@@ -30,6 +30,38 @@ const PREVIEWABLE_EXTS = new Set([
 ]);
 
 // ============================================================
+// 合并单元格清理（预览保留原始空位，不做 ffill）
+// ============================================================
+
+/**
+ * 清除 xlsx 解析后合并区域内非首行单元格的值。
+ * xlsx 库会把合并单元格的值填充到区域内每个 cell，
+ * 预览应只在首行显示，其余留空，与 Excel 视觉一致。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function clearMergedCells(ws: any): void {
+  const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = ws['!merges'];
+  if (!merges?.length) return;
+
+  for (const range of merges) {
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        // 跳过左上角首单元格（保留值）
+        if (r === range.s.r && c === range.s.c) continue;
+        // 列号转 A1 格式地址
+        let col = '';
+        let cc = c;
+        do {
+          col = String.fromCharCode(65 + (cc % 26)) + col;
+          cc = Math.floor(cc / 26) - 1;
+        } while (cc >= 0);
+        delete ws[`${col}${r + 1}`];
+      }
+    }
+  }
+}
+
+// ============================================================
 // CSV 解析器（支持引号内逗号/换行）
 // ============================================================
 
@@ -166,6 +198,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           workbookRef.current = wb;
           setSheetNames(wb.SheetNames);
           const ws = wb.Sheets[wb.SheetNames[0]];
+          clearMergedCells(ws);
           setTableData(utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]);
         } else if (isCsv) {
           const text = await response.text();
@@ -196,6 +229,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     try {
       const { utils } = await import('xlsx');
       const ws = wb.Sheets[wb.SheetNames[index]];
+      clearMergedCells(ws);
       const rows = utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][];
       setTableData(rows);
     } catch (e) {
