@@ -25,6 +25,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
+import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
 import ChartBlock from './ChartBlock';
 import FileCardList from '../media/FileCard';
@@ -469,18 +470,20 @@ export default memo(function MessageItem({
                       />
                     );
                   }
-                  // tool_step 内联渲染为步骤卡片
+                  // tool_step 折叠卡片（完成后可展开查看代码/输出）
                   if (part.type === 'tool_step') {
-                    const ts = part as { tool_name?: string; status?: string; summary?: string; elapsed_ms?: number };
-                    const statusIcon = ts.status === 'completed' ? '✓' : ts.status === 'error' ? '✗' : '…';
-                    const statusColor = ts.status === 'completed' ? 'text-green-500' : ts.status === 'error' ? 'text-red-500' : 'text-text-tertiary';
+                    const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error'; summary?: string; code?: string; output?: string; elapsed_ms?: number };
                     return (
-                      <div key={idx} className="my-1 flex items-center gap-1.5 text-xs text-text-tertiary">
-                        <span className={statusColor}>{statusIcon}</span>
-                        <span className="font-medium">{ts.tool_name || 'tool'}</span>
-                        {ts.summary && <span className="opacity-70 truncate max-w-xs">{ts.summary}</span>}
-                        {ts.elapsed_ms != null && <span className="opacity-50">{ts.elapsed_ms < 1000 ? `${ts.elapsed_ms}ms` : `${(ts.elapsed_ms / 1000).toFixed(1)}s`}</span>}
-                      </div>
+                      <ToolStepCard
+                        key={ts.tool_call_id || idx}
+                        toolName={ts.tool_name || 'tool'}
+                        toolCallId={ts.tool_call_id || String(idx)}
+                        status={ts.status || 'completed'}
+                        summary={ts.summary}
+                        code={ts.code}
+                        output={ts.output}
+                        elapsedMs={ts.elapsed_ms}
+                      />
                     );
                   }
                   if (part.type === 'text' && (part as { text: string }).text) {
@@ -565,7 +568,9 @@ export default memo(function MessageItem({
                       </div>
                     );
                   }
+                  // file：streaming 期间不渲染（避免中间产出过早暴露），完成后按位置显示
                   if (part.type === 'file' && ((part as { url?: string }).url || (part as { workspace_path?: string }).workspace_path)) {
+                    if (isStreaming) return null;
                     const fp = part as import('../../../types/message').FilePart;
                     return (
                       <div key={fp.url || fp.workspace_path || idx} className="my-2" style={{ maxWidth: '400px' }}>
