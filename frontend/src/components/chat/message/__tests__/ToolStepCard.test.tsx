@@ -61,12 +61,12 @@ describe('ToolStepCard', () => {
       render(<ToolStepCard {...baseProps} summary={undefined} />);
       fireEvent.click(screen.getByRole('button'));
       // 没有折叠内容区
-      expect(screen.queryByText('代码')).toBeNull();
+      expect(screen.queryByText('Input')).toBeNull();
     });
   });
 
   describe('code_execute 展示', () => {
-    it('展开后显示代码和输出', () => {
+    it('展开后显示 Input 和 Result', () => {
       render(
         <ToolStepCard
           toolName="code_execute"
@@ -79,8 +79,8 @@ describe('ToolStepCard', () => {
       );
       // 展开
       fireEvent.click(screen.getByRole('button'));
-      expect(screen.getByText('代码')).toBeDefined();
-      expect(screen.getByText('输出')).toBeDefined();
+      expect(screen.getByText('Input')).toBeDefined();
+      expect(screen.getByText('Result')).toBeDefined();
       expect(screen.getByText('处理了120条数据')).toBeDefined();
     });
 

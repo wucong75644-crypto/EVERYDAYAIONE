@@ -704,9 +704,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "tool_call_id": tc["id"],
                         "status": "running",
                     }
+                    # 所有工具补上 input（调用参数），对齐 Claude 风格展开区
+                    _raw_args = tc.get("arguments", "")
+                    if _raw_args:
+                        _tool_step["input"] = _raw_args[:2000]
                     if tc["name"] == "code_execute":
                         try:
-                            _ce_args = json.loads(tc.get("arguments", "{}"))
+                            _ce_args = json.loads(_raw_args or "{}")
                             _ce_code = _ce_args.get("code", "")[:2000]
                             if _ce_code:
                                 _tool_step["code"] = _ce_code
@@ -747,9 +751,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         tc["name"], summary_text, is_error,
                     )
 
-                    # Web 端特有：子Agent thinking 持久化
-                    if isinstance(result, AgentResult) and result.thinking_text:
-                        accumulated_thinking += result.thinking_text
+                    # 子Agent thinking 不再混入主 thinking，统一在 ToolStepCard 展开区展示
 
                     # Web 端特有：图片多模态延迟注入
                     if isinstance(result, FileReadResult) and result.type == "image" and result.image_url:

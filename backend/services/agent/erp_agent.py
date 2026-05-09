@@ -462,23 +462,9 @@ class ERPAgent:
         )
 
     async def _push_thinking(self, text: str) -> None:
+        """收集子Agent执行进度文本，不再推送到主thinking流。
+        进度信息通过 result.thinking_text 保留，供 ToolStepCard 展开区展示。"""
         self._thinking_parts.append(f"→ {text}")
-        if not self.task_id or not self.message_id:
-            return
-        try:
-            from schemas.websocket_builders import build_thinking_chunk
-            from services.websocket_manager import ws_manager
-            msg = build_thinking_chunk(
-                task_id=self.task_id,
-                conversation_id=self.conversation_id,
-                message_id=self.message_id,
-                chunk=f"\n── ERP Agent ──\n→ {text}\n",
-            )
-            await ws_manager.send_to_task_or_user(
-                self.task_id, self.user_id, msg
-            )
-        except Exception:
-            pass
 
     def _create_agent(self, domain: str) -> Any:
         from services.agent.departments.warehouse_agent import WarehouseAgent
