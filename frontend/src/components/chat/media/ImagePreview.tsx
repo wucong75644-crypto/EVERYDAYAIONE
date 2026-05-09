@@ -71,7 +71,7 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
 
   return (
     <>
-      <div className="flex gap-2 py-1">
+      <div className="flex gap-2">
         {images.map((image) => (
           <div key={image.id} className="relative inline-block shrink-0">
             {image.preview ? (

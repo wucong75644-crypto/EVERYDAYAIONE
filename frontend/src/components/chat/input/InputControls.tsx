@@ -302,7 +302,7 @@ export default function InputControls(props: InputControlsProps) {
       <div className="px-3 pt-2 pb-2">
         {/* 附件横排区域：图片 + PDF + 工作区文件 */}
         {(images.length > 0 || files.length > 0 || workspaceFiles.length > 0) && (
-          <div className="mb-2 flex items-end gap-2 overflow-x-auto scrollbar-hide">
+          <div className="mb-2 flex items-end gap-2 overflow-x-auto scrollbar-hide p-1">
             {/* 图片 */}
             {images.length > 0 && (
               <div className="shrink-0">
