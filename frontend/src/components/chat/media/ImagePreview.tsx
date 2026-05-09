@@ -79,7 +79,7 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
                 src={image.preview}
                 alt={image.isQuoted ? '引用图片' : `预览 ${image.file.name}`}
                 onClick={() => handleImageClick(image)}
-                className={`h-14 w-14 rounded-lg object-cover transition-transform ${
+                className={`h-10 w-10 rounded-lg object-cover transition-transform ${
                   image.isUploading ? 'opacity-50' : ''
                 } ${image.error ? 'border-2 border-error' : ''} ${
                   image.isQuoted ? 'ring-2 ring-blue-400' : ''
@@ -88,7 +88,7 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
                 }`}
               />
             ) : (
-            <div className="h-14 w-14 rounded-lg bg-active flex items-center justify-center">
+            <div className="h-10 w-10 rounded-lg bg-active flex items-center justify-center">
               <div className="w-4 h-4 border-2 border-text-disabled border-t-transparent rounded-full animate-spin"></div>
             </div>
           )}
