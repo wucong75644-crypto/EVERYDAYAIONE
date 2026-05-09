@@ -2115,7 +2115,18 @@
       "Bash(./git-push.sh \"fix: useRef初始值修复\\(tsc -b严格模式\\)\")",
       "Bash(./git-push.sh \"fix: useSettingsManager恢复逻辑——监听conversationChatSettings变化而非conversationId，修复异步时序bug\")",
       "Bash(./git-push.sh \"fix: 切换对话时立即清空modelId和chatSettings，防止旧值污染新对话的恢复逻辑\")",
-      "Bash(./git-push.sh \"feat: smartSubMode纳入chat_settings对话级持久化——切换对话恢复智能模式子模式\\(图生图/文生图/电商图/视频\\)\")"
+      "Bash(./git-push.sh \"feat: smartSubMode纳入chat_settings对话级持久化——切换对话恢复智能模式子模式\\(图生图/文生图/电商图/视频\\)\")",
+      "Bash(grep -r \"ssh\\\\|remote\\\\|server\\\\|deploy\\\\|host\" /Users/wucong/EVERYDAYAIONE/deploy*.sh /Users/wucong/EVERYDAYAIONE/scripts/deploy* /Users/wucong/EVERYDAYAIONE/.env.example)",
+      "WebFetch(domain:zhuanlan.zhihu.com)",
+      "WebFetch(domain:www.godofprompt.ai)",
+      "WebFetch(domain:a2a-mcp.org)",
+      "WebFetch(domain:help.apiyi.com)",
+      "WebFetch(domain:www.atlabs.ai)",
+      "Bash(python -m pytest backend/tests/test_sandbox_executor.py -x -q --tb=short)",
+      "Bash(python -m pytest backend/tests/ -x -q --tb=short -k \"dedup or confirm_delete or delete\")",
+      "Bash(python -m pytest backend/tests/ -x -q --tb=short -k \"dedup or confirm_delete or delete\" --ignore=backend/tests/manual)",
+      "Bash(python -m pytest backend/tests/test_sandbox_executor.py backend/tests/test_sandbox_e2e.py backend/tests/test_sandbox_worker.py -x -q --tb=short -k \"dedup or confirm_delete or delete\")",
+      "Bash(./git-push.sh \"fix: 沙盒文件删除confirm_delete路径匹配bug——basename对齐+静默恢复补日志\")"
     ],
     "additionalDirectories": [
       "/tmp"
