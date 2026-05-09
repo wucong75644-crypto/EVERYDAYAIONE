@@ -2107,7 +2107,9 @@
       "Bash(./git-push.sh \"refactor: tool_step统一为单一数据源——summary废弃改用output，去掉所有截断，两条链路合并为一条\")",
       "Bash(./git-push.sh \"fix: Result展开区改用主题色背景+thinking block补上duration_ms\\(每轮独立计时\\)\")",
       "Bash(./git-push.sh \"fix: ToolStepPart schema去掉summary改用input+output，持久化路径对齐新字段\")",
-      "Bash(./git-push.sh \"fix: 多块模式thinking持久化补上duration_ms，刷新后秒数不丢失\")"
+      "Bash(./git-push.sh \"fix: 多块模式thinking持久化补上duration_ms，刷新后秒数不丢失\")",
+      "Bash(python -m pytest tests/test_image_handler_batch.py -v --tb=short)",
+      "Bash(./git-push.sh \"fix: 图片生成失败状态显示'已取消'→正确显示失败+auto/1:1宽高比分辨率校验\\(KIE API限制\\)\")"
     ],
     "additionalDirectories": [
       "/tmp"

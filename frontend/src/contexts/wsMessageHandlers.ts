@@ -119,9 +119,12 @@ function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageDat
     });
   }
 
+  // 尊重后端返回的 status（全部失败时 status='failed'），不强制覆盖为 completed
+  const finalStatus = normalized.status === 'failed' ? 'failed' as const : 'completed' as const;
+
   const updateData = {
     ...normalized,
-    status: 'completed' as const,
+    status: finalStatus,
   };
 
   // 统一更新逻辑：即使 stream_end 已标记 completed，
@@ -132,7 +135,11 @@ function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageDat
   store.addMessage(conversationId, updateData);
 
   // 清理任务状态
-  store.completeTask(taskId);
+  if (finalStatus === 'failed') {
+    store.failTask(taskId, '生成失败');
+  } else {
+    store.completeTask(taskId);
+  }
 
   // 触发操作上下文回调
   const context = deps.operationContextRef.current.get(taskId);
@@ -223,7 +230,8 @@ function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
   // 2. 无 task_id 但有 messageData
   else if (messageData) {
     const normalized = normalizeMessage(messageData as NormalizeInput);
-    store.updateMessage(message_id || (messageData.id as string), { ...normalized, status: 'completed' });
+    const msgStatus = normalized.status === 'failed' ? 'failed' as const : 'completed' as const;
+    store.updateMessage(message_id || (messageData.id as string), { ...normalized, status: msgStatus });
   }
   // 3. 只有 message_id
   else if (message_id) {
@@ -240,8 +248,13 @@ function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
 
   // Toast 提示（仅在消息确实是新完成时才显示）
   if (isNewlyCompleted) {
+    const isFailed = messageData && (messageData.status as string) === 'failed';
     import('react-hot-toast').then(({ default: toast }) => {
-      toast.success('生成完成');
+      if (isFailed) {
+        toast.error('生成失败');
+      } else {
+        toast.success('生成完成');
+      }
     });
   }
 }

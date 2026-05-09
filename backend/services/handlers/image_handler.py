@@ -74,6 +74,12 @@ class ImageHandler(BaseHandler):
         model_config = get_model_config(model_id)
         if model_config and model_config.get("supports_resolution") and not resolution:
             resolution = "1K"
+        # KIE API 限制：auto 只能 1K，1:1 不能 4K
+        if resolution:
+            if aspect_ratio == "auto" and resolution != "1K":
+                resolution = "1K"
+            elif aspect_ratio == "1:1" and resolution == "4K":
+                resolution = "2K"
 
         # regenerate_single：仅生成 1 张，使用指定 image_index
         is_regenerate_single = params.get("operation") == "regenerate_single"

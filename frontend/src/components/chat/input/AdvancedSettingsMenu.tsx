@@ -129,7 +129,15 @@ export default function AdvancedSettingsMenu({
               {ASPECT_RATIOS.map((ratio) => (
                 <button
                   key={ratio.value}
-                  onClick={() => onAspectRatioChange(ratio.value)}
+                  onClick={() => {
+                    onAspectRatioChange(ratio.value);
+                    // KIE API 限制：auto 只能 1K，1:1 不能 4K
+                    if (ratio.value === 'auto' && resolution !== '1K') {
+                      onResolutionChange('1K');
+                    } else if (ratio.value === '1:1' && resolution === '4K') {
+                      onResolutionChange('2K');
+                    }
+                  }}
                   className={`px-3 py-1 text-xs rounded-md transition-base ${
                     aspectRatio === ratio.value
                       ? 'bg-accent text-text-on-accent'
@@ -147,15 +155,26 @@ export default function AdvancedSettingsMenu({
               <div className="flex gap-2">
                 {RESOLUTIONS.map((res) => {
                   const resCredits = getPerImageCredits(effectiveModel, res.value);
+                  // KIE API 限制：auto 只能 1K，1:1 不能 4K
+                  const disabled =
+                    (aspectRatio === 'auto' && res.value !== '1K') ||
+                    (aspectRatio === '1:1' && res.value === '4K');
+                  const disabledTitle = aspectRatio === 'auto'
+                    ? 'Auto 宽高比仅支持 1K 分辨率'
+                    : '1:1 宽高比不支持 4K 分辨率';
                   return (
                     <button
                       key={res.value}
+                      disabled={disabled}
                       onClick={() => onResolutionChange(res.value)}
                       className={`flex flex-col items-center px-3 py-1.5 text-xs rounded-md transition-base ${
                         resolution === res.value
                           ? 'bg-accent text-text-on-accent'
-                          : 'bg-hover text-text-secondary hover:bg-active'
+                          : disabled
+                            ? 'bg-hover text-text-disabled cursor-not-allowed opacity-50'
+                            : 'bg-hover text-text-secondary hover:bg-active'
                       }`}
+                      title={disabled ? disabledTitle : undefined}
                     >
                       <span className="font-medium">{res.label}</span>
                       <span className="text-[10px] opacity-75">{resCredits}积分</span>
