@@ -99,21 +99,16 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // 智能模式子模式：聊天/图生图/文生图/电商图/视频
-  type SmartSubMode = 'chat' | 'image-i2i' | 'image-t2i' | 'image-ecom' | 'video';
-  const [smartSubMode, setSmartSubMode] = useState<SmartSubMode>('chat');
-
   // 电商图模式：AI提示词增强相关状态
   const [imageTaskMeta, setImageTaskMeta] = useState<Array<{index: number; type: string; description: string; aspect_ratio: string}> | null>(null);
   const [costEstimate, setCostEstimate] = useState<{estimated_credits: number; image_count: number} | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
-  // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
   const [sendError, setSendError] = useState<string | null>(null);
 
   // 用户积分（用于禁用积分不足的数量选项）
   const userCredits = useAuthStore((s) => s.user?.credits);
 
-  // 设置管理 Hook（图像/视频/聊天参数）
+  // 设置管理 Hook（图像/视频/聊天参数，含智能模式子模式）
   const {
     imageSettings,
     setImageSetting,
@@ -124,6 +119,12 @@ export default function InputArea({
     saveSettings: handleSaveSettings,
     resetSettings: handleResetSettings,
   } = useSettingsManager(conversationId, conversationChatSettings);
+
+  // 智能模式子模式：从 chatSettings 获取（对话级持久化）
+  const smartSubMode = chatSettings.smartSubMode;
+  const setSmartSubMode = useCallback((mode: string) => {
+    setChatSetting('smartSubMode', mode as import('../../../hooks/useSettingsManager').SmartSubMode);
+  }, [setChatSetting]);
 
   // 图片上传 Hook
   const {
@@ -178,6 +179,7 @@ export default function InputArea({
 
   // 构建当前 chat_settings 快照（创建对话时保存）
   const buildChatSettingsPayload = useCallback(() => ({
+    smart_sub_mode: chatSettings.smartSubMode,
     deep_think_mode: chatSettings.deepThinkMode,
     thinking_effort: chatSettings.thinkingEffort,
     temperature: chatSettings.temperature,
@@ -716,7 +718,7 @@ export default function InputArea({
           onStop={handleStop}
           effectiveModelType={effectiveModelType}
           smartSubMode={isSmart ? smartSubMode : undefined}
-          onSmartSubModeChange={isSmart ? (mode: string) => setSmartSubMode(mode as SmartSubMode) : undefined}
+          onSmartSubModeChange={isSmart ? setSmartSubMode : undefined}
           isEnhancing={isEnhancing}
           onEnhancePrompt={isEcomMode ? async () => {
             if (isEnhancing) return;

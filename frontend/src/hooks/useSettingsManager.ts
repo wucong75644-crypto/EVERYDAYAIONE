@@ -41,7 +41,10 @@ export interface VideoSettings {
 
 export type PermissionMode = 'auto' | 'ask' | 'plan';
 
+export type SmartSubMode = 'chat' | 'image-i2i' | 'image-t2i' | 'image-ecom' | 'video';
+
 export interface ChatSettings {
+  smartSubMode: SmartSubMode;
   thinkingEffort: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode: boolean;
   permissionMode: PermissionMode;  // 权限模式：auto/ask/plan
@@ -77,7 +80,7 @@ export interface UseSettingsManagerReturn {
 const DEFAULTS = {
   image: { aspectRatio: '1:1' as AspectRatio, resolution: '1024x1024' as ImageResolution, outputFormat: 'png' as ImageOutputFormat, numImages: 1 as ImageCount },
   video: { frames: '10' as VideoFrames, aspectRatio: 'landscape' as VideoAspectRatio, removeWatermark: false },
-  chat: { thinkingEffort: 'low' as const, deepThinkMode: true, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
+  chat: { smartSubMode: 'chat' as SmartSubMode, thinkingEffort: 'low' as const, deepThinkMode: true, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
 };
 
 export function useSettingsManager(
@@ -106,6 +109,7 @@ export function useSettingsManager(
 
   // 聊天模型参数
   const [chatSettings, setChatSettings] = useState<ChatSettings>({
+    smartSubMode: (cs?.smart_sub_mode as SmartSubMode) || DEFAULTS.chat.smartSubMode,
     thinkingEffort: (cs?.thinking_effort as ChatSettings['thinkingEffort']) || savedSettings.chat?.thinkingEffort || DEFAULTS.chat.thinkingEffort,
     deepThinkMode: cs?.deep_think_mode ?? true,
     permissionMode: (savedSettings.chat as any)?.permissionMode || DEFAULTS.chat.permissionMode,
@@ -131,6 +135,7 @@ export function useSettingsManager(
       removeWatermark: s?.video_remove_watermark ?? DEFAULTS.video.removeWatermark,
     });
     setChatSettings({
+      smartSubMode: (s?.smart_sub_mode as SmartSubMode) || DEFAULTS.chat.smartSubMode,
       thinkingEffort: (s?.thinking_effort as ChatSettings['thinkingEffort']) || DEFAULTS.chat.thinkingEffort,
       deepThinkMode: s?.deep_think_mode ?? DEFAULTS.chat.deepThinkMode,
       permissionMode: DEFAULTS.chat.permissionMode,
@@ -150,6 +155,7 @@ export function useSettingsManager(
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const payload: ConversationChatSettings = {
+        smart_sub_mode: chat.smartSubMode,
         deep_think_mode: chat.deepThinkMode,
         thinking_effort: chat.thinkingEffort,
         temperature: chat.temperature,
@@ -245,6 +251,7 @@ export function useSettingsManager(
       removeWatermark: defaults.video.removeWatermark,
     });
     setChatSettings({
+      smartSubMode: 'chat',
       thinkingEffort: defaults.chat.thinkingEffort,
       deepThinkMode: true,
       permissionMode: 'auto',
