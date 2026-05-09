@@ -52,7 +52,7 @@ export default memo(function ToolStepCard({
   return (
     <div
       key={toolCallId}
-      className="my-1.5 rounded-lg border border-border-default/60 bg-bg-subtle/40 overflow-hidden text-xs"
+      className="my-1.5 max-w-md rounded-lg border border-border-default/60 bg-bg-subtle/40 overflow-hidden text-xs"
     >
       {/* Header — 始终可见 */}
       <button

@@ -2058,7 +2058,26 @@
       "Bash(./git-push.sh \"fix: 批量操作栏仅多选\\(≥2\\)时显示，单选不弹出\")",
       "Bash(./git-push.sh \"fix: 工作区网格视图图标放大\\(56→72px\\)+间距加大+字号调整，对齐桌面级体验\")",
       "Bash(./git-push.sh \"fix: 工作区网格列数减少\\(6→5\\)+文件名break-words，解决中文截断和间距问题\")",
-      "Bash(./git-push.sh \"fix: 工作区网格改用auto-fill+minmax，列数随面板宽度自动响应\")"
+      "Bash(./git-push.sh \"fix: 工作区网格改用auto-fill+minmax，列数随面板宽度自动响应\")",
+      "Bash(python -m pytest tests/test_data_profile.py::TestBuildDataProfile::test_preview_section -v --tb=long)",
+      "Bash(grep -n \"\\\\.zip\\\\|zipfile\\\\|extract\" /Users/wucong/EVERYDAYAIONE/backend/services/sandbox/*.py)",
+      "Bash(python -m pytest tests/test_data_profile.py tests/test_staging_cleaner.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_wecom_file_parser.py tests/test_wecom_file_mixin.py -x -q)",
+      "Bash(python -m pytest tests/test_wecom_file_parser.py -x -q)",
+      "Bash(python -m pytest tests/test_scoped_os.py tests/test_sandbox_e2e.py tests/test_sandbox_stateful_e2e.py tests/test_sandbox_executor.py tests/test_sandbox_functions.py -x -q)",
+      "Bash(python -m pytest tests/test_scoped_os.py::TestScopedPathlib -x -v)",
+      "Bash(python -m pytest tests/test_scoped_os.py tests/test_sandbox_e2e.py tests/test_sandbox_stateful_e2e.py tests/test_sandbox_executor.py -x -q)",
+      "Bash(python -m pytest tests/ -q --tb=line --ignore=tests/test_wecom*.py --ignore=tests/test_video*.py --ignore=tests/test_websocket*.py)",
+      "Bash(python -m pytest tests/ -q --tb=line --ignore=tests/test_video_retry.py --ignore=tests/test_websocket_manager_steer.py -k \"not wecom\")",
+      "Bash(python -m pytest tests/test_adapter_factory.py --tb=short)",
+      "Bash(python -m pytest tests/test_scoped_os.py -x -q)",
+      "Bash(ssh root@47.96.237.162 \"uptime && echo '---MEM---' && free -h && echo '---DISK---' && df -h / && echo '---CPU---' && top -bn1 | head -5 && echo '---DOCKER---' && docker stats --no-stream --format 'table {{.Name}}\\\\t{{.CPUPerc}}\\\\t{{.MemUsage}}\\\\t{{.MemPerc}}' 2>/dev/null || echo 'no docker'\")",
+      "Bash(ssh root@47.96.237.162 \"echo '---BACKEND LOGS \\(last 30\\)---' && tail -30 /root/EVERYDAYAIONE/logs/app.log 2>/dev/null || tail -30 /root/EVERYDAYAIONE/backend/logs/app.log 2>/dev/null || echo 'no app.log found'; echo '---PM2---' && pm2 list 2>/dev/null || echo 'no pm2'; echo '---SYSTEMCTL---' && systemctl is-active nginx redis postgresql 2>/dev/null || echo 'checked'\")",
+      "Bash(ping -c 3 -W 5 47.96.237.162)",
+      "Bash(ping -c 5 -W 3 47.96.237.162)",
+      "Bash(grep -r -l 'deploy\\\\|47.96\\\\|47.110' /Users/wucong/EVERYDAYAIONE/scripts/ /Users/wucong/EVERYDAYAIONE/deploy* /Users/wucong/EVERYDAYAIONE/Makefile)",
+      "Bash(node -e ' *)",
+      "Bash(./git-push.sh \"fix: ToolStepCard加max-w-md限制卡片宽度，避免撑满容器\")"
     ],
     "additionalDirectories": [
       "/tmp"
