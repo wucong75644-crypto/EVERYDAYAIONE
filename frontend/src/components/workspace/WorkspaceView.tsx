@@ -220,15 +220,7 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
         onMkdir={ws.mkdir}
       />
 
-      {/* 批量选中提示（轻量文字） */}
-      {selection.selectedCount >= 2 && (
-        <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[var(--s-border-default)] bg-[var(--s-accent)]/5 shrink-0">
-          <span className="text-xs text-[var(--s-text-secondary)]">
-            已选中 <span className="font-medium text-[var(--s-text-primary)]">{selection.selectedCount}</span> 个文件
-          </span>
-          <button type="button" onClick={selection.clear} className="text-xs text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)]">取消</button>
-        </div>
-      )}
+      {/* 多选提示已移除 — 选中态通过文件卡片高亮体现 */}
 
       {/* 错误提示 */}
       {ws.error && (
