@@ -16,7 +16,7 @@ export interface ChatSettings {
   image_resolution?: string;
   image_output_format?: string;
   image_num_images?: number;
-  video_frames?: number;
+  video_frames?: string;
   video_aspect_ratio?: string;
   video_remove_watermark?: boolean;
 }
