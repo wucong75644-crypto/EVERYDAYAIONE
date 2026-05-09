@@ -90,8 +90,16 @@ _TASK_PATTERN = re.compile(r"(\d+)\.\s*(.+?)(?=\n\d+\.|$)", re.DOTALL)
 def _parse_image_tasks(content: str) -> list[dict[str, Any]]:
     """从模型输出解析结构化图片任务（"1. xxx" "2. xxx" 格式）。
 
+    自动提取全局视觉锚点并注入每张图的 description 前缀，
+    确保 gpt-image-2 独立生成时各图风格一致。
     解析失败时兜底为整段当1张图。
     """
+    # 提取全局视觉锚点（如果有）
+    anchor = ""
+    anchor_match = _ANCHOR_PATTERN.search(content)
+    if anchor_match:
+        anchor = anchor_match.group(1).strip().strip("（）()")
+
     tasks: list[dict[str, Any]] = []
     for match in _TASK_PATTERN.finditer(content):
         desc = match.group(2).strip()
@@ -100,13 +108,19 @@ def _parse_image_tasks(content: str) -> list[dict[str, Any]]:
             img_type = "white_bg"
         elif "场景" in desc:
             img_type = "scene"
-        elif "详情" in desc or "卖点" in desc:
+        elif "详情" in desc or "卖点" in desc or "细节" in desc:
             img_type = "detail"
+        elif "信任" in desc or "多角度" in desc or "多色" in desc:
+            img_type = "trust"
         aspect = "3:4" if ("750×1000" in desc or "3:4" in desc) else "1:1"
+
+        # 将全局锚点注入每张图的描述前缀
+        full_desc = f"[Visual anchor: {anchor}] {desc}" if anchor else desc
+
         tasks.append({
             "index": int(match.group(1)),
             "type": img_type,
-            "description": desc,
+            "description": full_desc,
             "aspect_ratio": aspect,
         })
     if not tasks:
@@ -114,12 +128,36 @@ def _parse_image_tasks(content: str) -> list[dict[str, Any]]:
     return tasks
 
 
-def _extract_style_directive(content: str) -> str:
-    """从模型输出中提取风格描述（取关键行，最多5行）。"""
-    style_keywords = ("配色", "色调", "光线", "风格", "氛围", "暖", "冷", "色系")
+_ANCHOR_PATTERN = re.compile(
+    r"【全局视觉锚点】\s*\n(.+?)(?=\n##|\n\d+\.|\Z)",
+    re.DOTALL,
+)
+
+
+def _extract_visual_anchor(content: str) -> str:
+    """从模型输出中提取全局视觉锚点。
+
+    优先匹配 【全局视觉锚点】 标记段落，
+    未找到时降级到关键词行提取。
+    """
+    match = _ANCHOR_PATTERN.search(content)
+    if match:
+        anchor = match.group(1).strip()
+        # 去掉可能的括号包裹
+        anchor = anchor.strip("（）()")
+        if anchor:
+            return anchor
+
+    # 降级：按关键词提取风格行
+    style_keywords = ("配色", "色调", "光线", "风格", "氛围", "暖", "冷", "色系", "色温")
     lines = content.split("\n")
-    style_lines = [line for line in lines if any(kw in line for kw in style_keywords)]
+    style_lines = [line.strip() for line in lines if any(kw in line for kw in style_keywords)]
     return "\n".join(style_lines[:5]) if style_lines else content[:200]
+
+
+def _extract_style_directive(content: str) -> str:
+    """从模型输出中提取风格描述（优先使用全局视觉锚点）。"""
+    return _extract_visual_anchor(content)
 
 
 def _estimate_credits(image_count: int) -> dict[str, int]:
