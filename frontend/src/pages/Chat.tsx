@@ -261,9 +261,11 @@ export default function Chat() {
       conversationRequestSeqRef.current += 1;
       const currentSeq = conversationRequestSeqRef.current;
 
-      // 立即设置对话 ID（无需等待 API，让 MessageArea 立即加载缓存）
+      // 立即设置对话 ID + 清空旧设置（避免 API 返回前用旧对话的残留值恢复模型/参数）
       // eslint-disable-next-line react-hooks/set-state-in-effect -- URL 参数同步到状态是合理用例
       setCurrentConversationId(urlConversationId);
+      setConversationModelId(null);
+      setConversationChatSettings(null);
 
       // 优先从 localStorage 缓存中获取标题（避免显示"加载中..."）
       let cachedTitle: string | null = null;
