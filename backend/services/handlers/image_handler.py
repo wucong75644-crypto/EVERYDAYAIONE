@@ -69,6 +69,14 @@ class ImageHandler(BaseHandler):
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
         resolution = params.get("resolution") or None
+        # 归一化旧格式的 resolution 值（如 "1024x1024" → "1K"）
+        _RESOLUTION_NORMALIZE = {
+            "1024x1024": "1K", "1024": "1K",
+            "2048x2048": "2K", "2048": "2K", "2560x1440": "2K",
+            "4096x4096": "4K", "4096": "4K",
+        }
+        if resolution and resolution not in ("1K", "2K", "4K"):
+            resolution = _RESOLUTION_NORMALIZE.get(resolution, "1K")
         # 支持分辨率的模型（如 nano-banana-pro）未指定时默认 1K
         from config.kie_models import get_model_config
         model_config = get_model_config(model_id)
