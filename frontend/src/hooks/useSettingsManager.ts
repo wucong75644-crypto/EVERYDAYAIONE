@@ -76,7 +76,7 @@ export interface UseSettingsManagerReturn {
 /** 系统默认值（新建对话时使用） */
 const DEFAULTS = {
   image: { aspectRatio: '1:1' as AspectRatio, resolution: '1024x1024' as ImageResolution, outputFormat: 'png' as ImageOutputFormat, numImages: 1 as ImageCount },
-  video: { frames: 81 as VideoFrames, aspectRatio: '16:9' as VideoAspectRatio, removeWatermark: false },
+  video: { frames: '10' as VideoFrames, aspectRatio: 'landscape' as VideoAspectRatio, removeWatermark: false },
   chat: { thinkingEffort: 'low' as const, deepThinkMode: true, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
 };
 
