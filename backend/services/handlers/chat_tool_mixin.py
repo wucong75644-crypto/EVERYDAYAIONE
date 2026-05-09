@@ -46,7 +46,7 @@ class ChatToolMixin:
             budget: ExecutionBudget 实例（约束 sandbox 超时）
 
         Returns:
-            List of (tool_call_dict, result_text, is_error)
+            List of (tool_call_dict, result, is_error, display_text)
         """
         from config.chat_tools import is_concurrency_safe
         from services.tool_executor import ToolExecutor
@@ -104,7 +104,7 @@ class ChatToolMixin:
 
         # ── AgentResult 处理（通信协议 §3.2）──
         from services.agent.agent_result import AgentResult
-        for i, (tc, result, is_error) in enumerate(results):
+        for i, (tc, result, is_error, _display) in enumerate(results):
             if not isinstance(result, AgentResult):
                 continue
             # ① 前端文件卡片通道
@@ -284,7 +284,7 @@ class ChatToolMixin:
         user_id: str,
         turn: int,
     ) -> tuple:
-        """执行单个工具：安全检查 → 执行 → 返回 (tc, result, is_error)"""
+        """执行单个工具：安全检查 → 执行 → 返回 (tc, result, is_error, display_text)"""
         from config.chat_tools import get_safety_level, SafetyLevel
 
         tool_name = tc["name"]
@@ -301,7 +301,7 @@ class ChatToolMixin:
                 "reason": args.get("reason", "need_info"),
                 "tool_call_id": tool_call_id,
             }
-            return (tc, "OK", False)
+            return (tc, "OK", False, "OK")
 
         safety = get_safety_level(tool_name)
 
@@ -330,12 +330,11 @@ class ChatToolMixin:
                 tool_call_id, timeout=60.0,
             )
             if not approved:
-                return (
-                    tc,
+                _reject_msg = (
                     f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
-                    f"请告知用户操作未执行，询问是否需要重新确认。",
-                    True,
+                    f"请告知用户操作未执行，询问是否需要重新确认。"
                 )
+                return (tc, _reject_msg, True, _reject_msg)
 
         # confirm 级别：通知用户（不阻塞）
         if safety == SafetyLevel.CONFIRM:
@@ -345,7 +344,8 @@ class ChatToolMixin:
         try:
             args = json.loads(tc["arguments"]) if tc["arguments"] else {}
         except json.JSONDecodeError:
-            return (tc, f"参数解析失败: {tc['arguments'][:100]}", True)
+            _err = f"参数解析失败: {tc['arguments'][:100]}"
+            return (tc, _err, True, _err)
 
         import time as _time
         _audit_start = _time.monotonic()
@@ -355,10 +355,12 @@ class ChatToolMixin:
 
             # AgentResult 直接返回（不做 str 操作，由上层处理）
             from services.agent.agent_result import AgentResult
+            from services.handlers.chat_generate_mixin import extract_display_text
             if isinstance(result, AgentResult):
                 # 提取 [FILE] 标记 → FilePart 暂存（code_execute 生成的文件）
                 if result.summary and "[FILE]" in result.summary:
                     result.summary = self._extract_file_parts(result.summary)
+                display_text = extract_display_text(result)
                 raw_summary = result.summary[:100] if result.summary else ""
                 await ws_manager.send_to_task_or_user(
                     task_id, user_id,
@@ -373,12 +375,11 @@ class ChatToolMixin:
                         turn=turn,
                     ),
                 )
-                # 推送 tool_step 完成更新
                 await self._push_tool_step_update(
                     task_id, conversation_id, message_id, user_id,
                     tool_name, tool_call_id,
                     success=not result.is_failure,
-                    summary=result.summary[:500] if result.summary else "",
+                    output=display_text,
                     elapsed_ms=_audit_elapsed,
                 )
                 self._emit_tool_audit(
@@ -386,15 +387,14 @@ class ChatToolMixin:
                     tool_call_id, turn, args, len(result.summary),
                     _audit_elapsed, result.status,
                 )
-                return (tc, result, result.is_failure)
+                return (tc, result, result.is_failure, display_text)
 
             # FormBlockResult 通道：暂存到 _pending_form_block
-            # chat_handler 统一处理（推送 WS + 加 _content_blocks + break）
-            # 复用 _pending_file_parts 的已验证模式
             from services.scheduler.chat_task_manager import FormBlockResult
             if isinstance(result, FormBlockResult):
                 self._pending_form_block = result.form
                 llm_text = result.llm_hint
+                _form_display = "表单已展示"
                 await ws_manager.send_to_task_or_user(
                     task_id, user_id,
                     build_tool_result(
@@ -404,25 +404,26 @@ class ChatToolMixin:
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
                         success=True,
-                        summary="表单已展示",
+                        summary=_form_display,
                         turn=turn,
                     ),
                 )
                 await self._push_tool_step_update(
                     task_id, conversation_id, message_id, user_id,
                     tool_name, tool_call_id,
-                    success=True, summary="表单已展示", elapsed_ms=_audit_elapsed,
+                    success=True, output=_form_display, elapsed_ms=_audit_elapsed,
                 )
                 self._emit_tool_audit(
                     task_id, conversation_id, user_id, tool_name,
                     tool_call_id, turn, args, len(json.dumps(result.form)),
                     _audit_elapsed, "success",
                 )
-                return (tc, llm_text, False)
+                return (tc, llm_text, False, _form_display)
 
             # FileReadResult（图片多模态）：直接透传给 chat_handler 处理
             from services.file_executor import FileReadResult
             if isinstance(result, FileReadResult):
+                display_text = extract_display_text(result)
                 raw_summary = result.text[:100] if result.text else ""
                 await ws_manager.send_to_task_or_user(
                     task_id, user_id,
@@ -440,7 +441,7 @@ class ChatToolMixin:
                 await self._push_tool_step_update(
                     task_id, conversation_id, message_id, user_id,
                     tool_name, tool_call_id,
-                    success=True, summary=raw_summary[:500],
+                    success=True, output=display_text,
                     elapsed_ms=_audit_elapsed,
                 )
                 self._emit_tool_audit(
@@ -448,14 +449,15 @@ class ChatToolMixin:
                     tool_call_id, turn, args, len(result.text),
                     _audit_elapsed, "success",
                 )
-                return (tc, result, False)
+                return (tc, result, False, display_text)
 
             # 普通工具（str 路径）
             # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
             result = self._extract_file_parts(result)
-            # 先用完整结果生成 summary 推送前端（用户看到完整摘要）
+            # display_text 取 wrap 之前的完整结果（前端展示用）
+            display_text = extract_display_text(result)
             raw_summary = result[:100] if result else ""
-            # 再截断+信号（messages 里只放精简版给 LLM）
+            # 截断+信号（messages 里只放精简版给 LLM）
             from services.agent.tool_result_envelope import (
                 wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
             )
@@ -464,7 +466,6 @@ class ChatToolMixin:
                 PERSISTED_OUTPUT_TAG in result
                 or "⚠ 输出过长" in result
             ) if result else False
-            # 通知前端工具完成（summary 基于截断前的原始结果）
             await ws_manager.send_to_task_or_user(
                 task_id, user_id,
                 build_tool_result(
@@ -478,27 +479,23 @@ class ChatToolMixin:
                     turn=turn,
                 ),
             )
-            # 推送 tool_step 完成更新（code_execute 附带 output）
-            _step_output = None
-            if tool_name == "code_execute":
-                _step_output = raw_summary[:2000] if raw_summary else None
             await self._push_tool_step_update(
                 task_id, conversation_id, message_id, user_id,
                 tool_name, tool_call_id,
-                success=True, summary=raw_summary[:500],
-                elapsed_ms=_audit_elapsed, output=_step_output,
+                success=True, output=display_text,
+                elapsed_ms=_audit_elapsed,
             )
-            # [C1] 审计日志（fire-and-forget）
             self._emit_tool_audit(
                 task_id, conversation_id, user_id, tool_name,
                 tool_call_id, turn, args, len(result),
                 _audit_elapsed, "success", is_truncated,
             )
-            return (tc, result, False)
+            return (tc, result, False, display_text)
         except Exception as e:
             _audit_elapsed = int((_time.monotonic() - _audit_start) * 1000)
             logger.error(f"Tool execution error | tool={tool_name} | task={task_id} | error={e}")
             error_msg = f"工具执行失败: {e}"
+            display_text = str(e)
             await ws_manager.send_to_task_or_user(
                 task_id, user_id,
                 build_tool_result(
@@ -515,21 +512,20 @@ class ChatToolMixin:
             await self._push_tool_step_update(
                 task_id, conversation_id, message_id, user_id,
                 tool_name, tool_call_id,
-                success=False, summary=str(e)[:500], elapsed_ms=_audit_elapsed,
+                success=False, output=display_text, elapsed_ms=_audit_elapsed,
             )
             self._emit_tool_audit(
                 task_id, conversation_id, user_id, tool_name,
                 tool_call_id, turn, args, len(error_msg),
                 _audit_elapsed, "error",
             )
-            return (tc, error_msg, True)
+            return (tc, error_msg, True, display_text)
 
 
     async def _push_tool_step_update(
         self, task_id: str, conversation_id: str, message_id: str,
         user_id: str, tool_name: str, tool_call_id: str,
-        success: bool, summary: str, elapsed_ms: int,
-        output: Optional[str] = None,
+        success: bool, output: str, elapsed_ms: int,
     ) -> None:
         """推送 tool_step 完成/失败更新到前端（通过 content_block_add）"""
         _step_update: Dict[str, Any] = {
@@ -537,11 +533,9 @@ class ChatToolMixin:
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
             "status": "completed" if success else "error",
-            "summary": summary,
+            "output": output,
             "elapsed_ms": elapsed_ms,
         }
-        if output is not None:
-            _step_update["output"] = output
         try:
             await ws_manager.send_to_task_or_user(
                 task_id, user_id,

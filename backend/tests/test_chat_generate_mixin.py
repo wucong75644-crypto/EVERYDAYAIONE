@@ -193,78 +193,93 @@ class TestGenerateCompleteBasic:
 
 
 class TestUnpackToolResult:
-    """unpack_tool_result 统一解包工具返回值"""
+    """unpack_tool_result 只返回 LLM 上下文内容"""
 
     def test_agent_result(self):
-        """AgentResult → (to_message_content(), summary[:500])"""
+        """AgentResult → to_message_content()"""
         from services.handlers.chat_generate_mixin import unpack_tool_result
         from services.agent.agent_result import AgentResult
 
         ar = AgentResult(status="success", summary="订单统计：100笔")
-        msg_content, summary = unpack_tool_result(ar)
+        msg_content = unpack_tool_result(ar)
         assert isinstance(msg_content, list)  # to_message_content 返回 list
-        assert summary == "订单统计：100笔"
-
-    def test_agent_result_summary_truncated(self):
-        """AgentResult summary 超500字 → 截断"""
-        from services.handlers.chat_generate_mixin import unpack_tool_result
-        from services.agent.agent_result import AgentResult
-
-        long_summary = "x" * 600
-        ar = AgentResult(status="success", summary=long_summary)
-        _, summary = unpack_tool_result(ar)
-        assert len(summary) == 500
-
-    def test_agent_result_none_summary(self):
-        """AgentResult summary=None → 空字符串"""
-        from services.handlers.chat_generate_mixin import unpack_tool_result
-        from services.agent.agent_result import AgentResult
-
-        ar = AgentResult(status="success", summary=None)
-        _, summary = unpack_tool_result(ar)
-        assert summary == ""
 
     def test_file_read_result(self):
-        """FileReadResult → (text, text[:500])"""
+        """FileReadResult → text"""
         from services.handlers.chat_generate_mixin import unpack_tool_result
         from services.file_read_extensions import FileReadResult
 
         fr = FileReadResult(type="text", text="文件内容abc")
-        msg_content, summary = unpack_tool_result(fr)
+        msg_content = unpack_tool_result(fr)
         assert msg_content == "文件内容abc"
-        assert summary == "文件内容abc"
-
-    def test_file_read_result_image(self):
-        """FileReadResult type=image → text 作为 content"""
-        from services.handlers.chat_generate_mixin import unpack_tool_result
-        from services.file_read_extensions import FileReadResult
-
-        fr = FileReadResult(type="image", text="图片元信息", image_url="https://cdn/img.png")
-        msg_content, summary = unpack_tool_result(fr)
-        assert msg_content == "图片元信息"
-        assert summary == "图片元信息"
 
     def test_string_result(self):
-        """纯字符串 → (原文, 原文[:500])"""
+        """纯字符串 → 原样返回"""
         from services.handlers.chat_generate_mixin import unpack_tool_result
 
-        msg_content, summary = unpack_tool_result("查询成功")
+        msg_content = unpack_tool_result("查询成功")
         assert msg_content == "查询成功"
-        assert summary == "查询成功"
 
-    def test_string_result_truncated(self):
-        """长字符串 → summary 截断"""
+    def test_string_not_truncated(self):
+        """长字符串不截断"""
         from services.handlers.chat_generate_mixin import unpack_tool_result
 
         long_str = "a" * 600
-        msg_content, summary = unpack_tool_result(long_str)
-        assert msg_content == long_str  # content 不截断
-        assert len(summary) == 500
+        msg_content = unpack_tool_result(long_str)
+        assert msg_content == long_str
 
     def test_unknown_type_fallback(self):
         """未知类型 → str() 兜底"""
         from services.handlers.chat_generate_mixin import unpack_tool_result
 
-        msg_content, summary = unpack_tool_result(12345)
+        msg_content = unpack_tool_result(12345)
         assert msg_content == "12345"
-        assert summary == "12345"
+
+
+class TestExtractDisplayText:
+    """extract_display_text 提取原始工具结果用于前端展示"""
+
+    def test_agent_result(self):
+        """AgentResult → summary 完整"""
+        from services.handlers.chat_generate_mixin import extract_display_text
+        from services.agent.agent_result import AgentResult
+
+        ar = AgentResult(status="success", summary="订单统计：100笔")
+        assert extract_display_text(ar) == "订单统计：100笔"
+
+    def test_agent_result_long_not_truncated(self):
+        """AgentResult 长 summary 不截断"""
+        from services.handlers.chat_generate_mixin import extract_display_text
+        from services.agent.agent_result import AgentResult
+
+        long_summary = "x" * 5000
+        ar = AgentResult(status="success", summary=long_summary)
+        assert len(extract_display_text(ar)) == 5000
+
+    def test_agent_result_none_summary(self):
+        """AgentResult summary=None → 空字符串"""
+        from services.handlers.chat_generate_mixin import extract_display_text
+        from services.agent.agent_result import AgentResult
+
+        ar = AgentResult(status="success", summary=None)
+        assert extract_display_text(ar) == ""
+
+    def test_file_read_result(self):
+        """FileReadResult → text 完整"""
+        from services.handlers.chat_generate_mixin import extract_display_text
+        from services.file_read_extensions import FileReadResult
+
+        fr = FileReadResult(type="text", text="文件内容abc")
+        assert extract_display_text(fr) == "文件内容abc"
+
+    def test_string_result(self):
+        """纯字符串 → 原样返回"""
+        from services.handlers.chat_generate_mixin import extract_display_text
+
+        assert extract_display_text("查询成功") == "查询成功"
+
+    def test_unknown_type(self):
+        """未知类型 → str()"""
+        from services.handlers.chat_generate_mixin import extract_display_text
+
+        assert extract_display_text(12345) == "12345"
