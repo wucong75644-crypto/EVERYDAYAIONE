@@ -157,35 +157,13 @@ export default memo(function MessageItem({
     );
   }, [message.content]);
 
-  // 内联文件映射：提取 file block，匹配 text 中出现的文件名
-  // 匹配到的 file 交给 MarkdownRenderer 在文件名位置渲染 FileCard
-  // 未匹配的 file 在消息末尾兜底渲染
-  const { inlineFileMap, consumedFileNames } = useMemo(() => {
-    if (!Array.isArray(message.content)) return { inlineFileMap: undefined, consumedFileNames: new Set<string>() };
-    const fileBlocks = message.content.filter(
+  // 文件块提取：从 content 数组收集所有 file block，统一在文字内容后渲染（固定槽位）
+  const fileBlocks = useMemo(() => {
+    if (!Array.isArray(message.content)) return [];
+    return message.content.filter(
       (p): p is import('../../../types/message').FilePart =>
-        p.type === 'file' && !!(p as { url?: string }).url,
+        p.type === 'file' && !!((p as { url?: string }).url || (p as { workspace_path?: string }).workspace_path),
     );
-    if (fileBlocks.length === 0) return { inlineFileMap: undefined, consumedFileNames: new Set<string>() };
-
-    // 收集所有 text block 的文本
-    const allText = message.content
-      .filter((p) => p.type === 'text')
-      .map((p) => (p as { text: string }).text)
-      .join('\n');
-
-    const map = new Map<string, import('../../../types/message').FilePart>();
-    const consumed = new Set<string>();
-    for (const fb of fileBlocks) {
-      if (allText.includes(fb.name)) {
-        map.set(fb.name, fb);
-        consumed.add(fb.name);
-      }
-    }
-    return {
-      inlineFileMap: map.size > 0 ? map : undefined,
-      consumedFileNames: consumed,
-    };
   }, [message.content]);
 
   // 多块模式：所有内容在主内容区内联渲染（行业标准：Claude/ChatGPT 风格）
@@ -522,7 +500,6 @@ export default memo(function MessageItem({
                       <MarkdownRenderer
                         key={idx}
                         content={(part as { text: string }).text}
-                        inlineFiles={inlineFileMap}
                       />
                     );
                   }
@@ -600,18 +577,8 @@ export default memo(function MessageItem({
                       </div>
                     );
                   }
-                  // file：已被 MarkdownRenderer 内联消费的跳过，未消费的兜底渲染在消息末尾
-                  if (part.type === 'file' && ((part as { url?: string }).url || (part as { workspace_path?: string }).workspace_path)) {
-                    if (isStreaming) return null;
-                    const fp = part as import('../../../types/message').FilePart;
-                    // 已在文字中内联渲染的文件 → 跳过（避免重复）
-                    if (consumedFileNames.has(fp.name)) return null;
-                    return (
-                      <div key={fp.url || fp.workspace_path || idx} className="my-2" style={{ maxWidth: '400px' }}>
-                        <FileCardList files={[fp]} />
-                      </div>
-                    );
-                  }
+                  // file：在 content.map 中跳过，统一在文字内容后的固定槽位渲染
+                  if (part.type === 'file') return null;
                   if (part.type === 'chart') {
                     const cp = part as import('../../../types/message').ChartPart;
                     return (
@@ -629,6 +596,12 @@ export default memo(function MessageItem({
                   }
                   return null;
                 })}
+                {/* 文件卡片固定槽位：所有 file block 统一在文字内容后渲染 */}
+                {!isStreaming && fileBlocks.length > 0 && (
+                  <div className="my-2" style={{ maxWidth: '400px' }}>
+                    <FileCardList files={fileBlocks} />
+                  </div>
+                )}
                 {/* 当前轮 live thinking：仅在 text 未开始输出时显示（thinking→text 转换后由内联块接管） */}
                 {isStreaming && streamingThinking && (() => {
                   // text 正在输出时不显示 live thinking（已由 content_block_add 提交为内联块）
