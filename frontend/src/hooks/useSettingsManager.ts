@@ -145,7 +145,7 @@ export function useSettingsManager(
   }, [conversationId, conversationChatSettings]);
 
   // 自动保存到对话（debounce 避免频繁请求）
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const autoSaveToConversation = useCallback((
     img: ImageSettings, vid: VideoSettings, chat: ChatSettings,
   ) => {
