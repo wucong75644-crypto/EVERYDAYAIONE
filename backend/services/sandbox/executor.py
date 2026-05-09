@@ -367,8 +367,11 @@ class SandboxExecutor:
         策略：新文件改名为 name (N).ext，旧文件恢复原名——保证历史 CDN URL 不失效。
         用户通过 confirm_delete 确认删除的文件不恢复。
         """
-        # confirm_delete 是文件名列表，转为 set 加速查找
-        confirmed = set(confirm_delete or [])
+        # confirm_delete 统一提取纯文件名（basename），与 orig.name 对齐
+        # 修复：AI 可能传 "下载/xxx.xlsx" 带路径前缀，orig.name 只有 "xxx.xlsx"
+        confirmed = {
+            Path(p).name for p in (confirm_delete or [])
+        }
         for orig_path, backup_path in backups.items():
             orig = Path(orig_path)
             backup = Path(backup_path)
@@ -385,6 +388,11 @@ class SandboxExecutor:
                 else:
                     # 意外删除 → 恢复备份
                     backup.rename(orig)
+                    logger.warning(
+                        f"SandboxExecutor dedup | "
+                        f"unconfirmed delete, restored from backup | "
+                        f"file={orig.name}"
+                    )
                 continue
             # 对比 mtime+size：不同 = 被覆盖
             orig_st = orig.stat()
