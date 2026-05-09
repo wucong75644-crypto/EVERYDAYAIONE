@@ -122,9 +122,9 @@ class ToolStepPart(BaseModel):
     tool_name: str
     tool_call_id: str
     status: str = "running"  # "running" | "completed" | "error"
-    summary: Optional[str] = None
-    code: Optional[str] = None       # code_execute 专用：执行的代码
-    output: Optional[str] = None     # code_execute 专用：执行输出
+    input: Optional[str] = None      # 所有工具：调用参数（JSON）
+    code: Optional[str] = None       # code_execute 专用：语法高亮用的代码
+    output: Optional[str] = None     # 所有工具：完整返回结果
     elapsed_ms: Optional[int] = None
 
 

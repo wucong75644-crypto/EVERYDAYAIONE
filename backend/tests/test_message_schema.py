@@ -63,7 +63,7 @@ class TestToolStepPart:
             tool_name="code_execute",
             tool_call_id="tc_1",
             status="completed",
-            summary="图表已生成",
+            input='{"code":"print(1)"}',
             code="print(1)",
             output="1",
             elapsed_ms=5000,
@@ -73,6 +73,7 @@ class TestToolStepPart:
         assert d["tool_name"] == "code_execute"
         assert d["tool_call_id"] == "tc_1"
         assert d["status"] == "completed"
+        assert d["input"] == '{"code":"print(1)"}'
         assert d["code"] == "print(1)"
         assert d["output"] == "1"
         assert d["elapsed_ms"] == 5000
@@ -94,11 +95,11 @@ class TestToolStepPart:
             tool_name="erp_agent",
             tool_call_id="tc_3",
             status="error",
-            summary="超时",
+            output="超时",
             elapsed_ms=30000,
         )
         assert p.status == "error"
-        assert p.summary == "超时"
+        assert p.output == "超时"
 
     def test_type_literal_is_tool_step(self):
         """type 字段固定为 'tool_step'"""

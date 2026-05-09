@@ -776,7 +776,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             _blk["output"] = display_text
                             break
 
-                    # 工具结果日志已通过 ToolStepCard 的 summary 字段展示，
+                    # 工具结果日志已通过 ToolStepCard 的 output 字段展示，
                     # 不再重复写入 thinking（保持 thinking 只含纯 AI 推理）
 
                 # 持久化 blocks（tool_step 状态更新完毕：running → completed/error）
@@ -1042,7 +1042,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             tool_name=block["tool_name"],
                             tool_call_id=block["tool_call_id"],
                             status=block.get("status", "completed"),
-                            summary=block.get("summary"),
+                            input=block.get("input"),
                             code=block.get("code"),
                             output=block.get("output"),
                             elapsed_ms=block.get("elapsed_ms"),
