@@ -117,7 +117,7 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
           <button
             onClick={() => onRemove(image.id)}
             disabled={image.isUploading}
-            className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-surface-dark-card text-white rounded-full flex items-center justify-center hover:bg-surface-dark-card disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+            className="absolute top-0 right-0 w-4 h-4 bg-black/60 text-white rounded-full flex items-center justify-center hover:bg-black/80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
             title={image.error ? `删除失败的图片: ${image.error}` : '删除图片'}
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
