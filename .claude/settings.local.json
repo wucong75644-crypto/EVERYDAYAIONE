@@ -2104,7 +2104,8 @@
       "WebFetch(domain:support.anthropic.com)",
       "WebFetch(domain:support.claude.com)",
       "WebFetch(domain:community.anthropic.com)",
-      "Bash(./git-push.sh \"refactor: tool_step统一为单一数据源——summary废弃改用output，去掉所有截断，两条链路合并为一条\")"
+      "Bash(./git-push.sh \"refactor: tool_step统一为单一数据源——summary废弃改用output，去掉所有截断，两条链路合并为一条\")",
+      "Bash(./git-push.sh \"fix: Result展开区改用主题色背景+thinking block补上duration_ms\\(每轮独立计时\\)\")"
     ],
     "additionalDirectories": [
       "/tmp"
