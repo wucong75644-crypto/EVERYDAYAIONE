@@ -1034,6 +1034,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     if block["type"] == "thinking":
                         result_parts.append(_ThinkingPart(
                             text=block["text"],
+                            duration_ms=block.get("duration_ms"),
                         ))
                     elif block["type"] == "text":
                         result_parts.extend(extract_media_parts(block["text"]))
