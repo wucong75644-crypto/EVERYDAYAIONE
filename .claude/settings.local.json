@@ -2111,7 +2111,8 @@
       "Bash(python -m pytest tests/test_image_handler_batch.py -v --tb=short)",
       "Bash(./git-push.sh \"fix: 图片生成失败状态显示'已取消'→正确显示失败+auto/1:1宽高比分辨率校验\\(KIE API限制\\)\")",
       "Bash(./git-push.sh \"feat: 对话级设置持久化——chat_settings JSONB存储，切换/刷新/重登不丢失设置\")",
-      "Bash(./git-push.sh \"fix: VideoFrames类型修复+video_frames改为string类型\")"
+      "Bash(./git-push.sh \"fix: VideoFrames类型修复+video_frames改为string类型\")",
+      "Bash(./git-push.sh \"fix: useRef初始值修复\\(tsc -b严格模式\\)\")"
     ],
     "additionalDirectories": [
       "/tmp"
