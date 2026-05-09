@@ -239,7 +239,7 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 
 限制：
 - 禁止 import sys/subprocess
-- 删除文件必须两步：第一步用 file_list 列出待删文件并告知用户，等用户确认后第二步再调 code_execute 并在 confirm_delete 传入纯文件名（不带路径前缀）
+- 删除文件必须两步：第一步用 file_list 列出待删文件并告知用户，等用户确认后第二步再调 code_execute 并在 confirm_delete 传入文件路径（如 "下载/文件名.xlsx"）
 - 环境可能因超时重置，变量不存在时重新读取
 
 ### data_query — 数据读取与查询
