@@ -199,7 +199,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           setSheetNames(wb.SheetNames);
           const ws = wb.Sheets[wb.SheetNames[0]];
           clearMergedCells(ws);
-          setTableData(utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]);
+          setTableData(utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][]);
         } else if (isCsv) {
           const text = await response.text();
           if (cancelled) return;
@@ -230,7 +230,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
       const { utils } = await import('xlsx');
       const ws = wb.Sheets[wb.SheetNames[index]];
       clearMergedCells(ws);
-      const rows = utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][];
+      const rows = utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as string[][];
       setTableData(rows);
     } catch (e) {
       setError((e as Error).message);
