@@ -21,7 +21,7 @@ export default function FilePreview({ files, onRemove }: FilePreviewProps) {
   if (files.length === 0) return null;
 
   return (
-    <div className="mb-2 flex flex-wrap gap-2">
+    <div className="flex gap-2">
       {files.map((file) => (
         <div
           key={file.id}

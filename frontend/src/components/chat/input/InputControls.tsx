@@ -300,25 +300,26 @@ export default function InputControls(props: InputControlsProps) {
       )}
 
       <div className="px-3 pt-2 pb-2">
-        {/* 图片预览区域（输入框顶部） */}
-        {images.length > 0 && (
-          <div className="mb-2">
-            <ImagePreview images={images} onRemove={onRemoveImage} />
-          </div>
-        )}
-
-        {/* PDF 文件预览区域 */}
-        {files.length > 0 && (
-          <FilePreview files={files} onRemove={onRemoveFile} />
-        )}
-
-        {/* 工作区文件预览区域（"插入到聊天"的文件） */}
-        {workspaceFiles.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
+        {/* 附件横排区域：图片 + PDF + 工作区文件 */}
+        {(images.length > 0 || files.length > 0 || workspaceFiles.length > 0) && (
+          <div className="mb-2 flex items-end gap-2 overflow-x-auto scrollbar-hide">
+            {/* 图片 */}
+            {images.length > 0 && (
+              <div className="shrink-0">
+                <ImagePreview images={images} onRemove={onRemoveImage} />
+              </div>
+            )}
+            {/* PDF */}
+            {files.length > 0 && (
+              <div className="shrink-0">
+                <FilePreview files={files} onRemove={onRemoveFile} />
+              </div>
+            )}
+            {/* 工作区文件 */}
             {workspaceFiles.map((wf) => (
               <div
                 key={wf.workspace_path}
-                className="relative flex items-center gap-2 rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] px-3 py-2 text-sm"
+                className="shrink-0 relative flex items-center gap-2 rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] px-3 py-2 text-sm"
               >
                 <span className="text-base shrink-0">{getFileIcon(wf.name)}</span>
                 <span className="truncate max-w-[160px] font-medium text-[var(--s-text-primary)]">{wf.name}</span>
