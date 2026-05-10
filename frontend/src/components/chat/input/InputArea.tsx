@@ -24,6 +24,8 @@ import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
 import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
+import { EcomProductForm } from './EcomProductForm';
+import { EcomPlanCards, syncTextToPrompt, type ImageTask } from './EcomPlanCards';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
 
@@ -99,9 +101,10 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // 电商图模式：AI提示词增强相关状态
-  const [imageTaskMeta, setImageTaskMeta] = useState<Array<{index: number; type: string; description: string; aspect_ratio: string}> | null>(null);
+  // 电商图模式 v2：方案策划相关状态
+  const [imageTaskMeta, setImageTaskMeta] = useState<ImageTask[] | null>(null);
   const [costEstimate, setCostEstimate] = useState<{estimated_credits: number; image_count: number} | null>(null);
+  const [ecomPlan, setEcomPlan] = useState<{productInsight: string; visualStrategy: string} | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -488,8 +491,7 @@ export default function InputArea({
       // 发送消息（使用真实对话 ID）
       // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
       if (isEcomMode) {
-        // 电商图模式：走专用 EcomImageHandler（不走 ChatHandler）
-        // 通过 handleImageGeneration 发送，extraParams 覆盖 generationType 为 image_ecom
+        // 电商图模式 v2：走专用 EcomImageHandler
         await handleImageGeneration(
           currentConversationId!,
           messageContent,
@@ -498,10 +500,13 @@ export default function InputArea({
             generation_type_override: 'image_ecom',
             image_task_meta: imageTaskMeta,
             num_images: imageTaskMeta?.length || 1,
+            product_image_urls: imageUrls,
+            style_ref_urls: [],
           },
         );
         setImageTaskMeta(null);
         setCostEstimate(null);
+        setEcomPlan(null);
       } else if (effectiveModelType === 'chat') {
         // 聊天消息
         await handleChatMessage(
@@ -610,37 +615,86 @@ export default function InputArea({
           onRemoveImage={handleRemoveAllImages}
         />
 
-        {/* 电商图模式：快捷标签（移动端替代 Tab 补全） + AI提示词按钮 + 费用预估 */}
-        {isEcomMode && /Android|iPhone|iPad/i.test(navigator.userAgent) && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {[
-              { group: '平台', items: ['淘宝', '京东', '拼多多', '抖音', '小红书'] },
-              { group: '类型', items: ['白底主图', '场景图', '竖图', '详情页'] },
-              { group: '风格', items: ['极简', '清新', '网感', '种草', '奢华', '国潮'] },
-            ].map(({ items }) => (
-              items.map(item => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setPrompt(prompt + (prompt && !prompt.endsWith(' ') ? ' ' : '') + item)}
-                  className="px-2 py-0.5 text-xs bg-surface-hover rounded-full text-text-secondary hover:bg-accent-light hover:text-accent transition-base"
-                >
-                  {item}
-                </button>
-              ))
-            )).flat()}
-          </div>
-        )}
-        {/* 费用预估（电商图模式，AI按钮已移到输入框内部） */}
-        {isEcomMode && costEstimate && (
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs text-text-tertiary">
-              预计 {costEstimate.image_count} 张，约 {costEstimate.estimated_credits} 积分
-            </span>
+        {/* 电商图模式 v2：方案卡片（在输入区上方展示） */}
+        {isEcomMode && ecomPlan && imageTaskMeta && (
+          <div className="mb-3">
+            <EcomPlanCards
+              productInsight={ecomPlan.productInsight}
+              visualStrategy={ecomPlan.visualStrategy}
+              images={imageTaskMeta}
+              costEstimate={costEstimate}
+              onImageChange={(index, field, value) => {
+                setImageTaskMeta(prev => {
+                  if (!prev) return prev;
+                  const updated = [...prev];
+                  const img = { ...updated[index], [field]: value };
+                  // 同步文案到 prompt
+                  img.prompt = syncTextToPrompt(
+                    updated[index].prompt,
+                    field === 'title' ? value : img.title,
+                    field === 'subtitle' ? value : img.subtitle,
+                  );
+                  updated[index] = img;
+                  return updated;
+                });
+              }}
+              onConfirm={() => handleSubmit()}
+              onCancel={() => {
+                setImageTaskMeta(null);
+                setCostEstimate(null);
+                setEcomPlan(null);
+              }}
+              isSubmitting={isSubmitting}
+            />
           </div>
         )}
 
-        {/* 主输入控件（包含底部的模型选择器） */}
+        {/* 电商图模式 v2：产品信息表单（在方案生成前显示，替代 textarea） */}
+        {isEcomMode && !ecomPlan && (
+          <EcomProductForm
+            isEnhancing={isEnhancing}
+            hasProductImages={uploadedImageUrls.length > 0}
+            onSubmit={async (formData: EcomFormData) => {
+              if (isEnhancing) return;
+              setIsEnhancing(true);
+              try {
+                const { data } = await api.post('/ecom-image/enhance-prompt', {
+                  product_name: formData.productName,
+                  image_urls: uploadedImageUrls,
+                  platform: formData.platform,
+                  selling_points: formData.sellingPoints,
+                  price_info: formData.priceInfo,
+                  target_user: formData.targetUser,
+                  image_size: formData.imageSize,
+                  generate_detail: formData.generateDetail,
+                  conversation_id: conversationId || '',
+                  text: formData.productName,
+                });
+                if (data._parse_failed) {
+                  toast.error('AI 返回格式异常，请重试');
+                } else if (data.images && data.images.length > 0) {
+                  setImageTaskMeta(data.images);
+                  setCostEstimate(data.cost_estimate || null);
+                  setEcomPlan({
+                    productInsight: data.product_insight || '',
+                    visualStrategy: data.visual_strategy || '',
+                  });
+                  setPrompt(formData.productName);
+                } else if (data.error) {
+                  toast.error(data.error);
+                } else {
+                  toast.error('方案生成失败，请重试');
+                }
+              } catch {
+                toast.error('方案生成失败，请重试');
+              } finally {
+                setIsEnhancing(false);
+              }
+            }}
+          />
+        )}
+
+        {/* 主输入控件（ecom 模式下仍保留，用于图片上传和模型选择） */}
         <InputControls
           prompt={prompt}
           onPromptChange={handlePromptChange}
@@ -720,29 +774,7 @@ export default function InputArea({
           smartSubMode={isSmart ? smartSubMode : undefined}
           onSmartSubModeChange={isSmart ? setSmartSubMode : undefined}
           isEnhancing={isEnhancing}
-          onEnhancePrompt={isEcomMode ? async () => {
-            if (isEnhancing) return;
-            setIsEnhancing(true);
-            try {
-              const { data } = await api.post('/ecom-image/enhance-prompt', {
-                text: prompt,
-                image_urls: uploadedImageUrls,
-                conversation_id: conversationId || '',
-                platform: 'taobao',
-              });
-              if (data.enhanced_prompt) {
-                setPrompt(data.enhanced_prompt);
-                setImageTaskMeta(data.images || null);
-                setCostEstimate(data.cost_estimate || null);
-              } else if (data.error) {
-                toast.error(data.error);
-              }
-            } catch {
-              toast.error('提示词增强失败，请重试');
-            } finally {
-              setIsEnhancing(false);
-            }
-          } : undefined}
+          onEnhancePrompt={undefined /* v2: 表单提交替代 AI 按钮 */}
           mentionDropdownVisible={fileMention.showDropdown}
           mentionResults={fileMention.results}
           mentionActiveIndex={fileMention.activeIndex}

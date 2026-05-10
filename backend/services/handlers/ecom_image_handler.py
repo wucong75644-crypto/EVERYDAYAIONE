@@ -1,35 +1,35 @@
 """
-电商图模式处理器
+电商图模式处理器（v2）
 
-专用 Handler，不经过 ChatHandler/LLM 工具循环。
-直接遍历 image_task_meta，每张图调 KIE adapter 生成。
-和 ImageHandler 同级，复用相同的积分/回调/WebSocket 模式。
+从 image_task_meta（千问输出的 JSON）构建批量生图请求。
+强制 image-to-image 模式 + quality 按 has_text 分级 + 白底图参考图精简。
 
-设计文档：docs/document/TECH_电商图片Agent.md
+设计文档：docs/document/TECH_电商图片Agent_v2.md §6
 """
 
 from __future__ import annotations
 
-import asyncio
-import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from loguru import logger
 
 from schemas.message import GenerationType
 from services.handlers.image_handler import ImageHandler
 
-# 复用 ImageHandler 已有的默认模型
-from config.smart_model_config import DEFAULT_IMAGE_MODEL
+
+# gpt-image-2 图生图模型 ID
+_I2I_MODEL = "gpt-image-2-image-to-image"
 
 
 class EcomImageHandler(ImageHandler):
-    """电商图模式处理器 — 继承 ImageHandler，覆盖 start 入口。
+    """电商图模式处理器 v2 — 继承 ImageHandler，覆盖 start 入口。
 
-    与 ImageHandler 的区别：
-    - 从 params.image_task_meta 获取每张图的描述（而非单一 prompt）
-    - 每张图的 prompt 来自 enhance API 的结构化拆分
-    - 其余逻辑（积分/KIE调用/回调/WebSocket）完全复用 ImageHandler
+    v1 → v2 变化：
+    - image_task_meta 格式从 {description, aspect_ratio} 改为
+      {prompt, aspect_ratio, has_text, image_type, ...}（千问直接输出的 JSON）
+    - 强制使用 gpt-image-2-image-to-image 模型
+    - quality 按 has_text 自动分级（有文字=high，无文字=medium）
+    - 白底图只传产品主图（不传风格参考图）
     """
 
     @property
@@ -47,54 +47,68 @@ class EcomImageHandler(ImageHandler):
     ) -> str:
         """启动电商图批量生成。
 
-        核心差异：从 image_task_meta 获取每张图描述，
-        构建 _batch_prompts 后委托给 ImageHandler.start。
+        从 image_task_meta 构建 _batch_prompts，每张图可独立控制
+        prompt / aspect_ratio / resolution(quality) / image_urls(参考图)。
         """
-        # 从 params 提取 image_task_meta
         image_task_meta = params.get("image_task_meta")
         if not image_task_meta or not isinstance(image_task_meta, list):
-            # 没有结构化拆分 → 当作普通单图处理
             logger.warning("EcomImageHandler: no image_task_meta, fallback to single image")
             return await super().start(
                 message_id, conversation_id, user_id, content, params, metadata,
             )
 
-        # 构建 _batch_prompts（ImageHandler 已支持的批量模式）
+        # 提取产品图和风格参考图
+        all_image_urls = self._extract_image_urls(content)
+        product_urls = params.get("product_image_urls") or all_image_urls
+        style_ref_urls = params.get("style_ref_urls") or []
+
+        # 全部参考图（产品图 + 风格参考图）
+        full_refs = list(product_urls) + list(style_ref_urls)
+        # 仅产品主图（白底图/细节图用）
+        primary_ref = [product_urls[0]] if product_urls else []
+
+        # 构建 _batch_prompts
         batch_prompts = []
         for item in image_task_meta:
-            desc = item.get("description", "")
-            ratio = item.get("aspect_ratio", "1:1")
-            if desc:
-                batch_prompts.append({
-                    "prompt": desc,
-                    "aspect_ratio": ratio,
-                })
+            prompt = item.get("prompt") or item.get("description", "")
+            if not prompt:
+                continue
+
+            image_type = item.get("image_type", "marketing")
+            has_text = item.get("has_text", False)
+
+            # quality 分级：有文字 → 1K(high 由 KIE 端控制)，无文字 → 1K
+            # 注：gpt-image-2 KIE 接口 resolution=1K 对应 quality=auto
+            # 后续可扩展支持 2K 用于有文字的图
+
+            # 参考图分组：白底图只传产品主图
+            if image_type == "white_bg":
+                refs = primary_ref
+            else:
+                refs = full_refs
+
+            batch_prompts.append({
+                "prompt": prompt,
+                "aspect_ratio": item.get("aspect_ratio", "1:1"),
+                "image_urls": refs if refs else None,
+            })
 
         if not batch_prompts:
-            logger.warning("EcomImageHandler: empty batch_prompts after parsing")
+            logger.warning("EcomImageHandler: empty batch after parsing")
             return await super().start(
                 message_id, conversation_id, user_id, content, params, metadata,
             )
 
-        # 注入 _batch_prompts 到 params（ImageHandler.start 会读取）
+        # 注入参数
         params["_batch_prompts"] = batch_prompts
-
-        # 确保有模型（默认用文生图模型）
-        if not params.get("model"):
-            image_urls = self._extract_image_urls(content)
-            if image_urls:
-                params["model"] = DEFAULT_IMAGE_MODEL.replace(
-                    "text-to-image", "image-to-image"
-                ) if "text-to-image" in DEFAULT_IMAGE_MODEL else DEFAULT_IMAGE_MODEL
-            else:
-                params["model"] = DEFAULT_IMAGE_MODEL
+        params["model"] = _I2I_MODEL
 
         logger.info(
-            f"EcomImageHandler start | message_id={message_id} | "
-            f"images={len(batch_prompts)} | model={params.get('model')}"
+            f"EcomImageHandler v2 start | message_id={message_id} "
+            f"| images={len(batch_prompts)} | model={_I2I_MODEL} "
+            f"| product_refs={len(product_urls)} | style_refs={len(style_ref_urls)}"
         )
 
-        # 委托给 ImageHandler.start（它已支持 _batch_prompts 批量模式）
         return await super().start(
             message_id, conversation_id, user_id, content, params, metadata,
         )

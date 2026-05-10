@@ -1,209 +1,129 @@
 """
-电商图片提示词动态组装器
+电商图片提示词组装器（v2）
 
-四层叠加：角色 + 品类模板 + 平台规范 + 风格预设
-品类自动检测 + 风格矩阵推荐 + 平台关键词覆盖
+三层拼接：角色+执行规则 + 平台规则（配置文件） + 输出格式+品类启发
+千问 VL 一步到位输出 gpt-image-2 可执行 prompt。
 
-enhance API 和 ImageAgent 共用。
-设计文档：docs/document/TECH_电商图片Agent.md §5
+设计文档：docs/document/TECH_电商图片Agent_v2.md §4
 """
 
 from __future__ import annotations
 
 from loguru import logger
 
+from .platform_rules import format_platform_prompt
 from .prompts import (
-    CATEGORY_PLATFORM_STYLE,
-    CATEGORY_TEMPLATES,
-    DEFAULT_CATEGORY_GUIDE,
-    ENHANCE_PROMPT_TEMPLATE,
-    MULTI_IMAGE_GUIDE,
-    PLATFORM_PROMPTS,
-    STYLE_PRESETS,
+    CATEGORY_HINTS,
+    OUTPUT_FORMAT_PROMPT,
     SYSTEM_PROMPT_BASE,
 )
 
 
-# 平台关键词 → platform 编码
-_PLATFORM_KEYWORDS: dict[str, str] = {
-    "淘宝": "taobao",
-    "天猫": "tmall",
-    "京东": "jd",
-    "拼多多": "pdd",
-    "抖音": "douyin",
-    "小红书": "xiaohongshu",
-}
-
-# 平台中文名（用于提示词模板填充）
-_PLATFORM_LABELS: dict[str, str] = {
-    "taobao": "淘宝",
-    "tmall": "天猫",
-    "jd": "京东",
-    "pdd": "拼多多",
-    "douyin": "抖音",
-    "xiaohongshu": "小红书",
-}
-
-
 class PromptBuilder:
-    """四层提示词动态组装器。"""
+    """三层提示词组装器（v2）。"""
 
     # ----------------------------------------------------------
-    # 品类检测
+    # system prompt 组装（三层拼接）
     # ----------------------------------------------------------
 
-    def detect_category(self, text: str) -> str:
-        """根据文本关键词自动检测商品品类。
+    def build_system_prompt(self, platform: str = "taobao") -> str:
+        """组装完整的 system prompt。
 
-        按关键词长度降序匹配（"宠物服装" 优先匹配 pets 而非 clothing）。
-        无匹配时返回 "general"。
-        """
-        text_lower = text.lower()
-        best_match: str = "general"
-        best_len: int = 0
-
-        for cat_key, cat_data in CATEGORY_TEMPLATES.items():
-            for keyword in cat_data["keywords"]:
-                if keyword in text_lower and len(keyword) > best_len:
-                    best_match = cat_key
-                    best_len = len(keyword)
-
-        if best_match != "general":
-            label = CATEGORY_TEMPLATES[best_match]["label"]
-            logger.debug(f"品类检测: '{text[:30]}' → {best_match}({label})")
-        return best_match
-
-    # ----------------------------------------------------------
-    # 平台检测
-    # ----------------------------------------------------------
-
-    def detect_platform(self, text: str, default: str = "taobao") -> str:
-        """从文本中检测平台关键词，覆盖默认值。
-
-        如"京东主图" → 返回 "jd"（忽略 default）。
-        """
-        for keyword, platform_code in _PLATFORM_KEYWORDS.items():
-            if keyword in text:
-                logger.debug(f"平台检测: '{text[:30]}' → {platform_code}")
-                return platform_code
-        return default
-
-    # ----------------------------------------------------------
-    # 风格推荐
-    # ----------------------------------------------------------
-
-    def resolve_style_from_matrix(
-        self, category: str, platform: str,
-    ) -> str | None:
-        """从品类×平台矩阵推荐风格。
-
-        优先级：用户指定 > 矩阵推荐 > None（不注入第4层）。
-        """
-        matrix = CATEGORY_PLATFORM_STYLE.get(category, {})
-        return matrix.get(platform)
-
-    # ----------------------------------------------------------
-    # 四层组装
-    # ----------------------------------------------------------
-
-    def build_system_prompt(
-        self,
-        category: str,
-        platform: str,
-        style: str | None = None,
-    ) -> str:
-        """组装完整的 system prompt（四层叠加）。
+        三层拼接：
+          ① 角色 + gpt-image-2 执行规则（固定）
+          ② 平台规则（从 platform_rules.py 动态读取）
+          ③ 输出格式约束 + prompt 示例 + 品类启发（固定）
 
         Args:
-            category: 品类 key（如 "cosmetics"）或 "general"
-            platform: 平台 key（如 "taobao"）
-            style: 风格 key（如 "fresh"）或 None（不注入第4层）
+            platform: 平台 key（如 "taobao"/"jd"/"pdd"）
 
         Returns:
             完整的 system prompt 字符串
         """
-        parts: list[str] = []
-
-        # 第1层：角色 + 通用规则
-        parts.append(SYSTEM_PROMPT_BASE)
-
-        # 第2层：品类模板
-        cat_template = CATEGORY_TEMPLATES.get(category)
-        if cat_template:
-            parts.append(cat_template["prompt_guide"])
-        else:
-            parts.append(DEFAULT_CATEGORY_GUIDE)
-
-        # 第3层：平台规范
-        plat_prompt = PLATFORM_PROMPTS.get(platform)
-        if plat_prompt:
-            parts.append(plat_prompt)
-
-        # 第4层：风格预设
-        if style:
-            style_preset = STYLE_PRESETS.get(style)
-            if style_preset:
-                parts.append(style_preset["prompt_guide"])
-
+        parts: list[str] = [
+            SYSTEM_PROMPT_BASE,
+            format_platform_prompt(platform),
+            OUTPUT_FORMAT_PROMPT,
+            CATEGORY_HINTS,
+        ]
         return "\n\n".join(parts)
 
     # ----------------------------------------------------------
-    # enhance API 专用
+    # user message 组装（表单字段 → 结构化文本）
     # ----------------------------------------------------------
 
-    def build_enhance_prompt(
+    def build_user_message(
         self,
-        text: str,
+        product_name: str,
         platform: str = "taobao",
-        has_images: bool = False,
-        num_images: int | None = None,
+        product_image_count: int = 1,
+        style_ref_count: int = 0,
+        selling_points: str = "",
+        price_info: str = "",
+        target_user: str = "",
+        extra_notes: str = "",
+        image_size: str = "800x800",
+        generate_detail: bool = False,
     ) -> str:
-        """构建 enhance API 的 user prompt。
+        """将前端表单字段组装为千问 VL 的 user message。
 
         Args:
-            text: 用户输入的简短描述
+            product_name: 产品名称（必填）
             platform: 目标平台
-            has_images: 是否有上传图片（图生图模式）
-            num_images: 上传图片数量（多图时用角色约定）
+            product_image_count: 产品图数量
+            style_ref_count: 风格参考图数量
+            selling_points: 核心卖点（选填）
+            price_info: 价格/促销信息（选填）
+            target_user: 目标用户（选填）
+            extra_notes: 补充说明（选填）
+            image_size: 用户选择的图片尺寸
+            generate_detail: 是否生成详情页
 
         Returns:
-            user prompt 字符串
+            结构化 user message 字符串
         """
-        parts: list[str] = [f"## 用户需求\n{text}"]
+        parts = [f"## 产品信息\n- 产品名称：{product_name}"]
 
-        # 从用户文本中提取要求的生成数量（如"5张""生成4张"）
-        requested_count = self._extract_requested_count(text)
-        if requested_count:
-            parts.append(f"用户要求生成 {requested_count} 张图片，请规划 {requested_count} 张，每张承担不同角色。")
+        if selling_points:
+            parts.append(f"- 核心卖点：{selling_points}")
+        if price_info:
+            parts.append(f"- 价格/促销：{price_info}")
+        if target_user:
+            parts.append(f"- 目标用户：{target_user}")
+        if extra_notes:
+            parts.append(f"- 补充说明：{extra_notes}")
 
-        if has_images:
-            parts.append("用户已上传商品图片，请分析图片中的商品特征。")
-            if num_images and num_images > 1:
-                parts.append(MULTI_IMAGE_GUIDE)
+        # 图片角色标注
+        parts.append(f"\n## 上传的图片\n- 产品图：{product_image_count}张（用于识别产品外观，生成时保留产品）")
+        if style_ref_count > 0:
+            parts.append(
+                f"- 风格参考图：{style_ref_count}张（用户希望参照这些图的风格/色调/排版/氛围来设计）\n"
+                "- 注意区分：产品图 = 产品长什么样；风格参考图 = 用户想要什么风格。"
+                "分析风格参考图的色调、排版、氛围、设计手法，应用到你的方案中"
+            )
 
-        platform_label = _PLATFORM_LABELS.get(platform, platform)
-        parts.append(
-            ENHANCE_PROMPT_TEMPLATE.format(platform=platform_label)
+        # 生成要求
+        parts.append(f"\n## 生成要求\n- 图片尺寸：{image_size}")
+        scope = ["主图"]
+        if generate_detail:
+            scope.append("详情页（D1首屏+D2-D3卖点+D4实拍+D5特写+D6场景）")
+        parts.append(f"- 生成范围：{'，'.join(scope)}")
+
+        if not price_info:
+            parts.append(
+                "- 注意：用户未提供价格信息，不要生成促销图（带价格/满减的图），"
+                "用卖点图或场景图替补"
+            )
+
+        logger.debug(
+            f"build_user_message | product={product_name} | platform={platform} "
+            f"| product_imgs={product_image_count} | style_refs={style_ref_count} "
+            f"| size={image_size} | detail={generate_detail}"
         )
-
-        return "\n\n".join(parts)
-
-    @staticmethod
-    def _extract_requested_count(text: str) -> int | None:
-        """从用户文本中提取要求的图片数量。
-
-        匹配："5张""生成4张""做3张""来5个""要8张图"等。
-        """
-        import re
-        match = re.search(r"(\d+)\s*[张个]", text)
-        if match:
-            count = int(match.group(1))
-            if 1 <= count <= 10:  # 合理范围
-                return count
-        return None
+        return "\n".join(parts)
 
     # ----------------------------------------------------------
-    # ImageAgent 专用
+    # ImageAgent 单张重试专用（保持向后兼容）
     # ----------------------------------------------------------
 
     def build_final_prompt(
@@ -211,9 +131,12 @@ class PromptBuilder:
     ) -> str:
         """在生图提示词前注入全局风格约束。
 
+        v2 中 style_directive 存储的是 visual_strategy（千问输出的视觉策略描述），
+        注入到单张重试的 prompt 前确保风格一致。
+
         Args:
-            task: 单张图的生成描述
-            style_directive: 会话级全局风格约束（从 DB 读取）
+            task: 单张图的 prompt（已经是 gpt-image-2 格式）
+            style_directive: 会话级视觉策略（从 DB 读取）
 
         Returns:
             注入风格约束后的完整提示词
@@ -221,8 +144,6 @@ class PromptBuilder:
         if not style_directive:
             return task
         return (
-            f"【全局风格约束 — 必须严格遵循】\n"
-            f"{style_directive}\n\n"
-            f"【图片生成任务】\n"
+            f"Visual style context: {style_directive}\n\n"
             f"{task}"
         )
