@@ -148,7 +148,7 @@ class ImageHandler(BaseHandler):
                 # regenerate_single 使用指定的 image_index，否则使用循环 index
                 actual_index = single_image_index if is_regenerate_single else i
 
-                # Agent Loop 批量生图：每张图覆盖 prompt 和可选 aspect_ratio
+                # Agent Loop / Ecom 批量生图：每张图可覆盖 prompt/aspect_ratio/image_urls/resolution
                 task_kwargs = generate_kwargs
                 task_prompt = prompt
                 if batch_prompts and i < len(batch_prompts):
@@ -158,6 +158,12 @@ class ImageHandler(BaseHandler):
                         "prompt": item.get("prompt", prompt),
                         "size": item.get("aspect_ratio", aspect_ratio),
                     }
+                    # per-image 参考图覆盖（ecom 白底图只传产品主图，不传风格参考）
+                    if item.get("image_urls") is not None:
+                        task_kwargs["image_urls"] = item["image_urls"] or None
+                    # per-image quality/resolution 覆盖（ecom 有文字的图用 high）
+                    if item.get("resolution"):
+                        task_kwargs["resolution"] = item["resolution"]
                     task_prompt = item.get("prompt", prompt)
 
                 ext_task_id = await self._create_single_task(
