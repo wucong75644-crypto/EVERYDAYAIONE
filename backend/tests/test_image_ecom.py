@@ -131,10 +131,10 @@ class TestPromptBuilder:
 
     def test_build_system_prompt_four_layers(self):
         prompt = self.builder.build_system_prompt("cosmetics", "taobao", "fresh")
-        assert "5要素" in prompt       # 第1层
-        assert "美妆" in prompt        # 第2层
-        assert "淘宝" in prompt        # 第3层
-        assert "清新" in prompt        # 第4层
+        assert "视觉" in prompt        # 第1层（核心框架）
+        assert "美妆" in prompt        # 第2层（品类）
+        assert "淘宝" in prompt        # 第3层（平台）
+        assert "清新" in prompt        # 第4层（风格）
 
     def test_build_system_prompt_no_style(self):
         prompt = self.builder.build_system_prompt("electronics", "jd", None)

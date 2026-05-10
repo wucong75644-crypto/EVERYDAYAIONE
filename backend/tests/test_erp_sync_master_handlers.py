@@ -386,8 +386,8 @@ class TestSyncProduct:
 def _mock_stock_svc(wh_items=None, code_items=None):
     """创建 stock 专用 mock
 
-    wh_items: 按仓库+时间查返回的库存记录（增量同步直接 upsert）
-    code_items: 按编码查返回的库存记录（全量刷新专用）
+    wh_items: 按仓库+时间查返回的库存记录（增量同步：有startModified参数）
+    code_items: 按编码查返回的库存记录（全量刷新：有mainOuterId参数）
     """
     svc = MagicMock()
     mock_client = AsyncMock()
@@ -396,9 +396,13 @@ def _mock_stock_svc(wh_items=None, code_items=None):
     code_data = code_items or []
 
     async def _mock_request(method, params):
-        if "warehouseId" in params:
+        # 增量同步使用时间范围参数（startStockModified）
+        if "startStockModified" in params:
             return {"stockStatusVoList": wh_data, "total": len(wh_data)}
-        return {"stockStatusVoList": code_data, "total": len(code_data)}
+        # 全量刷新使用商品编码参数（mainOuterId + warehouseId）
+        if "mainOuterId" in params:
+            return {"stockStatusVoList": code_data, "total": len(code_data)}
+        return {"stockStatusVoList": [], "total": 0}
 
     mock_client.request_with_retry = _mock_request
     svc._get_client.return_value = mock_client
@@ -450,9 +454,13 @@ class TestSyncStock:
 
 class TestSyncStockFull:
     @pytest.mark.asyncio
-    async def test_full_refresh_basic(self):
+    async def test_full_refresh_basic(self, monkeypatch):
         """全量刷新：从商品表取编码 → 按编码查 → upsert"""
         from services.kuaimai.erp_sync_master_handlers import sync_stock_full
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_warehouse_ids="87227"),
+        )
         svc = _mock_stock_svc(code_items=[{
             "mainOuterId": "P01", "skuOuterId": "P01-01",
             "title": "商品A", "sellableNum": 50, "wareHouseId": "87227",
@@ -583,12 +591,14 @@ class TestFetchStockByCodes:
             ], "total": 150}
 
         svc = MagicMock()
+        svc.org_id = None
         mock_client = AsyncMock()
         mock_client.request_with_retry = _mock_request
         svc._get_client.return_value = mock_client
         svc.db = MockErpAsyncDBClient()
 
-        result = await _fetch_stock_by_codes(svc, ["P001"])
+        # 指定单仓库，避免 _get_warehouse_ids 读配置引入多仓库
+        result = await _fetch_stock_by_codes(svc, ["P001"], warehouse_ids=["87227"])
         assert result == 150
         assert page_call["n"] == 2
 

@@ -129,7 +129,7 @@ class TestExecuteSingleTool:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
-        tc_out, text, is_error = result
+        tc_out, text, is_error, _display = result
         assert is_error is True
         assert "拒绝" in text or "超时" in text
         # 不应该调用 executor
@@ -150,7 +150,7 @@ class TestExecuteSingleTool:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
-        tc_out, text, is_error = result
+        tc_out, text, is_error, _display = result
         assert is_error is False
         assert "库存100件" in text
         executor.execute.assert_called_once()
@@ -170,7 +170,7 @@ class TestExecuteSingleTool:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
-        tc_out, text, is_error = result
+        tc_out, text, is_error, _display = result
         assert is_error is True
         assert "失败" in text
 
@@ -188,7 +188,7 @@ class TestExecuteSingleTool:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
-        tc_out, text, is_error = result
+        tc_out, text, is_error, _display = result
         assert is_error is True
         assert "参数解析失败" in text
 
@@ -207,7 +207,7 @@ class TestExecuteSingleTool:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
-        tc_out, text, is_error = result
+        tc_out, text, is_error, _display = result
         assert is_error is False
         executor.execute.assert_called_once()
 
@@ -415,7 +415,7 @@ class TestAskUserShortCircuit:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
-        tc_out, text, is_error = result
+        tc_out, text, is_error, _display = result
         assert text == "OK"
         assert is_error is False
         # executor 不应被调用
@@ -493,7 +493,7 @@ class TestExecuteSingleToolAgentResult:
         ))
 
         tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
-        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+        tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
@@ -517,7 +517,7 @@ class TestExecuteSingleToolAgentResult:
         ))
 
         tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
-        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+        tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
@@ -559,7 +559,7 @@ class TestExecuteSingleToolAgentResult:
         executor.execute = AsyncMock(return_value="搜索结果：3条")
 
         tc = {"name": "web_search", "id": "tc1", "arguments": '{"query":"天气"}'}
-        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+        tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
@@ -687,7 +687,7 @@ class TestFormBlockResultChannel:
 
         tc = {"name": "manage_scheduled_task", "id": "tc1",
               "arguments": '{"action":"create","description":"每天9点推日报"}'}
-        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+        tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
@@ -745,7 +745,7 @@ class TestPushToolStepUpdate:
         await ChatToolMixin._push_tool_step_update(
             mixin, "task1", "conv1", "msg1", "user1",
             "web_search", "tc_1",
-            success=True, summary="找到3条结果", elapsed_ms=1500,
+            success=True, output="找到3条结果", elapsed_ms=1500,
         )
 
         mock_ws.send_to_task_or_user.assert_called_once()
@@ -756,7 +756,7 @@ class TestPushToolStepUpdate:
         assert block["type"] == "tool_step"
         assert block["tool_call_id"] == "tc_1"
         assert block["status"] == "completed"
-        assert block["summary"] == "找到3条结果"
+        assert block["output"] == "找到3条结果"
         assert block["elapsed_ms"] == 1500
 
     @pytest.mark.asyncio
@@ -771,12 +771,12 @@ class TestPushToolStepUpdate:
         await ChatToolMixin._push_tool_step_update(
             mixin, "task1", "conv1", "msg1", "user1",
             "erp_agent", "tc_2",
-            success=False, summary="连接超时", elapsed_ms=30000,
+            success=False, output="连接超时", elapsed_ms=30000,
         )
 
         block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
         assert block["status"] == "error"
-        assert block["summary"] == "连接超时"
+        assert block["output"] == "连接超时"
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -790,12 +790,11 @@ class TestPushToolStepUpdate:
         await ChatToolMixin._push_tool_step_update(
             mixin, "task1", "conv1", "msg1", "user1",
             "code_execute", "tc_3",
-            success=True, summary="图表已生成", elapsed_ms=5000,
-            output="处理了120条数据\n图表已保存",
+            success=True, output="图表已生成\n处理了120条数据\n图表已保存", elapsed_ms=5000,
         )
 
         block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
-        assert block["output"] == "处理了120条数据\n图表已保存"
+        assert "图表已生成" in block["output"]
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -810,7 +809,7 @@ class TestPushToolStepUpdate:
         await ChatToolMixin._push_tool_step_update(
             mixin, "task1", "conv1", "msg1", "user1",
             "web_search", "tc_4",
-            success=True, summary="ok", elapsed_ms=100,
+            success=True, output="ok", elapsed_ms=100,
         )
 
     @pytest.mark.asyncio
@@ -825,11 +824,12 @@ class TestPushToolStepUpdate:
         await ChatToolMixin._push_tool_step_update(
             mixin, "task1", "conv1", "msg1", "user1",
             "web_search", "tc_5",
-            success=True, summary="ok", elapsed_ms=100,
+            success=True, output="", elapsed_ms=100,
         )
 
         block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
-        assert "output" not in block
+        # output 为空字符串时仍存在于 block 中（函数总是设置该字段）
+        assert block["output"] == ""
 
 
 # ============================================================

@@ -163,7 +163,7 @@ class TestAskUserShortCircuit:
             }),
         }
 
-        result_tc, result_text, is_error = await mixin._execute_single_tool(
+        result_tc, result_text, is_error, _display = await mixin._execute_single_tool(
             tc, MagicMock(), "task-1", "conv-1", "msg-1", "user-1", 1,
         )
 
@@ -182,7 +182,7 @@ class TestAskUserShortCircuit:
         mixin._pending_file_parts = []
 
         tc = {"name": "ask_user", "id": "tc-2", "arguments": "bad json"}
-        result_tc, result_text, is_error = await mixin._execute_single_tool(
+        result_tc, result_text, is_error, _display = await mixin._execute_single_tool(
             tc, MagicMock(), "task-1", "conv-1", "msg-1", "user-1", 1,
         )
 

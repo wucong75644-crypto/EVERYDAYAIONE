@@ -573,8 +573,8 @@ class TestToolRegistration:
         assert get_safety_level("data_query") == SafetyLevel.SAFE
 
     def test_tool_schema_in_common_tools(self):
-        from config.chat_tools import _build_common_tools
-        tools = _build_common_tools()
+        from config.common_tools import build_common_tools
+        tools = build_common_tools()
         names = [t["function"]["name"] for t in tools]
         assert "data_query" in names
 
