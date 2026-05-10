@@ -175,13 +175,13 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         return AgentResult(summary="\n".join(lines), status="success")
 
     # ========================================
-    # 互联网搜索
+    # 互联网搜索（Gemini + Google Search Grounding）
     # ========================================
 
     async def _web_search(self, args: Dict[str, Any]) -> "AgentResult":
-        """搜索互联网获取实时信息"""
+        """搜索互联网获取实时信息（Gemini Google Search Grounding）"""
         from services.agent.agent_result import AgentResult
-        from services.intent_router import IntentRouter
+        from services.agent.web_search_engine import search_with_grounding
 
         query = args.get("query", "").strip()
         if not query:
@@ -192,19 +192,16 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
                 metadata={"retryable": True},
             )
 
-        router = IntentRouter()
-        try:
-            result = await router.execute_search(
-                query=query, user_text=query, system_prompt=None,
+        result = await search_with_grounding(query)
+        if not result:
+            return AgentResult(
+                summary=f"搜索「{query}」未找到相关结果",
+                status="empty",
             )
-            if not result:
-                return AgentResult(
-                    summary=f"搜索「{query}」未找到相关结果",
-                    status="empty",
-                )
-            return AgentResult(summary=result, status="success")
-        finally:
-            await router.close()
+        return AgentResult(summary=result["content"], status="success", metadata={
+            "sources": result.get("sources", []),
+            "search_queries": result.get("search_queries", []),
+        })
 
     # ========================================
     # 数据查询工具

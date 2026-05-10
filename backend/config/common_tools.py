@@ -138,8 +138,9 @@ def build_common_tools() -> List[Dict[str, Any]]:
                 "name": "web_search",
                 "description": (
                     "搜索互联网获取实时公开信息：天气、新闻、行业资讯、"
-                    "政策法规、技术文档、公司公开信息等。返回搜索结果摘要列表。\n\n"
-                    "返回：搜索结果列表（标题+摘要+来源链接），无结果时返回空列表。\n\n"
+                    "政策法规、技术文档、公司公开信息等。\n\n"
+                    "返回：基于 Google Search 的搜索结果摘要（含来源URL引用），"
+                    "回答中会标注信息来源。无结果时返回空。\n\n"
                     "不要用于：查询企业内部业务数据（订单/库存）→ erp_agent；"
                     "查询企业知识库 → search_knowledge；"
                     "爬取社交平台内容（小红书/抖音帖子）→ social_crawler。"
