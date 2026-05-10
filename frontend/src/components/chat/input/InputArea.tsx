@@ -669,7 +669,7 @@ export default function InputArea({
                   generate_detail: formData.generateDetail,
                   conversation_id: conversationId || '',
                   text: formData.productName,
-                });
+                }, { timeout: 60000 }); // 60s：主模型可能失败+fallback，总耗时可达40s+
                 if (data._parse_failed) {
                   toast.error('AI 返回格式异常，请重试');
                 } else if (data.images && data.images.length > 0) {
