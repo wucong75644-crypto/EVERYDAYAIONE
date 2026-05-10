@@ -24,7 +24,7 @@ import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
 import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
-import { EcomProductForm } from './EcomProductForm';
+import { EcomProductForm, type EcomFormData } from './EcomProductForm';
 import { EcomPlanCards, syncTextToPrompt, type ImageTask } from './EcomPlanCards';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
