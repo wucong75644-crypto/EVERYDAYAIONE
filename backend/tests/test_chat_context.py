@@ -108,7 +108,7 @@ class TestExtractTextFromContent:
     def test_tool_step_completed_extracted(self, chat_handler):
         """已完成的 tool_step 应提取 summary"""
         content = [
-            {"type": "tool_step", "tool_name": "data_query", "status": "completed", "summary": "查询了5条记录"},
+            {"type": "tool_step", "tool_name": "data_query", "status": "completed", "output": "查询了5条记录"},
         ]
         result = chat_handler._extract_text_from_content(content)
         assert "[工具执行: data_query]" in result
@@ -134,7 +134,7 @@ class TestExtractTextFromContent:
         """混合块：thinking 跳过，tool_step + text 提取"""
         content = [
             {"type": "thinking", "text": "让我分析一下..."},
-            {"type": "tool_step", "tool_name": "data_query", "status": "completed", "summary": "查询完成"},
+            {"type": "tool_step", "tool_name": "data_query", "status": "completed", "output": "查询完成"},
             {"type": "text", "text": "以上是分析结果"},
         ]
         result = chat_handler._extract_text_from_content(content)
