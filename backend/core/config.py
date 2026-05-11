@@ -259,7 +259,7 @@ class Settings(BaseSettings):
     image_enhance_model: str = "qwen3.5-plus"              # 主选：文字模式，稳定可靠
     image_enhance_vl_model: str = "qwen-vl-max"            # 图生图模式：能看图，最强VL
     image_enhance_fallback_model: str = "qwen3.5-plus"     # 降级备选（flash太弱，无法输出复杂策划格式）
-    image_enhance_timeout: float = 30.0                    # 超时秒数（视觉总监策划模式需要更长思考时间）
+    image_enhance_timeout: float = 60.0                    # 超时秒数（v2 三层prompt 6700字 + VL图片理解需要更长时间）
     # 图片生成（ImageAgent → KIE adapter，复用现有生图基础设施）
     image_agent_kie_model: str = "gpt-image-2-text-to-image"       # 文生图默认模型
     image_agent_kie_i2i_model: str = "gpt-image-2-image-to-image"  # 图生图模型
