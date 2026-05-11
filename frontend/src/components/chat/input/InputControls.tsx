@@ -365,7 +365,6 @@ export default function InputControls(props: InputControlsProps) {
             disabled={isSubmitting}
           />
         </div>
-        )}
 
         {/* 底部工具栏 */}
         <div className="flex items-center justify-between mt-1">
