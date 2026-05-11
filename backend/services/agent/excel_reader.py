@@ -2,8 +2,13 @@
 Excel 结构化读取（openpyxl 两次读取，保留公式+编号）
 
 输出格式对标 Claude：
-  ['A2:义乌部门', 'B2:义乌租金', 'C2:76800', 'D2:[公式]=C2/12']
-  空单元格跳过，不做 ffill。
+  Row1: ['A1:公共费用', 'C1:按年摊销金额', 'D1:费用金额']
+  Row2: ['B2:仓库租金', 'C2:283800', 'D2:[公式]=C2/12']
+
+  === 关键单元格公式 vs 值 ===
+  D2: 公式==C2/12  |  计算值=6400
+
+空单元格跳过，合并单元格去重，不做 ffill。
 
 设计文档：docs/document/TECH_file_read统一工具.md
 """
@@ -23,7 +28,7 @@ from services.agent.agent_result import AgentResult
 _MAX_ROWS_FULL = 10000       # 全量输出行数上限，超过则截断
 _MAX_FORMULA_CELLS = 500     # 公式单元格输出上限（Pass 1 扫描提前终止）
 _PREVIEW_HEAD = 5            # 大文件预览：前 N 行
-_PREVIEW_TAIL = 5            # 大文件预览：后 N 行
+_PREVIEW_TAIL = 10           # 大文件预览：后 N 行（对标 Claude）
 _FORMULA_PREFIX = "[公式]"   # 公式标记前缀
 
 
@@ -39,31 +44,24 @@ def _col_letter(col_idx: int) -> str:
 def _read_sheet_structured(
     excel_path: str,
     sheet_name: str | None = None,
-) -> tuple[list[list[str]], list[str], int, int, int]:
-    """读取单个 sheet，返回结构化行数据。
-
-    Returns:
-        (rows, formula_cross_refs, total_rows, total_cols, formula_count)
-        - rows: 每行是 ['A2:义乌部门', 'D2:[公式]=C2/12'] 格式的列表
-        - formula_cross_refs: 跨 sheet 引用列表
-        - total_rows, total_cols: 实际行列数
-        - formula_count: 公式单元格总数
-    """
+) -> tuple[
+    list[tuple[int, list[str]]],       # (行号, 单元格列表)
+    list[tuple[str, str, str]],        # (坐标, 公式, 计算值) — 公式对照表
+    list[str],                          # 跨 sheet 引用
+    int, int, int,                      # total_rows, total_cols, formula_count
+]:
+    """读取单个 sheet，返回结构化行数据 + 公式对照表。"""
     import openpyxl
 
     # Pass 1: 读公式字符串
     wb_formula = openpyxl.load_workbook(
         excel_path, read_only=True, data_only=False,
     )
-    if sheet_name:
-        ws_formula = wb_formula[sheet_name]
-    else:
-        ws_formula = wb_formula.active
+    ws_formula = wb_formula[sheet_name] if sheet_name else wb_formula.active
     if ws_formula is None:
         wb_formula.close()
-        return [], [], 0, 0, 0
+        return [], [], [], 0, 0, 0
 
-    # 收集公式 {(row, col): formula_str}，达到上限提前终止
     formulas: dict[tuple[int, int], str] = {}
     _scan_done = False
     for row in ws_formula.iter_rows():
@@ -83,51 +81,62 @@ def _read_sheet_structured(
     wb_value = openpyxl.load_workbook(
         excel_path, read_only=True, data_only=True,
     )
-    if sheet_name:
-        ws_value = wb_value[sheet_name]
-    else:
-        ws_value = wb_value.active
+    ws_value = wb_value[sheet_name] if sheet_name else wb_value.active
     if ws_value is None:
         wb_value.close()
-        return [], [], 0, 0, 0
+        return [], [], [], 0, 0, 0
 
-    rows: list[list[str]] = []
+    rows: list[tuple[int, list[str]]] = []
+    formula_values: list[tuple[str, str, str]] = []  # 公式对照表
     cross_refs: list[str] = []
     total_rows = 0
     max_col = 0
+    empty_streak = 0
 
     for row in ws_value.iter_rows():
         total_rows += 1
         row_cells: list[str] = []
+        seen_in_row: set[str] = set()  # 合并单元格去重
+
         for cell in row:
-            # read_only 模式下空区域产生 EmptyCell，跳过
             if not hasattr(cell, "column") or cell.column is None:
                 continue
             if cell.column > max_col:
                 max_col = cell.column
+
             col_letter = _col_letter(cell.column)
             coord = f"{col_letter}{cell.row}"
             formula = formulas.get((cell.row, cell.column))
 
             if formula:
-                # 公式单元格
                 row_cells.append(f"{coord}:{_FORMULA_PREFIX}{formula}")
-                # 检测跨 sheet 引用
+                val_str = str(cell.value) if cell.value is not None else "未缓存"
+                formula_values.append((coord, formula, val_str))
                 if "!" in formula:
                     cross_refs.append(f"{coord} → {formula}")
             elif cell.value is not None:
-                # 有值单元格（空值跳过）
+                # 合并单元格去重：同行内相同值只输出第一个
+                val_key = str(cell.value)
+                if val_key in seen_in_row:
+                    continue
+                seen_in_row.add(val_key)
                 row_cells.append(f"{coord}:{cell.value}")
 
         if row_cells:
-            rows.append(row_cells)
+            if empty_streak >= 1 and rows:
+                rows.append((0, ["---"]))
+            empty_streak = 0
+            rows.append((total_rows, row_cells))
+        else:
+            empty_streak += 1
 
     wb_value.close()
-    return rows, cross_refs, total_rows, max_col, len(formulas)
+    return rows, formula_values, cross_refs, total_rows, max_col, len(formulas)
 
 
 def _format_structured_output(
-    rows: list[list[str]],
+    rows: list[tuple[int, list[str]]],
+    formula_values: list[tuple[str, str, str]],
     cross_refs: list[str],
     total_rows: int,
     total_cols: int,
@@ -136,40 +145,58 @@ def _format_structured_output(
     sheet_overview: str,
     rel_path: str,
 ) -> str:
-    """将结构化行数据格式化为输出文本。"""
+    """格式化输出，对标 Claude 格式。"""
     lines: list[str] = []
     lines.append(f"=== Sheet: {sheet_name} ===")
-    lines.append(f"行数: {total_rows}, 列数: {total_cols}")
     lines.append("")
 
     is_large = total_rows > _MAX_ROWS_FULL
 
     if is_large:
-        # 大文件：前5行 + 后5行
-        head_rows = rows[:_PREVIEW_HEAD]
-        tail_rows = rows[-_PREVIEW_TAIL:] if len(rows) > _PREVIEW_TAIL else []
+        # 大文件：列名单独列 + 前5行 + 后10行 + 底部总行列数
+        # 找列名行（通常是第一或第二个非分隔行）
+        data_rows = [(rn, cells) for rn, cells in rows if cells != ["---"]]
+        head = data_rows[:_PREVIEW_HEAD]
+        tail = data_rows[-_PREVIEW_TAIL:] if len(data_rows) > _PREVIEW_TAIL else []
 
-        for row in head_rows:
-            lines.append(str(row))
-        if tail_rows:
-            lines.append(f"... (省略 {len(rows) - _PREVIEW_HEAD - _PREVIEW_TAIL} 行) ...")
-            for row in tail_rows:
-                lines.append(str(row))
+        # 列名提取（从前两行中找包含最多单元格的行）
+        if len(data_rows) >= 2:
+            r1_len = len(data_rows[0][1])
+            r2_len = len(data_rows[1][1])
+            header_row = data_rows[1] if r2_len > r1_len else data_rows[0]
+            lines.append("完整列名:")
+            for cell_str in header_row[1]:
+                lines.append(f"  {cell_str}")
+            lines.append("")
+
+        for rn, cells in head:
+            lines.append(f"  Row{rn}: {cells}")
+        lines.append(f"  ... (省略中间数据) ...")
+        for rn, cells in tail:
+            lines.append(f"  Row{rn}: {cells}")
+        lines.append(f"  总行数: {total_rows}, 总列数: {total_cols}")
     else:
-        # 小文件：全量输出
-        for row in rows:
-            lines.append(str(row))
+        # 小文件：全量输出，每行带 Row 标号
+        for rn, cells in rows:
+            if cells == ["---"]:
+                lines.append("")
+            else:
+                lines.append(f"  Row{rn}: {cells}")
 
-    # 公式统计
-    lines.append("")
-    if formula_count > 0:
-        lines.append(f"公式统计: {formula_count}个公式单元格")
+    # 公式 vs 值对照表（独立段落）
+    if formula_values:
+        lines.append("")
+        lines.append(f"=== {sheet_name} - 关键单元格公式 vs 值 ===")
+        for coord, formula, val in formula_values:
+            lines.append(f"{coord}: 公式={formula}  |  计算值={val}")
         if cross_refs:
+            lines.append("")
             for ref in cross_refs[:10]:
                 lines.append(f"跨Sheet引用: {ref}")
             if len(cross_refs) > 10:
                 lines.append(f"... 等{len(cross_refs)}个跨Sheet引用")
-    else:
+    elif formula_count == 0:
+        lines.append("")
         lines.append("公式统计: 0个（纯数据表）")
 
     # Sheet 概览
@@ -213,13 +240,7 @@ async def read_excel_structured(
     sheet: str | None,
     staging_dir: str,
 ) -> AgentResult:
-    """Excel 结构化读取入口（异步包装）。
-
-    Args:
-        abs_path: Excel 文件绝对路径
-        sheet: Sheet 名称（None=第一个 sheet）
-        staging_dir: staging 目录路径（写带编号 Parquet）
-    """
+    """Excel 结构化读取入口（异步包装）。"""
     start = time.monotonic()
     filename = Path(abs_path).name
 
@@ -252,17 +273,14 @@ def _read_excel_structured_sync(
     """Excel 结构化读取（同步，线程池执行）。"""
     filename = Path(abs_path).name
 
-    # 扫描所有 sheet
     sheet_overview, sheet_names = _build_sheet_overview(abs_path)
 
-    # sheet 名模糊匹配
     target_sheet = sheet
     if sheet and sheet_names:
         from services.agent.data_query_cache import fuzzy_match_sheet
         target_sheet = fuzzy_match_sheet(sheet, sheet_names)
 
-    # 读取目标 sheet
-    rows, cross_refs, total_rows, total_cols, formula_count = (
+    rows, formula_values, cross_refs, total_rows, total_cols, formula_count = (
         _read_sheet_structured(abs_path, target_sheet)
     )
 
@@ -272,24 +290,22 @@ def _read_excel_structured_sync(
             status="empty",
         )
 
-    # 计算相对路径（用于提示）
     rel_path = filename
-
-    # 格式化输出
     display_sheet = target_sheet or sheet_names[0] if sheet_names else "Sheet1"
     text = _format_structured_output(
-        rows, cross_refs, total_rows, total_cols, formula_count,
+        rows, formula_values, cross_refs,
+        total_rows, total_cols, formula_count,
         display_sheet, sheet_overview, rel_path,
     )
 
-    # 写 staging 带编号 Parquet
-    _write_staging_parquet(rows, staging_dir, filename)
+    _write_staging_parquet(rows, formula_values, staging_dir, filename)
 
     return AgentResult(summary=text, status="success")
 
 
 def _write_staging_parquet(
-    rows: list[list[str]],
+    rows: list[tuple[int, list[str]]],
+    formula_values: list[tuple[str, str, str]],
     staging_dir: str,
     filename: str,
 ) -> None:
@@ -299,11 +315,15 @@ def _write_staging_parquet(
     staging = Path(staging_dir)
     staging.mkdir(parents=True, exist_ok=True)
 
+    # 公式对照表 → {坐标: (公式, 计算值)}
+    fv_map = {coord: (formula, val) for coord, formula, val in formula_values}
+
     records: list[dict] = []
-    # 解析 'A2:义乌部门' 或 'D2:[公式]=C2/12' 格式
     pattern = re.compile(r"^([A-Z]+)(\d+):(.*)$")
 
-    for row_cells in rows:
+    for _rn, row_cells in rows:
+        if row_cells == ["---"]:
+            continue
         for cell_str in row_cells:
             m = pattern.match(cell_str)
             if not m:
@@ -312,21 +332,17 @@ def _write_staging_parquet(
             coord = f"{col_letter}{row_num}"
 
             if content.startswith(_FORMULA_PREFIX):
-                formula = content[len(_FORMULA_PREFIX):]
+                formula_str = content[len(_FORMULA_PREFIX):]
+                # 计算值从公式对照表取
+                calc_value = fv_map.get(coord, (None, None))[1]
                 records.append({
-                    "cell": coord,
-                    "row": row_num,
-                    "col": col_letter,
-                    "value": None,
-                    "formula": formula,
+                    "cell": coord, "row": row_num, "col": col_letter,
+                    "value": calc_value, "formula": formula_str,
                 })
             else:
                 records.append({
-                    "cell": coord,
-                    "row": row_num,
-                    "col": col_letter,
-                    "value": str(content),
-                    "formula": None,
+                    "cell": coord, "row": row_num, "col": col_letter,
+                    "value": str(content), "formula": None,
                 })
 
     if not records:
@@ -339,8 +355,7 @@ def _write_staging_parquet(
         parquet_name = f"_structured_{stem}.parquet"
         df.to_parquet(str(staging / parquet_name), index=False, engine="pyarrow")
         logger.info(
-            f"Structured Parquet written | file={parquet_name} | "
-            f"cells={len(records)}"
+            f"Structured Parquet written | file={parquet_name} | cells={len(records)}"
         )
     except Exception as e:
         logger.warning(f"Structured Parquet write failed: {e}")
