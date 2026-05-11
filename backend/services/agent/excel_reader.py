@@ -211,28 +211,43 @@ def _format_structured_output(
     return "\n".join(lines)
 
 
-def _build_sheet_overview(excel_path: str) -> tuple[str, list[str]]:
-    """扫描所有 sheet，返回概览文本和 sheet 名列表。"""
-    from services.agent.data_query_cache import scan_sheet_structures
+def _build_all_sheets_preview(
+    excel_path: str, preview_rows: int = 3,
+) -> tuple[str, list[str]]:
+    """所有 sheet 预览（对标 Claude：Sheet 列表 + 每个 sheet 行列数 + 前 3 行含公式）。"""
+    import openpyxl
 
-    try:
-        structures = scan_sheet_structures(excel_path)
-    except Exception:
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    sheet_names = wb.sheetnames
+    wb.close()
+
+    if not sheet_names:
         return "", []
 
-    if len(structures) <= 1:
-        return "", [s["name"] for s in structures]
+    lines = [f"Sheet列表: {sheet_names}"]
 
-    lines = [f"[Sheet 概览] 共 {len(structures)} 个 Sheet"]
-    for s in structures[:10]:
-        cols = ", ".join(s["columns"][:5])
-        if len(s["columns"]) > 5:
-            cols += f" (+{len(s['columns']) - 5}列)"
-        lines.append(f"- \"{s['name']}\" | {s['row_count']}行 × {len(s['columns'])}列 | 列: {cols}")
-    if len(structures) > 10:
-        lines.append(f"- ... 等{len(structures)}个 Sheet")
+    for sn in sheet_names[:10]:
+        # 复用 _read_sheet_structured 读每个 sheet（含公式检测）
+        rows, fv, cross, total_rows, total_cols, fc = (
+            _read_sheet_structured(excel_path, sn)
+        )
+        lines.append(f"\n=== Sheet: {sn} ===")
+        lines.append(f"  行数: {total_rows}, 列数: {total_cols}")
 
-    return "\n".join(lines), [s["name"] for s in structures]
+        # 前 3 行预览（跳过分隔符）
+        shown = 0
+        for rn, cells in rows:
+            if cells == ["---"]:
+                continue
+            lines.append(f"  Row{rn}: {cells}")
+            shown += 1
+            if shown >= preview_rows:
+                break
+
+    if len(sheet_names) > 10:
+        lines.append(f"\n... 等{len(sheet_names)}个 Sheet")
+
+    return "\n".join(lines), sheet_names
 
 
 async def read_excel_structured(
@@ -270,13 +285,32 @@ def _read_excel_structured_sync(
     sheet: str | None,
     staging_dir: str,
 ) -> AgentResult:
-    """Excel 结构化读取（同步，线程池执行）。"""
+    """Excel 结构化读取（同步，线程池执行）。
+
+    不指定 sheet：返回所有 sheet 预览（对标 Claude 第一次调用）
+    指定 sheet：返回该 sheet 完整内容 + 公式对照表
+    """
     filename = Path(abs_path).name
 
-    sheet_overview, sheet_names = _build_sheet_overview(abs_path)
+    # 不指定 sheet → 全 sheet 预览
+    if not sheet:
+        overview_text, sheet_names = _build_all_sheets_preview(abs_path)
+        if not overview_text:
+            return AgentResult(
+                summary=f"Excel 文件为空或无数据: {filename}",
+                status="empty",
+            )
+        overview_text += f"\n\n读取指定 Sheet: file_read(path=\"{filename}\", sheet=\"Sheet名\")"
+        return AgentResult(summary=overview_text, status="success")
+
+    # 指定 sheet → 完整内容
+    import openpyxl
+    wb = openpyxl.load_workbook(abs_path, read_only=True, data_only=True)
+    sheet_names = wb.sheetnames
+    wb.close()
 
     target_sheet = sheet
-    if sheet and sheet_names:
+    if sheet_names:
         from services.agent.data_query_cache import fuzzy_match_sheet
         target_sheet = fuzzy_match_sheet(sheet, sheet_names)
 
@@ -286,16 +320,14 @@ def _read_excel_structured_sync(
 
     if not rows:
         return AgentResult(
-            summary=f"Excel 文件为空或无数据: {filename}",
+            summary=f"Sheet \"{target_sheet}\" 为空或无数据",
             status="empty",
         )
 
-    rel_path = filename
-    display_sheet = target_sheet or sheet_names[0] if sheet_names else "Sheet1"
     text = _format_structured_output(
         rows, formula_values, cross_refs,
         total_rows, total_cols, formula_count,
-        display_sheet, sheet_overview, rel_path,
+        target_sheet, "", filename,
     )
 
     _write_staging_parquet(rows, formula_values, staging_dir, filename)
