@@ -43,14 +43,14 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "generate_image":   ToolDomain.GENERAL,
     "generate_video":   ToolDomain.GENERAL,
     "image_agent":      ToolDomain.GENERAL,
-    "file_read":        ToolDomain.GENERAL,
+    "file_read":        ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要读文件
     "file_list":        ToolDomain.GENERAL,
     "file_search":      ToolDomain.GENERAL,
     "manage_scheduled_task": ToolDomain.GENERAL,
 
     # === shared: 多个域的 Agent 内部都能用 ===
     "code_execute":     ToolDomain.SHARED,
-    "data_query":       ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要查询数据文件
+    # data_query 已合并到 file_read
     "ask_user":         ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要追问能力
 
     # === erp: 仅 erp_agent 内部可用 ===

@@ -235,7 +235,7 @@ class DataQueryExecutor:
                 schema_text += (
                     f"\n[多Sheet Excel] {', '.join(preview)}{more}"
                     f"\n注意: 当前schema仅为第1个Sheet，其他Sheet可能包含不同数据，"
-                    f"用 data_query(sheet=\"SheetName\") 切换"
+                    f"用 file_read(path=..., sheet=\"SheetName\") 切换"
                 )
             self.last_file_meta = (filename, original_path, schema_text)
         except Exception:
@@ -493,8 +493,8 @@ class DataQueryExecutor:
                 text += f"\n- 结构相同（{len(structures)}个）: {names_preview}"
                 text += f"\n- 每个 Sheet {structures[0]['row_count']}行 × {len(structures[0]['columns'])}列 | 合计 {total_rows:,}行"
                 text += f"\n- 列: {cols_preview}"
-                text += f"\n- 合并读取: data_query(file=\"{rel_path}\", sheet=\"*\")"
-                text += f"\n- 单个读取: data_query(file=\"{rel_path}\", sheet=\"{structures[0]['name']}\")"
+                text += f"\n- 合并读取: file_read(path=\"{rel_path}\", sheet=\"*\")"
+                text += f"\n- 单个读取: file_read(path=\"{rel_path}\", sheet=\"{structures[0]['name']}\")"
             else:
                 # 结构不同：逐个显示
                 for s in structures[:10]:
@@ -504,12 +504,12 @@ class DataQueryExecutor:
                     text += f"\n- \"{s['name']}\" | {s['row_count']}行 × {len(s['columns'])}列 | 列: {cols}"
                 if len(structures) > 10:
                     text += f"\n- ... 等{len(structures)}个 Sheet"
-                text += f"\n- 读取指定 Sheet: data_query(file=\"{rel_path}\", sheet=\"Sheet名\")"
+                text += f"\n- 读取指定 Sheet: file_read(path=\"{rel_path}\", sheet=\"Sheet名\")"
         else:
             text += (
                 f"\n\n后续操作:"
-                f"\n- 查询数据: data_query(file=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
-                f"\n- 全量读取: data_query(file=\"{rel_path}\", sql=\"SELECT * FROM data\")"
+                f"\n- 查询数据: file_read(path=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
+                f"\n- 全量读取: file_read(path=\"{rel_path}\", sql=\"SELECT * FROM data\")"
             )
 
         return AgentResult(summary=text, status="success")

@@ -22,6 +22,8 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["path"],
         "properties": {
             "path": {"type": "string"},
+            "sql": {"type": "string"},
+            "sheet": {"type": "string"},
             "offset": {"type": "integer"},
             "limit": {"type": "integer"},
             "pages": {"type": "string"},
@@ -60,35 +62,55 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_read",
                 "description": (
-                    "读取 workspace 内的 PDF、图片或纯文本文件。\n\n"
-                    "适用:\n"
-                    "- PDF 文件：自动提取文本，用 pages 参数指定页范围（如 '3' 或 '1-5'）。"
+                    "读取 workspace 内的任何文件。\n\n"
+                    "支持所有格式：\n"
+                    "- Excel/CSV/Parquet：返回结构化内容（含公式、单元格位置），"
+                    "传 sql 可执行 DuckDB SQL 查询\n"
+                    "- PDF：自动提取文本，用 pages 指定页范围（如 '1-5'）。"
                     "≤10 页自动全读，>10 页必须指定 pages，每次最多 20 页\n"
-                    "- 图片文件（png/jpg/gif/webp）：自动识别并返回图片供视觉分析\n"
-                    "- 纯文本文件（txt/md/json/py 等）：返回内容，最多 2000 行\n\n"
-                    "不适用:\n"
-                    "- Excel/CSV/Parquet 数据文件 → 用 data_query\n"
-                    "- 需要计算/处理的场景 → 用 code_execute"
+                    "- DOCX/PPTX：结构化读取（标题、段落、表格带行号）\n"
+                    "- 图片（png/jpg/gif/webp）：返回图片供视觉分析\n"
+                    "- 纯文本（txt/md/json/py 等）：返回内容，最多 2000 行\n\n"
+                    "不适用：\n"
+                    "- 计算/生成文件 → code_execute\n"
+                    "- 查 ERP 业务数据 → erp_agent"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "文件名或相对路径",
+                            "description": (
+                                "文件名或相对路径（如 '销售报表.xlsx' 或 '报表/data.csv'）。"
+                                "优先使用 file_list 返回的路径"
+                            ),
+                        },
+                        "sql": {
+                            "type": "string",
+                            "description": (
+                                "SQL 查询语句（仅 Excel/CSV/Parquet），表名用 FROM data。"
+                                "中文列名用双引号包裹。"
+                            ),
+                        },
+                        "sheet": {
+                            "type": "string",
+                            "description": (
+                                "Excel 的 Sheet 名称（可选，默认第一个 Sheet）。"
+                                "传 '*' 合并所有同结构 Sheet。"
+                            ),
                         },
                         "offset": {
                             "type": "integer",
                             "description": (
                                 "起始行号（1-based，默认1即文件开头）。"
-                                "仅在文件过大无法一次读取时使用"
+                                "仅文本文件过大时使用"
                             ),
                         },
                         "limit": {
                             "type": "integer",
                             "description": (
                                 "读取行数上限。"
-                                "仅在文件过大无法一次读取时使用"
+                                "仅文本文件过大时使用"
                             ),
                         },
                         "pages": {
@@ -192,8 +214,8 @@ FILE_ROUTING_PROMPT = (
     "- 所有文件操作直接用文件名或相对路径（如 '利润表.xlsx'、'子目录/data.csv'）\n"
     "- 查看目录/列出文件 → file_list\n"
     "- 搜索/查找文件 → file_search\n"
-    "- 读取/分析 Excel/CSV 数据文件 → data_query\n"
-    "- 读取 PDF/图片/纯文本 → file_read\n"
+    "- 读取任何文件（Excel/CSV/PDF/DOCX/图片/文本）→ file_read\n"
+    "- Excel/CSV 数据查询 → file_read(path=..., sql=\"SELECT ... FROM data\")\n"
     "- 计算分析/生成文件 → code_execute\n"
     "- 撤销/恢复原文件/回退 → restore_file\n"
     "- file_list 和 file_search 返回的结果已包含文件元信息（行列数/类型/读取命令），直接使用\n"

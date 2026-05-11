@@ -1,7 +1,7 @@
 """
 通用工具定义（非 ERP 直接查询）
 
-为 Agent Loop 提供 erp_agent/erp_analyze/search/media/data_query/scheduled_task 等
+为 Agent Loop 提供 erp_agent/erp_analyze/search/media/scheduled_task 等
 顶层工具的 OpenAI function calling schema。
 由 chat_tools.py 导入合并。
 """
@@ -273,47 +273,7 @@ def build_common_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "data_query",
-                "description": (
-                    "查询工作区数据文件或 staging 文件的内容，"
-                    "支持探索结构和 SQL 查询。\n"
-                    "不传 sql：返回文件结构（列名、类型、行数、统计信息）+ 后续可用路径。\n"
-                    "传 sql：执行查询，表名统一用 FROM data，结果自动存 staging。\n"
-                    "导出文件给用户请用 code_execute（df.to_excel 写到 OUTPUT_DIR）。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "required": ["file"],
-                    "properties": {
-                        "file": {
-                            "type": "string",
-                            "description": (
-                                "文件名或相对路径（如 \"销售报表.xlsx\" 或 \"报表/销售报表.xlsx\"）。"
-                                "优先使用 file_list 或 data_query 探索模式返回的路径"
-                            ),
-                        },
-                        "sql": {
-                            "type": "string",
-                            "description": (
-                                "SQL 查询语句，表名用 FROM data。"
-                                "中文列名用双引号包裹。"
-                            ),
-                        },
-                        "sheet": {
-                            "type": "string",
-                            "description": (
-                                "Excel 的 Sheet 名称（可选，默认第一个 Sheet）。"
-                                "传 \"*\" 合并所有同结构 Sheet 为一张表（自动加 _sheet 列标识来源）。"
-                                "探索模式会返回 Sheet 概览，告知是否可合并。"
-                            ),
-                        },
-                    },
-                },
-            },
-        },
+        # data_query 已合并到 file_read（TECH_file_read统一工具.md）
         {
             "type": "function",
             "function": {

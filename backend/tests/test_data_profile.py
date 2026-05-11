@@ -104,9 +104,9 @@ class TestBuildDataProfile:
         assert "A001" in text
 
     def test_read_instruction(self):
-        """查询指引包含 data_query + 文件名"""
+        """查询指引包含 file_read + 文件名"""
         text, _ = build_data_profile(self._basic_df(), "trade_999.parquet", 1.0)
-        assert 'data_query(file="trade_999.parquet"' in text
+        assert 'file_read(path="trade_999.parquet"' in text
 
     def test_no_absolute_path_leaked(self):
         """输出不包含服务器绝对路径"""

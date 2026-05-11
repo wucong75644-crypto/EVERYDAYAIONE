@@ -2,7 +2,7 @@
 文件上传公共模块
 
 从 sandbox/functions.py 提取的 auto_upload 逻辑，
-供 code_execute（沙盒）和 data_query（导出模式）共用。
+供 code_execute（沙盒）和 file_read（数据查询模式）共用。
 
 生成 workspace CDN URL（ossfs 自动同步到 OSS），
 或兜底上传到 OSS 获取 URL。返回 [FILE] 标签供前端展示。

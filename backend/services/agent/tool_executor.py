@@ -58,7 +58,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             "web_search": self._web_search,
             "generate_image": self._generate_image,
             "generate_video": self._generate_video,
-            "data_query": self._data_query,
+            # data_query 已合并到 file_read（file_tool_mixin._file_read_data）
             "erp_agent": self._erp_agent,
             "erp_analyze": self._erp_analyze,
             "manage_scheduled_task": self._manage_scheduled_task,
@@ -207,34 +207,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
     # 数据查询工具
     # ========================================
 
-    async def _data_query(self, args: Dict[str, Any]) -> "AgentResult":
-        """查询 staging 文件或工作区数据文件"""
-        from core.config import get_settings
-        from services.agent.data_query_executor import DataQueryExecutor
-
-        settings = get_settings()
-        executor = DataQueryExecutor(
-            user_id=self.user_id,
-            org_id=self.org_id,
-            conversation_id=self.conversation_id,
-            workspace_root=settings.file_workspace_root,
-        )
-
-        result = await executor.execute(
-            file=args.get("file", ""),
-            sql=args.get("sql"),
-            export=args.get("export"),
-            sheet=args.get("sheet"),
-        )
-
-        # schema 收集 → chat_tool_mixin 统一消费注册到 registry
-        if executor.last_file_meta:
-            self._pending_schemas.append(executor.last_file_meta)
-
-        # staging 文件注册到共享路径缓存（其他工具可直接用文件名引用）
-        self._register_staging_files(result)
-
-        return result
+    # _data_query 已合并到 file_read（file_tool_mixin._file_read_data）
 
     # ========================================
     # ERP Agent（独立 Agent 作为工具调用）
@@ -545,8 +518,8 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
                 f"[数据已暂存] {rel_path}\n"
                 f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
                 f"耗时 {elapsed:.1f}秒。{warning}\n"
-                f"如需处理请调 data_query，"
-                f"用 data_query(file=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n"
+                f"如需处理请调 file_read，"
+                f"用 file_read(path=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n"
                 f"代码处理: pd.read_parquet(STAGING_DIR + '/{filename}') | "
                 f"{len(items)}行 × {len(df.columns)}列\n"
                 f"[列: {col_schema}]\n\n"

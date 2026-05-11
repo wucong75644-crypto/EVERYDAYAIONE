@@ -11,9 +11,13 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, Optional
 
 from loguru import logger
+
+# 数据文件扩展名（走 DataQueryExecutor 或 excel_reader）
+_DATA_EXTS = frozenset({".xlsx", ".xls", ".xlsm", ".csv", ".tsv", ".parquet"})
 
 
 class FileToolMixin:
@@ -111,36 +115,51 @@ class FileToolMixin:
                     error_message=str(e), metadata={"retryable": False},
                 )
 
-        dispatch = {
-            "file_read": executor.file_read,
-        }
+        # ── file_read：统一文件读取 ──
+        if tool_name == "file_read":
+            return await self._file_read_dispatch(executor, args, settings)
 
-        func = dispatch.get(tool_name)
-        if not func:
-            return AgentResult(
-                summary=f"Unknown file tool: {tool_name}",
-                status="error",
-                error_message=f"Unknown tool: {tool_name}",
-                metadata={"retryable": False},
-            )
+        return AgentResult(
+            summary=f"Unknown file tool: {tool_name}",
+            status="error",
+            error_message=f"Unknown tool: {tool_name}",
+            metadata={"retryable": False},
+        )
 
-        # file_read 的 path 参数：先查缓存翻译
-        if "path" in args and tool_name == "file_read":
+    async def _file_read_dispatch(
+        self, executor: Any, args: Dict[str, Any], settings: Any,
+    ) -> Any:
+        """file_read 统一调度：数据文件走 DataQueryExecutor，其他走 FileExecutor。"""
+        from services.agent.agent_result import AgentResult
+
+        # path 参数：先查 FilePathCache 翻译
+        path = args.get("path", "")
+        if path:
             from services.agent.workspace_file_handles import get_file_cache
-            cached = get_file_cache(self.conversation_id).resolve(args["path"])
+            cached = get_file_cache(self.conversation_id).resolve(path)
             if cached:
                 args = {**args, "path": cached}
+                path = cached
 
+        ext = Path(path).suffix.lower() if path else ""
+
+        # ── 数据文件分支：Excel/CSV/Parquet ──
+        if ext in _DATA_EXTS:
+            ft = "excel" if ext in (".xlsx", ".xls", ".xlsm") else "csv"
+            return await self._file_read_data(args, settings, ft)
+
+        # ── 其他文件：走 FileExecutor 原有逻辑 ──
         try:
-            result = await func(**args)
-            # FileReadResult（图片多模态）直接透传，不包装
-            from services.file_executor import FileReadResult
+            result = await executor.file_read(**{
+                k: v for k, v in args.items()
+                if k in ("path", "offset", "limit", "pages")
+            })
+            from services.file_read_extensions import FileReadResult
             if isinstance(result, FileReadResult):
                 return result
-            # 普通 str 结果包装为 AgentResult
             return AgentResult(summary=result or "", status="success")
         except PermissionError as e:
-            logger.warning(f"ToolExecutor file_dispatch | tool={tool_name} | perm_error={e}")
+            logger.warning(f"ToolExecutor file_read | perm_error={e}")
             return AgentResult(
                 summary=f"权限不足: {e}",
                 status="error",
@@ -151,17 +170,63 @@ class FileToolMixin:
             from services.file_executor import FileOperationError
             if isinstance(e, FileOperationError):
                 return AgentResult(
-                    summary=str(e),
-                    status="error",
-                    error_message=str(e),
-                    metadata={"retryable": True},
+                    summary=str(e), status="error",
+                    error_message=str(e), metadata={"retryable": True},
                 )
-            logger.error(f"ToolExecutor file_dispatch | tool={tool_name} | error={e}")
+            logger.error(f"ToolExecutor file_read | error={e}")
             return AgentResult(
                 summary=f"文件操作失败: {e}",
                 status="error",
                 error_message=str(e),
                 metadata={"retryable": False},
+            )
+
+    async def _file_read_data(
+        self, args: Dict[str, Any], settings: Any, file_type: str,
+    ) -> Any:
+        """数据文件读取：Excel 结构化 / SQL 查询 / CSV-Parquet profile。"""
+        from services.agent.agent_result import AgentResult
+
+        # Excel 无 sql → 结构化读取（公式+编号）
+        if file_type == "excel" and not args.get("sql"):
+            try:
+                from services.agent.excel_reader import read_excel_structured
+                from core.workspace import resolve_staging_dir
+                staging_dir = resolve_staging_dir(
+                    settings.file_workspace_root,
+                    self.user_id, self.org_id, self.conversation_id,
+                )
+                return await read_excel_structured(
+                    args["path"], args.get("sheet"), staging_dir,
+                )
+            except Exception as e:
+                logger.error(f"Excel structured read failed, fallback to DuckDB | error={e}")
+                # 降级到 DataQueryExecutor
+
+        # SQL 查询 / CSV-Parquet profile / Excel 降级
+        try:
+            from services.agent.data_query_executor import DataQueryExecutor
+            dq_executor = DataQueryExecutor(
+                user_id=self.user_id,
+                org_id=self.org_id,
+                conversation_id=self.conversation_id,
+                workspace_root=settings.file_workspace_root,
+            )
+            result = await dq_executor.execute(
+                file=args["path"],
+                sql=args.get("sql"),
+                sheet=args.get("sheet"),
+            )
+            if dq_executor.last_file_meta:
+                self._pending_schemas.append(dq_executor.last_file_meta)
+            self._register_staging_files(result)
+            return result
+        except Exception as e:
+            logger.error(f"DataQueryExecutor failed | error={e}")
+            return AgentResult(
+                summary=f"数据文件读取失败: {e}",
+                status="error",
+                error_message=str(e),
             )
 
     async def _get_or_extract_metadata(self, abs_path: str) -> Optional[Dict]:

@@ -2177,7 +2177,11 @@
       "Bash(grep -r \"accessToken\\\\|refreshToken\\\\|expiresIn\\\\|session\" /Users/wucong/EVERYDAYAIONE/backend -path \"*/venv\" -prune -o -type f -name \"*.py\" -print)",
       "Bash(PYTHONPATH=backend backend/venv/bin/python3 -c \"from services.handlers.ecom_image_handler import EcomImageHandler; print\\('import ok'\\)\")",
       "Bash(grep -E \"\\\\.\\(py|md|txt\\)$\")",
-      "Bash(./git-push.sh \"feat: 快麦ERP Token主动续期——20天定时refresh+28天兜底告警\")"
+      "Bash(./git-push.sh \"feat: 快麦ERP Token主动续期——20天定时refresh+28天兜底告警\")",
+      "Bash(PYTHONPATH=backend backend/venv/bin/python3 -c \"from services.handlers.ecom_image_handler import EcomImageHandler; print\\('ok'\\)\")",
+      "Bash(PYTHONPATH=backend backend/venv/bin/python3 -m pytest backend/tests/test_ecom_image_handler.py backend/tests/test_image_ecom.py -q --tb=short)",
+      "Bash(grep -l \"data_query\" /Users/wucong/EVERYDAYAIONE/docs/document/*.md)",
+      "Bash(./git-push.sh \"feat: file_read统一工具——合并data_query+Excel结构化读取+DOCX结构化标注\")"
     ],
     "additionalDirectories": [
       "/tmp"

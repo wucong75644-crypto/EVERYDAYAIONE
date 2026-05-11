@@ -359,7 +359,9 @@ class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteE
         if not self._is_text_file(target):
             _data_exts = {".xlsx", ".xls", ".csv", ".tsv", ".parquet"}
             if ext in _data_exts:
-                return f"数据文件请用 data_query 读取: data_query(file=\"{path}\")"
+                # 数据文件由 file_tool_mixin._file_read_data 拦截处理
+                # 走到这里说明 detect_file_type 未识别，返回提示
+                return f"数据文件请用 file_read 读取: file_read(path=\"{path}\")"
             return (
                 f"二进制文件: {path}（{self._format_size(size)}）\n"
                 f"类型: {mimetypes.guess_type(str(target))[0] or '未知'}\n"

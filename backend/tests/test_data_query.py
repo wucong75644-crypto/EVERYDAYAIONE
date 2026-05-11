@@ -133,7 +133,7 @@ class TestExploreMode:
         assert "order_no" in result.summary
         assert "amount" in result.summary
         assert "[查询]" in result.summary
-        assert "data_query" in result.summary
+        assert "file_read" in result.summary
 
     @pytest.mark.asyncio
     async def test_explore_csv(self, executor, sample_csv):
@@ -554,41 +554,41 @@ class TestExcelCache:
 
 
 class TestToolRegistration:
-    """工具在各注册表中正确配置"""
+    """data_query 已合并到 file_read，验证 file_read 包含数据查询能力"""
 
-    def test_in_concurrent_safe(self):
+    def test_file_read_in_concurrent_safe(self):
         from config.chat_tools import is_concurrency_safe
-        assert is_concurrency_safe("data_query")
+        assert is_concurrency_safe("file_read")
 
-    def test_in_core_tools(self):
+    def test_file_read_in_core_tools(self):
         from config.chat_tools import _CORE_TOOLS
-        assert "data_query" in _CORE_TOOLS
+        assert "file_read" in _CORE_TOOLS
 
-    def test_in_tool_domains(self):
+    def test_file_read_in_tool_domains_shared(self):
         from config.tool_domains import TOOL_DOMAINS, ToolDomain
-        assert TOOL_DOMAINS["data_query"] == ToolDomain.SHARED
+        assert TOOL_DOMAINS["file_read"] == ToolDomain.SHARED
 
     def test_safety_level_safe(self):
         from config.chat_tools import get_safety_level, SafetyLevel
-        assert get_safety_level("data_query") == SafetyLevel.SAFE
+        assert get_safety_level("file_read") == SafetyLevel.SAFE
 
-    def test_tool_schema_in_common_tools(self):
-        from config.common_tools import build_common_tools
-        tools = build_common_tools()
-        names = [t["function"]["name"] for t in tools]
-        assert "data_query" in names
+    def test_file_read_has_sql_param(self):
+        from config.file_tools import build_file_tools
+        tools = build_file_tools()
+        fr = [t for t in tools if t["function"]["name"] == "file_read"][0]
+        assert "sql" in fr["function"]["parameters"]["properties"]
 
-    def test_tool_in_erp_domain(self):
+    def test_file_read_in_erp_domain(self):
         from config.phase_tools import build_domain_tools
         erp_tools = build_domain_tools("erp")
         names = [t["function"]["name"] for t in erp_tools]
-        assert "data_query" in names
+        assert "file_read" in names
 
-    def test_tool_in_computer_domain(self):
+    def test_file_read_in_computer_domain(self):
         from config.phase_tools import build_domain_tools
         computer_tools = build_domain_tools("computer")
         names = [t["function"]["name"] for t in computer_tools]
-        assert "data_query" in names
+        assert "file_read" in names
 
 
 # ============================================================
@@ -597,38 +597,32 @@ class TestToolRegistration:
 
 
 class TestPromptChanges:
-    """提示词正确更新"""
+    """提示词已从 data_query 更新为 file_read"""
 
-    def test_tool_system_prompt_has_data_query(self):
+    def test_tool_system_prompt_has_file_read(self):
         from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "data_query" in TOOL_SYSTEM_PROMPT
-        assert "FROM data" in TOOL_SYSTEM_PROMPT
+        assert "file_read" in TOOL_SYSTEM_PROMPT
 
-    def test_code_execute_prompt_updated(self):
+    def test_code_execute_prompt_uses_file_read(self):
         from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "data_query SQL 筛选" in TOOL_SYSTEM_PROMPT or \
-               "data_query" in TOOL_SYSTEM_PROMPT
+        assert "file_read" in TOOL_SYSTEM_PROMPT
 
-    def test_code_routing_prompt_has_data_query(self):
-        from config.code_tools import CODE_ROUTING_PROMPT
-        assert "data_query" in CODE_ROUTING_PROMPT
-
-    def test_base_agent_prompt_updated(self):
+    def test_base_agent_prompt_uses_file_read(self):
         from config.phase_tools import BASE_AGENT_PROMPT
-        assert "data_query" in BASE_AGENT_PROMPT
+        assert "file_read" in BASE_AGENT_PROMPT
 
     def test_data_profile_query_hint(self):
-        """data_profile 输出 [查询] 而非 [读取]"""
+        """data_profile 输出 [查询] 引用 file_read"""
         df = pd.DataFrame({"a": [1, 2, 3]})
         from services.agent.data_profile import build_data_profile
         text, _ = build_data_profile(df, "test.parquet", 1.0)
         assert "[查询]" in text
-        assert "data_query" in text
+        assert "file_read" in text
         assert "[读取]" not in text
 
     def test_description_workspace_updated(self):
         from config.code_tools import _DESCRIPTION_WORKSPACE
-        assert "data_query" in _DESCRIPTION_WORKSPACE
+        assert "file_read" in _DESCRIPTION_WORKSPACE
         assert "ERP 数据由 erp_agent" not in _DESCRIPTION_WORKSPACE
 
     def test_description_base_no_data_query(self):
@@ -789,7 +783,7 @@ class TestExploreReturnsPaths:
         result = await executor.execute(file="test.csv")
         assert not result.is_failure
         assert '后续操作:' in result.summary
-        assert 'data_query(file="test.csv"' in result.summary
+        assert 'file_read(path="test.csv"' in result.summary
         assert 'SELECT * FROM data' in result.summary
 
     @pytest.mark.asyncio
@@ -826,7 +820,7 @@ class TestExploreReturnsPaths:
             workspace_root=tmp_workspace["root"],
         )
         result = await executor.execute(file="report.csv")
-        assert 'data_query(file="数据/report.csv"' in result.summary
+        assert 'file_read(path="数据/report.csv"' in result.summary
 
 
 # ============================================================

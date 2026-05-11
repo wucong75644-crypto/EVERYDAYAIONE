@@ -474,14 +474,14 @@ class TestBinaryFileRegression:
         Path(workspace, "report.xlsx").write_bytes(b"PK\x03\x04")
         result = await executor.file_read("report.xlsx")
         assert isinstance(result, str)
-        assert "data_query" in result  # 数据文件引导到 data_query
+        assert "file_read" in result  # 数据文件引导到 file_read
 
     @pytest.mark.asyncio
     async def test_parquet_rejected(self, executor, workspace):
         Path(workspace, "data.parquet").write_bytes(b"PAR1" + b"\x00" * 100)
         result = await executor.file_read("data.parquet")
         assert isinstance(result, str)
-        assert "data_query" in result  # 数据文件引导到 data_query
+        assert "file_read" in result  # 数据文件引导到 file_read
 
     @pytest.mark.asyncio
     async def test_docx_invalid_file(self, executor, workspace):
@@ -616,6 +616,86 @@ class TestChatHandlerTypeRecognition:
         result = FileReadResult(type="image", text="", image_url="http://x.png")
         summary = result.text[:100]
         assert summary == ""
+
+
+# ============================================================
+# 7. DOCX 结构化标注
+# ============================================================
+
+
+def _make_structured_docx(path):
+    """创建带标题+段落+表格的测试 DOCX"""
+    from docx import Document
+    doc = Document()
+    doc.add_heading("接口文档", level=1)
+    doc.add_paragraph("这是正文段落")
+    doc.add_heading("请求参数", level=2)
+
+    table = doc.add_table(rows=3, cols=3)
+    table.cell(0, 0).text = "名称"
+    table.cell(0, 1).text = "类型"
+    table.cell(0, 2).text = "描述"
+    table.cell(1, 0).text = "pageNo"
+    table.cell(1, 1).text = "Integer"
+    table.cell(1, 2).text = "页码"
+    table.cell(2, 0).text = "pageSize"
+    table.cell(2, 1).text = "Integer"
+    table.cell(2, 2).text = "每页条数"
+
+    doc.add_paragraph("附件请参考。")
+    doc.save(str(path))
+
+
+class TestDocxStructuredRead:
+    """DOCX 结构化标注：[Heading]/[Normal] + 表格行号"""
+
+    @pytest.mark.asyncio
+    async def test_heading_annotation(self, executor, workspace):
+        path = Path(workspace, "test.docx")
+        _make_structured_docx(path)
+        result = await executor.file_read("test.docx")
+        assert "[Heading 1] 接口文档" in result
+        assert "[Heading 2] 请求参数" in result
+
+    @pytest.mark.asyncio
+    async def test_normal_annotation(self, executor, workspace):
+        path = Path(workspace, "test.docx")
+        _make_structured_docx(path)
+        result = await executor.file_read("test.docx")
+        assert "[Normal] 这是正文段落" in result
+        assert "[Normal] 附件请参考。" in result
+
+    @pytest.mark.asyncio
+    async def test_table_with_row_numbers(self, executor, workspace):
+        path = Path(workspace, "test.docx")
+        _make_structured_docx(path)
+        result = await executor.file_read("test.docx")
+        assert "=== 表格 1 (3行 x 3列) ===" in result
+        assert "Row1:" in result
+        assert "Row2:" in result
+        assert "pageNo" in result
+
+    @pytest.mark.asyncio
+    async def test_document_order_interleaved(self, executor, workspace):
+        """段落和表格按文档顺序交错输出"""
+        path = Path(workspace, "test.docx")
+        _make_structured_docx(path)
+        result = await executor.file_read("test.docx")
+        # 顺序：Heading 1 → Normal → Heading 2 → 表格 → Normal
+        h1_pos = result.index("[Heading 1]")
+        normal_pos = result.index("[Normal] 这是正文段落")
+        table_pos = result.index("=== 表格 1")
+        last_normal_pos = result.index("[Normal] 附件请参考")
+        assert h1_pos < normal_pos < table_pos < last_normal_pos
+
+    @pytest.mark.asyncio
+    async def test_para_and_table_counts(self, executor, workspace):
+        """段落数和表格数正确"""
+        path = Path(workspace, "test.docx")
+        _make_structured_docx(path)
+        result = await executor.file_read("test.docx")
+        assert "段落数: 4" in result  # 2 headings + 2 paragraphs
+        assert "表格数: 1" in result
 
 
 # ============================================================

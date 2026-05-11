@@ -158,7 +158,7 @@ class ChatToolMixin:
                     conversation_id, result, tc["name"],
                 )
 
-        # 收集 str 工具的 schema（data_query / fetch_all_pages 等）→ 对话级 registry
+        # 收集 str 工具的 schema（file_read / fetch_all_pages 等）→ 对话级 registry
         if executor._pending_schemas:
             self._register_schemas_from_tools(
                 conversation_id, executor._pending_schemas,
@@ -219,7 +219,7 @@ class ChatToolMixin:
             )
             # domain 用 filename 保证同秒注册多文件时 key 不冲突
             safe_name = filename.replace(":", "_")[:30]
-            tmp.register(f"ws:{safe_name}", "data_query", ref, schema_text=schema_text)
+            tmp.register(f"ws:{safe_name}", "file_read", ref, schema_text=schema_text)
 
         added_keys = save_conversation_registry(conversation_id, tmp)
 

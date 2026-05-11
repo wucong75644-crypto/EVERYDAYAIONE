@@ -858,12 +858,12 @@ def _format_standard(
         sheet_parts = [f"{s['name']}({s['rows']}行)" for s in sheets]
         lines.append(f"\n📑 多 Sheet: {', '.join(sheet_parts)}")
         lines.append(f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
-                     f"读其他 Sheet: data_query(file='{wp}', sheet='Sheet名')")
+                     f"读其他 Sheet: file_read(path='{wp}', sheet='Sheet名')")
 
     # 读取指引（自动带正确参数）
     read_cmd = _build_read_command(wp, meta)
     if read_cmd:
-        lines.append(f"\n用 data_query 分析: {read_cmd}")
+        lines.append(f"\n用 file_read 分析: {read_cmd}")
 
     return "\n".join(lines)
 
@@ -922,20 +922,20 @@ def _format_compact(
 
 
 def _build_read_command(wp: str, meta: Dict[str, Any]) -> str:
-    """根据文件类型和元信息生成 data_query 读取命令
+    """根据文件类型和元信息生成 file_read 读取命令
 
     核心设计：元信息提取发现的特殊情况（Sheet 名）
     自动反映到读取命令中，AI 复制即可用，不需要自己猜参数。
-    表头行由 data_query 内部自动检测，无需暴露给 LLM。
+    表头行由 file_read 内部自动检测，无需暴露给 LLM。
     """
-    params = [f"file=\"{wp}\""]
+    params = [f"path=\"{wp}\""]
 
     # 多 sheet 时提示 sheet 参数
     sheets = meta.get("sheets")
     if sheets and len(sheets) > 1:
         params.append(f"sheet=\"{sheets[0]['name']}\"")
 
-    return f"data_query({', '.join(params)})"
+    return f"file_read({', '.join(params)})"
 
 
 def _format_document_entry(
