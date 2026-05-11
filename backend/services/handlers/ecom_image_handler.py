@@ -55,6 +55,18 @@ class EcomImageHandler(ImageHandler):
 
         # Phase 1：没有方案 → 调 ImageAgent 策划方案
         task_id = metadata.client_task_id if metadata else message_id
+
+        # 先保存 task 到 DB（前端 WS 订阅需要 task 存在）
+        task_data = self._build_task_data(
+            task_id=task_id, message_id=message_id,
+            conversation_id=conversation_id, user_id=user_id,
+            task_type="image_ecom", status="running",
+            model_id="qwen-vl-max",
+            request_params={"phase": "plan"},
+            metadata=metadata,
+        )
+        self.db.table("tasks").insert(task_data).execute()
+
         # 后台异步执行（start 立刻返回，不阻塞 HTTP 响应）
         asyncio.create_task(self._phase1_plan(
             message_id, conversation_id, user_id, content, params, task_id,
@@ -130,6 +142,11 @@ class EcomImageHandler(ImageHandler):
                 credits_consumed=0,
             )
             await ws_manager.send_to_task_or_user(task_id, user_id, ws_msg)
+
+            # 更新 task 状态为完成
+            self.db.table("tasks").update(
+                {"status": "completed"}
+            ).eq("task_id", task_id).execute()
 
             logger.info(
                 f"EcomImageHandler Phase1 done | message_id={message_id} "
