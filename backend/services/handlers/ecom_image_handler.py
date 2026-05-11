@@ -60,7 +60,7 @@ class EcomImageHandler(ImageHandler):
         task_data = self._build_task_data(
             task_id=task_id, message_id=message_id,
             conversation_id=conversation_id, user_id=user_id,
-            task_type="image_ecom", status="running",
+            task_type="image", status="running",  # DB check 约束只允许 chat/image/video
             model_id="qwen-vl-max",
             request_params={"phase": "plan"},
             metadata=metadata,
