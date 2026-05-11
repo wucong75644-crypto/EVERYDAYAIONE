@@ -27,6 +27,7 @@ import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
+import EcomPlanBlock from './EcomPlanBlock';
 import ChartBlock from './ChartBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
@@ -593,6 +594,21 @@ export default memo(function MessageItem({
                   if (part.type === 'form') {
                     const fp = part as import('../../../types/message').FormPart;
                     return <FormBlock key={fp.form_id} form={fp} />;
+                  }
+                  if (part.type === 'ecom_plan') {
+                    const ep = part as import('../../../types/message').EcomPlanPart;
+                    return (
+                      <EcomPlanBlock
+                        key={`ecom-plan-${idx}`}
+                        plan={ep}
+                        onConfirm={(images) => {
+                          // 触发图片生成：dispatch 自定义事件，InputArea 监听
+                          window.dispatchEvent(new CustomEvent('ecom:confirm-generate', {
+                            detail: { images, conversationId: message.conversation_id },
+                          }));
+                        }}
+                      />
+                    );
                   }
                   return null;
                 })}

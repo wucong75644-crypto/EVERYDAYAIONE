@@ -24,8 +24,7 @@ import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
 import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
-import { EcomProductForm, type EcomFormData } from './EcomProductForm';
-import { EcomPlanCards, syncTextToPrompt, type ImageTask } from './EcomPlanCards';
+import { type ImageTask } from './EcomPlanCards';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
 
@@ -101,10 +100,8 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // 电商图模式 v2：方案策划相关状态
+  // 电商图模式 v2：方案卡片数据（用户确认后触发生成）
   const [imageTaskMeta, setImageTaskMeta] = useState<ImageTask[] | null>(null);
-  const [costEstimate, setCostEstimate] = useState<{estimated_credits: number; image_count: number} | null>(null);
-  const [ecomPlan, setEcomPlan] = useState<{productInsight: string; visualStrategy: string} | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -491,22 +488,103 @@ export default function InputArea({
       // 发送消息（使用真实对话 ID）
       // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
       if (isEcomMode) {
-        // 电商图模式 v2：走专用 EcomImageHandler
-        await handleImageGeneration(
-          currentConversationId!,
-          messageContent,
-          imageUrls,
-          {
-            generation_type_override: 'image_ecom',
-            image_task_meta: imageTaskMeta,
-            num_images: imageTaskMeta?.length || 1,
-            product_image_urls: imageUrls,
-            style_ref_urls: [],
-          },
-        );
-        setImageTaskMeta(null);
-        setCostEstimate(null);
-        setEcomPlan(null);
+        // 电商图模式 v2：对话式流程
+        if (imageTaskMeta) {
+          // 有方案 → 用户已确认，直接生成图片
+          await handleImageGeneration(
+            currentConversationId!,
+            messageContent,
+            imageUrls,
+            {
+              generation_type_override: 'image_ecom',
+              image_task_meta: imageTaskMeta,
+              num_images: imageTaskMeta.length,
+              product_image_urls: imageUrls,
+              style_ref_urls: [],
+            },
+          );
+          setImageTaskMeta(null);
+        } else {
+          // 没有方案 → 调 enhance API 获取方案，结果走聊天消息展示
+          setIsEnhancing(true);
+          try {
+            const { data } = await api.post('/ecom-image/enhance-prompt', {
+              product_name: messageContent,
+              image_urls: uploadedImageUrls,
+              platform: 'taobao',
+              text: messageContent,
+              conversation_id: currentConversationId || '',
+            }, { timeout: 90000 });
+
+            if (data.guide_message) {
+              // 信息不足 → 显示引导消息
+              onMessagePending({
+                id: `user-${Date.now()}`,
+                role: 'user',
+                content: messageContent,
+                created_at: new Date().toISOString(),
+                conversation_id: currentConversationId!,
+              } as Message);
+              onMessagePending({
+                id: `guide-${Date.now()}`,
+                role: 'assistant',
+                content: data.guide_message,
+                created_at: new Date().toISOString(),
+                conversation_id: currentConversationId!,
+              } as Message);
+            } else if (data._parse_failed || data.error) {
+              // 解析失败或后端错误 → 显示错误消息
+              onMessagePending({
+                id: `user-${Date.now()}`,
+                role: 'user',
+                content: messageContent,
+                created_at: new Date().toISOString(),
+                conversation_id: currentConversationId!,
+              } as Message);
+              onMessagePending({
+                id: `error-${Date.now()}`,
+                role: 'assistant',
+                content: data.error || '方案生成失败，请重试',
+                created_at: new Date().toISOString(),
+                conversation_id: currentConversationId!,
+              } as Message);
+            } else if (data.images && data.images.length > 0) {
+              // 方案生成成功 → 显示用户消息 + 方案卡片消息
+              onMessagePending({
+                id: `user-${Date.now()}`,
+                role: 'user',
+                content: messageContent,
+                created_at: new Date().toISOString(),
+                conversation_id: currentConversationId!,
+              } as Message);
+              onMessagePending({
+                id: `ecom-plan-${Date.now()}`,
+                role: 'assistant',
+                content: [{
+                  type: 'ecom_plan',
+                  product_insight: data.product_insight || '',
+                  visual_strategy: data.visual_strategy || '',
+                  images: data.images,
+                  cost_estimate: data.cost_estimate,
+                }],
+                created_at: new Date().toISOString(),
+                conversation_id: currentConversationId!,
+              } as Message);
+            } else {
+              // 信息不足 → 走普通聊天让 AI 引导补充
+              await handleChatMessage(
+                messageContent,
+                currentConversationId!,
+                imageUrls,
+                fileData,
+              );
+            }
+          } catch {
+            toast.error('方案生成失败，请重试');
+          } finally {
+            setIsEnhancing(false);
+          }
+        }
       } else if (effectiveModelType === 'chat') {
         // 聊天消息
         await handleChatMessage(
@@ -558,6 +636,29 @@ export default function InputArea({
       handleSubmit();
     }
   };
+
+  // 监听电商图方案确认事件 → 触发图片生成
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const { images, conversationId: cid } = (e as CustomEvent).detail || {};
+      if (!images || !cid) return;
+      try {
+        const imgUrls = uploadedImageUrls.length > 0 ? uploadedImageUrls : [];
+        await handleImageGeneration(cid, prompt || '电商主图生成', imgUrls, {
+          generation_type_override: 'image_ecom',
+          image_task_meta: images,
+          num_images: images.length,
+          product_image_urls: imgUrls,
+          style_ref_urls: [],
+        });
+      } catch (error) {
+        logger.error('inputArea', '电商图生成失败', error);
+        toast.error('图片生成失败，请重试');
+      }
+    };
+    window.addEventListener('ecom:confirm-generate', handler);
+    return () => window.removeEventListener('ecom:confirm-generate', handler);
+  }, [conversationId, prompt, uploadedImageUrls, handleImageGeneration]);
 
   // 监听建议按钮点击事件 → 自动发送
   useEffect(() => {
@@ -615,86 +716,23 @@ export default function InputArea({
           onRemoveImage={handleRemoveAllImages}
         />
 
-        {/* 电商图模式 v2：方案卡片（在输入区上方展示） */}
-        {isEcomMode && ecomPlan && imageTaskMeta && (
-          <div className="mb-3">
-            <EcomPlanCards
-              productInsight={ecomPlan.productInsight}
-              visualStrategy={ecomPlan.visualStrategy}
-              images={imageTaskMeta}
-              costEstimate={costEstimate}
-              onImageChange={(index, field, value) => {
-                setImageTaskMeta(prev => {
-                  if (!prev) return prev;
-                  const updated = [...prev];
-                  const img = { ...updated[index], [field]: value };
-                  // 同步文案到 prompt
-                  img.prompt = syncTextToPrompt(
-                    updated[index].prompt,
-                    field === 'title' ? value : img.title,
-                    field === 'subtitle' ? value : img.subtitle,
-                  );
-                  updated[index] = img;
-                  return updated;
-                });
-              }}
-              onConfirm={() => handleSubmit()}
-              onCancel={() => {
-                setImageTaskMeta(null);
-                setCostEstimate(null);
-                setEcomPlan(null);
-              }}
-              isSubmitting={isSubmitting}
-            />
+        {/* 电商图模式：输入引导提示 */}
+        {isEcomMode && !isEnhancing && !imageTaskMeta && (
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <span className="text-xs text-text-tertiary">
+              💡 上传产品图 + 描述产品信息后发送，AI 会为你策划主图方案
+            </span>
+          </div>
+        )}
+        {isEcomMode && isEnhancing && (
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <span className="text-xs text-accent animate-pulse">
+              ⏳ 正在分析产品并策划方案，请稍候...
+            </span>
           </div>
         )}
 
-        {/* 电商图模式 v2：产品信息表单（在方案生成前显示，替代 textarea） */}
-        {isEcomMode && !ecomPlan && (
-          <EcomProductForm
-            isEnhancing={isEnhancing}
-            hasProductImages={uploadedImageUrls.length > 0}
-            onSubmit={async (formData: EcomFormData) => {
-              if (isEnhancing) return;
-              setIsEnhancing(true);
-              try {
-                const { data } = await api.post('/ecom-image/enhance-prompt', {
-                  product_name: formData.productName,
-                  image_urls: uploadedImageUrls,
-                  platform: formData.platform,
-                  selling_points: formData.sellingPoints,
-                  price_info: formData.priceInfo,
-                  target_user: formData.targetUser,
-                  image_size: formData.imageSize,
-                  generate_detail: formData.generateDetail,
-                  conversation_id: conversationId || '',
-                  text: formData.productName,
-                }, { timeout: 60000 }); // 60s：主模型可能失败+fallback，总耗时可达40s+
-                if (data._parse_failed) {
-                  toast.error('AI 返回格式异常，请重试');
-                } else if (data.images && data.images.length > 0) {
-                  setImageTaskMeta(data.images);
-                  setCostEstimate(data.cost_estimate || null);
-                  setEcomPlan({
-                    productInsight: data.product_insight || '',
-                    visualStrategy: data.visual_strategy || '',
-                  });
-                  setPrompt(formData.productName);
-                } else if (data.error) {
-                  toast.error(data.error);
-                } else {
-                  toast.error('方案生成失败，请重试');
-                }
-              } catch {
-                toast.error('方案生成失败，请重试');
-              } finally {
-                setIsEnhancing(false);
-              }
-            }}
-          />
-        )}
-
-        {/* 主输入控件（ecom 模式下仍保留，用于图片上传和模型选择） */}
+        {/* 主输入控件 */}
         <InputControls
           prompt={prompt}
           onPromptChange={handlePromptChange}

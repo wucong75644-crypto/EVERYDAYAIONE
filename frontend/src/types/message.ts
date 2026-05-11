@@ -19,7 +19,8 @@ export type ContentPart =
   | ToolStepPart
   | ToolResultPart
   | FormPart
-  | ChartPart;
+  | ChartPart
+  | EcomPlanPart;
 
 export interface TextPart {
   type: 'text';
@@ -97,6 +98,26 @@ export interface FormPart {
   fields: FormField[];
   submit_text?: string;
   cancel_text?: string;
+}
+
+/** 电商图方案卡片内容块（用户确认后触发生成） */
+export interface EcomPlanPart {
+  type: 'ecom_plan';
+  product_insight: string;
+  visual_strategy: string;
+  images: EcomPlanImage[];
+  cost_estimate?: { estimated_credits: number; image_count: number };
+}
+
+export interface EcomPlanImage {
+  role: string;
+  purpose: string;
+  title: string;
+  subtitle: string;
+  prompt: string;
+  aspect_ratio: string;
+  has_text: boolean;
+  image_type: string;
 }
 
 /** 交互式图表内容块（ECharts 配置 JSON，前端 ChartBlock 渲染） */
