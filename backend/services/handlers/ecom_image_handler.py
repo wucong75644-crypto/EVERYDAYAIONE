@@ -146,7 +146,7 @@ class EcomImageHandler(ImageHandler):
             # 更新 task 状态为完成
             self.db.table("tasks").update(
                 {"status": "completed"}
-            ).eq("task_id", task_id).execute()
+            ).eq("client_task_id", task_id).execute()
 
             logger.info(
                 f"EcomImageHandler Phase1 done | message_id={message_id} "
