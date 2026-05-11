@@ -2182,7 +2182,8 @@
       "Bash(PYTHONPATH=backend backend/venv/bin/python3 -m pytest backend/tests/test_ecom_image_handler.py backend/tests/test_image_ecom.py -q --tb=short)",
       "Bash(grep -l \"data_query\" /Users/wucong/EVERYDAYAIONE/docs/document/*.md)",
       "Bash(./git-push.sh \"feat: file_read统一工具——合并data_query+Excel结构化读取+DOCX结构化标注\")",
-      "Bash(./git-push.sh \"fix: 输出格式对齐Claude——Excel公式值+Row标号+区域分隔+合并去重+PPTX结构化+PDF表格提取\")"
+      "Bash(./git-push.sh \"fix: 输出格式对齐Claude——Excel公式值+Row标号+区域分隔+合并去重+PPTX结构化+PDF表格提取\")",
+      "Bash(./git-push.sh \"fix: 工具引导对齐行业标准——description放使用细节+系统提示词只保留跨工具协作\")"
     ],
     "additionalDirectories": [
       "/tmp"
