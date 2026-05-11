@@ -164,8 +164,31 @@ async def enhance_prompt(
     builder = PromptBuilder()
 
     # v1 兼容：如果 product_name 为空但 text 有值，用 text 作为 product_name
-    product_name = req.product_name or req.text or "产品"
+    product_name = req.product_name or req.text or ""
     platform = req.platform
+
+    # 0. 信息充足判断：至少需要产品图 + 产品描述
+    missing = []
+    if not req.image_urls:
+        missing.append("产品图片（请上传至少1张产品照片）")
+    if not product_name.strip() or product_name.strip() == "产品":
+        missing.append("产品描述（请告诉我这是什么产品）")
+
+    if missing:
+        guide = "我需要以下信息来为你策划电商主图方案：\n\n"
+        for i, item in enumerate(missing, 1):
+            guide += f"{i}. {item}\n"
+        guide += "\n💡 示例：上传产品图后输入「221色拼豆收纳盒 淘宝5张主图 核心卖点大容量分类收纳」"
+        return {
+            "guide_message": guide,
+            "images": [],
+            "product_insight": "",
+            "visual_strategy": "",
+            "cost_estimate": None,
+            "platform": platform,
+            "enhanced_prompt": "",
+            "style_directive": "",
+        }
 
     # 1. 风格管理：读取已有风格（用于多轮对话风格延续）
     existing_style: str | None = None

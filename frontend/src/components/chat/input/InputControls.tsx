@@ -348,24 +348,23 @@ export default function InputControls(props: InputControlsProps) {
           />
         )}
 
-        {/* 输入区域（ecom v2 模式下隐藏 textarea，由 EcomProductForm 替代） */}
-        {smartSubMode !== 'image-ecom' && (
-          <div className="flex items-start gap-2">
-            <textarea
-              ref={textareaRef}
-              name="chat-input"
-              value={prompt}
-              onChange={(e) => {
-                onPromptChange(e.target.value);
-                onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
-              }}
-              onKeyDown={onKeyDown}
-              placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : '发送消息...'}
-              className="flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
-              rows={1}
-              disabled={isSubmitting}
-            />
-          </div>
+        {/* 输入区域 */}
+        <div className="flex items-start gap-2">
+          <textarea
+            ref={textareaRef}
+            name="chat-input"
+            value={prompt}
+            onChange={(e) => {
+              onPromptChange(e.target.value);
+              onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
+            onKeyDown={onKeyDown}
+            placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述你的产品和需求，如"221色拼豆收纳盒 淘宝5张主图"' : '发送消息...'}
+            className="flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
+            rows={1}
+            disabled={isSubmitting}
+          />
+        </div>
         )}
 
         {/* 底部工具栏 */}
