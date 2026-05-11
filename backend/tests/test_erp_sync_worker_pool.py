@@ -385,3 +385,30 @@ class TestThrottledKitRefresh:
             await pool._throttled_kit_refresh()
 
         pool.db.pool.connection.assert_not_called()
+
+
+# ── _run_token_refresh ──────────────────────────────
+
+
+class TestRunTokenRefresh:
+
+    @pytest.mark.asyncio
+    async def test_refresh_success(self):
+        """refresh_token 返回 True → 正常完成，不抛异常"""
+        pool = _make_pool()
+        mock_client = AsyncMock()
+        mock_client.refresh_token = AsyncMock(return_value=True)
+
+        await pool._run_token_refresh("org-123", mock_client)
+
+        mock_client.refresh_token.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_raises(self):
+        """refresh_token 返回 False → 抛 RuntimeError，触发重试"""
+        pool = _make_pool()
+        mock_client = AsyncMock()
+        mock_client.refresh_token = AsyncMock(return_value=False)
+
+        with pytest.raises(RuntimeError, match="Token proactive refresh failed"):
+            await pool._run_token_refresh("org-123", mock_client)

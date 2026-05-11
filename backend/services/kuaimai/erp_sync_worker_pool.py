@@ -213,7 +213,9 @@ class ErpSyncWorkerPool:
         )
 
         try:
-            if sync_type == "daily_maintenance":
+            if sync_type == "token_refresh":
+                await self._run_token_refresh(org_id, client)
+            elif sync_type == "daily_maintenance":
                 await self._run_daily_maintenance(
                     org_id, client, extend_fn,
                 )
@@ -374,6 +376,28 @@ class ErpSyncWorkerPool:
             logger.debug("Kit stock materialized view refreshed")
         except Exception as e:
             logger.warning(f"Kit stock refresh failed | error={e}")
+
+    # ── Token 主动续期 ─────────────────────────────────
+
+    async def _run_token_refresh(
+        self, org_id: str | None, client,
+    ) -> None:
+        """主动调用 refresh_token 续期，成功才算任务完成。
+
+        失败时抛异常，让 _process_task 走 error 路径 →
+        Scheduler 下轮 60s 后重新入队重试。
+        refresh 成功后 update_erp_token 会更新 org_configs.updated_at，
+        相当于重置计时器，下次要再过 20 天才会入队。
+        """
+        ok = await client.refresh_token()
+        if ok:
+            logger.info(
+                f"Token proactive refresh succeeded | org={org_id}"
+            )
+        else:
+            raise RuntimeError(
+                f"Token proactive refresh failed | org={org_id}"
+            )
 
     # ── Client 创建 ───────────────────────────────────
 
