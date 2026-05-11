@@ -5,7 +5,7 @@ ErpSyncScheduler 单元测试
 
 import pytest
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
@@ -312,3 +312,116 @@ class TestReconcileScheduling:
 
         s.mark_completed("org1", "aftersale_reconcile")
         assert "org1" in s._org_last_aftersale_reconcile
+
+
+# ── _parse_utc_timestamp ────────────────────────────
+
+
+class TestParseUtcTimestamp:
+
+    def test_none_returns_none(self):
+        from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
+        assert _parse_utc_timestamp(None) is None
+
+    def test_iso_string_with_tz(self):
+        from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
+        result = _parse_utc_timestamp("2026-05-01T12:00:00+00:00")
+        assert result.tzinfo is not None
+        assert result.year == 2026
+        assert result.month == 5
+
+    def test_iso_string_without_tz(self):
+        """无时区的 ISO 字符串应被当作 UTC"""
+        from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
+        result = _parse_utc_timestamp("2026-05-01T12:00:00")
+        assert result.tzinfo == timezone.utc
+
+    def test_datetime_object_naive(self):
+        """naive datetime 应被补上 UTC"""
+        from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
+        dt = datetime(2026, 5, 1, 12, 0, 0)
+        result = _parse_utc_timestamp(dt)
+        assert result.tzinfo == timezone.utc
+
+    def test_datetime_object_aware(self):
+        """aware datetime 保持原样"""
+        from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
+        dt = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        result = _parse_utc_timestamp(dt)
+        assert result is dt
+
+
+# ── _check_token_refresh ────────────────────────────
+
+
+class TestCheckTokenRefresh:
+
+    def _make_scheduler(self):
+        with patch("services.kuaimai.erp_sync_scheduler.get_settings") as mock:
+            settings = MagicMock()
+            settings.erp_sync_interval = 60
+            settings.erp_sync_queue_key = "erp_tasks"
+            settings.erp_sync_worker_count = 10
+            mock.return_value = settings
+            from services.kuaimai.erp_sync_scheduler import ErpSyncScheduler
+            s = ErpSyncScheduler(db=MagicMock())
+        return s
+
+    @pytest.mark.asyncio
+    async def test_enqueues_when_token_old(self):
+        """token 年龄 ≥ 20 天时应入队 token_refresh"""
+        s = self._make_scheduler()
+        old_time = (datetime.now(timezone.utc) - timedelta(days=25)).isoformat()
+        mock_result = MagicMock()
+        mock_result.data = [{"org_id": "org-a", "updated_at": old_time}]
+        s.db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute = AsyncMock(return_value=mock_result)
+        s._enqueue_task = AsyncMock(return_value=True)
+
+        await s._check_token_refresh(["org-a"])
+
+        s._enqueue_task.assert_called_once_with("org-a", "token_refresh")
+
+    @pytest.mark.asyncio
+    async def test_skips_when_token_fresh(self):
+        """token 年龄 < 20 天时不入队"""
+        s = self._make_scheduler()
+        fresh_time = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        mock_result = MagicMock()
+        mock_result.data = [{"org_id": "org-a", "updated_at": fresh_time}]
+        s.db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute = AsyncMock(return_value=mock_result)
+        s._enqueue_task = AsyncMock()
+
+        await s._check_token_refresh(["org-a"])
+
+        s._enqueue_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_none_org(self):
+        """org_id=None（散客）直接跳过"""
+        s = self._make_scheduler()
+        s._enqueue_task = AsyncMock()
+
+        await s._check_token_refresh([None])
+
+        s._enqueue_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_db_error_silent(self):
+        """DB 查询失败不抛异常"""
+        s = self._make_scheduler()
+        s.db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute = AsyncMock(
+            side_effect=Exception("db down")
+        )
+
+        await s._check_token_refresh(["org-a"])  # Should not raise
+
+
+# ── token_refresh 优先级 ────────────────────────────
+
+
+class TestTokenRefreshPriority:
+
+    def test_token_refresh_has_highest_priority(self):
+        from services.kuaimai.erp_sync_scheduler import PRIORITY_WEIGHTS
+        assert "token_refresh" in PRIORITY_WEIGHTS
+        assert PRIORITY_WEIGHTS["token_refresh"] == max(PRIORITY_WEIGHTS.values())

@@ -8,12 +8,16 @@ score = timestamp - priority_weight，越小越先被 Worker 取出。
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 
 from core.config import get_settings
 from utils.time_context import now_cn
+
+# Token 主动续期阈值（秒）：token 年龄超过此值时入队 token_refresh 任务
+# 快麦 token 有效期 30 天，20 天续期 → 留 10 天缓冲（失败后每 60s 重试 = 14400 次机会）
+TOKEN_REFRESH_AGE_THRESHOLD = 20 * 86400  # 20 天
 
 # 同步类型优先级权重（越大 → score 越小 → 越先执行）
 PRIORITY_WEIGHTS: dict[str, int] = {
@@ -49,6 +53,8 @@ PRIORITY_WEIGHTS: dict[str, int] = {
     "tag": 0,
     "category": 0,
     "logistics_company": 0,
+    # Token 主动续期（最高优先级，保证 ERP 连接可用）
+    "token_refresh": 200,
 }
 
 # 高频同步类型（每轮都入队）
@@ -151,6 +157,9 @@ class ErpSyncScheduler:
 
         if self._first_round:
             self._first_round = False
+
+        # Token 主动续期检查（查 DB 判断 token 年龄）
+        await self._check_token_refresh(org_ids)
 
         # 队列积压检查
         await self._check_queue_depth()
@@ -329,6 +338,47 @@ class ErpSyncScheduler:
             logger.error(f"Failed to load ERP org IDs | error={e}")
             return []
 
+    async def _check_token_refresh(self, org_ids: list[str | None]) -> None:
+        """检查每个企业的 token 年龄，超过阈值则入队 token_refresh。
+
+        判断依据：org_configs 中 kuaimai_access_token 的 updated_at。
+        refresh 成功后 updated_at 会被 update_erp_token 重置为 NOW()，
+        所以只有真正 refresh 成功才会重置计时器。
+
+        单条 SQL 批量查所有企业，避免逐 org 查询（企业数增长时 N→1）。
+        """
+        real_org_ids = [oid for oid in org_ids if oid is not None]
+        if not real_org_ids:
+            return
+
+        try:
+            result = await (
+                self.db.table("org_configs")
+                .select("org_id, updated_at")
+                .eq("config_key", "kuaimai_access_token")
+                .in_("org_id", real_org_ids)
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"Token age batch query failed | error={e}")
+            return
+
+        now_utc = datetime.now(timezone.utc)
+        for row in (result.data or []):
+            org_id = str(row["org_id"])
+            updated_at = _parse_utc_timestamp(row["updated_at"])
+            if updated_at is None:
+                continue
+
+            age_seconds = (now_utc - updated_at).total_seconds()
+            if age_seconds >= TOKEN_REFRESH_AGE_THRESHOLD:
+                age_days = age_seconds / 86400
+                if await self._enqueue_task(org_id, "token_refresh"):
+                    logger.info(
+                        f"Token refresh enqueued | org={org_id} | "
+                        f"age={age_days:.1f}d"
+                    )
+
     async def _check_queue_depth(self) -> None:
         """队列积压告警"""
         try:
@@ -353,3 +403,17 @@ def parse_task_id(task_id: str) -> tuple[str | None, str]:
     org_id_str, sync_type = parts
     org_id = None if org_id_str == "__default__" else org_id_str
     return org_id, sync_type
+
+
+def _parse_utc_timestamp(value) -> datetime | None:
+    """将 Supabase 返回的 updated_at 解析为 UTC aware datetime。
+
+    Supabase 可能返回 ISO 字符串或 datetime 对象，时区信息可能缺失。
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value

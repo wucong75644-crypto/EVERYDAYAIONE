@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
@@ -37,6 +38,10 @@ DEDUPE_TTL = 3600  # 1 小时
 
 # 扫描间隔（秒）
 SCAN_INTERVAL = 300  # 5 分钟
+
+# Token 年龄兜底预警阈值（秒）：28 天
+# Scheduler 在 20 天时入队主动续期，如果到 28 天还没成功说明出了问题
+TOKEN_AGE_WARN_THRESHOLD = 28 * 86400
 
 # Redis 告警状态位前缀（供前端 AdminPanel 读取展示）
 ALERT_STATE_PREFIX = "erp_sync:alerts"
@@ -111,6 +116,40 @@ async def _scan_and_alert(db: Any) -> None:
     except Exception as e:
         logger.warning(
             f"ErpSyncHealthcheck persist_failure scan failed | error={e}"
+        )
+
+    # === 3) Token 年龄兜底预警（≥28 天仍未续期 = 主动续期失败）===
+    try:
+        from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
+
+        now_utc = datetime.now(timezone.utc)
+        token_rows = await (
+            db.table("org_configs")
+            .select("org_id, updated_at")
+            .eq("config_key", "kuaimai_access_token")
+            .execute()
+        )
+        for r in (token_rows.data or []):
+            org_id = str(r["org_id"])
+            updated_at = _parse_utc_timestamp(r["updated_at"])
+            if updated_at is None:
+                continue
+            age_seconds = (now_utc - updated_at).total_seconds()
+            if age_seconds >= TOKEN_AGE_WARN_THRESHOLD:
+                age_days = age_seconds / 86400
+                by_org.setdefault(org_id, []).append({
+                    "org_id": org_id,
+                    "sync_type": "token_expiry_warning",
+                    "error_count": ALERT_THRESHOLD,
+                    "last_error": (
+                        f"⚠️ ERP Token 即将过期（已 {age_days:.0f} 天未续期，"
+                        f"30 天到期）。主动续期可能失败，请检查或手动重新授权。"
+                    ),
+                    "last_run_at": None,
+                })
+    except Exception as e:
+        logger.warning(
+            f"ErpSyncHealthcheck token age scan failed | error={e}"
         )
 
     if not by_org:

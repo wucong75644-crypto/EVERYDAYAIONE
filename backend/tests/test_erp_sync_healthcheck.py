@@ -490,3 +490,53 @@ class TestPushTokenRefreshAlert:
             await push_token_refresh_alert("org-x", "err")
 
         mock_push.assert_called_once()
+
+
+# ── Token 年龄兜底预警 ──────────────────────────────────
+
+
+class TestTokenAgeWarning:
+
+    @pytest.mark.asyncio
+    async def test_old_token_triggers_warning(self, mock_redis_no_persist_failures):
+        """token 年龄 ≥ 28 天时应产出 token_expiry_warning 告警"""
+        from datetime import datetime, timedelta, timezone
+
+        old_time = (datetime.now(timezone.utc) - timedelta(days=29)).isoformat()
+        db = _DBStub({
+            "erp_sync_state": [],
+            "org_configs": [
+                {"org_id": "org-a", "updated_at": old_time},
+            ],
+        })
+        with patch(
+            "services.kuaimai.erp_sync_healthcheck._maybe_alert_org",
+            new_callable=AsyncMock,
+        ) as mock_alert:
+            await _scan_and_alert(db)
+
+        mock_alert.assert_called_once()
+        org_id = mock_alert.call_args.args[1]
+        items = mock_alert.call_args.args[2]
+        assert org_id == "org-a"
+        assert any(i["sync_type"] == "token_expiry_warning" for i in items)
+
+    @pytest.mark.asyncio
+    async def test_fresh_token_no_warning(self, mock_redis_no_persist_failures):
+        """token 年龄 < 28 天时不产出告警"""
+        from datetime import datetime, timedelta, timezone
+
+        fresh_time = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        db = _DBStub({
+            "erp_sync_state": [],
+            "org_configs": [
+                {"org_id": "org-a", "updated_at": fresh_time},
+            ],
+        })
+        with patch(
+            "services.kuaimai.erp_sync_healthcheck._maybe_alert_org",
+            new_callable=AsyncMock,
+        ) as mock_alert:
+            await _scan_and_alert(db)
+
+        mock_alert.assert_not_called()

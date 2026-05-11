@@ -15,8 +15,7 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from schemas.message import GenerationType, MessageStatus
-from schemas.websocket_builders import build_message_done
+from schemas.message import GenerationType
 from services.handlers.image_handler import ImageHandler
 
 
@@ -86,11 +85,10 @@ class EcomImageHandler(ImageHandler):
         params: Dict[str, Any],
         task_id: str,
     ) -> None:
-        """后台异步：调 ImageAgent.ecom_plan → 写消息 → WS 推送。"""
+        """后台异步：调 ImageAgent.ecom_plan → 通过标准 on_complete 走已有消息完成流程。"""
         from services.agent.image.image_agent import ImageAgent
 
         try:
-            # 提取用户文本和图片
             user_text = self._extract_text_content(content)
             image_urls = self._extract_image_urls(content)
             platform = params.get("platform", "taobao")
@@ -106,11 +104,10 @@ class EcomImageHandler(ImageHandler):
                 platform=platform,
             )
 
-            # 根据结果构建消息内容
+            # 构建 content（和 ChatHandler 工具调用返回一样的格式）
             if result.status == "plan" and result.metadata.get("ecom_plan"):
-                # 方案成功 → 写 ecom_plan 消息
                 plan_data = result.metadata["ecom_plan"]
-                content_dicts = [{
+                result_content = [{
                     "type": "ecom_plan",
                     "product_insight": plan_data.get("product_insight", ""),
                     "visual_strategy": plan_data.get("visual_strategy", ""),
@@ -118,35 +115,11 @@ class EcomImageHandler(ImageHandler):
                     "cost_estimate": plan_data.get("cost_estimate"),
                 }]
             else:
-                # 信息不足或失败 → 写文本消息
-                content_dicts = [{"type": "text", "text": result.summary}]
+                result_content = [{"type": "text", "text": result.summary}]
 
-            # 写消息到 DB + 推送 WS
-            _, msg_data = self._upsert_assistant_message(
-                message_id=message_id,
-                conversation_id=conversation_id,
-                content_dicts=content_dicts,
-                status=MessageStatus.COMPLETED,
-                credits_cost=0,
-                client_task_id=task_id,
-                generation_type="image_ecom",
-                model_id="qwen-vl-max",
-            )
-
-            # 推送 message_done（前端替换占位消息为方案卡片或文本）
-            from services.websocket_manager import ws_manager
-            ws_msg = build_message_done(
-                task_id=task_id,
-                conversation_id=conversation_id,
-                message=msg_data,
-                credits_consumed=0,
-            )
-            await ws_manager.send_to_task_or_user(task_id, user_id, ws_msg)
-
-            # 更新 task 状态为完成
-            self.db.table("tasks").update(
-                {"status": "completed"}
-            ).eq("client_task_id", task_id).execute()
+            # 用标准的 on_complete 流程（和 ImageHandler/ChatHandler 一样）
+            # 内部自动：upsert 消息 + WS 推送 message_done + 更新 task 状态
+            await self.on_complete(task_id, result_content, credits_consumed=0)
 
             logger.info(
                 f"EcomImageHandler Phase1 done | message_id={message_id} "
@@ -157,27 +130,10 @@ class EcomImageHandler(ImageHandler):
             logger.opt(exception=True).error(
                 f"EcomImageHandler Phase1 failed | message_id={message_id} | error={e}"
             )
-            # 写错误消息
             try:
-                _, msg_data = self._upsert_assistant_message(
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    content_dicts=[{"type": "text", "text": f"方案生成失败：{e}"}],
-                    status=MessageStatus.COMPLETED,
-                    credits_cost=0,
-                    client_task_id=task_id,
-                    generation_type="image_ecom",
-                    model_id="qwen-vl-max",
-                    is_error=True,
-                )
-                from services.websocket_manager import ws_manager
-                ws_msg = build_message_done(
-                    task_id=task_id, conversation_id=conversation_id,
-                    message=msg_data, credits_consumed=0,
-                )
-                await ws_manager.send_to_task_or_user(task_id, user_id, ws_msg)
-            except Exception as push_err:
-                logger.error(f"Phase1 error push failed: {push_err}")
+                await self.on_error(task_id, "ECOM_PLAN_FAILED", str(e))
+            except Exception as err:
+                logger.error(f"Phase1 on_error failed: {err}")
 
     # ----------------------------------------------------------
     # Phase 2：批量生图（现有流程）
