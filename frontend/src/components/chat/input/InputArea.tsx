@@ -524,14 +524,14 @@ export default function InputArea({
                 content: messageContent,
                 created_at: new Date().toISOString(),
                 conversation_id: currentConversationId!,
-              } as Message);
+              } as unknown as Message);
               onMessagePending({
                 id: `guide-${Date.now()}`,
                 role: 'assistant',
                 content: data.guide_message,
                 created_at: new Date().toISOString(),
                 conversation_id: currentConversationId!,
-              } as Message);
+              } as unknown as Message);
             } else if (data._parse_failed || data.error) {
               // 解析失败或后端错误 → 显示错误消息
               onMessagePending({
@@ -540,14 +540,14 @@ export default function InputArea({
                 content: messageContent,
                 created_at: new Date().toISOString(),
                 conversation_id: currentConversationId!,
-              } as Message);
+              } as unknown as Message);
               onMessagePending({
                 id: `error-${Date.now()}`,
                 role: 'assistant',
                 content: data.error || '方案生成失败，请重试',
                 created_at: new Date().toISOString(),
                 conversation_id: currentConversationId!,
-              } as Message);
+              } as unknown as Message);
             } else if (data.images && data.images.length > 0) {
               // 方案生成成功 → 显示用户消息 + 方案卡片消息
               onMessagePending({
@@ -556,7 +556,7 @@ export default function InputArea({
                 content: messageContent,
                 created_at: new Date().toISOString(),
                 conversation_id: currentConversationId!,
-              } as Message);
+              } as unknown as Message);
               onMessagePending({
                 id: `ecom-plan-${Date.now()}`,
                 role: 'assistant',
@@ -569,7 +569,7 @@ export default function InputArea({
                 }],
                 created_at: new Date().toISOString(),
                 conversation_id: currentConversationId!,
-              } as Message);
+              } as unknown as Message);
             } else {
               // 信息不足 → 走普通聊天让 AI 引导补充
               await handleChatMessage(
