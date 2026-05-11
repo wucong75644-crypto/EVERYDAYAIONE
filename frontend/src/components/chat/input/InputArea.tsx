@@ -7,7 +7,6 @@
 import { useState, useEffect, useCallback } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
 import toast from 'react-hot-toast';
-import api from '../../../services/api';
 import { createConversation, updateConversation } from '../../../services/conversation';
 import { uploadAudio } from '../../../services/audio';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
