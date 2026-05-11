@@ -62,8 +62,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 搜索类
     "erp_api_search", "search_knowledge", "web_search",
     "social_crawler",
-    # 数据查询（只读，可并行）
-    "data_query",
+    # data_query 已合并到 file_read
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
     # 文件操作（只读）
@@ -172,7 +171,7 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 用 ask_user 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-data_query 只支持单文件查询。多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute 读取多个 staging 文件 merge。
+file_read 只支持单文件查询。多文件场景：每个文件分别调 file_read（可并行），各自存 staging，再用 code_execute 读取多个 staging 文件 merge。
 
 ## 编排与串联
 
@@ -224,16 +223,15 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 环境变量：WORKSPACE_DIR（工作区根目录）、STAGING_DIR（中间数据目录）、OUTPUT_DIR（输出目录）
 
 数据读取：
-- 所有数据文件先通过 data_query 读取，结果自动存 staging
+- 所有数据文件先通过 file_read 读取，结果自动存 staging
 - code_execute 统一从 staging 读: pd.read_parquet(STAGING_DIR + '/文件名')
-- 多文件关联：每个文件分别调 data_query，然后在 code_execute 中读多个 staging 文件 merge
+- 多文件关联：每个文件分别调 file_read，然后在 code_execute 中读多个 staging 文件 merge
 - 生成文件写到 OUTPUT_DIR，平台自动检测上传
 - 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
 - 写 Excel 用 engine='xlsxwriter'
 
 不适用（优先用外部工具，更快更准）：
-- 读数据文件内容/结构 → data_query
-- 读 PDF/图片/纯文本 → file_read
+- 读任何文件（Excel/CSV/PDF/DOCX/图片/文本）→ file_read
 - 列目录/搜索文件 → file_list / file_search
 - 查 ERP 业务数据 → erp_agent
 
@@ -242,36 +240,9 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 - 删除文件必须两步：第一步用 file_list 列出待删文件并告知用户，等用户确认后第二步再调 code_execute 并在 confirm_delete 传入文件路径（如 "下载/文件名.xlsx"）
 - 环境可能因超时重置，变量不存在时重新读取
 
-### data_query — 数据读取与查询
-
-读取工作区 Excel/CSV 文件，自动处理表头/编码/格式问题。
-查询结果自动存 staging 供 code_execute 后续读取。
-DuckDB SQL 引擎，恒定内存。支持并行调用（多文件可同时读取）。
-
-何时使用：
-- 看文件结构（不传 sql）：返回列名、类型、行数、统计信息 + 后续可用路径。探索结果包含数据质量和结构指标，向用户完整说明数据特征后再操作
-- SQL 聚合筛选（传 sql）：结果存 staging，返回数据 + staging 引用
-- 多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute merge
-
-多 Sheet Excel：
-- 探索模式自动扫描所有 Sheet 结构，返回概览（列名+行数+是否可合并）
-- 结构相同的 Sheet 用 sheet="*" 一次性合并为一张表（自动加 _sheet 列标识来源）
-- 结构不同的 Sheet 用 sheet="Sheet名" 单独读取
-
-不适用：
-- 导出文件给用户 → code_execute（从 staging 读取后 df.to_excel 写到 OUTPUT_DIR）
-- 计算、可视化 → code_execute
-- 查 ERP 业务数据 → erp_agent
-
-参数：
-- file：文件名或相对路径，使用 data_query 探索模式或 file_list 返回的路径最准确
-- sheet：Sheet 名称（可选），传 "*" 合并所有同结构 Sheet
-- 不传 sql：返回文件结构 + 后续可用的查询命令
-- 传 sql：执行查询，表名用 FROM data，中文列名用双引号
-
 ### file_list / file_search — 工作区文件发现
 查看工作区有哪些文件、搜索特定文件。支持并行调用。
-返回文件元信息（行列数/类型/读取命令），Excel/CSV 数据文件用 data_query 读取。
+返回文件元信息（行列数/类型/读取命令），所有文件用 file_read 读取。
 
 ### search_knowledge — 知识库搜索
 查找企业内部业务规则、SOP、操作流程、培训文档、历史经验。
@@ -443,9 +414,8 @@ _CORE_TOOLS: Set[str] = {
     "image_agent",              # 电商图片生成（单张，电商图模式下使用）
     # 执行
     "code_execute",             # 代码执行
-    "data_query",               # 数据查询与导出
     # 文件操作
-    "file_read",                # 文件读取（PDF/图片/纯文本）
+    "file_read",                # 统一文件读取（所有格式 + SQL 查询）
     "file_list",                # 目录列表（含元数据）
     "file_search",              # 文件搜索
     "restore_file",             # 恢复文件到修改前版本

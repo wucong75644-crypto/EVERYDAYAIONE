@@ -38,7 +38,7 @@ class TestBuildCommonTools:
             "erp_agent", "erp_analyze", "erp_api_search",
             "search_knowledge", "web_search",
             "generate_image", "generate_video", "image_agent",
-            "data_query", "manage_scheduled_task",
+            "manage_scheduled_task",  # data_query 已合并到 file_read
         }
         for name in expected:
             assert name in names, f"Missing tool: {name}"
@@ -53,10 +53,12 @@ class TestBuildCommonTools:
         erp_agent = next(t for t in tools if t["function"]["name"] == "erp_agent")
         assert "task" in erp_agent["function"]["parameters"]["required"]
 
-    def test_data_query_has_file_param(self):
-        tools = build_common_tools()
-        dq = next(t for t in tools if t["function"]["name"] == "data_query")
-        assert "file" in dq["function"]["parameters"]["required"]
+    def test_file_read_has_sql_param_in_file_tools(self):
+        """data_query 已合并到 file_read，验证 file_read 有 sql 参数"""
+        from config.file_tools import build_file_tools
+        tools = build_file_tools()
+        fr = [t for t in tools if t["function"]["name"] == "file_read"][0]
+        assert "sql" in fr["function"]["parameters"]["properties"]
 
     def test_tool_count(self):
         """工具数量在预期范围"""
@@ -75,7 +77,7 @@ class TestCommonToolsIntegration:
         # common_tools 里的工具应出现在 chat_tools 返回中
         assert "erp_agent" in names
         assert "web_search" in names
-        assert "data_query" in names
+        assert "file_read" in names  # data_query 已合并到 file_read
 
     def test_guest_still_has_common_tools(self):
         """散客仍能获取通用工具"""

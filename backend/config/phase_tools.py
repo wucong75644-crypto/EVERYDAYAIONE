@@ -65,7 +65,7 @@ BASE_AGENT_PROMPT = (
     "- 可以组合多个工具完成复杂需求\n\n"
     "## 大数据处理规则\n"
     "- 当工具返回 <persisted-output> 标签或 staging 文件引用时，说明数据量过大已存入文件\n"
-    "- 用 data_query 查询文件内容：先不传 sql 了解文件结构，再用 SQL 提取所需数据\n"
+    "- 用 file_read 查询文件内容：先不传 sql 了解文件结构，再用 SQL 提取所需数据\n"
     "- 禁止直接使用 Preview 中的数据回答用户，Preview 仅供了解数据结构\n"
     "- 多 Sheet Excel：探索模式会返回 Sheet 概览，结构相同时用 sheet=\"*\" 合并读取\n"
     "- 需要复杂计算时，用返回的 [完整数据] 路径在 code_execute 中处理\n\n"
@@ -109,21 +109,14 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
     )
     from config.file_tools import build_file_tools
 
-    # data_query 工具定义（erp/computer 域共用）
-    def _get_data_query_tool() -> List[Dict[str, Any]]:
-        from config.chat_tools import get_chat_tools
-        return [
-            t for t in get_chat_tools(org_id=None)
-            if t["function"]["name"] == "data_query"
-        ]
-
+    # file_read 已包含数据查询能力（原 data_query 合并入 file_read）
     builders: Dict[str, Any] = {
         "erp": lambda: [
             *build_erp_tools(),
             build_erp_search_tool(),
             build_fetch_all_pages_tool(),
             *build_code_tools(),
-            *_get_data_query_tool(),
+            *build_file_tools(),  # 含 file_read（数据查询能力）
             _build_phase2_route_to_chat_tool(),
             _build_ask_user_tool(),
         ],
@@ -135,7 +128,6 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
         "computer": lambda: [
             *build_file_tools(),
             *build_code_tools(),
-            *_get_data_query_tool(),
             _build_phase2_route_to_chat_tool(),
             _build_ask_user_tool(),
         ],

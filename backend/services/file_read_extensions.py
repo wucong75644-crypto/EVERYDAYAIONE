@@ -227,10 +227,17 @@ class FileReadExtensionsMixin:
         self, path: str, target: Path, size: int,
         max_read_size: int, bytes_per_token: int, max_output_tokens: int,
     ) -> str:
-        """DOCX 文件文本提取（对齐 PDF 直读模式）
+        """DOCX 结构化读取（保留标题层级+表格行号）
+
+        输出格式对标 Claude：
+          [Heading 1] 标题文本
+          [Normal] 正文段落
+          === 表格 1 (3行 x 4列) ===
+            Row1: ['名称', '类型', '是否必须', '描述']
+            Row2: ['pageNo', 'Integer', 'false', '页码']
 
         - 大文件预检：size > max_read_size 直接拒绝
-        - python-docx 提取段落+表格文本
+        - 段落和表格按文档顺序交错输出
         - 同步 I/O 在线程池执行，不阻塞事件循环
         """
         if size > max_read_size:
@@ -247,19 +254,61 @@ class FileReadExtensionsMixin:
 
         loop = asyncio.get_running_loop()
         try:
-            def _extract_text():
+            def _extract_structured():
                 doc = Document(str(target))
-                parts = [p.text for p in doc.paragraphs]
-                for table in doc.tables:
-                    for row in table.rows:
-                        cells = [c.text.strip() for c in row.cells if c.text.strip()]
-                        if cells:
-                            parts.append(" | ".join(cells))
-                return "\n".join(parts)
+                parts: list[str] = []
+                para_count = 0
+                table_count = 0
 
-            text = await loop.run_in_executor(None, _extract_text)
+                # 按文档顺序遍历（段落和表格交错）
+                # python-docx 的 doc.element.body 按 XML 顺序包含所有块级元素
+                from docx.table import Table as DocxTable
+                from docx.text.paragraph import Paragraph
+
+                table_idx = 0
+                for element in doc.element.body:
+                    tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
+
+                    if tag == "p":
+                        para = Paragraph(element, doc)
+                        text = para.text.strip()
+                        if not text:
+                            continue
+                        para_count += 1
+                        # 段落样式标注
+                        style_name = para.style.name if para.style else "Normal"
+                        if style_name.startswith("Heading"):
+                            parts.append(f"[{style_name}] {text}")
+                        elif style_name == "Title":
+                            parts.append(f"[Title] {text}")
+                        else:
+                            parts.append(f"[Normal] {text}")
+
+                    elif tag == "tbl":
+                        if table_idx < len(doc.tables):
+                            table = doc.tables[table_idx]
+                            table_idx += 1
+                            table_count += 1
+                            row_count = len(table.rows)
+                            col_count = max(
+                                (len(r.cells) for r in table.rows), default=0,
+                            )
+                            parts.append(
+                                f"\n=== 表格 {table_count} "
+                                f"({row_count}行 x {col_count}列) ==="
+                            )
+                            for ri, row in enumerate(table.rows, 1):
+                                cells = [c.text.strip() for c in row.cells]
+                                # 跳过全空行
+                                if any(cells):
+                                    parts.append(f"  Row{ri}: {cells}")
+
+                return "\n".join(parts), para_count, table_count
+
+            text, para_count, table_count = await loop.run_in_executor(
+                None, _extract_structured,
+            )
         except Exception as e:
-            # 脱敏：只暴露异常类型，不暴露服务端绝对路径
             logger.warning(f"DOCX open failed | path={path} | error={type(e).__name__}")
             return f"DOCX 文件无法打开: {path}（{type(e).__name__}）"
 
@@ -275,7 +324,10 @@ class FileReadExtensionsMixin:
                 "建议使用 code_execute 分段处理。"
             )
 
-        header = f"文件: {path} | DOCX | {self._format_size(size)}"
+        header = (
+            f"文件: {path} | DOCX | {self._format_size(size)}\n"
+            f"段落数: {para_count}, 表格数: {table_count}"
+        )
         return f"{header}\n{'─' * 60}\n{text}"
 
     async def _read_pptx(

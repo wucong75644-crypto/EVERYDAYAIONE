@@ -764,11 +764,12 @@ class TestWideTablePattern:
 class TestFormatFileMetadataLineReadCommands:
     """所有文件类型的读取命令统一为外部工具调用格式"""
 
-    def test_xlsx_uses_data_query(self):
+    def test_xlsx_uses_file_read(self):
+        """data_query 已合并到 file_read"""
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "", "row_count": 100, "col_count": 5}
         result = format_file_metadata_line("report.xlsx", "/abs/report.xlsx", 50000, meta)
-        assert 'data_query(file="report.xlsx")' in result
+        assert 'file_read(path="report.xlsx")' in result
 
     def test_pdf_uses_file_read(self):
         from services.file_metadata_extractor import format_file_metadata_line

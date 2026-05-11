@@ -117,5 +117,7 @@ class TestFileRoutingPrompt:
     def test_mentions_code_execute(self):
         assert "code_execute" in FILE_ROUTING_PROMPT
 
-    def test_mentions_data_query(self):
-        assert "data_query" in FILE_ROUTING_PROMPT
+    def test_mentions_file_read_for_data(self):
+        """data_query 已合并到 file_read"""
+        assert "file_read" in FILE_ROUTING_PROMPT
+        assert "sql" in FILE_ROUTING_PROMPT

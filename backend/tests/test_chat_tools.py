@@ -321,7 +321,7 @@ class TestCommonToolsSplit:
         tools = get_chat_tools(org_id="test_org")
         names = {t["function"]["name"] for t in tools}
         # common_tools 中的核心工具必须存在
-        for name in ("erp_agent", "data_query", "web_search", "manage_scheduled_task"):
+        for name in ("erp_agent", "file_read", "web_search", "manage_scheduled_task"):
             assert name in names, f"拆分后丢失工具: {name}"
 
 

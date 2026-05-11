@@ -399,3 +399,83 @@ class TestRestoreFile:
         # ../etc/passwd 应该被 resolve_safe_path 拦截
         with pytest.raises(ValueError):
             await mixin._restore_file(executor, {"filename": "../../etc/passwd"})
+
+
+# ============================================================
+# file_read 数据文件分支路由
+# ============================================================
+
+
+class TestFileReadDataRouting:
+    """file_read 对数据文件的路由：Excel → excel_reader / CSV → DataQueryExecutor"""
+
+    @pytest.mark.asyncio
+    async def test_xlsx_routes_to_data_branch(self, mixin):
+        """Excel 文件走数据文件分支"""
+        settings = MagicMock()
+        settings.file_workspace_enabled = True
+        settings.file_workspace_root = "/tmp"
+
+        mock_executor = MagicMock()
+        mock_result = AgentResult(summary="structured output", status="success")
+
+        with patch("core.config.get_settings", create=True, return_value=settings), \
+             patch("services.file_executor.FileExecutor", return_value=mock_executor), \
+             patch.object(mixin, "_file_read_data", new_callable=AsyncMock, return_value=mock_result) as mock_data:
+            result = await mixin._file_dispatch("file_read", {"path": "report.xlsx"})
+
+        mock_data.assert_called_once()
+        assert result.status == "success"
+
+    @pytest.mark.asyncio
+    async def test_csv_routes_to_data_branch(self, mixin):
+        """CSV 文件走数据文件分支"""
+        settings = MagicMock()
+        settings.file_workspace_enabled = True
+        settings.file_workspace_root = "/tmp"
+
+        mock_executor = MagicMock()
+        mock_result = AgentResult(summary="csv profile", status="success")
+
+        with patch("core.config.get_settings", create=True, return_value=settings), \
+             patch("services.file_executor.FileExecutor", return_value=mock_executor), \
+             patch.object(mixin, "_file_read_data", new_callable=AsyncMock, return_value=mock_result) as mock_data:
+            result = await mixin._file_dispatch("file_read", {"path": "data.csv"})
+
+        mock_data.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_txt_does_not_route_to_data(self, mixin):
+        """.txt 不走数据文件分支，走 FileExecutor"""
+        settings = MagicMock()
+        settings.file_workspace_enabled = True
+        settings.file_workspace_root = "/tmp"
+
+        mock_executor = MagicMock()
+        mock_executor.file_read = AsyncMock(return_value="text content")
+
+        with patch("core.config.get_settings", create=True, return_value=settings), \
+             patch("services.file_executor.FileExecutor", return_value=mock_executor), \
+             patch.object(mixin, "_file_read_data", new_callable=AsyncMock) as mock_data:
+            result = await mixin._file_dispatch("file_read", {"path": "notes.txt"})
+
+        mock_data.assert_not_called()
+        assert isinstance(result, AgentResult)
+        assert "text content" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_pdf_does_not_route_to_data(self, mixin):
+        """.pdf 不走数据文件分支"""
+        settings = MagicMock()
+        settings.file_workspace_enabled = True
+        settings.file_workspace_root = "/tmp"
+
+        mock_executor = MagicMock()
+        mock_executor.file_read = AsyncMock(return_value="pdf text")
+
+        with patch("core.config.get_settings", create=True, return_value=settings), \
+             patch("services.file_executor.FileExecutor", return_value=mock_executor), \
+             patch.object(mixin, "_file_read_data", new_callable=AsyncMock) as mock_data:
+            result = await mixin._file_dispatch("file_read", {"path": "doc.pdf"})
+
+        mock_data.assert_not_called()

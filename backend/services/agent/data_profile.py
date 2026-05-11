@@ -212,7 +212,7 @@ def build_data_profile(
             lines.append("\n" + "\n".join(preview_lines))
 
     # ── 6. 查询指引 ──
-    lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
+    lines.append(f'\n[查询] file_read(path="{filename}", sql="SELECT ... FROM data")')
 
     # ── 7. 警告 ──
     warnings: list[str] = []
@@ -367,7 +367,7 @@ def build_profile_from_duckdb(
         lines.append("\n" + "\n".join(preview_lines))
 
     # ── 7. 查询指引 ──
-    lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
+    lines.append(f'\n[查询] file_read(path="{filename}", sql="SELECT ... FROM data")')
 
     return "\n".join(lines), stats_dict
 
