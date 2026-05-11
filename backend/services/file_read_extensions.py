@@ -117,10 +117,11 @@ class FileReadExtensionsMixin:
                 "请缩小页码范围。"
             )
 
-        # ── 在线程池中提取文本 ──
+        # ── 在线程池中提取文本+表格 ──
         def _extract_pages():
             parts: list[str] = []
             empty: list[int] = []
+            table_total = 0
             for idx in page_indices:
                 page = pdf.pages[idx]
                 page_text = page.extract_text() or ""
@@ -128,14 +129,37 @@ class FileReadExtensionsMixin:
                 if not page_text:
                     empty.append(idx + 1)
                 page_num = idx + 1
-                parts.append(
-                    f"── 第 {page_num} 页 ──\n"
-                    f"{page_text if page_text else '（无可提取文本）'}"
+                page_parts = [f"── 第 {page_num} 页 ──"]
+                page_parts.append(
+                    page_text if page_text else "（无可提取文本）"
                 )
+                # 提取表格（pdfplumber extract_tables）
+                try:
+                    tables = page.extract_tables() or []
+                    for tbl in tables:
+                        if not tbl:
+                            continue
+                        table_total += 1
+                        row_count = len(tbl)
+                        col_count = max((len(r) for r in tbl), default=0)
+                        page_parts.append(
+                            f"\n=== 表格 ({row_count}行 x {col_count}列) ==="
+                        )
+                        for ri, row in enumerate(tbl, 1):
+                            cells = [
+                                (c or "").strip() for c in row
+                            ]
+                            if any(cells):
+                                page_parts.append(f"  Row{ri}: {cells}")
+                except Exception:
+                    pass  # 表格提取失败不影响文本
+                parts.append("\n".join(page_parts))
             pdf.close()
-            return parts, empty
+            return parts, empty, table_total
 
-        parts, empty_pages = await loop.run_in_executor(None, _extract_pages)
+        parts, empty_pages, table_total = await loop.run_in_executor(
+            None, _extract_pages,
+        )
         output = "\n\n".join(parts)
 
         # L3: token 估算
@@ -150,6 +174,8 @@ class FileReadExtensionsMixin:
         # header
         page_range = pages or f"1-{total_pages}"
         header = f"文件: {path} | PDF {total_pages} 页 | 读取: {page_range}"
+        if table_total > 0:
+            header += f" | 表格: {table_total}个"
         if empty_pages:
             header += (
                 f"\n⚠️ 第 {','.join(str(p) for p in empty_pages)} 页"
@@ -334,10 +360,16 @@ class FileReadExtensionsMixin:
         self, path: str, target: Path, size: int,
         max_read_size: int, bytes_per_token: int, max_output_tokens: int,
     ) -> str:
-        """PPTX 文件文本提取（对齐 DOCX 直读模式）
+        """PPTX 结构化读取（Slide 编号 + 标题/文本/表格分块）
+
+        输出格式：
+          === Slide 1 ===
+          [Title] 标题文本
+          [Text] 正文内容
+          === 表格 (3行 x 4列) ===
+            Row1: ['名称', '类型', '描述']
 
         - 大文件预检：size > max_read_size 直接拒绝
-        - python-pptx 提取每页标题+文本框+表格
         - 同步 I/O 在线程池执行，不阻塞事件循环
         """
         if size > max_read_size:
@@ -354,27 +386,50 @@ class FileReadExtensionsMixin:
 
         loop = asyncio.get_running_loop()
         try:
-            def _extract_text():
+            def _extract_structured():
                 prs = Presentation(str(target))
                 parts: list[str] = []
+                total_slides = len(prs.slides)
+                table_count = 0
+
                 for i, slide in enumerate(prs.slides, 1):
-                    slide_parts: list[str] = []
+                    parts.append(f"=== Slide {i} ===")
                     for shape in slide.shapes:
                         if shape.has_text_frame:
+                            # 区分标题和正文
+                            is_title = shape.shape_id == slide.placeholders[0].shape_id \
+                                if 0 in slide.placeholders else False
                             for para in shape.text_frame.paragraphs:
                                 text = para.text.strip()
-                                if text:
-                                    slide_parts.append(text)
+                                if not text:
+                                    continue
+                                tag = "[Title]" if is_title else "[Text]"
+                                parts.append(f"  {tag} {text}")
                         if shape.has_table:
-                            for row in shape.table.rows:
-                                cells = [c.text.strip() for c in row.cells if c.text.strip()]
-                                if cells:
-                                    slide_parts.append(" | ".join(cells))
-                    if slide_parts:
-                        parts.append(f"── 第 {i} 页 ──\n" + "\n".join(slide_parts))
-                return "\n\n".join(parts)
+                            table_count += 1
+                            tbl = shape.table
+                            row_count = len(tbl.rows)
+                            col_count = max(
+                                (len(r.cells) for r in tbl.rows), default=0,
+                            )
+                            parts.append(
+                                f"  === 表格 ({row_count}行 x {col_count}列) ==="
+                            )
+                            for ri, row in enumerate(tbl.rows, 1):
+                                cells = [c.text.strip() for c in row.cells]
+                                if any(cells):
+                                    parts.append(f"    Row{ri}: {cells}")
+                    # Speaker notes
+                    if slide.has_notes_slide:
+                        notes = slide.notes_slide.notes_text_frame.text.strip()
+                        if notes:
+                            parts.append(f"  [Notes] {notes}")
 
-            text = await loop.run_in_executor(None, _extract_text)
+                return "\n".join(parts), total_slides, table_count
+
+            text, slide_count, table_count = await loop.run_in_executor(
+                None, _extract_structured,
+            )
         except Exception as e:
             logger.warning(f"PPTX open failed | path={path} | error={type(e).__name__}")
             return f"PPTX 文件无法打开: {path}（{type(e).__name__}）"
@@ -391,7 +446,10 @@ class FileReadExtensionsMixin:
                 "建议使用 code_execute 分段处理。"
             )
 
-        header = f"文件: {path} | PPTX | {self._format_size(size)}"
+        header = (
+            f"文件: {path} | PPTX | {self._format_size(size)}\n"
+            f"幻灯片: {slide_count}页, 表格: {table_count}个"
+        )
         return f"{header}\n{'─' * 60}\n{text}"
 
     @staticmethod
