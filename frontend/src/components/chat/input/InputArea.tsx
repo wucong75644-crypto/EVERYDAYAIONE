@@ -483,13 +483,16 @@ export default function InputArea({
       // 发送消息（使用真实对话 ID）
       // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
       if (isEcomMode) {
-        // 电商图模式 v2：和普通聊天完全一样的流程
-        // 消息立刻出现 → 思考动画 → AI 回复（含方案卡片）→ 用户确认后生图
-        await handleChatMessage(
-          messageContent,
+        // 电商图模式 v2：发送到 EcomImageHandler
+        // 不带 image_task_meta → Phase 1（方案策划）
+        // 带 image_task_meta → Phase 2（批量生图）
+        await handleImageGeneration(
           currentConversationId!,
+          messageContent,
           imageUrls,
-          fileData,
+          {
+            generation_type_override: 'image_ecom',
+          },
         );
       } else if (effectiveModelType === 'chat') {
         // 聊天消息
