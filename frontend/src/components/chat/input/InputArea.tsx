@@ -24,7 +24,6 @@ import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
 import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
-import { type ImageTask } from './EcomPlanCards';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
 
@@ -100,9 +99,6 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // 电商图模式 v2：方案卡片数据（用户确认后触发生成）
-  const [imageTaskMeta, setImageTaskMeta] = useState<ImageTask[] | null>(null);
-  const [isEnhancing, setIsEnhancing] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
   // 用户积分（用于禁用积分不足的数量选项）
@@ -488,103 +484,14 @@ export default function InputArea({
       // 发送消息（使用真实对话 ID）
       // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
       if (isEcomMode) {
-        // 电商图模式 v2：对话式流程
-        if (imageTaskMeta) {
-          // 有方案 → 用户已确认，直接生成图片
-          await handleImageGeneration(
-            currentConversationId!,
-            messageContent,
-            imageUrls,
-            {
-              generation_type_override: 'image_ecom',
-              image_task_meta: imageTaskMeta,
-              num_images: imageTaskMeta.length,
-              product_image_urls: imageUrls,
-              style_ref_urls: [],
-            },
-          );
-          setImageTaskMeta(null);
-        } else {
-          // 没有方案 → 调 enhance API 获取方案，结果走聊天消息展示
-          setIsEnhancing(true);
-          try {
-            const { data } = await api.post('/ecom-image/enhance-prompt', {
-              product_name: messageContent,
-              image_urls: uploadedImageUrls,
-              platform: 'taobao',
-              text: messageContent,
-              conversation_id: currentConversationId || '',
-            }, { timeout: 90000 });
-
-            if (data.guide_message) {
-              // 信息不足 → 显示引导消息
-              onMessagePending({
-                id: `user-${Date.now()}`,
-                role: 'user',
-                content: messageContent,
-                created_at: new Date().toISOString(),
-                conversation_id: currentConversationId!,
-              } as unknown as Message);
-              onMessagePending({
-                id: `guide-${Date.now()}`,
-                role: 'assistant',
-                content: data.guide_message,
-                created_at: new Date().toISOString(),
-                conversation_id: currentConversationId!,
-              } as unknown as Message);
-            } else if (data._parse_failed || data.error) {
-              // 解析失败或后端错误 → 显示错误消息
-              onMessagePending({
-                id: `user-${Date.now()}`,
-                role: 'user',
-                content: messageContent,
-                created_at: new Date().toISOString(),
-                conversation_id: currentConversationId!,
-              } as unknown as Message);
-              onMessagePending({
-                id: `error-${Date.now()}`,
-                role: 'assistant',
-                content: data.error || '方案生成失败，请重试',
-                created_at: new Date().toISOString(),
-                conversation_id: currentConversationId!,
-              } as unknown as Message);
-            } else if (data.images && data.images.length > 0) {
-              // 方案生成成功 → 显示用户消息 + 方案卡片消息
-              onMessagePending({
-                id: `user-${Date.now()}`,
-                role: 'user',
-                content: messageContent,
-                created_at: new Date().toISOString(),
-                conversation_id: currentConversationId!,
-              } as unknown as Message);
-              onMessagePending({
-                id: `ecom-plan-${Date.now()}`,
-                role: 'assistant',
-                content: [{
-                  type: 'ecom_plan',
-                  product_insight: data.product_insight || '',
-                  visual_strategy: data.visual_strategy || '',
-                  images: data.images,
-                  cost_estimate: data.cost_estimate,
-                }],
-                created_at: new Date().toISOString(),
-                conversation_id: currentConversationId!,
-              } as unknown as Message);
-            } else {
-              // 信息不足 → 走普通聊天让 AI 引导补充
-              await handleChatMessage(
-                messageContent,
-                currentConversationId!,
-                imageUrls,
-                fileData,
-              );
-            }
-          } catch {
-            toast.error('方案生成失败，请重试');
-          } finally {
-            setIsEnhancing(false);
-          }
-        }
+        // 电商图模式 v2：和普通聊天完全一样的流程
+        // 消息立刻出现 → 思考动画 → AI 回复（含方案卡片）→ 用户确认后生图
+        await handleChatMessage(
+          messageContent,
+          currentConversationId!,
+          imageUrls,
+          fileData,
+        );
       } else if (effectiveModelType === 'chat') {
         // 聊天消息
         await handleChatMessage(
@@ -716,22 +623,6 @@ export default function InputArea({
           onRemoveImage={handleRemoveAllImages}
         />
 
-        {/* 电商图模式：输入引导提示 */}
-        {isEcomMode && !isEnhancing && !imageTaskMeta && (
-          <div className="flex items-center gap-2 mb-2 px-1">
-            <span className="text-xs text-text-tertiary">
-              💡 上传产品图 + 描述产品信息后发送，AI 会为你策划主图方案
-            </span>
-          </div>
-        )}
-        {isEcomMode && isEnhancing && (
-          <div className="flex items-center gap-2 mb-2 px-1">
-            <span className="text-xs text-accent animate-pulse">
-              ⏳ 正在分析产品并策划方案，请稍候...
-            </span>
-          </div>
-        )}
-
         {/* 主输入控件 */}
         <InputControls
           prompt={prompt}
@@ -811,7 +702,7 @@ export default function InputArea({
           effectiveModelType={effectiveModelType}
           smartSubMode={isSmart ? smartSubMode : undefined}
           onSmartSubModeChange={isSmart ? setSmartSubMode : undefined}
-          isEnhancing={isEnhancing}
+          isEnhancing={false}
           onEnhancePrompt={undefined /* v2: 表单提交替代 AI 按钮 */}
           mentionDropdownVisible={fileMention.showDropdown}
           mentionResults={fileMention.results}

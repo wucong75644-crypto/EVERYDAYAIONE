@@ -167,9 +167,22 @@ class ChartPart(BaseModel):
     chart_type: str = ""             # 类型标识（line/bar/pie，日志用）
 
 
+class EcomPlanPart(BaseModel):
+    """电商图方案卡片内容块
+
+    千问VL策划的设计方案，前端渲染为可编辑方案卡片+确认生成按钮。
+    """
+    type: Literal["ecom_plan"] = "ecom_plan"
+    product_insight: str = ""
+    visual_strategy: str = ""
+    images: List[Dict[str, Any]] = []
+    cost_estimate: Optional[Dict[str, Any]] = None
+
+
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
-          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart],
+          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart,
+          EcomPlanPart],
     Field(discriminator="type"),
 ]
 
