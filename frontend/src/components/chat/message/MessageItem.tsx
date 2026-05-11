@@ -154,7 +154,8 @@ export default memo(function MessageItem({
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
       p.type === 'tool_step' || p.type === 'tool_result' ||
-      p.type === 'image' || p.type === 'file' || p.type === 'form'
+      p.type === 'image' || p.type === 'file' || p.type === 'form' ||
+      p.type === 'ecom_plan'
     );
   }, [message.content]);
 
