@@ -62,18 +62,20 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_read",
                 "description": (
-                    "读取 workspace 内的任何文件。\n\n"
-                    "支持所有格式：\n"
-                    "- Excel/CSV/Parquet：返回结构化内容（含公式、单元格位置），"
-                    "传 sql 可执行 DuckDB SQL 查询\n"
-                    "- PDF：自动提取文本，用 pages 指定页范围（如 '1-5'）。"
-                    "≤10 页自动全读，>10 页必须指定 pages，每次最多 20 页\n"
-                    "- DOCX/PPTX：结构化读取（标题、段落、表格带行号）\n"
-                    "- 图片（png/jpg/gif/webp）：返回图片供视觉分析\n"
-                    "- 纯文本（txt/md/json/py 等）：返回内容，最多 2000 行\n\n"
-                    "不适用：\n"
-                    "- 计算/生成文件 → code_execute\n"
-                    "- 查 ERP 业务数据 → erp_agent"
+                    "读取 workspace 内的任何文件，自动识别格式。\n\n"
+                    "何时使用：需要查看文件内容、了解文件结构、查询数据时。\n"
+                    "何时不用：计算/生成文件 → code_execute；查 ERP 业务数据 → erp_agent。\n\n"
+                    "Excel/CSV/Parquet：\n"
+                    "- 不传 sql：返回结构化内容（单元格编号+公式+计算值+区域分隔），"
+                    "自动存 staging 供 code_execute 后续读取\n"
+                    "- 传 sql：DuckDB SQL 查询（表名用 FROM data），"
+                    "用于筛选/聚合大数据，结果存 staging\n"
+                    "- 多 Sheet：返回 Sheet 概览，用 sheet 参数指定读取\n\n"
+                    "PDF：自动提取文本+表格。"
+                    "≤10 页自动全读，>10 页用 pages 指定范围，每次最多 20 页\n"
+                    "DOCX/PPTX：结构化读取（标题层级、段落类型、表格带行号）\n"
+                    "图片（png/jpg/gif/webp）：返回图片供视觉分析\n"
+                    "纯文本（txt/md/json/py 等）：返回内容（带行号），最多 2000 行"
                 ),
                 "parameters": {
                     "type": "object",
