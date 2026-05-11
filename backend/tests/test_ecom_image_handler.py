@@ -5,6 +5,7 @@ EcomImageHandler v2 单元测试
 不调用实际的 KIE API——mock ImageHandler.start 验证传入的 params。
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -77,18 +78,20 @@ class TestEcomImageHandlerStart:
         assert bp[1]["image_urls"][0] == "https://cdn/p1.jpg"
 
     @pytest.mark.asyncio
-    async def test_no_meta_fallback_to_single(self):
-        """无 image_task_meta 时降级到 ImageHandler 单图模式。"""
+    async def test_no_meta_triggers_phase1(self):
+        """无 image_task_meta → Phase 1（异步方案策划），立刻返回 task_id。"""
         handler = self._make_handler()
         params: dict = {}  # 无 meta
+        metadata = MagicMock()
+        metadata.client_task_id = "task_plan_123"
 
-        with patch.object(EcomImageHandler.__bases__[0], "start", new_callable=AsyncMock, return_value="fallback") as mock_start:
-            result = await handler.start("msg1", "conv1", "user1", [], params, MagicMock())
+        with patch.object(handler, "_phase1_plan", new_callable=AsyncMock) as mock_plan:
+            result = await handler.start("msg1", "conv1", "user1", [], params, metadata)
 
-        assert result == "fallback"
-        call_params = mock_start.call_args[0][4]
-        # 降级模式不应有 _batch_prompts
-        assert "_batch_prompts" not in call_params
+        # Phase 1 立刻返回 task_id，不等方案生成完成
+        assert result == "task_plan_123"
+        # _phase1_plan 在后台被调用（通过 asyncio.create_task）
+        await asyncio.sleep(0.01)  # 让 create_task 有机会执行
 
     @pytest.mark.asyncio
     async def test_empty_prompts_skipped(self):
