@@ -268,16 +268,28 @@ class TestReadExcelStructured:
         _make_formula_excel(path)
         staging = os.path.join(tmp_dir, "staging")
 
+        # 不指定 sheet → 全 sheet 预览（对标 Claude）
         result = await read_excel_structured(path, None, staging)
         assert result.status == "success"
-        assert "公摊" in result.summary
+        assert "Sheet列表" in result.summary
+        assert "=== Sheet: 公摊 ===" in result.summary
+        assert "=== Sheet: 明细 ===" in result.summary
         assert "Row" in result.summary
-        assert "关键单元格公式 vs 值" in result.summary
         assert 'file_read(path=' in result.summary
+
+    @pytest.mark.asyncio
+    async def test_specific_sheet_full_content(self, tmp_dir):
+        """指定 sheet → 完整内容 + 公式对照"""
+        path = os.path.join(tmp_dir, "test.xlsx")
+        _make_formula_excel(path)
+        staging = os.path.join(tmp_dir, "staging")
+        result = await read_excel_structured(path, "公摊", staging)
+        assert result.status == "success"
+        assert "关键单元格公式 vs 值" in result.summary
         assert list(Path(staging).glob("*.parquet"))
 
     @pytest.mark.asyncio
-    async def test_specific_sheet(self, tmp_dir):
+    async def test_specific_sheet_other(self, tmp_dir):
         path = os.path.join(tmp_dir, "test.xlsx")
         _make_formula_excel(path)
         staging = os.path.join(tmp_dir, "staging")
@@ -289,13 +301,17 @@ class TestReadExcelStructured:
         path = os.path.join(tmp_dir, "empty.xlsx")
         _make_empty_excel(path)
         staging = os.path.join(tmp_dir, "staging")
+        # 空 Excel 有一个默认 Sheet 但无数据
         result = await read_excel_structured(path, None, staging)
-        assert result.status == "empty"
+        assert result.status == "success"  # 有 sheet 列表但内容空
 
     @pytest.mark.asyncio
-    async def test_multi_sheet_overview(self, tmp_dir):
+    async def test_multi_sheet_preview(self, tmp_dir):
+        """不指定 sheet 时返回所有 sheet 预览"""
         path = os.path.join(tmp_dir, "multi.xlsx")
         _make_formula_excel(path)
         staging = os.path.join(tmp_dir, "staging")
         result = await read_excel_structured(path, None, staging)
-        assert "Sheet 概览" in result.summary
+        assert "Sheet列表" in result.summary
+        assert "公摊" in result.summary
+        assert "明细" in result.summary
