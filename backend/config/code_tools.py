@@ -50,13 +50,21 @@ _DESCRIPTION_BASE = (
 
 # 主 Agent 版（加 WORKSPACE_DIR + 完整文件生成能力）
 _DESCRIPTION_WORKSPACE = (
-    "有状态 Python 沙盒，变量跨调用保留。\n"
-    "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, "
+    "有状态 Python 沙盒，变量跨调用保留。执行超时 120 秒。\n\n"
+    "Usage:\n"
+    "- 数据读取：从 staging 读取 pd.read_parquet(STAGING_DIR + '/文件名')。"
+    "数据文件 MUST 先通过 file_read 读取（自动存 staging），禁止直接读工作区大文件\n"
+    "- 多文件关联：每个文件分别调 file_read 存 staging，再在 code_execute 中 merge\n"
+    "- 文件输出：生成文件写到 OUTPUT_DIR，平台自动检测上传\n"
+    "- 图表：用 ECharts JSON（.echart.json），不要用 plt/matplotlib\n"
+    "- 写 Excel：用 engine='xlsxwriter'\n"
+    "- 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, "
+    "docx, pptx, openpyxl, pdfplumber, zipfile, "
     "os(受限: listdir/walk/stat/path), shutil(受限: copy/move)\n"
-    "环境变量: WORKSPACE_DIR（工作区）, STAGING_DIR（中间数据）, OUTPUT_DIR（输出，自动上传）\n"
-    "数据文件先通过 file_read 读取（自动存 staging），"
-    "code_execute 统一用 pd.read_parquet(STAGING_DIR + '/文件名') 读取。\n"
-    "写 Excel 用 engine='xlsxwriter'。生成文件写到 OUTPUT_DIR。禁止 sys/subprocess。"
+    "- 环境变量：WORKSPACE_DIR（工作区）, STAGING_DIR（中间数据）, OUTPUT_DIR（输出）\n"
+    "- 禁止 import sys/subprocess\n"
+    "- 删除文件必须两步：先 file_list 列出待删文件告知用户，确认后传 confirm_delete\n"
+    "- 环境可能因超时重置，变量不存在时重新读取"
 )
 
 

@@ -96,7 +96,6 @@ def _read_sheet_structured(
     for row in ws_value.iter_rows():
         total_rows += 1
         row_cells: list[str] = []
-        seen_in_row: set[str] = set()  # 合并单元格去重
 
         for cell in row:
             if not hasattr(cell, "column") or cell.column is None:
@@ -115,11 +114,6 @@ def _read_sheet_structured(
                 if "!" in formula:
                     cross_refs.append(f"{coord} → {formula}")
             elif cell.value is not None:
-                # 合并单元格去重：同行内相同值只输出第一个
-                val_key = str(cell.value)
-                if val_key in seen_in_row:
-                    continue
-                seen_in_row.add(val_key)
                 row_cells.append(f"{coord}:{cell.value}")
 
         if row_cells:
