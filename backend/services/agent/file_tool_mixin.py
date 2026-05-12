@@ -202,17 +202,15 @@ class FileToolMixin:
                 )
                 self._register_staging_files(result)
                 _filename = Path(args["path"]).name
-                self._pending_schemas.append((
-                    _filename, args["path"], result.summary[:500],
-                ))
                 # 创建 Parquet 缓存 + 附加 duckdb 查询指引
+                cache_name = None
+                cache_schema = ""
                 try:
                     from services.agent.data_query_cache import ensure_parquet_cache
                     cache_path, _ = await ensure_parquet_cache(
                         args["path"], args.get("sheet"), staging_dir,
                     )
                     cache_name = Path(cache_path).name
-                    cache_schema = ""
                     try:
                         import duckdb as _dq
                         _con = _dq.connect(":memory:")
@@ -238,6 +236,16 @@ class FileToolMixin:
                     )
                 except Exception:
                     pass
+                # schema 注册：包含 staging 路径和列名（跨轮注入用）
+                schema_text = f"{_filename}{cache_schema}"
+                if cache_name:
+                    schema_text += (
+                        f"\n读取: duckdb.sql(f\"SELECT * FROM "
+                        f"read_parquet(STAGING_DIR + '/{cache_name}')\")"
+                    )
+                self._pending_schemas.append((
+                    _filename, args["path"], schema_text,
+                ))
                 return result
             except Exception as e:
                 logger.error(f"Excel structured read failed | error={e}")
