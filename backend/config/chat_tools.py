@@ -224,8 +224,16 @@ MUST NOT 在确认前调用任何执行类工具。
 os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
 环境变量：WORKSPACE_DIR（工作区根目录）、STAGING_DIR（中间数据目录）、OUTPUT_DIR（输出目录）
 
+文件路径：
+- WORKSPACE_DIR 存放用户上传的原始文件
+- STAGING_DIR 存放 file_read 自动生成的 Parquet 缓存
+- OUTPUT_DIR 存放生成给用户的文件
+- 文件路径必须从 file_read / file_list 返回结果中复制，禁止凭记忆拼路径
+- 不确定文件名时先调 file_list 确认
+
 数据处理：
 - 所有数据文件先通过 file_read 读取，结果自动存 staging（Parquet 格式）
+- file_read 返回的 staging 缓存路径可直接复制到 code_execute 中使用
 - 大数据查询用 duckdb（恒定内存，百万行不爆）：
   duckdb.sql(f"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')").df()
 - 小数据或后处理用 pandas（导出、格式化、画图）
@@ -243,6 +251,7 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 限制：
 - 禁止 import sys/subprocess
 - 禁止用 pd.read_excel / pd.read_csv 直接读原始文件，必须从 staging Parquet 读取
+- 禁止自己拼文件路径，必须使用工具返回的路径
 - 删除文件必须两步：第一步用 file_list 列出待删文件并告知用户，等用户确认后第二步再调 code_execute 并在 confirm_delete 传入文件路径（如 "下载/文件名.xlsx"）
 - 环境可能因超时重置，变量不存在时重新读取
 
