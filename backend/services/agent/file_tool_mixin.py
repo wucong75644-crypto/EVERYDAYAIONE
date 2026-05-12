@@ -207,8 +207,12 @@ class FileToolMixin:
                 # 顺带创建扁平 Parquet 缓存（供 code_execute 读取）
                 try:
                     from services.agent.data_query_cache import ensure_parquet_cache
-                    await ensure_parquet_cache(
+                    cache_path, _ = await ensure_parquet_cache(
                         args["path"], args.get("sheet"), staging_dir,
+                    )
+                    cache_name = Path(cache_path).name
+                    result.summary += (
+                        f"\n\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}')"
                     )
                 except Exception:
                     pass  # 缓存创建失败不影响主流程
