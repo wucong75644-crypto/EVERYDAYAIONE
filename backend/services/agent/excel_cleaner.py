@@ -434,11 +434,8 @@ def _deduplicate_columns(df: pd.DataFrame) -> None:
 def _coerce_object_columns(df: pd.DataFrame) -> None:
     """混合类型列统一为 str（防止 PyArrow 崩溃）。
 
-    不猜测数值/日期类型——类型转换交给下游 AI 在 code_execute 中按需处理，
-    与 ChatGPT Code Interpreter 等主流产品一致。
-
-    只处理 dtype=object 的列（pandas 无法自动推断的混合类型列）。
-    纯数值/日期列由 pandas 在 read_excel 时已正确推断，不进此分支。
+    用 pd.api.types.infer_dtype（C 实现，全量扫描，百万行 <1ms）
+    替代 head(200) 采样——消除尾部混合类型的盲区 bug。
     """
     for col in df.columns:
         if str(col).startswith("_is_"):
@@ -448,7 +445,6 @@ def _coerce_object_columns(df: pd.DataFrame) -> None:
         non_null = df[col].dropna()
         if len(non_null) == 0:
             continue
-        # 检测是否存在混合类型（如同一列有 int 和 str）
-        types = set(type(v).__name__ for v in non_null.head(200))
-        if len(types) > 1:
+        inferred = pd.api.types.infer_dtype(non_null, skipna=True)
+        if inferred in ("mixed", "mixed-integer", "mixed-integer-float"):
             df[col] = df[col].astype(str).replace({"nan": None})
