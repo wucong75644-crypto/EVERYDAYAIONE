@@ -2192,7 +2192,8 @@
       "Bash(./git-push.sh \"fix: 补全合并遗漏——大文件走calamine快速路径+预览只读3行+sheet=*合并+小文件schema注册\")",
       "Bash(./git-push.sh \"fix: Excel读取引擎换fastexcel——混合类型列不崩+探索统一走openpyxl+大文件calamine兜底\")",
       "Bash(./git-push.sh \"fix: 探索时顺带创建扁平Parquet缓存——code_execute能直接pd.read_parquet读取\")",
-      "Bash(./git-push.sh \"fix: 探索结果附带Parquet缓存路径——AI直接复制到code_execute不再猜文件名\")"
+      "Bash(./git-push.sh \"fix: 探索结果附带Parquet缓存路径——AI直接复制到code_execute不再猜文件名\")",
+      "Bash(./git-push.sh \"fix: 补全旧data_query丢失的探索提示——列schema+SQL可复制命令+后续操作引导\")"
     ],
     "additionalDirectories": [
       "/tmp"

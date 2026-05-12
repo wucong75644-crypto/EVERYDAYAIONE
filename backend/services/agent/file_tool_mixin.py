@@ -204,15 +204,38 @@ class FileToolMixin:
                 self._pending_schemas.append((
                     _filename, args["path"], result.summary[:500],
                 ))
-                # 顺带创建扁平 Parquet 缓存（供 code_execute 读取）
+                # 顺带创建扁平 Parquet 缓存 + 附加可复制命令（对齐旧 data_query）
                 try:
                     from services.agent.data_query_cache import ensure_parquet_cache
                     cache_path, _ = await ensure_parquet_cache(
                         args["path"], args.get("sheet"), staging_dir,
                     )
                     cache_name = Path(cache_path).name
+                    # 读取 Parquet schema（列名+类型+行数）
+                    cache_schema = ""
+                    try:
+                        import duckdb as _dq
+                        _con = _dq.connect(":memory:")
+                        _escaped = cache_path.replace("'", "''")
+                        pq_cols = _con.execute(
+                            f"SELECT column_name, data_type FROM parquet_schema('{_escaped}')"
+                        ).fetchall()
+                        pq_rows = _con.execute(
+                            f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
+                        ).fetchone()[0]
+                        _con.close()
+                        col_preview = ", ".join(f"{n}({t})" for n, t in pq_cols[:15])
+                        if len(pq_cols) > 15:
+                            col_preview += f" (+{len(pq_cols)-15}列)"
+                        cache_schema = f" | {pq_rows}行 × {len(pq_cols)}列\n[列: {col_preview}]"
+                    except Exception:
+                        pass
+                    rel_path = _filename
                     result.summary += (
-                        f"\n\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}')"
+                        f"\n\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}'){cache_schema}"
+                        f"\n\n后续操作:"
+                        f"\n- 查询数据: file_read(path=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
+                        f"\n- 全量读取: file_read(path=\"{rel_path}\", sql=\"SELECT * FROM data\")"
                     )
                 except Exception:
                     pass  # 缓存创建失败不影响主流程
