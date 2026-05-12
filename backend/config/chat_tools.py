@@ -226,10 +226,10 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 
 文件路径：
 - WORKSPACE_DIR 存放用户上传的原始文件
-- STAGING_DIR 存放 file_read 自动生成的 Parquet 缓存
+- STAGING_DIR 是数据文件的共享目录，所有 file_read 读取过的数据文件都自动缓存在此（Parquet 格式）
 - OUTPUT_DIR 存放生成给用户的文件
-- 文件路径必须从 file_read / file_list 返回结果中复制，禁止凭记忆拼路径
-- 不确定文件名时先调 file_list 确认
+- 不确定可用文件时，在 code_execute 中用 os.listdir(STAGING_DIR) 查看
+- 文件路径从 file_read 返回结果或 STAGING_DIR 目录中复制，禁止凭记忆拼路径
 
 数据处理：
 - 所有数据文件先通过 file_read 读取，结果自动存 staging（Parquet 格式）
