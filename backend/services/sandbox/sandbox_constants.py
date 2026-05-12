@@ -38,7 +38,7 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "reportlab", "docx", "pptx", "openpyxl",
     "pdfplumber", "pdfminer",  # PDF 读取（pdfplumber 基于 pdfminer）
     # 高性能 Excel 读写引擎
-    "calamine", "xlsxwriter",
+    "calamine", "fastexcel", "xlsxwriter",
     # 受限文件系统操作（运行时走 scoped_os/scoped_shutil，不是真实模块）
     "os", "os.path", "shutil",
     # 内部 C 扩展（被上述模块传递依赖）
