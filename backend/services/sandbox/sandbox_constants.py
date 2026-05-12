@@ -29,7 +29,7 @@ ALLOWED_IMPORT_MODULES = frozenset({
     # 压缩/归档（ZIP 解压读取）
     "zipfile",
     # 数据分析
-    "pandas", "numpy", "pyarrow",
+    "pandas", "numpy", "pyarrow", "duckdb",
     # 可视化（matplotlib Agg 后端，无 GUI）
     "matplotlib", "seaborn",
     # 图片处理
