@@ -118,6 +118,6 @@ class TestFileRoutingPrompt:
         assert "code_execute" in FILE_ROUTING_PROMPT
 
     def test_mentions_file_read_for_data(self):
-        """data_query 已合并到 file_read"""
+        """数据查询通过 file_read + code_execute + duckdb"""
         assert "file_read" in FILE_ROUTING_PROMPT
-        assert "sql" in FILE_ROUTING_PROMPT
+        assert "duckdb" in FILE_ROUTING_PROMPT

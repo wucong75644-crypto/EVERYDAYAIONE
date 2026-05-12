@@ -102,25 +102,19 @@ def clean_excel(
     header_row: int = 0,
     structure: ExcelStructure | None = None,
 ) -> tuple[pd.DataFrame, CleaningReport]:
-    """三层清洗入口。structure 可由调用方预传（避免重复检测）。"""
+    """清洗入口：表头展平 + 去重 + 空行列 + 类型修正。
+
+    合并单元格填充不在此处处理——由 AI 在 code_execute 中按需 ffill。
+    """
     # 多级表头展平（MultiIndex → 单行，用 _ 连接）
     _flatten_multi_header(df)
 
     report = CleaningReport(original_shape=(len(df), len(df.columns)))
 
-    # Layer 1 + 2: 结构检测 + 智能清洗
-    if structure is None:
-        structure = _detect_structure(excel_path, sheet_name)
-    if structure is not None:
-        _apply_merge_fill(df, structure, header_row, report)
-        _mark_hidden_rows(df, structure, header_row, report)
-        _mark_hidden_cols(df, structure, report)
-        report.has_auto_filter = structure.has_auto_filter
-
-    # Layer 3: 质量校验
-    _deduplicate_columns(df)  # 先去重，防止后续按列名操作时 ambiguous
+    # 质量校验
+    _deduplicate_columns(df)
     _remove_empty_rows_cols(df, report)
-    _coerce_object_columns(df)  # 混合类型列统一为 str（防 PyArrow 崩溃）
+    _coerce_object_columns(df)
     _fix_int_columns(df, report)
 
     report.final_shape = (len(df), len(df.columns))
@@ -171,9 +165,24 @@ _RE_HIDDEN_COL = re.compile(
 _RE_AUTO_FILTER = re.compile(r'<autoFilter\b')
 
 # workbook.xml sheet 解析
-_RE_SHEET = re.compile(
-    r'<sheet\s[^>]*?name="([^"]*)"[^>]*?sheetId="(\d+)"[^>]*?r:id="(rId\d+)"'
-)
+def _parse_sheet_tags(xml: str) -> list[tuple[str, str, str]]:
+    """从 workbook.xml 提取 <sheet> 标签，不依赖属性顺序。
+
+    Returns: [(name, sheetId, rId), ...]
+    """
+    results = []
+    for m in re.finditer(r'<sheet\s([^>]*?)/?>', xml):
+        attrs = m.group(1)
+        name_m = re.search(r'name="([^"]*)"', attrs)
+        sid_m = re.search(r'sheetId="(\d+)"', attrs)
+        rid_m = re.search(r'r:id="(rId\d+)"', attrs)
+        if name_m and rid_m:
+            results.append((
+                name_m.group(1),
+                sid_m.group(1) if sid_m else "0",
+                rid_m.group(1),
+            ))
+    return results
 _RE_REL = re.compile(
     r'<Relationship\s[^>]*?Id="(rId\d+)"[^>]*?Target="([^"]*worksheet[^"]*)"'
     r'|<Relationship\s[^>]*?Target="([^"]*worksheet[^"]*)"[^>]*?Id="(rId\d+)"'
@@ -197,7 +206,7 @@ def _resolve_sheet_xml_path(
     except KeyError:
         return None
 
-    sheets = _RE_SHEET.findall(wb_xml)
+    sheets = _parse_sheet_tags(wb_xml)
     if not sheets:
         return None
 

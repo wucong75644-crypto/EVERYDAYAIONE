@@ -205,10 +205,42 @@ def _format_structured_output(
     return "\n".join(lines)
 
 
+def _extract_merged_ranges(excel_path: str) -> dict[str, list[str]]:
+    """从 xlsx ZIP 内 XML 提取各 Sheet 的合并区域（轻量，不加载数据）。
+
+    Returns: {sheet_xml_path: ["A1:C1", "B2:B5", ...], ...}
+    """
+    from zipfile import ZipFile, BadZipFile
+    import xml.etree.ElementTree as ET
+
+    result: dict[str, list[str]] = {}
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    try:
+        with ZipFile(excel_path, "r") as zf:
+            for name in zf.namelist():
+                if not name.startswith("xl/worksheets/sheet") or not name.endswith(".xml"):
+                    continue
+                try:
+                    xml_bytes = zf.read(name)
+                    root = ET.fromstring(xml_bytes)
+                    merges = []
+                    for mc in root.iter(f"{ns}mergeCell"):
+                        ref = mc.get("ref")
+                        if ref:
+                            merges.append(ref)
+                    if merges:
+                        result[name] = merges
+                except Exception:
+                    pass
+    except (BadZipFile, OSError):
+        pass
+    return result
+
+
 def _build_all_sheets_preview(
     excel_path: str, preview_rows: int = 3,
 ) -> tuple[str, list[str]]:
-    """所有 sheet 预览（对标 Claude：Sheet 列表 + 每个 sheet 行列数 + 前 3 行含公式）。"""
+    """所有 sheet 预览（对标 Claude：Sheet 列表 + 每个 sheet 行列数 + 前 3 行含公式 + 合并区域标注）。"""
     import openpyxl
 
     # 用 data_only=False 拿公式，read_only=True 保证低内存
@@ -222,6 +254,19 @@ def _build_all_sheets_preview(
     # 同时打开 data_only=True 拿计算值
     wb_val = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
 
+    # 提取合并区域（轻量 XML 解析）
+    all_merged = _extract_merged_ranges(excel_path)
+    # 按 sheet 索引映射：sheet1.xml → sheet_names[0]
+    merged_by_sheet: dict[str, list[str]] = {}
+    for xml_path, ranges in all_merged.items():
+        # xl/worksheets/sheet1.xml → index 0
+        import re
+        m = re.search(r'sheet(\d+)\.xml', xml_path)
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(sheet_names):
+                merged_by_sheet[sheet_names[idx]] = ranges
+
     lines = [f"Sheet列表: {sheet_names}"]
 
     for sn in sheet_names[:10]:
@@ -229,6 +274,16 @@ def _build_all_sheets_preview(
         ws_v = wb_val[sn]
         lines.append(f"\n=== Sheet: {sn} ===")
         lines.append(f"  行数: {ws_f.max_row}, 列数: {ws_f.max_column}")
+
+        # 合并区域标注
+        merges = merged_by_sheet.get(sn, [])
+        if merges:
+            preview_merges = merges[:20]
+            lines.append(f"  合并区域({len(merges)}个): {', '.join(preview_merges)}")
+            if len(merges) > 20:
+                lines.append(f"    ... 共{len(merges)}个合并区域，数据中有空值需要 ffill 填充")
+            else:
+                lines.append(f"    注意: 合并区域在 Parquet 中为空值，计算前需 ffill 填充")
 
         # 只读前 preview_rows 行（不全量遍历）
         row_idx = 0

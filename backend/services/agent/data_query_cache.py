@@ -343,26 +343,22 @@ def _convert_excel_to_parquet(
     else:
         target_sheet = fuzzy_match_sheet(sheet, sheet_names)
 
-    # Layer 1: 结构检测（合并区域 / 隐藏行列 / 筛选状态）
     from services.agent.excel_cleaner import (
-        _detect_structure, clean_excel, write_cleaning_report,
+        clean_excel, write_cleaning_report,
     )
 
     resolved_name = target_sheet if isinstance(target_sheet, str) else sheet_names[0]
-    structure = _detect_structure(excel_path, resolved_name)
-    merged = structure.merged_ranges if structure else None
 
-    # 自动检测表头行 + 基于合并元数据的多级表头深度
+    # 自动检测表头行
     sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
     df_raw = sheet_raw.to_pandas()
     header_row = detect_header_row(df_raw.values.tolist())
-    actual_start, header_depth = detect_header_depth(header_row, merged)
+    actual_start, header_depth = detect_header_depth(header_row, None)
 
     # fastexcel header_row 只支持单行表头（int），多级表头用 pandas 兼容
     header_param: int | list[int] = actual_start
     if header_depth > 1:
         header_param = list(range(actual_start, actual_start + header_depth))
-        # 多级表头回退 pandas（fastexcel 不支持 MultiIndex header）
         df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
     else:
         sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
@@ -374,9 +370,9 @@ def _convert_excel_to_parquet(
             f"| header_row={actual_start} | depth={header_depth}"
         )
 
-    # Layer 2+3: 智能清洗 + 质量校验（复用已检测的 structure）
+    # 质量校验（合并单元格填充由 AI 在 code_execute 中按需处理）
     df, cleaning_report = clean_excel(
-        df, excel_path, resolved_name, actual_start, structure,
+        df, excel_path, resolved_name, actual_start,
     )
 
     tmp_path = str(Path(cache_path).parent / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
@@ -414,7 +410,7 @@ def _convert_all_sheets_to_parquet(
     sheet_names = reader.sheet_names
 
     from services.agent.excel_cleaner import (
-        CleaningReport, _detect_structure, clean_excel, write_cleaning_report,
+        CleaningReport, clean_excel, write_cleaning_report,
     )
 
     frames: list = []
@@ -422,13 +418,10 @@ def _convert_all_sheets_to_parquet(
     merged_report = CleaningReport()
     for name in sheet_names:
         try:
-            structure = _detect_structure(excel_path, name)
-            merged = structure.merged_ranges if structure else None
-
             sheet_raw = reader.load_sheet(name, header_row=None, n_rows=_HEADER_MAX_SCAN)
             df_raw = sheet_raw.to_pandas()
             header_row = detect_header_row(df_raw.values.tolist())
-            actual_start, header_depth = detect_header_depth(header_row, merged)
+            actual_start, header_depth = detect_header_depth(header_row, None)
 
             if header_depth > 1:
                 header_param = list(range(actual_start, actual_start + header_depth))
@@ -447,9 +440,8 @@ def _convert_all_sheets_to_parquet(
                     f"请用 sheet 参数逐个读取。"
                 )
 
-            # 三层清洗（复用已检测的 structure）
             df, sheet_report = clean_excel(
-                df, excel_path, name, actual_start, structure,
+                df, excel_path, name, actual_start,
             )
             merged_report.merge(sheet_report)
             df.insert(0, "_sheet", name)

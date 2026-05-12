@@ -172,7 +172,8 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 用 ask_user 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-file_read 只支持单文件查询。多文件场景：每个文件分别调 file_read（可并行），各自存 staging，再用 code_execute 读取多个 staging 文件 merge。
+数据文件处理流程：先调 file_read 看结构（自动存 staging），再用 code_execute + duckdb 查询计算。
+多文件场景：每个文件分别调 file_read（可并行），各自存 staging，再用 code_execute 中 duckdb.sql JOIN 多个 Parquet。
 
 ## 编排与串联
 
@@ -219,14 +220,17 @@ file_read 只支持单文件查询。多文件场景：每个文件分别调 fil
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 
-可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, pdfplumber, zipfile
+可用库：duckdb, pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, pdfplumber, zipfile
 os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
 环境变量：WORKSPACE_DIR（工作区根目录）、STAGING_DIR（中间数据目录）、OUTPUT_DIR（输出目录）
 
-数据读取：
-- 所有数据文件先通过 file_read 读取，结果自动存 staging
-- code_execute 统一从 staging 读: pd.read_parquet(STAGING_DIR + '/文件名')
-- 多文件关联：每个文件分别调 file_read，然后在 code_execute 中读多个 staging 文件 merge
+数据处理：
+- 所有数据文件先通过 file_read 读取，结果自动存 staging（Parquet 格式）
+- 大数据查询用 duckdb（恒定内存，百万行不爆）：
+  duckdb.sql(f"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')").df()
+- 小数据或后处理用 pandas（导出、格式化、画图）
+- 多文件关联：duckdb.sql 直接 JOIN 多个 Parquet 文件
+- 合并单元格数据（file_read 预览中标注了合并区域）：用 df['列名'].ffill() 填充
 - 生成文件写到 OUTPUT_DIR，平台自动检测上传
 - 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
 - 写 Excel 用 engine='xlsxwriter'
@@ -238,6 +242,7 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 
 限制：
 - 禁止 import sys/subprocess
+- 禁止用 pd.read_excel / pd.read_csv 直接读原始文件，必须从 staging Parquet 读取
 - 删除文件必须两步：第一步用 file_list 列出待删文件并告知用户，等用户确认后第二步再调 code_execute 并在 confirm_delete 传入文件路径（如 "下载/文件名.xlsx"）
 - 环境可能因超时重置，变量不存在时重新读取
 

@@ -184,18 +184,19 @@ class FileToolMixin:
     async def _file_read_data(
         self, args: Dict[str, Any], settings: Any, file_type: str,
     ) -> Any:
-        """数据文件读取：Excel 结构化 / SQL 查询 / CSV-Parquet profile。"""
+        """数据文件读取：openpyxl 结构化预览 + Parquet 缓存。计算交给 code_execute + duckdb。"""
         from services.agent.agent_result import AgentResult
+        from core.workspace import resolve_staging_dir
 
-        # Excel 无 sql → openpyxl 结构化读取（sheet="*" 合并走 DataQueryExecutor）
-        if file_type == "excel" and not args.get("sql") and args.get("sheet") != "*":
+        staging_dir = resolve_staging_dir(
+            settings.file_workspace_root,
+            self.user_id, self.org_id, self.conversation_id,
+        )
+
+        # Excel → openpyxl 结构化预览 + Parquet 缓存
+        if file_type == "excel":
             try:
                 from services.agent.excel_reader import read_excel_structured
-                from core.workspace import resolve_staging_dir
-                staging_dir = resolve_staging_dir(
-                    settings.file_workspace_root,
-                    self.user_id, self.org_id, self.conversation_id,
-                )
                 result = await read_excel_structured(
                     args["path"], args.get("sheet"), staging_dir,
                 )
@@ -204,14 +205,13 @@ class FileToolMixin:
                 self._pending_schemas.append((
                     _filename, args["path"], result.summary[:500],
                 ))
-                # 顺带创建扁平 Parquet 缓存 + 附加可复制命令（对齐旧 data_query）
+                # 创建 Parquet 缓存 + 附加 duckdb 查询指引
                 try:
                     from services.agent.data_query_cache import ensure_parquet_cache
                     cache_path, _ = await ensure_parquet_cache(
                         args["path"], args.get("sheet"), staging_dir,
                     )
                     cache_name = Path(cache_path).name
-                    # 读取 Parquet schema（列名+类型+行数）
                     cache_schema = ""
                     try:
                         import duckdb as _dq
@@ -224,46 +224,77 @@ class FileToolMixin:
                             f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
                         ).fetchone()[0]
                         _con.close()
-                        col_preview = ", ".join(f"{n}({t})" for n, t in pq_cols[:15])
+                        col_preview = ", ".join(f'"{n}"({t})' for n, t in pq_cols[:15])
                         if len(pq_cols) > 15:
                             col_preview += f" (+{len(pq_cols)-15}列)"
                         cache_schema = f" | {pq_rows}行 × {len(pq_cols)}列\n[列: {col_preview}]"
                     except Exception:
                         pass
-                    rel_path = _filename
                     result.summary += (
-                        f"\n\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}'){cache_schema}"
-                        f"\n\n后续操作:"
-                        f"\n- 查询数据: file_read(path=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
-                        f"\n- 全量读取: file_read(path=\"{rel_path}\", sql=\"SELECT * FROM data\")"
+                        f"\n\n[staging 缓存] {cache_name}{cache_schema}"
+                        f"\n\n数据查询（在 code_execute 中使用）:"
+                        f"\n  import duckdb"
+                        f"\n  df = duckdb.sql(f\"SELECT * FROM read_parquet(STAGING_DIR + '/{cache_name}') LIMIT 20\").df()"
                     )
                 except Exception:
-                    pass  # 缓存创建失败不影响主流程
+                    pass
                 return result
             except Exception as e:
-                logger.error(f"Excel structured read failed, fallback to DuckDB | error={e}")
-                # 降级到 DataQueryExecutor
+                logger.error(f"Excel structured read failed | error={e}")
+                return AgentResult(
+                    summary=f"Excel 读取失败: {e}",
+                    status="error",
+                    error_message=str(e),
+                )
 
-        # SQL 查询 / CSV-Parquet profile / Excel 降级
+        # CSV / Parquet → DuckDB 快速 profile + 缓存
         try:
-            from services.agent.data_query_executor import DataQueryExecutor
-            dq_executor = DataQueryExecutor(
-                user_id=self.user_id,
-                org_id=self.org_id,
-                conversation_id=self.conversation_id,
-                workspace_root=settings.file_workspace_root,
+            from services.agent.data_query_cache import ensure_parquet_cache
+            _filename = Path(args["path"]).name
+
+            # CSV 需要转 Parquet 缓存；Parquet 直接用
+            if file_type == "csv":
+                cache_path, _ = await ensure_parquet_cache(
+                    args["path"], None, staging_dir,
+                )
+            else:
+                cache_path = args["path"]
+
+            # DuckDB 快速 profile
+            import duckdb as _dq
+            _con = _dq.connect(":memory:")
+            _escaped = cache_path.replace("'", "''")
+            pq_cols = _con.execute(
+                f"SELECT column_name, data_type FROM parquet_schema('{_escaped}')"
+            ).fetchall()
+            pq_rows = _con.execute(
+                f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
+            ).fetchone()[0]
+            preview = _con.execute(
+                f"SELECT * FROM read_parquet('{_escaped}') LIMIT 5"
+            ).fetchdf().to_string(index=False)
+            _con.close()
+
+            col_preview = ", ".join(f'"{n}"({t})' for n, t in pq_cols[:15])
+            if len(pq_cols) > 15:
+                col_preview += f" (+{len(pq_cols)-15}列)"
+            cache_name = Path(cache_path).name
+
+            summary = (
+                f"{_filename} | {pq_rows:,}行 × {len(pq_cols)}列\n"
+                f"[列: {col_preview}]\n\n"
+                f"预览:\n{preview}\n\n"
+                f"[staging 缓存] {cache_name}\n\n"
+                f"数据查询（在 code_execute 中使用）:\n"
+                f"  import duckdb\n"
+                f"  df = duckdb.sql(f\"SELECT * FROM read_parquet(STAGING_DIR + '/{cache_name}') LIMIT 20\").df()"
             )
-            result = await dq_executor.execute(
-                file=args["path"],
-                sql=args.get("sql"),
-                sheet=args.get("sheet"),
-            )
-            if dq_executor.last_file_meta:
-                self._pending_schemas.append(dq_executor.last_file_meta)
-            self._register_staging_files(result)
-            return result
+            self._pending_schemas.append((
+                _filename, args["path"], summary[:500],
+            ))
+            return AgentResult(summary=summary, status="success")
         except Exception as e:
-            logger.error(f"DataQueryExecutor failed | error={e}")
+            logger.error(f"Data file read failed | error={e}")
             return AgentResult(
                 summary=f"数据文件读取失败: {e}",
                 status="error",

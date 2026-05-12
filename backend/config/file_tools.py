@@ -22,7 +22,6 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["path"],
         "properties": {
             "path": {"type": "string"},
-            "sql": {"type": "string"},
             "sheet": {"type": "string"},
             "offset": {"type": "integer"},
             "limit": {"type": "integer"},
@@ -65,10 +64,10 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "读取 workspace 内的任何文件。所有格式自动识别，直接传文件名即可。\n\n"
                     "Usage:\n"
                     "- path 参数使用文件名或相对路径，优先使用 file_list 返回的路径\n"
-                    "- Excel 文件：返回所有 Sheet 的预览（Sheet 名+行列数+前 3 行带单元格编号和公式）\n"
+                    "- Excel 文件：返回所有 Sheet 的结构化预览（Sheet 名+行列数+前几行带单元格编号+合并区域标注），数据自动存 staging Parquet\n"
                     "- Excel 指定 sheet 参数时：返回该 Sheet 的完整内容，含公式对照表（公式 vs 计算值）\n"
-                    "- Excel/CSV/Parquet 传 sql 参数时：执行 DuckDB SQL 查询，表名用 FROM data，中文列名用双引号\n"
-                    "- Excel/CSV/Parquet 的读取结果自动存 staging，后续用 code_execute 从 staging 读取\n"
+                    "- CSV/Parquet 文件：返回结构预览（列名+类型+行数+前几行），数据自动存 staging Parquet\n"
+                    "- 数据查询和计算：用 code_execute + duckdb.sql() 从 staging Parquet 查询\n"
                     "- PDF 文件：自动提取文本和表格。≤10 页自动全读，>10 页 MUST 指定 pages 参数，每次最多 20 页\n"
                     "- DOCX 文件：返回结构化内容（[Heading 1]/[Normal] 标注 + 表格带行号）\n"
                     "- PPTX 文件：返回结构化内容（Slide 编号 + [Title]/[Text] 标注 + 表格带行号）\n"
@@ -84,13 +83,6 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "description": (
                                 "文件名或相对路径（如 '销售报表.xlsx' 或 '报表/data.csv'）。"
                                 "优先使用 file_list 返回的路径"
-                            ),
-                        },
-                        "sql": {
-                            "type": "string",
-                            "description": (
-                                "SQL 查询语句（仅 Excel/CSV/Parquet），表名用 FROM data。"
-                                "中文列名用双引号包裹。"
                             ),
                         },
                         "sheet": {
@@ -216,8 +208,7 @@ FILE_ROUTING_PROMPT = (
     "- 查看目录/列出文件 → file_list\n"
     "- 搜索/查找文件 → file_search\n"
     "- 读取任何文件（Excel/CSV/PDF/DOCX/图片/文本）→ file_read\n"
-    "- Excel/CSV 数据查询 → file_read(path=..., sql=\"SELECT ... FROM data\")\n"
-    "- 计算分析/生成文件 → code_execute\n"
+    "- 数据查询/计算/分析 → 先 file_read 看结构，再 code_execute + duckdb 查询计算\n"
     "- 撤销/恢复原文件/回退 → restore_file\n"
     "- file_list 和 file_search 返回的结果已包含文件元信息（行列数/类型/读取命令），直接使用\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
