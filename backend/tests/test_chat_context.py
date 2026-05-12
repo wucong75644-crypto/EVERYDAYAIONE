@@ -1459,7 +1459,7 @@ class TestBuildWorkspacePrompt:
         result = ChatContextMixin._build_workspace_prompt(files)
         assert "销售报表.xlsx" in result
         assert "xlsx" in result
-        assert "用合适的工具读取" in result
+        assert "file_read" in result
 
     def test_multiple_files(self):
         from services.handlers.chat_context_mixin import ChatContextMixin

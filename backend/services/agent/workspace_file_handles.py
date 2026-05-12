@@ -42,7 +42,7 @@ class FilePathCache:
     def resolve(self, filename: str) -> str | None:
         """解析文件名 → 绝对路径。
 
-        优先精确匹配，其次去空格匹配。
+        优先精确匹配，其次去空格匹配，最后模糊匹配（缺扩展名、多余标点等）。
         """
         # 精确匹配
         path = self._name_to_path.get(filename)
@@ -50,7 +50,15 @@ class FilePathCache:
             return path
         # 去空格匹配（LLM 常在中文-数字、连字符两边加空格）
         normalized = filename.replace(" ", "")
-        return self._normalized_index.get(normalized)
+        path = self._normalized_index.get(normalized)
+        if path:
+            return path
+        # 模糊匹配：AI 可能丢扩展名或加多余字符
+        # 用注册名包含查询名（或反向）来兜底
+        for registered, abs_path in self._normalized_index.items():
+            if normalized in registered or registered in normalized:
+                return abs_path
+        return None
 
     @property
     def count(self) -> int:
