@@ -30,6 +30,8 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "zipfile",
     # 数据分析
     "pandas", "numpy", "pyarrow", "duckdb",
+    # 内存管理（AI 可能用 gc.collect 释放大对象）
+    "gc",
     # 可视化（matplotlib Agg 后端，无 GUI）
     "matplotlib", "seaborn",
     # 图片处理
