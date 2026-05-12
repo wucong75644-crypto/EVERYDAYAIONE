@@ -2198,7 +2198,10 @@
       "Bash(/Users/wucong/EVERYDAYAIONE/.venv/bin/python3 -c ' *)",
       "WebFetch(domain:www.datastudios.org)",
       "Bash(/Users/wucong/EVERYDAYAIONE/.venv/bin/python3)",
-      "Bash(./git-push.sh \"fix: 主Agent提示词新增标识符原样复制规则——防止LLM美化列名导致SQL查询失败\")"
+      "Bash(./git-push.sh \"fix: 主Agent提示词新增标识符原样复制规则——防止LLM美化列名导致SQL查询失败\")",
+      "Bash(PYTHONPATH=. /Users/wucong/EVERYDAYAIONE/.venv/bin/python3)",
+      "Bash(python -m pytest tests/test_excel_cleaner.py tests/test_data_query.py tests/test_file_tools.py -x -q)",
+      "Bash(python -m pytest tests/test_excel_cleaner.py tests/test_file_tools.py -q)"
     ],
     "additionalDirectories": [
       "/tmp"

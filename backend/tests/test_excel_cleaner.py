@@ -180,42 +180,29 @@ class TestDetectStructure:
 
 
 class TestMergeFill:
-    def test_vertical_merge_ffill(self, merged_xlsx):
+    def test_merge_not_auto_filled(self, merged_xlsx):
+        """合并单元格不再自动 ffill——由 AI 在 code_execute 中按需处理。"""
         df = pd.read_excel(merged_xlsx, engine="calamine")
         assert pd.isna(df.iloc[1, 0])  # 合并后为 NaN
-        assert pd.isna(df.iloc[2, 0])
 
         df_clean, report = clean_excel(df, merged_xlsx, 0)
         assert df_clean.iloc[0, 0] == "ORD001"
-        assert df_clean.iloc[1, 0] == "ORD001"  # ffill
-        assert df_clean.iloc[2, 0] == "ORD001"  # ffill
-        assert df_clean.iloc[3, 0] == "ORD002"
-        assert df_clean.iloc[4, 0] == "ORD002"  # ffill
-        assert report.merged_cols_filled == 1
+        assert pd.isna(df_clean.iloc[1, 0])  # 不再自动填充
+        assert pd.isna(df_clean.iloc[2, 0])
 
     def test_other_cols_untouched(self, merged_xlsx):
         df = pd.read_excel(merged_xlsx, engine="calamine")
         df_clean, _ = clean_excel(df, merged_xlsx, 0)
-        # B 列（商品）不应被 ffill
         assert df_clean.iloc[0, 1] == "苹果"
         assert df_clean.iloc[1, 1] == "香蕉"
 
 
 class TestHiddenRowMark:
-    def test_hidden_rows_marked(self, hidden_xlsx):
+    def test_no_auto_hidden_mark(self, hidden_xlsx):
+        """隐藏行/列不再自动标记——结构检测已移除，由 AI 按需处理。"""
         df = pd.read_excel(hidden_xlsx, engine="calamine")
-        df_clean, report = clean_excel(df, hidden_xlsx, 0)
-
-        assert "_is_hidden" in df_clean.columns
-        assert report.hidden_rows_marked == 2
-        hidden = df_clean[df_clean["_is_hidden"] == True]
-        assert len(hidden) == 2
-        # 验证具体行：Excel row 5,6 → pandas index 3,4（header=0 → offset=2）
-        assert df_clean.loc[3, "_is_hidden"] == True
-        assert df_clean.loc[4, "_is_hidden"] == True
-        # 相邻行不应被标记
-        assert df_clean.loc[2, "_is_hidden"] == False
-        assert df_clean.loc[5, "_is_hidden"] == False
+        df_clean, _ = clean_excel(df, hidden_xlsx, 0)
+        assert "_is_hidden" not in df_clean.columns
 
     def test_no_hidden_no_column(self, simple_xlsx):
         df = pd.read_excel(simple_xlsx, engine="calamine")
@@ -224,24 +211,19 @@ class TestHiddenRowMark:
 
 
 class TestHiddenColReport:
-    def test_hidden_cols_in_report(self, hidden_xlsx):
-        df = pd.read_excel(hidden_xlsx, engine="calamine")
-        _, report = clean_excel(df, hidden_xlsx, 0)
-        assert "hidden_col" in report.hidden_cols_names
-
     def test_data_preserved(self, hidden_xlsx):
+        """隐藏列的数据仍保留（不删除）。"""
         df = pd.read_excel(hidden_xlsx, engine="calamine")
         df_clean, _ = clean_excel(df, hidden_xlsx, 0)
-        assert "hidden_col" in df_clean.columns  # 不删除
+        assert "hidden_col" in df_clean.columns
 
 
 class TestAutoFilter:
-    def test_auto_filter_reported(self, autofilter_xlsx):
+    def test_basic_clean(self, autofilter_xlsx):
+        """自动筛选不再检测——结构检测已移除。"""
         df = pd.read_excel(autofilter_xlsx, engine="calamine")
-        _, report = clean_excel(df, autofilter_xlsx, 0)
-        assert report.has_auto_filter is True
-        llm_text = report.to_llm_text()
-        assert "自动筛选" in llm_text
+        df_clean, _ = clean_excel(df, autofilter_xlsx, 0)
+        assert len(df_clean) > 0
 
 
 # ============================================================
@@ -394,9 +376,8 @@ class TestMixedScenario:
         df = pd.read_excel(str(p), engine="calamine")
         df_clean, report = clean_excel(df, str(p), 0)
 
-        assert df_clean.iloc[1, 0] == "水果"  # ffill
-        assert report.merged_cols_filled == 1
-        assert "_is_summary" not in df_clean.columns  # 不做汇总行检测
+        assert pd.isna(df_clean.iloc[1, 0])  # 不再自动 ffill
+        assert "_is_summary" not in df_clean.columns
 
     def test_no_cleaning_needed(self, simple_xlsx):
         """普通文件完全不受影响"""
