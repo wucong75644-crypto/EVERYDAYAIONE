@@ -15,6 +15,7 @@ Excel 结构化读取（openpyxl 两次读取，保留公式+编号）
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -205,29 +206,43 @@ def _format_structured_output(
     return "\n".join(lines)
 
 
+_RE_MERGE_CELL = re.compile(rb'<mergeCell\s+ref="([^"]+)"')
+_CHUNK_READ = 64 * 1024  # 64KB
+
+
 def _extract_merged_ranges(excel_path: str) -> dict[str, list[str]]:
-    """从 xlsx ZIP 内 XML 提取各 Sheet 的合并区域（轻量，不加载数据）。
+    """从 xlsx ZIP 内 XML 提取各 Sheet 的合并区域（分块读取，恒定内存 <1MB）。
+
+    不使用 XML 解析器（ET.iterparse 对大文件仍会累积 element 占 GB 内存），
+    直接按 64KB 块读取 XML 文本，正则提取 mergeCell 标签。
+    遇到 </mergeCells> 立即停止，不读后续的行数据。
 
     Returns: {sheet_xml_path: ["A1:C1", "B2:B5", ...], ...}
     """
     from zipfile import ZipFile, BadZipFile
-    import xml.etree.ElementTree as ET
 
     result: dict[str, list[str]] = {}
-    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
     try:
         with ZipFile(excel_path, "r") as zf:
             for name in zf.namelist():
                 if not name.startswith("xl/worksheets/sheet") or not name.endswith(".xml"):
                     continue
                 try:
-                    xml_bytes = zf.read(name)
-                    root = ET.fromstring(xml_bytes)
-                    merges = []
-                    for mc in root.iter(f"{ns}mergeCell"):
-                        ref = mc.get("ref")
-                        if ref:
-                            merges.append(ref)
+                    merges: list[str] = []
+                    found_end = False
+                    with zf.open(name) as xml_file:
+                        leftover = b""
+                        while not found_end:
+                            chunk = xml_file.read(_CHUNK_READ)
+                            if not chunk:
+                                break
+                            data = leftover + chunk
+                            for m in _RE_MERGE_CELL.finditer(data):
+                                merges.append(m.group(1).decode())
+                            if b"</mergeCells>" in data:
+                                found_end = True
+                            # 保留末尾防标签被截断
+                            leftover = data[-200:] if len(data) > 200 else data
                     if merges:
                         result[name] = merges
                 except Exception:
