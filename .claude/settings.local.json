@@ -2185,7 +2185,8 @@
       "Bash(./git-push.sh \"fix: 输出格式对齐Claude——Excel公式值+Row标号+区域分隔+合并去重+PPTX结构化+PDF表格提取\")",
       "Bash(./git-push.sh \"fix: 工具引导对齐行业标准——description放使用细节+系统提示词只保留跨工具协作\")",
       "Bash(./git-push.sh \"fix: Excel读取对齐Claude两步流程——不指定sheet返回全sheet预览+description对标Claude Code写法\")",
-      "Bash(./git-push.sh \"fix: 工具description对标Claude Code——file_read去重删除+code_execute补完能力说明\")"
+      "Bash(./git-push.sh \"fix: 工具description对标Claude Code——file_read去重删除+code_execute补完能力说明\")",
+      "Bash(./git-push.sh \"fix: 文件插入提示词明确指定file_read——防止AI绕道file_search\")"
     ],
     "additionalDirectories": [
       "/tmp"

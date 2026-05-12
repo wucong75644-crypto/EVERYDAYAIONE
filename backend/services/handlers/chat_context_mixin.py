@@ -72,7 +72,7 @@ class ChatContextMixin:
         if not workspace_files:
             return ""
 
-        lines: list[str] = ["用户附加了以下工作区文件，请用合适的工具读取后回答："]
+        lines: list[str] = ["用户附加了以下工作区文件，用 file_read 读取后回答："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             ext = _Path(wp).suffix.lower()
