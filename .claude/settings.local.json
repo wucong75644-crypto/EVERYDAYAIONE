@@ -2190,7 +2190,8 @@
       "Bash(./git-push.sh \"fix: FilePathCache增强模糊匹配——AI丢扩展名或加空格时自动解析正确路径\")",
       "Bash(./git-push.sh \"fix: 工作区文件提示词改为可复制命令格式——AI直接复制path参数不再拼凑文件名\")",
       "Bash(./git-push.sh \"fix: 补全合并遗漏——大文件走calamine快速路径+预览只读3行+sheet=*合并+小文件schema注册\")",
-      "Bash(./git-push.sh \"fix: Excel读取引擎换fastexcel——混合类型列不崩+探索统一走openpyxl+大文件calamine兜底\")"
+      "Bash(./git-push.sh \"fix: Excel读取引擎换fastexcel——混合类型列不崩+探索统一走openpyxl+大文件calamine兜底\")",
+      "Bash(./git-push.sh \"fix: 探索时顺带创建扁平Parquet缓存——code_execute能直接pd.read_parquet读取\")"
     ],
     "additionalDirectories": [
       "/tmp"
