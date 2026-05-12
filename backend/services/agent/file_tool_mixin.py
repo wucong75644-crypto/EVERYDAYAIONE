@@ -204,6 +204,14 @@ class FileToolMixin:
                 self._pending_schemas.append((
                     _filename, args["path"], result.summary[:500],
                 ))
+                # 顺带创建扁平 Parquet 缓存（供 code_execute 读取）
+                try:
+                    from services.agent.data_query_cache import ensure_parquet_cache
+                    await ensure_parquet_cache(
+                        args["path"], args.get("sheet"), staging_dir,
+                    )
+                except Exception:
+                    pass  # 缓存创建失败不影响主流程
                 return result
             except Exception as e:
                 logger.error(f"Excel structured read failed, fallback to DuckDB | error={e}")
