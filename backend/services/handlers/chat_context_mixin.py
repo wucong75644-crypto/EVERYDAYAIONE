@@ -75,9 +75,8 @@ class ChatContextMixin:
         lines: list[str] = ["用户附加了以下工作区文件，用 file_read 读取后回答："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
-            ext = _Path(wp).suffix.lower()
             size_str = _fmt_size(f.get("size"))
-            lines.append(f"- {wp} ({ext.lstrip('.')}, {size_str})")
+            lines.append(f"  file_read(path=\"{wp}\")  — {size_str}")
 
         return "\n".join(lines)
 
