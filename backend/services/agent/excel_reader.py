@@ -211,32 +211,53 @@ def _build_all_sheets_preview(
     """所有 sheet 预览（对标 Claude：Sheet 列表 + 每个 sheet 行列数 + 前 3 行含公式）。"""
     import openpyxl
 
-    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    # 用 data_only=False 拿公式，read_only=True 保证低内存
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=False)
     sheet_names = wb.sheetnames
-    wb.close()
 
     if not sheet_names:
+        wb.close()
         return "", []
+
+    # 同时打开 data_only=True 拿计算值
+    wb_val = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
 
     lines = [f"Sheet列表: {sheet_names}"]
 
     for sn in sheet_names[:10]:
-        # 复用 _read_sheet_structured 读每个 sheet（含公式检测）
-        rows, fv, cross, total_rows, total_cols, fc = (
-            _read_sheet_structured(excel_path, sn)
-        )
+        ws_f = wb[sn]
+        ws_v = wb_val[sn]
         lines.append(f"\n=== Sheet: {sn} ===")
-        lines.append(f"  行数: {total_rows}, 列数: {total_cols}")
+        lines.append(f"  行数: {ws_f.max_row}, 列数: {ws_f.max_column}")
 
-        # 前 3 行预览（跳过分隔符）
-        shown = 0
-        for rn, cells in rows:
-            if cells == ["---"]:
-                continue
-            lines.append(f"  Row{rn}: {cells}")
-            shown += 1
-            if shown >= preview_rows:
+        # 只读前 preview_rows 行（不全量遍历）
+        row_idx = 0
+        val_iter = ws_v.iter_rows()
+        for row_f in ws_f.iter_rows():
+            row_idx += 1
+            if row_idx > preview_rows:
                 break
+            # 同步读值行
+            try:
+                row_v = next(val_iter)
+            except StopIteration:
+                row_v = row_f
+
+            row_cells: list[str] = []
+            for cell_f, cell_v in zip(row_f, row_v):
+                if not hasattr(cell_f, "column") or cell_f.column is None:
+                    continue
+                col_letter = _col_letter(cell_f.column)
+                coord = f"{col_letter}{cell_f.row}"
+                if hasattr(cell_f, "data_type") and cell_f.data_type == "f" and cell_f.value:
+                    row_cells.append(f"{coord}:{_FORMULA_PREFIX}{cell_f.value}")
+                elif cell_f.value is not None:
+                    row_cells.append(f"{coord}:{cell_v.value if cell_v.value is not None else cell_f.value}")
+            if row_cells:
+                lines.append(f"  Row{row_idx}: {row_cells}")
+
+    wb.close()
+    wb_val.close()
 
     if len(sheet_names) > 10:
         lines.append(f"\n... 等{len(sheet_names)}个 Sheet")

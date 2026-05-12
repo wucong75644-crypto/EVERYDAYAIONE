@@ -187,21 +187,35 @@ class FileToolMixin:
         """数据文件读取：Excel 结构化 / SQL 查询 / CSV-Parquet profile。"""
         from services.agent.agent_result import AgentResult
 
-        # Excel 无 sql → 结构化读取（公式+编号）
-        if file_type == "excel" and not args.get("sql"):
-            try:
-                from services.agent.excel_reader import read_excel_structured
-                from core.workspace import resolve_staging_dir
-                staging_dir = resolve_staging_dir(
-                    settings.file_workspace_root,
-                    self.user_id, self.org_id, self.conversation_id,
-                )
-                return await read_excel_structured(
-                    args["path"], args.get("sheet"), staging_dir,
-                )
-            except Exception as e:
-                logger.error(f"Excel structured read failed, fallback to DuckDB | error={e}")
-                # 降级到 DataQueryExecutor
+        # Excel 无 sql → 按大小分流（sheet="*" 合并走 DataQueryExecutor）
+        if file_type == "excel" and not args.get("sql") and args.get("sheet") != "*":
+            # 判断文件大小：大文件走 DataQueryExecutor（calamine 快速路径）
+            _path = Path(args["path"])
+            _size_mb = _path.stat().st_size / (1024 * 1024) if _path.exists() else 0
+            _is_large = _size_mb > 5  # >5MB 视为大文件
+
+            if not _is_large:
+                try:
+                    from services.agent.excel_reader import read_excel_structured
+                    from core.workspace import resolve_staging_dir
+                    staging_dir = resolve_staging_dir(
+                        settings.file_workspace_root,
+                        self.user_id, self.org_id, self.conversation_id,
+                    )
+                    result = await read_excel_structured(
+                        args["path"], args.get("sheet"), staging_dir,
+                    )
+                    # schema 收集 + staging 注册（和 DataQueryExecutor 路径一致）
+                    self._register_staging_files(result)
+                    # schema 注册：从结果摘要提取 schema 信息
+                    _filename = Path(args["path"]).name
+                    self._pending_schemas.append((
+                        _filename, args["path"], result.summary[:500],
+                    ))
+                    return result
+                except Exception as e:
+                    logger.error(f"Excel structured read failed, fallback to DuckDB | error={e}")
+                    # 降级到 DataQueryExecutor
 
         # SQL 查询 / CSV-Parquet profile / Excel 降级
         try:
