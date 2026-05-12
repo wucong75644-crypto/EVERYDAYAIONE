@@ -62,16 +62,18 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_read",
                 "description": (
-                    "读取 workspace 内的任何文件，自动识别格式并返回结构化内容。\n\n"
+                    "读取 workspace 内的任何文件。所有格式自动识别，直接传文件名即可。\n\n"
                     "Usage:\n"
-                    "- Excel/CSV/Parquet：返回结构化内容（单元格编号+公式+计算值+区域分隔），"
-                    "自动存 staging。传 sql 参数可执行 DuckDB SQL 查询，结果存 staging。"
-                    "多 Sheet Excel 返回 Sheet 概览，用 sheet 参数指定读取\n"
-                    "- PDF：自动提取文本+表格。"
-                    "≤10 页自动全读，>10 页 MUST 指定 pages 参数，每次最多 20 页\n"
-                    "- DOCX/PPTX：结构化读取（标题层级、段落类型、表格带行号）\n"
-                    "- 图片（png/jpg/gif/webp）：返回图片供视觉分析\n"
-                    "- 纯文本（txt/md/json/py 等）：返回内容（带行号），最多 2000 行\n"
+                    "- path 参数使用文件名或相对路径，优先使用 file_list 返回的路径\n"
+                    "- Excel 文件：返回所有 Sheet 的预览（Sheet 名+行列数+前 3 行带单元格编号和公式）\n"
+                    "- Excel 指定 sheet 参数时：返回该 Sheet 的完整内容，含公式对照表（公式 vs 计算值）\n"
+                    "- Excel/CSV/Parquet 传 sql 参数时：执行 DuckDB SQL 查询，表名用 FROM data，中文列名用双引号\n"
+                    "- Excel/CSV/Parquet 的读取结果自动存 staging，后续用 code_execute 从 staging 读取\n"
+                    "- PDF 文件：自动提取文本和表格。≤10 页自动全读，>10 页 MUST 指定 pages 参数，每次最多 20 页\n"
+                    "- DOCX 文件：返回结构化内容（[Heading 1]/[Normal] 标注 + 表格带行号）\n"
+                    "- PPTX 文件：返回结构化内容（Slide 编号 + [Title]/[Text] 标注 + 表格带行号）\n"
+                    "- 图片文件（png/jpg/gif/webp）：返回图片供视觉分析\n"
+                    "- 纯文本文件（txt/md/json/py 等）：返回内容带行号，最多 2000 行\n"
                     "- 只能读文件，不能读目录。列目录用 file_list"
                 ),
                 "parameters": {
