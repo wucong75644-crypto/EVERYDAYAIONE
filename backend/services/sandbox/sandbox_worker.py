@@ -345,18 +345,17 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 # ① 文件大小预检
                 if file_arg is not None:
                     _check_file_size(file_arg)
-                # ② 引擎选择：未指定 → calamine（快 7 倍）
+                # ② 引擎选择：未指定 → fastexcel（calamine 同速，混合类型不崩）
                 if "engine" not in kwargs:
                     kwargs["engine"] = "calamine"
                 # ②b sheet 名模糊匹配（防全角/半角/空格等不精确匹配）
                 sheet_arg = kwargs.get("sheet_name")
                 if isinstance(sheet_arg, str) and file_arg is not None:
                     try:
-                        import pandas as _pd
+                        import fastexcel as _fe
                         from services.agent.data_query_cache import fuzzy_match_sheet
-                        _xl = _pd.ExcelFile(file_arg, engine=kwargs.get("engine", "calamine"))
-                        kwargs["sheet_name"] = fuzzy_match_sheet(sheet_arg, _xl.sheet_names)
-                        _xl.close()
+                        _reader = _fe.read_excel(str(file_arg))
+                        kwargs["sheet_name"] = fuzzy_match_sheet(sheet_arg, _reader.sheet_names)
                     except Exception:
                         pass
                 # ③ 表头检测：未指定 header → 自动检测

@@ -112,10 +112,10 @@ def scan_sheet_structures(excel_path: str) -> list[dict]:
     Returns:
         [{"name": "Sheet1", "columns": ["col1", "col2"], "row_count": 500}, ...]
     """
-    import pandas as pd
+    import fastexcel
 
-    xl = pd.ExcelFile(excel_path, engine="calamine")
-    all_names = xl.sheet_names[:_MAX_SCAN_SHEETS]
+    reader = fastexcel.read_excel(excel_path)
+    all_names = reader.sheet_names[:_MAX_SCAN_SHEETS]
 
     # 采样：前 N 个 + 最后 1 个（去重）
     if len(all_names) <= _STRUCTURE_SAMPLE:
@@ -128,30 +128,23 @@ def scan_sheet_structures(excel_path: str) -> list[dict]:
     scanned: dict[str, dict] = {}
     for name in scan_names:
         try:
-            # 一次读取：前 _HEADER_MAX_SCAN 行，同时检测表头和列名
-            df_raw = pd.read_excel(
-                xl, sheet_name=name, engine="calamine",
-                header=None, nrows=_HEADER_MAX_SCAN,
+            # 读前 _HEADER_MAX_SCAN 行检测表头
+            sheet_raw = reader.load_sheet(
+                name, header_row=None, n_rows=_HEADER_MAX_SCAN,
             )
+            df_raw = sheet_raw.to_pandas()
             header_row = detect_header_row(df_raw.values.tolist())
 
-            # 用检测到的表头重新读取列名 + 第一列行数
-            df = pd.read_excel(
-                xl, sheet_name=name, engine="calamine",
-                header=header_row, usecols=[0],
-            )
-            columns = [str(c) for c in pd.read_excel(
-                xl, sheet_name=name, engine="calamine",
-                header=header_row, nrows=1,
-            ).columns if not str(c).startswith("Unnamed:")]
+            # 用检测到的表头重新读取列名 + 行数
+            sheet = reader.load_sheet(name, header_row=header_row)
+            df = sheet.to_pandas()
+            columns = [str(c) for c in df.columns if not str(c).startswith("Unnamed:")]
             row_count = len(df)
 
             scanned[name] = {"name": name, "columns": columns, "row_count": row_count}
         except Exception as e:
             logger.warning(f"Sheet scan failed | sheet={name} | error={e}")
             scanned[name] = {"name": name, "columns": [], "row_count": 0}
-
-    xl.close()
 
     # 未扫描的 sheet 用第一个扫描结果的结构推断（列名相同，行数标 -1 表示未知）
     first_scanned = next((s for s in scanned.values() if s["columns"]), None)
@@ -336,9 +329,11 @@ def _convert_excel_to_parquet(
     """Excel → Parquet（同步，线程池执行）。返回所有 Sheet 名称。"""
     import pandas as pd
 
+    import fastexcel
+
     start = time.monotonic()
-    xl = pd.ExcelFile(excel_path, engine="calamine")
-    sheet_names = xl.sheet_names
+    reader = fastexcel.read_excel(excel_path)
+    sheet_names = reader.sheet_names
 
     target_sheet: str | int
     if sheet is None:
@@ -353,28 +348,25 @@ def _convert_excel_to_parquet(
         _detect_structure, clean_excel, write_cleaning_report,
     )
 
-    resolved_name = target_sheet if isinstance(target_sheet, str) else 0
+    resolved_name = target_sheet if isinstance(target_sheet, str) else sheet_names[0]
     structure = _detect_structure(excel_path, resolved_name)
     merged = structure.merged_ranges if structure else None
 
     # 自动检测表头行 + 基于合并元数据的多级表头深度
-    df_raw = pd.read_excel(
-        xl, sheet_name=target_sheet, engine="calamine",
-        header=None, nrows=_HEADER_MAX_SCAN,
-    )
+    sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
+    df_raw = sheet_raw.to_pandas()
     header_row = detect_header_row(df_raw.values.tolist())
     actual_start, header_depth = detect_header_depth(header_row, merged)
 
-    # 多级表头：传 list 让 pandas 生成 MultiIndex 列名
+    # fastexcel header_row 只支持单行表头（int），多级表头用 pandas 兼容
     header_param: int | list[int] = actual_start
     if header_depth > 1:
         header_param = list(range(actual_start, actual_start + header_depth))
-
-    df = pd.read_excel(
-        xl, sheet_name=target_sheet, engine="calamine",
-        header=header_param,
-    )
-    xl.close()
+        # 多级表头回退 pandas（fastexcel 不支持 MultiIndex header）
+        df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
+    else:
+        sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
+        df = sheet_data.to_pandas()
 
     if actual_start > 0 or header_depth > 1:
         logger.info(
@@ -414,11 +406,12 @@ def _convert_all_sheets_to_parquet(
     src_mtime: float, src_size: int, snapshot_path: str,
 ) -> list[str]:
     """所有同结构 Sheet 合并为单个 Parquet（加 _sheet 列标识来源）。"""
+    import fastexcel
     import pandas as pd
 
     start = time.monotonic()
-    xl = pd.ExcelFile(excel_path, engine="calamine")
-    sheet_names = xl.sheet_names
+    reader = fastexcel.read_excel(excel_path)
+    sheet_names = reader.sheet_names
 
     from services.agent.excel_cleaner import (
         CleaningReport, _detect_structure, clean_excel, write_cleaning_report,
@@ -432,26 +425,23 @@ def _convert_all_sheets_to_parquet(
             structure = _detect_structure(excel_path, name)
             merged = structure.merged_ranges if structure else None
 
-            df_raw = pd.read_excel(
-                xl, sheet_name=name, engine="calamine",
-                header=None, nrows=_HEADER_MAX_SCAN,
-            )
+            sheet_raw = reader.load_sheet(name, header_row=None, n_rows=_HEADER_MAX_SCAN)
+            df_raw = sheet_raw.to_pandas()
             header_row = detect_header_row(df_raw.values.tolist())
             actual_start, header_depth = detect_header_depth(header_row, merged)
-            header_param: int | list[int] = actual_start
+
             if header_depth > 1:
                 header_param = list(range(actual_start, actual_start + header_depth))
+                df = pd.read_excel(excel_path, sheet_name=name, header=header_param)
+            else:
+                sheet_data = reader.load_sheet(name, header_row=actual_start)
+                df = sheet_data.to_pandas()
 
-            df = pd.read_excel(
-                xl, sheet_name=name, engine="calamine",
-                header=header_param,
-            )
             if df.empty:
                 continue
 
             total_rows += len(df)
             if total_rows > _MAX_MERGE_ROWS:
-                xl.close()
                 raise ValueError(
                     f"合并后总行数（{total_rows:,}）超过上限（{_MAX_MERGE_ROWS:,}），"
                     f"请用 sheet 参数逐个读取。"
@@ -465,12 +455,10 @@ def _convert_all_sheets_to_parquet(
             df.insert(0, "_sheet", name)
             frames.append(df)
         except ValueError:
-            raise  # 内存预检的 ValueError 直接抛出
+            raise
         except Exception as e:
             logger.warning(f"Sheet merge skip | sheet={name} | error={e}")
             continue
-
-    xl.close()
 
     if not frames:
         raise ValueError(f"所有 Sheet 均为空或读取失败: {Path(excel_path).name}")
