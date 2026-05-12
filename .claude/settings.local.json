@@ -2187,7 +2187,8 @@
       "Bash(./git-push.sh \"fix: Excel读取对齐Claude两步流程——不指定sheet返回全sheet预览+description对标Claude Code写法\")",
       "Bash(./git-push.sh \"fix: 工具description对标Claude Code——file_read去重删除+code_execute补完能力说明\")",
       "Bash(./git-push.sh \"fix: 文件插入提示词明确指定file_read——防止AI绕道file_search\")",
-      "Bash(./git-push.sh \"fix: FilePathCache增强模糊匹配——AI丢扩展名或加空格时自动解析正确路径\")"
+      "Bash(./git-push.sh \"fix: FilePathCache增强模糊匹配——AI丢扩展名或加空格时自动解析正确路径\")",
+      "Bash(./git-push.sh \"fix: 工作区文件提示词改为可复制命令格式——AI直接复制path参数不再拼凑文件名\")"
     ],
     "additionalDirectories": [
       "/tmp"
