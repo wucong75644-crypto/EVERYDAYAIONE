@@ -322,13 +322,20 @@ def detect_header_depth(
     return actual_start_0indexed, depth
 
 
+_CHUNK_THRESHOLD = 100_000  # 超过此行数走分块读取
+_CHUNK_SIZE = 50_000        # 每块行数
+
+
 def _convert_excel_to_parquet(
     excel_path: str, cache_path: str, sheet: str | None,
     src_mtime: float, src_size: int, snapshot_path: str,
 ) -> list[str]:
-    """Excel → Parquet（同步，线程池执行）。返回所有 Sheet 名称。"""
-    import pandas as pd
+    """Excel → Parquet（同步，线程池执行）。
 
+    小文件（<10万行）：全量读取 + clean_excel 预处理
+    大文件（≥10万行）：分块读取 + 分批写 Parquet，内存恒定 ~55MB
+    """
+    import pandas as pd
     import fastexcel
 
     start = time.monotonic()
@@ -344,7 +351,7 @@ def _convert_excel_to_parquet(
         target_sheet = fuzzy_match_sheet(sheet, sheet_names)
 
     from services.agent.excel_cleaner import (
-        clean_excel, write_cleaning_report,
+        clean_excel, write_cleaning_report, CleaningReport,
     )
 
     resolved_name = target_sheet if isinstance(target_sheet, str) else sheet_names[0]
@@ -355,42 +362,98 @@ def _convert_excel_to_parquet(
     header_row = detect_header_row(df_raw.values.tolist())
     actual_start, header_depth = detect_header_depth(header_row, None)
 
-    # fastexcel header_row 只支持单行表头（int），多级表头用 pandas 兼容
-    header_param: int | list[int] = actual_start
-    if header_depth > 1:
-        header_param = list(range(actual_start, actual_start + header_depth))
-        df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
-    else:
-        sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
-        df = sheet_data.to_pandas()
-
     if actual_start > 0 or header_depth > 1:
         logger.info(
             f"Excel header auto-detected | src={Path(excel_path).name} "
             f"| header_row={actual_start} | depth={header_depth}"
         )
 
-    # 质量校验（合并单元格填充由 AI 在 code_execute 中按需处理）
-    df, cleaning_report = clean_excel(
-        df, excel_path, resolved_name, actual_start,
-    )
+    # 估算总行数（从 fastexcel 快速获取）
+    try:
+        probe = reader.load_sheet(target_sheet, header_row=actual_start)
+        total_rows = probe.total_height
+    except Exception:
+        total_rows = 0
 
     tmp_path = str(Path(cache_path).parent / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
-    try:
-        df.to_parquet(tmp_path, index=False, engine="pyarrow")
-        os.rename(tmp_path, cache_path)
-    except Exception:
-        Path(tmp_path).unlink(missing_ok=True)
-        raise
 
-    write_cleaning_report(cache_path, cleaning_report)
+    # ── 小文件：全量读取 + 完整预处理 ──
+    if total_rows < _CHUNK_THRESHOLD or header_depth > 1:
+        if header_depth > 1:
+            header_param = list(range(actual_start, actual_start + header_depth))
+            df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
+        else:
+            sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
+            df = sheet_data.to_pandas()
+
+        df, cleaning_report = clean_excel(
+            df, excel_path, resolved_name, actual_start,
+        )
+        try:
+            df.to_parquet(tmp_path, index=False, engine="pyarrow")
+            os.rename(tmp_path, cache_path)
+        except Exception:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+        write_cleaning_report(cache_path, cleaning_report)
+        row_count = len(df)
+        del df
+    else:
+        # ── 大文件：分块读取 + 分批写 Parquet ──
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        writer = None
+        row_count = 0
+        merged_report = CleaningReport()
+        chunk_idx = 0
+
+        while True:
+            skip = _CHUNK_SIZE * chunk_idx
+            try:
+                chunk = reader.load_sheet(
+                    target_sheet, header_row=actual_start,
+                    n_rows=_CHUNK_SIZE, skip_rows=skip if skip > 0 else None,
+                )
+                df_chunk = chunk.to_pandas()
+            except Exception:
+                break
+
+            if len(df_chunk) == 0:
+                break
+
+            # 每块独立清洗
+            df_chunk, chunk_report = clean_excel(
+                df_chunk, excel_path, resolved_name, actual_start,
+            )
+            merged_report.merge(chunk_report)
+
+            table = pa.Table.from_pandas(df_chunk, preserve_index=False)
+            if writer is None:
+                writer = pq.ParquetWriter(tmp_path, table.schema)
+            writer.write_table(table)
+            row_count += len(df_chunk)
+            chunk_idx += 1
+            del df_chunk, table
+
+        if writer is not None:
+            writer.close()
+            os.rename(tmp_path, cache_path)
+            write_cleaning_report(cache_path, merged_report)
+        else:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        logger.info(
+            f"Excel chunked convert | src={Path(excel_path).name} "
+            f"| chunks={chunk_idx} | chunk_size={_CHUNK_SIZE:,}"
+        )
+
     Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
     logger.info(
         f"Excel→Parquet cache | src={Path(excel_path).name} "
-        f"sheet={sheet or 'default'} | rows={len(df):,} "
+        f"sheet={sheet or 'default'} | rows={row_count:,} "
         f"| elapsed={time.monotonic() - start:.1f}s"
     )
-    del df
     return sheet_names
 
 
