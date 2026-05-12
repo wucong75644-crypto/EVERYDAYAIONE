@@ -235,7 +235,8 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 - 所有数据文件先通过 file_read 读取，结果自动存 staging（Parquet 格式）
 - file_read 返回的 staging 缓存路径可直接复制到 code_execute 中使用
 - 大数据查询用 duckdb（恒定内存，百万行不爆）：
-  duckdb.sql(f"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')").df()
+  path = STAGING_DIR + '/文件名.parquet'
+  df = duckdb.sql(f"SELECT * FROM read_parquet('{path}')").df()
 - 小数据或后处理用 pandas（导出、格式化、画图）
 - 多文件关联：duckdb.sql 直接 JOIN 多个 Parquet 文件
 - 合并单元格数据（file_read 预览中标注了合并区域）：用 df['列名'].ffill() 填充

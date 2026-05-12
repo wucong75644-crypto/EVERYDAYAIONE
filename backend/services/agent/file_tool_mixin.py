@@ -232,7 +232,8 @@ class FileToolMixin:
                         f"\n\n[staging 缓存] {cache_name}{cache_schema}"
                         f"\n\n数据查询（在 code_execute 中使用）:"
                         f"\n  import duckdb"
-                        f"\n  df = duckdb.sql(f\"SELECT * FROM read_parquet(STAGING_DIR + '/{cache_name}') LIMIT 20\").df()"
+                        f"\n  path = STAGING_DIR + '/{cache_name}'"
+                        f"\n  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}') LIMIT 20\").df()"
                     )
                 except Exception:
                     pass
@@ -240,8 +241,8 @@ class FileToolMixin:
                 schema_text = f"{_filename}{cache_schema}"
                 if cache_name:
                     schema_text += (
-                        f"\n读取: duckdb.sql(f\"SELECT * FROM "
-                        f"read_parquet(STAGING_DIR + '/{cache_name}')\")"
+                        f"\n读取: path = STAGING_DIR + '/{cache_name}'"
+                        f"\n      duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\")"
                     )
                 self._pending_schemas.append((
                     _filename, args["path"], schema_text,
@@ -295,7 +296,8 @@ class FileToolMixin:
                 f"[staging 缓存] {cache_name}\n\n"
                 f"数据查询（在 code_execute 中使用）:\n"
                 f"  import duckdb\n"
-                f"  df = duckdb.sql(f\"SELECT * FROM read_parquet(STAGING_DIR + '/{cache_name}') LIMIT 20\").df()"
+                f"  path = STAGING_DIR + '/{cache_name}'\n"
+                f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}') LIMIT 20\").df()"
             )
             self._pending_schemas.append((
                 _filename, args["path"], summary[:500],
