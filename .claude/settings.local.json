@@ -2194,7 +2194,11 @@
       "Bash(./git-push.sh \"fix: 探索时顺带创建扁平Parquet缓存——code_execute能直接pd.read_parquet读取\")",
       "Bash(./git-push.sh \"fix: 探索结果附带Parquet缓存路径——AI直接复制到code_execute不再猜文件名\")",
       "Bash(./git-push.sh \"fix: 补全旧data_query丢失的探索提示——列schema+SQL可复制命令+后续操作引导\")",
-      "Bash(./git-push.sh \"fix: 混合类型检测从head\\(200\\)采样改为infer_dtype全量扫描——消除尾部混合类型盲区\")"
+      "Bash(./git-push.sh \"fix: 混合类型检测从head\\(200\\)采样改为infer_dtype全量扫描——消除尾部混合类型盲区\")",
+      "Bash(/Users/wucong/EVERYDAYAIONE/.venv/bin/python3 -c ' *)",
+      "WebFetch(domain:www.datastudios.org)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/.venv/bin/python3)",
+      "Bash(./git-push.sh \"fix: 主Agent提示词新增标识符原样复制规则——防止LLM美化列名导致SQL查询失败\")"
     ],
     "additionalDirectories": [
       "/tmp"
