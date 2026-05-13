@@ -736,7 +736,7 @@ class TestPrepareSingleFile:
 
         assert result.status == "success"
         assert "data_001.parquet" in result.summary
-        assert "manifest" in result.summary
+        assert "duckdb.sql" in result.summary
 
 
 # ============================================================
