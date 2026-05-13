@@ -307,54 +307,21 @@ class TestSecurityEndToEnd:
 
 
 # ============================================================
-# confirm_delete E2E（stateless subprocess）
+# 沙盒删除拦截 E2E（stateless subprocess）
 # ============================================================
 
-class TestConfirmDeleteEndToEnd:
-    """删除操作确认流程 E2E"""
+class TestDeleteBlockedEndToEnd:
+    """沙盒内删除操作统一禁止"""
 
     @pytest.mark.asyncio
     async def test_remove_in_sandbox_always_blocked(self, executor, ws):
-        """沙盒内 os.remove 统一禁止"""
+        """沙盒内 os.remove 统一禁止，引导用 file_delete"""
         Path(ws["workspace"], "temp.txt").write_text("delete me")
         result = await executor.execute(
             "import os\nos.remove('temp.txt')", "删除文件",
         )
         assert "沙盒内禁止直接删除文件" in result.summary
         assert Path(ws["workspace"], "temp.txt").exists()
-
-    @pytest.mark.asyncio
-    async def test_confirm_delete_auto_executes(self, executor, ws):
-        """confirm_delete 参数 → executor 层自动删除（代码成功后）"""
-        Path(ws["workspace"], "temp.txt").write_text("delete me")
-        result = await executor.execute(
-            "print('done')", "删除文件",
-            confirm_delete=["temp.txt"],
-        )
-        assert result.status == "success"
-        assert "已删除文件" in result.summary
-        assert not Path(ws["workspace"], "temp.txt").exists()
-
-    @pytest.mark.asyncio
-    async def test_confirm_delete_skips_nonexistent(self, executor, ws):
-        """confirm_delete 中不存在的文件被跳过"""
-        result = await executor.execute(
-            "print('ok')", "删除",
-            confirm_delete=["ghost.xlsx"],
-        )
-        assert result.status == "success"
-        assert "已删除文件" not in result.summary
-
-    @pytest.mark.asyncio
-    async def test_confirm_delete_not_executed_on_error(self, executor, ws):
-        """代码执行失败时，confirm_delete 不执行"""
-        Path(ws["workspace"], "keep.txt").write_text("keep me")
-        result = await executor.execute(
-            "raise ValueError('boom')", "失败测试",
-            confirm_delete=["keep.txt"],
-        )
-        assert result.status == "error"
-        assert Path(ws["workspace"], "keep.txt").exists()
 
     @pytest.mark.asyncio
     async def test_rmdir_always_blocked(self, executor, ws):

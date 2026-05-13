@@ -8,7 +8,7 @@
   - 路径操作：所有接受路径的函数经过 _check_path 白名单校验
   - 只读操作：listdir/walk/stat/path.* 放行
   - 写操作：makedirs/rename 限制在白名单内
-  - 删除操作：remove/unlink/rmdir 路径白名单校验（不再需要 confirm_delete）
+  - 删除操作：remove/unlink/rmdir 禁止（引导用 file_delete 工具）
   - 系统命令：system/popen/exec* 不定义（AttributeError）
   - 环境变量：environ=空dict，getenv=返回default
 """
@@ -110,14 +110,13 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         def rename(src, dst):
             _real_os.rename(_check_path(src), _check_path(dst))
 
-        # 删除操作：沙盒内禁止，引导 LLM 用 code_execute 的 confirm_delete 参数
+        # 删除操作：沙盒内禁止，引导用 file_delete 工具
 
         @staticmethod
         def remove(path):
             name = _real_os.path.basename(str(path))
             raise PermissionError(
-                f"沙盒内禁止直接删除文件。"
-                f"请在 code_execute 的 confirm_delete 参数中传入 [{name}] 的路径。"
+                f"沙盒内禁止直接删除文件。请使用 file_delete 工具删除 {name}。"
             )
 
         @staticmethod

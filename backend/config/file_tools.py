@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Set
 FILE_INFO_TOOLS: Set[str] = {
     "file_search",
     "file_read",
+    "file_delete",
     "restore_file",
 }
 
@@ -35,6 +36,16 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["filename"],
         "properties": {
             "filename": {"type": "string"},
+        },
+    },
+    "file_delete": {
+        "required": ["files"],
+        "properties": {
+            "files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "要删除的文件名或相对路径列表",
+            },
         },
     },
 }
@@ -100,6 +111,29 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "file_delete",
+                "description": (
+                    "删除工作区文件。传入文件名或相对路径列表。\n\n"
+                    "路径从 file_search 返回的结果中获取，无需手动拼写。\n"
+                    "执行前会弹窗让用户确认，用户拒绝则不删除。\n"
+                    "删除后 30 天内可从 CDN 恢复。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "files": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "要删除的文件名或相对路径列表（如 ['下载/报表.xlsx']）",
+                        },
+                    },
+                    "required": ["files"],
                 },
             },
         },

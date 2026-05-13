@@ -24,11 +24,6 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "code": {"type": "string"},
             "description": {"type": "string"},
-            "confirm_delete": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "用户已确认删除的文件路径列表（相对于 WORKSPACE_DIR）",
-            },
         },
     },
 }
@@ -58,7 +53,7 @@ _DESCRIPTION_WORKSPACE = (
     "忘记路径时用 os.listdir(STAGING_DIR) 重新发现 .parquet 文件。\n"
     "图表用 ECharts JSON（.echart.json）。写 Excel 用 xlsxwriter。\n"
     "print() 输出摘要，不要输出完整数据。禁止 sys/subprocess。\n"
-    "删除文件：先 ask_user 确认，确认后在 confirm_delete 参数传入文件路径（如 '下载/a.xlsx'），代码执行成功后自动删除。沙盒内 os.remove 被禁用。"
+    "删除文件用 file_delete 工具，不要在沙盒内调 os.remove（已禁用）。"
 )
 
 

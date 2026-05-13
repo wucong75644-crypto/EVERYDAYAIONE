@@ -16,6 +16,7 @@ import { Button } from '../../ui/Button';
 const TOOL_LABELS: Record<string, string> = {
   erp_execute: 'ERP 写操作',
   trigger_erp_sync: 'ERP 数据同步',
+  file_delete: '文件删除',
 };
 
 export interface ToolConfirmRequest {

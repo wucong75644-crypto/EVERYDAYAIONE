@@ -6,7 +6,6 @@
 """
 
 import asyncio
-import os as _os
 import time as _time
 from pathlib import Path
 from typing import Callable, Dict, Optional
@@ -53,7 +52,6 @@ class SandboxExecutor:
 
     async def execute(
         self, code: str, description: str = "",
-        confirm_delete: list[str] | None = None,
     ) -> AgentResult:
         """执行 Python 代码并返回结构化结果
 
@@ -115,20 +113,7 @@ class SandboxExecutor:
                 error_message=raw_result,
             )
 
-        # 6. 代码执行成功后，执行用户已确认的文件删除
-        metadata: dict = {}
-        if confirm_delete:
-            deleted = self._execute_confirmed_deletes(confirm_delete)
-            if deleted:
-                names = [raw for raw, _ in deleted]
-                delete_msg = "已删除文件：" + "、".join(names)
-                raw_result = (raw_result or "").rstrip() + "\n" + delete_msg
-                metadata["deleted_files"] = [
-                    {"raw": raw, "resolved": resolved}
-                    for raw, resolved in deleted
-                ]
-
-        return AgentResult(summary=raw_result, status="success", metadata=metadata or None)
+        return AgentResult(summary=raw_result, status="success")
 
     async def _execute_code(self, code: str) -> str:
         """选择执行模式：有状态 Kernel 或无状态 subprocess
@@ -320,42 +305,6 @@ class SandboxExecutor:
                         files[f"{d}/{f.name}"] = (st.st_mtime, st.st_size)
         logger.info(f"SandboxExecutor snapshot | count={len(files)}")
         return files
-
-    # --------------------------------------------------
-    # 用户确认删除（executor 层直接执行）
-    # --------------------------------------------------
-
-    def _execute_confirmed_deletes(
-        self, paths: list[str],
-    ) -> list[tuple[str, str]]:
-        """代码执行成功后，删除用户已确认的文件。
-
-        路径解析：相对路径基于 workspace_dir 解析。
-        安全校验：必须在 workspace_dir 内。
-
-        Returns:
-            [(raw_path, resolved_abs_path), ...] 实际删除的文件列表。
-        """
-        if not self._workspace_dir:
-            return []
-        ws_real = _os.path.realpath(self._workspace_dir)
-        deleted: list[tuple[str, str]] = []
-        for p in paths:
-            raw = p
-            if not _os.path.isabs(p):
-                p = _os.path.join(ws_real, p)
-            resolved = _os.path.realpath(p)
-            # 白名单：必须在 workspace 内
-            if resolved != ws_real and not resolved.startswith(ws_real + _os.sep):
-                logger.warning(f"confirm_delete 路径越界，跳过 | path={raw}")
-                continue
-            if not _os.path.isfile(resolved):
-                logger.warning(f"confirm_delete 文件不存在，跳过 | path={raw}")
-                continue
-            _os.remove(resolved)
-            deleted.append((raw, resolved))
-            logger.info(f"confirm_delete 已删除 | path={raw}")
-        return deleted
 
     async def _auto_upload_new_files(self) -> list[str]:
         """扫描受监控目录中的新文件并自动上传（保留源文件供工作区下载）"""
