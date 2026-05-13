@@ -245,10 +245,10 @@ class TestDegradation:
 
 
 # ============================================================
-# confirm_delete（有状态 Kernel）
+# 沙盒删除拦截（有状态 Kernel）
 # ============================================================
 
-class TestStatefulConfirmDelete:
+class TestStatefulDeleteBlocked:
 
     @pytest.mark.asyncio
     async def test_remove_in_kernel_always_blocked(self, stateful_executor, ws):
@@ -259,15 +259,3 @@ class TestStatefulConfirmDelete:
         )
         assert "沙盒内禁止直接删除文件" in result.summary
         assert Path(ws["workspace"], "temp.txt").exists()
-
-    @pytest.mark.asyncio
-    async def test_confirm_delete_auto_executes(self, stateful_executor, ws):
-        """Kernel 模式：confirm_delete → executor 层自动删除"""
-        Path(ws["workspace"], "temp.txt").write_text("data")
-        result = await stateful_executor.execute(
-            "print('ok')", "删除",
-            confirm_delete=["temp.txt"],
-        )
-        assert result.status == "success"
-        assert "已删除文件" in result.summary
-        assert not Path(ws["workspace"], "temp.txt").exists()

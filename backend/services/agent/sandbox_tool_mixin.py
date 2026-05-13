@@ -45,7 +45,6 @@ class SandboxToolMixin:
 
         code = args.get("code", "")
         description = args.get("description", "")
-        confirm_delete = args.get("confirm_delete") or []
         if not code:
             return AgentResult(
                 summary="代码不能为空",
@@ -74,9 +73,7 @@ class SandboxToolMixin:
                 conversation_id=self.conversation_id,
                 kernel_manager=get_kernel_manager(),
             )
-            result = await executor.execute(
-                code, description, confirm_delete=confirm_delete,
-            )
+            result = await executor.execute(code, description)
 
             # 透传图片尺寸（沙盒读取的 PIL 宽高 → chat_handler 构建 image block）
             if hasattr(executor, "_image_dims") and executor._image_dims:
@@ -93,11 +90,6 @@ class SandboxToolMixin:
             # 从 stdout 提取文件名注册到路径缓存（替代 file_list 的缓存注册）
             if result.status == "success" and result.summary:
                 self._register_files_from_output(result.summary)
-
-            # 记录文件删除事件（confirm_delete 成功后，fire-and-forget 写 DB）
-            deleted_meta = (result.metadata or {}).get("deleted_files")
-            if deleted_meta:
-                self._record_deleted_files(deleted_meta)
 
             # AgentResult 状态 → 指标状态
             if result.is_failure:
@@ -232,19 +224,62 @@ class SandboxToolMixin:
             pass
 
     def _register_files_from_output(self, stdout: str) -> None:
-        """从 code_execute 输出中提取文件引用（已简化：不再注册 FilePathCache）。
+        """从 code_execute 输出中提取文件名并注册到共享路径缓存。
 
-        对齐 Claude 模式后，AI 在沙盒中自己发现文件路径，
-        不需要外部缓存机制。此方法保留为空操作以兼容调用方。
+        LLM 在沙盒中 os.listdir 发现的文件通过此方法注册，
+        后续 file_delete / file_read 的路径解析继续工作。
         """
-        pass
+        import os
+        import re
+
+        from services.agent.file_path_cache import get_file_cache
+
+        workspace_dir = self._get_workspace_dir()
+        if not workspace_dir:
+            return
+
+        _DATA_EXTS = r"\.(?:xlsx|xls|csv|tsv|parquet|pdf|docx|pptx|txt|json|png|jpg)"
+        _FILE_RE = re.compile(rf"['\"]([^'\"]*{_DATA_EXTS})['\"]", re.IGNORECASE)
+
+        cache = get_file_cache(self.conversation_id)
+
+        for m in _FILE_RE.finditer(stdout):
+            filename = m.group(1)
+            basename = os.path.basename(filename)
+            candidate = os.path.join(workspace_dir, filename)
+            if os.path.exists(candidate):
+                cache.register(basename, os.path.realpath(candidate))
 
     def _register_staging_files(self, result: "AgentResult") -> None:
-        """兼容占位：不再注册 FilePathCache。
+        """从工具结果中提取 staging 文件路径，注册到共享路径缓存。"""
+        import os
 
-        对齐 Claude 模式后，AI 通过 manifest 和 os.listdir 发现文件。
-        """
-        pass
+        from services.agent.file_path_cache import get_file_cache
+
+        if not result or not result.summary:
+            return
+
+        # 从 file_ref 注册（结构化路径，最可靠）
+        if hasattr(result, "file_ref") and result.file_ref:
+            fr = result.file_ref
+            if fr.path and os.path.exists(fr.path):
+                cache = get_file_cache(self.conversation_id)
+                cache.register(fr.filename, fr.path)
+                return
+
+        # 兜底：从 summary 文本中提取 staging 文件名
+        import re
+        _STAGING_RE = re.compile(r"STAGING_DIR\s*\+\s*'/([^']+)'")
+        staging_dir = self._get_staging_dir()
+        if not staging_dir:
+            return
+
+        cache = get_file_cache(self.conversation_id)
+        for m in _STAGING_RE.finditer(result.summary):
+            filename = m.group(1)
+            abs_path = os.path.join(staging_dir, filename)
+            if os.path.exists(abs_path):
+                cache.register(filename, abs_path)
 
     def _get_staging_dir(self) -> str:
         """获取当前用户的 staging 目录"""

@@ -86,6 +86,8 @@ class FileToolMixin:
                 return await self._file_search(executor, args, settings)
             if tool_name == "file_read":
                 return await self._file_read_image(executor, args)
+            if tool_name == "file_delete":
+                return await self._file_delete(executor, args, settings)
             if tool_name == "restore_file":
                 return await self._restore_file(executor, args, settings)
         except PermissionError as e:
@@ -183,6 +185,10 @@ class FileToolMixin:
         lines = [f"目录: {data['path']} | 共 {total} 项"]
         lines.append("─" * 50)
 
+        # 文件路径缓存：注册到会话级共享缓存，供 code_execute/file_delete 等工具使用
+        from services.agent.file_path_cache import get_file_cache
+        _cache = get_file_cache(self.conversation_id)
+
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/")
 
@@ -200,6 +206,7 @@ class FileToolMixin:
             except ValueError:
                 rel_path = f["name"]
             lines.append(f"  {rel_path}  ({size_str})")
+            _cache.register(rel_path, f["abs_path"])
 
             ext = Path(f["name"]).suffix.lower()
             if ext in _DATA_EXTS and f["size"] >= _MIN_CONVERT_SIZE:
@@ -245,6 +252,7 @@ class FileToolMixin:
     ) -> Any:
         """搜索文件并对数据文件自动转 Parquet"""
         from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
 
         raw_result = await executor.file_search(**{
             k: v for k, v in args.items()
@@ -255,6 +263,7 @@ class FileToolMixin:
             return AgentResult(summary=raw_result or "未找到匹配文件", status="empty")
 
         # 从搜索结果中提取文件路径
+        _cache = get_file_cache(self.conversation_id)
         data_files = []
         _file_re = re.compile(r"\s+\[文件\]\s+(\S+)")
         for line in raw_result.split("\n"):
@@ -264,6 +273,7 @@ class FileToolMixin:
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
+                        _cache.register(rel_path, str(target))
                         ext = target.suffix.lower()
                         if ext in _DATA_EXTS:
                             data_files.append({
@@ -303,9 +313,17 @@ class FileToolMixin:
     ) -> Any:
         """准备单个文件：数据文件转 Parquet + manifest，其他文件返回路径信息"""
         from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
 
         ext = Path(abs_path).suffix.lower()
         name = Path(abs_path).name
+
+        # 注册到共享缓存
+        try:
+            rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
+        except ValueError:
+            rel_path = name
+        get_file_cache(self.conversation_id).register(rel_path, abs_path)
 
         if ext not in _DATA_EXTS:
             # 非数据文件：返回基本信息 + workspace 路径
@@ -466,6 +484,78 @@ class FileToolMixin:
             return rows, cols
         except Exception:
             return 0, 0
+
+    # ================================================================
+    # file_delete：从缓存取路径 + 物理删除 + 记录 deleted_files
+    # ================================================================
+
+    async def _file_delete(
+        self, executor: Any, args: Dict[str, Any], settings: Any,
+    ) -> Any:
+        """file_delete：从共享缓存取精确路径，执行删除并记录到 deleted_files 表。
+
+        tool_confirm 弹窗确认在 chat_tool_mixin 的 DANGEROUS 级别自动处理，
+        执行到这里时用户已经点了确认。
+        """
+        from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
+
+        files = args.get("files") or []
+        if isinstance(files, str):
+            files = [files]
+        if not files:
+            return AgentResult(
+                summary="未指定要删除的文件",
+                status="error",
+                error_message="files is empty",
+                metadata={"retryable": True},
+            )
+
+        cache = get_file_cache(self.conversation_id)
+        ws_root = str(Path(settings.file_workspace_root).resolve())
+
+        deleted = []
+        skipped = []
+        for name in files:
+            abs_path = cache.resolve(name)
+            if not abs_path:
+                # 缓存没有 → 尝试直接 resolve
+                try:
+                    target = executor.resolve_safe_path(name)
+                    if target.is_file():
+                        abs_path = str(target)
+                except Exception:
+                    pass
+            if not abs_path or not os.path.isfile(abs_path):
+                skipped.append(name)
+                continue
+
+            os.remove(abs_path)
+            deleted.append((name, abs_path))
+            logger.info(f"file_delete | path={name} | resolved={abs_path}")
+
+        # 记录到 deleted_files 表（fire-and-forget）
+        if deleted:
+            deleted_meta = [
+                {"raw": name, "resolved": ap} for name, ap in deleted
+            ]
+            self._record_deleted_files(deleted_meta)
+
+        # 构建回复
+        lines = []
+        if deleted:
+            lines.append(f"已删除 {len(deleted)} 个文件：")
+            for name, _ in deleted:
+                lines.append(f"  ✓ {name}")
+        if skipped:
+            lines.append(f"跳过 {len(skipped)} 个（不存在或未找到）：")
+            for name in skipped:
+                lines.append(f"  ✗ {name}")
+        if not deleted and not skipped:
+            lines.append("未执行任何删除操作")
+
+        status = "success" if deleted else "error"
+        return AgentResult(summary="\n".join(lines), status=status)
 
     # ================================================================
     # file_read：仅图片视觉

@@ -442,77 +442,46 @@ class TestUploadScanDirs:
 
 
 # ============================================================
-# confirm_delete 自动删除
+# FilePathCache 共享缓存
 # ============================================================
 
-class TestConfirmDelete:
-    """confirm_delete executor 层自动删除"""
+class TestFilePathCache:
+    """会话级文件路径缓存"""
 
-    def test_deletes_confirmed_files(self, tmp_path):
-        """confirm_delete 列表中的文件被删除，返回 (raw, resolved) 元组"""
-        ws = tmp_path / "workspace"
-        ws.mkdir()
-        (ws / "a.xlsx").write_bytes(b"data a")
-        (ws / "b.csv").write_bytes(b"data b")
+    def test_register_and_resolve(self):
+        from services.agent.file_path_cache import FilePathCache
+        cache = FilePathCache()
+        cache.register("下载/报表.xlsx", "/mnt/ws/org/user/下载/报表.xlsx")
 
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws),
-        )
-        deleted = executor._execute_confirmed_deletes(["a.xlsx", "b.csv"])
+        # 按相对路径查
+        assert cache.resolve("下载/报表.xlsx") == "/mnt/ws/org/user/下载/报表.xlsx"
+        # 按纯文件名查
+        assert cache.resolve("报表.xlsx") == "/mnt/ws/org/user/下载/报表.xlsx"
 
-        raw_names = {raw for raw, _ in deleted}
-        assert raw_names == {"a.xlsx", "b.csv"}
-        # resolved 是绝对路径
-        for _, resolved in deleted:
-            assert os.path.isabs(resolved)
-        assert not (ws / "a.xlsx").exists()
-        assert not (ws / "b.csv").exists()
+    def test_resolve_nonexistent(self):
+        from services.agent.file_path_cache import FilePathCache
+        cache = FilePathCache()
+        assert cache.resolve("不存在.xlsx") is None
 
-    def test_skips_nonexistent_file(self, tmp_path):
-        """不存在的文件被跳过，不报错"""
-        ws = tmp_path / "workspace"
-        ws.mkdir()
+    def test_get_filename(self):
+        from services.agent.file_path_cache import FilePathCache
+        cache = FilePathCache()
+        cache.register("下载/报表.xlsx", "/mnt/ws/下载/报表.xlsx")
+        assert cache.get_filename("下载/报表.xlsx") == "报表.xlsx"
 
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws),
-        )
-        deleted = executor._execute_confirmed_deletes(["ghost.xlsx"])
+    def test_list_all_deduped(self):
+        from services.agent.file_path_cache import FilePathCache
+        cache = FilePathCache()
+        cache.register("下载/a.xlsx", "/mnt/ws/下载/a.xlsx")
+        cache.register("下载/b.csv", "/mnt/ws/下载/b.csv")
+        entries = cache.list_all()
+        assert len(entries) == 2
 
-        assert deleted == []
-
-    def test_blocks_path_traversal(self, tmp_path):
-        """路径越界被拦截"""
-        ws = tmp_path / "workspace"
-        ws.mkdir()
-        secret = tmp_path / "secret.txt"
-        secret.write_bytes(b"top secret")
-
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws),
-        )
-        deleted = executor._execute_confirmed_deletes(["../secret.txt"])
-
-        assert deleted == []
-        assert secret.exists()  # 文件未被删除
-
-    def test_relative_path_with_subdir(self, tmp_path):
-        """支持相对路径含子目录（如 下载/a.xlsx）"""
-        ws = tmp_path / "workspace"
-        dl = ws / "下载"
-        dl.mkdir(parents=True)
-        (dl / "report.xlsx").write_bytes(b"report")
-
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws),
-        )
-        deleted = executor._execute_confirmed_deletes(["下载/report.xlsx"])
-
-        assert len(deleted) == 1
-        assert deleted[0][0] == "下载/report.xlsx"
-        assert not (dl / "report.xlsx").exists()
-
-    def test_no_workspace_returns_empty(self):
-        """无 workspace_dir 时返回空"""
-        executor = SandboxExecutor(timeout=5.0)
-        deleted = executor._execute_confirmed_deletes(["a.xlsx"])
-        assert deleted == []
+    def test_max_entries_eviction(self):
+        from services.agent.file_path_cache import FilePathCache
+        cache = FilePathCache(max_entries=4)
+        cache.register("a.xlsx", "/a")
+        cache.register("b.xlsx", "/b")
+        cache.register("c.xlsx", "/c")  # 4 entries: a.xlsx, a.xlsx(basename), b.xlsx, b.xlsx(basename) → full
+        # 注册第 3 个时会触发淘汰
+        assert cache.resolve("c.xlsx") == "/c"
