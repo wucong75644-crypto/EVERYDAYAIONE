@@ -55,7 +55,7 @@ interface InputAreaProps {
   /** prompt 变更回调 */
   onPromptChange?: (value: string) => void;
   /** 工作区待发送文件（"插入到聊天"功能） */
-  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
+  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number; staging_path?: string | null; isPreparing?: boolean }>;
   /** 添加单个工作区文件（@ 提及选中时调用） */
   onAddWorkspaceFile?: (file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => void;
   /** 移除单个工作区文件 */
