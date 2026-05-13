@@ -224,8 +224,8 @@ print() 输出摘要统计，不要输出完整数据。无网络。禁止 sys/s
 删除工作区文件。传入 file_search 返回的文件名或路径，执行前弹窗让用户确认。
 删除后 30 天内可从 CDN 恢复。
 
-### restore_file — 恢复文件
-恢复 workspace 文件到修改前的版本。备份有效期 24 小时。
+### restore_file — 恢复已删除的文件
+从 OSS 恢复已删除的文件。file_delete 删除后 30 天内可恢复。
 
 ### search_knowledge — 知识库搜索
 查找企业内部业务规则、SOP、操作流程、培训文档、历史经验。

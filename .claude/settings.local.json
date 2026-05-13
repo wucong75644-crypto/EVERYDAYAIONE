@@ -2249,7 +2249,8 @@
       "Bash(./git-push.sh 'feat: file_delete独立工具+FilePathCache共享缓存——删除走tool_confirm弹窗，路径全程结构化 *)",
       "Bash(./git-push.sh \"fix: file_delete和restore_file注册tool_domains——启动时WARNING未注册域导致工具不可见\")",
       "Bash(./git-push.sh \"fix: ask_user工具结果从OK改为'等待用户回答'——避免前端误展示为已确认\")",
-      "Bash(./git-push.sh 'fix: ask_user恢复时替换占位tool_result+展示文本改为等待用户回答 *)"
+      "Bash(./git-push.sh 'fix: ask_user恢复时替换占位tool_result+展示文本改为等待用户回答 *)",
+      "Bash(./git-push.sh 'fix: restore_file改为从OSS恢复已删除文件——替代已砍掉的本地备份机制 *)"
     ],
     "additionalDirectories": [
       "/tmp"

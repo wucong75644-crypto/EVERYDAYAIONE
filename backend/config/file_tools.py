@@ -142,11 +142,10 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "restore_file",
                 "description": (
-                    "恢复 workspace 文件到修改前的版本。\n\n"
-                    "当用户说「撤销」「恢复原文件」「回退」时使用。\n"
-                    "系统在每次 code_execute 修改 workspace 文件前自动备份，"
-                    "此工具从备份中恢复原始文件。\n"
-                    "备份有效期 24 小时，过期后无法恢复。"
+                    "恢复已删除的文件。\n\n"
+                    "当用户说「撤销删除」「恢复文件」「找回文件」时使用。\n"
+                    "file_delete 删除文件后 30 天内，可从 OSS 下载回 workspace。\n"
+                    "超过 30 天后文件被永久清理，无法恢复。"
                 ),
                 "parameters": {
                     "type": "object",
