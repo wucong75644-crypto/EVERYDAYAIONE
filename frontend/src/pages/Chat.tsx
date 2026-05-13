@@ -20,7 +20,6 @@ import SearchPanel from '../components/chat/search/SearchPanel';
 import ScheduledTaskPanel from '../components/scheduled-tasks/ScheduledTaskPanel';
 import WorkspaceView from '../components/workspace/WorkspaceView';
 import type { WorkspaceFile } from '../services/workspace';
-import { prepareWorkspaceFile } from '../services/workspace';
 import { PageTransition } from '../components/motion';
 import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
@@ -329,39 +328,13 @@ export default function Chat() {
     setView((prev) => prev === 'chat' ? 'workspace' : 'chat');
   }, []);
 
-  // 工作区："插入到聊天"回调（按 workspace_path 去重 + 自动 prepare 数据文件）
+  // 工作区："插入到聊天"回调（按 workspace_path 去重，不自动关闭工作区）
   const handleSendFromWorkspace = useCallback((file: WorkspaceFile) => {
-    setPendingWorkspaceFiles((prev) => {
-      if (prev.some((f) => f.workspace_path === file.workspace_path)) return prev;
-
-      const newFile: WorkspaceFile = { ...file };
-      // 数据文件自动触发 prepare（Excel/CSV → Parquet）
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const dataExts = ['xlsx', 'xls', 'xlsm', 'csv', 'tsv', 'parquet'];
-      if (dataExts.includes(ext) && currentConversationId) {
-        newFile.isPreparing = true;
-        prepareWorkspaceFile(file.workspace_path, currentConversationId)
-          .then((res) => {
-            setPendingWorkspaceFiles((files) =>
-              files.map((f) =>
-                f.workspace_path === file.workspace_path
-                  ? { ...f, staging_path: res.staging_path, rows: res.rows, cols: res.cols, isPreparing: false }
-                  : f,
-              ),
-            );
-          })
-          .catch(() => {
-            // prepare 失败不阻塞——发送时 AI 会走 file_search 兜底
-            setPendingWorkspaceFiles((files) =>
-              files.map((f) =>
-                f.workspace_path === file.workspace_path ? { ...f, isPreparing: false } : f,
-              ),
-            );
-          });
-      }
-      return [...prev, newFile];
-    });
-  }, [currentConversationId]);
+    setPendingWorkspaceFiles((prev) =>
+      prev.some((f) => f.workspace_path === file.workspace_path) ? prev : [...prev, file],
+    );
+    // 并排模式下不自动关闭工作区，用户可以继续选文件
+  }, []);
 
   // 移除单个待发送的 workspace 文件
   const handleRemoveWorkspaceFile = useCallback((workspacePath: string) => {

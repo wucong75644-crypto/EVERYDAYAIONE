@@ -2229,7 +2229,9 @@
       "Bash(python -m pytest tests/test_file_tool_mixin.py tests/test_staging_cleaner.py tests/test_scoped_os.py -q --tb=short)",
       "Bash(./git-push.sh \"refactor: 提示词去掉manifest——file_search直接返回可复制的duckdb.sql\\(\\)语句，AI不再需要读manifest\")",
       "Bash(./git-push.sh \"feat: 文件附加时自动预转Parquet——前端调prepare接口，AI直接拿到duckdb查询语句，跳过file_search\")",
-      "Bash(./git-push.sh \"fix: InputArea prop类型补全staging_path和isPreparing字段\")"
+      "Bash(./git-push.sh \"fix: InputArea prop类型补全staging_path和isPreparing字段\")",
+      "Bash(git revert *)",
+      "Bash(./git-push.sh \"revert: 回退prepare预转换机制——大文件转换不稳定，先保持AI调file_search的流程\")"
     ],
     "additionalDirectories": [
       "/tmp"

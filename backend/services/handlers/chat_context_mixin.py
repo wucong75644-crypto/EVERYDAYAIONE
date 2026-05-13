@@ -65,15 +65,9 @@ class ChatContextMixin:
 
     @staticmethod
     def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
-        """生成工作区文件提示。
-
-        数据文件已预转 Parquet（有 staging_path）→ 直接给 duckdb.sql() 查询语句
-        非数据文件或预转失败（无 staging_path）→ 给 file_search 兜底指引
-        """
+        """生成工作区文件提示——告诉 AI 文件路径，由 AI 调 file_search 准备后在 code_execute 探索。"""
         if not workspace_files:
             return ""
-
-        from pathlib import Path as _Path
 
         def _fmt_size(size) -> str:
             if not size:
@@ -85,54 +79,11 @@ class ChatContextMixin:
                 return f"{size / 1024:.1f} KB"
             return f"{size / (1024 * 1024):.1f} MB"
 
-        lines: list[str] = ["用户消息中附加了以下文件："]
-
-        ready_files = []   # 已预处理的数据文件
-        pending_files = [] # 需要 file_search 或 code_execute 处理的文件
-
+        lines: list[str] = ["用户附加了以下文件，直接调用 file_search 准备（路径已确认）："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
-            staging_path = f.get("staging_path")
-            name = f.get("name", _Path(wp).name)
             size_str = _fmt_size(f.get("size"))
-            ext = _Path(name).suffix.lower()
-
-            if staging_path:
-                # 数据文件已预转 Parquet → 直接可查询
-                rows = f.get("rows") or 0
-                cols = f.get("cols") or 0
-                lines.append(f"  {name} ({size_str}) → 已转 Parquet ({rows:,}行 × {cols}列)")
-                ready_files.append((name, staging_path))
-            else:
-                lines.append(f"  {name} ({size_str})")
-                pending_files.append((name, wp, ext))
-
-        # 已预处理的文件：直接给可复制的查询语句
-        if ready_files:
-            lines.append("")
-            lines.append("在 code_execute 中直接查询（复制下面的语句）：")
-            for name, sp in ready_files:
-                lines.append(
-                    f"  duckdb.sql(\"SELECT * FROM read_parquet("
-                    f"STAGING_DIR + '/{sp}') LIMIT 20\")"
-                )
-
-        # 未预处理的文件：给操作指引
-        if pending_files:
-            lines.append("")
-            for name, wp, ext in pending_files:
-                _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
-                _DATA_EXTS = {".xlsx", ".xls", ".xlsm", ".csv", ".tsv", ".parquet"}
-                if ext in _IMAGE_EXTS:
-                    lines.append(f"  {name}: 图片文件，用 file_read(path=\"{wp}\") 查看")
-                elif ext in _DATA_EXTS:
-                    lines.append(f"  {name}: 数据文件，用 file_search(path=\"{wp}\") 准备后查询")
-                elif ext in (".pdf",):
-                    lines.append(f"  {name}: 在 code_execute 中用 pdfplumber.open(WORKSPACE_DIR + '/{name}') 读取")
-                elif ext in (".docx",):
-                    lines.append(f"  {name}: 在 code_execute 中用 docx.Document(WORKSPACE_DIR + '/{name}') 读取")
-                else:
-                    lines.append(f"  {name}: 在 code_execute 中用 open(WORKSPACE_DIR + '/{name}') 读取")
+            lines.append(f"  file_search(path=\"{wp}\")  — {size_str}")
 
         return "\n".join(lines)
 
