@@ -2225,7 +2225,9 @@
       "Bash(python -m pytest tests/test_scoped_os.py tests/test_file_tool_mixin.py tests/test_staging_cleaner.py tests/test_file_executor.py -q --tb=short)",
       "Bash(python -m pytest tests/test_scoped_os.py tests/test_file_tool_mixin.py tests/test_staging_cleaner.py tests/test_file_executor.py tests/test_tool_output.py tests/test_tool_loop_tooloutput.py tests/test_v6_integration.py -q --tb=short)",
       "Bash(./git-push.sh \"fix: 移除沙盒删除文件confirm_delete门控——路径白名单已够安全，备份机制兜底误删\")",
-      "Bash(./git-push.sh \"fix: 沙盒白名单加入inspect模块——duckdb.sql\\(\\)内部依赖inspect，不放行则预配置的磁盘模式连接无法使用\")"
+      "Bash(./git-push.sh \"fix: 沙盒白名单加入inspect模块——duckdb.sql\\(\\)内部依赖inspect，不放行则预配置的磁盘模式连接无法使用\")",
+      "Bash(python -m pytest tests/test_file_tool_mixin.py tests/test_staging_cleaner.py tests/test_scoped_os.py -q --tb=short)",
+      "Bash(./git-push.sh \"refactor: 提示词去掉manifest——file_search直接返回可复制的duckdb.sql\\(\\)语句，AI不再需要读manifest\")"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -222,10 +222,12 @@ class FileToolMixin:
                         f"({entry['rows']:,}行 × {entry['cols']}列)"
                     )
                 lines.append("")
-                lines.append("在 code_execute 中读取 manifest 获取精确路径：")
-                lines.append("  import json")
-                lines.append("  with open(STAGING_DIR + '/_manifest.json') as f:")
-                lines.append("      manifest = json.load(f)")
+                lines.append("在 code_execute 中直接使用：")
+                for entry in manifest_entries:
+                    lines.append(
+                        f"  duckdb.sql(\"SELECT * FROM read_parquet("
+                        f"STAGING_DIR + '/{entry['parquet']}') LIMIT 20\")"
+                    )
 
         if skipped_data_count > 0:
             lines.append(
@@ -287,10 +289,12 @@ class FileToolMixin:
                         f"({entry['rows']:,}行 × {entry['cols']}列)"
                     )
                 lines.append("")
-                lines.append("在 code_execute 中读取 manifest：")
-                lines.append("  import json")
-                lines.append("  with open(STAGING_DIR + '/_manifest.json') as f:")
-                lines.append("      manifest = json.load(f)")
+                lines.append("在 code_execute 中直接使用：")
+                for entry in manifest_entries:
+                    lines.append(
+                        f"  duckdb.sql(\"SELECT * FROM read_parquet("
+                        f"STAGING_DIR + '/{entry['parquet']}') LIMIT 20\")"
+                    )
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -337,12 +341,8 @@ class FileToolMixin:
         lines = [
             f"{name} → {entry['parquet']} ({entry['rows']:,}行 × {entry['cols']}列)",
             "",
-            "在 code_execute 中使用：",
-            "  import json",
-            "  with open(STAGING_DIR + '/_manifest.json') as f:",
-            "      manifest = json.load(f)",
-            f"  path = STAGING_DIR + '/' + manifest['files'][0]['parquet']",
-            "  duckdb.sql(f\"SELECT * FROM read_parquet('{path}') LIMIT 20\")",
+            "在 code_execute 中直接使用：",
+            f"  duckdb.sql(\"SELECT * FROM read_parquet(STAGING_DIR + '/{entry['parquet']}') LIMIT 20\")",
         ]
 
         return AgentResult(summary="\n".join(lines), status="success")

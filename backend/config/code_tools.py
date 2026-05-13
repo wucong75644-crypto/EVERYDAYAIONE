@@ -48,8 +48,9 @@ _DESCRIPTION_BASE = (
 _DESCRIPTION_WORKSPACE = (
     "有状态 Python 沙盒，变量跨调用保留。执行超时 120 秒。\n"
     "预装：duckdb(磁盘模式), openpyxl, pdfplumber, python-docx, pandas。\n"
-    "目录：WORKSPACE_DIR（用户文件）, STAGING_DIR（数据缓存，含 _manifest.json）, OUTPUT_DIR（输出，自动上传）。\n"
-    "数据文件已由 file_search 转为 Parquet 存 STAGING_DIR，路径记录在 _manifest.json，用 duckdb.sql() 查询。\n"
+    "目录：WORKSPACE_DIR（用户文件）, STAGING_DIR（Parquet 数据缓存）, OUTPUT_DIR（输出，自动上传）。\n"
+    "file_search 会把数据文件转为 Parquet 存到 STAGING_DIR 并返回可直接复制的 duckdb.sql() 查询语句。\n"
+    "忘记路径时用 os.listdir(STAGING_DIR) 重新发现 .parquet 文件。\n"
     "图表用 ECharts JSON（.echart.json）。写 Excel 用 xlsxwriter。\n"
     "print() 输出摘要，不要输出完整数据。禁止 sys/subprocess。"
 )

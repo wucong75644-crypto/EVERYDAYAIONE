@@ -54,8 +54,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "- path：列出指定目录或准备指定文件（大数据文件自动转 Parquet）\n"
                     "- keyword：按文件名关键词搜索\n"
                     "- file_pattern：按通配符过滤（如 *.csv）\n\n"
-                    "返回文件列表和 staging 路径。数据文件转 Parquet 后写入 staging/_manifest.json。\n"
-                    "后续在 code_execute 中读 manifest 获取精确路径，用 duckdb/openpyxl 探索数据。"
+                    "返回文件列表和 staging 路径，以及可直接复制到 code_execute 中执行的 duckdb.sql() 查询语句。"
                 ),
                 "parameters": {
                     "type": "object",
