@@ -43,7 +43,8 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "calamine", "fastexcel", "xlsxwriter",
     # 受限文件系统操作（运行时走 scoped_os/scoped_shutil，不是真实模块）
     "os", "os.path", "shutil",
-    # 内部 C 扩展（被上述模块传递依赖）
+    # 内部依赖（被上述模块传递依赖）
+    "inspect",  # duckdb.sql() 内部依赖
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",
 })
