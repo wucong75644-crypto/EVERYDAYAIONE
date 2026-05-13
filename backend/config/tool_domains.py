@@ -43,14 +43,13 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "generate_image":   ToolDomain.GENERAL,
     "generate_video":   ToolDomain.GENERAL,
     "image_agent":      ToolDomain.GENERAL,
-    "file_read":        ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要读文件
-    "file_list":        ToolDomain.GENERAL,
-    "file_search":      ToolDomain.GENERAL,
+    "file_read":        ToolDomain.GENERAL,  # 图片视觉（仅主 Agent）
+    "file_search":      ToolDomain.GENERAL,  # 文件搜索+准备
     "manage_scheduled_task": ToolDomain.GENERAL,
 
     # === shared: 多个域的 Agent 内部都能用 ===
     "code_execute":     ToolDomain.SHARED,
-    # data_query 已合并到 file_read
+    # data_query 已删除（AI 在 code_execute 中用 duckdb 查询）
     "ask_user":         ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要追问能力
 
     # === erp: 仅 erp_agent 内部可用 ===

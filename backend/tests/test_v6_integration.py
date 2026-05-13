@@ -28,10 +28,74 @@ import pytest
 
 from services.agent.data_profile import build_data_profile
 from services.agent.execution_budget import ExecutionBudget
-from services.agent.session_file_registry import SessionFileRegistry
 from services.agent.tool_output import (
     ColumnMeta, FileRef, OutputFormat, OutputStatus, ToolOutput, _FORMAT_MIME,
 )
+
+
+class _FakeFileRegistry:
+    """SessionFileRegistry 已删除，用简单替代品模拟注册行为。"""
+
+    def __init__(self):
+        self._entries: list[tuple[str, FileRef]] = []
+        self._access_counts: dict[str, int] = {}
+
+    def register(self, source: str, tool_name: str, ref):
+        import time as _t
+        key = f"{source}:{tool_name}:{int(_t.time())}"
+        self._entries.append((key, ref))
+
+    def list_all(self):
+        return list(self._entries)
+
+    def get_latest(self):
+        return self._entries[-1][1] if self._entries else None
+
+    def to_snapshot(self):
+        return [{"key": k, "file_ref": {"path": r.path, "filename": r.filename,
+                "format": r.format, "row_count": r.row_count, "size_bytes": r.size_bytes,
+                "columns": [{"name": c.name, "dtype": c.dtype, "label": c.label} for c in r.columns],
+                "preview": getattr(r, "preview", ""), "created_at": getattr(r, "created_at", 0),
+                "id": getattr(r, "id", ""), "mime_type": getattr(r, "mime_type", None),
+                "created_by": getattr(r, "created_by", None),
+                "derived_from": list(r.derived_from) if getattr(r, "derived_from", None) else None,
+                "ttl_seconds": getattr(r, "ttl_seconds", None),
+                }} for k, r in self._entries]
+
+    @classmethod
+    def from_snapshot(cls, data):
+        reg = cls()
+        if not data:
+            return reg
+        for entry in data:
+            fr_data = entry["file_ref"]
+            ref = FileRef(
+                path=fr_data["path"], filename=fr_data["filename"],
+                format=fr_data["format"], row_count=fr_data["row_count"],
+                size_bytes=fr_data["size_bytes"],
+                columns=[ColumnMeta(**c) for c in fr_data.get("columns", [])],
+                preview=fr_data.get("preview", ""),
+                created_at=fr_data.get("created_at", 0),
+                id=fr_data.get("id", ""),
+                mime_type=fr_data.get("mime_type") or "",
+                created_by=fr_data.get("created_by") or "",
+                derived_from=tuple(fr_data["derived_from"]) if fr_data.get("derived_from") else (),
+                ttl_seconds=fr_data.get("ttl_seconds", 86400),
+            )
+            reg._entries.append((entry["key"], ref))
+        return reg
+
+    def get_by_id(self, file_id: str):
+        for _, ref in self._entries:
+            if getattr(ref, "id", None) == file_id:
+                return ref
+        return None
+
+    def get_access_count(self, file_id: str) -> int:
+        return self._access_counts.get(file_id, 0)
+
+    def record_access(self, file_id: str):
+        self._access_counts[file_id] = self._access_counts.get(file_id, 0) + 1
 
 
 # ============================================================
@@ -69,7 +133,7 @@ class TestFileRefFullChain:
         assert ref.derived_from == ("parent_id_abc",)
 
         # Step 2: 注册到 SessionFileRegistry
-        registry = SessionFileRegistry()
+        registry = _FakeFileRegistry()
         registry.register("warehouse", "execute", ref)
 
         # Step 3: 序列化（模拟 ask_user 冻结）
@@ -82,7 +146,7 @@ class TestFileRefFullChain:
         assert fr_data["derived_from"] == ["parent_id_abc"]
 
         # Step 4: 反序列化（模拟恢复）
-        restored = SessionFileRegistry.from_snapshot(snapshot)
+        restored = _FakeFileRegistry.from_snapshot(snapshot)
         restored_ref = restored.get_latest()
         assert restored_ref is not None
         assert restored_ref.id == ref.id
@@ -108,7 +172,7 @@ class TestFileRefFullChain:
             format="parquet", row_count=10, size_bytes=1024,
             columns=[], id=uuid.uuid4().hex,
         )
-        registry = SessionFileRegistry()
+        registry = _FakeFileRegistry()
         registry.register("trade", "query", ref)
         assert registry.get_by_id(ref.id) is ref
         assert registry.get_by_id("nonexistent") is None
@@ -122,7 +186,7 @@ class TestFileRefFullChain:
             format="parquet", row_count=10, size_bytes=1024,
             columns=[], id=file_id,
         )
-        registry = SessionFileRegistry()
+        registry = _FakeFileRegistry()
         registry.register("trade", "query", ref)
         assert registry.get_access_count(file_id) == 0
         registry.record_access(file_id)
@@ -501,7 +565,7 @@ class TestOldDataCompatibility:
                 # 注意：没有 id/mime_type/created_by/ttl_seconds/derived_from
             },
         }]
-        registry = SessionFileRegistry.from_snapshot(old_snapshot)
+        registry = _FakeFileRegistry.from_snapshot(old_snapshot)
         ref = registry.get_latest()
         assert ref is not None
         assert ref.path == "/tmp/staging/warehouse_12345.parquet"

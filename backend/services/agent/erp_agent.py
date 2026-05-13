@@ -414,13 +414,8 @@ class ERPAgent:
         )
 
     def _register_files(self, domain: str, result: Any) -> None:
-        if not getattr(result, "file_ref", None):
-            return
-        try:
-            from services.agent.session_file_registry import SessionFileRegistry
-            SessionFileRegistry().register(domain, "execute", result.file_ref)
-        except Exception as e:
-            logger.debug(f"File registry failed: {e}")
+        """文件注册已废弃（对齐 Claude 模式：AI 通过 manifest 发现文件）"""
+        pass
 
     def _record_experience(self, domain: str, query: str, result: Any, params: dict | None) -> None:
         if hasattr(result, "status") and str(result.status) == "error":

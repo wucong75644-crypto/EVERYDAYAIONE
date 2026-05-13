@@ -66,8 +66,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
     # 文件操作（只读）
-    "file_read", "file_list", "file_search",
-    # 注意：file_write/file_edit 已移除（数据分析场景不需要，生成文件走 code_execute）
+    "file_read", "file_search",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }
@@ -172,7 +171,7 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 用 ask_user 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-file_read 读取数据文件后自动存入 STAGING_DIR（Parquet 格式），code_execute 中可直接从 STAGING_DIR 查询。
+file_search 定位文件后自动转 Parquet 存入 STAGING_DIR，code_execute 中读 manifest 获取路径后用 duckdb 查询。
 
 ## 编排与串联
 
@@ -204,15 +203,23 @@ file_read 读取数据文件后自动存入 STAGING_DIR（Parquet 格式），co
 ### code_execute — Python 计算环境
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
-STAGING_DIR 存放数据文件（Parquet 格式，由 file_read 自动生成）。OUTPUT_DIR 存放生成给用户的文件。
-duckdb 已预配置为磁盘模式，数据不进内存，可处理任意大小文件。DuckDB SQL 中列名用双引号包裹。
+预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
+三个目录：WORKSPACE_DIR（用户文件）、STAGING_DIR（数据缓存）、OUTPUT_DIR（输出，自动上传）。
+file_search 会把数据文件转为 Parquet 存 STAGING_DIR，路径记录在 _manifest.json。
+用 duckdb.sql() 查询 Parquet 数据，DuckDB SQL 中列名用双引号包裹。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
-无网络访问。不可用：sys、subprocess。
-删除文件必须两步：先 file_list 列出待删文件告知用户，确认后再执行。
+print() 输出摘要统计，不要输出完整数据。无网络。禁止 sys/subprocess。
 
-### file_list / file_search — 工作区文件发现
-查看工作区有哪些文件、搜索特定文件。支持并行调用。
-返回文件元信息（行列数/类型/读取命令），所有文件用 file_read 读取。
+### file_search — 工作区文件发现与准备
+搜索、列目录、定位文件。数据文件（Excel/CSV）自动转 Parquet 存 staging。
+返回文件列表和 staging 路径，后续在 code_execute 中用 duckdb 查询。
+
+### file_read — 图片视觉分析
+仅用于图片文件（png/jpg/gif/webp/bmp/svg），返回图片给视觉模型分析。
+其他文件类型在 code_execute 中直接读取（openpyxl/pdfplumber/docx/open）。
+
+### restore_file — 恢复文件
+恢复 workspace 文件到修改前的版本。备份有效期 24 小时。
 
 ### search_knowledge — 知识库搜索
 查找企业内部业务规则、SOP、操作流程、培训文档、历史经验。
@@ -385,9 +392,8 @@ _CORE_TOOLS: Set[str] = {
     # 执行
     "code_execute",             # 代码执行
     # 文件操作
-    "file_read",                # 统一文件读取（所有格式 + SQL 查询）
-    "file_list",                # 目录列表（含元数据）
-    "file_search",              # 文件搜索
+    "file_search",              # 文件搜索+准备（数据文件自动转 Parquet）
+    "file_read",                # 图片视觉分析
     "restore_file",             # 恢复文件到修改前版本
     # 定时任务
     "manage_scheduled_task",    # 定时任务管理（创建/查看/修改/暂停/恢复/删除）

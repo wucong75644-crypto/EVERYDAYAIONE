@@ -182,65 +182,19 @@ class SandboxToolMixin:
             logger.debug(f"Sandbox knowledge recording skipped | error={e}")
 
     def _register_files_from_output(self, stdout: str) -> None:
-        """从 code_execute 输出中提取文件名并注册到对话级路径缓存
+        """从 code_execute 输出中提取文件引用（已简化：不再注册 FilePathCache）。
 
-        替代 file_list 的缓存注册机制：LLM 在 code_execute 内 os.listdir 发现的
-        文件名通过此方法注册，后续 data_query/file_read 的模糊匹配继续工作。
+        对齐 Claude 模式后，AI 在沙盒中自己发现文件路径，
+        不需要外部缓存机制。此方法保留为空操作以兼容调用方。
         """
-        import os
-        import re
-
-        from services.agent.workspace_file_handles import get_file_cache
-
-        workspace_dir = self._get_workspace_dir()
-        if not workspace_dir:
-            return
-
-        _DATA_EXTS = r"\.(?:xlsx|xls|csv|tsv|parquet|pdf|docx|pptx|txt|json|png|jpg)"
-        _FILE_RE = re.compile(rf"['\"]([^'\"]*{_DATA_EXTS})['\"]", re.IGNORECASE)
-
-        file_cache = get_file_cache(self.conversation_id)
-
-        for m in _FILE_RE.finditer(stdout):
-            filename = m.group(1)
-            basename = os.path.basename(filename)
-            candidate = os.path.join(workspace_dir, filename)
-            if os.path.exists(candidate):
-                file_cache.register(basename, os.path.realpath(candidate))
+        pass
 
     def _register_staging_files(self, result: "AgentResult") -> None:
-        """从工具结果中提取 staging 文件路径，注册到共享路径缓存。
+        """兼容占位：不再注册 FilePathCache。
 
-        data_query / erp_agent 产出的 staging 文件注册后，
-        后续任何工具都能通过文件名直接引用。
+        对齐 Claude 模式后，AI 通过 manifest 和 os.listdir 发现文件。
         """
-        import os
-        from services.agent.workspace_file_handles import get_file_cache
-
-        if not result or not result.summary:
-            return
-
-        # 从 file_ref 注册（结构化路径，最可靠）
-        if hasattr(result, "file_ref") and result.file_ref:
-            fr = result.file_ref
-            if fr.path and os.path.exists(fr.path):
-                file_cache = get_file_cache(self.conversation_id)
-                file_cache.register(fr.filename, fr.path)
-                return
-
-        # 兜底：从 summary 文本中提取 staging 文件名
-        import re
-        _STAGING_RE = re.compile(r"STAGING_DIR\s*\+\s*'/([^']+)'")
-        file_cache = get_file_cache(self.conversation_id)
-        staging_dir = self._get_staging_dir()
-        if not staging_dir:
-            return
-
-        for m in _STAGING_RE.finditer(result.summary):
-            filename = m.group(1)
-            abs_path = os.path.join(staging_dir, filename)
-            if os.path.exists(abs_path):
-                file_cache.register(filename, abs_path)
+        pass
 
     def _get_staging_dir(self) -> str:
         """获取当前用户的 staging 目录"""
@@ -268,37 +222,13 @@ class SandboxToolMixin:
             return ""
 
     def _register_workspace_backups(self, ws_backups: dict[str, str]) -> None:
-        """将 workspace 备份注册到对话级 session_file_registry。
+        """记录 workspace 备份（仅日志，不再注册 registry）。
 
-        Args:
-            ws_backups: {原始文件名: 备份绝对路径}，来自 executor metadata
+        对齐 Claude 模式后，restore_file 通过 glob 扫描 staging 中的
+        _bak_{timestamp}_{filename} 文件来恢复，不依赖 registry。
         """
-        import os
-
-        from services.agent.session_file_registry import (
-            get_conversation_registry, save_conversation_registry,
-            SessionFileRegistry,
-        )
-        from services.agent.tool_output import FileRef
-
-        tmp = SessionFileRegistry()
-        for filename, backup_path in ws_backups.items():
-            if not os.path.exists(backup_path):
-                continue
-            size = os.path.getsize(backup_path)
-            ext = os.path.splitext(filename)[1].lstrip(".") or "unknown"
-            ref = FileRef(
-                path=backup_path,
-                filename=os.path.basename(backup_path),
-                format=ext,
-                row_count=0,
-                size_bytes=size,
-                columns=[],
+        if ws_backups:
+            logger.info(
+                f"Workspace backups created | "
+                f"count={len(ws_backups)} | files={list(ws_backups.keys())}"
             )
-            tmp.register(f"backup:{filename}", "code_execute", ref)
-
-        save_conversation_registry(self.conversation_id, tmp)
-        logger.info(
-            f"ToolExecutor workspace backups registered | "
-            f"count={len(ws_backups)} | files={list(ws_backups.keys())}"
-        )

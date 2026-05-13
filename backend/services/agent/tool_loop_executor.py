@@ -25,7 +25,6 @@ from services.agent.loop_hooks import LoopHook
 from services.agent.loop_types import (
     HookContext, LoopConfig, LoopResult, LoopStrategy,
 )
-from services.agent.session_file_registry import SessionFileRegistry
 from services.agent.tool_output import ToolOutput
 from services.agent.tool_result_cache import ToolResultCache
 
@@ -56,7 +55,7 @@ class ToolLoopExecutor:
         config: LoopConfig,
         strategy: LoopStrategy,
         hooks: List[LoopHook] = None,
-        file_registry: SessionFileRegistry | None = None,
+        file_registry: Any = None,
     ) -> None:
         self.adapter = adapter
         self.executor = executor
@@ -66,8 +65,8 @@ class ToolLoopExecutor:
         self.hooks: List[LoopHook] = list(hooks or [])
         # 会话级读工具缓存（key=tool_name+args_hash → result, TTL 5 分钟）
         self._cache = ToolResultCache()
-        # 会话级文件注册表（供 ComputeAgent 按域查找 staging 文件）
-        self._file_registry = file_registry or SessionFileRegistry()
+        # file_registry 已废弃（对齐 Claude 模式后不再需要）
+        self._file_registry = None
         # 停止策略：本轮所有工具的原始结果（供 run() 中 classify 使用）
         # 每项: (tool_name, result, audit_status)
         self._turn_tool_outcomes: List[Tuple[str, Any, str]] = []
@@ -408,13 +407,7 @@ class ToolLoopExecutor:
         embedding 预计算只在对话级 registry 做一次（ChatToolMixin._save_schema_to_conversation），
         此处不做——ERPAgent 内部 registry 不参与 schema 注入。
         """
-        file_ref = getattr(result, "file_ref", None)
-        if file_ref:
-            source = getattr(result, "source", None) or tool_name
-            schema_text = getattr(result, "summary", "") or ""
-            self._file_registry.register(
-                source, tool_name, file_ref, schema_text=schema_text,
-            )
+        # file_registry 已废弃（对齐 Claude 模式）
 
         collected = getattr(result, "collected_files", None)
         if collected:

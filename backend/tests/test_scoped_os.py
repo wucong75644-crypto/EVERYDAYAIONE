@@ -301,31 +301,7 @@ class TestRegisterFilesFromOutput:
         assert "数据.xlsx" in matches
         assert "log.csv" in matches
 
-    def test_registers_existing_files_to_cache(self, workspace):
-        """存在的文件被注册到 FilePathCache"""
-        from services.agent.workspace_file_handles import get_file_cache
-
-        ws = workspace["ws"]
-        # 文件存在
-        cache = get_file_cache("test_conv_register")
-        assert cache.resolve("销售报表.xlsx") is not None or True  # 可能已注册
-
-        # 手动模拟注册逻辑
-        abs_path = os.path.join(ws, "销售报表.xlsx")
-        cache.register("销售报表.xlsx", abs_path)
-        resolved = cache.resolve("销售报表.xlsx")
-        assert resolved == abs_path
-
-    def test_nonexistent_files_not_registered(self, workspace):
-        """不存在的文件不被注册"""
-        from services.agent.workspace_file_handles import get_file_cache
-
-        cache = get_file_cache("test_conv_nofile")
-        # 不注册不存在的文件
-        ws = workspace["ws"]
-        candidate = os.path.join(ws, "nonexistent.xlsx")
-        if not os.path.exists(candidate):
-            assert cache.resolve("nonexistent.xlsx") is None
+    # FilePathCache 测试已移除（workspace_file_handles 模块已删除）
 
 
 # ============ Staging 隔离测试 ============

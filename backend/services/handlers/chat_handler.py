@@ -262,11 +262,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         tool_context_state = snapshot.get("tool_context_state", {})
         budget_snapshot = snapshot.get("budget_snapshot", {})
 
-        # 恢复 SessionFileRegistry（§15.2 老格式兼容：空列表 → 空 Registry）
-        from services.agent.session_file_registry import SessionFileRegistry
-        file_registry = SessionFileRegistry.from_snapshot(
-            snapshot.get("file_registry", []),
-        )
+        # file_registry 已废弃（对齐 Claude 模式），保持接口兼容
+        file_registry = None
 
         # 恢复 DAG 进度（§15.2 老格式兼容：None → 无 DAG 进度）
         dag_progress = snapshot.get("dag_progress")

@@ -1,8 +1,8 @@
 """
 文件操作工具定义
 
-为 Agent Loop 提供 file_read/file_list/file_search 工具定义。
-由 agent_tools.py 导入合并。
+对齐 Claude 模式：file_search 定位文件并转 staging，AI 在 code_execute 自主探索。
+file_read 仅保留图片视觉能力。restore_file 恢复文件。
 """
 
 from typing import Any, Dict, List, Set
@@ -10,38 +10,25 @@ from typing import Any, Dict, List, Set
 
 # 文件工具名集合（INFO 类型：结果回传大脑）
 FILE_INFO_TOOLS: Set[str] = {
-    "file_read",
-    "file_list",
     "file_search",
+    "file_read",
     "restore_file",
 }
 
 # 工具 Schema（参数验证）
 FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "file_search": {
+        "required": [],
+        "properties": {
+            "path": {"type": "string"},
+            "keyword": {"type": "string"},
+            "file_pattern": {"type": "string"},
+        },
+    },
     "file_read": {
         "required": ["path"],
         "properties": {
             "path": {"type": "string"},
-            "sheet": {"type": "string"},
-            "offset": {"type": "integer"},
-            "limit": {"type": "integer"},
-            "pages": {"type": "string"},
-        },
-    },
-    "file_list": {
-        "required": [],
-        "properties": {
-            "path": {"type": "string"},
-            "show_hidden": {"type": "boolean"},
-        },
-    },
-    "file_search": {
-        "required": ["keyword"],
-        "properties": {
-            "keyword": {"type": "string"},
-            "path": {"type": "string"},
-            "search_content": {"type": "boolean"},
-            "file_pattern": {"type": "string"},
         },
     },
     "restore_file": {
@@ -54,124 +41,66 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 
 
 def build_file_tools() -> List[Dict[str, Any]]:
-    """构建文件操作工具定义（file_read/file_list/file_search）"""
+    """构建文件操作工具定义（file_search / file_read / restore_file）"""
     return [
-        {
-            "type": "function",
-            "function": {
-                "name": "file_read",
-                "description": (
-                    "读取 workspace 内的任何文件。所有格式自动识别，直接传文件名即可。\n\n"
-                    "Usage:\n"
-                    "- path 参数使用文件名或相对路径，优先使用 file_list 返回的路径\n"
-                    "- Excel 文件：返回所有 Sheet 的结构化预览（Sheet 名+行列数+前几行带单元格编号+合并区域标注），数据自动存 staging Parquet\n"
-                    "- Excel 指定 sheet 参数时：返回该 Sheet 的完整内容，含公式对照表（公式 vs 计算值）\n"
-                    "- CSV/Parquet 文件：返回结构预览（列名+类型+行数+前几行），数据自动存 staging Parquet\n"
-                    "- 数据查询和计算：用 code_execute + duckdb.sql() 从 staging Parquet 查询\n"
-                    "- PDF 文件：自动提取文本和表格。≤10 页自动全读，>10 页 MUST 指定 pages 参数，每次最多 20 页\n"
-                    "- DOCX 文件：返回结构化内容（[Heading 1]/[Normal] 标注 + 表格带行号）\n"
-                    "- PPTX 文件：返回结构化内容（Slide 编号 + [Title]/[Text] 标注 + 表格带行号）\n"
-                    "- 图片文件（png/jpg/gif/webp）：返回图片供视觉分析\n"
-                    "- 纯文本文件（txt/md/json/py 等）：返回内容带行号，最多 2000 行\n"
-                    "- 只能读文件，不能读目录。列目录用 file_list"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": (
-                                "文件名或相对路径（如 '销售报表.xlsx' 或 '报表/data.csv'）。"
-                                "优先使用 file_list 返回的路径"
-                            ),
-                        },
-                        "sheet": {
-                            "type": "string",
-                            "description": (
-                                "Excel 的 Sheet 名称（可选，默认第一个 Sheet）。"
-                                "传 '*' 合并所有同结构 Sheet。"
-                            ),
-                        },
-                        "offset": {
-                            "type": "integer",
-                            "description": (
-                                "起始行号（1-based，默认1即文件开头）。"
-                                "仅文本文件过大时使用"
-                            ),
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": (
-                                "读取行数上限。"
-                                "仅文本文件过大时使用"
-                            ),
-                        },
-                        "pages": {
-                            "type": "string",
-                            "description": (
-                                "PDF 页码范围（如 '3'、'1-5'、'3,7,10'）。"
-                                "仅用于 PDF 文件"
-                            ),
-                        },
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "file_list",
-                "description": (
-                    "列出 workspace 内目录的内容（文件和子目录）。\n"
-                    "返回文件名列表，后续直接用文件名引用。\n"
-                    "默认列出 workspace 根目录。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "目录相对路径（默认'.'即根目录）",
-                        },
-                        "show_hidden": {
-                            "type": "boolean",
-                            "description": "是否显示隐藏文件（默认false）",
-                        },
-                    },
-                },
-            },
-        },
         {
             "type": "function",
             "function": {
                 "name": "file_search",
                 "description": (
-                    "在 workspace 内搜索文件。\n"
-                    "默认按文件名搜索，设置 search_content=true 可搜索文件内容。\n"
-                    "可用 file_pattern 过滤文件类型（如 *.csv）。"
+                    "搜索和准备工作区文件。定位文件 → 大 Excel/CSV 自动转 Parquet 到 staging → 返回路径。\n\n"
+                    "Usage:\n"
+                    "- 无参数：列出工作区根目录所有文件\n"
+                    "- path：列出指定目录或准备指定文件（大数据文件自动转 Parquet）\n"
+                    "- keyword：按文件名关键词搜索\n"
+                    "- file_pattern：按通配符过滤（如 *.csv）\n\n"
+                    "返回文件列表和 staging 路径。数据文件转 Parquet 后写入 staging/_manifest.json。\n"
+                    "后续在 code_execute 中读 manifest 获取精确路径，用 duckdb/openpyxl 探索数据。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "keyword": {
-                            "type": "string",
-                            "description": "搜索关键词",
-                        },
                         "path": {
                             "type": "string",
-                            "description": "搜索起始目录（默认'.'）",
+                            "description": (
+                                "目录相对路径（列目录）或文件名/相对路径（准备单个文件）。"
+                                "默认列出根目录。"
+                            ),
                         },
-                        "search_content": {
-                            "type": "boolean",
-                            "description": "是否同时搜索文件内容（默认false）",
+                        "keyword": {
+                            "type": "string",
+                            "description": "搜索关键词（按文件名匹配）",
                         },
                         "file_pattern": {
                             "type": "string",
-                            "description": "文件名匹配模式（如 *.csv、report*）",
+                            "description": "文件名通配符（如 *.csv、report*）",
                         },
                     },
-                    "required": ["keyword"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "file_read",
+                "description": (
+                    "读取图片文件，返回给视觉模型分析。\n\n"
+                    "仅用于图片文件（png/jpg/gif/webp/bmp/svg）。\n"
+                    "其他文件类型（Excel/CSV/PDF/DOCX/文本）在 code_execute 中直接读取：\n"
+                    "- Excel: openpyxl.load_workbook(read_only=True)\n"
+                    "- PDF: pdfplumber.open()\n"
+                    "- DOCX: docx.Document()\n"
+                    "- 文本: open()"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "图片文件名或相对路径",
+                        },
+                    },
+                    "required": ["path"],
                 },
             },
         },
@@ -201,15 +130,16 @@ def build_file_tools() -> List[Dict[str, Any]]:
     ]
 
 
-# 路由提示词片段
+# 路由提示词片段（ERP Agent 用）
 FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
-    "- 所有文件操作直接用文件名或相对路径（如 '利润表.xlsx'、'子目录/data.csv'）\n"
-    "- 查看目录/列出文件 → file_list\n"
-    "- 搜索/查找文件 → file_search\n"
-    "- 读取任何文件（Excel/CSV/PDF/DOCX/图片/文本）→ file_read\n"
-    "- 数据查询/计算/分析 → 先 file_read 看结构，再 code_execute + duckdb 查询计算\n"
-    "- 撤销/恢复原文件/回退 → restore_file\n"
-    "- file_list 和 file_search 返回的结果已包含文件元信息（行列数/类型/读取命令），直接使用\n"
-    "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
+    "- file_search 定位文件：无参数列目录，有 path/keyword 搜索文件\n"
+    "- 数据文件（Excel/CSV）自动转 Parquet 到 staging，返回路径\n"
+    "- code_execute 中读 manifest 获取路径：\n"
+    "  import json\n"
+    "  with open(STAGING_DIR + '/_manifest.json') as f:\n"
+    "      manifest = json.load(f)\n"
+    "  用 duckdb.sql() 查询 Parquet 数据\n"
+    "- 图片文件用 file_read 返回给视觉模型\n"
+    "- 撤销/恢复原文件 → restore_file\n\n"
 )

@@ -1,9 +1,10 @@
 """
 文件操作 + 社交爬虫工具 Mixin
 
-从 tool_executor.py 拆出（500 行红线），承载：
-- file_read / file_write / file_edit / file_list / file_search / file_info
-- social_crawler
+对齐 Claude 模式：
+- file_search: 搜索/定位文件 → 大 Excel/CSV 转 Parquet → 写 manifest → 返回路径
+- file_read: 仅图片视觉（多模态）
+- restore_file: 从 staging 备份恢复（精确文件名匹配，不依赖 registry）
 
 通过 Mixin 继承组合到 ToolExecutor。
 依赖宿主类提供：self.user_id, self.org_id, self.conversation_id
@@ -11,13 +12,39 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import re
+import shutil
+import time
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, Optional
 
 from loguru import logger
 
-# 数据文件扩展名（走 DataQueryExecutor 或 excel_reader）
+# 数据文件扩展名（触发 Parquet 转换）
 _DATA_EXTS = frozenset({".xlsx", ".xls", ".xlsm", ".csv", ".tsv", ".parquet"})
+
+# 安全文件名：只保留 ASCII 字母/数字/下划线/连字符/点
+_SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_.\-]")
+
+
+def _sanitize_filename(name: str, idx: int) -> str:
+    """将原始文件名转换为安全的 ASCII 文件名。
+
+    中文/特殊字符全部移除，保留 ASCII 字母数字，加序号避免冲突。
+    统一输出 .parquet 扩展名。
+    例：sales_2024.xlsx → sales2024_001.parquet
+        销售数据.xlsx → file_001.parquet（中文全移除后为空，用 file 兜底）
+    """
+    ext = Path(name).suffix.lower()
+    stem = Path(name).stem
+    safe = _SAFE_NAME_RE.sub("", stem)
+    if not safe:
+        safe = "file"
+    # 截断避免过长
+    safe = safe[:30]
+    return f"{safe}_{idx:03d}.parquet"
 
 
 class FileToolMixin:
@@ -26,11 +53,7 @@ class FileToolMixin:
     def _make_file_handler(
         self, tool_name: str,
     ) -> Callable[..., Coroutine[Any, Any, Any]]:
-        """为指定文件工具创建handler
-
-        file_read 可能返回 FileReadResult（图片多模态），
-        由 ChatHandler 工具结果处理逻辑识别并注入 image_url。
-        """
+        """为指定文件工具创建 handler"""
         async def handler(args: Dict[str, Any]) -> Any:
             return await self._file_dispatch(tool_name, args)
         return handler
@@ -38,13 +61,7 @@ class FileToolMixin:
     async def _file_dispatch(
         self, tool_name: str, args: Dict[str, Any],
     ) -> Any:
-        """文件工具统一调度（直接用文件名/相对路径）
-
-        file_list 和 file_search 返回结果自动附带文件元数据。
-        元数据通过 per-message 缓存（_metadata_cache）避免重复提取。
-        file_read 可能返回 FileReadResult（图片多模态）— 直接透传，不包装。
-        其他工具返回 AgentResult。
-        """
+        """文件工具统一调度"""
         from core.config import get_settings
         from services.agent.agent_result import AgentResult
         from services.file_executor import FileExecutor
@@ -64,60 +81,25 @@ class FileToolMixin:
             org_id=self.org_id,
         )
 
-        # ── file_list：格式化 + 元数据 ──
-        if tool_name == "file_list":
-            try:
-                return await self._file_list_with_metadata(executor, args)
-            except PermissionError as e:
-                return AgentResult(
-                    summary=f"权限不足: {e}", status="error",
-                    error_message=f"PermissionError: {e}",
-                    metadata={"retryable": False},
-                )
-            except Exception as e:
-                logger.error(f"ToolExecutor file_list | error={e}")
-                return AgentResult(
-                    summary=f"文件操作失败: {e}", status="error",
-                    error_message=str(e), metadata={"retryable": False},
-                )
-
-        # ── file_search：搜索 + 元数据 ──
-        if tool_name == "file_search":
-            try:
-                return await self._file_search_with_metadata(executor, args)
-            except PermissionError as e:
-                return AgentResult(
-                    summary=f"权限不足: {e}", status="error",
-                    error_message=f"PermissionError: {e}",
-                    metadata={"retryable": False},
-                )
-            except Exception as e:
-                logger.error(f"ToolExecutor file_search | error={e}")
-                return AgentResult(
-                    summary=f"文件操作失败: {e}", status="error",
-                    error_message=str(e), metadata={"retryable": False},
-                )
-
-        # ── restore_file：从备份恢复 workspace 文件 ──
-        if tool_name == "restore_file":
-            try:
-                return await self._restore_file(executor, args)
-            except PermissionError as e:
-                return AgentResult(
-                    summary=f"权限不足: {e}", status="error",
-                    error_message=f"PermissionError: {e}",
-                    metadata={"retryable": False},
-                )
-            except Exception as e:
-                logger.error(f"ToolExecutor restore_file | error={e}")
-                return AgentResult(
-                    summary=f"文件恢复失败: {e}", status="error",
-                    error_message=str(e), metadata={"retryable": False},
-                )
-
-        # ── file_read：统一文件读取 ──
-        if tool_name == "file_read":
-            return await self._file_read_dispatch(executor, args, settings)
+        try:
+            if tool_name == "file_search":
+                return await self._file_search(executor, args, settings)
+            if tool_name == "file_read":
+                return await self._file_read_image(executor, args)
+            if tool_name == "restore_file":
+                return await self._restore_file(executor, args, settings)
+        except PermissionError as e:
+            return AgentResult(
+                summary=f"权限不足: {e}", status="error",
+                error_message=f"PermissionError: {e}",
+                metadata={"retryable": False},
+            )
+        except Exception as e:
+            logger.error(f"ToolExecutor {tool_name} | error={e}")
+            return AgentResult(
+                summary=f"文件操作失败: {e}", status="error",
+                error_message=str(e), metadata={"retryable": False},
+            )
 
         return AgentResult(
             summary=f"Unknown file tool: {tool_name}",
@@ -126,237 +108,68 @@ class FileToolMixin:
             metadata={"retryable": False},
         )
 
-    async def _file_read_dispatch(
+    # ================================================================
+    # file_search：搜索/定位 + Parquet 转换 + manifest
+    # ================================================================
+
+    async def _file_search(
         self, executor: Any, args: Dict[str, Any], settings: Any,
     ) -> Any:
-        """file_read 统一调度：数据文件走 DataQueryExecutor，其他走 FileExecutor。"""
-        from services.agent.agent_result import AgentResult
-
-        # path 参数：先查 FilePathCache 翻译
-        path = args.get("path", "")
-        if path:
-            from services.agent.workspace_file_handles import get_file_cache
-            cached = get_file_cache(self.conversation_id).resolve(path)
-            if cached:
-                args = {**args, "path": cached}
-                path = cached
-
-        ext = Path(path).suffix.lower() if path else ""
-
-        # ── 数据文件分支：Excel/CSV/Parquet ──
-        if ext in _DATA_EXTS:
-            ft = "excel" if ext in (".xlsx", ".xls", ".xlsm") else "csv"
-            return await self._file_read_data(args, settings, ft)
-
-        # ── 其他文件：走 FileExecutor 原有逻辑 ──
-        try:
-            result = await executor.file_read(**{
-                k: v for k, v in args.items()
-                if k in ("path", "offset", "limit", "pages")
-            })
-            from services.file_read_extensions import FileReadResult
-            if isinstance(result, FileReadResult):
-                return result
-            return AgentResult(summary=result or "", status="success")
-        except PermissionError as e:
-            logger.warning(f"ToolExecutor file_read | perm_error={e}")
-            return AgentResult(
-                summary=f"权限不足: {e}",
-                status="error",
-                error_message=f"PermissionError: {e}",
-                metadata={"retryable": False},
-            )
-        except Exception as e:
-            from services.file_executor import FileOperationError
-            if isinstance(e, FileOperationError):
-                return AgentResult(
-                    summary=str(e), status="error",
-                    error_message=str(e), metadata={"retryable": True},
-                )
-            logger.error(f"ToolExecutor file_read | error={e}")
-            return AgentResult(
-                summary=f"文件操作失败: {e}",
-                status="error",
-                error_message=str(e),
-                metadata={"retryable": False},
-            )
-
-    async def _file_read_data(
-        self, args: Dict[str, Any], settings: Any, file_type: str,
-    ) -> Any:
-        """数据文件读取：openpyxl 结构化预览 + Parquet 缓存。计算交给 code_execute + duckdb。"""
+        """file_search 实现：搜索文件 → 大数据文件转 Parquet → 写 manifest → 返回路径"""
         from services.agent.agent_result import AgentResult
         from core.workspace import resolve_staging_dir
+
+        path = args.get("path", "")
+        keyword = args.get("keyword", "")
+        file_pattern = args.get("file_pattern", "")
 
         staging_dir = resolve_staging_dir(
             settings.file_workspace_root,
             self.user_id, self.org_id, self.conversation_id,
         )
+        Path(staging_dir).mkdir(parents=True, exist_ok=True)
 
-        # Excel → openpyxl 结构化预览 + Parquet 缓存
-        if file_type == "excel":
+        # ── 判断模式：指向单文件 vs 列目录/搜索 ──
+        if path and not keyword and not file_pattern:
             try:
-                from services.agent.excel_reader import read_excel_structured
-                result = await read_excel_structured(
-                    args["path"], args.get("sheet"), staging_dir,
-                )
-                self._register_staging_files(result)
-                _filename = Path(args["path"]).name
-                # 创建 Parquet 缓存 + 附加 duckdb 查询指引
-                cache_name = None
-                cache_schema = ""
-                try:
-                    from services.agent.data_query_cache import ensure_parquet_cache
-                    cache_path, _ = await ensure_parquet_cache(
-                        args["path"], args.get("sheet"), staging_dir,
-                    )
-                    cache_name = Path(cache_path).name
-                    try:
-                        import duckdb as _dq
-                        _con = _dq.connect(":memory:")
-                        _escaped = cache_path.replace("'", "''")
-                        pq_cols = _con.execute(
-                            f"SELECT column_name, data_type FROM parquet_schema('{_escaped}')"
-                        ).fetchall()
-                        pq_rows = _con.execute(
-                            f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
-                        ).fetchone()[0]
-                        _con.close()
-                        col_preview = ", ".join(f'"{n}"({t})' for n, t in pq_cols[:15])
-                        if len(pq_cols) > 15:
-                            col_preview += f" (+{len(pq_cols)-15}列)"
-                        cache_schema = f" | {pq_rows}行 × {len(pq_cols)}列\n[列: {col_preview}]"
-                    except Exception:
-                        pass
-                    result.summary += (
-                        f"\n\n[staging 缓存] {cache_name}{cache_schema}"
-                        f"\n\n数据查询（在 code_execute 中使用）:"
-                        f"\n  import duckdb"
-                        f"\n  path = STAGING_DIR + '/{cache_name}'"
-                        f"\n  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}') LIMIT 20\").df()"
-                    )
-                except Exception:
-                    pass
-                # schema 注册：包含 staging 路径和列名（跨轮注入用）
-                schema_text = f"{_filename}{cache_schema}"
-                if cache_name:
-                    schema_text += (
-                        f"\n读取: path = STAGING_DIR + '/{cache_name}'"
-                        f"\n      duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\")"
-                    )
-                self._pending_schemas.append((
-                    _filename, args["path"], schema_text,
-                ))
-                return result
+                target = executor.resolve_safe_path(path)
             except Exception as e:
-                logger.error(f"Excel structured read failed | error={e}")
                 return AgentResult(
-                    summary=f"Excel 读取失败: {e}",
+                    summary=f"路径无效: {path} ({e})",
                     status="error",
                     error_message=str(e),
+                    metadata={"retryable": True},
                 )
-
-        # CSV / Parquet → DuckDB 快速 profile + 缓存
-        try:
-            from services.agent.data_query_cache import ensure_parquet_cache
-            _filename = Path(args["path"]).name
-
-            # CSV 需要转 Parquet 缓存；Parquet 直接用
-            if file_type == "csv":
-                cache_path, _ = await ensure_parquet_cache(
-                    args["path"], None, staging_dir,
+            if target.is_file():
+                return await self._prepare_single_file(
+                    executor, str(target), staging_dir,
                 )
-            else:
-                cache_path = args["path"]
-
-            # DuckDB 快速 profile
-            import duckdb as _dq
-            _con = _dq.connect(":memory:")
-            _escaped = cache_path.replace("'", "''")
-            pq_cols = _con.execute(
-                f"SELECT column_name, data_type FROM parquet_schema('{_escaped}')"
-            ).fetchall()
-            pq_rows = _con.execute(
-                f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
-            ).fetchone()[0]
-            preview = _con.execute(
-                f"SELECT * FROM read_parquet('{_escaped}') LIMIT 5"
-            ).fetchdf().to_string(index=False)
-            _con.close()
-
-            col_preview = ", ".join(f'"{n}"({t})' for n, t in pq_cols[:15])
-            if len(pq_cols) > 15:
-                col_preview += f" (+{len(pq_cols)-15}列)"
-            cache_name = Path(cache_path).name
-
-            summary = (
-                f"{_filename} | {pq_rows:,}行 × {len(pq_cols)}列\n"
-                f"[列: {col_preview}]\n\n"
-                f"预览:\n{preview}\n\n"
-                f"[staging 缓存] {cache_name}\n\n"
-                f"数据查询（在 code_execute 中使用）:\n"
-                f"  import duckdb\n"
-                f"  path = STAGING_DIR + '/{cache_name}'\n"
-                f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}') LIMIT 20\").df()"
-            )
-            self._pending_schemas.append((
-                _filename, args["path"], summary[:500],
-            ))
-            return AgentResult(summary=summary, status="success")
-        except Exception as e:
-            logger.error(f"Data file read failed | error={e}")
+            if target.is_dir():
+                return await self._list_directory(executor, args, staging_dir)
+            # 路径既非文件也非目录
             return AgentResult(
-                summary=f"数据文件读取失败: {e}",
+                summary=f"未找到文件或目录: {path}",
                 status="error",
-                error_message=str(e),
+                error_message=f"Path not found: {path}",
+                metadata={"retryable": True},
             )
 
-    async def _get_or_extract_metadata(self, abs_path: str) -> Optional[Dict]:
-        """获取文件元数据（带 per-message 缓存 + 线程池执行）
+        # ── 有 keyword/file_pattern → 搜索模式 ──
+        if keyword or file_pattern:
+            return await self._search_files(executor, args, staging_dir)
 
-        缓存挂在 ToolExecutor 实例上（_metadata_cache），
-        工具循环结束后自动 GC。
-        IO 阻塞操作（openpyxl 读文件等）在线程池中执行，不阻塞 event loop。
-        """
-        import os
-        from services.file_metadata_extractor import extract_file_metadata
+        # ── 无参数 → 列出根目录 ──
+        return await self._list_directory(executor, args, staging_dir)
 
-        cache = getattr(self, "_metadata_cache", None)
-        if cache is None:
-            cache = {}
-            self._metadata_cache = cache
-
-        # 缓存命中：路径 + mtime 匹配
-        cached = cache.get(abs_path)
-        if cached is not None:
-            try:
-                current_mtime = os.path.getmtime(abs_path)
-                if cached[0] == current_mtime:
-                    return cached[1]
-            except OSError:
-                pass
-
-        # 在线程池中提取（防阻塞 event loop）
-        try:
-            loop = asyncio.get_running_loop()
-            meta = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_file_metadata, abs_path),
-                timeout=3.0,
-            )
-            mtime = os.path.getmtime(abs_path)
-            cache[abs_path] = (mtime, meta)
-            return meta
-        except Exception:
-            return None
-
-    async def _file_list_with_metadata(
-        self, executor: 'Any', args: Dict[str, Any],
-    ) -> 'AgentResult':
-        """file_list + 元数据（每个文件附带结构信息和读取命令）"""
+    async def _list_directory(
+        self, executor: Any, args: Dict[str, Any], staging_dir: str,
+    ) -> Any:
+        """列出目录内容，对数据文件自动转 Parquet"""
         from services.agent.agent_result import AgentResult
-        from services.file_metadata_extractor import format_file_metadata_line
 
-        data = await executor.file_list_entries(**args)
+        data = await executor.file_list_entries(**{
+            k: v for k, v in args.items() if k in ("path", "show_hidden")
+        })
 
         if data["error"]:
             return AgentResult(
@@ -368,101 +181,352 @@ class FileToolMixin:
 
         total = len(data["dirs"]) + len(data["files"])
         lines = [f"目录: {data['path']} | 共 {total} 项"]
-        lines.append("─" * 60)
+        lines.append("─" * 50)
+
         for d in data["dirs"]:
-            lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
+            lines.append(f"  [目录] {d['name']}/")
 
-        from pathlib import Path as _Path
-        from services.agent.workspace_file_handles import get_file_cache
-        file_cache = get_file_cache(self.conversation_id)
-        ws_root = _Path(executor.workspace_root)
-
-        _MAX_METADATA = 5
-        for i, f in enumerate(data["files"]):
-            # 计算 workspace 相对路径（子目录文件带完整路径，如 "报表/月度汇总.xlsx"）
+        # 收集数据文件做批量转换（限制单次最多 5 个，避免列目录时大量转换阻塞）
+        _MAX_AUTO_CONVERT = 5
+        _MIN_CONVERT_SIZE = 1024  # 小于 1KB 的跳过（空文件/模板）
+        data_files = []
+        skipped_data_count = 0
+        for f in data["files"]:
+            size_str = executor._format_size(f["size"])
             try:
-                rel_path = str(_Path(f["abs_path"]).relative_to(ws_root))
+                rel_path = str(Path(f["abs_path"]).relative_to(
+                    Path(executor.workspace_root)
+                ))
             except ValueError:
                 rel_path = f["name"]
-            # 注册两种 key：纯文件名 + 相对路径（都能命中缓存）
-            file_cache.register(f["name"], f["abs_path"])
-            file_cache.register(rel_path, f["abs_path"])
-            if i < _MAX_METADATA:
-                meta = await self._get_or_extract_metadata(f["abs_path"])
-                line = format_file_metadata_line(
-                    rel_path, f["abs_path"], f["size"], meta,
-                )
-            else:
-                size_str = executor._format_size(f["size"])
-                line = f"  {rel_path}\t{size_str}"
-            lines.append(line)
+            lines.append(f"  {rel_path}  ({size_str})")
 
-        if data["truncated"]:
+            ext = Path(f["name"]).suffix.lower()
+            if ext in _DATA_EXTS and f["size"] >= _MIN_CONVERT_SIZE:
+                if len(data_files) < _MAX_AUTO_CONVERT:
+                    data_files.append(f)
+                else:
+                    skipped_data_count += 1
+
+        # 批量转 Parquet + 写 manifest
+        if data_files:
+            manifest_entries = await self._batch_prepare_parquet(
+                data_files, staging_dir,
+            )
+            if manifest_entries:
+                lines.append("")
+                lines.append(f"[staging] {len(manifest_entries)} 个数据文件已转 Parquet：")
+                for entry in manifest_entries:
+                    lines.append(
+                        f"  {entry['original']} → {entry['parquet']} "
+                        f"({entry['rows']:,}行 × {entry['cols']}列)"
+                    )
+                lines.append("")
+                lines.append("在 code_execute 中读取 manifest 获取精确路径：")
+                lines.append("  import json")
+                lines.append("  with open(STAGING_DIR + '/_manifest.json') as f:")
+                lines.append("      manifest = json.load(f)")
+
+        if skipped_data_count > 0:
+            lines.append(
+                f"\n还有 {skipped_data_count} 个数据文件未自动转换，"
+                "需要时用 file_search(path=\"文件名\") 逐个准备。"
+            )
+
+        if data.get("truncated"):
             lines.append("\n已达显示上限，部分条目未显示")
 
         return AgentResult(summary="\n".join(lines), status="success")
 
-    async def _file_search_with_metadata(
-        self, executor: 'Any', args: Dict[str, Any],
-    ) -> 'AgentResult':
-        """file_search + 元数据（搜到的文件附带结构信息）"""
-        import re
-        from services.file_metadata_extractor import format_file_metadata_line
+    async def _search_files(
+        self, executor: Any, args: Dict[str, Any], staging_dir: str,
+    ) -> Any:
+        """搜索文件并对数据文件自动转 Parquet"""
         from services.agent.agent_result import AgentResult
 
-        raw_result = await executor.file_search(**args)
+        raw_result = await executor.file_search(**{
+            k: v for k, v in args.items()
+            if k in ("keyword", "path", "search_content", "file_pattern")
+        })
 
         if "未找到" in raw_result or not raw_result.strip():
             return AgentResult(summary=raw_result or "未找到匹配文件", status="empty")
 
-        lines = raw_result.split("\n")
-        enhanced_lines = []
-        metadata_count = 0
-        _MAX_SEARCH_METADATA = 3
-
-        from services.agent.workspace_file_handles import get_file_cache
-        file_cache = get_file_cache(self.conversation_id)
-
-        for line in lines:
-            match = re.match(r"\s+\[文件\]\s+(\S+?)(?::\d+\s*\|.*)?$", line)
-            if match:
-                rel_path = match.group(1)
+        # 从搜索结果中提取文件路径
+        data_files = []
+        _file_re = re.compile(r"\s+\[文件\]\s+(\S+)")
+        for line in raw_result.split("\n"):
+            m = _file_re.match(line)
+            if m:
+                rel_path = m.group(1).split(":")[0]  # 去掉行号后缀
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
-                        # 注册两种 key（对齐 file_list），所有搜索结果都注册
-                        file_cache.register(target.name, str(target))
-                        file_cache.register(rel_path, str(target))
-                        if metadata_count < _MAX_SEARCH_METADATA:
-                            meta = await self._get_or_extract_metadata(str(target))
-                            if meta:
-                                enhanced_line = format_file_metadata_line(
-                                    target.name, str(target), target.stat().st_size, meta,
-                                )
-                                enhanced_lines.append(enhanced_line)
-                                metadata_count += 1
-                                continue
+                        ext = target.suffix.lower()
+                        if ext in _DATA_EXTS:
+                            data_files.append({
+                                "name": target.name,
+                                "abs_path": str(target),
+                                "size": target.stat().st_size,
+                            })
                 except Exception:
                     pass
-            enhanced_lines.append(line)
 
-        return AgentResult(summary="\n".join(enhanced_lines), status="success")
+        lines = [raw_result]
+
+        if data_files:
+            manifest_entries = await self._batch_prepare_parquet(
+                data_files, staging_dir,
+            )
+            if manifest_entries:
+                lines.append("")
+                lines.append(f"[staging] {len(manifest_entries)} 个数据文件已转 Parquet：")
+                for entry in manifest_entries:
+                    lines.append(
+                        f"  {entry['original']} → {entry['parquet']} "
+                        f"({entry['rows']:,}行 × {entry['cols']}列)"
+                    )
+                lines.append("")
+                lines.append("在 code_execute 中读取 manifest：")
+                lines.append("  import json")
+                lines.append("  with open(STAGING_DIR + '/_manifest.json') as f:")
+                lines.append("      manifest = json.load(f)")
+
+        return AgentResult(summary="\n".join(lines), status="success")
+
+    async def _prepare_single_file(
+        self, executor: Any, abs_path: str, staging_dir: str,
+    ) -> Any:
+        """准备单个文件：数据文件转 Parquet + manifest，其他文件返回路径信息"""
+        from services.agent.agent_result import AgentResult
+
+        ext = Path(abs_path).suffix.lower()
+        name = Path(abs_path).name
+
+        if ext not in _DATA_EXTS:
+            # 非数据文件：返回基本信息 + workspace 路径
+            size = os.path.getsize(abs_path)
+            size_str = self._fmt_size(size)
+            lines = [f"{name} ({size_str})"]
+            lines.append("")
+            lines.append("在 code_execute 中直接读取：")
+            if ext in (".pdf",):
+                lines.append(f"  import pdfplumber")
+                lines.append(f"  pdf = pdfplumber.open(WORKSPACE_DIR + '/{name}')")
+            elif ext in (".docx",):
+                lines.append(f"  from docx import Document")
+                lines.append(f"  doc = Document(WORKSPACE_DIR + '/{name}')")
+            else:
+                lines.append(f"  with open(WORKSPACE_DIR + '/{name}') as f:")
+                lines.append(f"      content = f.read()")
+            return AgentResult(summary="\n".join(lines), status="success")
+
+        # 数据文件：转 Parquet + 写 manifest
+        manifest_entries = await self._batch_prepare_parquet(
+            [{"name": name, "abs_path": abs_path, "size": os.path.getsize(abs_path)}],
+            staging_dir,
+        )
+
+        if not manifest_entries:
+            return AgentResult(
+                summary=f"{name}: Parquet 转换失败",
+                status="error",
+            )
+
+        entry = manifest_entries[0]
+        lines = [
+            f"{name} → {entry['parquet']} ({entry['rows']:,}行 × {entry['cols']}列)",
+            "",
+            "在 code_execute 中使用：",
+            "  import json",
+            "  with open(STAGING_DIR + '/_manifest.json') as f:",
+            "      manifest = json.load(f)",
+            f"  path = STAGING_DIR + '/' + manifest['files'][0]['parquet']",
+            "  duckdb.sql(f\"SELECT * FROM read_parquet('{path}') LIMIT 20\")",
+        ]
+
+        return AgentResult(summary="\n".join(lines), status="success")
+
+    # ================================================================
+    # Parquet 转换 + manifest
+    # ================================================================
+
+    async def _batch_prepare_parquet(
+        self, files: list[dict], staging_dir: str,
+    ) -> list[dict]:
+        """批量将数据文件转 Parquet 并写入 manifest。
+
+        Args:
+            files: [{"name": str, "abs_path": str, "size": int}]
+            staging_dir: staging 目录绝对路径
+
+        Returns:
+            manifest entries: [{"original": str, "parquet": str, "rows": int, "cols": int}]
+        """
+        from services.agent.data_query_cache import ensure_parquet_cache
+
+        manifest_path = os.path.join(staging_dir, "_manifest.json")
+
+        # 读取现有 manifest（增量更新）
+        existing_manifest = {"files": []}
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    existing_manifest = json.load(f)
+            except Exception:
+                pass
+
+        existing_by_original = {
+            e["original"]: e for e in existing_manifest.get("files", [])
+        }
+        # 用于生成唯一序号
+        next_idx = len(existing_manifest.get("files", [])) + 1
+
+        new_entries = []
+        for file_info in files:
+            name = file_info["name"]
+            abs_path = file_info["abs_path"]
+            ext = Path(name).suffix.lower()
+
+            # 已在 manifest 中且 Parquet 文件存在 → 跳过
+            if name in existing_by_original:
+                pq_name = existing_by_original[name]["parquet"]
+                if os.path.exists(os.path.join(staging_dir, pq_name)):
+                    new_entries.append(existing_by_original[name])
+                    continue
+
+            try:
+                if ext == ".parquet":
+                    # Parquet 文件直接 copy 到 staging
+                    safe_name = _sanitize_filename(name, next_idx)
+                    dst = os.path.join(staging_dir, safe_name)
+                    if not os.path.exists(dst):
+                        shutil.copy2(abs_path, dst)
+                    rows, cols = self._parquet_shape(dst)
+                else:
+                    # Excel/CSV → Parquet
+                    cache_path, _ = await ensure_parquet_cache(
+                        abs_path, None, staging_dir,
+                    )
+                    # 重命名为安全文件名
+                    safe_name = _sanitize_filename(name, next_idx)
+                    dst = os.path.join(staging_dir, safe_name)
+                    if cache_path != dst:
+                        if os.path.exists(dst):
+                            os.remove(dst)
+                        shutil.move(cache_path, dst)
+                    rows, cols = self._parquet_shape(dst)
+
+                entry = {
+                    "original": name,
+                    "parquet": safe_name,
+                    "rows": rows,
+                    "cols": cols,
+                }
+                new_entries.append(entry)
+                next_idx += 1
+            except Exception as e:
+                logger.warning(f"Parquet conversion failed | file={name} | error={e}")
+
+        # 合并并写入 manifest
+        all_entries = list(existing_by_original.values())
+        # 用 new_entries 覆盖同名条目
+        seen = set()
+        merged = []
+        for entry in new_entries:
+            merged.append(entry)
+            seen.add(entry["original"])
+        for entry in all_entries:
+            if entry["original"] not in seen:
+                merged.append(entry)
+
+        manifest = {"files": merged, "updated_at": int(time.time())}
+        # atomic write：先写临时文件再 rename，防并发覆盖丢条目
+        tmp_path = manifest_path + f".tmp.{os.getpid()}"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, manifest_path)  # 原子替换（POSIX 保证）
+
+        return new_entries
+
+    @staticmethod
+    def _parquet_shape(path: str) -> tuple[int, int]:
+        """读取 Parquet 文件的行列数"""
+        try:
+            import duckdb as _dq
+            _con = _dq.connect(":memory:")
+            _escaped = path.replace("'", "''")
+            rows = _con.execute(
+                f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
+            ).fetchone()[0]
+            cols = len(_con.execute(
+                f"SELECT column_name FROM parquet_schema('{_escaped}')"
+            ).fetchall())
+            _con.close()
+            return rows, cols
+        except Exception:
+            return 0, 0
+
+    # ================================================================
+    # file_read：仅图片视觉
+    # ================================================================
+
+    async def _file_read_image(
+        self, executor: Any, args: Dict[str, Any],
+    ) -> Any:
+        """file_read：仅处理图片文件，返回多模态 FileReadResult"""
+        from services.agent.agent_result import AgentResult
+
+        path = args.get("path", "")
+        if not path:
+            return AgentResult(
+                summary="请指定文件路径", status="error",
+                error_message="Validation: path is required",
+                metadata={"retryable": True},
+            )
+
+        ext = Path(path).suffix.lower()
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+
+        if ext not in _IMAGE_EXTS:
+            return AgentResult(
+                summary=(
+                    f"file_read 仅支持图片文件。"
+                    f"其他文件请在 code_execute 中直接读取（openpyxl/pdfplumber/docx/open）。"
+                ),
+                status="error",
+                error_message=f"Unsupported file type for file_read: {ext}",
+                metadata={"retryable": False},
+            )
+
+        try:
+            result = await executor.file_read(path=path)
+            from services.file_read_extensions import FileReadResult
+            if isinstance(result, FileReadResult):
+                return result
+            return AgentResult(summary=result or "", status="success")
+        except Exception as e:
+            logger.error(f"file_read image | error={e}")
+            return AgentResult(
+                summary=f"图片读取失败: {e}", status="error",
+                error_message=str(e), metadata={"retryable": True},
+            )
+
+    # ================================================================
+    # restore_file：精确匹配备份文件名（不依赖 registry）
+    # ================================================================
 
     async def _restore_file(
-        self, executor: "Any", args: Dict[str, Any],
-    ) -> "AgentResult":
-        """从 session_file_registry 中查找备份并恢复到 workspace。
+        self, executor: Any, args: Dict[str, Any], settings: Any,
+    ) -> Any:
+        """从 staging 备份恢复 workspace 文件。
 
-        路径安全：目标路径通过 FileExecutor.resolve_safe_path 校验，
-        与 file_read/file_list/file_search 共用同一套安全基础设施。
-
-        查找逻辑：registry 中 key 以 "backup:{filename}:" 开头的条目，
-        取最新的（timestamp 降序），copy 回 workspace 原路径。
+        备份文件名格式：_bak_{timestamp}_{original_filename}
+        精确解析文件名结构（_bak_ + 纯数字时间戳 + _ + 精确原文件名），
+        避免 glob 通配符误匹配其他文件的备份。
         """
-        import shutil
-
         from services.agent.agent_result import AgentResult
-        from services.agent.session_file_registry import get_conversation_registry
+        from core.workspace import resolve_staging_dir
 
         filename = args.get("filename", "").strip()
         if not filename:
@@ -473,54 +537,81 @@ class FileToolMixin:
                 metadata={"retryable": True},
             )
 
-        # 路径安全校验（realpath + workspace 白名单 + 符号链接 + 黑名单）
-        # 拦截 "../"、绝对路径、符号链接等穿越攻击
+        # 路径安全校验
         target_path = executor.resolve_safe_path(filename)
 
-        # 从对话级 registry 查找备份
-        registry = get_conversation_registry(self.conversation_id)
-        prefix = f"backup:{filename}:"
-        candidates = [
-            (key, ref)
-            for key, ref in registry.list_all()
-            if key.startswith(prefix)
-        ]
+        staging_dir = resolve_staging_dir(
+            settings.file_workspace_root,
+            self.user_id, self.org_id, self.conversation_id,
+        )
 
-        if not candidates:
+        # 精确匹配：_bak_{纯数字时间戳}_{精确文件名}
+        # 不用 glob，避免 * 贪婪匹配导致 _bak_123_old_data.csv 被 _bak_*_data.csv 命中
+        _BAK_PREFIX = "_bak_"
+        suffix = f"_{filename}"
+        backups: list[tuple[int, str]] = []  # (timestamp, abs_path)
+
+        try:
+            for entry in os.listdir(staging_dir):
+                if not entry.startswith(_BAK_PREFIX) or not entry.endswith(suffix):
+                    continue
+                # 提取中间的时间戳部分：_bak_{ts}_{filename}
+                middle = entry[len(_BAK_PREFIX):-len(suffix)]
+                if middle.isdigit():
+                    abs_path = os.path.join(staging_dir, entry)
+                    backups.append((int(middle), abs_path))
+        except FileNotFoundError:
+            pass
+
+        if not backups:
             return AgentResult(
                 summary=f"未找到「{filename}」的备份。可能备份已过期（24小时有效期）或该文件未被修改过。",
                 status="empty",
             )
 
-        # 取最新的备份（key 末尾是 timestamp）
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        best_key, best_ref = candidates[0]
+        # 按时间戳降序取最新
+        backups.sort(key=lambda x: x[0], reverse=True)
+        best_ts, best_backup = backups[0]
 
-        # 验证备份文件存在
-        if not best_ref.is_valid():
-            # 备份文件已被清理，移除 registry 条目
-            registry.remove(best_key)
+        if not os.path.exists(best_backup):
             return AgentResult(
                 summary=f"「{filename}」的备份文件已过期被清理，无法恢复。",
                 status="error",
                 error_message="Backup file expired",
             )
 
-        # 恢复：copy 备份 → workspace 原路径
-        shutil.copy2(best_ref.path, str(target_path))
+        # 恢复
+        shutil.copy2(best_backup, str(target_path))
 
-        # 恢复后移除该备份条目（一次性使用）
-        registry.remove(best_key)
+        # 删除已用的备份
+        try:
+            os.remove(best_backup)
+        except OSError:
+            pass
 
         logger.info(
-            f"ToolExecutor restore_file | file={filename} | "
-            f"backup={best_ref.filename} | target={target_path}"
+            f"restore_file | file={filename} | backup={best_backup} | target={target_path}"
         )
 
         return AgentResult(
             summary=f"已恢复「{filename}」到修改前的版本。",
             status="success",
         )
+
+    # ================================================================
+    # 工具函数
+    # ================================================================
+
+    @staticmethod
+    def _fmt_size(size: int) -> str:
+        """格式化文件大小"""
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        return f"{size / (1024 * 1024 * 1024):.1f} GB"
 
 
 class CrawlerToolMixin:

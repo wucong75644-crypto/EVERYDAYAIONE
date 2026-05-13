@@ -1,12 +1,16 @@
 """
 Staging 文件清理模块。
 
-设计文档：docs/document/TECH_data_query工具设计.md §九
+对齐 Claude 模式后简化：不再依赖 session_file_registry 保护伞。
 
-三层清理策略：
-1. Registry 保护伞 — registry 中的文件不删
-2. TTL 淘汰 — 不在 registry 且超 24h 的孤儿文件删除
-3. 容量兜底 — 目录总大小 > 500MB 时从最旧非保护文件开始删
+两层清理策略：
+1. TTL 淘汰 — 超 24h 的文件删除（排除 DuckDB 和备份文件）
+2. 容量兜底 — 目录总大小 > 500MB 时从最旧文件开始删
+
+排除项（不按 TTL 清理）：
+- .duckdb.db / .duckdb_temp/ — DuckDB 磁盘模式文件，跟会话同生命周期
+- _bak_* — workspace 备份文件，restore_file 依赖
+- _manifest.json — file_search 的文件索引
 
 触发时机：
 - 消息驱动（主）：每次消息处理开始时 fire-and-forget
@@ -17,24 +21,28 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from services.agent.session_file_registry import SessionFileRegistry
+# 受保护的文件名/前缀（不按 TTL 清理）
+_PROTECTED_NAMES = frozenset({".duckdb.db", "_manifest.json"})
+_PROTECTED_PREFIXES = ("_bak_", ".duckdb_temp")
 
 
-def _protected_paths(registry: SessionFileRegistry | None) -> set[str]:
-    """提取 registry 中所有受保护文件的绝对路径。"""
-    if not registry:
-        return set()
-    return {ref.path for _, ref in registry.list_all() if ref.path}
+def _is_protected(path: Path) -> bool:
+    """判断文件/目录是否受保护（不按 TTL 清理）"""
+    name = path.name
+    if name in _PROTECTED_NAMES:
+        return True
+    for prefix in _PROTECTED_PREFIXES:
+        if name.startswith(prefix):
+            return True
+    return False
 
 
 def cleanup_staging(
     staging_dir: str,
-    registry: SessionFileRegistry | None = None,
+    registry=None,  # 兼容旧调用签名，不再使用
     *,
     ttl_seconds: int = 86400,
     max_size_mb: int = 500,
@@ -43,8 +51,8 @@ def cleanup_staging(
 
     Args:
         staging_dir: staging/{conv_id}/ 的绝对路径
-        registry: 当前会话的文件注册表（None = 无保护伞，纯 TTL）
-        ttl_seconds: 孤儿文件过期时间（默认 24h）
+        registry: 已废弃，保留参数兼容旧调用方
+        ttl_seconds: 文件过期时间（默认 24h）
         max_size_mb: 目录总大小上限（MB）
 
     Returns:
@@ -54,18 +62,15 @@ def cleanup_staging(
     if not staging.exists() or not staging.is_dir():
         return {"deleted": 0, "protected": 0, "kept": 0}
 
-    protected = _protected_paths(registry)
     now = time.time()
     deleted = 0
     kept = 0
     protected_count = 0
-    # Phase 1 遍历时收集存活的非保护文件，供 Phase 2 容量兜底复用
     survivors: list[tuple[Path, float, int]] = []  # (path, mtime, size)
 
-    # ── Phase 1: TTL + 保护伞清理 ──
+    # ── Phase 1: TTL + 保护清理 ──
     for f in _list_files(staging):
-        abs_path = str(f)
-        if abs_path in protected:
+        if _is_protected(f):
             protected_count += 1
             continue
         try:
@@ -83,7 +88,7 @@ def cleanup_staging(
             kept += 1
             survivors.append((f, stat.st_mtime, stat.st_size))
 
-    # ── Phase 2: 容量兜底（复用 Phase 1 收集的存活文件列表）──
+    # ── Phase 2: 容量兜底 ──
     max_bytes = max_size_mb * 1024 * 1024
     total_size = sum(s for _, _, s in survivors)
     if total_size > max_bytes:
@@ -107,45 +112,12 @@ def cleanup_staging(
     return {"deleted": deleted, "protected": protected_count, "kept": max(kept, 0)}
 
 
-def evict_lru(
-    registry: SessionFileRegistry,
-    max_entries: int = 20,
-) -> list[str]:
-    """LRU 淘汰：registry 条目 > max_entries 时淘汰最旧的。
-
-    被淘汰的文件失去保护，下次清理按 TTL 处理。
-    通过 registry 的 public 方法操作，不直接访问私有属性。
-
-    Returns:
-        被淘汰的 key 列表
-    """
-    count = registry.entries_count()
-    if count <= max_entries:
-        return []
-
-    evict_count = count - max_entries
-    oldest_keys = registry.get_oldest_keys(evict_count)
-
-    for key in oldest_keys:
-        registry.remove(key)
-
-    if oldest_keys:
-        logger.info(
-            f"Registry LRU eviction | evicted={len(oldest_keys)} "
-            f"remaining={registry.entries_count()}"
-        )
-    return oldest_keys
-
-
 def cleanup_all_staging(
     workspace_root: str,
     *,
     ttl_seconds: int = 86400,
 ) -> int:
-    """进程启动兜底：扫描所有用户 staging 目录，清理过期文件。
-
-    不做 registry 保护（启动时无活跃 registry），纯 TTL + _tmp_ 清理。
-    """
+    """进程启动兜底：扫描所有用户 staging 目录，清理过期文件。"""
     ws_root = Path(workspace_root)
     if not ws_root.exists():
         return 0
@@ -164,7 +136,7 @@ def cleanup_all_staging(
                 pass
         return n
 
-    # 遍历所有 staging 目录：org/{org_id}/{user_id}/staging/ 和 personal/{hash}/staging/
+    # 遍历所有 staging 目录
     patterns = ["org/*/*/staging", "personal/*/staging"]
     for pattern in patterns:
         for staging_parent in ws_root.glob(pattern):
@@ -174,7 +146,7 @@ def cleanup_all_staging(
                 if conv_dir.is_dir():
                     total_deleted += _clean_conv_dir(conv_dir)
 
-    # 兼容旧的全局 staging（迁移过渡期）
+    # 兼容旧的全局 staging
     old_staging = ws_root / "staging"
     if old_staging.exists():
         for conv_dir in old_staging.iterdir():
@@ -190,9 +162,11 @@ def cleanup_all_staging(
 
 
 def _cleanup_single_dir(conv_dir: Path, now: float, ttl_seconds: int) -> int:
-    """清理单个会话目录中的过期文件（纯 TTL，无 registry 保护）。"""
+    """清理单个会话目录中的过期文件（纯 TTL，含保护规则）。"""
     deleted = 0
     for f in _list_files(conv_dir):
+        if _is_protected(f):
+            continue
         try:
             mtime = f.stat().st_mtime
         except OSError:
@@ -229,12 +203,3 @@ def _remove_empty_dirs(directory: Path) -> None:
                 d.rmdir()
     except OSError:
         pass
-
-
-def _extract_timestamp(key: str) -> int:
-    """从 registry key 中提取 timestamp（key = domain:tool_name:timestamp）。"""
-    parts = key.rsplit(":", 1)
-    try:
-        return int(parts[-1])
-    except (ValueError, IndexError):
-        return 0
