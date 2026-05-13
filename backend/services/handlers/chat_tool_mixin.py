@@ -205,7 +205,8 @@ class ChatToolMixin:
                 "reason": args.get("reason", "need_info"),
                 "tool_call_id": tool_call_id,
             }
-            return (tc, "OK", False, "OK")
+            _hint = "等待用户回答…"
+            return (tc, _hint, False, _hint)
 
         safety = get_safety_level(tool_name)
 
