@@ -446,6 +446,23 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         g["OUTPUT_DIR"] = PathStr(output_dir)
 
+    # DuckDB 磁盘模式预注入：数据全程在磁盘，内存只做缓存
+    # AI 直接用 duckdb.sql() 即可，不需要自己配置连接
+    if staging_dir:
+        try:
+            import duckdb as _duckdb
+            _db_path = str(Path(staging_dir) / ".duckdb.db")
+            _temp_dir = str(Path(staging_dir) / ".duckdb_temp")
+            Path(_temp_dir).mkdir(parents=True, exist_ok=True)
+            _con = _duckdb.connect(_db_path)
+            _con.execute("SET memory_limit = '512MB'")
+            _con.execute(f"SET temp_directory = '{_temp_dir}'")
+            # 注入为默认连接：duckdb.sql() 自动使用这个连接
+            _duckdb.default_connection = _con
+            g["duckdb"] = _duckdb
+        except Exception:
+            pass  # duckdb 不可用时降级，不影响其他功能
+
     # sandbox globals 的 open 直接用 builtins.open
     # builtins.open 已在 sandbox_worker_entry 中被替换为 _global_scoped_open
     # 统一处理：路径解析 + 安全检查 + 文件名纠错

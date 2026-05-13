@@ -220,43 +220,16 @@ MUST NOT 在确认前调用任何执行类工具。
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 
-可用库：duckdb, pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, pdfplumber, zipfile
-os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
-环境变量：WORKSPACE_DIR（工作区根目录）、STAGING_DIR（中间数据目录）、OUTPUT_DIR（输出目录）
+数据文件存在 STAGING_DIR（Parquet 格式），生成文件写到 OUTPUT_DIR。
+不确定可用文件时用 os.listdir(STAGING_DIR) 查看。
 
-文件路径：
-- WORKSPACE_DIR 存放用户上传的原始文件
-- STAGING_DIR 是数据文件的共享目录，所有 file_read 读取过的数据文件都自动缓存在此（Parquet 格式）
-- OUTPUT_DIR 存放生成给用户的文件
-- 不确定可用文件时，在 code_execute 中用 os.listdir(STAGING_DIR) 查看
-- 文件路径从 file_read 返回结果或 STAGING_DIR 目录中复制，禁止凭记忆拼路径
+数据查询用 duckdb.sql()（磁盘模式，已预配置，百万行不爆内存）。
+DuckDB SQL 中列名用双引号包裹。大结果用 COPY TO 导出文件，小结果用 .df() 转 pandas。
+图表用 ECharts JSON（.echart.json），不要用 matplotlib。
 
-数据处理：
-- 所有数据文件先通过 file_read 读取，结果自动存 staging（Parquet 格式）
-- file_read 返回的 staging 缓存路径可直接复制到 code_execute 中使用
-- 大数据查询用 duckdb（恒定内存，百万行不爆）：
-  path = STAGING_DIR + '/文件名.parquet'
-  df = duckdb.sql(f"SELECT * FROM read_parquet('{path}')").df()
-- 小数据或后处理用 pandas（导出、格式化、画图）
-- 多文件关联：duckdb.sql 直接 JOIN 多个 Parquet 文件
-- 合并单元格数据（file_read 预览中标注了合并区域）：用 df['列名'].ffill() 填充
-- 生成文件写到 OUTPUT_DIR，平台自动检测上传
-- 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
-- 写 Excel 用 engine='xlsxwriter'
-- 大数据导出（>10万行）：用 DuckDB COPY TO parquet/csv 流式导出，不要 .df() 全量转 pandas
-- DuckDB SQL 中列名必须用双引号包裹：SELECT "列名" FROM ...
-
-不适用（优先用外部工具，更快更准）：
-- 读任何文件（Excel/CSV/PDF/DOCX/图片/文本）→ file_read
-- 列目录/搜索文件 → file_list / file_search
-- 查 ERP 业务数据 → erp_agent
-
-限制：
-- 禁止 import sys/subprocess
-- 禁止用 pd.read_excel / pd.read_csv 直接读原始文件，必须从 staging Parquet 读取
-- 禁止自己拼文件路径，必须使用工具返回的路径
-- 删除文件必须两步：第一步用 file_list 列出待删文件并告知用户，等用户确认后第二步再调 code_execute 并在 confirm_delete 传入文件路径（如 "下载/文件名.xlsx"）
-- 环境可能因超时重置，变量不存在时重新读取
+可用：duckdb、pandas、matplotlib、openpyxl、xlsxwriter、docx、pptx、pdfplumber
+不可用：网络请求、sys、subprocess。禁止 pd.read_excel / pd.read_csv 直接读原始文件。
+删除文件必须两步：先 file_list 列出待删文件告知用户，确认后再执行。
 
 ### file_list / file_search — 工作区文件发现
 查看工作区有哪些文件、搜索特定文件。支持并行调用。
