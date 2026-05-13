@@ -8,7 +8,7 @@
   - 路径操作：所有接受路径的函数经过 _check_path 白名单校验
   - 只读操作：listdir/walk/stat/path.* 放行
   - 写操作：makedirs/rename 限制在白名单内
-  - 删除操作：remove/unlink 需 confirm_delete 确认
+  - 删除操作：remove/unlink/rmdir 路径白名单校验（不再需要 confirm_delete）
   - 系统命令：system/popen/exec* 不定义（AttributeError）
   - 环境变量：environ=空dict，getenv=返回default
 """
@@ -118,22 +118,17 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         def rename(src, dst):
             _real_os.rename(_check_path(src), _check_path(dst))
 
-        # 删除操作（需 confirm_delete 确认）
+        # 删除操作（路径白名单校验，不再需要 confirm_delete 二次确认）
+        # 安全兜底：_bak_ 备份机制 + restore_file 可恢复误删
+        # TODO: 后续改为硬 UI 确认（前端弹窗阻塞，参考 Claude Code Permission Check）
 
         @staticmethod
         def remove(path):
-            resolved = _check_path(path)
-            if resolved in _confirmed_deletes:
-                return _real_os.remove(resolved)
-            name = _real_os.path.basename(path)
-            raise PermissionError(
-                f"删除操作需要用户确认。请先调 ask_user 告知用户要删除 {name}，"
-                f"确认后在 code_execute 的 confirm_delete 参数传入文件名。"
-            )
+            _real_os.remove(_check_path(path))
 
         @staticmethod
         def rmdir(path):
-            raise PermissionError("删除目录被禁止。")
+            _real_os.rmdir(_check_path(path))
 
         unlink = remove
 
@@ -159,7 +154,7 @@ def build_scoped_pathlib(scoped_os_instance):
     pandas/openpyxl 等库在模块加载时已拿到真实 pathlib，不受影响。
 
     拦截方法：
-      - unlink → scoped_os.remove（confirm_delete 检查）
+      - unlink → scoped_os.remove（路径白名单校验）
       - rmdir → scoped_os.rmdir（始终拒绝）
       - write_text/write_bytes → 走 check_path 白名单校验
     """
