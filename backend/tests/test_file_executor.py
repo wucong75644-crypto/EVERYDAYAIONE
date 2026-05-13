@@ -786,37 +786,8 @@ class TestFileMove:
 
 
 class TestFilePathCacheCompat:
-    """FilePathCache 基本功能验证（确保旧句柄模块替换后不影响其他功能）"""
-
-    def test_register_and_resolve(self):
-        """注册文件后可解析回绝对路径"""
-        from services.agent.workspace_file_handles import FilePathCache
-        cache = FilePathCache()
-        cache.register("report.xlsx", "/mnt/workspace/report.xlsx")
-        assert cache.resolve("report.xlsx") == "/mnt/workspace/report.xlsx"
-
-    def test_resolve_with_spaces(self):
-        """LLM 加空格后仍能匹配"""
-        from services.agent.workspace_file_handles import FilePathCache
-        cache = FilePathCache()
-        cache.register("利润表-2026.xlsx", "/mnt/ws/利润表-2026.xlsx")
-        assert cache.resolve("利润表 - 2026.xlsx") == "/mnt/ws/利润表-2026.xlsx"
-
-    def test_resolve_returns_none_for_unknown(self):
-        """未注册的文件名返回 None"""
-        from services.agent.workspace_file_handles import FilePathCache
-        cache = FilePathCache()
-        assert cache.resolve("unknown.xlsx") is None
-
-    def test_workspace_and_staging_unified(self):
-        """workspace 和 staging 文件在同一个缓存里"""
-        from services.agent.workspace_file_handles import FilePathCache
-        cache = FilePathCache()
-        cache.register("利润表.xlsx", "/workspace/利润表.xlsx")
-        cache.register("trade.parquet", "/staging/trade.parquet")
-        assert cache.count == 2
-        assert cache.resolve("利润表.xlsx").endswith("利润表.xlsx")
-        assert cache.resolve("trade.parquet").endswith("trade.parquet")
+    """FilePathCache 已移除（workspace_file_handles 模块已删除），跳过"""
+    pass
 
 
 class TestResolveSafePathAbsolute:

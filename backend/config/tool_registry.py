@@ -232,24 +232,17 @@ register(ToolEntry(
 # ============================================================
 
 register(ToolEntry(
-    name="file_read",
-    domain="computer",
-    description="读取workspace内的文件内容",
-    tags=["读取", "文件", "查看", "打开", "内容"],
-    priority=1,
-))
-register(ToolEntry(
-    name="file_list",
-    domain="computer",
-    description="列出workspace内目录内容",
-    tags=["目录", "文件夹", "列表", "ls"],
-    priority=1,
-))
-register(ToolEntry(
     name="file_search",
     domain="computer",
-    description="在workspace内搜索文件（按名称或内容）",
-    tags=["搜索", "查找", "文件"],
+    description="搜索和准备工作区文件，数据文件自动转 Parquet 存 staging",
+    tags=["搜索", "查找", "文件", "目录", "列表", "ls"],
+    priority=1,
+))
+register(ToolEntry(
+    name="file_read",
+    domain="computer",
+    description="读取图片文件（视觉分析）",
+    tags=["图片", "图像", "看图", "视觉"],
     priority=1,
 ))
 

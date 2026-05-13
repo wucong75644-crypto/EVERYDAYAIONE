@@ -19,12 +19,7 @@ import pytest
 from services.staging_cleaner import (
     cleanup_staging,
     cleanup_all_staging,
-    evict_lru,
-    _protected_paths,
-    _extract_timestamp,
 )
-from services.agent.session_file_registry import SessionFileRegistry
-from services.agent.tool_output import ColumnMeta, FileRef
 
 
 # ── Fixtures ──
@@ -46,41 +41,8 @@ def _make_file(
     return f
 
 
-def _make_registry(file_paths: list[str]) -> SessionFileRegistry:
-    """创建包含指定文件路径的 registry。"""
-    registry = SessionFileRegistry()
-    for i, path in enumerate(file_paths):
-        ref = FileRef(
-            path=path,
-            filename=f"test_{i}.parquet",
-            format="parquet",
-            row_count=10,
-            size_bytes=100,
-            columns=[ColumnMeta(name="id", dtype="int64", label="ID")],
-            created_at=time.time(),
-        )
-        registry.register("test", "tool", ref)
-    return registry
-
-
-# ── Test: 保护伞 ──
-
-
-def test_protected_files_not_deleted(tmp_path: Path):
-    """registry 中的文件不被删除，即使超过 TTL。"""
-    staging = tmp_path / "staging" / "conv1"
-    staging.mkdir(parents=True)
-
-    protected = _make_file(staging, "protected.parquet", age_seconds=90000)
-    orphan = _make_file(staging, "orphan.parquet", age_seconds=90000)
-
-    registry = _make_registry([str(protected)])
-    result = cleanup_staging(str(staging), registry, ttl_seconds=86400)
-
-    assert protected.exists(), "protected file should survive"
-    assert not orphan.exists(), "orphan file should be deleted"
-    assert result["protected"] == 1
-    assert result["deleted"] == 1
+# _make_registry / test_protected_files_not_deleted 已移除
+# （SessionFileRegistry 保护伞已删除，staging 清理不再依赖 registry）
 
 
 # ── Test: TTL ──
@@ -135,54 +97,7 @@ def test_tmp_prefix_always_deleted(tmp_path: Path):
     assert result["deleted"] == 1
 
 
-# ── Test: LRU 淘汰 ──
-
-
-def test_lru_eviction_over_limit():
-    """超过 max_entries 时淘汰最旧的条目。"""
-    registry = SessionFileRegistry()
-    # 注册 25 个文件，timestamp 递增
-    for i in range(25):
-        ref = FileRef(
-            path=f"/tmp/file_{i}.parquet",
-            filename=f"file_{i}.parquet",
-            format="parquet",
-            row_count=10,
-            size_bytes=100,
-            columns=[],
-            created_at=time.time(),
-        )
-        # 手动设置 key 以控制 timestamp
-        key = f"test:tool:{1000 + i}"
-        registry._files[key] = ref
-
-    evicted = evict_lru(registry, max_entries=20)
-
-    assert len(evicted) == 5
-    assert len(registry._files) == 20
-    # 最旧的 5 个（timestamp 1000-1004）应该被淘汰
-    for key in evicted:
-        ts = int(key.rsplit(":", 1)[-1])
-        assert ts < 1005
-
-
-def test_lru_no_eviction_under_limit():
-    """条目数 <= max_entries 时不淘汰。"""
-    registry = SessionFileRegistry()
-    for i in range(15):
-        ref = FileRef(
-            path=f"/tmp/file_{i}.parquet",
-            filename=f"file_{i}.parquet",
-            format="parquet",
-            row_count=10,
-            size_bytes=100,
-            columns=[],
-        )
-        registry._files[f"test:tool:{1000 + i}"] = ref
-
-    evicted = evict_lru(registry, max_entries=20)
-    assert evicted == []
-    assert len(registry._files) == 15
+# LRU 淘汰测试已移除（evict_lru 随 SessionFileRegistry 一起删除）
 
 
 # ── Test: 容量兜底 ──
@@ -211,25 +126,7 @@ def test_capacity_over_limit(tmp_path: Path):
     assert not oldest.exists()
 
 
-def test_capacity_protected_files_survive(tmp_path: Path):
-    """容量清理时 registry 中的文件仍然受保护。"""
-    staging = tmp_path / "conv1"
-    staging.mkdir(parents=True)
-
-    protected = _make_file(staging, "protected.dat", size=300_000, age_seconds=5000)
-    expendable = _make_file(staging, "expendable.dat", size=300_000, age_seconds=3000)
-
-    registry = _make_registry([str(protected)])
-
-    result = cleanup_staging(
-        str(staging),
-        registry,
-        ttl_seconds=86400,
-        max_size_mb=0,
-    )
-
-    assert protected.exists(), "protected file must survive capacity cleanup"
-    assert not expendable.exists()
+# test_capacity_protected_files_survive 已移除（registry 保护伞已删除）
 
 
 # ── Test: 并发安全 ──
@@ -306,55 +203,8 @@ def test_startup_cleanup_legacy_staging(tmp_path: Path):
     assert deleted == 1
 
 
-# ── Test: evict_lru access_counts 清理 ──
 
-
-def test_lru_eviction_cleans_access_counts():
-    """淘汰条目时同步清理 _access_counts（验证 file_id key 修复）。"""
-    registry = SessionFileRegistry()
-    for i in range(5):
-        ref = FileRef(
-            path=f"/tmp/file_{i}.parquet",
-            filename=f"file_{i}.parquet",
-            format="parquet",
-            row_count=10,
-            size_bytes=100,
-            columns=[],
-            id=f"uuid-{i}",
-        )
-        registry._files[f"test:tool:{1000 + i}"] = ref
-        registry.record_access(f"uuid-{i}")
-
-    assert len(registry._access_counts) == 5
-
-    evicted = evict_lru(registry, max_entries=3)
-
-    assert len(evicted) == 2
-    assert len(registry._files) == 3
-    assert "uuid-0" not in registry._access_counts
-    assert "uuid-1" not in registry._access_counts
-    assert "uuid-2" in registry._access_counts
-
-
-# ── Test: _protected_paths 空 path 过滤 ──
-
-
-def test_protected_paths_filters_empty():
-    """FileRef.path 为空时不加入保护集合。"""
-    registry = SessionFileRegistry()
-    ref_with_path = FileRef(
-        path="/tmp/real.parquet", filename="real.parquet",
-        format="parquet", row_count=1, size_bytes=10, columns=[],
-    )
-    ref_no_path = FileRef(
-        path="", filename="ghost.parquet",
-        format="parquet", row_count=1, size_bytes=10, columns=[],
-    )
-    registry._files["a:b:1"] = ref_with_path
-    registry._files["a:b:2"] = ref_no_path
-
-    paths = _protected_paths(registry)
-    assert paths == {"/tmp/real.parquet"}
+# evict_lru / _protected_paths 测试已移除（随 SessionFileRegistry 一起删除）
 
 
 # ── Test: 子目录递归清理 ──
@@ -392,24 +242,61 @@ def test_startup_cleanup_removes_empty_conv_dirs(tmp_path: Path):
     assert not conv_dir.exists(), "empty conv dir should be removed after cleanup"
 
 
-# ── Test: _extract_timestamp 异常格式 ──
+
+# ── Test: _is_protected ──
 
 
-def test_extract_timestamp_normal():
-    """正常 key 提取 timestamp。"""
-    assert _extract_timestamp("domain:tool:1234567890") == 1234567890
+class TestIsProtected:
+    """新增的文件保护规则"""
+
+    def test_duckdb_file_protected(self):
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path(".duckdb.db")) is True
+
+    def test_manifest_protected(self):
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path("_manifest.json")) is True
+
+    def test_backup_file_protected(self):
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path("_bak_1700000000_report.xlsx")) is True
+
+    def test_duckdb_temp_dir_protected(self):
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path(".duckdb_temp")) is True
+
+    def test_normal_parquet_not_protected(self):
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path("data_001.parquet")) is False
+
+    def test_normal_csv_not_protected(self):
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path("export.csv")) is False
+
+    def test_tmp_file_not_protected(self):
+        """_tmp_ 前缀不在保护列表（由 TTL 逻辑专门处理）"""
+        from services.staging_cleaner import _is_protected
+        assert _is_protected(Path("_tmp_partial.parquet")) is False
 
 
-def test_extract_timestamp_no_colon():
-    """无冒号的 key 返回 0。"""
-    assert _extract_timestamp("nocolon") == 0
+def test_protected_files_survive_ttl(tmp_path: Path):
+    """_manifest.json、_bak_*、.duckdb.db 即使超过 TTL 也不被删"""
+    staging = tmp_path / "conv1"
+    staging.mkdir(parents=True)
 
+    # 全部设为超 TTL 的旧文件
+    _make_file(staging, "_manifest.json", age_seconds=90000)
+    _make_file(staging, "_bak_1700000000_data.csv", age_seconds=90000)
+    _make_file(staging, ".duckdb.db", age_seconds=90000)
+    normal = _make_file(staging, "old_data.parquet", age_seconds=90000)
 
-def test_extract_timestamp_non_numeric():
-    """timestamp 部分非数字返回 0。"""
-    assert _extract_timestamp("domain:tool:abc") == 0
+    result = cleanup_staging(str(staging), ttl_seconds=86400)
 
-
-def test_extract_timestamp_empty():
-    """空字符串返回 0。"""
-    assert _extract_timestamp("") == 0
+    # 受保护文件存活
+    assert (staging / "_manifest.json").exists()
+    assert (staging / "_bak_1700000000_data.csv").exists()
+    assert (staging / ".duckdb.db").exists()
+    # 普通文件被清理
+    assert not normal.exists()
+    assert result["protected"] == 3
+    assert result["deleted"] == 1

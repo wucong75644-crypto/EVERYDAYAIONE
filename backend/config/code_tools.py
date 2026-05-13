@@ -41,30 +41,22 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 # ERP Agent 版（只有 STAGING_DIR + OUTPUT_DIR，不知道 WORKSPACE_DIR 的存在）
 _DESCRIPTION_BASE = (
     "Python 沙盒，每次执行不保留变量。\n"
-    "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io, "
+    "可用库: pd, duckdb, plt, Path, math, json, datetime, Decimal, Counter, io, "
     "os(受限: listdir/walk/stat/path), shutil(受限: copy/move)\n"
     "环境变量: STAGING_DIR, OUTPUT_DIR（自动上传）\n"
-    "staging 数据用 pd.read_parquet() 读取，写 Excel 用 engine='xlsxwriter'。\n"
+    "staging 数据用 duckdb.sql(\"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')\") 查询。\n"
+    "写 Excel 用 engine='xlsxwriter'。\n"
     "生成文件写到 OUTPUT_DIR，用 print() 输出文本。禁止 sys/subprocess。"
 )
 
-# 主 Agent 版（加 WORKSPACE_DIR + 完整文件生成能力）
+# 主 Agent 版（加 WORKSPACE_DIR + 完整文件探索能力）
 _DESCRIPTION_WORKSPACE = (
-    "有状态 Python 沙盒，变量跨调用保留。执行超时 120 秒。\n\n"
-    "Usage:\n"
-    "- 数据读取：从 staging 读取 pd.read_parquet(STAGING_DIR + '/文件名')。"
-    "数据文件 MUST 先通过 file_read 读取（自动存 staging），禁止直接读工作区大文件\n"
-    "- 多文件关联：每个文件分别调 file_read 存 staging，再在 code_execute 中 merge\n"
-    "- 文件输出：生成文件写到 OUTPUT_DIR，平台自动检测上传\n"
-    "- 图表：用 ECharts JSON（.echart.json），不要用 plt/matplotlib\n"
-    "- 写 Excel：用 engine='xlsxwriter'\n"
-    "- 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, "
-    "docx, pptx, openpyxl, pdfplumber, zipfile, "
-    "os(受限: listdir/walk/stat/path), shutil(受限: copy/move)\n"
-    "- 环境变量：WORKSPACE_DIR（工作区）, STAGING_DIR（中间数据）, OUTPUT_DIR（输出）\n"
-    "- 禁止 import sys/subprocess\n"
-    "- 删除文件必须两步：先 file_list 列出待删文件告知用户，确认后传 confirm_delete\n"
-    "- 环境可能因超时重置，变量不存在时重新读取"
+    "有状态 Python 沙盒，变量跨调用保留。执行超时 120 秒。\n"
+    "预装：duckdb(磁盘模式), openpyxl, pdfplumber, python-docx, pandas。\n"
+    "目录：WORKSPACE_DIR（用户文件）, STAGING_DIR（数据缓存，含 _manifest.json）, OUTPUT_DIR（输出，自动上传）。\n"
+    "数据文件已由 file_search 转为 Parquet 存 STAGING_DIR，路径记录在 _manifest.json，用 duckdb.sql() 查询。\n"
+    "图表用 ECharts JSON（.echart.json）。写 Excel 用 xlsxwriter。\n"
+    "print() 输出摘要，不要输出完整数据。禁止 sys/subprocess。"
 )
 
 
@@ -122,8 +114,8 @@ def build_code_tools(
 CODE_ROUTING_PROMPT = (
     "## code_execute 使用协议\n"
     "- code_execute 是计算沙盒，只能处理已获取的数据，不能查询数据\n"
-    "- 数据获取必须先通过工具层完成（file_read / fetch_all_pages）\n"
-    "- staging 数据统一用 pd.read_parquet(STAGING_DIR + '/文件名') 读取\n"
+    "- 数据获取必须先通过工具层完成（file_search / fetch_all_pages）\n"
+    "- staging 数据用 duckdb.sql(\"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')\") 查询\n"
     "- 生成文件写到 OUTPUT_DIR 目录，平台自动检测上传，不需要手动上传\n"
     "- 图表用 ECharts JSON 配置输出：\n"
     "  import json\n"
@@ -132,7 +124,7 @@ CODE_ROUTING_PROMPT = (
     "      json.dump(option, f, ensure_ascii=False)\n"
     "  ECharts option 规范: https://echarts.apache.org/en/option.html\n"
     "  不要用 plt / matplotlib，平台已替换为前端交互式图表\n"
-    "- 典型流程：file_read 读取数据 → code_execute 计算 → "
+    "- 典型流程：file_search 定位数据 → code_execute 查询计算 → "
     "df.to_excel(OUTPUT_DIR + '/报表.xlsx')\n"
     "- 顶层可直接 await，用 print() 输出文字\n\n"
     "## 图表选择参考（自动选择，不需要用户指定）\n"
@@ -154,9 +146,8 @@ CODE_ROUTING_PROMPT = (
     "- 散点图 >5000 点改用 heatmap\n"
     "- 柱状图 Y 轴必须从 0 开始\n"
     "- 分类无自然顺序时按值降序排列\n\n"
-    "## file_read 使用协议\n"
-    "- 查询 staging 文件或工作区数据文件，file 传文件名或相对路径，sql 中表名用 FROM data\n"
-    "- 不传 sql 返回文件结构信息（列名、类型、统计）+ 后续可用路径\n"
+    "## 数据查询\n"
+    "- staging 数据用 duckdb.sql(\"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')\")\n"
     "- 中文列名用双引号包裹\n"
     "- 分析大数据用 SQL 聚合筛选，不要 SELECT * 全量取出\n"
     "- 导出文件给用户用 code_execute：df.to_excel(OUTPUT_DIR + '/报表.xlsx')\n\n"

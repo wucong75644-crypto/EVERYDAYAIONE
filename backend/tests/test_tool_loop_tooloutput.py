@@ -21,7 +21,6 @@ _backend_dir = Path(__file__).parent.parent
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
-from services.agent.session_file_registry import SessionFileRegistry
 from services.agent.tool_output import (
     ColumnMeta,
     FileRef,
@@ -35,6 +34,21 @@ from services.agent.tool_output import (
 # 辅助：模拟 ToolLoopExecutor 的核心分支逻辑
 # ============================================================
 
+class _FakeFileRegistry:
+    """SessionFileRegistry 已删除，用简单替代品模拟注册行为。"""
+
+    def __init__(self):
+        self._entries: list[tuple[str, FileRef]] = []
+
+    def register(self, source: str, tool_name: str, ref):
+        import time as _t
+        key = f"{source}:{tool_name}:{int(_t.time())}"
+        self._entries.append((key, ref))
+
+    def list_all(self):
+        return list(self._entries)
+
+
 def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"):
     """
     模拟 tool_loop_executor.py 第547-594行的分支逻辑。
@@ -43,7 +57,7 @@ def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"
     """
     from datetime import datetime, timezone
 
-    file_registry = SessionFileRegistry()
+    file_registry = _FakeFileRegistry()
     collected_files = []
 
     now_iso = datetime.now(timezone.utc).isoformat()

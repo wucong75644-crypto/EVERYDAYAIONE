@@ -65,18 +65,25 @@ class ChatContextMixin:
 
     @staticmethod
     def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
-        """生成工作区文件提示——只告诉 AI 文件路径和类型，由 AI 自行调用工具读取。"""
-        from pathlib import Path as _Path
-        from services.file_metadata_extractor import _fmt_size
-
+        """生成工作区文件提示——告诉 AI 文件路径，由 AI 调 file_search 准备后在 code_execute 探索。"""
         if not workspace_files:
             return ""
 
-        lines: list[str] = ["用户附加了以下文件，直接调用 file_read 读取（路径已确认，不需要 file_list）："]
+        def _fmt_size(size) -> str:
+            if not size:
+                return ""
+            size = int(size)
+            if size < 1024:
+                return f"{size} B"
+            elif size < 1024 * 1024:
+                return f"{size / 1024:.1f} KB"
+            return f"{size / (1024 * 1024):.1f} MB"
+
+        lines: list[str] = ["用户附加了以下文件，直接调用 file_search 准备（路径已确认）："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
-            lines.append(f"  file_read(path=\"{wp}\")  — {size_str}")
+            lines.append(f"  file_search(path=\"{wp}\")  — {size_str}")
 
         return "\n".join(lines)
 
@@ -186,29 +193,8 @@ class ChatContextMixin:
                 )
                 messages.append({"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
 
-        # schema 智能过滤注入（B2）— 从对话级 registry 中筛选相关 schema
-        await self._inject_schema_context(messages, conversation_id, text_content)
-
-        # 工作区文件提示注入：告诉 AI 文件路径和类型，由 AI 自行调用工具读取
+        # 工作区文件提示注入：告诉 AI 文件路径，由 AI 调 file_search 准备
         if workspace_files:
-            # 注册到文件缓存，后续工具调用时 resolve 可纠正 LLM 加空格等变形
-            from services.agent.workspace_file_handles import get_file_cache
-            from pathlib import Path as _Path
-            from core.config import get_settings as _get_settings
-            from core.workspace import resolve_workspace_dir as _resolve_ws
-            _ws_settings = _get_settings()
-            _ws_dir = _resolve_ws(
-                _ws_settings.file_workspace_root, user_id,
-                getattr(self, "org_id", None),
-            )
-            file_cache = get_file_cache(conversation_id)
-            for f in workspace_files:
-                wp = f.get("workspace_path", "")
-                if wp:
-                    abs_path = str(_Path(_ws_dir) / wp)
-                    file_cache.register(wp, abs_path)
-                    file_cache.register(_Path(wp).name, abs_path)
-
             ws_prompt = self._build_workspace_prompt(workspace_files)
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
@@ -324,49 +310,6 @@ class ChatContextMixin:
         except Exception as ex:
             logger.debug(f"Knowledge fetch skipped | error={ex}")
             return None
-
-    async def _inject_schema_context(
-        self,
-        messages: List[Dict[str, Any]],
-        conversation_id: str,
-        query: str,
-    ) -> None:
-        """从对话级 registry 中筛选相关 schema 并注入为 system 消息。
-
-        B2: schema 智能过滤注入。
-        位置：Layer 3 领域知识层，知识库之后、工作区文件之前。
-        """
-        try:
-            from services.agent.session_file_registry import get_conversation_registry
-            registry = get_conversation_registry(conversation_id)
-            schema_entries = registry.get_schema_entries()
-            if not schema_entries:
-                return
-
-            from services.agent.schema_filter import filter_schemas
-            recent_entries = registry.get_recent_schema_entries(3)
-            matched = await filter_schemas(query, schema_entries, recent_entries)
-            if not matched:
-                return
-
-            # 构建注入文本
-            lines = ["[可用数据文件 schema]", ""]
-            for key, ref, schema_text in matched:
-                lines.append(f"=== {ref.filename} ===")
-                lines.append(schema_text)
-                lines.append("")
-                # 更新 last_used
-                registry.touch(key)
-
-            schema_prompt = "\n".join(lines).rstrip()
-            messages.append({"role": "system", "content": schema_prompt})
-            logger.debug(
-                f"Schema context injected | conv={conversation_id} | "
-                f"matched={len(matched)}/{len(schema_entries)} | "
-                f"files={[m[1].filename for m in matched]}"
-            )
-        except Exception as e:
-            logger.debug(f"Schema injection skipped | error={e}")
 
     async def _extract_memories_async(
         self,

@@ -274,7 +274,7 @@ ERP_ROUTING_PROMPT = (
     "- **fetch_all_pages**：本地没有的数据（如物流轨迹）全量翻页拉取\n"
     "- **erp_* 远程工具**：物流轨迹、操作日志、仓库操作、写入操作\n"
     "- **code_execute**：纯计算沙盒，做公式计算/生成图表\n"
-    "- **file_read**：读 staging/工作区数据文件，SQL 查询\n\n"
+    "- **file_search**：搜索/准备工作区文件，数据文件自动转 Parquet 存 staging\n\n"
     "### 常见场景\n"
     "- 今天/本周/本月多少单 → local_data(doc_type=order, mode=summary, filters=[时间条件])\n"
     "- 已发货/未发货订单 → local_data(filters=[{field:order_status, op:eq, value:SELLER_SEND_GOODS}])\n"
