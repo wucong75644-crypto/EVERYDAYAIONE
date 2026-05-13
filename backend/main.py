@@ -260,16 +260,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         finally:
             await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
 
-    # 启动时清理过期的 staging 文件（24h TTL + _tmp_ 残留）
-    # 设计文档：docs/document/TECH_data_query工具设计.md §九
-    try:
-        from services.staging_cleaner import cleanup_all_staging
-        cleanup_all_staging(
-            settings.file_workspace_root,
-            ttl_seconds=settings.staging_file_ttl_seconds,
-        )
-    except Exception as e:
-        logger.debug(f"Staging cleanup skipped | error={e}")
+    # NAS 替代后不再需要 staging 文件清理（NAS 容量充足）
 
     # 清理过期的 pending_interaction（24h 过期）
     try:
