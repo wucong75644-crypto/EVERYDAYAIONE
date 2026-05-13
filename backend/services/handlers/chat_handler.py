@@ -247,12 +247,21 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         frozen = pending["frozen_messages"]
         messages = _json.loads(frozen) if isinstance(frozen, str) else frozen
 
-        # 用户回答作为 tool_result 注入（和 Claude 一致）
-        messages.append({
-            "role": "tool",
-            "tool_call_id": pending["tool_call_id"],
-            "content": f"用户回答: {user_answer}",
-        })
+        # 用户回答替换 ask_user 的占位 tool_result（冻结时注入的 "OK"）
+        _ask_tcid = pending["tool_call_id"]
+        _replaced = False
+        for m in messages:
+            if m.get("role") == "tool" and m.get("tool_call_id") == _ask_tcid:
+                m["content"] = f"用户回答: {user_answer}"
+                _replaced = True
+                break
+        if not _replaced:
+            # 兜底：找不到占位消息时追加（兼容旧格式）
+            messages.append({
+                "role": "tool",
+                "tool_call_id": _ask_tcid,
+                "content": f"用户回答: {user_answer}",
+            })
 
         # 恢复循环快照
         snapshot_raw = pending.get("loop_snapshot", "{}")
