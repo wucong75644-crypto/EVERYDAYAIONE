@@ -98,7 +98,7 @@ class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteE
     """安全文件操作执行器
 
     所有路径操作都限制在 workspace_root/{tenant}/{user_id}/ 内。
-    支持 ossfs 挂载目录，自动生成 CDN URL 供前端下载。
+    支持 NAS 挂载目录，文件变动显式同步到 OSS 生成 CDN URL 供前端下载。
     """
 
     def __init__(
@@ -173,7 +173,7 @@ class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteE
             return None
 
         target = self.resolve_safe_path(relative_path)
-        # 计算相对于 ossfs 挂载根的路径 = OSS object_key
+        # 计算相对于 NAS workspace 根的路径 = OSS object_key
         try:
             object_key = str(target.relative_to(self._workspace_base)).replace("\\", "/")
             encoded_key = quote(object_key, safe="/")

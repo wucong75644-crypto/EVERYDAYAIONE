@@ -8,12 +8,35 @@ FileExecutor 通过继承 FileWriteExtensionsMixin 获得这些能力。
 - resolve_safe_path(path: str) -> Path
 - _format_size(size: int) -> str
 - _root: Path（workspace 根目录）
+- _workspace_base: Path（workspace 根的 resolve 后路径）
 - _MAX_WRITE_SIZE: int
 """
 
 from pathlib import Path
 
 from loguru import logger
+
+
+async def _oss_sync(local_path: Path, workspace_base: Path) -> None:
+    """将文件同步到 OSS（不阻塞主流程，失败仅 warning）"""
+    try:
+        from services.oss_service import get_oss_service
+        oss = get_oss_service()
+        rel_path = str(local_path.relative_to(workspace_base))
+        await oss.sync_workspace_file(local_path, rel_path)
+    except Exception as e:
+        logger.warning(f"OSS sync failed | path={local_path} | error={e}")
+
+
+async def _oss_delete(target: Path, workspace_base: Path) -> None:
+    """从 OSS 删除对应文件（不阻塞主流程，失败仅 warning）"""
+    try:
+        from services.oss_service import get_oss_service
+        oss = get_oss_service()
+        rel_path = str(target.relative_to(workspace_base))
+        await oss.delete_workspace_object(rel_path)
+    except Exception as e:
+        logger.warning(f"OSS delete failed | path={target} | error={e}")
 
 
 class FileWriteExtensionsMixin:
@@ -49,6 +72,7 @@ class FileWriteExtensionsMixin:
 
         size = target.stat().st_size
         logger.info(f"FileExecutor write | path={path} | mode={mode} | size={size}")
+        await _oss_sync(target, self._workspace_base)
         return f"已{action}: {path}（{self._format_size(size)}）"
 
     async def file_delete(self, path: str) -> str:
@@ -59,6 +83,7 @@ class FileWriteExtensionsMixin:
             return f"路径不存在: {path}"
 
         if target.is_file():
+            await _oss_delete(target, self._workspace_base)
             target.unlink()
             logger.info(f"FileExecutor delete file | path={path}")
             return f"已删除文件: {path}"
@@ -102,6 +127,8 @@ class FileWriteExtensionsMixin:
 
         old_target.rename(new_target)
         logger.info(f"FileExecutor rename | {old_path} → {new_path}")
+        await _oss_delete(old_target, self._workspace_base)
+        await _oss_sync(new_target, self._workspace_base)
         return f"已重命名: {old_path} → {new_path}"
 
     async def file_move(self, src_path: str, dest_dir: str) -> str:
@@ -123,4 +150,6 @@ class FileWriteExtensionsMixin:
         src_target.rename(new_target)
         new_rel = str(new_target.relative_to(self._root))
         logger.info(f"FileExecutor move | {src_path} → {new_rel}")
+        await _oss_delete(src_target, self._workspace_base)
+        await _oss_sync(new_target, self._workspace_base)
         return f"已移动: {src_path} → {new_rel}"

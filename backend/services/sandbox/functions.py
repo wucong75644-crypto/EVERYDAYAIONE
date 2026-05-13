@@ -27,7 +27,7 @@ def build_sandbox_executor(
 
     文件输出：
     - 子进程代码写 df.to_excel(OUTPUT_DIR + "/报表.xlsx") 到 OUTPUT_DIR
-    - ossfs 自动同步到 OSS → 主进程生成 CDN 下载链接
+    - 显式同步到 OSS → 主进程生成 CDN 下载链接
     - 用户在工作区"下载/"文件夹直接可见可下载
     """
     from core.config import get_settings as _get_settings

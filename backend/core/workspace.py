@@ -7,7 +7,7 @@ Workspace 路径计算 — 全局唯一真相源
 目录结构：
     {workspace_root}/
     ├── org/{org_id}/{user_id}/         ← 企业用户 workspace
-    │   ├── 下载/                       ← 沙盒输出（ossfs 同步到 OSS）
+    │   ├── 下载/                       ← 沙盒输出（显式同步到 OSS）
     │   └── staging/{conv_id}/          ← 临时数据（工具结果分流 + db_export）
     └── personal/{hash}/                ← 个人用户 workspace
         ├── 下载/

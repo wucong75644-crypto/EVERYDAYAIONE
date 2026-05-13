@@ -4,8 +4,8 @@
 从 sandbox/functions.py 提取的 auto_upload 逻辑，
 供 code_execute（沙盒）和 file_read（数据查询模式）共用。
 
-生成 workspace CDN URL（ossfs 自动同步到 OSS），
-或兜底上传到 OSS 获取 URL。返回 [FILE] 标签供前端展示。
+NAS 文件变动时显式同步到 OSS，生成 CDN URL。
+返回 [FILE] 标签供前端展示。
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ async def auto_upload(
 ) -> str:
     """生成文件的下载 URL 并返回 [FILE] 标签。
 
-    优先用 CDN URL（文件通过 ossfs 已在 OSS 上），
-    兜底读文件上传 OSS。
+    NAS 文件显式同步到 OSS 获取 CDN URL，
+    兜底直接拼 CDN URL。
 
     Args:
         filename: 文件名（不含路径）
@@ -42,28 +42,45 @@ async def auto_upload(
     safe_name = Path(filename).name
     mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
 
-    # 优先：workspace CDN URL（ossfs 同步，零 IO）
     from core.config import get_settings
     settings = get_settings()
+    file_path = Path(output_dir) / safe_name
 
-    if settings.oss_cdn_domain:
+    # workspace_path 后缀（供前端代理预览）
+    ws_path_suffix = ""
+    try:
+        from services.file_executor import FileExecutor
         ws_base = Path(settings.file_workspace_root).resolve()
-        file_path = Path(output_dir) / safe_name
+        ws_path = FileExecutor.extract_user_relative_path(
+            file_path, ws_base, user_id, org_id,
+        )
+        ws_path_suffix = f"|{ws_path}"
+    except (ValueError, Exception):
+        pass
+
+    # 同步到 OSS 获取 CDN URL
+    try:
+        from services.oss_service import get_oss_service
+        oss = get_oss_service()
+        ws_base = Path(settings.file_workspace_root).resolve()
+        rel_path = str(file_path.relative_to(ws_base))
+        url = await oss.sync_workspace_file(file_path, rel_path)
+        if url:
+            return (
+                f"✅ 文件已生成: {safe_name}\n"
+                f"[FILE]{url}|{safe_name}|{mime_type}|{size}{ws_path_suffix}[/FILE]"
+            )
+    except Exception as e:
+        logger.warning(f"auto_upload OSS sync failed | file={safe_name} | error={e}")
+
+    # 兜底：OSS 同步失败时拼 CDN URL（NAS 文件已存在）
+    if settings.oss_cdn_domain:
         try:
             from urllib.parse import quote
+            ws_base = Path(settings.file_workspace_root).resolve()
             object_key = str(file_path.relative_to(ws_base))
             encoded_key = quote(object_key, safe="/")
             url = f"https://{settings.oss_cdn_domain}/workspace/{encoded_key}"
-            # workspace_path = 相对于用户目录的路径（供前端代理预览）
-            ws_path_suffix = ""
-            try:
-                from services.file_executor import FileExecutor
-                ws_path = FileExecutor.extract_user_relative_path(
-                    file_path, ws_base, user_id, org_id,
-                )
-                ws_path_suffix = f"|{ws_path}"
-            except ValueError:
-                pass
             return (
                 f"✅ 文件已生成: {safe_name}\n"
                 f"[FILE]{url}|{safe_name}|{mime_type}|{size}{ws_path_suffix}[/FILE]"
@@ -71,24 +88,5 @@ async def auto_upload(
         except ValueError:
             pass
 
-    # 兜底：无 CDN 配置时读文件上传 OSS（限制 100MB 防 OOM）
-    try:
-        from services.oss_service import get_oss_service
-        file_path = Path(output_dir) / safe_name
-        if size > 100 * 1024 * 1024:
-            logger.warning(f"auto_upload skip | file={safe_name} size={size} exceeds 100MB limit for OSS upload")
-            return f"❌ 文件过大（{size // 1024 // 1024}MB），无法上传。请配置 CDN 域名。"
-        content = file_path.read_bytes()
-        ext = Path(safe_name).suffix.lstrip(".")
-        oss = get_oss_service()
-        result = oss.upload_bytes(
-            content=content, user_id=user_id, ext=ext,
-            category="generated", content_type=mime_type, org_id=org_id,
-        )
-        return (
-            f"✅ 文件已生成: {safe_name}\n"
-            f"[FILE]{result['url']}|{safe_name}|{mime_type}|{result['size']}[/FILE]"
-        )
-    except Exception as e:
-        logger.error(f"auto_upload failed | file={safe_name} | error={e}")
-        return f"❌ 文件处理失败: {safe_name} ({e})"
+    logger.error(f"auto_upload failed | file={safe_name} | no CDN and no OSS sync")
+    return f"❌ 文件处理失败: {safe_name}"

@@ -1177,10 +1177,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             from services.agent.tool_result_envelope import clear_persisted, clear_staging_dir
             clear_persisted()
             clear_staging_dir()
-            # Staging 文件清理（fire-and-forget，文件级 TTL + 容量兜底）
-            asyncio.create_task(
-                _async_cleanup_staging(conversation_id, user_id, self.org_id)
-            )
+            # NAS 替代后不再需要 staging 文件清理
 
         # ── Boundary 2: 持久化（LLM 成功后执行，错误不触发重试）──
         if _llm_succeeded and _completion_args:
@@ -1296,31 +1293,6 @@ async def _async_cleanup_staging(
     user_id: str = "",
     org_id: str | None = None,
 ) -> None:
-    """会话级 staging 文件清理（fire-and-forget，文件级 TTL + 容量兜底）
-
-    设计文档：docs/document/TECH_data_query工具设计.md §九
-    - 不传 registry → 纯 TTL 模式（24h 孤儿清理 + _tmp_ 残留清理）
-    - 文件 IO 在 executor 中执行，不阻塞事件循环
-    """
-    from core.config import get_settings
-    from core.workspace import resolve_staging_dir
-    from services.staging_cleaner import cleanup_staging
-
-    try:
-        settings = get_settings()
-        staging_dir = resolve_staging_dir(
-            settings.file_workspace_root, user_id, org_id, conversation_id,
-        )
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: cleanup_staging(
-                staging_dir,
-                registry=None,
-                ttl_seconds=settings.staging_file_ttl_seconds,
-                max_size_mb=settings.staging_max_size_mb,
-            ),
-        )
-    except Exception as e:
-        logger.debug(f"Staging cleanup failed | conv={conversation_id} | error={e}")
+    """NAS 替代后不再需要 staging 清理（保留签名兼容测试）"""
+    pass
 

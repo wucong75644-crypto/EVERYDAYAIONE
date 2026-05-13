@@ -9,6 +9,7 @@ import hashlib
 import threading
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -351,6 +352,61 @@ class OSSService:
     def exists(self, object_key: str) -> bool:
         """检查对象是否存在"""
         return self.bucket.object_exists(object_key)
+
+    # ============================================================
+    # Workspace 文件同步（NAS ↔ OSS 双写）
+    # ============================================================
+
+    async def sync_workspace_file(self, local_path: Path, rel_path: str) -> Optional[str]:
+        """将 NAS 上的 workspace 文件同步到 OSS，返回 CDN URL。
+
+        Args:
+            local_path: NAS 上的绝对路径
+            rel_path: 相对于 workspace root 的路径（作为 OSS object key 的一部分）
+
+        Returns:
+            CDN URL，失败返回 None
+        """
+        import asyncio
+        object_key = f"workspace/{rel_path}"
+        content_type = self._guess_content_type(local_path.name)
+        try:
+            await asyncio.to_thread(
+                self.bucket.put_object_from_file,
+                object_key,
+                str(local_path),
+                headers={"Content-Type": content_type},
+            )
+            logger.info(f"Workspace sync OK | key={object_key} | size={local_path.stat().st_size}")
+            return self.get_url(object_key)
+        except Exception as e:
+            logger.warning(f"Workspace sync failed | key={object_key} | error={e}")
+            return None
+
+    async def delete_workspace_object(self, rel_path: str) -> bool:
+        """删除 OSS 上的 workspace 文件。
+
+        Args:
+            rel_path: 相对于 workspace root 的路径
+
+        Returns:
+            是否成功
+        """
+        import asyncio
+        object_key = f"workspace/{rel_path}"
+        try:
+            await asyncio.to_thread(self.bucket.delete_object, object_key)
+            logger.info(f"Workspace delete OK | key={object_key}")
+            return True
+        except Exception as e:
+            logger.warning(f"Workspace delete failed | key={object_key} | error={e}")
+            return False
+
+    @staticmethod
+    def _guess_content_type(filename: str) -> str:
+        """根据文件名猜测 MIME 类型"""
+        import mimetypes
+        return mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
     # ============================================================
     # 私有方法

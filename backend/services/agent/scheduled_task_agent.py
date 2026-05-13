@@ -195,7 +195,7 @@ class ScheduledTaskAgent:
             # 清理 staging ContextVar + 延迟清理 staging 文件
             from services.agent.tool_result_envelope import clear_staging_dir
             clear_staging_dir()
-            asyncio.create_task(self._cleanup_staging_delayed())
+            # NAS 替代后不再需要 staging 清理
 
     # ════════════════════════════════════════════════════════
     # 内部方法
@@ -366,21 +366,4 @@ class ScheduledTaskAgent:
                 f"_prepare_template failed | task={self.task_id} | error={e}"
             )
 
-    async def _cleanup_staging_delayed(self) -> None:
-        """5 分钟后清理 staging 目录"""
-        try:
-            await asyncio.sleep(300)
-            from core.config import get_settings
-            from pathlib import Path
-            import shutil
-
-            settings = get_settings()
-            from core.workspace import resolve_staging_dir
-            staging_dir = Path(resolve_staging_dir(
-                settings.file_workspace_root,
-                self.user_id, self.org_id, self.conversation_id,
-            ))
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-        except Exception as e:
-            logger.debug(f"Staging cleanup failed | error={e}")
+    # NAS 替代后不再需要 staging 清理（容量充足）

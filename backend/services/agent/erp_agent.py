@@ -338,8 +338,7 @@ class ERPAgent:
             self._register_files(domain, result)
             self._record_experience(domain, query, result, step_params_map.get(domain))
 
-        # staging 延迟清理
-        asyncio.create_task(self._cleanup_staging_delayed())
+        # NAS 替代后不再需要 staging 清理
 
         # 单步结果
         if len(successes) == 1:
@@ -497,27 +496,5 @@ class ERPAgent:
         from services.agent.erp_tool_description import build_tool_description
         return build_tool_description()
 
-    # ── staging 清理 ──
-
-    async def _cleanup_staging_delayed(self, delay: int = 1800) -> None:
-        """会话级 staging 延迟清理（30 分钟，覆盖 ~95% 的用户追问间隔）。"""
-        import shutil
-        from pathlib import Path
-        from core.config import get_settings
-
-        try:
-            await asyncio.sleep(delay)
-            settings = get_settings()
-            from core.workspace import resolve_staging_dir
-            staging_dir = Path(resolve_staging_dir(
-                settings.file_workspace_root,
-                self.user_id, self.org_id, self.conversation_id,
-            ))
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                logger.info(
-                    f"ERPAgent staging cleaned | dir={staging_dir}",
-                )
-        except Exception as e:
-            logger.debug(f"ERPAgent staging cleanup failed | error={e}")
+    # NAS 替代后不再需要 staging 清理（容量充足）
 
