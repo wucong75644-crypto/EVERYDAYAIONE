@@ -24,11 +24,6 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "code": {"type": "string"},
             "description": {"type": "string"},
-            "confirm_delete": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "用户已确认可删除的文件名列表",
-            },
         },
     },
 }
@@ -93,11 +88,6 @@ def build_code_tools(
                                 "代码功能描述（一句话，如「统计各店铺今日成交额」），"
                                 "用于执行日志审计。"
                             ),
-                        },
-                        "confirm_delete": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "用户已确认可删除的文件名列表",
                         },
                     },
                     "required": ["code", "description"],

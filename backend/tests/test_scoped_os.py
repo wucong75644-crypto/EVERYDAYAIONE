@@ -205,29 +205,31 @@ class TestEnvironmentVariables:
 
 class TestDeleteOperations:
 
-    def test_remove_without_confirm_blocked(self, scoped):
-        with pytest.raises(PermissionError, match="删除操作需要用户确认"):
-            scoped.remove("销售报表.xlsx")
+    def test_remove_in_workspace_allowed(self, scoped, workspace):
+        """白名单内文件可直接删除（不再需要 confirm_delete）"""
+        target = os.path.join(workspace["ws"], "销售报表.xlsx")
+        assert os.path.exists(target)
+        scoped.remove("销售报表.xlsx")
+        assert not os.path.exists(target)
 
-    def test_remove_with_confirm_allowed(self, scoped, workspace):
-        scoped._set_confirmed_deletes(["下载/旧报表.xlsx"])
-        scoped.remove("下载/旧报表.xlsx")
-        assert not os.path.exists(os.path.join(workspace["output"], "旧报表.xlsx"))
+    def test_remove_outside_workspace_blocked(self, scoped):
+        """白名单外路径仍然拒绝"""
+        with pytest.raises(PermissionError, match="路径不在允许范围内"):
+            scoped.remove("/etc/passwd")
 
-    def test_confirm_deletes_not_persist_across_calls(self, scoped):
-        """confirm_delete 列表可被重置清空"""
-        scoped._set_confirmed_deletes(["下载/旧报表.xlsx"])
-        scoped._set_confirmed_deletes([])  # 清空
-        with pytest.raises(PermissionError):
-            scoped.remove("下载/旧报表.xlsx")
+    def test_rmdir_in_workspace_allowed(self, scoped, workspace):
+        """白名单内空目录可删除"""
+        subdir = os.path.join(workspace["ws"], "空测试目录")
+        os.makedirs(subdir, exist_ok=True)
+        scoped.rmdir("空测试目录")
+        assert not os.path.exists(subdir)
 
-    def test_rmdir_always_blocked(self, scoped):
-        with pytest.raises(PermissionError, match="删除目录被禁止"):
-            scoped.rmdir("子目录")
-
-    def test_unlink_is_remove(self, scoped):
-        with pytest.raises(PermissionError, match="删除操作需要用户确认"):
-            scoped.unlink("销售报表.xlsx")
+    def test_unlink_is_remove(self, scoped, workspace):
+        """unlink 和 remove 行为一致"""
+        target = os.path.join(workspace["ws"], "销售报表.xlsx")
+        assert os.path.exists(target)
+        scoped.unlink("销售报表.xlsx")
+        assert not os.path.exists(target)
 
 
 # ============================================================
@@ -372,33 +374,28 @@ class TestScopedPathlib:
         scoped_pl = build_scoped_pathlib(scoped_os)
         return scoped_pl, scoped_os, workspace
 
-    def test_path_unlink_blocked_without_confirm(self, pathlib_env):
-        """Path.unlink 无 confirm_delete → PermissionError"""
+    def test_path_unlink_allowed(self, pathlib_env):
+        """Path.unlink 白名单内直接删除"""
         scoped_pl, _, ws = pathlib_env
         Path = scoped_pl.Path
-        with pytest.raises(PermissionError, match="删除操作需要用户确认"):
-            Path(os.path.join(ws["ws"], "销售报表.xlsx")).unlink()
-
-    def test_path_unlink_allowed_with_confirm(self, pathlib_env):
-        """Path.unlink + confirm_delete → 删除成功"""
-        scoped_pl, scoped_os, ws = pathlib_env
-        target = os.path.join(ws["output"], "旧报表.xlsx")
-        scoped_os._set_confirmed_deletes([target])
-        scoped_pl.Path(target).unlink()
+        target = os.path.join(ws["ws"], "销售报表.xlsx")
+        assert os.path.exists(target)
+        Path(target).unlink()
         assert not os.path.exists(target)
 
     def test_path_unlink_missing_ok(self, pathlib_env):
         """Path.unlink(missing_ok=True) 对不存在文件不报错"""
-        scoped_pl, scoped_os, ws = pathlib_env
+        scoped_pl, _, ws = pathlib_env
         target = os.path.join(ws["output"], "不存在.xlsx")
-        scoped_os._set_confirmed_deletes([target])
         scoped_pl.Path(target).unlink(missing_ok=True)  # 不应抛异常
 
-    def test_path_rmdir_always_blocked(self, pathlib_env):
-        """Path.rmdir 始终拒绝"""
+    def test_path_rmdir_allowed(self, pathlib_env):
+        """Path.rmdir 白名单内可删除空目录"""
         scoped_pl, _, ws = pathlib_env
-        with pytest.raises(PermissionError, match="删除目录被禁止"):
-            scoped_pl.Path(os.path.join(ws["ws"], "子目录")).rmdir()
+        subdir = os.path.join(ws["ws"], "空目录")
+        os.makedirs(subdir, exist_ok=True)
+        scoped_pl.Path(subdir).rmdir()
+        assert not os.path.exists(subdir)
 
     def test_path_read_operations_work(self, pathlib_env):
         """Path 的只读操作正常工作"""
@@ -416,9 +413,9 @@ class TestScopedPathlib:
         scoped_pl, _, ws = pathlib_env
         Path = scoped_pl.Path
         p = Path(ws["ws"]) / "销售报表.xlsx"
-        # 仍是受限 Path：unlink 会被拦截
-        with pytest.raises(PermissionError, match="删除操作需要用户确认"):
-            p.unlink()
+        # 仍是受限 Path：路径白名单校验生效
+        assert p.exists()
+        assert p.is_file()
 
     def test_path_iterdir_returns_scoped(self, pathlib_env):
         """iterdir 返回的也是受限 Path"""
@@ -426,9 +423,8 @@ class TestScopedPathlib:
         Path = scoped_pl.Path
         items = list(Path(ws["ws"]).iterdir())
         assert len(items) > 0
-        # 每个子项的 unlink 都应被拦截
+        # 子项仍是受限 Path（exists/is_file 正常工作）
         for item in items:
             if item.is_file():
-                with pytest.raises(PermissionError):
-                    item.unlink()
+                assert item.exists()
                 break
