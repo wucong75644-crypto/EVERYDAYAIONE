@@ -226,41 +226,6 @@ class TestFileOperations:
 # 3. 同名文件保护（dedup）
 # ============================================================
 
-class TestFileDedupEndToEnd:
-    """Google Drive 风格同名文件保护 E2E"""
-
-    @pytest.mark.asyncio
-    async def test_overwrite_file_dedup(self, executor, ws):
-        """已有文件被覆盖 → 旧文件保留，新文件重命名"""
-        # 预先创建文件
-        old_content = b"old report data"
-        Path(ws["output"], "report.txt").write_bytes(old_content)
-
-        # 沙盒代码覆盖同名文件
-        code = (
-            "with open(OUTPUT_DIR + '/report.txt', 'w') as f:\n"
-            "    f.write('new report data')\n"
-            "print('written')"
-        )
-        result = await executor.execute(code, "覆盖文件")
-        assert "written" in result.summary
-
-        # 旧文件恢复，新文件被重命名
-        assert Path(ws["output"], "report.txt").read_bytes() == old_content
-        assert Path(ws["output"], "report (1).txt").exists()
-
-    @pytest.mark.asyncio
-    async def test_no_overwrite_no_dedup(self, executor, ws):
-        """文件未被覆盖 → 备份被清理，无多余文件"""
-        Path(ws["output"], "keep.txt").write_bytes(b"untouched")
-
-        result = await executor.execute("print('no file write')", "无写入")
-
-        assert Path(ws["output"], "keep.txt").read_bytes() == b"untouched"
-        assert not Path(ws["output"], "keep.txt.dedup_bak").exists()
-        assert not Path(ws["output"], "keep (1).txt").exists()
-
-
 # ============================================================
 # 4. 安全拦截
 # ============================================================
@@ -349,38 +314,47 @@ class TestConfirmDeleteEndToEnd:
     """删除操作确认流程 E2E"""
 
     @pytest.mark.asyncio
-    async def test_remove_without_confirm_blocked(self, executor, ws):
-        """os.remove 无 confirm_delete → PermissionError"""
+    async def test_remove_in_sandbox_always_blocked(self, executor, ws):
+        """沙盒内 os.remove 统一禁止"""
         Path(ws["workspace"], "temp.txt").write_text("delete me")
         result = await executor.execute(
             "import os\nos.remove('temp.txt')", "删除文件",
         )
-        assert "删除操作需要用户确认" in result.summary
-        # 文件未被删除
+        assert "沙盒内禁止直接删除文件" in result.summary
         assert Path(ws["workspace"], "temp.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_remove_with_confirm_allowed(self, executor, ws):
-        """os.remove + confirm_delete → 删除成功"""
+    async def test_confirm_delete_auto_executes(self, executor, ws):
+        """confirm_delete 参数 → executor 层自动删除（代码成功后）"""
         Path(ws["workspace"], "temp.txt").write_text("delete me")
         result = await executor.execute(
-            "import os\nos.remove('temp.txt')\nprint('deleted')",
-            "删除文件",
+            "print('done')", "删除文件",
             confirm_delete=["temp.txt"],
         )
-        assert "deleted" in result.summary
+        assert result.status == "success"
+        assert "已删除文件" in result.summary
         assert not Path(ws["workspace"], "temp.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_confirm_delete_path_mismatch_blocked(self, executor, ws):
-        """confirm_delete 传的文件名和代码里的不匹配 → 仍然拒绝"""
-        Path(ws["workspace"], "important.xlsx").write_text("data")
+    async def test_confirm_delete_skips_nonexistent(self, executor, ws):
+        """confirm_delete 中不存在的文件被跳过"""
         result = await executor.execute(
-            "import os\nos.remove('important.xlsx')", "删除",
-            confirm_delete=["other.xlsx"],  # 不匹配
+            "print('ok')", "删除",
+            confirm_delete=["ghost.xlsx"],
         )
-        assert "删除操作需要用户确认" in result.summary
-        assert Path(ws["workspace"], "important.xlsx").exists()
+        assert result.status == "success"
+        assert "已删除文件" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_confirm_delete_not_executed_on_error(self, executor, ws):
+        """代码执行失败时，confirm_delete 不执行"""
+        Path(ws["workspace"], "keep.txt").write_text("keep me")
+        result = await executor.execute(
+            "raise ValueError('boom')", "失败测试",
+            confirm_delete=["keep.txt"],
+        )
+        assert result.status == "error"
+        assert Path(ws["workspace"], "keep.txt").exists()
 
     @pytest.mark.asyncio
     async def test_rmdir_always_blocked(self, executor, ws):
@@ -389,7 +363,7 @@ class TestConfirmDeleteEndToEnd:
         result = await executor.execute(
             "import os\nos.rmdir('empty_dir')", "删除目录",
         )
-        assert "删除目录被禁止" in result.summary
+        assert "沙盒内禁止删除目录" in result.summary
 
     @pytest.mark.asyncio
     async def test_os_listdir_works(self, executor, ws):

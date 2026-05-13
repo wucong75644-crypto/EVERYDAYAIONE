@@ -19,7 +19,7 @@ import os as _real_os
 def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
     """构建受限 os 模块实例
 
-    每次执行构造一份。confirm_delete 通过 set_confirmed_deletes 注入。
+    每次执行构造一份。
 
     Returns:
         (scoped_os_instance, _check_path_fn)
@@ -36,8 +36,6 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         _real_os.path.join(workspace_dir, "staging")
     )
     _denied = [_staging_parent]
-
-    _confirmed_deletes: list[str] = []
 
     def _check_path(path_str) -> str:
         """路径安全校验 — 解析相对路径 + realpath + 白名单 + 黑名单"""
@@ -62,12 +60,6 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         ):
             raise PermissionError(f"路径不在允许范围内: {path_str}")
         return resolved
-
-    def set_confirmed_deletes(paths: list[str]) -> None:
-        """设置本次执行允许删除的文件路径列表"""
-        _confirmed_deletes.clear()
-        for p in paths:
-            _confirmed_deletes.append(_check_path(p))
 
     class _ScopedOS:
         """受限 os 模块 — 对外行为像 os，内部所有 IO 操作经过路径校验"""
@@ -118,17 +110,19 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         def rename(src, dst):
             _real_os.rename(_check_path(src), _check_path(dst))
 
-        # 删除操作（路径白名单校验，不再需要 confirm_delete 二次确认）
-        # 安全兜底：_bak_ 备份机制 + restore_file 可恢复误删
-        # TODO: 后续改为硬 UI 确认（前端弹窗阻塞，参考 Claude Code Permission Check）
+        # 删除操作：沙盒内禁止，引导 LLM 用 code_execute 的 confirm_delete 参数
 
         @staticmethod
         def remove(path):
-            _real_os.remove(_check_path(path))
+            name = _real_os.path.basename(str(path))
+            raise PermissionError(
+                f"沙盒内禁止直接删除文件。"
+                f"请在 code_execute 的 confirm_delete 参数中传入 [{name}] 的路径。"
+            )
 
         @staticmethod
         def rmdir(path):
-            _real_os.rmdir(_check_path(path))
+            raise PermissionError("沙盒内禁止删除目录。")
 
         unlink = remove
 
@@ -143,7 +137,6 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         # system/popen/exec*/fork/kill → 不定义 → AttributeError
 
     scoped = _ScopedOS()
-    scoped._set_confirmed_deletes = set_confirmed_deletes
     return scoped, _check_path
 
 
@@ -299,10 +292,6 @@ def build_scoped_shutil(check_path_fn):
 
         @staticmethod
         def rmtree(path):
-            raise PermissionError(
-                "递归删除目录被禁止。"
-                "如需删除文件，请逐个使用 os.remove(path)，"
-                "并在 code_execute 的 confirm_delete 参数中传入文件名列表。"
-            )
+            raise PermissionError("沙盒内禁止递归删除目录。")
 
     return _ScopedShutil()

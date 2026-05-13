@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import os
 import shutil
 import time
 from pathlib import Path
@@ -399,140 +400,10 @@ class TestSnapshotAndAutoUpload:
 
 
 # ============================================================
-# Google Drive 风格同名文件保护
+# 上传扫描目录
 # ============================================================
 
-class TestDedupOverwrittenFiles:
-    """Google Drive 风格同名文件保护"""
-
-    def test_backup_creates_dedup_bak_files(self, tmp_path):
-        (tmp_path / "report.xlsx").write_bytes(b"old data")
-        (tmp_path / "data.csv").write_bytes(b"old csv")
-        (tmp_path / "notes.parquet").write_bytes(b"skip me")
-
-        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
-        backups = executor._backup_existing_files()
-
-        assert len(backups) == 2
-        assert (tmp_path / "report.xlsx.dedup_bak").exists()
-        assert (tmp_path / "data.csv.dedup_bak").exists()
-        assert not (tmp_path / "notes.parquet.dedup_bak").exists()
-
-    def test_dedup_renames_new_file_keeps_old(self, tmp_path):
-        old_content = b"March sales data"
-        new_content = b"April sales data - different"
-
-        (tmp_path / "report.xlsx").write_bytes(old_content)
-
-        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
-        backups = executor._backup_existing_files()
-
-        time.sleep(0.05)
-        (tmp_path / "report.xlsx").write_bytes(new_content)
-
-        executor._dedup_overwritten_files(backups)
-
-        assert (tmp_path / "report.xlsx").read_bytes() == old_content
-        assert (tmp_path / "report (1).xlsx").read_bytes() == new_content
-        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
-
-    def test_dedup_increments_suffix(self, tmp_path):
-        (tmp_path / "report.xlsx").write_bytes(b"v1")
-        (tmp_path / "report (1).xlsx").write_bytes(b"v2 from last time")
-
-        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
-        backups = executor._backup_existing_files()
-
-        time.sleep(0.05)
-        (tmp_path / "report.xlsx").write_bytes(b"v3 new")
-
-        executor._dedup_overwritten_files(backups)
-
-        assert (tmp_path / "report.xlsx").read_bytes() == b"v1"
-        assert (tmp_path / "report (1).xlsx").read_bytes() == b"v2 from last time"
-        assert (tmp_path / "report (2).xlsx").read_bytes() == b"v3 new"
-
-    def test_dedup_no_overwrite_cleans_backup(self, tmp_path):
-        (tmp_path / "report.xlsx").write_bytes(b"untouched")
-
-        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
-        backups = executor._backup_existing_files()
-
-        executor._dedup_overwritten_files(backups)
-
-        assert (tmp_path / "report.xlsx").read_bytes() == b"untouched"
-        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
-        assert not (tmp_path / "report (1).xlsx").exists()
-
-    def test_dedup_deleted_file_restored(self, tmp_path):
-        (tmp_path / "report.xlsx").write_bytes(b"important data")
-
-        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
-        backups = executor._backup_existing_files()
-
-        (tmp_path / "report.xlsx").unlink()
-
-        executor._dedup_overwritten_files(backups)
-
-        assert (tmp_path / "report.xlsx").read_bytes() == b"important data"
-
-    def test_dedup_confirmed_delete_not_restored(self, tmp_path):
-        """用户通过 confirm_delete 确认删除的文件，不恢复"""
-        (tmp_path / "report.xlsx").write_bytes(b"to be deleted")
-
-        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
-        backups = executor._backup_existing_files()
-
-        (tmp_path / "report.xlsx").unlink()
-
-        executor._dedup_overwritten_files(backups, confirm_delete=["report.xlsx"])
-
-        # 文件不应被恢复
-        assert not (tmp_path / "report.xlsx").exists()
-        # 备份也应被清理
-        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
-
-    @pytest.mark.asyncio
-    async def test_dedup_bak_not_uploaded(self, tmp_path):
-        (tmp_path / "report.xlsx.dedup_bak").write_bytes(b"backup")
-
-        results = []
-
-        async def mock_upload(filename, size):
-            results.append(filename)
-            return f"✅ {filename}"
-
-        executor = SandboxExecutor(
-            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
-        )
-        executor._snapshot_before = {}
-
-        await executor._auto_upload_new_files()
-        assert "report.xlsx.dedup_bak" not in results
-
-    def test_next_available_name(self, tmp_path):
-        p = tmp_path / "data.csv"
-        assert SandboxExecutor._next_available_name(p).name == "data (1).csv"
-
-        (tmp_path / "data (1).csv").write_bytes(b"x")
-        assert SandboxExecutor._next_available_name(p).name == "data (2).csv"
-
-    def test_backup_only_scans_output_dir(self, tmp_path):
-        out_dir = tmp_path / "output"
-        stg_dir = tmp_path / "staging"
-        out_dir.mkdir()
-        stg_dir.mkdir()
-        (out_dir / "a.xlsx").write_bytes(b"output file")
-        (stg_dir / "b.csv").write_bytes(b"staging file")
-
-        executor = SandboxExecutor(
-            timeout=5.0, output_dir=str(out_dir), staging_dir=str(stg_dir),
-        )
-        backups = executor._backup_existing_files()
-
-        assert len(backups) == 1
-        assert (out_dir / "a.xlsx.dedup_bak").exists()
-        assert not (stg_dir / "b.csv.dedup_bak").exists()
+class TestUploadScanDirs:
 
     def test_upload_scan_dirs_only_output(self, tmp_path):
         out_dir = tmp_path / "output"
@@ -571,164 +442,77 @@ class TestDedupOverwrittenFiles:
 
 
 # ============================================================
-# Workspace 原始文件备份（修改可回退）
+# confirm_delete 自动删除
 # ============================================================
 
-class TestWorkspaceBackup:
-    """Workspace 文件备份与回退"""
+class TestConfirmDelete:
+    """confirm_delete executor 层自动删除"""
 
-    def test_backup_creates_bak_files_in_staging(self, tmp_path):
-        """workspace 数据文件备份到 staging"""
+    def test_deletes_confirmed_files(self, tmp_path):
+        """confirm_delete 列表中的文件被删除，返回 (raw, resolved) 元组"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        (ws / "sales.xlsx").write_bytes(b"sales data")
-        (ws / "data.csv").write_bytes(b"csv data")
-        (ws / "notes.parquet").write_bytes(b"skip me")  # 非上传扩展名
+        (ws / "a.xlsx").write_bytes(b"data a")
+        (ws / "b.csv").write_bytes(b"data b")
 
         executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
+            timeout=5.0, workspace_dir=str(ws),
         )
-        backups = executor._backup_workspace_files()
+        deleted = executor._execute_confirmed_deletes(["a.xlsx", "b.csv"])
 
-        assert len(backups) == 2
-        for backup_path in backups.values():
-            p = Path(backup_path)
-            assert p.exists()
-            assert p.parent == stg
-            assert p.name.startswith("_bak_")
+        raw_names = {raw for raw, _ in deleted}
+        assert raw_names == {"a.xlsx", "b.csv"}
+        # resolved 是绝对路径
+        for _, resolved in deleted:
+            assert os.path.isabs(resolved)
+        assert not (ws / "a.xlsx").exists()
+        assert not (ws / "b.csv").exists()
 
-    def test_backup_skips_non_upload_extensions(self, tmp_path):
-        """非 _AUTO_UPLOAD_EXTENSIONS 的文件不备份"""
+    def test_skips_nonexistent_file(self, tmp_path):
+        """不存在的文件被跳过，不报错"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        (ws / "data.parquet").write_bytes(b"parquet")
-        (ws / "script.py").write_bytes(b"python")
 
         executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
+            timeout=5.0, workspace_dir=str(ws),
         )
-        backups = executor._backup_workspace_files()
+        deleted = executor._execute_confirmed_deletes(["ghost.xlsx"])
 
-        assert len(backups) == 0
-        assert not stg.exists() or not list(stg.iterdir())
+        assert deleted == []
 
-    def test_cleanup_removes_unmodified_backups(self, tmp_path):
-        """未被修改的文件 → 备份被删除，返回空 dict"""
+    def test_blocks_path_traversal(self, tmp_path):
+        """路径越界被拦截"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        (ws / "report.xlsx").write_bytes(b"untouched")
+        secret = tmp_path / "secret.txt"
+        secret.write_bytes(b"top secret")
 
         executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
+            timeout=5.0, workspace_dir=str(ws),
         )
-        backups = executor._backup_workspace_files()
+        deleted = executor._execute_confirmed_deletes(["../secret.txt"])
 
-        # 没有修改 workspace 文件
-        modified = executor._cleanup_workspace_backups(backups)
+        assert deleted == []
+        assert secret.exists()  # 文件未被删除
 
-        # 备份应被删除，返回空 dict
-        assert modified == {}
-        for backup_path in backups.values():
-            assert not Path(backup_path).exists()
-
-    def test_cleanup_keeps_modified_backups(self, tmp_path):
-        """已修改的文件 → 备份保留，返回 {文件名: 备份路径}"""
+    def test_relative_path_with_subdir(self, tmp_path):
+        """支持相对路径含子目录（如 下载/a.xlsx）"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
-        ws.mkdir()
-        (ws / "report.xlsx").write_bytes(b"original data")
+        dl = ws / "下载"
+        dl.mkdir(parents=True)
+        (dl / "report.xlsx").write_bytes(b"report")
 
         executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
+            timeout=5.0, workspace_dir=str(ws),
         )
-        backups = executor._backup_workspace_files()
+        deleted = executor._execute_confirmed_deletes(["下载/report.xlsx"])
 
-        # 模拟沙盒修改了文件
-        time.sleep(0.05)
-        (ws / "report.xlsx").write_bytes(b"modified data - different")
+        assert len(deleted) == 1
+        assert deleted[0][0] == "下载/report.xlsx"
+        assert not (dl / "report.xlsx").exists()
 
-        modified = executor._cleanup_workspace_backups(backups)
-
-        # 返回 {文件名: 备份路径}
-        assert "report.xlsx" in modified
-        # 备份应保留，且内容是原始数据
-        p = Path(modified["report.xlsx"])
-        assert p.exists()
-        assert p.read_bytes() == b"original data"
-
-    def test_cleanup_keeps_backup_when_file_deleted(self, tmp_path):
-        """原文件被删除 → 备份保留，返回 {文件名: 备份路径}"""
-        ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
-        ws.mkdir()
-        (ws / "report.xlsx").write_bytes(b"important data")
-
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
-        )
-        backups = executor._backup_workspace_files()
-
-        # 模拟沙盒删除了文件
-        (ws / "report.xlsx").unlink()
-
-        modified = executor._cleanup_workspace_backups(backups)
-
-        # 返回包含被删除的文件
-        assert "report.xlsx" in modified
-        assert Path(modified["report.xlsx"]).exists()
-        assert Path(modified["report.xlsx"]).read_bytes() == b"important data"
-
-    def test_multiple_executions_create_separate_backups(self, tmp_path):
-        """多次执行产生独立时间戳备份"""
-        ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
-        ws.mkdir()
-        (ws / "report.xlsx").write_bytes(b"v1")
-
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
-        )
-
-        backups1 = executor._backup_workspace_files()
-        time.sleep(1.1)  # 确保时间戳不同
-        backups2 = executor._backup_workspace_files()
-
-        # 两次备份路径不同（时间戳不同）
-        paths1 = set(backups1.values())
-        paths2 = set(backups2.values())
-        assert paths1.isdisjoint(paths2)
-
-    def test_no_workspace_dir_returns_empty(self, tmp_path):
+    def test_no_workspace_returns_empty(self):
         """无 workspace_dir 时返回空"""
-        executor = SandboxExecutor(
-            timeout=5.0, staging_dir=str(tmp_path / "staging"),
-        )
-        assert executor._backup_workspace_files() == {}
-
-    def test_no_staging_dir_returns_empty(self, tmp_path):
-        """无 staging_dir 时返回空"""
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(tmp_path / "workspace"),
-        )
-        assert executor._backup_workspace_files() == {}
-
-    def test_backup_only_scans_top_level(self, tmp_path):
-        """只扫描 workspace 顶层，不递归子目录"""
-        ws = tmp_path / "workspace"
-        sub = ws / "subdir"
-        stg = tmp_path / "staging"
-        ws.mkdir()
-        sub.mkdir()
-        (ws / "top.xlsx").write_bytes(b"top level")
-        (sub / "nested.xlsx").write_bytes(b"nested")
-
-        executor = SandboxExecutor(
-            timeout=5.0, workspace_dir=str(ws), staging_dir=str(stg),
-        )
-        backups = executor._backup_workspace_files()
-
-        assert len(backups) == 1
-        assert str(ws / "top.xlsx") in backups
+        executor = SandboxExecutor(timeout=5.0)
+        deleted = executor._execute_confirmed_deletes(["a.xlsx"])
+        assert deleted == []

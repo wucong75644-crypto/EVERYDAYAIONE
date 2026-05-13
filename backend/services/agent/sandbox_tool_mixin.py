@@ -94,10 +94,10 @@ class SandboxToolMixin:
             if result.status == "success" and result.summary:
                 self._register_files_from_output(result.summary)
 
-            # workspace 备份注册到 session_file_registry（供 restore_file 查找）
-            ws_backups = (result.metadata or {}).get("workspace_backups")
-            if ws_backups:
-                self._register_workspace_backups(ws_backups)
+            # 记录文件删除事件（confirm_delete 成功后，fire-and-forget 写 DB）
+            deleted_meta = (result.metadata or {}).get("deleted_files")
+            if deleted_meta:
+                self._record_deleted_files(deleted_meta)
 
             # AgentResult 状态 → 指标状态
             if result.is_failure:
@@ -181,6 +181,56 @@ class SandboxToolMixin:
         except Exception as e:
             logger.debug(f"Sandbox knowledge recording skipped | error={e}")
 
+    def _record_deleted_files(self, deleted_meta: list[dict]) -> None:
+        """Fire-and-forget 记录文件删除事件到 deleted_files 表（OSS 30 天延迟清理）"""
+        import asyncio
+
+        async def _do_record():
+            try:
+                from pathlib import Path as _Path
+                from core.config import get_settings
+                from services.knowledge_config import get_pg_connection, is_kb_available
+
+                if not is_kb_available():
+                    return
+                conn_ctx = await get_pg_connection()
+                if conn_ctx is None:
+                    return
+
+                settings = get_settings()
+                ws_root = str(_Path(settings.file_workspace_root).resolve())
+
+                async with conn_ctx as conn:
+                    async with conn.cursor() as cur:
+                        for item in deleted_meta:
+                            resolved = item["resolved"]
+                            if resolved.startswith(ws_root):
+                                rel = resolved[len(ws_root):].lstrip("/")
+                            else:
+                                rel = item["raw"]
+                            await cur.execute(
+                                """
+                                INSERT INTO deleted_files
+                                    (org_id, user_id, relative_path, oss_object_key, purge_after)
+                                VALUES
+                                    (%(org_id)s, %(user_id)s, %(rel)s, %(oss_key)s,
+                                     now() + interval '30 days')
+                                """,
+                                {
+                                    "org_id": self.org_id,
+                                    "user_id": self.user_id,
+                                    "rel": rel,
+                                    "oss_key": f"workspace/{rel}",
+                                },
+                            )
+            except Exception as e:
+                logger.debug(f"Deleted files recording skipped | error={e}")
+
+        try:
+            asyncio.create_task(_do_record())
+        except Exception:
+            pass
+
     def _register_files_from_output(self, stdout: str) -> None:
         """从 code_execute 输出中提取文件引用（已简化：不再注册 FilePathCache）。
 
@@ -220,15 +270,3 @@ class SandboxToolMixin:
             )
         except Exception:
             return ""
-
-    def _register_workspace_backups(self, ws_backups: dict[str, str]) -> None:
-        """记录 workspace 备份（仅日志，不再注册 registry）。
-
-        对齐 Claude 模式后，restore_file 通过 glob 扫描 staging 中的
-        _bak_{timestamp}_{filename} 文件来恢复，不依赖 registry。
-        """
-        if ws_backups:
-            logger.info(
-                f"Workspace backups created | "
-                f"count={len(ws_backups)} | files={list(ws_backups.keys())}"
-            )

@@ -1,7 +1,7 @@
 """
 services/agent/sandbox_tool_mixin.py 单元测试
 
-覆盖：_register_workspace_backups / _register_files_from_output / _register_staging_files
+覆盖：_register_files_from_output / _register_staging_files
 沙盒执行 (_code_execute) 的集成测试在 test_sandbox_executor.py 中。
 """
 
@@ -33,133 +33,23 @@ class FakeSandboxMixin(SandboxToolMixin):
 
 
 # ============================================================
-# _register_workspace_backups
-# ============================================================
-
-
-class TestRegisterWorkspaceBackups:
-    """workspace 备份注册到 session_file_registry"""
-
-    def test_registers_backup_to_registry(self, tmp_path):
-        """备份文件存在 → 注册到 registry"""
-        backup_file = tmp_path / "_bak_1700000000_report.xlsx"
-        backup_file.write_bytes(b"original data")
-
-        mixin = FakeSandboxMixin()
-
-        saved = {}
-
-        def mock_save(conv_id, tmp_reg):
-            saved["conv_id"] = conv_id
-            saved["entries"] = tmp_reg.list_all()
-
-        with patch(
-            "services.agent.session_file_registry.save_conversation_registry",
-            side_effect=mock_save,
-        ):
-            mixin._register_workspace_backups({
-                "report.xlsx": str(backup_file),
-            })
-
-        assert saved["conv_id"] == "conv1"
-        assert len(saved["entries"]) == 1
-        key, ref = saved["entries"][0]
-        assert key.startswith("backup:report.xlsx:")
-        assert ref.path == str(backup_file)
-        assert ref.format == "xlsx"
-
-    def test_skips_nonexistent_backup(self, tmp_path):
-        """备份文件不存在 → 跳过，不注册"""
-        saved = {}
-
-        def mock_save(conv_id, tmp_reg):
-            saved["entries"] = tmp_reg.list_all()
-
-        with patch(
-            "services.agent.session_file_registry.save_conversation_registry",
-            side_effect=mock_save,
-        ):
-            mixin = FakeSandboxMixin()
-            mixin._register_workspace_backups({
-                "report.xlsx": "/nonexistent/path/_bak_123_report.xlsx",
-            })
-
-        assert len(saved["entries"]) == 0
-
-    def test_multiple_backups_registered(self, tmp_path):
-        """多个备份文件 → 全部注册"""
-        (tmp_path / "_bak_1_a.xlsx").write_bytes(b"a")
-        (tmp_path / "_bak_1_b.csv").write_bytes(b"b")
-
-        saved = {}
-
-        def mock_save(conv_id, tmp_reg):
-            saved["entries"] = tmp_reg.list_all()
-
-        with patch(
-            "services.agent.session_file_registry.save_conversation_registry",
-            side_effect=mock_save,
-        ):
-            mixin = FakeSandboxMixin()
-            mixin._register_workspace_backups({
-                "a.xlsx": str(tmp_path / "_bak_1_a.xlsx"),
-                "b.csv": str(tmp_path / "_bak_1_b.csv"),
-            })
-
-        assert len(saved["entries"]) == 2
-        keys = {k for k, _ in saved["entries"]}
-        assert any("backup:a.xlsx:" in k for k in keys)
-        assert any("backup:b.csv:" in k for k in keys)
-
-
-# ============================================================
 # _register_files_from_output
 # ============================================================
 
 
 class TestRegisterFilesFromOutput:
-    """从 code_execute stdout 提取文件名注册到路径缓存"""
+    """_register_files_from_output 已简化为空操作（workspace_file_handles 模块已删除），
+    仅验证调用不抛异常。"""
 
-    def test_registers_existing_file(self, tmp_path):
-        """stdout 中引用的存在文件 → 注册到缓存"""
-        (tmp_path / "sales.xlsx").write_bytes(b"data")
-
+    def test_call_does_not_raise(self):
+        """任意 stdout 输入 → 不抛异常"""
         mixin = FakeSandboxMixin()
+        mixin._register_files_from_output("Found file: 'sales.xlsx' in directory")
 
-        registered = {}
-
-        class FakeCache:
-            def register(self, name, path):
-                registered[name] = path
-
-        with patch.object(mixin, "_get_workspace_dir", return_value=str(tmp_path)), \
-             patch("services.agent.workspace_file_handles.get_file_cache", return_value=FakeCache()):
-            mixin._register_files_from_output("Found file: 'sales.xlsx' in directory")
-
-        assert "sales.xlsx" in registered
-
-    def test_skips_nonexistent_file(self, tmp_path):
-        """stdout 中引用但不存在的文件 → 不注册"""
+    def test_empty_string_does_not_raise(self):
+        """空字符串 → 不抛异常"""
         mixin = FakeSandboxMixin()
-
-        registered = {}
-
-        class FakeCache:
-            def register(self, name, path):
-                registered[name] = path
-
-        with patch.object(mixin, "_get_workspace_dir", return_value=str(tmp_path)), \
-             patch("services.agent.workspace_file_handles.get_file_cache", return_value=FakeCache()):
-            mixin._register_files_from_output("File: 'nonexistent.xlsx'")
-
-        assert len(registered) == 0
-
-    def test_no_workspace_dir_returns_early(self):
-        """无 workspace_dir → 直接返回"""
-        mixin = FakeSandboxMixin()
-        with patch.object(mixin, "_get_workspace_dir", return_value=""):
-            # 不应抛异常
-            mixin._register_files_from_output("'test.xlsx'")
+        mixin._register_files_from_output("")
 
 
 # ============================================================

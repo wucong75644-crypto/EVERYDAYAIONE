@@ -2231,7 +2231,20 @@
       "Bash(./git-push.sh \"feat: 文件附加时自动预转Parquet——前端调prepare接口，AI直接拿到duckdb查询语句，跳过file_search\")",
       "Bash(./git-push.sh \"fix: InputArea prop类型补全staging_path和isPreparing字段\")",
       "Bash(git revert *)",
-      "Bash(./git-push.sh \"revert: 回退prepare预转换机制——大文件转换不稳定，先保持AI调file_search的流程\")"
+      "Bash(./git-push.sh \"revert: 回退prepare预转换机制——大文件转换不稳定，先保持AI调file_search的流程\")",
+      "Bash(python -m pytest tests/test_file_upload.py tests/test_staging_cleaner.py tests/test_tool_result_envelope.py -x -q)",
+      "Bash(python -m pytest tests/test_file_upload.py::TestAutoUploadCDN::test_cdn_url_generated -x -q)",
+      "Bash(python -m pytest tests/test_staging_cleaner.py tests/test_tool_result_envelope.py tests/test_file_tool_mixin.py tests/test_sandbox_functions.py -x -q)",
+      "Bash(python -m pytest tests/test_staging_cleaner.py tests/test_sandbox_functions.py -x -q)",
+      "Bash(grep -r \"workspace/\" backend/services/file_*.py --include=\"*.py\")",
+      "Bash(bash deploy/deploy.sh)",
+      "Bash(python -m pytest backend/tests/test_scoped_os.py backend/tests/test_sandbox_executor.py backend/tests/test_sandbox_e2e.py backend/tests/test_sandbox_stateful_e2e.py -x -q)",
+      "Bash(python -m pytest backend/tests/test_scoped_os.py backend/tests/test_sandbox_executor.py backend/tests/test_sandbox_e2e.py backend/tests/test_sandbox_stateful_e2e.py backend/tests/test_sandbox_tool_mixin.py -x -q)",
+      "Bash(python -m pytest backend/tests/test_sandbox_tool_mixin.py::TestRegisterFilesFromOutput::test_registers_existing_file -x -q)",
+      "Bash(python -m pytest backend/tests/test_scoped_os.py backend/tests/test_sandbox_executor.py backend/tests/test_sandbox_e2e.py backend/tests/test_sandbox_stateful_e2e.py -q)",
+      "Bash(python -m pytest backend/tests/test_sandbox_tool_mixin.py::TestRegisterFilesFromOutput -v)",
+      "Bash(python -c \"from services.scheduler.oss_purge_task import oss_purge_loop; print\\('import OK'\\)\")",
+      "Bash(./git-push.sh 'refactor: confirm_delete流程简化+砍本地备份+OSS 30天延迟清理 *)"
     ],
     "additionalDirectories": [
       "/tmp"
