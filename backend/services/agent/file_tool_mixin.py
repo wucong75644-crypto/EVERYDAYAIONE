@@ -609,14 +609,12 @@ class FileToolMixin:
     async def _restore_file(
         self, executor: Any, args: Dict[str, Any], settings: Any,
     ) -> Any:
-        """从 staging 备份恢复 workspace 文件。
+        """从 OSS/CDN 恢复已删除的文件到 workspace。
 
-        备份文件名格式：_bak_{timestamp}_{original_filename}
-        精确解析文件名结构（_bak_ + 纯数字时间戳 + _ + 精确原文件名），
-        避免 glob 通配符误匹配其他文件的备份。
+        查 deleted_files 表找到 oss_object_key → 从 OSS 下载回原位置。
+        删除后 30 天内可恢复（purge_after 之前）。
         """
         from services.agent.agent_result import AgentResult
-        from core.workspace import resolve_staging_dir
 
         filename = args.get("filename", "").strip()
         if not filename:
@@ -627,66 +625,96 @@ class FileToolMixin:
                 metadata={"retryable": True},
             )
 
-        # 路径安全校验
-        target_path = executor.resolve_safe_path(filename)
-
-        staging_dir = resolve_staging_dir(
-            settings.file_workspace_root,
-            self.user_id, self.org_id, self.conversation_id,
-        )
-
-        # 精确匹配：_bak_{纯数字时间戳}_{精确文件名}
-        # 不用 glob，避免 * 贪婪匹配导致 _bak_123_old_data.csv 被 _bak_*_data.csv 命中
-        _BAK_PREFIX = "_bak_"
-        suffix = f"_{filename}"
-        backups: list[tuple[int, str]] = []  # (timestamp, abs_path)
-
-        try:
-            for entry in os.listdir(staging_dir):
-                if not entry.startswith(_BAK_PREFIX) or not entry.endswith(suffix):
-                    continue
-                # 提取中间的时间戳部分：_bak_{ts}_{filename}
-                middle = entry[len(_BAK_PREFIX):-len(suffix)]
-                if middle.isdigit():
-                    abs_path = os.path.join(staging_dir, entry)
-                    backups.append((int(middle), abs_path))
-        except FileNotFoundError:
-            pass
-
-        if not backups:
+        # 查 deleted_files 表
+        record = await self._find_deleted_record(filename)
+        if not record:
             return AgentResult(
-                summary=f"未找到「{filename}」的备份。可能备份已过期（24小时有效期）或该文件未被修改过。",
+                summary=f"未找到「{filename}」的删除记录。文件可能未被删除，或已超过 30 天恢复期。",
                 status="empty",
             )
 
-        # 按时间戳降序取最新
-        backups.sort(key=lambda x: x[0], reverse=True)
-        best_ts, best_backup = backups[0]
+        oss_key = record["oss_object_key"]
+        rel_path = record["relative_path"]
 
-        if not os.path.exists(best_backup):
+        # 从 OSS 下载回 workspace
+        target_path = executor.resolve_safe_path(rel_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import asyncio
+            from services.oss_service import get_oss_service
+            oss = get_oss_service()
+            await asyncio.to_thread(
+                oss.bucket.get_object_to_file, oss_key, str(target_path),
+            )
+        except Exception as e:
+            logger.error(f"restore_file OSS download failed | key={oss_key} | error={e}")
             return AgentResult(
-                summary=f"「{filename}」的备份文件已过期被清理，无法恢复。",
+                summary=f"从 OSS 恢复「{filename}」失败: {e}",
                 status="error",
-                error_message="Backup file expired",
+                error_message=str(e),
             )
 
-        # 恢复
-        shutil.copy2(best_backup, str(target_path))
+        # 标记 deleted_files 记录为已恢复
+        await self._mark_restored(record["id"])
 
-        # 删除已用的备份
-        try:
-            os.remove(best_backup)
-        except OSError:
-            pass
-
-        logger.info(
-            f"restore_file | file={filename} | backup={best_backup} | target={target_path}"
-        )
+        logger.info(f"restore_file | file={filename} | oss_key={oss_key} | target={target_path}")
 
         return AgentResult(
-            summary=f"已恢复「{filename}」到修改前的版本。",
+            summary=f"已恢复「{filename}」到 {rel_path}",
             status="success",
         )
+
+    async def _find_deleted_record(self, filename: str) -> dict | None:
+        """从 deleted_files 表查找匹配的删除记录（未过期、未清理）"""
+        try:
+            from services.knowledge_config import get_pg_connection, is_kb_available
+            if not is_kb_available():
+                return None
+            conn_ctx = await get_pg_connection()
+            if conn_ctx is None:
+                return None
+            async with conn_ctx as conn:
+                async with conn.cursor() as cur:
+                    # 按 relative_path 精确匹配 或 文件名模糊匹配
+                    await cur.execute(
+                        """
+                        SELECT id, relative_path, oss_object_key
+                        FROM deleted_files
+                        WHERE org_id = %(org_id)s
+                          AND NOT purged
+                          AND purge_after > now()
+                          AND (relative_path = %(name)s
+                               OR relative_path LIKE '%%/' || %(name)s)
+                        ORDER BY deleted_at DESC
+                        LIMIT 1
+                        """,
+                        {"org_id": self.org_id, "name": filename},
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        return {"id": row[0], "relative_path": row[1], "oss_object_key": row[2]}
+        except Exception as e:
+            logger.warning(f"restore_file query failed | error={e}")
+        return None
+
+    async def _mark_restored(self, record_id: int) -> None:
+        """标记 deleted_files 记录为已恢复（purged=TRUE，不再被清理任务处理）"""
+        try:
+            from services.knowledge_config import get_pg_connection, is_kb_available
+            if not is_kb_available():
+                return
+            conn_ctx = await get_pg_connection()
+            if conn_ctx is None:
+                return
+            async with conn_ctx as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE deleted_files SET purged = TRUE WHERE id = %s",
+                        (record_id,),
+                    )
+        except Exception as e:
+            logger.warning(f"restore_file mark restored failed | error={e}")
 
     # ================================================================
     # 工具函数
