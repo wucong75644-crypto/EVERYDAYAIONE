@@ -549,7 +549,6 @@ def sandbox_worker_entry(
     output_dir: str,
     timeout: float,
     max_result_chars: int,
-    confirm_delete: list | None = None,
 ):
     """子进程入口：隔离环境中执行用户代码
 
@@ -561,7 +560,6 @@ def sandbox_worker_entry(
         output_dir: 输出目录
         timeout: 执行超时（秒）
         max_result_chars: 结果最大字符数
-        confirm_delete: 用户已确认可删除的文件名列表
     """
     import os
     from services.sandbox.validators import validate_code
@@ -598,12 +596,6 @@ def sandbox_worker_entry(
 
         # 4. 构建沙盒环境
         sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
-
-        # 4.5 设置本次执行允许删除的文件
-        if confirm_delete:
-            scoped_os = sandbox_globals.get("os")
-            if scoped_os and hasattr(scoped_os, "_set_confirmed_deletes"):
-                scoped_os._set_confirmed_deletes(confirm_delete)
 
         # 5. 执行代码
         result = _exec_code(code, sandbox_globals, timeout)

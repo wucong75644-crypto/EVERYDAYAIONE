@@ -251,41 +251,23 @@ class TestDegradation:
 class TestStatefulConfirmDelete:
 
     @pytest.mark.asyncio
-    async def test_remove_without_confirm_blocked(self, stateful_executor, ws):
-        """Kernel 模式：os.remove 无 confirm → 拒绝"""
+    async def test_remove_in_kernel_always_blocked(self, stateful_executor, ws):
+        """Kernel 模式：沙盒内 os.remove 统一禁止"""
         Path(ws["workspace"], "temp.txt").write_text("data")
         result = await stateful_executor.execute(
             "import os\nos.remove('temp.txt')", "删除",
         )
-        assert "删除操作需要用户确认" in result.summary
+        assert "沙盒内禁止直接删除文件" in result.summary
         assert Path(ws["workspace"], "temp.txt").exists()
 
     @pytest.mark.asyncio
-    async def test_remove_with_confirm_allowed(self, stateful_executor, ws):
-        """Kernel 模式：os.remove + confirm_delete → 删除成功"""
+    async def test_confirm_delete_auto_executes(self, stateful_executor, ws):
+        """Kernel 模式：confirm_delete → executor 层自动删除"""
         Path(ws["workspace"], "temp.txt").write_text("data")
         result = await stateful_executor.execute(
-            "import os\nos.remove('temp.txt')\nprint('ok')",
-            "删除",
+            "print('ok')", "删除",
             confirm_delete=["temp.txt"],
         )
-        assert "ok" in result.summary
+        assert result.status == "success"
+        assert "已删除文件" in result.summary
         assert not Path(ws["workspace"], "temp.txt").exists()
-
-    @pytest.mark.asyncio
-    async def test_confirm_not_persist_across_calls(self, stateful_executor, ws):
-        """Kernel 模式：confirm_delete 不跨调用残留"""
-        Path(ws["workspace"], "a.txt").write_text("data")
-        # 第一次：带 confirm 删除
-        await stateful_executor.execute(
-            "import os\nos.remove('a.txt')", "删除a",
-            confirm_delete=["a.txt"],
-        )
-        # 重新创建
-        Path(ws["workspace"], "a.txt").write_text("new data")
-        # 第二次：不带 confirm → 应拒绝
-        result = await stateful_executor.execute(
-            "import os\nos.remove('a.txt')", "删除a",
-        )
-        assert "删除操作需要用户确认" in result.summary
-        assert Path(ws["workspace"], "a.txt").exists()

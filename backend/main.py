@@ -348,6 +348,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     error_consumer_task = asyncio.create_task(error_log_consumer(_error_monitor_db))
     error_cleanup_task = asyncio.create_task(error_log_cleanup_loop(_error_monitor_db))
 
+    # OSS 延迟清理（confirm_delete 删 NAS 后，30 天后清理 OSS）
+    from services.scheduler.oss_purge_task import oss_purge_loop
+    _oss_purge_task = asyncio.create_task(oss_purge_loop())
+
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
 

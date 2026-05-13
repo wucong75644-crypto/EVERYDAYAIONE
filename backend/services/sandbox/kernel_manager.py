@@ -188,7 +188,6 @@ class KernelManager:
         conversation_id: str,
         code: str,
         timeout: float,
-        confirm_delete: list[str] | None = None,
     ) -> Tuple[str, str]:
         """向 Kernel 发送代码并等待结果
 
@@ -211,7 +210,7 @@ class KernelManager:
 
         async with kernel.lock:
             kernel.last_active = time.monotonic()
-            return await self._send_and_recv(kernel, code, timeout, confirm_delete)
+            return await self._send_and_recv(kernel, code, timeout)
 
     async def destroy(self, conversation_id: str) -> None:
         """销毁指定 Kernel"""
@@ -288,13 +287,10 @@ class KernelManager:
 
     async def _send_and_recv(
         self, kernel: Kernel, code: str, timeout: float,
-        confirm_delete: list[str] | None = None,
     ) -> Tuple[str, str]:
         """发送代码并等待结果"""
         req_id = f"req_{int(time.monotonic() * 1000)}"
         request: dict = {"id": req_id, "code": code, "timeout": timeout}
-        if confirm_delete:
-            request["confirm_delete"] = confirm_delete
         request_line = json.dumps(request, ensure_ascii=False) + "\n"
 
         try:

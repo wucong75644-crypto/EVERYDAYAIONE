@@ -177,7 +177,6 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
 
         code = request.get("code", "")
         timeout = request.get("timeout", 120.0)
-        confirm_delete = request.get("confirm_delete", [])
 
         if not code or not code.strip():
             _write_response({
@@ -208,10 +207,6 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
                 sandbox_globals, scoped_open,
                 _scoped_os, _scoped_shutil, _scoped_import,
             )
-
-            # 设置本次执行允许删除的文件（每次都调用，确保上一轮不残留）
-            if hasattr(_scoped_os, "_set_confirmed_deletes"):
-                _scoped_os._set_confirmed_deletes(confirm_delete)
 
             # 执行代码（sandbox_globals 在进程内持续存在，变量保留）
             result = _exec_code(code, sandbox_globals, timeout)
