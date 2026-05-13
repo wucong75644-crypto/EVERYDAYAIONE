@@ -223,8 +223,8 @@ MUST NOT 在确认前调用任何执行类工具。
 数据文件存在 STAGING_DIR（Parquet 格式），生成文件写到 OUTPUT_DIR。
 不确定可用文件时用 os.listdir(STAGING_DIR) 查看。
 
-数据查询用 duckdb.sql()（磁盘模式，已预配置，百万行不爆内存）。
-DuckDB SQL 中列名用双引号包裹。大结果用 COPY TO 导出文件，小结果用 .df() 转 pandas。
+数据查询用 duckdb.sql()（磁盘模式，已预配置，数据不进内存）。
+DuckDB SQL 中列名用双引号包裹。查询结果用 .df() 转 pandas，导出文件用 COPY TO。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
 
 可用：duckdb、pandas、matplotlib、openpyxl、xlsxwriter、docx、pptx、pdfplumber
