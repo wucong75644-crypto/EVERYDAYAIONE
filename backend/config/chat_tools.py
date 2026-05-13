@@ -243,6 +243,8 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 - 生成文件写到 OUTPUT_DIR，平台自动检测上传
 - 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
 - 写 Excel 用 engine='xlsxwriter'
+- 大数据导出（>10万行）：用 DuckDB COPY TO parquet/csv 流式导出，不要 .df() 全量转 pandas
+- DuckDB SQL 中列名必须用双引号包裹：SELECT "列名" FROM ...
 
 不适用（优先用外部工具，更快更准）：
 - 读任何文件（Excel/CSV/PDF/DOCX/图片/文本）→ file_read
