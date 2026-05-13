@@ -408,7 +408,8 @@ export default function InputArea({
       return;
     }
 
-    const anyUploading = isUploading || isFileUploading;
+    const anyPreparing = workspaceFiles.some((f) => f.isPreparing);
+    const anyUploading = isUploading || isFileUploading || anyPreparing;
     const hasWorkspaceFiles = workspaceFiles.length > 0;
     const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles || hasWorkspaceFiles));
     if (sendButtonState.disabled) return;
@@ -447,6 +448,7 @@ export default function InputArea({
       mime_type: f.mime_type || 'application/octet-stream',
       size: f.size,
       workspace_path: f.workspace_path,
+      staging_path: f.staging_path || undefined,
     }));
     const mergedFiles = [...uploadedFileUrls, ...wsFileMapped];
     const fileData = mergedFiles.length > 0 ? mergedFiles : null;

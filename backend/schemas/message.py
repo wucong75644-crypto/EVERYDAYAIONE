@@ -96,7 +96,8 @@ class FilePart(BaseModel):
     name: str
     mime_type: str
     size: Optional[int] = None
-    workspace_path: Optional[str] = None  # 工作区相对路径（有值时 AI 用 file_read 读取）
+    workspace_path: Optional[str] = None  # 工作区相对路径
+    staging_path: Optional[str] = None    # Parquet 文件名（数据文件 prepare 后才有）
 
 
 class ThinkingPart(BaseModel):

@@ -313,7 +313,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         return urls
 
     def _extract_workspace_files(self, content: List[ContentPart]) -> List[Dict[str, Any]]:
-        """提取含 workspace_path 的文件（用于注入 AI 提示，让 AI 用 file_read 读取）"""
+        """提取含 workspace_path 的文件（用于注入 AI 提示）"""
         from schemas.message import FilePart
         files: List[Dict[str, Any]] = []
         for part in content:
@@ -325,6 +325,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     "size": part.size,
                     "mime_type": part.mime_type,
                     "url": part.url,
+                    "staging_path": getattr(part, "staging_path", None),
                 }
             elif isinstance(part, dict) and part.get("type") == "file" and part.get("workspace_path"):
                 wp = {
@@ -333,6 +334,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     "size": part.get("size"),
                     "mime_type": part.get("mime_type", ""),
                     "url": part.get("url", ""),
+                    "staging_path": part.get("staging_path"),
                 }
             if wp:
                 files.append(wp)

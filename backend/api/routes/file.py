@@ -99,6 +99,20 @@ class WorkspaceUploadResponse(BaseModel):
     cdn_url: Optional[str] = Field(None, description="CDN 下载 URL")
 
 
+class PrepareRequest(BaseModel):
+    """文件预处理请求"""
+    workspace_path: str = Field(..., description="workspace 内相对路径")
+    conversation_id: str = Field(..., description="会话 ID（用于 staging 隔离）")
+
+
+class PrepareResponse(BaseModel):
+    """文件预处理响应"""
+    workspace_path: str = Field(..., description="原始 workspace 路径")
+    staging_path: Optional[str] = Field(None, description="Parquet 文件名（数据文件才有）")
+    rows: Optional[int] = Field(None, description="行数")
+    cols: Optional[int] = Field(None, description="列数")
+
+
 class WorkspaceFileItem(BaseModel):
     """workspace 文件列表项"""
     name: str
@@ -214,6 +228,162 @@ async def upload_to_workspace(
             code="WORKSPACE_UPLOAD_ERROR",
             message="文件上传失败",
             status_code=500,
+        )
+
+
+@router.post(
+    "/workspace/prepare",
+    response_model=PrepareResponse,
+    summary="预处理数据文件（Excel/CSV → Parquet）",
+)
+async def prepare_workspace_file(
+    ctx: OrgCtx,
+    db: ScopedDB,
+    body: PrepareRequest,
+):
+    """
+    将工作区数据文件预转换为 Parquet 格式，存到 staging 目录。
+
+    前端在文件附加到对话（上传/插入/@提及）时调用此接口。
+    非数据文件（PDF/DOCX/TXT/图片）返回 staging_path=null，不做转换。
+    已转换过的文件自动跳过（manifest 去重）。
+    """
+    from core.config import get_settings
+    from core.workspace import resolve_staging_dir
+    from services.file_executor import FileExecutor
+
+    settings = get_settings()
+    if not settings.file_workspace_enabled:
+        raise AppException(
+            code="FILE_WORKSPACE_DISABLED",
+            message="文件操作功能未启用",
+            status_code=403,
+        )
+
+    user_id = ctx.user_id
+    org_id = ctx.org_id
+
+    executor = FileExecutor(
+        workspace_root=settings.file_workspace_root,
+        user_id=user_id,
+        org_id=org_id,
+    )
+
+    # 解析并校验路径
+    try:
+        target = executor.resolve_safe_path(body.workspace_path)
+    except Exception as e:
+        raise ValidationError(message=f"路径无效: {e}")
+
+    if not target.is_file():
+        raise ValidationError(message=f"文件不存在: {body.workspace_path}")
+
+    # 判断是否是数据文件
+    _DATA_EXTS = {".xlsx", ".xls", ".xlsm", ".csv", ".tsv", ".parquet"}
+    ext = target.suffix.lower()
+
+    if ext not in _DATA_EXTS:
+        return PrepareResponse(
+            workspace_path=body.workspace_path,
+            staging_path=None,
+            rows=None,
+            cols=None,
+        )
+
+    # 数据文件：转 Parquet 到 staging
+    staging_dir = resolve_staging_dir(
+        settings.file_workspace_root,
+        user_id, org_id, body.conversation_id,
+    )
+    Path(staging_dir).mkdir(parents=True, exist_ok=True)
+
+    try:
+        from services.agent.file_tool_mixin import FileToolMixin, _sanitize_filename
+        from services.agent.data_query_cache import ensure_parquet_cache
+        import json
+        import os
+        import shutil
+        import time as _time
+
+        abs_path = str(target)
+        name = target.name
+        manifest_path = os.path.join(staging_dir, "_manifest.json")
+
+        # 读取现有 manifest（去重）
+        existing_manifest = {"files": []}
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    existing_manifest = json.load(f)
+            except Exception:
+                pass
+
+        existing_by_original = {
+            e["original"]: e for e in existing_manifest.get("files", [])
+        }
+
+        # 已转换过且 Parquet 文件存在 → 直接返回
+        if name in existing_by_original:
+            pq_name = existing_by_original[name]["parquet"]
+            if os.path.exists(os.path.join(staging_dir, pq_name)):
+                entry = existing_by_original[name]
+                return PrepareResponse(
+                    workspace_path=body.workspace_path,
+                    staging_path=entry["parquet"],
+                    rows=entry.get("rows"),
+                    cols=entry.get("cols"),
+                )
+
+        # 执行转换
+        next_idx = len(existing_manifest.get("files", [])) + 1
+        safe_name = _sanitize_filename(name, next_idx)
+
+        if ext == ".parquet":
+            dst = os.path.join(staging_dir, safe_name)
+            if not os.path.exists(dst):
+                shutil.copy2(abs_path, dst)
+        else:
+            cache_path, _ = await ensure_parquet_cache(abs_path, None, staging_dir)
+            dst = os.path.join(staging_dir, safe_name)
+            if cache_path != dst:
+                if os.path.exists(dst):
+                    os.remove(dst)
+                shutil.move(cache_path, dst)
+
+        rows, cols = FileToolMixin._parquet_shape(dst)
+
+        # 更新 manifest
+        entry = {"original": name, "parquet": safe_name, "rows": rows, "cols": cols}
+        existing_by_original[name] = entry
+        manifest = {
+            "files": list(existing_by_original.values()),
+            "updated_at": int(_time.time()),
+        }
+        tmp_path = manifest_path + f".tmp.{os.getpid()}"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, manifest_path)
+
+        logger.info(
+            f"File prepared | user={user_id} | file={name} | "
+            f"parquet={safe_name} | rows={rows} cols={cols}"
+        )
+
+        return PrepareResponse(
+            workspace_path=body.workspace_path,
+            staging_path=safe_name,
+            rows=rows,
+            cols=cols,
+        )
+
+    except Exception as e:
+        logger.error(f"File prepare failed | file={body.workspace_path} | error={e}")
+        # 转换失败不阻塞——返回无 staging_path，AI 运行时会走 file_search 兜底
+        return PrepareResponse(
+            workspace_path=body.workspace_path,
+            staging_path=None,
+            rows=None,
+            cols=None,
         )
 
 

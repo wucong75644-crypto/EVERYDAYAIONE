@@ -57,8 +57,10 @@ export interface FilePart {
   name: string;
   mime_type: string;
   size?: number;
-  /** 工作区相对路径（有值时 AI 通过 file_read 读取，无值时走多模态 image_url） */
+  /** 工作区相对路径 */
   workspace_path?: string;
+  /** Parquet 文件名（数据文件 prepare 后才有，AI 用 duckdb 直接查询） */
+  staging_path?: string;
 }
 
 /** 工具结果内容块（独立渲染，不被主 Agent 文本覆盖） */
