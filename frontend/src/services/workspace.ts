@@ -67,33 +67,6 @@ export interface WorkspaceFile {
   cdn_url: string | null;
   mime_type: string | null;
   size: number;
-  /** Parquet 文件名（数据文件 prepare 后才有） */
-  staging_path?: string | null;
-  rows?: number | null;
-  cols?: number | null;
-  /** prepare 是否进行中 */
-  isPreparing?: boolean;
-}
-
-/** 文件预处理响应 */
-export interface PrepareResponse {
-  workspace_path: string;
-  staging_path: string | null;
-  rows: number | null;
-  cols: number | null;
-}
-
-/** 预处理数据文件（Excel/CSV → Parquet） */
-export function prepareWorkspaceFile(
-  workspacePath: string,
-  conversationId: string,
-): Promise<PrepareResponse> {
-  return request<PrepareResponse>({
-    method: 'POST',
-    url: '/files/workspace/prepare',
-    data: { workspace_path: workspacePath, conversation_id: conversationId },
-    timeout: 60000, // 大文件转换最长 60 秒
-  });
 }
 
 // ============================================================

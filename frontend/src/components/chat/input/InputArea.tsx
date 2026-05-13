@@ -55,7 +55,7 @@ interface InputAreaProps {
   /** prompt 变更回调 */
   onPromptChange?: (value: string) => void;
   /** 工作区待发送文件（"插入到聊天"功能） */
-  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number; staging_path?: string | null; isPreparing?: boolean }>;
+  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
   /** 添加单个工作区文件（@ 提及选中时调用） */
   onAddWorkspaceFile?: (file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => void;
   /** 移除单个工作区文件 */
@@ -408,8 +408,7 @@ export default function InputArea({
       return;
     }
 
-    const anyPreparing = workspaceFiles.some((f) => f.isPreparing);
-    const anyUploading = isUploading || isFileUploading || anyPreparing;
+    const anyUploading = isUploading || isFileUploading;
     const hasWorkspaceFiles = workspaceFiles.length > 0;
     const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles || hasWorkspaceFiles));
     if (sendButtonState.disabled) return;
@@ -448,7 +447,6 @@ export default function InputArea({
       mime_type: f.mime_type || 'application/octet-stream',
       size: f.size,
       workspace_path: f.workspace_path,
-      staging_path: f.staging_path || undefined,
     }));
     const mergedFiles = [...uploadedFileUrls, ...wsFileMapped];
     const fileData = mergedFiles.length > 0 ? mergedFiles : null;
