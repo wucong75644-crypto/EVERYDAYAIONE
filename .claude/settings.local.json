@@ -2246,7 +2246,8 @@
       "Bash(python -c \"from services.scheduler.oss_purge_task import oss_purge_loop; print\\('import OK'\\)\")",
       "Bash(./git-push.sh 'refactor: confirm_delete流程简化+砍本地备份+OSS 30天延迟清理 *)",
       "Bash(./git-push.sh \"fix: 主Agent提示词补充confirm_delete删除流程说明——LLM确认后不知道下一步\")",
-      "Bash(./git-push.sh 'feat: file_delete独立工具+FilePathCache共享缓存——删除走tool_confirm弹窗，路径全程结构化 *)"
+      "Bash(./git-push.sh 'feat: file_delete独立工具+FilePathCache共享缓存——删除走tool_confirm弹窗，路径全程结构化 *)",
+      "Bash(./git-push.sh \"fix: file_delete和restore_file注册tool_domains——启动时WARNING未注册域导致工具不可见\")"
     ],
     "additionalDirectories": [
       "/tmp"
