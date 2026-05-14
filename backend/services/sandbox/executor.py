@@ -90,14 +90,13 @@ class SandboxExecutor:
             f"result_len={len(raw_result)} | result={raw_result[:200]}"
         )
 
-        # 4. 自动检测生成的文件并上传（追加在截断后的文本末尾）
-        file_results = await self._auto_upload_new_files()
-        if file_results:
-            raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
-
-        # 5. 包装为 AgentResult（根据子进程返回的前缀判断状态）
+        # 4. 执行成功时才上传生成的文件（失败的半成品不交付给用户）
         is_error = raw_result.startswith("❌")
         is_timeout = raw_result.startswith("⏱")
+        if not is_error and not is_timeout:
+            file_results = await self._auto_upload_new_files()
+            if file_results:
+                raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
 
         if is_error:
             return AgentResult(
