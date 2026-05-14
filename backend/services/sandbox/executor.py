@@ -40,12 +40,14 @@ class SandboxExecutor:
         upload_fn: Optional[Callable] = None,
         kernel_manager=None,
         conversation_id: str = "",
+        skills_dir: str = "",
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
         self._output_dir = output_dir        # 沙盒输出目录（自动上传）
         self._staging_dir = staging_dir      # staging 数据目录
         self._workspace_dir = workspace_dir  # 用户 workspace 目录
+        self._skills_dir = skills_dir        # 文件处理技能目录（只读）
         self._upload_fn = upload_fn          # 文件上传函数（注入）
         self._kernel_manager = kernel_manager  # KernelManager（有状态模式）
         self._conversation_id = conversation_id
@@ -128,6 +130,7 @@ class SandboxExecutor:
                         self._workspace_dir or "",
                         self._staging_dir or "",
                         self._output_dir or "",
+                        skills_dir=self._skills_dir,
                     )
                     if not kernel_ok:
                         break  # 池满且无法驱逐，直接降级
@@ -182,6 +185,7 @@ class SandboxExecutor:
                 self._output_dir or "",
                 self._timeout,
                 self._max_result_chars,
+                self._skills_dir,
             ),
         )
         proc.start()

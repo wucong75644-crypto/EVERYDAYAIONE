@@ -59,6 +59,9 @@ def build_sandbox_executor(
             output_dir=_output_dir, user_id=user_id, org_id=org_id,
         )
 
+    # 5. 文件处理技能目录（对标 Claude /mnt/skills/public/）
+    _skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
+
     return SandboxExecutor(
         timeout=timeout,
         max_result_chars=max_result_chars,
@@ -68,6 +71,7 @@ def build_sandbox_executor(
         upload_fn=_auto_upload,
         kernel_manager=kernel_manager,
         conversation_id=conversation_id,
+        skills_dir=_skills_dir,
     )
 
 

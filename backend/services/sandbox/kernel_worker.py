@@ -33,7 +33,7 @@ from services.sandbox.sandbox_constants import (
 from services.sandbox.validators import validate_code, truncate_result
 
 
-def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
+def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str, skills_dir: str = ""):
     """构建带路径安全检查的 open 函数。
 
     委托 build_scoped_open()（sandbox_worker.py 统一定义），
@@ -50,6 +50,7 @@ def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
     _global_scoped_open = build_scoped_open(
         workspace_dir, staging_dir, output_dir,
         original_open=_original_open,
+        skills_dir=skills_dir,
     )
 
     return _global_scoped_open
@@ -86,12 +87,14 @@ def _reset_security(
         sandbox_globals["shutil"] = scoped_shutil
 
 
-def _hide_paths(result: str, output_dir: str, workspace_dir: str) -> str:
+def _hide_paths(result: str, output_dir: str, workspace_dir: str, skills_dir: str = "") -> str:
     """路径替换为变量名（LLM 可直接用 OUTPUT_DIR/WORKSPACE_DIR 引用文件）"""
     if result and output_dir:
         result = result.replace(output_dir, "OUTPUT_DIR")
     if result and workspace_dir:
         result = result.replace(workspace_dir, "WORKSPACE_DIR")
+    if result and skills_dir:
+        result = result.replace(skills_dir, "SKILLS_DIR")
     return result
 
 
@@ -115,7 +118,7 @@ def _write_response(response: Dict[str, Any]) -> None:
 
 
 def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
-                max_result_chars: int = 8000) -> None:
+                max_result_chars: int = 8000, skills_dir: str = "") -> None:
     """Kernel Worker 主入口
 
     Args:
@@ -123,6 +126,7 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
         staging_dir: staging 数据目录（jail 内路径，如 /staging）
         output_dir: 输出目录（jail 内路径，如 /output）
         max_result_chars: 结果最大字符数
+        skills_dir: 文件处理技能目录（只读）
     """
     import os
 
@@ -138,7 +142,7 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
         os.makedirs(staging_dir, exist_ok=True)
 
     # 3. 构建 scoped open（进程生命周期内复用同一个闭包）
-    scoped_open = _setup_scoped_open(workspace_dir, staging_dir, output_dir)
+    scoped_open = _setup_scoped_open(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
 
     # 4. 替换 builtins.open + io.open
     import builtins
@@ -147,7 +151,7 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
     _io.open = scoped_open  # 堵住 io.open 绕过沙盒的漏洞
 
     # 5. 构建沙盒 globals（变量跨调用保留）
-    sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
+    sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
 
     # 取 scoped 引用（_reset_security 每次执行前重置用）
     _scoped_os = sandbox_globals.get("os")
@@ -212,7 +216,7 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             result = _exec_code(code, sandbox_globals, timeout)
 
             # 路径隐藏
-            result = _hide_paths(result, output_dir, workspace_dir)
+            result = _hide_paths(result, output_dir, workspace_dir, skills_dir)
 
             # 截断
             result = truncate_result(result, max_result_chars)
@@ -247,10 +251,10 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
 
 
 if __name__ == "__main__":
-    # 命令行启动：python kernel_worker.py <workspace_dir> <staging_dir> <output_dir> [max_result_chars]
+    # 命令行启动：python kernel_worker.py <workspace_dir> <staging_dir> <output_dir> [max_result_chars] [skills_dir]
     import sys as _sys
     if len(_sys.argv) < 4:
-        print("Usage: kernel_worker.py <workspace_dir> <staging_dir> <output_dir> [max_result_chars]",
+        print("Usage: kernel_worker.py <workspace_dir> <staging_dir> <output_dir> [max_result_chars] [skills_dir]",
               file=_sys.stderr)
         _sys.exit(1)
 
@@ -258,5 +262,6 @@ if __name__ == "__main__":
     _staging = _sys.argv[2]
     _output = _sys.argv[3]
     _max_chars = int(_sys.argv[4]) if len(_sys.argv) > 4 else 8000
+    _skills = _sys.argv[5] if len(_sys.argv) > 5 else ""
 
-    kernel_main(_workspace, _staging, _output, _max_chars)
+    kernel_main(_workspace, _staging, _output, _max_chars, skills_dir=_skills)
