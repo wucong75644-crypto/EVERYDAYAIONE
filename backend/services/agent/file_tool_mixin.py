@@ -637,7 +637,12 @@ class FileToolMixin:
         rel_path = record["relative_path"]
 
         # 从 OSS 下载回 workspace
-        target_path = executor.resolve_safe_path(rel_path)
+        # rel_path 已含 org 前缀（如 org/xxx/yyy/下载/file.xlsx），
+        # 需用 _workspace_base（/mnt/nas-workspace）拼接为绝对路径，
+        # 再走 resolve_safe_path 安全校验（确认在当前用户 _root 内）
+        from pathlib import Path as _Path
+        abs_path = str((_Path(executor._workspace_base) / rel_path).resolve())
+        target_path = executor.resolve_safe_path(abs_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -682,6 +687,7 @@ class FileToolMixin:
                         SELECT id, relative_path, oss_object_key
                         FROM deleted_files
                         WHERE org_id = %(org_id)s
+                          AND user_id = %(user_id)s
                           AND NOT purged
                           AND purge_after > now()
                           AND (relative_path = %(name)s
@@ -689,7 +695,7 @@ class FileToolMixin:
                         ORDER BY deleted_at DESC
                         LIMIT 1
                         """,
-                        {"org_id": self.org_id, "name": filename},
+                        {"org_id": self.org_id, "user_id": self.user_id, "name": filename},
                     )
                     row = await cur.fetchone()
                     if row:
