@@ -143,7 +143,7 @@ class Settings(BaseSettings):
 
     # Agent Loop 配置（多步工具编排）
     agent_loop_enabled: bool = True  # Agent Loop 总开关（False 退回 IntentRouter）
-    agent_loop_provider: str = "openrouter"  # 大脑提供商："dashscope" | "openrouter"
+    agent_loop_provider: str = "dashscope"  # 大脑提供商："dashscope" | "openrouter"
     agent_loop_max_turns: int = 8  # 最大循环轮数（支持多步查询+汇总）
     agent_loop_max_tokens: int = 100000  # 每次运行的总 token 预算（工具定义大，每轮约10K）
     agent_loop_model: str = "deepseek-v4-pro"  # Agent 大脑模型（dashscope）
