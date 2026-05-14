@@ -2262,7 +2262,9 @@
       "WebFetch(domain:www.latent.space)",
       "WebFetch(domain:anthropic.com)",
       "Bash(./git-push.sh \"refactor: 精简skill为纯探索指南——3文件166行替代7文件975行，只教AI怎么看清文件结构\")",
-      "Bash(./git-push.sh \"fix: 用户上传/插入/@引用的文件注册到FilePathCache——三个入口统一注册，所有工具共享路径\")"
+      "Bash(./git-push.sh \"fix: 用户上传/插入/@引用的文件注册到FilePathCache——三个入口统一注册，所有工具共享路径\")",
+      "Bash(python -m pytest tests/test_file_tool_mixin.py -q --tb=short)",
+      "Bash(./git-push.sh \"refactor: file_search去掉Parquet转换——NAS本地磁盘后不需要搬运到staging，AI直接读workspace文件\")"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -492,53 +492,6 @@ class TestFileReadImageOnly:
 
 
 # ============================================================
-# _sanitize_filename
-# ============================================================
-
-
-class TestSanitizeFilename:
-    """安全文件名转换"""
-
-    def test_ascii_name_preserved(self):
-        from services.agent.file_tool_mixin import _sanitize_filename
-        assert _sanitize_filename("sales_2024.xlsx", 1) == "sales_2024_001.parquet"
-
-    def test_chinese_name_becomes_file(self):
-        """中文名全部移除后为空 → 兜底 'file'"""
-        from services.agent.file_tool_mixin import _sanitize_filename
-        result = _sanitize_filename("销售数据.xlsx", 2)
-        assert result == "file_002.parquet"
-
-    def test_mixed_name_keeps_ascii(self):
-        """中英混合保留英文部分（下划线也保留）"""
-        from services.agent.file_tool_mixin import _sanitize_filename
-        result = _sanitize_filename("Q1_销售报告_final.csv", 3)
-        # Q1_ 保留，中文移除，_final 保留 → Q1__final
-        assert result == "Q1__final_003.parquet"
-        assert ".parquet" in result
-
-    def test_special_chars_removed(self):
-        """特殊字符（空格、括号、全角）被移除"""
-        from services.agent.file_tool_mixin import _sanitize_filename
-        result = _sanitize_filename("data (copy) [v2].xlsx", 4)
-        assert result == "datacopyv2_004.parquet"
-
-    def test_long_name_truncated(self):
-        """超长名截断到 30 字符"""
-        from services.agent.file_tool_mixin import _sanitize_filename
-        long_name = "a" * 50 + ".xlsx"
-        result = _sanitize_filename(long_name, 5)
-        stem = result.replace("_005.parquet", "")
-        assert len(stem) <= 30
-
-    def test_index_formatting(self):
-        """序号格式：3位补零"""
-        from services.agent.file_tool_mixin import _sanitize_filename
-        assert _sanitize_filename("x.csv", 99).endswith("_099.parquet")
-        assert _sanitize_filename("x.csv", 1).endswith("_001.parquet")
-
-
-# ============================================================
 # _fmt_size
 # ============================================================
 
@@ -672,181 +625,29 @@ class TestFileSearchRouting:
 
 
 # ============================================================
-# _prepare_single_file
+# _describe_single_file
 # ============================================================
 
 
-class TestPrepareSingleFile:
-    """单个文件准备：数据文件 vs 非数据文件"""
+class TestDescribeSingleFile:
+    """单个文件描述（NAS 模式：不做转换，只返回路径）"""
 
     @pytest.mark.asyncio
-    async def test_pdf_returns_pdfplumber_hint(self, tmp_path):
-        """PDF → 返回 pdfplumber 使用提示"""
-        pdf = tmp_path / "doc.pdf"
-        pdf.write_bytes(b"fake pdf")
+    async def test_returns_workspace_path(self, tmp_path):
+        """返回 WORKSPACE_DIR 路径"""
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        f = ws / "report.xlsx"
+        f.write_bytes(b"fake")
 
         mixin = FakeMixin()
         executor = MagicMock()
-        result = await mixin._prepare_single_file(executor, str(pdf), str(tmp_path / "staging"))
+        executor.workspace_root = str(ws)
+        result = await mixin._describe_single_file(executor, str(f))
 
         assert result.status == "success"
-        assert "pdfplumber" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_docx_returns_docx_hint(self, tmp_path):
-        """DOCX → 返回 docx.Document 使用提示"""
-        doc = tmp_path / "report.docx"
-        doc.write_bytes(b"fake docx")
-
-        mixin = FakeMixin()
-        executor = MagicMock()
-        result = await mixin._prepare_single_file(executor, str(doc), str(tmp_path / "staging"))
-
-        assert result.status == "success"
-        assert "Document" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_txt_returns_open_hint(self, tmp_path):
-        """TXT → 返回 open() 使用提示"""
-        txt = tmp_path / "notes.txt"
-        txt.write_text("hello")
-
-        mixin = FakeMixin()
-        executor = MagicMock()
-        result = await mixin._prepare_single_file(executor, str(txt), str(tmp_path / "staging"))
-
-        assert result.status == "success"
-        assert "open(" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_csv_triggers_parquet_conversion(self, tmp_path):
-        """CSV → 触发 Parquet 转换"""
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("a,b\n1,2")
-
-        stg = tmp_path / "staging"
-        stg.mkdir()
-
-        mixin = FakeMixin()
-        executor = MagicMock()
-
-        with patch.object(mixin, "_batch_prepare_parquet", new_callable=AsyncMock,
-                          return_value=[{"original": "data.csv", "parquet": "data_001.parquet", "rows": 1, "cols": 2}]):
-            result = await mixin._prepare_single_file(executor, str(csv_file), str(stg))
-
-        assert result.status == "success"
-        assert "data_001.parquet" in result.summary
-        assert "duckdb.sql" in result.summary
-
-
-# ============================================================
-# _batch_prepare_parquet
-# ============================================================
-
-
-class TestBatchPrepareParquet:
-    """批量 Parquet 转换 + manifest"""
-
-    @pytest.mark.asyncio
-    async def test_manifest_written(self, tmp_path):
-        """转换后写入 _manifest.json"""
-        stg = tmp_path / "staging"
-        stg.mkdir()
-
-        # Mock ensure_parquet_cache 返回一个假的 cache 路径
-        cache_file = stg / "cached.parquet"
-        cache_file.write_bytes(b"fake parquet")
-
-        mixin = FakeMixin()
-
-        with patch("services.agent.data_query_cache.ensure_parquet_cache",
-                    new_callable=AsyncMock, return_value=(str(cache_file), None)), \
-             patch.object(FileToolMixin, "_parquet_shape", return_value=(100, 5)):
-            entries = await mixin._batch_prepare_parquet(
-                [{"name": "test.xlsx", "abs_path": "/fake/test.xlsx", "size": 1024}],
-                str(stg),
-            )
-
-        assert len(entries) == 1
-        assert entries[0]["original"] == "test.xlsx"
-        assert entries[0]["rows"] == 100
-        assert entries[0]["cols"] == 5
-
-        manifest_path = stg / "_manifest.json"
-        assert manifest_path.exists()
-        import json
-        manifest = json.loads(manifest_path.read_text())
-        assert len(manifest["files"]) == 1
-        assert "updated_at" in manifest
-
-    @pytest.mark.asyncio
-    async def test_incremental_update(self, tmp_path):
-        """已存在的 manifest 条目不重复转换"""
-        stg = tmp_path / "staging"
-        stg.mkdir()
-
-        # 预先写入 manifest + 对应的 parquet 文件
-        existing_pq = stg / "test_001.parquet"
-        existing_pq.write_bytes(b"existing")
-        import json
-        manifest = {"files": [{"original": "test.xlsx", "parquet": "test_001.parquet", "rows": 50, "cols": 3}]}
-        (stg / "_manifest.json").write_text(json.dumps(manifest))
-
-        mixin = FakeMixin()
-
-        # ensure_parquet_cache 不应被调用
-        with patch("services.agent.data_query_cache.ensure_parquet_cache",
-                    new_callable=AsyncMock) as mock_cache:
-            entries = await mixin._batch_prepare_parquet(
-                [{"name": "test.xlsx", "abs_path": "/fake/test.xlsx", "size": 1024}],
-                str(stg),
-            )
-
-        mock_cache.assert_not_called()
-        assert len(entries) == 1
-        assert entries[0]["rows"] == 50  # 复用旧值
-
-    @pytest.mark.asyncio
-    async def test_conversion_error_skipped(self, tmp_path):
-        """转换失败 → 跳过该文件，不影响其他文件"""
-        stg = tmp_path / "staging"
-        stg.mkdir()
-
-        mixin = FakeMixin()
-
-        with patch("services.agent.data_query_cache.ensure_parquet_cache",
-                    new_callable=AsyncMock, side_effect=Exception("conversion failed")):
-            entries = await mixin._batch_prepare_parquet(
-                [{"name": "bad.xlsx", "abs_path": "/fake/bad.xlsx", "size": 1024}],
-                str(stg),
-            )
-
-        assert len(entries) == 0
-        # manifest 仍然被写入（空文件列表）
-        assert (stg / "_manifest.json").exists()
-
-    @pytest.mark.asyncio
-    async def test_parquet_file_copied_directly(self, tmp_path):
-        """Parquet 文件直接 copy 到 staging，不需要转换"""
-        stg = tmp_path / "staging"
-        stg.mkdir()
-
-        src = tmp_path / "data.parquet"
-        src.write_bytes(b"parquet content")
-
-        mixin = FakeMixin()
-
-        with patch.object(FileToolMixin, "_parquet_shape", return_value=(200, 8)):
-            entries = await mixin._batch_prepare_parquet(
-                [{"name": "data.parquet", "abs_path": str(src), "size": 1024}],
-                str(stg),
-            )
-
-        assert len(entries) == 1
-        # 文件已 copy 到 staging
-        dst = stg / entries[0]["parquet"]
-        assert dst.exists()
-        assert dst.read_bytes() == b"parquet content"
+        assert "report.xlsx" in result.summary
+        assert "WORKSPACE_DIR" in result.summary
 
 
 # ============================================================
@@ -963,61 +764,5 @@ class TestRestoreFilePreciseMatch:
         assert not bak.exists(), "backup should be deleted after restore"
 
 
-# ============================================================
-# _list_directory MAX_AUTO_CONVERT 限制
-# ============================================================
 
-
-class TestListDirectoryAutoConvert:
-    """列目录自动 Parquet 转换限制"""
-
-    @pytest.mark.asyncio
-    async def test_max_auto_convert_limit(self, mixin):
-        """超过 5 个数据文件时只转换前 5 个"""
-        executor = MagicMock()
-        executor._format_size = MagicMock(return_value="10 KB")
-        executor.workspace_root = "/tmp/ws"
-        executor.file_list_entries = AsyncMock(return_value={
-            "error": None,
-            "path": ".",
-            "dirs": [],
-            "files": [
-                {"name": f"file{i}.xlsx", "abs_path": f"/tmp/ws/file{i}.xlsx", "size": 2000}
-                for i in range(8)  # 8 个 Excel
-            ],
-        })
-
-        with patch.object(mixin, "_batch_prepare_parquet", new_callable=AsyncMock,
-                          return_value=[]) as mock_batch:
-            result = await mixin._list_directory(executor, {}, "/tmp/staging")
-
-        # 应该只传入 5 个文件
-        called_files = mock_batch.call_args[0][0]
-        assert len(called_files) == 5
-        # 结果应提示还有 3 个未转换
-        assert "3 个数据文件未自动转换" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_small_files_skipped(self, mixin):
-        """小于 1KB 的数据文件不自动转换"""
-        executor = MagicMock()
-        executor._format_size = MagicMock(return_value="500 B")
-        executor.workspace_root = "/tmp/ws"
-        executor.file_list_entries = AsyncMock(return_value={
-            "error": None,
-            "path": ".",
-            "dirs": [],
-            "files": [
-                {"name": "tiny.csv", "abs_path": "/tmp/ws/tiny.csv", "size": 500},  # < 1KB
-                {"name": "big.csv", "abs_path": "/tmp/ws/big.csv", "size": 5000},   # > 1KB
-            ],
-        })
-
-        with patch.object(mixin, "_batch_prepare_parquet", new_callable=AsyncMock,
-                          return_value=[]) as mock_batch:
-            await mixin._list_directory(executor, {}, "/tmp/staging")
-
-        called_files = mock_batch.call_args[0][0]
-        names = [f["name"] for f in called_files]
-        assert "big.csv" in names
-        assert "tiny.csv" not in names
+# Parquet 转换限制测试已删除（NAS 模式不做转换）
