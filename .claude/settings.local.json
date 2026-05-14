@@ -2261,7 +2261,8 @@
       "Bash(./git-push.sh \"feat: 对齐Claude SKILL.md模式——沙盒注入SKILLS_DIR，AI处理文件前自主读取对应处理指南\")",
       "WebFetch(domain:www.latent.space)",
       "WebFetch(domain:anthropic.com)",
-      "Bash(./git-push.sh \"refactor: 精简skill为纯探索指南——3文件166行替代7文件975行，只教AI怎么看清文件结构\")"
+      "Bash(./git-push.sh \"refactor: 精简skill为纯探索指南——3文件166行替代7文件975行，只教AI怎么看清文件结构\")",
+      "Bash(./git-push.sh \"fix: 用户上传/插入/@引用的文件注册到FilePathCache——三个入口统一注册，所有工具共享路径\")"
     ],
     "additionalDirectories": [
       "/tmp"

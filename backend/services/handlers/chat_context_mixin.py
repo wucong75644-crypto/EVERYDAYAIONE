@@ -113,6 +113,27 @@ class ChatContextMixin:
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
 
+        # 注册用户提供的文件到会话级路径缓存（上传/插入/@引用三个入口统一注册）
+        # 让后续所有工具（code_execute/file_delete 等）都能通过文件名查到绝对路径
+        if workspace_files:
+            try:
+                from services.agent.file_path_cache import get_file_cache
+                from core.workspace import resolve_workspace_dir
+                from core.config import get_settings
+                _org_id = getattr(self, "org_id", None)
+                _ws_dir = resolve_workspace_dir(
+                    get_settings().file_workspace_root, user_id, _org_id,
+                )
+                _cache = get_file_cache(conversation_id)
+                for f in workspace_files:
+                    wp = f.get("workspace_path", "")
+                    if wp:
+                        import os
+                        _abs = os.path.join(_ws_dir, wp)
+                        _cache.register(wp, _abs)
+            except Exception as e:
+                logger.debug(f"Workspace file cache registration failed | error={e}")
+
         # workspace 文件不走多模态 image_url（大部分格式不支持），由 AI 调工具读取
         if workspace_files:
             ws_urls = {f["url"] for f in workspace_files if f.get("url")}
