@@ -2258,7 +2258,10 @@
       "Bash(./git-push.sh \"fix: code_execute失败时不触发auto-upload——半成品文件不应作为结果交付用户\")",
       "Bash(grep -r \"system_prompt\\\\|SYSTEM\\\\|You are\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/*.py)",
       "Bash(grep -r \"get_tool_system_prompt\\\\|get_tools_by_names\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
-      "Bash(./git-push.sh \"feat: 对齐Claude SKILL.md模式——沙盒注入SKILLS_DIR，AI处理文件前自主读取对应处理指南\")"
+      "Bash(./git-push.sh \"feat: 对齐Claude SKILL.md模式——沙盒注入SKILLS_DIR，AI处理文件前自主读取对应处理指南\")",
+      "WebFetch(domain:www.latent.space)",
+      "WebFetch(domain:anthropic.com)",
+      "Bash(./git-push.sh \"refactor: 精简skill为纯探索指南——3文件166行替代7文件975行，只教AI怎么看清文件结构\")"
     ],
     "additionalDirectories": [
       "/tmp"
