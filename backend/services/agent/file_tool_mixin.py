@@ -128,8 +128,9 @@ class FileToolMixin:
     async def _list_directory(
         self, executor: Any, args: Dict[str, Any],
     ) -> Any:
-        """列出目录内容，返回文件列表和 WORKSPACE_DIR 路径"""
+        """列出目录内容，返回文件列表和 WORKSPACE_DIR 路径，注册到共享缓存"""
         from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
 
         data = await executor.file_list_entries(**{
             k: v for k, v in args.items() if k in ("path", "show_hidden")
@@ -147,6 +148,8 @@ class FileToolMixin:
         lines = [f"目录: {data['path']} | 共 {total} 项"]
         lines.append("─" * 50)
 
+        cache = get_file_cache(self.conversation_id)
+
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/")
 
@@ -159,6 +162,9 @@ class FileToolMixin:
             except ValueError:
                 rel_path = f["name"]
             lines.append(f"  {rel_path}  ({size_str})")
+            # 注册到共享缓存：文件名和相对路径都能找到绝对路径
+            cache.register(f["name"], f["abs_path"])
+            cache.register(rel_path, f["abs_path"])
 
         if data.get("truncated"):
             lines.append("\n已达显示上限，部分条目未显示")
@@ -171,8 +177,9 @@ class FileToolMixin:
     async def _search_files(
         self, executor: Any, args: Dict[str, Any],
     ) -> Any:
-        """搜索文件，返回结果列表"""
+        """搜索文件，返回结果列表，注册到共享缓存"""
         from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
 
         raw_result = await executor.file_search(**{
             k: v for k, v in args.items()
@@ -181,6 +188,21 @@ class FileToolMixin:
 
         if "未找到" in raw_result or not raw_result.strip():
             return AgentResult(summary=raw_result or "未找到匹配文件", status="empty")
+
+        # 从搜索结果中提取文件路径并注册到缓存
+        cache = get_file_cache(self.conversation_id)
+        _file_re = re.compile(r"\s+\[文件\]\s+(\S+)")
+        for line in raw_result.split("\n"):
+            m = _file_re.match(line)
+            if m:
+                rel_path = m.group(1).split(":")[0]
+                try:
+                    target = executor.resolve_safe_path(rel_path)
+                    if target.is_file():
+                        cache.register(target.name, str(target))
+                        cache.register(rel_path, str(target))
+                except Exception:
+                    pass
 
         lines = [raw_result]
         lines.append("")
@@ -191,8 +213,9 @@ class FileToolMixin:
     async def _describe_single_file(
         self, executor: Any, abs_path: str,
     ) -> Any:
-        """返回单个文件的基本信息和 WORKSPACE_DIR 路径"""
+        """返回单个文件的基本信息和 WORKSPACE_DIR 路径，注册到共享缓存"""
         from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
 
         name = Path(abs_path).name
         size = os.path.getsize(abs_path)
@@ -202,6 +225,11 @@ class FileToolMixin:
             rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
         except ValueError:
             rel_path = name
+
+        # 注册到共享缓存
+        cache = get_file_cache(self.conversation_id)
+        cache.register(name, abs_path)
+        cache.register(rel_path, abs_path)
 
         lines = [
             f"{name} ({size_str})",
@@ -315,14 +343,23 @@ class FileToolMixin:
                 metadata={"retryable": False},
             )
 
+        # 路径解析：优先从共享缓存取绝对路径，兜底 resolve_safe_path
+        from services.agent.file_path_cache import get_file_cache
+        resolved_path = get_file_cache(self.conversation_id).resolve(path)
+        if not resolved_path:
+            try:
+                resolved_path = str(executor.resolve_safe_path(path))
+            except Exception:
+                resolved_path = path
+
         try:
-            result = await executor.file_read(path=path)
+            result = await executor.file_read(path=resolved_path)
             from services.file_read_extensions import FileReadResult
             if isinstance(result, FileReadResult):
                 return result
             return AgentResult(summary=result or "", status="success")
         except Exception as e:
-            logger.error(f"file_read image | error={e}")
+            logger.error(f"file_read image | path={path} | resolved={resolved_path} | error={e}")
             return AgentResult(
                 summary=f"图片读取失败: {e}", status="error",
                 error_message=str(e), metadata={"retryable": True},
