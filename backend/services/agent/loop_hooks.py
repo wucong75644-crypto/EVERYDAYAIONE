@@ -317,7 +317,7 @@ class AmbiguityDetectionHook(LoopHook):
             "role": "system",
             "content": (
                 f"⚠ {tool_name} 返回了 {count} 条匹配结果。"
-                f"禁止自行选择，必须停止调用工具，在回复中将候选列表展示给用户，"
+                f"禁止自行选择，必须将候选列表展示给用户，"
                 f"让用户确认具体目标后再继续查询。"
             ),
         })

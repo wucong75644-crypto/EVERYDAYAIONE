@@ -209,7 +209,7 @@ def evaluate(
     if result_class == ResultClass.FATAL:
         return StopDecision.WRAP_UP
 
-    # ── 需要用户输入 / 歧义 → wrap_up（AI 在回复中向用户提问） ──
+    # ── 需要用户输入 / 歧义 → wrap_up ──
     if result_class in (ResultClass.NEEDS_INPUT, ResultClass.AMBIGUOUS):
         return StopDecision.WRAP_UP
 
