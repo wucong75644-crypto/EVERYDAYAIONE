@@ -48,7 +48,6 @@ MOCK_RESULTS: Dict[str, str] = {
     "erp_api_search": "搜索结果: 推荐使用 local_stock_query",
     "code_execute": "代码执行完成",
     "route_to_chat": "OK",
-    "ask_user": "OK",
 }
 
 MAX_TURNS = 3
@@ -114,7 +113,7 @@ async def run_erp_agent_test(
         turn_tools = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
         for tc in turn_tools:
             name = tc["name"]
-            if name not in ("route_to_chat", "ask_user"):
+            if name != "route_to_chat":
                 all_selected.append(name)
 
         # 构建 messages 继续循环
@@ -130,8 +129,8 @@ async def run_erp_agent_test(
             mock = MOCK_RESULTS.get(tc["name"], f"{tc['name']} OK")
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": mock})
 
-        # route_to_chat / ask_user → 退出
-        if any(tc["name"] in ("route_to_chat", "ask_user") for tc in turn_tools):
+        # route_to_chat → 退出
+        if any(tc["name"] == "route_to_chat" for tc in turn_tools):
             break
 
     return {

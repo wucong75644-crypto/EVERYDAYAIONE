@@ -118,13 +118,13 @@ class TestValidateToolArgs:
         assert "doc_type" in err
         assert "必填" in err
 
-    def test_missing_required_guides_to_ask_user(self):
-        """必填缺失错误信息包含 ask_user 引导"""
+    def test_missing_required_guides_user_confirmation(self):
+        """必填缺失错误信息引导向用户确认"""
         args = {"days": 3}
         _, err = validate_tool_args("local_db_export", args, TOOLS)
         assert err is not None
-        assert "ask_user" in err
         assert "禁止自行猜测" in err
+        assert "向用户确认" in err
 
     def test_hallucinated_and_missing_required(self):
         """幻觉参数被丢弃 + 必填缺失同时触发"""

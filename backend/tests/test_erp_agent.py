@@ -213,30 +213,6 @@ class TestToolExecutorERPAgent:
 
     @pytest.mark.asyncio
     @patch("services.erp_agent.ERPAgent.execute")
-    async def test_erp_agent_ask_user_returns_agent_result(self, mock_execute):
-        """ERP Agent 返回 ask_user → AgentResult 携带 ask_user_question"""
-        from services.agent.agent_result import AgentResult
-        from services.tool_executor import ToolExecutor
-
-        mock_execute.return_value = AgentResult(
-            status="ask_user", summary="需要排除刷单吗？",
-            ask_user_question="需要排除刷单吗？",
-            source="erp_agent", tokens_used=100,
-        )
-
-        exe = ToolExecutor(
-            db=MagicMock(), user_id="t",
-            conversation_id="t", org_id="test",
-        )
-        result = await exe._erp_agent({"query": "查销售额"})
-
-        # ask_user 冒泡现在由 ChatToolMixin 处理，tool_executor 只返回 AgentResult
-        assert isinstance(result, AgentResult)
-        assert result.status == "ask_user"
-        assert result.ask_user_question == "需要排除刷单吗？"
-
-    @pytest.mark.asyncio
-    @patch("services.erp_agent.ERPAgent.execute")
     async def test_erp_agent_normal_returns_agent_result(self, mock_execute):
         """ERP Agent 正常返回 → AgentResult"""
         from services.agent.agent_result import AgentResult
@@ -1368,18 +1344,6 @@ class TestAgentResultStructured:
         assert r.source == "erp_agent"
 
 
-# ============================================================
-# ask_user 冒泡：ERPAgent.execute → status="ask_user"
-# ============================================================
-
-
-class TestERPAgentAskUserBubble:
-    """ERPAgent.execute 检测 exit_via_ask_user → status + question"""
-
-    @pytest.mark.asyncio
-    async def test_ask_user_exit_sets_status(self):
-        # ask_user / normal_exit 测试已删除（旧 tool loop 路径）
-        pass
 
 
 # ============================================================

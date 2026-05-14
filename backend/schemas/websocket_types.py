@@ -41,11 +41,6 @@ class WSMessageType(str, Enum):
     CONTENT_BLOCK_ADD = "content_block_add"
     SUGGESTIONS_READY = "suggestions_ready"
 
-    # === AI 主动沟通 ===
-    ASK_USER_REQUEST = "ask_user_request"        # 后端 → 前端：AI 追问
-    ASK_USER_RESPONSE = "ask_user_response"      # 前端 → 后端：用户回答
-    ASK_USER_DISMISS = "ask_user_dismiss"         # 前端 → 后端：用户忽略/跳过
-
     # === 表单交互 ===
     FORM_SUBMIT = "form_submit"                   # 前端 → 后端：表单提交
     FORM_SUBMIT_RESULT = "form_submit_result"     # 后端 → 前端：表单提交结果

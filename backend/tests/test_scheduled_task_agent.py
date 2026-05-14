@@ -89,11 +89,6 @@ class TestBuildLightContext:
         assert "上次执行摘要" in user_msg
         assert "昨日总销售额 12.5 万" in user_msg
 
-    def test_no_ask_user_instruction(self):
-        """指令明确禁止 ask_user（无人交互场景）"""
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        messages = agent._build_light_context()
-        assert "不要使用 ask_user" in messages[0]["content"]
 
 
 # ════════════════════════════════════════════════════════

@@ -150,7 +150,6 @@ _PLAN_FULL_PROMPT = """\
 
 ## 允许的操作
 - 调 erp_analyze 分析任务结构
-- 调 ask_user 向用户确认方案或澄清需求
 - 调 search_knowledge / web_search 辅助分析
 - 调 code_execute 做辅助计算
 - 读取文件（file_read / file_list / file_search / file_info）
@@ -158,7 +157,7 @@ _PLAN_FULL_PROMPT = """\
 ## 工作流程
 1. 调 erp_analyze 分析用户请求，获取执行计划
 2. 向用户展示计划摘要（涉及哪些域、每步做什么、步骤间依赖）
-3. 调 ask_user 请求用户确认
+3. 向用户展示方案后停止（不要调用任何工具），等用户确认
 4. 用户确认后，系统会自动解锁执行工具
 
 ## 跨域关联查询建议
@@ -167,19 +166,19 @@ _PLAN_FULL_PROMPT = """\
 这比逐个编码传递更高效、更稳定。
 
 ## 重要
-- 你的回合只能以 ask_user（澄清/确认）或展示分析结果结束
+- 你的回合只能以展示分析结果结束（需要澄清时直接在回复中提问）
 - 不要假设用户意图，不确定就问
 - MUST NOT 调用 erp_agent、generate_image、generate_video、social_crawler"""
 
 _PLAN_SPARSE_PROMPT = """\
 [提醒] 计划模式仍在生效（完整说明见前文）。\
-只能分析不能执行，用 erp_analyze 分析，ask_user 确认。\
+只能分析不能执行，用 erp_analyze 分析，展示方案等用户确认。\
 MUST NOT 调用 erp_agent。"""
 
 _PLAN_EXIT_PROMPT = """\
 === 计划已确认，执行模式已解锁 ===
 用户已批准你的方案。你现在可以调用 erp_agent 执行数据操作。
-按照已确认的方案执行，不要偏离。如有疑问用 ask_user 澄清。"""
+按照已确认的方案执行，不要偏离。如有疑问直接在回复中澄清。"""
 
 _AUTO_FULL_PROMPT = """\
 === 自动模式已激活 ===

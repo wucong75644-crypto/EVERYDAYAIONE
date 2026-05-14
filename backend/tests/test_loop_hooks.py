@@ -121,14 +121,13 @@ class TestProgressNotifyHook:
 
     @pytest.mark.asyncio
     async def test_exit_signal_tools_skipped(self):
-        """退出信号工具（route_to_chat / ask_user）不推送进度"""
+        """退出信号工具（route_to_chat）不推送进度"""
         hook = ProgressNotifyHook(max_turns=20)
         ctx = make_ctx(task_id="task_001")
 
         with patch(
             "services.websocket_manager.ws_manager.send_to_task_or_user", new_callable=AsyncMock,
         ) as mock_publish:
-            await hook.on_tool_start(ctx, "ask_user", {})
             await hook.on_tool_start(ctx, "route_to_chat", {})
             mock_publish.assert_not_called()
 
@@ -320,7 +319,7 @@ class TestFailureReflectionHook:
 # ════════════════════════════════════════════════════════
 
 class TestAmbiguityDetectionHook:
-    """AmbiguityDetectionHook：[A1] 多条匹配时注入 ask_user 提示"""
+    """AmbiguityDetectionHook：[A1] 多条匹配时注入用户确认提示"""
 
     @pytest.mark.asyncio
     async def test_multi_product_match_triggers(self):
@@ -342,8 +341,8 @@ class TestAmbiguityDetectionHook:
         )
         assert len(ctx.messages) == 1
         assert ctx.messages[0]["role"] == "system"
-        assert "ask_user" in ctx.messages[0]["content"]
         assert "5" in ctx.messages[0]["content"]
+        assert "用户确认" in ctx.messages[0]["content"]
 
     @pytest.mark.asyncio
     async def test_multi_sku_match_triggers(self):

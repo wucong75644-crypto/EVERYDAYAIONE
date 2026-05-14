@@ -292,12 +292,6 @@ register(ToolEntry(
     description="汇总数据回复用户",
     always_include=True,
 ))
-register(ToolEntry(
-    name="ask_user",
-    domain="common",
-    description="信息不足时追问用户",
-    always_include=True,
-))
 
 # ============================================================
 # 同义词表（Level 1 扩展，~50 条覆盖 80% 场景）

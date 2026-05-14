@@ -78,8 +78,6 @@ export type WSMessageType =
   | 'suggestions_ready'
   | 'thinking_chunk'
   | 'image_partial_update'
-  // AI 主动沟通
-  | 'ask_user_request'
   // 表单交互
   | 'form_submit'
   | 'form_submit_result'

@@ -978,7 +978,7 @@ class TestToolRegistration:
         }
         routing_tools = {
             "route_to_chat", "route_to_image",
-            "route_to_video", "ask_user",
+            "route_to_video",
         }
         assert erp_tools.issubset(ALL_TOOLS)
         assert routing_tools.issubset(ALL_TOOLS)

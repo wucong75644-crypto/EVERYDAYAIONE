@@ -136,7 +136,7 @@ class TestFileRefFullChain:
         registry = _FakeFileRegistry()
         registry.register("warehouse", "execute", ref)
 
-        # Step 3: 序列化（模拟 ask_user 冻结）
+        # Step 3: 序列化（模拟状态冻结）
         snapshot = registry.to_snapshot()
         assert len(snapshot) == 1
         fr_data = snapshot[0]["file_ref"]

@@ -104,7 +104,6 @@ class ToolLoopExecutor:
         accumulated_text = ""
         total_tokens = 0
         is_llm_synthesis = False
-        exit_via_ask_user = False
         empty_turns = 0
         recent_calls: List[str] = []
         context_recovery_used = False
@@ -119,9 +118,6 @@ class ToolLoopExecutor:
         tracker = FailureTracker()
         stop_reason = ""
         wrap_up_reason = ""
-        _force_ask_user_next_turn = False
-        _tools_stripped = False  # strip tools 是否生效过
-        _original_selected_tools = list(selected_tools)  # strip tools 恢复用
 
         for turn in range(self.config.max_turns):
             hook_ctx.turn = turn + 1
@@ -131,23 +127,6 @@ class ToolLoopExecutor:
             )
             if not should_continue:
                 break
-
-            # ── strip tools：ASK_USER 决策后只保留 ask_user ──
-            if _force_ask_user_next_turn:
-                selected_tools[:] = [
-                    t for t in _original_selected_tools
-                    if t.get("function", {}).get("name") == "ask_user"
-                ]
-                _tools_stripped = True
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "工具连续执行遇到问题，继续重试不太可能成功。"
-                        "请用 ask_user 向用户说明："
-                        "1) 你在尝试做什么 2) 遇到了什么 3) 需要用户提供什么。"
-                    ),
-                })
-                _force_ask_user_next_turn = False
 
             try:
                 tc_acc, turn_text, turn_tokens, _pt, _ct = await self._stream_one_turn(
@@ -190,9 +169,7 @@ class ToolLoopExecutor:
 
             # 退出信号工具命中
             if any(tc["name"] in self.strategy.exit_signals for tc in completed):
-                has_ask_user = any(tc["name"] == "ask_user" for tc in completed)
-                is_llm_synthesis = has_ask_user or bool(turn_text)
-                exit_via_ask_user = has_ask_user
+                is_llm_synthesis = bool(turn_text)
                 break
 
             # ── 停止策略：分类 + 追踪 + 决策 ──
@@ -233,9 +210,7 @@ class ToolLoopExecutor:
                     f"turns_remaining={self.config.max_turns - (turn + 1)}"
                 )
 
-            if decision == StopDecision.ASK_USER:
-                _force_ask_user_next_turn = True
-            elif decision == StopDecision.WRAP_UP:
+            if decision == StopDecision.WRAP_UP:
                 stop_reason = "wrap_up_failure"
                 wrap_up_reason = (
                     f"consecutive_failures={tracker.consecutive_failures} | "
@@ -249,13 +224,9 @@ class ToolLoopExecutor:
                 f"tools={[tc['name'] for tc in completed]}"
             )
 
-        # strip tools 后恢复（确保不影响调用方的 selected_tools）
-        if _tools_stripped:
-            selected_tools[:] = _original_selected_tools
-
         return await self._finalize(
             accumulated_text, total_tokens, turn,
-            is_llm_synthesis, exit_via_ask_user, hook_ctx,
+            is_llm_synthesis, hook_ctx,
             stop_reason=stop_reason, wrap_up_reason=wrap_up_reason,
         )
 
@@ -284,14 +255,13 @@ class ToolLoopExecutor:
         total_tokens: int,
         turn: int,
         is_llm_synthesis: bool,
-        exit_via_ask_user: bool,
         hook_ctx: HookContext,
         stop_reason: str = "",
         wrap_up_reason: str = "",
     ) -> LoopResult:
         """循环退出后的兜底文本 / wrap_up 合成 / hook 链 + 打包 LoopResult"""
-        # ── wrap_up 合成（stop_reason 非空 且 不是 ask_user 退出） ──
-        if stop_reason and not exit_via_ask_user and not is_llm_synthesis:
+        # ── wrap_up 合成（stop_reason 非空） ──
+        if stop_reason and not is_llm_synthesis:
             from services.agent.stop_policy import synthesize_wrap_up
             synthesis = await synthesize_wrap_up(
                 adapter=self.adapter,
@@ -318,8 +288,8 @@ class ToolLoopExecutor:
             )
             accumulated_text = self.config.no_synthesis_fallback_text
 
-        # Hook 链：合成阶段（仅 LLM 合成且非 ask_user 退出）
-        if is_llm_synthesis and not exit_via_ask_user and accumulated_text:
+        # Hook 链：合成阶段（LLM 合成时触发）
+        if is_llm_synthesis and accumulated_text:
             for hook in self.hooks:
                 accumulated_text = await hook.on_text_synthesis(
                     hook_ctx, accumulated_text,
@@ -330,7 +300,6 @@ class ToolLoopExecutor:
             total_tokens=total_tokens,
             turns=min(turn + 1, self.config.max_turns),
             is_llm_synthesis=is_llm_synthesis,
-            exit_via_ask_user=exit_via_ask_user,
             collected_files=self._collected_files,
             stop_reason=stop_reason,
             wrap_up_reason=wrap_up_reason,
@@ -553,7 +522,7 @@ class ToolLoopExecutor:
             )
             return (
                 f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
-                f"请用 ask_user 告知用户操作未执行，询问是否需要重新确认。"
+                f"请告知用户操作未执行，询问是否需要重新确认。"
             )
         except Exception as e:
             logger.warning(
@@ -610,14 +579,7 @@ class ToolLoopExecutor:
 
             # 退出信号工具：不实际执行，记 OK 后短路
             if tool_name in self.strategy.exit_signals:
-                try:
-                    args = json.loads(tc["arguments"])
-                except json.JSONDecodeError:
-                    args = {}
-                if tool_name == "route_to_chat":
-                    accumulated = turn_text if turn_text else ""
-                else:  # ask_user
-                    accumulated = args.get("message", turn_text)
+                accumulated = turn_text if turn_text else ""
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": "OK",
                 })

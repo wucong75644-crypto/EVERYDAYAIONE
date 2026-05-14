@@ -50,16 +50,6 @@ class TestL4EndToEnd:
         assert "1,769 笔" in patched
         assert "1,186 笔" in patched
 
-    def test_l4_skipped_for_ask_user_exit(self):
-        """ask_user 消息不应被 L4 校验（ask_user 是追问，可能含假设日期）。
-
-        验证方式：直接检查 erp_agent._run_tool_loop 的退出标志逻辑。
-        真实路径需 mock adapter/executor，这里只验证正则层面的安全性 — 假设
-        追问消息没被强制 patch。
-        """
-        # 此测试是 smoke test，真实验证在 erp_agent 层的集成
-        # 参见 erp_agent.py 的 exit_via_ask_user 逻辑
-        pass
 
     def test_l4_deviations_empty_when_correct(self):
         """模型输出正确时，L4 不修改任何内容。"""
