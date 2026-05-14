@@ -206,14 +206,11 @@ MUST NOT 在确认前调用任何执行类工具。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
 四个目录：WORKSPACE_DIR（用户文件）、STAGING_DIR（ERP 数据缓存）、OUTPUT_DIR（输出，自动上传）、SKILLS_DIR（文件处理指南）。
 
-处理文件前，先在 code_execute 中读取对应的处理指南，再按指南操作：
-  open(SKILLS_DIR + '/excel.md')  — Excel (.xlsx/.xls)
-  open(SKILLS_DIR + '/csv.md')    — CSV/TSV
+处理文件前，先在 code_execute 中读取对应的处理指南，再按指南探索文件结构：
+  open(SKILLS_DIR + '/excel.md')  — Excel/CSV
   open(SKILLS_DIR + '/pdf.md')    — PDF
-  open(SKILLS_DIR + '/docx.md')   — Word
-  open(SKILLS_DIR + '/pptx.md')   — PPT
-  open(SKILLS_DIR + '/parquet.md') — Parquet (staging 数据)
-读取指南和探索文件结构可以合并在同一次 code_execute 中完成。
+  open(SKILLS_DIR + '/docx.md')   — Word/PPT
+第一次 code_execute 只读指南+探索结构，不写分析逻辑。探索完成后再写处理代码。
 
 ERP 查询结果在 STAGING_DIR（Parquet），用 duckdb.sql() 查询，列名用双引号包裹。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
