@@ -2250,7 +2250,11 @@
       "Bash(./git-push.sh \"fix: file_delete和restore_file注册tool_domains——启动时WARNING未注册域导致工具不可见\")",
       "Bash(./git-push.sh \"fix: ask_user工具结果从OK改为'等待用户回答'——避免前端误展示为已确认\")",
       "Bash(./git-push.sh 'fix: ask_user恢复时替换占位tool_result+展示文本改为等待用户回答 *)",
-      "Bash(./git-push.sh 'fix: restore_file改为从OSS恢复已删除文件——替代已砍掉的本地备份机制 *)"
+      "Bash(./git-push.sh 'fix: restore_file改为从OSS恢复已删除文件——替代已砍掉的本地备份机制 *)",
+      "Bash(python -m pytest tests/test_chat_tools.py tests/test_chat_tool_mixin.py tests/test_stop_policy.py tests/test_loop_hooks.py tests/test_tool_loop_parallel.py tests/test_websocket_schemas.py tests/test_agent_result.py tests/test_agent_tools.py tests/test_tool_args_validator.py tests/test_v6_integration.py -x --tb=short -q)",
+      "Bash(python -m pytest tests/test_chat_tools.py tests/test_stop_policy.py tests/test_websocket_schemas.py tests/test_agent_result.py tests/test_agent_tools.py tests/test_tool_args_validator.py -x --tb=short -q)",
+      "Bash(python -m pytest tests/test_file_tool_mixin.py::TestRestoreFile::test_restore_path_traversal_blocked -v --tb=short)",
+      "Bash(./git-push.sh \"refactor: 对齐Claude模式——用户附加文件直接给WORKSPACE_DIR路径，AI在code_execute里自己读，不再强制走file_search\")"
     ],
     "additionalDirectories": [
       "/tmp"
