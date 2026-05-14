@@ -177,7 +177,7 @@ async def run_benchmark(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "input": user_input,
                 "expected": list(expected),
                 "selected": list(selected_names - {
-                    "route_to_chat", "ask_user", "code_execute",
+                    "route_to_chat", "code_execute",
                     "erp_api_search", "search_knowledge",
                     "get_conversation_context",
                 }),

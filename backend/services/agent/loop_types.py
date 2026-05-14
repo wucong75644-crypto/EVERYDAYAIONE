@@ -50,7 +50,7 @@ class LoopStrategy:
     这里只放影响循环控制流的决策。
     """
     # 退出信号工具集（命中后立即结束循环）
-    # ERPAgent: {"route_to_chat", "ask_user"}
+    # ERPAgent: {"route_to_chat"}
     # ScheduledTaskAgent: frozenset()  # 无交互场景
     exit_signals: frozenset = field(default_factory=frozenset)
 
@@ -77,7 +77,6 @@ class LoopResult:
     total_tokens: int
     turns: int
     is_llm_synthesis: bool          # True = LLM 合成的结论；False = 走兜底
-    exit_via_ask_user: bool = False  # 是否通过 ask_user 退出
     collected_files: List[Dict[str, Any]] = field(default_factory=list)
     # 工具循环中提取的 [FILE] 标记，独立通道透传，不经过 LLM
     # 每项: {"url": str, "name": str, "mime_type": str, "size": int}

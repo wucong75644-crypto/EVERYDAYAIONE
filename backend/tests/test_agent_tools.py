@@ -98,18 +98,6 @@ class TestValidateToolCall:
             "route_to_video", {"model": "vidu"},
         ) is False
 
-    def test_ask_user_valid(self):
-        """ask_user 必填齐全→True"""
-        assert validate_tool_call("ask_user", {
-            "message": "你想要什么？", "reason": "need_info",
-        }) is True
-
-    def test_ask_user_missing_reason(self):
-        """ask_user 缺 reason→False"""
-        assert validate_tool_call(
-            "ask_user", {"message": "hello"},
-        ) is False
-
     def test_erp_tool_valid(self):
         """ERP 工具必填齐全→True"""
         assert validate_tool_call(
@@ -137,8 +125,8 @@ class TestToolSets:
         assert ALL_TOOLS == INFO_TOOLS | ROUTING_TOOLS
 
     def test_routing_tools_expected(self):
-        """ROUTING 工具包含 4 个核心工具"""
-        expected = {"route_to_chat", "route_to_image", "route_to_video", "ask_user"}
+        """ROUTING 工具包含 3 个核心工具"""
+        expected = {"route_to_chat", "route_to_image", "route_to_video"}
         assert expected <= ROUTING_TOOLS
 
     def test_info_tools_has_core(self):
@@ -373,7 +361,6 @@ class TestErpRoutingPrompt:
         """P2: 降级策略在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "降级" in ERP_ROUTING_PROMPT or "远程工具重试" in ERP_ROUTING_PROMPT
-        assert "ask_user" in ERP_ROUTING_PROMPT
 
     def test_encoding_identification_documented(self):
         """编码识别流程在提示词中"""
@@ -454,10 +441,10 @@ class TestToolRegistry:
             assert tool in TOOL_REGISTRY, f"Missing: {tool}"
 
     def test_registry_has_always_include(self):
-        """注册表有 6 个常驻工具"""
+        """注册表有 5 个常驻工具"""
         from config.tool_registry import TOOL_REGISTRY
         always = [t for t in TOOL_REGISTRY.values() if t.always_include]
-        assert len(always) == 6
+        assert len(always) == 5
 
     def test_local_tools_priority_1(self):
         """本地工具 priority=1"""

@@ -5,7 +5,7 @@ LoopHook 基类（所有方法 no-op default）+ 5 个具体实现：
 - ToolAuditHook：fire-and-forget 工具审计日志
 - TemporalValidatorHook：L4 时间事实校验（合成阶段改写文本）
 - FailureReflectionHook：[A2] 工具失败时注入分析提示，引导模型自我纠错
-- AmbiguityDetectionHook：[A1] 工具返回多条匹配时注入提示，引导模型用 ask_user 确认
+- AmbiguityDetectionHook：[A1] 工具返回多条匹配时注入提示，引导模型向用户确认
 
 设计参考：OpenAI Agents SDK RunHooks / Anthropic Claude Code 中间件链。
 每个 hook 单一职责，可独立单测，可任意组合。
@@ -93,7 +93,7 @@ class ProgressNotifyHook(LoopHook):
     ) -> None:
         if not ctx.task_id:
             return
-        if tool_name in ("route_to_chat", "ask_user"):
+        if tool_name == "route_to_chat":
             return  # 退出信号工具不推
         await self._publish(ctx, tool_name=tool_name)
 
@@ -272,7 +272,7 @@ class FailureReflectionHook(LoopHook):
 # ============================================================
 
 class AmbiguityDetectionHook(LoopHook):
-    """工具返回多条匹配时，注入 system message 引导模型用 ask_user 确认
+    """工具返回多条匹配时，注入 system message 引导模型向用户确认
 
     触发条件：local_product_identify 返回"匹配到N个商品/SKU"且 N≥2。
 
@@ -317,7 +317,7 @@ class AmbiguityDetectionHook(LoopHook):
             "role": "system",
             "content": (
                 f"⚠ {tool_name} 返回了 {count} 条匹配结果。"
-                f"禁止自行选择，必须用 ask_user 将候选列表展示给用户，"
+                f"禁止自行选择，必须停止调用工具，在回复中将候选列表展示给用户，"
                 f"让用户确认具体目标后再继续查询。"
             ),
         })

@@ -1,13 +1,13 @@
-"""Agent 四态停止策略
+"""Agent 三态停止策略
 
-四态停止模型：continue → ask_user → wrap_up → hard_fail
+三态停止模型：continue → wrap_up → hard_fail
 运行时硬控制，不依赖模型自觉。
 
 设计文档：docs/document/TECH_Agent停止策略产品化.md
 
 核心组件：
 - ResultClass：工具结果分类（SUCCESS/RETRYABLE/NEEDS_INPUT/AMBIGUOUS/FATAL）
-- StopDecision：运行时决策（CONTINUE/ASK_USER/WRAP_UP/HARD_FAIL）
+- StopDecision：运行时决策（CONTINUE/WRAP_UP/HARD_FAIL）
 - FailureTracker：连续失败追踪器
 - StopPolicyConfig：可配置阈值（不同 Agent 可调）
 - classify_tool_result()：结构化信号优先 + 关键词 fallback
@@ -61,7 +61,6 @@ def most_severe(classes: list[ResultClass]) -> ResultClass:
 class StopDecision(str, Enum):
     """运行时停止决策"""
     CONTINUE = "continue"
-    ASK_USER = "ask_user"
     WRAP_UP = "wrap_up"
     HARD_FAIL = "hard_fail"
 
@@ -88,8 +87,6 @@ def classify_tool_result(
     from services.agent.agent_result import AgentResult
     if isinstance(result, AgentResult):
         if not result.is_failure:
-            if result.status == "ask_user":
-                return ResultClass.NEEDS_INPUT
             return ResultClass.SUCCESS
         # is_failure = True（error / timeout）
         if result.status == "timeout":
@@ -181,12 +178,8 @@ class FailureTracker:
 class StopPolicyConfig:
     """停止策略配置 — 不同 Agent 可装配不同参数"""
 
-    # ── 交互能力 ──
-    allow_ask_user: bool = True
-
     # ── 失败阈值 ──
     max_same_error_retries: int = 1       # 同类错误最多重试 N 次
-    max_consecutive_for_ask: int = 2      # 连续失败 N 次 → ask_user
     max_consecutive_for_wrap: int = 3     # 连续失败 N 次 → wrap_up
 
     # ── 收尾预算 ──
@@ -214,35 +207,23 @@ def evaluate(
 
     # ── 永久性错误 → 不重试 ──
     if result_class == ResultClass.FATAL:
-        if tracker.has_meaningful_progress:
-            return StopDecision.WRAP_UP
-        return _ask_or_wrap(config)
+        return StopDecision.WRAP_UP
 
-    # ── 需要用户输入 / 歧义 → 直接 ask_user ──
+    # ── 需要用户输入 / 歧义 → wrap_up（AI 在回复中向用户提问） ──
     if result_class in (ResultClass.NEEDS_INPUT, ResultClass.AMBIGUOUS):
-        return _ask_or_wrap(config)
+        return StopDecision.WRAP_UP
 
     # ── 可重试错误 → 按连续次数升级 ──
     if tracker.same_error_streak > config.max_same_error_retries:
-        return _ask_or_wrap(config)  # 同类错误重试够了
+        return StopDecision.WRAP_UP   # 同类错误重试够了
 
     if tracker.consecutive_failures >= config.max_consecutive_for_wrap:
         return StopDecision.WRAP_UP   # 连续失败达上限，强制收尾
-
-    if tracker.consecutive_failures >= config.max_consecutive_for_ask:
-        return _ask_or_wrap(config)   # 连续失败中等，建议问用户
 
     if turns_remaining <= config.wrap_up_turns_reserved:
         return StopDecision.WRAP_UP   # 预算快没了，收尾
 
     return StopDecision.CONTINUE      # 允许重试一次
-
-
-def _ask_or_wrap(config: StopPolicyConfig) -> StopDecision:
-    """allow_ask_user=False 时自动降级为 WRAP_UP"""
-    if config.allow_ask_user:
-        return StopDecision.ASK_USER
-    return StopDecision.WRAP_UP
 
 
 # ============================================================

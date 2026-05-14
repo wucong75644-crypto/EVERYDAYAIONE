@@ -1,14 +1,14 @@
 """
-Agent 四态停止策略单元测试
+Agent 停止策略单元测试
 
 覆盖：
 - ResultClass 分类器（classify_tool_result）：结构化信号优先 + 关键词 fallback
-- StopDecision 决策器（evaluate）：8 种决策场景
+- StopDecision 决策器（evaluate）：决策场景
 - most_severe：多工具并行取最严重
 - FailureTracker：连续失败追踪 + 签名匹配 + 重置
 - _slim_messages_for_synthesis：system 消息收集
 - build_synthesis_context：content_blocks + files 提取
-- StopPolicyConfig：allow_ask_user=False 降级
+- StopPolicyConfig：配置验证
 """
 
 import sys
@@ -58,11 +58,6 @@ class TestClassifyToolResult:
         r = AgentResult(summary="OK", status="success")
         assert classify_tool_result(r, "error") == ResultClass.SUCCESS
 
-    def test_agent_result_ask_user(self):
-        """AgentResult(status=ask_user) → NEEDS_INPUT"""
-        from services.agent.agent_result import AgentResult
-        r = AgentResult(summary="需要确认", status="ask_user")
-        assert classify_tool_result(r, "error") == ResultClass.NEEDS_INPUT
 
     def test_agent_result_timeout(self):
         """AgentResult(status=timeout, is_failure=True) → RETRYABLE"""
@@ -245,10 +240,10 @@ class TestEvaluate:
         t = FailureTracker()
         assert evaluate(t, ResultClass.SUCCESS, self._cfg(), 10) == StopDecision.CONTINUE
 
-    def test_fatal_no_progress_returns_ask_user(self):
-        """FATAL + 无进展 + allow_ask_user=True → ASK_USER"""
+    def test_fatal_no_progress_returns_wrap_up(self):
+        """FATAL + 无进展 → WRAP_UP"""
         t = FailureTracker()
-        assert evaluate(t, ResultClass.FATAL, self._cfg(), 10) == StopDecision.ASK_USER
+        assert evaluate(t, ResultClass.FATAL, self._cfg(), 10) == StopDecision.WRAP_UP
 
     def test_fatal_has_progress_returns_wrap_up(self):
         """FATAL + 有进展 → WRAP_UP"""
@@ -256,13 +251,13 @@ class TestEvaluate:
         t.has_meaningful_progress = True
         assert evaluate(t, ResultClass.FATAL, self._cfg(), 10) == StopDecision.WRAP_UP
 
-    def test_needs_input_returns_ask_user(self):
+    def test_needs_input_returns_wrap_up(self):
         t = FailureTracker()
-        assert evaluate(t, ResultClass.NEEDS_INPUT, self._cfg(), 10) == StopDecision.ASK_USER
+        assert evaluate(t, ResultClass.NEEDS_INPUT, self._cfg(), 10) == StopDecision.WRAP_UP
 
-    def test_ambiguous_returns_ask_user(self):
+    def test_ambiguous_returns_wrap_up(self):
         t = FailureTracker()
-        assert evaluate(t, ResultClass.AMBIGUOUS, self._cfg(), 10) == StopDecision.ASK_USER
+        assert evaluate(t, ResultClass.AMBIGUOUS, self._cfg(), 10) == StopDecision.WRAP_UP
 
     def test_retryable_first_time_returns_continue(self):
         """可重试 + 首次失败 → CONTINUE"""
@@ -271,12 +266,12 @@ class TestEvaluate:
         t.same_error_streak = 1
         assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), 10) == StopDecision.CONTINUE
 
-    def test_same_error_streak_exceeds_limit_returns_ask(self):
-        """同类错误超限 → ASK_USER"""
+    def test_same_error_streak_exceeds_limit_returns_wrap_up(self):
+        """同类错误超限 → WRAP_UP"""
         t = FailureTracker()
         t.same_error_streak = 2  # > max_same_error_retries=1
         t.consecutive_failures = 2
-        assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), 10) == StopDecision.ASK_USER
+        assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), 10) == StopDecision.WRAP_UP
 
     def test_consecutive_failures_reach_wrap_threshold(self):
         """连续失败 ≥3 → WRAP_UP"""
@@ -285,12 +280,12 @@ class TestEvaluate:
         t.same_error_streak = 1
         assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), 10) == StopDecision.WRAP_UP
 
-    def test_consecutive_failures_reach_ask_threshold(self):
-        """连续失败 ≥2 但 <3 → ASK_USER"""
+    def test_consecutive_failures_below_wrap_threshold_continues(self):
+        """连续失败 <3 → CONTINUE（允许重试）"""
         t = FailureTracker()
-        t.consecutive_failures = 2  # ≥ max_consecutive_for_ask=2
+        t.consecutive_failures = 2
         t.same_error_streak = 1
-        assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), 10) == StopDecision.ASK_USER
+        assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), 10) == StopDecision.CONTINUE
 
     def test_turns_remaining_triggers_wrap_up(self):
         """剩余轮次 ≤ 预留 → WRAP_UP"""
@@ -299,17 +294,6 @@ class TestEvaluate:
         t.same_error_streak = 1
         assert evaluate(t, ResultClass.RETRYABLE, self._cfg(), turns_remaining=1) == StopDecision.WRAP_UP
 
-    def test_allow_ask_user_false_degrades_to_wrap_up(self):
-        """allow_ask_user=False → ASK_USER 降级为 WRAP_UP"""
-        t = FailureTracker()
-        cfg = self._cfg(allow_ask_user=False)
-        assert evaluate(t, ResultClass.NEEDS_INPUT, cfg, 10) == StopDecision.WRAP_UP
-
-    def test_allow_ask_user_false_fatal_no_progress(self):
-        """allow_ask_user=False + FATAL + 无进展 → WRAP_UP（降级）"""
-        t = FailureTracker()
-        cfg = self._cfg(allow_ask_user=False)
-        assert evaluate(t, ResultClass.FATAL, cfg, 10) == StopDecision.WRAP_UP
 
 
 # ============================================================
@@ -524,23 +508,19 @@ class TestStopPolicyConfig:
 
     def test_default_values(self):
         cfg = StopPolicyConfig()
-        assert cfg.allow_ask_user is True
         assert cfg.max_same_error_retries == 1
-        assert cfg.max_consecutive_for_ask == 2
         assert cfg.max_consecutive_for_wrap == 3
         assert cfg.wrap_up_turns_reserved == 1
 
     def test_scheduled_task_config(self):
-        """ScheduledTaskAgent 配置：无交互 + 低容忍度"""
+        """ScheduledTaskAgent 配置：低容忍度"""
         cfg = StopPolicyConfig(
-            allow_ask_user=False,
             max_consecutive_for_wrap=2,
         )
-        assert cfg.allow_ask_user is False
         assert cfg.max_consecutive_for_wrap == 2
 
     def test_frozen_dataclass(self):
         """frozen=True → 不可修改"""
         cfg = StopPolicyConfig()
         with pytest.raises(AttributeError):
-            cfg.allow_ask_user = False
+            cfg.max_consecutive_for_wrap = 5

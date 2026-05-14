@@ -247,7 +247,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         # staging 文件注册到共享路径缓存（其他工具可直接用文件名引用）
         self._register_staging_files(result)
 
-        # 返回 AgentResult，文件通道/ask_user/display/token 由 ChatToolMixin 统一处理
+        # 返回 AgentResult，文件通道/display/token 由 ChatToolMixin 统一处理
         return result
 
     async def _image_agent(self, args: Dict[str, Any]) -> "AgentResult":

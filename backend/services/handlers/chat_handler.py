@@ -105,22 +105,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
         return task_id
 
-    async def _stream_direct_reply(self, task_id, message_id, conversation_id, user_id, text):
-        """Agent Loop ask_user：大脑直接回复，跳过 LLM 调用"""
-        try:
-            await ws_manager.send_to_task_or_user(task_id, user_id, build_message_start(
-                task_id=task_id, conversation_id=conversation_id,
-                message_id=message_id, model="agent",
-            ))
-            await ws_manager.send_to_task_or_user(task_id, user_id, build_message_chunk(
-                task_id=task_id, conversation_id=conversation_id,
-                message_id=message_id, chunk=text, accumulated=text,
-            ))
-            await self.on_complete(task_id=task_id, result=[TextPart(text=text)], credits_consumed=0)
-            logger.info(f"Direct reply sent | task_id={task_id} | len={len(text)}")
-        except Exception as e:
-            logger.error(f"Direct reply error | task_id={task_id} | error={e}")
-            await self.on_error(task_id=task_id, error_code="DIRECT_REPLY_FAILED", error_message=str(e))
 
     async def _save_accumulated_content(self, task_id: str, content: str) -> None:
         """将累积内容写入数据库（供刷新恢复使用）"""
@@ -140,160 +124,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         except Exception as e:
             logger.warning(f"Failed to save accumulated_blocks | task_id={task_id} | error={e}")
 
-    # ================================================================
-    # ask_user 冻结/恢复（设计文档：TECH_AI主动沟通与打断机制.md §4.2）
-    # ================================================================
-
-    async def _freeze_for_ask_user(
-        self,
-        ask_info: Dict[str, Any],
-        messages: List[Dict[str, Any]],
-        task_id: str,
-        conversation_id: str,
-        message_id: str,
-        user_id: str,
-        model_id: str,
-        content_blocks: List[Dict[str, Any]],
-        tool_context_state: Dict[str, Any],
-        budget_snapshot: Dict[str, Any],
-    ) -> None:
-        """冻结当前工具循环状态到 DB，WS 推送追问给前端"""
-        import json as _json
-
-        interaction_id = str(uuid.uuid4())
-        question = ask_info["message"]
-
-        # 序列化 messages 和循环快照
-        # file_registry / dag_progress 为新增字段（§15.2 老格式兼容：
-        # _restore_from_pending 用 .get() 取，老格式返回空列表/None）
-        loop_snapshot = {
-            "content_blocks": content_blocks,
-            "tool_context_state": tool_context_state,
-            "model_id": model_id,
-            "budget_snapshot": budget_snapshot,
-            "file_registry": [],  # 由 ToolLoopExecutor._file_registry.to_snapshot() 填充
-            "dag_progress": None,  # DAG 模式由 ERPAgent 填充
-        }
-
-        try:
-            self.db.table("pending_interaction").insert({
-                "id": interaction_id,
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "org_id": self.org_id,
-                "frozen_messages": _json.dumps(messages, ensure_ascii=False),
-                "question": question,
-                "source": "chat",
-                "tool_call_id": ask_info["tool_call_id"],
-                "loop_snapshot": _json.dumps(loop_snapshot, ensure_ascii=False),
-                "status": "pending",
-            }).execute()
-        except Exception as e:
-            logger.error(f"Failed to freeze pending_interaction | error={e}")
-            return
-
-        # WS 推送追问请求给前端
-        from schemas.websocket_builders import build_ask_user_request
-        await ws_manager.send_to_task_or_user(
-            task_id, user_id,
-            build_ask_user_request(
-                task_id=task_id,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                interaction_id=interaction_id,
-                question=question,
-                source="chat",
-            ),
-        )
-        logger.info(
-            f"ask_user frozen | interaction={interaction_id} | "
-            f"conv={conversation_id} | question={question[:50]}"
-        )
-
-    def _check_pending_interaction(
-        self, conversation_id: str,
-    ) -> Optional[Dict[str, Any]]:
-        """检查是否有待恢复的 pending interaction"""
-        try:
-            result = self.db.table("pending_interaction") \
-                .select("*") \
-                .eq("conversation_id", conversation_id) \
-                .eq("status", "pending") \
-                .maybe_single() \
-                .execute()
-            data = result.data
-            # 类型校验：排除 MagicMock 等非法数据
-            if data and isinstance(data, dict) and "frozen_messages" in data:
-                return data
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to check pending_interaction | error={e}")
-            return None
-
-    def _restore_from_pending(
-        self,
-        pending: Dict[str, Any],
-        user_answer: str,
-    ) -> tuple:
-        """从 pending interaction 恢复冻结状态
-
-        Returns:
-            (messages, content_blocks, tool_context_state, budget_snapshot,
-             file_registry, dag_progress)
-        """
-        import json as _json
-
-        # 反序列化 frozen_messages
-        frozen = pending["frozen_messages"]
-        messages = _json.loads(frozen) if isinstance(frozen, str) else frozen
-
-        # 用户回答替换 ask_user 的占位 tool_result（冻结时注入的 "OK"）
-        _ask_tcid = pending["tool_call_id"]
-        _replaced = False
-        for m in messages:
-            if m.get("role") == "tool" and m.get("tool_call_id") == _ask_tcid:
-                m["content"] = f"用户回答: {user_answer}"
-                _replaced = True
-                break
-        if not _replaced:
-            # 兜底：找不到占位消息时追加（兼容旧格式）
-            messages.append({
-                "role": "tool",
-                "tool_call_id": _ask_tcid,
-                "content": f"用户回答: {user_answer}",
-            })
-
-        # 恢复循环快照
-        snapshot_raw = pending.get("loop_snapshot", "{}")
-        snapshot = _json.loads(snapshot_raw) if isinstance(snapshot_raw, str) else snapshot_raw
-
-        content_blocks = snapshot.get("content_blocks", [])
-        tool_context_state = snapshot.get("tool_context_state", {})
-        budget_snapshot = snapshot.get("budget_snapshot", {})
-
-        # file_registry 已废弃（对齐 Claude 模式），保持接口兼容
-        file_registry = None
-
-        # 恢复 DAG 进度（§15.2 老格式兼容：None → 无 DAG 进度）
-        dag_progress = snapshot.get("dag_progress")
-
-        # 原子标记为已恢复（防并发：只有 status=pending 才能抢到）
-        try:
-            res = self.db.table("pending_interaction") \
-                .update({"status": "resumed"}) \
-                .eq("id", pending["id"]) \
-                .eq("status", "pending") \
-                .execute()
-            if not res.data:
-                logger.warning(f"Pending already resumed by another request | id={pending['id']}")
-        except Exception as e:
-            logger.warning(f"Failed to mark pending as resumed | error={e}")
-
-        return (
-            messages, content_blocks, tool_context_state,
-            budget_snapshot, file_registry, dag_progress,
-        )
-
     async def _stream_generate(
         self,
         task_id: str,
@@ -311,18 +141,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
     ) -> None:
         """流式生成主逻辑（支持工具循环 + smart_mode 自动重试）"""
         import time as _time
-
-        # Agent Loop ask_user：大脑主动回复，跳过 LLM 调用
-        direct_reply = (_params or {}).get("_direct_reply")
-        if direct_reply:
-            await self._stream_direct_reply(
-                task_id=task_id,
-                message_id=message_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                text=direct_reply,
-            )
-            return
 
         _start_time = _time.monotonic()
         accumulated_text = ""
@@ -464,42 +282,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             set_staging_dir(resolve_staging_dir(
                 _s.file_workspace_root, user_id, self.org_id, conversation_id,
             ))
-
-            # ── ask_user 恢复检查：有 pending 则替换 messages ──
-            _pending = self._check_pending_interaction(conversation_id)
-            if _pending:
-                text_content = self._extract_text_content(content)
-                _restored = self._restore_from_pending(_pending, text_content)
-                messages, _content_blocks, _tc_state, _bs, _file_reg, _dag_prog = _restored
-                # 恢复 tool_context discovered_tools
-                tool_context.discovered_tools = set(_tc_state.get("discovered_tools", []))
-                # 恢复预算消耗（只恢复轮次，累计 token 不再限制）
-                for _ in range(_bs.get("turns_used", 0)):
-                    _budget.use_turn()
-                # 上下文压缩（frozen_messages 可能较大）
-                from services.handlers.context_compressor import (
-                    enforce_tool_budget, enforce_history_budget_sync,
-                )
-                enforce_tool_budget(messages, _s.context_tool_token_budget)
-                enforce_history_budget_sync(messages, _s.context_history_token_budget)
-                logger.info(
-                    f"Resumed from pending | conv={conversation_id} | "
-                    f"frozen_msgs={len(messages)} | budget_turns={_bs.get('turns_used', 0)}"
-                )
-
-                # ── plan 模式恢复：用户确认后解锁执行工具 ──
-                if perm.is_plan:
-                    restored_mode = perm.exit_plan()
-                    # 重建 core_tools（现在包含 erp_agent）
-                    core_tools = get_tools_for_mode(perm.mode.value, org_id=self.org_id)
-                    # Google Search 重新追加
-                    if needs_google_search and hasattr(self._adapter, 'supports_google_search') and self._adapter.supports_google_search:
-                        core_tools.append(self._adapter.create_google_search_tool())
-                    logger.info(
-                        f"Plan confirmed → execution unlocked | "
-                        f"restored_mode={restored_mode.value} | "
-                        f"tools={[t['function']['name'] for t in core_tools]}"
-                    )
 
             # ── 打断 & 取消监听注册 ──
             ws_manager.register_steer_listener(task_id)
@@ -898,42 +680,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
                     logger.info(f"FormBlock pushed + persisted | task={task_id}")
                     break  # 停止工具循环，等用户确认表单
-
-                # ── ask_user 冻结检测 ──
-                _ask_info = getattr(self, "_ask_user_pending", None)
-                if _ask_info:
-                    self._ask_user_pending = None
-                    # 冻结当前状态到 DB
-                    await self._freeze_for_ask_user(
-                        ask_info=_ask_info,
-                        messages=messages,
-                        task_id=task_id,
-                        conversation_id=conversation_id,
-                        message_id=message_id,
-                        user_id=user_id,
-                        model_id=model_id,
-                        content_blocks=_content_blocks,
-                        tool_context_state={
-                            "discovered_tools": list(tool_context.discovered_tools),
-                        },
-                        budget_snapshot={
-                            "turns_used": _budget.turns_used,
-                        },
-                    )
-                    # 追问文本作为本轮输出
-                    _ask_text = _ask_info["message"]
-                    _separator = "\n\n" if accumulated_text else ""
-                    accumulated_text += _separator + _ask_text
-                    await ws_manager.send_to_task_or_user(
-                        task_id, user_id,
-                        build_message_chunk(
-                            task_id=task_id,
-                            conversation_id=conversation_id,
-                            message_id=message_id,
-                            chunk=_separator + _ask_text,
-                        ),
-                    )
-                    break
 
                 # ── 取消检查点：工具执行完后再检查一次 ──
                 if ws_manager.is_cancelled(task_id):

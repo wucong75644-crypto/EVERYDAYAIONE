@@ -1,6 +1,6 @@
 """AgentResult 统一结果类型单元测试。
 
-覆盖场景：success/error/timeout/ask_user/file_ref/data/insights
+覆盖场景：success/error/timeout/file_ref/data/insights
          __post_init__ / to_tool_content / validate / ToolOutput 别名
 设计文档: docs/document/TECH_Agent通信协议结构化.md
 """
@@ -166,18 +166,6 @@ class TestToMessageContent:
         assert len(blocks) == 1
         assert blocks[0]["type"] == "text"
 
-    def test_ask_user_result(self):
-        """追问结果"""
-        result = AgentResult(
-            status="ask_user",
-            summary="需要确认查询范围",
-            ask_user_question="请问要查哪个平台？",
-        )
-        blocks = result.to_message_content()
-
-        assert len(blocks) == 1
-        assert result.ask_user_question == "请问要查哪个平台？"
-
     def test_inline_data_preview_limit(self):
         """内联数据预览最多 5 行"""
         data = [{"id": i, "val": f"row_{i}"} for i in range(50)]
@@ -303,13 +291,6 @@ class TestFieldCompleteness:
         )
         assert result.collected_files == files
 
-    def test_has_ask_user_question(self):
-        result = AgentResult(
-            status="ask_user", summary="需确认",
-            ask_user_question="查哪个平台？",
-        )
-        assert result.ask_user_question == "查哪个平台？"
-
     def test_has_metadata(self):
         result = AgentResult(
             status="success", summary="ok",
@@ -327,7 +308,6 @@ class TestFieldCompleteness:
         assert result.tokens_used == 0
         assert result.confidence == 1.0
         assert result.error_message == ""
-        assert result.ask_user_question == ""
         assert result.insights is None
         assert result.follow_up is None
         assert result.metadata == {}

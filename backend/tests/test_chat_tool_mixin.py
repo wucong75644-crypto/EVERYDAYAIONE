@@ -389,84 +389,6 @@ class TestAccumulateToolCallDelta:
         assert acc[0]["arguments"] == "args"
 
 
-# ============================================================
-# ask_user 短路（_execute_single_tool）
-# ============================================================
-
-
-class TestAskUserShortCircuit:
-    """ask_user 工具短路：不经过 executor，直接返回 OK + 暂存追问信息"""
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_ask_user_returns_ok(self, mock_ws):
-        """ask_user 工具返回 (tc, 'OK', False)"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-
-        tc = {
-            "name": "ask_user",
-            "id": "tc_ask",
-            "arguments": '{"message": "请选择店铺", "reason": "need_info"}',
-        }
-        result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
-        )
-        tc_out, text, is_error, _display = result
-        assert text == "OK"
-        assert is_error is False
-        # executor 不应被调用
-        executor.execute.assert_not_called()
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_ask_user_stores_pending_info(self, mock_ws):
-        """ask_user 工具将追问信息暂存到 _ask_user_pending"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = _make_mixin()
-        mixin._ask_user_pending = None
-        mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-
-        tc = {
-            "name": "ask_user",
-            "id": "tc_ask",
-            "arguments": '{"message": "选时间范围", "reason": "ambiguous"}',
-        }
-        await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
-        )
-
-        assert mixin._ask_user_pending is not None
-        assert mixin._ask_user_pending["message"] == "选时间范围"
-        assert mixin._ask_user_pending["reason"] == "ambiguous"
-        assert mixin._ask_user_pending["tool_call_id"] == "tc_ask"
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_ask_user_bad_json_uses_default(self, mock_ws):
-        """ask_user 参数 JSON 解析失败时使用默认消息"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = _make_mixin()
-        mixin._ask_user_pending = None
-        mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-
-        tc = {
-            "name": "ask_user",
-            "id": "tc_ask",
-            "arguments": "invalid json",
-        }
-        await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
-        )
-
-        assert mixin._ask_user_pending["message"] == "请补充更多信息"
 
 
 # ============================================================
@@ -579,7 +501,6 @@ class TestExecuteToolCallsAgentResult:
 
         mixin = _make_mixin()
         mixin._pending_file_parts = []
-        mixin._ask_user_pending = None
         mixin._last_erp_display_text = None
         mixin._last_erp_display_files = []
         mixin._erp_agent_tokens = 0
@@ -613,35 +534,6 @@ class TestExecuteToolCallsAgentResult:
         assert mixin._pending_file_parts[0].url == "/tmp/a.parquet"
         assert mixin._erp_agent_tokens == 300
 
-    @pytest.mark.asyncio
-    async def test_ask_user_bubble_from_agent_result(self):
-        """AgentResult status=ask_user → _ask_user_pending 设置"""
-        from services.agent.agent_result import AgentResult
-
-        mixin = _make_mixin()
-        mixin._ask_user_pending = None
-
-        agent_result = AgentResult(
-            status="ask_user", summary="需确认",
-            ask_user_question="查哪个平台？",
-            source="erp_agent",
-        )
-
-        tc = {"name": "erp_agent", "id": "tc1"}
-        # 模拟循环逻辑
-        if (agent_result.status == "ask_user" and agent_result.ask_user_question
-                and not mixin._ask_user_pending):
-            mixin._ask_user_pending = {
-                "message": agent_result.ask_user_question,
-                "reason": "need_info",
-                "tool_call_id": tc["id"],
-                "source": agent_result.source,
-            }
-
-        assert mixin._ask_user_pending is not None
-        assert mixin._ask_user_pending["message"] == "查哪个平台？"
-        assert mixin._ask_user_pending["tool_call_id"] == "tc1"
-        assert mixin._ask_user_pending["source"] == "erp_agent"
 
 
 # ============================================================

@@ -136,15 +136,6 @@ class ChatToolMixin:
                             workspace_path=f.get("workspace_path"),
                         ))
                         logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
-            # ② ask_user 冒泡
-            if (result.status == "ask_user" and result.ask_user_question
-                    and not getattr(self, "_ask_user_pending", None)):
-                self._ask_user_pending = {
-                    "message": result.ask_user_question,
-                    "reason": "need_info",
-                    "tool_call_id": tc["id"],
-                    "source": result.source,
-                }
             # ③ 展示文本（供 content_block_add 推送）
             self._last_erp_display_text = result.summary
             self._last_erp_display_files = result.collected_files or []
@@ -193,20 +184,6 @@ class ChatToolMixin:
 
         tool_name = tc["name"]
         tool_call_id = tc["id"]
-
-        # ask_user 短路：提取追问信息，标记到 handler 级别供冻结逻辑使用
-        if tool_name == "ask_user":
-            try:
-                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError:
-                args = {}
-            self._ask_user_pending = {
-                "message": args.get("message", "请补充更多信息"),
-                "reason": args.get("reason", "need_info"),
-                "tool_call_id": tool_call_id,
-            }
-            _hint = "等待用户回答…"
-            return (tc, _hint, False, _hint)
 
         safety = get_safety_level(tool_name)
 

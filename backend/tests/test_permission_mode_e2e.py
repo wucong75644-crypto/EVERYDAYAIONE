@@ -4,7 +4,7 @@
 模拟 chat_handler._stream_generate 中的真实路径：
   1. 前端参数 → PermissionMode 初始化 → 工具列表构建 → 提示词注入
   2. Tool loop 内 reminder 注入
-  3. Plan 模式 ask_user 冻结 → 恢复 → exit_plan → 工具解锁
+  3. Plan 模式冻结 → 恢复 → exit_plan → 工具解锁
   4. 模式切换（auto→plan→确认→恢复auto / ask→plan→确认→恢复ask）
   5. 旧参数兼容（plan_mode=True → permission_mode="plan"）
 
@@ -101,7 +101,7 @@ class TestPlanModeE2E:
     用户切到计划模式，发送 "查供应商纸制品01的商品，再用编码查订单"
 
     预期流程：
-    请求1: plan_mode → erp_analyze → ask_user → 冻结
+    请求1: plan_mode → erp_analyze → 分析 → 冻结
     请求2: 用户确认 → 恢复 → exit_plan → erp_agent 解锁 → 执行
     """
 
@@ -126,7 +126,6 @@ class TestPlanModeE2E:
         """plan 模式保留分析工具"""
         names = _tool_names("plan")
         assert "erp_analyze" in names
-        assert "ask_user" in names
         assert "code_execute" in names
         assert "search_knowledge" in names
         assert "web_search" in names
@@ -143,24 +142,19 @@ class TestPlanModeE2E:
         """
         LLM 收到的 tools 列表：
         - erp_analyze ✅（分析用）
-        - ask_user ✅（确认用）
         - erp_agent ❌（被移除）
         """
         tools = get_tools_for_mode("plan", org_id="test")
         tool_dict = {t["function"]["name"]: t for t in tools}
         assert "erp_analyze" in tool_dict
-        assert "ask_user" in tool_dict
         assert "erp_agent" not in tool_dict
 
-    def test_request1_step7_ask_user_freezes(self):
+    def test_request1_step7_plan_mode_freezes(self):
         """
-        LLM 调 ask_user → 冻结状态到 DB
+        LLM 分析完成 → 冻结状态到 DB
         此时 perm 仍是 plan 模式（冻结前不变）
         """
         perm = PermissionMode(mode="plan")
-        # 模拟 turn 0: erp_analyze
-        # 模拟 turn 1: ask_user → 冻结
-        # 冻结时 perm 状态不变
         assert perm.is_plan is True
         assert perm.need_exit_attachment is False
 
@@ -247,7 +241,7 @@ class TestAutoToPlanSwitchE2E:
         names = _tool_names("plan")
         assert "erp_agent" not in names
 
-        # Step 4: ask_user 确认后 exit_plan
+        # Step 4: 用户确认后 exit_plan
         restored = perm.exit_plan()
         assert restored == Mode.AUTO
         assert perm.is_auto is True
@@ -357,7 +351,7 @@ class TestPlanPendingRestoreChain:
     """
     模拟 chat_handler 中 pending 恢复时的完整状态链：
 
-    请求1 (plan): perm 初始化 → plan 工具 → ask_user → 冻结
+    请求1 (plan): perm 初始化 → plan 工具 → 分析 → 冻结
     请求2 (plan): perm 初始化(plan) → 检测 pending → exit_plan → auto 工具 → exit attachment → LLM 执行
     """
 
@@ -369,14 +363,13 @@ class TestPlanPendingRestoreChain:
 
         # 验证请求1工具列表
         assert "erp_analyze" in tools1_names
-        assert "ask_user" in tools1_names
         assert "erp_agent" not in tools1_names
 
         # 验证请求1提示词
         prompt1 = perm1.get_reminder(turn=0)
         assert "计划模式已激活" in prompt1
 
-        # ask_user 冻结（perm1 状态不变）
+        # 分析完成冻结（perm1 状态不变）
         assert perm1.is_plan is True
 
         # ── 请求 2（用户发"确认执行"）──

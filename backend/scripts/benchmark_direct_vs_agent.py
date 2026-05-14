@@ -64,7 +64,6 @@ MOCK_RESULTS: Dict[str, str] = {
     "generate_video": "视频生成需要专用通道",
     "code_execute": "代码执行完成",
     "route_to_chat": "OK",
-    "ask_user": "OK",
 }
 
 MAX_TURNS = 3
@@ -136,7 +135,7 @@ async def run_llm_loop(
         turn_tools = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
         for tc in turn_tools:
             name = tc["name"]
-            if name not in ("route_to_chat", "ask_user"):
+            if name != "route_to_chat":
                 all_selected.append(name)
 
         # 构建 messages
@@ -153,7 +152,7 @@ async def run_llm_loop(
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": mock})
 
         # 退出条件
-        if any(tc["name"] in ("route_to_chat", "ask_user") for tc in turn_tools):
+        if any(tc["name"] == "route_to_chat" for tc in turn_tools):
             break
 
     return {"selected_tools": all_selected, "turns": turns_used}

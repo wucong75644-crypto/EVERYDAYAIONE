@@ -160,36 +160,6 @@ class TestGetChatTools:
         assert len(guest) < len(enterprise)
 
 
-class TestAskUserTool:
-    """ask_user 工具验证"""
-
-    def test_ask_user_in_chat_tools(self):
-        """get_chat_tools 返回列表中包含 ask_user"""
-        from config.chat_tools import get_chat_tools
-        tools = get_chat_tools(org_id="test_org")
-        names = {t["function"]["name"] for t in tools}
-        assert "ask_user" in names
-
-    def test_ask_user_in_guest_tools(self):
-        """散客也有 ask_user"""
-        from config.chat_tools import get_chat_tools
-        tools = get_chat_tools(org_id=None)
-        names = {t["function"]["name"] for t in tools}
-        assert "ask_user" in names
-
-    def test_ask_user_in_core_tools(self):
-        """ask_user 在 _CORE_TOOLS 集合中"""
-        from config.chat_tools import _CORE_TOOLS
-        assert "ask_user" in _CORE_TOOLS
-
-    def test_ask_user_schema(self):
-        """ask_user 工具 schema 包含 message 参数"""
-        from config.chat_tools import get_chat_tools
-        tools = get_chat_tools(org_id="test_org")
-        ask_user = next(t for t in tools if t["function"]["name"] == "ask_user")
-        params = ask_user["function"]["parameters"]
-        assert "message" in params["properties"]
-
 
 class TestCoreToolsExpanded:
     """扩展后的 _CORE_TOOLS 验证"""
@@ -197,7 +167,7 @@ class TestCoreToolsExpanded:
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        for ft in ("file_read", "file_list", "file_search"):
+        for ft in ("file_read", "file_search"):
             assert ft in names, f"{ft} 应在核心工具中"
         # file_write/file_edit 已移除
         assert "file_write" not in names
@@ -248,12 +218,6 @@ class TestToolsForMode:
         plan = get_tools_for_mode("plan", org_id="test")
         plan_names = {t["function"]["name"] for t in plan}
         assert "erp_analyze" in plan_names
-
-    def test_plan_mode_keeps_ask_user(self):
-        from config.chat_tools import get_tools_for_mode
-        plan = get_tools_for_mode("plan", org_id="test")
-        plan_names = {t["function"]["name"] for t in plan}
-        assert "ask_user" in plan_names
 
     def test_plan_mode_keeps_search_tools(self):
         from config.chat_tools import get_tools_for_mode
@@ -331,10 +295,6 @@ class TestFileConcurrencySafe:
     def test_file_read_is_safe(self):
         from config.chat_tools import is_concurrency_safe
         assert is_concurrency_safe("file_read")
-
-    def test_file_list_is_safe(self):
-        from config.chat_tools import is_concurrency_safe
-        assert is_concurrency_safe("file_list")
 
     def test_file_search_is_safe(self):
         from config.chat_tools import is_concurrency_safe

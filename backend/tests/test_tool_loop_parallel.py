@@ -53,7 +53,7 @@ def _make_executor(tools_for_parallel: int = 1) -> ToolLoopExecutor:
     executor = AsyncMock()
     config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
     strategy = LoopStrategy(
-        exit_signals=frozenset({"route_to_chat", "ask_user"}),
+        exit_signals=frozenset({"route_to_chat"}),
         enable_tool_expansion=True,
     )
     tle = ToolLoopExecutor(
@@ -87,7 +87,7 @@ class TestPhase1Preprocess:
         hook_ctx = _make_hook_ctx()
 
         completed = [
-            _tc("tc1", "ask_user", '{"message": "请确认"}'),
+            _tc("tc1", "route_to_chat", '{"system_prompt": "你好", "model": "gemini-3-pro"}'),
             _tc("tc2", "local_data", '{"doc_type": "order"}'),
         ]
 
@@ -95,8 +95,8 @@ class TestPhase1Preprocess:
             completed, [], "思考文本", hook_ctx,
         )
 
-        # ask_user 命中退出信号，local_data 不执行
-        assert result == "请确认"
+        # route_to_chat 命中退出信号，local_data 不执行
+        assert result is not None
         # messages 只有 assistant + tool(OK)，没有 local_data 的结果
         tool_msgs = [m for m in hook_ctx.messages if m.get("role") == "tool"]
         assert len(tool_msgs) == 1

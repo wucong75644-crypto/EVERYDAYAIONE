@@ -3,7 +3,7 @@
 验证 AgentResult 从 ERPAgent 到主 Agent LLM messages 的完整链路：
 - to_message_content() → list[dict] 正确注入 messages
 - file_ref block 路径准确
-- ChatToolMixin 正确处理文件通道 / ask_user / token 统计
+- ChatToolMixin 正确处理文件通道 / token 统计
 - KIE adapter 正确转换 list content → text parts
 - context_compressor 兼容 list content
 
@@ -80,7 +80,7 @@ class TestMessageInjection:
 
 
 class TestChatToolMixinAgentResult:
-    """ChatToolMixin 正确从 AgentResult 提取文件/ask_user/token"""
+    """ChatToolMixin 正确从 AgentResult 提取文件/token"""
 
     def test_collected_files_to_pending(self):
         """collected_files → _pending_file_parts"""
@@ -95,17 +95,6 @@ class TestChatToolMixinAgentResult:
         assert result.collected_files is not None
         assert len(result.collected_files) == 1
         assert result.collected_files[0]["url"] == "/tmp/a.parquet"
-
-    def test_ask_user_fields(self):
-        """ask_user 冒泡字段完整"""
-        result = AgentResult(
-            status="ask_user", summary="需确认",
-            ask_user_question="查哪个平台？",
-            source="erp_agent",
-        )
-        assert result.status == "ask_user"
-        assert result.ask_user_question == "查哪个平台？"
-        assert result.source == "erp_agent"
 
     def test_token_accumulation(self):
         """tokens_used 正确累加"""
@@ -138,11 +127,6 @@ class TestChatToolMixinAgentResult:
     def test_partial_is_not_failure(self):
         """status=partial 不应被判定为 failure（部分成功仍可用）"""
         result = AgentResult(status="partial", summary="部分数据", source="erp_agent")
-        assert not result.is_failure
-
-    def test_ask_user_is_not_failure(self):
-        """status=ask_user 不应被判定为 failure（追问行为）"""
-        result = AgentResult(status="ask_user", summary="需要更多信息", source="erp_agent")
         assert not result.is_failure
 
     def test_plan_is_not_failure(self):

@@ -46,7 +46,7 @@ INFO_TOOLS: Set[str] = {
 } | ERP_SYNC_TOOLS | ERP_LOCAL_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS | FILE_INFO_TOOLS
 
 ROUTING_TOOLS: Set[str] = {
-    "route_to_chat", "route_to_image", "route_to_video", "ask_user",
+    "route_to_chat", "route_to_image", "route_to_video",
 }
 
 ALL_TOOLS: Set[str] = INFO_TOOLS | ROUTING_TOOLS
@@ -95,13 +95,6 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "prompt": {"type": "string"},
             "model": {"type": "string"},
-        },
-    },
-    "ask_user": {
-        "required": ["message", "reason"],
-        "properties": {
-            "message": {"type": "string"},
-            "reason": {"type": "string"},
         },
     },
     # === ERP 工具 ===

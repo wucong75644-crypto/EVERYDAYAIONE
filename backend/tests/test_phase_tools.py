@@ -18,7 +18,6 @@ class TestBuildDomainTools:
         assert len(tools) > 5
         names = {t["function"]["name"] for t in tools}
         assert "route_to_chat" in names
-        assert "ask_user" in names
         assert "code_execute" in names
 
     def test_erp_contains_erp_tools(self):
@@ -46,7 +45,6 @@ class TestBuildDomainTools:
         names = {t["function"]["name"] for t in tools}
         assert "social_crawler" in names
         assert "route_to_chat" in names
-        assert "ask_user" in names
 
     def test_computer_returns_tools(self):
         tools = build_domain_tools("computer")

@@ -9,46 +9,6 @@ from typing import Any, Dict, List
 
 
 # ============================================================
-# 共用工具
-# ============================================================
-
-
-def _build_ask_user_tool() -> Dict[str, Any]:
-    """ask_user 追问工具"""
-    return {
-        "type": "function",
-        "function": {
-            "name": "ask_user",
-            "description": (
-                    "主动向用户提问以消除歧义、收集缺失信息或确认操作意图。"
-                    "决策原则：猜错一次=用户多等10秒+重新描述需求；"
-                    "问一次=用户花3秒选选项。不确定时，选代价小的那个。\n\n"
-                    "返回：用户的回复文本。\n\n"
-                    "不要用于：已有足够信息的场景（直接执行）；"
-                    "纯确认类（'要我继续吗'）— 信息无歧义时直接做。"
-                ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": (
-                            "追问内容，简洁+带 2-3 个选项引导用户快速选择。"
-                            "e.g. '请确认查询范围：1. 全平台 2. 仅淘宝 3. 仅拼多多'"
-                        ),
-                    },
-                    "reason": {
-                        "type": "string",
-                        "enum": ["need_info", "out_of_scope"],
-                        "description": "need_info=信息不足需补充, out_of_scope=超出当前能力范围",
-                    },
-                },
-            },
-        },
-    }
-
-
-# ============================================================
 # 域工具构建
 # ============================================================
 
@@ -71,7 +31,7 @@ BASE_AGENT_PROMPT = (
     "- 需要复杂计算时，用返回的 [完整数据] 路径在 code_execute 中处理\n\n"
     "## 退出规则\n"
     "- 数据采集完毕 → 直接用文字总结结论回复用户（不需要调 route_to_chat）\n"
-    "- 关键参数有歧义（多个合理值）→ 调 ask_user，列出可选条件让用户选择\n"
+    "- 关键参数有歧义（多个合理值）→ 直接用文字向用户列出可选条件，等待用户回复\n"
     "- route_to_chat 仅在需要指定特殊角色时使用，普通场景直接输出文字即可\n\n"
 )
 
@@ -117,18 +77,15 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
             *build_code_tools(),
             *build_file_tools(),  # file_search + file_read + restore_file
             _build_phase2_route_to_chat_tool(),
-            _build_ask_user_tool(),
         ],
         "crawler": lambda: [
             *build_crawler_tools(),
             _build_phase2_route_to_chat_tool(),
-            _build_ask_user_tool(),
         ],
         "computer": lambda: [
             *build_file_tools(),
             *build_code_tools(),
             _build_phase2_route_to_chat_tool(),
-            _build_ask_user_tool(),
         ],
     }
     builder = builders.get(domain)

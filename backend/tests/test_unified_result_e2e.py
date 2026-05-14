@@ -134,7 +134,7 @@ class TestERPQueryPath:
         assert isinstance(messages[0]["content"], list)
 
     def test_chat_tool_mixin_processes_agent_result(self):
-        """ChatToolMixin 正确处理 AgentResult 的文件/ask_user/token"""
+        """ChatToolMixin 正确处理 AgentResult 的文件/token"""
         result = AgentResult(
             summary="共 50 条订单",
             status="success",
@@ -152,27 +152,8 @@ class TestERPQueryPath:
         assert len(result.collected_files) == 1
         assert result.collected_files[0]["name"] == "a.xlsx"
         assert result.tokens_used == 500
-        assert result.status != "ask_user"
+        assert result.status == "success"
 
-    def test_ask_user_bubbles_with_source(self):
-        """ask_user 冒泡时 source 字段正确传递"""
-        result = AgentResult(
-            summary="需要确认查询范围",
-            status="ask_user",
-            source="erp_agent",
-            ask_user_question="请问要查哪个平台？",
-        )
-
-        # 模拟 ChatToolMixin 行为 (chat_tool_mixin.py:118-125)
-        assert result.status == "ask_user"
-        ask_info = {
-            "message": result.ask_user_question,
-            "reason": "need_info",
-            "tool_call_id": "call_456",
-            "source": result.source,
-        }
-        assert ask_info["source"] == "erp_agent"
-        assert ask_info["message"] == "请问要查哪个平台？"
 
 
 # ============================================================
