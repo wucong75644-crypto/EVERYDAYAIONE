@@ -83,7 +83,7 @@ class ChatContextMixin:
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
-            lines.append(f"  WORKSPACE_DIR + '/{wp}'  ({size_str})")
+            lines.append(f"  '{wp}'  ({size_str})")
 
         return "\n".join(lines)
 

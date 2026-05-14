@@ -171,7 +171,7 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-用户附加的文件路径已注入上下文（WORKSPACE_DIR + '/...'），在 code_execute 中直接读取。
+用户附加的文件路径已注入上下文（相对路径），在 code_execute 中直接 open('路径') 读取。
 
 ## 编排与串联
 
@@ -204,9 +204,10 @@ MUST NOT 在确认前调用任何执行类工具。
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
-四个目录：WORKSPACE_DIR（用户文件）、STAGING_DIR（ERP 数据缓存）、OUTPUT_DIR（输出，自动上传）、SKILLS_DIR（文件处理指南）。
+工作目录(cwd)就是用户文件目录，直接用相对路径读文件：open('文件名.xlsx')。
+STAGING_DIR 存 ERP 查询结果，OUTPUT_DIR 存输出文件（自动上传），SKILLS_DIR 存文件处理指南。
 
-处理文件前，先在 code_execute 中读取对应的处理指南，再按指南探索文件结构：
+处理文件前，先读取处理指南再探索结构：
   open(SKILLS_DIR + '/excel.md')  — Excel/CSV
   open(SKILLS_DIR + '/pdf.md')    — PDF
   open(SKILLS_DIR + '/docx.md')   — Word/PPT
