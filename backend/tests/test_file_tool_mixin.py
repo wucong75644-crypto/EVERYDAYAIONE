@@ -647,7 +647,7 @@ class TestDescribeSingleFile:
 
         assert result.status == "success"
         assert "report.xlsx" in result.summary
-        assert "WORKSPACE_DIR" in result.summary
+        assert "open(" in result.summary
 
 
 # ============================================================

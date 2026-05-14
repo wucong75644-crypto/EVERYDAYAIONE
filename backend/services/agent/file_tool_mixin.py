@@ -170,7 +170,7 @@ class FileToolMixin:
             lines.append("\n已达显示上限，部分条目未显示")
 
         lines.append("")
-        lines.append("在 code_execute 中用 WORKSPACE_DIR + '/文件名' 直接读取。")
+        lines.append("在 code_execute 中直接用相对路径读取：open('文件名')")
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -206,7 +206,7 @@ class FileToolMixin:
 
         lines = [raw_result]
         lines.append("")
-        lines.append("在 code_execute 中用 WORKSPACE_DIR + '/文件名' 直接读取。")
+        lines.append("在 code_execute 中直接用相对路径读取：open('文件名')")
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -234,7 +234,7 @@ class FileToolMixin:
         lines = [
             f"{name} ({size_str})",
             "",
-            f"在 code_execute 中直接读取：WORKSPACE_DIR + '/{rel_path}'",
+            f"在 code_execute 中直接读取：open('{rel_path}')",
         ]
 
         return AgentResult(summary="\n".join(lines), status="success")
