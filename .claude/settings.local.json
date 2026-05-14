@@ -2255,7 +2255,10 @@
       "Bash(python -m pytest tests/test_chat_tools.py tests/test_stop_policy.py tests/test_websocket_schemas.py tests/test_agent_result.py tests/test_agent_tools.py tests/test_tool_args_validator.py -x --tb=short -q)",
       "Bash(python -m pytest tests/test_file_tool_mixin.py::TestRestoreFile::test_restore_path_traversal_blocked -v --tb=short)",
       "Bash(./git-push.sh \"refactor: 对齐Claude模式——用户附加文件直接给WORKSPACE_DIR路径，AI在code_execute里自己读，不再强制走file_search\")",
-      "Bash(./git-push.sh \"fix: code_execute失败时不触发auto-upload——半成品文件不应作为结果交付用户\")"
+      "Bash(./git-push.sh \"fix: code_execute失败时不触发auto-upload——半成品文件不应作为结果交付用户\")",
+      "Bash(grep -r \"system_prompt\\\\|SYSTEM\\\\|You are\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/*.py)",
+      "Bash(grep -r \"get_tool_system_prompt\\\\|get_tools_by_names\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
+      "Bash(./git-push.sh \"feat: 对齐Claude SKILL.md模式——沙盒注入SKILLS_DIR，AI处理文件前自主读取对应处理指南\")"
     ],
     "additionalDirectories": [
       "/tmp"

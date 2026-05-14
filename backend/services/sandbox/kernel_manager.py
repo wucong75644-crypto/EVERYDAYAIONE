@@ -139,6 +139,7 @@ class KernelManager:
         workspace_dir: str,
         staging_dir: str,
         output_dir: str,
+        skills_dir: str = "",
     ) -> bool:
         """获取或创建 Kernel
 
@@ -147,6 +148,7 @@ class KernelManager:
             workspace_dir: 宿主机 workspace 路径
             staging_dir: 宿主机 staging 路径
             output_dir: 宿主机 output 路径
+            skills_dir: 文件处理技能目录（只读）
 
         Returns:
             True = Kernel 可用，False = 降级为无状态
@@ -173,6 +175,7 @@ class KernelManager:
         try:
             kernel = await self._spawn_kernel(
                 conversation_id, workspace_dir, staging_dir, output_dir,
+                skills_dir=skills_dir,
             )
             self._kernels[conversation_id] = kernel
             logger.info("Kernel 创建成功 | conv=%s active=%d",
@@ -228,9 +231,10 @@ class KernelManager:
         workspace_dir: str,
         staging_dir: str,
         output_dir: str,
+        skills_dir: str = "",
     ) -> Kernel:
         """启动 Kernel 子进程"""
-        cmd = self._build_command(workspace_dir, staging_dir, output_dir)
+        cmd = self._build_command(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -265,25 +269,36 @@ class KernelManager:
 
     def _build_command(
         self, workspace_dir: str, staging_dir: str, output_dir: str,
+        skills_dir: str = "",
     ) -> list:
         """构建启动命令（nsjail 或裸 python）"""
         if self._nsjail_cfg and _NSJAIL_PATH:
-            return [
+            cmd = [
                 _NSJAIL_PATH, "--config", self._nsjail_cfg,
                 "-B", f"{workspace_dir}:/workspace",
                 "-B", f"{staging_dir}:/staging",
                 "-B", f"{output_dir}:/output",
+            ]
+            if skills_dir:
+                cmd.extend(["-B", f"{skills_dir}:/skills:ro"])
+            cmd.extend([
                 "--cwd", "/app",
                 "--", "/venv/bin/python3", "-u",
                 "-m", "services.sandbox.kernel_worker",
-                "/workspace", "/staging", "/output",
-            ]
+                "/workspace", "/staging", "/output", "8000",
+            ])
+            if skills_dir:
+                cmd.append("/skills")
+            return cmd
         # 无 nsjail：直接启动（保留 L1-L7 安全层）
-        return [
+        cmd = [
             sys.executable, "-u",
             "-m", "services.sandbox.kernel_worker",
-            workspace_dir, staging_dir, output_dir,
+            workspace_dir, staging_dir, output_dir, "8000",
         ]
+        if skills_dir:
+            cmd.append(skills_dir)
+        return cmd
 
     async def _send_and_recv(
         self, kernel: Kernel, code: str, timeout: float,

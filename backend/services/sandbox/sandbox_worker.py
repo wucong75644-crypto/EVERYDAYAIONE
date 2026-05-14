@@ -122,6 +122,7 @@ def _find_similar_file_global(target_path: str, workspace_dir: str) -> str:
 def build_scoped_open(
     workspace_dir: str, staging_dir: str, output_dir: str,
     original_open=None,
+    skills_dir: str = "",
 ):
     """构建带路径安全检查 + 文件名纠错的 open 函数。
 
@@ -140,12 +141,14 @@ def build_scoped_open(
 
     _ws_dir = workspace_dir
 
-    # 安全白名单：workspace + staging + output + 系统临时目录
+    # 安全白名单：workspace + staging + output + skills(只读) + 系统临时目录
     _allowed_prefixes = [os.path.realpath(_ws_dir)]
     if staging_dir:
         _allowed_prefixes.append(os.path.realpath(staging_dir))
     if output_dir:
         _allowed_prefixes.append(os.path.realpath(output_dir))
+    if skills_dir:
+        _allowed_prefixes.append(os.path.realpath(skills_dir))
     _allowed_prefixes.append(os.path.realpath(_tempfile.gettempdir()))
 
     # 只读系统文件白名单（库读取 mime.types/timezone 等元数据需要）
@@ -247,7 +250,7 @@ def _apply_resource_limits():
         pass  # Windows 无 resource 模块
 
 
-def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str) -> Dict[str, Any]:
+def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str, skills_dir: str = "") -> Dict[str, Any]:
     """构建受限执行环境（在子进程中调用）"""
     import builtins as _builtins
     from services.sandbox.scoped_os import (
@@ -445,6 +448,8 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         g["OUTPUT_DIR"] = PathStr(output_dir)
+    if skills_dir:
+        g["SKILLS_DIR"] = PathStr(skills_dir)
 
     # DuckDB 磁盘模式预注入：数据全程在磁盘，内存只做缓存
     # AI 直接用 duckdb.sql() 即可，不需要自己配置连接
@@ -549,6 +554,7 @@ def sandbox_worker_entry(
     output_dir: str,
     timeout: float,
     max_result_chars: int,
+    skills_dir: str = "",
 ):
     """子进程入口：隔离环境中执行用户代码
 
@@ -560,6 +566,7 @@ def sandbox_worker_entry(
         output_dir: 输出目录
         timeout: 执行超时（秒）
         max_result_chars: 结果最大字符数
+        skills_dir: 文件处理技能目录（只读）
     """
     import os
     from services.sandbox.validators import validate_code
@@ -590,12 +597,13 @@ def sandbox_worker_entry(
             scoped_open = build_scoped_open(
                 workspace_dir, staging_dir, output_dir,
                 original_open=builtins.open,
+                skills_dir=skills_dir,
             )
             builtins.open = scoped_open
             _io.open = scoped_open  # 堵住 io.open 绕过沙盒的漏洞
 
         # 4. 构建沙盒环境
-        sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
+        sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
 
         # 5. 执行代码
         result = _exec_code(code, sandbox_globals, timeout)
@@ -605,6 +613,8 @@ def sandbox_worker_entry(
             result = result.replace(output_dir, "OUTPUT_DIR")
         if result and workspace_dir:
             result = result.replace(workspace_dir, "WORKSPACE_DIR")
+        if result and skills_dir:
+            result = result.replace(skills_dir, "SKILLS_DIR")
 
         # 7. 截断
         result = truncate_result(result, max_result_chars)

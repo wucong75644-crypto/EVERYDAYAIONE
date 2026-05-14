@@ -204,8 +204,17 @@ MUST NOT 在确认前调用任何执行类工具。
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
-三个目录：WORKSPACE_DIR（用户文件，本地磁盘）、STAGING_DIR（ERP 数据缓存）、OUTPUT_DIR（输出，自动上传）。
-用户附加的文件在 WORKSPACE_DIR，直接用 openpyxl/pandas/pdfplumber/open 读取。
+四个目录：WORKSPACE_DIR（用户文件）、STAGING_DIR（ERP 数据缓存）、OUTPUT_DIR（输出，自动上传）、SKILLS_DIR（文件处理指南）。
+
+处理文件前，先在 code_execute 中读取对应的处理指南，再按指南操作：
+  open(SKILLS_DIR + '/excel.md')  — Excel (.xlsx/.xls)
+  open(SKILLS_DIR + '/csv.md')    — CSV/TSV
+  open(SKILLS_DIR + '/pdf.md')    — PDF
+  open(SKILLS_DIR + '/docx.md')   — Word
+  open(SKILLS_DIR + '/pptx.md')   — PPT
+  open(SKILLS_DIR + '/parquet.md') — Parquet (staging 数据)
+读取指南和探索文件结构可以合并在同一次 code_execute 中完成。
+
 ERP 查询结果在 STAGING_DIR（Parquet），用 duckdb.sql() 查询，列名用双引号包裹。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
 print() 输出摘要统计，不要输出完整数据。无网络。禁止 sys/subprocess。
