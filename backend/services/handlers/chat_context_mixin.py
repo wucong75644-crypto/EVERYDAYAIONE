@@ -65,7 +65,7 @@ class ChatContextMixin:
 
     @staticmethod
     def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
-        """生成工作区文件提示——告诉 AI 文件路径，由 AI 调 file_search 准备后在 code_execute 探索。"""
+        """生成工作区文件提示——直接给 AI WORKSPACE_DIR 路径，在 code_execute 中使用。"""
         if not workspace_files:
             return ""
 
@@ -79,11 +79,11 @@ class ChatContextMixin:
                 return f"{size / 1024:.1f} KB"
             return f"{size / (1024 * 1024):.1f} MB"
 
-        lines: list[str] = ["用户附加了以下文件，直接调用 file_search 准备（路径已确认）："]
+        lines: list[str] = ["用户附加了以下文件，路径可直接在 code_execute 中使用："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
-            lines.append(f"  file_search(path=\"{wp}\")  — {size_str}")
+            lines.append(f"  WORKSPACE_DIR + '/{wp}'  ({size_str})")
 
         return "\n".join(lines)
 
