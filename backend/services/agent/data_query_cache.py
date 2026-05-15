@@ -327,30 +327,82 @@ _CHUNK_SIZE = 50_000        # 每块行数
 
 
 def _prescan_schema(reader, target_sheet, actual_start, excel_path: str):
-    """预扫描确定 target_schema（清洗后列名 + 保守类型推断）。
+    """三段采样确定 target_schema。
 
-    读 500 行 → clean_excel → 基于清洗后的列推断类型。
-    object 列全部 string，只保留 pandas 已确定的 int/float/datetime。
+    开头 300 + 中间 200 + 末尾 300 行采样，
+    每段走 clean_excel 保持列名一致，
+    跨段对比确定每列最稳定的类型。
     """
     import pyarrow as pa
+    import pandas as pd
     from services.agent.excel_cleaner import clean_excel as _clean
 
-    probe = reader.load_sheet(target_sheet, header_row=actual_start, n_rows=500)
-    df = probe.to_pandas()
-    df_cleaned, _ = _clean(df, excel_path, "prescan", actual_start)
+    # 拿总行数
+    try:
+        probe_all = reader.load_sheet(target_sheet, header_row=actual_start)
+        total_rows = probe_all.total_height
+    except Exception:
+        total_rows = 0
 
+    # 收集三段采样
+    segments: list[pd.DataFrame] = []
+    _seg_params = {"header_row": actual_start}  # 与分块读取完全一致的参数
+
+    # 开头 300 行
+    head_n = min(300, max(total_rows, 1))
+    head_df = reader.load_sheet(target_sheet, **_seg_params, n_rows=head_n).to_pandas()
+    head_cleaned, _ = _clean(head_df, excel_path, "prescan_head", actual_start)
+    segments.append(head_cleaned)
+
+    # 中间 200 行（文件够大时）
+    if total_rows > 1000:
+        mid_skip = total_rows // 2
+        try:
+            mid_df = reader.load_sheet(
+                target_sheet, **_seg_params, skip_rows=mid_skip, n_rows=200,
+            ).to_pandas()
+            mid_cleaned, _ = _clean(mid_df, excel_path, "prescan_mid", actual_start)
+            segments.append(mid_cleaned)
+        except Exception:
+            pass  # 中间段读取失败不阻塞
+
+    # 末尾 300 行（最关键：合计行在这里）
+    if total_rows > 600:
+        tail_skip = max(0, total_rows - 300)
+        try:
+            tail_df = reader.load_sheet(
+                target_sheet, **_seg_params, skip_rows=tail_skip, n_rows=300,
+            ).to_pandas()
+            tail_cleaned, _ = _clean(tail_df, excel_path, "prescan_tail", actual_start)
+            segments.append(tail_cleaned)
+        except Exception:
+            pass
+
+    # 跨段对比：每列在每段的类型，取最保守的
+    base_cols = segments[0].columns
     fields = []
-    for col in df_cleaned.columns:
-        fields.append(pa.field(str(col), _infer_stable_type(df_cleaned[col])))
+    for col in base_cols:
+        seg_types = []
+        for seg in segments:
+            if col in seg.columns:
+                seg_types.append(_infer_segment_type(seg[col]))
+        unified = _unify_column_types(seg_types) if seg_types else pa.string()
+        fields.append(pa.field(str(col), unified))
+
     return pa.schema(fields)
 
 
-def _infer_stable_type(series):
-    """保守类型推断：只信任 pandas 已确定的纯类型，object 一律 string。"""
+def _infer_segment_type(series):
+    """单段类型推断：只信任 pandas 已确定的纯类型，object 用 99% 阈值。"""
     import pyarrow as pa
+    import pandas as pd
 
     dtype = str(series.dtype)
     if dtype in ("int64", "Int64", "int32", "int16"):
+        # 超长数字可能是订单号，按 string 处理
+        non_null = series.dropna()
+        if len(non_null) > 0 and non_null.astype(str).str.len().max() > 15:
+            return pa.string()
         return pa.int64()
     if dtype in ("float64", "Float64", "float32"):
         return pa.float64()
@@ -358,6 +410,40 @@ def _infer_stable_type(series):
         return pa.timestamp("ms")
     if dtype == "bool":
         return pa.bool_()
+    # object 列：99% 阈值判断
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return pa.string()
+    numeric = pd.to_numeric(non_null, errors="coerce")
+    if numeric.notna().sum() / len(non_null) >= 0.99:
+        if (numeric.dropna() == numeric.dropna().astype("int64", errors="ignore")).all():
+            if non_null.astype(str).str.len().max() > 15:
+                return pa.string()
+            return pa.int64()
+        return pa.float64()
+    dates = pd.to_datetime(non_null, errors="coerce", format="mixed")
+    if dates.notna().sum() / len(non_null) >= 0.99:
+        return pa.timestamp("ms")
+    return pa.string()
+
+
+def _unify_column_types(types) -> "pa.DataType":
+    """跨段类型合并：取最保守的公共类型。"""
+    import pyarrow as pa
+
+    unique = list(set(str(t) for t in types))
+    if len(unique) == 1:
+        return types[0]  # 三段完全一致
+
+    # 任一段是 string → 全部 string（最安全）
+    if any(pa.types.is_string(t) or pa.types.is_large_string(t) for t in types):
+        return pa.string()
+
+    # 都是数值但不一致（int vs float）→ float
+    if all(pa.types.is_integer(t) or pa.types.is_floating(t) for t in types):
+        return pa.float64()
+
+    # 兜底
     return pa.string()
 
 
