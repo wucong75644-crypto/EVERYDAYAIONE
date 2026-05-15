@@ -326,6 +326,72 @@ _CHUNK_THRESHOLD = 100_000  # 超过此行数走分块读取
 _CHUNK_SIZE = 50_000        # 每块行数
 
 
+def _prescan_schema(reader, target_sheet, actual_start, excel_path: str):
+    """预扫描确定 target_schema（清洗后列名 + 保守类型推断）。
+
+    读 500 行 → clean_excel → 基于清洗后的列推断类型。
+    object 列全部 string，只保留 pandas 已确定的 int/float/datetime。
+    """
+    import pyarrow as pa
+    from services.agent.excel_cleaner import clean_excel as _clean
+
+    probe = reader.load_sheet(target_sheet, header_row=actual_start, n_rows=500)
+    df = probe.to_pandas()
+    df_cleaned, _ = _clean(df, excel_path, "prescan", actual_start)
+
+    fields = []
+    for col in df_cleaned.columns:
+        fields.append(pa.field(str(col), _infer_stable_type(df_cleaned[col])))
+    return pa.schema(fields)
+
+
+def _infer_stable_type(series):
+    """保守类型推断：只信任 pandas 已确定的纯类型，object 一律 string。"""
+    import pyarrow as pa
+
+    dtype = str(series.dtype)
+    if dtype in ("int64", "Int64", "int32", "int16"):
+        return pa.int64()
+    if dtype in ("float64", "Float64", "float32"):
+        return pa.float64()
+    if "datetime" in dtype:
+        return pa.timestamp("ms")
+    if dtype == "bool":
+        return pa.bool_()
+    return pa.string()
+
+
+def _cast_to_schema(df, target_schema):
+    """将 DataFrame 强制对齐到 target_schema。cast 失败的列降级 string。"""
+    import pyarrow as pa
+
+    columns = []
+    fields = []
+    for field in target_schema:
+        col_name = field.name
+        if col_name not in df.columns:
+            columns.append(pa.nulls(len(df), type=field.type))
+            fields.append(field)
+            continue
+
+        series = df[col_name]
+        try:
+            arr = pa.array(series, type=field.type, from_pandas=True)
+            fields.append(field)
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError,
+                ValueError, TypeError):
+            # cast 失败 → 降级 string，field 也改为 string
+            arr = pa.array(
+                series.astype(str).replace({"nan": None, "<NA>": None}),
+                type=pa.string(),
+            )
+            fields.append(pa.field(col_name, pa.string()))
+            logger.debug(f"Schema cast fallback | col={col_name} | {field.type} → string")
+        columns.append(arr)
+
+    return pa.Table.from_arrays(columns, schema=pa.schema(fields))
+
+
 def _convert_excel_to_parquet(
     excel_path: str, cache_path: str, sheet: str | None,
     src_mtime: float, src_size: int, snapshot_path: str,
@@ -433,11 +499,14 @@ def _convert_excel_to_parquet(
         row_count = len(df)
         del df
     else:
-        # ── 大文件：分块读取 + 分批写 Parquet ──
+        # ── 大文件：预扫描 schema + 分块读取 + 强制 cast ──
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        writer = None
+        # 预扫描：读 500 行 + clean_excel → 确定 target_schema
+        target_schema = _prescan_schema(reader, target_sheet, actual_start, excel_path)
+
+        writer = pq.ParquetWriter(tmp_path, target_schema)
         row_count = 0
         merged_report = CleaningReport()
         chunk_idx = 0
@@ -456,23 +525,26 @@ def _convert_excel_to_parquet(
             if len(df_chunk) == 0:
                 break
 
-            # 每块独立清洗
+            # 每块独立清洗（与预扫描用相同参数）
             df_chunk, chunk_report = clean_excel(
                 df_chunk, excel_path, resolved_name, actual_start,
             )
             merged_report.merge(chunk_report)
 
-            table = pa.Table.from_pandas(df_chunk, preserve_index=False)
-            if writer is None:
-                writer = pq.ParquetWriter(tmp_path, table.schema)
+            # 强制对齐到预扫描 schema
+            table = _cast_to_schema(df_chunk, target_schema)
             writer.write_table(table)
             row_count += len(df_chunk)
             chunk_idx += 1
             del df_chunk, table
 
-        if writer is not None:
-            writer.close()
+        writer.close()
+        if row_count > 0:
             os.rename(tmp_path, cache_path)
+        else:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        if row_count > 0:
             # 设置行号映射参数
             # 大文件路径条件保证 header_depth == 1（381行 if 分支的反条件）
             merged_report.header_row = actual_start
@@ -505,8 +577,6 @@ def _convert_excel_to_parquet(
                 del sample_df
             except Exception as e:
                 logger.warning(f"Failed to generate file meta for chunked file: {e}")
-        else:
-            Path(tmp_path).unlink(missing_ok=True)
 
         logger.info(
             f"Excel chunked convert | src={Path(excel_path).name} "
