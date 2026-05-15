@@ -244,56 +244,79 @@ def _snapshot_matches(
         return False
 
 _HEADER_MAX_SCAN = 20   # 扫描前 N 行寻找表头
-_HEADER_STR_RATIO = 0.7  # 非空值中字符串占比阈值
+
+# 值内容模式识别（替代 isinstance，fastexcel 全返 str）
+_RE_NUMERIC = re.compile(r'^-?[\d,]+\.?\d*(e[+-]?\d+)?$', re.IGNORECASE)
+_RE_DATE = re.compile(
+    r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}'
+    r'(\s+\d{1,2}:\d{1,2}(:\d{1,2})?)?$'
+)
+_RE_LONG_ID = re.compile(r'^\d{10,}$')
+
+
+def _classify_cell(value) -> str:
+    """判断单元格内容的实际类型（不依赖 Python 类型，用值内容匹配）。"""
+    if value is None:
+        return "empty"
+    s = str(value).strip()
+    if not s or s.lower() in ("none", "null", "nan", "<na>"):
+        return "empty"
+    if _RE_LONG_ID.match(s):
+        return "long_id"
+    if _RE_DATE.match(s):
+        return "date"
+    s_clean = s.lstrip("¥$￥").rstrip("%").replace(",", "")
+    if _RE_NUMERIC.match(s_clean):
+        return "numeric"
+    return "text"
+
+
+def _is_data_row(row_values, threshold: float = 0.3) -> bool:
+    """判断一行是否是数据行（含数字/日期/长ID 占比 ≥ threshold）。"""
+    classes = [_classify_cell(v) for v in row_values]
+    non_empty = [c for c in classes if c != "empty"]
+    if not non_empty:
+        return False
+    data_n = sum(1 for c in non_empty if c in ("numeric", "date", "long_id"))
+    return data_n / len(non_empty) >= threshold
+
+
+def _looks_like_header(row_values) -> bool:
+    """判断一行是否像表头（文本占比高 + 值各不相同 + 非空数够多）。"""
+    classes = [_classify_cell(v) for v in row_values]
+    non_empty = [c for c in classes if c != "empty"]
+    if len(non_empty) < 2:
+        return False
+    text_ratio = sum(1 for c in non_empty if c == "text") / len(non_empty)
+    if text_ratio < 0.7:
+        return False
+    # 排除合并单元格的标题行（所有值相同）
+    vals = [str(v).strip() for v in row_values if v is not None and str(v).strip()]
+    if len(set(vals)) <= 1:
+        return False
+    return True
 
 
 def detect_header_row(rows: list[list]) -> int:
-    """自动检测 Excel 表头行号。
+    """自动检测 Excel 表头行号（值内容模式匹配 + 下一行验证）。
 
-    算法：
-    1. 统计每行非空单元格数，取众数（= 数据区期望列数）
-    2. 找候选表头行（非空数 ≥ 众数×0.5 且字符串占比 ≥ 70%）
-    3. 验证：候选行的下一行必须是数据行（非字符串占比 > 30%）
-       → 表头后面紧跟数据，标题行后面还是文本
-    4. 第一个通过验证的候选就是真正的表头
+    算法：找第一个"像表头 + 下一行像数据"的行。
+    用值内容（正则匹配数字/日期/长ID）替代 isinstance 判断，
+    兼容 fastexcel header_row=None 全返 str 的场景。
     """
     if not rows:
         return 0
 
-    from collections import Counter
-
     scan_rows = rows[:_HEADER_MAX_SCAN]
-    counts: list[int] = []
-    for row in scan_rows:
-        n = sum(1 for c in row if c is not None and str(c).strip())
-        counts.append(n)
+    for i in range(min(len(scan_rows) - 1, _HEADER_MAX_SCAN)):
+        if _is_data_row(scan_rows[i]):
+            continue  # 当前行是数据行，不是表头
+        if not _looks_like_header(scan_rows[i]):
+            continue  # 当前行不像表头（空行/标题行）
+        if _is_data_row(scan_rows[i + 1]):
+            return i  # 下一行是数据行 → 这行是表头
 
-    data_counts = [c for c in counts if c > 1]
-    if not data_counts:
-        return 0
-    modal = Counter(data_counts).most_common(1)[0][0]
-    threshold = modal * 0.5
-
-    for i, row in enumerate(scan_rows):
-        non_null = [c for c in row if c is not None and str(c).strip()]
-        if len(non_null) < threshold:
-            continue
-        str_count = sum(1 for v in non_null if isinstance(v, str))
-        if str_count / len(non_null) < _HEADER_STR_RATIO:
-            continue
-
-        # 下一行验证：真正的表头后面是数据行（含数字/日期/非字符串）
-        if i + 1 < len(scan_rows):
-            next_row = [c for c in scan_rows[i + 1] if c is not None and str(c).strip()]
-            if next_row:
-                non_str = sum(1 for v in next_row if not isinstance(v, str))
-                if non_str / len(next_row) > 0.3:
-                    return i  # 下一行有 >30% 非字符串 → 这行是表头
-                continue  # 下一行全是字符串 → 这行可能是标题行，继续找
-        else:
-            return i  # 最后一行且满足条件 → 返回
-
-    return 0
+    return 0  # 兜底：默认第一行是表头
 
 
 def detect_header_depth(
