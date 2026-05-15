@@ -353,6 +353,8 @@ def _convert_excel_to_parquet(
     from services.agent.excel_cleaner import (
         clean_excel, write_cleaning_report, CleaningReport,
     )
+    from services.agent.file_meta import extract_formulas, generate_file_meta, write_file_meta
+    from services.agent.session_files import update_session_files
 
     resolved_name = target_sheet if isinstance(target_sheet, str) else sheet_names[0]
 
@@ -367,6 +369,18 @@ def _convert_excel_to_parquet(
             f"Excel header auto-detected | src={Path(excel_path).name} "
             f"| header_row={actual_start} | depth={header_depth}"
         )
+
+    # ── 单 Sheet 多表格检测 ──
+    from services.agent.table_region_detector import convert_multi_region, detect_table_regions
+    scan_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=5000)
+    scan_rows = scan_raw.to_pandas().values.tolist()
+    regions = detect_table_regions(scan_rows)
+    if len(regions) >= 2:
+        convert_multi_region(
+            excel_path, str(cache_path), regions, sheet_names,
+            resolved_name, src_mtime, src_size, str(snapshot_path),
+        )
+        return sheet_names
 
     # 估算总行数（从 fastexcel 快速获取）
     try:
@@ -389,13 +403,33 @@ def _convert_excel_to_parquet(
         df, cleaning_report = clean_excel(
             df, excel_path, resolved_name, actual_start,
         )
+        # 设置行号映射参数
+        cleaning_report.header_row = actual_start
+        cleaning_report.data_start_row = actual_start + header_depth + 1
+        cleaning_report.row_offset = header_depth
         try:
             df.to_parquet(tmp_path, index=False, engine="pyarrow")
             os.rename(tmp_path, cache_path)
         except Exception:
             Path(tmp_path).unlink(missing_ok=True)
             raise
+        # 旧格式兼容 + 新完整 meta
         write_cleaning_report(cache_path, cleaning_report)
+        formulas, formula_skip = extract_formulas(excel_path, resolved_name)
+        file_meta = generate_file_meta(
+            df, cleaning_report,
+            source_file=excel_path,
+            sheet_count=len(sheet_names),
+            formulas=formulas,
+            formula_skip_reason=formula_skip,
+        )
+        write_file_meta(cache_path, file_meta)
+        update_session_files(
+            str(Path(cache_path).parent), cache_path,
+            columns=[str(c) for c in df.columns if not str(c).startswith("_is_")],
+            row_count=len(df),
+            source_file=excel_path,
+        )
         row_count = len(df)
         del df
     else:
@@ -439,7 +473,38 @@ def _convert_excel_to_parquet(
         if writer is not None:
             writer.close()
             os.rename(tmp_path, cache_path)
+            # 设置行号映射参数
+            # 大文件路径条件保证 header_depth == 1（381行 if 分支的反条件）
+            merged_report.header_row = actual_start
+            merged_report.data_start_row = actual_start + header_depth + 1
+            merged_report.row_offset = header_depth
             write_cleaning_report(cache_path, merged_report)
+            # 从 Parquet 读采样数据生成完整 meta
+            try:
+                import duckdb
+                sample_df = duckdb.sql(
+                    f"SELECT * FROM '{cache_path}' LIMIT 500"
+                ).to_df()
+                formulas, formula_skip = extract_formulas(excel_path)
+                file_meta = generate_file_meta(
+                    sample_df, merged_report,
+                    source_file=excel_path,
+                    sheet_count=len(sheet_names),
+                    formulas=formulas,
+                    formula_skip_reason=formula_skip,
+                )
+                # 修正行数为实际总行数（采样 df 只有 500 行）
+                file_meta.summary["row_count"] = row_count
+                write_file_meta(cache_path, file_meta)
+                update_session_files(
+                    str(Path(cache_path).parent), cache_path,
+                    columns=[str(c) for c in sample_df.columns if not str(c).startswith("_is_")],
+                    row_count=row_count,
+                    source_file=excel_path,
+                )
+                del sample_df
+            except Exception as e:
+                logger.warning(f"Failed to generate file meta for chunked file: {e}")
         else:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -475,10 +540,13 @@ def _convert_all_sheets_to_parquet(
     from services.agent.excel_cleaner import (
         CleaningReport, clean_excel, write_cleaning_report,
     )
+    from services.agent.file_meta import extract_formulas, generate_file_meta, write_file_meta
+    from services.agent.session_files import update_session_files
 
     frames: list = []
     total_rows = 0
     merged_report = CleaningReport()
+    first_data_start_row: int = 2  # 取第一个 Sheet 的行号映射，后续赋值
     for name in sheet_names:
         try:
             sheet_raw = reader.load_sheet(name, header_row=None, n_rows=_HEADER_MAX_SCAN)
@@ -507,6 +575,9 @@ def _convert_all_sheets_to_parquet(
                 df, excel_path, name, actual_start,
             )
             merged_report.merge(sheet_report)
+            # 记录第一个 Sheet 的行号映射（合并后沿用）
+            if not frames:
+                first_data_start_row = actual_start + header_depth + 1
             df.insert(0, "_sheet", name)
             frames.append(df)
         except ValueError:
@@ -529,6 +600,24 @@ def _convert_all_sheets_to_parquet(
         raise
 
     write_cleaning_report(cache_path, merged_report)
+    # 生成完整 meta（行号映射取第一个 Sheet 的值）
+    merged_report.data_start_row = first_data_start_row
+    formulas, formula_skip = extract_formulas(excel_path)
+    file_meta = generate_file_meta(
+        merged, merged_report,
+        source_file=excel_path,
+        sheet_count=len(sheet_names),
+        formulas=formulas,
+        formula_skip_reason=formula_skip,
+    )
+    write_file_meta(cache_path, file_meta)
+    update_session_files(
+        str(Path(cache_path).parent), cache_path,
+        columns=[str(c) for c in merged.columns if not str(c).startswith("_is_")],
+        row_count=len(merged),
+        source_file=excel_path,
+    )
+
     Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
     logger.info(
         f"Excel→Parquet merge-all | src={Path(excel_path).name} "

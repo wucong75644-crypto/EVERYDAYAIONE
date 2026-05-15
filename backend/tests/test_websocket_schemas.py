@@ -402,6 +402,46 @@ class TestBuildSuggestionsReady:
 
 
 
+class TestBuildFileProcessing:
+    """测试 build_file_processing 消息构建"""
+
+    def test_basic_structure(self):
+        from schemas.websocket_builders import build_file_processing
+        msg = build_file_processing(
+            "task_1", "conv_1", "msg_1",
+            stage="reading", file="sales.xlsx", progress=0.3,
+            message="正在读取文件",
+        )
+        assert msg["type"] == "file_processing"
+        assert msg["task_id"] == "task_1"
+        assert msg["conversation_id"] == "conv_1"
+        assert msg["payload"]["stage"] == "reading"
+        assert msg["payload"]["file"] == "sales.xlsx"
+        assert msg["payload"]["progress"] == 0.3
+        assert msg["payload"]["message"] == "正在读取文件"
+
+    def test_minimal_params(self):
+        from schemas.websocket_builders import build_file_processing
+        msg = build_file_processing("t", "c", "m", stage="ready", file="test.csv")
+        assert msg["payload"]["stage"] == "ready"
+        assert msg["payload"]["progress"] == 0.0
+        assert "message" not in msg["payload"]
+        assert "details" not in msg["payload"]
+
+    def test_with_details(self):
+        from schemas.websocket_builders import build_file_processing
+        msg = build_file_processing(
+            "t", "c", "m", stage="structuring", file="test.xlsx",
+            details={"sheet": "Sheet1", "rows_processed": 5000},
+        )
+        assert msg["payload"]["details"]["sheet"] == "Sheet1"
+
+    def test_has_timestamp(self):
+        from schemas.websocket_builders import build_file_processing
+        msg = build_file_processing("t", "c", "m", stage="ready", file="x.csv")
+        assert isinstance(msg["timestamp"], int)
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

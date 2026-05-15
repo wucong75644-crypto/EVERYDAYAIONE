@@ -38,9 +38,13 @@ class CleaningReport:
     warnings: list[str] = field(default_factory=list)
     original_shape: tuple[int, int] = (0, 0)
     final_shape: tuple[int, int] = (0, 0)
+    # 行号映射参数（file_meta.py 生成完整 .meta.json 时使用）
+    header_row: int = 0
+    data_start_row: int = 2
+    row_offset: int = 1
 
     def merge(self, other: CleaningReport) -> None:
-        """将另一个报告累加到自身（多 Sheet 合并场景）。"""
+        """将另一个报告累加到自身（多 Sheet / 分块合并场景）。"""
         for attr in ("merged_cols_filled", "hidden_rows_marked",
                       "empty_cols_removed", "empty_rows_removed",
                       "int_cols_fixed"):
@@ -52,6 +56,11 @@ class CleaningReport:
                                max(self.original_shape[1], other.original_shape[1]))
         self.final_shape = (self.final_shape[0] + other.final_shape[0],
                             max(self.final_shape[1], other.final_shape[1]))
+        # 行号映射：保留首块的值（首块决定了 header 位置）
+        if self.header_row == 0 and other.header_row > 0:
+            self.header_row = other.header_row
+            self.data_start_row = other.data_start_row
+            self.row_offset = other.row_offset
 
     def has_changes(self) -> bool:
         return any([

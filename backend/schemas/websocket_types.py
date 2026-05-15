@@ -41,6 +41,9 @@ class WSMessageType(str, Enum):
     CONTENT_BLOCK_ADD = "content_block_add"
     SUGGESTIONS_READY = "suggestions_ready"
 
+    # === 文件处理 ===
+    FILE_PROCESSING = "file_processing"           # 后端 → 前端：文件处理进度
+
     # === 表单交互 ===
     FORM_SUBMIT = "form_submit"                   # 前端 → 后端：表单提交
     FORM_SUBMIT_RESULT = "form_submit_result"     # 后端 → 前端：表单提交结果
@@ -162,3 +165,17 @@ class ErrorPayload(BaseModel):
     """错误消息的 payload"""
     message: str
     code: Optional[str] = None
+
+
+class FileProcessingPayload(BaseModel):
+    """文件处理进度的 payload
+
+    stage 分为用户可见和内部两类：
+    - 用户可见：reading / structuring / indexing / ready / failed
+    - 仅内部（不推送）：l2_fixing / l2_retry
+    """
+    stage: str                          # reading | structuring | indexing | ready | failed
+    file: str                           # 文件名
+    progress: float = 0.0               # 0.0 ~ 1.0
+    message: Optional[str] = None       # 用户可见的进度文案
+    details: Dict[str, Any] = Field(default_factory=dict)
