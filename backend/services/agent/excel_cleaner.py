@@ -122,7 +122,7 @@ def clean_excel(
 
     # 质量校验
     _deduplicate_columns(df)
-    _remove_empty_rows_cols(df, report)
+    _remove_empty_rows_cols(df, report, structure)
     _coerce_object_columns(df)
     _fix_int_columns(df, report)
 
@@ -330,22 +330,13 @@ def _apply_merge_fill(
     header_row: int,
     report: CleaningReport,
 ) -> None:
-    """对合并区域做填充（staging 数据关联用）。
+    """不自动填充合并区域——由 AI 在沙盒中根据业务语义决定。
 
-    垂直合并：ffill（向下填充），让每行都有关联字段（如订单编号）
-    水平合并：横向填充，让同一行的合并单元格都有值
-    Agent 看结构用原始 Excel 预览（openpyxl 直读，null 保留）。
+    只记录合并信息到 report，不修改 df 数据。
+    AI 通过 meta.json 的 merged_cells 和 issues 了解合并情况后，
+    在 code_execute 中按需 ffill / 重命名列 / 展开多级表头。
     """
-    filled_cols: set[int] = set()
-    for min_row, max_row, min_col, max_col in structure.merged_ranges:
-        if max_row <= min_row:
-            continue  # 水平合并：不处理，保持空值（通常是视觉格式）
-        for col_1indexed in range(min_col, max_col + 1):
-            pandas_col = col_1indexed - 1
-            if pandas_col < len(df.columns) and pandas_col not in filled_cols:
-                df.iloc[:, pandas_col] = df.iloc[:, pandas_col].ffill()
-                filled_cols.add(pandas_col)
-    report.merged_cols_filled = len(filled_cols)
+    report.merged_cols_filled = 0  # 不再自动填充
 
 
 def _mark_hidden_rows(
@@ -386,15 +377,27 @@ def _mark_hidden_cols(
         report.hidden_cols_names = hidden_names
 
 
-def _remove_empty_rows_cols(df: pd.DataFrame, report: CleaningReport) -> None:
-    """删除全 NaN 行和全 NaN 列（含 Unnamed 空列）。"""
-    # 空列（包含合并单元格产生的 Unnamed 空列）
-    # 用位置索引避免重复列名导致的 ambiguous Series 错误
+def _remove_empty_rows_cols(
+    df: pd.DataFrame,
+    report: CleaningReport,
+    structure: ExcelStructure | None = None,
+) -> None:
+    """删除全 NaN 行和全 NaN 列，但保留合并区域内的空列。"""
+    # 合并区域覆盖的列索引（1-indexed → 0-indexed）
+    merged_col_indices: set[int] = set()
+    if structure:
+        for min_row, max_row, min_col, max_col in structure.merged_ranges:
+            for c in range(min_col, max_col + 1):
+                merged_col_indices.add(c - 1)
+
+    # 空列（跳过合并区域内的列——它们的空值是合并导致的，不是真空）
     drop_indices: list[int] = []
     for i, col in enumerate(df.columns):
         col_str = str(col)
         if col_str.startswith("_is_"):
             continue
+        if i in merged_col_indices:
+            continue  # 合并区域内的空列不删
         if df.iloc[:, i].isna().all():
             drop_indices.append(i)
     if drop_indices:

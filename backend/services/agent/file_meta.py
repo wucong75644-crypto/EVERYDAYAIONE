@@ -51,6 +51,8 @@ class FileMeta:
     stats: dict[str, int] = field(default_factory=dict)
     formulas: list[dict[str, Any]] = field(default_factory=list)
     issues: list[dict[str, Any]] = field(default_factory=list)
+    merged_cells: list[dict[str, Any]] = field(default_factory=list)
+    raw_preserved: bool = True    # 原始结构是否被保留（未自动 ffill）
     cleaning: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
 
@@ -65,6 +67,7 @@ def generate_file_meta(
     sheet_count: int = 1,
     formulas: list[dict[str, Any]] | None = None,
     formula_skip_reason: str = "",
+    merged_ranges: list[tuple[int, int, int, int]] | None = None,
 ) -> FileMeta:
     """从 DataFrame + CleaningReport 生成完整 FileMeta。"""
     now = datetime.now().isoformat(timespec="seconds")
@@ -109,6 +112,25 @@ def generate_file_meta(
             "count": 0,
             "suggestion": formula_skip_reason,
         })
+
+    # ── merged_cells（合并单元格信息，不自动处理，AI 决定）──
+    if merged_ranges:
+        for min_row, max_row, min_col, max_col in merged_ranges:
+            col_start = _col_index_to_letter(min_col - 1)
+            col_end = _col_index_to_letter(max_col - 1)
+            meta.merged_cells.append({
+                "range": f"{col_start}{min_row}:{col_end}{max_row}",
+                "rows": [min_row, max_row],
+                "cols": [min_col, max_col],
+            })
+        meta.issues.append({
+            "type": "merged_cells",
+            "location": {},
+            "severity": "info",
+            "count": len(merged_ranges),
+            "suggestion": f"检测到{len(merged_ranges)}个合并区域，未自动处理，请根据业务语义决定如何展开",
+        })
+        meta.raw_preserved = True
 
     # ── cleaning（保留现有 CleaningReport 字段）──
     cr_dict = asdict(cleaning_report)
@@ -490,6 +512,10 @@ def format_file_view(meta: FileMeta) -> str:
 
     for f in meta.formulas[:3]:
         lines.append(f"公式：{f.get('cell','?')} = {f.get('formula','?')} → {f.get('value','?')}")
+    if meta.merged_cells:
+        lines.append(f"合并单元格（{len(meta.merged_cells)}个，未自动处理，需你根据业务语义决定）：")
+        for mc in meta.merged_cells[:5]:
+            lines.append(f"  {mc.get('range', '?')}")
     for issue in meta.issues[:5]:
         loc = issue.get("location", {})
         loc_str = f"Row {loc.get('row', '?')}" + (f" {loc['col']}列" if "col" in loc else "")
