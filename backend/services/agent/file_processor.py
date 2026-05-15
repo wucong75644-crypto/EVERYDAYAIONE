@@ -129,10 +129,11 @@ async def process_file(
             processed_by="L1",
         )
 
-    if meta.status == "pass":
+    if meta.status in ("pass", "warning"):
+        # warning = 数据有少量缺失值但完全可用，不算失败
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        logger.info(f"File process L1 pass | {Path(excel_path).name} | {elapsed_ms}ms")
-        await _audit_file_process("L1_clean", "success", elapsed_ms, Path(excel_path).name)
+        logger.info(f"File process L1 {meta.status} | {Path(excel_path).name} | {elapsed_ms}ms")
+        await _audit_file_process("L1_clean", meta.status, elapsed_ms, Path(excel_path).name)
         return FileProcessResult(
             success=True,
             file_view=format_file_view(meta),
