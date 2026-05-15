@@ -248,44 +248,50 @@ _HEADER_STR_RATIO = 0.7  # 非空值中字符串占比阈值
 
 
 def detect_header_row(rows: list[list]) -> int:
-    """自动检测 Excel 表头行号（messytables 列数众数法 + csv.Sniffer 类型验证）。
+    """自动检测 Excel 表头行号。
 
     算法：
     1. 统计每行非空单元格数，取众数（= 数据区期望列数）
-    2. 从上往下扫，找第一行同时满足：
-       - 非空单元格数 ≥ 众数 × 0.5（messytables 思路：标题行通常只有 1-2 个非空格）
-       - 非空值中字符串占比 ≥ 70%（csv.Sniffer 思路：数据行多为数字/日期）
-    3. 找不到 → 返回 0（标准表格，不影响现有行为）
+    2. 找候选表头行（非空数 ≥ 众数×0.5 且字符串占比 ≥ 70%）
+    3. 验证：候选行的下一行必须是数据行（非字符串占比 > 30%）
+       → 表头后面紧跟数据，标题行后面还是文本
+    4. 第一个通过验证的候选就是真正的表头
     """
     if not rows:
         return 0
 
-    # ── Step 1: 统计每行非空数，取众数 ──
     from collections import Counter
 
+    scan_rows = rows[:_HEADER_MAX_SCAN]
     counts: list[int] = []
-    for row in rows[:_HEADER_MAX_SCAN]:
+    for row in scan_rows:
         n = sum(1 for c in row if c is not None and str(c).strip())
         counts.append(n)
 
-    # 排除只有 0-1 个非空值的行（标题/空行），只统计数据区
     data_counts = [c for c in counts if c > 1]
     if not data_counts:
         return 0
     modal = Counter(data_counts).most_common(1)[0][0]
-
     threshold = modal * 0.5
 
-    # ── Step 2: 找第一行满足 非空数≥阈值 + 字符串占比≥70% ──
-    for i, row in enumerate(rows[:_HEADER_MAX_SCAN]):
+    for i, row in enumerate(scan_rows):
         non_null = [c for c in row if c is not None and str(c).strip()]
         if len(non_null) < threshold:
             continue
-
-        # 类型验证：表头行的值应该大部分是字符串
         str_count = sum(1 for v in non_null if isinstance(v, str))
-        if str_count / len(non_null) >= _HEADER_STR_RATIO:
-            return i
+        if str_count / len(non_null) < _HEADER_STR_RATIO:
+            continue
+
+        # 下一行验证：真正的表头后面是数据行（含数字/日期/非字符串）
+        if i + 1 < len(scan_rows):
+            next_row = [c for c in scan_rows[i + 1] if c is not None and str(c).strip()]
+            if next_row:
+                non_str = sum(1 for v in next_row if not isinstance(v, str))
+                if non_str / len(next_row) > 0.3:
+                    return i  # 下一行有 >30% 非字符串 → 这行是表头
+                continue  # 下一行全是字符串 → 这行可能是标题行，继续找
+        else:
+            return i  # 最后一行且满足条件 → 返回
 
     return 0
 
