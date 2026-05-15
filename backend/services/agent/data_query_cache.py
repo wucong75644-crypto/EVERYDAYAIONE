@@ -545,6 +545,11 @@ def _convert_excel_to_parquet(
     header_row = detect_header_row(df_raw.values.tolist())
     actual_start, header_depth = detect_header_depth(header_row, None)
 
+    # 获取合并单元格等结构信息（传给 clean_excel 和 generate_file_meta）
+    from services.agent.excel_cleaner import _detect_structure
+    structure = _detect_structure(excel_path, target_sheet)
+    merged_ranges = structure.merged_ranges if structure else []
+
     if actual_start > 0 or header_depth > 1:
         logger.info(
             f"Excel header auto-detected | src={Path(excel_path).name} "
@@ -582,7 +587,7 @@ def _convert_excel_to_parquet(
             df = sheet_data.to_pandas()
 
         df, cleaning_report = clean_excel(
-            df, excel_path, resolved_name, actual_start,
+            df, excel_path, resolved_name, actual_start, structure=structure,
         )
         # 设置行号映射参数
         cleaning_report.header_row = actual_start
@@ -603,6 +608,7 @@ def _convert_excel_to_parquet(
             sheet_count=len(sheet_names),
             formulas=formulas,
             formula_skip_reason=formula_skip,
+            merged_ranges=merged_ranges,
         )
         write_file_meta(cache_path, file_meta)
         update_session_files(
@@ -642,7 +648,7 @@ def _convert_excel_to_parquet(
 
             # 每块独立清洗（与预扫描用相同参数）
             df_chunk, chunk_report = clean_excel(
-                df_chunk, excel_path, resolved_name, actual_start,
+                df_chunk, excel_path, resolved_name, actual_start, structure=structure,
             )
             merged_report.merge(chunk_report)
 
@@ -679,6 +685,7 @@ def _convert_excel_to_parquet(
                     sheet_count=len(sheet_names),
                     formulas=formulas,
                     formula_skip_reason=formula_skip,
+                    merged_ranges=merged_ranges,
                 )
                 # 修正行数为实际总行数（采样 df 只有 500 行）
                 file_meta.summary["row_count"] = row_count
