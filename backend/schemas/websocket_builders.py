@@ -305,3 +305,30 @@ def build_tool_confirm_request(
          "safety_level": safety_level, "timeout": timeout},
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
     )
+
+
+def build_file_processing(
+    task_id: str, conversation_id: str, message_id: str,
+    stage: str, file: str, progress: float = 0.0,
+    message: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """构建文件处理进度消息。
+
+    stage:
+      用户可见：reading / structuring / indexing / ready / failed
+      仅内部：l2_fixing / l2_retry（不推送给前端）
+    """
+    payload: Dict[str, Any] = {
+        "stage": stage,
+        "file": file,
+        "progress": progress,
+    }
+    if message:
+        payload["message"] = message
+    if details:
+        payload["details"] = details
+    return _build_ws_message(
+        WSMessageType.FILE_PROCESSING, payload,
+        task_id=task_id, conversation_id=conversation_id, message_id=message_id,
+    )

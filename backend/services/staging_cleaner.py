@@ -25,7 +25,7 @@ from pathlib import Path
 from loguru import logger
 
 # 受保护的文件名/前缀（不按 TTL 清理）
-_PROTECTED_NAMES = frozenset({".duckdb.db", "_manifest.json"})
+_PROTECTED_NAMES = frozenset({".duckdb.db", "_manifest.json", "session_files.json"})
 _PROTECTED_PREFIXES = ("_bak_", ".duckdb_temp")
 
 
