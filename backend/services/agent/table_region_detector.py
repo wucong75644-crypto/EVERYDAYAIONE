@@ -199,6 +199,7 @@ def convert_multi_region(
     src_mtime: float,
     src_size: int,
     snapshot_path: str,
+    column_mapping: dict[str, str] | None = None,
 ) -> None:
     """多区域合并为一个 Parquet（加 _region 列标识来源），写入 cache_path。
 
@@ -238,6 +239,23 @@ def convert_multi_region(
 
     merged = pd.concat(frames, ignore_index=True)
     merged_report.data_start_row = regions[0].data_start + 1
+
+    # AI column_mapping 重命名列（合并完成后统一 rename）
+    if column_mapping:
+        rename_map = {}
+        for col_letter, new_name in column_mapping.items():
+            col_idx = 0
+            for ch in col_letter.upper():
+                col_idx = col_idx * 26 + (ord(ch) - ord("A") + 1)
+            # +1 因为 _region 列在第 0 位
+            parquet_idx = col_idx  # col_letter A=1 对应 merged 的第 1 列（第 0 列是 _region）
+            if parquet_idx < len(merged.columns):
+                old_name = str(merged.columns[parquet_idx])
+                if old_name != new_name and not old_name.startswith("_"):
+                    rename_map[old_name] = new_name
+        if rename_map:
+            merged = merged.rename(columns=rename_map)
+            logger.info(f"Multi-region column mapping: {rename_map}")
 
     tmp = str(Path(staging_dir) / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
     try:
