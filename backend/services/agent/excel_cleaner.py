@@ -115,15 +115,15 @@ def clean_excel(
 
     合并单元格填充不在此处处理——由 AI 在 code_execute 中按需 ffill。
     """
-    # 多级表头展平（MultiIndex → 单行，用 _ 连接）
-    _flatten_multi_header(df)
-
     report = CleaningReport(original_shape=(len(df), len(df.columns)))
 
-    # 质量校验
-    _deduplicate_columns(df)
+    # 多级表头展平（MultiIndex → 单行，用 _ 连接）
+    _flatten_multi_header(df, report)
+
+    # 质量校验（所有操作都标注到 report，AI 知道代码做了什么）
+    _deduplicate_columns(df, report)
     _remove_empty_rows_cols(df, report, structure)
-    _coerce_object_columns(df)
+    _coerce_object_columns(df, report)
     _fix_int_columns(df, report)
 
     report.final_shape = (len(df), len(df.columns))
@@ -312,16 +312,22 @@ def _detect_structure(
     return structure
 
 
-def _flatten_multi_header(df: pd.DataFrame) -> None:
-    """将 MultiIndex 列名展平为单行（用 _ 连接）。不截断，保留完整信息。"""
+def _flatten_multi_header(df: pd.DataFrame, report: CleaningReport | None = None) -> None:
+    """将 MultiIndex 列名展平为单行（用 _ 连接）+ 标注原始多级结构。"""
     if not isinstance(df.columns, pd.MultiIndex):
         return
+    # 记录原始多级结构
+    original_levels = [list(level) for level in df.columns.levels]
     flat: list[str] = []
     for col_tuple in df.columns:
         parts = [str(p).strip() for p in col_tuple if str(p).strip() and str(p) != "nan"]
         name = "_".join(parts) if parts else "Unnamed"
         flat.append(name)
     df.columns = flat
+    if report is not None:
+        report.warnings.append(
+            f"多级表头已展平为单行（原始 {len(original_levels)} 层，用 _ 连接）"
+        )
 
 
 def _apply_merge_fill(
@@ -390,29 +396,29 @@ def _remove_empty_rows_cols(
             for c in range(min_col, max_col + 1):
                 merged_col_indices.add(c - 1)
 
-    # 空列（跳过合并区域内的列——它们的空值是合并导致的，不是真空）
-    drop_indices: list[int] = []
+    # 空列：不删除，只标注位置（AI 决定是否需要）
+    empty_col_names: list[str] = []
     for i, col in enumerate(df.columns):
         col_str = str(col)
         if col_str.startswith("_is_"):
             continue
         if i in merged_col_indices:
-            continue  # 合并区域内的空列不删
+            continue  # 合并区域内的空列不标注（已有 merged_cells 信息）
         if df.iloc[:, i].isna().all():
-            drop_indices.append(i)
-    if drop_indices:
-        df.drop(df.columns[drop_indices], axis=1, inplace=True)
-        report.empty_cols_removed = len(drop_indices)
+            empty_col_names.append(col_str)
+    report.empty_cols_removed = 0  # 不再删除
+    if empty_col_names:
+        report.warnings.append(f"全空列（未删除）: {empty_col_names}")
 
-    # 空行（排除标记列）
+    # 空行：不删除，只标注位置（AI 决定是否需要）
     data_cols = [c for c in df.columns if not str(c).startswith("_is_")]
+    empty_row_indices: list[int] = []
     if data_cols:
         empty_mask = df[data_cols].isna().all(axis=1)
-        n_empty = empty_mask.sum()
-        if n_empty > 0:
-            df.drop(df[empty_mask].index, inplace=True)
-            df.reset_index(drop=True, inplace=True)
-            report.empty_rows_removed = int(n_empty)
+        empty_row_indices = list(df[empty_mask].index)
+    report.empty_rows_removed = 0  # 不再删除
+    if empty_row_indices:
+        report.warnings.append(f"全空行（未删除）: Row {[i + 1 for i in empty_row_indices[:10]]}")
 
 
 def _fix_int_columns(df: pd.DataFrame, report: CleaningReport) -> None:
@@ -436,28 +442,29 @@ def _fix_int_columns(df: pd.DataFrame, report: CleaningReport) -> None:
     report.int_cols_fixed = fixed
 
 
-def _deduplicate_columns(df: pd.DataFrame) -> None:
-    """列名重复时加后缀 _1 _2 去重。"""
+def _deduplicate_columns(df: pd.DataFrame, report: CleaningReport) -> None:
+    """列名重复时加后缀 _1 _2 去重 + 标注到 report。"""
     cols = list(df.columns)
     seen: dict[str, int] = {}
     new_cols: list[str] = []
+    duplicated: list[str] = []
     for c in cols:
         c_str = str(c)
         if c_str in seen:
             seen[c_str] += 1
             new_cols.append(f"{c_str}_{seen[c_str]}")
+            if c_str not in duplicated:
+                duplicated.append(c_str)
         else:
             seen[c_str] = 0
             new_cols.append(c_str)
     if new_cols != [str(c) for c in cols]:
         df.columns = new_cols
+        report.warnings.append(f"重复列名已加后缀（原始列名重复）: {duplicated}")
 
-def _coerce_object_columns(df: pd.DataFrame) -> None:
-    """混合类型列统一为 str（防止 PyArrow 崩溃）。
-
-    用 pd.api.types.infer_dtype（C 实现，全量扫描，百万行 <1ms）
-    替代 head(200) 采样——消除尾部混合类型的盲区 bug。
-    """
+def _coerce_object_columns(df: pd.DataFrame, report: CleaningReport) -> None:
+    """混合类型列统一为 str（防止 PyArrow 崩溃）+ 标注到 report。"""
+    coerced: list[str] = []
     for col in df.columns:
         if str(col).startswith("_is_"):
             continue
@@ -469,3 +476,6 @@ def _coerce_object_columns(df: pd.DataFrame) -> None:
         inferred = pd.api.types.infer_dtype(non_null, skipna=True)
         if inferred in ("mixed", "mixed-integer", "mixed-integer-float"):
             df[col] = df[col].astype(str).replace({"nan": None})
+            coerced.append(str(col))
+    if coerced:
+        report.warnings.append(f"混合类型列已转为文本（可用 pd.to_numeric 还原）: {coerced}")

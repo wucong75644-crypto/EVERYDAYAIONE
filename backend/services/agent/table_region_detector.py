@@ -199,74 +199,77 @@ def convert_multi_region(
     src_mtime: float,
     src_size: int,
     snapshot_path: str,
-) -> list[str]:
-    """单 Sheet 多表格区域分别输出独立 Parquet + meta + session_files。"""
+) -> None:
+    """多区域合并为一个 Parquet（加 _region 列标识来源），写入 cache_path。
+
+    不丢弃任何区域——全部保留，AI 通过 _region 列和 meta.json 自行判断。
+    """
     import pandas as pd
     from services.agent.excel_cleaner import CleaningReport, clean_excel, write_cleaning_report
     from services.agent.file_meta import extract_formulas, generate_file_meta, write_file_meta
     from services.agent.session_files import update_session_files
 
     start = time.monotonic()
-    output_paths: list[str] = []
-    stem = Path(excel_path).stem
+    frames: list[pd.DataFrame] = []
+    merged_report = CleaningReport()
     staging_dir = str(Path(cache_path).parent)
 
-    # 公式提取一次，所有区域共享
     formulas, formula_skip = extract_formulas(excel_path, resolved_name)
 
     for i, region in enumerate(regions):
         region_name = region.name or f"Region_{i + 1}"
-        safe_name = re.sub(r'[^\w\-]', '_', region_name)
-        region_cache = str(Path(staging_dir) / f"_cache_{safe_name}_{stem}.parquet")
-
-        # 按行范围读取：skiprows 跳过表头前的行，header=0 表示剩余部分第一行是表头
         skip = list(range(0, region.header_row)) if region.header_row > 0 else None
-        df = pd.read_excel(
-            excel_path, sheet_name=resolved_name,
-            header=0, skiprows=skip,
-            nrows=region.row_count,
-        )
-
-        df, cleaning_report = clean_excel(df, excel_path, region_name, region.header_row)
-        cleaning_report.header_row = region.header_row
-        cleaning_report.data_start_row = region.data_start + 1  # 0-indexed → Excel 1-indexed
-        cleaning_report.row_offset = 1
-
-        tmp = str(Path(staging_dir) / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
         try:
-            df.to_parquet(tmp, index=False, engine="pyarrow")
-            os.rename(tmp, region_cache)
+            df = pd.read_excel(
+                excel_path, sheet_name=resolved_name,
+                header=0, skiprows=skip,
+                nrows=region.row_count,
+            )
         except Exception:
-            Path(tmp).unlink(missing_ok=True)
             continue
 
-        write_cleaning_report(region_cache, cleaning_report)
-        file_meta = generate_file_meta(
-            df, cleaning_report,
-            source_file=excel_path,
-            sheet_count=len(sheet_names),
-            formulas=formulas,
-            formula_skip_reason=formula_skip,
-        )
-        file_meta.summary["description"] = (
-            f"{stem} / {region_name}，{len(df)}行×{len(df.columns)}列"
-        )
-        write_file_meta(region_cache, file_meta)
+        df, report = clean_excel(df, excel_path, region_name, region.header_row)
+        merged_report.merge(report)
+        df.insert(0, "_region", region_name)
+        frames.append(df)
 
-        # 注册到 session_files（含同源标记）
-        update_session_files(
-            staging_dir, region_cache,
-            columns=[str(c) for c in df.columns if not str(c).startswith("_is_")],
-            row_count=len(df),
-            source_file=excel_path,
-            source_region=region_name,
-        )
-        output_paths.append(region_cache)
-        del df
+    if not frames:
+        return
+
+    merged = pd.concat(frames, ignore_index=True)
+    merged_report.data_start_row = regions[0].data_start + 1
+
+    tmp = str(Path(staging_dir) / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
+    try:
+        merged.to_parquet(tmp, index=False, engine="pyarrow")
+        os.rename(tmp, cache_path)
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        return
+
+    write_cleaning_report(cache_path, merged_report)
+    file_meta = generate_file_meta(
+        merged, merged_report,
+        source_file=excel_path,
+        sheet_count=len(sheet_names),
+        formulas=formulas,
+        formula_skip_reason=formula_skip,
+    )
+    region_info = [f"{r.name or f'Region_{i+1}'}({r.row_count}行)" for i, r in enumerate(regions)]
+    file_meta.summary["description"] = (
+        f"{Path(excel_path).stem}，{len(regions)}个区域: {', '.join(region_info)}"
+    )
+    write_file_meta(cache_path, file_meta)
+    update_session_files(
+        staging_dir, cache_path,
+        columns=[str(c) for c in merged.columns if not str(c).startswith("_")],
+        row_count=len(merged),
+        source_file=excel_path,
+    )
 
     Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
     logger.info(
-        f"Excel multi-region | src={Path(excel_path).name} "
-        f"| regions={len(regions)} | elapsed={time.monotonic() - start:.1f}s"
+        f"Excel multi-region merged | src={Path(excel_path).name} "
+        f"| regions={len(regions)} | rows={len(merged)} | elapsed={time.monotonic() - start:.1f}s"
     )
-    return output_paths
+    del merged
