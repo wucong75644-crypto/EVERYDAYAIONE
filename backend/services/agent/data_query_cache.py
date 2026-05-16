@@ -527,6 +527,26 @@ def _cast_to_schema(df, target_schema):
     return pa.Table.from_arrays(columns, schema=pa.schema(fields))
 
 
+def _apply_column_mapping(df, column_mapping: dict[str, str]):
+    """用 AI prescan 的 column_mapping 重命名列。key 是列字母(A/B/C)，value 是业务列名。"""
+    if not column_mapping:
+        return df
+    rename_map = {}
+    for col_letter, new_name in column_mapping.items():
+        col_idx = 0
+        for ch in col_letter.upper():
+            col_idx = col_idx * 26 + (ord(ch) - ord("A") + 1)
+        col_idx -= 1  # 转为 0-indexed
+        if col_idx < len(df.columns):
+            old_name = str(df.columns[col_idx])
+            if old_name != new_name:
+                rename_map[old_name] = new_name
+    if rename_map:
+        df = df.rename(columns=rename_map)
+        logger.info(f"Column mapping applied: {rename_map}")
+    return df
+
+
 def _convert_excel_to_parquet(
     excel_path: str, cache_path: str, sheet: str | None,
     src_mtime: float, src_size: int, snapshot_path: str,
@@ -585,17 +605,23 @@ def _convert_excel_to_parquet(
             f"| header_row={actual_start} | depth={header_depth}"
         )
 
-    # ── 单 Sheet 多表格检测 ──
+    # ── 单 Sheet 多表格检测（prescan 优先）──
     from services.agent.table_region_detector import convert_multi_region, detect_table_regions
-    scan_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=5000)
-    scan_rows = scan_raw.to_pandas().values.tolist()
-    regions = detect_table_regions(scan_rows)
-    if len(regions) >= 2:
-        convert_multi_region(
-            excel_path, str(cache_path), regions, sheet_names,
-            resolved_name, src_mtime, src_size, str(snapshot_path),
-        )
-        return sheet_names
+    _skip_region_detect = (
+        prescan_result
+        and prescan_result.confidence in ("high", "medium")
+        and len(prescan_result.regions) <= 1
+    )
+    if not _skip_region_detect:
+        scan_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=5000)
+        scan_rows = scan_raw.to_pandas().values.tolist()
+        regions = detect_table_regions(scan_rows)
+        if len(regions) >= 2:
+            convert_multi_region(
+                excel_path, str(cache_path), regions, sheet_names,
+                resolved_name, src_mtime, src_size, str(snapshot_path),
+            )
+            return sheet_names
 
     # 估算总行数（从 fastexcel 快速获取）
     try:
@@ -622,6 +648,9 @@ def _convert_excel_to_parquet(
         cleaning_report.header_row = actual_start
         cleaning_report.data_start_row = actual_start + header_depth + 1
         cleaning_report.row_offset = header_depth
+        # AI column_mapping 重命名列
+        if prescan_result and prescan_result.column_mapping:
+            df = _apply_column_mapping(df, prescan_result.column_mapping)
         try:
             df.to_parquet(tmp_path, index=False, engine="pyarrow")
             os.rename(tmp_path, cache_path)
@@ -684,6 +713,9 @@ def _convert_excel_to_parquet(
             )
             merged_report.merge(chunk_report)
 
+            # AI column_mapping 重命名列
+            if prescan_result and prescan_result.column_mapping:
+                df_chunk = _apply_column_mapping(df_chunk, prescan_result.column_mapping)
             # 强制对齐到预扫描 schema
             table = _cast_to_schema(df_chunk, target_schema)
             writer.write_table(table)
