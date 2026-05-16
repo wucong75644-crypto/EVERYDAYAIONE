@@ -129,13 +129,8 @@ async def process_file(
             processed_by="L1",
         )
 
-    # warning + confidence 高 → 成功（少量缺失值但可用）
-    # warning + confidence 低 → 触发 L2（数据质量可能有问题）
-    _warning_needs_l2 = (
-        meta.status == "warning"
-        and meta.confidence < 0.7
-    )
-    if meta.status in ("pass", "warning") and not _warning_needs_l2:
+    if meta.status in ("pass", "warning"):
+        # warning = 数据有少量缺失值但完全可用，不算失败
         elapsed_ms = int((time.monotonic() - start) * 1000)
         logger.info(f"File process L1 {meta.status} | {Path(excel_path).name} | {elapsed_ms}ms")
         await _audit_file_process("L1_clean", meta.status, elapsed_ms, Path(excel_path).name)
