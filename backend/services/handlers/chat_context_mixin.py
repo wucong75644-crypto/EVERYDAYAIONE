@@ -64,8 +64,11 @@ class ChatContextMixin:
         return filtered
 
     @staticmethod
-    def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
-        """生成工作区文件提示——直接给 AI WORKSPACE_DIR 路径，在 code_execute 中使用。"""
+    def _build_workspace_prompt(
+        workspace_files: List[Dict[str, Any]],
+        preprocess_results: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """生成工作区文件提示——含预处理元数据（列名、类型、parquet 路径）。"""
         if not workspace_files:
             return ""
 
@@ -79,11 +82,31 @@ class ChatContextMixin:
                 return f"{size / 1024:.1f} KB"
             return f"{size / (1024 * 1024):.1f} MB"
 
-        lines: list[str] = ["用户附加了以下文件，路径可直接在 code_execute 中使用："]
+        # 建立预处理结果索引
+        pre_map: dict[str, dict] = {}
+        if preprocess_results:
+            for r in preprocess_results:
+                wp = r.get("workspace_path", "")
+                if wp and "file_view" in r:
+                    pre_map[wp] = r
+
+        lines: list[str] = ["用户附加了以下文件："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
-            lines.append(f"  '{wp}'  ({size_str})")
+            pre = pre_map.get(wp)
+
+            if pre and pre.get("file_view"):
+                # 有预处理结果：注入完整元数据 + parquet 路径
+                lines.append(f"\n--- {wp} ({size_str}) ---")
+                lines.append(pre["file_view"])
+                if pre.get("parquet_path"):
+                    lines.append(f"Parquet 缓存路径：{pre['parquet_path']}")
+                    lines.append("可直接用 duckdb.sql(\"SELECT ... FROM read_parquet('路径')\") 查询")
+            else:
+                # 无预处理结果：退回基础信息
+                lines.append(f"  '{wp}'  ({size_str})")
+                lines.append("  路径可直接在 code_execute 中使用")
 
         return "\n".join(lines)
 
@@ -96,6 +119,7 @@ class ChatContextMixin:
         prefetched_summary: Optional[str] = None,
         prefetched_memory: Optional[str] = None,
         user_location: Optional[str] = None,
+        preprocess_results: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表。
 
@@ -216,7 +240,7 @@ class ChatContextMixin:
 
         # 工作区文件提示注入：告诉 AI 文件路径，由 AI 调 file_search 准备
         if workspace_files:
-            ws_prompt = self._build_workspace_prompt(workspace_files)
+            ws_prompt = self._build_workspace_prompt(workspace_files, preprocess_results)
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
                 logger.debug(
@@ -224,9 +248,13 @@ class ChatContextMixin:
                     f"paths={[f['workspace_path'] for f in workspace_files]}"
                 )
 
-        # Layer 4: 用户记忆（失败不影响主流程）
-        if memory_prompt:
-            messages.append({"role": "system", "content": memory_prompt})
+        # Layer 4: 用户记忆（V2 双部分注入）
+        # 4a: L3 Persona（稳定部分，放 system prompt，prompt cache 友好）
+        _persona_ctx = getattr(self, "_memory_persona_context", "")
+        if _persona_ctx:
+            messages.append({"role": "system", "content": _persona_ctx})
+        # 4b: L1 相关记忆（动态部分，暂存，稍后注入 user prompt 前面）
+        _l1_memory_prepend = memory_prompt  # 来自 _build_memory_prompt 的 prepend_context
 
         # Layer 5: 对话摘要 — Phase 6 门控：短对话不注入
         _msg_count = len(context_messages) if context_messages else 0
@@ -269,34 +297,36 @@ class ChatContextMixin:
     async def _build_memory_prompt(
         self, user_id: str, query: str
     ) -> Optional[str]:
-        """构建记忆 system prompt（失败时返回 None）"""
+        """构建记忆上下文（V2 双部分注入）
+
+        返回格式仍为 Optional[str]（兼容旧调用方），但内部用 V2 管道。
+        双部分注入（prepend L1 + append persona）在 _build_llm_messages 中拆分处理。
+        """
         try:
-            from services.memory_service import MemoryService
-            from services.memory_config import build_memory_system_prompt
+            from services.memory.memory_service_v2 import MemoryServiceV2
 
-            memory_service = MemoryService(self.db)
-
-            if not await memory_service.is_memory_enabled(user_id):
-                return None
-
-            memories = await memory_service.get_relevant_memories(
-                user_id, query, org_id=self.org_id
+            svc = MemoryServiceV2(db_pool=self.db)
+            prepend, append_system = await svc.build_memory_context(
+                user_id=user_id,
+                org_id=self.org_id,
+                query=query,
             )
-            if not memories:
-                return None
 
-            prompt = build_memory_system_prompt(memories)
-            if prompt:
+            # 缓存 persona 到实例属性，供 _build_llm_messages 取用
+            self._memory_persona_context = append_system
+
+            if prepend:
                 logger.debug(
-                    f"Memory injected | user_id={user_id} | "
-                    f"memory_count={len(memories)}"
+                    f"Memory V2 injected | user_id={user_id} | "
+                    f"l1_len={len(prepend)} | persona={'yes' if append_system else 'no'}"
                 )
-            return prompt
+            return prepend or None
         except Exception as e:
             logger.warning(
-                f"Memory injection failed, skipping | "
+                f"Memory V2 injection failed, skipping | "
                 f"user_id={user_id} | error={e}"
             )
+            self._memory_persona_context = ""
             return None
 
     async def _fetch_knowledge(self, query: str) -> Optional[list]:
@@ -339,39 +369,35 @@ class ChatContextMixin:
         user_text: str,
         assistant_text: str,
     ) -> None:
-        """异步从对话中提取记忆（fire-and-forget，短消息跳过）"""
+        """异步从对话中提取记忆（V2 管道调度器）
+
+        V2 改造：不再直接调 Mem0，而是通知 PipelineScheduler。
+        调度器根据 Warm-up 阈值 / 稳态计数决定何时触发 L1 提取。
+        L1→L2→L3 全部由调度器自动编排。
+        """
         try:
-            # 短消息无信息量，跳过提取（中文信息密度高，阈值设低）
             if len(user_text) < 10:
                 return
 
-            from services.memory_service import MemoryService
+            from services.memory.memory_service_v2 import MemoryServiceV2, get_scheduler
 
-            memory_service = MemoryService(self.db)
-
-            if not await memory_service.is_memory_enabled(user_id):
-                return
+            scheduler = get_scheduler(db_pool=self.db)
 
             messages = [
-                {"role": "user", "content": user_text},
-                {"role": "assistant", "content": assistant_text},
+                {"role": "user", "content": user_text, "id": str(conversation_id), "timestamp": __import__("time").time() * 1000},
+                {"role": "assistant", "content": assistant_text, "id": "", "timestamp": __import__("time").time() * 1000},
             ]
 
-            extracted = await memory_service.extract_memories_from_conversation(
-                user_id, messages, conversation_id, org_id=self.org_id
+            await scheduler.on_turn_committed(
+                user_id=user_id,
+                org_id=self.org_id,
+                session_id=conversation_id,
+                messages=messages,
             )
 
-            if extracted:
-                await ws_manager.send_to_user(user_id, {
-                    "type": "memory_extracted",
-                    "data": {
-                        "memories": extracted,
-                        "count": len(extracted),
-                    },
-                }, org_id=self.org_id)
         except Exception as e:
             logger.warning(
-                f"Memory extraction failed | user_id={user_id} | "
+                f"Memory V2 extraction failed | user_id={user_id} | "
                 f"conversation_id={conversation_id} | "
                 f"error_type={type(e).__name__} | error={e!r}"
             )
