@@ -106,6 +106,139 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         return task_id
 
 
+    # ================================================================
+    # 文件自动预处理：消息发送时检测 Excel/CSV → prescan → parquet
+    # ================================================================
+
+    _PREPROCESS_MIME_TYPES = {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/csv",
+        "text/tab-separated-values",
+    }
+
+    async def _auto_preprocess_files(
+        self,
+        content: List[ContentPart],
+        conversation_id: str,
+        user_id: str,
+        task_id: str,
+        message_id: str,
+    ) -> List[Dict[str, Any]]:
+        """检测附件中的表格文件，自动触发 prescan → parquet 预处理。
+
+        在 _stream_generate 中 message_start 之后、_build_llm_messages 之前调用。
+        通过 thinking_chunk 推送进度，用户可在思考气泡中看到解析状态。
+        """
+        import os
+        import time
+
+        # 提取表格类附件
+        files_to_process = []
+        for part in content:
+            mime = getattr(part, "mime_type", "")
+            wp = getattr(part, "workspace_path", "")
+            if mime in self._PREPROCESS_MIME_TYPES and wp:
+                files_to_process.append(part)
+
+        if not files_to_process:
+            return []
+
+        # 推送开始状态
+        names = "、".join(getattr(f, "name", "?") for f in files_to_process)
+        await ws_manager.send_to_task_or_user(
+            task_id, user_id,
+            build_thinking_chunk(task_id, conversation_id, message_id,
+                                chunk=f"正在解析表格结构：{names}..."),
+        )
+
+        # 解析 workspace 根目录
+        from core.config import get_settings
+        from core.workspace import resolve_workspace_dir
+
+        settings = get_settings()
+        ws_dir = resolve_workspace_dir(
+            settings.file_workspace_root, user_id,
+            getattr(self, "org_id", None),
+        )
+
+        # 并行预处理所有文件
+        async def _process_one(file_part) -> Dict[str, Any]:
+            from services.agent.data_query_cache import ensure_parquet_cache
+            from services.agent.file_meta import read_file_meta, format_file_view
+
+            wp = getattr(file_part, "workspace_path", "")
+            name = getattr(file_part, "name", wp)
+            abs_path = os.path.join(ws_dir, wp)
+            staging_dir = os.path.join(ws_dir, "staging", conversation_id)
+
+            start = time.monotonic()
+            try:
+                cache_path, sheet_names = await ensure_parquet_cache(
+                    abs_path, None, staging_dir,
+                )
+                elapsed = round(time.monotonic() - start, 2)
+
+                meta = read_file_meta(cache_path)
+                file_view = format_file_view(meta) if meta else ""
+                meta_summary = {}
+                if meta:
+                    meta_summary = {
+                        "rows": meta.summary.get("row_count", 0),
+                        "cols": meta.summary.get("col_count", 0),
+                    }
+
+                logger.info(
+                    f"File auto-preprocess OK | {name} | "
+                    f"{meta_summary.get('rows', '?')}×{meta_summary.get('cols', '?')} | "
+                    f"{elapsed}s"
+                )
+                return {
+                    "workspace_path": wp,
+                    "name": name,
+                    "parquet_path": cache_path,
+                    "sheet_names": sheet_names,
+                    "file_view": file_view,
+                    "meta": meta_summary,
+                    "elapsed": elapsed,
+                }
+            except Exception as e:
+                elapsed = round(time.monotonic() - start, 2)
+                logger.warning(f"File auto-preprocess failed | {name} | {e} | {elapsed}s")
+                return {
+                    "workspace_path": wp,
+                    "name": name,
+                    "error": str(e),
+                    "elapsed": elapsed,
+                }
+
+        results = await asyncio.gather(
+            *[_process_one(f) for f in files_to_process],
+            return_exceptions=True,
+        )
+        # gather 异常处理
+        results = [
+            r if not isinstance(r, BaseException)
+            else {"name": "?", "error": str(r)}
+            for r in results
+        ]
+
+        # 推送完成状态
+        summary_parts = []
+        for r in results:
+            if "file_view" in r:
+                m = r.get("meta", {})
+                summary_parts.append(f"{r['name']}：{m.get('cols', '?')}列 × {m.get('rows', '?')}行")
+            else:
+                summary_parts.append(f"{r.get('name', '?')}：解析失败")
+        await ws_manager.send_to_task_or_user(
+            task_id, user_id,
+            build_thinking_chunk(task_id, conversation_id, message_id,
+                                chunk=f"\n表格解析完成：{'；'.join(summary_parts)}"),
+        )
+
+        return results
+
     async def _save_accumulated_content(self, task_id: str, content: str) -> None:
         """将累积内容写入数据库（供刷新恢复使用）"""
         try:
@@ -163,10 +296,19 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             )
             await ws_manager.send_to_task_or_user(task_id, user_id, start_msg)
 
-            # 2. 组装消息列表（记忆未预取时并行预取）
+            # 2. 自动预处理 Excel/CSV 附件（prescan → parquet，用户可见进度）
             import time as _time
             _t0 = _time.monotonic()
 
+            preprocess_results = await self._auto_preprocess_files(
+                content=content,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                task_id=task_id,
+                message_id=message_id,
+            )
+
+            # 3. 组装消息列表（记忆未预取时并行预取）
             text_content = self._extract_text_content(content)
             prefetched_summary = (_params or {}).get("_prefetched_summary")
             prefetched_memory = (_params or {}).get("_prefetched_memory")
@@ -190,6 +332,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 prefetched_summary=prefetched_summary,
                 prefetched_memory=prefetched_memory,
                 user_location=user_location,
+                preprocess_results=preprocess_results,
             )
             _t2 = _time.monotonic()
             logger.info(
