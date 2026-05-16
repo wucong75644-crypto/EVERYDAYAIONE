@@ -605,14 +605,39 @@ def _convert_excel_to_parquet(
             f"| header_row={actual_start} | depth={header_depth}"
         )
 
-    # ── 单 Sheet 多表格检测（prescan 优先）──
-    from services.agent.table_region_detector import convert_multi_region, detect_table_regions
-    _skip_region_detect = (
+    # ── 单 Sheet 多表格检测 ──
+    # prescan 有 regions → 用 AI 判断的区域
+    # prescan 没有或失败 → 退回代码检测
+    from services.agent.table_region_detector import (
+        TableRegion, convert_multi_region, detect_table_regions,
+    )
+    _use_prescan_regions = (
         prescan_result
         and prescan_result.confidence in ("high", "medium")
-        and len(prescan_result.regions) <= 1
+        and len(prescan_result.regions) >= 2
     )
-    if not _skip_region_detect:
+    if _use_prescan_regions:
+        # AI 判断有多区域 → 用 AI 的 regions
+        regions = [
+            TableRegion(
+                name=r.get("description", f"Region_{i+1}"),
+                header_row=r.get("start_row", 0) - 1,  # Excel 1-indexed → 0-indexed
+                data_start=r.get("start_row", 1),
+                data_end=r.get("end_row", 0),
+                columns=[],
+                row_count=r.get("end_row", 0) - r.get("start_row", 0),
+            )
+            for i, r in enumerate(prescan_result.regions)
+        ]
+        _col_mapping = prescan_result.column_mapping or {}
+        convert_multi_region(
+            excel_path, str(cache_path), regions, sheet_names,
+            resolved_name, src_mtime, src_size, str(snapshot_path),
+            column_mapping=_col_mapping,
+        )
+        return sheet_names
+    elif not (prescan_result and prescan_result.confidence in ("high", "medium")):
+        # prescan 失败或低置信 → 退回代码检测
         scan_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=5000)
         scan_rows = scan_raw.to_pandas().values.tolist()
         regions = detect_table_regions(scan_rows)
@@ -624,6 +649,7 @@ def _convert_excel_to_parquet(
                 column_mapping=_col_mapping,
             )
             return sheet_names
+    # prescan 高置信 + 单区域 → 走单表格路径（不检测多区域）
 
     # 估算总行数（从 fastexcel 快速获取）
     try:

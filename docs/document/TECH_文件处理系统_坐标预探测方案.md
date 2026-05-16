@@ -2,7 +2,7 @@
 
 > 基于 TECH_文件处理系统.md 的补充方案
 > 创建：2026-05-16
-> 状态：方案讨论，待确认
+> 状态：已实施 + 审核修复
 
 ---
 
@@ -173,4 +173,66 @@ C 类（三段扫描）：3 个
   AI 探测成功 → 用 AI 的结论（header_rows / data_start_row / regions）
   AI 探测失败 → 退回 detect_header_row + detect_table_regions（现有逻辑）
   两条路径输出格式一致 → 下游不感知
+```
+
+---
+
+## 六、审核修复记录（2026-05-16）
+
+### 修复 #1：prescan regions 替代 detect_table_regions
+
+```
+问题：prescan 成功且有多区域信息，但 detect_table_regions 还是独立运行，
+      覆盖了 prescan 的结论。
+
+修复：三条路径：
+  prescan 有 regions ≥ 2 → 用 AI 的 regions 构造 TableRegion → convert_multi_region
+  prescan 成功但单区域 → 跳过多区域检测，走单表格路径
+  prescan 失败 → 退回 detect_table_regions（代码检测）
+
+不跳过多区域处理，只替换数据源。
+```
+
+### 修复 #2：column_mapping 覆盖多区域分支
+
+```
+问题：column_mapping 只在单表格路径生效，多区域分支 convert_multi_region 没有接收。
+
+修复：convert_multi_region 新增 column_mapping 参数，合并完成后统一 rename。
+      普适方案——column_mapping 为空时不执行 rename，不影响原有逻辑。
+```
+
+### 修复 #3：④ 三段扫描使用 ① prescan 的 data_start_row
+
+```
+已在代码中实现：prescan 成功时 actual_start = prescan.data_start_row - 1，
+三段扫描基于此值开始采样。
+```
+
+### 修复 #4：L3 关联识别描述修正
+
+```
+L3 模式分布对比：不只是 UNION 合并，
+是针对多平台 ID 混合场景（淘宝18位/京东16位/拼多多日期串）的关联识别。
+```
+
+### 修复 #5：L2 触发条件扩展
+
+```
+问题：只有 status=fail 触发 L2，但 warning + confidence < 0.7 也应该触发。
+
+修复：
+  status=pass → 成功
+  status=warning + confidence ≥ 0.7 → 成功（少量缺失值可用）
+  status=warning + confidence < 0.7 → 触发 L2（数据质量可能有问题）
+  status=fail → 触发 L2
+```
+
+### 修复 #6：缓存失效机制
+
+```
+已有机制：.snapshot 文件存 mtime+size，每次访问时比对。
+mtime/size 变化 → snapshot 不匹配 → 重新转换（包括重新 prescan）。
+prescan 结论缓存在 meta.json 的 prescan 字段中，
+随 .meta.json 一起由 snapshot 机制控制失效。
 ```
