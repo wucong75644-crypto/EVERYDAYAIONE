@@ -212,6 +212,26 @@ async def ensure_parquet_cache(
         if _snapshot_matches(cache_path, snapshot_path, src_mtime, src_size):
             return str(cache_path), None
 
+        # 坐标预探测（async，在线程池之前调用）
+        prescan_result = None
+        if sheet != "*":
+            try:
+                from services.agent.file_prescan import run_prescan
+                import fastexcel as _fe
+                _reader = _fe.read_excel(excel_path)
+                _sheet_target = 0 if sheet is None else (int(sheet) if sheet.isdigit() else sheet)
+                _probe = _reader.load_sheet(_sheet_target, header_row=None)
+                _total_rows = _probe.total_height + 1  # +1 包含表头行
+                _total_cols = len(_probe.to_pandas().columns)
+                _sheet_name = _reader.sheet_names[0] if isinstance(_sheet_target, int) else str(_sheet_target)
+                prescan_result = await run_prescan(
+                    _reader, _sheet_target,
+                    Path(excel_path).name, _sheet_name,
+                    _total_rows, _total_cols,
+                )
+            except Exception as e:
+                logger.debug(f"Prescan skipped: {e}")
+
         loop = asyncio.get_running_loop()
         if sheet == "*":
             sheet_names = await loop.run_in_executor(
@@ -223,7 +243,7 @@ async def ensure_parquet_cache(
             sheet_names = await loop.run_in_executor(
                 None, _convert_excel_to_parquet,
                 excel_path, str(cache_path), sheet, src_mtime, src_size,
-                str(snapshot_path),
+                str(snapshot_path), prescan_result,
             )
         return str(cache_path), sheet_names
 
@@ -510,6 +530,7 @@ def _cast_to_schema(df, target_schema):
 def _convert_excel_to_parquet(
     excel_path: str, cache_path: str, sheet: str | None,
     src_mtime: float, src_size: int, snapshot_path: str,
+    prescan_result=None,
 ) -> list[str]:
     """Excel → Parquet（同步，线程池执行）。
 
@@ -539,11 +560,19 @@ def _convert_excel_to_parquet(
 
     resolved_name = target_sheet if isinstance(target_sheet, str) else sheet_names[0]
 
-    # 自动检测表头行
-    sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
-    df_raw = sheet_raw.to_pandas()
-    header_row = detect_header_row(df_raw.values.tolist())
-    actual_start, header_depth = detect_header_depth(header_row, None)
+    # 表头检测：优先用 AI 预探测结果，失败退回代码检测
+    if prescan_result and prescan_result.confidence in ("high", "medium"):
+        actual_start = prescan_result.data_start_row - 1  # Excel 1-indexed → 0-indexed
+        header_depth = len(prescan_result.header_rows) if prescan_result.header_rows else 1
+        logger.info(
+            f"Using AI prescan | src={Path(excel_path).name} "
+            f"| header_rows={prescan_result.header_rows} | data_start={prescan_result.data_start_row}"
+        )
+    else:
+        sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
+        df_raw = sheet_raw.to_pandas()
+        header_row = detect_header_row(df_raw.values.tolist())
+        actual_start, header_depth = detect_header_depth(header_row, None)
 
     # 获取合并单元格等结构信息（传给 clean_excel 和 generate_file_meta）
     from services.agent.excel_cleaner import _detect_structure
@@ -610,6 +639,9 @@ def _convert_excel_to_parquet(
             formula_skip_reason=formula_skip,
             merged_ranges=merged_ranges,
         )
+        if prescan_result and prescan_result.confidence in ("high", "medium"):
+            from dataclasses import asdict as _asdict
+            file_meta.prescan = _asdict(prescan_result)
         write_file_meta(cache_path, file_meta)
         update_session_files(
             str(Path(cache_path).parent), cache_path,
@@ -689,6 +721,9 @@ def _convert_excel_to_parquet(
                 )
                 # 修正行数为实际总行数（采样 df 只有 500 行）
                 file_meta.summary["row_count"] = row_count
+                if prescan_result and prescan_result.confidence in ("high", "medium"):
+                    from dataclasses import asdict as _asdict
+                    file_meta.prescan = _asdict(prescan_result)
                 write_file_meta(cache_path, file_meta)
                 update_session_files(
                     str(Path(cache_path).parent), cache_path,
