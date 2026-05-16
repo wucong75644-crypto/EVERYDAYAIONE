@@ -133,19 +133,27 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         import os
         import time
 
-        # 提取表格类附件
+        # 提取表格类附件（兼容 FilePart 实例和 dict 两种形式）
+        from schemas.message import FilePart
+
         files_to_process = []
         for part in content:
-            mime = getattr(part, "mime_type", "")
-            wp = getattr(part, "workspace_path", "")
+            if isinstance(part, FilePart):
+                mime, wp, name = part.mime_type, part.workspace_path, part.name
+            elif isinstance(part, dict) and part.get("type") == "file":
+                mime = part.get("mime_type", "")
+                wp = part.get("workspace_path", "")
+                name = part.get("name", "")
+            else:
+                continue
             if mime in self._PREPROCESS_MIME_TYPES and wp:
-                files_to_process.append(part)
+                files_to_process.append({"mime_type": mime, "workspace_path": wp, "name": name})
 
         if not files_to_process:
             return []
 
         # 推送开始状态
-        names = "、".join(getattr(f, "name", "?") for f in files_to_process)
+        names = "、".join(f.get("name", "?") if isinstance(f, dict) else getattr(f, "name", "?") for f in files_to_process)
         await ws_manager.send_to_task_or_user(
             task_id, user_id,
             build_thinking_chunk(task_id, conversation_id, message_id,
@@ -167,8 +175,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             from services.agent.data_query_cache import ensure_parquet_cache
             from services.agent.file_meta import read_file_meta, format_file_view
 
-            wp = getattr(file_part, "workspace_path", "")
-            name = getattr(file_part, "name", wp)
+            wp = file_part.get("workspace_path", "") if isinstance(file_part, dict) else getattr(file_part, "workspace_path", "")
+            name = file_part.get("name", wp) if isinstance(file_part, dict) else getattr(file_part, "name", wp)
             abs_path = os.path.join(ws_dir, wp)
             staging_dir = os.path.join(ws_dir, "staging", conversation_id)
 
