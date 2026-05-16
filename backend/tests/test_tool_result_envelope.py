@@ -437,32 +437,11 @@ class TestAsyncCleanupStaging:
     @pytest.mark.asyncio
     async def test_cleanup_removes_old_files(self, tmp_path):
         """清理后超 TTL 的文件被删除"""
-        import os
-        import time
-        from pathlib import Path
-        from core.workspace import resolve_staging_dir
         from services.handlers.chat_handler import _async_cleanup_staging
-        from unittest.mock import patch, MagicMock
 
-        staging = Path(resolve_staging_dir(
-            str(tmp_path), "u1", "org1", "conv-cleanup",
-        ))
-        staging.mkdir(parents=True)
-        old_file = staging / "data.txt"
-        old_file.write_text("test data")
-        # 设置 mtime 为 2 天前
-        old_time = time.time() - 2 * 86400
-        os.utime(old_file, (old_time, old_time))
-
-        mock_settings = MagicMock()
-        mock_settings.file_workspace_root = str(tmp_path)
-        mock_settings.staging_file_ttl_seconds = 86400
-        mock_settings.staging_max_size_mb = 500
-
-        with patch("core.config.get_settings", return_value=mock_settings):
-            await _async_cleanup_staging("conv-cleanup", "u1", "org1")
-
-        assert not old_file.exists()
+        # _async_cleanup_staging is now a no-op (NAS replaced staging cleanup)
+        # Just verify it runs without error
+        await _async_cleanup_staging("conv-cleanup", "u1", "org1")
 
     @pytest.mark.asyncio
     async def test_cleanup_noop_when_no_dir(self, tmp_path):

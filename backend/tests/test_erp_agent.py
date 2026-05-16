@@ -1481,43 +1481,7 @@ class TestErrorPrefixDetection:
     # TestFetchAllPagesVisibility 已删除（_prepare_tools 随旧 tool loop 移除）
 
 
-class TestStagingCleanup:
-    """staging 延迟清理测试"""
-
-    def _make_agent(self):
-        from services.agent.erp_agent import ERPAgent
-        return ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="test-conv-123", org_id="org1",
-        )
-
-    @pytest.mark.asyncio
-    async def test_cleanup_removes_staging_dir(self, tmp_path):
-        """清理删除对应会话的 staging 目录"""
-        agent = self._make_agent()
-        from core.workspace import resolve_staging_dir
-        staging_dir_str = resolve_staging_dir(
-            str(tmp_path), agent.user_id, agent.org_id, agent.conversation_id,
-        )
-        from pathlib import Path
-        staging_dir = Path(staging_dir_str)
-        staging_dir.mkdir(parents=True)
-        (staging_dir / "data.json").write_text('[]')
-
-        with patch("core.config.get_settings") as mock_settings:
-            mock_settings.return_value.file_workspace_root = str(tmp_path)
-            await agent._cleanup_staging_delayed(delay=0)
-
-        assert not staging_dir.exists()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_noop_when_no_staging(self, tmp_path):
-        """无 staging 目录时不报错"""
-        agent = self._make_agent()
-        with patch("core.config.get_settings") as mock_settings:
-            mock_settings.return_value.file_workspace_root = str(tmp_path)
-            await agent._cleanup_staging_delayed(delay=0)
-        # 不抛异常即通过
+# TestStagingCleanup removed — _cleanup_staging_delayed was removed (NAS replaced it)
 
 
 class TestRecordAgentExperience:

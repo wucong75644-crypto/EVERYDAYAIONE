@@ -16,7 +16,7 @@ class TestFileInfoTools:
         assert len(FILE_INFO_TOOLS) == 4
 
     def test_tool_names(self):
-        expected = {"file_read", "file_list", "file_search", "restore_file"}
+        expected = {"file_read", "file_delete", "file_search", "restore_file"}
         assert FILE_INFO_TOOLS == expected
 
 
@@ -30,13 +30,13 @@ class TestFileToolSchemas:
         schema = FILE_TOOL_SCHEMAS["file_read"]
         assert "path" in schema["required"]
 
-    def test_file_list_no_required(self):
-        schema = FILE_TOOL_SCHEMAS["file_list"]
-        assert schema["required"] == []
+    def test_file_delete_requires_files(self):
+        schema = FILE_TOOL_SCHEMAS["file_delete"]
+        assert "files" in schema["required"]
 
-    def test_file_search_requires_keyword(self):
+    def test_file_search_no_required(self):
         schema = FILE_TOOL_SCHEMAS["file_search"]
-        assert "keyword" in schema["required"]
+        assert schema["required"] == []
 
 
 class TestBuildFileTools:
@@ -66,35 +66,25 @@ class TestBuildFileTools:
         assert "file_edit" not in names
 
 
-class TestFileReadPagesParam:
-    """file_read 的 pages 参数在 schema 和工具定义中正确存在"""
+class TestFileReadImageOnly:
+    """file_read 现在仅支持图片，不含 pages 参数"""
 
-    def test_pages_in_schema(self):
+    def test_no_pages_in_schema(self):
         schema = FILE_TOOL_SCHEMAS["file_read"]
-        assert "pages" in schema["properties"]
-        assert schema["properties"]["pages"]["type"] == "string"
+        assert "pages" not in schema["properties"]
 
-    def test_pages_in_build_file_tools(self):
+    def test_no_pages_in_build_file_tools(self):
         tools = build_file_tools()
         read_tool = next(t for t in tools if t["function"]["name"] == "file_read")
         params = read_tool["function"]["parameters"]["properties"]
-        assert "pages" in params
-        assert params["pages"]["type"] == "string"
-        assert "PDF" in params["pages"]["description"]
+        assert "pages" not in params
 
-    def test_pages_not_required(self):
-        """pages 是可选参数"""
+    def test_only_path_required(self):
+        """只有 path 是必传参数"""
         tools = build_file_tools()
         read_tool = next(t for t in tools if t["function"]["name"] == "file_read")
         required = read_tool["function"]["parameters"]["required"]
-        assert "pages" not in required
-
-    def test_file_read_description_mentions_pdf(self):
-        tools = build_file_tools()
-        read_tool = next(t for t in tools if t["function"]["name"] == "file_read")
-        desc = read_tool["function"]["description"]
-        assert "PDF" in desc
-        assert "pages" in desc
+        assert required == ["path"]
 
     def test_file_read_description_mentions_image(self):
         tools = build_file_tools()
@@ -102,11 +92,19 @@ class TestFileReadPagesParam:
         desc = read_tool["function"]["description"]
         assert "图片" in desc or "png" in desc
 
+    def test_file_read_description_no_pdf_pages(self):
+        """file_read 不再处理 PDF"""
+        tools = build_file_tools()
+        read_tool = next(t for t in tools if t["function"]["name"] == "file_read")
+        desc = read_tool["function"]["description"]
+        # PDF 在 code_execute 中读取，不在 file_read 中
+        assert "pages" not in desc
+
 
 class TestFileRoutingPrompt:
 
     def test_mentions_core_tools(self):
-        for tool in ["file_read", "file_list", "file_search"]:
+        for tool in ["file_read", "file_search", "restore_file"]:
             assert tool in FILE_ROUTING_PROMPT
 
     def test_no_file_write_or_edit_in_routing(self):

@@ -508,18 +508,19 @@ class TestToolExecutorIntegration:
     """ToolExecutor.execute() → FileExecutor → FileReadResult 完整链路"""
 
     @pytest.mark.asyncio
-    async def test_tool_executor_pdf_read(self, tool_executor, user_workspace):
-        """ToolExecutor 调用 file_read 读 PDF → AgentResult"""
+    async def test_tool_executor_pdf_rejected(self, tool_executor, user_workspace):
+        """ToolExecutor 调用 file_read 读 PDF → 拒绝（仅支持图片）"""
         from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "contract.pdf"), 2)
 
         result = await tool_executor.execute("file_read", {"path": "contract.pdf"})
         assert isinstance(result, AgentResult)
-        assert "Page1Content" in result.summary
+        assert result.status == "error"
+        assert "仅支持图片" in result.summary
 
     @pytest.mark.asyncio
-    async def test_tool_executor_pdf_with_pages(self, tool_executor, user_workspace):
-        """ToolExecutor 调用 file_read 带 pages → AgentResult"""
+    async def test_tool_executor_pdf_with_pages_rejected(self, tool_executor, user_workspace):
+        """ToolExecutor 调用 file_read 带 pages → 拒绝（仅支持图片）"""
         from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "report.pdf"), 5)
 
@@ -527,8 +528,8 @@ class TestToolExecutorIntegration:
             "file_read", {"path": "report.pdf", "pages": "3"}
         )
         assert isinstance(result, AgentResult)
-        assert "Page3Content" in result.summary
-        assert "Page1Content" not in result.summary
+        assert result.status == "error"
+        assert "仅支持图片" in result.summary
 
     @pytest.mark.asyncio
     async def test_tool_executor_image_read(self, tool_executor, user_workspace):
@@ -543,8 +544,8 @@ class TestToolExecutorIntegration:
         assert result.image_url
 
     @pytest.mark.asyncio
-    async def test_tool_executor_text_read(self, tool_executor, user_workspace):
-        """ToolExecutor 读文本文件返回 AgentResult"""
+    async def test_tool_executor_text_rejected(self, tool_executor, user_workspace):
+        """ToolExecutor 读文本文件 → 拒绝（file_read 仅支持图片）"""
         from services.agent.agent_result import AgentResult
         Path(user_workspace, "notes.txt").write_text("hello world")
 
@@ -552,28 +553,29 @@ class TestToolExecutorIntegration:
             "file_read", {"path": "notes.txt"}
         )
         assert isinstance(result, AgentResult)
-        assert "hello world" in result.summary
+        assert result.status == "error"
+        assert "仅支持图片" in result.summary
 
     @pytest.mark.asyncio
-    async def test_tool_executor_file_list_then_read_pdf(
+    async def test_tool_executor_non_image_files_rejected(
         self, tool_executor, user_workspace
     ):
-        """用户场景：file_read PDF + text（file_list 已被 os.listdir 替代）"""
+        """file_read 对 PDF 和文本文件都拒绝（仅支持图片）"""
         from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "invoice.pdf"), 2)
         Path(user_workspace, "memo.txt").write_text("meeting notes")
 
-        # Step 1: file_read PDF
         pdf_result = await tool_executor.execute(
             "file_read", {"path": "invoice.pdf"}
         )
-        assert "Page1Content" in pdf_result.summary
+        assert pdf_result.status == "error"
+        assert "仅支持图片" in pdf_result.summary
 
-        # Step 2: file_read text（回归）
         txt_result = await tool_executor.execute(
             "file_read", {"path": "memo.txt"}
         )
-        assert "meeting notes" in txt_result.summary
+        assert txt_result.status == "error"
+        assert "仅支持图片" in txt_result.summary
 
 
 # ============================================================

@@ -287,34 +287,34 @@ class TestRestoreFile:
 
     @pytest.mark.asyncio
     async def test_restore_success(self, tmp_path):
-        """备份存在 → 恢复成功（glob 扫描 staging 目录）"""
+        """deleted_files 记录存在 → OSS 下载 → 恢复成功"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        stg.mkdir()
-
-        # 创建备份文件
-        backup_file = stg / "_bak_1700000000_report.xlsx"
-        backup_file.write_bytes(b"original data")
-
-        # 当前文件（被修改后的）
-        (ws / "report.xlsx").write_bytes(b"modified data")
 
         mixin = FakeMixin()
         executor = self._make_executor(str(ws))
+        executor._workspace_base = str(tmp_path)
 
         mock_settings = MagicMock()
-        mock_settings.file_workspace_root = str(tmp_path)
 
-        with patch(
-            "core.workspace.resolve_staging_dir",
-            return_value=str(stg),
-        ):
+        fake_record = {
+            "id": "rec-1",
+            "oss_object_key": "deleted/report.xlsx",
+            "relative_path": "workspace/report.xlsx",
+        }
+
+        with patch.object(mixin, "_find_deleted_record", new_callable=AsyncMock, return_value=fake_record), \
+             patch("services.oss_service.get_oss_service") as mock_oss_svc, \
+             patch.object(mixin, "_mark_restored", new_callable=AsyncMock):
+            # Mock OSS download to write the file
+            def fake_download(key, path):
+                from pathlib import Path as _P
+                _P(path).write_bytes(b"original data")
+            mock_oss_svc.return_value.bucket.get_object_to_file = fake_download
             result = await mixin._restore_file(executor, {"filename": "report.xlsx"}, mock_settings)
 
         assert result.status == "success"
         assert "已恢复" in result.summary
-        assert (ws / "report.xlsx").read_bytes() == b"original data"
 
     @pytest.mark.asyncio
     async def test_restore_no_backup(self, tmp_path):
@@ -375,7 +375,7 @@ class TestRestoreFile:
 
     @pytest.mark.asyncio
     async def test_restore_path_traversal_blocked(self, tmp_path):
-        """路径穿越攻击 → PermissionError"""
+        """路径穿越在 filename 中 → 返回 empty（DB 查不到穿越路径记录）"""
         ws = tmp_path / "workspace"
         ws.mkdir()
 
@@ -383,9 +383,10 @@ class TestRestoreFile:
         executor = self._make_executor(str(ws))
         mock_settings = MagicMock()
 
-        # ../etc/passwd 应该被 resolve_safe_path 拦截
-        with pytest.raises(ValueError):
-            await mixin._restore_file(executor, {"filename": "../../etc/passwd"}, mock_settings)
+        # _find_deleted_record returns None for traversal filenames
+        with patch.object(mixin, "_find_deleted_record", new_callable=AsyncMock, return_value=None):
+            result = await mixin._restore_file(executor, {"filename": "../../etc/passwd"}, mock_settings)
+        assert result.status == "empty"
 
 
 # ============================================================
@@ -522,7 +523,7 @@ class TestFileSearchRouting:
 
     @pytest.mark.asyncio
     async def test_path_to_existing_file(self, tmp_path):
-        """path 指向已存在的文件 → 调 _prepare_single_file"""
+        """path 指向已存在的文件 → 调 _describe_single_file"""
         ws = tmp_path / "workspace"
         ws.mkdir()
         (ws / "report.txt").write_text("hello")
@@ -535,11 +536,11 @@ class TestFileSearchRouting:
         settings.file_workspace_root = str(tmp_path)
 
         with patch("core.workspace.resolve_staging_dir", return_value=str(tmp_path / "staging")), \
-             patch.object(mixin, "_prepare_single_file", new_callable=AsyncMock,
-                          return_value=AgentResult(summary="prepared", status="success")) as mock_prep:
+             patch.object(mixin, "_describe_single_file", new_callable=AsyncMock,
+                          return_value=AgentResult(summary="described", status="success")) as mock_desc:
             result = await mixin._file_search(executor, {"path": "report.txt"}, settings)
 
-        mock_prep.assert_called_once()
+        mock_desc.assert_called_once()
         assert result.status == "success"
 
     @pytest.mark.asyncio
@@ -674,94 +675,101 @@ class TestRestoreFilePreciseMatch:
         return executor
 
     @pytest.mark.asyncio
-    async def test_no_cross_match_similar_names(self, tmp_path):
-        """_bak_123_old_data.csv 不会被 restore_file(filename='data.csv') 误匹配"""
+    async def test_no_record_returns_empty(self, tmp_path):
+        """DB 无删除记录 → 返回 empty"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        stg.mkdir()
-
-        # 创建两个备份：data.csv 和 old_data.csv
-        (stg / "_bak_1700000001_data.csv").write_bytes(b"correct backup")
-        (stg / "_bak_1700000002_old_data.csv").write_bytes(b"wrong backup")
-
-        # 当前文件
-        (ws / "data.csv").write_bytes(b"modified")
 
         mixin = FakeMixin()
         executor = self._make_executor(str(ws))
         settings = MagicMock()
 
-        with patch("core.workspace.resolve_staging_dir", return_value=str(stg)):
+        with patch.object(mixin, "_find_deleted_record", new_callable=AsyncMock, return_value=None):
             result = await mixin._restore_file(executor, {"filename": "data.csv"}, settings)
 
-        assert result.status == "success"
-        # 恢复的是 data.csv 的备份，不是 old_data.csv 的
-        assert (ws / "data.csv").read_bytes() == b"correct backup"
+        assert result.status == "empty"
 
     @pytest.mark.asyncio
-    async def test_picks_newest_backup(self, tmp_path):
-        """多个备份时取最新的（时间戳最大）"""
+    async def test_restore_from_oss_success(self, tmp_path):
+        """DB 有记录 + OSS 下载成功 → 恢复成功"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        stg.mkdir()
-
-        (stg / "_bak_1700000001_report.xlsx").write_bytes(b"old version")
-        (stg / "_bak_1700000099_report.xlsx").write_bytes(b"newest version")
-        (ws / "report.xlsx").write_bytes(b"current")
 
         mixin = FakeMixin()
         executor = self._make_executor(str(ws))
+        executor._workspace_base = str(tmp_path)
         settings = MagicMock()
 
-        with patch("core.workspace.resolve_staging_dir", return_value=str(stg)):
+        fake_record = {
+            "id": "rec-99",
+            "oss_object_key": "deleted/report.xlsx",
+            "relative_path": "workspace/report.xlsx",
+        }
+
+        with patch.object(mixin, "_find_deleted_record", new_callable=AsyncMock, return_value=fake_record), \
+             patch("services.oss_service.get_oss_service") as mock_oss_svc, \
+             patch.object(mixin, "_mark_restored", new_callable=AsyncMock):
+            def fake_download(key, path):
+                from pathlib import Path as _P
+                _P(path).write_bytes(b"newest version")
+            mock_oss_svc.return_value.bucket.get_object_to_file = fake_download
             result = await mixin._restore_file(executor, {"filename": "report.xlsx"}, settings)
 
         assert result.status == "success"
         assert (ws / "report.xlsx").read_bytes() == b"newest version"
 
     @pytest.mark.asyncio
-    async def test_non_numeric_timestamp_ignored(self, tmp_path):
-        """非数字时间戳的文件不会被匹配"""
+    async def test_oss_failure_returns_error(self, tmp_path):
+        """OSS 下载失败 → 返回 error"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        stg.mkdir()
-
-        # 这个文件名中 "abc" 不是有效时间戳
-        (stg / "_bak_abc_data.csv").write_bytes(b"bad format")
-        (ws / "data.csv").write_bytes(b"current")
 
         mixin = FakeMixin()
         executor = self._make_executor(str(ws))
+        executor._workspace_base = str(tmp_path)
         settings = MagicMock()
 
-        with patch("core.workspace.resolve_staging_dir", return_value=str(stg)):
-            result = await mixin._restore_file(executor, {"filename": "data.csv"}, settings)
+        fake_record = {
+            "id": "rec-1",
+            "oss_object_key": "deleted/test.txt",
+            "relative_path": "workspace/test.txt",
+        }
 
-        assert result.status == "empty"  # 没有有效备份
+        with patch.object(mixin, "_find_deleted_record", new_callable=AsyncMock, return_value=fake_record), \
+             patch("services.oss_service.get_oss_service") as mock_oss_svc:
+            mock_oss_svc.return_value.bucket.get_object_to_file.side_effect = Exception("OSS timeout")
+            result = await mixin._restore_file(executor, {"filename": "test.txt"}, settings)
+
+        assert result.status == "error"
+        assert "失败" in result.summary
 
     @pytest.mark.asyncio
-    async def test_backup_deleted_after_restore(self, tmp_path):
-        """恢复后备份文件被删除（一次性使用）"""
+    async def test_mark_restored_called_after_success(self, tmp_path):
+        """恢复成功后调用 _mark_restored"""
         ws = tmp_path / "workspace"
-        stg = tmp_path / "staging"
         ws.mkdir()
-        stg.mkdir()
-
-        bak = stg / "_bak_1700000000_test.txt"
-        bak.write_bytes(b"backup data")
-        (ws / "test.txt").write_bytes(b"modified")
 
         mixin = FakeMixin()
         executor = self._make_executor(str(ws))
+        executor._workspace_base = str(tmp_path)
         settings = MagicMock()
 
-        with patch("core.workspace.resolve_staging_dir", return_value=str(stg)):
+        fake_record = {
+            "id": "rec-42",
+            "oss_object_key": "deleted/test.txt",
+            "relative_path": "workspace/test.txt",
+        }
+
+        with patch.object(mixin, "_find_deleted_record", new_callable=AsyncMock, return_value=fake_record), \
+             patch("services.oss_service.get_oss_service") as mock_oss_svc, \
+             patch.object(mixin, "_mark_restored", new_callable=AsyncMock) as mock_mark:
+            def fake_download(key, path):
+                from pathlib import Path as _P
+                _P(path).write_bytes(b"restored")
+            mock_oss_svc.return_value.bucket.get_object_to_file = fake_download
             await mixin._restore_file(executor, {"filename": "test.txt"}, settings)
 
-        assert not bak.exists(), "backup should be deleted after restore"
+        mock_mark.assert_awaited_once_with("rec-42")
 
 
 

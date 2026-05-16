@@ -245,6 +245,13 @@ async def ensure_parquet_cache(
                 excel_path, str(cache_path), sheet, src_mtime, src_size,
                 str(snapshot_path), prescan_result,
             )
+
+        # 空文件检测：转换完成但无数据时，给出明确提示
+        if not cache_path.exists():
+            raise ValueError(
+                f"文件 {Path(excel_path).name} 内容为空，没有可读取的数据。"
+                f"请检查文件是否正确或选择其他 Sheet。"
+            )
         return str(cache_path), sheet_names
 
 
@@ -528,7 +535,10 @@ def _cast_to_schema(df, target_schema):
 
 
 def _apply_column_mapping(df, column_mapping: dict[str, str]):
-    """用 AI prescan 的 column_mapping 重命名列。key 是列字母(A/B/C)，value 是业务列名。"""
+    """用 AI prescan 的 column_mapping 重命名列。key 是列字母(A/B/C)，value 是业务列名。
+
+    安全机制：重命名后如果产生重复列名，对重复的加后缀 _1/_2 去重。
+    """
     if not column_mapping:
         return df
     rename_map = {}
@@ -541,8 +551,27 @@ def _apply_column_mapping(df, column_mapping: dict[str, str]):
             old_name = str(df.columns[col_idx])
             if old_name != new_name:
                 rename_map[old_name] = new_name
-    if rename_map:
-        df = df.rename(columns=rename_map)
+    if not rename_map:
+        return df
+
+    df = df.rename(columns=rename_map)
+
+    # 重命名后去重：重复列名加后缀 _1/_2
+    cols = list(df.columns)
+    seen: dict[str, int] = {}
+    new_cols: list[str] = []
+    for c in cols:
+        c_str = str(c)
+        if c_str in seen:
+            seen[c_str] += 1
+            new_cols.append(f"{c_str}_{seen[c_str]}")
+        else:
+            seen[c_str] = 0
+            new_cols.append(c_str)
+    if new_cols != [str(c) for c in cols]:
+        df.columns = new_cols
+        logger.info(f"Column mapping applied (deduped): {rename_map}")
+    else:
         logger.info(f"Column mapping applied: {rename_map}")
     return df
 
@@ -582,7 +611,17 @@ def _convert_excel_to_parquet(
 
     # 表头检测：优先用 AI 预探测结果，失败退回代码检测
     if prescan_result and prescan_result.confidence in ("high", "medium"):
-        actual_start = prescan_result.data_start_row - 1  # Excel 1-indexed → 0-indexed
+        # actual_start 语义：表头行位置(0-indexed)，与代码路径统一
+        if prescan_result.header_rows:
+            actual_start = prescan_result.header_rows[0] - 1  # 表头位置(0-indexed)
+        elif prescan_result.data_start_row:
+            actual_start = prescan_result.data_start_row - 2  # 推算：数据上一行是表头
+        else:
+            # 两个都没有 → 退回代码检测
+            sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
+            df_raw = sheet_raw.to_pandas()
+            actual_start = detect_header_row(df_raw.values.tolist())
+        actual_start = max(actual_start, 0)  # 防止负数
         header_depth = len(prescan_result.header_rows) if prescan_result.header_rows else 1
         logger.info(
             f"Using AI prescan | src={Path(excel_path).name} "
@@ -638,7 +677,17 @@ def _convert_excel_to_parquet(
     if total_rows < _CHUNK_THRESHOLD or header_depth > 1:
         if header_depth > 1:
             header_param = list(range(actual_start, actual_start + header_depth))
-            df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
+            try:
+                df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
+            except Exception as e:
+                # 多级表头读取失败（重复列名/格式异常等），降级为单层
+                logger.warning(
+                    f"Multi-header read failed ({type(e).__name__}: {e}), "
+                    f"fallback to single header | src={Path(excel_path).name}"
+                )
+                sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
+                df = sheet_data.to_pandas()
+                header_depth = 1
         else:
             sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
             df = sheet_data.to_pandas()
