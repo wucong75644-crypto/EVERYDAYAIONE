@@ -100,28 +100,34 @@ def generate_doc_meta(
         "pages_empty": len(empty_pages or []),
     }
 
-    # issues
+    # issues（统一 schema：type/severity/location/preserved/action/recovery_hint）
     issues: list[dict[str, Any]] = []
     for p in (empty_pages or []):
         issues.append({
             "type": "empty_page",
-            "location": {"page": p},
             "severity": "warning",
-            "suggestion": f"第{p}页无可提取文本（可能是扫描件/图片页）",
+            "location": {"page": p},
+            "preserved": True,
+            "action": f"第{p}页无可提取文本",
+            "recovery_hint": "可能是扫描件/图片页，需要 OCR 或跳过该页",
         })
     if error_type == "scanned_document":
         issues.append({
             "type": "scanned_document",
-            "location": {},
             "severity": "error",
-            "suggestion": "文件可能是扫描件，当前不支持 OCR，建议提供可编辑版本",
+            "location": {},
+            "preserved": True,
+            "action": "文件可能是扫描件，无法提取文字",
+            "recovery_hint": "建议提供可编辑版本，或等待 OCR 功能上线",
         })
     elif error_type == "low_extraction":
         issues.append({
             "type": "low_extraction",
-            "location": {},
             "severity": "warning",
-            "suggestion": "提取文本量偏少，部分内容可能是图片或特殊格式",
+            "location": {},
+            "preserved": True,
+            "action": "提取文本量偏少，部分内容可能是图片或特殊格式",
+            "recovery_hint": "在沙盒中用其他库尝试提取，或要求用户提供文字版",
         })
     meta.issues = issues
     return meta
