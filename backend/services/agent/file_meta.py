@@ -102,15 +102,17 @@ def generate_file_meta(
     # ── formulas ──
     meta.formulas = formulas or []
 
-    # ── issues（从 DataFrame 扫描）──
-    meta.issues = _scan_issues(df, cleaning_report.data_start_row)
+    # ── issues（合并来自 cleaning_report + DataFrame 扫描 + 额外标注）──
+    meta.issues = cleaning_report.issues.copy()  # excel_cleaner 的结构化标注
+    meta.issues.extend(_scan_issues(df, cleaning_report.data_start_row))
     if formula_skip_reason:
         meta.issues.append({
             "type": "formula_skipped",
-            "location": {},
             "severity": "info",
-            "count": 0,
-            "suggestion": formula_skip_reason,
+            "location": {},
+            "preserved": True,
+            "action": "公式信息未提取",
+            "recovery_hint": formula_skip_reason,
         })
 
     # ── merged_cells（合并单元格信息，不自动处理，AI 决定）──
@@ -125,10 +127,11 @@ def generate_file_meta(
             })
         meta.issues.append({
             "type": "merged_cells",
-            "location": {},
             "severity": "info",
-            "count": len(merged_ranges),
-            "suggestion": f"检测到{len(merged_ranges)}个合并区域，未自动处理，请根据业务语义决定如何展开",
+            "location": {},
+            "preserved": True,
+            "action": f"检测到{len(merged_ranges)}个合并区域，原始数据保留",
+            "recovery_hint": "根据业务语义决定：ffill（纵向填充）或重命名列（横向分组）",
         })
         meta.raw_preserved = True
 
@@ -244,14 +247,15 @@ def _scan_issues(
             first_null_idx = col_data.isnull().idxmax()
             issues.append({
                 "type": "missing_value",
+                "severity": "warning",
                 "location": {
                     "row": int(first_null_idx) + data_start_row,
                     "col": _col_index_to_letter(i),
                     "raw_col_name": col_str,
                 },
-                "severity": "warning",
-                "count": null_count,
-                "suggestion": f"{col_str}列有{null_count}个缺失值",
+                "preserved": True,
+                "action": f"{col_str}列有{null_count}个缺失值（NULL 保留）",
+                "recovery_hint": f"填充: df['{col_str}'].fillna(均值/0/ffill)，或查询时 WHERE {col_str} IS NOT NULL",
             })
 
         if len(issues) >= _MAX_ISSUES:
@@ -263,10 +267,11 @@ def _scan_issues(
         first_dup_idx = df.duplicated().idxmax()
         issues.append({
             "type": "duplicate_row",
-            "location": {"row": int(first_dup_idx) + data_start_row},
             "severity": "warning",
-            "count": dup_count,
-            "suggestion": f"有{dup_count}条重复数据",
+            "location": {"row": int(first_dup_idx) + data_start_row},
+            "preserved": True,
+            "action": f"有{dup_count}条重复数据（保留未删除）",
+            "recovery_hint": "去重: df.drop_duplicates()，或查询时 SELECT DISTINCT",
         })
 
     return issues
@@ -516,10 +521,26 @@ def format_file_view(meta: FileMeta) -> str:
         lines.append(f"合并单元格（{len(meta.merged_cells)}个，未自动处理，需你根据业务语义决定）：")
         for mc in meta.merged_cells[:5]:
             lines.append(f"  {mc.get('range', '?')}")
-    for issue in meta.issues[:5]:
+    for issue in meta.issues[:8]:
+        sev = issue.get("severity", "info")
+        action = issue.get("action", issue.get("suggestion", ""))
+        hint = issue.get("recovery_hint", "")
         loc = issue.get("location", {})
-        loc_str = f"Row {loc.get('row', '?')}" + (f" {loc['col']}列" if "col" in loc else "")
-        lines.append(f"[{issue.get('severity','info')}] {loc_str} — {issue.get('suggestion','')}")
+        loc_parts = []
+        if loc.get("row"):
+            loc_parts.append(f"Row {loc['row']}")
+        if loc.get("col"):
+            loc_parts.append(f"{loc['col']}列")
+        if loc.get("cols"):
+            loc_parts.append(f"列: {loc['cols']}")
+        if loc.get("rows"):
+            loc_parts.append(f"Row: {loc['rows'][:5]}")
+        loc_str = " ".join(loc_parts) if loc_parts else ""
+        preserved = "✓保留" if issue.get("preserved") else "✗已转换"
+        line = f"[{sev}] {loc_str} {action} [{preserved}]"
+        if hint:
+            line += f"\n    → {hint}"
+        lines.append(line)
     dsr = (meta.cleaning or {}).get("data_start_row", 2)
     lines.append(f"\n行号映射：Excel行号 = Parquet索引 + {dsr}")
 

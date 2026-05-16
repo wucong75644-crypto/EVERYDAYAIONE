@@ -35,7 +35,8 @@ class CleaningReport:
     empty_rows_removed: int = 0
     int_cols_fixed: int = 0
     has_auto_filter: bool = False
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # 旧字段保留兼容
+    issues: list[dict] = field(default_factory=list)    # 统一结构化标注
     original_shape: tuple[int, int] = (0, 0)
     final_shape: tuple[int, int] = (0, 0)
     # 行号映射参数（file_meta.py 生成完整 .meta.json 时使用）
@@ -52,6 +53,7 @@ class CleaningReport:
         self.hidden_cols_names = list(set(self.hidden_cols_names + other.hidden_cols_names))
         self.has_auto_filter = self.has_auto_filter or other.has_auto_filter
         self.warnings = list(set(self.warnings + other.warnings))
+        self.issues = self.issues + other.issues
         self.original_shape = (self.original_shape[0] + other.original_shape[0],
                                max(self.original_shape[1], other.original_shape[1]))
         self.final_shape = (self.final_shape[0] + other.final_shape[0],
@@ -325,9 +327,14 @@ def _flatten_multi_header(df: pd.DataFrame, report: CleaningReport | None = None
         flat.append(name)
     df.columns = flat
     if report is not None:
-        report.warnings.append(
-            f"多级表头已展平为单行（原始 {len(original_levels)} 层，用 _ 连接）"
-        )
+        report.issues.append({
+            "type": "header_flattened",
+            "severity": "info",
+            "location": {},
+            "preserved": False,
+            "action": f"多级表头（{len(original_levels)}层）已用 _ 连接展平为单行",
+            "recovery_hint": "原始层级信息见 merged_cells，可根据业务语义重命名列",
+        })
 
 
 def _apply_merge_fill(
@@ -371,7 +378,7 @@ def _mark_hidden_cols(
     structure: ExcelStructure,
     report: CleaningReport,
 ) -> None:
-    """在 warnings 中报告隐藏列（不删除，不加标记列）。"""
+    """标注隐藏列（不删除，数据保留）。"""
     if not structure.hidden_cols:
         return
     hidden_names = []
@@ -381,6 +388,14 @@ def _mark_hidden_cols(
             hidden_names.append(str(df.columns[pandas_col]))
     if hidden_names:
         report.hidden_cols_names = hidden_names
+        report.issues.append({
+            "type": "hidden_cols",
+            "severity": "info",
+            "location": {"cols": hidden_names},
+            "preserved": True,
+            "action": "数据保留，未删除隐藏列",
+            "recovery_hint": "按需排除隐藏列: SELECT 时不选这些列",
+        })
 
 
 def _remove_empty_rows_cols(
@@ -406,9 +421,16 @@ def _remove_empty_rows_cols(
             continue  # 合并区域内的空列不标注（已有 merged_cells 信息）
         if df.iloc[:, i].isna().all():
             empty_col_names.append(col_str)
-    report.empty_cols_removed = 0  # 不再删除
+    report.empty_cols_removed = 0
     if empty_col_names:
-        report.warnings.append(f"全空列（未删除）: {empty_col_names}")
+        report.issues.append({
+            "type": "empty_cols",
+            "severity": "info",
+            "location": {"cols": empty_col_names},
+            "preserved": True,
+            "action": "全空列已保留，未删除",
+            "recovery_hint": "如确认无用，查询时不选这些列即可",
+        })
 
     # 空行：不删除，只标注位置（AI 决定是否需要）
     data_cols = [c for c in df.columns if not str(c).startswith("_is_")]
@@ -416,9 +438,16 @@ def _remove_empty_rows_cols(
     if data_cols:
         empty_mask = df[data_cols].isna().all(axis=1)
         empty_row_indices = list(df[empty_mask].index)
-    report.empty_rows_removed = 0  # 不再删除
+    report.empty_rows_removed = 0
     if empty_row_indices:
-        report.warnings.append(f"全空行（未删除）: Row {[i + 1 for i in empty_row_indices[:10]]}")
+        report.issues.append({
+            "type": "empty_rows",
+            "severity": "info",
+            "location": {"rows": [i + 1 for i in empty_row_indices[:20]]},
+            "preserved": True,
+            "action": f"检测到 {len(empty_row_indices)} 个全空行，已保留未删除",
+            "recovery_hint": "WHERE 排除: WHERE NOT (所有列 IS NULL)",
+        })
 
 
 def _fix_int_columns(df: pd.DataFrame, report: CleaningReport) -> None:
@@ -460,7 +489,14 @@ def _deduplicate_columns(df: pd.DataFrame, report: CleaningReport) -> None:
             new_cols.append(c_str)
     if new_cols != [str(c) for c in cols]:
         df.columns = new_cols
-        report.warnings.append(f"重复列名已加后缀（原始列名重复）: {duplicated}")
+        report.issues.append({
+            "type": "column_deduplicated",
+            "severity": "info",
+            "location": {"cols": duplicated},
+            "preserved": False,
+            "action": f"重复列名已加后缀 _1/_2: {duplicated}",
+            "recovery_hint": "结合 merged_cells 信息重命名（如 3月_金额 / 4月_金额）",
+        })
 
 def _coerce_object_columns(df: pd.DataFrame, report: CleaningReport) -> None:
     """混合类型列统一为 str（防止 PyArrow 崩溃）+ 标注到 report。"""
@@ -478,4 +514,11 @@ def _coerce_object_columns(df: pd.DataFrame, report: CleaningReport) -> None:
             df[col] = df[col].astype(str).replace({"nan": None})
             coerced.append(str(col))
     if coerced:
-        report.warnings.append(f"混合类型列已转为文本（可用 pd.to_numeric 还原）: {coerced}")
+        report.issues.append({
+            "type": "mixed_type_coerced",
+            "severity": "warning",
+            "location": {"cols": coerced},
+            "preserved": False,
+            "action": f"混合类型列已转为文本: {coerced}",
+            "recovery_hint": "用 pd.to_numeric(df['列名'], errors='coerce') 还原数字",
+        })

@@ -167,7 +167,8 @@ class TestScanIssues:
         name_issue = next(i for i in missing_issues if i["location"]["raw_col_name"] == "name")
         assert name_issue["location"]["row"] == 3
         assert name_issue["location"]["col"] == "A"
-        assert name_issue["count"] == 1
+        assert name_issue["preserved"] is True
+        assert "recovery_hint" in name_issue
 
     def test_duplicates(self):
         df = pd.DataFrame({
@@ -177,7 +178,8 @@ class TestScanIssues:
         issues = _scan_issues(df, data_start_row=2)
         dup_issues = [i for i in issues if i["type"] == "duplicate_row"]
         assert len(dup_issues) == 1
-        assert dup_issues[0]["count"] == 1
+        assert dup_issues[0]["preserved"] is True
+        assert "drop_duplicates" in dup_issues[0]["recovery_hint"]
 
     def test_no_issues(self):
         df = pd.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
