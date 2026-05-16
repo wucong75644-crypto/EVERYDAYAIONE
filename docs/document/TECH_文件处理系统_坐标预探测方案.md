@@ -170,7 +170,48 @@ C 类（三段扫描）：3 个
   + 探测失败降级（退回代码检测）
 
 关系：
-  AI 探测成功 → 用 AI 的结论（header_rows / data_start_row / regions）
-  AI 探测失败 → 退回 detect_header_row + detect_table_regions（现有逻辑）
+  AI 探测成功 → 用 AI 的结论（header_rows / data_start_row / column_mapping）
+  AI 探测失败 → 退回 detect_header_row（现有逻辑）
   两条路径输出格式一致 → 下游不感知
+
+prescan 各字段的使用方式：
+  header_rows / data_start_row → 驱动 L1 管道（替代 detect_header_row）
+  column_mapping → 驱动列名重命名（单表格路径 + 多区域路径）
+  regions → 只写入 meta.json 供 AI 业务层参考（不驱动多区域检测）
+  special_rows → 只写入 meta.json 供 AI 业务层参考（不驱动代码逻辑）
+
+多区域检测始终由 detect_table_regions 代码执行（扫 5000 行，比 AI 50 行采样更准）
+```
+
+---
+
+## 六、审核修复记录（2026-05-16）
+
+### 修复 #1：prescan regions 不驱动多区域检测
+
+```
+经验教训：AI 的 regions 基于 50 行采样推断，不够准确。
+实测中 AI 把发票文件误判为多区域，导致数据丢失（1171 行→45 行）。
+
+结论：regions 只写入 meta.json 给 AI 业务层看，不用来驱动 L1 管道。
+多区域检测由 detect_table_regions 代码执行（扫 5000 行更可靠）。
+```
+
+### 修复 #2：column_mapping 覆盖多区域分支
+
+```
+convert_multi_region 新增 column_mapping 参数，合并完成后统一 rename。
+普适方案——column_mapping 为空时不执行 rename，不影响原有逻辑。
+```
+
+### 修复 #5：L2 触发条件扩展
+
+```
+status=warning + confidence < 0.7 → 也触发 L2
+```
+
+### 修复 #6：缓存失效机制
+
+```
+已有 .snapshot 的 mtime+size 比对。prescan 结论随 meta.json 一起失效。
 ```
