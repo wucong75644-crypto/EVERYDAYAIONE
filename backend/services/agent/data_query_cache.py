@@ -617,9 +617,11 @@ def _convert_excel_to_parquet(
         scan_rows = scan_raw.to_pandas().values.tolist()
         regions = detect_table_regions(scan_rows)
         if len(regions) >= 2:
+            _col_mapping = prescan_result.column_mapping if prescan_result else {}
             convert_multi_region(
                 excel_path, str(cache_path), regions, sheet_names,
                 resolved_name, src_mtime, src_size, str(snapshot_path),
+                column_mapping=_col_mapping,
             )
             return sheet_names
 
