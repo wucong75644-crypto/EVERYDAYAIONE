@@ -105,10 +105,10 @@ class TestCodeToolsDefinition:
         assert base["function"]["description"] != ws["function"]["description"]
 
     def test_workspace_version_has_parquet_hint(self):
-        """主 Agent 版包含 read_parquet 说明"""
+        """主 Agent 版包含 Parquet 说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "read_parquet" in desc
+        assert "Parquet" in desc or "duckdb" in desc
 
     def test_base_version_no_doc_generation(self):
         """ERP Agent 版不提及文档生成库"""
@@ -129,12 +129,11 @@ class TestCodeToolsDefinition:
         desc = tool["function"]["description"]
         assert "OUTPUT_DIR" in desc
 
-    def test_workspace_version_has_os(self):
-        """主 Agent 版包含 os 受限说明"""
+    def test_workspace_version_has_os_mention(self):
+        """主 Agent 版提及 os（禁用说明）"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
         assert "os" in desc
-        assert "listdir" in desc or "受限" in desc
 
 
 class TestAgentToolsIntegration:

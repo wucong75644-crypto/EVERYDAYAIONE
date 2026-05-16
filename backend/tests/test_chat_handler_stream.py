@@ -99,28 +99,11 @@ class TestCalculateCredits:
 class TestStreamGenerate:
 
     @pytest.mark.asyncio
-    async def test_direct_reply_skips_llm(self):
-        """_direct_reply → 跳过 LLM 走 _stream_direct_reply"""
+    async def test_direct_reply_removed(self):
+        """_direct_reply feature was removed — no longer exists"""
+        # _stream_direct_reply was removed from ChatHandler (NAS refactor)
         handler = _make_handler()
-        handler._stream_direct_reply = AsyncMock()
-
-        await handler._stream_generate(
-            task_id="t1",
-            message_id="m1",
-            conversation_id="c1",
-            user_id="u1",
-            content=[TextPart(text="test")],
-            model_id="model",
-            _params={"_direct_reply": "大脑直接回复"},
-        )
-
-        handler._stream_direct_reply.assert_awaited_once_with(
-            task_id="t1",
-            message_id="m1",
-            conversation_id="c1",
-            user_id="u1",
-            text="大脑直接回复",
-        )
+        assert not hasattr(handler, '_stream_direct_reply')
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
@@ -274,57 +257,7 @@ class TestStreamGenerate:
         mock_adapter.close.assert_awaited_once()
 
 
-# -- TestStreamDirectReply --
-
-
-class TestStreamDirectReply:
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_handler.ws_manager")
-    async def test_sends_start_and_chunk(self, mock_ws):
-        """发送 message_start + message_chunk WS 消息"""
-        handler = _make_handler()
-        handler.on_complete = AsyncMock()
-        mock_ws.send_to_task_or_user = AsyncMock()
-        mock_ws.is_cancelled.return_value = False
-
-        await handler._stream_direct_reply(
-            task_id="t1",
-            message_id="m1",
-            conversation_id="c1",
-            user_id="u1",
-            text="直接回复内容",
-        )
-
-        # 应该发送 2 次 WS 消息（start + chunk）
-        assert mock_ws.send_to_task_or_user.await_count == 2
-        # on_complete 积分=0
-        handler.on_complete.assert_awaited_once()
-        call_args = handler.on_complete.call_args
-        assert call_args.kwargs["credits_consumed"] == 0
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_handler.ws_manager")
-    async def test_exception_calls_on_error(self, mock_ws):
-        """异常调 on_error"""
-        handler = _make_handler()
-        handler.on_error = AsyncMock()
-        mock_ws.send_to_task_or_user = AsyncMock(
-            side_effect=Exception("ws down"),
-        )
-        mock_ws.is_cancelled.return_value = False
-
-        await handler._stream_direct_reply(
-            task_id="t1",
-            message_id="m1",
-            conversation_id="c1",
-            user_id="u1",
-            text="test",
-        )
-
-        handler.on_error.assert_awaited_once()
-        call_args = handler.on_error.call_args
-        assert call_args.kwargs["error_code"] == "DIRECT_REPLY_FAILED"
+# TestStreamDirectReply removed — _stream_direct_reply was removed from ChatHandler
 
 
 # -- TestHandleChatCreditsOnComplete --

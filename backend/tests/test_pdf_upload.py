@@ -438,7 +438,7 @@ class TestBuildLlmMessagesWorkspace:
 
         # 应该有一个 system prompt 包含 workspace 文件信息
         system_prompts = [m["content"] for m in result if m["role"] == "system"]
-        ws_prompt = [p for p in system_prompts if "工作区文件" in p]
+        ws_prompt = [p for p in system_prompts if "用户附加了以下文件" in p]
         assert len(ws_prompt) == 1
         assert "sales.csv" in ws_prompt[0]
 
@@ -473,7 +473,7 @@ class TestBuildLlmMessagesWorkspace:
 
         # workspace 文件通过 system prompt 注入
         system_prompts = [m["content"] for m in result if m["role"] == "system"]
-        ws_prompt = [p for p in system_prompts if "工作区文件" in p]
+        ws_prompt = [p for p in system_prompts if "用户附加了以下文件" in p]
         assert len(ws_prompt) == 1
         assert "data.csv" in ws_prompt[0]
 

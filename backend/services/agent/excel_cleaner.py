@@ -432,13 +432,40 @@ def _remove_empty_rows_cols(
             "recovery_hint": "如确认无用，查询时不选这些列即可",
         })
 
-    # 空行：不删除，只标注位置（AI 决定是否需要）
+    # 空行：中间空行保留（可能是分组分隔），尾部连续空行裁剪
+    # 纯空白字符串也视为空值（Excel 常见：空格占位但无业务意义）
     data_cols = [c for c in df.columns if not str(c).startswith("_is_")]
-    empty_row_indices: list[int] = []
     if data_cols:
-        empty_mask = df[data_cols].isna().all(axis=1)
-        empty_row_indices = list(df[empty_mask].index)
+        blank_mask = df[data_cols].apply(
+            lambda col: col.isna() | col.astype(str).str.strip().eq("") | col.astype(str).eq("nan")
+        ).all(axis=1)
+    else:
+        blank_mask = pd.Series(False, index=df.index)
+    empty_row_indices: list[int] = list(df[blank_mask].index)
     report.empty_rows_removed = 0
+
+    # 尾部连续空行裁剪（中间空行保留，只裁尾部无意义空行）
+    if empty_row_indices and data_cols:
+        non_empty_mask = ~blank_mask
+        if non_empty_mask.any():
+            last_non_empty_pos = non_empty_mask[::-1].idxmax()
+            trailing_mask = df.index > last_non_empty_pos
+            trailing_count = int(trailing_mask.sum())
+            if trailing_count > 5:
+                df.drop(df[trailing_mask].index, inplace=True)
+                report.empty_rows_removed = trailing_count
+                # 更新 empty_row_indices（去掉已裁剪的尾部）
+                empty_row_indices = [i for i in empty_row_indices if i <= last_non_empty_pos]
+                report.issues.append({
+                    "type": "trailing_empty_rows_trimmed",
+                    "severity": "info",
+                    "location": {},
+                    "preserved": False,
+                    "action": f"裁剪了 {trailing_count} 行尾部连续空行",
+                    "recovery_hint": "原始文件中尾部空行仍然存在",
+                })
+
+    # 中间空行标注（不删除）
     if empty_row_indices:
         report.issues.append({
             "type": "empty_rows",

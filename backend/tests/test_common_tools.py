@@ -53,12 +53,13 @@ class TestBuildCommonTools:
         erp_agent = next(t for t in tools if t["function"]["name"] == "erp_agent")
         assert "task" in erp_agent["function"]["parameters"]["required"]
 
-    def test_file_read_has_sql_param_in_file_tools(self):
-        """data_query 已合并到 file_read，验证 file_read 有 sql 参数"""
+    def test_file_read_is_image_only(self):
+        """file_read 现在仅用于图片，不含 sql 参数"""
         from config.file_tools import build_file_tools
         tools = build_file_tools()
         fr = [t for t in tools if t["function"]["name"] == "file_read"][0]
-        assert "sql" in fr["function"]["parameters"]["properties"]
+        assert "sql" not in fr["function"]["parameters"]["properties"]
+        assert "path" in fr["function"]["parameters"]["properties"]
 
     def test_tool_count(self):
         """工具数量在预期范围"""
