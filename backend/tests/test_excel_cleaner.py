@@ -232,24 +232,28 @@ class TestAutoFilter:
 
 
 class TestEmptyRowsCols:
-    def test_empty_cols_removed(self):
+    def test_empty_cols_preserved_and_annotated(self):
+        """空列不再删除，只在 warnings 里标注。"""
         df = pd.DataFrame({"a": [1, 2], "Unnamed: 0": [None, None], "b": [3, 4]})
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             p = f.name
         df.to_excel(p, index=False)
         df_clean, report = clean_excel(df.copy(), p, 0)
-        assert "Unnamed: 0" not in df_clean.columns
-        assert report.empty_cols_removed >= 1
+        assert "Unnamed: 0" in df_clean.columns  # 不再删除
+        assert report.empty_cols_removed == 0
+        assert any("全空列" in w for w in report.warnings)
         os.unlink(p)
 
-    def test_empty_rows_removed(self):
+    def test_empty_rows_preserved_and_annotated(self):
+        """空行不再删除，只在 warnings 里标注。"""
         df = pd.DataFrame({"a": [1, None, 3], "b": [4, None, 6]})
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             p = f.name
         df.to_excel(p, index=False)
         df_clean, report = clean_excel(df.copy(), p, 0)
-        assert len(df_clean) == 2
-        assert report.empty_rows_removed == 1
+        assert len(df_clean) == 3  # 不再删除
+        assert report.empty_rows_removed == 0
+        assert any("全空行" in w for w in report.warnings)
         os.unlink(p)
 
 

@@ -204,10 +204,10 @@ class TestConvertMultiRegion:
         wb.close()
         return xlsx_path
 
-    def test_outputs_separate_parquets(self, tmp_path):
-        """多区域输出独立 Parquet 文件。"""
+    def test_merged_parquet_with_region_col(self, tmp_path):
+        """多区域合并为一个 Parquet + _region 列。"""
         from services.agent.table_region_detector import convert_multi_region, detect_table_regions
-        import fastexcel
+        import fastexcel, duckdb
 
         xlsx_path = self._make_multi_region_xlsx(tmp_path)
         staging = tmp_path / "staging"
@@ -220,18 +220,21 @@ class TestConvertMultiRegion:
         regions = detect_table_regions(scan_raw.to_pandas().values.tolist())
         assert len(regions) == 2
 
-        paths = convert_multi_region(
+        convert_multi_region(
             xlsx_path, cache_path, regions, reader.sheet_names,
             "Sheet1", 0.0, 0, snapshot_path,
         )
-        assert len(paths) == 2
-        # 每个区域有独立的 .parquet + .meta.json
-        for p in paths:
-            assert Path(p).exists()
-            assert Path(p.replace(".parquet", ".meta.json")).exists()
+        # cache_path 存在（路径对齐）
+        assert Path(cache_path).exists()
+        assert Path(cache_path.replace(".parquet", ".meta.json")).exists()
+        # _region 列标识来源
+        df = duckdb.sql("SELECT * FROM read_parquet(?)", params=[cache_path]).to_df()
+        assert "_region" in df.columns
+        region_values = set(df["_region"].unique())
+        assert len(region_values) == 2
 
-    def test_session_files_updated(self, tmp_path):
-        """多区域转换后 session_files.json 包含所有区域。"""
+    def test_session_files_single_entry(self, tmp_path):
+        """多区域合并后 session_files 只注册一个文件。"""
         from services.agent.table_region_detector import convert_multi_region, detect_table_regions
         from services.agent.session_files import read_session_files
         import fastexcel
@@ -252,13 +255,10 @@ class TestConvertMultiRegion:
         )
 
         sf = read_session_files(str(staging))
-        assert len(sf["files"]) == 2
-        region_names = [f.get("source_region", "") for f in sf["files"]]
-        assert "订单表" in region_names
-        assert "退货表" in region_names
+        assert len(sf["files"]) == 1  # 合并为一个文件
 
-    def test_meta_has_correct_schema(self, tmp_path):
-        """每个区域的 meta 有正确的 schema 和行号。"""
+    def test_meta_has_region_info(self, tmp_path):
+        """meta 包含区域信息。"""
         from services.agent.table_region_detector import convert_multi_region, detect_table_regions
         from services.agent.file_meta import read_file_meta
         import fastexcel
@@ -273,17 +273,11 @@ class TestConvertMultiRegion:
         scan_raw = reader.load_sheet(0, header_row=None, n_rows=5000)
         regions = detect_table_regions(scan_raw.to_pandas().values.tolist())
 
-        paths = convert_multi_region(
+        convert_multi_region(
             xlsx_path, cache_path, regions, reader.sheet_names,
             "Sheet1", 0.0, 0, snapshot_path,
         )
 
-        # 订单表 meta
-        order_meta = read_file_meta(paths[0])
-        assert order_meta is not None
-        assert "订单号" in order_meta.schema or "金额" in order_meta.schema
-
-        # 退货表 meta
-        return_meta = read_file_meta(paths[1])
-        assert return_meta is not None
-        assert "编号" in return_meta.schema or "原因" in return_meta.schema
+        meta = read_file_meta(cache_path)
+        assert meta is not None
+        assert "区域" in meta.summary.get("description", "")
