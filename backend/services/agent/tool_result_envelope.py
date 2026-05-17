@@ -213,8 +213,7 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
         )
 
     # 落盘 staging 文件
-    rel_path = _persist_to_staging(staging_dir, tool_name, result)
-    filename = rel_path.split("/")[-1]
+    filename = _persist_to_staging(staging_dir, tool_name, result)
 
     # code_execute 用结构化预览（首尾行 + 统计），其他工具用纯文本预览
     if tool_name == "code_execute":
@@ -235,10 +234,9 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
 
 
 def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
-    """将完整结果写入 staging 文件，返回相对路径（供 read_file 使用）
+    """将完整结果写入 staging 文件，返回文件名（不含路径）。
 
-    相对路径格式：staging/{conv_id}/{filename}
-    FileExecutor.resolve_safe_path 以用户 workspace_dir 为 root 解析。
+    文件写入 staging_dir 目录，调用方通过 STAGING_DIR + '/filename' 引用。
     """
     Path(staging_dir).mkdir(parents=True, exist_ok=True)
 
@@ -249,17 +247,11 @@ def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
 
     file_path.write_text(result, encoding="utf-8")
 
-    # staging_dir 格式：{workspace_dir}/staging/{conv_id}
-    # 取最后两段（staging/{conv_id}）+ filename 构成相对路径
-    parts = Path(staging_dir).parts
-    # 倒数第二个是 "staging"，倒数第一个是 conv_id
-    rel_path = f"staging/{parts[-1]}/{filename}"
-
     logger.info(
         f"ToolResultEnvelope staged | tool={tool_name} | "
-        f"chars={len(result)} | path={rel_path}"
+        f"chars={len(result)} | file={filename}"
     )
-    return rel_path
+    return filename
 
 
 _HEAD_LINES = 8   # 结构化预览：展示前 N 行

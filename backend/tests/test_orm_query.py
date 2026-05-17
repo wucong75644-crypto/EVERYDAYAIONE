@@ -188,7 +188,7 @@ class TestExportOrm:
         tmp_path = Path("/tmp/test_orm_export.parquet")
         with patch(
             "services.kuaimai.erp_duckdb_helpers.resolve_export_path",
-            return_value=(tmp_path.parent, "test", tmp_path, "test.parquet"),
+            return_value=(tmp_path.parent, tmp_path, "test.parquet"),
         ), patch(
             "core.duckdb_engine.get_duckdb_engine",
         ) as mock_engine, patch(

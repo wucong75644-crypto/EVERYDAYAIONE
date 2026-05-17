@@ -1281,7 +1281,7 @@ class TestExportOrmExtraFields:
         tmp = Path("/tmp/test_extra_fields.parquet")
         with patch(
             "services.kuaimai.erp_duckdb_helpers.resolve_export_path",
-            return_value=(tmp.parent, "t", tmp, "t.parquet"),
+            return_value=(tmp.parent, tmp, "t.parquet"),
         ), patch(
             "core.duckdb_engine.get_duckdb_engine",
         ) as me, patch(

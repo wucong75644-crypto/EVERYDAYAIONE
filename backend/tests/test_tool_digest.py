@@ -107,7 +107,7 @@ class TestBuildToolDigest:
         assert digest["tools"][0]["name"] == "erp_agent"
         assert "最近七天" in digest["tools"][0]["hint"]
         assert digest["tools"][0]["ok"] is True
-        assert digest["staging_dir"] == "staging/conv-123"
+        assert digest["staging_dir"] == "STAGING_DIR"
 
     def test_with_staging_path(self):
         """包含 staging 文件路径的大结果"""
@@ -206,18 +206,18 @@ class TestFormatToolDigest:
                 {"name": "erp_agent", "hint": "查订单", "ok": True, "staged": "tool_result_erp_agent_a1b2.txt"},
                 {"name": "code_execute", "hint": "df.groupby", "ok": True},
             ],
-            "staging_dir": "staging/conv-123",
+            "staging_dir": "STAGING_DIR",
         }
         result = format_tool_digest(digest)
         assert "[上轮工具执行记录]" in result
         assert "✓ erp_agent: 查订单" in result
-        assert "tool_result_erp_agent_a1b2.txt" in result
+        assert "STAGING_DIR + '/tool_result_erp_agent_a1b2.txt'" in result
         assert "15 分钟内有效" in result
 
     def test_error_tool_format(self):
         digest = {
             "tools": [{"name": "erp_agent", "hint": "查订单", "ok": False}],
-            "staging_dir": "staging/conv-err",
+            "staging_dir": "STAGING_DIR",
         }
         result = format_tool_digest(digest)
         assert "✗ erp_agent" in result

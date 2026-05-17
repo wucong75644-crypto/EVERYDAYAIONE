@@ -160,7 +160,7 @@ class TestE2EProductStopSale:
             return_value=("2行数据 | 文件大小 1KB", {"rows": 2}),
         ):
             tmp = Path("/tmp/test_e2e_product.parquet")
-            mock_path.return_value = (tmp.parent, "test", tmp, "product_export.parquet")
+            mock_path.return_value = (tmp.parent, tmp, "product_export.parquet")
             mock_engine.return_value.profile_parquet = MagicMock(return_value={})
 
             result = await agent.execute(
@@ -211,7 +211,7 @@ class TestE2EDailyStatsTop:
             return_value=("10行数据", {"rows": 10}),
         ):
             tmp = Path("/tmp/test_e2e_daily.parquet")
-            mock_path.return_value = (tmp.parent, "test", tmp, "daily_stats.parquet")
+            mock_path.return_value = (tmp.parent, tmp, "daily_stats.parquet")
             mock_engine.return_value.profile_parquet = MagicMock(return_value={})
 
             result = await agent.execute(
