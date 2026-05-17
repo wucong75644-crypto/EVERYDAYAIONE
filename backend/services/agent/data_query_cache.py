@@ -379,7 +379,8 @@ def detect_header_depth(
 
 
 _CHUNK_THRESHOLD = 100_000  # 超过此行数走分块读取
-_CHUNK_SIZE = 50_000        # 每块行数
+_CHUNK_SIZE = 100_000       # 每块行数（从 50K 提升到 100K 减少循环开销）
+_CHUNK_WORKERS = 3          # 分块并行 worker 数
 
 
 def _prescan_schema(reader, target_sheet, actual_start, excel_path: str):
@@ -732,47 +733,76 @@ def _convert_excel_to_parquet(
         row_count = len(df)
         del df
     else:
-        # ── 大文件：预扫描 schema + 分块读取 + 强制 cast ──
+        # ── 大文件：预扫描 schema + 并行分块读取 + 强制 cast ──
         import pyarrow as pa
         import pyarrow.parquet as pq
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # 预扫描：读 500 行 + clean_excel → 确定 target_schema
+        # 预扫描：三段采样 + clean_excel → 确定 target_schema
         target_schema = _prescan_schema(reader, target_sheet, actual_start, excel_path)
 
         writer = pq.ParquetWriter(tmp_path, target_schema)
         row_count = 0
         merged_report = CleaningReport()
-        chunk_idx = 0
 
-        while True:
-            skip = _CHUNK_SIZE * chunk_idx
+        # 计算总块数和并行参数
+        total_chunks = (total_rows + _CHUNK_SIZE - 1) // _CHUNK_SIZE
+        max_workers = min(_CHUNK_WORKERS, total_chunks)
+        _col_mapping = prescan_result.column_mapping if prescan_result else {}
+
+        def _process_one_chunk(idx: int):
+            """单块独立处理：读取 → 清洗 → cast → 返回结果"""
+            import fastexcel as _fe
+            _rdr = _fe.read_excel(excel_path)
+            skip = _CHUNK_SIZE * idx
             try:
-                chunk = reader.load_sheet(
+                raw = _rdr.load_sheet(
                     target_sheet, header_row=actual_start,
                     n_rows=_CHUNK_SIZE, skip_rows=skip if skip > 0 else None,
                 )
-                df_chunk = chunk.to_pandas()
+                df_chunk = raw.to_pandas()
             except Exception:
-                break
+                return (idx, None, None, 0)
 
             if len(df_chunk) == 0:
-                break
+                return (idx, None, None, 0)
 
-            # 每块独立清洗（与预扫描用相同参数）
             df_chunk, chunk_report = clean_excel(
                 df_chunk, excel_path, resolved_name, actual_start, structure=structure,
             )
-            merged_report.merge(chunk_report)
-
-            # AI column_mapping 重命名列
-            if prescan_result and prescan_result.column_mapping:
-                df_chunk = _apply_column_mapping(df_chunk, prescan_result.column_mapping)
-            # 强制对齐到预扫描 schema
+            if _col_mapping:
+                df_chunk = _apply_column_mapping(df_chunk, _col_mapping)
             table = _cast_to_schema(df_chunk, target_schema)
-            writer.write_table(table)
-            row_count += len(df_chunk)
-            chunk_idx += 1
-            del df_chunk, table
+            nrows = len(df_chunk)
+            del df_chunk
+            return (idx, table, chunk_report, nrows)
+
+        # 分批并行处理（控制内存峰值：每批最多 max_workers 块同时在内存）
+        for batch_start in range(0, total_chunks, max_workers):
+            batch_end = min(batch_start + max_workers, total_chunks)
+            batch_results: dict[int, tuple] = {}
+
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_process_one_chunk, i): i
+                    for i in range(batch_start, batch_end)
+                }
+                for future in as_completed(futures):
+                    idx, table, report, nrows = future.result()
+                    batch_results[idx] = (table, report, nrows)
+
+            # 按编号顺序写入本批（Parquet 要求行序正确）
+            for i in range(batch_start, batch_end):
+                if i not in batch_results:
+                    break
+                table, report, nrows = batch_results[i]
+                if table is None:
+                    break
+                writer.write_table(table)
+                row_count += nrows
+                if report:
+                    merged_report.merge(report)
+                del table
 
         writer.close()
         if row_count > 0:
@@ -820,7 +850,8 @@ def _convert_excel_to_parquet(
 
         logger.info(
             f"Excel chunked convert | src={Path(excel_path).name} "
-            f"| chunks={chunk_idx} | chunk_size={_CHUNK_SIZE:,}"
+            f"| chunks={total_chunks} | workers={max_workers} "
+            f"| chunk_size={_CHUNK_SIZE:,}"
         )
 
     Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
