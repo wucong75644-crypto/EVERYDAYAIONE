@@ -58,6 +58,8 @@ class FileToolMixin:
                 return await self._file_search(executor, args, settings)
             if tool_name == "file_read":
                 return await self._file_read_image(executor, args)
+            if tool_name == "file_analyze":
+                return await self._file_analyze(executor, args, settings)
             if tool_name == "file_delete":
                 return await self._file_delete(executor, args, settings)
             if tool_name == "restore_file":
@@ -207,6 +209,125 @@ class FileToolMixin:
         lines = [raw_result]
         lines.append("")
         lines.append("在 code_execute 中直接用相对路径读取：open('文件名')")
+
+        return AgentResult(summary="\n".join(lines), status="success")
+
+    # ================================================================
+    # file_analyze：数据文件结构读取（Excel/CSV → prescan → Parquet）
+    # ================================================================
+
+    _ANALYZE_EXTENSIONS = {".xlsx", ".xls", ".csv", ".tsv"}
+
+    async def _file_analyze(
+        self, executor: Any, args: Dict[str, Any], settings: Any,
+    ) -> Any:
+        """读取 Excel/CSV 文件结构，自动转 Parquet 缓存，返回元数据。"""
+        import time
+        from services.agent.agent_result import AgentResult
+        from services.agent.file_path_cache import get_file_cache
+        from services.agent.data_query_cache import ensure_parquet_cache
+        from services.agent.file_meta import read_file_meta, format_file_view
+        from core.workspace import resolve_staging_dir
+
+        path = args.get("path", "")
+        if not path:
+            return AgentResult(
+                summary="请提供文件路径", status="error",
+                error_message="path is required",
+                metadata={"retryable": True},
+            )
+
+        # 路径解析：缓存 → resolve_safe_path
+        cache = get_file_cache(self.conversation_id)
+        abs_path = cache.resolve(path)
+        if not abs_path:
+            try:
+                target = executor.resolve_safe_path(path)
+                abs_path = str(target)
+            except Exception as e:
+                return AgentResult(
+                    summary=f"文件不存在: {path}",
+                    status="error",
+                    error_message=str(e),
+                    metadata={"retryable": True},
+                )
+
+        if not os.path.isfile(abs_path):
+            return AgentResult(
+                summary=f"文件不存在: {path}",
+                status="error",
+                error_message=f"Not a file: {abs_path}",
+                metadata={"retryable": True},
+            )
+
+        # 扩展名检查
+        ext = ("." + abs_path.rsplit(".", 1)[-1].lower()) if "." in abs_path else ""
+        if ext not in self._ANALYZE_EXTENSIONS:
+            return AgentResult(
+                summary=f"file_analyze 仅支持 Excel/CSV 文件，当前文件类型: {ext}",
+                status="error",
+                error_message=f"Unsupported extension: {ext}",
+                metadata={"retryable": False},
+            )
+
+        # prescan → parquet 转换
+        start = time.monotonic()
+        staging_dir = resolve_staging_dir(
+            settings.file_workspace_root,
+            self.user_id,
+            getattr(self, "org_id", None),
+            self.conversation_id,
+        )
+
+        try:
+            cache_path, sheet_names = await ensure_parquet_cache(
+                abs_path, None, staging_dir,
+            )
+        except ValueError as e:
+            # 空文件等
+            return AgentResult(
+                summary=str(e), status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
+        except Exception as e:
+            return AgentResult(
+                summary=f"文件解析失败: {e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
+
+        elapsed = round(time.monotonic() - start, 2)
+
+        # 读取元数据 → 格式化
+        meta = read_file_meta(cache_path)
+        file_view = format_file_view(meta) if meta else f"文件已转为 Parquet: {cache_path}"
+
+        # 注册到路径缓存
+        name = Path(abs_path).name
+        cache.register(name, abs_path)
+        try:
+            rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
+            cache.register(rel_path, abs_path)
+        except ValueError:
+            pass
+
+        # 构建返回内容
+        lines = [file_view]
+        lines.append("")
+        lines.append(f"Parquet 缓存路径: {cache_path}")
+        lines.append(f"查询示例: duckdb.sql(\"SELECT * FROM read_parquet('{cache_path}') LIMIT 10\")")
+        if sheet_names and len(sheet_names) > 1:
+            lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
+        lines.append(f"解析耗时: {elapsed}s")
+
+        logger.info(
+            f"file_analyze OK | {name} | "
+            f"{meta.summary.get('row_count', '?') if meta else '?'}×"
+            f"{meta.summary.get('col_count', '?') if meta else '?'} | "
+            f"{elapsed}s"
+        )
 
         return AgentResult(summary="\n".join(lines), status="success")
 

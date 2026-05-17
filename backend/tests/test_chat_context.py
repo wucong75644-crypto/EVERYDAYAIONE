@@ -1459,7 +1459,7 @@ class TestBuildWorkspacePrompt:
         files = [{"workspace_path": "销售报表.xlsx", "size": 156000}]
         result = ChatContextMixin._build_workspace_prompt(files)
         assert "销售报表.xlsx" in result
-        assert "code_execute" in result
+        assert "file_analyze" in result
 
     def test_multiple_files(self):
         from services.handlers.chat_context_mixin import ChatContextMixin
