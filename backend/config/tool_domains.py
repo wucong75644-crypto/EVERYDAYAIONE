@@ -45,6 +45,7 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "image_agent":      ToolDomain.GENERAL,
     "file_read":        ToolDomain.GENERAL,  # 图片视觉（仅主 Agent）
     "file_search":      ToolDomain.GENERAL,  # 文件搜索+准备
+    "file_analyze":     ToolDomain.GENERAL,  # 数据文件结构读取（Excel/CSV → Parquet）
     "file_delete":      ToolDomain.GENERAL,  # 文件删除（弹窗确认）
     "restore_file":     ToolDomain.GENERAL,  # 恢复文件
     "manage_scheduled_task": ToolDomain.GENERAL,
