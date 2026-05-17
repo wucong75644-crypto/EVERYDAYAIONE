@@ -163,16 +163,16 @@ class FileToolMixin:
                 ))
             except ValueError:
                 rel_path = f["name"]
-            lines.append(f"  {rel_path}  ({size_str})")
-            # 注册到共享缓存：文件名和相对路径都能找到绝对路径
-            cache.register(f["name"], f["abs_path"])
+            # 注册拿编号
+            fid = cache.register(f["name"], f["abs_path"])
             cache.register(rel_path, f["abs_path"])
+            lines.append(f"  {fid}: {f['name']}  ({size_str})")
 
         if data.get("truncated"):
             lines.append("\n已达显示上限，部分条目未显示")
 
         lines.append("")
-        lines.append("在 code_execute 中直接用相对路径读取：open('文件名')")
+        lines.append("调用工具或写代码时用编号引用：get_file('f1')")
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -191,9 +191,10 @@ class FileToolMixin:
         if "未找到" in raw_result or not raw_result.strip():
             return AgentResult(summary=raw_result or "未找到匹配文件", status="empty")
 
-        # 从搜索结果中提取文件路径并注册到缓存
+        # 从搜索结果中提取文件路径并注册到缓存，收集编号
         cache = get_file_cache(self.conversation_id)
         _file_re = re.compile(r"\s+\[文件\]\s+(\S+)")
+        id_lines: list[str] = []
         for line in raw_result.split("\n"):
             m = _file_re.match(line)
             if m:
@@ -201,14 +202,19 @@ class FileToolMixin:
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
-                        cache.register(target.name, str(target))
+                        fid = cache.register(target.name, str(target))
                         cache.register(rel_path, str(target))
+                        id_lines.append(f"  {fid}: {target.name}")
                 except Exception:
                     pass
 
         lines = [raw_result]
+        if id_lines:
+            lines.append("")
+            lines.append("文件编号：")
+            lines.extend(id_lines)
         lines.append("")
-        lines.append("在 code_execute 中直接用相对路径读取：open('文件名')")
+        lines.append("调用工具或写代码时用编号引用：get_file('f1')")
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -278,6 +284,9 @@ class FileToolMixin:
             getattr(self, "org_id", None),
             self.conversation_id,
         )
+        # 确保 cache 有 staging_dir（用户没上传文件时 chat_context_mixin 不会设置）
+        if not cache._staging_dir:
+            cache.set_staging_dir(staging_dir)
 
         try:
             cache_path, sheet_names = await ensure_parquet_cache(
@@ -304,7 +313,7 @@ class FileToolMixin:
         meta = read_file_meta(cache_path)
         file_view = format_file_view(meta) if meta else f"文件已转为 Parquet: {cache_path}"
 
-        # 注册到路径缓存
+        # 注册到路径缓存（原始文件 + parquet 产出）
         name = Path(abs_path).name
         cache.register(name, abs_path)
         try:
@@ -312,17 +321,19 @@ class FileToolMixin:
             cache.register(rel_path, abs_path)
         except ValueError:
             pass
+        # parquet 产出注册拿编号
+        parquet_name = Path(cache_path).name
+        parquet_fid = cache.register(parquet_name, cache_path)
 
         # 构建返回内容
         lines = [file_view]
         lines.append("")
         lines.append("## 后续操作")
-        lines.append(f"数据已清洗并缓存为 Parquet，后续所有查询和处理都使用此路径：")
-        lines.append(f"  {cache_path}")
+        lines.append(f"Parquet 数据编号: {parquet_fid}")
         lines.append("")
         lines.append(f"在 code_execute 中使用 duckdb 查询：")
-        lines.append(f"  import duckdb")
-        lines.append(f"  df = duckdb.sql(\"SELECT * FROM read_parquet('{cache_path}')\").df()")
+        lines.append(f"  path = get_file('{parquet_fid}')")
+        lines.append(f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\").df()")
         if sheet_names and len(sheet_names) > 1:
             lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
 
@@ -351,15 +362,15 @@ class FileToolMixin:
         except ValueError:
             rel_path = name
 
-        # 注册到共享缓存
+        # 注册到共享缓存拿编号
         cache = get_file_cache(self.conversation_id)
-        cache.register(name, abs_path)
+        fid = cache.register(name, abs_path)
         cache.register(rel_path, abs_path)
 
         lines = [
-            f"{name} ({size_str})",
+            f"{fid}: {name} ({size_str})",
             "",
-            f"在 code_execute 中直接读取：open('{rel_path}')",
+            f"在 code_execute 中读取：path = get_file('{fid}')",
         ]
 
         return AgentResult(summary="\n".join(lines), status="success")

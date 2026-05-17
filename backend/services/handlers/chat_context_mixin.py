@@ -64,9 +64,17 @@ class ChatContextMixin:
         return filtered
 
     @staticmethod
-    def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
-        """生成工作区文件提示——告知 AI 文件路径，引导数据文件用 file_analyze。"""
-        if not workspace_files:
+    def _build_workspace_prompt(
+        workspace_files: List[Dict[str, Any]],
+        file_id_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> str:
+        """生成工作区文件提示——用编号引用，引导数据文件用 file_analyze。
+
+        Args:
+            workspace_files: 原始文件列表（兜底用）
+            file_id_map: {file_id: {name, size, workspace_path}} 编号映射
+        """
+        if not workspace_files and not file_id_map:
             return ""
 
         def _fmt_size(size) -> str:
@@ -79,7 +87,23 @@ class ChatContextMixin:
                 return f"{size / 1024:.1f} KB"
             return f"{size / (1024 * 1024):.1f} MB"
 
-        lines: list[str] = ["用户附加了以下文件："]
+        # 有编号映射时用编号格式
+        if file_id_map:
+            lines: list[str] = ["用户附加了以下文件（调用工具时用编号引用）："]
+            for fid, info in file_id_map.items():
+                name = info.get("name", "")
+                size_str = _fmt_size(info.get("size"))
+                ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+                if ext in {".xlsx", ".xls", ".csv", ".tsv"}:
+                    lines.append(
+                        f"  {fid}: {name} ({size_str}) — 数据文件，用 file_analyze(path=\"{fid}\") 读取"
+                    )
+                else:
+                    lines.append(f"  {fid}: {name} ({size_str})")
+            return "\n".join(lines)
+
+        # 兜底：无编号映射时用旧格式
+        lines = ["用户附加了以下文件："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
@@ -119,23 +143,35 @@ class ChatContextMixin:
         workspace_files = self._extract_workspace_files(content)
 
         # 注册用户提供的文件到会话级路径缓存（上传/插入/@引用三个入口统一注册）
-        # 让后续所有工具（code_execute/file_delete 等）都能通过文件名查到绝对路径
+        # 返回编号（f1/f2/...），后续 LLM 用编号引用文件，get_file 翻译成绝对路径
+        _file_id_map: dict[str, dict] = {}  # {file_id: {workspace_path, name, size}}
         if workspace_files:
             try:
                 from services.agent.file_path_cache import get_file_cache
-                from core.workspace import resolve_workspace_dir
+                from core.workspace import resolve_workspace_dir, resolve_staging_dir
                 from core.config import get_settings
                 _org_id = getattr(self, "org_id", None)
+                _settings = get_settings()
                 _ws_dir = resolve_workspace_dir(
-                    get_settings().file_workspace_root, user_id, _org_id,
+                    _settings.file_workspace_root, user_id, _org_id,
                 )
                 _cache = get_file_cache(conversation_id)
+                # 设置 staging_dir（供 write_manifest 写入）
+                _staging = resolve_staging_dir(
+                    _settings.file_workspace_root, user_id, _org_id, conversation_id,
+                )
+                _cache.set_staging_dir(_staging)
                 for f in workspace_files:
                     wp = f.get("workspace_path", "")
                     if wp:
                         import os
                         _abs = os.path.join(_ws_dir, wp)
-                        _cache.register(wp, _abs)
+                        _fid = _cache.register(wp, _abs)
+                        _file_id_map[_fid] = {
+                            "workspace_path": wp,
+                            "name": f.get("name", wp),
+                            "size": f.get("size"),
+                        }
             except Exception as e:
                 logger.debug(f"Workspace file cache registration failed | error={e}")
 
@@ -219,9 +255,9 @@ class ChatContextMixin:
                 )
                 messages.append({"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
 
-        # 工作区文件提示注入：告诉 AI 文件路径，由 AI 调 file_search 准备
-        if workspace_files:
-            ws_prompt = self._build_workspace_prompt(workspace_files)
+        # 工作区文件提示注入：告诉 AI 文件编号，由 AI 用编号调工具
+        if workspace_files or _file_id_map:
+            ws_prompt = self._build_workspace_prompt(workspace_files, _file_id_map)
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
                 logger.debug(

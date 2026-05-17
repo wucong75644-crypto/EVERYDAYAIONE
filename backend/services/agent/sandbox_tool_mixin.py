@@ -64,6 +64,16 @@ class SandboxToolMixin:
             if _budget is not None and hasattr(_budget, "remaining"):
                 _timeout = min(_timeout, max(_budget.remaining, 5.0))
 
+            # code_execute 前写 manifest（让沙盒 get_file 能查到编号→路径映射）
+            from services.agent.file_path_cache import get_file_cache
+            _cache = get_file_cache(self.conversation_id)
+            # 确保 staging_dir 已设置（用户没上传文件时 chat_context_mixin 不会设置）
+            if not _cache._staging_dir:
+                _staging = self._get_staging_dir()
+                if _staging:
+                    _cache.set_staging_dir(_staging)
+            _cache.write_manifest()
+
             from services.sandbox.kernel_manager import get_kernel_manager
             executor = build_sandbox_executor(
                 timeout=_timeout,
@@ -264,7 +274,10 @@ class SandboxToolMixin:
             fr = result.file_ref
             if fr.path and os.path.exists(fr.path):
                 cache = get_file_cache(self.conversation_id)
-                cache.register(fr.filename, fr.path)
+                fid = cache.register(fr.filename, fr.path)
+                # 写回编号（frozen dataclass 用 object.__setattr__ 突破）
+                if not fr.file_id:
+                    object.__setattr__(fr, "file_id", fid)
                 return
 
         # 兜底：从 summary 文本中提取 staging 文件名
