@@ -65,7 +65,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
     # 文件操作（只读）
-    "file_read", "file_search",
+    "file_read", "file_search", "file_analyze",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }
@@ -224,7 +224,12 @@ print() 输出摘要统计，不要输出完整数据。无网络。禁止 sys/s
 
 ### file_read — 图片视觉分析
 仅用于图片文件（png/jpg/gif/webp/bmp/svg），返回图片给视觉模型分析。
-其他文件类型在 code_execute 中直接读取（openpyxl/pdfplumber/docx/open）。
+PDF/DOCX/文本在 code_execute 中读取。数据文件（Excel/CSV）用 file_analyze。
+
+### file_analyze — 读取数据文件结构
+读取 Excel/CSV 文件的完整结构（列名、类型、行数、样本数据），自动转 Parquet 缓存。
+用户上传或提到数据文件时，先调此工具了解结构，再用 code_execute + duckdb 查询 Parquet。
+返回的 Parquet 路径可直接在 code_execute 中使用：duckdb.sql("SELECT ... FROM read_parquet('路径')")
 
 ### file_delete — 删除文件
 删除工作区文件。传入 file_search 返回的文件名或路径，执行前弹窗让用户确认。
@@ -403,6 +408,7 @@ _CORE_TOOLS: Set[str] = {
     # 文件操作
     "file_search",              # 文件搜索+准备（数据文件自动转 Parquet）
     "file_read",                # 图片视觉分析
+    "file_analyze",             # 数据文件结构读取（Excel/CSV → Parquet）
     "file_delete",              # 删除文件（弹窗确认）
     "restore_file",             # 恢复文件到修改前版本
     # 定时任务
