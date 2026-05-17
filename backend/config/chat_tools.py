@@ -171,7 +171,8 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-用户附加的文件路径已注入上下文（相对路径），在 code_execute 中直接 open('路径') 读取。
+用户附加的数据文件（Excel/CSV），先调 file_analyze 读取结构，再用 code_execute + duckdb 查询。
+用户已附加的文件不需要 file_search，路径已在上下文中，直接传给 file_analyze。
 
 ## 编排与串联
 
@@ -204,14 +205,13 @@ MUST NOT 在确认前调用任何执行类工具。
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
-工作目录(cwd)就是用户文件目录，直接用相对路径读文件：open('文件名.xlsx')。
-STAGING_DIR 存 ERP 查询结果，OUTPUT_DIR 存输出文件（自动上传），SKILLS_DIR 存文件处理指南。
+工作目录(cwd)就是用户文件目录。
+STAGING_DIR 存 ERP 查询结果和 file_analyze 转换的 Parquet 缓存。
+OUTPUT_DIR 存输出文件（自动上传）。
 
-处理文件前，先读取处理指南再探索结构：
-  open(SKILLS_DIR + '/excel.md')  — Excel/CSV
-  open(SKILLS_DIR + '/pdf.md')    — PDF
-  open(SKILLS_DIR + '/docx.md')   — Word/PPT
-第一次 code_execute 只读指南+探索结构，不写分析逻辑。探索完成后再写处理代码。
+数据文件（Excel/CSV）不要在 code_execute 中用 openpyxl 读取。
+先调 file_analyze 获取结构和 Parquet 路径，再用 duckdb.sql() 查询 Parquet。
+PDF 用 pdfplumber.open()，DOCX 用 docx.Document()，文本用 open()。
 
 ERP 查询结果在 STAGING_DIR（Parquet），用 duckdb.sql() 查询，列名用双引号包裹。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
@@ -220,7 +220,7 @@ print() 输出摘要统计，不要输出完整数据。无网络。禁止 sys/s
 
 ### file_search — 搜索工作区文件
 搜索、列目录、定位文件。用于用户说"找文件""看看有什么文件"等场景。
-用户已附加的文件不需要 file_search，路径已在上下文中。
+注意：用户已附加的文件不需要 file_search（路径已在上下文中），直接调 file_analyze。
 
 ### file_read — 图片视觉分析
 仅用于图片文件（png/jpg/gif/webp/bmp/svg），返回图片给视觉模型分析。
