@@ -171,8 +171,8 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-用户附加的文件会分配编号（f1/f2/...），调用工具时用编号引用：file_analyze(path="f1")。
-写代码时用 get_file 获取路径：path = get_file('f1')。对用户说话时用文件名，不暴露编号。
+用户附加的文件直接用文件名引用。
+写代码时用 get_file('文件名') 获取绝对路径（自动纠错，文件名有小误差也能匹配）。
 分析数据文件时，先了解文件结构，再做计算和查询。
 
 ## 编排与串联
@@ -192,7 +192,7 @@ MUST NOT 在确认前调用任何执行类工具。
 返回两种形式：
 - summary：直接返回统计数字（总量/金额/分组明细），内联到回复
 - export：数据存 staging parquet + profile 摘要（行数/字段/前3行预览），返回数据编号
-  在 code_execute 中用 get_file(编号) + duckdb.sql() 查询
+  在 code_execute 中用 get_file('文件名') + duckdb.sql() 查询
 
 错误处理：
 - 无数据：转述返回的建议（扩大时间范围/检查平台名）
@@ -206,9 +206,9 @@ MUST NOT 在确认前调用任何执行类工具。
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
-get_file(编号) 是预定义函数，所有文件引用都用它获取绝对路径，不要手写文件名。
-示例：path = get_file('f1'); duckdb.sql(f"SELECT * FROM read_parquet('{path}')")
-示例：df = pd.read_excel(get_file('f2'))
+get_file('文件名') 是预定义函数，所有文件引用都用它获取绝对路径（自动纠错）。
+示例：path = get_file('销售报表.xlsx'); duckdb.sql(f"SELECT * FROM read_parquet('{path}')")
+示例：df = pd.read_excel(get_file('产品表.xlsx'))
 OUTPUT_DIR 存输出文件（自动上传）。列名用双引号包裹。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
 print() 输出摘要统计，不要输出完整数据。
@@ -234,11 +234,11 @@ print() 输出摘要统计，不要输出完整数据。
 使用场景：
 - 用户上传或提及了 Excel/CSV 文件
 - 需要了解数据文件的结构再做进一步分析
-- 需要获取 Parquet 编号供 code_execute 中 get_file + duckdb 查询
-所有 Excel/CSV 文件的首次读取都通过此工具，返回编号后用 get_file + duckdb 查询。
+- 需要获取 Parquet 路径供 code_execute 中 get_file + duckdb 查询
+所有 Excel/CSV 文件的首次读取都通过此工具，然后用 get_file('文件名') + duckdb 查询。
 
 ### file_delete — 删除文件
-删除工作区文件。传入文件编号（f1/f2/...），执行前弹窗让用户确认。
+删除工作区文件。传入文件名，执行前弹窗让用户确认。
 删除后 30 天内可从 CDN 恢复。
 
 ### restore_file — 恢复已删除的文件

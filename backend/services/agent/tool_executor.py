@@ -503,17 +503,17 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         if len(col_parts) > 15:
             col_schema += f" (+{len(col_parts)-15}列)"
 
-        # 注册编号
+        # 注册到路径缓存
         from services.agent.file_path_cache import get_file_cache
         _cache = get_file_cache(self.conversation_id)
-        _fid = _cache.register(filename, str(staging_path))
+        _cache.register(filename, str(staging_path))
 
         return AgentResult(
             summary=(
-                f"[数据已暂存] 编号: {_fid}\n"
+                f"[数据已暂存] {filename}\n"
                 f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
                 f"耗时 {elapsed:.1f}秒。{warning}\n"
-                f"代码处理: path = get_file('{_fid}'); "
+                f"代码处理: path = get_file('{filename}'); "
                 f"duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\") | "
                 f"{len(items)}行 × {len(df.columns)}列\n"
                 f"[列: {col_schema}]\n\n"

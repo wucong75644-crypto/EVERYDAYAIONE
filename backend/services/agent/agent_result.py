@@ -176,19 +176,13 @@ class AgentResult:
         # 文本摘要（始终有）
         blocks.append({"type": "text", "text": self.summary})
 
-        # 文件引用 → 编号引用（有编号时用 get_file，无编号时降级旧格式）
+        # 文件引用 → sandbox 标准引用
         if self.file_ref:
-            ref = self.file_ref.sandbox_ref
-            if self.file_ref.file_id:
-                read_hint = f"get_file('{ref}')"
-            else:
-                read_hint = f"pd.read_parquet({ref})"
             blocks.append({
                 "type": "text",
                 "text": (
                     f"[文件已存入 staging | "
-                    f"数据编号: {ref} | "
-                    f"读取: path = {read_hint} | "
+                    f"读取: get_file('{self.file_ref.filename}') | "
                     f"{self.file_ref.row_count}行 | "
                     f"{self.file_ref.format} | "
                     f"{self.file_ref.size_bytes // 1024}KB]"

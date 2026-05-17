@@ -77,30 +77,6 @@ def extract_display_text(result) -> str:
     return str(result)
 
 
-def _translate_file_ids_for_display(
-    raw_args: str, conversation_id: str,
-) -> str:
-    """把工具参数 JSON 字符串中的文件编号翻译回文件名（前端展示用）。
-
-    用户展开工具卡片看到的是文件名，不是编号。
-    例: {"path": "f1"} → {"path": "4月销售分析.xlsx"}
-    """
-    import re
-    from services.agent.file_path_cache import get_file_cache
-
-    cache = get_file_cache(conversation_id)
-
-    def _replace(m):
-        file_id = m.group(1)
-        display = cache.get_display_name(file_id)
-        if display:
-            return f'"{display}"'
-        return m.group(0)
-
-    # 匹配 JSON 字符串值中的编号格式："f1" "f12" 等
-    return re.sub(r'"(f\d+)"', _replace, raw_args)
-
-
 class ChatGenerateMixin:
     """非流式生成能力（被 ChatHandler 继承）"""
 
@@ -217,12 +193,9 @@ class ChatGenerateMixin:
                         "tool_call_id": tc["id"],
                         "status": "running",
                     }
-                    # 编号翻译：前端展示时把 f1 翻译回文件名
                     _raw_args = tc.get("arguments", "")
                     if _raw_args:
-                        _tool_step["input"] = _translate_file_ids_for_display(
-                            _raw_args[:2000], conversation_id,
-                        )
+                        _tool_step["input"] = _raw_args[:2000]
                     if tc["name"] == "code_execute":
                         try:
                             _ce_args = json.loads(_raw_args or "{}")

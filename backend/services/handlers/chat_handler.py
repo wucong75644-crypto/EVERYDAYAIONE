@@ -496,13 +496,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "status": "running",
                     }
                     # 所有工具补上 input（调用参数），对齐 Claude 风格展开区
-                    # 编号翻译：前端展示时把 f1 翻译回文件名（用户看文件名不看编号）
                     _raw_args = tc.get("arguments", "")
                     if _raw_args:
-                        from services.handlers.chat_generate_mixin import _translate_file_ids_for_display
-                        _tool_step["input"] = _translate_file_ids_for_display(
-                            _raw_args[:2000], conversation_id,
-                        )
+                        _tool_step["input"] = _raw_args[:2000]
                     if tc["name"] == "code_execute":
                         try:
                             _ce_args = json.loads(_raw_args or "{}")
