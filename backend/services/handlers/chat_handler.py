@@ -116,6 +116,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         "text/csv",
         "text/tab-separated-values",
     }
+    _PREPROCESS_EXTENSIONS = {".xlsx", ".xls", ".csv", ".tsv"}
 
     async def _auto_preprocess_files(
         self,
@@ -146,7 +147,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 name = part.get("name", "")
             else:
                 continue
-            if mime in self._PREPROCESS_MIME_TYPES and wp:
+            # 用 MIME 类型 + 文件扩展名双重检测（前端可能传 application/octet-stream）
+            ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+            is_table = mime in self._PREPROCESS_MIME_TYPES or ext in self._PREPROCESS_EXTENSIONS
+            if is_table and wp:
                 files_to_process.append({"mime_type": mime, "workspace_path": wp, "name": name})
 
         if not files_to_process:

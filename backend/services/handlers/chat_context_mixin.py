@@ -267,6 +267,10 @@ class ChatContextMixin:
             # 话题聚焦指令（紧贴用户消息前，防止旧话题污染新问题）
             messages.append({"role": "system", "content": "以用户最新一条消息为准。"})
 
+        # Layer 6.5: L1 记忆前缀（动态部分，紧贴用户消息前）
+        if _l1_memory_prepend:
+            messages.append({"role": "system", "content": f"用户相关记忆：\n{_l1_memory_prepend}"})
+
         # Layer 7: 用户消息（始终最后）
         user_msg: Dict[str, Any] = {"role": "user", "content": text_content}
         if image_urls or file_urls:
