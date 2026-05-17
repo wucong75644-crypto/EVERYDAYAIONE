@@ -246,6 +246,16 @@ async def _insert_atom(
 
         now = datetime.now(timezone.utc).isoformat()
 
+        # psycopg 兼容：UUID 用字符串，vector 用字符串格式，数组用 list
+        source_ids_str = [sid for sid in atom.source_message_ids if _is_uuid(sid)]
+        session_id_val = session_id if session_id else None
+
+        # embedding → pgvector 字符串格式 "[0.1, 0.2, ...]"
+        embedding_str = f"[{','.join(str(x) for x in embedding)}]" if embedding else None
+
+        # merge_timestamps → PostgreSQL TIMESTAMPTZ[] 直接用 list
+        merge_ts = [datetime.now(timezone.utc)]
+
         sql = """
             INSERT INTO memory_atoms (
                 id, org_id, user_id, content, type, priority, scene_name,
@@ -254,24 +264,22 @@ async def _insert_atom(
                 embedding, content_tsv, metadata,
                 created_at, updated_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9,
+                $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7,
+                $8::uuid[], $9::uuid,
                 $10, $11, $12,
-                $13, to_tsvector('simple', $14), $15,
+                $13::vector, to_tsvector('simple', $14), $15::jsonb,
                 $16, $17
             )
         """
 
-        source_ids = [uuid.UUID(sid) for sid in atom.source_message_ids if _is_uuid(sid)]
-
         await db_pool.execute(
             sql,
-            uuid.UUID(atom_id), uuid.UUID(org_id), uuid.UUID(user_id),
+            atom_id, org_id, user_id,
             atom.content, atom.type, atom.priority, atom.scene_name,
-            source_ids, uuid.UUID(session_id) if session_id else None,
+            source_ids_str, session_id_val,
             _parse_iso_time(activity_start), _parse_iso_time(activity_end),
-            [datetime.now(timezone.utc)],
-            embedding, tokens, json.dumps(atom.metadata, ensure_ascii=False),
+            merge_ts,
+            embedding_str, tokens, json.dumps(atom.metadata, ensure_ascii=False),
             now, now,
         )
 

@@ -41,15 +41,26 @@ async def _get_memory_db():
 
 
 class _PsycopgAdapter:
-    """适配 psycopg AsyncConnectionPool 为 memory 模块使用的接口"""
+    """适配 psycopg AsyncConnectionPool 为 memory 模块使用的接口
+
+    memory 模块 SQL 使用 asyncpg 风格的 $1, $2... 占位符。
+    psycopg 使用 %s 占位符。这里自动转换。
+    """
 
     def __init__(self, pool):
         self._pool = pool
 
+    @staticmethod
+    def _convert_placeholders(sql: str) -> str:
+        """将 $1, $2, ... 转为 %s"""
+        import re
+        return re.sub(r'\$\d+', '%s', sql)
+
     async def fetch(self, sql, *args):
+        sql = self._convert_placeholders(sql)
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql, args)
+                await cur.execute(sql, args if args else None)
                 cols = [desc[0] for desc in cur.description] if cur.description else []
                 rows = await cur.fetchall()
                 return [dict(zip(cols, row)) for row in rows]
@@ -59,9 +70,10 @@ class _PsycopgAdapter:
         return rows[0] if rows else None
 
     async def execute(self, sql, *args):
+        sql = self._convert_placeholders(sql)
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql, args)
+                await cur.execute(sql, args if args else None)
             await conn.commit()
 
 
