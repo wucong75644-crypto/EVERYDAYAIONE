@@ -316,11 +316,15 @@ class FileToolMixin:
         # 构建返回内容
         lines = [file_view]
         lines.append("")
-        lines.append(f"Parquet 缓存路径: {cache_path}")
-        lines.append(f"查询示例: duckdb.sql(\"SELECT * FROM read_parquet('{cache_path}') LIMIT 10\")")
+        lines.append("## 后续操作")
+        lines.append(f"数据已清洗并缓存为 Parquet，后续所有查询和处理都使用此路径：")
+        lines.append(f"  {cache_path}")
+        lines.append("")
+        lines.append(f"在 code_execute 中使用 duckdb 查询：")
+        lines.append(f"  import duckdb")
+        lines.append(f"  df = duckdb.sql(\"SELECT * FROM read_parquet('{cache_path}')\").df()")
         if sheet_names and len(sheet_names) > 1:
             lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
-        lines.append(f"解析耗时: {elapsed}s")
 
         logger.info(
             f"file_analyze OK | {name} | "
