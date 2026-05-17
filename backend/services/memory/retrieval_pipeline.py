@@ -167,6 +167,7 @@ class RetrievalPipeline:
                 return []
             tsquery = " | ".join(tokens)  # OR 逻辑，更宽容
 
+            # $1 出现两次（rank + WHERE），psycopg %s 需要传两次
             sql = """
                 SELECT id::text as record_id, content, type, priority, scene_name,
                        activity_start_time::text as activity_start,
@@ -174,13 +175,13 @@ class RetrievalPipeline:
                        ts_rank_cd(content_tsv, to_tsquery('simple', $1::text)) as score
                 FROM memory_atoms
                 WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
-                      AND content_tsv @@ to_tsquery('simple', $1::text)
+                      AND content_tsv @@ to_tsquery('simple', $4::text)
                 ORDER BY score DESC
-                LIMIT $4
+                LIMIT $5
             """
             rows = await self._db.fetch(
                 sql,
-                tsquery, org_id, user_id, limit,
+                tsquery, org_id, user_id, tsquery, limit,
             )
             return [dict(r) for r in rows]
         except Exception as e:
