@@ -24,12 +24,45 @@ logger = logging.getLogger(__name__)
 _scheduler: PipelineScheduler | None = None
 
 
-def get_scheduler(db_pool=None) -> PipelineScheduler:
-    """获取全局管道调度器"""
+async def get_scheduler(db_pool=None) -> PipelineScheduler:
+    """获取全局管道调度器（自动适配 DB 连接）"""
     global _scheduler
     if _scheduler is None:
-        _scheduler = PipelineScheduler(db_pool=db_pool)
+        pool = await _get_memory_db()
+        adapted = _PsycopgAdapter(pool) if pool else db_pool
+        _scheduler = PipelineScheduler(db_pool=adapted)
     return _scheduler
+
+
+async def _get_memory_db():
+    """获取记忆系统的 psycopg 异步连接池（复用 knowledge_config 的池）"""
+    from services.knowledge_config import _get_pg_pool
+    return await _get_pg_pool()
+
+
+class _PsycopgAdapter:
+    """适配 psycopg AsyncConnectionPool 为 memory 模块使用的接口"""
+
+    def __init__(self, pool):
+        self._pool = pool
+
+    async def fetch(self, sql, *args):
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, args)
+                cols = [desc[0] for desc in cur.description] if cur.description else []
+                rows = await cur.fetchall()
+                return [dict(zip(cols, row)) for row in rows]
+
+    async def fetchrow(self, sql, *args):
+        rows = await self.fetch(sql, *args)
+        return rows[0] if rows else None
+
+    async def execute(self, sql, *args):
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, args)
+            await conn.commit()
 
 
 class MemoryServiceV2:
@@ -44,10 +77,22 @@ class MemoryServiceV2:
     """
 
     def __init__(self, db_pool=None):
-        self._db = db_pool
+        self._raw_pool = db_pool  # 可能是 Supabase client（忽略）
+        self._db = None  # 延迟初始化
         self._cfg = get_memory_config()
-        self._retrieval = RetrievalPipeline(db_pool=db_pool)
+        self._retrieval = None
         self._compressor = ContextCompressor()
+
+    async def _ensure_db(self):
+        """确保 DB 适配器已初始化"""
+        if self._db is None:
+            pool = await _get_memory_db()
+            if pool:
+                self._db = _PsycopgAdapter(pool)
+                self._retrieval = RetrievalPipeline(db_pool=self._db)
+            else:
+                raise RuntimeError("Memory V2: database pool not available")
+        return self._db
 
     # ============================
     # 检索（替代旧的 Mem0 搜索+千问精排）
@@ -68,6 +113,7 @@ class MemoryServiceV2:
         if not query or not self._cfg.enabled:
             return []
 
+        await self._ensure_db()
         scored = await self._retrieval.search(
             query=query,
             user_id=user_id,
@@ -109,6 +155,8 @@ class MemoryServiceV2:
             - prepend_context: 动态 L1 记忆，注入 user prompt 前面
             - append_system_context: 稳定 L3 persona，注入 system prompt 末尾
         """
+        await self._ensure_db()
+
         # 动态部分：L1 相关记忆
         scored = await self._retrieval.search(
             query=query, user_id=user_id, org_id=org_id,
