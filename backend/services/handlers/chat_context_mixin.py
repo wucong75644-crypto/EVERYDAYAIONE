@@ -64,11 +64,8 @@ class ChatContextMixin:
         return filtered
 
     @staticmethod
-    def _build_workspace_prompt(
-        workspace_files: List[Dict[str, Any]],
-        preprocess_results: Optional[List[Dict[str, Any]]] = None,
-    ) -> str:
-        """生成工作区文件提示——含预处理元数据（列名、类型、parquet 路径）。"""
+    def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
+        """生成工作区文件提示——告知 AI 文件路径，引导数据文件用 file_analyze。"""
         if not workspace_files:
             return ""
 
@@ -82,31 +79,16 @@ class ChatContextMixin:
                 return f"{size / 1024:.1f} KB"
             return f"{size / (1024 * 1024):.1f} MB"
 
-        # 建立预处理结果索引
-        pre_map: dict[str, dict] = {}
-        if preprocess_results:
-            for r in preprocess_results:
-                wp = r.get("workspace_path", "")
-                if wp and "file_view" in r:
-                    pre_map[wp] = r
-
         lines: list[str] = ["用户附加了以下文件："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
-            pre = pre_map.get(wp)
-
-            if pre and pre.get("file_view"):
-                # 有预处理结果：注入完整元数据 + parquet 路径
-                lines.append(f"\n--- {wp} ({size_str}) ---")
-                lines.append(pre["file_view"])
-                if pre.get("parquet_path"):
-                    lines.append(f"Parquet 缓存路径：{pre['parquet_path']}")
-                    lines.append("可直接用 duckdb.sql(\"SELECT ... FROM read_parquet('路径')\") 查询")
+            name = f.get("name", wp)
+            ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+            if ext in {".xlsx", ".xls", ".csv", ".tsv"}:
+                lines.append(f"  '{wp}'  ({size_str}) — 数据文件，用 file_analyze 读取结构")
             else:
-                # 无预处理结果：退回基础信息
                 lines.append(f"  '{wp}'  ({size_str})")
-                lines.append("  路径可直接在 code_execute 中使用")
 
         return "\n".join(lines)
 
@@ -119,7 +101,6 @@ class ChatContextMixin:
         prefetched_summary: Optional[str] = None,
         prefetched_memory: Optional[str] = None,
         user_location: Optional[str] = None,
-        preprocess_results: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表。
 
@@ -240,7 +221,7 @@ class ChatContextMixin:
 
         # 工作区文件提示注入：告诉 AI 文件路径，由 AI 调 file_search 准备
         if workspace_files:
-            ws_prompt = self._build_workspace_prompt(workspace_files, preprocess_results)
+            ws_prompt = self._build_workspace_prompt(workspace_files)
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
                 logger.debug(
@@ -385,7 +366,7 @@ class ChatContextMixin:
 
             from services.memory.memory_service_v2 import MemoryServiceV2, get_scheduler
 
-            scheduler = get_scheduler(db_pool=self.db)
+            scheduler = await get_scheduler(db_pool=self.db)
 
             messages = [
                 {"role": "user", "content": user_text, "id": str(conversation_id), "timestamp": __import__("time").time() * 1000},
