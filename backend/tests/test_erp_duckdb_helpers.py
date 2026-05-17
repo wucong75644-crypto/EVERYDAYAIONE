@@ -240,34 +240,33 @@ class TestBuildExportWhere:
 class TestResolveExportPath:
 
     @patch("core.config.get_settings")
-    def test_returns_four_elements(self, mock_settings):
+    def test_returns_three_elements(self, mock_settings):
         mock_settings.return_value.file_workspace_root = tempfile.gettempdir()
-        staging_dir, rel_path, staging_path, filename = resolve_export_path(
+        staging_dir, staging_path, filename = resolve_export_path(
             "order", "user1", "org1", "conv1",
         )
         assert isinstance(staging_dir, Path)
         assert isinstance(staging_path, Path)
-        assert isinstance(rel_path, str)
         assert isinstance(filename, str)
 
     @patch("core.config.get_settings")
     def test_filename_contains_doc_type(self, mock_settings):
         mock_settings.return_value.file_workspace_root = tempfile.gettempdir()
-        _, _, _, filename = resolve_export_path("order", "u", "o", "c")
+        _, _, filename = resolve_export_path("order", "u", "o", "c")
         assert filename.startswith("local_order_")
         assert filename.endswith(".parquet")
 
     @patch("core.config.get_settings")
     def test_default_conversation_id(self, mock_settings):
         mock_settings.return_value.file_workspace_root = tempfile.gettempdir()
-        _, rel_path, _, _ = resolve_export_path("order", "u", "o", None)
-        assert "default" in rel_path
+        _, _, filename = resolve_export_path("order", "u", "o", None)
+        assert filename.startswith("local_order_")
 
     @patch("core.config.get_settings")
     def test_staging_dir_created(self, mock_settings):
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_settings.return_value.file_workspace_root = tmpdir
-            staging_dir, _, _, _ = resolve_export_path("order", "u", "o", "c123")
+            staging_dir, _, _ = resolve_export_path("order", "u", "o", "c123")
             assert staging_dir.exists()
 
 

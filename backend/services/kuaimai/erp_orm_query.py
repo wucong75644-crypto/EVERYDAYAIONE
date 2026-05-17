@@ -188,7 +188,7 @@ async def export_orm(
         )
 
     import pandas as pd
-    staging_dir, rel_path, staging_path, filename = resolve_export_path(
+    staging_dir, staging_path, filename = resolve_export_path(
         doc_type, user_id, org_id, conversation_id,
     )
 
@@ -390,7 +390,7 @@ def _write_detail_staging(
         import pandas as pd
         from services.kuaimai.erp_duckdb_helpers import resolve_export_path
 
-        staging_dir, rel_path, staging_path, filename = resolve_export_path(
+        staging_dir, staging_path, filename = resolve_export_path(
             doc_type, user_id, org_id, conversation_id,
         )
         # 列名翻译：英文 → 中文（与 DuckDB 导出一致）

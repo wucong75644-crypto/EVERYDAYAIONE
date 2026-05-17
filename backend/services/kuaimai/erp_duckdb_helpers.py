@@ -304,15 +304,15 @@ def resolve_export_path(
     user_id: str | None,
     org_id: str | None,
     conversation_id: str | None,
-) -> tuple[Path, str, Path, str]:
+) -> tuple[Path, Path, str]:
     """
     构建导出 Parquet 的 staging 路径。
 
-    返回: (staging_dir, rel_path, staging_path, filename)
-    路径格式与 _write_parquet 完全一致，确保沙盒 STAGING_DIR 不变。
+    返回: (staging_dir, staging_path, filename)
+    LLM 引用统一用 STAGING_DIR + '/filename'，不暴露相对路径。
     """
     from core.config import get_settings
-    from core.workspace import resolve_staging_dir, resolve_staging_rel_path
+    from core.workspace import resolve_staging_dir
 
     settings = get_settings()
     conv_id = conversation_id or "default"
@@ -326,7 +326,6 @@ def resolve_export_path(
     ts = int(_time.time())
     filename = f"local_{doc_type}_{ts}.parquet"
     staging_path = staging_dir / filename
-    rel_path = resolve_staging_rel_path(conversation_id=conv_id, filename=filename)
 
-    return staging_dir, rel_path, staging_path, filename
+    return staging_dir, staging_path, filename
 

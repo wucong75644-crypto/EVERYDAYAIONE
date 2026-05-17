@@ -657,7 +657,7 @@ class UnifiedQueryEngine:
             )
 
         # staging 路径
-        staging_dir, rel_path, staging_path, filename = resolve_export_path(
+        staging_dir, staging_path, filename = resolve_export_path(
             doc_type, user_id, self.org_id, conversation_id,
         )
 

@@ -467,7 +467,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             )
 
         # 存 staging 文件（用户级隔离）
-        from core.workspace import resolve_staging_dir, resolve_staging_rel_path
+        from core.workspace import resolve_staging_dir
 
         _conv = self.conversation_id or "default"
         staging_dir = Path(resolve_staging_dir(
@@ -487,7 +487,6 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         df = _pd.DataFrame(items)
         df.to_parquet(staging_path, index=False, engine="pyarrow")
 
-        rel_path = resolve_staging_rel_path(conversation_id=_conv, filename=filename)
         file_size_kb = staging_path.stat().st_size / 1024
 
         # 预览前3条
@@ -506,7 +505,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
 
         return AgentResult(
             summary=(
-                f"[数据已暂存] {rel_path}\n"
+                f"[数据已暂存] STAGING_DIR + '/{filename}'\n"
                 f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
                 f"耗时 {elapsed:.1f}秒。{warning}\n"
                 f"代码处理: duckdb.sql(\"SELECT * FROM read_parquet(STAGING_DIR + '/{filename}')\") | "

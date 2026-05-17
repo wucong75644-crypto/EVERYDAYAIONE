@@ -111,7 +111,7 @@ def build_tool_digest(
 
     digest: Dict[str, Any] = {
         "tools": entries,
-        "staging_dir": f"staging/{conversation_id}",
+        "staging_dir": "STAGING_DIR",
     }
 
     # 大小控制：超限则逐步裁剪 hint
@@ -142,13 +142,13 @@ def format_tool_digest(digest: Dict[str, Any]) -> str:
         if t.get("hint"):
             line += f": {t['hint']}"
         if t.get("staged"):
-            line += f" → {t['staged']}"
+            line += f" → STAGING_DIR + '/{t['staged']}'"
         lines.append(line)
 
     staging_dir = digest.get("staging_dir", "")
     if staging_dir:
         lines.append(
-            f"数据目录: {staging_dir}（数据文件 15 分钟内有效，超时需重新查询）"
+            f"数据目录: {staging_dir}（沙盒变量，用 STAGING_DIR + '/文件名' 访问，15 分钟内有效）"
         )
 
     return "\n".join(lines)

@@ -279,7 +279,7 @@ class ScheduledTaskAgent:
             tpl = self.task["template_file"]
             user_msg += (
                 f"\n\n## 模板文件\n"
-                f"已放入 staging 目录: staging/{tpl['name']}\n"
+                f"模板文件路径: STAGING_DIR + '/{tpl['name']}'\n"
                 f"使用 pd.read_excel(STAGING_DIR + '/{tpl['name']}') 读取模板结构，"
                 f"按模板格式填入数据后输出到 OUTPUT_DIR"
             )

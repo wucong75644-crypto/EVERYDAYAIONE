@@ -50,21 +50,3 @@ def resolve_staging_dir(
     """
     ws_dir = resolve_workspace_dir(workspace_root, user_id, org_id)
     return str(Path(ws_dir) / "staging" / (conversation_id or "default"))
-
-
-def resolve_staging_rel_path(
-    conversation_id: str = "default",
-    filename: str = "",
-) -> str:
-    """计算 staging 文件的相对路径（供 read_file 使用）
-
-    返回格式：staging/{conv_id}/{filename}
-    read_file 要求以 "staging/" 开头。
-
-    注意：此路径相对于用户级 workspace_dir，不是全局 workspace_root。
-    FileExecutor.resolve_safe_path 会以 workspace_dir 为 root 解析。
-    """
-    conv_id = conversation_id or "default"
-    if filename:
-        return f"staging/{conv_id}/{filename}"
-    return f"staging/{conv_id}"

@@ -1,7 +1,7 @@
 """
 core/workspace.py 单元测试
 
-覆盖：resolve_workspace_dir / resolve_staging_dir / resolve_staging_rel_path
+覆盖：resolve_workspace_dir / resolve_staging_dir
       三种用户场景（企业/个人/无用户）+ 边界值 + 路径与 FileExecutor 对齐
 """
 
@@ -11,7 +11,6 @@ from pathlib import Path
 from core.workspace import (
     resolve_workspace_dir,
     resolve_staging_dir,
-    resolve_staging_rel_path,
 )
 
 
@@ -96,48 +95,3 @@ class TestResolveStagingDir:
         # 但共享同一个用户 workspace
         assert Path(dir_a).parent == Path(dir_b).parent
 
-
-# ============================================================
-# resolve_staging_rel_path
-# ============================================================
-
-class TestResolveStagingRelPath:
-
-    def test_with_filename(self):
-        """有文件名时返回 staging/{conv_id}/{filename}"""
-        result = resolve_staging_rel_path("conv-abc", "data.txt")
-        assert result == "staging/conv-abc/data.txt"
-
-    def test_without_filename(self):
-        """无文件名时返回 staging/{conv_id}"""
-        result = resolve_staging_rel_path("conv-abc")
-        assert result == "staging/conv-abc"
-
-    def test_default_conversation_id(self):
-        """conversation_id 为空时用 default"""
-        result = resolve_staging_rel_path("", "file.txt")
-        assert result == "staging/default/file.txt"
-
-    def test_starts_with_staging(self):
-        """路径必须以 staging/ 开头（read_file 的前置检查）"""
-        result = resolve_staging_rel_path("any-conv", "any-file.txt")
-        assert result.startswith("staging/")
-
-    def test_rel_path_resolvable_by_file_executor(self, tmp_path):
-        """staging 相对路径能正确解析到对应文件（staging 目录由系统管理，不经 FileExecutor）"""
-        # 创建 staging 文件
-        staging_dir = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
-        staging_dir.mkdir(parents=True)
-        test_file = staging_dir / "test.txt"
-        test_file.write_text("hello")
-
-        # resolve_staging_rel_path 返回 workspace 根下的相对路径
-        rel_path = resolve_staging_rel_path("conv1", "test.txt")
-        assert rel_path.startswith("staging/")
-
-        # 通过 workspace 根 + 相对路径可定位到实际文件
-        from core.workspace import resolve_workspace_dir
-        ws_dir = resolve_workspace_dir(str(tmp_path), "u1", "org1")
-        resolved = Path(ws_dir) / rel_path
-        assert resolved.exists()
-        assert resolved.read_text() == "hello"
