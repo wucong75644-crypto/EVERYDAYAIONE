@@ -126,21 +126,22 @@ class RetrievalPipeline:
     ) -> list[dict]:
         """pgvector 余弦相似度搜索"""
         try:
+            # psycopg %s 不支持同参数复用，所以 embedding 传两次
+            embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
             sql = """
                 SELECT id::text as record_id, content, type, priority, scene_name,
                        activity_start_time::text as activity_start,
                        activity_end_time::text as activity_end,
-                       1 - (embedding <=> $3::vector) as score
+                       1 - (embedding <=> $1::vector) as score
                 FROM memory_atoms
-                WHERE org_id = $1 AND user_id = $2 AND NOT is_deleted
+                WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
                       AND embedding IS NOT NULL
-                ORDER BY embedding <=> $3::vector
-                LIMIT $4
+                ORDER BY embedding <=> $4::vector
+                LIMIT $5
             """
             rows = await self._db.fetch(
                 sql,
-                uuid.UUID(org_id), uuid.UUID(user_id),
-                str(query_embedding), limit,
+                embedding_str, org_id, user_id, embedding_str, limit,
             )
             return [dict(r) for r in rows]
         except Exception as e:
@@ -170,17 +171,16 @@ class RetrievalPipeline:
                 SELECT id::text as record_id, content, type, priority, scene_name,
                        activity_start_time::text as activity_start,
                        activity_end_time::text as activity_end,
-                       ts_rank_cd(content_tsv, query) as score
-                FROM memory_atoms, to_tsquery('simple', $3) query
-                WHERE org_id = $1 AND user_id = $2 AND NOT is_deleted
-                      AND content_tsv @@ query
-                ORDER BY ts_rank_cd(content_tsv, query) DESC
+                       ts_rank_cd(content_tsv, to_tsquery('simple', $1::text)) as score
+                FROM memory_atoms
+                WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
+                      AND content_tsv @@ to_tsquery('simple', $1::text)
+                ORDER BY score DESC
                 LIMIT $4
             """
             rows = await self._db.fetch(
                 sql,
-                uuid.UUID(org_id), uuid.UUID(user_id),
-                tsquery, limit,
+                tsquery, org_id, user_id, limit,
             )
             return [dict(r) for r in rows]
         except Exception as e:

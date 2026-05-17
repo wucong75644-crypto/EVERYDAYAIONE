@@ -158,18 +158,19 @@ class L1DedupService:
     ) -> list[dict]:
         """pgvector 余弦相似度召回"""
         try:
+            embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
             sql = """
                 SELECT id::text as record_id, content, type, priority,
                        scene_name, created_at::text as timestamp_str
                 FROM memory_atoms
                 WHERE org_id = $1 AND user_id = $2 AND NOT is_deleted
+                      AND embedding IS NOT NULL
                 ORDER BY embedding <=> $3::vector
                 LIMIT $4
             """
             rows = await self._db.fetch(
                 sql,
-                uuid.UUID(org_id), uuid.UUID(user_id),
-                str(query_embedding), top_k,
+                org_id, user_id, embedding_str, top_k,
             )
             return [
                 {
@@ -204,17 +205,16 @@ class L1DedupService:
             sql = """
                 SELECT id::text as record_id, content, type, priority,
                        scene_name, created_at::text as timestamp_str,
-                       ts_rank(content_tsv, query) as rank
-                FROM memory_atoms, to_tsquery('simple', $3) query
-                WHERE org_id = $1 AND user_id = $2 AND NOT is_deleted
-                      AND content_tsv @@ query
+                       ts_rank_cd(content_tsv, to_tsquery('simple', $1::text)) as rank
+                FROM memory_atoms
+                WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
+                      AND content_tsv @@ to_tsquery('simple', $1::text)
                 ORDER BY rank DESC
                 LIMIT $4
             """
             rows = await self._db.fetch(
                 sql,
-                uuid.UUID(org_id), uuid.UUID(user_id),
-                tokens, top_k,
+                tokens, org_id, user_id, top_k,
             )
             return [
                 {
