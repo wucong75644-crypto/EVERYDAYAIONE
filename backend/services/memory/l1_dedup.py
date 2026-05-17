@@ -208,13 +208,13 @@ class L1DedupService:
                        ts_rank_cd(content_tsv, to_tsquery('simple', $1::text)) as rank
                 FROM memory_atoms
                 WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
-                      AND content_tsv @@ to_tsquery('simple', $1::text)
+                      AND content_tsv @@ to_tsquery('simple', $4::text)
                 ORDER BY rank DESC
-                LIMIT $4
+                LIMIT $5
             """
             rows = await self._db.fetch(
                 sql,
-                tokens, org_id, user_id, top_k,
+                tokens, org_id, user_id, tokens, top_k,
             )
             return [
                 {
