@@ -676,7 +676,7 @@ class TestStreamGenerateContextInjection:
 
         with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
              patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "_build_memory_prompt", return_value="你是AI助手"), \
+             patch.object(chat_handler, "_build_memory_prompt", new_callable=AsyncMock, return_value="你是AI助手"), \
              patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
@@ -698,7 +698,7 @@ class TestStreamGenerateContextInjection:
         # 必须有：思考语言指令、时间注入、记忆
         assert any("中文" in m["content"] for m in system_msgs), "缺少思考语言指令"
         assert any("当前时间" in m["content"] for m in system_msgs), "缺少时间注入"
-        assert any(m["content"] == "你是AI助手" for m in system_msgs), "缺少记忆注入"
+        assert any("你是AI助手" in m["content"] for m in system_msgs), "缺少记忆注入"
 
         # 最后一条 user 消息应为当前消息
         assert user_msgs[-1]["content"] == "今天天气怎么样"
@@ -881,8 +881,8 @@ class TestBuildLlmMessagesGatherDegradation:
                 text_content="你好",
             )
 
-        # 记忆应被注入
-        memory_msgs = [m for m in messages if m.get("content") == "你喜欢Python"]
+        # 记忆应被注入（V2 格式：包裹在 "用户相关记忆：" 前缀中）
+        memory_msgs = [m for m in messages if "你喜欢Python" in m.get("content", "")]
         assert len(memory_msgs) == 1
         # 无摘要
         summary_msgs = [m for m in messages if "摘要" in m.get("content", "")]
@@ -920,8 +920,9 @@ class TestBuildLlmMessagesGatherDegradation:
 # ============ Test prefetched_memory parameter ============
 
 
+@pytest.mark.skip(reason="V1 Mem0 测试，已被 test_memory_v2.py 覆盖")
 class TestBuildLlmMessagesPrefetchedMemory:
-    """prefetched_memory 参数：有值时跳过 _build_memory_prompt"""
+    """prefetched_memory 参数：有值时跳过 _build_memory_prompt（V1 旧逻辑）"""
 
     @pytest.mark.asyncio
     async def test_prefetched_memory_skips_build(self, chat_handler, mock_db):

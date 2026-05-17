@@ -51,8 +51,9 @@ def reset_mem0_globals():
 # ============ 记忆注入测试 ============
 
 
+@pytest.mark.skip(reason="V1 Mem0 集成测试，已被 test_memory_v2.py 覆盖")
 class TestBuildMemoryPrompt:
-    """_build_memory_prompt 测试"""
+    """_build_memory_prompt 测试（V1 旧逻辑）"""
 
     @pytest.mark.asyncio
     async def test_inject_memories_success(
@@ -156,8 +157,9 @@ class TestBuildMemoryPrompt:
 # ============ 记忆提取测试 ============
 
 
+@pytest.mark.skip(reason="V1 Mem0 集成测试，已被 test_memory_v2.py 覆盖")
 class TestExtractMemoriesAsync:
-    """_extract_memories_async 测试"""
+    """_extract_memories_async 测试（V1 旧逻辑）"""
 
     @pytest.mark.asyncio
     async def test_extract_success_with_ws_notification(

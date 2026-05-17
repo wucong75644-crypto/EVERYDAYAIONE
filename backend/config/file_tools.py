@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Set
 FILE_INFO_TOOLS: Set[str] = {
     "file_search",
     "file_read",
+    "file_analyze",
     "file_delete",
     "restore_file",
 }
@@ -36,6 +37,12 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["filename"],
         "properties": {
             "filename": {"type": "string"},
+        },
+    },
+    "file_analyze": {
+        "required": ["path"],
+        "properties": {
+            "path": {"type": "string"},
         },
     },
     "file_delete": {
@@ -96,11 +103,8 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "description": (
                     "读取图片文件，返回给视觉模型分析。\n\n"
                     "仅用于图片文件（png/jpg/gif/webp/bmp/svg）。\n"
-                    "其他文件类型（Excel/CSV/PDF/DOCX/文本）在 code_execute 中直接读取：\n"
-                    "- Excel: openpyxl.load_workbook(read_only=True)\n"
-                    "- PDF: pdfplumber.open()\n"
-                    "- DOCX: docx.Document()\n"
-                    "- 文本: open()"
+                    "数据文件（Excel/CSV）用 file_analyze 读取结构。\n"
+                    "PDF/DOCX/文本在 code_execute 中读取。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -108,6 +112,30 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         "path": {
                             "type": "string",
                             "description": "图片文件名或相对路径",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "file_analyze",
+                "description": (
+                    "读取 Excel/CSV 文件结构，自动转为 Parquet 缓存。\n\n"
+                    "返回：列名、数据类型、行数、样本数据、Parquet 缓存路径。\n"
+                    "用户上传或提到数据文件时，先调此工具了解结构，\n"
+                    "再用 code_execute + duckdb.sql(\"SELECT ... FROM read_parquet('路径')\") 查询。\n\n"
+                    "支持：.xlsx .xls .csv .tsv\n"
+                    "自动处理：多级表头、合并单元格、表头偏移、特殊行检测。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "文件名或相对路径（从 file_search 结果或用户附件路径获取）",
                         },
                     },
                     "required": ["path"],
