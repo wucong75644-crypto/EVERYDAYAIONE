@@ -474,6 +474,34 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # pandas/docx/pptx/pdfplumber 等库内部调用的 open() 也自动受益
     g["open"] = _builtins.open
 
+    # get_file(编号) — 按编号获取文件绝对路径
+    # 读 staging/_manifest.json（由主进程在每次 code_execute 前写入最新全量）
+    if staging_dir:
+        _manifest_path = str(Path(staging_dir) / "_manifest.json")
+
+        def _get_file(file_id: str) -> str:
+            """按编号获取文件绝对路径。
+
+            用法：path = get_file('f1')
+            每次调用重新读 manifest（主进程可能注册了新编号）。
+            """
+            try:
+                with _builtins.open(_manifest_path, "r", encoding="utf-8") as _mf:
+                    manifest = json.load(_mf)
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    f"文件编号注册表不存在。请先调用 file_analyze 或 file_search 注册文件。"
+                )
+            path = manifest.get(file_id)
+            if not path:
+                available = list(manifest.keys())
+                raise FileNotFoundError(
+                    f"编号 '{file_id}' 不存在。可用编号: {available}"
+                )
+            return path
+
+        g["get_file"] = _get_file
+
     return g
 
 

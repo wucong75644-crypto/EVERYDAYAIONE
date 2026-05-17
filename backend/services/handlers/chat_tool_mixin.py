@@ -229,6 +229,9 @@ class ChatToolMixin:
             _err = f"参数解析失败: {tc['arguments'][:100]}"
             return (tc, _err, True, _err)
 
+        # get_file 翻译：编号→绝对路径（工具收到正确路径，工具代码不需要改）
+        args = _resolve_file_ids(args, conversation_id)
+
         import time as _time
         _audit_start = _time.monotonic()
         try:
@@ -525,6 +528,43 @@ def _partition_tool_calls(
         batches.append((current_safe, current_batch))
 
     return batches
+
+
+def _resolve_file_ids(args: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
+    """get_file 翻译：把工具参数中的文件编号替换为绝对路径。
+
+    检查 args["path"] 和 args["files"]，如果值能被 cache.resolve 识别为编号，
+    替换为绝对路径。工具收到正确路径，工具代码不需要任何改动。
+    """
+    from services.agent.file_path_cache import get_file_cache
+
+    cache = get_file_cache(conversation_id)
+
+    # path 参数（file_analyze / file_search / file_read）
+    path_val = args.get("path")
+    if isinstance(path_val, str) and path_val:
+        resolved = cache.resolve(path_val)
+        if resolved:
+            logger.debug(f"get_file translate | {path_val} → {resolved}")
+            args["path"] = resolved
+
+    # files 参数（file_delete，数组）
+    files_val = args.get("files")
+    if isinstance(files_val, list):
+        translated = []
+        for item in files_val:
+            if isinstance(item, str):
+                resolved = cache.resolve(item)
+                if resolved:
+                    logger.debug(f"get_file translate | {item} → {resolved}")
+                    translated.append(resolved)
+                else:
+                    translated.append(item)
+            else:
+                translated.append(item)
+        args["files"] = translated
+
+    return args
 
 
 def accumulate_tool_call_delta(
