@@ -313,26 +313,25 @@ class FileToolMixin:
         meta = read_file_meta(cache_path)
         file_view = format_file_view(meta) if meta else f"文件已转为 Parquet: {cache_path}"
 
-        # 注册到路径缓存（原始文件 + parquet 产出）
+        # 注册到路径缓存 + 把编号路径更新为 parquet（一个文件一个编号，不分裂）
         name = Path(abs_path).name
-        cache.register(name, abs_path)
+        orig_fid = cache.register(name, abs_path)
         try:
             rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
             cache.register(rel_path, abs_path)
         except ValueError:
             pass
-        # parquet 产出注册拿编号
-        parquet_name = Path(cache_path).name
-        parquet_fid = cache.register(parquet_name, cache_path)
+        # 把原始编号的路径更新为 parquet（后续 get_file 直接拿到 parquet）
+        cache.update_path(orig_fid, cache_path)
 
         # 构建返回内容
         lines = [file_view]
         lines.append("")
         lines.append("## 后续操作")
-        lines.append(f"Parquet 数据编号: {parquet_fid}")
+        lines.append(f"数据已就绪，编号: {orig_fid}")
         lines.append("")
         lines.append(f"在 code_execute 中使用 duckdb 查询：")
-        lines.append(f"  path = get_file('{parquet_fid}')")
+        lines.append(f"  path = get_file('{orig_fid}')")
         lines.append(f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\").df()")
         if sheet_names and len(sheet_names) > 1:
             lines.append(f"Sheet 列表: {', '.join(sheet_names)}")

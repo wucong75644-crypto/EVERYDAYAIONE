@@ -78,6 +78,27 @@ class FilePathCache:
         self._entries[file_id] = entry
         return file_id
 
+    def update_path(self, file_id: str, new_abs_path: str) -> None:
+        """更新编号对应的路径（file_analyze 后把 xlsx 编号指向 parquet）。
+
+        一个文件一个编号，不分裂。
+        """
+        old_entry = self._id_to_entry.get(file_id)
+        if not old_entry:
+            return
+        old_filename = old_entry[0]
+        new_entry = (old_filename, new_abs_path)
+        # 更新 _id_to_entry
+        self._id_to_entry[file_id] = new_entry
+        # 更新 _entries 里编号 key 的路径
+        self._entries[file_id] = new_entry
+        # 更新 _path_to_id：删旧路径，加新路径
+        old_normalized = os.path.realpath(old_entry[1])
+        new_normalized = os.path.realpath(new_abs_path)
+        if old_normalized in self._path_to_id:
+            del self._path_to_id[old_normalized]
+        self._path_to_id[new_normalized] = file_id
+
     def resolve(self, name: str) -> Optional[str]:
         """按编号/文件名/相对路径查绝对路径。
 
