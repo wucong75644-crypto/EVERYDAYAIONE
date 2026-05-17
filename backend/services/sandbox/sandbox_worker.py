@@ -474,31 +474,55 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # pandas/docx/pptx/pdfplumber 等库内部调用的 open() 也自动受益
     g["open"] = _builtins.open
 
-    # get_file(编号) — 按编号获取文件绝对路径
+    # get_file(文件名) — 按文件名获取绝对路径（归一化匹配）
     # 读 staging/_manifest.json（由主进程在每次 code_execute 前写入最新全量）
     if staging_dir:
         _manifest_path = str(Path(staging_dir) / "_manifest.json")
 
-        def _get_file(file_id: str) -> str:
-            """按编号获取文件绝对路径。
+        def _normalize_fn(name):
+            """归一化：NFKC + 只保留中文/字母/数字 + 扩展名点"""
+            import unicodedata as _ud, re as _re
+            _stem, _ext = __import__("os").path.splitext(name)
+            _stem = _ud.normalize("NFKC", _stem)
+            _stem = _re.sub(r'[^\u4e00-\u9fff\da-zA-Z]', '', _stem)
+            return (_stem + _ext).lower()
 
-            用法：path = get_file('f1')
-            每次调用重新读 manifest（主进程可能注册了新编号）。
+        def _get_file(name: str) -> str:
+            """按文件名获取绝对路径（归一化匹配）。
+
+            用法：path = get_file('销售报表.xlsx')
             """
             try:
                 with _builtins.open(_manifest_path, "r", encoding="utf-8") as _mf:
                     manifest = json.load(_mf)
             except FileNotFoundError:
                 raise FileNotFoundError(
-                    f"文件编号注册表不存在。请先调用 file_analyze 或 file_search 注册文件。"
+                    "文件注册表不存在。请先调用 file_analyze 或 file_search 注册文件。"
                 )
-            path = manifest.get(file_id)
-            if not path:
-                available = list(manifest.keys())
-                raise FileNotFoundError(
-                    f"编号 '{file_id}' 不存在。可用编号: {available}"
-                )
-            return path
+            # 1. 精确匹配
+            if name in manifest:
+                return manifest[name]
+            # 2. 归一化匹配
+            norm_input = _normalize_fn(name)
+            for key, path in manifest.items():
+                if _normalize_fn(key) == norm_input:
+                    return path
+            # 3. Stem 匹配（用户没带扩展名）
+            input_stem = __import__("os").path.splitext(norm_input)[0]
+            if input_stem:
+                for key, path in manifest.items():
+                    if __import__("os").path.splitext(_normalize_fn(key))[0] == input_stem:
+                        return path
+            # 4. 前缀匹配（LLM 截断，≥6 字符）
+            if len(input_stem) >= 6:
+                for key, path in manifest.items():
+                    reg_stem = __import__("os").path.splitext(_normalize_fn(key))[0]
+                    if reg_stem.startswith(input_stem) or input_stem.startswith(reg_stem):
+                        return path
+            available = [k for k in manifest.keys() if not k.startswith("_")]
+            raise FileNotFoundError(
+                f"文件 '{name}' 未找到。已注册文件: {available}"
+            )
 
         g["get_file"] = _get_file
 

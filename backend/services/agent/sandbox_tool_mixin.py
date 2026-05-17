@@ -274,10 +274,7 @@ class SandboxToolMixin:
             fr = result.file_ref
             if fr.path and os.path.exists(fr.path):
                 cache = get_file_cache(self.conversation_id)
-                fid = cache.register(fr.filename, fr.path)
-                # 写回编号（frozen dataclass 用 object.__setattr__ 突破）
-                if not fr.file_id:
-                    object.__setattr__(fr, "file_id", fid)
+                cache.register(fr.filename, fr.path)
                 return
 
         # 兜底：从 summary 文本中提取 staging 文件名

@@ -531,10 +531,9 @@ def _partition_tool_calls(
 
 
 def _resolve_file_ids(args: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
-    """get_file 翻译：把工具参数中的文件编号替换为绝对路径。
+    """归一化匹配：把工具参数中的文件名匹配到正确的绝对路径。
 
-    检查 args["path"] 和 args["files"]，如果值能被 cache.resolve 识别为编号，
-    替换为绝对路径。工具收到正确路径，工具代码不需要任何改动。
+    LLM 传的文件名可能有空格/破折号/截断等错误，归一化后匹配注册表里的正确路径。
     """
     from services.agent.file_path_cache import get_file_cache
 

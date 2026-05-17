@@ -99,17 +99,13 @@ class FileRef:
     created_by: str = ""            # 哪个 agent/工具创建
     ttl_seconds: int = 86400        # 文件有效期（秒），导出可设 172800
     derived_from: tuple[str, ...] = ()  # v6: 血缘追踪（输入 artifact id 列表）
-    file_id: str = ""                   # v7: 短编号（f1/f2/...），由 file_path_cache 分配
 
     @property
     def sandbox_ref(self) -> str:
-        """LLM 朝向的标准文件引用。
+        """LLM 朝向的标准文件引用 — 等价于 OpenAI /mnt/data/filename。
 
-        有编号时返回编号（f1），LLM 用 get_file('f1') 获取路径。
-        无编号时降级返回旧格式（向后兼容）。
+        所有 to_message_content() 统一用此属性，禁止直接输出 path。
         """
-        if self.file_id:
-            return self.file_id
         return f"STAGING_DIR + '/{self.filename}'"
 
     def is_valid(self, max_age_seconds: int = 0) -> bool:
