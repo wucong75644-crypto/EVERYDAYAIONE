@@ -172,6 +172,13 @@ def build_scoped_open(
             for prefix in _allowed_prefixes
         )
         if not _in_whitelist:
+            # [debug] 打印拦截详情到 result（会出现在沙盒输出里）
+            import sys as _dbg_sys
+            print(
+                f"[_scoped_open BLOCKED] resolved={resolved}\n"
+                f"  allowed={_allowed_prefixes}",
+                file=_dbg_sys.stdout,
+            )
             _is_readonly_system = (
                 "r" in mode
                 and "w" not in mode
