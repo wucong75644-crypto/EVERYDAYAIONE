@@ -501,21 +501,25 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 raise FileNotFoundError(
                     "文件注册表不存在。请先调用 file_analyze 注册文件。"
                 )
-            # 四级匹配
+            # 四级匹配（先取 basename，LLM 可能传了带目录的路径）
             path = None
             # 1. 精确匹配
             if name in manifest:
                 path = manifest[name]
             if not path:
-                # 2. 归一化匹配
-                norm_input = _normalize_fn(name)
+                _basename = __import__("os").path.basename(name)
+                if _basename in manifest:
+                    path = manifest[_basename]
+            if not path:
+                # 2. 归一化匹配（用 basename）
+                norm_input = _normalize_fn(__import__("os").path.basename(name))
                 for key, val in manifest.items():
                     if _normalize_fn(key) == norm_input:
                         path = val
                         break
             if not path:
-                # 3. Stem 匹配
-                input_stem = _os.path.splitext(_normalize_fn(name))[0]
+                # 3. Stem 匹配（用 basename）
+                input_stem = _os.path.splitext(norm_input)[0]
                 if input_stem:
                     for key, val in manifest.items():
                         if _os.path.splitext(_normalize_fn(key))[0] == input_stem:
