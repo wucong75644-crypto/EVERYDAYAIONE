@@ -113,28 +113,28 @@ class TestGetFile:
         cache.register(f.name, workspace=str(f))
         cache.set_parquet(f.name, str(parquet))
 
-        assert cache.get_file(f.name, "code") == str(parquet)
+        assert cache.resolve_path(f.name, "code") == str(parquet)
 
     def test_analyze_returns_workspace(self, cache, workspace):
         f = workspace / "4月销售分析.xlsx"
         cache.register(f.name, workspace=str(f))
-        assert cache.get_file(f.name, "analyze") == str(f)
+        assert cache.resolve_path(f.name, "analyze") == str(f)
 
     def test_delete_returns_workspace(self, cache, workspace):
         f = workspace / "产品库存表.csv"
         cache.register(f.name, workspace=str(f))
-        assert cache.get_file(f.name, "delete") == str(f)
+        assert cache.resolve_path(f.name, "delete") == str(f)
 
     def test_code_no_parquet_raises(self, cache, workspace):
         """没 analyze 过，code 用途拦截"""
         f = workspace / "4月销售分析.xlsx"
         cache.register(f.name, workspace=str(f))
         with pytest.raises(FileNotFoundError, match="尚未分析"):
-            cache.get_file(f.name, "code")
+            cache.resolve_path(f.name, "code")
 
     def test_unregistered_raises(self, cache):
         with pytest.raises(FileNotFoundError, match="未注册"):
-            cache.get_file("不存在.xlsx", "code")
+            cache.resolve_path("不存在.xlsx", "code")
 
     def test_parquet_expired_raises(self, cache, workspace, staging):
         """parquet 文件被删了，拦截"""
@@ -146,15 +146,15 @@ class TestGetFile:
         # 模拟 staging 清理
         parquet.unlink()
         with pytest.raises(FileNotFoundError, match="已失效"):
-            cache.get_file(f.name, "code")
+            cache.resolve_path(f.name, "code")
 
     def test_erp_output_both_usages(self, cache, staging):
         """ERP 产出两个地址相同，任何 usage 都能用"""
         p = staging / "trade_123.parquet"
         p.write_bytes(b"parquet")
         cache.register("trade_123.parquet", workspace=str(p), parquet=str(p))
-        assert cache.get_file("trade_123.parquet", "code") == str(p)
-        assert cache.get_file("trade_123.parquet", "analyze") == str(p)
+        assert cache.resolve_path("trade_123.parquet", "code") == str(p)
+        assert cache.resolve_path("trade_123.parquet", "analyze") == str(p)
 
 
 class TestResolve:

@@ -119,7 +119,7 @@ class FilePathCache:
         if entry:
             entry.parquet = parquet_path
 
-    def get_file(self, name: str, usage: str = "code") -> str:
+    def resolve_path(self, name: str, usage: str = "code") -> str:
         """按文件名 + 用途获取路径，含自检拦截。
 
         usage:
