@@ -533,8 +533,16 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 raise FileNotFoundError(
                     f"文件 '{name}' 未找到。已注册文件: {available}"
                 )
-            # 自检：文件存在性
-            if not _os.path.exists(path):
+            # 自检：文件存在性（realpath 解析后检查，避免 cwd 影响相对路径）
+            real_path = _os.path.realpath(path)
+            if not _os.path.exists(real_path):
+                import sys as _sys
+                print(
+                    f"[get_file] path={path} real={real_path} "
+                    f"exists={_os.path.exists(path)} "
+                    f"cwd={_os.getcwd()}",
+                    file=_sys.stderr,
+                )
                 raise FileNotFoundError(
                     f"文件缓存已失效: {_os.path.basename(path)}，"
                     f"请重新调用 file_analyze(path='{name}')"
