@@ -73,6 +73,10 @@ class SandboxToolMixin:
                 if _staging:
                     _cache.set_staging_dir(_staging)
             _cache.write_manifest()
+            logger.info(
+                f"get_file manifest written | conv={self.conversation_id} | "
+                f"cache_staging={_cache._staging_dir}"
+            )
 
             from services.sandbox.kernel_manager import get_kernel_manager
             executor = build_sandbox_executor(
