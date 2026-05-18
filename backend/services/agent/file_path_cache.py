@@ -1,13 +1,15 @@
 """
-会话级文件路径缓存 + 归一化匹配
+会话级文件路径缓存 + 归一化匹配 + 三字段注册表
 
-所有文件出现时（上传/@插入/file_search/file_analyze产出/code_execute产出）
-注册到此缓存。
+注册表结构：每个文件三个字段
+- name: 显示名（原始文件名）
+- workspace: 工作区绝对路径（原始文件位置）
+- parquet: staging 里的 parquet 路径（file_analyze 后才有）
 
-LLM 全链路用文件名引用文件：
-- 调工具：path="销售报表.xlsx" → 归一化匹配 → 正确绝对路径
-- 写代码：get_file('销售报表.xlsx') → 归一化匹配 → 正确绝对路径
-- file_analyze 后原始文件名自动指向 parquet 路径
+get_file(name, usage) 按用途返回对应路径 + 自检：
+- usage="code"    → 返回 parquet（没有则拦截提示调 file_analyze）
+- usage="analyze" → 返回 workspace（源文件）
+- usage="delete"  → 返回 workspace
 
 归一化规则：NFKC + 只保留中文/字母/数字 + 扩展名点
 匹配策略：精确 → 归一化 → stem（无扩展名）→ 前缀（截断）
@@ -23,7 +25,9 @@ import re
 import unicodedata
 from pathlib import Path
 from threading import Lock
-from typing import Optional
+from typing import Any, Optional
+
+from loguru import logger
 
 
 # ============================================================
@@ -42,16 +46,33 @@ def normalize_filename(name: str) -> str:
     return (stem + ext).lower()
 
 
+# ============================================================
+# 三字段文件条目
+# ============================================================
+
+class FileEntry:
+    """三字段文件条目：name + workspace + parquet"""
+    __slots__ = ("name", "workspace", "parquet")
+
+    def __init__(self, name: str, workspace: str = "", parquet: str = "") -> None:
+        self.name = name
+        self.workspace = workspace
+        self.parquet = parquet
+
+    def to_dict(self) -> dict[str, str]:
+        return {"name": self.name, "workspace": self.workspace, "parquet": self.parquet}
+
+
 class FilePathCache:
-    """会话级文件路径缓存 — 归一化匹配 + 路径查询"""
+    """会话级文件路径缓存 — 三字段注册表 + 归一化匹配 + get_file 自检"""
 
     __slots__ = ("_entries", "_normalized", "_max", "_staging_dir")
 
     def __init__(self, max_entries: int = 500) -> None:
-        # {key: (filename, abs_path)}  key = rel_path / filename
-        self._entries: dict[str, tuple[str, str]] = {}
-        # {归一化文件名: (原始文件名, abs_path)}  归一化匹配用
-        self._normalized: dict[str, tuple[str, str]] = {}
+        # {key: FileEntry}  key = rel_path / filename
+        self._entries: dict[str, FileEntry] = {}
+        # {归一化文件名: FileEntry}  归一化匹配用
+        self._normalized: dict[str, FileEntry] = {}
         self._max = max_entries
         self._staging_dir: str = ""
 
@@ -59,64 +80,116 @@ class FilePathCache:
         """设置 staging 目录（供 write_manifest 写入）"""
         self._staging_dir = staging_dir
 
-    def register(self, rel_path: str, abs_path: str) -> None:
-        """注册文件。按相对路径、纯文件名、归一化文件名三个维度存储。"""
+    def register(
+        self, rel_path: str,
+        workspace: str = "", parquet: str = "",
+    ) -> None:
+        """注册文件。三字段：name + workspace + parquet。
+
+        重复注册同一文件时：
+        - workspace/parquet 非空才更新（不覆盖已有值）
+        - 防止后续 register 把 analyze 后的 parquet 清空
+        """
         filename = os.path.basename(rel_path)
-        entry = (filename, abs_path)
+        norm_key = normalize_filename(filename)
+
+        # 已存在 → 合并更新（非空字段才覆盖）
+        existing = self._normalized.get(norm_key)
+        if existing:
+            if workspace:
+                existing.workspace = workspace
+            if parquet:
+                existing.parquet = parquet
+            return
+
+        # 新注册
+        entry = FileEntry(name=filename, workspace=workspace, parquet=parquet)
 
         if len(self._entries) >= self._max:
             first_key = next(iter(self._entries))
             del self._entries[first_key]
 
-        # 按相对路径 + 纯文件名存储
         self._entries[rel_path] = entry
         self._entries[filename] = entry
-        # 归一化 key 存储（容错匹配用）
-        norm_key = normalize_filename(filename)
         self._normalized[norm_key] = entry
 
-    def update_path(self, filename: str, new_abs_path: str) -> None:
-        """更新文件名对应的路径（file_analyze 后 xlsx → parquet）。
+    def set_parquet(self, filename: str, parquet_path: str) -> None:
+        """设置 parquet 路径（file_analyze 完成后调用）。"""
+        entry = self._resolve_entry(filename)
+        if entry:
+            entry.parquet = parquet_path
 
-        直接替换，LLM 用同一个文件名始终拿到最新路径。
+    def get_file(self, name: str, usage: str = "code") -> str:
+        """按文件名 + 用途获取路径，含自检拦截。
+
+        usage:
+            "code"    → 返回 parquet（沙盒 duckdb 查询用）
+            "analyze" → 返回 workspace（file_analyze/file_read 源文件）
+            "delete"  → 返回 workspace（file_delete 删除源文件）
+
+        自检拦截：
+            - 文件未注册 → FileNotFoundError
+            - code 但没 parquet → FileNotFoundError（提示调 file_analyze）
+            - 路径文件不存在 → FileNotFoundError（提示重新操作）
         """
-        norm_key = normalize_filename(filename)
-        old_entry = self._normalized.get(norm_key)
-        if not old_entry:
-            return
-        orig_filename = old_entry[0]
-        new_entry = (orig_filename, new_abs_path)
-        # 更新所有维度
-        self._normalized[norm_key] = new_entry
-        self._entries[orig_filename] = new_entry
-        # 同时更新可能存在的 rel_path key
-        for key, val in self._entries.items():
-            if val[0] == orig_filename and val[1] != new_abs_path:
-                self._entries[key] = new_entry
+        entry = self._resolve_entry(name)
+        if not entry:
+            raise FileNotFoundError(
+                f"文件 '{name}' 未注册，请先用 file_search 搜索文件"
+            )
 
-    def resolve(self, name: str) -> Optional[str]:
-        """按文件名查绝对路径。四级递进匹配。
+        if usage == "code":
+            path = entry.parquet
+            if not path:
+                raise FileNotFoundError(
+                    f"文件 '{entry.name}' 尚未分析，"
+                    f"请先调用 file_analyze(path=\"{entry.name}\")"
+                )
+        else:
+            path = entry.workspace
+            if not path:
+                raise FileNotFoundError(
+                    f"文件 '{entry.name}' 缺少工作区路径"
+                )
 
-        1. 精确匹配
-        2. 归一化匹配（去符号后比较）
-        3. Stem 匹配（去扩展名后归一化比较，用户可能没带扩展名）
-        4. 前缀匹配（归一化后是前缀，≥6字符，LLM 截断时兜底）
+        if not os.path.exists(path):
+            if usage == "code":
+                raise FileNotFoundError(
+                    f"Parquet 缓存已失效，"
+                    f"请重新调用 file_analyze(path=\"{entry.name}\")"
+                )
+            raise FileNotFoundError(f"文件不存在: {path}")
+
+        return path
+
+    def resolve(self, name: str, usage: str = "code") -> Optional[str]:
+        """按文件名查路径（不拦截，返回 None 表示未找到）。
+
+        供 _resolve_file_ids 等需要静默失败的场景使用。
         """
+        entry = self._resolve_entry(name)
+        if not entry:
+            return None
+        if usage == "code":
+            return entry.parquet or None
+        return entry.workspace or None
+
+    def _resolve_entry(self, name: str) -> Optional[FileEntry]:
+        """四级递进匹配查找 FileEntry。"""
         # 1. 精确匹配
         entry = self._entries.get(name)
         if entry:
-            return entry[1]
-        # basename 兜底
+            return entry
         basename = os.path.basename(name)
         entry = self._entries.get(basename)
         if entry:
-            return entry[1]
+            return entry
 
         # 2. 归一化匹配
         norm_input = normalize_filename(name)
         entry = self._normalized.get(norm_input)
         if entry:
-            return entry[1]
+            return entry
 
         # 3. Stem 匹配（用户没带扩展名）
         input_stem = os.path.splitext(norm_input)[0]
@@ -124,52 +197,48 @@ class FilePathCache:
             for norm_key, entry in self._normalized.items():
                 registered_stem = os.path.splitext(norm_key)[0]
                 if input_stem == registered_stem:
-                    return entry[1]
+                    return entry
 
         # 4. 前缀匹配（LLM 截断文件名，≥6 字符防误匹配）
-        if len(input_stem) >= 6:
+        if input_stem and len(input_stem) >= 6:
             for norm_key, entry in self._normalized.items():
                 registered_stem = os.path.splitext(norm_key)[0]
                 if registered_stem.startswith(input_stem) or input_stem.startswith(registered_stem):
-                    return entry[1]
+                    return entry
 
         return None
 
     def get_filename(self, name: str) -> Optional[str]:
         """按 key 查原始文件名。"""
         entry = self._entries.get(name)
-        return entry[0] if entry else None
+        return entry.name if entry else None
 
-    def list_all(self) -> list[tuple[str, str]]:
-        """返回所有去重的 (filename, abs_path) 列表。"""
+    def list_all(self) -> list[dict[str, str]]:
+        """返回所有去重的文件条目。"""
         seen: set[str] = set()
-        result: list[tuple[str, str]] = []
-        for filename, abs_path in self._entries.values():
-            if abs_path not in seen:
-                seen.add(abs_path)
-                result.append((filename, abs_path))
+        result: list[dict[str, str]] = []
+        for entry in self._normalized.values():
+            if entry.name not in seen:
+                seen.add(entry.name)
+                result.append(entry.to_dict())
         return result
 
     def write_manifest(self) -> None:
-        """把文件名→绝对路径映射写入 staging/_manifest.json。
+        """把三字段映射写入 staging/_manifest.json。
 
         供沙盒子进程的 get_file() 读取。
-        在 code_execute 执行前调用一次，包含当前全量映射。
-        写入两份：原始文件名 + 归一化文件名，沙盒也能做归一化匹配。
+        沙盒只需要 parquet 路径，但也写入 name 和归一化 key 方便匹配。
         """
         if not self._staging_dir:
             return
+        # {文件名: parquet路径, 归一化文件名: parquet路径}
         manifest: dict[str, str] = {}
-        seen_paths: set[str] = set()
-        # 原始文件名 → 路径
-        for filename, abs_path in self._entries.values():
-            if abs_path not in seen_paths:
-                seen_paths.add(abs_path)
-                manifest[filename] = abs_path
-        # 归一化文件名 → 路径（沙盒归一化匹配用）
-        for norm_key, (_, abs_path) in self._normalized.items():
-            if norm_key not in manifest:
-                manifest[norm_key] = abs_path
+        for entry in self._normalized.values():
+            if entry.parquet:
+                manifest[entry.name] = entry.parquet
+                norm_key = normalize_filename(entry.name)
+                if norm_key != entry.name:
+                    manifest[norm_key] = entry.parquet
         if not manifest:
             return
         staging = Path(self._staging_dir)

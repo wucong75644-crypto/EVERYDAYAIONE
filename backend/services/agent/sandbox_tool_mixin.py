@@ -258,7 +258,7 @@ class SandboxToolMixin:
             basename = os.path.basename(filename)
             candidate = os.path.join(workspace_dir, filename)
             if os.path.exists(candidate):
-                cache.register(basename, os.path.realpath(candidate))
+                cache.register(basename, workspace=os.path.realpath(candidate))
 
     def _register_staging_files(self, result: "AgentResult") -> None:
         """从工具结果中提取 staging 文件路径，注册到共享路径缓存。"""
@@ -274,7 +274,8 @@ class SandboxToolMixin:
             fr = result.file_ref
             if fr.path and os.path.exists(fr.path):
                 cache = get_file_cache(self.conversation_id)
-                cache.register(fr.filename, fr.path)
+                # ERP 产出：parquet 就是源文件，两个地址相同
+                cache.register(fr.filename, workspace=fr.path, parquet=fr.path)
                 return
 
         # 兜底：从 summary 文本中提取 staging 文件名
@@ -289,7 +290,8 @@ class SandboxToolMixin:
             filename = m.group(1)
             abs_path = os.path.join(staging_dir, filename)
             if os.path.exists(abs_path):
-                cache.register(filename, abs_path)
+                # staging 文件：两个地址相同
+                cache.register(filename, workspace=abs_path, parquet=abs_path)
 
     def _get_staging_dir(self) -> str:
         """获取当前用户的 staging 目录"""

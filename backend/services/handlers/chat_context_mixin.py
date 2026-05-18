@@ -140,7 +140,7 @@ class ChatContextMixin:
                     if wp:
                         import os
                         _abs = os.path.join(_ws_dir, wp)
-                        _cache.register(wp, _abs)
+                        _cache.register(wp, workspace=_abs)
             except Exception as e:
                 logger.debug(f"Workspace file cache registration failed | error={e}")
 

@@ -229,8 +229,8 @@ class ChatToolMixin:
             _err = f"参数解析失败: {tc['arguments'][:100]}"
             return (tc, _err, True, _err)
 
-        # get_file 翻译：编号→绝对路径（工具收到正确路径，工具代码不需要改）
-        args = _resolve_file_ids(args, conversation_id)
+        # get_file 翻译：文件名→绝对路径（按工具类型选 usage）
+        args = _resolve_file_ids(args, conversation_id, tool_name)
 
         import time as _time
         _audit_start = _time.monotonic()
@@ -530,32 +530,47 @@ def _partition_tool_calls(
     return batches
 
 
-def _resolve_file_ids(args: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
-    """归一化匹配：把工具参数中的文件名匹配到正确的绝对路径。
+def _resolve_file_ids(
+    args: Dict[str, Any], conversation_id: str, tool_name: str = "",
+) -> Dict[str, Any]:
+    """归一化匹配：按工具类型把文件名翻译为正确的绝对路径。
 
-    LLM 传的文件名可能有空格/破折号/截断等错误，归一化后匹配注册表里的正确路径。
+    不同工具取不同地址：
+    - file_analyze / file_read → workspace（源文件）
+    - file_delete → workspace
+    - 其他 → 默认不翻译（code_execute 在沙盒内用 get_file）
     """
     from services.agent.file_path_cache import get_file_cache
 
+    # 确定 usage
+    _ANALYZE_TOOLS = {"file_analyze", "file_read"}
+    _DELETE_TOOLS = {"file_delete"}
+    if tool_name in _ANALYZE_TOOLS:
+        usage = "analyze"
+    elif tool_name in _DELETE_TOOLS:
+        usage = "delete"
+    else:
+        return args  # 非文件工具不翻译
+
     cache = get_file_cache(conversation_id)
 
-    # path 参数（file_analyze / file_search / file_read）
+    # path 参数（file_analyze / file_read）
     path_val = args.get("path")
     if isinstance(path_val, str) and path_val:
-        resolved = cache.resolve(path_val)
+        resolved = cache.resolve(path_val, usage=usage)
         if resolved:
-            logger.debug(f"get_file translate | {path_val} → {resolved}")
+            logger.debug(f"get_file translate | {tool_name} | {path_val} → {resolved}")
             args["path"] = resolved
 
-    # files 参数（file_delete，数组）
+    # files 参数（file_delete）
     files_val = args.get("files")
     if isinstance(files_val, list):
         translated = []
         for item in files_val:
             if isinstance(item, str):
-                resolved = cache.resolve(item)
+                resolved = cache.resolve(item, usage=usage)
                 if resolved:
-                    logger.debug(f"get_file translate | {item} → {resolved}")
+                    logger.debug(f"get_file translate | {tool_name} | {item} → {resolved}")
                     translated.append(resolved)
                 else:
                     translated.append(item)
