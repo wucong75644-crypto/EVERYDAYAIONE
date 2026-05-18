@@ -172,8 +172,6 @@ def build_scoped_open(
             for prefix in _allowed_prefixes
         )
         if not _in_whitelist:
-            import sys as _sys
-            print(f"[sandbox-debug] REJECTED path={path} resolved={resolved} allowed={_allowed_prefixes}", file=_sys.stderr)
             _is_readonly_system = (
                 "r" in mode
                 and "w" not in mode
@@ -490,41 +488,58 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
             return (_stem + _ext).lower()
 
         def _get_file(name: str) -> str:
-            """按文件名获取绝对路径（归一化匹配）。
+            """按文件名获取 parquet 绝对路径（归一化匹配 + 自检）。
 
+            manifest 只存 parquet 路径，沙盒内所有文件访问都走这个函数。
             用法：path = get_file('销售报表.xlsx')
             """
+            import os as _os
             try:
                 with _builtins.open(_manifest_path, "r", encoding="utf-8") as _mf:
                     manifest = json.load(_mf)
             except FileNotFoundError:
                 raise FileNotFoundError(
-                    "文件注册表不存在。请先调用 file_analyze 或 file_search 注册文件。"
+                    "文件注册表不存在。请先调用 file_analyze 注册文件。"
                 )
+            # 四级匹配
+            path = None
             # 1. 精确匹配
             if name in manifest:
-                return manifest[name]
-            # 2. 归一化匹配
-            norm_input = _normalize_fn(name)
-            for key, path in manifest.items():
-                if _normalize_fn(key) == norm_input:
-                    return path
-            # 3. Stem 匹配（用户没带扩展名）
-            input_stem = __import__("os").path.splitext(norm_input)[0]
-            if input_stem:
-                for key, path in manifest.items():
-                    if __import__("os").path.splitext(_normalize_fn(key))[0] == input_stem:
-                        return path
-            # 4. 前缀匹配（LLM 截断，≥6 字符）
-            if len(input_stem) >= 6:
-                for key, path in manifest.items():
-                    reg_stem = __import__("os").path.splitext(_normalize_fn(key))[0]
-                    if reg_stem.startswith(input_stem) or input_stem.startswith(reg_stem):
-                        return path
-            available = [k for k in manifest.keys() if not k.startswith("_")]
-            raise FileNotFoundError(
-                f"文件 '{name}' 未找到。已注册文件: {available}"
-            )
+                path = manifest[name]
+            if not path:
+                # 2. 归一化匹配
+                norm_input = _normalize_fn(name)
+                for key, val in manifest.items():
+                    if _normalize_fn(key) == norm_input:
+                        path = val
+                        break
+            if not path:
+                # 3. Stem 匹配
+                input_stem = _os.path.splitext(_normalize_fn(name))[0]
+                if input_stem:
+                    for key, val in manifest.items():
+                        if _os.path.splitext(_normalize_fn(key))[0] == input_stem:
+                            path = val
+                            break
+                # 4. 前缀匹配
+                if not path and input_stem and len(input_stem) >= 6:
+                    for key, val in manifest.items():
+                        reg_stem = _os.path.splitext(_normalize_fn(key))[0]
+                        if reg_stem.startswith(input_stem) or input_stem.startswith(reg_stem):
+                            path = val
+                            break
+            if not path:
+                available = [k for k in manifest.keys() if not k.startswith("_")]
+                raise FileNotFoundError(
+                    f"文件 '{name}' 未找到。已注册文件: {available}"
+                )
+            # 自检：文件存在性
+            if not _os.path.exists(path):
+                raise FileNotFoundError(
+                    f"文件缓存已失效: {_os.path.basename(path)}，"
+                    f"请重新调用 file_analyze(path='{name}')"
+                )
+            return path
 
         g["get_file"] = _get_file
 

@@ -164,8 +164,8 @@ class FileToolMixin:
             except ValueError:
                 rel_path = f["name"]
             lines.append(f"  {rel_path}  ({size_str})")
-            cache.register(f["name"], f["abs_path"])
-            cache.register(rel_path, f["abs_path"])
+            cache.register(f["name"], workspace=f["abs_path"])
+            cache.register(rel_path, workspace=f["abs_path"])
 
         if data.get("truncated"):
             lines.append("\n已达显示上限，部分条目未显示")
@@ -200,8 +200,8 @@ class FileToolMixin:
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
-                        cache.register(target.name, str(target))
-                        cache.register(rel_path, str(target))
+                        cache.register(target.name, workspace=str(target))
+                        cache.register(rel_path, workspace=str(target))
                 except Exception:
                     pass
 
@@ -236,9 +236,9 @@ class FileToolMixin:
                 metadata={"retryable": True},
             )
 
-        # 路径解析：缓存 → resolve_safe_path
+        # 路径解析：缓存(workspace) → resolve_safe_path
         cache = get_file_cache(self.conversation_id)
-        abs_path = cache.resolve(path)
+        abs_path = cache.resolve(path, usage="analyze")
         if not abs_path:
             try:
                 target = executor.resolve_safe_path(path)
@@ -306,16 +306,16 @@ class FileToolMixin:
         meta = read_file_meta(cache_path)
         file_view = format_file_view(meta) if meta else f"文件已转为 Parquet: {cache_path}"
 
-        # 注册到路径缓存 + 路径升级为 parquet（get_file 自动返回 parquet）
+        # 注册到路径缓存：workspace + parquet 分开写
         name = Path(abs_path).name
-        cache.register(name, abs_path)
+        cache.register(name, workspace=abs_path)
         try:
             rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
-            cache.register(rel_path, abs_path)
+            cache.register(rel_path, workspace=abs_path)
         except ValueError:
             pass
-        # 路径升级：原始文件名 → parquet 路径（后续 get_file 直接拿到 parquet）
-        cache.update_path(name, cache_path)
+        # 设置 parquet 路径（后续 get_file usage="code" 返回 parquet）
+        cache.set_parquet(name, cache_path)
 
         # 构建返回内容
         lines = [file_view]
@@ -354,8 +354,8 @@ class FileToolMixin:
 
         # 注册到共享缓存拿编号
         cache = get_file_cache(self.conversation_id)
-        cache.register(name, abs_path)
-        cache.register(rel_path, abs_path)
+        cache.register(name, workspace=abs_path)
+        cache.register(rel_path, workspace=abs_path)
 
         lines = [
             f"{name} ({size_str})",
@@ -397,7 +397,7 @@ class FileToolMixin:
         deleted = []
         skipped = []
         for name in files:
-            abs_path = cache.resolve(name)
+            abs_path = cache.resolve(name, usage="delete")
             if not abs_path:
                 # 缓存没有 → 尝试直接 resolve
                 try:
@@ -471,7 +471,7 @@ class FileToolMixin:
 
         # 路径解析：优先从共享缓存取绝对路径，兜底 resolve_safe_path
         from services.agent.file_path_cache import get_file_cache
-        resolved_path = get_file_cache(self.conversation_id).resolve(path)
+        resolved_path = get_file_cache(self.conversation_id).resolve(path, usage="analyze")
         if not resolved_path:
             try:
                 resolved_path = str(executor.resolve_safe_path(path))

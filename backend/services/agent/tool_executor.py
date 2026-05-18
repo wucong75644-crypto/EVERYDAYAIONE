@@ -506,7 +506,8 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         # 注册到路径缓存
         from services.agent.file_path_cache import get_file_cache
         _cache = get_file_cache(self.conversation_id)
-        _cache.register(filename, str(staging_path))
+        # fetch_all_pages 产出：parquet 就是源文件
+        _cache.register(filename, workspace=str(staging_path), parquet=str(staging_path))
 
         return AgentResult(
             summary=(
