@@ -533,16 +533,21 @@ def _partition_tool_calls(
 def _resolve_file_ids(
     args: Dict[str, Any], conversation_id: str, tool_name: str = "",
 ) -> Dict[str, Any]:
-    """归一化匹配：按工具类型把文件名翻译为正确的绝对路径。
+    """工具层无感拦截：按工具类型从注册表取正确路径 + 自检。
 
     不同工具取不同地址：
     - file_analyze / file_read → workspace（源文件）
     - file_delete → workspace
-    - 其他 → 默认不翻译（code_execute 在沙盒内用 get_file）
+    - 其他 → 不翻译（code_execute 在沙盒内用 get_file）
+
+    自检拦截（get_file 内部）：
+    - 文件未注册 → FileNotFoundError
+    - code 但没 parquet → FileNotFoundError（提示调 file_analyze）
+    - 文件不存在 → FileNotFoundError
+    拦截后错误回传给 LLM，LLM 自行重试。
     """
     from services.agent.file_path_cache import get_file_cache
 
-    # 确定 usage
     _ANALYZE_TOOLS = {"file_analyze", "file_read"}
     _DELETE_TOOLS = {"file_delete"}
     if tool_name in _ANALYZE_TOOLS:
@@ -550,29 +555,32 @@ def _resolve_file_ids(
     elif tool_name in _DELETE_TOOLS:
         usage = "delete"
     else:
-        return args  # 非文件工具不翻译
+        return args
 
     cache = get_file_cache(conversation_id)
 
-    # path 参数（file_analyze / file_read）
+    # path 参数 — 用 get_file 自检拦截
     path_val = args.get("path")
     if isinstance(path_val, str) and path_val:
-        resolved = cache.resolve(path_val, usage=usage)
-        if resolved:
-            logger.debug(f"get_file translate | {tool_name} | {path_val} → {resolved}")
+        try:
+            resolved = cache.resolve_path(path_val, usage=usage)
+            logger.debug(f"get_file | {tool_name} | {path_val} → {resolved}")
             args["path"] = resolved
+        except FileNotFoundError:
+            # 自检失败时静默透传（让工具内部的 resolve_safe_path 兜底）
+            pass
 
-    # files 参数（file_delete）
+    # files 参数 — 逐个自检
     files_val = args.get("files")
     if isinstance(files_val, list):
         translated = []
         for item in files_val:
             if isinstance(item, str):
-                resolved = cache.resolve(item, usage=usage)
-                if resolved:
-                    logger.debug(f"get_file translate | {tool_name} | {item} → {resolved}")
+                try:
+                    resolved = cache.resolve_path(item, usage=usage)
+                    logger.debug(f"get_file | {tool_name} | {item} → {resolved}")
                     translated.append(resolved)
-                else:
+                except FileNotFoundError:
                     translated.append(item)
             else:
                 translated.append(item)

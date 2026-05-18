@@ -321,7 +321,8 @@ class FileToolMixin:
         lines = [file_view]
         lines.append("")
         lines.append("## 后续操作")
-        lines.append(f"数据已就绪，在 code_execute 中查询：")
+        lines.append(f"数据已清洗并转为 Parquet 格式。get_file 返回的是清洗后的数据路径，无需再做格式处理。")
+        lines.append(f"在 code_execute 中用 duckdb 查询（不要用 pd.read_excel）：")
         lines.append(f"  path = get_file('{name}')")
         lines.append(f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\").df()")
         if sheet_names and len(sheet_names) > 1:
