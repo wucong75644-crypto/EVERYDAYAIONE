@@ -535,11 +535,15 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 )
             # 自检：文件存在性
             if not _os.path.exists(path):
+                _parent = _os.path.dirname(path)
+                _grandparent = _os.path.dirname(_parent)
                 raise FileNotFoundError(
-                    f"文件缓存已失效: {_os.path.basename(path)}，"
-                    f"请重新调用 file_analyze(path='{name}')。"
-                    f"[debug] path={path} cwd={_os.getcwd()} "
-                    f"dir_exists={_os.path.isdir(_os.path.dirname(path))}"
+                    f"文件缓存已失效，请重新调用 file_analyze(path='{name}')。"
+                    f"\n[debug] manifest_staging={staging_dir}"
+                    f"\n[debug] path={path}"
+                    f"\n[debug] parent_exists={_os.path.exists(_parent)}"
+                    f"\n[debug] grandparent_exists={_os.path.exists(_grandparent)}"
+                    f"\n[debug] grandparent_ls={_os.listdir(_grandparent)[:5] if _os.path.exists(_grandparent) else 'N/A'}"
                 )
             return path
 
