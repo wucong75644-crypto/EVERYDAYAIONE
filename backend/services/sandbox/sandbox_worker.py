@@ -172,6 +172,8 @@ def build_scoped_open(
             for prefix in _allowed_prefixes
         )
         if not _in_whitelist:
+            import sys as _sys
+            print(f"[sandbox-debug] REJECTED path={path} resolved={resolved} allowed={_allowed_prefixes}", file=_sys.stderr)
             _is_readonly_system = (
                 "r" in mode
                 and "w" not in mode
