@@ -207,8 +207,9 @@ class TestManifest:
         cache.write_manifest()
 
         manifest = json.loads((staging / "_manifest.json").read_text())
+        # manifest 里存的是 parquet 文件名（不是完整路径）
         for k, v in manifest.items():
-            assert v == str(parquet)
+            assert v == parquet.name
 
     def test_manifest_no_workspace(self, cache, workspace, staging):
         """manifest 里不会出现 workspace 路径"""
@@ -277,11 +278,11 @@ class TestFullFlow:
         assert cache.resolve(xlsx.name, "code") == str(parquet)
         assert cache.resolve(xlsx.name, "analyze") == str(xlsx)
 
-        # 3. write_manifest → 沙盒 get_file 只拿到 parquet
+        # 3. write_manifest → manifest 存 parquet 文件名（沙盒拼 STAGING_DIR）
         cache.write_manifest()
         manifest = json.loads((staging / "_manifest.json").read_text())
         for v in manifest.values():
-            assert v == str(parquet)
+            assert v == parquet.name
 
         # 4. 重复注册不覆盖 parquet
         cache.register(xlsx.name, workspace=str(xlsx))

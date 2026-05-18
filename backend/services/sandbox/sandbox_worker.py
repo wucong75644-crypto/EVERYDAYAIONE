@@ -172,13 +172,6 @@ def build_scoped_open(
             for prefix in _allowed_prefixes
         )
         if not _in_whitelist:
-            # [debug] 打印拦截详情到 result（会出现在沙盒输出里）
-            import sys as _dbg_sys
-            print(
-                f"[_scoped_open BLOCKED] resolved={resolved}\n"
-                f"  allowed={_allowed_prefixes}",
-                file=_dbg_sys.stdout,
-            )
             _is_readonly_system = (
                 "r" in mode
                 and "w" not in mode
@@ -544,9 +537,9 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 raise FileNotFoundError(
                     f"文件 '{name}' 未找到。已注册文件: {available}"
                 )
-            # 不做 exists 自检（子进程文件系统视图可能与主进程不同）
-            # 文件不存在时 duckdb/pandas 会自己报错
-            return path
+            # manifest 里存的是 parquet 文件名，拼上 staging_dir 返回完整路径
+            # 这样无论 nsjail（/staging/）还是裸模式都能拿到正确的 jail 内路径
+            return str(Path(staging_dir) / path)
 
         g["get_file"] = _get_file
 

@@ -49,8 +49,6 @@ def build_sandbox_executor(
     _staging_dir = resolve_staging_dir(
         _file_settings.file_workspace_root, user_id, org_id, _conv_id,
     )
-    from loguru import logger as _logger
-    _logger.info(f"build_sandbox_executor | conv={conversation_id} | staging={_staging_dir}")
 
     # 4. 文件检测函数 — 调用公共 auto_upload 模块
     async def _auto_upload(filename: str, size: int) -> str:

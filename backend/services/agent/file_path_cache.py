@@ -227,18 +227,21 @@ class FilePathCache:
         """把三字段映射写入 staging/_manifest.json。
 
         供沙盒子进程的 get_file() 读取。
-        沙盒只需要 parquet 路径，但也写入 name 和归一化 key 方便匹配。
+        写入 parquet 的文件名（不是完整路径），沙盒用 STAGING_DIR + '/文件名' 拼出路径。
+        这样无论 nsjail（/staging/）还是裸模式（/mnt/nas-workspace/.../staging/conv/），
+        沙盒拿到的都是正确的 jail 内路径。
         """
         if not self._staging_dir:
             return
-        # {文件名: parquet路径, 归一化文件名: parquet路径}
+        # {原始文件名: parquet文件名, 归一化文件名: parquet文件名}
         manifest: dict[str, str] = {}
         for entry in self._normalized.values():
             if entry.parquet:
-                manifest[entry.name] = entry.parquet
+                parquet_filename = os.path.basename(entry.parquet)
+                manifest[entry.name] = parquet_filename
                 norm_key = normalize_filename(entry.name)
                 if norm_key != entry.name:
-                    manifest[norm_key] = entry.parquet
+                    manifest[norm_key] = parquet_filename
         if not manifest:
             return
         staging = Path(self._staging_dir)
