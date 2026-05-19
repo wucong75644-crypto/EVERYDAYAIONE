@@ -126,15 +126,25 @@ def generate_file_meta(
                 "rows": [min_row, max_row],
                 "cols": [min_col, max_col],
             })
-        meta.issues.append({
-            "type": "merged_cells",
-            "severity": "info",
-            "location": {},
-            "preserved": True,
-            "action": f"检测到{len(merged_ranges)}个合并区域，原始数据保留",
-            "recovery_hint": "根据业务语义决定：ffill（纵向填充）或重命名列（横向分组）",
-        })
         meta.raw_preserved = (cleaning_report.merged_cols_filled == 0)
+        if meta.raw_preserved:
+            meta.issues.append({
+                "type": "merged_cells",
+                "severity": "info",
+                "location": {},
+                "preserved": True,
+                "action": f"检测到{len(merged_ranges)}个合并区域，原始数据保留",
+                "recovery_hint": "根据业务语义决定：ffill（纵向填充）或重命名列（横向分组）",
+            })
+        else:
+            meta.issues.append({
+                "type": "merged_cells",
+                "severity": "info",
+                "location": {},
+                "preserved": False,
+                "action": f"检测到{len(merged_ranges)}个合并区域，已按merge range精确填充{cleaning_report.merged_cols_filled}个单元格",
+                "recovery_hint": "合并区域空值已自动填充，数据可直接查询",
+            })
 
     # ── cleaning（保留现有 CleaningReport 字段）──
     cr_dict = asdict(cleaning_report)
