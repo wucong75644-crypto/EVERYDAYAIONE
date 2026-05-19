@@ -134,7 +134,7 @@ def generate_file_meta(
             "action": f"检测到{len(merged_ranges)}个合并区域，原始数据保留",
             "recovery_hint": "根据业务语义决定：ffill（纵向填充）或重命名列（横向分组）",
         })
-        meta.raw_preserved = True
+        meta.raw_preserved = (cleaning_report.merged_cols_filled == 0)
 
     # ── cleaning（保留现有 CleaningReport 字段）──
     cr_dict = asdict(cleaning_report)
@@ -519,7 +519,10 @@ def format_file_view(meta: FileMeta) -> str:
     for f in meta.formulas[:3]:
         lines.append(f"公式：{f.get('cell','?')} = {f.get('formula','?')} → {f.get('value','?')}")
     if meta.merged_cells:
-        lines.append(f"合并单元格（{len(meta.merged_cells)}个，未自动处理，需你根据业务语义决定）：")
+        if meta.raw_preserved:
+            lines.append(f"合并单元格（{len(meta.merged_cells)}个，未自动处理，需你根据业务语义决定）：")
+        else:
+            lines.append(f"合并单元格（{len(meta.merged_cells)}个，已自动精确填充，非全列ffill）：")
         for mc in meta.merged_cells[:5]:
             lines.append(f"  {mc.get('range', '?')}")
     for issue in meta.issues[:8]:

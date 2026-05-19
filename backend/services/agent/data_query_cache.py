@@ -693,8 +693,14 @@ def _convert_excel_to_parquet(
             sheet_data = reader.load_sheet(target_sheet, header_row=actual_start)
             df = sheet_data.to_pandas()
 
+        # 提取 prescan 的 special_rows（合计行等）
+        _special_rows = None
+        if prescan_result and prescan_result.confidence in ("high", "medium"):
+            _special_rows = prescan_result.special_rows or None
+
         df, cleaning_report = clean_excel(
-            df, excel_path, resolved_name, actual_start, structure=structure,
+            df, excel_path, resolved_name, actual_start,
+            structure=structure, special_rows=_special_rows,
         )
         # 设置行号映射参数
         cleaning_report.header_row = actual_start
@@ -741,6 +747,15 @@ def _convert_excel_to_parquet(
         # 预扫描：三段采样 + clean_excel → 确定 target_schema
         target_schema = _prescan_schema(reader, target_sheet, actual_start, excel_path)
 
+        # 提取 prescan 的 special_rows（合计行等）
+        _special_rows = None
+        if prescan_result and prescan_result.confidence in ("high", "medium"):
+            _special_rows = prescan_result.special_rows or None
+
+        # 如果 prescan 识别到合计行，schema 预留 _is_summary 列
+        if _special_rows and _special_rows.get("summary"):
+            target_schema = target_schema.append(pa.field("_is_summary", pa.bool_()))
+
         writer = pq.ParquetWriter(tmp_path, target_schema)
         row_count = 0
         merged_report = CleaningReport()
@@ -768,7 +783,9 @@ def _convert_excel_to_parquet(
                 return (idx, None, None, 0)
 
             df_chunk, chunk_report = clean_excel(
-                df_chunk, excel_path, resolved_name, actual_start, structure=structure,
+                df_chunk, excel_path, resolved_name, actual_start,
+                structure=structure, special_rows=_special_rows,
+                chunk_row_offset=skip,
             )
             if _col_mapping:
                 df_chunk = _apply_column_mapping(df_chunk, _col_mapping)

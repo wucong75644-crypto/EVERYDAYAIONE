@@ -29,6 +29,7 @@ class CleaningReport:
     """清洗报告，写入 .meta.json 供 executor 探索模式注入 LLM 上下文。"""
 
     merged_cols_filled: int = 0
+    summary_rows_marked: int = 0
     hidden_rows_marked: int = 0
     hidden_cols_names: list[str] = field(default_factory=list)
     empty_cols_removed: int = 0
@@ -46,9 +47,9 @@ class CleaningReport:
 
     def merge(self, other: CleaningReport) -> None:
         """将另一个报告累加到自身（多 Sheet / 分块合并场景）。"""
-        for attr in ("merged_cols_filled", "hidden_rows_marked",
-                      "empty_cols_removed", "empty_rows_removed",
-                      "int_cols_fixed"):
+        for attr in ("merged_cols_filled", "summary_rows_marked",
+                      "hidden_rows_marked", "empty_cols_removed",
+                      "empty_rows_removed", "int_cols_fixed"):
             setattr(self, attr, getattr(self, attr) + getattr(other, attr))
         self.hidden_cols_names = list(set(self.hidden_cols_names + other.hidden_cols_names))
         self.has_auto_filter = self.has_auto_filter or other.has_auto_filter
@@ -66,17 +67,19 @@ class CleaningReport:
 
     def has_changes(self) -> bool:
         return any([
-            self.merged_cols_filled, self.hidden_rows_marked,
-            self.hidden_cols_names, self.empty_cols_removed,
-            self.empty_rows_removed, self.int_cols_fixed,
-            self.has_auto_filter, self.warnings,
+            self.merged_cols_filled, self.summary_rows_marked,
+            self.hidden_rows_marked, self.hidden_cols_names,
+            self.empty_cols_removed, self.empty_rows_removed,
+            self.int_cols_fixed, self.has_auto_filter, self.warnings,
         ])
 
     def to_llm_text(self) -> str:
         """生成注入 LLM 上下文的简洁报告。"""
         parts: list[str] = []
         if self.merged_cols_filled:
-            parts.append(f"合并单元格已填充（{self.merged_cols_filled}列）")
+            parts.append(f"合并单元格精确填充（{self.merged_cols_filled}个）")
+        if self.summary_rows_marked:
+            parts.append(f"标记合计行（{self.summary_rows_marked}行）")
         if self.hidden_rows_marked:
             parts.append(f"标记隐藏行（{self.hidden_rows_marked}行）")
         if self.empty_cols_removed:
@@ -112,19 +115,30 @@ def clean_excel(
     sheet_name: str | int,
     header_row: int = 0,
     structure: ExcelStructure | None = None,
+    special_rows: dict[str, list[int]] | None = None,
+    chunk_row_offset: int = 0,  # 大文件分块时的数据行偏移量（不含 header）
 ) -> tuple[pd.DataFrame, CleaningReport]:
-    """清洗入口：表头展平 + 去重 + 空行列 + 类型修正。
-
-    合并单元格填充不在此处处理——由 AI 在 code_execute 中按需 ffill。
-    """
+    """清洗入口：merge 填充 + 表头展平 + 去重 + 合计行标记 + 空行列 + 类型修正。"""
     report = CleaningReport(original_shape=(len(df), len(df.columns)))
 
-    # 多级表头展平（MultiIndex → 单行，用 _ 连接）
+    # Step 1: 多级表头展平（MultiIndex → 单行，用 _ 连接）
     _flatten_multi_header(df, report)
 
-    # 质量校验（所有操作都标注到 report，AI 知道代码做了什么）
+    # Step 2: 合并单元格精确填充（按 merge range，不是全列 ffill）
+    if structure and structure.merged_ranges:
+        _apply_merge_fill(df, structure, header_row, report, chunk_row_offset)
+
+    # Step 3: 列名去重
     _deduplicate_columns(df, report)
+
+    # Step 4: 合计行标记（prescan 识别的 summary 行）
+    if special_rows:
+        _mark_summary_rows(df, special_rows, header_row, report, chunk_row_offset)
+
+    # Step 5: 空行空列处理（全空行删除，空列标注）
     _remove_empty_rows_cols(df, report, structure)
+
+    # Step 6-7: 类型修正
     _coerce_object_columns(df, report)
     _fix_int_columns(df, report)
 
@@ -342,14 +356,109 @@ def _apply_merge_fill(
     structure: ExcelStructure,
     header_row: int,
     report: CleaningReport,
+    chunk_row_offset: int = 0,
 ) -> None:
-    """不自动填充合并区域——由 AI 在沙盒中根据业务语义决定。
+    """按 merge range 精确填充合并单元格。
 
-    只记录合并信息到 report，不修改 df 数据。
-    AI 通过 meta.json 的 merged_cells 和 issues 了解合并情况后，
-    在 code_execute 中按需 ffill / 重命名列 / 展开多级表头。
+    只填充 merge 范围内的空值，不做全列 ffill。
+    header 区域的合并跳过（由 _flatten_multi_header 处理）。
     """
-    report.merged_cols_filled = 0  # 不再自动填充
+    if not structure.merged_ranges:
+        return
+
+    # 数据起始行（Excel 1-indexed）：header 在 header_row+1，数据从 header_row+2 开始
+    data_start_excel = header_row + 2
+    # 当前 chunk 对应的 Excel 行范围
+    chunk_start_excel = data_start_excel + chunk_row_offset
+    chunk_end_excel = chunk_start_excel + len(df) - 1
+    filled = 0
+
+    for min_row, max_row, min_col, max_col in structure.merged_ranges:
+        # 跳过 header 区域的合并
+        if max_row < data_start_excel:
+            continue
+        # 合并范围限制到数据区域
+        eff_min_row = max(min_row, data_start_excel)
+        # 跳过不在当前 chunk 范围内的合并
+        if eff_min_row > chunk_end_excel or max_row < chunk_start_excel:
+            continue
+        # 左上角值必须在当前 chunk 内（跨块合并跳过）
+        if eff_min_row < chunk_start_excel:
+            continue
+
+        # Excel 行号 → DataFrame 行索引
+        df_start = eff_min_row - chunk_start_excel
+        df_end = min(max_row, chunk_end_excel) - chunk_start_excel
+        # Excel 列号 → DataFrame 列索引（1-indexed → 0-indexed）
+        col_start = min_col - 1
+        col_end = min(max_col - 1, len(df.columns) - 1)
+
+        for ci in range(col_start, col_end + 1):
+            if ci >= len(df.columns):
+                break
+            fill_val = df.iloc[df_start, ci]
+            if pd.isna(fill_val):
+                continue
+            for ri in range(df_start + 1, df_end + 1):
+                if ri >= len(df):
+                    break
+                if pd.isna(df.iloc[ri, ci]):
+                    df.iloc[ri, ci] = fill_val
+                    filled += 1
+
+    report.merged_cols_filled = filled
+    if filled:
+        report.issues.append({
+            "type": "merge_filled",
+            "severity": "info",
+            "location": {},
+            "preserved": False,
+            "action": f"合并单元格精确填充（{filled}个单元格）",
+            "recovery_hint": "合并区域内的空值已用左上角值填充，非全列ffill",
+        })
+
+
+def _mark_summary_rows(
+    df: pd.DataFrame,
+    special_rows: dict[str, list[int]],
+    header_row: int,
+    report: CleaningReport,
+    chunk_row_offset: int = 0,
+) -> None:
+    """用 prescan 识别的合计行位置标记 _is_summary 列。
+
+    只要 special_rows 有 summary 条目就始终添加 _is_summary 列（默认 False），
+    确保分块场景下每个 chunk 都有此列，不会被 _cast_to_schema 丢弃。
+    """
+    summary_excel_rows = special_rows.get("summary", [])
+    if not summary_excel_rows:
+        return
+
+    # 始终添加列（分块场景下保证每个 chunk 都有此列）
+    df["_is_summary"] = False
+
+    data_start_excel = header_row + 2
+    chunk_start_excel = data_start_excel + chunk_row_offset
+
+    matched = []
+    for excel_row in summary_excel_rows:
+        df_idx = excel_row - chunk_start_excel
+        if 0 <= df_idx < len(df):
+            matched.append(df_idx)
+
+    if not matched:
+        return
+
+    df.loc[matched, "_is_summary"] = True
+    report.summary_rows_marked = len(matched)
+    report.issues.append({
+        "type": "summary_rows_marked",
+        "severity": "info",
+        "location": {"rows": [i + chunk_start_excel for i in matched]},
+        "preserved": True,
+        "action": f"标记{len(matched)}个合计行（_is_summary=True）",
+        "recovery_hint": "查询时加: WHERE _is_summary = false 排除合计行",
+    })
 
 
 def _mark_hidden_rows(
@@ -432,7 +541,7 @@ def _remove_empty_rows_cols(
             "recovery_hint": "如确认无用，查询时不选这些列即可",
         })
 
-    # 空行：中间空行保留（可能是分组分隔），尾部连续空行裁剪
+    # 空行：删除所有全空行（含中间和尾部）
     # 纯空白字符串也视为空值（Excel 常见：空格占位但无业务意义）
     data_cols = [c for c in df.columns if not str(c).startswith("_is_")]
     if data_cols:
@@ -441,40 +550,22 @@ def _remove_empty_rows_cols(
         ).all(axis=1)
     else:
         blank_mask = pd.Series(False, index=df.index)
-    empty_row_indices: list[int] = list(df[blank_mask].index)
-    report.empty_rows_removed = 0
+    empty_row_indices = list(df[blank_mask].index)
 
-    # 尾部连续空行裁剪（中间空行保留，只裁尾部无意义空行）
-    if empty_row_indices and data_cols:
-        non_empty_mask = ~blank_mask
-        if non_empty_mask.any():
-            last_non_empty_pos = non_empty_mask[::-1].idxmax()
-            trailing_mask = df.index > last_non_empty_pos
-            trailing_count = int(trailing_mask.sum())
-            if trailing_count > 5:
-                df.drop(df[trailing_mask].index, inplace=True)
-                report.empty_rows_removed = trailing_count
-                # 更新 empty_row_indices（去掉已裁剪的尾部）
-                empty_row_indices = [i for i in empty_row_indices if i <= last_non_empty_pos]
-                report.issues.append({
-                    "type": "trailing_empty_rows_trimmed",
-                    "severity": "info",
-                    "location": {},
-                    "preserved": False,
-                    "action": f"裁剪了 {trailing_count} 行尾部连续空行",
-                    "recovery_hint": "原始文件中尾部空行仍然存在",
-                })
-
-    # 中间空行标注（不删除）
     if empty_row_indices:
+        df.drop(empty_row_indices, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        report.empty_rows_removed = len(empty_row_indices)
         report.issues.append({
-            "type": "empty_rows",
+            "type": "empty_rows_removed",
             "severity": "info",
             "location": {"rows": [i + 1 for i in empty_row_indices[:20]]},
-            "preserved": True,
-            "action": f"检测到 {len(empty_row_indices)} 个全空行，已保留未删除",
-            "recovery_hint": "WHERE 排除: WHERE NOT (所有列 IS NULL)",
+            "preserved": False,
+            "action": f"删除了 {len(empty_row_indices)} 个全空行",
+            "recovery_hint": "原始文件中的空行已被删除",
         })
+    else:
+        report.empty_rows_removed = 0
 
 
 def _fix_int_columns(df: pd.DataFrame, report: CleaningReport) -> None:
