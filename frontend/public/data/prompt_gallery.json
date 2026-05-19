@@ -65,7 +65,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Polanco_IA/status/2047689647967609037",
-      "source_author": "@Polanco_IA"
+      "source_author": "@Polanco_IA",
+      "prompt_zh": "奢品香水广告：  \n一幅奢华、电影感十足的产品静物摄影，主体为一款经典矩形香水瓶，设计灵感源自{argument name=\"brand label\" default=\"N°5 CHANEL PARIS PARFUM\"}。香水瓶垂直置于光洁的黑色大理石台面（带白色天然纹路）之上，构图居中略偏右。瓶身为透明刻面玻璃材质，配一枚硕大的透明水晶瓶塞；瓶内盛满浓郁的琥珀金色香水，由内而外透出温润光泽。玻璃表面覆有细微冷凝水珠，增强质感与真实感。左上方投射戏剧性暖光，在瓶身形成金色高光，在大理石台面映出深邃倒影，并于背景中晕染出柔和的发光光斑（luminous bloom）。瓶体左右两侧各萦绕一缕优雅烟雾，强化高端、情绪化（moody）的奢侈品广告氛围。背景为深色，采用浅景深（shallow depth of field），超精细影棚级产品摄影（ultra-detailed studio product photography），呈现奢华美妆广告（luxury beauty campaign）美学风格；焦点精准锁定瓶身，反射效果高度写实，整体采用温暖的黑金（warm black-and-gold）配色方案。右上角添加一枚小巧的白色{argument name=\"corner logo\" default=\"Pollo.ai\"}标识。正方形构图，高端商业广告质感，照片级真实感（photorealistic），高对比度，格调 refined 且 sophisticated（精致而考究）。"
     },
     {
       "id": "product_hero_002",
@@ -84,7 +85,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Strength04_X/status/2047636636847231222",
-      "source_author": "@Strength04_X"
+      "source_author": "@Strength04_X",
+      "prompt_zh": "一款柔光{argument name=\"bottle color\" default=\"cream-colored\"}色瓶身，搭配{argument name=\"pump color\" default=\"pastel yellow\"}色泵头，置于哑光质感展台之上，周围环绕丝滑细腻的泡沫及{argument name=\"flowers\" default=\"chamomile blossoms\"}。背景为浅黄色渐变，点缀细腻气泡纹理细节。瓶身标签突出“有机洋甘菊”与“舒缓护理”功效。新鲜洋甘菊花朵进一步强化产品温和亲肤的视觉调性。"
     },
     {
       "id": "product_hero_003",
@@ -103,7 +105,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/edimakorfr/status/2047635133466124726",
-      "source_author": "@edimakorfr"
+      "source_author": "@edimakorfr",
+      "prompt_zh": "提示词标题：夏日饮料广告海报\n\n创作一幅充满活力的热带风格商业海报，用于一款柑橘味汽水瓶，采用明亮清爽的夏季广告风格。画面中央略偏右位置展示一支大型塑料瓶装 {argument name=\"product name\" default=\"Soda\"}，瓶身微微向左倾斜；瓶盖为明黄色，瓶体透明，表面覆盖着逼真的冷凝水珠，瓶内盛满泛着微光的金橙色汽水。瓶身标签需呈现切片橙子与柑橘主题插画，并印有品牌名称 \"{argument name=\"product name\" default=\"Soda\"}\"、法语标语 \"aux agrumes d'été\"，以及右下角一处小巧的绿色“500 ml”容量标识。\n\n背景为阳光明媚的海滩场景：湛蓝晴空（vivid blue sky）、青绿色海水（turquoise ocean）、柔和蓬松的云朵（soft clouds），以及从画面右上角斜向切入、虚化处理的热带棕榈叶（blurred tropical palm leaves）。瓶底周围添加富有戏剧感的水花飞溅效果（dramatic water splashes），散落若干晶莹剔透的冰块（scattered clear ice cubes）；前景中清晰呈现5枚柑橘类水果切片：2片橙子楔形切片（orange wedges）、1个对半切开的青柠（lime half）、1个对半切开的葡萄柚（grapefruit half），以及1片位于画面最右侧边缘的不完整橙子薄片（partial orange slice）。\n\n左侧区域配置大幅法语促销文案：顶部为超大号白色主标题 \"{argument name=\"headline text\" default=\"Soda\"}\"，其正上方带有一处水花状装饰元素（splash accent）；主标题下方以明黄色手写体（yellow script text）呈现副标 \"aux agrumes d'été\"。在画面中左位置添加一枚明黄色油漆笔触风格徽章（yellow paint-stroke badge），内含法语口号：\"LA FRAÎCHEUR QUI PÉTILLE !\"（气泡迸发的清爽感！）\n\n左下区域垂直排布一项功能特性列表（vertical feature list），含3个圆形图标（3 round icons）及对应法语说明文字：  \n- \"SAVEURS NATURELLES\"（天然风味）  \n- \"SANS COLORANTS ARTIFICIELS\"（无人工色素）  \n- \"EXTRA RAFRAÎCHISSANT\"（加倍沁爽）\n\n左下角另设一条绿色画笔笔触风格横幅（green brushstroke banner），印有法语文案：\"FORMAT PRATIQUE 500 ml\"（便捷规格 500 ml）。\n\n右下角添加一枚圆形米褐色环保风格认证印章（round beige eco-style seal），外圈为绿色描边（green outline），内部含叶片图案（leaf motif），印章中央文字为：\"{argument name=\"seal text\" default=\"PLAISIR FRUITÉ À CHAQUE GORGÉE\"}\"（每一口，皆是果香欢愉）。\n\n整体光影风格需呈现高光质感（glossy）与高能量感（high-energy），光源来自左上方并带有强烈阳光眩光（strong sun flare from the upper left）；色彩高度饱和（saturated citrus colors），包装细节锐利清晰（crisp packaging detail），冷凝水珠真实可感（realistic droplets），整体视觉效果兼具超市级广告的真实感与精致度（polished supermarket-ad realism）。"
     },
     {
       "id": "product_hero_004",
@@ -122,7 +125,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/ShamsAmin56/status/2047627860752621647",
-      "source_author": "@ShamsAmin56"
+      "source_author": "@ShamsAmin56",
+      "prompt_zh": "提示词标题：工业设计展板\n\n核心主体：[{argument name=\"reference\" default=\"use the uploaded image\"}，100% 保留原图细节、字体排印（typography）与版式结构]\n\n版式与构图：一张 {argument name=\"presentation type\" default=\"professional industrial design presentation sheet\"}（专业工业设计展板）。图像需采用简洁的网格系统进行组织。\n\n顶部区域：3×3 布局，展示产品俯视平铺（top-down flat lay）视角及材质的微距（macro）特写细节。\n\n中部区域：三张主角级（hero shot）产品立式正面图，分别呈现三种配色方案（哑光黑 Matte Black、北极白 Arctic White 及带装饰色点缀的变体 accented variants）；产品需轻微倾斜，以凸显三维深度与造型轮廓。\n\n底部区域：一组富有动感的“悬浮”（floating）构图，两件产品以相反角度交叠，同步展现产品正视图与侧视图。\n\n环境与布光：置于极简主义、中性灰（studio gray）影棚背景中；采用柔和的自上而下（soft top-down）布光，并呈现真实可信的接触阴影（contact shadows）；整体呈现高端产品摄影（high-end product photography）美学风格。\n\n风格与完成效果：哑光（matte）质感、干净利落的剪影（clean silhouettes）、锐利分明的边缘（sharp edges）；在产品表面预留指定空白区域，用于标注“Placeholder Branding”（占位品牌标识）与“Graphic Mockups”（图形样机）；4K 分辨率，Unreal Engine 5 渲染风格，超写实（hyper-realistic），洁净美学（clean aesthetic）。"
     },
     {
       "id": "product_hero_005",
@@ -141,7 +145,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/dynamicwangs/status/2047580984342925545",
-      "source_author": "@dynamicwangs"
+      "source_author": "@dynamicwangs",
+      "prompt_zh": "提示词标题：鞋类生活方式拍摄\n\n一张温暖、具有杂志编辑风格（editorial-style）的生活方式产品静物摄影，室内拍摄，采用低角度近距离特写构图，焦点集中在一位女性的下肢与双脚——她正试穿1双黑色皮革无后跟乐福鞋（black leather backless loafers），鞋内衬为棕褐色仿毛皮（tan faux-fur lining）。其中一只鞋穿在右脚，左脚赤裸，轻悬于肌理感奶油色长绒地毯（textured cream shag rug）上方；另一只同款乐福鞋则置于画面左下前景的地毯上。该鞋款采用顺滑黑色皮革鞋面，杏仁形圆头（rounded almond toe），穆勒式开放式鞋跟（open mule-style heel），柔软棕色毛绒从鞋口自然溢出，鞋面中央饰有小巧抛光金色马衔扣五金细节（polished gold horsebit hardware detail across the vamp）。模特身着中蓝色短款牛仔裤（cropped medium-blue denim jeans），裤脚为未经包边的毛边设计（raw frayed hem）。场景为温馨简约风室内空间：奶油色地毯上带有两条细窄、不规则的黑色线条；中性色调墙面；右上方背景中斜倚一面矩形镜，镜框为中等色调木质（medium wood frame），柔和映出地毯及部分场景。布光采用柔和自然的窗光（soft natural window light），浅景深（shallow depth of field），附带细微胶片颗粒感（subtle film grain），呈现真实肌肤质感（realistic skin texture），整体配色为低饱和度的米 beige 与黑色（muted beige and black palette），构图松弛自然、富有抓拍感（relaxed candid composition），营造高端时尚型录氛围（premium fashion catalog mood），高细节表现，高度写实（photorealistic）。"
     },
     {
       "id": "product_hero_006",
@@ -160,7 +165,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/MiguelMaestroIA/status/2047555836252151831",
-      "source_author": "@MiguelMaestroIA"
+      "source_author": "@MiguelMaestroIA",
+      "prompt_zh": "提示词标题：香水大理石梳妆台\n\n一张高端电商广告摄影图：一款顶级香水瓶置于抛光灰白双色大理石梳妆台（vanity）上，采用温暖电影感影棚风格（cinematic studio style）拍摄，配以柔和金色灯光、浅景深（shallow depth of field）及优雅倒影。构图为正方形、高奢质感，香水瓶居中略偏右，促销文案置于画面左侧。瓶身为修长雕塑感沙漏造型玻璃瓶（glass flacon），通体为烟灰色半透明玻璃，底部渐变为更深色调；瓶盖为高光金色球形盖；瓶颈处配金色环状颈圈（gold collar），精细蚀刻品牌标识；瓶身正面印有大型金属金色交织字母标志（interlocking monogram）。整体需保留品牌调性氛围，但不得添加额外产品。\n\n前景左下方：1个切割水晶碗（cut-crystal bowl），镶金边（gold rim），画面中部分裁切（partially cropped）；  \n背景右上方：1个拉丝金圆柱形花瓶（brushed gold cylindrical vase），内插一束柔白色花卉（soft white flowers），呈虚化效果；  \n瓶身后方：1个黑色大理石矩形盒（black marble rectangular box），带有细腻白色纹理（subtle white veining）与金色包边（gold trim）；  \n右下前景：1块香槟色缎面织物（champagne-colored satin fabric），自然垂坠，轻微失焦（softly out of focus）。\n\n背景为深色、奢华、柔和虚化（softly blurred）的暗调空间，主色调为浓郁棕黑色（rich brown-black tones），左侧设一道垂直阴影面板（vertical shadowed panel），专为排版文字（typography）提供视觉支撑。\n\n左上区域添加优雅衬线体（serif）主标题文字，内容为：{argument name=\"headline text\" default=\"Premium Perfume,\"}，以大号暖米色（warm beige）字体呈现；其下方配较小号衬线体副标题（subheading），内容为：{argument name=\"tagline\" default=\"Subtlety and Elegance\"}；副标题下方加一条细短金色横线（thin short gold horizontal line）。  \n右上角置小型白色Logo，文字为：{argument name=\"brand logo\" default=\"Pollo.ai\"}。\n\n整体强调：顶级材质表现、真实玻璃折射（realistic glass refraction）、金色金属高光（gold metallic highlights）、高端产品摄影（luxury product photography）、精炼构图（refined composition）、柔美散景（soft bokeh）以及高端美妆广告美学（upscale beauty-ad aesthetics）。"
     },
     {
       "id": "product_hero_007",
@@ -179,7 +185,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Strength04_X/status/2048074514278563949",
-      "source_author": "@Strength04_X"
+      "source_author": "@Strength04_X",
+      "prompt_zh": "提示词标题：微缩场景创意广告\n\n一个超写实（hyper-realistic）微缩模型（miniature diorama）风格的产品广告，主体为一支巨型奢华护肤泵瓶，瓶身标签清晰印有“LUXEVEIL Skin Science – Radiance Nourishing Body Lotion”字样，主色调为米奶油色（cream/beige），泵头为抛光金色（polished gold），整体置于圆形平台（circular platform）之上。数名微缩人偶造型的建筑工人（tiny figurine construction workers）身穿明黄色工装服（yellow coveralls）与白色安全帽（white hard hats），围绕瓶身忙碌作业：攀爬金属脚手架（scaffolding）、手持滚筒刷为瓶身涂装、操控塔式起重机（tower crane）、在工业储罐（industrial silos）与管道系统（pipework）旁施工，并从一辆微型平板卡车（miniature flatbed truck）上卸货。场景中包含金属脚手架结构、工业筒仓、橙色交通锥（orange traffic cones）、木质路障（wooden barricades）及储存桶（storage barrels）。整体色彩体系为暖调米 beige、奶油色（cream）、金色（gold）与芥末黄（mustard yellow）。采用影棚摄影（studio photography）风格，光线柔和漫射（soft diffused lighting），无阴影（no shadows），背景为纯净米色（clean beige background）。创意概念以隐喻手法表现工人正“精工打造”（crafting）或“构筑”（building）臻美润肤乳。融合移轴镜头（tilt-shift）微缩美学（miniature aesthetic），极致细节（ultra-detailed），商业级产品摄影（commercial product photography），8K分辨率（8K resolution），照片级真实感CGI渲染（photorealistic CGI render）。"
     },
     {
       "id": "product_hero_008",
@@ -198,7 +205,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/songguoxiansen/status/2048046906585280977",
-      "source_author": "@songguoxiansen"
+      "source_author": "@songguoxiansen",
+      "prompt_zh": "提示词标题：国风瓷器丝巾  \n\n一条受《千里江山图》启发的丝巾，周围环绕王希孟青绿山水画风格的景致，呈现真丝质感（silk texture）与柔光照明（soft lighting）。  \n\n一件粉彩（famille rose） porcelain 瓷瓶，描绘杨贵妃赏花场景，饰有牡丹与蝴蝶纹样，采用清代官窑（imperial kilns）风格。"
     },
     {
       "id": "product_hero_009",
@@ -217,7 +225,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/rojassartorio/status/2048019666816163867",
-      "source_author": "@rojassartorio"
+      "source_author": "@rojassartorio",
+      "prompt_zh": "提示词标题：电子产品暗调棚拍\n\n一张高端发烧级ATX游戏主板（gaming motherboard）的产品摄影图，置于深色影棚背景（dark studio background）中，采用三分之四俯视视角（three-quarter top-down perspective），镜头角度自画面左下方向右上方倾斜。主板主体以哑光黑（matte black）与枪灰色（gunmetal）为主色调，配以棱角锐利的几何装甲板（sharp geometric armor plates）、拉丝金属质感（brushed metal textures），以及边缘处柔和的RGB灯效——呈蓝色（blue）、紫色（purple）与洋红色（magenta）。主板上可见：位于画面正上方偏中的现代Intel风格裸露CPU插槽（exposed modern Intel-style CPU socket）；右侧4个黑色DIMM内存插槽（black DIMM memory slots）；顶部及左上方大面积VRM散热片（large VRM heatsinks）；下半区域多个加固型PCIe插槽（reinforced PCIe slots）。\n\n图中需清晰呈现三大品牌化散热区（branded heatsink zones）：  \n- 左上方高耸的后置I/O挡板（rear I/O shroud），带发光RGB眼形Logo及蚀刻文字“MAXIMUS HERO”；  \n- 左侧芯片组/插槽装甲件（chipset/slot armor piece），印有文字“SUPREMEFX”；  \n- 右下方大型斜角式芯片组盖板（angular lower-right chipset cover），表面镶嵌银色ROG风格徽标（silver ROG-style emblem），下方条状铭牌刻有“For Those Who Dare”字样。\n\n细节须完整展现：精密电容（detailed capacitors）、各类针脚接口（headers）、供电接口（power connectors）、右上角带数字“88”的调试显示屏（debug display reading \"88\"），以及其旁一颗小型圆形启动按钮（small round start button）。\n\n图像为超精细商业级产品摄影（ultra-detailed commercial product photography），全板锐利对焦（crisp focus across the board），金属表面呈现真实可信的反射（realistic reflections on metal），整体呈现高端奢华科技美学（premium luxury tech aesthetic），采用戏剧性低调布光（dramatic low-key lighting），背景为洁净纯黑无缝幕布（clean black seamless backdrop），无任何线缆（no cables）、无CPU、无内存条（no RAM）、无其他干扰物件（no other objects）。"
     },
     {
       "id": "product_hero_010",
@@ -236,7 +245,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/SPEEDAI07/status/2047981795552153860",
-      "source_author": "@SPEEDAI07"
+      "source_author": "@SPEEDAI07",
+      "prompt_zh": "提示词标题：耳机电商信息图\n\n面向“{argument name=\"product\" default=\"Apple Pods Pro 3\"}”无线耳塞的高冲击力电商信息图（e-commerce infographic）。\n\n前景：一只手以极近距离（extreme close-up）将一个开启的、表面光亮的白色无线耳塞充电盒朝向镜头托起。盒内放置着两只流线型白色耳塞，扬声器部位配有黑色装饰边。充电盒正面可见一颗微小的、发出柔和绿光的LED指示灯。手部与充电盒均采用微距镜头（macro-lens）风格的轻微景深虚化（depth blur），增强真实感。\n\n中景：一位{argument name=\"model\" default=\"confident young woman\"}——肤色为浅褐色（tan skin）、棕色眼睛（brown eyes）、深色头发扎成随意松散的发髻（messy bun）。妆容自然，肌肤呈现水润光泽（dewy glow）。身着一件纯色{argument name=\"clothing\" default=\"yellow athletic t-shirt\"}运动T恤（无任何Logo）。右耳佩戴一只白色耳塞。她直视镜头，神情自信而含蓄。\n\n背景：干净柔和的灰阶渐变（soft gray gradient）影棚背景，采用浅景深（shallow depth of field）；画面中穿插斜向彩虹棱镜光晕（diagonal rainbow prism lens flares）及柔化光斑（soft light leaks）；背景中还漂浮着数只虚化的白色耳塞，营造空间纵深感与动态氛围。\n\n布光：专业影棚柔光（soft professional studio lighting），产品表面呈现高光质感（glossy highlights），人物轮廓带有细腻的边缘光（subtle rim light），整体具备高动态范围（high dynamic range, HDR）。\n\n文字排版（现代无衬线字体，白色）：\n\n顶部居中（位于模特后方）：大号加粗文字 “AIRPODS”\n\n右上角：“Apple Pods Pro 3”\n\n中左位置：“Premium sound and noise cancellation” → “卓越音质与主动降噪”\n\n中右位置：大号加粗数字 “30”，下方配文 “hours of battery life” → “续航长达30小时”\n\n右下角：大号加粗数字 “1”，下方配文 “year warranty” → “享1年保修”\n\n风格：超写实（ultra-realistic）、商业级产品摄影（commercial product photography）、8K分辨率、焦点精准落在充电盒主体上（sharp focus on product case）、浅景深（shallow depth of field）、色彩鲜活且干净（vibrant yet clean color palette）、高端广告美学（premium advertising aesthetic）。"
     },
     {
       "id": "product_hero_011",
@@ -255,7 +265,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Strength04_X/status/2047917220165231011",
-      "source_author": "@Strength04_X"
+      "source_author": "@Strength04_X",
+      "prompt_zh": "提示词标题：极简产品广告\n\n一个极简风格的产品广告，中央摆放一件{argument name=\"product\" default=\"炸鸡桶\"}，置于洁净的白色展台（podium）上。\n\n背景：柔和渐变（{argument name=\"background gradient\" default=\"浅米色至白色\"}），干净的专业影棚（studio）环境。\n\n布光：柔和漫射光（soft diffused lighting），高端苹果风（Apple-style）质感。\n\n版式排版（居中）：主标题“{argument name=\"headline\" default=\"纯粹酥脆\"}”\n\n下方小字：“无需多余。唯有臻美。”\n\n风格：极致洁净（ultra clean）、杂志级极简（editorial minimal）、高端品牌调性（high-end branding）、8K超高清。"
     },
     {
       "id": "product_hero_012",
@@ -274,7 +285,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/PrometheanAIX/status/2049141839882522707",
-      "source_author": "@PrometheanAIX"
+      "source_author": "@PrometheanAIX",
+      "prompt_zh": "提示词标题：通用产品棚拍模板\n\n为[BRAND]品牌创建一张高端产品影棚图像，主体为[PRODUCT]，设计风格需契合[BRAND REFERENCE]。呈现[PRODUCT]悬浮于干净的浅灰至柔白渐变背景之上，整体呈现极简、高端科技感（high-end tech aesthetic）。[PRODUCT]应呈现出流畅、现代、精致且高端的视觉感受，并带有[LIGHTING COLOR]色的微妙照明高光（subtle illuminated accents）。采用三分之四正面视角（three-quarter front angle），确保左右耳罩（earcups）均清晰可见，并充分展现精细的工业设计细节（detailed industrial design elements）。在产品本体上干净利落地呈现[BRAND]品牌名称。布光需柔和、精准、具有杂志级（editorial）质感——高光锐利（crisp highlights）、阴影柔和（soft shadows），并辅以[LIGHTING COLOR]色的细微轮廓光（rim light）或辉光（glow）。重点强调材质真实感（material realism）与简洁的几何造型（clean geometric forms）。背景须保持无杂乱、极简（uncluttered and minimal）。禁止添加额外道具（no extra props）、人物（no people）、文字叠加（no text overlays）、包装（no packaging）及任何干扰性元素（no distracting elements）。画面焦点须完全集中于[PRODUCT]本身，使其作为绝对主角（hero product）呈现。"
     },
     {
       "id": "product_hero_013",
@@ -293,7 +305,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Diplomeme/status/2047957339974828092",
-      "source_author": "@Diplomeme"
+      "source_author": "@Diplomeme",
+      "prompt_zh": "提示词标题：环保服饰广告\n\n一幅高端、注重生态意识的时尚广告图，以精致杂志风格（editorial）的产品摄影方式呈现。一件偏米白或天然奶油色的圆领T恤，悬挂在光滑木质衣架上（衣架配黑色金属挂钩），衣架置于一面郁郁葱葱的深绿色叶片与攀缘藤蔓构成的背景墙前。衣架颈部附近镌刻一枚极简风格的品牌单字母徽标（monogram）。T恤呈上半身至部分下摆的视角，略微倾斜构图，呈现柔和自然的垂坠褶皱与高品质棉质纹理。衣领内侧印有极简品牌标识及文字：“JUGGERKNOT ORIGINALS”。从领口垂下一枚长方形再生纸种子标签（recycled-paper seed tag），以质朴的棕褐色麻绳系挂；标签上印有“Tulsi”及“Plantable Seed Tag”字样，底部附一枚微缩的萌芽种子细节图案。自该标签延伸出一株真实的圣罗勒（tulsi）植物枝条，向上斜跨T恤正面，枝条上生有数片鲜嫩翠绿的叶片，直观体现该标签可种植特性。在标签旁添加一处精细的小型标注文字：“TULSI PLANTABLE SEED TAG”。画面右侧以大型优雅白色衬线体（serif）排布主标题文字：{argument name=\"headline text\" default=\"Plant it.\"}。其下方以窄版无衬线体（sans-serif）、全大写字母、三行纵向堆叠形式排列副文案：“WEAR IT.”、“PLANT IT.”、“GROW WITH IT.”。左下角以字间距拉开的全大写衬线体（serif）呈现品牌名称：{argument name=\"brand name\" default=\"JUGGERKNOT ORIGINALS\"}，其上方加一条细横线。右下角以小号全大写无衬线体（sans-serif）分三行排布：“FSC® CERTIFIED PACKAGING.”、“ZERO SYNTHETIC FIBRE”、“BACKED BY ZERODHA.”。采用柔和漫射日光（soft diffused daylight）、浅景深（shallow depth of field）、情绪化青绿色与奶油色调色（moody green-and-cream color grading）、奢华可持续品牌美学（luxury sustainable-brand aesthetics）、简洁构图（clean composition）、竖版海报布局（vertical poster layout）、微妙阴影（subtle shadows）及宁静有机氛围（calm organic atmosphere）。整体设计须保持极简、高端与照片级真实感（photorealistic）：T恤占据画面左半部，右侧 typography 布局均衡。"
     },
     {
       "id": "product_hero_014",
@@ -312,7 +325,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Salmaaboukarr/status/2048103506125463983",
-      "source_author": "@Salmaaboukarr"
+      "source_author": "@Salmaaboukarr",
+      "prompt_zh": "提示词标题：香水毛皮质感特写\n\n一张奢华的时尚杂志（editorial）风格产品静物摄影：一支香水瓶静卧于浓密厚实的仿毛皮（faux fur）之中，毛皮呈现浓郁的金焦糖色（golden caramel）与蜜棕色（honey-brown）。画面中心构图聚焦于一支透明椭圆形玻璃瓶，瓶内盛装暖调琥珀色液体；瓶盖为光亮圆润的黑色；瓶身贴有一张干净纯白的矩形标签。标签文字排布如下：顶部为{argument name=\"brand name\" default=\"BYREDO\"}，居中大幅显示{argument name=\"product name\" default=\"BAL D’AFRIQUE\"}，底部靠近边缘以小号字体标注{argument name=\"product type\" default=\"EAU DE PARFUM\"}。采用近距离静物（close-up still life）拍摄，搭配柔和的影棚灯光（soft studio lighting），玻璃瓶体与瓶盖呈现细腻高光（subtle highlights），毛皮褶皱间投下轻柔阴影（gentle shadows），整体采用温暖电影感（cinematic）色调。香水瓶略微嵌入毛皮之中，使周围毛皮纹理从四面环绕 framing 瓶身，营造高端时尚杂志（premium fashion editorial）氛围；构图极简（minimal composition）；浅景深（shallow depth of field）；标签文字清晰锐利对焦（crisp focus on the label）；整体呈现高端美妆广告（high-end beauty campaign）美学风格。"
     },
     {
       "id": "product_hero_015",
@@ -331,7 +345,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Salmaaboukarr/status/2048103506125463983",
-      "source_author": "@Salmaaboukarr"
+      "source_author": "@Salmaaboukarr",
+      "prompt_zh": "高端时尚杂志风格产品摄影：一支奢华香水瓶居中置于温暖质朴的静物场景中。主体为一支透明矩形玻璃瓶，内装金琥珀色液体，瓶顶配有一枚光亮圆润的黑色瓶盖，正面标签简洁纯白，印有“BYREDO”、“BAL D’AFRIQUE”及“EAU DE PARFUM”。将香水瓶垂直立于1段弯曲的浅色风化浮木之上，周围铺满1层浓密饱满的翠绿色苔藓，覆盖画面前景及下部画框区域。采用极简影棚构图，产品孤立呈现于平滑的暖棕至琥珀色渐变背景前，光线模拟日落时分的柔和漫射光（sunset light）。以右上方投射的戏剧性定向暖光（dramatic directional warm light）布光：背景呈现明亮辉光，瓶盖形成清晰高光（crisp highlight），玻璃表面映出柔和反光（soft reflections），浮木与苔藓上投下细腻自然的阴影（gentle shadows）。画面采用竖构图（vertical framing），香水瓶居中但略偏画面下方，上方保留充裕负空间（generous negative space）；整体氛围需呈现自然感、奢华感、大地感（earthy）、电影感（cinematic）与高度精致感（polished），堪比顶级香氛品牌广告大片（premium fragrance campaign shot）。"
     },
     {
       "id": "detail_page_001",
@@ -350,7 +365,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/WooGabriel76263/status/2047988112094101770",
-      "source_author": "@WooGabriel76263"
+      "source_author": "@WooGabriel76263",
+      "prompt_zh": "{\"type\":\"中国电商产品营销版式图\",\"product\":{\"category\":\"速溶谷物粉饮品\",\"brand\":\"五谷磨房\",\"name\":\"核桃芝麻黑豆粉\",\"packaging\":\"哑光黑色零售礼盒，正面印有烫金中文书法字体及一个大型漩涡状碗形图形；内含10袋独立黑色小袋装\",\"net weight\":\"320g（32g×10袋）\"},\"style\":{\"overall\":\"高端暗色系食品广告版式\",\"color palette\":[\"黑色\",\"深棕色\",\"暖金色\",\"米 beige 色\",\"胡桃木棕\"],\"lighting\":\"戏剧化影棚布光，带高光质感（glossy highlights）与暖色轮廓光（warm rim light）\",\"mood\":\"奢华感、滋养感、健康感、诱人食欲\"},\"layout\":{\"format\":\"单张纵向复合版式，划分为5个主功能区 + 底部表格化分镜脚本区\",\"sections\":[{\"title\":\"主图/Main image\",\"position\":\"左上区域\",\"count\":8,\"labels\":[\"五谷磨房\",\"核桃芝麻黑豆粉\",\"32g×10袋 独立包装\",\"五黑谷物\",\"香浓醇厚\",\"独立小袋\",\"即冲即饮\",\"产品礼盒与饮用杯\"]},{\"title\":\"详情页/Details page\",\"position\":\"右上区域\",\"count\":5,\"labels\":[\"黑芝麻\",\"黑豆\",\"黑米\",\"核桃\",\"谷物粉\"]},{\"title\":\"香浓细腻 顺滑好喝\",\"position\":\"右中区域\",\"count\":4,\"labels\":[\"一冲即饮 营养美味\",\"粉质细腻 Fine powder\",\"浓香醇厚 Rich & Smooth\",\"营养代餐 Nutritious\"]},{\"title\":\"冲泡方式 HOW TO MAKE\",\"position\":\"左中偏下区域\",\"count\":3,\"labels\":[\"1 倒入一袋粉(32g)\",\"2 加入200ml 热水或牛奶\",\"3 搅拌均匀 即可享用\"]},{\"title\":\"一杯好谷物 轻松好生活\",\"position\":\"左下区域\",\"count\":4,\"labels\":[\"元气早餐\",\"办公室下午茶\",\"健身代餐\",\"睡前暖饮\"]},{\"title\":\"独立小袋 随身携带\",\"position\":\"右下区域\",\"count\":3,\"labels\":[\"独立小袋 便携卫生\",\"锁住新鲜 防潮防氧化\",\"1袋1杯 精准份量\"]},{\"title\":\"视频推广广告 seedance 2.0 视频提示词 + 分镜头脚本\",\"position\":\"底部全宽区域\",\"count\":7,\"labels\":[\"镜头1 开场-产品展示\",\"镜头2 食材特写\",\"镜头3 倒粉入杯\",\"镜头4 冲泡搅拌\",\"镜头5 饮用场景\",\"镜头6 产品卖点\",\"镜头7 结尾口号\"]}],\"grid\":\"顶部区域分为左侧主视觉图与右侧详情页；中部区域分为冲泡指南与核心卖点展示区；底部区域分为生活方式场景与小袋便携功能区；最底部为全宽表格化分镜脚本（tabular storyboard）\"},\"scene_elements\":{\"ingredients\":[{\"name\":\"黑芝麻\",\"form\":\"圆形碗中盛放的小颗黑色种子\"},{\"name\":\"黑豆\",\"form\":\"圆形碗中盛放的油亮完整豆粒\"},{\"name\":\"黑米\",\"form\":\"圆形碗中盛放的深色细长米粒\"},{\"name\":\"核桃\",\"form\":\"圆形碗中盛放的核桃仁半瓣\"},{\"name\":\"谷物粉\",\"form\":\"圆形碗中盛放的浅米 beige 色粉末\"}],\"serving\":{\"drink\":\"灰褐色浓稠芝麻核桃黑豆饮品，表面呈现顺滑漩涡纹理（smooth surface swirl）\",\"cup\":\"带手柄透明玻璃杯\",\"utensil\":\"金属勺——正在饮品中搅拌或静置于杯内\"},\"supporting props\":[\"桌面上散落的核桃仁\",\"零星撒布的黑豆\",\"谷穗或麦秆枝条\",\"深色桌面\",\"食材小碗\",\"打开的包装盒，露出其中5袋清晰可见的独立小袋\"]},\"text_treatment\":{\"headline_font\":\"加粗优雅中文展示字体，金属烫金效果（metallic gold）\",\"body_font\":\"简洁无衬线体中文，辅以少量英文副标题（English subtitles）\",\"accent\":\"纤细金色分隔线 + 圆形食材框（circular ingredient frames）\"},\"camera_and_composition\":{\"product_shots\":\"正面主视觉礼盒（front-facing hero box）、斜角小袋陈列盒（angled sachet display box）、饮品特写微距（close-up beverage macro）\",\"food_photography\":\"高细节商业食品摄影风格，浅景深（shallow depth of field），强调纹理锐度（crisp texture emphasis）\",\"aspect_ratio\":\"竖构图，约9:16\"},\"quality\":\"超精细商业级设计效果图（ultra-detailed commercial design mockup），涵盖电商主视觉（key visual）+ 详情页（details page）+ 广告分镜脚本（ad storyboard），4K分辨率\"}"
     },
     {
       "id": "detail_page_002",
@@ -369,7 +385,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Magncsans/status/2047876253898903594",
-      "source_author": "@Magncsans"
+      "source_author": "@Magncsans",
+      "prompt_zh": "提示词标题：9宫格TVC分镜脚本\n\n基于提供的参考图像，将单张日常风格的产品照片，转化为一套专业级电商TVC分镜脚本（storyboard board），用于一支{argument name=\"video duration\" default=\"15-second\"}时长、{argument name=\"aspect ratio\" default=\"9:16\"}竖屏比例的广告，以9宫格（3×3）网格形式呈现。产品主体保持原蓝色白底陶瓷烟灰缸不变，但需重新构图，融入电影感广告镜头语言：采用暖调高级布光（warm premium lighting）、浅景深（shallow depth of field），并置于精致的生活化桌面场景（refined lifestyle desktop environment）中。整体分镜板采用深色背景布局，每格配中文场景标题与精确时间码（timing）。严格包含以下9个镜头：\n\n1）环境建立镜头（广角）：展现整张书桌、书籍、窗外自然光及产品在真实生活语境中的摆放；  \n2）主角产品中景：烟灰缸居中置于桌面，构图经典、质感突出；  \n3）极致特写镜头：聚焦蓝色青花花卉纹样（blue floral craftsmanship pattern）的精细手绘工艺与釉面质感；  \n4）使用场景镜头：一只手将香烟置入烟灰缸，烟雾清晰可见，强调功能与氛围；  \n5）俯拍容量展示：自上而下视角，呈现烟灰缸内已容纳多支烟蒂，体现实用容量；  \n6）清洁场景：产品置于水槽中，水流冲刷，一只手稳持烟灰缸，表现易洁特性；  \n7）底部细节特写：低角度近距离拍摄产品底面，清晰展现防滑垫（anti-slip pads）结构与工艺；  \n8）情绪/生活方式夜景：夜间桌面场景，烟灰缸静置，一缕轻烟袅袅上升，环境台灯光晕柔和弥漫（ambient lamp light）；  \n9）品牌收尾帧：产品作为视觉焦点居中，叠加中文营销文案，强化品牌识别。\n\n全局页眉文字为：“产品TVC分镜脚本(15秒 / 9:16竖屏 / 9宫格)”；  \n产品副标题为：{argument name=\"product name\" default=\"青花瓷烟灰缸\"}。\n\n为全部9个分镜格分别添加中文场景标题与对应时间码（如“00:00–00:01”），并在每幅图像下方配一行小型中文描述性文案（descriptive Chinese copy），风格须符合专业商业广告分镜表（commercial shot list）规范。全片采用高端写实商业摄影（premium, realistic commercial photography）风格，确保产品形象统一连贯（consistent product identity）、整体呈现东方雅韵（elegant Chinese aesthetic），分镜板设计简洁、高端、信息清晰（clean high-end storyboard presentation）。"
     },
     {
       "id": "detail_page_003",
@@ -388,7 +405,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Gdgtify/status/2049449869530775877",
-      "source_author": "@Gdgtify"
+      "source_author": "@Gdgtify",
+      "prompt_zh": "提示词标题：食品英雄图+分镜  \n\nPrompt 1：创作一幅电影级（cinematic）美食英雄图（hero image），主体为一款高端 gourmet 汉堡，置于深色石材台面之上；汉堡需呈现闪亮光泽的布里欧修（brioche）面包胚、融化的奶酪、清脆生菜、新鲜番茄片、炭烤牛肉饼、酱汁；强调真实细腻的材质质感（realistic texture）、诱人升腾的热气（appetizing steam）、温暖的侧向布光（warm side light）、浅景深（shallow depth of field）；整体风格为高端食品商业广告（premium food commercial style）；画面中不得出现文字、品牌标识（logos）或水印（watermark）。\n\nPrompt 2：为一支15秒的高端汉堡广告（gourmet burger ad）制作一张9格混合式关键帧—转场分镜表（hybrid keyframe-to-transition storyboard sheet），时间线依次呈现：空台面 → 各食材逐一组装过程 → 最终特写级英雄镜头（macro hero shot）。构图采用大型S格（主关键帧，S = “Shot”）与小型T格（转场细节，T = “Transition”）组合；需包含动态箭头（motion arrows）、食材半透明定位轮廓（ghosted ingredient positions）、升腾热气（steam）、酱汁流动轨迹（sauce trails）及镜头推进图标（camera push-in icons）。视觉风格为高端食品商业风（premium food commercial），搭配暖色调布光（warm lighting）、丰富材质表现（rich texture）、强食欲感（appetizing）、电影级质感（cinematic），仅保留极简必要标注（minimal labels only）；严禁出现任何品牌标识（logos）或水印（watermark）。"
     },
     {
       "id": "detail_page_004",
@@ -407,7 +425,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/wory37303852/status/2045925660401795478",
-      "source_author": "@wory37303852"
+      "source_author": "@wory37303852",
+      "prompt_zh": "{\n  \"type\": \"产品爆炸拆解图海报\",\n  \"subject\": \"VR头戴设备\",\n  \"style\": \"简洁高科技风格的3D渲染图，影棚布光(studio lighting)，发光装饰元素(glowing accents)\",\n  \"background\": \"{argument name=\\\"background color\\\" default=\\\"柔和的紫蓝色渐变\\\"}\",\n  \"header\": {\n    \"logo\": \"∞ {argument name=\\\"product name\\\" default=\\\"Meta Quest 3\\\"}\",\n    \"subtitle\": \"{argument name=\\\"main catchphrase\\\" default=\\\"从全然崭新的结构，开启全然崭新的现实。\\\"}\"\n  },\n  \"layout\": {\n    \"centerpiece\": \"垂直堆叠式VR头戴设备爆炸拆解图，清晰展示9个独立的内部结构层：外壳(outer shell)、摄像头传感器(camera sensors)、搭载芯片的主板(motherboard with chip)、折叠式透镜(pancake lenses)、内部框架(internal frame)、电池组(battery packs)、侧边头带(side straps)、顶部头带(top strap)以及面部接触缓冲垫(facial interface cushion)。\",\n    \"callout_labels\": {\n      \"count\": 8,\n      \"left_side\": [\n        \"Snapdragon® XR2 Gen 2\\n凭借压倒性的处理性能，实现真正的实时沉浸体验。\",\n        \"可调节瞳距(IPD)机构\\n适配更广泛的用户群体，提供舒适贴合的佩戴感。\",\n        \"精密设计的头带系统\\n融合人体工学(ergonomics)，兼顾舒适性与佩戴稳定性。\"\n      ],\n      \"right_side\": [\n        \"面部面板(Faceplate)\\n兼具精致外观设计与优化的重量分布。\",\n        \"追踪摄像头(Tracking Camera)\\n实现高精度位置追踪与环境感知能力。\",\n        \"折叠式透镜(Pancake Lenses)\\n超薄光学结构，提供宽广视场角(FOV)与高清成像效果。\",\n        \"高性能电池(High-Performance Battery)\\n经优化的电源管理系统，支撑长时间续航表现。\",\n        \"柔软面部接口(Face Interface)\\n即使长时间佩戴，亦能保持卓越舒适感。\"\n      ]\n    },\n    \"footer\": {\n      \"left_text_block\": {\n        \"headline\": \"{argument name=\\\"bottom headline\\\" default=\\\"体验，始于结构的进化。\\\"}\",\n        \"body\": \"每一个零部件，都凝聚着支撑沉浸式体验的前沿科技与精雕细琢的设计理念。Meta Quest 3，正从内部构造出发，孕育令人真切感知未来的全新体验。\"\n      },\n      \"right_logo\": \"∞ Meta\"\n    }\n  }\n}"
     },
     {
       "id": "ad_creative_001",
@@ -426,7 +445,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/makaneko_AI/status/2045764016858087720",
-      "source_author": "@makaneko_AI"
+      "source_author": "@makaneko_AI",
+      "prompt_zh": "{\n  \"type\": \"2×2网格的日本数码广告横幅（Banner）\",\n  \"layout\": {\n    \"structure\": \"4个均等象限\",\n    \"quadrants\": [\n      {\n        \"position\": \"左上\",\n        \"theme\": \"旅行\",\n        \"subject\": \"一对情侣手牵手站在白沙海滩上，眺望碧绿清澈的海水，背景是明亮的湛蓝色天空。\",\n        \"elements\": [\"左下角一朵红色朱槿花（hibiscus flower）\"],\n        \"text_labels\": [\n          \"今年こそ、解き放て。\",\n          \"{argument name=\\\"travel destination\\\" default=\\\"沖縄旅行\\\"}\",\n          \"3日間の癒やし旅\",\n          \"航空券+ホテル\",\n          \"39,800円〜\",\n          \"絶景、グルメ、体験 ぜんぶ叶う!\"\n        ],\n        \"icons\": {\n          \"count\": 3,\n          \"descriptions\": [\"飞机（airplane）\", \"酒店建筑（hotel building）\", \"汽车（car）\"]\n        }\n      },\n      {\n        \"position\": \"右上\",\n        \"theme\": \"护肤（Skincare）\",\n        \"subject\": \"一位年轻女性的特写肖像：肌肤透亮水润，双目轻闭，双手温柔轻触脸颊。\",\n        \"elements\": [\n          \"柔和粉色调渐变背景（soft pink gradient background）\",\n          \"动态水花飞溅效果（dynamic water splash effects）\",\n          \"粉色化妆品罐，标签文字为'{argument name=\\\"skincare product name\\\" default=\\\"LUMIÈRE\\\"} Brightening Gel'\"\n        ],\n        \"text_labels\": [\n          \"毛穴・くすみ卒業!\",\n          \"透明感あふれる\",\n          \"水光肌へ\",\n          \"新感覚スキンケア\",\n          \"初回限定 78%OFF\",\n          \"{argument name=\\\"discount price\\\" default=\\\"1,980円\\\"}\"\n        ],\n        \"badges\": {\n          \"count\": 3,\n          \"style\": \"金色圆形徽章（gold circular）\",\n          \"labels\": [\"毛穴ケア\", \"高保湿\", \"ハリ・ツヤ\"]\n        }\n      },\n      {\n        \"position\": \"左下\",\n        \"theme\": \"美食（Gourmet Food）\",\n        \"subject\": \"一块厚切、五分熟（medium-rare）牛排，在深色烤盘上滋滋作响。\",\n        \"elements\": [\n          \"蒜片（garlic chips）\",\n          \"迷迭香枝（rosemary sprig）\",\n          \"深色背景，带缭绕烟雾与发光余烬（dark background with smoke and glowing embers）\"\n        ],\n        \"text_labels\": [\n          \"とろける旨さ!\",\n          \"{argument name=\\\"food item\\\" default=\\\"黒毛和牛\\\"}\",\n          \"贅沢ステーキ\",\n          \"期間限定\",\n          \"特別価格\",\n          \"通常価格 8,980円\",\n          \"4,980円\"\n        ],\n        \"badges\": {\n          \"count\": 1,\n          \"style\": \"红色圆形徽章（red circular）\",\n          \"labels\": [\"A4 A5等級\"]\n        }\n      },\n      {\n        \"position\": \"右下\",\n        \"theme\": \"在线教育（Online Education）\",\n        \"subject\": \"一位身穿蓝色衬衫的年轻男性坐在书桌前学习，笔记本摊开书写，身旁是一台打开的笔记本电脑。\",\n        \"elements\": [\"明亮的室内照明（bright indoor lighting）\", \"书桌环境（desk environment）\"],\n        \"text_labels\": [\n          \"スキマ時間で\",\n          \"{argument name=\\\"education goal\\\" default=\\\"最短合格!\\\"}\",\n          \"オンライン資格講座\",\n          \"スマホで完結\",\n          \"効率学習で差がつく!\",\n          \"今だけ! 受講料 20%OFF\"\n        ],\n        \"badges\": {\n          \"count\": 1,\n          \"style\": \"蓝色圆形徽章（blue circular）\",\n          \"labels\": [\"受講者数 10万人 突破!\"]\n        },\n        \"icons\": {\n          \"count\": 2,\n          \"descriptions\": [\"智能手机（smartphone）\", \"打开的书本（open book）\"]\n        }\n      }\n    ]\n  }\n}"
     },
     {
       "id": "ad_creative_002",
@@ -445,7 +465,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/AlwaveNazca/status/2048147643809865950",
-      "source_author": "@AlwaveNazca"
+      "source_author": "@AlwaveNazca",
+      "prompt_zh": "提示词标题：奢侈手表广告\n\n一幅戏剧感十足的奢侈品广告图像，主题为一款灵感源自赛车运动的计时码表（chronograph）腕表，拍摄于暗调影棚环境中。画面中心偏左的前景中，呈现一枚单独的不锈钢材质计时码表，直立摆放，呈略微三分之四角度（three-quarter angle）；表盘为黑色，配有两个红色点缀的副表盘（subdials），纤细的银色时标（hour markers），测速圈（tachymeter bezel），右侧可见表冠（crown）与计时按钮（pushers）。表带为黑色皮革材质，两侧边缘饰以醒目的红色缝线，整体呈现动感且高端的精工质感。  \n在腕表右侧，放置一个黑色方形展示盒（presentation box），位置略靠后，表面纹理模拟皮革质感，盒盖边缘以红色缝线装饰，盖面中央上方压印一枚银色眼形（eye-shaped）Logo，并标有银色文字“NESS STUDIO”，其下方为较小字号的红色文字“TRACK SURFACE”。  \n画面正上方中央位置，添加同一款银色眼形Logo，并配文“NESS STUDIO”，其下方以更小字号呈现红色文字“BY NICOLAS”。  \n背景中横向铺展一个超大尺寸、高度虚化（oversized blurred）的单词：{argument name=\"headline text\" default=\"PRECISION\"}，以大号灰色大写字母呈现，横向跨度几乎覆盖整个画幅宽度。  \n整体场景置于深邃纯黑（deep black）背景前，背景中穿插数道电影感（cinematic）的横向红白光束（red and white horizontal light streaks），自左向右掠过产品后方，隐喻速度感与赛道能量（racetrack energy）。  \n地面采用高光润泽（glossy wet）质感平面，具备镜面反射（mirrorlike reflections）特性，可清晰映出腕表与表盒的倒影，并捕捉到鲜明的红色高光（red highlights）。  \n画面底部中央添加文字“CHRONOGRAPH SERIES”，使用干净利落的白色无衬线大写字母（spaced capitals），字间距均匀，其上下两侧延伸出细长的红色水平线（thin red horizontal lines）；该文字正下方以更小字号的红色大写字母呈现：{argument name=\"tagline text\" default=\"ALSACE MADE\"}。  \n色彩体系（Color palette）：黑色、炭灰（charcoal gray）、银色不锈钢（silver steel）、鲜活赛车红（vivid racing red），以及少量白色。  \n布光要求高对比度（high-contrast）且具高级感（premium）：金属表壳需呈现锐利清晰的镜面高光（crisp specular highlights），展示盒表面采用柔和微妙的补光（subtle soft fill），整体阴影富有情绪张力（moody shadows）。  \n整体风格：极致精修的商业级产品摄影（ultra-polished commercial product photography），高端腕表广告大片（luxury watch campaign），产品主体全程锐焦（sharp focus on the products），品牌视觉简洁锋利（sleek branding），融合顶级汽车工业美学（high-end automotive aesthetic）。"
     },
     {
       "id": "ad_creative_003",
@@ -464,7 +485,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/AlwaveNazca/status/2048147643809865950",
-      "source_author": "@AlwaveNazca"
+      "source_author": "@AlwaveNazca",
+      "prompt_zh": "提示词标题：运动品牌霓虹海报  \n\n一张高能量竖版耐克（Nike）时尚广告海报，主体为一位年轻健美女性，正腾空跃起，背景为未来感十足的霓虹摄影棚。她以充满张力的空中动态姿态被捕捉：一膝上抬、另一腿向后折叠，一臂向外伸展、另一臂屈于胸前，整体传达出强烈的运动感与力量感。其面部被一块干净的矩形模糊遮罩（clean rectangular blur block）居中覆盖。  \n她身穿一件短款虹彩白色连帽防风夹克，配黑色拉链，胸前印有小型耐克（Nike）标志；下身着全息金属质感的淡紫蓝色紧身裤（holographic metallic lavender-blue leggings），大腿外侧带有微妙的耐克勾形标志（Nike swoosh）；裤腰上方可见一条黑色品牌腰带（branded waistband）；脚穿白色厚底耐克运动鞋（white chunky Nike sneakers）。她的棕色长发扎成高马尾，在跃起瞬间向后飞扬。  \n\n背景中，巨大的发光白色衬线体（serif）字母“NIKE”横跨画面顶部区域；一个小型白色耐克勾形标志（Nike swoosh）精准居中置于该单词正上方。画面中段背景处，“LUMINA”一词以宽幅粗体发光字体呈现一次，并叠加水平方向故障效果（horizontal glitch）与扫描线失真（scanline distortion），部分被模特身体遮挡。  \n\n整体色调饱和度极高，主色为洋红（magenta）、紫罗兰（violet）、青色（cyan）与电光蓝（electric blue），并强化辉光（bloom）、镜面高光（glossy highlights）、镜头眩光（lens flares）及色差畸变（chromatic aberration）。在模特腿部与躯干周围添加环绕式弧形光迹（sweeping circular light trails），强化速度与动感表现。  \n\n整体风格为高端运动服饰广告（premium sportswear advertising），极致精修（ultra-polished）、电影级质感（cinematic）、高对比度（high contrast）、超写实润饰（hyperreal retouching）、产品细节锐利清晰（crisp product detail）、戏剧性轮廓光（dramatic rim lighting），以及明亮全息（luminous holographic）视觉美学。  \n\n画面底部添加两行小字号文字：  \n- 左下角文字为：{argument name=\"tagline text\" default=\"LIGHT. MOTION. ENERGY.\"}  \n- 右下角文字为：{argument name=\"collection name\" default=\"NIKE LUMINA COLLECTION\"}，其后紧跟一个小型耐克勾形标志（Nike swoosh）。  \n\n画面中须**严格呈现恰好3个可见的耐克勾形标志（Nike swoosh）**：  \n1. 位于顶部巨型“NIKE”标题正上方的1个；  \n2. 位于夹克胸前的1个；  \n3. 位于紧身裤大腿外侧的1个。"
     },
     {
       "id": "ad_creative_004",
@@ -483,7 +505,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/AlwaveNazca/status/2048147643809865950",
-      "source_author": "@AlwaveNazca"
+      "source_author": "@AlwaveNazca",
+      "prompt_zh": "提示词标题：街头潮鞋海报\n\n为{argument name=\"brand name\" default=\"NESS STUDIO\"}创作一幅大胆鲜明的街头服饰（streetwear）海报广告：一位年轻成年模特以低角度时尚姿势随意坐于地面，单膝抬起、另一条腿朝向镜头伸展，使前景中的运动鞋呈现夸张放大的视觉效果，成为画面主导焦点。模特身穿深棕色 oversized 皮质飞行员夹克（leather bomber jacket）、黑色上衣、浅蓝色宽松牛仔裤（loose-fit jeans）、白色袜子，以及一双厚底黑白灰配色运动鞋——鞋底带有红色点缀，且鞋侧（side）与鞋舌（tongue）清晰可见{argument name=\"brand name\" default=\"NESS STUDIO\"}品牌标识。模特面部被居中放置的柔和矩形模糊块（soft rectangular blur block）刻意遮挡。\n\n背景采用米白色肌理纸（off-white textured paper），叠加做旧颓废风（distressed grunge）设计元素与拼贴分层（collage layering）。模特后方，以粗犷笔触绘制一道大型红色油漆刷痕（rough red paint brushstroke），呈对角线贯穿画面中央。添加黑色墨点飞溅（black ink splatters）、手绘圆圈（sketch circles）、撕裂纸片（torn paper scraps）及手绘涂鸦（hand-painted graffiti）装饰细节。\n\n画面中嵌入4个核心图形涂鸦（graphic doodles）：  \n- 右上角为一个大型黑色“X”；  \n- 左下角为一支手绘向上的箭头（upward arrow）；  \n- 右下角为一枚粗粝风格的王冠草图（rough crown sketch）；  \n- 画面上方中央附近为一个圆形潦草涂写（circular scribble）。\n\n左上角区域：置于文字“{argument name=\"brand name\" default=\"NESS STUDIO\"}”上方，放置一枚风格化眼睛标志（stylized eye logo）；其下方配有一行较小标语：“A MOMENT OF YOUR STYLE”。\n\n画面中左区域：以堆叠式黑色刷写体（stacked black brush lettering）手写呈现标语“INNOVATE CREATE INSPIRE”。\n\n画面中右区域：粘贴一块撕裂质感黑色纸片（torn black paper patch），其上以手写白字呈现标语“BUILT DIFFERENT MOVE DIFFERENT”，并配一条红色下划线（red underline stroke）。\n\n画面左下角、靠近运动鞋处：添加一枚黑色做旧标签贴纸（black distressed label sticker），内含一个地球潦草简笔（globe scribble）、文字“{argument name=\"brand name\" default=\"NESS STUDIO\"}”，以及一条条形码（barcode）。\n\n底部页脚（bottom footer）：设计一条干净的横向条带，内含3个社交媒体图标及账号名，以细垂直分割线（thin vertical dividers）隔开——依次为 Instagram、Facebook 和 Twitter，每个图标后均标注“@NESS.STUDIO”。\n\n整体风格需兼具锋利感（edgy）、都市感（urban）、青春活力（youthful）、高对比度（high-contrast），融合高端杂志级街头时尚摄影（editorial street fashion）、产品广告摄影（product advertising photography）、涂鸦海报设计（graffiti poster design）、拼贴肌理（collage textures）与动态品牌表达（dynamic branding）。"
     },
     {
       "id": "ad_creative_005",
@@ -502,7 +525,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/_LaurentB/status/2048126606313464040",
-      "source_author": "@_LaurentB"
+      "source_author": "@_LaurentB",
+      "prompt_zh": "提示词标题：时尚卫衣概念广告\n\n一张干净利落的杂志风格（editorial）时尚广告海报，背景为浅粉蓝色（pale powder-blue）影棚纯色背景，地面为高光反射材质（glossy reflective floor）。构图呈垂直竖版、极简主义（minimal），画面主体由背景中巨大的加粗白色压缩无衬线字体（oversized bold white condensed sans-serif typography）构成：顶部一行显示“OSAKA SIX:”，其正下方为“006 REMAINS”，文字占据画面上半部分大部分区域，并位于主体人物后方。右上角以小号白色品牌文字标注：“Designed by ARTTEESHOW”。\n\n画面正中央偏下位置，一件超大号森林绿色（forest-green）圆领卫衣（crewneck sweatshirt）直立摆放，形如雕塑装置（sculptural object）；面料为柔软厚重的棉质（soft heavy cotton fabric），肩线自然下垂（dropped shoulders），袖长极度加长，袖口堆叠于地面（extra-long sleeves pooled on the floor）；领口内侧缝有一枚小巧黑色洗标（small black neck label），印有“ARTTEESHOW”字样。卫衣胸前印有一幅大型抽象拼贴图案（large abstract collage print），由撕裂纸片（torn paper fragments）构成，色彩包括米 beige、棕 tan、黑 black、灰 gray、白 white 及明艳红色 vivid red，碎片纵向层叠排列（arranged vertically like layered scraps）。\n\n一件巨型卫衣右侧倚靠着一位纤瘦女性时尚模特（slim female fashion model），她留着长直黑发（long straight black hair），身穿同色系 {argument name=\"sweatshirt color\" default=\"forest green\"} 卫衣及宽松阔腿运动裤（relaxed wide-leg sweatpants），脚踩纯白低帮小白鞋（clean white low-top sneakers）。模特以侧脸姿态（profile）呈现，神情冷静疏离（calm detached editorial attitude），一手插在裤袋中，身体沿对角线方向斜倚于巨型卫衣之上，双腿向前伸展；面部采用柔和矩形模糊（soft rectangular blur）处理，营造匿名化艺术时尚（anonymous art-fashion look）效果。她所穿的常规尺码卫衣（smaller worn sweatshirt）胸前亦以居中方式呈现完全相同的抽象撕纸拼贴图形（same abstract torn-paper collage graphic centered on the chest）。\n\n画面底部中央添加两行小号白色文案（small white copy text）：  \n第一行：“Made for comfort, worn for confidence.”  \n第二行：“Because life feels better when someone’s carrying the weight of the world.”\n\n整张图像应呈现出一种高端概念化街头服饰（premium conceptual streetwear）广告气质——灵感源自20世纪90年代初（early 1990s），但以当代奢侈广告（contemporary luxury advertising）语言重新演绎：影棚灯光锐利清晰（crisp studio lighting），阴影柔和（soft shadows），地面反射细腻微妙（subtle floor reflections），产品细节精准聚焦（precise product focus），巨型卫衣与真人模特之间形成超现实尺度对比（surreal scale contrast），整体视觉兼具精致画报感与海报级质感（polished magazine-poster aesthetic）。"
     },
     {
       "id": "ad_creative_006",
@@ -521,7 +545,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/SPEEDAI07/status/2049459155086500321",
-      "source_author": "@SPEEDAI07"
+      "source_author": "@SPEEDAI07",
+      "prompt_zh": "提示词标题：奢华巧克力品牌广告\n\n为虚构的高端巧克力品牌“Noirvelle Chocolat（诺瓦尔巧克力）”创作一幅高级感十足的正方形（1:1）产品广告，该品牌灵感源自顶级巧克力品牌。广告需呈现高端杂志（high-end editorial）风格的视觉叙事，融合奢华食品摄影（luxury food photography）、精致包装设计（refined packaging design）与电影级布光（cinematic lighting）。采用哑光黑色（matte black）外包装、细腻烫金（subtle gold foil）、优雅衬线体（elegant serif）字体，以及高度逼真的产品渲染（realistic product rendering）。设计三种风味变体：  \n- “血橙 Noir（Blood Orange Noir）”  \n- “海盐开心果缪斯（Salted Pistachio Muse）”  \n- “覆盆子余烬（Raspberry Ember）”  \n\n每种风味需具备独立的情绪氛围（mood）、专属配色方案（color palette）、核心原料（ingredients）、主标题（headline）及辅助文案（supporting copy）。巧克力条须作为画面绝对主角（hero centerpiece），呈现微妙反光（subtle reflections）、浅景深（shallow depth of field）、极简主义奢华感（luxury minimalism），并添加小型行动号召（CTA）：“Shop the drop.”（立即选购本季新品）"
     },
     {
       "id": "ad_creative_007",
@@ -540,7 +565,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/AIwithSarah_/status/2049452842931630202",
-      "source_author": "@AIwithSarah_"
+      "source_author": "@AIwithSarah_",
+      "prompt_zh": "提示词标题：果汁广告海报\n\n创建一张高端现代饮品广告海报，采用竖版3:4比例构图：画面主体为一位时尚年轻的女性模特，自信地蹲踞于明亮的城市室内走廊中，一侧是色彩缤纷的涂鸦墙艺术（graffiti wall art），另一侧则是简洁极简主义风格的建筑结构（clean minimal architecture）。前景中，一个巨型写实风格水果果汁瓶以强制透视（forced perspective）方式朝向镜头呈现，瓶身印有虚构品牌名“VIVAJUICE”。画面需包含品牌Logo、宣传标语（tagline）、巨大粗体且相互重叠的排版文字（huge bold overlapping typography）、四个基于图标的特性徽章（four icon-based feature badges），以及右下角排列的三款较小尺寸的同系列瓶装变体（three smaller bottle variants）。整体采用柔和自然光与商业影棚级精修光影（commercial studio polish）相结合的布光方式，呈现真实阴影（realistic shadows）、浅景深（shallow depth of field）、高光质感地板反射（glossy floor reflections），并营造出高端活力型电商营销活动（premium energetic eCommerce campaign）的视觉美学风格。"
     },
     {
       "id": "ad_creative_008",
@@ -559,7 +585,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/ChillaiKalan__/status/2053310109678535000",
-      "source_author": "@ChillaiKalan__"
+      "source_author": "@ChillaiKalan__",
+      "prompt_zh": "提示词标题：珠宝微缩城市广告\n\n创作一张超精细、奢华风格的广告海报，采用电影级微缩世界（miniature-world）视觉风格。画面中央矗立一条巨型皇家钻石项链，其以繁复精美的黄金镂空雕花（gold filigree）打造，并镶嵌硕大的红宝石（ruby gemstones），宛如一座建筑纪念碑。围绕该项链构建一座未来主义风格的微缩城市——城市结构延展并嵌入珠宝本体之中，包含摩天大楼、高架高速公路、桥梁、螺旋楼梯、微小的人类人偶、高端奢侈品广告牌、无人机、直升机，以及富有电影感的城市动态场景。背景采用深绯红色（crimson red）单色基调，辅以金色与红宝石色点缀。整体呈现高级时装广告（fashion-ad）美学：纹理极致真实（ultra-realistic textures）、表面具备高光镜面反射（glossy reflections）、影棚级戏剧化布光（dramatic studio lighting）、浅景深（shallow depth of field）、移轴微缩效果（tilt-shift miniature effect），以及高端商业级构图（high-end commercial composition）。画面顶部配以醒目而优雅的粗体排版文字：“EMBRACE THE EXTRAORDINARY”（拥抱非凡）。视觉风格灵感源自顶级珠宝品牌广告大片、超现实城市建构概念（surreal city-building concepts）及高端3D广告渲染（premium 3D advertising renders）。最终效果需达到：超写实（ultra realistic）、8K分辨率、Octane渲染器输出（octane render）、焦点锐利（sharp focus）、细节极度丰富（highly detailed）、电影级阴影（cinematic shadows）、对称式构图（symmetrical composition）。"
     },
     {
       "id": "ad_creative_009",
@@ -578,7 +605,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/ShamiWeb3/status/2053430685399232756",
-      "source_author": "@ShamiWeb3"
+      "source_author": "@ShamiWeb3",
+      "prompt_zh": "提示词标题：双色饮料广告  \n\n为“We Drink”品牌创作一张高端现代饮品宣传海报。\n\n主题：  \n西瓜粉红（Watermelon Pink）+ 青柠绿（Lime Green）焕新畅饮活动  \n\n风格与艺术指导：  \n现代活力型饮品广告（Modern energetic beverage advertising）  \n面向青年群体的商业品牌形象（Youthful commercial branding）  \n双色分割背景构图（Split-color background composition）  \n明亮清爽的夏日美学（Bright refreshing summer aesthetic）  \n极简动态版式（Minimal dynamic layout）  \n高对比度饮品广告风格（High-contrast drink advertisement style）  \n适配Instagram传播的饮品推广视觉（Instagram-ready beverage promotion）  \n高端快消品类商业设计（Premium fast-moving commercial design）  \n\n主体内容：  \n两张超写实、冰镇感强烈的大型饮品，居中醒目呈现。  \n\n饮品1：  \n一杯明艳的西瓜粉红饮品，盛装于透明塑料杯中，清晰可见冰块、杯壁凝结水珠（condensation droplets），并以新鲜西瓜片作装饰。  \n\n饮品2：  \n一杯鲜亮的青柠绿饮品，盛装于同系列透明杯中，同样可见冰块、凝结水珠（condensation droplets），并以一片青柠切片作装饰。  \n\n附加元素：  \n环绕构图漂浮的独立冰块（Floating ice cubes）  \n动态水花飞溅效果（Dynamic water splash effects）  \n每只杯子下方投射出柔和真实的阴影（Soft realistic shadows）  \n高端光泽质感的液体表面（Premium glossy liquid textures）  \n微小水果切片悬浮于运动轨迹中（Tiny fruit slices suspended in motion）  \n\n版式与构图：  \n对角线分割色块背景（Diagonal split-color background）  \n左侧：西瓜粉红渐变（watermelon pink gradient）  \n右侧：青柠绿渐变（lime green gradient）  \n顶部中央设置大幅加粗主标题：“SIP THE FRESHNESS”（啜饮鲜活）  \n两大主角饮品居中突出呈现  \n产品描述文字分别置于对应杯体旁侧  \n促销价格信息置于左下区域  \n“We Drink”品牌Logo及小型品牌标识置于底部  \n饮品周围分布漂浮冰块与水花效果  \n留白充足、层级清晰的现代商业视觉逻辑（Spacious modern commercial hierarchy）  \n\n文字与字体设计：  \n粗壮超大号无衬线字体（Bold oversized sans-serif typography）  \n年轻化圆润商业字体（Youthful rounded commercial fonts）  \n纯白色文字强调（White typography accents）  \n辅助文案：“Watermelon Burst”（西瓜爆汁）与“Lime Rush”（青柠奔涌）  \n促销价：“仅售 $3.99”（Only $3.99）  \n标语：“每一口，皆新鲜”（Freshness in Every Sip）  \n\n空间深度与布光：  \n柔光质感影棚照明（Soft glossy studio lighting）  \n明亮清爽的反射光效（Bright refreshing reflections）  \n逼真的饮品高光表现（Realistic beverage highlights）  \n营造悬浮式商业纵深感（Floating commercial depth）  \n柔和环境阴影（Soft ambient shadows）  \n凸显凝结水珠质感的专业布光（Premium condensation texture lighting）  \n\n额外设计细节：  \n漂浮冰块（Floating ice cubes）  \n水花微粒（Water splash particles）  \n光泽渐变（Glossy gradients）  \n现代感促销徽章（Modern promotional badges）  \n水果切片与水滴（Fruit slices and droplets）  \n极简而富有动感的装饰元素（Minimal energetic decorative elements）  \n\n色彩方案：  \n西瓜粉红（#FF4F87）  \n青柠绿（#A8FF2A）  \n纯白文字（White typography）  \n柔和透明高光（Soft transparent highlights）  \n\n画质要求：  \n超写实饮品摄影（Ultra-realistic beverage photography）  \n高端广告级构图（Premium advertising composition）  \nBehance水准商业海报（Behance-quality commercial poster）  \n高分辨率（high-resolution）  \n锐利焦点（sharp focus）  \n照片级真实材质表现（photorealistic textures）  \n专业品牌营销视觉气质（professional brand campaign aesthetic）"
     },
     {
       "id": "ad_creative_010",
@@ -597,7 +625,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/amynys/status/2054340951678587051",
-      "source_author": "@amynys"
+      "source_author": "@amynys",
+      "prompt_zh": "提示词标题：奢华香水人像广告  \n\n将上传的人像照片转化为一幅奢华、电影感十足的香水海报，灵感源自高端时尚香水广告所呈现的暗黑诱惑式优雅（dark seductive elegance）。完整保留她精准的面部特征、温暖的肤色、自信的表情、波浪状棕发（wavy brunette hair）以及可辨识的个人身份。将其塑造成一位神秘的致命女郎（femme fatale）：唇部柔润亮泽（soft glossy lips），肌肤通透发光（luminous skin），眼妆为细腻烟熏（subtle smoky eyes），目光强烈而摄人心魄（intense captivating gaze）。\n\n为她搭配一件黑色缎面吊带裙（black satin slip dress），饰以精致蕾丝边（delicate lace trim），外搭一件华美仿毛皮披肩（glamorous faux fur wrap），自然滑落于肩头。将她置于一处情绪浓郁、受巴黎风格启发的奢华室内空间中：墙面为黑色高反射材质（black reflective walls），配以金色边缘照明（gold rim lighting）、深邃阴影（deep shadows）、电影级明暗对比（cinematic contrast）及富有情调的环境光（sensual ambient lighting）。加入优雅的镜面反射（elegant reflections）与空间纵深感（depth），营造高端杂志级（premium editorial）视觉效果。\n\n在画面前景附近添加一支线条利落的黑色香水瓶，设计灵感源自奢华黑色电影风（luxury noir）香水美学。采用精炼极简主义字体（refined minimalist typography），风格契合高端时尚广告（luxury fashion-ad），排版强调戏剧性留白（dramatic spacing）与顶级构图（premium composition）。加入一句标语，例如：“她从不追随——她只留下痕迹。”（“She doesn’t follow. She leaves a trace.”）\n\n整体氛围需传达出诱惑感（seductive）、神秘感（mysterious）、力量感（powerful）、女性气质（feminine）、电影感（cinematic）、永恒感（timeless）与极致奢华感（ultra-luxurious）——宛如香奈儿（Chanel）《Coco Noir》广告大片，由好莱坞电影摄影师（Hollywood cinematographer）掌镜执导。画质要求：超高细节（high detail）、皮肤纹理高度写实（photorealistic skin texture）、亮泽高光（glossy highlights）、饱满浓郁的纯黑（rich blacks）、温暖金色点缀（warm gold accents）、杂志级时尚摄影质感（magazine-quality fashion photography）、8K 级奢华杂志成片效果（8K luxury editorial finish）。"
     },
     {
       "id": "ad_creative_011",
@@ -616,7 +645,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/AIwithAliya/status/2054553101236080714",
-      "source_author": "@AIwithAliya"
+      "source_author": "@AIwithAliya",
+      "prompt_zh": "GPT Image 2 提示词：为[PRODUCT NAME]（一种[PRODUCT TYPE]）创作一幅富有创意的商业广告海报，灵感源自充满活力的热带风格产品营销活动。将产品作为核心视觉主体（hero object）置于画面中心偏右位置，呈现逼真的高光反射（glossy reflections）、清晰锐利的标签细节（sharp label details）以及高端质感灯光（premium lighting）。在产品旁或略靠前的位置添加一位时尚模特，自然地与产品互动，动作为[MODEL ACTION]。模特神情应呈现[MOOD]状态，身着[OUTFIT STYLE]风格服饰，且不得遮挡产品标签。"
     },
     {
       "id": "ad_creative_012",
@@ -635,7 +665,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/SPEEDAI07/status/2047907058079650035",
-      "source_author": "@SPEEDAI07"
+      "source_author": "@SPEEDAI07",
+      "prompt_zh": "提示词标题：时尚鞋类广告大片  \n\n一幅高端影棚风格的广告海报，品牌为{argument name=\"brand name\" default=\"crocs\"}，采用柔和的单色粉蓝色与白色配色方案（monochrome pastel blue and white color palette），地面为高光反射材质（glossy reflective floor），背景为柔雾感天蓝色（soft sky-blue backdrop）。背景中占据主导地位的是巨型粗体白色无衬线压缩字体（gigantic bold white condensed sans-serif letters）呈现的单词{argument name=\"headline text\" default=\"CROCS\"}，其高度几乎贯穿整幅图像。右上角添加小号白色文字：“Designed with ChatGPT”。  \n\n画面中呈现3位成年女性，均留有齐肩波浪发，发色介于浅棕色至深金色之间；身着宽松 oversized 白色长袖上衣与垂坠感强的白色阔腿长裤，整体造型为极简主义时尚模特风格（minimalist fashion models），神情放松、中性淡然；面部刻意虚化或遮蔽（intentionally obscured or blurred）。  \n\n构图安排如下：  \n- 左侧：一位模特慵懒倚靠在一只巨型直立式白色洞洞鞋（clog）上；  \n- 右上方：一位模特随意坐于另一只巨型白色洞洞鞋顶部；  \n- 右下方：一位模特斜倚于地面，单臂支撑身体向后靠，部分身体坐于一颗高光蓝色球体（glossy blue sphere）之上。  \n\n作为核心视觉道具（hero props），呈现两只超大尺寸白色洞洞鞋：  \n- 左侧一只垂直竖立，清晰展示鞋底（sole）与侧面轮廓（side profile）；  \n- 右侧居中偏右一只以倾斜角度置于蓝色水晶质感块状基座（blue crystalline blocks）上，完整呈现鞋面（upper）与鞋头区域（toe box）。  \n两只鞋均为经典泡沫材质一脚蹬款式（classic foam slip-on style），具备透气孔（perforation holes）、厚实防滑鞋底纹路（chunky tread）、可调节后跟带（heel straps）及圆形品牌标识铆钉（circular logo rivets）。  \n右侧居中偏右的洞洞鞋鞋面上，精准装饰8枚可见配饰（charms）：一枚蓝绿色虹彩圆形配饰、一朵白瓣黄芯雏菊、一枚靠近后跟带的黑白圆形徽章、一枚小型“CROCS”字样金属字牌、一朵深色花卉、一个和平手势（peace-hand sign）、一枚橙色笑脸（smiley face）、一朵白色云朵、一朵橙色花卉。  \n\n场景中散落共7颗高光蓝色球体（glossy blue spheres），大小不一，分布如下：  \n- 一颗大型球体位于左侧模特后方；  \n- 一颗中型球体悬浮于画面中央附近；  \n- 一颗中型球体置于左下前景；  \n- 一颗中型球体作为右下模特的坐具；  \n- 一颗小型球体靠近左上方；  \n- 另外2颗蓝色球体自然融入整体构图（integrated into the composition）。  \n\n画面最左侧与最右侧边缘添加半透明雕塑感凝胶状形态（translucent sculptural gel-like forms）；右鞋下方布置棱角分明的蓝色水晶质感岩石（angular blue crystal-like rocks）。  \n\n画面底部中央以干净无衬线字体（clean sans-serif font）呈现白色宣传文案：  \n第一行：{argument name=\"tagline line 1\" default=\"Made for comfort, worn for confidence.\"}  \n第二行：{argument name=\"tagline line 2\" default=\"Because life feels better when your feet stop complaining.\"}  \n\n其下方排列4枚极简风格功能图标（minimalist feature icons），图标旁配白色标签文字：  \n“ICONIC COMFORT”、“LIGHTWEIGHT”、“EASY TO CLEAN”、“UNIQUELY YOU”。  \n\n画面正下方中央位置，以加粗小写白色字体呈现{argument name=\"logo text\" default=\"crocs\"}品牌标识，并附带小型商标符号（trademark symbol）。  \n\n整体视觉风格应体现高端超现实主义时尚广告（premium surreal fashion campaign）：采用干净利落的杂志级布光（clean editorial lighting）、柔和阴影（soft shadows）、高光质感表面（glossy textures）、通透轻盈的构图（airy composition），以及现代生活方式导向的产品广告语感（modern lifestyle product advertising）。"
     },
     {
       "id": "food_photo_001",
@@ -654,7 +685,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/PrometheanAIX/status/2049122713722106161",
-      "source_author": "@PrometheanAIX"
+      "source_author": "@PrometheanAIX",
+      "prompt_zh": "提示词标题：通用美食摄影模板\n\n创建一幅正方形[ASPECT RATIO]的高端美食摄影图像，主体为一份热气腾腾的[FOOD]，盛装于深黑色石质碗或铸铁煎锅中，并置于木质砧板上。菜肴需呈现滚烫、油亮、辛辣且刚出锅的新鲜质感：其中包含褐化均匀的 Bite-sized 蛋白块（bite-sized pieces of browned protein）、干红辣椒、青葱段、白洋葱丝、蒜片、辣椒碎（chili flakes）以及清晰可见、裹满深红色油润川式酱汁的花椒粒（Sichuan peppercorns）。采用略高于平视的近距离俯拍视角（slightly elevated close-up camera angle），搭配浅景深（shallow depth of field）。确保食物为画面绝对视觉焦点——居中构图，细节丰富、层次饱满。添加自然升腾的可见蒸汽（visible steam rising naturally from the dish）。碗周环境辅以低调的餐厅风格道具，例如深红色托盘、散落的干辣椒与花椒粒、一只小酱碟，或背景中虚化的茶壶（blurred teapot）。布光需营造温暖、氛围感强且具杂志级（editorial）质感的效果，模拟高端餐厅专业美食拍摄风格。重点强化真实可触的材质表现（realistic textures），整体图像须兼具诱人食欲感、高度写实性、电影感（cinematic）与精修完成度（polished）。禁止出现文字、Logo、人手、人物、遮挡食物的餐具、卡通化风格、虚假塑料质感、过度对称构图，或过于干净刻板的商用图库风（overly clean stock-photo look）。"
     },
     {
       "id": "food_photo_002",
@@ -673,7 +705,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Sairah_0/status/2053312926141005835",
-      "source_author": "@Sairah_0"
+      "source_author": "@Sairah_0",
+      "prompt_zh": "提示词标题：莓果碗生活广告  \n\nPrompt 1：充满活力的生活方式食品广告，一位面带微笑的女性身穿明艳炽热粉（hot pink）西装外套，坐在一家色彩缤纷、风格前卫的咖啡馆内，手持勺子正享用一碗阿萨伊莓（acai）碗——碗中铺满草莓、蓝莓、香蕉片与格兰诺拉麦片（granola）；木质桌面上摆放印有品牌标识的“Berry Loud”玻璃罐；画面采用俏皮复古字体设计，以奶油色（cream）气泡字大幅呈现“BERRY LOUD”字样；咖啡馆内部为热带风装潢，垂挂绿植，洒入温暖自然阳光，整体氛围欢快愉悦；主色调为大胆鲜明的粉红（pink）与青绿色（teal），浅景深（shallow depth of field），电影级美食摄影（cinematic food photography），超写实（ultra realistic），高细节（high detail），商业广告大片风格（commercial ad campaign style），4K  \n\nPrompt 2：“Berry Loud”混合莓果（mixed berry）饮品的动态产品广告，一碗丰盈溢出的阿萨伊思慕雪碗（acai smoothie bowl），盛满草莓、树莓、蓝莓、黑莓、香蕉片与格兰诺拉麦片（granola）；画面中呈现戏剧性的莓果汁液飞溅（dramatic berry juice splashes）及悬浮于空中的水果（floating fruits in mid air）；品牌玻璃罐置于碗旁；背景为高饱和度炽热粉（vivid hot pink）纯色；大幅复古奶油色（retro cream）字体醒目呈现“NEW DROP BERRY LOUD”；光泽感照明（glossy lighting），超写实美食摄影（hyper realistic food photography），富有能量感的构图（energetic composition），色彩明快鲜活（vibrant colors），商业产品静物拍摄（commercial product shoot），纹理细节极致丰富（ultra detailed textures），飞溅特效（splash effect），影棚灯光（studio lighting），4K，广告海报风格（advertising poster style）"
     },
     {
       "id": "food_photo_003",
@@ -692,7 +725,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/ShamsAmin56/status/2054238324198625780",
-      "source_author": "@ShamsAmin56"
+      "source_author": "@ShamsAmin56",
+      "prompt_zh": "提示词标题：汉堡英雄海报\n\n一个电影感十足的9:16竖构图，呈现一款高端美食级“烟熏黑曜石”（Smokey Obsidian）汉堡。  \nWHAT（主体内容）：一座高耸的汉堡——炭烤布里欧修面包（charcoal brioche bun），厚实的和牛牛肉饼（Wagyu beef patty），表面带有清晰可见的焦化纹路（sear marks）；融化的陈年格鲁耶尔奶酪（aged gruyère）如熔岩般缓缓滴落；外脆内韧的枫糖釉培根（maple-glazed bacon）。  \nFEEL（氛围感受）：“都市纵享”（Urban Indulgence）氛围。暗调、情绪化布光，仅有一束温暖琥珀色（warm amber）聚光灯打亮主体；真实山核桃木（hickory）烟雾轻盈缭绕于面包边缘；质感高度拟真（hyper-realistic）——可清晰辨识面包表皮的盐晶颗粒（salt crystals）与传家宝番茄（heirloom tomato）表面沁出的湿润水光。  \nSHOW（动态呈现）：采用“解构重力”（deconstructed gravity）瞬间捕捉——上层面包微微悬浮于空中，恰巧揭示内部层次：自制蒜香蛋黄酱（house-made aioli）与腌制红洋葱（pickled red onions）。  \nTYPOGRAPHY（字体设计）：超粗体、做旧处理的无衬线字体（ultra-bold, distressed sans-serif）覆盖画面底部三分之一区域；文字内容为“DEFY GRAVITY”，表面呈现粗粝混凝土肌理（raw, concrete-texture finish）。  \nTECHNICAL（技术参数）：4K分辨率，微距摄影（macro photography）风格，浅景深（shallow depth of field），霓虹黑色电影风（neon-noir）色彩分级——深邃纯黑（deep blacks）、温暖琥珀色（warm ambers）主调，辅以微妙青蓝色（subtle teal）高光。"
     },
     {
       "id": "food_photo_004",
@@ -711,7 +745,8 @@
       "aspect_ratio": "1:1",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Sairah_0/status/2054111354202779672",
-      "source_author": "@Sairah_0"
+      "source_author": "@Sairah_0",
+      "prompt_zh": "提示词标题：健康谷物广告组图  \n\n（抹茶燕麦格兰诺拉广告）  \n超写实高端食品广告海报，面向健康早餐格兰诺拉（granola）品牌；画面中心为哑光质感立式自封袋包装，标签清晰印有“Matcha Oat Granola”；整体采用绿色单色美学（green monochrome aesthetic）；俯拍平铺构图（flat lay composition）；柔光影棚灯光（soft studio lighting）；背景为明快鲜活的抹茶绿（vibrant matcha green background）；周围环绕猕猴桃切片、杏仁、燕麦粒、奇亚籽、一碟抹茶粉、盛装格兰诺拉的碗、以及散落的各类原料；版面采用干净现代的字体设计，主标题为“SUPERFOOD MORNING BOWL”；手写风格标注箭头（handwritten annotation arrows）配以健康功效说明文字；强调有机奢华品牌调性（luxury organic branding）；呈现自然投影（natural shadows）；属高端商业食品摄影（high-end commercial food photography）；布局极简却不失细节（minimal yet detailed layout）；构图对称（symmetrical composition）；焦点锐利（sharp focus）；风格契合Instagram信息流广告（Instagram ad style）；8K级超高细节（8k detail）；整体为健康生活方式营销视觉设计（healthy lifestyle marketing design）。  \n\nPrompt : （浆果酸奶脆麦片广告）  \n高端商业早餐麦片广告，采用柔和粉彩色系（pastel pink aesthetic）；画面中心为直立式站立袋包装，标签明确标注“Berry Yogurt Crunch Cereal”；周围环绕草莓、蓝莓、盛装酸奶的碗、牛奶壶、酥脆格兰诺拉、散落的浆果与谷物；采用柔和自然光（soft natural lighting），营造鲜活饱满、清新愉悦的氛围（vibrant fresh mood）；主标题采用现代粗体排版（modern bold typography headline），文字为“START FRESH EVERY MORNING”；辅以手写风格呼出箭头（handwritten callout arrows）及功效说明文本；食材纹理高度真实（realistic food textures）；包装设计体现高端超市级品质感（luxury supermarket packaging design）；构图为干净利落的俯拍平铺（clean flat lay composition）；阴影柔和（soft shadows）；整体传达精品品牌调性（premium branding）；色彩明艳且富有光泽感（glossy vibrant colors）；属超精细食品摄影（ultra-detailed food photography）；适配Instagram / Facebook广告投放系列风格（Instagram/Facebook ad campaign style）；紧扣健康早餐概念（healthy breakfast concept）；8K级超写实渲染（8k realistic render）。  \n\nPrompt : （巧克力蛋白什锦麦片广告）  \n高端蛋白早餐食品广告海报，画面中心为立式袋装产品，标签清晰印有“Chocolate Protein Muesli”；采用浓郁棕色调单色主题（rich brown monochrome theme）；周围环绕黑巧克力碎块、杏仁、燕麦、香蕉切片、牛奶壶、什锦麦片碗及散落原料；运用戏剧化暖调影棚灯光（dramatic warm studio lighting）；主标题采用醒目现代字体（bold modern headline typography），文字为“HIGH PROTEIN BREAKFAST FUEL”；手写风格标注箭头（handwritten annotation arrows）突出核心健康益处；品牌定位融合高端健身早餐理念（luxury fitness breakfast branding）；食材质感高度逼真（realistic textures）；构图为对称式俯拍平铺（symmetrical flat lay composition）；属高端商业食品摄影（high-end commercial food photography）；明暗对比强烈（strong contrast）；传递健康能量概念（healthy energy concept）；包装为洁净专业的Mockup设计（clean packaging mockup design）；8K级超写实广告级渲染（ultra-realistic 8k advertising render）；具备电影级食物造型表现力（cinematic food styling）。"
     },
     {
       "id": "food_photo_005",
@@ -730,7 +765,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/xc5_/status/2048310696686014935",
-      "source_author": "@xc5_"
+      "source_author": "@xc5_",
+      "prompt_zh": "提示词标题：外卖传单设计\n\n一张面向日本社区的中式餐厅外卖传单（3:4画幅比），专为投递至信箱而设计。整体呈现为双面印刷的B5尺寸（182mm × 257mm）实物效果。\n\n传单特征（严格遵循真实日本外卖传单的视觉语法与排版逻辑）：\n- 醒目、高对比度的红黄配色方案（red and yellow color scheme）；\n- 顶部大号文字：“支持外卖！{argument name=\"shop name\" default=\"Mona-Hanten\"}”（采用带阴影的哥特体字体 / shadowed Gothic font）；\n- 插图：一位{argument name=\"character\" default=\"身穿红色旗袍、棕色短发波波头的中国少女\"}，手捧拉面，气泡对话框中写着“欢迎光临！”（\"Welcome!\"）；\n- 菜单照片网格（4行×3列），展示以下菜品：多种口味拉面、炒饭、煎饺（gyoza）、糖醋里脊、辣子虾（shrimp in chili sauce）、麻婆豆腐（mapo tofu）、猪肝韭菜炒、天津饭（tenshinhan）、回锅肉（twice-cooked pork）、春卷（spring rolls）、杏仁豆腐（annin tofu）、以及炒饭套餐（fried rice sets）；\n- 每道菜品均配有清晰菜名与对应价格；\n- 一条大型黄色横幅标语：“所有菜单项目满¥1,000即享免费配送！”（\"Free delivery on all menu items over ¥1,000!\"）；\n- “电话订餐！☎ 072-XX-XXXX”字样以醒目的红色圆圈重点突出；\n- 营业时间：“11:00–22:00（每周二休业）”；\n- 配送范围示意图（简洁示意性地图 / simple schematic map）；\n- 优惠券区域（带虚线裁切线 / perforated line for clipping）：“凭本传单可免费获赠一盘煎饺！”（\"One free plate of gyoza with this flyer!\"）。\n\n纸张质感：廉价复印纸（cheap paper）印刷效果，包含真实折痕（fold marks）。整体精度极高，足以以假乱真，令人误以为是日本本地实际流通的真实外卖传单。"
     },
     {
       "id": "brand_001",
@@ -749,7 +785,8 @@
       "aspect_ratio": "1:2",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/Colin_Leeee/status/2044802802149650631",
-      "source_author": "@Colin_Leeee"
+      "source_author": "@Colin_Leeee",
+      "prompt_zh": "{\n  \"type\": \"18面板品牌识别与角色设计全案文档\",\n  \"brand\": {\n    \"name\": \"{argument name=\\\"brand name\\\" default=\\\"沐阳 MUYANG TEA\\\"}\",\n    \"industry\": \"{argument name=\\\"industry\\\" default=\\\"茶饮店（tea shop）\\\"}\",\n    \"colors\": [\"{argument name=\\\"primary color\\\" default=\\\"黄色（yellow）\\\"}\", \"{argument name=\\\"secondary color\\\" default=\\\"绿色（green）\\\"}\", \"白色（white）\", \"棕色（brown）\", \"深绿色（dark green）\"]\n  },\n  \"subject\": \"{argument name=\\\"character description\\\" default=\\\"3D渲染风格的可爱柴犬（Shiba Inu）吉祥物，身着绿色围裙\\\"}\",\n  \"layout\": {\n    \"grid\": \"3列 × 6行\",\n    \"sections\": [\n      {\n        \"title\": \"01 品牌DNA分析 / BRAND DNA ANALYSIS\",\n        \"elements\": [\"标志（logo）\", \"5种色卡（color swatches）\", \"6个图标（icons）\", \"目标受众图表（target audience charts）\"]\n      },\n      {\n        \"title\": \"02 概念构思 / CONCEPT MOODBOARD\",\n        \"elements\": [\"5张参考照片（photo references）\", \"4个情绪图标（mood icons）\", \"设计方程式（design equation）\"]\n      },\n      {\n        \"title\": \"03 形态研究 / FORM STUDY\",\n        \"elements\": [\"4个标志解剖图标（logo anatomy icons）\", \"4个演进步骤（evolution steps）\", \"4个剪影（silhouettes）\"]\n      },\n      {\n        \"title\": \"04 概念探索 / CONCEPT EXPLORATION\",\n        \"elements\": [\"12张线稿风格角色草图（line-art character sketches）\"]\n      },\n      {\n        \"title\": \"05 精细线稿 / REFINED LINE ART\",\n        \"elements\": [\"3行正面与侧面线稿，含比例参考线（proportion guides）\"]\n      },\n      {\n        \"title\": \"06 细节精修 / DETAIL REFINEMENT\",\n        \"elements\": [\"2张带标注的全身3D渲染图（full-body renders with labels）\", \"4个圆形特写视图（circular close-ups）\"]\n      },\n      {\n        \"title\": \"07 表情设定 / EXPRESSION SHEET\",\n        \"elements\": [\"11种3D渲染的头部表情（3D rendered head expressions）\"]\n      },\n      {\n        \"title\": \"08 姿势库 / POSE LIBRARY\",\n        \"elements\": [\"9个全身3D渲染姿势（full-body 3D rendered poses）\"]\n      },\n      {\n        \"title\": \"09 转身视图 / TURNAROUND VIEW\",\n        \"elements\": [\"5张全身3D渲染图（full-body 3D renders）\", \"5张对应线稿视图（matching line-art views）\"]\n      },\n      {\n        \"title\": \"10 色彩开发 / COLOR DEVELOPMENT\",\n        \"elements\": [\"5行×5色配色方案（5 rows of 5-color palettes）\", \"色彩心理学说明文字（color psychology text）\"]\n      },\n      {\n        \"title\": \"11 材质规格 / MATERIAL SPECIFICATION\",\n        \"elements\": [\"5种材质色卡（texture swatches）\", \"属性滑块（property sliders）\", \"4个生产工艺图标（manufacturing icons）\"]\n      },\n      {\n        \"title\": \"12 色彩应用 / COLOR APPLICATION\",\n        \"elements\": [\"4种配色变体渲染图（color variant renders）\", \"2张明/暗环境渲染图（light/dark renders）\", \"4个对比度评级圆环（contrast rating circles）\"]\n      },\n      {\n        \"title\": \"13 构造指南 / CONSTRUCTION GUIDE\",\n        \"elements\": [\"2张几何结构与网格线稿示意图（line-art diagrams for geometry and grid）\"]\n      },\n      {\n        \"title\": \"14 设计系统规则 / DESIGN SYSTEM RULES\",\n        \"elements\": [\"最小尺寸图标（minimum size icons）\", \"留白空间示意图（clear space diagram）\", \"4个使用场景示例（usage examples）\"]\n      },\n      {\n        \"title\": \"15 资产变体 / ASSET VARIANTS\",\n        \"elements\": [\"3种尺寸变体（size variants）\", \"3种线稿变体（line-art variants）\", \"3种简化扁平化头部造型（simplified flat heads）\"]\n      },\n      {\n        \"title\": \"16 数字应用 / DIGITAL APPLICATIONS\",\n        \"elements\": [\"1个App图标（app icon）\", \"2个社交平台头像（social avatars）\", \"UI界面元素（UI elements）\", \"3步循环动画（3-step animation cycle）\"]\n      },\n      {\n        \"title\": \"17 实物应用 / PHYSICAL APPLICATIONS\",\n        \"elements\": [\"毛绒玩具效果图（plush toy mockup）\", \"包装效果图（packaging mockup）\", \"周边商品效果图（merchandise mockup）\", \"门店门头效果图（storefront mockup）\"]\n      },\n      {\n        \"title\": \"18 最终主视觉 / FINAL RENDERING\",\n        \"elements\": [\"吉祥物手持茶杯的大幅高分辨率3D渲染图（large high-res 3D render of mascot holding tea）\", \"品牌标志（logo）\", \"文件格式清单（file format list）\"]\n      }\n    ]\n  }\n}"
     },
     {
       "id": "brand_002",
@@ -768,7 +805,8 @@
       "aspect_ratio": "3:4",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/chi_vc_/status/2046061073720369228",
-      "source_author": "@chi_vc_"
+      "source_author": "@chi_vc_",
+      "prompt_zh": "{\n  \"type\": \"品牌标识与周边商品设计展板\",\n  \"theme\": {\n    \"color_palette\": \"{argument name=\\\"theme color\\\" default=\\\"淡粉色\\\"} 和白色\",\n    \"motif\": \"{argument name=\\\"motif\\\" default=\\\"樱花\\\"} 与粉色爱心\"\n  },\n  \"character\": {\n    \"description\": \"动漫风格少女，棕色齐耳短发（bob hair），粉红色眼睛，身穿白色连帽衫（hoodie），面带温柔微笑\"\n  },\n  \"branding\": {\n    \"main_logo\": \"{argument name=\\\"character name\\\" default=\\\"癒音ちー\\\"}\",\n    \"sub_logo\": \"{argument name=\\\"character subtext\\\" default=\\\"ゆおんちー\\\"}\"\n  },\n  \"layout\": {\n    \"sections\": [\n      {\n        \"type\": \"页眉横幅（header banner）\",\n        \"position\": \"顶部\",\n        \"elements\": [\"大型主Logo\", \"副Logo\", \"樱花图形元素\", \"右侧角色肖像画\"]\n      },\n      {\n        \"type\": \"产品包装区\",\n        \"position\": \"中左部\",\n        \"elements\": [\"1个方形礼盒，盒面设心形透明视窗，内装粉色爱心糖果\", \"盒身印有角色插画\", \"2款独立糖果包装纸\", \"5颗散落的爱心糖果\"]\n      },\n      {\n        \"type\": \"宣传海报\",\n        \"position\": \"中右部\",\n        \"elements\": [\"角色肖像画\", \"心形糖果碗\", \"主Logo\", \"文字 '4.26 新店开业（NEW OPEN）'\", \"文字 '{argument name=\\\"social handle\\\" default=\\\"@yuonchii\\\"}'\"]\n      },\n      {\n        \"type\": \"网页横幅（horizontal web banner）\",\n        \"position\": \"下中部\",\n        \"elements\": [\"主Logo\", \"樱花元素\", \"右侧角色肖像画\"]\n      },\n      {\n        \"type\": \"社交媒体主页模拟图（social media profile mockup）\",\n        \"position\": \"底部左侧\",\n        \"elements\": [\"含Logo的封面图（header image）\", \"1张圆形头像（circular profile picture）\", \"账号名 '{argument name=\\\"social handle\\\" default=\\\"@yuonchii\\\"}'\", \"1个关注按钮（follow button）\", \"模拟简介文案（mock bio text）\"]\n      },\n      {\n        \"type\": \"周边商品系列展示（merchandise collection）\",\n        \"position\": \"底部右侧\",\n        \"count\": 9,\n        \"items\": [\"1件印有Logo的白色T恤\", \"1只印有角色图案的白色马克杯（mug）\", \"4枚圆形徽章（round pin badges）\", \"1个亚克力材质钥匙扣（acrylic keychain）\", \"2包糖果小袋（candy packets）\"]\n      }\n    ]\n  }\n}"
     },
     {
       "id": "brand_003",
@@ -787,7 +825,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/IndieDevHailey/status/2044974254769463312",
-      "source_author": "@IndieDevHailey"
+      "source_author": "@IndieDevHailey",
+      "prompt_zh": "{\n  \"type\": \"UI/UX 落地页（landing page）设计稿\",\n  \"theme\": \"暗色模式（dark mode）、简洁现代美学（sleek modern aesthetic）、玻璃拟态（glassmorphism）、{argument name=\\\"primary accent color\\\" default=\\\"霓虹紫与霓虹蓝\\\"} 发光强调色\",\n  \"header\": {\n    \"logo\": \"{argument name=\\\"brand name\\\" default=\\\"goViralX\\\"}\",\n    \"top_right_tag\": \"病毒式传播营销案例研究（VIRAL CAMPAIGN CASE STUDY）\"\n  },\n  \"layout\": {\n    \"sections\": [\n      {\n        \"name\": \"首屏区（Hero）\",\n        \"headline\": \"{argument name=\\\"hero headline\\\" default=\\\"我们如何打造超1000万次病毒式传播影响力\\\"}\",\n        \"subheadline\": \"3天引爆全网，助力品牌实现指数级增长\",\n        \"stats_row\": {\n          \"count\": 4,\n          \"labels\": [\"总播放量\", \"互动率\", \"转化咨询量\", \"执行周期\"],\n          \"values\": [\"{argument name=\\\"main statistic\\\" default=\\\"10,240,000+\\\"}\", \"18.7%\", \"3,200+\", \"72小时\"]\n        },\n        \"visual\": \"电影感镜头（cinematic shot）：一名穿着连帽衫的人正凝视多块发光的数字屏幕与数据图表，画面叠加大型播放按钮（play button）图层\"\n      },\n      {\n        \"name\": \"策略区（Strategy）\",\n        \"title\": \"我们的3天高效执行策略\",\n        \"layout_type\": \"垂直时间轴（vertical timeline）\",\n        \"steps_count\": 3,\n        \"elements_per_step\": [\"时间轴节点（timeline node）\", \"标题（title）\", \"要点列表（bullet points）\", \"带播放按钮的视频缩略图（video thumbnail with play button）\", \"描述文本框（description box）\"]\n      },\n      {\n        \"name\": \"效果区（Performance）\",\n        \"title\": \"数据驱动的效果表现\",\n        \"left_column\": {\n          \"stat_cards_count\": 4,\n          \"values\": [\"1000万+\", \"43%\", \"28,000+\", \"3,200+\"]\n        },\n        \"right_column\": {\n          \"charts_count\": 2,\n          \"chart_1\": \"折线图（line graph），展示7日内增长趋势，峰值出现在第3天\",\n          \"chart_2\": \"横向分段条形图（horizontal segmented bar chart），显示各平台流量分布（TikTok 占52%，Instagram 占24%，X 占15%，YouTube 占9%）\"\n        }\n      },\n      {\n        \"name\": \"成功关键区（Keys to Success）\",\n        \"title\": \"实现病毒式传播的三大关键\",\n        \"cards_count\": 3,\n        \"card_elements\": [\"发光图标（glowing icon）——火焰（fire）、靶心（target）、天线（antenna）\", \"标题（title）\", \"描述（description）\", \"‘查看详情’链接（VIEW DETAIL link）\"]\n      },\n      {\n        \"name\": \"社交背书区（Social Proof）\",\n        \"title\": \"深受创作者与品牌信赖（TRUSTED BY CREATORS & BRANDS）\",\n        \"left_column\": {\n          \"logos_count\": 8,\n          \"grid\": \"2×4 网格布局\",\n          \"brands\": [\"SHEIN\", \"SHOPLINE\", \"Blueglass\", \"instacart\", \"lemon8\", \"mi\", \"CIDER\", \"bellroy\"]\n        },\n        \"right_column\": {\n          \"testimonial_cards_count\": 2,\n          \"elements\": [\"用户引述（quote）\", \"作者头衔（author title）——如‘SaaS 创始人’、‘增长负责人（Growth Manager）’\"]\n        }\n      },\n      {\n        \"name\": \"行动号召区（Call to Action）\",\n        \"title\": \"准备好引爆你的品牌了吗？（READY TO GO VIRAL?）\",\n        \"interactive_elements\": [\"文本输入框（text input field）\", \"发光按钮（glowing button），按钮文字为：'{argument name=\\\"call to action text\\\" default=\\\"获取专属增长方案 ->\\\"}'\"],\n        \"visual\": \"紫色与蓝色火焰喷射的火箭升空3D渲染图（3D render of a rocket ship taking off with purple and blue flames）\"\n      }\n    ]\n  }\n}"
     },
     {
       "id": "livestream_001",
@@ -806,7 +845,8 @@
       "aspect_ratio": "9:16",
       "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
       "source_url": "https://x.com/sjbbxhz/status/2045684734714380687",
-      "source_author": "@sjbbxhz"
+      "source_author": "@sjbbxhz",
+      "prompt_zh": "{\n  \"type\": \"直播带货UI模拟\",\n  \"subject\": {\n    \"description\": \"人物肖像照，{argument name=\\\"host name\\\" default=\\\"Elon Musk\\\"}，面带微笑，身穿黑色T恤，T恤印有白色技术原理图（technical schematic graphic）\",\n    \"background\": \"画面左侧为屏幕，显示文字'{argument name=\\\"left background logo\\\" default=\\\"SPACEX\\\"}'；右侧为红色'{argument name=\\\"right background logo\\\" default=\\\"Tesla T logo\\\"}'标识及一辆深色汽车\"\n  },\n  \"ui_overlay\": {\n    \"top_header\": {\n      \"host_info\": \"主播头像、姓名'{argument name=\\\"host name\\\" default=\\\"Elon Musk\\\"}'、副标题'55.6万本场点赞'、红色'关注'按钮\",\n      \"rank_badge\": \"金色硬币图标（gold coin icon），配文'全站第1名'\",\n      \"viewer_stats\": \"3位高活跃观众头像，分别标注'12.3w'、'8.6w'、'5.7w'；总观看人数'68.7万'；右上角'X'关闭按钮\",\n      \"right_links\": \"'更多直播 >'、'礼物展馆 0/24'，其中'经典'标签为蓝色\"\n    },\n    \"mid_left_gifts\": {\n      \"count\": 2,\n      \"items\": [\n        \"用户头像'科技爱好者'，留言'送小心心'，爱心图标（heart icon）×1314\",\n        \"用户头像'星辰大海'，留言'送火箭'，火箭图标（rocket icon）×666\"\n      ]\n    },\n    \"bottom_left_chat\": {\n      \"system_message\": \"等级37徽章（level 37 badge），文字'宇宙漫游者 加入了直播间'\",\n      \"message_count\": 7,\n      \"messages\": [\n        \"小火箭: 马斯克!未来可期!🚀\",\n        \"future: 特斯拉Model 2什么时候出?\",\n        \"星空梦想家: SpaceX今年能上火星吗?\",\n        \"AI探索者: Neuralink进展如何?\",\n        \"帅气的网友: 马总好!\",\n        \"Mars: 第一次来你的直播,超激动!\",\n        \"用户123: 讲讲AI吧,会取代人类吗?\"\n      ]\n    },\n    \"bottom_right_product_card\": {\n      \"hot_tag\": \"橙色'热卖 x 1888'标签\",\n      \"image\": \"特斯拉Cybertruck\",\n      \"title\": \"{argument name=\\\"product name\\\" default=\\\"特斯拉Cybertruck 电动皮卡\\\"}\",\n      \"price\": \"{argument name=\\\"product price\\\" default=\\\"¥ 1,618,000\\\"}\",\n      \"button\": \"红色'抢'按钮\",\n      \"floating_animation\": \"半透明爱心图标（translucent hearts）沿右侧边缘向上浮动\"\n    },\n    \"bottom_bar\": {\n      \"input_field\": \"'说点什么...'\",\n      \"icons\": [\"笑脸图标（smiley face）\", \"三个圆点图标（three dots）\", \"购物车图标（shopping cart）\", \"礼盒图标（gift box）\", \"分享图标（share）\"]\n    }\n  }\n}"
     }
   ]
 }

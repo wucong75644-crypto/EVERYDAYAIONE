@@ -5,7 +5,7 @@
  */
 
 import { useState, useRef } from 'react';
-import { Search, LogOut, Boxes, Sparkles } from 'lucide-react';
+import { Search, LogOut, Home, Boxes, Sparkles } from 'lucide-react';
 import { m, LayoutGroup } from 'framer-motion';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useAuthModalStore } from '../../stores/useAuthModalStore';
@@ -13,7 +13,7 @@ import { useClickOutside } from '../../hooks/useClickOutside';
 import { useLogout } from '../../hooks/useLogout';
 import { SOFT_SPRING } from '../../utils/motion';
 
-export type HomeSection = 'models' | 'prompts';
+export type HomeSection = 'home' | 'models' | 'prompts';
 
 interface NavBarProps {
   searchQuery: string;
@@ -23,6 +23,7 @@ interface NavBarProps {
 }
 
 const SECTIONS: { id: HomeSection; label: string; icon: React.ElementType }[] = [
+  { id: 'home', label: '首页', icon: Home },
   { id: 'models', label: '模型广场', icon: Boxes },
   { id: 'prompts', label: 'AI 提示词', icon: Sparkles },
 ];
@@ -80,16 +81,18 @@ export default function NavBar({ searchQuery, onSearchChange, activeSection, onS
               </div>
             </LayoutGroup>
 
-            <div className="relative max-w-xs hidden sm:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-disabled" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder={activeSection === 'models' ? '搜索模型...' : '搜索提示词...'}
-                className="w-full pl-10 pr-4 py-2 rounded-xl border border-border-default text-text-primary bg-surface-card focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus-ring text-sm"
-              />
-            </div>
+            {activeSection !== 'home' && (
+              <div className="relative max-w-xs hidden sm:block">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-disabled" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  placeholder={activeSection === 'models' ? '搜索模型...' : '搜索提示词...'}
+                  className="w-full pl-10 pr-4 py-2 rounded-xl border border-border-default text-text-primary bg-surface-card focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus-ring text-sm"
+                />
+              </div>
+            )}
           </div>
 
           {/* 右侧操作区 */}
@@ -139,16 +142,18 @@ export default function NavBar({ searchQuery, onSearchChange, activeSection, onS
         </div>
 
         {/* 移动端搜索框 */}
-        <div className="pb-3 sm:hidden relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-disabled" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={activeSection === 'models' ? '搜索模型...' : '搜索提示词...'}
-            className="w-full pl-10 pr-4 py-2 rounded-xl border border-border-default text-text-primary bg-surface-card focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus-ring text-sm"
-          />
-        </div>
+        {activeSection !== 'home' && (
+          <div className="pb-3 sm:hidden relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-disabled" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder={activeSection === 'models' ? '搜索模型...' : '搜索提示词...'}
+              className="w-full pl-10 pr-4 py-2 rounded-xl border border-border-default text-text-primary bg-surface-card focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus-ring text-sm"
+            />
+          </div>
+        )}
       </div>
     </nav>
   );

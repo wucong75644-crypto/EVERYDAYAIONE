@@ -42,8 +42,8 @@ export default function Home() {
     isSubscribing,
   } = useSubscriptionStore();
 
-  // 顶级 section 切换
-  const [activeSection, setActiveSection] = useState<HomeSection>('models');
+  // 顶级 section 切换（默认首页）
+  const [activeSection, setActiveSection] = useState<HomeSection>('home');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<TabValue>('all');
@@ -205,11 +205,16 @@ export default function Home() {
         onSectionChange={handleSectionChange}
       />
 
-      <HeroSection
-        totalModels={DISPLAY_MODELS.length}
-        isAuthenticated={isAuthenticated}
-        onStartChat={openLogin}
-      />
+      {/* === 首页：只有品牌区 === */}
+      {activeSection === 'home' && (
+        <div className="flex-1">
+          <HeroSection
+            totalModels={DISPLAY_MODELS.length}
+            isAuthenticated={isAuthenticated}
+            onStartChat={openLogin}
+          />
+        </div>
+      )}
 
       {/* === 模型广场 === */}
       {activeSection === 'models' && (
