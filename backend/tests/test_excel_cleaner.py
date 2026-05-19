@@ -180,15 +180,25 @@ class TestDetectStructure:
 
 
 class TestMergeFill:
-    def test_merge_not_auto_filled(self, merged_xlsx):
-        """合并单元格不再自动 ffill——由 AI 在 code_execute 中按需处理。"""
+    def test_merge_filled_with_structure(self, merged_xlsx):
+        """传入 structure 时，合并单元格按 merge range 精确填充。"""
+        from services.agent.excel_cleaner import _detect_structure
         df = pd.read_excel(merged_xlsx, engine="calamine")
-        assert pd.isna(df.iloc[1, 0])  # 合并后为 NaN
+        assert pd.isna(df.iloc[1, 0])  # 合并后原始为 NaN
 
-        df_clean, report = clean_excel(df, merged_xlsx, 0)
+        structure = _detect_structure(merged_xlsx, 0)
+        df_clean, report = clean_excel(df, merged_xlsx, 0, structure=structure)
         assert df_clean.iloc[0, 0] == "ORD001"
-        assert pd.isna(df_clean.iloc[1, 0])  # 不再自动填充
-        assert pd.isna(df_clean.iloc[2, 0])
+        # 合并区域内的空值已被填充
+        if structure and structure.merged_ranges:
+            assert report.merged_cols_filled > 0
+
+    def test_no_fill_without_structure(self, merged_xlsx):
+        """不传 structure 时，不做 merge fill（向后兼容）。"""
+        df = pd.read_excel(merged_xlsx, engine="calamine")
+        df_clean, report = clean_excel(df, merged_xlsx, 0)
+        assert pd.isna(df_clean.iloc[1, 0])  # 无 structure，不填充
+        assert report.merged_cols_filled == 0
 
     def test_other_cols_untouched(self, merged_xlsx):
         df = pd.read_excel(merged_xlsx, engine="calamine")
@@ -244,16 +254,16 @@ class TestEmptyRowsCols:
         assert any(i["type"] == "empty_cols" for i in report.issues)
         os.unlink(p)
 
-    def test_empty_rows_preserved_and_annotated(self):
-        """空行不再删除，只在 issues 里标注。"""
+    def test_empty_rows_deleted(self):
+        """全空行被删除（含中间空行）。"""
         df = pd.DataFrame({"a": [1, None, 3], "b": [4, None, 6]})
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             p = f.name
         df.to_excel(p, index=False)
         df_clean, report = clean_excel(df.copy(), p, 0)
-        assert len(df_clean) == 3  # 不再删除
-        assert report.empty_rows_removed == 0
-        assert any(i["type"] == "empty_rows" for i in report.issues)
+        assert len(df_clean) == 2  # 空行已删除
+        assert report.empty_rows_removed == 1
+        assert any(i["type"] == "empty_rows_removed" for i in report.issues)
         os.unlink(p)
 
 
@@ -330,7 +340,7 @@ class TestCleaningReport:
             final_shape=(100, 12),
         )
         text = report.to_llm_text()
-        assert "合并单元格已填充（3列）" in text
+        assert "合并单元格精确填充（3个）" in text
         assert "标记隐藏行（5行）" in text
         assert "_is_hidden = false" in text
         assert "自动筛选" in text
@@ -378,9 +388,14 @@ class TestMixedScenario:
         wb.close()
 
         df = pd.read_excel(str(p), engine="calamine")
-        df_clean, report = clean_excel(df, str(p), 0)
+        from services.agent.excel_cleaner import _detect_structure
+        structure = _detect_structure(str(p), 0)
+        df_clean, report = clean_excel(df, str(p), 0, structure=structure)
 
-        assert pd.isna(df_clean.iloc[1, 0])  # 不再自动 ffill
+        # 合并区域 A2:A3 → A3 应被填充为"水果"
+        if structure and structure.merged_ranges:
+            assert df_clean.iloc[1, 0] == "水果"
+            assert report.merged_cols_filled > 0
         assert "_is_summary" not in df_clean.columns
 
     def test_no_cleaning_needed(self, simple_xlsx):
