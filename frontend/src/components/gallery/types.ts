@@ -16,6 +16,7 @@ export interface PromptItem {
   description: string;
   tags: string[];
   prompt: string;
+  prompt_zh?: string;
   preview_url: string;
   aspect_ratio: string;
   source: string;
