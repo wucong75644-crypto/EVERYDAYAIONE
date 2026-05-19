@@ -79,7 +79,7 @@ class ChatContextMixin:
                 return f"{size / 1024:.1f} KB"
             return f"{size / (1024 * 1024):.1f} MB"
 
-        lines: list[str] = ["用户附加了以下文件："]
+        lines: list[str] = ["用户当前消息附加的文件："]
         for f in workspace_files:
             wp = f.get("workspace_path", "")
             size_str = _fmt_size(f.get("size"))
