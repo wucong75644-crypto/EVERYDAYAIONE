@@ -64,6 +64,45 @@ class ChatContextMixin:
         return filtered
 
     @staticmethod
+    def _format_attachments(workspace_files: List[Dict[str, Any]]) -> str:
+        """把附件信息结构化追加到用户消息文本里。
+
+        LLM 在用户消息中直接看到：有什么文件、多大、什么类型。
+        """
+        if not workspace_files:
+            return ""
+
+        def _fmt_size(size) -> str:
+            if not size:
+                return ""
+            size = int(size)
+            if size < 1024:
+                return f"{size}B"
+            elif size < 1024 * 1024:
+                return f"{size / 1024:.1f}KB"
+            return f"{size / (1024 * 1024):.1f}MB"
+
+        _DATA_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
+        _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+
+        lines = ["\n\n[附件]"]
+        for f in workspace_files:
+            name = f.get("name", f.get("workspace_path", ""))
+            size_str = _fmt_size(f.get("size"))
+            ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+            if ext in _DATA_EXTS:
+                lines.append(f"  {name} ({size_str}) — 数据文件")
+            elif ext in _IMG_EXTS:
+                lines.append(f"  {name} ({size_str}) — 图片")
+            elif ext == ".pdf":
+                lines.append(f"  {name} ({size_str}) — PDF文档")
+            elif ext in {".docx", ".doc"}:
+                lines.append(f"  {name} ({size_str}) — Word文档")
+            else:
+                lines.append(f"  {name} ({size_str})")
+        return "\n".join(lines)
+
+    @staticmethod
     def _build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
         """生成工作区文件提示——告知文件名，引导数据文件用 file_analyze。"""
         if not workspace_files:
@@ -258,14 +297,21 @@ class ChatContextMixin:
             messages.append({"role": "system", "content": f"用户相关记忆：\n{_l1_memory_prepend}"})
 
         # Layer 7: 用户消息（始终最后）
-        user_msg: Dict[str, Any] = {"role": "user", "content": text_content}
+        # 把附件信息结构化追加到用户文本里，LLM 直接在用户消息中看到文件
+        _user_text = text_content
+        if workspace_files:
+            _user_text += self._format_attachments(workspace_files)
+        if image_urls:
+            _user_text += f"\n\n[图片] 已注入视觉理解（{len(image_urls)}张）"
+
+        user_msg: Dict[str, Any] = {"role": "user", "content": _user_text}
         if image_urls or file_urls:
             media_parts = [
                 *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
                 *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],
             ]
             user_msg["content"] = [
-                {"type": "text", "text": text_content},
+                {"type": "text", "text": _user_text},
                 *media_parts,
             ]
         messages.append(user_msg)
