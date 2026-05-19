@@ -296,9 +296,9 @@ def _build_all_sheets_preview(
             preview_merges = merges[:20]
             lines.append(f"  合并区域({len(merges)}个): {', '.join(preview_merges)}")
             if len(merges) > 20:
-                lines.append(f"    ... 共{len(merges)}个合并区域，数据中有空值需要 ffill 填充")
+                lines.append(f"    ... 共{len(merges)}个合并区域，已在转换时自动精确填充")
             else:
-                lines.append(f"    注意: 合并区域在 Parquet 中为空值，计算前需 ffill 填充")
+                lines.append(f"    注意: 合并区域已在转换时自动精确填充，数据可直接查询")
 
         # 只读前 preview_rows 行（不全量遍历）
         row_idx = 0
