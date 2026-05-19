@@ -207,8 +207,8 @@ MUST NOT 在确认前调用任何执行类工具。
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
 get_file('文件名') 是预定义函数，所有文件引用都用它获取绝对路径（自动纠错）。
-示例：path = get_file('销售报表.xlsx'); duckdb.sql(f"SELECT * FROM read_parquet('{path}')")
-示例：df = pd.read_excel(get_file('产品表.xlsx'))
+数据文件已由 file_analyze 转为 Parquet，必须用 duckdb 读取，禁止 pd.read_excel。
+示例：path = get_file('销售报表.xlsx'); df = duckdb.sql(f"SELECT * FROM read_parquet('{path}')").df()
 OUTPUT_DIR 存输出文件（自动上传）。列名用双引号包裹。
 图表用 ECharts JSON（.echart.json），不要用 matplotlib。
 print() 输出摘要统计，不要输出完整数据。
