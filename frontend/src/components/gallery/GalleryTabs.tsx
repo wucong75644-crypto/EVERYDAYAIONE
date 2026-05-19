@@ -12,6 +12,7 @@ import {
   UtensilsCrossed,
   Palette,
   Video,
+  Wand2,
 } from 'lucide-react';
 import { SOFT_SPRING } from '../../utils/motion';
 import type { PromptCategory } from './types';
@@ -23,6 +24,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   utensils: UtensilsCrossed,
   palette: Palette,
   video: Video,
+  wand: Wand2,
 };
 
 interface GalleryTabsProps {
