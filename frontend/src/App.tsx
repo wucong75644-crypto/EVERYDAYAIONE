@@ -23,7 +23,7 @@ const Chat = lazy(() => import('./pages/Chat'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const WecomCallback = lazy(() => import('./pages/WecomCallback'));
 const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
-const PromptGallery = lazy(() => import('./pages/PromptGallery'));
+// PromptGallery 已内嵌到首页，保留路由做重定向
 
 /**
  * 路由动画包装器
@@ -52,7 +52,7 @@ function AnimatedRoutes() {
         <Routes location={location} key={routeKey}>
           <Route path="/" element={<Home />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/prompt-gallery" element={<PromptGallery />} />
+          <Route path="/prompt-gallery" element={<Navigate to="/" replace />} />
           <Route path="/auth/wecom/callback" element={<WecomCallback />} />
           {/* 受保护的路由：需要登录才能访问 */}
           <Route
