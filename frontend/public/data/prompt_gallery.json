@@ -51,7 +51,7 @@
       "name": "图生图/编辑",
       "name_en": "Image Editing",
       "icon": "wand",
-      "count": 15
+      "count": 20
     }
   ],
   "prompts": [
@@ -857,303 +857,403 @@
     },
     {
       "id": "img2img_001",
-      "title": "产品图白底抠图",
-      "title_en": "Product Photo Clean Background Extraction",
+      "title": "纯白底电商主图",
+      "title_en": "Pure White Marketplace Packshot",
       "category": "img2img",
-      "description": "将产品从杂乱背景中提取出来，放到纯白背景上，保留产品几何形状和标签清晰度",
+      "description": "将产品放到纯白背景上，保留产品细节和品牌标签，适合淘宝/亚马逊主图",
       "tags": [
-        "抠图",
         "白底",
-        "产品图",
-        "电商"
+        "电商主图",
+        "抠图",
+        "通用"
       ],
-      "prompt": "Extract the product from the input image and place it on a plain white opaque background. Output: centered product, crisp silhouette, no halos or fringing. Preserve product geometry, label text, and label colors exactly. Add only light polishing and a subtle realistic contact shadow beneath the product. Do not restyle, recolor, or modify the product in any way; only remove the original background and lightly polish.",
-      "preview_url": "",
+      "prompt": "Place the [product] centered on a pure white background, keep the exact shape, proportions, branding, label text, and material finish, use soft studio lighting, realistic shadow directly under the product, e-commerce packshot style, no props, no extra objects.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于纯白色背景中央，保持其精确的形状、比例、品牌标识、标签文字及材质表面效果；采用柔和的影棚灯光（soft studio lighting）；在产品正下方投射真实感阴影（realistic shadow）；呈现电商主图（e-commerce packshot）风格；不添加任何道具或额外物体。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_002",
+      "title": "浅灰棚拍高级感",
+      "title_en": "Soft Gray Studio Hero Shot",
+      "category": "img2img",
+      "description": "浅灰色无缝背景+柔和灯光，比纯白底更有质感，适合品牌官网和DTC独立站",
+      "tags": [
+        "灰底",
+        "高级感",
+        "棚拍",
+        "品牌官网"
+      ],
+      "prompt": "Place the [product] in a clean studio setup with a light gray seamless background, soft diffused lighting, subtle natural shadow, product fully visible, sharp edges, realistic reflections if the material is glossy, premium e-commerce photography.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于干净的影棚布景中，背景为浅灰色无缝纸（light gray seamless background），采用柔和漫射光（soft diffused lighting），呈现微妙的自然阴影（subtle natural shadow），产品完全可见，边缘锐利（sharp edges），若材质为亮面，则呈现真实反射（realistic reflections），高端电商摄影（premium e-commerce photography）。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_003",
+      "title": "悬浮产品图",
+      "title_en": "Floating Cutout with Clean Shadow",
+      "category": "img2img",
+      "description": "产品悬浮效果+底部柔和阴影，适合落地页Banner和商品卡片",
+      "tags": [
+        "悬浮",
+        "阴影",
+        "Banner",
+        "卡片"
+      ],
+      "prompt": "Turn the [product] into a floating studio product image on a clean neutral background, preserve exact product geometry, add a soft shadow below to ground it, keep all visible details realistic and accurate.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]转化为干净中性背景上的悬浮式影棚产品图（floating studio product image），精确保留产品的几何结构，底部添加柔和阴影以增强真实感（ground it），确保所有可见细节均真实且准确。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_004",
+      "title": "俯拍平铺图",
+      "title_en": "Top-Down Flat Lay",
+      "category": "img2img",
+      "description": "俯拍平铺构图，均匀灯光+真实材质质感，适合包装、文具、美妆类产品",
+      "tags": [
+        "俯拍",
+        "平铺",
+        "美妆",
+        "包装"
+      ],
+      "prompt": "Create a top-down flat lay of the [product] on a clean studio surface, balanced composition, soft even lighting, realistic material texture, minimal shadow, commercial product photography style.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "俯拍平铺图：在干净的影棚台面（studio surface）上拍摄[product]的俯视平铺构图（top-down flat lay），构图均衡（balanced composition），光线柔和均匀（soft even lighting），材质纹理真实（realistic material texture），阴影极简（minimal shadow），商业产品摄影风格（commercial product photography style）。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_005",
+      "title": "产品自然场景图",
+      "title_en": "Natural Habitat Scene",
+      "category": "img2img",
+      "description": "将产品放到真实使用场景中，保留产品外观不变，适合需要展示使用场景的品类",
+      "tags": [
+        "场景图",
+        "生活方式",
+        "自然",
+        "通用"
+      ],
+      "prompt": "Place the [product] in its natural real-life environment, styled realistically, keep the exact product design, branding, and proportions, use believable lighting and shadows, make the scene look like authentic commercial photography.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于其自然的真实生活环境中，采用写实风格呈现，严格保留产品的原始设计、品牌标识和比例关系，使用可信的光线与阴影效果，使整个场景呈现真实商业摄影（commercial photography）质感。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_006",
+      "title": "极简室内场景",
+      "title_en": "Minimal Interior Scene",
+      "category": "img2img",
+      "description": "现代极简室内场景+自然光，产品作为视觉焦点，适合家居/香薰/小家电",
+      "tags": [
+        "室内",
+        "极简",
+        "家居",
+        "日光"
+      ],
+      "prompt": "Place the [product] in a modern minimal interior, clean composition, neutral styling, realistic daylight, the product remains the hero, no clutter, editorial e-commerce photography.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于现代极简主义室内空间中，构图简洁，中性风格，真实日光照明，产品始终作为视觉焦点，无任何杂乱元素，适用于杂志级电商摄影（editorial e-commerce photography）。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_007",
+      "title": "户外生活方式图",
+      "title_en": "Outdoor Lifestyle Scene",
+      "category": "img2img",
+      "description": "户外自然光场景，适合运动/户外/旅行类产品的场景化展示",
+      "tags": [
+        "户外",
+        "生活方式",
+        "自然光",
+        "运动"
+      ],
+      "prompt": "Place the [product] in an outdoor setting that matches its use, natural light, realistic environment, accurate texture and color, product clearly visible, premium lifestyle product photography.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于与其用途相匹配的户外场景中，自然光（natural light），真实环境（realistic environment），纹理（texture）与色彩（color）准确还原，产品清晰可见，高端生活方式产品摄影（premium lifestyle product photography）。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_008",
+      "title": "桌面办公场景",
+      "title_en": "Desktop Context Scene",
+      "category": "img2img",
+      "description": "产品放在现代办公桌上+窗户柔光，适合数码配件/文具/办公用品",
+      "tags": [
+        "桌面",
+        "办公",
+        "数码",
+        "文具"
+      ],
+      "prompt": "Place the [product] in a realistic desk setup with complementary objects, clean arrangement, soft window light, keep the product as the focal point, modern commercial photography.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于真实的桌面办公场景中，搭配协调的办公物品，布局整洁，采用柔和的窗光照明，确保产品为视觉焦点，现代商业摄影（modern commercial photography）。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_009",
+      "title": "大理石高端展台",
+      "title_en": "Marble Surface Premium Display",
+      "category": "img2img",
+      "description": "白色大理石台面+暖色灯光+微妙倒影，适合美妆/香水/护肤品的高级感展示",
+      "tags": [
+        "大理石",
+        "高级感",
+        "美妆",
+        "展台"
+      ],
+      "prompt": "Replace the background with a polished white marble surface with subtle gray veining. Add soft warm studio lighting from the upper left, creating gentle highlights on the marble and a soft luminous glow behind the product. Keep the product itself completely unchanged — preserve its exact shape, colors, label, proportions, and material texture. Add a subtle realistic reflection on the marble surface beneath the product. The overall mood should feel luxurious, clean, and premium, like a high-end beauty campaign.",
       "aspect_ratio": "1:1",
       "source": "OpenAI Cookbook",
       "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
       "source_author": "@OpenAI",
-      "prompt_zh": "从输入图像中抠出产品，并将其置于纯白色不透明背景上。输出要求：产品居中放置，轮廓清晰锐利，无光晕（halos）或边缘色边（fringing）。精确保留产品的几何形状、标签文字及标签颜色。仅添加轻微的润饰（light polishing），并在产品下方添加细微且符合物理规律的真实接触阴影（subtle realistic contact shadow）。不得对产品进行任何风格化（restyle）、重着色（recolor）或任何形式的修改；仅移除原始背景并做轻微润饰。"
+      "prompt_zh": "将背景替换为抛光白色大理石表面，带有细腻的灰色纹理（veining）。从左上方添加柔和暖调影棚灯光（studio lighting），在大理石表面形成轻柔高光，并在[product]后方营造出柔和的发光效果（luminous glow）。[product]本体须完全保持不变——精确保留其形状、颜色、标签、比例及材质纹理。在[product]下方的大理石表面添加细微且逼真的反射（reflection）。整体氛围应呈现奢华、洁净与高端感，类似高端美妆品牌广告（high-end beauty campaign）。",
+      "preview_url": ""
     },
     {
-      "id": "img2img_002",
-      "title": "产品图场景化 — 大自然背景",
-      "title_en": "Product Scene — Nature Background",
+      "id": "img2img_010",
+      "title": "手持使用展示",
+      "title_en": "Hands-in-Frame Usage Shot",
       "category": "img2img",
-      "description": "保留产品不变，将背景替换为自然户外场景，适合食品/饮料/护肤品的场景图",
+      "description": "只露手不露脸的产品使用图，展示真实使用效果，省去模特拍摄成本",
       "tags": [
-        "换背景",
-        "场景图",
-        "自然",
-        "户外"
+        "手持",
+        "使用",
+        "信任感",
+        "省模特"
       ],
-      "prompt": "Replace the background with a soft out-of-focus garden scene with warm afternoon light, dappled sunlight filtering through green leaves. Keep the product, its exact position, size, geometry, label, and lighting on the product completely unchanged. Add a natural subtle shadow beneath the product consistent with the new lighting direction. Do not modify, recolor, or restyle the product itself.",
-      "preview_url": "",
+      "prompt": "Show the [product] being used by hands only, no full person visible, realistic interaction, clean composition, natural lighting, keep the product details accurate and in focus.",
       "aspect_ratio": "1:1",
-      "source": "Atlas Cloud Blog",
-      "source_url": "https://www.atlascloud.ai/blog/guides/gpt-image-2-prompts-guide",
-      "source_author": "@AtlasCloud",
-      "prompt_zh": "将背景替换为柔和虚化的花园场景，呈现温暖的午后光线，斑驳的阳光透过翠绿叶片洒落。产品本身（包括其精确位置、尺寸、几何形态、标签及产品表面的光照效果）须完全保持不变。在产品下方添加一道自然且微妙的阴影，确保其方向与新背景光源方向一致。不得对产品本身进行任何修改、重新着色或风格化处理。"
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "手持使用展示：仅显示双手操作[product]，不可出现完整人物，呈现真实互动场景，构图简洁，采用自然光照，确保[product]的细节准确且焦点清晰。",
+      "preview_url": ""
     },
     {
-      "id": "img2img_003",
-      "title": "产品图场景化 — 大理石台面",
-      "title_en": "Product Scene — Marble Surface",
+      "id": "img2img_011",
+      "title": "模特自然使用图",
+      "title_en": "Model Using Product Naturally",
       "category": "img2img",
-      "description": "将产品放到高端大理石台面上，搭配暖色灯光，适合美妆/香水/护肤品的高级感展示",
+      "description": "模特在真实场景中自然使用产品，产品清晰可见，适合配件/包包/耳机等",
       "tags": [
-        "换背景",
-        "大理石",
-        "高级感",
-        "美妆"
+        "模特",
+        "使用场景",
+        "生活方式",
+        "自然"
       ],
-      "prompt": "Replace the background with a polished white marble surface with subtle gray veining. Add soft warm studio lighting from the upper left, creating gentle highlights on the marble and a soft luminous glow behind the product. Keep the product itself completely unchanged — preserve its exact shape, colors, label, proportions, and material texture. Add a subtle realistic reflection on the marble surface beneath the product. The overall mood should feel luxurious, clean, and premium, like a high-end beauty campaign.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "Community Best Practice",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "将背景替换为抛光白色大理石台面，表面带有细腻的灰色纹理（veining）。从左上方添加柔和暖调影棚灯光（studio lighting），在大理石表面形成轻柔高光，并在产品后方营造出柔和的发光效果（luminous glow）。产品本体须完全保持不变——精确保留其原始形状、颜色、标签、比例及材质纹理。在产品正下方的大理石表面添加微妙而逼真的反射（reflection）。整体氛围应呈现奢华感、洁净感与高端质感，类似高端美妆品牌广告（high-end beauty campaign）。"
+      "prompt": "Show a model naturally using the [product] in a realistic setting, keep the product fully accurate in shape, size, and branding, product clearly visible, natural pose, commercial lifestyle photography.",
+      "aspect_ratio": "3:4",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "展示一位模特在真实场景中自然使用[product]，产品在形状、尺寸和品牌标识上完全准确，产品清晰可见，姿态自然，商业生活方式摄影（commercial lifestyle photography）。",
+      "preview_url": ""
     },
     {
-      "id": "img2img_004",
-      "title": "产品图场景化 — 节日氛围",
-      "title_en": "Product Scene — Holiday Atmosphere",
+      "id": "img2img_012",
+      "title": "多角度组合图",
+      "title_en": "Multiple Angle Composition",
       "category": "img2img",
-      "description": "给产品图添加节日氛围背景（春节/圣诞/年货节等），适合大促营销图",
+      "description": "一张图展示产品正面、侧面、斜面三个角度，减少用户对外观的不确定感",
       "tags": [
-        "换背景",
-        "节日",
-        "大促",
+        "多角度",
+        "组合图",
+        "详情页",
+        "展示"
+      ],
+      "prompt": "Create a clean product composition showing the [product] from front, side, and slightly angled views in one frame, consistent lighting, neutral background, preserve exact color and shape, catalog-ready.",
+      "aspect_ratio": "16:9",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "多角度组合图：创建一幅简洁的产品构图，于同一画幅内呈现[product]的正面、侧面及轻微倾斜角度视图，光照一致，背景为中性色，精确还原产品原色与原形，达到商品目录（catalog）级成片标准。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_013",
+      "title": "材质细节特写",
+      "title_en": "Material Texture Close-Up",
+      "category": "img2img",
+      "description": "微距特写产品材质纹理、缝线、表面工艺，传递品质感",
+      "tags": [
+        "特写",
+        "材质",
+        "纹理",
+        "品质"
+      ],
+      "prompt": "Create a close-up detail image of the [product] focused on material texture, stitching, finish, or surface quality, realistic macro-style lighting, sharp detail, premium product photography.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "材质细节特写：创建一张[product]的近距离细节图像，重点呈现材质纹理（material texture）、缝线（stitching）、表面处理（finish）或表面品质（surface quality），采用逼真的微距风格布光（macro-style lighting），画面锐利清晰，符合高端产品摄影（premium product photography）标准。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_014",
+      "title": "春季清新场景",
+      "title_en": "Spring Refresh Scene",
+      "category": "img2img",
+      "description": "清新春季主题场景+柔和自然光+花卉点缀，适合春季上新和换季营销",
+      "tags": [
+        "春季",
+        "清新",
+        "上新",
         "营销"
       ],
-      "prompt": "Replace the background with a festive holiday celebration scene. Add warm red and gold bokeh lights in the background, scattered gold confetti particles in the air, and subtle gift boxes or decorative ribbons at the edges. Maintain soft warm lighting that complements the festive mood. Keep the product itself completely unchanged — preserve its exact shape, colors, label, and material. Add a subtle warm color cast to the shadows to match the festive lighting. The composition should feel joyful, premium, and celebration-ready for a shopping festival campaign.",
-      "preview_url": "",
+      "prompt": "Place the [product] in a fresh spring-themed scene, light airy styling, soft natural light, clean composition, subtle seasonal details like fresh flowers and green leaves, keep the product shape, branding, and details exact.",
       "aspect_ratio": "1:1",
-      "source": "Community Best Practice",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "将背景替换为节日庆典场景。在背景中添加温暖的红色与金色散景光斑（bokeh lights），空中散布金色彩纸颗粒（confetti particles），画面边缘点缀微妙的礼品盒或装饰丝带。保持柔和的暖色调照明，以契合节日氛围。产品本体须完全保持不变——精确保留其形状、颜色、标签及材质。在阴影区域添加轻微的暖色调色偏（warm color cast），以匹配节日灯光效果。整体构图应传递出欢乐、高端且即刻可投入购物节营销活动的庆典感。"
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于清新春季主题场景中，采用轻盈通透的布景风格，柔和自然光线，构图简洁干净，融入细微的季节性元素（如新鲜花卉与绿叶），严格保持产品外形、品牌标识及所有细节的准确性。",
+      "preview_url": ""
     },
     {
-      "id": "img2img_005",
-      "title": "产品换色 — 生成色彩变体",
-      "title_en": "Product Color Variant Generation",
+      "id": "img2img_015",
+      "title": "夏日活力场景",
+      "title_en": "Summer Campaign Scene",
       "category": "img2img",
-      "description": "保留产品造型不变，只改变产品颜色，用于生成同款不同色的SKU主图",
+      "description": "明亮夏日场景+温暖自然光+活力氛围，适合夏季大促和清凉品类",
+      "tags": [
+        "夏日",
+        "活力",
+        "大促",
+        "清凉"
+      ],
+      "prompt": "Place the [product] in a bright summer setting, warm natural light, fresh energetic atmosphere, clean composition, realistic shadows, keep the product shape, branding, and details exact.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于明亮的夏日场景中，温暖的自然光线，清新充满活力的氛围，简洁干净的构图，真实的阴影效果，精确保留产品的外形、品牌标识及所有细节。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_016",
+      "title": "冬季雪景场景",
+      "title_en": "Snowy Winter Scene",
+      "category": "img2img",
+      "description": "洁白雪景+明亮冬日光线+清新氛围，适合冬季和圣诞/年货节营销",
+      "tags": [
+        "冬季",
+        "雪景",
+        "圣诞",
+        "年货节"
+      ],
+      "prompt": "Place the [product] in a crisp snowy setting, bright winter light, clean composition, fresh seasonal mood, realistic reflections and shadows, keep the product shape, branding, and details exact.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于清冽的雪景环境中，明亮的冬季光线，简洁的构图，清新的季节氛围，真实的反射（reflection）与阴影（shadow），精确保留产品的外形、品牌标识（branding）及所有细节。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_017",
+      "title": "黑五/大促氛围图",
+      "title_en": "Black Friday / Sale Campaign",
+      "category": "img2img",
+      "description": "高对比度大促营销风格，强视觉冲击力，适合双11/黑五/618等大促活动",
+      "tags": [
+        "大促",
+        "双11",
+        "黑五",
+        "高对比"
+      ],
+      "prompt": "Place the [product] in a bold Black Friday themed campaign scene, strong commercial composition, high-contrast lighting, modern promotional feel, keep the product shape, branding, and details exact.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于大胆的黑色星期五（Black Friday）主题营销场景中，构图具有强烈的商业感，高对比度灯光，呈现现代促销氛围，精确保留产品的外形、品牌标识及所有细节。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_018",
+      "title": "节日送礼场景",
+      "title_en": "Holiday Gifting Season",
+      "category": "img2img",
+      "description": "节日送礼氛围+精致包装+温馨灯光，适合圣诞/情人节/母亲节等送礼营销",
+      "tags": [
+        "节日",
+        "送礼",
+        "温馨",
+        "包装"
+      ],
+      "prompt": "Place the [product] in a festive gifting season scene, elegant celebratory styling, clean composition, realistic lighting, premium seasonal atmosphere, keep the product shape, branding, and details exact.",
+      "aspect_ratio": "1:1",
+      "source": "LetsEnhance Blog",
+      "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
+      "source_author": "@LetsEnhance",
+      "prompt_zh": "将[product]置于节日送礼季场景中，优雅庆典风格，构图简洁，真实光照效果，高端季节性氛围，精确保留产品外形、品牌标识及所有细节。",
+      "preview_url": ""
+    },
+    {
+      "id": "img2img_019",
+      "title": "产品换色变体",
+      "title_en": "Product Color Variant",
+      "category": "img2img",
+      "description": "只改产品颜色，其他全部保持不变，用于生成同款不同色的SKU图",
       "tags": [
         "换色",
         "SKU",
         "变体",
-        "产品图"
+        "同款"
       ],
       "prompt": "Change the product color to {argument name=\"target color\" default=\"deep forest green\"} while preserving every other aspect of the image exactly: the product shape, geometry, proportions, label text, label placement, material texture, lighting, shadows, reflections, background, and camera angle. The color change should look natural and photorealistic, with proper material response to light — matte surfaces stay matte, glossy surfaces stay glossy. Do not add, remove, or modify any other element.",
-      "preview_url": "",
       "aspect_ratio": "1:1",
       "source": "Atlas Cloud Blog",
       "source_url": "https://www.atlascloud.ai/blog/guides/gpt-image-2-prompts-guide",
       "source_author": "@AtlasCloud",
-      "prompt_zh": "将产品颜色更改为{参数名=\"目标颜色\" 默认值=\"深森林绿\"}，同时精确保留图像的所有其他方面：产品形状、几何结构、比例、标签文字、标签位置、材质纹理、光照、阴影、反射、背景以及相机角度。颜色变更需呈现自然且逼真的摄影效果，并正确体现材质对光线的响应——哑光表面保持哑光，高光表面保持高光。不得添加、删除或修改任何其他元素。"
+      "prompt_zh": "将产品颜色更改为{argument name=\"target color\" default=\"深森林绿\"}，同时精确保留图像的所有其他方面：产品形状、几何结构、比例、标签文字、标签位置、材质纹理、光照、阴影、反射、背景及相机角度。颜色变更需呈现自然且照片级真实感，并确保材质对光线的响应准确——哑光表面保持哑光，光泽表面保持光泽。不得添加、删除或修改任何其他元素。",
+      "preview_url": ""
     },
     {
-      "id": "img2img_006",
-      "title": "产品标签文案替换",
-      "title_en": "Product Label Text Replacement",
-      "category": "img2img",
-      "description": "替换产品包装上的文字内容，保留原有字体风格和排版，适合多语言/多SKU出图",
-      "tags": [
-        "文案",
-        "标签",
-        "包装",
-        "多语言"
-      ],
-      "prompt": "Replace the text on the product label from the original text to \"{argument name=\"new text\" default=\"MORNING BLEND\"}\". Keep the exact same font style, font weight, text color, text size, and text placement as the original. Preserve all other aspects of the product and image unchanged: shape, material, lighting, background, shadows, and every non-text element. The new text must be perfectly legible, correctly spelled, and naturally integrated.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "Atlas Cloud Blog",
-      "source_url": "https://www.atlascloud.ai/blog/guides/gpt-image-2-prompts-guide",
-      "source_author": "@AtlasCloud",
-      "prompt_zh": "将产品标签上的文字从原始文本替换为“{argument name=\"new text\" default=\"MORNING BLEND\"}”。保持与原标签完全一致的字体样式（font style）、字重（font weight）、文字颜色（text color）、字号（text size）及文字位置（text placement）。保留产品及图像的所有其他要素不变：形状、材质、光照、背景、阴影，以及所有非文字元素。新文本必须清晰可辨、拼写正确，并自然融入整体设计。"
-    },
-    {
-      "id": "img2img_007",
-      "title": "风格转换 — 实拍转插画",
-      "title_en": "Style Transfer — Photo to Illustration",
-      "category": "img2img",
-      "description": "将实拍产品图转为手绘插画风格，适合品牌包装设计、社媒内容等",
-      "tags": [
-        "风格转换",
-        "插画",
-        "手绘",
-        "品牌"
-      ],
-      "prompt": "Transform this product photograph into a hand-drawn watercolor illustration style. Preserve the exact product shape, proportions, label layout, and key identifying details. Apply soft watercolor washes with visible brush texture, gentle color bleeds at edges, and delicate ink outlines. Use a warm, inviting color palette that matches the original product colors but with a hand-painted quality. Leave generous white space around the product. The result should look like a premium editorial illustration for a lifestyle magazine, not a filter effect.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "fal.ai Prompting Guide",
-      "source_url": "https://fal.ai/learn/tools/prompting-gpt-image-2",
-      "source_author": "@fal.ai",
-      "prompt_zh": "将这张产品实拍照片转换为手绘水彩插画（watercolor illustration）风格。完整保留产品的精确外形、比例、标签排版及所有关键识别细节。运用柔和的水彩晕染（watercolor washes），呈现清晰可见的笔触纹理（brush texture）、边缘处自然轻柔的色彩晕染（color bleeds），以及细腻的墨线勾勒（ink outlines）。采用温暖宜人的配色方案，在忠实还原原产品色彩的基础上，赋予其手工绘制（hand-painted）的独特质感。产品四周需留出充足的留白（white space）。最终效果应呈现为高端生活方式杂志（lifestyle magazine）所用的精品 editorial 插画，而非简单的滤镜（filter）效果。"
-    },
-    {
-      "id": "img2img_008",
-      "title": "风格转换 — 实拍转3D渲染",
-      "title_en": "Style Transfer — Photo to 3D Render",
-      "category": "img2img",
-      "description": "将实拍产品图转为3D渲染风格，干净的工业设计感，适合科技/数码产品",
-      "tags": [
-        "风格转换",
-        "3D渲染",
-        "科技",
-        "工业设计"
-      ],
-      "prompt": "Transform this product photograph into a clean 3D rendered visualization. Preserve the exact product shape, proportions, and key design features. Apply smooth, polished material surfaces with subtle environment reflections. Use controlled studio lighting: soft key light from the upper left, gentle fill from the right, and a subtle rim light to define edges. Place the product on a minimal gradient background (light gray to white). The result should look like a professional industrial design render from Keyshot or Blender Cycles — clean, precise, and premium. No artistic stylization, no cartoon effects.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "Community Best Practice",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "风格转换 — 实拍转3D渲染  \n\n将此产品实拍照片转化为干净、精准的3D渲染可视化效果。严格保留产品的原始外形、精确比例及所有关键设计特征。赋予表面光滑、高度抛光的材质质感，并添加微妙的环境反射（environment reflections）。采用受控的专业影棚布光：主光（key light）为柔和光源，来自左上方；辅光（fill light）为轻柔光源，来自右侧；轮廓光（rim light）细腻柔和，用于清晰勾勒产品边缘。将产品置于极简渐变背景之上（浅灰至纯白）。最终效果应呈现为使用Keyshot或Blender Cycles制作的专业级工业设计渲染图——简洁、精准、高端。禁止任何艺术化风格处理，禁止卡通化（cartoon）效果。"
-    },
-    {
-      "id": "img2img_009",
-      "title": "虚拟试衣 — 模特换装",
-      "title_en": "Virtual Try-On — Outfit Change",
-      "category": "img2img",
-      "description": "用服装参考图给模特换装，保持面部、身型、姿态不变，适合服装电商",
-      "tags": [
-        "虚拟试衣",
-        "换装",
-        "服饰",
-        "模特"
-      ],
-      "prompt": "Edit the image to dress the person using the provided clothing reference images. Do not change their face, facial features, skin tone, body shape, pose, or identity in any way. Preserve their exact likeness, expression, hairstyle, and proportions. Replace only the clothing, fitting the garments naturally to their existing pose and body geometry with realistic fabric draping and wrinkle behavior. Match lighting, shadows, and color temperature to the original photo so the outfit integrates photorealistically without looking pasted on. Do not change the background, camera angle, framing, or image quality. Do not add accessories, text, logos, or watermarks.",
-      "preview_url": "",
-      "aspect_ratio": "3:4",
-      "source": "OpenAI Cookbook",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "编辑图像，使用提供的服装参考图为人像更换服饰。不得以任何形式更改其面部、面部特征、肤色、体型、姿态或身份。须完整保留其精确的相貌特征、表情、发型及身体比例。仅替换服装，并使服饰自然贴合其原有姿态与身体几何结构，呈现逼真的布料垂坠感与褶皱效果。匹配原始照片的光照、阴影及色温，确保服饰融入画面达到照片级真实感，避免出现“粘贴式”合成痕迹。不得更改背景、相机角度、构图或图像质量。不得添加配饰、文字、品牌标识（logos）或水印（watermarks）。"
-    },
-    {
-      "id": "img2img_010",
-      "title": "产品使用场景 — 手持展示",
-      "title_en": "Product in Use — Hand-Held Showcase",
-      "category": "img2img",
-      "description": "将产品放入手持使用场景中，展示真实使用效果，增强购买信任感",
-      "tags": [
-        "使用场景",
-        "手持",
-        "生活方式",
-        "信任感"
-      ],
-      "prompt": "Generate a lifestyle scene where a person's hand is naturally holding this product. The hand should have realistic skin texture, natural nail appearance, and a relaxed comfortable grip. Shot from a slightly elevated angle. Background: a cozy home setting with soft natural window light, blurred warm-toned interior. Preserve the product's exact appearance, label, colors, and proportions. The lighting on the product should match the scene lighting seamlessly. Shallow depth of field, the product in crisp focus, background softly blurred. Style: authentic lifestyle photography for social media or e-commerce, not overly staged.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "Community Best Practice",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "提示词标题：产品使用场景 — 手持展示  \n\n生成一幅生活化场景图像：一只手自然握持该产品。手部需呈现真实细腻的皮肤质感、自然的指甲外观，以及放松舒适的握持姿态。拍摄角度为略高于平视的俯角（slightly elevated angle）。背景为温馨居家环境，采用柔和的自然窗光（soft natural window light），室内色调偏暖且景深虚化（blurred warm-toned interior）。严格保留产品的原始外观、标签、色彩及比例。产品受光需与场景整体光照无缝匹配（match the scene lighting seamlessly）。采用浅景深（shallow depth of field）：产品主体清晰锐利（crisp focus），背景柔和虚化（softly blurred）。风格为真实自然的生活方式摄影（authentic lifestyle photography），适用于社交媒体或电商平台（for social media or e-commerce），避免过度摆拍（not overly staged）。"
-    },
-    {
-      "id": "img2img_011",
-      "title": "产品爆炸/悬浮拆解图",
-      "title_en": "Product Exploded View",
-      "category": "img2img",
-      "description": "将产品照片转为爆炸拆解视图，展示内部结构和组件，适合详情页卖点展示",
-      "tags": [
-        "拆解图",
-        "结构",
-        "卖点",
-        "详情页"
-      ],
-      "prompt": "Transform this product into an exploded view diagram showing all major components separated vertically with even spacing between layers. Each component should float in position, revealing the internal structure and assembly order. Maintain the exact product design, colors, and materials for each part. Use a clean white or light gray gradient background. Add subtle drop shadows beneath each floating component. Soft even studio lighting. The style should look like a premium product teardown or industrial design presentation. No labels or text, just the visual breakdown.",
-      "preview_url": "",
-      "aspect_ratio": "3:4",
-      "source": "Community Best Practice",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "将该产品转化为爆炸图（exploded view diagram），以垂直方向展示所有主要组件，各层之间保持均匀间距。每个组件均需悬浮于其对应位置，从而清晰呈现内部结构与装配顺序。严格保留产品的原始设计、各部件的颜色及材质。背景采用纯净白色或浅灰色渐变（white or light gray gradient background）。为每个悬浮组件添加微妙的投影（subtle drop shadows）。采用柔和、均匀的影棚灯光（soft even studio lighting）。整体风格应呈现高端产品拆解（premium product teardown）或工业设计演示（industrial design presentation）质感。不添加任何标注（labels）或文字（text），仅呈现纯视觉化的结构分解效果。"
-    },
-    {
-      "id": "img2img_012",
-      "title": "画稿/草图转写实产品图",
+      "id": "img2img_020",
+      "title": "草图转写实产品图",
       "title_en": "Sketch to Photorealistic Product",
       "category": "img2img",
-      "description": "将手绘草图或线稿转为写实的产品渲染图，适合产品设计打样阶段",
+      "description": "将手绘草图/线稿转为写实产品渲染图，适合产品设计打样和概念展示",
       "tags": [
         "草图",
         "写实",
-        "产品设计",
+        "设计",
         "打样"
       ],
       "prompt": "Turn this drawing into a photorealistic product image. Preserve the exact layout, proportions, shape, and perspective from the sketch. Choose realistic materials and surface finishes consistent with the sketch intent — if it shows a glossy surface, render it glossy; if matte, render it matte. Apply natural studio lighting with soft shadows. Place the product on a clean neutral background. Do not add new elements, decorations, text, or features not present in the original sketch. The result should look like a professional product photography shot of the designed object.",
-      "preview_url": "",
       "aspect_ratio": "1:1",
       "source": "OpenAI Cookbook",
       "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
       "source_author": "@OpenAI",
-      "prompt_zh": "将此画稿/草图转化为照片级写实（photorealistic）产品图像。严格保留草图中的原始布局、比例、形状与透视关系。根据草图所表达的设计意图，选用符合逻辑的真实材质与表面处理效果——若草图呈现高光（glossy）表面，则渲染为高光效果；若为哑光（matte）表面，则渲染为哑光效果。采用自然的影棚布光（studio lighting），配以柔和阴影（soft shadows）。将产品置于干净、中性的背景之上。不得添加任何原草图中未包含的新元素、装饰、文字或功能细节。最终效果应呈现为一张专业级产品摄影（product photography）风格的成片，精准还原所设计物体的真实观感。"
-    },
-    {
-      "id": "img2img_013",
-      "title": "季节/氛围变换",
-      "title_en": "Season & Atmosphere Transform",
-      "category": "img2img",
-      "description": "改变产品场景的季节或天气氛围，如夏日→冬日、白天→夜晚，适合季节性营销",
-      "tags": [
-        "季节",
-        "氛围",
-        "营销",
-        "场景"
-      ],
-      "prompt": "Transform the scene to a {argument name=\"season\" default=\"winter evening with gentle snowfall\"}. Add {argument name=\"atmosphere\" default=\"soft snow covering surfaces, warm golden lamplight glow, and visible breath mist in the cold air\"}. Preserve the product, its exact position, appearance, label, and all identifying details completely unchanged. Adjust only the environment: lighting color temperature, weather effects, and seasonal elements. The product should look naturally placed in the new seasonal setting with consistent lighting and shadows.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "OpenAI Cookbook",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "将场景变换为{参数名=\"season\" 默认值=\"冬夜，轻柔飘雪\"}。添加{参数名=\"atmosphere\" 默认值=\"表面覆盖柔和积雪、温暖的金色路灯辉光，以及寒冷空气中可见的呼气雾气\"}。产品本体、其精确位置、外观、标签及所有识别性细节须完全保持不变。仅调整环境要素：灯光色温、天气效果及季节性元素。产品应自然融入新的季节化场景中，且光照与阴影需保持一致。"
-    },
-    {
-      "id": "img2img_014",
-      "title": "电商变体网格图",
-      "title_en": "E-commerce Color Variant Grid",
-      "category": "img2img",
-      "description": "从单张产品图生成多色变体网格图，一张图展示所有SKU颜色选项",
-      "tags": [
-        "变体",
-        "网格",
-        "SKU",
-        "电商"
-      ],
-      "prompt": "Using the input product image as reference, create an e-commerce catalog grid showing the same product in {argument name=\"color count\" default=\"4\"} color variants arranged in a 2x2 grid layout: {argument name=\"colors\" default=\"sage green (top-left), terracotta orange (top-right), deep navy blue (bottom-left), soft blush pink (bottom-right)\"}. Each variant must have identical lighting, shadow, angle, background (clean white), and product geometry — only the color differs. Uniform spacing between grid cells. Each product should be centered in its cell. Professional e-commerce catalog photography style.",
-      "preview_url": "",
-      "aspect_ratio": "1:1",
-      "source": "Atlas Cloud Blog",
-      "source_url": "https://www.atlascloud.ai/blog/guides/gpt-image-2-prompts-guide",
-      "source_author": "@AtlasCloud",
-      "prompt_zh": "以输入的产品图像为参考，创建一张电商目录网格图，展示同一产品在{argument name=\"color count\" default=\"4\"}种颜色变体下的效果，按2×2网格布局排列：{argument name=\"colors\" default=\"鼠尾草绿（左上）、赤陶橙（右上）、深海军蓝（左下）、柔雾粉红（右下）\"}。每个变体须保持完全一致的光照、阴影、拍摄角度、背景（纯白色）及产品几何结构——仅颜色不同。网格单元之间间距均匀。每个产品需在其对应单元格内居中放置。采用专业电商目录摄影（e-commerce catalog photography）风格。"
-    },
-    {
-      "id": "img2img_015",
-      "title": "产品图添加营销文案",
-      "title_en": "Product Photo with Marketing Copy",
-      "category": "img2img",
-      "description": "在现有产品图上添加营销文案和促销信息，生成带文字的广告图",
-      "tags": [
-        "文案",
-        "营销",
-        "广告",
-        "促销"
-      ],
-      "prompt": "Add marketing text overlay to this product image without modifying the product or background. Place a bold headline \"{argument name=\"headline\" default=\"NEW ARRIVAL\"}\" at the top in clean modern sans-serif font, white color with subtle drop shadow for readability. Add a smaller tagline \"{argument name=\"tagline\" default=\"Premium Quality · Limited Edition\"}\" below the headline. In the bottom-left corner, add a price badge: \"{argument name=\"price\" default=\"¥199\"}\" in a bold accent color circle. Keep all text perfectly legible, correctly spelled, and professionally typeset. The text should complement the product image, not obscure it. Premium advertising layout aesthetic.",
-      "preview_url": "",
-      "aspect_ratio": "3:4",
-      "source": "Community Best Practice",
-      "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
-      "source_author": "@OpenAI",
-      "prompt_zh": "在该产品图像上添加营销文案图层，不得修改产品本身或背景。  \n在图像顶部居中放置加粗标题：“{argument name=\"headline\" default=\"新品上市\"}”，采用简洁现代的无衬线字体（sans-serif），白色文字，配以细微投影（drop shadow）以确保可读性。  \n在标题正下方添加较小字号的副标题（tagline）：“{argument name=\"tagline\" default=\"卓越品质 · 限量发售\"}”。  \n于图像左下角添加价格徽章：圆形背景，使用醒目的强调色（accent color）填充，内部显示价格“{argument name=\"price\" default=\"¥199\"}”，文字加粗。  \n所有文字须绝对清晰易读、拼写准确、排版专业；文字布局应与产品图像和谐呼应，不得遮挡或干扰产品主体。整体呈现高端广告级（Premium advertising layout）视觉美学。"
+      "prompt_zh": "将此草图转换为照片级写实（photorealistic）产品图。严格保留草图的原始布局、比例、形状和透视关系。选用与草图设计意图一致的真实材质与表面处理效果——若草图显示为高光（glossy）表面，则渲染为高光效果；若为哑光（matte）表面，则渲染为哑光效果。采用自然的影棚灯光（studio lighting），并呈现柔和阴影（soft shadows）。将[product]置于干净的中性背景上。不得添加任何原草图中不存在的新元素、装饰、文字或功能特征。最终效果应呈现为该设计物体的专业级产品摄影（product photography）成片。",
+      "preview_url": ""
     }
   ]
 }

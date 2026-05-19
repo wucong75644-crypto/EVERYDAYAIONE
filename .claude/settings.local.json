@@ -2275,7 +2275,14 @@
       "WebFetch(domain:www.atlascloud.ai)",
       "WebFetch(domain:10b.ai)",
       "WebFetch(domain:www.cometapi.com)",
-      "Bash(./git-push.sh \"feat: 新增15条图生图/编辑提示词——换背景、换色、风格转换、虚拟试衣等电商高频场景\")"
+      "Bash(./git-push.sh \"feat: 新增15条图生图/编辑提示词——换背景、换色、风格转换、虚拟试衣等电商高频场景\")",
+      "Bash(grep -E \"gallery-.*\\\\.md$\")",
+      "Bash(grep -E \"^docs/.*\\(product|edit|fashion\\).*\\\\.png$\")",
+      "WebFetch(domain:www.hanyuai.com)",
+      "WebFetch(domain:claid.ai)",
+      "WebFetch(domain:letsenhance.io)",
+      "WebFetch(domain:sider.ai)",
+      "Bash(./git-push.sh \"feat: 图生图提示词扩充至20条——白底棚拍/场景化/使用展示/季节营销/风格转换，来源LetsEnhance+OpenAI\")"
     ],
     "additionalDirectories": [
       "/tmp"
