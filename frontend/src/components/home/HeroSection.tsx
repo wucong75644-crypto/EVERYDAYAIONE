@@ -9,6 +9,7 @@
 
 import { Link } from 'react-router-dom';
 import { m } from 'framer-motion';
+import { Sparkles } from 'lucide-react';
 import { Reveal } from '../motion/Reveal';
 import { MagneticButton } from '../motion/MagneticButton';
 import { SOFT_SPRING } from '../../utils/motion';
@@ -67,6 +68,18 @@ export default function HeroSection({
               </m.button>
             )}
           </MagneticButton>
+        </div>
+      </Reveal>
+      {/* 提示词画廊入口 */}
+      <Reveal delay={0.24}>
+        <div className="mt-4">
+          <Link
+            to="/prompt-gallery"
+            className="inline-flex items-center gap-1.5 text-sm text-text-tertiary hover:text-accent transition-colors"
+          >
+            <Sparkles className="w-4 h-4" />
+            AI 绘图提示词库 — 40+ 精选电商设计 Prompt
+          </Link>
         </div>
       </Reveal>
     </section>

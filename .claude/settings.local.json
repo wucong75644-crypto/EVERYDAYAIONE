@@ -2266,7 +2266,10 @@
       "Bash(python -m pytest tests/test_file_tool_mixin.py -q --tb=short)",
       "Bash(./git-push.sh \"refactor: file_search去掉Parquet转换——NAS本地磁盘后不需要搬运到staging，AI直接读workspace文件\")",
       "Bash(./git-push.sh \"fix: 文件工具路径统一共享——file_read/file_delete/file_search全部走file_path_cache注册和解析\")",
-      "Bash(./git-push.sh \"refactor: 统一用相对路径——去掉WORKSPACE_DIR变量拼接，AI直接open\\('文件名'\\)读文件，工具和沙盒用同一套路径\")"
+      "Bash(./git-push.sh \"refactor: 统一用相对路径——去掉WORKSPACE_DIR变量拼接，AI直接open\\('文件名'\\)读文件，工具和沙盒用同一套路径\")",
+      "Bash(python -m pytest tests/test_file_path_cache.py -x -q)",
+      "Bash(python -m pytest tests/ -x -q -k \"file_path_cache or tool_output or sandbox_worker or file_tool_mixin or sandbox_tool_mixin or chat_tool_mixin\")",
+      "Bash(./git-push.sh \"feat: AI绘图提示词画廊——40条电商设计Prompt，分类浏览+搜索+复制\")"
     ],
     "additionalDirectories": [
       "/tmp"

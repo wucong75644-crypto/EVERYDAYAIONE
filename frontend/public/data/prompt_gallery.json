@@ -1,0 +1,812 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-05-19",
+  "source_repo": "https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts",
+  "license": "MIT",
+  "categories": [
+    {
+      "id": "product_hero",
+      "name": "商品主图",
+      "name_en": "Product Hero",
+      "icon": "camera",
+      "count": 15
+    },
+    {
+      "id": "detail_page",
+      "name": "详情页/分镜",
+      "name_en": "Detail & Storyboard",
+      "icon": "layout",
+      "count": 4
+    },
+    {
+      "id": "ad_creative",
+      "name": "广告创意",
+      "name_en": "Ad Creative",
+      "icon": "megaphone",
+      "count": 12
+    },
+    {
+      "id": "food_photo",
+      "name": "食品摄影",
+      "name_en": "Food Photography",
+      "icon": "utensils",
+      "count": 5
+    },
+    {
+      "id": "brand_identity",
+      "name": "品牌设计",
+      "name_en": "Brand Identity",
+      "icon": "palette",
+      "count": 3
+    },
+    {
+      "id": "livestream",
+      "name": "直播电商",
+      "name_en": "Livestream",
+      "icon": "video",
+      "count": 1
+    }
+  ],
+  "prompts": [
+    {
+      "id": "product_hero_001",
+      "title": "奢品香水广告",
+      "title_en": "E-commerce Main Image - Luxury Amber Perfume Ad",
+      "category": "product_hero",
+      "description": "经典奢品广告风格，黑色大理石台面+烟雾效果，适合香水/护肤/美妆类高端产品",
+      "tags": [
+        "香水",
+        "奢侈品",
+        "暗调",
+        "棚拍"
+      ],
+      "prompt": "A luxurious cinematic product photograph of a classic rectangular perfume bottle inspired by {argument name=\"brand label\" default=\"N°5 CHANEL PARIS PARFUM\"}, placed upright on a glossy black marble surface with white veining. The bottle is centered slightly to the right, made of clear faceted glass with a large transparent crystal stopper, filled with rich amber-gold perfume that glows from within. Tiny condensation droplets cover the glass, adding texture and realism. Dramatic warm lighting from the upper left creates golden highlights, deep reflections on the marble, and a soft luminous bloom in the background. Wisps of elegant smoke curl around the bottle on both sides, enhancing a moody high-end advertisement feel. Dark background, shallow depth of field, ultra-detailed studio product photography, luxury beauty campaign aesthetic, crisp focus on the bottle, realistic reflections, warm black-and-gold color palette. Add a small white {argument name=\"corner logo\" default=\"Pollo.ai\"} in the top-right corner. Square composition, premium commercial ad, photorealistic, high contrast, refined and sophisticated.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case113/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Polanco_IA/status/2047689647967609037",
+      "source_author": "@Polanco_IA"
+    },
+    {
+      "id": "product_hero_002",
+      "title": "护肤品柔光棚拍",
+      "title_en": "E-commerce Main Image - Skincare Product Studio Shot",
+      "category": "product_hero",
+      "description": "柔和的奶油色调，搭配泡沫和花瓣，适合护肤品/洗护用品的清新展示",
+      "tags": [
+        "护肤品",
+        "柔光",
+        "清新",
+        "棚拍"
+      ],
+      "prompt": "A soft {argument name=\"bottle color\" default=\"cream-colored\"} bottle with a {argument name=\"pump color\" default=\"pastel yellow\"} pump stands on a matte podium, surrounded by silky foam and {argument name=\"flowers\" default=\"chamomile blossoms\"}. The background is a pale yellow gradient with subtle bubble details. The label emphasizes organic chamomile and calming care. Fresh chamomile flowers accentuate the gentle appeal.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case114/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Strength04_X/status/2047636636847231222",
+      "source_author": "@Strength04_X"
+    },
+    {
+      "id": "product_hero_003",
+      "title": "夏日饮料广告海报",
+      "title_en": "E-commerce Main Image - Tropical Citrus Soda Ad Poster",
+      "category": "product_hero",
+      "description": "热带风情饮料广告，沙滩背景+水花+冰块+水果，带完整文案排版",
+      "tags": [
+        "饮料",
+        "夏日",
+        "热带",
+        "海报"
+      ],
+      "prompt": "Create a vibrant tropical commercial poster for a citrus soda bottle, in a bright summer advertising style. Show a single large plastic bottle of {argument name=\"product name\" default=\"Soda\"} centered slightly to the right, tilted a little left, with a yellow cap and transparent bottle covered in cold condensation droplets, filled with glowing golden-orange soda. The label should feature sliced oranges and citrus artwork with the brand text \"{argument name=\"product name\" default=\"Soda\"}\", the phrase \"aux agrumes d'été\", and a small green \"500 ml\" mark. Use a sunny beach background with vivid blue sky, turquoise ocean, soft clouds, and blurred tropical palm leaves entering from the upper right corner. Add dramatic water splashes around the base of the bottle, scattered clear ice cubes, and 5 visible citrus pieces in the foreground: 2 orange wedges, 1 lime half, 1 grapefruit half, and 1 partial orange slice at the far right edge. Place large French promotional text on the left: a huge white headline \"{argument name=\"headline text\" default=\"Soda\"}\" with a small splash accent above it, then yellow script text \"aux agrumes d'été\" underneath. Add a yellow paint-stroke badge at mid-left with the text \"LA FRAÎCHEUR QUI PÉTILLE !\". Add a vertical feature list on the lower left with 3 round icons and French captions: \"SAVEURS NATURELLES\", \"SANS COLORANTS ARTIFICIELS\", and \"EXTRA RAFRAÎCHISSANT\". Add a green brushstroke banner at the bottom left reading \"FORMAT PRATIQUE 500 ml\". Add a round beige eco-style seal at the bottom right with green outline and leaf motif, containing the text \"{argument name=\"seal text\" default=\"PLAISIR FRUITÉ À CHAQUE GORGÉE\"}\". Lighting should be glossy and high-energy with strong sun flare from the upper left, saturated citrus colors, crisp packaging detail, realistic droplets, and polished supermarket-ad realism.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case115/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/edimakorfr/status/2047635133466124726",
+      "source_author": "@edimakorfr"
+    },
+    {
+      "id": "product_hero_004",
+      "title": "工业设计展板",
+      "title_en": "E-commerce Main Image - Industrial Design Presentation Sheet",
+      "category": "product_hero",
+      "description": "专业工业设计展示板，3x3网格布局展示产品多角度+材质细节+配色方案",
+      "tags": [
+        "工业设计",
+        "展板",
+        "多角度",
+        "产品设计"
+      ],
+      "prompt": "Core Subject: [{argument name=\"reference\" default=\"use the uploaded image\"}, keep the details, typography and structure locked 100%]\n\nLayout & Composition: A {argument name=\"presentation type\" default=\"professional industrial design presentation sheet\"}. The image should be organized into a clean grid system.\n\nTop Row: A 3x3 layout showing top-down flat lay views and close-up macro details of materials.\n\nMiddle Section: Three hero shots of the product standing upright in different color ways (Matte Black, Arctic White, and accented variants). The products should be slightly tilted to show depth and form.\n\nBottom Section: A dynamic \"floating\" composition featuring two products overlapping at opposing angles to showcase the front and side profiles simultaneously.\n\nEnvironment & Lighting: Set against a minimalist, neutral studio gray background. Soft top-down lighting with realistic contact shadows. High-end product photography aesthetic.\n\nStyle & Finish: Matte textures, clean silhouettes, and sharp edges. Leave designated blank areas on the product surfaces for \"Placeholder Branding\" and \"Graphic Mockups.\" 4k resolution, Unreal Engine 5 render style, hyper-realistic, clean aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case116/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/ShamsAmin56/status/2047627860752621647",
+      "source_author": "@ShamsAmin56"
+    },
+    {
+      "id": "product_hero_005",
+      "title": "鞋类生活方式拍摄",
+      "title_en": "E-commerce Main Image - Luxury Fur-Lined Loafer Lifestyle Photo",
+      "category": "product_hero",
+      "description": "温暖编辑风格的生活方式产品照，低角度特写，适合鞋类/服饰的场景化展示",
+      "tags": [
+        "鞋类",
+        "生活方式",
+        "编辑风格",
+        "场景图"
+      ],
+      "prompt": "A warm, editorial-style lifestyle product photo shot indoors from a low close-up angle, focused on a woman's lower legs and feet as she tries on 1 pair of black leather backless loafers with tan faux-fur lining. One loafer is worn on the right foot and the left foot is bare, hovering just above the textured cream shag rug, while the second matching loafer lies on the rug in the lower left foreground. The shoes have smooth black leather uppers, a rounded almond toe, open mule-style heel, plush brown fur spilling out around the opening, and a small polished gold horsebit hardware detail across the vamp. The model wears cropped medium-blue denim jeans with a raw frayed hem. The setting is a cozy minimalist interior with a cream rug featuring 2 thin irregular black lines, a neutral wall, and a leaning rectangular mirror with a medium wood frame in the upper right background, softly reflecting the rug and part of the scene. Use soft natural window light, shallow depth of field, subtle film grain, realistic skin texture, muted beige and black palette, relaxed candid composition, premium fashion catalog mood, high detail, photorealistic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case117/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/dynamicwangs/status/2047580984342925545",
+      "source_author": "@dynamicwangs"
+    },
+    {
+      "id": "product_hero_006",
+      "title": "香水大理石梳妆台",
+      "title_en": "E-commerce Main Image - Luxury Perfume Ad on Marble Vanity",
+      "category": "product_hero",
+      "description": "奢华梳妆台场景，金色灯光+丝绸+鲜花，带文案排版的完整广告图",
+      "tags": [
+        "香水",
+        "奢华",
+        "金色调",
+        "广告"
+      ],
+      "prompt": "A luxury e-commerce advertising photo of a premium perfume bottle on a polished gray-and-white marble vanity, shot in a warm cinematic studio style with soft golden lighting, shallow depth of field, and elegant reflections. The composition is square and high-end, with the perfume bottle centered slightly right of frame and promotional text on the left. The bottle is a tall sculpted hourglass-shaped glass flacon with smoky transparent gray glass fading darker at the base, a glossy gold spherical cap, a gold collar engraved with fine branding, and a large metallic gold interlocking monogram on the front. Keep the branding-inspired feel but do not add extra products. In the foreground left, include 1 cut-crystal bowl with a gold rim, partially cropped. In the background right, include 1 brushed gold cylindrical vase holding 1 bouquet of soft white flowers, blurred. Behind the bottle, add 1 black marble rectangular box with subtle white veining and gold trim. In the lower right foreground, include 1 draped piece of champagne-colored satin fabric, softly out of focus. The background should be dark, luxurious, and softly blurred, with rich brown-black tones and a vertical shadowed panel on the left to support typography. Add elegant serif headline text on the upper left reading {argument name=\"headline text\" default=\"Premium Perfume,\"} in large warm beige letters, with a smaller serif subheading beneath reading {argument name=\"tagline\" default=\"Subtlety and Elegance\"}, plus a thin short gold horizontal line below the subheading. Place a small white logo in the top-right corner reading {argument name=\"brand logo\" default=\"Pollo.ai\"}. Emphasize premium materials, realistic glass refraction, gold metallic highlights, luxury product photography, refined composition, soft bokeh, and upscale beauty-ad aesthetics.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case118/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/MiguelMaestroIA/status/2047555836252151831",
+      "source_author": "@MiguelMaestroIA"
+    },
+    {
+      "id": "product_hero_007",
+      "title": "微缩场景创意广告",
+      "title_en": "E-commerce Main Image - Miniature Diorama Skincare Advertisement",
+      "category": "product_hero",
+      "description": "超写实微缩工厂场景，小人偶围绕巨型产品瓶工作，极具创意的电商主图风格",
+      "tags": [
+        "微缩场景",
+        "创意",
+        "护肤品",
+        "CGI"
+      ],
+      "prompt": "A hyper-realistic miniature diorama product advertisement featuring an oversized luxury skincare pump bottle labeled \"LUXEVEIL Skin Science – Radiance Nourishing Body Lotion\" in cream/beige with a polished gold pump top, placed on a circular platform. Tiny figurine construction workers dressed in yellow coveralls and white hard hats swarm around the bottle climbing scaffolding, painting the bottle with rollers, operating a tower crane, working near industrial tanks and pipework, and unloading a miniature flatbed truck. The scene includes metal scaffolding structures, industrial silos, orange traffic cones, wooden barricades, and storage barrels. The overall color palette is warm beige, cream, gold, and mustard yellow. Studio photography style with soft diffused lighting, no shadows, clean beige background. The concept metaphorically shows workers \"crafting\" or \"building\" the perfect lotion. Tilt-shift miniature aesthetic, ultra-detailed, commercial product photography, 8K resolution, photorealistic CGI render.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case151/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Strength04_X/status/2048074514278563949",
+      "source_author": "@Strength04_X"
+    },
+    {
+      "id": "product_hero_008",
+      "title": "国风瓷器丝巾",
+      "title_en": "E-commerce Main Image - Traditional Chinese Art and Porcelain Vases",
+      "category": "product_hero",
+      "description": "千里江山图丝巾+青花瓷花瓶，东方美学产品展示，适合国风/文创产品",
+      "tags": [
+        "国风",
+        "瓷器",
+        "丝巾",
+        "文创"
+      ],
+      "prompt": "A scarf inspired by 'A Thousand Li of Rivers and Mountains', surrounded by Wang Ximeng's blue-green landscape, with a silky texture and soft lighting.\n\nA famille rose porcelain vase featuring Lady Yang Guifei enjoying flowers, with peony and butterfly patterns in the style of imperial kilns.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case152/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/songguoxiansen/status/2048046906585280977",
+      "source_author": "@songguoxiansen"
+    },
+    {
+      "id": "product_hero_009",
+      "title": "电子产品暗调棚拍",
+      "title_en": "E-commerce Main Image - Premium Gaming Motherboard Studio Shot",
+      "category": "product_hero",
+      "description": "高端电子产品暗调摄影，RGB灯效+金属质感细节，适合数码/电竞/硬件产品",
+      "tags": [
+        "电子产品",
+        "暗调",
+        "电竞",
+        "棚拍"
+      ],
+      "prompt": "A high-end enthusiast ATX gaming motherboard product photo on a dark studio background, shown in a three-quarter top-down perspective angled from the lower left toward the upper right. The board is mostly matte black and gunmetal with sharp geometric armor plates, brushed metal textures, and subtle RGB edge lighting in blue, purple, and magenta. Feature an exposed modern Intel-style CPU socket near the upper center, 4 black DIMM memory slots on the right, large VRM heatsinks across the top and upper left, and multiple reinforced PCIe slots in the lower half. Include 3 major branded heatsink zones: a tall rear I/O shroud at upper left with an illuminated RGB eye logo and the text \"MAXIMUS HERO\", a left-side chipset/slot armor piece with the text \"SUPREMEFX\", and a large angular lower-right chipset cover with a silver ROG-style emblem plus a lower strip that reads \"FOR THOSE WHO DARE\". Show detailed capacitors, headers, power connectors, debug display reading \"88\" at the top right, and a small round start button nearby. Ultra-detailed commercial product photography, crisp focus across the board, realistic reflections on metal, premium luxury tech aesthetic, dramatic low-key lighting, clean black seamless backdrop, no cables, no CPU, no RAM, no other objects.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case153/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/rojassartorio/status/2048019666816163867",
+      "source_author": "@rojassartorio"
+    },
+    {
+      "id": "product_hero_010",
+      "title": "耳机电商信息图",
+      "title_en": "E-commerce Main Image - Earbuds E-commerce Infographic",
+      "category": "product_hero",
+      "description": "带模特的电商信息图，产品特写+数据卖点+模特展示，适合3C数码类目",
+      "tags": [
+        "耳机",
+        "信息图",
+        "3C",
+        "模特"
+      ],
+      "prompt": "High-impact e-commerce infographic for \"{argument name=\"product\" default=\"Apple Pods Pro 3\"}\" wireless earbuds.\nForeground: An extreme close-up of a hand holding an open glossy white wireless earbud charging case toward the camera. Inside the case are two sleek white earbuds with black speaker accents. A small glowing green LED indicator is visible on the front of the case. The hand and case have slight macro-lens depth blur for realism.\n\nMid-ground: A {argument name=\"model\" default=\"confident young woman\"} with tan skin, brown eyes, and dark hair tied in a messy bun. She has natural makeup with a dewy glow. She is wearing a plain {argument name=\"clothing\" default=\"yellow athletic t-shirt\"} (no logos). One white earbud is in her ear. She is looking directly at the camera with a subtle, confident expression.\n\nBackground: Clean soft gray gradient studio backdrop with shallow depth of field. Diagonal rainbow prism lens flares and soft light leaks across the scene. Several blurred floating white earbuds in the background for depth and motion.\n\nLighting: Soft professional studio lighting with glossy highlights on the product, subtle rim light on the model, high dynamic range.\n\nTypography (modern sans-serif, white):\n\nTop center (behind model): Large bold text “AIRPODS”\n\nTop right: “Apple Pods Pro 3”\n\nMid-left: “Premium sound and noise cancellation”\n\nMid-right: Large bold “30” with “hours of battery life”\n\nBottom-right: Large bold “1” with “year warranty”\n\nStyle: Ultra-realistic, commercial product photography, 8k resolution, sharp focus on product case, shallow depth of field, vibrant yet clean color palette, premium advertising aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case155/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/SPEEDAI07/status/2047981795552153860",
+      "source_author": "@SPEEDAI07"
+    },
+    {
+      "id": "product_hero_011",
+      "title": "极简产品广告",
+      "title_en": "E-commerce Main Image - Minimalist Product Ad: PURE CRUNCH",
+      "category": "product_hero",
+      "description": "Apple风格极简广告，白色柔光+简洁文案，适合任何产品的高端极简展示",
+      "tags": [
+        "极简",
+        "Apple风格",
+        "白底",
+        "通用"
+      ],
+      "prompt": "A minimalist product advertisement with a {argument name=\"product\" default=\"fried chicken bucket\"} placed on a clean white podium.\n\nBackground: soft gradient ({argument name=\"background gradient\" default=\"light cream to white\"}), clean studio.\n\nLighting: soft diffused, premium Apple-style.\n\nTypography (center): “{argument name=\"headline\" default=\"PURE CRUNCH\"}”\n\nSmall text below: “Nothing extra. Just perfection.”\n\nStyle: ultra clean, editorial minimal, high-end branding, 8K.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case158/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Strength04_X/status/2047917220165231011",
+      "source_author": "@Strength04_X"
+    },
+    {
+      "id": "product_hero_012",
+      "title": "通用产品棚拍模板",
+      "title_en": "Premium product studio shot template",
+      "category": "product_hero",
+      "description": "万能产品棚拍模板，浅灰渐变背景+专业灯光，只需替换产品名即可使用",
+      "tags": [
+        "通用模板",
+        "棚拍",
+        "万能",
+        "简洁"
+      ],
+      "prompt": "Create a premium product studio image of a [PRODUCT] for [BRAND], designed in line with [BRAND REFERENCE]. Show the [PRODUCT] floating against a clean light gray to soft white gradient background with a minimal high-end tech aesthetic. The [PRODUCT] should feel sleek, modern, refined, and premium, with subtle illuminated accents in [LIGHTING COLOR]. Use a three-quarter front angle so both earcups are visible, with detailed industrial design elements. Include the [BRAND] name cleanly on the product. Lighting should be soft, controlled, and editorial, with crisp highlights, soft shadows, and a subtle colored rim light or glow in [LIGHTING COLOR]. Emphasize material realism and clean geometric forms. Keep the background uncluttered and minimal. No extra props, no people, no text overlays, no packaging, and no distracting elements. Focus entirely on the [PRODUCT] as the hero product.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case161/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/PrometheanAIX/status/2049141839882522707",
+      "source_author": "@PrometheanAIX"
+    },
+    {
+      "id": "product_hero_013",
+      "title": "环保服饰广告",
+      "title_en": "E-commerce Main Image - Sustainable T-Shirt Plantable Tag Ad",
+      "category": "product_hero",
+      "description": "环保时尚广告风格，绿植墙+木衣架+可种植标签，适合环保/有机品牌",
+      "tags": [
+        "环保",
+        "服饰",
+        "可持续",
+        "品牌"
+      ],
+      "prompt": "A premium eco-conscious fashion advertisement, shot as a refined editorial product photo. A single off-white or natural cream crew-neck T-shirt hangs on a smooth wooden hanger with a black metal hook, placed against a lush wall of dense green leaves and climbing vines. The hanger has a small minimalist brand monogram engraved near the neck. The shirt is shown from the upper torso down to part of the hem, slightly angled, with soft natural folds and high-quality cotton texture. Printed inside the collar is a minimalist brand mark and the text \"JUGGERKNOT ORIGINALS\". Hanging from the neckline is 1 rectangular recycled-paper seed tag tied with rustic brown twine; the tag reads \"Tulsi\" and \"Plantable Seed Tag\" with a tiny sprouting seed detail near the bottom. From the tag, 1 real tulsi plant stem grows upward across the front of the shirt, with several fresh green leaves, visually demonstrating that the tag is plantable. Add a small fine-label annotation near the tag reading \"TULSI PLANTABLE SEED TAG\". On the right side, large elegant white serif typography says {argument name=\"headline text\" default=\"Plant it.\"}. Beneath it, place 3 stacked lines of narrow uppercase sans-serif copy: \"WEAR IT.\", \"PLANT IT.\", and \"GROW WITH IT.\". At the lower left, add the brand name in spaced uppercase serif text: {argument name=\"brand name\" default=\"JUGGERKNOT ORIGINALS\"}, with a thin horizontal line above it. At the lower right, add 3 lines of small uppercase sans-serif text: \"FSC® CERTIFIED PACKAGING.\", \"ZERO SYNTHETIC FIBRE\", and \"BACKED BY ZERODHA.\". Use soft diffused daylight, shallow depth of field, moody green-and-cream color grading, luxury sustainable-brand aesthetics, clean composition, vertical poster layout, subtle shadows, and a calm organic atmosphere. Keep the design minimal, premium, and photorealistic, with the shirt occupying the left half and the typography balanced on the right.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case156/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Diplomeme/status/2047957339974828092",
+      "source_author": "@Diplomeme"
+    },
+    {
+      "id": "product_hero_014",
+      "title": "香水毛皮质感特写",
+      "title_en": "Editorial Perfume Bottle in Golden Fur",
+      "category": "product_hero",
+      "description": "编辑级香水特写，产品嵌入金色毛皮中，温暖奢华的时尚杂志风格",
+      "tags": [
+        "香水",
+        "编辑风格",
+        "特写",
+        "质感"
+      ],
+      "prompt": "A luxurious editorial product photograph of a single perfume bottle nestled into dense, plush faux fur in rich golden caramel and honey-brown tones. Center the composition on one clear oval glass bottle filled with warm amber liquid, with a glossy rounded black cap and a clean white rectangular label. The label text should read {argument name=\"brand name\" default=\"BYREDO\"} at the top, {argument name=\"product name\" default=\"BAL D’AFRIQUE\"} large in the middle, and {argument name=\"product type\" default=\"EAU DE PARFUM\"} in small text near the bottom. Shoot it as a close-up still life with soft studio lighting, subtle highlights on the glass and cap, gentle shadows in the folds of the fur, and a warm cinematic color palette. The bottle should sit slightly embedded in the fur so the surrounding texture frames it from all sides, creating a premium fashion editorial mood, minimal composition, shallow depth of field, crisp focus on the label, and a high-end beauty campaign aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case149/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Salmaaboukarr/status/2048103506125463983",
+      "source_author": "@Salmaaboukarr"
+    },
+    {
+      "id": "product_hero_015",
+      "title": "香水苔藓自然风",
+      "title_en": "Editorial Perfume Shot on Moss",
+      "category": "product_hero",
+      "description": "产品放在浮木上，绿苔前景+琥珀暖光，自然大地色系的高端产品摄影",
+      "tags": [
+        "香水",
+        "自然",
+        "苔藓",
+        "大地色"
+      ],
+      "prompt": "A high-end editorial product photograph of a single luxury perfume bottle centered in a warm earthy still-life scene. The product is a clear rectangular glass bottle filled with golden amber liquid, topped with a glossy rounded black cap, with a clean white front label that reads \"BYREDO\", \"BAL D’AFRIQUE\", and \"EAU DE PARFUM\". Place the bottle upright on 1 curved piece of pale weathered driftwood, surrounded by a dense carpet of 1 layer of rich green moss covering the foreground and lower frame. Use a minimal studio composition with the product isolated against a smooth warm brown-to-amber gradient background, softly illuminated like sunset light. Light the scene with dramatic directional warm light from the upper right, creating a bright glow on the background, a crisp highlight on the cap, soft reflections in the glass, and gentle shadows across the wood and moss. Keep the framing vertical, the bottle centered slightly low in the composition with generous negative space above, and the overall mood natural, luxurious, earthy, cinematic, and polished like a premium fragrance campaign shot.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case148/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Salmaaboukarr/status/2048103506125463983",
+      "source_author": "@Salmaaboukarr"
+    },
+    {
+      "id": "detail_page_001",
+      "title": "食品全套详情页",
+      "title_en": "E-commerce Main Image - Premium Grain Powder Ad Board",
+      "category": "detail_page",
+      "description": "五谷冲饮完整电商详情页：主图+成分展示+冲泡方式+使用场景+卖点+视频分镜，一张图出全套",
+      "tags": [
+        "食品",
+        "详情页",
+        "全套",
+        "分镜"
+      ],
+      "prompt": "{\"type\":\"Chinese e-commerce product marketing board\",\"product\":{\"category\":\"instant grain powder drink\",\"brand\":\"五谷磨房\",\"name\":\"核桃芝麻黑豆粉\",\"packaging\":\"matte black retail box with gold Chinese typography and a large swirling bowl graphic on the front, plus individual black sachets inside\",\"net weight\":\"320g (32g×10袋)\"},\"style\":{\"overall\":\"premium dark food advertising layout\",\"color palette\":[\"black\",\"deep brown\",\"warm gold\",\"beige\",\"walnut brown\"],\"lighting\":\"dramatic studio lighting with glossy highlights and warm rim light\",\"mood\":\"luxurious, nourishing, healthy, appetizing\"},\"layout\":{\"format\":\"single tall composite board divided into 5 major sections plus a bottom storyboard table\",\"sections\":[{\"title\":\"主图/Main image\",\"position\":\"top-left\",\"count\":8,\"labels\":[\"五谷磨房\",\"核桃芝麻黑豆粉\",\"32g×10袋 独立包装\",\"五黑谷物\",\"香浓醇厚\",\"独立小袋\",\"即冲即饮\",\"product box and drink cup\"]},{\"title\":\"详情页/Details page\",\"position\":\"top-right\",\"count\":5,\"labels\":[\"黑芝麻\",\"黑豆\",\"黑米\",\"核桃\",\"谷物粉\"]},{\"title\":\"香浓细腻 顺滑好喝\",\"position\":\"mid-right\",\"count\":4,\"labels\":[\"一冲即饮 营养美味\",\"粉质细腻 Fine powder\",\"浓香醇厚 Rich & Smooth\",\"营养代餐 Nutritious\"]},{\"title\":\"冲泡方式 HOW TO MAKE\",\"position\":\"mid-left lower\",\"count\":3,\"labels\":[\"1 倒入一袋粉(32g)\",\"2 加入200ml 热水或牛奶\",\"3 搅拌均匀 即可享用\"]},{\"title\":\"一杯好谷物 轻松好生活\",\"position\":\"lower-left\",\"count\":4,\"labels\":[\"元气早餐\",\"办公室下午茶\",\"健身代餐\",\"睡前暖饮\"]},{\"title\":\"独立小袋 随身携带\",\"position\":\"lower-right\",\"count\":3,\"labels\":[\"独立小袋 便携卫生\",\"锁住新鲜 防潮防氧化\",\"1袋1杯 精准份量\"]},{\"title\":\"视频推广广告 seedance 2.0 视频提示词 + 分镜头脚本\",\"position\":\"bottom full width\",\"count\":7,\"labels\":[\"镜头1 开场-产品展示\",\"镜头2 食材特写\",\"镜头3 倒粉入杯\",\"镜头4 冲泡搅拌\",\"镜头5 饮用场景\",\"镜头6 产品卖点\",\"镜头7 结尾口号\"]}],\"grid\":\"top area split into left main image and right detail page; middle area split into preparation guide and feature panel; lower area split into lifestyle scenarios and sachet carry section; bottom is a full-width tabular storyboard\"},\"scene_elements\":{\"ingredients\":[{\"name\":\"black sesame\",\"form\":\"small black seeds in a round bowl\"},{\"name\":\"black beans\",\"form\":\"glossy whole beans in a round bowl\"},{\"name\":\"black rice\",\"form\":\"dark long grains in a round bowl\"},{\"name\":\"walnuts\",\"form\":\"walnut halves in a round bowl\"},{\"name\":\"grain powder\",\"form\":\"light beige powder in a round bowl\"}],\"serving\":{\"drink\":\"thick gray-brown sesame walnut bean beverage with smooth surface swirl\",\"cup\":\"transparent glass cup with handle\",\"utensil\":\"metal spoon stirring or resting inside drink\"},\"supporting props\":[\"walnuts on table\",\"scattered black beans\",\"grain stalks or wheat stems\",\"dark tabletop\",\"ingredient bowls\",\"open package showing 5 visible sachets\"]},\"text_treatment\":{\"headline_font\":\"bold elegant Chinese display type in metallic gold\",\"body_font\":\"clean sans serif Chinese with occasional English subtitles\",\"accent\":\"thin gold divider lines and circular ingredient frames\"},\"camera_and_composition\":{\"product_shots\":\"front-facing hero box, angled sachet display box, close-up beverage macro\",\"food_photography\":\"high-detail commercial food styling, shallow depth of field, crisp texture emphasis\",\"aspect_ratio\":\"portrait, approximately 9:16\"},\"quality\":\"ultra-detailed commercial design mockup, polished e-commerce key visual plus details page plus ad storyboard, 4K\"}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case154/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/WooGabriel76263/status/2047988112094101770",
+      "source_author": "@WooGabriel76263"
+    },
+    {
+      "id": "detail_page_002",
+      "title": "9宫格TVC分镜脚本",
+      "title_en": "E-commerce Main Image - 9-Panel Product TVC Storyboard",
+      "category": "detail_page",
+      "description": "将产品照片转化为9格TVC分镜板，带中文场景标题和时间标注，专业广告导演风格",
+      "tags": [
+        "分镜",
+        "TVC",
+        "9宫格",
+        "视频"
+      ],
+      "prompt": "Using the provided reference image, transform the single casual product photo into a polished e-commerce TVC storyboard board for a {argument name=\"video duration\" default=\"15-second\"} ad in a {argument name=\"aspect ratio\" default=\"9:16\"} vertical format, presented as a 9-panel grid. Keep the same blue-and-white ceramic ashtray as the product base, but restage it across cinematic advertising shots with warm premium lighting, shallow depth of field, and a refined lifestyle desktop environment. Add a dark storyboard layout with Chinese titles and timing for each panel. Include exactly 9 scenes: 1) environment-establishing wide shot with desk, books, window, and the product placed in context; 2) hero product medium shot on the table; 3) extreme close-up of the blue floral craftsmanship pattern; 4) use case showing a hand placing a cigarette into the ashtray with visible smoke; 5) top-down capacity display showing multiple cigarette butts inside; 6) cleaning scene under running water in a sink with a hand holding the product; 7) bottom-detail close-up showing the underside and anti-slip pads; 8) mood/lifestyle scene at night with the product on a desk, smoke rising, and ambient lamp light; 9) brand closing frame with the product as the hero plus Chinese marketing text. Add the overall header text “产品TVC分镜脚本(15秒 / 9:16竖屏 / 9宫格)” and a product subtitle naming it {argument name=\"product name\" default=\"青花瓷烟灰缸\"}. Give each of the 9 panels a Chinese scene title and timestamp, plus small descriptive Chinese copy beneath each image in the style of a professional commercial shot list. Use premium, realistic commercial photography throughout, consistent product identity, elegant Chinese aesthetic, and a clean high-end storyboard presentation.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case160/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Magncsans/status/2047876253898903594",
+      "source_author": "@Magncsans"
+    },
+    {
+      "id": "detail_page_003",
+      "title": "食品英雄图+分镜",
+      "title_en": "Burger hero image plus 9-cell ad storyboard",
+      "category": "detail_page",
+      "description": "分两步生成：先出产品英雄图（无文字纯食品摄影），再出9格广告分镜板",
+      "tags": [
+        "食品",
+        "英雄图",
+        "分镜",
+        "汉堡"
+      ],
+      "prompt": "Prompt 1: Create a cinematic hero image of a gourmet cheeseburger on a dark stone surface with glossy brioche bun, melted cheese, crisp lettuce, tomato, grilled patty, sauce, realistic texture, appetizing steam, warm side light, shallow depth of field, premium food commercial style, no text/logos/watermark.\n\nPrompt 2: Create a 9-cell hybrid keyframe-to-transition storyboard sheet for a 15-second gourmet burger ad, moving from empty surface to ingredient assembly to final macro hero shot. Use large S cells and smaller T cells, motion arrows, ghosted ingredient positions, steam, sauce trails, and camera push-in icons. Style: premium food commercial, warm lighting, rich texture, appetizing, cinematic, minimal labels only. No logos, no watermark.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ecommerce_case163/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Gdgtify/status/2049449869530775877",
+      "source_author": "@Gdgtify"
+    },
+    {
+      "id": "detail_page_004",
+      "title": "产品爆炸拆解图",
+      "title_en": "VR Headset Exploded View Poster",
+      "category": "detail_page",
+      "description": "VR头盔爆炸视图海报，9层内部结构分层展示+日文标注，适合科技产品卖点拆解",
+      "tags": [
+        "拆解图",
+        "科技",
+        "结构",
+        "卖点"
+      ],
+      "prompt": "{\n  \"type\": \"exploded view product diagram poster\",\n  \"subject\": \"VR headset\",\n  \"style\": \"clean high-tech 3D render, studio lighting, glowing accents\",\n  \"background\": \"{argument name=\\\"background color\\\" default=\\\"soft purple and blue gradient\\\"}\",\n  \"header\": {\n    \"logo\": \"∞ {argument name=\\\"product name\\\" default=\\\"Meta Quest 3\\\"}\",\n    \"subtitle\": \"{argument name=\\\"main catchphrase\\\" default=\\\"まったく新しい現実を、まったく新しい構造から。\\\"}\"\n  },\n  \"layout\": {\n    \"centerpiece\": \"vertically stacked exploded view of a VR headset showing 9 distinct layers of internal components: outer shell, camera sensors, motherboard with chip, pancake lenses, internal frame, battery packs, side straps, top strap, and facial interface cushion.\",\n    \"callout_labels\": {\n      \"count\": 8,\n      \"left_side\": [\n        \"Snapdragon® XR2 Gen 2\\n圧倒的な処理性能でリアルタイムな体験を。\",\n        \"調整可能なIPD機構\\n幅広いユーザーに快適なフィット感を。\",\n        \"精密設計されたヘッドストラップ\\n快適さと安定性を追求したエルゴノミクス。\"\n      ],\n      \"right_side\": [\n        \"フェイスプレート\\n洗練されたデザインと最適な重量バランス。\",\n        \"トラッキングカメラ\\n高精度な位置トラッキングと環境認識を実現。\",\n        \"パンケーキレンズ\\n薄型設計で広い視野角と鮮明な映像を提供。\",\n        \"高性能バッテリー\\n長時間駆動を支える最適化された電源設計。\",\n        \"柔らかなフェイスインターフェース\\n長時間でも快適な装着感を実現。\"\n      ]\n    },\n    \"footer\": {\n      \"left_text_block\": {\n        \"headline\": \"{argument name=\\\"bottom headline\\\" default=\\\"体験は、構造から進化する。\\\"}\",\n        \"body\": \"一つひとつのパーツに、没入体験を支える最先端テクノロジーとこだわりの設計。Meta Quest 3は、未来を感じさせる体験を内部から生み出しています。\"\n      },\n      \"right_logo\": \"∞ Meta\"\n    }\n  }\n}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case109/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/wory37303852/status/2045925660401795478",
+      "source_author": "@wory37303852"
+    },
+    {
+      "id": "ad_creative_001",
+      "title": "四宫格广告Banner",
+      "title_en": "4-Panel Japanese Digital Ad Banner Grid",
+      "category": "ad_creative",
+      "description": "2x2日式广告Banner网格，旅游/护肤/美食/教育四个主题，带完整文案和价格",
+      "tags": [
+        "Banner",
+        "网格",
+        "日式",
+        "多主题"
+      ],
+      "prompt": "{\n  \"type\": \"2x2 grid of Japanese digital advertisement banners\",\n  \"layout\": {\n    \"structure\": \"4 equal quadrants\",\n    \"quadrants\": [\n      {\n        \"position\": \"top-left\",\n        \"theme\": \"Travel\",\n        \"subject\": \"A couple holding hands on a white sand beach, looking out at turquoise ocean water under a bright blue sky.\",\n        \"elements\": [\"red hibiscus flower in bottom left corner\"],\n        \"text_labels\": [\n          \"今年こそ、解き放て。\",\n          \"{argument name=\\\"travel destination\\\" default=\\\"沖縄旅行\\\"}\",\n          \"3日間の癒やし旅\",\n          \"航空券+ホテル\",\n          \"39,800円〜\",\n          \"絶景、グルメ、体験 ぜんぶ叶う!\"\n        ],\n        \"icons\": {\n          \"count\": 3,\n          \"descriptions\": [\"airplane\", \"hotel building\", \"car\"]\n        }\n      },\n      {\n        \"position\": \"top-right\",\n        \"theme\": \"Skincare\",\n        \"subject\": \"Close-up portrait of a young woman with glowing, dewy skin, eyes closed, gently touching her cheeks.\",\n        \"elements\": [\n          \"soft pink gradient background\",\n          \"dynamic water splash effects\",\n          \"pink cosmetic jar labeled '{argument name=\\\"skincare product name\\\" default=\\\"LUMIÈRE\\\"} Brightening Gel'\"\n        ],\n        \"text_labels\": [\n          \"毛穴・くすみ卒業!\",\n          \"透明感あふれる\",\n          \"水光肌へ\",\n          \"新感覚スキンケア\",\n          \"初回限定 78%OFF\",\n          \"{argument name=\\\"discount price\\\" default=\\\"1,980円\\\"}\"\n        ],\n        \"badges\": {\n          \"count\": 3,\n          \"style\": \"gold circular\",\n          \"labels\": [\"毛穴ケア\", \"高保湿\", \"ハリ・ツヤ\"]\n        }\n      },\n      {\n        \"position\": \"bottom-left\",\n        \"theme\": \"Gourmet Food\",\n        \"subject\": \"Thick, sliced, medium-rare steak sizzling on a dark grill plate.\",\n        \"elements\": [\n          \"garlic chips\",\n          \"rosemary sprig\",\n          \"dark background with smoke and glowing embers\"\n        ],\n        \"text_labels\": [\n          \"とろける旨さ!\",\n          \"{argument name=\\\"food item\\\" default=\\\"黒毛和牛\\\"}\",\n          \"贅沢ステーキ\",\n          \"期間限定\",\n          \"特別価格\",\n          \"通常価格 8,980円\",\n          \"4,980円\"\n        ],\n        \"badges\": {\n          \"count\": 1,\n          \"style\": \"red circular\",\n          \"labels\": [\"A4 A5等級\"]\n        }\n      },\n      {\n        \"position\": \"bottom-right\",\n        \"theme\": \"Online Education\",\n        \"subject\": \"Young man in a blue shirt studying at a desk, writing in a notebook next to an open laptop.\",\n        \"elements\": [\"bright indoor lighting\", \"desk environment\"],\n        \"text_labels\": [\n          \"スキマ時間で\",\n          \"{argument name=\\\"education goal\\\" default=\\\"最短合格!\\\"}\",\n          \"オンライン資格講座\",\n          \"スマホで完結\",\n          \"効率学習で差がつく!\",\n          \"今だけ! 受講料 20%OFF\"\n        ],\n        \"badges\": {\n          \"count\": 1,\n          \"style\": \"blue circular\",\n          \"labels\": [\"受講者数 10万人 突破!\"]\n        },\n        \"icons\": {\n          \"count\": 2,\n          \"descriptions\": [\"smartphone\", \"open book\"]\n        }\n      }\n    ]\n  }\n}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ui_case90/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/makaneko_AI/status/2045764016858087720",
+      "source_author": "@makaneko_AI"
+    },
+    {
+      "id": "ad_creative_002",
+      "title": "奢侈手表广告",
+      "title_en": "Luxury Chronograph Watch Ad",
+      "category": "ad_creative",
+      "description": "赛车风格奢侈手表广告，暗调+红色光线+光面倒影地面，高端产品广告模板",
+      "tags": [
+        "手表",
+        "奢侈品",
+        "暗调",
+        "赛车风"
+      ],
+      "prompt": "A dramatic luxury product advertising image for a motorsport-inspired chronograph wristwatch in a dark studio. Center-left foreground, show a single stainless steel chronograph watch standing upright at a slight three-quarter angle, with a black dial, two red-accent subdials, slim silver hour markers, a tachymeter bezel, and visible crown and pushers on the right side. The watch has a black leather strap with bold red stitching along both edges and a sporty premium finish. To the right of the watch, place one black square presentation box slightly behind it, textured like leather, with red stitching around the lid and a silver embossed eye-shaped logo above the text “NESS STUDIO” and smaller red text “TRACK SURFACE.” At the top center of the composition, add the same silver eye logo with the words “NESS STUDIO” and smaller “BY NICOLAS.” Across the background, place one oversized blurred word, {argument name=\"headline text\" default=\"PRECISION\"}, in large gray capital letters spanning nearly the full width. The scene is set against a deep black background with cinematic red and white horizontal light streaks crossing behind the products from left to right, suggesting speed and racetrack energy. Use a glossy wet ground plane with reflective texture, catching red highlights and mirrorlike reflections beneath the watch and box. At the bottom center, add the text “CHRONOGRAPH SERIES” in clean white spaced capitals with thin red horizontal lines extending on both sides, and below it smaller red capitals reading {argument name=\"tagline text\" default=\"ALSACE MADE\"}. Color palette: black, charcoal gray, silver steel, vivid racing red, and a touch of white. Lighting should be high-contrast and premium, with crisp specular highlights on the metal case, subtle soft fill on the box, and moody shadows. Overall style: ultra-polished commercial product photography, luxury watch campaign, sharp focus on the products, sleek branding, high-end automotive aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case144/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/AlwaveNazca/status/2048147643809865950",
+      "source_author": "@AlwaveNazca"
+    },
+    {
+      "id": "ad_creative_003",
+      "title": "运动品牌霓虹海报",
+      "title_en": "Neon Nike Lumina Ad Poster",
+      "category": "ad_creative",
+      "description": "Nike风格运动广告，霓虹灯光+动态跳跃模特+巨大品牌字体，高能量运动美学",
+      "tags": [
+        "运动",
+        "霓虹",
+        "模特",
+        "动态"
+      ],
+      "prompt": "A high-energy vertical Nike fashion campaign poster featuring a single athletic young woman mid-jump against a futuristic neon studio background. She is captured in a dynamic airborne pose with one knee bent up, the other leg folded back, one arm extended outward and the other bent near her chest, conveying motion and power. Her face is obscured by a clean rectangular blur block centered over the face. She wears a cropped iridescent white hooded windbreaker with a black zipper and small Nike logo on the chest, holographic metallic lavender-blue leggings with a subtle Nike swoosh on the thigh, a black branded waistband visible above the leggings, and white chunky Nike sneakers. Her brown hair is tied in a high ponytail flying outward with the jump. Behind her, enormous glowing white serif letters spell “NIKE” across the upper half, with a small white Nike swoosh centered above the word. Across the middle background, the phrase “LUMINA” appears once in wide bold glowing letters with a horizontal glitch and scanline distortion effect, partially obscured by the model. The color palette is saturated magenta, violet, cyan, and electric blue with strong bloom, glossy highlights, lens flares, and chromatic aberration. Add sweeping circular light trails wrapping around the model’s legs and body, suggesting speed and motion. The overall style is premium sportswear advertising, ultra-polished, cinematic, high contrast, hyperreal retouching, crisp product detail, dramatic rim lighting, and a luminous holographic aesthetic. Place 2 small text lines at the bottom: bottom left reads {argument name=\"tagline text\" default=\"LIGHT. MOTION. ENERGY.\"}, bottom right reads {argument name=\"collection name\" default=\"NIKE LUMINA COLLECTION\"} followed by a small Nike swoosh. Include exactly 3 visible Nike swooshes total: 1 above the large NIKE headline, 1 on the jacket chest, and 1 on the leggings.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case145/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/AlwaveNazca/status/2048147643809865950",
+      "source_author": "@AlwaveNazca"
+    },
+    {
+      "id": "ad_creative_004",
+      "title": "街头潮鞋海报",
+      "title_en": "Streetwear Sneaker Poster Ad",
+      "category": "ad_creative",
+      "description": "街头风潮鞋广告，涂鸦+撕纸+模特低角度pose，复古街头潮牌美学",
+      "tags": [
+        "潮牌",
+        "街头",
+        "球鞋",
+        "涂鸦"
+      ],
+      "prompt": "Create a bold streetwear poster advertisement for {argument name=\"brand name\" default=\"NESS STUDIO\"} featuring a young adult model seated casually on the ground in a low-angle fashion pose, one knee raised and one leg extended toward the camera so the sneaker in front appears oversized and dominant. The model wears a dark brown oversized leather bomber jacket, a black shirt, light blue loose-fit jeans, white socks, and chunky black-white-gray sneakers with a red accent in the sole and the {argument name=\"brand name\" default=\"NESS STUDIO\"} logo visible on the shoe side and tongue. The face is intentionally obscured by a soft rectangular blur block centered over the face. Use an off-white textured paper background with distressed grunge design elements and collage layering. Behind the model, place a large rough red paint brushstroke shape spanning diagonally across the center. Add black ink splatters, sketch circles, torn paper scraps, and hand-painted graffiti accents. Include 4 major graphic doodles: a large black X in the upper right, a hand-drawn upward arrow in the lower left, a rough crown sketch in the lower right, and a circular scribble near the top center. In the upper left, place a stylized eye logo above the text \"{argument name=\"brand name\" default=\"NESS STUDIO\"}\" and a smaller tagline below reading \"A MOMENT OF YOUR STYLE\". On the left middle area, add the handwritten slogan \"INNOVATE CREATE INSPIRE\" in stacked black brush lettering. On the right middle area, place a torn black paper patch with the handwritten white slogan \"BUILT DIFFERENT MOVE DIFFERENT\" and a red underline stroke. In the lower left near the shoe, add a black distressed label sticker containing a globe scribble, the text \"{argument name=\"brand name\" default=\"NESS STUDIO\"}\", and a barcode. Along the bottom footer, create a clean horizontal strip with 3 social media icons and handles separated by thin vertical dividers: Instagram, Facebook, and Twitter, each followed by \"@NESS.STUDIO\". The overall style should be edgy, urban, youthful, high-contrast, editorial street fashion, mixing product advertising photography with graffiti poster design, collage textures, and dynamic branding.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case146/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/AlwaveNazca/status/2048147643809865950",
+      "source_author": "@AlwaveNazca"
+    },
+    {
+      "id": "ad_creative_005",
+      "title": "时尚卫衣概念广告",
+      "title_en": "Editorial Osaka Six Sweatshirt Ad",
+      "category": "ad_creative",
+      "description": "巨大卫衣+模特的超现实比例对比，90年代奢华街头风，概念时装广告",
+      "tags": [
+        "时尚",
+        "卫衣",
+        "概念",
+        "超现实"
+      ],
+      "prompt": "A clean editorial fashion advertisement poster on a pale powder-blue studio background with a glossy reflective floor. The composition is vertical and minimal, dominated by oversized bold white condensed sans-serif typography in the background reading “OSAKA SIX:” on the top line and “006 REMAINS” below, filling most of the upper half behind the subject. In the top right corner, small white branding text reads “Designed by ARTTEESHOW.” Centered in the lower middle is an oversized forest-green crewneck sweatshirt standing upright like a sculptural object, with soft heavy cotton fabric, dropped shoulders, extra-long sleeves pooled on the floor, and a small black neck label that reads ARTTEESHOW. On the chest of the sweatshirt is a large abstract collage print made from torn paper fragments in beige, tan, black, gray, white, and vivid red, arranged vertically like layered scraps. Leaning against the right side of the giant sweatshirt is a slim female fashion model with long straight black hair, wearing a matching {argument name=\"sweatshirt color\" default=\"forest green\"} sweatshirt and relaxed wide-leg sweatpants with clean white low-top sneakers. She is posed in profile with a calm detached editorial attitude, one hand in her pocket, her body reclining diagonally against the giant garment, legs extended forward; her face is obscured by a soft rectangular blur for an anonymous art-fashion look. The smaller worn sweatshirt has the same abstract torn-paper collage graphic centered on the chest. At the bottom center, add 2 lines of small white copy text: “Made for comfort, worn for confidence.” and “Because life feels better when someone’s carrying the weight of the world.” The image should feel like a premium conceptual streetwear campaign from the early 1990s reimagined as contemporary luxury advertising, with crisp studio lighting, soft shadows, subtle floor reflections, precise product focus, surreal scale contrast between the oversized sweatshirt and the model, and a polished magazine-poster aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case147/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/_LaurentB/status/2048126606313464040",
+      "source_author": "@_LaurentB"
+    },
+    {
+      "id": "ad_creative_006",
+      "title": "奢华巧克力品牌广告",
+      "title_en": "Luxury chocolate campaign system",
+      "category": "ad_creative",
+      "description": "虚构奢华巧克力品牌广告系统，多口味变体+编辑级摄影+极简奢华排版",
+      "tags": [
+        "巧克力",
+        "品牌",
+        "奢华",
+        "食品"
+      ],
+      "prompt": "Create a premium, square (1:1) product advertisement for a fictional luxury chocolate brand called Noirvelle Chocolat, inspired by high-end chocolate brands. The ad should feel like a high-end editorial campaign, combining luxury food photography, refined packaging design, and cinematic lighting. Use matte black wrapper, subtle gold foil, elegant serif typography, and realistic product rendering. Generate flavor variants such as Blood Orange Noir, Salted Pistachio Muse, and Raspberry Ember with distinct mood, color palette, ingredients, headline, and supporting copy. Keep the chocolate bar as hero centerpiece with subtle reflections, shallow depth of field, luxury minimalism, and a small CTA: “Shop the drop.”",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case169/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/SPEEDAI07/status/2049459155086500321",
+      "source_author": "@SPEEDAI07"
+    },
+    {
+      "id": "ad_creative_007",
+      "title": "果汁广告海报",
+      "title_en": "Urban fruit juice ad poster",
+      "category": "ad_creative",
+      "description": "城市风果汁广告，模特+巨大果汁瓶强制透视+品牌排版+卖点图标",
+      "tags": [
+        "果汁",
+        "饮料",
+        "模特",
+        "海报"
+      ],
+      "prompt": "Create a premium modern beverage advertisement poster in a vertical 3:4 format featuring a stylish young female model crouching confidently in a bright urban indoor hallway with colorful graffiti wall art on one side and clean minimal architecture on the other. In the foreground, a giant realistic fruit juice bottle is held toward the camera in forced perspective, with fictional branding like “VIVAJUICE”. Add brand logo, tagline, huge bold overlapping typography, four icon-based feature badges, and three smaller bottle variants at bottom right. Use soft natural lighting mixed with commercial studio polish, realistic shadows, shallow depth of field, glossy floor reflections, and a premium energetic eCommerce campaign aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case170/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/AIwithSarah_/status/2049452842931630202",
+      "source_author": "@AIwithSarah_"
+    },
+    {
+      "id": "ad_creative_008",
+      "title": "珠宝微缩城市广告",
+      "title_en": "Miniature City Diamond Necklace Ad",
+      "category": "ad_creative",
+      "description": "钻石项链变成微缩城市纪念碑，超现实奢华广告风格，适合珠宝/奢侈品",
+      "tags": [
+        "珠宝",
+        "微缩",
+        "奢华",
+        "超现实"
+      ],
+      "prompt": "Create a hyper-detailed luxury advertising poster in a cinematic miniature-world style. A gigantic royal diamond necklace with intricate gold filigree and massive ruby gemstones stands in the center like an architectural monument. Surround the necklace with a futuristic miniature city built around and inside the jewelry piece, including skyscrapers, elevated highways, bridges, spiral staircases, tiny human figures, luxury billboards, drones, helicopters, and cinematic urban activity. Use a deep crimson red monochrome background with gold and ruby accents. Add premium fashion-ad aesthetics, ultra-realistic textures, glossy reflections, dramatic studio lighting, depth of field, tilt-shift miniature effect, and high-end commercial composition. Include bold elegant typography at the top saying: \"EMBRACE THE EXTRAORDINARY\". Style inspired by luxury jewelry campaigns, surreal city-building concepts, and premium 3D advertising renders. Ultra realistic, 8K, octane render, sharp focus, highly detailed, cinematic shadows, symmetrical composition.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad_case171/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/ChillaiKalan__/status/2053310109678535000",
+      "source_author": "@ChillaiKalan__"
+    },
+    {
+      "id": "ad_creative_009",
+      "title": "双色饮料广告",
+      "title_en": "Watermelon Lime Beverage Ad Poster",
+      "category": "ad_creative",
+      "description": "西瓜粉+青柠绿对角分色背景，两杯饮品对称构图，完整排版+价格+配色代码",
+      "tags": [
+        "饮料",
+        "双色",
+        "夏日",
+        "海报"
+      ],
+      "prompt": "Create a premium modern beverage promotional poster for We Drink.\n\nTOPIC:\n\nWatermelon Pink + Lime Green Refresh Campaign\n\nSTYLE & ART DIRECTION:\nModern energetic beverage advertising\nYouthful commercial branding\nSplit-color background composition\nBright refreshing summer aesthetic\nMinimal dynamic layout\nHigh-contrast drink advertisement style\nInstagram-ready beverage promotion\nPremium fast-moving commercial design\n\nMAIN SUBJECT:\n\nTwo large ultra-realistic cold beverages positioned prominently in the center.\n\nDrink 1:\n\nA vibrant watermelon pink drink in a transparent plastic cup with visible ice cubes, condensation droplets, and a fresh watermelon garnish.\n\nDrink 2:\n\nA bright lime green drink in a matching transparent cup with visible ice cubes, condensation droplets, and a lime slice garnish.\n\nAdditional elements:\n\nFloating ice cubes around the composition\nDynamic water splash effects\nSoft realistic shadows beneath each cup\nPremium glossy liquid textures\nTiny fruit slices suspended in motion\n\nLAYOUT & COMPOSITION:\nDiagonal split-color background\nLeft side: watermelon pink gradient\nRight side: lime green gradient\nLarge bold headline at the top center: \"SIP THE FRESHNESS\"\nTwo hero drinks centered prominently\nProduct descriptions placed beside each cup\nPromotional price section near the bottom-left\nWe Drink logo and small branding elements at the bottom\nFloating ice cubes and splash effects around the drinks\nSpacious modern commercial hierarchy\n\nTEXT & TYPOGRAPHY:\nBold oversized sans-serif typography\nYouthful rounded commercial fonts\nWhite typography accents\nSupporting text: \"Watermelon Burst\" and \"Lime Rush\"\nPromotional price: Only $3.99\nTagline: \"Freshness in Every Sip\"\n\nDEPTH & LIGHTING:\nSoft glossy studio lighting\nBright refreshing reflections\nRealistic beverage highlights\nFloating commercial depth\nSoft ambient shadows\nPremium condensation texture lighting\n\nEXTRA DESIGN DETAILS:\nFloating ice cubes\nWater splash particles\nGlossy gradients\nModern promotional badges\nFruit slices and droplets\nMinimal energetic decorative elements\n\nCOLOR PALETTE:\nWatermelon Pink (#FF4F87)\nLime Green (#A8FF2A)\nWhite typography\nSoft transparent highlights\n\nQUALITY:\n\nUltra-realistic beverage photography, premium advertising composition, Behance-quality commercial poster, high-resolution, sharp focus, photorealistic textures, professional brand campaign aesthetic.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad_case172/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/ShamiWeb3/status/2053430685399232756",
+      "source_author": "@ShamiWeb3"
+    },
+    {
+      "id": "ad_creative_010",
+      "title": "奢华香水人像广告",
+      "title_en": "Luxury Fragrance Campaign Portrait",
+      "category": "ad_creative",
+      "description": "将人像照片转为Chanel风格的暗调香水广告，巴黎奢华室内+黑色丝绸+金色灯光",
+      "tags": [
+        "香水",
+        "人像",
+        "奢华",
+        "巴黎"
+      ],
+      "prompt": "Transform the uploaded portrait into a luxurious cinematic fragrance poster inspired by the dark seductive elegance of a high-fashion perfume campaign. Preserve her exact facial features, warm skin tone, confident expression, wavy brunette hair, and recognizable identity. Style her as a mysterious femme fatale with soft glossy lips, luminous skin, subtle smoky eyes, and an intense captivating gaze.\n\nDress her in a black satin slip dress with delicate lace trim and a glamorous faux fur wrap slipping off her shoulders. Place her inside a moody Parisian-inspired luxury interior with black reflective walls, gold rim lighting, deep shadows, cinematic contrast, and sensual ambient lighting. Add elegant reflections and depth for a premium editorial look.\n\nInclude a sleek black perfume bottle inspired by a luxury noir fragrance aesthetic near the foreground. Use refined minimalist typography in a luxury fashion-ad style with dramatic spacing and premium composition. Add a tagline such as: “She doesn’t follow. She leaves a trace.”\n\nThe overall mood should feel seductive, mysterious, powerful, feminine, cinematic, timeless, and ultra-luxurious — like a Chanel Coco Noir campaign directed by a Hollywood cinematographer. High detail, photorealistic skin texture, glossy highlights, rich blacks, warm gold accents, magazine-quality fashion photography, 8K luxury editorial finish.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad-creative_case174/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/amynys/status/2054340951678587051",
+      "source_author": "@amynys"
+    },
+    {
+      "id": "ad_creative_011",
+      "title": "热带风产品广告模板",
+      "title_en": "Tropical Product Ad Poster",
+      "category": "ad_creative",
+      "description": "万能产品广告模板：产品英雄图+模特互动+品牌排版，只需替换方括号参数",
+      "tags": [
+        "通用模板",
+        "模特",
+        "热带",
+        "万能"
+      ],
+      "prompt": "GPT Image 2 Prompt Create a creative commercial advertising poster for [PRODUCT NAME], a [PRODUCT TYPE], inspired by vibrant tropical product campaigns. Place the product as a large hero object on the center-right with realistic glossy reflections, sharp label details, and premium lighting. Add a stylish model sitting beside or slightly in front of the product, naturally interacting with it by [MODEL ACTION]. The model should look [MOOD], wearing [OUTFIT STYLE], and should not cover the product label.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad-creative_case178/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/AIwithAliya/status/2054553101236080714",
+      "source_author": "@AIwithAliya"
+    },
+    {
+      "id": "ad_creative_012",
+      "title": "时尚鞋类广告大片",
+      "title_en": "E-commerce Main Image - Pastel Blue Crocs Fashion Ad",
+      "category": "ad_creative",
+      "description": "超大品牌字体背景+模特+巨型鞋子道具+蓝色球体，超现实时尚广告大片",
+      "tags": [
+        "鞋类",
+        "时尚",
+        "超现实",
+        "大片"
+      ],
+      "prompt": "A high-end studio advertising poster for {argument name=\"brand name\" default=\"crocs\"}, in a monochrome pastel blue and white color palette, with a glossy reflective floor and a soft sky-blue backdrop. The background is dominated by the word {argument name=\"headline text\" default=\"CROCS\"} in gigantic bold white condensed sans-serif letters spanning nearly the full height of the image. In the top-right corner, add small white text reading \"Designed with ChatGPT\". Feature 3 adult women with shoulder-length wavy light brown to dark blonde hair, all wearing loose oversized white long-sleeve tops and flowing white wide-leg pants, styled as minimalist fashion models with relaxed neutral expressions. Their faces are intentionally obscured or blurred. One model reclines against an enormous upright white clog shoe on the left side, one model sits casually on top of a giant white clog on the upper right, and one model lounges on the floor at the lower right, leaning back on one arm while seated partly on a glossy blue sphere. Include 2 oversized white clog shoes as hero props: one standing vertically on the left showing the sole and side profile, and one angled on blue crystalline blocks at center-right showing the upper and toe box. Both clogs are classic foam slip-on style with perforation holes, chunky tread, heel straps, and circular logo rivets. The center-right clog is decorated with exactly 8 visible charms pinned to the upper: a blue-green iridescent round charm, a white daisy with yellow center, a black-and-white round emblem near the strap, a small \"CROCS\" word charm, a dark flower, a peace-hand sign, an orange smiley face, a white cloud, and an orange flower. Scatter exactly 7 glossy floating or grounded blue spheres of varying sizes around the set: one large sphere behind the left model, one medium sphere floating near center, one medium sphere at bottom left foreground, one medium sphere used as a seat under the lower-right model, one small sphere near the upper left, and 2 additional blue spheres integrated into the composition. Add translucent sculptural gel-like forms at the far left and far right edges, plus angular blue crystal-like rocks beneath the right shoe. At the bottom center, place white promotional copy in a clean sans-serif font: {argument name=\"tagline line 1\" default=\"Made for comfort, worn for confidence.\"} on the first line and {argument name=\"tagline line 2\" default=\"Because life feels better when your feet stop complaining.\"} on the second line. Beneath that, show 4 minimalist feature icons with labels in white: \"ICONIC COMFORT\", \"LIGHTWEIGHT\", \"EASY TO CLEAN\", and \"UNIQUELY YOU\". Place the {argument name=\"logo text\" default=\"crocs\"} logo in bold lowercase white at the bottom center with a small trademark symbol. The overall style should feel like a premium surreal fashion campaign, clean editorial lighting, soft shadows, glossy textures, airy composition, and modern lifestyle product advertising.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case159/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/SPEEDAI07/status/2047907058079650035",
+      "source_author": "@SPEEDAI07"
+    },
+    {
+      "id": "food_photo_001",
+      "title": "通用美食摄影模板",
+      "title_en": "Premium food photography template",
+      "category": "food_photo",
+      "description": "万能美食摄影模板：深色石碗+木板+蒸汽+暖光，替换食物名即可使用",
+      "tags": [
+        "通用模板",
+        "美食",
+        "暗调",
+        "万能"
+      ],
+      "prompt": "Create a square [ASPECT RATIO] premium food photography image of a steaming [FOOD] served in a dark black stone bowl or cast-iron skillet on a wooden board. The dish should look hot, glossy, spicy, and freshly served, with bite-sized pieces of browned protein, dried red chilies, green scallions, white onion, garlic, chili flakes, and visible Sichuan peppercorns coated in a deep red, oily Szechuan sauce. Use a slightly elevated close-up camera angle with shallow depth of field. Make the food the clear hero of the image, centered and richly detailed. Add visible steam rising naturally from the dish. Surround the bowl with subtle restaurant-style props like a dark red tray, scattered dried chilies, peppercorns, a small sauce bowl, or a blurred teapot in the background. Lighting should feel warm, moody, and editorial, like a high-end restaurant food shoot. Emphasize realistic textures and keep the image appetizing, realistic, cinematic, and polished. Avoid text, logos, hands, people, utensils covering the food, cartoon styling, fake plastic textures, excessive symmetry, or an overly clean stock-photo look.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case162/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/PrometheanAIX/status/2049122713722106161",
+      "source_author": "@PrometheanAIX"
+    },
+    {
+      "id": "food_photo_002",
+      "title": "莓果碗生活广告",
+      "title_en": "Berry Loud Acai Bowl Food Ad",
+      "category": "food_photo",
+      "description": "两张一组：咖啡馆生活方式图+动态食品产品图，粉色系莓果碗广告",
+      "tags": [
+        "莓果",
+        "生活方式",
+        "粉色",
+        "咖啡馆"
+      ],
+      "prompt": "Prompt 1: Vibrant lifestyle food advertisement, smiling woman in a bright hot pink blazer sitting inside a colorful trendy café, holding a spoon and eating an acai berry bowl topped with strawberries, blueberries, banana slices, and granola, branded \"Berry Loud\" jar on wooden table, playful retro typography reading \"BERRY LOUD\" in large cream bubble letters, tropical café interior with hanging plants, warm natural sunlight, cheerful atmosphere, bold pink and teal color palette, shallow depth of field, cinematic food photography, ultra realistic, high detail, commercial ad campaign style, 4k\n\nPrompt 2: Dynamic food product advertisement for \"Berry Loud\" mixed berry blend, acai smoothie bowl overflowing with strawberries, raspberries, blueberries, blackberries, banana slices, granola, dramatic berry juice splashes and floating fruits in mid air, branded jar beside bowl, vivid hot pink background, large retro cream typography saying \"NEW DROP BERRY LOUD\", glossy lighting, hyper realistic food photography, energetic composition, vibrant colors, commercial product shoot, ultra detailed textures, splash effect, studio lighting, 4k, advertising poster style",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad_case173/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Sairah_0/status/2053312926141005835",
+      "source_author": "@Sairah_0"
+    },
+    {
+      "id": "food_photo_003",
+      "title": "汉堡英雄海报",
+      "title_en": "Fast Food Hero Poster",
+      "category": "food_photo",
+      "description": "电影级汉堡英雄海报，悬浮拆解+烟熏效果+暗调霓虹色彩分级",
+      "tags": [
+        "汉堡",
+        "快餐",
+        "电影级",
+        "暗调"
+      ],
+      "prompt": "A cinematic 9:16 vertical composition featuring a gourmet \"Smokey Obsidian\" burger.\nWHAT: A towering burger with a charcoal brioche bun, thick Wagyu beef patty with visible sear marks, melting aged gruyère dripping like lava, and crispy maple-glazed bacon.\nFEEL: An atmosphere of \"Urban Indulgence.\" Dark, moody lighting with a single warm amber spotlight. Wisps of real hickory smoke curl around the bun. The texture is hyper-realistic you can see the salt crystals on the crust and the moisture on the heirloom tomato.\nSHOW: The burger is captured in a \"deconstructed gravity\" moment the top bun is slightly hovering, revealing the internal layers of house-made aioli and pickled red onions.\nTYPOGRAPHY: Integration of ultra-bold, distressed sans-serif typeface overlapping the bottom third of the frame. The text reads \"DEFY GRAVITY\" in a raw, concrete-texture finish.\nTECHNICAL: 4k resolution, macro photography style, shallow depth of field, neon-noir color grading (deep blacks, warm ambers, and subtle teal highlights).",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad-creative_case176/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/ShamsAmin56/status/2054238324198625780",
+      "source_author": "@ShamsAmin56"
+    },
+    {
+      "id": "food_photo_004",
+      "title": "健康谷物广告组图",
+      "title_en": "Matcha Granola Ad Poster",
+      "category": "food_photo",
+      "description": "三张一组：抹茶麦片（绿）+莓果酸奶（粉）+巧克力蛋白（棕），平铺构图+手写标注",
+      "tags": [
+        "谷物",
+        "健康",
+        "平铺",
+        "系列"
+      ],
+      "prompt": "(Matcha Granola Ad)\n\nUltra-realistic premium food advertisement poster for a healthy breakfast granola brand, centered matte pouch packaging labeled “Matcha Oat Granola”, green monochrome aesthetic, flat lay composition, soft studio lighting, vibrant matcha green background, surrounded by kiwi slices, almonds, oats, chia seeds, matcha powder bowl, granola bowls, scattered ingredients, clean modern typography headline “SUPERFOOD MORNING BOWL”, handwritten annotation arrows with wellness benefits, luxury organic branding, natural shadows, high-end commercial food photography, minimal yet detailed layout, symmetrical composition, sharp focus, Instagram ad style, 8k detail, healthy lifestyle marketing design.\n\nPrompt : (Berry Yogurt Cereal Ad)\n\nHigh-end commercial breakfast cereal advertisement, pastel pink aesthetic with centered standing pouch packaging labeled “Berry Yogurt Crunch Cereal”, surrounded by strawberries, blueberries, yogurt bowls, milk jug, crunchy granola, scattered berries and grains, soft natural lighting, vibrant fresh mood, modern bold typography headline “START FRESH EVERY MORNING”, handwritten callout arrows and benefit text, realistic food textures, luxury supermarket packaging design, clean flat lay composition, soft shadows, premium branding, glossy vibrant colors, ultra-detailed food photography, Instagram/Facebook ad campaign style, healthy breakfast concept, 8k realistic render.\n\nPrompt : (Chocolate Protein Muesli Ad)\n\nPremium protein breakfast food advertisement poster featuring centered pouch package labeled “Chocolate Protein Muesli”, rich brown monochrome theme, surrounded by dark chocolate chunks, almonds, oats, banana slices, milk jug, muesli bowls, scattered ingredients, dramatic warm studio lighting, bold modern headline typography “HIGH PROTEIN BREAKFAST FUEL”, handwritten annotation arrows highlighting benefits, luxury fitness breakfast branding, realistic textures, symmetrical flat lay composition, high-end commercial food photography, strong contrast, healthy energy concept, clean packaging mockup design, ultra-realistic 8k advertising render, cinematic food styling.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ad-creative_case177/output.jpg",
+      "aspect_ratio": "1:1",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Sairah_0/status/2054111354202779672",
+      "source_author": "@Sairah_0"
+    },
+    {
+      "id": "food_photo_005",
+      "title": "外卖传单设计",
+      "title_en": "Japanese Chinese Food Delivery Flyer",
+      "category": "food_photo",
+      "description": "日式中华料理外卖传单，菜单网格+角色插画+优惠券+地图，拟真印刷质感",
+      "tags": [
+        "传单",
+        "外卖",
+        "菜单",
+        "日式"
+      ],
+      "prompt": "A Japanese neighborhood Chinese restaurant delivery flyer for mailbox posting (3:4 aspect ratio). Designed to look like a double-sided B5 print.\n\nFlyer characteristics (following the grammar of real delivery flyers):\n- Flashy red and yellow color scheme.\n- Large text at the top: \"Delivery Available! {argument name=\"shop name\" default=\"Mona-Hanten\"}\" (shadowed Gothic font).\n- An illustration of a {argument name=\"character\" default=\"Chinese girl in a red cheongsam with a brown short bob\"} holding ramen and saying \"Welcome!\" in a speech bubble.\n- A menu photo grid (4x3) featuring various dishes: different types of ramen, fried rice, gyoza, sweet and sour pork, shrimp in chili sauce, mapo tofu, liver and leek stir-fry, tenshinhan, twice-cooked pork, spring rolls, annin tofu, and fried rice sets.\n- Names and prices for each dish.\n- A large yellow banner saying \"Free delivery on all menu items over ¥1,000!\".\n- \"Order by phone! ☎ 072-XX-XXXX\" emphasized with a red circle.\n- Business hours \"11:00-22:00 (Closed on Tuesdays)\".\n- Delivery area map (simple schematic map).\n- Coupon (perforated line for clipping): \"One free plate of gyoza with this flyer!\".\n\nTexture of cheap paper printing. Includes fold marks. Precision that could be mistaken for a real Japanese delivery flyer.",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case166/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/xc5_/status/2048310696686014935",
+      "source_author": "@xc5_"
+    },
+    {
+      "id": "brand_001",
+      "title": "18面板IP品牌全案",
+      "title_en": "18-Panel Mascot Brand Identity Document",
+      "category": "brand_identity",
+      "description": "一张图出完整品牌全案：DNA分析→概念草图→精稿→表情→姿势→配色→材质→应用→主视觉，适合IP/吉祥物品牌",
+      "tags": [
+        "IP",
+        "吉祥物",
+        "品牌全案",
+        "18面板"
+      ],
+      "prompt": "{\n  \"type\": \"18-panel brand identity and character design document\",\n  \"brand\": {\n    \"name\": \"{argument name=\\\"brand name\\\" default=\\\"沐阳 MUYANG TEA\\\"}\",\n    \"industry\": \"{argument name=\\\"industry\\\" default=\\\"tea shop\\\"}\",\n    \"colors\": [\"{argument name=\\\"primary color\\\" default=\\\"yellow\\\"}\", \"{argument name=\\\"secondary color\\\" default=\\\"green\\\"}\", \"white\", \"brown\", \"dark green\"]\n  },\n  \"subject\": \"{argument name=\\\"character description\\\" default=\\\"3D rendered cute Shiba Inu mascot wearing a green apron\\\"}\",\n  \"layout\": {\n    \"grid\": \"3 columns by 6 rows\",\n    \"sections\": [\n      {\n        \"title\": \"01 品牌DNA分析 / BRAND DNA ANALYSIS\",\n        \"elements\": [\"logo\", \"5 color swatches\", \"6 icons\", \"target audience charts\"]\n      },\n      {\n        \"title\": \"02 概念构思 / CONCEPT MOODBOARD\",\n        \"elements\": [\"5 photo references\", \"4 mood icons\", \"design equation\"]\n      },\n      {\n        \"title\": \"03 形态研究 / FORM STUDY\",\n        \"elements\": [\"4 logo anatomy icons\", \"4 evolution steps\", \"4 silhouettes\"]\n      },\n      {\n        \"title\": \"04 概念探索 / CONCEPT EXPLORATION\",\n        \"elements\": [\"12 line-art character sketches\"]\n      },\n      {\n        \"title\": \"05 精细线稿 / REFINED LINE ART\",\n        \"elements\": [\"3 rows of front and side line art with proportion guides\"]\n      },\n      {\n        \"title\": \"06 细节精修 / DETAIL REFINEMENT\",\n        \"elements\": [\"2 full-body renders with labels\", \"4 circular close-ups\"]\n      },\n      {\n        \"title\": \"07 表情设定 / EXPRESSION SHEET\",\n        \"elements\": [\"11 3D rendered head expressions\"]\n      },\n      {\n        \"title\": \"08 姿势库 / POSE LIBRARY\",\n        \"elements\": [\"9 full-body 3D rendered poses\"]\n      },\n      {\n        \"title\": \"09 转身视图 / TURNAROUND VIEW\",\n        \"elements\": [\"5 full-body 3D renders\", \"5 matching line-art views\"]\n      },\n      {\n        \"title\": \"10 色彩开发 / COLOR DEVELOPMENT\",\n        \"elements\": [\"5 rows of 5-color palettes\", \"color psychology text\"]\n      },\n      {\n        \"title\": \"11 材质规格 / MATERIAL SPECIFICATION\",\n        \"elements\": [\"5 texture swatches\", \"property sliders\", \"4 manufacturing icons\"]\n      },\n      {\n        \"title\": \"12 色彩应用 / COLOR APPLICATION\",\n        \"elements\": [\"4 color variant renders\", \"2 light/dark renders\", \"4 contrast rating circles\"]\n      },\n      {\n        \"title\": \"13 构造指南 / CONSTRUCTION GUIDE\",\n        \"elements\": [\"2 line-art diagrams for geometry and grid\"]\n      },\n      {\n        \"title\": \"14 设计系统规则 / DESIGN SYSTEM RULES\",\n        \"elements\": [\"minimum size icons\", \"clear space diagram\", \"4 usage examples\"]\n      },\n      {\n        \"title\": \"15 资产变体 / ASSET VARIANTS\",\n        \"elements\": [\"3 size variants\", \"3 line-art variants\", \"3 simplified flat heads\"]\n      },\n      {\n        \"title\": \"16 数字应用 / DIGITAL APPLICATIONS\",\n        \"elements\": [\"1 app icon\", \"2 social avatars\", \"UI elements\", \"3-step animation cycle\"]\n      },\n      {\n        \"title\": \"17 实物应用 / PHYSICAL APPLICATIONS\",\n        \"elements\": [\"plush toy mockup\", \"packaging mockup\", \"merchandise mockup\", \"storefront mockup\"]\n      },\n      {\n        \"title\": \"18 最终主视觉 / FINAL RENDERING\",\n        \"elements\": [\"large high-res 3D render of mascot holding tea\", \"logo\", \"file format list\"]\n      }\n    ]\n  }\n}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case107/output.jpg",
+      "aspect_ratio": "1:2",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/Colin_Leeee/status/2044802802149650631",
+      "source_author": "@Colin_Leeee"
+    },
+    {
+      "id": "brand_002",
+      "title": "角色品牌周边展板",
+      "title_en": "Anime Character Brand Identity & Merch Board",
+      "category": "brand_identity",
+      "description": "动漫角色品牌+周边设计全案：Banner+包装+海报+社媒+周边商品一张图搞定",
+      "tags": [
+        "角色",
+        "周边",
+        "包装",
+        "社媒"
+      ],
+      "prompt": "{\n  \"type\": \"brand identity and merchandise design board\",\n  \"theme\": {\n    \"color_palette\": \"{argument name=\\\"theme color\\\" default=\\\"pastel pink\\\"} and white\",\n    \"motif\": \"{argument name=\\\"motif\\\" default=\\\"cherry blossoms\\\"} and pink hearts\"\n  },\n  \"character\": {\n    \"description\": \"anime girl with short brown bob hair, pink eyes, wearing a white hoodie, gentle smile\"\n  },\n  \"branding\": {\n    \"main_logo\": \"{argument name=\\\"character name\\\" default=\\\"癒音ちー\\\"}\",\n    \"sub_logo\": \"{argument name=\\\"character subtext\\\" default=\\\"ゆおんちー\\\"}\"\n  },\n  \"layout\": {\n    \"sections\": [\n      {\n        \"type\": \"header banner\",\n        \"position\": \"top\",\n        \"elements\": [\"large main logo\", \"sub logo\", \"cherry blossom graphics\", \"character portrait on the right\"]\n      },\n      {\n        \"type\": \"product packaging\",\n        \"position\": \"middle left\",\n        \"elements\": [\"1 square box with heart-shaped transparent window showing pink heart candies\", \"character illustration on box\", \"2 individual candy wrappers\", \"5 scattered heart candies\"]\n      },\n      {\n        \"type\": \"promotional poster\",\n        \"position\": \"middle right\",\n        \"elements\": [\"character portrait\", \"heart-shaped candy bowl\", \"main logo\", \"text '4.26 NEW OPEN'\", \"text '{argument name=\\\"social handle\\\" default=\\\"@yuonchii\\\"}'\"]\n      },\n      {\n        \"type\": \"horizontal web banner\",\n        \"position\": \"lower middle\",\n        \"elements\": [\"main logo\", \"cherry blossoms\", \"character portrait on the right\"]\n      },\n      {\n        \"type\": \"social media profile mockup\",\n        \"position\": \"bottom left\",\n        \"elements\": [\"header image with logo\", \"1 circular profile picture\", \"handle '{argument name=\\\"social handle\\\" default=\\\"@yuonchii\\\"}'\", \"1 follow button\", \"mock bio text\"]\n      },\n      {\n        \"type\": \"merchandise collection\",\n        \"position\": \"bottom right\",\n        \"count\": 9,\n        \"items\": [\"1 white t-shirt with logo\", \"1 white mug with character\", \"4 round pin badges\", \"1 acrylic keychain\", \"2 candy packets\"]\n      }\n    ]\n  }\n}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case112/output.jpg",
+      "aspect_ratio": "3:4",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/chi_vc_/status/2046061073720369228",
+      "source_author": "@chi_vc_"
+    },
+    {
+      "id": "brand_003",
+      "title": "暗色营销案例页",
+      "title_en": "Dark Mode Marketing Case Study UI",
+      "category": "brand_identity",
+      "description": "暗色玻璃拟态风格的营销案例着陆页，带数据统计+策略时间线+客户Logo墙+CTA",
+      "tags": [
+        "营销",
+        "着陆页",
+        "暗色",
+        "数据"
+      ],
+      "prompt": "{\n  \"type\": \"UI/UX landing page mockup\",\n  \"theme\": \"dark mode, sleek modern aesthetic, glassmorphism, {argument name=\\\"primary accent color\\\" default=\\\"neon purple and blue\\\"} glowing accents\",\n  \"header\": {\n    \"logo\": \"{argument name=\\\"brand name\\\" default=\\\"goViralX\\\"}\",\n    \"top_right_tag\": \"VIRAL CAMPAIGN CASE STUDY\"\n  },\n  \"layout\": {\n    \"sections\": [\n      {\n        \"name\": \"Hero\",\n        \"headline\": \"{argument name=\\\"hero headline\\\" default=\\\"How We Created 10M+ Viral Impact\\\"}\",\n        \"subheadline\": \"3天引爆全网, 助力品牌实现指数级增长\",\n        \"stats_row\": {\n          \"count\": 4,\n          \"labels\": [\"总播放量\", \"互动率\", \"转化咨询\", \"执行周期\"],\n          \"values\": [\"{argument name=\\\"main statistic\\\" default=\\\"10,240,000+\\\"}\", \"18.7%\", \"3,200+\", \"72小时\"]\n        },\n        \"visual\": \"cinematic shot of a person in a hoodie looking at glowing digital screens and graphs, large play button overlay\"\n      },\n      {\n        \"name\": \"Strategy\",\n        \"title\": \"Our 3-Day Execution Strategy\",\n        \"layout_type\": \"vertical timeline\",\n        \"steps_count\": 3,\n        \"elements_per_step\": [\"timeline node\", \"title\", \"bullet points\", \"video thumbnail with play button\", \"description box\"]\n      },\n      {\n        \"name\": \"Performance\",\n        \"title\": \"Data-Driven Performance\",\n        \"left_column\": {\n          \"stat_cards_count\": 4,\n          \"values\": [\"10M+\", \"43%\", \"28,000+\", \"3,200+\"]\n        },\n        \"right_column\": {\n          \"charts_count\": 2,\n          \"chart_1\": \"line graph showing 7-day growth peaking at Day 3\",\n          \"chart_2\": \"horizontal segmented bar chart showing platform distribution (TikTok 52%, Instagram 24%, X 15%, YouTube 9%)\"\n        }\n      },\n      {\n        \"name\": \"Keys to Success\",\n        \"title\": \"The 3 Keys to Viral Success\",\n        \"cards_count\": 3,\n        \"card_elements\": [\"glowing icon (fire, target, antenna)\", \"title\", \"description\", \"VIEW DETAIL link\"]\n      },\n      {\n        \"name\": \"Social Proof\",\n        \"title\": \"TRUSTED BY CREATORS & BRANDS\",\n        \"left_column\": {\n          \"logos_count\": 8,\n          \"grid\": \"2x4\",\n          \"brands\": [\"SHEIN\", \"SHOPLINE\", \"Blueglass\", \"instacart\", \"lemon8\", \"mi\", \"CIDER\", \"bellroy\"]\n        },\n        \"right_column\": {\n          \"testimonial_cards_count\": 2,\n          \"elements\": [\"quote\", \"author title (SaaS Founder, Growth Manager)\"]\n        }\n      },\n      {\n        \"name\": \"Call to Action\",\n        \"title\": \"READY TO GO VIRAL?\",\n        \"interactive_elements\": [\"text input field\", \"glowing button with text '{argument name=\\\"call to action text\\\" default=\\\"获取专属增长方案 ->\\\"}'\"],\n        \"visual\": \"3D render of a rocket ship taking off with purple and blue flames\"\n      }\n    ]\n  }\n}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/poster_case108/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/IndieDevHailey/status/2044974254769463312",
+      "source_author": "@IndieDevHailey"
+    },
+    {
+      "id": "livestream_001",
+      "title": "直播带货UI模拟",
+      "title_en": "E-commerce Live Stream UI Mockup",
+      "category": "livestream",
+      "description": "完整的直播间UI模拟图：主播+弹幕+礼物动效+商品卡片+互动栏，适合直播间视觉设计",
+      "tags": [
+        "直播",
+        "UI",
+        "带货",
+        "弹幕"
+      ],
+      "prompt": "{\n  \"type\": \"live stream UI mockup\",\n  \"subject\": {\n    \"description\": \"portrait of {argument name=\\\"host name\\\" default=\\\"Elon Musk\\\"}, smiling, wearing a black t-shirt with a white technical schematic graphic\",\n    \"background\": \"left side shows a screen with '{argument name=\\\"left background logo\\\" default=\\\"SPACEX\\\"}' text, right side shows a red '{argument name=\\\"right background logo\\\" default=\\\"Tesla T logo\\\"}' and a dark car\"\n  },\n  \"ui_overlay\": {\n    \"top_header\": {\n      \"host_info\": \"avatar, name '{argument name=\\\"host name\\\" default=\\\"Elon Musk\\\"}', subtext '55.6万本场点赞', red '关注' button\",\n      \"rank_badge\": \"gold coin icon with '全站第1名'\",\n      \"viewer_stats\": \"3 top viewer avatars with '12.3w', '8.6w', '5.7w', total '68.7万', 'X' close button\",\n      \"right_links\": \"'更多直播 >', '礼物展馆 0/24' with blue '经典' tag\"\n    },\n    \"mid_left_gifts\": {\n      \"count\": 2,\n      \"items\": [\n        \"avatar '科技爱好者', '送小心心', heart icon x 1314\",\n        \"avatar '星辰大海', '送火箭', rocket icon x 666\"\n      ]\n    },\n    \"bottom_left_chat\": {\n      \"system_message\": \"level 37 badge '宇宙漫游者 加入了直播间'\",\n      \"message_count\": 7,\n      \"messages\": [\n        \"小火箭: 马斯克!未来可期!🚀\",\n        \"future: 特斯拉Model 2什么时候出?\",\n        \"星空梦想家: SpaceX今年能上火星吗?\",\n        \"AI探索者: Neuralink进展如何?\",\n        \"帅气的网友: 马总好!\",\n        \"Mars: 第一次来你的直播,超激动!\",\n        \"用户123: 讲讲AI吧,会取代人类吗?\"\n      ]\n    },\n    \"bottom_right_product_card\": {\n      \"hot_tag\": \"orange '热卖 x 1888'\",\n      \"image\": \"Tesla Cybertruck\",\n      \"title\": \"{argument name=\\\"product name\\\" default=\\\"特斯拉Cybertruck 电动皮卡\\\"}\",\n      \"price\": \"{argument name=\\\"product price\\\" default=\\\"¥ 1,618,000\\\"}\",\n      \"button\": \"red '抢' button\",\n      \"floating_animation\": \"translucent hearts floating up the right edge\"\n    },\n    \"bottom_bar\": {\n      \"input_field\": \"'说点什么...'\",\n      \"icons\": [\"smiley face\", \"three dots\", \"shopping cart\", \"gift box\", \"share\"]\n    }\n  }\n}",
+      "preview_url": "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/images/ui_case89/output.jpg",
+      "aspect_ratio": "9:16",
+      "source": "EvoLinkAI/awesome-gpt-image-2-prompts",
+      "source_url": "https://x.com/sjbbxhz/status/2045684734714380687",
+      "source_author": "@sjbbxhz"
+    }
+  ]
+}
