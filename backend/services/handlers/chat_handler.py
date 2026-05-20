@@ -152,6 +152,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         _completion_args: Optional[Dict[str, Any]] = None
         # 多内容块追踪：每轮 LLM 文本 = 独立 TextPart，工具结果 = ToolResultPart
         _content_blocks: List[Dict[str, Any]] = []
+        # 空输出兜底：工具返回后模型只有 thinking 没有 text 时，追加一轮逼它输出
+        _empty_output_retried = False
+        _last_finish_reason: Optional[str] = None
 
         try:
             # 1. 推送开始消息
@@ -412,9 +415,42 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     if chunk.credits_consumed is not None:
                         final_usage["api_credits"] = chunk.credits_consumed
 
+                    # 记录最后的 finish_reason（通常在最后一帧）
+                    if chunk.finish_reason:
+                        _last_finish_reason = chunk.finish_reason
+
                 # --- 流结束，判断是否有工具调用 ---
                 if not tool_calls_acc:
-                    break  # 无工具调用，输出完成
+                    # ── 空输出兜底：工具返回后模型只有 thinking 没有 text ──
+                    if not turn_text and _budget.turns_used > 1:
+                        logger.warning(
+                            f"Empty output detected | task={task_id} | "
+                            f"turn={turn + 1} | finish_reason={_last_finish_reason} | "
+                            f"thinking_len={len(turn_thinking)} | retried={_empty_output_retried}"
+                        )
+                        if not _empty_output_retried:
+                            # 逻辑一：追加一轮，关闭 thinking，逼模型直接输出
+                            _empty_output_retried = True
+                            thinking_mode = None
+                            messages.append({
+                                "role": "user",
+                                "content": "请根据刚才的工具执行结果，直接告诉我结论。",
+                            })
+                            continue
+                        else:
+                            # 逻辑二：已追加过还是空 → 保底消息，不再循环
+                            _last_tool_text = ""
+                            for blk in reversed(_content_blocks):
+                                _blk_text = blk.get("output") or blk.get("text")
+                                if blk["type"] in ("tool_result", "tool_step") and _blk_text:
+                                    _last_tool_text = str(_blk_text)[:2000]
+                                    break
+                            turn_text = (
+                                "抱歉，我在整理回复时遇到了问题。以下是工具返回的原始结果：\n\n"
+                                + (_last_tool_text or "（无工具输出）")
+                            )
+                            accumulated_text += turn_text
+                    break
 
                 # 有工具调用 → 未提交的 thinking + 中间叙述按时序插入 content_blocks
                 # thinking 通常在 text 开始时已提交（转换点），这里兜底处理无 text 直接调工具的情况
