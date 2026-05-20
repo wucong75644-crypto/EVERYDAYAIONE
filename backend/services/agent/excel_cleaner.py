@@ -372,6 +372,7 @@ def _apply_merge_fill(
     chunk_start_excel = data_start_excel + chunk_row_offset
     chunk_end_excel = chunk_start_excel + len(df) - 1
     filled = 0
+    filled_cols: set[str] = set()
 
     for min_row, max_row, min_col, max_col in structure.merged_ranges:
         # 跳过 header 区域的合并
@@ -405,15 +406,16 @@ def _apply_merge_fill(
                 if pd.isna(df.iloc[ri, ci]):
                     df.iloc[ri, ci] = fill_val
                     filled += 1
+                    filled_cols.add(str(df.columns[ci]))
 
     report.merged_cols_filled = filled
     if filled:
         report.issues.append({
             "type": "merge_filled",
             "severity": "info",
-            "location": {},
+            "location": {"cols": sorted(filled_cols)},
             "preserved": False,
-            "action": f"合并单元格精确填充（{filled}个单元格）",
+            "action": f"合并单元格精确填充（{filled}个单元格，涉及{len(filled_cols)}列）：{', '.join(sorted(filled_cols))}",
             "recovery_hint": "合并区域内的空值已用左上角值填充，非全列ffill",
         })
 
@@ -570,7 +572,7 @@ def _remove_empty_rows_cols(
 
 def _fix_int_columns(df: pd.DataFrame, report: CleaningReport) -> None:
     """将全整数的 float64 列转回 nullable Int64（防止 123 → 123.0）。"""
-    fixed = 0
+    fixed_cols: list[str] = []
     for col in df.columns:
         if str(col).startswith("_is_"):
             continue
@@ -583,10 +585,19 @@ def _fix_int_columns(df: pd.DataFrame, report: CleaningReport) -> None:
         try:
             if (non_null == non_null.astype("int64")).all():
                 df[col] = df[col].astype("Int64")
-                fixed += 1
+                fixed_cols.append(str(col))
         except (OverflowError, ValueError):
             pass
-    report.int_cols_fixed = fixed
+    report.int_cols_fixed = len(fixed_cols)
+    if fixed_cols:
+        report.issues.append({
+            "type": "int_cols_fixed",
+            "severity": "info",
+            "location": {"cols": fixed_cols},
+            "preserved": False,
+            "action": f"整数修复（{len(fixed_cols)}列）：{', '.join(fixed_cols)}",
+            "recovery_hint": "float64 全为整数的列已转 Int64，防止 123→123.0",
+        })
 
 
 def _deduplicate_columns(df: pd.DataFrame, report: CleaningReport) -> None:
