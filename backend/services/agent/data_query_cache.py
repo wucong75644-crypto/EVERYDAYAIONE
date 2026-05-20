@@ -709,6 +709,14 @@ def _convert_excel_to_parquet(
         # AI column_mapping 重命名列
         if prescan_result and prescan_result.column_mapping:
             df = _apply_column_mapping(df, prescan_result.column_mapping)
+            cleaning_report.issues.append({
+                "type": "column_renamed",
+                "severity": "info",
+                "location": {"cols": list(prescan_result.column_mapping.values())},
+                "preserved": False,
+                "action": f"AI 重命名列：{prescan_result.column_mapping}",
+                "recovery_hint": "列名已按 AI 预探测结果重命名",
+            })
         try:
             df.to_parquet(tmp_path, index=False, engine="pyarrow")
             os.rename(tmp_path, cache_path)
@@ -890,6 +898,16 @@ def _convert_excel_to_parquet(
                                 "action": a.get("description", ""),
                                 "recovery_hint": "AI 检测到的数据异常，建议分析时注意",
                             })
+                # AI 列重命名记录
+                if prescan_result and prescan_result.column_mapping:
+                    file_meta.issues.append({
+                        "type": "column_renamed",
+                        "severity": "info",
+                        "location": {"cols": list(prescan_result.column_mapping.values())},
+                        "preserved": False,
+                        "action": f"AI 重命名列：{prescan_result.column_mapping}",
+                        "recovery_hint": "列名已按 AI 预探测结果重命名",
+                    })
                 # 粒度检测（大文件：用采样 df + 实际行数）
                 from services.agent.file_meta import _detect_grain
                 _grain = _detect_grain(sample_df, file_meta.schema, row_count)
