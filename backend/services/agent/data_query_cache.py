@@ -729,6 +729,18 @@ def _convert_excel_to_parquet(
         if prescan_result and prescan_result.confidence in ("high", "medium"):
             from dataclasses import asdict as _asdict
             file_meta.prescan = _asdict(prescan_result)
+            # AI 检测到的数据异常 → 转成 issues
+            if prescan_result.anomalies:
+                for a in prescan_result.anomalies:
+                    file_meta.issues.append({
+                        "type": f"anomaly_{a.get('type', 'unknown')}",
+                        "severity": a.get("severity", "warning"),
+                        "location": {"col": a.get("column", ""),
+                                     "rows": a.get("sample_rows", [])},
+                        "preserved": True,
+                        "action": a.get("description", ""),
+                        "recovery_hint": "AI 检测到的数据异常，建议分析时注意",
+                    })
         # 粒度检测（小文件：df 是完整数据，len(df) 是真实行数）
         from services.agent.file_meta import _detect_grain
         _grain = _detect_grain(df, file_meta.schema, len(df))
@@ -866,6 +878,18 @@ def _convert_excel_to_parquet(
                 if prescan_result and prescan_result.confidence in ("high", "medium"):
                     from dataclasses import asdict as _asdict
                     file_meta.prescan = _asdict(prescan_result)
+                    # AI 检测到的数据异常 → 转成 issues
+                    if prescan_result.anomalies:
+                        for a in prescan_result.anomalies:
+                            file_meta.issues.append({
+                                "type": f"anomaly_{a.get('type', 'unknown')}",
+                                "severity": a.get("severity", "warning"),
+                                "location": {"col": a.get("column", ""),
+                                             "rows": a.get("sample_rows", [])},
+                                "preserved": True,
+                                "action": a.get("description", ""),
+                                "recovery_hint": "AI 检测到的数据异常，建议分析时注意",
+                            })
                 # 粒度检测（大文件：用采样 df + 实际行数）
                 from services.agent.file_meta import _detect_grain
                 _grain = _detect_grain(sample_df, file_meta.schema, row_count)
