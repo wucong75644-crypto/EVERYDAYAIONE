@@ -729,6 +729,11 @@ def _convert_excel_to_parquet(
         if prescan_result and prescan_result.confidence in ("high", "medium"):
             from dataclasses import asdict as _asdict
             file_meta.prescan = _asdict(prescan_result)
+        # 粒度检测（小文件：df 是完整数据，len(df) 是真实行数）
+        from services.agent.file_meta import _detect_grain
+        _grain = _detect_grain(df, file_meta.schema, len(df))
+        if _grain:
+            file_meta.grain = _grain
         write_file_meta(cache_path, file_meta)
         update_session_files(
             str(Path(cache_path).parent), cache_path,
@@ -837,8 +842,15 @@ def _convert_excel_to_parquet(
             # 从 Parquet 读采样数据生成完整 meta
             try:
                 import duckdb
+                # 三段采样（前2000+中1000+尾2000=5000行），比只取头部更有代表性
+                _mid_off = row_count // 2
+                _tail_off = max(0, row_count - 2000)
                 sample_df = duckdb.sql(
-                    f"SELECT * FROM '{cache_path}' LIMIT 500"
+                    f"(SELECT * FROM '{cache_path}' LIMIT 2000)"
+                    f" UNION ALL "
+                    f"(SELECT * FROM '{cache_path}' LIMIT 1000 OFFSET {_mid_off})"
+                    f" UNION ALL "
+                    f"(SELECT * FROM '{cache_path}' LIMIT 2000 OFFSET {_tail_off})"
                 ).to_df()
                 formulas, formula_skip = extract_formulas(excel_path)
                 file_meta = generate_file_meta(
@@ -849,11 +861,16 @@ def _convert_excel_to_parquet(
                     formula_skip_reason=formula_skip,
                     merged_ranges=merged_ranges,
                 )
-                # 修正行数为实际总行数（采样 df 只有 500 行）
+                # 修正行数为实际总行数（采样 df 只有 5000 行）
                 file_meta.summary["row_count"] = row_count
                 if prescan_result and prescan_result.confidence in ("high", "medium"):
                     from dataclasses import asdict as _asdict
                     file_meta.prescan = _asdict(prescan_result)
+                # 粒度检测（大文件：用采样 df + 实际行数）
+                from services.agent.file_meta import _detect_grain
+                _grain = _detect_grain(sample_df, file_meta.schema, row_count)
+                if _grain:
+                    file_meta.grain = _grain
                 write_file_meta(cache_path, file_meta)
                 update_session_files(
                     str(Path(cache_path).parent), cache_path,

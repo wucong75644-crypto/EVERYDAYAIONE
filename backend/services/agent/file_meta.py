@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,7 @@ class FileMeta:
     issues: list[dict[str, Any]] = field(default_factory=list)
     merged_cells: list[dict[str, Any]] = field(default_factory=list)
     raw_preserved: bool = True    # 原始结构是否被保留（未自动 ffill）
+    grain: dict[str, Any] = field(default_factory=dict)    # 粒度检测结果
     prescan: dict[str, Any] = field(default_factory=dict)  # AI 坐标预探测结论
     cleaning: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
@@ -201,15 +203,117 @@ def _build_schema(df: pd.DataFrame, data_start_row: int) -> dict[str, dict[str, 
             except (TypeError, ValueError):
                 pass
 
-        # 分类检测
-        if entry["type"] == "string" and len(non_null) > 0:
+        # 唯一值计数（所有列都存，供粒度检测使用）
+        if len(non_null) > 0:
             unique_count = non_null.nunique()
-            if 1 < unique_count <= _CATEGORY_THRESHOLD:
+            entry["unique_count"] = unique_count
+            # 分类检测仍然只对 string 且 ≤20 时存 categories
+            if entry["type"] == "string" and 1 < unique_count <= _CATEGORY_THRESHOLD:
                 top_values = non_null.value_counts().head(10).index.tolist()
                 entry["categories"] = [str(v) for v in top_values]
 
         schema[col_str] = entry
     return schema
+
+
+# ── 粒度检测 ──
+
+_GROUP_KEY_HINTS = re.compile(
+    r'(订单|编号|单号|发票号|ID|order|invoice|bill|no\.?$)', re.IGNORECASE
+)
+
+
+def _detect_grain(
+    df: pd.DataFrame,
+    schema: dict[str, dict[str, Any]],
+    actual_row_count: int,
+) -> dict[str, Any] | None:
+    """检测一对多粒度关系。返回 grain dict 或 None（不确定时不输出）。
+
+    复用 schema 里已有的 unique_count，只在找到分组键后才做 groupby。
+    注意：schema 的 unique_count 基于传入的 df（大文件时是采样），
+    所以 ratio 计算用 len(df) 而非 actual_row_count。
+    actual_row_count 只用于输出展示。
+    """
+    sample_rows = len(df)
+    if sample_rows < 10 or actual_row_count < 10:
+        return None
+
+    # Step 1: 从 schema 找候选分组键
+    # unique_count 来自 _build_schema 对 df 的计算，ratio 必须基于 df 行数
+    candidates: list[tuple[str, int, float, float]] = []
+    for col_name, info in schema.items():
+        if info.get("type") not in ("string", "integer"):
+            continue
+        uc = info.get("unique_count", 0)
+        if uc < 5:
+            continue
+        ratio = uc / sample_rows  # 用采样行数算 ratio，不用 actual_row_count
+        if not (0.15 <= ratio <= 0.85):
+            continue
+        avg_size = sample_rows / uc  # 采样内的平均组大小
+        if avg_size < 1.5:
+            continue
+        name_boost = 2.0 if _GROUP_KEY_HINTS.search(col_name) else 1.0
+        score = name_boost * (1.0 - abs(ratio - 0.45))
+        candidates.append((col_name, uc, avg_size, score))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: -x[3])
+    group_key, unique_count, avg_size, _ = candidates[0]
+
+    # 验证：至少 30% 的组有多行
+    if group_key not in df.columns:
+        return None
+    group_sizes = df.groupby(group_key).size()
+    if (group_sizes > 1).mean() < 0.3:
+        return None
+
+    # Step 2: 分类其他列（统一用 round(4) + groupby.nunique）
+    order_level: list[str] = []
+    line_level: list[str] = []
+
+    for col_name, info in schema.items():
+        if col_name == group_key or col_name not in df.columns:
+            continue
+        if info.get("null_ratio", 0) > 0.9:
+            continue  # 高空值列跳过
+        col_data = df[col_name]
+        if col_data.isna().all():
+            continue
+
+        try:
+            if info.get("type") in ("integer", "decimal"):
+                rounded = col_data.round(4)
+                group_unique = rounded.groupby(df[group_key]).nunique()
+            else:
+                group_unique = df.groupby(group_key)[col_name].nunique()
+            if (group_unique == 1).mean() > 0.95:
+                order_level.append(col_name)
+            else:
+                line_level.append(col_name)
+        except (TypeError, ValueError):
+            line_level.append(col_name)
+
+    # Step 3: 置信度门控 — 至少 1 个数值列是订单级
+    numeric_order = [
+        c for c in order_level
+        if schema.get(c, {}).get("type") in ("integer", "decimal")
+    ]
+    if not numeric_order:
+        return None
+
+    # 输出用实际行数（大文件时采样的 avg_size 按比例换算）
+    actual_avg_size = round(actual_row_count / max(unique_count, 1), 1)
+    return {
+        "group_key": group_key,
+        "unique_count": int(unique_count),
+        "row_count": actual_row_count,
+        "avg_group_size": actual_avg_size,
+        "order_level_fields": order_level,
+        "line_level_fields": line_level,
+    }
 
 
 def _build_sample(
@@ -500,6 +604,37 @@ def format_file_view(meta: FileMeta) -> str:
                 extra = f" | 枚举: {cats}"
 
             lines.append(f"  {col_letter} | {col_name} | {dtype} | 空值: {null_str}{extra}")
+        lines.append("")
+
+    # grain warning
+    if meta.grain:
+        g = meta.grain
+        gk = g["group_key"]
+        lines.append(
+            f"⚠ 数据粒度：明细表（每行 ≠ 一个{gk}，"
+            f"平均每组 {g.get('avg_group_size', 0)} 行）"
+        )
+        lines.append(
+            f"  分组键: {gk}（{g['unique_count']}个唯一值 / {g['row_count']}行）"
+        )
+        ol = g.get("order_level_fields", [])
+        ll = g.get("line_level_fields", [])
+        numeric_ol = [c for c in ol if meta.schema.get(c, {}).get("type") in ("integer", "decimal")]
+        dim_ol = [c for c in ol if c not in numeric_ol]
+        if numeric_ol:
+            lines.append(
+                f"  ⚠ 订单级数值（同一{gk}内值相同，SUM前必须先按{gk}去重）："
+            )
+            lines.append(f"    {', '.join(numeric_ol)}")
+        if dim_ol:
+            lines.append(f"  订单级维度（同组内相同）：{', '.join(dim_ol[:8])}")
+        if ll:
+            lines.append(f"  明细级字段（每行独立，可直接SUM/COUNT）：{', '.join(ll[:8])}")
+        if numeric_ol:
+            lines.append(
+                f"  正确写法: SELECT SUM(\"{numeric_ol[0]}\") FROM "
+                f"(SELECT DISTINCT \"{gk}\", \"{numeric_ol[0]}\" FROM data)"
+            )
         lines.append("")
 
     # sample
