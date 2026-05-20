@@ -29,6 +29,7 @@ class PrescanResult:
     column_mapping: dict[str, str] = field(default_factory=dict)
     special_rows: dict[str, list[int]] = field(default_factory=dict)
     regions: list[dict[str, Any]] = field(default_factory=list)
+    anomalies: list[dict[str, Any]] = field(default_factory=list)  # AI 检测到的数据异常
     confidence: str = "low"
     reasoning: str = ""
     raw_response: str = ""            # 原始 AI 返回（调试用）
@@ -63,9 +64,11 @@ def build_prescan_prompt(
 - 有没有合计行/备注行/单位行
 - 有没有多个数据区域（纵向或横向）
 - 如果有多级表头或重复列名，给出业务语义的列名映射
+- 数据中有没有看起来异常的值（负数价格/金额、超大异常值、明显不合理的数字）
+  注意：优惠/退款/折扣导致的负数是正常业务行为，不算异常；只标记真正可疑的
 
 返回严格 JSON 格式（不要 markdown 代码块）：
-{{"header_type": "single | multi_level | none", "header_rows": [行号], "data_start_row": 行号, "column_mapping": {{"原列字母": "业务列名"}}, "special_rows": {{"summary": [行号], "unit": [行号], "note": [行号]}}, "regions": [{{"start_row": N, "end_row": N, "start_col": "A", "end_col": "E", "description": ""}}], "confidence": "high | medium | low", "reasoning": "简短说明判断依据"}}"""
+{{"header_type": "single | multi_level | none", "header_rows": [行号], "data_start_row": 行号, "column_mapping": {{"原列字母": "业务列名"}}, "special_rows": {{"summary": [行号], "unit": [行号], "note": [行号]}}, "regions": [{{"start_row": N, "end_row": N, "start_col": "A", "end_col": "E", "description": ""}}], "anomalies": [{{"column": "列名", "type": "negative|extreme|suspicious", "severity": "warning|info", "description": "异常描述", "sample_rows": [行号]}}], "confidence": "high | medium | low", "reasoning": "简短说明判断依据"}}"""
 
 
 def sample_to_coordinate_text(
@@ -185,7 +188,7 @@ async def _call_llm(prompt: str) -> str:
             model="qwen-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=1500,
             timeout=10,
         )
         return resp.choices[0].message.content.strip()
@@ -211,6 +214,7 @@ def _parse_prescan_response(response: str) -> PrescanResult:
         column_mapping=data.get("column_mapping", {}),
         special_rows=data.get("special_rows", {}),
         regions=data.get("regions", []),
+        anomalies=data.get("anomalies", []),
         confidence=data.get("confidence", "low"),
         reasoning=data.get("reasoning", ""),
     )
