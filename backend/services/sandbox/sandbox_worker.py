@@ -488,18 +488,11 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
             return (_stem + _ext).lower()
 
         def _get_file(name: str) -> str:
-            """[deprecated] 请使用 STAGING_DIR + '/parquet文件名' 直接拼接。
+            """按文件名获取 parquet 绝对路径（归一化匹配 + 自检）。
 
-            按文件名获取 parquet 绝对路径（归一化匹配 + 自检）。
             manifest 只存 parquet 路径，沙盒内所有文件访问都走这个函数。
             用法：path = get_file('销售报表.xlsx')
             """
-            import warnings as _warnings
-            _warnings.warn(
-                "get_file() 已废弃，请使用 STAGING_DIR + '/parquet文件名' 直接拼接路径",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             import os as _os
             try:
                 with _builtins.open(_manifest_path, "r", encoding="utf-8") as _mf:
