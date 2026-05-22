@@ -98,7 +98,7 @@ class TestSandboxConstants:
 
     def test_allowed_modules_excludes_dangerous(self):
         # os/shutil 已移到白名单（运行时走 scoped_os），其他仍禁止
-        for mod in ["sys", "subprocess", "socket", "pickle"]:
+        for mod in ["subprocess", "socket", "pickle"]:
             assert mod not in ALLOWED_IMPORT_MODULES
         # os/shutil 在白名单（由 make_restricted_import + scoped_os 保障安全）
         for mod in ["os", "os.path", "shutil"]:

@@ -2311,7 +2311,8 @@
       "Bash(grep -r \"erp_trade\\\\|erp_document\\\\|erp_aftersale\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
       "Bash(ssh everydayai *)",
       "Bash(ssh root@everydayai.com.cn \"du -sh /* 2>/dev/null | sort -rh | head -15\")",
-      "Bash(./git-push.sh \"fix: 沙盒白名单补充sys模块——修复duckdb.register\\(\\)被拦截的问题\")"
+      "Bash(./git-push.sh \"fix: 沙盒白名单补充sys模块——修复duckdb.register\\(\\)被拦截的问题\")",
+      "Bash(./git-push.sh \"test: 更新沙盒白名单测试——sys已加入允许列表\")"
     ],
     "additionalDirectories": [
       "/tmp"
