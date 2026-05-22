@@ -322,9 +322,9 @@ class FileToolMixin:
         lines.append("")
         lines.append("## 后续操作")
         lines.append(f"已转为 Parquet（表头展平+合并单元格精确填充+空行删除+类型修正已完成，数据可直接查询）。")
+        parquet_basename = Path(cache_path).name
         lines.append(f"在 code_execute 中用 duckdb 查询（不要用 pd.read_excel）：")
-        lines.append(f"  path = get_file('{name}')")
-        lines.append(f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\").df()")
+        lines.append(f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{STAGING_DIR}}/{parquet_basename}')\").df()")
         if sheet_names and len(sheet_names) > 1:
             lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
 
@@ -361,7 +361,7 @@ class FileToolMixin:
         lines = [
             f"{name} ({size_str})",
             "",
-            f"在 code_execute 中读取：path = get_file('{name}')",
+            f"在 code_execute 中读取：该文件位于 WORKSPACE_DIR + '/{rel_path}'",
         ]
 
         return AgentResult(summary="\n".join(lines), status="success")
