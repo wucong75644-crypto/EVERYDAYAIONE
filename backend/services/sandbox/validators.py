@@ -11,7 +11,7 @@ from typing import List, Optional
 # 禁止导入的模块（进程/网络/编译）
 # os/shutil 已移出 — 运行时走 scoped_os/scoped_shutil（见 scoped_os.py）
 _BLOCKED_MODULES = frozenset({
-    "sys", "subprocess",
+    "subprocess",
     "socket", "http", "urllib", "requests", "httpx",
     "ctypes", "importlib", "code", "codeop", "compileall",
     "multiprocessing", "threading", "signal", "resource",
