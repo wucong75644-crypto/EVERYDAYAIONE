@@ -45,6 +45,7 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "os", "os.path", "shutil",
     # 内部依赖（被上述模块传递依赖）
     "inspect",  # duckdb.sql() 内部依赖
+    "sys",  # duckdb.register() 内部依赖
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",
 })
