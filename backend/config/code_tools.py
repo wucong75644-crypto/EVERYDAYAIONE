@@ -42,7 +42,8 @@ _DESCRIPTION_BASE = (
     "get_file('文件名') 是预定义函数，按文件名获取绝对路径（自动纠错）。\n"
     "示例：path = get_file('销售报表.xlsx'); duckdb.sql(f\"SELECT * FROM read_parquet('{path}')\")\n"
     "写 Excel 用 engine='xlsxwriter'。\n"
-    "生成文件写到 OUTPUT_DIR，用 print() 输出文本。禁止 sys/subprocess。"
+    "生成文件写到 OUTPUT_DIR，用 print() 输出文本。禁止 sys/subprocess。\n"
+    "NEVER用中文标点写代码：逗号用 , 不用 ，；括号用 () 不用 （）；分号用 ; 不用 ；"
 )
 
 # 主 Agent 版（加 WORKSPACE_DIR + 完整文件探索能力）
@@ -57,7 +58,8 @@ _DESCRIPTION_WORKSPACE = (
     "PDF 用 pdfplumber，DOCX 用 python-docx。\n"
     "图表用 ECharts JSON（.echart.json）。写 Excel 用 xlsxwriter。\n"
     "print() 输出摘要，不要输出完整数据。禁止 sys/subprocess。\n"
-    "删除文件用 file_delete 工具，不要在沙盒内调 os.remove（已禁用）。"
+    "删除文件用 file_delete 工具，不要在沙盒内调 os.remove（已禁用）。\n"
+    "NEVER用中文标点写代码：逗号用 , 不用 ，；括号用 () 不用 （）；分号用 ; 不用 ；"
 )
 
 
@@ -145,6 +147,7 @@ CODE_ROUTING_PROMPT = (
     "## 数据查询\n"
     "- staging 数据用 duckdb.sql(\"SELECT ... FROM read_parquet(STAGING_DIR + '/文件名')\")\n"
     "- 中文列名用双引号包裹\n"
+    "- 代码语法必须全英文半角标点：逗号 , 括号 () 分号 ; 冒号 :（中文标点 ，（）；：会导致 SQL 解析失败）\n"
     "- 分析大数据用 SQL 聚合筛选，不要 SELECT * 全量取出\n"
     "- 导出文件给用户用 code_execute：df.to_excel(OUTPUT_DIR + '/报表.xlsx')\n\n"
     "## 大批量操作\n"
