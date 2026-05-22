@@ -2317,7 +2317,14 @@
       "Bash(./git-push.sh \"fix: 沙盒AST黑名单同步放行sys——双层防线一致性修复\")",
       "Bash(python -m pytest tests/test_code_tools.py tests/test_chat_tools.py tests/test_agent_tools.py tests/test_phase_tools.py -x -q)",
       "Bash(python -m pytest tests/test_code_tools.py -x -q)",
-      "Bash(./git-push.sh \"feat: code_execute提示词补充英文标点约束——防止LLM生成中文标点导致SQL解析失败\")"
+      "Bash(./git-push.sh \"feat: code_execute提示词补充英文标点约束——防止LLM生成中文标点导致SQL解析失败\")",
+      "Bash(python -m pytest tests/test_code_tools.py tests/test_sandbox_worker.py tests/test_file_tool_mixin.py -x -q)",
+      "Bash(python -m pytest tests/test_code_tools.py tests/test_sandbox_worker.py tests/test_file_tool_mixin.py tests/test_sandbox_validators.py tests/test_sandbox_tool_mixin.py -q --ignore-glob=\"**/test_config*\" -k \"not test_sandbox_defaults\")",
+      "Bash(python -m pytest tests/test_file_tool_mixin.py::TestDescribeSingleFile::test_returns_workspace_path -x -q)",
+      "Bash(python -m pytest tests/test_sandbox_worker.py::TestSandboxWorkerEntry::test_validation_failure -x -q)",
+      "Bash(python -m pytest tests/test_code_tools.py tests/test_file_tool_mixin.py::TestDescribeSingleFile -x -q -k \"not test_sandbox_defaults and not test_sandbox_default_values and not test_context_tool and not test_code_execute_handler\")",
+      "Bash(git merge *)",
+      "Bash(./git-push.sh \"feat: STAGING_DIR直接拼接替代get_file——根治LLM中文文件名拼写错误\")"
     ],
     "additionalDirectories": [
       "/tmp"
