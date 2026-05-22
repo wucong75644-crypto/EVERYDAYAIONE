@@ -59,10 +59,10 @@ class TestValidateCode:
         """shutil 已从 AST 黑名单移出"""
         assert validate_code("import shutil") is None
 
-    def test_blocked_import_sys(self):
+    def test_allowed_import_sys(self):
+        """sys 已放行（duckdb.register 内部依赖）"""
         result = validate_code("import sys")
-        assert result is not None
-        assert "sys" in result
+        assert result is None
 
     def test_blocked_import_socket(self):
         result = validate_code("import socket")
@@ -143,10 +143,10 @@ class TestValidateCode:
 
     def test_multiple_blocked_imports(self):
         """多个违规只报前 3 个"""
-        code = "import os\nimport sys\nimport subprocess\nimport socket"
+        code = "import subprocess\nimport socket\nimport pickle\nimport ctypes"
         result = validate_code(code)
         assert result is not None
-        # 至少检测到 3 个
+        # 至少检测到 3 个（最多报 3 个后截断）
         assert result.count("禁止导入模块") >= 3
 
 
