@@ -43,7 +43,7 @@ class TestCodeToolsDefinition:
         desc = tool["function"]["description"]
         assert "erp_query" not in desc
         assert "web_search" not in desc
-        assert "纯计算" in desc or "staging" in desc.lower() or "STAGING_DIR" in desc
+        assert "纯计算" in desc or "staging" in desc or "get_file" in desc
 
     def test_parquet_staging_documented(self):
         """code_execute 描述中说明 Parquet + STAGING_DIR"""
@@ -91,10 +91,10 @@ class TestCodeToolsDefinition:
         assert "WORKSPACE_DIR" not in desc
 
     def test_workspace_version_has_staging_hint(self):
-        """主 Agent 版包含 STAGING_DIR 读取说明"""
+        """主 Agent 版包含 get_file 读取说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "STAGING_DIR" in desc
+        assert "get_file" in desc
 
     def test_architecture_isolation_symmetric(self):
         """两版工具名和参数完全相同，只有描述不同"""
