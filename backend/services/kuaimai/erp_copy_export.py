@@ -179,7 +179,7 @@ async def copy_streaming_export(
     """PG COPY 流式导出——突破 DuckDB 30k 行限制。
 
     Returns:
-        {"row_count": int, "size_kb": float, "path": str, "rel_path": str}
+        {"row_count": int, "size_kb": float, "path": str, "filename": str}
     """
     from core.config import get_settings
 
@@ -212,7 +212,7 @@ async def copy_streaming_export(
 
     # 3. 准备 staging 路径
     from services.kuaimai.erp_duckdb_helpers import resolve_export_path
-    _, rel_path, staging_path, _ = resolve_export_path(
+    staging_dir, staging_path, filename = resolve_export_path(
         doc_type, user_id, org_id, conversation_id,
     )
 
@@ -286,7 +286,7 @@ async def copy_streaming_export(
         "row_count": total_rows,
         "size_kb": round(size_kb, 1),
         "path": str(staging_path),
-        "rel_path": rel_path,
+        "filename": filename,
     }
 
 

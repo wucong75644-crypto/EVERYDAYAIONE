@@ -282,7 +282,7 @@ async def _write_sql_result_to_staging(
     from services.agent.tool_output import FileRef, ColumnMeta
     from services.kuaimai.erp_duckdb_helpers import resolve_export_path
 
-    _, rel_path, staging_path, filename = resolve_export_path(
+    staging_dir, staging_path, filename = resolve_export_path(
         "sql_fallback", user_id, org_id, conversation_id,
     )
 
