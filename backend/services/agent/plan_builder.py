@@ -34,7 +34,8 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     ],
     "trade": [
         "订单", "发货", "物流", "快递", "签收", "退款",
-        "order", "trade", "logistics",
+        "销售", "成交", "下单", "买家", "收货",
+        "order", "trade", "logistics", "sales",
     ],
     "aftersale": [
         "退货", "售后", "退款率", "退货率", "换货",
