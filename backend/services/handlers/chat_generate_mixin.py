@@ -80,6 +80,42 @@ def extract_display_text(result) -> str:
 class ChatGenerateMixin:
     """非流式生成能力（被 ChatHandler 继承）"""
 
+    def _get_conv_source(self, conversation_id: str) -> str:
+        """读取并缓存 conversations.source 字段。
+
+        缓存到 self._conv_source_cache（dict）按 conversation_id 索引，
+        避免每轮压缩都查 DB。读取失败/为空时返回 "" （视为 Web）。
+
+        Returns:
+            "wecom" / "" / 其他字符串
+        """
+        cache = getattr(self, "_conv_source_cache", None)
+        if cache is None:
+            cache = {}
+            self._conv_source_cache = cache
+        if conversation_id in cache:
+            return cache[conversation_id]
+
+        source = ""
+        try:
+            conv = (
+                self.db.table("conversations")
+                .select("source")
+                .eq("id", conversation_id)
+                .maybe_single()
+                .execute()
+            )
+            if conv and conv.data:
+                source = conv.data.get("source") or ""
+        except Exception as e:
+            logger.warning(
+                f"_get_conv_source failed | "
+                f"conversation_id={conversation_id} | error={e}"
+            )
+
+        cache[conversation_id] = source
+        return source
+
     async def generate_complete(
         self,
         content: List[ContentPart],
@@ -235,17 +271,35 @@ class ChatGenerateMixin:
                             break
 
                 # 层4+5: 旧工具结果归档 + 循环内摘要
+                # 设计文档：docs/document/TECH_Web端上下文压缩改造.md
                 from services.handlers.context_compressor import (
-                    compact_stale_tool_results, compact_loop_with_summary,
+                    compact_stale_tool_results, compact_stale_by_user_turns,
+                    compact_loop_with_summary,
                 )
                 from core.config import get_settings as _get_settings
                 _s = _get_settings()
-                compact_stale_tool_results(messages, _s.context_tool_keep_turns)
-                if turn >= 3:
-                    await compact_loop_with_summary(
-                        messages, _s.context_max_tokens,
-                        _s.context_loop_summary_trigger,
+
+                # 按来源分流——企微小预算激进压缩，Web 大预算容量触发
+                # generate_complete 主要被企微调用，但保留分支以兼容未来 Web 非流式入口
+                if self._get_conv_source(conversation_id) == "wecom":
+                    compact_stale_tool_results(messages, _s.context_tool_keep_turns)
+                    if turn >= 3:
+                        await compact_loop_with_summary(
+                            messages, _s.context_max_tokens,
+                            _s.context_loop_summary_trigger,
+                        )
+                else:
+                    compact_stale_by_user_turns(
+                        messages,
+                        keep_user_turns=_s.context_web_keep_user_turns,
+                        capacity_trigger=_s.context_web_compact_trigger,
+                        max_tokens=_s.context_web_max_tokens,
                     )
+                    if turn >= 3:
+                        await compact_loop_with_summary(
+                            messages, _s.context_web_max_tokens,
+                            _s.context_web_compact_trigger,
+                        )
 
                 logger.info(
                     f"generate_complete tool turn {turn + 1} | "

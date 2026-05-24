@@ -316,17 +316,35 @@ class ChatContextMixin:
             ]
         messages.append(user_msg)
 
-        # ─── 分桶预算控制（Phase 2）───
+        # ─── 分桶预算控制（按来源分流）───
+        # 企微：保持小预算激进压缩
+        # Web：用大预算容量触发，避免在 _build_llm_messages 阶段就丢 schema
         from core.config import get_settings
         from services.handlers.context_compressor import (
             enforce_tool_budget, enforce_history_budget, enforce_budget,
         )
         _s = get_settings()
-        enforce_tool_budget(messages, _s.context_tool_token_budget)
-        await enforce_history_budget(
-            messages, _s.context_history_token_budget, current_query=text_content,
+
+        # ChatContextMixin 被 ChatHandler 继承，运行时 self 拥有 _get_conv_source
+        # 独立使用 ChatContextMixin 时无此方法，hasattr 兜底为 Web 路径
+        is_wecom = (
+            hasattr(self, "_get_conv_source")
+            and self._get_conv_source(conversation_id) == "wecom"
         )
-        enforce_budget(messages, _s.context_max_tokens)
+        if is_wecom:
+            tool_budget = _s.context_tool_token_budget
+            history_budget = _s.context_history_token_budget
+            total_budget = _s.context_max_tokens
+        else:
+            tool_budget = _s.context_web_tool_token_budget
+            history_budget = _s.context_web_history_token_budget
+            total_budget = _s.context_web_max_tokens
+
+        enforce_tool_budget(messages, tool_budget)
+        await enforce_history_budget(
+            messages, history_budget, current_query=text_content,
+        )
+        enforce_budget(messages, total_budget)
 
         return messages
 

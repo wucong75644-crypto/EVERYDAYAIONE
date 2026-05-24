@@ -115,6 +115,34 @@
 | `extractVideoUrl` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从 API 响应提取视频 URL | result: unknown | string \| undefined |
 | `handleGenerationError` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 处理生成错误并创建错误消息 | conversationId, errorPrefix, error, createdAt?, generationParams? | Promise<Message> |
 
+### 上下文压缩模块 (Context Compression)
+
+> **2026-05-23 重构**：原 `context_compressor.py` (773 行) 按职责拆为 4 个子模块 + `__init__.py` 重导出。所有原 `from services.handlers.context_compressor import xxx` 调用通过 `__init__.py` 向后兼容。
+
+#### 包结构
+
+| 子模块 | 行数 | 职责 |
+|--------|------|------|
+| `context_compressor/__init__.py` | 78 | 重导出所有公共符号（向后兼容） |
+| `context_compressor/tokens.py` | 79 | token 估算 + 文本提取 + 归档判断 + system prompt 去重 |
+| `context_compressor/archive.py` | 290 | 层4 工具结果归档（含轮次识别） |
+| `context_compressor/budget.py` | 277 | 层6 Token 预算管理（整体/工具桶/历史桶） |
+| `context_compressor/summary.py` | 175 | 层5 LLM 摘要（触发式） |
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `estimate_tokens` | `backend/services/handlers/context_compressor/tokens.py` | 估算 messages 列表的总 token 数（基于字符数偏保守） | messages: List[Dict] | int |
+| `compact_stale_tool_results` | `backend/services/handlers/context_compressor/archive.py` | 层4 工具结果归档：按工具轮次保留最近 N 轮（**企微链路用**） | messages, keep_turns=2 | int |
+| `_identify_tool_turns` | `backend/services/handlers/context_compressor/archive.py` | 按 `assistant+tool_calls` 切分工具轮次（企微用） | messages | List[List[int]] |
+| `_identify_user_turns` | `backend/services/handlers/context_compressor/archive.py` | 按 `role=user` 切分用户对话回合（**Web 用**） | messages | List[Tuple[int,int]] |
+| `compact_stale_by_user_turns` | `backend/services/handlers/context_compressor/archive.py` | Web 端工具结果归档：按用户对话回合 + 容量触发 | messages, keep_user_turns=10, capacity_trigger=0.7, max_tokens=200000 | int |
+| `compact_loop_with_summary` | `backend/services/handlers/context_compressor/summary.py` | 层5 循环内摘要：超阈值时调便宜模型压缩为摘要 | messages, max_tokens, trigger_ratio=0.8 | bool |
+| `enforce_tool_budget` | `backend/services/handlers/context_compressor/budget.py` | 工具结果桶：超预算从最旧 tool 开始归档 | messages, max_tokens | None |
+| `enforce_history_budget_sync` | `backend/services/handlers/context_compressor/budget.py` | 历史消息桶：超预算反向累积找切点 | messages, max_tokens | None |
+| `ChatGenerateMixin._get_conv_source` | `backend/services/handlers/chat_generate_mixin.py` | 读取并缓存 conversations.source（Web/企微分流用） | conversation_id | str |
+
 ### 滚动管理模块 (Scroll Management)
 
 > **重构记录（2026-02-03）**：从 Virtuoso 迁移到 Virtua，统一为 `useVirtuaScroll` 单一入口。Virtua 更轻量（~3KB）且更好支持动态高度。
