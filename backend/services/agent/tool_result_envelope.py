@@ -114,9 +114,11 @@ CODE_EXECUTE_BUDGET = 30000
 # - generate_image/video: 返回本身就短
 # - file_*: file_read 自有三级防线（L1 字节 256KB / L2 行数 2000 /
 #   L3 token 25000）兜底，对齐 Claude Code maxResultSizeChars=Infinity
+# - file_analyze: 返回结构化说明书（schema + 样本 + get_file 用法），
+#   尾部的"## 后续操作"是 LLM 后续所有数据操作的前提，截断会导致瞎拼文件名
 _NO_TRUNCATE = {
     "generate_image", "generate_video",
-    "file_read", "file_search",
+    "file_read", "file_search", "file_analyze",
 }
 
 # 对齐 Claude Code 的 persisted-output 标签（防重入 + 截断检测）
