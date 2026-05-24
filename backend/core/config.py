@@ -132,8 +132,18 @@ class Settings(BaseSettings):
     context_summary_update_interval: int = 5  # 每N条新消息更新摘要
 
     # 工具循环上下文压缩配置（层4+层5）
-    context_tool_keep_turns: int = 10  # 层4: 安全网兜底，主力归档靠 enforce_tool_budget 的 token 预算
+    context_tool_keep_turns: int = 10  # 层4: 安全网兜底（企微链路用），主力归档靠 enforce_tool_budget 的 token 预算
     context_loop_summary_trigger: float = 0.8  # 层5: token 占比超此值时触发循环内摘要
+
+    # Web 端上下文压缩配置（按用户对话回合 + 容量触发，企微不受影响）
+    # 全部 4 步压缩（Step 1-4）共用一套大预算，避免桶级预算绕过 Step 1 的 70% 阈值
+    # Step 2/3 桶级预算特意设为等于 max_tokens，让 Step 1 容量阈值主导压缩时机，
+    # 桶级仅在总容量已爆炸时兜底（行业惯例：不让分桶预算抢先于全局阈值触发）
+    context_web_keep_user_turns: int = 10  # Web 层4: 保留最近 N 次用户对话回合的工具结果
+    context_web_compact_trigger: float = 0.7  # Web 层4: 上下文使用率超此值才触发压缩
+    context_web_max_tokens: int = 200000  # Web 层4: 真实模型容量基数，用于阈值计算
+    context_web_tool_token_budget: int = 200000  # Web 层6: 工具桶预算（= max_tokens，不抢先触发）
+    context_web_history_token_budget: int = 200000  # Web 层6: 历史桶预算（= max_tokens，不抢先触发）
 
     # 智能路由配置
     intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）

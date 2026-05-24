@@ -740,21 +740,41 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     _asyncio.create_task(extract_incremental(_new_turn_msgs))
 
                 # 层4+5+6: 旧工具结果归档 + 循环内摘要 + 分桶预算控制
-                # 设计文档：docs/document/TECH_上下文工程重构.md §五
+                # 设计文档：docs/document/TECH_Web端上下文压缩改造.md
                 from services.handlers.context_compressor import (
-                    compact_stale_tool_results, compact_loop_with_summary,
+                    compact_stale_tool_results, compact_stale_by_user_turns,
+                    compact_loop_with_summary,
                     enforce_tool_budget, enforce_history_budget_sync,
                 )
                 from core.config import get_settings as _get_settings
                 _s = _get_settings()
-                compact_stale_tool_results(messages, _s.context_tool_keep_turns)
-                enforce_tool_budget(messages, _s.context_tool_token_budget)
-                enforce_history_budget_sync(messages, _s.context_history_token_budget)
-                if turn >= 3:
-                    await compact_loop_with_summary(
-                        messages, _s.context_max_tokens,
-                        _s.context_loop_summary_trigger,
+
+                # 按来源分流 4 步压缩——企微小预算激进压缩，Web 大预算容量触发
+                if self._get_conv_source(conversation_id) == "wecom":
+                    # 企微：保持原激进策略
+                    compact_stale_tool_results(messages, _s.context_tool_keep_turns)
+                    enforce_tool_budget(messages, _s.context_tool_token_budget)
+                    enforce_history_budget_sync(messages, _s.context_history_token_budget)
+                    if turn >= 3:
+                        await compact_loop_with_summary(
+                            messages, _s.context_max_tokens,
+                            _s.context_loop_summary_trigger,
+                        )
+                else:
+                    # Web：4 步统一用大预算，避免桶级压缩绕过 Step 1 容量阈值
+                    compact_stale_by_user_turns(
+                        messages,
+                        keep_user_turns=_s.context_web_keep_user_turns,
+                        capacity_trigger=_s.context_web_compact_trigger,
+                        max_tokens=_s.context_web_max_tokens,
                     )
+                    enforce_tool_budget(messages, _s.context_web_tool_token_budget)
+                    enforce_history_budget_sync(messages, _s.context_web_history_token_budget)
+                    if turn >= 3:
+                        await compact_loop_with_summary(
+                            messages, _s.context_web_max_tokens,
+                            _s.context_web_compact_trigger,
+                        )
 
                 # 继续循环，让 AI 看到工具结果
                 logger.info(f"Tool turn {turn + 1} complete | task={task_id} | continuing loop")

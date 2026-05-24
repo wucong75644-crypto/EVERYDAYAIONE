@@ -12,6 +12,37 @@
 
 ---
 
+### 2026-05-23 Web 端上下文压缩改造 — 完成
+
+**关联文档**：[TECH_Web端上下文压缩改造.md](document/TECH_Web端上下文压缩改造.md)
+
+**背景问题**：
+- Web 长对话中（10+ 工具调用轮次）schema 过早丢失，LLM 写错列名、错误调用 API
+- 根因 1：`compact_stale_tool_results` 按 `assistant+tool_calls` 算轮次，用户说 1 句 LLM 调 5 个工具就算 5 轮，`keep_turns=10` 实际只保留 2-3 次用户对话
+- 根因 2：按轮次触发，10 轮就开始压缩，不管上下文实际使用率
+
+**修复方案**：
+- 新增 `compact_stale_by_user_turns`：按用户对话回合切分 + 容量触发（70%）
+- 新增配置：`context_web_keep_user_turns=10`、`context_web_compact_trigger=0.7`、`context_web_max_tokens=200000`
+- 调用点按 `conversations.source` 分流：企微继续走旧函数，Web 走新函数
+- 企微链路完全不动，零回归风险
+
+**改动文件**（4 + 1 测试）：
+- `backend/core/config.py`：+5 行（3 个 Web 配置项）
+- `backend/services/handlers/context_compressor.py`：+95 行（`_identify_user_turns` + `compact_stale_by_user_turns`）
+- `backend/services/handlers/chat_generate_mixin.py`：+50 行（`_get_conv_source` 带缓存 + source 分支）
+- `backend/services/handlers/chat_handler.py`：+12 行（source 分支）
+- 新增 `backend/tests/test_context_compressor_web.py`：326 行，17 个用例
+
+**E2E 仿真验证**：
+- 20 轮普通对话（37K tokens, 19%）→ 不压缩 ✓
+- 20 轮重度对话（154K tokens, 77%）→ 压缩 10 条旧 tool，节省 47% ✓
+- 企微 source=wecom 继续走旧函数 ✓
+
+**额外发现**：file_analyze 归档后 `_extract_archive_meta` 自动保留字段名等元数据，schema 关键信息即使超出保留区也不会完全丢失，无需做白名单豁免。
+
+---
+
 ### 2026-04-16 统一查询引擎（Filter DSL）— 全部完成
 
 **关联文档**：[TECH_统一查询引擎FilterDSL.md](document/TECH_统一查询引擎FilterDSL.md)
