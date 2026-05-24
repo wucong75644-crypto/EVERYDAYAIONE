@@ -231,6 +231,29 @@ class TestNoTruncate:
         result = "路径: big_report.xlsx\n类型: 文件\n大小: 56.2MB"
         assert wrap("file_info", result) == result
 
+    def test_file_analyze_no_truncate(self):
+        """file_analyze 返回结构化说明书（schema+样本+get_file用法），尾部用法不能被截"""
+        schema_lines = [
+            f"  {chr(65 + i % 26)} | 列{i:02d}名称 | string | 空值: 5.0% | "
+            f"范围: 2026-01-01 ~ 2026-05-23 | 枚举: A类目, B类目, C类目, D类目"
+            for i in range(30)
+        ]
+        result = (
+            "[文件已就绪] 销售明细.xlsx\n\n"
+            "数据概览：8500行 × 30列\n\n"
+            "字段 schema（30列）：\n"
+            + "\n".join(schema_lines)
+            + "\n\n样本数据：\n  Row 1: {...}\n\n"
+            "## 后续操作\n"
+            "  path = get_file('销售明细.xlsx')\n"
+            "  df = duckdb.sql(f\"SELECT * FROM read_parquet('{path}')\").df()"
+        )
+        assert len(result) > MAIN_AGENT_BUDGET
+        wrapped = wrap("file_analyze", result)
+        assert wrapped == result
+        assert "get_file('销售明细.xlsx')" in wrapped
+        assert "## 后续操作" in wrapped
+
 
 # ============================================================
 # persist_and_get_key + get_persisted（保留兼容）
