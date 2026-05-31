@@ -14,6 +14,32 @@ from loguru import logger
 _MAX_XML_SIZE = 500 * 1024 * 1024  # 500MB: 解压后 XML 超此大小跳过结构检测
 
 
+def _dedup_issues(items: list[dict]) -> list[dict]:
+    """按 (type, action, location) 去重 issues — 保留首次出现的顺序。
+
+    chunked 处理大文件时，每个 chunk 的 clean_excel 都会产生同样的 issue
+    （如"全空列已保留" / "整数修复"），merge 时直接拼接会导致 4x-5x 重复。
+    """
+    seen: set = set()
+    out: list[dict] = []
+    for item in items:
+        try:
+            key = (
+                item.get("type"),
+                item.get("action"),
+                json.dumps(item.get("location"), sort_keys=True, default=str),
+            )
+        except Exception:
+            # 不可哈希 → 不去重，保留
+            out.append(item)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 @dataclass
 class ExcelStructure:
     """Layer 1 检测结果。"""
@@ -54,7 +80,9 @@ class CleaningReport:
         self.hidden_cols_names = list(set(self.hidden_cols_names + other.hidden_cols_names))
         self.has_auto_filter = self.has_auto_filter or other.has_auto_filter
         self.warnings = list(set(self.warnings + other.warnings))
-        self.issues = self.issues + other.issues
+        # issues 按 (type, action, location) 去重 — 解决 chunked 处理时
+        # 多 chunk 产生同样 issue 导致 4x/5x 重复输出的 bug
+        self.issues = _dedup_issues(self.issues + other.issues)
         self.original_shape = (self.original_shape[0] + other.original_shape[0],
                                max(self.original_shape[1], other.original_shape[1]))
         self.final_shape = (self.final_shape[0] + other.final_shape[0],

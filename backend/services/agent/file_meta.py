@@ -19,7 +19,11 @@ from services.agent.excel_cleaner import (
 )
 
 # ── 常量 ──
-_SAMPLE_ROWS = 5           # head/tail 各取几行
+_SAMPLE_ROWS = 5           # 兼容保留（其他模块可能引用）
+_SAMPLE_HEAD = 4           # 开头取几行
+_SAMPLE_MIDDLE = 2         # 中段取几行（解决 lost-in-the-middle）
+_SAMPLE_TAIL = 4           # 末尾取几行
+_SAMPLE_BOUNDARY_MAX = 2   # 边界补充上限（来自 prescan anomalies）
 _CATEGORY_THRESHOLD = 20   # unique ≤ 此值视为分类列
 _MAX_ISSUES = 50           # issues 最多记录条数
 
@@ -71,6 +75,7 @@ def generate_file_meta(
     formulas: list[dict[str, Any]] | None = None,
     formula_skip_reason: str = "",
     merged_ranges: list[tuple[int, int, int, int]] | None = None,
+    prescan_result: Any = None,
 ) -> FileMeta:
     """从 DataFrame + CleaningReport 生成完整 FileMeta。"""
     now = datetime.now().isoformat(timespec="seconds")
@@ -94,7 +99,7 @@ def generate_file_meta(
     meta.schema = _build_schema(df, cleaning_report.data_start_row)
 
     # ── sample（带行号）──
-    meta.sample = _build_sample(df, cleaning_report.data_start_row)
+    meta.sample = _build_sample(df, cleaning_report.data_start_row, prescan_result)
 
     # ── stats ──
     meta.stats = {
@@ -317,15 +322,53 @@ def _detect_grain(
 
 
 def _build_sample(
-    df: pd.DataFrame, data_start_row: int,
+    df: pd.DataFrame, data_start_row: int, prescan_result: Any = None,
 ) -> dict[str, list[dict]]:
-    """提取 head/tail 样本数据，带 Excel 原始行号。"""
-    n = min(_SAMPLE_ROWS, len(df))
-    if n == 0:
-        return {"head": [], "tail": []}
+    """提取代表性样本数据，带 Excel 原始行号。
 
-    head_df = df.head(n)
-    tail_df = df.tail(n)
+    覆盖三段（head + middle + tail），共约 10 行：
+    - head 4 行：开头
+    - middle 2 行：中段（避免"lost in the middle"）
+    - tail 4 行：末尾（含可能的汇总行）
+
+    边界补充（boundary，可选 0-2 行）：
+    - 复用 prescan_result.anomalies[*].sample_rows ——
+      AI 在 schema 生成前已经判定过的代表性异常行
+    - 零额外计算成本（不调 idxmax）
+    """
+    n_head = min(_SAMPLE_HEAD, len(df))
+    n_tail = min(_SAMPLE_TAIL, len(df))
+    if n_head == 0 and n_tail == 0:
+        return {"head": [], "middle": [], "tail": [], "boundary": []}
+
+    head_df = df.head(n_head)
+    tail_df = df.tail(n_tail)
+
+    # middle 段（仅文件够长时才生成，避免和 head/tail 重叠）
+    if len(df) > n_head + n_tail + _SAMPLE_MIDDLE:
+        mid_start = len(df) // 2
+        middle_df = df.iloc[mid_start:mid_start + _SAMPLE_MIDDLE]
+    else:
+        middle_df = df.iloc[0:0]
+
+    # boundary 段：复用 prescan 的 AI 异常行号（零额外扫描）
+    boundary_df = df.iloc[0:0]
+    if prescan_result is not None:
+        anomalies = getattr(prescan_result, "anomalies", None) or []
+        covered = set(head_df.index) | set(middle_df.index) | set(tail_df.index)
+        boundary_indices: list[int] = []
+        for anomaly in anomalies:
+            for excel_row in (anomaly.get("sample_rows") or []):
+                df_idx = int(excel_row) - data_start_row
+                if 0 <= df_idx < len(df) and df_idx not in covered:
+                    boundary_indices.append(df_idx)
+                    covered.add(df_idx)
+                    if len(boundary_indices) >= _SAMPLE_BOUNDARY_MAX:
+                        break
+            if len(boundary_indices) >= _SAMPLE_BOUNDARY_MAX:
+                break
+        if boundary_indices:
+            boundary_df = df.loc[boundary_indices]
 
     def _rows_to_dicts(subset: pd.DataFrame) -> list[dict]:
         result = []
@@ -341,7 +384,9 @@ def _build_sample(
 
     return {
         "head": _rows_to_dicts(head_df),
+        "middle": _rows_to_dicts(middle_df),
         "tail": _rows_to_dicts(tail_df),
+        "boundary": _rows_to_dicts(boundary_df),
     }
 
 
@@ -649,16 +694,28 @@ def format_file_view(meta: FileMeta) -> str:
             )
         lines.append("")
 
-    # sample
+    # sample — 三段覆盖 + AI 标注边界
     if meta.sample:
         lines.append("样本数据：")
         for rd in (meta.sample.get("head") or []):
             fields = {k: v for k, v in rd.items() if k != "_row"}
             lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
-        tail = (meta.sample.get("tail") or [])[-2:]
+        middle = meta.sample.get("middle") or []
+        if middle:
+            lines.append("  ... [中段] ...")
+            for rd in middle:
+                fields = {k: v for k, v in rd.items() if k != "_row"}
+                lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
+        tail = meta.sample.get("tail") or []
         if tail:
-            lines.append("  ...")
+            lines.append("  ... [末尾] ...")
             for rd in tail:
+                fields = {k: v for k, v in rd.items() if k != "_row"}
+                lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
+        boundary = meta.sample.get("boundary") or []
+        if boundary:
+            lines.append("  📌 AI 标注的代表性行（异常/边界值，预探测时判定）：")
+            for rd in boundary:
                 fields = {k: v for k, v in rd.items() if k != "_row"}
                 lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
         lines.append("")
