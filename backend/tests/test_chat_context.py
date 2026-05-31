@@ -139,6 +139,175 @@ class TestExtractTextFromContent:
         assert "以上是分析结果" in result
 
 
+# ============ Test _extract_oai_messages_from_content (Step 4) ============
+
+
+class TestExtractOaiMessagesFromContent:
+    """Step 4 结构化：把 DB content blocks 拆成多条 OpenAI 标准消息"""
+
+    def test_plain_string_becomes_single_message(self, chat_handler):
+        msgs = chat_handler._extract_oai_messages_from_content("hi", role="user")
+        assert msgs == [{"role": "user", "content": "hi"}]
+
+    def test_ts_prefix_only_on_first_text(self, chat_handler):
+        content = [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(
+            content, role="assistant", ts_prefix="[03-06 18:00] ",
+        )
+        assert msgs == [
+            {"role": "assistant", "content": "[03-06 18:00] first"},
+            {"role": "assistant", "content": "second"},
+        ]
+
+    def test_thinking_skipped(self, chat_handler):
+        content = [
+            {"type": "thinking", "text": "推理过程不应回灌"},
+            {"type": "text", "text": "回复"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert msgs == [{"role": "assistant", "content": "回复"}]
+
+    def test_tool_step_completed_emits_assistant_and_tool(self, chat_handler):
+        content = [
+            {
+                "type": "tool_step",
+                "tool_name": "code_execute",
+                "tool_call_id": "call_abc",
+                "status": "completed",
+                "input": '{"code": "print(1)", "description": "demo"}',
+                "output": "1",
+            },
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert len(msgs) == 2
+        # assistant.tool_calls
+        assert msgs[0]["role"] == "assistant"
+        assert msgs[0]["content"] is None
+        assert msgs[0]["tool_calls"][0]["id"] == "call_abc"
+        assert msgs[0]["tool_calls"][0]["type"] == "function"
+        assert msgs[0]["tool_calls"][0]["function"]["name"] == "code_execute"
+        assert msgs[0]["tool_calls"][0]["function"]["arguments"] == '{"code": "print(1)", "description": "demo"}'
+        # tool result
+        assert msgs[1]["role"] == "tool"
+        assert msgs[1]["tool_call_id"] == "call_abc"
+        assert msgs[1]["content"] == "1"
+
+    def test_tool_step_error_keeps_pair(self, chat_handler):
+        content = [{
+            "type": "tool_step",
+            "tool_name": "code_execute",
+            "tool_call_id": "call_err",
+            "status": "error",
+            "input": '{"code": "broken"}',
+            "output": "执行错误: SyntaxError",
+        }]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert msgs[0]["tool_calls"][0]["id"] == "call_err"
+        assert msgs[1]["content"] == "执行错误: SyntaxError"
+
+    def test_tool_step_running_skipped(self, chat_handler):
+        content = [{
+            "type": "tool_step",
+            "tool_name": "code_execute",
+            "tool_call_id": "call_xx",
+            "status": "running",
+        }]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert msgs == []
+
+    def test_tool_step_missing_id_gets_stable_hash(self, chat_handler):
+        content = [{
+            "type": "tool_step",
+            "tool_name": "file_analyze",
+            "status": "completed",
+            "input": '{"path": "a.xlsx"}',
+            "output": "ok",
+        }]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert msgs[0]["tool_calls"][0]["id"].startswith("call_")
+        # 同样输入第二次生成的 id 应稳定一致（hash 输入相同）
+        msgs2 = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert msgs[0]["tool_calls"][0]["id"] == msgs2[0]["tool_calls"][0]["id"]
+        # assistant + tool 用同一个 id
+        assert msgs[1]["tool_call_id"] == msgs[0]["tool_calls"][0]["id"]
+
+    def test_tool_step_with_code_only_falls_back(self, chat_handler):
+        content = [{
+            "type": "tool_step",
+            "tool_name": "code_execute",
+            "tool_call_id": "call_c",
+            "status": "completed",
+            "code": "print('x')",
+            "output": "x",
+        }]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        args = msgs[0]["tool_calls"][0]["function"]["arguments"]
+        assert "print" in args  # JSON 包含 code 字段
+
+    def test_tool_result_degrades_to_assistant_text(self, chat_handler):
+        content = [{
+            "type": "tool_result",
+            "tool_name": "erp_agent",
+            "text": "退货率 5.73%",
+        }]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert msgs[0]["role"] == "assistant"
+        assert "erp_agent" in msgs[0]["content"]
+        assert "5.73%" in msgs[0]["content"]
+
+    def test_mixed_thinking_tool_step_text(self, chat_handler):
+        """真实场景：thinking → tool_step → text 的混合块（用户测试里的形态）"""
+        content = [
+            {"type": "thinking", "text": "我来分析一下"},
+            {
+                "type": "tool_step",
+                "tool_name": "file_analyze",
+                "tool_call_id": "call_fa",
+                "status": "completed",
+                "input": '{"path": "sales.xlsx"}',
+                "output": "schema...",
+            },
+            {"type": "text", "text": "分析完成"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(
+            content, role="assistant", ts_prefix="[T] ",
+        )
+        # thinking 跳过 → assistant.tool_calls → tool → assistant.text
+        assert len(msgs) == 3
+        assert msgs[0]["tool_calls"][0]["function"]["name"] == "file_analyze"
+        assert msgs[1]["role"] == "tool"
+        assert msgs[1]["content"] == "schema..."
+        assert msgs[2] == {"role": "assistant", "content": "[T] 分析完成"}
+
+    def test_multiple_tool_calls_emit_pairs_in_order(self, chat_handler):
+        """连续多个 tool_step：每个生成独立的 assistant+tool 对，保留顺序"""
+        content = [
+            {"type": "tool_step", "tool_name": "A", "tool_call_id": "c1",
+             "status": "completed", "input": "{}", "output": "rA"},
+            {"type": "tool_step", "tool_name": "B", "tool_call_id": "c2",
+             "status": "completed", "input": "{}", "output": "rB"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        assert len(msgs) == 4
+        assert msgs[0]["tool_calls"][0]["id"] == "c1"
+        assert msgs[1]["tool_call_id"] == "c1"
+        assert msgs[2]["tool_calls"][0]["id"] == "c2"
+        assert msgs[3]["tool_call_id"] == "c2"
+
+    def test_empty_content_returns_empty(self, chat_handler):
+        assert chat_handler._extract_oai_messages_from_content([], role="user") == []
+        assert chat_handler._extract_oai_messages_from_content("", role="user") == []
+
+    def test_json_string_with_block_list(self, chat_handler):
+        """DB content 是 JSON 字符串时，应解析后处理"""
+        content = '[{"type": "text", "text": "hi"}]'
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="user")
+        assert msgs == [{"role": "user", "content": "hi"}]
+
+
 # ============ Test _build_context_messages ============
 
 
@@ -1435,6 +1604,111 @@ class TestFetchKnowledgeParallel:
         assert exp_call["min_confidence"] == 0.6
         assert exp_call["org_id"] == "test_org"
         assert exp_call["limit"] == 2
+
+
+# ============================================================
+# Step 4: _build_context_messages 与结构化协议 E2E
+# ============================================================
+
+
+class TestBuildContextMessagesStructured:
+    """Phase 4.2: tool_step 在 history 中被还原为 assistant.tool_calls + tool 消息"""
+
+    @pytest.mark.asyncio
+    async def test_tool_step_emits_tool_calls_and_tool_message(self, chat_handler, mock_db):
+        """含 tool_step 的 assistant 历史 → assistant.tool_calls + tool 配对"""
+        # 旧到新: user 提问 → assistant 调 file_analyze → assistant 回复
+        mock_db.set_table_data("messages", [
+            # current（会被去重）
+            _make_msg("user", "新问题"),
+            # 上一轮：含 tool_step
+            _make_msg("assistant", [
+                {"type": "thinking", "text": "需要读文件"},
+                {
+                    "type": "tool_step",
+                    "tool_name": "file_analyze",
+                    "tool_call_id": "call_fa_1",
+                    "status": "completed",
+                    "input": '{"path": "销售.xlsx"}',
+                    "output": "[文件已就绪] schema: ...",
+                },
+                {"type": "text", "text": "分析完成"},
+            ]),
+            _make_msg("user", "读取这个文件"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "新问题")
+
+        # 期望: user(读取) → assistant.tool_calls(file_analyze) → tool(...) → assistant(分析完成)
+        assert len(result) >= 4
+        assert result[0]["role"] == "user"
+        assert "读取这个文件" in result[0]["content"]
+
+        # 找到 file_analyze 的 assistant.tool_calls
+        assistant_with_tool = next(
+            (m for m in result if m.get("role") == "assistant" and m.get("tool_calls")),
+            None,
+        )
+        assert assistant_with_tool is not None
+        tc = assistant_with_tool["tool_calls"][0]
+        assert tc["id"] == "call_fa_1"
+        assert tc["function"]["name"] == "file_analyze"
+        assert "销售.xlsx" in tc["function"]["arguments"]
+
+        # 找到配对的 tool 消息
+        tool_msg = next(
+            (m for m in result if m.get("role") == "tool" and m.get("tool_call_id") == "call_fa_1"),
+            None,
+        )
+        assert tool_msg is not None
+        assert "schema" in tool_msg["content"]
+
+        # 最后一条 assistant text 消息
+        last_assistant_text = next(
+            (m for m in reversed(result)
+             if m.get("role") == "assistant"
+             and isinstance(m.get("content"), str)
+             and not m.get("tool_calls")),
+            None,
+        )
+        assert last_assistant_text is not None
+        assert "分析完成" in last_assistant_text["content"]
+
+    @pytest.mark.asyncio
+    async def test_thinking_block_does_not_appear_in_history(self, chat_handler, mock_db):
+        """thinking block 不应注入 LLM history"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "current"),
+            _make_msg("assistant", [
+                {"type": "thinking", "text": "我在推理这个复杂问题"},
+                {"type": "text", "text": "答案是 42"},
+            ]),
+            _make_msg("user", "问题"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "current")
+
+        # thinking 内容不应出现
+        for m in result:
+            c = m.get("content")
+            if isinstance(c, str):
+                assert "推理这个复杂问题" not in c
+
+    @pytest.mark.asyncio
+    async def test_user_text_message_unchanged(self, chat_handler, mock_db):
+        """纯 text 的 user/assistant 消息保持单条 OAI 消息"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "current"),
+            _make_msg("assistant", "好的，已查询"),
+            _make_msg("user", "查一下昨天订单"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "current")
+
+        # 没有 tool_calls / tool 消息
+        for m in result:
+            assert not m.get("tool_calls")
+            assert m["role"] != "tool"
 
 
 # ============================================================

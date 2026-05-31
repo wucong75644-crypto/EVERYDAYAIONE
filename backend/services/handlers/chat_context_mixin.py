@@ -505,29 +505,12 @@ class ChatContextMixin:
                 budget_exhausted = False
                 for row in result.data:  # DESC 排序，最新在前
                     raw_content = row.get("content")
-                    text = self._extract_text_from_content(raw_content)
+                    role = row["role"]
                     images = (
                         self._extract_image_urls_from_content(raw_content)
                         if total_images < max_images
                         else []
                     )
-
-                    if not text and not images:
-                        continue
-
-                    # 估算这条消息的 token 数
-                    msg_tokens = int(len(text) / 2.5) if text else 0
-                    if total_tokens + msg_tokens > budget:
-                        budget_exhausted = True
-                        break  # 预算用完
-
-                    # 限制图片数量不超过配额
-                    remaining = max_images - total_images
-                    if images and remaining > 0:
-                        images = images[:remaining]
-                        total_images += len(images)
-                    else:
-                        images = []
 
                     # 时间戳前缀 — 让模型区分历史消息日期，防止旧"今天"污染当前请求
                     ts_prefix = ""
@@ -536,40 +519,100 @@ class ChatContextMixin:
                         if msg_time:
                             ts_prefix = f"[{msg_time.strftime('%m-%d %H:%M')}] "
 
-                    # 有图片时用多模态格式，无图片时保持纯文本（节省 token）
-                    # 注意：只有 user 消息可以发 image_url（视觉理解），
-                    # assistant 消息中的图片（沙盒图表等）转为文本占位符，LLM API 不接受 assistant 的 image_url
-                    if images and row["role"] == "user":
-                        parts: List[Dict[str, Any]] = []
-                        if text:
-                            parts.append({"type": "text", "text": f"{ts_prefix}{text}"})
-                        for url in images:
-                            parts.append({
-                                "type": "image_url",
-                                "image_url": {"url": url},
-                            })
-                        context.append({"role": row["role"], "content": parts})
-                    elif images and row["role"] == "assistant":
-                        # assistant 图片转为文本占位符（LLM API 不接受 assistant 的 image_url）
-                        img_hint = "".join(f"\n📊 [已生成图表]" for _ in images)
-                        context.append({"role": "assistant", "content": f"{ts_prefix}{text}{img_hint}"})
-                    else:
-                        context.append({"role": row["role"], "content": f"{ts_prefix}{text}"})
+                    # Step 4 结构化：把 block list 拆成多条 OpenAI 标准消息
+                    # （tool_step → assistant.tool_calls + role=tool 配对）
+                    oai_msgs = self._extract_oai_messages_from_content(
+                        raw_content, role=role, ts_prefix=ts_prefix,
+                    )
+
+                    # 图片处理：只有 user 消息可以发 image_url，assistant 转占位符
+                    remaining = max_images - total_images
+                    if images and remaining > 0:
+                        images = images[:remaining]
+                        if role == "user":
+                            # 把第一条 user 文本消息升级为多模态 parts
+                            text_msg_idx = next(
+                                (i for i, m in enumerate(oai_msgs)
+                                 if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                                None,
+                            )
+                            text_value = oai_msgs[text_msg_idx]["content"] if text_msg_idx is not None else ts_prefix
+                            parts: List[Dict[str, Any]] = []
+                            if text_value:
+                                parts.append({"type": "text", "text": text_value})
+                            for url in images:
+                                parts.append({"type": "image_url", "image_url": {"url": url}})
+                            if text_msg_idx is not None:
+                                oai_msgs[text_msg_idx] = {"role": "user", "content": parts}
+                            else:
+                                oai_msgs.insert(0, {"role": "user", "content": parts})
+                        else:
+                            # assistant 图片 → 文本占位符（LLM API 不接受 assistant 的 image_url）
+                            img_hint = "".join("\n📊 [已生成图表]" for _ in images)
+                            target_idx = next(
+                                (i for i in range(len(oai_msgs) - 1, -1, -1)
+                                 if oai_msgs[i].get("role") == "assistant"
+                                 and isinstance(oai_msgs[i].get("content"), str)),
+                                None,
+                            )
+                            if target_idx is not None:
+                                oai_msgs[target_idx]["content"] = (
+                                    oai_msgs[target_idx]["content"] + img_hint
+                                )
+                            else:
+                                oai_msgs.append({
+                                    "role": "assistant",
+                                    "content": f"{ts_prefix}{img_hint.lstrip()}",
+                                })
+                        total_images += len(images)
+
+                    if not oai_msgs:
+                        continue
+
+                    # 估算这批 OAI 消息的总 token 数
+                    msg_chars = 0
+                    for m in oai_msgs:
+                        c = m.get("content")
+                        if isinstance(c, str):
+                            msg_chars += len(c)
+                        elif isinstance(c, list):
+                            msg_chars += sum(
+                                len(p.get("text", "")) for p in c
+                                if isinstance(p, dict) and p.get("type") == "text"
+                            )
+                        for tc in (m.get("tool_calls") or []):
+                            msg_chars += len(tc.get("function", {}).get("arguments", ""))
+                    msg_tokens = int(msg_chars / 2.5)
+                    if total_tokens + msg_tokens > budget:
+                        budget_exhausted = True
+                        break  # 预算用完
+
+                    context.extend(oai_msgs)
                     total_tokens += msg_tokens
 
                     # 注入工具执行摘要（让 LLM 知道上轮做了什么、数据在哪）
-                    if row["role"] == "assistant" and context:
+                    # 追加到这一轮最后一条 assistant text 消息（不是 tool 消息）
+                    if role == "assistant" and oai_msgs:
                         gen_params = row.get("generation_params") or {}
                         digest = gen_params.get("tool_digest") if isinstance(gen_params, dict) else None
                         if digest:
                             from services.handlers.tool_digest import format_tool_digest
                             annotation = format_tool_digest(digest)
                             if annotation:
-                                last_msg = context[-1]
-                                if isinstance(last_msg["content"], str):
-                                    last_msg["content"] += annotation
-                                elif isinstance(last_msg["content"], list):
-                                    last_msg["content"].append({"type": "text", "text": annotation})
+                                target = None
+                                for m in reversed(context):
+                                    if m.get("role") != "assistant":
+                                        continue
+                                    if m.get("tool_calls"):
+                                        continue
+                                    if isinstance(m.get("content"), (str, list)):
+                                        target = m
+                                        break
+                                if target is not None:
+                                    if isinstance(target["content"], str):
+                                        target["content"] += annotation
+                                    elif isinstance(target["content"], list):
+                                        target["content"].append({"type": "text", "text": annotation})
 
                 if budget_exhausted:
                     break  # 跳出外层 while
@@ -823,3 +866,129 @@ class ChatContextMixin:
                         texts.append(text)
             return " ".join(texts)
         return ""
+
+    # ============================================================
+    # OpenAI 标准协议序列化（Step 4 结构化历史）
+    # ============================================================
+    @staticmethod
+    def _extract_oai_messages_from_content(
+        content: Any,
+        role: str,
+        ts_prefix: str = "",
+    ) -> List[Dict[str, Any]]:
+        """把一条 DB 消息的 content blocks 拆成多条 OpenAI 标准消息。
+
+        DB 里 content 是结构化的 block 列表（text / thinking / tool_step / ...），
+        旧的 _extract_text_from_content 会把它们压成一段 plain text 注入 history，
+        导致 LLM 把代码当模板复用 + 工具调用细节丢失（跨轮失忆）。
+
+        本方法按 block 顺序展开为标准 OAI 消息：
+          - text         → {role: <user/assistant>, content: "<ts_prefix><text>"}
+          - thinking     → 跳过（不发回 LLM）
+          - tool_step (completed/error)
+                         → {role: "assistant", tool_calls: [{id, function: {name, arguments}}]}
+                         → {role: "tool", tool_call_id, content: "<output>"}
+          - tool_step (running) → 跳过（未完成无意义）
+          - tool_result  → 退化为 assistant content（无 tool_call_id 无法配对）
+
+        所有 tool_step 的 input/code 优先级：input(JSON) > {code: ...}
+        ts_prefix 仅注入到首个 text/assistant 消息上（避免重复噪声）。
+        """
+        msgs: List[Dict[str, Any]] = []
+
+        # 解析 raw content
+        if isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, list):
+                    blocks = parsed
+                else:
+                    text = content.strip()
+                    if text:
+                        msgs.append({"role": role, "content": f"{ts_prefix}{text}"})
+                    return msgs
+            except (json.JSONDecodeError, TypeError):
+                text = content.strip()
+                if text:
+                    msgs.append({"role": role, "content": f"{ts_prefix}{text}"})
+                return msgs
+        elif isinstance(content, list):
+            blocks = content
+        else:
+            return msgs
+
+        ts_consumed = False  # ts_prefix 只用一次，避免每个 text block 重复
+        for part in blocks:
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+
+            if ptype == "text":
+                text = (part.get("text") or "").strip()
+                if not text:
+                    continue
+                prefix = "" if ts_consumed else ts_prefix
+                ts_consumed = True
+                msgs.append({"role": role, "content": f"{prefix}{text}"})
+
+            elif ptype == "thinking":
+                # thinking 是推理过程，不应回灌给 LLM
+                continue
+
+            elif ptype == "tool_step":
+                status = part.get("status")
+                if status not in ("completed", "error"):
+                    continue
+                tool_name = part.get("tool_name") or "unknown"
+                tool_call_id = part.get("tool_call_id") or ""
+                if not tool_call_id:
+                    # 历史数据兜底：生成稳定 id
+                    import hashlib
+                    seed = f"{tool_name}|{part.get('input') or part.get('code') or ''}|{len(msgs)}"
+                    tool_call_id = "call_" + hashlib.md5(seed.encode()).hexdigest()[:24]
+                arguments = part.get("input") or ""
+                if not arguments and part.get("code"):
+                    arguments = json.dumps({"code": part["code"]}, ensure_ascii=False)
+                if not isinstance(arguments, str):
+                    arguments = json.dumps(arguments, ensure_ascii=False)
+
+                # assistant 消息携带 tool_calls
+                msgs.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": arguments,
+                        },
+                    }],
+                })
+                # 紧跟的 tool 消息（OpenAI 协议要求配对）
+                output = part.get("output") or ""
+                if status == "error" and not output:
+                    output = "[工具执行失败]"
+                msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": output,
+                })
+
+            elif ptype == "tool_result":
+                # 独立的 tool_result block 没有 tool_call_id，无法配对到 assistant.tool_calls
+                # 退化为 assistant content（保留信息但不进入工具协议链）
+                text = (part.get("text") or "").strip()
+                if text:
+                    tool_name = part.get("tool_name") or ""
+                    prefix = "" if ts_consumed else ts_prefix
+                    ts_consumed = True
+                    msgs.append({
+                        "role": "assistant",
+                        "content": f"{prefix}[工具结论: {tool_name}] {text}",
+                    })
+
+            # 其他类型（image/video/audio/file/form/chart/...）由上层 _build_context_messages
+            # 单独处理为多模态格式，这里不动
+
+        return msgs
