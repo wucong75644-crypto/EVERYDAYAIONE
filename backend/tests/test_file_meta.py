@@ -128,27 +128,87 @@ class TestBuildSchema:
 
 class TestBuildSample:
     def test_sample_with_row_numbers(self):
+        # 6 行小数据：head/tail 各 4 行可能重叠，但函数不去重（行号保留）
         df = pd.DataFrame({
             "name": ["Alice", "Bob", "Charlie", "David", "Eve", "Frank"],
             "age": [25, 30, 35, 40, 45, 50],
         })
         sample = _build_sample(df, data_start_row=2)
-        assert len(sample["head"]) == 5
+        # head 4 行
+        assert len(sample["head"]) == 4
         assert sample["head"][0]["_row"] == 2
         assert sample["head"][0]["name"] == "Alice"
-        assert sample["tail"][-1]["_row"] == 7  # index 5 + 2
+        # tail 4 行（最后一行索引 5 + data_start_row 2 = 7）
+        assert sample["tail"][-1]["_row"] == 7
+        # 6 行小数据没 middle / boundary
+        assert sample.get("middle") == []
+        assert sample.get("boundary") == []
 
     def test_empty_df(self):
         df = pd.DataFrame(columns=["a", "b"])
         sample = _build_sample(df, data_start_row=2)
         assert sample["head"] == []
         assert sample["tail"] == []
+        assert sample["middle"] == []
+        assert sample["boundary"] == []
 
     def test_small_df(self):
         df = pd.DataFrame({"x": [1, 2]})
         sample = _build_sample(df, data_start_row=3)
         assert len(sample["head"]) == 2
         assert sample["head"][0]["_row"] == 3
+
+    def test_large_df_has_middle_segment(self):
+        """大数据应有 middle 段（解决 lost-in-the-middle）"""
+        df = pd.DataFrame({"x": list(range(100))})
+        sample = _build_sample(df, data_start_row=2)
+        # head 4 + middle 2 + tail 4 = 10 行
+        assert len(sample["head"]) == 4
+        assert len(sample["middle"]) == 2
+        assert len(sample["tail"]) == 4
+        # middle 行号在中间
+        mid_row = sample["middle"][0]["_row"]
+        assert 40 < mid_row < 60  # 100 行的中间附近
+
+    def test_boundary_from_prescan(self):
+        """复用 prescan_result.anomalies 作为 boundary 边界样本"""
+        df = pd.DataFrame({"amount": list(range(100))})
+        # 模拟 prescan 标记的异常行
+        class _Prescan:
+            anomalies = [
+                {"column": "amount", "sample_rows": [50, 75]},  # Excel 行号
+            ]
+        sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
+        assert len(sample["boundary"]) <= 2
+        # Excel row 50 → df idx 48; Excel row 75 → df idx 73
+        boundary_rows = [r["_row"] for r in sample["boundary"]]
+        assert 50 in boundary_rows or 75 in boundary_rows
+
+    def test_boundary_dedup_with_head_tail(self):
+        """边界行如果已在 head/tail 里，不重复"""
+        df = pd.DataFrame({"x": list(range(100))})
+        class _Prescan:
+            # Excel 行号 2 = df idx 0（已在 head 里）
+            anomalies = [{"column": "x", "sample_rows": [2]}]
+        sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
+        # boundary 应为空（已被 head 覆盖）
+        assert sample["boundary"] == []
+
+    def test_boundary_no_prescan_returns_empty(self):
+        """无 prescan_result 时 boundary 为空"""
+        df = pd.DataFrame({"x": list(range(100))})
+        sample = _build_sample(df, data_start_row=2)
+        assert sample["boundary"] == []
+
+    def test_boundary_max_limit(self):
+        """boundary 最多 2 行，超出忽略"""
+        df = pd.DataFrame({"x": list(range(100))})
+        class _Prescan:
+            anomalies = [
+                {"column": "x", "sample_rows": [30, 40, 50, 60, 70]},
+            ]
+        sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
+        assert len(sample["boundary"]) == 2
 
 
 # ── _scan_issues ──

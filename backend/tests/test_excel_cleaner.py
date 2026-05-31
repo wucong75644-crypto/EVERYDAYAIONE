@@ -367,6 +367,50 @@ class TestCleaningReport:
         assert r1.original_shape == (80, 5)
         assert r1.final_shape == (78, 6)
 
+    def test_merge_dedup_issues(self):
+        """大文件 chunked 处理时，多个 chunk 产生相同 issue 必须去重
+        （根治"全空列已保留"+"整数修复"输出 4-5 次的 bug）
+        """
+        same_issue = {
+            "type": "empty_col",
+            "severity": "info",
+            "location": {"cols": ["快递公司名称"]},
+            "preserved": True,
+            "action": "全空列已保留",
+            "recovery_hint": "查询时不选即可",
+        }
+        r1 = CleaningReport(issues=[same_issue.copy()])
+        r2 = CleaningReport(issues=[same_issue.copy()])
+        r3 = CleaningReport(issues=[same_issue.copy()])
+        r4 = CleaningReport(issues=[same_issue.copy()])
+
+        r1.merge(r2)
+        r1.merge(r3)
+        r1.merge(r4)
+        # 5 个 chunk 合并后只剩 1 条
+        assert len(r1.issues) == 1
+
+    def test_merge_keeps_different_issues(self):
+        """去重不应丢失不同类型的 issue"""
+        r1 = CleaningReport(issues=[{
+            "type": "empty_col", "action": "全空列已保留",
+            "location": {"cols": ["A"]},
+        }])
+        r2 = CleaningReport(issues=[{
+            "type": "int_fix", "action": "整数修复",
+            "location": {"cols": ["B"]},
+        }])
+        r3 = CleaningReport(issues=[{  # 和 r1 同 type 同 action 同 location → 去重
+            "type": "empty_col", "action": "全空列已保留",
+            "location": {"cols": ["A"]},
+        }])
+        r1.merge(r2)
+        r1.merge(r3)
+        # 应有 2 条（empty_col + int_fix），不是 3 条
+        assert len(r1.issues) == 2
+        types = {i["type"] for i in r1.issues}
+        assert types == {"empty_col", "int_fix"}
+
 
 # ============================================================
 # 集成场景

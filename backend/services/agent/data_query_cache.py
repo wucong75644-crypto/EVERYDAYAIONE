@@ -733,6 +733,9 @@ def _convert_excel_to_parquet(
             formulas=formulas,
             formula_skip_reason=formula_skip,
             merged_ranges=merged_ranges,
+            prescan_result=prescan_result if (
+                prescan_result and prescan_result.confidence in ("high", "medium")
+            ) else None,
         )
         if prescan_result and prescan_result.confidence in ("high", "medium"):
             from dataclasses import asdict as _asdict
@@ -880,6 +883,9 @@ def _convert_excel_to_parquet(
                     formulas=formulas,
                     formula_skip_reason=formula_skip,
                     merged_ranges=merged_ranges,
+                    prescan_result=prescan_result if (
+                        prescan_result and prescan_result.confidence in ("high", "medium")
+                    ) else None,
                 )
                 # 修正行数为实际总行数（采样 df 只有 5000 行）
                 file_meta.summary["row_count"] = row_count
