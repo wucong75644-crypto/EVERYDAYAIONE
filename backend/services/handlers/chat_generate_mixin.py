@@ -229,13 +229,14 @@ class ChatGenerateMixin:
                         "tool_call_id": tc["id"],
                         "status": "running",
                     }
+                    # 不截断：input 同时承担 LLM 历史重建（function.arguments 必须合法 JSON）
                     _raw_args = tc.get("arguments", "")
                     if _raw_args:
-                        _tool_step["input"] = _raw_args[:2000]
+                        _tool_step["input"] = _raw_args
                     if tc["name"] == "code_execute":
                         try:
                             _ce_args = json.loads(_raw_args or "{}")
-                            _ce_code = _ce_args.get("code", "")[:2000]
+                            _ce_code = _ce_args.get("code", "")
                             if _ce_code:
                                 _tool_step["code"] = _ce_code
                         except Exception:
