@@ -382,12 +382,74 @@ def _build_sample(
             result.append(row_dict)
         return result
 
-    return {
+    # 跨段特征去重：避免 head/middle/tail/boundary 中"同质化"行重复占字符
+    # 签名规则：数值列看是否非零（不看具体值），字符串列看前 8 字符 hash
+    return _dedup_samples_by_signature({
         "head": _rows_to_dicts(head_df),
         "middle": _rows_to_dicts(middle_df),
         "tail": _rows_to_dicts(tail_df),
         "boundary": _rows_to_dicts(boundary_df),
-    }
+    }, df)
+
+
+def _dedup_samples_by_signature(
+    sample: dict[str, list[dict]], df: pd.DataFrame,
+) -> dict[str, list[dict]]:
+    """跨段去重：保留特征签名不同的行，去掉同质化重复样本。
+
+    每行计算签名（数值是否非零 + 字符串短 hash），按出现顺序保留首次出现的行。
+    各段最少保留 1 行（即使被去重也保 head[0]/tail[-1]，保结构完整）。
+    """
+    # 计算列类型映射
+    col_types: dict[str, str] = {}
+    for col in df.columns:
+        col_str = str(col)
+        if col_str.startswith("_is_"):
+            continue
+        try:
+            kind = df[col].dtype.kind
+            if kind in ("i", "u", "f"):
+                col_types[col_str] = "number"
+            else:
+                col_types[col_str] = "string"
+        except Exception:
+            col_types[col_str] = "string"
+
+    def _sig(row: dict) -> tuple:
+        sig: list = []
+        for col, t in col_types.items():
+            val = row.get(col)
+            if val is None or val == "":
+                sig.append("∅")
+            elif t == "number":
+                try:
+                    sig.append("+" if float(val) > 0 else "0")
+                except (TypeError, ValueError):
+                    sig.append(str(val)[:8])
+            else:
+                sig.append(hash(str(val)[:8]))
+        return tuple(sig)
+
+    seen: set = set()
+    out: dict[str, list[dict]] = {"head": [], "middle": [], "tail": [], "boundary": []}
+
+    # 各段必保第 1 行（保结构完整，让 LLM 知道有数据）
+    for seg in ("head", "middle", "tail", "boundary"):
+        rows = sample.get(seg) or []
+        if not rows:
+            continue
+        # 首行无条件保留 + 记签名
+        first = rows[0]
+        out[seg].append(first)
+        seen.add(_sig(first))
+        # 后续行按签名去重
+        for row in rows[1:]:
+            s = _sig(row)
+            if s in seen:
+                continue
+            seen.add(s)
+            out[seg].append(row)
+    return out
 
 
 def _scan_issues(
@@ -616,150 +678,234 @@ def read_file_meta(cache_path: str) -> FileMeta | None:
 
 
 def format_file_view(meta: FileMeta) -> str:
-    """将 FileMeta 格式化为 AI context 注入的文件视图文本。"""
+    """将 FileMeta 格式化为 AI context 注入的文件视图文本。
+
+    U 形 attention 优化（[arXiv 2406.16008] Found in the Middle）:
+      - 头部锚定: 概览 + 大数据警告 + 订单级字段警告（核心约束）
+      - 中段: schema（含 🔴 订单级行级标签）+ 样本数据 + 数据质量
+      - 尾部锚定: 再次提醒订单级处理规则（双锚定防中段遗漏）
+
+    Markdown 结构化分块: 千问/OpenAI/Gemini 都认 ## 标题
+    """
     lines: list[str] = []
     src = meta.source_file
+    s = meta.summary or {}
+    row_count = s.get("row_count", 0)
+    grain = meta.grain or {}
+
+    # 预计算订单级字段（schema 标签 + 警告共用）
+    order_level_fields: list[str] = grain.get("order_level_fields", []) or []
+    numeric_ol = [
+        c for c in order_level_fields
+        if meta.schema.get(c, {}).get("type") in ("integer", "decimal")
+    ]
+    group_key = grain.get("group_key", "")
+
+    # ============================================================
+    # [HEAD] 顶部锚定：核心警告（U 形 attention 头部高峰）
+    # ============================================================
     lines.append(f"[文件已就绪] {src}")
     lines.append("")
-
-    # summary
-    s = meta.summary
-    row_count = s.get('row_count', 0)
+    lines.append("## 📊 数据概览")
     lines.append(
-        f"数据概览：{row_count}行 × {s.get('col_count', 0)}列"
-        f"，{s.get('sheet_count', 1)} 个 Sheet"
+        f"- 规模: {row_count:,} 行 × {s.get('col_count', 0)} 列，"
+        f"{s.get('sheet_count', 1)} 个 Sheet"
     )
-    # 规模警告：schema-aware reasoning（行业标准做法，对标 OpenAI Files API）
-    # 让 LLM 看到具体规模 → 自然选择 SQL 聚合而非全量 .df()
     if row_count >= 100_000:
         lines.append(
-            f"⚠️ 大数据（{row_count:,}行）：禁止 SELECT * .df() 全量加载，"
+            f"- ⚠️ **大数据**({row_count:,} 行): 禁止 `SELECT * .df()` 全量加载，"
             "会 OOM。必须先 SQL 聚合/筛选后再 .df()。"
         )
     elif row_count >= 10_000:
         lines.append(
-            f"提示：{row_count:,}行 中等规模，建议 SQL 先 WHERE/GROUP BY 过滤再 .df()。"
+            f"- 提示: {row_count:,} 行中等规模，建议 SQL 先 WHERE/GROUP BY 过滤再 .df()。"
+        )
+    if numeric_ol:
+        lines.append(
+            f"- 🔴 **订单级字段必读**: `{', '.join(numeric_ol)}` 在同一 {group_key} 内值重复，"
+            f"SUM 前必须先 DISTINCT，否则数字虚高 10-30%。"
+        )
+        lines.append(
+            f"  正确写法: `SELECT SUM(\"{numeric_ol[0]}\") FROM "
+            f"(SELECT DISTINCT \"{group_key}\", \"{numeric_ol[0]}\" FROM data)`"
         )
     lines.append("")
 
-    # schema
+    # ============================================================
+    # [MID] schema — 行级 🔴 订单级标签
+    # ============================================================
     if meta.schema:
-        lines.append(f"字段 schema（{len(meta.schema)}列）：")
+        lines.append(f"## 📐 字段 schema（{len(meta.schema)} 列）")
+        order_level_set = set(order_level_fields)
         for col_name, info in meta.schema.items():
             col_letter = info.get("col", "?")
             dtype = info.get("type", "unknown")
             null_pct = info.get("null_ratio", 0)
-            null_str = f"{null_pct*100:.1f}%" if null_pct > 0 else "0%"
 
-            extra = ""
+            extra_parts: list[str] = []
+            if null_pct > 0:
+                extra_parts.append(f"空值: {null_pct*100:.1f}%")
             if "min" in info and "max" in info:
-                extra = f" | 范围: {info['min']} ~ {info['max']}"
+                extra_parts.append(f"范围: {info['min']} ~ {info['max']}")
             elif "range" in info:
-                extra = f" | {info['range'][0]} ~ {info['range'][1]}"
+                extra_parts.append(f"{info['range'][0]} ~ {info['range'][1]}")
             elif "categories" in info:
                 cats = ", ".join(info["categories"][:5])
-                extra = f" | 枚举: {cats}"
+                extra_parts.append(f"枚举: {cats}")
 
-            lines.append(f"  {col_letter} | {col_name} | {dtype} | 空值: {null_str}{extra}")
+            tag = ""
+            if col_name in order_level_set:
+                if col_name in numeric_ol:
+                    tag = " | 🔴 订单级（SUM 前 DISTINCT）"
+                else:
+                    tag = " | 订单级维度"
+            extra = " | ".join(extra_parts)
+            extra = f" | {extra}" if extra else ""
+            lines.append(f"  {col_letter} | {col_name} | {dtype}{extra}{tag}")
         lines.append("")
 
-    # grain warning
-    if meta.grain:
-        g = meta.grain
-        gk = g["group_key"]
+    # ============================================================
+    # [MID] 数据粒度详情（订单级头部已警告，这里给数字背景）
+    # ============================================================
+    if grain:
+        lines.append("## 📦 数据粒度")
         lines.append(
-            f"⚠ 数据粒度：明细表（每行 ≠ 一个{gk}，"
-            f"平均每组 {g.get('avg_group_size', 0)} 行）"
+            f"- 明细表: 每订单平均 {grain.get('avg_group_size', 0)} 行（"
+            f"{grain['unique_count']} 个 {group_key} / {grain['row_count']} 行）"
         )
-        lines.append(
-            f"  分组键: {gk}（{g['unique_count']}个唯一值 / {g['row_count']}行）"
-        )
-        ol = g.get("order_level_fields", [])
-        ll = g.get("line_level_fields", [])
-        numeric_ol = [c for c in ol if meta.schema.get(c, {}).get("type") in ("integer", "decimal")]
-        dim_ol = [c for c in ol if c not in numeric_ol]
-        if numeric_ol:
-            lines.append(
-                f"  ⚠ 订单级数值（同一{gk}内值相同，SUM前必须先按{gk}去重）："
-            )
-            lines.append(f"    {', '.join(numeric_ol)}")
-        if dim_ol:
-            lines.append(f"  订单级维度（同组内相同）：{', '.join(dim_ol[:8])}")
+        ll = grain.get("line_level_fields", []) or []
         if ll:
-            lines.append(f"  明细级字段（每行独立，可直接SUM/COUNT）：{', '.join(ll[:8])}")
-        if numeric_ol:
-            lines.append(
-                f"  正确写法: SELECT SUM(\"{numeric_ol[0]}\") FROM "
-                f"(SELECT DISTINCT \"{gk}\", \"{numeric_ol[0]}\" FROM data)"
-            )
+            lines.append(f"- 明细级字段（每行独立，可直接 SUM/COUNT）: {', '.join(ll[:8])}")
         lines.append("")
 
-    # sample — 三段覆盖 + AI 标注边界
+    # ============================================================
+    # [MID] 样本数据（已在 _build_sample 跨段去重）
+    # ============================================================
     if meta.sample:
-        lines.append("样本数据：")
-        for rd in (meta.sample.get("head") or []):
-            fields = {k: v for k, v in rd.items() if k != "_row"}
-            lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
-        middle = meta.sample.get("middle") or []
-        if middle:
-            lines.append("  ... [中段] ...")
-            for rd in middle:
+        lines.append("## 📋 样本数据")
+        head_rows = meta.sample.get("head") or []
+        middle_rows = meta.sample.get("middle") or []
+        tail_rows = meta.sample.get("tail") or []
+        boundary_rows = meta.sample.get("boundary") or []
+
+        def _emit(rows: list[dict], tag: str) -> None:
+            for rd in rows:
                 fields = {k: v for k, v in rd.items() if k != "_row"}
-                lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
-        tail = meta.sample.get("tail") or []
-        if tail:
-            lines.append("  ... [末尾] ...")
-            for rd in tail:
-                fields = {k: v for k, v in rd.items() if k != "_row"}
-                lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
-        boundary = meta.sample.get("boundary") or []
-        if boundary:
-            lines.append("  📌 AI 标注的代表性行（异常/边界值，预探测时判定）：")
-            for rd in boundary:
-                fields = {k: v for k, v in rd.items() if k != "_row"}
-                lines.append(f"  Row {rd.get('_row', '?')}: {fields}")
+                lines.append(f"  Row {rd.get('_row', '?')} [{tag}]: {fields}")
+
+        _emit(head_rows, "head")
+        _emit(middle_rows, "middle")
+        _emit(tail_rows, "tail")
+        if boundary_rows:
+            _emit(boundary_rows, "边界")
         lines.append("")
 
-    # stats + formulas + issues
+    # ============================================================
+    # [MID] 数据质量（issues 合并 + 智能压缩）
+    # ============================================================
+    notes_lines: list[str] = []
     st = meta.stats or {}
-    stat_parts = []
     if st.get("missing_values", 0) > 0:
-        stat_parts.append(f"缺失值 {st['missing_values']}")
+        notes_lines.append(f"- 缺失值: {st['missing_values']}")
     if st.get("duplicates", 0) > 0:
-        stat_parts.append(f"重复行 {st['duplicates']}")
-    if stat_parts:
-        lines.append(f"统计：{' | '.join(stat_parts)}")
+        notes_lines.append(f"- 重复行: {st['duplicates']}")
 
     for f in meta.formulas[:3]:
-        lines.append(f"公式：{f.get('cell','?')} = {f.get('formula','?')} → {f.get('value','?')}")
+        notes_lines.append(
+            f"- 公式: {f.get('cell','?')} = {f.get('formula','?')} → {f.get('value','?')}"
+        )
+
     if meta.merged_cells:
         if meta.raw_preserved:
-            lines.append(f"合并单元格（{len(meta.merged_cells)}个，未自动处理，需你根据业务语义决定）：")
+            notes_lines.append(
+                f"- 合并单元格 {len(meta.merged_cells)} 个（未自动处理）"
+            )
         else:
-            lines.append(f"合并单元格（{len(meta.merged_cells)}个，已自动精确填充，非全列ffill）：")
-        for mc in meta.merged_cells[:5]:
-            lines.append(f"  {mc.get('range', '?')}")
-    for issue in meta.issues[:8]:
-        sev = issue.get("severity", "info")
-        action = issue.get("action", issue.get("suggestion", ""))
-        hint = issue.get("recovery_hint", "")
-        loc = issue.get("location", {})
-        loc_parts = []
-        if loc.get("row"):
-            loc_parts.append(f"Row {loc['row']}")
-        if loc.get("col"):
-            loc_parts.append(f"{loc['col']}列")
-        if loc.get("cols"):
-            loc_parts.append(f"列: {loc['cols']}")
-        if loc.get("rows"):
-            loc_parts.append(f"Row: {loc['rows'][:5]}")
-        loc_str = " ".join(loc_parts) if loc_parts else ""
-        preserved = "✓保留" if issue.get("preserved") else "✗已转换"
-        line = f"[{sev}] {loc_str} {action} [{preserved}]"
-        if hint:
-            line += f"\n    → {hint}"
-        lines.append(line)
+            notes_lines.append(
+                f"- 合并单元格 {len(meta.merged_cells)} 个（已精确填充）"
+            )
+
+    # issues — 智能合并：同行的 N 个缺失值 warning 合并成 1 行
+    notes_lines.extend(_compress_issues(meta.issues[:20]))
+
+    if notes_lines:
+        lines.append("## 📝 数据质量")
+        lines.extend(notes_lines)
+        lines.append("")
+
+    # ============================================================
+    # [TAIL] 尾部锚定：再次提醒订单级处理规则
+    # ============================================================
+    if numeric_ol:
+        lines.append("## ⚠️ 再次提醒（重要）")
+        lines.append(
+            f"订单级字段 `{', '.join(numeric_ol)}` 在 {group_key} 内值重复，"
+            f"SUM 前必须先 `DISTINCT {group_key}` 去重。"
+        )
+
     dsr = (meta.cleaning or {}).get("data_start_row", 2)
-    lines.append(f"\n行号映射：Excel行号 = Parquet索引 + {dsr}")
+    lines.append(f"\n行号映射: Excel 行号 = Parquet 索引 + {dsr}")
 
     return "\n".join(lines)
+
+
+def _compress_issues(issues: list[dict]) -> list[str]:
+    """智能合并 issues 为压缩后的 notes 行。
+
+    特殊场景: 同行的多个"X 列有 N 个缺失值"warning 合并为 1 行
+    （如 Row 5001 是 _is_summary 汇总行，5 列都缺失 → 合并为
+    "Row 5001 多列缺失，大概率是 _is_summary 汇总行"）
+    """
+    if not issues:
+        return []
+
+    by_row: dict[int, list[dict]] = {}
+    other: list[dict] = []
+    for issue in issues:
+        loc = issue.get("location", {}) or {}
+        row = loc.get("row")
+        if issue.get("type") == "missing_value" and isinstance(row, int):
+            by_row.setdefault(row, []).append(issue)
+        else:
+            other.append(issue)
+
+    out: list[str] = []
+    for row, group in by_row.items():
+        if len(group) >= 3:
+            cols = [(i.get("location") or {}).get("col", "?") for i in group]
+            out.append(
+                f"- Row {row} 多列缺失（{', '.join(cols[:5])}{'...' if len(cols) > 5 else ''}），"
+                f"大概率是 _is_summary 汇总行，查询时加 `WHERE _is_summary = false` 排除"
+            )
+        else:
+            for i in group:
+                out.append(_format_single_issue(i))
+    for i in other:
+        out.append(_format_single_issue(i))
+    return out
+
+
+def _format_single_issue(issue: dict) -> str:
+    """格式化单条 issue 为一行 markdown bullet。"""
+    sev = issue.get("severity", "info")
+    action = issue.get("action", issue.get("suggestion", ""))
+    loc = issue.get("location", {}) or {}
+    loc_parts: list[str] = []
+    if loc.get("row"):
+        loc_parts.append(f"Row {loc['row']}")
+    if loc.get("col"):
+        loc_parts.append(f"{loc['col']}列")
+    if loc.get("cols"):
+        cols_str = (
+            loc["cols"] if isinstance(loc["cols"], str)
+            else ", ".join(map(str, loc["cols"][:5]))
+        )
+        loc_parts.append(f"列: {cols_str}")
+    if loc.get("rows"):
+        rows = loc["rows"] if isinstance(loc["rows"], list) else [loc["rows"]]
+        rows_str = ", ".join(str(r) for r in rows[:5])
+        loc_parts.append(f"Row: {rows_str}")
+    loc_str = " ".join(loc_parts) if loc_parts else ""
+    sev_mark = "⚠️" if sev == "warning" else ""
+    sep = " " if loc_str else ""
+    return f"- [{sev}]{sep}{loc_str}{sep}{action} {sev_mark}".rstrip()
