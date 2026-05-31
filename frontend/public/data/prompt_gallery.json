@@ -873,7 +873,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于纯白色背景中央，保持其精确的形状、比例、品牌标识、标签文字及材质表面效果；采用柔和的影棚灯光（soft studio lighting）；在产品正下方投射真实感阴影（realistic shadow）；呈现电商主图（e-commerce packshot）风格；不添加任何道具或额外物体。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_001.png"
     },
     {
       "id": "img2img_002",
@@ -893,7 +893,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于干净的影棚布景中，背景为浅灰色无缝纸（light gray seamless background），采用柔和漫射光（soft diffused lighting），呈现微妙的自然阴影（subtle natural shadow），产品完全可见，边缘锐利（sharp edges），若材质为亮面，则呈现真实反射（realistic reflections），高端电商摄影（premium e-commerce photography）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_002.png"
     },
     {
       "id": "img2img_003",
@@ -913,7 +913,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]转化为干净中性背景上的悬浮式影棚产品图（floating studio product image），精确保留产品的几何结构，底部添加柔和阴影以增强真实感（ground it），确保所有可见细节均真实且准确。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_003.png"
     },
     {
       "id": "img2img_004",
@@ -933,7 +933,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "俯拍平铺图：在干净的影棚台面（studio surface）上拍摄[product]的俯视平铺构图（top-down flat lay），构图均衡（balanced composition），光线柔和均匀（soft even lighting），材质纹理真实（realistic material texture），阴影极简（minimal shadow），商业产品摄影风格（commercial product photography style）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_004.png"
     },
     {
       "id": "img2img_005",
@@ -953,7 +953,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于其自然的真实生活环境中，采用写实风格呈现，严格保留产品的原始设计、品牌标识和比例关系，使用可信的光线与阴影效果，使整个场景呈现真实商业摄影（commercial photography）质感。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_005.png"
     },
     {
       "id": "img2img_006",
@@ -973,7 +973,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于现代极简主义室内空间中，构图简洁，中性风格，真实日光照明，产品始终作为视觉焦点，无任何杂乱元素，适用于杂志级电商摄影（editorial e-commerce photography）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_006.png"
     },
     {
       "id": "img2img_007",
@@ -993,7 +993,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于与其用途相匹配的户外场景中，自然光（natural light），真实环境（realistic environment），纹理（texture）与色彩（color）准确还原，产品清晰可见，高端生活方式产品摄影（premium lifestyle product photography）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_007.png"
     },
     {
       "id": "img2img_008",
@@ -1013,7 +1013,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于真实的桌面办公场景中，搭配协调的办公物品，布局整洁，采用柔和的窗光照明，确保产品为视觉焦点，现代商业摄影（modern commercial photography）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_008.png"
     },
     {
       "id": "img2img_009",
@@ -1033,7 +1033,7 @@
       "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
       "source_author": "@OpenAI",
       "prompt_zh": "将背景替换为抛光白色大理石表面，带有细腻的灰色纹理（veining）。从左上方添加柔和暖调影棚灯光（studio lighting），在大理石表面形成轻柔高光，并在[product]后方营造出柔和的发光效果（luminous glow）。[product]本体须完全保持不变——精确保留其形状、颜色、标签、比例及材质纹理。在[product]下方的大理石表面添加细微且逼真的反射（reflection）。整体氛围应呈现奢华、洁净与高端感，类似高端美妆品牌广告（high-end beauty campaign）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_009.png"
     },
     {
       "id": "img2img_010",
@@ -1053,7 +1053,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "手持使用展示：仅显示双手操作[product]，不可出现完整人物，呈现真实互动场景，构图简洁，采用自然光照，确保[product]的细节准确且焦点清晰。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_010.png"
     },
     {
       "id": "img2img_011",
@@ -1073,7 +1073,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "展示一位模特在真实场景中自然使用[product]，产品在形状、尺寸和品牌标识上完全准确，产品清晰可见，姿态自然，商业生活方式摄影（commercial lifestyle photography）。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_011.png"
     },
     {
       "id": "img2img_012",
@@ -1093,7 +1093,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "多角度组合图：创建一幅简洁的产品构图，于同一画幅内呈现[product]的正面、侧面及轻微倾斜角度视图，光照一致，背景为中性色，精确还原产品原色与原形，达到商品目录（catalog）级成片标准。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_012.png"
     },
     {
       "id": "img2img_013",
@@ -1113,7 +1113,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "材质细节特写：创建一张[product]的近距离细节图像，重点呈现材质纹理（material texture）、缝线（stitching）、表面处理（finish）或表面品质（surface quality），采用逼真的微距风格布光（macro-style lighting），画面锐利清晰，符合高端产品摄影（premium product photography）标准。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_013.png"
     },
     {
       "id": "img2img_014",
@@ -1133,7 +1133,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于清新春季主题场景中，采用轻盈通透的布景风格，柔和自然光线，构图简洁干净，融入细微的季节性元素（如新鲜花卉与绿叶），严格保持产品外形、品牌标识及所有细节的准确性。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_014.png"
     },
     {
       "id": "img2img_015",
@@ -1153,7 +1153,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于明亮的夏日场景中，温暖的自然光线，清新充满活力的氛围，简洁干净的构图，真实的阴影效果，精确保留产品的外形、品牌标识及所有细节。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_015.png"
     },
     {
       "id": "img2img_016",
@@ -1173,7 +1173,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于清冽的雪景环境中，明亮的冬季光线，简洁的构图，清新的季节氛围，真实的反射（reflection）与阴影（shadow），精确保留产品的外形、品牌标识（branding）及所有细节。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_016.png"
     },
     {
       "id": "img2img_017",
@@ -1193,7 +1193,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于大胆的黑色星期五（Black Friday）主题营销场景中，构图具有强烈的商业感，高对比度灯光，呈现现代促销氛围，精确保留产品的外形、品牌标识及所有细节。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_017.png"
     },
     {
       "id": "img2img_018",
@@ -1213,7 +1213,7 @@
       "source_url": "https://letsenhance.io/blog/all/ecommerce-product-prompts/",
       "source_author": "@LetsEnhance",
       "prompt_zh": "将[product]置于节日送礼季场景中，优雅庆典风格，构图简洁，真实光照效果，高端季节性氛围，精确保留产品外形、品牌标识及所有细节。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_018.png"
     },
     {
       "id": "img2img_019",
@@ -1233,7 +1233,7 @@
       "source_url": "https://www.atlascloud.ai/blog/guides/gpt-image-2-prompts-guide",
       "source_author": "@AtlasCloud",
       "prompt_zh": "将产品颜色更改为{argument name=\"target color\" default=\"深森林绿\"}，同时精确保留图像的所有其他方面：产品形状、几何结构、比例、标签文字、标签位置、材质纹理、光照、阴影、反射、背景及相机角度。颜色变更需呈现自然且照片级真实感，并确保材质对光线的响应准确——哑光表面保持哑光，光泽表面保持光泽。不得添加、删除或修改任何其他元素。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_019.png"
     },
     {
       "id": "img2img_020",
@@ -1253,7 +1253,7 @@
       "source_url": "https://developers.openai.com/cookbook/examples/multimodal/image-gen-models-prompting-guide",
       "source_author": "@OpenAI",
       "prompt_zh": "将此草图转换为照片级写实（photorealistic）产品图。严格保留草图的原始布局、比例、形状和透视关系。选用与草图设计意图一致的真实材质与表面处理效果——若草图显示为高光（glossy）表面，则渲染为高光效果；若为哑光（matte）表面，则渲染为哑光效果。采用自然的影棚灯光（studio lighting），并呈现柔和阴影（soft shadows）。将[product]置于干净的中性背景上。不得添加任何原草图中不存在的新元素、装饰、文字或功能特征。最终效果应呈现为该设计物体的专业级产品摄影（product photography）成片。",
-      "preview_url": ""
+      "preview_url": "/data/previews/img2img_020.png"
     }
   ]
 }

@@ -26,14 +26,13 @@ export default function PromptCard({ prompt }: PromptCardProps) {
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    // 始终复制英文原文（GPT-Image-2 用英文效果最好）
     try {
-      await navigator.clipboard.writeText(prompt.prompt);
+      await navigator.clipboard.writeText(displayText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       const ta = document.createElement('textarea');
-      ta.value = prompt.prompt;
+      ta.value = displayText;
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
@@ -134,7 +133,7 @@ export default function PromptCard({ prompt }: PromptCardProps) {
                 <button
                   onClick={handleCopy}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-border-default hover:bg-hover transition-colors text-text-tertiary"
-                  title="复制英文原文（推荐用于生图）"
+                  title={showEnglish || !hasZh ? '复制英文原文' : '复制中文翻译'}
                 >
                   {copied ? (
                     <>
@@ -144,7 +143,7 @@ export default function PromptCard({ prompt }: PromptCardProps) {
                   ) : (
                     <>
                       <Copy className="w-3 h-3" />
-                      <span>复制原文</span>
+                      <span>{showEnglish || !hasZh ? '复制原文' : '复制中文'}</span>
                     </>
                   )}
                 </button>
