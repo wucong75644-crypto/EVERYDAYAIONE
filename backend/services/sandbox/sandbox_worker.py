@@ -453,6 +453,9 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
 
     # DuckDB 磁盘模式预注入：数据全程在磁盘，内存只做缓存
     # AI 直接用 duckdb.sql() 即可，不需要自己配置连接
+    # 关键：DuckDB 在容器内无法正确读 cgroup（issue #15080），
+    # 必须显式 SET memory_limit，否则 DuckDB 会默认按宿主机 80% 内存自适应。
+    # 沙盒 cgroup 上限 4GB（deploy/sandbox.cfg），DuckDB 给 3GB，留 1GB 给 Python + pandas。
     if staging_dir:
         try:
             import duckdb as _duckdb
@@ -460,7 +463,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
             _temp_dir = str(Path(staging_dir) / ".duckdb_temp")
             Path(_temp_dir).mkdir(parents=True, exist_ok=True)
             _con = _duckdb.connect(_db_path)
-            _con.execute("SET memory_limit = '512MB'")
+            _con.execute("SET memory_limit = '3GB'")
             _con.execute(f"SET temp_directory = '{_temp_dir}'")
             # 注入为默认连接：duckdb.sql() 自动使用这个连接
             _duckdb.default_connection = _con

@@ -307,6 +307,36 @@ class TestFormatFileView:
         assert "Row 2" in view
         assert "行号映射" in view
 
+    def test_small_data_no_warning(self):
+        """小数据（< 1万行）不应触发规模警告"""
+        df = pd.DataFrame({"a": list(range(100)), "b": list(range(100))})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="small.xlsx")
+        view = format_file_view(meta)
+        assert "⚠️" not in view
+        assert "OOM" not in view
+
+    def test_medium_data_hint(self):
+        """中数据（≥1万行）应出现温和提示，不出 ⚠️"""
+        df = pd.DataFrame({"a": list(range(15_000)), "b": list(range(15_000))})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="medium.xlsx")
+        view = format_file_view(meta)
+        assert "15,000行" in view
+        assert "WHERE/GROUP BY" in view
+        assert "⚠️" not in view  # 中数据不上 ⚠️
+
+    def test_large_data_oom_warning(self):
+        """大数据（≥10万行）应出现 ⚠️ + OOM 警告（行业 schema-aware 做法）"""
+        df = pd.DataFrame({"a": list(range(150_000)), "b": list(range(150_000))})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="large.xlsx")
+        view = format_file_view(meta)
+        assert "⚠️" in view
+        assert "150,000行" in view
+        assert "OOM" in view
+        assert "SELECT *" in view  # 给出反例
+
 
 # ── extract_formulas ──
 
