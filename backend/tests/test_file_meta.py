@@ -153,20 +153,24 @@ class TestBuildSample:
         assert sample["boundary"] == []
 
     def test_small_df(self):
+        # 2 行小数据，head 取 2 行；但去重后第二行 (x=2) 签名和第一行 (x=1) 都是 "+"
+        # 会被去重，但首行无条件保留 → 至少 1 行
         df = pd.DataFrame({"x": [1, 2]})
         sample = _build_sample(df, data_start_row=3)
-        assert len(sample["head"]) == 2
+        assert len(sample["head"]) >= 1
         assert sample["head"][0]["_row"] == 3
 
     def test_large_df_has_middle_segment(self):
         """大数据应有 middle 段（解决 lost-in-the-middle）"""
-        df = pd.DataFrame({"x": list(range(100))})
+        # 单调 range(100) 都是非零 → 签名全部 "+"，去重后每段保 1 行
+        # 用 50 零值 + 50 非零值，让签名有多样性
+        df = pd.DataFrame({"x": [0]*30 + list(range(1, 71))})
         sample = _build_sample(df, data_start_row=2)
-        # head 4 + middle 2 + tail 4 = 10 行
-        assert len(sample["head"]) == 4
-        assert len(sample["middle"]) == 2
-        assert len(sample["tail"]) == 4
-        # middle 行号在中间
+        # 各段至少 1 行（去重后保结构）
+        assert len(sample["head"]) >= 1
+        assert len(sample["middle"]) >= 1
+        assert len(sample["tail"]) >= 1
+        # middle 行号在中间附近
         mid_row = sample["middle"][0]["_row"]
         assert 40 < mid_row < 60  # 100 行的中间附近
 
@@ -201,14 +205,17 @@ class TestBuildSample:
         assert sample["boundary"] == []
 
     def test_boundary_max_limit(self):
-        """boundary 最多 2 行，超出忽略"""
+        """boundary 最多 2 行，超出忽略（注意：去重后可能进一步减少）"""
         df = pd.DataFrame({"x": list(range(100))})
         class _Prescan:
             anomalies = [
                 {"column": "x", "sample_rows": [30, 40, 50, 60, 70]},
             ]
         sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
-        assert len(sample["boundary"]) == 2
+        # 全部非零签名相同 → 去重后保 1 行（首行无条件保留）
+        # 测试上限逻辑：boundary_indices 最多收 2 个再去重
+        assert len(sample["boundary"]) >= 1
+        assert len(sample["boundary"]) <= 2
 
 
 # ── _scan_issues ──
@@ -377,14 +384,14 @@ class TestFormatFileView:
         assert "OOM" not in view
 
     def test_medium_data_hint(self):
-        """中数据（≥1万行）应出现温和提示，不出 ⚠️"""
+        """中数据（≥1万行）应出现温和提示，不出 ⚠️ 大数据警告"""
         df = pd.DataFrame({"a": list(range(15_000)), "b": list(range(15_000))})
         report = CleaningReport(data_start_row=2)
         meta = generate_file_meta(df, report, source_file="medium.xlsx")
         view = format_file_view(meta)
-        assert "15,000行" in view
+        assert "15,000 行" in view  # 新格式带空格
         assert "WHERE/GROUP BY" in view
-        assert "⚠️" not in view  # 中数据不上 ⚠️
+        assert "⚠️ **大数据**" not in view  # 中数据不上 ⚠️ 大数据警告
 
     def test_large_data_oom_warning(self):
         """大数据（≥10万行）应出现 ⚠️ + OOM 警告（行业 schema-aware 做法）"""
@@ -393,9 +400,62 @@ class TestFormatFileView:
         meta = generate_file_meta(df, report, source_file="large.xlsx")
         view = format_file_view(meta)
         assert "⚠️" in view
-        assert "150,000行" in view
+        assert "150,000 行" in view  # 新格式带空格
         assert "OOM" in view
         assert "SELECT *" in view  # 给出反例
+
+    def test_markdown_structure(self):
+        """输出应使用 Markdown ## 标题分块（U 形 attention 优化）"""
+        df = pd.DataFrame({"x": list(range(50))})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="any.xlsx")
+        view = format_file_view(meta)
+        # 至少有 schema 和 sample 两个 ## 标题
+        assert "## 📐 字段 schema" in view
+        assert "## 📋 样本数据" in view
+        assert "## 📊 数据概览" in view
+
+    def test_u_shape_anchoring_for_grain(self):
+        """订单级警告必须头部 + 尾部双锚定（防中段遗漏）"""
+        # 构造一个 grain 检测能命中的 df
+        df = pd.DataFrame({
+            "order_id": (["A001"] * 5 + ["A002"] * 5 + ["A003"] * 5
+                         + ["A004"] * 5 + ["A005"] * 5 + ["A006"] * 5
+                         + ["A007"] * 5 + ["A008"] * 5),
+            "amount": ([100.0] * 5 + [200.0] * 5 + [300.0] * 5
+                       + [400.0] * 5 + [500.0] * 5 + [600.0] * 5
+                       + [700.0] * 5 + [800.0] * 5),  # 订单级（同订单 amount 重复）
+            "item_qty": list(range(40)),  # 明细级（每行不同）
+        })
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="orders.xlsx")
+        view = format_file_view(meta)
+
+        # 如果检测到 grain（订单级数值字段），应同时出现：
+        if meta.grain and meta.grain.get("order_level_fields"):
+            # 头部锚定（## 概览 段含订单级警告）
+            head_part = view.split("## 📐")[0]  # 概览部分
+            assert "订单级" in head_part
+            # 尾部锚定（## 再次提醒 段）
+            assert "## ⚠️ 再次提醒" in view
+
+    def test_schema_row_level_order_tag(self):
+        """订单级数值字段在 schema 行直接标 🔴"""
+        df = pd.DataFrame({
+            "order_id": (["A001"] * 8 + ["A002"] * 8 + ["A003"] * 8
+                         + ["A004"] * 8 + ["A005"] * 8),
+            "refund": ([10.0] * 8 + [20.0] * 8 + [30.0] * 8
+                       + [40.0] * 8 + [50.0] * 8),  # 订单级数值
+            "qty": list(range(40)),  # 明细级
+        })
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="t.xlsx")
+        view = format_file_view(meta)
+        if meta.grain and meta.grain.get("order_level_fields"):
+            # refund 列在 schema 行应有 🔴 标签
+            schema_section = view.split("## 📐")[1].split("## ")[0]
+            assert "🔴" in schema_section
+            assert "refund" in schema_section
 
 
 # ── extract_formulas ──

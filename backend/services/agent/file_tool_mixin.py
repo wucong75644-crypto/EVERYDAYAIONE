@@ -318,14 +318,10 @@ class FileToolMixin:
         cache.set_parquet(name, cache_path)
 
         # 构建返回内容
+        # 删除"## 后续操作"重复段 — get_file/duckdb 用法已在 code_execute 工具描述里
         lines = [file_view]
-        lines.append("")
-        lines.append("## 后续操作")
-        lines.append(f"已转为 Parquet（表头展平+合并单元格精确填充+空行删除+类型修正已完成，数据可直接查询）。")
-        lines.append(f"在 code_execute 中用 duckdb 查询（不要用 pd.read_excel）：")
-        lines.append(f"  path = get_file('{name}')")
-        lines.append(f"  df = duckdb.sql(f\"SELECT * FROM read_parquet('{{path}}')\").df()")
         if sheet_names and len(sheet_names) > 1:
+            lines.append("")
             lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
 
         logger.info(
