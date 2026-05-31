@@ -439,6 +439,28 @@ class TestFormatFileView:
             # 尾部锚定（## 再次提醒 段）
             assert "## ⚠️ 再次提醒" in view
 
+    def test_multi_field_aggregation_template_at_tail(self):
+        """尾部应包含多字段聚合范式（明细级 + 订单级混合时的完整代码模板）"""
+        df = pd.DataFrame({
+            "order_id": (["A001"] * 8 + ["A002"] * 8 + ["A003"] * 8
+                         + ["A004"] * 8 + ["A005"] * 8),
+            "refund": ([10.0] * 8 + [20.0] * 8 + [30.0] * 8
+                       + [40.0] * 8 + [50.0] * 8),  # 订单级数值
+            "qty": list(range(40)),  # 明细级数值
+        })
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="t.xlsx")
+        view = format_file_view(meta)
+        if meta.grain and meta.grain.get("order_level_fields"):
+            # 必须有多字段范式（行业最佳实践: One-shot template）
+            assert "多字段聚合范式" in view
+            # 必须示范了"明细级 SUM + 订单级 DISTINCT 子查询 + pandas merge"完整三步
+            assert "明细级字段直接 SUM" in view
+            assert "SELECT DISTINCT" in view
+            assert "merge" in view  # pandas merge
+            # 必须警告"不要用 SQL 三表 JOIN"（之前 LLM 自创出错的写法）
+            assert "三表 JOIN" in view or "三表" in view
+
     def test_schema_row_level_order_tag(self):
         """订单级数值字段在 schema 行直接标 🔴"""
         df = pd.DataFrame({
