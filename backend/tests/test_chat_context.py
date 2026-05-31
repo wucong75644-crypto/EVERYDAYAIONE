@@ -105,14 +105,12 @@ class TestExtractTextFromContent:
         """无效 JSON 字符串当作普通文本"""
         assert chat_handler._extract_text_from_content("{broken") == "{broken"
 
-    def test_tool_step_completed_extracted(self, chat_handler):
-        """已完成的 tool_step 应提取 summary"""
+    def test_tool_step_completed_not_flattened(self, chat_handler):
+        """tool_step 输出不应压进 assistant 正文历史，避免工具代码污染下一轮"""
         content = [
             {"type": "tool_step", "tool_name": "data_query", "status": "completed", "output": "查询了5条记录"},
         ]
-        result = chat_handler._extract_text_from_content(content)
-        assert "[工具执行: data_query]" in result
-        assert "查询了5条记录" in result
+        assert chat_handler._extract_text_from_content(content) == ""
 
     def test_tool_step_running_skipped(self, chat_handler):
         """running 状态的 tool_step 应被跳过"""
@@ -121,17 +119,15 @@ class TestExtractTextFromContent:
         ]
         assert chat_handler._extract_text_from_content(content) == ""
 
-    def test_tool_result_extracted(self, chat_handler):
-        """tool_result 应提取 text"""
+    def test_tool_result_not_flattened(self, chat_handler):
+        """tool_result 不应伪装成 assistant 正文历史"""
         content = [
             {"type": "tool_result", "tool_name": "erp_agent", "text": "共找到15条订单记录"},
         ]
-        result = chat_handler._extract_text_from_content(content)
-        assert "[工具结论: erp_agent]" in result
-        assert "共找到15条订单记录" in result
+        assert chat_handler._extract_text_from_content(content) == ""
 
     def test_mixed_blocks_with_thinking_skipped(self, chat_handler):
-        """混合块：thinking 跳过，tool_step + text 提取"""
+        """混合块：thinking/tool_step 跳过，只提取 assistant 文本"""
         content = [
             {"type": "thinking", "text": "让我分析一下..."},
             {"type": "tool_step", "tool_name": "data_query", "status": "completed", "output": "查询完成"},
@@ -139,7 +135,7 @@ class TestExtractTextFromContent:
         ]
         result = chat_handler._extract_text_from_content(content)
         assert "让我分析一下" not in result
-        assert "[工具执行: data_query]" in result
+        assert "查询完成" not in result
         assert "以上是分析结果" in result
 
 
