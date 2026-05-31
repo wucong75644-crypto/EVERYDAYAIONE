@@ -134,6 +134,59 @@ class TestStreamChat:
         assert chunks[1].content == "好"
 
     @pytest.mark.asyncio
+    async def test_qwen_tool_xml_content_suppressed_when_tools_enabled(self):
+        """Qwen 工具 XML 是协议数据，不能作为 assistant 正文流出"""
+        lines = [
+            _sse_line(_make_chunk(content='<parameter name="code">print(1)</parameter>')),
+            _sse_line(_make_chunk(content="正常回答")),
+            "data: [DONE]",
+        ]
+        adapter = _make_adapter()
+        mock_response = MockStreamResponse(lines)
+
+        @asynccontextmanager
+        async def mock_stream(*args, **kwargs):
+            yield mock_response
+
+        adapter._client = MagicMock()
+        adapter._client.is_closed = False
+        adapter._client.stream = mock_stream
+
+        chunks = []
+        async for chunk in adapter.stream_chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "code_execute", "parameters": {}}}],
+        ):
+            chunks.append(chunk)
+
+        assert chunks[0].content is None
+        assert chunks[1].content == "正常回答"
+
+    @pytest.mark.asyncio
+    async def test_qwen_tool_xml_content_kept_without_tools(self):
+        """无 tools 请求时不把普通 XML 示例误判成工具协议"""
+        lines = [
+            _sse_line(_make_chunk(content='<parameter name="example">x</parameter>')),
+            "data: [DONE]",
+        ]
+        adapter = _make_adapter()
+        mock_response = MockStreamResponse(lines)
+
+        @asynccontextmanager
+        async def mock_stream(*args, **kwargs):
+            yield mock_response
+
+        adapter._client = MagicMock()
+        adapter._client.is_closed = False
+        adapter._client.stream = mock_stream
+
+        chunks = []
+        async for chunk in adapter.stream_chat(messages=[{"role": "user", "content": "hi"}]):
+            chunks.append(chunk)
+
+        assert chunks[0].content == '<parameter name="example">x</parameter>'
+
+    @pytest.mark.asyncio
     async def test_usage_null_does_not_crash(self):
         """🔴 核心回归测试：usage: null 不崩溃（生产 bug）"""
         lines = [

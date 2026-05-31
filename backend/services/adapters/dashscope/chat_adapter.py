@@ -6,6 +6,7 @@ DashScope Chat 适配器
 """
 
 import json
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -45,6 +46,12 @@ DASHSCOPE_PRICING: Dict[str, DashScopeModelPricing] = {
 # 默认超时（秒）— 当工厂未传入 stream_timeout 时的兜底值
 _DEFAULT_STREAM_TIMEOUT = 120.0
 CONNECT_TIMEOUT = 15.0
+_QWEN_TOOL_XML_TAG_RE = re.compile(r"</?(?:parameter|function|invoke)\b", re.IGNORECASE)
+
+
+def _is_qwen_tool_xml_content(content: Optional[str]) -> bool:
+    """DashScope/Qwen may leak internal tool-call XML via delta.content."""
+    return bool(content and _QWEN_TOOL_XML_TAG_RE.search(content))
 
 
 class DashScopeChatAdapter(BaseChatAdapter):
@@ -191,6 +198,13 @@ class DashScopeChatAdapter(BaseChatAdapter):
                                 )
                                 for tc in raw_tcs
                             ]
+
+                    # Provider boundary: Qwen sometimes emits internal tool-call XML
+                    # in delta.content while tools are enabled. That is protocol data,
+                    # not assistant-visible text, so never expose it as StreamChunk.content.
+                    if tools and _is_qwen_tool_xml_content(content):
+                        logger.debug("Suppressed Qwen tool XML from stream content")
+                        content = None
 
                     # 提取 usage（通常在最后一个 chunk，中间 chunk 为 null）
                     usage = chunk.get("usage") or {}
