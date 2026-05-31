@@ -79,7 +79,7 @@ export default function Home() {
     if (activeSection !== 'prompts' || galleryData) return;
     let ignore = false;
     setGalleryLoading(true);
-    fetch('/data/prompt_gallery.json')
+    fetch('/data/prompt_gallery.json', { cache: 'no-cache' })
       .then((res) => {
         if (!res.ok) throw new Error('加载失败');
         return res.json();
