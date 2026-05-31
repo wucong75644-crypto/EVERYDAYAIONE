@@ -834,7 +834,9 @@ def format_file_view(meta: FileMeta) -> str:
         lines.append("")
 
     # ============================================================
-    # [TAIL] 尾部锚定：再次提醒订单级处理规则
+    # [TAIL] 尾部锚定：再次提醒 + 多字段聚合范式
+    # 行业最佳实践（One-shot template + ReAct fallback）:
+    # 在 LLM 容易"自创错误 JOIN 写法"的多字段场景，直接给完整代码模板
     # ============================================================
     if numeric_ol:
         lines.append("## ⚠️ 再次提醒（重要）")
@@ -842,6 +844,37 @@ def format_file_view(meta: FileMeta) -> str:
             f"订单级字段 `{', '.join(numeric_ol)}` 在 {group_key} 内值重复，"
             f"SUM 前必须先 `DISTINCT {group_key}` 去重。"
         )
+
+        # 多字段聚合范式（明细级 + 订单级混合统计时必用）
+        line_level_numeric = [
+            c for c in (grain.get("line_level_fields", []) or [])
+            if meta.schema.get(c, {}).get("type") in ("integer", "decimal")
+        ]
+        if line_level_numeric:
+            first_ll = line_level_numeric[0]
+            first_ol = numeric_ol[0]
+            lines.append("")
+            lines.append("📌 多字段聚合范式（同时统计明细级 + 订单级字段时必用）:")
+            lines.append("```python")
+            lines.append("# 步骤1：明细级字段直接 SUM")
+            lines.append("detail = duckdb.sql(f\"\"\"")
+            lines.append(f'    SELECT 分组列, SUM("{first_ll}") AS "{first_ll}"')
+            lines.append(f"    FROM read_parquet('{{path}}') GROUP BY 分组列")
+            lines.append('""").df()')
+            lines.append("")
+            lines.append("# 步骤2：订单级字段先 DISTINCT 再 SUM")
+            lines.append("order_ = duckdb.sql(f\"\"\"")
+            lines.append(f'    SELECT 分组列, SUM("{first_ol}") AS "{first_ol}"')
+            lines.append(
+                f'    FROM (SELECT DISTINCT "{group_key}", 分组键, "{first_ol}" '
+                f"FROM read_parquet('{{path}}'))"
+            )
+            lines.append("    GROUP BY 分组列")
+            lines.append('""").df()')
+            lines.append("")
+            lines.append("# 步骤3：pandas merge 合并两个聚合结果（不要用 SQL 三表 JOIN，会导致数据重复）")
+            lines.append("result = detail.merge(order_, on='分组列', how='left')")
+            lines.append("```")
 
     dsr = (meta.cleaning or {}).get("data_start_row", 2)
     lines.append(f"\n行号映射: Excel 行号 = Parquet 索引 + {dsr}")
