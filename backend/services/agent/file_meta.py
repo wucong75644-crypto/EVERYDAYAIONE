@@ -579,10 +579,22 @@ def format_file_view(meta: FileMeta) -> str:
 
     # summary
     s = meta.summary
+    row_count = s.get('row_count', 0)
     lines.append(
-        f"数据概览：{s.get('row_count', 0)}行 × {s.get('col_count', 0)}列"
+        f"数据概览：{row_count}行 × {s.get('col_count', 0)}列"
         f"，{s.get('sheet_count', 1)} 个 Sheet"
     )
+    # 规模警告：schema-aware reasoning（行业标准做法，对标 OpenAI Files API）
+    # 让 LLM 看到具体规模 → 自然选择 SQL 聚合而非全量 .df()
+    if row_count >= 100_000:
+        lines.append(
+            f"⚠️ 大数据（{row_count:,}行）：禁止 SELECT * .df() 全量加载，"
+            "会 OOM。必须先 SQL 聚合/筛选后再 .df()。"
+        )
+    elif row_count >= 10_000:
+        lines.append(
+            f"提示：{row_count:,}行 中等规模，建议 SQL 先 WHERE/GROUP BY 过滤再 .df()。"
+        )
     lines.append("")
 
     # schema

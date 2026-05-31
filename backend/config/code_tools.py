@@ -49,10 +49,14 @@ _DESCRIPTION_BASE = (
 # 主 Agent 版（加 WORKSPACE_DIR + 完整文件探索能力）
 _DESCRIPTION_WORKSPACE = (
     "有状态 Python 沙盒，变量跨调用保留。执行超时 120 秒。\n"
+    "资源上限：内存 4GB（DuckDB 内部 3GB + Python/pandas 1GB），超出会 OOM kill。\n"
     "预装：duckdb(磁盘模式), openpyxl, pdfplumber, python-docx, pandas。\n"
     "get_file('文件名') 是预定义函数，所有文件引用都用它获取绝对路径（自动纠错）。\n"
     "数据文件已由 file_analyze 转为 Parquet，必须用 duckdb 读取，禁止 pd.read_excel。\n"
     "示例：path = get_file('销售报表.xlsx'); df = duckdb.sql(f\"SELECT * FROM read_parquet('{path}')\").df()\n"
+    "大数据处理（>10万行）：用 SQL 聚合后 .df()，不要 SELECT * .df() 全量加载。\n"
+    "  ✓ duckdb.sql(f\"SELECT 店铺, SUM(金额) FROM read_parquet('{p}') GROUP BY 店铺\").df()\n"
+    "  ✗ duckdb.sql(f\"SELECT * FROM read_parquet('{p}')\").df()  ← 50万行 OOM\n"
     "OUTPUT_DIR 存输出文件，自动上传。\n"
     "数据文件（Excel/CSV）先调 file_analyze，再用 get_file + duckdb 查询。\n"
     "PDF 用 pdfplumber，DOCX 用 python-docx。\n"
