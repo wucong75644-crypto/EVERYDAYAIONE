@@ -80,3 +80,25 @@ pytest-asyncio==0.25.2
 time-machine==2.14.1            # 时间冻结（asyncio + zoneinfo + Pydantic v2 兼容）
 jieba==0.42.1
 langfuse==2.51.3                # v6: Agent 可观测性（trace + span + generation + dashboard）
+
+# ============================================================
+# 沙盒（code_execute）数据科学栈 — 对齐 OpenAI Code Interpreter
+# AI 在沙盒里写 Python 处理数据/文件常用库，避免 ImportError 翻车
+# ============================================================
+
+# 必装（高频）
+tabulate==0.9.0                 # pandas.to_markdown() 硬依赖
+scipy==1.14.1                   # 统计/插值，scikit-learn 隐式依赖
+scikit-learn==1.6.0             # 聚类/分类/回归（客户分群、ABC、异常订单）
+chardet==5.2.0                  # 自动识别 CSV 编码（GBK/GB18030 中文电商常见）
+python-dateutil==2.9.0          # 解析"2026年3月15日"等中文日期
+lxml==5.3.0                     # pd.read_html、XML 解析，比 ElementTree 快 10×
+beautifulsoup4==4.12.3          # HTML 清洗
+xlrd==2.0.1                     # 读 .xls 老格式（淘宝/拼多多旧版导出常见）
+
+# 可选（中频）
+regex==2024.11.6                # 增强 Unicode 中文正则
+rapidfuzz==3.10.1               # 商品名/客户名模糊匹配
+pyyaml==6.0.2                   # YAML 配置/规则文件
+pypdf==5.1.0                    # PDF 合并/拆分（已有 pdfplumber 只读，pypdf 可写）
+psutil==6.1.1                   # 沙盒内监控内存（防 OOM）

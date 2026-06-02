@@ -8,17 +8,9 @@ AST 预验证 + 模块/函数黑名单 + 结果截断。
 import ast
 from typing import List, Optional
 
-# 禁止导入的模块（进程/网络/编译）
-# os/shutil 已移出 — 运行时走 scoped_os/scoped_shutil（见 scoped_os.py）
-_BLOCKED_MODULES = frozenset({
-    "subprocess",
-    "socket", "http", "urllib", "requests", "httpx",
-    "ctypes", "importlib", "code", "codeop", "compileall",
-    "multiprocessing", "threading", "signal", "resource",
-    "pickle", "shelve", "marshal", "tempfile", "glob",
-    "webbrowser", "ftplib", "smtplib", "telnetlib",
-    "builtins", "__builtin__",
-})
+# 禁止导入的模块 — 单一真相源在 sandbox_constants.BLOCKED_IMPORT_MODULES
+# AST 层与运行时层用同一份黑名单，确保两层防御一致
+from services.sandbox.sandbox_constants import BLOCKED_IMPORT_MODULES as _BLOCKED_MODULES
 
 # 禁止调用的函数名
 _BLOCKED_CALLS = frozenset({
