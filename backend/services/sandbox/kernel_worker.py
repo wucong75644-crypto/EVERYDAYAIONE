@@ -238,14 +238,12 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             })
 
         except Exception as e:
+            from services.sandbox.error_format import format_sandbox_error
             elapsed = int((_time.monotonic() - start) * 1000)
-            tb = traceback.format_exc()
-            tb_lines = tb.strip().split("\n")
-            short_tb = "\n".join(tb_lines[-3:])
             _write_response({
                 "id": req_id,
                 "status": "error",
-                "result": f"❌ 执行错误:\n{short_tb}",
+                "result": f"❌ 执行错误:\n{format_sandbox_error(e, code)}",
                 "elapsed_ms": elapsed,
             })
 

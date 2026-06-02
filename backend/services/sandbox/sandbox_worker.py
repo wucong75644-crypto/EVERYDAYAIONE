@@ -701,7 +701,5 @@ def sandbox_worker_entry(
         result_queue.put(("ok", result))
 
     except Exception as e:
-        tb = traceback.format_exc()
-        tb_lines = tb.strip().split("\n")
-        short_tb = "\n".join(tb_lines[-3:])
-        result_queue.put(("error", f"❌ 执行错误:\n{short_tb}"))
+        from services.sandbox.error_format import format_sandbox_error
+        result_queue.put(("error", f"❌ 执行错误:\n{format_sandbox_error(e, code)}"))
