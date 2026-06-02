@@ -18,7 +18,7 @@ from services.sandbox.sandbox_worker import (
 )
 from services.sandbox.sandbox_constants import (
     SAFE_BUILTINS,
-    ALLOWED_IMPORT_MODULES,
+    BLOCKED_IMPORT_MODULES,
     SENSITIVE_ENV_PREFIXES,
     restricted_import,
 )
@@ -92,20 +92,37 @@ class TestSandboxConstants:
             else:
                 assert name not in SAFE_BUILTINS
 
-    def test_allowed_modules_includes_data_libs(self):
-        for mod in ["pandas", "numpy", "matplotlib", "json", "math"]:
-            assert mod in ALLOWED_IMPORT_MODULES
+    def test_blocked_modules_include_dangerous(self):
+        """黑名单覆盖核心危险类（C ABI / 反序列化 / 网络 / 进程 / 动态加载）"""
+        for mod in [
+            "subprocess", "socket", "pickle", "ctypes",
+            "marshal", "urllib", "http", "importlib", "runpy",
+        ]:
+            assert mod in BLOCKED_IMPORT_MODULES, f"{mod} should be blocked"
 
-    def test_allowed_modules_excludes_dangerous(self):
-        # os/shutil 已移到白名单（运行时走 scoped_os），其他仍禁止
-        for mod in ["subprocess", "socket", "pickle"]:
-            assert mod not in ALLOWED_IMPORT_MODULES
-        # os/shutil 在白名单（由 make_restricted_import + scoped_os 保障安全）
-        for mod in ["os", "os.path", "shutil"]:
-            assert mod in ALLOWED_IMPORT_MODULES
+    def test_blocked_modules_exclude_safe(self):
+        """黑名单不应误拦数据科学栈"""
+        for mod in [
+            "pandas", "numpy", "matplotlib", "json", "math",
+            "datetime", "types", "typing", "hashlib", "base64",
+        ]:
+            assert mod not in BLOCKED_IMPORT_MODULES, f"{mod} should NOT be blocked"
 
-    def test_restricted_import_allows_os_in_whitelist(self):
-        """向后兼容：无 scoped 模块时 os 在白名单中，返回真实 os（非生产路径）"""
+    def test_restricted_import_blocks_dangerous(self):
+        """restricted_import 拒绝黑名单模块"""
+        import pytest as _pytest
+        for mod in ["subprocess", "socket", "pickle", "ctypes"]:
+            with _pytest.raises(ImportError, match="禁止导入模块"):
+                restricted_import(mod)
+
+    def test_restricted_import_allows_stdlib(self):
+        """restricted_import 放行标准库工具模块（types/typing/hashlib 等）"""
+        for mod in ["types", "typing", "hashlib", "base64", "uuid", "math"]:
+            m = restricted_import(mod)
+            assert m is not None, f"{mod} should be importable"
+
+    def test_restricted_import_allows_os(self):
+        """无 scoped 时 os 默认放行（运行时由 build_scoped_os 包装）"""
         mod = restricted_import("os")
         assert hasattr(mod, "path")
 
@@ -343,17 +360,18 @@ class TestSandboxWorkerEntry:
         assert "执行错误" in result
 
     def test_validation_failure(self, tmp_path):
-        """AST 验证失败返回 error（用 sys 测试，os 已放行）"""
+        """AST 验证失败返回 error（用 ctypes 触发 — 黑名单拦截危险模块）"""
         q = _make_queue()
 
         sandbox_worker_entry(
-            q, "import sys",
+            q, "import ctypes",
             str(tmp_path), "", "", 5.0, 1000,
         )
 
         status, result = q.get(timeout=5)
         assert status == "error"
-        assert "验证失败" in result
+        # AST 验证或 import 时拒绝（两者都符合预期，都是"沙盒拒绝"）
+        assert ("验证失败" in result) or ("禁止导入" in result)
 
     def test_path_hidden_in_result(self, tmp_path):
         """真实路径在结果中被替换"""
