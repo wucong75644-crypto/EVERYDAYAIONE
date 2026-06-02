@@ -46,6 +46,7 @@ ALLOWED_IMPORT_MODULES = frozenset({
     # 内部依赖（被上述模块传递依赖）
     "inspect",  # duckdb.sql() 内部依赖
     "sys",  # duckdb.register() 内部依赖
+    "types",  # duckdb DataFrame 自动注册时识别对象类型；Python 标准类型常量
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",
 })
