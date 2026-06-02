@@ -244,24 +244,31 @@ class FilePathCache:
         return result
 
     def write_manifest(self) -> None:
-        """把三字段映射写入 staging/_manifest.json。
+        """把所有已注册文件写入 staging/_manifest.json。
 
-        供沙盒子进程的 get_file() 读取。
-        写入 parquet 的文件名（不是完整路径），沙盒用 STAGING_DIR + '/文件名' 拼出路径。
-        这样无论 nsjail（/staging/）还是裸模式（/mnt/nas-workspace/.../staging/conv/），
-        沙盒拿到的都是正确的 jail 内路径。
+        供沙盒子进程的 get_file() 读取。每个文件按优先级取路径：
+          1) parquet 路径（已 file_analyze 的 Excel/CSV）—— 写 basename，沙盒拼 staging_dir
+          2) workspace 绝对路径（未分析的 Word/PDF/数据/文本等）—— 直接写绝对路径
+
+        沙盒 get_file() 区分：值以 '/' 开头视为绝对路径直接返回；
+        否则视为 parquet basename 拼 staging_dir。
         """
         if not self._staging_dir:
             return
-        # {原始文件名: parquet文件名, 归一化文件名: parquet文件名}
         manifest: dict[str, str] = {}
         for entry in self._normalized.values():
+            # 优先 parquet（已分析 → 沙盒走 duckdb 高效查询）
             if entry.parquet:
-                parquet_filename = os.path.basename(entry.parquet)
-                manifest[entry.name] = parquet_filename
-                norm_key = normalize_filename(entry.name)
-                if norm_key != entry.name:
-                    manifest[norm_key] = parquet_filename
+                value = os.path.basename(entry.parquet)
+            # 未分析但有 workspace 路径（Word/PDF/数据/文本 → 沙盒走 python-docx/pdfplumber 等）
+            elif entry.workspace:
+                value = entry.workspace
+            else:
+                continue
+            manifest[entry.name] = value
+            norm_key = normalize_filename(entry.name)
+            if norm_key != entry.name:
+                manifest[norm_key] = value
         if not manifest:
             return
         staging = Path(self._staging_dir)

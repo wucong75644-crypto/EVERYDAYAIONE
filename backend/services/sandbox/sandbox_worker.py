@@ -540,8 +540,11 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 raise FileNotFoundError(
                     f"文件 '{name}' 未找到。已注册文件: {available}"
                 )
-            # manifest 里存的是 parquet 文件名，拼上 staging_dir 返回完整路径
-            # 这样无论 nsjail（/staging/）还是裸模式都能拿到正确的 jail 内路径
+            # manifest 值有两种形式：
+            #  - 以 '/' 开头：workspace 绝对路径（未 analyze 的 Word/PDF/数据/文本等）→ 直接返回
+            #  - 其他：parquet basename，拼 staging_dir 得到完整路径（已 analyze 的 Excel/CSV）
+            if path.startswith("/") or path.startswith("\\"):
+                return path
             return str(Path(staging_dir) / path)
 
         g["get_file"] = _get_file
