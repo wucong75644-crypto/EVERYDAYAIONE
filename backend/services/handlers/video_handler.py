@@ -146,11 +146,20 @@ class VideoHandler(BaseHandler):
                 transaction_id=transaction_id,
             )
         except Exception as save_err:
-            # API 任务已创建，不退积分（回调可能还会回来）
+            # task 没落库 → webhook 回调时 get_task 找不到 → 永远不会确认/退积分
+            # 必须主动退积分 + 抛出异常，让 message.py finally 释放 slot
             logger.critical(
-                f"Video _save_task failed | external_task_id={external_task_id} | "
+                f"Video _save_task failed, refunding | external_task_id={external_task_id} | "
                 f"transaction_id={transaction_id} | error={save_err}"
             )
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(
+                    f"Video _save_task refund also failed | tx={transaction_id} | "
+                    f"error={refund_err}"
+                )
+            raise
 
         logger.info(
             f"Video task started | external_task_id={external_task_id} | "
@@ -230,7 +239,8 @@ class VideoHandler(BaseHandler):
             finally:
                 await new_adapter.close()
 
-            # API 成功 → 持久化（在 try 外，DB 错误不触发重试/退积分）
+            # API 成功 → 持久化。落库失败必须退积分 + 继续重试下一个 model，
+            # 否则 webhook 找不到 task 永远不退积分
             try:
                 retry_params = {
                     **params,
@@ -251,9 +261,18 @@ class VideoHandler(BaseHandler):
                 )
             except Exception as save_err:
                 logger.critical(
-                    f"Video retry _save_task failed | "
-                    f"external_task_id={result.task_id} | error={save_err}"
+                    f"Video retry _save_task failed, refunding | "
+                    f"external_task_id={result.task_id} | tx={new_tx} | error={save_err}"
                 )
+                try:
+                    self._refund_credits(new_tx)
+                except Exception as refund_err:
+                    logger.critical(
+                        f"Video retry _save_task refund also failed | tx={new_tx} | "
+                        f"error={refund_err}"
+                    )
+                ctx.add_failure(new_model, f"save_task_failed: {save_err}")
+                continue
 
             logger.info(
                 f"Video retry succeeded | task_id={result.task_id} | "

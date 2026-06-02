@@ -270,12 +270,21 @@ class ImageHandler(BaseHandler):
                 batch_id=batch_id,
             )
         except Exception as save_err:
-            # API 任务已创建，不退积分（回调可能还会回来）
+            # task 没落库 → webhook 回调时 get_task 找不到 → 永远不会确认/退积分
+            # 必须主动退积分 + 返回 None，与"adapter 失败"路径一致，避免积分锁定 + slot 泄漏
             logger.critical(
-                f"Image _save_task failed | external_task_id={external_task_id} | "
+                f"Image _save_task failed, refunding | external_task_id={external_task_id} | "
                 f"batch_id={batch_id} | transaction_id={transaction_id} | "
                 f"error={save_err}"
             )
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(
+                    f"Image _save_task refund also failed | tx={transaction_id} | "
+                    f"error={refund_err}"
+                )
+            return None
 
         return external_task_id
 
@@ -350,7 +359,8 @@ class ImageHandler(BaseHandler):
             finally:
                 await new_adapter.close()
 
-            # API 成功 → 持久化（在 try 外，DB 错误不触发重试/退积分）
+            # API 成功 → 持久化。落库失败必须退积分 + 返回 None，
+            # 否则 webhook 找不到 task 永远不退积分，且本张图的 slot 也会泄漏
             try:
                 retry_params = {
                     **params,
@@ -373,9 +383,17 @@ class ImageHandler(BaseHandler):
                 )
             except Exception as save_err:
                 logger.critical(
-                    f"Image retry _save_task failed | index={index} | "
-                    f"external_task_id={result.task_id} | error={save_err}"
+                    f"Image retry _save_task failed, refunding | index={index} | "
+                    f"external_task_id={result.task_id} | tx={new_tx} | error={save_err}"
                 )
+                try:
+                    self._refund_credits(new_tx)
+                except Exception as refund_err:
+                    logger.critical(
+                        f"Image retry _save_task refund also failed | tx={new_tx} | "
+                        f"error={refund_err}"
+                    )
+                return None
             return result.task_id
 
         return None

@@ -19,6 +19,7 @@ from core.exceptions import (
     PermissionDeniedError,
 )
 from core.limiter import limiter
+from services.task_limit_service import release_task_slot
 
 
 class MarkTaskFailedRequest(BaseModel):
@@ -165,7 +166,9 @@ async def cancel_task_by_message_id(
     """
     try:
         for field in ("placeholder_message_id", "assistant_message_id"):
-            q = db.table("tasks").select("id, external_task_id").eq(
+            q = db.table("tasks").select(
+                "id, external_task_id, user_id, conversation_id, org_id, request_params"
+            ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
                 "status", ["pending", "running"]
@@ -190,6 +193,10 @@ async def cancel_task_by_message_id(
                     ext_id = task.get("external_task_id")
                     if ext_id:
                         ws_manager.cancel_task(ext_id)
+
+                    # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
+                    # 必须由 cancel 路径主动释放 Redis 槽位（SREM 幂等，handler 再次释放也安全）
+                    await release_task_slot(task)
 
                     logger.info(
                         f"Task cancelled by user | task_id={task['id']} | "
@@ -226,7 +233,7 @@ async def cancel_task_by_message_id(
 @router.post("/{external_task_id}/fail", summary="手动标记任务失败")
 @limiter.limit("60/minute")
 async def mark_task_failed(
-    req: Request,
+    request: Request,
     ctx: OrgCtx,
     db: ScopedDB,
     external_task_id: str = Path(
@@ -234,7 +241,7 @@ async def mark_task_failed(
         regex=r"^[a-zA-Z0-9_-]{1,100}$",
         description="任务ID，只能包含字母、数字、下划线和连字符"
     ),
-    request: MarkTaskFailedRequest = MarkTaskFailedRequest(),
+    body: MarkTaskFailedRequest = MarkTaskFailedRequest(),
 ) -> Dict[str, Any]:
     """
     手动标记任务为失败状态
@@ -243,7 +250,9 @@ async def mark_task_failed(
     """
     try:
         # 验证任务属于当前用户 + org 隔离
-        q = db.table("tasks").select("id").eq(
+        q = db.table("tasks").select(
+            "id, user_id, conversation_id, org_id, request_params"
+        ).eq(
             "external_task_id", external_task_id
         ).eq("user_id", ctx.user_id)
         if ctx.org_id:
@@ -258,11 +267,15 @@ async def mark_task_failed(
         # 更新状态（带 user_id 过滤防越权）
         db.table("tasks").update({
             "status": "failed",
-            "error_message": request.reason,
+            "error_message": body.reason,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }).eq("external_task_id", external_task_id).eq(
             "user_id", ctx.user_id
         ).execute()
+
+        # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
+        # 必须由 fail 路径主动释放 Redis 槽位
+        await release_task_slot(task.data)
 
         return {"success": True, "message": "任务已标记为失败"}
     except (
@@ -275,7 +288,7 @@ async def mark_task_failed(
     except Exception as e:
         logger.error(
             f"Mark task failed error | external_task_id={external_task_id} | "
-            f"user_id={ctx.user_id} | reason={request.reason} | error={str(e)}"
+            f"user_id={ctx.user_id} | reason={body.reason} | error={str(e)}"
         )
         raise AppException(
             code="MARK_TASK_FAILED_ERROR",

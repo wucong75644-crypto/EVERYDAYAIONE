@@ -167,8 +167,12 @@ async def generate_message(
             body.params = {}
         body.params["_task_slot_id"] = slot_id
 
+    # slot 生命周期：
+    # - 正常返回 = task 已落库，slot 由 task 终态化路径释放（on_complete/on_error/cancel/timeout/batch_completion）
+    # - 任何异常（含 asyncio.CancelledError，不被 except Exception 接住）= task 未落库，由 finally 释放，避免泄漏
+    slot_handed_off = False
     try:
-        return await _do_generate_message(
+        response = await _do_generate_message(
             request=request,
             conversation_id=conversation_id,
             body=body,
@@ -176,14 +180,14 @@ async def generate_message(
             db=db,
             user_id=user_id,
         )
-    except Exception:
-        # 任务启动失败 → 释放槽位，防止泄漏
-        if slot_id and task_limit_service:
+        slot_handed_off = True
+        return response
+    finally:
+        if not slot_handed_off and slot_id and task_limit_service:
             await task_limit_service.release(
                 user_id, conversation_id,
                 org_id=ctx.org_id, slot_id=slot_id,
             )
-        raise
 
 
 async def _do_generate_message(
