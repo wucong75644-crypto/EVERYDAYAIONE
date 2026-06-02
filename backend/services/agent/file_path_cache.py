@@ -246,23 +246,34 @@ class FilePathCache:
     def write_manifest(self) -> None:
         """把所有已注册文件写入 staging/_manifest.json。
 
-        供沙盒子进程的 get_file() 读取。每个文件按优先级取路径：
-          1) parquet 路径（已 file_analyze 的 Excel/CSV）—— 写 basename，沙盒拼 staging_dir
-          2) workspace 绝对路径（未分析的 Word/PDF/数据/文本等）—— 直接写绝对路径
+        复用 parquet 的"相对名 + 沙盒拼前缀"机制扩展到所有文件：
+          - 已 analyze 的 Excel/CSV → 写 parquet basename（不含 /），沙盒拼 staging_dir
+          - 未分析的 Word/PDF/数据/文本 → 写 workspace 相对路径（含 /），沙盒拼 workspace_dir
 
-        沙盒 get_file() 区分：值以 '/' 开头视为绝对路径直接返回；
-        否则视为 parquet basename 拼 staging_dir。
+        沙盒 _get_file 按 '/' 区分两种值（不含 / 走 staging，含 / 走 workspace）。
+        这样 nsjail 把 user workspace bind 到 /workspace、staging bind 到 /staging 后
+        沙盒进程都能正确读到，无需暴露宿主机绝对路径。
         """
         if not self._staging_dir:
             return
+        # staging_dir = {workspace_root}/staging/{conv_id}/，反推 workspace_root
+        workspace_root = os.path.dirname(os.path.dirname(self._staging_dir))
         manifest: dict[str, str] = {}
         for entry in self._normalized.values():
             # 优先 parquet（已分析 → 沙盒走 duckdb 高效查询）
             if entry.parquet:
                 value = os.path.basename(entry.parquet)
-            # 未分析但有 workspace 路径（Word/PDF/数据/文本 → 沙盒走 python-docx/pdfplumber 等）
-            elif entry.workspace:
-                value = entry.workspace
+            # 未分析但有 workspace 路径 → 转 abs → workspace 相对路径
+            elif entry.workspace and workspace_root:
+                try:
+                    rel = os.path.relpath(entry.workspace, workspace_root)
+                except ValueError:
+                    continue
+                # rel 必须含 '/' 以区分 parquet basename；
+                # workspace 根目录的文件加 ./ 前缀强制含 /
+                if "/" not in rel and "\\" not in rel:
+                    rel = "./" + rel
+                value = rel
             else:
                 continue
             manifest[entry.name] = value
