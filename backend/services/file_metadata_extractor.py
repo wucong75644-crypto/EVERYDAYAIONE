@@ -858,12 +858,14 @@ def _format_standard(
         sheet_parts = [f"{s['name']}({s['rows']}行)" for s in sheets]
         lines.append(f"\n📑 多 Sheet: {', '.join(sheet_parts)}")
         lines.append(f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
-                     f"读其他 Sheet: file_read(path='{wp}', sheet='Sheet名')")
+                     f"读其他 Sheet: file_analyze(path='{wp}') 后在 code_execute 用 "
+                     f"`openpyxl.load_workbook(get_file('{wp}'))['Sheet名']`")
 
-    # 读取指引（自动带正确参数）
-    read_cmd = _build_read_command(wp, meta)
-    if read_cmd:
-        lines.append(f"\n用 file_read 分析: {read_cmd}")
+    # 读取指引（file_analyze 后用 duckdb 查询 Parquet）
+    lines.append(
+        f"\n分析: file_analyze(path=\"{wp}\")，之后在 code_execute 中用 "
+        f"`duckdb.sql(f\"SELECT ... FROM read_parquet('{{get_file('{wp}')}}')\")`"
+    )
 
     return "\n".join(lines)
 
@@ -922,33 +924,25 @@ def _format_compact(
 
 
 def _build_read_command(wp: str, meta: Dict[str, Any]) -> str:
-    """根据文件类型和元信息生成 file_read 读取命令
+    """根据文件类型和元信息生成 file_analyze 命令。
 
-    核心设计：元信息提取发现的特殊情况（Sheet 名）
-    自动反映到读取命令中，AI 复制即可用，不需要自己猜参数。
-    表头行由 file_read 内部自动检测，无需暴露给 LLM。
+    多 sheet 时不在 file_analyze 中区分 sheet（file_analyze 默认读首 sheet 转 Parquet），
+    其余 sheet 由 code_execute 中 openpyxl 按需读取。
     """
-    params = [f"path=\"{wp}\""]
-
-    # 多 sheet 时提示 sheet 参数
-    sheets = meta.get("sheets")
-    if sheets and len(sheets) > 1:
-        params.append(f"sheet=\"{sheets[0]['name']}\"")
-
-    return f"file_read({', '.join(params)})"
+    return f"file_analyze(path=\"{wp}\")"
 
 
 def _format_document_entry(
     wp: str, size_str: str, ext: str, meta: Optional[Dict[str, Any]],
 ) -> str:
-    """格式化文档文件条目（docx/pptx/pdf）"""
+    """格式化文档文件条目（docx/pptx/pdf）—— 全部走 code_execute 提取。"""
     _DOC_READ_HINTS = {
-        ".docx": f"file_read(path=\"{wp}\")",
-        ".pptx": f"file_read(path=\"{wp}\")",
-        ".pdf": f"file_read(path=\"{wp}\")",
+        ".docx": f"docx.Document(get_file(\"{wp}\"))",
+        ".pptx": f"pptx.Presentation(get_file(\"{wp}\"))",
+        ".pdf": f"pdfplumber.open(get_file(\"{wp}\"))",
     }
 
-    read_hint = _DOC_READ_HINTS.get(ext, f"open('{wp}')")
+    read_hint = _DOC_READ_HINTS.get(ext, f"open(get_file(\"{wp}\"))")
 
     _DOC_TYPE_TAGS = {".docx": "📝 [Word]", ".pptx": "📽 [PPT]", ".pdf": "📕 [PDF]"}
     tag = _DOC_TYPE_TAGS.get(ext, "📝 [文档]")
@@ -1150,7 +1144,7 @@ def format_file_metadata_line(
         c = meta.get("chars", 0)
         return (
             f"  📝 [Word] ({size_str}) | {p}段 {t}表 ~{c:,}字\n"
-            f"  读取: file_read(path=\"{name}\")"
+            f"  读取: code_execute 中 docx.Document(get_file(\"{name}\"))"
         )
     if file_type == "pptx":
         s = meta.get("slides", 0)
@@ -1159,7 +1153,7 @@ def format_file_metadata_line(
         title_hint = f" | {', '.join(titles[:3])}" if titles else ""
         return (
             f"  📽 [PPT] ({size_str}) | {s}页 ~{c:,}字{title_hint}\n"
-            f"  读取: file_read(path=\"{name}\")"
+            f"  读取: code_execute 中 pptx.Presentation(get_file(\"{name}\"))"
         )
     if file_type == "pdf":
         p = meta.get("pages", 0)
@@ -1167,7 +1161,7 @@ def format_file_metadata_line(
         scanned = " | 扫描件" if meta.get("is_scanned") else ""
         return (
             f"  📕 [PDF] ({size_str}) | {p}页 ~{c:,}字{scanned}\n"
-            f"  读取: file_read(path=\"{name}\")"
+            f"  读取: code_execute 中 pdfplumber.open(get_file(\"{name}\"))"
         )
 
     # 文本类
@@ -1181,7 +1175,7 @@ def format_file_metadata_line(
         preview_hint = f' | "{first_line}"' if first_line else ""
         return (
             f"  📄 [文本] ({size_str}) | {lines_label} {chars_label}{preview_hint}\n"
-            f"  读取: file_read(path=\"{name}\")"
+            f"  读取: code_execute 中 open(get_file(\"{name}\")).read()"
         )
 
     # 图片类
@@ -1190,7 +1184,7 @@ def format_file_metadata_line(
         h = meta.get("height", 0)
         return (
             f"  🖼 [图片] ({size_str}) | {w}×{h}px\n"
-            f"  读取: file_read(path=\"{name}\")"
+            f"  查看: file_search(path=\"{name}\") 自动返回多模态视觉"
         )
 
     # Parquet

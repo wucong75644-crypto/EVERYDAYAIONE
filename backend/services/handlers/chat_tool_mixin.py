@@ -306,7 +306,7 @@ class ChatToolMixin:
                 return (tc, llm_text, False, _form_display)
 
             # FileReadResult（图片多模态）：直接透传给 chat_handler 处理
-            from services.file_executor import FileReadResult
+            from schemas.multimodal import FileReadResult
             if isinstance(result, FileReadResult):
                 display_text = extract_display_text(result)
                 raw_summary = result.text[:100] if result.text else ""
@@ -536,7 +536,7 @@ def _resolve_file_ids(
     """工具层无感拦截：按工具类型从注册表取正确路径 + 自检。
 
     不同工具取不同地址：
-    - file_analyze / file_read → workspace（源文件）
+    - file_analyze → workspace（源文件）
     - file_delete → workspace
     - 其他 → 不翻译（code_execute 在沙盒内用 get_file）
 
@@ -548,7 +548,7 @@ def _resolve_file_ids(
     """
     from services.agent.file_path_cache import get_file_cache
 
-    _ANALYZE_TOOLS = {"file_analyze", "file_read"}
+    _ANALYZE_TOOLS = {"file_analyze"}
     _DELETE_TOOLS = {"file_delete"}
     if tool_name in _ANALYZE_TOOLS:
         usage = "analyze"

@@ -250,7 +250,7 @@ Path(meta_path).write_text(json.dumps(asdict(report), ensure_ascii=False))
 
 ### 不改的文件
 
-- `file_executor.py`（file_read 不走 Parquet 转换）
+- `file_executor.py`（仅安全路径校验，不涉及 Parquet 转换）
 - `file_metadata_extractor.py`（元数据提取独立于数据清洗）
 - `tool_executor.py`（消费 Parquet，不关心清洗过程）
 - CSV/Parquet 文件链路（不存在合并单元格）
@@ -358,7 +358,7 @@ python -m pytest tests/test_data_query.py -k "merged_cell or multi_header or hid
 |------|------|
 | CSV 文件 | 纯文本格式，不存在合并/隐藏/表头问题 |
 | Parquet 文件 | 已是结构化数据 |
-| PDF/DOCX/PPTX | 走 file_read 提取文字，不经过 Parquet 转换 |
+| PDF/DOCX/PPTX | 走 code_execute + pdfplumber/python-docx/python-pptx 提取，不经过 Parquet 转换 |
 | 水平合并（跨列） | calamine 引擎已自动处理 |
 | VBA 宏 | 不执行宏，只读数据 |
 | 嵌入图表/对象 | 不影响数据解析，忽略 |

@@ -75,7 +75,7 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
             build_erp_search_tool(),
             build_fetch_all_pages_tool(),
             *build_code_tools(),
-            *build_file_tools(),  # file_search + file_read + restore_file
+            *build_file_tools(),  # file_search + file_analyze + restore_file
             _build_phase2_route_to_chat_tool(),
         ],
         "crawler": lambda: [

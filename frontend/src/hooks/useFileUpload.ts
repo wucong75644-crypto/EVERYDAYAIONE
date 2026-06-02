@@ -20,6 +20,8 @@ export interface UploadedFile {
   url: string | null;
   isUploading: boolean;
   error: string | null;
+  /** 后端双写返回的工作区相对路径，构造 FilePart 时透传 */
+  workspace_path?: string;
 }
 
 export function useFileUpload() {
@@ -67,7 +69,13 @@ export function useFileUpload() {
         setFiles((prev) =>
           prev.map((f) =>
             f.id === nf.id
-              ? { ...f, url: result.url, name: result.name, isUploading: false }
+              ? {
+                  ...f,
+                  url: result.url,
+                  name: result.name,
+                  workspace_path: result.workspace_path,
+                  isUploading: false,
+                }
               : f,
           ),
         );
@@ -118,6 +126,7 @@ export function useFileUpload() {
       name: f.name,
       mime_type: f.mime_type,
       size: f.size,
+      workspace_path: f.workspace_path,
     }));
   const hasFiles = files.length > 0;
 

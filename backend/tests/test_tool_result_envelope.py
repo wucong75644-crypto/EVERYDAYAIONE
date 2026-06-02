@@ -214,13 +214,6 @@ class TestNoTruncate:
         wrapped = wrap_for_erp_agent("code_execute", result)
         assert wrapped == result
 
-    def test_file_read_no_truncate(self):
-        result = "文件: data.csv | 共 50000 行\n" + "\n".join(
-            f"  {i}\tcol_{i}_data_value" for i in range(200)
-        )
-        assert len(result) > MAIN_AGENT_BUDGET
-        assert wrap("file_read", result) == result
-
     def test_file_list_no_truncate(self):
         result = "目录: . | 共 50 项\n" + "\n".join(
             f"  [文件] report_{i}.xlsx\t5.0MB" for i in range(50)

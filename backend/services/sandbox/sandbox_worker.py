@@ -317,7 +317,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 if _os.path.isfile(path):
                     size = _os.path.getsize(path)
                     if size > _SIZE_WARN_BYTES:
-                        print(f"\u26a0\ufe0f 文件 {size // 1048576}MB，建议用 file_read SQL 聚合。")
+                        print(f"\u26a0\ufe0f 文件 {size // 1048576}MB，建议用 duckdb 直接聚合 Parquet。")
             except Exception:
                 pass
 
@@ -330,7 +330,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 if len(result) >= _DEFAULT_NROWS:
                     print(
                         f"\u26a0\ufe0f 数据已截断到前 {_DEFAULT_NROWS} 行。"
-                        f"如需全量分析，用 file_read SQL 聚合或传 nrows=None。"
+                        f"如需全量分析，用 duckdb 直接聚合 Parquet 或传 nrows=None。"
                     )
                 return result
             if kwargs["nrows"] is None:

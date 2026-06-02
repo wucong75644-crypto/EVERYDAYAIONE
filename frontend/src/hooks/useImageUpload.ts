@@ -16,6 +16,11 @@ export interface UploadedImage {
   isUploading: boolean;
   error: string | null;
   isQuoted?: boolean; // 是否为引用图片（来自 AI 生成图片的引用，无需上传）
+  // 工作区双写后由后端返回，前端构造 ImagePart 时透传给消息
+  workspace_path?: string;
+  name?: string;
+  mime_type?: string;
+  size?: number;
 }
 
 export function useImageUpload() {
@@ -103,11 +108,19 @@ export function useImageUpload() {
         // 预加载 CDN 图片，确保发送消息时图片已在浏览器缓存中
         new Image().src = uploadResult.url;
 
-        // 更新URL和状态
+        // 更新URL和状态（透传后端返回的 workspace_path/name/mime_type/size）
         setImages((prev) =>
           prev.map((img) =>
             img.id === newImage.id
-              ? { ...img, url: uploadResult.url, isUploading: false }
+              ? {
+                  ...img,
+                  url: uploadResult.url,
+                  isUploading: false,
+                  workspace_path: uploadResult.workspace_path,
+                  name: uploadResult.name,
+                  mime_type: uploadResult.mime_type,
+                  size: uploadResult.size,
+                }
               : img
           )
         );
@@ -243,13 +256,24 @@ export function useImageUpload() {
   const uploadedImageUrls = images
     .filter((img) => img.url !== null)
     .map((img) => img.url as string);
+  // 完整图片元数据（含 workspace_path/name），构造 ImagePart 时透传
+  const uploadedImages = images
+    .filter((img) => img.url !== null)
+    .map((img) => ({
+      url: img.url as string,
+      name: img.name,
+      workspace_path: img.workspace_path,
+      mime_type: img.mime_type,
+      size: img.size,
+    }));
   const previewUrls = images.map((img) => img.preview);
   const hasImages = images.length > 0;
   const hasQuotedImage = images.some((img) => img.isQuoted);
 
   return {
     images, // 所有图片记录
-    uploadedImageUrls, // 已上传的图片 URL 数组（服务器 URL）
+    uploadedImageUrls, // 已上传的图片 URL 数组（仅 URL，兼容旧调用）
+    uploadedImages, // 完整元数据数组（含 workspace_path，构造 ImagePart 用）
     previewUrls, // 本地预览 URL 数组（ObjectURL，用于消息显示）
     isUploading, // 是否有图片正在上传
     uploadError, // 上传错误信息

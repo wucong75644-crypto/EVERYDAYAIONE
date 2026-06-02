@@ -152,7 +152,7 @@ _PLAN_FULL_PROMPT = """\
 - 调 erp_analyze 分析任务结构
 - 调 search_knowledge / web_search 辅助分析
 - 调 code_execute 做辅助计算
-- 读取文件（file_read / file_list / file_search / file_info）
+- 检索文件（file_search / file_analyze；图片走 file_search 自动多模态）
 
 ## 工作流程
 1. 调 erp_analyze 分析用户请求，获取执行计划

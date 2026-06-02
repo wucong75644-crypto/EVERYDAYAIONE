@@ -1,7 +1,8 @@
 """文档文件（PDF/DOCX/PPTX）元数据生成 + 提取质检。
 
 从已提取的文本内容中分析质量，生成 .meta.json。
-不改现有 file_read_extensions.py 的提取函数。
+PDF/DOCX/PPTX 文本提取走 code_execute + pdfplumber/python-docx/python-pptx
+（file_read 工具已废弃，本模块只负责对已提取的文本做元数据分析）。
 
 设计文档：docs/document/TECH_文件处理系统.md §二（类型二：文档文件）
 """

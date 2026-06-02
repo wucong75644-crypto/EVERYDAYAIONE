@@ -49,7 +49,7 @@ class TestBuildDomainTools:
     def test_computer_returns_tools(self):
         tools = build_domain_tools("computer")
         names = {t["function"]["name"] for t in tools}
-        assert "file_read" in names
+        assert "file_search" in names  # P2: file_read 工具已删；file_search 命中图片返回多模态
         assert "code_execute" in names
 
     def test_unknown_domain_returns_empty(self):

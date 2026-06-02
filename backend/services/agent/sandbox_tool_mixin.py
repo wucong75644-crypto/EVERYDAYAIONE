@@ -237,7 +237,7 @@ class SandboxToolMixin:
         """从 code_execute 输出中提取文件名并注册到共享路径缓存。
 
         LLM 在沙盒中 os.listdir 发现的文件通过此方法注册，
-        后续 file_delete / file_read 的路径解析继续工作。
+        后续 file_delete / file_analyze 的路径解析继续工作。
         """
         import os
         import re

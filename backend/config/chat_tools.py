@@ -61,11 +61,10 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 搜索类
     "erp_api_search", "search_knowledge", "web_search",
     "social_crawler",
-    # data_query 已合并到 file_read
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
-    # 文件操作（只读）
-    "file_read", "file_search", "file_analyze",
+    # 文件操作（只读；file_search 命中图片自动多模态返回）
+    "file_search", "file_analyze",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }
@@ -219,14 +218,9 @@ print() 输出摘要统计，不要输出完整数据。
 使用场景：
 - 用户询问工作区有哪些文件
 - 需要找到特定名称或类型的文件但路径未知
-注意：用户消息中已附加的文件路径无需再搜索。
-
-### file_read — 读取图片文件
-将图片文件返回给视觉模型分析。
-使用场景：
-- 用户上传图片并询问图片内容
-- 需要 OCR、读取截图、识别图表内容
-支持格式：png/jpg/gif/webp/bmp/svg。仅支持图片格式。
+- 用户提到工作区里的某张图片但本轮未附加（"看一下工作区的 logo.png"）
+  → file_search 命中单张图片时直接返回多模态，视觉模型自动可见，无需额外工具。
+注意：用户消息中已附加的图片已自动注入视觉（见 <attachments> status），不要再 file_search。
 
 ### file_analyze — 读取数据文件结构
 读取 Excel/CSV 文件的完整结构，自动转为 Parquet 缓存，返回 Parquet 数据编号。
@@ -411,9 +405,8 @@ _CORE_TOOLS: Set[str] = {
     "image_agent",              # 电商图片生成（单张，电商图模式下使用）
     # 执行
     "code_execute",             # 代码执行
-    # 文件操作
-    "file_search",              # 文件搜索+准备（数据文件自动转 Parquet）
-    "file_read",                # 图片视觉分析
+    # 文件操作（file_search 命中图片自动多模态返回）
+    "file_search",              # 文件搜索+准备（数据文件自动转 Parquet；图片直接多模态）
     "file_analyze",             # 数据文件结构读取（Excel/CSV → Parquet）
     "file_delete",              # 删除文件（弹窗确认）
     "restore_file",             # 恢复文件到修改前版本

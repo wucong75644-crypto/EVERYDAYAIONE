@@ -55,7 +55,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             "web_search": self._web_search,
             "generate_image": self._generate_image,
             "generate_video": self._generate_video,
-            # data_query 已合并到 file_read（file_tool_mixin._file_read_data）
+            # 数据查询：file_analyze → code_execute + duckdb（沿用沙盒查询能力）
             "erp_agent": self._erp_agent,
             "erp_analyze": self._erp_analyze,
             "manage_scheduled_task": self._manage_scheduled_task,
@@ -204,7 +204,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
     # 数据查询工具
     # ========================================
 
-    # _data_query 已合并到 file_read（file_tool_mixin._file_read_data）
+    # 数据查询统一走 file_analyze → code_execute + duckdb（沙盒内直接 SQL Parquet）
 
     # ========================================
     # ERP Agent（独立 Agent 作为工具调用）

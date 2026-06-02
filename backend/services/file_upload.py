@@ -2,7 +2,7 @@
 文件上传公共模块
 
 从 sandbox/functions.py 提取的 auto_upload 逻辑，
-供 code_execute（沙盒）和 file_read（数据查询模式）共用。
+供 code_execute（沙盒）和文件类工具共用。
 
 NAS 文件变动时显式同步到 OSS，生成 CDN URL。
 返回 [FILE] 标签供前端展示。

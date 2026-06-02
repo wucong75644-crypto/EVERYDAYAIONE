@@ -167,9 +167,10 @@ class TestCoreToolsExpanded:
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        for ft in ("file_read", "file_search"):
+        # P2: file_read 工具已删，仅核对剩余文件工具
+        for ft in ("file_search", "file_analyze"):
             assert ft in names, f"{ft} 应在核心工具中"
-        # file_write/file_edit 已移除
+        assert "file_read" not in names
         assert "file_write" not in names
         assert "file_edit" not in names
 
@@ -284,17 +285,13 @@ class TestCommonToolsSplit:
         from config.chat_tools import get_chat_tools
         tools = get_chat_tools(org_id="test_org")
         names = {t["function"]["name"] for t in tools}
-        # common_tools 中的核心工具必须存在
-        for name in ("erp_agent", "file_read", "web_search", "manage_scheduled_task"):
+        # common_tools 中的核心工具必须存在（file_read 已删除，改用 file_search）
+        for name in ("erp_agent", "file_search", "web_search", "manage_scheduled_task"):
             assert name in names, f"拆分后丢失工具: {name}"
 
 
 class TestFileConcurrencySafe:
     """file 工具并发安全标记"""
-
-    def test_file_read_is_safe(self):
-        from config.chat_tools import is_concurrency_safe
-        assert is_concurrency_safe("file_read")
 
     def test_file_search_is_safe(self):
         from config.chat_tools import is_concurrency_safe

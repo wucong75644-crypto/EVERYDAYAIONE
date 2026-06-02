@@ -35,6 +35,13 @@ export interface ImagePart {
   alt?: string;
   failed?: boolean;
   error?: string;
+  /** 工作区文件名（用户上传/引用时填充，AI 生成图不填）—— 后端用于注册 file_path_cache 和 attachments 渲染 */
+  name?: string;
+  /** 工作区相对路径（如 上传/2026-06/xxx.png）。有值时后端注册 file_path_cache，
+   *  file_search 等工具按文件名查询可定位到本地路径。图片在视觉模型多模态注入后无需额外读取工具。 */
+  workspace_path?: string;
+  size?: number;
+  mime_type?: string;
 }
 
 export interface VideoPart {
@@ -57,7 +64,7 @@ export interface FilePart {
   name: string;
   mime_type: string;
   size?: number;
-  /** 工作区相对路径（有值时 AI 通过 file_read 读取，无值时走多模态 image_url） */
+  /** 工作区相对路径（有值时后端注册 file_path_cache，AI 可用 file_analyze/code_execute 读取） */
   workspace_path?: string;
 }
 

@@ -51,13 +51,22 @@ def normalize_filename(name: str) -> str:
 # ============================================================
 
 class FileEntry:
-    """三字段文件条目：name + workspace + parquet"""
-    __slots__ = ("name", "workspace", "parquet")
+    """文件条目：name + workspace + parquet + analyzed
 
-    def __init__(self, name: str, workspace: str = "", parquet: str = "") -> None:
+    analyzed: 是否已被 file_analyze 处理过（跨轮持久），驱动 attachments status 切换：
+        False → "未分析。如需查询数据，调用 file_analyze(...)。"
+        True  → "已分析。直接用 code_execute + get_file + duckdb 查询。"
+    """
+    __slots__ = ("name", "workspace", "parquet", "analyzed")
+
+    def __init__(
+        self, name: str, workspace: str = "", parquet: str = "",
+        analyzed: bool = False,
+    ) -> None:
         self.name = name
         self.workspace = workspace
         self.parquet = parquet
+        self.analyzed = analyzed
 
     def to_dict(self) -> dict[str, str]:
         return {"name": self.name, "workspace": self.workspace, "parquet": self.parquet}
@@ -119,12 +128,23 @@ class FilePathCache:
         if entry:
             entry.parquet = parquet_path
 
+    def set_analyzed(self, filename: str, analyzed: bool = True) -> None:
+        """标记文件已被 file_analyze 处理过（驱动 attachments status 切换）。"""
+        entry = self._resolve_entry(filename)
+        if entry:
+            entry.analyzed = analyzed
+
+    def is_analyzed(self, filename: str) -> bool:
+        """查询文件是否已被 file_analyze 处理过。"""
+        entry = self._resolve_entry(filename)
+        return entry.analyzed if entry else False
+
     def resolve_path(self, name: str, usage: str = "code") -> str:
         """按文件名 + 用途获取路径，含自检拦截。
 
         usage:
             "code"    → 返回 parquet（沙盒 duckdb 查询用）
-            "analyze" → 返回 workspace（file_analyze/file_read 源文件）
+            "analyze" → 返回 workspace（file_analyze 源文件 / file_search 命中图片走多模态时复用）
             "delete"  → 返回 workspace（file_delete 删除源文件）
 
         自检拦截：

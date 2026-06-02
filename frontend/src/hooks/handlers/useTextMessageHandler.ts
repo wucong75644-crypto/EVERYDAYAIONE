@@ -7,7 +7,7 @@
 
 import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
-import { sendMessage, createTextContent, createTextWithImages, createTextWithFiles, createErrorMessage } from '../../services/messageSender';
+import { sendMessage, createTextContent, createTextWithImages, createTextWithFiles, createErrorMessage, type ImageInputInfo } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { tabSync } from '../../utils/tabSync';
 import { logger } from '../../utils/logger';
@@ -44,7 +44,7 @@ export function useTextMessageHandler({
   const handleChatMessage = async (
     messageContent: string,
     currentConversationId: string,
-    imageUrls: string[] | null = null,
+    imageUrls: string[] | ImageInputInfo[] | null = null,
     files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[] | null = null,
     extraParams: Record<string, unknown> | null = null,
   ) => {

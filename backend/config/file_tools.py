@@ -2,7 +2,8 @@
 文件操作工具定义
 
 对齐 Claude 模式：file_search 定位文件并转 staging，AI 在 code_execute 自主探索。
-file_read 仅保留图片视觉能力。restore_file 恢复文件。
+file_search 命中图片时直接返回多模态（FileReadResult type=image）。
+restore_file 恢复文件。
 """
 
 from typing import Any, Dict, List, Set
@@ -11,7 +12,6 @@ from typing import Any, Dict, List, Set
 # 文件工具名集合（INFO 类型：结果回传大脑）
 FILE_INFO_TOOLS: Set[str] = {
     "file_search",
-    "file_read",
     "file_analyze",
     "file_delete",
     "restore_file",
@@ -25,12 +25,6 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "path": {"type": "string"},
             "keyword": {"type": "string"},
             "file_pattern": {"type": "string"},
-        },
-    },
-    "file_read": {
-        "required": ["path"],
-        "properties": {
-            "path": {"type": "string"},
         },
     },
     "restore_file": {
@@ -59,7 +53,7 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 
 
 def build_file_tools() -> List[Dict[str, Any]]:
-    """构建文件操作工具定义（file_search / file_read / restore_file）"""
+    """构建文件操作工具定义（file_search / file_analyze / file_delete / restore_file）"""
     return [
         {
             "type": "function",
@@ -93,29 +87,6 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "description": "文件名通配符（如 *.csv、report*）",
                         },
                     },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "file_read",
-                "description": (
-                    "将图片文件返回给视觉模型分析。\n\n"
-                    "使用场景：\n"
-                    "- 用户上传图片并询问图片内容\n"
-                    "- 需要 OCR、读取截图、识别图表内容\n\n"
-                    "支持格式：png/jpg/gif/webp/bmp/svg。仅支持图片格式。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "图片文件名或相对路径",
-                        },
-                    },
-                    "required": ["path"],
                 },
             },
         },
@@ -205,6 +176,6 @@ FILE_ROUTING_PROMPT = (
     "  with open(STAGING_DIR + '/_manifest.json') as f:\n"
     "      manifest = json.load(f)\n"
     "  用 duckdb.sql() 查询 Parquet 数据\n"
-    "- 图片文件用 file_read 返回给视觉模型\n"
+    "- 图片：file_search 命中单张图直接返回多模态（视觉模型自动可见，无需额外工具）\n"
     "- 撤销/恢复原文件 → restore_file\n\n"
 )
