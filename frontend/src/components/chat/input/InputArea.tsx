@@ -127,8 +127,6 @@ export default function InputArea({
     uploadError: imageUploadError,
     hasImages,
     hasQuotedImage,
-    handleImageDrop,
-    handleImagePaste,
     handleImageFiles,
     handleRemoveImage: removeImageById,
     handleRemoveAllImages,
@@ -703,12 +701,8 @@ export default function InputArea({
           onSaveSettings={handleSaveSettings}
           onResetSettings={handleResetSettings}
           images={images}
-          maxImages={selectedModel.capabilities.maxImages}
-          maxFileSize={selectedModel.capabilities.maxFileSize}
           isUploading={isUploading}
           onRemoveImage={handleRemoveImage}
-          onImageDrop={handleImageDrop}
-          onImagePaste={handleImagePaste}
           files={files}
           onRemoveFile={handleRemoveFile}
           workspaceFiles={workspaceFiles}

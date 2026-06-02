@@ -91,12 +91,8 @@ interface InputControlsProps {
   onSaveSettings: () => void;
   onResetSettings: () => void;
   images: UploadedImage[];
-  maxImages?: number;
-  maxFileSize?: number;
   isUploading: boolean;
   onRemoveImage: (imageId: string) => void;
-  onImageDrop: (files: FileList, maxImages?: number, maxFileSize?: number) => void;
-  onImagePaste: (e: ClipboardEvent, maxImages?: number, maxFileSize?: number) => void;
   /** 文档/数据文件列表 */
   files: UploadedFile[];
   /** 删除文档文件 */
@@ -161,7 +157,7 @@ export default function InputControls(props: InputControlsProps) {
     temperature, onTemperatureChange, topP, onTopPChange, topK, onTopKChange,
     maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
-    images, maxImages, maxFileSize, onRemoveImage, onImageDrop, onImagePaste,
+    images, onRemoveImage,
     files, onRemoveFile,
     workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, onUnifiedFiles, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
@@ -198,7 +194,13 @@ export default function InputControls(props: InputControlsProps) {
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  const { isDragging } = useDragDropUpload({ dropZoneRef, textareaRef, onImageDrop, onImagePaste, maxImages, maxFileSize });
+  // 拖拽/粘贴统一走 onUnifiedFiles（图片走 useImageUpload，其他走 useFileUpload；
+  // 与「上传文件」菜单完全对称）
+  const { isDragging } = useDragDropUpload({
+    dropZoneRef,
+    textareaRef,
+    onFiles: (files) => onUnifiedFiles?.(files),
+  });
 
   // 自动调整文本框高度（最多5行，约120px）
   useEffect(() => {
@@ -592,7 +594,7 @@ export default function InputControls(props: InputControlsProps) {
       </div>
 
       {/* 文件选择 input 已迁入 UploadMenu（统一上传入口）；
-          拖拽/粘贴仍走 onImageDrop / onImagePaste 直接事件，不需要 file input。 */}
+          拖拽/粘贴由 useDragDropUpload 统一接管，按 mime 分流到 useImageUpload/useFileUpload。 */}
     </div>
   );
 }

@@ -1,7 +1,10 @@
 /**
- * 拖拽上传自定义Hook
+ * 拖拽 / 粘贴上传 Hook
  *
- * 处理拖放和粘贴上传图片的事件逻辑
+ * 统一两条事件入口：dropZone 内拖放 + textarea 内粘贴 → 调用 onFiles(File[])。
+ * 不过滤 mime，由上层 handleUnifiedFiles 按 image/* vs 其他分流到对应 hook。
+ *
+ * 修复历史：旧版只接受 image/* mime，导致 PDF/Excel/Word 粘贴静默丢失、拖拽报错。
  */
 
 import { useState, useEffect, type RefObject } from 'react';
@@ -9,23 +12,18 @@ import { useState, useEffect, type RefObject } from 'react';
 interface UseDragDropUploadProps {
   dropZoneRef: RefObject<HTMLElement | null>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  onImageDrop: (files: FileList, maxImages?: number, maxFileSize?: number) => void;
-  onImagePaste: (e: ClipboardEvent, maxImages?: number, maxFileSize?: number) => void;
-  maxImages?: number;
-  maxFileSize?: number;
+  /** 统一文件回调：拖放和粘贴都走这一个出口 */
+  onFiles: (files: File[]) => void;
 }
 
 export function useDragDropUpload({
   dropZoneRef,
   textareaRef,
-  onImageDrop,
-  onImagePaste,
-  maxImages,
-  maxFileSize,
+  onFiles,
 }: UseDragDropUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
 
-  // 拖拽上传事件处理
+  // 拖放：从 DragEvent 提取所有 files
   useEffect(() => {
     const dropZone = dropZoneRef.current;
     if (!dropZone) return;
@@ -56,9 +54,9 @@ export function useDragDropUpload({
       e.stopPropagation();
       setIsDragging(false);
 
-      const files = e.dataTransfer?.files;
-      if (files && files.length > 0) {
-        onImageDrop(files, maxImages, maxFileSize);
+      const fileList = e.dataTransfer?.files;
+      if (fileList && fileList.length > 0) {
+        onFiles(Array.from(fileList));
       }
     };
 
@@ -73,19 +71,36 @@ export function useDragDropUpload({
       dropZone.removeEventListener('dragleave', handleDragLeave);
       dropZone.removeEventListener('drop', handleDrop);
     };
-  }, [dropZoneRef, onImageDrop, maxImages, maxFileSize]);
+  }, [dropZoneRef, onFiles]);
 
-  // 粘贴上传事件处理
+  // 粘贴：从 ClipboardEvent.items 提取所有 kind=='file' 的项目（图片+文档+任意文件）
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
-      if (document.activeElement === textareaRef.current) {
-        onImagePaste(e, maxImages, maxFileSize);
+      if (document.activeElement !== textareaRef.current) return;
+
+      const items = e.clipboardData?.items;
+      if (!items || items.length === 0) return;
+
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        // 关键修复：检查 kind==='file' 而非 mime 是否含 'image'，
+        // 这样 PDF/Excel/Word 等任何文件类型的粘贴都能捕获
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+
+      if (files.length > 0) {
+        e.preventDefault();
+        onFiles(files);
       }
     };
 
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [textareaRef, onImagePaste, maxImages, maxFileSize]);
+  }, [textareaRef, onFiles]);
 
   return { isDragging };
 }
