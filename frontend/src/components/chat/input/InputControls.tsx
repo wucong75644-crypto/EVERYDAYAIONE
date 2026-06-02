@@ -112,8 +112,8 @@ interface InputControlsProps {
   onRemoveWorkspaceFile?: (workspacePath: string) => void;
   /** 切换工作区视图（开/关） */
   onOpenWorkspace?: () => void;
-  /** 上传文件到工作区 */
-  onUploadToWorkspace?: (files: File[]) => void;
+  /** 统一文件上传入口（UploadMenu → InputArea.handleUnifiedFiles，按 mime 分流）*/
+  onUnifiedFiles?: (files: File[]) => void;
   /** 工作区是否已打开（用于 toggle 按钮状态） */
   workspaceOpen?: boolean;
   /** 是否需要上传图片（用于显示引导提示） */
@@ -168,7 +168,7 @@ export default function InputControls(props: InputControlsProps) {
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     files, maxPDFSize, onRemoveFile, onFileSelect,
-    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, onUploadToWorkspace, workspaceOpen = false,
+    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, onUnifiedFiles, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
     isStreaming = false, onStop,
@@ -199,8 +199,6 @@ export default function InputControls(props: InputControlsProps) {
   }, [requiresImageUpload]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const pdfFileInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -541,10 +539,7 @@ export default function InputControls(props: InputControlsProps) {
               <UploadMenu
                 visible={showUploadMenu}
                 closing={uploadMenuClosing}
-                selectedModel={selectedModel}
-                onImageUpload={() => fileInputRef.current?.click()}
-                onFileUpload={() => pdfFileInputRef.current?.click()}
-                onUploadToWorkspace={onUploadToWorkspace}
+                onFilesSelected={(files) => onUnifiedFiles?.(files)}
                 onClose={closeUploadMenu}
               />
             </div>
@@ -601,30 +596,8 @@ export default function InputControls(props: InputControlsProps) {
         </div>
       </div>
 
-      {/* 隐藏的图片文件输入 */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        onChange={(e) => onImageSelect(e, maxImages, maxFileSize)}
-        className="hidden"
-        aria-label="选择图片文件"
-        title="选择图片文件"
-      />
-
-      {/* 隐藏的 PDF 文件输入 */}
-      <input
-        ref={pdfFileInputRef}
-        type="file"
-        accept=".pdf,application/pdf"
-        onChange={(e) => onFileSelect(e, maxPDFSize)}
-        className="hidden"
-        aria-label="选择 PDF 文件"
-        title="选择 PDF 文件"
-      />
-
-      {/* workspace 独立上传已移除 — 统一走工作区面板 */}
+      {/* 文件选择 input 已迁入 UploadMenu（统一上传入口）；
+          拖拽/粘贴仍走 onImageDrop / onImagePaste 直接事件，不需要 file input。 */}
     </div>
   );
 }

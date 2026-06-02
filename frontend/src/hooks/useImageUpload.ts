@@ -282,6 +282,7 @@ export function useImageUpload() {
     handleImageSelect, // 文件选择处理
     handleImageDrop, // 拖拽上传处理
     handleImagePaste, // 粘贴上传处理
+    handleImageFiles, // 通用 File[] 入口（供 InputArea handleUnifiedFiles 统一分流后调用）
     handleRemoveImage, // 移除单张图片
     handleRemoveAllImages, // 移除所有图片
     addQuotedImage, // 添加引用图片
