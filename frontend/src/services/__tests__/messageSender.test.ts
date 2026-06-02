@@ -92,6 +92,71 @@ describe('createTextWithImages', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ type: 'text', text: '纯文本' });
   });
+
+  // ============ P0 新增：接受 ImageInputInfo[] 对象数组 ============
+  // ImagePart 带 name + workspace_path，后端注册 file_path_cache + <attachments> 渲染
+
+  it('should accept ImageInputInfo object array and pass workspace_path', () => {
+    const result = createTextWithImages('看图', [
+      {
+        url: 'https://cdn.example.com/photo.png',
+        name: 'photo.png',
+        workspace_path: '上传/2026-06/photo_a3f.png',
+        mime_type: 'image/png',
+        size: 256000,
+        width: 1920,
+        height: 1080,
+      },
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ type: 'text', text: '看图' });
+    expect(result[1]).toEqual({
+      type: 'image',
+      url: 'https://cdn.example.com/photo.png',
+      name: 'photo.png',
+      workspace_path: '上传/2026-06/photo_a3f.png',
+      mime_type: 'image/png',
+      size: 256000,
+      width: 1920,
+      height: 1080,
+    });
+  });
+
+  it('should omit undefined fields when ImageInputInfo has partial data', () => {
+    const result = createTextWithImages('看图', [
+      { url: 'https://cdn.example.com/x.png' }, // 只有 url（如引用图）
+    ]);
+
+    expect(result[1]).toEqual({ type: 'image', url: 'https://cdn.example.com/x.png' });
+    // 不应该出现 undefined 字段
+    expect('name' in (result[1] as object)).toBe(false);
+    expect('workspace_path' in (result[1] as object)).toBe(false);
+  });
+
+  it('should preserve order for ImageInputInfo array', () => {
+    const result = createTextWithImages('对比', [
+      { url: 'https://x/1.png', name: '1.png', workspace_path: '上传/2026-06/1.png' },
+      { url: 'https://x/2.png', name: '2.png', workspace_path: '上传/2026-06/2.png' },
+    ]);
+
+    expect((result[1] as { name?: string }).name).toBe('1.png');
+    expect((result[2] as { name?: string }).name).toBe('2.png');
+  });
+
+  it('should pass workspace_path through to ImagePart (核心：file_path_cache 注册依赖)', () => {
+    const result = createTextWithImages('图', [
+      {
+        url: 'https://x/logo.png',
+        name: 'logo.png',
+        workspace_path: '上传/2026-06/logo_uuid.png',
+      },
+    ]);
+
+    const imagePart = result[1] as { type: string; workspace_path?: string };
+    expect(imagePart.type).toBe('image');
+    expect(imagePart.workspace_path).toBe('上传/2026-06/logo_uuid.png');
+  });
 });
 
 // ============================================================

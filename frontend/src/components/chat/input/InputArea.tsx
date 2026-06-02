@@ -125,6 +125,7 @@ export default function InputArea({
   const {
     images,
     uploadedImageUrls,
+    uploadedImages,
     isUploading,
     uploadError: imageUploadError,
     hasImages,
@@ -440,6 +441,8 @@ export default function InputArea({
 
     // 准备图片 URL 数组：使用服务器 URL（确保图片已上传完成）
     const imageUrls = uploadedImageUrls.length > 0 ? [...uploadedImageUrls] : null;
+    // 完整图片元数据（含 workspace_path/name），chat 分支用以构造 ImagePart
+    const imageInputs = uploadedImages.length > 0 ? [...uploadedImages] : null;
     // 准备文件数组（PDF 上传 + 工作区插入的文件合并）
     const wsFileMapped = workspaceFiles.map((f) => ({
       url: f.cdn_url || '',
@@ -495,11 +498,11 @@ export default function InputArea({
           },
         );
       } else if (effectiveModelType === 'chat') {
-        // 聊天消息
+        // 聊天消息（传完整图片元数据，让 ImagePart 带 workspace_path/name）
         await handleChatMessage(
           messageContent,
           currentConversationId!,
-          imageUrls,
+          imageInputs ?? imageUrls,
           fileData,
         );
       } else if (effectiveModelType === 'video') {

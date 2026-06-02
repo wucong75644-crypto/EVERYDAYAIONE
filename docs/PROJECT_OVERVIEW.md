@@ -162,16 +162,15 @@ EVERYDAYAIONE/
 │   │   │   ├── plan_builder.py           # 意图分析→执行计划构建器
 │   │   │   ├── dag_executor.py           # DAG编排执行引擎
 │   │   │   ├── data_query_cache.py       # Excel→Parquet 缓存（双重检查锁+快照校验）
-│   │   │   ├── data_query_executor.py    # DuckDB 查询执行器（file_read SQL 分支调用）
-│   │   │   ├── excel_reader.py           # ★ Excel 结构化读取（公式+编号，file_read 入口）
+│   │   │   ├── data_query_executor.py    # DuckDB 查询执行器（file_analyze 转 Parquet 后用）
+│   │   │   ├── excel_reader.py           # ★ Excel 结构化读取（公式+编号，file_analyze 入口）
 │   │   │   ├── excel_cleaner.py          # Excel 三层清洗（结构检测/智能清洗/质量校验）
 │   │   │   └── departments/              # 部门Agent实现
 │   │   │       ├── warehouse_agent.py        # 仓储Agent
 │   │   │       ├── purchase_agent.py         # 采购Agent
 │   │   │       ├── trade_agent.py            # 订单Agent
 │   │   │       └── aftersale_agent.py        # 售后Agent
-│   │   ├── file_executor.py          # 文件操作执行器（安全路径校验 + file_read 路由）
-│   │   ├── file_read_extensions.py   # file_read 扩展 Mixin（PDF/图片/DOCX 直读）
+│   │   ├── file_executor.py          # 文件操作执行器（安全路径校验 + Query/Write Mixin 组合）
 │   │   ├── file_query_extensions.py  # file_list/search/info/edit 扩展 Mixin
 │   │   ├── file_write_extensions.py  # file_write/delete/mkdir/rename/move 扩展 Mixin
 │   │   ├── file_metadata_extractor.py # 文件元信息提取（docx/pptx/pdf/xlsx 预览）

@@ -6,9 +6,21 @@
 此文件仅保留上传功能的响应 schema
 """
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class UploadImageResponse(BaseModel):
     """图片上传响应"""
     url: str = Field(..., description="上传后的图片公开 URL")
+    name: Optional[str] = Field(
+        None,
+        description="工作区文件名（含 UUID 后缀，供 LLM 引用与 file_path_cache 查询）",
+    )
+    workspace_path: Optional[str] = Field(
+        None,
+        description="工作区相对路径（如 上传/2026-06/xxx_uuid.png），供 file_path_cache 注册",
+    )
+    size: Optional[int] = Field(None, description="文件大小（字节）")
+    mime_type: Optional[str] = Field(None, description="MIME 类型")

@@ -115,7 +115,7 @@ def build_common_tools() -> List[Dict[str, Any]]:
                     "返回：匹配的文档片段列表（含来源和相关度），无匹配时返回空列表。\n\n"
                     "不要用于：查询业务数据（订单/库存/销售额）→ erp_agent；"
                     "查询实时信息（天气/新闻）→ web_search；"
-                    "查看具体文件内容 → file_read。"
+                    "查看工作区文件内容 → file_search + file_analyze + code_execute。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -273,7 +273,7 @@ def build_common_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
-        # data_query 已合并到 file_read（TECH_file_read统一工具.md）
+        # 数据查询：file_analyze 转 Parquet → code_execute + duckdb 查询
         {
             "type": "function",
             "function": {

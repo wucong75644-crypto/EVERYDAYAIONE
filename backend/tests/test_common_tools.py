@@ -38,7 +38,7 @@ class TestBuildCommonTools:
             "erp_agent", "erp_analyze", "erp_api_search",
             "search_knowledge", "web_search",
             "generate_image", "generate_video", "image_agent",
-            "manage_scheduled_task",  # data_query 已合并到 file_read
+            "manage_scheduled_task",
         }
         for name in expected:
             assert name in names, f"Missing tool: {name}"
@@ -53,13 +53,12 @@ class TestBuildCommonTools:
         erp_agent = next(t for t in tools if t["function"]["name"] == "erp_agent")
         assert "task" in erp_agent["function"]["parameters"]["required"]
 
-    def test_file_read_is_image_only(self):
-        """file_read 现在仅用于图片，不含 sql 参数"""
+    def test_file_read_removed(self):
+        """file_read 工具已删除（P2：多模态模型下冗余）"""
         from config.file_tools import build_file_tools
         tools = build_file_tools()
-        fr = [t for t in tools if t["function"]["name"] == "file_read"][0]
-        assert "sql" not in fr["function"]["parameters"]["properties"]
-        assert "path" in fr["function"]["parameters"]["properties"]
+        names = {t["function"]["name"] for t in tools}
+        assert "file_read" not in names
 
     def test_tool_count(self):
         """工具数量在预期范围"""
@@ -78,7 +77,7 @@ class TestCommonToolsIntegration:
         # common_tools 里的工具应出现在 chat_tools 返回中
         assert "erp_agent" in names
         assert "web_search" in names
-        assert "file_read" in names  # data_query 已合并到 file_read
+        assert "file_search" in names  # file_search 命中图片自动多模态返回
 
     def test_guest_still_has_common_tools(self):
         """散客仍能获取通用工具"""

@@ -366,27 +366,76 @@ export function createTextContent(text: string): ContentPart[] {
   return [{ type: 'text', text }];
 }
 
+/** 用户上传/引用图片的完整元数据（构造 ImagePart 时使用） */
+export interface ImageInputInfo {
+  url: string;
+  /** 工作区文件名，有值时后端注册 file_path_cache */
+  name?: string;
+  /** 工作区相对路径（如 上传/2026-06/xxx.png） */
+  workspace_path?: string;
+  mime_type?: string;
+  size?: number;
+  width?: number;
+  height?: number;
+}
+
 /**
  * 创建图文混合内容（多图）
+ *
+ * 接收字符串数组（旧接口，仅 url）或对象数组（含 workspace_path/name 等元数据）。
+ * 对象数组时 ImagePart 会带上 name + workspace_path，后端可注册到 file_path_cache
+ * 并在 <attachments> XML 块中展示文件名给 LLM。
  */
-export function createTextWithImages(text: string, imageUrls: string[]): ContentPart[] {
+export function createTextWithImages(
+  text: string,
+  images: string[] | ImageInputInfo[],
+): ContentPart[] {
+  const normalize = (img: string | ImageInputInfo) =>
+    typeof img === 'string'
+      ? { type: 'image' as const, url: img }
+      : {
+          type: 'image' as const,
+          url: img.url,
+          ...(img.name ? { name: img.name } : {}),
+          ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
+          ...(img.mime_type ? { mime_type: img.mime_type } : {}),
+          ...(img.size ? { size: img.size } : {}),
+          ...(img.width ? { width: img.width } : {}),
+          ...(img.height ? { height: img.height } : {}),
+        };
   return [
     { type: 'text', text },
-    ...imageUrls.map(url => ({ type: 'image' as const, url })),
+    ...(images as Array<string | ImageInputInfo>).map(normalize),
   ];
 }
 
 /**
  * 创建带文件（PDF）的混合内容
+ *
+ * imageUrls 既接受字符串数组（旧调用）也接受对象数组（含 workspace_path 等）。
  */
 export function createTextWithFiles(
   text: string,
-  imageUrls: string[] | null,
+  imageUrls: string[] | ImageInputInfo[] | null,
   files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[],
 ): ContentPart[] {
+  const normalizeImg = (img: string | ImageInputInfo) =>
+    typeof img === 'string'
+      ? { type: 'image' as const, url: img }
+      : {
+          type: 'image' as const,
+          url: img.url,
+          ...(img.name ? { name: img.name } : {}),
+          ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
+          ...(img.mime_type ? { mime_type: img.mime_type } : {}),
+          ...(img.size ? { size: img.size } : {}),
+          ...(img.width ? { width: img.width } : {}),
+          ...(img.height ? { height: img.height } : {}),
+        };
+  const images = (imageUrls || []) as Array<string | ImageInputInfo>;
   return [
     { type: 'text', text },
-    ...(imageUrls || []).map(url => ({ type: 'image' as const, url })),
+    ...images.map(normalizeImg),
     ...files.map(f => ({
       type: 'file' as const,
       url: f.url,

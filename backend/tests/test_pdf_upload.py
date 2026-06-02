@@ -124,8 +124,10 @@ class TestExtractFileUrls:
         from services.handlers.chat_handler import ChatHandler
         return ChatHandler(db=mock_db)
 
-    def test_extract_file_urls_from_filepart(self, handler):
-        """测试：从 FilePart 提取 URL"""
+    # _extract_file_urls 已按 mime 分流：仅 image/* 的 FilePart 进 image_url 多模态块
+    # PDF/Excel 等非图片 FilePart 不再被错塞进多模态，改走 <attachments> XML 块
+    def test_extract_file_urls_pdf_filtered_out(self, handler):
+        """PDF FilePart 不进 image_url 多模态块（mime 不是 image/*）"""
         content = [
             TextPart(text="分析这份报告"),
             FilePart(url="https://cdn.example.com/report.pdf", name="report.pdf", mime_type="application/pdf"),
@@ -133,29 +135,53 @@ class TestExtractFileUrls:
 
         result = handler._extract_file_urls(content)
 
-        assert result == ["https://cdn.example.com/report.pdf"]
+        assert result == []
 
-    def test_extract_file_urls_from_dict(self, handler):
-        """测试：从 dict 格式提取 URL"""
+    def test_extract_file_urls_image_filepart_kept(self, handler):
+        """image/* mime 的 FilePart 保留（如用户用 FilePart 通道上传图片）"""
         content = [
-            {"type": "text", "text": "分析"},
-            {"type": "file", "url": "https://cdn.example.com/doc.pdf"},
+            FilePart(url="https://cdn.example.com/a.png", name="a.png", mime_type="image/png"),
+            FilePart(url="https://cdn.example.com/b.jpg", name="b.jpg", mime_type="image/jpeg"),
         ]
 
         result = handler._extract_file_urls(content)
 
-        assert result == ["https://cdn.example.com/doc.pdf"]
+        assert result == [
+            "https://cdn.example.com/a.png",
+            "https://cdn.example.com/b.jpg",
+        ]
+
+    def test_extract_file_urls_from_dict_pdf_filtered(self, handler):
+        """dict 形式：非 image/* mime 的 file 也被过滤"""
+        content = [
+            {"type": "text", "text": "分析"},
+            {"type": "file", "url": "https://cdn.example.com/doc.pdf", "mime_type": "application/pdf"},
+        ]
+
+        result = handler._extract_file_urls(content)
+
+        assert result == []
+
+    def test_extract_file_urls_from_dict_image_kept(self, handler):
+        """dict 形式 image/* mime 保留"""
+        content = [
+            {"type": "file", "url": "https://cdn.example.com/x.webp", "mime_type": "image/webp"},
+        ]
+
+        result = handler._extract_file_urls(content)
+
+        assert result == ["https://cdn.example.com/x.webp"]
 
     def test_extract_file_urls_empty(self, handler):
-        """测试：无文件时返回空列表"""
+        """无文件时返回空列表"""
         content = [TextPart(text="纯文本")]
 
         result = handler._extract_file_urls(content)
 
         assert result == []
 
-    def test_extract_file_urls_multiple(self, handler):
-        """测试：多个文件"""
+    def test_extract_file_urls_multiple_pdfs_filtered(self, handler):
+        """多个 PDF 全部被过滤"""
         content = [
             FilePart(url="https://cdn.example.com/a.pdf", name="a.pdf", mime_type="application/pdf"),
             FilePart(url="https://cdn.example.com/b.pdf", name="b.pdf", mime_type="application/pdf"),
@@ -163,18 +189,19 @@ class TestExtractFileUrls:
 
         result = handler._extract_file_urls(content)
 
-        assert len(result) == 2
+        assert result == []
 
     def test_extract_file_urls_skip_none_url(self, handler):
-        """测试：跳过 URL 为 None 的 dict"""
+        """跳过 URL 为 None 的 dict；非 image/* 的 url 也跳过"""
         content = [
-            {"type": "file", "url": None},
-            {"type": "file", "url": "https://cdn.example.com/ok.pdf"},
+            {"type": "file", "url": None, "mime_type": "image/png"},
+            {"type": "file", "url": "https://cdn.example.com/ok.pdf", "mime_type": "application/pdf"},
+            {"type": "file", "url": "https://cdn.example.com/ok.png", "mime_type": "image/png"},
         ]
 
         result = handler._extract_file_urls(content)
 
-        assert result == ["https://cdn.example.com/ok.pdf"]
+        assert result == ["https://cdn.example.com/ok.png"]
 
 
 # ============ ChatContextMixin._build_llm_messages FilePart ============
@@ -208,8 +235,12 @@ class TestBuildLlmMessagesFilePart:
         assert user_msg["content"] == "你好"
 
     @pytest.mark.asyncio
-    async def test_with_file_urls(self, chat_handler, mock_db):
-        """测试：带 PDF 的消息包含 image_url 格式的媒体部分"""
+    async def test_pdf_does_not_enter_image_url(self, chat_handler, mock_db):
+        """PDF FilePart 不被错塞进 image_url 多模态块（mime 分流）。
+
+        改造前：PDF 的 url 也被注入 image_url，视觉模型读不懂 URL 报错或忽略。
+        改造后：仅 image/* 进 image_url；PDF 走 <attachments> XML 块的 status 引导。
+        """
         mock_db.set_table_data("messages", [])
 
         content = [
@@ -225,18 +256,13 @@ class TestBuildLlmMessagesFilePart:
             )
 
         user_msg = result[-1]
-        assert isinstance(user_msg["content"], list)
-        # 第一个是文本
-        assert user_msg["content"][0] == {"type": "text", "text": "分析这份PDF"}
-        # 第二个是 PDF 的 image_url
-        assert user_msg["content"][1] == {
-            "type": "image_url",
-            "image_url": {"url": "https://cdn.example.com/report.pdf"},
-        }
+        # 无 workspace_path 时 content 是纯字符串（没有 image_url 多模态块）
+        assert isinstance(user_msg["content"], str)
+        assert "PDF" in user_msg["content"]
 
     @pytest.mark.asyncio
-    async def test_with_image_and_file(self, chat_handler, mock_db):
-        """测试：图片 + PDF 混合"""
+    async def test_image_kept_pdf_filtered(self, chat_handler, mock_db):
+        """图片 + PDF 混合：图片进 image_url 多模态，PDF 被过滤。"""
         mock_db.set_table_data("messages", [])
 
         content = [
@@ -253,12 +279,15 @@ class TestBuildLlmMessagesFilePart:
             )
 
         user_msg = result[-1]
+        # 有图片时 content 是 list；仅 1 个 image_url（图片），无 PDF
         assert isinstance(user_msg["content"], list)
-        assert len(user_msg["content"]) == 3  # text + image + file
-        # 图片
-        assert user_msg["content"][1]["image_url"]["url"] == "https://cdn.example.com/photo.png"
-        # PDF
-        assert user_msg["content"][2]["image_url"]["url"] == "https://cdn.example.com/doc.pdf"
+        image_urls = [
+            p["image_url"]["url"] for p in user_msg["content"]
+            if isinstance(p, dict) and p.get("type") == "image_url"
+        ]
+        assert image_urls == ["https://cdn.example.com/photo.png"]
+        # PDF 的 url 不应在 image_url 块里
+        assert "https://cdn.example.com/doc.pdf" not in image_urls
 
 
 # ============ AgentLoop PDF 检测 ============
@@ -409,8 +438,8 @@ class TestBuildLlmMessagesWorkspace:
             yield
 
     @pytest.mark.asyncio
-    async def test_workspace_file_injects_system_prompt(self, chat_handler, mock_db):
-        """workspace 文件注入 system prompt，不作为 image_url"""
+    async def test_workspace_file_injects_attachments_xml(self, chat_handler, mock_db):
+        """workspace 文件通过 <attachments> XML 块注入 user 消息（不走 image_url）"""
         mock_db.set_table_data("messages", [])
 
         content = [
@@ -420,7 +449,7 @@ class TestBuildLlmMessagesWorkspace:
                 name="sales.csv",
                 mime_type="text/csv",
                 size=2048,
-                workspace_path="uploads/sales.csv",
+                workspace_path="上传/2026-06/sales.csv",
             ),
         ]
         with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
@@ -431,26 +460,42 @@ class TestBuildLlmMessagesWorkspace:
                 text_content="分析这个CSV",
             )
 
-        # 用户消息应该是纯文本（workspace 文件不走 image_url）
+        # 用户消息：text 含 <attachments> XML 块；无 image_url 多模态（仅 image/* 才进）
         user_msg = result[-1]
         assert user_msg["role"] == "user"
-        assert user_msg["content"] == "分析这个CSV"
-
-        # 应该有一个 system prompt 包含 workspace 文件信息
-        system_prompts = [m["content"] for m in result if m["role"] == "system"]
-        ws_prompt = [p for p in system_prompts if "用户附加了以下文件" in p]
-        assert len(ws_prompt) == 1
-        assert "sales.csv" in ws_prompt[0]
+        # content 可能是 str 或 list（取决于是否有 image_urls）；本例无图，应为 str
+        text = (
+            user_msg["content"]
+            if isinstance(user_msg["content"], str)
+            else next(
+                (p["text"] for p in user_msg["content"] if isinstance(p, dict) and p.get("type") == "text"),
+                "",
+            )
+        )
+        assert "<attachments" in text
+        assert "<name>sales.csv</name>" in text
+        assert "<type>数据文件</type>" in text
+        assert "file_analyze" in text  # status 引导
 
     @pytest.mark.asyncio
     async def test_mixed_pdf_and_workspace(self, chat_handler, mock_db):
-        """PDF（无 workspace_path）走 image_url，workspace 文件走提示注入"""
+        """PDF 走 <attachments> XML 块（不再错塞进 image_url）"""
         mock_db.set_table_data("messages", [])
 
         content = [
             TextPart(text="对比这些"),
-            FilePart(url="https://cdn.example.com/report.pdf", name="report.pdf", mime_type="application/pdf"),
-            FilePart(url="https://cdn.example.com/ws/data.csv", name="data.csv", mime_type="text/csv", workspace_path="data.csv"),
+            FilePart(
+                url="https://cdn.example.com/report.pdf",
+                name="report.pdf",
+                mime_type="application/pdf",
+                workspace_path="上传/2026-06/report.pdf",
+            ),
+            FilePart(
+                url="https://cdn.example.com/ws/data.csv",
+                name="data.csv",
+                mime_type="text/csv",
+                workspace_path="上传/2026-06/data.csv",
+            ),
         ]
         with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
             result = await chat_handler._build_llm_messages(
@@ -461,21 +506,27 @@ class TestBuildLlmMessagesWorkspace:
             )
 
         user_msg = result[-1]
-        # 用户消息应该包含 image_url（仅 PDF，不含 workspace 文件）
-        assert isinstance(user_msg["content"], list)
-        image_urls = [
-            p["image_url"]["url"]
-            for p in user_msg["content"]
-            if isinstance(p, dict) and p.get("type") == "image_url"
-        ]
-        assert "https://cdn.example.com/report.pdf" in image_urls
-        assert "https://cdn.example.com/ws/data.csv" not in image_urls
-
-        # workspace 文件通过 system prompt 注入
-        system_prompts = [m["content"] for m in result if m["role"] == "system"]
-        ws_prompt = [p for p in system_prompts if "用户附加了以下文件" in p]
-        assert len(ws_prompt) == 1
-        assert "data.csv" in ws_prompt[0]
+        # 两个 PDF/CSV 都不进 image_url（无图片）
+        text = (
+            user_msg["content"]
+            if isinstance(user_msg["content"], str)
+            else next(
+                (p["text"] for p in user_msg["content"] if isinstance(p, dict) and p.get("type") == "text"),
+                "",
+            )
+        )
+        # 两个文件都出现在 <attachments> 块里
+        assert "<name>report.pdf</name>" in text
+        assert "<name>data.csv</name>" in text
+        # PDF url 不出现在 image_url 多模态块
+        if isinstance(user_msg["content"], list):
+            image_urls = [
+                p["image_url"]["url"]
+                for p in user_msg["content"]
+                if isinstance(p, dict) and p.get("type") == "image_url"
+            ]
+            assert "https://cdn.example.com/report.pdf" not in image_urls
+            assert "https://cdn.example.com/ws/data.csv" not in image_urls
 
     @pytest.mark.asyncio
     async def test_no_workspace_files_no_injection(self, chat_handler, mock_db):

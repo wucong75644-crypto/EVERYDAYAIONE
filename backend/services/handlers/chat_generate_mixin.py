@@ -49,7 +49,7 @@ def unpack_tool_result(result) -> str:
     Web 端 _stream_generate 和企微端 generate_complete 共用。
     """
     from services.agent.agent_result import AgentResult
-    from services.file_executor import FileReadResult
+    from schemas.multimodal import FileReadResult
 
     if isinstance(result, AgentResult):
         return result.to_message_content()
@@ -66,7 +66,7 @@ def extract_display_text(result) -> str:
     不截断、不结构化。工具自身已有尺寸限制，直接透传。
     """
     from services.agent.agent_result import AgentResult
-    from services.file_executor import FileReadResult
+    from schemas.multimodal import FileReadResult
 
     if isinstance(result, AgentResult):
         return result.summary or ""

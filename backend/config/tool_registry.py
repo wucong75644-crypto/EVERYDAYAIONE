@@ -234,15 +234,8 @@ register(ToolEntry(
 register(ToolEntry(
     name="file_search",
     domain="computer",
-    description="搜索和准备工作区文件，数据文件自动转 Parquet 存 staging",
-    tags=["搜索", "查找", "文件", "目录", "列表", "ls"],
-    priority=1,
-))
-register(ToolEntry(
-    name="file_read",
-    domain="computer",
-    description="读取图片文件（视觉分析）",
-    tags=["图片", "图像", "看图", "视觉"],
+    description="搜索/准备工作区文件；数据文件自动转 Parquet 存 staging；命中单张图片时直接返回多模态视觉",
+    tags=["搜索", "查找", "文件", "目录", "列表", "ls", "图片", "图像", "看图", "视觉"],
     priority=1,
 ))
 

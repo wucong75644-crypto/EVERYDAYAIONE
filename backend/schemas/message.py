@@ -62,7 +62,12 @@ class TextPart(BaseModel):
 
 
 class ImagePart(BaseModel):
-    """图片内容（url 可为 None 表示占位符/生成中，failed=True 表示生成失败）"""
+    """图片内容（url 可为 None 表示占位符/生成中，failed=True 表示生成失败）
+
+    name + workspace_path: 用户上传/引用工作区图片时填充，
+    供后端注册 file_path_cache、attachments 渲染文件名给 LLM。
+    AI 生成的图片不填这两个字段。
+    """
     type: Literal["image"] = "image"
     url: Optional[str] = None
     width: Optional[int] = None
@@ -71,6 +76,10 @@ class ImagePart(BaseModel):
     failed: Optional[bool] = None
     error: Optional[str] = None
     retry_context: Optional[dict] = None
+    name: Optional[str] = None
+    workspace_path: Optional[str] = None
+    size: Optional[int] = None
+    mime_type: Optional[str] = None
 
 
 class VideoPart(BaseModel):
@@ -96,7 +105,7 @@ class FilePart(BaseModel):
     name: str
     mime_type: str
     size: Optional[int] = None
-    workspace_path: Optional[str] = None  # 工作区相对路径（有值时 AI 用 file_read 读取）
+    workspace_path: Optional[str] = None  # 工作区相对路径（有值时后端注册 file_path_cache，AI 用 file_analyze/code_execute 读取）
 
 
 class ThinkingPart(BaseModel):

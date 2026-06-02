@@ -70,7 +70,7 @@ def get_capability_manifest() -> dict:
         "returns": [
             "summary 模式：{status:'ok', summary:'统计文本', data:[{维度:值, 指标:数字}...]}，直接内联",
             "export 模式：{status:'ok', file:'trade_xxx.parquet', rows:N, columns:[...], preview:[前3行]}",
-            "导出工作流：erp_agent 存 staging → file_read SQL 提取 → code_execute 写 Excel",
+            "导出工作流：erp_agent 存 staging → code_execute 中 duckdb.read_parquet 提取 → 写 Excel",
             "跨域并行：各域数据独立时一次返回多域结果 + 关联计算提示，code_execute 按提示关联",
             "计划模式：{status:'plan', steps:[...]}，调用方按计划逐步执行并传递中间结果",
         ],

@@ -10,7 +10,7 @@ Excel 结构化读取（openpyxl 两次读取，保留公式+编号）
 
 空单元格跳过，合并单元格去重，不做 ffill。
 
-设计文档：docs/document/TECH_file_read统一工具.md
+file_analyze 入口将 Excel/CSV 转为 Parquet 缓存，供 code_execute 中 duckdb 查询。
 """
 from __future__ import annotations
 
@@ -201,7 +201,10 @@ def _format_structured_output(
 
     # 后续操作提示
     lines.append("")
-    lines.append(f"后续查询: file_read(path=\"{rel_path}\", sql=\"SELECT ... FROM data\")")
+    lines.append(
+        f"后续查询：code_execute 中用 "
+        f"`duckdb.sql(f\"SELECT ... FROM read_parquet('{{get_file('{rel_path}')}}')\")`"
+    )
 
     return "\n".join(lines)
 
@@ -385,7 +388,11 @@ def _read_excel_structured_sync(
                 summary=f"Excel 文件为空或无数据: {filename}",
                 status="empty",
             )
-        overview_text += f"\n\n读取指定 Sheet: file_read(path=\"{filename}\", sheet=\"Sheet名\")"
+        overview_text += (
+            f"\n\n读取指定 Sheet：在 code_execute 中用 "
+            f"`openpyxl.load_workbook(get_file('{filename}'))['Sheet名']` "
+            f"或重新 file_analyze 时指定 sheet 参数。"
+        )
         return AgentResult(summary=overview_text, status="success")
 
     # 指定 sheet → 完整内容

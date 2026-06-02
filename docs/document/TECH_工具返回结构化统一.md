@@ -227,12 +227,7 @@ def format_sql_error(error_msg: str, columns: list[str]) -> AgentResult:
 | 35 | `tool_executor.py:633` | `f"权限不足: {e}"` (read/write/edit) | error | 权限(不可重试) |
 | 36 | `tool_executor.py:636` | `f"文件操作失败: {e}"` (read/write/edit) | error | 系统错误 |
 | 37 | `tool_executor.py:687` | `f"目录为空: {path}"` | empty | 空结果 |
-| 38 | `file_read_extensions.py:243` | `f"页码格式错误: '{part}'"` | error | 参数校验 |
-| 39 | `file_read_extensions.py:245` | `f"页码必须从 1 开始"` | error | 参数校验 |
-| 40 | `file_read_extensions.py:247` | `f"页码超出范围"` | error | 参数校验 |
-| 41 | `file_read_extensions.py:249` | `f"起始页不能大于结束页"` | error | 参数校验 |
-| 42 | `file_read_extensions.py:255-259` | 同上（3 处） | error | 参数校验 |
-| 43 | `file_read_extensions.py:263` | `"未指定有效页码"` | error | 参数校验 |
+| 38-43 | `file_read_extensions.py`（已删除） | PDF 页码校验等 | — | file_read 工具及底层模块已废弃，相关返回已不存在 |
 
 ### 4.5 media_tools（6 处）
 
@@ -402,7 +397,7 @@ def format_sql_error(error_msg: str, columns: list[str]) -> AgentResult:
 | 步骤 | 内容 | 文件 | 改造点数 |
 |------|------|------|---------|
 | 3.1 | `tool_executor.py:584-687` — file_* 错误/空结果返回 AgentResult | 1 文件 | 9 处 |
-| 3.2 | `file_read_extensions.py` — PDF 页码校验返回 AgentResult | 1 文件 | 7 处 |
+| 3.2 | ~~`file_read_extensions.py` — PDF 页码校验返回 AgentResult~~ | — | 模块已删除（file_read 废弃） |
 | 3.3 | 测试适配 | 1 文件 | ~30 行 |
 
 ### Phase 4：media_tools + social_crawler 结构化（9 处）

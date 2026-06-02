@@ -2,9 +2,10 @@
 文件操作 + 社交爬虫工具 Mixin
 
 对齐 Claude 模式：
-- file_search: 搜索/列目录/定位文件 → 返回 WORKSPACE_DIR 路径
-- file_read: 仅图片视觉（多模态）
-- restore_file: 从 staging 备份恢复（精确文件名匹配，不依赖 registry）
+- file_search: 搜索/列目录/定位文件 → 返回 WORKSPACE_DIR 路径；
+               命中单张图片时直接返回 FileReadResult(type=image) 多模态注入视觉模型
+- file_analyze: Excel/CSV 结构化读取转 Parquet
+- file_delete / restore_file: 删除/恢复文件
 
 通过 Mixin 继承组合到 ToolExecutor。
 依赖宿主类提供：self.user_id, self.org_id, self.conversation_id
@@ -56,8 +57,6 @@ class FileToolMixin:
         try:
             if tool_name == "file_search":
                 return await self._file_search(executor, args, settings)
-            if tool_name == "file_read":
-                return await self._file_read_image(executor, args)
             if tool_name == "file_analyze":
                 return await self._file_analyze(executor, args, settings)
             if tool_name == "file_delete":
@@ -316,6 +315,8 @@ class FileToolMixin:
             pass
         # 设置 parquet 路径（后续 get_file usage="code" 返回 parquet）
         cache.set_parquet(name, cache_path)
+        # 标记已分析（跨轮持久，驱动下一轮 <attachments> status 切换为"已分析"）
+        cache.set_analyzed(name, True)
 
         # 构建返回内容
         # 删除"## 后续操作"重复段 — get_file/duckdb 用法已在 code_execute 工具描述里
@@ -336,7 +337,12 @@ class FileToolMixin:
     async def _describe_single_file(
         self, executor: Any, abs_path: str,
     ) -> Any:
-        """返回单个文件的基本信息和 WORKSPACE_DIR 路径，注册到共享缓存"""
+        """返回单个文件的基本信息和 WORKSPACE_DIR 路径，注册到共享缓存。
+
+        命中图片时返回 FileReadResult(type="image")，让 chat_handler 在下一轮
+        把 image_url 多模态块注入 messages —— 多模态模型直接看到图，
+        无需再走 file_read（P1 file_search 多模态化）。
+        """
         from services.agent.agent_result import AgentResult
         from services.agent.file_path_cache import get_file_cache
 
@@ -353,6 +359,21 @@ class FileToolMixin:
         cache = get_file_cache(self.conversation_id)
         cache.register(name, workspace=abs_path)
         cache.register(rel_path, workspace=abs_path)
+
+        # ── 图片：返回 FileReadResult(type="image") 走多模态注入 ──
+        ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+        _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+        if ext in _IMG_EXTS:
+            from schemas.multimodal import FileReadResult
+            cdn_url = executor.get_cdn_url(rel_path) if hasattr(executor, "get_cdn_url") else ""
+            if cdn_url:
+                return FileReadResult(
+                    type="image",
+                    text=f"{name} ({size_str}) — 图片已注入视觉，可直接观察。",
+                    image_url=cdn_url,
+                )
+            # OSS URL 拿不到时退回文本结果（极少见），保持原行为
+            logger.warning(f"file_search image | no CDN URL for {abs_path}")
 
         lines = [
             f"{name} ({size_str})",
@@ -433,60 +454,6 @@ class FileToolMixin:
 
         status = "success" if deleted else "error"
         return AgentResult(summary="\n".join(lines), status=status)
-
-    # ================================================================
-    # file_read：仅图片视觉
-    # ================================================================
-
-    async def _file_read_image(
-        self, executor: Any, args: Dict[str, Any],
-    ) -> Any:
-        """file_read：仅处理图片文件，返回多模态 FileReadResult"""
-        from services.agent.agent_result import AgentResult
-
-        path = args.get("path", "")
-        if not path:
-            return AgentResult(
-                summary="请指定文件路径", status="error",
-                error_message="Validation: path is required",
-                metadata={"retryable": True},
-            )
-
-        ext = Path(path).suffix.lower()
-        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
-
-        if ext not in _IMAGE_EXTS:
-            return AgentResult(
-                summary=(
-                    f"file_read 仅支持图片文件。"
-                    f"其他文件请在 code_execute 中直接读取（openpyxl/pdfplumber/docx/open）。"
-                ),
-                status="error",
-                error_message=f"Unsupported file type for file_read: {ext}",
-                metadata={"retryable": False},
-            )
-
-        # 路径解析：优先从共享缓存取绝对路径，兜底 resolve_safe_path
-        from services.agent.file_path_cache import get_file_cache
-        resolved_path = get_file_cache(self.conversation_id).resolve(path, usage="analyze")
-        if not resolved_path:
-            try:
-                resolved_path = str(executor.resolve_safe_path(path))
-            except Exception:
-                resolved_path = path
-
-        try:
-            result = await executor.file_read(path=resolved_path)
-            from services.file_read_extensions import FileReadResult
-            if isinstance(result, FileReadResult):
-                return result
-            return AgentResult(summary=result or "", status="success")
-        except Exception as e:
-            logger.error(f"file_read image | path={path} | resolved={resolved_path} | error={e}")
-            return AgentResult(
-                summary=f"图片读取失败: {e}", status="error",
-                error_message=str(e), metadata={"retryable": True},
-            )
 
     # ================================================================
     # restore_file：精确匹配备份文件名（不依赖 registry）

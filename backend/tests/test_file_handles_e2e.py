@@ -1,8 +1,9 @@
 """
 文件操作 E2E 测试 — 验证文件名直接引用链路：
 
-  file_list 返回文件名 → file_read 用文件名读 → code_execute 用文件名读
-  （句柄系统已移除，所有文件操作统一用文件名/相对路径）
+  file_search 返回文件名 → file_analyze/code_execute 用文件名读
+  （句柄系统已移除，所有文件操作统一用文件名/相对路径；
+   file_read 工具已删除，图片走 file_search 自动多模态）
 
 模拟真实场景：用户上传文件 → AI 直接用文件名读取处理。
 """
@@ -55,7 +56,7 @@ def tool_executor(workspace):
 
 
 # ============================================================
-# E2E: file_list → 文件名列表 → file_read 用文件名读
+# E2E: file_search → 文件名列表 → file_analyze/code_execute 用文件名读
 # ============================================================
 
 

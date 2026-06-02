@@ -191,12 +191,13 @@ class TestFormatStructuredOutput:
         assert "跨Sheet引用" in text
 
     def test_follow_up_hint(self):
-        """后续查询提示用 file_read"""
+        """后续查询提示引导用 code_execute + duckdb"""
         rows = [(1, ["A1:test"])]
         text = _format_structured_output(
             rows, [], [], 1, 1, 0, "Sheet1", "", "test.xlsx",
         )
-        assert 'file_read(path="test.xlsx"' in text
+        assert "duckdb" in text
+        assert "test.xlsx" in text
 
     def test_large_file_truncated(self):
         """大文件截断 + 底部总行列数"""
@@ -275,7 +276,8 @@ class TestReadExcelStructured:
         assert "=== Sheet: 公摊 ===" in result.summary
         assert "=== Sheet: 明细 ===" in result.summary
         assert "Row" in result.summary
-        assert 'file_read(path=' in result.summary
+        # 多 sheet 文件的引导：openpyxl 读其他 sheet
+        assert "openpyxl" in result.summary or "file_analyze" in result.summary
 
     @pytest.mark.asyncio
     async def test_specific_sheet_full_content(self, tmp_dir):

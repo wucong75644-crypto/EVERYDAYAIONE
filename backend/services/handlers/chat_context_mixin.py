@@ -6,9 +6,11 @@ Chat 上下文构建 Mixin
 
 Phase 1-6 上下文工程重构。设计文档：docs/document/TECH_上下文工程重构.md
 Phase 7: 知识库 similarity 分数门控（替代正则排除）
+Phase 8: 结构化附件元数据（XML <attachments> + status 行动指引）
 """
 
 import asyncio
+import html
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -64,42 +66,148 @@ class ChatContextMixin:
         return filtered
 
     @staticmethod
-    def _format_attachments(workspace_files: List[Dict[str, Any]]) -> str:
-        """把附件信息结构化追加到用户消息文本里。
+    def _format_attachments(
+        workspace_files: List[Dict[str, Any]],
+        conversation_id: Optional[str] = None,
+    ) -> str:
+        """渲染结构化附件元数据（XML <attachments> 块）追加到用户消息文本。
 
-        LLM 在用户消息中直接看到：有什么文件、多大、什么类型。
+        设计依据：Anthropic prompt engineering 文档 — XML 标签让 Claude 系模型
+        给附件元数据稳定的注意力锚点；project 已用 <system-reminder> 等 XML 范式。
+
+        每个 <file> 块包含：
+          - name/type/format/size: 基础元数据
+          - source: 来源（本轮上传 / 工作区引用）—— 根据 workspace_path 前缀粗判
+          - dimensions: 图片专属（width×height）
+          - status: LLM 行动指引核心字段（"未分析则调 file_analyze" / "已可视无需读取" 等）
+
+        status 会根据 file_path_cache 的 analyzed 状态动态切换：
+          xlsx/csv 未分析 → 引导调 file_analyze
+          xlsx/csv 已分析 → 引导用 get_file + duckdb（schema 信息在 messages 历史里）
         """
         if not workspace_files:
             return ""
 
+        # ── 工具函数 ──
         def _fmt_size(size) -> str:
             if not size:
                 return ""
             size = int(size)
             if size < 1024:
                 return f"{size}B"
-            elif size < 1024 * 1024:
+            if size < 1024 * 1024:
                 return f"{size / 1024:.1f}KB"
             return f"{size / (1024 * 1024):.1f}MB"
 
-        _DATA_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
-        _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+        def _esc(s: Any) -> str:
+            return html.escape(str(s or ""), quote=False)
 
-        lines = ["\n\n[附件]"]
+        def _ext_of(name: str) -> str:
+            return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+
+        _DATA_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
+        _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+        _PDF_EXTS = {".pdf"}
+        _WORD_EXTS = {".docx", ".doc"}
+        _PPT_EXTS = {".pptx", ".ppt"}
+        _TEXT_EXTS = {".txt", ".md", ".json", ".yaml", ".yml", ".xml", ".log",
+                      ".py", ".js", ".ts", ".html", ".css", ".sql"}
+
+        # ── 查询 file_path_cache 的 analyzed 状态（已分析的 xlsx/csv 切换 status）──
+        cache = None
+        if conversation_id:
+            try:
+                from services.agent.file_path_cache import get_file_cache
+                cache = get_file_cache(conversation_id)
+            except Exception as e:
+                logger.warning(f"_format_attachments: get_file_cache 失败 | {e}")
+
+        # ── 构建 XML ──
+        lines: list[str] = []
+        lines.append("")  # 与上面 user 文本留空行
+        lines.append("")
+        lines.append(
+            f"<attachments count=\"{len(workspace_files)}\" "
+            f"hint=\"status 字段是行动指引；每个文件按 status 决定下一步操作\">"
+        )
+
         for f in workspace_files:
-            name = f.get("name", f.get("workspace_path", ""))
+            raw_name = f.get("name") or f.get("workspace_path", "")
+            name = _esc(raw_name)
+            wp = f.get("workspace_path") or ""
             size_str = _fmt_size(f.get("size"))
-            ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
-            if ext in _DATA_EXTS:
-                lines.append(f"  {name} ({size_str}) — 数据文件")
-            elif ext in _IMG_EXTS:
-                lines.append(f"  {name} ({size_str}) — 图片")
-            elif ext == ".pdf":
-                lines.append(f"  {name} ({size_str}) — PDF文档")
-            elif ext in {".docx", ".doc"}:
-                lines.append(f"  {name} ({size_str}) — Word文档")
+            ext = _ext_of(raw_name)
+            format_str = ext.lstrip(".") or "unknown"
+
+            # 来源判断：上传/ 前缀视为"本轮上传"，否则"工作区引用"
+            source = "本轮上传" if wp.startswith("上传/") else "工作区引用"
+
+            # 类型 + status 按扩展名分流
+            if ext in _IMG_EXTS:
+                ftype = "图片"
+                status = (
+                    "已自动注入视觉，可直接观察图片内容。"
+                    "不要调用任何文件读取工具。"
+                )
+            elif ext in _DATA_EXTS:
+                ftype = "数据文件"
+                analyzed = cache.is_analyzed(raw_name) if cache else False
+                if analyzed:
+                    status = (
+                        f"已分析。直接在 code_execute 中用 "
+                        f"get_file(\"{raw_name}\") + duckdb 查询。"
+                    )
+                else:
+                    status = (
+                        f"未分析。如需查询数据，先调用 "
+                        f"file_analyze(\"{raw_name}\")。"
+                    )
+            elif ext in _PDF_EXTS:
+                ftype = "文档"
+                status = (
+                    f"PDF 文档。在 code_execute 中用 pdfplumber + "
+                    f"get_file(\"{raw_name}\") 读取内容。"
+                )
+            elif ext in _WORD_EXTS:
+                ftype = "文档"
+                status = (
+                    f"Word 文档。在 code_execute 中用 python-docx + "
+                    f"get_file(\"{raw_name}\") 读取内容。"
+                )
+            elif ext in _PPT_EXTS:
+                ftype = "文档"
+                status = (
+                    f"PowerPoint 文档。在 code_execute 中用 python-pptx + "
+                    f"get_file(\"{raw_name}\") 读取内容。"
+                )
+            elif ext in _TEXT_EXTS:
+                ftype = "文本"
+                status = (
+                    f"文本文件。在 code_execute 中用 "
+                    f"open(get_file(\"{raw_name}\")) 读取。"
+                )
             else:
-                lines.append(f"  {name} ({size_str})")
+                ftype = "二进制"
+                status = (
+                    f"未识别格式 .{format_str}。"
+                    f"如需处理，在 code_execute 中用 get_file 取路径后按需读取。"
+                )
+
+            lines.append("  <file>")
+            lines.append(f"    <name>{name}</name>")
+            lines.append(f"    <type>{ftype}</type>")
+            lines.append(f"    <format>{_esc(format_str)}</format>")
+            if size_str:
+                lines.append(f"    <size>{size_str}</size>")
+            if ext in _IMG_EXTS:
+                w, h = f.get("width"), f.get("height")
+                if w and h:
+                    lines.append(f"    <dimensions>{int(w)}×{int(h)}</dimensions>")
+            lines.append(f"    <source>{source}</source>")
+            lines.append(f"    <status>{_esc(status)}</status>")
+            lines.append("  </file>")
+
+        lines.append("</attachments>")
         return "\n".join(lines)
 
     @staticmethod
@@ -297,15 +405,16 @@ class ChatContextMixin:
             messages.append({"role": "system", "content": f"用户相关记忆：\n{_l1_memory_prepend}"})
 
         # Layer 7: 用户消息（始终最后）
-        # 把附件信息结构化追加到用户文本里，LLM 直接在用户消息中看到文件
+        # 结构化附件元数据（XML <attachments>）追加到用户文本里；
+        # 图片可视性、数据文件 analyzed 状态等信息全部由 <attachments> 块的
+        # <status> 字段表达，无需额外 [图片] 文案。
         _user_text = text_content
         if workspace_files:
-            _user_text += self._format_attachments(workspace_files)
-        if image_urls:
-            _user_text += f"\n\n[图片] 已注入视觉理解（{len(image_urls)}张）"
+            _user_text += self._format_attachments(workspace_files, conversation_id)
 
         user_msg: Dict[str, Any] = {"role": "user", "content": _user_text}
         if image_urls or file_urls:
+            # 仅 image/* 的 FilePart 会进 file_urls（_extract_file_urls 已按 mime 过滤）
             media_parts = [
                 *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
                 *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],

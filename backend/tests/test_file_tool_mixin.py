@@ -55,7 +55,7 @@ class TestFileDispatchDisabled:
         settings.file_workspace_enabled = False
 
         with patch("core.config.get_settings", create=True, return_value=settings):
-            result = await mixin._file_dispatch("file_read", {"path": "x.txt"})
+            result = await mixin._file_dispatch("file_search", {"path": "x.txt"})
 
         assert isinstance(result, AgentResult)
         assert result.is_failure
@@ -64,27 +64,6 @@ class TestFileDispatchDisabled:
 
 class TestFileDispatchErrors:
     """各类异常正确映射为 AgentResult"""
-
-    @pytest.mark.asyncio
-    async def test_file_operation_error_retryable(self, mixin):
-        """FileOperationError → status=error, retryable=True"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        mock_executor = MagicMock()
-        mock_executor.file_read = AsyncMock(
-            side_effect=FileOperationError("文件不存在: test.png")
-        )
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "test.png"})
-
-        assert isinstance(result, AgentResult)
-        assert result.status == "error"
-        assert result.metadata.get("retryable") is True
-        assert "图片读取失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_permission_error_not_retryable(self, mixin):
@@ -122,48 +101,6 @@ class TestFileDispatchErrors:
         assert isinstance(result, AgentResult)
         assert result.is_failure
         assert "Unknown" in result.summary
-
-
-class TestFileDispatchSuccess:
-    """成功路径"""
-
-    @pytest.mark.asyncio
-    async def test_str_result_wrapped_as_success(self, mixin):
-        """正常 str 结果（图片路径）→ AgentResult(success)"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        mock_executor = MagicMock()
-        mock_executor.file_read = AsyncMock(return_value="image content here")
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "x.png"})
-
-        assert isinstance(result, AgentResult)
-        assert result.status == "success"
-        assert "image content here" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_file_read_result_passthrough(self, mixin):
-        """FileReadResult（图片多模态）直接透传，不包装为 AgentResult"""
-        from services.file_executor import FileReadResult
-
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        fr = FileReadResult(type="image", text="", image_url="https://cdn/img.png")
-        mock_executor = MagicMock()
-        mock_executor.file_read = AsyncMock(return_value=fr)
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "img.png"})
-
-        assert isinstance(result, FileReadResult)
-        assert result.image_url == "https://cdn/img.png"
 
 
 # ============================================================
@@ -389,108 +326,6 @@ class TestRestoreFile:
         assert result.status == "empty"
 
 
-# ============================================================
-# file_read 数据文件分支路由
-# ============================================================
-
-
-class TestFileReadImageOnly:
-    """file_read 仅接受图片文件"""
-
-    @pytest.mark.asyncio
-    async def test_xlsx_rejected(self, mixin):
-        """Excel 文件被拒绝（应使用 file_search + code_execute）"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        mock_executor = MagicMock()
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "report.xlsx"})
-
-        assert result.status == "error"
-        assert "仅支持图片" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_csv_rejected(self, mixin):
-        """CSV 文件被拒绝"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        mock_executor = MagicMock()
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "data.csv"})
-
-        assert result.status == "error"
-        assert "仅支持图片" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_txt_rejected(self, mixin):
-        """文本文件被拒绝"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        mock_executor = MagicMock()
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "notes.txt"})
-
-        assert result.status == "error"
-        assert "仅支持图片" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_png_accepted(self, mixin):
-        """PNG 图片正常通过"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-
-        mock_executor = MagicMock()
-        mock_executor.file_read = AsyncMock(return_value="image data")
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "photo.png"})
-
-        assert result.status == "success"
-
-    @pytest.mark.asyncio
-    async def test_no_extension_rejected(self, mixin):
-        """无扩展名文件被拒绝"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-        mock_executor = MagicMock()
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": "README"})
-
-        assert result.status == "error"
-        assert "仅支持图片" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_empty_path_rejected(self, mixin):
-        """空路径 → 返回 error"""
-        settings = MagicMock()
-        settings.file_workspace_enabled = True
-        settings.file_workspace_root = "/tmp"
-        mock_executor = MagicMock()
-
-        with patch("core.config.get_settings", create=True, return_value=settings), \
-             patch("services.file_executor.FileExecutor", return_value=mock_executor):
-            result = await mixin._file_dispatch("file_read", {"path": ""})
-
-        assert result.status == "error"
-        assert "请指定" in result.summary
-
 
 # ============================================================
 # _fmt_size
@@ -622,7 +457,82 @@ class TestFileSearchRouting:
             result = await mixin._file_search(executor, {"path": "../../etc/passwd"}, settings)
 
         assert result.status == "error"
-        assert "路径无效" in result.summary
+
+
+class TestDescribeSingleFileMultimodal:
+    """P1 file_search 多模态化：单文件路径命中图片时返回 FileReadResult(type=image)，
+    chat_handler 据此在下一轮注入 image_url 多模态块给视觉模型直接看，
+    替代旧的 file_read 两步流程。
+    """
+
+    @pytest.mark.asyncio
+    async def test_image_returns_multimodal_result(self, tmp_path):
+        """命中 .png 文件 → 返回 FileReadResult(type='image', image_url=CDN URL)"""
+        from schemas.multimodal import FileReadResult
+
+        ws = tmp_path / "workspace"
+        (ws / "上传" / "2026-06").mkdir(parents=True)
+        img_path = ws / "上传" / "2026-06" / "logo.png"
+        img_path.write_bytes(b"fake png bytes")
+
+        mixin = FakeMixin(conversation_id="conv-img-1")
+        executor = MagicMock()
+        executor.workspace_root = str(ws)
+        executor.get_cdn_url = MagicMock(
+            return_value="https://cdn.example.com/workspace/org/x/上传/2026-06/logo.png"
+        )
+
+        result = await mixin._describe_single_file(executor, str(img_path))
+
+        assert isinstance(result, FileReadResult)
+        assert result.type == "image"
+        assert "logo.png" in result.text
+        assert result.image_url.endswith("logo.png")
+        # 验证 file_path_cache 已注册（后续工具按文件名能找到）
+        from services.agent.file_path_cache import get_file_cache
+        cache = get_file_cache("conv-img-1")
+        assert cache.resolve("logo.png", usage="analyze") == str(img_path)
+
+    @pytest.mark.asyncio
+    async def test_non_image_returns_agent_result(self, tmp_path):
+        """非图片（如 .xlsx）保持原行为 → AgentResult 文本"""
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        f = ws / "report.xlsx"
+        f.write_bytes(b"fake xlsx")
+
+        mixin = FakeMixin(conversation_id="conv-img-2")
+        executor = MagicMock()
+        executor.workspace_root = str(ws)
+        executor.get_cdn_url = MagicMock(return_value="https://cdn.example.com/x.xlsx")
+
+        result = await mixin._describe_single_file(executor, str(f))
+
+        assert isinstance(result, AgentResult)
+        assert result.status == "success"
+        assert "report.xlsx" in result.summary
+        assert "get_file" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_image_no_cdn_falls_back_to_text(self, tmp_path):
+        """CDN 未配置时退回文本结果（开发环境保护）"""
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        img = ws / "shot.jpg"
+        img.write_bytes(b"jpeg")
+
+        mixin = FakeMixin(conversation_id="conv-img-3")
+        executor = MagicMock()
+        executor.workspace_root = str(ws)
+        executor.get_cdn_url = MagicMock(return_value=None)  # 无 CDN
+
+        result = await mixin._describe_single_file(executor, str(img))
+
+        assert isinstance(result, AgentResult)
+        assert result.status == "success"
+        assert "shot.jpg" in result.summary
+        # CDN 拿不到时退回标准文本输出（含 get_file 引导）
+        assert "get_file" in result.summary
 
 
 # ============================================================

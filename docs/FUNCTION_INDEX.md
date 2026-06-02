@@ -1056,12 +1056,9 @@
 
 | 类/函数名 | 文件路径 | 功能描述 |
 |-----------|---------|---------|
-| `FileExecutor` | `backend/services/file_executor.py` | 文件操作执行器（路径安全校验 + file_read 路由 + 三 Mixin 继承） |
+| `FileExecutor` | `backend/services/file_executor.py` | 文件操作执行器（路径安全校验 + Query/Write Mixin 组合） |
 | `FileOperationError` | `backend/services/file_executor.py` | 文件操作业务校验异常（参数/路径问题，LLM 可重试） |
-| `FileReadExtensionsMixin` | `backend/services/file_read_extensions.py` | PDF/图片/DOCX 直读 Mixin |
-| `_read_pdf` | `backend/services/file_read_extensions.py` | PDF 文本提取（PyPDF2，线程池，扫描件检测） |
-| `_read_image` | `backend/services/file_read_extensions.py` | 图片多模态读取（CDN URL / base64） |
-| `_read_docx` | `backend/services/file_read_extensions.py` | DOCX 文本提取（python-docx，段落+表格，线程池） |
+| `FileReadResult` | `backend/schemas/multimodal.py` | 多模态工具返回类型（type=image 触发 chat_handler 注入 image_url 多模态块） |
 | `FileQueryExtensionsMixin` | `backend/services/file_query_extensions.py` | 文件查询+编辑 Mixin |
 | `file_list_entries` | `backend/services/file_query_extensions.py` | 列目录（结构化数据返回） |
 | `file_list` | `backend/services/file_query_extensions.py` | 列目录（格式化文本） |

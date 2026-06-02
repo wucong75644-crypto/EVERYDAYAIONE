@@ -300,21 +300,34 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         return urls
 
     def _extract_file_urls(self, content: List[ContentPart]) -> List[str]:
-        """从 ContentPart 数组提取所有文件 URL（PDF 等文档）"""
+        """从 ContentPart 数组提取「图片类」FilePart 的 URL（供多模态 image_url 块）。
+
+        按 mime_type 分流：仅 image/* 的 FilePart.url 返回。
+        PDF/Excel/Word/Zip 等非图片不再被错塞进 image_url 块给视觉模型。
+        """
         from schemas.message import FilePart
         urls: List[str] = []
         for part in content:
             if isinstance(part, FilePart) and part.url:
-                urls.append(part.url)
+                mime = (part.mime_type or "").lower()
+                if mime.startswith("image/"):
+                    urls.append(part.url)
             elif isinstance(part, dict) and part.get("type") == "file":
                 url = part.get("url")
-                if url:
+                mime = (part.get("mime_type") or "").lower()
+                if url and mime.startswith("image/"):
                     urls.append(url)
         return urls
 
     def _extract_workspace_files(self, content: List[ContentPart]) -> List[Dict[str, Any]]:
-        """提取含 workspace_path 的文件（用于注入 AI 提示，让 AI 用 file_read 读取）"""
-        from schemas.message import FilePart
+        """提取所有含 workspace_path 的附件（FilePart + ImagePart 统一处理）。
+
+        统一上传链路后图片也带 workspace_path，需一并收集，
+        用于：
+          - 注册到 file_path_cache（让 file_search/file_analyze 等工具能按文件名匹配）
+          - 生成 <attachments> XML 块（让 LLM 看到文件名 + status 行动指引）
+        """
+        from schemas.message import FilePart, ImagePart
         files: List[Dict[str, Any]] = []
         for part in content:
             wp = None
@@ -326,14 +339,36 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     "mime_type": part.mime_type,
                     "url": part.url,
                 }
-            elif isinstance(part, dict) and part.get("type") == "file" and part.get("workspace_path"):
+            elif isinstance(part, ImagePart) and part.workspace_path:
                 wp = {
-                    "workspace_path": part["workspace_path"],
-                    "name": part.get("name", ""),
-                    "size": part.get("size"),
-                    "mime_type": part.get("mime_type", ""),
-                    "url": part.get("url", ""),
+                    "workspace_path": part.workspace_path,
+                    "name": part.name or "",
+                    "size": part.size,
+                    "mime_type": part.mime_type or "image/*",
+                    "url": part.url or "",
+                    "width": part.width,
+                    "height": part.height,
                 }
+            elif isinstance(part, dict):
+                ptype = part.get("type")
+                if ptype == "file" and part.get("workspace_path"):
+                    wp = {
+                        "workspace_path": part["workspace_path"],
+                        "name": part.get("name", ""),
+                        "size": part.get("size"),
+                        "mime_type": part.get("mime_type", ""),
+                        "url": part.get("url", ""),
+                    }
+                elif ptype == "image" and part.get("workspace_path"):
+                    wp = {
+                        "workspace_path": part["workspace_path"],
+                        "name": part.get("name", "") or "",
+                        "size": part.get("size"),
+                        "mime_type": part.get("mime_type", "") or "image/*",
+                        "url": part.get("url", "") or "",
+                        "width": part.get("width"),
+                        "height": part.get("height"),
+                    }
             if wp:
                 files.append(wp)
         return files

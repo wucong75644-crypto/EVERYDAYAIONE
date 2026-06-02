@@ -570,7 +570,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 # 工具结果塞进 messages + 更新上下文 + 更新 tool_step 状态
                 from services.agent.agent_result import AgentResult
-                from services.file_executor import FileReadResult
+                from schemas.multimodal import FileReadResult
                 from services.handlers.chat_generate_mixin import unpack_tool_result
                 _pending_image_urls: List[str] = []  # 图片多模态：收集待注入的 image_url
                 for tc, result, is_error, display_text in tool_results:
@@ -612,7 +612,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 图片需要通过追加 user 消息的方式让模型"看到"。
                 if _pending_image_urls:
                     img_parts: List[Dict[str, Any]] = [
-                        {"type": "text", "text": "[系统：以下是 file_read 返回的图片]"},
+                        {"type": "text", "text": "[系统：以下是工具返回的图片]"},
                     ]
                     for img_url in _pending_image_urls:
                         img_parts.append({

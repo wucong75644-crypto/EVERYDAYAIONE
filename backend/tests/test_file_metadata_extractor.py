@@ -762,55 +762,58 @@ class TestWideTablePattern:
 
 
 class TestFormatFileMetadataLineReadCommands:
-    """所有文件类型的读取命令统一为外部工具调用格式"""
+    """读取引导按文件类型分流到正确工具/沙盒库（file_read 已废弃）"""
 
-    def test_xlsx_uses_file_read(self):
-        """data_query 已合并到 file_read"""
+    def test_xlsx_uses_file_analyze(self):
+        """Excel/CSV 引导用 file_analyze 转 Parquet"""
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "", "row_count": 100, "col_count": 5}
         result = format_file_metadata_line("report.xlsx", "/abs/report.xlsx", 50000, meta)
-        assert 'file_read(path="report.xlsx")' in result
+        assert 'file_analyze(path="report.xlsx")' in result
 
-    def test_pdf_uses_file_read(self):
+    def test_pdf_uses_code_execute_pdfplumber(self):
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "pdf", "pages": 10, "chars": 5000}
         result = format_file_metadata_line("doc.pdf", "/abs/doc.pdf", 200000, meta)
-        assert 'file_read(path="doc.pdf")' in result
+        assert "pdfplumber.open" in result
+        assert 'get_file("doc.pdf")' in result
 
-    def test_docx_uses_file_read(self):
+    def test_docx_uses_code_execute_docx(self):
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "docx", "paragraphs": 20, "tables": 2, "chars": 3000}
         result = format_file_metadata_line("方案.docx", "/abs/方案.docx", 100000, meta)
-        assert 'file_read(path="方案.docx")' in result
+        assert "docx.Document" in result
+        assert 'get_file("方案.docx")' in result
 
-    def test_pptx_uses_file_read(self):
+    def test_pptx_uses_code_execute_pptx(self):
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "pptx", "slides": 15, "chars": 8000, "slide_titles": ["封面"]}
         result = format_file_metadata_line("ppt.pptx", "/abs/ppt.pptx", 500000, meta)
-        assert 'file_read(path="ppt.pptx")' in result
+        assert "pptx.Presentation" in result
+        assert 'get_file("ppt.pptx")' in result
 
-    def test_text_uses_file_read(self):
+    def test_text_uses_code_execute_open(self):
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "text", "lines": 50, "chars": 2000, "preview": ["hello"]}
         result = format_file_metadata_line("readme.md", "/abs/readme.md", 2000, meta)
-        assert 'file_read(path="readme.md")' in result
+        assert "open(get_file" in result
 
-    def test_image_uses_file_read(self):
+    def test_image_uses_file_search_multimodal(self):
+        """图片引导走 file_search（命中单图自动返回多模态视觉）"""
         from services.file_metadata_extractor import format_file_metadata_line
         meta = {"type": "image", "width": 800, "height": 600}
         result = format_file_metadata_line("photo.png", "/abs/photo.png", 500000, meta)
-        assert 'file_read(path="photo.png")' in result
+        assert 'file_search(path="photo.png")' in result
 
-    def test_no_code_snippets_in_read_commands(self):
-        """读取命令不应包含 Python 代码（from xxx import）"""
+    def test_no_stale_file_read_in_read_commands(self):
+        """引导文字不应再出现 file_read（工具已删）"""
         from services.file_metadata_extractor import format_file_metadata_line
         for file_type, meta in [
             ("pdf", {"type": "pdf", "pages": 5, "chars": 1000}),
             ("docx", {"type": "docx", "paragraphs": 10, "tables": 1, "chars": 500}),
             ("pptx", {"type": "pptx", "slides": 3, "chars": 200, "slide_titles": []}),
+            ("png", {"type": "image", "width": 100, "height": 100}),
+            ("xlsx", {"type": "", "row_count": 10, "col_count": 3}),
         ]:
             result = format_file_metadata_line(f"test.{file_type}", f"/abs/test.{file_type}", 1000, meta)
-            assert "import" not in result
-            assert "Document(" not in result
-            assert "Presentation(" not in result
-            assert "PdfReader(" not in result
+            assert "file_read" not in result

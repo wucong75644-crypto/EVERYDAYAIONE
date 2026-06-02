@@ -207,7 +207,7 @@ class TestUnpackToolResult:
     def test_file_read_result(self):
         """FileReadResult → text"""
         from services.handlers.chat_generate_mixin import unpack_tool_result
-        from services.file_read_extensions import FileReadResult
+        from schemas.multimodal import FileReadResult
 
         fr = FileReadResult(type="text", text="文件内容abc")
         msg_content = unpack_tool_result(fr)
@@ -267,7 +267,7 @@ class TestExtractDisplayText:
     def test_file_read_result(self):
         """FileReadResult → text 完整"""
         from services.handlers.chat_generate_mixin import extract_display_text
-        from services.file_read_extensions import FileReadResult
+        from schemas.multimodal import FileReadResult
 
         fr = FileReadResult(type="text", text="文件内容abc")
         assert extract_display_text(fr) == "文件内容abc"
