@@ -540,11 +540,15 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 raise FileNotFoundError(
                     f"文件 '{name}' 未找到。已注册文件: {available}"
                 )
-            # manifest 值有两种形式：
-            #  - 以 '/' 开头：workspace 绝对路径（未 analyze 的 Word/PDF/数据/文本等）→ 直接返回
-            #  - 其他：parquet basename，拼 staging_dir 得到完整路径（已 analyze 的 Excel/CSV）
-            if path.startswith("/") or path.startswith("\\"):
-                return path
+            # manifest 值按是否含 '/' 分流（复用 parquet basename 机制扩展到 workspace 文件）：
+            #  - 不含 '/' → parquet basename（已 analyze 的 Excel/CSV），拼 staging_dir
+            #  - 含 '/' → workspace 相对路径（Word/PDF/数据/文本），拼 workspace_dir
+            #    nsjail 把 staging/workspace 分别 bind 到 /staging /workspace，两种值都能正确解析
+            if "/" in path or "\\" in path:
+                # 去 './' 前缀（workspace 根目录文件的标记）
+                if path.startswith("./") or path.startswith(".\\"):
+                    path = path[2:]
+                return str(Path(workspace_dir) / path)
             return str(Path(staging_dir) / path)
 
         g["get_file"] = _get_file
