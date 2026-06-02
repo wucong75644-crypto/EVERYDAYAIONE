@@ -21,7 +21,9 @@ from core.config import settings
 from core.exceptions import TaskQueueFullError
 
 # SET key 过期时间（秒），兜底防止永久残留
-_SET_TTL = 3600
+# 30 分钟：image/chat 任务上限 10min，video 上限 30min；
+# 每次 acquire 都会 EXPIRE 重置，正常运行不会触发兜底
+_SET_TTL = 1800
 
 
 class TaskLimitService:

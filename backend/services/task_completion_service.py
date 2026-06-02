@@ -114,6 +114,10 @@ class TaskCompletionService:
                 f"Task already {task['status']}, skipping | "
                 f"task_id={external_task_id}"
             )
+            # 兜底释放 Redis 槽位（SREM 幂等）：
+            # 覆盖 cancel/fail 路径 release 前的遗留 + 防御未来新增直接改 status 的路径
+            from services.task_limit_service import release_task_slot
+            await release_task_slot(task)
             return True
 
         # 3. 只处理 pending/running 状态的任务

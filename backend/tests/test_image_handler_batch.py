@@ -465,7 +465,11 @@ class TestImageHandlerErrorHandling:
 
     @pytest.mark.asyncio
     async def test_save_task_failure_does_not_crash(self):
-        """主路径 _save_task 失败 → 不崩溃，返回 external_task_id"""
+        """主路径 _save_task 失败 → 不崩溃，退积分 + 返回 None
+
+        修复 slot 泄漏：task 没落库时 webhook 找不到 task 永远不会退积分，
+        必须主动退积分 + 返回 None（与 adapter 失败路径一致）。
+        """
         handler, db = self._make_handler()
 
         # mock adapter.generate 成功
@@ -481,6 +485,8 @@ class TestImageHandlerErrorHandling:
 
         # _save_task 失败
         handler._save_task = MagicMock(side_effect=Exception("DB down"))
+        # _refund_credits 应被调用
+        handler._refund_credits = MagicMock()
 
         # _attempt_image_sync_retry 不应被调用
         handler._attempt_image_sync_retry = AsyncMock()
@@ -502,10 +508,12 @@ class TestImageHandlerErrorHandling:
             metadata=metadata,
         )
 
-        # 返回 task_id（API 已成功）
-        assert result == "ext_123"
+        # 返回 None（task 未落库 → 不该传给 batch_completion）
+        assert result is None
         # _save_task 被调用（虽然失败了）
         handler._save_task.assert_called_once()
+        # 必须退积分，避免积分永久锁定
+        handler._refund_credits.assert_called_once_with("tx_1")
 
     @pytest.mark.asyncio
     async def test_refund_failure_in_api_error_path_no_crash(self):
