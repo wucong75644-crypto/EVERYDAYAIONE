@@ -95,17 +95,12 @@ interface InputControlsProps {
   maxFileSize?: number;
   isUploading: boolean;
   onRemoveImage: (imageId: string) => void;
-  onImageSelect: (e: React.ChangeEvent<HTMLInputElement>, maxImages?: number, maxFileSize?: number) => void;
   onImageDrop: (files: FileList, maxImages?: number, maxFileSize?: number) => void;
   onImagePaste: (e: ClipboardEvent, maxImages?: number, maxFileSize?: number) => void;
-  /** PDF 文件列表 */
+  /** 文档/数据文件列表 */
   files: UploadedFile[];
-  /** PDF 最大大小（MB） */
-  maxPDFSize?: number;
-  /** 删除 PDF 文件 */
+  /** 删除文档文件 */
   onRemoveFile: (fileId: string) => void;
-  /** 选择 PDF 文件 */
-  onFileSelect: (e: React.ChangeEvent<HTMLInputElement>, maxSizeMB?: number) => void;
   /** 工作区待发送文件 */
   workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
   /** 移除工作区文件 */
@@ -166,8 +161,8 @@ export default function InputControls(props: InputControlsProps) {
     temperature, onTemperatureChange, topP, onTopPChange, topK, onTopKChange,
     maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
-    images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
-    files, maxPDFSize, onRemoveFile, onFileSelect,
+    images, maxImages, maxFileSize, onRemoveImage, onImageDrop, onImagePaste,
+    files, onRemoveFile,
     workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, onUnifiedFiles, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,

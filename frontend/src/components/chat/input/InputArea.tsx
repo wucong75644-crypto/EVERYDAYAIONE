@@ -127,7 +127,6 @@ export default function InputArea({
     uploadError: imageUploadError,
     hasImages,
     hasQuotedImage,
-    handleImageSelect,
     handleImageDrop,
     handleImagePaste,
     handleImageFiles,
@@ -144,38 +143,11 @@ export default function InputArea({
     isUploading: isFileUploading,
     uploadError: fileUploadError,
     hasFiles,
-    handleFileSelect,
     handleFileUpload,
     handleRemoveFile,
     handleRemoveAllFiles,
     clearUploadError: clearFileUploadError,
   } = useFileUpload();
-
-  // 统一上传入口：UploadMenu 按用户原生 file picker 选好的 File[] 在此分流
-  // image/* → useImageUpload；其他 → useFileUpload。
-  // 两条 hook 内部都走 /images/upload 或 /files/upload，P0 后已落 上传/{YYYY-MM}/。
-  const handleUnifiedFiles = useCallback(
-    (incoming: File[]) => {
-      if (incoming.length === 0) return;
-      const images: File[] = [];
-      const docs: File[] = [];
-      for (const f of incoming) {
-        if (f.type.startsWith('image/')) images.push(f);
-        else docs.push(f);
-      }
-      if (images.length > 0) {
-        handleImageFiles(
-          images,
-          selectedModel.capabilities.maxImages,
-          selectedModel.capabilities.maxFileSize,
-        );
-      }
-      if (docs.length > 0) {
-        handleFileUpload(docs, selectedModel.capabilities.maxPDFSize);
-      }
-    },
-    [handleImageFiles, handleFileUpload, selectedModel],
-  );
 
   // 音频录制 Hook
   const {
@@ -242,6 +214,34 @@ export default function InputArea({
     conversationModelId,
     onAutoSaveModel: handleAutoSaveModel,
   });
+
+  // 统一上传入口：UploadMenu 按用户原生 file picker 选好的 File[] 在此分流
+  // image/* → useImageUpload.handleImageFiles（构造 ImagePart）
+  // 其他 → useFileUpload.handleFileUpload（构造 FilePart）
+  // 两条 hook 内部都走 /images/upload 或 /files/upload，P0 后已落 上传/{YYYY-MM}/。
+  // 注：必须放在 useModelSelection 之后（依赖 selectedModel.capabilities）
+  const handleUnifiedFiles = useCallback(
+    (incoming: File[]) => {
+      if (incoming.length === 0) return;
+      const images: File[] = [];
+      const docs: File[] = [];
+      for (const f of incoming) {
+        if (f.type.startsWith('image/')) images.push(f);
+        else docs.push(f);
+      }
+      if (images.length > 0) {
+        handleImageFiles(
+          images,
+          selectedModel.capabilities.maxImages,
+          selectedModel.capabilities.maxFileSize,
+        );
+      }
+      if (docs.length > 0) {
+        handleFileUpload(docs, selectedModel.capabilities.maxPDFSize);
+      }
+    },
+    [handleImageFiles, handleFileUpload, selectedModel],
+  );
 
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
   // 电商图模式走专用 EcomImageHandler（和 ImageHandler 同级），不走 ChatHandler
@@ -707,13 +707,10 @@ export default function InputArea({
           maxFileSize={selectedModel.capabilities.maxFileSize}
           isUploading={isUploading}
           onRemoveImage={handleRemoveImage}
-          onImageSelect={handleImageSelect}
           onImageDrop={handleImageDrop}
           onImagePaste={handleImagePaste}
           files={files}
-          maxPDFSize={selectedModel.capabilities.maxPDFSize}
           onRemoveFile={handleRemoveFile}
-          onFileSelect={handleFileSelect}
           workspaceFiles={workspaceFiles}
           onRemoveWorkspaceFile={onRemoveWorkspaceFile}
           onOpenWorkspace={onOpenWorkspace}
