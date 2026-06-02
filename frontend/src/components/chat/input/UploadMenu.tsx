@@ -1,156 +1,85 @@
 /**
- * 上传菜单组件
+ * 上传菜单组件（合并版）
  *
- * 改造（V2 - 设计系统重构）：
- * - 全 token 化（跟随主题）
- * - 4 处内联 SVG → lucide-react
- * - 提取 MENU_ITEM_CLASS 常量减少重复
- *
- * V3 改造：工作区选项改为直接上传文件到工作区
+ * 历史演进：
+ * - V1: 上传图片 / 屏幕截图(disabled) / 上传文档 三项独立
+ * - V3: 加入「上传到工作区」入口（target_dir=根目录）
+ * - V4（本版）：合并为单一「上传文件」入口
+ *   - 内部统一 file input，accept 涵盖图片+文档+数据+文本
+ *   - 上传后所有文件统一落工作区 上传/{YYYY-MM}/（后端双写已就绪）
+ *   - 屏幕截图 disabled 项删除（暂未实现，不放占位）
+ *   - 「上传到工作区」语义合并入此入口（独立工作区面板的上传按钮不变）
  */
 
 import { useRef } from 'react';
-import { ImagePlus, Camera, FileText, Upload } from 'lucide-react';
-import { type UnifiedModel } from '../../../constants/models';
-import { WORKSPACE_ALLOWED_EXTENSIONS } from '../../../services/workspace';
+import { Upload } from 'lucide-react';
 
 interface UploadMenuProps {
   visible: boolean;
   closing?: boolean;
-  selectedModel: UnifiedModel;
-  onImageUpload: () => void;
-  onFileUpload?: () => void;
-  /** 上传文件到工作区 */
-  onUploadToWorkspace?: (files: File[]) => void;
+  /** 用户选好文件后的统一回调（InputArea 内部按 mime 分流到 useImageUpload / useFileUpload） */
+  onFilesSelected: (files: File[]) => void;
   onClose: () => void;
 }
 
-/** 启用状态菜单项 */
-const ITEM_ENABLED = 'hover:bg-hover text-text-primary';
-/** 禁用状态菜单项 */
-const ITEM_DISABLED = 'text-text-disabled cursor-not-allowed';
+/** 允许的扩展名 = 图片 + 后端 _WORKSPACE_ALLOWED_EXTENSIONS（剔除 svg） */
+const ACCEPT_EXTS = [
+  // 图片
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
+  // 文档
+  '.pdf', '.doc', '.docx', '.ppt', '.pptx',
+  // 数据
+  '.xls', '.xlsx', '.csv', '.tsv',
+  // 文本/代码/配置
+  '.txt', '.md', '.json', '.yaml', '.yml', '.xml', '.log',
+  '.py', '.js', '.ts', '.html', '.css', '.sql',
+  // 压缩
+  '.zip',
+].join(',');
 
 export default function UploadMenu({
   visible,
   closing = false,
-  selectedModel,
-  onImageUpload,
-  onFileUpload,
-  onUploadToWorkspace,
+  onFilesSelected,
   onClose,
 }: UploadMenuProps) {
-  const wsFileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!visible) return null;
 
-  const supportsImageUpload =
-    selectedModel.capabilities.imageEditing ||
-    selectedModel.capabilities.imageToVideo ||
-    selectedModel.capabilities.vqa ||
-    selectedModel.capabilities.videoQA;
-
-  const supportsDocumentUpload = !!selectedModel.capabilities.pdfInput;
-
   return (
     <div
-      className={`absolute bottom-full right-0 mb-2 bg-surface-card rounded-lg shadow-lg border border-border-default overflow-hidden z-30 min-w-[200px] ${
+      className={`absolute bottom-full right-0 mb-2 bg-surface-card rounded-lg shadow-lg border border-border-default overflow-hidden z-30 min-w-[220px] ${
         closing ? 'animate-popup-exit' : 'animate-popup-enter'
       }`}
     >
-      {/* 上传图片 */}
       <button
-        onClick={() => {
-          if (supportsImageUpload) {
-            onImageUpload();
-            onClose();
-          }
-        }}
-        disabled={!supportsImageUpload}
-        className={`w-full px-4 py-2 text-left flex items-center space-x-3 transition-base ${
-          supportsImageUpload ? ITEM_ENABLED : ITEM_DISABLED
-        }`}
-      >
-        <ImagePlus className="w-5 h-5 text-text-tertiary" />
-        <div>
-          <div className="text-sm font-medium">上传图片</div>
-          <div className="text-xs">
-            {supportsImageUpload ? '支持 PNG, JPG, GIF' : '当前模型不支持'}
-          </div>
-        </div>
-      </button>
-
-      {/* 屏幕截图 */}
-      <button
-        onClick={() => {
-          onClose();
-        }}
-        disabled
-        className={`w-full px-4 py-2 text-left flex items-center space-x-3 ${ITEM_DISABLED}`}
-      >
-        <Camera className="w-5 h-5 text-text-tertiary" />
-        <div>
-          <div className="text-sm font-medium">屏幕截图</div>
-          <div className="text-xs">暂不支持</div>
-        </div>
-      </button>
-
-      {/* 上传文档 */}
-      <button
-        onClick={() => {
-          if (supportsDocumentUpload && onFileUpload) {
-            onFileUpload();
-            onClose();
-          }
-        }}
-        disabled={!supportsDocumentUpload || !onFileUpload}
-        className={`w-full px-4 py-2 text-left flex items-center space-x-3 transition-base ${
-          supportsDocumentUpload && onFileUpload ? ITEM_ENABLED : ITEM_DISABLED
-        }`}
-      >
-        <FileText className="w-5 h-5 text-text-tertiary" />
-        <div>
-          <div className="text-sm font-medium">上传文档</div>
-          <div className="text-xs">
-            {supportsDocumentUpload ? '支持 PDF 文档' : '当前模型不支持'}
-          </div>
-        </div>
-      </button>
-
-      {/* 分隔线 */}
-      <div className="border-t border-border-light my-1" />
-
-      {/* 上传到工作区 */}
-      <button
-        onClick={() => {
-          if (onUploadToWorkspace) {
-            wsFileInputRef.current?.click();
-          }
-        }}
-        disabled={!onUploadToWorkspace}
-        className={`w-full px-4 py-2 text-left flex items-center space-x-3 transition-base ${
-          onUploadToWorkspace ? ITEM_ENABLED : ITEM_DISABLED
-        }`}
+        onClick={() => fileInputRef.current?.click()}
+        className="w-full px-4 py-3 text-left flex items-center space-x-3 transition-base hover:bg-hover text-text-primary"
       >
         <Upload className="w-5 h-5 text-text-tertiary" />
         <div>
-          <div className="text-sm font-medium">上传到工作区</div>
-          <div className="text-xs">上传文件供 AI 读取分析</div>
+          <div className="text-sm font-medium">上传文件</div>
+          <div className="text-xs text-text-tertiary">
+            支持图片 / PDF / Excel / Word / CSV 等
+          </div>
         </div>
       </button>
       <input
-        ref={wsFileInputRef}
+        ref={fileInputRef}
         type="file"
         multiple
-        accept={Array.from(WORKSPACE_ALLOWED_EXTENSIONS).map((ext) => `.${ext}`).join(',')}
+        accept={ACCEPT_EXTS}
         onChange={(e) => {
           const files = e.target.files;
-          if (files && files.length > 0 && onUploadToWorkspace) {
-            onUploadToWorkspace(Array.from(files));
+          if (files && files.length > 0) {
+            onFilesSelected(Array.from(files));
             onClose();
           }
           e.target.value = '';
         }}
         className="hidden"
+        aria-label="上传文件"
       />
     </div>
   );

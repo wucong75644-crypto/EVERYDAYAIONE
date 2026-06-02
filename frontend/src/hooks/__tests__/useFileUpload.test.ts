@@ -1,9 +1,9 @@
 /**
  * useFileUpload Hook 单测
  *
- * 覆盖 PDF 文件上传相关功能：
+ * 覆盖通用文档/数据/文本文件上传（图片走 useImageUpload）：
  * - 初始状态
- * - 文件校验（类型、大小）
+ * - 文件校验（扩展名白名单、大小 100MB）
  * - 文件删除
  * - 状态派生（hasFiles、isUploading）
  */
@@ -40,7 +40,8 @@ describe('useFileUpload', () => {
   it('should set upload error for invalid file type', async () => {
     const { result } = renderHook(() => useFileUpload());
 
-    const invalidFile = new File(['content'], 'test.txt', { type: 'text/plain' });
+    // .exe 不在新白名单里（白名单含 pdf/doc/xls/csv/txt/json/md/yaml/zip/code 等）
+    const invalidFile = new File(['content'], 'malware.exe', { type: 'application/octet-stream' });
     const fakeEvent = {
       target: { files: [invalidFile], value: '' },
     } as unknown as React.ChangeEvent<HTMLInputElement>;
@@ -49,16 +50,16 @@ describe('useFileUpload', () => {
       await result.current.handleFileSelect(fakeEvent);
     });
 
-    expect(result.current.uploadError).toBe('仅支持 PDF 格式的文档');
+    expect(result.current.uploadError).toMatch(/不支持的文件类型/);
     expect(result.current.files).toEqual([]);
   });
 
-  it('should set upload error for oversized file', async () => {
+  it('should set upload error for oversized file (> 100MB)', async () => {
     const { result } = renderHook(() => useFileUpload());
 
-    // Create a "large" file mock (can't actually create 51MB in test)
+    // 新上限 100MB（与后端 _WORKSPACE_MAX_FILE_SIZE 对齐）
     const bigFile = new File(['x'], 'big.pdf', { type: 'application/pdf' });
-    Object.defineProperty(bigFile, 'size', { value: 51 * 1024 * 1024 });
+    Object.defineProperty(bigFile, 'size', { value: 101 * 1024 * 1024 });
 
     const fakeEvent = {
       target: { files: [bigFile], value: '' },
@@ -181,8 +182,8 @@ describe('useFileUpload', () => {
   it('should clear upload error', async () => {
     const { result } = renderHook(() => useFileUpload());
 
-    // Trigger an error first
-    const invalidFile = new File(['content'], 'test.txt', { type: 'text/plain' });
+    // 先用无效扩展名触发错误（.exe 不在白名单里）
+    const invalidFile = new File(['content'], 'malware.exe', { type: 'application/octet-stream' });
     const fakeEvent = {
       target: { files: [invalidFile], value: '' },
     } as unknown as React.ChangeEvent<HTMLInputElement>;

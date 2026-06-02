@@ -64,8 +64,6 @@ interface InputAreaProps {
   onWorkspaceFilesConsumed?: () => void;
   /** 切换工作区视图 */
   onOpenWorkspace?: () => void;
-  /** 上传文件到工作区 */
-  onUploadToWorkspace?: (files: File[]) => void;
   /** 工作区是否已打开 */
   workspaceOpen?: boolean;
   /** 紧凑模式：工作区打开时取消 max-w 限制 */
@@ -87,7 +85,6 @@ export default function InputArea({
   onRemoveWorkspaceFile,
   onWorkspaceFilesConsumed,
   onOpenWorkspace,
-  onUploadToWorkspace,
   workspaceOpen = false,
   compact = false,
 }: InputAreaProps) {
@@ -133,13 +130,14 @@ export default function InputArea({
     handleImageSelect,
     handleImageDrop,
     handleImagePaste,
+    handleImageFiles,
     handleRemoveImage: removeImageById,
     handleRemoveAllImages,
     addQuotedImage,
     clearUploadError,
   } = useImageUpload();
 
-  // PDF 文件上传 Hook
+  // 通用文档/数据/文本上传 Hook（非图片走这条）
   const {
     files,
     uploadedFileUrls,
@@ -147,10 +145,37 @@ export default function InputArea({
     uploadError: fileUploadError,
     hasFiles,
     handleFileSelect,
+    handleFileUpload,
     handleRemoveFile,
     handleRemoveAllFiles,
     clearUploadError: clearFileUploadError,
   } = useFileUpload();
+
+  // 统一上传入口：UploadMenu 按用户原生 file picker 选好的 File[] 在此分流
+  // image/* → useImageUpload；其他 → useFileUpload。
+  // 两条 hook 内部都走 /images/upload 或 /files/upload，P0 后已落 上传/{YYYY-MM}/。
+  const handleUnifiedFiles = useCallback(
+    (incoming: File[]) => {
+      if (incoming.length === 0) return;
+      const images: File[] = [];
+      const docs: File[] = [];
+      for (const f of incoming) {
+        if (f.type.startsWith('image/')) images.push(f);
+        else docs.push(f);
+      }
+      if (images.length > 0) {
+        handleImageFiles(
+          images,
+          selectedModel.capabilities.maxImages,
+          selectedModel.capabilities.maxFileSize,
+        );
+      }
+      if (docs.length > 0) {
+        handleFileUpload(docs, selectedModel.capabilities.maxPDFSize);
+      }
+    },
+    [handleImageFiles, handleFileUpload, selectedModel],
+  );
 
   // 音频录制 Hook
   const {
@@ -692,7 +717,7 @@ export default function InputArea({
           workspaceFiles={workspaceFiles}
           onRemoveWorkspaceFile={onRemoveWorkspaceFile}
           onOpenWorkspace={onOpenWorkspace}
-          onUploadToWorkspace={onUploadToWorkspace}
+          onUnifiedFiles={handleUnifiedFiles}
           workspaceOpen={workspaceOpen}
           recordingState={recordingState}
           audioBlob={audioBlob}

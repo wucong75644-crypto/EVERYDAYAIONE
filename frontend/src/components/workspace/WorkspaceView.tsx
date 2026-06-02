@@ -28,14 +28,11 @@ import type { FilePart } from '../../types/message';
 interface WorkspaceViewProps {
   onBack: () => void;
   onSendToChat: (file: WorkspaceFile) => void;
-  pendingUploadFiles?: File[];
-  onPendingUploadConsumed?: () => void;
 }
 
-export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles, onPendingUploadConsumed }: WorkspaceViewProps) {
+export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewProps) {
   const ws = useWorkspace();
   const selection = useFileSelection();
-  const pendingConsumedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 重命名目标路径（由右键菜单/F2 触发）
@@ -46,19 +43,6 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
     selection.clear();
     setRenameTarget(null);
   }, [ws.currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 接收外部待上传文件
-  useEffect(() => {
-    if (pendingUploadFiles && pendingUploadFiles.length > 0 && !pendingConsumedRef.current) {
-      pendingConsumedRef.current = true;
-      (async () => {
-        const success = await ws.upload(pendingUploadFiles);
-        if (success) toast.success(`已上传 ${pendingUploadFiles.length} 个文件`);
-        onPendingUploadConsumed?.();
-        pendingConsumedRef.current = false;
-      })();
-    }
-  }, [pendingUploadFiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 预览弹窗
   const [previewFile, setPreviewFile] = useState<FilePart | null>(null);
