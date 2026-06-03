@@ -1,11 +1,12 @@
 """
-文件操作 + 社交爬虫工具 Mixin
+文件操作 + 社交爬虫工具 Mixin（聚合入口）
 
 对齐 Claude 模式：
 - file_search: 搜索/列目录/定位文件 → 返回 WORKSPACE_DIR 路径；
                命中单张图片时直接返回 FileReadResult(type=image) 多模态注入视觉模型
 - file_analyze: Excel/CSV 结构化读取转 Parquet
-- file_delete / restore_file: 删除/恢复文件
+- file_delete / restore_file: 删除/恢复文件（拆到 file_delete_mixin.py）
+- social_crawler: 社交媒体爬虫（拆到 crawler_tool_mixin.py）
 
 通过 Mixin 继承组合到 ToolExecutor。
 依赖宿主类提供：self.user_id, self.org_id, self.conversation_id
@@ -15,13 +16,19 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Dict, Optional
+from typing import Any, Callable, Coroutine, Dict
 
 from loguru import logger
 
+from services.agent.crawler_tool_mixin import CrawlerToolMixin
+from services.agent.file_delete_mixin import FileDeleteMixin
 
-class FileToolMixin:
-    """文件操作工具 Mixin"""
+
+__all__ = ["FileToolMixin", "CrawlerToolMixin"]
+
+
+class FileToolMixin(FileDeleteMixin):
+    """文件操作工具 Mixin（搜索 + 分析 + 删除恢复继承自 FileDeleteMixin）"""
 
     def _make_file_handler(
         self, tool_name: str,
@@ -384,198 +391,6 @@ class FileToolMixin:
         return AgentResult(summary="\n".join(lines), status="success")
 
     # ================================================================
-    # file_delete：从缓存取路径 + 物理删除 + 记录 deleted_files
-    # ================================================================
-
-    async def _file_delete(
-        self, executor: Any, args: Dict[str, Any], settings: Any,
-    ) -> Any:
-        """file_delete：从共享缓存取精确路径，执行删除并记录到 deleted_files 表。
-
-        tool_confirm 弹窗确认在 chat_tool_mixin 的 DANGEROUS 级别自动处理，
-        执行到这里时用户已经点了确认。
-        """
-        from services.agent.agent_result import AgentResult
-        from services.agent.file_path_cache import get_file_cache
-
-        files = args.get("files") or []
-        if isinstance(files, str):
-            files = [files]
-        if not files:
-            return AgentResult(
-                summary="未指定要删除的文件",
-                status="error",
-                error_message="files is empty",
-                metadata={"retryable": True},
-            )
-
-        cache = get_file_cache(self.conversation_id)
-        ws_root = str(Path(settings.file_workspace_root).resolve())
-
-        deleted = []
-        skipped = []
-        for name in files:
-            abs_path = cache.resolve(name, usage="delete")
-            if not abs_path:
-                # 缓存没有 → 尝试直接 resolve
-                try:
-                    target = executor.resolve_safe_path(name)
-                    if target.is_file():
-                        abs_path = str(target)
-                except Exception:
-                    pass
-            if not abs_path or not os.path.isfile(abs_path):
-                skipped.append(name)
-                continue
-
-            os.remove(abs_path)
-            deleted.append((name, abs_path))
-            logger.info(f"file_delete | path={name} | resolved={abs_path}")
-
-        # 记录到 deleted_files 表（fire-and-forget）
-        if deleted:
-            deleted_meta = [
-                {"raw": name, "resolved": ap} for name, ap in deleted
-            ]
-            self._record_deleted_files(deleted_meta)
-
-        # 构建回复
-        lines = []
-        if deleted:
-            lines.append(f"已删除 {len(deleted)} 个文件：")
-            for name, _ in deleted:
-                lines.append(f"  ✓ {name}")
-        if skipped:
-            lines.append(f"跳过 {len(skipped)} 个（不存在或未找到）：")
-            for name in skipped:
-                lines.append(f"  ✗ {name}")
-        if not deleted and not skipped:
-            lines.append("未执行任何删除操作")
-
-        status = "success" if deleted else "error"
-        return AgentResult(summary="\n".join(lines), status=status)
-
-    # ================================================================
-    # restore_file：精确匹配备份文件名（不依赖 registry）
-    # ================================================================
-
-    async def _restore_file(
-        self, executor: Any, args: Dict[str, Any], settings: Any,
-    ) -> Any:
-        """从 OSS/CDN 恢复已删除的文件到 workspace。
-
-        查 deleted_files 表找到 oss_object_key → 从 OSS 下载回原位置。
-        删除后 30 天内可恢复（purge_after 之前）。
-        """
-        from services.agent.agent_result import AgentResult
-
-        filename = args.get("filename", "").strip()
-        if not filename:
-            return AgentResult(
-                summary="请指定要恢复的文件名",
-                status="error",
-                error_message="Validation: filename is required",
-                metadata={"retryable": True},
-            )
-
-        # 查 deleted_files 表
-        record = await self._find_deleted_record(filename)
-        if not record:
-            return AgentResult(
-                summary=f"未找到「{filename}」的删除记录。文件可能未被删除，或已超过 30 天恢复期。",
-                status="empty",
-            )
-
-        oss_key = record["oss_object_key"]
-        rel_path = record["relative_path"]
-
-        # 从 OSS 下载回 workspace
-        # rel_path 已含 org 前缀（如 org/xxx/yyy/下载/file.xlsx），
-        # 需用 _workspace_base（/mnt/nas-workspace）拼接为绝对路径，
-        # 再走 resolve_safe_path 安全校验（确认在当前用户 _root 内）
-        from pathlib import Path as _Path
-        abs_path = str((_Path(executor._workspace_base) / rel_path).resolve())
-        target_path = executor.resolve_safe_path(abs_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            import asyncio
-            from services.oss_service import get_oss_service
-            oss = get_oss_service()
-            await asyncio.to_thread(
-                oss.bucket.get_object_to_file, oss_key, str(target_path),
-            )
-        except Exception as e:
-            logger.error(f"restore_file OSS download failed | key={oss_key} | error={e}")
-            return AgentResult(
-                summary=f"从 OSS 恢复「{filename}」失败: {e}",
-                status="error",
-                error_message=str(e),
-            )
-
-        # 标记 deleted_files 记录为已恢复
-        await self._mark_restored(record["id"])
-
-        logger.info(f"restore_file | file={filename} | oss_key={oss_key} | target={target_path}")
-
-        return AgentResult(
-            summary=f"已恢复「{filename}」到 {rel_path}",
-            status="success",
-        )
-
-    async def _find_deleted_record(self, filename: str) -> dict | None:
-        """从 deleted_files 表查找匹配的删除记录（未过期、未清理）"""
-        try:
-            from services.knowledge_config import get_pg_connection, is_kb_available
-            if not is_kb_available():
-                return None
-            conn_ctx = await get_pg_connection()
-            if conn_ctx is None:
-                return None
-            async with conn_ctx as conn:
-                async with conn.cursor() as cur:
-                    # 按 relative_path 精确匹配 或 文件名模糊匹配
-                    await cur.execute(
-                        """
-                        SELECT id, relative_path, oss_object_key
-                        FROM deleted_files
-                        WHERE org_id = %(org_id)s
-                          AND user_id = %(user_id)s
-                          AND NOT purged
-                          AND purge_after > now()
-                          AND (relative_path = %(name)s
-                               OR relative_path LIKE '%%/' || %(name)s)
-                        ORDER BY deleted_at DESC
-                        LIMIT 1
-                        """,
-                        {"org_id": self.org_id, "user_id": self.user_id, "name": filename},
-                    )
-                    row = await cur.fetchone()
-                    if row:
-                        return {"id": row[0], "relative_path": row[1], "oss_object_key": row[2]}
-        except Exception as e:
-            logger.warning(f"restore_file query failed | error={e}")
-        return None
-
-    async def _mark_restored(self, record_id: int) -> None:
-        """标记 deleted_files 记录为已恢复（purged=TRUE，不再被清理任务处理）"""
-        try:
-            from services.knowledge_config import get_pg_connection, is_kb_available
-            if not is_kb_available():
-                return
-            conn_ctx = await get_pg_connection()
-            if conn_ctx is None:
-                return
-            async with conn_ctx as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "UPDATE deleted_files SET purged = TRUE WHERE id = %s",
-                        (record_id,),
-                    )
-        except Exception as e:
-            logger.warning(f"restore_file mark restored failed | error={e}")
-
-    # ================================================================
     # 工具函数
     # ================================================================
 
@@ -589,75 +404,3 @@ class FileToolMixin:
         elif size < 1024 * 1024 * 1024:
             return f"{size / (1024 * 1024):.1f} MB"
         return f"{size / (1024 * 1024 * 1024):.1f} GB"
-
-
-class CrawlerToolMixin:
-    """社交媒体爬虫工具 Mixin"""
-
-    async def _social_crawler(self, args: Dict[str, Any]) -> "AgentResult":
-        """爬取社交媒体平台搜索结果"""
-        from core.config import get_settings
-        from services.agent.agent_result import AgentResult
-        from services.crawler.service import CrawlerService
-
-        settings = get_settings()
-        if not settings.crawler_enabled:
-            return AgentResult(
-                summary="社交媒体爬虫功能未启用，请在 .env 中设置 CRAWLER_ENABLED=true",
-                status="error",
-                error_message="Feature disabled: crawler_enabled=false",
-                metadata={"retryable": False},
-            )
-
-        service = CrawlerService()
-        if not service.is_available():
-            return AgentResult(
-                summary=(
-                    "社交媒体爬虫未安装，请运行以下命令安装：\n"
-                    "cd backend/external && git clone https://github.com/NanmiCoder/MediaCrawler.git mediacrawler\n"
-                    "cd mediacrawler && python3 -m venv venv && source venv/bin/activate\n"
-                    "pip install -r requirements.txt && playwright install chromium"
-                ),
-                status="error",
-                error_message="Crawler not installed",
-                metadata={"retryable": False},
-            )
-
-        platform = args.get("platform", "xhs")
-        keywords_str = args.get("keywords", "")
-        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-        if not keywords:
-            return AgentResult(
-                summary="搜索关键词不能为空",
-                status="error",
-                error_message="Validation: keywords is required",
-                metadata={"retryable": True},
-            )
-
-        max_results = min(args.get("max_results", 10), 30)
-        crawl_type = args.get("crawl_type", "search")
-
-        logger.info(
-            f"ToolExecutor social_crawler | platform={platform} "
-            f"| keywords={keywords_str} | max={max_results}"
-        )
-
-        result = await service.execute(
-            platform=platform,
-            keywords=keywords,
-            max_notes=max_results,
-            crawl_type=crawl_type,
-        )
-
-        if result.error:
-            return AgentResult(
-                summary=f"爬取失败：{result.error}",
-                status="error",
-                error_message=result.error,
-                metadata={"retryable": True},
-            )
-
-        return AgentResult(
-            summary=service.format_for_brain(result.items),
-            status="success",
-        )
