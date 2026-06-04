@@ -184,8 +184,9 @@ def validate_decision(decision: AIDecision) -> list[str]:
         errors.append("column_semantics 不能为空")
 
     for cs in decision.column_semantics:
-        if not cs.letter or not cs.business_name:
-            errors.append(f"ColumnSemantic 缺 letter/business_name: {cs}")
+        # business_name 允许为空：LLM 对空列如实输出 business_name="" 是合理行为
+        if not cs.letter:
+            errors.append(f"ColumnSemantic 缺 letter: {cs}")
         if cs.semantic_type not in SEMANTIC_TYPES:
             errors.append(
                 f"ColumnSemantic.semantic_type 非法：{cs.semantic_type} (列 {cs.letter})"

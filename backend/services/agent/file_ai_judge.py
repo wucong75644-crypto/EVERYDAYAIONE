@@ -300,6 +300,9 @@ async def _call_llm(prompt: str, model: str, timeout: float) -> dict:
     client = AsyncOpenAI(
         api_key=settings.dashscope_api_key,
         base_url=settings.dashscope_base_url,
+        # SDK 默认 max_retries=2，每次 timeout 会被偷偷重试 2 次（实际耗时 timeout×3）。
+        # _ATTEMPTS 已在外层显式控制三段失败链，禁掉 SDK 内部重试避免叠加放大。
+        max_retries=0,
     )
     resp = await client.chat.completions.create(
         model=model,
