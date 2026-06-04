@@ -207,13 +207,22 @@ class TestValidateDecisionNegative:
         errors = validate_decision(d)
         assert any("semantic_type 非法" in e for e in errors)
 
-    def test_missing_business_name(self):
+    def test_empty_business_name_allowed(self):
+        # 空列场景：LLM 老实输出 business_name="" 时不应被校验拒绝
         d = AIDecision(
             header_row=1, data_start_row=2,
-            column_semantics=[ColumnSemantic(letter="A", business_name="", semantic_type="id")],
+            column_semantics=[ColumnSemantic(letter="A", business_name="", semantic_type="other")],
         )
         errors = validate_decision(d)
-        assert any("缺 letter/business_name" in e for e in errors)
+        assert not any("business_name" in e for e in errors)
+
+    def test_missing_letter(self):
+        d = AIDecision(
+            header_row=1, data_start_row=2,
+            column_semantics=[ColumnSemantic(letter="", business_name="x", semantic_type="id")],
+        )
+        errors = validate_decision(d)
+        assert any("缺 letter" in e for e in errors)
 
     def test_invalid_merged_cell_action(self):
         d = AIDecision(
