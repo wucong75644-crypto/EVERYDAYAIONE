@@ -1771,10 +1771,11 @@ def _convert_excel_to_parquet(
             except Exception as e:
                 logger.warning(f"Failed to generate file meta for chunked file: {e}")
 
+        # V1.2 calamine 重构后：chunk 数从 row_count 算（顺序处理无 workers 概念）
+        _chunks = (row_count + _CHUNK_SIZE - 1) // _CHUNK_SIZE
         logger.info(
             f"Excel chunked convert | src={Path(excel_path).name} "
-            f"| chunks={total_chunks} | workers={max_workers} "
-            f"| chunk_size={_CHUNK_SIZE:,}"
+            f"| chunks={_chunks} | chunk_size={_CHUNK_SIZE:,} | engine=calamine"
         )
 
     # v2.2: snapshot 原子写 + 内容指纹（tmp+rename，避免中途崩溃留半截）
