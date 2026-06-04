@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from loguru import logger
 
 from services.agent.file_meta.dataclass import FileMeta
@@ -202,16 +203,41 @@ def format_file_view(meta: FileMeta) -> str:
         tail_rows = meta.sample.get("tail") or []
         boundary_rows = meta.sample.get("boundary") or []
 
-        def _emit(rows: list[dict], tag: str) -> None:
-            for rd in rows:
-                fields = {k: v for k, v in rd.items() if k != "_row"}
-                lines.append(f"  Row {rd.get('_row', '?')} [{tag}]: {fields}")
+        # 行业标准（LangChain Pandas Agent / LlamaIndex / Vanna）：
+        # 用 markdown table 给 LLM 看样本，让 Timestamp/数字裸值显示，
+        # 避免之前 Python dict 字面量把 Timestamp 加引号让 AI 误判为字符串。
+        # 列类型 AI 仍可从上面 📐 schema 段（含 TIMESTAMP/BIGINT/DOUBLE/VARCHAR）确定。
+        all_rows: list[tuple[dict, str]] = []
+        for r in head_rows:
+            all_rows.append((r, "head"))
+        for r in middle_rows:
+            all_rows.append((r, "middle"))
+        for r in tail_rows:
+            all_rows.append((r, "tail"))
+        for r in boundary_rows:
+            all_rows.append((r, "边界"))
 
-        _emit(head_rows, "head")
-        _emit(middle_rows, "middle")
-        _emit(tail_rows, "tail")
-        if boundary_rows:
-            _emit(boundary_rows, "边界")
+        if all_rows:
+            data_rows = [
+                {k: v for k, v in r.items() if k != "_row"} for r, _ in all_rows
+            ]
+            row_labels = [
+                f"Row {r.get('_row', '?')} [{tag}]" for r, tag in all_rows
+            ]
+            try:
+                df_sample = pd.DataFrame(data_rows)
+                df_sample.index = row_labels
+                lines.append(
+                    df_sample.to_markdown(tablefmt="pipe", index=True)
+                )
+            except Exception as e:
+                # tabulate 缺失或异常时降级到列表渲染（不阻塞主流程）
+                logger.warning(
+                    f"format_file_view sample to_markdown failed: {e}, fallback to dict"
+                )
+                for r, tag in all_rows:
+                    fields = {k: v for k, v in r.items() if k != "_row"}
+                    lines.append(f"  Row {r.get('_row', '?')} [{tag}]: {fields}")
         lines.append("")
 
     # ============================================================

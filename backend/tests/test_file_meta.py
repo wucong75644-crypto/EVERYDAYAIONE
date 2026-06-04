@@ -728,3 +728,103 @@ class TestFix4MultiSheetView:
         # evidence_summary 缺 sheets 子键
         view = format_file_view(meta)
         assert "## 📋 多 Sheet" not in view
+
+
+class TestFix5SampleMarkdownTable:
+    """Fix 5: 样本数据用 markdown table 格式（对齐 LangChain Pandas Agent / Vanna），
+    避免 Python dict 字面量把 Timestamp 加引号让 AI 误判为字符串。"""
+
+    def test_sample_uses_markdown_pipe_format(self):
+        """样本段必须用 markdown table 的 | 分隔，不是 Python dict 字面量。"""
+        df = pd.DataFrame({
+            "订单号": ["A001", "A002", "A003"],
+            "金额": [100.0, 200.0, 300.0],
+        })
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="test.xlsx")
+        view = format_file_view(meta)
+        # 找到样本段
+        assert "## 📋 样本数据" in view
+        sample_section = view.split("## 📋 样本数据")[1].split("##")[0]
+        # 必须含 markdown table 的分隔符（| 列分隔 + 多个 | 的表头分隔行 :---:）
+        assert "|" in sample_section
+        assert ":---" in sample_section or "|--" in sample_section, \
+            f"样本段未使用 markdown table 格式（无表头分隔行）: {sample_section[:200]}"
+
+    def test_sample_timestamp_no_quotes(self):
+        """Timestamp 在样本表里不带引号（pandas table 风格）→ AI 不再误判为 string。"""
+        df = pd.DataFrame({
+            "申请时间": pd.to_datetime(["2024-01-01 10:23:45"]),
+            "金额": [100.0],
+        })
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="test.xlsx")
+        view = format_file_view(meta)
+        sample_section = view.split("## 📋 样本数据")[1].split("##")[0]
+        # 日期值应该出现但不带引号
+        assert "2024-01-01" in sample_section, \
+            f"样本里应有时间值: {sample_section[:300]}"
+        assert "'2024-01-01" not in sample_section, \
+            "样本里 timestamp 不应带单引号（dict 字面量风格）"
+        assert '"2024-01-01' not in sample_section, \
+            "样本里 timestamp 不应带双引号"
+
+    def test_sample_includes_row_labels(self):
+        """每行需有 Row N [tag] 标签，复用之前的行号映射约定。"""
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="test.xlsx")
+        view = format_file_view(meta)
+        assert "Row 2 [head]" in view, "样本行应含行号 + 段标签"
+
+    def test_sample_render_fallback_on_tabulate_failure(self, monkeypatch):
+        """tabulate 异常时降级为 dict 字面量（不阻塞主流程）。"""
+        df = pd.DataFrame({"a": [1, 2]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="test.xlsx")
+        # monkeypatch DataFrame.to_markdown 抛错
+        def _boom(self, *a, **kw):
+            raise RuntimeError("simulated tabulate missing")
+        monkeypatch.setattr(pd.DataFrame, "to_markdown", _boom)
+        view = format_file_view(meta)
+        # 应降级输出，不抛异常
+        assert "## 📋 样本数据" in view
+        assert "Row 2" in view
+
+
+class TestFix6DuckDBDateFunctions:
+    """Fix 6: 方言提示词补全 strftime / DAY / MONTH / YEAR / EXTRACT，
+    防止 AI 不知道这些函数而用 SUBSTRING + LPAD 拼接日期格式。"""
+
+    def test_workspace_version_has_strftime(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "strftime" in desc, "主 Agent 版必须列 strftime"
+
+    def test_workspace_version_has_year_month_day(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        for fn in ["YEAR", "MONTH", "DAY"]:
+            assert fn in desc, f"必须列出 {fn} 函数"
+
+    def test_workspace_version_has_extract(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "EXTRACT" in desc
+
+    def test_workspace_version_has_strptime(self):
+        """字符串→TIMESTAMP 反向转换也要列。"""
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "strptime" in desc
+
+    def test_base_version_has_strftime(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
+        assert "strftime" in desc, "ERP Agent 版也要列 strftime"
+
+    def test_base_version_has_year_month_day(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
+        for fn in ["YEAR", "MONTH", "DAY"]:
+            assert fn in desc
