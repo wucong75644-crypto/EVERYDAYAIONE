@@ -127,19 +127,9 @@ class TestPathAScanner:
         # 金额不是
         assert not cols_by_letter["B"].is_long_id_candidate
 
-    def test_currency_and_unit_detection(self, tmp_path):
-        f = tmp_path / "mixed.xlsx"
-        _write_test_xlsx(str(f), {
-            "金额": ["¥99.5", "¥120.0", "¥85.3"],
-            "重量": ["1.5kg", "2.3kg", "0.5kg"],
-            "qty": [1, 2, 3],
-        })
-        from services.agent.file_scanners import make_scanner
-        pool = make_scanner(str(f)).scan()
-
-        cols_by_letter = {c.col_letter: c for c in pool.columns}
-        assert cols_by_letter["A"].has_currency_prefix, "¥ 前缀列应识别"
-        assert cols_by_letter["B"].has_unit_suffix_candidates, "kg 单位列应识别"
+    # V3：删 test_currency_and_unit_detection
+    # 货币 / 单位 格式识别已下沉到 AI 裁决层（看 sample 自识别），
+    # 不再由扫描器输出 has_currency_prefix / has_unit_suffix_candidates。
 
     def test_suspicious_keyword_row(self, tmp_path):
         f = tmp_path / "with_summary.xlsx"
@@ -787,50 +777,9 @@ class TestV22Phase2:
     #18+#41 日志 / #20 staging cleanup
     """
 
-    def test_id_uuid_recognized(self, tmp_path):
-        """#15: UUID 列被识别为 long_id_candidate"""
-        from services.agent.file_scanners import make_scanner
-        f = tmp_path / "uuid.xlsx"
-        wb = openpyxl.Workbook(); ws = wb.active
-        ws.append(["uuid", "name"])
-        # 标准 UUID 格式
-        for i in range(20):
-            ws.append([f"abcdef12-1234-5678-9abc-{i:012d}", f"item{i}"])
-        wb.save(str(f)); wb.close()
-        pool = make_scanner(str(f)).scan()
-        uuid_col = next(c for c in pool.columns if c.raw_header == "uuid")
-        assert uuid_col.is_long_id_candidate, "UUID 应识别为 long_id"
-
-    def test_id_objectid_recognized(self, tmp_path):
-        """#15: MongoDB ObjectId（24 位 hex）被识别"""
-        from services.agent.file_scanners import make_scanner
-        f = tmp_path / "obj.xlsx"
-        wb = openpyxl.Workbook(); ws = wb.active
-        ws.append(["objectid", "name"])
-        for i in range(20):
-            ws.append([f"5f{i:022d}", f"item{i}"])
-        wb.save(str(f)); wb.close()
-        pool = make_scanner(str(f)).scan()
-        obj_col = next(c for c in pool.columns if c.raw_header == "objectid")
-        assert obj_col.is_long_id_candidate, "ObjectId 应识别为 long_id"
-
-    def test_id_asin_recognized(self, tmp_path):
-        """#15: Amazon ASIN（B + 9 字母数字）被识别"""
-        from services.agent.file_scanners import make_scanner
-        f = tmp_path / "asin.xlsx"
-        wb = openpyxl.Workbook(); ws = wb.active
-        ws.append(["asin", "name"])
-        for i in range(20):
-            ws.append([f"B0{i:08d}".replace("0", "A", 1)[:10].ljust(10, "Z"),
-                       f"item{i}"])
-        wb.save(str(f)); wb.close()
-        pool = make_scanner(str(f)).scan()
-        asin_col = next(c for c in pool.columns if c.raw_header == "asin")
-        # ASIN 严格匹配 B + 9 字母数字，构造的样本可能不全符合
-        # 这里只验证识别函数本身工作
-        from services.agent.file_scanners import _is_known_id_format
-        assert _is_known_id_format("B0123ABCDE")
-        assert not _is_known_id_format("not-an-id")
+    # V3：删 UUID / ObjectId / ASIN 识别测试
+    # 业务 ID 格式（UUID/ObjectId/ASIN）识别已下沉到 AI 裁决层（看 sample 自识别）。
+    # is_long_id_candidate 现在只走纯统计规则（10 位以上纯数字 / abs ≥ 1e10 数值）。
 
     def test_streaming_region_detection(self, tmp_path):
         """#17: 大文件流式空行段检测正确识别多区域"""

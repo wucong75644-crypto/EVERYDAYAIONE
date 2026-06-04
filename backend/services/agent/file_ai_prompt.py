@@ -104,13 +104,11 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
     # 列证据
     parts.append("# 列证据\n")
     for col_ev in evidence.columns:
+        # V3：仅保留纯统计驱动的 flag（long_id_candidate）
+        # 业务格式（货币/单位/UUID/ASIN）改由 AI 看 sample 自识别
         flags = []
         if col_ev.is_long_id_candidate:
             flags.append("⚠️ 长ID候选(可能是订单号/编码,清洗时应保 string)")
-        if col_ev.has_unit_suffix_candidates:
-            flags.append("⚠️ 含单位后缀")
-        if col_ev.has_currency_prefix:
-            flags.append("⚠️ 含货币前缀")
         flag_str = (" " + " ".join(flags)) if flags else ""
         parts.append(
             f"列 {col_ev.col_letter}: 原始表头='{col_ev.raw_header}', "

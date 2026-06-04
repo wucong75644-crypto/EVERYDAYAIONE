@@ -55,31 +55,8 @@ SAMPLE_TAIL_DEFAULT = 5
 SUSPICIOUS_MIN_NULL_RATIO = 0.5  # 整行 ≥ 50% 列为空视为可疑
 SUMMARY_KEYWORDS = ("合计", "总计", "小计", "Total", "Subtotal", "Grand Total")
 
-# 列字母 ↔ 索引
-_RE_CURRENCY_PREFIX = re.compile(r"^[¥$￥]")
-_RE_UNIT_NUMBER = re.compile(r"^-?\d+\.?\d*\s*[A-Za-z一-鿿]+$")
-
-# V2.2 #15: 扩展 ID 列识别覆盖 UUID/ObjectId/ASIN 等非纯数字 ID
-_RE_UUID = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
-_RE_OBJECTID = re.compile(r"^[0-9a-fA-F]{24}$")  # MongoDB ObjectId
-_RE_ASIN = re.compile(r"^B[0-9A-Z]{9}$")          # Amazon ASIN (B + 9 字母数字)
-_RE_HEX_ID = re.compile(r"^[0-9a-fA-F]{16,64}$")  # 通用 hex ID (16-64 位)
-
-
-def _is_known_id_format(s: str) -> bool:
-    """识别常见非纯数字 ID 格式（UUID / ObjectId / ASIN / 通用 hex）。"""
-    if not s or len(s) < 8:
-        return False
-    return bool(
-        _RE_UUID.match(s)
-        or _RE_OBJECTID.match(s)
-        or _RE_ASIN.match(s)
-        or _RE_HEX_ID.match(s)
-    )
-
+# V3：业务关键词正则（货币 / 单位 / ID 格式）已下沉到 AI 裁决层。
+# 扫描器只做"抓位置 + 原始采样 + 类型分布"，业务语义由 AI 看 sample 自己识别。
 
 # 复用 file_meta.dataclass 的统一实现（与 excel_cleaner.structure._col_index_to_letter_local 同源）
 from services.agent.file_meta.dataclass import (  # noqa: E402
@@ -157,10 +134,9 @@ class BaseScanner(ABC):
 
             null_ratio = round(1 - len(non_null) / max(n, 1), 4)
 
-            # ID 候选：宽松筛选给 AI 看（最终由 AI 裁决 is_id_column）
+            # ID 候选（纯统计驱动，业务格式 UUID/ASIN 等由 AI 看 sample 自判）
             #   规则 1：long_id（≥10 位数字串）占比 ≥ 50%
             #   规则 2：数值列且采样里有 abs ≥ 1e10 的大数（pandas float64 误读 ID）
-            #   规则 3 (V2.2 #15)：UUID / ObjectId / ASIN / hex ID 等非纯数字 ID 占比 ≥ 50%
             non_empty = sum(v for k, v in classified.items() if k != "empty")
             long_id_ratio = (classified.get("long_id", 0) / non_empty) if non_empty else 0
             is_long_id = long_id_ratio >= 0.5
@@ -170,28 +146,6 @@ class BaseScanner(ABC):
                         is_long_id = True
                 except (TypeError, ValueError, AttributeError):
                     pass
-            # 规则 3：扩展 ID 格式（仅在 text 占主导且 sample 充足时检查）
-            if not is_long_id and sample_vals:
-                id_format_hits = sum(
-                    1 for v in sample_vals
-                    if v is not None and _is_known_id_format(str(v).strip())
-                )
-                if id_format_hits / max(len(sample_vals), 1) >= 0.5:
-                    is_long_id = True
-
-            # 货币前缀 / 单位后缀
-            has_currency = False
-            has_unit = False
-            for val in sample_vals[:10]:
-                if val is None:
-                    continue
-                s = str(val).strip()
-                if not s:
-                    continue
-                if _RE_CURRENCY_PREFIX.match(s):
-                    has_currency = True
-                if _RE_UNIT_NUMBER.match(s):
-                    has_unit = True
 
             cols.append(ColumnEvidence(
                 col_letter=col_letter(i),
@@ -200,8 +154,6 @@ class BaseScanner(ABC):
                 classified_dist=classified,
                 null_ratio=null_ratio,
                 is_long_id_candidate=is_long_id,
-                has_unit_suffix_candidates=has_unit,
-                has_currency_prefix=has_currency,
             ))
         return cols
 
