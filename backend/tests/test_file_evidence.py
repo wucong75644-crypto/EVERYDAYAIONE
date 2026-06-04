@@ -34,9 +34,9 @@ class TestDataclassDefaults:
         assert cs.classified == ""
 
     def test_suspicious_row_minimal(self):
-        sr = SuspiciousRow(row=10, reason="keyword_match")
+        sr = SuspiciousRow(row=10, reason="multi_null")
         assert sr.row == 10
-        assert sr.reason == "keyword_match"
+        assert sr.reason == "multi_null"
         assert sr.keywords == []
         assert sr.null_ratio == 0.0
         assert sr.raw_values == []
@@ -103,10 +103,10 @@ class TestEvidencePoolPaths:
     def test_path_b_with_suspicious(self):
         pool = self._base_pool("B")
         pool.suspicious_rows.append(
-            SuspiciousRow(row=500001, reason="keyword_match", keywords=["合计"])
+            SuspiciousRow(row=500001, reason="multi_null", keywords=["合计"])
         )
         assert len(pool.suspicious_rows) == 1
-        assert pool.suspicious_rows[0].reason == "keyword_match"
+        assert pool.suspicious_rows[0].reason == "multi_null"
 
     def test_path_c_with_regions(self):
         pool = self._base_pool("C")
@@ -168,7 +168,7 @@ class TestSerialization:
         """dataclass 嵌套结构序列化后能完整还原。"""
         original = SuspiciousRow(
             row=42,
-            reason="keyword_match",
+            reason="multi_null",
             keywords=["合计", "总计"],
             null_ratio=0.85,
             raw_values=[None, None, "合计", 1234.5],

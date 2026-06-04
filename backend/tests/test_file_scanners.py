@@ -131,21 +131,29 @@ class TestPathAScanner:
     # 货币 / 单位 格式识别已下沉到 AI 裁决层（看 sample 自识别），
     # 不再由扫描器输出 has_currency_prefix / has_unit_suffix_candidates。
 
-    def test_suspicious_keyword_row(self, tmp_path):
-        f = tmp_path / "with_summary.xlsx"
+    # V3：删 test_suspicious_keyword_row。
+    # 汇总行识别下沉到 AI 看 raw_values 自判，扫描器只按 null 率筛位置。
+    # 含"合计"但 null 率不高的行不再被扫描器标记 — 由 AI 看末尾样本兜底。
+
+    def test_suspicious_multi_null_row(self, tmp_path):
+        """V3：高 null 率行仍应被标记为 suspicious（位置 + 原始值传给 AI）"""
+        f = tmp_path / "high_null.xlsx"
         df = pd.DataFrame({
             "id": [1, 2, 3, None],
             "name": ["a", "b", "c", "合计"],
-            "amount": [10.0, 20.0, 30.0, 60.0],
+            "amount": [10.0, 20.0, 30.0, None],
         })
         df.to_excel(str(f), index=False)
 
         from services.agent.file_scanners import make_scanner
         pool = make_scanner(str(f)).scan()
 
-        kw_rows = [s for s in pool.suspicious_rows if s.reason == "keyword_match"]
-        assert len(kw_rows) >= 1, "应识别含 '合计' 关键词的行"
-        assert "合计" in kw_rows[0].keywords
+        multi_null_rows = [
+            s for s in pool.suspicious_rows if s.reason == "multi_null"
+        ]
+        assert len(multi_null_rows) >= 1, "高 null 率行应被标记"
+        # 原始值应保留（AI 看 "合计" 自判这是汇总行）
+        assert any("合计" in str(v) for v in multi_null_rows[0].raw_values)
 
     def test_key_samples_head_tail(self, tmp_path):
         f = tmp_path / "for_samples.xlsx"
@@ -181,50 +189,10 @@ class TestPathBScannerSyntheticLarge:
         scanner = make_scanner(str(f))
         assert scanner.PATH_TYPE == "B"
 
-    def test_keyword_scanning_finds_summary(self, tmp_path):
-        """大文件含一个含'合计'关键词的行，流式扫描应能找到。"""
-        f = tmp_path / "with_total.xlsx"
-        # 100k+ 行，最后一行是合计
-        n = 101_000
-        df = pd.DataFrame({
-            "id": list(range(n - 1)) + [None],
-            "name": [f"r{i}" for i in range(n - 1)] + ["合计"],
-            "amount": [1.0] * (n - 1) + [float(n - 1)],
-        })
-        df.to_excel(str(f), index=False, engine="openpyxl")
-
-        from services.agent.file_scanners import make_scanner
-        pool = make_scanner(str(f)).scan()
-        assert pool.path_type == "B"
-        kw_rows = [s for s in pool.suspicious_rows if "合计" in s.keywords]
-        assert len(kw_rows) >= 1
-
-    def test_pipeline_finds_middle_keyword_row(self, tmp_path):
-        """关键改造验证：合计行出现在中间区域时，流水线全表扫描必须找到。
-
-        当前 bug 模式：head 20k + tail 20k 采样会错过 50000 行处的合计行。
-        改后：分块流水线扫全表，必须命中。
-        """
-        f = tmp_path / "middle_total.xlsx"
-        n = 105_000
-        # 合计行放在 ~52,500（中间），head/tail 各 20k 都覆盖不到
-        names = [f"r{i}" for i in range(n)]
-        names[52_500] = "合计"
-        df = pd.DataFrame({
-            "id": list(range(n)),
-            "name": names,
-            "amount": [1.0] * n,
-        })
-        df.to_excel(str(f), index=False, engine="openpyxl")
-
-        from services.agent.file_scanners import make_scanner
-        pool = make_scanner(str(f)).scan()
-        assert pool.path_type == "B"
-        kw_rows = [s for s in pool.suspicious_rows if "合计" in s.keywords]
-        assert len(kw_rows) >= 1, "中段合计行必须被流水线全表扫描命中"
-        # Excel 行号验证：Row 1 表头，Row 2 起数据 → idx 52500 是 Excel Row 52502
-        assert any(s.row == 52_502 for s in kw_rows), \
-            f"应找到 Row 52502 的合计行，实际找到: {[s.row for s in kw_rows]}"
+    # V3：删 test_keyword_scanning_finds_summary / test_pipeline_finds_middle_keyword_row
+    # 关键词扫描已下沉到 AI 层（看末尾 raw_values 自识别汇总行），
+    # 扫描器不再做业务关键词识别。
+    # 高 null 率行仍会被标记（test_suspicious_multi_null_row 覆盖）。
 
     def test_file_too_large_raises(self, monkeypatch):
         """超过 MAX_TOTAL_CELLS 阈值时主动 raise FileAnalyzeError。"""

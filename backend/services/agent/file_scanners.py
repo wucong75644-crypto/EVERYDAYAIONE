@@ -53,7 +53,9 @@ SAMPLE_TAIL_DEFAULT = 5
 
 # 可疑行上限规则
 SUSPICIOUS_MIN_NULL_RATIO = 0.5  # 整行 ≥ 50% 列为空视为可疑
-SUMMARY_KEYWORDS = ("合计", "总计", "小计", "Total", "Subtotal", "Grand Total")
+# V3：删 SUMMARY_KEYWORDS（"合计"/"总计"/"小计"/"Total"/...）。
+# 汇总行识别下沉到 AI 看末尾几行的 raw_values 自识别，避免业务关键词闭集
+# 漏掉财务"累计"/营销"环比"/科研"平均值"等场景。
 
 # V3：业务关键词正则（货币 / 单位 / ID 格式）已下沉到 AI 裁决层。
 # 扫描器只做"抓位置 + 原始采样 + 类型分布"，业务语义由 AI 看 sample 自己识别。
@@ -179,52 +181,21 @@ class BaseScanner(ABC):
         # 修 fastexcel fallback-to-string 列把空 cell 读成 "" 而非 NaN 的 bug
         df = df.mask(df.eq(""), np.nan)
 
-        # ① 向量化：每行 null 比例
+        # V3：只按 null 率筛候选位置；AI 看 raw_values 自判是不是汇总/单位/小计/异常
         null_mask_2d = df.isna().to_numpy()       # (n_rows, n_cols) bool
         null_ratios = null_mask_2d.sum(axis=1) / n_cols
         multi_null_mask = null_ratios >= SUSPICIOUS_MIN_NULL_RATIO
-
-        # ② 向量化：关键词扫描
-        # 只在含 object/str 类型的列做（数值列不可能含"合计"）
-        str_cols = [c for c in df.columns if df[c].dtype == object]
-        if str_cols:
-            # 各 str 列转字符串后用 " ".join 拼接每行
-            str_df = df[str_cols].fillna("").astype(str)
-            row_texts = str_df.agg(" ".join, axis=1)
-            # 一次性 str.contains 所有关键词
-            import re
-            pattern = "|".join(re.escape(kw) for kw in SUMMARY_KEYWORDS)
-            kw_match_mask = row_texts.str.contains(pattern, regex=True, na=False).to_numpy()
-        else:
-            kw_match_mask = np.zeros(n_rows, dtype=bool)
-
-        # ③ 候选行 = 关键词命中 ∨ 多列空
-        candidate_mask = kw_match_mask | multi_null_mask
-        candidate_indices = np.flatnonzero(candidate_mask)[:limit]
+        candidate_indices = np.flatnonzero(multi_null_mask)[:limit]
         if len(candidate_indices) == 0:
             return suspicious
 
-        # ④ 仅对候选行（很少）逐行构造 SuspiciousRow
         values_arr = df.to_numpy()
         for idx in candidate_indices:
             row_arr = values_arr[idx]
-            kw_hit = bool(kw_match_mask[idx])
-            null_ratio = float(null_ratios[idx])
-
-            if kw_hit:
-                # 在 str 列文本里查匹配的关键词
-                row_text = row_texts.iat[idx] if str_cols else ""
-                matched_kw = [kw for kw in SUMMARY_KEYWORDS if kw in row_text]
-                reason = "keyword_match"
-            else:
-                matched_kw = []
-                reason = "multi_null"
-
             suspicious.append(SuspiciousRow(
                 row=int(idx) + data_start_excel_row,
-                reason=reason,
-                keywords=matched_kw,
-                null_ratio=round(null_ratio, 4),
+                reason="multi_null",
+                null_ratio=round(float(null_ratios[idx]), 4),
                 raw_values=[
                     None if (isinstance(v, float) and pd.isna(v)) else v
                     for v in row_arr[:15].tolist()
