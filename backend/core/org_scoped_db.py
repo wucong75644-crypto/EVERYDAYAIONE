@@ -71,6 +71,14 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "user_extra_grants", "user_revocations", "permission_audit_log",
     # 定时任务（migration 069）
     "scheduled_tasks", "scheduled_task_runs",
+    # 快麦 Web 外部数据接入（migration 114）
+    "kuaimai_external_credentials",
+    "erp_thinktank_profit_shop",
+    "erp_viperp_sale_finance",
+    "kuaimai_sync_logs",
+    "kuaimai_field_audit",
+    "erp_shop_operators",
+    "erp_operators",
 })
 
 
