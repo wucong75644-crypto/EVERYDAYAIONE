@@ -36,9 +36,14 @@ from services.agent.file_evidence import EvidencePool
 # ── 失败链配置 ──
 
 _ATTEMPTS: list[dict] = [
-    {"model": "qwen-turbo", "timeout": 15, "prompt_variant": "default"},
-    {"model": "qwen-turbo", "timeout": 20, "prompt_variant": "simplified"},
-    {"model": "qwen-plus",  "timeout": 30, "prompt_variant": "default"},
+    # 90/120/180 s ladder，对齐 LangChain ChatModel 默认（120s 量级）。
+    # 实测：1171 行 × 27 列 prompt 5344 token，qwen-turbo 端到端最坏 170s
+    # （prefill 53-107s + 输出 40-67s）。千问拥塞或中文 tokenize 偏重时
+    # 30/45/60 全部踩满 timeout（生产 2026-06-04 19:01 真实现象）。
+    # 失败链路总耗时 90+120+180=390s（6.5 分钟），换"今天踩雷场景全过"。
+    {"model": "qwen-turbo", "timeout": 90, "prompt_variant": "default"},
+    {"model": "qwen-turbo", "timeout": 120, "prompt_variant": "simplified"},
+    {"model": "qwen-plus",  "timeout": 180, "prompt_variant": "default"},
 ]
 
 
