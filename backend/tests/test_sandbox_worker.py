@@ -92,6 +92,57 @@ class TestSandboxConstants:
             else:
                 assert name not in SAFE_BUILTINS
 
+    def test_safe_builtins_includes_all_stdlib_exceptions(self):
+        """所有标准 Python 内置异常类必须可用 — 解今天日志 FileNotFoundError 类问题。
+
+        之前白名单手工列只有 9 个异常，AI 用 FileNotFoundError 就 NameError。
+        改为 builtins 全集后所有 stdlib 异常自动可用。
+        """
+        stdlib_exceptions = [
+            "FileNotFoundError",     # 用户今天真踩到的
+            "PermissionError", "FileExistsError", "IsADirectoryError",
+            "NotADirectoryError", "InterruptedError",
+            "OSError", "IOError", "BlockingIOError", "ChildProcessError",
+            "ConnectionError", "ConnectionAbortedError", "ConnectionRefusedError",
+            "ConnectionResetError", "BrokenPipeError",
+            "TimeoutError", "NotImplementedError", "RecursionError",
+            "UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
+            "ArithmeticError", "OverflowError", "FloatingPointError",
+            "LookupError", "ModuleNotFoundError", "MemoryError",
+            "NameError", "UnboundLocalError",
+            "SyntaxError", "IndentationError", "TabError",
+            "AssertionError", "BufferError", "EOFError",
+            "GeneratorExit", "KeyboardInterrupt", "SystemExit", "BaseException",
+            "Warning", "DeprecationWarning", "UserWarning", "RuntimeWarning",
+            "StopAsyncIteration",
+        ]
+        missing = [e for e in stdlib_exceptions if e not in SAFE_BUILTINS]
+        assert not missing, f"缺失内置异常: {missing}"
+
+    def test_safe_builtins_includes_useful_funcs(self):
+        """非危险的内置函数应可用（之前白名单可能漏的）。"""
+        useful = [
+            "iter", "next", "callable",
+            "hex", "oct", "bin", "id", "hash",
+            "slice", "ascii", "repr", "format",
+            "object", "property", "staticmethod", "classmethod",
+            "super", "complex",
+            "True", "False", "None",
+            "Ellipsis", "NotImplemented",
+        ]
+        missing = [f for f in useful if f not in SAFE_BUILTINS]
+        assert not missing, f"缺失常用 builtin: {missing}"
+
+    def test_safe_builtins_blocks_input_and_open(self):
+        """input（阻塞 stdin）和 open（必须走 scoped_open）必须不在 SAFE_BUILTINS。"""
+        assert "input" not in SAFE_BUILTINS, "input 会阻塞沙盒进程"
+        assert "open" not in SAFE_BUILTINS, "open 必须走 scoped_open 否则绕过路径白名单"
+
+    def test_safe_builtins_blocks_breakpoint_and_exit(self):
+        """中断沙盒进程的 builtin 必须禁。"""
+        for name in ["breakpoint", "exit", "quit"]:
+            assert name not in SAFE_BUILTINS, f"{name} 可中断沙盒进程"
+
     def test_blocked_modules_include_dangerous(self):
         """黑名单覆盖核心危险类（C ABI / 反序列化 / 网络 / 进程 / 动态加载）"""
         for mod in [

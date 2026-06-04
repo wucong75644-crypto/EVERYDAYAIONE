@@ -111,37 +111,34 @@ restricted_import = make_restricted_import()
 
 
 # ============================================================
-# 沙盒内可用的安全内置函数白名单
+# 沙盒内可用的内置函数（黑名单模式）
 # ============================================================
+# 行业标准对齐：OpenAI Code Interpreter / Anthropic / E2B / Modal 都用
+# 标准 CPython 全套 builtins，安全边界靠 import 白名单 + 文件系统 scoped + 进程隔离。
+# 之前手工列白名单会无穷漏（FileNotFoundError / PermissionError / iter / next ...），
+# 每漏一个 AI 写代码就 NameError，永远补不完。
+# 现在和 BLOCKED_IMPORT_MODULES 策略统一：默认全开，黑名单显式禁危险。
+
+import builtins as _b
+
+_DANGEROUS_BUILTINS = frozenset({
+    # ── 任意代码执行（绕过 AST 检查和 import 白名单）──
+    "exec", "eval", "compile",
+    # ── 中断沙盒进程 ──
+    "breakpoint", "exit", "quit",
+    # ── 阻塞 stdin（沙盒非交互，等输入会卡死直到 deadline）──
+    "input",
+    # ── 必须走 scoped_open（由 sandbox_worker 显式注入到 g['open']）──
+    # 留在 __builtins__ 里会让 AI 通过 __builtins__.open 绕过路径白名单
+    "open",
+})
 
 SAFE_BUILTINS = {
-    # 类型转换
-    "int": int, "float": float, "str": str, "bool": bool,
-    "list": list, "dict": dict, "tuple": tuple, "set": set,
-    "frozenset": frozenset, "bytes": bytes, "bytearray": bytearray,
-    # 数学/聚合
-    "abs": abs, "round": round, "min": min, "max": max,
-    "sum": sum, "len": len, "pow": pow, "divmod": divmod,
-    # 迭代
-    "range": range, "enumerate": enumerate, "zip": zip,
-    "map": map, "filter": filter, "sorted": sorted, "reversed": reversed,
-    # 字符串/格式化
-    "format": format, "repr": repr, "chr": chr, "ord": ord,
-    # 逻辑
-    "all": all, "any": any, "isinstance": isinstance, "issubclass": issubclass,
-    "type": type, "hasattr": hasattr,
-    # 打印（重定向到 StringIO）
-    "print": print,
-    # 异常类型（允许 try-except）
-    "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
-    "KeyError": KeyError, "IndexError": IndexError, "AttributeError": AttributeError,
-    "ZeroDivisionError": ZeroDivisionError, "RuntimeError": RuntimeError,
-    "StopIteration": StopIteration, "ImportError": ImportError,
-    # None/True/False
-    "None": None, "True": True, "False": False,
-    # 受限 import
-    "__import__": restricted_import,
+    k: v for k, v in vars(_b).items()
+    if not k.startswith("_") and k not in _DANGEROUS_BUILTINS
 }
+# 受限 import（sandbox_worker._build_sandbox_globals 还会用 scoped 版本覆盖）
+SAFE_BUILTINS["__import__"] = restricted_import
 
 
 # ============================================================
