@@ -288,6 +288,43 @@ class TestIntFix:
         os.unlink(p)
 
 
+class TestFixIntColumnsLongId:
+    """Bug-4 修复回归：长度 > 15 位的数字保留 float64，避免精度丢失。"""
+
+    def test_19_digit_order_id_stays_float(self):
+        """19 位订单号不应被转 Int64（虽然能装下但精度已丢，转 Int 是误导）。"""
+        df = pd.DataFrame({
+            "order_id": [5006827369075309014.0, 5032064954868665226.0],
+            "qty": [1.0, 2.0],
+        })
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            p = f.name
+        df.to_excel(p, index=False)
+        try:
+            df_clean, report = clean_excel(df.copy(), p, 0)
+            # 长 ID 列保留 float64（不转 Int64）
+            assert df_clean["order_id"].dtype == "float64", \
+                "19 位 ID 列必须保留 float64 防精度误导"
+            # 普通整数列仍然转 Int64
+            assert df_clean["qty"].dtype.name == "Int64"
+            assert report.int_cols_fixed == 1   # 只有 qty 列被修
+        finally:
+            os.unlink(p)
+
+    def test_15_digit_still_converts(self):
+        """15 位数字（< 阈值）正常转 Int64。"""
+        df = pd.DataFrame({"id_15": [123456789012345.0, 234567890123456.0]})
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            p = f.name
+        df.to_excel(p, index=False)
+        try:
+            df_clean, report = clean_excel(df.copy(), p, 0)
+            assert df_clean["id_15"].dtype.name == "Int64"
+            assert report.int_cols_fixed == 1
+        finally:
+            os.unlink(p)
+
+
 class TestDuplicateColumns:
     def test_dedup(self):
         df = pd.DataFrame([[1, 2, 3]], columns=["a", "a", "b"])
