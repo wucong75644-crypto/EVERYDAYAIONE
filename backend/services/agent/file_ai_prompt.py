@@ -124,10 +124,10 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
     if evidence.suspicious_rows:
         limit = 10 if variant == "simplified" else 50
         parts.append(f"# 可疑行（共 {len(evidence.suspicious_rows)} 条，展示前 {limit}）\n")
+        # V3：可疑行只给位置 + null 率 + 原始值，由 AI 自判是 summary/note/unit/异常
         for sr in evidence.suspicious_rows[:limit]:
-            kw_str = f", 关键词={sr.keywords}" if sr.keywords else ""
             parts.append(
-                f"Row {sr.row}: reason={sr.reason}, null率={sr.null_ratio:.0%}{kw_str}\n"
+                f"Row {sr.row}: null率={sr.null_ratio:.0%}\n"
                 f"  原始值: {_truncate_list(sr.raw_values[:10])}\n"
             )
         parts.append("\n")

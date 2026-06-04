@@ -245,7 +245,7 @@ class TestBuildPrompt:
     def test_default_contains_all_sections(self):
         from services.agent.file_ai_prompt import build_prompt
         pool = _mini_pool()
-        pool.suspicious_rows.append(SuspiciousRow(row=10, reason="keyword_match", keywords=["合计"]))
+        pool.suspicious_rows.append(SuspiciousRow(row=10, reason="multi_null", raw_values=["合计", None, 9999]))
         prompt = build_prompt(pool, variant="default")
         assert "# 任务" in prompt
         assert "# 文件信息" in prompt

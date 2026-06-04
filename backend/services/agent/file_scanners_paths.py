@@ -6,7 +6,6 @@ PathAScanner / PathBScanner / PathCScanner / PathDScanner 都继承 BaseScanner�
 from __future__ import annotations
 
 import gc
-import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -37,7 +36,6 @@ from services.agent.file_scanners import (
     KEYWORD_SCAN_CHUNK,
     MAX_SHEETS_LISTED,
     MAX_SHEETS_SAMPLED,
-    SUMMARY_KEYWORDS,
     SUSPICIOUS_MIN_NULL_RATIO,
     col_letter,
     sample_segment_sizes,
@@ -189,25 +187,10 @@ class _PathBChunkAccumulator:
                 local_idx = global_idx - chunk_start_local
                 self.key_samples_buf[global_idx] = list(chunk_df.iloc[local_idx].values)
 
-        # 可疑行向量化
+        # V3：可疑行只按 null 率筛位置；AI 看 raw_values 自判语义
         null_ratios = null_mask.sum(axis=1) / self.n_cols
         multi_null_mask = null_ratios >= SUSPICIOUS_MIN_NULL_RATIO
-
-        # 用列索引而非列名（防止重复列名导致返回 DataFrame）
-        str_col_idx = [i for i in range(self.n_cols)
-                       if chunk_df.iloc[:, i].dtype == object]
-        if str_col_idx:
-            str_df = chunk_df.iloc[:, str_col_idx].fillna("").astype(str)
-            row_texts = str_df.agg(" ".join, axis=1)
-            pattern = "|".join(re.escape(kw) for kw in SUMMARY_KEYWORDS)
-            kw_match_mask = row_texts.str.contains(
-                pattern, regex=True, na=False,
-            ).to_numpy()
-        else:
-            kw_match_mask = np.zeros(n, dtype=bool)
-
-        candidate_mask = kw_match_mask | multi_null_mask
-        candidate_indices = np.flatnonzero(candidate_mask)
+        candidate_indices = np.flatnonzero(multi_null_mask)
 
         room = self.suspicious_limit - len(self.suspicious)
         if room <= 0:
@@ -218,21 +201,12 @@ class _PathBChunkAccumulator:
             values_arr = chunk_df.to_numpy()
             for idx in candidate_indices:
                 row_arr = values_arr[idx]
-                kw_hit = bool(kw_match_mask[idx])
-                if kw_hit:
-                    row_text = row_texts.iat[idx] if str_col_idx else ""
-                    matched_kw = [kw for kw in SUMMARY_KEYWORDS if kw in row_text]
-                    reason = "keyword_match"
-                else:
-                    matched_kw = []
-                    reason = "multi_null"
                 global_excel_row = (
                     chunk_start_local + int(idx) + self.data_start_excel
                 )
                 self.suspicious.append(SuspiciousRow(
                     row=global_excel_row,
-                    reason=reason,
-                    keywords=matched_kw,
+                    reason="multi_null",
                     null_ratio=round(float(null_ratios[idx]), 4),
                     raw_values=[
                         None if (isinstance(v, float) and pd.isna(v)) else v
