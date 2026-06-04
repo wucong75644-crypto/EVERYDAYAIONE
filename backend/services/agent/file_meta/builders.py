@@ -30,9 +30,12 @@ def generate_file_meta(
     formulas: list[dict[str, Any]] | None = None,
     formula_skip_reason: str = "",
     merged_ranges: list[tuple[int, int, int, int]] | None = None,
-    prescan_result: Any = None,
+    ai_decision: Any = None,
 ) -> FileMeta:
-    """从 DataFrame + CleaningReport 生成完整 FileMeta。"""
+    """从 DataFrame + CleaningReport 生成完整 FileMeta。
+
+    ai_decision 接受 AIDecision 或 _AIDecisionAdapter（兼容 V1 PrescanResult 接口）。
+    """
     now = datetime.now().isoformat(timespec="seconds")
     row_count, col_count = df.shape
 
@@ -54,7 +57,7 @@ def generate_file_meta(
     meta.schema = _build_schema(df, cleaning_report.data_start_row)
 
     # ── sample（带行号）──
-    meta.sample = _build_sample(df, cleaning_report.data_start_row, prescan_result)
+    meta.sample = _build_sample(df, cleaning_report.data_start_row, ai_decision)
 
     # ── stats ──
     meta.stats = {
@@ -277,7 +280,7 @@ def _detect_grain(
 
 
 def _build_sample(
-    df: pd.DataFrame, data_start_row: int, prescan_result: Any = None,
+    df: pd.DataFrame, data_start_row: int, ai_decision: Any = None,
 ) -> dict[str, list[dict]]:
     """提取代表性样本数据，带 Excel 原始行号。
 
@@ -287,7 +290,7 @@ def _build_sample(
     - tail 4 行：末尾（含可能的汇总行）
 
     边界补充（boundary，可选 0-2 行）：
-    - 复用 prescan_result.anomalies[*].sample_rows ——
+    - 复用 ai_decision.anomalies[*].sample_rows ——
       AI 在 schema 生成前已经判定过的代表性异常行
     - 零额外计算成本（不调 idxmax）
     """
@@ -306,10 +309,10 @@ def _build_sample(
     else:
         middle_df = df.iloc[0:0]
 
-    # boundary 段：复用 prescan 的 AI 异常行号（零额外扫描）
+    # boundary 段：复用 AI 决策的 anomalies 行号（零额外扫描）
     boundary_df = df.iloc[0:0]
-    if prescan_result is not None:
-        anomalies = getattr(prescan_result, "anomalies", None) or []
+    if ai_decision is not None:
+        anomalies = getattr(ai_decision, "anomalies", None) or []
         covered = set(head_df.index) | set(middle_df.index) | set(tail_df.index)
         boundary_indices: list[int] = []
         for anomaly in anomalies:

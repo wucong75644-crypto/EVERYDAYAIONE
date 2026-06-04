@@ -175,14 +175,14 @@ class TestBuildSample:
         assert 40 < mid_row < 60  # 100 行的中间附近
 
     def test_boundary_from_prescan(self):
-        """复用 prescan_result.anomalies 作为 boundary 边界样本"""
+        """复用 ai_decision.anomalies 作为 boundary 边界样本"""
         df = pd.DataFrame({"amount": list(range(100))})
         # 模拟 prescan 标记的异常行
         class _Prescan:
             anomalies = [
                 {"column": "amount", "sample_rows": [50, 75]},  # Excel 行号
             ]
-        sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
+        sample = _build_sample(df, data_start_row=2, ai_decision=_Prescan())
         assert len(sample["boundary"]) <= 2
         # Excel row 50 → df idx 48; Excel row 75 → df idx 73
         boundary_rows = [r["_row"] for r in sample["boundary"]]
@@ -194,12 +194,12 @@ class TestBuildSample:
         class _Prescan:
             # Excel 行号 2 = df idx 0（已在 head 里）
             anomalies = [{"column": "x", "sample_rows": [2]}]
-        sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
+        sample = _build_sample(df, data_start_row=2, ai_decision=_Prescan())
         # boundary 应为空（已被 head 覆盖）
         assert sample["boundary"] == []
 
     def test_boundary_no_prescan_returns_empty(self):
-        """无 prescan_result 时 boundary 为空"""
+        """无 ai_decision 时 boundary 为空"""
         df = pd.DataFrame({"x": list(range(100))})
         sample = _build_sample(df, data_start_row=2)
         assert sample["boundary"] == []
@@ -211,7 +211,7 @@ class TestBuildSample:
             anomalies = [
                 {"column": "x", "sample_rows": [30, 40, 50, 60, 70]},
             ]
-        sample = _build_sample(df, data_start_row=2, prescan_result=_Prescan())
+        sample = _build_sample(df, data_start_row=2, ai_decision=_Prescan())
         # 全部非零签名相同 → 去重后保 1 行（首行无条件保留）
         # 测试上限逻辑：boundary_indices 最多收 2 个再去重
         assert len(sample["boundary"]) >= 1
