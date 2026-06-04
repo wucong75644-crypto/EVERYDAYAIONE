@@ -96,6 +96,48 @@ def _find_empty_rows(rows: list[list]) -> list[int]:
     return empty
 
 
+def has_multiple_regions_streaming(excel_path: str, target_sheet) -> bool:
+    """V2.2 #17 + #7：大文件多区域流式检测。
+
+    用 calamine iter_rows 全表扫描，识别"≥3 行连续空行"作为区域分隔标志。
+    返回 True 表示文件含 ≥2 个数据块（需走 PathC 或拒绝）。
+
+    设计：
+      - 流式遍历，O(rows) 时间，O(1) 内存
+      - 不试图返回 region 细节（PathB 防御只需要 bool 信号）
+      - 连续空行阈值=3，避免单空行误判（数据缺失常见）
+      - 至少需要见过 1 个数据行 + 1 段空行 + 又 1 个数据行 才返回 True
+    """
+    try:
+        import python_calamine
+        wb = python_calamine.CalamineWorkbook.from_path(excel_path)
+        if isinstance(target_sheet, int):
+            ws = wb.get_sheet_by_index(target_sheet)
+        else:
+            ws = wb.get_sheet_by_name(target_sheet)
+    except Exception:
+        return False
+
+    seen_data_before_gap = False
+    consecutive_empty = 0
+    found_gap = False
+    EMPTY_GAP_THRESHOLD = 3
+
+    for row in ws.iter_rows():
+        is_empty = all((c is None or str(c).strip() == "") for c in row)
+        if is_empty:
+            consecutive_empty += 1
+            if seen_data_before_gap and consecutive_empty >= EMPTY_GAP_THRESHOLD:
+                found_gap = True
+        else:
+            if found_gap:
+                # 见过数据 → 空段 → 再见数据 = 多区域
+                return True
+            consecutive_empty = 0
+            seen_data_before_gap = True
+    return False
+
+
 def _split_by_empty_rows(
     total_rows: int, empty_indices: list[int],
 ) -> list[tuple[int, int]]:
@@ -200,25 +242,49 @@ def convert_multi_region(
     src_size: int,
     snapshot_path: str,
     column_mapping: dict[str, str] | None = None,
+    decision=None,
+    strategy=None,
 ) -> None:
     """多区域合并为一个 Parquet（加 _region 列标识来源），写入 cache_path。
 
-    不丢弃任何区域——全部保留，AI 通过 _region 列和 meta.json 自行判断。
+    Args:
+        decision: AIDecision，按 decision.regions[i].role == "skip" 过滤
+        strategy: CleaningStrategy，传给 clean_excel
+
+    decision=None 时保持向后兼容（所有区域都进，clean_excel 走硬规则）。
     """
     import pandas as pd
     from services.agent.excel_cleaner import CleaningReport, clean_excel, write_cleaning_report
     from services.agent.file_meta import extract_formulas, generate_file_meta, write_file_meta
     from services.agent.session_files import update_session_files
 
+    # 构建 region_id → role 映射
+    region_role_map: dict[int, str] = {}
+    if decision is not None:
+        for r in getattr(decision, "regions", []):
+            region_role_map[r.region_id] = r.role
+
     start = time.monotonic()
     frames: list[pd.DataFrame] = []
+    skipped_regions: list[tuple[int, str]] = []  # (region_id, role)
     merged_report = CleaningReport()
     staging_dir = str(Path(cache_path).parent)
 
     formulas, formula_skip = extract_formulas(excel_path, resolved_name)
 
     for i, region in enumerate(regions):
-        region_name = region.name or f"Region_{i + 1}"
+        region_id = i + 1
+        # 按 AI 决策跳过非主数据区域
+        role = region_role_map.get(region_id, "primary")
+        if role == "skip":
+            skipped_regions.append((region_id, role))
+            logger.info(
+                f"Region skipped per AI decision | region_id={region_id} | role={role} "
+                f"| src={Path(excel_path).name}"
+            )
+            continue
+
+        region_name = region.name or f"Region_{region_id}"
         skip = list(range(0, region.header_row)) if region.header_row > 0 else None
         try:
             df = pd.read_excel(
@@ -229,7 +295,10 @@ def convert_multi_region(
         except Exception:
             continue
 
-        df, report = clean_excel(df, excel_path, region_name, region.header_row)
+        df, report = clean_excel(
+            df, excel_path, region_name, region.header_row,
+            strategy=strategy,
+        )
         merged_report.merge(report)
         df.insert(0, "_region", region_name)
         frames.append(df)
