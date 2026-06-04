@@ -249,9 +249,30 @@ class FileToolMixin(FileDeleteMixin):
             try:
                 target = executor.resolve_safe_path(path)
                 abs_path = str(target)
-            except Exception as e:
+            except (FileNotFoundError, IsADirectoryError) as e:
+                # 文件不存在 / 是目录 → 可重试（用户可能正在上传）
                 return AgentResult(
                     summary=f"文件不存在: {path}",
+                    status="error",
+                    error_message=str(e),
+                    metadata={"retryable": True},
+                )
+            except (PermissionError, OSError, ValueError) as e:
+                # 权限拒绝 / 路径越界 / 非法路径 → 不可重试 + 安全审计日志
+                logger.warning(
+                    f"file_analyze path rejected | conv={self.conversation_id} "
+                    f"| path={path!r} | reason={type(e).__name__}: {e}"
+                )
+                return AgentResult(
+                    summary=f"路径不允许: {path}",
+                    status="error",
+                    error_message=str(e),
+                    metadata={"retryable": False},
+                )
+            except Exception as e:
+                # 其他未预期异常 → 兜底可重试
+                return AgentResult(
+                    summary=f"路径解析失败: {path}",
                     status="error",
                     error_message=str(e),
                     metadata={"retryable": True},
@@ -287,9 +308,58 @@ class FileToolMixin(FileDeleteMixin):
         if not cache._staging_dir:
             cache.set_staging_dir(staging_dir)
 
+        # Phase 5: FileAnalyzeError 必须在 _file_dispatch 顶层 except Exception 之前捕获
+        # （顶层会吞 metadata，丢失结构化错误信息）
+        import asyncio as _aio
+        from services.agent.file_ai_judge import FileAnalyzeError as _FileAnalyzeError
+        from services.agent.data_query_cache import (
+            _ENSURE_CACHE_TIMEOUT, validate_xlsx_safety,
+        )
         try:
-            cache_path, sheet_names = await ensure_parquet_cache(
-                abs_path, None, staging_dir,
+            # V2.2 #38: xlsx zip bomb 防御（magic / entry 数 / 压缩比）
+            if ext in (".xlsx", ".xls"):
+                validate_xlsx_safety(abs_path)
+            # CSV/TSV 走独立路径（fastexcel 不支持 csv，否则 make_scanner 会崩）
+            # V2.2 #19: 总超时包裹（覆盖 AI 失败链 + 转换 + 写盘最坏 65+30s）
+            if ext in (".csv", ".tsv"):
+                from services.agent.data_query_cache import ensure_parquet_cache_csv
+                cache_path, sheet_names = await _aio.wait_for(
+                    ensure_parquet_cache_csv(abs_path, staging_dir),
+                    timeout=_ENSURE_CACHE_TIMEOUT,
+                )
+            else:
+                cache_path, sheet_names = await _aio.wait_for(
+                    ensure_parquet_cache(abs_path, None, staging_dir),
+                    timeout=_ENSURE_CACHE_TIMEOUT,
+                )
+        except _aio.TimeoutError:
+            # V2.2 #19: 总超时 → 结构化 timeout 错误，标记 retryable
+            _name = Path(abs_path).name
+            cache.register(_name, workspace=abs_path)
+            return AgentResult(
+                summary=f"文件「{_name}」分析超时（> {_ENSURE_CACHE_TIMEOUT}s）",
+                status="error",
+                error_message=f"ensure_parquet_cache timeout ({_ENSURE_CACHE_TIMEOUT}s)",
+                metadata={
+                    "retryable": True,
+                    "error_category": "timeout",
+                    "suggested_action": "retry_immediately",
+                },
+            )
+        except _FileAnalyzeError as e:
+            # 即使 AI 失败也保留原文件注册（让用户后续能找到文件再试）
+            _name = Path(abs_path).name
+            cache.register(_name, workspace=abs_path)
+            try:
+                _rel = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
+                cache.register(_rel, workspace=abs_path)
+            except ValueError:
+                pass
+            return AgentResult(
+                summary=e.user_message or e.error_summary,
+                status="error",
+                error_message=e.error_summary,
+                metadata=e.to_metadata(),
             )
         except ValueError as e:
             # 空文件等
@@ -308,9 +378,14 @@ class FileToolMixin(FileDeleteMixin):
 
         elapsed = round(time.monotonic() - start, 2)
 
-        # 读取元数据 → 格式化
+        # 读取元数据 → 优先用 V2 XML（meta.xml_view），降级到 markdown
         meta = read_file_meta(cache_path)
-        file_view = format_file_view(meta) if meta else f"文件已转为 Parquet: {cache_path}"
+        if meta is None:
+            file_view = f"文件已转为 Parquet: {cache_path}"
+        elif getattr(meta, "xml_view", "") and meta.xml_view:
+            file_view = meta.xml_view
+        else:
+            file_view = format_file_view(meta)
 
         # 注册到路径缓存：workspace + parquet 分开写
         name = Path(abs_path).name
@@ -332,11 +407,18 @@ class FileToolMixin(FileDeleteMixin):
             lines.append("")
             lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
 
+        # V2.2 #18: 扩展日志维度（path_type / cache_hit / attempt_count / model / elapsed）
+        _ai = (meta.ai_decision if meta else None) or {}
+        _path_type = (meta.schema.get("path_type") if meta and meta.schema else None) or "?"
         logger.info(
             f"file_analyze OK | {name} | "
             f"{meta.summary.get('row_count', '?') if meta else '?'}×"
             f"{meta.summary.get('col_count', '?') if meta else '?'} | "
-            f"{elapsed}s"
+            f"path={_path_type} | "
+            f"model={_ai.get('model_used', '?')} | "
+            f"ai_attempts={_ai.get('attempt_count', '?')} | "
+            f"ai_ms={_ai.get('elapsed_ms', '?')} | "
+            f"total={elapsed}s"
         )
 
         return AgentResult(summary="\n".join(lines), status="success")
