@@ -37,7 +37,10 @@ from services.agent.table_region_detector import (
 
 # ── 常量 ──
 
-CHUNK_THRESHOLD = 100_000      # 路径 B 分块阈值
+# V3.1: PathA 全表加载到内存的行数上限。
+# 8GB ECS 4GB file_analyze 池子可装 60W 行 × 30 列（peak ~4GB）。
+# 超过此值仍走 PathB 流式扫描兜底,避免 MemoryError。
+CHUNK_THRESHOLD = 600_000      # 路径 B 分块阈值（V3.1: 100K → 600K）
 HEADER_MAX_SCAN = 20           # 探测表头扫描行数
 KEYWORD_SCAN_CHUNK = 20_000    # 路径 B 关键词扫描 head/tail 各 20k 行
 MAX_SHEETS_SAMPLED = 20        # 路径 D 完整采样的 sheet 上限
@@ -72,6 +75,10 @@ class BaseScanner(ABC):
     """4 路径扫描器共享基类。
 
     子类需实现 scan() 返回完整 EvidencePool。
+
+    V3.1: 新增 _cached_df / _cached_sheet_dfs 槽,scan() 时持有 df 不丢弃,
+          供 _convert_excel_to_parquet 复用,避免重读 Excel。
+          调用方必须在 finally 块调用 release_cached() 释放内存。
     """
 
     PATH_TYPE: str = ""
@@ -81,11 +88,30 @@ class BaseScanner(ABC):
         self.reader = reader
         self.file_name = Path(excel_path).name
         self.file_size = Path(excel_path).stat().st_size
+        # V3.1: 内存复用槽（scan 持有,convert 复用,finally 释放）
+        self._cached_df: Any = None                    # PathA/C 用
+        self._cached_sheet_dfs: dict[str, Any] = {}    # PathD 用 (sheet_name → df)
 
     @abstractmethod
     def scan(self) -> EvidencePool:
         """执行扫描，返回完整 evidence_pool。"""
         ...
+
+    def release_cached(self) -> None:
+        """V3.1: 释放 cached df,触发 GC。
+
+        必须在调用方 finally 块调用,确保即使 AI/清洗/写盘任意环节失败,
+        df 内存也立刻释放。内部异常不重抛,避免压住原始业务异常。
+        """
+        try:
+            had_df = self._cached_df is not None or bool(self._cached_sheet_dfs)
+            self._cached_df = None
+            self._cached_sheet_dfs.clear()
+            if had_df:
+                import gc
+                gc.collect()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"release_cached error | {self.file_name} | {e}")
 
     # ── 共享工具 ──
 

@@ -86,6 +86,9 @@ class PathAScanner(BaseScanner):
             df, data_start_excel, n_head, n_mid, n_tail,
         )
 
+        # V3.1: 持有 df 供 _convert_excel_to_parquet 复用,避免重读 Excel
+        self._cached_df = df
+
         return EvidencePool(
             file_path=self.excel_path,
             file_name=self.file_name,
@@ -626,6 +629,10 @@ class PathDScanner(BaseScanner):
 
         head_sample = df.head(3).values.tolist() if len(df) > 0 else []
         tail_sample = df.tail(3).values.tolist() if len(df) > 3 else []
+
+        # V3.1: 持有每个 sheet 的 df 供 _convert_all_sheets_to_parquet 复用
+        # PathD 文件大小已限 150MB,即使持有 20 个 sheet 的 df 也不爆
+        self._cached_sheet_dfs[str(name)] = df
 
         return SheetEvidence(
             name=str(name),

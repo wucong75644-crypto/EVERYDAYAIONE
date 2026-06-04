@@ -234,6 +234,15 @@ _CACHE_SCHEMA_VERSION = "v3.0"  # V3：骨架抽取 + AI 一次裁决（删 grai
 # 正常场景 90% 在 60s 内完成；触发 600s 意味系统级异常，报错合理
 _ENSURE_CACHE_TIMEOUT = 600.0  # 10 分钟兜底
 
+# V3.1: Excel 文件大小硬上限（与 OpenAI Code Interpreter 100MB 对齐）
+# 8GB ECS 4GB file_analyze 池子 + 60W 行阈值,峰值估算 4GB 内安全
+_MAX_EXCEL_FILE_SIZE_MB = 100
+
+# V3.1: 大文件并发节流。≥ 30MB 视为大文件,同时只允许 1 个进入扫描-AI-转换链路,
+# 避免 2 个用户同时上传 67MB 文件时各持 1.7GB df,叠加其他进程 OOM。
+_BIG_FILE_THRESHOLD_MB = 30
+_BIG_FILE_SEMAPHORE = asyncio.Semaphore(1)
+
 # V2.2 #12: 失败软熔断（同 fingerprint 文件短期内不重跑 AI）
 _FAILURE_CACHE_TTL = 300.0  # 5 分钟
 # fingerprint → (failure_timestamp, error_category, user_message)
@@ -643,6 +652,30 @@ async def ensure_parquet_cache(
     # 保留 mtime/size 供 user_message 显示和兼容旧转换函数
     stat = os.stat(excel_path)
     src_mtime, src_size = stat.st_mtime, stat.st_size
+    src_size_mb = src_size / 1024 / 1024
+
+    # V3.1: 文件大小硬上限（与 OpenAI Code Interpreter 100MB 对齐）
+    if src_size_mb > _MAX_EXCEL_FILE_SIZE_MB:
+        from services.agent.file_ai_judge import FileAnalyzeError
+        raise FileAnalyzeError(
+            error_category="file_too_large",
+            error_summary=(
+                f"文件 {Path(excel_path).name} 大小 {src_size_mb:.1f}MB "
+                f"超过 {_MAX_EXCEL_FILE_SIZE_MB}MB 上限"
+            ),
+            retryable=False,
+            suggested_action="ask_user",
+            user_message=(
+                f"文件「{Path(excel_path).name}」{src_size_mb:.1f}MB,"
+                f"超过 {_MAX_EXCEL_FILE_SIZE_MB}MB 上限。\n"
+                f"请按月份/类别拆分到 {_MAX_EXCEL_FILE_SIZE_MB}MB 以内后再上传。"
+            ),
+            file_path=excel_path,
+            file_name=Path(excel_path).name,
+            file_size_mb=round(src_size_mb, 2),
+            total_rows=0,
+            path_type="?",
+        )
 
     # V2.2 #20: lazy staging 清理（每目录最多 1h 一次）
     _maybe_cleanup_staging(staging_dir)
@@ -675,8 +708,17 @@ async def ensure_parquet_cache(
     lock_key = f"{excel_path}:{sheet_label}"
     lock_file_path = str(cache_path) + ".lock"
 
+    # V3.1: scanner 持有 cached_df 跨 AI 等待期,
+    # 用 holder list 共享给外层 _run_with_locks 的 finally 块统一释放。
+    # 这样即使 AI/清洗/写盘任意环节抛异常或被超时取消,df 内存也立刻还给 GC。
+    _scanner_holder: list = [None]
+
     async def _do_convert():
-        """临界区内核心逻辑（双锁内执行）。"""
+        """临界区内核心逻辑（双锁内执行）。
+
+        V3.1: scanner 持有 _cached_df 跨 AI 等待期,finally 块确保即使
+        AI/清洗/写盘任意环节失败,df 内存也立刻释放。
+        """
         # 双重检查
         if _snapshot_matches_fp(cache_path, snapshot_path, fingerprint):
             return str(cache_path), None
@@ -692,11 +734,31 @@ async def ensure_parquet_cache(
         _stage_t0 = time.monotonic()
 
         # 代码扫描在线程池（IO/CPU 密集）
+        scanner = None
         try:
             scanner = await loop.run_in_executor(None, make_scanner, excel_path, None)
+            # V3.1: 立即把 scanner 放入 holder,即使 scan() 抛异常也能让外层 finally 释放
+            _scanner_holder[0] = scanner
             evidence = await loop.run_in_executor(None, scanner.scan)
         except FileAnalyzeError:
             raise
+        except MemoryError as e:
+            # V3.1: 加载到内存时爆 → 转结构化错误,不让 generic Exception 误归类为 file_corrupted
+            from services.agent.file_ai_judge import FileAnalyzeError as _FAE
+            raise _FAE(
+                error_category="file_too_complex",
+                error_summary=f"文件加载内存不足: {e}",
+                retryable=False,
+                suggested_action="ask_user",
+                user_message=(
+                    f"文件「{Path(excel_path).name}」加载时内存不足,"
+                    f"可能含超宽表/超长字符串,请拆分或简化后重试。"
+                ),
+                file_path=excel_path,
+                file_name=Path(excel_path).name,
+                file_size_mb=round(src_size / 1024 / 1024, 2),
+                attempts=[],
+            ) from e
         except Exception as e:
             from services.agent.file_ai_judge import (
                 FileAnalyzeError as _FAE, AnalyzeAttemptLog,
@@ -820,19 +882,20 @@ async def ensure_parquet_cache(
         adapter = _AIDecisionAdapter(decision)
 
         # 线程池中执行 Excel → Parquet 转换
+        # V3.1: scanner 作为最后一个参数传入,复用 _cached_df / _cached_sheet_dfs
         if evidence.path_type == "D":
             # 路径 D：传 decision + strategy（按 sheets[i].role 过滤 meta/aggregated/skip）
             sheet_names = await loop.run_in_executor(
                 None, _convert_all_sheets_to_parquet,
                 excel_path, str(cache_path), src_mtime, src_size,
                 str(snapshot_path),
-                decision, strategy,
+                decision, strategy, scanner,
             )
         else:
             sheet_names = await loop.run_in_executor(
                 None, _convert_excel_to_parquet,
                 excel_path, str(cache_path), sheet, src_mtime, src_size,
-                str(snapshot_path), adapter, strategy,
+                str(snapshot_path), adapter, strategy, scanner,
             )
 
         # Smell 3：clean_excel + Parquet 写入合并日志（这两步在 _convert_* 里串行做）
@@ -865,13 +928,39 @@ async def ensure_parquet_cache(
 
         return str(cache_path), sheet_names
 
-    entry = await _acquire_convert_lock(lock_key)
-    try:
-        async with entry.lock:                          # 进程内互斥（修 #1）
-            with _FileLock(lock_file_path):             # 进程间互斥（修 #5）
-                return await _do_convert()
-    finally:
-        _release_convert_lock(lock_key)
+    # V3.1: 大文件并发节流 — 防止 2 个用户同时上传大文件叠加内存峰值
+    _is_big_file = src_size_mb >= _BIG_FILE_THRESHOLD_MB
+
+    async def _run_with_locks():
+        entry = await _acquire_convert_lock(lock_key)
+        try:
+            async with entry.lock:                      # 进程内互斥（修 #1）
+                with _FileLock(lock_file_path):         # 进程间互斥（修 #5）
+                    return await _do_convert()
+        finally:
+            # V3.1: 不管 _do_convert 成功/失败/超时取消,都释放 scanner cached_df
+            # 释放放在 lock 释放之前,避免内存堆积
+            _scanner = _scanner_holder[0]
+            if _scanner is not None:
+                try:
+                    _scanner.release_cached()
+                except Exception as _re:  # noqa: BLE001
+                    logger.warning(
+                        f"file_analyze release_cached error | "
+                        f"src={Path(excel_path).name} | {_re}"
+                    )
+                _scanner_holder[0] = None
+            _release_convert_lock(lock_key)
+
+    if _is_big_file:
+        if _BIG_FILE_SEMAPHORE._value == 0:
+            logger.info(
+                f"file_analyze big-file waiting | src={Path(excel_path).name} "
+                f"| size_mb={src_size_mb:.1f}"
+            )
+        async with _BIG_FILE_SEMAPHORE:
+            return await _run_with_locks()
+    return await _run_with_locks()
 
 
 async def ensure_parquet_cache_csv(
@@ -1435,11 +1524,15 @@ def _convert_excel_to_parquet(
     src_mtime: float, src_size: int, snapshot_path: str,
     ai_decision=None,
     strategy=None,
+    scanner=None,  # V3.1: scanner 实例,优先用 scanner._cached_df 避免重读 Excel
 ) -> list[str]:
     """Excel → Parquet（同步，线程池执行）。
 
-    小文件（<10万行）：全量读取 + clean_excel 预处理
-    大文件（≥10万行）：分块读取 + 分批写 Parquet，内存恒定 ~55MB
+    小文件（<60万行）：全量读取 + clean_excel 预处理
+    大文件（≥60万行）：分块读取 + 分批写 Parquet，内存恒定 ~55MB
+
+    V3.1: 如果 scanner 持有 _cached_df 且与 AI 决策的 header 位置一致,
+    直接复用 cached_df 跳过 Excel 重读,省 ~30s/次。
     """
     import pandas as pd
     import fastexcel
@@ -1547,7 +1640,25 @@ def _convert_excel_to_parquet(
 
     # ── 小文件：全量读取 + 完整预处理 ──
     if total_rows < _CHUNK_THRESHOLD or header_depth > 1:
-        if header_depth > 1:
+        # V3.1: 优先复用 scanner._cached_df,避免重读 Excel。
+        # 复用条件: scanner 持有 df + 单级表头 + scanner.header_row == actual_start
+        # （多级表头走重读路径,因为 scanner.df 是单级加载的）
+        _scanner_header_row = (
+            getattr(scanner, "header_row", None) if scanner is not None else None
+        )
+        _can_reuse = (
+            scanner is not None
+            and getattr(scanner, "_cached_df", None) is not None
+            and header_depth == 1
+            and _scanner_header_row == actual_start
+        )
+        if _can_reuse:
+            df = scanner._cached_df
+            logger.info(
+                f"_convert_excel_to_parquet reuse cached_df | "
+                f"src={Path(excel_path).name} | header_row={actual_start}"
+            )
+        elif header_depth > 1:
             header_param = list(range(actual_start, actual_start + header_depth))
             try:
                 df = pd.read_excel(excel_path, sheet_name=target_sheet, header=header_param)
@@ -1839,12 +1950,14 @@ def _convert_all_sheets_to_parquet(
     src_mtime: float, src_size: int, snapshot_path: str,
     decision: Any = None,
     strategy: Any = None,
+    scanner=None,  # V3.1: PathD scanner,优先用 _cached_sheet_dfs 避免重读每个 sheet
 ) -> list[str]:
     """所有同结构 Sheet 合并为单个 Parquet（加 _sheet 列标识来源）。
 
     Args:
         decision: AIDecision，按 decision.sheets[i].role 过滤 meta/aggregated/skip
         strategy: CleaningStrategy，传给 clean_excel（合计行/混合类型/ID 列保护）
+        scanner: V3.1 PathD scanner 实例,持有 _cached_sheet_dfs={sheet_name: df}
 
     decision=None 时保持向后兼容（所有 sheet 都进，clean_excel 走硬规则）。
     """
@@ -1889,7 +2002,24 @@ def _convert_all_sheets_to_parquet(
             header_row = detect_header_row(df_raw.values.tolist())
             actual_start, header_depth = detect_header_depth(header_row, None)
 
-            if header_depth > 1:
+            # V3.1: 优先复用 scanner._cached_sheet_dfs[name]
+            # 复用条件: scanner 持有 + 单级表头 + header_row 一致
+            _cached_sheet_df = (
+                scanner._cached_sheet_dfs.get(name)
+                if scanner is not None else None
+            )
+            _can_reuse_sheet = (
+                _cached_sheet_df is not None
+                and header_depth == 1
+                and header_row == actual_start
+            )
+            if _can_reuse_sheet:
+                df = _cached_sheet_df
+                logger.info(
+                    f"_convert_all_sheets_to_parquet reuse cached_df | "
+                    f"sheet={name} | src={Path(excel_path).name}"
+                )
+            elif header_depth > 1:
                 header_param = list(range(actual_start, actual_start + header_depth))
                 df = pd.read_excel(excel_path, sheet_name=name, header=header_param)
             else:

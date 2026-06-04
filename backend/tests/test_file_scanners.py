@@ -169,19 +169,76 @@ class TestPathAScanner:
         # 必有 Excel 第 2 行（head 起点）和某个尾部行
         assert 2 in rows
 
+    # ── V3.1: PathA 内存复用测试 ──
+
+    def test_path_a_holds_cached_df_after_scan(self, tmp_path):
+        """V3.1: PathA scan() 完成后应持有 _cached_df,供 _convert_excel_to_parquet 复用。"""
+        f = tmp_path / "cache_df.xlsx"
+        _write_test_xlsx(str(f), {
+            "id": [1, 2, 3, 4, 5],
+            "amount": [10.0, 20.0, 30.0, 40.0, 50.0],
+        })
+        from services.agent.file_scanners import make_scanner
+        scanner = make_scanner(str(f))
+        assert scanner.PATH_TYPE == "A"
+        # scan 前 cached_df 应为 None
+        assert scanner._cached_df is None
+        scanner.scan()
+        # scan 后 cached_df 应持有
+        assert scanner._cached_df is not None
+        assert len(scanner._cached_df) == 5
+
+    def test_release_cached_clears_df(self, tmp_path):
+        """V3.1: release_cached() 后 _cached_df 应被清空。"""
+        f = tmp_path / "release.xlsx"
+        _write_test_xlsx(str(f), {"id": [1, 2, 3], "name": ["a", "b", "c"]})
+        from services.agent.file_scanners import make_scanner
+        scanner = make_scanner(str(f))
+        scanner.scan()
+        assert scanner._cached_df is not None
+        scanner.release_cached()
+        assert scanner._cached_df is None
+        # 幂等:再调一次 release_cached 不抛错
+        scanner.release_cached()
+        assert scanner._cached_df is None
+
+    def test_release_cached_handles_exception(self, tmp_path):
+        """V3.1: release_cached() 内部异常不应重抛,避免压住原始业务异常。"""
+        f = tmp_path / "release_safe.xlsx"
+        _write_test_xlsx(str(f), {"id": [1], "name": ["a"]})
+        from services.agent.file_scanners import make_scanner
+        scanner = make_scanner(str(f))
+        scanner.scan()
+        # 即使内部失败也不应抛(LOGS only)
+        scanner._cached_sheet_dfs = "not a dict"  # 故意污染
+        try:
+            scanner.release_cached()
+        except Exception as e:
+            pytest.fail(f"release_cached should not raise: {e}")
+
 
 # ── PathBScanner ──
 
-class TestPathBScannerSyntheticLarge:
-    """合成大文件（≥ 10 万行）走路径 B。"""
+@pytest.fixture
+def _path_b_threshold(monkeypatch):
+    """V3.1: CHUNK_THRESHOLD 上调到 600K 后,合成 PathB 测试需要 monkeypatch 调小阈值。
 
-    def test_large_file_routing(self, tmp_path):
-        """构造 105k 行文件应走路径 B 而非 A。"""
+    生产实际 PathA 阈值 600K 行,但测试构造那么大文件太慢。
+    用 monkeypatch 临时把阈值调到 1000,让 ≥1000 行测试样本就能走 PathB。
+    """
+    from services.agent import file_scanners
+    monkeypatch.setattr(file_scanners, "CHUNK_THRESHOLD", 1000)
+
+
+class TestPathBScannerSyntheticLarge:
+    """合成大文件（≥ CHUNK_THRESHOLD 行）走路径 B。"""
+
+    def test_large_file_routing(self, tmp_path, _path_b_threshold):
+        """构造合成大文件应走路径 B 而非 A（已 monkeypatch 阈值=1000）。"""
         f = tmp_path / "large.xlsx"
-        # 105k 行需要分批写避免太慢
         df = pd.DataFrame({
-            "id": range(105_000),
-            "name": [f"r{i}" for i in range(105_000)],
+            "id": range(5_000),
+            "name": [f"r{i}" for i in range(5_000)],
         })
         df.to_excel(str(f), index=False, engine="openpyxl")
 
@@ -230,14 +287,20 @@ class TestPathBScannerSyntheticLarge:
 class TestPathBParallelFormulaExtraction:
     """V1.3：PathB 公式提取与 calamine 主扫描并行（ThreadPoolExecutor + lxml 释放 GIL）。
 
+    V3.1: 测试 _path_b_threshold fixture 自动 monkeypatch CHUNK_THRESHOLD=1000 让 PathB 触发。
+
     目标：50w 行 scan 总耗时 290s → 230s（公式 30-60s 隐藏在主扫描时间内）。
 
     100k+ 合成文件每个用例 ~6s 写入 + 几秒扫描，所以这组测试只设最小必要用例。
     """
 
     @staticmethod
-    def _build_large_xlsx_with_formula(path, n=101_000):
-        """构造 100k+ 行 + 几个公式的合成文件。"""
+    def _build_large_xlsx_with_formula(path, n=5_000):
+        """构造合成文件 + 几个公式。
+
+        V3.1: 行数从 101_000 降到 5_000(配合 _path_b_threshold fixture monkeypatch
+        CHUNK_THRESHOLD=1000),保持 PathB 触发但减少构造时间。
+        """
         df = pd.DataFrame({
             "id": list(range(n)),
             "name": [f"r{i}" for i in range(n)],
@@ -253,7 +316,7 @@ class TestPathBParallelFormulaExtraction:
         wb.save(str(path))
         wb.close()
 
-    def test_parallel_extracts_formulas_correctly(self, tmp_path):
+    def test_parallel_extracts_formulas_correctly(self, tmp_path, _path_b_threshold):
         """并行模式扫描结果应包含写入的 3 个公式。"""
         f = tmp_path / "large_with_formula.xlsx"
         self._build_large_xlsx_with_formula(f)
@@ -271,10 +334,10 @@ class TestPathBParallelFormulaExtraction:
         assert any("SUM" in fx for fx in formulas_text), \
             f"应有 SUM 公式，实际 {formulas_text[:5]}"
         # 主扫描结果完整（确认并行没破坏主路径）
-        assert pool.total_rows >= 100_000
+        assert pool.total_rows >= 1_000  # V3.1: fixture monkeypatch 后 PathB 阈值=1000
         assert pool.path_type == "B"
 
-    def test_formula_extraction_failure_does_not_break_scan(self, tmp_path, monkeypatch):
+    def test_formula_extraction_failure_does_not_break_scan(self, tmp_path, monkeypatch, _path_b_threshold):
         """公式提取在线程里 raise → 主扫描照常完成，formulas=[]。"""
         f = tmp_path / "large_failing_formula.xlsx"
         self._build_large_xlsx_with_formula(f)
@@ -293,9 +356,9 @@ class TestPathBParallelFormulaExtraction:
         # 公式降级为空，但主扫描结果不受影响
         assert pool.formula_total_count == 0
         assert pool.formulas == []
-        assert pool.total_rows >= 100_000
+        assert pool.total_rows >= 1_000  # V3.1: fixture monkeypatch 后 PathB 阈值=1000
 
-    def test_formula_extraction_timeout_does_not_break_scan(self, tmp_path, monkeypatch):
+    def test_formula_extraction_timeout_does_not_break_scan(self, tmp_path, monkeypatch, _path_b_threshold):
         """公式提取超过 timeout → 降级为空，不阻塞主扫描。"""
         import time
         f = tmp_path / "large_slow_formula.xlsx"
@@ -319,7 +382,7 @@ class TestPathBParallelFormulaExtraction:
         # 超时降级，不影响主扫描
         assert pool.formula_total_count == 0
         assert pool.formulas == []
-        assert pool.total_rows >= 100_000
+        assert pool.total_rows >= 1_000  # V3.1: fixture monkeypatch 后 PathB 阈值=1000
 
 
 # ── PathCScanner ──
@@ -389,7 +452,7 @@ class TestRealDataRegression:
     def test_small_file_path_a(self):
         from services.agent.file_scanners import make_scanner
         scanner = make_scanner(REAL_FILES["small_invoice"])
-        assert scanner.PATH_TYPE == "A"   # 85k 行 < 100k
+        assert scanner.PATH_TYPE == "A"   # 85k 行 < 600k (V3.1)
         pool = scanner.scan()
         assert pool.total_rows > 80_000
         assert pool.total_cols == 23
@@ -400,16 +463,22 @@ class TestRealDataRegression:
         if order_id_col:
             assert order_id_col.is_long_id_candidate
 
-    def test_large_file_path_b(self):
+    def test_large_file_path_a(self):
+        """V3.1: 500k 销售明细从 PathB 改走 PathA(内存全加载,省一次 Excel I/O)。"""
         from services.agent.file_scanners import make_scanner
         scanner = make_scanner(REAL_FILES["large_invoice"])
-        assert scanner.PATH_TYPE == "B"   # 500k 行
+        assert scanner.PATH_TYPE == "A"   # V3.1: 500k < 600k 阈值,走 PathA
         pool = scanner.scan()
         assert pool.total_rows > 400_000
         # evidence 不应太大
         assert len(pool.suspicious_rows) <= 500
         assert len(pool.columns) > 0
         assert len(pool.key_samples) > 0
+        # V3.1: 验证 scanner 持有了 cached_df
+        assert scanner._cached_df is not None
+        # 测试结束前释放
+        scanner.release_cached()
+        assert scanner._cached_df is None
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1067,18 +1136,21 @@ class TestCSVEncodingFallback:
 class TestPathBLargeFileCalamine:
     """修 5：大文件分块用 calamine（替代 fastexcel skip_rows）。"""
 
-    def test_large_file_via_calamine_chunking(self, tmp_path):
-        """构造 105K 行文件 → _convert_excel_to_parquet 大文件分支应用 calamine 跑通。
+    def test_large_file_via_calamine_chunking(self, tmp_path, _path_b_threshold):
+        """构造合成大文件 → _convert_excel_to_parquet 大文件分支应用 calamine 跑通。
 
         实测内存上限：fastexcel chunked 5 块 peak 2530MB；calamine peak 1095MB。
         本测试只验证跑通性（不检内存，避免环境敏感）。
+
+        V3.1: _path_b_threshold fixture monkeypatch CHUNK_THRESHOLD=1000,
+              构造 5000 行 xlsx 即可触发 PathB,避免 101k 行构造耗时。
         """
         import pandas as pd
         from services.agent.file_scanners import make_scanner
         from services.agent.file_ai_judge import adjudicate
 
         f = tmp_path / "large.xlsx"
-        n = 101_000
+        n = 5_000
         df_src = pd.DataFrame({
             "id": list(range(n)),
             "name": [f"r{i}" for i in range(n)],
@@ -1090,7 +1162,7 @@ class TestPathBLargeFileCalamine:
         scanner = make_scanner(str(f))
         assert scanner.PATH_TYPE == "B"
         pool = scanner.scan()
-        assert pool.total_rows >= 100_000
+        assert pool.total_rows >= 1_000  # V3.1: fixture monkeypatch 后 PathB 阈值=1000
 
         # 大文件分块路径需要完整 ensure_parquet_cache 跑（含 AI 调用 + 实际 Parquet 写入）。
         # 单测不调真实 AI，只验证 _convert_excel_to_parquet 大文件分支不报错。
