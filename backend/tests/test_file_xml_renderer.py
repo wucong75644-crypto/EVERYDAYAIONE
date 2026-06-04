@@ -74,13 +74,7 @@ def _build_meta() -> FileMeta:
             {"type": "column_renamed", "action": "AI 重命名 23 列"},
         ],
         merged_cells=[],
-        grain={
-            "group_key": "平台订单号",
-            "unique_count": 187234,
-            "avg_group_size": 2.7,
-            "order_level_fields": ["销售金额"],
-            "line_level_fields": ["销售数量"],
-        },
+        # V3：grain 字段已删除，order_level 改由 ai_decision.column_semantics 标注
         ai_decision={
             "header_row": 2,
             "data_start_row": 3,
@@ -129,10 +123,10 @@ class TestRenderXmlBasic:
                          original_path="/mnt/test.xlsx")
         assert xml.startswith("<file_analysis>")
         assert xml.rstrip().endswith("</file_analysis>")
-        # 关键节点存在
+        # 关键节点存在（V3：删 grain 节点）
         for tag in (
             "data_access", "file_meta", "ai_decision", "usage_hints",
-            "column_schema", "grain", "sample_data", "cleaning_result",
+            "column_schema", "sample_data", "cleaning_result",
         ):
             assert f"<{tag}" in xml, f"缺少 <{tag}> 节点"
 
@@ -176,11 +170,8 @@ class TestColumnSchemaAndGrain:
         # order_level 标签
         assert 'order_level="true"' in xml
 
-    def test_grain_fields(self):
-        meta = _build_meta()
-        xml = render_xml(meta, parquet_path="/x.parquet")
-        assert "<group_key>平台订单号</group_key>" in xml
-        assert "<order_level_fields>" in xml
+    # V3：删 test_grain_fields，grain 章节已废弃，order_level 改由
+    # ai_decision.column_semantics[i].is_order_level 标注（test_columns_have_order_level_tag 覆盖）
 
 
 # ── sample_data + column_index ──
@@ -370,9 +361,9 @@ class TestDegradeGracefully:
         # ai_decision 节点缺失
         assert "<ai_decision" not in xml
 
-    def test_empty_grain(self):
+    def test_no_grain_section(self):
+        """V3：grain 章节已删除，xml 不应再包含 <grain> 节点。"""
         meta = _build_meta()
-        meta.grain = {}
         xml = render_xml(meta, parquet_path="/x.parquet")
         assert "<grain" not in xml
 

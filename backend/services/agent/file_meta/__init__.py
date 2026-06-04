@@ -2,12 +2,11 @@
 
 包目录拆分：
 - dataclass.py: FileMeta + 共享常量 + 列号工具
-- builders.py:  generate_file_meta + _build_schema / _build_sample / _detect_grain / _scan_issues
+- builders.py:  generate_file_meta + _build_schema / _build_sample / _scan_issues
 - formulas.py:  extract_formulas（Excel 公式提取）
 - view.py:      read_file_meta / write_file_meta / format_file_view（IO + 渲染）
 
-公开 API 通过 `from services.agent.file_meta import xxx` 直接访问；
-私有名（_detect_grain 等）也在外部被引用，一并重导出。
+V3 起：表角色识别（fact/dim/log/...）下沉到 AI 裁决层，删 _detect_grain 函数。
 """
 
 # 数据类 + 常量
@@ -28,7 +27,6 @@ from services.agent.file_meta.builders import (
     _build_sample,
     _build_schema,
     _dedup_samples_by_signature,
-    _detect_grain,
     _determine_status,
     _infer_dtype,
     _scan_issues,

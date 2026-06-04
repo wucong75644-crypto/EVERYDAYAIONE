@@ -70,15 +70,24 @@ def format_file_view(meta: FileMeta) -> str:
     src = meta.source_file
     s = meta.summary or {}
     row_count = s.get("row_count", 0)
-    grain = meta.grain or {}
 
-    # 预计算订单级字段（schema 标签 + 警告共用）
-    order_level_fields: list[str] = grain.get("order_level_fields", []) or []
+    # V3：order_level / group_key 改读 ai_decision（不再依赖 grain）
+    ai = meta.ai_decision or {}
+    cs_list = ai.get("column_semantics", []) or []
+    order_level_fields = [
+        cs.get("business_name", "")
+        for cs in cs_list
+        if cs.get("is_order_level") and cs.get("business_name")
+    ]
     numeric_ol = [
         c for c in order_level_fields
         if meta.schema.get(c, {}).get("type") in ("integer", "decimal")
     ]
-    group_key = grain.get("group_key", "")
+    group_key = next(
+        (cs.get("business_name", "") for cs in cs_list
+         if cs.get("is_id_column") and cs.get("business_name")),
+        "",
+    )
 
     # ============================================================
     # [HEAD] 顶部锚定：核心警告（U 形 attention 头部高峰）
@@ -179,19 +188,7 @@ def format_file_view(meta: FileMeta) -> str:
             lines.append(f"  {col_letter} | {col_name} | {dtype}{extra}{tag}")
         lines.append("")
 
-    # ============================================================
-    # [MID] 数据粒度详情（订单级头部已警告，这里给数字背景）
-    # ============================================================
-    if grain:
-        lines.append("## 📦 数据粒度")
-        lines.append(
-            f"- 明细表: 每订单平均 {grain.get('avg_group_size', 0)} 行（"
-            f"{grain['unique_count']} 个 {group_key} / {grain['row_count']} 行）"
-        )
-        ll = grain.get("line_level_fields", []) or []
-        if ll:
-            lines.append(f"- 明细级字段（每行独立，可直接 SUM/COUNT）: {', '.join(ll[:8])}")
-        lines.append("")
+    # V3：删数据粒度章节（grain 已废弃，AI 在 column_semantics 标注 order_level）
 
     # ============================================================
     # [MID] 样本数据（已在 _build_sample 跨段去重）
@@ -285,10 +282,17 @@ def format_file_view(meta: FileMeta) -> str:
             f"SUM 前必须先 `DISTINCT {group_key}` 去重。"
         )
 
-        # 多字段聚合范式（明细级 + 订单级混合统计时必用）
+        # V3：明细级数值字段从 ai_decision 取（非订单级 + 数值类型）
         line_level_numeric = [
-            c for c in (grain.get("line_level_fields", []) or [])
-            if meta.schema.get(c, {}).get("type") in ("integer", "decimal")
+            cs.get("business_name", "")
+            for cs in cs_list
+            if (
+                cs.get("business_name")
+                and not cs.get("is_order_level")
+                and meta.schema.get(
+                    cs.get("business_name", ""), {}
+                ).get("type") in ("integer", "decimal")
+            )
         ]
         if line_level_numeric:
             first_ll = line_level_numeric[0]

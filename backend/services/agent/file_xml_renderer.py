@@ -64,8 +64,7 @@ def render_xml(
     # 5. 列 schema
     parts.append(_render_column_schema(meta))
 
-    # 6. 数据粒度
-    parts.append(_render_grain(meta))
+    # V3：删 _render_grain 调用（grain 章节已废弃）
 
     # 7. 样本数据（动态行数）
     parts.append(_render_sample_data(meta))
@@ -219,51 +218,56 @@ def _render_ai_decision(meta: FileMeta) -> str:
 
 
 def _render_usage_hints(meta: FileMeta, parquet_path: str) -> str:
-    """根据 grain + ai_decision 生成 critical 级 SQL 范式。"""
-    parts: list[str] = ['\n  <usage_hints priority="critical">\n']
+    """V3：仅从 ai_decision + summary 生成通用 SQL 范式（删 grain 依赖）。
 
-    grain = meta.grain or {}
-    group_key = grain.get("group_key", "")
-    order_level_numeric = []
-    line_level_numeric = []
+    业务粒度（订单级/明细级）由 AI 在 column_semantics[i].is_order_level 标注，
+    P4 还会接入 ai_decision.table_role 走分角色模板。
+    """
+    parts: list[str] = []
+    hint_lines: list[str] = []
 
-    # 从 ai_decision 取业务列名
     ai = meta.ai_decision or {}
-    cs_list = ai.get("column_semantics", []) or []
-    semantic_by_name = {cs.get("business_name", ""): cs for cs in cs_list}
-
-    # 订单级数值字段
-    for c in (grain.get("order_level_fields") or []):
-        info = meta.schema.get(c, {})
-        if info.get("type") in ("integer", "decimal"):
-            order_level_numeric.append(c)
-    for c in (grain.get("line_level_fields") or []):
-        info = meta.schema.get(c, {})
-        if info.get("type") in ("integer", "decimal"):
-            line_level_numeric.append(c)
-
     # 是否有汇总行需要过滤（AI 决策标了 summary_rows → 清洗时已加 _is_summary 列）
     has_summary = bool(ai.get("summary_rows") or [])
     summary_filter = ' WHERE "_is_summary" = false' if has_summary else ""
 
-    # critical hint
-    if order_level_numeric and group_key:
+    # 从 ai_decision.column_semantics 找订单级 / 明细级数值列
+    cs_list = ai.get("column_semantics", []) or []
+    order_level_numeric: list[str] = []
+    detail_level_numeric: list[str] = []
+    group_key_candidate = ""
+    for cs in cs_list:
+        name = cs.get("business_name") or ""
+        if not name:
+            continue
+        info = meta.schema.get(name, {})
+        if info.get("type") not in ("integer", "decimal"):
+            # ID 类列做 group_key 候选
+            if cs.get("is_id_column") and not group_key_candidate:
+                group_key_candidate = name
+            continue
+        if cs.get("is_order_level"):
+            order_level_numeric.append(name)
+        else:
+            detail_level_numeric.append(name)
+
+    if order_level_numeric and group_key_candidate:
         cols_str = "/".join(order_level_numeric)
-        parts.append(
+        hint_lines.append(
             '    <hint severity="must">\n'
-            f"      {escape(cols_str)} 是订单级字段，在同一 {escape(group_key)} 内值重复，"
-            f"SUM 前必须先 DISTINCT {escape(group_key)}，否则数字会虚高。\n"
+            f"      {escape(cols_str)} 是订单级字段，在同一 {escape(group_key_candidate)} 内值重复，"
+            f"SUM 前必须先 DISTINCT {escape(group_key_candidate)}，否则数字会虚高。\n"
             "    </hint>\n"
         )
-    if line_level_numeric:
-        parts.append(
+    if detail_level_numeric:
+        hint_lines.append(
             '    <hint severity="info">\n'
-            f"      {escape('/'.join(line_level_numeric))} 是明细级字段，可直接 SUM。\n"
+            f"      {escape('/'.join(detail_level_numeric))} 是明细级字段，可直接 SUM。\n"
             "    </hint>\n"
         )
 
     if has_summary:
-        parts.append(
+        hint_lines.append(
             '    <hint severity="must">\n'
             "      文件含合计行（_is_summary=true），所有聚合/统计 SQL 必须加 "
             '<code>WHERE "_is_summary" = false</code>，否则会把合计算入明细，数字虚高 2 倍。\n'
@@ -272,43 +276,55 @@ def _render_usage_hints(meta: FileMeta, parquet_path: str) -> str:
 
     rows = (meta.summary or {}).get("row_count", 0)
     if rows >= 100_000:
-        parts.append(
+        hint_lines.append(
             '    <hint severity="info">\n'
             f"      {rows:,} 行规模，禁止 SELECT * .df() 全量加载会 OOM，"
             "先 SQL 聚合再 .df()。\n"
             "    </hint>\n"
         )
 
-    # code examples（含 _is_summary 过滤）
-    if order_level_numeric and group_key:
+    # code examples
+    code_lines: list[str] = []
+    if order_level_numeric and group_key_candidate:
         first_ol = order_level_numeric[0]
-        # 在 DISTINCT 子查询的 FROM 后加过滤
         from_clause = f"FROM read_parquet('{parquet_path}'){summary_filter}"
-        parts.append(
+        code_lines.append(
             '    <code_example title="订单级聚合范式（必用）"><![CDATA[\n'
             f'SELECT SUM("{first_ol}") AS 总额\n'
             "FROM (\n"
-            f'    SELECT DISTINCT "{group_key}", "{first_ol}"\n'
+            f'    SELECT DISTINCT "{group_key_candidate}", "{first_ol}"\n'
             f"    {from_clause}\n"
             ")\n"
             "]]></code_example>\n"
         )
-    if line_level_numeric:
-        first_ll = line_level_numeric[0]
-        parts.append(
+    if detail_level_numeric:
+        first_ll = detail_level_numeric[0]
+        code_lines.append(
             '    <code_example title="明细级聚合（直接 SUM）"><![CDATA[\n'
             f"SELECT SUM(\"{first_ll}\") FROM read_parquet('{parquet_path}'){summary_filter}\n"
             "]]></code_example>\n"
         )
 
+    # V3 稀疏渲染：没有任何 hint 和 code 时整段不输出
+    if not hint_lines and not code_lines:
+        return ""
+
+    parts.append('\n  <usage_hints priority="critical">\n')
+    parts.extend(hint_lines)
+    parts.extend(code_lines)
     parts.append("  </usage_hints>\n")
     return "".join(parts)
 
 
 def _render_column_schema(meta: FileMeta) -> str:
+    """V3：order_level 改读 ai_decision.column_semantics[i].is_order_level（不再依赖 grain）。"""
     parts: list[str] = ['\n  <column_schema priority="high">\n']
-    grain = meta.grain or {}
-    order_level_set = set(grain.get("order_level_fields") or [])
+    ai = meta.ai_decision or {}
+    order_level_set = {
+        cs.get("business_name", "")
+        for cs in (ai.get("column_semantics") or [])
+        if cs.get("is_order_level") and cs.get("business_name")
+    }
 
     for col_name, info in meta.schema.items():
         attrs = [
@@ -335,30 +351,7 @@ def _render_column_schema(meta: FileMeta) -> str:
     return "".join(parts)
 
 
-def _render_grain(meta: FileMeta) -> str:
-    grain = meta.grain or {}
-    if not grain:
-        return ""
-    parts: list[str] = ['\n  <grain priority="high">\n']
-    parts.append(f"    <group_key>{escape(grain.get('group_key', ''))}</group_key>\n")
-    parts.append(f"    <unique_count>{grain.get('unique_count', 0)}</unique_count>\n")
-    parts.append(
-        f"    <avg_group_size>{grain.get('avg_group_size', 0)}</avg_group_size>\n"
-    )
-    ol = grain.get("order_level_fields") or []
-    if ol:
-        parts.append("    <order_level_fields>\n")
-        for f in ol:
-            parts.append(f"      <field>{escape(str(f))}</field>\n")
-        parts.append("    </order_level_fields>\n")
-    ll = grain.get("line_level_fields") or []
-    if ll:
-        parts.append("    <line_level_fields>\n")
-        for f in ll:
-            parts.append(f"      <field>{escape(str(f))}</field>\n")
-        parts.append("    </line_level_fields>\n")
-    parts.append("  </grain>\n")
-    return "".join(parts)
+# V3：删 _render_grain 函数。表角色识别下沉到 AI ai_decision.table_role（P4 接入）。
 
 
 def _render_sample_data(meta: FileMeta) -> str:

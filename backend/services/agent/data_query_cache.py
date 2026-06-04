@@ -1628,11 +1628,7 @@ def _convert_excel_to_parquet(
                         "action": a.get("description", ""),
                         "recovery_hint": "AI 检测到的数据异常，建议分析时注意",
                     })
-        # 粒度检测（小文件：df 是完整数据，len(df) 是真实行数）
-        from services.agent.file_meta import _detect_grain
-        _grain = _detect_grain(df, file_meta.schema, len(df))
-        if _grain:
-            file_meta.grain = _grain
+        # V3：删粒度检测；表角色由 AI 看 schema+sample 自判（写入 ai_decision.table_role）
         write_file_meta(cache_path, file_meta)
         update_session_files(
             str(Path(cache_path).parent), cache_path,
@@ -1806,11 +1802,7 @@ def _convert_excel_to_parquet(
                         "action": f"AI 重命名列：{ai_decision.column_mapping}",
                         "recovery_hint": "列名已按 AI 预探测结果重命名",
                     })
-                # 粒度检测（大文件：用采样 df + 实际行数）
-                from services.agent.file_meta import _detect_grain
-                _grain = _detect_grain(sample_df, file_meta.schema, row_count)
-                if _grain:
-                    file_meta.grain = _grain
+                # V3：删粒度检测；表角色由 AI 看 schema+sample 自判
                 write_file_meta(cache_path, file_meta)
                 update_session_files(
                     str(Path(cache_path).parent), cache_path,
