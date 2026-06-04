@@ -1320,7 +1320,7 @@ def detect_header_depth(
     return actual_start_0indexed, depth
 
 
-_CHUNK_THRESHOLD = 100_000  # 超过此行数走分块读取
+_CHUNK_THRESHOLD = 600_000  # V3.1: 与 file_scanners.CHUNK_THRESHOLD 同步,允许 500K 销售明细走小文件全量+cached_df 复用
 _CHUNK_SIZE = 100_000       # 每块行数（从 50K 提升到 100K 减少循环开销）
 _CHUNK_WORKERS = 3          # 分块并行 worker 数
 
