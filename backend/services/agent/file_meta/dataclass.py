@@ -50,7 +50,7 @@ class FileMeta:
     issues: list[dict[str, Any]] = field(default_factory=list)
     merged_cells: list[dict[str, Any]] = field(default_factory=list)
     raw_preserved: bool = True            # 原始结构是否被保留（未自动 ffill）
-    grain: dict[str, Any] = field(default_factory=dict)
+    # V3：删 grain 字段（电商假设的"事实表粒度"层）。表角色识别 → AI 输出 ai_decision.table_role
     prescan: dict[str, Any] = field(default_factory=dict)  # v1: PrescanResult；v2 后废弃
     cleaning: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0               # v1: 1.0/0.8/0.5；v2 后废弃
