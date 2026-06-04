@@ -52,8 +52,8 @@ class ColumnEvidence:
     classified_dist: dict[str, int] = field(default_factory=dict)  # {long_id: 9, numeric: 3, empty: 1}
     null_ratio: float = 0.0                                  # 该列 null 比例
     is_long_id_candidate: bool = False                       # 长度 > 10 且全数字的占比 > 70%
-    has_unit_suffix_candidates: bool = False                 # 形如 "1.5kg" 的值
-    has_currency_prefix: bool = False                        # ¥/$/￥ 前缀
+    # V3：删除 has_currency_prefix / has_unit_suffix_candidates
+    # 业务格式识别下沉到 AI 看 sample 自判，扫描器只产出纯统计字段
 
 
 @dataclass

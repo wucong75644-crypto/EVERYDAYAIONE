@@ -50,8 +50,6 @@ class TestDataclassDefaults:
         assert ce.classified_dist == {}
         assert ce.null_ratio == 0.0
         assert ce.is_long_id_candidate is False
-        assert ce.has_unit_suffix_candidates is False
-        assert ce.has_currency_prefix is False
 
     def test_region_evidence_minimal(self):
         re_obj = RegionEvidence(

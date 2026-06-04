@@ -39,8 +39,6 @@ from services.agent.file_scanners import (
     MAX_SHEETS_SAMPLED,
     SUMMARY_KEYWORDS,
     SUSPICIOUS_MIN_NULL_RATIO,
-    _RE_CURRENCY_PREFIX,
-    _RE_UNIT_NUMBER,
     col_letter,
     sample_segment_sizes,
     suspicious_row_limit,
@@ -265,19 +263,6 @@ class _PathBChunkAccumulator:
                 if self.col_max_abs[ci] >= 1e10:
                     is_long_id = True
 
-            has_currency = False
-            has_unit = False
-            for val in sample_vals[:10]:
-                if val is None:
-                    continue
-                s = str(val).strip()
-                if not s:
-                    continue
-                if _RE_CURRENCY_PREFIX.match(s):
-                    has_currency = True
-                if _RE_UNIT_NUMBER.match(s):
-                    has_unit = True
-
             cols.append(ColumnEvidence(
                 col_letter=col_letter(ci),
                 raw_header=col_str,
@@ -285,8 +270,6 @@ class _PathBChunkAccumulator:
                 classified_dist=classified,
                 null_ratio=null_ratio,
                 is_long_id_candidate=is_long_id,
-                has_unit_suffix_candidates=has_unit,
-                has_currency_prefix=has_currency,
             ))
         return cols
 
