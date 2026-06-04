@@ -73,9 +73,22 @@ JSON_SCHEMA_TEMPLATE = """
       "affected_cols": ["<列字母>"]
     }
   ],
-  "overall_summary": "<100-300 字总结>"
+  "overall_summary": "<100-300 字总结>",
+  "table_role": "fact" | "dimension" | "log" | "wide" | "snapshot" | "unknown",
+  "table_role_note": "<一句话理由，例如：维度表，主要用于 JOIN 补充店铺所属信息>"
 }
-""".strip()
+
+# table_role 判断指南
+- fact:      事实表 / 订单明细表 / 交易流水。有 ID + 多个数值聚合字段（金额/数量），
+             同一 ID 多行（一对多粒度）。例：销售订单明细、退款流水。
+- dimension: 维度表 / 映射表 / 字典表。行数不多，列以字符串为主，无聚合数值字段，
+             有高基数 string 列（候选 join key）。例：店铺映射、地区编码表、商品类目表。
+- log:       日志 / 事件表。按时间排序，无主键聚合概念，每行一个事件。
+             例：系统日志、操作记录。
+- wide:      宽表 / 指标表。高列数（≥50 列），每行一个 entity 多个指标。
+             例：KPI 周报、月度运营报表。
+- snapshot:  快照表。某时点全量数据，无时间维度。例：当日库存、月末余额。
+- unknown:   无法判断时填此值（不强求选）。""".strip()
 
 
 def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:

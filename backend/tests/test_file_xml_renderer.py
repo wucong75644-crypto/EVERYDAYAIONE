@@ -98,6 +98,9 @@ def _build_meta() -> FileMeta:
             "attempt_count": 1,
             "elapsed_ms": 1240,
             "path_type": "B",
+            # V3：fixture 默认事实表，让 usage_hints 走 fact 分支
+            "table_role": "fact",
+            "table_role_note": "订单明细，订单号+金额一对多",
         },
         cleaning_strategy={},
         related_files=[],
@@ -152,11 +155,11 @@ class TestRenderXmlBasic:
         assert 'model="qwen-turbo"' in xml
         assert 'attempt="1"' in xml
 
-    def test_summary_rows_empty_marker(self):
+    def test_summary_rows_omitted_when_empty(self):
+        """V3 稀疏渲染：summary_rows 为空时整段不渲染（不再输出 <summary_rows/> 空标签）"""
         meta = _build_meta()
         xml = render_xml(meta, parquet_path="/x.parquet")
-        # AI 确认无汇总行
-        assert "<summary_rows/>" in xml or "<summary_rows></summary_rows>" in xml
+        assert "<summary_rows" not in xml
 
 
 # ── column_schema + grain ──

@@ -227,7 +227,7 @@ _MAX_LOCKS = 100
 # V2 缓存 schema 版本：升级时改这个数字，所有用户旧缓存自动失效（强制重算）
 # v2.0 → v2.1：PathB calamine 改造 + PathA/B null_ratio bug 修复 + ""列识别（2026-06-03）
 # v2.1 → v2.2：cache_key 改用内容指纹（zip CRC / csv md5），snapshot 改存 fingerprint（2026-06-04）
-_CACHE_SCHEMA_VERSION = "v2.2"
+_CACHE_SCHEMA_VERSION = "v3.0"  # V3：骨架抽取 + AI 一次裁决（删 grain，加 table_role）
 
 # V2.2 #19: ensure_parquet_cache 总超时（兜底防挂死，业界通用 10 分钟）
 # 覆盖：AI 失败链 195s（3×65s 含网络抖动）+ scan 大文件 90s + 转换 60s + 写盘/meta 余量
