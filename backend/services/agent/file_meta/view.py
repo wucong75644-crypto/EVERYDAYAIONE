@@ -251,9 +251,9 @@ def format_file_view(meta: FileMeta) -> str:
 def _compress_issues(issues: list[dict]) -> list[str]:
     """智能合并 issues 为压缩后的 notes 行。
 
-    特殊场景: 同行的多个"X 列有 N 个缺失值"warning 合并为 1 行
-    （如 Row 5001 是 _is_summary 汇总行，5 列都缺失 → 合并为
-    "Row 5001 多列缺失，大概率是 _is_summary 汇总行"）
+    同行 missing_value 合并为客观陈述，不再附加任何归因猜测。
+    汇总行的判断由 AI 一次裁决（AIDecision.summary_rows）负责，
+    此函数只输出代码可验证的事实。
     """
     if not issues:
         return []
@@ -272,10 +272,8 @@ def _compress_issues(issues: list[dict]) -> list[str]:
     for row, group in by_row.items():
         if len(group) >= 3:
             cols = [(i.get("location") or {}).get("col", "?") for i in group]
-            out.append(
-                f"- Row {row} 多列缺失（{', '.join(cols[:5])}{'...' if len(cols) > 5 else ''}），"
-                f"大概率是 _is_summary 汇总行，查询时加 `WHERE _is_summary = false` 排除"
-            )
+            cols_display = ", ".join(cols[:5]) + ("..." if len(cols) > 5 else "")
+            out.append(f"- Row {row} 多列缺失（{cols_display}）")
         else:
             for i in group:
                 out.append(_format_single_issue(i))

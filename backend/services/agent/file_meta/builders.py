@@ -371,6 +371,13 @@ def _dedup_samples_by_signature(
             col_types[col_str] = "string"
 
     def _sig(row: dict) -> tuple:
+        """生成行签名。
+
+        Bug-6 修复：
+          - 数值列：保留前 4 位有效数字（用 %.4g 格式化），区分接近的数值
+          - 字符串列：前 16 字符 hash + 长度，避免长字符串（如订单号）前 8 位
+            相同就被误判为同一类
+        """
         sig: list = []
         for col, t in col_types.items():
             val = row.get(col)
@@ -378,11 +385,14 @@ def _dedup_samples_by_signature(
                 sig.append("∅")
             elif t == "number":
                 try:
-                    sig.append("+" if float(val) > 0 else "0")
+                    fv = float(val)
+                    sig.append(f"{fv:.4g}")
                 except (TypeError, ValueError):
-                    sig.append(str(val)[:8])
+                    s = str(val)
+                    sig.append((hash(s[:16]), len(s)))
             else:
-                sig.append(hash(str(val)[:8]))
+                s = str(val)
+                sig.append((hash(s[:16]), len(s)))
         return tuple(sig)
 
     seen: set = set()

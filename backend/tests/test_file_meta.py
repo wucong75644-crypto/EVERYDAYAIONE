@@ -480,6 +480,61 @@ class TestFormatFileView:
             assert "refund" in schema_section
 
 
+# ── _compress_issues 回归（Bug-1/2 修复）──
+
+
+class TestCompressIssuesNoFabrication:
+    """Bug-1/2 修复回归：_compress_issues 不再编造 '_is_summary 汇总行' 提示。"""
+
+    def test_multi_null_no_summary_fabrication(self):
+        """≥3 个同行 missing_value 只输出客观'多列缺失'，不附加汇总行猜测。"""
+        from services.agent.file_meta.view import _compress_issues
+
+        issues = [
+            {"type": "missing_value", "severity": "warning",
+             "location": {"row": 2, "col": "D"}, "action": "D 列缺 N 个"},
+            {"type": "missing_value", "severity": "warning",
+             "location": {"row": 2, "col": "E"}, "action": "E 列缺 N 个"},
+            {"type": "missing_value", "severity": "warning",
+             "location": {"row": 2, "col": "F"}, "action": "F 列缺 N 个"},
+        ]
+        out = _compress_issues(issues)
+        text = "\n".join(out)
+        # 必须有客观陈述
+        assert "Row 2" in text
+        assert "多列缺失" in text
+        # 必须没有任何造谣
+        assert "_is_summary" not in text, "Bug-1 修复后不应再编造 _is_summary 提示"
+        assert "汇总行" not in text, "Bug-1 修复后不应再编造汇总行猜测"
+        assert "WHERE" not in text, "不应给出 SQL 建议（这是 AI 裁决的职责）"
+
+    def test_single_missing_value_unchanged(self):
+        """< 3 个同行 missing_value 走 _format_single_issue 不受影响。"""
+        from services.agent.file_meta.view import _compress_issues
+
+        issues = [
+            {"type": "missing_value", "severity": "warning",
+             "location": {"row": 5, "col": "D"}, "action": "D 列缺 1 个"},
+        ]
+        out = _compress_issues(issues)
+        assert len(out) == 1
+        # 单条仍按 _format_single_issue 输出，含 Row 5 D 列
+        assert "Row 5" in out[0]
+
+    def test_non_missing_value_passthrough(self):
+        """非 missing_value 类型不受合并影响。"""
+        from services.agent.file_meta.view import _compress_issues
+
+        issues = [
+            {"type": "merge_filled", "severity": "info",
+             "location": {"cols": ["A"]}, "action": "合并填充"},
+            {"type": "int_cols_fixed", "severity": "info",
+             "location": {"cols": ["qty"]}, "action": "整数修复"},
+        ]
+        out = _compress_issues(issues)
+        assert len(out) == 2
+
+
 # ── extract_formulas ──
 
 
