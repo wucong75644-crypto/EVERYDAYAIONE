@@ -370,3 +370,30 @@ class TestAdjudicateFailureChain:
         assert "test.xlsx" in exc.value.user_message
         # 中文格式
         assert "文件" in exc.value.user_message
+
+
+class TestAttemptsTimeoutConfig:
+    """锁定 _ATTEMPTS timeout 配置：90/120/180 s ladder（对齐 LangChain ChatModel）。
+
+    5344 token prompt 端到端最坏 170s（prefill 53-107s + 输出 40-67s）。
+    30/45/60 实测全部踩满 timeout（生产 2026-06-04 19:01 真实现象）。
+    防止未来手抖改回过紧值。
+    """
+
+    def test_ladder_90_120_180(self):
+        from services.agent.file_ai_judge import _ATTEMPTS
+        timeouts = [a["timeout"] for a in _ATTEMPTS]
+        assert timeouts == [90, 120, 180], \
+            f"_ATTEMPTS timeout ladder 必须 [90, 120, 180]，实际 {timeouts}"
+
+    def test_first_attempt_at_least_60s(self):
+        """attempt 1 至少 60s — 给千问 5344 token prompt prefill 留余量。"""
+        from services.agent.file_ai_judge import _ATTEMPTS
+        assert _ATTEMPTS[0]["timeout"] >= 60, "首次 timeout 不应 < 60s"
+
+    def test_monotonic_increasing(self):
+        """timeout 必须单调递增（每次重试给更宽余量）。"""
+        from services.agent.file_ai_judge import _ATTEMPTS
+        timeouts = [a["timeout"] for a in _ATTEMPTS]
+        assert all(timeouts[i] < timeouts[i+1] for i in range(len(timeouts)-1)), \
+            f"timeout 必须递增，实际 {timeouts}"
