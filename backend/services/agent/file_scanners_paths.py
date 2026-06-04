@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import gc
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,12 @@ import numpy as np
 import pandas as pd
 import python_calamine
 from loguru import logger
+
+from services.agent.file_meta import extract_formulas
+
+# 并行公式提取超时（秒）。lxml 流式扫到 _MAX_FORMULAS=200 就 break，
+# 正常文件几秒内返回；这里给 120s 是给 GB 级 sheet1.xml 兜底。
+_PATH_B_FORMULA_TIMEOUT = 120.0
 
 from services.agent.data_query_cache import _classify_cell, detect_header_row
 from services.agent.file_evidence import (
@@ -369,9 +376,8 @@ class PathBScanner(BaseScanner):
         if n_data * n_cols_probe > self.MAX_TOTAL_CELLS:
             self._raise_file_too_large(n_data, n_cols_probe)
 
-        # ② 结构 + 公式（不依赖数据读取，复用 BaseScanner 工具）
+        # ② 结构（不依赖数据读取，复用 BaseScanner 工具）
         merged, hidden_rows, hidden_cols, has_filter = self._structure_to_lists()
-        formulas, total_formulas = self._scan_formulas(target)
 
         # ③ 采样位置预计算
         sample_idx_global = _build_path_b_sample_idx(n_data)
@@ -381,40 +387,59 @@ class PathBScanner(BaseScanner):
         )
         susp_limit = suspicious_row_limit(n_data)
 
-        # ④ calamine 流式读
-        wb = python_calamine.CalamineWorkbook.from_path(self.excel_path)
-        ws = wb.get_sheet_by_index(0)
+        # ④ 公式提取并行化：在 calamine 主扫描启动前丢到独立线程。
+        # lxml.iterparse 是 C 实现会释放 GIL，与主线程的 calamine 解压+行解析
+        # 可以真并行；50w 行原本串行 290s（公式 30-60s），并行后近似只剩 calamine 主路径。
+        formula_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="pathb-formula",
+        )
+        formula_future = formula_executor.submit(
+            extract_formulas, self.excel_path, target,
+        )
 
-        data_start_excel = self.header_row + 2
-        header_candidates_raw: list[list[Any]] = []
-        col_names: list[str] = []
-        n_cols = 0
-        acc: _PathBChunkAccumulator | None = None
-        chunk_buf: list[list[Any]] = []
-        chunk_start_local = 0
-        rows_seen = 0
+        try:
+            # ⑤ calamine 流式读
+            wb = python_calamine.CalamineWorkbook.from_path(self.excel_path)
+            ws = wb.get_sheet_by_index(0)
 
-        for raw_row in ws.iter_rows():
-            if rows_seen < 5:
-                header_candidates_raw.append(list(raw_row))
-            if rows_seen <= self.header_row:
-                if rows_seen == self.header_row:
-                    col_names = [str(v) for v in raw_row]
-                    n_cols = len(col_names)
-                    acc = _PathBChunkAccumulator(
-                        total_rows=n_data,
-                        n_cols=n_cols,
-                        data_start_excel=data_start_excel,
-                        col_names=col_names,
-                        sample_idx_global=sample_idx_global,
-                        key_sample_idx_global=key_sample_idx_global,
-                        suspicious_limit=susp_limit,
-                    )
+            data_start_excel = self.header_row + 2
+            header_candidates_raw: list[list[Any]] = []
+            col_names: list[str] = []
+            n_cols = 0
+            acc: _PathBChunkAccumulator | None = None
+            chunk_buf: list[list[Any]] = []
+            chunk_start_local = 0
+            rows_seen = 0
+
+            for raw_row in ws.iter_rows():
+                if rows_seen < 5:
+                    header_candidates_raw.append(list(raw_row))
+                if rows_seen <= self.header_row:
+                    if rows_seen == self.header_row:
+                        col_names = [str(v) for v in raw_row]
+                        n_cols = len(col_names)
+                        acc = _PathBChunkAccumulator(
+                            total_rows=n_data,
+                            n_cols=n_cols,
+                            data_start_excel=data_start_excel,
+                            col_names=col_names,
+                            sample_idx_global=sample_idx_global,
+                            key_sample_idx_global=key_sample_idx_global,
+                            suspicious_limit=susp_limit,
+                        )
+                    rows_seen += 1
+                    continue
+                chunk_buf.append(list(raw_row))
                 rows_seen += 1
-                continue
-            chunk_buf.append(list(raw_row))
-            rows_seen += 1
-            if len(chunk_buf) >= PATH_B_CHUNK_SIZE:
+                if len(chunk_buf) >= PATH_B_CHUNK_SIZE:
+                    df = pd.DataFrame(chunk_buf)
+                    acc.process_chunk(df, chunk_start_local)
+                    chunk_start_local += len(chunk_buf)
+                    chunk_buf = []
+                    del df
+                    gc.collect()
+
+            if chunk_buf and acc is not None:
                 df = pd.DataFrame(chunk_buf)
                 acc.process_chunk(df, chunk_start_local)
                 chunk_start_local += len(chunk_buf)
@@ -422,13 +447,23 @@ class PathBScanner(BaseScanner):
                 del df
                 gc.collect()
 
-        if chunk_buf and acc is not None:
-            df = pd.DataFrame(chunk_buf)
-            acc.process_chunk(df, chunk_start_local)
-            chunk_start_local += len(chunk_buf)
-            chunk_buf = []
-            del df
-            gc.collect()
+            # ⑥ 主扫描结束后再回收公式结果（通常主路径耗时 > 公式提取，近零等待）
+            try:
+                raw_formulas, _skip = formula_future.result(
+                    timeout=_PATH_B_FORMULA_TIMEOUT,
+                )
+                formulas, total_formulas = self._wrap_formula_raw(raw_formulas)
+            except Exception as e:
+                # 公式提取失败不影响主流程：返回空列表，PathB 扫描结果照常返回
+                logger.warning(
+                    f"PathB parallel formula extraction failed: "
+                    f"{type(e).__name__}: {e}"
+                )
+                formulas, total_formulas = [], 0
+        finally:
+            # wait=False：主扫描已完成，公式线程要么已结束要么 timeout
+            # 让 GC 兜底回收，不阻塞主路径
+            formula_executor.shutdown(wait=False)
 
         # 空表 / 表头越界兜底
         if acc is None:

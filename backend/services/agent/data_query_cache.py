@@ -1903,6 +1903,19 @@ def _convert_all_sheets_to_parquet(
         formulas=formulas,
         formula_skip_reason=formula_skip,
     )
+    # 多 Sheet 元数据：让 AI 知道(1)已合并到 _sheet 列(2)哪些 sheet 被 AI 跳过
+    # 通过 evidence_summary['sheets'] 透传给 view 层，避免改 FileMeta dataclass 与 generate_file_meta 签名
+    merged_sheets = [
+        n for n in sheet_names
+        if sheet_role_map.get(n, "data") not in ("meta", "aggregated", "skip")
+    ]
+    file_meta.evidence_summary["sheets"] = {
+        "total": len(sheet_names),
+        "merged": merged_sheets,           # 已并入 Parquet（_sheet 列区分）
+        "skipped": [                       # AI 判定跳过：role + 原因
+            {"name": n, "role": r} for n, r in skipped_sheets
+        ],
+    }
     write_file_meta(cache_path, file_meta)
     update_session_files(
         str(Path(cache_path).parent), cache_path,

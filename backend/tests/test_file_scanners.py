@@ -269,6 +269,101 @@ class TestPathBScannerSyntheticLarge:
             os.unlink(tmp_path)
 
 
+class TestPathBParallelFormulaExtraction:
+    """V1.3：PathB 公式提取与 calamine 主扫描并行（ThreadPoolExecutor + lxml 释放 GIL）。
+
+    目标：50w 行 scan 总耗时 290s → 230s（公式 30-60s 隐藏在主扫描时间内）。
+
+    100k+ 合成文件每个用例 ~6s 写入 + 几秒扫描，所以这组测试只设最小必要用例。
+    """
+
+    @staticmethod
+    def _build_large_xlsx_with_formula(path, n=101_000):
+        """构造 100k+ 行 + 几个公式的合成文件。"""
+        df = pd.DataFrame({
+            "id": list(range(n)),
+            "name": [f"r{i}" for i in range(n)],
+            "amount": [1.0] * n,
+        })
+        df.to_excel(str(path), index=False, engine="openpyxl")
+        # 用 openpyxl 重开并塞入公式（openpyxl 直接写公式不影响整体 1 行表头 + n 行数据结构）
+        wb = openpyxl.load_workbook(str(path))
+        ws = wb.active
+        ws.cell(row=2, column=4, value="=SUM(C2:C100)")        # D2
+        ws.cell(row=3, column=4, value="=C3*2")                # D3
+        ws.cell(row=4, column=4, value="=A4+1")                # D4
+        wb.save(str(path))
+        wb.close()
+
+    def test_parallel_extracts_formulas_correctly(self, tmp_path):
+        """并行模式扫描结果应包含写入的 3 个公式。"""
+        f = tmp_path / "large_with_formula.xlsx"
+        self._build_large_xlsx_with_formula(f)
+
+        from services.agent.file_scanners import make_scanner
+        scanner = make_scanner(str(f))
+        assert scanner.PATH_TYPE == "B"
+
+        pool = scanner.scan()
+        # 公式总数 ≥ 3（写入的 3 个 SUM/算术）
+        assert pool.formula_total_count >= 3, \
+            f"应提取 ≥3 个公式，实际 {pool.formula_total_count}"
+        # 验证至少一个公式包含 SUM
+        formulas_text = [f.expression for f in pool.formulas]
+        assert any("SUM" in fx for fx in formulas_text), \
+            f"应有 SUM 公式，实际 {formulas_text[:5]}"
+        # 主扫描结果完整（确认并行没破坏主路径）
+        assert pool.total_rows >= 100_000
+        assert pool.path_type == "B"
+
+    def test_formula_extraction_failure_does_not_break_scan(self, tmp_path, monkeypatch):
+        """公式提取在线程里 raise → 主扫描照常完成，formulas=[]。"""
+        f = tmp_path / "large_failing_formula.xlsx"
+        self._build_large_xlsx_with_formula(f)
+
+        # mock 掉 extract_formulas，让其 raise
+        def _boom(*_a, **_kw):
+            raise RuntimeError("simulated lxml failure")
+        from services.agent import file_scanners_paths
+        monkeypatch.setattr(
+            file_scanners_paths, "extract_formulas", _boom,
+        )
+
+        from services.agent.file_scanners import make_scanner
+        scanner = make_scanner(str(f))
+        pool = scanner.scan()
+        # 公式降级为空，但主扫描结果不受影响
+        assert pool.formula_total_count == 0
+        assert pool.formulas == []
+        assert pool.total_rows >= 100_000
+
+    def test_formula_extraction_timeout_does_not_break_scan(self, tmp_path, monkeypatch):
+        """公式提取超过 timeout → 降级为空，不阻塞主扫描。"""
+        import time
+        f = tmp_path / "large_slow_formula.xlsx"
+        self._build_large_xlsx_with_formula(f)
+
+        from services.agent import file_scanners_paths
+        # 把 timeout 改成 0.01 秒；让 extract_formulas 睡 0.5 秒触发超时
+        monkeypatch.setattr(
+            file_scanners_paths, "_PATH_B_FORMULA_TIMEOUT", 0.01,
+        )
+        def _slow(*_a, **_kw):
+            time.sleep(0.5)
+            return [], ""
+        monkeypatch.setattr(
+            file_scanners_paths, "extract_formulas", _slow,
+        )
+
+        from services.agent.file_scanners import make_scanner
+        scanner = make_scanner(str(f))
+        pool = scanner.scan()
+        # 超时降级，不影响主扫描
+        assert pool.formula_total_count == 0
+        assert pool.formulas == []
+        assert pool.total_rows >= 100_000
+
+
 # ── PathCScanner ──
 
 class TestPathCScannerSynthetic:
