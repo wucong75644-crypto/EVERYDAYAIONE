@@ -543,7 +543,7 @@ class _AIDecisionAdapter:
     """适配层：把 AIDecision 包装成与旧 PrescanResult 兼容的对象。
 
     现有 _convert_excel_to_parquet / convert_multi_region 内部仍读
-    prescan_result.header_rows / .special_rows / .column_mapping / 等字段，
+    ai_decision.header_rows / .special_rows / .column_mapping / 等字段，
     通过此适配避免改动 360 行的转换函数。
     """
 
@@ -687,6 +687,10 @@ async def ensure_parquet_cache(
 
         loop = asyncio.get_running_loop()
 
+        # Smell 3 观测：记录 file_analyze 各阶段耗时
+        _fn = Path(excel_path).name
+        _stage_t0 = time.monotonic()
+
         # 代码扫描在线程池（IO/CPU 密集）
         try:
             scanner = await loop.run_in_executor(None, make_scanner, excel_path, None)
@@ -712,7 +716,15 @@ async def ensure_parquet_cache(
                 attempts=[],
             ) from e
 
+        _scan_elapsed = time.monotonic() - _stage_t0
+        logger.info(
+            f"file_analyze stage | scan_done | src={_fn} "
+            f"| path={evidence.path_type} | rows={evidence.total_rows} "
+            f"| cols={evidence.total_cols} | elapsed={_scan_elapsed:.1f}s"
+        )
+
         # V2.2 #16: 尝试用 schema 指纹复用历史 AIDecision（同模板月度报表）
+        _stage_t = time.monotonic()
         schema_fp = _compute_schema_fingerprint(evidence)
         cached_decision_dict = _try_reuse_decision(staging_dir, schema_fp)
         if cached_decision_dict:
@@ -768,8 +780,22 @@ async def ensure_parquet_cache(
         else:
             decision = None
 
+        # Smell 2 + 3：AI 裁决前后埋点
+        _fp_elapsed = time.monotonic() - _stage_t
+        _ai_reused = decision is not None  # 是否走的缓存复用
+        logger.info(
+            f"file_analyze stage | fingerprint_check_done | src={_fn} "
+            f"| reused={_ai_reused} | elapsed={_fp_elapsed:.1f}s"
+        )
+
         # 缓存未命中或重建失败 → 走完整 AI 裁决
         if decision is None:
+            _ai_t0 = time.monotonic()
+            logger.info(
+                f"AI adjudicate start | src={_fn} "
+                f"| evidence_cols={len(evidence.columns)} "
+                f"| evidence_rows={evidence.total_rows}"
+            )
             try:
                 decision = await adjudicate(evidence)
             except Exception as ai_err:
@@ -777,7 +803,19 @@ async def ensure_parquet_cache(
                 _cat = getattr(ai_err, "error_category", "internal_error")
                 _msg = getattr(ai_err, "user_message", str(ai_err))
                 _record_failure(fingerprint, _cat, _msg or _cat)
+                logger.info(
+                    f"AI adjudicate end | src={_fn} | status=failed "
+                    f"| elapsed={time.monotonic()-_ai_t0:.1f}s | category={_cat}"
+                )
                 raise
+            logger.info(
+                f"AI adjudicate end | src={_fn} | status=ok "
+                f"| model={getattr(decision, 'model_used', 'N/A')} "
+                f"| attempts={getattr(decision, 'attempt_count', 'N/A')} "
+                f"| elapsed={time.monotonic()-_ai_t0:.1f}s"
+            )
+
+        _stage_t = time.monotonic()
         strategy = CleaningStrategy.from_decision(decision)
         adapter = _AIDecisionAdapter(decision)
 
@@ -797,6 +835,13 @@ async def ensure_parquet_cache(
                 str(snapshot_path), adapter, strategy,
             )
 
+        # Smell 3：clean_excel + Parquet 写入合并日志（这两步在 _convert_* 里串行做）
+        logger.info(
+            f"file_analyze stage | clean_parquet_done | src={_fn} "
+            f"| elapsed={time.monotonic()-_stage_t:.1f}s"
+        )
+        _stage_t = time.monotonic()
+
         # 空文件检测
         if not cache_path.exists():
             raise ValueError(
@@ -810,6 +855,12 @@ async def ensure_parquet_cache(
             None, _enrich_meta_v2,
             str(cache_path), excel_path, decision, strategy, staging_dir,
             schema_fp,
+        )
+
+        logger.info(
+            f"file_analyze stage | meta_write_done | src={_fn} "
+            f"| elapsed={time.monotonic()-_stage_t:.1f}s "
+            f"| total_elapsed={time.monotonic()-_stage_t0:.1f}s"
         )
 
         return str(cache_path), sheet_names
@@ -1338,7 +1389,7 @@ def _cast_to_schema(df, target_schema):
 
 
 def _apply_column_mapping(df, column_mapping: dict[str, str]):
-    """用 AI prescan 的 column_mapping 重命名列。key 是列字母(A/B/C)，value 是业务列名。
+    """用 AI 决策的 column_mapping 重命名列。key 是列字母(A/B/C)，value 是业务列名。
 
     安全机制：重命名后如果产生重复列名，对重复的加后缀 _1/_2 去重。
     """
@@ -1382,7 +1433,7 @@ def _apply_column_mapping(df, column_mapping: dict[str, str]):
 def _convert_excel_to_parquet(
     excel_path: str, cache_path: str, sheet: str | None,
     src_mtime: float, src_size: int, snapshot_path: str,
-    prescan_result=None,
+    ai_decision=None,
     strategy=None,
 ) -> list[str]:
     """Excel → Parquet（同步，线程池执行）。
@@ -1414,22 +1465,22 @@ def _convert_excel_to_parquet(
     resolved_name = target_sheet if isinstance(target_sheet, str) else sheet_names[0]
 
     # 表头检测：优先用 AI 预探测结果，失败退回代码检测
-    if prescan_result and prescan_result.confidence in ("high", "medium"):
+    if ai_decision and ai_decision.confidence in ("high", "medium"):
         # actual_start 语义：表头行位置(0-indexed)，与代码路径统一
-        if prescan_result.header_rows:
-            actual_start = prescan_result.header_rows[0] - 1  # 表头位置(0-indexed)
-        elif prescan_result.data_start_row:
-            actual_start = prescan_result.data_start_row - 2  # 推算：数据上一行是表头
+        if ai_decision.header_rows:
+            actual_start = ai_decision.header_rows[0] - 1  # 表头位置(0-indexed)
+        elif ai_decision.data_start_row:
+            actual_start = ai_decision.data_start_row - 2  # 推算：数据上一行是表头
         else:
             # 两个都没有 → 退回代码检测
             sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
             df_raw = sheet_raw.to_pandas()
             actual_start = detect_header_row(df_raw.values.tolist())
         actual_start = max(actual_start, 0)  # 防止负数
-        header_depth = len(prescan_result.header_rows) if prescan_result.header_rows else 1
+        header_depth = len(ai_decision.header_rows) if ai_decision.header_rows else 1
         logger.info(
-            f"Using AI prescan | src={Path(excel_path).name} "
-            f"| header_rows={prescan_result.header_rows} | data_start={prescan_result.data_start_row}"
+            f"Using AI decision | src={Path(excel_path).name} "
+            f"| header_rows={ai_decision.header_rows} | data_start={ai_decision.data_start_row}"
         )
     else:
         sheet_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=_HEADER_MAX_SCAN)
@@ -1451,18 +1502,18 @@ def _convert_excel_to_parquet(
     # ── 单 Sheet 多表格检测（prescan 优先）──
     from services.agent.table_region_detector import convert_multi_region, detect_table_regions
     _skip_region_detect = (
-        prescan_result
-        and prescan_result.confidence in ("high", "medium")
-        and len(prescan_result.regions) <= 1
+        ai_decision
+        and ai_decision.confidence in ("high", "medium")
+        and len(ai_decision.regions) <= 1
     )
     if not _skip_region_detect:
         scan_raw = reader.load_sheet(target_sheet, header_row=None, n_rows=5000)
         scan_rows = scan_raw.to_pandas().values.tolist()
         regions = detect_table_regions(scan_rows)
         if len(regions) >= 2:
-            _col_mapping = prescan_result.column_mapping if prescan_result else {}
+            _col_mapping = ai_decision.column_mapping if ai_decision else {}
             # 从 _AIDecisionAdapter 拿真正的 AIDecision（含 regions）+ strategy
-            _ai_decision = getattr(prescan_result, "_d", None) if prescan_result else None
+            _ai_decision = getattr(ai_decision, "_d", None) if ai_decision else None
             convert_multi_region(
                 excel_path, str(cache_path), regions, sheet_names,
                 resolved_name, src_mtime, src_size, str(snapshot_path),
@@ -1515,8 +1566,8 @@ def _convert_excel_to_parquet(
 
         # 提取 prescan 的 special_rows（合计行等）
         _special_rows = None
-        if prescan_result and prescan_result.confidence in ("high", "medium"):
-            _special_rows = prescan_result.special_rows or None
+        if ai_decision and ai_decision.confidence in ("high", "medium"):
+            _special_rows = ai_decision.special_rows or None
 
         df, cleaning_report = clean_excel(
             df, excel_path, resolved_name, actual_start,
@@ -1528,14 +1579,14 @@ def _convert_excel_to_parquet(
         cleaning_report.data_start_row = actual_start + header_depth + 1
         cleaning_report.row_offset = header_depth
         # AI column_mapping 重命名列
-        if prescan_result and prescan_result.column_mapping:
-            df = _apply_column_mapping(df, prescan_result.column_mapping)
+        if ai_decision and ai_decision.column_mapping:
+            df = _apply_column_mapping(df, ai_decision.column_mapping)
             cleaning_report.issues.append({
                 "type": "column_renamed",
                 "severity": "info",
-                "location": {"cols": list(prescan_result.column_mapping.values())},
+                "location": {"cols": list(ai_decision.column_mapping.values())},
                 "preserved": False,
-                "action": f"AI 重命名列：{prescan_result.column_mapping}",
+                "action": f"AI 重命名列：{ai_decision.column_mapping}",
                 "recovery_hint": "列名已按 AI 预探测结果重命名",
             })
         try:
@@ -1554,20 +1605,20 @@ def _convert_excel_to_parquet(
             formulas=formulas,
             formula_skip_reason=formula_skip,
             merged_ranges=merged_ranges,
-            prescan_result=prescan_result if (
-                prescan_result and prescan_result.confidence in ("high", "medium")
+            ai_decision=ai_decision if (
+                ai_decision and ai_decision.confidence in ("high", "medium")
             ) else None,
         )
-        if prescan_result and prescan_result.confidence in ("high", "medium"):
+        if ai_decision and ai_decision.confidence in ("high", "medium"):
             # 支持新 _AIDecisionAdapter（含 to_dict()）和旧 dataclass PrescanResult
-            if hasattr(prescan_result, "to_dict"):
-                file_meta.prescan = prescan_result.to_dict()
+            if hasattr(ai_decision, "to_dict"):
+                file_meta.prescan = ai_decision.to_dict()
             else:
                 from dataclasses import asdict as _asdict
-                file_meta.prescan = _asdict(prescan_result)
+                file_meta.prescan = _asdict(ai_decision)
             # AI 检测到的数据异常 → 转成 issues
-            if prescan_result.anomalies:
-                for a in prescan_result.anomalies:
+            if ai_decision.anomalies:
+                for a in ai_decision.anomalies:
                     file_meta.issues.append({
                         "type": f"anomaly_{a.get('type', 'unknown')}",
                         "severity": a.get("severity", "warning"),
@@ -1606,8 +1657,8 @@ def _convert_excel_to_parquet(
 
         # 提取 prescan 的 special_rows（合计行等）
         _special_rows = None
-        if prescan_result and prescan_result.confidence in ("high", "medium"):
-            _special_rows = prescan_result.special_rows or None
+        if ai_decision and ai_decision.confidence in ("high", "medium"):
+            _special_rows = ai_decision.special_rows or None
 
         # 如果 prescan 识别到合计行，schema 预留 _is_summary 列
         if _special_rows and _special_rows.get("summary"):
@@ -1616,7 +1667,7 @@ def _convert_excel_to_parquet(
         writer = pq.ParquetWriter(tmp_path, target_schema)
         row_count = 0
         merged_report = CleaningReport()
-        _col_mapping = prescan_result.column_mapping if prescan_result else {}
+        _col_mapping = ai_decision.column_mapping if ai_decision else {}
 
         # calamine 流式遍历 + 100K 行 chunk 处理
         wb = python_calamine.CalamineWorkbook.from_path(excel_path)
@@ -1720,22 +1771,22 @@ def _convert_excel_to_parquet(
                     formulas=formulas,
                     formula_skip_reason=formula_skip,
                     merged_ranges=merged_ranges,
-                    prescan_result=prescan_result if (
-                        prescan_result and prescan_result.confidence in ("high", "medium")
+                    ai_decision=ai_decision if (
+                        ai_decision and ai_decision.confidence in ("high", "medium")
                     ) else None,
                 )
                 # 修正行数为实际总行数（采样 df 只有 5000 行）
                 file_meta.summary["row_count"] = row_count
-                if prescan_result and prescan_result.confidence in ("high", "medium"):
+                if ai_decision and ai_decision.confidence in ("high", "medium"):
                     # 兼容 _AIDecisionAdapter（V2 架构，非 dataclass）和旧 PrescanResult dataclass
-                    if hasattr(prescan_result, "to_dict"):
-                        file_meta.prescan = prescan_result.to_dict()
+                    if hasattr(ai_decision, "to_dict"):
+                        file_meta.prescan = ai_decision.to_dict()
                     else:
                         from dataclasses import asdict as _asdict
-                        file_meta.prescan = _asdict(prescan_result)
+                        file_meta.prescan = _asdict(ai_decision)
                     # AI 检测到的数据异常 → 转成 issues
-                    if prescan_result.anomalies:
-                        for a in prescan_result.anomalies:
+                    if ai_decision.anomalies:
+                        for a in ai_decision.anomalies:
                             file_meta.issues.append({
                                 "type": f"anomaly_{a.get('type', 'unknown')}",
                                 "severity": a.get("severity", "warning"),
@@ -1746,13 +1797,13 @@ def _convert_excel_to_parquet(
                                 "recovery_hint": "AI 检测到的数据异常，建议分析时注意",
                             })
                 # AI 列重命名记录
-                if prescan_result and prescan_result.column_mapping:
+                if ai_decision and ai_decision.column_mapping:
                     file_meta.issues.append({
                         "type": "column_renamed",
                         "severity": "info",
-                        "location": {"cols": list(prescan_result.column_mapping.values())},
+                        "location": {"cols": list(ai_decision.column_mapping.values())},
                         "preserved": False,
-                        "action": f"AI 重命名列：{prescan_result.column_mapping}",
+                        "action": f"AI 重命名列：{ai_decision.column_mapping}",
                         "recovery_hint": "列名已按 AI 预探测结果重命名",
                     })
                 # 粒度检测（大文件：用采样 df + 实际行数）
