@@ -14,6 +14,18 @@ from loguru import logger
 from services.agent.file_meta.dataclass import FileMeta
 
 
+# 行业标准映射（dbt/Spark/DuckDB CLI 风格）：view 直接显示 DuckDB native type。
+# AI 看到的是真实 SQL 类型 → 写 SQL 时不会再用 MySQL/PG 方言（CAST AS DATETIME 等）。
+# 注：schema["type"] 字段本身保持原值（integer/decimal/...），只在渲染层映射。
+_DUCKDB_TYPE_MAP: dict[str, str] = {
+    "integer":  "BIGINT",
+    "decimal":  "DOUBLE",
+    "datetime": "TIMESTAMP",
+    "boolean":  "BOOLEAN",
+    "string":   "VARCHAR",
+}
+
+
 def write_file_meta(cache_path: str, meta: FileMeta) -> None:
     """将 FileMeta 写入 .meta.json。"""
     meta_path = cache_path.replace(".parquet", ".meta.json")
@@ -95,6 +107,39 @@ def format_file_view(meta: FileMeta) -> str:
             f"  正确写法: `SELECT SUM(\"{numeric_ol[0]}\") FROM "
             f"(SELECT DISTINCT \"{group_key}\", \"{numeric_ol[0]}\" FROM data)`"
         )
+
+    # ── 多 Sheet 章节（仅当文件实际多 sheet 才输出）──
+    sheets_info = (meta.evidence_summary or {}).get("sheets") or {}
+    merged_sheets = sheets_info.get("merged") or []
+    skipped_sheets = sheets_info.get("skipped") or []
+    if len(merged_sheets) > 1 or skipped_sheets:
+        lines.append("")
+        lines.append("## 📋 多 Sheet")
+        if len(merged_sheets) > 1:
+            lines.append(
+                f"- ✅ 已合并 {len(merged_sheets)} 个数据 sheet 到同一 Parquet："
+                f"{', '.join(merged_sheets)}"
+            )
+            lines.append(
+                "  来源 sheet 用 `_sheet` 列区分（"
+                f"`WHERE _sheet = '{merged_sheets[0]}'` 可过滤单个 sheet）"
+            )
+        for sk in skipped_sheets:
+            sk_name = sk.get("name", "?")
+            sk_role = sk.get("role", "?")
+            role_hint = {
+                "meta": "元信息表（无数据）",
+                "aggregated": "汇总表（含小计/合计，跳过避免重复）",
+                "skip": "AI 判定无关",
+            }.get(sk_role, sk_role)
+            lines.append(
+                f"- ⏭️ **{sk_name}** 被跳过 ({role_hint})"
+            )
+        if skipped_sheets:
+            lines.append(
+                "  如需读取跳过的 sheet："
+                "`pd.read_excel(get_file('文件名'), sheet_name='Sheet 名')`"
+            )
     lines.append("")
 
     # ============================================================
@@ -105,7 +150,10 @@ def format_file_view(meta: FileMeta) -> str:
         order_level_set = set(order_level_fields)
         for col_name, info in meta.schema.items():
             col_letter = info.get("col", "?")
-            dtype = info.get("type", "unknown")
+            raw_type = info.get("type", "unknown")
+            # 行业标准：渲染层直接显示 DuckDB native type（VARCHAR/BIGINT/TIMESTAMP）
+            # 让 AI 看到的就是写 SQL 时要用的类型名，避免 MySQL/PG 方言混入
+            dtype = _DUCKDB_TYPE_MAP.get(raw_type, raw_type)
             null_pct = info.get("null_ratio", 0)
 
             extra_parts: list[str] = []

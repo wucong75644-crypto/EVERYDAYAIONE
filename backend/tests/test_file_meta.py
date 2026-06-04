@@ -634,3 +634,97 @@ class TestExtractFormulas:
             assert "cell" in formula_entry
             assert "formula" in formula_entry
             assert "value" in formula_entry
+
+
+class TestFix3DuckDBNativeType:
+    """Fix 3: view 渲染层把 schema type 映射成 DuckDB native type，避免 AI 用 MySQL/PG 方言。"""
+
+    def test_datetime_renders_as_timestamp(self):
+        df = pd.DataFrame({
+            "申请时间": pd.to_datetime(["2024-01-01", "2024-02-01"]),
+        })
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="t.xlsx")
+        view = format_file_view(meta)
+        assert "TIMESTAMP" in view, "datetime 列应渲染为 DuckDB TIMESTAMP"
+        assert " | datetime |" not in view, "不应再裸露 logical type"
+
+    def test_integer_decimal_renders_as_native(self):
+        df = pd.DataFrame({"qty": [1, 2, 3], "amount": [1.5, 2.5, 3.5]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="t.xlsx")
+        view = format_file_view(meta)
+        assert "BIGINT" in view
+        assert "DOUBLE" in view
+
+    def test_string_renders_as_varchar(self):
+        df = pd.DataFrame({"order_no": ["A001", "A002", "A003"]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="t.xlsx")
+        view = format_file_view(meta)
+        assert "VARCHAR" in view
+
+    def test_schema_field_value_unchanged(self):
+        """渲染层映射不应改 schema 数据值本身（向后兼容下游消费方）。"""
+        df = pd.DataFrame({"a": pd.to_datetime(["2024-01-01"])})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="t.xlsx")
+        # schema 数据值保持原 logical type
+        assert meta.schema["a"]["type"] == "datetime"
+
+
+class TestFix4MultiSheetView:
+    """Fix 4: 多 Sheet 章节渲染（evidence_summary['sheets'] 透传）。"""
+
+    def test_single_sheet_no_section(self):
+        """单 sheet 文件不应渲染多 Sheet 章节。"""
+        df = pd.DataFrame({"a": [1, 2]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="single.xlsx")
+        view = format_file_view(meta)
+        assert "## 📋 多 Sheet" not in view
+
+    def test_multi_sheet_merged_section(self):
+        """已合并的多 sheet 应渲染 ✅ + _sheet 列查询提示。"""
+        df = pd.DataFrame({"a": [1, 2]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="multi.xlsx", sheet_count=3)
+        meta.evidence_summary["sheets"] = {
+            "total": 3,
+            "merged": ["Sheet1", "Sheet2", "Sheet3"],
+            "skipped": [],
+        }
+        view = format_file_view(meta)
+        assert "## 📋 多 Sheet" in view
+        assert "已合并 3 个" in view
+        assert "Sheet1, Sheet2, Sheet3" in view
+        assert "_sheet" in view  # 必含查询用法提示
+
+    def test_multi_sheet_with_skipped(self):
+        """被 AI 跳过的 sheet 应单独渲染 ⏭️ + 单读 sheet 提示。"""
+        df = pd.DataFrame({"a": [1, 2]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="multi.xlsx", sheet_count=3)
+        meta.evidence_summary["sheets"] = {
+            "total": 3,
+            "merged": ["销售明细"],
+            "skipped": [
+                {"name": "汇总", "role": "aggregated"},
+                {"name": "说明", "role": "meta"},
+            ],
+        }
+        view = format_file_view(meta)
+        assert "⏭️" in view
+        assert "汇总" in view
+        assert "说明" in view
+        assert "aggregated" in view or "汇总表" in view
+        assert "pd.read_excel" in view  # 必含读取跳过 sheet 的代码示例
+
+    def test_empty_evidence_summary_safe(self):
+        """evidence_summary 缺失或 sheets 为空时不应崩，不渲染章节。"""
+        df = pd.DataFrame({"a": [1, 2]})
+        report = CleaningReport(data_start_row=2)
+        meta = generate_file_meta(df, report, source_file="x.xlsx")
+        # evidence_summary 缺 sheets 子键
+        view = format_file_view(meta)
+        assert "## 📋 多 Sheet" not in view

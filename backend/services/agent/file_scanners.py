@@ -319,6 +319,16 @@ class BaseScanner(ABC):
     def _scan_formulas(self, sheet_name: str | int | None) -> tuple[list[FormulaEvidence], int]:
         """复用 extract_formulas 抓公式。"""
         raw, _skip = extract_formulas(self.excel_path, sheet_name)
+        return self._wrap_formula_raw(raw)
+
+    def _wrap_formula_raw(
+        self, raw: list[dict[str, Any]],
+    ) -> tuple[list[FormulaEvidence], int]:
+        """将 extract_formulas 的 raw 输出包装成 FormulaEvidence 列表。
+
+        PathB 并行扫描在线程池里只跑 extract_formulas（释放 GIL 的 lxml 流式解析），
+        主线程拿到 future.result() 后再统一走这里完成包装，避免数据类构造跨线程。
+        """
         formulas = [
             FormulaEvidence(
                 cell=item.get("cell", ""),

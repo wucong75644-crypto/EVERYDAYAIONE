@@ -303,3 +303,76 @@ class TestFetchAllPagesExecution:
                 "tool": "erp_trade_query", "action": "order_list",
             })
         assert "为空" in result.summary
+
+
+class TestFix1DuckDBDialectHints:
+    """Fix 1: 两版 description 都必须包含 DuckDB 方言提示，杜绝 AI 用 MySQL/PG 方言。"""
+
+    def test_workspace_version_has_cast_hint(self):
+        from config.code_tools import build_code_tools
+        tools = build_code_tools(include_workspace=True)
+        desc = tools[0]["function"]["description"]
+        assert "CAST(ts AS DATE)" in desc, "主 Agent 版必须明示 CAST AS DATE 用法"
+
+    def test_workspace_version_warns_no_date_function(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "无 DATE()" in desc, "必须警告 DuckDB 无 DATE() 标量函数"
+
+    def test_workspace_version_has_date_trunc(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "DATE_TRUNC" in desc
+
+    def test_workspace_version_has_interval(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "INTERVAL" in desc
+
+    def test_workspace_version_warns_no_datetime_type(self):
+        """DuckDB 类型名是 TIMESTAMP 不是 DATETIME，AI 写 CAST AS DATETIME 会炸。"""
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "TIMESTAMP" in desc
+
+    def test_base_version_has_cast_hint(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
+        assert "CAST(ts AS DATE)" in desc, "ERP Agent 版同样需要 DuckDB 方言"
+
+    def test_base_version_warns_no_date_function(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
+        assert "无 DATE()" in desc
+
+
+class TestFix2ExcelExportPattern:
+    """Fix 2: 引导用 df.to_excel + 明示 NaN 自动处理 + 反模式禁令。"""
+
+    def test_workspace_version_uses_to_excel(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "df.to_excel" in desc, "必须引导用 df.to_excel"
+
+    def test_workspace_version_mentions_nan_handling(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "NaN" in desc, "必须明示 to_excel 自动处理 NaN"
+
+    def test_workspace_version_forbids_manual_xlsxwriter(self):
+        """禁止 worksheet.write 循环反模式。"""
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "不要手撸" in desc
+        assert "worksheet.write" in desc
+
+    def test_base_version_uses_to_excel(self):
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
+        assert "df.to_excel" in desc
+
+    def test_workspace_version_mentions_multi_sheet(self):
+        """Fix 4 配套：description 必须提示 _sheet 列用法（多 sheet 已合并）。"""
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "_sheet" in desc
