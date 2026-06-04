@@ -247,13 +247,19 @@ class TestBuildPrompt:
         pool = _mini_pool()
         pool.suspicious_rows.append(SuspiciousRow(row=10, reason="multi_null", raw_values=["合计", None, 9999]))
         prompt = build_prompt(pool, variant="default")
-        assert "# 任务" in prompt
+        # V3：prompt 结构 = 角色 + 思考流程 + 强制规则 + 数据证据 + 输出 schema
+        assert "# 角色" in prompt
+        assert "# 思考流程" in prompt
+        assert "# 强制规则" in prompt
         assert "# 文件信息" in prompt
         assert "# 表头候选" in prompt
         assert "# 列证据" in prompt
         assert "# 可疑行" in prompt
-        assert "# 你的输出格式" in prompt
+        assert "# 输出格式" in prompt
         assert "JSON" in prompt or "json" in prompt
+        # V3 关键约束
+        assert "MUST" in prompt
+        assert "table_role" in prompt
 
     def test_simplified_shorter_than_default(self):
         from services.agent.file_ai_prompt import build_prompt

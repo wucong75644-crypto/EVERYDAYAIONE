@@ -6,37 +6,61 @@ variant:
   - "default":     完整 prompt（含全部 evidence）
   - "simplified":  retry 时减小 prompt（仅头尾样本 + 表头候选）
 
-设计文档：docs/document/TECH_file_analyze_重构.md §5.2 §5.3
+V3：极简普适 prompt — 不教 LLM 业务关键词（货币/订单/金额...），
+让 LLM 用训练得来的常识看 sample 自判。
+
+设计文档：docs/document/TECH_file_analyze_V3_骨架抽取重构.md §1 / §4
 """
 from __future__ import annotations
 
 from services.agent.file_evidence import EvidencePool
 
 
+# 输出 JSON Schema —— 每字段只标类型 + 一句话用途，不列业务关键词
 JSON_SCHEMA_TEMPLATE = """
 {
   "header_row": <int, Excel 1-indexed>,
-  "data_start_row": <int, Excel 1-indexed>,
-  "header_type": "single" | "multi_level",
-  "header_note": "<可选，特殊说明>",
+  "data_start_row": <int, Excel 1-indexed; 必须 > header_row>,
+  "header_type": "single | multi_level",
+  "header_note": "<可选,特殊说明>",
+
   "column_semantics": [
     {
-      "letter": "A",
-      "business_name": "<推断的业务列名>",
-      "semantic_type": "id" | "name" | "datetime" | "amount" | "quantity" | "address" | "note" | "category" | "other",
-      "is_order_level": <bool>,
-      "is_id_column": <bool>,
+      "letter": "A",                                       // Excel 列字母
+      "business_name": "<推断的业务列名;空列填 ''>",
+      "semantic_type": "id|name|datetime|amount|quantity|address|note|category|other",
+      "is_order_level": <bool>,                            // 同主键内值是否重复(订单级字段 SUM 前需 DISTINCT)
+      "is_id_column": <bool>,                              // 是否 ID 类(清洗保 string 不转 int)
       "notes": "<可选>"
     }
   ],
-  "summary_rows": [<Excel 1-indexed>],
-  "unit_rows": [],
-  "note_rows": [],
+
+  "summary_rows": [<Excel 行号>],                           // 你识别的汇总/合计/累计/小计 行
+  "unit_rows": [<Excel 行号>],                              // 你识别的单位说明行(紧贴表头那种)
+  "note_rows": [<Excel 行号>],                              // 你识别的备注/版权/数据来源 行
+
+  "merged_cell_actions": [
+    {
+      "range_str": "A2:H2",
+      "action": "treat_as_header | fill_down | preserve_as_group | skip",
+      "reason": "<可选>"
+    }
+  ],
+  "mixed_type_handling": [
+    {
+      "col_letter": "F",
+      "action": "force_str | extract_unit_number | extract_currency_amount | to_datetime",
+      "unit": "<extract_unit_number 时必填,如 'kg'>",
+      "reason": "<可选>"
+    }
+  ],
+  "preserve_empty_rows": [{"row": <int>, "reason": "<可选>"}],
+
   "regions": [
     {
       "region_id": 1,
       "range_str": "A1:H100",
-      "role": "primary" | "secondary" | "metadata" | "skip",
+      "role": "primary | secondary | metadata | skip",
       "relation_to_primary": "<可选>",
       "skip_reason": "<可选>"
     }
@@ -44,64 +68,85 @@ JSON_SCHEMA_TEMPLATE = """
   "sheets": [
     {
       "name": "<sheet 名>",
-      "role": "data" | "meta" | "aggregated" | "skip",
-      "merge_group": "<同组合并>",
+      "role": "data | meta | aggregated | skip",
+      "merge_group": "<同组合并键,留空=独立>",
       "skip_reason": "<可选>"
     }
   ],
-  "merged_cell_actions": [
-    {
-      "range_str": "A2:H2",
-      "action": "treat_as_header" | "fill_down" | "preserve_as_group" | "skip",
-      "reason": "<可选>"
-    }
-  ],
-  "mixed_type_handling": [
-    {
-      "col_letter": "F",
-      "action": "force_str" | "extract_unit_number" | "extract_currency_amount" | "to_datetime",
-      "unit": "<当 extract_unit_number 时>",
-      "reason": "<可选>"
-    }
-  ],
-  "preserve_empty_rows": [{"row": <int>, "reason": "<可选>"}],
+
   "data_quality_notes": [
     {
-      "severity": "info" | "warning" | "error",
-      "note": "<给主 Agent 看的提示>",
+      "severity": "info | warning | error",
+      "note": "<给主 Agent 的提示;父子层级/异常空值/疑似脏数据 写这里>",
       "affected_rows": [<int>],
       "affected_cols": ["<列字母>"]
     }
   ],
-  "overall_summary": "<100-300 字总结>",
-  "table_role": "fact" | "dimension" | "log" | "wide" | "snapshot" | "unknown",
-  "table_role_note": "<一句话理由，例如：维度表，主要用于 JOIN 补充店铺所属信息>"
-}
 
-# table_role 判断指南
-- fact:      事实表 / 订单明细表 / 交易流水。有 ID + 多个数值聚合字段（金额/数量），
-             同一 ID 多行（一对多粒度）。例：销售订单明细、退款流水。
-- dimension: 维度表 / 映射表 / 字典表。行数不多，列以字符串为主，无聚合数值字段，
-             有高基数 string 列（候选 join key）。例：店铺映射、地区编码表、商品类目表。
-- log:       日志 / 事件表。按时间排序，无主键聚合概念，每行一个事件。
-             例：系统日志、操作记录。
-- wide:      宽表 / 指标表。高列数（≥50 列），每行一个 entity 多个指标。
-             例：KPI 周报、月度运营报表。
-- snapshot:  快照表。某时点全量数据，无时间维度。例：当日库存、月末余额。
-- unknown:   无法判断时填此值（不强求选）。""".strip()
+  "overall_summary": "<100-300 字:这是什么文件/规模/关键字段/使用注意>",
+
+  "table_role": "fact | dimension | log | wide | snapshot | unknown",
+  "table_role_note": "<一句话理由>"
+}
+""".strip()
+
+
+# 顶部任务说明 + 思考流程 + 强制规则（V3）
+TASK_BLOCK = """
+# 角色
+你是 Excel/CSV 结构分析专家。代码已经扫了文件结构,把"骨架位置"和"原始值"打包好了。
+你的任务: 看完所有证据,一次性输出 AIDecision JSON,不中途纠结。
+
+# 思考流程(按顺序,一次走完)
+1. 看「表头候选」前 5 行 → 判定 header_row / data_start_row
+   - 哪几行是标题/标语 → note_rows
+   - 哪一行是单位说明(紧贴表头) → unit_rows
+   - 哪一行是真表头 → header_row
+
+2. 看「列证据 + 样本」→ 给每列填 business_name + semantic_type
+   - 看样本内容用你的常识判断业务语义,不要凭列名瞎猜
+   - 同主键内值重复的字段 → is_order_level=true
+   - ID/订单号/编码类(清洗时要保 string)→ is_id_column=true
+
+3. 看「可疑行原始值」→ 判定每行业务角色
+   - 看 raw_values 内容,你自己判断是汇总/单位说明/备注/数据起始/异常
+   - 把行号分别写入 summary_rows / unit_rows / note_rows
+
+4. 看「关键样本 + 整体规模」→ 判 table_role
+   - fact:      明细级数据,有 ID + 多个数值聚合字段,同 ID 多行(一对多)
+   - dimension: 维度/映射表,列以 string 为主,无聚合数值,有候选 join key
+   - log:       日志/事件流,按时间排序,无主键聚合
+   - wide:      宽表,列数 ≥ 50,每行一个 entity 多个指标
+   - snapshot:  快照表,某时点全量,无时间维度
+   - unknown:   无法判断时填(不强求选)
+
+5. 看「合并单元格 / 公式 / 多区域 / 多 sheet」→ 决定清洗动作
+
+# 强制规则
+- MUST 严格 JSON 输出,不要 markdown 代码块包裹
+- MUST 每列都要有 1 条 column_semantics(包括空列,business_name='')
+- MUST 不确定时填默认值(other / unknown / false / 空 list),不要瞎猜
+- MUST 用你的常识看 sample 内容,不要因列名长得像就贴标签
+- MUST NOT 输出超出 schema 的字段
+- MUST 一次性给出全部判断,不要思考过程的中间推理
+
+""".strip() + "\n\n"
 
 
 def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
-    """构造 AI 裁决 prompt。"""
+    """构造 AI 裁决 prompt。
+
+    V3 结构:
+      1. 角色 + 思考流程 + 强制规则(TASK_BLOCK)
+      2. 数据证据(文件信息 / 表头候选 / 列证据 / 可疑行 / 关键样本 / 多区域 / 多 sheet / 公式 / 结构)
+      3. 输出 JSON Schema(JSON_SCHEMA_TEMPLATE)
+    """
     parts: list[str] = []
 
-    parts.append("# 任务\n")
-    parts.append(
-        "你将看到一份 Excel/CSV 文件的代码扫描结果。请基于这些证据做出一次性裁决，"
-        "包括表头位置、列业务语义、是否有汇总行、清洗策略等。"
-        "你的输出会被代码直接执行，所以必须精确。\n\n"
-    )
+    # ── 1. 任务 + 思考流程 + 规则 ──
+    parts.append(TASK_BLOCK)
 
+    # ── 2. 数据证据 ──
     parts.append("# 文件信息\n")
     parts.append(f"- 文件名: {evidence.file_name}\n")
     parts.append(f"- 总行数: {evidence.total_rows:,}\n")
@@ -109,7 +154,7 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
     parts.append(f"- 当前 Sheet: {evidence.target_sheet}\n")
     parts.append(f"- 处理路径: {evidence.path_type}\n\n")
 
-    parts.append("# 表头候选（前 5 行原始）\n")
+    parts.append("# 表头候选(前 5 行原始)\n")
     for i, row in enumerate(evidence.header_candidates, start=1):
         parts.append(f"Row {i}: {_truncate_row(row)}\n")
     parts.append(f"\n代码兜底检测表头行: Row {evidence.detected_header_row_code + 1}\n\n")
@@ -117,27 +162,24 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
     # 列证据
     parts.append("# 列证据\n")
     for col_ev in evidence.columns:
-        # V3：仅保留纯统计驱动的 flag（long_id_candidate）
-        # 业务格式（货币/单位/UUID/ASIN）改由 AI 看 sample 自识别
+        # V3：仅保留纯统计驱动的 flag(long_id_candidate)
         flags = []
         if col_ev.is_long_id_candidate:
-            flags.append("⚠️ 长ID候选(可能是订单号/编码,清洗时应保 string)")
+            flags.append("⚠️ 长ID候选(清洗时应保 string)")
         flag_str = (" " + " ".join(flags)) if flags else ""
         parts.append(
             f"列 {col_ev.col_letter}: 原始表头='{col_ev.raw_header}', "
             f"类型分布={col_ev.classified_dist}, null率={col_ev.null_ratio:.2%}{flag_str}\n"
         )
-        # simplified 不输出 sample_values
         if variant != "simplified":
             sample_preview = col_ev.sample_values[:8] if col_ev.sample_values else []
             parts.append(f"  样本: {_truncate_list(sample_preview)}\n")
     parts.append("\n")
 
-    # 可疑行（simplified 限 10 条）
+    # 可疑行
     if evidence.suspicious_rows:
         limit = 10 if variant == "simplified" else 50
-        parts.append(f"# 可疑行（共 {len(evidence.suspicious_rows)} 条，展示前 {limit}）\n")
-        # V3：可疑行只给位置 + null 率 + 原始值，由 AI 自判是 summary/note/unit/异常
+        parts.append(f"# 可疑行(共 {len(evidence.suspicious_rows)} 条,展示前 {limit})\n")
         for sr in evidence.suspicious_rows[:limit]:
             parts.append(
                 f"Row {sr.row}: null率={sr.null_ratio:.0%}\n"
@@ -145,7 +187,7 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
             )
         parts.append("\n")
 
-    # 关键样本（simplified 仅头尾 3 行）
+    # 关键样本
     if evidence.key_samples:
         limit = 6 if variant == "simplified" else 30
         parts.append("# 关键样本\n")
@@ -153,9 +195,9 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
             parts.append(f"Row {sample['row']}: {_truncate_list(sample['cells'])}\n")
         parts.append("\n")
 
-    # 路径 C 多区域证据
+    # 路径 C 多区域
     if evidence.path_type == "C" and evidence.regions:
-        parts.append("# 候选数据区域（路径 C，待你裁决每个区域的 role）\n")
+        parts.append("# 候选数据区域(路径 C,你裁决每个区域的 role)\n")
         for r in evidence.regions:
             parts.append(
                 f"Region {r.region_id} ({r.range_str}): {r.row_count} 行, 表头={_truncate_list(r.header_cells)}\n"
@@ -166,9 +208,9 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
                 parts.append(f"  Tail: {_truncate_row(r.tail_sample[-1])}\n")
         parts.append("\n")
 
-    # 路径 D 多 sheet 证据
+    # 路径 D 多 sheet
     if evidence.path_type == "D" and evidence.sheets:
-        parts.append("# 所有 Sheet 元信息（路径 D，待你裁决每个 sheet 的 role / merge_group）\n")
+        parts.append("# 所有 Sheet 元信息(路径 D,你裁决每个 sheet 的 role / merge_group)\n")
         for s in evidence.sheets:
             rows_str = "未采样" if s.rows == -1 else f"{s.rows} 行"
             parts.append(
@@ -181,13 +223,13 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
     # 公式
     if evidence.formulas:
         parts.append(
-            f"# 公式（共 {evidence.formula_total_count} 个，展示前 10）\n"
+            f"# 公式(共 {evidence.formula_total_count} 个,展示前 10)\n"
         )
         for f in evidence.formulas[:10]:
             parts.append(f"- {f.cell}: {f.expression} = {f.value}\n")
         parts.append("\n")
 
-    # 结构元信息
+    # 结构元信息（V3 稀疏：全空时不输出）
     if evidence.merged_ranges or evidence.hidden_cols or evidence.has_auto_filter:
         parts.append("# 结构元信息\n")
         if evidence.merged_ranges:
@@ -201,8 +243,8 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
             parts.append("- 含 autofilter\n")
         parts.append("\n")
 
-    # 输出 schema
-    parts.append("# 你的输出格式（严格 JSON，不要 markdown）\n")
+    # ── 3. 输出 schema ──
+    parts.append("# 输出格式(严格 JSON,不要 markdown 代码块包裹)\n")
     parts.append(JSON_SCHEMA_TEMPLATE)
 
     return "".join(parts)
@@ -218,7 +260,7 @@ def _truncate_str(val, maxlen: int = 60) -> str:
 
 
 def _truncate_row(row, max_cells: int = 25) -> str:
-    """单元格行 → 字符串，长值截断。"""
+    """单元格行 → 字符串,长值截断。"""
     if not row:
         return "[]"
     cells = [_truncate_str(v) for v in list(row)[:max_cells]]
