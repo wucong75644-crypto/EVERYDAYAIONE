@@ -1727,8 +1727,12 @@ def _convert_excel_to_parquet(
                 # 修正行数为实际总行数（采样 df 只有 5000 行）
                 file_meta.summary["row_count"] = row_count
                 if prescan_result and prescan_result.confidence in ("high", "medium"):
-                    from dataclasses import asdict as _asdict
-                    file_meta.prescan = _asdict(prescan_result)
+                    # 兼容 _AIDecisionAdapter（V2 架构，非 dataclass）和旧 PrescanResult dataclass
+                    if hasattr(prescan_result, "to_dict"):
+                        file_meta.prescan = prescan_result.to_dict()
+                    else:
+                        from dataclasses import asdict as _asdict
+                        file_meta.prescan = _asdict(prescan_result)
                     # AI 检测到的数据异常 → 转成 issues
                     if prescan_result.anomalies:
                         for a in prescan_result.anomalies:
