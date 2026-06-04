@@ -668,10 +668,10 @@ class TestV22Fixes:
         # 注意 xlsx 二进制差异较大，但即使 size 相近也能区分
         assert _compute_file_fingerprint(str(f1)) != _compute_file_fingerprint(str(f2))
 
-    def test_cache_schema_version_v22(self):
-        """#3+#4: schema 版本已升级到 v2.2"""
+    def test_cache_schema_version_v3(self):
+        """V3: schema 版本升级到 v3.0（删 grain + 加 table_role 后强制重算）"""
         from services.agent.data_query_cache import _CACHE_SCHEMA_VERSION
-        assert _CACHE_SCHEMA_VERSION == "v2.2"
+        assert _CACHE_SCHEMA_VERSION == "v3.0"
 
     def test_path_d_file_size_defense(self, tmp_path, monkeypatch):
         """#6: 多 sheet 文件超过 150MB → raise file_too_large"""

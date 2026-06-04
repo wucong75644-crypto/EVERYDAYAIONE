@@ -407,6 +407,9 @@ def _parse_and_validate(data: dict) -> AIDecision:
                 for n in data.get("data_quality_notes", [])
             ],
             overall_summary=str(data["overall_summary"]),
+            # V3：table_role 缺失默认 unknown 兜底，保持向后兼容
+            table_role=data.get("table_role") or "unknown",
+            table_role_note=data.get("table_role_note", "") or "",
         )
     except (KeyError, TypeError) as e:
         raise ValueError(f"AI 输出反序列化失败: {e}") from e

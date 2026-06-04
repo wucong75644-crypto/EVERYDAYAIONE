@@ -139,14 +139,22 @@ def _render_ai_decision(meta: FileMeta) -> str:
     header_note = ai.get("header_note", "")
     summary = ai.get("overall_summary", "")
 
+    # V3：table_role 作为 ai_decision 根属性输出（unknown 不渲染）
+    table_role = ai.get("table_role") or ""
+    role_attr = f' table_role="{escape(table_role)}"' if table_role and table_role != "unknown" else ""
+
     parts: list[str] = [
         f'\n  <ai_decision priority="critical" status="ok"'
-        f' model="{escape(str(model))}" attempt="{attempt}" elapsed_ms="{elapsed_ms}">\n',
+        f' model="{escape(str(model))}" attempt="{attempt}" elapsed_ms="{elapsed_ms}"{role_attr}>\n',
         f"    <header_row>{header_row}</header_row>\n",
         f"    <data_start_row>{data_start_row}</data_start_row>\n",
     ]
     if header_note:
         parts.append(f"    <header_note>{escape(header_note)}</header_note>\n")
+    # table_role_note 单独成行（如果有）
+    table_role_note = ai.get("table_role_note") or ""
+    if table_role_note:
+        parts.append(f"    <table_role_note>{escape(table_role_note)}</table_role_note>\n")
 
     # column_semantics
     cs_list = ai.get("column_semantics", []) or []
@@ -164,12 +172,10 @@ def _render_ai_decision(meta: FileMeta) -> str:
         parts.append(f"      <col {attrs}/>\n")
     parts.append("    </column_semantics>\n")
 
-    # summary_rows / unit_rows / note_rows
+    # V3 稀疏渲染：summary_rows 为空时不输出该节点（删除"AI 确认无汇总行"空标签）
     sr = ai.get("summary_rows", []) or []
     if sr:
         parts.append(f"    <summary_rows>{','.join(map(str, sr))}</summary_rows>\n")
-    else:
-        parts.append("    <summary_rows/>  <!-- AI 确认无汇总行 -->\n")
 
     # regions（路径 C）
     regions = ai.get("regions", []) or []
@@ -218,54 +224,142 @@ def _render_ai_decision(meta: FileMeta) -> str:
 
 
 def _render_usage_hints(meta: FileMeta, parquet_path: str) -> str:
-    """V3：仅从 ai_decision + summary 生成通用 SQL 范式（删 grain 依赖）。
+    """V3 P4：按 ai_decision.table_role 分支渲染 usage_hints。
 
-    业务粒度（订单级/明细级）由 AI 在 column_semantics[i].is_order_level 标注，
-    P4 还会接入 ai_decision.table_role 走分角色模板。
+    - fact/snapshot: 订单级 SUM DISTINCT 范式 + 明细级直接 SUM
+    - dimension:     JOIN 范式提示（关联键候选）
+    - log:           时间过滤范式 + 禁止 SELECT *
+    - wide:          列选取范式（高列数，避免 SELECT *）
+    - unknown:       通用 hint（has_summary / 大文件 OOM）
+
+    稀疏渲染：没有任何 hint 和 code 时整段不输出。
     """
     parts: list[str] = []
     hint_lines: list[str] = []
+    code_lines: list[str] = []
 
     ai = meta.ai_decision or {}
-    # 是否有汇总行需要过滤（AI 决策标了 summary_rows → 清洗时已加 _is_summary 列）
+    table_role = ai.get("table_role") or "unknown"
     has_summary = bool(ai.get("summary_rows") or [])
     summary_filter = ' WHERE "_is_summary" = false' if has_summary else ""
+    rows = (meta.summary or {}).get("row_count", 0)
 
-    # 从 ai_decision.column_semantics 找订单级 / 明细级数值列
+    # 从 column_semantics 提取候选列
     cs_list = ai.get("column_semantics", []) or []
     order_level_numeric: list[str] = []
     detail_level_numeric: list[str] = []
-    group_key_candidate = ""
+    id_columns: list[str] = []
+    string_high_card: list[str] = []
     for cs in cs_list:
         name = cs.get("business_name") or ""
         if not name:
             continue
         info = meta.schema.get(name, {})
-        if info.get("type") not in ("integer", "decimal"):
-            # ID 类列做 group_key 候选
-            if cs.get("is_id_column") and not group_key_candidate:
-                group_key_candidate = name
-            continue
-        if cs.get("is_order_level"):
-            order_level_numeric.append(name)
-        else:
-            detail_level_numeric.append(name)
+        col_type = info.get("type")
+        if col_type in ("integer", "decimal"):
+            if cs.get("is_order_level"):
+                order_level_numeric.append(name)
+            else:
+                detail_level_numeric.append(name)
+        if cs.get("is_id_column") or cs.get("semantic_type") == "id":
+            id_columns.append(name)
+        if col_type == "string" and info.get("unique_count", 0) >= 5:
+            string_high_card.append(name)
 
-    if order_level_numeric and group_key_candidate:
-        cols_str = "/".join(order_level_numeric)
+    group_key_candidate = id_columns[0] if id_columns else ""
+
+    # ── 分角色渲染 ──
+    if table_role in ("fact", "snapshot"):
+        if order_level_numeric and group_key_candidate:
+            cols_str = "/".join(order_level_numeric)
+            hint_lines.append(
+                '    <hint severity="must">\n'
+                f"      {escape(cols_str)} 是订单级字段，在同一 {escape(group_key_candidate)} 内值重复，"
+                f"SUM 前必须先 DISTINCT {escape(group_key_candidate)}，否则数字会虚高。\n"
+                "    </hint>\n"
+            )
+            first_ol = order_level_numeric[0]
+            from_clause = f"FROM read_parquet('{parquet_path}'){summary_filter}"
+            code_lines.append(
+                '    <code_example title="订单级聚合范式（必用）"><![CDATA[\n'
+                f'SELECT SUM("{first_ol}") AS 总额\n'
+                "FROM (\n"
+                f'    SELECT DISTINCT "{group_key_candidate}", "{first_ol}"\n'
+                f"    {from_clause}\n"
+                ")\n"
+                "]]></code_example>\n"
+            )
+        if detail_level_numeric:
+            hint_lines.append(
+                '    <hint severity="info">\n'
+                f"      {escape('/'.join(detail_level_numeric))} 是明细级字段，可直接 SUM。\n"
+                "    </hint>\n"
+            )
+            first_ll = detail_level_numeric[0]
+            code_lines.append(
+                '    <code_example title="明细级聚合（直接 SUM）"><![CDATA[\n'
+                f"SELECT SUM(\"{first_ll}\") FROM read_parquet('{parquet_path}'){summary_filter}\n"
+                "]]></code_example>\n"
+            )
+
+    elif table_role == "dimension":
+        join_keys = id_columns or string_high_card
+        if join_keys:
+            keys_str = "/".join(join_keys[:3])
+            hint_lines.append(
+                '    <hint severity="info">\n'
+                f"      本文件是维度/映射表（{rows:,} 行 × {len(cs_list)} 列），"
+                f"主要用于 JOIN 补充信息，不是聚合主体。\n"
+                f"      关联键候选: {escape(keys_str)}。\n"
+                "    </hint>\n"
+            )
+            hint_lines.append(
+                '    <hint severity="must">\n'
+                "      多表 JOIN 时，SELECT/GROUP BY 引用列必须用列原始来源的别名，"
+                "不要把维度列错挂到事实表别名上。\n"
+                "    </hint>\n"
+            )
+            first_key = join_keys[0]
+            code_lines.append(
+                '    <code_example title="维度 JOIN 范式"><![CDATA[\n'
+                "SELECT fact.*, dim.\"<维度列名>\"\n"
+                "FROM read_parquet('<事实表路径>') fact\n"
+                f"JOIN read_parquet('{parquet_path}') dim\n"
+                f'  ON fact."<事实表关联列>" = dim."{first_key}"\n'
+                "]]></code_example>\n"
+            )
+
+    elif table_role == "log":
+        # 找时间列候选
+        datetime_cols = [
+            cs.get("business_name", "")
+            for cs in cs_list
+            if cs.get("semantic_type") == "datetime" and cs.get("business_name")
+        ]
+        if datetime_cols:
+            time_col = datetime_cols[0]
+            hint_lines.append(
+                '    <hint severity="must">\n'
+                f"      本文件是日志/事件流（{rows:,} 行），按 \"{escape(time_col)}\" 排序。\n"
+                "      查询时应先按时间窗口过滤，避免全表扫描。\n"
+                "    </hint>\n"
+            )
+            code_lines.append(
+                '    <code_example title="时间窗口过滤"><![CDATA[\n'
+                f'SELECT * FROM read_parquet(\'{parquet_path}\')\n'
+                f'WHERE "{time_col}" >= \'YYYY-MM-DD\' AND "{time_col}" < \'YYYY-MM-DD\'\n'
+                "]]></code_example>\n"
+            )
+
+    elif table_role == "wide":
         hint_lines.append(
             '    <hint severity="must">\n'
-            f"      {escape(cols_str)} 是订单级字段，在同一 {escape(group_key_candidate)} 内值重复，"
-            f"SUM 前必须先 DISTINCT {escape(group_key_candidate)}，否则数字会虚高。\n"
-            "    </hint>\n"
-        )
-    if detail_level_numeric:
-        hint_lines.append(
-            '    <hint severity="info">\n'
-            f"      {escape('/'.join(detail_level_numeric))} 是明细级字段，可直接 SUM。\n"
+            f"      本文件是宽表（{len(cs_list)} 列指标），禁止 SELECT *，"
+            "必须只选用到的指标列以节省内存。\n"
             "    </hint>\n"
         )
 
+    # ── 通用 hint（所有角色都加）──
     if has_summary:
         hint_lines.append(
             '    <hint severity="must">\n'
@@ -273,8 +367,6 @@ def _render_usage_hints(meta: FileMeta, parquet_path: str) -> str:
             '<code>WHERE "_is_summary" = false</code>，否则会把合计算入明细，数字虚高 2 倍。\n'
             "    </hint>\n"
         )
-
-    rows = (meta.summary or {}).get("row_count", 0)
     if rows >= 100_000:
         hint_lines.append(
             '    <hint severity="info">\n'
@@ -283,29 +375,7 @@ def _render_usage_hints(meta: FileMeta, parquet_path: str) -> str:
             "    </hint>\n"
         )
 
-    # code examples
-    code_lines: list[str] = []
-    if order_level_numeric and group_key_candidate:
-        first_ol = order_level_numeric[0]
-        from_clause = f"FROM read_parquet('{parquet_path}'){summary_filter}"
-        code_lines.append(
-            '    <code_example title="订单级聚合范式（必用）"><![CDATA[\n'
-            f'SELECT SUM("{first_ol}") AS 总额\n'
-            "FROM (\n"
-            f'    SELECT DISTINCT "{group_key_candidate}", "{first_ol}"\n'
-            f"    {from_clause}\n"
-            ")\n"
-            "]]></code_example>\n"
-        )
-    if detail_level_numeric:
-        first_ll = detail_level_numeric[0]
-        code_lines.append(
-            '    <code_example title="明细级聚合（直接 SUM）"><![CDATA[\n'
-            f"SELECT SUM(\"{first_ll}\") FROM read_parquet('{parquet_path}'){summary_filter}\n"
-            "]]></code_example>\n"
-        )
-
-    # V3 稀疏渲染：没有任何 hint 和 code 时整段不输出
+    # ── 稀疏渲染：没有任何 hint 和 code 时整段不输出 ──
     if not hint_lines and not code_lines:
         return ""
 

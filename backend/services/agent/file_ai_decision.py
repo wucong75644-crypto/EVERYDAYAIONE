@@ -38,6 +38,16 @@ HEADER_TYPES = frozenset({"single", "multi_level"})
 NOTE_SEVERITIES = frozenset({"info", "warning", "error"})
 CONFIDENCE_LEVELS = frozenset({"high", "medium", "low"})  # V2.2 #11
 
+# V3：表角色识别 — AI 看 schema+sample 自判断（替代 _detect_grain 电商假设）
+TABLE_ROLES = frozenset({
+    "fact",        # 事实表：明细级数据，含数值聚合字段（订单/交易/事件流水）
+    "dimension",   # 维度表：lookup 表，主要用于 JOIN（店铺映射/字典表）
+    "log",         # 日志/事件表：按时间排序，无主键聚合概念
+    "wide",        # 宽表：高列数指标表（KPI 周报/月报）
+    "snapshot",    # 快照表：某时点全量数据（库存/余额）
+    "unknown",     # AI 无法判断（默认值）
+})
+
 
 # ── 子对象 ──
 
@@ -148,6 +158,12 @@ class AIDecision:
     # ── 整体总结（给主 Agent 看）──
     overall_summary: str = ""
 
+    # ── V3：表角色识别（替代 grain 电商假设） ──
+    # AI 看 schema+sample 自判断表的业务角色（fact/dimension/log/wide/snapshot/unknown）。
+    # 渲染层据此选 usage_hints 模板，根治维度表 hint 空标签 bug。
+    table_role: str = "unknown"     # 见 TABLE_ROLES
+    table_role_note: str = ""       # 一句话理由
+
     # ── V2.2 #11: AI 整体置信度 ──
     # AI 通过 prompt 输出对此次裁决的整体置信度。
     # 主 Agent 可据此决定是否给用户提示"AI 判断不确定，建议复核"。
@@ -217,5 +233,9 @@ def validate_decision(decision: AIDecision) -> list[str]:
     # V2.2 #11: 置信度校验（缺失默认 high 兜底，非法报错）
     if decision.confidence not in CONFIDENCE_LEVELS:
         errors.append(f"AIDecision.confidence 非法：{decision.confidence}")
+
+    # V3：table_role 校验（缺失默认 unknown 兜底，非法报错）
+    if decision.table_role not in TABLE_ROLES:
+        errors.append(f"AIDecision.table_role 非法：{decision.table_role}")
 
     return errors
