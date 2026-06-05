@@ -80,7 +80,7 @@ export interface UseSettingsManagerReturn {
 const DEFAULTS = {
   image: { aspectRatio: '1:1' as AspectRatio, resolution: '1024x1024' as ImageResolution, outputFormat: 'png' as ImageOutputFormat, numImages: 1 as ImageCount },
   video: { frames: '10' as VideoFrames, aspectRatio: 'landscape' as VideoAspectRatio, removeWatermark: false },
-  chat: { smartSubMode: 'chat' as SmartSubMode, thinkingEffort: 'low' as const, deepThinkMode: true, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
+  chat: { smartSubMode: 'chat' as SmartSubMode, thinkingEffort: 'low' as const, deepThinkMode: false, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
 };
 
 export function useSettingsManager(
@@ -111,7 +111,7 @@ export function useSettingsManager(
   const [chatSettings, setChatSettings] = useState<ChatSettings>({
     smartSubMode: (cs?.smart_sub_mode as SmartSubMode) || DEFAULTS.chat.smartSubMode,
     thinkingEffort: (cs?.thinking_effort as ChatSettings['thinkingEffort']) || savedSettings.chat?.thinkingEffort || DEFAULTS.chat.thinkingEffort,
-    deepThinkMode: cs?.deep_think_mode ?? true,
+    deepThinkMode: cs?.deep_think_mode ?? DEFAULTS.chat.deepThinkMode,
     permissionMode: (savedSettings.chat as any)?.permissionMode || DEFAULTS.chat.permissionMode,
     temperature: cs?.temperature ?? savedSettings.chat?.temperature ?? DEFAULTS.chat.temperature,
     topP: cs?.top_p ?? savedSettings.chat?.topP ?? DEFAULTS.chat.topP,
@@ -253,7 +253,7 @@ export function useSettingsManager(
     setChatSettings({
       smartSubMode: 'chat',
       thinkingEffort: defaults.chat.thinkingEffort,
-      deepThinkMode: true,
+      deepThinkMode: DEFAULTS.chat.deepThinkMode,
       permissionMode: 'auto',
       temperature: defaults.chat.temperature,
       topP: defaults.chat.topP,

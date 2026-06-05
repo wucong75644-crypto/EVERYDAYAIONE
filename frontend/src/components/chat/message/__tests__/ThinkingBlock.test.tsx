@@ -32,6 +32,22 @@ describe('ThinkingBlock', () => {
       const { container } = render(<ThinkingBlock content="" isThinking={true} />);
       expect(container.innerHTML).not.toBe('');
     });
+
+    it('空内容 + 仅 durationMs（状态指示模式）渲染为纯文字，无折叠箭头', () => {
+      const { container } = render(<ThinkingBlock content="" durationMs={6000} />);
+      expect(screen.getByText(/Thought for/)).toBeDefined();
+      expect(screen.getByText('用时 6秒')).toBeDefined();
+      // 状态指示模式：无 SVG 折叠箭头
+      expect(container.querySelector('svg')).toBeNull();
+      // 按钮为 cursor-default 不可交互
+      const button = screen.getByRole('button');
+      expect(button.className).toContain('cursor-default');
+    });
+
+    it('有内容时仍显示折叠箭头', () => {
+      const { container } = render(<ThinkingBlock content="reasoning" durationMs={3000} />);
+      expect(container.querySelector('svg')).not.toBeNull();
+    });
   });
 
   describe('时长显示', () => {
