@@ -228,14 +228,22 @@ async def handle_regenerate_or_send_operation(
     # 扁平化 generation_params（用于返回给前端，包含 aspect_ratio 等渲染参数）
     gen_params_flat: Optional[Dict[str, Any]] = None
 
-    # Media 类型（image/video）：将占位符 insert 到 messages 表
-    # 这样刷新页面后占位符能通过 GET /messages 自然加载，无需 taskRestoration 手动重建
-    # Chat 类型保持虚拟（不入库），因为 Chat 的流式 chunk 依赖 optimisticMessages
-    if gen_type in (GenerationType.IMAGE, GenerationType.IMAGE_ECOM, GenerationType.VIDEO):
+    # 所有任务类型（chat / image / image_ecom / video）：placeholder insert 到 messages 表
+    # 设计：预创建保证任何时点都能查到 message（防 cancel/失败/刷新 等场景丢消息）
+    # - Chat: content=[], status='streaming'（流式 chunk 仍由前端 optimisticMessages 显示，
+    #   不读 DB placeholder）
+    # - Media: content=[占位文字], status='pending'（前端从 DB 读占位符渲染）
+    if gen_type in (
+        GenerationType.IMAGE,
+        GenerationType.IMAGE_ECOM,
+        GenerationType.VIDEO,
+        GenerationType.CHAT,
+    ):
         _PLACEHOLDER_TEXT_FALLBACK = {
             GenerationType.IMAGE: "图片生成中",
             GenerationType.IMAGE_ECOM: "电商图生成中",
             GenerationType.VIDEO: "视频生成中",
+            GenerationType.CHAT: "",  # chat 不需要占位文案
         }
         # 优先使用大脑提供的渲染提示，兜底硬编码
         render = (params or {}).get("_render", {})
@@ -252,6 +260,7 @@ async def handle_regenerate_or_send_operation(
                 GenerationType.IMAGE: ("num_images", "aspect_ratio", "resolution", "output_format"),
                 GenerationType.IMAGE_ECOM: ("num_images", "aspect_ratio"),
                 GenerationType.VIDEO: ("aspect_ratio", "n_frames", "remove_watermark"),
+                GenerationType.CHAT: (),  # chat 无渲染参数
             }
             for key in _PARAM_KEYS.get(gen_type, ()):
                 if key in params:
@@ -262,12 +271,14 @@ async def handle_regenerate_or_send_operation(
 
         gen_params_flat = gen_params  # 保存完整扁平参数，用于返回给前端
 
+        # chat 用 streaming 状态 + 空 content；media 用 pending 状态 + 占位文字
+        is_chat = gen_type == GenerationType.CHAT
         placeholder_data = {
             "id": assistant_message_id,
             "conversation_id": conversation_id,
             "role": MessageRole.ASSISTANT.value,
-            "content": [{"type": "text", "text": placeholder_text}],
-            "status": MessageStatus.PENDING.value,
+            "content": [] if is_chat else [{"type": "text", "text": placeholder_text}],
+            "status": MessageStatus.STREAMING.value if is_chat else MessageStatus.PENDING.value,
             "generation_params": gen_params,
             "credits_cost": 0,
         }
@@ -277,13 +288,13 @@ async def handle_regenerate_or_send_operation(
         try:
             db.table("messages").insert(placeholder_data).execute()
             logger.info(
-                f"Media placeholder saved to DB | "
+                f"Placeholder saved to DB | "
                 f"message_id={assistant_message_id} | type={gen_type.value}"
             )
         except Exception as e:
-            # 占位符入库失败不应阻断任务，降级为虚拟占位符（与 Chat 行为一致）
+            # 占位符入库失败不应阻断任务，降级为虚拟占位符
             logger.warning(
-                f"Failed to save media placeholder to DB, continuing | "
+                f"Failed to save placeholder to DB, continuing | "
                 f"message_id={assistant_message_id} | error={e}"
             )
 

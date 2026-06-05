@@ -58,7 +58,10 @@ async def build_context_messages(
                 # NOTE: 加载 generation_params 用于提取 tool_digest（跨轮上下文补全）
                 .select("role, content, status, created_at, generation_params")
                 .eq("conversation_id", conversation_id)
-                .eq("status", "completed")
+                # 加载完成 + 中断的 message。中断的 message 含 interrupt_marker，
+                # 让 history_loader 注入 [任务恢复] 让 LLM 知道被打断。
+                # streaming/failed 不加载（前者是半成品，后者无业务价值）。
+                .in_("status", ["completed", "interrupted"])
                 .in_("role", ["user", "assistant"])
                 .order("created_at", desc=True)
                 .range(offset, offset + BATCH_SIZE - 1)

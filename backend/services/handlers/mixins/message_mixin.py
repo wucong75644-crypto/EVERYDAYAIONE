@@ -72,7 +72,29 @@ class MessageMixin:
             (Message 对象, 原始字典数据)
         """
         # 1. 构建消息数据
-        gen_params: Dict[str, Any] = {"type": generation_type, "model": model_id}
+        # 先从现有 placeholder 拿 generation_params（如果存在），合并新值避免丢失
+        # 场景：chat task 启动时预创建 placeholder（含 _render 等前端渲染参数），
+        # on_complete upsert 时如果直接重新构造 gen_params 会覆盖丢失。
+        existing_gen_params: Dict[str, Any] = {}
+        try:
+            existing = (
+                self.db.table("messages")
+                .select("generation_params")
+                .eq("id", message_id)
+                .maybe_single()
+                .execute()
+            )
+            if existing and existing.data:
+                _existing_gp = existing.data.get("generation_params") or {}
+                if isinstance(_existing_gp, dict):
+                    existing_gen_params = _existing_gp
+        except Exception:
+            # 查不到不影响主流程，按新建处理
+            pass
+
+        gen_params: Dict[str, Any] = {**existing_gen_params}
+        gen_params["type"] = generation_type
+        gen_params["model"] = model_id
         if extra_generation_params:
             gen_params.update(extra_generation_params)
 
