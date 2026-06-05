@@ -101,6 +101,65 @@ class TestBasic:
 
 
 # ============================================================
+# SIGINT interrupt（用户取消时中断当前执行的代码，保留 kernel）
+# 详见 docs/document/TECH_用户中断与恢复机制.md §M3
+# ============================================================
+
+
+class TestInterrupt:
+    """kernel SIGINT 中断机制"""
+
+    async def test_interrupt_nonexistent_returns_false(self, km):
+        """不存在的 kernel → 返回 False，不报错"""
+        assert km.interrupt("nonexistent") is False
+
+    async def test_interrupt_alive_kernel_returns_true(self, km, temp_dirs):
+        """活的 kernel → 成功发送 SIGINT 返回 True"""
+        ws, st, out = temp_dirs()
+        await km.get_or_create("conv1", ws, st, out)
+        assert km.interrupt("conv1") is True
+
+    async def test_interrupt_dead_kernel_returns_false(self, km, temp_dirs):
+        """已死的 kernel → 返回 False"""
+        ws, st, out = temp_dirs()
+        await km.get_or_create("conv1", ws, st, out)
+        km._kernels["conv1"].process.kill()
+        await km._kernels["conv1"].process.wait()
+        assert km.interrupt("conv1") is False
+
+    async def test_interrupt_preserves_variables(self, km, temp_dirs):
+        """SIGINT 中断长任务后，kernel 存活，变量保留，下次 execute 可用"""
+        import asyncio as _asyncio
+        ws, st, out = temp_dirs()
+        await km.get_or_create("conv1", ws, st, out)
+
+        # 先设变量
+        status, _ = await km.execute("conv1", "x = 42", 10)
+        assert status == "ok"
+
+        # 启动一个长任务（time.sleep）+ 中断它
+        async def run_long():
+            return await km.execute("conv1", "import time; time.sleep(60)", 70)
+
+        task = _asyncio.create_task(run_long())
+        await _asyncio.sleep(0.5)  # 让 kernel 开始执行
+        assert km.interrupt("conv1") is True
+
+        # 等待 execute 返回（应该是 interrupted 状态）
+        try:
+            status, result = await _asyncio.wait_for(task, timeout=5)
+            assert status == "interrupted"
+        except _asyncio.TimeoutError:
+            task.cancel()
+            raise AssertionError("interrupt 未在 5s 内生效")
+
+        # 验证变量保留 + kernel 可继续用
+        status2, result2 = await km.execute("conv1", "print(x)", 10)
+        assert status2 == "ok"
+        assert "42" in result2
+
+
+# ============================================================
 # 多 Kernel
 # ============================================================
 

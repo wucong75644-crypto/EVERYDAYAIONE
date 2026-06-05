@@ -128,18 +128,30 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         self,
         task_id: str,
         message_id: str,
+        conversation_id: str,
         messages: List[Dict[str, Any]],
         content_blocks: List[Dict[str, Any]],
         location: str,
         partial_text: str = "",
         partial_thinking: str = "",
     ) -> None:
-        """用户取消统一收尾：落锚原子操作 + 日志。
+        """用户取消统一收尾：沙盒 interrupt + 落锚原子操作 + 日志。
 
-        详见 docs/document/TECH_用户中断与恢复机制.md §四.2
+        详见 docs/document/TECH_用户中断与恢复机制.md §四.2 / §M3
         """
         from services.handlers.interrupt_anchor import persist_interrupt_anchor
         logger.info(f"Task cancelled by user ({location}) | task={task_id}")
+
+        # 给沙盒 kernel 发 SIGINT（业界标准 Jupyter interrupt 模式）
+        # 中断当前执行的代码但保留 kernel + 变量，下次 code_execute 立即可用
+        try:
+            from services.sandbox.kernel_manager import get_kernel_manager
+            km = get_kernel_manager()
+            if km is not None:
+                km.interrupt(conversation_id)
+        except Exception as e:
+            logger.warning(f"Kernel interrupt failed | task={task_id} | error={e}")
+
         await persist_interrupt_anchor(
             db=self.db,
             task_id=task_id,
@@ -324,7 +336,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # ── 取消检查点：用户点了停止按钮 ──
                 if ws_manager.is_cancelled(task_id):
                     await self._handle_user_cancel(
-                        task_id, message_id, messages, _content_blocks, "loop_top",
+                        task_id, message_id, conversation_id,
+                        messages, _content_blocks, "loop_top",
                     )
                     break
                 _budget.use_turn()
@@ -468,7 +481,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # Phase 3: stream 后立即检查 cancel + 落锚（覆盖 stream 内 break 场景）
                 if ws_manager.is_cancelled(task_id):
                     await self._handle_user_cancel(
-                        task_id, message_id, messages, _content_blocks, "stream",
+                        task_id, message_id, conversation_id,
+                        messages, _content_blocks, "stream",
                         partial_text=turn_text,
                         partial_thinking=turn_thinking,
                     )
@@ -780,7 +794,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # ── 取消检查点：工具执行完后再检查一次 ──
                 if ws_manager.is_cancelled(task_id):
                     await self._handle_user_cancel(
-                        task_id, message_id, messages, _content_blocks, "post_tool",
+                        task_id, message_id, conversation_id,
+                        messages, _content_blocks, "post_tool",
                     )
                     break
 
