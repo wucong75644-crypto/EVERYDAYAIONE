@@ -222,13 +222,26 @@ class ChatContextMixin:
         if _l1_memory_prepend:
             messages.append({"role": "system", "content": f"用户相关记忆：\n{_l1_memory_prepend}"})
 
+        # Layer 6.7: 当前轮附件元数据（独立 system message，紧贴 user 前）
+        # 行业对齐（OpenAI Assistants / Claude document block / Gemini Part）：
+        # 文件元数据脱离 user content，user message 保持用户字面意图纯净。
+        # 设计文档：docs/document/TECH_messages数组结构净化.md
+        from core.config import get_settings as _get_cfg
+        _attachments_as_system = _get_cfg().messages_attachments_as_system
+        _attachments_xml = (
+            self._format_attachments(workspace_files, conversation_id)
+            if workspace_files else ""
+        )
+        if _attachments_as_system and _attachments_xml.strip():
+            messages.append({"role": "system", "content": _attachments_xml.strip()})
+
         # Layer 7: 用户消息（始终最后）
-        # 结构化附件元数据（XML <attachments>）追加到用户文本里；
-        # 图片可视性、数据文件 analyzed 状态等信息全部由 <attachments> 块的
-        # <status> 字段表达，无需额外 [图片] 文案。
-        _user_text = text_content
-        if workspace_files:
-            _user_text += self._format_attachments(workspace_files, conversation_id)
+        # on  → user 纯净（attachments 已在 Layer 6.7）
+        # off → 旧路径：XML 追加到 user text（向后兼容回滚）
+        if _attachments_as_system:
+            _user_text = text_content
+        else:
+            _user_text = text_content + _attachments_xml
 
         user_msg: Dict[str, Any] = {"role": "user", "content": _user_text}
         if image_urls or file_urls:

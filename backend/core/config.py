@@ -123,6 +123,11 @@ class Settings(BaseSettings):
     context_tool_token_budget: int = 6000  # 工具结果专属 token 预算
     context_max_tokens: int = 32000  # messages 总 token 预算（分桶兜底）
 
+    # messages 数组结构净化：attachments XML 从 user content 拆到独立 system message
+    # 历史加载时自动剥离旧 XML（DB 存储不变，向后兼容）
+    # 设计文档：docs/document/TECH_messages数组结构净化.md
+    messages_attachments_as_system: bool = True
+
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
