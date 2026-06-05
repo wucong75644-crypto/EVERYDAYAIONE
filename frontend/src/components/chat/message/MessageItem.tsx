@@ -6,6 +6,21 @@
  */
 
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
+
+/** 相对时间格式化（中文，与后端 utils/time_context.format_relative_time 对齐） */
+function formatRelativeCN(iso: string): string {
+  try {
+    const dt = new Date(iso);
+    if (isNaN(dt.getTime())) return '未知时间前';
+    const delta = (Date.now() - dt.getTime()) / 1000;
+    if (delta < 60) return '刚刚';
+    if (delta < 3600) return `约 ${Math.floor(delta / 60)} 分钟前`;
+    if (delta < 86400) return `约 ${Math.floor(delta / 3600)} 小时前`;
+    return `约 ${Math.floor(delta / 86400)} 天前`;
+  } catch {
+    return '未知时间前';
+  }
+}
 import { m } from 'framer-motion';
 import type { Message } from '../../../stores/useMessageStore';
 import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
@@ -487,7 +502,7 @@ export default memo(function MessageItem({
                   }
                   // tool_step 折叠卡片（完成后可展开查看代码/输出）
                   if (part.type === 'tool_step') {
-                    const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error'; code?: string; output?: string; input?: string; elapsed_ms?: number };
+                    const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
                     return (
                       <ToolStepCard
                         key={ts.tool_call_id || idx}
@@ -501,6 +516,9 @@ export default memo(function MessageItem({
                       />
                     );
                   }
+                  // interrupt_marker：数据层标记，前端不渲染独立卡片（消息末尾灰字代替）
+                  // 详见 TECH_用户中断与恢复机制.md §15.5
+                  if (part.type === 'interrupt_marker') return null;
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer
@@ -617,6 +635,24 @@ export default memo(function MessageItem({
                   }
                   return null;
                 })}
+                {/* 中断提示：messages.status='interrupted' 时 partial 末尾追加 8-10px 灰字
+                    详见 TECH_用户中断与恢复机制.md §15.5 信号 2 */}
+                {(() => {
+                  if (message.status !== 'interrupted') return null;
+                  const marker = message.content.find(
+                    (p) => p.type === 'interrupt_marker'
+                  ) as { interrupted_at?: string } | undefined;
+                  if (!marker?.interrupted_at) return null;
+                  const ago = formatRelativeCN(marker.interrupted_at);
+                  return (
+                    <div
+                      className="mt-1 text-[10px] text-text-tertiary leading-none"
+                      data-testid="interrupt-hint"
+                    >
+                      停止于 {ago}
+                    </div>
+                  );
+                })()}
                 {/* 文件卡片固定槽位：所有 file block 统一在文字内容后渲染 */}
                 {!isStreaming && fileBlocks.length > 0 && (
                   <div className="my-2" style={{ maxWidth: '400px' }}>

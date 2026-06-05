@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from fastapi import WebSocket
 from loguru import logger
 
+from services.cancel_gate import CancelManager
 from services.websocket_redis import RedisPubSubMixin
 
 
@@ -69,9 +70,9 @@ class WebSocketManager(RedisPubSubMixin):
         # key = task_id → str（打断消息内容）
         self._steer_messages: Dict[str, str] = {}
 
-        # 用户取消机制（Cancel）— 硬停止，区别于 steer 的软打断
-        # key = task_id → Event（取消信号）
-        self._cancel_signals: Dict[str, asyncio.Event] = {}
+        # 用户取消机制（Cancel）— 整合 asyncio.Event 信号 + WS 闸门
+        # 详见 docs/document/TECH_用户中断与恢复机制.md §13.2 / §四.5
+        self._cancel = CancelManager()
 
         # Redis Pub/Sub
         self._worker_id = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
@@ -238,8 +239,21 @@ class WebSocketManager(RedisPubSubMixin):
         self,
         task_id: str,
         message: Dict[str, Any],
+        org_id: str | None = None,
     ) -> int:
-        """发送消息到任务的所有订阅者（本地 + 跨进程）"""
+        """发送消息到任务的所有订阅者（本地 + 跨进程）。
+
+        Args:
+            org_id: 用于闸门复合 key 匹配（可选向后兼容）
+        """
+        # === Phase 1: WS 闸门 ===
+        if self.is_in_cancelled_gate(task_id, org_id):
+            logger.debug(
+                f"Drop cancelled task message | task={task_id} | "
+                f"type={message.get('type')}"
+            )
+            return 0
+
         subscribers = self._task_subscribers.get(task_id, set())
 
         logger.debug(
@@ -262,13 +276,25 @@ class WebSocketManager(RedisPubSubMixin):
         task_id: str,
         user_id: str,
         message: Dict[str, Any],
+        org_id: str | None = None,
     ) -> None:
         """
         发送消息：优先走任务订阅，同时通过 Redis 确保跨进程送达。
 
         多 Worker 场景下，本地可能没有任务订阅者（订阅在其他 Worker）。
         因此始终通过 Redis 以 user 维度广播，确保消息不丢。
+
+        Args:
+            org_id: 用于闸门复合 key 匹配（可选向后兼容）
         """
+        # === Phase 1: WS 闸门 ===
+        if self.is_in_cancelled_gate(task_id, org_id):
+            logger.debug(
+                f"Drop cancelled task message | task={task_id} | "
+                f"type={message.get('type')}"
+            )
+            return
+
         local_subscribers = self._task_subscribers.get(task_id, set())
         if local_subscribers:
             logger.info(
@@ -391,35 +417,33 @@ class WebSocketManager(RedisPubSubMixin):
         self._steer_messages.pop(task_id, None)
 
     # ================================================================
-    # 用户取消（Cancel）— 硬停止 Agent 循环
+    # 用户取消（Cancel）— 转发到 CancelManager（services/cancel_gate.py）
     # ================================================================
 
     def register_cancel_listener(self, task_id: str) -> None:
-        """注册取消监听（工具循环开始时调用）"""
-        self._cancel_signals[task_id] = asyncio.Event()
+        self._cancel.register_listener(task_id)
 
     def is_cancelled(self, task_id: str) -> bool:
-        """非阻塞检查是否已被用户取消"""
-        event = self._cancel_signals.get(task_id)
-        return bool(event and event.is_set())
+        return self._cancel.is_signalled(task_id)
 
-    def cancel_task(self, task_id: str) -> bool:
-        """触发取消信号（cancel API 调用）
-
-        Returns:
-            True = 找到运行中的任务并发送了取消信号
-        """
-        event = self._cancel_signals.get(task_id)
-        if event:
-            event.set()
-            logger.info(f"Cancel signal sent | task_id={task_id}")
-            return True
-        logger.warning(f"Cancel signal miss (task not running) | task_id={task_id}")
-        return False
+    def cancel_task(self, task_id: str, org_id: str | None = None) -> bool:
+        return self._cancel.cancel(task_id, org_id)
 
     def unregister_cancel_listener(self, task_id: str) -> None:
-        """清理取消监听（工具循环结束时调用）"""
-        self._cancel_signals.pop(task_id, None)
+        self._cancel.unregister_listener(task_id)
+
+    async def mark_cancelled_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> None:
+        await self._cancel.mark_gate(task_id, org_id)
+
+    def is_in_cancelled_gate(
+        self, task_id: str, org_id: str | None = None,
+    ) -> bool:
+        return self._cancel.is_in_gate(task_id, org_id)
+
+    async def cleanup_cancelled_gates(self) -> int:
+        return await self._cancel.cleanup_gates()
 
     # ================================================================
     # 心跳与清理

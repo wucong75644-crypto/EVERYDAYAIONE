@@ -88,11 +88,20 @@ export interface ToolStepPart {
   type: 'tool_step';
   tool_name: string;
   tool_call_id: string;
-  status: 'running' | 'completed' | 'error';
+  status: 'running' | 'completed' | 'error' | 'cancelled';
   summary?: string;
   code?: string;
   output?: string;
   elapsed_ms?: number;
+  input?: string;
+  cancelled_at?: string;
+}
+
+/** 中断标记块（数据层，前端不渲染独立卡片，仅用于检测） */
+export interface InterruptMarkerPart {
+  type: 'interrupt_marker';
+  interrupted_at: string;
+  reason: 'user_cancel' | 'system_timeout' | 'network_error';
 }
 
 /** 表单内容块（聊天内嵌表单，如定时任务创建/修改） */
@@ -156,7 +165,7 @@ export interface FormField {
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** 消息状态 */
-export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
+export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed' | 'interrupted';
 
 /** 消息错误 */
 export interface MessageError {

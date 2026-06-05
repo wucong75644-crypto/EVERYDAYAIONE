@@ -229,6 +229,109 @@ describe('MessageItem 回调稳定性', () => {
 
 
 // ============================================================
+// Phase 5: 中断态视觉信号（灰字提示 + interrupt_marker 跳过）
+// 详见 docs/document/TECH_用户中断与恢复机制.md §15.5
+// ============================================================
+
+function makeInterruptedMessage(overrides: Partial<Message> = {}): Message {
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  return {
+    id: 'msg-interrupted',
+    conversation_id: 'conv-1',
+    role: 'assistant',
+    content: [
+      { type: 'text', text: '我先查最近订单' },
+      {
+        type: 'tool_step' as const,
+        tool_name: 'erp_query',
+        tool_call_id: 'call_A',
+        status: 'cancelled' as const,
+        cancelled_at: fiveMinAgo,
+      },
+      {
+        type: 'interrupt_marker' as const,
+        interrupted_at: fiveMinAgo,
+        reason: 'user_cancel' as const,
+      },
+    ] as Message['content'],
+    status: 'interrupted',
+    created_at: '2026-06-05T10:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('MessageItem 中断态渲染', () => {
+  beforeEach(() => {
+    capturedMediaProps = {};
+    mockUpdateMessage.mockClear();
+  });
+
+  it('status=interrupted 且含 interrupt_marker → 显示灰字提示"停止于 X 前"', () => {
+    const msg = makeInterruptedMessage();
+    render(
+      <MessageItem
+        message={msg}
+        allImageUrls={[]}
+        currentImageIndex={0}
+      />,
+    );
+    const hint = screen.getByTestId('interrupt-hint');
+    expect(hint).toBeInTheDocument();
+    expect(hint.textContent).toContain('停止于');
+    expect(hint.textContent).toContain('分钟前');
+  });
+
+  it('status=interrupted 但无 interrupt_marker → 不显示提示', () => {
+    const msg = makeInterruptedMessage({
+      content: [
+        { type: 'text', text: '部分内容' },
+        {
+          type: 'tool_step' as const,
+          tool_name: 'erp_query',
+          tool_call_id: 'call_A',
+          status: 'cancelled' as const,
+        },
+      ] as Message['content'],
+    });
+    render(
+      <MessageItem
+        message={msg}
+        allImageUrls={[]}
+        currentImageIndex={0}
+      />,
+    );
+    expect(screen.queryByTestId('interrupt-hint')).toBeNull();
+  });
+
+  it('status=completed 即使含 interrupt_marker 也不显示提示', () => {
+    const msg = makeInterruptedMessage({ status: 'completed' });
+    render(
+      <MessageItem
+        message={msg}
+        allImageUrls={[]}
+        currentImageIndex={0}
+      />,
+    );
+    expect(screen.queryByTestId('interrupt-hint')).toBeNull();
+  });
+
+  it('interrupt_marker block 不渲染为独立卡片', () => {
+    const msg = makeInterruptedMessage();
+    const { container } = render(
+      <MessageItem
+        message={msg}
+        allImageUrls={[]}
+        currentImageIndex={0}
+      />,
+    );
+    // 整个组件渲染后，DOM 内不应出现 "interrupt_marker" 字面量文本
+    expect(container.textContent).not.toContain('interrupt_marker');
+    expect(container.textContent).not.toContain('user_cancel');
+  });
+});
+
+
+// ============================================================
 // 电商图模式：failed ImagePart 渲染测试
 // ============================================================
 

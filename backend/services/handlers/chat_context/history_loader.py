@@ -14,8 +14,13 @@ from loguru import logger
 
 from services.handlers.chat_context.content_extractors import (
     extract_image_urls_from_content,
+    extract_interrupt_marker,
     extract_oai_messages_from_content,
     extract_text_from_content,
+)
+from services.handlers.interrupt_anchor import (
+    TASK_RESUMPTION_TEMPLATE,
+    fix_orphan_tool_calls,
 )
 
 
@@ -41,6 +46,11 @@ async def build_context_messages(
         has_more = True
         batch_count = 0
 
+        # 中断标记检测：只看最近一条 assistant 是否含 interrupt_marker
+        # 详见 docs/document/TECH_用户中断与恢复机制.md §15.4 约束 6
+        first_assistant_seen = False
+        latest_interrupt_marker: Dict[str, Any] | None = None
+
         while has_more and total_tokens < budget and batch_count < MAX_BATCHES:
             batch_count += 1
             result = (
@@ -63,6 +73,13 @@ async def build_context_messages(
             for row in result.data:  # DESC 排序，最新在前
                 raw_content = row.get("content")
                 role = row["role"]
+
+                # 检测最近一条 assistant 是否含 interrupt_marker（DESC 第一条 assistant）
+                if role == "assistant" and not first_assistant_seen:
+                    first_assistant_seen = True
+                    _marker = extract_interrupt_marker(raw_content)
+                    if _marker:
+                        latest_interrupt_marker = _marker
                 images = (
                     extract_image_urls_from_content(raw_content)
                     if total_images < max_images
@@ -176,6 +193,23 @@ async def build_context_messages(
 
         # 反转为正序（旧→新），LLM 需要按时间顺序读取
         context.reverse()
+
+        # 防御性 orphan 补对：处理历史脏数据 / 中断遗留 / 边界情况
+        # 设计参考 LiteLLM Message Sanitization + Cline taskResumption
+        # 详见 docs/document/TECH_用户中断与恢复机制.md §四.3
+        context = fix_orphan_tool_calls(context)
+
+        # 注入 [任务恢复] 前缀（仅最近一次中断未恢复的场景）
+        # 详见 docs/document/TECH_用户中断与恢复机制.md §四.4 / §15.5
+        if latest_interrupt_marker:
+            from utils.time_context import format_relative_time
+            ago_text = format_relative_time(
+                latest_interrupt_marker.get("interrupted_at", "")
+            )
+            context.append({
+                "role": "system",
+                "content": TASK_RESUMPTION_TEMPLATE.format(ago_text=ago_text),
+            })
 
         # 去除末尾与当前消息重复的 user 消息
         if context and context[-1]["role"] == "user":

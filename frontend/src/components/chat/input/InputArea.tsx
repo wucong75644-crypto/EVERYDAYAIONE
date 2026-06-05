@@ -293,8 +293,9 @@ export default function InputArea({
       }
     }
 
-    // 2. 标记消息完成（防止后续 WS 事件重复处理）
-    store.updateMessage(streamingMessageId, { status: 'completed' });
+    // 2. 标记消息为已中断（前端立即视觉反馈；后端落锚完成后 WS 不会推新事件因有闸门）
+    // 详见 TECH_用户中断与恢复机制.md §15
+    store.updateMessage(streamingMessageId, { status: 'interrupted' });
     // 3. 清理流式状态
     store.completeStreaming(conversationId);
     // 4. 后端取消任务（fire-and-forget）

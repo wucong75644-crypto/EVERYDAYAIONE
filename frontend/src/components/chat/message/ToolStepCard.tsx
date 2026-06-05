@@ -12,7 +12,7 @@ import { getToolCallText } from '../../../constants/placeholder';
 interface ToolStepCardProps {
   toolName: string;
   toolCallId: string;
-  status: 'running' | 'completed' | 'error';
+  status: 'running' | 'completed' | 'error' | 'cancelled';
   code?: string;
   output?: string;
   input?: string;
@@ -56,12 +56,18 @@ export default memo(function ToolStepCard({
   const [expanded, setExpanded] = useState(false);
   const label = getToolLabel(toolName);
   const hasContent = !!(code || output || input);
+  // running 不可展开（无内容）；cancelled 即使无 output 也可展开（用户看输入参数）
   const canExpand = hasContent && status !== 'running';
+  const isCancelled = status === 'cancelled';
 
   return (
     <div
       key={toolCallId}
-      className="my-1.5 max-w-md rounded-lg border border-border-default/60 bg-bg-subtle/40 overflow-hidden text-xs"
+      className={`my-1.5 max-w-md rounded-lg border overflow-hidden text-xs ${
+        isCancelled
+          ? 'border-l-2 border-l-yellow-500 border-border-default/60 bg-bg-subtle/30'
+          : 'border-border-default/60 bg-bg-subtle/40'
+      }`}
     >
       {/* Header — 始终可见 */}
       <button
@@ -123,6 +129,12 @@ export default memo(function ToolStepCard({
             {elapsedMs != null && <span className="text-text-disabled ml-0.5">{formatElapsed(elapsedMs)}</span>}
           </span>
         )}
+        {status === 'cancelled' && (
+          <span className="flex items-center gap-1 text-yellow-600 dark:text-yellow-500 shrink-0">
+            <span className="text-[10px]">⏸</span>
+            <span>已中断</span>
+          </span>
+        )}
       </button>
 
       {/* 折叠内容区：Input（调用参数）+ Result（返回结果），对齐 Claude 风格 */}
@@ -157,6 +169,13 @@ export default memo(function ToolStepCard({
               }`}>
                 {output}
               </pre>
+            </div>
+          )}
+          {/* Cancelled：显式提示用户中断（无 output 时） */}
+          {isCancelled && !output && (
+            <div className="text-[11px] text-yellow-700 dark:text-yellow-500 flex items-center gap-1.5">
+              <span>⏸</span>
+              <span>用户中断了执行（结果不可用）</span>
             </div>
           )}
         </div>

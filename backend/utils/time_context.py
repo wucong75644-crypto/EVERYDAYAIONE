@@ -53,6 +53,26 @@ def _parse_iso_to_cn(value: Optional[Union[str, datetime]]) -> Optional[datetime
         return None
 
 
+def format_relative_time(value: Union[str, datetime]) -> str:
+    """格式化为中文相对时间："刚刚" / "X 分钟前" / "X 小时前" / "X 天前"。
+
+    用于 history_loader TASK RESUMPTION 前缀的 agoText 注入。
+    详见 docs/document/TECH_用户中断与恢复机制.md §四.1.3
+    """
+    dt = _parse_iso_to_cn(value)
+    if dt is None:
+        return "未知时间前"
+
+    delta = (now_cn() - dt).total_seconds()
+    if delta < 60:
+        return "刚刚"
+    if delta < 3600:
+        return f"约 {int(delta // 60)} 分钟前"
+    if delta < 86400:
+        return f"约 {int(delta // 3600)} 小时前"
+    return f"约 {int(delta // 86400)} 天前"
+
+
 # ────────────────────────────────────────────────────────────────────
 # TimePoint — 单个时间点的结构化表示
 # ────────────────────────────────────────────────────────────────────

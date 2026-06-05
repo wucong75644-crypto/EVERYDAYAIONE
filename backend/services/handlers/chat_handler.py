@@ -124,6 +124,33 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         except Exception as e:
             logger.warning(f"Failed to save accumulated_blocks | task_id={task_id} | error={e}")
 
+    async def _handle_user_cancel(
+        self,
+        task_id: str,
+        message_id: str,
+        messages: List[Dict[str, Any]],
+        content_blocks: List[Dict[str, Any]],
+        location: str,
+        partial_text: str = "",
+        partial_thinking: str = "",
+    ) -> None:
+        """用户取消统一收尾：落锚原子操作 + 日志。
+
+        详见 docs/document/TECH_用户中断与恢复机制.md §四.2
+        """
+        from services.handlers.interrupt_anchor import persist_interrupt_anchor
+        logger.info(f"Task cancelled by user ({location}) | task={task_id}")
+        await persist_interrupt_anchor(
+            db=self.db,
+            task_id=task_id,
+            message_id=message_id,
+            org_id=self.org_id,
+            messages=messages,
+            content_blocks=content_blocks,
+            partial_text=partial_text,
+            partial_thinking=partial_thinking,
+        )
+
     async def _stream_generate(
         self,
         task_id: str,
@@ -296,7 +323,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             while not _budget.stop_reason:
                 # ── 取消检查点：用户点了停止按钮 ──
                 if ws_manager.is_cancelled(task_id):
-                    logger.info(f"Task cancelled by user | task={task_id}")
+                    await self._handle_user_cancel(
+                        task_id, message_id, messages, _content_blocks, "loop_top",
+                    )
                     break
                 _budget.use_turn()
                 turn = _budget.turns_used - 1  # 0-based for logging
@@ -353,6 +382,18 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     thinking_mode=thinking_mode,
                     **stream_kwargs,
                 ):
+                    # === Phase 2: cancel 真停（每个 chunk 头部检查）===
+                    # break 让 async generator 自动 aclose，httpx 连接立即关闭
+                    if ws_manager.is_cancelled(task_id):
+                        from services.cancel_metrics import record_cancel_latency
+                        record_cancel_latency(
+                            task_id, self.org_id, phase="stream",
+                            had_partial=bool(turn_text or turn_thinking),
+                            tools_in_flight=len(tool_calls_acc),
+                        )
+                        logger.info(f"LLM stream cancelled by user | task={task_id}")
+                        break
+
                     # 思考内容
                     if chunk.thinking_content:
                         if _thinking_start_time is None:
@@ -423,6 +464,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     # 记录最后的 finish_reason（通常在最后一帧）
                     if chunk.finish_reason:
                         _last_finish_reason = chunk.finish_reason
+
+                # Phase 3: stream 后立即检查 cancel + 落锚（覆盖 stream 内 break 场景）
+                if ws_manager.is_cancelled(task_id):
+                    await self._handle_user_cancel(
+                        task_id, message_id, messages, _content_blocks, "stream",
+                        partial_text=turn_text,
+                        partial_thinking=turn_thinking,
+                    )
+                    break
 
                 # --- 流结束，判断是否有工具调用 ---
                 if not tool_calls_acc:
@@ -729,7 +779,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 # ── 取消检查点：工具执行完后再检查一次 ──
                 if ws_manager.is_cancelled(task_id):
-                    logger.info(f"Task cancelled by user (post-tool) | task={task_id}")
+                    await self._handle_user_cancel(
+                        task_id, message_id, messages, _content_blocks, "post_tool",
+                    )
                     break
 
                 # ── 打断检查点：用户在工具执行期间发了新消息 ──

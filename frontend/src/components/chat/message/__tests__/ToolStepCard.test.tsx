@@ -33,6 +33,17 @@ describe('ToolStepCard', () => {
       expect(screen.getByText('失败')).toBeDefined();
     });
 
+    it('cancelled 状态显示"已中断"', () => {
+      render(<ToolStepCard {...baseProps} status="cancelled" output={undefined} input='{"x":1}' />);
+      expect(screen.getByText('已中断')).toBeDefined();
+    });
+
+    it('cancelled 状态无 output 时展开显示"用户中断了执行"', () => {
+      render(<ToolStepCard {...baseProps} status="cancelled" output={undefined} input='{"x":1}' />);
+      fireEvent.click(screen.getByRole('button'));
+      expect(screen.getByText('用户中断了执行（结果不可用）')).toBeDefined();
+    });
+
     it('毫秒级耗时显示 ms 单位', () => {
       render(<ToolStepCard {...baseProps} elapsedMs={500} />);
       expect(screen.getByText('500ms')).toBeDefined();
