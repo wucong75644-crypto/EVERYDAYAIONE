@@ -9,7 +9,7 @@ MessageMixin - 消息处理
 
 import asyncio
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 
@@ -152,20 +152,44 @@ class MessageMixin:
         if task.get('status') not in ('completed', 'failed', 'cancelled'):
             return None
 
-        # 用户取消场景：允许 on_complete 写入部分结果
-        if (
-            task.get('status') == 'failed'
-            and task.get('error_message') == '用户取消了任务'
-        ):
-            logger.info(
-                f"User-cancelled task, allowing content upsert | task_id={task_id}"
-            )
-            return None
-
         message_id = task["placeholder_message_id"]
+
+        # 用户取消场景：cancel API + chat_handler persist_interrupt_anchor 已经
+        # 把 message 写到 DB（status='interrupted' + cancelled tool_step + marker），
+        # on_complete 绝对不能再 upsert，否则会覆盖中断状态导致 LLM 失忆。
+        # 兼容两种 task 状态：
+        # - 'cancelled'（chat_handler persist 成功写 tasks 之后）
+        # - 'failed' + error_message='用户取消了任务'（cancel API 写、persist 未跑完时）
+        # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
+        is_user_cancelled = (
+            task.get('status') == 'cancelled'
+            or (
+                task.get('status') == 'failed'
+                and task.get('error_message') == '用户取消了任务'
+            )
+        )
+        if is_user_cancelled:
+            logger.info(
+                f"Cancel-triggered task, skipping on_complete persistence | "
+                f"task_id={task_id} | message_id={message_id} | "
+                f"status={task.get('status')}"
+            )
+            # 返回 stub Message 让 _handle_complete_common 早返回。
+            # 不查 DB —— OrgScopedDB org_id 过滤可能误判为 missing 导致 data-inconsistency 兜底
+            # 重新跑 _upsert，又覆盖了中断状态（这是线上观察到的 bug）。
+            return Message(
+                id=message_id,
+                conversation_id=task["conversation_id"],
+                role=MessageRole.ASSISTANT,
+                content=[],
+                status=MessageStatus.FAILED,
+                error=None,
+                created_at=datetime.now(timezone.utc),
+            )
+
         logger.warning(
             f"Task already in terminal state, skipping duplicate processing | "
-            f"task_id={task_id} | status={task['status']}"
+            f"task_id={task_id} | status={task.get('status')}"
         )
         try:
             existing_msg = (
