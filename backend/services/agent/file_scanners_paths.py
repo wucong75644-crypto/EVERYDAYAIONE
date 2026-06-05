@@ -240,6 +240,16 @@ class _PathBChunkAccumulator:
                 if self.col_max_abs[ci] >= 1e10:
                     is_long_id = True
 
+            # V3.2: PathB 流式扫描不算全表 unique(避免每列维护 set 增内存),
+            # 用采样估算: len(set(sample_vals)) 给 AI 一个粗略参考
+            try:
+                unique_count = len({
+                    v for v in sample_vals
+                    if v is not None and not (isinstance(v, float) and pd.isna(v))
+                })
+            except Exception:
+                unique_count = 0
+
             cols.append(ColumnEvidence(
                 col_letter=col_letter(ci),
                 raw_header=col_str,
@@ -247,6 +257,7 @@ class _PathBChunkAccumulator:
                 classified_dist=classified,
                 null_ratio=null_ratio,
                 is_long_id_candidate=is_long_id,
+                unique_count=unique_count,
             ))
         return cols
 
@@ -634,6 +645,17 @@ class PathDScanner(BaseScanner):
         # PathD 文件大小已限 150MB,即使持有 20 个 sheet 的 df 也不爆
         self._cached_sheet_dfs[str(name)] = df
 
+        # V3.2: 对非空 sheet 跑 _scan_columns,补充列证据
+        # (让 AI 在多 sheet 场景判 is_order_level 时有 unique/null 等数据)
+        columns_ev: list[ColumnEvidence] = []
+        if len(df) > 0:
+            try:
+                columns_ev = self._scan_columns(df)
+            except Exception as e:
+                logger.warning(
+                    f"PathD _scan_columns failed | sheet={name} | err={e}"
+                )
+
         return SheetEvidence(
             name=str(name),
             rows=len(df),
@@ -642,4 +664,5 @@ class PathDScanner(BaseScanner):
             head_sample=head_sample,
             tail_sample=tail_sample,
             column_names=[str(c) for c in df.columns],
+            columns=columns_ev,
         )

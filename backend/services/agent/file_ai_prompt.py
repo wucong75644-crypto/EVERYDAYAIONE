@@ -36,7 +36,7 @@ JSON_SCHEMA_TEMPLATE = """
   ],
 
   "summary_rows": [<Excel 行号>],                           // 你识别的汇总/合计/累计/小计 行
-  "unit_rows": [<Excel 行号>],                              // 你识别的单位说明行(紧贴表头那种)
+  "unit_rows": [<Excel 行号>],                              // 含 (单位:xxx) / 计量说明 的行
   "note_rows": [<Excel 行号>],                              // 你识别的备注/版权/数据来源 行
 
   "merged_cell_actions": [
@@ -50,7 +50,7 @@ JSON_SCHEMA_TEMPLATE = """
     {
       "col_letter": "F",
       "action": "force_str | extract_unit_number | extract_currency_amount | to_datetime",
-      "unit": "<extract_unit_number 时必填,如 'kg'>",
+      "unit": "<extract_unit_number 时必填,提取的单位字符串>",
       "reason": "<可选>"
     }
   ],
@@ -77,13 +77,13 @@ JSON_SCHEMA_TEMPLATE = """
   "data_quality_notes": [
     {
       "severity": "info | warning | error",
-      "note": "<给主 Agent 的提示;父子层级/异常空值/疑似脏数据 写这里>",
+      "note": "<给主 Agent 的提示,结构异常/数据缺陷/风险提示等>",
       "affected_rows": [<int>],
       "affected_cols": ["<列字母>"]
     }
   ],
 
-  "overall_summary": "<100-300 字:这是什么文件/规模/关键字段/使用注意>",
+  "overall_summary": "<简明总结:文件用途/规模/关键字段/使用注意,约 100-300 字>",
 
   "table_role": "fact | dimension | log | wide | snapshot | unknown",
   "table_role_note": "<一句话理由>"
@@ -100,13 +100,15 @@ TASK_BLOCK = """
 # 思考流程(按顺序,一次走完)
 1. 看「表头候选」前 5 行 → 判定 header_row / data_start_row
    - 哪几行是标题/标语 → note_rows
-   - 哪一行是单位说明(紧贴表头) → unit_rows
+   - 哪一行是计量单位/币种 说明 → unit_rows
    - 哪一行是真表头 → header_row
 
 2. 看「列证据 + 样本」→ 给每列填 business_name + semantic_type
    - 看样本内容用你的常识判断业务语义,不要凭列名瞎猜
-   - 同主键内值重复的字段 → is_order_level=true
-   - ID/订单号/编码类(清洗时要保 string)→ is_id_column=true
+   - is_id_column=true: 看 sample 是 ID 类(长数字串/UUID/带连字符或前缀的编码等,
+     清洗时要保 string 避免 int 精度丢失)
+   - is_order_level=true: 该数值列在同业务主键内值重复(SUM 前需 DISTINCT)
+     用 sample + unique_count + 常识判断,不确定填 false (默认安全)
 
 3. 看「可疑行原始值」→ 判定每行业务角色
    - 看 raw_values 内容,你自己判断是汇总/单位说明/备注/数据起始/异常
@@ -116,7 +118,7 @@ TASK_BLOCK = """
    - fact:      明细级数据,有 ID + 多个数值聚合字段,同 ID 多行(一对多)
    - dimension: 维度/映射表,列以 string 为主,无聚合数值,有候选 join key
    - log:       日志/事件流,按时间排序,无主键聚合
-   - wide:      宽表,列数 ≥ 50,每行一个 entity 多个指标
+   - wide:      宽表,列数明显多于行数特征数,每行一个 entity 多个指标列
    - snapshot:  快照表,某时点全量,无时间维度
    - unknown:   无法判断时填(不强求选)
 
@@ -124,9 +126,11 @@ TASK_BLOCK = """
 
 # 强制规则
 - MUST 严格 JSON 输出,不要 markdown 代码块包裹
+- MUST 所有文本字段(business_name / overall_summary / table_role_note / data_quality_notes / 各 reason / notes)用与文件内容一致的语言(文件中文则中文,英文则英文),不要混语
 - MUST 每列都要有 1 条 column_semantics(包括空列,business_name='')
 - MUST 不确定时填默认值(other / unknown / false / 空 list),不要瞎猜
 - MUST 用你的常识看 sample 内容,不要因列名长得像就贴标签
+- MUST 一行同时像 summary/unit/note 时,按 summary > unit > note 优先级只填一处,不重复
 - MUST NOT 输出超出 schema 的字段
 - MUST 一次性给出全部判断,不要思考过程的中间推理
 
@@ -169,7 +173,8 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
         flag_str = (" " + " ".join(flags)) if flags else ""
         parts.append(
             f"列 {col_ev.col_letter}: 原始表头='{col_ev.raw_header}', "
-            f"类型分布={col_ev.classified_dist}, null率={col_ev.null_ratio:.2%}{flag_str}\n"
+            f"类型分布={col_ev.classified_dist}, null率={col_ev.null_ratio:.2%}, "
+            f"unique={col_ev.unique_count}{flag_str}\n"
         )
         if variant != "simplified":
             sample_preview = col_ev.sample_values[:8] if col_ev.sample_values else []
@@ -218,6 +223,23 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
             )
             if variant != "simplified" and s.head_sample:
                 parts.append(f"  Head: {_truncate_row(s.head_sample[0])}\n")
+            # V3.2: 每个 sheet 各自的列证据(unique/null/类型),让 AI 在多 sheet 场景
+            # 判 is_order_level 时有数据支撑(对齐 PathA 体验)
+            if variant != "simplified" and s.columns:
+                parts.append(f"  列证据({len(s.columns)} 列):\n")
+                for col_ev in s.columns:
+                    flags = []
+                    if col_ev.is_long_id_candidate:
+                        flags.append("⚠️ 长ID候选")
+                    flag_str = (" " + " ".join(flags)) if flags else ""
+                    parts.append(
+                        f"    {col_ev.col_letter} {col_ev.raw_header!r}: "
+                        f"类型分布={col_ev.classified_dist}, "
+                        f"null率={col_ev.null_ratio:.1%}, "
+                        f"unique={col_ev.unique_count}{flag_str}\n"
+                    )
+                    sample_preview = col_ev.sample_values[:5] if col_ev.sample_values else []
+                    parts.append(f"      样本: {_truncate_list(sample_preview)}\n")
         parts.append("\n")
 
     # 公式

@@ -175,6 +175,12 @@ class BaseScanner(ABC):
                 except (TypeError, ValueError, AttributeError):
                     pass
 
+            # V3.2: 计算唯一值数量,供 AI 用统计方法判断 is_order_level
+            try:
+                unique_count = int(non_null.nunique())
+            except Exception:
+                unique_count = 0
+
             cols.append(ColumnEvidence(
                 col_letter=col_letter(i),
                 raw_header=col_str,
@@ -182,6 +188,7 @@ class BaseScanner(ABC):
                 classified_dist=classified,
                 null_ratio=null_ratio,
                 is_long_id_candidate=is_long_id,
+                unique_count=unique_count,
             ))
         return cols
 
