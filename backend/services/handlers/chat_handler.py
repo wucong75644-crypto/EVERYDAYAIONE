@@ -344,6 +344,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 turn_thinking = ""
                 _thinking_committed = False
                 _thinking_start_time = None  # 每轮重置，确保 duration_ms 只算当前轮
+                _turn_request_start = _time.monotonic()  # 未开启深度思考时的 AI 响应等待计时
                 tool_calls_acc: Dict[int, Dict[str, Any]] = {}  # index → {id, name, arguments}
 
                 async for chunk in self._adapter.stream_chat(
@@ -370,9 +371,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     # 正文内容
                     # thinking→text 转换点：立即提交 thinking 块到 content_blocks
                     # 确保前端 content.map 中 thinking 在 text 之前
-                    if chunk.content and turn_thinking and not _thinking_committed:
+                    # 无 reasoning 时也注入空 text 块，作为「AI 响应等待」状态指示
+                    if chunk.content and not _thinking_committed:
                         _thinking_committed = True
-                        _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                        if turn_thinking:
+                            _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                        else:
+                            _think_dur = int((_time.monotonic() - _turn_request_start) * 1000)
                         _thinking_block = {"type": "thinking", "text": turn_thinking, "duration_ms": _think_dur}
                         _content_blocks.append(_thinking_block)
                         try:
@@ -454,8 +459,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 # 有工具调用 → 未提交的 thinking + 中间叙述按时序插入 content_blocks
                 # thinking 通常在 text 开始时已提交（转换点），这里兜底处理无 text 直接调工具的情况
-                if turn_thinking and not _thinking_committed:
-                    _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                # 无 reasoning 时也注入空 text 块，作为「AI 响应等待」状态指示
+                if not _thinking_committed:
+                    if turn_thinking:
+                        _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                    else:
+                        _think_dur = int((_time.monotonic() - _turn_request_start) * 1000)
                     _thinking_block = {"type": "thinking", "text": turn_thinking, "duration_ms": _think_dur}
                     _content_blocks.append(_thinking_block)
                     try:

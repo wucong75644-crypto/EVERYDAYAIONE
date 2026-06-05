@@ -151,26 +151,32 @@ export default memo(function ThinkingBlock({
   }, [isThinking, durationMs, thinkingStartTime]);
 
   const hasItems = items && items.length > 0;
+  // 无 reasoning 文本 + 无工具步骤 → 仅作为「AI 响应耗时」状态指示，不显示折叠箭头
+  const isStatusOnly = !content && !hasItems && !isThinking;
 
-  // 无内容时不渲染
-  if (!content && !isThinking && !hasItems) return null;
+  // 无内容且无耗时信号时不渲染
+  if (!content && !isThinking && !hasItems && durationMs == null && !thinkingStartTime) return null;
 
   return (
     <div className="mb-2">
-      {/* 折叠/展开触发器 */}
+      {/* 折叠/展开触发器（状态指示模式时退化为纯文字） */}
       <button
-        onClick={toggleExpanded}
-        className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-secondary transition-base py-1 group"
+        onClick={isStatusOnly ? undefined : toggleExpanded}
+        className={`flex items-center gap-1.5 text-xs text-text-tertiary transition-base py-1 group ${
+          isStatusOnly ? 'cursor-default' : 'hover:text-text-secondary'
+        }`}
       >
-        {/* 展开/折叠图标 */}
-        <svg
-          className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
+        {/* 展开/折叠图标（状态指示模式时不显示） */}
+        {!isStatusOnly && (
+          <svg
+            className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        )}
 
         {/* 思考中动画 / 思考完成标签 */}
         {isThinking ? (

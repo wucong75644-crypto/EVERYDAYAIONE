@@ -431,7 +431,8 @@ export default memo(function MessageItem({
             const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
             const thinkingDurationMs = thinkingFromContent?.duration_ms;
             const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
-            if (!thinkingText && !isThinkingNow) return null;
+            // 无 text 但有 duration → 渲染「Thought for 用时 X秒」状态指示
+            if (!thinkingText && !isThinkingNow && thinkingDurationMs == null) return null;
             return (
               <ThinkingBlock
                 content={thinkingText}
@@ -472,12 +473,15 @@ export default memo(function MessageItem({
               <>
                 {message.content.map((part, idx) => {
                   // thinking 内联渲染为小折叠块（每轮独立）
-                  if (part.type === 'thinking' && (part as { text?: string }).text) {
+                  // 兼容空 text + 有 duration_ms 的「状态指示」型 thinking 块
+                  if (part.type === 'thinking') {
+                    const tp = part as { text?: string; duration_ms?: number };
+                    if (!tp.text && tp.duration_ms == null) return null;
                     return (
                       <ThinkingBlock
                         key={`thinking-${idx}`}
-                        content={(part as { text: string }).text}
-                        durationMs={(part as { duration_ms?: number }).duration_ms}
+                        content={tp.text || ''}
+                        durationMs={tp.duration_ms}
                       />
                     );
                   }

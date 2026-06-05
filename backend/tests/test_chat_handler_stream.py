@@ -149,7 +149,12 @@ class TestStreamGenerate:
         handler.on_complete.assert_awaited_once()
         call_args = handler.on_complete.call_args
         result_parts = call_args.kwargs["result"]
-        assert result_parts[0].text == "你好！"
+        # 含一个状态指示用 thinking 块（text="", duration_ms>=0）+ text 块
+        text_parts = [p for p in result_parts if getattr(p, "type", None) == "text"]
+        assert text_parts and text_parts[0].text == "你好！"
+        thinking_parts = [p for p in result_parts if getattr(p, "type", None) == "thinking"]
+        assert thinking_parts and thinking_parts[0].text == ""
+        assert thinking_parts[0].duration_ms is not None
 
         # 验证 adapter 被关闭
         mock_adapter.close.assert_awaited_once()
