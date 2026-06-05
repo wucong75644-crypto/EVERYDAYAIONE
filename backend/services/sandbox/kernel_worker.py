@@ -237,6 +237,19 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
                 "elapsed_ms": elapsed,
             })
 
+        except KeyboardInterrupt:
+            # SIGINT 中断：用户取消任务时由 KernelManager.interrupt 发送
+            # 保持 kernel 存活，变量保留，下次 execute 立即可用
+            elapsed = int((_time.monotonic() - start) * 1000)
+            try:
+                _write_response({
+                    "id": req_id,
+                    "status": "interrupted",
+                    "result": "⏹ 代码执行被用户中断",
+                    "elapsed_ms": elapsed,
+                })
+            except (BrokenPipeError, OSError):
+                break
         except Exception as e:
             from services.sandbox.error_format import format_sandbox_error
             elapsed = int((_time.monotonic() - start) * 1000)

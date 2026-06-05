@@ -219,6 +219,36 @@ class KernelManager:
         """销毁指定 Kernel"""
         await self._destroy_kernel(conversation_id)
 
+    def interrupt(self, conversation_id: str) -> bool:
+        """向 Kernel 发送 SIGINT 中断当前执行的代码。
+
+        Kernel 进程保留，变量保留，下次 execute 立即可用。
+        业界对标 Jupyter / ChatGPT Code Interpreter 的 interrupt kernel 行为。
+
+        详见 docs/document/TECH_用户中断与恢复机制.md §M3 沙盒中断
+
+        Returns:
+            True = 成功发送 SIGINT
+            False = kernel 不存在或已死
+        """
+        kernel = self._kernels.get(conversation_id)
+        if not kernel or not self._is_alive(kernel):
+            return False
+
+        try:
+            kernel.process.send_signal(signal.SIGINT)
+            logger.info(
+                "Kernel interrupt sent | conv=%s | pid=%s",
+                conversation_id[:8], kernel.process.pid,
+            )
+            return True
+        except (ProcessLookupError, OSError) as e:
+            logger.warning(
+                "Kernel interrupt failed | conv=%s | error=%s",
+                conversation_id[:8], e,
+            )
+            return False
+
     # ── 内部方法 ──
 
     def _is_alive(self, kernel: Kernel) -> bool:

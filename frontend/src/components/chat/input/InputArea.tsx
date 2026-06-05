@@ -293,9 +293,38 @@ export default function InputArea({
       }
     }
 
-    // 2. 标记消息为已中断（前端立即视觉反馈；后端落锚完成后 WS 不会推新事件因有闸门）
-    // 详见 TECH_用户中断与恢复机制.md §15
-    store.updateMessage(streamingMessageId, { status: 'interrupted' });
+    // 2. 把所有 running tool_step 改为 cancelled（前端立即视觉反馈，
+    //    后端落锚后的状态更新会被 WS 闸门 drop，所以前端必须自己改）
+    //    详见 TECH_用户中断与恢复机制.md §15.5
+    const cancelledAt = new Date().toISOString();
+    const msgForCancel = store.getMessage(streamingMessageId);
+    if (msgForCancel && Array.isArray(msgForCancel.content)) {
+      const updatedContent = msgForCancel.content.map((p) => {
+        if (
+          p.type === 'tool_step' &&
+          (p as { status?: string }).status === 'running'
+        ) {
+          return {
+            ...p,
+            status: 'cancelled' as const,
+            cancelled_at: cancelledAt,
+          };
+        }
+        return p;
+      });
+      // 末尾追加 interrupt_marker（前端不渲染独立卡片，仅供"停止于 X 前"灰字识别）
+      updatedContent.push({
+        type: 'interrupt_marker',
+        interrupted_at: cancelledAt,
+        reason: 'user_cancel',
+      } as never);
+      store.updateMessage(streamingMessageId, {
+        status: 'interrupted',
+        content: updatedContent,
+      });
+    } else {
+      store.updateMessage(streamingMessageId, { status: 'interrupted' });
+    }
     // 3. 清理流式状态
     store.completeStreaming(conversationId);
     // 4. 后端取消任务（fire-and-forget）
