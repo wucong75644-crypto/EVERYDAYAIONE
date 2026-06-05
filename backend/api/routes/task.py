@@ -149,6 +149,78 @@ async def get_chat_task_content(
         )
 
 
+def _anchor_messages_immediately(db, message_id: str) -> None:
+    """cancel API 同步落锚 messages 表：
+
+    - status: streaming → interrupted
+    - content 内所有 running tool_step → cancelled
+    - content 末尾追加 interrupt_marker block
+
+    cancel API 在 HTTP 同步处理里立即写 DB，保证用户秒发"继续"时
+    history_loader 能立即检测到 interrupt_marker → 注入 [任务恢复]。
+
+    chat_handler 后台 persist_interrupt_anchor 仍会跑（最终一致），
+    但本函数确保最坏情况（用户秒发新消息）下 DB 已含 marker。
+    """
+    import json
+    from datetime import datetime, timezone
+
+    try:
+        existing = (
+            db.table("messages")
+            .select("content")
+            .eq("id", message_id)
+            .execute()
+        )
+        if not existing.data:
+            return
+
+        raw_content = existing.data[0].get("content")
+        if isinstance(raw_content, str):
+            try:
+                blocks = json.loads(raw_content)
+                if not isinstance(blocks, list):
+                    blocks = []
+            except (json.JSONDecodeError, TypeError):
+                blocks = []
+        elif isinstance(raw_content, list):
+            blocks = list(raw_content)
+        else:
+            blocks = []
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for blk in blocks:
+            if (
+                isinstance(blk, dict)
+                and blk.get("type") == "tool_step"
+                and blk.get("status") == "running"
+            ):
+                blk["status"] = "cancelled"
+                blk["cancelled_at"] = now_iso
+
+        # 末尾追加 interrupt_marker（仅当尚未存在）
+        has_marker = any(
+            isinstance(blk, dict) and blk.get("type") == "interrupt_marker"
+            for blk in blocks
+        )
+        if not has_marker:
+            blocks.append({
+                "type": "interrupt_marker",
+                "interrupted_at": now_iso,
+                "reason": "user_cancel",
+            })
+
+        db.table("messages").update({
+            "status": "interrupted",
+            "content": blocks,
+        }).eq("id", message_id).execute()
+    except Exception as e:
+        logger.warning(
+            f"_anchor_messages_immediately failed | "
+            f"message_id={message_id} | error={e}"
+        )
+
+
 @router.post("/cancel-by-message/{message_id}", summary="通过消息ID取消关联任务")
 @limiter.limit("60/minute")
 async def cancel_task_by_message_id(
@@ -212,10 +284,11 @@ async def cancel_task_by_message_id(
                         f"ext={ext_id} | message_id={message_id} | user_id={ctx.user_id}"
                     )
 
-                # 同步更新消息状态，防止重新登录后仍为 streaming 显示空气泡
-                db.table("messages").update({
-                    "status": "completed",
-                }).eq("id", message_id).execute()
+                # 立即同步落锚 messages 表：marker + tool_step cancelled + status='interrupted'
+                # 防止 race condition：用户在 chat_handler 后台落锚前发"继续"，
+                # 导致 history_loader 检测不到 interrupt_marker → LLM 失忆。
+                # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
+                _anchor_messages_immediately(db, message_id)
 
                 return {"success": True, "cancelled_count": len(result.data)}
 
