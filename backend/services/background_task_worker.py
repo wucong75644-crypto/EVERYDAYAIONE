@@ -343,6 +343,8 @@ class BackgroundTaskWorker:
                     client_task_id=client_task_id,
                     task_type=task_type,
                     accumulated_blocks=task.get("accumulated_blocks"),
+                    # chat 超时：任务真的失败了，状态应该 failed（之前硬编码 completed 是 bug）
+                    status="failed",
                 )
                 if saved:
                     logger.info(

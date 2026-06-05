@@ -64,6 +64,8 @@ async def recover_orphan_tasks(db) -> int:
             client_task_id=client_task_id,
             task_type=task.get("type", "chat"),
             accumulated_blocks=task.get("accumulated_blocks"),
+            # 应用重启导致的中断：语义对齐 cancel 路径，保留部分内容可见
+            status="interrupted",
         )
 
         if saved:

@@ -39,9 +39,15 @@ def save_accumulated_to_message(
     client_task_id: str = "",
     task_type: str = "chat",
     accumulated_blocks: list | None = None,
+    status: str = "completed",
 ) -> bool:
     """
     将 tasks.accumulated_content + accumulated_blocks 回写到 messages 表（upsert 幂等）。
+
+    Args:
+        status: 写入的 message 状态。默认 'completed' 向后兼容旧调用方。
+                background_task_worker chat 超时应传 'failed'（任务真的失败了）
+                task_recovery orphan 恢复应传 'interrupted'（应用重启中断）
 
     Returns:
         True 写入成功，False 写入失败
@@ -57,7 +63,7 @@ def save_accumulated_to_message(
             "conversation_id": conversation_id,
             "role": "assistant",
             "content": content,
-            "status": "completed",
+            "status": status,
             "credits_cost": 0,
             "task_id": client_task_id,
             "generation_params": {"type": task_type, "model": model_id},

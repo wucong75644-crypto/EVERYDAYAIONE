@@ -63,7 +63,8 @@ async def test_recover_task_with_accumulated_content():
     upsert_data = upsert_calls[0][0][0]
     assert upsert_data["id"] == "msg-1"
     assert upsert_data["content"] == [{"type": "text", "text": "这是部分生成的内容"}]
-    assert upsert_data["status"] == "completed"
+    # 应用重启中断的 task 恢复时 status='interrupted'（之前硬编码 completed 是 bug）
+    assert upsert_data["status"] == "interrupted"
     assert upsert_data["credits_cost"] == 0
     assert upsert_data["generation_params"]["type"] == "chat"
 
