@@ -149,18 +149,26 @@ async def get_chat_task_content(
         )
 
 
-def _anchor_messages_immediately(db, message_id: str) -> None:
+def _anchor_messages_immediately(
+    db,
+    message_id: str,
+    conversation_id: str | None = None,
+) -> None:
     """cancel API 同步落锚 messages 表：
 
-    - status: streaming → interrupted
-    - content 内所有 running tool_step → cancelled
-    - content 末尾追加 interrupt_marker block
+    场景 A：message 已存在（chat_handler 在流式过程中已 _upsert）
+      - status: streaming → interrupted
+      - content 内 running tool_step → cancelled
+      - content 末尾追加 interrupt_marker
+      - update
 
-    cancel API 在 HTTP 同步处理里立即写 DB，保证用户秒发"继续"时
-    history_loader 能立即检测到 interrupt_marker → 注入 [任务恢复]。
+    场景 B：message 不存在（chat 任务设计 lazy 创建——
+      只有 on_complete 才通过 _upsert_assistant_message 写入。
+      cancel 路径跳过了 _upsert，导致 message 行从未存在）
+      → 主动 upsert 创建 stub message（含 interrupt_marker），
+      保证 history_loader 加载得到中断标记
 
-    chat_handler 后台 persist_interrupt_anchor 仍会跑（最终一致），
-    但本函数确保最坏情况（用户秒发新消息）下 DB 已含 marker。
+    详见 docs/document/TECH_用户中断与恢复机制.md §四.2
     """
     import json
     from datetime import datetime, timezone
@@ -172,9 +180,37 @@ def _anchor_messages_immediately(db, message_id: str) -> None:
             .eq("id", message_id)
             .execute()
         )
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         if not existing.data:
+            # 场景 B：message 不存在 → 创建 stub
+            if not conversation_id:
+                logger.warning(
+                    f"_anchor: message not exist + missing conversation_id, skipping | "
+                    f"message_id={message_id}"
+                )
+                return
+
+            stub_content = [{
+                "type": "interrupt_marker",
+                "interrupted_at": now_iso,
+                "reason": "user_cancel",
+            }]
+            db.table("messages").upsert({
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "role": "assistant",
+                "content": stub_content,
+                "status": "interrupted",
+                "credits_cost": 0,
+            }, on_conflict="id").execute()
+            logger.info(
+                f"_anchor: created stub interrupted message | "
+                f"message_id={message_id} | conv={conversation_id}"
+            )
             return
 
+        # 场景 A：message 已存在 → update
         raw_content = existing.data[0].get("content")
         if isinstance(raw_content, str):
             try:
@@ -188,7 +224,6 @@ def _anchor_messages_immediately(db, message_id: str) -> None:
         else:
             blocks = []
 
-        now_iso = datetime.now(timezone.utc).isoformat()
         for blk in blocks:
             if (
                 isinstance(blk, dict)
@@ -287,8 +322,11 @@ async def cancel_task_by_message_id(
                 # 立即同步落锚 messages 表：marker + tool_step cancelled + status='interrupted'
                 # 防止 race condition：用户在 chat_handler 后台落锚前发"继续"，
                 # 导致 history_loader 检测不到 interrupt_marker → LLM 失忆。
+                # 传 conversation_id 让 _anchor 在 message 不存在时（chat lazy 创建）
+                # 主动创建 stub。
                 # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
-                _anchor_messages_immediately(db, message_id)
+                _conv_id = result.data[0].get("conversation_id") if result.data else None
+                _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
 
                 return {"success": True, "cancelled_count": len(result.data)}
 
