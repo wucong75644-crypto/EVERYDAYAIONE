@@ -20,7 +20,8 @@ export type ContentPart =
   | ToolResultPart
   | FormPart
   | ChartPart
-  | EcomPlanPart;
+  | EcomPlanPart
+  | InterruptMarkerPart;
 
 export interface TextPart {
   type: 'text';
