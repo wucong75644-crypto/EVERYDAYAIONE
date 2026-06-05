@@ -439,7 +439,13 @@ class TestBuildLlmMessagesWorkspace:
 
     @pytest.mark.asyncio
     async def test_workspace_file_injects_attachments_xml(self, chat_handler, mock_db):
-        """workspace 文件通过 <attachments> XML 块注入 user 消息（不走 image_url）"""
+        """workspace 文件通过 <attachments> XML 块注入独立 system message（Layer 6.7）
+
+        messages 净化后（messages_attachments_as_system=True）：
+        - attachments XML 在 user 前的独立 system message 中
+        - user content 保持纯净（仅 text_content）
+        - 设计文档：docs/document/TECH_messages数组结构净化.md
+        """
         mock_db.set_table_data("messages", [])
 
         content = [
@@ -460,26 +466,26 @@ class TestBuildLlmMessagesWorkspace:
                 text_content="分析这个CSV",
             )
 
-        # 用户消息：text 含 <attachments> XML 块；无 image_url 多模态（仅 image/* 才进）
+        # user 纯净
         user_msg = result[-1]
         assert user_msg["role"] == "user"
-        # content 可能是 str 或 list（取决于是否有 image_urls）；本例无图，应为 str
-        text = (
-            user_msg["content"]
-            if isinstance(user_msg["content"], str)
-            else next(
-                (p["text"] for p in user_msg["content"] if isinstance(p, dict) and p.get("type") == "text"),
-                "",
-            )
-        )
-        assert "<attachments" in text
-        assert "<name>sales.csv</name>" in text
-        assert "<type>数据文件</type>" in text
-        assert "file_analyze" in text  # status 引导
+        assert user_msg["content"] == "分析这个CSV"
+        assert "<attachments" not in user_msg["content"]
+
+        # 紧贴 user 前一条是独立 system 含 attachments XML
+        att_msg = result[-2]
+        assert att_msg["role"] == "system"
+        assert "<attachments" in att_msg["content"]
+        assert "<name>sales.csv</name>" in att_msg["content"]
+        assert "<type>数据文件</type>" in att_msg["content"]
+        assert "file_analyze" in att_msg["content"]  # status 引导
 
     @pytest.mark.asyncio
     async def test_mixed_pdf_and_workspace(self, chat_handler, mock_db):
-        """PDF 走 <attachments> XML 块（不再错塞进 image_url）"""
+        """PDF 走 <attachments> XML 块（不再错塞进 image_url）
+
+        messages 净化后：XML 在 Layer 6.7 独立 system，user 纯净。
+        """
         mock_db.set_table_data("messages", [])
 
         content = [
@@ -506,7 +512,15 @@ class TestBuildLlmMessagesWorkspace:
             )
 
         user_msg = result[-1]
-        # 两个 PDF/CSV 都不进 image_url（无图片）
+        assert user_msg["role"] == "user"
+
+        # 独立 system 含两个文件名
+        att_msg = result[-2]
+        assert att_msg["role"] == "system"
+        assert "<name>report.pdf</name>" in att_msg["content"]
+        assert "<name>data.csv</name>" in att_msg["content"]
+
+        # user 纯净
         text = (
             user_msg["content"]
             if isinstance(user_msg["content"], str)
@@ -515,9 +529,8 @@ class TestBuildLlmMessagesWorkspace:
                 "",
             )
         )
-        # 两个文件都出现在 <attachments> 块里
-        assert "<name>report.pdf</name>" in text
-        assert "<name>data.csv</name>" in text
+        assert "<attachments" not in text
+
         # PDF url 不出现在 image_url 多模态块
         if isinstance(user_msg["content"], list):
             image_urls = [

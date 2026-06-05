@@ -507,7 +507,7 @@ class TestBuildContextMessages:
 
     @pytest.mark.asyncio
     async def test_query_filters_role_and_status(self, chat_handler):
-        """验证 DB 查询包含 role 过滤（in_）和 status 过滤（eq）"""
+        """验证 DB 查询包含 role/status 过滤（status 加载 completed + interrupted）"""
         mock_table = MagicMock()
         mock_table.select.return_value = mock_table
         mock_table.eq.return_value = mock_table
@@ -527,8 +527,10 @@ class TestBuildContextMessages:
         mock_table.select.assert_called_once_with("role, content, status, created_at, generation_params")
         eq_calls = mock_table.eq.call_args_list
         assert ("conversation_id", "conv1") in [c.args for c in eq_calls]
-        assert ("status", "completed") in [c.args for c in eq_calls]
-        mock_table.in_.assert_called_once_with("role", ["user", "assistant"])
+        # status 改用 in_ 加载 completed + interrupted（含中断标记，让 LLM 知道被打断）
+        in_calls = mock_table.in_.call_args_list
+        assert ("status", ["completed", "interrupted"]) in [c.args for c in in_calls]
+        assert ("role", ["user", "assistant"]) in [c.args for c in in_calls]
         mock_table.order.assert_called_once_with("created_at", desc=True)
 
     @pytest.mark.asyncio
@@ -551,7 +553,8 @@ class TestBuildContextMessages:
 
         result = await chat_handler._build_context_messages("conv1", "当前")
 
-        mock_table.in_.assert_called_once_with("role", ["user", "assistant"])
+        in_calls = mock_table.in_.call_args_list
+        assert ("role", ["user", "assistant"]) in [c.args for c in in_calls]
         assert len(result) == 1
         assert result[0] == {"role": "user", "content": _ts("用户消息")}
 
@@ -1863,3 +1866,81 @@ class TestBuildContextMessagesInterruptMarker:
             m.get("role") == "system" and "任务恢复" in m.get("content", "")
             for m in result
         )
+
+
+# ============ messages 净化：历史加载剥离旧 attachments XML ============
+# 设计文档：docs/document/TECH_messages数组结构净化.md
+
+
+class TestHistoryStripAttachmentsXml:
+    """历史加载时 strip_attachments_xml 自动剥离旧 XML（DB 存储不变）"""
+
+    @pytest.mark.asyncio
+    async def test_historical_user_xml_stripped(self, chat_handler, mock_db):
+        """历史 user message 含 XML → 加载后只剩用户字面意图"""
+        # 上一轮 user content 含系统注入的 attachments XML（DB 老数据形态）
+        legacy_user_text = (
+            '分析下\n\n<attachments count="1" hint="status 字段是行动指引">\n'
+            "  <file>\n"
+            "    <name>账单.xlsx</name>\n"
+            "    <status>未分析</status>\n"
+            "  </file>\n"
+            "</attachments>"
+        )
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", "已分析。共 1240 行"),
+            _make_msg("user", legacy_user_text),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "按月聚合")
+
+        # 找到 user message，验证 XML 已被剥
+        user_msgs = [m for m in result if m.get("role") == "user"]
+        assert len(user_msgs) == 1
+        content = user_msgs[0]["content"]
+        text = content if isinstance(content, str) else (
+            " ".join(p.get("text", "") for p in content if p.get("type") == "text")
+        )
+        assert "<attachments" not in text
+        assert "分析下" in text  # 用户字面意图保留
+
+    @pytest.mark.asyncio
+    async def test_tail_dedup_with_xml(self, chat_handler, mock_db):
+        """tail 去重比较：剥 XML 后能正确识别与当前 user query 重复"""
+        # 上一轮 user 文本剥 XML 后等于 current_text → 应被 pop
+        legacy_text = (
+            '继续\n\n<attachments count="1" hint="x">'
+            '<file><name>a.xlsx</name></file></attachments>'
+        )
+        mock_db.set_table_data("messages", [
+            _make_msg("user", legacy_text),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "继续")
+        # tail user 应被去重
+        assert all(m.get("role") != "user" for m in result)
+
+    @pytest.mark.asyncio
+    async def test_xml_in_list_form_content(self, chat_handler, mock_db):
+        """历史 user content 是 list 形式（block 列表），text part 内 XML 被剥"""
+        list_content = [
+            {
+                "type": "text",
+                "text": (
+                    '看图\n\n<attachments count="1" hint="x">'
+                    '<file><name>x.png</name></file></attachments>'
+                ),
+            },
+        ]
+        mock_db.set_table_data("messages", [
+            _make_msg("user", list_content),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "新问题")
+
+        user_msgs = [m for m in result if m.get("role") == "user"]
+        assert len(user_msgs) == 1
+        # str 或 list 形式，都不应含 XML
+        c = user_msgs[0]["content"]
+        text = c if isinstance(c, str) else " ".join(
+            p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"
+        )
+        assert "<attachments" not in text
+        assert "看图" in text
