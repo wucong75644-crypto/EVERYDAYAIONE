@@ -37,7 +37,7 @@ function executeHandleStop(
 ) {
   if (!streamingMessageId || !conversationId) return;
 
-  store.getState().updateMessage(streamingMessageId, { status: 'completed' });
+  store.getState().updateMessage(streamingMessageId, { status: 'interrupted' });
   store.getState().completeStreaming(conversationId);
   cancelTaskByMessageId(streamingMessageId).catch(() => {});
 }
@@ -50,12 +50,12 @@ describe('handleStop - 停止生成逻辑', () => {
     vi.clearAllMocks();
   });
 
-  it('should update message status to completed', () => {
+  it('should update message status to interrupted', () => {
     store.getState().startStreaming('conv_1', 'msg_1');
 
     executeHandleStop(store, 'msg_1', 'conv_1');
 
-    expect(store.getState().updateMessage).toHaveBeenCalledWith('msg_1', { status: 'completed' });
+    expect(store.getState().updateMessage).toHaveBeenCalledWith('msg_1', { status: 'interrupted' });
   });
 
   it('should clear streaming state', () => {

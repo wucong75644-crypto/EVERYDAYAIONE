@@ -189,10 +189,19 @@ async def cancel_task_by_message_id(
                         "completed_at": datetime.now(timezone.utc).isoformat(),
                     }).eq("id", task["id"]).execute()
 
-                    # 向运行中的 Agent 循环发送取消信号（同进程 asyncio.Event）
+                    # 向运行中的 Agent 循环发送取消信号 + 标记 WS 闸门
+                    # 闸门防止"工具鬼显"（旧 task 跑完后向已取消 task_id 推 WS）
+                    # 详见 docs/document/TECH_用户中断与恢复机制.md §四.5
                     ext_id = task.get("external_task_id")
                     if ext_id:
-                        ws_manager.cancel_task(ext_id)
+                        # Phase 2: 记录取消起始时刻，供 cancel.latency metric 计算
+                        from services.cancel_metrics import (
+                            mark_cancel_start,
+                            record_cancel_event,
+                        )
+                        mark_cancel_start(ext_id)
+                        record_cancel_event(ext_id, org_id=ctx.org_id)
+                        ws_manager.cancel_task(ext_id, org_id=ctx.org_id)
 
                     # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
                     # 必须由 cancel 路径主动释放 Redis 槽位（SREM 幂等，handler 再次释放也安全）

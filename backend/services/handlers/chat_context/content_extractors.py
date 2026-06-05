@@ -29,6 +29,29 @@ def extract_image_urls_from_content(content: Any) -> List[str]:
     return []
 
 
+def extract_interrupt_marker(content: Any) -> Dict[str, Any] | None:
+    """从 DB content 字段提取 interrupt_marker block（如有）。
+
+    用于 history_loader 检测用户中断标记，注入 [任务恢复] 前缀。
+    详见 docs/document/TECH_用户中断与恢复机制.md §15.5
+    """
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, list):
+                content = parsed
+            else:
+                return None
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "interrupt_marker":
+            return block
+    return None
+
+
 def extract_text_from_content(content: Any) -> str:
     """从 DB content 字段提取纯文本，跳过图片/视频 URL"""
     if isinstance(content, str):
@@ -119,7 +142,7 @@ def extract_oai_messages_from_content(
 
         elif ptype == "tool_step":
             status = part.get("status")
-            if status not in ("completed", "error"):
+            if status not in ("completed", "error", "cancelled"):
                 continue
             tool_name = part.get("tool_name") or "unknown"
             tool_call_id = part.get("tool_call_id") or ""
@@ -150,6 +173,9 @@ def extract_oai_messages_from_content(
             output = part.get("output") or ""
             if status == "error" and not output:
                 output = "[工具执行失败]"
+            elif status == "cancelled":
+                from services.handlers.interrupt_anchor import INTERRUPTED_TOOL_RESULT
+                output = INTERRUPTED_TOOL_RESULT.format(tool_name=tool_name)
             msgs.append({
                 "role": "tool",
                 "tool_call_id": tool_call_id,

@@ -257,6 +257,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info(f"Orphan task recovery completed | recovered={recovered}")
         except Exception as e:
             logger.error(f"Orphan task recovery failed (non-critical) | error={e}")
+
+    # 落锚自愈：扫描 status='interrupted' 但 tasks 表不一致的项目，以 messages 为准重建
+    # 详见 docs/document/TECH_用户中断与恢复机制.md §17.4
+    _reconcile_lock = await RedisClient.acquire_lock("interrupt_anchor_reconcile", timeout=30)
+    if _reconcile_lock:
+        try:
+            from services.handlers.interrupt_anchor import reconcile_interrupted_messages
+            result = await reconcile_interrupted_messages(db)
+            if result.get("reconciled", 0) > 0:
+                logger.info(
+                    f"Interrupt anchor reconcile completed | "
+                    f"scanned={result.get('scanned')} | reconciled={result.get('reconciled')}"
+                )
+        except Exception as e:
+            logger.error(f"Interrupt anchor reconcile failed (non-critical) | error={e}")
         finally:
             await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
 

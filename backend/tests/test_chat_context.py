@@ -311,7 +311,7 @@ class TestExtractOaiMessagesFromContent:
 # ============ Test _build_context_messages ============
 
 
-def _make_msg(role, text, status="completed", conversation_id="conv1", generation_params=None):
+def _make_msg(role, text, status="completed", conversation_id="conv1", generation_params=None, created_at=None):
     """构造 messages 表数据行"""
     if isinstance(text, str):
         content = [{"type": "text", "text": text}]
@@ -322,7 +322,7 @@ def _make_msg(role, text, status="completed", conversation_id="conv1", generatio
         "content": content,
         "status": status,
         "conversation_id": conversation_id,
-        "created_at": "2026-03-06T10:00:00Z",  # UTC → CN_TZ = 03-06 18:00
+        "created_at": created_at or "2026-03-06T10:00:00Z",  # UTC → CN_TZ = 03-06 18:00
         "generation_params": generation_params,
     }
     return msg
@@ -1758,3 +1758,108 @@ class TestBuildWorkspacePrompt:
         result = ChatContextMixin._build_workspace_prompt(files)
         # 应该有可读的大小格式
         assert "big.xlsx" in result
+
+
+# ============ Test history_loader interrupt_marker 注入（Phase 4） ============
+
+
+class TestBuildContextMessagesInterruptMarker:
+    """history_loader 检测最近一条 assistant 的 interrupt_marker → 注入 [任务恢复]
+
+    详见 docs/document/TECH_用户中断与恢复机制.md §四.4 / §15.4 约束 6
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_marker_no_injection(self, chat_handler, mock_db):
+        """无 marker → 末尾不追加 system 消息"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "查订单"),
+            _make_msg("assistant", "好的我去查"),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "继续")
+        assert not any(
+            m.get("role") == "system" and "任务恢复" in m.get("content", "")
+            for m in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_marker_in_latest_assistant_injects(self, chat_handler, mock_db):
+        """最近一条 assistant 含 marker → 末尾注入 [任务恢复] system 消息"""
+        from datetime import datetime, timedelta, timezone
+        five_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        marker_content = [
+            {"type": "text", "text": "我先查最近订单"},
+            {
+                "type": "interrupt_marker",
+                "interrupted_at": five_min_ago,
+                "reason": "user_cancel",
+            },
+        ]
+        # DESC 顺序：assistant 在前（latest）
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", marker_content,
+                      created_at="2026-06-05T10:01:00Z"),
+            _make_msg("user", "查订单",
+                      created_at="2026-06-05T10:00:00Z"),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "继续")
+        # 末尾应有 system 消息含 [任务恢复]
+        last = result[-1]
+        assert last.get("role") == "system"
+        assert "[任务恢复]" in last["content"]
+        assert "分钟前" in last["content"]
+
+    @pytest.mark.asyncio
+    async def test_only_latest_marker_injected(self, chat_handler, mock_db):
+        """连续两次中断 → 只注入最近一次的 marker
+
+        mock_db.order 是 no-op，按插入顺序返回 → 模拟 DB DESC 时应把 latest 放在前面
+        """
+        from datetime import datetime, timedelta, timezone
+        old_marker = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        new_marker = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+        old_content = [
+            {"type": "text", "text": "旧的尝试"},
+            {"type": "interrupt_marker", "interrupted_at": old_marker, "reason": "user_cancel"},
+        ]
+        new_content = [
+            {"type": "text", "text": "新的尝试"},
+            {"type": "interrupt_marker", "interrupted_at": new_marker, "reason": "user_cancel"},
+        ]
+        # DESC 顺序：最新的 assistant 在前
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", new_content, created_at="2026-06-05T08:03:00Z"),
+            _make_msg("user", "继续", created_at="2026-06-05T08:02:00Z"),
+            _make_msg("assistant", old_content, created_at="2026-06-05T08:01:00Z"),
+            _make_msg("user", "查订单", created_at="2026-06-05T08:00:00Z"),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "继续2")
+        system_msgs = [m for m in result if m.get("role") == "system" and "任务恢复" in m.get("content", "")]
+        # 只注入一次（最近的）
+        assert len(system_msgs) == 1
+        # 注入的是 new_marker（3 分钟前），不是 old_marker（2 小时前）
+        assert "分钟前" in system_msgs[0]["content"]
+        assert "小时前" not in system_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_latest_is_normal_assistant_no_injection(self, chat_handler, mock_db):
+        """最近一条 assistant 已恢复（不含 marker）→ 即使更早的 assistant 含 marker 也不注入"""
+        from datetime import datetime, timedelta, timezone
+        old_marker = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        old_content = [
+            {"type": "text", "text": "旧的尝试"},
+            {"type": "interrupt_marker", "interrupted_at": old_marker, "reason": "user_cancel"},
+        ]
+        # DESC 顺序：latest 是不含 marker 的普通 assistant
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", "好的结果是这样", created_at="2026-06-05T08:03:00Z"),
+            _make_msg("user", "继续", created_at="2026-06-05T08:02:00Z"),
+            _make_msg("assistant", old_content, created_at="2026-06-05T08:01:00Z"),
+            _make_msg("user", "查订单", created_at="2026-06-05T08:00:00Z"),
+        ])
+        result = await chat_handler._build_context_messages("conv1", "再来")
+        # 不注入（latest assistant 没有 marker → 视为已恢复）
+        assert not any(
+            m.get("role") == "system" and "任务恢复" in m.get("content", "")
+            for m in result
+        )
