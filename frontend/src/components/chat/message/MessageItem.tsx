@@ -425,12 +425,12 @@ export default memo(function MessageItem({
         >
           {/* 思考过程：单块模式独立渲染，多块模式在 content.map 内联 */}
           {!isUser && !hasMultiBlocks && (() => {
-            const thinkingFromContent = !isStreaming
-              ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
-              : undefined;
+            // 流式中也查 message.content 中的 thinking 块（content_block_add 会推送进来）
+            const thinkingFromContent = message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined;
             const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
             const thinkingDurationMs = thinkingFromContent?.duration_ms;
-            const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
+            // 流式中 + 还没有 thinking 块 + 还没有 text → 显示「thinking...」动画作 AI 响应等待指示
+            const isThinkingNow = !!(isStreaming && !thinkingFromContent && !textContent);
             // 无 text 但有 duration → 渲染「Thought for 用时 X秒」状态指示
             if (!thinkingText && !isThinkingNow && thinkingDurationMs == null) return null;
             return (
@@ -623,16 +623,18 @@ export default memo(function MessageItem({
                     <FileCardList files={fileBlocks} />
                   </div>
                 )}
-                {/* 当前轮 live thinking：仅在 text 未开始输出时显示（thinking→text 转换后由内联块接管） */}
-                {isStreaming && streamingThinking && (() => {
-                  // text 正在输出时不显示 live thinking（已由 content_block_add 提交为内联块）
+                {/* 当前轮 live thinking：流式开始就显示 thinking 动画（无论是否开启深度思考） */}
+                {isStreaming && (() => {
                   const lastBlock = message.content[message.content.length - 1];
+                  // text 正在输出时不显示 live thinking（已由 content_block_add 提交为内联块）
                   if (lastBlock?.type === 'text') return null;
+                  // 末尾已是 thinking 块 → 由 line 475 内联渲染接管，避免重复
+                  if (lastBlock?.type === 'thinking') return null;
+                  // streamingThinking 差量（depths only：开启深度思考时显示新一轮 reasoning；否则为空仅显示动画）
                   const committedLen = message.content
                     .filter(p => p.type === 'thinking')
                     .reduce((sum, p) => sum + ((p as { text?: string }).text?.length || 0), 0);
-                  const livePart = streamingThinking.slice(committedLen);
-                  if (!livePart.trim()) return null;
+                  const livePart = (streamingThinking || '').slice(committedLen);
                   return (
                     <ThinkingBlock
                       content={livePart}
