@@ -13,9 +13,10 @@ from api.routes.task import _anchor_messages_immediately
 
 
 def _make_db(existing_content):
-    """构造 mock db: select messages.content + update messages"""
+    """构造 mock db: select messages.content + update messages + upsert messages"""
     db = MagicMock()
     db.update_payloads = []
+    db.upsert_payloads = []
 
     select_chain = MagicMock()
     select_result = MagicMock()
@@ -24,19 +25,22 @@ def _make_db(existing_content):
     )
     select_chain.eq.return_value.execute.return_value = select_result
 
-    update_chain = MagicMock()
-
     def capture_update(payload):
         db.update_payloads.append(payload)
         mock = MagicMock()
         mock.eq.return_value.execute.return_value = MagicMock(data=[])
         return mock
 
-    update_chain.update = capture_update
+    def capture_upsert(payload, on_conflict=""):
+        db.upsert_payloads.append({"data": payload, "on_conflict": on_conflict})
+        mock = MagicMock()
+        mock.execute.return_value = MagicMock(data=[payload])
+        return mock
 
     msg_table = MagicMock()
     msg_table.select.return_value = select_chain
     msg_table.update = capture_update
+    msg_table.upsert = capture_upsert
 
     db.table = lambda name: msg_table
     return db
@@ -105,10 +109,36 @@ class TestAnchorImmediately:
         assert payload["status"] == "interrupted"
         assert any(b.get("type") == "interrupt_marker" for b in payload["content"])
 
-    def test_message_not_found_no_error(self):
+    def test_message_not_found_without_conv_id_skipped(self):
+        """message 不存在 + 没传 conversation_id → 不报错也不写"""
         db = _make_db(None)
         _anchor_messages_immediately(db, "msg_NONEXISTENT")
         assert db.update_payloads == []
+        assert db.upsert_payloads == []
+
+    def test_message_not_found_with_conv_id_creates_stub(self):
+        """message 不存在 + 有 conversation_id → upsert 创建 stub message
+
+        修复 chat lazy 创建场景：chat 任务的 message 在 on_complete 才入库，
+        cancel 路径跳过了 _upsert，message 从未存在 → 必须主动创建 stub
+        否则 history_loader 加载不到中断标记 → LLM 失忆。
+        """
+        db = _make_db(None)
+        _anchor_messages_immediately(
+            db, "msg_NEW", conversation_id="conv_X",
+        )
+        assert len(db.upsert_payloads) == 1
+        payload = db.upsert_payloads[0]
+        assert payload["on_conflict"] == "id"
+        data = payload["data"]
+        assert data["id"] == "msg_NEW"
+        assert data["conversation_id"] == "conv_X"
+        assert data["role"] == "assistant"
+        assert data["status"] == "interrupted"
+        # content 末尾应有 interrupt_marker
+        assert any(
+            b.get("type") == "interrupt_marker" for b in data["content"]
+        )
 
     def test_db_failure_silent(self, caplog):
         db = MagicMock()
