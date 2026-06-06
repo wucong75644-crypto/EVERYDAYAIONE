@@ -44,6 +44,7 @@ import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
 import EcomPlanBlock from './EcomPlanBlock';
 import ChartBlock from './ChartBlock';
+import { TableBlock } from './TableBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
 import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
@@ -612,6 +613,18 @@ export default memo(function MessageItem({
                           title={cp.title}
                         />
                       </div>
+                    );
+                  }
+                  if (part.type === 'table') {
+                    const tp = part as import('../../../types/message').TablePart;
+                    return (
+                      <TableBlock
+                        key={idx}
+                        title={tp.title}
+                        columns={tp.columns}
+                        rows={tp.rows}
+                        truncated={tp.truncated}
+                      />
                     );
                   }
                   if (part.type === 'form') {

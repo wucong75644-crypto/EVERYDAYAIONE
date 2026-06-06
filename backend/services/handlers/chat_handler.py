@@ -27,8 +27,27 @@ from schemas.websocket import (
 )
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
-from services.handlers.chart_block_builder import build_orphan_chart_blocks
 from services.handlers.chat_context_mixin import ChatContextMixin
+
+
+def _extract_chart_title(opt: dict) -> str:
+    """从 ECharts option 提取 title.text(兼容 dict 和 list[dict] 两种格式)"""
+    t = opt.get("title") if isinstance(opt, dict) else None
+    if isinstance(t, dict):
+        return t.get("text", "") or ""
+    if isinstance(t, list) and t and isinstance(t[0], dict):
+        return t[0].get("text", "") or ""
+    return ""
+
+
+def _extract_chart_type(opt: dict) -> str:
+    """从 ECharts option 提取 series[0].type"""
+    if not isinstance(opt, dict):
+        return ""
+    series = opt.get("series")
+    if isinstance(series, list) and series and isinstance(series[0], dict):
+        return series[0].get("type", "") or ""
+    return ""
 from services.handlers.chat_generate_mixin import ChatGenerateMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
@@ -762,14 +781,22 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
                     self._pending_file_parts.clear()
 
-                # ── ECharts 独立推送(路径协议:.echart.json 写 staging 读完即删,
-                #    不再走 FilePart 触发,需独立遍历 _chart_options 生成 chart block) ──
-                _orphan_chart_blocks = build_orphan_chart_blocks(
-                    chart_options=getattr(self, "_chart_options", {}),
-                    existing_blocks=_content_blocks,
-                )
-                if _orphan_chart_blocks:
-                    for _chart_block in _orphan_chart_blocks:
+                # ── ECharts 推送(emit_chart 触发,沙盒 IO 统一协议) ──
+                _chart_opts = getattr(self, "_chart_options", None) or {}
+                if _chart_opts:
+                    _consumed_titles = {
+                        b.get("title", "") for b in _content_blocks if isinstance(b, dict) and b.get("type") == "chart"
+                    }
+                    for _name, _opt in _chart_opts.items():
+                        _title = _extract_chart_title(_opt)
+                        if _title and _title in _consumed_titles:
+                            continue  # 旧 FilePart 链路已推过(兼容)
+                        _chart_block = {
+                            "type": "chart",
+                            "option": _opt,
+                            "title": _title,
+                            "chart_type": _extract_chart_type(_opt),
+                        }
                         _content_blocks.append(_chart_block)
                         await ws_manager.send_to_task_or_user(
                             task_id, user_id,
@@ -781,11 +808,36 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             ),
                         )
                     asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
+                    logger.info(f"Chart blocks pushed | count={len(_chart_opts)} | task={task_id}")
+                    self._chart_options = {}  # 消费完清空
+
+                # ── Table 推送(emit_table 触发,沙盒 IO 统一协议) ──
+                _pending_tables = getattr(self, "_pending_table_parts", None)
+                if _pending_tables:
+                    for _tbl in _pending_tables:
+                        _table_block = {
+                            "type": "table",
+                            "title": _tbl.get("title", ""),
+                            "columns": _tbl.get("columns", []),
+                            "rows": _tbl.get("rows", []),
+                            "truncated": _tbl.get("truncated", False),
+                        }
+                        _content_blocks.append(_table_block)
+                        await ws_manager.send_to_task_or_user(
+                            task_id, user_id,
+                            build_content_block_add(
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                message_id=message_id,
+                                block=_table_block,
+                            ),
+                        )
+                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
                     logger.info(
-                        f"Chart blocks pushed to frontend | "
-                        f"count={len(_orphan_chart_blocks)} | task={task_id}"
+                        f"Table blocks pushed to frontend | "
+                        f"count={len(_pending_tables)} | task={task_id}"
                     )
-                    self._chart_options = {}  # 消费完清空,避免下轮重复推送
+                    self._pending_table_parts = []  # 消费完清空
 
                 # ── FormBlock 推送（复用 _pending_file_parts 模式） ──
                 _pending_form = getattr(self, "_pending_form_block", None)

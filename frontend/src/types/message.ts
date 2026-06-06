@@ -20,6 +20,7 @@ export type ContentPart =
   | ToolResultPart
   | FormPart
   | ChartPart
+  | TablePart
   | EcomPlanPart
   | InterruptMarkerPart;
 
@@ -143,6 +144,15 @@ export interface ChartPart {
   option: Record<string, unknown>;
   title?: string;
   chart_type?: string;
+}
+
+/** 交互式表格内容块(沙盒 emit_table 触发,前端 TableBlock 渲染) */
+export interface TablePart {
+  type: 'table';
+  title?: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  truncated?: boolean;
 }
 
 /** 表单字段定义 */

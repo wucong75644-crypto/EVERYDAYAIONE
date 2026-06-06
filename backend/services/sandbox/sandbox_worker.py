@@ -460,12 +460,27 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # 路径协议:AI 用相对路径 + attachments XML 给完整字符串,无需 get_file 兜底
     # 长对话上下文丢失时,AI 主动调 file_search 工具(Agent 层)探索
 
-    # emit 协议(POC 阶段):沙盒里主动声明产物 → buffer 收集 → _exec_code 收尾
-    #   时合并为 [EMIT] marker 拼到 stdout(避开 kernel JSON-Line 协议通道冲突)
+    # emit 协议:沙盒主动声明产物 → buffer 收集 → _exec_code 收尾时合并为
+    # [EMIT] marker 拼到 stdout(避开 kernel JSON-Line 协议通道冲突)
     # 见 services/sandbox/emit_protocol.py + tool_loop_executor [EMIT] 解析逻辑
     from services.sandbox.emit_protocol import install_emit_in_globals
     g["_emit_buffer"] = []  # _exec_code 每次执行前 clear,收尾时读
     install_emit_in_globals(g, g["_emit_buffer"])
+
+    # 自动 hook(行业范本):plt.show() / plotly fig.show() / altair Chart 无感 emit
+    # 让 LLM 不显式调 emit 也能自动渲染(对标 matplotlib_inline post_execute)
+    try:
+        from services.sandbox.emit_auto_hooks import (
+            install_ipython_display_shim,
+            install_matplotlib_hook,
+        )
+        install_ipython_display_shim(g, g["_emit_buffer"])  # plotly/altair
+        if output_dir:
+            install_matplotlib_hook(g, output_dir, g["_emit_buffer"])  # matplotlib
+    except Exception as e:
+        # hook 失败不阻断沙盒运行
+        import sys as _sys
+        _sys.stderr.write(f"[sandbox] emit auto hook 失败: {e}\n")
 
     return g
 
