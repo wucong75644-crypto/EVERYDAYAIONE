@@ -101,11 +101,14 @@ def _render_data_access(parquet_path: str, original_path: str) -> str:
 
 def _render_file_meta(meta: FileMeta, original_path: str) -> str:
     s = meta.summary or {}
+    # 路径协议:展示给 LLM 的 <path> 用 caller 传的相对路径(沙盒视角)
+    # I/O 用 meta.source_file(host 绝对路径,主进程文件系统操作)
+    display_path = original_path or (Path(meta.source_file).name if meta.source_file else "")
+    src_for_stat = meta.source_file or original_path
     size_bytes = 0
-    src = meta.source_file or original_path
-    if src and Path(src).exists():
+    if src_for_stat and Path(src_for_stat).exists():
         try:
-            size_bytes = Path(src).stat().st_size
+            size_bytes = Path(src_for_stat).stat().st_size
         except OSError:
             pass
     size_mb = round(size_bytes / 1024 / 1024, 2) if size_bytes else 0
@@ -113,8 +116,8 @@ def _render_file_meta(meta: FileMeta, original_path: str) -> str:
 
     return (
         '\n  <file_meta priority="high">\n'
-        f"    <path>{escape(src)}</path>\n"
-        f"    <filename>{escape(Path(src).name if src else '')}</filename>\n"
+        f"    <path>{escape(display_path)}</path>\n"
+        f"    <filename>{escape(Path(display_path).name if display_path else '')}</filename>\n"
         f"    <size_mb>{size_mb}</size_mb>\n"
         f"    <rows>{s.get('row_count', 0)}</rows>\n"
         f"    <cols>{s.get('col_count', 0)}</cols>\n"

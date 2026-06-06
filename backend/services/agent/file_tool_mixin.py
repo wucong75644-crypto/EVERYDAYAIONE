@@ -387,7 +387,8 @@ class FileToolMixin(FileDeleteMixin):
         # 读取元数据 → 优先用 V2 XML（meta.xml_view），降级到 markdown
         meta = read_file_meta(cache_path)
         if meta is None:
-            file_view = f"文件已转为 Parquet: {cache_path}"
+            # 路径协议:LLM 看相对路径,不暴露 host 绝对路径
+            file_view = f"文件已转为 Parquet: staging/{Path(cache_path).name}"
         elif getattr(meta, "xml_view", "") and meta.xml_view:
             file_view = meta.xml_view
         else:

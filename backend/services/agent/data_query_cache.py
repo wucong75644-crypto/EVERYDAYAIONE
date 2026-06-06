@@ -1093,9 +1093,19 @@ def _enrich_meta_v2(
         logger.debug(f"V2 related_files skipped: {e}")
     meta.related_files = related
 
+    # 路径协议:LLM 看的是沙盒视角(cwd=/workspace),传相对路径给 renderer
+    # parquet → 'staging/{basename}.parquet'
+    # excel   → 'workspace 相对路径'(从 staging_dir 反推 workspace_dir)
+    parquet_rel = f"staging/{Path(cache_path).name}"
+    try:
+        workspace_dir = Path(staging_dir).parent.parent  # staging/{conv} → workspace
+        excel_rel = str(Path(excel_path).relative_to(workspace_dir))
+    except (ValueError, OSError):
+        excel_rel = Path(excel_path).name  # 兜底:文件不在 workspace 下,只给 basename
+
     try:
         meta.xml_view = render_xml(
-            meta, parquet_path=cache_path, original_path=excel_path,
+            meta, parquet_path=parquet_rel, original_path=excel_rel,
             related_files=related,
         )
     except Exception as e:
