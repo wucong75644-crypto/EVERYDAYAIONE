@@ -67,7 +67,8 @@ def format_file_view(meta: FileMeta) -> str:
     Markdown 结构化分块: 千问/OpenAI/Gemini 都认 ## 标题
     """
     lines: list[str] = []
-    src = meta.source_file
+    # 路径协议:LLM 看的是沙盒视角,host 绝对路径不暴露,只显示文件名
+    src = Path(meta.source_file).name if meta.source_file else ""
     s = meta.summary or {}
     row_count = s.get("row_count", 0)
 
