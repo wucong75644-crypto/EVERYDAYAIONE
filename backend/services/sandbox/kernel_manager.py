@@ -355,14 +355,10 @@ class KernelManager:
             link = ws / name
             tgt = Path(target)
             tgt.mkdir(parents=True, exist_ok=True)
+            # 已存在(symlink/真实目录/文件)就跳过,不覆盖用户已有数据
+            if link.is_symlink() or link.exists():
+                continue
             try:
-                if link.is_symlink() or link.exists():
-                    # 已存在且指向正确则跳过;否则保留原有(不覆盖用户数据)
-                    if link.is_symlink() and Path(link.readlink()) == tgt.resolve():
-                        continue
-                    if link.is_dir() and link.resolve() == tgt.resolve():
-                        continue
-                    continue
                 link.symlink_to(tgt.resolve())
             except OSError:
                 pass  # symlink 失败不阻断启动,kernel 仍可跑无文件路径的代码

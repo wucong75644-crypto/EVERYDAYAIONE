@@ -380,7 +380,7 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     # 文件操作工具
     tools.extend(build_file_tools())
 
-    # 代码执行工具（主 Agent 版，含 WORKSPACE_DIR + 图表/文档能力）
+    # 代码执行工具（主 Agent 版，含图表/文档能力）
     tools.extend(build_code_tools(include_workspace=True))
 
     # 通用工具（搜索、知识库、图片、视频 — 始终加载）

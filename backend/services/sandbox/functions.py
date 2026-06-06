@@ -26,8 +26,8 @@ def build_sandbox_executor(
     子进程负责：chdir 到 workspace + exec 用户代码 + 返回结果。
 
     文件输出：
-    - 子进程代码写 df.to_excel(OUTPUT_DIR + "/报表.xlsx") 到 OUTPUT_DIR
-    - 显式同步到 OSS → 主进程生成 CDN 下载链接
+    - 子进程代码写 df.to_excel('下载/报表.xlsx')（相对路径，沙盒 cwd=/workspace）
+    - 主进程扫 output_dir 自动同步到 OSS → 生成 CDN 下载链接
     - 用户在工作区"下载/"文件夹直接可见可下载
     """
     from core.config import get_settings as _get_settings
