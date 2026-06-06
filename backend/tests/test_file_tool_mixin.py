@@ -511,7 +511,8 @@ class TestDescribeSingleFileMultimodal:
         assert isinstance(result, AgentResult)
         assert result.status == "success"
         assert "report.xlsx" in result.summary
-        assert "get_file" in result.summary
+        # 数据文件路径协议:引导用 file_analyze 治理
+        assert "file_analyze" in result.summary
 
     @pytest.mark.asyncio
     async def test_image_no_cdn_falls_back_to_text(self, tmp_path):
@@ -531,8 +532,8 @@ class TestDescribeSingleFileMultimodal:
         assert isinstance(result, AgentResult)
         assert result.status == "success"
         assert "shot.jpg" in result.summary
-        # CDN 拿不到时退回标准文本输出（含 get_file 引导）
-        assert "get_file" in result.summary
+        # CDN 拿不到时退回标准文本输出(非数据文件:相对路径引导)
+        assert "shot.jpg" in result.summary and "相对路径" in result.summary
 
 
 # ============================================================
@@ -545,7 +546,7 @@ class TestDescribeSingleFile:
 
     @pytest.mark.asyncio
     async def test_returns_workspace_path(self, tmp_path):
-        """返回 WORKSPACE_DIR 路径"""
+        """返回 workspace 相对路径(新协议:数据文件引导 file_analyze)"""
         ws = tmp_path / "workspace"
         ws.mkdir()
         f = ws / "report.xlsx"
@@ -558,7 +559,8 @@ class TestDescribeSingleFile:
 
         assert result.status == "success"
         assert "report.xlsx" in result.summary
-        assert "get_file(" in result.summary
+        # 数据文件引导调 file_analyze 治理
+        assert "file_analyze" in result.summary
 
 
 # ============================================================

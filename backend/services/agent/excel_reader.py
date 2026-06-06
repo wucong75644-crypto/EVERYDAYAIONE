@@ -199,11 +199,12 @@ def _format_structured_output(
         lines.append("")
         lines.append(sheet_overview)
 
-    # 后续操作提示
+    # 后续操作提示(沙盒 cwd=/workspace,相对路径直接解析)
+    _stem = Path(rel_path).stem
     lines.append("")
     lines.append(
         f"后续查询：code_execute 中用 "
-        f"`duckdb.sql(f\"SELECT ... FROM read_parquet('{{get_file('{rel_path}')}}')\")`"
+        f"`duckdb.sql(\"SELECT ... FROM 'staging/_structured_{_stem}.parquet'\")`"
     )
 
     return "\n".join(lines)
@@ -389,9 +390,7 @@ def _read_excel_structured_sync(
                 status="empty",
             )
         overview_text += (
-            f"\n\n读取指定 Sheet：在 code_execute 中用 "
-            f"`openpyxl.load_workbook(get_file('{filename}'))['Sheet名']` "
-            f"或重新 file_analyze 时指定 sheet 参数。"
+            f"\n\n读取指定 Sheet：重新调用 file_analyze 并指定 sheet 参数"
         )
         return AgentResult(summary=overview_text, status="success")
 

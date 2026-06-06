@@ -147,8 +147,7 @@ def format_file_view(meta: FileMeta) -> str:
             )
         if skipped_sheets:
             lines.append(
-                "  如需读取跳过的 sheet："
-                "`pd.read_excel(get_file('文件名'), sheet_name='Sheet 名')`"
+                "  如需读取跳过的 sheet：重新调用 file_analyze 并指定 sheet 参数"
             )
     lines.append("")
 

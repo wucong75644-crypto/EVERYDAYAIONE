@@ -177,7 +177,10 @@ class FileToolMixin(FileDeleteMixin):
             lines.append("\n已达显示上限，部分条目未显示")
 
         lines.append("")
-        lines.append("在 code_execute 中用 get_file('文件名') 获取路径")
+        lines.append(
+            "在 code_execute 中用相对路径直接读取（沙盒 cwd=/workspace）；"
+            "xlsx/csv 数据文件请先调 file_analyze 治理后用 pd.read_parquet('staging/x.parquet') 读"
+        )
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -213,7 +216,10 @@ class FileToolMixin(FileDeleteMixin):
 
         lines = [raw_result]
         lines.append("")
-        lines.append("在 code_execute 中用 get_file('文件名') 获取路径")
+        lines.append(
+            "在 code_execute 中用相对路径直接读取（沙盒 cwd=/workspace）；"
+            "xlsx/csv 数据文件请先调 file_analyze 治理后用 pd.read_parquet('staging/x.parquet') 读"
+        )
 
         return AgentResult(summary="\n".join(lines), status="success")
 
@@ -464,10 +470,16 @@ class FileToolMixin(FileDeleteMixin):
             # OSS URL 拿不到时退回文本结果（极少见），保持原行为
             logger.warning(f"file_search image | no CDN URL for {abs_path}")
 
+        # 数据文件 → 引导 file_analyze；其他 → 给相对路径直接读
+        _data_exts = {".xlsx", ".xls", ".csv", ".tsv"}
+        if ext in _data_exts:
+            hint = f"数据文件需先 file_analyze('{rel_path}') 治理后用 pd.read_parquet 读"
+        else:
+            hint = f"在 code_execute 中用相对路径 '{rel_path}' 直接读取"
         lines = [
             f"{name} ({size_str})",
             "",
-            f"在 code_execute 中读取：path = get_file('{name}')",
+            hint,
         ]
 
         return AgentResult(summary="\n".join(lines), status="success")

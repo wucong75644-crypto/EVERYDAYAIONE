@@ -724,7 +724,8 @@ class TestFix4MultiSheetView:
         assert "汇总" in view
         assert "说明" in view
         assert "aggregated" in view or "汇总表" in view
-        assert "pd.read_excel" in view  # 必含读取跳过 sheet 的代码示例
+        # 新协议:不再给 pd.read_excel 字面值,改引导重新调用 file_analyze
+        assert "file_analyze" in view
 
     def test_empty_evidence_summary_safe(self):
         """evidence_summary 缺失或 sheets 为空时不应崩，不渲染章节。"""
