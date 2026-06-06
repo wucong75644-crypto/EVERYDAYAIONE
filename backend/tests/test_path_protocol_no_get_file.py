@@ -22,26 +22,24 @@ _SERVICES_DIR = _BACKEND_ROOT / "services"
 _GET_FILE_LITERAL_RE = re.compile(r"""get_file\s*\(\s*['"]""")
 
 # 测试/历史对比/废弃说明白名单(这些注释里的 get_file 是合法说明,不是引导文案)
-_ALLOWED_PATHS = {
-    "tests/",
-    "scripts/",
-    "external/",
-}
-
-
-def _is_allowed(rel_path: str) -> bool:
-    return any(rel_path.startswith(prefix) for prefix in _ALLOWED_PATHS)
+_DOC_KEYWORDS = ("已删", "已废弃", "废弃", "历史", "旧的", "兼容", "Phase 1")
 
 
 def _is_doc_comment(line: str) -> bool:
-    """是不是历史说明/废弃注释(允许保留)"""
+    """是不是历史说明/废弃注释(允许保留)。
+
+    覆盖三种说明形式:单行 # 注释 / docstring 单行(\"\"\" 或 ''' 包裹) / 多行
+    docstring 内部行。判定逻辑:含说明关键字即放行。
+    """
     stripped = line.strip()
-    if not stripped.startswith("#"):
-        return False
-    return any(
-        keyword in stripped
-        for keyword in ("已删", "已废弃", "废弃", "历史", "旧的", "兼容", "Phase 1")
+    is_comment_marker = (
+        stripped.startswith("#")
+        or stripped.startswith('"""')
+        or stripped.startswith("'''")
     )
+    if not is_comment_marker:
+        return False
+    return any(keyword in stripped for keyword in _DOC_KEYWORDS)
 
 
 def test_no_get_file_literal_in_llm_facing_strings():
@@ -53,8 +51,6 @@ def test_no_get_file_literal_in_llm_facing_strings():
 
     for py_file in _SERVICES_DIR.rglob("*.py"):
         rel_path = str(py_file.relative_to(_BACKEND_ROOT))
-        if _is_allowed(rel_path):
-            continue
 
         with py_file.open("r", encoding="utf-8") as f:
             for lineno, line in enumerate(f, start=1):

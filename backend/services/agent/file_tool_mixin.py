@@ -471,8 +471,7 @@ class FileToolMixin(FileDeleteMixin):
             logger.warning(f"file_search image | no CDN URL for {abs_path}")
 
         # 数据文件 → 引导 file_analyze；其他 → 给相对路径直接读
-        _data_exts = {".xlsx", ".xls", ".csv", ".tsv"}
-        if ext in _data_exts:
+        if ext in self._ANALYZE_EXTENSIONS:
             hint = f"数据文件需先 file_analyze('{rel_path}') 治理后用 pd.read_parquet 读"
         else:
             hint = f"在 code_execute 中用相对路径 '{rel_path}' 直接读取"
