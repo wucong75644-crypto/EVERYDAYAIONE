@@ -121,6 +121,9 @@ def extract_oai_messages_from_content(
                      → {role: "tool", tool_call_id, content: "<output>"}
       - tool_step (running) → 跳过（未完成无意义）
       - tool_result  → 退化为 assistant content（无 tool_call_id 无法配对）
+      - file (user 角色) → 追加 "[附件] name (workspace_path: ...)" 到 user text
+                     防止历史轮文件丢失（中断后 LLM 看不到附件名/路径）。
+                     image 由上层 build_context_messages 走多模态 image_url 分支。
 
     所有 tool_step 的 input/code 优先级：input(JSON) > {code: ...}
     ts_prefix 仅注入到首个 text/assistant 消息上（避免重复噪声）。
@@ -147,6 +150,22 @@ def extract_oai_messages_from_content(
         blocks = content
     else:
         return msgs
+
+    # 预收集 user 上传的文件引用（只对 user 角色生效；assistant 不上传文件，
+    # 若 assistant 有 file block 通常是生成产物，走多模态/图表渲染分支）
+    file_refs: List[str] = []
+    if role == "user":
+        for part in blocks:
+            if not isinstance(part, dict) or part.get("type") != "file":
+                continue
+            name = (part.get("name") or "").strip()
+            if not name:
+                continue
+            wp = (part.get("workspace_path") or "").strip()
+            ref = f"[附件] {name}"
+            if wp:
+                ref += f" (workspace_path: {wp})"
+            file_refs.append(ref)
 
     ts_consumed = False  # ts_prefix 只用一次，避免每个 text block 重复
     for part in blocks:
@@ -221,7 +240,24 @@ def extract_oai_messages_from_content(
                     "content": f"{prefix}[工具结论: {tool_name}] {text}",
                 })
 
-        # 其他类型（image/video/audio/file/form/chart/...）由上层 build_context_messages
+        # 其他类型（image/video/audio/form/chart/...）由上层 build_context_messages
         # 单独处理为多模态格式，这里不动
+        # file 块在循环外统一追加到 user text（见下方 file_refs 合并）
+
+    # 把 file 引用合并到最近一条同 role 的 text 消息；若没有 text 消息则新建
+    if file_refs:
+        refs_text = "\n".join(file_refs)
+        target = next(
+            (
+                m for m in reversed(msgs)
+                if m.get("role") == role and isinstance(m.get("content"), str)
+            ),
+            None,
+        )
+        if target is not None:
+            target["content"] = target["content"] + "\n" + refs_text
+        else:
+            prefix = "" if ts_consumed else ts_prefix
+            msgs.append({"role": role, "content": f"{prefix}{refs_text}"})
 
     return msgs
