@@ -353,7 +353,7 @@ class TestContextCompressor:
 
         comp = ContextCompressor()
         msgs = self._make_messages(3, 10)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             comp.compress_if_needed(msgs, context_window=200000)
         )
         assert len(result) == len(msgs)  # 不压缩

@@ -176,13 +176,13 @@ class AgentResult:
         # 文本摘要（始终有）
         blocks.append({"type": "text", "text": self.summary})
 
-        # 文件引用 → sandbox 标准引用
+        # 文件引用 → sandbox 标准引用(新路径协议:相对路径,沙盒 cwd=/workspace)
         if self.file_ref:
             blocks.append({
                 "type": "text",
                 "text": (
                     f"[文件已存入 staging | "
-                    f"读取: get_file('{self.file_ref.filename}') | "
+                    f"读取: pd.read_parquet('staging/{self.file_ref.filename}') | "
                     f"{self.file_ref.row_count}行 | "
                     f"{self.file_ref.format} | "
                     f"{self.file_ref.size_bytes // 1024}KB]"

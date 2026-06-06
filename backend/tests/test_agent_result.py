@@ -411,7 +411,8 @@ class TestToToolContent:
         assert "storage: file" in content
         assert "rows: 100" in content
         assert "format: parquet" in content
-        assert "STAGING_DIR" in content
+        # 新协议:相对路径 staging/{filename}(替代 STAGING_DIR 变量)
+        assert "staging/" in content
 
     def test_metadata_included(self):
         """metadata 字段出现在 [DATA_REF] 中"""

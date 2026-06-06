@@ -87,17 +87,6 @@ def _reset_security(
         sandbox_globals["shutil"] = scoped_shutil
 
 
-def _hide_paths(result: str, output_dir: str, workspace_dir: str, skills_dir: str = "") -> str:
-    """路径替换为变量名（LLM 可直接用 OUTPUT_DIR/WORKSPACE_DIR 引用文件）"""
-    if result and output_dir:
-        result = result.replace(output_dir, "OUTPUT_DIR")
-    if result and workspace_dir:
-        result = result.replace(workspace_dir, "WORKSPACE_DIR")
-    if result and skills_dir:
-        result = result.replace(skills_dir, "SKILLS_DIR")
-    return result
-
-
 def _read_request() -> Optional[Dict[str, Any]]:
     """从 stdin 读取一行 JSON 请求，EOF 返回 None"""
     try:
@@ -215,8 +204,7 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             # 执行代码（sandbox_globals 在进程内持续存在，变量保留）
             result = _exec_code(code, sandbox_globals, timeout)
 
-            # 路径隐藏
-            result = _hide_paths(result, output_dir, workspace_dir, skills_dir)
+            # 路径协议:cwd=/workspace,所有输出已是虚拟相对路径,不再隐藏
 
             # 截断
             result = truncate_result(result, max_result_chars)

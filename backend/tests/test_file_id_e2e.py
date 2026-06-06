@@ -190,39 +190,10 @@ class TestResolve:
         assert cache.resolve("产品库存表", "analyze") == str(f)
 
 
-class TestManifest:
-    """manifest 只写 parquet"""
-
-    def test_only_parquet_in_manifest(self, cache, workspace, staging):
-        f = workspace / "4月销售分析.xlsx"
-        cache.register(f.name, workspace=str(f))
-        # 没 analyze，没 parquet → manifest 为空
-        cache.write_manifest()
-        assert not (staging / "_manifest.json").exists()
-
-        # analyze 后有 parquet → 写入 manifest
-        parquet = staging / "_cache.parquet"
-        parquet.write_bytes(b"parquet")
-        cache.set_parquet(f.name, str(parquet))
-        cache.write_manifest()
-
-        manifest = json.loads((staging / "_manifest.json").read_text())
-        # manifest 里存的是 parquet 文件名（不是完整路径）
-        for k, v in manifest.items():
-            assert v == parquet.name
-
-    def test_manifest_no_workspace(self, cache, workspace, staging):
-        """manifest 里不会出现 workspace 路径"""
-        f = workspace / "4月销售分析.xlsx"
-        cache.register(f.name, workspace=str(f))
-        parquet = staging / "_cache.parquet"
-        parquet.write_bytes(b"parquet")
-        cache.set_parquet(f.name, str(parquet))
-        cache.write_manifest()
-
-        manifest = json.loads((staging / "_manifest.json").read_text())
-        for v in manifest.values():
-            assert "workspace" not in v or "staging" in v
+# ============================================================
+# 路径协议:manifest 机制已删除(沙盒 get_file 同步删,改走相对路径协议)
+# TestManifest 整组测试已删除
+# ============================================================
 
 
 class TestToolResolve:
@@ -264,6 +235,7 @@ class TestFullFlow:
     """完整流程：上传 → analyze → code_execute"""
 
     def test_upload_analyze_code(self, cache, workspace, staging, conv_id):
+        """完整流程:上传 → analyze → code_execute(新协议:相对路径,无 manifest)"""
         xlsx = workspace / "4月销售分析.xlsx"
 
         # 1. 上传注册（只有 workspace）
@@ -278,12 +250,6 @@ class TestFullFlow:
         assert cache.resolve(xlsx.name, "code") == str(parquet)
         assert cache.resolve(xlsx.name, "analyze") == str(xlsx)
 
-        # 3. write_manifest → manifest 存 parquet 文件名（沙盒拼 STAGING_DIR）
-        cache.write_manifest()
-        manifest = json.loads((staging / "_manifest.json").read_text())
-        for v in manifest.values():
-            assert v == parquet.name
-
-        # 4. 重复注册不覆盖 parquet
+        # 3. 重复注册不覆盖 parquet
         cache.register(xlsx.name, workspace=str(xlsx))
         assert cache.resolve(xlsx.name, "code") == str(parquet)

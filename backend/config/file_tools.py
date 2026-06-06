@@ -169,13 +169,11 @@ def build_file_tools() -> List[Dict[str, Any]]:
 # 路由提示词片段（ERP Agent 用）
 FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
-    "- file_search 定位文件：无参数列目录，有 path/keyword 搜索文件\n"
-    "- 数据文件（Excel/CSV）自动转 Parquet 到 staging，返回路径\n"
-    "- code_execute 中读 manifest 获取路径：\n"
-    "  import json\n"
-    "  with open(STAGING_DIR + '/_manifest.json') as f:\n"
-    "      manifest = json.load(f)\n"
-    "  用 duckdb.sql() 查询 Parquet 数据\n"
-    "- 图片：file_search 命中单张图直接返回多模态（视觉模型自动可见，无需额外工具）\n"
+    "- file_search 定位文件: 无参数列目录,有 path/keyword 搜索文件\n"
+    "- 数据文件(Excel/CSV)用 file_analyze 治理 → 生成 staging/x.parquet\n"
+    "- code_execute 直接读 parquet:\n"
+    "  df = pd.read_parquet('staging/x.parquet')\n"
+    "  或 duckdb.sql(\"SELECT * FROM 'staging/x.parquet'\").df()\n"
+    "- 图片: file_search 命中单张图直接返回多模态(视觉模型自动可见,无需额外工具)\n"
     "- 撤销/恢复原文件 → restore_file\n\n"
 )

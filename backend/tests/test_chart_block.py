@@ -59,29 +59,24 @@ class TestChartDetection:
 
     @pytest.mark.asyncio
     async def test_echart_json_detected(self, tmp_path):
-        """正常 .echart.json → _chart_options 填充"""
+        """正常 .echart.json → _chart_options 填充(新协议:扫 staging 读完即删)"""
+        staging = tmp_path / "staging"
+        staging.mkdir()
         option = {"title": {"text": "销售趋势"}, "series": [{"type": "line", "data": [1, 2]}]}
-        (tmp_path / "trend.echart.json").write_text(
-            json.dumps(option, ensure_ascii=False), encoding="utf-8",
-        )
-
-        uploaded = []
-
-        async def mock_upload(filename, size):
-            uploaded.append(filename)
-            return f"[FILE]https://cdn/f/{filename}|{filename}|application/json|{size}[/FILE]"
+        chart_file = staging / "trend.echart.json"
+        chart_file.write_text(json.dumps(option, ensure_ascii=False), encoding="utf-8")
 
         executor = SandboxExecutor(
-            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
+            timeout=5.0, staging_dir=str(staging), output_dir=str(tmp_path / "下载"),
         )
-        executor._snapshot_before = {}
 
-        await executor._auto_upload_new_files()
+        executor._scan_chart_options()
 
-        assert "trend.echart.json" in uploaded
         assert hasattr(executor, "_chart_options")
         assert "trend.echart.json" in executor._chart_options
         assert executor._chart_options["trend.echart.json"]["title"]["text"] == "销售趋势"
+        # 中转数据,读完即删
+        assert not chart_file.exists()
 
     @pytest.mark.asyncio
     async def test_regular_json_not_chart(self, tmp_path):
@@ -142,17 +137,21 @@ class TestChartDetection:
 
     @pytest.mark.asyncio
     async def test_image_and_chart_coexist(self, tmp_path):
-        """同时有 PNG 和 .echart.json 时各自独立检测"""
-        # PNG 文件（1x1 白色像素）
-        import struct
+        """同时有 PNG(下载/)和 .echart.json(staging/)时各自独立检测"""
+        output = tmp_path / "下载"
+        staging = tmp_path / "staging"
+        output.mkdir()
+        staging.mkdir()
+        # PNG 文件（1x1 白色像素）→ 下载/
         png_header = (
             b'\x89PNG\r\n\x1a\n'  # PNG signature
             + b'\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde'
             + b'\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N'
             + b'\x00\x00\x00\x00IEND\xaeB`\x82'
         )
-        (tmp_path / "chart.png").write_bytes(png_header)
-        (tmp_path / "trend.echart.json").write_text(
+        (output / "chart.png").write_bytes(png_header)
+        # echart.json → staging/(中转,读完即删)
+        (staging / "trend.echart.json").write_text(
             json.dumps({"series": [{"type": "bar"}]}), encoding="utf-8",
         )
 
@@ -163,14 +162,16 @@ class TestChartDetection:
             return f"[FILE]https://cdn/{filename}|{filename}|image/png|{size}[/FILE]"
 
         executor = SandboxExecutor(
-            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
+            timeout=5.0, output_dir=str(output), staging_dir=str(staging),
+            upload_fn=mock_upload,
         )
         executor._snapshot_before = {}
 
+        # 路径协议:chart 先扫 staging,再扫 output_dir auto_upload
+        executor._scan_chart_options()
         await executor._auto_upload_new_files()
 
         assert "chart.png" in uploaded
-        assert "trend.echart.json" in uploaded
         # PNG → _image_dims
         assert hasattr(executor, "_image_dims")
         assert "chart.png" in executor._image_dims

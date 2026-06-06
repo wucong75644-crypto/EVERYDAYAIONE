@@ -68,7 +68,7 @@ def _make_staged_result(tool_name="erp_agent", hash_str="a1b2c3d4", size=45632):
     return (
         f'<persisted-output>\n'
         f'Output too large ({size} chars). '
-        f'Full output saved to: STAGING_DIR + "/{filename}"\n\n'
+        f'Full output saved to: staging/{filename}\n\n'
         f'Preview (first 2000 chars):\n'
         f'商品编码 | 可售库存 | 仓库\n'
         f'A001    | 450     | 上海\n'
@@ -107,7 +107,7 @@ class TestBuildToolDigest:
         assert digest["tools"][0]["name"] == "erp_agent"
         assert "最近七天" in digest["tools"][0]["hint"]
         assert digest["tools"][0]["ok"] is True
-        assert digest["staging_dir"] == "STAGING_DIR"
+        assert digest["staging_dir"] == "staging/"
 
     def test_with_staging_path(self):
         """包含 staging 文件路径的大结果"""
@@ -149,7 +149,7 @@ class TestBuildToolDigest:
         """归档消息中仍可提取 staging 路径"""
         archived_content = (
             '[已归档] erp_agent 查询结果（原始 45632 字符）\n'
-            '数据文件: STAGING_DIR + "/tool_result_erp_agent_a1b2c3d4.txt"\n'
+            '数据文件: staging/tool_result_erp_agent_a1b2c3d4.txt\n'
             '字段: 商品编码, 可售库存 | 共 500 条记录'
         )
         messages = [
@@ -206,18 +206,18 @@ class TestFormatToolDigest:
                 {"name": "erp_agent", "hint": "查订单", "ok": True, "staged": "tool_result_erp_agent_a1b2.txt"},
                 {"name": "code_execute", "hint": "df.groupby", "ok": True},
             ],
-            "staging_dir": "STAGING_DIR",
+            "staging_dir": "staging/",
         }
         result = format_tool_digest(digest)
         assert "[上轮工具执行记录]" in result
         assert "✓ erp_agent: 查订单" in result
-        assert "STAGING_DIR + '/tool_result_erp_agent_a1b2.txt'" in result
+        assert "staging/tool_result_erp_agent_a1b2.txt" in result
         assert "15 分钟内有效" in result
 
     def test_error_tool_format(self):
         digest = {
             "tools": [{"name": "erp_agent", "hint": "查订单", "ok": False}],
-            "staging_dir": "STAGING_DIR",
+            "staging_dir": "staging/",
         }
         result = format_tool_digest(digest)
         assert "✗ erp_agent" in result

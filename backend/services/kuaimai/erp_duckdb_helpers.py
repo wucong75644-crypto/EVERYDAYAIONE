@@ -309,7 +309,7 @@ def resolve_export_path(
     构建导出 Parquet 的 staging 路径。
 
     返回: (staging_dir, staging_path, filename)
-    LLM 引用统一用 STAGING_DIR + '/filename'，不暴露相对路径。
+    LLM 引用统一用相对路径 'staging/filename',沙盒 cwd=/workspace 自动解析。
     """
     from core.config import get_settings
     from core.workspace import resolve_staging_dir

@@ -228,7 +228,7 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
     return (
         f"{PERSISTED_OUTPUT_TAG}\n"
         f"Output too large ({len(result):,} chars). "
-        f'Full output saved to: STAGING_DIR + "/{filename}"\n\n'
+        f'Full output saved to: staging/{filename}\n\n'
         f"{preview}\n"
         f"{PERSISTED_OUTPUT_CLOSING_TAG}"
     )
@@ -237,7 +237,7 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
 def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
     """将完整结果写入 staging 文件，返回文件名（不含路径）。
 
-    文件写入 staging_dir 目录，调用方通过 STAGING_DIR + '/filename' 引用。
+    文件写入 staging_dir 目录，调用方通过 "staging/filename" 相对路径引用。
     """
     Path(staging_dir).mkdir(parents=True, exist_ok=True)
 

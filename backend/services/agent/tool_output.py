@@ -102,11 +102,14 @@ class FileRef:
 
     @property
     def sandbox_ref(self) -> str:
-        """LLM 朝向的标准文件引用 — 等价于 OpenAI /mnt/data/filename。
+        """LLM 朝向的标准文件引用 — 沙盒 cwd=/workspace 下的相对路径。
 
-        所有 to_message_content() 统一用此属性，禁止直接输出 path。
+        新协议:LLM 字面 copy 此字符串到代码,如:
+            df = duckdb.sql("FROM 'staging/trade_xxx.parquet'").df()
+
+        相比旧的 STAGING_DIR + '/x',无变量拼接,LLM 训练分布友好,0 字符串陷阱。
         """
-        return f"STAGING_DIR + '/{self.filename}'"
+        return f"staging/{self.filename}"
 
     def is_valid(self, max_age_seconds: int = 0) -> bool:
         """检查文件是否仍然有效（存在 + 未过期）。
