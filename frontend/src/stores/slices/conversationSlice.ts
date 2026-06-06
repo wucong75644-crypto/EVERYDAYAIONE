@@ -59,14 +59,14 @@ export interface ConversationSlice {
 }
 
 // Store 依赖类型
+// 路径协议:chatTasks 已删除(死代码,任务限流由后端做单一事实来源)
 export interface ConversationSliceDeps {
   messages: Record<string, Message[]>;
   cacheMetadata: Record<string, { hasMore: boolean; lastFetchedAt: number }>;
   cacheAccessOrder: string[];
   optimisticMessages: Map<string, Message[]>;
   streamingMessages: Map<string, string>;
-  tasks: Map<string, unknown>;
-  chatTasks: Map<string, unknown>;
+  tasks: Map<string, unknown>;  // 真实类型由 TaskSlice 提供,这里仅为跨 slice 依赖声明
   recentlyCompleted: Set<string>;
   forceRefreshConversations: Set<string>;
   unreadConversations: Set<string>;
@@ -311,7 +311,6 @@ export const createConversationSlice: StateCreator<
       cacheMetadata: {},
       cacheAccessOrder: [],
       tasks: new Map(),
-      chatTasks: new Map(),
       streamingMessages: new Map(),
       optimisticMessages: new Map(),
       unreadConversations: new Set(),

@@ -141,7 +141,6 @@ export default function Chat() {
     conversationOptimisticUpdate,
     setConversationOptimisticUpdate,
   } = useMessageCallbacks({
-    conversationTitle,
     currentConversationId,
   });
 

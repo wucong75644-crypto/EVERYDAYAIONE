@@ -16,7 +16,6 @@ import { tabSync } from '../utils/tabSync';
 
 /** Hook 参数接口 */
 export interface UseMessageCallbacksParams {
-  conversationTitle: string;
   currentConversationId: string | null;
 }
 
@@ -48,7 +47,6 @@ export interface UseMessageCallbacksReturn {
  * - 侧边栏状态同步
  */
 export function useMessageCallbacks({
-  conversationTitle,
   currentConversationId,
 }: UseMessageCallbacksParams): UseMessageCallbacksReturn {
   const { refreshUser } = useAuthStore();
@@ -67,21 +65,15 @@ export function useMessageCallbacks({
 
   // MessageStore actions
   const {
-    startChatTask,
-    failChatTask,
     clearRecentlyCompleted,
     addErrorMessage,
   } = useMessageStore();
 
   // 消息开始发送（乐观更新）
+  // 路径协议:任务追踪由后端 task_limit_service 做单一事实来源,前端只做 UI 更新
   const handleMessagePending = useCallback(
     (message: Message) => {
       const messageConversationId = message.conversation_id;
-
-      // 启动任务追踪（所有对话都追踪，仅用户消息）
-      if (messageConversationId && message.role === 'user') {
-        startChatTask(messageConversationId, conversationTitle);
-      }
 
       // 注意：消息添加已由 sendMessage 处理，这里不再重复添加
       // sendMessage 中调用了 messageStore.addMessage()
@@ -99,10 +91,7 @@ export function useMessageCallbacks({
         });
       }
     },
-    [
-      conversationTitle,
-      startChatTask,
-    ]
+    [],
   );
 
   // 消息发送失败处理（仅处理发送错误，正常完成由 WebSocketContext 处理）
@@ -112,9 +101,6 @@ export function useMessageCallbacks({
 
       // 错误处理（现在只处理发送错误，正常完成已由 WebSocket 处理）
       if (messageConversationId && aiMessage?.is_error) {
-        // 失败任务追踪
-        failChatTask(messageConversationId);
-
         // 添加错误消息
         addErrorMessage(messageConversationId, aiMessage);
 
@@ -135,7 +121,6 @@ export function useMessageCallbacks({
     },
     [
       refreshUser,
-      failChatTask,
       addErrorMessage,
       clearRecentlyCompleted,
     ]
