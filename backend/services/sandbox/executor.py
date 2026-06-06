@@ -178,10 +178,10 @@ class SandboxExecutor:
 
     @property
     def _upload_scan_dirs(self) -> list[str]:
-        """auto_upload 监控的目录列表：仅 OUTPUT_DIR。
+        """auto_upload 监控的目录列表：仅 output_dir（host 路径，对应沙盒 '下载/'）。
 
-        STAGING_DIR 是中间数据目录（parquet/json 等），不应推送给用户。
-        工具描述已明确要求 LLM 将用户产出写到 OUTPUT_DIR。
+        staging_dir（沙盒 'staging/'）是中间数据目录（parquet/json 等），
+        不应推送给用户。工具描述已明确要求 LLM 把用户产出写到 '下载/'。
         """
         dirs: list[str] = []
         if self._output_dir:
@@ -263,7 +263,7 @@ class SandboxExecutor:
 
         新协议:LLM 写图表配置到 "staging/x.echart.json"(相对路径),
         cwd=/workspace 解析到 host staging_dir。读完即删,避免污染
-        用户 下载/ 目录(原 bug:文件留在 OUTPUT_DIR 持久化)。
+        用户 下载/ 目录(原 bug:文件留在 output_dir 持久化)。
         """
         if not self._staging_dir:
             return

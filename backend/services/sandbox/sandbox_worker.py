@@ -113,8 +113,9 @@ def build_scoped_open(
     sandbox_worker 和 kernel_worker 共用此逻辑，避免两处维护。
     返回 scoped_open 函数，调用方赋值给 builtins.open。
 
-    注意：不做虚拟路径别名（/staging/ /output/），LLM 统一用
-    STAGING_DIR/OUTPUT_DIR 变量（真实绝对路径），任何库都能直接写。
+    路径协议：沙盒 cwd=workspace_dir，LLM 用相对路径字符串
+    （'staging/x.parquet' / '下载/x.xlsx' / '上传/x.csv'），
+    任何库内部的 open() 也自动走这套白名单校验。
     """
     import os
     import tempfile as _tempfile
@@ -167,7 +168,7 @@ def build_scoped_open(
             )
             if not _is_readonly_system:
                 raise PermissionError(f"文件访问被拒绝：{path} 不在允许的目录内")
-        # 文件不存在时自动纠错：当前目录 → OUTPUT_DIR → STAGING_DIR
+        # 文件不存在时自动纠错：workspace → output_dir → staging_dir
         if "r" in mode and not os.path.exists(resolved):
             _basename = os.path.basename(resolved)
             suggestion = _find_similar_file_global(resolved, _ws_dir)

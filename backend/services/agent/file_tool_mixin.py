@@ -2,7 +2,7 @@
 文件操作 + 社交爬虫工具 Mixin（聚合入口）
 
 对齐 Claude 模式：
-- file_search: 搜索/列目录/定位文件 → 返回 WORKSPACE_DIR 路径；
+- file_search: 搜索/列目录/定位文件 → 返回 workspace 相对路径；
                命中单张图片时直接返回 FileReadResult(type=image) 多模态注入视觉模型
 - file_analyze: Excel/CSV 结构化读取转 Parquet
 - file_delete / restore_file: 删除/恢复文件（拆到 file_delete_mixin.py）
@@ -136,7 +136,7 @@ class FileToolMixin(FileDeleteMixin):
     async def _list_directory(
         self, executor: Any, args: Dict[str, Any],
     ) -> Any:
-        """列出目录内容，返回文件列表和 WORKSPACE_DIR 路径，注册到共享缓存"""
+        """列出目录内容，返回文件列表和 workspace 相对路径，注册到共享缓存"""
         from services.agent.agent_result import AgentResult
         from services.agent.file_path_cache import get_file_cache
 
@@ -426,7 +426,7 @@ class FileToolMixin(FileDeleteMixin):
     async def _describe_single_file(
         self, executor: Any, abs_path: str,
     ) -> Any:
-        """返回单个文件的基本信息和 WORKSPACE_DIR 路径，注册到共享缓存。
+        """返回单个文件的基本信息和 workspace 相对路径，注册到共享缓存。
 
         命中图片时返回 FileReadResult(type="image")，让 chat_handler 在下一轮
         把 image_url 多模态块注入 messages —— 多模态模型直接看到图，
