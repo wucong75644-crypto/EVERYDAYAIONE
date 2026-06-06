@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
@@ -33,6 +34,11 @@ from services.agent.tool_result_cache import ToolResultCache
 _FILE_RE = re.compile(
     r"\[FILE\](?P<url>[^|]+)\|(?P<name>[^|]+)\|(?P<mime>[^|]+)\|(?P<size>\d+)(?:\|(?P<wspath>[^[\]]+))?\[/FILE\]"
 )
+
+# [EMIT] 协议标记(POC 阶段):沙盒里 LLM 主动声明产物
+# 格式:[EMIT]{"kind":"chart|file|image|table", ...}[/EMIT]
+# 见 services/sandbox/emit_protocol.py
+_EMIT_RE = re.compile(r"\[EMIT\](?P<payload>\{.+?\})\[/EMIT\]", re.DOTALL)
 
 
 class ToolLoopExecutor:
@@ -382,6 +388,106 @@ class ToolLoopExecutor:
         if collected:
             self._collected_files.extend(collected)
 
+    async def _process_emit_markers(self, content: str, tool_name: str) -> str:
+        """解析 [EMIT]{json}[/EMIT] marker(POC 阶段)
+
+        路由:
+          - kind=chart → executor._chart_options[name] = option(由 chat_handler chart_block_builder 推送)
+          - kind=file  → 主进程上传 OSS,改写成 [FILE] marker 进入原链路
+          - kind=image → TODO,日志记录,文本占位
+          - kind=table → TODO,日志记录,文本占位
+
+        返回:替换掉 marker 后的 content 文本(给 LLM 看的占位提示)
+        """
+        emit_count = 0
+
+        # 收集所有 emit 项
+        emits: list[dict[str, Any]] = []
+        for m in _EMIT_RE.finditer(content):
+            try:
+                payload = json.loads(m.group("payload"))
+                emits.append({"match": m, "payload": payload})
+                emit_count += 1
+            except json.JSONDecodeError as e:
+                logger.warning(f"[EMIT] 解析失败 | tool={tool_name} | err={e}")
+                continue
+
+        if not emits:
+            return content
+
+        logger.info(f"[EMIT] markers found | tool={tool_name} | count={emit_count}")
+
+        # 注入 chart_options(POC:复用 chart_block_builder 推送链路)
+        chart_payloads = [e["payload"] for e in emits if e["payload"].get("kind") == "chart"]
+        if chart_payloads and hasattr(self.executor, "_chart_options"):
+            if self.executor._chart_options is None:
+                self.executor._chart_options = {}
+            for idx, p in enumerate(chart_payloads):
+                title = p.get("title") or f"chart_{idx}"
+                # 用 title 作 key,跟 chart_block_builder 去重逻辑配合
+                self.executor._chart_options[f"{title}.echart.json"] = p.get("option", {})
+
+        # 处理 file 项:转 [FILE] marker(复用现有 auto_upload + OSS 上传链路)
+        file_payloads = [e["payload"] for e in emits if e["payload"].get("kind") == "file"]
+        file_markers: list[str] = []
+        if file_payloads:
+            try:
+                from services.file_upload import auto_upload
+                # 拿 output_dir(主进程上传需要绝对路径)
+                output_dir = getattr(self.executor, "_output_dir", None)
+                workspace_dir = getattr(self.executor, "_workspace_dir", None)
+                user_id = getattr(self.executor, "user_id", "") or ""
+                org_id = getattr(self.executor, "org_id", None)
+
+                for p in file_payloads:
+                    rel_path = p.get("path", "")
+                    name = p.get("name") or os.path.basename(rel_path)
+                    size = p.get("size", 0)
+                    # 相对路径在 workspace_dir 下解析
+                    if workspace_dir and rel_path:
+                        abs_path = os.path.join(workspace_dir, rel_path)
+                        host_dir = os.path.dirname(abs_path)
+                    else:
+                        host_dir = output_dir or ""
+
+                    if host_dir and os.path.exists(os.path.join(host_dir, name)):
+                        marker = await auto_upload(name, size, host_dir, user_id, org_id)
+                        file_markers.append(marker)
+                    else:
+                        logger.warning(
+                            f"[EMIT] file not found | path={rel_path} | host_dir={host_dir}"
+                        )
+            except Exception as e:
+                logger.warning(f"[EMIT] file upload failed | err={e}")
+
+        # image/table 暂时只记日志(POC 阶段),后续接入对应 block
+        for p in (e["payload"] for e in emits if e["payload"].get("kind") in ("image", "table")):
+            logger.info(f"[EMIT] {p.get('kind')} TODO | name={p.get('name', p.get('title', ''))}")
+
+        # 替换 marker → 占位文本(给 LLM 看的,告诉它已经处理了)
+        def _emit_placeholder(m):
+            try:
+                payload = json.loads(m.group("payload"))
+                kind = payload.get("kind", "?")
+                if kind == "chart":
+                    return f"📊 图表已生成: {payload.get('title', '')}（前端将自动渲染）"
+                if kind == "file":
+                    return f"📎 文件已生成: {payload.get('label') or payload.get('name', '')}（下载卡片将自动展示）"
+                if kind == "image":
+                    return f"🖼️ 图片已生成: {payload.get('name', '')}"
+                if kind == "table":
+                    return f"📋 表格已生成: {payload.get('title', '')}"
+                return f"[已 emit:{kind}]"
+            except Exception:
+                return ""
+        content = _EMIT_RE.sub(_emit_placeholder, content)
+
+        # 追加 file markers 让原 [FILE] 解析流程接管
+        if file_markers:
+            content = content + "\n" + "\n".join(file_markers)
+
+        return content
+
     async def _pre_turn_checks(
         self,
         turn: int,
@@ -694,6 +800,14 @@ class ToolLoopExecutor:
                 content = result or ""
                 is_truncated = False
                 self._register_result_files(result, tool_name)
+
+            # Step 2a: [EMIT] 协议(POC):沙盒 LLM 主动声明产物 → 转成内部结构
+            #   - chart → 注入 executor._chart_options(复用 chart_block_builder 推送)
+            #   - file  → 主进程上传 OSS + 改写成 [FILE] marker(走原链路)
+            #   - image → TODO 后续接入 image block
+            #   - table → TODO 前端 table 组件后接入
+            if content and _EMIT_RE.search(content):
+                content = await self._process_emit_markers(content, tool_name)
 
             # Step 2: [FILE] 标记提取（统一处理，不分类型）
             if content and "[FILE]" in content:

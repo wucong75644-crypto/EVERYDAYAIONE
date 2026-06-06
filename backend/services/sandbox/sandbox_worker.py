@@ -460,6 +460,11 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # 路径协议:AI 用相对路径 + attachments XML 给完整字符串,无需 get_file 兜底
     # 长对话上下文丢失时,AI 主动调 file_search 工具(Agent 层)探索
 
+    # emit 协议(POC 阶段):沙盒里主动声明产物 → 主进程解析 marker → 推前端 block
+    # 见 services/sandbox/emit_protocol.py + tool_loop_executor [EMIT] 解析逻辑
+    from services.sandbox.emit_protocol import EMIT_FUNCTIONS
+    g.update(EMIT_FUNCTIONS)
+
     return g
 
 

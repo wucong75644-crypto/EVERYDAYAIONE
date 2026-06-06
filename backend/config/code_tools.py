@@ -50,6 +50,34 @@ _DESCRIPTION = (
     "代码语法全英文半角: 逗号 , 括号 () 分号 ; 冒号 :"
 )
 
+# emit 协议(POC 2026-06):受 settings.emit_protocol_enabled 控制
+# 启用后追加到 _DESCRIPTION,LLM 用 emit_xxx() 主动声明产物,主进程解析 [EMIT] marker
+_EMIT_PROTOCOL_HINT = (
+    "\n\n【产物输出协议(实验)】\n"
+    "沙盒预装 4 个产物声明函数,当你产生想给用户看的内容时,必须调用:\n"
+    "  emit_chart(option, title='')   ECharts 图表(option 是完整 echarts 配置 dict)\n"
+    "  emit_file(path, label=None)    文件下载卡片(写文件后调,没 emit 等于丢)\n"
+    "  emit_image(path)               静态图片\n"
+    "  emit_table(df, title='')       交互式表格(传 DataFrame 或 list[dict])\n"
+    "\n"
+    "规则:\n"
+    "  1. 不要让用户读 print 数据,要 emit_xxx 让前端渲染卡片\n"
+    "  2. 写文件(df.to_excel/csv)后必须 emit_file,否则用户看不到下载链接\n"
+    "  3. 画图表优先 emit_chart(ECharts option),不要走 staging/x.echart.json 旧路径"
+)
+
+
+def _get_description() -> str:
+    """运行时拼接 description(根据 emit_protocol_enabled flag)"""
+    desc = _DESCRIPTION
+    try:
+        from core.config import get_settings
+        if get_settings().emit_protocol_enabled:
+            desc += _EMIT_PROTOCOL_HINT
+    except Exception:
+        pass
+    return desc
+
 
 def build_code_tools(
     include_workspace: bool = False,
@@ -63,7 +91,7 @@ def build_code_tools(
             "type": "function",
             "function": {
                 "name": "code_execute",
-                "description": _DESCRIPTION,
+                "description": _get_description(),
                 "parameters": {
                     "type": "object",
                     "properties": {
