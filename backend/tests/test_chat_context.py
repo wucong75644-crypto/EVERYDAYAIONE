@@ -307,6 +307,87 @@ class TestExtractOaiMessagesFromContent:
         msgs = chat_handler._extract_oai_messages_from_content(content, role="user")
         assert msgs == [{"role": "user", "content": "hi"}]
 
+    # === file 块：历史轮附件名/路径必须能注入到 LLM context ===
+    # 中断恢复场景：用户上传文件→工具中断→说"继续"时 LLM 仍要能看到文件名+路径
+    # 否则 LLM 失忆问"您指的是哪个文件"
+
+    def test_file_block_appended_to_user_text(self, chat_handler):
+        """user 消息 text + file 块 → text 后追加 [附件] name + workspace_path"""
+        content = [
+            {"type": "text", "text": "读取这个文件"},
+            {
+                "type": "file",
+                "name": "report.xlsx",
+                "workspace_path": "已整理表格/report.xlsx",
+                "url": "https://cdn/file",
+                "size": 12345,
+            },
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="user")
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"
+        assert "读取这个文件" in msgs[0]["content"]
+        assert "[附件] report.xlsx" in msgs[0]["content"]
+        assert "workspace_path: 已整理表格/report.xlsx" in msgs[0]["content"]
+
+    def test_file_only_user_message_creates_user_msg(self, chat_handler):
+        """user 消息只有 file 块没有 text → 新建 user 消息纯文件引用"""
+        content = [{
+            "type": "file",
+            "name": "data.csv",
+            "workspace_path": "uploads/data.csv",
+        }]
+        msgs = chat_handler._extract_oai_messages_from_content(
+            content, role="user", ts_prefix="[03-06 18:00] ",
+        )
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"
+        assert msgs[0]["content"].startswith("[03-06 18:00] ")
+        assert "[附件] data.csv" in msgs[0]["content"]
+        assert "uploads/data.csv" in msgs[0]["content"]
+
+    def test_multiple_file_blocks(self, chat_handler):
+        """多个 file 块 → 多行 [附件] 追加"""
+        content = [
+            {"type": "text", "text": "处理这两个表"},
+            {"type": "file", "name": "a.xlsx", "workspace_path": "上传/a.xlsx"},
+            {"type": "file", "name": "b.xlsx", "workspace_path": "上传/b.xlsx"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="user")
+        assert len(msgs) == 1
+        assert "[附件] a.xlsx" in msgs[0]["content"]
+        assert "[附件] b.xlsx" in msgs[0]["content"]
+
+    def test_file_block_without_workspace_path(self, chat_handler):
+        """file 块只有 name 没 workspace_path → 仅追加 name"""
+        content = [
+            {"type": "text", "text": "看这个"},
+            {"type": "file", "name": "image.png"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="user")
+        assert "[附件] image.png" in msgs[0]["content"]
+        assert "workspace_path" not in msgs[0]["content"]
+
+    def test_file_block_assistant_ignored(self, chat_handler):
+        """assistant 角色的 file 块不追加（assistant 不上传文件）"""
+        content = [
+            {"type": "text", "text": "已生成"},
+            {"type": "file", "name": "chart.png", "workspace_path": "out/chart.png"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="assistant")
+        # 只有 text，没有文件引用
+        assert len(msgs) == 1
+        assert "[附件]" not in msgs[0]["content"]
+
+    def test_file_block_no_name_skipped(self, chat_handler):
+        """file 块缺 name → 跳过"""
+        content = [
+            {"type": "text", "text": "x"},
+            {"type": "file", "workspace_path": "无名/文件"},
+        ]
+        msgs = chat_handler._extract_oai_messages_from_content(content, role="user")
+        assert msgs == [{"role": "user", "content": "x"}]
+
 
 # ============ Test _build_context_messages ============
 
