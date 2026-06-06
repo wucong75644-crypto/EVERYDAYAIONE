@@ -27,6 +27,7 @@ from schemas.websocket import (
 )
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
+from services.handlers.chart_block_builder import build_orphan_chart_blocks
 from services.handlers.chat_context_mixin import ChatContextMixin
 from services.handlers.chat_generate_mixin import ChatGenerateMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
@@ -760,6 +761,31 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         f"count={len(self._pending_file_parts)} | task={task_id}"
                     )
                     self._pending_file_parts.clear()
+
+                # ── ECharts 独立推送(路径协议:.echart.json 写 staging 读完即删,
+                #    不再走 FilePart 触发,需独立遍历 _chart_options 生成 chart block) ──
+                _orphan_chart_blocks = build_orphan_chart_blocks(
+                    chart_options=getattr(self, "_chart_options", {}),
+                    existing_blocks=_content_blocks,
+                )
+                if _orphan_chart_blocks:
+                    for _chart_block in _orphan_chart_blocks:
+                        _content_blocks.append(_chart_block)
+                        await ws_manager.send_to_task_or_user(
+                            task_id, user_id,
+                            build_content_block_add(
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                message_id=message_id,
+                                block=_chart_block,
+                            ),
+                        )
+                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
+                    logger.info(
+                        f"Chart blocks pushed to frontend | "
+                        f"count={len(_orphan_chart_blocks)} | task={task_id}"
+                    )
+                    self._chart_options = {}  # 消费完清空,避免下轮重复推送
 
                 # ── FormBlock 推送（复用 _pending_file_parts 模式） ──
                 _pending_form = getattr(self, "_pending_form_block", None)
