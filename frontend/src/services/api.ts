@@ -6,9 +6,15 @@
  * 2. 刷新成功 → 用新 token 重发原请求（用户无感知）
  * 3. 刷新失败 → logoutOnce() 统一登出
  * 4. 并发 401 → 第一个触发刷新，其余排队等新 token 后重发
+ *
+ * 429 处理流程（任务限流统一弹 toast）：
+ * 1. 后端 task_limit_service 是任务计数单一事实来源,超限返回 429
+ * 2. 收到 429 → 解析 ApiErrorResponse.message → toast.error
+ * 3. 不重试(限流不是临时错误)
  */
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
+import toast from 'react-hot-toast';
 import type { ApiErrorResponse } from '../types/auth';
 import { silentRefresh } from '../utils/tokenManager';
 
@@ -64,7 +70,13 @@ api.interceptors.response.use(
       }
     }
 
-    // 非 401 或已重试过 → 直接 reject
+    // 429 任务限流:后端 task_limit_service 返回 TASK_QUEUE_FULL,统一弹 toast
+    if (error.response?.status === 429) {
+      const message = error.response?.data?.error?.message || '请求过于频繁，请稍后再试';
+      toast.error(message);
+    }
+
+    // 其他错误 → 直接 reject(由调用方处理)
     return Promise.reject(error);
   }
 );

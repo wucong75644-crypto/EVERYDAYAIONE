@@ -478,13 +478,8 @@ export default function InputArea({
       return;
     }
 
-    // 检查全局任务限制
-    const taskLimitCheck = useMessageStore.getState().canStartTask();
-    if (!taskLimitCheck.allowed) {
-      toast.error(taskLimitCheck.reason || '任务队列已满');
-      return;
-    }
-
+    // 路径协议:任务限流由后端 task_limit_service 做单一事实来源
+    // 超限会返回 429 + 友好 message,api.ts 拦截器统一弹 toast,前端不再预检
     const messageContent = prompt.trim();
 
     // 打断：如果 AI 正在执行，先发 steer 信号
