@@ -214,8 +214,7 @@ def build_data_profile(
     # ── 6. 查询指引 ──
     lines.append(
         f"\n[查询] code_execute 中用 "
-        f"duckdb.sql(\"SELECT ... FROM read_parquet('\" + "
-        f"get_file('{filename}') + \"')\")"
+        f"duckdb.sql(\"SELECT ... FROM 'staging/{filename}'\")"
     )
 
     # ── 7. 警告 ──
@@ -373,8 +372,7 @@ def build_profile_from_duckdb(
     # ── 7. 查询指引 ──
     lines.append(
         f"\n[查询] code_execute 中用 "
-        f"duckdb.sql(\"SELECT ... FROM read_parquet('\" + "
-        f"get_file('{filename}') + \"')\")"
+        f"duckdb.sql(\"SELECT ... FROM 'staging/{filename}'\")"
     )
 
     return "\n".join(lines), stats_dict

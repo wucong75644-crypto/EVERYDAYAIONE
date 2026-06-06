@@ -191,13 +191,14 @@ class TestFormatStructuredOutput:
         assert "跨Sheet引用" in text
 
     def test_follow_up_hint(self):
-        """后续查询提示引导用 code_execute + duckdb"""
+        """后续查询提示引导用 code_execute + duckdb 读 staging parquet"""
         rows = [(1, ["A1:test"])]
         text = _format_structured_output(
             rows, [], [], 1, 1, 0, "Sheet1", "", "test.xlsx",
         )
         assert "duckdb" in text
-        assert "test.xlsx" in text
+        # 新协议:相对路径 staging/_structured_{stem}.parquet
+        assert "staging/_structured_test.parquet" in text
 
     def test_large_file_truncated(self):
         """大文件截断 + 底部总行列数"""

@@ -857,14 +857,17 @@ def _format_standard(
     if sheets:
         sheet_parts = [f"{s['name']}({s['rows']}行)" for s in sheets]
         lines.append(f"\n📑 多 Sheet: {', '.join(sheet_parts)}")
-        lines.append(f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
-                     f"读其他 Sheet: file_analyze(path='{wp}') 后在 code_execute 用 "
-                     f"`openpyxl.load_workbook(get_file('{wp}'))['Sheet名']`")
+        lines.append(
+            f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
+            f"读其他 Sheet: 重新调用 file_analyze(path='{wp}', sheet='Sheet名')"
+        )
 
-    # 读取指引（file_analyze 后用 duckdb 查询 Parquet）
+    # 读取指引（file_analyze 后用 duckdb 查询 Parquet,新路径协议:相对路径)
+    from pathlib import Path as _Path
+    _stem = _Path(wp).stem
     lines.append(
         f"\n分析: file_analyze(path=\"{wp}\")，之后在 code_execute 中用 "
-        f"`duckdb.sql(f\"SELECT ... FROM read_parquet('{{get_file('{wp}')}}')\")`"
+        f"`duckdb.sql(\"SELECT ... FROM 'staging/{_stem}.parquet'\")`"
     )
 
     return "\n".join(lines)
