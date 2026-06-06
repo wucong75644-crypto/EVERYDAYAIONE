@@ -44,22 +44,26 @@ def format_attachments(
     workspace_files: List[Dict[str, Any]],
     conversation_id: Optional[str] = None,
 ) -> str:
-    """渲染结构化附件元数据（XML <attachments> 块）追加到用户消息文本。
+    """渲染结构化附件元数据(行业标准:纯状态声明 + 相对路径)。
 
-    每个 <file> 块包含：
-      - name/type/format/size: 基础元数据
-      - source: 来源（本轮上传 / 工作区引用）—— 根据 workspace_path 前缀粗判
-      - dimensions: 图片专属（width×height）
-      - status: LLM 行动指引核心字段（"未分析则调 file_analyze" / "已可视无需读取" 等）
+    设计原则(对齐 OpenAI Assistants / Claude / Gemini):
+      - <status> 仅是状态(raw / analyzed / parquet / ready),不含可执行代码
+      - <path>:相对 workspace 的路径,LLM 字面 copy 用
+      - <parquet>:仅 analyzed 数据文件有,LLM 直接 pd.read_parquet 读
+      - LLM 看 tools(API tools 字段) + status 自主决策选哪个工具
 
-    status 会根据 file_path_cache 的 analyzed 状态动态切换：
-      xlsx/csv 未分析 → 引导调 file_analyze
-      xlsx/csv 已分析 → 引导用 get_file + duckdb（schema 信息在 messages 历史里）
+    状态枚举:
+      - raw      : 未分析的 xlsx/csv,需要 file_analyze 工具治理
+      - analyzed : 已分析,parquet_path 字段直接给 pd.read_parquet 用
+      - parquet  : 已是 parquet 格式,直接读 path 即可
+      - image    : 图片(多模态注入,无需工具)
+      - doc      : 文档(PDF/Word/PPT)用 code_execute + 相应库读
+      - text     : 文本文件
     """
     if not workspace_files:
         return ""
 
-    # ── 查询 file_path_cache 的 analyzed 状态（已分析的 xlsx/csv 切换 status）──
+    # 查 file_path_cache:已分析的数据文件拿 parquet 相对路径
     cache = None
     if conversation_id:
         try:
@@ -68,14 +72,7 @@ def format_attachments(
         except Exception as e:
             logger.warning(f"format_attachments: get_file_cache 失败 | {e}")
 
-    # ── 构建 XML ──
-    lines: list[str] = []
-    lines.append("")  # 与上面 user 文本留空行
-    lines.append("")
-    lines.append(
-        f"<attachments count=\"{len(workspace_files)}\" "
-        f"hint=\"status 字段是行动指引；每个文件按 status 决定下一步操作\">"
-    )
+    lines: list[str] = ["", "", f"<attachments count=\"{len(workspace_files)}\">"]
 
     for f in workspace_files:
         raw_name = f.get("name") or f.get("workspace_path", "")
@@ -83,74 +80,52 @@ def format_attachments(
         wp = f.get("workspace_path") or ""
         size_str = _fmt_size(f.get("size"))
         ext = _ext_of(raw_name)
-        format_str = ext.lstrip(".") or "unknown"
 
-        # 来源判断：上传/ 前缀视为"本轮上传"，否则"工作区引用"
-        source = "本轮上传" if wp.startswith("上传/") else "工作区引用"
-
-        # 类型 + status 按扩展名分流
+        # 状态分流(纯状态,不含指令)
         if ext in _IMG_EXTS:
-            ftype = "图片"
-            status = (
-                "已自动注入视觉，可直接观察图片内容。"
-                "不要调用任何文件读取工具。"
-            )
+            status = "image"
+            parquet_rel = None
         elif ext in _DATA_EXTS:
-            ftype = "数据文件"
             analyzed = cache.is_analyzed(raw_name) if cache else False
             if analyzed:
-                status = (
-                    f"已分析。直接在 code_execute 中用 "
-                    f"get_file(\"{raw_name}\") + duckdb 查询。"
-                )
+                status = "analyzed"
+                # 取 parquet basename,渲染为 staging 相对路径
+                # (沙盒 cwd=/workspace,实际路径 = /workspace/staging/{basename})
+                parquet_rel = None
+                if cache:
+                    entry = cache._resolve_entry(raw_name)
+                    if entry and entry.parquet:
+                        import os as _os
+                        parquet_rel = f"staging/{_os.path.basename(entry.parquet)}"
             else:
-                status = (
-                    f"未分析。如需查询数据，先调用 "
-                    f"file_analyze(\"{raw_name}\")。"
-                )
-        elif ext in _PDF_EXTS:
-            ftype = "文档"
-            status = (
-                f"PDF 文档。在 code_execute 中用 pdfplumber + "
-                f"get_file(\"{raw_name}\") 读取内容。"
-            )
-        elif ext in _WORD_EXTS:
-            ftype = "文档"
-            status = (
-                f"Word 文档。在 code_execute 中用 python-docx + "
-                f"get_file(\"{raw_name}\") 读取内容。"
-            )
-        elif ext in _PPT_EXTS:
-            ftype = "文档"
-            status = (
-                f"PowerPoint 文档。在 code_execute 中用 python-pptx + "
-                f"get_file(\"{raw_name}\") 读取内容。"
-            )
+                status = "raw"
+                parquet_rel = None
+        elif ext == ".parquet":
+            status = "parquet"
+            parquet_rel = None
+        elif ext in _PDF_EXTS or ext in _WORD_EXTS or ext in _PPT_EXTS:
+            status = "doc"
+            parquet_rel = None
         elif ext in _TEXT_EXTS:
-            ftype = "文本"
-            status = (
-                f"文本文件。在 code_execute 中用 "
-                f"open(get_file(\"{raw_name}\")) 读取。"
-            )
+            status = "text"
+            parquet_rel = None
         else:
-            ftype = "二进制"
-            status = (
-                f"未识别格式 .{format_str}。"
-                f"如需处理，在 code_execute 中用 get_file 取路径后按需读取。"
-            )
+            status = "binary"
+            parquet_rel = None
 
         lines.append("  <file>")
         lines.append(f"    <name>{name}</name>")
-        lines.append(f"    <type>{ftype}</type>")
-        lines.append(f"    <format>{_esc(format_str)}</format>")
+        if wp:
+            lines.append(f"    <path>{_esc(wp)}</path>")
         if size_str:
             lines.append(f"    <size>{size_str}</size>")
         if ext in _IMG_EXTS:
             w, h = f.get("width"), f.get("height")
             if w and h:
                 lines.append(f"    <dimensions>{int(w)}×{int(h)}</dimensions>")
-        lines.append(f"    <source>{source}</source>")
-        lines.append(f"    <status>{_esc(status)}</status>")
+        if parquet_rel:
+            lines.append(f"    <parquet>{_esc(parquet_rel)}</parquet>")
+        lines.append(f"    <status>{status}</status>")
         lines.append("  </file>")
 
     lines.append("</attachments>")

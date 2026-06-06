@@ -14,7 +14,6 @@ from services.sandbox.sandbox_worker import (
     _build_sandbox_globals,
     _clean_env,
     _exec_code,
-    sandbox_worker_entry,
 )
 from services.sandbox.sandbox_constants import (
     SAFE_BUILTINS,
@@ -24,19 +23,8 @@ from services.sandbox.sandbox_constants import (
 )
 
 import gc
-import multiprocessing as mp
-import resource
 
 _original_open = builtins.open
-_queues_to_cleanup: list = []
-
-
-def _make_queue():
-    """创建 Queue 并注册清理，防止 pipe fd 泄漏污染后续测试"""
-    ctx = mp.get_context("spawn")
-    q = ctx.Queue()
-    _queues_to_cleanup.append(q)
-    return q
 
 
 @pytest.fixture(autouse=True)
@@ -44,11 +32,9 @@ def _restore_sandbox_side_effects():
     """恢复沙盒测试的副作用：
     - builtins.open（_build_sandbox_globals 会覆盖）
     - os.environ（_clean_env 会删除 DATABASE_URL 等）
-    - multiprocessing Queue pipe fd（显式关闭）
     """
     env_snapshot = os.environ.copy()
     cwd_snapshot = os.getcwd()
-    _queues_to_cleanup.clear()
     # 阻止 _apply_resource_limits 在测试进程中生效（设 NPROC=0 不可逆）
     import unittest.mock as _mock
     with _mock.patch(
@@ -59,15 +45,6 @@ def _restore_sandbox_side_effects():
     os.environ.clear()
     os.environ.update(env_snapshot)
     os.chdir(cwd_snapshot)
-    for q in _queues_to_cleanup:
-        try:
-            q.close()
-            q.join_thread()
-        except Exception:
-            pass
-    _queues_to_cleanup.clear()
-    for child in mp.active_children():
-        child.join(timeout=2)
     gc.collect()
 
 
@@ -278,20 +255,24 @@ class TestBuildSandboxGlobals:
         except ImportError:
             pass
 
-    def test_workspace_dir_injected(self, tmp_path):
-        g = _build_sandbox_globals(str(tmp_path), "", "")
-        assert g["WORKSPACE_DIR"] == str(tmp_path)
-
-    def test_staging_dir_injected(self, tmp_path):
-        staging = str(tmp_path / "staging")
-        g = _build_sandbox_globals("", staging, "")
-        assert g["STAGING_DIR"] == staging
-
-    def test_output_dir_injected_and_created(self, tmp_path):
+    def test_output_dir_auto_created(self, tmp_path):
+        """传入 output_dir 时自动创建目录（路径协议:不再注入变量,仅建目录）"""
         output = str(tmp_path / "下载")
-        g = _build_sandbox_globals("", "", output)
-        assert g["OUTPUT_DIR"] == output
+        _build_sandbox_globals("", "", output)
         assert Path(output).exists()
+
+    def test_no_path_variables_injected(self, tmp_path):
+        """路径协议:WORKSPACE_DIR/STAGING_DIR/OUTPUT_DIR 变量已删除,沙盒只用相对路径"""
+        g = _build_sandbox_globals(str(tmp_path), str(tmp_path / "staging"), str(tmp_path / "下载"))
+        assert "WORKSPACE_DIR" not in g
+        assert "STAGING_DIR" not in g
+        assert "OUTPUT_DIR" not in g
+        assert "SKILLS_DIR" not in g
+
+    def test_no_get_file_injected(self, tmp_path):
+        """路径协议:get_file 函数已删除,沙盒只用相对路径 + manifest 已废弃"""
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        assert "get_file" not in g
 
     def test_open_delegates_to_builtins(self, tmp_path):
         """sandbox globals 的 open 委托给 builtins.open（安全检查在 worker_entry 层统一处理）"""
@@ -348,7 +329,7 @@ class TestExecCode:
         assert "成功" in result
 
     def test_runtime_error(self, tmp_path):
-        """运行时异常由 _exec_code 抛出，sandbox_worker_entry 外层 catch"""
+        """运行时异常由 _exec_code 抛出，executor 外层 catch"""
         g = self._make_globals(tmp_path)
         with pytest.raises(ZeroDivisionError):
             _exec_code("1 / 0", g, timeout=5.0)
@@ -363,95 +344,6 @@ class TestExecCode:
         result = _exec_code("await some_func()", g, timeout=5.0)
         assert "不支持" in result
 
-    def test_read_workspace_file_via_worker(self, tmp_path):
-        """通过 open() 读取 workspace 文件（需走 worker_entry 完整链路）"""
-        (tmp_path / "data.txt").write_text("test content")
-        q = _make_queue()
-        sandbox_worker_entry(
-            q, "print(open('data.txt').read())",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "test content" in result
-
-
-# ============================================================
-# sandbox_worker_entry 集成测试（通过 Queue 通信）
-# ============================================================
-
-
-class TestSandboxWorkerEntry:
-    """Worker 入口集成测试"""
-
-    def test_normal_execution(self, tmp_path):
-        """正常执行返回 ok"""
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "1 + 1",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "2" in result
-
-    def test_error_execution(self, tmp_path):
-        """运行时错误由外层 catch，返回 error"""
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "1 / 0",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-
-        status, result = q.get(timeout=5)
-        assert status == "error"
-        assert "执行错误" in result
-
-    def test_validation_failure(self, tmp_path):
-        """AST 验证失败返回 error（用 ctypes 触发 — 黑名单拦截危险模块）"""
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "import ctypes",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-
-        status, result = q.get(timeout=5)
-        assert status == "error"
-        # AST 验证或 import 时拒绝（两者都符合预期，都是"沙盒拒绝"）
-        assert ("验证失败" in result) or ("禁止导入" in result)
-
-    def test_path_hidden_in_result(self, tmp_path):
-        """真实路径在结果中被替换"""
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "print(WORKSPACE_DIR)",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert str(tmp_path) not in result
-        assert "WORKSPACE_DIR" in result
-
-    def test_chdir_to_workspace(self, tmp_path):
-        """子进程 chdir 到 workspace，相对路径可读"""
-        (tmp_path / "hello.txt").write_text("chdir works")
-
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "print(open('hello.txt').read())",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "chdir works" in result
 
 
 # ============================================================
@@ -595,123 +487,3 @@ class TestFindSimilarFile:
             str(tmp_path / "completely_different.txt"), str(tmp_path),
         )
         assert result == ""
-
-    def test_exact_file_via_worker(self, tmp_path):
-        """通过 sandbox_worker_entry 完整链路测试精确文件名读取"""
-        (tmp_path / "data.txt").write_text("hello from worker")
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "print(open('data.txt').read())",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "hello from worker" in result
-
-    def test_auto_correct_via_worker(self, tmp_path):
-        """通过完整链路测试文件名自动纠错"""
-        (tmp_path / "利润表-数据.xlsx").write_bytes(b"fake xlsx")
-        q = _make_queue()
-
-        # AI 拼错的文件名（多了空格）
-        sandbox_worker_entry(
-            q, "f = open('利润表 - 数据.xlsx', 'rb')\nprint(len(f.read()))\nf.close()",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "9" in result  # b"fake xlsx" = 9 bytes
-
-    def test_outside_workspace_blocked_via_worker(self, tmp_path):
-        """通过完整链路测试路径穿越拦截"""
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q, "open('/etc/passwd').read()",
-            str(tmp_path), "", "", 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert "文件访问被拒绝" in result or "PermissionError" in result
-
-    def test_output_dir_variable_write(self, tmp_path):
-        """Agent 用 OUTPUT_DIR 变量写文件"""
-        output_dir = tmp_path / "下载"
-        output_dir.mkdir()
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q,
-            "f = open(OUTPUT_DIR + '/test.txt', 'w')\nf.write('hello')\nf.close()\nprint('ok')",
-            str(tmp_path), "", str(output_dir), 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "ok" in result
-        assert (output_dir / "test.txt").read_text() == "hello"
-
-    def test_staging_dir_variable_write(self, tmp_path):
-        """Agent 用 STAGING_DIR 变量写文件"""
-        staging_dir = tmp_path / "staging"
-        staging_dir.mkdir()
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q,
-            "f = open(STAGING_DIR + '/mid.txt', 'w')\nf.write('mid')\nf.close()\nprint('ok')",
-            str(tmp_path), str(staging_dir), "", 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert (staging_dir / "mid.txt").read_text() == "mid"
-
-    def test_output_dir_write_read_roundtrip(self, tmp_path):
-        """通过 OUTPUT_DIR 写入后可读回"""
-        output_dir = tmp_path / "下载"
-        output_dir.mkdir()
-        q = _make_queue()
-
-        sandbox_worker_entry(
-            q,
-            (
-                "f = open(OUTPUT_DIR + '/data.txt', 'w')\nf.write('roundtrip')\nf.close()\n"
-                "f2 = open(OUTPUT_DIR + '/data.txt')\nprint(f2.read())\nf2.close()"
-            ),
-            str(tmp_path), "", str(output_dir), 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "roundtrip" in result
-
-    def test_fallback_search_output_dir(self, tmp_path):
-        """文件在 OUTPUT_DIR 里，Agent 用相对路径读取 → 自动搜到"""
-        output_dir = tmp_path / "下载"
-        output_dir.mkdir()
-        (output_dir / "报表_2026-04-20至04-26.csv").write_text("a,b\n1,2")
-        q = _make_queue()
-
-        # Agent 用相对路径，workspace 根目录找不到 → fallback 搜 OUTPUT_DIR
-        sandbox_worker_entry(
-            q, "print(open('报表_2026-04-20至04-26.csv').read())",
-            str(tmp_path), "", str(output_dir), 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "1,2" in result
-
-    def test_fallback_search_output_dir_fuzzy(self, tmp_path):
-        """文件在 OUTPUT_DIR + 文件名有空格差异 → 模糊纠错搜到"""
-        output_dir = tmp_path / "下载"
-        output_dir.mkdir()
-        # 实际文件名无空格
-        (output_dir / "汇总_2026-04-20至04-26.csv").write_text("x,y\n3,4")
-        q = _make_queue()
-
-        # Agent 文件名多了空格（"至"前后）
-        sandbox_worker_entry(
-            q, "print(open('汇总_2026-04-20 至 04-26.csv').read())",
-            str(tmp_path), "", str(output_dir), 5.0, 1000,
-        )
-        status, result = q.get(timeout=5)
-        assert status == "ok"
-        assert "3,4" in result

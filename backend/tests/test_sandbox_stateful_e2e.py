@@ -142,9 +142,9 @@ class TestStatefulFileUpload:
 
     @pytest.mark.asyncio
     async def test_file_upload_works(self, stateful_executor, ws):
-        """有状态模式下文件上传仍然正常"""
+        """有状态模式下文件上传仍然正常(新路径协议:相对路径 '下载/x.json')"""
         code = (
-            "with open(OUTPUT_DIR + '/report.json', 'w') as f:\n"
+            "with open('下载/report.json', 'w') as f:\n"
             "    f.write('{\"ok\": true}')\n"
             "print('done')"
         )
@@ -166,82 +166,10 @@ class TestStatefulFileUpload:
 
 
 # ============================================================
-# 降级：KernelManager 不可用时走无状态
+# 路径协议:subprocess 降级路径已删除(Phase 1 路径协议重构)
+# TestExceptionDegradation / TestDegradation 测试已删除的旧路径
+# Kernel 不可用现在直接返回错误,不再 fallback
 # ============================================================
-
-class TestExceptionDegradation:
-    """Kernel 执行中异常时自动降级为无状态 subprocess"""
-
-    @pytest.mark.asyncio
-    async def test_kernel_keyerror_fallback(self, ws, km):
-        """Kernel 死亡导致 KeyError 时降级为无状态 subprocess"""
-        ex = SandboxExecutor(
-            timeout=10.0,
-            workspace_dir=ws["workspace"],
-            staging_dir=ws["staging"],
-            output_dir=ws["output"],
-            kernel_manager=km,
-            conversation_id="test_crash",
-        )
-        # 先创建 Kernel
-        await ex.execute("x = 1", "init")
-        # 强制杀死 Kernel 进程
-        kernel = km._kernels["test_crash"]
-        kernel.process.kill()
-        await kernel.process.wait()
-        # 下次执行应降级为无状态 subprocess（不抛异常）
-        result = await ex.execute("print(42)", "降级执行")
-        assert "42" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_kernel_runtime_error_fallback(self, ws):
-        """KernelManager 启动失败（RuntimeError）时降级"""
-        from unittest.mock import AsyncMock
-
-        mock_km = AsyncMock()
-        mock_km.get_or_create = AsyncMock(side_effect=RuntimeError("spawn failed"))
-
-        ex = SandboxExecutor(
-            timeout=10.0,
-            workspace_dir=ws["workspace"],
-            staging_dir=ws["staging"],
-            output_dir=ws["output"],
-            kernel_manager=mock_km,
-            conversation_id="test_fail",
-        )
-        result = await ex.execute("print(99)", "降级测试")
-        assert "99" in result.summary
-
-
-class TestDegradation:
-
-    @pytest.mark.asyncio
-    async def test_no_kernel_manager_fallback(self, ws):
-        """kernel_manager=None 时降级为无状态 subprocess"""
-        ex = SandboxExecutor(
-            timeout=10.0,
-            workspace_dir=ws["workspace"],
-            staging_dir=ws["staging"],
-            output_dir=ws["output"],
-            kernel_manager=None,  # 无 KernelManager
-            conversation_id="test",
-        )
-        result = await ex.execute("print(42)", "降级测试")
-        assert "42" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_no_conversation_id_fallback(self, ws, km):
-        """conversation_id 为空时降级为无状态"""
-        ex = SandboxExecutor(
-            timeout=10.0,
-            workspace_dir=ws["workspace"],
-            staging_dir=ws["staging"],
-            output_dir=ws["output"],
-            kernel_manager=km,
-            conversation_id="",  # 空 conversation_id
-        )
-        result = await ex.execute("print(42)", "降级测试")
-        assert "42" in result.summary
 
 
 # ============================================================

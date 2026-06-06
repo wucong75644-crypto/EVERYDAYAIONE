@@ -18,9 +18,11 @@ from services.handlers.context_compressor.tokens import (
 )
 
 
-# staging 路径正则（匹配 STAGING_DIR + '/xxx.parquet' 或 "/xxx.txt" 等任意格式）
+# staging 路径正则:同时兼容新协议(staging/xxx.parquet)和历史消息(STAGING_DIR + '/x')
+# 新协议是主路径,历史正则保留用于解析归档前的旧 messages
+# 新协议格式可能是:bare `staging/x.txt`(envelope 写)或 quoted `"staging/x.txt"`
 _STAGING_PATH_RE = re.compile(
-    r"STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]"
+    r"(?:STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]|staging/([^\s'\"]+))"
 )
 
 
@@ -235,10 +237,10 @@ def _extract_archive_meta(content: str, tool_name: str = "") -> str:
     fields_line = ""
 
     try:
-        # 提取 staging 文件路径
+        # 提取 staging 文件路径(两种格式:旧 STAGING_DIR 变量 / 新 staging/x 相对路径)
         path_match = _STAGING_PATH_RE.search(content)
         if path_match:
-            staged_path = path_match.group(1)
+            staged_path = path_match.group(1) or path_match.group(2)
 
         # 提取原始大小
         size_match = re.search(r'Output too large \((\d+) chars\)', content)
@@ -278,7 +280,7 @@ def _extract_archive_meta(content: str, tool_name: str = "") -> str:
     label = tool_name or "工具"
     lines = [f"[已归档] {label} 查询结果（原始 {original_size} 字符）"]
     if staged_path:
-        lines.append(f"数据文件: STAGING_DIR + '/{staged_path}'")
+        lines.append(f"数据文件: staging/{staged_path}")
     if fields_line:
         lines.append(fields_line)
 

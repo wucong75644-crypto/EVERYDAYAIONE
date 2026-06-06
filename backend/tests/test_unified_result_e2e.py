@@ -120,7 +120,7 @@ class TestERPQueryPath:
         assert len(content) >= 2  # summary + file_ref
         assert all(b["type"] == "text" for b in content)
         assert "23 笔退货" in content[0]["text"]
-        assert "STAGING_DIR" in content[1]["text"]
+        assert "staging/" in content[1]["text"]
         assert "23行" in content[1]["text"]
 
         # 模拟注入 messages
@@ -262,7 +262,7 @@ class TestScheduledTaskPath:
         assert isinstance(content, str)
         assert "storage: file" in content
         assert "rows: 500" in content
-        assert "STAGING_DIR + '/warehouse_123.parquet'" in content
+        assert "staging/warehouse_123.parquet" in content
         assert "format: parquet" in content
         assert "size_kb: 2" in content
         assert "前3行预览..." in content

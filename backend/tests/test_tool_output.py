@@ -191,7 +191,7 @@ class TestToolOutputFileRef:
         content = t.to_tool_content()
         assert "storage: file" in content
         assert "rows: 500" in content
-        assert "path: STAGING_DIR + '/test.parquet'" in content
+        assert "path: staging/test.parquet" in content
         assert "format: parquet" in content
         assert "size_kb: 50" in content
 
@@ -225,7 +225,7 @@ class TestToolOutputFileRef:
         )
         content = t.to_tool_content()
         # 必须包含 sandbox_ref 格式
-        assert "STAGING_DIR + '/local_order_123.parquet'" in content
+        assert "staging/local_order_123.parquet" in content
         # 绝对路径不能泄漏给 LLM
         assert "/data/workspace/" not in content
         assert "org/abc" not in content
@@ -405,9 +405,9 @@ class TestFileRef:
             fr.row_count = 999  # type: ignore[misc]
 
     def test_sandbox_ref_format(self):
-        """sandbox_ref 返回 STAGING_DIR + '/filename' 格式（对标 OpenAI /mnt/data/）"""
+        """sandbox_ref 返回 'staging/{filename}' 相对路径(沙盒 cwd=/workspace)"""
         fr = _file_ref(path="/data/workspace/staging/conv123/trade_123.parquet")
-        assert fr.sandbox_ref == "STAGING_DIR + '/test.parquet'"
+        assert fr.sandbox_ref == "staging/test.parquet"
 
     def test_sandbox_ref_uses_filename_not_path(self):
         """sandbox_ref 只用 filename，不暴露绝对路径"""
@@ -432,7 +432,7 @@ class TestFileRef:
             size_bytes=4096,
             columns=[],
         )
-        assert fr.sandbox_ref == "STAGING_DIR + '/warehouse_1713600000.parquet'"
+        assert fr.sandbox_ref == "staging/warehouse_1713600000.parquet"
 
 
 # ============================================================

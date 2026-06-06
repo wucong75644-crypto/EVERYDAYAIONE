@@ -78,7 +78,7 @@ class TestBuildLightContext:
         assert "模板文件" in user_msg
         assert "销售模板.xlsx" in user_msg
         assert "pd.read_excel" in user_msg
-        assert "OUTPUT_DIR" in user_msg
+        assert "'下载/" in user_msg
 
     def test_with_last_summary(self):
         task = make_task(last_summary="昨日总销售额 12.5 万，比前日增长 8%")

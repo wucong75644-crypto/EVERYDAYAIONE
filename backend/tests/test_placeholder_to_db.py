@@ -127,8 +127,8 @@ class TestMediaPlaceholderInsert:
         assert inserted_data["generation_params"] == {"type": "video"}
 
     @pytest.mark.asyncio
-    async def test_chat_type_not_inserted_to_db(self):
-        """Chat 类型不应将占位符 insert 到 messages 表"""
+    async def test_chat_type_inserted_streaming_placeholder(self):
+        """Chat 类型也预创建 streaming 占位符(refactor 933ac31:多状态加载)"""
         from api.routes.message import _handle_regenerate_or_send_operation
 
         db, table_mock, insert_mock = _make_db_mock()
@@ -143,11 +143,13 @@ class TestMediaPlaceholderInsert:
             gen_type=GenerationType.CHAT,
         )
 
-        # 验证 insert 未被调用（Chat 不入库）
-        table_mock.insert.assert_not_called()
+        # 验证 insert 被调用一次,content 为空 list,status=STREAMING
+        table_mock.insert.assert_called_once()
+        inserted_data = table_mock.insert.call_args[0][0]
+        assert inserted_data["content"] == []
+        assert inserted_data["status"] == MessageStatus.STREAMING.value
 
-        # 但仍然返回有效的虚拟 Message
-        assert result_msg.status == MessageStatus.PENDING
+        # 返回有效 Message
         assert result_msg.role == MessageRole.ASSISTANT
 
     @pytest.mark.asyncio
@@ -231,7 +233,7 @@ class TestPlaceholderInsertFailure:
             # 验证 warning 被记录
             mock_logger.warning.assert_called_once()
             warning_msg = mock_logger.warning.call_args[0][0]
-            assert "Failed to save media placeholder" in warning_msg
+            assert "Failed to save placeholder to DB" in warning_msg
 
 
 class TestUpsertCompatibility:

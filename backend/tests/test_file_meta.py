@@ -799,38 +799,28 @@ class TestFix5SampleMarkdownTable:
 
 
 class TestFix6DuckDBDateFunctions:
-    """Fix 6: 方言提示词补全 strftime / DAY / MONTH / YEAR / EXTRACT，
-    防止 AI 不知道这些函数而用 SUBSTRING + LPAD 拼接日期格式。"""
+    """DuckDB 日期方言 hint(新协议极简:只留核心陷阱型差异,不列函数库)
 
-    def test_workspace_version_has_strftime(self):
+    V3 描述刻意去掉了函数清单(strftime/YEAR/MONTH/...),让 LLM 用训练知识。
+    只保留 DATE_TRUNC 和类型 hint(TIMESTAMP 不是 DATETIME)。
+    """
+
+    def test_workspace_version_has_date_trunc(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "strftime" in desc, "主 Agent 版必须列 strftime"
+        assert "DATE_TRUNC" in desc
 
-    def test_workspace_version_has_year_month_day(self):
+    def test_workspace_version_has_timestamp_type(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        for fn in ["YEAR", "MONTH", "DAY"]:
-            assert fn in desc, f"必须列出 {fn} 函数"
+        assert "TIMESTAMP" in desc
 
-    def test_workspace_version_has_extract(self):
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "EXTRACT" in desc
-
-    def test_workspace_version_has_strptime(self):
-        """字符串→TIMESTAMP 反向转换也要列。"""
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "strptime" in desc
-
-    def test_base_version_has_strftime(self):
+    def test_base_version_has_date_trunc(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        assert "strftime" in desc, "ERP Agent 版也要列 strftime"
+        assert "DATE_TRUNC" in desc
 
-    def test_base_version_has_year_month_day(self):
+    def test_base_version_has_timestamp_type(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        for fn in ["YEAR", "MONTH", "DAY"]:
-            assert fn in desc
+        assert "TIMESTAMP" in desc

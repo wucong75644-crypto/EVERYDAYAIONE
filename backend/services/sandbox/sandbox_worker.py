@@ -29,22 +29,6 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-class PathStr(str):
-    """支持 / 运算符的路径字符串
-
-    沙盒内 OUTPUT_DIR / STAGING_DIR / WORKSPACE_DIR 的类型。
-    保持 str 的全部行为（+ 拼接、f-string、传给 pandas 等），
-    额外支持 Path 风格的 / 运算符拼路径。
-    """
-
-    def __truediv__(self, other):
-        import os
-        return PathStr(os.path.join(self, str(other)))
-
-    def __rtruediv__(self, other):
-        import os
-        return PathStr(os.path.join(str(other), self))
-
 # 预导入数据分析库
 try:
     import pandas as pd
@@ -440,16 +424,11 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
 
     g["Path"] = Path
 
-    # 目录路径（PathStr：str 兼容 + 支持 / 运算符拼路径）
-    if workspace_dir:
-        g["WORKSPACE_DIR"] = PathStr(workspace_dir)
-    if staging_dir:
-        g["STAGING_DIR"] = PathStr(staging_dir)
+    # 路径协议:cwd=workspace,AI 用相对路径"上传/x" "下载/x" "staging/x"
+    # 不再注入 OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR 等字符串变量
+    # output_dir 目录(workspace/下载/)仍需主进程创建,供 _auto_upload_new_files 扫描
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        g["OUTPUT_DIR"] = PathStr(output_dir)
-    if skills_dir:
-        g["SKILLS_DIR"] = PathStr(skills_dir)
 
     # DuckDB 磁盘模式预注入：数据全程在磁盘，内存只做缓存
     # AI 直接用 duckdb.sql() 即可，不需要自己配置连接
@@ -477,81 +456,8 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # pandas/docx/pptx/pdfplumber 等库内部调用的 open() 也自动受益
     g["open"] = _builtins.open
 
-    # get_file(文件名) — 按文件名获取绝对路径（归一化匹配）
-    # 读 staging/_manifest.json（由主进程在每次 code_execute 前写入最新全量）
-    if staging_dir:
-        _manifest_path = str(Path(staging_dir) / "_manifest.json")
-
-        def _normalize_fn(name):
-            """归一化：NFKC + 只保留中文/字母/数字 + 扩展名点"""
-            import unicodedata as _ud, re as _re
-            _stem, _ext = __import__("os").path.splitext(name)
-            _stem = _ud.normalize("NFKC", _stem)
-            _stem = _re.sub(r'[^\u4e00-\u9fff\da-zA-Z]', '', _stem)
-            return (_stem + _ext).lower()
-
-        def _get_file(name: str) -> str:
-            """按文件名获取 parquet 绝对路径（归一化匹配 + 自检）。
-
-            manifest 只存 parquet 路径，沙盒内所有文件访问都走这个函数。
-            用法：path = get_file('销售报表.xlsx')
-            """
-            import os as _os
-            try:
-                with _builtins.open(_manifest_path, "r", encoding="utf-8") as _mf:
-                    manifest = json.load(_mf)
-            except FileNotFoundError:
-                raise FileNotFoundError(
-                    "文件注册表不存在。请先调用 file_analyze 注册文件。"
-                )
-            # 四级匹配（先取 basename，LLM 可能传了带目录的路径）
-            path = None
-            # 1. 精确匹配
-            if name in manifest:
-                path = manifest[name]
-            if not path:
-                _basename = __import__("os").path.basename(name)
-                if _basename in manifest:
-                    path = manifest[_basename]
-            if not path:
-                # 2. 归一化匹配（用 basename）
-                norm_input = _normalize_fn(__import__("os").path.basename(name))
-                for key, val in manifest.items():
-                    if _normalize_fn(key) == norm_input:
-                        path = val
-                        break
-            if not path:
-                # 3. Stem 匹配（用 basename）
-                input_stem = _os.path.splitext(norm_input)[0]
-                if input_stem:
-                    for key, val in manifest.items():
-                        if _os.path.splitext(_normalize_fn(key))[0] == input_stem:
-                            path = val
-                            break
-                # 4. 前缀匹配
-                if not path and input_stem and len(input_stem) >= 6:
-                    for key, val in manifest.items():
-                        reg_stem = _os.path.splitext(_normalize_fn(key))[0]
-                        if reg_stem.startswith(input_stem) or input_stem.startswith(reg_stem):
-                            path = val
-                            break
-            if not path:
-                available = [k for k in manifest.keys() if not k.startswith("_")]
-                raise FileNotFoundError(
-                    f"文件 '{name}' 未找到。已注册文件: {available}"
-                )
-            # manifest 值按是否含 '/' 分流（复用 parquet basename 机制扩展到 workspace 文件）：
-            #  - 不含 '/' → parquet basename（已 analyze 的 Excel/CSV），拼 staging_dir
-            #  - 含 '/' → workspace 相对路径（Word/PDF/数据/文本），拼 workspace_dir
-            #    nsjail 把 staging/workspace 分别 bind 到 /staging /workspace，两种值都能正确解析
-            if "/" in path or "\\" in path:
-                # 去 './' 前缀（workspace 根目录文件的标记）
-                if path.startswith("./") or path.startswith(".\\"):
-                    path = path[2:]
-                return str(Path(workspace_dir) / path)
-            return str(Path(staging_dir) / path)
-
-        g["get_file"] = _get_file
+    # 路径协议:AI 用相对路径 + attachments XML 给完整字符串,无需 get_file 兜底
+    # 长对话上下文丢失时,AI 主动调 file_search 工具(Agent 层)探索
 
     return g
 
@@ -620,86 +526,3 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
 
     return "\n".join(parts)
 
-
-# ============================================================
-# Worker 入口函数（multiprocessing.Process target）
-# ============================================================
-
-def sandbox_worker_entry(
-    result_queue,
-    code: str,
-    workspace_dir: str,
-    staging_dir: str,
-    output_dir: str,
-    timeout: float,
-    max_result_chars: int,
-    skills_dir: str = "",
-):
-    """子进程入口：隔离环境中执行用户代码
-
-    Args:
-        result_queue: multiprocessing.Queue，写入 (status, result_text)
-        code: 用户代码
-        workspace_dir: 用户 workspace 绝对路径
-        staging_dir: staging 数据目录
-        output_dir: 输出目录
-        timeout: 执行超时（秒）
-        max_result_chars: 结果最大字符数
-        skills_dir: 文件处理技能目录（只读）
-    """
-    import os
-    from services.sandbox.validators import validate_code
-
-    try:
-        # 1. 安全措施
-        _clean_env()
-        _apply_resource_limits()
-
-        # 2. AST 验证（子进程内再验一次，防止绕过）
-        error = validate_code(code)
-        if error:
-            result_queue.put(("error", f"❌ 代码验证失败:\n{error}"))
-            return
-
-        # 3. 切换到用户 workspace（进程级隔离，安全）
-        if workspace_dir:
-            os.makedirs(workspace_dir, exist_ok=True)
-            os.chdir(workspace_dir)
-        if staging_dir:
-            os.makedirs(staging_dir, exist_ok=True)
-
-        # 3.5 替换 builtins.open 为带路径安全检查 + 文件名纠错的版本
-        # 逻辑在 build_scoped_open() 中统一定义，kernel_worker 共用
-        if workspace_dir:
-            import builtins
-            import io as _io
-            scoped_open = build_scoped_open(
-                workspace_dir, staging_dir, output_dir,
-                original_open=builtins.open,
-                skills_dir=skills_dir,
-            )
-            builtins.open = scoped_open
-            _io.open = scoped_open  # 堵住 io.open 绕过沙盒的漏洞
-
-        # 4. 构建沙盒环境
-        sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir, skills_dir=skills_dir)
-
-        # 5. 执行代码
-        result = _exec_code(code, sandbox_globals, timeout)
-
-        # 6. 路径隐藏（替换为变量名，LLM 可直接用 OUTPUT_DIR/WORKSPACE_DIR 引用）
-        if result and output_dir:
-            result = result.replace(output_dir, "OUTPUT_DIR")
-        if result and workspace_dir:
-            result = result.replace(workspace_dir, "WORKSPACE_DIR")
-        if result and skills_dir:
-            result = result.replace(skills_dir, "SKILLS_DIR")
-
-        # 7. 截断
-        result = truncate_result(result, max_result_chars)
-
-        result_queue.put(("ok", result))
-
-    except Exception as e:
-        from services.sandbox.error_format import format_sandbox_error
-        result_queue.put(("error", f"❌ 执行错误:\n{format_sandbox_error(e, code)}"))

@@ -16,14 +16,16 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 
-# staging 路径正则：匹配 STAGING_DIR + '/xxx.parquet' 或 "/xxx.txt" 等任意格式
+# staging 路径正则:兼容两种格式
+#   旧:STAGING_DIR + '/xxx.parquet'(历史消息,保留向后兼容)
+#   新:staging/xxx.parquet(envelope 写,bare 相对路径)
 _STAGING_RE = re.compile(
-    r"STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]"
+    r"(?:STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]|staging/([^\s'\"]+))"
 )
 
-# 归档消息中保留的 staging 路径正则
+# 归档消息中保留的 staging 路径正则(同样两种格式)
 _ARCHIVED_STAGING_RE = re.compile(
-    r"数据文件:\s*STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]"
+    r"数据文件:\s*(?:STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]|staging/([^\s'\"]+))"
 )
 
 # 错误标记（字面量匹配，不是正则）
@@ -111,7 +113,7 @@ def build_tool_digest(
 
     digest: Dict[str, Any] = {
         "tools": entries,
-        "staging_dir": "STAGING_DIR",
+        "staging_dir": "staging/",
     }
 
     # 大小控制：超限则逐步裁剪 hint
@@ -142,13 +144,12 @@ def format_tool_digest(digest: Dict[str, Any]) -> str:
         if t.get("hint"):
             line += f": {t['hint']}"
         if t.get("staged"):
-            line += f" → STAGING_DIR + '/{t['staged']}'"
+            line += f" → staging/{t['staged']}"
         lines.append(line)
 
-    staging_dir = digest.get("staging_dir", "")
-    if staging_dir:
+    if digest.get("staging_dir"):
         lines.append(
-            f"数据目录: {staging_dir}（沙盒变量，用 STAGING_DIR + '/文件名' 访问，15 分钟内有效）"
+            "数据目录: 'staging/'(相对路径,沙盒 cwd=/workspace 下,15 分钟内有效)"
         )
 
     return "\n".join(lines)
@@ -190,15 +191,15 @@ def _extract_staging_path(result_text: str) -> Optional[str]:
     if not result_text:
         return None
 
-    # 原始格式
+    # 原始格式(两个 capture group:旧 STAGING_DIR / 新 staging/x)
     match = _STAGING_RE.search(result_text)
     if match:
-        return match.group(1)
+        return match.group(1) or match.group(2)
 
     # 归档格式
     match = _ARCHIVED_STAGING_RE.search(result_text)
     if match:
-        return match.group(1)
+        return match.group(1) or match.group(2)
 
     return None
 

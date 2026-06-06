@@ -259,7 +259,7 @@ class ScheduledTaskAgent:
             "要求：\n"
             "1. 完成任务指令中描述的工作\n"
             "2. 如需取数据，调用 erp_agent 工具\n"
-            "3. 如需生成报表/计算，调用 code_execute 工具，文件输出到 OUTPUT_DIR\n"
+            "3. 如需生成报表/计算，调用 code_execute 工具，文件输出到 '下载/x.xlsx'(相对路径)\n"
             "4. 最终回复应简洁清晰，适合直接推送到企微群"
         )
 
@@ -279,9 +279,9 @@ class ScheduledTaskAgent:
             tpl = self.task["template_file"]
             user_msg += (
                 f"\n\n## 模板文件\n"
-                f"模板文件路径: STAGING_DIR + '/{tpl['name']}'\n"
-                f"使用 pd.read_excel(STAGING_DIR + '/{tpl['name']}') 读取模板结构，"
-                f"按模板格式填入数据后输出到 OUTPUT_DIR"
+                f"模板文件路径: staging/{tpl['name']}\n"
+                f"使用 pd.read_excel('staging/{tpl['name']}') 读取模板结构,"
+                f"按模板格式填入数据后输出到 '下载/x.xlsx'"
             )
 
         # 上次执行摘要（跨次状态，借鉴 LangGraph stateful cron）

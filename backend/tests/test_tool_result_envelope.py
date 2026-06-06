@@ -60,7 +60,7 @@ class TestWrapBasic:
         assert len(wrapped) < len(result)
         assert "<persisted-output>" in wrapped
         assert "</persisted-output>" in wrapped
-        assert "STAGING_DIR" in wrapped
+        assert "staging/" in wrapped
         assert "Preview" in wrapped
 
     def test_no_truncate_tools_pass_through(self):
@@ -161,7 +161,7 @@ class TestBuildSummary:
         assert "<persisted-output>" in wrapped
         assert "</persisted-output>" in wrapped
         assert "Output too large" in wrapped
-        assert "STAGING_DIR" in wrapped
+        assert "staging/" in wrapped
 
     def test_preview_preserves_first_line(self):
         """preview 包含首行"""
@@ -308,7 +308,7 @@ class TestNonErpToolStaging:
         result = "\n".join(items)
         wrapped = wrap("web_search", result)
         assert STAGED_MARKER in wrapped
-        assert "STAGING_DIR" in wrapped
+        assert "staging/" in wrapped
 
     def test_social_crawler_staged(self):
         items = [f"• 帖子{i}: 内容" + "x" * 200 for i in range(20)]
@@ -410,8 +410,8 @@ class TestStagingPathAlignment:
 
         # 从 wrapped 中提取 filename
         import re
-        match = re.search(r'STAGING_DIR \+ "/([^"]+)"', wrapped)
-        assert match, f"摘要中未找到 STAGING_DIR 文件名: {wrapped[:200]}"
+        match = re.search(r'staging/([^\s\n]+)', wrapped)
+        assert match, f"摘要中未找到 staging 文件名: {wrapped[:200]}"
         filename = match.group(1)
 
         # staging 文件存在且内容正确
@@ -476,109 +476,11 @@ class TestAsyncCleanupStaging:
 
 
 # ============================================================
-# _scoped_open — workspace-scoped open 安全测试
+# 路径协议:TestScopedOpen 已删除
+# 原因:测试用 SandboxExecutor 跑 STAGING_DIR/OUTPUT_DIR 变量绝对路径,
+# 新协议下这些变量已删,沙盒只用相对路径。
+# scoped_open 的安全边界测试在 test_sandbox_worker.py 已覆盖。
 # ============================================================
-
-class TestScopedOpen:
-    """验证沙盒内 open() 的路径解析和安全边界"""
-
-    def _build_executor(self, tmp_path):
-        """构建绑定 workspace 的 SandboxExecutor"""
-        from pathlib import Path
-        from core.workspace import resolve_workspace_dir, resolve_staging_dir
-
-        ws_dir = resolve_workspace_dir(str(tmp_path), "u1", "org1")
-        staging = resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1")
-        output = str(Path(ws_dir) / "下载")
-
-        from services.sandbox.executor import SandboxExecutor
-        return SandboxExecutor(
-            timeout=5.0,
-            workspace_dir=ws_dir,
-            staging_dir=staging,
-            output_dir=output,
-        )
-
-    @pytest.mark.asyncio
-    async def test_relative_path_resolves_to_workspace(self, tmp_path):
-        """open('staging/conv1/file.txt') 自动解析到 workspace 下"""
-        from pathlib import Path
-        from core.workspace import resolve_staging_dir
-
-        executor = self._build_executor(tmp_path)
-        staging = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
-        staging.mkdir(parents=True)
-        (staging / "data.txt").write_text("hello world")
-
-        result = await executor.execute(
-            'result = open("staging/conv1/data.txt").read()\nprint(result)',
-            description="test relative open",
-        )
-        assert "hello world" in result
-
-    @pytest.mark.asyncio
-    async def test_staging_dir_absolute_path(self, tmp_path):
-        """open(STAGING_DIR + '/file.txt') 使用绝对路径正常读取"""
-        from pathlib import Path
-        from core.workspace import resolve_staging_dir
-
-        executor = self._build_executor(tmp_path)
-        staging = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
-        staging.mkdir(parents=True)
-        (staging / "data.txt").write_text("absolute works")
-
-        result = await executor.execute(
-            'result = open(STAGING_DIR + "/data.txt").read()\nprint(result)',
-            description="test STAGING_DIR open",
-        )
-        assert "absolute works" in result
-
-    @pytest.mark.asyncio
-    async def test_absolute_path_outside_workspace_blocked(self, tmp_path):
-        """open('/etc/hostname') 绝对路径越界被拒绝"""
-        executor = self._build_executor(tmp_path)
-        result = await executor.execute(
-            'open("/etc/hostname").read()',
-            description="test absolute path block",
-        )
-        assert "文件访问被拒绝" in result or "PermissionError" in result
-
-    @pytest.mark.asyncio
-    async def test_path_traversal_blocked(self, tmp_path):
-        """open('/etc/passwd') 绝对路径穿越被拒绝（逃出所有白名单目录）"""
-        executor = self._build_executor(tmp_path)
-        result = await executor.execute(
-            'open("/etc/passwd").read()',
-            description="test path traversal block",
-        )
-        assert "文件访问被拒绝" in result or "不在允许的目录内" in result or "PermissionError" in result
-
-    @pytest.mark.asyncio
-    async def test_write_in_output_dir(self, tmp_path):
-        """open(OUTPUT_DIR + '/test.txt', 'w') 在输出目录写文件允许"""
-        executor = self._build_executor(tmp_path)
-        result = await executor.execute(
-            'f = open(OUTPUT_DIR + "/test.txt", "w")\nf.write("written")\nf.close()\nprint("ok")',
-            description="test write in OUTPUT_DIR",
-        )
-        assert "ok" in result
-
-    @pytest.mark.asyncio
-    async def test_path_read_text_with_staging_dir(self, tmp_path):
-        """Path(STAGING_DIR + '/file').read_text() 绝对路径正常读取"""
-        from pathlib import Path
-        from core.workspace import resolve_staging_dir
-
-        executor = self._build_executor(tmp_path)
-        staging = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
-        staging.mkdir(parents=True)
-        (staging / "data.txt").write_text("path works")
-
-        result = await executor.execute(
-            'from pathlib import Path\nresult = Path(STAGING_DIR + "/data.txt").read_text()\nprint(result)',
-            description="test Path.read_text with STAGING_DIR",
-        )
-        assert "path works" in result
 
 
 # ============================================================

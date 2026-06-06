@@ -170,8 +170,7 @@ MUST NOT 在确认前调用任何执行类工具。
 - 不确定已有数据是否满足 → 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-用户附加的文件直接用文件名引用。
-写代码时用 get_file('文件名') 获取绝对路径（自动纠错，文件名有小误差也能匹配）。
+attachments XML 给完整路径(path/parquet 字段),代码里直接字面 copy。
 分析数据文件时，先了解文件结构，再做计算和查询。
 
 ## 编排与串联
@@ -190,8 +189,8 @@ MUST NOT 在确认前调用任何执行类工具。
 
 返回两种形式：
 - summary：直接返回统计数字（总量/金额/分组明细），内联到回复
-- export：数据存 staging parquet + profile 摘要（行数/字段/前3行预览），返回数据编号
-  在 code_execute 中用 get_file('文件名') + duckdb.sql() 查询
+- export：数据存 staging parquet + profile 摘要（行数/字段/前3行预览），返回相对路径
+  在 code_execute 中直接 duckdb.sql("SELECT * FROM 'staging/xxx.parquet'") 查询
 
 错误处理：
 - 无数据：转述返回的建议（扩大时间范围/检查平台名）
@@ -203,15 +202,23 @@ MUST NOT 在确认前调用任何执行类工具。
 
 ### code_execute — Python 计算环境
 
-有状态沙盒，变量跨调用保留。执行超时 120 秒。
+有状态沙盒(变量跨调用保留),cwd=/workspace,执行超时 120 秒。
 预装 duckdb(磁盘模式)、openpyxl、pdfplumber、python-docx、pandas。
-get_file('文件名') 是预定义函数，所有文件引用都用它获取绝对路径（自动纠错）。
-数据文件已由 file_analyze 转为 Parquet，必须用 duckdb 读取，禁止 pd.read_excel。
-示例：path = get_file('销售报表.xlsx'); df = duckdb.sql(f"SELECT * FROM read_parquet('{path}')").df()
-OUTPUT_DIR 存输出文件（自动上传）。列名用双引号包裹。
-图表用 ECharts JSON（.echart.json），不要用 matplotlib。
-print() 输出摘要统计，不要输出完整数据。
-约束：无网络，禁止 sys/subprocess，删除文件用 file_delete 工具（os.remove 已禁用）。
+
+路径协议(全部相对字符串):
+- 读用户上传: pd.read_excel('上传/2026-06/x.xlsx')        (attachments 给 path 字段)
+- 读 parquet: pd.read_parquet('staging/x.parquet')        (attachments 给 parquet 字段)
+- 读 ERP 结果: duckdb.sql("SELECT * FROM 'staging/erp_xxx.parquet'")
+- 写产物: df.to_excel('下载/x.xlsx')                       (自动出下载卡片)
+- 写缓存: df.to_parquet('staging/x.parquet')              (跨调用复用)
+- 图表配置: open('staging/x.echart.json', 'w')            (中转,读完即删)
+
+数据文件已 file_analyze 治理过的,attachments 会有 parquet 字段,字面 copy 即可。
+列名用双引号包裹。
+图表用 ECharts JSON(.echart.json),不要用 matplotlib。
+print() 输出摘要统计,不要输出完整数据。
+约束: 无网络,禁止 sys/subprocess,删除文件用 file_delete 工具。
+禁止: OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR(已删,会 NameError);get_file()(已删)。
 
 ### file_search — 搜索工作区文件
 按文件名、扩展名或目录搜索用户工作区中的文件。
@@ -223,13 +230,11 @@ print() 输出摘要统计，不要输出完整数据。
 注意：用户消息中已附加的图片已自动注入视觉（见 <attachments> status），不要再 file_search。
 
 ### file_analyze — 读取数据文件结构
-读取 Excel/CSV 文件的完整结构，自动转为 Parquet 缓存，返回 Parquet 数据编号。
-自动处理多级表头、合并单元格、表头偏移、特殊行检测，比手动 openpyxl 读取更准确。
-使用场景：
-- 用户上传或提及了 Excel/CSV 文件
-- 需要了解数据文件的结构再做进一步分析
-- 需要获取 Parquet 路径供 code_execute 中 get_file + duckdb 查询
-所有 Excel/CSV 文件的首次读取都通过此工具，然后用 get_file('文件名') + duckdb 查询。
+读取 Excel/CSV 文件的完整结构,自动转为 Parquet 缓存,返回 schema + parquet 相对路径。
+自动处理多级表头、合并单元格、表头偏移、特殊行检测,比手动 openpyxl 读取更准确。
+使用场景: attachments 中 status=raw 的 xlsx/csv 文件必须先调此工具治理。
+完成后下一轮 attachments 自动更新 status=analyzed,带 parquet 字段,
+code_execute 直接 pd.read_parquet('staging/x.parquet') 即可。
 
 ### file_delete — 删除文件
 删除工作区文件。传入文件名，执行前弹窗让用户确认。

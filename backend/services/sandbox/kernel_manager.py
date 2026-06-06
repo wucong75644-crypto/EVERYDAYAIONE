@@ -301,13 +301,20 @@ class KernelManager:
         self, workspace_dir: str, staging_dir: str, output_dir: str,
         skills_dir: str = "",
     ) -> list:
-        """构建启动命令（nsjail 或裸 python）"""
+        """构建启动命令（nsjail 或裸 python）
+
+        nsjail 模式(prod):/workspace 整体 bind + /workspace/staging 覆盖 bind,
+        AI 视角 cwd=/workspace,相对路径"staging/...","下载/..."自然解析。
+
+        裸 python 模式(dev):无 nsjail 时,通过 symlink 让相对路径协议一致 ——
+        workspace_dir/staging → staging_dir(会话级,不在 workspace 子目录里)
+        workspace_dir/下载   → output_dir(若不在 workspace 下)
+        """
         if self._nsjail_cfg and _NSJAIL_PATH:
             cmd = [
                 _NSJAIL_PATH, "--config", self._nsjail_cfg,
                 "-B", f"{workspace_dir}:/workspace",
-                "-B", f"{staging_dir}:/staging",
-                "-B", f"{output_dir}:/output",
+                "-B", f"{staging_dir}:/workspace/staging",
             ]
             if skills_dir:
                 cmd.extend(["-B", f"{skills_dir}:/skills:ro"])
@@ -315,12 +322,15 @@ class KernelManager:
                 "--cwd", "/app",
                 "--", "/venv/bin/python3", "-u",
                 "-m", "services.sandbox.kernel_worker",
-                "/workspace", "/staging", "/output", "8000",
+                "/workspace", "/workspace/staging", "/workspace/下载", "8000",
             ])
             if skills_dir:
                 cmd.append("/skills")
             return cmd
-        # 无 nsjail：直接启动（保留 L1-L7 安全层）
+
+        # 裸 python 模式: symlink staging/下载 到 workspace 子目录,
+        # 让 "staging/x.parquet" 这类相对路径在 dev/test 也能解析。
+        self._ensure_workspace_symlinks(workspace_dir, staging_dir, output_dir)
         cmd = [
             sys.executable, "-u",
             "-m", "services.sandbox.kernel_worker",
@@ -329,6 +339,33 @@ class KernelManager:
         if skills_dir:
             cmd.append(skills_dir)
         return cmd
+
+    @staticmethod
+    def _ensure_workspace_symlinks(
+        workspace_dir: str, staging_dir: str, output_dir: str,
+    ) -> None:
+        """裸 python 模式专用:workspace 下建 staging/下载 软链,对齐相对路径协议。"""
+        if not workspace_dir:
+            return
+        ws = Path(workspace_dir)
+        ws.mkdir(parents=True, exist_ok=True)
+        for name, target in (("staging", staging_dir), ("下载", output_dir)):
+            if not target:
+                continue
+            link = ws / name
+            tgt = Path(target)
+            tgt.mkdir(parents=True, exist_ok=True)
+            try:
+                if link.is_symlink() or link.exists():
+                    # 已存在且指向正确则跳过;否则保留原有(不覆盖用户数据)
+                    if link.is_symlink() and Path(link.readlink()) == tgt.resolve():
+                        continue
+                    if link.is_dir() and link.resolve() == tgt.resolve():
+                        continue
+                    continue
+                link.symlink_to(tgt.resolve())
+            except OSError:
+                pass  # symlink 失败不阻断启动,kernel 仍可跑无文件路径的代码
 
     async def _send_and_recv(
         self, kernel: Kernel, code: str, timeout: float,

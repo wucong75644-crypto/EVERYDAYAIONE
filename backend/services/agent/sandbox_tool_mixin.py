@@ -64,15 +64,14 @@ class SandboxToolMixin:
             if _budget is not None and hasattr(_budget, "remaining"):
                 _timeout = min(_timeout, max(_budget.remaining, 5.0))
 
-            # code_execute 前写 manifest（让沙盒 get_file 能查到编号→路径映射）
+            # 路径协议:不再写 manifest(沙盒 get_file 已删除)
+            # 仍维护 file_path_cache 状态(file_search/file_delete 用)
             from services.agent.file_path_cache import get_file_cache
             _cache = get_file_cache(self.conversation_id)
-            # 确保 staging_dir 已设置（用户没上传文件时 chat_context_mixin 不会设置）
             if not _cache._staging_dir:
                 _staging = self._get_staging_dir()
                 if _staging:
                     _cache.set_staging_dir(_staging)
-            _cache.write_manifest()
 
             from services.sandbox.kernel_manager import get_kernel_manager
             executor = build_sandbox_executor(
@@ -278,9 +277,13 @@ class SandboxToolMixin:
                 cache.register(fr.filename, workspace=fr.path, parquet=fr.path)
                 return
 
-        # 兜底：从 summary 文本中提取 staging 文件名
+        # 兜底:从 summary 文本中提取 staging 文件名(同时兼容新旧格式)
+        # 新格式: staging/x.parquet (相对路径)
+        # 旧格式: STAGING_DIR + '/x.parquet' (保留正则,向后兼容历史 messages)
         import re
-        _STAGING_RE = re.compile(r"STAGING_DIR\s*\+\s*'/([^']+)'")
+        _STAGING_RE = re.compile(
+            r"(?:STAGING_DIR\s*\+\s*'/|['\"]staging/)([^'\"]+)['\"]?"
+        )
         staging_dir = self._get_staging_dir()
         if not staging_dir:
             return

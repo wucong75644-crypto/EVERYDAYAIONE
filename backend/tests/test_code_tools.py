@@ -67,9 +67,10 @@ class TestCodeToolsDefinition:
         assert "erp_query_all" not in CODE_ROUTING_PROMPT
 
     def test_routing_prompt_parquet_format(self):
-        """CODE_ROUTING_PROMPT 说明 Parquet 格式"""
-        assert "Parquet" in CODE_ROUTING_PROMPT
-        assert "read_parquet" in CODE_ROUTING_PROMPT
+        """CODE_ROUTING_PROMPT 说明 Parquet 格式(新协议:duckdb 读相对路径)"""
+        assert "parquet" in CODE_ROUTING_PROMPT.lower()
+        # 新协议用 duckdb.sql() 读 staging/x.parquet,不要求 read_parquet 字面量
+        assert "staging" in CODE_ROUTING_PROMPT
 
     def test_code_execute_desc_parquet(self):
         """code_execute 描述中包含 Parquet 和 read_parquet"""
@@ -84,11 +85,13 @@ class TestCodeToolsDefinition:
 
     # ---- 架构隔离测试 ----
 
-    def test_base_version_no_workspace_dir(self):
-        """ERP Agent 版不含 WORKSPACE_DIR"""
+    def test_base_version_mentions_workspace_dir_as_forbidden(self):
+        """路径协议:WORKSPACE_DIR 仅作为禁用变量出现(LLM 用了会 NameError)"""
         tool = build_code_tools(include_workspace=False)[0]
         desc = tool["function"]["description"]
-        assert "WORKSPACE_DIR" not in desc
+        # 新协议描述含禁止子句:OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR 变量(已删,会 NameError)
+        assert "WORKSPACE_DIR" in desc
+        assert "NameError" in desc or "已删" in desc
 
     def test_workspace_version_has_staging_hint(self):
         """主 Agent 版包含 get_file 读取说明"""
@@ -97,12 +100,13 @@ class TestCodeToolsDefinition:
         assert "get_file" in desc
 
     def test_architecture_isolation_symmetric(self):
-        """两版工具名和参数完全相同，只有描述不同"""
+        """两版工具名和参数完全相同(新协议:description 也统一,LLM 看 attachments 自主决策)"""
         base = build_code_tools(include_workspace=False)[0]
         ws = build_code_tools(include_workspace=True)[0]
         assert base["function"]["name"] == ws["function"]["name"]
         assert base["function"]["parameters"] == ws["function"]["parameters"]
-        assert base["function"]["description"] != ws["function"]["description"]
+        # 新协议:两版描述相同(include_workspace 参数仅为 API 兼容保留)
+        assert base["function"]["description"] == ws["function"]["description"]
 
     def test_workspace_version_has_parquet_hint(self):
         """主 Agent 版包含 Parquet 说明"""
@@ -129,11 +133,11 @@ class TestCodeToolsDefinition:
         desc = tool["function"]["description"]
         assert "OUTPUT_DIR" in desc
 
-    def test_workspace_version_has_os_mention(self):
-        """主 Agent 版提及 os（禁用说明）"""
+    def test_workspace_version_mentions_subprocess_forbidden(self):
+        """主 Agent 版提及 subprocess/sys 禁用说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "os" in desc
+        assert "subprocess" in desc or "sys" in desc
 
 
 class TestAgentToolsIntegration:
@@ -306,31 +310,27 @@ class TestFetchAllPagesExecution:
 
 
 class TestFix1DuckDBDialectHints:
-    """Fix 1: 两版 description 都必须包含 DuckDB 方言提示，杜绝 AI 用 MySQL/PG 方言。"""
+    """DuckDB 方言提示(新协议:极简 hint,只留陷阱型差异)"""
 
     def test_workspace_version_has_cast_hint(self):
+        """新协议:ts::DATE 简写(替代 CAST AS DATE)"""
         from config.code_tools import build_code_tools
-        tools = build_code_tools(include_workspace=True)
-        desc = tools[0]["function"]["description"]
-        assert "CAST(ts AS DATE)" in desc, "主 Agent 版必须明示 CAST AS DATE 用法"
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "::DATE" in desc or "CAST" in desc, "必须明示 DATE 类型转换方式"
 
     def test_workspace_version_warns_no_date_function(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "无 DATE()" in desc, "必须警告 DuckDB 无 DATE() 标量函数"
+        # 新协议表达:ts::DATE 不是 DATE()
+        assert "不是 DATE()" in desc, "必须警告 DuckDB 无 DATE() 标量函数"
 
     def test_workspace_version_has_date_trunc(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "DATE_TRUNC" in desc
 
-    def test_workspace_version_has_interval(self):
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "INTERVAL" in desc
-
     def test_workspace_version_warns_no_datetime_type(self):
-        """DuckDB 类型名是 TIMESTAMP 不是 DATETIME，AI 写 CAST AS DATETIME 会炸。"""
+        """DuckDB 类型名是 TIMESTAMP 不是 DATETIME"""
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "TIMESTAMP" in desc
@@ -338,41 +338,34 @@ class TestFix1DuckDBDialectHints:
     def test_base_version_has_cast_hint(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        assert "CAST(ts AS DATE)" in desc, "ERP Agent 版同样需要 DuckDB 方言"
+        assert "::DATE" in desc or "CAST" in desc
 
     def test_base_version_warns_no_date_function(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        assert "无 DATE()" in desc
+        assert "不是 DATE()" in desc
 
 
 class TestFix2ExcelExportPattern:
-    """Fix 2: 引导用 df.to_excel + 明示 NaN 自动处理 + 反模式禁令。"""
+    """Excel 导出:引导用 df.to_excel + 明示 xlsxwriter 自动处理 NaN"""
 
     def test_workspace_version_uses_to_excel(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "df.to_excel" in desc, "必须引导用 df.to_excel"
+        assert "to_excel" in desc, "必须引导用 df.to_excel"
 
     def test_workspace_version_mentions_nan_handling(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "NaN" in desc, "必须明示 to_excel 自动处理 NaN"
 
-    def test_workspace_version_forbids_manual_xlsxwriter(self):
-        """禁止 worksheet.write 循环反模式。"""
+    def test_workspace_version_uses_xlsxwriter(self):
+        """新协议:engine='xlsxwriter' 自动处理 NaN/Timestamp"""
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "不要手撸" in desc
-        assert "worksheet.write" in desc
+        assert "xlsxwriter" in desc
 
     def test_base_version_uses_to_excel(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        assert "df.to_excel" in desc
-
-    def test_workspace_version_mentions_multi_sheet(self):
-        """Fix 4 配套：description 必须提示 _sheet 列用法（多 sheet 已合并）。"""
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "_sheet" in desc
+        assert "to_excel" in desc

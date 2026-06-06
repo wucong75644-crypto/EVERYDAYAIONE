@@ -92,10 +92,12 @@ class SandboxExecutor:
             f"result_len={len(raw_result)} | result={raw_result[:200]}"
         )
 
-        # 4. 执行成功时才上传生成的文件（失败的半成品不交付给用户）
+        # 4. 执行成功时:扫 .echart.json 中转数据(staging,读完即删)
+        #    再扫 output_dir 上传产物文件(下载/)
         is_error = raw_result.startswith("❌")
         is_timeout = raw_result.startswith("⏱")
         if not is_error and not is_timeout:
+            self._scan_chart_options()  # staging 中转,读完即删
             file_results = await self._auto_upload_new_files()
             if file_results:
                 raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
@@ -117,162 +119,56 @@ class SandboxExecutor:
         return AgentResult(summary=raw_result, status="success")
 
     async def _execute_code(self, code: str) -> str:
-        """选择执行模式：有状态 Kernel 或无状态 subprocess
-
-        崩溃恢复策略（对标 Jupyter autorestart）：
-        Kernel 崩溃 → 销毁 → 重建 → 重试一次 → 再失败降级 subprocess
+        """Kernel 模式单一执行路径(无 subprocess 降级)
+        Kernel 崩溃 → 销毁 → 重建 → 重试一次 → 仍失败报错
         """
-        if self._kernel_manager and self._conversation_id:
-            for attempt in range(2):  # 最多 2 次：首次 + 崩溃重试
-                try:
-                    kernel_ok = await self._kernel_manager.get_or_create(
-                        self._conversation_id,
-                        self._workspace_dir or "",
-                        self._staging_dir or "",
-                        self._output_dir or "",
-                        skills_dir=self._skills_dir,
+        if not (self._kernel_manager and self._conversation_id):
+            return self._format_error(
+                "沙盒服务未就绪,请稍后重试", retryable=True,
+            )
+
+        for attempt in range(2):
+            try:
+                kernel_ok = await self._kernel_manager.get_or_create(
+                    self._conversation_id,
+                    self._workspace_dir or "",
+                    self._staging_dir or "",
+                    self._output_dir or "",
+                    skills_dir=self._skills_dir,
+                )
+                if not kernel_ok:
+                    return self._format_error(
+                        "沙盒资源紧张,请稍后重试", retryable=True,
                     )
-                    if not kernel_ok:
-                        break  # 池满且无法驱逐，直接降级
 
-                    status, result = await self._kernel_manager.execute(
-                        self._conversation_id, code, self._timeout,
-                    )
+                status, result = await self._kernel_manager.execute(
+                    self._conversation_id, code, self._timeout,
+                )
 
-                    if status != "crashed":
-                        return result
+                if status != "crashed":
+                    return result
 
-                    # Kernel 崩溃：销毁后重试一次
-                    if attempt == 0:
-                        logger.warning("Kernel 崩溃，尝试重建 | conv={}",
-                                       self._conversation_id[:8])
-                        await self._kernel_manager.destroy(self._conversation_id)
-                        continue
-                    # 第二次仍崩溃，降级
-                    logger.warning("Kernel 重建后仍崩溃，降级为无状态 | conv={}",
+                if attempt == 0:
+                    logger.warning("Kernel 崩溃,尝试重建 | conv={}",
                                    self._conversation_id[:8])
-                    break
+                    await self._kernel_manager.destroy(self._conversation_id)
+                    continue
+                return self._format_error(
+                    "沙盒执行异常,请稍后重试", retryable=True,
+                )
 
-                except (KeyError, RuntimeError, OSError) as e:
-                    logger.warning("Kernel 执行失败，降级为无状态 | error=%s", e)
-                    break
+            except (KeyError, RuntimeError, OSError) as e:
+                logger.warning("Kernel 执行失败 | error=%s", e)
+                return self._format_error(
+                    f"沙盒执行失败: {e}", retryable=True,
+                )
 
-        # 降级：无状态 subprocess
-        return await self._run_in_subprocess(code)
-
-    async def _run_in_subprocess(self, code: str) -> str:
-        """在独立子进程中执行代码（spawn 隔离）
-
-        通信协议：子进程通过 Queue 返回 (status, result_text)。
-        超时策略：SIGTERM → 5s → SIGKILL。
-        """
-        import multiprocessing as mp
-        import os
-        import signal
-
-        from services.sandbox.sandbox_worker import sandbox_worker_entry
-
-        ctx = mp.get_context("spawn")
-        result_queue = ctx.Queue()
-
-        proc = ctx.Process(
-            target=sandbox_worker_entry,
-            args=(
-                result_queue,
-                code,
-                self._workspace_dir or "",
-                self._staging_dir or "",
-                self._output_dir or "",
-                self._timeout,
-                self._max_result_chars,
-                self._skills_dir,
-            ),
-        )
-        proc.start()
-        logger.debug(f"Sandbox subprocess started | pid={proc.pid}")
-
-        try:
-            # 在线程池中等待结果（不阻塞 event loop）
-            loop = asyncio.get_running_loop()
-            status, result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, self._wait_for_result, result_queue, proc,
-                    self._timeout,
-                ),
-                timeout=self._timeout + 10,  # 留 10s 余量给进程启动
-            )
-            if status == "error":
-                logger.warning(f"Sandbox subprocess error | pid={proc.pid}")
-            return result
-
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"Sandbox subprocess timeout | pid={proc.pid} | "
-                f"timeout={self._timeout}s"
-            )
-            # 优雅退出：SIGTERM → 5s → SIGKILL
-            self._kill_process(proc)
-            from services.sandbox.sandbox_constants import TIMEOUT_MESSAGE
-            return TIMEOUT_MESSAGE.format(timeout=self._timeout)
-        except Exception as e:
-            logger.error(f"Sandbox subprocess failed | pid={proc.pid} | error={e}")
-            self._kill_process(proc)
-            return f"❌ 沙盒进程异常: {e}"
-        finally:
-            # 确保进程退出 + 清理 Queue
-            if proc.is_alive():
-                self._kill_process(proc)
-            else:
-                proc.join(timeout=3)
-            try:
-                result_queue.close()
-                result_queue.join_thread()
-            except Exception:
-                pass
+        return self._format_error("沙盒不可用", retryable=True)
 
     @staticmethod
-    def _wait_for_result(result_queue, proc, timeout: float) -> tuple:
-        """阻塞等待子进程结果（在线程池中调用）"""
-        import queue as _queue
-        try:
-            return result_queue.get(timeout=timeout + 5)  # 比子进程 timeout 多留 5s
-        except _queue.Empty:
-            # 子进程没写结果就退了
-            exitcode = proc.exitcode
-            if exitcode is not None and exitcode < 0:
-                import signal
-                sig_name = signal.Signals(-exitcode).name
-                return ("error", f"❌ 沙盒进程被信号终止: {sig_name}")
-            return ("error", "❌ 沙盒进程无响应（可能 OOM 或崩溃）")
-
-    @staticmethod
-    def _kill_process(proc):
-        """优雅杀死子进程：SIGTERM → 5s → SIGKILL"""
-        import os
-        import signal
-
-        if not proc.is_alive():
-            proc.join(timeout=3)
-            return
-
-        # 先 SIGTERM（给代码清理机会）
-        try:
-            os.kill(proc.pid, signal.SIGTERM)
-        except OSError:
-            pass
-        proc.join(timeout=5)
-
-        # 还没死就 SIGKILL
-        if proc.is_alive():
-            try:
-                os.kill(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            proc.join(timeout=3)
-
-    # ========================================
-    # 自动文件检测与上传
-    # ========================================
+    def _format_error(msg: str, retryable: bool = True) -> str:
+        """统一的错误返回格式(替代之前的 subprocess 降级路径)"""
+        return f"❌ {msg}"
 
     def _clean_output_dir(self) -> None:
         """确保输出目录存在（不清空，下载文件夹是持久的）"""
@@ -347,26 +243,8 @@ class SandboxExecutor:
                                 self._image_dims[f.name] = (_im.width, _im.height)
                         except Exception:
                             pass
-                    # .echart.json 文件：读取 ECharts option，存到实例供 chart block 使用
-                    if f.name.endswith(".echart.json"):
-                        try:
-                            _content = f.read_text(encoding="utf-8")
-                            if len(_content) <= self._CHART_OPTION_MAX_BYTES:
-                                import json as _json
-                                _option = _json.loads(_content)
-                                if not hasattr(self, "_chart_options"):
-                                    self._chart_options = {}
-                                self._chart_options[f.name] = _option
-                            else:
-                                logger.warning(
-                                    f"SandboxExecutor chart too large | "
-                                    f"file={f.name} | size={len(_content)}"
-                                )
-                        except Exception as _ce:
-                            logger.warning(
-                                f"SandboxExecutor chart parse failed | "
-                                f"file={f.name} | error={_ce}"
-                            )
+                    # 路径协议:.echart.json 不再写到 output_dir,改到 staging
+                    # 由 _scan_chart_options 单独扫描 + 即删,这里不再处理
                     logger.info(
                         f"SandboxExecutor auto-upload | file={f.name} | "
                         f"size={st.st_size} | new={old is None}"
@@ -379,3 +257,38 @@ class SandboxExecutor:
                     results.append(f"❌ 文件上传失败: {f.name} ({e})")
 
         return results
+
+    def _scan_chart_options(self) -> None:
+        """扫描 staging 中的 .echart.json — 读取后立即删除(中转数据,不持久)。
+
+        新协议:LLM 写图表配置到 "staging/x.echart.json"(相对路径),
+        cwd=/workspace 解析到 host staging_dir。读完即删,避免污染
+        用户 下载/ 目录(原 bug:文件留在 OUTPUT_DIR 持久化)。
+        """
+        if not self._staging_dir:
+            return
+        from pathlib import Path
+        staging_path = Path(self._staging_dir)
+        if not staging_path.exists():
+            return
+        for f in staging_path.iterdir():
+            if not f.is_file() or not f.name.endswith(".echart.json"):
+                continue
+            try:
+                content = f.read_text(encoding="utf-8")
+                if len(content) <= self._CHART_OPTION_MAX_BYTES:
+                    import json as _json
+                    option = _json.loads(content)
+                    if not hasattr(self, "_chart_options"):
+                        self._chart_options = {}
+                    self._chart_options[f.name] = option
+                else:
+                    logger.warning(
+                        f"SandboxExecutor chart too large | "
+                        f"file={f.name} | size={len(content)}"
+                    )
+                f.unlink()  # 中转数据,读完即删
+            except Exception as e:
+                logger.warning(
+                    f"Chart option scan failed | file={f.name} | error={e}"
+                )

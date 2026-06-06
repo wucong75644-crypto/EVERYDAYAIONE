@@ -225,7 +225,7 @@ class TestToolResultEnvelope:
             wrapped = wrap("some_tool", result)
             assert len(wrapped) < len(result)
             assert STAGED_MARKER in wrapped
-            assert "STAGING_DIR" in wrapped
+            assert "staging/" in wrapped
         finally:
             clear_staging_dir()
 

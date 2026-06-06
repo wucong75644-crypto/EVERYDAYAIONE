@@ -52,7 +52,7 @@ class TestStorageServiceUploadFile:
 
         with patch("services.storage_service.get_oss_service", return_value=fake_oss):
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 storage.upload_file(
                     user_id="user1",
                     file_data=b"%PDF-1.4 fake content",
@@ -70,7 +70,7 @@ class TestStorageServiceUploadFile:
         """测试：不支持的文件类型"""
         import asyncio
         with pytest.raises(ValidationError, match="不支持的文件类型"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 storage.upload_file(
                     user_id="user1",
                     file_data=b"fake",
@@ -83,7 +83,7 @@ class TestStorageServiceUploadFile:
         big_data = b"x" * (51 * 1024 * 1024)
         import asyncio
         with pytest.raises(ValidationError, match="文件过大"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 storage.upload_file(
                     user_id="user1",
                     file_data=big_data,
@@ -101,7 +101,7 @@ class TestStorageServiceUploadFile:
 
         with patch("services.storage_service.get_oss_service", return_value=fake_oss):
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 storage.upload_file(
                     user_id="user1",
                     file_data=b"%PDF content",
@@ -477,8 +477,8 @@ class TestBuildLlmMessagesWorkspace:
         assert att_msg["role"] == "system"
         assert "<attachments" in att_msg["content"]
         assert "<name>sales.csv</name>" in att_msg["content"]
-        assert "<type>数据文件</type>" in att_msg["content"]
-        assert "file_analyze" in att_msg["content"]  # status 引导
+        # 新协议:纯状态 <status>raw</status>(数据文件未分析),LLM 看 tools 自主选 file_analyze
+        assert "<status>raw</status>" in att_msg["content"]
 
     @pytest.mark.asyncio
     async def test_mixed_pdf_and_workspace(self, chat_handler, mock_db):
@@ -584,7 +584,7 @@ class TestStorageServiceErrorTypes:
         import asyncio
         with patch("services.storage_service.get_oss_service", return_value=fake_oss):
             with pytest.raises(ExternalServiceError):
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     storage.upload_image(
                         user_id="user1",
                         file_data=b"\x89PNG\r\n\x1a\n" + b"x" * 100,
@@ -601,7 +601,7 @@ class TestStorageServiceErrorTypes:
         import asyncio
         with patch("services.storage_service.get_oss_service", return_value=fake_oss):
             with pytest.raises(ExternalServiceError):
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     storage.upload_file(
                         user_id="user1",
                         file_data=b"%PDF-1.4 fake",
@@ -613,7 +613,7 @@ class TestStorageServiceErrorTypes:
         """无效 base64 → ValidationError(400)"""
         import asyncio
         with pytest.raises(ValidationError, match="无效的图片数据"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 storage.upload_base64_image(
                     user_id="user1",
                     base64_data="data:image/png;base64,!!!invalid!!!",

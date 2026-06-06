@@ -1,14 +1,13 @@
 """
-ChatContextMixin._format_attachments 专项测试
+ChatContextMixin._format_attachments 专项测试(路径协议 v2:纯状态)
 
-覆盖 P0 重写的 <attachments> XML 渲染：
-- 多文件 / 空列表
-- 类型分流（图片 / 数据文件 / PDF / Word / PPT / 文本 / 二进制）
-- analyzed 状态切换（数据文件 未分析 → 已分析 status 文本变化）
-- source 推断（"本轮上传" / "工作区引用"）
-- XML 转义安全（特殊字符不破坏结构）
+新协议要点(对齐 OpenAI Assistants / Claude / Gemini):
+- <status> 纯状态枚举:raw/analyzed/parquet/image/doc/text/binary
+- <path> 相对 workspace 路径,LLM 字面 copy 用
+- <parquet> 仅 analyzed 数据文件,LLM 直接 pd.read_parquet 读
+- 不再有 <type>/<source>/<hint>(老的"教 AI 工作"字段已删,LLM 看 tools 自主决策)
 
-依据：Anthropic prompt engineering 文档推荐 XML 标签，本测试守护输出结构。
+依据:Anthropic prompt engineering 推荐 XML 锚点,但内容应是声明而非指令。
 """
 
 import pytest
@@ -65,13 +64,6 @@ class TestXmlStructure:
         )
         assert 'count="3"' in out
 
-    def test_hint_attribute_present(self):
-        out = ChatContextMixin._format_attachments(
-            [_file("a.png", "image/png")], conversation_id=_CONV,
-        )
-        assert "hint=" in out
-        assert "行动指引" in out  # 强调 status 是行动指引
-
     def test_each_file_has_file_tag(self):
         out = ChatContextMixin._format_attachments(
             [_file("a.png", "image/png"), _file("b.png", "image/png")],
@@ -82,17 +74,15 @@ class TestXmlStructure:
 
 
 class TestFileTypeRouting:
-    """按扩展名分流的 type/status 行动指引"""
+    """按扩展名分流的 status 枚举(纯状态,LLM 看 tools 自主决策)"""
 
     def test_image_type_status(self):
         out = ChatContextMixin._format_attachments(
             [_file("photo.png", "image/png", width=1920, height=1080)],
             conversation_id=_CONV,
         )
-        assert "<type>图片</type>" in out
+        assert "<status>image</status>" in out
         assert "<dimensions>1920×1080</dimensions>" in out
-        assert "已自动注入视觉" in out
-        assert "不要调用" in out  # 明确禁止 file_read
 
     def test_xlsx_unanalyzed_status(self):
         out = ChatContextMixin._format_attachments(
@@ -100,101 +90,98 @@ class TestFileTypeRouting:
                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")],
             conversation_id=_CONV,
         )
-        assert "<type>数据文件</type>" in out
-        assert "未分析" in out
-        assert 'file_analyze("sales.xlsx")' in out
+        assert "<status>raw</status>" in out
+        assert "<name>sales.xlsx</name>" in out
 
     def test_csv_unanalyzed_status(self):
         out = ChatContextMixin._format_attachments(
             [_file("data.csv", "text/csv")], conversation_id=_CONV,
         )
-        assert "<type>数据文件</type>" in out
-        assert "file_analyze" in out
+        assert "<status>raw</status>" in out
 
     def test_pdf_routes_to_code_execute(self):
         out = ChatContextMixin._format_attachments(
             [_file("doc.pdf", "application/pdf")], conversation_id=_CONV,
         )
-        assert "<type>文档</type>" in out
-        assert "pdfplumber" in out
-        assert "get_file" in out
+        assert "<status>doc</status>" in out
 
     def test_word_routes_to_code_execute(self):
         out = ChatContextMixin._format_attachments(
             [_file("方案.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")],
             conversation_id=_CONV,
         )
-        assert "<type>文档</type>" in out
-        assert "python-docx" in out
+        assert "<status>doc</status>" in out
 
     def test_pptx_routes_to_code_execute(self):
         out = ChatContextMixin._format_attachments(
             [_file("slides.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")],
             conversation_id=_CONV,
         )
-        assert "<type>文档</type>" in out
-        assert "python-pptx" in out
+        assert "<status>doc</status>" in out
 
     def test_text_routes_to_open(self):
         out = ChatContextMixin._format_attachments(
             [_file("readme.md", "text/markdown")], conversation_id=_CONV,
         )
-        assert "<type>文本</type>" in out
+        assert "<status>text</status>" in out
 
     def test_unknown_binary_fallback(self):
-        """未知二进制扩展名走 get_file 兜底引导"""
+        """未知扩展名落 binary 状态"""
         out = ChatContextMixin._format_attachments(
             [_file("data.bin", "application/octet-stream")], conversation_id=_CONV,
         )
-        assert "<type>二进制</type>" in out
-        assert "get_file" in out
+        assert "<status>binary</status>" in out
 
 
 class TestAnalyzedStateSwitch:
-    """analyzed 状态驱动数据文件 status 切换（核心跨轮持久行为）"""
+    """analyzed 状态驱动数据文件 status 切换 raw→analyzed,并暴露 parquet 相对路径"""
 
-    def test_unanalyzed_status_calls_file_analyze(self):
+    def test_unanalyzed_status_is_raw(self):
         cache = get_file_cache(_CONV + "-state-a")
         cache.register("report.xlsx", workspace="/abs/report.xlsx")
-        # 未调 set_analyzed，应仍是未分析
+        # 未调 set_analyzed,应仍是未分析
 
         out = ChatContextMixin._format_attachments(
             [_file("report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")],
             conversation_id=_CONV + "-state-a",
         )
-        assert "未分析" in out
-        assert "file_analyze" in out
+        assert "<status>raw</status>" in out
+        # 未分析时不应该有 parquet 字段
+        assert "<parquet>" not in out
 
-    def test_analyzed_status_calls_duckdb(self):
+    def test_analyzed_status_exposes_parquet_path(self):
         cache = get_file_cache(_CONV + "-state-b")
-        cache.register("report.xlsx", workspace="/abs/report.xlsx")
+        cache.register(
+            "report.xlsx",
+            workspace="/abs/report.xlsx",
+            parquet="/host/staging/conv-x/report.parquet",
+        )
         cache.set_analyzed("report.xlsx", True)
 
         out = ChatContextMixin._format_attachments(
             [_file("report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")],
             conversation_id=_CONV + "-state-b",
         )
-        assert "已分析" in out
-        assert "duckdb" in out
-        assert 'get_file("report.xlsx")' in out
+        assert "<status>analyzed</status>" in out
+        assert "<parquet>staging/report.parquet</parquet>" in out
 
 
-class TestSourceInference:
-    """source 字段根据 workspace_path 前缀推断"""
+class TestPathField:
+    """<path> 字段渲染 workspace 相对路径(沙盒 cwd=/workspace,LLM 字面 copy)"""
 
-    def test_upload_prefix_means_uploaded(self):
+    def test_upload_path_rendered(self):
         out = ChatContextMixin._format_attachments(
             [_file("a.png", "image/png", wp="上传/2026-06/a.png")],
             conversation_id=_CONV,
         )
-        assert "<source>本轮上传</source>" in out
+        assert "<path>上传/2026-06/a.png</path>" in out
 
-    def test_other_path_means_workspace_ref(self):
+    def test_workspace_subdir_path_rendered(self):
         out = ChatContextMixin._format_attachments(
             [_file("a.png", "image/png", wp="销售/Q1/a.png")],
             conversation_id=_CONV,
         )
-        assert "<source>工作区引用</source>" in out
+        assert "<path>销售/Q1/a.png</path>" in out
 
 
 class TestXmlEscapeSafety:
@@ -243,10 +230,10 @@ class TestMultiFileRendering:
             ],
             conversation_id=_CONV,
         )
-        # 三种类型都正确出现
-        assert "<type>图片</type>" in out
-        assert "<type>数据文件</type>" in out
-        assert "<type>文档</type>" in out
+        # 三种 status 状态都正确出现
+        assert "<status>image</status>" in out
+        assert "<status>raw</status>" in out
+        assert "<status>doc</status>" in out
         # 三个文件名都正确出现
         assert "<name>photo.png</name>" in out
         assert "<name>sales.xlsx</name>" in out
