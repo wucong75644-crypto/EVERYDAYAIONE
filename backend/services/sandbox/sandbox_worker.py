@@ -460,10 +460,12 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # 路径协议:AI 用相对路径 + attachments XML 给完整字符串,无需 get_file 兜底
     # 长对话上下文丢失时,AI 主动调 file_search 工具(Agent 层)探索
 
-    # emit 协议(POC 阶段):沙盒里主动声明产物 → 主进程解析 marker → 推前端 block
+    # emit 协议(POC 阶段):沙盒里主动声明产物 → buffer 收集 → _exec_code 收尾
+    #   时合并为 [EMIT] marker 拼到 stdout(避开 kernel JSON-Line 协议通道冲突)
     # 见 services/sandbox/emit_protocol.py + tool_loop_executor [EMIT] 解析逻辑
-    from services.sandbox.emit_protocol import EMIT_FUNCTIONS
-    g.update(EMIT_FUNCTIONS)
+    from services.sandbox.emit_protocol import install_emit_in_globals
+    g["_emit_buffer"] = []  # _exec_code 每次执行前 clear,收尾时读
+    install_emit_in_globals(g, g["_emit_buffer"])
 
     return g
 
@@ -489,6 +491,11 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
     sandbox_globals["print"] = lambda *args, **kwargs: print(
         *args, **kwargs, file=stdout_buffer,
     )
+
+    # emit 协议:执行前 clear buffer(避免上轮残留)
+    _emit_buf = sandbox_globals.get("_emit_buffer")
+    if _emit_buf is not None:
+        _emit_buf.clear()
 
     # 超时 trace
     deadline = _time.monotonic() + timeout
@@ -521,6 +528,16 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
 
     # 组合输出
     stdout_text = stdout_buffer.getvalue()
+
+    # emit 协议:把 buffer 转 [EMIT] marker 拼到 stdout(走用户 stdout 通道,
+    # 不污染 kernel JSON-Line 响应通道)
+    _emit_buf = sandbox_globals.get("_emit_buffer")
+    if _emit_buf:
+        from services.sandbox.emit_protocol import format_emit_markers
+        emit_text = format_emit_markers(_emit_buf)
+        if emit_text:
+            stdout_text = (stdout_text.rstrip() + "\n" + emit_text) if stdout_text.strip() else emit_text
+
     parts = []
     if stdout_text.strip():
         parts.append(stdout_text.rstrip())

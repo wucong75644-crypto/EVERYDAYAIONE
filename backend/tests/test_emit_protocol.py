@@ -21,10 +21,16 @@ import pytest
 from services.sandbox.emit_protocol import (
     EMIT_MARKER_END,
     EMIT_MARKER_START,
+    build_chart_payload,
+    build_file_payload,
+    build_image_payload,
+    build_table_payload,
     emit_chart,
     emit_file,
     emit_image,
     emit_table,
+    format_emit_markers,
+    install_emit_in_globals,
 )
 
 
@@ -208,3 +214,142 @@ class TestToolLoopExtractEmits:
     def test_no_marker_returns_no_match(self):
         text = "完全没有 marker 的纯文本"
         assert not _EMIT_RE.search(text)
+
+
+# ============================================================
+# Buffer 模式 (沙盒生产路径) - 不污染 kernel JSON-Line 协议通道
+# ============================================================
+
+class TestInstallEmitInGlobals:
+    """生产路径:emit_xxx 通过闭包绑定 buffer,不打 print"""
+
+    def test_install_creates_4_functions(self):
+        g: dict = {}
+        buf: list = []
+        install_emit_in_globals(g, buf)
+        assert "emit_chart" in g
+        assert "emit_file" in g
+        assert "emit_image" in g
+        assert "emit_table" in g
+        assert callable(g["emit_chart"])
+
+    def test_emit_chart_appends_to_buffer_not_stdout(self, tmp_path, capsys):
+        """关键:emit_chart 调用后 buffer 收到 payload,但 stdout 一片干净"""
+        g: dict = {}
+        buf: list = []
+        install_emit_in_globals(g, buf)
+
+        g["emit_chart"]({"series": [{"type": "bar"}]}, title="测试")
+
+        # buffer 收到 payload
+        assert len(buf) == 1
+        assert buf[0]["kind"] == "chart"
+        assert buf[0]["title"] == "测试"
+
+        # 关键合约:stdout 没污染(kernel 协议通道纯净)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+    def test_emit_file_buffer(self, tmp_path):
+        g: dict = {}
+        buf: list = []
+        install_emit_in_globals(g, buf)
+
+        f = tmp_path / "x.csv"
+        f.write_text("a,b\n1,2")
+        g["emit_file"](str(f), label="测试")
+
+        assert len(buf) == 1
+        assert buf[0]["kind"] == "file"
+        assert buf[0]["label"] == "测试"
+        assert buf[0]["size"] > 0
+
+    def test_multiple_emits_accumulate(self):
+        g: dict = {}
+        buf: list = []
+        install_emit_in_globals(g, buf)
+
+        g["emit_chart"]({"x": 1}, title="A")
+        g["emit_chart"]({"x": 2}, title="B")
+        g["emit_image"]("p.png", alt="图片")
+
+        assert len(buf) == 3
+        assert [p["kind"] for p in buf] == ["chart", "chart", "image"]
+
+
+class TestFormatEmitMarkers:
+    """buffer → [EMIT] marker 文本(沙盒末尾合并到 stdout)"""
+
+    def test_empty_buffer(self):
+        assert format_emit_markers([]) == ""
+
+    def test_single_chart(self):
+        payload = build_chart_payload({"series": []}, title="测试")
+        text = format_emit_markers([payload])
+        # 包含 marker 边界
+        assert text.startswith(EMIT_MARKER_START)
+        assert text.endswith(EMIT_MARKER_END)
+        # 中文不转义
+        assert "测试" in text
+
+    def test_multiple_payloads_one_per_line(self):
+        payloads = [
+            build_chart_payload({"x": 1}, "A"),
+            build_file_payload("x.txt"),
+        ]
+        text = format_emit_markers(payloads)
+        # 两行,各自一个完整 marker
+        lines = text.split("\n")
+        assert len(lines) == 2
+        for line in lines:
+            assert line.startswith(EMIT_MARKER_START)
+            assert line.endswith(EMIT_MARKER_END)
+
+    def test_can_be_parsed_back_by_regex(self):
+        """合约: format 输出的 marker 能被 _EMIT_RE 反向解析"""
+        payloads = [
+            build_chart_payload({"series": []}, "销售额"),
+            build_file_payload("/tmp/x.csv"),
+        ]
+        text = format_emit_markers(payloads)
+
+        matches = list(_EMIT_RE.finditer(text))
+        assert len(matches) == 2
+
+        parsed = [json.loads(m.group("payload")) for m in matches]
+        assert parsed[0]["kind"] == "chart"
+        assert parsed[0]["title"] == "销售额"
+        assert parsed[1]["kind"] == "file"
+
+
+class TestBuildPayloadPureFunctions:
+    """payload 构造函数(纯函数,无副作用)"""
+
+    def test_build_chart_payload(self):
+        p = build_chart_payload({"x": 1}, title="A")
+        assert p == {"kind": "chart", "title": "A", "option": {"x": 1}}
+
+    def test_build_chart_payload_validates_dict(self):
+        with pytest.raises(TypeError, match="必须是 dict"):
+            build_chart_payload("not dict", "x")  # type: ignore
+
+    def test_build_file_payload(self, tmp_path):
+        f = tmp_path / "y.txt"
+        f.write_text("hi")
+        p = build_file_payload(str(f))
+        assert p["kind"] == "file"
+        assert p["size"] == 2
+
+    def test_build_image_payload(self):
+        p = build_image_payload("a/b.png", alt="image")
+        assert p["kind"] == "image"
+        assert p["name"] == "b.png"
+
+    def test_build_table_payload_dataframe(self):
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+        p = build_table_payload(df, title="t")
+        assert p["kind"] == "table"
+        assert p["columns"] == ["a", "b"]
+        assert len(p["rows"]) == 2
