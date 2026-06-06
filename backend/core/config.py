@@ -243,6 +243,13 @@ class Settings(BaseSettings):
     sandbox_api_concurrency: int = 10              # ERP API 并发限制
     sandbox_max_pages: int = 200                   # erp_query_all 最大翻页数
 
+    # emit 协议(POC 2026-06)
+    # 沙盒里 LLM 主动调 emit_chart/emit_file/emit_image/emit_table 声明产物
+    # → 主进程解析 [EMIT] marker → 推前端 block
+    # 设计文档:docs/document/TECH_沙盒IO统一协议_调研.md (推荐方案 B)
+    # 验证完后将作为正式产物协议替代 _scan_chart_options + [FILE] 双轨
+    emit_protocol_enabled: bool = False           # 是否启用 emit 协议(影响 LLM system prompt + 主进程解析)
+
     # 文件操作配置
     file_workspace_enabled: bool = True                          # 文件操作总开关
     file_workspace_root: str = "/mnt/nas-workspace"              # NAS 挂载路径（生产）或本地路径（开发）

@@ -1,0 +1,185 @@
+{
+  "gemini-3-pro": [
+    {
+      "name": "1_用户主动要图表",
+      "error": "Chat completions request failed: ",
+      "verdict": "ERROR"
+    },
+    {
+      "name": "2_AI自主判断要图表",
+      "error": "Chat completions request failed: ",
+      "verdict": "ERROR"
+    },
+    {
+      "name": "3_用户主动要下载",
+      "error": "Chat completions request failed: ",
+      "verdict": "ERROR"
+    },
+    {
+      "name": "4_AI自主判断给下载",
+      "error": "2 validation errors for ChatCompletionChunk\nmodel\n  Field required [type=missing, input_value={'choices': [{'finish_rea..., 'total_tokens': 1152}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/missing\nchoices.0.delta\n  Field required [type=missing, input_value={'finish_reason': 'stop',...', 'role': 'assistant'}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/missing",
+      "verdict": "ERROR"
+    },
+    {
+      "name": "5_多产物混合",
+      "error": "Chat completions request failed: ",
+      "verdict": "ERROR"
+    }
+  ],
+  "qwen-plus": [
+    {
+      "name": "1_用户主动要图表",
+      "user": "画一个柱形图比较 A/B/C 三家店本月销售额。A: 12.5 万, B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 1,
+        "file": 0,
+        "image": 0,
+        "table": 0
+      },
+      "expected": {
+        "chart": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\noption = {\n    \"title\": {\"text\": \"各店铺本月销售额对比\"},\n    \"xAxis\": {\n        \"type\": \"category\",\n        \"data\": [\"A店\", \"B店\", \"C店\"]\n    },\n    \"yAxis\": {\n        \"type\": \"value\",\n        \"name\": \"销售额 (万)\"\n    },\n    \"series\": [\n        {\n            \"data\": [12.5, 8.7, 15.3],\n            \"type\": \"bar\",\n            \"itemStyle\": {\n                \"color\": \"#5470c6\"\n            },\n            \"label\": {\n                \"show\": True,\n                \"position\": \"top\",\n                \"formatter\": \"{c} 万\"\n            }\n        }\n    ],\n    \"tooltip\": {\n        \"trigger\": \"axis\",\n        \"formatter\": \"{b}: {c} 万\"\n    }\n}\nemit_chart(option, title=\"各店铺本月销售额对比\")\n```"
+    },
+    {
+      "name": "2_AI自主判断要图表",
+      "user": "分析这三家店本月业绩,A 12.5 万, B 8.7 万, C 15.3 万。给我说说情况",
+      "emits": {
+        "chart": 1,
+        "file": 1,
+        "image": 0,
+        "table": 1
+      },
+      "expected": {
+        "chart": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 创建数据\ndata = {\n    \"店铺\": [\"A店\", \"B店\", \"C店\"],\n    \"销售额 (万)\": [12.5, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 计算统计指标\ntotal_sales = df[\"销售额 (万)\"].sum()\navg_sales = df[\"销售额 (万)\"].mean()\ndf[\"占比\"] = (df[\"销售额 (万)\"] / total_sales * 100).round(1)\ndf[\"与平均值差异\"] = (df[\"销售额 (万)\"] - avg_sales).round(2)\n\n# 1. 输出交互式表格\nemit_table(df, title=\"本月各店铺业绩详情\")\n\n# 2. 绘制柱状图 + 折线图 (双轴)\noption = {\n    \"title\": {\"text\": \"本月店铺业绩分析\"},\n    \"tooltip\": {\"trigger\": \"axis\", \"axisPointer\": {\"type\": \"cross\"}},\n    \"legend\": {\"data\": [\"销售额\", \"占比\"]},\n    \"xAxis\": {\n        \"type\": \"category\",\n        \"data\": df[\"店铺\"].tolist()\n    },\n    \"yAxis\": [\n        {\"type\": \"value\", \"name\": \"销售额 (万)\", \"position\": \"left\"},\n        {\"type\": \"value\", \"name\": \"占比 (%)\", \"position\": \"right\", \"max\": 100}\n    ],\n    \"series\": [\n        {\n            \"name\": \"销售额\",\n            \"type\": \"bar\",\n            \"data\": df[\"销售额 (万)\"].tolist(),\n            \"itemStyle\": {\"color\": \"#5470c6\"},\n            \"label\": {\"show\": True, \"position\": \"top\", \"formatter\": \"{c}万\"}\n        },\n        {\n            \"name\": \"占比\",\n            \"type\": \"line\",\n            \"yAxisIndex\": 1,\n            \"data\": df[\"占比\"].tolist(),\n            \"itemStyle\": {\"color\": \"#91cc75\"},\n            \"label\": {\"show\": True, \"position\": \"top\", \"formatter\": \"{c}%\"}\n        }\n    ]\n}\nemit_chart(option, title=\"业绩分布与占比\")\n\n# 3. 生成简要分析报告文件\nreport_text = f\"\"\"\n【本月业绩分析报告】\n\n1. 总体情况：\n   - 三家店总销售额：{total_sales:.1f} 万\n   - 平均单店销售额：{avg_sales:.2f} 万\n\n2. 店铺表现：\n   - 冠军：C店 (15.3 万)，占比 {df.loc[df['店铺']=='C店', '占比'].values[0]}%，高于平均水平 {df.loc[df['店铺']=='C店', '与平均值差异'].values[0]} 万。\n   - 亚军：A店 (12.5 万)，占比 {df.loc[df['店铺']=='A店', '占比'].values[0]}%，高于平均水平 {df.loc[df['店铺']=='A店', '与平均值差异'].values[0]} 万。\n   - 季军：B店 (8.7 万)，占比 {df.loc[df['店铺']=='B店', '占比'].values[0]}%，低于平均水平 {abs(df.loc[df['店铺']=='B店', '与平均值差异'].values[0])} 万，需关注提升。\n\n3. 建议：\n   - C店表现优异，可总结其成功经验推广至其他店铺。\n   - B店业绩相对落后，建议分析具体原因（如客流、转化率等）并制定改进措施。\n\"\"\"\n\nwith open(\"下载/业绩分析报告.txt\", \"w\", encoding=\"utf-8\") as f:\n    f.write(report_text)\n\nemit_file(\"下载/业绩分析报告.txt\", label=\"业绩分析报告\")\n```"
+    },
+    {
+      "name": "3_用户主动要下载",
+      "user": "把这三家店的销售数据整理成 Excel 给我下载。A: 12.5 万, B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 0,
+        "file": 1,
+        "image": 0,
+        "table": 0
+      },
+      "expected": {
+        "file": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 创建数据\ndata = {\n    \"店铺\": [\"A\", \"B\", \"C\"],\n    \"销售额 (万)\": [12.5, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 保存为 Excel 文件\nfile_path = \"下载/店铺销售数据.xlsx\"\ndf.to_excel(file_path, index=False)\n\n# 发送文件下载卡片\nemit_file(file_path, label=\"店铺销售数据\")\n```"
+    },
+    {
+      "name": "4_AI自主判断给下载",
+      "user": "把销售数据合并去重整理好,我后续要看。A: 12.5 万, A: 13 万(重复), B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 0,
+        "file": 1,
+        "image": 0,
+        "table": 1
+      },
+      "expected": {
+        "file": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 创建原始数据\ndata = {\n    '店铺': ['A', 'A', 'B', 'C'],\n    '销售额_万': [12.5, 13.0, 8.7, 15.3]\n}\n\ndf = pd.DataFrame(data)\n\n# 去重：保留第一次出现的记录 (根据需求 \"A: 13 万(重复)\" 暗示第二条是重复项，通常保留第一条或最后一条，这里默认保留第一条)\n# 如果业务逻辑是“更新为最新值”，则应使用 keep='last'。鉴于描述为“重复”，通常指冗余数据，故去除重复项。\ndf_clean = df.drop_duplicates(subset=['店铺'], keep='first')\n\n# 重置索引\ndf_clean = df_clean.reset_index(drop=True)\n\n# 展示整理后的表格\nemit_table(df_clean, title=\"去重后的销售数据\")\n\n# 导出为 Excel 文件供后续使用\noutput_path = \"下载/销售数据_整理后.xlsx\"\ndf_clean.to_excel(output_path, index=False)\nemit_file(output_path, label=\"销售数据_整理后\")\n```"
+    },
+    {
+      "name": "5_多产物混合",
+      "user": "画个销售趋势柱形图,顺便把数据也导出 csv 给我下载。A: 12.5 万, B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 1,
+        "file": 1,
+        "image": 0,
+        "table": 0
+      },
+      "expected": {
+        "chart": 1,
+        "file": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 准备数据\ndata = {\n    \"店铺\": [\"A\", \"B\", \"C\"],\n    \"销售额(万)\": [12.5, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 1. 生成 ECharts 柱形图配置\noption = {\n    \"title\": {\"text\": \"各店铺销售趋势\"},\n    \"tooltip\": {\"trigger\": \"axis\"},\n    \"xAxis\": {\n        \"type\": \"category\",\n        \"data\": df[\"店铺\"].tolist()\n    },\n    \"yAxis\": {\n        \"type\": \"value\",\n        \"name\": \"销售额 (万)\"\n    },\n    \"series\": [\n        {\n            \"name\": \"销售额\",\n            \"type\": \"bar\",\n            \"data\": df[\"销售额(万)\"].tolist(),\n            \"itemStyle\": {\n                \"color\": \"#5470c6\"\n            },\n            \"label\": {\n                \"show\": True,\n                \"position\": \"top\",\n                \"formatter\": \"{c} 万\"\n            }\n        }\n    ]\n}\nemit_chart(option, title=\"各店铺销售趋势柱形图\")\n\n# 2. 导出 CSV 文件\nfile_path = \"下载/销售数据.csv\"\ndf.to_csv(file_path, index=False, encoding='utf-8-sig')\nemit_file(file_path, label=\"销售数据.csv\")\n```"
+    }
+  ],
+  "claude-opus-4-7": [
+    {
+      "name": "1_用户主动要图表",
+      "user": "画一个柱形图比较 A/B/C 三家店本月销售额。A: 12.5 万, B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 1,
+        "file": 0,
+        "image": 0,
+        "table": 0
+      },
+      "expected": {
+        "chart": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\noption = {\n    \"title\": {\"text\": \"本月各店铺销售额对比\"},\n    \"tooltip\": {},\n    \"xAxis\": {\n        \"data\": [\"A店\", \"B店\", \"C店\"]\n    },\n    \"yAxis\": {\n        \"name\": \"销售额 (万)\"\n    },\n    \"series\": [\n        {\n            \"name\": \"销售额\",\n            \"type\": \"bar\",\n            \"data\": [12.5, 8.7, 15.3],\n            \"itemStyle\": {\n                \"color\": \"#5470c6\"\n            }\n        }\n    ]\n}\nemit_chart(option, title=\"本月各店铺销售额对比\")\n```"
+    },
+    {
+      "name": "2_AI自主判断要图表",
+      "user": "分析这三家店本月业绩,A 12.5 万, B 8.7 万, C 15.3 万。给我说说情况",
+      "emits": {
+        "chart": 2,
+        "file": 0,
+        "image": 0,
+        "table": 1
+      },
+      "expected": {
+        "chart": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 创建数据\ndata = {\n    '店铺': ['A店', 'B店', 'C店'],\n    '销售额(万)': [12.5, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 计算统计指标\ntotal_sales = df['销售额(万)'].sum()\navg_sales = df['销售额(万)'].mean()\nbest_shop = df.loc[df['销售额(万)'].idxmax()]\nworst_shop = df.loc[df['销售额(万)'].idxmin()]\n\n# 添加占比列\ndf['占比'] = (df['销售额(万)'] / total_sales * 100).round(1)\n\n# 1. 输出交互式表格\nemit_table(df, title=\"本月各店铺业绩详情\")\n\n# 2. 输出柱状图\noption = {\n    \"title\": {\"text\": \"本月各店铺销售额对比\"},\n    \"tooltip\": {\"trigger\": \"axis\", \"formatter\": \"{b}: {c}万 ({d}%)\"},\n    \"xAxis\": {\"type\": \"category\", \"data\": df['店铺'].tolist()},\n    \"yAxis\": {\"type\": \"value\", \"name\": \"销售额 (万)\"},\n    \"series\": [\n        {\n            \"type\": \"bar\",\n            \"data\": df['销售额(万)'].tolist(),\n            \"itemStyle\": {\"color\": \"#5470C6\"},\n            \"label\": {\"show\": True, \"position\": \"top\", \"formatter\": \"{c}万\"}\n        }\n    ]\n}\nemit_chart(option, title=\"销售额对比图\")\n\n# 3. 输出饼图展示占比\npie_option = {\n    \"title\": {\"text\": \"销售额占比分布\"},\n    \"tooltip\": {\"trigger\": \"item\", \"formatter\": \"{b}: {c}万 ({d}%)\"},\n    \"series\": [\n        {\n            \"type\": \"pie\",\n            \"radius\": \"50%\",\n            \"data\": [\n                {\"value\": row['销售额(万)'], \"name\": row['店铺']} \n                for _, row in df.iterrows()\n            ],\n            \"emphasis\": {\n                \"itemStyle\": {\n                    \"shadowBlur\": 10,\n                    \"shadowOffsetX\": 0,\n                    \"shadowColor\": \"rgba(0, 0, 0, 0.5)\"\n                }\n            },\n            \"label\": {\"formatter\": \"{b}: {d}%\"}\n        }\n    ]\n}\nemit_chart(pie_option, title=\"业绩占比分析\")\n```"
+    },
+    {
+      "name": "3_用户主动要下载",
+      "user": "把这三家店的销售数据整理成 Excel 给我下载。A: 12.5 万, B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 0,
+        "file": 1,
+        "image": 0,
+        "table": 0
+      },
+      "expected": {
+        "file": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 创建数据\ndata = {\n    \"店铺\": [\"A\", \"B\", \"C\"],\n    \"销售额 (万)\": [12.5, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 保存为 Excel 文件\nfile_path = \"下载/店铺销售数据.xlsx\"\ndf.to_excel(file_path, index=False)\n\n# 发出文件下载卡片\nemit_file(file_path, label=\"店铺销售数据\")\n```"
+    },
+    {
+      "name": "4_AI自主判断给下载",
+      "user": "把销售数据合并去重整理好,我后续要看。A: 12.5 万, A: 13 万(重复), B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 0,
+        "file": 1,
+        "image": 0,
+        "table": 1
+      },
+      "expected": {
+        "file": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 创建原始数据\ndata = {\n    '店铺': ['A', 'A', 'B', 'C'],\n    '销售额': [12.5, 13.0, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 数据清洗：去重 (保留第一次出现的记录，因为题目暗示 A:13万是重复的冗余数据)\n# 如果意图是取最大值，逻辑会不同，这里按\"去重整理\"理解为移除完全重复或冗余条目\n# 假设第二条 A:13 万是录入重复或错误，我们保留第一条有效数据，或者根据常规逻辑去重\n# 此处演示标准去重逻辑：subset=['店铺'] 表示如果店铺名相同则视为重复，保留第一个\ndf_clean = df.drop_duplicates(subset=['店铺'], keep='first')\n\n# 重置索引\ndf_clean = df_clean.reset_index(drop=True)\n\n# 输出交互式表格供用户查看\nemit_table(df_clean, title=\"清洗后的销售数据\")\n\n# 导出为 Excel 文件供用户下载\noutput_path = \"下载/清洗后销售数据.xlsx\"\ndf_clean.to_excel(output_path, index=False)\nemit_file(output_path, label=\"清洗后销售数据.xlsx\")\n```"
+    },
+    {
+      "name": "5_多产物混合",
+      "user": "画个销售趋势柱形图,顺便把数据也导出 csv 给我下载。A: 12.5 万, B: 8.7 万, C: 15.3 万",
+      "emits": {
+        "chart": 1,
+        "file": 1,
+        "image": 0,
+        "table": 0
+      },
+      "expected": {
+        "chart": 1,
+        "file": 1
+      },
+      "verdict": "PASS",
+      "output": "```python\nimport pandas as pd\n\n# 准备数据\ndata = {\n    \"店铺\": [\"A\", \"B\", \"C\"],\n    \"销售额(万)\": [12.5, 8.7, 15.3]\n}\ndf = pd.DataFrame(data)\n\n# 1. 绘制 ECharts 柱形图\noption = {\n    \"title\": {\"text\": \"各店铺销售趋势\"},\n    \"tooltip\": {\"trigger\": \"axis\"},\n    \"xAxis\": {\n        \"type\": \"category\",\n        \"data\": df[\"店铺\"].tolist(),\n        \"name\": \"店铺\"\n    },\n    \"yAxis\": {\n        \"type\": \"value\",\n        \"name\": \"销售额 (万)\"\n    },\n    \"series\": [\n        {\n            \"name\": \"销售额\",\n            \"type\": \"bar\",\n            \"data\": df[\"销售额(万)\"].tolist(),\n            \"itemStyle\": {\n                \"color\": \"#5470c6\"\n            },\n            \"label\": {\n                \"show\": True,\n                \"position\": \"top\",\n                \"formatter\": \"{c} 万\"\n            }\n        }\n    ]\n}\nemit_chart(option, title=\"各店铺销售趋势柱形图\")\n\n# 2. 导出 CSV 文件\nfile_path = \"下载/销售数据.csv\"\ndf.to_csv(file_path, index=False, encoding='utf-8-sig')\nemit_file(file_path, label=\"销售数据.csv\")\n```"
+    }
+  ]
+}
