@@ -92,12 +92,11 @@ class SandboxExecutor:
             f"result_len={len(raw_result)} | result={raw_result[:200]}"
         )
 
-        # 4. 执行成功时:扫 .echart.json 中转数据(staging,读完即删)
-        #    再扫 output_dir 上传产物文件(下载/)
+        # 4. 执行成功时:扫 output_dir 兜底上传(LLM 漏 emit 时的安全网)
+        # 注:沙盒 IO 统一协议 emit_file/emit_image 是主路径,这里仅兜底
         is_error = raw_result.startswith("❌")
         is_timeout = raw_result.startswith("⏱")
         if not is_error and not is_timeout:
-            self._scan_chart_options()  # staging 中转,读完即删
             file_results = await self._auto_upload_new_files()
             if file_results:
                 raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
@@ -243,8 +242,6 @@ class SandboxExecutor:
                                 self._image_dims[f.name] = (_im.width, _im.height)
                         except Exception:
                             pass
-                    # 路径协议:.echart.json 不再写到 output_dir,改到 staging
-                    # 由 _scan_chart_options 单独扫描 + 即删,这里不再处理
                     logger.info(
                         f"SandboxExecutor auto-upload | file={f.name} | "
                         f"size={st.st_size} | new={old is None}"
@@ -257,38 +254,3 @@ class SandboxExecutor:
                     results.append(f"❌ 文件上传失败: {f.name} ({e})")
 
         return results
-
-    def _scan_chart_options(self) -> None:
-        """扫描 staging 中的 .echart.json — 读取后立即删除(中转数据,不持久)。
-
-        新协议:LLM 写图表配置到 "staging/x.echart.json"(相对路径),
-        cwd=/workspace 解析到 host staging_dir。读完即删,避免污染
-        用户 下载/ 目录(原 bug:文件留在 output_dir 持久化)。
-        """
-        if not self._staging_dir:
-            return
-        from pathlib import Path
-        staging_path = Path(self._staging_dir)
-        if not staging_path.exists():
-            return
-        for f in staging_path.iterdir():
-            if not f.is_file() or not f.name.endswith(".echart.json"):
-                continue
-            try:
-                content = f.read_text(encoding="utf-8")
-                if len(content) <= self._CHART_OPTION_MAX_BYTES:
-                    import json as _json
-                    option = _json.loads(content)
-                    if not hasattr(self, "_chart_options"):
-                        self._chart_options = {}
-                    self._chart_options[f.name] = option
-                else:
-                    logger.warning(
-                        f"SandboxExecutor chart too large | "
-                        f"file={f.name} | size={len(content)}"
-                    )
-                f.unlink()  # 中转数据,读完即删
-            except Exception as e:
-                logger.warning(
-                    f"Chart option scan failed | file={f.name} | error={e}"
-                )

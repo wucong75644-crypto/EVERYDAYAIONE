@@ -167,6 +167,13 @@ class ChatToolMixin:
                 self._chart_options = {}
             self._chart_options.update(executor._chart_options)
 
+        # 透传 table parts (emit_table 沙盒 IO 统一协议)
+        if hasattr(executor, "_pending_table_parts") and executor._pending_table_parts:
+            if not hasattr(self, "_pending_table_parts"):
+                self._pending_table_parts = []
+            self._pending_table_parts.extend(executor._pending_table_parts)
+            executor._pending_table_parts = []  # 透传后清空 executor 端
+
         return results
 
     async def _execute_single_tool(

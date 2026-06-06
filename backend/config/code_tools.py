@@ -32,51 +32,33 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 # AI 看 attachments 的 status 自主决策(raw 调 file_analyze,analyzed 用 parquet)
 _DESCRIPTION = (
     "Python 沙盒 (有状态,变量跨调用保留)。沙盒 cwd=/workspace,所有路径用相对字符串。\n"
-    "预装: pandas/duckdb/matplotlib/openpyxl/pdfplumber/python-docx 等\n"
+    "预装: pandas/duckdb/matplotlib/plotly/altair/openpyxl/pdfplumber/python-docx 等\n"
     "\n"
     "路径协议(全部相对):\n"
     "  读用户上传: pd.read_excel('上传/2026-06/x.xlsx')  ← attachments 给 path 字段\n"
     "  读 parquet: pd.read_parquet('staging/x.parquet')  ← attachments 给 parquet 字段\n"
     "  读 ERP 结果: pd.read_parquet('staging/erp_xxx.parquet')\n"
-    "  写产物给用户: df.to_excel('下载/x.xlsx')          ← 自动出下载卡片\n"
+    "  写产物给用户: df.to_excel('下载/x.xlsx') 然后 emit_file('下载/x.xlsx')\n"
     "  写缓存: df.to_parquet('staging/x.parquet')        ← 跨调用复用,24h 自动清\n"
-    "  写图表配置: open('staging/x.echart.json', 'w')    ← 中转数据,读完即删\n"
+    "\n"
+    "【产物输出协议 — 当你想给用户看的内容时必须调用】\n"
+    "  emit_chart(option, title='')   ECharts 图表(option 完整 echarts 配置 dict)\n"
+    "  emit_file(path, label=None)    文件下载卡片(写文件后调,没 emit 等于丢)\n"
+    "  emit_image(path)               静态图片(PNG/JPG)\n"
+    "  emit_table(df, title='')       交互式表格(传 DataFrame 或 list[dict])\n"
+    "规则:\n"
+    "  1. 不要让用户读 print,要 emit_xxx 让前端渲染卡片\n"
+    "  2. df.to_excel/csv 后必须 emit_file 否则用户看不到下载\n"
+    "  3. matplotlib plt.show() 自动 emit_image 不需要显式调\n"
+    "  4. plotly fig.show() / altair Chart 自动 emit_chart 不需要显式调\n"
     "\n"
     "DuckDB SQL 方言: 中文列名用双引号; ts::DATE 不是 DATE(); 拼接 || 不是 +;\n"
     "  日期: DATE_TRUNC('month', ts); 类型: TIMESTAMP/BIGINT/DOUBLE/VARCHAR\n"
     "大数据(>10万行): SQL 聚合后 .df(),禁止 SELECT * .df() 全量加载\n"
     "导出 Excel: 用 engine='xlsxwriter',自动处理 NaN/Timestamp\n"
-    "禁止: OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR 变量(已删,会 NameError);get_file()(已删);sys/subprocess\n"
+    "禁止: OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR 变量(已删);get_file()(已删);sys/subprocess\n"
     "代码语法全英文半角: 逗号 , 括号 () 分号 ; 冒号 :"
 )
-
-# emit 协议(POC 2026-06):受 settings.emit_protocol_enabled 控制
-# 启用后追加到 _DESCRIPTION,LLM 用 emit_xxx() 主动声明产物,主进程解析 [EMIT] marker
-_EMIT_PROTOCOL_HINT = (
-    "\n\n【产物输出协议(实验)】\n"
-    "沙盒预装 4 个产物声明函数,当你产生想给用户看的内容时,必须调用:\n"
-    "  emit_chart(option, title='')   ECharts 图表(option 是完整 echarts 配置 dict)\n"
-    "  emit_file(path, label=None)    文件下载卡片(写文件后调,没 emit 等于丢)\n"
-    "  emit_image(path)               静态图片\n"
-    "  emit_table(df, title='')       交互式表格(传 DataFrame 或 list[dict])\n"
-    "\n"
-    "规则:\n"
-    "  1. 不要让用户读 print 数据,要 emit_xxx 让前端渲染卡片\n"
-    "  2. 写文件(df.to_excel/csv)后必须 emit_file,否则用户看不到下载链接\n"
-    "  3. 画图表优先 emit_chart(ECharts option),不要走 staging/x.echart.json 旧路径"
-)
-
-
-def _get_description() -> str:
-    """运行时拼接 description(根据 emit_protocol_enabled flag)"""
-    desc = _DESCRIPTION
-    try:
-        from core.config import get_settings
-        if get_settings().emit_protocol_enabled:
-            desc += _EMIT_PROTOCOL_HINT
-    except Exception:
-        pass
-    return desc
 
 
 def build_code_tools(
@@ -91,7 +73,7 @@ def build_code_tools(
             "type": "function",
             "function": {
                 "name": "code_execute",
-                "description": _get_description(),
+                "description": _DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {
