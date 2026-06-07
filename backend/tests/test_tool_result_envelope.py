@@ -27,7 +27,9 @@ from services.agent.tool_result_envelope import (
 @pytest.fixture(autouse=True)
 def _setup_staging(tmp_path):
     """每个测试自动设置 staging_dir 到临时目录"""
-    staging = str(tmp_path / "staging" / "test-conv")
+    staging_path = tmp_path / "staging" / "test-conv"
+    staging_path.mkdir(parents=True, exist_ok=True)
+    staging = str(staging_path)
     set_staging_dir(staging)
     yield staging
     clear_staging_dir()

@@ -645,7 +645,6 @@ async def ensure_parquet_cache(
     )
 
     staging = Path(staging_dir)
-    staging.mkdir(parents=True, exist_ok=True)
     cache_path = staging / cache_name
     snapshot_path = cache_path.with_suffix(".snapshot")
 
@@ -985,7 +984,6 @@ async def ensure_parquet_cache_csv(
         f"{Path(csv_path).stem}.parquet"
     )
     staging = Path(staging_dir)
-    staging.mkdir(parents=True, exist_ok=True)
     cache_path = staging / cache_name
     snapshot_path = cache_path.with_suffix(".snapshot")
 

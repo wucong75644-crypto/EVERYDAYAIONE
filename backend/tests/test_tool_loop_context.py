@@ -218,7 +218,9 @@ class TestToolResultEnvelope:
         from services.agent.tool_result_envelope import (
             wrap, set_staging_dir, clear_staging_dir, STAGED_MARKER,
         )
-        staging = str(tmp_path / "staging" / "test")
+        _staging_path = tmp_path / "staging" / "test"
+        _staging_path.mkdir(parents=True, exist_ok=True)
+        staging = str(_staging_path)
         set_staging_dir(staging)
         try:
             result = "标题\n" + "x" * 5000
@@ -239,7 +241,9 @@ class TestToolResultEnvelope:
             wrap, ERP_AGENT_RESULT_BUDGET,
             set_staging_dir, clear_staging_dir, STAGED_MARKER,
         )
-        staging = str(tmp_path / "staging" / "test")
+        _staging_path = tmp_path / "staging" / "test"
+        _staging_path.mkdir(parents=True, exist_ok=True)
+        staging = str(_staging_path)
         set_staging_dir(staging)
         try:
             result = "标题\n" + "x" * (ERP_AGENT_RESULT_BUDGET + 500)

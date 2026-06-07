@@ -426,10 +426,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     g["Path"] = Path
 
     # 路径协议:cwd=workspace,AI 用相对路径"上传/x" "下载/x" "staging/x"
-    # 不再注入 OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR 等字符串变量
-    # output_dir 目录(workspace/下载/)仍需主进程创建,供 _auto_upload_new_files 扫描
-    if output_dir:
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    # 目录存在性由主进程 core/workspace.resolve_* 契约保证,子进程不再 mkdir
 
     # DuckDB 磁盘模式预注入：数据全程在磁盘，内存只做缓存
     # AI 直接用 duckdb.sql() 即可，不需要自己配置连接

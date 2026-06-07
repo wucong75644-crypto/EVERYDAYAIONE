@@ -321,7 +321,6 @@ def resolve_export_path(
         user_id=user_id or "", org_id=org_id,
         conversation_id=conv_id,
     ))
-    staging_dir.mkdir(parents=True, exist_ok=True)
 
     ts = int(_time.time())
     filename = f"local_{doc_type}_{ts}.parquet"

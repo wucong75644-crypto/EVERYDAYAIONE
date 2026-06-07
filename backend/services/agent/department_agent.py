@@ -236,7 +236,6 @@ class DepartmentAgent(ABC):
         ts = int(start)
         filename = f"{self.domain}_{ts}.parquet"
         staging_path = Path(staging_dir)
-        staging_path.mkdir(parents=True, exist_ok=True)
         file_path = staging_path / filename
 
         try:
