@@ -1,0 +1,116 @@
+{
+  "OLD": [
+    {
+      "run": 1,
+      "code_lines": 50,
+      "step_comments": 0,
+      "has_emit_file": false,
+      "has_merge": false,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": false,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%m.%d').str.lstrip('0').str.replace('^\\\\.', '0', regex=True)\n# 修正逻辑：如果月份是单数字且被lstrip去掉了，需要补回逻辑，或者直接用格式化判断\n# 更稳妥的方式：\ndef format_date(ts):\n    if pd.isna(ts):\n        return \"\"\n    m = ts.month\n    d = ts.day\n    return f\"{m}.{d}\"\n\ndf['日期'] = df['申请时间'].apply(format_date)\n\n# 2. 处理数量汇总规则: 同一订单按 单价>0 的行汇总\n# 先标记有效行\ndf['有效数量'] = df.apply(lambda x: x['数量'] if x['单价'] > 0 else 0, axis=1)\n\n# 定义聚合字典\nagg_dict = {\n    '日期': 'first',       # 取第一行的日期\n    '发票类型': 'first',\n    '购方名称': 'first',\n    '购方税号': 'first',\n    '商品名称': 'first',\n    '有效数量': 'sum',     # 汇总数量\n    '发票金额': 'sum',     # 汇总金额 (通常一个订单多行是明细，金额需加总，若原意是每行独立则用first，这里按常规理解汇总)\n    '纸票收货人姓名': 'first',\n    '备注': 'first'\n}\n\n# 分组聚合\ngrouped = df.groupby('订单编号').agg(agg_dict).reset_index()\n\n# 3. 构建目标列\nresult = pd.DataFrame()\nresult['日期'] = grouped['日期']\nresult['平台订单号'] = grouped['订单编号']\nresult['发票类型'] = grouped['发票类型']\nresult['公司名称'] = grouped['购方名称']\nresult['税号'] = grouped['购方税号']\nresult['项目名称'] = grouped['商品名称']\nresult['数量'] = grouped['有效数量']\nresult['金额'] = grouped['发票金额']\nresult['平台+店铺'] = ''  # 留空\nresult['申请人'] = grouped['纸票收货人姓名']\nresult['备注'] = grouped['备注']\n\n# 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nprint(f\"处理完成，共 {len(result)} 条记录，已保存至 {output_path}\")\nprint(result.head())\n"
+    },
+    {
+      "run": 2,
+      "code_lines": 45,
+      "step_comments": 0,
+      "has_emit_file": false,
+      "has_merge": true,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": true,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 的 月.日 格式 (去掉前导 0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 2. 处理数量: 同一订单按 单价>0 的行汇总\n# 先将数量列转为数值型，避免计算错误\ndf['数量'] = pd.to_numeric(df['数量'], errors='coerce').fillna(0)\ndf['单价'] = pd.to_numeric(df['单价'], errors='coerce').fillna(0)\n\n# 标记需要计数的行 (单价 > 0)\ndf['有效数量'] = df.apply(lambda row: row['数量'] if row['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合有效数量\nqty_agg = df.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_agg.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 3. 准备基础数据 (去重，因为一个订单可能有多行商品，但发票信息通常一致，取第一行)\n# 注意：如果同一个订单有不同商品行且需要保留多行，逻辑需调整。\n# 根据需求“项目名称”是单列，推测可能是一个订单对应一个主要商品，或者取第一个。\n# 这里假设每个订单编号在结果中只出现一次，取该订单的第一行作为代表，并替换聚合后的数量。\nbase_cols = ['订单编号', '发票类型', '购方名称', '购方税号', '商品名称', '发票金额', '纸票收货人姓名', '备注']\ndf_base = df[base_cols].drop_duplicates(subset=['订单编号'], keep='first').copy()\n\n# 合并聚合后的数量\ndf_final = df_base.merge(qty_agg, on='订单编号', how='left')\n\n# 4. 构建目标列\nresult = pd.DataFrame()\nresult['日期'] = df['日期'].drop_duplicates().reset_index(drop=True) # 这里的日期需要对应到去重后的订单\n# 重新对齐日期到去重后的订单列表\norder_dates = df[['订单编号', '日期']].drop_duplicates(subset=['订单编号'], keep='first')\ndf_final = df_final.merge(order_dates, on='订单编号', how='left')\n\nresult['日期'] = df_final['日期']\nresult['平台订单号'] = df_final['订单编号']\nresult['发票类型'] = df_final['发票类型']\nresult['公司名称'] = df_final['购方名称']\nresult['税号'] = df_final['购方税号']\nresult['项目名称'] = df_final['商品名称']\nresult['数量'] = df_final['数量']\nresult['金额'] = df_final['发票金额']\nresult['平台+店铺'] = '' # 留空\nresult['申请人'] = df_final['纸票收货人姓名']\nresult['备注'] = df_final['备注']\n\n# 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nprint(f\"处理完成，共 {len(result)} 行数据，已保存至 {output_path}\")\nprint(result.head())\n"
+    },
+    {
+      "run": 3,
+      "code_lines": 51,
+      "step_comments": 0,
+      "has_emit_file": false,
+      "has_merge": false,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": false,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%-m.%-d')\n# 兼容 Windows 环境 (strftime 不支持 %-m), 使用 lstrip('0')\nif '%-m' in df['日期'].iloc[0]:\n    pass # Linux/Mac 已处理\nelse:\n    df['日期'] = df['申请时间'].dt.month.astype(str) + '.' + df['申请时间'].dt.day.astype(str)\n\n# 2. 筛选有效行用于数量汇总 (单价 > 0)\nvalid_qty_mask = df['单价'] > 0\n# 将无效行的数量置为 0，方便后续 groupby 求和\ndf['有效数量'] = 0\ndf.loc[valid_qty_mask, '有效数量'] = df.loc[valid_qty_mask, '数量']\n\n# 3. 按订单编号聚合\n# 需要保留的字段逻辑:\n# - 日期, 发票类型, 公司名称, 税号, 项目名称, 金额, 申请人, 备注: 取每组第一行 (假设同一订单这些信息一致)\n# - 数量: 求和 (仅统计单价>0的行)\nagg_dict = {\n    '日期': 'first',\n    '发票类型': 'first',\n    '购方名称': 'first',\n    '购方税号': 'first',\n    '商品名称': 'first',\n    '发票金额': 'first',\n    '纸票收货人姓名': 'first',\n    '备注': 'first',\n    '有效数量': 'sum'\n}\n\ngrouped = df.groupby('订单编号', as_index=False).agg(agg_dict)\n\n# 4. 构建目标列\nresult = pd.DataFrame()\nresult['日期'] = grouped['日期']\nresult['平台订单号'] = grouped['订单编号']\nresult['发票类型'] = grouped['发票类型']\nresult['公司名称'] = grouped['购方名称']\nresult['税号'] = grouped['购方税号']\nresult['项目名称'] = grouped['商品名称']\nresult['数量'] = grouped['有效数量']\nresult['金额'] = grouped['发票金额']\nresult['平台+店铺'] = ''  # 留空\nresult['申请人'] = grouped['纸票收货人姓名']\nresult['备注'] = grouped['备注']\n\n# 5. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nprint(f\"处理完成，共 {len(result)} 条订单记录。\")\nprint(f\"文件已保存至: {output_path}\")\nprint(result.head())\n"
+    },
+    {
+      "run": 4,
+      "code_lines": 47,
+      "step_comments": 0,
+      "has_emit_file": false,
+      "has_merge": true,
+      "uses_suffixes": true,
+      "drops_before_merge": true,
+      "keyerror_risk": false,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 的 月.日 格式 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 2. 处理数量: 同一订单按 单价>0 的行汇总\n# 先标记有效行\ndf['有效数量'] = df.apply(lambda row: row['数量'] if row['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合数量\nqty_sum = df.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_sum.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 合并回原表 (取每个订单的第一行作为基础信息，因为金额、名称等通常一致或取首行)\n# 注意：金额直接取原值，不需要聚合，除非一个订单多行金额不同需加总。\n# 根据需求“金额：发票金额”，假设每行即最终展示行，或者如果需按订单合并金额：\n# 这里假设用户希望保留原始明细行结构，但数量被修正为订单维度的汇总值。\n# 如果原数据一个订单有多行商品，通常Excel整理需要一行一单还是保留多行？\n# 需求中列有\"项目名称\"(商品名称)，若一个订单多商品，则不能简单合并为一行。\n# 重新解读规则：“数量：同一订单按 单价>0 的行汇总”。\n# 这意味着输出表中，该订单下的所有行，其“数量”列都显示该订单的汇总数量？\n# 或者输出表本身就需要按订单去重？\n# 观察列要求：有\"项目名称\"。如果一个订单有多个商品，必须保留多行。\n# 那么“数量汇总”可能是指：该订单下所有商品的总数量填在每一行？或者只统计主商品？\n# 通常此类需求是：将同一个订单号的多行数据合并成一行（如果商品相同），或者如果商品不同，数量列显示该订单总数。\n# 鉴于有\"项目名称\"列，最稳妥的方式是：保留原始行结构（不同商品不同行），但该订单的“数量”列统一填充为该订单符合条件行的数量之和。\n\ndf = df.merge(qty_sum[['订单编号', '数量']], on='订单编号', how='left', suffixes=('', '_new'))\n# 覆盖原数量列\ndf['数量'] = df['数量_new']\ndf.drop(columns=['数量_new', '有效数量'], inplace=True)\n\n# 3. 构建目标列\nresult = pd.DataFrame()\nresult['日期'] = df['日期']\nresult['平台订单号'] = df['订单编号']\nresult['发票类型'] = df['发票类型']\nresult['公司名称'] = df['购方名称']\nresult['税号'] = df['购方税号']\nresult['项目名称'] = df['商品名称']\nresult['数量'] = df['数量']\nresult['金额'] = df['发票金额']\nresult['平台+店铺'] = ''  # 留空\nresult['申请人'] = df['纸票收货人姓名']\nresult['备注'] = df['备注']\n\n# 4. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nprint(f\"处理完成，共 {len(result)} 行数据，已保存至 {output_path}\")\nprint(result.head())\n"
+    },
+    {
+      "run": 5,
+      "code_lines": 53,
+      "step_comments": 0,
+      "has_emit_file": false,
+      "has_merge": true,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": true,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 的 月.日 格式 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%-m.%-d')\n# 兼容 Windows 环境 (strftime 不支持 %-m), 如果上面失败则用下面逻辑\nif df['日期'].iloc[0].startswith('0'):\n    df['日期'] = df['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 2. 数量汇总规则: 同一订单按 单价>0 的行汇总\n# 先标记有效行\ndf['有效数量'] = df.apply(lambda row: row['数量'] if row['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合数量\nqty_sum = df.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_sum.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 3. 构建结果表\n# 选取需要的列，对于非聚合列，取每个订单的第一行数据\nbase_cols = ['订单编号', '发票类型', '购方名称', '购方税号', '商品名称', '发票金额', '纸票收货人姓名', '备注']\nresult = df[base_cols].drop_duplicates(subset=['订单编号']).copy()\n\n# 合并汇总后的数量\nresult = result.merge(qty_sum, on='订单编号', how='left')\n\n# 4. 重命名和排序列\nfinal_df = pd.DataFrame()\nfinal_df['日期'] = result.set_index('订单编号').loc[result['订单编号']]['日期'].values # 重新对齐日期\n# 由于 drop_duplicates 可能打乱顺序，我们直接基于原始 df 映射更稳妥，或者简单点：\n# 重新构建最终 DataFrame\nmapping = result.set_index('订单编号')\n\nfinal_data = []\nfor oid in df['订单编号'].unique():\n    row_map = mapping.loc[oid]\n    # 获取该订单对应的日期 (取第一个出现的即可，因为同订单日期应一致)\n    date_val = df[df['订单编号']==oid]['日期'].iloc[0]\n    \n    final_data.append({\n        '日期': date_val,\n        '平台订单号': oid,\n        '发票类型': row_map['发票类型'],\n        '公司名称': row_map['购方名称'],\n        '税号': row_map['购方税号'],\n        '项目名称': row_map['商品名称'],\n        '数量': row_map['数量'],\n        '金额': row_map['发票金额'],\n        '平台+店铺': '',\n        '申请人': row_map['纸票收货人姓名'],\n        '备注': row_map['备注']\n    })\n\nfinal_df = pd.DataFrame(final_data)\n\n# 调整列顺序\ncols_order = ['日期', '平台订单号', '发票类型', '公司名称', '税号', '项目名称', '数量', '金额', '平台+店铺', '申请人', '备注']\nfinal_df = final_df[cols_order]\n\n# 导出 Excel\nfinal_df.to_excel('下载/发票整理表.xlsx', index=False, engine='xlsxwriter')\nprint(f\"处理完成，共 {len(final_df)} 条订单记录。\")\nprint(final_df.head())\n"
+    }
+  ],
+  "NEW": [
+    {
+      "run": 1,
+      "code_lines": 42,
+      "step_comments": 0,
+      "has_emit_file": true,
+      "has_merge": true,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": true,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%m.%d').str.replace(r'^0', '', regex=True).str.replace(r'\\.0', '.', regex=True)\n# 修正正则逻辑，确保 06.06 -> 6.6, 12.05 -> 12.5\ndef format_date(dt):\n    m = dt.month\n    d = dt.day\n    return f\"{m}.{d}\"\ndf['日期'] = df['申请时间'].apply(format_date)\n\n# 2. 基础列映射\ndf['平台订单号'] = df['订单编号']\ndf['公司名称'] = df['购方名称']\ndf['税号'] = df['购方税号']\ndf['项目名称'] = df['商品名称']\ndf['金额'] = df['发票金额']\ndf['平台+店铺'] = ''\ndf['申请人'] = df['纸票收货人姓名']\ndf['备注'] = df['备注']\n\n# 3. 处理数量: 同一订单按 单价>0 的行汇总\n# 先标记有效数量行\ndf['有效数量'] = df.apply(lambda x: x['数量'] if x['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合数量\nqty_sum = df.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_sum.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 合并回主表 (保留其他列的第一行值)\nbase_cols = ['订单编号', '日期', '平台订单号', '发票类型', '公司名称', '税号', '项目名称', '金额', '平台+店铺', '申请人', '备注']\n# 去重前需要先确保每个订单只保留一行用于合并其他信息\n# 这里假设一个订单内的发票类型/公司/商品等信息是一致的，取第一条\ndf_base = df.drop_duplicates(subset=['订单编号'], keep='first')[base_cols].copy()\n\n# 合并计算好的数量\nresult = pd.merge(df_base, qty_sum, on='订单编号', how='left')\nresult['数量'] = result['数量'].fillna(0)\n\n# 4. 调整列顺序\nfinal_cols = ['日期', '平台订单号', '发票类型', '公司名称', '税号', '项目名称', '数量', '金额', '平台+店铺', '申请人', '备注']\nresult = result[final_cols]\n\n# 5. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nemit_file(output_path, label='发票整理表.xlsx')\n"
+    },
+    {
+      "run": 2,
+      "code_lines": 41,
+      "step_comments": 0,
+      "has_emit_file": true,
+      "has_merge": false,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": false,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%m.%d').str.replace(r'^0', '', regex=False).str.replace(r'\\.0', '.', regex=False)\n# 修正正则逻辑: strftime('%m.%d') 得到 \"06.06\", 需要变成 \"6.6\"\n# 更稳妥的方法: 分别取月和日转int再拼接\ndf['日期'] = df['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 2. 处理数量聚合规则: 同一订单按 单价>0 的行汇总\n# 先标记有效行\ndf['有效数量'] = df.apply(lambda row: row['数量'] if row['单价'] > 0 else 0, axis=1)\n\n# 定义聚合字典\nagg_dict = {\n    '有效数量': 'sum',\n    '发票金额': 'first', # 金额通常整单一致，取第一行\n    '发票类型': 'first',\n    '购方名称': 'first',\n    '购方税号': 'first',\n    '商品名称': 'first', # 项目名称\n    '纸票收货人姓名': 'first' # 申请人\n}\n\n# 按订单编号分组聚合\ngrouped = df.groupby('订单编号').agg(agg_dict).reset_index()\n\n# 3. 构建目标列\nresult = pd.DataFrame()\nresult['日期'] = df.groupby('订单编号')['申请时间'].first().apply(lambda x: f\"{x.month}.{x.day}\")\nresult['平台订单号'] = grouped['订单编号']\nresult['发票类型'] = grouped['发票类型']\nresult['公司名称'] = grouped['购方名称']\nresult['税号'] = grouped['购方税号']\nresult['项目名称'] = grouped['商品名称']\nresult['数量'] = grouped['有效数量']\nresult['金额'] = grouped['发票金额']\nresult['平台+店铺'] = '' # 留空\nresult['申请人'] = grouped['纸票收货人姓名']\nresult['备注'] = '' # 原文未指定备注来源，留空\n\n# 4. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nemit_file(output_path, label='发票整理表.xlsx')\n"
+    },
+    {
+      "run": 3,
+      "code_lines": 47,
+      "step_comments": 0,
+      "has_emit_file": true,
+      "has_merge": true,
+      "uses_suffixes": false,
+      "drops_before_merge": true,
+      "keyerror_risk": false,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%m.%d').str.lstrip('0').replace(r'^\\.', '0', regex=True)\n# 修正逻辑：如果月份是单数字且被lstrip去掉了，需要补回逻辑，或者直接用格式化判断\n# 更稳妥的去前导0方法：\ndef format_date(dt):\n    m = dt.month\n    d = dt.day\n    return f\"{m}.{d}\"\ndf['日期'] = df['申请时间'].apply(format_date)\n\n# 2. 基础列映射\nresult = df.copy()\nresult['平台订单号'] = result['订单编号']\nresult['公司名称'] = result['购方名称']\nresult['税号'] = result['购方税号']\nresult['项目名称'] = result['商品名称']\nresult['金额'] = result['发票金额']\nresult['平台+店铺'] = '' # 留空\nresult['申请人'] = result['纸票收货人姓名']\nresult['备注'] = result['备注']\n\n# 3. 处理数量聚合规则: 同一订单按 单价>0 的行汇总\n# 先标记有效数量行\nresult['有效数量'] = result.apply(lambda x: x['数量'] if x['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合数量\nqty_sum = result.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_sum.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 合并回主表 (保留第一行的其他信息)\n# 由于需要保留每行的商品名称等细节，但数量要汇总到该订单的所有行？\n# 需求解读：\"同一订单按单价>0的行汇总\"。通常意味着如果一个订单有多行商品，数量列显示该订单的总有效数量。\n# 或者是指输出时每个订单只保留一行？\n# 根据通常的\"整理成Excel\"需求，如果是明细表，通常每行对应原数据的一行商品，但\"数量\"列显示该订单的汇总值。\n# 如果原数据一个订单多行商品，这里我们选择：每行保留商品明细，但\"数量\"列填入该订单的汇总值。\nresult = result.drop(columns=['数量'])\nresult = result.merge(qty_sum, on='订单编号', how='left')\n\n# 4. 选择并排序最终列\nfinal_cols = [\n    '日期', '平台订单号', '发票类型', '公司名称', '税号', \n    '项目名称', '数量', '金额', '平台+店铺', '申请人', '备注'\n]\n\noutput_df = result[final_cols]\n\n# 5. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\noutput_df.to_excel(output_path, index=False, engine='xlsxwriter')\n\nemit_file(output_path, label='发票整理表.xlsx')\n"
+    },
+    {
+      "run": 4,
+      "code_lines": 41,
+      "step_comments": 0,
+      "has_emit_file": true,
+      "has_merge": true,
+      "uses_suffixes": false,
+      "drops_before_merge": false,
+      "keyerror_risk": true,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%m.%d').str.replace(r'^0', '', regex=True).str.replace(r'\\.0', '.', regex=True)\n# 上面正则可能有点问题，重新写个稳妥的\ndef fmt_date(ts):\n    if pd.isna(ts): return ''\n    m = ts.month\n    d = ts.day\n    return f\"{m}.{d}\"\ndf['日期'] = df['申请时间'].apply(fmt_date)\n\n# 2. 基础列映射\ndf['平台订单号'] = df['订单编号']\ndf['公司名称'] = df['购方名称']\ndf['税号'] = df['购方税号']\ndf['项目名称'] = df['商品名称']\ndf['金额'] = df['发票金额']\ndf['平台+店铺'] = ''\ndf['申请人'] = df['纸票收货人姓名']\ndf['备注'] = df['备注']\n\n# 3. 处理数量: 同一订单按 单价>0 的行汇总\n# 先标记有效行\ndf['有效数量'] = df.apply(lambda x: x['数量'] if x['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合数量\nqty_sum = df.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_sum.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 合并回主表 (保留其他列的第一行值)\nbase_cols = ['订单编号', '日期', '平台订单号', '发票类型', '公司名称', '税号', '项目名称', '金额', '平台+店铺', '申请人', '备注']\n# 取每个订单的第一行作为基础信息\ndf_base = df.drop_duplicates(subset=['订单编号'], keep='first')[base_cols].copy()\n\n# 合并数量\nresult = df_base.merge(qty_sum, on='订单编号', how='left')\n\n# 4. 整理最终列顺序\nfinal_cols = ['日期', '平台订单号', '发票类型', '公司名称', '税号', '项目名称', '数量', '金额', '平台+店铺', '申请人', '备注']\nresult = result[final_cols]\n\n# 5. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\nemit_file(output_path, label='发票整理表.xlsx')\n"
+    },
+    {
+      "run": 5,
+      "code_lines": 43,
+      "step_comments": 0,
+      "has_emit_file": true,
+      "has_merge": true,
+      "uses_suffixes": false,
+      "drops_before_merge": true,
+      "keyerror_risk": false,
+      "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/_cache_v3.0_13e4522ac598_sheet0_104960729691_fd1952.parquet')\n\n# 1. 处理日期: 申请时间 -> 月.日 (去掉前导0)\ndf['申请时间'] = pd.to_datetime(df['申请时间'])\ndf['日期'] = df['申请时间'].dt.strftime('%m.%d').str.replace(r'^0', '', regex=False).str.replace(r'\\.0', '.', regex=False)\n# 更精确的去前导0逻辑: 比如 06.06 -> 6.06, 12.05 -> 12.05\ndef format_date(d):\n    if pd.isna(d): return \"\"\n    m = d.month\n    day = d.day\n    return f\"{m}.{day}\"\ndf['日期'] = df['申请时间'].apply(format_date)\n\n# 2. 基础列映射\ndf['平台订单号'] = df['订单编号']\ndf['公司名称'] = df['购方名称']\ndf['税号'] = df['购方税号']\ndf['项目名称'] = df['商品名称']\ndf['金额'] = df['发票金额']\ndf['平台+店铺'] = \"\" # 留空\ndf['申请人'] = df['纸票收货人姓名']\ndf['备注'] = df['备注']\n\n# 3. 处理数量: 同一订单按 单价>0 的行汇总\n# 先标记有效行\ndf['有效数量'] = df.apply(lambda x: x['数量'] if x['单价'] > 0 else 0, axis=1)\n\n# 按订单编号聚合数量\nqty_sum = df.groupby('订单编号')['有效数量'].sum().reset_index()\nqty_sum.rename(columns={'有效数量': '数量'}, inplace=True)\n\n# 合并回主表 (因为其他字段如金额、公司名等通常在同一订单内是一致的，取第一行即可)\n# 先去除原表中的数量列，准备合并\ndf_drop = df.drop(columns=['数量', '有效数量'])\n\n# 合并\nresult = pd.merge(df_drop, qty_sum, on='订单编号', how='left')\n\n# 4. 整理最终列顺序\nfinal_cols = [\n    '日期', '平台订单号', '发票类型', '公司名称', '税号', \n    '项目名称', '数量', '金额', '平台+店铺', '申请人', '备注'\n]\n\nfinal_df = result[final_cols]\n\n# 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nfinal_df.to_excel(output_path, index=False, engine='xlsxwriter')\n\nemit_file(output_path, label='发票整理表.xlsx')\n"
+    }
+  ]
+}
