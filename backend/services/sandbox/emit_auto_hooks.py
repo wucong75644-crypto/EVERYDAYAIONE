@@ -88,6 +88,9 @@ def install_ipython_display_shim(sandbox_globals: dict, emit_buffer: list[dict])
     fake_display.publish_display_data = publish_display_data
     fake_display.display = display
     fake_ipython.display = fake_display
+    # matplotlib 用 IPython.get_ipython() 检测是否在 notebook 环境,
+    # 返回 None 让它走默认 Agg 后端逻辑(避免 AttributeError)。
+    fake_ipython.get_ipython = lambda: None
     sys.modules["IPython"] = fake_ipython
     sys.modules["IPython.display"] = fake_display
 
