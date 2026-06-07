@@ -28,9 +28,23 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 }
 
 
-# 行业标准:工具描述极简,不教业务流程
-# AI 看 attachments 的 status 自主决策(raw 调 file_analyze,analyzed 用 parquet)
+# 工具描述按 Anthropic 官方推荐格式:What / When to use / When NOT / Params / Caveats
+# 来源:https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use
 _DESCRIPTION = (
+    "Python 沙盒,用于执行计算 / 数据处理 / 文件生成 / 图表渲染。\n"
+    "\n"
+    "【MUST USE — 以下场景必须调用本工具,禁止用文字回答】\n"
+    "  - 用户要求生成图表(柱形图/折线图/饼图/任何可视化) → 必须 emit_chart\n"
+    "  - 用户要求导出文件(Excel/CSV/PDF) → 必须 df.to_excel + emit_file\n"
+    "  - 用户要求计算 / 统计 / 聚合 / 排序 → 必须 SQL 或 pandas 计算\n"
+    "  - 用户要求查看具体数据表格 → 必须 emit_table\n"
+    "\n"
+    "【MUST NOT — 反偷懒】\n"
+    "  - 禁止只用文字描述'已生成柱形图''数据如下'等假装完成\n"
+    "  - 禁止'根据上文数据,大致情况是...' — 数据已在上文不代表不用算,要算就调本工具\n"
+    "  - 用户问'画图'=要看图,不是要读你描述图长什么样\n"
+    "  - 上文有数据汇总 ≠ 用户不要图。用户说'画柱形图',必须 emit_chart 让前端渲染卡片\n"
+    "\n"
     "Python 沙盒 (有状态,变量跨调用保留)。沙盒 cwd=/workspace,所有路径用相对字符串。\n"
     "预装: pandas/duckdb/matplotlib/plotly/altair/openpyxl/pdfplumber/python-docx 等\n"
     "\n"
