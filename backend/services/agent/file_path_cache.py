@@ -6,11 +6,6 @@
 - workspace: 工作区绝对路径（原始文件位置）
 - parquet: staging 里的 parquet 路径（file_analyze 后才有）
 
-get_file(name, usage) 按用途返回对应路径 + 自检：
-- usage="code"    → 返回 parquet（没有则拦截提示调 file_analyze）
-- usage="analyze" → 返回 workspace（源文件）
-- usage="delete"  → 返回 workspace
-
 归一化规则：NFKC + 只保留中文/字母/数字 + 扩展名点
 匹配策略：精确 → 归一化 → stem（无扩展名）→ 前缀（截断）
 
