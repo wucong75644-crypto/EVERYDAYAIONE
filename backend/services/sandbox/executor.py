@@ -1,17 +1,23 @@
 """
 沙盒执行器
 
-主进程负责: AST 验证 + 子进程生命周期管理 + 漏 emit 告警。
+主进程负责: AST 验证 + 子进程生命周期管理 + [EMIT] 协议解析 + 漏 emit 告警。
 子进程负责: chdir + exec 用户代码 + 返回结果(sandbox_worker.py)。
 
 产物协议: emit_chart/file/image/table (沙盒 IO 统一协议)。
+[EMIT] marker 在 execute() 内部解析,填进 AgentResult.emit_payloads,
+所有调用方(主 Agent / 子 Agent)拿到 AgentResult 时产物已就位。
+
 LLM 漏调 emit_xxx 时主进程不再兜底上传(对齐行业标准
 OpenAI/Anthropic/Jupyter),改为 WARNING 日志暴露漏调率。
 """
 
+import json
+import os
+import re
 import time as _time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -25,6 +31,9 @@ _PRODUCT_EXTS = frozenset({
     ".png", ".jpg", ".jpeg", ".svg", ".pdf",
     ".docx", ".pptx",
 })
+
+# [EMIT] 协议正则: [EMIT]{"kind":..., ...}[/EMIT]
+_EMIT_RE = re.compile(r"\[EMIT\](?P<payload>\{.+?\})\[/EMIT\]", re.DOTALL)
 
 
 class SandboxExecutor:
@@ -40,6 +49,8 @@ class SandboxExecutor:
         kernel_manager=None,
         conversation_id: str = "",
         skills_dir: str = "",
+        user_id: str = "",
+        org_id: Optional[str] = None,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
@@ -49,6 +60,8 @@ class SandboxExecutor:
         self._skills_dir = skills_dir        # 文件处理技能目录(只读)
         self._kernel_manager = kernel_manager  # KernelManager(有状态模式)
         self._conversation_id = conversation_id
+        self._user_id = user_id              # 给 emit_file/image 上传 OSS 用
+        self._org_id = org_id                # 给 emit_file/image 上传 OSS 用
 
     async def execute(
         self, code: str, description: str = "",
@@ -88,11 +101,6 @@ class SandboxExecutor:
         is_error = raw_result.startswith("❌")
         is_timeout = raw_result.startswith("⏱")
 
-        # 4. 执行成功时:检查 output_dir 是否有新文件但 LLM 没 emit
-        #    (不上传,只告警 - 对齐 Jupyter/OpenAI 行业标准)
-        if not is_error and not is_timeout:
-            self._warn_missed_emit(snapshot_before, raw_result)
-
         if is_error:
             return AgentResult(
                 summary=raw_result.lstrip("❌ "),
@@ -107,7 +115,93 @@ class SandboxExecutor:
                 error_message=raw_result,
             )
 
-        return AgentResult(summary=raw_result, status="success")
+        # 4. 解析 [EMIT] marker → emit_payloads (沙盒 IO 统一协议)
+        #    chart/table 直接收集;file/image 上传 OSS 拿 url+workspace_path 写回
+        summary, payloads = await self._parse_emit(raw_result)
+
+        # 5. 漏 emit 告警(不上传,只 WARNING - 对齐 Jupyter/OpenAI 行业标准)
+        self._warn_missed_emit(snapshot_before, raw_result)
+
+        return AgentResult(
+            summary=summary,
+            status="success",
+            emit_payloads=payloads,
+        )
+
+    async def _parse_emit(
+        self, content: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """解析 [EMIT] marker → (替换占位的 content, emit_payloads list)。
+
+        - chart/table: payload 直接收集
+        - file/image:  上传 OSS,把 url + workspace_path 写回 payload
+        """
+        if not content or not _EMIT_RE.search(content):
+            return content, []
+
+        emits: list[dict[str, Any]] = []
+        for m in _EMIT_RE.finditer(content):
+            try:
+                emits.append(json.loads(m.group("payload")))
+            except json.JSONDecodeError as e:
+                logger.warning(f"[EMIT] 解析失败 | err={e}")
+
+        if not emits:
+            return content, []
+
+        logger.info(
+            f"[EMIT] markers | conv={self._conversation_id[:8]} | "
+            f"count={len(emits)} | kinds={[e.get('kind') for e in emits]}"
+        )
+
+        # file/image 上传 OSS,把 url + workspace_path 写回 payload
+        file_image = [e for e in emits if e.get("kind") in ("file", "image")]
+        if file_image:
+            from services.file_upload import upload_to_payload
+            for p in file_image:
+                rel_path = p.get("path", "")
+                name = p.get("name") or os.path.basename(rel_path)
+                size = p.get("size", 0)
+                if self._workspace_dir and rel_path:
+                    host_dir = os.path.dirname(
+                        os.path.join(self._workspace_dir, rel_path)
+                    )
+                else:
+                    host_dir = self._output_dir or ""
+
+                if not (host_dir and os.path.exists(os.path.join(host_dir, name))):
+                    logger.warning(
+                        f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
+                    )
+                    continue
+                uploaded = await upload_to_payload(
+                    name, size, host_dir, self._user_id, self._org_id,
+                )
+                if uploaded:
+                    p["url"] = uploaded.get("url", "")
+                    p["mime_type"] = uploaded.get("mime_type", "")
+                    if "workspace_path" in uploaded:
+                        p["workspace_path"] = uploaded["workspace_path"]
+                    if not p.get("size"):
+                        p["size"] = uploaded.get("size", 0)
+
+        # 替换 marker → 占位文本(给 LLM 看的,防止它重复 emit)
+        def _placeholder(m):
+            try:
+                payload = json.loads(m.group("payload"))
+                kind = payload.get("kind", "?")
+                hints = {
+                    "chart": f"📊 图表已生成: {payload.get('title', '')}（前端将自动渲染）",
+                    "file": f"📎 文件已生成: {payload.get('label') or payload.get('name', '')}（下载卡片将自动展示）",
+                    "image": f"🖼️ 图片已生成: {payload.get('name', '')}（前端将自动展示）",
+                    "table": f"📋 表格已生成: {payload.get('title', '') or '(无标题)'}（前端将自动渲染）",
+                }
+                return hints.get(kind, f"[已 emit:{kind}]")
+            except Exception:
+                return ""
+
+        new_content = _EMIT_RE.sub(_placeholder, content)
+        return new_content, emits
 
     async def _execute_code(self, code: str) -> str:
         """Kernel 模式单一执行路径(无 subprocess 降级)。

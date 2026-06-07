@@ -56,6 +56,8 @@ def build_sandbox_executor(
         kernel_manager=kernel_manager,
         conversation_id=conversation_id,
         skills_dir=_skills_dir,
+        user_id=user_id,
+        org_id=org_id,
     )
 
 
