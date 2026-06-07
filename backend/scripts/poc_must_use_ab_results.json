@@ -1,0 +1,158 @@
+{
+  "qwen-plus": {
+    "A": [
+      {
+        "name": "S1_直接要图表",
+        "verdict": "PASS",
+        "reason": "emit=['chart']",
+        "snippet": "```python import pandas as pd import plotly.express as px  # 创建数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '销售额 (万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 绘制柱形图 fig = px.bar(df, x='店铺', y="
+      },
+      {
+        "name": "S2_AI自主判断要图表",
+        "verdict": "PASS",
+        "reason": "emit=['table', 'chart', 'chart']",
+        "snippet": "```python import pandas as pd import plotly.express as px  # 创建数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '本月业绩(万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 计算统计指标 total_sales = df['本月业绩(万)'"
+      },
+      {
+        "name": "S3_直接要下载",
+        "verdict": "PASS",
+        "reason": "emit=['file']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '店铺': ['A', 'B', 'C'],     '销售额 (万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 保存为 Excel 文件 output_path = '下载/店铺销售数据.xlsx' df.to_excel(output_p"
+      },
+      {
+        "name": "S4_多产物混合",
+        "verdict": "PASS",
+        "reason": "emit=['image', 'file']",
+        "snippet": "```python import pandas as pd import plotly.express as px  # 创建数据 data = {     '产品': ['A', 'B', 'C'],     '销售额_万': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 绘制柱形图 (使用 plotly 生成静态图片以符合 emit_image "
+      },
+      {
+        "name": "S5_★关键_上文有数据汇总_问画图",
+        "verdict": "PASS",
+        "reason": "emit=['image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3] } df = pd.DataFram"
+      },
+      {
+        "name": "S6_★关键_上文有汇总_要表格",
+        "verdict": "PASS",
+        "reason": "emit=['table']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统', '拼多多'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3, 10516],     '备注': ['', '', '', '', '', '', "
+      }
+    ],
+    "B": [
+      {
+        "name": "S1_直接要图表",
+        "verdict": "PASS",
+        "reason": "emit=['chart']",
+        "snippet": "```python import pandas as pd from pyecharts.charts import Bar from pyecharts import options as opts  # 准备数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '销售额': [12.5, 8.7, 15.3] } df = pd.DataFrame(dat"
+      },
+      {
+        "name": "S2_AI自主判断要图表",
+        "verdict": "PASS",
+        "reason": "emit=['table', 'image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '业绩(万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 计算统计指标 total_sales = df['业绩(万)'"
+      },
+      {
+        "name": "S3_直接要下载",
+        "verdict": "PASS",
+        "reason": "emit=['file']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '店铺': ['A', 'B', 'C'],     '销售额 (万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 保存为 Excel 文件 file_path = '下载/店铺销售数据.xlsx' df.to_excel(file_path,"
+      },
+      {
+        "name": "S4_多产物混合",
+        "verdict": "PASS",
+        "reason": "emit=['file', 'image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '产品': ['A', 'B', 'C'],     '销售额_万': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 1. 导出 CSV 文件 csv_path = '下载/销售数据.c"
+      },
+      {
+        "name": "S5_★关键_上文有数据汇总_问画图",
+        "verdict": "PASS",
+        "reason": "emit=['image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3] } df = pd.DataFram"
+      },
+      {
+        "name": "S6_★关键_上文有汇总_要表格",
+        "verdict": "PASS",
+        "reason": "emit=['table']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统', '拼多多'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3, 10516],     '备注': ['', '', '', '', '', '', "
+      }
+    ]
+  },
+  "claude-opus-4-7": {
+    "A": [
+      {
+        "name": "S1_直接要图表",
+        "verdict": "PASS",
+        "reason": "emit=['chart']",
+        "snippet": "```python import pandas as pd import plotly.express as px  # 创建数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '销售额_万': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 绘制柱形图 fig = px.bar(     df,      x="
+      },
+      {
+        "name": "S2_AI自主判断要图表",
+        "verdict": "PASS",
+        "reason": "emit=['image', 'table']",
+        "snippet": "```python import pandas as pd import plotly.express as px  # 创建数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '业绩(万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 计算统计指标 total_sales = df['业绩(万)'].su"
+      },
+      {
+        "name": "S3_直接要下载",
+        "verdict": "PASS",
+        "reason": "emit=['file']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '店铺': ['A', 'B', 'C'],     '销售额 (万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 保存为 Excel 文件 output_path = '下载/店铺销售数据.xlsx' df.to_excel(output_p"
+      },
+      {
+        "name": "S4_多产物混合",
+        "verdict": "PASS",
+        "reason": "emit=['file', 'image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '产品': ['A', 'B', 'C'],     '销售额(万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 保存 CSV 文件 csv_path = '下载/销售数据.csv"
+      },
+      {
+        "name": "S5_★关键_上文有数据汇总_问画图",
+        "verdict": "PASS",
+        "reason": "emit=['file']",
+        "snippet": "```python import pandas as pd import plotly.express as px  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统', '拼多多'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3, 10516] } df = p"
+      },
+      {
+        "name": "S6_★关键_上文有汇总_要表格",
+        "verdict": "PASS",
+        "reason": "emit=['table']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统', '拼多多'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3, 10516],     '备注': ['', '', '', '', '', '', "
+      }
+    ],
+    "B": [
+      {
+        "name": "S1_直接要图表",
+        "verdict": "PASS",
+        "reason": "emit=['chart']",
+        "snippet": "```python import pandas as pd from pyecharts.charts import Bar from pyecharts import options as opts  # 准备数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '销售额 (万)': [12.5, 8.7, 15.3] } df = pd.DataFrame"
+      },
+      {
+        "name": "S2_AI自主判断要图表",
+        "verdict": "PASS",
+        "reason": "emit=['table', 'image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '店铺': ['A店', 'B店', 'C店'],     '业绩(万)': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 计算统计指标 total_sales = df['业绩(万)'"
+      },
+      {
+        "name": "S3_直接要下载",
+        "verdict": "PASS",
+        "reason": "emit=['file']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '店铺': ['A', 'B', 'C'],     '销售额 (万)': [12.5, 8.7, 15.3] }  df = pd.DataFrame(data)  # 保存为 Excel 文件 file_path = '下载/店铺销售数据.xlsx' df.to_excel(file_path"
+      },
+      {
+        "name": "S4_多产物混合",
+        "verdict": "PASS",
+        "reason": "emit=['file', 'image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '产品': ['A', 'B', 'C'],     '销售额': [12.5, 8.7, 15.3] } df = pd.DataFrame(data)  # 保存 CSV 文件 csv_path = '下载/销售数据.csv' d"
+      },
+      {
+        "name": "S5_★关键_上文有数据汇总_问画图",
+        "verdict": "PASS",
+        "reason": "emit=['image']",
+        "snippet": "```python import pandas as pd import matplotlib.pyplot as plt  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3] } df = pd.DataFram"
+      },
+      {
+        "name": "S6_★关键_上文有汇总_要表格",
+        "verdict": "PASS",
+        "reason": "emit=['table']",
+        "snippet": "```python import pandas as pd  # 创建数据 data = {     '平台': ['淘宝', '抖音', '1688', '京东', '快手', '小红书', '系统', '拼多多'],     '有效订单数': [824, 727, 577, 406, 181, 58, 3, 10516],     '备注': ['', '', '', '', '', '', "
+      }
+    ]
+  }
+}

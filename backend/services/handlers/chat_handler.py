@@ -409,6 +409,48 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 _turn_request_start = _time.monotonic()  # 未开启深度思考时的 AI 响应等待计时
                 tool_calls_acc: Dict[int, Dict[str, Any]] = {}  # index → {id, name, arguments}
 
+                # ★ 临时 debug(emit-protocol 排查):dump LLM 实际看到的 tools + 最近 messages
+                # 找完根因后删除。只对 turn=0 和 1 做(避免后续轮次日志爆炸)
+                if turn <= 1:
+                    try:
+                        _dbg_tools = [
+                            t.get("function", {}).get("name", "?")
+                            for t in stream_kwargs.get("tools", []) or []
+                        ]
+                        logger.info(
+                            f"[DEBUG-LLM] task={task_id} turn={turn} model={model_id} "
+                            f"tools={_dbg_tools} msg_count={len(messages)}"
+                        )
+                        # 最近 5 条 messages,每条 content 截 500 字符
+                        for _i, _m in enumerate(messages[-5:]):
+                            _role = _m.get("role", "?")
+                            _content = _m.get("content", "")
+                            if isinstance(_content, list):
+                                _content = " | ".join(
+                                    (p.get("text", "")[:200] if isinstance(p, dict) else str(p))
+                                    for p in _content
+                                )
+                            elif not isinstance(_content, str):
+                                _content = str(_content)
+                            _preview = _content[:500].replace("\n", " | ")
+                            logger.info(
+                                f"[DEBUG-LLM] task={task_id} msg[-{5-_i}] role={_role} "
+                                f"content={_preview}"
+                            )
+                        # 也 dump 一下 system prompt 第一条(可能很长)
+                        _sys = next((m for m in messages if m.get("role") == "system"), None)
+                        if _sys:
+                            _sys_content = _sys.get("content", "")
+                            if isinstance(_sys_content, str):
+                                # 查找 MUST USE 是否在 system prompt 里
+                                _has_must_use = "MUST USE" in _sys_content
+                                logger.info(
+                                    f"[DEBUG-LLM] task={task_id} system_prompt_len={len(_sys_content)} "
+                                    f"has_MUST_USE={_has_must_use}"
+                                )
+                    except Exception as _e:
+                        logger.warning(f"[DEBUG-LLM] dump failed | {_e}")
+
                 async for chunk in self._adapter.stream_chat(
                     messages=messages,
                     reasoning_effort=thinking_effort,
