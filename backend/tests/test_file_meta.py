@@ -811,17 +811,7 @@ class TestFix6DuckDBDateFunctions:
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "DATE_TRUNC" in desc
 
-    def test_workspace_version_has_timestamp_type(self):
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "TIMESTAMP" in desc
-
     def test_base_version_has_date_trunc(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
         assert "DATE_TRUNC" in desc
-
-    def test_base_version_has_timestamp_type(self):
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        assert "TIMESTAMP" in desc

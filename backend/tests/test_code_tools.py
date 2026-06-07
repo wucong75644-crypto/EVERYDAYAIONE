@@ -38,19 +38,21 @@ class TestCodeToolsDefinition:
         assert "description" in params["properties"]
 
     def test_sandbox_is_pure_computation(self):
-        """code_execute 描述不包含数据获取函数"""
+        """code_execute 是纯计算沙盒,不再注入旧时代沙盒内数据获取函数"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert "erp_query" not in desc
-        assert "web_search" not in desc
-        assert "纯计算" in desc or "staging" in desc or "get_file" in desc
+        # 旧时代沙盒里有 erp_query() / fetch_all_pages() 函数,新协议已删除
+        # description 可以引用同名"工具"(WHEN NOT TO USE 段),但不能教用户在沙盒里调函数
+        assert "erp_query(" not in desc
+        assert "fetch_all_pages(" not in desc
+        assert "staging" in desc  # 路径协议存在
 
     def test_parquet_staging_documented(self):
-        """code_execute 描述中说明 Parquet + STAGING_DIR"""
+        """code_execute 描述中说明 Parquet 读取协议"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert "STAGING_DIR" in desc
         assert "parquet" in desc.lower()
+        assert "staging/" in desc  # 相对路径协议
 
     def test_routing_prompt_not_empty(self):
         assert "code_execute" in CODE_ROUTING_PROMPT
@@ -73,11 +75,11 @@ class TestCodeToolsDefinition:
         assert "staging" in CODE_ROUTING_PROMPT
 
     def test_code_execute_desc_parquet(self):
-        """code_execute 描述中包含 Parquet 和 read_parquet"""
+        """code_execute 描述中包含 Parquet 读取协议和产物输出协议"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
         assert "parquet" in desc.lower()
-        assert "OUTPUT_DIR" in desc
+        assert "下载/" in desc  # 产物落地目录(替代旧 OUTPUT_DIR 变量协议)
 
     def test_routing_prompt_no_local_db_export(self):
         """CODE_ROUTING_PROMPT 不再提及已删除的 local_db_export"""
@@ -85,19 +87,19 @@ class TestCodeToolsDefinition:
 
     # ---- 架构隔离测试 ----
 
-    def test_base_version_mentions_workspace_dir_as_forbidden(self):
-        """路径协议:WORKSPACE_DIR 仅作为禁用变量出现(LLM 用了会 NameError)"""
+    def test_base_version_uses_relative_path_protocol(self):
+        """路径协议是相对路径(不再有 *_DIR 变量教学)"""
         tool = build_code_tools(include_workspace=False)[0]
         desc = tool["function"]["description"]
-        # 新协议描述含禁止子句:OUTPUT_DIR/STAGING_DIR/WORKSPACE_DIR 变量(已删,会 NameError)
-        assert "WORKSPACE_DIR" in desc
-        assert "NameError" in desc or "已删" in desc
+        # 新协议:LLM 用相对路径字符串,不用 OUTPUT_DIR/STAGING_DIR 变量
+        assert "staging/" in desc
+        assert "上传/" in desc or "下载/" in desc
 
     def test_workspace_version_has_staging_hint(self):
-        """主 Agent 版包含 get_file 读取说明"""
+        """主 Agent 版包含 staging 路径协议"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "get_file" in desc
+        assert "staging" in desc
 
     def test_architecture_isolation_symmetric(self):
         """两版工具名和参数完全相同(新协议:description 也统一,LLM 看 attachments 自主决策)"""
@@ -107,6 +109,19 @@ class TestCodeToolsDefinition:
         assert base["function"]["parameters"] == ws["function"]["parameters"]
         # 新协议:两版描述相同(include_workspace 参数仅为 API 兼容保留)
         assert base["function"]["description"] == ws["function"]["description"]
+
+    def test_referenced_tool_names_exist(self):
+        """description 的 WHEN NOT TO USE 段引用的工具名必须在主 Agent 工具集里
+        防止未来工具改名时 description 文案漂移成幽灵引用。
+        """
+        from config.chat_tools import _CORE_TOOLS
+        desc = build_code_tools()[0]["function"]["description"]
+        for tool_name in ("erp_agent", "web_search", "file_search"):
+            if tool_name in desc:
+                assert tool_name in _CORE_TOOLS, (
+                    f"description 引用了 {tool_name} 但主 Agent 核心工具集里没有,"
+                    f"改名/删除时需同步更新 _DESCRIPTION"
+                )
 
     def test_workspace_version_has_parquet_hint(self):
         """主 Agent 版包含 Parquet 说明"""
@@ -127,11 +142,12 @@ class TestCodeToolsDefinition:
 
     # ---- Code-as-Query 模式测试 ----
 
-    def test_workspace_version_has_output_dir(self):
-        """主 Agent 版包含 OUTPUT_DIR 说明"""
+    def test_workspace_version_has_output_protocol(self):
+        """主 Agent 版包含产物输出协议(下载目录或 emit_file)"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "OUTPUT_DIR" in desc
+        assert "下载/" in desc
+        assert "emit_file" in desc  # 新产物输出协议
 
     def test_workspace_version_mentions_subprocess_forbidden(self):
         """主 Agent 版提及 subprocess/sys 禁用说明"""
@@ -318,32 +334,31 @@ class TestFix1DuckDBDialectHints:
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "::DATE" in desc or "CAST" in desc, "必须明示 DATE 类型转换方式"
 
-    def test_workspace_version_warns_no_date_function(self):
-        from config.code_tools import build_code_tools
-        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        # 新协议表达:ts::DATE 不是 DATE()
-        assert "不是 DATE()" in desc, "必须警告 DuckDB 无 DATE() 标量函数"
-
     def test_workspace_version_has_date_trunc(self):
+        """DuckDB 日期分桶提示存在"""
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "DATE_TRUNC" in desc
 
-    def test_workspace_version_warns_no_datetime_type(self):
-        """DuckDB 类型名是 TIMESTAMP 不是 DATETIME"""
+    def test_workspace_version_has_full_duckdb_hints(self):
+        """DuckDB 方言四要素必备:中文列名双引号 + 日期转换 + 拼接 + 日期分桶"""
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
-        assert "TIMESTAMP" in desc
+        assert "中文列名" in desc or "双引号" in desc, "中文列名引号规则缺失"
+        assert "::DATE" in desc, "日期转换语法缺失"
+        assert "||" in desc, "字符串拼接语法缺失"
+        assert "DATE_TRUNC" in desc, "日期分桶函数缺失"
 
     def test_base_version_has_cast_hint(self):
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
         assert "::DATE" in desc or "CAST" in desc
 
-    def test_base_version_warns_no_date_function(self):
+    def test_base_version_has_date_trunc_hint(self):
+        """DuckDB 日期分桶提示存在(取代旧'不是 DATE()'字面警告)"""
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=False)[0]["function"]["description"]
-        assert "不是 DATE()" in desc
+        assert "DATE_TRUNC" in desc
 
 
 class TestFix2ExcelExportPattern:

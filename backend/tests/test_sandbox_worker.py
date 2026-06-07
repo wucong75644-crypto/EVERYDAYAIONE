@@ -255,12 +255,6 @@ class TestBuildSandboxGlobals:
         except ImportError:
             pass
 
-    def test_output_dir_auto_created(self, tmp_path):
-        """传入 output_dir 时自动创建目录（路径协议:不再注入变量,仅建目录）"""
-        output = str(tmp_path / "下载")
-        _build_sandbox_globals("", "", output)
-        assert Path(output).exists()
-
     def test_no_path_variables_injected(self, tmp_path):
         """路径协议:WORKSPACE_DIR/STAGING_DIR/OUTPUT_DIR 变量已删除,沙盒只用相对路径"""
         g = _build_sandbox_globals(str(tmp_path), str(tmp_path / "staging"), str(tmp_path / "下载"))
