@@ -182,8 +182,8 @@ class KernelManager:
                         conversation_id[:8], len(self._kernels))
             return True
         except Exception as e:
-            logger.error("Kernel 创建失败，降级为无状态 | conv=%s error=%s",
-                         conversation_id[:8], e)
+            logger.error("Kernel 创建失败，降级为无状态 | conv=%s error_type=%s error=%r",
+                         conversation_id[:8], type(e).__name__, e)
             return False
 
     async def execute(
@@ -280,13 +280,25 @@ class KernelManager:
             ready_line = await asyncio.wait_for(
                 process.stdout.readline(), timeout=self.READY_TIMEOUT,
             )
-            ready = json.loads(ready_line)
-            if ready.get("status") != "ok":
-                raise RuntimeError(f"Kernel ready 失败: {ready}")
+            ready = json.loads(ready_line) if ready_line else None
+            if not ready or ready.get("status") != "ok":
+                raise RuntimeError(f"Kernel ready 失败: line={ready_line!r}")
         except (asyncio.TimeoutError, json.JSONDecodeError, RuntimeError) as e:
-            process.kill()
-            await process.wait()
-            raise RuntimeError(f"Kernel 启动超时或协议错误: {e}") from e
+            # 进程已死或协议错误:抓 stderr + returncode 给后续诊断
+            stderr_bytes = b""
+            try:
+                stderr_bytes = await asyncio.wait_for(process.stderr.read(4000), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            rc = process.returncode
+            if rc is None:
+                process.kill()
+                await process.wait()
+                rc = process.returncode
+            stderr_tail = stderr_bytes.decode("utf-8", "replace").strip()[-600:]
+            raise RuntimeError(
+                f"Kernel 启动失败 reason={e!r} rc={rc} stderr_tail={stderr_tail!r}"
+            ) from e
 
         kernel = Kernel(
             conversation_id=conversation_id,

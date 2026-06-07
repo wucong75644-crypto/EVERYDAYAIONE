@@ -437,17 +437,20 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                                 f"[DEBUG-LLM] task={task_id} msg[-{5-_i}] role={_role} "
                                 f"content={_preview}"
                             )
-                        # 也 dump 一下 system prompt 第一条(可能很长)
-                        _sys = next((m for m in messages if m.get("role") == "system"), None)
-                        if _sys:
-                            _sys_content = _sys.get("content", "")
-                            if isinstance(_sys_content, str):
-                                # 查找 MUST USE 是否在 system prompt 里
-                                _has_must_use = "MUST USE" in _sys_content
+                        # MUST USE 是写在 tools[*].function.description 里(不是 system message)
+                        _tools_list = stream_kwargs.get("tools", []) or []
+                        for _t in _tools_list:
+                            _fn = _t.get("function", {})
+                            _name = _fn.get("name", "?")
+                            _desc = _fn.get("description", "") or ""
+                            if _name == "code_execute":
+                                _has_must_use = "MUST USE" in _desc
                                 logger.info(
-                                    f"[DEBUG-LLM] task={task_id} system_prompt_len={len(_sys_content)} "
-                                    f"has_MUST_USE={_has_must_use}"
+                                    f"[DEBUG-LLM] task={task_id} tool=code_execute "
+                                    f"desc_len={len(_desc)} has_MUST_USE={_has_must_use} "
+                                    f"desc_head={_desc[:300]!r}"
                                 )
+                                break
                     except Exception as _e:
                         logger.warning(f"[DEBUG-LLM] dump failed | {_e}")
 
