@@ -7,15 +7,15 @@
 # Import 策略：黑名单模式（对齐 OpenAI Code Interpreter / Pyodide）
 默认放行所有 Python 标准库 + 已装第三方库；仅黑名单显式拦危险模块。
 
-理由：白名单维护成本指数级（每次第三方库踩到一个传递依赖标准库就要补一个，
-duckdb 已经踩了 inspect / sys / types 三次）。黑名单收敛快，且 nsjail
-namespace+cgroup 已经做了进程级隔离，Python 层只需要拦"能逃逸 nsjail
-的模块"（ctypes/pickle 等）和"沙盒环境内没意义的模块"（network/subprocess
-—— nsjail 已隔离但深度防御）。
+理由:白名单维护成本指数级(每次第三方库踩到一个传递依赖标准库就要补一个,
+duckdb 已经踩了 inspect / sys / types 三次)。黑名单收敛快,且 nsjail
+namespace+cgroup 已经做了进程级隔离,Python 层只是 UX 引导:
+  - "能逃逸 nsjail 的模块" (ctypes/pickle) - 早 fail 提示
+  - "沙盒环境内没意义的模块" (network/subprocess) - nsjail 已隔离但提供更友好的错误信号
 
-# 例外（os / shutil / pathlib）
-这些有副作用的文件系统模块走 _scoped 注入：import 时拿到的是
-scoped_os / scoped_shutil 等包装版本，路径走白名单校验。
+# 例外(os / shutil / pathlib)
+这些有副作用的文件系统模块走 _scoped 注入:import 时拿到的是
+scoped_os / scoped_shutil 等包装版本(主要做相对路径解析 + 删除拦截 UX 引导)。
 """
 
 from typing import Any
@@ -128,8 +128,9 @@ _DANGEROUS_BUILTINS = frozenset({
     "breakpoint", "exit", "quit",
     # ── 阻塞 stdin（沙盒非交互，等输入会卡死直到 deadline）──
     "input",
-    # ── 必须走 scoped_open（由 sandbox_worker 显式注入到 g['open']）──
-    # 留在 __builtins__ 里会让 AI 通过 __builtins__.open 绕过路径白名单
+    # ── 必须走 scoped_open(由 sandbox_worker 显式注入到 g['open'])──
+    # 留在 __builtins__ 里会让 AI 通过 __builtins__.open 绕过 scoped_open
+    # 的路径解析(相对路径 + 文件名纠错),拿到原生 builtin open
     "open",
 })
 

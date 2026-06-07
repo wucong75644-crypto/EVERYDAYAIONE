@@ -73,6 +73,9 @@ _DESCRIPTION = (
     "- 读 ERP 结果: pd.read_parquet('staging/erp_xxx.parquet')\n"
     "- 写产物: df.to_excel('下载/x.xlsx') + emit_file('下载/x.xlsx')\n"
     "- 写缓存: df.to_parquet('staging/x.parquet')           跨调用复用,24h 自动清\n"
+    "⚠ attachments 的 path/parquet 字段是字面字符串,**完整 copy 不要修改任何字符**\n"
+    "  (尤其中英文混排的文件名:'4月销售-按订单' 不要美化为 '4 月销售 - 按订单',\n"
+    "   文件名带空格/连字符也保留原样,否则路径不存在报 IOException)\n"
     "\n"
     "VERIFY BEFORE ACCESS\n"
     "  merge/groupby/pivot/rename 后,**必须先 print(df.columns.tolist())**\n"
@@ -82,6 +85,8 @@ _DESCRIPTION = (
     "- DuckDB 方言: 中文列名双引号; 转日期 ts::DATE; 拼接 ||; DATE_TRUNC('month', ts)\n"
     "- Excel 导出: engine='xlsxwriter',自动处理 NaN/Timestamp\n"
     "- 代码语法全英文半角(中文 ,();: 会让 SQL 解析失败)\n"
+    "- 大数据(>10 万行): 用 SQL `GROUP BY ... LIMIT` 聚合后 `.df()` 拿小结果,\n"
+    "  禁止 `SELECT * FROM 'big.parquet'` 全量加载(会爆 4GB cgroup OOM)\n"
     "- 无网络 / 禁止 sys/subprocess / 删文件用 file_delete 工具"
 )
 

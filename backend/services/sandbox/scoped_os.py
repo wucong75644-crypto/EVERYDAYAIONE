@@ -1,16 +1,19 @@
 """
 沙盒受限 os/shutil 模块
 
-只暴露安全的文件系统操作，屏蔽系统命令/进程操作/环境变量。
+只暴露安全的文件系统操作,屏蔽系统命令/进程操作/环境变量。
 由 _build_sandbox_globals 注入到沙盒执行环境。
 
-安全原则：
-  - 路径操作：所有接受路径的函数经过 _check_path 白名单校验
-  - 只读操作：listdir/walk/stat/path.* 放行
-  - 写操作：makedirs/rename 限制在白名单内
-  - 删除操作：remove/unlink/rmdir 禁止（引导用 file_delete 工具）
-  - 系统命令：system/popen/exec* 不定义（AttributeError）
-  - 环境变量：environ=空dict，getenv=返回default
+设计原则(对齐 OpenAI Code Interpreter / Anthropic sandbox-runtime):
+  - 安全边界 = nsjail (生产) / 信任 (本地开发),Python 层不做路径白名单
+  - 路径操作:_check_path 只做相对路径解析(workspace cwd → 绝对 realpath)
+  - 只读操作:listdir/walk/stat/path.* 放行
+  - 写操作:makedirs/rename 由 nsjail bind mount ro/rw 决定
+  - 删除操作:remove/unlink/rmdir 禁止 (UX 引导用 file_delete 工具)
+  - 系统命令:system/popen/exec* 不定义 (AttributeError)
+  - 环境变量:environ=空dict,getenv=返回 default
+
+详见 docs/document/TECH_沙盒安全架构.md
 """
 
 import os as _real_os
@@ -25,41 +28,19 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
         (scoped_os_instance, _check_path_fn)
     """
     _ws = _real_os.path.realpath(workspace_dir)
-    _allowed = [_ws]
-    if staging_dir:
-        _allowed.append(_real_os.path.realpath(staging_dir))
-    if output_dir:
-        _allowed.append(_real_os.path.realpath(output_dir))
-
-    # staging 父目录黑名单：禁止列举/访问其他会话的临时文件
-    _staging_parent = _real_os.path.realpath(
-        _real_os.path.join(workspace_dir, "staging")
-    )
-    _denied = [_staging_parent]
 
     def _check_path(path_str) -> str:
-        """路径安全校验 — 解析相对路径 + realpath + 白名单 + 黑名单"""
+        """路径解析 — 相对路径 → workspace cwd → realpath。
+
+        历史:曾在此做白名单/黑名单校验,但 Python 层挡不住攻击者
+        (introspection 5 行逃逸),且会拦库内部资源 (matplotlib 字体等),
+        反成 bug 源。现统一由 nsjail bind mount + clone_newnet + cgroup
+        负责安全边界,Python 层只做路径解析。
+        """
         path_str = str(path_str)
         if not _real_os.path.isabs(path_str):
             path_str = _real_os.path.join(_ws, path_str)
-        resolved = _real_os.path.realpath(path_str)
-
-        # 黑名单优先：staging 父目录下的路径，必须被更具体的白名单条目覆盖
-        for d in _denied:
-            if resolved == d or resolved.startswith(d + _real_os.sep):
-                # 检查是否有非 workspace-root 的白名单精确覆盖
-                if not any(
-                    (resolved == a or resolved.startswith(a + _real_os.sep))
-                    for a in _allowed if a != _ws
-                ):
-                    raise PermissionError(f"路径不在允许范围内: {path_str}")
-
-        if not any(
-            resolved == p or resolved.startswith(p + _real_os.sep)
-            for p in _allowed
-        ):
-            raise PermissionError(f"路径不在允许范围内: {path_str}")
-        return resolved
+        return _real_os.path.realpath(path_str)
 
     class _ScopedOS:
         """受限 os 模块 — 对外行为像 os，内部所有 IO 操作经过路径校验"""
@@ -143,12 +124,12 @@ def build_scoped_pathlib(scoped_os_instance):
     """构建受限 pathlib 模块 — Path 的破坏性方法走 scoped_os 检查
 
     用户代码 import pathlib 时拿到此受限版本；
-    pandas/openpyxl 等库在模块加载时已拿到真实 pathlib，不受影响。
+    pandas/openpyxl 等库在模块加载时已拿到真实 pathlib,不受影响。
 
-    拦截方法：
-      - unlink → scoped_os.remove（路径白名单校验）
-      - rmdir → scoped_os.rmdir（始终拒绝）
-      - write_text/write_bytes → 走 check_path 白名单校验
+    拦截方法:
+      - unlink → scoped_os.remove(UX 引导用 file_delete)
+      - rmdir → scoped_os.rmdir(始终拒绝)
+      - write_text/write_bytes → 走 check_path 路径解析,nsjail 负责权限
     """
     import pathlib as _real_pathlib
 

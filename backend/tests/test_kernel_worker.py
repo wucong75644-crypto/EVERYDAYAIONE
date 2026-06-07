@@ -235,14 +235,22 @@ class TestFileOperations:
         # 验证文件确实在 workspace
         assert os.path.exists(os.path.join(workspace, "test.txt"))
 
-    def test_access_outside_workspace_blocked(self, kernel_proc):
+    def test_access_outside_workspace_no_longer_blocked_by_python(self, kernel_proc):
+        """Phase 1 后 Python 层不再挡 workspace 外路径,生产由 nsjail bind mount 决定。
+
+        本地无 nsjail → 能读 /etc/passwd (开发机被信任)。
+        生产环境 nsjail 不 bind /etc → ENOENT/EACCES (OS 层拒)。
+        Python 层不再 raise '访问被拒绝',避免拦库内部资源 (matplotlib 字体等)。
+        """
         r = _send(kernel_proc, {
             "id": "f3",
-            "code": "open('/etc/passwd').read()",
+            "code": "open('/etc/passwd').read()[:50]",
             "timeout": 10,
         })
-        assert r["status"] == "error"
-        assert "拒绝" in r["result"] or "PermissionError" in r["result"]
+        # 不应该是 Python 层"拒绝"或"不在允许的目录内"
+        if r["status"] == "error":
+            assert "不在允许的目录内" not in r["result"]
+            assert "拒绝" not in r["result"]
 
 
 # ============================================================
