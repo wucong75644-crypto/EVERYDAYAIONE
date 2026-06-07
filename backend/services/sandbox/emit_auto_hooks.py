@@ -85,6 +85,23 @@ def install_ipython_display_shim(sandbox_globals: dict, emit_buffer: list[dict])
     _hooked_publish._emit_hooked = True  # type: ignore[attr-defined]
     ip_display.publish_display_data = _hooked_publish
 
+    # display() 入口劫持:LLM 调 IPython.display.display(fig) 时直接走 buffer
+    # (不依赖 publish 链路 patch,IPython 内部 from import 会绑定原引用导致补丁失效)
+    def _hooked_display(*objs: Any, **kw: Any) -> None:
+        for obj in objs:
+            bundle_fn = getattr(obj, "_repr_mimebundle_", None)
+            if callable(bundle_fn):
+                try:
+                    result = bundle_fn()
+                    bundle = result[0] if isinstance(result, tuple) and result else result
+                    if isinstance(bundle, dict):
+                        _hooked_publish(bundle)
+                        continue
+                except Exception:
+                    pass
+    _hooked_display._emit_hooked = True  # type: ignore[attr-defined]
+    ip_display.display = _hooked_display
+
     # plotly: 直接 hook Figure.show / pio.show 用 fig.to_dict() 构造 plotly mimebundle。
     # 不用 _repr_mimebundle_(plotly 5.x 默认返回空 dict, 要手动构造)。
     try:

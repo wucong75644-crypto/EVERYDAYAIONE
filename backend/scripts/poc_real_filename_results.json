@@ -1,0 +1,71 @@
+[
+  {
+    "run": 1,
+    "path_found": true,
+    "used": "staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet",
+    "matches_literal": true,
+    "has_space_in_chinese": false,
+    "code_head": [
+      "import pandas as pd",
+      "",
+      "# 读取已缓存的 parquet 文件 (直接复制 attachments 中的 parquet 字段路径)",
+      "df_sales = pd.read_parquet('staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet')",
+      "df_shop_group = pd.read_parquet('staging/_cache_v3.0_6db4d68a87b8_sheet0_运营名下店铺分组_2c5340.parquet')"
+    ]
+  },
+  {
+    "run": 2,
+    "path_found": true,
+    "used": "staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet",
+    "matches_literal": true,
+    "has_space_in_chinese": false,
+    "code_head": [
+      "import pandas as pd",
+      "",
+      "# 读取已缓存的 parquet 文件 (直接复制 attachments 中的 parquet 字段)",
+      "df_sales = pd.read_parquet('staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet')",
+      "df_shop_group = pd.read_parquet('staging/_cache_v3.0_6db4d68a87b8_sheet0_运营名下店铺分组_2c5340.parquet')"
+    ]
+  },
+  {
+    "run": 3,
+    "path_found": true,
+    "used": "staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet",
+    "matches_literal": true,
+    "has_space_in_chinese": false,
+    "code_head": [
+      "import pandas as pd",
+      "",
+      "# 读取已缓存的 parquet 文件 (直接复制 attachments 中的 parquet 字段路径)",
+      "df_sales = pd.read_parquet('staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet')",
+      "df_group = pd.read_parquet('staging/_cache_v3.0_6db4d68a87b8_sheet0_运营名下店铺分组_2c5340.parquet')"
+    ]
+  },
+  {
+    "run": 4,
+    "path_found": true,
+    "used": "staging/_cache_v3.0_037237fcf9f7_sheet0_4 月销售主题分析 - 按订单商品明细 -20260508134809_1d1705a783dab9d1_bb4aa2.parquet",
+    "matches_literal": false,
+    "code_head": [
+      "import pandas as pd",
+      "",
+      "# 读取已缓存的 parquet 文件 (直接复制 attachments 中的 parquet 字段)",
+      "df_sales = pd.read_parquet(\"staging/_cache_v3.0_037237fcf9f7_sheet0_4 月销售主题分析 - 按订单商品明细 -20260508134809_1d1705a783dab9d1_bb4aa2.parquet\")",
+      "df_shop_group = pd.read_parquet(\"staging/_cache_v3.0_6db4d68a87b8_sheet0_运营名下店铺分组_2c5340.parquet\")"
+    ]
+  },
+  {
+    "run": 5,
+    "path_found": true,
+    "used": "staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet",
+    "matches_literal": true,
+    "has_space_in_chinese": false,
+    "code_head": [
+      "import pandas as pd",
+      "",
+      "# 读取已缓存的 parquet 文件 (使用 attachments 中提供的完整 parquet 路径)",
+      "df_sales = pd.read_parquet('staging/_cache_v3.0_037237fcf9f7_sheet0_4月销售主题分析-按订单商品明细-20260508134809_1d1705a783dab9d1_bb4aa2.parquet')",
+      "df_shop_group = pd.read_parquet('staging/_cache_v3.0_6db4d68a87b8_sheet0_运营名下店铺分组_2c5340.parquet')"
+    ]
+  }
+]
