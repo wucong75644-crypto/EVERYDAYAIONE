@@ -1,0 +1,196 @@
+{
+  "qwen-plus": {
+    "A": {
+      "S1_发票整理_经典场景": {
+        "code": "import pandas as pd\nimport duckdb\n\n# 读取数据\ndf = pd.read_parquet('staging/invoices.parquet')\n\n# 使用 DuckDB 进行高效聚合和清洗\nquery = \"\"\"\nSELECT \n    -- 日期格式化: 月.日 (去掉前导0)\n    REPLACE(REPLACE(CAST(\"申请时间\"::DATE AS VARCHAR), '-', '.'), '.0', '.') as \"日期\",\n    \"订单编号\" as \"平台订单号\",\n    FIRST(\"发票类型\") as \"发票类型\",\n    FIRST(\"购方名称\") as \"公司名称\",\n    FIRST(\"购方税号\") as \"税号\",\n    FIRST(\"商品名称\") as \"项目名称\",\n    -- 数量求和: 仅统计单价>0的行\n    SUM(CASE WHEN \"单价\" > 0 THEN \"数量\" ELSE 0 END) as \"数量\",\n    FIRST(\"发票金额\") as \"金额\",\n    '' as \"平台+店铺\",\n    FIRST(\"纸票收货人姓名\") as \"申请人\",\n    FIRST(\"备注\") as \"备注\"\nFROM 'staging/invoices.parquet'\nGROUP BY \"订单编号\", \"申请时间\"::DATE\nORDER BY \"申请时间\"::DATE\n\"\"\"\n\nresult = duckdb.sql(query).df()\n\n# 确保列顺序完全符合要求\nfinal_cols = [\n    \"日期\", \"平台订单号\", \"发票类型\", \"公司名称\", \"税号\", \n    \"项目名称\", \"数量\", \"金额\", \"平台+店铺\", \"申请人\", \"备注\"\n]\nresult = result[final_cols]\n\n# 导出 Excel\nresult.to_excel('下载/发票整理表.xlsx', index=False, engine='xlsxwriter')\nprint(f\"处理完成，共 {len(result)} 条订单记录。\")\n",
+        "analysis": {
+          "total_lines": 34,
+          "code_lines": 30,
+          "comment_lines": 4,
+          "step_comments": 0,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 0,
+          "agg_multi_col": 0,
+          "emit_calls": []
+        }
+      },
+      "S2_销售数据_多步聚合": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/sales.parquet')\n\n# 分组聚合\nstats = df.groupby(['平台', '店铺'], as_index=False).agg(\n    订单数=('订单号', 'count'),\n    总销售额=('销售额', 'sum'),\n    总利润=('利润', 'sum')\n)\n\n# 计算平均客单价和利润率\nstats['平均客单价'] = stats['总销售额'] / stats['订单数']\nstats['利润率'] = (stats['总利润'] / stats['总销售额'] * 100).round(2)\n\n# 按总销售额降序排序\nstats = stats.sort_values('总销售额', ascending=False)\n\n# 导出 Excel\nstats.to_excel('下载/平台店铺业绩.xlsx', index=False, engine='xlsxwriter')\n\nprint(f\"处理完成，共 {len(stats)} 条记录，已保存至 下载/平台店铺业绩.xlsx\")\n",
+        "analysis": {
+          "total_lines": 17,
+          "code_lines": 12,
+          "comment_lines": 5,
+          "step_comments": 0,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": []
+        }
+      },
+      "S3_订单清洗_去重去异常": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/orders.parquet')\n\n# 1. 按订单号去重 (保留第一条)\n# 假设订单号列名为 '订单号'，如果实际列名不同请调整\nif '订单号' in df.columns:\n    df = df.drop_duplicates(subset=['订单号'], keep='first')\nelse:\n    # 尝试查找包含 'order' 或 'id' 的列作为订单号\n    order_col = [c for c in df.columns if '订单' in c or 'order' in c.lower() or 'id' in c.lower()]\n    if order_col:\n        df = df.drop_duplicates(subset=[order_col[0]], keep='first')\n\n# 2. 过滤异常金额 (金额 <= 0 或 金额 > 100000)\n# 假设金额列名为 '金额'\namount_col = '金额'\nif '金额' not in df.columns:\n    amount_col = [c for c in df.columns if '金额' in c or 'amount' in c.lower()][0]\n\ndf = df[(df[amount_col] > 0) & (df[amount_col] <= 100000)]\n\n# 3. 按日期 + 平台分组统计\n# 假设日期列名为 '日期' 或 '下单时间', 平台列名为 '平台'\ndate_col = '日期'\nplatform_col = '平台'\n\nif '日期' not in df.columns:\n    date_col = [c for c in df.columns if '日期' in c or '时间' in c or 'date' in c.lower()][0]\nif '平台' not in df.columns:\n    platform_col = [c for c in df.columns if '平台' in c or 'platform' in c.lower()][0]\n\n# 确保日期列为日期类型并提取日期部分 (去除时间)\ndf[date_col] = pd.to_datetime(df[date_col], errors='coerce')\ndf['日期'] = df[date_col].dt.date\n\n# 分组聚合\nresult = df.groupby(['日期', platform_col]).agg(\n    总订单数=(amount_col, 'count'),\n    总金额=(amount_col, 'sum')\n).reset_index()\n\n# 重命名列以匹配要求 (如果平台列名不是 '平台')\nif platform_col != '平台':\n    result = result.rename(columns={platform_col: '平台'})\n\n# 4. 导出结果\nresult.to_excel('下载/订单清洗结果.xlsx', index=False, engine='xlsxwriter')\n\nprint(\"数据清洗完成！\")\nprint(f\"原始行数: {len(pd.read_parquet('staging/orders.parquet'))}\")\nprint(f\"清洗后行数: {len(result)}\")\nprint(\"\\n前5行预览:\")\nprint(result.head())\n",
+        "analysis": {
+          "total_lines": 44,
+          "code_lines": 32,
+          "comment_lines": 12,
+          "step_comments": 4,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": []
+        }
+      }
+    },
+    "B": {
+      "S1_发票整理_经典场景": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/invoices.parquet')\n\n# 1. 过滤单价 > 0 的行用于数量求和\ndf_valid = df[df['单价'] > 0].copy()\n\n# 2. 按订单编号聚合\n# 需要保留的字段：发票类型、购方名称、购方税号、商品名称、纸票收货人姓名、备注、发票金额\n# 假设每个订单这些字段是一致的，取第一个值；数量求和；申请时间取第一个用于格式化\nagg_dict = {\n    '申请时间': 'first',\n    '发票类型': 'first',\n    '购方名称': 'first',\n    '购方税号': 'first',\n    '商品名称': 'first',\n    '纸票收货人姓名': 'first',\n    '备注': 'first',\n    '发票金额': 'first',\n    '数量': 'sum'\n}\n\ngrouped = df_valid.groupby('订单编号').agg(agg_dict).reset_index()\n\n# 3. 处理日期格式：月.日 (去掉前导0)\ngrouped['申请时间'] = pd.to_datetime(grouped['申请时间'])\ngrouped['日期'] = grouped['申请时间'].dt.strftime('%-m.%-d') \n# 注意: %-m 在 Windows 可能不生效，备用方案如下：\nif '%-m' in grouped['日期'].iloc[0] if len(grouped) > 0 else False:\n    pass\nelse:\n    # 兼容 Windows 的去零写法\n    grouped['日期'] = grouped['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 4. 重命名并调整列顺序\n# 输出列顺序: 日期、平台订单号、发票类型、公司名称、税号、项目名称、数量、金额、平台 + 店铺 (留空)、申请人、备注\nfinal_df = pd.DataFrame()\nfinal_df['日期'] = grouped['日期']\nfinal_df['平台订单号'] = grouped['订单编号']\nfinal_df['发票类型'] = grouped['发票类型']\nfinal_df['公司名称'] = grouped['购方名称']\nfinal_df['税号'] = grouped['购方税号']\nfinal_df['项目名称'] = grouped['商品名称']\nfinal_df['数量'] = grouped['数量']\nfinal_df['金额'] = grouped['发票金额']\nfinal_df['平台+店铺'] = ''  # 留空\nfinal_df['申请人'] = grouped['纸票收货人姓名']\nfinal_df['备注'] = grouped['备注']\n\n# 5. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nfinal_df.to_excel(output_path, index=False, engine='xlsxwriter')\n\nemit_file(output_path, label='发票整理表.xlsx')\n",
+        "analysis": {
+          "total_lines": 47,
+          "code_lines": 36,
+          "comment_lines": 11,
+          "step_comments": 5,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": [
+            "file"
+          ]
+        }
+      },
+      "S2_销售数据_多步聚合": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/sales.parquet')\n\n# 分组聚合计算\nstats = df.groupby(['平台', '店铺']).agg(\n    订单数=('订单号', 'count'),\n    总销售额=('销售额', 'sum'),\n    总利润=('利润', 'sum')\n).reset_index()\n\n# 计算平均客单价和利润率\nstats['平均客单价'] = stats['总销售额'] / stats['订单数']\nstats['利润率'] = (stats['总利润'] / stats['总销售额'] * 100).round(2)\n\n# 按总销售额降序排序\nstats = stats.sort_values(by='总销售额', ascending=False)\n\n# 导出 Excel\noutput_path = '下载/平台店铺业绩.xlsx'\nstats.to_excel(output_path, index=False, engine='xlsxwriter')\n\n# 发出文件下载卡片\nemit_file(output_path, label='平台店铺业绩统计.xlsx')\n",
+        "analysis": {
+          "total_lines": 19,
+          "code_lines": 13,
+          "comment_lines": 6,
+          "step_comments": 0,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": [
+            "file"
+          ]
+        }
+      },
+      "S3_订单清洗_去重去异常": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/orders.parquet')\n\n# 1. 按订单号去重 (保留第一条)\n# 假设订单号列名为 '订单号'，如果实际列名不同请调整\norder_id_col = [c for c in df.columns if '订单' in c and '号' in c][0] if any('订单' in c and '号' in c for c in df.columns) else 'order_id'\ndf = df.drop_duplicates(subset=[order_id_col], keep='first')\n\n# 2. 过滤异常金额 (金额 <= 0 或 金额 > 100000)\n# 假设金额列名为 '金额'\namount_col = [c for c in df.columns if '金额' in c][0] if any('金额' in c for c in df.columns) else 'amount'\ndf = df[(df[amount_col] > 0) & (df[amount_col] <= 100000)]\n\n# 确保日期列是 datetime 类型以便按天分组\ndate_col = [c for c in df.columns if '日期' in c or '时间' in c or 'date' in c.lower()][0] if any('日期' in c or '时间' in c or 'date' in c.lower() for c in df.columns) else 'order_date'\ndf[date_col] = pd.to_datetime(df[date_col], errors='coerce')\ndf = df.dropna(subset=[date_col])\n\n# 提取日期部分 (YYYY-MM-DD) 用于分组\ndf['日期'] = df[date_col].dt.date\n\n# 识别平台列\nplatform_col = [c for c in df.columns if '平台' in c or '渠道' in c or 'source' in c.lower()][0] if any('平台' in c or '渠道' in c or 'source' in c.lower() for c in df.columns) else 'platform'\n\n# 3. 按日期 + 平台分组算总订单数和总金额\nresult = df.groupby(['日期', platform_col]).agg(\n    总订单数=(order_id_col, 'count'),\n    总金额=(amount_col, 'sum')\n).reset_index()\n\n# 排序\nresult = result.sort_values(by=['日期', '总金额'], ascending=[True, False])\n\n# 4. 导出到 Excel\noutput_path = '下载/订单清洗结果.xlsx'\nresult.to_excel(output_path, index=False, engine='xlsxwriter')\n\n# 输出文件下载卡片和预览表格\nemit_file(output_path, label='订单清洗结果.xlsx')\nemit_table(result, title='订单清洗统计预览')\n",
+        "analysis": {
+          "total_lines": 32,
+          "code_lines": 20,
+          "comment_lines": 12,
+          "step_comments": 4,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": [
+            "file",
+            "table"
+          ]
+        }
+      }
+    }
+  },
+  "claude-opus-4-7": {
+    "A": {
+      "S1_发票整理_经典场景": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/invoices.parquet')\n\n# 1. 过滤单价 > 0 的行并计算数量\ndf_valid = df[df['单价'] > 0].copy()\nqty_sum = df_valid.groupby('订单编号')['数量'].sum().reset_index(name='数量')\n\n# 2. 提取每个订单的其他信息 (取第一条，假设同订单这些信息一致)\ncols_info = ['订单编号', '发票类型', '购方名称', '购方税号', '商品名称', '纸票收货人姓名', '备注', '发票金额', '申请时间']\ndf_info = df.drop_duplicates(subset=['订单编号'])[cols_info]\n\n# 3. 合并汇总数量和基础信息\nresult = pd.merge(df_info, qty_sum, on='订单编号', how='left')\n\n# 4. 格式化日期: 月.日 (去掉前导0)\nresult['申请时间'] = pd.to_datetime(result['申请时间'])\nresult['日期'] = result['申请时间'].dt.strftime('%-m.%-d') # Linux/Mac; if Windows fails, use alternative below logic\n# 兼容 Windows 的写法 (如果上面报错，用下面这行替换上面两行中的 strftime)\n# result['日期'] = result['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 5. 重命名并调整列顺序\n# 输出列顺序: 日期、平台订单号、发票类型、公司名称、税号、项目名称、数量、金额、平台 + 店铺 (留空)、申请人、备注\nfinal_df = pd.DataFrame()\nfinal_df['日期'] = result['日期']\nfinal_df['平台订单号'] = result['订单编号']\nfinal_df['发票类型'] = result['发票类型']\nfinal_df['公司名称'] = result['购方名称']\nfinal_df['税号'] = result['购方税号']\nfinal_df['项目名称'] = result['商品名称']\nfinal_df['数量'] = result['数量']\nfinal_df['金额'] = result['发票金额']\nfinal_df['平台+店铺'] = ''  # 留空\nfinal_df['申请人'] = result['纸票收货人姓名']\nfinal_df['备注'] = result['备注']\n\n# 6. 导出 Excel\nfinal_df.to_excel('下载/发票整理表.xlsx', index=False, engine='xlsxwriter')\nprint(f\"处理完成，共 {len(final_df)} 条订单记录。\")\n",
+        "analysis": {
+          "total_lines": 33,
+          "code_lines": 23,
+          "comment_lines": 10,
+          "step_comments": 6,
+          "merge_total": 1,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": []
+        }
+      },
+      "S2_销售数据_多步聚合": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/sales.parquet')\n\n# 分组聚合\nresult = df.groupby(['平台', '店铺'], as_index=False).agg(\n    订单数=('订单号', 'count'),\n    总销售额=('销售额', 'sum'),\n    总利润=('利润', 'sum')\n)\n\n# 计算平均客单价和利润率\nresult['平均客单价'] = result['总销售额'] / result['订单数']\nresult['利润率'] = (result['总利润'] / result['总销售额'] * 100).round(2)\n\n# 按总销售额降序排序\nresult = result.sort_values('总销售额', ascending=False)\n\n# 导出 Excel\nresult.to_excel('下载/平台店铺业绩.xlsx', index=False, engine='xlsxwriter')\n\nprint(f\"处理完成，共 {len(result)} 条记录。前5行预览:\\n{result.head()}\")\n",
+        "analysis": {
+          "total_lines": 17,
+          "code_lines": 12,
+          "comment_lines": 5,
+          "step_comments": 0,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": []
+        }
+      },
+      "S3_订单清洗_去重去异常": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/orders.parquet')\n\n# 1. 按订单号去重 (保留第一条)\n# 假设订单号列名为 '订单号'，如果实际列名不同请调整\nif '订单号' in df.columns:\n    df = df.drop_duplicates(subset=['订单号'], keep='first')\nelse:\n    # 尝试寻找包含 'order' 或 'id' 的列作为订单号\n    order_col = [c for c in df.columns if '订单' in c or 'Order' in c or 'ID' in c.upper()]\n    if order_col:\n        df = df.drop_duplicates(subset=[order_col[0]], keep='first')\n\n# 2. 过滤异常数据: 金额 <= 0 或 金额 > 100000\n# 假设金额列名为 '金额'\namount_col = '金额'\nif '金额' not in df.columns:\n    amount_col = [c for c in df.columns if '金额' in c or 'Amount' in c or 'Price' in c][0]\n\ndf = df[(df[amount_col] > 0) & (df[amount_col] <= 100000)]\n\n# 3. 按日期 + 平台分组算总订单数和总金额\n# 假设日期列名为 '日期' 或 '下单时间', 平台列名为 '平台'\ndate_col = '日期'\nplatform_col = '平台'\n\nif '日期' not in df.columns:\n    date_col = [c for c in df.columns if '日期' in c or '时间' in c or 'Date' in c][0]\nif '平台' not in df.columns:\n    platform_col = [c for c in df.columns if '平台' in c or 'Platform' in c or 'Source' in c][0]\n\n# 确保日期是字符串或日期格式以便分组 (如果是时间戳则转为日期字符串)\nif pd.api.types.is_datetime64_any_dtype(df[date_col]):\n    df[date_col] = df[date_col].dt.strftime('%Y-%m-%d')\nelif pd.api.types.is_numeric_dtype(df[date_col]):\n    # 如果是时间戳数字，尝试转换，否则直接转字符串\n    try:\n        df[date_col] = pd.to_datetime(df[date_col], unit='s').dt.strftime('%Y-%m-%d')\n    except:\n        df[date_col] = df[date_col].astype(str)\n\ngrouped = df.groupby([date_col, platform_col]).agg(\n    总订单数=(amount_col, 'count'),\n    总金额=(amount_col, 'sum')\n).reset_index()\n\n# 重命名分组列为更友好的名称 (如果需要)\ngrouped = grouped.rename(columns={date_col: '日期', platform_col: '平台'})\n\n# 4. 导出到 Excel\noutput_path = '下载/订单清洗结果.xlsx'\ngrouped.to_excel(output_path, index=False, engine='xlsxwriter')\n\nprint(f\"清洗完成。原始行数: {len(pd.read_parquet('staging/orders.parquet'))}, 处理后行数: {len(grouped)}\")\nprint(f\"结果已保存至: {output_path}\")\nprint(grouped.head())\n",
+        "analysis": {
+          "total_lines": 47,
+          "code_lines": 35,
+          "comment_lines": 12,
+          "step_comments": 4,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": []
+        }
+      }
+    },
+    "B": {
+      "S1_发票整理_经典场景": {
+        "code": "import pandas as pd\nfrom datetime import datetime\n\n# 读取数据\ndf = pd.read_parquet('staging/invoices.parquet')\n\n# 1. 过滤单价 > 0 的行用于数量求和\nvalid_qty_df = df[df['单价'] > 0]\n\n# 2. 按订单编号聚合\n# 需要汇总的列：数量 (sum)\n# 需要保留的列 (取第一个非空值): 发票类型, 购方名称, 购方税号, 商品名称, 纸票收货人姓名, 备注, 发票金额, 申请时间\nagg_dict = {\n    '数量': 'sum',\n    '发票类型': 'first',\n    '购方名称': 'first',\n    '购方税号': 'first',\n    '商品名称': 'first',\n    '纸票收货人姓名': 'first',\n    '备注': 'first',\n    '发票金额': 'first',\n    '申请时间': 'first'\n}\n\ngrouped = valid_qty_df.groupby('订单编号').agg(agg_dict).reset_index()\n\n# 3. 处理日期格式: 月.日 (去掉前导0)\n# 确保申请时间是 datetime 类型\ngrouped['申请时间'] = pd.to_datetime(grouped['申请时间'])\ngrouped['日期'] = grouped['申请时间'].apply(lambda x: f\"{x.month}.{x.day}\")\n\n# 4. 重命名并调整列顺序\n# 输出列顺序: 日期、平台订单号、发票类型、公司名称、税号、项目名称、数量、金额、平台 + 店铺 (留空)、申请人、备注\nfinal_df = pd.DataFrame()\nfinal_df['日期'] = grouped['日期']\nfinal_df['平台订单号'] = grouped['订单编号']\nfinal_df['发票类型'] = grouped['发票类型']\nfinal_df['公司名称'] = grouped['购方名称']\nfinal_df['税号'] = grouped['购方税号']\nfinal_df['项目名称'] = grouped['商品名称']\nfinal_df['数量'] = grouped['数量']\nfinal_df['金额'] = grouped['发票金额']\nfinal_df['平台+店铺'] = ''  # 留空\nfinal_df['申请人'] = grouped['纸票收货人姓名']\nfinal_df['备注'] = grouped['备注']\n\n# 5. 导出 Excel\noutput_path = '下载/发票整理表.xlsx'\nfinal_df.to_excel(output_path, index=False, engine='xlsxwriter')\n\n# 6. 发出文件下载卡片\nemit_file(output_path, label='发票整理表.xlsx')\n",
+        "analysis": {
+          "total_lines": 44,
+          "code_lines": 33,
+          "comment_lines": 11,
+          "step_comments": 6,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": [
+            "file"
+          ]
+        }
+      },
+      "S2_销售数据_多步聚合": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/sales.parquet')\n\n# 分组聚合\nstats = df.groupby(['平台', '店铺']).agg(\n    订单数=('订单号', 'count'),\n    总销售额=('销售额', 'sum'),\n    总利润=('利润', 'sum')\n).reset_index()\n\n# 计算平均客单价和利润率\nstats['平均客单价'] = stats['总销售额'] / stats['订单数']\nstats['利润率'] = (stats['总利润'] / stats['总销售额'] * 100).round(2)\n\n# 按总销售额降序排序\nstats = stats.sort_values(by='总销售额', ascending=False)\n\n# 导出 Excel\noutput_path = '下载/平台店铺业绩.xlsx'\nstats.to_excel(output_path, index=False, engine='xlsxwriter')\n\n# 发出下载卡片\nemit_file(output_path, label='平台店铺业绩统计.xlsx')\n",
+        "analysis": {
+          "total_lines": 19,
+          "code_lines": 13,
+          "comment_lines": 6,
+          "step_comments": 0,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": [
+            "file"
+          ]
+        }
+      },
+      "S3_订单清洗_去重去异常": {
+        "code": "import pandas as pd\n\n# 读取数据\ndf = pd.read_parquet('staging/orders.parquet')\n\n# 1. 按订单号去重 (保留第一条)\n# 假设订单号列名为 '订单号'，如果实际列名不同请调整\nif '订单号' in df.columns:\n    df = df.drop_duplicates(subset=['订单号'], keep='first')\nelse:\n    # 尝试寻找包含 'order' 或 'id' 的列作为订单号\n    order_col = [c for c in df.columns if 'order' in c.lower() or 'id' in c.lower()]\n    if order_col:\n        df = df.drop_duplicates(subset=[order_col[0]], keep='first')\n\n# 2. 过滤掉 金额 <= 0 或 金额 > 100000 的异常订单\n# 假设金额列名为 '金额'\namount_col = '金额'\nif '金额' not in df.columns:\n    amount_col = [c for c in df.columns if 'amount' in c.lower() or 'price' in c.lower() or 'sum' in c.lower()][0]\n\ndf = df[(df[amount_col] > 0) & (df[amount_col] <= 100000)]\n\n# 确保日期列存在并转换格式，假设列名为 '日期' 或 'order_date'\ndate_col = '日期'\nif '日期' not in df.columns:\n    date_col = [c for c in df.columns if 'date' in c.lower() or 'time' in c.lower()][0]\n\ndf[date_col] = pd.to_datetime(df[date_col], errors='coerce')\n# 提取日期部分用于分组 (去掉时间)\ndf['date_only'] = df[date_col].dt.date\n\n# 假设平台列名为 '平台'\nplatform_col = '平台'\nif '平台' not in df.columns:\n    platform_col = [c for c in df.columns if 'platform' in c.lower() or 'source' in c.lower()][0]\n\n# 3. 按日期 + 平台分组算总订单数和总金额\ngrouped = df.groupby(['date_only', platform_col]).agg(\n    总订单数=(amount_col, 'count'),\n    总金额=(amount_col, 'sum')\n).reset_index()\n\n# 重命名日期列以便输出更清晰\ngrouped.rename(columns={'date_only': '日期', platform_col: '平台'}, inplace=True)\n\n# 4. 导出到 Excel\noutput_path = '下载/订单清洗结果.xlsx'\ngrouped.to_excel(output_path, index=False, engine='xlsxwriter')\n\n# 发出文件下载卡片和表格预览\nemit_file(output_path, label='订单清洗结果.xlsx')\nemit_table(grouped, title='订单清洗统计结果 (前100行)')\n",
+        "analysis": {
+          "total_lines": 42,
+          "code_lines": 29,
+          "comment_lines": 13,
+          "step_comments": 4,
+          "merge_total": 0,
+          "merge_safe_suffixes": 0,
+          "groupby_count": 1,
+          "agg_multi_col": 0,
+          "emit_calls": [
+            "file",
+            "table"
+          ]
+        }
+      }
+    }
+  }
+}

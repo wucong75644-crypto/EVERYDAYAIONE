@@ -200,11 +200,17 @@ def _format_structured_output(
         lines.append(sheet_overview)
 
     # 后续操作提示(沙盒 cwd=/workspace,相对路径直接解析)
-    _stem = Path(rel_path).stem
+    # parquet 文件名走 cache_naming.py(强制 ASCII,LLM 不会美化中文路径)
+    import hashlib
+    from services.agent.cache_naming import make_cache_parquet_name
+    _fingerprint = hashlib.md5(
+        Path(rel_path).name.encode("utf-8")
+    ).hexdigest()[:12]
+    _parquet = make_cache_parquet_name("v3.0", _fingerprint, "structured")
     lines.append("")
     lines.append(
         f"后续查询：code_execute 中用 "
-        f"`duckdb.sql(\"SELECT ... FROM 'staging/_structured_{_stem}.parquet'\")`"
+        f"`duckdb.sql(\"SELECT ... FROM 'staging/{_parquet}'\")`"
     )
 
     return "\n".join(lines)
@@ -471,10 +477,17 @@ def _write_staging_parquet(
         return
 
     try:
+        import hashlib
         import pandas as pd
+        from services.agent.cache_naming import make_cache_parquet_name
+
         df = pd.DataFrame(records)
-        stem = Path(filename).stem
-        parquet_name = f"_structured_{stem}.parquet"
+        # filename 含中文,用 md5 hash 作 ASCII fingerprint
+        # (LLM 复制中文路径会美化加空格 → IOException,见 cache_naming.py)
+        fingerprint = hashlib.md5(filename.encode("utf-8")).hexdigest()[:12]
+        parquet_name = make_cache_parquet_name(
+            "v3.0", fingerprint, "structured",
+        )
         df.to_parquet(str(staging / parquet_name), index=False, engine="pyarrow")
         logger.info(
             f"Structured Parquet written | file={parquet_name} | cells={len(records)}"

@@ -639,9 +639,9 @@ async def ensure_parquet_cache(
     fingerprint = _compute_file_fingerprint(excel_path)
     sheet_label = sheet or "sheet0"
     safe_sheet = re.sub(r'[^\w\-]', '_', str(sheet_label))
-    cache_name = (
-        f"_cache_{_CACHE_SCHEMA_VERSION}_{fingerprint}_"
-        f"{safe_sheet}_{Path(excel_path).stem}.parquet"
+    from services.agent.cache_naming import make_cache_parquet_name
+    cache_name = make_cache_parquet_name(
+        _CACHE_SCHEMA_VERSION, fingerprint, safe_sheet,
     )
 
     staging = Path(staging_dir)
@@ -979,9 +979,9 @@ async def ensure_parquet_cache_csv(
 
     # v2.2: cache_key 用内容指纹（同 ensure_parquet_cache 协议）
     fingerprint = _compute_file_fingerprint(csv_path)
-    cache_name = (
-        f"_cache_{_CACHE_SCHEMA_VERSION}_{fingerprint}_csv_"
-        f"{Path(csv_path).stem}.parquet"
+    from services.agent.cache_naming import make_cache_parquet_name
+    cache_name = make_cache_parquet_name(
+        _CACHE_SCHEMA_VERSION, fingerprint, "csv",
     )
     staging = Path(staging_dir)
     cache_path = staging / cache_name
