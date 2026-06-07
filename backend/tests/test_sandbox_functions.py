@@ -66,11 +66,12 @@ class TestBuildSandboxExecutor:
         )
         assert "conv-123" in executor._staging_dir
 
-    def test_upload_fn_injected(self):
-        """upload_fn 被注入（用于文件自动上传）"""
+    def test_kernel_executor_built(self):
+        """build_sandbox_executor 构造完整执行器(沙盒 IO 统一协议:emit 由 tool_loop_executor 处理)"""
         executor = build_sandbox_executor(user_id="u1", org_id="org1")
-        assert executor._upload_fn is not None
-        assert callable(executor._upload_fn)
+        assert executor._output_dir
+        assert executor._staging_dir
+        assert executor._workspace_dir
 
 
 class TestKernelManagerInjection:
@@ -104,23 +105,15 @@ class TestKernelManagerInjection:
         assert executor._conversation_id == "conv-abc-123"
 
 
-class TestAutoUploadSignature:
-    """_auto_upload 函数签名测试（filename + size，不读文件内容）"""
+class TestUploadIsExternal:
+    """文件上传由 tool_loop_executor 解析 emit_file 后调 upload_to_payload 完成。
+    sandbox executor 不再持有 upload_fn(沙盒 IO 统一协议)。
+    """
 
-    @pytest.mark.asyncio
-    async def test_auto_upload_accepts_filename_and_size(self, tmp_path):
-        with patch("core.config.get_settings") as mock_s:
-            mock_s.return_value.file_workspace_root = str(tmp_path)
-            mock_s.return_value.oss_cdn_domain = "cdn.test.com"
-            executor = build_sandbox_executor(user_id="u1", org_id="o1")
-        with patch("core.config.get_settings") as mock_s2:
-            mock_s2.return_value.file_workspace_root = str(tmp_path)
-            mock_s2.return_value.oss_cdn_domain = "cdn.test.com"
-            result = await executor._upload_fn("report.xlsx", 1024)
-        assert "report.xlsx" in result
-        assert "1024" in result
-        assert "[FILE]" in result
-        assert "cdn.test.com" in result
+    def test_executor_has_no_upload_fn(self):
+        from services.sandbox.executor import SandboxExecutor
+        executor = build_sandbox_executor(user_id="u1", org_id="org1")
+        assert not hasattr(executor, "_upload_fn")
 
 
 class TestComputeCodeHash:

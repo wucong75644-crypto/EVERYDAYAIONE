@@ -678,12 +678,12 @@ class TestChatHandlerFilePart:
         assert result[1]["type"] == "image"
         assert result[2]["type"] == "file"
 
-    def test_pending_file_parts_initialized(self):
-        """ChatHandler 初始化时 _pending_file_parts 为空列表"""
+    def test_pending_emit_payloads_initialized(self):
+        """ChatHandler 初始化时 _pending_emit_payloads 为空列表(沙盒 IO 统一协议)"""
         from services.handlers.chat_handler import ChatHandler
         handler = ChatHandler(db=MagicMock())
-        assert hasattr(handler, "_pending_file_parts")
-        assert handler._pending_file_parts == []
+        assert hasattr(handler, "_pending_emit_payloads")
+        assert handler._pending_emit_payloads == []
 
 
 # ============ _handle_complete_common 集成测试 ============

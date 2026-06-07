@@ -2,7 +2,7 @@
 v6 Agent 架构细节对齐 — 端到端集成模拟测试
 
 覆盖 8 个场景，验证每个改动板块在完整调用链上是否正确工作：
-1. FileRef 新字段在完整链路中的传播（创建→序列化→反序列化→collected_files）
+1. FileRef 新字段在完整链路中的传播（创建→序列化→反序列化→emit_payloads）
 2. Budget 两档切换 + inline/staging 分流
 3. 数据摘要全列类型 profile（数值+时间+文本+空df）
 4. validate + 降级结构化（无文本前缀）
@@ -104,7 +104,7 @@ class _FakeFileRegistry:
 
 
 class TestFileRefFullChain:
-    """模拟: 用户查库存 → DepartmentAgent 写 staging → 注册到 registry → 序列化/反序列化 → erp_agent 构建 collected_files"""
+    """模拟: 用户查库存 → DepartmentAgent 写 staging → 注册到 registry → 序列化/反序列化 → erp_agent 构建 emit_payloads"""
 
     def test_new_fields_survive_full_chain(self):
         """FileRef 创建 → registry 注册 → snapshot → 恢复 → 字段完整"""
@@ -155,7 +155,7 @@ class TestFileRefFullChain:
         assert restored_ref.derived_from == ("parent_id_abc",)
         assert restored_ref.ttl_seconds == 86400
 
-        # Step 5: 模拟 erp_agent 构建 collected_files
+        # Step 5: 模拟 erp_agent 构建 emit_payloads
         collected = {
             "url": restored_ref.path,
             "name": restored_ref.filename,

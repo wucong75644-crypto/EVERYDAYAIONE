@@ -83,18 +83,8 @@ class SandboxToolMixin:
                 kernel_manager=get_kernel_manager(),
             )
             result = await executor.execute(code, description)
-
-            # 透传图片尺寸（沙盒读取的 PIL 宽高 → chat_handler 构建 image block）
-            if hasattr(executor, "_image_dims") and executor._image_dims:
-                if not hasattr(self, "_image_dims"):
-                    self._image_dims = {}
-                self._image_dims.update(executor._image_dims)
-
-            # 透传 ECharts 配置（沙盒读取的 JSON → chat_handler 构建 chart block）
-            if hasattr(executor, "_chart_options") and executor._chart_options:
-                if not hasattr(self, "_chart_options"):
-                    self._chart_options = {}
-                self._chart_options.update(executor._chart_options)
+            # 产物透传由 tool_loop_executor._process_emit_markers 处理 (emit_payloads)
+            # 此处不再需要 _chart_options/_image_dims 透传 (沙盒 IO 统一协议)
 
             # 从 stdout 提取文件名注册到路径缓存（替代 file_list 的缓存注册）
             if result.status == "success" and result.summary:

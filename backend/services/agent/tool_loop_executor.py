@@ -29,13 +29,7 @@ from services.agent.loop_types import (
 from services.agent.tool_output import ToolOutput
 from services.agent.tool_result_cache import ToolResultCache
 
-# [FILE] 标记正则：沙盒 code_execute 输出的文件引用
-# 格式：[FILE]{url}|{filename}|{mime_type}|{size}[|{workspace_path}][/FILE]
-_FILE_RE = re.compile(
-    r"\[FILE\](?P<url>[^|]+)\|(?P<name>[^|]+)\|(?P<mime>[^|]+)\|(?P<size>\d+)(?:\|(?P<wspath>[^[\]]+))?\[/FILE\]"
-)
-
-# [EMIT] 协议标记(POC 阶段):沙盒里 LLM 主动声明产物
+# [EMIT] 协议:沙盒里 LLM 主动声明产物(沙盒 IO 统一协议)
 # 格式:[EMIT]{"kind":"chart|file|image|table", ...}[/EMIT]
 # 见 services/sandbox/emit_protocol.py
 _EMIT_RE = re.compile(r"\[EMIT\](?P<payload>\{.+?\})\[/EMIT\]", re.DOTALL)
@@ -113,7 +107,7 @@ class ToolLoopExecutor:
         empty_turns = 0
         recent_calls: List[str] = []
         context_recovery_used = False
-        self._collected_files: List[Dict[str, Any]] = []
+        self._emit_payloads: List[Dict[str, Any]] = []
 
         # ── 停止策略：初始化追踪器和配置 ──
         from services.agent.stop_policy import (
@@ -272,7 +266,7 @@ class ToolLoopExecutor:
             synthesis = await synthesize_wrap_up(
                 adapter=self.adapter,
                 messages=hook_ctx.messages,
-                collected_files=self._collected_files,
+                emit_payloads=self._emit_payloads,
                 reason=wrap_up_reason or stop_reason,
             )
             if synthesis:
@@ -306,7 +300,7 @@ class ToolLoopExecutor:
             total_tokens=total_tokens,
             turns=min(turn + 1, self.config.max_turns),
             is_llm_synthesis=is_llm_synthesis,
-            collected_files=self._collected_files,
+            emit_payloads=self._emit_payloads,
             stop_reason=stop_reason,
             wrap_up_reason=wrap_up_reason,
         )
@@ -376,26 +370,21 @@ class ToolLoopExecutor:
         return "break", turn_text, True, empty_turns
 
     def _register_result_files(self, result: Any, tool_name: str) -> None:
-        """统一注册 file_ref + collected_files（ToolOutput / AgentResult 共用）
-
-        B2: 同时传 schema_text（data_profile 文本），供 schema 智能过滤注入。
-        embedding 预计算只在对话级 registry 做一次（ChatToolMixin._save_schema_to_conversation），
-        此处不做——ERPAgent 内部 registry 不参与 schema 注入。
+        """统一注册 emit_payloads(ToolOutput / AgentResult 共用)。
+        Agent (ImageAgent/media_tool 等) 直接产 result.emit_payloads,
+        此处聚合到 self._emit_payloads。
         """
-        # file_registry 已废弃（对齐 Claude 模式）
-
-        collected = getattr(result, "collected_files", None)
-        if collected:
-            self._collected_files.extend(collected)
+        payloads = getattr(result, "emit_payloads", None)
+        if payloads:
+            self._emit_payloads.extend(payloads)
 
     async def _process_emit_markers(self, content: str, tool_name: str) -> str:
-        """解析 [EMIT]{json}[/EMIT] marker(沙盒 IO 统一协议正式版)
+        """解析 [EMIT]{json}[/EMIT] marker → self._emit_payloads(沙盒 IO 统一协议)。
 
         路由:
-          - kind=chart → executor._chart_options 注入(chat_handler 推 chart block)
-          - kind=file  → 上传 OSS,转 [FILE] marker(mime 非 image 走 file block)
-          - kind=image → 上传 OSS,转 [FILE] marker(mime=image/* 走 image block)
-          - kind=table → 直接注入 _pending_table_parts(chat_handler 推 table block)
+          - kind=chart/table:  payload 直接收集
+          - kind=file/image:   调 upload_to_payload 拿 url + workspace_path 写回 payload
+        marker 在 content 里替换为占位文本(给 LLM 看,防止重复 emit)。
         """
         emits: list[dict[str, Any]] = []
         for m in _EMIT_RE.finditer(content):
@@ -407,59 +396,47 @@ class ToolLoopExecutor:
         if not emits:
             return content
 
-        logger.info(f"[EMIT] markers | tool={tool_name} | count={len(emits)} | kinds={[e.get('kind') for e in emits]}")
+        logger.info(
+            f"[EMIT] markers | tool={tool_name} | count={len(emits)} | "
+            f"kinds={[e.get('kind') for e in emits]}"
+        )
 
-        # 1. chart → 注入 executor._chart_options
-        chart_payloads = [e for e in emits if e.get("kind") == "chart"]
-        if chart_payloads and hasattr(self.executor, "_chart_options"):
-            if self.executor._chart_options is None:
-                self.executor._chart_options = {}
-            for idx, p in enumerate(chart_payloads):
-                title = p.get("title") or f"chart_{idx}"
-                self.executor._chart_options[f"{title}.echart.json"] = p.get("option", {})
+        # 上传 file/image 类型,把 url + workspace_path 写回 payload
+        file_image_payloads = [e for e in emits if e.get("kind") in ("file", "image")]
+        if file_image_payloads:
+            from services.file_upload import upload_to_payload
+            workspace_dir = getattr(self.executor, "_workspace_dir", None)
+            output_dir = getattr(self.executor, "_output_dir", None)
+            user_id = getattr(self.executor, "user_id", "") or ""
+            org_id = getattr(self.executor, "org_id", None)
 
-        # 2. file + image → 都走 OSS 上传 + [FILE] marker(mime 决定前端用 file/image block)
-        upload_payloads = [e for e in emits if e.get("kind") in ("file", "image")]
-        file_markers: list[str] = []
-        if upload_payloads:
-            try:
-                from services.file_upload import auto_upload
-                workspace_dir = getattr(self.executor, "_workspace_dir", None)
-                output_dir = getattr(self.executor, "_output_dir", None)
-                user_id = getattr(self.executor, "user_id", "") or ""
-                org_id = getattr(self.executor, "org_id", None)
+            for p in file_image_payloads:
+                rel_path = p.get("path", "")
+                name = p.get("name") or os.path.basename(rel_path)
+                size = p.get("size", 0)
+                if workspace_dir and rel_path:
+                    host_dir = os.path.dirname(os.path.join(workspace_dir, rel_path))
+                else:
+                    host_dir = output_dir or ""
 
-                for p in upload_payloads:
-                    rel_path = p.get("path", "")
-                    name = p.get("name") or os.path.basename(rel_path)
-                    size = p.get("size", 0)
-                    if workspace_dir and rel_path:
-                        host_dir = os.path.dirname(os.path.join(workspace_dir, rel_path))
-                    else:
-                        host_dir = output_dir or ""
+                if not (host_dir and os.path.exists(os.path.join(host_dir, name))):
+                    logger.warning(
+                        f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
+                    )
+                    continue
+                uploaded = await upload_to_payload(
+                    name, size, host_dir, user_id, org_id,
+                )
+                if uploaded:
+                    p["url"] = uploaded.get("url", "")
+                    p["mime_type"] = uploaded.get("mime_type", "")
+                    if "workspace_path" in uploaded:
+                        p["workspace_path"] = uploaded["workspace_path"]
+                    if not p.get("size"):
+                        p["size"] = uploaded.get("size", 0)
 
-                    if host_dir and os.path.exists(os.path.join(host_dir, name)):
-                        marker = await auto_upload(name, size, host_dir, user_id, org_id)
-                        file_markers.append(marker)
-                    else:
-                        logger.warning(
-                            f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
-                        )
-            except Exception as e:
-                logger.warning(f"[EMIT] upload 失败 | err={e}")
-
-        # 3. table → 直接注入 _pending_table_parts(executor 持有)
-        table_payloads = [e for e in emits if e.get("kind") == "table"]
-        if table_payloads:
-            if not hasattr(self.executor, "_pending_table_parts"):
-                self.executor._pending_table_parts = []
-            for p in table_payloads:
-                self.executor._pending_table_parts.append({
-                    "title": p.get("title", ""),
-                    "columns": p.get("columns", []),
-                    "rows": p.get("rows", []),
-                    "truncated": p.get("truncated", False),
-                })
+        # 全部 payload 入收集器(后续透传到 chat_handler 推 block)
+        self._emit_payloads.extend(emits)
 
         # 替换 marker → 占位文本(给 LLM 看的,防止它重复 emit)
         def _emit_placeholder(m):
@@ -475,13 +452,7 @@ class ToolLoopExecutor:
                 return hints.get(kind, f"[已 emit:{kind}]")
             except Exception:
                 return ""
-        content = _EMIT_RE.sub(_emit_placeholder, content)
-
-        # 追加 [FILE] markers 让原解析流程接管(走 OSS URL + 前端渲染)
-        if file_markers:
-            content = content + "\n" + "\n".join(file_markers)
-
-        return content
+        return _EMIT_RE.sub(_emit_placeholder, content)
 
     async def _pre_turn_checks(
         self,
@@ -796,33 +767,11 @@ class ToolLoopExecutor:
                 is_truncated = False
                 self._register_result_files(result, tool_name)
 
-            # Step 2a: [EMIT] 协议(POC):沙盒 LLM 主动声明产物 → 转成内部结构
-            #   - chart → 注入 executor._chart_options(复用 chart_block_builder 推送)
-            #   - file  → 主进程上传 OSS + 改写成 [FILE] marker(走原链路)
-            #   - image → TODO 后续接入 image block
-            #   - table → TODO 前端 table 组件后接入
+            # Step 2: [EMIT] 协议解析 → self._emit_payloads(沙盒 IO 统一协议)
+            #   chart/table: payload 直接收集
+            #   file/image:  上传 OSS,url + workspace_path 写回 payload
             if content and _EMIT_RE.search(content):
                 content = await self._process_emit_markers(content, tool_name)
-
-            # Step 2: [FILE] 标记提取（统一处理，不分类型）
-            if content and "[FILE]" in content:
-                logger.info(f"[FILE] tag found | tool={tool_name} | content_len={len(content)}")
-                for m in _FILE_RE.finditer(content):
-                    logger.info(f"[FILE] extracted | name={m.group('name')} | url={m.group('url')[:80]}")
-                    entry: Dict[str, Any] = {
-                        "url": m.group("url"),
-                        "name": m.group("name"),
-                        "mime_type": m.group("mime"),
-                        "size": int(m.group("size")),
-                    }
-                    if m.group("wspath"):
-                        entry["workspace_path"] = m.group("wspath")
-                    self._collected_files.append(entry)
-                def _file_placeholder(m):
-                    if m.group("mime").startswith("image/"):
-                        return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
-                    return f"📎 文件已生成: {m.group('name')}（下载卡片将自动展示，不要重复引用文件名）"
-                content = _FILE_RE.sub(_file_placeholder, content)
 
             # Step 3: 信封分流（按工具名自动选预算，大结果落盘 staging）
             if not isinstance(result, ToolOutput):

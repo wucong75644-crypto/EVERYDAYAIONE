@@ -306,7 +306,7 @@ class TestImageAgentErrorResult:
             image_urls=["https://cdn/img.jpg"], platform="taobao", style_directive="暖色调",
         )
         assert result.status == "error"
-        cf = result.collected_files[0]
+        cf = result.emit_payloads[0]
         assert cf["failed"] is True
         assert cf["retry_context"]["task"] == "白底主图 800×800：商品居中"
 
@@ -330,7 +330,7 @@ class TestImageAgentExecute:
             result = await agent.execute(task="白底主图", platform="taobao")
 
         assert result.status == "success"
-        assert result.collected_files[0]["url"] == "https://cdn/gen.png"
+        assert result.emit_payloads[0]["url"] == "https://cdn/gen.png"
         mock_confirm.assert_called_once_with("tx_1")
 
     @pytest.mark.asyncio
@@ -358,7 +358,7 @@ class TestImageAgentExecute:
             result = await agent.execute(task="白底主图", platform="taobao")
 
         assert result.status == "error"
-        assert result.collected_files is None
+        assert result.emit_payloads == []
 
 
 # ============================================================

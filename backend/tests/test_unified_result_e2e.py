@@ -140,7 +140,7 @@ class TestERPQueryPath:
             status="success",
             source="erp_agent",
             tokens_used=500,
-            collected_files=[{
+            emit_payloads=[{
                 "url": "/tmp/a.xlsx", "name": "a.xlsx",
                 "mime_type": "application/xlsx", "size": 2048,
             }],
@@ -148,9 +148,9 @@ class TestERPQueryPath:
 
         # 模拟 ChatToolMixin 行为 (chat_tool_mixin.py:104-132)
         assert isinstance(result, AgentResult)
-        assert result.collected_files is not None
-        assert len(result.collected_files) == 1
-        assert result.collected_files[0]["name"] == "a.xlsx"
+        assert result.emit_payloads is not None
+        assert len(result.emit_payloads) == 1
+        assert result.emit_payloads[0]["name"] == "a.xlsx"
         assert result.tokens_used == 500
         assert result.status == "success"
 

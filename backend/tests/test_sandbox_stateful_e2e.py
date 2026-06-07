@@ -40,24 +40,16 @@ async def km():
 
 @pytest.fixture
 def stateful_executor(ws, km):
-    """带 KernelManager 的有状态执行器"""
-    uploaded = []
-
-    async def mock_upload(filename, size):
-        uploaded.append(filename)
-        return f"✅ {filename}"
-
+    """带 KernelManager 的有状态执行器(沙盒 IO 统一协议:emit 由 tool_loop_executor 处理)"""
     ex = SandboxExecutor(
         timeout=30.0,
         max_result_chars=8000,
         workspace_dir=ws["workspace"],
         staging_dir=ws["staging"],
         output_dir=ws["output"],
-        upload_fn=mock_upload,
         kernel_manager=km,
         conversation_id="test_conv_001",
     )
-    ex._uploaded = uploaded
     return ex
 
 
@@ -141,16 +133,21 @@ class TestStatefulSecurity:
 class TestStatefulFileUpload:
 
     @pytest.mark.asyncio
-    async def test_file_upload_works(self, stateful_executor, ws):
-        """有状态模式下文件上传仍然正常(新路径协议:相对路径 '下载/x.json')"""
+    async def test_file_write_works(self, stateful_executor, ws):
+        """有状态模式下文件写入 + emit_file 协议正常工作。
+        新协议:LLM 调 emit_file('下载/x.json') 由 tool_loop_executor 接管上传。
+        沙盒主进程不再扫描 output_dir 兜底(对齐 Jupyter/OpenAI 行业标准)。
+        """
         code = (
             "with open('下载/report.json', 'w') as f:\n"
             "    f.write('{\"ok\": true}')\n"
+            "emit_file('下载/report.json')\n"
             "print('done')"
         )
-        result = await stateful_executor.execute(code, "写文件")
+        result = await stateful_executor.execute(code, "写文件并 emit")
         assert "done" in result.summary
-        assert "report.json" in stateful_executor._uploaded
+        # 沙盒末尾产 [EMIT] marker,由 tool_loop_executor 处理(此处不验证 upload)
+        assert "[EMIT]" in result.summary or "report.json" in result.summary
 
     @pytest.mark.asyncio
     async def test_file_persists_in_workspace(self, stateful_executor, ws):

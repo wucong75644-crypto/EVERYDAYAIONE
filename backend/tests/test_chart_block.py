@@ -61,182 +61,85 @@ class TestChartPartSchema:
 
 
 # ============================================================
-# _extract_file_parts chart 占位文本
+# _build_block_from_payload(沙盒 IO 统一协议:emit_payloads → content block)
 # ============================================================
 
-class TestExtractFilePartsChart:
-    """_extract_file_parts 对 .echart.json 的占位文本"""
+class TestBuildBlockFromPayload:
+    """chat_handler._build_block_from_payload 把 emit_payload 转 block"""
 
-    def test_echart_placeholder_text(self):
-        """chart 文件应使用交互式图表占位文本"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = ChatToolMixin.__new__(ChatToolMixin)
-        mixin._pending_file_parts = []
-
-        result = mixin._extract_file_parts(
-            "[FILE]https://cdn/f/trend.echart.json|trend.echart.json|application/json|1234[/FILE]"
-        )
-        assert "交互式图表已生成" in result
-        assert len(mixin._pending_file_parts) == 1
-        assert mixin._pending_file_parts[0].name == "trend.echart.json"
-
-    def test_image_placeholder_unchanged(self):
-        """图片文件占位文本不受影响"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = ChatToolMixin.__new__(ChatToolMixin)
-        mixin._pending_file_parts = []
-
-        result = mixin._extract_file_parts(
-            "[FILE]https://cdn/f/chart.png|chart.png|image/png|5678[/FILE]"
-        )
-        assert "图表已生成" in result
-        assert "交互式" not in result
-
-
-# ============================================================
-# AgentResult [FILE] 提取（chat_tool_mixin AgentResult 分支）
-# ============================================================
-
-class TestAgentResultFileExtraction:
-    """AgentResult.summary 中的 [FILE] 标记应被提取为 FilePart"""
-
-    def test_agent_result_file_extracted(self):
-        """AgentResult.summary 含 [FILE] → FilePart 暂存 + summary 替换为占位文本"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = ChatToolMixin.__new__(ChatToolMixin)
-        mixin._pending_file_parts = []
-
-        original = (
-            "计算完成\n"
-            "[FILE]https://cdn/f/trend.echart.json|trend.echart.json|application/json|2048[/FILE]"
-        )
-        result = mixin._extract_file_parts(original)
-
-        assert "交互式图表已生成" in result
-        assert "[FILE]" not in result
-        assert len(mixin._pending_file_parts) == 1
-        assert mixin._pending_file_parts[0].name == "trend.echart.json"
-        assert mixin._pending_file_parts[0].size == 2048
-
-    def test_agent_result_multiple_files(self):
-        """多个 [FILE] 标记全部提取"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = ChatToolMixin.__new__(ChatToolMixin)
-        mixin._pending_file_parts = []
-
-        original = (
-            "[FILE]https://cdn/a.echart.json|a.echart.json|application/json|100[/FILE]\n"
-            "中间文字\n"
-            "[FILE]https://cdn/b.xlsx|b.xlsx|application/vnd.ms-excel|5000[/FILE]"
-        )
-        result = mixin._extract_file_parts(original)
-
-        assert len(mixin._pending_file_parts) == 2
-        assert mixin._pending_file_parts[0].name == "a.echart.json"
-        assert mixin._pending_file_parts[1].name == "b.xlsx"
-        # chart 用交互式占位，Excel 用文件占位
-        assert "交互式图表已生成" in result
-        assert "文件已生成: b.xlsx" in result
-
-    def test_no_file_marker_unchanged(self):
-        """无 [FILE] 标记的 summary 原样返回"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = ChatToolMixin.__new__(ChatToolMixin)
-        mixin._pending_file_parts = []
-
-        original = "计算完成，结果如下"
-        result = mixin._extract_file_parts(original)
-
-        assert result == original
-        assert len(mixin._pending_file_parts) == 0
-
-
-# ============================================================
-# chart block 构造逻辑（chat_handler _pending_file_parts → block）
-# ============================================================
-
-class TestChartBlockConstruction:
-    """chat_handler 中 _pending_file_parts + _chart_options → chart block"""
-
-    def test_chart_block_from_file_part(self):
-        """FilePart + _chart_options 匹配 → 构造 type=chart block"""
-        from schemas.message import FilePart
-
-        fp = FilePart(
-            url="https://cdn/f/trend.echart.json",
-            name="trend.echart.json",
-            mime_type="application/json",
-            size=1024,
-        )
-        chart_options = {
-            "trend.echart.json": {
+    def test_chart_payload_to_block(self):
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "chart",
+            "title": "销售趋势",
+            "option": {
                 "title": {"text": "销售趋势"},
                 "series": [{"type": "bar", "data": [1, 2, 3]}],
-            }
-        }
-
-        # 模拟 chat_handler 的 block 构造逻辑
-        _charts = chart_options
-        if fp.name in _charts:
-            _opt = _charts[fp.name]
-            _ct = ""
-            if isinstance(_opt.get("series"), list) and _opt["series"]:
-                _ct = _opt["series"][0].get("type", "")
-            block = {
-                "type": "chart",
-                "option": _opt,
-                "title": _opt.get("title", {}).get("text", ""),
-                "chart_type": _ct,
-            }
-
+            },
+        })
         assert block["type"] == "chart"
         assert block["title"] == "销售趋势"
         assert block["chart_type"] == "bar"
-        assert block["option"]["series"][0]["data"] == [1, 2, 3]
 
-    def test_non_chart_json_stays_file_block(self):
-        """普通 JSON 文件（不在 _chart_options 中）→ file block"""
-        from schemas.message import FilePart
+    def test_table_payload_to_block(self):
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "table",
+            "title": "TOP10",
+            "columns": ["name", "count"],
+            "rows": [{"name": "A", "count": 1}],
+            "truncated": False,
+        })
+        assert block["type"] == "table"
+        assert block["columns"] == ["name", "count"]
+        assert block["rows"][0]["name"] == "A"
 
-        fp = FilePart(
-            url="https://cdn/f/data.json",
-            name="data.json",
-            mime_type="application/json",
-            size=500,
-        )
-        _charts = {}  # 空，没有 chart option
+    def test_image_payload_to_block_with_dims(self):
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "image",
+            "url": "https://cdn/img.png",
+            "name": "img.png",
+            "width": 1024, "height": 768,
+            "workspace_path": "下载/img.png",
+        })
+        assert block["type"] == "image"
+        assert block["url"] == "https://cdn/img.png"
+        assert block["width"] == 1024
+        assert block["height"] == 768
+        assert block["workspace_path"] == "下载/img.png"
 
-        # 模拟 chat_handler 逻辑
-        if fp.name in _charts:
-            block = {"type": "chart"}
-        elif fp.mime_type.startswith("image/"):
-            block = {"type": "image"}
-        else:
-            block = {"type": "file", "url": fp.url, "name": fp.name}
+    def test_failed_image_payload_includes_retry(self):
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "image",
+            "url": None,
+            "failed": True,
+            "error": "timeout",
+            "retry_context": {"prompt": "test"},
+        })
+        assert block["failed"] is True
+        assert block["error"] == "timeout"
+        assert block["retry_context"] == {"prompt": "test"}
 
+    def test_file_payload_to_block_keeps_dual_path(self):
+        """双轨字段:url(CDN) + workspace_path(本地相对路径) 都保留"""
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "file",
+            "url": "https://cdn/x.xlsx",
+            "name": "x.xlsx",
+            "mime_type": "application/vnd",
+            "size": 12345,
+            "workspace_path": "下载/x.xlsx",
+        })
         assert block["type"] == "file"
-        assert block["name"] == "data.json"
+        assert block["url"] == "https://cdn/x.xlsx"
+        assert block["workspace_path"] == "下载/x.xlsx"
 
-    def test_chart_type_extracted_from_series(self):
-        """chart_type 从 series[0].type 提取"""
-        option = {"series": [{"type": "pie", "data": []}]}
-        _ct = ""
-        if isinstance(option.get("series"), list) and option["series"]:
-            _ct = option["series"][0].get("type", "")
-        assert _ct == "pie"
-
-    def test_empty_series_no_crash(self):
-        """series 为空时 chart_type 为空字符串"""
-        option = {"series": []}
-        _ct = ""
-        if isinstance(option.get("series"), list) and option["series"]:
-            _ct = option["series"][0].get("type", "")
-        assert _ct == ""
+    def test_unknown_kind_returns_none(self):
+        from services.handlers.chat_handler import _build_block_from_payload
+        assert _build_block_from_payload({"kind": "unknown"}) is None
 
 
 # ============================================================
