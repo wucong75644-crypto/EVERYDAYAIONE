@@ -6,7 +6,7 @@
 - 不重构 ChatHandler，照抄 erp_agent.py 的 headless 模式
 - 复用 ToolLoopExecutor / LoopConfig / LoopStrategy / LoopHook
 - 无 WebSocket 依赖（task_id=None 让 ProgressNotifyHook 自然 no-op）
-- 沙盒输出文件由 ToolLoopExecutor 在独立通道提取（collected_files）
+- 沙盒输出产物由 ToolLoopExecutor 在独立通道提取（emit_payloads）
 
 2026-04-11 重构：删除 _run_tool_loop / _execute_tools 共 170 行重复代码，
 改为装配 LoopConfig + LoopStrategy + 单 ToolAuditHook 走共享内核。
@@ -149,8 +149,8 @@ class ScheduledTaskAgent:
             text = result.text
             turns = result.turns
 
-            # 8. 提取沙盒输出的文件（ToolLoopExecutor 已在独立通道透传）
-            files = result.collected_files or []
+            # 8. 提取沙盒输出的产物(ToolLoopExecutor 已在独立通道透传 emit_payloads)
+            files = result.emit_payloads or []
 
             # 9. 生成摘要
             summary = await self._generate_summary(text, adapter)

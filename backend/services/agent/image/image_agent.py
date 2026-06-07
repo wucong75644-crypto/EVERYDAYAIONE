@@ -70,7 +70,7 @@ class ImageAgent(CreditMixin):
         """分析产品并策划电商主图方案。
 
         调千问VL一步到位输出 gpt-image-2 可执行的 prompt JSON。
-        返回 AgentResult，collected_files 中放 ecom_plan 数据（前端渲染为方案卡片）。
+        返回 AgentResult,emit_payloads 中放 ecom_plan 数据(前端渲染为方案卡片)。
 
         Args:
             user_text: 用户输入的产品描述
@@ -324,8 +324,8 @@ class ImageAgent(CreditMixin):
                 status="success",
                 summary=f"已生成图片：{task[:30]}",
                 source="image_agent",
-                collected_files=[{
-                    "type": "image",
+                emit_payloads=[{
+                    "kind": "image",
                     "url": cdn_url,
                     "width": width,
                     "height": height,
@@ -419,8 +419,8 @@ class ImageAgent(CreditMixin):
             summary=summary,
             source="image_agent",
             error_message=summary,
-            collected_files=[{
-                "type": "image",
+            emit_payloads=[{
+                "kind": "image",
                 "url": None,
                 "width": width,
                 "height": height,

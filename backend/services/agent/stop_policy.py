@@ -241,16 +241,16 @@ _WRAP_UP_SYSTEM_PROMPT = (
 
 def build_synthesis_context(
     content_blocks: list[dict] | None = None,
-    collected_files: list[dict] | None = None,
+    emit_payloads: list[dict] | None = None,
 ) -> str:
     """构建 wrap_up 合成的补充上下文。
 
-    从 content_blocks 和 file artifacts 中提取摘要，
+    从 content_blocks 和 emit_payloads 中提取摘要,
     补充 messages 可能因压缩而丢失的信息。
     """
     parts: list[str] = []
 
-    # 工具结果摘要（从 content_blocks 提取）
+    # 工具结果摘要(从 content_blocks 提取)
     if content_blocks:
         tool_summaries = []
         for block in content_blocks:
@@ -262,13 +262,16 @@ def build_synthesis_context(
         if tool_summaries:
             parts.append("## 工具执行记录\n" + "\n".join(tool_summaries))
 
-    # 文件产物列表
-    if collected_files:
-        file_list = [
-            f"- {f.get('name', '?')} ({f.get('mime_type', '?')})"
-            for f in collected_files
-        ]
-        parts.append("## 已生成的文件\n" + "\n".join(file_list))
+    # 产物列表(emit_payloads:chart/file/image/table 统一)
+    if emit_payloads:
+        items: list[str] = []
+        for p in emit_payloads:
+            kind = p.get("kind", "?")
+            label = (
+                p.get("title") or p.get("name") or p.get("alt") or p.get("label") or ""
+            )
+            items.append(f"- [{kind}] {label}")
+        parts.append("## 已生成的产物\n" + "\n".join(items))
 
     return "\n\n".join(parts)
 
@@ -302,19 +305,19 @@ async def synthesize_wrap_up(
     adapter: Any,
     messages: list[dict],
     content_blocks: list[dict] | None = None,
-    collected_files: list[dict] | None = None,
+    emit_payloads: list[dict] | None = None,
     reason: str = "",
     timeout: float = _WRAP_UP_TIMEOUT,
 ) -> str | None:
-    """Final Synthesis Turn — 不传 tools，强制纯文本输出。
+    """Final Synthesis Turn — 不传 tools,强制纯文本输出。
 
-    返回合成文本，失败返回 None（调用方走 hard_fail 兜底）。
-    超时默认 15 秒，避免 LLM 响应慢时无限阻塞。
+    返回合成文本,失败返回 None(调用方走 hard_fail 兜底)。
+    超时默认 15 秒,避免 LLM 响应慢时无限阻塞。
     """
     import asyncio
 
     # 构建补充上下文
-    extra_ctx = build_synthesis_context(content_blocks, collected_files)
+    extra_ctx = build_synthesis_context(content_blocks, emit_payloads)
     system_content = _WRAP_UP_SYSTEM_PROMPT
     if extra_ctx:
         system_content += f"\n\n{extra_ctx}"

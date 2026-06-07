@@ -70,16 +70,29 @@ def build_file_payload(path: str, label: str | None = None) -> dict:
 
 
 def build_image_payload(path: str, alt: str = "") -> dict:
-    """构造 image payload"""
+    """构造 image payload(沙盒内调用,自动读取 PIL 尺寸)。
+
+    width/height 在沙盒内用 PIL 读取直接填进 payload,
+    避免后端 chat_handler 反查 _image_dims 字典。
+    """
     if not path:
         raise ValueError("emit_image path 不能为空")
     name = os.path.basename(str(path))
-    return {
+    payload: dict = {
         "kind": "image",
         "path": str(path),
         "alt": alt or name,
         "name": name,
     }
+    # PIL 读尺寸(失败不阻断,前端可走默认)
+    try:
+        from PIL import Image  # type: ignore
+        with Image.open(str(path)) as im:
+            payload["width"] = im.width
+            payload["height"] = im.height
+    except Exception:
+        pass
+    return payload
 
 
 def build_table_payload(data: Any, title: str = "") -> dict:

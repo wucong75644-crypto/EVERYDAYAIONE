@@ -341,14 +341,14 @@ async def retry_image(
         style_directive=req.style_directive,
     )
 
-    if result.status == "success" and result.collected_files:
+    if result.status == "success" and result.emit_payloads:
         try:
             _update_message_image_part(
-                db, req.message_id, req.part_index, result.collected_files[0],
+                db, req.message_id, req.part_index, result.emit_payloads[0],
             )
         except Exception as e:
             logger.error(f"retry update message failed: {e}")
-        return {"success": True, "image_url": result.collected_files[0].get("url", "")}
+        return {"success": True, "image_url": result.emit_payloads[0].get("url", "")}
 
     return {"success": False, "error": result.summary}
 

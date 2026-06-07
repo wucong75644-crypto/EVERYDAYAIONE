@@ -283,13 +283,13 @@ class TestFieldCompleteness:
         result = AgentResult(status="success", summary="ok", confidence=0.6)
         assert result.confidence == 0.6
 
-    def test_has_collected_files(self):
+    def test_has_emit_payloads(self):
         files = [{"url": "/tmp/a.parquet", "name": "a.parquet",
                   "mime_type": "application/octet-stream", "size": 1024}]
         result = AgentResult(
-            status="success", summary="ok", collected_files=files,
+            status="success", summary="ok", emit_payloads=files,
         )
-        assert result.collected_files == files
+        assert result.emit_payloads == files
 
     def test_has_metadata(self):
         result = AgentResult(
@@ -303,7 +303,7 @@ class TestFieldCompleteness:
         assert result.file_ref is None
         assert result.data is None
         assert result.columns is None
-        assert result.collected_files is None
+        assert result.emit_payloads == []
         assert result.source == ""
         assert result.tokens_used == 0
         assert result.confidence == 1.0

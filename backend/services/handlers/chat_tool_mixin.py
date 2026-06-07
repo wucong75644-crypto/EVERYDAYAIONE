@@ -7,15 +7,9 @@ ChatHandler 工具执行 Mixin
 
 import asyncio
 import json
-import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-
-# [FILE] 标记正则：沙盒 upload_file 返回的格式
-_FILE_PATTERN = re.compile(
-    r'\[FILE\]([^|]+)\|([^|]+)\|([^|]+)\|(\d+)(?:\|([^[\]]+))?\[/FILE\]'
-)
 
 from schemas.websocket import (
     build_tool_result,
@@ -73,7 +67,6 @@ class ChatToolMixin:
         executor._parent_messages = messages
         if budget is not None:
             executor._budget = budget
-        executor._pending_file_parts = []
         # 提取当前用户消息中的图片 URLs（供 image_agent 自动注入）
         executor._current_message_images = self._extract_user_image_urls(messages)
         results: List[tuple] = []
@@ -102,77 +95,32 @@ class ChatToolMixin:
                     )
                     results.append(result)
 
-        # ── AgentResult 处理（通信协议 §3.2）──
+        # ── AgentResult 处理:聚合 emit_payloads (沙盒 IO 统一协议) ──
         from services.agent.agent_result import AgentResult
-        for i, (tc, result, is_error, _display) in enumerate(results):
+        for tc, result, _is_error, _display in results:
             if not isinstance(result, AgentResult):
                 continue
-            # ① 前端文件卡片通道
+            payloads = result.emit_payloads or []
             logger.info(
-                f"AgentResult file check | tool={tc['name']} | "
-                f"collected_files={len(result.collected_files) if result.collected_files else 0} | "
-                f"has_pending={hasattr(self, '_pending_file_parts')}"
+                f"AgentResult emit_payloads check | tool={tc['name']} | "
+                f"count={len(payloads)} | "
+                f"kinds={[p.get('kind') for p in payloads]}"
             )
-            if result.collected_files and hasattr(self, "_pending_file_parts"):
-                from schemas.message import FilePart, ImagePart
-                for f in result.collected_files:
-                    # ImageAgent 返回 ImagePart 格式（type=image, url/width/height/alt）
-                    if f.get("type") == "image":
-                        self._pending_file_parts.append(ImagePart(
-                            url=f.get("url"),
-                            width=f.get("width"),
-                            height=f.get("height"),
-                            alt=f.get("alt", ""),
-                            failed=f.get("failed") or None,
-                            error=f.get("error") or None,
-                            retry_context=f.get("retry_context") or None,
-                        ))
-                        logger.info(f"ImagePart added | alt={f.get('alt', '')[:30]} | failed={f.get('failed')} | url={f.get('url', 'None')[:80] if f.get('url') else 'None'}")
-                    else:
-                        # 其他工具返回 FilePart 格式（url/name/mime_type/size/workspace_path）
-                        self._pending_file_parts.append(FilePart(
-                            url=f["url"], name=f["name"],
-                            mime_type=f["mime_type"], size=f.get("size"),
-                            workspace_path=f.get("workspace_path"),
-                        ))
-                        logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
-            # ③ 展示文本（供 content_block_add 推送）
+            if payloads:
+                if not hasattr(self, "_pending_emit_payloads"):
+                    self._pending_emit_payloads = []
+                self._pending_emit_payloads.extend(payloads)
+            # 展示文本(供 content_block_add 推送)
             self._last_erp_display_text = result.summary
-            self._last_erp_display_files = result.collected_files or []
-            # ④ token 统计
+            self._last_erp_display_files = payloads
+            # token 统计
             self._erp_agent_tokens = (
                 getattr(self, "_erp_agent_tokens", 0) + result.tokens_used
             )
-            # schema 注入已移除（对齐 Claude 模式：AI 在沙盒自主探索）
 
-        # 清理遗留 _pending_schemas（兼容 fetch_all_pages 等仍写入的场景）
+        # 清理遗留 _pending_schemas(兼容 fetch_all_pages 等仍写入的场景)
         if executor._pending_schemas:
             executor._pending_schemas.clear()
-
-        # 收集普通工具（非 AgentResult）透传的 FilePart（[FILE] 标记通道）
-        if executor._pending_file_parts:
-            if hasattr(self, "_pending_file_parts"):
-                self._pending_file_parts.extend(executor._pending_file_parts)
-            executor._pending_file_parts.clear()
-
-        # 透传图片尺寸（sandbox PIL 读取 → chat_handler image block）
-        if hasattr(executor, "_image_dims") and executor._image_dims:
-            if not hasattr(self, "_image_dims"):
-                self._image_dims = {}
-            self._image_dims.update(executor._image_dims)
-
-        # 透传 ECharts 配置（sandbox JSON 读取 → chat_handler chart block）
-        if hasattr(executor, "_chart_options") and executor._chart_options:
-            if not hasattr(self, "_chart_options"):
-                self._chart_options = {}
-            self._chart_options.update(executor._chart_options)
-
-        # 透传 table parts (emit_table 沙盒 IO 统一协议)
-        if hasattr(executor, "_pending_table_parts") and executor._pending_table_parts:
-            if not hasattr(self, "_pending_table_parts"):
-                self._pending_table_parts = []
-            self._pending_table_parts.extend(executor._pending_table_parts)
-            executor._pending_table_parts = []  # 透传后清空 executor 端
 
         return results
 
@@ -249,9 +197,6 @@ class ChatToolMixin:
             from services.agent.agent_result import AgentResult
             from services.handlers.chat_generate_mixin import extract_display_text
             if isinstance(result, AgentResult):
-                # 提取 [FILE] 标记 → FilePart 暂存（code_execute 生成的文件）
-                if result.summary and "[FILE]" in result.summary:
-                    result.summary = self._extract_file_parts(result.summary)
                 display_text = extract_display_text(result)
                 raw_summary = result.summary[:100] if result.summary else ""
                 await ws_manager.send_to_task_or_user(
@@ -343,10 +288,7 @@ class ChatToolMixin:
                 )
                 return (tc, result, False, display_text)
 
-            # 普通工具（str 路径）
-            # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
-            result = self._extract_file_parts(result)
-            # display_text 取 wrap 之前的完整结果（前端展示用）
+            # 普通工具(str 路径) - emit 协议已统一,不再解析 [FILE] marker
             display_text = extract_display_text(result)
             raw_summary = result[:100] if result else ""
             # 截断+信号（messages 里只放精简版给 LLM）
@@ -476,37 +418,6 @@ class ChatToolMixin:
                 ]
             break
         return []
-
-    def _extract_file_parts(self, result: str) -> str:
-        """从工具结果中提取 [FILE] 标记，暂存为 FilePart
-
-        [FILE] 标记替换为占位文本（LLM 可读），FilePart 存到
-        self._pending_file_parts，在工具执行后插入 _content_blocks。
-
-        占位文本按 mime 类型区分：
-        - 图片：提示"将自动展示"，引导 LLM 只写结论不重复图表数据
-        - 其他：保留文件名，提示"下载卡片将自动展示"
-        """
-        if not result or "[FILE]" not in result:
-            return result
-
-        from schemas.message import FilePart
-
-        def _replace_match(m):
-            url, name, mime_type, size, ws_path = m.groups()
-            self._pending_file_parts.append(FilePart(
-                url=url, name=name, mime_type=mime_type, size=int(size),
-                workspace_path=ws_path,
-            ))
-            # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
-            if name.endswith(".echart.json"):
-                return "📊 交互式图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
-            if mime_type.startswith("image/"):
-                return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
-            return f"📎 文件已生成: {name}（下载卡片将自动展示，不要重复引用文件名）"
-
-        return _FILE_PATTERN.sub(_replace_match, result)
-
 
 def _partition_tool_calls(
     tool_calls: List[Dict[str, Any]],

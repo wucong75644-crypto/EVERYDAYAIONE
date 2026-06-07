@@ -5,7 +5,7 @@ ToolLoopExecutor 的 ToolOutput 适配单元测试。
 - ToolOutput 结果 → messages 带 timestamp + DATA_REF
 - ToolOutput 带 file_ref → 注册到 SessionFileRegistry
 - str 结果（旧链路）→ messages 也带 timestamp
-- str 结果带 [FILE] → 提取到 _collected_files
+- str 结果带 [FILE] → 提取到 _emit_payloads
 
 不测完整的工具循环（那由 test_dag_integration.py 覆盖），
 只测 messages.append 处的分支逻辑。
@@ -52,13 +52,13 @@ class _FakeFileRegistry:
 def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"):
     """
     模拟 tool_loop_executor.py 第547-594行的分支逻辑。
-    返回 (message_dict, file_registry, collected_files)。
+    返回 (message_dict, file_registry, emit_payloads)。
     不启动完整的工具循环，只测 messages.append 处的分支。
     """
     from datetime import datetime, timezone
 
     file_registry = _FakeFileRegistry()
-    collected_files = []
+    emit_payloads = []
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -77,7 +77,7 @@ def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"
             "timestamp": now_iso,
             "content": content,
         }
-        return msg, file_registry, collected_files, is_truncated
+        return msg, file_registry, emit_payloads, is_truncated
 
     else:
         import re
@@ -86,7 +86,7 @@ def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"
         )
         if result and "[FILE]" in result:
             for m in _FILE_RE.finditer(result):
-                collected_files.append({
+                emit_payloads.append({
                     "url": m.group("url"),
                     "name": m.group("name"),
                     "mime_type": m.group("mime"),
@@ -104,7 +104,7 @@ def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"
             "timestamp": now_iso,
             "content": result,
         }
-        return msg, file_registry, collected_files, is_truncated
+        return msg, file_registry, emit_payloads, is_truncated
 
 
 # ── 测试数据工厂 ──
@@ -242,7 +242,7 @@ class TestStrBranch:
         assert msg["content"] == "查询结果文本"
 
     def test_str_file_marker_extracted(self):
-        """str 结果带 [FILE] → 提取到 collected_files"""
+        """str 结果带 [FILE] → 提取到 emit_payloads"""
         raw = "生成完成\n[FILE]https://cdn.example.com/report.xlsx|report.xlsx|application/vnd.openxmlformats|24000[/FILE]"
         msg, _, collected, _ = _simulate_result_handling(raw)
         assert len(collected) == 1

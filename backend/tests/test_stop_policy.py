@@ -375,21 +375,22 @@ class TestBuildSynthesisContext:
         assert "code_execute(error)" in ctx
         assert "一些文字" not in ctx
 
-    def test_extracts_collected_files(self):
-        files = [
-            {"name": "report.xlsx", "mime_type": "application/xlsx"},
-            {"name": "chart.png", "mime_type": "image/png"},
+    def test_extracts_emit_payloads(self):
+        payloads = [
+            {"kind": "file", "name": "report.xlsx", "label": "report.xlsx"},
+            {"kind": "image", "name": "chart.png", "alt": "chart.png"},
         ]
-        ctx = build_synthesis_context(collected_files=files)
+        ctx = build_synthesis_context(emit_payloads=payloads)
         assert "report.xlsx" in ctx
         assert "chart.png" in ctx
 
     def test_combined_output(self):
         blocks = [{"type": "tool_step", "tool_name": "t1", "status": "ok", "result": "r"}]
-        files = [{"name": "f.csv", "mime_type": "text/csv"}]
-        ctx = build_synthesis_context(content_blocks=blocks, collected_files=files)
+        payloads = [{"kind": "file", "name": "f.csv", "label": "f.csv"}]
+        ctx = build_synthesis_context(content_blocks=blocks, emit_payloads=payloads)
         assert "工具执行记录" in ctx
-        assert "已生成的文件" in ctx
+        assert "已生成的产物" in ctx
+        assert "f.csv" in ctx
 
 
 # ============================================================

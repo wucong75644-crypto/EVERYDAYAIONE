@@ -105,8 +105,7 @@ def _make_mixin():
     mixin = MagicMock()
     mixin.db = MagicMock()
     mixin.org_id = None
-    # 绑定真实方法（不 mock）
-    mixin._extract_file_parts = ChatToolMixin._extract_file_parts.__get__(mixin)
+    # 绑定真实方法(_extract_file_parts 已删 — 沙盒 IO 统一协议)
     mixin._push_tool_step_update = ChatToolMixin._push_tool_step_update.__get__(mixin)
     return mixin
 
@@ -210,101 +209,6 @@ class TestExecuteSingleTool:
         tc_out, text, is_error, _display = result
         assert is_error is False
         executor.execute.assert_called_once()
-
-
-# ============================================================
-# _extract_file_parts 文件标记提取
-# ============================================================
-
-
-class TestExtractFileParts:
-    """_extract_file_parts() 从工具结果中提取 [FILE] 标记"""
-
-    def _make_instance(self):
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-        obj = MagicMock()
-        obj._extract_file_parts = ChatToolMixin._extract_file_parts.__get__(obj)
-        obj._pending_file_parts = []  # 初始化为真实列表，避免 MagicMock 自动属性
-        return obj
-
-    def test_no_file_marker_passthrough(self):
-        """无 [FILE] 标记 → 原样返回"""
-        obj = self._make_instance()
-        result = obj._extract_file_parts("库存100件")
-        assert result == "库存100件"
-        assert not hasattr(obj, "_pending_file_parts") or len(obj._pending_file_parts) == 0
-
-    def test_empty_string(self):
-        """空字符串 → 原样返回"""
-        obj = self._make_instance()
-        assert obj._extract_file_parts("") == ""
-
-    def test_none_input(self):
-        """None → 原样返回"""
-        obj = self._make_instance()
-        assert obj._extract_file_parts(None) is None
-
-    def test_single_file_extracted(self):
-        """单个 [FILE] 标记 → 提取 FilePart + 替换为友好文本"""
-        obj = self._make_instance()
-        text = "✅ 文件已上传: 报表.xlsx\n[FILE]https://cdn.example.com/a.xlsx|报表.xlsx|application/vnd.ms-excel|2048[/FILE]"
-        result = obj._extract_file_parts(text)
-        # 替换为纯文件名（不含 URL，防止 LLM 幻觉篡改域名）
-        assert "📎 文件已生成: 报表.xlsx" in result
-        assert "[FILE]" not in result
-        assert len(obj._pending_file_parts) == 1
-        fp = obj._pending_file_parts[0]
-        assert fp.url == "https://cdn.example.com/a.xlsx"
-        assert fp.name == "报表.xlsx"
-        assert fp.size == 2048
-
-    def test_multiple_files_extracted(self):
-        """多个 [FILE] 标记 → 全部提取，不含 URL"""
-        obj = self._make_instance()
-        text = (
-            "[FILE]https://cdn.example.com/a.csv|数据.csv|text/csv|1024[/FILE]\n"
-            "中间文字\n"
-            "[FILE]https://cdn.example.com/b.xlsx|报表.xlsx|application/vnd.ms-excel|4096[/FILE]"
-        )
-        result = obj._extract_file_parts(text)
-        assert "[FILE]" not in result
-        assert "📎 文件已生成: 数据.csv" in result
-        assert "📎 文件已生成: 报表.xlsx" in result
-        assert len(obj._pending_file_parts) == 2
-
-    def test_accumulates_across_calls(self):
-        """多次调用 → _pending_file_parts 累积"""
-        obj = self._make_instance()
-        obj._extract_file_parts("[FILE]https://a.com/1.csv|a.csv|text/csv|100[/FILE]")
-        obj._extract_file_parts("[FILE]https://a.com/2.csv|b.csv|text/csv|200[/FILE]")
-        assert len(obj._pending_file_parts) == 2
-
-    def test_image_mime_placeholder_differs(self):
-        """图片 mime → 占位文本提示'将自动展示'，非图片 → 保留文件名"""
-        obj = self._make_instance()
-        text = (
-            "[FILE]https://cdn.com/chart.png|chart.png|image/png|2048[/FILE]\n"
-            "[FILE]https://cdn.com/data.xlsx|data.xlsx|application/vnd.ms-excel|4096[/FILE]"
-        )
-        result = obj._extract_file_parts(text)
-        # 图片：不含文件名，提示自动展示
-        assert "📊 图表已生成" in result
-        assert "不要在文字中重复描述" in result
-        # 非图片：保留文件名
-        assert "📎 文件已生成: data.xlsx" in result
-        assert "不要重复引用文件名" in result
-        # URL 不暴露
-        assert "cdn.com" not in result
-        assert len(obj._pending_file_parts) == 2
-
-    def test_image_svg_also_gets_image_placeholder(self):
-        """SVG (image/svg+xml) 也走图片占位文本"""
-        obj = self._make_instance()
-        result = obj._extract_file_parts(
-            "[FILE]https://cdn.com/flow.svg|flow.svg|image/svg+xml|1024[/FILE]"
-        )
-        assert "📊 图表已生成" in result
-        assert "flow.svg" not in result  # 文件名不暴露给 LLM
 
 
 # ============================================================
@@ -494,44 +398,39 @@ class TestExecuteToolCallsAgentResult:
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_collected_files_to_pending(self, mock_ws):
-        """AgentResult.collected_files → _pending_file_parts"""
+    async def test_emit_payloads_to_pending(self, mock_ws):
+        """AgentResult.emit_payloads → self._pending_emit_payloads(沙盒 IO 统一协议)"""
         from services.agent.agent_result import AgentResult
-        from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mixin._pending_file_parts = []
+        mixin._pending_emit_payloads = []
         mixin._last_erp_display_text = None
         mixin._last_erp_display_files = []
         mixin._erp_agent_tokens = 0
         mock_ws.send_to_task_or_user = AsyncMock()
 
-        files = [{"url": "/tmp/a.parquet", "name": "a.parquet",
-                  "mime_type": "application/octet-stream", "size": 1024}]
+        payloads = [{
+            "kind": "file", "url": "/tmp/a.parquet", "name": "a.parquet",
+            "mime_type": "application/octet-stream", "size": 1024,
+        }]
         agent_result = AgentResult(
             status="success", summary="已导出",
-            collected_files=files, source="erp_agent", tokens_used=300,
+            emit_payloads=payloads, source="erp_agent", tokens_used=300,
         )
 
-        # 模拟 _execute_tool_calls 的 AgentResult 处理循环
+        # 模拟 _execute_tool_calls 中的 emit_payloads 聚合逻辑
         results = [
-            ({"name": "erp_agent", "id": "tc1"}, agent_result, False),
+            ({"name": "erp_agent", "id": "tc1"}, agent_result, False, ""),
         ]
-
-        # 直接测试循环逻辑
-        for tc, result, is_error in results:
+        for tc, result, _is_error, _display in results:
             if isinstance(result, AgentResult):
-                if result.collected_files and hasattr(mixin, "_pending_file_parts"):
-                    from schemas.message import FilePart
-                    for f in result.collected_files:
-                        mixin._pending_file_parts.append(FilePart(
-                            url=f["url"], name=f["name"],
-                            mime_type=f["mime_type"], size=f["size"],
-                        ))
+                if result.emit_payloads:
+                    mixin._pending_emit_payloads.extend(result.emit_payloads)
                 mixin._erp_agent_tokens += result.tokens_used
 
-        assert len(mixin._pending_file_parts) == 1
-        assert mixin._pending_file_parts[0].url == "/tmp/a.parquet"
+        assert len(mixin._pending_emit_payloads) == 1
+        assert mixin._pending_emit_payloads[0]["url"] == "/tmp/a.parquet"
+        assert mixin._pending_emit_payloads[0]["kind"] == "file"
         assert mixin._erp_agent_tokens == 300
 
 
@@ -746,7 +645,7 @@ class TestRequestCtxFallback:
         with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
              patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
             mock_exec = MagicMock()
-            mock_exec._pending_file_parts = []
+            # emit_payloads 由 tool_loop_executor 处理 (沙盒 IO 统一协议)
             MockExecutor.return_value = mock_exec
 
             # 调用真实方法
@@ -776,7 +675,7 @@ class TestRequestCtxFallback:
         with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
              patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
             mock_exec = MagicMock()
-            mock_exec._pending_file_parts = []
+            # emit_payloads 由 tool_loop_executor 处理 (沙盒 IO 统一协议)
             MockExecutor.return_value = mock_exec
 
             await ChatToolMixin._execute_tool_calls(

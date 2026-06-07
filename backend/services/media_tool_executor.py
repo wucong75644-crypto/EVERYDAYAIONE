@@ -98,8 +98,8 @@ class MediaToolMixin:
                     status="error",
                     error_message=fail_msg,
                     metadata={"retryable": True},
-                    collected_files=[{
-                        "type": "image", "url": None,
+                    emit_payloads=[{
+                        "kind": "image", "url": None,
                         "failed": True, "error": fail_msg,
                         "retry_context": {
                             "prompt": prompt,
@@ -116,8 +116,8 @@ class MediaToolMixin:
                 status="error",
                 error_message=str(e),
                 metadata={"retryable": True},
-                collected_files=[{
-                    "type": "image", "url": None,
+                emit_payloads=[{
+                    "kind": "image", "url": None,
                     "failed": True, "error": str(e),
                     "retry_context": {
                         "prompt": prompt,

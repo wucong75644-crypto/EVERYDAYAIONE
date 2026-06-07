@@ -83,19 +83,19 @@ class TestMessageInjection:
 class TestChatToolMixinAgentResult:
     """ChatToolMixin 正确从 AgentResult 提取文件/token"""
 
-    def test_collected_files_to_pending(self):
-        """collected_files → _pending_file_parts"""
+    def test_emit_payloads_to_pending(self):
+        """emit_payloads → _pending_file_parts"""
         result = AgentResult(
             status="success", summary="ok",
-            collected_files=[{
+            emit_payloads=[{
                 "url": "/tmp/a.parquet", "name": "a.parquet",
                 "mime_type": "application/octet-stream", "size": 1024,
             }],
             source="erp_agent",
         )
-        assert result.collected_files is not None
-        assert len(result.collected_files) == 1
-        assert result.collected_files[0]["url"] == "/tmp/a.parquet"
+        assert result.emit_payloads is not None
+        assert len(result.emit_payloads) == 1
+        assert result.emit_payloads[0]["url"] == "/tmp/a.parquet"
 
     def test_token_accumulation(self):
         """tokens_used 正确累加"""

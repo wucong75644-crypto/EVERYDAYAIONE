@@ -1,34 +1,34 @@
 """
 沙盒执行器
 
-主进程负责：AST 验证、文件快照/上传检测、子进程生命周期管理。
-子进程负责：chdir + exec 用户代码 + 返回结果（sandbox_worker.py）。
+主进程负责: AST 验证 + 子进程生命周期管理 + 漏 emit 告警。
+子进程负责: chdir + exec 用户代码 + 返回结果(sandbox_worker.py)。
+
+产物协议: emit_chart/file/image/table (沙盒 IO 统一协议)。
+LLM 漏调 emit_xxx 时主进程不再兜底上传(对齐行业标准
+OpenAI/Anthropic/Jupyter),改为 WARNING 日志暴露漏调率。
 """
 
-import asyncio
 import time as _time
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Optional
 
 from loguru import logger
 
 from services.agent.agent_result import AgentResult
-from services.sandbox.validators import validate_code, truncate_result
+from services.sandbox.validators import validate_code
+
+
+# 用于漏 emit 告警的常见产物扩展名
+_PRODUCT_EXTS = frozenset({
+    ".xlsx", ".xls", ".csv", ".tsv",
+    ".png", ".jpg", ".jpeg", ".svg", ".pdf",
+    ".docx", ".pptx",
+})
 
 
 class SandboxExecutor:
     """通用 Python 代码沙盒执行器"""
-
-    # ECharts option JSON 最大字节数（超限降级为普通文件下载）
-    _CHART_OPTION_MAX_BYTES = 512_000  # 500KB
-
-    # 自动检测并上传的文件扩展名
-    _AUTO_UPLOAD_EXTENSIONS = frozenset({
-        ".xlsx", ".xls", ".csv", ".tsv",
-        ".png", ".jpg", ".jpeg", ".svg", ".pdf",
-        ".json", ".jsonl", ".txt",
-        ".docx", ".pptx",
-    })
 
     def __init__(
         self,
@@ -37,35 +37,29 @@ class SandboxExecutor:
         output_dir: Optional[str] = None,
         staging_dir: Optional[str] = None,
         workspace_dir: Optional[str] = None,
-        upload_fn: Optional[Callable] = None,
         kernel_manager=None,
         conversation_id: str = "",
         skills_dir: str = "",
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
-        self._output_dir = output_dir        # 沙盒输出目录（自动上传）
-        self._staging_dir = staging_dir      # staging 数据目录
+        self._output_dir = output_dir        # 沙盒输出目录("下载/")
+        self._staging_dir = staging_dir      # staging 数据目录(中间产物)
         self._workspace_dir = workspace_dir  # 用户 workspace 目录
-        self._skills_dir = skills_dir        # 文件处理技能目录（只读）
-        self._upload_fn = upload_fn          # 文件上传函数（注入）
-        self._kernel_manager = kernel_manager  # KernelManager（有状态模式）
+        self._skills_dir = skills_dir        # 文件处理技能目录(只读)
+        self._kernel_manager = kernel_manager  # KernelManager(有状态模式)
         self._conversation_id = conversation_id
 
     async def execute(
         self, code: str, description: str = "",
     ) -> AgentResult:
-        """执行 Python 代码并返回结构化结果
+        """执行 Python 代码并返回结构化结果。
 
-        使用独立子进程执行（spawn），实现：
-        - 进程级 cwd 隔离（os.chdir 到用户 workspace）
-        - 真超时杀死（SIGTERM → SIGKILL）
-        - 零状态污染（每次请求独立进程）
-
-        主进程负责：AST 验证、文件快照、文件上传检测。
-        子进程负责：chdir + exec 用户代码 + 返回结果文本。
+        产物通过 emit_chart/file/image/table 协议返回。
+        result.summary 含 [EMIT] marker,由 tool_loop_executor 解析填进
+        AgentResult.emit_payloads(本函数不直接产生 emit_payloads)。
         """
-        # 1. AST 安全验证（主进程，快速拦截）
+        # 1. AST 安全验证(主进程,快速拦截)
         error = validate_code(code)
         if error:
             return AgentResult(
@@ -80,11 +74,10 @@ class SandboxExecutor:
             f"code_len={len(code)} | subprocess=spawn"
         )
 
-        # 2. 快照现有文件(用于检测新生成的文件)
-        # 注:目录存在性由 core/workspace.resolve_* 函数契约保证(行业标准 resolve=ensure 模式)
-        self._snapshot_before = self._snapshot_output_files()
+        # 2. 快照 output_dir(执行后比对,漏 emit 时打 WARNING)
+        snapshot_before = self._snapshot_output_dir()
 
-        # 3. 执行代码（优先有状态 Kernel，fallback 无状态 subprocess）
+        # 3. 执行代码
         raw_result = await self._execute_code(code)
 
         logger.info(
@@ -92,14 +85,13 @@ class SandboxExecutor:
             f"result_len={len(raw_result)} | result={raw_result[:200]}"
         )
 
-        # 4. 执行成功时:扫 output_dir 兜底上传(LLM 漏 emit 时的安全网)
-        # 注:沙盒 IO 统一协议 emit_file/emit_image 是主路径,这里仅兜底
         is_error = raw_result.startswith("❌")
         is_timeout = raw_result.startswith("⏱")
+
+        # 4. 执行成功时:检查 output_dir 是否有新文件但 LLM 没 emit
+        #    (不上传,只告警 - 对齐 Jupyter/OpenAI 行业标准)
         if not is_error and not is_timeout:
-            file_results = await self._auto_upload_new_files()
-            if file_results:
-                raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
+            self._warn_missed_emit(snapshot_before, raw_result)
 
         if is_error:
             return AgentResult(
@@ -118,8 +110,8 @@ class SandboxExecutor:
         return AgentResult(summary=raw_result, status="success")
 
     async def _execute_code(self, code: str) -> str:
-        """Kernel 模式单一执行路径(无 subprocess 降级)
-        Kernel 崩溃 → 销毁 → 重建 → 重试一次 → 仍失败报错
+        """Kernel 模式单一执行路径(无 subprocess 降级)。
+        Kernel 崩溃 → 销毁 → 重建 → 重试一次 → 仍失败报错。
         """
         if not (self._kernel_manager and self._conversation_id):
             return self._format_error(
@@ -166,86 +158,52 @@ class SandboxExecutor:
 
     @staticmethod
     def _format_error(msg: str, retryable: bool = True) -> str:
-        """统一的错误返回格式(替代之前的 subprocess 降级路径)"""
         return f"❌ {msg}"
 
-
-    @property
-    def _upload_scan_dirs(self) -> list[str]:
-        """auto_upload 监控的目录列表：仅 output_dir（host 路径，对应沙盒 '下载/'）。
-
-        staging_dir（沙盒 'staging/'）是中间数据目录（parquet/json 等），
-        不应推送给用户。工具描述已明确要求 LLM 把用户产出写到 '下载/'。
-        """
-        dirs: list[str] = []
-        if self._output_dir:
-            dirs.append(self._output_dir)
-        return dirs
-
-    def _snapshot_output_files(self) -> dict[str, tuple[float, int]]:
-        """快照所有受监控目录的现有文件（执行前调用，用于检测新增或覆盖写入的文件）。
-
-        返回 {dir/filename: (mtime, size)}，覆盖写入同名文件后 mtime/size 会变，
-        对比即可检测到。
-        """
+    def _snapshot_output_dir(self) -> dict[str, tuple[float, int]]:
+        """快照 output_dir 现有文件 (执行前调用,用于漏 emit 告警)。"""
         files: dict[str, tuple[float, int]] = {}
-        for d in self._upload_scan_dirs:
-            dp = Path(d)
-            if dp.exists():
-                for f in dp.iterdir():
-                    if f.is_file():
-                        st = f.stat()
-                        files[f"{d}/{f.name}"] = (st.st_mtime, st.st_size)
-        logger.info(f"SandboxExecutor snapshot | count={len(files)}")
+        if not self._output_dir:
+            return files
+        dp = Path(self._output_dir)
+        if dp.exists():
+            for f in dp.iterdir():
+                if f.is_file():
+                    st = f.stat()
+                    files[f.name] = (st.st_mtime, st.st_size)
         return files
 
-    async def _auto_upload_new_files(self) -> list[str]:
-        """扫描受监控目录中的新文件并自动上传（保留源文件供工作区下载）"""
-        if not self._upload_fn:
-            return []
+    def _warn_missed_emit(
+        self,
+        snapshot_before: dict[str, tuple[float, int]],
+        raw_result: str,
+    ) -> None:
+        """检查 output_dir 是否有新文件但 LLM 没在 result 里 emit。
+        不上传,只打 WARNING 暴露漏调率(对齐 Jupyter/OpenAI/Anthropic 行业标准:
+        无兜底扫描,LLM 必须显式声明产物)。
+        """
+        if not self._output_dir:
+            return
+        dp = Path(self._output_dir)
+        if not dp.exists():
+            return
 
-        before: dict = getattr(self, "_snapshot_before", {})
-        results = []
-
-        for scan_dir in self._upload_scan_dirs:
-            dir_path = Path(scan_dir)
-            if not dir_path.exists():
+        missed: list[str] = []
+        for f in dp.iterdir():
+            if not f.is_file():
                 continue
-            for f in dir_path.iterdir():
-                if not f.is_file():
-                    continue
-                if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
-                    continue
+            if f.suffix.lower() not in _PRODUCT_EXTS:
+                continue
+            st = f.stat()
+            old = snapshot_before.get(f.name)
+            if old and old == (st.st_mtime, st.st_size):
+                continue  # 未变化
+            # 新增或覆盖,且 raw_result 没 emit 这个文件
+            if f.name not in raw_result:
+                missed.append(f.name)
 
-                # 对比快照：新文件 OR 覆盖写入（mtime/size 变化）
-                full_key = f"{scan_dir}/{f.name}"
-                st = f.stat()
-                old = before.get(full_key)
-                if old and old == (st.st_mtime, st.st_size):
-                    continue  # 未修改，跳过
-
-                try:
-                    upload_result = await self._upload_fn(f.name, st.st_size)
-                    results.append(upload_result)
-                    # 图片文件：读取宽高，存到实例供 image block 使用
-                    if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-                        try:
-                            from PIL import Image as _PILImage
-                            with _PILImage.open(f) as _im:
-                                if not hasattr(self, "_image_dims"):
-                                    self._image_dims = {}
-                                self._image_dims[f.name] = (_im.width, _im.height)
-                        except Exception:
-                            pass
-                    logger.info(
-                        f"SandboxExecutor auto-upload | file={f.name} | "
-                        f"size={st.st_size} | new={old is None}"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"SandboxExecutor auto-upload failed | file={f.name} | "
-                        f"error={e}"
-                    )
-                    results.append(f"❌ 文件上传失败: {f.name} ({e})")
-
-        return results
+        if missed:
+            logger.warning(
+                f"[MISSED_EMIT] LLM 漏调 emit_file/emit_image | "
+                f"files={missed} | conv={self._conversation_id[:8]}"
+            )

@@ -48,6 +48,65 @@ def _extract_chart_type(opt: dict) -> str:
     if isinstance(series, list) and series and isinstance(series[0], dict):
         return series[0].get("type", "") or ""
     return ""
+
+
+def _build_block_from_payload(p: dict) -> dict | None:
+    """把 emit_payload 转成前端 content block(沙盒 IO 统一协议出口)。
+
+    返回 dict 给 content_block_add 推送,或 None(payload 无效时跳过)。
+    """
+    kind = p.get("kind")
+    if kind == "chart":
+        option = p.get("option") or {}
+        return {
+            "type": "chart",
+            "option": option,
+            "title": p.get("title") or _extract_chart_title(option),
+            "chart_type": _extract_chart_type(option),
+        }
+    if kind == "table":
+        return {
+            "type": "table",
+            "title": p.get("title", ""),
+            "columns": p.get("columns", []),
+            "rows": p.get("rows", []),
+            "truncated": p.get("truncated", False),
+        }
+    if kind == "image":
+        url = p.get("url")
+        if not url and not p.get("failed"):
+            return None  # 无 url 且非失败占位,跳过
+        block = {
+            "type": "image",
+            "url": url,
+            "alt": p.get("alt") or p.get("name", ""),
+        }
+        if p.get("width"):
+            block["width"] = p["width"]
+        if p.get("height"):
+            block["height"] = p["height"]
+        if p.get("workspace_path"):
+            block["workspace_path"] = p["workspace_path"]
+        # 失败图片占位(retry_context 让前端能重试)
+        if p.get("failed"):
+            block["failed"] = True
+            if p.get("error"):
+                block["error"] = p["error"]
+            if p.get("retry_context"):
+                block["retry_context"] = p["retry_context"]
+        return block
+    if kind == "file":
+        return {
+            "type": "file",
+            "url": p.get("url", ""),
+            "name": p.get("name", ""),
+            "mime_type": p.get("mime_type", ""),
+            "size": p.get("size"),
+            "workspace_path": p.get("workspace_path"),
+        }
+    return None
+
+
 from services.handlers.chat_generate_mixin import ChatGenerateMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
@@ -67,7 +126,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
     def __init__(self, db):
         super().__init__(db)
         self._adapter = None
-        self._pending_file_parts: list = []  # 沙盒 upload_file 生成的 FilePart 暂存
+        # 沙盒 IO 统一协议:emit_chart/file/image/table 产物统一收集器
+        # 每项 dict 必含 kind: "chart"|"file"|"image"|"table"
+        # file/image 含 url(CDN) + workspace_path(本地相对路径) 双轨字段
+        self._pending_emit_payloads: list = []
 
     @property
     def handler_type(self) -> GenerationType:
@@ -714,57 +776,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         })
                     messages.append({"role": "user", "content": img_parts})
 
-                # ── 文件块嵌入 content 流 + 实时推送前端 ──
-                # 设计文档：TECH_内容块混排渲染架构.md §6.2
-                # 通过 content_block_add 立即推送，前端流式阶段即可渲染占位符
-                if self._pending_file_parts:
-                    _dims = getattr(self, "_image_dims", {})
-                    _charts = getattr(self, "_chart_options", {})
-                    for _fp in self._pending_file_parts:
-                        # ImagePart（来自 ImageAgent）：直接序列化，不走 FilePart 逻辑
-                        if getattr(_fp, "type", None) == "image" and not hasattr(_fp, "mime_type"):
-                            _block = _fp.model_dump(exclude_none=True)
-                            _content_blocks.append(_block)
-                            await ws_manager.send_to_task_or_user(
-                                task_id, user_id,
-                                build_content_block_add(
-                                    task_id=task_id,
-                                    conversation_id=conversation_id,
-                                    message_id=message_id,
-                                    block=_block,
-                                ),
-                            )
+                # ── 统一推送 emit_payloads (沙盒 IO 统一协议)──
+                # chart/file/image/table 全部通过 _pending_emit_payloads 汇集,
+                # 单一循环按 kind 组装 block 推送给前端。
+                if self._pending_emit_payloads:
+                    for _p in self._pending_emit_payloads:
+                        _block = _build_block_from_payload(_p)
+                        if not _block:
                             continue
-                        # FilePart（来自 sandbox/[FILE] 标记）
-                        if hasattr(_fp, "name") and _fp.name in _charts:
-                            # ECharts 交互式图表（option 嵌入 block）
-                            _opt = _charts[_fp.name]
-                            _ct = ""
-                            if isinstance(_opt.get("series"), list) and _opt["series"]:
-                                _ct = _opt["series"][0].get("type", "")
-                            _block = {
-                                "type": "chart",
-                                "option": _opt,
-                                "title": _opt.get("title", {}).get("text", ""),
-                                "chart_type": _ct,
-                            }
-                        elif hasattr(_fp, "mime_type") and _fp.mime_type and _fp.mime_type.startswith("image/"):
-                            _w, _h = _dims.get(_fp.name, (None, None))
-                            _block = {
-                                "type": "image", "url": _fp.url,
-                                "alt": _fp.name,
-                                **({"width": _w, "height": _h} if _w else {}),
-                            }
-                        else:
-                            _block = {
-                                "type": "file", "url": _fp.url,
-                                "name": getattr(_fp, "name", ""),
-                                "mime_type": getattr(_fp, "mime_type", ""),
-                                "size": getattr(_fp, "size", None),
-                                "workspace_path": getattr(_fp, "workspace_path", None),
-                            }
                         _content_blocks.append(_block)
-                        # 实时推送：前端立即渲染（图片→骨架屏，文件→卡片）
                         await ws_manager.send_to_task_or_user(
                             task_id, user_id,
                             build_content_block_add(
@@ -776,70 +796,14 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         )
                     asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
                     logger.info(
-                        f"File blocks pushed to frontend | "
-                        f"count={len(self._pending_file_parts)} | task={task_id}"
+                        f"Emit payloads pushed | "
+                        f"count={len(self._pending_emit_payloads)} | "
+                        f"kinds={[p.get('kind') for p in self._pending_emit_payloads]} | "
+                        f"task={task_id}"
                     )
-                    self._pending_file_parts.clear()
+                    self._pending_emit_payloads = []  # 消费完清空
 
-                # ── ECharts 推送(emit_chart 触发,沙盒 IO 统一协议) ──
-                _chart_opts = getattr(self, "_chart_options", None) or {}
-                if _chart_opts:
-                    _consumed_titles = {
-                        b.get("title", "") for b in _content_blocks if isinstance(b, dict) and b.get("type") == "chart"
-                    }
-                    for _name, _opt in _chart_opts.items():
-                        _title = _extract_chart_title(_opt)
-                        if _title and _title in _consumed_titles:
-                            continue  # 旧 FilePart 链路已推过(兼容)
-                        _chart_block = {
-                            "type": "chart",
-                            "option": _opt,
-                            "title": _title,
-                            "chart_type": _extract_chart_type(_opt),
-                        }
-                        _content_blocks.append(_chart_block)
-                        await ws_manager.send_to_task_or_user(
-                            task_id, user_id,
-                            build_content_block_add(
-                                task_id=task_id,
-                                conversation_id=conversation_id,
-                                message_id=message_id,
-                                block=_chart_block,
-                            ),
-                        )
-                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
-                    logger.info(f"Chart blocks pushed | count={len(_chart_opts)} | task={task_id}")
-                    self._chart_options = {}  # 消费完清空
-
-                # ── Table 推送(emit_table 触发,沙盒 IO 统一协议) ──
-                _pending_tables = getattr(self, "_pending_table_parts", None)
-                if _pending_tables:
-                    for _tbl in _pending_tables:
-                        _table_block = {
-                            "type": "table",
-                            "title": _tbl.get("title", ""),
-                            "columns": _tbl.get("columns", []),
-                            "rows": _tbl.get("rows", []),
-                            "truncated": _tbl.get("truncated", False),
-                        }
-                        _content_blocks.append(_table_block)
-                        await ws_manager.send_to_task_or_user(
-                            task_id, user_id,
-                            build_content_block_add(
-                                task_id=task_id,
-                                conversation_id=conversation_id,
-                                message_id=message_id,
-                                block=_table_block,
-                            ),
-                        )
-                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
-                    logger.info(
-                        f"Table blocks pushed to frontend | "
-                        f"count={len(_pending_tables)} | task={task_id}"
-                    )
-                    self._pending_table_parts = []  # 消费完清空
-
-                # ── FormBlock 推送（复用 _pending_file_parts 模式） ──
+                # ── FormBlock 推送(复用 emit_payloads 推送模式) ──
                 _pending_form = getattr(self, "_pending_form_block", None)
                 if _pending_form:
                     self._pending_form_block = None
@@ -1044,10 +1008,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         from schemas.message import FormPart
                         result_parts.append(FormPart(**block))
             else:
-                # 单块模式（无工具调用）：兼容原逻辑
+                # 单块模式(无工具调用):兼容原逻辑
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts = extract_media_parts(accumulated_text)
-                self._pending_file_parts = []
+                self._pending_emit_payloads = []
 
             # 7. Thinking 持久化
             # 多块模式：每轮 thinking 已按时序插入 _content_blocks，不重复插入

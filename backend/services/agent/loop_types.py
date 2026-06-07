@@ -77,9 +77,10 @@ class LoopResult:
     total_tokens: int
     turns: int
     is_llm_synthesis: bool          # True = LLM 合成的结论；False = 走兜底
-    collected_files: List[Dict[str, Any]] = field(default_factory=list)
-    # 工具循环中提取的 [FILE] 标记，独立通道透传，不经过 LLM
-    # 每项: {"url": str, "name": str, "mime_type": str, "size": int}
+    emit_payloads: List[Dict[str, Any]] = field(default_factory=list)
+    # 工具循环中收集的所有产物(沙盒 emit_xxx + Agent collected payload),独立通道透传不经过 LLM。
+    # 每项 dict 必含 kind: "chart" | "file" | "image" | "table",
+    # file/image 含 url(CDN) + workspace_path 双轨字段。
     stop_reason: str = ""
     """停止原因：wrap_up_failure / wrap_up_budget / loop_detected / 空=正常退出"""
     wrap_up_reason: str = ""
