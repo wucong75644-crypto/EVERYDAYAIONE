@@ -28,7 +28,9 @@ from services.agent.excel_reader import (
 
 @pytest.fixture
 def tmp_dir():
+    """提供临时目录,并预建 staging 子目录(模拟 resolve_staging_dir 契约)。"""
     d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "staging"), exist_ok=True)
     yield d
     shutil.rmtree(d, ignore_errors=True)
 
@@ -219,7 +221,9 @@ class TestWriteStagingParquet:
         """staging Parquet 文件创建"""
         rows = [(1, ["A1:部门", "B1:年费"]), (2, [f"C2:{_FORMULA_PREFIX}=B2/12"])]
         fv = [("C2", "=B2/12", "6400")]
+        # 测试绕过 resolve_staging_dir,自己保证目录存在(契约要求)
         staging = os.path.join(tmp_dir, "staging")
+        os.makedirs(staging, exist_ok=True)
         _write_staging_parquet(rows, fv, staging, "test.xlsx")
         parquets = list(Path(staging).glob("*.parquet"))
         assert len(parquets) == 1
@@ -230,6 +234,7 @@ class TestWriteStagingParquet:
         rows = [(1, ["A1:部门"]), (2, [f"C2:{_FORMULA_PREFIX}=B2/12"])]
         fv = [("C2", "=B2/12", "6400")]
         staging = os.path.join(tmp_dir, "staging")
+        os.makedirs(staging, exist_ok=True)
         _write_staging_parquet(rows, fv, staging, "test.xlsx")
         df = pd.read_parquet(str(list(Path(staging).glob("*.parquet"))[0]))
         assert set(df.columns) == {"cell", "row", "col", "value", "formula"}
@@ -240,6 +245,7 @@ class TestWriteStagingParquet:
         rows = [(2, [f"C2:{_FORMULA_PREFIX}=B2/12"])]
         fv = [("C2", "=B2/12", "6400")]
         staging = os.path.join(tmp_dir, "staging")
+        os.makedirs(staging, exist_ok=True)
         _write_staging_parquet(rows, fv, staging, "test.xlsx")
         df = pd.read_parquet(str(list(Path(staging).glob("*.parquet"))[0]))
         row = df.iloc[0]
@@ -251,6 +257,7 @@ class TestWriteStagingParquet:
         import pandas as pd
         rows = [(1, ["A1:部门"])]
         staging = os.path.join(tmp_dir, "staging")
+        os.makedirs(staging, exist_ok=True)
         _write_staging_parquet(rows, [], staging, "test.xlsx")
         df = pd.read_parquet(str(list(Path(staging).glob("*.parquet"))[0]))
         row = df.iloc[0]

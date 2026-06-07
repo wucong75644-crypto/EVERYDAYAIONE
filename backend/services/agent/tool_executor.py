@@ -473,7 +473,6 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         staging_dir = Path(resolve_staging_dir(
             settings.file_workspace_root, self.user_id, self.org_id, _conv,
         ))
-        staging_dir.mkdir(parents=True, exist_ok=True)
 
         import pandas as _pd
 

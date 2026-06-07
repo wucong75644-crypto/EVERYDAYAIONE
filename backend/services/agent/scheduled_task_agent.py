@@ -341,7 +341,6 @@ class ScheduledTaskAgent:
             staging_dir = Path(_resolve_staging(
                 workspace_root, self.user_id, self.org_id, self.conversation_id,
             ))
-            staging_dir.mkdir(parents=True, exist_ok=True)
 
             fe = FileExecutor(
                 workspace_root=workspace_root,

@@ -436,7 +436,6 @@ def _write_staging_parquet(
     import re
 
     staging = Path(staging_dir)
-    staging.mkdir(parents=True, exist_ok=True)
 
     # 公式对照表 → {坐标: (公式, 计算值)}
     fv_map = {coord: (formula, val) for coord, formula, val in formula_values}

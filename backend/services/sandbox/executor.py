@@ -80,8 +80,8 @@ class SandboxExecutor:
             f"code_len={len(code)} | subprocess=spawn"
         )
 
-        # 2. 确保输出目录存在 + 快照现有文件（用于检测新生成的文件）
-        self._clean_output_dir()
+        # 2. 快照现有文件(用于检测新生成的文件)
+        # 注:目录存在性由 core/workspace.resolve_* 函数契约保证(行业标准 resolve=ensure 模式)
         self._snapshot_before = self._snapshot_output_files()
 
         # 3. 执行代码（优先有状态 Kernel，fallback 无状态 subprocess）
@@ -169,11 +169,6 @@ class SandboxExecutor:
         """统一的错误返回格式(替代之前的 subprocess 降级路径)"""
         return f"❌ {msg}"
 
-    def _clean_output_dir(self) -> None:
-        """确保输出目录存在（不清空，下载文件夹是持久的）"""
-        if not self._output_dir:
-            return
-        Path(self._output_dir).mkdir(parents=True, exist_ok=True)
 
     @property
     def _upload_scan_dirs(self) -> list[str]:

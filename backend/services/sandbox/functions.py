@@ -36,16 +36,16 @@ def build_sandbox_executor(
     _file_settings = _get_settings()
     _conv_id = conversation_id or "default"
 
-    # 1. 用户 workspace 目录（对标 OpenAI /mnt/data）
-    from core.workspace import resolve_workspace_dir, resolve_staging_dir
+    # 1-3. 三个目录全部通过 resolve_* 获取(契约保证目录存在,无需手动 mkdir)
+    from core.workspace import (
+        resolve_workspace_dir, resolve_output_dir, resolve_staging_dir,
+    )
     _workspace_dir = resolve_workspace_dir(
         _file_settings.file_workspace_root, user_id, org_id,
     )
-
-    # 2. 输出目录 → workspace 下的 "下载/" 文件夹（对标电脑的下载文件夹）
-    _output_dir = str(Path(_workspace_dir) / "下载")
-
-    # 3. staging 数据目录（用户级隔离，工具结果分流 + db_export 写入）
+    _output_dir = resolve_output_dir(
+        _file_settings.file_workspace_root, user_id, org_id,
+    )
     _staging_dir = resolve_staging_dir(
         _file_settings.file_workspace_root, user_id, org_id, _conv_id,
     )

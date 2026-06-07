@@ -239,8 +239,6 @@ def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
 
     文件写入 staging_dir 目录，调用方通过 "staging/filename" 相对路径引用。
     """
-    Path(staging_dir).mkdir(parents=True, exist_ok=True)
-
     digest = hashlib.md5(result.encode()).hexdigest()[:8]
     safe_tool = tool_name.replace("/", "_").replace("..", "_")
     filename = f"tool_result_{safe_tool}_{digest}.txt"

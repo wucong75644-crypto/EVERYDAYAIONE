@@ -179,7 +179,6 @@ def write_doc_meta(staging_dir: str, filename: str, meta: DocMeta) -> str:
     safe_name = re.sub(r'[^\w\-.]', '_', filename)
     meta_path = Path(staging_dir) / f"{safe_name}.meta.json"
     try:
-        Path(staging_dir).mkdir(parents=True, exist_ok=True)
         meta_path.write_text(
             json.dumps(meta.to_dict(), ensure_ascii=False, default=str),
             encoding="utf-8",
