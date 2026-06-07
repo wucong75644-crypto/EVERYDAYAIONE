@@ -481,3 +481,51 @@ class TestFindSimilarFile:
             str(tmp_path / "completely_different.txt"), str(tmp_path),
         )
         assert result == ""
+
+
+# ============================================================
+# scoped_open Phase 1: 库内资源不再被 Python 层拦
+# ============================================================
+# 历史 bug 模式:matplotlib 字体 / plotly 模板 / zoneinfo 等读 site-packages
+# 内部资源时,被旧路径白名单拒,LLM 自动 retry → 浪费 token。
+# Phase 1 后:Python 层只解析路径,nsjail bind mount 是安全边界。
+# 详见 docs/document/TECH_沙盒安全架构.md
+
+
+class TestScopedOpenNoLongerBlocksLibResources:
+    """验证 build_scoped_open 不再拦截库内部资源 (matplotlib/scipy 等)"""
+
+    def test_open_sys_prefix_file_not_blocked(self, tmp_path):
+        """scoped_open 读 sys.prefix 下的文件 (模拟 matplotlib 字体) 不再 raise"""
+        import sys
+        from services.sandbox.sandbox_worker import build_scoped_open
+
+        scoped_open = build_scoped_open(
+            str(tmp_path), str(tmp_path / "staging"), str(tmp_path / "out"),
+        )
+        # 找 sys.prefix 下真实存在的文件
+        candidate = os.path.join(sys.prefix, "pyvenv.cfg")
+        if not os.path.exists(candidate):
+            import pytest as _pytest_pkg
+            candidate = _pytest_pkg.__file__
+            if not candidate.startswith(sys.prefix):
+                pytest.skip(f"pytest 不在 sys.prefix 下: {candidate}")
+        # 不应 raise PermissionError "不在允许的目录内"
+        with scoped_open(candidate, "r", encoding="utf-8") as f:
+            content = f.read(50)
+        assert content
+
+    def test_open_etc_no_longer_blocked_by_python(self, tmp_path):
+        """读 /etc 不再被 Python 层拦 (本地能读,生产 nsjail ro bind 决定)"""
+        from services.sandbox.sandbox_worker import build_scoped_open
+
+        scoped_open = build_scoped_open(
+            str(tmp_path), str(tmp_path / "staging"), str(tmp_path / "out"),
+        )
+        # 不应 raise '不在允许的目录内'
+        try:
+            scoped_open("/etc/hosts", "r").close()
+        except PermissionError as e:
+            assert "不在允许的目录内" not in str(e)
+        except (FileNotFoundError, OSError):
+            pass  # OS 拒访问可接受 (生产 nsjail 没 bind 时)

@@ -119,40 +119,61 @@ class TestWalkPathFormat:
 
 
 # ============================================================
-# 3. 路径越界攻击
+# 3. 路径解析 (Python 层不挡,nsjail 兜底)
 # ============================================================
+# 历史:_check_path 曾在 Python 层做白名单 raise PermissionError。
+# Phase 1 后:安全边界统一交给 nsjail bind mount + clone_newnet,
+# Python 层只做相对路径解析(workspace cwd → realpath)。
+# 详见 docs/document/TECH_沙盒安全架构.md
 
-class TestPathTraversal:
+class TestPathResolutionOnly:
+    """验证 _check_path 不再做白名单校验,只做路径解析。
 
-    def test_listdir_etc(self, scoped):
-        with pytest.raises(PermissionError, match="不在允许范围"):
+    生产环境 nsjail 才是安全边界(bind mount ro/rw),Python 层挡不住
+    introspection 逃逸,做白名单只会拦库内部资源(matplotlib 字体等) → bug。
+    """
+
+    def test_check_path_returns_realpath(self, workspace):
+        """_check_path 返回 realpath, 不再 raise"""
+        _, check_path = build_scoped_os(
+            workspace["ws"], workspace["staging"], workspace["output"],
+        )
+        result = check_path("销售报表.xlsx")
+        assert result == os.path.realpath(
+            os.path.join(workspace["ws"], "销售报表.xlsx")
+        )
+
+    def test_check_path_outside_no_longer_raises(self, workspace):
+        """workspace 外的路径不再 raise — 由 nsjail 兜底"""
+        _, check_path = build_scoped_os(
+            workspace["ws"], workspace["staging"], workspace["output"],
+        )
+        # 不 raise (旧行为是 raise PermissionError)
+        # realpath 会跟 symlink (macOS /etc → /private/etc),取真实值
+        result = check_path("/etc/passwd")
+        assert result == os.path.realpath("/etc/passwd")
+
+    def test_listdir_outside_no_longer_raises(self, scoped):
+        """LLM 写 os.listdir('/etc') 不再被 Python 层挡 — 由 nsjail OS 层决定"""
+        # 仅断言不 raise PermissionError; 实际是否能列举由 OS 决定
+        try:
             scoped.listdir("/etc")
+        except PermissionError as e:
+            # macOS/Linux 本地 OS 可能直接拒访问,但不应该来自我们 Python 层
+            assert "不在允许范围" not in str(e)
+        except (FileNotFoundError, OSError):
+            pass  # OS 拒访问可接受
 
-    def test_listdir_parent_traversal(self, scoped):
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            scoped.listdir("../..")
+    def test_makedirs_outside_no_longer_raises_python_layer(self, scoped, tmp_path):
+        """LLM 写 os.makedirs 到 workspace 外不再被 Python 层挡
 
-    def test_stat_etc_passwd(self, scoped):
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            scoped.stat("/etc/passwd")
-
-    def test_walk_root(self, scoped):
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            list(scoped.walk("/"))
-
-    def test_walk_outside(self, scoped, tmp_path):
-        outside = tmp_path / "outside"
-        outside.mkdir(exist_ok=True)
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            list(scoped.walk(str(outside)))
-
-    def test_makedirs_outside(self, scoped):
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            scoped.makedirs("/tmp/evil")
-
-    def test_rename_outside(self, scoped):
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            scoped.rename("销售报表.xlsx", "/tmp/stolen.xlsx")
+        生产 nsjail 把 /etc /usr 等 mount 为 ro,写入会 raise EROFS。
+        Python 层不该再 raise '不在允许范围'。
+        """
+        target = tmp_path / "outside_dir"
+        # tmp_path 是本地临时目录,OS 不会拒 makedirs
+        scoped.makedirs(str(target))
+        assert target.exists()
 
 
 # ============================================================
@@ -237,9 +258,15 @@ class TestScopedShutil:
         scoped_sh.copy("销售报表.xlsx", "销售报表_copy.xlsx")
         assert os.path.exists(os.path.join(workspace["ws"], "销售报表_copy.xlsx"))
 
-    def test_copy_outside_blocked(self, scoped_sh):
-        with pytest.raises(PermissionError, match="不在允许范围"):
-            scoped_sh.copy("销售报表.xlsx", "/tmp/stolen.xlsx")
+    def test_copy_outside_no_longer_blocked_by_python(self, scoped_sh, tmp_path):
+        """shutil.copy 到 workspace 外不再由 Python 层挡 — nsjail 兜底
+
+        生产 nsjail 把 /etc /usr 等 mount 为 ro,写入会 EROFS。
+        本地测试用 tmp_path,OS 不拒。
+        """
+        target = tmp_path / "outside_copy.xlsx"
+        scoped_sh.copy("销售报表.xlsx", str(target))
+        assert target.exists()
 
     def test_move(self, scoped_sh, workspace):
         (workspace["ws"] + "/temp.txt")
@@ -257,15 +284,25 @@ class TestScopedShutil:
 # ============================================================
 
 class TestSymlinkEscape:
+    """Phase 1 后符号链接不再由 Python 层挡,nsjail bind mount 决定可达性"""
 
-    def test_symlink_outside_blocked(self, scoped, workspace, tmp_path):
-        """符号链接指向 workspace 外 → PermissionError"""
+    def test_symlink_outside_resolved_not_blocked_by_python(self, scoped, workspace, tmp_path):
+        """符号链接指向 workspace 外,Python 层不再 raise(由 nsjail OS 层决定)。
+
+        生产 nsjail 没把 tmp_path 的 outside 目录 bind 进沙盒,
+        符号链接 resolve 后访问会 ENOENT/EACCES,不需要 Python 层挡。
+        """
         outside = tmp_path / "secret.txt"
         outside.write_text("secret")
         link = os.path.join(workspace["ws"], "evil_link")
         os.symlink(str(outside), link)
-        with pytest.raises(PermissionError, match="不在允许范围"):
+        # 不应该 raise "不在允许范围"; 本地 OS 能 stat 就 stat,生产 nsjail 拦
+        try:
             scoped.stat("evil_link")
+        except PermissionError as e:
+            assert "不在允许范围" not in str(e)
+        except (FileNotFoundError, OSError):
+            pass
 
 
 # ============================================================
@@ -305,7 +342,12 @@ class TestRegisterFilesFromOutput:
 
 
 class TestStagingIsolation:
-    """staging 目录隔离：父目录禁止，当前会话放行，其他会话禁止"""
+    """staging 目录会话隔离 — Phase 1 后由 nsjail bind mount 实现,Python 层不挡
+
+    生产 nsjail 用 `-B {host_staging_for_this_conv}:/staging`,
+    只 bind 当前会话的 staging 目录,其他会话的 staging 在沙盒里物理上不存在。
+    本地开发(无 nsjail)被信任,不做隔离。
+    """
 
     @pytest.fixture
     def staging_workspace(self, tmp_path):
@@ -327,21 +369,13 @@ class TestStagingIsolation:
         }
         os.chdir(old_cwd)
 
-    def test_staging_parent_blocked(self, staging_workspace):
-        """listing staging/ 父目录应被拒绝"""
+    def test_staging_current_conv_listable(self, staging_workspace):
+        """当前会话的 staging 子目录可访问(基本能力)"""
         scoped_os, _ = build_scoped_os(
             staging_workspace["ws"], staging_workspace["staging"], staging_workspace["output"],
         )
-        with pytest.raises(PermissionError):
-            scoped_os.listdir("staging")
-
-    def test_staging_other_conv_blocked(self, staging_workspace):
-        """访问其他会话的 staging 子目录应被拒绝"""
-        scoped_os, _ = build_scoped_os(
-            staging_workspace["ws"], staging_workspace["staging"], staging_workspace["output"],
-        )
-        with pytest.raises(PermissionError):
-            scoped_os.listdir("staging/conv_other")
+        files = scoped_os.listdir(staging_workspace["staging"])
+        assert "data.parquet" in files
 
     def test_staging_current_conv_allowed(self, staging_workspace):
         """当前会话的 staging 子目录应允许访问"""

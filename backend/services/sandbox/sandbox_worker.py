@@ -108,17 +108,18 @@ def build_scoped_open(
     original_open=None,
     skills_dir: str = "",
 ):
-    """构建带路径安全检查 + 文件名纠错的 open 函数。
+    """构建带路径解析 + 文件名纠错的 open 函数。
 
-    sandbox_worker 和 kernel_worker 共用此逻辑，避免两处维护。
-    返回 scoped_open 函数，调用方赋值给 builtins.open。
+    sandbox_worker 和 kernel_worker 共用此逻辑,避免两处维护。
+    返回 scoped_open 函数,调用方赋值给 builtins.open。
 
-    路径协议：沙盒 cwd=workspace_dir，LLM 用相对路径字符串
-    （'staging/x.parquet' / '下载/x.xlsx' / '上传/x.csv'），
-    任何库内部的 open() 也自动走这套白名单校验。
+    安全边界 = nsjail (生产) / 信任 (本地开发)。
+    Python 层只做两件 UX 业务:
+      1. 相对路径解析到 workspace cwd (沙盒 cwd 在 worker 进程,LLM 写相对路径)
+      2. 文件不存在时自动纠正(workspace → output → staging,带空格/连字符模糊匹配)
+    详见 docs/document/TECH_沙盒安全架构.md
     """
     import os
-    import tempfile as _tempfile
 
     if original_open is None:
         import builtins
@@ -126,48 +127,12 @@ def build_scoped_open(
 
     _ws_dir = workspace_dir
 
-    # 安全白名单：workspace + staging + output + skills(只读) + 系统临时目录
-    _allowed_prefixes = [os.path.realpath(_ws_dir)]
-    if staging_dir:
-        _allowed_prefixes.append(os.path.realpath(staging_dir))
-    if output_dir:
-        _allowed_prefixes.append(os.path.realpath(output_dir))
-    if skills_dir:
-        _allowed_prefixes.append(os.path.realpath(skills_dir))
-    _allowed_prefixes.append(os.path.realpath(_tempfile.gettempdir()))
-
-    # 只读系统文件白名单（库读取 mime.types/timezone 等元数据需要）
-    _readonly_system_files = frozenset({
-        "/etc/apache2/mime.types",
-        "/private/etc/apache2/mime.types",
-        "/etc/mime.types",
-        "/usr/share/misc/mime.types",
-        "/usr/share/zoneinfo",
-    })
-
     def _scoped_open(path, mode="r", *args, **kwargs):
         path_str = str(path)
         # 相对路径解析到 workspace
         if not os.path.isabs(path_str):
             path_str = os.path.join(_ws_dir, path_str)
         resolved = os.path.realpath(path_str)
-        # 安全检查：只允许访问白名单目录
-        _in_whitelist = any(
-            resolved.startswith(prefix + os.sep) or resolved == prefix
-            for prefix in _allowed_prefixes
-        )
-        if not _in_whitelist:
-            _is_readonly_system = (
-                "r" in mode
-                and "w" not in mode
-                and "a" not in mode
-                and (
-                    resolved in _readonly_system_files
-                    or any(resolved.startswith(f + "/") for f in _readonly_system_files)
-                )
-            )
-            if not _is_readonly_system:
-                raise PermissionError(f"文件访问被拒绝：{path} 不在允许的目录内")
         # 文件不存在时自动纠错：workspace → output_dir → staging_dir
         if "r" in mode and not os.path.exists(resolved):
             _basename = os.path.basename(resolved)
@@ -219,14 +184,10 @@ def _apply_resource_limits():
     """限制子进程资源（Linux only，macOS 部分限制不生效）"""
     try:
         import resource
-        # 内存限制 2GB
-        mem_limit = 2 * 1024 * 1024 * 1024
-        try:
-            resource.setrlimit(resource.RLIMIT_AS, (mem_limit, mem_limit))
-        except (ValueError, OSError):
-            pass  # macOS 不支持 RLIMIT_AS
-
-        # 限制子进程/线程数量（防 fork bomb，但允许库创建工作线程）
+        # 进程/线程数量限制(防 fork bomb,允许库创建工作线程)
+        # 生产环境内存/CPU 由 nsjail cgroup 控制 (sandbox.cfg cgroup_mem_max),
+        # 此处 setrlimit 仅作为本地 macOS 开发的轻量兜底,不再设 RLIMIT_AS
+        # (macOS 不支持 + Python 内部分配易触发 false positive,生产由 cgroup 替代)
         try:
             resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
         except (ValueError, OSError, AttributeError):
@@ -243,7 +204,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     )
     from services.sandbox.sandbox_constants import make_restricted_import
 
-    # 构建 scoped os/shutil/pathlib（路径白名单 + 操作限制）
+    # 构建 scoped os/shutil/pathlib(路径解析 + 删除拦截引导用 file_delete)
     scoped_os, check_path = build_scoped_os(workspace_dir, staging_dir, output_dir)
     scoped_shutil = build_scoped_shutil(check_path)
     scoped_pathlib = build_scoped_pathlib(scoped_os)
