@@ -62,6 +62,13 @@ matplotlib==3.10.8
 seaborn==0.13.2
 Pillow==12.2.0
 XlsxWriter==3.2.9
+# Jupyter 生态: 行业标准 Code Interpreter 需要真 IPython kernel
+# (matplotlib_inline / plotly _repr_mimebundle_ / altair Chart.show 都依赖)
+# 替代之前的 fake IPython.display shim,补不完的洞由真包解决
+ipython==8.32.0
+plotly==5.24.1
+altair==5.4.1
+nbformat==5.10.4  # plotly_mimetype renderer 硬依赖
 
 # 文档生成（沙盒内 PDF/PPT）
 reportlab==4.4.10
