@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
@@ -29,10 +27,8 @@ from services.agent.loop_types import (
 from services.agent.tool_output import ToolOutput
 from services.agent.tool_result_cache import ToolResultCache
 
-# [EMIT] 协议:沙盒里 LLM 主动声明产物(沙盒 IO 统一协议)
-# 格式:[EMIT]{"kind":"chart|file|image|table", ...}[/EMIT]
-# 见 services/sandbox/emit_protocol.py
-_EMIT_RE = re.compile(r"\[EMIT\](?P<payload>\{.+?\})\[/EMIT\]", re.DOTALL)
+# [EMIT] 协议在 SandboxExecutor.execute 内部解析(沙盒 IO 统一协议)
+# 此处只聚合 result.emit_payloads → self._emit_payloads,见 _register_result_files
 
 
 class ToolLoopExecutor:
@@ -378,82 +374,6 @@ class ToolLoopExecutor:
         if payloads:
             self._emit_payloads.extend(payloads)
 
-    async def _process_emit_markers(self, content: str, tool_name: str) -> str:
-        """解析 [EMIT]{json}[/EMIT] marker → self._emit_payloads(沙盒 IO 统一协议)。
-
-        路由:
-          - kind=chart/table:  payload 直接收集
-          - kind=file/image:   调 upload_to_payload 拿 url + workspace_path 写回 payload
-        marker 在 content 里替换为占位文本(给 LLM 看,防止重复 emit)。
-        """
-        emits: list[dict[str, Any]] = []
-        for m in _EMIT_RE.finditer(content):
-            try:
-                emits.append(json.loads(m.group("payload")))
-            except json.JSONDecodeError as e:
-                logger.warning(f"[EMIT] 解析失败 | tool={tool_name} | err={e}")
-
-        if not emits:
-            return content
-
-        logger.info(
-            f"[EMIT] markers | tool={tool_name} | count={len(emits)} | "
-            f"kinds={[e.get('kind') for e in emits]}"
-        )
-
-        # 上传 file/image 类型,把 url + workspace_path 写回 payload
-        file_image_payloads = [e for e in emits if e.get("kind") in ("file", "image")]
-        if file_image_payloads:
-            from services.file_upload import upload_to_payload
-            workspace_dir = getattr(self.executor, "_workspace_dir", None)
-            output_dir = getattr(self.executor, "_output_dir", None)
-            user_id = getattr(self.executor, "user_id", "") or ""
-            org_id = getattr(self.executor, "org_id", None)
-
-            for p in file_image_payloads:
-                rel_path = p.get("path", "")
-                name = p.get("name") or os.path.basename(rel_path)
-                size = p.get("size", 0)
-                if workspace_dir and rel_path:
-                    host_dir = os.path.dirname(os.path.join(workspace_dir, rel_path))
-                else:
-                    host_dir = output_dir or ""
-
-                if not (host_dir and os.path.exists(os.path.join(host_dir, name))):
-                    logger.warning(
-                        f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
-                    )
-                    continue
-                uploaded = await upload_to_payload(
-                    name, size, host_dir, user_id, org_id,
-                )
-                if uploaded:
-                    p["url"] = uploaded.get("url", "")
-                    p["mime_type"] = uploaded.get("mime_type", "")
-                    if "workspace_path" in uploaded:
-                        p["workspace_path"] = uploaded["workspace_path"]
-                    if not p.get("size"):
-                        p["size"] = uploaded.get("size", 0)
-
-        # 全部 payload 入收集器(后续透传到 chat_handler 推 block)
-        self._emit_payloads.extend(emits)
-
-        # 替换 marker → 占位文本(给 LLM 看的,防止它重复 emit)
-        def _emit_placeholder(m):
-            try:
-                payload = json.loads(m.group("payload"))
-                kind = payload.get("kind", "?")
-                hints = {
-                    "chart": f"📊 图表已生成: {payload.get('title', '')}（前端将自动渲染）",
-                    "file": f"📎 文件已生成: {payload.get('label') or payload.get('name', '')}（下载卡片将自动展示）",
-                    "image": f"🖼️ 图片已生成: {payload.get('name', '')}（前端将自动展示）",
-                    "table": f"📋 表格已生成: {payload.get('title', '') or '(无标题)'}（前端将自动渲染）",
-                }
-                return hints.get(kind, f"[已 emit:{kind}]")
-            except Exception:
-                return ""
-        return _EMIT_RE.sub(_emit_placeholder, content)
-
     async def _pre_turn_checks(
         self,
         turn: int,
@@ -767,13 +687,10 @@ class ToolLoopExecutor:
                 is_truncated = False
                 self._register_result_files(result, tool_name)
 
-            # Step 2: [EMIT] 协议解析 → self._emit_payloads(沙盒 IO 统一协议)
-            #   chart/table: payload 直接收集
-            #   file/image:  上传 OSS,url + workspace_path 写回 payload
-            if content and _EMIT_RE.search(content):
-                content = await self._process_emit_markers(content, tool_name)
+            # Step 2: emit_payloads 已由 SandboxExecutor.execute 内部解析填进 result,
+            # _register_result_files 已聚合到 self._emit_payloads,此处无需再处理 [EMIT]
 
-            # Step 3: 信封分流（按工具名自动选预算，大结果落盘 staging）
+            # Step 3: 信封分流(按工具名自动选预算,大结果落盘 staging)
             if not isinstance(result, ToolOutput):
                 from services.agent.tool_result_envelope import (
                     wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
