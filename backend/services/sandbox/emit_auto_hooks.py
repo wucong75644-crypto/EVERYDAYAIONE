@@ -18,12 +18,109 @@ import os
 from typing import Any
 
 
-def install_ipython_display_shim(sandbox_globals: dict, emit_buffer: list[dict]) -> None:
-    """Hook 真 IPython.display.publish_display_data,转发 plotly/altair mimebundle 到 emit。
+def _mimebundle_to_payload(data: dict) -> dict | None:
+    """统一 mimebundle → emit payload 分发表(Phase 2c 配置中心)。
+
+    优先级:富类型(图表) > 图片 > HTML 表格 > 通用文本。
+    返回 None 时让调用方落回原 publish(打 stdout 等无害)。
+    """
+    # Plotly v1
+    plotly_spec = data.get("application/vnd.plotly.v1+json")
+    if plotly_spec:
+        title = ""
+        try:
+            title = (plotly_spec.get("layout") or {}).get("title", {}).get("text", "")
+        except Exception:
+            pass
+        return {
+            "kind": "chart",
+            "spec_format": "plotly",
+            "title": title or "",
+            "option": plotly_spec,
+        }
+
+    # Vega-Lite (altair) v3+
+    for k, v in data.items():
+        if k.startswith("application/vnd.vegalite"):
+            return {
+                "kind": "chart",
+                "spec_format": "vegalite",
+                "title": v.get("title", "") if isinstance(v, dict) else "",
+                "option": v,
+            }
+
+    # 图片 (PIL.Image / matplotlib Figure 单独 display 等)
+    # _repr_png_/_repr_jpeg_ 返回 base64 字符串或 bytes
+    for mime in ("image/png", "image/jpeg", "image/svg+xml"):
+        img = data.get(mime)
+        if img:
+            import base64
+            if mime == "image/svg+xml":
+                # SVG 是文本,不需要 base64
+                svg_text = img if isinstance(img, str) else img.decode("utf-8", errors="ignore")
+                return {
+                    "kind": "image",
+                    "mime_type": "image/svg+xml",
+                    "svg": svg_text,
+                    "name": "inline.svg",
+                }
+            # PNG/JPEG: 沙盒写到一个临时文件再走 emit_image (复用 OSS 上传链路)
+            ext = "png" if mime == "image/png" else "jpg"
+            try:
+                # base64 字符串 → bytes
+                if isinstance(img, str):
+                    img_bytes = base64.b64decode(img)
+                else:
+                    img_bytes = img
+            except Exception:
+                continue
+            return {
+                "kind": "image",
+                "mime_type": mime,
+                "_inline_bytes": img_bytes,  # 让上层写出到 output_dir
+                "_inline_ext": ext,
+            }
+
+    # text/html (pandas DataFrame / IPython.display.HTML)
+    html = data.get("text/html")
+    if html and isinstance(html, str):
+        return {
+            "kind": "html",
+            "html": html,
+            "name": "inline.html",
+        }
+
+    # application/json
+    json_data = data.get("application/json")
+    if json_data is not None:
+        return {
+            "kind": "data",
+            "data": json_data,
+        }
+
+    # text/markdown
+    md = data.get("text/markdown")
+    if md and isinstance(md, str):
+        return {
+            "kind": "markdown",
+            "markdown": md,
+        }
+
+    return None
+
+
+def install_ipython_display_shim(
+    sandbox_globals: dict,
+    emit_buffer: list[dict],
+    output_dir: str = "",
+) -> None:
+    """Hook 真 IPython.display.publish_display_data,转发 mimebundle 到 emit。
+
+    Phase 2 升级: 支持全 mimetype 集合(plotly/vegalite/png/jpeg/svg/html/json/markdown),
+    对齐 Jupyter mimebundle 协议(行业事实标准)。
+    详见 docs/document/TECH_沙盒产物协议.md
 
     注:真 IPython 包必须已 pip install(requirements.txt 已声明)。
-    不再 fake IPython 模块,避免 fake shim 补不完 matplotlib 内部访问的
-    IPython.get_ipython / IPython.version_info 等属性。
     """
     try:
         import IPython.display as ip_display
@@ -38,6 +135,31 @@ def install_ipython_display_shim(sandbox_globals: dict, emit_buffer: list[dict])
 
     _orig_publish = ip_display.publish_display_data
 
+    # 内联图片(_repr_png_/_repr_jpeg_)写到 output_dir 才能走 OSS 上传链路
+    _inline_image_counter = {"n": 0}
+
+    def _materialize_inline_image(payload: dict) -> dict | None:
+        """把 _inline_bytes 字段的 image payload 写到 output_dir,转成普通 emit_image"""
+        img_bytes = payload.pop("_inline_bytes", None)
+        ext = payload.pop("_inline_ext", "png")
+        if not img_bytes or not output_dir:
+            return payload  # 无 output_dir 时退化(开发环境)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            _inline_image_counter["n"] += 1
+            fname = f"display_{_inline_image_counter['n']}.{ext}"
+            fpath = os.path.join(output_dir, fname)
+            with open(fpath, "wb") as f:
+                f.write(img_bytes)
+            return {
+                "kind": "image",
+                "path": fpath,
+                "name": fname,
+                "alt": fname,
+            }
+        except Exception:
+            return None
+
     def _hooked_publish(
         data: dict,
         metadata: dict | None = None,
@@ -47,36 +169,20 @@ def install_ipython_display_shim(sandbox_globals: dict, emit_buffer: list[dict])
         update: bool = False,
         **kwargs: Any,
     ) -> None:
-        """拦截 publish_display_data 把 mimebundle 转 emit_buffer"""
+        """拦截 publish_display_data 用统一 mimetype 分发表转 emit_buffer"""
         if isinstance(data, dict):
-            # Plotly v1
-            plotly_spec = data.get("application/vnd.plotly.v1+json")
-            if plotly_spec:
-                title = ""
-                try:
-                    title = (plotly_spec.get("layout") or {}).get("title", {}).get("text", "")
-                except Exception:
-                    pass
-                emit_buffer.append({
-                    "kind": "chart",
-                    "spec_format": "plotly",
-                    "title": title or "",
-                    "option": plotly_spec,
-                })
+            payload = _mimebundle_to_payload(data)
+            if payload is not None:
+                # 内联 image bytes → 写文件 → 走统一 OSS 链路
+                if payload.get("kind") == "image" and "_inline_bytes" in payload:
+                    materialized = _materialize_inline_image(payload)
+                    if materialized:
+                        emit_buffer.append(materialized)
+                else:
+                    emit_buffer.append(payload)
                 return  # 不再调原始 publish(避免双重渲染)
 
-            # Vega-Lite (altair) v3+
-            for k, v in data.items():
-                if k.startswith("application/vnd.vegalite"):
-                    emit_buffer.append({
-                        "kind": "chart",
-                        "spec_format": "vegalite",
-                        "title": v.get("title", "") if isinstance(v, dict) else "",
-                        "option": v,
-                    })
-                    return
-
-        # 不是图表类型,落回原 publish(打 stdout 等无害)
+        # 不是已知 mimetype,落回原 publish(打 stdout 等无害)
         try:
             _orig_publish(data, metadata, source, transient=transient, update=update, **kwargs)
         except Exception:
@@ -85,20 +191,48 @@ def install_ipython_display_shim(sandbox_globals: dict, emit_buffer: list[dict])
     _hooked_publish._emit_hooked = True  # type: ignore[attr-defined]
     ip_display.publish_display_data = _hooked_publish
 
-    # display() 入口劫持:LLM 调 IPython.display.display(fig) 时直接走 buffer
-    # (不依赖 publish 链路 patch,IPython 内部 from import 会绑定原引用导致补丁失效)
+    # display() 入口劫持:LLM 调 IPython.display.display(fig) 时直接走 buffer。
+    # 不依赖 publish 链路 patch,IPython 内部 from import 会绑定原引用导致补丁失效。
+    # Phase 2: 支持所有 _repr_*_ 而不仅 _repr_mimebundle_(pandas DataFrame 只有 _repr_html_)
+    _REPR_TO_MIME = {
+        "_repr_html_": "text/html",
+        "_repr_png_": "image/png",
+        "_repr_jpeg_": "image/jpeg",
+        "_repr_svg_": "image/svg+xml",
+        "_repr_json_": "application/json",
+        "_repr_markdown_": "text/markdown",
+        "_repr_latex_": "text/latex",
+        "_repr_pdf_": "application/pdf",
+    }
+
     def _hooked_display(*objs: Any, **kw: Any) -> None:
         for obj in objs:
+            # 优先级 1: _repr_mimebundle_ (plotly v4+/altair 等富对象)
             bundle_fn = getattr(obj, "_repr_mimebundle_", None)
             if callable(bundle_fn):
                 try:
                     result = bundle_fn()
                     bundle = result[0] if isinstance(result, tuple) and result else result
-                    if isinstance(bundle, dict):
+                    if isinstance(bundle, dict) and bundle:
                         _hooked_publish(bundle)
                         continue
                 except Exception:
                     pass
+
+            # 优先级 2: 单独 _repr_*_ 方法(pandas DataFrame _repr_html_ / PIL _repr_png_)
+            bundle: dict = {}
+            for repr_name, mime in _REPR_TO_MIME.items():
+                fn = getattr(obj, repr_name, None)
+                if callable(fn):
+                    try:
+                        val = fn()
+                        if val is not None:
+                            bundle[mime] = val
+                    except Exception:
+                        continue
+            if bundle:
+                _hooked_publish(bundle)
+
     _hooked_display._emit_hooked = True  # type: ignore[attr-defined]
     ip_display.display = _hooked_display
 

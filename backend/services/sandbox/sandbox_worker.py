@@ -432,7 +432,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
             install_ipython_display_shim,
             install_matplotlib_hook,
         )
-        install_ipython_display_shim(g, g["_emit_buffer"])  # plotly/altair
+        install_ipython_display_shim(g, g["_emit_buffer"], output_dir=output_dir)  # plotly/altair/img/html
         if output_dir:
             install_matplotlib_hook(g, output_dir, g["_emit_buffer"])  # matplotlib
     except Exception as e:
@@ -482,6 +482,7 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
     sys.settrace(_timeout_trace)
     try:
         last_expr_value = None
+        last_expr_displayed = False  # 是否触发了富表示(走 emit_buffer)
         if tree.body and isinstance(tree.body[-1], ast.Expr):
             last_node = tree.body.pop()
             if tree.body:
@@ -490,6 +491,21 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
                 ast.Expression(body=last_node.value), "<sandbox>", "eval",
             )
             last_expr_value = eval(expr_code, sandbox_globals)
+
+            # Engine A 扩展(对齐 Jupyter InteractiveShell):
+            # cell 最后一行是表达式且值非 None → 尝试自动 display
+            # 触发对象的 _repr_mimebundle_/_repr_html_/_repr_png_/... 富表示,
+            # 让 df.head() / fig / im.show() 等无需显式 emit/print 也能渲染。
+            if last_expr_value is not None and _emit_buf is not None:
+                _buf_size_before = len(_emit_buf)
+                try:
+                    import IPython.display as _ip_display
+                    _ip_display.display(last_expr_value)
+                    # 富表示触发(buffer 长度增加) → 不再 str() 重复输出
+                    if len(_emit_buf) > _buf_size_before:
+                        last_expr_displayed = True
+                except Exception:
+                    pass  # display 失败 fallback 到 str(value)
         else:
             exec(compile(tree, "<sandbox>", "exec"), sandbox_globals)
     except TimeoutError:
@@ -514,7 +530,9 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
     parts = []
     if stdout_text.strip():
         parts.append(stdout_text.rstrip())
-    if last_expr_value is not None:
+    # 如果最后表达式已通过 display() 触发富表示走 emit_buffer,
+    # 不再重复 str() 输出到 stdout(避免文字 + 图同时出现)
+    if last_expr_value is not None and not last_expr_displayed:
         parts.append(str(last_expr_value))
 
     if not parts:

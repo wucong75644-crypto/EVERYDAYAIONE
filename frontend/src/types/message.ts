@@ -138,12 +138,21 @@ export interface EcomPlanImage {
   image_type: string;
 }
 
-/** 交互式图表内容块（ECharts 配置 JSON，前端 ChartBlock 渲染） */
+/** 交互式图表内容块
+ *
+ * 三引擎产物协议 (Phase 2):
+ * - spec_format='echarts' (默认) — emit_chart 显式 → ChartBlock ECharts 渲染
+ * - spec_format='plotly'  — fig.show() / display(fig) → react-plotly 渲染
+ * - spec_format='vegalite' — Chart.show() / altair → vega-embed 渲染
+ *
+ * 详见 docs/document/TECH_沙盒产物协议.md
+ */
 export interface ChartPart {
   type: 'chart';
   option: Record<string, unknown>;
   title?: string;
   chart_type?: string;
+  spec_format?: 'echarts' | 'plotly' | 'vegalite';
 }
 
 /** 交互式表格内容块(沙盒 emit_table 触发,前端 TableBlock 渲染) */
