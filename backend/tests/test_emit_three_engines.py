@@ -284,45 +284,77 @@ class TestMatplotlibChineseFont:
         plt.close(fig)
         assert out.exists() and out.stat().st_size > 0
 
-    def test_llm_override_to_simhei_still_keeps_wenquanyi_fallback(self, tmp_path):
-        """关键回归: LLM 写 plt.rcParams['font.sans-serif']=['SimHei'] 覆盖,
-        我们的 monkey patch 应自动 append WenQuanYi/DejaVu 到末尾,
-        即使 SimHei 找不到也能 fallback 到中文字体渲染。
+    def test_chinese_aliases_registered_to_real_font(self, tmp_path):
+        """关键: install_matplotlib_hook 把 LLM 常用字体名注册指向真实字体文件。
 
-        这是生产 14:36 用户报方块的真实场景 — install_matplotlib_hook 设的
-        默认配置被 LLM 用 = 完全覆盖,SimHei 在 Linux 没装 → fallback DejaVu → 方块。
+        生产 Linux: 7 个 LLM 常用字体名 (SimHei/Microsoft YaHei/PingFang SC 等)
+        全部注册到 fontManager.ttflist, findfont 直接命中 wqy 字体文件。
+        本地 macOS 无 wqy 文件 → 跳过注册 (开发环境不强求)。
+
+        这是 mplfonts 库的行业标准做法, 比 monkey patch 更干净。
         """
         from services.sandbox.emit_auto_hooks import install_matplotlib_hook
-        import matplotlib.pyplot as plt
+        from matplotlib import font_manager as fm
+        import os
 
-        g: dict = {}
-        emit_buffer: list = []
-        install_matplotlib_hook(g, str(tmp_path), emit_buffer)
+        # 重置标记位以便测试可重入
+        if hasattr(fm.fontManager, "_emit_chinese_aliases"):
+            delattr(fm.fontManager, "_emit_chinese_aliases")
 
-        # 模拟 LLM 覆盖(Windows 字体习惯)
-        plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+        install_matplotlib_hook({}, str(tmp_path), [])
 
-        # 我们的 monkey patch 应该自动 append WenQuanYi + DejaVu
-        actual = plt.rcParams["font.sans-serif"]
-        assert "WenQuanYi Micro Hei" in actual, (
-            f"LLM 覆盖后未保留 WenQuanYi fallback: {actual}. "
-            f"monkey patch RcParams.__setitem__ 失效"
-        )
-        assert "DejaVu Sans" in actual, (
-            f"LLM 覆盖后未保留 DejaVu fallback: {actual}"
-        )
-        # LLM 设的字体仍在最前(用户优先)
-        assert actual[0] == "SimHei"
+        WQY_PATH = "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc"
+        if not os.path.exists(WQY_PATH):
+            pytest.skip("wqy 字体未装 (本地开发环境跳过, 生产 Linux 必装)")
 
-    def test_llm_override_to_single_string_handled(self, tmp_path):
-        """LLM 写 plt.rcParams['font.sans-serif']='SimHei' (字符串非列表) 也兼容"""
+        # LLM 常用字体名应全部 findfont 到 wqy 路径
+        for alias in ["SimHei", "Microsoft YaHei", "PingFang SC"]:
+            resolved = fm.fontManager.findfont(alias, fallback_to_default=False)
+            assert WQY_PATH in resolved, (
+                f"别名 {alias!r} 未指向 wqy: {resolved}"
+            )
+
+    def test_alias_registration_dedupes_on_second_call(self, tmp_path):
+        """重复调用 install_matplotlib_hook 不应重复 append 别名 (标记位去重)"""
         from services.sandbox.emit_auto_hooks import install_matplotlib_hook
-        import matplotlib.pyplot as plt
+        from matplotlib import font_manager as fm
+        import os
 
-        g: dict = {}
-        install_matplotlib_hook(g, str(tmp_path), [])
+        if not os.path.exists("/usr/share/fonts/wqy-microhei/wqy-microhei.ttc"):
+            pytest.skip("wqy 字体未装")
 
-        plt.rcParams["font.sans-serif"] = "PingFang SC"
-        actual = plt.rcParams["font.sans-serif"]
-        assert "WenQuanYi Micro Hei" in actual
-        assert "PingFang SC" in actual
+        # 重置标记位
+        if hasattr(fm.fontManager, "_emit_chinese_aliases"):
+            delattr(fm.fontManager, "_emit_chinese_aliases")
+
+        n0 = len(fm.fontManager.ttflist)
+        install_matplotlib_hook({}, str(tmp_path), [])
+        n1 = len(fm.fontManager.ttflist)
+        install_matplotlib_hook({}, str(tmp_path), [])  # 二次调用应跳过
+        n2 = len(fm.fontManager.ttflist)
+
+        assert n1 - n0 == 7, f"首次注册应 +7 别名, 实际 +{n1-n0}"
+        assert n2 == n1, f"二次调用应去重, 但又加了 {n2-n1} 条"
+
+    def test_macos_no_wqy_skips_registration_gracefully(self, tmp_path, monkeypatch):
+        """macOS 无 wqy 字体路径时, install_matplotlib_hook 不报错只跳过"""
+        from services.sandbox import emit_auto_hooks
+        from matplotlib import font_manager as fm
+
+        # 重置标记位
+        if hasattr(fm.fontManager, "_emit_chinese_aliases"):
+            delattr(fm.fontManager, "_emit_chinese_aliases")
+
+        # mock os.path.exists 总返回 False (模拟没 wqy)
+        original_exists = emit_auto_hooks.os.path.exists
+        def mock_exists(p):
+            if "wqy" in p:
+                return False
+            return original_exists(p)
+        monkeypatch.setattr(emit_auto_hooks.os.path, "exists", mock_exists)
+
+        n_before = len(fm.fontManager.ttflist)
+        # 不应报错
+        emit_auto_hooks.install_matplotlib_hook({}, str(tmp_path), [])
+        n_after = len(fm.fontManager.ttflist)
+        assert n_after == n_before, "无 wqy 时不应注册任何别名"
