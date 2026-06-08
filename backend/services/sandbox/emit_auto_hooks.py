@@ -296,11 +296,39 @@ def install_matplotlib_hook(sandbox_globals: dict, output_dir: str, emit_buffer:
         import matplotlib
         matplotlib.use("Agg")  # 非交互后端(沙盒无显示)
         import matplotlib.pyplot as plt
+        from matplotlib import RcParams
         from matplotlib._pylab_helpers import Gcf
 
-        # 中文字体默认配置(生产 Linux 已装 WenQuanYi Micro Hei)
-        # 防止中文标题/标签/字符变方块,LLM 不需要自己设字体
-        # POC 验证: backend/scripts (字体可渲染中文+负号+¥,无 Glyph missing 警告)
+        # 中文字体兜底(生产 Linux 已装 WenQuanYi Micro Hei)
+        # 防止中文标题/标签/字符变方块,LLM 不需要自己设字体。
+        #
+        # Root cause: LLM 常按 Windows/Mac 习惯写 rcParams['font.sans-serif']=['SimHei']
+        # 等字体,Linux 服务器没装这些字体 → fallback 到 DejaVu Sans → 中文方块。
+        # 仅设默认 rcParams 没用 (LLM 用 = 直接覆盖整个列表)。
+        #
+        # 真正根治: monkey patch RcParams.__setitem__, 当 LLM 设 font.sans-serif 时,
+        # 强制 append WenQuanYi Micro Hei 兜底。LLM 写 ['SimHei'] 实际生效为
+        # ['SimHei', 'WenQuanYi Micro Hei', 'DejaVu Sans'],SimHei 找不到时自动
+        # fallback WenQuanYi 渲染中文。LLM 0 感知。
+        _CHINESE_FALLBACKS = ["WenQuanYi Micro Hei", "DejaVu Sans"]
+
+        if not getattr(RcParams, "_emit_chinese_patched", False):
+            _orig_rcparams_setitem = RcParams.__setitem__
+
+            def _patched_setitem(self, key, value):
+                if key == "font.sans-serif":
+                    if isinstance(value, str):
+                        value = [value]
+                    value = list(value)
+                    for fallback in _CHINESE_FALLBACKS:
+                        if fallback not in value:
+                            value.append(fallback)
+                _orig_rcparams_setitem(self, key, value)
+
+            RcParams.__setitem__ = _patched_setitem
+            RcParams._emit_chinese_patched = True  # type: ignore[attr-defined]
+
+        # 同步设默认配置(确保即使 LLM 不动 rcParams,中文也能渲染)
         plt.rcParams["font.sans-serif"] = ["WenQuanYi Micro Hei", "DejaVu Sans"]
         plt.rcParams["axes.unicode_minus"] = False  # 防止负号显示为方块
 
