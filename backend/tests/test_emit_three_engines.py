@@ -283,3 +283,46 @@ class TestMatplotlibChineseFont:
         fig.savefig(str(out), dpi=60)
         plt.close(fig)
         assert out.exists() and out.stat().st_size > 0
+
+    def test_llm_override_to_simhei_still_keeps_wenquanyi_fallback(self, tmp_path):
+        """关键回归: LLM 写 plt.rcParams['font.sans-serif']=['SimHei'] 覆盖,
+        我们的 monkey patch 应自动 append WenQuanYi/DejaVu 到末尾,
+        即使 SimHei 找不到也能 fallback 到中文字体渲染。
+
+        这是生产 14:36 用户报方块的真实场景 — install_matplotlib_hook 设的
+        默认配置被 LLM 用 = 完全覆盖,SimHei 在 Linux 没装 → fallback DejaVu → 方块。
+        """
+        from services.sandbox.emit_auto_hooks import install_matplotlib_hook
+        import matplotlib.pyplot as plt
+
+        g: dict = {}
+        emit_buffer: list = []
+        install_matplotlib_hook(g, str(tmp_path), emit_buffer)
+
+        # 模拟 LLM 覆盖(Windows 字体习惯)
+        plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei"]
+
+        # 我们的 monkey patch 应该自动 append WenQuanYi + DejaVu
+        actual = plt.rcParams["font.sans-serif"]
+        assert "WenQuanYi Micro Hei" in actual, (
+            f"LLM 覆盖后未保留 WenQuanYi fallback: {actual}. "
+            f"monkey patch RcParams.__setitem__ 失效"
+        )
+        assert "DejaVu Sans" in actual, (
+            f"LLM 覆盖后未保留 DejaVu fallback: {actual}"
+        )
+        # LLM 设的字体仍在最前(用户优先)
+        assert actual[0] == "SimHei"
+
+    def test_llm_override_to_single_string_handled(self, tmp_path):
+        """LLM 写 plt.rcParams['font.sans-serif']='SimHei' (字符串非列表) 也兼容"""
+        from services.sandbox.emit_auto_hooks import install_matplotlib_hook
+        import matplotlib.pyplot as plt
+
+        g: dict = {}
+        install_matplotlib_hook(g, str(tmp_path), [])
+
+        plt.rcParams["font.sans-serif"] = "PingFang SC"
+        actual = plt.rcParams["font.sans-serif"]
+        assert "WenQuanYi Micro Hei" in actual
+        assert "PingFang SC" in actual
