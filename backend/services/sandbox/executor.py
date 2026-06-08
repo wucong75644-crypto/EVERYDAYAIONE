@@ -1,15 +1,19 @@
 """
-沙盒执行器
+沙盒执行器 — 三引擎产物协议(Phase 2)
 
-主进程负责: AST 验证 + 子进程生命周期管理 + [EMIT] 协议解析 + 漏 emit 告警。
+主进程负责: AST 验证 + 子进程生命周期管理 + 三引擎产物聚合。
 子进程负责: chdir + exec 用户代码 + 返回结果(sandbox_worker.py)。
 
-产物协议: emit_chart/file/image/table (沙盒 IO 统一协议)。
-[EMIT] marker 在 execute() 内部解析,填进 AgentResult.emit_payloads,
-所有调用方(主 Agent / 子 Agent)拿到 AgentResult 时产物已就位。
+产物三引擎(任一捕获即送达,完全冗余):
+  A. Jupyter mimebundle 协议(emit_auto_hooks.py):
+     plt.show/fig.show/Chart.show/display() + _repr_*_ 自动出图
+  B. Runtime 写盘 diff(_auto_emit_missed):
+     扫 output_dir 新增/修改文件 → 按扩展名自动构造 emit_image/file payload
+  C. LLM 显式 emit(emit_protocol.py):
+     emit_chart/file/image/table 显式声明,提供 title/label
 
-LLM 漏调 emit_xxx 时主进程不再兜底上传(对齐行业标准
-OpenAI/Anthropic/Jupyter),改为 WARNING 日志暴露漏调率。
+去重: LLM emit + auto diff 触发同一文件时,以 LLM emit 为准(保留 title/label)。
+详见 docs/document/TECH_沙盒产物协议.md
 """
 
 import json
@@ -115,12 +119,16 @@ class SandboxExecutor:
                 error_message=raw_result,
             )
 
-        # 4. 解析 [EMIT] marker → emit_payloads (沙盒 IO 统一协议)
+        # 4. Engine C: 解析 LLM 显式 [EMIT] marker → emit_payloads
         #    chart/table 直接收集;file/image 上传 OSS 拿 url+workspace_path 写回
         summary, payloads = await self._parse_emit(raw_result)
 
-        # 5. 漏 emit 告警(不上传,只 WARNING - 对齐 Jupyter/OpenAI 行业标准)
-        self._warn_missed_emit(snapshot_before, raw_result)
+        # 5. Engine B: 写盘 diff 兜底 — 扫 output_dir 新增/修改文件,
+        #    LLM 漏 emit 时自动构造 payload + OSS 上传 + 加入 emit_payloads
+        #    (对齐 Anthropic Code Execution runtime hook)
+        auto_payloads = await self._auto_emit_missed(snapshot_before, payloads)
+        if auto_payloads:
+            payloads.extend(auto_payloads)
 
         return AgentResult(
             summary=summary,
@@ -155,35 +163,7 @@ class SandboxExecutor:
         )
 
         # file/image 上传 OSS,把 url + workspace_path 写回 payload
-        file_image = [e for e in emits if e.get("kind") in ("file", "image")]
-        if file_image:
-            from services.file_upload import upload_to_payload
-            for p in file_image:
-                rel_path = p.get("path", "")
-                name = p.get("name") or os.path.basename(rel_path)
-                size = p.get("size", 0)
-                if self._workspace_dir and rel_path:
-                    host_dir = os.path.dirname(
-                        os.path.join(self._workspace_dir, rel_path)
-                    )
-                else:
-                    host_dir = self._output_dir or ""
-
-                if not (host_dir and os.path.exists(os.path.join(host_dir, name))):
-                    logger.warning(
-                        f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
-                    )
-                    continue
-                uploaded = await upload_to_payload(
-                    name, size, host_dir, self._user_id, self._org_id,
-                )
-                if uploaded:
-                    p["url"] = uploaded.get("url", "")
-                    p["mime_type"] = uploaded.get("mime_type", "")
-                    if "workspace_path" in uploaded:
-                        p["workspace_path"] = uploaded["workspace_path"]
-                    if not p.get("size"):
-                        p["size"] = uploaded.get("size", 0)
+        await self._upload_payload_files(emits)
 
         # 替换 marker → 占位文本(给 LLM 看的,防止它重复 emit)
         def _placeholder(m):
@@ -267,37 +247,116 @@ class SandboxExecutor:
                     files[f.name] = (st.st_mtime, st.st_size)
         return files
 
-    def _warn_missed_emit(
+    async def _upload_payload_files(self, payloads: list[dict]) -> None:
+        """共用 OSS 上传逻辑(Engine B 自动检测 + Engine C LLM emit 都调用)。
+
+        对 kind in (file, image) 的 payload 调 upload_to_payload 拿 CDN url,
+        把 url/mime_type/workspace_path 写回 payload(原地修改)。
+        """
+        from services.file_upload import upload_to_payload
+
+        file_image = [p for p in payloads if p.get("kind") in ("file", "image")]
+        for p in file_image:
+            rel_path = p.get("path", "")
+            name = p.get("name") or os.path.basename(rel_path)
+            size = p.get("size", 0)
+            if self._workspace_dir and rel_path:
+                # rel_path 可能是绝对路径(自动 detect)或相对路径(LLM emit)
+                if os.path.isabs(rel_path):
+                    host_dir = os.path.dirname(rel_path)
+                else:
+                    host_dir = os.path.dirname(
+                        os.path.join(self._workspace_dir, rel_path)
+                    )
+            else:
+                host_dir = self._output_dir or ""
+
+            if not (host_dir and os.path.exists(os.path.join(host_dir, name))):
+                logger.warning(
+                    f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
+                )
+                continue
+            uploaded = await upload_to_payload(
+                name, size, host_dir, self._user_id, self._org_id,
+            )
+            if uploaded:
+                p["url"] = uploaded.get("url", "")
+                p["mime_type"] = uploaded.get("mime_type", "")
+                if "workspace_path" in uploaded:
+                    p["workspace_path"] = uploaded["workspace_path"]
+                if not p.get("size"):
+                    p["size"] = uploaded.get("size", 0)
+
+    async def _auto_emit_missed(
         self,
         snapshot_before: dict[str, tuple[float, int]],
-        raw_result: str,
-    ) -> None:
-        """检查 output_dir 是否有新文件但 LLM 没在 result 里 emit。
-        不上传,只打 WARNING 暴露漏调率(对齐 Jupyter/OpenAI/Anthropic 行业标准:
-        无兜底扫描,LLM 必须显式声明产物)。
+        existing_payloads: list[dict],
+    ) -> list[dict]:
+        """Engine B: 写盘 diff 兜底 — output_dir 新增/修改文件自动 emit。
+
+        扫 output_dir 比对 snapshot, 找出 LLM 没显式 emit 但写到下载目录的文件,
+        按扩展名分类(image vs file), 自动上传 OSS, 返回 payload list 供合并。
+
+        去重: 跳过 LLM 已显式 emit 的文件(以 LLM emit 为准,保留 title/label)。
+
+        对齐 Anthropic Code Execution runtime hook — LLM 不调 emit 也能送达前端。
         """
         if not self._output_dir:
-            return
+            return []
         dp = Path(self._output_dir)
         if not dp.exists():
-            return
+            return []
 
-        missed: list[str] = []
+        # 已 emit 过的文件名集合(LLM 显式 emit 的优先,不再重复)
+        emitted_names = {
+            os.path.basename(p.get("path", "")) or p.get("name", "")
+            for p in existing_payloads
+            if p.get("kind") in ("file", "image")
+        }
+        emitted_names.discard("")
+
+        # 图片扩展名集合(其余视为通用文件)
+        _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".bmp"})
+
+        new_payloads: list[dict] = []
         for f in dp.iterdir():
             if not f.is_file():
                 continue
             if f.suffix.lower() not in _PRODUCT_EXTS:
                 continue
+            if f.name in emitted_names:
+                continue  # LLM 已显式 emit,跳过
             st = f.stat()
             old = snapshot_before.get(f.name)
             if old and old == (st.st_mtime, st.st_size):
-                continue  # 未变化
-            # 新增或覆盖,且 raw_result 没 emit 这个文件
-            if f.name not in raw_result:
-                missed.append(f.name)
+                continue  # 未变化,旧文件不算产物
 
-        if missed:
-            logger.warning(
-                f"[MISSED_EMIT] LLM 漏调 emit_file/emit_image | "
-                f"files={missed} | conv={self._conversation_id[:8]}"
-            )
+            # 按扩展名构造 payload
+            if f.suffix.lower() in _IMAGE_EXTS:
+                from services.sandbox.emit_protocol import build_image_payload
+                try:
+                    payload = build_image_payload(str(f), alt=f.name)
+                except Exception as e:
+                    logger.warning(f"[AUTO_EMIT] image payload 构造失败 | file={f.name} | err={e}")
+                    continue
+            else:
+                from services.sandbox.emit_protocol import build_file_payload
+                try:
+                    payload = build_file_payload(str(f))
+                except Exception as e:
+                    logger.warning(f"[AUTO_EMIT] file payload 构造失败 | file={f.name} | err={e}")
+                    continue
+            payload["auto_detected"] = True
+            new_payloads.append(payload)
+
+        if not new_payloads:
+            return []
+
+        logger.info(
+            f"[AUTO_EMIT] LLM 漏 emit 自动兜底 | "
+            f"files={[p.get('name') for p in new_payloads]} | "
+            f"conv={self._conversation_id[:8]}"
+        )
+        # OSS 上传 + 写回 url/mime_type/workspace_path
+        await self._upload_payload_files(new_payloads)
+        return new_payloads

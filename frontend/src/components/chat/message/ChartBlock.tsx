@@ -12,10 +12,14 @@ import { useRef, useEffect, useState, useCallback, useMemo, memo } from 'react';
 import { useTheme } from '../../../hooks/useTheme';
 import { getEChartsThemeName } from '../../../constants/echartsThemes';
 import { logger } from '../../../utils/logger';
+import PlotlyBlock from './PlotlyBlock';
+import VegaLiteBlock from './VegaLiteBlock';
 
 interface ChartBlockProps {
   option: Record<string, unknown>;
   title?: string;
+  /** 图表格式 (Phase 2): echarts (默认) / plotly (fig.show) / vegalite (altair) */
+  spec_format?: 'echarts' | 'plotly' | 'vegalite';
 }
 
 // ============================================================
@@ -264,7 +268,21 @@ function DataViewOverlay({ data, onClose }: { data: ChartData; onClose: () => vo
 // 主组件
 // ============================================================
 
-function ChartBlockInner({ option, title }: ChartBlockProps) {
+function ChartBlockInner({ option, title, spec_format }: ChartBlockProps) {
+  // Phase 2: 按 spec_format 分发到对应渲染器
+  // 沙盒 Engine A 把 plotly fig.show() / altair Chart.show() 自动 hook 后
+  // 打了 spec_format 标签;ChartBlock (ECharts) 是默认渲染器
+  if (spec_format === 'plotly') {
+    return <PlotlyBlock option={option} title={title} />;
+  }
+  if (spec_format === 'vegalite') {
+    return <VegaLiteBlock option={option} title={title} />;
+  }
+  // 默认 spec_format === 'echarts' 或未指定 → 走 ECharts 渲染
+  return <EChartsBlockInner option={option} title={title} />;
+}
+
+function EChartsBlockInner({ option, title }: ChartBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof import('echarts/core').init> | null>(null);
   const { theme, isDark } = useTheme();

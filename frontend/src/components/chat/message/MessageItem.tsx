@@ -611,6 +611,7 @@ export default memo(function MessageItem({
                         <ChartBlock
                           option={cp.option}
                           title={cp.title}
+                          spec_format={cp.spec_format}
                         />
                       </div>
                     );
