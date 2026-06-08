@@ -298,6 +298,12 @@ def install_matplotlib_hook(sandbox_globals: dict, output_dir: str, emit_buffer:
         import matplotlib.pyplot as plt
         from matplotlib._pylab_helpers import Gcf
 
+        # 中文字体默认配置(生产 Linux 已装 WenQuanYi Micro Hei)
+        # 防止中文标题/标签/字符变方块,LLM 不需要自己设字体
+        # POC 验证: backend/scripts (字体可渲染中文+负号+¥,无 Glyph missing 警告)
+        plt.rcParams["font.sans-serif"] = ["WenQuanYi Micro Hei", "DejaVu Sans"]
+        plt.rcParams["axes.unicode_minus"] = False  # 防止负号显示为方块
+
         _counter = {"n": 0}
 
         def _hooked_show(*_args: Any, **_kw: Any) -> None:

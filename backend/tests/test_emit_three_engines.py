@@ -231,3 +231,55 @@ class TestCoverageMatrix:
         assert "B_writedisk_diff" in matrix.values(), "Engine B 必须覆盖"
         assert any(v.startswith("A_") for v in matrix.values()), "Engine A 必须覆盖"
         assert "C" in matrix.values(), "Engine C 必须覆盖"
+
+
+# ============================================================
+# matplotlib 中文字体守护(防止回归)
+# ============================================================
+
+
+class TestMatplotlibChineseFont:
+    """install_matplotlib_hook 必须默认配置中文字体,防止中文渲染为方块"""
+
+    def test_install_hook_sets_chinese_font_rcparams(self, tmp_path):
+        """install_matplotlib_hook 调用后, rcParams 字体列表必须含中文字体优先"""
+        from services.sandbox.emit_auto_hooks import install_matplotlib_hook
+        import matplotlib.pyplot as plt
+
+        g: dict = {}
+        emit_buffer: list = []
+        install_matplotlib_hook(g, str(tmp_path), emit_buffer)
+
+        # 字体列表第一个必须是中文字体(生产 Linux 已装)
+        fonts = plt.rcParams["font.sans-serif"]
+        assert fonts[0] == "WenQuanYi Micro Hei", (
+            f"中文字体未注入或顺序错: {fonts}. "
+            f"修 install_matplotlib_hook 把 'WenQuanYi Micro Hei' 放第一位"
+        )
+        # 负号防方块
+        assert plt.rcParams["axes.unicode_minus"] is False, (
+            "axes.unicode_minus 必须为 False,否则负号显示为方块"
+        )
+
+    def test_chinese_font_in_fallback_list_avoids_box(self, tmp_path):
+        """模拟生产场景: 画含中文的图, 不应出现 'missing from font' 警告
+
+        本地 macOS 无 WenQuanYi 时会 fallback, 不一定能渲染中文,
+        但只断言不 RuntimeError + rcParams 配置正确 (生产 Linux 由 POC 实测保证)。
+        """
+        from services.sandbox.emit_auto_hooks import install_matplotlib_hook
+        import matplotlib.pyplot as plt
+
+        g: dict = {}
+        emit_buffer: list = []
+        install_matplotlib_hook(g, str(tmp_path), emit_buffer)
+
+        # 画一个含中文 + 负数的图,不应 raise(本地 fallback 不强求渲染中文)
+        fig, ax = plt.subplots()
+        ax.bar(["运营", "退款"], [100, -50])
+        ax.set_title("销售对比")
+        ax.set_ylabel("金额(¥)")
+        out = tmp_path / "chinese_test.png"
+        fig.savefig(str(out), dpi=60)
+        plt.close(fig)
+        assert out.exists() and out.stat().st_size > 0
