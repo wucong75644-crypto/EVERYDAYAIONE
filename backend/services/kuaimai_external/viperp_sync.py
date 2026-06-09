@@ -79,11 +79,11 @@ def _cast_to_db(col_type: str, value: Any) -> Any:
     return value
 
 
-def _get_table_columns(db: Any, table_name: str) -> dict[str, str]:
+async def _get_table_columns(db: Any, table_name: str) -> dict[str, str]:
     cols: dict[str, str] = {}
-    with db.pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
+    async with db.pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
                 """
                 SELECT column_name, data_type
                 FROM information_schema.columns
@@ -91,7 +91,7 @@ def _get_table_columns(db: Any, table_name: str) -> dict[str, str]:
                 """,
                 (table_name,),
             )
-            for r in cur.fetchall():
+            for r in await cur.fetchall():
                 cols[r["column_name"]] = r["data_type"]
     return cols
 
@@ -141,7 +141,7 @@ def _build_row_payload(
     return payload
 
 
-def _create_sync_log(
+async def _create_sync_log(
     db: Any,
     *,
     org_id: str,
@@ -150,7 +150,7 @@ def _create_sync_log(
     start: date,
     end: date,
 ) -> str:
-    resp = db.table("kuaimai_sync_logs").insert({
+    resp = await db.table("kuaimai_sync_logs").insert({
         "org_id": org_id,
         "source": source,
         "sync_type": sync_type,
@@ -161,7 +161,7 @@ def _create_sync_log(
     return resp.data[0]["id"]
 
 
-def _finish_sync_log(
+async def _finish_sync_log(
     db: Any,
     *,
     log_id: str,
@@ -170,24 +170,29 @@ def _finish_sync_log(
     error_message: str | None = None,
     metadata: dict | None = None,
 ) -> None:
-    db.table("kuaimai_sync_logs").update({
-        "status": status,
-        "finished_at": datetime.now().isoformat(),
-        "rows_synced": rows_synced,
-        "error_message": error_message,
-        "metadata": metadata,
-    }).eq("id", log_id).execute()
+    await (
+        db.table("kuaimai_sync_logs")
+        .update({
+            "status": status,
+            "finished_at": datetime.now().isoformat(),
+            "rows_synced": rows_synced,
+            "error_message": error_message,
+            "metadata": metadata,
+        })
+        .eq("id", log_id)
+        .execute()
+    )
 
 
-def _get_org_label(db: Any, org_id: str) -> str:
-    resp = (
+async def _get_org_label(db: Any, org_id: str) -> str:
+    resp = await (
         db.table("organizations")
         .select("name")
         .eq("id", org_id)
         .maybe_single()
         .execute()
     )
-    if resp.data:
+    if resp and resp.data:
         return resp.data.get("name", "未知")
     return "未知"
 
@@ -222,7 +227,7 @@ async def sync_viperp(
     所以我们用 (start, end, dimension) 作为唯一键的一部分。
     """
     # 1. 凭证
-    cred = credential_store.get_active_credential(
+    cred = await credential_store.get_active_credential(
         db, org_id=org_id, source="viperp"
     )
     if not cred:
@@ -235,7 +240,7 @@ async def sync_viperp(
     if start_date is None:
         start_date = end_date - timedelta(days=7)
 
-    log_id = _create_sync_log(
+    log_id = await _create_sync_log(
         db,
         org_id=org_id,
         source="viperp",
@@ -283,12 +288,12 @@ async def sync_viperp(
         amount_data = amount_result.json_body or {}
 
     except http_base.CookieExpiredError as e:
-        credential_store.mark_expired(db, credential_id=cred.id, error_msg=str(e))
-        _finish_sync_log(
+        await credential_store.mark_expired(db, credential_id=cred.id, error_msg=str(e))
+        await _finish_sync_log(
             db, log_id=log_id, status="failed",
             error_message=f"cookie_expired: {e}",
         )
-        org_label = _get_org_label(db, org_id)
+        org_label = await _get_org_label(db, org_id)
         await wecom_alert.send_alert(
             org_id,
             f"⚠️ **快麦 viperp Cookie 失效** [{org_label}]\n\n"
@@ -299,8 +304,8 @@ async def sync_viperp(
             success=False, log_id=log_id, error=str(e), cookie_expired=True,
         )
     except Exception as e:
-        credential_store.record_sync_failure(db, credential_id=cred.id, error_msg=str(e))
-        _finish_sync_log(db, log_id=log_id, status="failed", error_message=str(e))
+        await credential_store.record_sync_failure(db, credential_id=cred.id, error_msg=str(e))
+        await _finish_sync_log(db, log_id=log_id, status="failed", error_message=str(e))
         logger.error(f"viperp_sync 失败 | org={org_id} | err={e}")
         return SyncResult(success=False, log_id=log_id, error=str(e))
     finally:
@@ -327,17 +332,17 @@ async def sync_viperp(
                 summary_total = None
 
     if not rows:
-        _finish_sync_log(
+        await _finish_sync_log(
             db, log_id=log_id, status="success", rows_synced=0,
             metadata={"summary_amount": summary_amount, "summary_total": summary_total},
         )
-        credential_store.record_sync_success(db, credential_id=cred.id)
+        await credential_store.record_sync_success(db, credential_id=cred.id)
         logger.info(f"viperp_sync 完成（空数据）| org={org_id}")
         return SyncResult(success=True, log_id=log_id, rows_synced=0)
 
     # 4. UPSERT 业务数据
     sync_batch_id = str(uuid.uuid4())
-    table_columns = _get_table_columns(db, "erp_viperp_sale_finance")
+    table_columns = await _get_table_columns(db, "erp_viperp_sale_finance")
 
     upsert_count = 0
     skipped = 0
@@ -358,7 +363,7 @@ async def sync_viperp(
             skipped += 1
             continue
         try:
-            db.table("erp_viperp_sale_finance").upsert(
+            await db.table("erp_viperp_sale_finance").upsert(
                 row_payload,
                 on_conflict=(
                     "org_id,kuaimai_company_id,user_id,dimension,"
@@ -378,7 +383,7 @@ async def sync_viperp(
     )
 
     # 5. 同步店铺-运营
-    org_label = _get_org_label(db, org_id)
+    org_label = await _get_org_label(db, org_id)
     shop_changes_result = None
     try:
         shop_changes_result = await shop_operator_sync.sync_shop_operators(
@@ -421,11 +426,11 @@ async def sync_viperp(
             "new_operators_unbound": len(shop_changes_result.new_operators_unbound),
             "binding_invalidated": len(shop_changes_result.binding_invalidated),
         }
-    _finish_sync_log(
+    await _finish_sync_log(
         db, log_id=log_id, status="success", rows_synced=upsert_count,
         metadata=summary_dict,
     )
-    credential_store.record_sync_success(db, credential_id=cred.id)
+    await credential_store.record_sync_success(db, credential_id=cred.id)
 
     return SyncResult(
         success=True,

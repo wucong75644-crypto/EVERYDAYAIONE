@@ -95,16 +95,18 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_analyze",
                 "description": (
-                    "读取 Excel/CSV 文件的完整结构，自动转为 Parquet 缓存。\n"
+                    "读取数据文件（.xlsx/.xls/.csv/.tsv）的完整结构，自动转为 Parquet 缓存。\n"
                     "自动处理多级表头、合并单元格、表头偏移、特殊行检测，"
                     "比手动 openpyxl 读取更准确。\n\n"
-                    "使用场景：\n"
-                    "- 用户上传或提及了 Excel/CSV 文件\n"
-                    "- 需要了解数据文件的结构再做进一步分析\n"
-                    "- 需要获取 Parquet 路径供 code_execute 中 duckdb 查询\n\n"
-                    "所有 Excel/CSV 文件的首次读取都通过此工具。\n"
-                    "返回：列名、数据类型、行数、样本数据、Parquet 缓存路径。\n"
-                    "支持：.xlsx .xls .csv .tsv"
+                    "When to use:\n"
+                    "- attachments 中 status=raw 的 .xlsx/.xls/.csv/.tsv 文件首次治理\n"
+                    "- 需要 Parquet 路径供 code_execute 中 duckdb/pandas 查询\n\n"
+                    "When NOT to use:\n"
+                    "- 已 status=analyzed 的文件 — 直接用 <parquet> 字段 pd.read_parquet，禁止重复治理\n"
+                    "- 图片文件（.png/.jpg/.jpeg/.gif/.webp/.bmp）— 已通过视觉通道注入\n"
+                    "- PDF/Word/PPT/文本文件 — 用 code_execute + 对应库读取\n\n"
+                    "Returns: 列名、数据类型、行数、样本数据、Parquet 缓存相对路径。\n"
+                    "支持扩展名: .xlsx .xls .csv .tsv（其他不支持）"
                 ),
                 "parameters": {
                     "type": "object",

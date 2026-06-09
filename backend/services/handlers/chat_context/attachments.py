@@ -1,7 +1,9 @@
-"""Phase 8: 结构化附件元数据（XML <attachments> + status 行动指引）。
+"""结构化附件元数据（XML <attachments> + status + 配对 <action> 行动指引）。
 
-设计依据：Anthropic prompt engineering 文档 — XML 标签让 Claude 系模型
-给附件元数据稳定的注意力锚点；project 已用 <system-reminder> 等 XML 范式。
+设计依据：Anthropic prompt engineering — XML 锚点 + 每个 status 配对显式行动
+指引，避免模型跨段查 system prompt 拼信息。
+
+_STATUS_ACTIONS：单一事实来源（DRY），每个 status 必须有对应 action。
 """
 
 import html
@@ -18,6 +20,17 @@ _PPT_EXTS = {".pptx", ".ppt"}
 _TEXT_EXTS = {
     ".txt", ".md", ".json", ".yaml", ".yml", ".xml", ".log",
     ".py", ".js", ".ts", ".html", ".css", ".sql",
+}
+
+# status → action 单一事实来源（修改时只动这里）
+_STATUS_ACTIONS: Dict[str, str] = {
+    "image": "已视觉注入，直接看图回答，无需任何文件工具",
+    "raw": "调 file_analyze 转 Parquet（仅 .xlsx/.xls/.csv/.tsv 支持）",
+    "analyzed": "用 <parquet> 字段在 code_execute 中 pd.read_parquet 读取，不要重复 file_analyze",
+    "parquet": "用 <path> 字段在 code_execute 中 pd.read_parquet 读取",
+    "doc": "用 code_execute + PyPDF2/python-docx/python-pptx 读取",
+    "text": "用 code_execute open() 读取",
+    "binary": "未知文件类型，询问用户期望如何处理",
 }
 
 
@@ -44,21 +57,13 @@ def format_attachments(
     workspace_files: List[Dict[str, Any]],
     conversation_id: Optional[str] = None,
 ) -> str:
-    """渲染结构化附件元数据(行业标准:纯状态声明 + 相对路径)。
+    """渲染结构化附件元数据(行业标准:状态 + 显式 action 行动指引)。
 
     设计原则(对齐 OpenAI Assistants / Claude / Gemini):
-      - <status> 仅是状态(raw / analyzed / parquet / ready),不含可执行代码
-      - <path>:相对 workspace 的路径,LLM 字面 copy 用
-      - <parquet>:仅 analyzed 数据文件有,LLM 直接 pd.read_parquet 读
-      - LLM 看 tools(API tools 字段) + status 自主决策选哪个工具
-
-    状态枚举:
-      - raw      : 未分析的 xlsx/csv,需要 file_analyze 工具治理
-      - analyzed : 已分析,parquet_path 字段直接给 pd.read_parquet 用
-      - parquet  : 已是 parquet 格式,直接读 path 即可
-      - image    : 图片(多模态注入,无需工具)
-      - doc      : 文档(PDF/Word/PPT)用 code_execute + 相应库读
-      - text     : 文本文件
+      - <status>: 状态码（image/raw/analyzed/parquet/doc/text/binary）
+      - <action>: 与 status 配对的最小化行动指引（单一事实来源 _STATUS_ACTIONS）
+      - <path>: 相对 workspace 的路径,LLM 字面 copy 用
+      - <parquet>: 仅 analyzed 数据文件有,LLM 直接 pd.read_parquet 读
     """
     if not workspace_files:
         return ""
@@ -126,36 +131,70 @@ def format_attachments(
         if parquet_rel:
             lines.append(f"    <parquet>{_esc(parquet_rel)}</parquet>")
         lines.append(f"    <status>{status}</status>")
+        lines.append(f"    <action>{_STATUS_ACTIONS[status]}</action>")
         lines.append("  </file>")
 
     lines.append("</attachments>")
     return "\n".join(lines)
 
 
-def build_workspace_prompt(workspace_files: List[Dict[str, Any]]) -> str:
-    """生成工作区文件提示——告知文件名，引导数据文件用 file_analyze。"""
+def _fmt_size_long(size: Any) -> str:
+    if not size:
+        return ""
+    size = int(size)
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def build_workspace_prompt(
+    workspace_files: List[Dict[str, Any]],
+    conversation_id: Optional[str] = None,
+) -> str:
+    """渲染工作区文件清单（注意力锚点 system message）。
+
+    设计原则（与 attachments XML 解耦）：
+      - 只声明附件存在 + 状态分类（元事实），让模型在含糊指代下保持注意力
+      - 不硬编码工具名（file_analyze/code_execute）— 工具调用方式见 attachments XML 的 <action>
+      - 状态来自 file_path_cache，与 attachments XML 的 <status> 保持一致
+
+    数据驱动依据：含糊指代场景（"再算下"）下，独立 system message 能提供额外的
+    注意力锚点，将 PASS 率从 80% 推到 100%（compare_description_fix.py 实测）。
+    """
     if not workspace_files:
         return ""
 
-    def _fmt_size_long(size: Any) -> str:
-        if not size:
-            return ""
-        size = int(size)
-        if size < 1024:
-            return f"{size} B"
-        elif size < 1024 * 1024:
-            return f"{size / 1024:.1f} KB"
-        return f"{size / (1024 * 1024):.1f} MB"
+    cache = None
+    if conversation_id:
+        try:
+            from services.agent.file_path_cache import get_file_cache
+            cache = get_file_cache(conversation_id)
+        except Exception as e:
+            logger.warning(f"build_workspace_prompt: get_file_cache 失败 | {e}")
 
-    lines: list[str] = ["用户当前消息附加的文件："]
+    lines: list[str] = [f"用户当前消息附加了 {len(workspace_files)} 个文件："]
     for f in workspace_files:
-        wp = f.get("workspace_path", "")
+        raw_name = f.get("name") or f.get("workspace_path", "")
         size_str = _fmt_size_long(f.get("size"))
-        name = f.get("name", wp)
-        ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
-        if ext in {".xlsx", ".xls", ".csv", ".tsv"}:
-            lines.append(f"  '{name}'  ({size_str}) — 数据文件，用 file_analyze 读取")
+        ext = _ext_of(raw_name)
+
+        if ext in _IMG_EXTS:
+            kind = "图片（已视觉注入）"
+        elif ext in _DATA_EXTS:
+            is_analyzed = cache.is_analyzed(raw_name) if cache else False
+            kind = "数据文件（已分析）" if is_analyzed else "数据文件（待治理）"
+        elif ext == ".parquet":
+            kind = "Parquet 数据"
+        elif ext in _PDF_EXTS or ext in _WORD_EXTS or ext in _PPT_EXTS:
+            kind = "文档"
+        elif ext in _TEXT_EXTS:
+            kind = "文本文件"
         else:
-            lines.append(f"  '{name}'  ({size_str})")
+            kind = "未知类型"
+
+        size_suffix = f" ({size_str})" if size_str else ""
+        lines.append(f"  - {raw_name}{size_suffix} — {kind}")
 
     return "\n".join(lines)

@@ -189,15 +189,15 @@ class ChatContextMixin:
                 )
                 messages.append({"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
 
-        # 工作区文件提示注入：告诉 AI 文件名，由 AI 调工具处理
+        # Layer 3.5: 工作区文件清单（注意力锚点 system message）
+        # 状态感知版：仅声明文件存在 + 状态分类，工具调用方式见 attachments XML 的 <action>
+        # 数据驱动：含糊指代场景下能将场景 7 准确率从 80% 推到 100%
         if workspace_files:
-            ws_prompt = self._build_workspace_prompt(workspace_files)
+            ws_prompt = self._build_workspace_prompt(
+                workspace_files, conversation_id,
+            )
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
-                logger.debug(
-                    f"Workspace files injected | count={len(workspace_files)} | "
-                    f"paths={[f['workspace_path'] for f in workspace_files]}"
-                )
 
         # Layer 4: 用户记忆（V2 双部分注入）
         # 4a: L3 Persona（稳定部分，放 system prompt，prompt cache 友好）

@@ -21,7 +21,7 @@ from typing import Literal
 
 from loguru import logger
 
-from core.database import get_db
+from core.database import get_async_db
 
 
 # 目标执行时间：上午 10:00（给快麦自己的 T+1 计算留缓冲，POC 实测 ~8:20 完成）
@@ -106,13 +106,13 @@ async def sync_all_active(
         viperp_sync,
     )
 
-    db = get_db()
+    db = await get_async_db()
     stats = {
         "thinktank": {"ok": 0, "fail": 0, "rows": 0, "cookie_expired": 0},
         "viperp": {"ok": 0, "fail": 0, "rows": 0, "cookie_expired": 0},
     }
 
-    creds = credential_store.list_all_active_credentials(db)
+    creds = await credential_store.list_all_active_credentials(db)
     logger.info(f"sync_all_active 待同步凭证数: {len(creds)}")
 
     for cred in creds:
