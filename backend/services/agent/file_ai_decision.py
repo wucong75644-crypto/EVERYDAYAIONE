@@ -14,7 +14,7 @@ from typing import Any
 # ── 枚举值常量（用于 schema 校验） ──
 
 SEMANTIC_TYPES = frozenset({
-    "id", "name", "datetime", "amount", "quantity",
+    "id", "name", "datetime", "amount", "quantity", "percentage",
     "address", "note", "category", "other",
 })
 

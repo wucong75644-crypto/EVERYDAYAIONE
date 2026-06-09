@@ -37,6 +37,8 @@ from services.agent.file_scanners import (
     MAX_SHEETS_LISTED,
     MAX_SHEETS_SAMPLED,
     SUSPICIOUS_MIN_NULL_RATIO,
+    _classify_dist_full,
+    _detect_ragged_mixed,
     col_letter,
     sample_segment_sizes,
     suspicious_row_limit,
@@ -127,7 +129,7 @@ class _PathBChunkAccumulator:
     替代 BaseScanner._scan_columns / _scan_suspicious_rows / _build_key_samples
     的全表向量化。在 chunk 边界上保持等价语义：
       - null_ratio 用 (累计 null) / (累计 total) 全列精确计算
-      - classified_dist 在预定行号采样
+      - classified_dist V3.3 改 chunk 内 value_counts 全列累加(原 13 采样统计)
       - sample_values 跨 chunk 拼接 head/mid/tail
       - is_long_id_candidate 维护全局 abs().max()
       - suspicious_rows 全行号映射到 Excel 1-indexed
@@ -149,6 +151,10 @@ class _PathBChunkAccumulator:
         self.col_sample_values: list[list[Any]] = [[] for _ in range(n_cols)]
         self.col_max_abs: list[float] = [0.0] * n_cols
         self.col_max_abs_seen: list[bool] = [False] * n_cols
+        # V3.3: 全列 classified_dist 累加(chunk 内 value_counts)
+        self.col_classified_full: list[dict[str, int]] = [
+            {} for _ in range(n_cols)
+        ]
 
         self.key_samples_buf: dict[int, list[Any]] = {}
         self.suspicious: list[SuspiciousRow] = []
@@ -169,7 +175,8 @@ class _PathBChunkAccumulator:
         self.col_total_count += n
 
         for ci in range(self.n_cols):
-            non_null = chunk_df.iloc[:, ci].dropna()
+            col_series = chunk_df.iloc[:, ci]
+            non_null = col_series.dropna()
             if len(non_null) > 0:
                 try:
                     m = float(non_null.abs().max())
@@ -178,6 +185,11 @@ class _PathBChunkAccumulator:
                     self.col_max_abs_seen[ci] = True
                 except (TypeError, ValueError, AttributeError):
                     pass
+            # V3.3: chunk 内全列 classified_dist 累加(value_counts 路线)
+            chunk_dist = _classify_dist_full(col_series)
+            target = self.col_classified_full[ci]
+            for k, v in chunk_dist.items():
+                target[k] = target.get(k, 0) + v
 
         for global_idx in self.sample_idx_global:
             if chunk_start_local <= global_idx < chunk_start_local + n:
@@ -224,10 +236,8 @@ class _PathBChunkAccumulator:
             if col_str.startswith("_is_"):
                 continue
             sample_vals = self.col_sample_values[ci]
-            classified: dict[str, int] = {}
-            for v in sample_vals:
-                cls = _classify_cell(v)
-                classified[cls] = classified.get(cls, 0) + 1
+            # V3.3: classified_dist 用 chunk 累加的全列分布,替代 sample 上的统计
+            classified = self.col_classified_full[ci]
 
             total = int(self.col_total_count[ci])
             null_count = int(self.col_null_count[ci])
@@ -250,6 +260,9 @@ class _PathBChunkAccumulator:
             except Exception:
                 unique_count = 0
 
+            # V3.3: ragged mixed type 检测(排除 ID 列)
+            is_ragged, ragged_types = _detect_ragged_mixed(classified, is_long_id)
+
             cols.append(ColumnEvidence(
                 col_letter=col_letter(ci),
                 raw_header=col_str,
@@ -258,6 +271,8 @@ class _PathBChunkAccumulator:
                 null_ratio=null_ratio,
                 is_long_id_candidate=is_long_id,
                 unique_count=unique_count,
+                is_ragged_mixed=is_ragged,
+                ragged_types=ragged_types,
             ))
         return cols
 
