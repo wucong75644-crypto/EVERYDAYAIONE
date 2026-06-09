@@ -69,6 +69,61 @@ from services.agent.file_meta.dataclass import (  # noqa: E402
 )
 
 
+def _detect_ragged_mixed(
+    classified: dict[str, int],
+    is_long_id_candidate: bool = False,
+) -> tuple[bool, list[str]]:
+    """V3.3: 检测列是否 ragged mixed type(数值类型跟其他非空类型共存)。
+
+    返回: (is_ragged, ragged_types) — ragged_types 是排序后的类型列表
+
+    这是 deterministic 信号,让 AI 不用从 classified_dist 比例自己推断。
+    哪怕 1 个 percentage 混在 100 个 numeric 里也要标(pandas astype(float) 会崩)。
+
+    排除规则(避免 ID 列被误标导致 LLM 用 safe_float 毁数据):
+      - is_long_id_candidate=True(ID 列优先保 string)
+      - classified 含 long_id 类型(纯数字长串列)
+
+    触发规则:
+      - 非空类型 ≥ 2 种
+      - 且至少含 numeric 或 percentage 之一(只有这两个类型转 float 才会因杂质崩)
+    """
+    # 排除规则: ID 列优先保 string,不让 LLM 用 safe_float 毁 ID
+    if is_long_id_candidate:
+        return False, []
+    non_empty = {k for k, v in classified.items() if k != "empty" and v > 0}
+    if "long_id" in non_empty:
+        return False, []
+    # 至少 2 种非空类型才算混合
+    if len(non_empty) < 2:
+        return False, []
+    # 必须含 numeric 或 percentage(只有这两个会让 pandas astype(float) 崩)
+    if not ({"numeric", "percentage"} & non_empty):
+        return False, []
+    return True, sorted(non_empty)
+
+
+def _classify_dist_full(series) -> dict[str, int]:
+    """全列 classified_dist — value_counts 路线减少重复 _classify_cell 调用。
+
+    对于列内值重复多的情况(状态/金额/类目),value_counts 让每个 unique 值
+    只跑一次 _classify_cell,提速 50-200x;全 unique 列(订单号)略慢于直接循环但仍可接受。
+
+    与 13 采样的差异: 全列扫不会漏掉散落 / 集中在中段或 tail 的罕见类型(% / placeholder)。
+    """
+    import pandas as pd
+    classified: dict[str, int] = {}
+    # NaN 单独算 empty(value_counts 默认 dropna=True)
+    nan_count = int(series.isna().sum())
+    if nan_count:
+        classified["empty"] = nan_count
+    vc = series.dropna().value_counts()
+    for v, cnt in vc.items():
+        cls = _classify_cell(v)
+        classified[cls] = classified.get(cls, 0) + int(cnt)
+    return classified
+
+
 # ── 基类 ──
 
 class BaseScanner(ABC):
@@ -118,7 +173,8 @@ class BaseScanner(ABC):
     def _scan_columns(self, df) -> list[ColumnEvidence]:
         """按列扫描，构建 ColumnEvidence 列表。
 
-        sample_values 取 head 5 + mid 3 + tail 5（自适应总行数）。
+        V3.3: classified_dist 改全列扫(value_counts 路线),对齐 null_ratio/unique_count 数据源。
+              sample_values 仍取 head 5 + mid 3 + tail 5(给 AI 看具体值,用途不同)。
         """
         import numpy as np
         # 修 fastexcel fallback-to-string 列把空 cell 读成 "" 而非 NaN 的 bug
@@ -126,7 +182,7 @@ class BaseScanner(ABC):
         df = df.mask(df.eq(""), np.nan)
         cols: list[ColumnEvidence] = []
         n = len(df)
-        # 取样行索引
+        # sample_values 取样行索引(只用于展示,不再用于 classified_dist)
         idx_set: list[int] = []
         if n > 0:
             idx_set.extend(range(min(5, n)))
@@ -151,14 +207,10 @@ class BaseScanner(ABC):
             series = df.iloc[:, i]
             non_null = series.dropna()
 
-            # 分类分布（限于采样行，节省时间）
-            sample_vals: list[Any] = []
-            classified: dict[str, int] = {}
-            for ridx in idx_set:
-                val = df.iat[ridx, i]
-                sample_vals.append(val)
-                cls = _classify_cell(val)
-                classified[cls] = classified.get(cls, 0) + 1
+            # sample_values: 13 采样原始值(给 AI 看具体值长啥样)
+            sample_vals: list[Any] = [df.iat[ridx, i] for ridx in idx_set]
+            # classified_dist: 全列扫(对齐 null_ratio/unique_count 数据源)
+            classified = _classify_dist_full(series)
 
             null_ratio = round(1 - len(non_null) / max(n, 1), 4)
 
@@ -181,6 +233,11 @@ class BaseScanner(ABC):
             except Exception:
                 unique_count = 0
 
+            # V3.3: ragged mixed type 检测 — 数值类型跟其他非空类型共存
+            # 是 deterministic 信号,代码层算好,AI 直接读不用推理
+            # 排除 ID 列(避免 LLM 用 safe_float 毁数据)
+            is_ragged, ragged_types = _detect_ragged_mixed(classified, is_long_id)
+
             cols.append(ColumnEvidence(
                 col_letter=col_letter(i),
                 raw_header=col_str,
@@ -189,6 +246,8 @@ class BaseScanner(ABC):
                 null_ratio=null_ratio,
                 is_long_id_candidate=is_long_id,
                 unique_count=unique_count,
+                is_ragged_mixed=is_ragged,
+                ragged_types=ragged_types,
             ))
         return cols
 

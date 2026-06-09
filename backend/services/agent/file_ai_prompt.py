@@ -28,7 +28,7 @@ JSON_SCHEMA_TEMPLATE = """
     {
       "letter": "A",                                       // Excel 列字母
       "business_name": "<推断的业务列名;空列填 ''>",
-      "semantic_type": "id|name|datetime|amount|quantity|address|note|category|other",
+      "semantic_type": "id|name|datetime|amount|quantity|percentage|address|note|category|other",
       "is_order_level": <bool>,                            // 同主键内值是否重复(订单级字段 SUM 前需 DISTINCT)
       "is_id_column": <bool>,                              // 是否 ID 类(清洗保 string 不转 int)
       "notes": "<可选>"
@@ -124,8 +124,10 @@ TASK_BLOCK = """
 
 5. 看「合并单元格 / 公式 / 多区域 / 多 sheet」→ 决定清洗动作
 
-6. 看「列样本」→ 识别 ragged 混合类型(同列业务异构)
-   - 触发: 同列样本同时出现 数字('123.45') + 百分比('47.40%') + 占位符('-')
+6. 识别 ragged 混合类型(同列业务异构)
+   - 触发(任一即可):
+     a. 列证据含 ⚠️ ragged混合 flag(代码已检测,deterministic 信号,**必须**按它来标 warning)
+     b. 列样本同时出现 数字 + 百分比/占位符/文本(自识别补充)
      典型: 利润表"合计"列(金额行 vs 率类行混合)、KPI 宽表
    - 处理:
      a. mixed_type_handling: action='force_str'(整列保留字符串,不破坏原值)
@@ -134,6 +136,8 @@ TASK_BLOCK = """
                     df['X_num'] = df['X'].apply(safe_float)
                     (47.40%→0.474, '-'/NaN→0, 数字保留)"
         affected_cols=[相关列字母]
+   - 重要: flag 出现就**必须**标 warning,即使罕见类(percentage/placeholder)占比 < 5% 也要标
+     (pandas astype(float) 哪怕 1 个 % 也会全列崩)
    - 禁止: 用 extract_percentage 整列转换(会把金额行也 ÷ 100,毁数据)
 
 7. 看「列样本」→ 识别中文占位符变体
@@ -207,10 +211,16 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
     # 列证据
     parts.append("# 列证据\n")
     for col_ev in evidence.columns:
-        # V3：仅保留纯统计驱动的 flag(long_id_candidate)
+        # V3.3: 纯统计驱动的 deterministic flag(long_id_candidate / ragged_mixed)
         flags = []
         if col_ev.is_long_id_candidate:
             flags.append("⚠️ 长ID候选(清洗时应保 string)")
+        if col_ev.is_ragged_mixed:
+            types_str = "+".join(col_ev.ragged_types)
+            flags.append(
+                f"⚠️ ragged混合({types_str},pandas astype(float)会崩,"
+                f"必须 data_quality_notes warning + safe_float)"
+            )
         flag_str = (" " + " ".join(flags)) if flags else ""
         parts.append(
             f"列 {col_ev.col_letter}: 原始表头='{col_ev.raw_header}', "
@@ -218,7 +228,8 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
             f"unique={col_ev.unique_count}{flag_str}\n"
         )
         if variant != "simplified":
-            sample_preview = col_ev.sample_values[:8] if col_ev.sample_values else []
+            # V3.3: 完整 13 个 sample(head 5 + mid 3 + tail 5),AI 能看到 tail 的 %/占位符
+            sample_preview = col_ev.sample_values
             parts.append(f"  样本: {_truncate_list(sample_preview)}\n")
     parts.append("\n")
 
@@ -272,6 +283,9 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
                     flags = []
                     if col_ev.is_long_id_candidate:
                         flags.append("⚠️ 长ID候选")
+                    if col_ev.is_ragged_mixed:
+                        types_str = "+".join(col_ev.ragged_types)
+                        flags.append(f"⚠️ ragged混合({types_str})")
                     flag_str = (" " + " ".join(flags)) if flags else ""
                     parts.append(
                         f"    {col_ev.col_letter} {col_ev.raw_header!r}: "
@@ -279,7 +293,8 @@ def build_prompt(evidence: EvidencePool, variant: str = "default") -> str:
                         f"null率={col_ev.null_ratio:.1%}, "
                         f"unique={col_ev.unique_count}{flag_str}\n"
                     )
-                    sample_preview = col_ev.sample_values[:5] if col_ev.sample_values else []
+                    # V3.3: 完整 13 个 sample(对齐 PathA)
+                    sample_preview = col_ev.sample_values
                     parts.append(f"      样本: {_truncate_list(sample_preview)}\n")
         parts.append("\n")
 

@@ -1229,16 +1229,40 @@ _RE_DATE = re.compile(
     r'(\s+\d{1,2}:\d{1,2}(:\d{1,2})?)?$'
 )
 _RE_LONG_ID = re.compile(r'^\d{10,}$')
+# V3.3: 复合 ID(数字{4+}-数字{4+} 或 数字{4+}/数字{4+})
+# 覆盖淘宝/拼多多订单号格式 "260424-295677498891357"、SKU 批次号等
+# 跟 _RE_DATE 不冲突:date 需要两段 -(yyyy-mm-dd),复合 ID 只有一段
+_RE_COMPOUND_ID = re.compile(r'^\d{4,}[-/]\d{4,}$')
+
+# V3.3: 占位符集合(替代/缺省/未知)
+_PLACEHOLDERS = frozenset({
+    "-", "—", "─", "/", "N/A", "NA", "n/a", "无", "空", "尚未", "未知",
+})
 
 
 def _classify_cell(value) -> str:
-    """判断单元格内容的实际类型（不依赖 Python 类型，用值内容匹配）。"""
+    """判断单元格内容的实际类型（不依赖 Python 类型，用值内容匹配）。
+
+    V3.3 新增分类: placeholder / percentage,扩展 long_id 支持复合 ID。
+    顺序: empty → placeholder → percentage → long_id → compound_id → date → numeric → text
+    """
     if value is None:
         return "empty"
     s = str(value).strip()
     if not s or s.lower() in ("none", "null", "nan", "<na>"):
         return "empty"
+    # V3.3: 占位符(精确匹配,避免被 numeric 误吞)
+    if s in _PLACEHOLDERS:
+        return "placeholder"
+    # V3.3: 百分比(必须先于 numeric 判断,避免 strip % 后被 numeric 抢走)
+    if s.endswith("%"):
+        s_pct = s.rstrip("%")
+        if _RE_NUMERIC.match(s_pct):
+            return "percentage"
     if _RE_LONG_ID.match(s):
+        return "long_id"
+    # V3.3: 复合 ID(数字-数字 / 数字/数字),订单号/SKU 等格式
+    if _RE_COMPOUND_ID.match(s):
         return "long_id"
     if _RE_DATE.match(s):
         return "date"
@@ -1249,12 +1273,16 @@ def _classify_cell(value) -> str:
 
 
 def _is_data_row(row_values, threshold: float = 0.3) -> bool:
-    """判断一行是否是数据行（含数字/日期/长ID 占比 ≥ threshold）。"""
+    """判断一行是否是数据行（含数字/日期/长ID/百分比 占比 ≥ threshold）。"""
     classes = [_classify_cell(v) for v in row_values]
     non_empty = [c for c in classes if c != "empty"]
     if not non_empty:
         return False
-    data_n = sum(1 for c in non_empty if c in ("numeric", "date", "long_id"))
+    # V3.3: percentage 算数据(否则"毛利率"等 % 行会被误判为表头)
+    data_n = sum(
+        1 for c in non_empty
+        if c in ("numeric", "date", "long_id", "percentage")
+    )
     return data_n / len(non_empty) >= threshold
 
 
@@ -1264,7 +1292,10 @@ def _looks_like_header(row_values) -> bool:
     non_empty = [c for c in classes if c != "empty"]
     if len(non_empty) < 2:
         return False
-    text_ratio = sum(1 for c in non_empty if c == "text") / len(non_empty)
+    # V3.3: placeholder 也当 text(防多级表头合并 cell 填 "-" 破坏 text_ratio)
+    text_ratio = sum(
+        1 for c in non_empty if c in ("text", "placeholder")
+    ) / len(non_empty)
     if text_ratio < 0.7:
         return False
     # 排除合并单元格的标题行（所有值相同）

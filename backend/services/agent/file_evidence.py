@@ -53,6 +53,9 @@ class ColumnEvidence:
     null_ratio: float = 0.0                                  # 该列 null 比例
     is_long_id_candidate: bool = False                       # 长度 > 10 且全数字的占比 > 70%
     unique_count: int = 0                                    # V3.2: 唯一值数量(AI 据此判断 is_order_level)
+    # V3.3: ragged mixed type 检测(deterministic 信号,给 AI 直接读)
+    is_ragged_mixed: bool = False                            # numeric 跟 percentage/placeholder/text 共存
+    ragged_types: list[str] = field(default_factory=list)    # 实际共存的类型 ["numeric", "percentage"]
     # V3：删除 has_currency_prefix / has_unit_suffix_candidates
     # 业务格式识别下沉到 AI 看 sample 自判，扫描器只产出纯统计字段
 
