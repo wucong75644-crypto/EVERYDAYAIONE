@@ -124,6 +124,47 @@ TASK_BLOCK = """
 
 5. 看「合并单元格 / 公式 / 多区域 / 多 sheet」→ 决定清洗动作
 
+6. 看「列样本」→ 识别 ragged 混合类型(同列业务异构)
+   - 触发: 同列样本同时出现 数字('123.45') + 百分比('47.40%') + 占位符('-')
+     典型: 利润表"合计"列(金额行 vs 率类行混合)、KPI 宽表
+   - 处理:
+     a. mixed_type_handling: action='force_str'(整列保留字符串,不破坏原值)
+     b. data_quality_notes 加 severity='warning':
+        note 模板: "列 X 含 ragged 混合(金额+率+占位符),用沙盒内置 safe_float() 按行处理:
+                    df['X_num'] = df['X'].apply(safe_float)
+                    (47.40%→0.474, '-'/NaN→0, 数字保留)"
+        affected_cols=[相关列字母]
+   - 禁止: 用 extract_percentage 整列转换(会把金额行也 ÷ 100,毁数据)
+
+7. 看「列样本」→ 识别中文占位符变体
+   - 触发: 样本含 '无'/'空'/'/' / '——'/'─'/'尚未'/'未知'/'N/A' 等中文/混合占位符
+   - 处理: mixed_type_handling action='force_str',data_quality_notes 加 severity='info':
+     "列 X 含中文占位符 [示例],数值计算时用 sandbox safe_float() 自动转 0"
+     (safe_float 通过 try/except 路径已兜底,无需改 helper)
+
+8. 看「列样本 + 关键样本」→ 识别 Excel 公式错误值
+   - 触发: 样本中出现 '#DIV/0!' / '#REF!' / '#NAME?' / '#VALUE!' / '#N/A' / '#NULL!' / '#NUM!'
+   - 含义: Excel 公式计算失败,这些是错误状态值(不是真实数据)
+   - 处理: data_quality_notes 加 severity='error':
+     "列 X 含 N 个 Excel 公式错误值 (#DIV/0! 等),会被 safe_float 转 0 污染统计。
+      计算前必须过滤: df[~df['X'].astype(str).str.startswith('#')]"
+     affected_cols=[列字母]
+
+9. 看「列证据」→ 识别 Excel 日期 serial number
+   - 触发: 列名含"日期/时间/月份/年份" + sample 是 5 位整数(40000~50000 区间)
+     原因: Excel 把日期 "2026-05-01" 内部存为 serial 45414(1900-01-01 起的天数)
+   - 处理: column_semantics.semantic_type='datetime',mixed_type_handling action='to_datetime'
+     data_quality_notes 加 severity='info':
+     "列 X 是 Excel 日期 serial,清洗后已转 datetime"
+
+10. 看「列证据」→ 识别 pandas 同名列后缀
+    - 触发: 原始表头含 '.1' / '.2' / '.3' 后缀(如"金额.1"、"日期.1")
+    - 含义: 原 Excel 有重名列,pandas 读时自动加后缀
+    - 处理: data_quality_notes 加 severity='warning':
+      "列 X 是同名列(pandas 自动加 .N 后缀),原始 Excel 有 2+ 列同名 [原名]。
+       LLM 引用时需明确用后缀名,避免误用"
+      affected_cols=[列字母]
+
 # 强制规则
 - MUST 严格 JSON 输出,不要 markdown 代码块包裹
 - MUST 所有文本字段(business_name / overall_summary / table_role_note / data_quality_notes / 各 reason / notes)用与文件内容一致的语言(文件中文则中文,英文则英文),不要混语
