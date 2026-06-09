@@ -164,16 +164,17 @@ function CredentialCard({
     setSyncing(true);
     try {
       const result = await triggerSync(source);
+      // 后端异步执行：立即返回，前端跳到"同步记录"tab 看进度
       if (result.success) {
-        toast.success(`同步完成 — 落库 ${result.rows_synced} 行`);
-      } else if (result.cookie_expired) {
-        toast.error('Cookie 已失效，请重新粘贴 cURL');
+        toast.success('已在后台开始同步，请到「同步记录」tab 查看进度（约 1-2 分钟）');
       } else {
-        toast.error(`同步失败: ${result.error}`);
+        toast.error(`触发失败: ${result.error}`);
       }
       onRefresh();
     } catch (e) {
-      toast.error(`同步失败: ${(e as Error).message}`);
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+                || (e as Error).message;
+      toast.error(`触发失败: ${msg}`);
     } finally {
       setSyncing(false);
     }
@@ -399,10 +400,33 @@ function LogsTab() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    listSyncLogs(undefined, 50)
-      .then(setLogs)
-      .catch((e) => toast.error(`加载失败: ${e.message}`))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const fetchOnce = async () => {
+      try {
+        const data = await listSyncLogs(undefined, 50);
+        if (cancelled) return;
+        setLogs(data);
+        setLoading(false);
+        // 如果有 running，5 秒后自动刷新（看进度）
+        const hasRunning = data.some((l) => l.status === 'running');
+        if (hasRunning) {
+          timer = window.setTimeout(fetchOnce, 5000);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(`加载失败: ${(e as Error).message}`);
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchOnce();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, []);
 
   if (loading) return <div className="text-center py-8">加载中...</div>;
