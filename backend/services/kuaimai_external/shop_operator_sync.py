@@ -94,7 +94,7 @@ def _try_int(v: Any) -> int | None:
 # ──────────────────────── 店铺同步 ────────────────────────
 
 
-def _sync_shop_row(
+async def _sync_shop_row(
     db: Any,
     *,
     org_id: str,
@@ -104,7 +104,7 @@ def _sync_shop_row(
     changes: SyncChanges,
 ) -> None:
     """UPSERT 单个店铺，检测变化记到 changes。"""
-    existing_resp = (
+    existing_resp = await (
         db.table("erp_shop_operators")
         .select("id, operator_name, is_active")
         .eq("org_id", org_id)
@@ -133,7 +133,7 @@ def _sync_shop_row(
 
     if existing is None:
         # 新店铺
-        db.table("erp_shop_operators").insert(payload).execute()
+        await db.table("erp_shop_operators").insert(payload).execute()
         changes.new_shops.append({
             "shop_user_id": shop.shop_user_id,
             "shop_name": shop.shop_name,
@@ -162,10 +162,15 @@ def _sync_shop_row(
             f"shop={shop.shop_name} {old_operator} → {shop.operator_name}"
         )
 
-    db.table("erp_shop_operators").update(payload).eq("id", existing["id"]).execute()
+    await (
+        db.table("erp_shop_operators")
+        .update(payload)
+        .eq("id", existing["id"])
+        .execute()
+    )
 
 
-def _mark_removed_shops(
+async def _mark_removed_shops(
     db: Any,
     *,
     org_id: str,
@@ -175,7 +180,7 @@ def _mark_removed_shops(
 ) -> None:
     """检测这次 sync 不再出现的店铺，标 is_active=FALSE。"""
     # 拿当前所有 active 店铺
-    resp = (
+    resp = await (
         db.table("erp_shop_operators")
         .select("id, shop_user_id, shop_name, operator_name, platform_name")
         .eq("org_id", org_id)
@@ -187,10 +192,15 @@ def _mark_removed_shops(
         if row["shop_user_id"] in seen_shop_ids:
             continue
         # 这次没看到 → 标 inactive
-        db.table("erp_shop_operators").update({
-            "is_active": False,
-            "updated_at": datetime.now().isoformat(),
-        }).eq("id", row["id"]).execute()
+        await (
+            db.table("erp_shop_operators")
+            .update({
+                "is_active": False,
+                "updated_at": datetime.now().isoformat(),
+            })
+            .eq("id", row["id"])
+            .execute()
+        )
         changes.removed_shops.append({
             "shop_user_id": row["shop_user_id"],
             "shop_name": row["shop_name"],
@@ -206,7 +216,7 @@ def _mark_removed_shops(
 # ──────────────────────── 运营同步 ────────────────────────
 
 
-def _sync_operators(
+async def _sync_operators(
     db: Any,
     *,
     org_id: str,
@@ -224,7 +234,7 @@ def _sync_operators(
         if not name:
             continue
 
-        existing_resp = (
+        existing_resp = await (
             db.table("erp_operators")
             .select("id, is_bound, wecom_userid")
             .eq("org_id", org_id)
@@ -236,20 +246,25 @@ def _sync_operators(
 
         if existing:
             # 已存在 → 只更新 last_seen
-            db.table("erp_operators").update({
-                "last_seen_at": now,
-                "is_active": True,
-                "updated_at": now,
-            }).eq("id", existing["id"]).execute()
+            await (
+                db.table("erp_operators")
+                .update({
+                    "last_seen_at": now,
+                    "is_active": True,
+                    "updated_at": now,
+                })
+                .eq("id", existing["id"])
+                .execute()
+            )
             continue
 
         # 新运营 → 尝试自动匹配企微
-        match = operator_resolver.resolve_operator(
+        match = await operator_resolver.resolve_operator(
             db, org_id=org_id, operator_name=name
         )
         if match.status == "matched":
             # 自动绑定
-            db.table("erp_operators").insert({
+            await db.table("erp_operators").insert({
                 "org_id": org_id,
                 "operator_name": name,
                 "wecom_userid": match.wecom_userid,
@@ -271,7 +286,7 @@ def _sync_operators(
             )
         else:
             # 没匹配到 / 多匹配 → INSERT 未绑定
-            db.table("erp_operators").insert({
+            await db.table("erp_operators").insert({
                 "org_id": org_id,
                 "operator_name": name,
                 "wecom_userid": None,
@@ -295,7 +310,7 @@ def _sync_operators(
             )
 
 
-def _verify_existing_bindings(
+async def _verify_existing_bindings(
     db: Any,
     *,
     org_id: str,
@@ -305,7 +320,7 @@ def _verify_existing_bindings(
     自愈检查：找出所有 is_bound=TRUE 的运营，验证 wecom_userid 是否还在职。
     失效 → 自动解绑 + 记 changes（推告警）。
     """
-    bound = (
+    bound = await (
         db.table("erp_operators")
         .select("id, operator_name, wecom_userid")
         .eq("org_id", org_id)
@@ -317,20 +332,25 @@ def _verify_existing_bindings(
         wecom_userid = row.get("wecom_userid")
         if not wecom_userid:
             continue
-        if operator_resolver.verify_binding_still_valid(
+        if await operator_resolver.verify_binding_still_valid(
             db, org_id=org_id, wecom_userid=wecom_userid
         ):
             continue
         # 企微账号已失效 → 自动解绑
-        db.table("erp_operators").update({
-            "is_bound": False,
-            "wecom_userid": None,
-            "notes": (
-                f"企微账号 {wecom_userid} 失效，"
-                f"自动解绑于 {datetime.now().isoformat()}"
-            ),
-            "updated_at": datetime.now().isoformat(),
-        }).eq("id", row["id"]).execute()
+        await (
+            db.table("erp_operators")
+            .update({
+                "is_bound": False,
+                "wecom_userid": None,
+                "notes": (
+                    f"企微账号 {wecom_userid} 失效，"
+                    f"自动解绑于 {datetime.now().isoformat()}"
+                ),
+                "updated_at": datetime.now().isoformat(),
+            })
+            .eq("id", row["id"])
+            .execute()
+        )
         changes.binding_invalidated.append({
             "operator_name": row["operator_name"],
             "stale_wecom_userid": wecom_userid,
@@ -344,7 +364,7 @@ def _verify_existing_bindings(
 # ──────────────────────── audit 写入 ────────────────────────
 
 
-def _write_audit_records(
+async def _write_audit_records(
     db: Any,
     *,
     org_id: str,
@@ -389,7 +409,7 @@ def _write_audit_records(
         })
 
     for r in records:
-        db.table("kuaimai_field_audit").insert({
+        await db.table("kuaimai_field_audit").insert({
             "org_id": org_id,
             "source": source,
             "audit_type": r["audit_type"],
@@ -445,7 +465,7 @@ async def sync_shop_operators(
     # 同步店铺
     for shop in shops:
         try:
-            _sync_shop_row(
+            await _sync_shop_row(
                 db,
                 org_id=org_id,
                 kuaimai_company_id=kuaimai_company_id,
@@ -460,7 +480,7 @@ async def sync_shop_operators(
             )
 
     # 标记消失店铺
-    _mark_removed_shops(
+    await _mark_removed_shops(
         db,
         org_id=org_id,
         kuaimai_company_id=kuaimai_company_id,
@@ -469,14 +489,14 @@ async def sync_shop_operators(
     )
 
     # 同步运营（含自动匹配企微）
-    _sync_operators(db, org_id=org_id, operator_names=operator_names, changes=changes)
+    await _sync_operators(db, org_id=org_id, operator_names=operator_names, changes=changes)
 
     # 验证现有绑定（自愈机制）
-    _verify_existing_bindings(db, org_id=org_id, changes=changes)
+    await _verify_existing_bindings(db, org_id=org_id, changes=changes)
 
     # 写 audit
     if changes.has_any:
-        _write_audit_records(
+        await _write_audit_records(
             db,
             org_id=org_id,
             source="viperp",

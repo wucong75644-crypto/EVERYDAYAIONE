@@ -160,14 +160,14 @@ def _is_compatible_type_drift(old_t: str, new_t: str) -> bool:
 # ──────────────────────── DB 写入 ────────────────────────
 
 
-def _get_last_snapshot(
+async def _get_last_snapshot(
     db: Any,
     *,
     org_id: str,
     source: str,
 ) -> dict[str, str] | None:
     """从 kuaimai_field_audit 取该 source 最近一次的字段快照。"""
-    resp = (
+    resp = await (
         db.table("kuaimai_field_audit")
         .select("all_fields_snapshot")
         .eq("org_id", org_id)
@@ -182,11 +182,10 @@ def _get_last_snapshot(
     snap = resp.data[0].get("all_fields_snapshot")
     if not snap or not isinstance(snap, dict):
         return None
-    # snapshot 格式：{字段名: 类型}
     return snap
 
 
-def _save_audit_record(
+async def _save_audit_record(
     db: Any,
     *,
     org_id: str,
@@ -207,13 +206,13 @@ def _save_audit_record(
         "sync_batch_id": sync_batch_id,
         "status": "new",
     }
-    resp = db.table("kuaimai_field_audit").insert(record).execute()
+    resp = await db.table("kuaimai_field_audit").insert(record).execute()
     if not resp.data:
         return None
     return resp.data[0]["id"]
 
 
-def _save_baseline_snapshot(
+async def _save_baseline_snapshot(
     db: Any,
     *,
     org_id: str,
@@ -222,7 +221,7 @@ def _save_baseline_snapshot(
     sync_batch_id: str | None,
 ) -> None:
     """首次 sync 写一条"基线"记录（无差异，仅为下次对比留底）。"""
-    db.table("kuaimai_field_audit").insert({
+    await db.table("kuaimai_field_audit").insert({
         "org_id": org_id,
         "source": source,
         "audit_type": "field_change",
@@ -231,7 +230,7 @@ def _save_baseline_snapshot(
         "type_changed_fields": [],
         "all_fields_snapshot": current_snapshot,
         "sync_batch_id": sync_batch_id,
-        "status": "acknowledged",  # 基线，不需要管理员关注
+        "status": "acknowledged",
         "notes": "首次同步基线快照",
     }).execute()
 
@@ -304,11 +303,11 @@ async def audit_response(
         return FieldDiff()
 
     current = extract_field_types(sample_row)
-    previous = _get_last_snapshot(db, org_id=org_id, source=source)
+    previous = await _get_last_snapshot(db, org_id=org_id, source=source)
 
     if previous is None:
         # 首次同步，写基线，不告警
-        _save_baseline_snapshot(
+        await _save_baseline_snapshot(
             db,
             org_id=org_id,
             source=source,
@@ -335,7 +334,7 @@ async def audit_response(
         return diff
 
     # 有差异：写 audit + 推告警
-    audit_id = _save_audit_record(
+    audit_id = await _save_audit_record(
         db,
         org_id=org_id,
         source=source,

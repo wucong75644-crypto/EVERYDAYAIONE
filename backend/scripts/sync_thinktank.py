@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from loguru import logger
 
-from core.database import get_db
+from core.database import get_async_db
 from services.kuaimai_external import thinktank_sync
 
 
@@ -43,7 +43,7 @@ async def main() -> int:
     )
     args = ap.parse_args()
 
-    db = get_db()
+    db = await get_async_db()
     result = await thinktank_sync.sync_thinktank(
         db,
         org_id=args.org_id,

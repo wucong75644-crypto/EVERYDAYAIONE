@@ -19,11 +19,18 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import Database, OrgCtx
+from api.deps import OrgCtx
+from core.database import get_async_db
+
+
+# Async DB 依赖（按 services/kuaimai/erp_sync_service.py 同样模式）
+AsyncDatabase = Annotated[Any, Depends(get_async_db)]
 from services.kuaimai_external import (
     credential_store,
     curl_parser,
@@ -158,10 +165,10 @@ class BindOperatorIn(BaseModel):
 @router.get("/credentials", summary="列出当前企业的快麦凭证")
 async def list_credentials(
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ) -> list[CredentialOut]:
     org_id = _require_admin(org_ctx)
-    creds = credential_store.list_credentials(db, org_id=org_id)
+    creds = await credential_store.list_credentials(db, org_id=org_id)
     return [_to_credential_out(c) for c in creds]
 
 
@@ -169,7 +176,7 @@ async def list_credentials(
 async def create_credential(
     body: CreateCredentialIn,
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ) -> CreateCredentialOut:
     org_id = _require_admin(org_ctx)
 
@@ -197,7 +204,7 @@ async def create_credential(
             detail=f"无法识别数据源（URL: {parsed.url}），请显式指定 source 字段",
         )
 
-    cred_id = credential_store.save_credential(
+    cred_id = await credential_store.save_credential(
         db,
         org_id=org_id,
         source=source,  # type: ignore
@@ -206,7 +213,7 @@ async def create_credential(
         cookie_full=parsed.cookie_full,
     )
 
-    cred = credential_store.get_credential(db, org_id=org_id, source=source)  # type: ignore
+    cred = await credential_store.get_credential(db, org_id=org_id, source=source)  # type: ignore
     if not cred:
         raise HTTPException(status_code=500, detail="凭证保存后无法读回")
 
@@ -225,10 +232,10 @@ async def create_credential(
 async def delete_credential(
     credential_id: str,
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ):
     org_id = _require_admin(org_ctx)
-    ok = credential_store.delete_credential(
+    ok = await credential_store.delete_credential(
         db, credential_id=credential_id, org_id=org_id
     )
     if not ok:
@@ -240,12 +247,12 @@ async def delete_credential(
 async def test_credential(
     credential_id: str,
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ):
     org_id = _require_admin(org_ctx)
 
-    # 找凭证
-    resp = (
+    # 找凭证（用 credential_store 自动解密 cookie）
+    cred = await (
         db.table("kuaimai_external_credentials")
         .select("*")
         .eq("id", credential_id)
@@ -253,14 +260,25 @@ async def test_credential(
         .maybe_single()
         .execute()
     )
-    if not resp or not resp.data:
+    if not cred or not cred.data:
         raise HTTPException(status_code=404, detail="凭证不存在")
 
-    cred = resp.data
-    client = http_base.KuaimaiWebClient(
-        companyid=cred["kuaimai_company_id"],
-        cookie=cred.get("cookie_full") or f"_censeid={cred['censeid_cookie']}",
+    # cookie 字段是密文，要解密
+    from services.kuaimai_external import cookie_crypto
+    encrypted_censeid = cred.data["censeid_cookie"]
+    encrypted_full = cred.data.get("cookie_full") or ""
+    plain_censeid = await cookie_crypto.decrypt_cookie(
+        org_id=org_id, stored=encrypted_censeid
     )
+    plain_full = await cookie_crypto.decrypt_cookie(
+        org_id=org_id, stored=encrypted_full
+    ) if encrypted_full else ""
+
+    client = http_base.KuaimaiWebClient(
+        companyid=cred.data["kuaimai_company_id"],
+        cookie=plain_full or f"_censeid={plain_censeid}",
+    )
+    source = cred.data["source"]
 
     # 用最小 payload 调一次 thinktank（即使凭证是 viperp 也能用，因为是同源探活）
     # 仅为了快速验证 cookie 有效性
@@ -279,7 +297,7 @@ async def test_credential(
     }
 
     try:
-        if cred["source"] == "thinktank":
+        if source == "thinktank":
             await client.post(
                 url="https://erp.superboss.cc/kmzk/profit/report/shop",
                 payload=test_payload,
@@ -314,11 +332,11 @@ async def test_credential(
             )
 
         # 测试通过：更新健康状态
-        credential_store.record_sync_success(db, credential_id=credential_id)
+        await credential_store.record_sync_success(db, credential_id=credential_id)
         return {"ok": True, "message": "Cookie 有效，连接正常"}
 
     except http_base.CookieExpiredError as e:
-        credential_store.mark_expired(db, credential_id=credential_id, error_msg=str(e))
+        await credential_store.mark_expired(db, credential_id=credential_id, error_msg=str(e))
         return {"ok": False, "message": f"Cookie 已失效: {e}"}
     except Exception as e:
         return {"ok": False, "message": f"调用失败: {e}"}
@@ -329,7 +347,7 @@ async def test_credential(
 # ──────────────────────── 手动触发同步 ────────────────────────
 
 
-async def _run_sync_in_background(
+async def _run_sync_background(
     source: str,
     org_id: str,
     sync_type: str,
@@ -338,15 +356,15 @@ async def _run_sync_in_background(
     dimension: str,
 ) -> None:
     """
-    后台运行同步任务，独立 DB 连接 + 异常吞掉。
+    后台运行同步任务。
 
-    关键设计：内部异常必须自己 catch，不能冒泡到 asyncio.create_task 引发
-    "Task exception was never retrieved" 警告。
+    因为 sync_thinktank / sync_viperp 内部全部用 await async db，
+    不会阻塞 event loop，asyncio.create_task 是安全的异步并发。
     """
     from loguru import logger as _logger
-    from core.database import get_db as _get_db
+    from core.database import get_async_db as _get_async_db
 
-    db = _get_db()
+    db = await _get_async_db()
     try:
         if source == "thinktank":
             await thinktank_sync.sync_thinktank(
@@ -377,52 +395,33 @@ async def trigger_sync(
     source: Literal["thinktank", "viperp"],
     body: SyncRequest,
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ) -> SyncResultOut:
     """
     异步触发同步：
 
-    - 立即创建 sync_logs 记录（status=running）
-    - 启动 asyncio task 后台跑实际同步逻辑（不阻塞 HTTP worker）
-    - 立即返回 log_id
+    - 校验凭证存在（提前 fail）
+    - asyncio.create_task 启动后台任务（async db 不阻塞 event loop）
+    - 立即返回，前端通过同步记录 tab 看进度
 
-    前端拿到 log_id 后，通过轮询 /sync-logs 看进度（success/failed）。
+    跟 services/kuaimai/erp_sync_worker_pool 同样架构：async db + create_task。
     """
     import asyncio
-    from datetime import date as _date, timedelta as _timedelta
-    from uuid import uuid4
 
     org_id = _require_admin(org_ctx)
 
-    # 校验凭证存在（提前 fail，避免后台任务白跑）
-    cred = credential_store.get_active_credential(db, org_id=org_id, source=source)
+    # 提前校验凭证存在
+    cred = await credential_store.get_active_credential(
+        db, org_id=org_id, source=source
+    )
     if not cred:
         raise HTTPException(
             status_code=400,
             detail=f"{source} 没有可用凭证，请先配置或重新登录",
         )
 
-    # 创建 sync_log 记录（status=running，前端立即能看到）
-    end_d = body.end_date or _date.today()
-    start_d = body.start_date or (end_d - _timedelta(days=7))
-    log_resp = db.table("kuaimai_sync_logs").insert({
-        "org_id": org_id,
-        "source": source,
-        "sync_type": body.sync_type,
-        "status": "running",
-        "date_range_start": start_d.isoformat(),
-        "date_range_end": end_d.isoformat(),
-    }).execute()
-    placeholder_log_id = log_resp.data[0]["id"] if log_resp.data else str(uuid4())
-
-    # 后台启动真实同步（不阻塞当前 HTTP 请求）
-    # 注：实际 sync 内部会再创建 sync_log，这个 placeholder 仅供前端立即查询
-    # 简化策略：把 placeholder 标记成 success/failed 由后台判断；
-    # 但因为 sync 内部建自己的 log，placeholder 会冗余。
-    # → 直接删 placeholder，让 sync 内部建唯一记录
-    db.table("kuaimai_sync_logs").delete().eq("id", placeholder_log_id).execute()
-
-    asyncio.create_task(_run_sync_in_background(
+    # 后台启动真实同步（async db，不阻塞 event loop）
+    asyncio.create_task(_run_sync_background(
         source=source,
         org_id=org_id,
         sync_type=body.sync_type,
@@ -446,7 +445,7 @@ async def trigger_sync(
 @router.get("/sync-logs", summary="同步记录")
 async def list_sync_logs(
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
     source: Optional[Literal["thinktank", "viperp"]] = None,
     limit: int = 20,
 ) -> list[SyncLogOut]:
@@ -460,7 +459,7 @@ async def list_sync_logs(
     )
     if source:
         q = q.eq("source", source)
-    resp = q.execute()
+    resp = await q.execute()
     return [SyncLogOut(**row) for row in (resp.data or [])]
 
 
@@ -470,7 +469,7 @@ async def list_sync_logs(
 @router.get("/operators", summary="运营列表（含店铺数）")
 async def list_operators(
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
     only_unbound: bool = False,
 ) -> list[OperatorOut]:
     org_id = _require_admin(org_ctx)
@@ -484,16 +483,16 @@ async def list_operators(
     )
     if only_unbound:
         q = q.eq("is_bound", False)
-    resp = q.execute()
+    resp = await q.execute()
     operators = resp.data or []
 
-    # 计算每个运营管的店铺数
+    # 计算每个运营管的店铺数（async pool）
     op_names = [o["operator_name"] for o in operators]
     shop_counts: dict[str, int] = {}
     if op_names:
-        with db.pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
+        async with db.pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
                     """
                     SELECT operator_name, COUNT(*) AS cnt
                     FROM erp_shop_operators
@@ -503,7 +502,7 @@ async def list_operators(
                     """,
                     (org_id, op_names),
                 )
-                for r in cur.fetchall():
+                for r in await cur.fetchall():
                     shop_counts[r["operator_name"]] = r["cnt"]
 
     return [
@@ -528,12 +527,12 @@ async def bind_operator(
     operator_id: str,
     body: BindOperatorIn,
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ):
     org_id = _require_admin(org_ctx)
 
     # 校验运营存在且属于本 org
-    op_resp = (
+    op_resp = await (
         db.table("erp_operators")
         .select("id, operator_name")
         .eq("id", operator_id)
@@ -545,7 +544,7 @@ async def bind_operator(
         raise HTTPException(status_code=404, detail="运营不存在")
 
     # 校验 wecom_userid 在该 org 的企微员工表里存在且在职
-    emp_resp = (
+    emp_resp = await (
         db.table("wecom_employees")
         .select("name, status")
         .eq("org_id", org_id)
@@ -562,15 +561,20 @@ async def bind_operator(
 
     # 绑定
     now = datetime.now().isoformat()
-    db.table("erp_operators").update({
-        "wecom_userid": body.wecom_userid,
-        "operator_user_id": body.operator_user_id,
-        "is_bound": True,
-        "bound_at": now,
-        "bound_by": org_ctx.user_id,
-        "notes": f"管理员手动绑定（{emp_resp.data['name']}）",
-        "updated_at": now,
-    }).eq("id", operator_id).execute()
+    await (
+        db.table("erp_operators")
+        .update({
+            "wecom_userid": body.wecom_userid,
+            "operator_user_id": body.operator_user_id,
+            "is_bound": True,
+            "bound_at": now,
+            "bound_by": org_ctx.user_id,
+            "notes": f"管理员手动绑定（{emp_resp.data['name']}）",
+            "updated_at": now,
+        })
+        .eq("id", operator_id)
+        .execute()
+    )
 
     logger.info(
         f"kuaimai_external 运营手动绑定 | "
@@ -584,10 +588,10 @@ async def bind_operator(
 async def unbind_operator(
     operator_id: str,
     org_ctx: OrgCtx,
-    db: Database,
+    db: AsyncDatabase,
 ):
     org_id = _require_admin(org_ctx)
-    resp = (
+    resp = await (
         db.table("erp_operators")
         .update({
             "wecom_userid": None,
