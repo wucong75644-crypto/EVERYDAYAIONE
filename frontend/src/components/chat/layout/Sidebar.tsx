@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { useClickOutside } from '../../../hooks/useClickOutside';
@@ -17,7 +17,6 @@ import { Brain, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } fro
 import ConversationList from './ConversationList';
 import SettingsModal from '../modals/SettingsModal';
 import MemoryModal from '../modals/MemoryModal';
-import AdminPanel from '../../admin/AdminPanel';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
 
 /** 乐观更新参数 */
@@ -71,7 +70,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const { user, currentOrg } = useAuthStore();
   const logout = useLogout();
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const navigate = useNavigate();
   const showAdminEntry =
     user?.role === 'super_admin' ||
     (currentOrg && ['owner', 'admin'].includes(currentOrg.role));
@@ -202,7 +201,7 @@ export default function Sidebar({
       {showAdminEntry && (
         <div className="px-3 pb-1">
           <button
-            onClick={() => setShowAdminPanel(true)}
+            onClick={() => navigate('/admin')}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
           >
             <Settings2 className="w-4 h-4" />
@@ -267,11 +266,6 @@ export default function Sidebar({
 
       {/* 记忆管理弹框 */}
       <MemoryModal />
-
-      {/* 管理后台弹框 */}
-      {showAdminPanel && (
-        <AdminPanel onClose={() => setShowAdminPanel(false)} />
-      )}
     </aside>
   );
 }
