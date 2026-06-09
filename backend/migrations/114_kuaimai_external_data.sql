@@ -434,8 +434,9 @@ CREATE TABLE kuaimai_field_audit (
         )),
 
     -- 字段差异（audit_type='field_change' 时使用）
+    -- 注意：全部用 JSONB，避免 PG TEXT[] 跟 LocalDB.json.dumps 的不兼容
     new_fields JSONB DEFAULT '[]'::jsonb,
-    disappeared_fields TEXT[] DEFAULT '{}',
+    disappeared_fields JSONB DEFAULT '[]'::jsonb,
     type_changed_fields JSONB DEFAULT '[]'::jsonb,
     all_fields_snapshot JSONB,
 

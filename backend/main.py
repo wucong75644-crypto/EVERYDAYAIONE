@@ -18,8 +18,8 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
     audio, auth, conversation, error_monitor, file, health, image, image_ecom,
-    memory, message, models, org, org_members_assignments, pdd, qimen,
-    scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
+    kuaimai_external, memory, message, models, org, org_members_assignments,
+    pdd, qimen, scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
     wecom_chat_targets, ws,
 )
 from core.config import get_settings
@@ -367,6 +367,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from services.scheduler.oss_purge_task import oss_purge_loop
     _oss_purge_task = asyncio.create_task(oss_purge_loop())
 
+    # 快麦 Web 数据自动同步（每天 10:00，分层兜底 7/30/90 天）
+    from services.kuaimai_external.scheduler import kuaimai_external_sync_loop
+    _kuaimai_external_sync_task = asyncio.create_task(kuaimai_external_sync_loop())
+    logger.info("kuaimai_external_sync_loop started")
+
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
 
@@ -643,6 +648,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 系统错误监控
     app.include_router(error_monitor.router, prefix="/api")
+
+    # 快麦 Web 数据接入（智库 + viperp）
+    app.include_router(kuaimai_external.router, prefix="/api")
 
 
 # 创建应用实例

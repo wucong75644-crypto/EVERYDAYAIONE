@@ -23,6 +23,7 @@ const Chat = lazy(() => import('./pages/Chat'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const WecomCallback = lazy(() => import('./pages/WecomCallback'));
 const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
+const KuaimaiIntegration = lazy(() => import('./pages/KuaimaiIntegration'));
 // PromptGallery 已内嵌到首页，保留路由做重定向
 
 /**
@@ -76,6 +77,14 @@ function AnimatedRoutes() {
             element={
               <ProtectedRoute>
                 <OrganizationSettings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/integrations/kuaimai"
+            element={
+              <ProtectedRoute>
+                <KuaimaiIntegration />
               </ProtectedRoute>
             }
           />
