@@ -112,7 +112,7 @@ class TestModelMapping:
 class TestDefaults:
 
     def test_default_chat_model(self):
-        assert DEFAULT_CHAT_MODEL == "gemini-3-pro"
+        assert DEFAULT_CHAT_MODEL == "qwen3.5-plus"
 
     def test_default_image_model(self):
         assert DEFAULT_IMAGE_MODEL == "gpt-image-2-text-to-image"
@@ -198,8 +198,8 @@ class TestRetryTools:
         """get_remaining_models 保持优先级顺序"""
         remaining = get_remaining_models(GenerationType.CHAT, [])
         assert len(remaining) > 0
-        # 第一个应该是 priority=1 的模型（gemini-3-pro）
-        assert remaining[0] == "gemini-3-pro"
+        # 第一个应该是 priority=1 的模型（qwen3.5-plus）
+        assert remaining[0] == "qwen3.5-plus"
 
 
 # ============================================================
