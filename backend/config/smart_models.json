@@ -2,10 +2,20 @@
   "chat": {
     "models": [
       {
-        "id": "qwen3.5-plus",
-        "description": "阿里千问3.5，百万上下文，费用极低，响应快。默认首选，适合通用对话、长文分析、写作、翻译。用户无特殊要求时优先选择此模型",
-        "keywords": ["qwen", "千问", "通义", "阿里"],
+        "id": "gemini-3-pro",
+        "description": "Google顶级全模态（文/图/视频/音频）+ 顶级代码与推理能力，边界处理稳定。默认首选，适合所有任务尤其代码/数据分析/对比计算/做表",
+        "keywords": ["gemini", "谷歌", "google"],
         "priority": 1,
+        "capabilities": ["reasoning", "analysis", "search", "code", "vision"],
+        "supports_image": true,
+        "supports_search": true,
+        "supports_thinking": true
+      },
+      {
+        "id": "qwen3.5-plus",
+        "description": "阿里千问3.5，百万上下文，费用极低，响应快。适合通用对话、长文分析、写作、翻译。⚠ 写代码/数据计算任务边界处理较弱，此类任务优先 gemini-3-pro",
+        "keywords": ["qwen", "千问", "通义", "阿里"],
+        "priority": 8,
         "capabilities": ["chat", "analysis", "writing", "translation"],
         "supports_image": true,
         "supports_search": false,
@@ -70,16 +80,6 @@
         "supports_image": false,
         "supports_search": false,
         "supports_thinking": false
-      },
-      {
-        "id": "gemini-3-pro",
-        "description": "Google高级推理，复杂分析/深度思考。需要实时信息时选此模型",
-        "keywords": ["gemini", "谷歌", "google"],
-        "priority": 8,
-        "capabilities": ["reasoning", "analysis", "search"],
-        "supports_image": true,
-        "supports_search": true,
-        "supports_thinking": true
       },
       {
         "id": "gemini-3-flash",
@@ -202,7 +202,7 @@
         "supports_thinking": true
       }
     ],
-    "default": "qwen3.5-plus"
+    "default": "gemini-3-pro"
   },
   "image": {
     "models": [
