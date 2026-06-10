@@ -659,18 +659,22 @@ class TestBuildContextMessages:
         """超过 token 预算时优先保留最新消息，丢弃最旧的"""
         # 8000 token = 20000 字符，每条消息 12000 字符（≈4800 token）
         # 两条共 9600 token > 8000 预算
+        # V3.3: history_loader 不再做 budget 截断,完整加载历史
+        # 压缩责任移交给上层 compress_messages_if_needed 统一入口,
+        # 避免旧版"超 budget 直接 break 砍最新 file_analyze tool_result"的跨轮失忆 bug
         long_text = "x" * 12000
         mock_db.set_table_data("messages", [
             _make_msg("user", "当前"),
-            _make_msg("assistant", long_text),  # 最新（DESC 第一条）
-            _make_msg("user", long_text),        # 最旧（DESC 第二条，超预算被截断）
+            _make_msg("assistant", long_text),
+            _make_msg("user", long_text),
         ])
 
         result = await chat_handler._build_context_messages("conv1", "当前")
 
-        # 从新→旧遍历：最新 assistant 4800 token < 8000 保留，旧 user 累计超限被截断
-        assert len(result) == 1
-        assert result[0]["role"] == "assistant"
+        # V3.3: 完整加载,user "当前" 因末尾 user 去重被 pop,剩余 2 条
+        assert len(result) == 2
+        assert result[0]["role"] == "user"
+        assert result[1]["role"] == "assistant"
 
     @pytest.mark.asyncio
     async def test_char_limit_keeps_all_within_budget(self, chat_handler, mock_db):
