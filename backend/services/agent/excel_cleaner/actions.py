@@ -22,6 +22,11 @@ from services.agent.excel_cleaner._strategy_helpers import (
     _strategy_mixed_handling,
     _strategy_preserve_rows,
 )
+from services.agent.excel_cleaner.internal_helpers import (
+    make_unique_col_name,
+    safe_float,
+    smart_parse_date,
+)
 from services.agent.excel_cleaner.report import CleaningReport, ExcelStructure
 from services.agent.excel_cleaner.structure import _col_index_to_letter_local
 
@@ -398,6 +403,60 @@ def _fix_int_columns(
             "preserved": False,
             "action": f"整数修复（{len(fixed_cols)}列）：{', '.join(fixed_cols)}",
             "recovery_hint": "float64 全为整数的列已转 Int64，防止 123→123.0",
+        })
+
+
+def _apply_universal_actions(
+    df: pd.DataFrame, report: CleaningReport, strategy: Any = None,
+) -> None:
+    """V3.3: 处理 universal action(auto_extract_num / auto_extract_date)。
+
+    跟 _coerce_object_columns 不同:不要求 infer_dtype == "mixed"。
+    fastexcel 对 ragged 列 fallback to string,本函数直接对 strategy 指定的列做清洗。
+
+    清洗策略 — 生成衍生列,原列保留:
+      auto_extract_num  → {col}_num float (safe_float 处理 %/¥/,/占位符)
+      auto_extract_date → {col}_date datetime (Excel serial + 多格式)
+
+    设计理由:
+      - 原列保留 string,防误判时丢原值;LLM 可选用
+      - 衍生列 _num/_date 是干净 float/datetime,LLM 像普通列直接计算
+      - 不再依赖沙盒注入的 safe_float,清洗职责完全归 cleaning 层
+    """
+    handling = _strategy_mixed_handling(strategy)
+    if not handling:
+        return
+    generated: list[dict] = []
+    for i, col in enumerate(df.columns):
+        col_str = str(col)
+        if col_str.startswith("_is_"):
+            continue
+        col_letter = _col_index_to_letter_local(i)
+        action_obj = handling.get(col_letter)
+        if not action_obj:
+            continue
+        action = action_obj.action
+
+        if action == "auto_extract_num":
+            new_col = make_unique_col_name(df.columns, f"{col_str}_num")
+            df[new_col] = df[col].apply(safe_float)
+            generated.append({"orig": col_str, "new": new_col, "action": action})
+        elif action == "auto_extract_date":
+            new_col = make_unique_col_name(df.columns, f"{col_str}_date")
+            df[new_col] = smart_parse_date(df[col])
+            generated.append({"orig": col_str, "new": new_col, "action": action})
+
+    if generated:
+        report.issues.append({
+            "type": "universal_action_extracted",
+            "severity": "info",
+            "location": {"cols": [g["new"] for g in generated]},
+            "preserved": True,
+            "action": (
+                "AI 决策预清洗(生成衍生列,原列保留): "
+                + ", ".join(f"{g['orig']}→{g['new']}({g['action']})" for g in generated)
+            ),
+            "recovery_hint": "数值/日期计算优先用衍生列(_num/_date),原列仍含原始字符串值",
         })
 
 
