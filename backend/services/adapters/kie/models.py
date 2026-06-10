@@ -199,7 +199,7 @@ class ChatCompletionChunk(BaseModel):
     id: str
     object: str = "chat.completion.chunk"
     created: int
-    model: str
+    model: Optional[str] = None  # KIE/Gemini 最后的 usage chunk 不传 model 字段
     choices: List[ChatCompletionChunkChoice]
     credits_consumed: Optional[float] = None
     usage: Optional[TokenUsage] = None
