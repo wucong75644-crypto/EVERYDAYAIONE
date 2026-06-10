@@ -146,7 +146,10 @@ async def build_context_messages(
                 if not oai_msgs:
                     continue
 
-                # 估算这批 OAI 消息的总 token 数
+                # V3.3: 不再用 budget break 砍 message
+                # 历史加载只负责"完整重建",压缩交给统一入口 compress_messages_if_needed
+                # 原 budget 算法会把超大 file_analyze tool_result 整条丢掉,导致跨轮 schema 丢失
+                # 估算 tokens 仅用于日志统计,不再触发 break
                 msg_chars = 0
                 for m in oai_msgs:
                     c = m.get("content")
@@ -160,9 +163,6 @@ async def build_context_messages(
                     for tc in (m.get("tool_calls") or []):
                         msg_chars += len(tc.get("function", {}).get("arguments", ""))
                 msg_tokens = int(msg_chars / 2.5)
-                if total_tokens + msg_tokens > budget:
-                    budget_exhausted = True
-                    break  # 预算用完
 
                 context.extend(oai_msgs)
                 total_tokens += msg_tokens

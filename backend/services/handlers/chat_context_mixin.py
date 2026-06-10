@@ -399,8 +399,49 @@ class ChatContextMixin:
     async def _build_context_messages(
         self, conversation_id: str, current_text: str
     ) -> List[Dict[str, Any]]:
-        """对话历史加载（token 预算驱动）—— 委托 history_loader."""
-        return await build_context_messages(self.db, conversation_id, current_text)
+        """对话历史加载 — V3.3 Redis cache 优先 + DB 重建降级。
+
+        路径(对齐 OpenAI Assistants thread 模式):
+          1. Redis.get(conv_id) → hit 直接返回(99% 流程)
+          2. miss → DB 重建 → 调统一压缩入口 → 回填 Redis(冷启动 / 过期)
+
+        Redis 故障时自动降级走 DB 路径,不阻塞主流程。
+        """
+        from services.handlers import conversation_cache
+        from services.handlers.context_compressor import compress_messages_if_needed
+
+        org_id = getattr(self, "org_id", None)
+
+        # 1. Redis hit 直接用
+        cached = await conversation_cache.get_messages(conversation_id, org_id)
+        if cached is not None:
+            return cached
+
+        # 2. Redis miss → DB 重建(history_loader 已删 budget break,返回完整)
+        messages = await build_context_messages(
+            self.db, conversation_id, current_text,
+        )
+        if not messages:
+            return messages
+
+        # 3. 重建后调统一压缩入口(防大 file_analyze 历史撑爆下游)
+        # 注:DB 重建是冷启动路径,默认 web 压缩策略(大预算容量触发)
+        # wecom 路径在主流程内已被层 4/5/6 压缩,cache miss 后 messages 已是压缩态
+        try:
+            messages, state = await compress_messages_if_needed(
+                messages, conv_source="web",
+            )
+            if state != "NORMAL":
+                logger.debug(
+                    f"DB rebuild compressed | conv={conversation_id} | state={state}"
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"compress on rebuild failed | conv={conversation_id} | {e}")
+
+        # 4. 回填 cache(下次直接 hit)
+        await conversation_cache.set_messages(conversation_id, messages, org_id)
+
+        return messages
 
     async def _get_context_summary(
         self, conversation_id: str, prefetched: Optional[str] = None

@@ -898,6 +898,18 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 继续循环，让 AI 看到工具结果
                 logger.info(f"Tool turn {turn + 1} complete | task={task_id} | continuing loop")
 
+                # V3.3: 每轮 turn 结束后同步更新 Redis cache
+                # messages 已被上方层 4+5+6 压缩,跨轮直接复用,不再 DB 重建
+                try:
+                    from services.handlers import conversation_cache
+                    await conversation_cache.set_messages(
+                        conversation_id, messages, self.org_id,
+                    )
+                except Exception as _cache_err:  # noqa: BLE001
+                    logger.warning(
+                        f"ConversationCache update failed | task={task_id} | {_cache_err}"
+                    )
+
             # 优雅降级：预算耗尽时 Final Synthesis Turn
             _stop = _budget.stop_reason
             _budget_error_sent = False
@@ -933,6 +945,18 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         error_message=_STOP_MESSAGES.get(_stop, "执行超限，请稍后重试"),
                     )
                     _budget_error_sent = True
+
+            # V3.3: tool_loop 完全结束 → 最终一次 cache 写入(覆盖无工具调用 / break 路径)
+            # 每轮 turn 已经写过 cache(line ~903),这里兜底防止无工具场景漏写
+            try:
+                from services.handlers import conversation_cache
+                await conversation_cache.set_messages(
+                    conversation_id, messages, self.org_id,
+                )
+            except Exception as _cache_err:  # noqa: BLE001
+                logger.warning(
+                    f"ConversationCache final update failed | task={task_id} | {_cache_err}"
+                )
 
             # 6. 收割最后一轮文本 + 构建多块 result
             credits_consumed = self._calculate_credits(final_usage)

@@ -24,6 +24,32 @@ from zoneinfo import ZoneInfo
 _CN_TZ_TEST = ZoneInfo("Asia/Shanghai")
 
 
+# ============ V3.3: ConversationCache 自动 mock ============
+# 单元测试不应依赖 Redis 实际数据,默认让 cache 返回 None(走 DB 路径)
+# 个别测试可显式 patch 来验证 cache 行为
+@pytest.fixture(autouse=True)
+def _auto_mock_conversation_cache(monkeypatch):
+    """所有测试默认 mock conversation_cache 的 get/set,避免 Redis 脏数据。"""
+    try:
+        from services.handlers import conversation_cache as _cc
+
+        async def _noop_get(*args, **kwargs):
+            return None
+
+        async def _noop_set(*args, **kwargs):
+            return False
+
+        async def _noop_delete(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(_cc, "get_messages", _noop_get)
+        monkeypatch.setattr(_cc, "set_messages", _noop_set)
+        monkeypatch.setattr(_cc, "delete_messages", _noop_delete)
+    except ImportError:
+        pass  # conversation_cache 不存在时不报错(向后兼容)
+    yield
+
+
 @pytest.fixture
 def freeze_2026_04_10():
     """Freeze 在 2026-04-10 13:05 周五（4-10 bug 复现时刻）。
