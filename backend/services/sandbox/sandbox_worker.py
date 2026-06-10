@@ -425,10 +425,9 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     g["_emit_buffer"] = []  # _exec_code 每次执行前 clear,收尾时读
     install_emit_in_globals(g, g["_emit_buffer"])
 
-    # 数据 helpers: safe_float / safe_int (混合类型 ragged data 一行处理)
-    # 对应 code_tools.py 的 DATA HELPERS 段声明
-    from services.sandbox.data_helpers import install_data_helpers_in_globals
-    install_data_helpers_in_globals(g)
+    # V3.3: 删除 safe_float / safe_int 注入 — 清洗职责完全归 cleaning 层
+    # ragged 列在 file_analyze 阶段已预清洗为 {col}_num 干净 float 列
+    # LLM 直接用 _num 列,沙盒不需要清洗能力
 
     # 自动 hook(行业范本):plt.show() / plotly fig.show() / altair Chart 无感 emit
     # 让 LLM 不显式调 emit 也能自动渲染(对标 matplotlib_inline post_execute)

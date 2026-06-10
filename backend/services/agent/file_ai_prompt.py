@@ -126,19 +126,19 @@ TASK_BLOCK = """
 
 6. 识别 ragged 混合类型(同列业务异构)
    - 触发(任一即可):
-     a. 列证据含 ⚠️ ragged混合 flag(代码已检测,deterministic 信号,**必须**按它来标 warning)
+     a. 列证据含 ⚠️ ragged混合 flag(代码已检测,deterministic 信号,**必须**按它来处理)
      b. 列样本同时出现 数字 + 百分比/占位符/文本(自识别补充)
      典型: 利润表"合计"列(金额行 vs 率类行混合)、KPI 宽表
    - 处理:
-     a. mixed_type_handling: action='force_str'(整列保留字符串,不破坏原值)
-     b. data_quality_notes 加 severity='warning':
-        note 模板: "列 X 含 ragged 混合(金额+率+占位符),用沙盒内置 safe_float() 按行处理:
-                    df['X_num'] = df['X'].apply(safe_float)
-                    (47.40%→0.474, '-'/NaN→0, 数字保留)"
+     a. mixed_type_handling: action='auto_extract_num'
+        cleaning 阶段自动生成 {列名}_num float 列(原列保留 string)
+        内部用 safe_float 处理: 47.40%→0.474, '-'/NaN→0, 数字保留, ¥/$/千分位剥离
+     b. data_quality_notes 加 severity='info':
+        note 模板: "列 X 已预清洗为 X_num(float),数值计算直接用 X_num;
+                    原列 X 保留字符串原值仅供显示"
         affected_cols=[相关列字母]
-   - 重要: flag 出现就**必须**标 warning,即使罕见类(percentage/placeholder)占比 < 5% 也要标
-     (pandas astype(float) 哪怕 1 个 % 也会全列崩)
-   - 禁止: 用 extract_percentage 整列转换(会把金额行也 ÷ 100,毁数据)
+   - 重要: flag 出现就**必须**选 auto_extract_num(不要选 force_str,沙盒不再有 safe_float)
+   - 禁止: 用 extract_currency_amount 单独处理 ragged 列(那是纯货币用的)
 
 7. 看「列样本」→ 识别中文占位符变体
    - 触发: 样本含 '无'/'空'/'/' / '——'/'─'/'尚未'/'未知'/'N/A' 等中文/混合占位符
@@ -154,12 +154,14 @@ TASK_BLOCK = """
       计算前必须过滤: df[~df['X'].astype(str).str.startswith('#')]"
      affected_cols=[列字母]
 
-9. 看「列证据」→ 识别 Excel 日期 serial number
+9. 看「列证据」→ 识别 Excel 日期 serial number 或日期混合
    - 触发: 列名含"日期/时间/月份/年份" + sample 是 5 位整数(40000~50000 区间)
-     原因: Excel 把日期 "2026-05-01" 内部存为 serial 45414(1900-01-01 起的天数)
-   - 处理: column_semantics.semantic_type='datetime',mixed_type_handling action='to_datetime'
+     或: sample 是多种日期格式混合("2026-06-09" + "2026/6/9" + "2026年6月9日")
+   - 处理: column_semantics.semantic_type='datetime',mixed_type_handling action='auto_extract_date'
+     cleaning 阶段自动生成 {列名}_date datetime 列(原列保留 string)
+     内部处理: Excel serial + ISO + 中文格式 + 多分隔符
      data_quality_notes 加 severity='info':
-     "列 X 是 Excel 日期 serial,清洗后已转 datetime"
+     "列 X 已预清洗为 X_date(datetime),时间筛选/分组直接用 X_date"
 
 10. 看「列证据」→ 识别 pandas 同名列后缀
     - 触发: 原始表头含 '.1' / '.2' / '.3' 后缀(如"金额.1"、"日期.1")

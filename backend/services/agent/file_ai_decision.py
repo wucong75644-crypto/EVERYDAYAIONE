@@ -30,6 +30,9 @@ MIXED_TYPE_ACTIONS = frozenset({
     "extract_unit_number",      # "1.5kg" → 1.5
     "extract_currency_amount",  # "¥99.5" → 99.5
     "to_datetime",              # "2024年4月" → datetime
+    # V3.3: universal action — 生成 {col}_num / {col}_date 衍生列,原列保留
+    "auto_extract_num",         # ragged 数字混合 → {col}_num float(safe_float 内部)
+    "auto_extract_date",        # 日期混乱 → {col}_date datetime(Excel serial + 多格式)
 })
 
 REGION_ROLES = frozenset({"primary", "secondary", "metadata", "skip"})

@@ -20,6 +20,7 @@ from loguru import logger
 from services.agent.excel_cleaner._strategy_helpers import _strategy_summary_rows
 from services.agent.excel_cleaner.actions import (
     _apply_merge_fill,
+    _apply_universal_actions,
     _coerce_object_columns,
     _deduplicate_columns,
     _fix_int_columns,
@@ -75,7 +76,11 @@ def clean_excel(
     _remove_empty_rows_cols(df, report, structure, strategy=strategy,
                             header_row=header_row, chunk_row_offset=chunk_row_offset)
 
-    # Step 6-7: 类型修正
+    # Step 6: V3.3 universal action 预清洗(生成 {col}_num / {col}_date 衍生列)
+    # 必须在 _coerce_object_columns 之前 — 原列保留后再走兜底类型修正
+    _apply_universal_actions(df, report, strategy=strategy)
+
+    # Step 7-8: 类型修正(legacy action + int 修复)
     _coerce_object_columns(df, report, strategy=strategy)
     _fix_int_columns(df, report, strategy=strategy)
 
