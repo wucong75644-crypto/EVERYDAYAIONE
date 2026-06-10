@@ -10,23 +10,16 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
 
-# staging 路径正则:兼容两种格式
-#   旧:STAGING_DIR + '/xxx.parquet'(历史消息,保留向后兼容)
-#   新:staging/xxx.parquet(envelope 写,bare 相对路径)
-_STAGING_RE = re.compile(
-    r"(?:STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]|staging/([^\s'\"]+))"
-)
-
-# 归档消息中保留的 staging 路径正则(同样两种格式)
-_ARCHIVED_STAGING_RE = re.compile(
-    r"数据文件:\s*(?:STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]|staging/([^\s'\"]+))"
-)
+# V3.3: 删除 staging 路径正则提取
+# 行业对齐(Anthropic Tool Use Best Practices / OpenAI Assistants):
+# tool result 完整保留在 messages 里,LLM 自己读 XML 拿 parquet_path,
+# 不需要正则二次提取(易出错且冗余)。
+# digest 只负责告诉 LLM "上轮做了什么"(tool_name + hint),不告诉"数据在哪"。
 
 # 错误标记（字面量匹配，不是正则）
 _ERROR_MARKERS = ("❌", "执行错误", "查询超时", "执行异常")
@@ -47,17 +40,18 @@ def build_tool_digest(
 ) -> Optional[Dict[str, Any]]:
     """从工具循环 messages 中提取执行摘要。
 
-    扫描 assistant(tool_calls) + 对应的 tool result，提取：
+    扫描 assistant(tool_calls) + 对应的 tool result,提取:
     - 工具名 + 参数摘要
-    - staging 文件路径（从原文或归档元数据中提取）
     - 成功/失败状态
+
+    V3.3: 不再提取 staging 路径(让 LLM 自己读 tool result XML 拿)。
 
     Args:
         messages: 工具循环内的完整消息列表
         conversation_id: 会话 ID
 
     Returns:
-        摘要 dict 或 None（无工具调用时）
+        摘要 dict 或 None(无工具调用时)
     """
     # 建立 tool_call_id → tool result 映射
     result_map: Dict[str, str] = {}
@@ -91,15 +85,12 @@ def build_tool_digest(
             # 提取参数摘要（query/code 字段优先）
             hint = _extract_hint(name, args_str)
 
-            # 从对应的 tool result 提取 staging 路径 + 状态
+            # V3.3: 只看状态,不提取 staging 路径
             tc_id = tc.get("id", "")
             result_text = result_map.get(tc_id, "")
-            staged = _extract_staging_path(result_text)
             ok = not _is_error(result_text)
 
             entry: Dict[str, Any] = {"name": name, "hint": hint, "ok": ok}
-            if staged:
-                entry["staged"] = staged
             entries.append(entry)
 
     if not entries:
@@ -113,10 +104,9 @@ def build_tool_digest(
 
     digest: Dict[str, Any] = {
         "tools": entries,
-        "staging_dir": "staging/",
     }
 
-    # 大小控制：超限则逐步裁剪 hint
+    # 大小控制:超限则逐步裁剪 hint
     _enforce_size_limit(digest)
 
     return digest
@@ -143,14 +133,7 @@ def format_tool_digest(digest: Dict[str, Any]) -> str:
         line = f"- {status} {t['name']}"
         if t.get("hint"):
             line += f": {t['hint']}"
-        if t.get("staged"):
-            line += f" → staging/{t['staged']}"
         lines.append(line)
-
-    if digest.get("staging_dir"):
-        lines.append(
-            "数据目录: 'staging/'(相对路径,沙盒 cwd=/workspace 下,15 分钟内有效)"
-        )
 
     return "\n".join(lines)
 
@@ -179,29 +162,6 @@ def _extract_hint(tool_name: str, args_str: str) -> str:
             return val[:_HINT_MAX_LEN]
 
     return ""
-
-
-def _extract_staging_path(result_text: str) -> Optional[str]:
-    """从工具结果中提取 staging 文件路径。
-
-    支持两种来源：
-    1. 原始 <persisted-output> 标签中的路径
-    2. 归档后保留的 "数据文件: ..." 元数据
-    """
-    if not result_text:
-        return None
-
-    # 原始格式(两个 capture group:旧 STAGING_DIR / 新 staging/x)
-    match = _STAGING_RE.search(result_text)
-    if match:
-        return match.group(1) or match.group(2)
-
-    # 归档格式
-    match = _ARCHIVED_STAGING_RE.search(result_text)
-    if match:
-        return match.group(1) or match.group(2)
-
-    return None
 
 
 def _is_error(result_text: str) -> bool:
