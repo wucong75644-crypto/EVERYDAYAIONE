@@ -167,8 +167,9 @@ class KieChatAdapter(BaseChatAdapter):
         # 转换历史消息
         for msg in history:
             role = MessageRole(msg["role"])
-            content = msg.get("content", "")
-            attachments = msg.get("attachments", [])
+            # 注意: dict.get("k", default) 在 key 存在但值为 None 时仍返回 None,需 or 兜底
+            content = msg.get("content") or ""
+            attachments = msg.get("attachments") or []
 
             if isinstance(content, list):
                 # 结构化 content block（AgentResult.to_message_content()）

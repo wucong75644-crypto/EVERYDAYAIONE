@@ -107,7 +107,7 @@ class ChatContentPart(BaseModel):
 class ChatMessage(BaseModel):
     """聊天消息"""
     role: MessageRole
-    content: Union[str, List[ChatContentPart]]
+    content: Optional[Union[str, List[ChatContentPart]]] = None  # assistant tool_calls 轮次 content 可能为 None
 
 
 class FunctionDefinition(BaseModel):
