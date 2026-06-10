@@ -786,8 +786,7 @@ class TestToolDigestInjection:
     async def test_digest_injected_into_assistant_text(self, chat_handler, mock_db):
         """assistant 消息带 tool_digest → 注入 [上轮工具执行记录]"""
         digest = {
-            "tools": [{"name": "erp_agent", "hint": "查订单", "ok": True, "staged": "tool_result_erp_agent_a1b2.txt"}],
-            "staging_dir": "staging/conv1",
+            "tools": [{"name": "erp_agent", "hint": "查订单", "ok": True}],
         }
         mock_db.set_table_data("messages", [
             _make_msg("user", "当前问题"),
@@ -803,7 +802,8 @@ class TestToolDigestInjection:
         content = assistant_msgs[0]["content"]
         assert "[上轮工具执行记录]" in content
         assert "erp_agent" in content
-        assert "tool_result_erp_agent_a1b2.txt" in content
+        # V3.3: 不再注入 staging 路径
+        assert "staging/" not in content
 
     @pytest.mark.asyncio
     async def test_no_digest_no_injection(self, chat_handler, mock_db):

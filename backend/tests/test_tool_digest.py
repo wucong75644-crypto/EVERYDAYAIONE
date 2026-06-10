@@ -1,13 +1,15 @@
 """tool_digest 单元测试 — build_tool_digest + format_tool_digest + _extract_archive_meta
 
-覆盖场景：
-1. 正常提取（含 staging 路径）
+覆盖场景:
+1. 正常提取(tool_name + hint)
 2. 无工具调用 → None
-3. 已归档消息中仍可提取 staging 路径
-4. 去重逻辑
-5. 大小控制裁剪
-6. format_tool_digest 格式化
-7. _extract_archive_meta 容错降级
+3. 去重逻辑
+4. 大小控制裁剪
+5. format_tool_digest 格式化
+6. _extract_archive_meta 容错降级
+
+V3.3: 删除 staging 路径正则提取(行业对齐 — 路径由 tool result XML 自带,
+不重复在 digest 提取)。
 """
 
 import sys
@@ -23,7 +25,6 @@ from services.handlers.tool_digest import (
     build_tool_digest,
     format_tool_digest,
     _extract_hint,
-    _extract_staging_path,
     _is_error,
     _deduplicate,
 )
@@ -107,19 +108,8 @@ class TestBuildToolDigest:
         assert digest["tools"][0]["name"] == "erp_agent"
         assert "最近七天" in digest["tools"][0]["hint"]
         assert digest["tools"][0]["ok"] is True
-        assert digest["staging_dir"] == "staging/"
-
-    def test_with_staging_path(self):
-        """包含 staging 文件路径的大结果"""
-        messages = [
-            _make_assistant_msg([
-                {"id": "tc1", "name": "erp_agent", "args": {"query": "查库存"}},
-            ]),
-            _make_tool_result("tc1", _make_staged_result()),
-        ]
-
-        digest = build_tool_digest(messages, "conv-456")
-        assert digest["tools"][0]["staged"] == "tool_result_erp_agent_a1b2c3d4.txt"
+        # V3.3: 不再有 staged 字段(LLM 自己从 tool result XML 读路径)
+        assert "staged" not in digest["tools"][0]
 
     def test_no_tool_calls(self):
         """无工具调用 → None"""
@@ -144,23 +134,6 @@ class TestBuildToolDigest:
 
         digest = build_tool_digest(messages, "conv-err")
         assert digest["tools"][0]["ok"] is False
-
-    def test_archived_message_staging_path(self):
-        """归档消息中仍可提取 staging 路径"""
-        archived_content = (
-            '[已归档] erp_agent 查询结果（原始 45632 字符）\n'
-            '数据文件: staging/tool_result_erp_agent_a1b2c3d4.txt\n'
-            '字段: 商品编码, 可售库存 | 共 500 条记录'
-        )
-        messages = [
-            _make_assistant_msg([
-                {"id": "tc1", "name": "erp_agent", "args": {"query": "查库存"}},
-            ]),
-            _make_tool_result("tc1", archived_content),
-        ]
-
-        digest = build_tool_digest(messages, "conv-arc")
-        assert digest["tools"][0]["staged"] == "tool_result_erp_agent_a1b2c3d4.txt"
 
     def test_deduplication(self):
         """同名工具 + 相同 hint 去重"""
@@ -203,21 +176,20 @@ class TestFormatToolDigest:
     def test_normal_format(self):
         digest = {
             "tools": [
-                {"name": "erp_agent", "hint": "查订单", "ok": True, "staged": "tool_result_erp_agent_a1b2.txt"},
+                {"name": "erp_agent", "hint": "查订单", "ok": True},
                 {"name": "code_execute", "hint": "df.groupby", "ok": True},
             ],
-            "staging_dir": "staging/",
         }
         result = format_tool_digest(digest)
         assert "[上轮工具执行记录]" in result
         assert "✓ erp_agent: 查订单" in result
-        assert "staging/tool_result_erp_agent_a1b2.txt" in result
-        assert "15 分钟内有效" in result
+        assert "✓ code_execute: df.groupby" in result
+        # V3.3: 不再注入 staging 路径
+        assert "staging/" not in result
 
     def test_error_tool_format(self):
         digest = {
             "tools": [{"name": "erp_agent", "hint": "查订单", "ok": False}],
-            "staging_dir": "staging/",
         }
         result = format_tool_digest(digest)
         assert "✗ erp_agent" in result
@@ -339,19 +311,6 @@ class TestHelpers:
     def test_extract_hint_invalid_json(self):
         result = _extract_hint("tool", "not json")
         assert result == "not json"[:50]
-
-    def test_extract_staging_path_persisted(self):
-        content = 'STAGING_DIR + "/tool_result_erp_agent_abc.txt"'
-        assert _extract_staging_path(content) == "tool_result_erp_agent_abc.txt"
-
-    def test_extract_staging_path_archived(self):
-        content = '数据文件: STAGING_DIR + "/tool_result_erp_agent_abc.txt"'
-        assert _extract_staging_path(content) == "tool_result_erp_agent_abc.txt"
-
-    def test_extract_staging_path_none(self):
-        assert _extract_staging_path("普通文本结果") is None
-        assert _extract_staging_path("") is None
-        assert _extract_staging_path(None) is None
 
     def test_is_error_markers(self):
         assert _is_error("❌ 执行错误") is True
