@@ -129,7 +129,7 @@ class ChatGenerateMixin:
         返回 GenerateResult（parts + content_blocks + tool_digest），
         与 Web 端 _stream_generate 的持久化结构对齐。
         """
-        from config.chat_tools import get_core_tools, get_tools_by_names, get_tool_system_prompt
+        from config.chat_tools import get_core_tools, get_tools_by_names
         from services.adapters.factory import DEFAULT_MODEL_ID, create_chat_adapter
         from services.handlers.media_extractor import extract_media_parts
         from services.handlers.tool_loop_context import ToolLoopContext
@@ -138,16 +138,15 @@ class ChatGenerateMixin:
         text_content = self._extract_text_content(content)
 
         # 1. 构建消息（记忆 + 摘要 + 历史 + 用户消息）
+        # V3.4: TOOL_SYSTEM_PROMPT 已合并到 PromptBuilder Layer 1, 不再单独注入
         memory_prompt = await self._build_memory_prompt(user_id, text_content)
         messages = await self._build_llm_messages(
             content, user_id, conversation_id, text_content,
             prefetched_memory=memory_prompt,
+            permission_mode="auto",  # 企微非流式默认 auto
         )
 
-        # 2. 注入工具提示 + 加载核心工具
-        tool_prompt = get_tool_system_prompt()
-        if tool_prompt:
-            messages.append({"role": "system", "content": tool_prompt})
+        # 2. 加载核心工具 (工具提示已在 Layer 1, 不再单独注入)
         core_tools = get_core_tools(org_id=self.org_id)
 
         # 3. 创建适配器

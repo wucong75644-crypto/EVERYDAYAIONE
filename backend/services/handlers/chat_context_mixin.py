@@ -66,30 +66,32 @@ class ChatContextMixin:
         prefetched_summary: Optional[str] = None,
         prefetched_memory: Optional[str] = None,
         user_location: Optional[str] = None,
+        permission_mode: str = "auto",
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表。
 
-        分层 append 模式（行业标准：OpenAI/Anthropic/LangChain）：
-        Layer 1: 世界状态（时间 + 位置）
-        Layer 2: 思考语言
-        Layer 3: 领域知识（经验案例 + 通用知识 + schema + 工作区文件）
-        Layer 4: 用户记忆
-        Layer 5: 对话摘要
-        Layer 6: 对话历史 + 话题聚焦
-        Layer 7: 用户消息
-        （后续 chat_handler._stream_generate 中 append TOOL_SYSTEM_PROMPT + 权限模式）
+        V3.4: 统一走 PromptBuilder, 替代旧的 11 处碎片化 system append。
+        设计文档: docs/document/TECH_PromptBuilder架构重构.md
+
+        旧 11 处注入全部合并到 PromptBuilder 的 3 层结构:
+          Layer 1 (静态): 角色 + 规则 + 工作流 + 工具策略 + 模式约束
+          Layer 2 (动态): 时间 + 位置 + 偏好 + persona + 相关记忆
+          Layer 3 (user): 附件 XML + user text (不加时间戳前缀)
+
+        本函数保持原签名兼容旧调用方 (chat_handler / chat_generate_mixin)。
         """
+        from services.prompt_builder import PromptBuilder, BuildInput
+        from core.config import get_settings
+
         image_urls = self._extract_image_urls(content)
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
 
-        # 注册用户提供的文件到会话级路径缓存（上传/插入/@引用三个入口统一注册）
-        # 后续 LLM 用文件名引用，get_file 归一化匹配翻译成正确绝对路径
+        # 注册 workspace 文件到会话级路径缓存 (保留旧逻辑, PromptBuilder 不负责文件管理)
         if workspace_files:
             try:
                 from services.agent.file_path_cache import get_file_cache
                 from core.workspace import resolve_workspace_dir, resolve_staging_dir
-                from core.config import get_settings
                 _org_id = getattr(self, "org_id", None)
                 _settings = get_settings()
                 _ws_dir = resolve_workspace_dir(
@@ -109,184 +111,43 @@ class ChatContextMixin:
             except Exception as e:
                 logger.debug(f"Workspace file cache registration failed | error={e}")
 
-        # workspace 文件不走多模态 image_url（大部分格式不支持），由 AI 调工具读取
+        # workspace 文件不走多模态 image_url (大部分格式不支持)
         if workspace_files:
             ws_urls = {f["url"] for f in workspace_files if f.get("url")}
             file_urls = [u for u in file_urls if u not in ws_urls]
 
-        # ─── 并行获取：记忆 / 摘要 / 历史 / 知识库（全部独立，无交叉依赖）───
-        if prefetched_memory is not None:
-            summary_result, context_result, knowledge_result = await asyncio.gather(
-                self._get_context_summary(conversation_id, prefetched=prefetched_summary),
-                self._build_context_messages(conversation_id, text_content),
-                self._fetch_knowledge(text_content),
-                return_exceptions=True,
-            )
-            memory_prompt = prefetched_memory
-        else:
-            memory_result, summary_result, context_result, knowledge_result = await asyncio.gather(
-                self._build_memory_prompt(user_id, text_content),
-                self._get_context_summary(conversation_id, prefetched=prefetched_summary),
-                self._build_context_messages(conversation_id, text_content),
-                self._fetch_knowledge(text_content),
-                return_exceptions=True,
-            )
-            memory_prompt = (
-                memory_result if not isinstance(memory_result, BaseException) else None
-            )
-            if isinstance(memory_result, BaseException):
-                logger.warning(f"Memory gather failed | error={memory_result}")
-
-        # 安全解包（异常降级）
-        summary_prompt = (
-            summary_result if not isinstance(summary_result, BaseException) else None
-        )
-        context_messages = (
-            context_result if not isinstance(context_result, BaseException) else []
-        )
-        knowledge_items = (
-            knowledge_result if not isinstance(knowledge_result, BaseException) else None
-        )
-        if isinstance(summary_result, BaseException):
-            logger.warning(f"Summary gather failed | error={summary_result}")
-        if isinstance(context_result, BaseException):
-            logger.warning(f"Context gather failed | error={context_result}")
-        if isinstance(knowledge_result, BaseException):
-            logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
-
-        # ─── 按层 append 构建 messages（禁止 insert(0)）───
-        messages: List[Dict[str, Any]] = []
-
-        # Layer 1: 世界状态（时间 + 位置，合并为一条 system message）
-        # RequestContext 从入口传入（HTTP/WS/企微），全链路不可变 SSOT
-        _request_ctx = getattr(self, "request_ctx", None) or RequestContext.build(
+        # 调 PromptBuilder 统一构造
+        inp = BuildInput(
             user_id=user_id,
+            conversation_id=conversation_id,
             org_id=getattr(self, "org_id", None),
-            request_id=conversation_id or "",
+            text_content=text_content,
+            workspace_files=workspace_files,
+            image_urls=image_urls,
+            file_urls=file_urls,
+            permission_mode=permission_mode,
+            user_location=user_location,
+            user_preferences=None,  # TODO Phase 2 后: 从 user 表读取 custom_instructions
+            db=self.db,
+            prefetched_summary=prefetched_summary,
+            prefetched_memory=prefetched_memory,
+            request_ctx=getattr(self, "request_ctx", None),
+            attachments_as_system=get_settings().messages_attachments_as_system,
         )
-        world_state = _request_ctx.for_prompt_injection()
-        if user_location:
-            world_state += f"\n用户位置：{user_location}"
-        messages.append({"role": "system", "content": world_state})
 
-        # Layer 2: 思考语言指令（让推理模型的 thinking 过程使用中文）
-        messages.append({"role": "system", "content": "请使用中文进行思考和推理。"})
+        builder = PromptBuilder(inp)
+        result = await builder.build()
 
-        # Layer 3: 领域知识（经验案例 + 通用知识 + schema + 工作区文件）
-        if knowledge_items:
-            filtered_knowledge = self._filter_knowledge_by_similarity(knowledge_items)
-            exp = [k for k in filtered_knowledge if k.get("_source") == "experience"]
-            general = [k for k in filtered_knowledge if k.get("_source") != "experience"]
-
-            if exp:
-                exp_text = "\n".join(f"- {e['content']}" for e in exp)
-                messages.append({"role": "system", "content":
-                    f"以下是类似查询的历史成功案例，参考其查询方式：\n{exp_text}"})
-
-            if general:
-                knowledge_text = "\n".join(
-                    f"- {k['title']}: {k['content']}" for k in general
-                )
-                messages.append({"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
-
-        # Layer 3.5: 工作区文件清单（注意力锚点 system message）
-        # 状态感知版：仅声明文件存在 + 状态分类，工具调用方式见 attachments XML 的 <action>
-        # 数据驱动：含糊指代场景下能将场景 7 准确率从 80% 推到 100%
-        if workspace_files:
-            ws_prompt = self._build_workspace_prompt(
-                workspace_files, conversation_id,
-            )
-            if ws_prompt:
-                messages.append({"role": "system", "content": ws_prompt})
-
-        # Layer 4: 用户记忆（V2 双部分注入）
-        # 4a: L3 Persona（稳定部分，放 system prompt，prompt cache 友好）
-        _persona_ctx = getattr(self, "_memory_persona_context", "")
-        if _persona_ctx:
-            messages.append({"role": "system", "content": _persona_ctx})
-        # 4b: L1 相关记忆（动态部分，暂存，稍后注入 user prompt 前面）
-        _l1_memory_prepend = memory_prompt  # 来自 _build_memory_prompt 的 prepend_context
-
-        # Layer 5: 对话摘要 — Phase 6 门控：短对话不注入
-        _msg_count = len(context_messages) if context_messages else 0
-        if summary_prompt and _msg_count > 5:
-            messages.append({"role": "system", "content": summary_prompt})
-
-        # Layer 6: 对话历史 + 话题聚焦
-        if context_messages:
-            messages.extend(context_messages)
-            # 话题聚焦指令（紧贴用户消息前，防止旧话题污染新问题）
-            messages.append({"role": "system", "content": "以用户最新一条消息为准。"})
-
-        # Layer 6.5: L1 记忆前缀（动态部分，紧贴用户消息前）
-        if _l1_memory_prepend:
-            messages.append({"role": "system", "content": f"用户相关记忆：\n{_l1_memory_prepend}"})
-
-        # Layer 6.7: 当前轮附件元数据（独立 system message，紧贴 user 前）
-        # 行业对齐（OpenAI Assistants / Claude document block / Gemini Part）：
-        # 文件元数据脱离 user content，user message 保持用户字面意图纯净。
-        # 设计文档：docs/document/TECH_messages数组结构净化.md
-        from core.config import get_settings as _get_cfg
-        _attachments_as_system = _get_cfg().messages_attachments_as_system
-        _attachments_xml = (
-            self._format_attachments(workspace_files, conversation_id)
-            if workspace_files else ""
+        logger.info(
+            f"PromptBuilder done | conv={conversation_id} | "
+            f"static={result.static_block_chars} | "
+            f"dynamic={result.dynamic_block_chars} | "
+            f"persona={result.persona_injected} | "
+            f"memory={result.memory_injected} | "
+            f"messages={len(result.messages)}"
         )
-        if _attachments_as_system and _attachments_xml.strip():
-            messages.append({"role": "system", "content": _attachments_xml.strip()})
 
-        # Layer 7: 用户消息（始终最后）
-        # on  → user 纯净（attachments 已在 Layer 6.7）
-        # off → 旧路径：XML 追加到 user text（向后兼容回滚）
-        if _attachments_as_system:
-            _user_text = text_content
-        else:
-            _user_text = text_content + _attachments_xml
-
-        user_msg: Dict[str, Any] = {"role": "user", "content": _user_text}
-        if image_urls or file_urls:
-            # 仅 image/* 的 FilePart 会进 file_urls（_extract_file_urls 已按 mime 过滤）
-            media_parts = [
-                *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
-                *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],
-            ]
-            user_msg["content"] = [
-                {"type": "text", "text": _user_text},
-                *media_parts,
-            ]
-        messages.append(user_msg)
-
-        # ─── 分桶预算控制（按来源分流）───
-        # 企微：保持小预算激进压缩
-        # Web：用大预算容量触发，避免在 _build_llm_messages 阶段就丢 schema
-        from core.config import get_settings
-        from services.handlers.context_compressor import (
-            enforce_tool_budget, enforce_history_budget, enforce_budget,
-        )
-        _s = get_settings()
-
-        # ChatContextMixin 被 ChatHandler 继承，运行时 self 拥有 _get_conv_source
-        # 独立使用 ChatContextMixin 时无此方法，hasattr 兜底为 Web 路径
-        is_wecom = (
-            hasattr(self, "_get_conv_source")
-            and self._get_conv_source(conversation_id) == "wecom"
-        )
-        if is_wecom:
-            tool_budget = _s.context_tool_token_budget
-            history_budget = _s.context_history_token_budget
-            total_budget = _s.context_max_tokens
-        else:
-            tool_budget = _s.context_web_tool_token_budget
-            history_budget = _s.context_web_history_token_budget
-            total_budget = _s.context_web_max_tokens
-
-        enforce_tool_budget(messages, tool_budget)
-        await enforce_history_budget(
-            messages, history_budget, current_query=text_content,
-        )
-        enforce_budget(messages, total_budget)
-
-        return messages
+        return result.messages
 
     async def _build_memory_prompt(
         self, user_id: str, query: str

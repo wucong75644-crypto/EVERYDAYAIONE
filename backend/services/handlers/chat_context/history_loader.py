@@ -89,12 +89,11 @@ async def build_context_messages(
                     else []
                 )
 
-                # 时间戳前缀 — 让模型区分历史消息日期，防止旧"今天"污染当前请求
+                # V3.4: 不再给 user 消息加 [时间] 前缀
+                # 原因: ①messages API metadata 不支持 timestamp 字段, 前缀会破坏 prompt cache
+                #       ②当前时间已在 PromptBuilder Layer 2 <current_time>, 模型能区分"今天"
+                #       ③符合 OpenAI/Anthropic 官方"user content 不嵌 metadata"原则
                 ts_prefix = ""
-                if row.get("created_at"):
-                    msg_time = _parse_iso_to_cn(row["created_at"])
-                    if msg_time:
-                        ts_prefix = f"[{msg_time.strftime('%m-%d %H:%M')}] "
 
                 # Step 4 结构化：把 block list 拆成多条 OpenAI 标准消息
                 # （tool_step → assistant.tool_calls + role=tool 配对）
