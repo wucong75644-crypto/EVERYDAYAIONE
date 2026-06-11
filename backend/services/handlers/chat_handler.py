@@ -309,11 +309,20 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     prefetched_memory = mem
             _t1 = _time.monotonic()
 
+            # V3.4: PromptBuilder 路径 - permission_mode 需提前转换并传给 _build_llm_messages
+            # (因为 mode 信息已合并到 Layer 1 templates/modes.md + Layer 2 <permission_mode>)
+            # 兼容旧参数: plan_mode=True → permission_mode="plan"
+            if permission_mode is True or permission_mode == "true":
+                permission_mode = "plan"
+            elif permission_mode is False or permission_mode == "false" or not permission_mode:
+                permission_mode = "auto"
+
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
                 prefetched_summary=prefetched_summary,
                 prefetched_memory=prefetched_memory,
                 user_location=user_location,
+                permission_mode=permission_mode,
             )
             _t2 = _time.monotonic()
             logger.info(
@@ -335,31 +344,21 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 f"setup_total={int((_t3-_t0)*1000)}ms"
             )
 
-            # 4. 注入全局工具使用指引
-            from config.chat_tools import (
-                get_tools_by_names, get_tool_system_prompt,
-            )
-            tool_prompt = get_tool_system_prompt()
-            if tool_prompt:
-                messages.append({"role": "system", "content": tool_prompt})
+            # 4. V3.4: TOOL_SYSTEM_PROMPT 注入已搬到 PromptBuilder Layer 1 (templates/*.md)
+            # 此处只 import get_tools_by_names 供工具循环使用
+            from config.chat_tools import get_tools_by_names
 
             # 4.6 电商图模式已移至专用 EcomImageHandler，不再在 ChatHandler 处理
 
             # 4.5 权限模式初始化（对齐 Claude Code ToolPermissionContext）
-            # 兼容旧参数：plan_mode=True → permission_mode="plan"
-            if permission_mode is True or permission_mode == "true":
-                permission_mode = "plan"
-            elif permission_mode is False or permission_mode == "false" or not permission_mode:
-                permission_mode = "auto"
-
             from services.handlers.permission_mode import PermissionMode
             perm = PermissionMode(mode=permission_mode)
             logger.info(f"Permission mode | mode={perm.mode.value}")
 
-            # 首轮模式提示词注入（full reminder）
-            _mode_prompt = perm.get_reminder(turn=0)
-            if _mode_prompt:
-                messages.append({"role": "system", "content": _mode_prompt})
+            # V3.4: turn=0 mode reminder 注入已合并到 PromptBuilder Layer 1+2
+            # (Layer 1 templates/modes.md 含三模式详细说明,
+            #  Layer 2 <permission_mode>auto</permission_mode> 标识当前模式)
+            # 此处不再调 perm.get_reminder(turn=0); 工具循环内 turn>=1 的 sparse/full 提醒保留
 
             # 5. 按模式加载工具（plan 模式移除执行类工具）
             from config.chat_tools import get_tools_for_mode
