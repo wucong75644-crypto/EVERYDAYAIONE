@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     # 设计文档：docs/document/TECH_messages数组结构净化.md
     messages_attachments_as_system: bool = True
 
+    # V2: prompt cache_control 显式标记 (PromptBuilder L1+L2a 末尾)
+    # 开启后用 Anthropic 风格 cache_control: ephemeral, 千问/Gemini OpenAI 兼容
+    # 关闭则降级走 implicit cache (千问自动)
+    # 紧急回滚: 设 False, 重启 backend 即可
+    prompt_cache_control_enabled: bool = True
+
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
