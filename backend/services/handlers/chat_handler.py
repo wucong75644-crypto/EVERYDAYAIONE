@@ -293,20 +293,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
             text_content = self._extract_text_content(content)
             prefetched_summary = (_params or {}).get("_prefetched_summary")
-            prefetched_memory = (_params or {}).get("_prefetched_memory")
             user_location = (_params or {}).get("_user_location")
 
-            if prefetched_memory is None:
-                # 非 smart mode 路径：记忆未预取，在此并行获取
-                memory_result = await asyncio.gather(
-                    self._build_memory_prompt(user_id, text_content),
-                    return_exceptions=True,
-                )
-                mem = memory_result[0]
-                if isinstance(mem, BaseException):
-                    logger.warning(f"Memory prefetch failed | task={task_id} | error={mem}")
-                else:
-                    prefetched_memory = mem
+            # V2 阶段 4.1: 删除 mem0 预取路径
+            # 原因: v1 时代为了减首字延迟做的"并行预取", 跟 v2 session cache 冲突
+            # mem0 查询统一到 PromptBuilder._parallel_fetch 内部 (单一入口)
+            # 内部 session cache 命中后, 整会话内不再查 mem0
             _t1 = _time.monotonic()
 
             # V3.4: PromptBuilder 路径 - permission_mode 需提前转换并传给 _build_llm_messages
@@ -320,7 +312,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
                 prefetched_summary=prefetched_summary,
-                prefetched_memory=prefetched_memory,
                 user_location=user_location,
                 permission_mode=permission_mode,
             )

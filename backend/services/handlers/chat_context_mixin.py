@@ -64,7 +64,6 @@ class ChatContextMixin:
         conversation_id: str,
         text_content: str,
         prefetched_summary: Optional[str] = None,
-        prefetched_memory: Optional[str] = None,
         user_location: Optional[str] = None,
         permission_mode: str = "auto",
     ) -> List[Dict[str, Any]]:
@@ -78,7 +77,8 @@ class ChatContextMixin:
           Layer 2 (动态): 时间 + 位置 + 偏好 + persona + 相关记忆
           Layer 3 (user): 附件 XML + user text (不加时间戳前缀)
 
-        本函数保持原签名兼容旧调用方 (chat_handler / chat_generate_mixin)。
+        V2 阶段 4.1: 移除 prefetched_memory 参数, mem0 查询统一到 PromptBuilder 内部
+        (session cache 在 builder._memory() 内, 单一入口避免双查)
         """
         from services.prompt_builder import PromptBuilder, BuildInput
         from core.config import get_settings
@@ -127,10 +127,9 @@ class ChatContextMixin:
             file_urls=file_urls,
             permission_mode=permission_mode,
             user_location=user_location,
-            user_preferences=None,  # TODO Phase 2 后: 从 user 表读取 custom_instructions
+            user_preferences=None,  # TODO 阶段 4.4: 从 user_preferences 表读取
             db=self.db,
             prefetched_summary=prefetched_summary,
-            prefetched_memory=prefetched_memory,
             request_ctx=getattr(self, "request_ctx", None),
             attachments_as_system=get_settings().messages_attachments_as_system,
         )
@@ -149,40 +148,10 @@ class ChatContextMixin:
 
         return result.messages
 
-    async def _build_memory_prompt(
-        self, user_id: str, query: str
-    ) -> Optional[str]:
-        """构建记忆上下文（V2 双部分注入）
+    # V2 阶段 4.1: _build_memory_prompt 已删除
+    # mem0 查询统一到 PromptBuilder._parallel_fetch._memory() 内部
+    # 配合 session_memory_cache 实现"新会话首查 + 整会话固定"
 
-        返回格式仍为 Optional[str]（兼容旧调用方），但内部用 V2 管道。
-        双部分注入（prepend L1 + append persona）在 _build_llm_messages 中拆分处理。
-        """
-        try:
-            from services.memory.memory_service_v2 import MemoryServiceV2
-
-            svc = MemoryServiceV2(db_pool=self.db)
-            prepend, append_system = await svc.build_memory_context(
-                user_id=user_id,
-                org_id=self.org_id,
-                query=query,
-            )
-
-            # 缓存 persona 到实例属性，供 _build_llm_messages 取用
-            self._memory_persona_context = append_system
-
-            if prepend:
-                logger.debug(
-                    f"Memory V2 injected | user_id={user_id} | "
-                    f"l1_len={len(prepend)} | persona={'yes' if append_system else 'no'}"
-                )
-            return prepend or None
-        except Exception as e:
-            logger.warning(
-                f"Memory V2 injection failed, skipping | "
-                f"user_id={user_id} | error={e}"
-            )
-            self._memory_persona_context = ""
-            return None
 
     async def _fetch_knowledge(self, query: str) -> Optional[list]:
         """获取知识库经验 + 历史成功案例（两路并行召回）。
