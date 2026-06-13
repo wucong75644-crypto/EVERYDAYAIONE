@@ -35,6 +35,12 @@ from loguru import logger
 
 from services.prompt_builder.layers.static_layer import StaticLayer
 from services.prompt_builder.layers.dynamic_layer import DynamicContext, DynamicLayer
+from services.prompt_builder.layers.session_stable_layer import (
+    SessionStableContext, SessionStableLayer,
+)
+from services.prompt_builder.layers.turn_dynamic_layer import (
+    TurnDynamicContext, TurnDynamicLayer,
+)
 from services.prompt_builder.layers.user_layer import UserLayer, UserMessageInput
 from services.prompt_builder.persona_gate import PersonaGate, default_gate
 
@@ -138,15 +144,22 @@ class PromptBuilder:
         # persona gate 过滤
         gated_persona = self._gate.filter(persona_text)
 
-        dynamic_ctx = DynamicContext(
-            current_time_text=time_text,
+        # V2: 把原 Layer 2 拆成 L2a 会话稳定 + L2b 本轮动态
+        # L2a 整会话不变 (permission_mode + preferences + persona + memory) → cache 友好
+        # L2b 每条新 user 才变 (current_time) → 不 cache, 但小
+        session_stable_ctx = SessionStableContext(
             permission_mode=inp.permission_mode,
-            user_location=inp.user_location,
             user_preferences=inp.user_preferences,
-            persona=gated_persona,
-            relevant_memory=memory_prompt,
+            user_facts=gated_persona,       # mem0 短事实 (原 persona)
+            user_memory=memory_prompt,      # mem0 召回
         )
-        dynamic_content = DynamicLayer.render(dynamic_ctx)
+        session_stable_content = SessionStableLayer.render(session_stable_ctx)
+
+        turn_dynamic_ctx = TurnDynamicContext(
+            current_time_text=time_text,
+            user_location=inp.user_location,
+        )
+        turn_dynamic_content = TurnDynamicLayer.render(turn_dynamic_ctx)
 
         # ── Step 4: Layer 3 用户层 ──
         attachments_xml = (
@@ -170,28 +183,48 @@ class PromptBuilder:
         user_result = UserLayer.render(user_inp)
 
         # ── Step 5: 拼接 messages ──
+        # V2 cache_control 布局 (Anthropic 风格, 千问 OpenAI 兼容):
+        #   L1 (静态) + L2a (会话稳定)合并到 1 个 system block,
+        #   末尾的 text part 标 cache_control: ephemeral
+        #   → 长期 cache 命中, 跨会话同 org/user 几乎不重算
+        #   L2b (本轮动态) + workspace + 历史 + attachments 不 cache
+        from core.config import get_settings as _get_cfg
+        _cache_enabled = _get_cfg().prompt_cache_control_enabled
+
         messages: List[Dict[str, Any]] = []
 
-        # Layer 1: 静态 system (cache_control 友好, 永久不变)
-        messages.append({"role": "system", "content": static_content})
+        # Layer 1 + L2a 合并为一个 system message (cache 边界在 L2a 末尾)
+        # 用 content list 格式塞 cache_control (Anthropic 风格, 千问兼容)
+        if _cache_enabled:
+            l1_l2a_content = [
+                {"type": "text", "text": static_content},
+                {
+                    "type": "text",
+                    "text": session_stable_content,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ]
+            messages.append({"role": "system", "content": l1_l2a_content})
+        else:
+            # 兼容降级路径: 不开 cache_control 时, 拆 2 个 system block
+            messages.append({"role": "system", "content": static_content})
+            messages.append({"role": "system", "content": session_stable_content})
 
-        # Layer 2: 动态 system (时间/偏好/persona/memory)
-        messages.append({"role": "system", "content": dynamic_content})
+        # L2b 本轮动态 (current_time), 不 cache
+        messages.append({"role": "system", "content": turn_dynamic_content})
 
         # Workspace 文件清单 (workspace_files 存在时, 独立 system block 做注意力锚点)
-        # 行业对齐 Cline environment_details 思路, 但作为前置 system 而非附加
         if user_result.workspace_system_block:
             messages.append(
                 {"role": "system", "content": user_result.workspace_system_block}
             )
 
-        # Layer 6: 对话历史 + 话题聚焦
+        # 历史对话
         if history_messages:
             messages.extend(history_messages)
 
-        # Layer 5: 对话摘要 (短对话不注入)
+        # 对话摘要 (短对话不注入)
         if summary_prompt and history_messages and len(history_messages) > 5:
-            # 摘要紧贴 user 前 (对齐旧逻辑位置)
             messages.append({"role": "system", "content": summary_prompt})
 
         # 附件 XML (attachments_as_system=True 时独立 system block, 紧贴 user 前)
@@ -209,7 +242,8 @@ class PromptBuilder:
         return BuildResult(
             messages=messages,
             static_block_chars=len(static_content),
-            dynamic_block_chars=len(dynamic_content),
+            # V2: dynamic_block_chars 现在等于 L2a + L2b 总和 (兼容旧字段名)
+            dynamic_block_chars=len(session_stable_content) + len(turn_dynamic_content),
             persona_injected=gated_persona is not None,
             memory_injected=memory_prompt is not None,
             state=state,
