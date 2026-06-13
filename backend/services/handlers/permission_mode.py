@@ -100,27 +100,34 @@ class PermissionMode:
         """返回当前轮次应注入的提示词，无需注入时返回 None
 
         turn: 0-based 轮次号
+
+        V2 行为变化:
+          turn > 0 时永远返回 sparse, 不再返回 full
+          原因: full 内容已合并到 PromptBuilder Layer 1 的 templates/modes.md
+                工具循环再注入一遍是重复 (~161 字符 / 每 5 轮)
+                v2 只用 sparse 提醒 (~80 字符) 唤醒 LLM 当前模式
+
+          turn == 0 路径保留 (v1 兼容, 但 chat_handler 已不再调用 turn=0)
         """
         # ask 模式无专属提示词（对齐 Claude Code default 模式）
         if self._mode == Mode.ASK:
             return None
 
-        # 首轮总是 full
+        # 首轮: 保留兼容老测试 (chat_handler 实际不再调用 turn=0)
         if turn == 0:
             self._reminder_count = 1
             self._turns_since_last_reminder = 0
             return self._build_full()
 
-        # 非首轮：节流
+        # 非首轮: 节流
         self._turns_since_last_reminder += 1
         if self._turns_since_last_reminder < REMINDER_INTERVAL:
             return None
 
-        # 触发提醒
+        # 触发提醒 (V2: 永远 sparse, 不再周期性 full)
+        # full 内容已在 Layer 1 modes.md, 工具循环只需轻量唤醒
         self._turns_since_last_reminder = 0
         self._reminder_count += 1
-        if self._reminder_count % FULL_EVERY_N == 1:
-            return self._build_full()
         return self._build_sparse()
 
     # ── 提示词构建 ──

@@ -1,5 +1,19 @@
 """
-记忆智能过滤器（评分制）
+记忆智能过滤器（评分制）— V1 遗留代码, 已被 RetrievalPipeline RRF 替代
+
+⚠️  DEPRECATED (V2 已停用):
+    新的 RetrievalPipeline (services/memory/retrieval_pipeline.py)
+    用 RRF (向量 + BM25 混合检索) 替代了千问 1-10 评分.
+    主 Agent 链路 (MemoryServiceV2) 已不再调用本模块.
+
+    本文件保留是因为:
+    - V1 memory_service.py 还在 api/routes/memory.py 和 wecom/* handlers 使用
+    - 这些次要路径迁移到 V2 后即可删除本文件
+
+    迁移路径 (后续单独立项):
+    1. api/routes/memory.py → 改用 MemoryServiceV2
+    2. wecom/{command_handler,card_event_handler,wecom_ai_mixin}.py → 改用 V2
+    3. 然后才能删除 memory_filter.py + memory_service.py
 
 通过千问 LLM 对 Mem0 初筛记忆逐条评分（1-10），只保留高相关记忆。
 基于 LlamaIndex / Mem0 Reranker 最佳实践，用评分代替编号列表，精度更高。
