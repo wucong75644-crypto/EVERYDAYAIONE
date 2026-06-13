@@ -267,6 +267,19 @@ class PromptBuilder:
             """返回 (l1_prepend, persona_text)。"""
             if inp.prefetched_memory is not None:
                 return inp.prefetched_memory, ""
+            # V2 阶段 4.1: mem0 会话级缓存
+            # 新会话开头查一次, 整会话固定, 不再查 mem0
+            # 学到的新事实异步抽取存 DB, 等下次新会话生效
+            from services.prompt_builder import session_memory_cache
+            cached = await session_memory_cache.get_session_memory(
+                inp.conversation_id, inp.org_id,
+            )
+            if cached is not None:
+                prepend, persona = cached
+                logger.debug(
+                    f"PromptBuilder mem0 session cache HIT | conv={inp.conversation_id}"
+                )
+                return prepend, persona
             try:
                 svc = MemoryServiceV2(db_pool=inp.db)
                 prepend, persona = await svc.build_memory_context(
@@ -274,7 +287,13 @@ class PromptBuilder:
                     org_id=inp.org_id,
                     query=inp.text_content,
                 )
-                return (prepend or None), (persona or "")
+                prepend = prepend or None
+                persona = persona or ""
+                # 写回 session cache, 整会话内后续轮次命中
+                await session_memory_cache.set_session_memory(
+                    inp.conversation_id, prepend, persona, inp.org_id,
+                )
+                return prepend, persona
             except Exception as e:
                 logger.warning(f"PromptBuilder memory fetch failed | {e}")
                 return None, ""
