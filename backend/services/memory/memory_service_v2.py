@@ -133,6 +133,10 @@ class MemoryServiceV2:
             max_results=limit,
         )
 
+        # V2 阶段 4.1: 按 atom_id 排序保证字节稳定
+        # 防止 RRF 分值微变导致顺序漂移, 漂移会破坏 prompt cache
+        # 召回相关性已经在 search 阶段决定, 注入顺序不影响 LLM 行为
+        scored_sorted = sorted(scored, key=lambda m: m.atom_id)
         return [
             {
                 "id": m.atom_id,
@@ -146,7 +150,7 @@ class MemoryServiceV2:
                 "created_at": "",
                 "updated_at": "",
             }
-            for m in scored
+            for m in scored_sorted
         ]
 
     # ============================
