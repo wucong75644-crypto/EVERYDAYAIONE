@@ -139,10 +139,9 @@ class ChatGenerateMixin:
 
         # 1. 构建消息（记忆 + 摘要 + 历史 + 用户消息）
         # V3.4: TOOL_SYSTEM_PROMPT 已合并到 PromptBuilder Layer 1, 不再单独注入
-        memory_prompt = await self._build_memory_prompt(user_id, text_content)
+        # V2 阶段 4.1: 删除 mem0 预取, 改由 PromptBuilder 内部 session cache 统一管理
         messages = await self._build_llm_messages(
             content, user_id, conversation_id, text_content,
-            prefetched_memory=memory_prompt,
             permission_mode="auto",  # 企微非流式默认 auto
         )
 

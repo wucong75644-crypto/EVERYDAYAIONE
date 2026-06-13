@@ -70,7 +70,8 @@ class BuildInput:
 
     # 可选注入 (chat_context_mixin 兼容)
     prefetched_summary: Optional[str] = None
-    prefetched_memory: Optional[str] = None
+    # V2 阶段 4.1: prefetched_memory 已删除
+    # mem0 调用统一到 PromptBuilder._memory() 内部 + session cache
     persona_gate_instance: Optional[PersonaGate] = None
 
     # request context (含时间 + 位置, 来自上游)
@@ -264,11 +265,13 @@ class PromptBuilder:
         inp = self.inp
 
         async def _memory() -> tuple[Optional[str], str]:
-            """返回 (l1_prepend, persona_text)。"""
-            if inp.prefetched_memory is not None:
-                return inp.prefetched_memory, ""
-            # V2 阶段 4.1: mem0 会话级缓存
-            # 新会话开头查一次, 整会话固定, 不再查 mem0
+            """返回 (l1_prepend, persona_text)。
+
+            V2 阶段 4.1: 单一入口 + 会话级缓存
+              - 新会话开头查一次 mem0, 整会话固定
+              - 学到的新事实异步抽取存 DB, 等下次新会话生效
+              - prefetched_memory 路径已删除 (chat_handler / chat_generate_mixin 不再预取)
+            """
             # 学到的新事实异步抽取存 DB, 等下次新会话生效
             from services.prompt_builder import session_memory_cache
             cached = await session_memory_cache.get_session_memory(
@@ -276,8 +279,9 @@ class PromptBuilder:
             )
             if cached is not None:
                 prepend, persona = cached
-                logger.debug(
-                    f"PromptBuilder mem0 session cache HIT | conv={inp.conversation_id}"
+                logger.info(
+                    f"mem0 session cache HIT | conv={inp.conversation_id} | "
+                    f"l1_len={len(prepend) if prepend else 0} | persona={'yes' if persona else 'no'}"
                 )
                 return prepend, persona
             try:
