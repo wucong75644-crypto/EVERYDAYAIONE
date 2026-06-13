@@ -291,6 +291,19 @@ class GoogleChatAdapter(BaseChatAdapter):
                     prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0)
                     completion_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0)
 
+                    # V2: 读 Gemini cache 命中指标 (cachedContentTokenCount)
+                    # Gemini 2.5 implicit cache 默认开启 (Flash >=1024, Pro >=2048 tokens)
+                    cached_tokens = getattr(
+                        chunk.usage_metadata, 'cached_content_token_count', 0
+                    ) or 0
+                    if cached_tokens > 0 and prompt_tokens > 0:
+                        hit_rate = cached_tokens / prompt_tokens
+                        logger.info(
+                            f"LLM cache | model=gemini | "
+                            f"prompt={prompt_tokens} cached={cached_tokens} "
+                            f"hit_rate={hit_rate:.1%}"
+                        )
+
                 # 检查是否被内容过滤
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     for candidate in chunk.candidates:

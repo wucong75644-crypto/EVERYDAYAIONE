@@ -379,10 +379,10 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             gen_params["tool_digest"] = tool_digest
             # 大小保护：与 Web 端 _upsert_assistant_message 一致
             _GP_MAX = 8192
-            _gp_size = len(json.dumps(gen_params, ensure_ascii=False).encode())
+            _gp_size = len(json.dumps(gen_params, sort_keys=True, ensure_ascii=False).encode())
             if _gp_size > _GP_MAX:
                 gen_params["tool_digest"].pop("tools", None)
-                _gp_size = len(json.dumps(gen_params, ensure_ascii=False).encode())
+                _gp_size = len(json.dumps(gen_params, sort_keys=True, ensure_ascii=False).encode())
             if _gp_size > _GP_MAX:
                 gen_params = {"type": "chat"}
                 logger.warning(f"Wecom generation_params truncated | original={_gp_size}B")

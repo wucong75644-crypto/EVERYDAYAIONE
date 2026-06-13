@@ -107,6 +107,13 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 # 全局工具使用指引（系统提示词）
 # ============================================================
 
+# ⚠️  DEPRECATED (V2 已停用):
+#     主 Agent (ChatHandler) 已切换到 PromptBuilder + templates/*.md.
+#     本常量保留是为了向后兼容 8 个 scripts + 4 个测试文件的引用.
+#     新代码不要使用 TOOL_SYSTEM_PROMPT, 改用 PromptBuilder.
+#
+#     迁移完所有 scripts/tests 后, 本常量将被删除.
+#     当前权威源: backend/services/prompt_builder/templates/*.md
 TOOL_SYSTEM_PROMPT = """# 做事原则
 
 - 用户的请求以数据查询、文件处理和业务分析为主。收到不明确的指令时，结合这些场景理解意图。
@@ -433,6 +440,27 @@ def get_core_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     return filter_tools_for_domain(core, "general")
 
 
+def _normalize_tools_bytes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """规范化 tools 数组字节顺序, 保证 prompt cache 命中.
+
+    V2: 所有嵌套 dict key 按字母序排序 + 工具数组按 function.name 排序,
+    防止 tools 字节漂移导致 cache 100% 失效.
+
+    千问/Anthropic prompt cache 是 prefix 字节哈希:
+      - tools 数组顺序变 → cache 作废
+      - dict key 顺序变 → cache 作废
+      - 必须保证字节稳定
+
+    用 json round-trip 强制规范化 dict 内部 key 顺序.
+    """
+    import json
+    # 1. dict 内部 key 字母序 (json round-trip)
+    normalized = json.loads(json.dumps(tools, sort_keys=True, ensure_ascii=False))
+    # 2. 工具数组按 function.name 排序 (固定顺序)
+    normalized.sort(key=lambda t: t.get("function", {}).get("name", ""))
+    return normalized
+
+
 def get_tools_for_mode(
     mode: str, org_id: str | None = None,
 ) -> List[Dict[str, Any]]:
@@ -440,11 +468,15 @@ def get_tools_for_mode(
 
     plan 模式：从核心工具中移除执行类工具（架构层过滤）
     ask / auto 模式：返回完整核心工具
+
+    V2: 出口处用 _normalize_tools_bytes 规范化字节顺序, 保证 prompt cache 命中.
     """
     core = get_core_tools(org_id)
     if mode == "plan":
-        return [t for t in core if t["function"]["name"] not in _PLAN_MODE_BLOCKED]
-    return core
+        tools = [t for t in core if t["function"]["name"] not in _PLAN_MODE_BLOCKED]
+    else:
+        tools = core
+    return _normalize_tools_bytes(tools)
 
 
 def get_tools_by_names(

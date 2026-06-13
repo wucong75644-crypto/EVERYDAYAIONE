@@ -211,6 +211,20 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
 
+                    # V2: 读 prompt cache 命中指标 (千问 OpenAI 兼容字段)
+                    # 用于监控 cache 命中率, 验证 cache_control 配置是否生效
+                    if prompt_tokens > 0:
+                        details = usage.get("prompt_tokens_details") or {}
+                        cached_tokens = details.get("cached_tokens", 0)
+                        cache_creation = usage.get("cache_creation_input_tokens", 0)
+                        if cached_tokens > 0 or cache_creation > 0:
+                            hit_rate = cached_tokens / prompt_tokens if prompt_tokens else 0
+                            logger.info(
+                                f"LLM cache | model={self._model_id} | "
+                                f"prompt={prompt_tokens} cached={cached_tokens} "
+                                f"created={cache_creation} hit_rate={hit_rate:.1%}"
+                            )
+
                     yield StreamChunk(
                         content=content,
                         thinking_content=thinking_content,
