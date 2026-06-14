@@ -265,6 +265,16 @@ configure_backend_service() {
     else
         log_warning "未找到systemd服务模板，跳过服务配置"
     fi
+
+    # 同步 Worker 独立进程（承载 ERP/oss_purge/kuaimai_external 后台任务）
+    if [ -f /tmp/everydayai-sync.service ]; then
+        cp /tmp/everydayai-sync.service /etc/systemd/system/everydayai-sync.service
+        systemctl daemon-reload
+        systemctl enable everydayai-sync
+        log_success "同步服务配置完成（待代码部署后由 deploy.sh 启动）"
+    else
+        log_warning "未找到同步服务模板，跳过 sync 服务配置"
+    fi
 }
 
 # 优化系统参数
