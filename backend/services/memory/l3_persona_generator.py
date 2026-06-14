@@ -12,10 +12,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from loguru import logger
+
 from .config import get_memory_config
 from .l1_extractor import _call_qianwen
 from .prompts.l3_persona import (
-from loguru import logger
     PERSONA_GENERATION_SYSTEM_PROMPT,
     format_persona_prompt,
 )

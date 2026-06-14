@@ -18,11 +18,11 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import jieba
+from loguru import logger
 
 from .config import get_memory_config
 from .l1_extractor import MemoryAtom, _call_qianwen, _get_embedding, _insert_atom
 from .prompts.l1_dedup import (
-from loguru import logger
     CONFLICT_DETECTION_SYSTEM_PROMPT,
     format_batch_conflict_prompt,
 )

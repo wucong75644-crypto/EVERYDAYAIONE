@@ -15,10 +15,11 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from loguru import logger
+
 from .config import get_memory_config
 from .l1_extractor import _call_qianwen
 from .prompts.l2_scene import (
-from loguru import logger
     SCENE_EXTRACTION_SYSTEM_PROMPT,
     format_scene_extraction_prompt,
 )
