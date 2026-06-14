@@ -116,11 +116,17 @@ class MemoryServiceV2:
         query: str,
         limit: int = 5,
         org_id: str = "",
+        domain: str | None = None,
     ) -> list[dict]:
         """
         检索相关记忆（兼容旧接口）
 
         旧接口返回 [{id, memory, metadata, created_at, updated_at}]
+
+        V2 阶段 4.3:
+          - 加 domain 参数, 按 metadata->>'domain' 过滤
+          - 防止"Apple 案例 (tech 域)"污染"利润分析 (finance 域)"召回
+          - 当前调用方暂时不传 domain (等数据积累后再启用)
         """
         if not query or not self._cfg.enabled:
             return []
@@ -131,6 +137,7 @@ class MemoryServiceV2:
             user_id=user_id,
             org_id=org_id,
             max_results=limit,
+            domain=domain,
         )
 
         # V2 阶段 4.1: 按 atom_id 排序保证字节稳定
