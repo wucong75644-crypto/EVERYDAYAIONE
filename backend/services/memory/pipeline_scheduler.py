@@ -90,11 +90,78 @@ class PipelineScheduler:
             state["conversation_count"] = 0
             await self._update_state(state)
 
+    @staticmethod
+    def _should_extract(messages: list[dict]) -> bool:
+        """V2 阶段 6.4: 抽取前置门禁
+
+        判断这批对话是否值得调 LLM 抽取记忆.
+
+        业界共识 (ChatGPT/mem0 都用前置 classifier):
+          - 短消息/寒暄 → 跳过 (60-70% 对话其实无新事实)
+          - 业务关键词/数字 → 抽取
+          - 减少 LLM 调用成本 + 提升抽取质量 (避免抽取"嗯/好/谢谢"这种空轮)
+
+        返回 True 才走 LLM 抽取.
+        """
+        import re
+
+        # 业务关键词 (跟 EVERYDAYAIONE 业务相关的)
+        BUSINESS_KEYWORDS = (
+            "公司", "我们", "我的", "退款率", "退款", "销售", "利润", "毛利",
+            "SKU", "订单", "客单价", "红线", "成本", "采购", "库存", "供应商",
+            "平台", "京东", "淘宝", "拼多多", "抖音", "快手", "小红书",
+            "偏好", "习惯", "通常", "总是", "经常", "重要", "关注",
+            "目标", "计划", "策略", "标准", "规则", "要求",
+        )
+
+        # 数字/百分比正则
+        NUMBER_RE = re.compile(r'\d+%|\d{2,}')
+
+        # 至少有一条 user 消息满足条件
+        for m in messages:
+            if m.get("role") != "user":
+                continue
+            content = m.get("content", "")
+            if isinstance(content, list):
+                # 多模态: 提取 text 部分
+                content = " ".join(
+                    p.get("text", "") for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+            text = str(content).strip()
+
+            # 太短 → skip
+            if len(text) < 10:
+                continue
+            # 业务关键词触发
+            if any(kw in text for kw in BUSINESS_KEYWORDS):
+                return True
+            # 数字/百分比触发
+            if NUMBER_RE.search(text):
+                return True
+            # 长消息 (>50 字) 兜底, 可能含价值
+            if len(text) > 50:
+                return True
+
+        return False
+
     async def _run_l1(self, state: dict, messages: list[dict]) -> None:
-        """执行 L1 提取（fire-and-forget）"""
+        """执行 L1 提取（fire-and-forget）
+
+        V2 阶段 6.4: 前置门禁
+        """
         user_id = state["user_id"]
         org_id = state["org_id"]
         session_id = state["session_id"]
+
+        # 抽取前置门禁: 判断这批对话是否值得调 LLM
+        if not self._should_extract(messages):
+            logger.info(
+                f"Pipeline L1 SKIP (no business value) | "
+                f"user={user_id[:8]}... session={session_id[:8]}... | "
+                f"msgs={len(messages)}"
+            )
+            return
 
         logger.info(f"Pipeline: triggering L1 for user={user_id[:8]}... session={session_id[:8]}...")
 

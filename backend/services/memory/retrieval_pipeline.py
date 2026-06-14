@@ -103,6 +103,31 @@ class RetrievalPipeline:
         else:
             merged = []
 
+        # V2 阶段 6.1: 召回质量监控
+        # 记录每次召回的关键指标, 用于离线评估 Recall@k / Precision@k
+        # 字段:
+        #   candidates_vector / candidates_bm25 = 各路召回原始候选数
+        #   final_top_k = 融合后返回数
+        #   score_distribution = 分值最大/最小/中位数 (判断"召回质量")
+        if merged:
+            scores = [r.get("rrf_score", r.get("score", 0)) for r in merged]
+            score_max = max(scores) if scores else 0
+            score_min = min(scores) if scores else 0
+            score_mid = sorted(scores)[len(scores) // 2] if scores else 0
+            logger.info(
+                f"mem0 recall | strategy={strategy} | "
+                f"vector_n={len(vector_results)} bm25_n={len(bm25_results)} | "
+                f"final_top_k={len(merged)} | "
+                f"score_max={score_max:.3f} mid={score_mid:.3f} min={score_min:.3f} | "
+                f"domain={domain or 'all'} | user={user_id[:8]}"
+            )
+        else:
+            logger.info(
+                f"mem0 recall EMPTY | strategy={strategy} | "
+                f"vector_n={len(vector_results)} bm25_n={len(bm25_results)} | "
+                f"domain={domain or 'all'} | user={user_id[:8]} | query={query[:30]}"
+            )
+
         return [
             ScoredMemory(
                 atom_id=r["record_id"],
