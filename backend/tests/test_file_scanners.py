@@ -602,6 +602,77 @@ class TestPathDDecisionFiltering:
         df = pd.read_parquet(cache_path)
         assert set(df["_sheet"].unique()) == {"A", "B"}
 
+    def test_all_sheets_empty_template(self, tmp_path):
+        """所有 sheet 仅有表头无数据：不抛错，保留列结构 + 标注 empty_templates。"""
+        import pandas as pd
+        from services.agent.data_query_cache import _convert_all_sheets_to_parquet
+        from services.agent.file_meta import read_file_meta
+
+        f = tmp_path / "template_only.xlsx"
+        wb = openpyxl.Workbook()
+        ws1 = wb.active; ws1.title = "订单"
+        ws1.append(["订单号", "商品名", "数量"])
+        ws2 = wb.create_sheet("商品")
+        ws2.append(["商品编码", "标题", "价格"])
+        wb.save(str(f)); wb.close()
+
+        cache_path = tmp_path / "out.parquet"
+        snap_path = tmp_path / "out.snapshot"
+        _convert_all_sheets_to_parquet(
+            str(f), str(cache_path),
+            os.path.getmtime(f), os.path.getsize(f), str(snap_path),
+        )
+
+        # parquet 0 行 + 含表头列
+        df = pd.read_parquet(cache_path)
+        assert len(df) == 0
+        assert "_sheet" in df.columns
+        assert "订单号" in df.columns and "商品编码" in df.columns
+
+        # evidence_summary.empty_templates 标注两个 sheet
+        meta = read_file_meta(str(cache_path))
+        assert meta is not None
+        sheets_info = meta.evidence_summary.get("sheets", {})
+        empty = sheets_info.get("empty_templates", [])
+        assert {e["name"] for e in empty} == {"订单", "商品"}
+        order_cols = next(e["columns"] for e in empty if e["name"] == "订单")
+        assert order_cols == ["订单号", "商品名", "数量"]
+
+    def test_mixed_template_and_data_sheets(self, tmp_path):
+        """部分 sheet 为模板 + 部分 sheet 有数据：模板进 empty_templates，
+        数据 sheet 正常并入 Parquet。"""
+        import pandas as pd
+        from services.agent.data_query_cache import _convert_all_sheets_to_parquet
+        from services.agent.file_meta import read_file_meta
+
+        f = tmp_path / "mixed.xlsx"
+        wb = openpyxl.Workbook()
+        ws1 = wb.active; ws1.title = "实际数据"
+        ws1.append(["id", "amount"])
+        ws1.append([1, 100])
+        ws1.append([2, 200])
+        ws2 = wb.create_sheet("空模板")
+        ws2.append(["id", "amount"])
+        wb.save(str(f)); wb.close()
+
+        cache_path = tmp_path / "out.parquet"
+        snap_path = tmp_path / "out.snapshot"
+        _convert_all_sheets_to_parquet(
+            str(f), str(cache_path),
+            os.path.getmtime(f), os.path.getsize(f), str(snap_path),
+        )
+
+        df = pd.read_parquet(cache_path)
+        # 实际数据 sheet 2 行；空模板贡献 0 行（仅 schema）
+        assert set(df["_sheet"].unique()) == {"实际数据"}
+        assert len(df) == 2
+
+        meta = read_file_meta(str(cache_path))
+        assert meta is not None
+        sheets_info = meta.evidence_summary.get("sheets", {})
+        empty = sheets_info.get("empty_templates", [])
+        assert [e["name"] for e in empty] == ["空模板"]
+
 
 class TestPathCDecisionFiltering:
     """修 2：路径 C 按 AI 决策过滤 regions。"""
