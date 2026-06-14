@@ -56,13 +56,16 @@ def _ext_of(name: str) -> str:
 def format_attachments(
     workspace_files: List[Dict[str, Any]],
     conversation_id: Optional[str] = None,
+    org_id: Optional[str] = None,
 ) -> str:
     """渲染结构化附件元数据(行业标准:状态 + 显式 action 行动指引)。
 
     设计原则(对齐 OpenAI Assistants / Claude / Gemini):
+      - <id>: 短 ASCII file_id（fid_xxx），调工具时 LLM copy 这个，避免 pangu 化
+      - <name>: 文件名，AI 跟用户对话时引用（"我已读取《4月销售》..."）
+      - <path>: 沙盒内 open/pd.read_excel 读取用（沙盒已有去空格兜底）
       - <status>: 状态码（image/raw/analyzed/parquet/doc/text/binary）
       - <action>: 与 status 配对的最小化行动指引（单一事实来源 _STATUS_ACTIONS）
-      - <path>: 相对 workspace 的路径,LLM 字面 copy 用
       - <parquet>: 仅 analyzed 数据文件有,LLM 直接 pd.read_parquet 读
     """
     if not workspace_files:
@@ -119,6 +122,9 @@ def format_attachments(
             parquet_rel = None
 
         lines.append("  <file>")
+        if wp:
+            from services.agent.file_id import compute_fid
+            lines.append(f"    <id>{compute_fid(org_id, wp)}</id>")
         lines.append(f"    <name>{name}</name>")
         if wp:
             lines.append(f"    <path>{_esc(wp)}</path>")
@@ -135,6 +141,12 @@ def format_attachments(
         lines.append("  </file>")
 
     lines.append("</attachments>")
+    lines.append("")
+    lines.append("【附件使用规则】")
+    lines.append("- 调工具(file_analyze/file_delete 等)时，file_id 参数必须 copy `id` 字段（fid_xxx）")
+    lines.append("- 回复用户、生成图表标题、说明分析对象时，引用 `name` 字段")
+    lines.append("- 沙盒 code_execute 内读取数据时，用 `path` 字段（如 pd.read_excel(path)）")
+    lines.append("- 已治理数据文件直接 pd.read_parquet(`parquet` 字段)；不要重复 file_analyze")
     return "\n".join(lines)
 
 
@@ -152,6 +164,7 @@ def _fmt_size_long(size: Any) -> str:
 def build_workspace_prompt(
     workspace_files: List[Dict[str, Any]],
     conversation_id: Optional[str] = None,
+    org_id: Optional[str] = None,
 ) -> str:
     """渲染工作区文件清单（注意力锚点 system message）。
 
@@ -174,11 +187,15 @@ def build_workspace_prompt(
         except Exception as e:
             logger.warning(f"build_workspace_prompt: get_file_cache 失败 | {e}")
 
+    from services.agent.file_id import compute_fid
+
     lines: list[str] = [f"用户当前消息附加了 {len(workspace_files)} 个文件："]
     for f in workspace_files:
         raw_name = f.get("name") or f.get("workspace_path", "")
+        wp = f.get("workspace_path") or ""
         size_str = _fmt_size_long(f.get("size"))
         ext = _ext_of(raw_name)
+        fid_prefix = f"[{compute_fid(org_id, wp)}] " if wp else ""
 
         if ext in _IMG_EXTS:
             kind = "图片（已视觉注入）"
@@ -195,6 +212,6 @@ def build_workspace_prompt(
             kind = "未知类型"
 
         size_suffix = f" ({size_str})" if size_str else ""
-        lines.append(f"  - {raw_name}{size_suffix} — {kind}")
+        lines.append(f"  - {fid_prefix}{raw_name}{size_suffix} — {kind}")
 
     return "\n".join(lines)

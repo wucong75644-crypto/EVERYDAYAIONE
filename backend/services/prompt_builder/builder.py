@@ -164,11 +164,11 @@ class PromptBuilder:
 
         # ── Step 4: Layer 3 用户层 ──
         attachments_xml = (
-            format_attachments(inp.workspace_files, inp.conversation_id)
+            format_attachments(inp.workspace_files, inp.conversation_id, inp.org_id)
             if inp.workspace_files else ""
         )
         workspace_prompt = (
-            build_workspace_prompt(inp.workspace_files, inp.conversation_id)
+            build_workspace_prompt(inp.workspace_files, inp.conversation_id, inp.org_id)
             if inp.workspace_files else ""
         )
 

@@ -111,12 +111,16 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "file_id": {
+                            "type": "string",
+                            "pattern": "^fid_[a-z0-9]{8}$",
+                            "description": "文件 ID（fid_xxx），从 <attachments> 的 <id> 字段 copy。优先使用 file_id。",
+                        },
                         "path": {
                             "type": "string",
-                            "description": "文件名或相对路径（从 file_search 结果或用户附件路径获取）",
+                            "description": "（兼容老协议）文件名或相对路径。仅在没有 file_id 时使用。",
                         },
                     },
-                    "required": ["path"],
                 },
             },
         },
@@ -133,13 +137,20 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "file_ids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^fid_[a-z0-9]{8}$",
+                            },
+                            "description": "要删除的 file_id 列表（如 ['fid_a3f2b1c9']）。从 <attachments> 的 <id> 或 file_search 返回的 [fid_xxx] 获取。",
+                        },
                         "files": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "要删除的文件名或相对路径列表（如 ['下载/报表.xlsx']）",
+                            "description": "（兼容老协议）文件名或相对路径列表。仅在没有 file_ids 时使用。",
                         },
                     },
-                    "required": ["files"],
                 },
             },
         },
