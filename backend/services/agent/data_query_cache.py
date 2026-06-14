@@ -2021,6 +2021,8 @@ def _convert_all_sheets_to_parquet(
 
     frames: list = []
     skipped_sheets: list[tuple[str, str]] = []  # (sheet_name, role)
+    # 仅有表头无数据行的"空模板" sheet：列名透传给 AI，避免误报"读取失败"
+    empty_template_sheets: list[tuple[str, list[str]]] = []
     total_rows = 0
     merged_report = CleaningReport()
     first_data_start_row: int = 2  # 取第一个 Sheet 的行号映射，后续赋值
@@ -2066,6 +2068,20 @@ def _convert_all_sheets_to_parquet(
                 df = sheet_data.to_pandas()
 
             if df.empty:
+                # 区分两类：有列名 = 空白模板（透传 schema），无列名 = 真读取失败
+                visible_cols = [
+                    str(c) for c in df.columns if not str(c).startswith("_is_")
+                ]
+                if visible_cols:
+                    if not frames:
+                        first_data_start_row = actual_start + header_depth + 1
+                    df.insert(0, "_sheet", name)
+                    frames.append(df)
+                    empty_template_sheets.append((name, visible_cols))
+                    logger.info(
+                        f"Sheet is empty template | sheet={name} "
+                        f"| columns={len(visible_cols)} | src={Path(excel_path).name}"
+                    )
                 continue
 
             total_rows += len(df)
@@ -2094,7 +2110,16 @@ def _convert_all_sheets_to_parquet(
     if not frames:
         raise ValueError(f"所有 Sheet 均为空或读取失败: {Path(excel_path).name}")
 
-    merged = pd.concat(frames, ignore_index=True)
+    # 有数据的 frame 优先合并；全空模板时再合并 schema-only 0 行 DataFrame
+    # 拆分避免 pandas concat 因空 frame 推断 dtype 走 object 兜底（FutureWarning）
+    data_frames = [f for f in frames if len(f) > 0]
+    if data_frames:
+        merged = pd.concat(data_frames, ignore_index=True)
+    else:
+        all_cols = list(dict.fromkeys(c for f in frames for c in f.columns))
+        merged = pd.concat(
+            [f.reindex(columns=all_cols) for f in frames], ignore_index=True
+        )
 
     tmp_path = str(Path(cache_path).parent / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
     try:
@@ -2126,6 +2151,9 @@ def _convert_all_sheets_to_parquet(
         "merged": merged_sheets,           # 已并入 Parquet（_sheet 列区分）
         "skipped": [                       # AI 判定跳过：role + 原因
             {"name": n, "role": r} for n, r in skipped_sheets
+        ],
+        "empty_templates": [               # 仅有表头无数据：列名透传，避免误报失败
+            {"name": n, "columns": cols} for n, cols in empty_template_sheets
         ],
     }
     write_file_meta(cache_path, file_meta)
