@@ -13,12 +13,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from .config import get_memory_config
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+
 
 
 class ContextCompressor:

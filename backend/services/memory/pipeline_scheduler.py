@@ -14,13 +14,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 
 from .config import get_memory_config
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+
 
 
 class PipelineScheduler:

@@ -11,7 +11,6 @@ L1 冲突检测服务
 from __future__ import annotations
 
 import json
-import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -23,11 +22,12 @@ import jieba
 from .config import get_memory_config
 from .l1_extractor import MemoryAtom, _call_qianwen, _get_embedding, _insert_atom
 from .prompts.l1_dedup import (
+from loguru import logger
     CONFLICT_DETECTION_SYSTEM_PROMPT,
     format_batch_conflict_prompt,
 )
 
-logger = logging.getLogger(__name__)
+
 
 VALID_TYPES = {"persona", "episodic", "instruction"}
 

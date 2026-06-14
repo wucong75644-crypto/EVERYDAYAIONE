@@ -11,17 +11,15 @@ RRF 混合检索管道
 
 from __future__ import annotations
 
-import logging
 import uuid
 from dataclasses import dataclass
 from typing import Literal
 
 import jieba
+from loguru import logger
 
 from .config import get_memory_config
 from .l1_extractor import _get_embedding
-
-logger = logging.getLogger(__name__)
 
 
 # ============================================================

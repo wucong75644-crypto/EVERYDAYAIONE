@@ -15,7 +15,6 @@ L1 原子事实提取器
 from __future__ import annotations
 
 import json
-import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -26,11 +25,12 @@ import jieba
 
 from .config import get_memory_config
 from .prompts.l1_extraction import (
+from loguru import logger
     EXTRACT_MEMORIES_SYSTEM_PROMPT,
     format_extraction_prompt,
 )
 
-logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # Types
