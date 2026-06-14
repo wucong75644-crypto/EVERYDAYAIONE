@@ -26,17 +26,17 @@ PERSONA_GENERATION_SYSTEM_PROMPT = """# 用户画像生成 — 短事实清单 (
 
 ## 输出格式
 
-返回 XML 包裹的事实清单, 每条 10-30 字:
+返回 `<fact>` 列表 (无外层包装), 每条 10-30 字:
 
 ```
-<user_facts>
 <fact category="基本信息">公司: LCWJ官方旗舰店, 主营京东电商</fact>
 <fact category="业务领域">关注利润分析、退款率、平台对比</fact>
 <fact category="红线">退款率红线 3%, 不可突破</fact>
 <fact category="工作习惯">偏好结构化数据展示, 不喜散文式回复</fact>
 <fact category="工具偏好">常用 code_execute 处理 Excel, 偏好 pandas</fact>
-</user_facts>
 ```
+
+外层 `<user_facts>` 包装由系统自动添加, 你**不要**输出它.
 
 每条事实必须:
 - **保留专有名词** (公司/产品/品牌名 原样)
@@ -63,7 +63,7 @@ PERSONA_GENERATION_SYSTEM_PROMPT = """# 用户画像生成 — 短事实清单 (
 - 禁止过度推测 (信息不足就少写, 不要编)
 - 禁止散文/段落格式
 - 所有内容必须来自提供的场景数据
-- 只输出 <user_facts> XML, 不输出思考过程, 不输出 Markdown 代码块修饰符"""
+- 只输出 `<fact>` 列表 (不含外层 `<user_facts>`), 不输出思考过程, 不输出 Markdown 代码块修饰符"""
 
 
 # ============================================================
