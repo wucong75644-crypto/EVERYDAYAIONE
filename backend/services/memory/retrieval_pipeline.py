@@ -59,6 +59,7 @@ class RetrievalPipeline:
         org_id: str,
         max_results: int | None = None,
         strategy: Literal["hybrid", "embedding", "keyword"] | None = None,
+        domain: str | None = None,
     ) -> list[ScoredMemory]:
         """
         混合检索：向量 + BM25 + RRF 融合
@@ -68,6 +69,9 @@ class RetrievalPipeline:
             user_id, org_id: 租户隔离
             max_results: 最大返回数（默认5）
             strategy: 检索策略（默认hybrid）
+            domain: V2 阶段 4.3 — 可选 domain 过滤
+                    匹配 metadata->>'domain' = domain
+                    防 Apple 案例 (tech 域) 污染利润分析 (finance 域)
         """
         cfg = self._cfg
         max_results = max_results or cfg.retrieval_max_results
@@ -81,12 +85,12 @@ class RetrievalPipeline:
             embedding = await _get_embedding(query)
             if embedding:
                 vector_results = await self._search_vector(
-                    embedding, user_id, org_id, extend_limit
+                    embedding, user_id, org_id, extend_limit, domain
                 )
 
         if strategy in ("hybrid", "keyword"):
             bm25_results = await self._search_bm25(
-                query, user_id, org_id, extend_limit
+                query, user_id, org_id, extend_limit, domain
             )
 
         # 融合
@@ -123,12 +127,14 @@ class RetrievalPipeline:
         user_id: str,
         org_id: str,
         limit: int,
+        domain: str | None = None,
     ) -> list[dict]:
-        """pgvector 余弦相似度搜索"""
+        """pgvector 余弦相似度搜索 (V2 阶段 4.3: 加 domain pre-filter)"""
         try:
             # psycopg %s 不支持同参数复用，所以 embedding 传两次
             embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
-            sql = """
+            domain_clause = "AND metadata->>'domain' = $6" if domain else ""
+            sql = f"""
                 SELECT id::text as record_id, content, type, priority, scene_name,
                        activity_start_time::text as activity_start,
                        activity_end_time::text as activity_end,
@@ -136,13 +142,14 @@ class RetrievalPipeline:
                 FROM memory_atoms
                 WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
                       AND embedding IS NOT NULL
+                      {domain_clause}
                 ORDER BY embedding <=> $4::vector
                 LIMIT $5
             """
-            rows = await self._db.fetch(
-                sql,
-                embedding_str, org_id, user_id, embedding_str, limit,
-            )
+            params = [embedding_str, org_id, user_id, embedding_str, limit]
+            if domain:
+                params.append(domain)
+            rows = await self._db.fetch(sql, *params)
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Retrieval: vector search failed: {e}")
@@ -158,8 +165,9 @@ class RetrievalPipeline:
         user_id: str,
         org_id: str,
         limit: int,
+        domain: str | None = None,
     ) -> list[dict]:
-        """tsvector BM25 关键词搜索"""
+        """tsvector BM25 关键词搜索 (V2 阶段 4.3: 加 domain pre-filter)"""
         try:
             # jieba 分词 → tsquery
             tokens = [t for t in jieba.cut_for_search(query) if len(t) > 1]
@@ -167,8 +175,8 @@ class RetrievalPipeline:
                 return []
             tsquery = " | ".join(tokens)  # OR 逻辑，更宽容
 
-            # $1 出现两次（rank + WHERE），psycopg %s 需要传两次
-            sql = """
+            domain_clause = "AND metadata->>'domain' = $6" if domain else ""
+            sql = f"""
                 SELECT id::text as record_id, content, type, priority, scene_name,
                        activity_start_time::text as activity_start,
                        activity_end_time::text as activity_end,
@@ -176,13 +184,14 @@ class RetrievalPipeline:
                 FROM memory_atoms
                 WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
                       AND content_tsv @@ to_tsquery('simple', $4::text)
+                      {domain_clause}
                 ORDER BY score DESC
                 LIMIT $5
             """
-            rows = await self._db.fetch(
-                sql,
-                tsquery, org_id, user_id, tsquery, limit,
-            )
+            params = [tsquery, org_id, user_id, tsquery, limit]
+            if domain:
+                params.append(domain)
+            rows = await self._db.fetch(sql, *params)
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Retrieval: BM25 search failed: {e}")
