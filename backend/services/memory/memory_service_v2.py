@@ -51,13 +51,26 @@ class _PsycopgAdapter:
         self._pool = pool
 
     @staticmethod
-    def _convert_placeholders(sql: str) -> str:
-        """将 $1, $2, ... 转为 %s"""
+    def _convert_placeholders(sql: str, args: tuple) -> tuple[str, tuple]:
+        """asyncpg $N → psycopg %s，按 $N 在 SQL 中出现顺序重排 args。
+
+        asyncpg 按编号绑定，$N 可乱序/复用（如 SET 用 $4..$13、WHERE 用 $1..$3）。
+        psycopg %s 按出现位置绑定，若不重排 args 会让 SET/WHERE 字段错位
+        （历史 bug：'operator does not exist: uuid = boolean'）。
+        """
         import re
-        return re.sub(r'\$\d+', '%s', sql)
+        order: list[int] = []
+
+        def replace(m):
+            order.append(int(m.group(1)) - 1)
+            return '%s'
+
+        new_sql = re.sub(r'\$(\d+)', replace, sql)
+        new_args = tuple(args[i] for i in order)
+        return new_sql, new_args
 
     async def fetch(self, sql, *args):
-        sql = self._convert_placeholders(sql)
+        sql, args = self._convert_placeholders(sql, args)
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, args if args else None)
@@ -70,7 +83,7 @@ class _PsycopgAdapter:
         return rows[0] if rows else None
 
     async def execute(self, sql, *args):
-        sql = self._convert_placeholders(sql)
+        sql, args = self._convert_placeholders(sql, args)
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, args if args else None)
