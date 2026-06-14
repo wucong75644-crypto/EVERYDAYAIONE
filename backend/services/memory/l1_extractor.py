@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import jieba
+from loguru import logger
 
 from .config import get_memory_config
 from .prompts.l1_extraction import (
-from loguru import logger
     EXTRACT_MEMORIES_SYSTEM_PROMPT,
     format_extraction_prompt,
 )
