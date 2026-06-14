@@ -1073,3 +1073,15 @@
 | `file_move` | `backend/services/file_write_extensions.py` | 移动文件到目标目录 |
 | `_restore_file` | `backend/services/agent/file_tool_mixin.py` | 从registry查找备份并恢复workspace文件（restore_file工具执行逻辑） |
 | `_register_workspace_backups` | `backend/services/agent/tool_executor.py` | 将workspace备份注册到对话级session_file_registry |
+
+### 文件 ID 协议（file_id）
+
+> 解决 LLM 在生成 tool_call 时把中文 path 自动 "pangu 化"（中英文间加空格）导致文件读不到的问题。AI 看到短 ASCII 的 `fid_xxx` 而非中文路径。详见 `docs/document/TECH_文件ID协议化.md`。
+
+| 函数/常量 | 文件路径 | 功能描述 |
+|-----------|---------|---------|
+| `compute_fid` | `backend/services/agent/file_id.py` | 确定性哈希 `(org_id, workspace_path) → fid_xxx`（blake2b 4字节 → 12 位 ASCII） |
+| `is_valid_fid` | `backend/services/agent/file_id.py` | 校验 fid 格式 `^fid_[a-z0-9]{8}$` |
+| `resolve_fid_to_workspace` | `backend/services/agent/file_id.py` | 从 file_path_cache 反查 fid 对应的 workspace 绝对路径 |
+| `format_attachments` | `backend/services/handlers/chat_context/attachments.py` | XML 渲染附件，每个 `<file>` 含 `<id>fid_xxx</id>` + `<name>` + `<path>` + 附件使用规则 |
+| `build_workspace_prompt` | `backend/services/handlers/chat_context/attachments.py` | 工作区清单，每行带 `[fid_xxx]` 前缀 |

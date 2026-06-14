@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Dict
+from typing import Any, Callable, Coroutine, Dict, Optional
 
 from loguru import logger
 
@@ -157,6 +157,8 @@ class FileToolMixin(FileDeleteMixin):
         lines.append("─" * 50)
 
         cache = get_file_cache(self.conversation_id)
+        from services.agent.file_id import compute_fid
+        _org_id = getattr(self, "org_id", None)
 
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/")
@@ -169,7 +171,8 @@ class FileToolMixin(FileDeleteMixin):
                 ))
             except ValueError:
                 rel_path = f["name"]
-            lines.append(f"  {rel_path}  ({size_str})")
+            fid = compute_fid(_org_id, rel_path)
+            lines.append(f"  [{fid}] {rel_path}  ({size_str})")
             cache.register(f["name"], workspace=f["abs_path"])
             cache.register(rel_path, workspace=f["abs_path"])
 
@@ -201,7 +204,11 @@ class FileToolMixin(FileDeleteMixin):
 
         # 从搜索结果中提取文件路径并注册到缓存，收集编号
         cache = get_file_cache(self.conversation_id)
+        from services.agent.file_id import compute_fid
+        _org_id = getattr(self, "org_id", None)
         _file_re = re.compile(r"\s+\[文件\]\s+(\S+)")
+        # 同时为每行 [文件] xxx 前插入 [fid_xxx]，方便 LLM 后续调工具
+        annotated_lines: list[str] = []
         for line in raw_result.split("\n"):
             m = _file_re.match(line)
             if m:
@@ -213,8 +220,15 @@ class FileToolMixin(FileDeleteMixin):
                         cache.register(rel_path, workspace=str(target))
                 except Exception:
                     pass
+                fid = compute_fid(_org_id, rel_path)
+                # 替换 "[文件] rel_path" → "[文件] [fid_xxx] rel_path"
+                annotated_lines.append(
+                    line.replace(f"[文件] {rel_path}", f"[文件] [{fid}] {rel_path}", 1)
+                )
+            else:
+                annotated_lines.append(line)
 
-        lines = [raw_result]
+        lines = ["\n".join(annotated_lines)]
         lines.append("")
         lines.append(
             "在 code_execute 中用相对路径直接读取（沙盒 cwd=/workspace）；"
@@ -240,17 +254,50 @@ class FileToolMixin(FileDeleteMixin):
         from services.agent.file_meta import read_file_meta, format_file_view
         from core.workspace import resolve_staging_dir
 
-        path = args.get("path", "")
-        if not path:
+        # 路径解析：优先 file_id（fid 协议），兜底 path（老协议）
+        cache = get_file_cache(self.conversation_id)
+        file_id = (args.get("file_id") or "").strip()
+        path = (args.get("path") or "").strip()
+        abs_path: Optional[str] = None
+
+        if file_id:
+            from services.agent.file_id import is_valid_fid, resolve_fid_to_workspace
+            if not is_valid_fid(file_id):
+                return AgentResult(
+                    summary=f"file_id 格式错误: {file_id}",
+                    status="error",
+                    error_message=(
+                        f"file_id 必须是 fid_xxx 格式（fid_ + 8 位十六进制）。"
+                        f"你传的是 {file_id!r}。请从 <attachments> 的 <id> 字段 copy。"
+                    ),
+                    metadata={"retryable": True},
+                )
+            abs_path = resolve_fid_to_workspace(
+                file_id, getattr(self, "org_id", None), cache,
+            )
+            if not abs_path:
+                return AgentResult(
+                    summary=f"未找到 file_id={file_id}",
+                    status="error",
+                    error_message=(
+                        f"file_id={file_id} 在当前对话的附件里找不到。"
+                        f"请检查 <attachments> 块的 <id> 字段。"
+                    ),
+                    metadata={"retryable": True},
+                )
+            path = file_id  # 后续日志/错误消息显示用
+
+        if not abs_path and not path:
             return AgentResult(
-                summary="请提供文件路径", status="error",
-                error_message="path is required",
+                summary="请提供 file_id 或 path",
+                status="error",
+                error_message="file_id 或 path 至少传一个",
                 metadata={"retryable": True},
             )
 
-        # 路径解析：缓存(workspace) → resolve_safe_path
-        cache = get_file_cache(self.conversation_id)
-        abs_path = cache.resolve(path, usage="analyze")
+        # 老协议兜底：path → 缓存(workspace) → resolve_safe_path
+        if not abs_path:
+            abs_path = cache.resolve(path, usage="analyze")
         if not abs_path:
             try:
                 target = executor.resolve_safe_path(path)

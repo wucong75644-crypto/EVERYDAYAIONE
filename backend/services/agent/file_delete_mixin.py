@@ -31,31 +31,62 @@ class FileDeleteMixin:
         from services.agent.agent_result import AgentResult
         from services.agent.file_path_cache import get_file_cache
 
+        cache = get_file_cache(self.conversation_id)
+
+        # 优先 file_ids（fid 协议），兜底 files（老协议）
+        file_ids = args.get("file_ids") or []
         files = args.get("files") or []
+        if isinstance(file_ids, str):
+            file_ids = [file_ids]
         if isinstance(files, str):
             files = [files]
-        if not files:
+        if not file_ids and not files:
             return AgentResult(
                 summary="未指定要删除的文件",
                 status="error",
-                error_message="files is empty",
+                error_message="file_ids 或 files 至少传一个",
                 metadata={"retryable": True},
             )
 
-        cache = get_file_cache(self.conversation_id)
+        # fid 优先解析
+        if file_ids:
+            from services.agent.file_id import (
+                is_valid_fid, resolve_fid_to_workspace,
+            )
+            _org_id = getattr(self, "org_id", None)
+            for fid in file_ids:
+                if not is_valid_fid(fid):
+                    return AgentResult(
+                        summary=f"file_id 格式错误: {fid}",
+                        status="error",
+                        error_message=f"file_id 必须 fid_xxx 格式，你传的是 {fid!r}",
+                        metadata={"retryable": True},
+                    )
+                ws = resolve_fid_to_workspace(fid, _org_id, cache)
+                if not ws:
+                    return AgentResult(
+                        summary=f"未找到 file_id={fid}",
+                        status="error",
+                        error_message=f"file_id={fid} 在当前对话附件里找不到",
+                        metadata={"retryable": True},
+                    )
+                files.append(ws)
 
         deleted = []
         skipped = []
         for name in files:
-            abs_path = cache.resolve(name, usage="delete")
-            if not abs_path:
-                # 缓存没有 → 尝试直接 resolve
-                try:
-                    target = executor.resolve_safe_path(name)
-                    if target.is_file():
-                        abs_path = str(target)
-                except Exception:
-                    pass
+            if os.path.isabs(name) and os.path.isfile(name):
+                abs_path = name  # 已经是 fid 解析出来的 abs 路径
+            else:
+                abs_path = cache.resolve(name, usage="delete")
+                if not abs_path:
+                    # 缓存没有 → 尝试直接 resolve
+                    try:
+                        target = executor.resolve_safe_path(name)
+                        if target.is_file():
+                            abs_path = str(target)
+                    except Exception:
+                        pass
             if not abs_path or not os.path.isfile(abs_path):
                 skipped.append(name)
                 continue
