@@ -1,0 +1,45 @@
+[Unit]
+Description=EVERYDAYAIONE Sync Worker Service
+Documentation=https://github.com/your-org/everydayai
+# 必须在 PostgreSQL / Redis 之后启动，避免启动竞速拿不到 DB/Redis 连接
+After=network.target postgresql.service redis.service everydayai-backend.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/var/www/everydayai/backend
+
+# 环境变量（与 backend 共用同一 .env）
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+# L0 时区固化 — 必须显式设置，不依赖 OS /etc/localtime
+# 设计文档：docs/document/TECH_ERP时间准确性架构.md §4.4 / §17
+# sync 进程的 scheduler 用 Asia/Shanghai 计算"明天 10:00"，时区错会让定时任务跑错时刻
+Environment="TZ=Asia/Shanghai"
+EnvironmentFile=/var/www/everydayai/backend/.env
+
+# 启动命令（单进程，无需 leader election）
+ExecStart=/var/www/everydayai/backend/venv/bin/python sync_worker_main.py
+
+# 优雅停止：先 SIGTERM 等协程清理（最多 30s），超时再 SIGKILL
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# 自动重启配置（崩溃即拉起）
+Restart=always
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=5
+
+# 资源限制
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=everydayai-sync
+
+[Install]
+WantedBy=multi-user.target

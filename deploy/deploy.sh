@@ -282,17 +282,39 @@ deploy_backend() {
         pkill -f kernel_worker 2>/dev/null || true
         echo "已清理"
 
-        echo "6. 重启后端服务"
+        echo "6. 重启后端服务（瘦身后只跑 API + chat 后台任务）"
         sudo systemctl restart everydayai-backend
 
-        echo "7. 重启企微服务（共享后端代码）"
+        echo "7. 确认 backend 已不再启动 ERP 同步（防双跑）"
+        sleep 5
+        if sudo journalctl -u everydayai-backend --since '15 seconds ago' --no-pager 2>/dev/null \
+                | grep -q -E 'ErpSyncOrchestrator started|kuaimai_external_sync_loop started'; then
+            echo "❌ backend 仍在启动 ERP 同步，停止部署以防双跑！"
+            exit 1
+        fi
+        echo "✅ backend 已不再启动 ERP 同步"
+
+        echo "8. 重启同步服务（独立进程承载 ERP/oss_purge/kuaimai_external）"
+        if systemctl list-unit-files everydayai-sync.service &>/dev/null; then
+            sudo systemctl restart everydayai-sync
+            echo "同步服务已重启"
+        else
+            echo "⚠️  everydayai-sync.service 未安装，请先执行："
+            echo "    scp deploy/everydayai-sync.service root@SERVER:/etc/systemd/system/"
+            echo "    sudo systemctl daemon-reload && sudo systemctl enable --now everydayai-sync"
+        fi
+
+        echo "9. 重启企微服务（共享后端代码）"
         if systemctl is-enabled everydayai-wecom &>/dev/null; then
             sudo systemctl restart everydayai-wecom
             echo "企微服务已重启"
         fi
 
-        echo "8. 检查服务状态"
+        echo "10. 检查服务状态"
         sudo systemctl status everydayai-backend --no-pager
+        if systemctl is-enabled everydayai-sync &>/dev/null; then
+            sudo systemctl status everydayai-sync --no-pager
+        fi
 ENDSSH
 
     log_success "后端部署完成"
@@ -330,6 +352,7 @@ setup_server() {
     scp -P ${SERVER_PORT} deploy/setup-server.sh ${SERVER_USER}@${SERVER_HOST}:/tmp/
     scp -P ${SERVER_PORT} deploy/nginx.conf ${SERVER_USER}@${SERVER_HOST}:/tmp/
     scp -P ${SERVER_PORT} deploy/everydayai-backend.service ${SERVER_USER}@${SERVER_HOST}:/tmp/
+    scp -P ${SERVER_PORT} deploy/everydayai-sync.service ${SERVER_USER}@${SERVER_HOST}:/tmp/
 
     # 在服务器上执行初始化
     log_info "在服务器上执行初始化脚本..."
@@ -351,6 +374,13 @@ show_status() {
         echo -e "\n【后端服务】"
         sudo systemctl status everydayai-backend --no-pager | head -n 10
 
+        echo -e "\n【同步服务】"
+        if systemctl is-enabled everydayai-sync &>/dev/null; then
+            sudo systemctl status everydayai-sync --no-pager | head -n 10
+        else
+            echo "（未安装）"
+        fi
+
         echo -e "\n【Nginx服务】"
         sudo systemctl status nginx --no-pager | head -n 10
 
@@ -360,6 +390,10 @@ show_status() {
         echo -e "\n【最近日志】"
         echo "后端日志（最后10行）:"
         sudo journalctl -u everydayai-backend -n 10 --no-pager
+        if systemctl is-enabled everydayai-sync &>/dev/null; then
+            echo -e "\n同步日志（最后10行）:"
+            sudo journalctl -u everydayai-sync -n 10 --no-pager
+        fi
 ENDSSH
 
     log_success "状态检查完成"

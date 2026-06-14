@@ -295,85 +295,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
-    # ── ERP 同步编排器（Leader Election 模式） ──
-    # 对齐 Celery Beat / K8s Lease 标准：SETNX + TTL 30s + 心跳 10s + Follower 重试 10s
-    # 所有 worker 都参与选举，Leader 崩溃后最多 30s 自动 failover
-    import os
-    from core.redis import get_redis
-    from core.database import get_async_db, close_async_db
-
-    _worker_pid = os.getpid()
-    _redis = await get_redis()
-
-    erp_orchestrator = None
-    erp_orchestrator_task = None
-    erp_healthcheck_task = None
-    _sync_election = None
-    _sync_election_task = None
-
-    if _redis:
-        from core.leader_election import LeaderElection
-
-        # 被选为 Leader 时启动同步
-        async def _on_sync_elected() -> None:
-            nonlocal erp_orchestrator, erp_orchestrator_task, erp_healthcheck_task
-            async_db = await get_async_db()
-            from services.kuaimai.erp_sync_orchestrator import ErpSyncOrchestrator
-            erp_orchestrator = ErpSyncOrchestrator(async_db)
-            erp_orchestrator_task = asyncio.create_task(erp_orchestrator.start())
-            logger.info(f"ErpSyncOrchestrator started | elected_worker={_worker_pid}")
-            from services.kuaimai.erp_sync_healthcheck import healthcheck_loop
-            erp_healthcheck_task = asyncio.create_task(healthcheck_loop(async_db))
-            logger.info(f"ErpSyncHealthcheck started | elected_worker={_worker_pid}")
-
-        # 失去 Leader 时停止同步（防御性，正常不会触发）
-        async def _on_sync_demoted() -> None:
-            nonlocal erp_orchestrator, erp_orchestrator_task, erp_healthcheck_task
-            logger.warning(f"ErpSyncOrchestrator demoted | worker={_worker_pid}")
-            if erp_orchestrator is not None:
-                await erp_orchestrator.stop()
-                erp_orchestrator = None
-            for t in (erp_orchestrator_task, erp_healthcheck_task):
-                if t is not None:
-                    t.cancel()
-            erp_orchestrator_task = None
-            erp_healthcheck_task = None
-
-        _sync_election = LeaderElection(
-            redis=_redis,
-            key="erp_sync_leader",
-            on_elected=_on_sync_elected,
-            on_demoted=_on_sync_demoted,
-        )
-        _sync_election_task = asyncio.create_task(_sync_election.run())
-    else:
-        # Redis 不可用时直接启动（单进程模式）
-        async_db = await get_async_db()
-        from services.kuaimai.erp_sync_orchestrator import ErpSyncOrchestrator
-        erp_orchestrator = ErpSyncOrchestrator(async_db)
-        erp_orchestrator_task = asyncio.create_task(erp_orchestrator.start())
-        logger.info(f"ErpSyncOrchestrator started (no Redis) | worker={_worker_pid}")
-        from services.kuaimai.erp_sync_healthcheck import healthcheck_loop
-        erp_healthcheck_task = asyncio.create_task(healthcheck_loop(async_db))
-        logger.info(f"ErpSyncHealthcheck started (no Redis) | worker={_worker_pid}")
-
     # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
+    import os
+    from core.database import get_async_db, close_async_db
     _error_monitor_db = await get_async_db()
     from core.error_alert_sink import error_log_consumer, error_log_cleanup_loop
     error_consumer_task = asyncio.create_task(error_log_consumer(_error_monitor_db))
     error_cleanup_task = asyncio.create_task(error_log_cleanup_loop(_error_monitor_db))
 
-    # OSS 延迟清理（confirm_delete 删 NAS 后，30 天后清理 OSS）
-    from services.scheduler.oss_purge_task import oss_purge_loop
-    _oss_purge_task = asyncio.create_task(oss_purge_loop())
-
-    # 快麦 Web 数据自动同步（每天 10:00，分层兜底 7/30/90 天）
-    from services.kuaimai_external.scheduler import kuaimai_external_sync_loop
-    _kuaimai_external_sync_task = asyncio.create_task(kuaimai_external_sync_loop())
-    logger.info("kuaimai_external_sync_loop started")
-
-    # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
-    # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
+    # 以下后台任务已迁移到 everydayai-sync.service 独立进程，避免与 API 进程争抢
+    # DB 连接池 + 简化生命周期管理：
+    #   - ErpSyncOrchestrator + erp_healthcheck（原 leader election 已废弃）
+    #   - kuaimai_external_sync_loop（每天 10:00 拉 thinktank/viperp）
+    #   - oss_purge_loop（每天 03:00 清理 OSS）
+    # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py），由 everydayai-wecom.service 管理
 
     # 有状态代码执行 Kernel 管理器
     from services.sandbox.kernel_manager import KernelManager, set_kernel_manager
@@ -401,34 +336,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await worker_task
     except asyncio.CancelledError:
         pass
-
-    # 停止 Leader Election（Lua DEL-if-match 释放锁 + 退出循环）
-    if _sync_election is not None:
-        await _sync_election.stop()
-        if _sync_election_task:
-            _sync_election_task.cancel()
-            try:
-                await _sync_election_task
-            except asyncio.CancelledError:
-                pass
-
-    # 停止 ERP 同步编排器
-    if erp_orchestrator is not None:
-        await erp_orchestrator.stop()
-        if erp_orchestrator_task:
-            erp_orchestrator_task.cancel()
-            try:
-                await erp_orchestrator_task
-            except asyncio.CancelledError:
-                pass
-
-    # 停止 ERP 健康检查后台任务
-    if erp_healthcheck_task is not None:
-        erp_healthcheck_task.cancel()
-        try:
-            await erp_healthcheck_task
-        except asyncio.CancelledError:
-            pass
 
     # 停止全局错误监控
     for _t in (error_consumer_task, error_cleanup_task):
