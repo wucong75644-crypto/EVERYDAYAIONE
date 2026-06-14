@@ -56,9 +56,11 @@ class SessionStableLayer:
     def render(ctx: SessionStableContext) -> str:
         sections: list[str] = []
 
-        # <context> 仅含 permission_mode (整会话不变的运行时配置)
+        # <context> 仅含 current_mode (整会话不变的运行时配置)
+        # 注: 改用 <current_mode> 而非 <permission_mode>, 避免与 L1 静态段里
+        # <permission_mode> 章节标题 (描述 auto/plan/ask 三模式策略) 同名混淆.
         sections.append(
-            f"<context>\n<permission_mode>{ctx.permission_mode}</permission_mode>\n</context>"
+            f"<context>\n<current_mode>{ctx.permission_mode}</current_mode>\n</context>"
         )
 
         # 用户偏好 (Custom Instructions, 可空)

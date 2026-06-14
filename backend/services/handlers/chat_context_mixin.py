@@ -151,40 +151,10 @@ class ChatContextMixin:
     # V2 阶段 4.1: _build_memory_prompt 已删除
     # mem0 查询统一到 PromptBuilder._parallel_fetch._memory() 内部
     # 配合 session_memory_cache 实现"新会话首查 + 整会话固定"
-
-
-    async def _fetch_knowledge(self, query: str) -> Optional[list]:
-        """获取知识库经验 + 历史成功案例（两路并行召回）。
-
-        通用知识和经验案例混合返回，经验结果加 _source="experience" tag，
-        注入时按 tag 分离为独立 system message。
-        设计文档: docs/document/TECH_Agent能力通信架构.md §3.4.2 / Phase 3
-        """
-        if not query:
-            return None
-        try:
-            from services.knowledge_service import search_relevant
-            general, experience = await asyncio.gather(
-                search_relevant(query=query, limit=3, org_id=self.org_id),
-                search_relevant(
-                    query=query,
-                    limit=2,
-                    category="experience",
-                    node_type="routing_pattern",
-                    min_confidence=0.6,
-                    org_id=self.org_id,
-                ),
-                return_exceptions=True,
-            )
-            g = general if not isinstance(general, BaseException) else []
-            e = experience if not isinstance(experience, BaseException) else []
-            for item in (e or []):
-                item["_source"] = "experience"
-            result = (g or []) + (e or [])
-            return result if result else None
-        except Exception as ex:
-            logger.debug(f"Knowledge fetch skipped | error={ex}")
-            return None
+    #
+    # V2 阶段 6.6 (2026-06-14): _fetch_knowledge 已删除
+    # 知识库召回走 LLM 主动调工具路径 (search_knowledge / erp_analyze),
+    # 不再在 prompt 预注入. 按需召回优于无脑塞.
 
     async def _extract_memories_async(
         self,
