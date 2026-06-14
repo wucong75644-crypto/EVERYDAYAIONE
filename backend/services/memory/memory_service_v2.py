@@ -197,6 +197,26 @@ class MemoryServiceV2:
         scored = await self._retrieval.search(
             query=query, user_id=user_id, org_id=org_id,
         )
+
+        # V2 阶段 6.5: 千问 LLM 精排过滤召回噪音
+        # RRF 只保证语义近的排前面, 无法过滤"语义近但与当前问题无关"的条目
+        # (如查"昨天销售"时召回"Apple 案例 102837880383")
+        # filter_memories 内部已含: ≤3 条跳过 + qwen-turbo→qwen-plus 降级链 + 失败回退原始列表
+        if scored and len(scored) > 3:
+            try:
+                from services.memory_filter import filter_memories
+                memory_dicts = [
+                    {"id": m.atom_id, "memory": m.content} for m in scored
+                ]
+                filtered = await filter_memories(query, memory_dicts)
+                kept_ids = {m["id"] for m in filtered}
+                scored = [m for m in scored if m.atom_id in kept_ids]
+                logger.info(
+                    f"mem0 LLM filter | before={len(memory_dicts)} after={len(scored)}"
+                )
+            except Exception as e:
+                logger.warning(f"mem0 LLM filter failed, using raw recall: {e}")
+
         prepend = self._retrieval.format_for_injection(scored)
 
         # 稳定部分：L3 persona
