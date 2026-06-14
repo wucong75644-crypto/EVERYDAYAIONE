@@ -35,6 +35,20 @@ def _xml_section(tag: str, body: str) -> str:
     return f"<{tag}>\n{body.strip()}\n</{tag}>"
 
 
+def _strip_outer_tag(body: str, tag: str) -> str:
+    """剥掉 body 已有的外层 <tag>...</tag>, 防双重嵌套.
+
+    历史 persona 由 LLM 直接输出 <user_facts>...</user_facts> 整段, Layer 又包一层 → 双嵌套.
+    新版 prompt 已要求 LLM 只输出 <fact> 列表, 此函数保留作向后兼容老 persona.
+    """
+    s = body.strip()
+    open_tag = f"<{tag}>"
+    close_tag = f"</{tag}>"
+    if s.startswith(open_tag) and s.endswith(close_tag):
+        return s[len(open_tag):-len(close_tag)].strip()
+    return s
+
+
 class SessionStableLayer:
     """Layer 2a 渲染器, 按存在与否拼接片段."""
 
@@ -53,7 +67,8 @@ class SessionStableLayer:
 
         # mem0 短事实 (已过 gate, 进来即注入)
         if ctx.user_facts and ctx.user_facts.strip():
-            sections.append(_xml_section("user_facts", ctx.user_facts))
+            facts_body = _strip_outer_tag(ctx.user_facts, "user_facts")
+            sections.append(_xml_section("user_facts", facts_body))
 
         # mem0 召回 (会话首次拉一次, 整会话固定)
         if ctx.user_memory and ctx.user_memory.strip():
