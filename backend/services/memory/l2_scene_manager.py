@@ -11,7 +11,6 @@ LLM 输出结构化 JSON 操作指令，代码层执行 DB 操作。
 from __future__ import annotations
 
 import json
-import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -19,11 +18,12 @@ from datetime import datetime, timezone
 from .config import get_memory_config
 from .l1_extractor import _call_qianwen
 from .prompts.l2_scene import (
+from loguru import logger
     SCENE_EXTRACTION_SYSTEM_PROMPT,
     format_scene_extraction_prompt,
 )
 
-logger = logging.getLogger(__name__)
+
 
 
 class L2SceneManager:

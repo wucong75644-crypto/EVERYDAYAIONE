@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import logging
 import uuid
 from typing import Any
 
@@ -17,8 +16,9 @@ from .l1_dedup import L1DedupService
 from .retrieval_pipeline import RetrievalPipeline, ScoredMemory
 from .pipeline_scheduler import PipelineScheduler
 from .context_compressor import ContextCompressor
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+
 
 # 全局调度器单例
 _scheduler: PipelineScheduler | None = None
