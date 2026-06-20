@@ -50,24 +50,96 @@ class TestMimebundleDispatch:
         assert payload["kind"] == "image"
         assert payload["svg"] == "<svg/>"
 
-    def test_html_dispatched_as_html_kind(self):
-        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
-        bundle = {"text/html": "<table>...</table>"}
-        payload = _mimebundle_to_payload(bundle)
-        assert payload["kind"] == "html"
-        assert "<table>" in payload["html"]
+    def test_html_dataframe_dispatched_as_table(self):
+        """pandas DataFrame _repr_html_ → 智能解析为 table payload (对标 Databricks display)。
 
-    def test_json_dispatched_as_data_kind(self):
+        对称美:df._repr_html_() 出 → pd.read_html 进。
+        """
+        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
+        import pandas as pd
+        df = pd.DataFrame({"name": ["张三", "李四"], "count": [100, 200]})
+        bundle = {"text/html": df.to_html()}
+        payload = _mimebundle_to_payload(bundle)
+        assert payload["kind"] == "table"
+        assert "name" in payload["columns"]
+        assert "count" in payload["columns"]
+        assert len(payload["rows"]) == 2
+        assert payload["rows"][0]["name"] == "张三"
+        assert payload["rows"][0]["count"] == 100
+
+    def test_html_non_table_returns_none(self):
+        """非表格 HTML(IPython.display.HTML('<div>...</div>'))不接通,return None。
+
+        简化派(Databricks/Hex)路径:非结构化 HTML 不渲染,避免 XSS。
+        """
+        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
+        bundle = {"text/html": "<div>纯文本 div</div>"}
+        assert _mimebundle_to_payload(bundle) is None
+
+    def test_html_empty_table_returns_none(self):
+        """空表格 HTML 不构造无意义 payload"""
+        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
+        bundle = {"text/html": "<table><thead></thead><tbody></tbody></table>"}
+        assert _mimebundle_to_payload(bundle) is None
+
+    def test_html_multi_table_takes_first(self):
+        """HTML 含多个 table 只取第一个(pandas 习惯)"""
+        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
+        import pandas as pd
+        df1 = pd.DataFrame({"a": [1]})
+        df2 = pd.DataFrame({"b": [2]})
+        bundle = {"text/html": df1.to_html() + df2.to_html()}
+        payload = _mimebundle_to_payload(bundle)
+        assert payload["kind"] == "table"
+        assert "a" in payload["columns"]
+        assert "b" not in payload["columns"]
+
+    def test_html_unnamed_index_column_stripped(self):
+        """pandas df.to_html() 默认 index=True 反解会产生 Unnamed: 0 列,必须去掉。
+
+        场景:LLM 在 sandbox 写 df.head(),触发默认 to_html(index=True)。
+        """
+        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
+        import pandas as pd
+        df = pd.DataFrame({"name": ["张三"], "count": [100]})
+        bundle = {"text/html": df.to_html()}  # 默认 index=True
+        payload = _mimebundle_to_payload(bundle)
+        assert payload["kind"] == "table"
+        assert payload["columns"] == ["name", "count"]
+        assert "Unnamed: 0" not in payload["columns"]
+
+    def test_html_nan_converted_to_none_for_json_safety(self):
+        """pandas NaN → None (JSON 标准 NaN 非法,前端 JSON.parse 会崩)"""
+        from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
+        import json
+        import pandas as pd
+        df = pd.DataFrame({"name": ["张三", None], "count": [100, 80]})
+        bundle = {"text/html": df.to_html()}
+        payload = _mimebundle_to_payload(bundle)
+        assert payload["kind"] == "table"
+        # NaN 必须转 None,且 JSON 可序列化(不抛 ValueError)
+        rows_json = json.dumps(payload["rows"])
+        assert "NaN" not in rows_json
+        assert payload["rows"][1]["name"] is None
+
+    def test_json_returns_none(self):
+        """application/json (IPython.display.JSON) 不接通 — LLM Agent 场景不需要。
+
+        简化派(Databricks/Hex)做法:JSON 嵌套数据让 LLM 用 print(json.dumps) 即可,
+        不引入独立的 data block 渲染器。
+        """
         from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
         bundle = {"application/json": {"k": "v"}}
-        payload = _mimebundle_to_payload(bundle)
-        assert payload["kind"] == "data"
+        assert _mimebundle_to_payload(bundle) is None
 
-    def test_markdown_dispatched_as_markdown(self):
+    def test_markdown_returns_none(self):
+        """text/markdown (IPython.display.Markdown) 不接通 — LLM 主消息本身就是 markdown。
+
+        重复功能,简化派(Databricks/Hex)做法是不接 markdown mime。
+        """
         from services.sandbox.emit_auto_hooks import _mimebundle_to_payload
         bundle = {"text/markdown": "# Header"}
-        payload = _mimebundle_to_payload(bundle)
-        assert payload["kind"] == "markdown"
+        assert _mimebundle_to_payload(bundle) is None
 
     def test_unknown_mime_returns_none(self):
         from services.sandbox.emit_auto_hooks import _mimebundle_to_payload

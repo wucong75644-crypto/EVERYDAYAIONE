@@ -328,7 +328,13 @@ class TestBuildPayloadPureFunctions:
 
     def test_build_chart_payload(self):
         p = build_chart_payload({"x": 1}, title="A")
-        assert p == {"kind": "chart", "title": "A", "option": {"x": 1}}
+        # 手动 emit_chart → spec_format 固定 echarts(plotly/vegalite 走 emit_auto_hooks)
+        assert p == {
+            "kind": "chart",
+            "spec_format": "echarts",
+            "title": "A",
+            "option": {"x": 1},
+        }
 
     def test_build_chart_payload_validates_dict(self):
         with pytest.raises(TypeError, match="必须是 dict"):

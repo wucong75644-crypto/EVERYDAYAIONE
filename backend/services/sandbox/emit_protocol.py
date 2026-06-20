@@ -38,11 +38,16 @@ _TABLE_MAX_ROWS = 200
 
 
 def build_chart_payload(option: dict, title: str = "") -> dict:
-    """构造 chart payload(ECharts option dict)"""
+    """构造 chart payload(ECharts option dict)。
+
+    手动 emit_chart 入口 → spec_format 固定 echarts。
+    plotly/vegalite 走 emit_auto_hooks 的 publish 链路,自带各自 spec_format。
+    """
     if not isinstance(option, dict):
         raise TypeError(f"emit_chart option 必须是 dict,收到 {type(option).__name__}")
     return {
         "kind": "chart",
+        "spec_format": "echarts",
         "title": title or "",
         "option": option,
     }

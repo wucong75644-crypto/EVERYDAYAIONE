@@ -81,32 +81,68 @@ def _mimebundle_to_payload(data: dict) -> dict | None:
                 "_inline_ext": ext,
             }
 
-    # text/html (pandas DataFrame / IPython.display.HTML)
+    # text/html → 智能转 table (对标 Databricks display(df) / Hex Smart Cells)
+    # df._repr_html_() 出 → pd.read_html 进,对称美。
+    # 非表格 HTML(IPython.display.HTML('<div>'))不接通,return None。
     html = data.get("text/html")
     if html and isinstance(html, str):
-        return {
-            "kind": "html",
-            "html": html,
-            "name": "inline.html",
-        }
+        return _html_to_table_payload(html)
 
-    # application/json
-    json_data = data.get("application/json")
-    if json_data is not None:
-        return {
-            "kind": "data",
-            "data": json_data,
-        }
-
-    # text/markdown
-    md = data.get("text/markdown")
-    if md and isinstance(md, str):
-        return {
-            "kind": "markdown",
-            "markdown": md,
-        }
+    # application/json / text/markdown 不接通(对标 Databricks/Hex 简化派):
+    #   - JSON: LLM 可 print(json.dumps),无需独立 data block
+    #   - Markdown: LLM 主消息本身就是 markdown,功能重复
+    # 详见 docs/document/TECH_沙盒IO统一协议.md
 
     return None
+
+
+# 表格预览行数上限 — 与 emit_protocol._TABLE_MAX_ROWS / 前端 MAX_PREVIEW_ROWS 对齐
+_HTML_TABLE_MAX_ROWS = 200
+
+
+def _html_to_table_payload(html: str) -> dict | None:
+    """HTML(含 <table>)→ table payload。
+
+    用 pandas.read_html 反向解析,对 df.to_html() / df._repr_html_() 天然对称。
+    非表格 HTML / 空表格 / 解析失败 → return None(走静默丢弃,对齐 data/markdown)。
+
+    清理:
+      - 去掉 pandas 默认 index 反解产生的 "Unnamed: 0" 列
+      - numpy.nan → None (JSON 序列化合法 + 前端 formatCell 能正确处理)
+    """
+    try:
+        import pandas as pd
+        from io import StringIO
+    except ImportError:
+        return None
+    try:
+        # StringIO 包装(pandas 2.x 起字符串字面量被弃用)
+        dfs = pd.read_html(StringIO(html), flavor="lxml")
+    except (ValueError, ImportError, Exception):
+        return None
+    if not dfs:
+        return None
+    df = dfs[0]
+    if df.empty or len(df.columns) == 0:
+        return None
+    # 去掉 pandas df.to_html(默认 index=True)产生的 "Unnamed: 0" 索引列
+    unnamed_cols = [c for c in df.columns if str(c).startswith("Unnamed:")]
+    if unnamed_cols:
+        df = df.drop(columns=unnamed_cols)
+        if df.empty or len(df.columns) == 0:
+            return None
+    total_rows = len(df)
+    truncated = total_rows > _HTML_TABLE_MAX_ROWS
+    if truncated:
+        df = df.head(_HTML_TABLE_MAX_ROWS)
+    # numpy.nan → None (JSON 标准 NaN 非法,前端 JSON.parse 会崩)
+    df = df.astype(object).where(df.notna(), None)
+    return {
+        "kind": "table",
+        "columns": [str(c) for c in df.columns.tolist()],
+        "rows": df.to_dict(orient="records"),
+        "truncated": truncated,
+    }
 
 
 def install_ipython_display_shim(

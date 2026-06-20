@@ -165,15 +165,18 @@ class FormPart(BaseModel):
 
 
 class ChartPart(BaseModel):
-    """交互式图表内容块（ECharts 配置 JSON）
+    """交互式图表内容块
 
-    沙盒 code_execute 生成 .echart.json → 后端读取内容嵌入 block →
-    前端 ChartBlock 用 ECharts 渲染交互式图表。
+    沙盒 emit 协议 → 后端 → 前端 ChartBlock。spec_format 决定渲染器:
+      - echarts (默认) — 手动 emit_chart / 内置图表
+      - plotly  — plotly fig.show() / display(fig) hook 产出
+      - vegalite — altair Chart.show() hook 产出
     """
     type: Literal["chart"] = "chart"
-    option: Dict[str, Any]           # ECharts option 配置
-    title: str = ""                  # 图表标题（用于无障碍和导出）
-    chart_type: str = ""             # 类型标识（line/bar/pie，日志用）
+    option: Dict[str, Any]                # 图表 spec(echarts option / plotly fig dict / vega-lite spec)
+    title: str = ""                       # 图表标题(用于无障碍和导出)
+    chart_type: str = ""                  # 类型标识(line/bar/pie,日志用)
+    spec_format: Literal["echarts", "plotly", "vegalite"] = "echarts"
 
 
 class EcomPlanPart(BaseModel):

@@ -49,6 +49,35 @@ class TestChartPartSchema:
         assert isinstance(parsed, ChartPart)
         assert parsed.type == "chart"
 
+    def test_chart_part_accepts_spec_format(self):
+        """ChartPart 支持 spec_format 字段(plotly/vegalite/echarts)。
+
+        Bug: 之前 ChartPart 没有 spec_format 字段,导致 plotly/vegalite
+        spec 在持久化时丢失 spec_format,前端默认走 ECharts 渲染失败。
+        """
+        cp = ChartPart(
+            option={"data": [{"type": "bar"}]},
+            title="plotly 柱状图",
+            spec_format="plotly",
+        )
+        d = cp.model_dump()
+        assert d["spec_format"] == "plotly"
+
+    def test_chart_part_spec_format_default_echarts(self):
+        """未指定 spec_format 时默认 echarts(向后兼容)"""
+        cp = ChartPart(option={"series": []})
+        assert cp.spec_format == "echarts"
+
+    def test_chart_part_roundtrip_with_spec_format(self):
+        """ChartPart spec_format 序列化往返"""
+        original = ChartPart(
+            option={"data": [{"type": "bar"}], "layout": {}},
+            spec_format="vegalite",
+        )
+        dumped = original.model_dump()
+        restored = ChartPart(**dumped)
+        assert restored.spec_format == "vegalite"
+
 
 # ============================================================
 # SandboxExecutor .echart.json 检测
@@ -80,6 +109,42 @@ class TestBuildBlockFromPayload:
         assert block["type"] == "chart"
         assert block["title"] == "销售趋势"
         assert block["chart_type"] == "bar"
+
+    def test_chart_payload_transmits_spec_format_plotly(self):
+        """plotly emit 的 spec_format 必须透传到 block (前端按此选 PlotlyBlock)。
+
+        Bug: _build_block_from_payload 之前丢了 spec_format 字段,
+        前端拿到 undefined 默认走 ECharts → plotly spec 渲染失败。
+        """
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "chart",
+            "spec_format": "plotly",
+            "title": "plotly 图",
+            "option": {"data": [{"type": "bar"}], "layout": {}},
+        })
+        assert block["spec_format"] == "plotly"
+
+    def test_chart_payload_transmits_spec_format_vegalite(self):
+        """vegalite emit 的 spec_format 必须透传到 block"""
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "chart",
+            "spec_format": "vegalite",
+            "title": "altair 图",
+            "option": {"$schema": "https://vega.github.io/schema/vega-lite/v5.json"},
+        })
+        assert block["spec_format"] == "vegalite"
+
+    def test_chart_payload_no_spec_format_defaults_echarts(self):
+        """未指定 spec_format (老的手动 emit_chart) 默认 echarts,向后兼容。"""
+        from services.handlers.chat_handler import _build_block_from_payload
+        block = _build_block_from_payload({
+            "kind": "chart",
+            "title": "ECharts 图",
+            "option": {"series": [{"type": "bar", "data": [1, 2, 3]}]},
+        })
+        assert block.get("spec_format") == "echarts"
 
     def test_table_payload_to_block(self):
         from services.handlers.chat_handler import _build_block_from_payload
@@ -190,3 +255,24 @@ class TestChartPersistence:
         )
         assert cp.title == ""
         assert cp.chart_type == ""
+
+    def test_chart_part_constructed_from_block_keeps_spec_format(self):
+        """block dict 含 spec_format 时,构造 ChartPart 必须保留。
+
+        Bug: chat_handler.py 1014-1020 result_parts.append(ChartPart(...))
+        之前未传 spec_format,持久化时丢失。
+        """
+        block = {
+            "type": "chart",
+            "option": {"data": [{"type": "bar"}]},
+            "title": "plotly 图",
+            "chart_type": "bar",
+            "spec_format": "plotly",
+        }
+        cp = ChartPart(
+            option=block["option"],
+            title=block.get("title", ""),
+            chart_type=block.get("chart_type", ""),
+            spec_format=block.get("spec_format", "echarts"),
+        )
+        assert cp.spec_format == "plotly"

@@ -63,6 +63,7 @@ def _build_block_from_payload(p: dict) -> dict | None:
             "option": option,
             "title": p.get("title") or _extract_chart_title(option),
             "chart_type": _extract_chart_type(option),
+            "spec_format": p.get("spec_format") or "echarts",
         }
     if kind == "table":
         return {
@@ -1017,6 +1018,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             option=block["option"],
                             title=block.get("title", ""),
                             chart_type=block.get("chart_type", ""),
+                            spec_format=block.get("spec_format", "echarts"),
                         ))
                     elif block["type"] == "form":
                         from schemas.message import FormPart
