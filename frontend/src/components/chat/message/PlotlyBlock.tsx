@@ -186,24 +186,23 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
   }
 
   return (
-    <div className="my-3 relative">
+    <div className="my-3 relative" style={{ height: 400 }}>
       {/* title 不在外层渲染:plotly 内部 layout.title 已由 PROFESSIONAL_TEMPLATE
           渲染(左对齐 16px 加粗),外层再渲染会出现双标题 + 中间空白 */}
-      {/* loading 占位与真容器二选一渲染:loading 时 containerRef 用 display:none
-          避免两个 400px 块叠加出 800px 双倍空白(对齐 ChartBlock 的处理) */}
+
+      {/* 容器固定 height:400 始终有尺寸(不用 display:none),plotly newPlot 才能读
+          到正确容器尺寸渲染。否则 newPlot 时容器是 0x0,plotly 用默认 450px 撑
+          超容器覆盖下方文字。loading 占位用 absolute 覆盖在容器上方,plotly 渲染
+          完成自然显现。 */}
+      <div ref={containerRef} style={{ width: '100%', height: 400 }} />
       {loading && (
-        <div className="rounded-xl flex items-center justify-center bg-hover"
-             style={{ width: '100%', height: 400 }}>
+        <div className="absolute inset-0 rounded-xl flex items-center justify-center bg-hover">
           <svg className="w-8 h-8 text-text-disabled animate-pulse" viewBox="0 0 24 24"
                fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M3 3v18h18" /><path d="M7 16l4-8 4 4 4-6" />
           </svg>
         </div>
       )}
-      {/* 容器固定 height: 400 (不用 minHeight),否则 plotly responsive:true + autosize
-          会撑到 600-1000px,X 轴标签被挤出 viewport。对齐 ChartBlock(ECharts) 处理。 */}
-      <div ref={containerRef}
-        style={{ width: '100%', height: 400, display: loading ? 'none' : 'block' }} />
     </div>
   );
 }
