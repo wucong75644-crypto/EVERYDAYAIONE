@@ -1,33 +1,28 @@
-"""emit 协议:沙盒内主动声明产物给主进程
+"""emit 协议:沙盒内主动声明产物给主进程(流派 2 多字段 IPC,对齐 OpenAI/Anthropic)
 
-LLM 调用 emit_xxx() → buffer 收集 payload → 沙盒 _exec_code 收尾时合并成
-[EMIT]{json}[/EMIT] marker 拼到 stdout_text → kernel_worker JSON-Line 协议
-传回主进程 → tool_loop_executor 解析路由。
+LLM 调用 emit_xxx() → buffer 收集 payload → _exec_code 返回 (stdout, payloads)
+→ kernel_worker JSON-Line 协议独立字段传回主进程 → executor 拿 emit_payloads。
 
 为什么用 buffer 不用 print:
   kernel_worker 用 sys.stdin/stdout JSON-Line 跟主进程通信(沙盒响应通道)。
   emit 函数若直接 print() 会污染协议通道导致 JSON 解析失败。
-  改成 buffer 收集 + _exec_code 末尾合并到用户 stdout 文本(走正确通道)。
+  改成 buffer 收集 → _exec_code 返回 (stdout, payloads) 元组 → IPC 独立字段。
 
 设计文档:docs/document/TECH_沙盒IO统一协议.md
-状态:正式协议(2026-06),全局始终启用
+状态:正式协议(流派 2 字段分离 2026-06),全局始终启用
 
-protocol(向 LLM/前端):
-  [EMIT]{"kind":"chart","title":"...","option":{...}}[/EMIT]
-  [EMIT]{"kind":"file","path":"下载/x.xlsx","label":"销售报表","size":2048}[/EMIT]
-  [EMIT]{"kind":"image","path":"下载/x.png","alt":""}[/EMIT]
-  [EMIT]{"kind":"table","title":"...","columns":[...],"rows":[...]}[/EMIT]
+产物 payload kind:
+  chart: {kind, spec_format, title, option}   — ECharts/plotly/vegalite spec
+  file:  {kind, path, label, name, size, url} — 文件下载卡片
+  image: {kind, path, alt, name, width, height, url} — 图片
+  table: {kind, title, columns, rows, truncated, total_rows} — 表格
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
-EMIT_MARKER_START = "[EMIT]"
-EMIT_MARKER_END = "[/EMIT]"
-
-# 表格行数上限(防大表把 marker 撑爆)
+# 表格行数上限(防大表撑爆 IPC / 前端渲染)
 # 注意:前端 TableBlock.tsx 也有 MAX_PREVIEW_ROWS,两端必须一致
 _TABLE_MAX_ROWS = 200
 
@@ -139,10 +134,11 @@ def build_table_payload(data: Any, title: str = "") -> dict:
 
 
 def install_emit_in_globals(sandbox_globals: dict, buffer: list[dict]) -> None:
-    """在 sandbox_globals 注入 emit_xxx 函数,闭包绑定 buffer
+    """在 sandbox_globals 注入 emit_xxx 函数,闭包绑定 buffer。
 
     sandbox 执行用户代码前调一次。emit_xxx 调用时不打 print,而是把 payload
-    append 到 buffer。_exec_code 末尾把 buffer 转 [EMIT] marker 拼到 stdout_text。
+    append 到 buffer。_exec_code 末尾把 buffer 作为 emit_payloads 返回,
+    走 IPC 独立字段传到主进程,完整无截断。
 
     Args:
         sandbox_globals: 沙盒执行环境的 globals dict
@@ -160,50 +156,3 @@ def install_emit_in_globals(sandbox_globals: dict, buffer: list[dict]) -> None:
     sandbox_globals["emit_table"] = (
         lambda data, title="": buffer.append(build_table_payload(data, title))
     )
-
-
-def format_emit_markers(buffer: list[dict]) -> str:
-    """把 buffer 转成 [EMIT]{json}[/EMIT] marker 文本(每条一行)
-
-    _exec_code 末尾调用,合并到用户 stdout_text 末尾。
-    """
-    if not buffer:
-        return ""
-    return "\n".join(
-        f"{EMIT_MARKER_START}{json.dumps(p, ensure_ascii=False, default=str)}{EMIT_MARKER_END}"
-        for p in buffer
-    )
-
-
-# ============================================================
-# 测试/兼容包装(直接打印版,仅供测试,不建议生产用)
-# ============================================================
-# 旧版 API 兼容:有些守护测试还在 capture print 验证。保留 print 版本
-# 但内部用 build_xxx_payload 共享逻辑。
-
-def _print_payload(payload: dict) -> None:
-    print(
-        f"{EMIT_MARKER_START}"
-        f"{json.dumps(payload, ensure_ascii=False, default=str)}"
-        f"{EMIT_MARKER_END}"
-    )
-
-
-def emit_chart(option: dict, title: str = "") -> None:
-    """直接打印版(仅供守护测试 capture stdout)"""
-    _print_payload(build_chart_payload(option, title))
-
-
-def emit_file(path: str, label: str | None = None) -> None:
-    """直接打印版"""
-    _print_payload(build_file_payload(path, label))
-
-
-def emit_image(path: str, alt: str = "") -> None:
-    """直接打印版"""
-    _print_payload(build_image_payload(path, alt))
-
-
-def emit_table(data: Any, title: str = "") -> None:
-    """直接打印版"""
-    _print_payload(build_table_payload(data, title))

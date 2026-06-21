@@ -27,7 +27,8 @@ from services.agent.loop_types import (
 from services.agent.tool_output import ToolOutput
 from services.agent.tool_result_cache import ToolResultCache
 
-# [EMIT] 协议在 SandboxExecutor.execute 内部解析(沙盒 IO 统一协议)
+# 产物通道:SandboxExecutor.execute 直接产出 AgentResult.emit_payloads
+# (流派 2 多字段 IPC,沙盒 IO 统一协议)
 # 此处只聚合 result.emit_payloads → self._emit_payloads,见 _register_result_files
 
 
@@ -687,8 +688,8 @@ class ToolLoopExecutor:
                 is_truncated = False
                 self._register_result_files(result, tool_name)
 
-            # Step 2: emit_payloads 已由 SandboxExecutor.execute 内部解析填进 result,
-            # _register_result_files 已聚合到 self._emit_payloads,此处无需再处理 [EMIT]
+            # Step 2: emit_payloads 已由 SandboxExecutor.execute 通过 IPC 独立字段拿到,
+            # _register_result_files 已聚合到 self._emit_payloads,此处无需再处理产物
 
             # Step 3: 信封分流(按工具名自动选预算,大结果落盘 staging)
             if not isinstance(result, ToolOutput):

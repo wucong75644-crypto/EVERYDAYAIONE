@@ -281,3 +281,71 @@ class TestProtocol:
         kernel_proc.stdin.close()
         exit_code = kernel_proc.wait(timeout=5)
         assert exit_code == 0
+
+
+class TestNonNativeJsonSerialization:
+    """emit_payloads 含 numpy / datetime 等非原生类型时,_write_response 必须兜底。
+
+    Bug: 之前 _write_response 调 json.dumps 不传 default,plotly fig.to_dict()
+    含 ndarray → TypeError: Object of type ndarray is not JSON serializable
+    → kernel 崩溃。
+    """
+
+    def test_numpy_ndarray_in_emit_payload(self, kernel_proc):
+        """ndarray 必须自动转 list,kernel 不崩"""
+        code = (
+            "import numpy as np\n"
+            "arr = np.array([1, 2, 3])\n"
+            "emit_chart({'series': [{'type': 'bar', 'data': arr}]}, '测试')\n"
+        )
+        r = _send(kernel_proc, {"id": "np1", "code": code, "timeout": 10})
+        assert r["status"] == "ok"
+        assert len(r["emit_payloads"]) == 1
+        # ndarray 已转成 list
+        assert r["emit_payloads"][0]["option"]["series"][0]["data"] == [1, 2, 3]
+
+    def test_numpy_scalar_in_emit_payload(self, kernel_proc):
+        """numpy 标量 (np.int64) 必须自动转 Python int"""
+        code = (
+            "import numpy as np\n"
+            "n = np.int64(42)\n"
+            "emit_table([{'count': n}], '表格')\n"
+        )
+        r = _send(kernel_proc, {"id": "np2", "code": code, "timeout": 10})
+        assert r["status"] == "ok"
+        assert r["emit_payloads"][0]["rows"][0]["count"] == 42
+
+    def test_unserializable_fallback_to_str(self, kernel_proc):
+        """完全不可序列化的对象兜底 str(),kernel 不崩"""
+        code = (
+            "import datetime as _dt\n"
+            "ts = _dt.datetime(2026, 6, 21, 12, 0, 0)\n"
+            "emit_table([{'time': ts}], '日志')\n"
+        )
+        r = _send(kernel_proc, {"id": "dt1", "code": code, "timeout": 10})
+        assert r["status"] == "ok"
+        # datetime → str 兜底
+        assert "2026-06-21" in str(r["emit_payloads"][0]["rows"][0]["time"])
+
+
+class TestLargeResponseJsonLine:
+    """JSON-Line 响应行长度边界:asyncio readline 默认 64KB 限制。
+
+    Bug 预防:plotly fig 完整 spec(含 default template) + stdout 截断 50KB
+    合并后单行轻松超 64KB → readline LimitOverrunError → IPC 协议崩。
+    kernel_manager 必须显式设置 limit=10MB 才能容纳。
+    """
+
+    def test_large_emit_payload_100kb_not_crash(self, kernel_proc):
+        """emit 100KB+ 产物时 kernel 必须能完整返回(不崩、不截断)"""
+        code = (
+            "# 构造一个 100KB+ 的 chart payload(模拟 plotly 大 fig spec)\n"
+            "big_data = list(range(20000))  # ~120KB 序列化\n"
+            "emit_chart({'series': [{'type': 'bar', 'data': big_data}]}, '大图')\n"
+        )
+        r = _send(kernel_proc, {"id": "big1", "code": code, "timeout": 15})
+        assert r["status"] == "ok"
+        assert len(r["emit_payloads"]) == 1
+        # 验证 100KB+ 数据完整透传,没被截断
+        assert len(r["emit_payloads"][0]["option"]["series"][0]["data"]) == 20000
+        assert r["emit_payloads"][0]["option"]["series"][0]["data"][-1] == 19999

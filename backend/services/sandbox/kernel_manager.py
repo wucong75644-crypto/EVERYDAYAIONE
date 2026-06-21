@@ -274,6 +274,11 @@ class KernelManager:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # asyncio StreamReader 默认 64KB 行长度限制,plotly 完整 fig spec
+            # (含 default template)+ stdout 截断 50KB 合并 JSON-Line 容易超 64KB
+            # → readline() 抛 LimitOverrunError,整个 IPC 协议崩。
+            # 提高到 10MB 容纳任意大小产物(emit_payloads 不计入 stdout 截断预算)。
+            limit=10 * 1024 * 1024,
             cwd=self._backend_dir,
             preexec_fn=self._pdeathsig_fn,
         )

@@ -418,9 +418,9 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # 路径协议:AI 用相对路径 + attachments XML 给完整字符串,无需 get_file 兜底
     # 长对话上下文丢失时,AI 主动调 file_search 工具(Agent 层)探索
 
-    # emit 协议:沙盒主动声明产物 → buffer 收集 → _exec_code 收尾时合并为
-    # [EMIT] marker 拼到 stdout(避开 kernel JSON-Line 协议通道冲突)
-    # 见 services/sandbox/emit_protocol.py + tool_loop_executor [EMIT] 解析逻辑
+    # emit 协议:沙盒主动声明产物 → buffer 收集 → _exec_code 返回 (stdout, payloads)
+    # → kernel_worker JSON-Line IPC 独立字段(stdout vs emit_payloads)
+    # 见 services/sandbox/emit_protocol.py(流派 2 多字段协议)
     from services.sandbox.emit_protocol import install_emit_in_globals
     g["_emit_buffer"] = []  # _exec_code 每次执行前 clear,收尾时读
     install_emit_in_globals(g, g["_emit_buffer"])

@@ -100,9 +100,38 @@ def _read_request() -> Optional[Dict[str, Any]]:
         return {"id": "__malformed__", "code": "", "timeout": 0, "_error": str(e)}
 
 
+def _json_default(o: Any) -> Any:
+    """JSON 序列化兜底:emit_payloads 可能含 numpy / datetime / Decimal 等非原生类型。
+
+    plotly fig.to_dict() 出来的 spec 内含 numpy ndarray 与 numpy 标量,
+    必须转 list / Python 标量,前端 PlotlyBlock 才能正确渲染。
+    其他不可序列化对象兜底 str(),避免 kernel 崩溃。
+    """
+    # numpy ndarray / pandas Series → list
+    if hasattr(o, "tolist"):
+        try:
+            return o.tolist()
+        except Exception:
+            pass
+    # numpy 标量 (np.int64/np.float64) → Python 原生
+    if hasattr(o, "item"):
+        try:
+            return o.item()
+        except Exception:
+            pass
+    # datetime / Decimal / Path / 其他对象 → str
+    return str(o)
+
+
 def _write_response(response: Dict[str, Any]) -> None:
-    """向 stdout 写入一行 JSON 响应"""
-    sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+    """向 stdout 写入一行 JSON 响应。
+
+    用 _json_default 兜底 numpy/datetime/Decimal 等非原生类型,
+    避免 plotly emit_payloads 含 ndarray 时 kernel 崩溃。
+    """
+    sys.stdout.write(
+        json.dumps(response, ensure_ascii=False, default=_json_default) + "\n"
+    )
     sys.stdout.flush()
 
 

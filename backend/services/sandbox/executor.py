@@ -40,7 +40,7 @@ def _append_emit_hints(stdout: str, payloads: list[dict]) -> str:
     """在 stdout 末尾追加产物占位提示。
 
     产物 payload 走独立通道传给前端,LLM 不看;但要让 LLM 知道"已 emit",
-    不要重复 emit。占位提示对齐之前 [EMIT] marker 替换出来的文本。
+    不要重复 emit。
     """
     if not payloads:
         return stdout
