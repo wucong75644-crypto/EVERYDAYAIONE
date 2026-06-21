@@ -26,5 +26,3 @@ declare module 'plotly.js-basic-dist-min' {
   };
   export default _default;
 }
-</content>
-</invoke>
