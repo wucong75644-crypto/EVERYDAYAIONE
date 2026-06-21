@@ -63,18 +63,18 @@ class TestBasic:
         assert ok is True
         assert km.active_count() == 1
 
-        status, result = await km.execute("conv1", "print('hello')", 10)
+        status, stdout, payloads = await km.execute("conv1", "print('hello')", 10)
         assert status == "ok"
-        assert "hello" in result
+        assert "hello" in stdout
 
     async def test_variable_persistence(self, km, temp_dirs):
         ws, st, out = temp_dirs()
         await km.get_or_create("conv1", ws, st, out)
 
         await km.execute("conv1", "x = 42", 10)
-        status, result = await km.execute("conv1", "print(x * 2)", 10)
+        status, stdout, payloads = await km.execute("conv1", "print(x * 2)", 10)
         assert status == "ok"
-        assert "84" in result
+        assert "84" in stdout
 
     async def test_reuse_existing_kernel(self, km, temp_dirs):
         ws, st, out = temp_dirs()
@@ -134,7 +134,7 @@ class TestInterrupt:
         await km.get_or_create("conv1", ws, st, out)
 
         # 先设变量
-        status, _ = await km.execute("conv1", "x = 42", 10)
+        status, _, _ = await km.execute("conv1", "x = 42", 10)
         assert status == "ok"
 
         # 启动一个长任务（time.sleep）+ 中断它
@@ -147,16 +147,16 @@ class TestInterrupt:
 
         # 等待 execute 返回（应该是 interrupted 状态）
         try:
-            status, result = await _asyncio.wait_for(task, timeout=5)
+            status, stdout, payloads = await _asyncio.wait_for(task, timeout=5)
             assert status == "interrupted"
         except _asyncio.TimeoutError:
             task.cancel()
             raise AssertionError("interrupt 未在 5s 内生效")
 
         # 验证变量保留 + kernel 可继续用
-        status2, result2 = await km.execute("conv1", "print(x)", 10)
+        status2, stdout2, payloads2 = await km.execute("conv1", "print(x)", 10)
         assert status2 == "ok"
-        assert "42" in result2
+        assert "42" in stdout2
 
 
 # ============================================================
@@ -182,10 +182,10 @@ class TestMultiKernel:
         await km.execute("conv_a", "secret = 'alpha'", 10)
         await km.execute("conv_b", "secret = 'beta'", 10)
 
-        _, r_a = await km.execute("conv_a", "print(secret)", 10)
-        _, r_b = await km.execute("conv_b", "print(secret)", 10)
-        assert "alpha" in r_a
-        assert "beta" in r_b
+        _, stdout_a, _ = await km.execute("conv_a", "print(secret)", 10)
+        _, stdout_b, _ = await km.execute("conv_b", "print(secret)", 10)
+        assert "alpha" in stdout_a
+        assert "beta" in stdout_b
 
 
 # ============================================================
@@ -260,9 +260,9 @@ class TestCrashRecovery:
         ok = await km.get_or_create("conv1", ws, st, out)
         assert ok is True
 
-        status, result = await km.execute("conv1", "print('reborn')", 10)
+        status, stdout, payloads = await km.execute("conv1", "print('reborn')", 10)
         assert status == "ok"
-        assert "reborn" in result
+        assert "reborn" in stdout
 
 
 # ============================================================
@@ -329,9 +329,9 @@ class TestConcurrency:
         results = await asyncio.gather(*(increment(i) for i in range(5)))
 
         # 最终值应该是 5（如果串行化正确）
-        status, result = await km.execute("conv1", "print(counter)", 10)
+        status, stdout, payloads = await km.execute("conv1", "print(counter)", 10)
         assert status == "ok"
-        assert "5" in result
+        assert "5" in stdout
 
 
 # ============================================================

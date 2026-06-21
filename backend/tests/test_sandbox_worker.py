@@ -297,30 +297,39 @@ class TestBuildSandboxGlobals:
 
 
 class TestExecCode:
-    """代码执行测试（直接调用，不经子进程）"""
+    """代码执行测试（直接调用，不经子进程）
+
+    流派 2 协议下,_exec_code 返回 (stdout, emit_payloads) 元组:
+      - stdout: 文本输出
+      - emit_payloads: 结构化产物 list[dict]
+    """
 
     def _make_globals(self, tmp_path):
         return _build_sandbox_globals(str(tmp_path), "", "")
 
     def test_simple_expression(self, tmp_path):
         g = self._make_globals(tmp_path)
-        result = _exec_code("1 + 1", g, timeout=5.0)
-        assert "2" in result
+        stdout, payloads = _exec_code("1 + 1", g, timeout=5.0)
+        assert "2" in stdout
+        assert payloads == []
 
     def test_print_output(self, tmp_path):
         g = self._make_globals(tmp_path)
-        result = _exec_code("print('hello')", g, timeout=5.0)
-        assert "hello" in result
+        stdout, payloads = _exec_code("print('hello')", g, timeout=5.0)
+        assert "hello" in stdout
+        assert payloads == []
 
     def test_last_expression_captured(self, tmp_path):
         g = self._make_globals(tmp_path)
-        result = _exec_code("x = 42\nx", g, timeout=5.0)
-        assert "42" in result
+        stdout, payloads = _exec_code("x = 42\nx", g, timeout=5.0)
+        assert "42" in stdout
+        assert payloads == []
 
     def test_no_output(self, tmp_path):
         g = self._make_globals(tmp_path)
-        result = _exec_code("x = 1", g, timeout=5.0)
-        assert "成功" in result
+        stdout, payloads = _exec_code("x = 1", g, timeout=5.0)
+        assert "成功" in stdout
+        assert payloads == []
 
     def test_runtime_error(self, tmp_path):
         """运行时异常由 _exec_code 抛出，executor 外层 catch"""
@@ -330,13 +339,33 @@ class TestExecCode:
 
     def test_timeout_on_infinite_loop(self, tmp_path):
         g = self._make_globals(tmp_path)
-        result = _exec_code("while True: pass", g, timeout=0.5)
-        assert "超时" in result
+        stdout, payloads = _exec_code("while True: pass", g, timeout=0.5)
+        assert "超时" in stdout
+        # 超时仍返回 emit_payloads(已收集的部分,可能为空)
+        assert isinstance(payloads, list)
 
     def test_async_not_supported(self, tmp_path):
         g = self._make_globals(tmp_path)
-        result = _exec_code("await some_func()", g, timeout=5.0)
-        assert "不支持" in result
+        stdout, payloads = _exec_code("await some_func()", g, timeout=5.0)
+        assert "不支持" in stdout
+        assert payloads == []
+
+    def test_emit_payloads_returned_separately(self, tmp_path):
+        """流派 2 协议:emit_chart 调用应直接进 emit_payloads,不混入 stdout"""
+        g = self._make_globals(tmp_path)
+        code = (
+            "emit_chart({'series': [{'type': 'bar', 'data': [1,2,3]}]}, '测试图')\n"
+            "print('done')"
+        )
+        stdout, payloads = _exec_code(code, g, timeout=5.0)
+        # stdout 只有 print 输出,不再含 [EMIT] marker
+        assert "done" in stdout
+        assert "[EMIT]" not in stdout
+        # chart payload 走独立通道
+        assert len(payloads) == 1
+        assert payloads[0]["kind"] == "chart"
+        assert payloads[0]["title"] == "测试图"
+        assert payloads[0]["spec_format"] == "echarts"
 
 
 

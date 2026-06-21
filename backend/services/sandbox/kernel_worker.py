@@ -163,7 +163,8 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             _write_response({
                 "id": req_id,
                 "status": "error",
-                "result": f"❌ 协议错误: {request['_error']}",
+                "stdout": f"❌ 协议错误: {request['_error']}",
+                "emit_payloads": [],
                 "elapsed_ms": 0,
             })
             continue
@@ -175,7 +176,8 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             _write_response({
                 "id": req_id,
                 "status": "error",
-                "result": "❌ 代码不能为空",
+                "stdout": "❌ 代码不能为空",
+                "emit_payloads": [],
                 "elapsed_ms": 0,
             })
             continue
@@ -190,7 +192,8 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
                 _write_response({
                     "id": req_id,
                     "status": "error",
-                    "result": f"❌ 代码验证失败:\n{error}",
+                    "stdout": f"❌ 代码验证失败:\n{error}",
+                    "emit_payloads": [],
                     "elapsed_ms": elapsed,
                 })
                 continue
@@ -202,17 +205,19 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             )
 
             # 执行代码（sandbox_globals 在进程内持续存在，变量保留）
-            result = _exec_code(code, sandbox_globals, timeout)
+            # 流派 2 多字段协议:stdout 与 emit_payloads 分离传输
+            stdout, emit_payloads = _exec_code(code, sandbox_globals, timeout)
 
             # 路径协议:cwd=/workspace,所有输出已是虚拟相对路径,不再隐藏
 
-            # 截断
-            result = truncate_result(result, max_result_chars)
+            # 截断只作用于 stdout(emit_payloads 完整传输,绝不截断)
+            # 避免 plotly 等大型产物 spec 被拦腰截断导致前端无法渲染
+            stdout = truncate_result(stdout, max_result_chars)
 
             # 判断状态
-            if result.startswith("⏱"):
+            if stdout.startswith("⏱"):
                 status = "timeout"
-            elif result.startswith("❌"):
+            elif stdout.startswith("❌"):
                 status = "error"
             else:
                 status = "ok"
@@ -221,19 +226,23 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
             _write_response({
                 "id": req_id,
                 "status": status,
-                "result": result,
+                "stdout": stdout,
+                "emit_payloads": emit_payloads,
                 "elapsed_ms": elapsed,
             })
 
         except KeyboardInterrupt:
             # SIGINT 中断：用户取消任务时由 KernelManager.interrupt 发送
             # 保持 kernel 存活，变量保留，下次 execute 立即可用
+            # 已 emit 的产物仍传回(避免半成品丢失)
             elapsed = int((_time.monotonic() - start) * 1000)
             try:
+                _emit_buf = sandbox_globals.get("_emit_buffer") or []
                 _write_response({
                     "id": req_id,
                     "status": "interrupted",
-                    "result": "⏹ 代码执行被用户中断",
+                    "stdout": "⏹ 代码执行被用户中断",
+                    "emit_payloads": list(_emit_buf),
                     "elapsed_ms": elapsed,
                 })
             except (BrokenPipeError, OSError):
@@ -241,10 +250,13 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
         except Exception as e:
             from services.sandbox.error_format import format_sandbox_error
             elapsed = int((_time.monotonic() - start) * 1000)
+            # 即使异常,已 emit 的产物也传回
+            _emit_buf = sandbox_globals.get("_emit_buffer") or []
             _write_response({
                 "id": req_id,
                 "status": "error",
-                "result": f"❌ 执行错误:\n{format_sandbox_error(e, code)}",
+                "stdout": f"❌ 执行错误:\n{format_sandbox_error(e, code)}",
+                "emit_payloads": list(_emit_buf),
                 "elapsed_ms": elapsed,
             })
 

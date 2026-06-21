@@ -191,7 +191,7 @@ class KernelManager:
         conversation_id: str,
         code: str,
         timeout: float,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, list]:
         """向 Kernel 发送代码并等待结果
 
         Args:
@@ -200,7 +200,10 @@ class KernelManager:
             timeout: 执行超时（秒）
 
         Returns:
-            (status, result) — status: "ok" | "error" | "timeout"
+            (status, stdout, emit_payloads):
+              - status: "ok" | "error" | "timeout" | "crashed" | "interrupted"
+              - stdout: 文本输出(截断后,进 LLM 上下文)
+              - emit_payloads: 结构化产物 list[dict](完整,走前端独立通道)
 
         Raises:
             KeyError: conversation_id 对应的 Kernel 不存在
@@ -377,8 +380,14 @@ class KernelManager:
 
     async def _send_and_recv(
         self, kernel: Kernel, code: str, timeout: float,
-    ) -> Tuple[str, str]:
-        """发送代码并等待结果"""
+    ) -> Tuple[str, str, list]:
+        """发送代码并等待结果。
+
+        返回 (status, stdout, emit_payloads):
+          - status: ok / error / timeout / crashed / interrupted
+          - stdout: 受截断的文本输出(进 LLM 上下文)
+          - emit_payloads: 结构化产物 list[dict](独立通道,完整传输)
+        """
         req_id = f"req_{int(time.monotonic() * 1000)}"
         request: dict = {"id": req_id, "code": code, "timeout": timeout}
         request_line = json.dumps(request, ensure_ascii=False) + "\n"
@@ -387,7 +396,7 @@ class KernelManager:
             kernel.process.stdin.write(request_line.encode())
             await kernel.process.stdin.drain()
         except (BrokenPipeError, ConnectionResetError, OSError):
-            return "error", "❌ Kernel 进程已断开，环境已重置"
+            return "error", "❌ Kernel 进程已断开，环境已重置", []
 
         # 等待响应（timeout + 缓冲时间）
         try:
@@ -397,21 +406,25 @@ class KernelManager:
             )
         except asyncio.TimeoutError:
             from services.sandbox.sandbox_constants import TIMEOUT_MESSAGE
-            return "timeout", TIMEOUT_MESSAGE.format(timeout=timeout)
+            return "timeout", TIMEOUT_MESSAGE.format(timeout=timeout), []
 
         if not response_line:
             # 读取 stderr 和 returncode 诊断崩溃原因
             diag = await self._diagnose_crash(kernel)
             logger.error("Kernel 崩溃 | conv=%s %s",
                          kernel.conversation_id[:8], diag)
-            return "crashed", f"❌ Kernel 进程已退出，环境已重置\n原因: {diag}"
+            return "crashed", f"❌ Kernel 进程已退出，环境已重置\n原因: {diag}", []
 
         try:
             response = json.loads(response_line)
         except json.JSONDecodeError:
-            return "error", f"❌ Kernel 返回无效 JSON: {response_line[:200]}"
+            return "error", f"❌ Kernel 返回无效 JSON: {response_line[:200]}", []
 
-        return response.get("status", "error"), response.get("result", "")
+        return (
+            response.get("status", "error"),
+            response.get("stdout", ""),
+            response.get("emit_payloads", []),
+        )
 
     @staticmethod
     async def _diagnose_crash(kernel: "Kernel") -> str:

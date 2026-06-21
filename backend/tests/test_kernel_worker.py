@@ -76,14 +76,14 @@ class TestBasicExecution:
     def test_simple_print(self, kernel_proc):
         r = _send(kernel_proc, {"id": "t1", "code": "print('hello')", "timeout": 10})
         assert r["status"] == "ok"
-        assert r["result"] == "hello"
+        assert r["stdout"] == "hello"
         assert r["id"] == "t1"
         assert "elapsed_ms" in r
 
     def test_expression_value(self, kernel_proc):
         r = _send(kernel_proc, {"id": "t2", "code": "1 + 2", "timeout": 10})
         assert r["status"] == "ok"
-        assert "3" in r["result"]
+        assert "3" in r["stdout"]
 
     def test_empty_code(self, kernel_proc):
         r = _send(kernel_proc, {"id": "t3", "code": "", "timeout": 10})
@@ -104,13 +104,13 @@ class TestStatefulPersistence:
         _send(kernel_proc, {"id": "s1", "code": "x = 42", "timeout": 10})
         r = _send(kernel_proc, {"id": "s2", "code": "print(x)", "timeout": 10})
         assert r["status"] == "ok"
-        assert "42" in r["result"]
+        assert "42" in r["stdout"]
 
     def test_function_persists(self, kernel_proc):
         _send(kernel_proc, {"id": "s3", "code": "def double(n): return n * 2", "timeout": 10})
         r = _send(kernel_proc, {"id": "s4", "code": "print(double(21))", "timeout": 10})
         assert r["status"] == "ok"
-        assert "42" in r["result"]
+        assert "42" in r["stdout"]
 
     def test_pandas_dataframe_persists(self, kernel_proc):
         _send(kernel_proc, {
@@ -120,22 +120,22 @@ class TestStatefulPersistence:
         })
         r = _send(kernel_proc, {"id": "s6", "code": "print(df['a'].sum())", "timeout": 10})
         assert r["status"] == "ok"
-        assert "6" in r["result"]
+        assert "6" in r["stdout"]
 
     def test_multiple_variables(self, kernel_proc):
         _send(kernel_proc, {"id": "s7", "code": "a = 10\nb = 20\nc = a + b", "timeout": 10})
         r = _send(kernel_proc, {"id": "s8", "code": "print(a, b, c)", "timeout": 10})
         assert r["status"] == "ok"
-        assert "10" in r["result"]
-        assert "20" in r["result"]
-        assert "30" in r["result"]
+        assert "10" in r["stdout"]
+        assert "20" in r["stdout"]
+        assert "30" in r["stdout"]
 
     def test_variable_mutation(self, kernel_proc):
         _send(kernel_proc, {"id": "s9", "code": "items = [1, 2, 3]", "timeout": 10})
         _send(kernel_proc, {"id": "s10", "code": "items.append(4)", "timeout": 10})
         r = _send(kernel_proc, {"id": "s11", "code": "print(len(items))", "timeout": 10})
         assert r["status"] == "ok"
-        assert "4" in r["result"]
+        assert "4" in r["stdout"]
 
 
 # ============================================================
@@ -148,7 +148,7 @@ class TestSecurityReset:
         """import os 返回 scoped 版本，无 system 属性"""
         r = _send(kernel_proc, {"id": "sec1", "code": "import os\nprint(hasattr(os, 'system'))", "timeout": 10})
         assert r["status"] == "ok"
-        assert "False" in r["result"]
+        assert "False" in r["stdout"]
 
     def test_import_subprocess_blocked(self, kernel_proc):
         r = _send(kernel_proc, {"id": "sec2", "code": "import subprocess", "timeout": 10})
@@ -164,7 +164,7 @@ class TestSecurityReset:
         _send(kernel_proc, {"id": "sec4b", "code": "import os", "timeout": 10})
         r = _send(kernel_proc, {"id": "sec4c", "code": "print(x)", "timeout": 10})
         assert r["status"] == "ok"
-        assert "99" in r["result"]
+        assert "99" in r["stdout"]
 
     def test_builtins_reset_after_tampering(self, kernel_proc):
         """用户尝试篡改 __builtins__ 后，下次执行应被重置"""
@@ -190,7 +190,7 @@ class TestSecurityReset:
             "timeout": 10,
         })
         assert r["status"] == "ok"
-        assert "3.14" in r["result"]
+        assert "3.14" in r["stdout"]
 
 
 # ============================================================
@@ -209,7 +209,7 @@ class TestTimeout:
         _send(kernel_proc, {"id": "to2b", "code": "while True: pass", "timeout": 2})
         r = _send(kernel_proc, {"id": "to2c", "code": "print(y)", "timeout": 10})
         assert r["status"] == "ok"
-        assert "123" in r["result"]
+        assert "123" in r["stdout"]
 
 
 # ============================================================
@@ -231,7 +231,7 @@ class TestFileOperations:
             "timeout": 10,
         })
         assert r["status"] == "ok"
-        assert "hello kernel" in r["result"]
+        assert "hello kernel" in r["stdout"]
         # 验证文件确实在 workspace
         assert os.path.exists(os.path.join(workspace, "test.txt"))
 
@@ -249,8 +249,8 @@ class TestFileOperations:
         })
         # 不应该是 Python 层"拒绝"或"不在允许的目录内"
         if r["status"] == "error":
-            assert "不在允许的目录内" not in r["result"]
-            assert "拒绝" not in r["result"]
+            assert "不在允许的目录内" not in r["stdout"]
+            assert "拒绝" not in r["stdout"]
 
 
 # ============================================================
@@ -273,7 +273,7 @@ class TestProtocol:
         for i in range(10):
             r = _send(kernel_proc, {"id": f"seq_{i}", "code": f"print({i})", "timeout": 5})
             assert r["status"] == "ok"
-            assert str(i) in r["result"]
+            assert str(i) in r["stdout"]
             assert r["id"] == f"seq_{i}"
 
     def test_graceful_shutdown(self, kernel_proc):

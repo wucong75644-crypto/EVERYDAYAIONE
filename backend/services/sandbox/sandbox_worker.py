@@ -451,8 +451,18 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
 # 代码执行（同步，在子进程中运行）
 # ============================================================
 
-def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> str:
-    """执行代码，捕获 stdout + 最后表达式的值"""
+def _exec_code(
+    code: str, sandbox_globals: Dict[str, Any], timeout: float,
+) -> tuple[str, list[Dict[str, Any]]]:
+    """执行代码,返回 (stdout 文本, emit_payloads 列表)。
+
+    流派 2 多字段协议(对齐 OpenAI/Anthropic Code Execution):
+      - stdout: print 输出 + 错误信息 + 超时消息,受截断管控(进 LLM 上下文)
+      - emit_payloads: 结构化产物(chart/file/image/table),独立通道,完整传输
+        (不进 LLM 上下文,直接走前端 ChartBlock/TableBlock 等渲染)
+
+    错误/超时时 emit_payloads 仍返回已收集的部分(避免半成品丢失)。
+    """
     tree = ast.parse(code, mode="exec")
 
     # 不支持 await（子进程无 event loop）
@@ -461,7 +471,7 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
         for node in ast.walk(tree)
     )
     if has_await:
-        return "❌ 子进程沙盒不支持 async/await 语法"
+        return "❌ 子进程沙盒不支持 async/await 语法", []
 
     # stdout 重定向
     stdout_buffer = io.StringIO()
@@ -513,23 +523,16 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
         else:
             exec(compile(tree, "<sandbox>", "exec"), sandbox_globals)
     except TimeoutError:
-        return TIMEOUT_MESSAGE.format(timeout=timeout)
+        # 超时:返回已收集的 emit 部分(避免半成品丢失)
+        emit_snapshot = list(_emit_buf) if _emit_buf else []
+        return TIMEOUT_MESSAGE.format(timeout=timeout), emit_snapshot
     finally:
         sys.settrace(old_trace)
         if _MATPLOTLIB_AVAILABLE:
             _plt.close("all")
 
-    # 组合输出
+    # 组合 stdout (不再拼 [EMIT] marker —— 产物走独立 emit_payloads 通道)
     stdout_text = stdout_buffer.getvalue()
-
-    # emit 协议:把 buffer 转 [EMIT] marker 拼到 stdout(走用户 stdout 通道,
-    # 不污染 kernel JSON-Line 响应通道)
-    _emit_buf = sandbox_globals.get("_emit_buffer")
-    if _emit_buf:
-        from services.sandbox.emit_protocol import format_emit_markers
-        emit_text = format_emit_markers(_emit_buf)
-        if emit_text:
-            stdout_text = (stdout_text.rstrip() + "\n" + emit_text) if stdout_text.strip() else emit_text
 
     parts = []
     if stdout_text.strip():
@@ -539,8 +542,7 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
     if last_expr_value is not None and not last_expr_displayed:
         parts.append(str(last_expr_value))
 
-    if not parts:
-        return "代码执行成功（无输出）"
-
-    return "\n".join(parts)
+    stdout_result = "\n".join(parts) if parts else "代码执行成功（无输出）"
+    emit_payloads = list(_emit_buf) if _emit_buf else []
+    return stdout_result, emit_payloads
 

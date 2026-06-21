@@ -16,9 +16,7 @@
 详见 docs/document/TECH_沙盒产物协议.md
 """
 
-import json
 import os
-import re
 import time as _time
 from pathlib import Path
 from typing import Any, Optional
@@ -29,16 +27,51 @@ from services.agent.agent_result import AgentResult
 from services.sandbox.validators import validate_code
 
 
+# 产物 → LLM 占位提示模板(让 LLM 知道已 emit,防止重复)
+_EMIT_HINT_TEMPLATES = {
+    "chart": "📊 图表已生成: {label}（前端将自动渲染）",
+    "file":  "📎 文件已生成: {label}（下载卡片将自动展示）",
+    "image": "🖼️ 图片已生成: {label}（前端将自动展示）",
+    "table": "📋 表格已生成: {label}（前端将自动渲染）",
+}
+
+
+def _append_emit_hints(stdout: str, payloads: list[dict]) -> str:
+    """在 stdout 末尾追加产物占位提示。
+
+    产物 payload 走独立通道传给前端,LLM 不看;但要让 LLM 知道"已 emit",
+    不要重复 emit。占位提示对齐之前 [EMIT] marker 替换出来的文本。
+    """
+    if not payloads:
+        return stdout
+    hints: list[str] = []
+    for p in payloads:
+        kind = p.get("kind", "?")
+        tmpl = _EMIT_HINT_TEMPLATES.get(kind)
+        if not tmpl:
+            hints.append(f"[已 emit:{kind}]")
+            continue
+        label = (
+            p.get("title")
+            or p.get("label")
+            or p.get("name")
+            or ("(无标题)" if kind == "table" else "")
+        )
+        hints.append(tmpl.format(label=label))
+    if not hints:
+        return stdout
+    hint_text = "\n".join(hints)
+    if stdout and stdout.strip() and stdout != "代码执行成功（无输出）":
+        return stdout.rstrip() + "\n" + hint_text
+    return hint_text
+
+
 # 用于漏 emit 告警的常见产物扩展名
 _PRODUCT_EXTS = frozenset({
     ".xlsx", ".xls", ".csv", ".tsv",
     ".png", ".jpg", ".jpeg", ".svg", ".pdf",
     ".docx", ".pptx",
 })
-
-# [EMIT] 协议正则: [EMIT]{"kind":..., ...}[/EMIT]
-_EMIT_RE = re.compile(r"\[EMIT\](?P<payload>\{.+?\})\[/EMIT\]", re.DOTALL)
-
 
 class SandboxExecutor:
     """通用 Python 代码沙盒执行器"""
@@ -72,9 +105,12 @@ class SandboxExecutor:
     ) -> AgentResult:
         """执行 Python 代码并返回结构化结果。
 
-        产物通过 emit_chart/file/image/table 协议返回。
-        result.summary 含 [EMIT] marker,由 tool_loop_executor 解析填进
-        AgentResult.emit_payloads(本函数不直接产生 emit_payloads)。
+        流派 2 多字段协议(对齐 OpenAI/Anthropic Code Execution):
+          - stdout: 文本输出(进 LLM 上下文,受截断管控)
+          - emit_payloads: 结构化产物 list[dict](独立通道,完整传输)
+
+        产物通过 emit_chart/file/image/table API 由 sandbox 收集,
+        kernel_worker JSON-Line 协议独立字段传回,不再走 [EMIT] inline marker。
         """
         # 1. AST 安全验证(主进程,快速拦截)
         error = validate_code(code)
@@ -94,34 +130,41 @@ class SandboxExecutor:
         # 2. 快照 output_dir(执行后比对,漏 emit 时打 WARNING)
         snapshot_before = self._snapshot_output_dir()
 
-        # 3. 执行代码
-        raw_result = await self._execute_code(code)
+        # 3. 执行代码 → 拿到 stdout(截断后) + emit_payloads(完整)
+        stdout, payloads = await self._execute_code(code)
 
         logger.info(
             f"SandboxExecutor result | desc={description} | "
-            f"result_len={len(raw_result)} | result={raw_result[:200]}"
+            f"stdout_len={len(stdout)} | emit_count={len(payloads)} | "
+            f"stdout={stdout[:200]}"
         )
 
-        is_error = raw_result.startswith("❌")
-        is_timeout = raw_result.startswith("⏱")
+        is_error = stdout.startswith("❌")
+        is_timeout = stdout.startswith("⏱")
 
         if is_error:
             return AgentResult(
-                summary=raw_result.lstrip("❌ "),
+                summary=stdout.lstrip("❌ "),
                 status="error",
-                error_message=raw_result,
+                error_message=stdout,
+                emit_payloads=payloads,  # 半成品产物仍透传
                 metadata={"retryable": True},
             )
         if is_timeout:
             return AgentResult(
-                summary=raw_result.lstrip("⏱ "),
+                summary=stdout.lstrip("⏱ "),
                 status="timeout",
-                error_message=raw_result,
+                error_message=stdout,
+                emit_payloads=payloads,
             )
 
-        # 4. Engine C: 解析 LLM 显式 [EMIT] marker → emit_payloads
-        #    chart/table 直接收集;file/image 上传 OSS 拿 url+workspace_path 写回
-        summary, payloads = await self._parse_emit(raw_result)
+        # 4. file/image 类 payload 上传 OSS(原地写回 url/workspace_path)
+        if payloads:
+            await self._upload_payload_files(payloads)
+            logger.info(
+                f"[EMIT] payloads | conv={self._conversation_id[:8]} | "
+                f"count={len(payloads)} | kinds={[p.get('kind') for p in payloads]}"
+            )
 
         # 5. Engine B: 写盘 diff 兜底 — 扫 output_dir 新增/修改文件,
         #    LLM 漏 emit 时自动构造 payload + OSS 上传 + 加入 emit_payloads
@@ -130,67 +173,28 @@ class SandboxExecutor:
         if auto_payloads:
             payloads.extend(auto_payloads)
 
+        # 6. stdout 追加占位提示(让 LLM 知道产物已生成,不要重复 emit)
+        summary = _append_emit_hints(stdout, payloads)
+
         return AgentResult(
             summary=summary,
             status="success",
             emit_payloads=payloads,
         )
 
-    async def _parse_emit(
-        self, content: str,
-    ) -> tuple[str, list[dict[str, Any]]]:
-        """解析 [EMIT] marker → (替换占位的 content, emit_payloads list)。
-
-        - chart/table: payload 直接收集
-        - file/image:  上传 OSS,把 url + workspace_path 写回 payload
-        """
-        if not content or not _EMIT_RE.search(content):
-            return content, []
-
-        emits: list[dict[str, Any]] = []
-        for m in _EMIT_RE.finditer(content):
-            try:
-                emits.append(json.loads(m.group("payload")))
-            except json.JSONDecodeError as e:
-                logger.warning(f"[EMIT] 解析失败 | err={e}")
-
-        if not emits:
-            return content, []
-
-        logger.info(
-            f"[EMIT] markers | conv={self._conversation_id[:8]} | "
-            f"count={len(emits)} | kinds={[e.get('kind') for e in emits]}"
-        )
-
-        # file/image 上传 OSS,把 url + workspace_path 写回 payload
-        await self._upload_payload_files(emits)
-
-        # 替换 marker → 占位文本(给 LLM 看的,防止它重复 emit)
-        def _placeholder(m):
-            try:
-                payload = json.loads(m.group("payload"))
-                kind = payload.get("kind", "?")
-                hints = {
-                    "chart": f"📊 图表已生成: {payload.get('title', '')}（前端将自动渲染）",
-                    "file": f"📎 文件已生成: {payload.get('label') or payload.get('name', '')}（下载卡片将自动展示）",
-                    "image": f"🖼️ 图片已生成: {payload.get('name', '')}（前端将自动展示）",
-                    "table": f"📋 表格已生成: {payload.get('title', '') or '(无标题)'}（前端将自动渲染）",
-                }
-                return hints.get(kind, f"[已 emit:{kind}]")
-            except Exception:
-                return ""
-
-        new_content = _EMIT_RE.sub(_placeholder, content)
-        return new_content, emits
-
-    async def _execute_code(self, code: str) -> str:
+    async def _execute_code(self, code: str) -> tuple[str, list[dict[str, Any]]]:
         """Kernel 模式单一执行路径(无 subprocess 降级)。
+
+        返回 (stdout, emit_payloads):
+          - stdout: 文本输出(已截断,进 LLM 上下文)
+          - emit_payloads: 结构化产物 list[dict](独立通道,完整,不计入截断预算)
+
         Kernel 崩溃 → 销毁 → 重建 → 重试一次 → 仍失败报错。
         """
         if not (self._kernel_manager and self._conversation_id):
             return self._format_error(
                 "沙盒服务未就绪,请稍后重试", retryable=True,
-            )
+            ), []
 
         for attempt in range(2):
             try:
@@ -204,14 +208,14 @@ class SandboxExecutor:
                 if not kernel_ok:
                     return self._format_error(
                         "沙盒资源紧张,请稍后重试", retryable=True,
-                    )
+                    ), []
 
-                status, result = await self._kernel_manager.execute(
+                status, stdout, payloads = await self._kernel_manager.execute(
                     self._conversation_id, code, self._timeout,
                 )
 
                 if status != "crashed":
-                    return result
+                    return stdout, payloads
 
                 if attempt == 0:
                     logger.warning("Kernel 崩溃,尝试重建 | conv={}",
@@ -220,15 +224,15 @@ class SandboxExecutor:
                     continue
                 return self._format_error(
                     "沙盒执行异常,请稍后重试", retryable=True,
-                )
+                ), []
 
             except (KeyError, RuntimeError, OSError) as e:
                 logger.warning("Kernel 执行失败 | error=%s", e)
                 return self._format_error(
                     f"沙盒执行失败: {e}", retryable=True,
-                )
+                ), []
 
-        return self._format_error("沙盒不可用", retryable=True)
+        return self._format_error("沙盒不可用", retryable=True), []
 
     @staticmethod
     def _format_error(msg: str, retryable: bool = True) -> str:
