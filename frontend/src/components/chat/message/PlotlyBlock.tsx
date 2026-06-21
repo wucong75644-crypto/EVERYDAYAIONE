@@ -2,7 +2,11 @@
  * Plotly 图表渲染块
  *
  * 由 ChartBlock 在 spec_format='plotly' 时分发,
- * 走 plotly.js-dist-min (按需加载)。
+ * 走 plotly.js-basic-dist-min (按需加载,~200KB gzip,比 full dist 小 5 倍)。
+ *
+ * basic 版支持: scatter / bar / pie / heatmap / contour / histogram / box /
+ *                candlestick / scatterpolar 等基础图表,覆盖 LLM 99% 数据可视化场景。
+ * 不支持: 3D / 地图 / scatter3d / mesh3d 等高级类型(LLM 极少用)。
  *
  * 视觉:对齐 plotly 官网 demo 风格 + 中文字体 + 简洁工具栏(移除 plotly logo)。
  * 详见 docs/document/TECH_沙盒产物协议.md
@@ -18,10 +22,10 @@ interface PlotlyBlockProps {
   title?: string;
 }
 
-let plotlyPromise: Promise<typeof import('plotly.js-dist-min')> | null = null;
+let plotlyPromise: Promise<typeof import('plotly.js-basic-dist-min')> | null = null;
 function getPlotly() {
   if (!plotlyPromise) {
-    plotlyPromise = import('plotly.js-dist-min');
+    plotlyPromise = import('plotly.js-basic-dist-min');
   }
   return plotlyPromise;
 }

@@ -29,7 +29,7 @@
     "katex": "^0.16.38",
     "lucide-react": "^0.563.0",
     "mermaid": "^11.13.0",
-    "plotly.js-dist-min": "^3.6.0",
+    "plotly.js-basic-dist-min": "^3.6.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-hot-toast": "^2.6.0",
