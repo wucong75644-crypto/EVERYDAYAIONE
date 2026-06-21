@@ -51,7 +51,8 @@ const PROFESSIONAL_TEMPLATE = {
       '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
       '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
     ],
-    margin: { l: 60, r: 30, t: 60, b: 60, pad: 4 },
+    // legend 改水平放底部(默认右侧垂直会挤压绘图区宽度),底边距 b:80 给 legend 留位置
+    margin: { l: 60, r: 30, t: 60, b: 80, pad: 4 },
     xaxis: {
       gridcolor: '#f3f4f6',
       linecolor: '#e5e7eb',
@@ -79,7 +80,13 @@ const PROFESSIONAL_TEMPLATE = {
       bgcolor: 'white',
       bordercolor: '#e5e7eb',
     },
+    // legend 水平放底部:默认右侧垂直会挤压绘图区宽度(用户实测窄了一半)
     legend: {
+      orientation: 'h',
+      y: -0.18,
+      x: 0.5,
+      xanchor: 'center',
+      yanchor: 'top',
       font: { size: 12, color: '#4b5563' },
       bgcolor: 'rgba(255,255,255,0)',
     },
@@ -176,6 +183,25 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
     };
   }, [data, mergedLayout, mergedConfig]);
 
+  // ResizeObserver: 容器宽度变化时(窗口 resize / 侧边栏切换)触发 plotly 重新计算
+  // 否则 plotly 渲染时的宽度被锁死,不会响应父级宽度变化
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    let cancelled = false;
+    const ro = new ResizeObserver(() => {
+      if (cancelled) return;
+      getPlotly().then((Plotly) => {
+        const PlotlyAny = Plotly as unknown as { Plots?: { resize: (el: HTMLElement) => void } };
+        if (!cancelled && el && PlotlyAny.Plots?.resize) {
+          try { PlotlyAny.Plots.resize(el); } catch { /* ignore */ }
+        }
+      }).catch(() => { /* ignore */ });
+    });
+    ro.observe(el);
+    return () => { cancelled = true; ro.disconnect(); };
+  }, []);
+
   if (error) {
     return (
       <div className="my-3 rounded-xl border border-border-default bg-surface-card p-4">
@@ -186,7 +212,7 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
   }
 
   return (
-    <div className="my-3 relative" style={{ height: 400 }}>
+    <div className="my-3 relative" style={{ height: 450 }}>
       {/* title 不在外层渲染:plotly 内部 layout.title 已由 PROFESSIONAL_TEMPLATE
           渲染(左对齐 16px 加粗),外层再渲染会出现双标题 + 中间空白 */}
 
@@ -194,7 +220,7 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
           到正确容器尺寸渲染。否则 newPlot 时容器是 0x0,plotly 用默认 450px 撑
           超容器覆盖下方文字。loading 占位用 absolute 覆盖在容器上方,plotly 渲染
           完成自然显现。 */}
-      <div ref={containerRef} style={{ width: '100%', height: 400 }} />
+      <div ref={containerRef} style={{ width: '100%', height: 450 }} />
       {loading && (
         <div className="absolute inset-0 rounded-xl flex items-center justify-center bg-hover">
           <svg className="w-8 h-8 text-text-disabled animate-pulse" viewBox="0 0 24 24"
