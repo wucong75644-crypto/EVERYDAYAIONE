@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { PROFESSIONAL_TEMPLATE, TOOLBAR_CONFIG } from '../PlotlyBlock';
+import { PROFESSIONAL_TEMPLATE, TOOLBAR_CONFIG, CHART_HEIGHT_PX, stripSizeFields } from '../PlotlyBlock';
 
 describe('PlotlyBlock - 视觉模板', () => {
   describe('PROFESSIONAL_TEMPLATE', () => {
@@ -124,6 +124,73 @@ describe('PlotlyBlock - 视觉模板', () => {
       const llmConfig = { displaylogo: true };  // LLM 想打开 logo
       const merged = { ...llmConfig, ...TOOLBAR_CONFIG };
       expect(merged.displaylogo).toBe(false);  // 我们强制覆盖
+    });
+  });
+
+  // ============================================================
+  // 大厂自适应策略 (Databricks/Hex/Streamlit/Jupyter):
+  //   宽度 100% 容器, 高度固定 450, overflow:hidden 兜底
+  // ============================================================
+
+  describe('尺寸控制(大厂"宽度自适应+高度固定"策略)', () => {
+    it('图表高度固定 450px(对话场景标准,防图表吞噬上下文)', () => {
+      expect(CHART_HEIGHT_PX).toBe(450);
+    });
+  });
+
+  describe('stripSizeFields(剥离 LLM 给的尺寸字段)', () => {
+    it('剥离 width', () => {
+      const cleaned = stripSizeFields({ width: 1200, title: 'x' });
+      expect(cleaned.width).toBeUndefined();
+      expect(cleaned.title).toBe('x');
+    });
+
+    it('剥离 height(LLM 经常设 height:800 撑爆容器)', () => {
+      const cleaned = stripSizeFields({ height: 800, title: 'x' });
+      expect(cleaned.height).toBeUndefined();
+      expect(cleaned.title).toBe('x');
+    });
+
+    it('剥离 autosize(防 LLM 设 false 锁死尺寸)', () => {
+      const cleaned = stripSizeFields({ autosize: false, title: 'x' });
+      expect(cleaned.autosize).toBeUndefined();
+      expect(cleaned.title).toBe('x');
+    });
+
+    it('剥离 margin(防 LLM 设大 margin 让图表视觉撑大)', () => {
+      const cleaned = stripSizeFields({ margin: { t: 200, b: 300 }, title: 'x' });
+      expect(cleaned.margin).toBeUndefined();
+      expect(cleaned.title).toBe('x');
+    });
+
+    it('保留所有非尺寸字段(title/xaxis/yaxis/colorway 等)', () => {
+      const cleaned = stripSizeFields({
+        width: 1200,
+        height: 800,
+        autosize: false,
+        margin: { t: 100 },
+        title: { text: '标题' },
+        xaxis: { title: 'x 轴' },
+        yaxis: { title: 'y 轴' },
+        colorway: ['#000'],
+        showlegend: true,
+      });
+      expect(cleaned.title).toEqual({ text: '标题' });
+      expect(cleaned.xaxis).toEqual({ title: 'x 轴' });
+      expect(cleaned.yaxis).toEqual({ title: 'y 轴' });
+      expect(cleaned.colorway).toEqual(['#000']);
+      expect(cleaned.showlegend).toBe(true);
+    });
+
+    it('空 layout 返回空对象(不崩)', () => {
+      expect(stripSizeFields({})).toEqual({});
+    });
+
+    it('不修改原对象(返回新对象,避免污染 LLM payload)', () => {
+      const original = { width: 1200, title: 'x' };
+      const cleaned = stripSizeFields(original);
+      expect(original.width).toBe(1200);  // 原对象不变
+      expect(cleaned).not.toBe(original);   // 新对象
     });
   });
 });

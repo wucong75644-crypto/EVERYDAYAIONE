@@ -1,42 +1,46 @@
 /**
- * Plotly 图表渲染块
+ * Plotly 图表渲染块(对话场景 / 大厂标准)
  *
  * 由 ChartBlock 在 spec_format='plotly' 时分发,
  * 走 plotly.js-basic-dist-min (按需加载,~200KB gzip,比 full dist 小 5 倍)。
  *
  * basic 版支持: scatter / bar / pie / heatmap / contour / histogram / box /
- *                candlestick / scatterpolar 等基础图表,覆盖 LLM 99% 数据可视化场景。
- * 不支持: 3D / 地图 / scatter3d / mesh3d 等高级类型(LLM 极少用)。
+ *                candlestick / scatterpolar 等基础图表,覆盖 LLM 99% 场景。
+ * 不支持: 3D / 地图(LLM 极少用)。
  *
- * 视觉:对齐 plotly 官网 demo 风格 + 中文字体 + 简洁工具栏(移除 plotly logo)。
+ * ============================================================
+ * 尺寸 / 视觉策略(对齐 Databricks / Hex / Streamlit / Jupyter)
+ * ============================================================
+ *
+ * 宽度: 100% 跟随容器(响应窗口/侧边栏 resize)
+ * 高度: 固定 CHART_HEIGHT_PX (对话场景不让图表吞噬上下文流)
+ * 兜底: 容器 overflow:hidden(plotly 任何超出 450 都被截,绝不覆盖下方文字)
+ *
+ * 防御性:剥离 LLM 给的 width / height / autosize / margin,
+ *        所有尺寸由我们控制,LLM 仍可改 title / xaxis 内容 / 配色等。
+ *
+ * 视觉: PROFESSIONAL_TEMPLATE (中文字体 + 商业感配色 + 浅灰网格 +
+ *       legend 水平放底部 + 标题左对齐)。
+ *
+ * 工具栏: TOOLBAR_CONFIG (移除 plotly logo / cloud 跳转 / 冗余按钮)。
+ *
  * 详见 docs/document/TECH_沙盒产物协议.md
  */
-import { useEffect, useMemo, useRef, useState, memo } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
 import { logger } from '../../../utils/logger';
 
-interface PlotlyBlockProps {
-  option: Record<string, unknown>;
-  // title 由 plotly 内部 layout.title 渲染(PROFESSIONAL_TEMPLATE 已配 16px 左对齐),
-  // 不再外层重复渲染,避免与 plotly 内部 title 双标题(对齐 ChartBlock 处理)。
-  // 保留 prop 仅供未来扩展(如 fullscreen 模式可加),默认不显示。
-  title?: string;
-}
-
-let plotlyPromise: Promise<typeof import('plotly.js-basic-dist-min')> | null = null;
-function getPlotly() {
-  if (!plotlyPromise) {
-    plotlyPromise = import('plotly.js-basic-dist-min');
-  }
-  return plotlyPromise;
-}
-
 // ============================================================
-// 专业视觉模板(对齐 plotly 官网 demo + 中文场景优化)
+// 常量
 // ============================================================
-//
-// plotly template 机制:LLM 给的 layout 字段覆盖 template 默认值,
-// 我们的 template 设默认风格,LLM 仍可自定义 title/标签/特殊样式。
 
+/** 图表固定高度(px) — 对话场景标准,避免巨型图表吞噬对话流 */
+const CHART_HEIGHT_PX = 450;
+
+/** 我们完全控制的 layout 字段集 — 剥离 LLM 在这些字段上的输入,
+ *  避免 LLM 设 height:800 / margin:{t:200} 等让图表撑爆容器。 */
+const STRIPPED_LAYOUT_FIELDS = ['width', 'height', 'autosize', 'margin'] as const;
+
+/** 视觉模板:对齐 plotly 官网 demo 风格 + 中文场景优化 */
 const PROFESSIONAL_TEMPLATE = {
   layout: {
     font: {
@@ -46,12 +50,12 @@ const PROFESSIONAL_TEMPLATE = {
     },
     paper_bgcolor: 'white',
     plot_bgcolor: 'white',
-    // 现代商业感配色(蓝/绿/橙/红/紫/粉/青/草绿)
+    // 商业感配色(蓝/绿/橙/红/紫/粉/青/草绿)
     colorway: [
       '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
       '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
     ],
-    // legend 改水平放底部(默认右侧垂直会挤压绘图区宽度),底边距 b:80 给 legend 留位置
+    // 我们控制 margin (LLM 给的会被剥离),legend 在底部所以 b 大一点
     margin: { l: 60, r: 30, t: 60, b: 80, pad: 4 },
     xaxis: {
       gridcolor: '#f3f4f6',
@@ -80,7 +84,7 @@ const PROFESSIONAL_TEMPLATE = {
       bgcolor: 'white',
       bordercolor: '#e5e7eb',
     },
-    // legend 水平放底部:默认右侧垂直会挤压绘图区宽度(用户实测窄了一半)
+    // legend 水平放底部:默认右侧垂直会挤压绘图区宽度(实测窄一半)
     legend: {
       orientation: 'h',
       y: -0.18,
@@ -94,25 +98,22 @@ const PROFESSIONAL_TEMPLATE = {
   },
 };
 
-// ============================================================
-// 工具栏配置(精简实用,移除 plotly logo / cloud 跳转)
-// ============================================================
-
+/** 工具栏配置:精简实用,移除 plotly logo 和 cloud 跳转 */
 const TOOLBAR_CONFIG: Record<string, unknown> = {
-  // 关键:移除右下角 "Made with Plotly" 跳转角标
+  // 移除右下角 "Made with Plotly" 跳转角标
   displaylogo: false,
-  // 鼠标 hover 在图表上才显示工具栏(默认常驻太占视觉)
+  // 鼠标 hover 才显示工具栏(默认常驻太占视觉)
   displayModeBar: 'hover',
-  // 删除冗余 / 高级按钮(只保留常用 5 个:保存/缩放/平移/重置/全屏)
+  // 删除冗余 / 高级按钮(只保留常用:保存/缩放/平移/重置/全屏)
   modeBarButtonsToRemove: [
-    'lasso2d',                // 套索选择(数据分析少用)
-    'select2d',               // 矩形选区(同上)
+    'lasso2d',                // 套索选择
+    'select2d',               // 矩形选区
     'autoScale2d',            // 自适应缩放(跟重置重复)
     'hoverClosestCartesian',  // 悬浮模式切换
     'hoverCompareCartesian',  // 悬浮对比模式
     'toggleSpikelines',       // 十字辅助线
-    'sendDataToCloud',        // 发送到 plotly cloud(跳转外站,删)
-    'editInChartStudio',      // 在 plotly cloud 编辑(跳转外站,删)
+    'sendDataToCloud',        // 发送到 plotly cloud (跳转外站)
+    'editInChartStudio',      // 在 plotly cloud 编辑 (跳转外站)
   ],
   // 保存图片:中文文件名 + 高清 + 默认尺寸
   toImageButtonOptions: {
@@ -127,74 +128,139 @@ const TOOLBAR_CONFIG: Record<string, unknown> = {
 };
 
 // ============================================================
+// 工具函数
+// ============================================================
+
+let plotlyPromise: Promise<typeof import('plotly.js-basic-dist-min')> | null = null;
+function getPlotly() {
+  if (!plotlyPromise) {
+    plotlyPromise = import('plotly.js-basic-dist-min');
+  }
+  return plotlyPromise;
+}
+
+/** 剥离 LLM 给的尺寸字段(width / height / autosize / margin)
+ *  让我们完全控制图表尺寸,LLM 仍可改 title / xaxis / 配色等。 */
+export function stripSizeFields(
+  layout: Record<string, unknown>,
+): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = { ...layout };
+  for (const f of STRIPPED_LAYOUT_FIELDS) {
+    delete cleaned[f];
+  }
+  return cleaned;
+}
+
+// ============================================================
+// 子组件
+// ============================================================
+
+function LoadingOverlay() {
+  return (
+    <div className="absolute inset-0 rounded-xl flex items-center justify-center bg-hover">
+      <svg className="w-8 h-8 text-text-disabled animate-pulse" viewBox="0 0 24 24"
+           fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M3 3v18h18" /><path d="M7 16l4-8 4 4 4-6" />
+      </svg>
+    </div>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className="my-3 rounded-xl border border-border-default bg-surface-card p-4">
+      <div className="text-sm font-medium text-error mb-2">Plotly 图表渲染失败</div>
+      <p className="text-xs text-text-tertiary">{message}</p>
+    </div>
+  );
+}
+
+// ============================================================
 // 主组件
 // ============================================================
 
+interface PlotlyBlockProps {
+  option: Record<string, unknown>;
+  /** title 已不用 — plotly 内部 layout.title 由 template 渲染,
+   *  外层重复渲染会出现双标题 + 空白(对齐 ChartBlock 处理)。
+   *  保留 prop 仅供未来 fullscreen 扩展。 */
+  title?: string;
+}
+
+type RenderState = 'loading' | 'ready' | 'error';
+
 function PlotlyBlockInner({ option }: PlotlyBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState<RenderState>('loading');
+  const [errMsg, setErrMsg] = useState('');
 
-  // 合并:LLM layout 覆盖 template 默认 + 强制 config
-  const { data, mergedLayout, mergedConfig } = useMemo(() => {
-    const rawData = (option.data as unknown[]) || [];
-    const rawLayout = (option.layout as Record<string, unknown>) || {};
-    const rawConfig = (option.config as Record<string, unknown>) || {};
-    return {
-      data: rawData,
-      // template 机制:LLM 的 layout 覆盖 template 同字段, 没指定的走 template
-      mergedLayout: {
-        template: PROFESSIONAL_TEMPLATE,
-        ...rawLayout,
-      },
-      // config:LLM 给的 + 我们强制的(强制覆盖 displaylogo 等)
-      mergedConfig: {
-        ...rawConfig,
-        ...TOOLBAR_CONFIG,
-      },
-    };
-  }, [option]);
-
+  // 主渲染:option 变化时重新 newPlot
   useEffect(() => {
     if (!containerRef.current) return;
     let disposed = false;
+
     (async () => {
       try {
         const Plotly = await getPlotly();
         if (disposed || !containerRef.current) return;
-        await Plotly.newPlot(containerRef.current, data as never, mergedLayout, mergedConfig);
-        setLoading(false);
-        setError(null);
+
+        // 1. 准备 data: LLM 直接给的 data 列表
+        const data = (option.data as unknown[]) || [];
+
+        // 2. 准备 layout:
+        //    - template 提供视觉默认
+        //    - LLM 的 layout 覆盖 template (但 width/height/autosize/margin 被剥离)
+        //    - 强制 autosize=true 让 plotly 用容器尺寸
+        const llmLayout = (option.layout as Record<string, unknown>) || {};
+        const layout = {
+          template: PROFESSIONAL_TEMPLATE,
+          ...stripSizeFields(llmLayout),
+          autosize: true,
+        };
+
+        // 3. 准备 config: LLM 的 + 我们强制覆盖 (displaylogo 等)
+        const llmConfig = (option.config as Record<string, unknown>) || {};
+        const config = { ...llmConfig, ...TOOLBAR_CONFIG };
+
+        await Plotly.newPlot(containerRef.current, data as never, layout, config);
+        if (!disposed) {
+          setState('ready');
+          setErrMsg('');
+        }
       } catch (e) {
         if (!disposed) {
-          logger.error('PlotlyBlock', `init failed | ${e}`);
-          setError(`Plotly 渲染失败: ${e instanceof Error ? e.message : String(e)}`);
-          setLoading(false);
+          const msg = e instanceof Error ? e.message : String(e);
+          logger.error('PlotlyBlock', `init failed | ${msg}`);
+          setErrMsg(msg);
+          setState('error');
         }
       }
     })();
+
     return () => {
       disposed = true;
-      if (containerRef.current) {
+      // 卸载/重渲染:purge 释放 plotly 内部资源
+      const el = containerRef.current;
+      if (el) {
         getPlotly().then((Plotly) => {
-          try { Plotly.purge(containerRef.current!); } catch { /* ignore */ }
+          try { Plotly.purge(el); } catch { /* ignore */ }
         }).catch(() => { /* ignore */ });
       }
     };
-  }, [data, mergedLayout, mergedConfig]);
+  }, [option]);
 
-  // ResizeObserver: 容器宽度变化时(窗口 resize / 侧边栏切换)触发 plotly 重新计算
-  // 否则 plotly 渲染时的宽度被锁死,不会响应父级宽度变化
+  // 响应容器尺寸变化(窗口 resize / 侧边栏切换等)
   useEffect(() => {
-    if (!containerRef.current) return;
     const el = containerRef.current;
+    if (!el) return;
     let cancelled = false;
     const ro = new ResizeObserver(() => {
       if (cancelled) return;
-      getPlotly().then((Plotly) => {
-        const PlotlyAny = Plotly as unknown as { Plots?: { resize: (el: HTMLElement) => void } };
-        if (!cancelled && el && PlotlyAny.Plots?.resize) {
-          try { PlotlyAny.Plots.resize(el); } catch { /* ignore */ }
+      getPlotly().then((P) => {
+        if (cancelled) return;
+        const Plots = (P as unknown as { Plots?: { resize: (el: HTMLElement) => void } }).Plots;
+        if (Plots?.resize) {
+          try { Plots.resize(el); } catch { /* ignore */ }
         }
       }).catch(() => { /* ignore */ });
     });
@@ -202,33 +268,19 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
     return () => { cancelled = true; ro.disconnect(); };
   }, []);
 
-  if (error) {
-    return (
-      <div className="my-3 rounded-xl border border-border-default bg-surface-card p-4">
-        <div className="text-sm font-medium text-error mb-2">Plotly 图表渲染失败</div>
-        <p className="text-xs text-text-tertiary">{error}</p>
-      </div>
-    );
-  }
+  if (state === 'error') return <ErrorBox message={errMsg} />;
 
   return (
-    <div className="my-3 relative" style={{ height: 450 }}>
-      {/* title 不在外层渲染:plotly 内部 layout.title 已由 PROFESSIONAL_TEMPLATE
-          渲染(左对齐 16px 加粗),外层再渲染会出现双标题 + 中间空白 */}
-
-      {/* 容器固定 height:400 始终有尺寸(不用 display:none),plotly newPlot 才能读
-          到正确容器尺寸渲染。否则 newPlot 时容器是 0x0,plotly 用默认 450px 撑
-          超容器覆盖下方文字。loading 占位用 absolute 覆盖在容器上方,plotly 渲染
-          完成自然显现。 */}
-      <div ref={containerRef} style={{ width: '100%', height: 450 }} />
-      {loading && (
-        <div className="absolute inset-0 rounded-xl flex items-center justify-center bg-hover">
-          <svg className="w-8 h-8 text-text-disabled animate-pulse" viewBox="0 0 24 24"
-               fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M3 3v18h18" /><path d="M7 16l4-8 4 4 4-6" />
-          </svg>
-        </div>
-      )}
+    // 大厂自适应策略 (Databricks/Hex/Streamlit/Jupyter):
+    //   宽度 100% 跟随容器 (响应式)
+    //   高度固定 CHART_HEIGHT_PX (对话场景标准, 防图表吞噬上下文)
+    //   overflow: hidden (兜底, plotly 任何超出都被截, 不覆盖下方文字)
+    <div
+      className="my-3 relative"
+      style={{ height: CHART_HEIGHT_PX, overflow: 'hidden' }}
+    >
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {state === 'loading' && <LoadingOverlay />}
     </div>
   );
 }
@@ -236,4 +288,4 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
 export default memo(PlotlyBlockInner);
 
 // 导出常量供测试使用
-export { PROFESSIONAL_TEMPLATE, TOOLBAR_CONFIG };
+export { PROFESSIONAL_TEMPLATE, TOOLBAR_CONFIG, CHART_HEIGHT_PX };
