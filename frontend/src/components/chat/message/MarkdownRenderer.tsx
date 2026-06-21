@@ -190,10 +190,13 @@ export default memo(function MarkdownRenderer({
   );
 
   // 纯文本快速路径：无 Markdown 语法时跳过解析
+  // trimEnd 去掉 LLM 输出常带的 trailing \n\n,避免 whitespace-pre-wrap
+  // 把段落分隔符渲染成可见空白(每个 \n ≈ 24px,2 个 = 48px 空段)
   if (!hasMarkdown) {
+    const trimmed = content.replace(/\s+$/, '');
     return (
       <div className={`text-[15px] leading-relaxed whitespace-pre-wrap ${className}`}>
-        {content}
+        {trimmed}
         {isStreaming && content && (
           <span className="inline-block w-0.5 h-[18px] bg-text-tertiary ml-0.5 rounded-sm animate-cursor-blink" />
         )}
