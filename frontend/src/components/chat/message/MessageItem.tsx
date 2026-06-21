@@ -485,8 +485,12 @@ export default memo(function MessageItem({
             ) : hasMultiBlocks ? (
               /* AI 消息（多块模式）：遍历 content 按 type 分发渲染
                  text(中间叙述) / tool_step / tool_result / image / file / form 按时序混排
-                 thinking 单独在 ThinkingBlock 渲染；设计文档：TECH_内容块混排渲染架构.md §7.2 */
-              <>
+                 thinking 单独在 ThinkingBlock 渲染；设计文档：TECH_内容块混排渲染架构.md §7.2
+
+                 [multi-block-spacing] 用 space-y-1 (4px) 统一相邻 parts 垂直间距,
+                 避免各组件 my-* / mb-* 累加(thinking mb-2 + tool_step my-1.5
+                 + markdown p mb-0.75rem)产生 30-80px 空白割裂感。 */
+              <div className="space-y-1">
                 {message.content.map((part, idx) => {
                   // thinking 内联渲染为小折叠块（每轮独立）
                   // 兼容空 text + 有 duration_ms 的「状态指示」型 thinking 块
@@ -699,7 +703,7 @@ export default memo(function MessageItem({
                     textContent ? 'AI 正在输出' : 'AI 正在思考'
                   )} />
                 )}
-              </>
+              </div>
             ) : (
               /* AI 消息（单块 / 流式）：Markdown 渲染 */
               <MarkdownRenderer
