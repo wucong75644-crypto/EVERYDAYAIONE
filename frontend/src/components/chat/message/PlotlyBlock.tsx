@@ -12,6 +12,9 @@ import { logger } from '../../../utils/logger';
 
 interface PlotlyBlockProps {
   option: Record<string, unknown>;
+  // title 由 plotly 内部 layout.title 渲染(PROFESSIONAL_TEMPLATE 已配 16px 左对齐),
+  // 不再外层重复渲染,避免与 plotly 内部 title 双标题(对齐 ChartBlock 处理)。
+  // 保留 prop 仅供未来扩展(如 fullscreen 模式可加),默认不显示。
   title?: string;
 }
 
@@ -116,7 +119,7 @@ const TOOLBAR_CONFIG: Record<string, unknown> = {
 // 主组件
 // ============================================================
 
-function PlotlyBlockInner({ option, title }: PlotlyBlockProps) {
+function PlotlyBlockInner({ option }: PlotlyBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -180,7 +183,8 @@ function PlotlyBlockInner({ option, title }: PlotlyBlockProps) {
 
   return (
     <div className="my-3 relative">
-      {title && <div className="text-sm font-medium text-text-primary mb-2">{title}</div>}
+      {/* title 不在外层渲染:plotly 内部 layout.title 已由 PROFESSIONAL_TEMPLATE
+          渲染(左对齐 16px 加粗),外层再渲染会出现双标题 + 中间空白 */}
       {/* loading 占位与真容器二选一渲染:loading 时 containerRef 用 display:none
           避免两个 400px 块叠加出 800px 双倍空白(对齐 ChartBlock 的处理) */}
       {loading && (
