@@ -196,8 +196,10 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
           </svg>
         </div>
       )}
+      {/* 容器固定 height: 400 (不用 minHeight),否则 plotly responsive:true + autosize
+          会撑到 600-1000px,X 轴标签被挤出 viewport。对齐 ChartBlock(ECharts) 处理。 */}
       <div ref={containerRef}
-        style={{ width: '100%', minHeight: 400, display: loading ? 'none' : 'block' }} />
+        style={{ width: '100%', height: 400, display: loading ? 'none' : 'block' }} />
     </div>
   );
 }
