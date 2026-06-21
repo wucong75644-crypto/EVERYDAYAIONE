@@ -487,10 +487,11 @@ export default memo(function MessageItem({
                  text(中间叙述) / tool_step / tool_result / image / file / form 按时序混排
                  thinking 单独在 ThinkingBlock 渲染；设计文档：TECH_内容块混排渲染架构.md §7.2
 
-                 [multi-block-spacing] 用 space-y-1 (4px) 统一相邻 parts 垂直间距,
-                 避免各组件 my-* / mb-* 累加(thinking mb-2 + tool_step my-1.5
-                 + markdown p mb-0.75rem)产生 30-80px 空白割裂感。 */
-              <div className="space-y-1">
+                 [multi-block-spacing] 用 flex gap-1.5 (6px) 统一相邻 parts 垂直间距,
+                 [&>*]:!my-0 强制清空子元素自带 my-*/mb-* 避免叠加。
+                 (space-y-* 只设 mt 不清 mb,thinking mb-2 / tool_step my-1.5
+                 仍会叠加 20-30px 空白,gap+!my-0 才能根治。) */
+              <div className="flex flex-col gap-1.5 [&>*]:!my-0">
                 {message.content.map((part, idx) => {
                   // thinking 内联渲染为小折叠块（每轮独立）
                   // 兼容空 text + 有 duration_ms 的「状态指示」型 thinking 块
