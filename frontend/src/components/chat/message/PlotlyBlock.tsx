@@ -181,13 +181,19 @@ function PlotlyBlockInner({ option, title }: PlotlyBlockProps) {
   return (
     <div className="my-3 relative">
       {title && <div className="text-sm font-medium text-text-primary mb-2">{title}</div>}
+      {/* loading 占位与真容器二选一渲染:loading 时 containerRef 用 display:none
+          避免两个 400px 块叠加出 800px 双倍空白(对齐 ChartBlock 的处理) */}
       {loading && (
         <div className="rounded-xl flex items-center justify-center bg-hover"
              style={{ width: '100%', height: 400 }}>
-          <div className="text-xs text-text-tertiary">加载 Plotly...</div>
+          <svg className="w-8 h-8 text-text-disabled animate-pulse" viewBox="0 0 24 24"
+               fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M3 3v18h18" /><path d="M7 16l4-8 4 4 4-6" />
+          </svg>
         </div>
       )}
-      <div ref={containerRef} style={{ width: '100%', minHeight: 400 }} />
+      <div ref={containerRef}
+        style={{ width: '100%', minHeight: 400, display: loading ? 'none' : 'block' }} />
     </div>
   );
 }
