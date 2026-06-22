@@ -57,7 +57,13 @@ function DocxAdapterComponent({ item, onClose }: PreviewCommonProps) {
   }, [item]);
 
   return (
-    <PreviewFrame item={item} onClose={onClose} loading={loading} error={error}>
+    <PreviewFrame
+      item={item}
+      onClose={onClose}
+      loading={loading}
+      loadingText="正在解析 Word 文档..."
+      error={error}
+    >
       <div className="p-6">
         <article
           className="docx-preview mx-auto max-w-3xl bg-white text-gray-900 rounded-lg p-8 shadow-lg leading-relaxed"

@@ -23,6 +23,8 @@ interface PreviewFrameProps {
   onClose: () => void;
   /** 加载中显示 spinner（覆盖 children） */
   loading?: boolean;
+  /** 自定义 loading 文案（默认仅显示 spinner，不显示文字）*/
+  loadingText?: string;
   /** 错误文案，非空时显示红色错误（覆盖 children） */
   error?: string | null;
   /** 自定义下载行为；默认走 downloadFile(CDN URL or 后端代理) */
@@ -37,6 +39,7 @@ export default function PreviewFrame({
   item,
   onClose,
   loading = false,
+  loadingText,
   error = null,
   onDownload,
   children,
@@ -116,8 +119,9 @@ export default function PreviewFrame({
       {/* 内容区域 */}
       <div className="flex-1 overflow-auto min-h-0">
         {loading && (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex flex-col items-center justify-center h-full gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-white" />
+            {loadingText && <div className="text-sm text-gray-300">{loadingText}</div>}
           </div>
         )}
 

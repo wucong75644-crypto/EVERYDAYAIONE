@@ -29,12 +29,15 @@ const ZOOM_STEP = 0.2;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 
+type LoadStage = 'converting' | 'rendering' | 'done';
+
 function PptxAdapterComponent({ item, onClose }: PreviewCommonProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [stage, setStage] = useState<LoadStage>('converting');
   const [error, setError] = useState<string | null>(null);
 
   // 调后端转 PDF
@@ -42,6 +45,7 @@ function PptxAdapterComponent({ item, onClose }: PreviewCommonProps) {
     let cancelled = false;
     let currentBlobUrl: string | null = null;
     setLoading(true);
+    setStage('converting');
     setError(null);
     setBlobUrl(null);
     setPageNumber(1);
@@ -66,6 +70,9 @@ function PptxAdapterComponent({ item, onClose }: PreviewCommonProps) {
           } catch { /* ignore */ }
           throw new Error(msg);
         }
+        // 后端返回了 → 进入渲染阶段
+        if (cancelled) return;
+        setStage('rendering');
         const blob = await resp.blob();
         if (cancelled) return;
         currentBlobUrl = URL.createObjectURL(blob);
@@ -135,14 +142,27 @@ function PptxAdapterComponent({ item, onClose }: PreviewCommonProps) {
     </div>
   ) : null;
 
+  // 区分两阶段文案 — 首次转换 ~3s，缓存命中 ~200ms
+  const loadingText = stage === 'converting'
+    ? '正在转换文档为 PDF... 首次约需 3 秒，再次预览将秒开'
+    : '正在渲染 PDF...';
+
   return (
-    <PreviewFrame item={item} onClose={onClose} loading={loading} error={error} footer={footer}>
+    <PreviewFrame
+      item={item}
+      onClose={onClose}
+      loading={loading}
+      loadingText={loadingText}
+      error={error}
+      footer={footer}
+    >
       {blobUrl && (
         <div className="flex items-center justify-center min-h-full p-4">
           <Document
             file={blobUrl}
             onLoadSuccess={({ numPages: total }) => {
               setNumPages(total);
+              setStage('done');
               setLoading(false);
             }}
             onLoadError={(e) => {

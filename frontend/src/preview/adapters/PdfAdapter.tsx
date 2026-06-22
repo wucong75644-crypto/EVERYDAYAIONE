@@ -36,6 +36,7 @@ function PdfAdapterComponent({ item, onClose }: PreviewCommonProps) {
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // 切换文件时重置
@@ -43,6 +44,7 @@ function PdfAdapterComponent({ item, onClose }: PreviewCommonProps) {
     setPageNumber(1);
     setScale(1);
     setLoading(true);
+    setLoadProgress(0);
     setError(null);
   }, [pdfUrl]);
 
@@ -55,6 +57,17 @@ function PdfAdapterComponent({ item, onClose }: PreviewCommonProps) {
     setError(`PDF 加载失败：${e.message}`);
     setLoading(false);
   }, []);
+
+  // PDF.js 加载进度回调
+  const onDocLoadProgress = useCallback(({ loaded, total }: { loaded: number; total?: number }) => {
+    if (total && total > 0) {
+      setLoadProgress(Math.min(99, Math.round((loaded / total) * 100)));
+    }
+  }, []);
+
+  const loadingText = loadProgress > 0
+    ? `加载 PDF 中... ${loadProgress}%`
+    : '加载 PDF 中...';
 
   const prev = useCallback(() => setPageNumber((p) => Math.max(1, p - 1)), []);
   const next = useCallback(
@@ -128,12 +141,20 @@ function PdfAdapterComponent({ item, onClose }: PreviewCommonProps) {
   ) : null;
 
   return (
-    <PreviewFrame item={item} onClose={onClose} loading={loading} error={error} footer={footer}>
+    <PreviewFrame
+      item={item}
+      onClose={onClose}
+      loading={loading}
+      loadingText={loadingText}
+      error={error}
+      footer={footer}
+    >
       <div className="flex items-center justify-center min-h-full p-4">
         <Document
           file={pdfUrl}
           onLoadSuccess={onDocLoadSuccess}
           onLoadError={onDocLoadError}
+          onLoadProgress={onDocLoadProgress}
           loading={null}
           error={null}
         >
