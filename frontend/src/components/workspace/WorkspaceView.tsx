@@ -276,12 +276,14 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     enabled: !ws.multiSelectMode,
   });
 
-  // 点击空白区域清空选中
+  // 点击空白区域清空选中（grid 间隙、列表行间、容器内的空白都算）
   const handleBlankClick = useCallback((e: React.MouseEvent) => {
-    // 只有点击到容器本身（非子元素冒泡）时清空
-    if (e.target === e.currentTarget) {
-      selection.clear();
-    }
+    const target = e.target as HTMLElement;
+    // 点击落在文件卡片内 → 不算空白
+    if (target.closest('[data-workspace-path]')) return;
+    // 点击落在交互元素（按钮、表头排序、输入框等）→ 不算空白
+    if (target.closest('button, input, textarea, [role="menuitem"], [role="tab"]')) return;
+    selection.clear();
   }, [selection]);
 
   // 键盘快捷键
