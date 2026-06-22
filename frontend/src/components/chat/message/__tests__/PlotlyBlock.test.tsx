@@ -193,4 +193,90 @@ describe('PlotlyBlock - 视觉模板', () => {
       expect(cleaned).not.toBe(original);   // 新对象
     });
   });
+
+  describe('PROFESSIONAL_TEMPLATE.legend (顶部水平居中)', () => {
+    it('legend 水平排列(避免右侧垂直挤压绘图区宽度)', () => {
+      const legend = PROFESSIONAL_TEMPLATE.layout.legend as { orientation: string };
+      expect(legend.orientation).toBe('h');
+    });
+
+    it('legend 顶部居中(y > 1,xanchor center,标题左对齐+legend 中上)', () => {
+      const legend = PROFESSIONAL_TEMPLATE.layout.legend as {
+        y: number; x: number; xanchor: string; yanchor: string;
+      };
+      expect(legend.y).toBeGreaterThan(1);   // 在 plot 区域上方
+      expect(legend.x).toBe(0.5);             // 水平居中
+      expect(legend.xanchor).toBe('center');
+      expect(legend.yanchor).toBe('bottom');
+    });
+
+    it('template.legend.title 强制空(隐藏 plotly express 自动加的 variable)', () => {
+      const legend = PROFESSIONAL_TEMPLATE.layout.legend as {
+        title: { text: string };
+      };
+      expect(legend.title.text).toBe('');
+    });
+
+    it('PROFESSIONAL_TEMPLATE.margin: 顶部 90 给标题+legend 两行,底部 50 省空间', () => {
+      const m = PROFESSIONAL_TEMPLATE.layout.margin as {
+        t: number; b: number; l: number; r: number;
+      };
+      expect(m.t).toBe(90);
+      expect(m.b).toBe(50);
+    });
+  });
+
+  describe('Layout 合并:强制 legend 覆盖 LLM/px 给的字段', () => {
+    // 模拟 PlotlyBlock 主渲染逻辑的 legend 合并
+    function mergeLegend(llmLegend: Record<string, unknown>) {
+      return {
+        ...llmLegend,
+        orientation: 'h',
+        x: 0.5,
+        y: 1.08,
+        xanchor: 'center',
+        yanchor: 'bottom',
+        title: { text: '' },
+      };
+    }
+
+    it('plotly express 自动加的 title=variable 被强制清空', () => {
+      const llmLegend = { title: { text: 'variable' }, traceorder: 'normal' };
+      const merged = mergeLegend(llmLegend);
+      expect((merged.title as { text: string }).text).toBe('');
+    });
+
+    it('plotly express 默认右侧位置被强制改顶部水平', () => {
+      // px 可能设 orientation='v' 或 x=1, y=1(右上)
+      const llmLegend = { orientation: 'v', x: 1, y: 1 };
+      const merged = mergeLegend(llmLegend);
+      expect(merged.orientation).toBe('h');
+      expect(merged.x).toBe(0.5);
+      expect(merged.y).toBeGreaterThan(1);
+    });
+
+    it('LLM 设置的非位置字段保留(traceorder/itemwidth/font 等)', () => {
+      const llmLegend = {
+        traceorder: 'reversed',
+        itemwidth: 30,
+        font: { size: 14 },
+        title: { text: '应该被覆盖' },
+        orientation: 'v',
+      };
+      const merged = mergeLegend(llmLegend);
+      // 非位置字段保留
+      expect(merged.traceorder).toBe('reversed');
+      expect(merged.itemwidth).toBe(30);
+      expect((merged.font as { size: number }).size).toBe(14);
+      // 位置/标题被覆盖
+      expect((merged.title as { text: string }).text).toBe('');
+      expect(merged.orientation).toBe('h');
+    });
+
+    it('LLM 没设 legend 时合并仍生效(空对象 spread 安全)', () => {
+      const merged = mergeLegend({});
+      expect(merged.orientation).toBe('h');
+      expect((merged.title as { text: string }).text).toBe('');
+    });
+  });
 });

@@ -55,8 +55,8 @@ const PROFESSIONAL_TEMPLATE = {
       '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
       '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
     ],
-    // 我们控制 margin (LLM 给的会被剥离),legend 在底部所以 b 大一点
-    margin: { l: 60, r: 30, t: 60, b: 80, pad: 4 },
+    // 我们控制 margin (LLM 给的会被剥离),legend 在顶部所以 t 大一点(标题 + legend 两行)
+    margin: { l: 60, r: 30, t: 90, b: 50, pad: 4 },
     xaxis: {
       gridcolor: '#f3f4f6',
       linecolor: '#e5e7eb',
@@ -84,15 +84,18 @@ const PROFESSIONAL_TEMPLATE = {
       bgcolor: 'white',
       bordercolor: '#e5e7eb',
     },
-    // legend 水平放底部:默认右侧垂直会挤压绘图区宽度(实测窄一半)
+    // legend 水平放顶部居中(标题左对齐 + legend 一行在标题下方):
+    // 默认 plotly express 把 legend 放右侧垂直会挤压绘图区宽度,
+    // 实测改顶部水平后绘图区宽度铺满,且不占底部 X 轴/X 轴标题空间。
     legend: {
       orientation: 'h',
-      y: -0.18,
       x: 0.5,
+      y: 1.08,
       xanchor: 'center',
-      yanchor: 'top',
+      yanchor: 'bottom',
       font: { size: 12, color: '#4b5563' },
       bgcolor: 'rgba(255,255,255,0)',
+      title: { text: '' },  // 隐藏 plotly express 自动加的 'variable' 等技术标题
     },
     bargap: 0.3,
   },
@@ -211,11 +214,23 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
         //    - template 提供视觉默认
         //    - LLM 的 layout 覆盖 template (但 width/height/autosize/margin 被剥离)
         //    - 强制 autosize=true 让 plotly 用容器尺寸
+        //    - 强制 legend 顶部水平居中 + 隐藏自动标题
+        //      (plotly express 在 fig.layout.legend 设默认值会覆盖 template.layout.legend,
+        //       不强制就出现每次 legend 位置/标题不固定,如 px.line(y=[a,b]) 自动加 'variable')
         const llmLayout = (option.layout as Record<string, unknown>) || {};
         const layout = {
           template: PROFESSIONAL_TEMPLATE,
           ...stripSizeFields(llmLayout),
           autosize: true,
+          legend: {
+            ...((llmLayout.legend as Record<string, unknown>) || {}),
+            orientation: 'h',
+            x: 0.5,
+            y: 1.08,
+            xanchor: 'center',
+            yanchor: 'bottom',
+            title: { text: '' },  // 隐藏 'variable' 等 px 自动技术标题
+          },
         };
 
         // 3. 准备 config: LLM 的 + 我们强制覆盖 (displaylogo 等)
