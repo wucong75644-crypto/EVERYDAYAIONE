@@ -25,7 +25,9 @@ import { m } from 'framer-motion';
 import type { Message } from '../../../stores/useMessageStore';
 import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
 import DeleteMessageModal from '../modals/DeleteMessageModal';
-import ImagePreviewModal from '../media/ImagePreviewModal';
+import { usePreview } from '../../../preview/usePreview';
+import PreviewHost from '../../../preview/PreviewHost';
+import { fromBlobImage } from '../../../preview/toPreviewItem';
 import toast from 'react-hot-toast';
 import { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
 import api from '../../../services/api';
@@ -292,9 +294,8 @@ export default memo(function MessageItem({
     close: closeDeleteModal,
   } = useModalAnimation();
 
-  // 图片预览弹窗状态
-  const [showImagePreview, setShowImagePreview] = useState(false);
-  const [previewIndex, setPreviewIndex] = useState(currentImageIndex);
+  // 图片预览弹窗状态（统一收敛到 usePreview）
+  const preview = usePreview();
 
   // 用于预览的图片列表：所有消息都使用全局列表（支持查看对话中所有图片）
   const previewImageUrls = allImageUrls;
@@ -312,9 +313,11 @@ export default memo(function MessageItem({
   // 图片点击回调（合并用户/AI 两处相同逻辑，稳定引用）
   const handleImageClick = useCallback((index?: number) => {
     const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
-    setPreviewIndex(globalIndex);
-    setShowImagePreview(true);
-  }, [getGlobalImageIndex, currentImageIndex]);
+    const items = previewImageUrls.map((url, i) =>
+      fromBlobImage({ previewUrl: url, filename: `image-${i + 1}` }),
+    );
+    preview.open(items, globalIndex);
+  }, [getGlobalImageIndex, currentImageIndex, previewImageUrls, preview]);
 
   // 单图重新生成回调（绑定 message.id，稳定引用）
   const handleRegenerateSingle = useCallback((idx: number) => {
@@ -789,21 +792,12 @@ export default memo(function MessageItem({
         loading={deleteLoading}
       />
 
-      {/* 图片预览弹窗 */}
-      {showImagePreview && previewImageUrls.length > 0 && (
-        <ImagePreviewModal
-          imageUrl={previewImageUrls[previewIndex]}
-          onClose={() => setShowImagePreview(false)}
-          filename={`image-${previewIndex + 1}`}
-          onPrev={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
-          onNext={() => setPreviewIndex(Math.min(previewImageUrls.length - 1, previewIndex + 1))}
-          hasPrev={previewIndex > 0}
-          hasNext={previewIndex < previewImageUrls.length - 1}
-          allImages={previewImageUrls}
-          currentIndex={previewIndex}
-          onSelectImage={setPreviewIndex}
-        />
-      )}
+      {/* 图片预览弹窗（统一走 PreviewHost）*/}
+      <PreviewHost
+        state={preview.state}
+        onClose={preview.close}
+        onIndexChange={preview.setIndex}
+      />
     </m.div>
   );
 });

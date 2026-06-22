@@ -8,8 +8,6 @@ import { describe, it, expect } from 'vitest';
 import {
   categorize,
   matchesFilter,
-  canPreviewImage,
-  canPreviewVideo,
   IMAGE_EXTS,
   VIDEO_EXTS,
 } from '../fileCategory';
@@ -97,29 +95,8 @@ describe('matchesFilter', () => {
   });
 });
 
-describe('canPreviewImage', () => {
-  it('图片返回 true', () => {
-    expect(canPreviewImage({ name: 'a.png' })).toBe(true);
-  });
-  it('视频返回 false', () => {
-    expect(canPreviewImage({ name: 'a.mp4' })).toBe(false);
-  });
-  it('文档返回 false', () => {
-    expect(canPreviewImage({ name: 'a.pdf' })).toBe(false);
-  });
-});
-
-describe('canPreviewVideo', () => {
-  it('视频返回 true', () => {
-    expect(canPreviewVideo({ name: 'a.mp4' })).toBe(true);
-  });
-  it('图片返回 false', () => {
-    expect(canPreviewVideo({ name: 'a.png' })).toBe(false);
-  });
-  it('文档返回 false', () => {
-    expect(canPreviewVideo({ name: 'a.pdf' })).toBe(false);
-  });
-});
+// canPreviewImage / canPreviewVideo 已被预览适配器架构取代
+// 见 src/preview/registry.ts canPreview() 与 resolveAdapter()
 
 describe('白名单完整性', () => {
   it('图片白名单包含核心扩展名', () => {

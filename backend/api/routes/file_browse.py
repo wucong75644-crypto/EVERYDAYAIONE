@@ -194,8 +194,12 @@ async def preview_workspace_file(
 
     media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     logger.info(f"Workspace preview | user={ctx.user_id} | path={path}")
+    # content_disposition_type='inline' — 让浏览器 inline 渲染 PDF/图片等，
+    # 而非触发下载。starlette FileResponse 传 filename 时默认 attachment，
+    # 这会让 iframe PDF 黑屏 + 自动下载（fallback 场景的 latent bug）
     return FileResponse(
         path=str(target),
         media_type=media_type,
         filename=target.name,
+        content_disposition_type="inline",
     )

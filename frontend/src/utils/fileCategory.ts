@@ -39,12 +39,5 @@ export function matchesFilter(item: CategorizableItem, filter: CategoryFilter): 
   return true;
 }
 
-/** 双击是否应该弹图片预览 */
-export function canPreviewImage(item: CategorizableItem): boolean {
-  return categorize(item) === 'image';
-}
-
-/** 双击是否应该弹视频预览 */
-export function canPreviewVideo(item: CategorizableItem): boolean {
-  return categorize(item) === 'video';
-}
+// 注：canPreviewImage / canPreviewVideo 已被预览适配器架构（preview/registry）取代
+// 调用方改用 preview/registry.canPreview(item) 或 preview/registry.resolveAdapter(item)

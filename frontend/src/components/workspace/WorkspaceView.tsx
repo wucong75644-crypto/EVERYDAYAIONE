@@ -13,9 +13,11 @@ import { useFileSelection } from '../../hooks/useFileSelection';
 import { useRubberBand, rubberBandStyle } from '../../hooks/useRubberBand';
 import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
-import FilePreviewModal, { canPreview } from '../chat/media/FilePreviewModal';
-import ImagePreviewModal from '../chat/media/ImagePreviewModal';
-import VideoPreviewModal from '../chat/media/VideoPreviewModal';
+import { usePreview } from '../../preview/usePreview';
+import PreviewHost from '../../preview/PreviewHost';
+import { fromWorkspaceItem } from '../../preview/toPreviewItem';
+import { resolveAdapter } from '../../preview/registry';
+import type { PreviewItem } from '../../preview/types';
 import FileContextMenu from './FileContextMenu';
 // BatchActionBar removed — 多选用轻量文字提示
 import WorkspaceHeader from './WorkspaceHeader';
@@ -28,8 +30,7 @@ import { getFullPath } from './WorkspaceFileItem';
 import type { WorkspaceFileItem, WorkspaceFile } from '../../services/workspace';
 import { downloadWorkspaceZip } from '../../services/workspace';
 import { downloadFile } from '../../utils/downloadFile';
-import { matchesFilter, canPreviewImage, canPreviewVideo } from '../../utils/fileCategory';
-import type { FilePart } from '../../types/message';
+import { categorize, matchesFilter } from '../../utils/fileCategory';
 
 interface WorkspaceViewProps {
   onBack: () => void;
@@ -39,6 +40,7 @@ interface WorkspaceViewProps {
 export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewProps) {
   const ws = useWorkspace();
   const selection = useFileSelection();
+  const preview = usePreview();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileAreaRef = useRef<HTMLDivElement>(null);
 
@@ -50,11 +52,6 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     selection.clear();
     setRenameTarget(null);
   }, [ws.currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 预览弹窗（三类：文档/图片/视频分别独立）
-  const [previewFile, setPreviewFile] = useState<FilePart | null>(null);
-  const [previewImageIndex, setPreviewImageIndex] = useState<number | null>(null);
-  const [previewVideoIndex, setPreviewVideoIndex] = useState<number | null>(null);
 
   // 删除确认弹窗
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -72,11 +69,11 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
 
   // 图片/视频上下张所基于的列表 — 仅在当前筛选可见的同类型文件之间循环
   const imageItems = useMemo(
-    () => filteredItems.filter((i) => !i.is_dir && canPreviewImage(i) && i.cdn_url),
+    () => filteredItems.filter((i) => !i.is_dir && categorize(i) === 'image' && i.cdn_url),
     [filteredItems],
   );
   const videoItems = useMemo(
-    () => filteredItems.filter((i) => !i.is_dir && canPreviewVideo(i) && i.cdn_url),
+    () => filteredItems.filter((i) => !i.is_dir && categorize(i) === 'video' && i.cdn_url),
     [filteredItems],
   );
 
@@ -95,41 +92,29 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     }
   }, [orderedPaths, selection, ws.multiSelectMode]);
 
-  // 双击打开 — 按文件分类分发到不同 Modal
+  // 双击打开 — 通过 registry 选 adapter，统一交给 PreviewHost 渲染
   const handleOpen = useCallback((item: WorkspaceFileItem) => {
     if (item.is_dir) {
       ws.navigateTo(getFullPath(ws.currentPath, item.name));
       return;
     }
-    // 图片：弹 ImagePreviewModal，索引基于当前可见的图片列表
-    if (canPreviewImage(item)) {
-      const idx = imageItems.findIndex((i) => i.name === item.name);
-      setPreviewImageIndex(idx >= 0 ? idx : 0);
-      return;
+    const fullPath = getFullPath(ws.currentPath, item.name);
+    const ctx = fromWorkspaceItem(item, fullPath);
+    const adapter = resolveAdapter(ctx);
+    // 图片/视频走上下张：兄弟列表用同分类的当前可见项
+    let siblings: PreviewItem[] = [ctx];
+    let index = 0;
+    if (adapter?.id === 'image') {
+      siblings = imageItems.map((i) => fromWorkspaceItem(i, getFullPath(ws.currentPath, i.name)));
+      const found = imageItems.findIndex((i) => i.name === item.name);
+      index = found >= 0 ? found : 0;
+    } else if (adapter?.id === 'video') {
+      siblings = videoItems.map((i) => fromWorkspaceItem(i, getFullPath(ws.currentPath, i.name)));
+      const found = videoItems.findIndex((i) => i.name === item.name);
+      index = found >= 0 ? found : 0;
     }
-    // 视频：弹 VideoPreviewModal
-    if (canPreviewVideo(item)) {
-      const idx = videoItems.findIndex((i) => i.name === item.name);
-      setPreviewVideoIndex(idx >= 0 ? idx : 0);
-      return;
-    }
-    // 文档（xlsx/csv/pdf/text）：弹 FilePreviewModal
-    if (canPreview(item.name)) {
-      setPreviewFile({
-        type: 'file',
-        url: item.cdn_url || '',
-        name: item.name,
-        mime_type: item.mime_type || 'application/octet-stream',
-        size: item.size,
-        workspace_path: getFullPath(ws.currentPath, item.name),
-      });
-      return;
-    }
-    // 兜底：触发下载
-    if (item.cdn_url) {
-      downloadFile(item.cdn_url, item.name);
-    }
-  }, [ws.currentPath, ws.navigateTo, imageItems, videoItems]);
+    preview.open(siblings, index);
+  }, [ws.currentPath, ws.navigateTo, imageItems, videoItems, preview]);
 
   const handleSendToChat = useCallback((item: WorkspaceFileItem) => {
     // 多选时插入所有选中的非文件夹项
@@ -283,8 +268,8 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 重命名/弹窗/输入框中不拦截（含三类预览 Modal）
-      if (renameTarget || deleteTarget || previewFile || previewImageIndex !== null || previewVideoIndex !== null) return;
+      // 重命名/弹窗/输入框中不拦截（含预览 Modal 打开时）
+      if (renameTarget || deleteTarget || preview.isOpen) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
@@ -329,7 +314,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [renameTarget, deleteTarget, previewFile, previewImageIndex, previewVideoIndex, selection, orderedPaths, ws.items, ws.currentPath, handleOpen]);
+  }, [renameTarget, deleteTarget, preview.isOpen, selection, orderedPaths, ws.items, ws.currentPath, handleOpen]);
 
   // 删除弹窗显示名称
   const deleteDisplayName = deleteTarget?.startsWith('batch:')
@@ -457,37 +442,12 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         </div>
       </Modal>
 
-      {/* 文档预览（xlsx/csv/pdf/text）*/}
-      {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}
-
-      {/* 图片预览（仅在筛选可见的图片间切换）*/}
-      {previewImageIndex !== null && imageItems[previewImageIndex] && (
-        <ImagePreviewModal
-          imageUrl={imageItems[previewImageIndex].cdn_url || ''}
-          filename={imageItems[previewImageIndex].name}
-          onClose={() => setPreviewImageIndex(null)}
-          onPrev={() => setPreviewImageIndex((i) => (i !== null && i > 0 ? i - 1 : i))}
-          onNext={() => setPreviewImageIndex((i) => (i !== null && i < imageItems.length - 1 ? i + 1 : i))}
-          hasPrev={previewImageIndex > 0}
-          hasNext={previewImageIndex < imageItems.length - 1}
-          allImages={imageItems.map((i) => i.cdn_url || '')}
-          currentIndex={previewImageIndex}
-          onSelectImage={(idx) => setPreviewImageIndex(idx)}
-        />
-      )}
-
-      {/* 视频预览（仅在筛选可见的视频间切换）*/}
-      {previewVideoIndex !== null && videoItems[previewVideoIndex] && (
-        <VideoPreviewModal
-          videoUrl={videoItems[previewVideoIndex].cdn_url || ''}
-          filename={videoItems[previewVideoIndex].name}
-          onClose={() => setPreviewVideoIndex(null)}
-          onPrev={() => setPreviewVideoIndex((i) => (i !== null && i > 0 ? i - 1 : i))}
-          onNext={() => setPreviewVideoIndex((i) => (i !== null && i < videoItems.length - 1 ? i + 1 : i))}
-          hasPrev={previewVideoIndex > 0}
-          hasNext={previewVideoIndex < videoItems.length - 1}
-        />
-      )}
+      {/* 统一预览入口（registry 自动按文件类型分发到对应 adapter）*/}
+      <PreviewHost
+        state={preview.state}
+        onClose={preview.close}
+        onIndexChange={preview.setIndex}
+      />
     </div>
   );
 }

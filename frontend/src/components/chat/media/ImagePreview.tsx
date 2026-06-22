@@ -6,9 +6,10 @@
  * - 点击放大查看（集成 ImagePreviewModal）
  */
 
-import { useState } from 'react';
 import { type UploadedImage } from '../../../hooks/useImageUpload';
-import ImagePreviewModal from './ImagePreviewModal';
+import { usePreview } from '../../../preview/usePreview';
+import PreviewHost from '../../../preview/PreviewHost';
+import { fromBlobImage } from '../../../preview/toPreviewItem';
 
 interface ImagePreviewProps {
   images: UploadedImage[];
@@ -16,56 +17,44 @@ interface ImagePreviewProps {
 }
 
 export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
-  // 当前放大预览的图片索引（-1 表示未预览）
-  const [previewIndex, setPreviewIndex] = useState<number>(-1);
+  const preview = usePreview();
 
   if (images.length === 0) return null;
 
-  // 获取可预览的图片列表（排除上传中和错误的）
+  // 可预览的图片（排除上传中/错误）
   const previewableImages = images.filter((img) => !img.isUploading && !img.error && img.preview);
 
-  // 当前预览的图片
-  const currentPreviewImage = previewIndex >= 0 ? previewableImages[previewIndex] : null;
+  // 把可预览图列表映射为 PreviewItem 数组（顺序与 previewableImages 一致）
+  const previewItems = previewableImages.map((img) =>
+    fromBlobImage({
+      previewUrl: img.preview!,
+      filename: img.file.name.replace(/\.[^.]+$/, ''),
+    }),
+  );
 
-  // 点击缩略图放大
+  // 点击缩略图打开预览
   const handleImageClick = (image: UploadedImage) => {
-    // 上传中或有错误时不允许放大
     if (image.isUploading || image.error || !image.preview) return;
     const index = previewableImages.findIndex((img) => img.id === image.id);
-    if (index >= 0) {
-      setPreviewIndex(index);
-    }
+    if (index >= 0) preview.open(previewItems, index);
   };
 
-  // 切换到上一张
-  const handlePrev = () => {
-    if (previewIndex > 0) {
-      setPreviewIndex(previewIndex - 1);
-    }
-  };
-
-  // 切换到下一张
-  const handleNext = () => {
-    if (previewIndex < previewableImages.length - 1) {
-      setPreviewIndex(previewIndex + 1);
-    }
-  };
-
-  // 删除当前预览的图片
+  // 删除当前预览图（透传给 PreviewHost.onDelete）
+  // 删除后自动切换到下一张或上一张（与原逻辑等价）
   const handleDelete = () => {
-    if (!currentPreviewImage) return;
-    const imageId = currentPreviewImage.id;
-
-    // 删除后自动切换到下一张或上一张
-    if (previewableImages.length === 1) {
-      // 只有一张图片，关闭预览
-      setPreviewIndex(-1);
-    } else if (previewIndex >= previewableImages.length - 1) {
-      // 删除的是最后一张，切换到前一张
-      setPreviewIndex(previewIndex - 1);
+    if (preview.state.kind !== 'open') return;
+    const currentIdx = preview.state.index;
+    const currentImage = previewableImages[currentIdx];
+    if (!currentImage) return;
+    const imageId = currentImage.id;
+    const remainingCount = previewableImages.length - 1;
+    if (remainingCount === 0) {
+      preview.close();
+    } else if (currentIdx >= remainingCount) {
+      // 删的是最后一张 → 切到前一张
+      preview.setIndex(currentIdx - 1);
     }
-    // 其他情况保持当前索引，会自动显示下一张
-
+    // 其他情况：索引不变，自动显示下一张
     onRemove(imageId);
   };
 
@@ -144,22 +133,13 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
       ))}
     </div>
 
-      {/* 图片放大预览弹窗 */}
-      {currentPreviewImage && (
-        <ImagePreviewModal
-          imageUrl={currentPreviewImage.preview}
-          onClose={() => setPreviewIndex(-1)}
-          filename={currentPreviewImage.file.name.replace(/\.[^.]+$/, '')}
-          onDelete={handleDelete}
-          onPrev={handlePrev}
-          onNext={handleNext}
-          hasPrev={previewIndex > 0}
-          hasNext={previewIndex < previewableImages.length - 1}
-          allImages={previewableImages.map((img) => img.preview)}
-          currentIndex={previewIndex}
-          onSelectImage={setPreviewIndex}
-        />
-      )}
+      {/* 图片放大预览弹窗 — 统一走 PreviewHost（onDelete 透传保留删图能力）*/}
+      <PreviewHost
+        state={preview.state}
+        onClose={preview.close}
+        onIndexChange={preview.setIndex}
+        onDelete={handleDelete}
+      />
     </>
   );
 }

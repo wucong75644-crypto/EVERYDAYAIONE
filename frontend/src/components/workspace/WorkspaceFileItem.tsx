@@ -9,9 +9,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Folder, Check } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
+import { IMAGE_EXTS } from '../../utils/fileCategory';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
-
-const _IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 
 /** 中间省略：头部 + … + 尾部（含后缀前几个字符），对齐 macOS Finder */
 function ellipsisMiddle(name: string, maxLen: number): string {
@@ -307,7 +306,7 @@ export default function WorkspaceFileItem({
 
       {/* 大图标 / 图片缩略图 */}
       {(() => {
-        const isImage = !item.is_dir && !!item.cdn_url && _IMAGE_EXTS.has(('.' + (item.name.split('.').pop() || '')).toLowerCase());
+        const isImage = !item.is_dir && !!item.cdn_url && IMAGE_EXTS.has((item.name.split('.').pop() || '').toLowerCase());
         return (
           <>
             {isImage && (

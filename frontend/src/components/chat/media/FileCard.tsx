@@ -4,32 +4,37 @@
  * 在消息中展示可下载/可预览的文件。
  */
 
-import { useState } from 'react';
 import toast from 'react-hot-toast';
 import type { FilePart } from '../../../types/message';
 import { downloadFile } from '../../../utils/downloadFile';
 import { getFileIcon, formatFileSize } from '../../../utils/fileUtils';
-import FilePreviewModal, { canPreview } from './FilePreviewModal';
+import { usePreview } from '../../../preview/usePreview';
+import PreviewHost from '../../../preview/PreviewHost';
+import { canPreview } from '../../../preview/registry';
+import { fromFilePart } from '../../../preview/toPreviewItem';
 
 /** 文件卡片列表（含预览弹窗状态） */
 export default function FileCardList({ files }: { files: FilePart[] }) {
-  const [previewFile, setPreviewFile] = useState<FilePart | null>(null);
+  const preview = usePreview();
 
   return (
     <div className="mt-3 space-y-2">
-      {files.map((file, i) => (
-        <FileCardItem
-          key={file.url || file.workspace_path || i}
-          file={file}
-          onPreview={canPreview(file.name) ? () => setPreviewFile(file) : undefined}
-        />
-      ))}
-      {previewFile && (
-        <FilePreviewModal
-          file={previewFile}
-          onClose={() => setPreviewFile(null)}
-        />
-      )}
+      {files.map((file, i) => {
+        const item = fromFilePart(file);
+        const canShow = canPreview(item);
+        return (
+          <FileCardItem
+            key={file.url || file.workspace_path || i}
+            file={file}
+            onPreview={canShow ? () => preview.open(item) : undefined}
+          />
+        );
+      })}
+      <PreviewHost
+        state={preview.state}
+        onClose={preview.close}
+        onIndexChange={preview.setIndex}
+      />
     </div>
   );
 }
