@@ -73,10 +73,10 @@ export default function WorkspaceCategoryTabs({
         })}
       </div>
 
-      {/* 右侧：多选模式 + 下载按钮 */}
+      {/* 右侧：下载按钮 + 多选 toggle */}
       <div className="flex items-center gap-1 shrink-0">
-        {/* 多选模式 + 有选中 → 显示「下载 (N)」 */}
-        {multiSelectMode && selectedCount > 0 && (
+        {/* 有选中即显示「下载 (N)」— 不限于多选模式，拖拽/Ctrl/Shift 选中也生效 */}
+        {selectedCount > 0 && (
           <button
             type="button"
             onClick={onBatchDownload}
