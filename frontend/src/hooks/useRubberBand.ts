@@ -31,6 +31,14 @@ interface UseRubberBandOptions {
   onSelectionChange: (paths: string[], additive: boolean) => void;
   /** 拖拽开始时回调（用于 additive 模式 snapshot baseline） */
   onDragStart?: () => void;
+  /**
+   * 纯点击空白（mousedown→mouseup 之间无显著移动）时回调。
+   *
+   * 设计意图：把"点击空白清空选中"的判断收归 hook 管理，避免依赖 React
+   * 合成 click 事件（容器嵌套导致 e.target 误判，且 mouseup 后浏览器仍触发
+   * click 会让"刚拖完保留的选中"被误清空）。
+   */
+  onEmptyClick?: () => void;
   /** 是否启用（多选模式下应禁用，避免与复选框冲突）*/
   enabled: boolean;
 }
@@ -56,6 +64,7 @@ export function useRubberBand({
   containerRef,
   onSelectionChange,
   onDragStart,
+  onEmptyClick,
   enabled,
 }: UseRubberBandOptions): UseRubberBandReturn {
   const [rect, setRect] = useState<Rect | null>(null);
@@ -64,8 +73,10 @@ export function useRubberBand({
   // 用 ref 持有最新回调，避免 effect 因依赖变化频繁重注册（mousemove 实时调用）
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onDragStartRef = useRef(onDragStart);
+  const onEmptyClickRef = useRef(onEmptyClick);
   useEffect(() => { onSelectionChangeRef.current = onSelectionChange; }, [onSelectionChange]);
   useEffect(() => { onDragStartRef.current = onDragStart; }, [onDragStart]);
+  useEffect(() => { onEmptyClickRef.current = onEmptyClick; }, [onEmptyClick]);
 
   // 容器内 mousedown：只在点击空白（target === container）时启动框选
   useEffect(() => {
@@ -156,10 +167,17 @@ export function useRubberBand({
     };
 
     const handleUp = () => {
-      // 重置（选中已由 mousemove 实时 commit）
+      // 没接管过 mousedown（落在文件/按钮上）→ 跳过
+      if (!startRef.current) return;
+      const wasDragging = draggingRef.current;
       startRef.current = null;
       draggingRef.current = false;
       setRect(null);
+      // 纯点击空白（无显著移动）→ 通知组件清空选中
+      // 拖拽完成 → 选中已 commit，不动
+      if (!wasDragging) {
+        onEmptyClickRef.current?.();
+      }
     };
 
     window.addEventListener('mousemove', handleMove);

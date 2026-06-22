@@ -273,16 +273,12 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     onDragStart: useCallback(() => {
       additiveBaselineRef.current = Array.from(selection.selectedPaths);
     }, [selection.selectedPaths]),
+    // 纯点击空白 → 清空选中（统一收归 hook 管理，避免 React onClick 事件序列竞态）
+    onEmptyClick: useCallback(() => {
+      selection.clear();
+    }, [selection]),
     enabled: !ws.multiSelectMode,
   });
-
-  // 点击空白区域清空选中
-  const handleBlankClick = useCallback((e: React.MouseEvent) => {
-    // 只有点击到容器本身（非子元素冒泡）时清空
-    if (e.target === e.currentTarget) {
-      selection.clear();
-    }
-  }, [selection]);
 
   // 键盘快捷键
   useEffect(() => {
@@ -380,7 +376,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
             onUpload: () => fileInputRef.current?.click(),
           }}
         >
-          <div ref={fileAreaRef} className="relative flex-1 overflow-y-auto select-none" onClick={handleBlankClick}>
+          <div ref={fileAreaRef} className="relative flex-1 overflow-y-auto select-none">
             {/* 拖拽框选矩形（rubber-band） */}
             {rubberBand.rect && <div style={rubberBandStyle(rubberBand.rect)} />}
             {ws.loading && ws.items.length === 0 ? (
