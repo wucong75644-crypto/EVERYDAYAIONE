@@ -13,7 +13,7 @@
  * 启动阈值 = 5px（避免与"点击空白清空选中"冲突）。
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const DRAG_THRESHOLD_PX = 5;
 
