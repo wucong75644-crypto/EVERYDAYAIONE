@@ -61,9 +61,6 @@ export function useRubberBand({
   const [rect, setRect] = useState<Rect | null>(null);
   const startRef = useRef<{ x: number; y: number; additive: boolean } | null>(null);
   const draggingRef = useRef(false);
-  // 标记「刚拖完」的瞬间 —— 用于在 capture phase 拦截紧随其后的 click
-  // 否则 WorkspaceView 的 onClick handler 会把刚选中的全部清空
-  const justDraggedRef = useRef(false);
   // 用 ref 持有最新回调，避免 effect 因依赖变化频繁重注册（mousemove 实时调用）
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onDragStartRef = useRef(onDragStart);
@@ -159,32 +156,17 @@ export function useRubberBand({
     };
 
     const handleUp = () => {
-      // 拖拽真的发生过：标记 justDragged 拦截紧随的 click（防止误清空）
-      if (draggingRef.current) {
-        justDraggedRef.current = true;
-      }
       // 重置（选中已由 mousemove 实时 commit）
       startRef.current = null;
       draggingRef.current = false;
       setRect(null);
     };
 
-    // 在 capture phase 拦截「刚拖完」紧随的 click，防止 onClick 误清空选中
-    const handleClickCapture = (e: MouseEvent) => {
-      if (justDraggedRef.current) {
-        justDraggedRef.current = false;
-        e.stopPropagation();
-        e.preventDefault();
-      }
-    };
-
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
-    window.addEventListener('click', handleClickCapture, true);
     return () => {
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
-      window.removeEventListener('click', handleClickCapture, true);
     };
     // onSelectionChange 通过 ref 读取，无需进依赖；rect 同样不进依赖避免 effect 重注册
     // eslint-disable-next-line react-hooks/exhaustive-deps
