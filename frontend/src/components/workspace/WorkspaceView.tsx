@@ -370,6 +370,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
                 onSendToChat={handleSendToChat}
                 onStartRename={setRenameTarget}
                 onMove={ws.move}
+                onBatchDownload={handleBatchDownload}
               />
             )}
           </div>
