@@ -22,6 +22,7 @@ interface WorkspaceFileGridProps {
   onSendToChat?: (item: FileItemData) => void;
   onStartRename: (path: string) => void;
   onMove?: (srcPath: string, destDir: string) => void;
+  onBatchDownload?: (item: FileItemData) => void;
 }
 
 export default function WorkspaceFileGrid({
@@ -37,6 +38,7 @@ export default function WorkspaceFileGrid({
   onSendToChat,
   onStartRename,
   onMove,
+  onBatchDownload,
 }: WorkspaceFileGridProps) {
   return (
     <div className="grid gap-4 p-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
@@ -53,6 +55,7 @@ export default function WorkspaceFileGrid({
               onOpen: () => onOpen(item),
               onRename: () => onStartRename(fullPath),
               onDownload: () => item.cdn_url && downloadFile(item.cdn_url, item.name),
+              onBatchDownload: onBatchDownload ? () => onBatchDownload(item) : undefined,
               onSendToChat: () => onSendToChat?.(item),
               onDelete: () => onDelete(fullPath),
             }}

@@ -16,10 +16,15 @@ import {
   moveWorkspaceItem,
   type WorkspaceFileItem,
 } from '../services/workspace';
+import type { CategoryFilter } from '../utils/fileCategory';
 
 export type ViewMode = 'list' | 'grid';
+export type SortField = 'name' | 'size' | 'modified';
+export type SortOrder = 'asc' | 'desc';
 
 const VIEW_MODE_KEY = 'workspace_view_mode';
+const SORT_FIELD_KEY = 'workspace_sort_field';
+const SORT_ORDER_KEY = 'workspace_sort_order';
 
 function loadViewMode(): ViewMode {
   try {
@@ -29,8 +34,21 @@ function loadViewMode(): ViewMode {
   return 'list';
 }
 
-export type SortField = 'name' | 'size' | 'modified';
-export type SortOrder = 'asc' | 'desc';
+function loadSortField(): SortField {
+  try {
+    const saved = localStorage.getItem(SORT_FIELD_KEY);
+    if (saved === 'name' || saved === 'size' || saved === 'modified') return saved;
+  } catch { /* ignore */ }
+  return 'modified';
+}
+
+function loadSortOrder(): SortOrder {
+  try {
+    const saved = localStorage.getItem(SORT_ORDER_KEY);
+    if (saved === 'asc' || saved === 'desc') return saved;
+  } catch { /* ignore */ }
+  return 'desc';
+}
 
 export interface UseWorkspaceReturn {
   /** 当前路径 */
@@ -71,6 +89,10 @@ export interface UseWorkspaceReturn {
   toggleSort: (field: SortField) => void;
   /** 清除错误 */
   clearError: () => void;
+  /** 当前分类筛选（all=全部 / images=图片与视频 / documents=文档） */
+  categoryFilter: CategoryFilter;
+  /** 切换分类筛选 */
+  setCategoryFilter: (filter: CategoryFilter) => void;
 }
 
 /** 校验文件/文件夹名称（前端防御层，后端 resolve_safe_path 做最终校验） */
@@ -87,9 +109,13 @@ export function useWorkspace(): UseWorkspaceReturn {
   const [loading, setLoading] = useState(false);
   const [operatingPath, setOperatingPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewModeState] = useState<ViewMode>(loadViewMode);
-  const [sortField, setSortField] = useState<SortField>('name');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+  const [userViewMode, setUserViewModeState] = useState<ViewMode>(loadViewMode);
+  const [sortField, setSortField] = useState<SortField>(loadSortField);
+  const [sortOrder, setSortOrder] = useState<SortOrder>(loadSortOrder);
+  const [categoryFilter, setCategoryFilterState] = useState<CategoryFilter>('all');
+
+  // 「图片与视频」Tab 强制 grid；其他 Tab 用用户偏好（实现自动联动 + 恢复）
+  const viewMode: ViewMode = categoryFilter === 'images' ? 'grid' : userViewMode;
 
   // 防止快速切换目录时的竞态
   const fetchSeqRef = useRef(0);
@@ -118,9 +144,10 @@ export function useWorkspace(): UseWorkspaceReturn {
     }
   }, []);
 
-  // 首次加载 + 路径变化时获取列表
+  // 首次加载 + 路径变化时获取列表 + 重置 Tab 到「全部」
   useEffect(() => {
     fetchList(currentPath);
+    setCategoryFilterState('all');
   }, [currentPath, fetchList]);
 
   // Agent 文件操作（code_execute 生成/删除）后自动刷新
@@ -272,24 +299,36 @@ export function useWorkspace(): UseWorkspaceReturn {
     }
   }, [currentPath, fetchList]);
 
-  // 切换视图模式
+  // 切换视图模式（更新用户偏好 + 持久化；images Tab 下展示值仍受 categoryFilter 控制）
   const setViewMode = useCallback((mode: ViewMode) => {
-    setViewModeState(mode);
+    setUserViewModeState(mode);
     try {
       localStorage.setItem(VIEW_MODE_KEY, mode);
     } catch { /* ignore */ }
   }, []);
 
+  const setCategoryFilter = useCallback((filter: CategoryFilter) => {
+    setCategoryFilterState(filter);
+  }, []);
+
   const clearError = useCallback(() => setError(null), []);
 
-  // 切换排序：同字段翻转方向，新字段重置升序
+  // 切换排序：同字段翻转方向，新字段重置升序；全程持久化
   const toggleSort = useCallback((field: SortField) => {
-    setSortField((prev) => {
-      if (prev === field) {
-        setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
-        return prev;
+    setSortField((prevField) => {
+      if (prevField === field) {
+        setSortOrder((o) => {
+          const next: SortOrder = o === 'asc' ? 'desc' : 'asc';
+          try { localStorage.setItem(SORT_ORDER_KEY, next); } catch { /* ignore */ }
+          return next;
+        });
+        return prevField;
       }
       setSortOrder('asc');
+      try {
+        localStorage.setItem(SORT_FIELD_KEY, field);
+        localStorage.setItem(SORT_ORDER_KEY, 'asc');
+      } catch { /* ignore */ }
       return field;
     });
   }, []);
@@ -330,5 +369,7 @@ export function useWorkspace(): UseWorkspaceReturn {
     setViewMode,
     toggleSort,
     clearError,
+    categoryFilter,
+    setCategoryFilter,
   };
 }

@@ -1085,3 +1085,28 @@
 | `resolve_fid_to_workspace` | `backend/services/agent/file_id.py` | 从 file_path_cache 反查 fid 对应的 workspace 绝对路径 |
 | `format_attachments` | `backend/services/handlers/chat_context/attachments.py` | XML 渲染附件，每个 `<file>` 含 `<id>fid_xxx</id>` + `<name>` + `<path>` + 附件使用规则 |
 | `build_workspace_prompt` | `backend/services/handlers/chat_context/attachments.py` | 工作区清单，每行带 `[fid_xxx]` 前缀 |
+
+### 工作区分类与批量下载
+
+> 工作区文件面板 Tab 分类筛选（全部/文档/图片与视频）+ 图片/视频双击预览 + 批量下载 ZIP。详见 `docs/document/TECH_工作区分类与批量下载.md`。
+
+#### 后端函数
+
+| 函数 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `download_workspace_zip` | `backend/api/routes/file_download.py` | POST endpoint：流式 ZIP 打包多文件/文件夹（zipstream-ng，UTF-8 中文文件名，500 文件/2GB 上限） |
+| `_collect_zip_targets` | `backend/api/routes/file_download.py` | 解析 + 校验 + 递归展开路径列表为 (绝对路径, arcname) 元组列表 |
+| `_resolve_archive_name` | `backend/api/routes/file_download.py` | 决定 ZIP 文件名（单文件夹→folder.zip / 多个→workspace-{ts}.zip） |
+| `get_executor` | `backend/api/routes/file_common.py` | workspace 路由共用的 FileExecutor 工厂（拆分时提取自原 `_get_executor`） |
+
+#### 前端函数
+
+| 函数/组件 | 文件路径 | 功能描述 |
+|----------|---------|---------|
+| `categorize` | `frontend/src/utils/fileCategory.ts` | 判定文件分类（image/video/document，扩展名优先 + mime 兜底） |
+| `matchesFilter` | `frontend/src/utils/fileCategory.ts` | 判断文件是否属于当前 Tab 筛选 |
+| `canPreviewImage` / `canPreviewVideo` | `frontend/src/utils/fileCategory.ts` | 双击是否应弹图片/视频预览 |
+| `downloadWorkspaceZip` | `frontend/src/services/workspace.ts` | POST ZIP 接口 + blob 接收 + 触发浏览器下载（含 RFC 5987 文件名解析） |
+| `WorkspaceCategoryTabs` | `frontend/src/components/workspace/WorkspaceCategoryTabs.tsx` | 分类 Tab 组件（蓝色下划线选中态） |
+| `VideoPreviewModal` | `frontend/src/components/chat/media/VideoPreviewModal.tsx` | 视频全屏预览 Modal（Portal + `<video controls>` + ESC + ←→ 切换） |
+| `useWorkspace.categoryFilter` | `frontend/src/hooks/useWorkspace.ts` | 当前 Tab 筛选状态（不持久化，切目录重置 all） |

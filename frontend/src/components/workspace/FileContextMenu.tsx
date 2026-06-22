@@ -60,20 +60,32 @@ interface FileMenuProps {
   onOpen: () => void;
   onRename: () => void;
   onDownload: () => void;
+  onBatchDownload?: () => void;
   onSendToChat: () => void;
   onDelete: () => void;
 }
 
-function FileMenu({ isDir, hasCdnUrl, selectedCount, onOpen, onRename, onDownload, onSendToChat, onDelete }: FileMenuProps) {
+function FileMenu({ isDir, hasCdnUrl, selectedCount, onOpen, onRename, onDownload, onBatchDownload, onSendToChat, onDelete }: FileMenuProps) {
   const isBatch = selectedCount > 1;
   return (
     <>
       {!isBatch && <MenuItem icon={<FolderOpen className="w-4 h-4" />} onSelect={onOpen}>打开</MenuItem>}
       {!isBatch && <MenuItem icon={<Pencil className="w-4 h-4" />} shortcut="F2" onSelect={onRename}>重命名</MenuItem>}
-      {!isDir && hasCdnUrl && (
+      {/* 批量：下载选中 */}
+      {isBatch && onBatchDownload && (
+        <MenuItem icon={<Download className="w-4 h-4" />} onSelect={onBatchDownload}>
+          下载选中 ({selectedCount})
+        </MenuItem>
+      )}
+      {/* 单选文件：原下载 */}
+      {!isBatch && !isDir && hasCdnUrl && (
         <MenuItem icon={<Download className="w-4 h-4" />} onSelect={onDownload}>下载</MenuItem>
       )}
-      {!isDir && (
+      {/* 单选文件夹：ZIP 下载 */}
+      {!isBatch && isDir && onBatchDownload && (
+        <MenuItem icon={<Download className="w-4 h-4" />} onSelect={onBatchDownload}>下载（ZIP）</MenuItem>
+      )}
+      {!isBatch && !isDir && (
         <MenuItem icon={<MessageSquarePlus className="w-4 h-4" />} onSelect={onSendToChat}>插入到聊天</MenuItem>
       )}
       <Separator />

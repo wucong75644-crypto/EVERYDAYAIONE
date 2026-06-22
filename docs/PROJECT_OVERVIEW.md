@@ -537,6 +537,17 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-06-22**：工作区分类筛选 + 图片视频预览 + 批量下载 ZIP
+  - 新增 `frontend/src/utils/fileCategory.ts`：扩展名白名单 + mime 兜底分类（image/video/document）
+  - 新增 `frontend/src/components/workspace/WorkspaceCategoryTabs.tsx`：3 个 Tab（全部/文档/图片与视频）+ 蓝色下划线
+  - 新增 `frontend/src/components/chat/media/VideoPreviewModal.tsx`：视频全屏 Modal（Portal + ESC + ←→ 切换）
+  - `useWorkspace.ts`：加 `categoryFilter` 状态；默认排序改 `modified desc` 并持久化；images Tab 自动切 grid
+  - `WorkspaceView.tsx`：接入 Tab + 客户端 filter + 双击图片/视频分发到对应 Modal（顺带修双击 PNG 走下载的 bug）
+  - 后端新增 `POST /workspace/download_zip`（zipstream-ng 流式 + 500 文件/2GB 上限）
+  - **后端 file.py 拆分**：原 790 行单文件按职责拆为 `file.py`（25 行聚合）+ `file_common.py` / `file_upload.py` / `file_browse.py` / `file_manage.py` / `file_download.py`，所有子模块 ≤251 行
+  - 新增依赖 `zipstream-ng==1.7.1`（纯 Python 流式 ZIP，UTF-8 中文文件名）
+  - 测试：前端新增 43 个用例（fileCategory），后端新增 14 个用例（test_workspace_zip）
+  - 详见 [TECH_工作区分类与批量下载.md](document/TECH_工作区分类与批量下载.md)
 - **2026-05-03**：交互式图表（ECharts 替代 matplotlib）
   - 新增 `ChartPart` content block 类型（后端 `schemas/message.py` + 前端 `types/message.ts`）
   - 沙盒 `.echart.json` 检测 → JSON 读取 → `_chart_options` 传播链（executor → tool_executor → chat_tool_mixin → chat_handler）

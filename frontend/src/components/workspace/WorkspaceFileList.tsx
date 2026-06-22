@@ -29,6 +29,7 @@ interface WorkspaceFileListProps {
   onSendToChat?: (item: FileItemData) => void;
   onStartRename: (path: string) => void;
   onMove?: (srcPath: string, destDir: string) => void;
+  onBatchDownload?: (item: FileItemData) => void;
 }
 
 export default function WorkspaceFileList({
@@ -47,6 +48,7 @@ export default function WorkspaceFileList({
   onSendToChat,
   onStartRename,
   onMove,
+  onBatchDownload,
 }: WorkspaceFileListProps) {
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null;
@@ -84,6 +86,7 @@ export default function WorkspaceFileList({
               onOpen: () => onOpen(item),
               onRename: () => onStartRename(fullPath),
               onDownload: () => item.cdn_url && downloadFile(item.cdn_url, item.name),
+              onBatchDownload: onBatchDownload ? () => onBatchDownload(item) : undefined,
               onSendToChat: () => onSendToChat?.(item),
               onDelete: () => onDelete(fullPath),
             }}

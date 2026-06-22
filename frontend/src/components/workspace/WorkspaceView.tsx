@@ -13,16 +13,21 @@ import { useFileSelection } from '../../hooks/useFileSelection';
 import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
 import FilePreviewModal, { canPreview } from '../chat/media/FilePreviewModal';
+import ImagePreviewModal from '../chat/media/ImagePreviewModal';
+import VideoPreviewModal from '../chat/media/VideoPreviewModal';
 import FileContextMenu from './FileContextMenu';
 // BatchActionBar removed — 多选用轻量文字提示
 import WorkspaceHeader from './WorkspaceHeader';
+import WorkspaceCategoryTabs from './WorkspaceCategoryTabs';
 import WorkspaceFileList from './WorkspaceFileList';
 import WorkspaceFileGrid from './WorkspaceFileGrid';
 import WorkspaceEmptyState from './WorkspaceEmptyState';
 import WorkspaceDropZone from './WorkspaceDropZone';
 import { getFullPath } from './WorkspaceFileItem';
 import type { WorkspaceFileItem, WorkspaceFile } from '../../services/workspace';
+import { downloadWorkspaceZip } from '../../services/workspace';
 import { downloadFile } from '../../utils/downloadFile';
+import { matchesFilter, canPreviewImage, canPreviewVideo } from '../../utils/fileCategory';
 import type { FilePart } from '../../types/message';
 
 interface WorkspaceViewProps {
@@ -44,17 +49,39 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     setRenameTarget(null);
   }, [ws.currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 预览弹窗
+  // 预览弹窗（三类：文档/图片/视频分别独立）
   const [previewFile, setPreviewFile] = useState<FilePart | null>(null);
+  const [previewImageIndex, setPreviewImageIndex] = useState<number | null>(null);
+  const [previewVideoIndex, setPreviewVideoIndex] = useState<number | null>(null);
 
   // 删除确认弹窗
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  // 有序路径列表（供 Shift 范围选用）
+  // 按当前 Tab 过滤后的文件列表（不影响后端拉取，仅 client-side filter）
+  // 文件夹仅在「全部」Tab 显示——其他 Tab 下用户聚焦看文件，避免混入容器
+  const filteredItems = useMemo(
+    () => ws.items.filter((item) => {
+      if (item.is_dir) return ws.categoryFilter === 'all';
+      return matchesFilter(item, ws.categoryFilter);
+    }),
+    [ws.items, ws.categoryFilter],
+  );
+
+  // 图片/视频上下张所基于的列表 — 仅在当前筛选可见的同类型文件之间循环
+  const imageItems = useMemo(
+    () => filteredItems.filter((i) => !i.is_dir && canPreviewImage(i) && i.cdn_url),
+    [filteredItems],
+  );
+  const videoItems = useMemo(
+    () => filteredItems.filter((i) => !i.is_dir && canPreviewVideo(i) && i.cdn_url),
+    [filteredItems],
+  );
+
+  // 有序路径列表（供 Shift 范围选 + Ctrl+A 全选用，基于当前可见列表）
   const orderedPaths = useMemo(
-    () => ws.items.map((item) => getFullPath(ws.currentPath, item.name)),
-    [ws.items, ws.currentPath],
+    () => filteredItems.map((item) => getFullPath(ws.currentPath, item.name)),
+    [filteredItems, ws.currentPath],
   );
 
   // 单击选中（处理 Ctrl/Shift）
@@ -62,11 +89,26 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     selection.handleClick(path, orderedPaths, e);
   }, [orderedPaths, selection]);
 
-  // 双击打开
+  // 双击打开 — 按文件分类分发到不同 Modal
   const handleOpen = useCallback((item: WorkspaceFileItem) => {
     if (item.is_dir) {
       ws.navigateTo(getFullPath(ws.currentPath, item.name));
-    } else if (canPreview(item.name)) {
+      return;
+    }
+    // 图片：弹 ImagePreviewModal，索引基于当前可见的图片列表
+    if (canPreviewImage(item)) {
+      const idx = imageItems.findIndex((i) => i.name === item.name);
+      setPreviewImageIndex(idx >= 0 ? idx : 0);
+      return;
+    }
+    // 视频：弹 VideoPreviewModal
+    if (canPreviewVideo(item)) {
+      const idx = videoItems.findIndex((i) => i.name === item.name);
+      setPreviewVideoIndex(idx >= 0 ? idx : 0);
+      return;
+    }
+    // 文档（xlsx/csv/pdf/text）：弹 FilePreviewModal
+    if (canPreview(item.name)) {
       setPreviewFile({
         type: 'file',
         url: item.cdn_url || '',
@@ -75,10 +117,13 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         size: item.size,
         workspace_path: getFullPath(ws.currentPath, item.name),
       });
-    } else if (item.cdn_url) {
+      return;
+    }
+    // 兜底：触发下载
+    if (item.cdn_url) {
       downloadFile(item.cdn_url, item.name);
     }
-  }, [ws.currentPath, ws.navigateTo]);
+  }, [ws.currentPath, ws.navigateTo, imageItems, videoItems]);
 
   const handleSendToChat = useCallback((item: WorkspaceFileItem) => {
     // 多选时插入所有选中的非文件夹项
@@ -146,6 +191,42 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     if (success) toast.success(`已上传 ${files.length} 个文件`);
   }, [ws]);
 
+  // 批量下载：选中 ≥2 项 → ZIP；单文件夹 → ZIP；单文件 → 走原 downloadFile（不打包）
+  const handleBatchDownload = useCallback(async (item: WorkspaceFileItem) => {
+    const fullPath = getFullPath(ws.currentPath, item.name);
+    const isMulti = selection.selectedCount > 1 && selection.selectedPaths.has(fullPath);
+
+    // 1) 多选：打包所有选中
+    if (isMulti) {
+      const paths = Array.from(selection.selectedPaths);
+      const toastId = toast.loading(`正在打包 ${paths.length} 项...`);
+      try {
+        await downloadWorkspaceZip(paths);
+        toast.success(`已下载 ${paths.length} 项`, { id: toastId });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : '下载失败', { id: toastId });
+      }
+      return;
+    }
+
+    // 2) 单文件夹：打包该目录
+    if (item.is_dir) {
+      const toastId = toast.loading(`正在打包 ${item.name}...`);
+      try {
+        await downloadWorkspaceZip([fullPath]);
+        toast.success('已下载', { id: toastId });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : '下载失败', { id: toastId });
+      }
+      return;
+    }
+
+    // 3) 单文件：走原下载（不打包，保留原扩展名）
+    if (item.cdn_url) {
+      downloadFile(item.cdn_url, item.name);
+    }
+  }, [ws.currentPath, selection.selectedCount, selection.selectedPaths]);
+
   // 点击空白区域清空选中
   const handleBlankClick = useCallback((e: React.MouseEvent) => {
     // 只有点击到容器本身（非子元素冒泡）时清空
@@ -157,8 +238,8 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 重命名/弹窗/输入框中不拦截
-      if (renameTarget || deleteTarget || previewFile) return;
+      // 重命名/弹窗/输入框中不拦截（含三类预览 Modal）
+      if (renameTarget || deleteTarget || previewFile || previewImageIndex !== null || previewVideoIndex !== null) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
@@ -202,7 +283,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [renameTarget, deleteTarget, previewFile, selection, orderedPaths, ws.items, ws.currentPath, handleOpen]);
+  }, [renameTarget, deleteTarget, previewFile, previewImageIndex, previewVideoIndex, selection, orderedPaths, ws.items, ws.currentPath, handleOpen]);
 
   // 删除弹窗显示名称
   const deleteDisplayName = deleteTarget?.startsWith('batch:')
@@ -220,6 +301,8 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         onUpload={handleUpload}
         onMkdir={ws.mkdir}
       />
+
+      <WorkspaceCategoryTabs value={ws.categoryFilter} onChange={ws.setCategoryFilter} />
 
       {/* 多选提示已移除 — 选中态通过文件卡片高亮体现 */}
 
@@ -247,10 +330,15 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
               </div>
             ) : ws.items.length === 0 ? (
               <WorkspaceEmptyState />
+            ) : filteredItems.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center h-full px-6 text-center">
+                <div className="text-4xl mb-3" aria-hidden>📂</div>
+                <div className="text-sm text-[var(--s-text-secondary)]">该分类下暂无文件</div>
+              </div>
             ) : ws.viewMode === 'list' ? (
               <div className="px-1">
                 <WorkspaceFileList
-                  items={ws.items}
+                  items={filteredItems}
                   currentPath={ws.currentPath}
                   selectedPaths={selection.selectedPaths}
                   renameTarget={renameTarget}
@@ -265,11 +353,12 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
                   onSendToChat={handleSendToChat}
                   onStartRename={setRenameTarget}
                   onMove={ws.move}
+                  onBatchDownload={handleBatchDownload}
                 />
               </div>
             ) : (
               <WorkspaceFileGrid
-                items={ws.items}
+                items={filteredItems}
                 currentPath={ws.currentPath}
                 selectedPaths={selection.selectedPaths}
                 renameTarget={renameTarget}
@@ -310,8 +399,37 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         </div>
       </Modal>
 
-      {/* 文件预览弹窗 */}
+      {/* 文档预览（xlsx/csv/pdf/text）*/}
       {previewFile && <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}
+
+      {/* 图片预览（仅在筛选可见的图片间切换）*/}
+      {previewImageIndex !== null && imageItems[previewImageIndex] && (
+        <ImagePreviewModal
+          imageUrl={imageItems[previewImageIndex].cdn_url || ''}
+          filename={imageItems[previewImageIndex].name}
+          onClose={() => setPreviewImageIndex(null)}
+          onPrev={() => setPreviewImageIndex((i) => (i !== null && i > 0 ? i - 1 : i))}
+          onNext={() => setPreviewImageIndex((i) => (i !== null && i < imageItems.length - 1 ? i + 1 : i))}
+          hasPrev={previewImageIndex > 0}
+          hasNext={previewImageIndex < imageItems.length - 1}
+          allImages={imageItems.map((i) => i.cdn_url || '')}
+          currentIndex={previewImageIndex}
+          onSelectImage={(idx) => setPreviewImageIndex(idx)}
+        />
+      )}
+
+      {/* 视频预览（仅在筛选可见的视频间切换）*/}
+      {previewVideoIndex !== null && videoItems[previewVideoIndex] && (
+        <VideoPreviewModal
+          videoUrl={videoItems[previewVideoIndex].cdn_url || ''}
+          filename={videoItems[previewVideoIndex].name}
+          onClose={() => setPreviewVideoIndex(null)}
+          onPrev={() => setPreviewVideoIndex((i) => (i !== null && i > 0 ? i - 1 : i))}
+          onNext={() => setPreviewVideoIndex((i) => (i !== null && i < videoItems.length - 1 ? i + 1 : i))}
+          hasPrev={previewVideoIndex > 0}
+          hasNext={previewVideoIndex < videoItems.length - 1}
+        />
+      )}
     </div>
   );
 }

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from api.routes.file import _search_files_sync
+from api.routes.file_browse import _search_files_sync
 
 
 def _stub_cdn(rel_path: str) -> str:

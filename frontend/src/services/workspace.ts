@@ -174,3 +174,47 @@ export function moveWorkspaceItem(
     data: { src_path: srcPath, dest_dir: destDir },
   });
 }
+
+/**
+ * 批量下载 workspace 文件为 ZIP。
+ *
+ * 后端流式打包返回 application/zip，前端用 fetch + blob 触发浏览器原生下载。
+ * 超过 500 文件或 2GB 时后端返回 413。
+ */
+export async function downloadWorkspaceZip(paths: string[]): Promise<void> {
+  if (paths.length === 0) throw new Error('未选择任何文件');
+
+  const response = await fetch(`${API_BASE_URL}/files/workspace/download_zip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ paths }),
+  });
+
+  if (!response.ok) {
+    // 尝试解析后端 AppException 标准格式 { code, message }
+    let message = '下载失败';
+    try {
+      const data = await response.json();
+      message = data?.detail?.message || data?.message || message;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+
+  // 从 Content-Disposition 解析文件名（优先 RFC 5987 filename*=UTF-8''xxx）
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const asciiMatch = /filename="([^"]+)"/.exec(disposition);
+  const filename = utf8Match
+    ? decodeURIComponent(utf8Match[1])
+    : asciiMatch?.[1] || 'download.zip';
+
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(blobUrl);
+}
