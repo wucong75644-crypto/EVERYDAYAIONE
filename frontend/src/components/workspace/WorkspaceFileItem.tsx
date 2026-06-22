@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Folder } from 'lucide-react';
+import { Folder, Check } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
@@ -47,6 +47,8 @@ interface WorkspaceFileItemProps {
   onMove?: (srcPath: string, destDir: string) => void;
   /** 当前选中的路径集合（拖拽多文件用） */
   selectedPaths?: Set<string>;
+  /** 多选模式：grid 模式下渲染复选框 + 单击直接 toggle 选中 */
+  multiSelectMode?: boolean;
 }
 
 /** 计算文件的完整相对路径 */
@@ -84,6 +86,7 @@ export default function WorkspaceFileItem({
   onRenameEnd,
   onMove,
   selectedPaths,
+  multiSelectMode = false,
 }: WorkspaceFileItemProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(item.name);
@@ -214,6 +217,7 @@ export default function WorkspaceFileItem({
   if (mode === 'list') {
     return (
       <div
+        data-workspace-path={fullPath}
         className={cn(
           "group flex items-center gap-3 px-3 py-2.5 rounded-[var(--s-radius-control)] transition-colors",
           isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
@@ -275,6 +279,7 @@ export default function WorkspaceFileItem({
   // === 图标模式 ===
   return (
     <div
+      data-workspace-path={fullPath}
       className={cn(
         "group relative flex flex-col items-center gap-3 p-4 rounded-[var(--s-radius-card)] transition-colors",
         isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
@@ -285,6 +290,21 @@ export default function WorkspaceFileItem({
       {...dragProps}
       onDoubleClick={isUploading ? undefined : handleDoubleClick}
     >
+      {/* 多选模式复选框（左上角，仅 grid 模式 + 多选模式时显示） */}
+      {multiSelectMode && !isUploading && (
+        <div
+          aria-hidden
+          className={cn(
+            'absolute top-2 left-2 w-5 h-5 rounded border flex items-center justify-center transition-colors pointer-events-none',
+            selected
+              ? 'bg-[var(--s-accent)] border-[var(--s-accent)]'
+              : 'bg-white/90 dark:bg-black/40 border-[var(--s-border-default)]',
+          )}
+        >
+          {selected && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
+        </div>
+      )}
+
       {/* 大图标 / 图片缩略图 */}
       {(() => {
         const isImage = !item.is_dir && !!item.cdn_url && _IMAGE_EXTS.has(('.' + (item.name.split('.').pop() || '')).toLowerCase());

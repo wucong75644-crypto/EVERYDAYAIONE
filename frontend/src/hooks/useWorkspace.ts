@@ -93,6 +93,10 @@ export interface UseWorkspaceReturn {
   categoryFilter: CategoryFilter;
   /** 切换分类筛选 */
   setCategoryFilter: (filter: CategoryFilter) => void;
+  /** 多选模式开关（开启后单击文件即切换选中，无需 Ctrl/Shift） */
+  multiSelectMode: boolean;
+  /** 切换多选模式 */
+  setMultiSelectMode: (on: boolean) => void;
 }
 
 /** 校验文件/文件夹名称（前端防御层，后端 resolve_safe_path 做最终校验） */
@@ -113,6 +117,7 @@ export function useWorkspace(): UseWorkspaceReturn {
   const [sortField, setSortField] = useState<SortField>(loadSortField);
   const [sortOrder, setSortOrder] = useState<SortOrder>(loadSortOrder);
   const [categoryFilter, setCategoryFilterState] = useState<CategoryFilter>('all');
+  const [multiSelectMode, setMultiSelectModeState] = useState<boolean>(false);
 
   // 「图片与视频」Tab 强制 grid；其他 Tab 用用户偏好（实现自动联动 + 恢复）
   const viewMode: ViewMode = categoryFilter === 'images' ? 'grid' : userViewMode;
@@ -144,10 +149,11 @@ export function useWorkspace(): UseWorkspaceReturn {
     }
   }, []);
 
-  // 首次加载 + 路径变化时获取列表 + 重置 Tab 到「全部」
+  // 首次加载 + 路径变化时获取列表 + 重置 Tab 到「全部」+ 退出多选模式
   useEffect(() => {
     fetchList(currentPath);
     setCategoryFilterState('all');
+    setMultiSelectModeState(false);
   }, [currentPath, fetchList]);
 
   // Agent 文件操作（code_execute 生成/删除）后自动刷新
@@ -311,6 +317,10 @@ export function useWorkspace(): UseWorkspaceReturn {
     setCategoryFilterState(filter);
   }, []);
 
+  const setMultiSelectMode = useCallback((on: boolean) => {
+    setMultiSelectModeState(on);
+  }, []);
+
   const clearError = useCallback(() => setError(null), []);
 
   // 切换排序：同字段翻转方向，新字段重置升序；全程持久化
@@ -371,5 +381,7 @@ export function useWorkspace(): UseWorkspaceReturn {
     clearError,
     categoryFilter,
     setCategoryFilter,
+    multiSelectMode,
+    setMultiSelectMode,
   };
 }

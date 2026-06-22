@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { useFileSelection } from '../../hooks/useFileSelection';
+import { useRubberBand, rubberBandStyle } from '../../hooks/useRubberBand';
 import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
 import FilePreviewModal, { canPreview } from '../chat/media/FilePreviewModal';
@@ -39,6 +40,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
   const ws = useWorkspace();
   const selection = useFileSelection();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileAreaRef = useRef<HTMLDivElement>(null);
 
   // 重命名目标路径（由右键菜单/F2 触发）
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
@@ -84,10 +86,14 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     [filteredItems, ws.currentPath],
   );
 
-  // 单击选中（处理 Ctrl/Shift）
+  // 单击选中：多选模式下直接 toggle（不需 Ctrl/Shift）；普通模式走原 Ctrl/Shift 修饰逻辑
   const handleSelect = useCallback((path: string, e: React.MouseEvent) => {
-    selection.handleClick(path, orderedPaths, e);
-  }, [orderedPaths, selection]);
+    if (ws.multiSelectMode) {
+      selection.toggle(path);
+    } else {
+      selection.handleClick(path, orderedPaths, e);
+    }
+  }, [orderedPaths, selection, ws.multiSelectMode]);
 
   // 双击打开 — 按文件分类分发到不同 Modal
   const handleOpen = useCallback((item: WorkspaceFileItem) => {
@@ -227,6 +233,46 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     }
   }, [ws.currentPath, selection.selectedCount, selection.selectedPaths]);
 
+  // 多选模式下「下载 (N)」按钮：始终打包所有选中（无锚点 item）
+  const handleBatchDownloadAll = useCallback(async () => {
+    const paths = Array.from(selection.selectedPaths);
+    if (paths.length === 0) return;
+    const toastId = toast.loading(`正在打包 ${paths.length} 项...`);
+    try {
+      await downloadWorkspaceZip(paths);
+      toast.success(`已下载 ${paths.length} 项`, { id: toastId });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '下载失败', { id: toastId });
+    }
+  }, [selection.selectedPaths]);
+
+  // 切换多选模式：开启时不动选中；关闭时清空选中
+  const handleToggleMultiSelect = useCallback(() => {
+    const next = !ws.multiSelectMode;
+    ws.setMultiSelectMode(next);
+    if (!next) selection.clear();
+  }, [ws, selection]);
+
+  // 鼠标拖拽框选（多选模式下禁用，避免与复选框冲突）
+  const handleRubberSelect = useCallback((paths: string[], additive: boolean) => {
+    if (paths.length === 0 && !additive) {
+      selection.clear();
+      return;
+    }
+    if (additive) {
+      // Ctrl/Cmd/Shift 拖：追加到现有选中
+      for (const p of paths) selection.toggle(p);
+    } else {
+      selection.selectAll(paths);
+    }
+  }, [selection]);
+
+  const rubberBand = useRubberBand({
+    containerRef: fileAreaRef,
+    onSelectionChange: handleRubberSelect,
+    enabled: !ws.multiSelectMode,
+  });
+
   // 点击空白区域清空选中
   const handleBlankClick = useCallback((e: React.MouseEvent) => {
     // 只有点击到容器本身（非子元素冒泡）时清空
@@ -249,9 +295,10 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         selection.selectAll(orderedPaths);
         return;
       }
-      // Escape → 清空选中
+      // Escape → 清空选中 +（如多选模式）退出多选
       if (e.key === 'Escape') {
         selection.clear();
+        if (ws.multiSelectMode) ws.setMultiSelectMode(false);
         return;
       }
       // 以下需要有选中项
@@ -302,7 +349,14 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         onMkdir={ws.mkdir}
       />
 
-      <WorkspaceCategoryTabs value={ws.categoryFilter} onChange={ws.setCategoryFilter} />
+      <WorkspaceCategoryTabs
+        value={ws.categoryFilter}
+        onChange={ws.setCategoryFilter}
+        multiSelectMode={ws.multiSelectMode}
+        onToggleMultiSelect={handleToggleMultiSelect}
+        selectedCount={selection.selectedCount}
+        onBatchDownload={handleBatchDownloadAll}
+      />
 
       {/* 多选提示已移除 — 选中态通过文件卡片高亮体现 */}
 
@@ -323,7 +377,9 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
             onUpload: () => fileInputRef.current?.click(),
           }}
         >
-          <div className="flex-1 overflow-y-auto select-none" onClick={handleBlankClick}>
+          <div ref={fileAreaRef} className="relative flex-1 overflow-y-auto select-none" onClick={handleBlankClick}>
+            {/* 拖拽框选矩形（rubber-band） */}
+            {rubberBand.rect && <div style={rubberBandStyle(rubberBand.rect)} />}
             {ws.loading && ws.items.length === 0 ? (
               <div className="flex-1 flex items-center justify-center h-full">
                 <Loader2 className="w-8 h-8 text-[var(--s-text-tertiary)] animate-spin" />
@@ -354,6 +410,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
                   onStartRename={setRenameTarget}
                   onMove={ws.move}
                   onBatchDownload={handleBatchDownload}
+                  multiSelectMode={ws.multiSelectMode}
                 />
               </div>
             ) : (
@@ -371,6 +428,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
                 onStartRename={setRenameTarget}
                 onMove={ws.move}
                 onBatchDownload={handleBatchDownload}
+                multiSelectMode={ws.multiSelectMode}
               />
             )}
           </div>

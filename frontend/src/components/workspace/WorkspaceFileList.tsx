@@ -30,6 +30,7 @@ interface WorkspaceFileListProps {
   onStartRename: (path: string) => void;
   onMove?: (srcPath: string, destDir: string) => void;
   onBatchDownload?: (item: FileItemData) => void;
+  multiSelectMode?: boolean;
 }
 
 export default function WorkspaceFileList({
@@ -49,6 +50,7 @@ export default function WorkspaceFileList({
   onStartRename,
   onMove,
   onBatchDownload,
+  multiSelectMode = false,
 }: WorkspaceFileListProps) {
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null;
@@ -104,6 +106,7 @@ export default function WorkspaceFileList({
                 onRenameEnd={onRenameEnd}
                 onMove={onMove}
                 selectedPaths={selectedPaths}
+                multiSelectMode={multiSelectMode}
               />
             </div>
           </FileContextMenu>

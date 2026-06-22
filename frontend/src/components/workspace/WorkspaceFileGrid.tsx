@@ -23,6 +23,7 @@ interface WorkspaceFileGridProps {
   onStartRename: (path: string) => void;
   onMove?: (srcPath: string, destDir: string) => void;
   onBatchDownload?: (item: FileItemData) => void;
+  multiSelectMode?: boolean;
 }
 
 export default function WorkspaceFileGrid({
@@ -39,6 +40,7 @@ export default function WorkspaceFileGrid({
   onStartRename,
   onMove,
   onBatchDownload,
+  multiSelectMode = false,
 }: WorkspaceFileGridProps) {
   return (
     <div className="grid gap-4 p-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
@@ -73,6 +75,7 @@ export default function WorkspaceFileGrid({
                 onRenameEnd={onRenameEnd}
                 onMove={onMove}
                 selectedPaths={selectedPaths}
+                multiSelectMode={multiSelectMode}
               />
             </div>
           </FileContextMenu>
