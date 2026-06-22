@@ -238,6 +238,23 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
         const config = { ...llmConfig, ...TOOLBAR_CONFIG };
 
         await Plotly.newPlot(containerRef.current, data as never, layout, config);
+
+        // 自适应兜底:newPlot 用 chunk 加载完那一瞬间的容器尺寸渲染,
+        // 可能在浏览器 layout 稳定之前(字体异步加载/父级 flex 重排/侧边栏
+        // 切换等)。等下一帧浏览器 paint 时容器实际尺寸已稳定,触发一次
+        // Plots.resize 让 plotly 用真实容器尺寸重新计算 plot area。
+        // 跟 ResizeObserver(兜底后续容器变化) + responsive:true(兜底
+        // window resize) 互补,覆盖"初次渲染时机"漏洞。
+        requestAnimationFrame(() => {
+          if (disposed || !containerRef.current) return;
+          const Plots = (Plotly as unknown as {
+            Plots?: { resize: (el: HTMLElement) => void };
+          }).Plots;
+          if (Plots?.resize) {
+            try { Plots.resize(containerRef.current); } catch { /* ignore */ }
+          }
+        });
+
         if (!disposed) {
           setState('ready');
           setErrMsg('');
