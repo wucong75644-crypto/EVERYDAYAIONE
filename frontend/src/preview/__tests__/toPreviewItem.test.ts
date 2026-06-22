@@ -55,11 +55,12 @@ describe('fromFilePart', () => {
 });
 
 describe('fromBlobImage', () => {
-  it('生成本地 blob 预览项', () => {
+  it('生成本地 blob 预览项 + 注入 image/* mimeType（防 ImageAdapter 漏匹配）', () => {
     const item = fromBlobImage({ previewUrl: 'blob:xxx', filename: 'photo' });
     expect(item).toEqual({
       url: 'blob:xxx',
       filename: 'photo',
+      mimeType: 'image/*',
     });
   });
 });

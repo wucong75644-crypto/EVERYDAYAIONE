@@ -38,6 +38,7 @@ export function fromBlobImage(opts: { previewUrl: string; filename: string }): P
   return {
     url: opts.previewUrl,
     filename: opts.filename,
-    // 本地 blob 没有 workspacePath、mimeType；CDN fallback 不会触发（因为 url 是 blob:）
+    // 函数名已保证输入是图片：注入 mimeType 兜底，让 ImageAdapter 在 filename 无扩展名时仍能命中
+    mimeType: 'image/*',
   };
 }
