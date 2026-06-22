@@ -27,8 +27,10 @@ interface Rect {
 interface UseRubberBandOptions {
   /** 框选容器（事件 + 坐标基准） */
   containerRef: React.RefObject<HTMLElement | null>;
-  /** 提交选中的路径列表（每次拖动结束触发一次） */
+  /** 提交选中的路径列表（mousemove 实时触发） */
   onSelectionChange: (paths: string[], additive: boolean) => void;
+  /** 拖拽开始时回调（用于 additive 模式 snapshot baseline） */
+  onDragStart?: () => void;
   /** 是否启用（多选模式下应禁用，避免与复选框冲突）*/
   enabled: boolean;
 }
@@ -53,11 +55,17 @@ function intersects(a: Rect, b: Rect): boolean {
 export function useRubberBand({
   containerRef,
   onSelectionChange,
+  onDragStart,
   enabled,
 }: UseRubberBandOptions): UseRubberBandReturn {
   const [rect, setRect] = useState<Rect | null>(null);
   const startRef = useRef<{ x: number; y: number; additive: boolean } | null>(null);
   const draggingRef = useRef(false);
+  // 用 ref 持有最新回调，避免 effect 因依赖变化频繁重注册（mousemove 实时调用）
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const onDragStartRef = useRef(onDragStart);
+  useEffect(() => { onSelectionChangeRef.current = onSelectionChange; }, [onSelectionChange]);
+  useEffect(() => { onDragStartRef.current = onDragStart; }, [onDragStart]);
 
   // 容器内 mousedown：只在点击空白（target === container）时启动框选
   useEffect(() => {
@@ -80,6 +88,7 @@ export function useRubberBand({
         additive: e.ctrlKey || e.metaKey || e.shiftKey,
       };
       draggingRef.current = false;
+      onDragStartRef.current?.();
     };
 
     container.addEventListener('mousedown', handleMouseDown);
@@ -98,6 +107,27 @@ export function useRubberBand({
         x: e.clientX - cr.left + container.scrollLeft,
         y: e.clientY - cr.top + container.scrollTop,
       };
+    };
+
+    const computeHits = (currentRect: Rect): string[] => {
+      const container = containerRef.current;
+      if (!container) return [];
+      const containerRect = container.getBoundingClientRect();
+      const hits: string[] = [];
+      container.querySelectorAll<HTMLElement>('[data-workspace-path]').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const elRect: Rect = {
+          left: r.left - containerRect.left + container.scrollLeft,
+          top: r.top - containerRect.top + container.scrollTop,
+          width: r.width,
+          height: r.height,
+        };
+        if (intersects(elRect, currentRect)) {
+          const p = el.getAttribute('data-workspace-path');
+          if (p) hits.push(p);
+        }
+      });
+      return hits;
     };
 
     const handleMove = (e: MouseEvent) => {
@@ -121,41 +151,15 @@ export function useRubberBand({
         height: Math.abs(dy),
       };
       setRect(next);
+      // 实时更新选中（Finder 行为）— ref 调用避免闭包过期
+      onSelectionChangeRef.current(computeHits(next), start.additive);
     };
 
     const handleUp = () => {
-      const start = startRef.current;
-      if (!start) return;
-      const wasDragging = draggingRef.current;
-      const currentRect = rect;
-
-      // 重置
+      // 重置（选中已由 mousemove 实时 commit）
       startRef.current = null;
       draggingRef.current = false;
       setRect(null);
-
-      if (!wasDragging || !currentRect) return;
-
-      // 容器内查找命中的项
-      const container = containerRef.current;
-      if (!container) return;
-      const containerRect = container.getBoundingClientRect();
-      const hits: string[] = [];
-      container.querySelectorAll<HTMLElement>('[data-workspace-path]').forEach((el) => {
-        const r = el.getBoundingClientRect();
-        const elRect: Rect = {
-          left: r.left - containerRect.left + container.scrollLeft,
-          top: r.top - containerRect.top + container.scrollTop,
-          width: r.width,
-          height: r.height,
-        };
-        if (intersects(elRect, currentRect)) {
-          const p = el.getAttribute('data-workspace-path');
-          if (p) hits.push(p);
-        }
-      });
-
-      onSelectionChange(hits, start.additive);
     };
 
     window.addEventListener('mousemove', handleMove);
@@ -164,7 +168,9 @@ export function useRubberBand({
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [containerRef, enabled, rect, onSelectionChange]);
+    // onSelectionChange 通过 ref 读取，无需进依赖；rect 同样不进依赖避免 effect 重注册
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef, enabled]);
 
   // 拖拽中临时禁用文本选择，避免高亮文字
   useEffect(() => {
@@ -180,7 +186,7 @@ export function useRubberBand({
   };
 }
 
-/** 渲染拖拽矩形的内联样式辅助 */
+/** 渲染拖拽矩形的内联样式辅助（半透明，让下层文件可见 — 对齐 macOS Finder） */
 export function rubberBandStyle(rect: Rect): React.CSSProperties {
   return {
     position: 'absolute',
@@ -188,8 +194,9 @@ export function rubberBandStyle(rect: Rect): React.CSSProperties {
     top: rect.top,
     width: rect.width,
     height: rect.height,
-    background: 'var(--s-accent-soft, rgba(59, 130, 246, 0.15))',
-    border: '1px solid var(--s-accent, #3b82f6)',
+    background: 'rgba(59, 130, 246, 0.08)',
+    border: '1px solid rgba(59, 130, 246, 0.6)',
+    borderRadius: 2,
     pointerEvents: 'none',
     zIndex: 5,
   };

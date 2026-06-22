@@ -253,23 +253,26 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
     if (!next) selection.clear();
   }, [ws, selection]);
 
-  // 鼠标拖拽框选（多选模式下禁用，避免与复选框冲突）
+  // additive（Ctrl/Cmd/Shift+拖）的基线快照：拖拽开始时 snapshot 当前选中
+  const additiveBaselineRef = useRef<string[]>([]);
+
+  // mousemove 实时调用：additive 模式合并 baseline，普通模式直接覆盖
   const handleRubberSelect = useCallback((paths: string[], additive: boolean) => {
-    if (paths.length === 0 && !additive) {
-      selection.clear();
+    if (!additive) {
+      selection.selectAll(paths);
       return;
     }
-    if (additive) {
-      // Ctrl/Cmd/Shift 拖：追加到现有选中
-      for (const p of paths) selection.toggle(p);
-    } else {
-      selection.selectAll(paths);
-    }
+    const merged = new Set<string>(additiveBaselineRef.current);
+    for (const p of paths) merged.add(p);
+    selection.selectAll(Array.from(merged));
   }, [selection]);
 
   const rubberBand = useRubberBand({
     containerRef: fileAreaRef,
     onSelectionChange: handleRubberSelect,
+    onDragStart: useCallback(() => {
+      additiveBaselineRef.current = Array.from(selection.selectedPaths);
+    }, [selection.selectedPaths]),
     enabled: !ws.multiSelectMode,
   });
 
