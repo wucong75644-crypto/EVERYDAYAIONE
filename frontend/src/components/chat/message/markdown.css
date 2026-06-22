@@ -317,3 +317,41 @@
   from { opacity: 0; max-height: 0; }
   to { opacity: 1; max-height: 2000px; }
 }
+
+/* ============================================================
+ * Plotly 工具栏（modebar）位置 + 图标对齐
+ * ============================================================
+ *
+ * plotly 默认把 modebar 用 inline style 钉在 (top:2px, right:2px),
+ * 跟我们 PROFESSIONAL_TEMPLATE 的 title (y=0.95, x=0.05) 不在同一水平线,
+ * 视觉上 6 个图标飘在标题/legend 之间。
+ *
+ * 修复:
+ *  1) modebar-container: 下移到与标题水平 (top:14px),右对齐到 layout.margin.r (30px)。
+ *  2) modebar-btn: flex 居中,避免 plotly 内部按钮 padding 不均导致图标错位。
+ *  3) modebar-group: 取消间隔背景,统一在一行展示。
+ *
+ * 注: plotly 用 inline style 设 top/right,必须 !important 才能覆盖。 */
+.plotly-block .modebar-container {
+  top: 14px !important;
+  right: 30px !important;
+}
+
+.plotly-block .modebar {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 2px;
+}
+
+.plotly-block .modebar-group {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.plotly-block .modebar-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}

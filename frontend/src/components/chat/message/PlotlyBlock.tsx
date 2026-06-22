@@ -308,7 +308,7 @@ function PlotlyBlockInner({ option }: PlotlyBlockProps) {
     //   高度固定 CHART_HEIGHT_PX (对话场景标准, 防图表吞噬上下文)
     //   overflow: hidden (兜底, plotly 任何超出都被截, 不覆盖下方文字)
     <div
-      className="my-3 relative"
+      className="my-3 relative plotly-block"
       style={{ height: CHART_HEIGHT_PX, overflow: 'hidden' }}
     >
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
