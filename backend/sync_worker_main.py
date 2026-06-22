@@ -148,6 +148,13 @@ async def _run() -> None:
     ))
     logger.info("[sync] kuaimai_external_sync_loop started")
 
+    # 5. 快麦 Cookie 心跳保活（每 10 分钟探活，触发滑动过期续命）
+    from services.kuaimai_external.scheduler import kuaimai_external_keepalive_loop
+    tasks.append(asyncio.create_task(
+        kuaimai_external_keepalive_loop(), name="kuaimai_external_keepalive"
+    ))
+    logger.info("[sync] kuaimai_external_keepalive_loop started")
+
     # ── 等待 shutdown 信号 ──────────────────────────────────
 
     shutdown_event = asyncio.Event()

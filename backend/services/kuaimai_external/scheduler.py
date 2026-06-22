@@ -154,3 +154,131 @@ async def sync_all_active(
 
     logger.info(f"sync_all_active 完成 | stats={stats}")
     return stats
+
+
+# ──────────────────────── Cookie Keepalive ────────────────────────
+#
+# 设计原理（方案 0 心跳保活）：
+#   - _censeid cookie 大概率是"滑动过期"（每次使用就续命）
+#   - 用 cookie 周期性调一个轻量接口 → 维持会话活跃
+#   - 选 /kmzk/meal/getFunctionList（只返回菜单配置，~1KB）
+#   - 间隔 10 分钟 = 一天 144 次 × 2 source × N org，可控
+#
+# 不保证 100% 成功 — 如果 cookie 是"绝对过期"（24h 死活续不了），
+# 这个无效，但至少能延长寿命到自然极限。
+#
+# 双源共享：同一 org 的 thinktank + viperp 共享同一个 _censeid，
+#          只需要保活其中一个，另一个自动跟着续命。
+#          但为了完整性 + 简单实现，两个都保活。
+
+_KEEPALIVE_INTERVAL_SECONDS = 600  # 10 分钟
+
+# 轻量探活接口（智库的菜单配置，~1KB，最快返回）
+_KEEPALIVE_URL = "https://erp.superboss.cc/kmzk/meal/getFunctionList"
+_KEEPALIVE_MODULE_PATH = "/think_tank/profit_shop/"
+_KEEPALIVE_ORIGIN = "https://erp.superboss.cc"
+_KEEPALIVE_REFERER = "https://erp.superboss.cc/index.html"
+
+
+async def kuaimai_external_keepalive_loop() -> None:
+    """
+    Cookie 心跳保活 loop —— 每 10 分钟用所有 active 凭证调一次轻量接口。
+
+    目的：让快麦服务器认为账号"在使用中"，触发滑动过期续命。
+    """
+    logger.info(
+        f"kuaimai_external_keepalive loop started | "
+        f"interval={_KEEPALIVE_INTERVAL_SECONDS}s"
+    )
+    # 启动后等 1 分钟再开始（避免跟启动初始化竞争）
+    await asyncio.sleep(60)
+
+    while True:
+        try:
+            await keepalive_all_active()
+        except asyncio.CancelledError:
+            logger.info("kuaimai_external_keepalive loop cancelled")
+            return
+        except Exception as e:
+            logger.error(f"kuaimai_external_keepalive loop error | error={e}")
+        await asyncio.sleep(_KEEPALIVE_INTERVAL_SECONDS)
+
+
+async def keepalive_all_active() -> dict:
+    """
+    遍历所有 active 凭证，调轻量接口续命。
+
+    返回统计 {"ok": N, "expired": M, "error": K}。
+    cookie 失效会被 http_base 抛 CookieExpiredError，
+    我们捕获后 mark_expired + 推告警（跟 sync 流程同样的自愈机制）。
+    """
+    from services.kuaimai_external import (
+        credential_store,
+        http_base,
+        wecom_alert,
+    )
+
+    db = await get_async_db()
+    stats = {"ok": 0, "expired": 0, "error": 0}
+
+    creds = await credential_store.list_all_active_credentials(db)
+    if not creds:
+        return stats
+
+    for cred in creds:
+        client = http_base.KuaimaiWebClient(
+            companyid=cred.kuaimai_company_id,
+            cookie=cred.cookie_full or f"_censeid={cred.censeid_cookie}",
+            timeout=10.0,  # 探活短超时，不能卡 loop
+        )
+        try:
+            # getFunctionList 是 POST，body 简单
+            await client.post(
+                url=_KEEPALIVE_URL,
+                payload={"companyId": cred.kuaimai_company_id, "version": 2},
+                module_path=_KEEPALIVE_MODULE_PATH,
+                origin=_KEEPALIVE_ORIGIN,
+                referer=_KEEPALIVE_REFERER,
+                content_type="application/json",
+            )
+            # 成功 → 更新 last_health_check_at
+            await credential_store.record_sync_success(
+                db, credential_id=cred.id,
+            )
+            stats["ok"] += 1
+            logger.debug(
+                f"keepalive ok | org={cred.org_id} source={cred.source}"
+            )
+
+        except http_base.CookieExpiredError as e:
+            await credential_store.mark_expired(
+                db, credential_id=cred.id, error_msg=str(e),
+            )
+            stats["expired"] += 1
+            logger.warning(
+                f"keepalive cookie expired | "
+                f"org={cred.org_id} source={cred.source}"
+            )
+            # 推告警（best-effort，不影响其他凭证）
+            try:
+                await wecom_alert.send_alert(
+                    cred.org_id,
+                    f"⚠️ **快麦 {cred.source} Cookie 失效**\n\n"
+                    f"心跳保活检测到会话已过期，请到管理后台 → "
+                    f"快麦接入 → 数据源 → 更新 Cookie。",
+                )
+            except Exception as alert_err:
+                logger.error(f"keepalive alert failed | err={alert_err}")
+
+        except Exception as e:
+            stats["error"] += 1
+            logger.error(
+                f"keepalive error | "
+                f"org={cred.org_id} source={cred.source} err={e}"
+            )
+        finally:
+            await client.close()
+
+    if stats["ok"] or stats["expired"] or stats["error"]:
+        logger.info(f"keepalive_all_active done | stats={stats}")
+    return stats
