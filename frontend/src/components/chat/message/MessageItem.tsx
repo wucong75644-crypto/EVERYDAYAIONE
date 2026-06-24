@@ -6,6 +6,8 @@
  */
 
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import TextContextMenu from '../menus/TextContextMenu';
 
 /** 相对时间格式化（中文，与后端 utils/time_context.format_relative_time 对齐） */
 function formatRelativeCN(iso: string): string {
@@ -282,6 +284,30 @@ export default memo(function MessageItem({
     return true;
   }, [message.role, message.status, message.generation_params, hasImage, hasVideo, isStreaming]);
 
+  // 用户文字气泡右键菜单状态
+  const userBubbleRef = useRef<HTMLDivElement>(null);
+  const [textContextMenu, setTextContextMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null);
+
+  const handleUserBubbleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!isUser) return;
+    // 没有可引用的文字（纯媒体消息）就让浏览器默认菜单接管
+    if (!textContent || !textContent.trim()) return;
+
+    // 仅当选区落在当前气泡内部时才作为"选中引用"
+    let selectedText = '';
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      const range = sel.getRangeAt(0);
+      const bubble = userBubbleRef.current;
+      if (bubble && bubble.contains(range.commonAncestorContainer)) {
+        selectedText = sel.toString();
+      }
+    }
+
+    e.preventDefault();
+    setTextContextMenu({ x: e.clientX, y: e.clientY, selectedText });
+  }, [isUser, textContent]);
+
   // 工具栏显示/隐藏状态
   const [showToolbar, setShowToolbar] = useState(false);
   const hideTimeoutRef = useRef<number | null>(null);
@@ -435,6 +461,8 @@ export default memo(function MessageItem({
             V3：用户气泡加内高光 (inset 0 1px 0 rgba(255,255,255,0.2))，
             制造"半透明玻璃"的光感效果 */}
         <div
+          ref={isUser ? userBubbleRef : undefined}
+          onContextMenu={isUser ? handleUserBubbleContextMenu : undefined}
           className={`${
             isUser
               ? 'rounded-2xl px-5 py-3 bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
@@ -798,6 +826,19 @@ export default memo(function MessageItem({
         onClose={preview.close}
         onIndexChange={preview.setIndex}
       />
+
+      {/* 用户文字气泡右键菜单（Portal 到 body，避免被 overflow-hidden 裁剪） */}
+      {textContextMenu && isUser && createPortal(
+        <TextContextMenu
+          x={textContextMenu.x}
+          y={textContextMenu.y}
+          fullText={textContent}
+          selectedText={textContextMenu.selectedText}
+          messageId={message.id}
+          onClose={() => setTextContextMenu(null)}
+        />,
+        document.body,
+      )}
     </m.div>
   );
 });

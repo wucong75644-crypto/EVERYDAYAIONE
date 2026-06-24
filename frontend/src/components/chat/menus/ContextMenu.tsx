@@ -1,6 +1,14 @@
 /**
- * 右键上下文菜单组件
+ * 会话项右键上下文菜单
+ *
+ * 在会话列表项上右键弹出：
+ * - 重命名
+ * - 删除
+ *
+ * 壳逻辑（位置/ESC/外部关闭/样式）走 BaseContextMenu。
  */
+
+import BaseContextMenu, { type ContextMenuItem } from './BaseContextMenu';
 
 interface ContextMenuProps {
   x: number;
@@ -8,6 +16,7 @@ interface ContextMenuProps {
   closing?: boolean;
   onRename: () => void;
   onDelete: () => void;
+  onClose?: () => void;
 }
 
 export default function ContextMenu({
@@ -16,27 +25,20 @@ export default function ContextMenu({
   closing = false,
   onRename,
   onDelete,
+  onClose,
 }: ContextMenuProps) {
+  const items: ContextMenuItem[] = [
+    { label: '重命名', onClick: onRename, tone: 'secondary' },
+    { label: '删除', onClick: onDelete, tone: 'danger' },
+  ];
+
   return (
-    <div
-      className={`fixed bg-surface-card rounded-lg shadow-lg border border-border-default py-1 z-30 min-w-32 ${
-        closing ? 'animate-dropdown-exit' : 'animate-dropdown-enter'
-      }`}
-      style={{ left: `${x}px`, top: `${y}px` }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        onClick={onRename}
-        className="w-full px-4 py-2 text-left text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition-base"
-      >
-        重命名
-      </button>
-      <button
-        onClick={onDelete}
-        className="w-full px-4 py-2 text-left text-sm text-error hover:bg-error-light transition-base"
-      >
-        删除
-      </button>
-    </div>
+    <BaseContextMenu
+      x={x}
+      y={y}
+      items={items}
+      closing={closing}
+      onClose={onClose ?? (() => {})}
+    />
   );
 }
