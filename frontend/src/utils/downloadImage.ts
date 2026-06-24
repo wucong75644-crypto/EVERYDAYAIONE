@@ -6,8 +6,9 @@
  * 外部图片 → fetch + blob 兼容路径
  */
 
-function isWorkspaceUrl(url: string): boolean {
-  return /^https?:\/\/[^/]+\/workspace\//.test(url);
+/** 是否为我们的 OSS CDN 资源(workspace/images/videos 三种前缀) */
+function isOurOssResource(url: string): boolean {
+  return /^https?:\/\/[^/]+\/(workspace|images|videos)\//.test(url);
 }
 
 /** 给 OSS URL 拼 attachment 参数,让 CDN 响应强制下载 */
@@ -60,8 +61,8 @@ export async function downloadImage(
   filename: string,
   options: { cors?: boolean } = {},
 ): Promise<void> {
-  // 工作区图片 → CDN 直连(query 参数)
-  if (isWorkspaceUrl(imageUrl)) {
+  // OSS 图片 → CDN 直连(query 参数让响应头变 attachment)
+  if (isOurOssResource(imageUrl)) {
     const ext = getExtensionFromUrl(imageUrl);
     const fullName = `${filename}.${ext}`;
     triggerDownload(buildOssDownloadUrl(imageUrl, fullName), fullName);

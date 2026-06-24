@@ -7,9 +7,11 @@
  * 外部 URL → fetch + blob 兼容路径,失败 iframe fallback。
  */
 
-/** 是否为工作区 OSS CDN URL */
-function isWorkspaceUrl(url: string): boolean {
-  return /^https?:\/\/[^/]+\/workspace\//.test(url);
+/** 是否为我们的 OSS CDN URL(覆盖三种前缀:workspace/images/videos)。
+ *  双轨设计:CDN 用于下载(此函数判断走 CDN 直连),NAS 用于查看/编辑(file_executor)。
+ */
+function isOurOssResource(url: string): boolean {
+  return /^https?:\/\/[^/]+\/(workspace|images|videos)\//.test(url);
 }
 
 /** 给 OSS URL 拼 attachment 参数,让 CDN 返回的响应强制下载 */
@@ -38,8 +40,8 @@ export async function downloadFile(
   filename: string,
   headers?: Record<string, string>,
 ): Promise<void> {
-  // 工作区资源 → CDN 直连(OSS query 参数控制响应头)
-  if (isWorkspaceUrl(url)) {
+  // 我们的 OSS 资源 → CDN 直连(OSS query 参数让响应头变 attachment)
+  if (isOurOssResource(url)) {
     triggerDownload(buildOssDownloadUrl(url, filename), filename);
     return;
   }
