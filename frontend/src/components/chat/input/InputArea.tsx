@@ -266,14 +266,12 @@ export default function InputArea({
   }, [addQuotedImage]);
 
   // 监听文字引用事件（从用户消息右键菜单触发）
-  // 把引用文字以 Markdown blockquote 形式插入到输入框开头，光标停在末尾
+  // 直接把引用文字插到输入框开头：空 prompt 直接铺；非空时加单换行分隔
   useEffect(() => {
     const handleQuoteText = (e: Event) => {
       const { text } = (e as CustomEvent<{ text: string; messageId: string }>).detail;
       if (!text || !text.trim()) return;
-      // 每行加 "> " 前缀，多段引用更可读
-      const quoted = text.split('\n').map((line) => `> ${line}`).join('\n');
-      setPrompt(`${quoted}\n\n${prompt}`);
+      setPrompt(prompt ? `${text}\n${prompt}` : text);
     };
     window.addEventListener('chat:quote-text', handleQuoteText);
     return () => window.removeEventListener('chat:quote-text', handleQuoteText);
