@@ -1,17 +1,31 @@
 /**
- * 通用文件下载（fetch + blob）
+ * 通用文件下载
  *
- * 支持所有文件类型（xlsx/csv/pdf 等），直接用原始文件名。
- * 可传入自定义 headers（用于后端代理认证）。
+ * 工作区资源(OSS CDN URL 含 `/workspace/`) → 走后端代理 /files/workspace/download_zip
+ *   (跟批量下载共用端点,后端强制 Content-Disposition: attachment,跨域无忧)
+ * 外部 URL → fetch + blob 兼容路径,失败 iframe fallback
  */
+
+import { downloadWorkspaceZip } from '../services/workspace';
+
+/** 是否为工作区 OSS CDN URL(同步到 OSS workspace/ 路径下的资源) */
+function isWorkspaceUrl(url: string): boolean {
+  return /^https?:\/\/[^/]+\/workspace\//.test(url);
+}
 
 export async function downloadFile(
   url: string,
   filename: string,
   headers?: Record<string, string>,
 ): Promise<void> {
+  // 工作区资源 → 后端代理(统一入口)
+  if (isWorkspaceUrl(url)) {
+    await downloadWorkspaceZip([url]);
+    return;
+  }
+
+  // 外部 URL fallback:fetch + blob → a.download
   try {
-    // 优先用 fetch + blob（能指定文件名，不跳转）
     const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();

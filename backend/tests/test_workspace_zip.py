@@ -329,3 +329,75 @@ class TestHttpEndpoint:
         assert "filename*=UTF-8''" in cd
         # latin-1 自检（TestClient 已经走过，能拿到 resp 就说明没崩）
         cd.encode("latin-1")
+
+    def test_single_file_returns_raw_stream_not_zip(
+        self, workspace: Path, monkeypatch
+    ) -> None:
+        """单文件 path → 直接流式返回原文件(attachment + 原 mime),不打 ZIP。"""
+        from fastapi.testclient import TestClient
+        from core.config import get_settings
+        from services.file_executor import FileExecutor
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "file_workspace_enabled", True)
+        monkeypatch.setattr(settings, "file_workspace_root", str(workspace))
+
+        app = self._build_app(workspace)
+        client = TestClient(app)
+
+        ex = FileExecutor(workspace_root=str(workspace), user_id="u-test")
+        Path(ex.workspace_root).mkdir(parents=True, exist_ok=True)
+        target = Path(ex.workspace_root) / "下载" / "AI图片"
+        target.mkdir(parents=True)
+        (target / "IMG_001.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-png-data" * 5)
+
+        resp = client.post(
+            "/files/workspace/download_zip",
+            json={"paths": ["下载/AI图片/IMG_001.png"]},
+        )
+        assert resp.status_code == 200
+        # 关键: Content-Type 是 image/png 而不是 application/zip
+        assert resp.headers["content-type"].startswith("image/png")
+        # Content-Disposition 强制 attachment(避免浏览器渲染)
+        cd = resp.headers["content-disposition"]
+        assert cd.startswith("attachment;")
+        assert "IMG_001.png" in cd or "IMG_001" in cd
+        # 内容是原文件,不是 ZIP
+        assert resp.content.startswith(b"\x89PNG")
+
+    def test_single_file_accepts_cdn_url(
+        self, workspace: Path, monkeypatch
+    ) -> None:
+        """paths 接受 OSS CDN URL 形式(workspace 资源),自动转 NAS 路径。"""
+        from fastapi.testclient import TestClient
+        from core.config import get_settings
+        from services.file_executor import FileExecutor
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "file_workspace_enabled", True)
+        monkeypatch.setattr(settings, "file_workspace_root", str(workspace))
+
+        app = self._build_app(workspace)
+        client = TestClient(app)
+
+        ex = FileExecutor(workspace_root=str(workspace), user_id="u-test")
+        Path(ex.workspace_root).mkdir(parents=True, exist_ok=True)
+        target = Path(ex.workspace_root) / "下载" / "AI图片"
+        target.mkdir(parents=True)
+        png_bytes = b"\x89PNG\r\n\x1a\nfake-png-data" * 5
+        (target / "IMG_002.png").write_bytes(png_bytes)
+
+        # 模拟前端调用:传 OSS CDN URL
+        from urllib.parse import quote
+        import hashlib
+        user_hash = hashlib.md5("u-test".encode()).hexdigest()[:8]
+        object_key = f"personal/{user_hash}/下载/AI图片/IMG_002.png"
+        cdn_url = f"https://cdn.example.com/workspace/{quote(object_key, safe='/')}"
+
+        resp = client.post(
+            "/files/workspace/download_zip",
+            json={"paths": [cdn_url]},
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("image/png")
+        assert resp.content == png_bytes

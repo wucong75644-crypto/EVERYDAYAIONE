@@ -1,8 +1,16 @@
 /**
- * 图片下载工具函数
+ * 图片下载工具
  *
- * 通过 fetch + blob 方式下载图片，避免浏览器直接打开图片。
+ * 工作区图片(OSS CDN URL 含 `/workspace/`) → 走后端代理 /files/workspace/download_zip
+ *   (统一入口,强制 attachment,跨域无忧)
+ * 外部图片 → fetch + blob 兼容路径
  */
+
+import { downloadWorkspaceZip } from '../services/workspace';
+
+function isWorkspaceUrl(url: string): boolean {
+  return /^https?:\/\/[^/]+\/workspace\//.test(url);
+}
 
 /** 从 Blob MIME 类型获取文件扩展名 */
 function getExtensionFromBlob(blob: Blob): string {
@@ -19,18 +27,23 @@ function getExtensionFromBlob(blob: Blob): string {
 /**
  * 通过 fetch + blob 下载图片
  *
- * @param imageUrl - 图片 URL
- * @param filename - 下载文件名（不含扩展名）
+ * @param imageUrl - 图片 URL(工作区图自动走代理,外部图走 fetch)
+ * @param filename - 下载文件名(不含扩展名)— 仅外部图 fetch 路径使用
  * @param options - 可选配置
- * @param options.cors - 是否使用 cors 模式（默认 true）
+ * @param options.cors - 是否 cors 模式(默认 true,仅 fetch fallback 用)
  */
 export async function downloadImage(
   imageUrl: string,
   filename: string,
   options: { cors?: boolean } = {},
 ): Promise<void> {
-  const { cors = true } = options;
+  // 工作区图片 → 后端代理(跟批量下载统一入口)
+  if (isWorkspaceUrl(imageUrl)) {
+    await downloadWorkspaceZip([imageUrl]);
+    return;
+  }
 
+  const { cors = true } = options;
   const fetchOptions: RequestInit = cors
     ? { mode: 'cors', credentials: 'omit' }
     : {};
