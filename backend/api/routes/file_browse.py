@@ -9,7 +9,7 @@
 import asyncio
 import mimetypes
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse
@@ -175,14 +175,50 @@ async def search_workspace(
 
 @router.get(
     "/workspace/preview",
-    summary="预览workspace文件（代理，绕过CDN CORS）",
+    summary="代理读取 workspace 文件(iframe 预览 / 强制下载二合一)",
 )
 async def preview_workspace_file(
     ctx: OrgCtx,
-    path: str = Query(..., description="workspace 内相对路径", max_length=500),
+    path: Optional[str] = Query(None, description="workspace 内相对路径", max_length=500),
+    url: Optional[str] = Query(None, description="OSS CDN URL(workspace/ 前缀);path 二选一", max_length=2048),
+    disposition: str = Query("inline", regex="^(inline|attachment)$",
+                              description="inline=iframe 渲染(默认); attachment=触发下载"),
 ):
-    """读取 workspace 文件并返回，供前端预览使用。绕过 CDN 的 CORS 限制。"""
+    """代理读取 workspace 文件。绕过 CDN CORS;支持 iframe 内嵌预览 / 强制下载两种模式。
+
+    输入二选一:
+      - path: workspace 相对路径(工作区面板已知)
+      - url:  OSS CDN URL(聊天图片只有 url 的场景)
+    都经过 resolve_safe_path 验证属于当前用户。
+
+    disposition:
+      - inline:    PDF/图片在 iframe / object 内嵌渲染
+      - attachment: 浏览器触发下载(用于 PDF 等浏览器默认内嵌渲染的类型)
+    """
+    if not path and not url:
+        raise AppException(
+            code="MISSING_PATH",
+            message="path 或 url 必须提供一个",
+            status_code=400,
+        )
+
     executor = get_executor(ctx)
+
+    # 从 OSS CDN URL 反推 NAS 路径(由 resolve_safe_path 验证归属)
+    if url and not path:
+        from urllib.parse import unquote, urlparse
+        parsed = urlparse(url)
+        path_part = unquote(parsed.path.lstrip("/"))
+        if not path_part.startswith("workspace/"):
+            raise AppException(
+                code="INVALID_URL",
+                message="仅支持 workspace/ 前缀的 OSS URL",
+                status_code=400,
+            )
+        from core.config import get_settings
+        ws_base = Path(get_settings().file_workspace_root).resolve()
+        path = str(ws_base / path_part[len("workspace/"):])
+
     target = executor.resolve_safe_path(path)
 
     if not target.exists() or not target.is_file():
@@ -193,13 +229,13 @@ async def preview_workspace_file(
         )
 
     media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-    logger.info(f"Workspace preview | user={ctx.user_id} | path={path}")
-    # content_disposition_type='inline' — 让浏览器 inline 渲染 PDF/图片等，
-    # 而非触发下载。starlette FileResponse 传 filename 时默认 attachment，
-    # 这会让 iframe PDF 黑屏 + 自动下载（fallback 场景的 latent bug）
+    logger.info(
+        f"Workspace preview | user={ctx.user_id} | "
+        f"file={target.name} | disposition={disposition}"
+    )
     return FileResponse(
         path=str(target),
         media_type=media_type,
         filename=target.name,
-        content_disposition_type="inline",
+        content_disposition_type=disposition,
     )

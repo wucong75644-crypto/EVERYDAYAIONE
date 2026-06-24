@@ -1,25 +1,16 @@
 /**
- * 图片下载工具
+ * 图片下载
  *
- * 工作区 OSS CDN 图片 → 走 CDN 直连(加 response-content-disposition query 参数
- *   让 CDN 返回 attachment header,浏览器必下载,不经过后端)
- * 外部图片 → fetch + blob 兼容路径
+ * 我们的 OSS 图片(workspace/images/videos) → ObjectMeta 自带
+ *   Content-Disposition: attachment,a.click 必下载,走 CDN 边缘节点最快。
+ * 外部图片 → fetch + blob 兼容路径(无 CD,无法直接 click 下载)。
  */
 
-/** 是否为我们的 OSS CDN 资源(workspace/images/videos 三种前缀) */
 function isOurOssResource(url: string): boolean {
   return /^https?:\/\/[^/]+\/(workspace|images|videos)\//.test(url);
 }
 
-/** 给 OSS URL 拼 attachment 参数,让 CDN 响应强制下载 */
-function buildOssDownloadUrl(url: string, filename: string): string {
-  const encoded = encodeURIComponent(filename);
-  const cd = `attachment; filename*=UTF-8''${encoded}`;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}response-content-disposition=${encodeURIComponent(cd)}`;
-}
-
-function triggerDownload(url: string, filename: string): void {
+function triggerClick(url: string, filename: string): void {
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
@@ -41,7 +32,7 @@ function getExtensionFromBlob(blob: Blob): string {
   return mimeMap[blob.type] || 'png';
 }
 
-/** 从 OSS URL 推断扩展名(走 CDN 直连分支用) */
+/** 从 URL 路径推断扩展名(OSS 直连分支用) */
 function getExtensionFromUrl(url: string): string {
   const pathname = url.split('?')[0].toLowerCase();
   const m = /\.(png|jpe?g|gif|webp|svg)(?:$|[?#])/i.exec(pathname);
@@ -51,7 +42,7 @@ function getExtensionFromUrl(url: string): string {
 /**
  * 图片下载
  *
- * @param imageUrl - 图片 URL(工作区图自动走 CDN 直连,外部图走 fetch)
+ * @param imageUrl - 图片 URL(我们的 OSS 图自动走 CDN 直连,外部图走 fetch)
  * @param filename - 下载文件名(不含扩展名 — 内部自动追加)
  * @param options - 可选配置
  * @param options.cors - cors 模式(默认 true,仅 fetch fallback 用)
@@ -61,11 +52,10 @@ export async function downloadImage(
   filename: string,
   options: { cors?: boolean } = {},
 ): Promise<void> {
-  // OSS 图片 → CDN 直连(query 参数让响应头变 attachment)
+  // 我们的 OSS 图片:ObjectMeta 自带 attachment → a.click 必下载
   if (isOurOssResource(imageUrl)) {
     const ext = getExtensionFromUrl(imageUrl);
-    const fullName = `${filename}.${ext}`;
-    triggerDownload(buildOssDownloadUrl(imageUrl, fullName), fullName);
+    triggerClick(imageUrl, `${filename}.${ext}`);
     return;
   }
 
@@ -80,6 +70,6 @@ export async function downloadImage(
   const blob = await response.blob();
   const ext = getExtensionFromBlob(blob);
   const blobUrl = URL.createObjectURL(blob);
-  triggerDownload(blobUrl, `${filename}.${ext}`);
+  triggerClick(blobUrl, `${filename}.${ext}`);
   URL.revokeObjectURL(blobUrl);
 }

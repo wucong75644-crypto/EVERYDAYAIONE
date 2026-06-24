@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import oss2
 from loguru import logger
@@ -19,6 +19,27 @@ from loguru import logger
 from core.config import settings
 from core.exceptions import AppException
 from services.http_downloader import HttpDownloader
+
+
+# 浏览器默认会"内嵌渲染"(而非下载)的 MIME 前缀 — 这些需要强制 attachment
+# 文档类(PDF/Office)不加 attachment,因为前端用 iframe 内嵌预览
+_INLINE_RENDERED_MIME_PREFIXES = ("image/", "video/", "audio/")
+
+
+def _build_upload_headers(content_type: str, filename: str) -> dict[str, str]:
+    """构造 OSS 上传 headers。
+
+    对浏览器会内嵌渲染的资源(image/video/audio)写入 Content-Disposition: attachment,
+    让 CDN 永久返回 attachment header,所有 a.click(url) 都触发下载而非渲染。
+    `<img src=url>` / `<video src=url>` 不读 CD,预览仍然正常。
+
+    PDF / Office 文档不加 attachment(它们走 iframe 内嵌预览,加 CD 会破坏预览)。
+    """
+    headers: dict[str, str] = {"Content-Type": content_type}
+    if content_type.startswith(_INLINE_RENDERED_MIME_PREFIXES):
+        encoded = quote(filename)
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{encoded}"
+    return headers
 
 
 class OSSService:
@@ -138,12 +159,17 @@ class OSSService:
         # 上传到 OSS（使用线程池避免阻塞event loop）
         try:
             import asyncio
+            filename = Path(urlparse(url).path).name or f"{uuid.uuid4().hex}.{ext}"
+            upload_headers = _build_upload_headers(
+                content_type or f"{media_type}/{ext}",
+                filename,
+            )
             # 将同步OSS上传放到线程池执行，避免阻塞worker
             result = await asyncio.to_thread(
                 self.bucket.put_object,
                 object_key,
                 content,
-                headers={"Content-Type": content_type or f"{media_type}/{ext}"},
+                headers=upload_headers,
             )
             logger.info(
                 f"{media_type.capitalize()} uploaded: object_key={object_key}, "
@@ -370,12 +396,13 @@ class OSSService:
         import asyncio
         object_key = f"workspace/{rel_path}"
         content_type = self._guess_content_type(local_path.name)
+        headers = _build_upload_headers(content_type, local_path.name)
         try:
             await asyncio.to_thread(
                 self.bucket.put_object_from_file,
                 object_key,
                 str(local_path),
-                headers={"Content-Type": content_type},
+                headers=headers,
             )
             logger.info(f"Workspace sync OK | key={object_key} | size={local_path.stat().st_size}")
             return self.get_url(object_key)

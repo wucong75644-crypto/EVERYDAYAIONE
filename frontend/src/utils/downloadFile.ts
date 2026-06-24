@@ -1,31 +1,28 @@
 /**
  * 通用文件下载
  *
- * 工作区 OSS CDN 资源 → 直接走 CDN(加 OSS query 参数 response-content-disposition)
- *   CDN 看到这个参数,响应头自动带 Content-Disposition: attachment,
- *   浏览器必下载。不经过后端,CDN 边缘节点直接服务,最快。
- * 外部 URL → fetch + blob 兼容路径,失败 iframe fallback。
+ * 我们的 OSS 资源(workspace/images/videos):
+ *   - image/video/audio → ObjectMeta 自带 Content-Disposition: attachment,
+ *     a.click 走 CDN 直连必下载(最快)
+ *   - PDF → OSS 不加 attachment(避免破坏 iframe 预览),改走后端代理
+ *     /files/workspace/preview?url=...&disposition=attachment
+ *   - Excel/Word/ZIP 等 → 浏览器 MIME 默认就触发下载,无需特殊处理
+ * 外部 URL → fetch + blob 兼容路径,失败时 iframe fallback。
  */
 
-/** 是否为我们的 OSS CDN URL(覆盖三种前缀:workspace/images/videos)。
- *  双轨设计:CDN 用于下载(此函数判断走 CDN 直连),NAS 用于查看/编辑(file_executor)。
- */
+import { API_BASE_URL } from '../services/api';
+
+/** 是否为我们的 OSS CDN 资源(workspace/images/videos 三种前缀) */
 function isOurOssResource(url: string): boolean {
   return /^https?:\/\/[^/]+\/(workspace|images|videos)\//.test(url);
 }
 
-/** 给 OSS URL 拼 attachment 参数,让 CDN 返回的响应强制下载 */
-function buildOssDownloadUrl(url: string, filename: string): string {
-  // RFC 5987 编码,支持中文文件名
-  const encoded = encodeURIComponent(filename);
-  const cd = `attachment; filename*=UTF-8''${encoded}`;
-  const sep = url.includes('?') ? '&' : '?';
-  // 整个 cd 值再做一次 URL 编码作为 query value(OSS 要求)
-  return `${url}${sep}response-content-disposition=${encodeURIComponent(cd)}`;
+/** PDF 等浏览器默认内嵌渲染但 OSS Meta 未设 attachment 的类型 → 走代理 */
+function needsProxyDownload(filename: string): boolean {
+  return /\.pdf(\?|$)/i.test(filename);
 }
 
-/** 用 a.click 触发浏览器原生下载(配合 attachment header 必下载) */
-function triggerDownload(url: string, filename: string): void {
+function triggerClick(url: string, filename: string): void {
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
@@ -40,9 +37,17 @@ export async function downloadFile(
   filename: string,
   headers?: Record<string, string>,
 ): Promise<void> {
-  // 我们的 OSS 资源 → CDN 直连(OSS query 参数让响应头变 attachment)
+  // 我们的 OSS 资源
   if (isOurOssResource(url)) {
-    triggerDownload(buildOssDownloadUrl(url, filename), filename);
+    // PDF: 走后端代理(避免 iframe 预览受 attachment 影响)
+    if (needsProxyDownload(filename)) {
+      const proxyUrl = `${API_BASE_URL}/files/workspace/preview`
+        + `?url=${encodeURIComponent(url)}&disposition=attachment`;
+      triggerClick(proxyUrl, filename);
+      return;
+    }
+    // image/video/audio/Excel/Word/ZIP 等 → CDN 直连 a.click 即下载
+    triggerClick(url, filename);
     return;
   }
 
@@ -52,7 +57,7 @@ export async function downloadFile(
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
-    triggerDownload(blobUrl, filename);
+    triggerClick(blobUrl, filename);
     URL.revokeObjectURL(blobUrl);
   } catch {
     // CORS 失败时用隐藏 iframe 触发浏览器原生下载
