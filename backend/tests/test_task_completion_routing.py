@@ -155,13 +155,19 @@ class TestHandleSuccessRouting:
         return TaskCompletionService(MockRoutingDB())
 
     @pytest.mark.asyncio
-    @patch("services.task_completion_service.TaskCompletionService._upload_urls_to_oss")
+    @patch("services.file_upload.persist_media_urls_to_workspace")
     @patch("services.batch_completion_service.BatchCompletionService.handle_image_complete")
     async def test_image_with_batch_id_routes_to_batch_service(
-        self, mock_batch_complete, mock_oss, service
+        self, mock_batch_complete, mock_persist, service
     ):
-        """测试：图片任务 + batch_id → BatchCompletionService"""
-        mock_oss.return_value = ["https://oss/img.png"]
+        """测试：图片任务 + batch_id → BatchCompletionService + persist 走工作区"""
+        mock_persist.return_value = [{
+            "type": "image",
+            "url": "https://oss/workspace/.../IMG_xxx.png",
+            "workspace_path": "下载/AI图片/IMG_xxx.png",
+            "width": 1024, "height": 1024,
+            "name": "IMG_xxx.png", "mime_type": "image/png", "size": 100,
+        }]
         mock_batch_complete.return_value = True
 
         task = make_image_task(batch_id="batch_abc")
@@ -170,19 +176,32 @@ class TestHandleSuccessRouting:
         success = await service._handle_success(task, result)
 
         assert success is True
+        # 验证 image 走 persist(L3 落工作区路径)
+        mock_persist.assert_called_once()
+        _, kwargs = mock_persist.call_args
+        assert kwargs["media_type"] == "image"
+        assert kwargs["user_id"] == task["user_id"]
+        # 验证 batch_complete 收到带 workspace_path 的 content_parts
         mock_batch_complete.assert_called_once()
-        # 验证传递了正确的 task 和 content_parts
         call_args = mock_batch_complete.call_args
+        passed_content_parts = call_args[0][1]
+        assert len(passed_content_parts) == 1
+        assert passed_content_parts[0]["workspace_path"] == "下载/AI图片/IMG_xxx.png"
         assert call_args[0][0]["batch_id"] == "batch_abc"
 
     @pytest.mark.asyncio
-    @patch("services.task_completion_service.TaskCompletionService._upload_urls_to_oss")
+    @patch("services.file_upload.persist_media_urls_to_workspace")
     @patch("services.handlers.image_handler.ImageHandler.on_complete")
     async def test_image_without_batch_id_routes_to_handler(
-        self, mock_on_complete, mock_oss, service
+        self, mock_on_complete, mock_persist, service
     ):
-        """测试：图片任务 + 无 batch_id（历史数据）→ ImageHandler"""
-        mock_oss.return_value = ["https://oss/img.png"]
+        """测试：图片任务 + 无 batch_id（历史数据）→ ImageHandler + persist 走工作区"""
+        mock_persist.return_value = [{
+            "type": "image",
+            "url": "https://oss/workspace/.../IMG_xxx.png",
+            "workspace_path": "下载/AI图片/IMG_xxx.png",
+            "width": 1024, "height": 1024,
+        }]
         mock_on_complete.return_value = None
 
         task = make_image_task(batch_id=None)  # 无 batch_id
@@ -191,6 +210,7 @@ class TestHandleSuccessRouting:
         success = await service._handle_success(task, result)
 
         assert success is True
+        mock_persist.assert_called_once()
         mock_on_complete.assert_called_once()
 
     @pytest.mark.asyncio

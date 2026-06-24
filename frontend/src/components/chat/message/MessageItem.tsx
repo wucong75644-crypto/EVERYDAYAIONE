@@ -588,12 +588,51 @@ export default memo(function MessageItem({
                       />
                     );
                   }
-                  {/* 失败的图片：裂开占位符 + 重新生成按钮（电商图模式） */}
+                  {/* 失败的图片：裂开占位符 + 重新生成按钮 */}
                   if (part.type === 'image' && (part as { failed?: boolean }).failed) {
                     const failedImg = part as {
                       width?: number; height?: number; alt?: string;
                       retry_context?: { task: string; image_urls: string[]; platform: string; style_directive: string };
                     };
+                    // 图片索引(用于 L3 异步 regenerate_single)
+                    const imageIdx = message.content
+                      .filter((p, i) => i < idx && p.type === 'image')
+                      .length;
+                    // B 链路同步重试(/ecom-image/retry, ImageAgent 直接出图)
+                    const ecomRetry = failedImg.retry_context ? async () => {
+                      try {
+                        const { data } = await api.post('/ecom-image/retry', {
+                          conversation_id: message.conversation_id,
+                          message_id: message.id,
+                          task: failedImg.retry_context!.task,
+                          image_urls: failedImg.retry_context!.image_urls,
+                          platform: failedImg.retry_context!.platform,
+                          style_directive: failedImg.retry_context!.style_directive,
+                          part_index: imageIdx,
+                        });
+                        if (data.success && data.image_url) {
+                          // 局部更新：替换 content 中对应位置的 ImagePart（不刷新页面）
+                          const newContent = [...message.content];
+                          newContent[idx] = {
+                            type: 'image',
+                            url: data.image_url,
+                            width: failedImg.width || 800,
+                            height: failedImg.height || 800,
+                            alt: failedImg.alt || '',
+                          };
+                          useMessageStore.getState().updateMessage(message.id, { content: newContent });
+                          toast.success('图片重新生成成功');
+                        } else {
+                          toast.error(data.error || '重新生成失败');
+                        }
+                      } catch {
+                        toast.error('重新生成失败，请稍后再试');
+                      }
+                    } : undefined;
+                    // L3 异步重试 fallback(走 regenerate_single → task 表 → KIE → WS 回推)
+                    const fallbackRetry = !ecomRetry && onRegenerateSingle
+                      ? () => handleRegenerateSingle(imageIdx)
+                      : undefined;
                     return (
                       <div key={`failed-${idx}`} className="my-2">
                         <FailedMediaPlaceholder
@@ -601,38 +640,7 @@ export default memo(function MessageItem({
                           width={failedImg.width || 280}
                           height={failedImg.height || 280}
                           retryLabel="重新生成"
-                          onRetry={failedImg.retry_context ? async () => {
-                            try {
-                              const { data } = await api.post('/ecom-image/retry', {
-                                conversation_id: message.conversation_id,
-                                message_id: message.id,
-                                task: failedImg.retry_context!.task,
-                                image_urls: failedImg.retry_context!.image_urls,
-                                platform: failedImg.retry_context!.platform,
-                                style_directive: failedImg.retry_context!.style_directive,
-                                part_index: message.content
-                                  .filter((p, i) => i < idx && p.type === 'image')
-                                  .length,
-                              });
-                              if (data.success && data.image_url) {
-                                // 局部更新：替换 content 中对应位置的 ImagePart（不刷新页面）
-                                const newContent = [...message.content];
-                                newContent[idx] = {
-                                  type: 'image',
-                                  url: data.image_url,
-                                  width: failedImg.width || 800,
-                                  height: failedImg.height || 800,
-                                  alt: failedImg.alt || '',
-                                };
-                                useMessageStore.getState().updateMessage(message.id, { content: newContent });
-                                toast.success('图片重新生成成功');
-                              } else {
-                                toast.error(data.error || '重新生成失败');
-                              }
-                            } catch {
-                              toast.error('重新生成失败，请稍后再试');
-                            }
-                          } : undefined}
+                          onRetry={ecomRetry || fallbackRetry}
                         />
                       </div>
                     );

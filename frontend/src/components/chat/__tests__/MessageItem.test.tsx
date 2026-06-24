@@ -402,4 +402,71 @@ describe('MessageItem failed ImagePart', () => {
     // 正常图片不应渲染 FailedMediaPlaceholder
     expect(screen.queryByTestId('failed-media-placeholder')).toBeNull();
   });
+
+  it('L3 失败图(无 retry_context)走 onRegenerateSingle fallback', () => {
+    // L3 异步任务失败的 ImagePart 不带 retry_context,
+    // 但有 onRegenerateSingle prop 时应该提供 onRetry(走 fallback 路径)
+    const onRegenerateSingle = vi.fn();
+    const l3FailedMessage = makeMessage({
+      content: [
+        { type: 'text', text: '图片生成失败' },
+        {
+          type: 'image',
+          url: null,
+          width: 800,
+          height: 800,
+          failed: true,
+          error: '生成失败',
+          // 关键:无 retry_context(L3 不填这个字段)
+        },
+      ],
+      generation_params: { type: 'image' },
+      status: 'completed',
+    });
+
+    render(
+      <MessageItem
+        message={l3FailedMessage}
+        allImageUrls={[]}
+        currentImageIndex={0}
+        onRegenerateSingle={onRegenerateSingle}
+      />,
+    );
+
+    // FailedMediaPlaceholder 仍然渲染
+    expect(screen.getByTestId('failed-media-placeholder')).toBeTruthy();
+    // onRetry 应该存在(走 onRegenerateSingle fallback)
+    expect(typeof capturedFailedPlaceholderProps?.onRetry).toBe('function');
+    // 触发 onRetry 应该调到 onRegenerateSingle
+    capturedFailedPlaceholderProps?.onRetry?.();
+    expect(onRegenerateSingle).toHaveBeenCalledTimes(1);
+  });
+
+  it('L3 失败图无 onRegenerateSingle prop 时不显示重试按钮', () => {
+    const l3FailedMessage = makeMessage({
+      content: [
+        {
+          type: 'image',
+          url: null,
+          failed: true,
+          error: '生成失败',
+        },
+      ],
+      generation_params: { type: 'image' },
+      status: 'completed',
+    });
+
+    render(
+      <MessageItem
+        message={l3FailedMessage}
+        allImageUrls={[]}
+        currentImageIndex={0}
+        // 不传 onRegenerateSingle
+      />,
+    );
+
+    // 占位符渲染,但 onRetry 应为 undefined(无按钮)
+    expect(screen.getByTestId('failed-media-placeholder')).toBeTruthy();
+    expect(capturedFailedPlaceholderProps?.onRetry).toBeUndefined();
+  });
 });

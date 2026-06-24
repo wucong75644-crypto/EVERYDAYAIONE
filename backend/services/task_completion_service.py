@@ -178,12 +178,15 @@ class TaskCompletionService:
         # 1. 提取媒体 URL
         raw_urls = self._extract_urls(result, task_type)
 
-        # 2. OSS 上传（临时 URL → 持久化）
+        # 2. OSS 上传 + 构建 ContentPart
+        # image 走 persist_media_urls_to_workspace(下载→NAS→OSS+workspace_path 一站式);
+        # video 沿用 _upload_urls_to_oss(只上 OSS,不进工作区)
         org_id = task.get("org_id")
-        oss_urls = await self._upload_urls_to_oss(raw_urls, user_id, task_type, org_id=org_id)
-
-        # 3. 构建 ContentPart 列表（含元数据）
-        content_parts = self._build_content_parts(oss_urls, task_type, task)
+        if task_type == "image":
+            content_parts = await self._build_content_parts(raw_urls, task_type, task)
+        else:
+            oss_urls = await self._upload_urls_to_oss(raw_urls, user_id, task_type, org_id=org_id)
+            content_parts = await self._build_content_parts(oss_urls, task_type, task)
 
         # 4. 空结果检查
         if not content_parts:
@@ -210,7 +213,7 @@ class TaskCompletionService:
 
         logger.info(
             f"Task completed via unified service | task_id={external_task_id} | "
-            f"type={task_type} | urls={len(oss_urls)}"
+            f"type={task_type} | urls={len(content_parts)}"
         )
         return True
 
@@ -431,33 +434,56 @@ class TaskCompletionService:
         # 理论上不会到这里（最后一次循环会抛异常）
         raise Exception(f"媒体持久化失败: {last_error}")
 
-    def _build_content_parts(
+    async def _build_content_parts(
         self,
         urls: List[str],
         task_type: str,
         task: Dict[str, Any],
     ) -> list:
-        """构建 ContentPart 字典列表（含元数据，供 handler.on_complete 使用）"""
-        request_params = task.get("request_params") or {}
-        parts = []
+        """构建 ContentPart 字典列表（含元数据，供 handler.on_complete 使用）。
 
+        image: 走 persist_media_urls_to_workspace 落工作区「下载/AI图片」+ OSS 双轨,
+               额外字段 workspace_path/name/mime_type/size 对齐 emit_payload 协议。
+        video: 保留原 url 直接构建(不落工作区,视频任务沿用现有路径)。
+        """
+        request_params = task.get("request_params") or {}
+        parts: list = []
+
+        if task_type == "image" and urls:
+            from services.file_upload import persist_media_urls_to_workspace
+
+            width, height = _compute_image_dimensions(
+                aspect_ratio=request_params.get("aspect_ratio", "1:1"),
+                resolution=request_params.get("resolution"),
+            )
+            payloads = await persist_media_urls_to_workspace(
+                urls=urls,
+                user_id=task["user_id"],
+                org_id=task.get("org_id"),
+                media_type="image",
+                meta={
+                    "prompt": request_params.get("prompt") or "",
+                    "model": task.get("model_id") or "",
+                    "aspect_ratio": request_params.get("aspect_ratio"),
+                    "resolution": request_params.get("resolution"),
+                    "task_id": task.get("external_task_id"),
+                },
+                extra_fields={
+                    "type": "image",
+                    "width": width,
+                    "height": height,
+                },
+            )
+            for p in payloads:
+                if p.get("url"):
+                    parts.append(p)
+            return parts
+
+        # video 分支:保留原行为
         for url in urls:
             if not url:
                 continue
-
-            if task_type == "image":
-                width, height = _compute_image_dimensions(
-                    aspect_ratio=request_params.get("aspect_ratio", "1:1"),
-                    resolution=request_params.get("resolution"),
-                )
-                parts.append({
-                    "type": "image",
-                    "url": url,
-                    "width": width,
-                    "height": height,
-                })
-
-            elif task_type == "video":
+            if task_type == "video":
                 duration = _compute_video_duration(
                     request_params.get("n_frames", "10"),
                 )
