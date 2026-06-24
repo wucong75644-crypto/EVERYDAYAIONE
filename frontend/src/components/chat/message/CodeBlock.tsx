@@ -106,7 +106,7 @@ export default memo(function CodeBlock({ language, children }: CodeBlockProps) {
       </div>
       {/* 代码区域：rehype-highlight 已注入高亮 class，这里只做容器 */}
       <div className="bg-surface-dark overflow-x-auto">
-        <pre className="p-4 text-sm leading-relaxed m-0">
+        <pre className="p-4 text-sm leading-relaxed m-0 whitespace-pre-wrap break-words">
           <code className={language ? `hljs language-${language}` : 'hljs'}>
             {children}
           </code>
