@@ -757,6 +757,53 @@ describe('wsMessageHandlers', () => {
 
       expect(store.getMessage).not.toHaveBeenCalled();
     });
+
+    it('should dispatch workspace:changed when content_part has workspace_path (L3)', () => {
+      const existingMessage = { id: 'msg_1', content: [{ type: 'image', url: null }] };
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(existingMessage);
+
+      const wsHandler = vi.fn();
+      window.addEventListener('workspace:changed', wsHandler);
+
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {
+          image_index: 0,
+          content_part: {
+            type: 'image',
+            url: 'https://oss/workspace/.../IMG_xxx.png',
+            workspace_path: '下载/AI图片/IMG_xxx.png',
+            width: 1024, height: 1024,
+          },
+          completed_count: 1,
+          total_count: 1,
+        },
+      });
+
+      expect(wsHandler).toHaveBeenCalledTimes(1);
+      window.removeEventListener('workspace:changed', wsHandler);
+    });
+
+    it('should NOT dispatch workspace:changed when content_part has no workspace_path (legacy)', () => {
+      const existingMessage = { id: 'msg_1', content: [{ type: 'image', url: null }] };
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(existingMessage);
+
+      const wsHandler = vi.fn();
+      window.addEventListener('workspace:changed', wsHandler);
+
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {
+          image_index: 0,
+          content_part: { type: 'image', url: 'https://oss/img.png', width: 1024, height: 1024 },
+          completed_count: 1,
+          total_count: 1,
+        },
+      });
+
+      expect(wsHandler).not.toHaveBeenCalled();
+      window.removeEventListener('workspace:changed', wsHandler);
+    });
   });
 
   // ========================================

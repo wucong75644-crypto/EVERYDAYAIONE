@@ -257,6 +257,13 @@ function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
       }
     });
   }
+
+  // L3 批次完成兜底:任一 content_part 含 workspace_path → 通知工作区刷新
+  // (覆盖 image_partial_update 可能漏推的场景,如单图直接走 message_done)
+  const finalContent = (messageData?.content ?? []) as Array<{ workspace_path?: string }>;
+  if (Array.isArray(finalContent) && finalContent.some((p) => p && p.workspace_path)) {
+    window.dispatchEvent(new CustomEvent('workspace:changed'));
+  }
 }
 
 /** 处理生成失败消息 */
@@ -351,6 +358,11 @@ function handleImagePartialUpdate(deps: HandlerDeps, msg: WSIncomingMessage): vo
   }
 
   store.updateMessage(message_id, { content });
+
+  // L3 单图落工作区成功 → 通知工作区面板刷新(silent)
+  if (content_part && (content_part as { workspace_path?: string }).workspace_path) {
+    window.dispatchEvent(new CustomEvent('workspace:changed'));
+  }
 }
 
 // ============================================================
