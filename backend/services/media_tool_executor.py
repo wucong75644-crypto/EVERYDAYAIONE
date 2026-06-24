@@ -84,11 +84,27 @@ class MediaToolMixin:
             )
 
             if result.image_urls:
+                from services.file_upload import persist_media_urls_to_workspace
+
                 self._confirm_deduct(tx_id)
                 urls = "\n".join(result.image_urls)
+                emit_payloads = await persist_media_urls_to_workspace(
+                    urls=result.image_urls,
+                    user_id=self.user_id,
+                    org_id=self.org_id,
+                    media_type="image",
+                    meta={
+                        "prompt": prompt,
+                        "model": model_id,
+                        "aspect_ratio": aspect_ratio,
+                        "task_id": task_id,
+                        "reference_images": image_urls,
+                    },
+                )
                 return AgentResult(
                     summary=f"图片已生成：\n{urls}",
                     status="success",
+                    emit_payloads=emit_payloads,
                 )
             else:
                 self._refund_credits(tx_id)

@@ -323,15 +323,75 @@ class TestImageAgentExecute:
         mock_result = MagicMock(image_urls=["https://cdn/gen.png"], fail_msg=None)
         mock_adapter = AsyncMock(generate=AsyncMock(return_value=mock_result), close=AsyncMock())
 
+        # mock 落盘:返回 None 触发 fallback,emit_payload 保留原 CDN url
         with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
              patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=None)), \
              patch.object(agent, "_lock_credits", return_value="tx_1"), \
              patch.object(agent, "_confirm_deduct") as mock_confirm:
             result = await agent.execute(task="白底主图", platform="taobao")
 
         assert result.status == "success"
+        # 落盘失败降级:保留原始 CDN url + 仍带 width/height/alt
         assert result.emit_payloads[0]["url"] == "https://cdn/gen.png"
+        assert result.emit_payloads[0]["kind"] == "image"
+        assert result.emit_payloads[0]["alt"] == "白底主图"
         mock_confirm.assert_called_once_with("tx_1")
+
+    @pytest.mark.asyncio
+    async def test_execute_persists_to_workspace(self):
+        """落盘成功时 emit_payload 含 workspace_path 双轨字段。"""
+        agent, _ = self._make_agent()
+        mock_result = MagicMock(image_urls=["https://cdn/gen.png"], fail_msg=None)
+        mock_adapter = AsyncMock(generate=AsyncMock(return_value=mock_result), close=AsyncMock())
+
+        persisted = {
+            "kind": "image",
+            "url": "https://oss.cdn/workspace/personal/x/下载/AI图片/IMG_xxx.png",
+            "workspace_path": "下载/AI图片/IMG_xxx.png",
+            "name": "IMG_xxx.png",
+            "mime_type": "image/png",
+            "size": 12345,
+        }
+
+        with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
+             patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=persisted)), \
+             patch.object(agent, "_lock_credits", return_value="tx_3"), \
+             patch.object(agent, "_confirm_deduct"):
+            result = await agent.execute(task="白底主图", platform="taobao")
+
+        assert result.status == "success"
+        p = result.emit_payloads[0]
+        assert p["workspace_path"] == "下载/AI图片/IMG_xxx.png"
+        assert p["url"].startswith("https://oss.cdn/")
+        # width/height/alt 字段已合并
+        assert "width" in p and "height" in p
+        assert p["alt"] == "白底主图"
+
+    @pytest.mark.asyncio
+    async def test_execute_multi_image_emits_all(self):
+        """KIE 返回多张时,每张都 emit 一个 payload。"""
+        agent, _ = self._make_agent()
+        urls = [f"https://cdn/img{i}.png" for i in range(3)]
+        mock_result = MagicMock(image_urls=urls, fail_msg=None)
+        mock_adapter = AsyncMock(generate=AsyncMock(return_value=mock_result), close=AsyncMock())
+
+        with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
+             patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=None)), \
+             patch.object(agent, "_lock_credits", return_value="tx_m"), \
+             patch.object(agent, "_confirm_deduct"):
+            result = await agent.execute(task="多图主图", platform="taobao")
+
+        assert result.status == "success"
+        assert len(result.emit_payloads) == 3
+        # 降级时 url 应回退到对应的原始 CDN url
+        for idx, p in enumerate(result.emit_payloads):
+            assert p["url"] == urls[idx]
 
     @pytest.mark.asyncio
     async def test_execute_failure_refunds(self):

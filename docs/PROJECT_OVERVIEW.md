@@ -174,7 +174,7 @@ EVERYDAYAIONE/
 │   │   ├── file_query_extensions.py  # file_list/search/info/edit 扩展 Mixin
 │   │   ├── file_write_extensions.py  # file_write/delete/mkdir/rename/move 扩展 Mixin
 │   │   ├── file_metadata_extractor.py # 文件元信息提取（docx/pptx/pdf/xlsx 预览）
-│   │   ├── file_upload.py            # 文件上传服务
+│   │   ├── file_upload.py            # 文件上传服务（upload_to_payload + download_url_to_workspace 远程URL落盘到「下载/AI图片」+ 双轨payload）
 │   │   └── adapters/                 # AI 模型适配器
 │   │       ├── __init__.py               # 适配器导出
 │   │       ├── base.py                   # 适配器基类

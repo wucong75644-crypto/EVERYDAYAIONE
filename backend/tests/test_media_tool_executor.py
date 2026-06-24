@@ -70,12 +70,65 @@ class TestGenerateImage:
         mock_adapter.generate = AsyncMock(return_value=mock_result)
         mock_adapter.close = AsyncMock()
 
+        # mock 落盘:None 触发 fallback,emit_payload 仍保留原 CDN url
         with patch("services.adapters.factory.create_image_adapter", return_value=mock_adapter), \
-             patch("config.kie_models.calculate_image_cost", return_value={"user_credits": 18}):
+             patch("config.kie_models.calculate_image_cost", return_value={"user_credits": 18}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=None)):
             result = await exe._generate_image({"prompt": "a cute cat"})
 
         assert "https://cdn.example.com/cat.png" in result
         assert "图片已生成" in result
+        # summary 字段保持不变（向后兼容）+ emit_payloads 新增双轨
+        assert len(result.emit_payloads) == 1
+        assert result.emit_payloads[0]["url"] == "https://cdn.example.com/cat.png"
+        assert result.emit_payloads[0]["kind"] == "image"
+
+    @pytest.mark.asyncio
+    async def test_success_with_workspace_path_when_persist_ok(self):
+        exe = _make_executor()
+        mock_result = MockImageResult(image_urls=["https://cdn.example.com/cat.png"])
+        mock_adapter = AsyncMock()
+        mock_adapter.generate = AsyncMock(return_value=mock_result)
+        mock_adapter.close = AsyncMock()
+
+        persisted = {
+            "kind": "image",
+            "url": "https://oss.cdn/workspace/org/A/u1/下载/AI图片/IMG_xxx.png",
+            "workspace_path": "下载/AI图片/IMG_xxx.png",
+            "name": "IMG_xxx.png",
+            "mime_type": "image/png",
+            "size": 100,
+        }
+        with patch("services.adapters.factory.create_image_adapter", return_value=mock_adapter), \
+             patch("config.kie_models.calculate_image_cost", return_value={"user_credits": 18}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=persisted)):
+            result = await exe._generate_image({"prompt": "a cute cat"})
+
+        p = result.emit_payloads[0]
+        assert p["workspace_path"] == "下载/AI图片/IMG_xxx.png"
+        assert p["url"].startswith("https://oss.cdn/")
+
+    @pytest.mark.asyncio
+    async def test_success_multi_image_emits_all(self):
+        exe = _make_executor()
+        urls = [f"https://cdn.example.com/img{i}.png" for i in range(3)]
+        mock_result = MockImageResult(image_urls=urls)
+        mock_adapter = AsyncMock()
+        mock_adapter.generate = AsyncMock(return_value=mock_result)
+        mock_adapter.close = AsyncMock()
+
+        with patch("services.adapters.factory.create_image_adapter", return_value=mock_adapter), \
+             patch("config.kie_models.calculate_image_cost", return_value={"user_credits": 18}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=None)):
+            result = await exe._generate_image({"prompt": "multi"})
+
+        assert len(result.emit_payloads) == 3
+        for idx, p in enumerate(result.emit_payloads):
+            assert p["url"] == urls[idx]
+            assert p["kind"] == "image"
 
     @pytest.mark.asyncio
     async def test_adapter_failure_refunds_credits(self):

@@ -1095,7 +1095,7 @@
 | 函数 | 文件路径 | 功能描述 |
 |------|---------|---------|
 | `download_workspace_zip` | `backend/api/routes/file_download.py` | POST endpoint：流式 ZIP 打包多文件/文件夹（zipstream-ng，UTF-8 中文文件名，500 文件/2GB 上限） |
-| `_collect_zip_targets` | `backend/api/routes/file_download.py` | 解析 + 校验 + 递归展开路径列表为 (绝对路径, arcname) 元组列表 |
+| `_collect_zip_targets` | `backend/api/routes/file_download.py` | 解析 + 校验 + 递归展开路径列表为 (绝对路径, arcname) 元组列表（自动排除 `.` 开头隐藏文件，与 listdir/search 对齐） |
 | `_resolve_archive_name` | `backend/api/routes/file_download.py` | 决定 ZIP 文件名（单文件夹→folder.zip / 多个→workspace-{ts}.zip） |
 | `get_executor` | `backend/api/routes/file_common.py` | workspace 路由共用的 FileExecutor 工厂（拆分时提取自原 `_get_executor`） |
 
@@ -1110,3 +1110,18 @@
 | `WorkspaceCategoryTabs` | `frontend/src/components/workspace/WorkspaceCategoryTabs.tsx` | 分类 Tab 组件（蓝色下划线选中态） |
 | `VideoPreviewModal` | `frontend/src/components/chat/media/VideoPreviewModal.tsx` | 视频全屏预览 Modal（Portal + `<video controls>` + ESC + ←→ 切换） |
 | `useWorkspace.categoryFilter` | `frontend/src/hooks/useWorkspace.ts` | 当前 Tab 筛选状态（不持久化，切目录重置 all） |
+
+### AI 媒体产物落盘
+
+> 把 KIE/CDN 生成的图片/视频下载到用户工作区「下载/AI图片(AI视频)」目录,产出双轨 emit_payload(CDN URL + workspace_path),让工作区面板可见、可批量下载。失败时降级保留原 CDN URL,聊天里仍能看图,不退积分。
+
+#### 后端函数
+
+| 函数 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `download_url_to_workspace` | `backend/services/file_upload.py` | 单 URL → 工作区落盘 + 双轨 payload。复用 HttpDownloader + tenacity(3次/总45s预算) + upload_to_payload。命名 `IMG_<YYYYMMDD>_<HHMMSS>_<6hex>_<3idx>.<ext>`,MIME 白名单,写盘走 asyncio.to_thread,可选 .meta.json sidecar |
+| `persist_media_urls_to_workspace` | `backend/services/file_upload.py` | 多 URL 并发落盘 helper(semaphore=5)。顺序保持,失败降级,extra_fields 透传 width/height/alt。media_tool_executor 与 image_agent 共用入口 |
+| `_download_with_retry` | `backend/services/file_upload.py` | tenacity 装饰的下载封装:retry_if HTTPError/Timeout,3 次或 45s 总预算 stop |
+| `_write_meta_sidecar` | `backend/services/file_upload.py` | 写隐藏 .meta.json sidecar(async to_thread,OSError 仅 warning) |
+| `_generate_media_filename` | `backend/services/file_upload.py` | 生成行业标准命名(IMG/VID 前缀 + datetime + 短 hash + 序号 + 扩展名) |
+| `_compute_user_root` | `backend/services/file_upload.py` | 计算用户工作区根目录(与 FileExecutor.__init__ 同步,org/personal 双模式) |

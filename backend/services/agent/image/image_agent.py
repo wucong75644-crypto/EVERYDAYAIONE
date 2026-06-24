@@ -312,25 +312,37 @@ class ImageAgent(CreditMixin):
             self._confirm_deduct(tx_id)
 
             # 7. 返回成功结果
-            cdn_url = result.image_urls[0]
             width, height = detect_dimensions(task, platform)
 
             logger.info(
                 f"ImageAgent success | user={self.user_id} | model={model_id} "
-                f"| size={width}x{height} | task={task[:50]}"
+                f"| size={width}x{height} | task={task[:50]} | "
+                f"count={len(result.image_urls)}"
+            )
+
+            from services.file_upload import persist_media_urls_to_workspace
+            emit_payloads = await persist_media_urls_to_workspace(
+                urls=result.image_urls,
+                user_id=self.user_id,
+                org_id=self.org_id,
+                media_type="image",
+                meta={
+                    "prompt": task,
+                    "model": model_id,
+                    "platform": platform,
+                    "style_directive": style_directive,
+                    "reference_images": image_urls,
+                    "width": width,
+                    "height": height,
+                },
+                extra_fields={"width": width, "height": height, "alt": task[:50]},
             )
 
             return AgentResult(
                 status="success",
                 summary=f"已生成图片：{task[:30]}",
                 source="image_agent",
-                emit_payloads=[{
-                    "kind": "image",
-                    "url": cdn_url,
-                    "width": width,
-                    "height": height,
-                    "alt": task[:50],
-                }],
+                emit_payloads=emit_payloads,
                 metadata={"platform": platform, "model": model_id},
             )
 

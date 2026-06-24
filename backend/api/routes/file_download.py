@@ -76,6 +76,9 @@ def _collect_zip_targets(
             for sub in abs_path.rglob("*"):
                 if not sub.is_file():
                     continue
+                # 与 listdir/search 行为对齐:跳过隐藏文件(如 .meta.json sidecar)
+                if sub.name.startswith("."):
+                    continue
                 try:
                     rel = sub.relative_to(abs_path)
                     arc = f"{base}/{rel.as_posix()}"

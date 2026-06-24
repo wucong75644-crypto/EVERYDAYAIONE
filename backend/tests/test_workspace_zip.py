@@ -192,6 +192,19 @@ class TestSafety:
         assert len(errors) == 1
         assert "越权" in errors[0] or "不合法" in errors[0]
 
+    def test_hidden_files_excluded_from_folder_zip(self, executor: FileExecutor) -> None:
+        """sidecar/隐藏文件 (. 开头) 在文件夹打包时被跳过,与 listdir/search 行为对齐。"""
+        # 在子文件夹下放一个 hidden sidecar
+        ws_root = Path(executor.workspace_root)
+        (ws_root / "下载" / "子文件夹" / ".IMG_001.png.meta.json").write_text("{}", encoding="utf-8")
+        targets, errors = _collect_zip_targets(executor, ["下载/子文件夹"])
+        arcs = [arc for _, arc in targets]
+        # 普通文件保留
+        assert "子文件夹/数据.csv" in arcs
+        assert "子文件夹/nested.txt" in arcs
+        # 隐藏文件被过滤
+        assert not any(".meta.json" in a for a in arcs)
+
 
 # ============================================================
 # 端到端：用 zipstream-ng 真打包 + zipfile 解包验证
