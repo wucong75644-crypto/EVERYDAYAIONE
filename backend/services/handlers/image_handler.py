@@ -445,6 +445,12 @@ class ImageHandler(BaseHandler):
         credits_consumed: int = 0,
     ) -> Message:
         """完成回调（调用基类通用流程）"""
+        image_count = sum(1 for p in result if isinstance(p, ImagePart))
+        if image_count != 1:
+            logger.warning(
+                f"IMAGE_COUNT_MISMATCH | task_id={task_id} | "
+                f"expected=1 | actual={image_count} | credits_consumed={credits_consumed}"
+            )
         return await self._handle_complete_common(task_id, result, credits_consumed)
 
     async def on_error(
