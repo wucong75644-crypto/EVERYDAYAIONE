@@ -59,7 +59,7 @@ class TestGetOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_returns_existing_user(self):
-        """已有映射 → 直接返回 user_id"""
+        """已有映射 → 直接返回 user_id 并刷新 last_login_at"""
         db = _make_db_mock()
         mapping_mock = db._table_mocks.setdefault(
             "wecom_user_mappings", MagicMock()
@@ -76,6 +76,30 @@ class TestGetOrCreateUser:
             )
 
         assert user_id == "existing-uuid-123"
+
+        # 命中映射时也要刷新 last_login_at（修复 OAuth 链路漏写的 bug）
+        users_mock = db._table_mocks["users"]
+        users_mock.update.assert_called_once()
+        update_payload = users_mock.update.call_args[0][0]
+        assert "last_login_at" in update_payload
+        users_mock.eq.assert_called_with("id", "existing-uuid-123")
+
+    @pytest.mark.asyncio
+    async def test_existing_user_last_login_refresh_failure_no_raise(self):
+        """刷新 last_login_at 失败时不应阻断业务，仍返回 user_id"""
+        db = _make_db_mock()
+        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(
+            data=[{"user_id": "u-x", "wecom_nickname": "x"}]
+        )
+        db._table_mocks["users"].update.side_effect = RuntimeError("DB write down")
+
+        svc = WecomUserMappingService(db)
+        with patch.object(svc, "settings", MagicMock()):
+            user_id = await svc.get_or_create_user(
+                wecom_userid="z", corp_id="c"
+            )
+
+        assert user_id == "u-x"
 
     @pytest.mark.asyncio
     async def test_creates_new_user_on_first_message(self):
@@ -138,6 +162,8 @@ class TestGetOrCreateUser:
 
         user_data = db._table_mocks["users"].insert.call_args[0][0]
         assert user_data["nickname"] == "企微用户_abcdefgh"
+        # 新用户创建即首次活跃，INSERT 应带 last_login_at
+        assert "last_login_at" in user_data
 
     @pytest.mark.asyncio
     async def test_uses_wecom_user_get_real_name_when_available(self):

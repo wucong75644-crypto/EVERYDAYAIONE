@@ -5,6 +5,7 @@
 首次接收到企微用户消息时自动创建系统账号并建立映射。
 """
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from loguru import logger
@@ -43,11 +44,21 @@ class WecomUserMappingService:
         # 1. 查找已有映射
         mapping = await self._find_mapping(wecom_userid, corp_id, org_id=org_id)
         if mapping:
+            # 企微消息也算活跃，刷新 last_login_at（OAuth 链路只覆盖网页扫码登录）
+            user_id = mapping["user_id"]
+            try:
+                self.db.table("users").update({
+                    "last_login_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", user_id).execute()
+            except Exception as e:
+                logger.warning(
+                    f"Refresh last_login_at failed | user_id={user_id} | error={e}"
+                )
             logger.debug(
                 f"Wecom user found | wecom_userid={wecom_userid} | "
-                f"user_id={mapping['user_id']}"
+                f"user_id={user_id}"
             )
-            return mapping["user_id"]
+            return user_id
 
         # 2. 创建新系统用户 + 映射
         user_id = await self._create_wecom_user(
@@ -118,6 +129,7 @@ class WecomUserMappingService:
                 "role": "user",
                 "credits": 100,
                 "status": "active",
+                "last_login_at": datetime.now(timezone.utc).isoformat(),
             })
             .execute()
         )
