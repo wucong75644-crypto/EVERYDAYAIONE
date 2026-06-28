@@ -78,6 +78,47 @@
 | `refund_credits` | `backend/services/credit_service.py` | 退回积分（任务失败时调用） | transaction_id | None |
 | `credit_lock` | `backend/services/credit_service.py` | 积分锁定上下文管理器 | task_id, user_id, amount, reason | AsyncContextManager |
 | `get_credit_service` | `backend/services/credit_service.py` | 获取积分服务实例（依赖注入） | db, redis? | CreditService |
+| `admin_adjust_credits` | `backend/api/routes/admin_users_helpers.py` | 管理员手动调整积分（正=充值/负=扣减），调用 RPC，写 operator_id 审计 | db, user_id, delta, reason, operator_id, org_id? | int (新余额) |
+
+### 管理员用户管理模块 (Admin Users)
+
+#### 后端函数（全部需 super_admin）
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `list_users` | `backend/api/routes/admin_users.py` | 用户列表（搜手机号/昵称 + 分页 + org 过滤 + phone 脱敏） | search?, org_id?, page, page_size | dict |
+| `get_user_summary` | `backend/api/routes/admin_users.py` | 用户概览（余额/累计消耗/对话数/所属企业） | uid | dict |
+| `recharge_credits` | `backend/api/routes/admin_users.py` | 充值/扣减积分（写 admin_action_logs 审计） | uid, delta, reason?, org_id? | dict |
+| `get_credits_history` | `backend/api/routes/admin_users.py` | 积分流水（带 operator 昵称） | uid, page, page_size | dict |
+| `list_user_conversations` | `backend/api/routes/admin_users.py` | 用户对话列表 | uid, page, page_size | dict |
+| `get_conversation_messages` | `backend/api/routes/admin_users.py` | 对话内消息（含 content JSONB 解析的附件） | uid, cid, limit? | dict |
+| `list_user_uploads` | `backend/api/routes/admin_users.py` | 用户上传资产（扫 messages.content JSONB 提取附件） | uid, page, page_size, days? | dict |
+| `list_user_generations` | `backend/api/routes/admin_users.py` | AI 生成资产（聚合 image_generations + tasks/video） | uid, page, page_size, kind? | dict |
+| `download_user_assets_zip` | `backend/api/routes/admin_users_zip.py` | OSS CDN URL 数组流式打包 ZIP（500 文件/1GB/单文件 100MB） | uid, urls, filenames?, zip_name? | StreamingResponse |
+| `_require_super_admin` | `backend/api/routes/admin_users_helpers.py` | super_admin 权限校验依赖 | user_id, db | None |
+| `_safe_parse_content` | `backend/api/routes/admin_users_helpers.py` | messages.content JSONB 容错解析 | raw | Any |
+| `_extract_upload_parts` | `backend/api/routes/admin_users_helpers.py` | 从 content 数组提取 file/image/image_url ContentPart | parts | list[dict] |
+| `_log_admin_action` | `backend/api/routes/admin_users_helpers.py` | 写 admin_action_logs（失败不阻断） | db, admin_id, action_type, ... | None |
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `listAdminUsers` | `frontend/src/services/adminUser.ts` | 用户列表 API 封装 | { search?, org_id?, page?, page_size? } | Promise<AdminUserListResponse> |
+| `getAdminUserSummary` | `frontend/src/services/adminUser.ts` | 用户概览 API | uid | Promise<AdminUserSummary> |
+| `rechargeUserCredits` | `frontend/src/services/adminUser.ts` | 充值/扣减 API | uid, { delta, reason?, org_id? } | Promise<RechargeResponse> |
+| `getUserCreditsHistory` | `frontend/src/services/adminUser.ts` | 流水 API | uid, { page?, page_size? } | Promise<CreditsHistoryResponse> |
+| `listUserConversations` | `frontend/src/services/adminUser.ts` | 对话列表 API | uid, { page?, page_size? } | Promise<ConversationListResponse> |
+| `getUserConversationMessages` | `frontend/src/services/adminUser.ts` | 对话消息 API | uid, cid, { limit? } | Promise<ConversationMessagesResponse> |
+| `listUserUploads` | `frontend/src/services/adminUser.ts` | 上传资产 API | uid, { page?, page_size?, days? } | Promise<UploadAssetsResponse> |
+| `listUserGenerations` | `frontend/src/services/adminUser.ts` | 生成资产 API | uid, { page?, page_size?, kind? } | Promise<GenerationAssetsResponse> |
+| `downloadUserAssetsZip` | `frontend/src/services/adminUser.ts` | 触发批量 ZIP 下载（fetch + Blob） | uid, { urls, filenames?, zip_name? } | Promise<void> |
+| `formatRelativeCN` | `frontend/src/utils/formatRelativeCN.ts` | 相对时间中文格式化 | iso | string |
+| `UserManagePanel` | `frontend/src/components/admin/UserManagePanel.tsx` | 用户列表 + 搜索 + 分页 + 详情抽屉 | — | JSX |
+| `UserDetailDrawer` | `frontend/src/components/admin/UserDetailDrawer.tsx` | 右侧滑入抽屉，含 3 Tab | userId, onClose, onChanged? | JSX |
+| `CreditsTab` | `frontend/src/components/admin/userDetail/CreditsTab.tsx` | 余额 + 充值表单（二次确认）+ 流水 | userId, balance, status?, onChanged | JSX |
+| `ConversationViewTab` | `frontend/src/components/admin/userDetail/ConversationViewTab.tsx` | 左对话列表 + 右消息流 + 一键下载本对话素材 | userId | JSX |
+| `AssetSpaceTab` | `frontend/src/components/admin/userDetail/AssetSpaceTab.tsx` | [上传/生成] 切换 + 网格 + 多选 + 批量 ZIP | userId | JSX |
 
 ### 对话管理模块 (Conversation Management)
 

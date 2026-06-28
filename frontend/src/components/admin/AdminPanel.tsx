@@ -17,8 +17,9 @@ import OrgManagePanel from './OrgManagePanel';
 import KuaimaiIntegrationPanel from '../integrations/KuaimaiIntegrationPanel';
 
 const ErrorMonitorPanel = lazy(() => import('./ErrorMonitorPanel'));
+const UserManagePanel = lazy(() => import('./UserManagePanel'));
 
-type Tab = 'platform' | 'org' | 'monitoring' | 'kuaimai';
+type Tab = 'platform' | 'org' | 'monitoring' | 'kuaimai' | 'users';
 
 
 export default function AdminPanel() {
@@ -29,6 +30,7 @@ export default function AdminPanel() {
 
   const tabs: { key: Tab; label: string; visible: boolean }[] = [
     { key: 'platform', label: '平台管理', visible: isSuperAdmin },
+    { key: 'users', label: '用户管理', visible: isSuperAdmin },
     { key: 'org', label: '企业管理', visible: isOrgAdmin || isSuperAdmin },
     { key: 'monitoring', label: '系统监控', visible: isSuperAdmin },
     { key: 'kuaimai', label: '🔗 快麦接入', visible: isOrgAdmin },
@@ -73,6 +75,11 @@ export default function AdminPanel() {
       {/* Tab 内容（保留 lazy 加载，避免不可见 tab 拖慢首屏） */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'platform' && isSuperAdmin && <SuperAdminPanel />}
+        {activeTab === 'users' && isSuperAdmin && (
+          <Suspense fallback={<div className="text-center py-8 text-text-tertiary">加载中...</div>}>
+            <UserManagePanel />
+          </Suspense>
+        )}
         {activeTab === 'org' && (isOrgAdmin || isSuperAdmin) && (
           <OrgManagePanel orgId={currentOrg?.org_id} />
         )}

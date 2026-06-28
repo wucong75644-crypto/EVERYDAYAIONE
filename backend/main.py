@@ -17,7 +17,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
-    audio, auth, conversation, error_monitor, file, health, image, image_ecom,
+    admin_users, audio, auth, conversation, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
     pdd, qimen, scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
     wecom_chat_targets, ws,
@@ -555,6 +555,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 系统错误监控
     app.include_router(error_monitor.router, prefix="/api")
+
+    # 管理员用户管理面板（仅 super_admin）
+    app.include_router(admin_users.router, prefix="/api")
 
     # 快麦 Web 数据接入（智库 + viperp）
     app.include_router(kuaimai_external.router, prefix="/api")

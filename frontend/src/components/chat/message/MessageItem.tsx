@@ -8,21 +8,7 @@
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import TextContextMenu from '../menus/TextContextMenu';
-
-/** 相对时间格式化（中文，与后端 utils/time_context.format_relative_time 对齐） */
-function formatRelativeCN(iso: string): string {
-  try {
-    const dt = new Date(iso);
-    if (isNaN(dt.getTime())) return '未知时间前';
-    const delta = (Date.now() - dt.getTime()) / 1000;
-    if (delta < 60) return '刚刚';
-    if (delta < 3600) return `约 ${Math.floor(delta / 60)} 分钟前`;
-    if (delta < 86400) return `约 ${Math.floor(delta / 3600)} 小时前`;
-    return `约 ${Math.floor(delta / 86400)} 天前`;
-  } catch {
-    return '未知时间前';
-  }
-}
+import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { m } from 'framer-motion';
 import type { Message } from '../../../stores/useMessageStore';
 import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
