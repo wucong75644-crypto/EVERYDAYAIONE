@@ -16,6 +16,7 @@ import { Copy, Download, ZoomIn } from 'lucide-react';
 import type { UploadAsset, GenerationAsset } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
+import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 
 
 export function UploadCard({
@@ -47,8 +48,10 @@ export function UploadCard({
     >
       {asset.type === 'image' ? (
         <img
-          src={asset.url}
+          src={ossThumbUrl(asset.url, 360)}
           alt={asset.name}
+          loading="lazy"
+          decoding="async"
           className="w-full aspect-square object-cover cursor-zoom-in"
           onClick={handlePreview}
           title="点击放大查看"
@@ -147,8 +150,10 @@ export function GenerationCard({
     >
       {asset.kind === 'image' ? (
         <img
-          src={asset.url}
+          src={ossThumbUrl(asset.url, 360)}
           alt={asset.prompt || ''}
+          loading="lazy"
+          decoding="async"
           className="w-full aspect-square object-cover cursor-zoom-in"
           onClick={handlePreview}
           title="点击放大查看"

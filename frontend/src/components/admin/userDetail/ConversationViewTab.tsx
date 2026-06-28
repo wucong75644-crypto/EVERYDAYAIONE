@@ -18,6 +18,7 @@ import {
 } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
+import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
@@ -331,8 +332,10 @@ function AttachmentThumb({
     return (
       <div className="relative group">
         <img
-          src={url}
+          src={ossThumbUrl(url, 192)}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="w-24 h-24 rounded object-cover cursor-zoom-in"
           onClick={() => onPreview(url)}
           title="点击放大查看"
