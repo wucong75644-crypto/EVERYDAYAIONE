@@ -200,7 +200,7 @@ function AdminMessageBubble({ message }: { message: ConversationMessage }) {
             <div className="text-sm whitespace-pre-wrap break-words">{textContent}</div>
           )}
 
-          {/* 用户上传附件 */}
+          {/* 媒体附件（user=上传 / assistant=生成结果，统一从 content JSONB 提取） */}
           {message.attachments && message.attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {message.attachments.map((a, i) => (
@@ -209,7 +209,7 @@ function AdminMessageBubble({ message }: { message: ConversationMessage }) {
             </div>
           )}
 
-          {/* AI 生成图 */}
+          {/* AI 生成图（兼容老消息：图片存在 image_url 字段而非 content 里）*/}
           {message.image_url && (
             <div className="mt-2">
               <AttachmentThumb url={message.image_url} name="生成图" type="image" />

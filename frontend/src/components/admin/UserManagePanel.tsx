@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import { Copy } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
@@ -91,7 +92,9 @@ export default function UserManagePanel() {
             <thead className="bg-[var(--s-bg-secondary)] text-left">
               <tr className="border-b border-[var(--s-border-default)]">
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">用户</th>
+                <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">ID</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">手机</th>
+                <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">所属企业</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">角色</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)] text-right">积分</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">状态</th>
@@ -121,8 +124,26 @@ export default function UserManagePanel() {
                       <span className="font-medium">{u.nickname || '—'}</span>
                     </div>
                   </td>
+                  <td className="px-4 py-2.5">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(u.id);
+                        toast.success('已复制完整 ID');
+                      }}
+                      className="font-mono text-xs text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)] flex items-center gap-1"
+                      title={`点击复制完整 ID：${u.id}`}
+                    >
+                      {u.id.slice(0, 8)}
+                      <Copy className="w-3 h-3" />
+                    </button>
+                  </td>
                   <td className="px-4 py-2.5 text-[var(--s-text-secondary)] font-mono text-xs">
                     {u.phone || '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-[var(--s-text-secondary)] text-xs max-w-[120px] truncate" title={u.org_name || ''}>
+                    {u.org_name || '—'}
                   </td>
                   <td className="px-4 py-2.5">
                     <Badge variant={u.role === 'super_admin' ? 'accent' : u.role === 'admin' ? 'warning' : 'default'}>

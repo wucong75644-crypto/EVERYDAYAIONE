@@ -17,6 +17,7 @@ export interface AdminUserListItem {
   credits: number;
   status: 'active' | 'disabled';
   current_org_id: string | null;
+  org_name: string | null;
   created_at: string;
 }
 

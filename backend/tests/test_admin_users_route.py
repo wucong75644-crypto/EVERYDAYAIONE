@@ -264,6 +264,27 @@ class TestListUsers:
         assert body["total"] == 1
         # phone 被脱敏
         assert body["items"][0]["phone"] == "138****5678"
+        # 散客 org_name = None
+        assert body["items"][0]["org_name"] is None
+
+    def test_list_with_org_name(self):
+        """有 current_org_id 的用户应 batch join 出 org_name"""
+        org_id = "11111111-1111-1111-1111-111111111111"
+        db = FakeDB()
+        db.enqueue(data={"role": "super_admin"})
+        db.enqueue(data=[{
+            "id": TARGET_USER_ID, "nickname": "员工 A",
+            "phone": None, "avatar_url": None, "role": "user",
+            "credits": 100, "status": "active",
+            "current_org_id": org_id,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }])
+        # batch query organizations
+        db.enqueue(data=[{"id": org_id, "name": "蓝创科技"}])
+        app = _build_app(db)
+        resp = TestClient(app).get("/api/admin/users")
+        assert resp.status_code == 200
+        assert resp.json()["items"][0]["org_name"] == "蓝创科技"
 
     def test_list_empty(self):
         db = FakeDB()
@@ -464,6 +485,36 @@ class TestConversationMessages:
         # 附件提取
         assert len(body["items"][0]["attachments"]) == 1
         assert body["items"][0]["attachments"][0]["url"] == "https://x.com/a.jpg"
+
+    def test_assistant_message_extracts_generated_media(self):
+        """AI 助手消息的生成图存在 content JSONB（非 image_url 字段），需要提取到 attachments"""
+        db = FakeDB()
+        db.enqueue(data={"role": "super_admin"})
+        db.enqueue(data={"user_id": TARGET_USER_ID, "title": "test"})
+        db.enqueue(data=[{
+            "id": "m2", "conversation_id": "conv-1", "role": "assistant",
+            "content": json.dumps([
+                {"type": "image", "url": "https://cdn.../gen1.png", "name": "gen1.png",
+                 "kind": "image", "width": 1024, "height": 1024},
+                {"type": "image", "url": "https://cdn.../gen2.png", "name": "gen2.png"},
+            ]),
+            "image_url": None, "video_url": None,
+            "credits_cost": 6, "is_error": False,
+            "generation_params": {"type": "image", "model": "gpt-image-2"},
+            "created_at": "2026-06-28T10:00:00+00:00",
+        }])
+        app = _build_app(db)
+        resp = TestClient(app).get(
+            f"/api/admin/users/{TARGET_USER_ID}/conversations/conv-1/messages"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # 关键：AI 消息也提取媒体到 attachments
+        msg = body["items"][0]
+        assert msg["role"] == "assistant"
+        assert len(msg["attachments"]) == 2
+        assert msg["attachments"][0]["url"] == "https://cdn.../gen1.png"
+        assert msg["attachments"][1]["url"] == "https://cdn.../gen2.png"
 
 
 # ── uploads ──────────────────────────────────────────────

@@ -85,9 +85,22 @@ async def list_users(
         .execute()
     )
 
+    raw_items = result.data or []
+
+    # 批量查 org_name（避免 N+1）
+    org_ids = list({u["current_org_id"] for u in raw_items if u.get("current_org_id")})
+    org_map: dict[str, str] = {}
+    if org_ids:
+        orgs = db.table("organizations").select("id, name").in_("id", org_ids).execute()
+        org_map = {r["id"]: r.get("name") or "" for r in (orgs.data or [])}
+
     items = []
-    for u in (result.data or []):
-        items.append({**u, "phone": _mask_phone(u.get("phone"))})
+    for u in raw_items:
+        items.append({
+            **u,
+            "phone": _mask_phone(u.get("phone")),
+            "org_name": org_map.get(u.get("current_org_id")) if u.get("current_org_id") else None,
+        })
 
     total = result.count if hasattr(result, "count") and result.count is not None else len(items)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -284,10 +297,11 @@ async def get_conversation_messages(
     messages = []
     for m in (result.data or []):
         parsed = _safe_parse_content(m.get("content"))
+        # 所有 role 都解析 content：用户消息→上传附件；助手消息→生成结果（图/视频）
         messages.append({
             **m,
             "content_parsed": parsed,
-            "attachments": _extract_upload_parts(parsed) if m.get("role") == "user" else [],
+            "attachments": _extract_upload_parts(parsed),
         })
 
     return {
