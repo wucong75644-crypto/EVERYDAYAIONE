@@ -309,52 +309,42 @@ class WecomOAuthService:
         nickname: Optional[str],
         org_id: Optional[str] = None,
     ) -> dict:
-        """创建新用户 + 映射 + 加入企业 + 登录"""
+        """创建新用户 + 映射 + 加入企业 + 登录（走原子 RPC，防并发重复）"""
         display_name = nickname or f"企微用户_{wecom_userid[:8]}"
 
-        # 创建系统用户
-        user_result = (
+        # 原子 RPC：user + mapping + credits_history 单事务，advisory lock 串行化并发
+        rpc_result = self.db.rpc(
+            "wecom_get_or_create_user",
+            {
+                "p_wecom_userid": wecom_userid,
+                "p_corp_id": corp_id,
+                "p_org_id": org_id,
+                "p_channel": "oauth",
+                "p_display_name": display_name,
+            },
+        ).execute()
+
+        data = rpc_result.data or {}
+        user_id = data.get("user_id")
+        if not user_id:
+            raise RuntimeError(
+                f"创建用户失败 | wecom_userid={wecom_userid} | rpc_result={data}"
+            )
+
+        # 拿完整 user 行用于 token / 响应
+        user_row = (
             self.db.table("users")
-            .insert({
-                "nickname": display_name,
-                "login_methods": ["wecom"],
-                "created_by": "wecom",
-                "role": "user",
-                "credits": 100,
-                "status": "active",
-            })
+            .select("id, nickname, avatar_url, phone, role, credits, status, created_at")
+            .eq("id", user_id)
+            .single()
             .execute()
         )
+        if not user_row.data:
+            raise RuntimeError(f"用户查询失败 | user_id={user_id}")
+        user = user_row.data
 
-        if not user_result.data:
-            raise RuntimeError(f"创建用户失败 | wecom_userid={wecom_userid}")
-
-        user = user_result.data[0]
-        user_id = user["id"]
-
-        # 记录注册积分
-        self.db.table("credits_history").insert({
-            "user_id": user_id,
-            "change_amount": 100,
-            "balance_after": 100,
-            "change_type": "register_gift",
-            "description": "企业微信扫码登录注册赠送积分",
-        }).execute()
-
-        # 创建映射
-        mapping_data = {
-            "wecom_userid": wecom_userid,
-            "corp_id": corp_id,
-            "user_id": user_id,
-            "channel": "oauth",
-            "wecom_nickname": display_name,
-        }
-        if org_id:
-            mapping_data["org_id"] = org_id
-        self.db.table("wecom_user_mappings").insert(mapping_data).execute()
-
-        # 自动加入企业成员
-        if org_id:
+        # 加入企业成员（独立操作，失败仅告警不阻塞登录）
+        if data.get("is_new") and org_id:
             try:
                 self.db.table("org_members").insert({
                     "org_id": org_id,
@@ -368,8 +358,9 @@ class WecomOAuthService:
                     f"user_id={user_id} | error={e}"
                 )
 
+        log_action = "new user created" if data.get("is_new") else "found existing (concurrent)"
         logger.info(
-            f"Wecom OAuth: new user created | user_id={user_id} | "
+            f"Wecom OAuth: {log_action} | user_id={user_id} | "
             f"wecom_userid={wecom_userid}"
         )
 

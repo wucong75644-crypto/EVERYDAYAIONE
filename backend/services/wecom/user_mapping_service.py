@@ -32,19 +32,17 @@ class WecomUserMappingService:
         """
         查找或创建企微用户对应的系统用户。
 
-        Args:
-            wecom_userid: 企微用户 ID
-            corp_id: 企业 ID
-            channel: 渠道来源（smart_robot / app）
-            nickname: 企微昵称（可选）
-
-        Returns:
-            系统 user_id（UUID 字符串）
+        并发安全保证（commit 之后）：
+        1. 快速路径：先在应用层查 mapping（避免 RPC 开销）
+        2. 慢路径：调 RPC wecom_get_or_create_user
+           - PG advisory_xact_lock 串行化同 (wecom_userid, corp_id) 的并发请求
+           - INSERT user + mapping + credits_history 单事务，任一失败全回滚
+           - wecom_mappings_uniq_idx 唯一索引兜底
+        3. is_new + org_id：独立加入企业（不在 RPC 内，因为可能失败但不应阻塞登录）
         """
-        # 1. 查找已有映射
+        # 1. 快速路径：直接查现有 mapping
         mapping = await self._find_mapping(wecom_userid, corp_id, org_id=org_id)
         if mapping:
-            # 企微消息也算活跃，刷新 last_login_at（OAuth 链路只覆盖网页扫码登录）
             user_id = mapping["user_id"]
             try:
                 self.db.table("users").update({
@@ -55,20 +53,87 @@ class WecomUserMappingService:
                     f"Refresh last_login_at failed | user_id={user_id} | error={e}"
                 )
             logger.debug(
-                f"Wecom user found | wecom_userid={wecom_userid} | "
+                f"Wecom user found (fast path) | wecom_userid={wecom_userid} | "
                 f"user_id={user_id}"
             )
             return user_id
 
-        # 2. 创建新系统用户 + 映射
-        user_id = await self._create_wecom_user(
-            wecom_userid, corp_id, channel, nickname, org_id=org_id
-        )
-        logger.info(
-            f"Wecom user created | wecom_userid={wecom_userid} | "
-            f"corp_id={corp_id} | channel={channel} | user_id={user_id}"
-        )
+        # 2. 慢路径：解析昵称 → 走原子 RPC
+        display_name = await self._resolve_display_name(nickname, wecom_userid, org_id)
+
+        result = self.db.rpc(
+            "wecom_get_or_create_user",
+            {
+                "p_wecom_userid": wecom_userid,
+                "p_corp_id": corp_id,
+                "p_org_id": org_id,
+                "p_channel": channel,
+                "p_display_name": display_name,
+            },
+        ).execute()
+
+        data = result.data or {}
+        user_id = data.get("user_id")
+        if not user_id:
+            raise RuntimeError(
+                f"wecom_get_or_create_user RPC 失败 | wecom_userid={wecom_userid} | "
+                f"result={data}"
+            )
+
+        is_new = data.get("is_new", False)
+        if is_new:
+            logger.info(
+                f"Wecom user created (atomic RPC) | wecom_userid={wecom_userid} | "
+                f"corp_id={corp_id} | channel={channel} | user_id={user_id}"
+            )
+            # 加入企业（独立操作：失败告警但不阻塞登录）
+            if org_id:
+                self._ensure_org_member_safe(user_id, org_id)
+        else:
+            logger.debug(
+                f"Wecom user found (slow path / concurrent loser) | "
+                f"wecom_userid={wecom_userid} | user_id={user_id}"
+            )
+
         return user_id
+
+    async def _resolve_display_name(
+        self,
+        nickname: Optional[str],
+        wecom_userid: str,
+        org_id: Optional[str],
+    ) -> str:
+        """解析企微用户的显示昵称（按优先级）"""
+        real_name = nickname
+        if not real_name and org_id:
+            from services.wecom.wecom_contact_api import fetch_wecom_real_name
+            real_name = await fetch_wecom_real_name(self.db, org_id, wecom_userid)
+        return real_name or f"企微用户_{wecom_userid[:8]}"
+
+    def _ensure_org_member_safe(self, user_id: str, org_id: str) -> None:
+        """加入企业成员（失败仅告警，不阻塞登录链路）"""
+        try:
+            existing = (
+                self.db.table("org_members")
+                .select("user_id")
+                .eq("user_id", user_id)
+                .eq("org_id", org_id)
+                .maybe_single()
+                .execute()
+            )
+            if existing and existing.data:
+                return
+            self.db.table("org_members").insert({
+                "org_id": org_id,
+                "user_id": user_id,
+                "role": "member",
+                "status": "active",
+            }).execute()
+        except Exception as e:
+            logger.error(
+                f"Auto add org member failed | "
+                f"org_id={org_id} | user_id={user_id} | error={e}"
+            )
 
     async def _find_mapping(
         self, wecom_userid: str, corp_id: str, org_id: str | None = None,
@@ -86,98 +151,6 @@ class WecomUserMappingService:
             query = query.is_("org_id", "null")
         result = query.limit(1).execute()
         return result.data[0] if result.data else None
-
-    async def _create_wecom_user(
-        self,
-        wecom_userid: str,
-        corp_id: str,
-        channel: str,
-        nickname: Optional[str],
-        org_id: Optional[str] = None,
-    ) -> str:
-        """
-        创建系统用户 + 企微映射记录。
-
-        用户属性：
-        - phone: 空（企微用户无手机号）
-        - nickname: 企微昵称（优先级：传入 nickname > 企微 user/get 真名 > 兜底）
-        - created_by: "wecom"（标识来源）
-        - credits: 100（新用户赠送）
-
-        Why 调 user/get: 企微回调 / WS 事件不带昵称，传入的 nickname
-        基本永远是 None。如果不主动查企微 API，所有新用户都会被命名为
-        "企微用户_xxxxxx"——这就是 2026-04 之前的乱码 bug 根因。
-        采用按需 user/get 而非全量同步是因为 user/get 在自建应用 token
-        + 自己可见范围内可调，无需额外通讯录权限。
-        每个企微员工只在首次发消息时调一次（之后走 _find_mapping 直接 return）。
-        """
-        # 优先用传入的 nickname；否则按需调 user/get 拿真名
-        real_name = nickname
-        if not real_name and org_id:
-            from services.wecom.wecom_contact_api import fetch_wecom_real_name
-            real_name = await fetch_wecom_real_name(self.db, org_id, wecom_userid)
-
-        display_name = real_name or f"企微用户_{wecom_userid[:8]}"
-
-        # 创建系统用户
-        user_result = (
-            self.db.table("users")
-            .insert({
-                "nickname": display_name,
-                "login_methods": ["wecom"],
-                "created_by": "wecom",
-                "role": "user",
-                "credits": 100,
-                "status": "active",
-                "last_login_at": datetime.now(timezone.utc).isoformat(),
-            })
-            .execute()
-        )
-
-        if not user_result.data:
-            raise RuntimeError(
-                f"Failed to create system user for wecom_userid={wecom_userid}"
-            )
-
-        user_id = user_result.data[0]["id"]
-
-        # 记录注册积分
-        self.db.table("credits_history").insert({
-            "user_id": user_id,
-            "change_amount": 100,
-            "balance_after": 100,
-            "change_type": "register_gift",
-            "description": "企业微信用户注册赠送积分",
-        }).execute()
-
-        # 创建映射
-        mapping_data = {
-            "wecom_userid": wecom_userid,
-            "corp_id": corp_id,
-            "user_id": user_id,
-            "channel": channel,
-            "wecom_nickname": display_name,
-        }
-        if org_id:
-            mapping_data["org_id"] = org_id
-        self.db.table("wecom_user_mappings").insert(mapping_data).execute()
-
-        # 企业用户：自动加入企业成员
-        if org_id:
-            try:
-                self.db.table("org_members").insert({
-                    "org_id": org_id,
-                    "user_id": user_id,
-                    "role": "member",
-                    "status": "active",
-                }).execute()
-            except Exception as e:
-                logger.error(
-                    f"Auto add org member failed, user created but not in org | "
-                    f"org_id={org_id} | user_id={user_id} | error={e}"
-                )
-
-        return user_id
 
     async def update_nickname(
         self, wecom_userid: str, corp_id: str, nickname: str

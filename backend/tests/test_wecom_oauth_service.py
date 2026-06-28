@@ -283,21 +283,27 @@ class TestLoginOrCreate:
 
     @pytest.mark.asyncio
     async def test_new_user_creation(self):
-        """无映射 → 创建用户 + 映射"""
+        """无映射 → 调原子 RPC 创建用户 + 映射 + 积分（migration 116 后走 RPC）"""
         db = _make_db_mock()
         mapping_table = db._table_mocks.setdefault("wecom_user_mappings", MagicMock())
         users_table = db._table_mocks.setdefault("users", MagicMock())
-        credits_table = db._table_mocks.setdefault("credits_history", MagicMock())
 
-        # 映射查询返回空
+        # 映射查询返回空（_find_mapping 不命中）
         (mapping_table.select.return_value
          .eq.return_value.eq.return_value.limit.return_value
          .execute.return_value) = MagicMock(data=[])
 
-        # 创建用户
+        # RPC wecom_get_or_create_user 返回新创建的 user_id
+        rpc_chain = MagicMock(name="rpc()")
+        rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "uid-new", "is_new": True}
+        )
+        db.rpc = MagicMock(return_value=rpc_chain)
+
+        # 后续 users.select(...) 拿完整 user 行
         new_user = {
             "id": "uid-new",
-            "nickname": "企微用户_wecom_zh",
+            "nickname": "张三",
             "avatar_url": None,
             "phone": None,
             "role": "user",
@@ -305,13 +311,9 @@ class TestLoginOrCreate:
             "status": "active",
             "created_at": "2026-03-22T00:00:00",
         }
-        users_table.insert.return_value.execute.return_value = MagicMock(data=[new_user])
-
-        # 积分记录
-        credits_table.insert.return_value.execute.return_value = MagicMock()
-
-        # 创建映射
-        mapping_table.insert.return_value.execute.return_value = MagicMock()
+        users_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+            data=new_user
+        )
 
         with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
@@ -320,9 +322,14 @@ class TestLoginOrCreate:
         assert result["user"]["id"] == "uid-new"
         assert "access_token" in result["token"]
 
-        # 验证调用了 insert
-        users_table.insert.assert_called_once()
-        mapping_table.insert.assert_called_once()
+        # 验证 RPC 调用参数正确
+        db.rpc.assert_called_once()
+        rpc_args = db.rpc.call_args
+        assert rpc_args[0][0] == "wecom_get_or_create_user"
+        params = rpc_args[0][1]
+        assert params["p_wecom_userid"] == "wecom_zhangsan"
+        assert params["p_channel"] == "oauth"
+        assert params["p_display_name"] == "张三"
 
     @pytest.mark.asyncio
     async def test_disabled_user_rejected(self):

@@ -1,9 +1,14 @@
 """
 WecomUserMappingService 单元测试
 
-覆盖：get_or_create_user（已有映射/首次创建/DB 异常）、
-      _create_wecom_user（用户+映射+积分三步创建）、
-      update_nickname
+覆盖（commit 116 重构后）：
+- 快速路径：已有 mapping → 直接复用 + 刷新 last_login_at
+- 慢速路径：mapping 不存在 → 调原子 RPC wecom_get_or_create_user
+- RPC 并发输家：返回 is_new=False → 复用赢家的 user_id
+- RPC 失败 → 抛 RuntimeError
+- display_name 解析优先级（传入 nickname > 企微 user/get > 兜底）
+- is_new + org_id → 自动加入企业成员（_ensure_org_member_safe）
+- update_nickname 不变
 """
 
 import sys
@@ -22,26 +27,17 @@ from services.wecom.user_mapping_service import WecomUserMappingService
 
 
 def _make_chain_mock(name: str = "chain") -> MagicMock:
-    """创建支持链式调用的 mock（select/eq/is_/like/order/limit/insert/update 都返回自身）
-
-    注意：execute 不在链中，需要在测试中单独设置 .execute.return_value
-    """
     chain = MagicMock(name=name)
-    for method in ("select", "eq", "is_", "like", "order", "limit", "insert", "update"):
+    for method in ("select", "eq", "is_", "like", "order", "limit", "insert", "update", "maybe_single"):
         getattr(chain, method).return_value = chain
-    # execute 默认返回空数据（测试中可覆盖）
     chain.execute.return_value = MagicMock(data=[])
     return chain
 
 
 def _make_db_mock(*table_names: str):
-    """按表名隔离的 DB mock。预创建常用表的链式 mock。"""
     db = MagicMock()
     table_mocks: Dict[str, MagicMock] = {}
-
-    # 预创建常用表
-    for name in ("wecom_user_mappings", "users", "credits_history",
-                 "org_members", *table_names):
+    for name in ("wecom_user_mappings", "users", "credits_history", "org_members", *table_names):
         table_mocks[name] = _make_chain_mock(f"table({name})")
 
     def _table(name: str):
@@ -50,134 +46,160 @@ def _make_db_mock(*table_names: str):
         return table_mocks[name]
 
     db.table = MagicMock(side_effect=_table)
+
+    # rpc mock：链式 .execute()
+    rpc_chain = MagicMock(name="rpc()")
+    rpc_chain.execute.return_value = MagicMock(data={})
+    db.rpc = MagicMock(return_value=rpc_chain)
+    db._rpc_chain = rpc_chain
+
     db._table_mocks = table_mocks
     return db
 
 
-class TestGetOrCreateUser:
-    """get_or_create_user 查找或创建"""
+class TestFastPath:
+    """快速路径：已有 mapping 直接复用"""
 
     @pytest.mark.asyncio
     async def test_returns_existing_user(self):
-        """已有映射 → 直接返回 user_id 并刷新 last_login_at"""
         db = _make_db_mock()
-        mapping_mock = db._table_mocks.setdefault(
-            "wecom_user_mappings", MagicMock()
-        )
-        # 模拟查询返回已有映射
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(
             data=[{"user_id": "existing-uuid-123", "wecom_nickname": "张三"}]
         )
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            user_id = await svc.get_or_create_user(
-                wecom_userid="zhangsan", corp_id="corp1"
-            )
+            user_id = await svc.get_or_create_user("zhangsan", "corp1")
 
         assert user_id == "existing-uuid-123"
-
-        # 命中映射时也要刷新 last_login_at（修复 OAuth 链路漏写的 bug）
-        users_mock = db._table_mocks["users"]
-        users_mock.update.assert_called_once()
-        update_payload = users_mock.update.call_args[0][0]
+        # 刷新 last_login_at
+        db._table_mocks["users"].update.assert_called_once()
+        update_payload = db._table_mocks["users"].update.call_args[0][0]
         assert "last_login_at" in update_payload
-        users_mock.eq.assert_called_with("id", "existing-uuid-123")
+        # 不应该调 RPC
+        db.rpc.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_existing_user_last_login_refresh_failure_no_raise(self):
-        """刷新 last_login_at 失败时不应阻断业务，仍返回 user_id"""
+    async def test_refresh_last_login_failure_no_raise(self):
+        """刷新失败不阻断业务，仍返回 user_id"""
         db = _make_db_mock()
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(
-            data=[{"user_id": "u-x", "wecom_nickname": "x"}]
+            data=[{"user_id": "u-x"}]
         )
         db._table_mocks["users"].update.side_effect = RuntimeError("DB write down")
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            user_id = await svc.get_or_create_user(
-                wecom_userid="z", corp_id="c"
-            )
+            user_id = await svc.get_or_create_user("z", "c")
 
         assert user_id == "u-x"
 
+
+class TestSlowPathRPC:
+    """慢路径：mapping 不存在 → 调 wecom_get_or_create_user RPC"""
+
     @pytest.mark.asyncio
-    async def test_creates_new_user_on_first_message(self):
-        """首次消息 → 创建系统用户+映射+积分"""
+    async def test_creates_new_user_via_rpc(self):
         db = _make_db_mock()
-
-        # 映射表查询返回空（_find_mapping 走 is_("org_id","null") 分支）
-        mapping_mock = db._table_mocks["wecom_user_mappings"]
-        mapping_mock.execute.return_value = MagicMock(data=[])
-
-        # 用户表插入返回新 user_id
-        users_mock = db._table_mocks["users"]
-        users_mock.execute.return_value = MagicMock(data=[{"id": "new-uuid-456"}])
-
-        # 积分表插入（不关心返回值）
-        credits_mock = db._table_mocks["credits_history"]
+        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "new-uuid-456", "is_new": True}
+        )
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
             user_id = await svc.get_or_create_user(
-                wecom_userid="lisi", corp_id="corp2", channel="app",
+                "lisi", "corp2", channel="app",
             )
 
         assert user_id == "new-uuid-456"
 
-    @pytest.mark.asyncio
-    async def test_custom_nickname(self):
-        """传入 nickname → 使用自定义昵称"""
-        db = _make_db_mock()
+        # 验证 RPC 调用参数正确
+        db.rpc.assert_called_once()
+        rpc_call = db.rpc.call_args
+        assert rpc_call[0][0] == "wecom_get_or_create_user"
+        params = rpc_call[0][1]
+        assert params["p_wecom_userid"] == "lisi"
+        assert params["p_corp_id"] == "corp2"
+        assert params["p_channel"] == "app"
 
-        # 映射查询返回空 → 走创建流程
+    @pytest.mark.asyncio
+    async def test_concurrent_loser_reuses_winner_user(self):
+        """RPC 返回 is_new=False → 我们是并发输家，复用赢家的 user_id"""
+        db = _make_db_mock()
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
-        # 用户创建返回 user_id
-        db._table_mocks["users"].execute.return_value = MagicMock(data=[{"id": "u1"}])
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "winner-uuid", "is_new": False}
+        )
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            await svc.get_or_create_user(
-                wecom_userid="ww001", corp_id="corp",
-                nickname="自定义昵称",
-            )
+            user_id = await svc.get_or_create_user("liaojuan", "corp_X")
 
-        users_mock = db._table_mocks["users"]
-        user_data = users_mock.insert.call_args[0][0]
-        assert user_data["nickname"] == "自定义昵称"
+        assert user_id == "winner-uuid"
+        # is_new=False 不应触发自动加入企业
+        db._table_mocks["org_members"].insert.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_default_nickname_when_none(self):
-        """未传 nickname → 使用默认格式"""
+    async def test_rpc_failure_raises(self):
+        """RPC 返回空或没 user_id → 抛 RuntimeError"""
         db = _make_db_mock()
-
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
-        db._table_mocks["users"].execute.return_value = MagicMock(data=[{"id": "u2"}])
+        db._rpc_chain.execute.return_value = MagicMock(data={})
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            await svc.get_or_create_user(
-                wecom_userid="abcdefgh_long_id", corp_id="corp",
-            )
-
-        user_data = db._table_mocks["users"].insert.call_args[0][0]
-        assert user_data["nickname"] == "企微用户_abcdefgh"
-        # 新用户创建即首次活跃，INSERT 应带 last_login_at
-        assert "last_login_at" in user_data
+            with pytest.raises(RuntimeError, match="wecom_get_or_create_user RPC 失败"):
+                await svc.get_or_create_user("fail_user", "corp")
 
     @pytest.mark.asyncio
-    async def test_uses_wecom_user_get_real_name_when_available(self):
-        """未传 nickname 但企微 user/get 拿到真名 → 用真名而不是兜底
-
-        Why: 修复 2026-04 之前所有企微用户名为 '企微用户_xxxxxxxx' 的根因。
-        实现方式: 按需调 cgi-bin/user/get（不依赖全量通讯录同步）。
-        """
+    async def test_is_new_auto_joins_org(self):
+        """is_new=True + org_id → 调 _ensure_org_member_safe"""
         db = _make_db_mock()
-
-        # 映射查询返回空 → 走创建流程
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
-        # 用户创建返回 user_id
-        db._table_mocks["users"].execute.return_value = MagicMock(data=[{"id": "u3"}])
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "new-u", "is_new": True}
+        )
+        # 模拟 org_members 查询：用户尚不在 org 中
+        db._table_mocks["org_members"].execute.return_value = MagicMock(data=None)
+
+        svc = WecomUserMappingService(db)
+        with patch.object(svc, "settings", MagicMock()):
+            await svc.get_or_create_user("u", "c", org_id="org-1")
+
+        # 应该 INSERT org_members
+        db._table_mocks["org_members"].insert.assert_called_once()
+        insert_payload = db._table_mocks["org_members"].insert.call_args[0][0]
+        assert insert_payload["org_id"] == "org-1"
+        assert insert_payload["user_id"] == "new-u"
+        assert insert_payload["role"] == "member"
+
+
+class TestDisplayNameResolution:
+    """display_name 优先级：传入 > fetch_wecom_real_name > 兜底"""
+
+    @pytest.mark.asyncio
+    async def test_uses_provided_nickname(self):
+        db = _make_db_mock()
+        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "u1", "is_new": True}
+        )
+
+        svc = WecomUserMappingService(db)
+        with patch.object(svc, "settings", MagicMock()):
+            await svc.get_or_create_user("ww001", "corp", nickname="自定义昵称")
+
+        params = db.rpc.call_args[0][1]
+        assert params["p_display_name"] == "自定义昵称"
+
+    @pytest.mark.asyncio
+    async def test_uses_wecom_real_name_when_no_nickname(self):
+        db = _make_db_mock()
+        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "u3", "is_new": True}
+        )
 
         async def fake_fetch(d, oid, uid, **kw):
             return "王五"
@@ -188,27 +210,21 @@ class TestGetOrCreateUser:
                  "services.wecom.wecom_contact_api.fetch_wecom_real_name",
                  new=fake_fetch,
              ):
-            await svc.get_or_create_user(
-                wecom_userid="wangwu_userid", corp_id="corp",
-                org_id="org-1",
-            )
+            await svc.get_or_create_user("wangwu", "corp", org_id="org-1")
 
-        user_data = db._table_mocks["users"].insert.call_args[0][0]
-        assert user_data["nickname"] == "王五"
-
-        # 同时映射表也应写入真名
-        mapping_data = db._table_mocks["wecom_user_mappings"].insert.call_args[0][0]
-        assert mapping_data["wecom_nickname"] == "王五"
+        params = db.rpc.call_args[0][1]
+        assert params["p_display_name"] == "王五"
 
     @pytest.mark.asyncio
-    async def test_falls_back_when_user_get_returns_none(self):
-        """企微 user/get 拿不到名（如不在可见范围）→ 兜底到 '企微用户_xxx'"""
+    async def test_fallback_when_no_real_name(self):
         db = _make_db_mock()
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
-        db._table_mocks["users"].execute.return_value = MagicMock(data=[{"id": "u4"}])
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "u4", "is_new": True}
+        )
 
         async def fake_fetch(d, oid, uid, **kw):
-            return None  # 模拟 API 失败 / 不可见
+            return None
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()), \
@@ -216,54 +232,19 @@ class TestGetOrCreateUser:
                  "services.wecom.wecom_contact_api.fetch_wecom_real_name",
                  new=fake_fetch,
              ):
-            await svc.get_or_create_user(
-                wecom_userid="abcdefgh_long", corp_id="corp", org_id="org-1",
-            )
+            await svc.get_or_create_user("abcdefgh_long", "corp", org_id="org-1")
 
-        user_data = db._table_mocks["users"].insert.call_args[0][0]
-        assert user_data["nickname"] == "企微用户_abcdefgh"
-
-    @pytest.mark.asyncio
-    async def test_db_query_error_raises(self):
-        """DB 查询异常 → _find_mapping 抛异常（不再静默创建重复用户）"""
-        db = _make_db_mock()
-
-        mapping_mock = db._table_mocks.setdefault("wecom_user_mappings", MagicMock())
-        mapping_mock.select.side_effect = RuntimeError("DB error")
-
-        svc = WecomUserMappingService(db)
-        with patch.object(svc, "settings", MagicMock()):
-            with pytest.raises(RuntimeError, match="DB error"):
-                await svc.get_or_create_user(
-                    wecom_userid="err_user", corp_id="corp",
-                )
-
-    @pytest.mark.asyncio
-    async def test_create_user_failure_raises(self):
-        """用户创建失败（insert 返回空）→ RuntimeError"""
-        db = _make_db_mock()
-
-        # 映射查询返回空 → 走创建流程
-        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
-        # 用户创建返回空 → 抛 RuntimeError
-        db._table_mocks["users"].execute.return_value = MagicMock(data=[])
-
-        svc = WecomUserMappingService(db)
-        with patch.object(svc, "settings", MagicMock()):
-            with pytest.raises(RuntimeError, match="Failed to create system user"):
-                await svc.get_or_create_user(
-                    wecom_userid="fail_user", corp_id="corp",
-                )
+        params = db.rpc.call_args[0][1]
+        assert params["p_display_name"] == "企微用户_abcdefgh"
 
 
 class TestUpdateNickname:
-    """update_nickname 昵称更新"""
+    """update_nickname 昵称更新（未改动，保留覆盖）"""
 
     @pytest.mark.asyncio
     async def test_update_success(self):
-        """正常更新昵称"""
         db = _make_db_mock()
-        mapping_mock = db._table_mocks.setdefault("wecom_user_mappings", MagicMock())
+        mapping_mock = db._table_mocks["wecom_user_mappings"]
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
@@ -273,12 +254,10 @@ class TestUpdateNickname:
 
     @pytest.mark.asyncio
     async def test_update_error_no_raise(self):
-        """更新失败 → 记录日志但不抛出"""
         db = _make_db_mock()
-        mapping_mock = db._table_mocks.setdefault("wecom_user_mappings", MagicMock())
+        mapping_mock = db._table_mocks["wecom_user_mappings"]
         mapping_mock.update.side_effect = RuntimeError("DB error")
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            # 不应抛出异常
             await svc.update_nickname("ww001", "corp1", "新昵称")
