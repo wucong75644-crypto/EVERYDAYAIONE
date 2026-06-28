@@ -18,6 +18,9 @@ import {
 } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
+import { usePreview } from '../../../preview/usePreview';
+import PreviewHost from '../../../preview/PreviewHost';
+import type { PreviewItem } from '../../../preview/types';
 
 interface Props {
   userId: string;
@@ -32,6 +35,7 @@ export default function ConversationViewTab({ userId }: Props) {
   const [msgLoading, setMsgLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const preview = usePreview();
 
   // 加载对话列表
   useEffect(() => {
@@ -88,6 +92,25 @@ export default function ConversationViewTab({ userId }: Props) {
     return urls;
   }, [messages]);
 
+  // 收集本对话所有可预览图片（按消息顺序）作为 lightbox 上下张轮播池
+  const previewItems = useMemo<PreviewItem[]>(() => {
+    const items: PreviewItem[] = [];
+    for (const m of messages) {
+      m.attachments?.forEach((a) => {
+        if (a.type === 'image') items.push({ url: a.url, filename: a.name });
+      });
+      if (m.image_url) {
+        items.push({ url: m.image_url, filename: filenameFromUrl(m.image_url) });
+      }
+    }
+    return items;
+  }, [messages]);
+
+  const openLightbox = useCallback((url: string) => {
+    const idx = previewItems.findIndex((i) => i.url === url);
+    preview.open(previewItems, idx >= 0 ? idx : 0);
+  }, [previewItems, preview]);
+
   const handleDownloadAll = async () => {
     if (allUrls.length === 0) {
       toast.error('本对话没有可下载素材');
@@ -110,7 +133,12 @@ export default function ConversationViewTab({ userId }: Props) {
   };
 
   return (
-    <div className="flex gap-4 h-full -m-6">
+    <div className="flex gap-4 h-full -m-6 relative">
+      <PreviewHost
+        state={preview.state}
+        onClose={preview.close}
+        onIndexChange={preview.setIndex}
+      />
       {/* 左：对话列表 */}
       <div className="w-64 border-r border-[var(--s-border-default)] overflow-y-auto shrink-0">
         {convLoading ? (
@@ -165,7 +193,13 @@ export default function ConversationViewTab({ userId }: Props) {
             </div>
           ) : (
             <>
-              {messages.map((m) => <AdminMessageBubble key={m.id} message={m} />)}
+              {messages.map((m) => (
+                <AdminMessageBubble
+                  key={m.id}
+                  message={m}
+                  onPreviewImage={openLightbox}
+                />
+              ))}
               <div ref={messagesEndRef} />
             </>
           )}
@@ -179,7 +213,13 @@ export default function ConversationViewTab({ userId }: Props) {
 // ── 简化版消息气泡（admin 场景专用）────────────────────
 
 
-function AdminMessageBubble({ message }: { message: ConversationMessage }) {
+function AdminMessageBubble({
+  message,
+  onPreviewImage,
+}: {
+  message: ConversationMessage;
+  onPreviewImage: (url: string) => void;
+}) {
   const isUser = message.role === 'user';
   const textContent = useMemo(() => extractText(message), [message]);
 
@@ -216,7 +256,13 @@ function AdminMessageBubble({ message }: { message: ConversationMessage }) {
           {message.attachments && message.attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {message.attachments.map((a, i) => (
-                <AttachmentThumb key={i} url={a.url} name={a.name} type={a.type} />
+                <AttachmentThumb
+                  key={i}
+                  url={a.url}
+                  name={a.name}
+                  type={a.type}
+                  onPreview={onPreviewImage}
+                />
               ))}
             </div>
           )}
@@ -224,7 +270,12 @@ function AdminMessageBubble({ message }: { message: ConversationMessage }) {
           {/* AI 生成图（兼容老消息：图片存在 image_url 字段而非 content 里）*/}
           {message.image_url && (
             <div className="mt-2">
-              <AttachmentThumb url={message.image_url} name="生成图" type="image" />
+              <AttachmentThumb
+                url={message.image_url}
+                name="生成图"
+                type="image"
+                onPreview={onPreviewImage}
+              />
             </div>
           )}
 
@@ -260,9 +311,20 @@ function AdminMessageBubble({ message }: { message: ConversationMessage }) {
 }
 
 
-function AttachmentThumb({ url, name, type }: { url: string; name: string; type: 'file' | 'image' }) {
-  const handleClick = (e: React.MouseEvent) => {
+function AttachmentThumb({
+  url,
+  name,
+  type,
+  onPreview,
+}: {
+  url: string;
+  name: string;
+  type: 'file' | 'image';
+  onPreview: (url: string) => void;
+}) {
+  const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();  // 阻止冒泡触发 lightbox 打开
     downloadFile(url, name).catch((err) => toast.error(err?.message || '下载失败'));
   };
   if (type === 'image') {
@@ -271,24 +333,27 @@ function AttachmentThumb({ url, name, type }: { url: string; name: string; type:
         <img
           src={url}
           alt={name}
-          className="w-24 h-24 rounded object-cover cursor-pointer"
-          onClick={() => window.open(url, '_blank')}
+          className="w-24 h-24 rounded object-cover cursor-zoom-in"
+          onClick={() => onPreview(url)}
+          title="点击放大查看"
         />
         <button
           type="button"
-          onClick={handleClick}
+          onClick={handleDownload}
           className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
           aria-label="下载"
+          title="下载"
         >
           <Download className="w-3.5 h-3.5" />
         </button>
       </div>
     );
   }
+  // 文件：整个按钮 = 下载（非图片无预览概念）
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={handleDownload}
       className="text-sm px-2 py-1 bg-[var(--s-bg-tertiary)] rounded hover:bg-[var(--s-hover)] flex items-center gap-1.5"
     >
       📎 {name}
@@ -347,6 +412,16 @@ function extractText(m: ConversationMessage): string {
     return texts.join('\n');
   }
   return typeof m.content === 'string' ? m.content : '';
+}
+
+
+function filenameFromUrl(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+    return decodeURIComponent(path.split('/').pop() || '生成图');
+  } catch {
+    return '生成图';
+  }
 }
 
 

@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import toast from 'react-hot-toast';
-import { Copy, Download } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import { useFileSelection } from '../../../hooks/useFileSelection';
 import {
@@ -16,8 +16,10 @@ import {
   type UploadAsset,
   type GenerationAsset,
 } from '../../../services/adminUser';
-import { formatRelativeCN } from '../../../utils/formatRelativeCN';
-import { downloadFile } from '../../../utils/downloadFile';
+import { usePreview } from '../../../preview/usePreview';
+import PreviewHost from '../../../preview/PreviewHost';
+import type { PreviewItem } from '../../../preview/types';
+import { UploadCard, GenerationCard } from './AssetCards';
 
 type Mode = 'uploads' | 'generations';
 
@@ -37,6 +39,25 @@ export default function AssetSpaceTab({ userId }: Props) {
   const [downloading, setDownloading] = useState(false);
 
   const sel = useFileSelection();
+  const preview = usePreview();
+
+  // 当前页所有可预览图片（按显示顺序，作为 lightbox 上下张轮播池）
+  const previewItems = useMemo<PreviewItem[]>(() => {
+    if (mode === 'uploads') {
+      return uploads
+        .filter((u) => u.type === 'image')
+        .map((u) => ({ url: u.url, filename: u.name }));
+    }
+    return generations
+      .filter((g) => g.kind === 'image')
+      .map((g) => ({ url: g.url, filename: `${g.id}.jpg` }));
+  }, [mode, uploads, generations]);
+
+  const openLightbox = useCallback((url: string) => {
+    const idx = previewItems.findIndex((i) => i.url === url);
+    if (idx < 0) return;
+    preview.open(previewItems, idx);
+  }, [previewItems, preview]);
 
   // 加载数据（page / mode 变化）
   useEffect(() => {
@@ -123,6 +144,11 @@ export default function AssetSpaceTab({ userId }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
+      <PreviewHost
+        state={preview.state}
+        onClose={preview.close}
+        onIndexChange={preview.setIndex}
+      />
       {/* 顶部切换 */}
       <div className="flex gap-1 border-b border-[var(--s-border-default)]">
         <ModeTab
@@ -183,6 +209,7 @@ export default function AssetSpaceTab({ userId }: Props) {
                     asset={a}
                     selected={sel.isSelected(a.url)}
                     onToggle={() => sel.toggle(a.url)}
+                    onPreview={openLightbox}
                   />
                 ))
               : generations.map((g) => (
@@ -191,6 +218,7 @@ export default function AssetSpaceTab({ userId }: Props) {
                     asset={g}
                     selected={sel.isSelected(g.url)}
                     onToggle={() => sel.toggle(g.url)}
+                    onPreview={openLightbox}
                   />
                 ))}
           </div>
@@ -235,191 +263,3 @@ function ModeTab({ active, label, count, onClick }: {
 }
 
 
-// ── 上传卡片 ─────────────────────────────────────────────
-
-
-function UploadCard({
-  asset,
-  selected,
-  onToggle,
-}: {
-  asset: UploadAsset;
-  selected: boolean;
-  onToggle: () => void;
-}) {
-  const handleDownload = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    downloadFile(asset.url, asset.name).catch((err) => toast.error(err?.message || '下载失败'));
-  };
-
-  return (
-    <div
-      className={`relative border rounded-lg overflow-hidden group cursor-pointer transition-colors ${
-        selected ? 'border-[var(--s-accent)] ring-2 ring-[var(--s-accent)]/30' : 'border-[var(--s-border-default)]'
-      }`}
-      onClick={onToggle}
-    >
-      {/* 缩略图 / 文件图标 */}
-      {asset.type === 'image' ? (
-        <img src={asset.url} alt={asset.name} className="w-full aspect-square object-cover" />
-      ) : (
-        <div className="w-full aspect-square bg-[var(--s-bg-secondary)] flex items-center justify-center text-4xl">
-          📄
-        </div>
-      )}
-
-      {/* 多选框 */}
-      <div className="absolute top-2 left-2">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggle}
-          onClick={(e) => e.stopPropagation()}
-          className="cursor-pointer"
-          aria-label={`选中 ${asset.name}`}
-        />
-      </div>
-
-      {/* 下载按钮 */}
-      <button
-        type="button"
-        onClick={handleDownload}
-        className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-        aria-label="下载"
-      >
-        <Download className="w-3.5 h-3.5" />
-      </button>
-
-      {/* 元数据 */}
-      <div className="p-2 text-xs space-y-0.5">
-        <div className="truncate font-medium" title={asset.name}>{asset.name}</div>
-        <div className="flex justify-between text-[var(--s-text-tertiary)]">
-          <span>{asset.size ? `${(asset.size / 1024).toFixed(0)} KB` : '—'}</span>
-          <span>{formatRelativeCN(asset.created_at)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-// ── 生成卡片 ─────────────────────────────────────────────
-
-
-function GenerationCard({
-  asset,
-  selected,
-  onToggle,
-}: {
-  asset: GenerationAsset;
-  selected: boolean;
-  onToggle: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  const handleDownload = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const ext = asset.kind === 'video' ? 'mp4' : 'jpg';
-    downloadFile(asset.url, `${asset.id}.${ext}`).catch((err) => toast.error(err?.message || '下载失败'));
-  };
-
-  const handleCopyPrompt = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!asset.prompt) return;
-    navigator.clipboard.writeText(asset.prompt);
-    toast.success('已复制提示词');
-  };
-
-  return (
-    <div
-      className={`relative border rounded-lg overflow-hidden group cursor-pointer transition-colors ${
-        selected ? 'border-[var(--s-accent)] ring-2 ring-[var(--s-accent)]/30' : 'border-[var(--s-border-default)]'
-      }`}
-      onClick={onToggle}
-    >
-      {/* 缩略图 */}
-      {asset.kind === 'image' ? (
-        <img src={asset.url} alt={asset.prompt || ''} className="w-full aspect-square object-cover" />
-      ) : (
-        <div className="relative w-full aspect-square bg-black flex items-center justify-center">
-          <video src={asset.url} className="w-full h-full object-cover" muted preload="metadata" />
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-10 h-10 rounded-full bg-white/30 backdrop-blur flex items-center justify-center">
-              <span className="text-white text-xl">▶</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 类型徽章 */}
-      <div className="absolute top-2 left-2 flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggle}
-          onClick={(e) => e.stopPropagation()}
-          className="cursor-pointer"
-          aria-label="选中"
-        />
-        <span className="text-[10px] px-1.5 py-0.5 bg-black/60 text-white rounded">
-          {asset.kind === 'image' ? '🖼' : '🎬'}
-        </span>
-      </div>
-
-      {/* 下载按钮 */}
-      <button
-        type="button"
-        onClick={handleDownload}
-        className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-        aria-label="下载"
-      >
-        <Download className="w-3.5 h-3.5" />
-      </button>
-
-      {/* 元数据 + 提示词 */}
-      <div className="p-2 text-xs space-y-1">
-        {/* 提示词 */}
-        {asset.prompt ? (
-          <div className="bg-[var(--s-bg-secondary)] rounded p-1.5">
-            <div
-              className={`text-[var(--s-text-secondary)] break-words ${
-                expanded ? '' : 'line-clamp-2'
-              }`}
-            >
-              {asset.prompt}
-            </div>
-            <div className="flex items-center justify-between mt-1">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setExpanded(!expanded);
-                }}
-                className="text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)] text-[10px]"
-              >
-                {expanded ? '收起' : '展开'}
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyPrompt}
-                className="text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)]"
-                aria-label="复制提示词"
-                title="复制提示词"
-              >
-                <Copy className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="text-[var(--s-text-tertiary)] italic">无提示词</div>
-        )}
-
-        <div className="flex justify-between text-[var(--s-text-tertiary)]">
-          <span className="truncate">{asset.model_id || '—'}</span>
-          <span>💰 {asset.credits_cost}</span>
-        </div>
-        <div className="text-[var(--s-text-tertiary)]">{formatRelativeCN(asset.created_at)}</div>
-      </div>
-    </div>
-  );
-}
