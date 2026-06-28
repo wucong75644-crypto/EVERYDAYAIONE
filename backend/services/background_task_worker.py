@@ -55,6 +55,7 @@ class BackgroundTaskWorker:
         self._poll_lock = asyncio.Lock()
         self._last_consistency_check = None  # 上次数据一致性检查时间
         self._last_scoring_aggregation = None  # 上次模型评分聚合时间
+        self._last_wecom_dup_check = None     # 上次企微重复账号检查时间（每天）
 
         # 定时任务扫描器（嵌入主循环）
         # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.2
@@ -98,6 +99,7 @@ class BackgroundTaskWorker:
                     await self._scheduled_scanner.poll()  # 定时任务扫描
                     await self.check_data_consistency()
                     await self._run_model_scoring()
+                    await self.check_wecom_duplicates()
 
             except Exception as e:
                 logger.error(f"BackgroundTaskWorker error: {e}", exc_info=True)
@@ -444,6 +446,30 @@ class BackgroundTaskWorker:
 
         except Exception as e:
             logger.error(f"Data consistency check failed | error={e}", exc_info=True)
+
+    async def check_wecom_duplicates(self):
+        """每天检查企微重复账号（孤儿用户 + 同名重复）
+
+        commit cd12ed7 之后，DB 唯一约束 + 原子 RPC + 应用层走 RPC 三层防御
+        理论上不会再出现新增重复。本检查作为兜底监控，发现异常立即上报 Sentry。
+        """
+        from datetime import datetime, timezone
+        from services.wecom_dup_monitor import WecomDuplicateMonitor
+
+        now = datetime.now(timezone.utc)
+
+        # 每 24 小时一次
+        if self._last_wecom_dup_check is not None:
+            elapsed = (now - self._last_wecom_dup_check).total_seconds()
+            if elapsed < 86400:
+                return
+
+        try:
+            monitor = WecomDuplicateMonitor(self.db)
+            await monitor.check_and_alert()
+            self._last_wecom_dup_check = now
+        except Exception as e:
+            logger.error(f"Wecom dup check failed | error={e}", exc_info=True)
 
     async def _run_model_scoring(self):
         """每小时执行模型评分聚合"""
