@@ -431,6 +431,53 @@ async def list_user_generations(
                 "created_at": r["created_at"],
             })
 
+    # 新链路：assistant 消息的生成图存在 messages.content JSONB（非 image_generations 表）
+    # 例：gpt-image-2 / 电商图链路 — 不写 image_generations，直接塞进 message.content
+    # 用 url 去重（避免与 image_generations 重复）
+    convs = db.table("conversations").select("id").eq("user_id", uid).execute()
+    conv_ids = [c["id"] for c in (convs.data or [])]
+    existing_urls = {it["url"] for it in items}
+    if conv_ids:
+        ai_msgs = (
+            db.table("messages")
+            .select("id, conversation_id, content, generation_params, credits_cost, created_at")
+            .in_("conversation_id", conv_ids).eq("role", "assistant")
+            .order("created_at", desc=True)
+            .limit(_DEFAULT_GENERATIONS_LIMIT).execute()
+        )
+        for m in (ai_msgs.data or []):
+            parsed = _safe_parse_content(m.get("content"))
+            params = m.get("generation_params") or {}
+            gen_type = params.get("type") if isinstance(params, dict) else None
+            for part in _extract_upload_parts(parsed):
+                url = part["url"]
+                if url in existing_urls:
+                    continue
+                # 推断 kind：generation_params.type 优先 / 按 url 后缀兜底
+                if gen_type == "video":
+                    item_kind = "video"
+                elif gen_type == "image":
+                    item_kind = "image"
+                else:
+                    item_kind = "video" if url.lower().endswith((".mp4", ".mov", ".webm")) else "image"
+
+                if kind and item_kind != kind:
+                    continue
+
+                items.append({
+                    "kind": item_kind,
+                    "id": m["id"],
+                    "url": url,
+                    "prompt": params.get("prompt") if isinstance(params, dict) else None,
+                    "negative_prompt": params.get("negative_prompt") if isinstance(params, dict) else None,
+                    "model_id": params.get("model") or params.get("model_id") if isinstance(params, dict) else None,
+                    "size": params.get("resolution") or params.get("aspect_ratio") if isinstance(params, dict) else None,
+                    "credits_cost": m.get("credits_cost") or 0,
+                    "conversation_id": m.get("conversation_id"),
+                    "created_at": m["created_at"],
+                })
+                existing_urls.add(url)
+
     items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
 
     total = len(items)

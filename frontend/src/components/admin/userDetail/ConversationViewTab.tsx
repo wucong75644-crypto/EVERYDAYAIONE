@@ -5,7 +5,7 @@
  * 用户消息附件 + AI 生图 + 提示词 全部按时间顺序展示。
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { Copy, Download } from 'lucide-react';
 import { Button } from '../../ui/Button';
@@ -31,6 +31,7 @@ export default function ConversationViewTab({ userId }: Props) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 加载对话列表
   useEffect(() => {
@@ -67,6 +68,14 @@ export default function ConversationViewTab({ userId }: Props) {
   useEffect(() => {
     if (selectedConvId) loadMessages(selectedConvId);
   }, [selectedConvId, loadMessages]);
+
+  // 消息加载完成后自动滚到底部（定位最新消息）
+  // 用 instant 避免图片延迟加载时的二次滚动跳跃
+  useEffect(() => {
+    if (!msgLoading && messages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+    }
+  }, [msgLoading, messages]);
 
   // 收集本对话所有可下载 URL
   const allUrls = useMemo(() => {
@@ -155,7 +164,10 @@ export default function ConversationViewTab({ userId }: Props) {
               {selectedConvId ? '本对话无消息' : '请从左侧选择一个对话'}
             </div>
           ) : (
-            messages.map((m) => <AdminMessageBubble key={m.id} message={m} />)
+            <>
+              {messages.map((m) => <AdminMessageBubble key={m.id} message={m} />)}
+              <div ref={messagesEndRef} />
+            </>
           )}
         </div>
       </div>

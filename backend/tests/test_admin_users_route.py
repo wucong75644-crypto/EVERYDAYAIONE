@@ -598,6 +598,75 @@ class TestGenerations:
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
 
+    def test_generations_extracts_from_assistant_messages(self):
+        """新链路：AI 生成图存 messages.content JSONB（不在 image_generations 表）
+
+        修复：list_user_generations 应该聚合三个数据源：
+        1. image_generations 表（旧链路）
+        2. tasks 表 type=video（视频）
+        3. messages 表 role=assistant 的 content JSONB（gpt-image-2 等新链路）
+        """
+        import json
+        db = FakeDB()
+        db.enqueue(data={"role": "super_admin"})  # 权限
+        db.enqueue(data=[])  # image_generations 空（新链路不写这里）
+        db.enqueue(data=[])  # tasks video 空
+        db.enqueue(data=[{"id": "conv-1"}])  # conversations 查询
+        db.enqueue(data=[{
+            "id": "m-ai-1", "conversation_id": "conv-1",
+            "content": json.dumps([
+                {"type": "image", "url": "https://cdn.../gen1.png",
+                 "name": "gen1.png", "kind": "image"},
+            ]),
+            "generation_params": {
+                "type": "image", "model": "gpt-image-2",
+                "resolution": "1024x1024",
+            },
+            "credits_cost": 6,
+            "created_at": "2026-06-28T17:24:39+00:00",
+        }])
+        app = _build_app(db)
+        resp = TestClient(app).get(f"/api/admin/users/{TARGET_USER_ID}/generations")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1
+        item = body["items"][0]
+        assert item["kind"] == "image"
+        assert item["url"] == "https://cdn.../gen1.png"
+        assert item["model_id"] == "gpt-image-2"
+        assert item["credits_cost"] == 6
+
+    def test_generations_dedupes_by_url(self):
+        """同 url 出现在 image_generations 和 messages → 只算一次"""
+        import json
+        db = FakeDB()
+        db.enqueue(data={"role": "super_admin"})
+        # image_generations 有这个 url
+        db.enqueue(data=[{
+            "id": "ig-1", "conversation_id": None,
+            "prompt": "a cat", "negative_prompt": None,
+            "image_size": "1024x1024",
+            "image_url": "https://cdn.../dup.png",
+            "credits_cost": 5,
+            "created_at": "2026-06-28T10:00:00+00:00",
+            "model_id": "sd3.5",
+        }])
+        db.enqueue(data=[])  # videos
+        db.enqueue(data=[{"id": "conv-1"}])
+        # messages 也有同一个 url（来自 assistant）
+        db.enqueue(data=[{
+            "id": "m-1", "conversation_id": "conv-1",
+            "content": json.dumps([{"type": "image", "url": "https://cdn.../dup.png"}]),
+            "generation_params": {"type": "image"},
+            "credits_cost": 0,
+            "created_at": "2026-06-28T10:00:00+00:00",
+        }])
+        app = _build_app(db)
+        resp = TestClient(app).get(f"/api/admin/users/{TARGET_USER_ID}/generations")
+        assert resp.status_code == 200
+        # 去重后应只有 1 条
+        assert resp.json()["total"] == 1
+
     def test_generations_skips_empty_urls(self):
         db = FakeDB()
         db.enqueue(data={"role": "super_admin"})
