@@ -96,7 +96,7 @@ class QueryBuilder:
         self._count_mode: Optional[str] = None  # "exact" / "planned" / "estimated"
         self._filters: list[tuple[str, str, Any]] = []
         self._or_filters: list[str] = []  # 原始 OR 条件
-        self._order_clauses: list[tuple[str, bool]] = []
+        self._order_clauses: list[tuple[str, bool, Optional[bool]]] = []
         self._limit_val: Optional[int] = None
         self._offset_val: Optional[int] = None
         self._single: bool = False
@@ -199,8 +199,22 @@ class QueryBuilder:
 
     # ---- 排序 / 分页 ----
 
-    def order(self, column: str, *, desc: bool = False) -> QueryBuilder:
-        self._order_clauses.append((column, desc))
+    def order(
+        self,
+        column: str,
+        *,
+        desc: bool = False,
+        nulls_first: Optional[bool] = None,
+    ) -> QueryBuilder:
+        """添加 ORDER BY 子句
+
+        Args:
+            column: 列名
+            desc: 倒序
+            nulls_first: None=Postgres 默认（DESC→NULLS FIRST / ASC→NULLS LAST）；
+                         True=NULLS FIRST；False=NULLS LAST
+        """
+        self._order_clauses.append((column, desc, nulls_first))
         return self
 
     def limit(self, count: int) -> QueryBuilder:
@@ -298,8 +312,14 @@ class QueryBuilder:
         if not self._order_clauses:
             return ""
         parts = []
-        for col, desc in self._order_clauses:
-            parts.append(f'{self._quote_col(col)} {"DESC" if desc else "ASC"}')
+        for col, desc, nulls_first in self._order_clauses:
+            direction = "DESC" if desc else "ASC"
+            nulls_clause = ""
+            if nulls_first is True:
+                nulls_clause = " NULLS FIRST"
+            elif nulls_first is False:
+                nulls_clause = " NULLS LAST"
+            parts.append(f'{self._quote_col(col)} {direction}{nulls_clause}')
         return " ORDER BY " + ", ".join(parts)
 
     def _build_limit_offset(self) -> str:
