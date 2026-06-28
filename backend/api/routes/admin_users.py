@@ -61,7 +61,8 @@ async def list_users(
     _require_super_admin(user_id, db)
 
     query = db.table("users").select(
-        "id, nickname, phone, avatar_url, role, credits, status, current_org_id, created_at",
+        "id, nickname, phone, avatar_url, role, credits, status, "
+        "current_org_id, created_at, last_login_at",
         count="exact",
     )
 
@@ -78,9 +79,11 @@ async def list_users(
     elif org_id:
         query = query.eq("current_org_id", org_id)
 
+    # 按上次活跃倒序（行业标准 admin 默认）。从未登录的（NULL）排末尾
     offset = (page - 1) * page_size
     result = (
-        query.order("created_at", desc=True)
+        query.order("last_login_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)  # 同活跃时间时按注册时间次排
         .range(offset, offset + page_size - 1)
         .execute()
     )

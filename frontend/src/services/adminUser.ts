@@ -19,6 +19,7 @@ export interface AdminUserListItem {
   current_org_id: string | null;
   org_name: string | null;
   created_at: string;
+  last_login_at: string | null;
 }
 
 export interface AdminUserSummary extends AdminUserListItem {

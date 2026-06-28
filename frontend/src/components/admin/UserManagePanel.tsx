@@ -11,6 +11,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
 import { listAdminUsers, type AdminUserListItem } from '../../services/adminUser';
+import { formatRelativeCN } from '../../utils/formatRelativeCN';
 import UserDetailDrawer from './UserDetailDrawer';
 
 const PAGE_SIZE = 20;
@@ -98,7 +99,7 @@ export default function UserManagePanel() {
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">角色</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)] text-right">积分</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">状态</th>
-                <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">注册时间</th>
+                <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)]">上次活跃 ↓</th>
                 <th className="px-4 py-2.5 font-medium text-[var(--s-text-secondary)] text-right">操作</th>
               </tr>
             </thead>
@@ -156,8 +157,11 @@ export default function UserManagePanel() {
                       {u.status === 'active' ? '正常' : '禁用'}
                     </Badge>
                   </td>
-                  <td className="px-4 py-2.5 text-[var(--s-text-tertiary)] text-xs">
-                    {u.created_at?.slice(0, 10)}
+                  <td
+                    className="px-4 py-2.5 text-[var(--s-text-tertiary)] text-xs whitespace-nowrap"
+                    title={`注册时间：${u.created_at?.slice(0, 19).replace('T', ' ') || '—'}\n上次活跃：${u.last_login_at?.slice(0, 19).replace('T', ' ') || '未登录'}`}
+                  >
+                    {u.last_login_at ? formatRelativeCN(u.last_login_at) : '未登录'}
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <Button
