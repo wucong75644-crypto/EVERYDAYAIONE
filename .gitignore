@@ -22,10 +22,12 @@ ENV/
 
 # Environment variables
 .env
+.env.example
 .env.local
 .env.production
 deploy/.env*
 deploy/config.env
+deploy/config.env.example
 
 # Node modules
 node_modules/
