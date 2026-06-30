@@ -17,6 +17,7 @@ import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
+import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import styles from '../menus/shared.module.css';
 import type { ContentPart } from '../../../stores/useMessageStore';
 import type { ImagePart } from '../../../types/message';
@@ -96,13 +97,17 @@ const GridCell = memo(function GridCell({
     threshold: 0.1,
     rootMargin: '100px',
   });
+  const displayImageUrl = useMemo(
+    () => ossThumbUrl(imageUrl, Math.ceil(placeholderSize.width)),
+    [imageUrl, placeholderSize.width],
+  );
 
   const imageUrlWithRetry = useMemo(() => {
-    if (!imageUrl) return null;
-    if (retryCount === 0) return imageUrl;
-    const separator = imageUrl.includes('?') ? '&' : '?';
-    return `${imageUrl}${separator}_retry=${retryCount}`;
-  }, [imageUrl, retryCount]);
+    if (!displayImageUrl) return null;
+    if (retryCount === 0) return displayImageUrl;
+    const separator = displayImageUrl.includes('?') ? '&' : '?';
+    return `${displayImageUrl}${separator}_retry=${retryCount}`;
+  }, [displayImageUrl, retryCount]);
 
   useEffect(() => {
     if (imageUrl) {
@@ -202,7 +207,7 @@ const GridCell = memo(function GridCell({
     >
       {shouldRender && (
         <img
-          src={imageUrlWithRetry || imageUrl}
+          src={imageUrlWithRetry || displayImageUrl}
           alt={`生成的图片 ${index + 1}`}
           className={`w-full h-full object-cover block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
           onLoad={() => { setImageLoaded(true); onMediaLoaded?.(); }}
@@ -284,7 +289,7 @@ export default function AiImageGrid({
       if (part && part.type === 'image') {
         const imgPart = part as ImagePart;
         result.push({
-          url: imgPart.url || null,
+          url: imgPart.original_url || imgPart.download_url || imgPart.preview_url || imgPart.url || null,
           failed: imgPart.failed || false,
         });
       } else {

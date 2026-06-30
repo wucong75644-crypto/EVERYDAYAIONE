@@ -51,6 +51,23 @@ describe('getImageUrls', () => {
     expect(result).toEqual(['https://oss/img0.png', 'https://oss/img1.png']);
   });
 
+  it('should use transport url instead of thumbnail-like display fields', () => {
+    const msg = createTestMessage([
+      {
+        type: 'image',
+        url: 'https://oss/thumb.png',
+        original_url: 'https://oss/original.png',
+        thumbnail_url: 'https://oss/thumb.png',
+        preview_url: 'https://oss/preview.png',
+        download_url: 'https://oss/download.png',
+      } as unknown as ContentPart,
+    ]);
+
+    const result = getImageUrls(msg);
+
+    expect(result).toEqual(['https://oss/original.png']);
+  });
+
   it('should filter out image parts with null URL (multi-image pending slot)', () => {
     const msg = createTestMessage([
       { type: 'image', url: 'https://oss/img0.png' },
@@ -215,6 +232,27 @@ describe('normalizeMessage', () => {
     const result = normalizeMessage(msg);
 
     expect(result.content).toEqual([{ type: 'text', text: 'Hello' }]);
+  });
+
+  it('should preserve additive media asset fields on array content', () => {
+    const msg = {
+      id: 'msg-1',
+      content: [{
+        type: 'image',
+        url: 'https://oss/original.png',
+        asset_id: 'asset-1',
+        original_url: 'https://oss/original.png',
+        thumbnail_url: 'https://oss/thumb.png',
+        preview_url: 'https://oss/preview.png',
+        download_url: 'https://oss/download.png',
+        workspace_path: '下载/AI图片/original.png',
+      }],
+      status: 'completed',
+    } as unknown as Message;
+
+    const result = normalizeMessage(msg);
+
+    expect(result.content).toEqual(msg.content);
   });
 
   it('should convert string content to array', () => {

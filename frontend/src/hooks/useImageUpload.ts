@@ -13,6 +13,10 @@ export interface UploadedImage {
   file: File;
   preview: string; // ObjectURL 预览（本地 blob:// URL，性能优于 base64）；引用图直接用 CDN URL
   url: string | null; // 上传后的公网URL
+  original_url?: string;
+  thumbnail_url?: string;
+  preview_url?: string;
+  download_url?: string;
   isUploading: boolean;
   error: string | null;
   isQuoted?: boolean; // 是否为引用图片（来自 AI 生成图片的引用，无需上传）
@@ -115,6 +119,10 @@ export function useImageUpload() {
               ? {
                   ...img,
                   url: uploadResult.url,
+                  original_url: uploadResult.original_url || uploadResult.url,
+                  thumbnail_url: uploadResult.thumbnail_url,
+                  preview_url: uploadResult.preview_url || uploadResult.url,
+                  download_url: uploadResult.download_url || uploadResult.url,
                   isUploading: false,
                   workspace_path: uploadResult.workspace_path,
                   name: uploadResult.name,
@@ -234,6 +242,9 @@ export function useImageUpload() {
         file: new File([], 'quoted-image'),
         preview: cdnUrl,
         url: cdnUrl,
+        original_url: cdnUrl,
+        preview_url: cdnUrl,
+        download_url: cdnUrl,
         isUploading: false,
         error: null,
         isQuoted: true,
@@ -261,6 +272,10 @@ export function useImageUpload() {
     .filter((img) => img.url !== null)
     .map((img) => ({
       url: img.url as string,
+      original_url: img.original_url || (img.url as string),
+      thumbnail_url: img.thumbnail_url,
+      preview_url: img.preview_url || img.original_url || (img.url as string),
+      download_url: img.download_url || img.original_url || (img.url as string),
       name: img.name,
       workspace_path: img.workspace_path,
       mime_type: img.mime_type,

@@ -8,6 +8,10 @@ import { request } from './api';
 
 export interface UploadImageResponse {
   url: string;
+  original_url?: string;
+  thumbnail_url?: string;
+  preview_url?: string;
+  download_url?: string;
   /** 工作区文件名（带 UUID 后缀），LLM 引用与 file_path_cache 查询用 */
   name?: string;
   /** 工作区相对路径（如 上传/2026-06/xxx.png），后端注册 file_path_cache 用 */

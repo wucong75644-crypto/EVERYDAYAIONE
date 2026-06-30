@@ -114,6 +114,9 @@ describe('createTextWithImages', () => {
     expect(result[1]).toEqual({
       type: 'image',
       url: 'https://cdn.example.com/photo.png',
+      original_url: 'https://cdn.example.com/photo.png',
+      preview_url: 'https://cdn.example.com/photo.png',
+      download_url: 'https://cdn.example.com/photo.png',
       name: 'photo.png',
       workspace_path: '上传/2026-06/photo_a3f.png',
       mime_type: 'image/png',
@@ -128,7 +131,13 @@ describe('createTextWithImages', () => {
       { url: 'https://cdn.example.com/x.png' }, // 只有 url（如引用图）
     ]);
 
-    expect(result[1]).toEqual({ type: 'image', url: 'https://cdn.example.com/x.png' });
+    expect(result[1]).toEqual({
+      type: 'image',
+      url: 'https://cdn.example.com/x.png',
+      original_url: 'https://cdn.example.com/x.png',
+      preview_url: 'https://cdn.example.com/x.png',
+      download_url: 'https://cdn.example.com/x.png',
+    });
     // 不应该出现 undefined 字段
     expect('name' in (result[1] as object)).toBe(false);
     expect('workspace_path' in (result[1] as object)).toBe(false);

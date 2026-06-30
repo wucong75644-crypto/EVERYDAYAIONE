@@ -6,6 +6,7 @@ import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
+import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import { type AspectRatio, type VideoAspectRatio } from '../../../constants/models';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../../utils/settingsStorage';
 import MediaPlaceholder, { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
@@ -87,13 +88,17 @@ function AiGeneratedImage({
   const shouldRender = !isGenerating || inView;
 
   const aspectRatio = placeholderSize.width / placeholderSize.height;
+  const displayImageUrl = useMemo(
+    () => ossThumbUrl(imageUrl, Math.ceil(placeholderSize.width)),
+    [imageUrl, placeholderSize.width],
+  );
 
   const imageUrlWithRetry = useMemo(() => {
-    if (!imageUrl) return null;
-    if (retryCount === 0) return imageUrl;
-    const separator = imageUrl.includes('?') ? '&' : '?';
-    return `${imageUrl}${separator}_retry=${retryCount}`;
-  }, [imageUrl, retryCount]);
+    if (!displayImageUrl) return null;
+    if (retryCount === 0) return displayImageUrl;
+    const separator = displayImageUrl.includes('?') ? '&' : '?';
+    return `${displayImageUrl}${separator}_retry=${retryCount}`;
+  }, [displayImageUrl, retryCount]);
 
   useEffect(() => {
     if (imageUrl) {
@@ -194,7 +199,7 @@ function AiGeneratedImage({
           aria-label="查看大图"
         >
           <img
-            src={imageUrlWithRetry || imageUrl}
+            src={imageUrlWithRetry || displayImageUrl}
             alt="生成的图片"
             className={`rounded-xl shadow-sm w-full h-auto block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
             onLoad={() => {
@@ -286,6 +291,7 @@ function UserImage({
   onMediaLoaded?: () => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const displayImageUrl = useMemo(() => ossThumbUrl(imageUrl, 360), [imageUrl]);
 
   const handleClick = useCallback(() => {
     onImageClick(index);
@@ -309,7 +315,7 @@ function UserImage({
       aria-label={`查看图片 ${index + 1}`}
     >
       <img
-        src={imageUrl}
+        src={displayImageUrl}
         alt={`上传的图片 ${index + 1}`}
         className="rounded-xl shadow-sm w-full h-auto block"
         onLoad={onMediaLoaded}
@@ -514,5 +520,4 @@ export default memo(function MessageMedia({
     </>
   );
 });
-
 

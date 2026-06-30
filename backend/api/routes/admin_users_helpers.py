@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from loguru import logger
 
 from core.exceptions import AppException
+from services.file_upload import build_oss_thumbnail_url
 
 
 # ── 权限校验 ─────────────────────────────────────────────
@@ -73,12 +74,31 @@ def _extract_upload_parts(parts: Any) -> list[dict]:
             continue
         out.append({
             "url": url,
+            **_asset_url_fields(url, t, p),
             "name": p.get("name") or p.get("filename") or _filename_from_url(url),
             "type": t,
             "size": p.get("size"),
             "mime": p.get("mime") or p.get("mime_type"),
         })
     return out
+
+
+def _asset_url_fields(
+    url: str,
+    kind: str = "image",
+    part: Optional[dict] = None,
+) -> dict[str, Optional[str]]:
+    """统一资产 URL 语义字段；缩略仅用于小图展示，下载/预览默认原图。"""
+    part = part or {}
+    original_url = part.get("original_url") or part.get("download_url") or part.get("preview_url") or url
+    return {
+        "original_url": original_url,
+        "preview_url": part.get("preview_url") or original_url,
+        "download_url": part.get("download_url") or original_url,
+        "thumbnail_url": part.get("thumbnail_url") or (
+            build_oss_thumbnail_url(url) if kind == "image" else None
+        ),
+    }
 
 
 # ── 通用工具 ─────────────────────────────────────────────

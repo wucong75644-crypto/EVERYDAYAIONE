@@ -98,6 +98,7 @@
 | `_require_super_admin` | `backend/api/routes/admin_users_helpers.py` | super_admin 权限校验依赖 | user_id, db | None |
 | `_safe_parse_content` | `backend/api/routes/admin_users_helpers.py` | messages.content JSONB 容错解析 | raw | Any |
 | `_extract_upload_parts` | `backend/api/routes/admin_users_helpers.py` | 从 content 数组提取 file/image/image_url ContentPart | parts | list[dict] |
+| `_asset_url_fields` | `backend/api/routes/admin_users_helpers.py` | 统一管理员资产 original/preview/download/thumbnail URL 字段 | url, kind, part? | dict |
 | `_log_admin_action` | `backend/api/routes/admin_users_helpers.py` | 写 admin_action_logs（失败不阻断） | db, admin_id, action_type, ... | None |
 
 #### 前端函数
@@ -1163,6 +1164,7 @@
 |------|---------|---------|
 | `download_url_to_workspace` | `backend/services/file_upload.py` | 单 URL → 工作区落盘 + 双轨 payload。复用 HttpDownloader + tenacity(3次/总45s预算) + upload_to_payload。命名 `IMG_<YYYYMMDD>_<HHMMSS>_<6hex>_<3idx>.<ext>`,MIME 白名单,写盘走 asyncio.to_thread,可选 .meta.json sidecar |
 | `persist_media_urls_to_workspace` | `backend/services/file_upload.py` | 多 URL 并发落盘 helper(semaphore=5)。顺序保持,失败降级,extra_fields 透传 width/height/alt。media_tool_executor 与 image_agent 共用入口 |
+| `build_oss_thumbnail_url` | `backend/services/file_upload.py` | 为 OSS/CDN 图片 URL 附加缩略图处理参数，仅用于小图展示 |
 | `_download_with_retry` | `backend/services/file_upload.py` | tenacity 装饰的下载封装:retry_if HTTPError/Timeout,3 次或 45s 总预算 stop |
 | `_write_meta_sidecar` | `backend/services/file_upload.py` | 写隐藏 .meta.json sidecar(async to_thread,OSError 仅 warning) |
 | `_generate_media_filename` | `backend/services/file_upload.py` | 生成行业标准命名(IMG/VID 前缀 + datetime + 短 hash + 序号 + 扩展名) |

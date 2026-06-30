@@ -369,6 +369,11 @@ export function createTextContent(text: string): ContentPart[] {
 /** 用户上传/引用图片的完整元数据（构造 ImagePart 时使用） */
 export interface ImageInputInfo {
   url: string;
+  original_url?: string;
+  thumbnail_url?: string;
+  preview_url?: string;
+  download_url?: string;
+  asset_id?: string;
   /** 工作区文件名，有值时后端注册 file_path_cache */
   name?: string;
   /** 工作区相对路径（如 上传/2026-06/xxx.png） */
@@ -396,6 +401,11 @@ export function createTextWithImages(
       : {
           type: 'image' as const,
           url: img.url,
+          original_url: img.original_url || img.url,
+          ...(img.thumbnail_url ? { thumbnail_url: img.thumbnail_url } : {}),
+          preview_url: img.preview_url || img.original_url || img.url,
+          download_url: img.download_url || img.original_url || img.url,
+          ...(img.asset_id ? { asset_id: img.asset_id } : {}),
           ...(img.name ? { name: img.name } : {}),
           ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
           ...(img.mime_type ? { mime_type: img.mime_type } : {}),
@@ -425,6 +435,11 @@ export function createTextWithFiles(
       : {
           type: 'image' as const,
           url: img.url,
+          original_url: img.original_url || img.url,
+          ...(img.thumbnail_url ? { thumbnail_url: img.thumbnail_url } : {}),
+          preview_url: img.preview_url || img.original_url || img.url,
+          download_url: img.download_url || img.original_url || img.url,
+          ...(img.asset_id ? { asset_id: img.asset_id } : {}),
           ...(img.name ? { name: img.name } : {}),
           ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
           ...(img.mime_type ? { mime_type: img.mime_type } : {}),

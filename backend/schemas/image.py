@@ -14,6 +14,10 @@ from pydantic import BaseModel, Field
 class UploadImageResponse(BaseModel):
     """图片上传响应"""
     url: str = Field(..., description="上传后的图片公开 URL")
+    original_url: Optional[str] = Field(None, description="原图 URL（模型输入/下载使用）")
+    thumbnail_url: Optional[str] = Field(None, description="缩略图 URL（小图展示使用）")
+    preview_url: Optional[str] = Field(None, description="预览 URL（放大查看使用）")
+    download_url: Optional[str] = Field(None, description="下载 URL")
     name: Optional[str] = Field(
         None,
         description="工作区文件名（含 UUID 后缀，供 LLM 引用与 file_path_cache 查询）",

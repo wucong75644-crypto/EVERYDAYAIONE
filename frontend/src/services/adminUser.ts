@@ -82,6 +82,10 @@ export interface ConversationListResponse {
 
 export interface AttachmentPart {
   url: string;
+  original_url?: string;
+  thumbnail_url?: string | null;
+  preview_url?: string;
+  download_url?: string;
   name: string;
   type: 'file' | 'image';
   size: number | null;
@@ -111,6 +115,10 @@ export interface ConversationMessagesResponse {
 
 export interface UploadAsset {
   url: string;
+  original_url?: string;
+  thumbnail_url?: string | null;
+  preview_url?: string;
+  download_url?: string;
   name: string;
   type: 'file' | 'image';
   size: number | null;
@@ -131,6 +139,10 @@ export interface GenerationAsset {
   kind: 'image' | 'video';
   id: string;
   url: string;
+  original_url?: string;
+  thumbnail_url?: string | null;
+  preview_url?: string;
+  download_url?: string;
   prompt: string | null;
   negative_prompt: string | null;
   model_id: string | null;

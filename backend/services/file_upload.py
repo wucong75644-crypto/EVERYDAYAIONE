@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import mimetypes
+import re
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,30 @@ _MIME_EXTENSIONS: dict[str, str] = {
     "video/webm": ".webm",
     "video/quicktime": ".mov",
 }
+
+_OSS_HOSTS_PATTERN = re.compile(r"cdn\.everydayai\.com\.cn|\.aliyuncs\.com")
+
+
+def build_oss_thumbnail_url(url: str, width: int = 360) -> str:
+    """为项目 OSS/CDN 图片 URL 附加缩略图处理参数；外部 URL 原样返回。"""
+    if not _OSS_HOSTS_PATTERN.search(url):
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}x-oss-process=image/resize,w_{width},m_lfit"
+
+
+def _add_media_asset_urls(payload: dict[str, Any], media_type: str) -> dict[str, Any]:
+    """补齐媒体资产 URL 语义：旧 url 兼容，原图/预览/下载显式分开。"""
+    url = payload.get("url")
+    if not isinstance(url, str) or not url:
+        return payload
+
+    payload.setdefault("original_url", url)
+    payload.setdefault("preview_url", url)
+    payload.setdefault("download_url", url)
+    if media_type == "image":
+        payload.setdefault("thumbnail_url", build_oss_thumbnail_url(url))
+    return payload
 
 
 async def upload_to_payload(
@@ -342,6 +367,7 @@ async def download_url_to_workspace(
             return None
 
         payload["kind"] = media_type
+        _add_media_asset_urls(payload, media_type)
         logger.info(
             f"download_url_to_workspace ok | user={user_id} | "
             f"path={payload.get('workspace_path')} | size={len(content)} | "
@@ -398,7 +424,7 @@ async def persist_media_urls_to_workspace(
             )
         if payload:
             return {**payload, **extra}
-        return {"kind": media_type, "url": src_url, **extra}
+        return _add_media_asset_urls({"kind": media_type, "url": src_url, **extra}, media_type)
 
     return await asyncio.gather(
         *(_one(i, u) for i, u in enumerate(urls, start=1))

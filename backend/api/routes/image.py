@@ -20,6 +20,7 @@ from core.exceptions import (
 from schemas.image import UploadImageResponse
 from services.storage_service import StorageService
 from services.user_activity_service import record_user_activity
+from services.file_upload import build_oss_thumbnail_url
 
 router = APIRouter(prefix="/images", tags=["图像"])
 
@@ -69,7 +70,13 @@ async def upload_image(
                     filename=file.filename,
                     org_id=org_id,
                 )
-                return UploadImageResponse(url=url)
+                return UploadImageResponse(
+                    url=url,
+                    original_url=url,
+                    thumbnail_url=build_oss_thumbnail_url(url),
+                    preview_url=url,
+                    download_url=url,
+                )
 
             filename = file.filename or "image.png"
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -131,6 +138,10 @@ async def upload_image(
             )
             return UploadImageResponse(
                 url=cdn_url or "",
+                original_url=cdn_url or "",
+                thumbnail_url=build_oss_thumbnail_url(cdn_url) if cdn_url else None,
+                preview_url=cdn_url or "",
+                download_url=cdn_url or "",
                 name=unique_name,
                 workspace_path=upload_path,
                 size=total_size,
@@ -154,7 +165,13 @@ async def upload_image(
                 resource_type="image",
                 metadata={"kind": "base64_image"},
             )
-            return UploadImageResponse(url=url)
+            return UploadImageResponse(
+                url=url,
+                original_url=url,
+                thumbnail_url=build_oss_thumbnail_url(url),
+                preview_url=url,
+                download_url=url,
+            )
 
         raise ValidationError(message="请提供图片文件或 base64 数据")
 

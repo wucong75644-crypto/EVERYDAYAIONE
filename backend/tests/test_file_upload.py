@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from services.file_upload import (
+    build_oss_thumbnail_url,
     download_url_to_workspace,
     persist_media_urls_to_workspace,
     upload_to_payload,
@@ -148,7 +149,10 @@ class TestDownloadUrlToWorkspace:
 
     @pytest.mark.asyncio
     async def test_success_returns_dual_track_payload(self, ws_root):
-        settings, mock_oss = _patch_settings_and_oss(ws_root)
+        settings, mock_oss = _patch_settings_and_oss(
+            ws_root,
+            oss_url="https://cdn.everydayai.com.cn/workspace/x.png",
+        )
         mock_dl = _make_downloader_mock(b"PNG" * 100, "image/png")
 
         with patch("core.config.get_settings", return_value=settings), \
@@ -163,6 +167,11 @@ class TestDownloadUrlToWorkspace:
         assert payload is not None
         assert payload["kind"] == "image"
         assert payload["url"].startswith("https://")
+        assert payload["original_url"] == payload["url"]
+        assert payload["preview_url"] == payload["url"]
+        assert payload["download_url"] == payload["url"]
+        assert payload["thumbnail_url"].startswith(payload["url"])
+        assert "x-oss-process=image/resize" in payload["thumbnail_url"]
         assert "workspace_path" in payload
         # 默认子目录
         assert payload["workspace_path"].startswith("下载/AI图片/")
@@ -394,6 +403,10 @@ class TestPersistMediaUrlsToWorkspace:
 
         assert payloads[0] == {
             "kind": "image", "url": "https://cdn/a.png",
+            "original_url": "https://cdn/a.png",
+            "preview_url": "https://cdn/a.png",
+            "download_url": "https://cdn/a.png",
+            "thumbnail_url": "https://cdn/a.png",
             "width": 100, "height": 100, "alt": "x",
         }
         assert payloads[1]["workspace_path"] == "下载/AI图片/x.png"
@@ -429,3 +442,23 @@ class TestPersistMediaUrlsToWorkspace:
 
         assert peak <= 2, f"semaphore failed | peak={peak}"
         assert peak >= 2, f"实际并发不足,可能退化为串行 | peak={peak}"
+
+
+class TestBuildOssThumbnailUrl:
+    """缩略图 URL 仅对项目 OSS/CDN 生效。"""
+
+    def test_project_cdn_adds_oss_process(self):
+        result = build_oss_thumbnail_url(
+            "https://cdn.everydayai.com.cn/workspace/a.png",
+            width=160,
+        )
+
+        assert result == (
+            "https://cdn.everydayai.com.cn/workspace/a.png"
+            "?x-oss-process=image/resize,w_160,m_lfit"
+        )
+
+    def test_external_cdn_returns_original_url(self):
+        url = "https://kie-cdn.example.com/generated/a.png"
+
+        assert build_oss_thumbnail_url(url) == url

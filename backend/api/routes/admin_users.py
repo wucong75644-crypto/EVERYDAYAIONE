@@ -17,6 +17,7 @@ from api.deps import CurrentUserId, Database
 
 from .admin_users_helpers import (
     _extract_upload_parts,
+    _asset_url_fields,
     _mask_phone,
     _require_super_admin,
     _safe_parse_content,
@@ -402,6 +403,7 @@ async def list_user_generations(
                 "kind": "image",
                 "id": r["id"],
                 "url": r["image_url"],
+                **_asset_url_fields(r["image_url"], "image"),
                 "prompt": r.get("prompt"),
                 "negative_prompt": r.get("negative_prompt"),
                 "model_id": r.get("model_id"),
@@ -428,6 +430,7 @@ async def list_user_generations(
                 "kind": "video",
                 "id": r["id"],
                 "url": url,
+                **_asset_url_fields(url, "video"),
                 "prompt": params.get("prompt") or res.get("prompt"),
                 "negative_prompt": params.get("negative_prompt"),
                 "model_id": params.get("model_id"),
@@ -474,6 +477,7 @@ async def list_user_generations(
                     "kind": item_kind,
                     "id": m["id"],
                     "url": url,
+                    **_asset_url_fields(url, item_kind, part),
                     "prompt": params.get("prompt") if isinstance(params, dict) else None,
                     "negative_prompt": params.get("negative_prompt") if isinstance(params, dict) else None,
                     "model_id": params.get("model") or params.get("model_id") if isinstance(params, dict) else None,

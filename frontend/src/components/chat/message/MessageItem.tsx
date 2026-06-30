@@ -24,6 +24,7 @@ import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
+import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
@@ -77,7 +78,7 @@ function InlineChartImage({ url, alt, width, height, onClick }: {
       )}
       {/* 图片：加载完直接显示，容器尺寸已固定不会跳变 */}
       <img
-        src={url}
+        src={ossThumbUrl(url, displayW)}
         alt={alt}
         className={`rounded-xl shadow-sm w-full h-auto cursor-pointer ${loaded ? '' : 'hidden'}`}
         onClick={onClick}
@@ -561,12 +562,21 @@ export default memo(function MessageItem({
                     );
                   }
                   if (part.type === 'image' && (part as { url?: string }).url) {
-                    const img = part as { url: string; alt?: string; width?: number; height?: number };
-                    const imgIndex = imageUrls.indexOf(img.url);
+                    const img = part as {
+                      url: string;
+                      original_url?: string;
+                      download_url?: string;
+                      preview_url?: string;
+                      alt?: string;
+                      width?: number;
+                      height?: number;
+                    };
+                    const originalUrl = img.original_url || img.download_url || img.preview_url || img.url;
+                    const imgIndex = imageUrls.indexOf(originalUrl);
                     return (
                       <InlineChartImage
-                        key={img.url}
-                        url={img.url}
+                        key={originalUrl}
+                        url={originalUrl}
                         alt={img.alt || '生成的图表'}
                         width={img.width}
                         height={img.height}

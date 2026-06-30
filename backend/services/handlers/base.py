@@ -281,9 +281,14 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         from schemas.message import ImagePart
         for part in content:
             if isinstance(part, ImagePart):
-                return part.url
+                return part.original_url or part.download_url or part.preview_url or part.url
             if isinstance(part, dict) and part.get("type") == "image":
-                return part.get("url")
+                return (
+                    part.get("original_url")
+                    or part.get("download_url")
+                    or part.get("preview_url")
+                    or part.get("url")
+                )
         return None
 
     def _extract_image_urls(self, content: List[ContentPart]) -> List[str]:
@@ -291,10 +296,17 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         from schemas.message import ImagePart
         urls: List[str] = []
         for part in content:
-            if isinstance(part, ImagePart) and part.url:
-                urls.append(part.url)
+            if isinstance(part, ImagePart):
+                url = part.original_url or part.download_url or part.preview_url or part.url
+                if url:
+                    urls.append(url)
             elif isinstance(part, dict) and part.get("type") == "image":
-                url = part.get("url")
+                url = (
+                    part.get("original_url")
+                    or part.get("download_url")
+                    or part.get("preview_url")
+                    or part.get("url")
+                )
                 if url:
                     urls.append(url)
         return urls
@@ -345,7 +357,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     "name": part.name or "",
                     "size": part.size,
                     "mime_type": part.mime_type or "image/*",
-                    "url": part.url or "",
+                    "url": part.original_url or part.download_url or part.preview_url or part.url or "",
                     "width": part.width,
                     "height": part.height,
                 }
@@ -365,7 +377,13 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                         "name": part.get("name", "") or "",
                         "size": part.get("size"),
                         "mime_type": part.get("mime_type", "") or "image/*",
-                        "url": part.get("url", "") or "",
+                        "url": (
+                            part.get("original_url")
+                            or part.get("download_url")
+                            or part.get("preview_url")
+                            or part.get("url", "")
+                            or ""
+                        ),
                         "width": part.get("width"),
                         "height": part.get("height"),
                     }

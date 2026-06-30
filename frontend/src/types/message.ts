@@ -32,6 +32,11 @@ export interface TextPart {
 export interface ImagePart {
   type: 'image';
   url: string | null;
+  original_url?: string;
+  thumbnail_url?: string;
+  preview_url?: string;
+  download_url?: string;
+  asset_id?: string;
   width?: number;
   height?: number;
   alt?: string;

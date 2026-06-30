@@ -46,11 +46,11 @@ export default function AssetSpaceTab({ userId }: Props) {
     if (mode === 'uploads') {
       return uploads
         .filter((u) => u.type === 'image')
-        .map((u) => ({ url: u.url, filename: u.name }));
+        .map((u) => ({ url: u.preview_url || u.original_url || u.url, filename: u.name }));
     }
     return generations
       .filter((g) => g.kind === 'image')
-      .map((g) => ({ url: g.url, filename: `${g.id}.jpg` }));
+      .map((g) => ({ url: g.preview_url || g.original_url || g.url, filename: `${g.id}.jpg` }));
   }, [mode, uploads, generations]);
 
   const openLightbox = useCallback((url: string) => {
@@ -107,8 +107,8 @@ export default function AssetSpaceTab({ userId }: Props) {
 
   const currentItems = useMemo(() => {
     return mode === 'uploads'
-      ? uploads.map((u) => ({ url: u.url, name: u.name }))
-      : generations.map((g) => ({ url: g.url, name: g.id }));
+      ? uploads.map((u) => ({ url: u.download_url || u.original_url || u.url, name: u.name }))
+      : generations.map((g) => ({ url: g.download_url || g.original_url || g.url, name: g.id }));
   }, [mode, uploads, generations]);
 
   const currentUrls = useMemo(() => currentItems.map((i) => i.url), [currentItems]);
@@ -207,8 +207,8 @@ export default function AssetSpaceTab({ userId }: Props) {
                   <UploadCard
                     key={a.message_id + a.url}
                     asset={a}
-                    selected={sel.isSelected(a.url)}
-                    onToggle={() => sel.toggle(a.url)}
+                    selected={sel.isSelected(a.download_url || a.original_url || a.url)}
+                    onToggle={() => sel.toggle(a.download_url || a.original_url || a.url)}
                     onPreview={openLightbox}
                   />
                 ))
@@ -216,8 +216,8 @@ export default function AssetSpaceTab({ userId }: Props) {
                   <GenerationCard
                     key={g.id + g.url}
                     asset={g}
-                    selected={sel.isSelected(g.url)}
-                    onToggle={() => sel.toggle(g.url)}
+                    selected={sel.isSelected(g.download_url || g.original_url || g.url)}
+                    onToggle={() => sel.toggle(g.download_url || g.original_url || g.url)}
                     onPreview={openLightbox}
                   />
                 ))}
@@ -261,5 +261,4 @@ function ModeTab({ active, label, count, onClick }: {
     </button>
   );
 }
-
 

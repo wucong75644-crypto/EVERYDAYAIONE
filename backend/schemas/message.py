@@ -70,6 +70,11 @@ class ImagePart(BaseModel):
     """
     type: Literal["image"] = "image"
     url: Optional[str] = None
+    original_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    download_url: Optional[str] = None
+    asset_id: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
     alt: Optional[str] = None

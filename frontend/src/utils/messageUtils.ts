@@ -60,8 +60,9 @@ export function getImageUrls(message: Message): string[] {
   if (!Array.isArray(message.content)) return [];
 
   return message.content
-    .filter((p): p is ImagePart & { url: string } => p.type === 'image' && !!p.url)
-    .map((p) => p.url);
+    .filter((p): p is ImagePart => p.type === 'image')
+    .map((p) => p.original_url || p.download_url || p.preview_url || p.url)
+    .filter((url): url is string => !!url);
 }
 
 /** 从 Message 提取视频 URL */

@@ -9,6 +9,7 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 from schemas.message import FilePart, ImagePart, TextPart, VideoPart
+from services.handlers.base import BaseHandler
 from services.handlers.media_extractor import extract_media_parts
 
 
@@ -113,6 +114,52 @@ class TestExtractMediaParts:
         assert len(images) == 1
         if texts:
             assert "https://example.com/result.jpg" not in texts[0].text
+
+
+class TestMediaTransportUrlContract:
+    """图片显示字段与模型传输 URL 的边界契约。"""
+
+    def test_extract_image_url_uses_transport_url_when_display_fields_exist(self):
+        """模型输入提取原始传输 URL，不被缩略/预览字段影响。"""
+        content = [
+            {"type": "text", "text": "参考这张图"},
+            {
+                "type": "image",
+                "url": "https://cdn.example.com/thumb.png",
+                "original_url": "https://cdn.example.com/original.png",
+                "thumbnail_url": "https://cdn.example.com/thumb.png",
+                "preview_url": "https://cdn.example.com/preview.png",
+                "download_url": "https://cdn.example.com/download.png",
+            },
+        ]
+
+        result = BaseHandler._extract_image_url(object(), content)
+
+        assert result == "https://cdn.example.com/original.png"
+
+    def test_extract_image_urls_preserves_order_and_uses_transport_urls(self):
+        """多图模型输入按原始 URL 顺序传输。"""
+        content = [
+            {
+                "type": "image",
+                "url": "https://cdn.example.com/thumb-1.png",
+                "original_url": "https://cdn.example.com/original-1.png",
+                "thumbnail_url": "https://cdn.example.com/thumb-1.png",
+            },
+            {
+                "type": "image",
+                "url": "https://cdn.example.com/thumb-2.png",
+                "original_url": "https://cdn.example.com/original-2.png",
+                "thumbnail_url": "https://cdn.example.com/thumb-2.png",
+            },
+        ]
+
+        result = BaseHandler._extract_image_urls(object(), content)
+
+        assert result == [
+            "https://cdn.example.com/original-1.png",
+            "https://cdn.example.com/original-2.png",
+        ]
 
 
 # ============================================================

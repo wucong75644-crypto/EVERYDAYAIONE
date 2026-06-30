@@ -295,3 +295,26 @@ const isMediaMessage = !!message.generation_params?.type;
 - [x] 无新增依赖
 - [x] 无数据库变更
 - [x] 前端渲染通道从 3 个精简为 2 个
+
+---
+
+## 12. 图片资产 URL 分层约定
+
+2026-06-30 起，`ImagePart` 采用兼容式 URL 分层：
+
+- `url`：旧字段，继续保留，默认等价于原图 URL。
+- `original_url`：原图 URL，供模型输入、引用再生成、放大预览使用。
+- `download_url`：下载 URL，默认等价于 `original_url`。
+- `preview_url`：大图预览 URL，默认等价于 `original_url`。
+- `thumbnail_url`：缩略图 URL，仅用于列表、网格、底部缩略条等小尺寸展示。
+
+前端渲染规则：
+
+- 消息列表、AI 多图网格、管理员资产卡片、预览弹窗底部缩略条使用 `thumbnail_url` 或 `ossThumbUrl(original_url)`。
+- 放大预览、单图下载、批量 ZIP 下载使用 `preview_url/download_url/original_url`，不使用缩略图 URL。
+- `getImageUrls()` 的语义是“原图/传输 URL”，按 `original_url -> download_url -> preview_url -> url` 兜底。
+
+后端处理规则：
+
+- `BaseHandler._extract_image_url(s)` 同样按 `original_url -> download_url -> preview_url -> url` 取值，确保模型输入始终是原图。
+- AI 生成媒体落盘和图片上传响应会补齐 `original_url/preview_url/download_url/thumbnail_url`，旧消息缺字段时按 `url` 兼容。

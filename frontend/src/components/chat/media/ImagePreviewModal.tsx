@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { downloadImage } from '../../../utils/downloadImage';
+import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 
 interface ImagePreviewModalProps {
   /** 图片 URL */
@@ -456,7 +457,7 @@ export default memo(function ImagePreviewModal({
               title={`切换到图片 ${index + 1}`}
             >
               <img
-                src={img}
+                src={ossThumbUrl(img, 160)}
                 alt={`缩略图 ${index + 1}`}
                 className="w-full h-full object-cover"
               />
@@ -468,4 +469,3 @@ export default memo(function ImagePreviewModal({
     document.body
   );
 });
-

@@ -30,14 +30,18 @@ export function UploadCard({
   onToggle: () => void;
   onPreview: (url: string) => void;
 }) {
+  const previewUrl = asset.preview_url || asset.original_url || asset.url;
+  const downloadUrl = asset.download_url || asset.original_url || asset.url;
+  const thumbnailUrl = asset.thumbnail_url || ossThumbUrl(asset.url, 360);
+
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    downloadFile(asset.url, asset.name).catch((err) => toast.error(err?.message || '下载失败'));
+    downloadFile(downloadUrl, asset.name).catch((err) => toast.error(err?.message || '下载失败'));
   };
 
   const handlePreview = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onPreview(asset.url);
+    onPreview(previewUrl);
   };
 
   return (
@@ -48,7 +52,7 @@ export function UploadCard({
     >
       {asset.type === 'image' ? (
         <img
-          src={ossThumbUrl(asset.url, 360)}
+          src={thumbnailUrl}
           alt={asset.name}
           loading="lazy"
           decoding="async"
@@ -123,16 +127,19 @@ export function GenerationCard({
   onPreview: (url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const previewUrl = asset.preview_url || asset.original_url || asset.url;
+  const downloadUrl = asset.download_url || asset.original_url || asset.url;
+  const thumbnailUrl = asset.thumbnail_url || ossThumbUrl(asset.url, 360);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
     const ext = asset.kind === 'video' ? 'mp4' : 'jpg';
-    downloadFile(asset.url, `${asset.id}.${ext}`).catch((err) => toast.error(err?.message || '下载失败'));
+    downloadFile(downloadUrl, `${asset.id}.${ext}`).catch((err) => toast.error(err?.message || '下载失败'));
   };
 
   const handlePreview = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onPreview(asset.url);
+    onPreview(previewUrl);
   };
 
   const handleCopyPrompt = (e: React.MouseEvent) => {
@@ -150,7 +157,7 @@ export function GenerationCard({
     >
       {asset.kind === 'image' ? (
         <img
-          src={ossThumbUrl(asset.url, 360)}
+          src={thumbnailUrl}
           alt={asset.prompt || ''}
           loading="lazy"
           decoding="async"

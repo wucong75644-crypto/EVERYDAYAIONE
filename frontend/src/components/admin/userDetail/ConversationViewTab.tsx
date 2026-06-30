@@ -86,7 +86,7 @@ export default function ConversationViewTab({ userId }: Props) {
   const allUrls = useMemo(() => {
     const urls: string[] = [];
     for (const m of messages) {
-      m.attachments?.forEach((a) => urls.push(a.url));
+      m.attachments?.forEach((a) => urls.push(a.download_url || a.original_url || a.url));
       if (m.image_url) urls.push(m.image_url);
       if (m.video_url) urls.push(m.video_url);
     }
@@ -98,7 +98,9 @@ export default function ConversationViewTab({ userId }: Props) {
     const items: PreviewItem[] = [];
     for (const m of messages) {
       m.attachments?.forEach((a) => {
-        if (a.type === 'image') items.push({ url: a.url, filename: a.name });
+        if (a.type === 'image') {
+          items.push({ url: a.preview_url || a.original_url || a.url, filename: a.name });
+        }
       });
       if (m.image_url) {
         items.push({ url: m.image_url, filename: filenameFromUrl(m.image_url) });
@@ -259,7 +261,9 @@ function AdminMessageBubble({
               {message.attachments.map((a, i) => (
                 <AttachmentThumb
                   key={i}
-                  url={a.url}
+                  url={a.download_url || a.original_url || a.url}
+                  previewUrl={a.preview_url || a.original_url || a.url}
+                  thumbnailUrl={a.thumbnail_url || null}
                   name={a.name}
                   type={a.type}
                   onPreview={onPreviewImage}
@@ -314,11 +318,15 @@ function AdminMessageBubble({
 
 function AttachmentThumb({
   url,
+  previewUrl,
+  thumbnailUrl,
   name,
   type,
   onPreview,
 }: {
   url: string;
+  previewUrl?: string;
+  thumbnailUrl?: string | null;
   name: string;
   type: 'file' | 'image';
   onPreview: (url: string) => void;
@@ -332,12 +340,12 @@ function AttachmentThumb({
     return (
       <div className="relative group">
         <img
-          src={ossThumbUrl(url, 192)}
+          src={thumbnailUrl || ossThumbUrl(url, 192)}
           alt={name}
           loading="lazy"
           decoding="async"
           className="w-24 h-24 rounded object-cover cursor-zoom-in"
-          onClick={() => onPreview(url)}
+          onClick={() => onPreview(previewUrl || url)}
           title="点击放大查看"
         />
         <button
