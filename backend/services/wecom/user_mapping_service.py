@@ -12,6 +12,7 @@ from loguru import logger
 
 
 from core.config import get_settings
+from services.user_activity_service import record_user_activity
 
 
 class WecomUserMappingService:
@@ -56,6 +57,16 @@ class WecomUserMappingService:
                 f"Wecom user found (fast path) | wecom_userid={wecom_userid} | "
                 f"user_id={user_id}"
             )
+            record_user_activity(
+                self.db,
+                user_id=user_id,
+                event_type="wecom_message_received",
+                org_id=org_id,
+                source="wecom",
+                resource_type="wecom_user",
+                resource_id=wecom_userid,
+                metadata={"corp_id": corp_id, "channel": channel},
+            )
             return user_id
 
         # 2. 慢路径：解析昵称 → 走原子 RPC
@@ -81,6 +92,16 @@ class WecomUserMappingService:
             )
 
         is_new = data.get("is_new", False)
+        record_user_activity(
+            self.db,
+            user_id=user_id,
+            event_type="wecom_message_received",
+            org_id=org_id,
+            source="wecom",
+            resource_type="wecom_user",
+            resource_id=wecom_userid,
+            metadata={"corp_id": corp_id, "channel": channel},
+        )
         if is_new:
             logger.info(
                 f"Wecom user created (atomic RPC) | wecom_userid={wecom_userid} | "

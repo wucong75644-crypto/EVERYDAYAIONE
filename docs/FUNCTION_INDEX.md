@@ -881,6 +881,7 @@
 | `_get_user` | `backend/services/base_generation_service.py` | 获取用户信息 | user_id | dict |
 | `_check_credits` | `backend/services/base_generation_service.py` | 检查积分是否足够 | user, required_credits | None |
 | `_deduct_credits` | `backend/services/base_generation_service.py` | 扣除积分 | user_id, credits, description | int |
+| `record_user_activity` | `backend/services/user_activity_service.py` | 记录用户活跃事件并更新 users.last_active_at（失败不阻断） | db, user_id, event_type, org_id?, source?, resource_type?, resource_id?, occurred_at?, metadata? | None |
 
 ### 企业微信 AI 路由模块 (WeChat Work AI Routing)
 

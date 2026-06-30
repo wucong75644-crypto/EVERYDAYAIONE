@@ -19,6 +19,7 @@ from core.exceptions import (
 )
 from schemas.image import UploadImageResponse
 from services.storage_service import StorageService
+from services.user_activity_service import record_user_activity
 
 router = APIRouter(prefix="/images", tags=["图像"])
 
@@ -118,6 +119,16 @@ async def upload_image(
                 f"Image upload | user={user_id} | file={filename} | "
                 f"size={total_size} | path={upload_path}"
             )
+            record_user_activity(
+                db,
+                user_id=user_id,
+                event_type="file_uploaded",
+                org_id=org_id,
+                source="web",
+                resource_type="workspace_file",
+                resource_id=upload_path,
+                metadata={"filename": filename, "size": total_size, "kind": "image"},
+            )
             return UploadImageResponse(
                 url=cdn_url or "",
                 name=unique_name,
@@ -133,6 +144,15 @@ async def upload_image(
                 user_id=user_id,
                 base64_data=image_data,
                 org_id=org_id,
+            )
+            record_user_activity(
+                db,
+                user_id=user_id,
+                event_type="file_uploaded",
+                org_id=org_id,
+                source="web",
+                resource_type="image",
+                metadata={"kind": "base64_image"},
             )
             return UploadImageResponse(url=url)
 

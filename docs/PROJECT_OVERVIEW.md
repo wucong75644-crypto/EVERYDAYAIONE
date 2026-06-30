@@ -113,6 +113,7 @@ EVERYDAYAIONE/
 │   │   ├── oss_service.py            # OSS 存储服务
 │   │   ├── sms_service.py            # 短信服务
 │   │   ├── credit_service.py         # 积分服务
+│   │   ├── user_activity_service.py  # 用户活跃事件记录（失败不阻断主流程）
 │   │   ├── task_limit_service.py     # 任务限制服务
 │   │   ├── background_task_worker.py # 后台任务轮询器（兜底模式，120s 间隔）
 │   │   ├── task_completion_service.py # 统一任务完成处理服务（Webhook/轮询共用）
@@ -319,7 +320,7 @@ EVERYDAYAIONE/
 - **断线重连**：前端重连后自动拉取活跃任务并恢复订阅
 
 ### 数据存储架构
-- **结构化数据**：Supabase PostgreSQL（用户、对话、消息、任务、积分记录）
+- **结构化数据**：Supabase PostgreSQL（用户、对话、消息、任务、积分记录、用户活跃事件）
 - **文件存储**：阿里云OSS（图片、视频）
   - 前端直传OSS（使用STS临时凭证）
   - 生成URL后保存到Supabase

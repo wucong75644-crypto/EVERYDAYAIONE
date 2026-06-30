@@ -10,6 +10,7 @@ from loguru import logger
 
 
 from core.exceptions import NotFoundError, PermissionDeniedError
+from services.user_activity_service import record_user_activity
 
 
 class ConversationService:
@@ -65,6 +66,16 @@ class ConversationService:
             logger.info(
                 f"Conversation created | conversation_id={conversation['id']} | user_id={user_id}"
             )
+            if source == "web":
+                record_user_activity(
+                    self.db,
+                    user_id=user_id,
+                    event_type="conversation_created",
+                    org_id=org_id,
+                    source="web",
+                    resource_type="conversation",
+                    resource_id=conversation["id"],
+                )
 
             return self._format_conversation(conversation)
         except (NotFoundError, PermissionDeniedError):

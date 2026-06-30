@@ -28,6 +28,7 @@ from services.wecom_account_merge import (
     merge_users as _merge_users,
     _add_login_method,
 )
+from services.user_activity_service import record_user_activity
 
 # 企微 OAuth API
 GETUSERINFO_URL = "https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo"
@@ -296,6 +297,14 @@ class WecomOAuthService:
         self.db.table("users").update({
             "last_login_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", user_id).execute()
+        org = self._find_user_org(user_id)
+        record_user_activity(
+            self.db,
+            user_id=user_id,
+            event_type="login_success",
+            org_id=org.get("org_id") if org else None,
+            source="wecom",
+        )
 
         logger.info(f"Wecom OAuth login | user_id={user_id} | wecom_userid={wecom_userid}")
 

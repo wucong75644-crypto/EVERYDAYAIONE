@@ -117,6 +117,7 @@ WHERE phone = 'admin' AND role = 'super_admin';
 |-----|------|
 | `credits_history` | 积分变动历史 |
 | `admin_action_logs` | 管理员操作日志 |
+| `user_activity_events` | 用户活跃事件日志 |
 
 ### 4. 视图
 
@@ -500,6 +501,7 @@ users (用户)
   │         └─ 1:N → messages (消息)
   ├─ 1:N → image_generations (图片生成)
   ├─ 1:N → credits_history (积分历史)
+  ├─ 1:N → user_activity_events (活跃事件)
   ├─ N:N → models (模型)
   │         └─ user_subscriptions (订阅关系)
   └─ 1:N → admin_action_logs (操作日志)

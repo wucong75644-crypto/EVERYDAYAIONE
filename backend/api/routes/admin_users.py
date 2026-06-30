@@ -62,7 +62,7 @@ async def list_users(
 
     query = db.table("users").select(
         "id, nickname, phone, avatar_url, role, credits, status, "
-        "current_org_id, created_at, last_login_at",
+        "current_org_id, created_at, last_login_at, last_active_at",
         count="exact",
     )
 
@@ -79,10 +79,10 @@ async def list_users(
     elif org_id:
         query = query.eq("current_org_id", org_id)
 
-    # 按上次活跃倒序（行业标准 admin 默认）。从未登录的（NULL）排末尾
+    # 按上次活跃倒序（行业标准 admin 默认）。从未活跃的（NULL）排末尾
     offset = (page - 1) * page_size
     result = (
-        query.order("last_login_at", desc=True, nulls_first=False)
+        query.order("last_active_at", desc=True, nulls_first=False)
         .order("created_at", desc=True)  # 同活跃时间时按注册时间次排
         .range(offset, offset + page_size - 1)
         .execute()
@@ -118,7 +118,10 @@ async def get_user_summary(uid: str, user_id: CurrentUserId, db: Database) -> di
 
     user_result = (
         db.table("users")
-        .select("id, nickname, phone, avatar_url, role, credits, status, current_org_id, created_at")
+        .select(
+            "id, nickname, phone, avatar_url, role, credits, status, "
+            "current_org_id, created_at, last_login_at, last_active_at"
+        )
         .eq("id", uid).maybe_single().execute()
     )
     if not user_result or not user_result.data:

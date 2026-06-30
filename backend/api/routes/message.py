@@ -28,6 +28,7 @@ from schemas.message import (
 from services.message_service import MessageService
 from services.conversation_service import ConversationService
 from services.handlers import get_handler
+from services.user_activity_service import record_user_activity
 
 from api.routes.message_generation_helpers import (
     handle_retry_operation,
@@ -261,6 +262,16 @@ async def _do_generate_message(
         )
         conversation = conv_result
         user_message = msg_result
+        record_user_activity(
+            db,
+            user_id=user_id,
+            event_type="message_sent",
+            org_id=ctx.org_id,
+            source="web",
+            resource_type="message",
+            resource_id=user_message.id,
+            metadata={"conversation_id": conversation_id},
+        )
     else:
         conversation = await conversation_service.get_conversation(
             conversation_id, user_id, ctx.org_id,
@@ -337,6 +348,20 @@ async def _do_generate_message(
         client_task_id=body.client_task_id,
         placeholder_created_at=body.placeholder_created_at,
         operation=body.operation,
+    )
+    record_user_activity(
+        db,
+        user_id=user_id,
+        event_type="task_created",
+        org_id=ctx.org_id,
+        source="web",
+        resource_type="task",
+        resource_id=external_task_id,
+        metadata={
+            "conversation_id": conversation_id,
+            "generation_type": gen_type.value,
+            "operation": body.operation.value,
+        },
     )
 
     # 7. 确定返回的 client_task_id（Handler 已保存到数据库）

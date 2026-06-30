@@ -57,6 +57,12 @@ def _make_db_mock(*table_names: str):
     return db
 
 
+def _rpc_params(db, fn_name: str):
+    matches = [call for call in db.rpc.call_args_list if call[0][0] == fn_name]
+    assert matches
+    return matches[0][0][1]
+
+
 class TestFastPath:
     """快速路径：已有 mapping 直接复用"""
 
@@ -76,8 +82,9 @@ class TestFastPath:
         db._table_mocks["users"].update.assert_called_once()
         update_payload = db._table_mocks["users"].update.call_args[0][0]
         assert "last_login_at" in update_payload
-        # 不应该调 RPC
-        db.rpc.assert_not_called()
+        # 不应该调创建用户 RPC；只允许记录活跃事件
+        db.rpc.assert_called_once()
+        assert db.rpc.call_args[0][0] == "record_user_activity"
 
     @pytest.mark.asyncio
     async def test_refresh_last_login_failure_no_raise(self):
@@ -114,9 +121,13 @@ class TestSlowPathRPC:
 
         assert user_id == "new-uuid-456"
 
-        # 验证 RPC 调用参数正确
-        db.rpc.assert_called_once()
-        rpc_call = db.rpc.call_args
+        # 验证创建用户 RPC 调用参数正确（活跃事件会额外调用 record_user_activity）
+        create_calls = [
+            call for call in db.rpc.call_args_list
+            if call[0][0] == "wecom_get_or_create_user"
+        ]
+        assert len(create_calls) == 1
+        rpc_call = create_calls[0]
         assert rpc_call[0][0] == "wecom_get_or_create_user"
         params = rpc_call[0][1]
         assert params["p_wecom_userid"] == "lisi"
@@ -190,7 +201,7 @@ class TestDisplayNameResolution:
         with patch.object(svc, "settings", MagicMock()):
             await svc.get_or_create_user("ww001", "corp", nickname="自定义昵称")
 
-        params = db.rpc.call_args[0][1]
+        params = _rpc_params(db, "wecom_get_or_create_user")
         assert params["p_display_name"] == "自定义昵称"
 
     @pytest.mark.asyncio
@@ -212,7 +223,7 @@ class TestDisplayNameResolution:
              ):
             await svc.get_or_create_user("wangwu", "corp", org_id="org-1")
 
-        params = db.rpc.call_args[0][1]
+        params = _rpc_params(db, "wecom_get_or_create_user")
         assert params["p_display_name"] == "王五"
 
     @pytest.mark.asyncio
@@ -234,7 +245,7 @@ class TestDisplayNameResolution:
              ):
             await svc.get_or_create_user("abcdefgh_long", "corp", org_id="org-1")
 
-        params = db.rpc.call_args[0][1]
+        params = _rpc_params(db, "wecom_get_or_create_user")
         assert params["p_display_name"] == "企微用户_abcdefgh"
 
 

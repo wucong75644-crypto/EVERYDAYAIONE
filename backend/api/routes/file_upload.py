@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from api.deps import OrgCtx, ScopedDB
 from core.exceptions import AppException, ValidationError
 from schemas.file import UploadFileResponse
+from services.user_activity_service import record_user_activity
 
 from .file_common import (
     WORKSPACE_ALLOWED_EXTENSIONS,
@@ -116,6 +117,16 @@ async def upload_file(
         logger.info(
             f"Upload | user={user_id} | file={filename} | "
             f"size={total_size} | path={upload_path}"
+        )
+        record_user_activity(
+            db,
+            user_id=user_id,
+            event_type="file_uploaded",
+            org_id=org_id,
+            source="web",
+            resource_type="workspace_file",
+            resource_id=upload_path,
+            metadata={"filename": filename, "size": total_size},
         )
 
         return UploadFileResponse(
@@ -228,6 +239,16 @@ async def upload_to_workspace(
         logger.info(
             f"Workspace upload | user={user_id} | file={filename} | "
             f"size={total_size} | path={upload_path}"
+        )
+        record_user_activity(
+            db,
+            user_id=user_id,
+            event_type="file_uploaded",
+            org_id=org_id,
+            source="web",
+            resource_type="workspace_file",
+            resource_id=upload_path,
+            metadata={"filename": filename, "size": total_size},
         )
 
         return WorkspaceUploadResponse(

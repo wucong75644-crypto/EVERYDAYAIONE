@@ -24,6 +24,7 @@ from core.security import (
     verify_password,
 )
 from services.sms_service import get_sms_service
+from services.user_activity_service import record_user_activity
 
 
 class AuthService:
@@ -140,6 +141,12 @@ class AuthService:
         self.db.table("users").update({
             "last_login_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", user["id"]).execute()
+        record_user_activity(
+            self.db,
+            user_id=user["id"],
+            event_type="login_success",
+            source="web",
+        )
 
         logger.info(f"User logged in by phone code | user_id={user['id']} | phone={phone}")
 
@@ -189,6 +196,12 @@ class AuthService:
         self.db.table("users").update({
             "last_login_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", user["id"]).execute()
+        record_user_activity(
+            self.db,
+            user_id=user["id"],
+            event_type="login_success",
+            source="web",
+        )
 
         logger.info(f"User logged in by password | user_id={user['id']} | phone={phone}")
 
@@ -274,6 +287,13 @@ class AuthService:
             "current_org_id": org_id,
             "last_login_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", user_id).execute()
+        record_user_activity(
+            self.db,
+            user_id=user_id,
+            event_type="login_success",
+            org_id=org_id,
+            source="web",
+        )
 
         logger.info(
             f"User logged in via org | user_id={user_id} | "

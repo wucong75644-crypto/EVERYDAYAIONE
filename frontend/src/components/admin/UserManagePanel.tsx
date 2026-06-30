@@ -159,9 +159,9 @@ export default function UserManagePanel() {
                   </td>
                   <td
                     className="px-4 py-2.5 text-[var(--s-text-tertiary)] text-xs whitespace-nowrap"
-                    title={`注册时间：${u.created_at?.slice(0, 19).replace('T', ' ') || '—'}\n上次活跃：${u.last_login_at?.slice(0, 19).replace('T', ' ') || '未登录'}`}
+                    title={`注册时间：${u.created_at?.slice(0, 19).replace('T', ' ') || '—'}\n上次活跃：${u.last_active_at?.slice(0, 19).replace('T', ' ') || '未活跃'}\n上次登录：${u.last_login_at?.slice(0, 19).replace('T', ' ') || '未登录'}`}
                   >
-                    {u.last_login_at ? formatRelativeCN(u.last_login_at) : '未登录'}
+                    {u.last_active_at ? formatRelativeCN(u.last_active_at) : '未活跃'}
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <Button
