@@ -21,6 +21,7 @@ import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
+import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
@@ -505,7 +506,7 @@ export default function InputArea({
     const imageInputs = uploadedImages.length > 0 ? [...uploadedImages] : null;
     // 准备文件数组（PDF 上传 + 工作区插入的文件合并）
     const wsFileMapped = workspaceFiles.map((f) => ({
-      url: f.cdn_url || '',
+      url: toOriginalImageUrl(f.cdn_url),
       name: f.name,
       mime_type: f.mime_type || 'application/octet-stream',
       size: f.size,

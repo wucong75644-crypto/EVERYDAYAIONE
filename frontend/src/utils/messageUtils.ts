@@ -13,6 +13,7 @@ import type {
   VideoPart,
   FilePart,
 } from '../types/message';
+import { toOriginalImageUrl } from './imageUrlRules';
 
 // ============================================================
 // 内容提取函数
@@ -56,24 +57,9 @@ export function calcRemainingText(
   return accumulated || '';
 }
 
-export function stripOssImageProcess(url: string): string {
-  const [withoutHash, hash = ''] = url.split('#');
-  const queryStart = withoutHash.indexOf('?');
-  if (queryStart < 0) return url;
-
-  const base = withoutHash.slice(0, queryStart);
-  const query = withoutHash.slice(queryStart + 1);
-  const params = query
-    .split('&')
-    .filter((param) => param && param.split('=')[0] !== 'x-oss-process');
-  const nextQuery = params.length > 0 ? `?${params.join('&')}` : '';
-  const nextHash = hash ? `#${hash}` : '';
-  return `${base}${nextQuery}${nextHash}`;
-}
-
 export function resolveImageOriginalUrl(part: ImagePart): string | null {
   const url = part.original_url || part.download_url || part.preview_url || part.url || null;
-  return url ? stripOssImageProcess(url) : null;
+  return url ? toOriginalImageUrl(url) : null;
 }
 
 /** 从 Message 提取图片资产，保留原图/缩略图语义 */

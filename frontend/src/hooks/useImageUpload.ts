@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { uploadImageFile } from '../services/upload';
+import { toOriginalImageUrl } from '../utils/imageUrlRules';
 import { logger } from '../utils/logger';
 
 export interface UploadedImage {
@@ -118,11 +119,11 @@ export function useImageUpload() {
             img.id === newImage.id
               ? {
                   ...img,
-                  url: uploadResult.url,
-                  original_url: uploadResult.original_url || uploadResult.url,
+                  url: toOriginalImageUrl(uploadResult.url),
+                  original_url: toOriginalImageUrl(uploadResult.original_url || uploadResult.url),
                   thumbnail_url: uploadResult.thumbnail_url,
-                  preview_url: uploadResult.preview_url || uploadResult.url,
-                  download_url: uploadResult.download_url || uploadResult.url,
+                  preview_url: toOriginalImageUrl(uploadResult.preview_url || uploadResult.url),
+                  download_url: toOriginalImageUrl(uploadResult.download_url || uploadResult.url),
                   isUploading: false,
                   workspace_path: uploadResult.workspace_path,
                   name: uploadResult.name,
@@ -234,18 +235,19 @@ export function useImageUpload() {
    * - 引用图 preview 可使用缩略图，url/original_url 始终使用原图
    */
   const addQuotedImage = (cdnUrl: string, thumbnailUrl?: string) => {
+    const originalUrl = toOriginalImageUrl(cdnUrl);
     setImages((prev) => {
       // 同一张图不重复引用
-      if (prev.some((img) => img.isQuoted && img.url === cdnUrl)) return prev;
+      if (prev.some((img) => img.isQuoted && img.url === originalUrl)) return prev;
       const quotedImage: UploadedImage = {
         id: `quoted-${Date.now()}`,
         file: new File([], 'quoted-image'),
         preview: thumbnailUrl || cdnUrl,
-        url: cdnUrl,
-        original_url: cdnUrl,
+        url: originalUrl,
+        original_url: originalUrl,
         thumbnail_url: thumbnailUrl,
-        preview_url: cdnUrl,
-        download_url: cdnUrl,
+        preview_url: originalUrl,
+        download_url: originalUrl,
         isUploading: false,
         error: null,
         isQuoted: true,
@@ -267,16 +269,16 @@ export function useImageUpload() {
   const isUploading = images.some((img) => img.isUploading);
   const uploadedImageUrls = images
     .filter((img) => img.url !== null)
-    .map((img) => img.url as string);
+    .map((img) => toOriginalImageUrl(img.url as string));
   // 完整图片元数据（含 workspace_path/name），构造 ImagePart 时透传
   const uploadedImages = images
     .filter((img) => img.url !== null)
     .map((img) => ({
-      url: img.url as string,
-      original_url: img.original_url || (img.url as string),
+      url: toOriginalImageUrl(img.url as string),
+      original_url: toOriginalImageUrl(img.original_url || (img.url as string)),
       thumbnail_url: img.thumbnail_url,
-      preview_url: img.preview_url || img.original_url || (img.url as string),
-      download_url: img.download_url || img.original_url || (img.url as string),
+      preview_url: toOriginalImageUrl(img.preview_url || img.original_url || (img.url as string)),
+      download_url: toOriginalImageUrl(img.download_url || img.original_url || (img.url as string)),
       name: img.name,
       workspace_path: img.workspace_path,
       mime_type: img.mime_type,

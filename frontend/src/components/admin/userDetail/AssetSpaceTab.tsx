@@ -20,6 +20,7 @@ import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
 import { UploadCard, GenerationCard } from './AssetCards';
+import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 
 type Mode = 'uploads' | 'generations';
 
@@ -47,7 +48,7 @@ export default function AssetSpaceTab({ userId }: Props) {
       return uploads
         .filter((u) => u.type === 'image')
         .map((u) => ({
-          url: u.original_url || u.download_url || u.url,
+          url: toOriginalImageUrl(u.original_url || u.download_url || u.url),
           thumbnailUrl: u.thumbnail_url || undefined,
           filename: u.name,
         }));
@@ -55,7 +56,7 @@ export default function AssetSpaceTab({ userId }: Props) {
     return generations
       .filter((g) => g.kind === 'image')
       .map((g) => ({
-        url: g.original_url || g.download_url || g.url,
+        url: toOriginalImageUrl(g.original_url || g.download_url || g.url),
         thumbnailUrl: g.thumbnail_url || undefined,
         filename: `${g.id}.jpg`,
       }));
@@ -115,8 +116,8 @@ export default function AssetSpaceTab({ userId }: Props) {
 
   const currentItems = useMemo(() => {
     return mode === 'uploads'
-      ? uploads.map((u) => ({ url: u.download_url || u.original_url || u.url, name: u.name }))
-      : generations.map((g) => ({ url: g.download_url || g.original_url || g.url, name: g.id }));
+      ? uploads.map((u) => ({ url: toOriginalImageUrl(u.download_url || u.original_url || u.url), name: u.name }))
+      : generations.map((g) => ({ url: toOriginalImageUrl(g.download_url || g.original_url || g.url), name: g.id }));
   }, [mode, uploads, generations]);
 
   const currentUrls = useMemo(() => currentItems.map((i) => i.url), [currentItems]);

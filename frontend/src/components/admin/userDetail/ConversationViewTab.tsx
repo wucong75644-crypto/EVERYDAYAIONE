@@ -18,7 +18,7 @@ import {
 } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
-import { ossThumbUrl } from '../../../utils/ossThumbUrl';
+import { toOriginalImageUrl, toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
@@ -100,14 +100,14 @@ export default function ConversationViewTab({ userId }: Props) {
       m.attachments?.forEach((a) => {
         if (a.type === 'image') {
           items.push({
-            url: a.original_url || a.download_url || a.url,
+            url: toOriginalImageUrl(a.original_url || a.download_url || a.url),
             thumbnailUrl: a.thumbnail_url || undefined,
             filename: a.name,
           });
         }
       });
       if (m.image_url) {
-        items.push({ url: m.image_url, filename: filenameFromUrl(m.image_url) });
+        items.push({ url: toOriginalImageUrl(m.image_url), filename: filenameFromUrl(m.image_url) });
       }
     }
     return items;
@@ -265,8 +265,8 @@ function AdminMessageBubble({
               {message.attachments.map((a, i) => (
                 <AttachmentThumb
                   key={i}
-                  url={a.download_url || a.original_url || a.url}
-                  previewUrl={a.original_url || a.download_url || a.url}
+                  url={toOriginalImageUrl(a.download_url || a.original_url || a.url)}
+                  previewUrl={toOriginalImageUrl(a.original_url || a.download_url || a.url)}
                   thumbnailUrl={a.thumbnail_url || null}
                   name={a.name}
                   type={a.type}
@@ -344,7 +344,7 @@ function AttachmentThumb({
     return (
       <div className="relative group">
         <img
-          src={thumbnailUrl || ossThumbUrl(url, 192)}
+          src={thumbnailUrl || toThumbnailImageUrl(url, 192)}
           alt={name}
           loading="lazy"
           decoding="async"

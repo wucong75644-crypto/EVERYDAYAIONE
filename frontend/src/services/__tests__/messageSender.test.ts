@@ -86,6 +86,17 @@ describe('createTextWithImages', () => {
     expect(result[2]).toEqual({ type: 'image', url: 'https://example.com/2.jpg' });
   });
 
+  it('should send original image URL when input URL is a thumbnail', () => {
+    const result = createTextWithImages('看图', [
+      'https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_360,m_lfit',
+    ]);
+
+    expect(result[1]).toEqual({
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+    });
+  });
+
   it('should handle empty image array', () => {
     const result = createTextWithImages('纯文本', []);
 
@@ -190,6 +201,19 @@ describe('createTextWithFiles', () => {
     expect(result[0]).toEqual({ type: 'text', text: '对比' });
     expect(result[1]).toEqual({ type: 'image', url: 'https://cdn.example.com/img.png' });
     expect(result[2]).toEqual({ type: 'file', url: testFile.url, name: testFile.name, mime_type: testFile.mime_type, size: testFile.size });
+  });
+
+  it('should normalize image URLs before sending files mixed content', () => {
+    const result = createTextWithFiles(
+      '对比',
+      ['https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_360,m_lfit'],
+      [testFile],
+    );
+
+    expect(result[1]).toEqual({
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+    });
   });
 
   it('should handle null imageUrls', () => {

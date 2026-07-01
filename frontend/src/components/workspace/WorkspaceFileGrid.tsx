@@ -8,6 +8,7 @@ import WorkspaceFileItem, { getFullPath } from './WorkspaceFileItem';
 import FileContextMenu from './FileContextMenu';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
 import { downloadFile } from '../../utils/downloadFile';
+import { toOriginalImageUrl } from '../../utils/imageUrlRules';
 
 interface WorkspaceFileGridProps {
   items: FileItemData[];
@@ -56,7 +57,7 @@ export default function WorkspaceFileGrid({
               selectedCount: selectedPaths.size,
               onOpen: () => onOpen(item),
               onRename: () => onStartRename(fullPath),
-              onDownload: () => item.cdn_url && downloadFile(item.cdn_url, item.name),
+              onDownload: () => item.cdn_url && downloadFile(toOriginalImageUrl(item.cdn_url), item.name),
               onBatchDownload: onBatchDownload ? () => onBatchDownload(item) : undefined,
               onSendToChat: () => onSendToChat?.(item),
               onDelete: () => onDelete(fullPath),

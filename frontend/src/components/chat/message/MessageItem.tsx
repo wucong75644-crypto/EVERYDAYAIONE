@@ -24,8 +24,8 @@ import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
+import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
-import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
@@ -80,7 +80,7 @@ function InlineChartImage({ url, alt, width, height, onClick }: {
       )}
       {/* 图片：加载完直接显示，容器尺寸已固定不会跳变 */}
       <img
-        src={ossThumbUrl(url, displayW)}
+        src={toThumbnailImageUrl(url, displayW)}
         alt={alt}
         className={`rounded-xl shadow-sm w-full h-auto cursor-pointer ${loaded ? '' : 'hidden'}`}
         onClick={onClick}

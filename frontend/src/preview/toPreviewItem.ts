@@ -9,12 +9,13 @@
 
 import type { WorkspaceFileItem } from '../services/workspace';
 import type { FilePart, ImageAsset } from '../types/message';
+import { toOriginalImageUrl } from '../utils/imageUrlRules';
 import type { PreviewItem } from './types';
 
 /** 工作区列表项 → PreviewItem */
 export function fromWorkspaceItem(item: WorkspaceFileItem, workspacePath: string): PreviewItem {
   return {
-    url: item.cdn_url || undefined,
+    url: item.cdn_url ? toOriginalImageUrl(item.cdn_url) : undefined,
     workspacePath,
     filename: item.name,
     mimeType: item.mime_type,
@@ -25,7 +26,7 @@ export function fromWorkspaceItem(item: WorkspaceFileItem, workspacePath: string
 /** 消息附件 FilePart → PreviewItem */
 export function fromFilePart(file: FilePart): PreviewItem {
   return {
-    url: file.url || undefined,
+    url: file.url ? toOriginalImageUrl(file.url) : undefined,
     workspacePath: file.workspace_path,
     filename: file.name,
     mimeType: file.mime_type,
@@ -46,7 +47,7 @@ export function fromBlobImage(opts: { previewUrl: string; filename: string }): P
 /** 消息图片资产 → PreviewItem（主体预览/下载用原图，缩略条用 thumbnailUrl） */
 export function fromImageAsset(asset: ImageAsset, fallbackFilename: string): PreviewItem {
   return {
-    url: asset.originalUrl,
+    url: toOriginalImageUrl(asset.originalUrl),
     thumbnailUrl: asset.thumbnailUrl,
     filename: asset.filename || fallbackFilename,
     mimeType: 'image/*',

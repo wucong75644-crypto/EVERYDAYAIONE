@@ -287,6 +287,7 @@ EVERYDAYAIONE/
             ├── settingsStorage.ts        # 用户设置存储
             ├── modelConflict.ts          # 模型冲突检测
             ├── messageUtils.ts           # 消息工具函数（getTextContent、normalizeMessage）
+            ├── imageUrlRules.ts          # 图片 URL 规则（原图/缩略图语义入口）
             ├── messageCoordinator.ts     # 消息协调器
             ├── mergeOptimisticMessages.ts # 合并乐观更新消息（去重逻辑）
             ├── imageUtils.ts             # 图片URL工具

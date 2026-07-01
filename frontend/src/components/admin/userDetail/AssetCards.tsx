@@ -16,7 +16,7 @@ import { Copy, Download, ZoomIn } from 'lucide-react';
 import type { UploadAsset, GenerationAsset } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
-import { ossThumbUrl } from '../../../utils/ossThumbUrl';
+import { toOriginalImageUrl, toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 
 
 export function UploadCard({
@@ -30,9 +30,9 @@ export function UploadCard({
   onToggle: () => void;
   onPreview: (url: string) => void;
 }) {
-  const originalUrl = asset.original_url || asset.download_url || asset.url;
-  const downloadUrl = asset.download_url || asset.original_url || asset.url;
-  const thumbnailUrl = asset.thumbnail_url || ossThumbUrl(asset.url, 360);
+  const originalUrl = toOriginalImageUrl(asset.original_url || asset.download_url || asset.url);
+  const downloadUrl = toOriginalImageUrl(asset.download_url || asset.original_url || asset.url);
+  const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.url, 360);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -127,9 +127,9 @@ export function GenerationCard({
   onPreview: (url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const originalUrl = asset.original_url || asset.download_url || asset.url;
-  const downloadUrl = asset.download_url || asset.original_url || asset.url;
-  const thumbnailUrl = asset.thumbnail_url || ossThumbUrl(asset.url, 360);
+  const originalUrl = toOriginalImageUrl(asset.original_url || asset.download_url || asset.url);
+  const downloadUrl = toOriginalImageUrl(asset.download_url || asset.original_url || asset.url);
+  const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.url, 360);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();

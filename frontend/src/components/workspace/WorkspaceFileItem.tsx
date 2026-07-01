@@ -10,6 +10,7 @@ import { Folder, Check } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
 import { IMAGE_EXTS } from '../../utils/fileCategory';
+import { toThumbnailImageUrl } from '../../utils/imageUrlRules';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
 
 /** 中间省略：头部 + … + 尾部（含后缀前几个字符），对齐 macOS Finder */
@@ -311,7 +312,7 @@ export default function WorkspaceFileItem({
           <>
             {isImage && (
               <img
-                src={`${item.cdn_url}?x-oss-process=image/resize,w_160,h_160,m_fill`}
+                src={toThumbnailImageUrl(item.cdn_url, 160, 'fill')}
                 alt={item.name}
                 className="w-[72px] h-[72px] rounded-lg object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}

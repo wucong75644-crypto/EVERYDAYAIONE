@@ -12,6 +12,7 @@ import { cn } from '../../utils/cn';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
 import type { SortField, SortOrder } from '../../hooks/useWorkspace';
 import { downloadFile } from '../../utils/downloadFile';
+import { toOriginalImageUrl } from '../../utils/imageUrlRules';
 
 interface WorkspaceFileListProps {
   items: FileItemData[];
@@ -87,7 +88,7 @@ export default function WorkspaceFileList({
               selectedCount: selectedPaths.size,
               onOpen: () => onOpen(item),
               onRename: () => onStartRename(fullPath),
-              onDownload: () => item.cdn_url && downloadFile(item.cdn_url, item.name),
+              onDownload: () => item.cdn_url && downloadFile(toOriginalImageUrl(item.cdn_url), item.name),
               onBatchDownload: onBatchDownload ? () => onBatchDownload(item) : undefined,
               onSendToChat: () => onSendToChat?.(item),
               onDelete: () => onDelete(fullPath),

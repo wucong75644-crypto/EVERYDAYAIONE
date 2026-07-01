@@ -26,6 +26,22 @@ describe('fromWorkspaceItem', () => {
     });
   });
 
+  it('预览工作区图片时使用原图 URL', () => {
+    const item = fromWorkspaceItem(
+      {
+        name: 'a.png',
+        is_dir: false,
+        size: 1024,
+        modified: '0',
+        cdn_url: 'https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_360,m_lfit',
+        mime_type: 'image/png',
+      },
+      '下载/a.png',
+    );
+
+    expect(item.url).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+  });
+
   it('cdn_url 为 null → url 为 undefined', () => {
     const item = fromWorkspaceItem(
       { name: 'a.txt', is_dir: false, size: 0, modified: '0', cdn_url: null, mime_type: null },

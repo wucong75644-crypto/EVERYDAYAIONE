@@ -17,8 +17,8 @@ import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
+import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
-import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import styles from '../menus/shared.module.css';
 import type { ContentPart } from '../../../stores/useMessageStore';
 import type { ImageAsset, ImagePart } from '../../../types/message';
@@ -100,7 +100,7 @@ const GridCell = memo(function GridCell({
     rootMargin: '100px',
   });
   const displayImageUrl = useMemo(
-    () => imageAsset?.thumbnailUrl || ossThumbUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
+    () => imageAsset?.thumbnailUrl || toThumbnailImageUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
     [imageAsset, placeholderSize.width],
   );
 

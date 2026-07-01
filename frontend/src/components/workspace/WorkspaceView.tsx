@@ -31,6 +31,7 @@ import type { WorkspaceFileItem, WorkspaceFile } from '../../services/workspace'
 import { downloadWorkspaceZip } from '../../services/workspace';
 import { downloadFile } from '../../utils/downloadFile';
 import { categorize, matchesFilter } from '../../utils/fileCategory';
+import { toOriginalImageUrl } from '../../utils/imageUrlRules';
 
 interface WorkspaceViewProps {
   onBack: () => void;
@@ -127,7 +128,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         onSendToChat({
           name: it.name,
           workspace_path: getFullPath(ws.currentPath, it.name),
-          cdn_url: it.cdn_url,
+          cdn_url: it.cdn_url ? toOriginalImageUrl(it.cdn_url) : null,
           mime_type: it.mime_type,
           size: it.size,
         });
@@ -136,7 +137,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
       onSendToChat({
         name: item.name,
         workspace_path: getFullPath(ws.currentPath, item.name),
-        cdn_url: item.cdn_url,
+        cdn_url: item.cdn_url ? toOriginalImageUrl(item.cdn_url) : null,
         mime_type: item.mime_type,
         size: item.size,
       });
@@ -214,7 +215,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
 
     // 3) 单文件：走原下载（不打包，保留原扩展名）
     if (item.cdn_url) {
-      downloadFile(item.cdn_url, item.name);
+      downloadFile(toOriginalImageUrl(item.cdn_url), item.name);
     }
   }, [ws.currentPath, selection.selectedCount, selection.selectedPaths]);
 

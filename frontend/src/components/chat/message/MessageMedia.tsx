@@ -6,7 +6,7 @@ import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
-import { ossThumbUrl } from '../../../utils/ossThumbUrl';
+import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import { type AspectRatio, type VideoAspectRatio } from '../../../constants/models';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../../utils/settingsStorage';
 import MediaPlaceholder, { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
@@ -90,7 +90,7 @@ function AiGeneratedImage({
   const aspectRatio = placeholderSize.width / placeholderSize.height;
   const imageUrl = imageAsset?.originalUrl || null;
   const displayImageUrl = useMemo(
-    () => imageAsset?.thumbnailUrl || ossThumbUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
+    () => imageAsset?.thumbnailUrl || toThumbnailImageUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
     [imageAsset, placeholderSize.width],
   );
 
@@ -294,7 +294,7 @@ function UserImage({
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const displayImageUrl = useMemo(
-    () => imageAsset.thumbnailUrl || ossThumbUrl(imageAsset.originalUrl, 360),
+    () => imageAsset.thumbnailUrl || toThumbnailImageUrl(imageAsset.originalUrl, 360),
     [imageAsset],
   );
 

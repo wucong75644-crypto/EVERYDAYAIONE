@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { downloadImage } from '../../../utils/downloadImage';
-import { ossThumbUrl } from '../../../utils/ossThumbUrl';
+import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 
 interface PreviewImageAsset {
   originalUrl: string;
@@ -462,7 +462,7 @@ export default memo(function ImagePreviewModal({
               title={`切换到图片 ${index + 1}`}
             >
               <img
-                src={img.thumbnailUrl || ossThumbUrl(img.originalUrl, 160)}
+                src={img.thumbnailUrl || toThumbnailImageUrl(img.originalUrl, 160)}
                 alt={`缩略图 ${index + 1}`}
                 className="w-full h-full object-cover"
               />
