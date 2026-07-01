@@ -20,7 +20,7 @@ from core.exceptions import (
 from schemas.image import UploadImageResponse
 from services.storage_service import StorageService
 from services.user_activity_service import record_user_activity
-from services.file_upload import build_oss_thumbnail_url
+from services.file_upload import build_workspace_thumbnail_url
 
 router = APIRouter(prefix="/images", tags=["图像"])
 
@@ -73,7 +73,7 @@ async def upload_image(
                 return UploadImageResponse(
                     url=url,
                     original_url=url,
-                    thumbnail_url=build_oss_thumbnail_url(url),
+                    thumbnail_url=build_workspace_thumbnail_url(url),
                     preview_url=url,
                     download_url=url,
                 )
@@ -116,8 +116,10 @@ async def upload_image(
                 oss = get_oss_service()
                 rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
                 cdn_url = await oss.sync_workspace_file(target, rel_path)
+                thumbnail_url = await oss.sync_workspace_thumbnail(target, rel_path) if cdn_url else None
             except Exception as e:
                 logger.warning(f"Image OSS sync failed | file={filename} | error={e}")
+                thumbnail_url = None
             if not cdn_url:
                 cdn_url = executor.get_cdn_url(upload_path)
 
@@ -139,7 +141,7 @@ async def upload_image(
             return UploadImageResponse(
                 url=cdn_url or "",
                 original_url=cdn_url or "",
-                thumbnail_url=build_oss_thumbnail_url(cdn_url) if cdn_url else None,
+                thumbnail_url=thumbnail_url,
                 preview_url=cdn_url or "",
                 download_url=cdn_url or "",
                 name=unique_name,
@@ -168,7 +170,7 @@ async def upload_image(
             return UploadImageResponse(
                 url=url,
                 original_url=url,
-                thumbnail_url=build_oss_thumbnail_url(url),
+                thumbnail_url=build_workspace_thumbnail_url(url),
                 preview_url=url,
                 download_url=url,
             )

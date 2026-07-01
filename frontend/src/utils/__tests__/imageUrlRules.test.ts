@@ -14,15 +14,15 @@ describe('imageUrlRules', () => {
     )).toBe('https://cdn.everydayai.com.cn/workspace/a.png?Expires=1&Signature=abc');
   });
 
-  it('builds thumbnail URL from the original URL', () => {
+  it('uses original URL as thumbnail fallback without OSS processing params', () => {
     expect(toThumbnailImageUrl(
       'https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_80,m_lfit',
       360,
-    )).toBe('https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_360,m_lfit');
+    )).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
   });
 
-  it('supports fill thumbnails for fixed-size grids', () => {
+  it('does not append fill thumbnail params for fixed-size grids', () => {
     expect(toThumbnailImageUrl('https://cdn.everydayai.com.cn/workspace/a.png', 160, 'fill'))
-      .toBe('https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_160,m_fill');
+      .toBe('https://cdn.everydayai.com.cn/workspace/a.png');
   });
 });

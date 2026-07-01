@@ -107,6 +107,8 @@ async def upload_file(
             oss = get_oss_service()
             rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
             cdn_url = await oss.sync_workspace_file(target, rel_path)
+            if (file.content_type or "").startswith("image/"):
+                await oss.sync_workspace_thumbnail(target, rel_path)
         except Exception as e:
             logger.warning(f"Upload OSS sync failed | file={filename} | error={e}")
         if not cdn_url:
@@ -231,6 +233,8 @@ async def upload_to_workspace(
             oss = get_oss_service()
             rel_path = str(target.relative_to(Path(settings.file_workspace_root).resolve()))
             cdn_url = await oss.sync_workspace_file(target, rel_path)
+            if (file.content_type or "").startswith("image/"):
+                await oss.sync_workspace_thumbnail(target, rel_path)
         except Exception as e:
             logger.warning(f"Workspace OSS sync failed | file={filename} | error={e}")
         if not cdn_url:

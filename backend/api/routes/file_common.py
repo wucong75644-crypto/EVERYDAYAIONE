@@ -45,6 +45,7 @@ class WorkspaceFileItem(BaseModel):
     size: int = 0
     modified: str = ""
     cdn_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
     mime_type: Optional[str] = None
     workspace_path: Optional[str] = None
 

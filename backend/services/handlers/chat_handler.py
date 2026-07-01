@@ -88,6 +88,9 @@ def _build_block_from_payload(p: dict) -> dict | None:
             block["height"] = p["height"]
         if p.get("workspace_path"):
             block["workspace_path"] = p["workspace_path"]
+        for field in ("original_url", "thumbnail_url", "preview_url", "download_url"):
+            if p.get(field):
+                block[field] = p[field]
         # 失败图片占位(retry_context 让前端能重试)
         if p.get("failed"):
             block["failed"] = True
@@ -1241,4 +1244,3 @@ async def _async_cleanup_staging(
 ) -> None:
     """NAS 替代后不再需要 staging 清理（保留签名兼容测试）"""
     pass
-

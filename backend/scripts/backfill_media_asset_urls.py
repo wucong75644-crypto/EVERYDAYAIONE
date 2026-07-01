@@ -8,13 +8,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from typing import Any, Callable, Iterable
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -24,7 +25,7 @@ PROJECT_DIR = BACKEND_DIR.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from services.file_upload import build_oss_thumbnail_url  # noqa: E402
+from services.file_upload import build_workspace_thumbnail_url  # noqa: E402
 
 PROCESS_KEY = "x-oss-process"
 JSON_COLUMNS = {
@@ -41,6 +42,7 @@ class BackfillStats:
     original_added: int = 0
     original_normalized: int = 0
     thumbnail_added: int = 0
+    thumbnail_synced: int = 0
 
 
 def load_env() -> None:
@@ -115,7 +117,11 @@ def encode_json_like(original: Any, value: Any) -> Any:
     return value
 
 
-def backfill_value(value: Any, stats: BackfillStats) -> tuple[Any, bool]:
+def backfill_value(
+    value: Any,
+    stats: BackfillStats,
+    thumbnail_resolver: Callable[[str], str | None] | None = None,
+) -> tuple[Any, bool]:
     decoded = decode_json(value)
     if not isinstance(decoded, (dict, list)):
         return value, False
@@ -138,8 +144,17 @@ def backfill_value(value: Any, stats: BackfillStats) -> tuple[Any, bool]:
             stats.original_normalized += 1
             changed = True
 
-        if not image.get("thumbnail_url"):
-            image["thumbnail_url"] = build_oss_thumbnail_url(base_original)
+        thumbnail_url = image.get("thumbnail_url")
+        next_thumbnail = (
+            thumbnail_resolver(base_original)
+            if thumbnail_resolver
+            else build_workspace_thumbnail_url(base_original)
+        )
+        if next_thumbnail and (
+            not isinstance(thumbnail_url, str)
+            or PROCESS_KEY in thumbnail_url
+        ):
+            image["thumbnail_url"] = next_thumbnail
             stats.thumbnail_added += 1
             changed = True
 
@@ -170,13 +185,14 @@ def process_column(
     *,
     apply: bool,
     limit: int | None,
+    thumbnail_resolver: Callable[[str], str | None] | None = None,
 ) -> BackfillStats:
     stats = BackfillStats()
     rows = fetch_rows(conn, table, column, limit)
     with conn.cursor() as cur:
         for row_id, value in rows:
             stats.scanned_rows += 1
-            new_value, changed = backfill_value(value, stats)
+            new_value, changed = backfill_value(value, stats, thumbnail_resolver)
             if not changed:
                 continue
             stats.updated_rows += 1
@@ -187,6 +203,42 @@ def process_column(
                     (db_value, row_id),
                 )
     return stats
+
+
+def build_thumbnail_resolver(stats: BackfillStats) -> Callable[[str], str | None]:
+    """构造生产回填用缩略图同步器：从 workspace URL 找 NAS 原图并上传独立缩略图。"""
+    from core.config import get_settings
+    from services.oss_service import get_oss_service
+
+    settings = get_settings()
+    ws_base = Path(settings.file_workspace_root).resolve()
+    oss = get_oss_service()
+    cache: dict[str, str | None] = {}
+
+    def _resolve(original_url: str) -> str | None:
+        if original_url in cache:
+            return cache[original_url]
+        parsed = urlsplit(original_url)
+        if not parsed.path.startswith("/workspace/"):
+            cache[original_url] = build_workspace_thumbnail_url(original_url)
+            return cache[original_url]
+        rel_path = unquote(parsed.path[len("/workspace/"):])
+        local_path = (ws_base / rel_path).resolve()
+        try:
+            local_path.relative_to(ws_base)
+        except ValueError:
+            cache[original_url] = None
+            return None
+        if not local_path.exists() or not local_path.is_file():
+            cache[original_url] = None
+            return None
+        thumb_url = asyncio.run(oss.sync_workspace_thumbnail(local_path, rel_path))
+        if thumb_url:
+            stats.thumbnail_synced += 1
+        cache[original_url] = thumb_url
+        return thumb_url
+
+    return _resolve
 
 
 def merge_stats(total: BackfillStats, current: BackfillStats) -> None:
@@ -200,6 +252,11 @@ def main() -> int:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--apply", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--sync-thumbnails",
+        action="store_true",
+        help="从 NAS 原图生成并上传 workspace-thumbnails 独立缩略图对象",
+    )
     args = parser.parse_args()
 
     load_env()
@@ -208,10 +265,20 @@ def main() -> int:
         raise SystemExit("DATABASE_URL is not configured")
 
     grand_total = BackfillStats()
+    thumbnail_resolver = (
+        build_thumbnail_resolver(grand_total)
+        if args.apply and args.sync_thumbnails
+        else None
+    )
     with psycopg.connect(database_url) as conn:
         for table, columns in JSON_COLUMNS.items():
             for column in columns:
-                stats = process_column(conn, table, column, apply=args.apply, limit=args.limit)
+                stats = process_column(
+                    conn, table, column,
+                    apply=args.apply,
+                    limit=args.limit,
+                    thumbnail_resolver=thumbnail_resolver,
+                )
                 merge_stats(grand_total, stats)
                 print(f"{table}.{column}: {stats}")
         if args.apply:

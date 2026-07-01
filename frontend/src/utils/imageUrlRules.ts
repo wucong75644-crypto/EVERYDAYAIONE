@@ -1,5 +1,3 @@
-const OSS_HOSTS_PATTERN = /cdn\.everydayai\.com\.cn|\.aliyuncs\.com/;
-
 function removeOssProcessParam(url: string): string {
   const [withoutHash, hash = ''] = url.split('#');
   const queryStart = withoutHash.indexOf('?');
@@ -24,12 +22,8 @@ export function toOriginalImageUrl(url: string | null | undefined): string {
 /** 缩略图规则：只用于小图展示、缩略条、列表网格。 */
 export function toThumbnailImageUrl(
   url: string | null | undefined,
-  width: number = 240,
-  mode: 'lfit' | 'fill' = 'lfit',
+  _width: number = 240,
+  _mode: 'lfit' | 'fill' = 'lfit',
 ): string {
-  const originalUrl = toOriginalImageUrl(url);
-  if (!originalUrl) return '';
-  if (!OSS_HOSTS_PATTERN.test(originalUrl)) return originalUrl;
-  const sep = originalUrl.includes('?') ? '&' : '?';
-  return `${originalUrl}${sep}x-oss-process=image/resize,w_${width},m_${mode}`;
+  return toOriginalImageUrl(url);
 }

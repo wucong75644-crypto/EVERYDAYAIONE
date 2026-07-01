@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from api.deps import OrgCtx, ScopedDB
 from core.exceptions import AppException
+from services.file_upload import build_workspace_thumbnail_url
 
 from .file_common import WorkspaceFileItem, get_executor
 
@@ -85,11 +86,14 @@ async def list_workspace(
 
             # 文件：生成 CDN URL 和 MIME 类型
             cdn_url = None
+            thumbnail_url = None
             mime_type = None
             if is_file:
                 rel_path = f"{path_prefix}/{item.name}" if path_prefix and path_prefix != "." else item.name
                 cdn_url = executor.get_cdn_url(rel_path)
                 mime_type = mimetypes.guess_type(item.name)[0]
+                if cdn_url and (mime_type or "").startswith("image/"):
+                    thumbnail_url = build_workspace_thumbnail_url(cdn_url)
 
             items.append(WorkspaceFileItem(
                 name=item.name,
@@ -97,6 +101,7 @@ async def list_workspace(
                 size=st.st_size if is_file else 0,
                 modified=str(int(st.st_mtime)),
                 cdn_url=cdn_url,
+                thumbnail_url=thumbnail_url,
                 mime_type=mime_type,
             ))
         except (PermissionError, OSError):
@@ -127,12 +132,19 @@ def _search_files_sync(
         try:
             st = item.stat()
             rel_path = str(item.relative_to(root))
+            cdn_url = cdn_url_fn(rel_path)
+            mime_type = mimetypes.guess_type(item.name)[0]
             results.append({
                 "name": item.name,
                 "size": st.st_size,
                 "modified": str(int(st.st_mtime)),
-                "cdn_url": cdn_url_fn(rel_path),
-                "mime_type": mimetypes.guess_type(item.name)[0],
+                "cdn_url": cdn_url,
+                "thumbnail_url": (
+                    build_workspace_thumbnail_url(cdn_url)
+                    if cdn_url and (mime_type or "").startswith("image/")
+                    else None
+                ),
+                "mime_type": mime_type,
                 "workspace_path": rel_path,
             })
         except (PermissionError, OSError):

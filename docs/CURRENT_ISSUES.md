@@ -155,6 +155,7 @@
 
 ## 更新记录
 
+- **2026-07-01**：图片缩略图根治改造（后端生成 `workspace-thumbnails` 独立缩略图对象；实时消息保留 `original_url/thumbnail_url/preview_url/download_url`；NAS 工作区返回 `thumbnail_url`；前端停止生成 `x-oss-process` 缩略图 URL）
 - **2026-07-01**：完成历史图片 URL 数据回填（messages/tasks JSON 图片 payload 补 `original_url` + `thumbnail_url`，生产复扫待回填数为 0；`url:null` 占位对象保持不回填）
 - **2026-07-01**：前端图片资产协议改造（聊天/预览/右键引用/管理员资产页改用 `ImageAsset{originalUrl, thumbnailUrl}`，小图展示用缩略图，放大/下载/模型传输用原图）
 - **2026-06-30**：管理员列表“上次活跃”口径升级（新增 `user_activity_events` + `users.last_active_at`，核心登录/消息/任务/企微/上传链路写活跃事件，列表改按 `last_active_at` 展示和排序）

@@ -8,6 +8,7 @@
 import hashlib
 import threading
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -408,6 +409,53 @@ class OSSService:
             return self.get_url(object_key)
         except Exception as e:
             logger.warning(f"Workspace sync failed | key={object_key} | error={e}")
+            return None
+
+    async def sync_workspace_thumbnail(
+        self,
+        local_path: Path,
+        rel_path: str,
+        width: int = 360,
+    ) -> Optional[str]:
+        """为 workspace 图片生成独立缩略图对象，返回 CDN URL。"""
+        import asyncio
+        from PIL import Image, UnidentifiedImageError
+
+        content_type = self._guess_content_type(local_path.name)
+        if not content_type.startswith("image/"):
+            return None
+
+        thumb_key = f"workspace-thumbnails/{Path(rel_path).with_suffix('').as_posix()}.w{width}.webp"
+
+        def _render_thumbnail() -> bytes:
+            with Image.open(local_path) as image:
+                image.thumbnail((width, width), Image.Resampling.LANCZOS)
+                if image.mode not in ("RGB", "RGBA"):
+                    image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+                output = BytesIO()
+                image.save(output, format="WEBP", quality=82, method=6)
+                return output.getvalue()
+
+        try:
+            content = await asyncio.to_thread(_render_thumbnail)
+            result = await asyncio.to_thread(
+                self.bucket.put_object,
+                thumb_key,
+                content,
+                headers={"Content-Type": "image/webp"},
+            )
+            logger.info(
+                f"Workspace thumbnail sync OK | key={thumb_key} | "
+                f"size={len(content)} | etag={result.etag}"
+            )
+            return self.get_url(thumb_key)
+        except (UnidentifiedImageError, OSError, ValueError) as e:
+            logger.warning(
+                f"Workspace thumbnail skipped | file={local_path.name} | error={e}"
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"Workspace thumbnail sync failed | key={thumb_key} | error={e}")
             return None
 
     async def delete_workspace_object(self, rel_path: str) -> bool:

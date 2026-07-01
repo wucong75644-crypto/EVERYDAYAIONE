@@ -18,7 +18,6 @@ from fastapi import HTTPException
 from loguru import logger
 
 from core.exceptions import AppException
-from services.file_upload import build_oss_thumbnail_url
 
 
 # ── 权限校验 ─────────────────────────────────────────────
@@ -95,9 +94,7 @@ def _asset_url_fields(
         "original_url": original_url,
         "preview_url": part.get("preview_url") or original_url,
         "download_url": part.get("download_url") or original_url,
-        "thumbnail_url": part.get("thumbnail_url") or (
-            build_oss_thumbnail_url(url) if kind == "image" else None
-        ),
+        "thumbnail_url": part.get("thumbnail_url") if kind == "image" else None,
     }
 
 

@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from services.file_upload import (
-    build_oss_thumbnail_url,
+    build_workspace_thumbnail_url,
     download_url_to_workspace,
     persist_media_urls_to_workspace,
     upload_to_payload,
@@ -130,8 +130,12 @@ def _patch_settings_and_oss(ws_root_path, oss_url: str | None = "https://cdn.exa
     mock_oss = AsyncMock()
     if oss_url:
         mock_oss.sync_workspace_file.return_value = oss_url
+        mock_oss.sync_workspace_thumbnail.return_value = (
+            oss_url.replace("/workspace/", "/workspace-thumbnails/").replace(".png", ".w360.webp")
+        )
     else:
         mock_oss.sync_workspace_file.return_value = None
+        mock_oss.sync_workspace_thumbnail.return_value = None
 
     return settings, mock_oss
 
@@ -170,8 +174,7 @@ class TestDownloadUrlToWorkspace:
         assert payload["original_url"] == payload["url"]
         assert payload["preview_url"] == payload["url"]
         assert payload["download_url"] == payload["url"]
-        assert payload["thumbnail_url"].startswith(payload["url"])
-        assert "x-oss-process=image/resize" in payload["thumbnail_url"]
+        assert payload["thumbnail_url"] == "https://cdn.everydayai.com.cn/workspace-thumbnails/x.w360.webp"
         assert "workspace_path" in payload
         # 默认子目录
         assert payload["workspace_path"].startswith("下载/AI图片/")
@@ -406,7 +409,6 @@ class TestPersistMediaUrlsToWorkspace:
             "original_url": "https://cdn/a.png",
             "preview_url": "https://cdn/a.png",
             "download_url": "https://cdn/a.png",
-            "thumbnail_url": "https://cdn/a.png",
             "width": 100, "height": 100, "alt": "x",
         }
         assert payloads[1]["workspace_path"] == "下载/AI图片/x.png"
@@ -444,21 +446,17 @@ class TestPersistMediaUrlsToWorkspace:
         assert peak >= 2, f"实际并发不足,可能退化为串行 | peak={peak}"
 
 
-class TestBuildOssThumbnailUrl:
-    """缩略图 URL 仅对项目 OSS/CDN 生效。"""
+class TestBuildWorkspaceThumbnailUrl:
+    """缩略图 URL 使用独立 workspace-thumbnails 路径。"""
 
-    def test_project_cdn_adds_oss_process(self):
-        result = build_oss_thumbnail_url(
+    def test_project_cdn_builds_independent_thumbnail_path(self):
+        result = build_workspace_thumbnail_url(
             "https://cdn.everydayai.com.cn/workspace/a.png",
-            width=160,
         )
 
-        assert result == (
-            "https://cdn.everydayai.com.cn/workspace/a.png"
-            "?x-oss-process=image/resize,w_160,m_lfit"
-        )
+        assert result == "https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp"
 
-    def test_external_cdn_returns_original_url(self):
+    def test_external_cdn_returns_none(self):
         url = "https://kie-cdn.example.com/generated/a.png"
 
-        assert build_oss_thumbnail_url(url) == url
+        assert build_workspace_thumbnail_url(url) is None

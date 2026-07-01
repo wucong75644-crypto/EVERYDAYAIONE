@@ -35,6 +35,7 @@ export interface WorkspaceFileItem {
   size: number;
   modified: string;
   cdn_url: string | null;
+  thumbnail_url?: string | null;
   mime_type: string | null;
   /** 上传进度 0~100，undefined 表示非上传状态 */
   uploadProgress?: number;

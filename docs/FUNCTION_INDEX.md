@@ -1035,7 +1035,7 @@
 | 函数 | 文件路径 | 功能描述 |
 |------|---------|---------|
 | `toOriginalImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 原图规则入口；预览、下载、传模型前移除 OSS `x-oss-process` 参数 |
-| `toThumbnailImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 缩略图规则入口；仅用于小图展示、缩略条、列表网格 |
+| `toThumbnailImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 缩略图兜底入口；不再生成 OSS 处理参数，缺少 `thumbnailUrl` 时返回原图 URL |
 | `resolveImageOriginalUrl` | `frontend/src/utils/messageUtils.ts` | 从图片 content part 解析原图 URL，并防止缩略图处理参数进入预览/下载链路 |
 | `getImageAssets` | `frontend/src/utils/messageUtils.ts` | 从消息 content 提取图片资产对象，保留 `originalUrl` / `thumbnailUrl` 语义 |
 | `fromImageAsset` | `frontend/src/preview/toPreviewItem.ts` | 将图片资产转换为 PreviewItem，主体预览/下载用原图，缩略条用缩略图 |
@@ -1175,7 +1175,7 @@
 |------|---------|---------|
 | `download_url_to_workspace` | `backend/services/file_upload.py` | 单 URL → 工作区落盘 + 双轨 payload。复用 HttpDownloader + tenacity(3次/总45s预算) + upload_to_payload。命名 `IMG_<YYYYMMDD>_<HHMMSS>_<6hex>_<3idx>.<ext>`,MIME 白名单,写盘走 asyncio.to_thread,可选 .meta.json sidecar |
 | `persist_media_urls_to_workspace` | `backend/services/file_upload.py` | 多 URL 并发落盘 helper(semaphore=5)。顺序保持,失败降级,extra_fields 透传 width/height/alt。media_tool_executor 与 image_agent 共用入口 |
-| `build_oss_thumbnail_url` | `backend/services/file_upload.py` | 为 OSS/CDN 图片 URL 附加缩略图处理参数，仅用于小图展示 |
+| `build_workspace_thumbnail_url` | `backend/services/file_upload.py` | 根据 workspace 原图 URL 计算 `workspace-thumbnails` 独立缩略图 URL，不使用 OSS query 处理 |
 | `_download_with_retry` | `backend/services/file_upload.py` | tenacity 装饰的下载封装:retry_if HTTPError/Timeout,3 次或 45s 总预算 stop |
 | `_write_meta_sidecar` | `backend/services/file_upload.py` | 写隐藏 .meta.json sidecar(async to_thread,OSError 仅 warning) |
 | `_generate_media_filename` | `backend/services/file_upload.py` | 生成行业标准命名(IMG/VID 前缀 + datetime + 短 hash + 序号 + 扩展名) |
@@ -1189,8 +1189,9 @@
 | `strip_oss_process` | `backend/scripts/backfill_media_asset_urls.py` | 移除 URL 中的 `x-oss-process` 缩略参数，保留其他 query 参数 |
 | `is_image_payload` | `backend/scripts/backfill_media_asset_urls.py` | 判断 JSON dict 是否为图片 payload |
 | `iter_image_payloads` | `backend/scripts/backfill_media_asset_urls.py` | 递归遍历 JSON 中的图片 payload |
-| `backfill_value` | `backend/scripts/backfill_media_asset_urls.py` | 给历史图片 payload 补 `original_url` 和 `thumbnail_url` |
+| `backfill_value` | `backend/scripts/backfill_media_asset_urls.py` | 给历史图片 payload 补 `original_url` 和独立 `workspace-thumbnails` 缩略图 URL |
 | `fetch_rows` | `backend/scripts/backfill_media_asset_urls.py` | 按表/列读取包含图片 JSON 的候选行 |
 | `process_column` | `backend/scripts/backfill_media_asset_urls.py` | dry-run/apply 单个 JSON 列的回填逻辑 |
+| `build_thumbnail_resolver` | `backend/scripts/backfill_media_asset_urls.py` | 生产回填时从 NAS 原图生成并上传独立缩略图对象 |
 | `merge_stats` | `backend/scripts/backfill_media_asset_urls.py` | 合并回填统计 |
-| `main` | `backend/scripts/backfill_media_asset_urls.py` | CLI 入口，支持 `--dry-run` / `--apply` / `--limit` |
+| `main` | `backend/scripts/backfill_media_asset_urls.py` | CLI 入口，支持 `--dry-run` / `--apply` / `--limit` / `--sync-thumbnails` |

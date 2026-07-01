@@ -81,7 +81,7 @@ describe('AiImageGrid', () => {
       type: 'image',
       url: 'https://cdn.everydayai.com.cn/original.png',
       original_url: 'https://cdn.everydayai.com.cn/original.png',
-      thumbnail_url: 'https://cdn.everydayai.com.cn/thumb.png?x-oss-process=image/resize,w_360,m_lfit',
+      thumbnail_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/thumb.w360.webp',
     }];
 
     render(
@@ -97,7 +97,7 @@ describe('AiImageGrid', () => {
 
     expect(screen.getByRole('img')).toHaveAttribute(
       'src',
-      'https://cdn.everydayai.com.cn/thumb.png?x-oss-process=image/resize,w_360,m_lfit',
+      'https://cdn.everydayai.com.cn/workspace-thumbnails/thumb.w360.webp',
     );
   });
 

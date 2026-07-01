@@ -30,12 +30,12 @@ def test_backfills_original_and_thumbnail_from_legacy_url():
     assert changed is True
     image = result[0]
     assert image["original_url"] == "https://cdn.everydayai.com.cn/workspace/a.png"
-    assert image["thumbnail_url"].endswith("x-oss-process=image/resize,w_360,m_lfit")
+    assert image["thumbnail_url"] == "https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp"
     assert stats.original_added == 1
     assert stats.thumbnail_added == 1
 
 
-def test_keeps_existing_thumbnail_url():
+def test_replaces_existing_oss_process_thumbnail_url():
     stats = BackfillStats()
     payload = [{
         "type": "image",
@@ -46,9 +46,9 @@ def test_keeps_existing_thumbnail_url():
 
     result, changed = backfill_value(payload, stats)
 
-    assert changed is False
-    assert result[0]["thumbnail_url"].endswith("w_120,m_lfit")
-    assert stats.thumbnail_added == 0
+    assert changed is True
+    assert result[0]["thumbnail_url"] == "https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp"
+    assert stats.thumbnail_added == 1
 
 
 def test_normalizes_original_when_url_has_thumbnail_process():
@@ -63,4 +63,4 @@ def test_normalizes_original_when_url_has_thumbnail_process():
     assert changed is True
     image = result[0]
     assert image["original_url"] == "https://cdn.everydayai.com.cn/workspace/a.png"
-    assert image["thumbnail_url"].startswith("https://cdn.everydayai.com.cn/workspace/a.png?")
+    assert image["thumbnail_url"] == "https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp"

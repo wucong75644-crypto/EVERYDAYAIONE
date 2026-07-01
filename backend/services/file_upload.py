@@ -16,6 +16,7 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from loguru import logger
@@ -68,12 +69,16 @@ _MIME_EXTENSIONS: dict[str, str] = {
 _OSS_HOSTS_PATTERN = re.compile(r"cdn\.everydayai\.com\.cn|\.aliyuncs\.com")
 
 
-def build_oss_thumbnail_url(url: str, width: int = 360) -> str:
-    """为项目 OSS/CDN 图片 URL 附加缩略图处理参数；外部 URL 原样返回。"""
+def build_workspace_thumbnail_url(url: str, width: int = 360) -> str | None:
+    """根据 workspace 原图 URL 计算独立缩略图 URL；不使用 OSS query 处理。"""
     if not _OSS_HOSTS_PATTERN.search(url):
-        return url
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}x-oss-process=image/resize,w_{width},m_lfit"
+        return None
+    parsed = urlparse(url)
+    if not parsed.path.startswith("/workspace/"):
+        return None
+    stem = Path(parsed.path[len("/workspace/"):]).with_suffix("").as_posix()
+    thumb_path = f"/workspace-thumbnails/{stem}.w{width}.webp"
+    return urlunparse(parsed._replace(path=thumb_path, query="", fragment=""))
 
 
 def _add_media_asset_urls(payload: dict[str, Any], media_type: str) -> dict[str, Any]:
@@ -85,8 +90,6 @@ def _add_media_asset_urls(payload: dict[str, Any], media_type: str) -> dict[str,
     payload.setdefault("original_url", url)
     payload.setdefault("preview_url", url)
     payload.setdefault("download_url", url)
-    if media_type == "image":
-        payload.setdefault("thumbnail_url", build_oss_thumbnail_url(url))
     return payload
 
 
@@ -129,12 +132,15 @@ async def upload_to_payload(
 
     # 同步到 OSS 获取 CDN URL
     url: str | None = None
+    thumbnail_url: str | None = None
     try:
         from services.oss_service import get_oss_service
         oss = get_oss_service()
         ws_base = Path(settings.file_workspace_root).resolve()
         rel_path = str(file_path.relative_to(ws_base))
         url = await oss.sync_workspace_file(file_path, rel_path)
+        if url and mime_type.startswith("image/"):
+            thumbnail_url = await oss.sync_workspace_thumbnail(file_path, rel_path)
     except Exception as e:
         logger.warning(f"upload_to_payload OSS sync failed | file={safe_name} | error={e}")
 
@@ -161,6 +167,8 @@ async def upload_to_payload(
     }
     if workspace_path:
         payload["workspace_path"] = workspace_path
+    if thumbnail_url:
+        payload["thumbnail_url"] = thumbnail_url
     return payload
 
 
