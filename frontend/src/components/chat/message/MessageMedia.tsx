@@ -13,7 +13,7 @@ import MediaPlaceholder, { FailedMediaPlaceholder } from '../media/MediaPlacehol
 import AiImageGrid from '../media/AiImageGrid';
 import ImageContextMenu from '../media/ImageContextMenu';
 import styles from '../menus/shared.module.css';
-import type { ContentPart, FilePart } from '../../../types/message';
+import type { ContentPart, FilePart, ImageAsset } from '../../../types/message';
 import FileCardList from '../media/FileCard';
 
 const IMAGE_RETRY_CONFIG = {
@@ -22,8 +22,8 @@ const IMAGE_RETRY_CONFIG = {
 };
 
 interface MessageMediaProps {
-  /** 图片 URL 列表 */
-  imageUrls?: string[];
+  /** 图片资产列表（原图/缩略图分离） */
+  imageAssets?: ImageAsset[];
   /** 视频 URL 列表 */
   videoUrls?: string[];
   /** 消息 ID（用于下载文件命名） */
@@ -58,14 +58,14 @@ interface MessageMediaProps {
 
 /** 单张图片组件（AI 生成，带占位符和失败重试） */
 function AiGeneratedImage({
-  imageUrl,
+  imageAsset,
   messageId,
   placeholderSize,
   onImageClick,
   onMediaLoaded,
   isGenerating,
 }: {
-  imageUrl: string | null;
+  imageAsset: ImageAsset | null;
   messageId: string;
   placeholderSize: { width: number; height: number };
   onImageClick: () => void;
@@ -88,9 +88,10 @@ function AiGeneratedImage({
   const shouldRender = !isGenerating || inView;
 
   const aspectRatio = placeholderSize.width / placeholderSize.height;
+  const imageUrl = imageAsset?.originalUrl || null;
   const displayImageUrl = useMemo(
-    () => ossThumbUrl(imageUrl, Math.ceil(placeholderSize.width)),
-    [imageUrl, placeholderSize.width],
+    () => imageAsset?.thumbnailUrl || ossThumbUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
+    [imageAsset, placeholderSize.width],
   );
 
   const imageUrlWithRetry = useMemo(() => {
@@ -242,6 +243,7 @@ function AiGeneratedImage({
               x={contextMenu.x}
               y={contextMenu.y}
               imageUrl={imageUrl}
+              thumbnailUrl={imageAsset?.thumbnailUrl}
               messageId={messageId}
               onClose={() => setContextMenu(null)}
             />,
@@ -278,20 +280,23 @@ function AiGeneratedImage({
 
 /** 单张用户图片组件（无占位符，自适应尺寸，支持右键引用） */
 function UserImage({
-  imageUrl,
+  imageAsset,
   index,
   messageId,
   onImageClick,
   onMediaLoaded,
 }: {
-  imageUrl: string;
+  imageAsset: ImageAsset;
   index: number;
   messageId: string;
   onImageClick: (index: number) => void;
   onMediaLoaded?: () => void;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const displayImageUrl = useMemo(() => ossThumbUrl(imageUrl, 360), [imageUrl]);
+  const displayImageUrl = useMemo(
+    () => imageAsset.thumbnailUrl || ossThumbUrl(imageAsset.originalUrl, 360),
+    [imageAsset],
+  );
 
   const handleClick = useCallback(() => {
     onImageClick(index);
@@ -324,7 +329,8 @@ function UserImage({
         <ImageContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          imageUrl={imageUrl}
+          imageUrl={imageAsset.originalUrl}
+          thumbnailUrl={imageAsset.thumbnailUrl}
           messageId={messageId}
           onClose={() => setContextMenu(null)}
         />,
@@ -336,29 +342,29 @@ function UserImage({
 
 /** 用户图片容器（auto-fill 网格，与 AI 图片统一布局逻辑） */
 function UserImageGallery({
-  imageUrls,
+  imageAssets,
   messageId,
   maxWidth,
   onImageClick,
   onMediaLoaded,
 }: {
-  imageUrls: string[];
+  imageAssets: ImageAsset[];
   messageId: string;
   maxWidth: number;
   onImageClick: (index: number) => void;
   onMediaLoaded?: () => void;
 }) {
-  if (imageUrls.length === 0) return null;
+  if (imageAssets.length === 0) return null;
 
   return (
     <div
       className="mt-4 grid gap-2 w-full justify-end"
       style={{ gridTemplateColumns: `repeat(auto-fit, ${maxWidth}px)` }}
     >
-      {imageUrls.map((url, index) => (
+      {imageAssets.map((asset, index) => (
         <UserImage
-          key={`${url}-${index}`}
-          imageUrl={url}
+          key={`${asset.originalUrl}-${index}`}
+          imageAsset={asset}
           index={index}
           messageId={messageId}
           onImageClick={onImageClick}
@@ -370,7 +376,7 @@ function UserImageGallery({
 }
 
 export default memo(function MessageMedia({
-  imageUrls = [],
+  imageAssets = [],
   videoUrls = [],
   files = [],
   messageId,
@@ -419,16 +425,16 @@ export default memo(function MessageMedia({
     onImageClick(index ?? 0);
   }, [onImageClick]);
 
-  if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType && files.length === 0) return null;
+  if (imageAssets.length === 0 && !videoUrl && !isGenerating && !failedMediaType && files.length === 0) return null;
 
   return (
     <>
       {/* 图片渲染 */}
-      {(imageUrls.length > 0 || (isGenerating && generatingType === 'image')) && (
+      {(imageAssets.length > 0 || (isGenerating && generatingType === 'image')) && (
         isUser ? (
           // 用户图片：直接显示，无占位符，支持多图横排
           <UserImageGallery
-            imageUrls={imageUrls}
+            imageAssets={imageAssets}
             messageId={messageId}
             maxWidth={imagePlaceholderSize.width}
             onImageClick={handleImageClick}
@@ -449,7 +455,7 @@ export default memo(function MessageMedia({
         ) : (
           // AI 单图：占位符 + 淡入效果
           <AiGeneratedImage
-            imageUrl={imageUrls[0] || null}
+            imageAsset={imageAssets[0] || null}
             messageId={messageId}
             placeholderSize={imagePlaceholderSize}
             onImageClick={() => handleImageClick(0)}
@@ -460,7 +466,7 @@ export default memo(function MessageMedia({
       )}
 
       {/* 失败的图片占位符（裂开状态 + hover 重新生成） */}
-      {failedMediaType === 'image' && imageUrls.length === 0 && !isGenerating && (
+      {failedMediaType === 'image' && imageAssets.length === 0 && !isGenerating && (
         <div className="mt-3">
           <FailedMediaPlaceholder
             type="image"
@@ -520,4 +526,3 @@ export default memo(function MessageMedia({
     </>
   );
 });
-

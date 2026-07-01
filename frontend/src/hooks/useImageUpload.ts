@@ -231,18 +231,19 @@ export function useImageUpload() {
   /**
    * 添加引用图片（已有 CDN URL，无需上传）
    * - 支持多张引用图，同一 URL 不重复添加
-   * - 引用图的 preview 和 url 均使用 CDN URL
+   * - 引用图 preview 可使用缩略图，url/original_url 始终使用原图
    */
-  const addQuotedImage = (cdnUrl: string) => {
+  const addQuotedImage = (cdnUrl: string, thumbnailUrl?: string) => {
     setImages((prev) => {
       // 同一张图不重复引用
       if (prev.some((img) => img.isQuoted && img.url === cdnUrl)) return prev;
       const quotedImage: UploadedImage = {
         id: `quoted-${Date.now()}`,
         file: new File([], 'quoted-image'),
-        preview: cdnUrl,
+        preview: thumbnailUrl || cdnUrl,
         url: cdnUrl,
         original_url: cdnUrl,
+        thumbnail_url: thumbnailUrl,
         preview_url: cdnUrl,
         download_url: cdnUrl,
         isUploading: false,
@@ -287,7 +288,7 @@ export function useImageUpload() {
 
   return {
     images, // 所有图片记录
-    uploadedImageUrls, // 已上传的图片 URL 数组（仅 URL，兼容旧调用）
+    uploadedImageUrls, // 已上传/引用的原图 URL 数组（给图片/视频生成接口使用）
     uploadedImages, // 完整元数据数组（含 workspace_path，构造 ImagePart 用）
     previewUrls, // 本地预览 URL 数组（ObjectURL，用于消息显示）
     isUploading, // 是否有图片正在上传

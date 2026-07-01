@@ -30,7 +30,7 @@ export function UploadCard({
   onToggle: () => void;
   onPreview: (url: string) => void;
 }) {
-  const previewUrl = asset.preview_url || asset.original_url || asset.url;
+  const originalUrl = asset.original_url || asset.download_url || asset.url;
   const downloadUrl = asset.download_url || asset.original_url || asset.url;
   const thumbnailUrl = asset.thumbnail_url || ossThumbUrl(asset.url, 360);
 
@@ -41,7 +41,7 @@ export function UploadCard({
 
   const handlePreview = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onPreview(previewUrl);
+    onPreview(originalUrl);
   };
 
   return (
@@ -127,7 +127,7 @@ export function GenerationCard({
   onPreview: (url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const previewUrl = asset.preview_url || asset.original_url || asset.url;
+  const originalUrl = asset.original_url || asset.download_url || asset.url;
   const downloadUrl = asset.download_url || asset.original_url || asset.url;
   const thumbnailUrl = asset.thumbnail_url || ossThumbUrl(asset.url, 360);
 
@@ -139,7 +139,7 @@ export function GenerationCard({
 
   const handlePreview = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onPreview(previewUrl);
+    onPreview(originalUrl);
   };
 
   const handleCopyPrompt = (e: React.MouseEvent) => {

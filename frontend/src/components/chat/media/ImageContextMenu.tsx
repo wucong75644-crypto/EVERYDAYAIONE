@@ -18,6 +18,7 @@ interface ImageContextMenuProps {
   x: number;
   y: number;
   imageUrl: string;
+  thumbnailUrl?: string;
   messageId: string;
   closing?: boolean;
   onClose: () => void;
@@ -27,6 +28,7 @@ export default function ImageContextMenu({
   x,
   y,
   imageUrl,
+  thumbnailUrl,
   messageId,
   closing = false,
   onClose,
@@ -34,7 +36,7 @@ export default function ImageContextMenu({
   const handleQuote = () => {
     window.dispatchEvent(
       new CustomEvent('chat:quote-image', {
-        detail: { url: imageUrl, messageId },
+        detail: { url: imageUrl, thumbnailUrl, messageId },
       }),
     );
     onClose();

@@ -15,7 +15,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } fr
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import { ArrowDown, MessageSquare } from 'lucide-react';
 import { deleteMessage, cancelTaskByMessageId } from '../../../services/message';
-import { useMessageStore, type Message, getTextContent, getImageUrls } from '../../../stores/useMessageStore';
+import { useMessageStore, type Message, type ImageAsset, getTextContent, getImageAssets } from '../../../stores/useMessageStore';
 import MessageItem from './MessageItem';
 import EmptyState from '../layout/EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
@@ -270,23 +270,23 @@ export default function MessageArea({
     [conversationId, replaceMessage, appendMessage]
   );
 
-  // 提取所有图片 URL（用于缩略图预览）
-  const allImageUrls = useMemo(() => {
-    return mergedMessages.flatMap(m => getImageUrls(m));
+  // 提取所有图片资产（预览用原图，缩略条用 thumbnailUrl）
+  const allImageAssets = useMemo<ImageAsset[]>(() => {
+    return mergedMessages.flatMap(m => getImageAssets(m));
   }, [mergedMessages]);
 
-  // 创建图片 URL 索引 Map（O(1) 查找优化）
+  // 创建图片原图 URL 索引 Map（O(1) 查找优化）
   const imageUrlIndexMap = useMemo(() => {
     const map = new Map<string, number>();
-    allImageUrls.forEach((url, index) => map.set(url, index));
+    allImageAssets.forEach((asset, index) => map.set(asset.originalUrl, index));
     return map;
-  }, [allImageUrls]);
+  }, [allImageAssets]);
 
   // 计算每条消息的第一张图片索引
   const getImageIndex = useCallback((message: Message): number => {
-    const urls = getImageUrls(message);
-    if (urls.length === 0) return -1;
-    return imageUrlIndexMap.get(urls[0]) ?? -1;
+    const assets = getImageAssets(message);
+    if (assets.length === 0) return -1;
+    return imageUrlIndexMap.get(assets[0].originalUrl) ?? -1;
   }, [imageUrlIndexMap]);
 
   // 重新生成相关状态（由 message.status 管理）
@@ -450,7 +450,7 @@ export default function MessageArea({
                     onRegenerate={handleRegenerate}
                     onDelete={handleDelete}
                     onMediaLoaded={handleMediaLoaded}
-                    allImageUrls={allImageUrls}
+                    allImageAssets={allImageAssets}
                     currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
                     skipEntryAnimation={loading || loadingMore}
                     onRegenerateSingle={handleRegenerateSingle}

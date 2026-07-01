@@ -10,12 +10,12 @@ import { createPortal } from 'react-dom';
 import TextContextMenu from '../menus/TextContextMenu';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { m } from 'framer-motion';
-import type { Message } from '../../../stores/useMessageStore';
-import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
+import type { ImageAsset, Message } from '../../../stores/useMessageStore';
+import { getTextContent, getImageAssets, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
 import DeleteMessageModal from '../modals/DeleteMessageModal';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
-import { fromBlobImage } from '../../../preview/toPreviewItem';
+import { fromImageAsset } from '../../../preview/toPreviewItem';
 import toast from 'react-hot-toast';
 import { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
 import api from '../../../services/api';
@@ -100,8 +100,8 @@ interface MessageItemProps {
   onDelete?: (messageId: string) => void;
   /** 媒体加载完成回调（用于滚动调整） */
   onMediaLoaded?: () => void;
-  /** 所有图片 URL 列表（用于缩略图预览） */
-  allImageUrls?: string[];
+  /** 所有图片资产列表（主体预览用原图，缩略条用 thumbnailUrl） */
+  allImageAssets?: ImageAsset[];
   /** 当前图片在列表中的索引（用于缩略图预览） */
   currentImageIndex?: number;
   /** 是否跳过进入动画（批量加载历史消息时） */
@@ -127,7 +127,7 @@ export default memo(function MessageItem({
   onRegenerate,
   onDelete,
   onMediaLoaded,
-  allImageUrls = [],
+  allImageAssets = [],
   currentImageIndex = 0,
   skipEntryAnimation = false,
   onRegenerateSingle,
@@ -147,10 +147,10 @@ export default memo(function MessageItem({
 
   // 提取内容（兼容新旧格式）
   const textContent = getTextContent(message);
-  const imageUrls = getImageUrls(message);
+  const imageAssets = getImageAssets(message);
   const videoUrls = getVideoUrls(message);
   const files = getFiles(message);
-  const hasImage = imageUrls.length > 0;
+  const hasImage = imageAssets.length > 0;
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
 
@@ -310,27 +310,27 @@ export default memo(function MessageItem({
   // 图片预览弹窗状态（统一收敛到 usePreview）
   const preview = usePreview();
 
-  // 用于预览的图片列表：所有消息都使用全局列表（支持查看对话中所有图片）
-  const previewImageUrls = allImageUrls;
+  // 用于预览的图片列表：所有消息都使用全局资产列表（支持查看对话中所有图片）
+  const previewImageAssets = allImageAssets;
 
   // 将消息内图片索引转换为全局索引
   const getGlobalImageIndex = useCallback((localIndex: number): number => {
-    if (imageUrls.length === 0 || localIndex >= imageUrls.length) {
+    if (imageAssets.length === 0 || localIndex >= imageAssets.length) {
       return currentImageIndex;
     }
-    const targetUrl = imageUrls[localIndex];
-    const globalIndex = allImageUrls.indexOf(targetUrl);
+    const targetUrl = imageAssets[localIndex].originalUrl;
+    const globalIndex = allImageAssets.findIndex((asset) => asset.originalUrl === targetUrl);
     return globalIndex >= 0 ? globalIndex : currentImageIndex;
-  }, [imageUrls, allImageUrls, currentImageIndex]);
+  }, [imageAssets, allImageAssets, currentImageIndex]);
 
   // 图片点击回调（合并用户/AI 两处相同逻辑，稳定引用）
   const handleImageClick = useCallback((index?: number) => {
     const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
-    const items = previewImageUrls.map((url, i) =>
-      fromBlobImage({ previewUrl: url, filename: `image-${i + 1}` }),
+    const items = previewImageAssets.map((asset, i) =>
+      fromImageAsset(asset, `image-${i + 1}`),
     );
     preview.open(items, globalIndex);
-  }, [getGlobalImageIndex, currentImageIndex, previewImageUrls, preview]);
+  }, [getGlobalImageIndex, currentImageIndex, previewImageAssets, preview]);
 
   // 单图重新生成回调（绑定 message.id，稳定引用）
   const handleRegenerateSingle = useCallback((idx: number) => {
@@ -429,7 +429,7 @@ export default memo(function MessageItem({
         {isUser && (hasImage || hasVideo || hasFiles) && (
           <div className="mb-3 w-full">
             <MessageMedia
-              imageUrls={imageUrls}
+              imageAssets={imageAssets}
               videoUrls={videoUrls}
               files={files}
               messageId={message.id}
@@ -572,7 +572,7 @@ export default memo(function MessageItem({
                       height?: number;
                     };
                     const originalUrl = img.original_url || img.download_url || img.preview_url || img.url;
-                    const imgIndex = imageUrls.indexOf(originalUrl);
+                    const imgIndex = imageAssets.findIndex((asset) => asset.originalUrl === originalUrl);
                     return (
                       <InlineChartImage
                         key={originalUrl}
@@ -763,7 +763,7 @@ export default memo(function MessageItem({
             设计文档：TECH_内容块混排渲染架构.md §7.1 */}
         {!isUser && isMediaMessage && (
           <MessageMedia
-            imageUrls={imageUrls}
+            imageAssets={imageAssets}
             videoUrls={videoUrls}
             files={files}
             messageId={message.id}
@@ -784,7 +784,6 @@ export default memo(function MessageItem({
         {/* AI 聊天消息：失败的媒体占位符（仅非 isMediaMessage 时需要） */}
         {!isUser && !isMediaMessage && failedMediaType && (
           <MessageMedia
-            imageUrls={[]}
             videoUrls={[]}
             messageId={message.id}
             isUser={isUser}

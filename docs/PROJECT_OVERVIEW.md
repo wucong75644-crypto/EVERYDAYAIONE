@@ -190,6 +190,8 @@ EVERYDAYAIONE/
 │   │           └── image_adapter.py          # Imagen 图片适配器
 │   ├── config/                   # 配置文件
 │   │   └── kie_models.py             # KIE 模型配置
+│   ├── scripts/                  # 运维/数据修复脚本
+│   │   └── backfill_media_asset_urls.py # 历史图片 original_url/thumbnail_url 回填脚本
 │   └── migrations/              # 数据库迁移脚本
 │       └── 034_wecom_oauth_support.sql  # 企微 OAuth 数据库迁移
 │

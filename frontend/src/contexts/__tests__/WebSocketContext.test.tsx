@@ -43,7 +43,7 @@ vi.mock('../../stores/useMessageStore', () => ({
     };
   },
   getTextContent: vi.fn(),
-  getImageUrls: vi.fn(),
+  getImageAssets: vi.fn(),
   getVideoUrls: vi.fn(),
 }));
 vi.mock('../../utils/logger', () => ({

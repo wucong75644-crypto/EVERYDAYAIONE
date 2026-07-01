@@ -1030,6 +1030,14 @@
 - [Handler 使用指南](../frontend/src/hooks/handlers/README.md) - 消息处理器（文本/图片/视频）完整使用文档和示例代码
 - [消息处理器工具函数](../frontend/src/hooks/handlers/mediaHandlerUtils.ts) - 媒体处理工具函数实现
 
+### 前端图片资产协议
+
+| 函数 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `getImageAssets` | `frontend/src/utils/messageUtils.ts` | 从消息 content 提取图片资产对象，保留 `originalUrl` / `thumbnailUrl` 语义 |
+| `fromImageAsset` | `frontend/src/preview/toPreviewItem.ts` | 将图片资产转换为 PreviewItem，主体预览/下载用原图，缩略条用缩略图 |
+| `useImageUpload.addQuotedImage` | `frontend/src/hooks/useImageUpload.ts` | 引用图片加入输入框；显示可用缩略图，发送与入库保留原图 URL |
+
 ### 架构文档
 - [项目概览](./PROJECT_OVERVIEW.md) - 项目整体架构和目录结构
 - [当前问题](./CURRENT_ISSUES.md) - 待修复问题和开发进度追踪
@@ -1169,3 +1177,17 @@
 | `_write_meta_sidecar` | `backend/services/file_upload.py` | 写隐藏 .meta.json sidecar(async to_thread,OSError 仅 warning) |
 | `_generate_media_filename` | `backend/services/file_upload.py` | 生成行业标准命名(IMG/VID 前缀 + datetime + 短 hash + 序号 + 扩展名) |
 | `_compute_user_root` | `backend/services/file_upload.py` | 计算用户工作区根目录(与 FileExecutor.__init__ 同步,org/personal 双模式) |
+
+### 历史图片 URL 回填脚本
+
+| 函数 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `load_env` | `backend/scripts/backfill_media_asset_urls.py` | 加载当前目录/backend/项目根 `.env`，用于本地和生产临时执行 |
+| `strip_oss_process` | `backend/scripts/backfill_media_asset_urls.py` | 移除 URL 中的 `x-oss-process` 缩略参数，保留其他 query 参数 |
+| `is_image_payload` | `backend/scripts/backfill_media_asset_urls.py` | 判断 JSON dict 是否为图片 payload |
+| `iter_image_payloads` | `backend/scripts/backfill_media_asset_urls.py` | 递归遍历 JSON 中的图片 payload |
+| `backfill_value` | `backend/scripts/backfill_media_asset_urls.py` | 给历史图片 payload 补 `original_url` 和 `thumbnail_url` |
+| `fetch_rows` | `backend/scripts/backfill_media_asset_urls.py` | 按表/列读取包含图片 JSON 的候选行 |
+| `process_column` | `backend/scripts/backfill_media_asset_urls.py` | dry-run/apply 单个 JSON 列的回填逻辑 |
+| `merge_stats` | `backend/scripts/backfill_media_asset_urls.py` | 合并回填统计 |
+| `main` | `backend/scripts/backfill_media_asset_urls.py` | CLI 入口，支持 `--dry-run` / `--apply` / `--limit` |

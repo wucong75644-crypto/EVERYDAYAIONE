@@ -22,7 +22,10 @@ function ImageAdapterComponent({
   onDelete,
 }: PreviewCommonProps) {
   // 所有兄弟图片的 URL 列表（用于底部缩略图栏）
-  const allImages = siblings.map((s) => s.url || '');
+  const allImages = siblings.map((s) => ({
+    originalUrl: s.url || '',
+    thumbnailUrl: s.thumbnailUrl,
+  }));
 
   return (
     <ImagePreviewModal

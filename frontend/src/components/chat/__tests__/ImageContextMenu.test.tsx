@@ -17,6 +17,7 @@ describe('ImageContextMenu', () => {
     x: 100,
     y: 200,
     imageUrl: 'https://cdn.example.com/test.png',
+    thumbnailUrl: 'https://cdn.example.com/test-thumb.png',
     messageId: 'msg-123',
     onClose: vi.fn(),
   };
@@ -39,6 +40,7 @@ describe('ImageContextMenu', () => {
     expect(eventHandler).toHaveBeenCalledTimes(1);
     const detail = (eventHandler.mock.calls[0][0] as CustomEvent).detail;
     expect(detail.url).toBe('https://cdn.example.com/test.png');
+    expect(detail.thumbnailUrl).toBe('https://cdn.example.com/test-thumb.png');
     expect(detail.messageId).toBe('msg-123');
     expect(defaultProps.onClose).toHaveBeenCalled();
 

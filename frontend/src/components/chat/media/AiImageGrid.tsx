@@ -20,7 +20,7 @@ import { downloadImage } from '../../../utils/downloadImage';
 import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import styles from '../menus/shared.module.css';
 import type { ContentPart } from '../../../stores/useMessageStore';
-import type { ImagePart } from '../../../types/message';
+import type { ImageAsset, ImagePart } from '../../../types/message';
 
 /** 图片加载重试配置 */
 const IMAGE_RETRY_CONFIG = {
@@ -51,7 +51,7 @@ interface AiImageGridProps {
 
 /** GridCell props */
 interface GridCellProps {
-  imageUrl: string | null;
+  imageAsset: ImageAsset | null;
   failed?: boolean;
   index: number;
   messageId: string;
@@ -65,7 +65,8 @@ interface GridCellProps {
 /** 自定义比较：仅比较数据 props，忽略函数 props（函数行为不变，仅引用变化） */
 function gridCellAreEqual(prev: GridCellProps, next: GridCellProps): boolean {
   return (
-    prev.imageUrl === next.imageUrl &&
+    prev.imageAsset?.originalUrl === next.imageAsset?.originalUrl &&
+    prev.imageAsset?.thumbnailUrl === next.imageAsset?.thumbnailUrl &&
     prev.failed === next.failed &&
     prev.index === next.index &&
     prev.messageId === next.messageId &&
@@ -75,7 +76,7 @@ function gridCellAreEqual(prev: GridCellProps, next: GridCellProps): boolean {
 
 /** 单个网格单元（memo 包裹，仅数据变化时重渲染） */
 const GridCell = memo(function GridCell({
-  imageUrl,
+  imageAsset,
   failed,
   index,
   messageId,
@@ -98,8 +99,8 @@ const GridCell = memo(function GridCell({
     rootMargin: '100px',
   });
   const displayImageUrl = useMemo(
-    () => ossThumbUrl(imageUrl, Math.ceil(placeholderSize.width)),
-    [imageUrl, placeholderSize.width],
+    () => imageAsset?.thumbnailUrl || ossThumbUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
+    [imageAsset, placeholderSize.width],
   );
 
   const imageUrlWithRetry = useMemo(() => {
@@ -110,7 +111,7 @@ const GridCell = memo(function GridCell({
   }, [displayImageUrl, retryCount]);
 
   useEffect(() => {
-    if (imageUrl) {
+    if (imageAsset?.originalUrl) {
       setImageLoaded(false);
       setRetryCount(0);
       setLoadError(false);
@@ -119,7 +120,7 @@ const GridCell = memo(function GridCell({
         retryTimerRef.current = null;
       }
     }
-  }, [imageUrl]);
+  }, [imageAsset?.originalUrl]);
 
   useEffect(() => {
     return () => {
@@ -140,11 +141,11 @@ const GridCell = memo(function GridCell({
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isDownloading || !imageUrl) return;
+    if (isDownloading || !imageAsset?.originalUrl) return;
 
     setIsDownloading(true);
     try {
-      await downloadImage(imageUrl, `image-${messageId}-${index}`);
+      await downloadImage(imageAsset.originalUrl, `image-${messageId}-${index}`);
     } catch {
       toast.error('download failed');
     } finally {
@@ -167,7 +168,7 @@ const GridCell = memo(function GridCell({
   }
 
   // 占位符（未完成）— 自适应填充 grid cell，不用固定像素
-  if (!imageUrl) {
+  if (!imageAsset?.originalUrl) {
     return (
       <div
         className="rounded-xl bg-hover dark:bg-surface-dark-card flex items-center justify-center shadow-sm animate-fade-in animate-media-pulse"
@@ -202,7 +203,7 @@ const GridCell = memo(function GridCell({
       tabIndex={0}
       onClick={() => onImageClick(index)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onImageClick(index); } }}
-      onContextMenu={(e) => { if (imageLoaded && imageUrl) { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); } }}
+      onContextMenu={(e) => { if (imageLoaded && imageAsset.originalUrl) { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); } }}
       aria-label={`查看图片 ${index + 1}`}
     >
       {shouldRender && (
@@ -256,11 +257,12 @@ const GridCell = memo(function GridCell({
       </div>
 
       {/* 右键上下文菜单（Portal 到 body，避免被 overflow-hidden 裁剪） */}
-      {contextMenu && imageUrl && createPortal(
+      {contextMenu && imageAsset.originalUrl && createPortal(
         <ImageContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          imageUrl={imageUrl}
+          imageUrl={imageAsset.originalUrl}
+          thumbnailUrl={imageAsset.thumbnailUrl}
           messageId={messageId}
           onClose={() => setContextMenu(null)}
         />,
@@ -282,19 +284,27 @@ export default function AiImageGrid({
 }: AiImageGridProps) {
   // 构建 cells 数组：确保有 numImages 个 cell
   const cells = useMemo(() => {
-    const result: Array<{ url: string | null; failed?: boolean }> = [];
+    const result: Array<{ asset: ImageAsset | null; failed?: boolean }> = [];
 
     for (let i = 0; i < numImages; i++) {
       const part = content[i];
       if (part && part.type === 'image') {
         const imgPart = part as ImagePart;
+        const originalUrl = imgPart.original_url || imgPart.download_url || imgPart.preview_url || imgPart.url || null;
         result.push({
-          url: imgPart.original_url || imgPart.download_url || imgPart.preview_url || imgPart.url || null,
+          asset: originalUrl ? {
+            originalUrl,
+            ...(imgPart.thumbnail_url ? { thumbnailUrl: imgPart.thumbnail_url } : {}),
+            ...(imgPart.alt ? { alt: imgPart.alt } : {}),
+            ...(imgPart.width ? { width: imgPart.width } : {}),
+            ...(imgPart.height ? { height: imgPart.height } : {}),
+            sourcePart: imgPart,
+          } : null,
           failed: imgPart.failed || false,
         });
       } else {
         // 未到达的 slot
-        result.push({ url: null });
+        result.push({ asset: null });
       }
     }
 
@@ -307,7 +317,7 @@ export default function AiImageGrid({
         {cells.map((cell, index) => (
           <GridCell
             key={`${messageId}-cell-${index}`}
-            imageUrl={cell.url}
+            imageAsset={cell.asset}
             failed={cell.failed}
             index={index}
             messageId={messageId}

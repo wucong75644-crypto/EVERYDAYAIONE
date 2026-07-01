@@ -258,8 +258,8 @@ export default function InputArea({
   // 监听图片引用事件（从 AI 生成图片右键菜单触发）
   useEffect(() => {
     const handleQuoteImage = (e: Event) => {
-      const { url } = (e as CustomEvent<{ url: string; messageId: string }>).detail;
-      addQuotedImage(url);
+      const { url, thumbnailUrl } = (e as CustomEvent<{ url: string; thumbnailUrl?: string; messageId: string }>).detail;
+      addQuotedImage(url, thumbnailUrl);
     };
     window.addEventListener('chat:quote-image', handleQuoteImage);
     return () => window.removeEventListener('chat:quote-image', handleQuoteImage);

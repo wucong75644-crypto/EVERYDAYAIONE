@@ -51,7 +51,7 @@ describe('MessageMedia', () => {
   it('多图模式渲染 AiImageGrid', () => {
     render(
       <MessageMedia
-        imageUrls={['https://img1.png']}
+        imageAssets={[{ originalUrl: 'https://img1.png' }]}
         messageId="msg-1"
         isUser={false}
         onImageClick={vi.fn()}
@@ -70,7 +70,7 @@ describe('MessageMedia', () => {
     const onImageClick = vi.fn();
     render(
       <MessageMedia
-        imageUrls={['https://img1.png']}
+        imageAssets={[{ originalUrl: 'https://img1.png' }]}
         messageId="msg-1"
         isUser={false}
         onImageClick={onImageClick}
@@ -88,7 +88,7 @@ describe('MessageMedia', () => {
   it('单图模式不渲染 AiImageGrid', () => {
     render(
       <MessageMedia
-        imageUrls={['https://img1.png']}
+        imageAssets={[{ originalUrl: 'https://img1.png' }]}
         messageId="msg-1"
         isUser={false}
         onImageClick={vi.fn()}
@@ -114,7 +114,7 @@ describe('MessageMedia', () => {
   it('memo：相同 props 重渲染时保持稳定', () => {
     const onImageClick = vi.fn();
     const props = {
-      imageUrls: ['https://img1.png'],
+      imageAssets: [{ originalUrl: 'https://img1.png' }],
       messageId: 'msg-1',
       isUser: false as const,
       onImageClick,

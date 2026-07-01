@@ -46,11 +46,19 @@ export default function AssetSpaceTab({ userId }: Props) {
     if (mode === 'uploads') {
       return uploads
         .filter((u) => u.type === 'image')
-        .map((u) => ({ url: u.preview_url || u.original_url || u.url, filename: u.name }));
+        .map((u) => ({
+          url: u.original_url || u.download_url || u.url,
+          thumbnailUrl: u.thumbnail_url || undefined,
+          filename: u.name,
+        }));
     }
     return generations
       .filter((g) => g.kind === 'image')
-      .map((g) => ({ url: g.preview_url || g.original_url || g.url, filename: `${g.id}.jpg` }));
+      .map((g) => ({
+        url: g.original_url || g.download_url || g.url,
+        thumbnailUrl: g.thumbnail_url || undefined,
+        filename: `${g.id}.jpg`,
+      }));
   }, [mode, uploads, generations]);
 
   const openLightbox = useCallback((url: string) => {
@@ -261,4 +269,3 @@ function ModeTab({ active, label, count, onClick }: {
     </button>
   );
 }
-

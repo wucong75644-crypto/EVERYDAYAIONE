@@ -15,6 +15,8 @@ import type { ComponentType } from 'react';
 export interface PreviewItem {
   /** CDN URL（首选）— 也可以是 blob URL（聊天输入框上传图） */
   url?: string;
+  /** 图片缩略图 URL；仅用于列表/缩略条展示，不能用于下载或主体预览 */
+  thumbnailUrl?: string;
   /** workspace 相对路径 — fallback 后端代理时需要 */
   workspacePath?: string;
   /** 文件名（含扩展名，用于决策 + 显示）*/

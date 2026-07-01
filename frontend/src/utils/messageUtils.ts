@@ -9,6 +9,7 @@ import type {
   MessageStatus,
   ContentPart,
   ImagePart,
+  ImageAsset,
   VideoPart,
   FilePart,
 } from '../types/message';
@@ -55,14 +56,30 @@ export function calcRemainingText(
   return accumulated || '';
 }
 
-/** 从 Message 提取图片 URL */
-export function getImageUrls(message: Message): string[] {
+function resolveImageOriginalUrl(part: ImagePart): string | null {
+  return part.original_url || part.download_url || part.preview_url || part.url || null;
+}
+
+/** 从 Message 提取图片资产，保留原图/缩略图语义 */
+export function getImageAssets(message: Message): ImageAsset[] {
   if (!Array.isArray(message.content)) return [];
 
   return message.content
     .filter((p): p is ImagePart => p.type === 'image')
-    .map((p) => p.original_url || p.download_url || p.preview_url || p.url)
-    .filter((url): url is string => !!url);
+    .map((p): ImageAsset | null => {
+      const originalUrl = resolveImageOriginalUrl(p);
+      if (!originalUrl) return null;
+      return {
+        originalUrl,
+        ...(p.thumbnail_url ? { thumbnailUrl: p.thumbnail_url } : {}),
+        ...(p.alt ? { alt: p.alt } : {}),
+        ...(p.width ? { width: p.width } : {}),
+        ...(p.height ? { height: p.height } : {}),
+        ...(p.name ? { filename: p.name } : {}),
+        sourcePart: p,
+      };
+    })
+    .filter((asset): asset is ImageAsset => !!asset);
 }
 
 /** 从 Message 提取视频 URL */

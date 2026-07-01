@@ -87,10 +87,13 @@ vi.mock('../../../stores/useMessageStore', () => ({
     const text = msg.content.find((p: { type: string }) => p.type === 'text');
     return text && 'text' in text ? (text as { text: string }).text : '';
   },
-  getImageUrls: (msg: Message) =>
+  getImageAssets: (msg: Message) =>
     msg.content
       .filter((p: { type: string }) => p.type === 'image' && 'url' in p && (p as { url: string | null }).url)
-      .map((p: { type: string }) => (p as { url: string }).url),
+      .map((p: { type: string; original_url?: string; thumbnail_url?: string; url?: string }) => ({
+        originalUrl: p.original_url || p.url!,
+        thumbnailUrl: p.thumbnail_url,
+      })),
   getVideoUrls: () => [],
   getFiles: () => [],
 }));
@@ -139,7 +142,7 @@ describe('MessageItem 回调稳定性', () => {
     render(
       <MessageItem
         message={msg}
-        allImageUrls={['https://img1.png', 'https://img2.png']}
+        allImageAssets={[{ originalUrl: 'https://img1.png' }, { originalUrl: 'https://img2.png' }]}
         currentImageIndex={0}
       />,
     );
@@ -154,7 +157,7 @@ describe('MessageItem 回调稳定性', () => {
       <MessageItem
         message={msg}
         onRegenerateSingle={onRegenerateSingle}
-        allImageUrls={['https://img1.png', 'https://img2.png']}
+        allImageAssets={[{ originalUrl: 'https://img1.png' }, { originalUrl: 'https://img2.png' }]}
         currentImageIndex={0}
       />,
     );
@@ -174,7 +177,7 @@ describe('MessageItem 回调稳定性', () => {
       <MessageItem
         message={msg}
         onRegenerate={onRegenerate}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
       />,
     );
@@ -190,7 +193,7 @@ describe('MessageItem 回调稳定性', () => {
     render(
       <MessageItem
         message={msg}
-        allImageUrls={['https://img1.png']}
+        allImageAssets={[{ originalUrl: 'https://img1.png' }]}
         currentImageIndex={0}
       />,
     );
@@ -204,7 +207,7 @@ describe('MessageItem 回调稳定性', () => {
       <MessageItem
         message={msg}
         onRegenerateSingle={onRegenerateSingle}
-        allImageUrls={['https://img1.png', 'https://img2.png']}
+        allImageAssets={[{ originalUrl: 'https://img1.png' }, { originalUrl: 'https://img2.png' }]}
         currentImageIndex={0}
       />,
     );
@@ -215,7 +218,7 @@ describe('MessageItem 回调稳定性', () => {
       <MessageItem
         message={msg}
         onRegenerateSingle={onRegenerateSingle}
-        allImageUrls={['https://img1.png', 'https://img2.png']}
+        allImageAssets={[{ originalUrl: 'https://img1.png' }, { originalUrl: 'https://img2.png' }]}
         currentImageIndex={0}
       />,
     );
@@ -271,7 +274,7 @@ describe('MessageItem 中断态渲染', () => {
     render(
       <MessageItem
         message={msg}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
       />,
     );
@@ -296,7 +299,7 @@ describe('MessageItem 中断态渲染', () => {
     render(
       <MessageItem
         message={msg}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
       />,
     );
@@ -308,7 +311,7 @@ describe('MessageItem 中断态渲染', () => {
     render(
       <MessageItem
         message={msg}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
       />,
     );
@@ -320,7 +323,7 @@ describe('MessageItem 中断态渲染', () => {
     const { container } = render(
       <MessageItem
         message={msg}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
       />,
     );
@@ -366,7 +369,7 @@ describe('MessageItem failed ImagePart', () => {
     render(
       <MessageItem
         message={failedMessage}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
       />,
     );
@@ -394,7 +397,7 @@ describe('MessageItem failed ImagePart', () => {
     render(
       <MessageItem
         message={normalMessage}
-        allImageUrls={['https://cdn/img.png']}
+        allImageAssets={[{ originalUrl: 'https://cdn/img.png' }]}
         currentImageIndex={0}
       />,
     );
@@ -427,7 +430,7 @@ describe('MessageItem failed ImagePart', () => {
     render(
       <MessageItem
         message={l3FailedMessage}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
         onRegenerateSingle={onRegenerateSingle}
       />,
@@ -459,7 +462,7 @@ describe('MessageItem failed ImagePart', () => {
     render(
       <MessageItem
         message={l3FailedMessage}
-        allImageUrls={[]}
+        allImageAssets={[]}
         currentImageIndex={0}
         // 不传 onRegenerateSingle
       />,

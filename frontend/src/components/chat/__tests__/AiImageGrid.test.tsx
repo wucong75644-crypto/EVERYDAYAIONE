@@ -76,6 +76,31 @@ describe('AiImageGrid', () => {
     expect(images[1]).toHaveAttribute('src', 'https://img2.png');
   });
 
+  it('uses thumbnail_url for grid display while keeping original_url in content', () => {
+    const content: ContentPart[] = [{
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/original.png',
+      original_url: 'https://cdn.everydayai.com.cn/original.png',
+      thumbnail_url: 'https://cdn.everydayai.com.cn/thumb.png?x-oss-process=image/resize,w_360,m_lfit',
+    }];
+
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={1}
+        messageId="msg-1"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+
+    expect(screen.getByRole('img')).toHaveAttribute(
+      'src',
+      'https://cdn.everydayai.com.cn/thumb.png?x-oss-process=image/resize,w_360,m_lfit',
+    );
+  });
+
   it('失败的图片渲染 FailedMediaPlaceholder', () => {
     const content = makeContent([null], [true]);
     render(

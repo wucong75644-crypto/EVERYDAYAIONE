@@ -45,10 +45,11 @@ export type {
   ChatTask,
   MediaTask,
   CompletedNotification,
+  ImageAsset,
 } from '../types/message';
 
 // 重新导出辅助函数，保持向后兼容
-export { getTextContent, getImageUrls, getVideoUrls, getFiles, normalizeMessage } from '../utils/messageUtils';
+export { getTextContent, getImageAssets, getVideoUrls, getFiles, normalizeMessage } from '../utils/messageUtils';
 
 // ============================================================
 // Store 类型
@@ -88,4 +89,3 @@ export const useMessageStore = create<MessageStore>()(
     }
   )
 );
-

@@ -2,7 +2,7 @@
  * 转换器测试 — 三种来源 → PreviewItem
  */
 import { describe, it, expect } from 'vitest';
-import { fromWorkspaceItem, fromFilePart, fromBlobImage } from '../toPreviewItem';
+import { fromWorkspaceItem, fromFilePart, fromBlobImage, fromImageAsset } from '../toPreviewItem';
 
 describe('fromWorkspaceItem', () => {
   it('完整字段映射', () => {
@@ -60,6 +60,23 @@ describe('fromBlobImage', () => {
     expect(item).toEqual({
       url: 'blob:xxx',
       filename: 'photo',
+      mimeType: 'image/*',
+    });
+  });
+});
+
+describe('fromImageAsset', () => {
+  it('keeps original URL for preview and thumbnail URL for thumbnail strip', () => {
+    const item = fromImageAsset({
+      originalUrl: 'https://cdn.example.com/original.png',
+      thumbnailUrl: 'https://cdn.example.com/thumb.png',
+      filename: 'real.png',
+    }, 'fallback.png');
+
+    expect(item).toEqual({
+      url: 'https://cdn.example.com/original.png',
+      thumbnailUrl: 'https://cdn.example.com/thumb.png',
+      filename: 'real.png',
       mimeType: 'image/*',
     });
   });

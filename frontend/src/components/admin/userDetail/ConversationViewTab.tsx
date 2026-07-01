@@ -99,7 +99,11 @@ export default function ConversationViewTab({ userId }: Props) {
     for (const m of messages) {
       m.attachments?.forEach((a) => {
         if (a.type === 'image') {
-          items.push({ url: a.preview_url || a.original_url || a.url, filename: a.name });
+          items.push({
+            url: a.original_url || a.download_url || a.url,
+            thumbnailUrl: a.thumbnail_url || undefined,
+            filename: a.name,
+          });
         }
       });
       if (m.image_url) {
@@ -262,7 +266,7 @@ function AdminMessageBubble({
                 <AttachmentThumb
                   key={i}
                   url={a.download_url || a.original_url || a.url}
-                  previewUrl={a.preview_url || a.original_url || a.url}
+                  previewUrl={a.original_url || a.download_url || a.url}
                   thumbnailUrl={a.thumbnail_url || null}
                   name={a.name}
                   type={a.type}

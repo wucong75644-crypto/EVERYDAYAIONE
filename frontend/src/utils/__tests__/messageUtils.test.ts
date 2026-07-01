@@ -2,7 +2,7 @@
  * messageUtils 工具函数单元测试
  *
  * 覆盖：
- * 1. getImageUrls：过滤 null/undefined URL、正常 URL 保留、混合场景
+ * 1. getImageAssets：过滤 null/undefined URL、保留原图/缩略图语义、混合场景
  * 2. getTextContent：提取文本内容
  * 3. getVideoUrls：提取视频 URL
  * 4. normalizeMessage：旧格式转换
@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  getImageUrls,
+  getImageAssets,
   getTextContent,
   getVideoUrls,
   getFiles,
@@ -36,17 +36,17 @@ function createTestMessage(content: ContentPart[], overrides: Partial<Message> =
 }
 
 // ============================================================
-// getImageUrls 测试
+// getImageAssets 测试
 // ============================================================
 
-describe('getImageUrls', () => {
+describe('getImageAssets original URL extraction', () => {
   it('should return URLs from valid image parts', () => {
     const msg = createTestMessage([
       { type: 'image', url: 'https://oss/img0.png' },
       { type: 'image', url: 'https://oss/img1.png' },
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual(['https://oss/img0.png', 'https://oss/img1.png']);
   });
@@ -63,7 +63,7 @@ describe('getImageUrls', () => {
       } as unknown as ContentPart,
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual(['https://oss/original.png']);
   });
@@ -76,7 +76,7 @@ describe('getImageUrls', () => {
       { type: 'image', url: null } as unknown as ContentPart,
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual(['https://oss/img0.png', 'https://oss/img2.png']);
   });
@@ -87,7 +87,7 @@ describe('getImageUrls', () => {
       { type: 'image', url: 'https://oss/valid.png' },
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual(['https://oss/valid.png']);
   });
@@ -98,7 +98,7 @@ describe('getImageUrls', () => {
       { type: 'image', url: 'https://oss/valid.png' },
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual(['https://oss/valid.png']);
   });
@@ -109,7 +109,7 @@ describe('getImageUrls', () => {
       { type: 'image', url: null } as unknown as ContentPart,
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual([]);
   });
@@ -121,7 +121,7 @@ describe('getImageUrls', () => {
       { type: 'video', url: 'https://oss/video.mp4' },
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual(['https://oss/img.png']);
   });
@@ -129,7 +129,7 @@ describe('getImageUrls', () => {
   it('should return empty array for non-array content', () => {
     const msg = { content: 'old string format' } as unknown as Message;
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual([]);
   });
@@ -137,7 +137,7 @@ describe('getImageUrls', () => {
   it('should return empty array for empty content', () => {
     const msg = createTestMessage([]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toEqual([]);
   });
@@ -151,10 +151,32 @@ describe('getImageUrls', () => {
       { type: 'image', url: null } as unknown as ContentPart,
     ]);
 
-    const result = getImageUrls(msg);
+    const result = getImageAssets(msg).map((asset) => asset.originalUrl);
 
     expect(result).toHaveLength(2);
     expect(result).toEqual(['https://oss/img0.png', 'https://oss/img2.png']);
+  });
+});
+
+describe('getImageAssets', () => {
+  it('should preserve original and thumbnail URLs as separate fields', () => {
+    const msg = createTestMessage([
+      {
+        type: 'image',
+        url: 'https://oss/fallback.png',
+        original_url: 'https://oss/original.png',
+        thumbnail_url: 'https://oss/thumb.png',
+      } as unknown as ContentPart,
+    ]);
+
+    const result = getImageAssets(msg);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        originalUrl: 'https://oss/original.png',
+        thumbnailUrl: 'https://oss/thumb.png',
+      }),
+    ]);
   });
 });
 

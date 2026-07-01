@@ -14,6 +14,11 @@ import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, 
 import { downloadImage } from '../../../utils/downloadImage';
 import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 
+interface PreviewImageAsset {
+  originalUrl: string;
+  thumbnailUrl?: string;
+}
+
 interface ImagePreviewModalProps {
   /** 图片 URL */
   imageUrl: string | null;
@@ -32,7 +37,7 @@ interface ImagePreviewModalProps {
   /** 是否有下一张 */
   hasNext?: boolean;
   /** 所有图片列表（用于底部缩略图预览） */
-  allImages?: string[];
+  allImages?: PreviewImageAsset[];
   /** 当前图片索引（用于底部缩略图预览） */
   currentIndex?: number;
   /** 选择图片回调（用于底部缩略图预览） */
@@ -457,7 +462,7 @@ export default memo(function ImagePreviewModal({
               title={`切换到图片 ${index + 1}`}
             >
               <img
-                src={ossThumbUrl(img, 160)}
+                src={img.thumbnailUrl || ossThumbUrl(img.originalUrl, 160)}
                 alt={`缩略图 ${index + 1}`}
                 className="w-full h-full object-cover"
               />

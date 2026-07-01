@@ -51,6 +51,16 @@ export interface ImagePart {
   mime_type?: string;
 }
 
+export interface ImageAsset {
+  originalUrl: string;
+  thumbnailUrl?: string;
+  filename?: string;
+  alt?: string;
+  width?: number;
+  height?: number;
+  sourcePart?: ImagePart;
+}
+
 export interface VideoPart {
   type: 'video';
   url: string;

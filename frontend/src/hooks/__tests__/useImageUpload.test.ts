@@ -44,6 +44,23 @@ describe('useImageUpload - addQuotedImage', () => {
     expect(result.current.uploadedImageUrls).toContain('https://cdn.example.com/image1.png');
   });
 
+  it('should display quoted thumbnail but keep original URL for sending', () => {
+    const { result } = renderHook(() => useImageUpload());
+
+    act(() => {
+      result.current.addQuotedImage(
+        'https://cdn.example.com/original.png',
+        'https://cdn.example.com/thumb.png',
+      );
+    });
+
+    const quoted = result.current.images[0];
+    expect(quoted.preview).toBe('https://cdn.example.com/thumb.png');
+    expect(quoted.url).toBe('https://cdn.example.com/original.png');
+    expect(result.current.uploadedImages[0].original_url).toBe('https://cdn.example.com/original.png');
+    expect(result.current.uploadedImages[0].thumbnail_url).toBe('https://cdn.example.com/thumb.png');
+  });
+
   it('should support multiple quoted images (not replace)', () => {
     const { result } = renderHook(() => useImageUpload());
 

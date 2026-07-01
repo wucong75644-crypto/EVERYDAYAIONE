@@ -8,7 +8,7 @@
  */
 
 import type { WorkspaceFileItem } from '../services/workspace';
-import type { FilePart } from '../types/message';
+import type { FilePart, ImageAsset } from '../types/message';
 import type { PreviewItem } from './types';
 
 /** 工作区列表项 → PreviewItem */
@@ -39,6 +39,16 @@ export function fromBlobImage(opts: { previewUrl: string; filename: string }): P
     url: opts.previewUrl,
     filename: opts.filename,
     // 函数名已保证输入是图片：注入 mimeType 兜底，让 ImageAdapter 在 filename 无扩展名时仍能命中
+    mimeType: 'image/*',
+  };
+}
+
+/** 消息图片资产 → PreviewItem（主体预览/下载用原图，缩略条用 thumbnailUrl） */
+export function fromImageAsset(asset: ImageAsset, fallbackFilename: string): PreviewItem {
+  return {
+    url: asset.originalUrl,
+    thumbnailUrl: asset.thumbnailUrl,
+    filename: asset.filename || fallbackFilename,
     mimeType: 'image/*',
   };
 }
