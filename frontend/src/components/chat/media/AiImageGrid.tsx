@@ -17,6 +17,7 @@ import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
+import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import styles from '../menus/shared.module.css';
 import type { ContentPart } from '../../../stores/useMessageStore';
@@ -290,7 +291,7 @@ export default function AiImageGrid({
       const part = content[i];
       if (part && part.type === 'image') {
         const imgPart = part as ImagePart;
-        const originalUrl = imgPart.original_url || imgPart.download_url || imgPart.preview_url || imgPart.url || null;
+        const originalUrl = resolveImageOriginalUrl(imgPart);
         result.push({
           asset: originalUrl ? {
             originalUrl,

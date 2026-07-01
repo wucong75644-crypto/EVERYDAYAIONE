@@ -16,6 +16,7 @@ import {
   getFiles,
   normalizeMessage,
   calcRemainingText,
+  resolveImageOriginalUrl,
 } from '../messageUtils';
 import type { Message, ContentPart } from '../../types/message';
 
@@ -177,6 +178,31 @@ describe('getImageAssets', () => {
         thumbnailUrl: 'https://oss/thumb.png',
       }),
     ]);
+  });
+
+  it('should strip OSS thumbnail process from original URL candidates', () => {
+    const processedUrl = 'https://cdn.everydayai.com.cn/workspace/a.png?x-oss-process=image/resize,w_360,m_lfit';
+    const msg = createTestMessage([
+      {
+        type: 'image',
+        url: processedUrl,
+        thumbnail_url: processedUrl,
+      } as unknown as ContentPart,
+    ]);
+
+    const result = getImageAssets(msg);
+
+    expect(result[0].originalUrl).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+    expect(result[0].thumbnailUrl).toBe(processedUrl);
+  });
+
+  it('should keep non-thumbnail query parameters when stripping OSS process', () => {
+    const result = resolveImageOriginalUrl({
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/workspace/a.png?Expires=1&x-oss-process=image/resize,w_360,m_lfit&Signature=abc',
+    });
+
+    expect(result).toBe('https://cdn.everydayai.com.cn/workspace/a.png?Expires=1&Signature=abc');
   });
 });
 

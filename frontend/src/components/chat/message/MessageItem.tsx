@@ -24,6 +24,7 @@ import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
+import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 import { ossThumbUrl } from '../../../utils/ossThumbUrl';
 import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
@@ -41,6 +42,7 @@ import SuggestionChips from './SuggestionChips';
 import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
+import type { ImagePart } from '../../../types/message';
 
 /** 内联图表图片（元数据驱动的固定占位 + 直接替换）
  *  后端传 width/height → 前端用 aspect-ratio 预留精确空间 → 零布局跳变
@@ -562,16 +564,9 @@ export default memo(function MessageItem({
                     );
                   }
                   if (part.type === 'image' && (part as { url?: string }).url) {
-                    const img = part as {
-                      url: string;
-                      original_url?: string;
-                      download_url?: string;
-                      preview_url?: string;
-                      alt?: string;
-                      width?: number;
-                      height?: number;
-                    };
-                    const originalUrl = img.original_url || img.download_url || img.preview_url || img.url;
+                    const img = part as ImagePart;
+                    const originalUrl = resolveImageOriginalUrl(img) || img.url || '';
+                    if (!originalUrl) return null;
                     const imgIndex = imageAssets.findIndex((asset) => asset.originalUrl === originalUrl);
                     return (
                       <InlineChartImage

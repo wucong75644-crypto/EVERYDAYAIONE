@@ -1034,6 +1034,8 @@
 
 | 函数 | 文件路径 | 功能描述 |
 |------|---------|---------|
+| `stripOssImageProcess` | `frontend/src/utils/messageUtils.ts` | 从图片 URL 移除 OSS `x-oss-process` 参数，保留其他查询参数 |
+| `resolveImageOriginalUrl` | `frontend/src/utils/messageUtils.ts` | 从图片 content part 解析原图 URL，并防止缩略图处理参数进入预览/下载链路 |
 | `getImageAssets` | `frontend/src/utils/messageUtils.ts` | 从消息 content 提取图片资产对象，保留 `originalUrl` / `thumbnailUrl` 语义 |
 | `fromImageAsset` | `frontend/src/preview/toPreviewItem.ts` | 将图片资产转换为 PreviewItem，主体预览/下载用原图，缩略条用缩略图 |
 | `useImageUpload.addQuotedImage` | `frontend/src/hooks/useImageUpload.ts` | 引用图片加入输入框；显示可用缩略图，发送与入库保留原图 URL |
