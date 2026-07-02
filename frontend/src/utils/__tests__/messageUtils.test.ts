@@ -204,6 +204,16 @@ describe('getImageAssets', () => {
 
     expect(result).toBe('https://cdn.everydayai.com.cn/workspace/a.png?Expires=1&Signature=abc');
   });
+
+  it('should skip workspace thumbnail candidates and continue to original URL fields', () => {
+    const result = resolveImageOriginalUrl({
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+      preview_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+    });
+
+    expect(result).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+  });
 });
 
 // ============================================================

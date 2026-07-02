@@ -18,7 +18,7 @@ import {
 } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
-import { toOriginalImageUrl, toThumbnailImageUrl } from '../../../utils/imageUrlRules';
+import { pickOriginalImageUrl, toThumbnailImageUrl } from '../../../utils/imageUrlRules';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
@@ -86,7 +86,10 @@ export default function ConversationViewTab({ userId }: Props) {
   const allUrls = useMemo(() => {
     const urls: string[] = [];
     for (const m of messages) {
-      m.attachments?.forEach((a) => urls.push(a.download_url || a.original_url || a.url));
+      m.attachments?.forEach((a) => {
+        const url = pickOriginalImageUrl(a.download_url, a.original_url, a.url);
+        if (url) urls.push(url);
+      });
       if (m.image_url) urls.push(m.image_url);
       if (m.video_url) urls.push(m.video_url);
     }
@@ -100,14 +103,15 @@ export default function ConversationViewTab({ userId }: Props) {
       m.attachments?.forEach((a) => {
         if (a.type === 'image') {
           items.push({
-            url: toOriginalImageUrl(a.original_url || a.download_url || a.url),
+            url: pickOriginalImageUrl(a.original_url, a.download_url, a.url),
             thumbnailUrl: a.thumbnail_url || undefined,
             filename: a.name,
           });
         }
       });
       if (m.image_url) {
-        items.push({ url: toOriginalImageUrl(m.image_url), filename: filenameFromUrl(m.image_url) });
+        const url = pickOriginalImageUrl(m.image_url);
+        if (url) items.push({ url, filename: filenameFromUrl(m.image_url) });
       }
     }
     return items;
@@ -265,8 +269,8 @@ function AdminMessageBubble({
               {message.attachments.map((a, i) => (
                 <AttachmentThumb
                   key={i}
-                  url={toOriginalImageUrl(a.download_url || a.original_url || a.url)}
-                  previewUrl={toOriginalImageUrl(a.original_url || a.download_url || a.url)}
+                  url={pickOriginalImageUrl(a.download_url, a.original_url, a.url)}
+                  previewUrl={pickOriginalImageUrl(a.original_url, a.download_url, a.url)}
                   thumbnailUrl={a.thumbnail_url || null}
                   name={a.name}
                   type={a.type}

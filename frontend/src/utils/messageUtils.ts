@@ -13,7 +13,7 @@ import type {
   VideoPart,
   FilePart,
 } from '../types/message';
-import { toOriginalImageUrl } from './imageUrlRules';
+import { pickOriginalImageUrl } from './imageUrlRules';
 
 // ============================================================
 // 内容提取函数
@@ -58,8 +58,7 @@ export function calcRemainingText(
 }
 
 export function resolveImageOriginalUrl(part: ImagePart): string | null {
-  const url = part.original_url || part.download_url || part.preview_url || part.url || null;
-  return url ? toOriginalImageUrl(url) : null;
+  return pickOriginalImageUrl(part.original_url, part.download_url, part.preview_url, part.url) || null;
 }
 
 /** 从 Message 提取图片资产，保留原图/缩略图语义 */

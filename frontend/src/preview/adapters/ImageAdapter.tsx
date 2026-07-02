@@ -9,6 +9,7 @@
  */
 
 import ImagePreviewModal from '../../components/chat/media/ImagePreviewModal';
+import { toOriginalImageUrl } from '../../utils/imageUrlRules';
 import { IMAGE_EXTS } from '../registry';
 import type { PreviewAdapter, PreviewCommonProps, PreviewItem } from '../types';
 import { extOf } from '../types';
@@ -21,15 +22,18 @@ function ImageAdapterComponent({
   onNavigate,
   onDelete,
 }: PreviewCommonProps) {
+  const imageUrl = toOriginalImageUrl(item.url);
   // 所有兄弟图片的 URL 列表（用于底部缩略图栏）
-  const allImages = siblings.map((s) => ({
-    originalUrl: s.url || '',
-    thumbnailUrl: s.thumbnailUrl,
-  }));
+  const allImages = siblings
+    .map((s) => ({
+      originalUrl: toOriginalImageUrl(s.url),
+      thumbnailUrl: s.thumbnailUrl,
+    }))
+    .filter((s) => s.originalUrl);
 
   return (
     <ImagePreviewModal
-      imageUrl={item.url || null}
+      imageUrl={imageUrl || null}
       filename={item.filename}
       onClose={onClose}
       onPrev={() => onNavigate(index - 1)}

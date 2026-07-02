@@ -47,6 +47,22 @@ describe('ImageContextMenu', () => {
     window.removeEventListener('chat:quote-image', eventHandler);
   });
 
+  it('should not dispatch quote event when only thumbnail URL is provided as imageUrl', () => {
+    const eventHandler = vi.fn();
+    window.addEventListener('chat:quote-image', eventHandler);
+
+    render(
+      <ImageContextMenu
+        {...defaultProps}
+        imageUrl="https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp"
+      />,
+    );
+    fireEvent.click(screen.getByText('引用'));
+
+    expect(eventHandler).not.toHaveBeenCalled();
+    window.removeEventListener('chat:quote-image', eventHandler);
+  });
+
   it('should call onClose when ESC is pressed', () => {
     const onClose = vi.fn();
     render(<ImageContextMenu {...defaultProps} onClose={onClose} />);

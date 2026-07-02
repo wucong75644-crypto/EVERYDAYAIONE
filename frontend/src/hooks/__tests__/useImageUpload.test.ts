@@ -61,6 +61,17 @@ describe('useImageUpload - addQuotedImage', () => {
     expect(result.current.uploadedImages[0].thumbnail_url).toBe('https://cdn.example.com/thumb.png');
   });
 
+  it('should reject quoted thumbnail URL when original URL is missing', () => {
+    const { result } = renderHook(() => useImageUpload());
+
+    act(() => {
+      result.current.addQuotedImage('https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp');
+    });
+
+    expect(result.current.images).toHaveLength(0);
+    expect(result.current.uploadError).toBe('无法引用缩略图，请打开原图后再引用');
+  });
+
   it('should support multiple quoted images (not replace)', () => {
     const { result } = renderHook(() => useImageUpload());
 

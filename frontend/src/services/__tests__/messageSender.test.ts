@@ -154,6 +154,25 @@ describe('createTextWithImages', () => {
     expect('workspace_path' in (result[1] as object)).toBe(false);
   });
 
+  it('should not send workspace thumbnail as original when object contains an original fallback', () => {
+    const result = createTextWithImages('看图', [
+      {
+        url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+        thumbnail_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+        download_url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+      },
+    ]);
+
+    expect(result[1]).toEqual({
+      type: 'image',
+      url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+      original_url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+      thumbnail_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+      preview_url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+      download_url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+    });
+  });
+
   it('should preserve order for ImageInputInfo array', () => {
     const result = createTextWithImages('对比', [
       { url: 'https://x/1.png', name: '1.png', workspace_path: '上传/2026-06/1.png' },

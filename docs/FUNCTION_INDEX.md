@@ -1034,9 +1034,12 @@
 
 | 函数 | 文件路径 | 功能描述 |
 |------|---------|---------|
-| `toOriginalImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 原图规则入口；预览、下载、传模型前移除 OSS `x-oss-process` 参数 |
-| `toThumbnailImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 缩略图兜底入口；不再生成 OSS 处理参数，缺少 `thumbnailUrl` 时返回原图 URL |
-| `resolveImageOriginalUrl` | `frontend/src/utils/messageUtils.ts` | 从图片 content part 解析原图 URL，并防止缩略图处理参数进入预览/下载链路 |
+| `isThumbnailImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 判断 URL 是否为独立缩略图对象，当前用于识别 `/workspace-thumbnails/` |
+| `toOriginalImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 原图规则入口；预览、下载、传模型前移除 OSS `x-oss-process` 参数，并拒绝独立缩略图对象 |
+| `pickOriginalImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 按候选字段顺序选择第一个合法原图 URL，避免旧数据中缩略图字段短路原图字段 |
+| `toDisplayThumbnailUrl` | `frontend/src/utils/imageUrlRules.ts` | 缩略图展示入口；小图、缩略条、列表网格可使用独立缩略图，缺省时回退原图 |
+| `toThumbnailImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 旧缩略图兜底入口；委托给 `toDisplayThumbnailUrl`，不再生成 OSS 处理参数 |
+| `resolveImageOriginalUrl` | `frontend/src/utils/messageUtils.ts` | 从图片 content part 解析原图 URL，逐个跳过缩略图候选，防止进入预览/下载链路 |
 | `getImageAssets` | `frontend/src/utils/messageUtils.ts` | 从消息 content 提取图片资产对象，保留 `originalUrl` / `thumbnailUrl` 语义 |
 | `fromImageAsset` | `frontend/src/preview/toPreviewItem.ts` | 将图片资产转换为 PreviewItem，主体预览/下载用原图，缩略条用缩略图 |
 | `useImageUpload.addQuotedImage` | `frontend/src/hooks/useImageUpload.ts` | 引用图片加入输入框；显示可用缩略图，发送与入库保留原图 URL |

@@ -12,6 +12,7 @@
 import { Quote, Copy, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
+import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import BaseContextMenu, { type ContextMenuItem } from '../menus/BaseContextMenu';
 
 interface ImageContextMenuProps {
@@ -33,16 +34,28 @@ export default function ImageContextMenu({
   closing = false,
   onClose,
 }: ImageContextMenuProps) {
+  const originalUrl = toOriginalImageUrl(imageUrl);
+
   const handleQuote = () => {
+    if (!originalUrl) {
+      toast.error('无法引用缩略图');
+      onClose();
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent('chat:quote-image', {
-        detail: { url: imageUrl, thumbnailUrl, messageId },
+        detail: { url: originalUrl, thumbnailUrl, messageId },
       }),
     );
     onClose();
   };
 
   const handleCopy = async () => {
+    if (!originalUrl) {
+      toast.error('无法复制缩略图');
+      onClose();
+      return;
+    }
     try {
       // clipboard.write 只支持 image/png，需通过 canvas 转换格式
       const img = new Image();
@@ -60,7 +73,7 @@ export default function ImageContextMenu({
           );
         };
         img.onerror = () => reject(new Error('image load failed'));
-        img.src = imageUrl;
+        img.src = originalUrl;
       });
       await navigator.clipboard.write([
         new ClipboardItem({ 'image/png': pngBlob }),
@@ -69,7 +82,7 @@ export default function ImageContextMenu({
     } catch {
       // 降级：复制图片链接
       try {
-        await navigator.clipboard.writeText(imageUrl);
+        await navigator.clipboard.writeText(originalUrl);
         toast.success('已复制图片链接');
       } catch {
         toast.error('复制失败');
@@ -80,7 +93,8 @@ export default function ImageContextMenu({
 
   const handleDownload = async () => {
     try {
-      await downloadImage(imageUrl, `image-${messageId}`);
+      if (!originalUrl) throw new Error('thumbnail cannot be downloaded as original');
+      await downloadImage(originalUrl, `image-${messageId}`);
     } catch {
       toast.error('下载失败');
     }

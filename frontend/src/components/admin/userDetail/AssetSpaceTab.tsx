@@ -20,7 +20,7 @@ import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
 import { UploadCard, GenerationCard } from './AssetCards';
-import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
+import { pickOriginalImageUrl } from '../../../utils/imageUrlRules';
 
 type Mode = 'uploads' | 'generations';
 
@@ -48,7 +48,7 @@ export default function AssetSpaceTab({ userId }: Props) {
       return uploads
         .filter((u) => u.type === 'image')
         .map((u) => ({
-          url: toOriginalImageUrl(u.original_url || u.download_url || u.url),
+          url: pickOriginalImageUrl(u.original_url, u.download_url, u.url),
           thumbnailUrl: u.thumbnail_url || undefined,
           filename: u.name,
         }));
@@ -56,7 +56,7 @@ export default function AssetSpaceTab({ userId }: Props) {
     return generations
       .filter((g) => g.kind === 'image')
       .map((g) => ({
-        url: toOriginalImageUrl(g.original_url || g.download_url || g.url),
+        url: pickOriginalImageUrl(g.original_url, g.download_url, g.url),
         thumbnailUrl: g.thumbnail_url || undefined,
         filename: `${g.id}.jpg`,
       }));
@@ -116,8 +116,8 @@ export default function AssetSpaceTab({ userId }: Props) {
 
   const currentItems = useMemo(() => {
     return mode === 'uploads'
-      ? uploads.map((u) => ({ url: toOriginalImageUrl(u.download_url || u.original_url || u.url), name: u.name }))
-      : generations.map((g) => ({ url: toOriginalImageUrl(g.download_url || g.original_url || g.url), name: g.id }));
+      ? uploads.map((u) => ({ url: pickOriginalImageUrl(u.download_url, u.original_url, u.url), name: u.name }))
+      : generations.map((g) => ({ url: pickOriginalImageUrl(g.download_url, g.original_url, g.url), name: g.id }));
   }, [mode, uploads, generations]);
 
   const currentUrls = useMemo(() => currentItems.map((i) => i.url), [currentItems]);
@@ -216,8 +216,8 @@ export default function AssetSpaceTab({ userId }: Props) {
                   <UploadCard
                     key={a.message_id + a.url}
                     asset={a}
-                    selected={sel.isSelected(a.download_url || a.original_url || a.url)}
-                    onToggle={() => sel.toggle(a.download_url || a.original_url || a.url)}
+                    selected={sel.isSelected(pickOriginalImageUrl(a.download_url, a.original_url, a.url))}
+                    onToggle={() => sel.toggle(pickOriginalImageUrl(a.download_url, a.original_url, a.url))}
                     onPreview={openLightbox}
                   />
                 ))
@@ -225,8 +225,8 @@ export default function AssetSpaceTab({ userId }: Props) {
                   <GenerationCard
                     key={g.id + g.url}
                     asset={g}
-                    selected={sel.isSelected(g.download_url || g.original_url || g.url)}
-                    onToggle={() => sel.toggle(g.download_url || g.original_url || g.url)}
+                    selected={sel.isSelected(pickOriginalImageUrl(g.download_url, g.original_url, g.url))}
+                    onToggle={() => sel.toggle(pickOriginalImageUrl(g.download_url, g.original_url, g.url))}
                     onPreview={openLightbox}
                   />
                 ))}

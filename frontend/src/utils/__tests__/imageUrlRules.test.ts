@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { toOriginalImageUrl, toThumbnailImageUrl } from '../imageUrlRules';
+import {
+  isThumbnailImageUrl,
+  toDisplayThumbnailUrl,
+  toOriginalImageUrl,
+  toThumbnailImageUrl,
+} from '../imageUrlRules';
 
 describe('imageUrlRules', () => {
   it('removes OSS image process for original image URLs', () => {
@@ -24,5 +29,20 @@ describe('imageUrlRules', () => {
   it('does not append fill thumbnail params for fixed-size grids', () => {
     expect(toThumbnailImageUrl('https://cdn.everydayai.com.cn/workspace/a.png', 160, 'fill'))
       .toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+  });
+
+  it('rejects workspace thumbnail objects as original image URLs', () => {
+    expect(toOriginalImageUrl(
+      'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+    )).toBe('');
+  });
+
+  it('allows workspace thumbnail objects for thumbnail display only', () => {
+    expect(isThumbnailImageUrl('https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp'))
+      .toBe(true);
+    expect(toDisplayThumbnailUrl(
+      'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+      'https://cdn.everydayai.com.cn/workspace/a.png',
+    )).toBe('https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp');
   });
 });

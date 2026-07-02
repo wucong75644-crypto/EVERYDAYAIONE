@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { uploadImageFile } from '../services/upload';
-import { toOriginalImageUrl } from '../utils/imageUrlRules';
+import { pickOriginalImageUrl, toDisplayThumbnailUrl, toOriginalImageUrl } from '../utils/imageUrlRules';
 import { logger } from '../utils/logger';
 
 export interface UploadedImage {
@@ -120,10 +120,10 @@ export function useImageUpload() {
               ? {
                   ...img,
                   url: toOriginalImageUrl(uploadResult.url),
-                  original_url: toOriginalImageUrl(uploadResult.original_url || uploadResult.url),
+                  original_url: pickOriginalImageUrl(uploadResult.original_url, uploadResult.url),
                   thumbnail_url: uploadResult.thumbnail_url,
-                  preview_url: toOriginalImageUrl(uploadResult.preview_url || uploadResult.url),
-                  download_url: toOriginalImageUrl(uploadResult.download_url || uploadResult.url),
+                  preview_url: pickOriginalImageUrl(uploadResult.preview_url, uploadResult.original_url, uploadResult.download_url, uploadResult.url),
+                  download_url: pickOriginalImageUrl(uploadResult.download_url, uploadResult.original_url, uploadResult.preview_url, uploadResult.url),
                   isUploading: false,
                   workspace_path: uploadResult.workspace_path,
                   name: uploadResult.name,
@@ -236,13 +236,17 @@ export function useImageUpload() {
    */
   const addQuotedImage = (cdnUrl: string, thumbnailUrl?: string) => {
     const originalUrl = toOriginalImageUrl(cdnUrl);
+    if (!originalUrl) {
+      setUploadError('无法引用缩略图，请打开原图后再引用');
+      return;
+    }
     setImages((prev) => {
       // 同一张图不重复引用
       if (prev.some((img) => img.isQuoted && img.url === originalUrl)) return prev;
       const quotedImage: UploadedImage = {
         id: `quoted-${Date.now()}`,
         file: new File([], 'quoted-image'),
-        preview: thumbnailUrl || cdnUrl,
+        preview: toDisplayThumbnailUrl(thumbnailUrl, originalUrl),
         url: originalUrl,
         original_url: originalUrl,
         thumbnail_url: thumbnailUrl,
@@ -275,10 +279,10 @@ export function useImageUpload() {
     .filter((img) => img.url !== null)
     .map((img) => ({
       url: toOriginalImageUrl(img.url as string),
-      original_url: toOriginalImageUrl(img.original_url || (img.url as string)),
+      original_url: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url as string),
       thumbnail_url: img.thumbnail_url,
-      preview_url: toOriginalImageUrl(img.preview_url || img.original_url || (img.url as string)),
-      download_url: toOriginalImageUrl(img.download_url || img.original_url || (img.url as string)),
+      preview_url: pickOriginalImageUrl(img.preview_url, img.original_url, img.download_url, img.url as string),
+      download_url: pickOriginalImageUrl(img.download_url, img.original_url, img.preview_url, img.url as string),
       name: img.name,
       workspace_path: img.workspace_path,
       mime_type: img.mime_type,

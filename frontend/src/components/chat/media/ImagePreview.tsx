@@ -10,6 +10,7 @@ import { type UploadedImage } from '../../../hooks/useImageUpload';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import { fromBlobImage } from '../../../preview/toPreviewItem';
+import { pickOriginalImageUrl, toDisplayThumbnailUrl } from '../../../utils/imageUrlRules';
 
 interface ImagePreviewProps {
   images: UploadedImage[];
@@ -28,6 +29,8 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
   const previewItems = previewableImages.map((img) =>
     fromBlobImage({
       previewUrl: img.preview!,
+      originalUrl: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url),
+      thumbnailUrl: toDisplayThumbnailUrl(img.thumbnail_url, img.preview),
       filename: img.file.name.replace(/\.[^.]+$/, ''),
     }),
   );

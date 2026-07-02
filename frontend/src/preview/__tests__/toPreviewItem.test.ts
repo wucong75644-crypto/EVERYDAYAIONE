@@ -13,12 +13,14 @@ describe('fromWorkspaceItem', () => {
         size: 1024,
         modified: '0',
         cdn_url: 'https://cdn/a.png',
+        thumbnail_url: 'https://cdn/thumb.png',
         mime_type: 'image/png',
       },
       '下载/a.png',
     );
     expect(item).toEqual({
       url: 'https://cdn/a.png',
+      thumbnailUrl: 'https://cdn/thumb.png',
       workspacePath: '下载/a.png',
       filename: 'a.png',
       mimeType: 'image/png',
@@ -40,6 +42,42 @@ describe('fromWorkspaceItem', () => {
     );
 
     expect(item.url).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+  });
+
+  it('工作区图片有缩略图时主预览仍使用 cdn_url 原图', () => {
+    const item = fromWorkspaceItem(
+      {
+        name: 'a.png',
+        is_dir: false,
+        size: 1024,
+        modified: '0',
+        cdn_url: 'https://cdn.everydayai.com.cn/workspace/a.png',
+        thumbnail_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+        mime_type: 'image/png',
+      },
+      '下载/a.png',
+    );
+
+    expect(item.url).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+    expect(item.thumbnailUrl).toBe('https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp');
+  });
+
+  it('工作区 cdn_url 如果误传缩略图则不能作为主预览', () => {
+    const item = fromWorkspaceItem(
+      {
+        name: 'a.png',
+        is_dir: false,
+        size: 1024,
+        modified: '0',
+        cdn_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+        thumbnail_url: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+        mime_type: 'image/png',
+      },
+      '下载/a.png',
+    );
+
+    expect(item.url).toBeUndefined();
+    expect(item.thumbnailUrl).toBe('https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp');
   });
 
   it('cdn_url 为 null → url 为 undefined', () => {
@@ -78,6 +116,18 @@ describe('fromBlobImage', () => {
       filename: 'photo',
       mimeType: 'image/*',
     });
+  });
+
+  it('引用图输入框预览可用缩略图，但放大预览使用原图', () => {
+    const item = fromBlobImage({
+      previewUrl: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+      originalUrl: 'https://cdn.everydayai.com.cn/workspace/a.png',
+      thumbnailUrl: 'https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp',
+      filename: 'quoted.png',
+    });
+
+    expect(item.url).toBe('https://cdn.everydayai.com.cn/workspace/a.png');
+    expect(item.thumbnailUrl).toBe('https://cdn.everydayai.com.cn/workspace-thumbnails/a.w360.webp');
   });
 });
 

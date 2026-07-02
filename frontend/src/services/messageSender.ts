@@ -14,7 +14,7 @@ import { request } from './api';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { getPlaceholderText } from '../constants/placeholder';
-import { toOriginalImageUrl } from '../utils/imageUrlRules';
+import { pickOriginalImageUrl, toOriginalImageUrl } from '../utils/imageUrlRules';
 
 // ============================================================
 // 类型定义
@@ -408,11 +408,11 @@ export function createTextWithImages(
       ? createOriginalImagePart(img)
       : {
           type: 'image' as const,
-          url: toOriginalImageUrl(img.url),
-          original_url: toOriginalImageUrl(img.original_url || img.url),
+          url: pickOriginalImageUrl(img.url, img.original_url, img.download_url, img.preview_url),
+          original_url: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url),
           ...(img.thumbnail_url ? { thumbnail_url: img.thumbnail_url } : {}),
-          preview_url: toOriginalImageUrl(img.preview_url || img.original_url || img.url),
-          download_url: toOriginalImageUrl(img.download_url || img.original_url || img.url),
+          preview_url: pickOriginalImageUrl(img.preview_url, img.original_url, img.download_url, img.url),
+          download_url: pickOriginalImageUrl(img.download_url, img.original_url, img.preview_url, img.url),
           ...(img.asset_id ? { asset_id: img.asset_id } : {}),
           ...(img.name ? { name: img.name } : {}),
           ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
@@ -442,11 +442,11 @@ export function createTextWithFiles(
       ? createOriginalImagePart(img)
       : {
           type: 'image' as const,
-          url: toOriginalImageUrl(img.url),
-          original_url: toOriginalImageUrl(img.original_url || img.url),
+          url: pickOriginalImageUrl(img.url, img.original_url, img.download_url, img.preview_url),
+          original_url: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url),
           ...(img.thumbnail_url ? { thumbnail_url: img.thumbnail_url } : {}),
-          preview_url: toOriginalImageUrl(img.preview_url || img.original_url || img.url),
-          download_url: toOriginalImageUrl(img.download_url || img.original_url || img.url),
+          preview_url: pickOriginalImageUrl(img.preview_url, img.original_url, img.download_url, img.url),
+          download_url: pickOriginalImageUrl(img.download_url, img.original_url, img.preview_url, img.url),
           ...(img.asset_id ? { asset_id: img.asset_id } : {}),
           ...(img.name ? { name: img.name } : {}),
           ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
