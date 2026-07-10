@@ -8,119 +8,24 @@
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import TextContextMenu from '../menus/TextContextMenu';
-import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { m } from 'framer-motion';
-import type { ImageAsset, Message } from '../../../stores/useMessageStore';
 import { getTextContent, getImageAssets, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
 import DeleteMessageModal from '../modals/DeleteMessageModal';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
 import { fromImageAsset } from '../../../preview/toPreviewItem';
-import toast from 'react-hot-toast';
-import { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
-import api from '../../../services/api';
-import { useMessageStore } from '../../../stores/useMessageStore';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
 import { logger } from '../../../utils/logger';
-import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
-import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
-import LoadingPlaceholder from './LoadingPlaceholder';
-import MarkdownRenderer from './MarkdownRenderer';
-import ThinkingBlock from './ThinkingBlock';
-import ToolResultBlock from './ToolResultBlock';
-import ToolStepCard from './ToolStepCard';
-import FormBlock from './FormBlock';
-import EcomPlanBlock from './EcomPlanBlock';
-import ChartBlock from './ChartBlock';
-import { TableBlock } from './TableBlock';
-import FileCardList from '../media/FileCard';
+import MessageBubbleContent from './MessageBubbleContent';
 import SuggestionChips from './SuggestionChips';
 import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
-import type { ImagePart } from '../../../types/message';
-
-/** 内联图表图片（元数据驱动的固定占位 + 直接替换）
- *  后端传 width/height → 前端用 aspect-ratio 预留精确空间 → 零布局跳变
- *  对齐 Claude 方案：灰色占位区 → 图片加载完直接显示 */
-function InlineChartImage({ url, alt, width, height, onClick }: {
-  url: string; alt: string; width?: number; height?: number; onClick: () => void;
-}) {
-  const [loaded, setLoaded] = useState(false);
-  // 限制最大显示宽度 500px，按比例缩放高度
-  const maxW = 500;
-  const displayW = width ? Math.min(width, maxW) : maxW;
-  const displayH = (width && height) ? Math.round(displayW * height / width) : undefined;
-
-  return (
-    <div className="my-3" style={{ width: displayW }}>
-      {/* 固定尺寸占位：用后端传的 width/height 预留精确空间 */}
-      {!loaded && (
-        <div
-          className="rounded-xl flex items-center justify-center"
-          style={{
-            width: displayW,
-            height: displayH || 120,
-            backgroundColor: '#27272a',
-          }}
-        >
-          <svg className="w-8 h-8 text-zinc-500" xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
-            strokeLinecap="round" strokeLinejoin="round"
-          >
-            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-            <circle cx="9" cy="9" r="2" />
-            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-          </svg>
-        </div>
-      )}
-      {/* 图片：加载完直接显示，容器尺寸已固定不会跳变 */}
-      <img
-        src={toThumbnailImageUrl(url, displayW)}
-        alt={alt}
-        className={`rounded-xl shadow-sm w-full h-auto cursor-pointer ${loaded ? '' : 'hidden'}`}
-        onClick={onClick}
-        onLoad={() => setLoaded(true)}
-      />
-    </div>
-  );
-}
-
-interface MessageItemProps {
-  message: Message;
-  /** 是否正在流式输出 */
-  isStreaming?: boolean;
-  /** 是否正在重新生成 */
-  isRegenerating?: boolean;
-  /** 重新生成回调 */
-  onRegenerate?: (messageId: string) => void;
-  /** 删除回调 */
-  onDelete?: (messageId: string) => void;
-  /** 媒体加载完成回调（用于滚动调整） */
-  onMediaLoaded?: () => void;
-  /** 所有图片资产列表（主体预览用原图，缩略条用 thumbnailUrl） */
-  allImageAssets?: ImageAsset[];
-  /** 当前图片在列表中的索引（用于缩略图预览） */
-  currentImageIndex?: number;
-  /** 是否跳过进入动画（批量加载历史消息时） */
-  skipEntryAnimation?: boolean;
-  /** 单图重新生成回调（多图模式） */
-  onRegenerateSingle?: (messageId: string, imageIndex: number) => void;
-  /** Agent Loop 步骤提示（"正在搜索..." 等） */
-  agentStepHint?: string;
-  /** 流式思考内容 */
-  streamingThinking?: string;
-  /** 思考开始时间戳 */
-  thinkingStartTime?: number;
-  /** 是否启用 framer layout 动画（长对话时父级会禁用以保性能） */
-  enableLayoutAnimation?: boolean;
-  /** 建议问题列表（仅最后一条 AI 消息显示） */
-  suggestions?: string[];
-}
+import type { MessageItemProps } from './MessageItem.types';
 
 export default memo(function MessageItem({
   message,
@@ -459,298 +364,28 @@ export default memo(function MessageItem({
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
-          {/* 思考过程：单块模式独立渲染，多块模式在 content.map 内联 */}
-          {!isUser && !hasMultiBlocks && (() => {
-            // 流式中也查 message.content 中的 thinking 块（content_block_add 会推送进来）
-            const thinkingFromContent = message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined;
-            const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
-            const thinkingDurationMs = thinkingFromContent?.duration_ms;
-            // 流式中 + 还没有 thinking 块 + 还没有 text → 显示「thinking...」动画作 AI 响应等待指示
-            const isThinkingNow = !!(isStreaming && !thinkingFromContent && !textContent);
-            // 无 text 但有 duration → 渲染「Thought for 用时 X秒」状态指示
-            if (!thinkingText && !isThinkingNow && thinkingDurationMs == null) return null;
-            return (
-              <ThinkingBlock
-                content={thinkingText}
-                isThinking={isThinkingNow}
-                thinkingStartTime={thinkingStartTime}
-                durationMs={thinkingDurationMs}
-              />
-            );
-          })()}
-
-          {/* 消息文本（工具调用过程已归入 ThinkingBlock，不再独立展示 ToolStepCard） */}
-          <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
-            {/* 加载状态：流式输出开始但还没有任何可渲染的内容块
-                - 已有 content blocks（tool_step 等）时直接走多块渲染，不显示占位符
-                - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
-                - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
-            {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
-              <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
-            ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !hasMultiBlocks && !isErrorMessage && !isStreaming && !isRegenerating && !(suggestions && suggestions.length > 0)) ? (
-              /* 已完成但无内容（用户取消等场景，有建议按钮或多块内容时不算取消） */
-              <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
-            ) : bubbleTextInfo ? (
-              /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
-              bubbleTextInfo.hasAnimation ? (
-                <LoadingPlaceholder text={bubbleTextInfo.text} />
-              ) : (
-                <span>{bubbleTextInfo.text}</span>
-              )
-            ) : isErrorMessage ? (
-              <span className="text-[15px]">{textContent || 'Error occurred'}</span>
-            ) : isUser ? (
-              /* 用户消息：保持纯文本 */
-              <>{textContent}</>
-            ) : hasMultiBlocks ? (
-              /* AI 消息（多块模式）：遍历 content 按 type 分发渲染
-                 text(中间叙述) / tool_step / tool_result / image / file / form 按时序混排
-                 thinking 单独在 ThinkingBlock 渲染；设计文档：TECH_内容块混排渲染架构.md §7.2
-
-                 [multi-block-spacing] 用 space-y-1 (4px) 统一相邻 parts 垂直间距,
-                 避免各组件 my-* / mb-* 累加(thinking mb-2 + tool_step my-1.5
-                 + markdown p mb-0.75rem)产生 30-80px 空白割裂感。 */
-              <div className="space-y-1">
-                {message.content.map((part, idx) => {
-                  // thinking 内联渲染为小折叠块（每轮独立）
-                  // 兼容空 text + 有 duration_ms 的「状态指示」型 thinking 块
-                  if (part.type === 'thinking') {
-                    const tp = part as { text?: string; duration_ms?: number };
-                    if (!tp.text && tp.duration_ms == null) return null;
-                    return (
-                      <ThinkingBlock
-                        key={`thinking-${idx}`}
-                        content={tp.text || ''}
-                        durationMs={tp.duration_ms}
-                      />
-                    );
-                  }
-                  // tool_step 折叠卡片（完成后可展开查看代码/输出）
-                  if (part.type === 'tool_step') {
-                    const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
-                    return (
-                      <ToolStepCard
-                        key={ts.tool_call_id || idx}
-                        toolName={ts.tool_name || 'tool'}
-                        toolCallId={ts.tool_call_id || String(idx)}
-                        status={ts.status || 'completed'}
-                        code={ts.code}
-                        output={ts.output}
-                        input={ts.input}
-                        elapsedMs={ts.elapsed_ms}
-                      />
-                    );
-                  }
-                  // interrupt_marker：数据层标记，前端不渲染独立卡片（消息末尾灰字代替）
-                  // 详见 TECH_用户中断与恢复机制.md §15.5
-                  if (part.type === 'interrupt_marker') return null;
-                  if (part.type === 'text' && (part as { text: string }).text) {
-                    return (
-                      <MarkdownRenderer
-                        key={idx}
-                        content={(part as { text: string }).text}
-                      />
-                    );
-                  }
-                  if (part.type === 'tool_result') {
-                    const tr = part as { tool_name: string; text: string; files?: Array<{ url: string; name: string; mime_type: string; size?: number }> };
-                    return (
-                      <ToolResultBlock
-                        key={idx}
-                        toolName={tr.tool_name}
-                        text={tr.text}
-                        files={tr.files}
-                      />
-                    );
-                  }
-                  if (part.type === 'image' && (part as { url?: string }).url) {
-                    const img = part as ImagePart;
-                    const originalUrl = resolveImageOriginalUrl(img) || img.url || '';
-                    if (!originalUrl) return null;
-                    const imgIndex = imageAssets.findIndex((asset) => asset.originalUrl === originalUrl);
-                    return (
-                      <InlineChartImage
-                        key={originalUrl}
-                        url={originalUrl}
-                        alt={img.alt || '生成的图表'}
-                        width={img.width}
-                        height={img.height}
-                        onClick={() => handleImageClick(imgIndex >= 0 ? imgIndex : 0)}
-                      />
-                    );
-                  }
-                  {/* 失败的图片：裂开占位符 + 重新生成按钮 */}
-                  if (part.type === 'image' && (part as { failed?: boolean }).failed) {
-                    const failedImg = part as {
-                      width?: number; height?: number; alt?: string;
-                      retry_context?: { task: string; image_urls: string[]; platform: string; style_directive: string };
-                    };
-                    // 图片索引(用于 L3 异步 regenerate_single)
-                    const imageIdx = message.content
-                      .filter((p, i) => i < idx && p.type === 'image')
-                      .length;
-                    // B 链路同步重试(/ecom-image/retry, ImageAgent 直接出图)
-                    const ecomRetry = failedImg.retry_context ? async () => {
-                      try {
-                        const { data } = await api.post('/ecom-image/retry', {
-                          conversation_id: message.conversation_id,
-                          message_id: message.id,
-                          task: failedImg.retry_context!.task,
-                          image_urls: failedImg.retry_context!.image_urls,
-                          platform: failedImg.retry_context!.platform,
-                          style_directive: failedImg.retry_context!.style_directive,
-                          part_index: imageIdx,
-                        });
-                        if (data.success && data.image_url) {
-                          // 局部更新：替换 content 中对应位置的 ImagePart（不刷新页面）
-                          const newContent = [...message.content];
-                          newContent[idx] = {
-                            type: 'image',
-                            url: data.image_url,
-                            width: failedImg.width || 800,
-                            height: failedImg.height || 800,
-                            alt: failedImg.alt || '',
-                          };
-                          useMessageStore.getState().updateMessage(message.id, { content: newContent });
-                          toast.success('图片重新生成成功');
-                        } else {
-                          toast.error(data.error || '重新生成失败');
-                        }
-                      } catch {
-                        toast.error('重新生成失败，请稍后再试');
-                      }
-                    } : undefined;
-                    // L3 异步重试 fallback(走 regenerate_single → task 表 → KIE → WS 回推)
-                    const fallbackRetry = !ecomRetry && onRegenerateSingle
-                      ? () => handleRegenerateSingle(imageIdx)
-                      : undefined;
-                    return (
-                      <div key={`failed-${idx}`} className="my-2">
-                        <FailedMediaPlaceholder
-                          type="image"
-                          width={failedImg.width || 280}
-                          height={failedImg.height || 280}
-                          retryLabel="重新生成"
-                          onRetry={ecomRetry || fallbackRetry}
-                        />
-                      </div>
-                    );
-                  }
-                  // file：在 content.map 中跳过，统一在文字内容后的固定槽位渲染
-                  if (part.type === 'file') return null;
-                  if (part.type === 'chart') {
-                    const cp = part as import('../../../types/message').ChartPart;
-                    return (
-                      <div key={idx} className="my-3 group" style={{ maxWidth: '100%' }}>
-                        <ChartBlock
-                          option={cp.option}
-                          title={cp.title}
-                          spec_format={cp.spec_format}
-                        />
-                      </div>
-                    );
-                  }
-                  if (part.type === 'table') {
-                    const tp = part as import('../../../types/message').TablePart;
-                    return (
-                      <TableBlock
-                        key={idx}
-                        title={tp.title}
-                        columns={tp.columns}
-                        rows={tp.rows}
-                        truncated={tp.truncated}
-                      />
-                    );
-                  }
-                  if (part.type === 'form') {
-                    const fp = part as import('../../../types/message').FormPart;
-                    return <FormBlock key={fp.form_id} form={fp} />;
-                  }
-                  if (part.type === 'ecom_plan') {
-                    const ep = part as import('../../../types/message').EcomPlanPart;
-                    return (
-                      <EcomPlanBlock
-                        key={`ecom-plan-${idx}`}
-                        plan={ep}
-                        onConfirm={(images) => {
-                          // 触发图片生成：dispatch 自定义事件，InputArea 监听
-                          window.dispatchEvent(new CustomEvent('ecom:confirm-generate', {
-                            detail: { images, conversationId: message.conversation_id },
-                          }));
-                        }}
-                      />
-                    );
-                  }
-                  return null;
-                })}
-                {/* 中断提示：messages.status='interrupted' 时 partial 末尾追加 8-10px 灰字
-                    详见 TECH_用户中断与恢复机制.md §15.5 信号 2 */}
-                {(() => {
-                  if (message.status !== 'interrupted') return null;
-                  const marker = message.content.find(
-                    (p) => p.type === 'interrupt_marker'
-                  ) as { interrupted_at?: string } | undefined;
-                  if (!marker?.interrupted_at) return null;
-                  const ago = formatRelativeCN(marker.interrupted_at);
-                  return (
-                    <div
-                      className="mt-1 text-[10px] text-text-tertiary leading-none"
-                      data-testid="interrupt-hint"
-                    >
-                      停止于 {ago}
-                    </div>
-                  );
-                })()}
-                {/* 文件卡片固定槽位：所有 file block 统一在文字内容后渲染 */}
-                {!isStreaming && fileBlocks.length > 0 && (
-                  <div className="my-2" style={{ maxWidth: '400px' }}>
-                    <FileCardList files={fileBlocks} />
-                  </div>
-                )}
-                {/* 当前轮 live thinking：流式开始就显示 thinking 动画（无论是否开启深度思考） */}
-                {isStreaming && (() => {
-                  const lastBlock = message.content[message.content.length - 1];
-                  // text 正在输出时不显示 live thinking（已由 content_block_add 提交为内联块）
-                  if (lastBlock?.type === 'text') return null;
-                  // 末尾已是 thinking 块 → 由 line 475 内联渲染接管，避免重复
-                  if (lastBlock?.type === 'thinking') return null;
-                  // streamingThinking 差量（depths only：开启深度思考时显示新一轮 reasoning；否则为空仅显示动画）
-                  const committedLen = message.content
-                    .filter(p => p.type === 'thinking')
-                    .reduce((sum, p) => sum + ((p as { text?: string }).text?.length || 0), 0);
-                  const livePart = (streamingThinking || '').slice(committedLen);
-                  return (
-                    <ThinkingBlock
-                      content={livePart}
-                      isThinking
-                      thinkingStartTime={thinkingStartTime}
-                    />
-                  );
-                })()}
-                {/* 流式加载指示器 */}
-                {(isStreaming || isRegenerating) && (
-                  <LoadingPlaceholder text={agentStepHint || (
-                    textContent ? 'AI 正在输出' : 'AI 正在思考'
-                  )} />
-                )}
-              </div>
-            ) : (
-              /* AI 消息（单块 / 流式）：Markdown 渲染 */
-              <MarkdownRenderer
-                content={textContent}
-              />
-            )}
-          </div>
-
-          {/* 流式状态指示器：整个流式期间始终显示在底部
-              - 有 agentStepHint → 显示工具步骤（"正在执行代码"等）
-              - 正在输出文字 → 显示"AI 正在输出"
-              - 等待首 token → 由上方 LoadingPlaceholder 处理，这里不重复 */}
-          {!isUser && (isStreaming || isRegenerating) && textContent && !hasMultiBlocks && (
-            <div className="mt-1.5">
-              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} />
-            </div>
-          )}
+          <MessageBubbleContent
+            message={message}
+            isUser={isUser}
+            hasMultiBlocks={hasMultiBlocks}
+            imageAssets={imageAssets}
+            fileBlocks={fileBlocks}
+            isStreaming={isStreaming}
+            isRegenerating={isRegenerating}
+            textContent={textContent}
+            thinkingContent={genParams.thinking_content as string | undefined}
+            hasImage={hasImage}
+            hasVideo={hasVideo}
+            hasFiles={hasFiles}
+            isErrorMessage={isErrorMessage}
+            suggestions={suggestions}
+            bubbleTextInfo={bubbleTextInfo}
+            agentStepHint={agentStepHint}
+            streamingThinking={streamingThinking}
+            thinkingStartTime={thinkingStartTime}
+            onImageClick={handleImageClick}
+            onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
+          />
         </div>
 
         {/* AI 媒体生成消息（generate_image / generate_video）：保留 MessageMedia 全部功能

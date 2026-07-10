@@ -252,7 +252,7 @@ export function getFiles(message: Message): FilePart[] {
 const files = getFiles(message);
 const hasFiles = files.length > 0;
 // 传给 MessageMedia
-<MessageMedia imageUrls={...} videoUrls={...} files={files} />
+<MessageMedia imageAssets={...} videoUrls={...} files={files} />
 ```
 
 #### MessageMedia.tsx — 新增文件卡片渲染

@@ -226,8 +226,13 @@ EVERYDAYAIONE/
         │       ├── DeleteConfirmModal.tsx    # 对话删除确认弹框
         │       ├── conversationUtils.ts      # 对话列表工具函数
         │       ├── MessageArea.tsx           # 消息区域
-        │       ├── MessageItem.tsx           # 单条消息（组合子组件）
-        │       ├── MessageMedia.tsx          # 消息媒体渲染（图片、视频）
+        │       ├── message/                  # 消息渲染组件（主项、气泡内容、媒体内容块）
+        │       │   ├── MessageItem.tsx       # 单条消息编排（预览、工具栏、删除）
+        │       │   ├── MessageBubbleContent.tsx # 气泡内容状态分发
+        │       │   ├── MessageContentBlocks.tsx # AI 多内容块渲染
+        │       │   ├── MessageMedia.tsx      # 消息媒体容器（图片、视频、文件）
+        │       │   ├── MessageImageBlocks.tsx # 图片块渲染（缩略图展示、原图下载）
+        │       │   └── InlineChartImage.tsx  # 内容块内联图片
         │       ├── MessageActions.tsx        # 消息操作工具栏
         │       ├── MessageToolbar.tsx        # 消息工具栏（旧版，待删除）
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）

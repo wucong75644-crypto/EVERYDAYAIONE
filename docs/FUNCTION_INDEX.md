@@ -531,8 +531,12 @@
 | `ContextMenu` | `frontend/src/components/chat/ContextMenu.tsx` | 右键菜单组件 |
 | `DeleteConfirmModal` | `frontend/src/components/chat/DeleteConfirmModal.tsx` | 对话删除确认弹框 |
 | `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
-| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息（memo 包裹，useCallback 稳定回调：handleImageClick/handleRegenerateSingle/handleRegenerate） |
-| `MessageMedia` | `frontend/src/components/chat/MessageMedia.tsx` | 消息媒体渲染（memo 包裹，图片、视频、懒加载、下载、右键菜单） |
+| `MessageItem` | `frontend/src/components/chat/message/MessageItem.tsx` | 单条消息编排（memo 包裹，useCallback 稳定回调：handleImageClick/handleRegenerateSingle/handleRegenerate） |
+| `MessageBubbleContent` | `frontend/src/components/chat/message/MessageBubbleContent.tsx` | 气泡内容分发：加载、取消、错误、Markdown、多内容块 |
+| `MessageContentBlocks` | `frontend/src/components/chat/message/MessageContentBlocks.tsx` | AI 多内容块渲染：thinking/tool/text/image/file/chart/table/form/ecom_plan |
+| `MessageMedia` | `frontend/src/components/chat/message/MessageMedia.tsx` | 消息媒体容器（图片、视频、文件、生成占位符） |
+| `MessageImageBlocks` | `frontend/src/components/chat/message/MessageImageBlocks.tsx` | 图片块渲染：小图用 thumbnailUrl，下载/菜单用 originalUrl |
+| `InlineChartImage` | `frontend/src/components/chat/message/InlineChartImage.tsx` | 内容块内联图片，固定占位并按缩略图规则展示 |
 | `MessageActions` | `frontend/src/components/chat/MessageActions.tsx` | 消息操作工具栏（复制、朗读、反馈、分享、删除） |
 | `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏（旧版） |
 | `DeleteMessageModal` | `frontend/src/components/chat/DeleteMessageModal.tsx` | 删除消息确认弹框 |

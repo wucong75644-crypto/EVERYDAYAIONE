@@ -240,7 +240,7 @@ const isMediaMessage = !!message.generation_params?.type;
 ### 7.3 删除冗余逻辑
 
 - 删除 `hasMultiBlocks` 判断和单块/多块分流
-- 聊天消息不再调用 `getImageUrls()` / `getFiles()`（仅 isMediaMessage 时用）
+- 聊天消息图片统一通过 `getImageAssets()` 获取 `originalUrl/thumbnailUrl`，文件继续通过 `getFiles()` 进入固定文件卡片槽位。
 - MessageMedia 不再用于聊天消息
 
 ---
@@ -312,7 +312,7 @@ const isMediaMessage = !!message.generation_params?.type;
 
 - 消息列表、AI 多图网格、管理员资产卡片、预览弹窗底部缩略条使用 `thumbnail_url` 或 `ossThumbUrl(original_url)`。
 - 放大预览、单图下载、批量 ZIP 下载使用 `preview_url/download_url/original_url`，不使用缩略图 URL。
-- `getImageUrls()` 的语义是“原图/传输 URL”，按 `original_url -> download_url -> preview_url -> url` 兜底。
+- `getImageAssets()` 返回 `ImageAsset{originalUrl, thumbnailUrl}`；`originalUrl` 用于模型输入、引用、放大预览和下载，`thumbnailUrl` 仅用于小尺寸展示。
 
 后端处理规则：
 
