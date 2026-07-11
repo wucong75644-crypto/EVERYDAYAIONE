@@ -85,6 +85,23 @@ def _start_processing(
     _track_processing_task(task, provider, external_task_id)
 
 
+def _describe_payload_shape(value: Any, depth: int = 0) -> Any:
+    """生成不含值的 payload 结构，用于诊断 Provider 协议变化。"""
+    if depth >= 4:
+        return type(value).__name__
+    if isinstance(value, dict):
+        return {
+            str(key): _describe_payload_shape(item, depth + 1)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return {
+            "type": "list",
+            "item": _describe_payload_shape(value[0], depth + 1) if value else "empty",
+        }
+    return type(value).__name__
+
+
 # Provider → 适配器类映射（回调解析用）
 # 新增 Provider 时，只需在此注册对应的适配器类
 CALLBACK_PARSERS: Dict[ModelProvider, Dict[str, Type]] = {
@@ -148,7 +165,8 @@ async def handle_webhook(
         external_task_id = first_parser.extract_task_id(payload)
     except ValueError as e:
         logger.warning(
-            f"Webhook: missing task_id | provider={provider} | error={e}"
+            f"Webhook: missing task_id | provider={provider} | error={e} | "
+            f"payload_shape={_describe_payload_shape(payload)}"
         )
         return JSONResponse(
             status_code=400,

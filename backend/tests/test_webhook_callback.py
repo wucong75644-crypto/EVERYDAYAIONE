@@ -13,7 +13,11 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from api.routes.webhook import _processing_tasks, handle_webhook
+from api.routes.webhook import (
+    _describe_payload_shape,
+    _processing_tasks,
+    handle_webhook,
+)
 from services.adapters.base import ImageGenerateResult, TaskStatus
 from services.handlers.base import BaseHandler
 from services.task_completion_service import TaskCompletionService
@@ -68,6 +72,28 @@ def test_callback_url_contains_encoded_token() -> None:
     assert url == (
         "https://example.com/api/webhook/kie?token=secret%20token%2F%2B"
     )
+
+
+def test_payload_shape_hides_all_values() -> None:
+    payload = {
+        "code": 200,
+        "data": {
+            "taskId": "secret-task-id",
+            "resultUrls": ["https://private.example/image.png"],
+        },
+    }
+
+    shape = _describe_payload_shape(payload)
+
+    assert shape == {
+        "code": "int",
+        "data": {
+            "taskId": "str",
+            "resultUrls": {"type": "list", "item": "str"},
+        },
+    }
+    assert "secret-task-id" not in str(shape)
+    assert "private.example" not in str(shape)
 
 
 @pytest.mark.asyncio
