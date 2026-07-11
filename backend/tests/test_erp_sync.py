@@ -4,6 +4,7 @@ ERP 同步服务 + 归档任务单元测试
 """
 
 import pytest
+import time_machine
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -870,6 +871,7 @@ class TestRunArchive:
         assert count == 1
 
     @pytest.mark.asyncio
+    @time_machine.travel("2026-05-01 00:00:00+08:00")
     async def test_run_archive_skips_recent_created_with_old_modified(self):
         """doc_created_at 保底：modified=2000（ERP零值）但 created 在保留期内 → 不归档"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker

@@ -13,40 +13,23 @@
 import { ApiRequestError, request, toApiRequestError } from './api';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
-import { getPlaceholderText } from '../constants/placeholder';
 import { pickOriginalImageUrl, toOriginalImageUrl } from '../utils/imageUrlRules';
+import {
+  applyOptimisticUpdate,
+  processApiResponse,
+  rollbackOnError,
+  type GenerateResponse,
+  type GenerationType,
+  type MessageOperation,
+  type SendContext,
+  type SendOptions,
+} from './messageSendLifecycle';
+
+export type { GenerationType, MessageOperation, SendOptions } from './messageSendLifecycle';
 
 // ============================================================
 // 类型定义
 // ============================================================
-
-/** 生成类型 */
-export type GenerationType = 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
-
-/** 操作类型 */
-export type MessageOperation = 'send' | 'regenerate' | 'retry' | 'regenerate_single';
-
-/** 发送选项 */
-export interface SendOptions {
-  /** 对话 ID */
-  conversationId: string;
-  /** 消息内容（统一 ContentPart[] 格式） */
-  content: ContentPart[];
-  /** 生成类型（自动推断或显式指定） */
-  generationType?: GenerationType;
-  /** 模型 ID */
-  model?: string;
-  /** 类型特定参数 */
-  params?: Record<string, unknown>;
-  /** 操作类型 */
-  operation?: MessageOperation;
-  /** 原消息 ID（regenerate/retry 时传入） */
-  originalMessageId?: string;
-  /** WebSocket 订阅函数（可选，由调用者注入） */
-  subscribeTask?: (taskId: string, conversationId: string) => void;
-  /** WebSocket 取消订阅函数（可选，用于错误回滚） */
-  unsubscribeTask?: (taskId: string) => void;
-}
 
 /** API 请求格式 */
 interface GenerateRequest {
@@ -61,246 +44,7 @@ interface GenerateRequest {
   assistant_message_id?: string;
 }
 
-/** API 响应格式 */
-interface GenerateResponse {
-  task_id: string;
-  user_message: Message | null;
-  assistant_message: Message;
-  operation: MessageOperation;
-  generation_type?: GenerationType;
-}
-
-/** 发送上下文（sendMessage 内部生成的 ID 和时间戳） */
-interface SendContext {
-  clientRequestId: string;
-  userMessageId: string;
-  assistantMessageId: string;
-  clientTaskId: string;
-  now: Date;
-  placeholderCreatedAt: string;
-  originalAssistant?: Message;
-}
-
-// ============================================================
-// Phase 提取函数
-// ============================================================
-
 /** Phase 1: 乐观更新 — 创建用户消息 + 助手占位符 */
-function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): void {
-  const { conversationId, content, generationType, model, params, operation = 'send' } = options;
-  const messageStore = useMessageStore.getState();
-
-  // 1.1 创建乐观用户消息（send/regenerate，retry/regenerate_single 不创建）
-  if (operation !== 'retry' && operation !== 'regenerate_single') {
-    messageStore.addMessage(conversationId, {
-      id: ctx.userMessageId,
-      conversation_id: conversationId,
-      role: 'user',
-      content,
-      status: 'completed',
-      created_at: ctx.now.toISOString(),
-      client_request_id: ctx.clientRequestId,
-    });
-  }
-
-  // 1.2 处理助手消息（retry 更新原消息，其他创建新占位符）
-  if (operation === 'retry') {
-    messageStore.updateMessage(ctx.assistantMessageId, {
-      status: 'pending',
-      content: [],
-      is_error: false,
-      error: undefined,
-    });
-    if (generationType === 'chat' || !generationType) {
-      messageStore.registerStreamingId(conversationId, ctx.assistantMessageId);
-    } else {
-      messageStore.setIsSending(true);
-    }
-  } else if (operation === 'regenerate_single') {
-    const imageIndex = (params?.image_index as number) ?? 0;
-    const existing = messageStore.getMessage(ctx.assistantMessageId);
-    if (existing) {
-      const newContent = [...existing.content];
-      if (imageIndex < newContent.length) {
-        newContent[imageIndex] = { type: 'image', url: null } as ContentPart;
-      }
-      messageStore.updateMessage(ctx.assistantMessageId, { content: newContent, status: 'pending' });
-    }
-    messageStore.setIsSending(true);
-  } else {
-    // 统一占位符：旋转圆点（思考阶段），HTTP 响应后变形为类型专属占位符
-    messageStore.startStreaming(conversationId, ctx.assistantMessageId, {
-      initialContent: '',
-      createdAt: ctx.placeholderCreatedAt,
-      generationParams: { model },
-    });
-  }
-}
-
-/** Phase 3-5: API 响应处理 — 状态更新 + 任务创建 + task_id 验证 */
-function processApiResponse(
-  response: GenerateResponse,
-  options: SendOptions,
-  ctx: SendContext,
-): void {
-  const { conversationId, generationType, operation = 'send', subscribeTask } = options;
-  const messageStore = useMessageStore.getState();
-
-  // 3.1 更新助手消息的 task_id
-  messageStore.updateMessage(ctx.assistantMessageId, { task_id: response.task_id });
-
-  // 3.2 占位符变形：旋转圆点 → 类型专属占位符
-  const actualType = response.generation_type;
-  if (actualType && operation !== 'retry' && operation !== 'regenerate_single') {
-    if (actualType === 'chat') {
-      messageStore.updateMessage(ctx.assistantMessageId, {
-        generation_params: response.assistant_message.generation_params,
-      });
-    } else if (actualType === 'image_ecom') {
-      // 电商图 Phase 1：像 chat 一样保持等待（不创建图片占位符）
-      // Phase 1 返回方案卡片，Phase 2 才创建图片占位符
-      const hasTaskMeta = !!options.params?.image_task_meta;
-      if (hasTaskMeta) {
-        // Phase 2：有方案 → 图片占位符
-        const render = response.assistant_message?.generation_params?._render as Record<string, string> | undefined;
-        const loadingText = render?.placeholder_text || getPlaceholderText('image');
-        messageStore.completeStreamingWithMessage(conversationId, {
-          id: ctx.assistantMessageId,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: [{ type: 'text', text: loadingText }],
-          status: 'pending',
-          created_at: ctx.placeholderCreatedAt,
-          generation_params: response.assistant_message.generation_params,
-          task_id: response.task_id,
-        });
-        messageStore.setIsSending(true);
-      } else {
-        // Phase 1：无方案 → 像 chat 一样等待 message_done
-        messageStore.updateMessage(ctx.assistantMessageId, {
-          generation_params: response.assistant_message.generation_params,
-        });
-      }
-    } else if (actualType === 'image' || actualType === 'video' || actualType === 'audio') {
-      const render = response.assistant_message?.generation_params?._render as Record<string, string> | undefined;
-      const loadingText = render?.placeholder_text || getPlaceholderText(actualType as 'image' | 'video' | 'audio');
-      messageStore.completeStreamingWithMessage(conversationId, {
-        id: ctx.assistantMessageId,
-        conversation_id: conversationId,
-        role: 'assistant',
-        content: [{ type: 'text', text: loadingText }],
-        status: 'pending',
-        created_at: ctx.placeholderCreatedAt,
-        generation_params: response.assistant_message.generation_params,
-        task_id: response.task_id,
-      });
-      messageStore.setIsSending(true);
-    }
-  }
-
-  // Phase 4: 创建任务追踪
-  messageStore.createTask({
-    taskId: ctx.clientTaskId,
-    messageId: response.assistant_message.id,
-    conversationId,
-    type: actualType || generationType || 'chat',
-    status: 'pending',
-    progress: 0,
-    createdAt: Date.now(),
-  });
-
-  // Phase 5: 验证 task_id 一致性
-  if (response.task_id !== ctx.clientTaskId) {
-    logger.warn('messageSender', 'task_id mismatch', {
-      expected: ctx.clientTaskId,
-      received: response.task_id,
-    });
-    if (subscribeTask) {
-      subscribeTask(response.task_id, conversationId);
-    }
-  }
-}
-
-/** 错误回滚 — 取消订阅 + 清理状态 + 添加错误消息 */
-function rollbackOnError(error: unknown, options: SendOptions, ctx: SendContext): void {
-  const { conversationId, generationType, params, operation = 'send', unsubscribeTask } = options;
-  const messageStore = useMessageStore.getState();
-  const apiError = toApiRequestError(error);
-
-  logger.error('messageSender', 'send failed', error);
-
-  if (unsubscribeTask) {
-    unsubscribeTask(ctx.clientTaskId);
-    logger.info('messageSender', 'unsubscribed from task', { clientTaskId: ctx.clientTaskId });
-  }
-
-  messageStore.completeStreaming(conversationId);
-  messageStore.setIsSending(false);
-
-  if (apiError.code === 'INSUFFICIENT_CREDITS') {
-    if (ctx.originalAssistant) {
-      messageStore.updateMessage(ctx.assistantMessageId, ctx.originalAssistant);
-    } else {
-      messageStore.removeMessage(ctx.assistantMessageId);
-      messageStore.removeMessage(ctx.userMessageId);
-    }
-    return;
-  }
-
-  if (apiError.code === 'IMAGE_GENERATION_FAILED' && generationType === 'image') {
-    const imageCount = Math.max(1, Math.min(4, Number(params?.num_images ?? 1)));
-    const failedPart = {
-      type: 'image' as const,
-      url: null,
-      failed: true,
-      error: apiError.message,
-    };
-    let failedContent: ContentPart[] = Array.from({ length: imageCount }, () => ({ ...failedPart }));
-    if (operation === 'regenerate_single' && ctx.originalAssistant) {
-      failedContent = [...ctx.originalAssistant.content];
-      const imageIndex = Number(params?.image_index ?? 0);
-      failedContent[imageIndex] = failedPart;
-    }
-    messageStore.updateMessage(ctx.assistantMessageId, {
-      content: failedContent,
-      status: 'failed',
-      is_error: false,
-      error: { code: apiError.code, message: apiError.message },
-      generation_params: {
-        ...ctx.originalAssistant?.generation_params,
-        ...params,
-        type: 'image',
-      },
-    });
-    return;
-  }
-
-  if (ctx.originalAssistant) {
-    messageStore.updateMessage(ctx.assistantMessageId, ctx.originalAssistant);
-    return;
-  }
-
-  messageStore.removeMessage(ctx.assistantMessageId);
-
-  messageStore.addMessage(conversationId, {
-    id: ctx.assistantMessageId,
-    conversation_id: conversationId,
-    role: 'assistant',
-    content: [{ type: 'text', text: '' }],
-    status: 'failed',
-    is_error: true,
-    error: {
-      code: 'SEND_FAILED',
-      message: apiError.message,
-    },
-    created_at: new Date().toISOString(),
-  });
-}
-
-// ============================================================
-// 主函数
-// ============================================================
-
 /**
  * 统一消息发送
  *

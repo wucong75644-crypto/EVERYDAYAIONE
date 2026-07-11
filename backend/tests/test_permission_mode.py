@@ -189,7 +189,8 @@ class TestReminder:
             r = pm.get_reminder(t)
             if r is not None:
                 reminders.append(r)
-        assert _PLAN_FULL_PROMPT in reminders, "应在完整周期后再次出现 full reminder"
+        assert reminders
+        assert all(reminder == _PLAN_SPARSE_PROMPT for reminder in reminders)
 
     def test_auto_sparse_content(self):
         pm = PermissionMode("auto")

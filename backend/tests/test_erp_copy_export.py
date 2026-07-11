@@ -1,6 +1,7 @@
 """erp_copy_export.py 单元测试——PII 脱敏 + 字段翻译 + WHERE 构建。"""
 import sys
 from pathlib import Path
+import time_machine
 
 _backend_dir = Path(__file__).parent.parent
 if str(_backend_dir) not in sys.path:
@@ -99,6 +100,7 @@ class TestBuildCopyWhere:
 
 class TestNeedArchive:
 
+    @time_machine.travel("2026-05-01 00:00:00+08:00")
     def test_recent_no_archive(self):
         from services.kuaimai.erp_copy_export import _need_archive
         from services.kuaimai.erp_unified_schema import TimeRange

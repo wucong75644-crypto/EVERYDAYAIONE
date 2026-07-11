@@ -496,10 +496,10 @@ class TestL3PersonaPrompt:
         assert "迭代决策指南" in result
         assert "old persona" in result
 
-    def test_system_prompt_four_layers(self):
+    def test_system_prompt_uses_short_fact_contract(self):
         from services.memory.prompts.l3_persona import PERSONA_GENERATION_SYSTEM_PROMPT
 
-        assert "基础锚点" in PERSONA_GENERATION_SYSTEM_PROMPT
-        assert "兴趣图谱" in PERSONA_GENERATION_SYSTEM_PROMPT
-        assert "交互协议" in PERSONA_GENERATION_SYSTEM_PROMPT
-        assert "认知内核" in PERSONA_GENERATION_SYSTEM_PROMPT
+        assert "短事实清单" in PERSONA_GENERATION_SYSTEM_PROMPT
+        assert '<fact category="基本信息">' in PERSONA_GENERATION_SYSTEM_PROMPT
+        assert "禁止散文/段落格式" in PERSONA_GENERATION_SYSTEM_PROMPT
+        assert "不含外层 `<user_facts>`" in PERSONA_GENERATION_SYSTEM_PROMPT

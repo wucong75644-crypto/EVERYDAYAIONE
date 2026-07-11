@@ -237,6 +237,7 @@ sync_backend() {
         --exclude '.env' \
         --exclude '*.log' \
         --exclude '.pytest_cache' \
+        --exclude 'external/mediacrawler' \
         backend/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/
 

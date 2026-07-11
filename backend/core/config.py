@@ -229,7 +229,7 @@ class Settings(BaseSettings):
 
     # MediaCrawler 社交媒体爬虫配置
     crawler_enabled: bool = False
-    crawler_dir: str = "backend/external/mediacrawler"
+    crawler_dir: str = "external/mediacrawler"
     crawler_timeout: int = 120  # 单次爬取超时（秒）
     crawler_max_notes: int = 30  # 最大抓取条数上限
     crawler_headless: bool = True  # 无头浏览器模式

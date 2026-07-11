@@ -7,404 +7,37 @@
  * - 任务完成/失败辅助函数
  */
 
-import { normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
 import { calcRemainingText } from '../utils/messageUtils';
-import { tabSync } from '../utils/tabSync';
-import type { OperationContext } from './WebSocketContext';
-
-// ============================================================
-// 类型定义
-// ============================================================
-
-import type { MessageStatus } from '../types/message';
 import type { WSMessage } from '../hooks/useWebSocket';
 import { getAgentStepText, getToolCallText, getPlaceholderText } from '../constants/placeholder';
+import {
+  flushChunkBuffer,
+  type HandlerDeps,
+  type WSIncomingMessage,
+} from './wsMessageHandlerShared';
+import {
+  handleImagePartialUpdate,
+  handleMessageDone,
+  handleMessageError,
+} from './wsTaskMessageHandlers';
+
+export {
+  flushChunkBuffer,
+  type HandlerDeps,
+  type MessageStoreActions,
+} from './wsMessageHandlerShared';
 
 /**
  * WS 消息扩展类型 — 后端各消息类型可能携带的额外字段
  * 仅处理器内部使用，外部统一使用 WSMessage
  */
-interface WSIncomingMessage extends WSMessage {
-  message_id?: string;
-  message?: unknown;
-  chunk?: string;
-  accumulated?: string;
-  error?: { code?: string; message?: string };
-  credits?: number;
-  progress?: number;
-  data?: Record<string, unknown>;
-}
 
-/** normalizeMessage 参数类型（避免导出内部 RawApiMessage） */
-type NormalizeInput = Parameters<typeof normalizeMessage>[0];
+type HandlerDefinition = (deps: HandlerDeps, msg: WSIncomingMessage) => void;
 
-/** MessageStore 需要的方法子集（避免导入完整 Store 类型） */
-export interface MessageStoreActions {
-  setStatus: (messageId: string, status: MessageStatus) => void;
-  appendStreamingContent: (conversationId: string, chunk: string) => void;
-  appendContent: (messageId: string, chunk: string) => void;
-  updateTaskProgress: (taskId: string, progress: number) => void;
-  updateMessage: (messageId: string, data: Partial<Message>) => void;
-  addMessage: (conversationId: string, message: Message) => void;
-  completeTask: (taskId: string) => void;
-  failTask: (taskId: string, error: string) => void;
-  completeStreaming: (conversationId: string) => void;
-  completeStreamingWithMessage: (conversationId: string, message: Message) => void;
-  markConversationCompleted: (conversationId: string) => void;
-  setIsSending: (isSending: boolean) => void;
-  getMessage: (messageId: string) => Message | undefined;
-  setStreamingContent: (conversationId: string, content: string) => void;
-  restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
-  replaceLastTextBlock: (conversationId: string, block: { type: 'text'; text: string }) => void;
-  setAgentStepHint: (conversationId: string, hint: string) => void;
-  clearAgentStepHint: (conversationId: string) => void;
-  appendStreamingThinking: (conversationId: string, chunk: string) => void;
-  appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
-  updateContentBlock: (conversationId: string, toolCallId: string, updates: Record<string, unknown>) => void;
-  markForceRefresh: (conversationId: string) => void;
-  setSuggestions: (conversationId: string, suggestions: string[]) => void;
-  setToolConfirmRequest: (request: {
-    toolCallId: string;
-    toolName: string;
-    arguments: Record<string, unknown>;
-    description: string;
-    timeout: number;
-  } | null) => void;
-}
-
-/** handler 工厂的依赖 */
-export interface HandlerDeps {
-  getStore: () => MessageStoreActions;
-  subscribedTasksRef: React.RefObject<Set<string>>;
-  taskConversationMapRef: React.RefObject<Map<string, string>>;
-  operationContextRef: React.RefObject<Map<string, OperationContext>>;
-  chunkBufferRef: React.RefObject<Map<string, { chunk: string; conversationId: string }>>;
-  flushTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
-  unsubscribeTask: (taskId: string) => void;
-  send: (message: Omit<WSMessage, 'timestamp'>) => void;
-}
-
-// ============================================================
-// 辅助函数
-// ============================================================
-
-/** 清理任务订阅 */
-function cleanupTaskSubscription(deps: HandlerDeps, taskId: string): void {
-  deps.subscribedTasksRef.current.delete(taskId);
-  deps.taskConversationMapRef.current.delete(taskId);
-  deps.unsubscribeTask(taskId);
-}
-
-/** 处理任务完成（有 messageData），返回是否为新处理的消息 */
-function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageData: Record<string, unknown>, conversationId: string): boolean {
-  const store = deps.getStore();
-  const normalized = normalizeMessage(messageData as NormalizeInput);
-
-  // 幂等性检查：stream_end 可能已标记 completed（流/持久化解耦）
-  const existingMessage = store.getMessage(normalized.id);
-  const alreadyCompleted = existingMessage?.status === 'completed';
-
-  if (alreadyCompleted) {
-    logger.info('ws:done', 'message already completed by stream_end, persisting DB data', {
-      taskId,
-      messageId: normalized.id,
-    });
-  } else {
-    logger.info('ws:done', 'processing message', {
-      taskId,
-      conversationId,
-      messageId: normalized.id,
-    });
-  }
-
-  // 尊重后端返回的 status（全部失败时 status='failed'），不强制覆盖为 completed
-  const finalStatus = normalized.status === 'failed' ? 'failed' as const : 'completed' as const;
-
-  const updateData = {
-    ...normalized,
-    status: finalStatus,
-  };
-
-  // 统一更新逻辑：即使 stream_end 已标记 completed，
-  // 仍用 DB 返回的完整数据覆盖（含 credits_cost、generation_params 等）
-  store.updateMessage(normalized.id, updateData);
-
-  // 持久化到 messages（确保切换对话再切回来时不丢失）
-  store.addMessage(conversationId, updateData);
-
-  // 清理任务状态
-  if (finalStatus === 'failed') {
-    store.failTask(taskId, '生成失败');
-  } else {
-    store.completeTask(taskId);
-  }
-
-  // 触发操作上下文回调
-  const context = deps.operationContextRef.current.get(taskId);
-  context?.onComplete?.(normalized);
-  deps.operationContextRef.current.delete(taskId);
-
-  // stream_end 已处理 streaming 状态 → 不重复触发 completeStreaming/toast
-  return !alreadyCompleted;
-}
-
-/** 处理任务失败 */
-function handleTaskFailure(deps: HandlerDeps, taskId: string, error: { message?: string } | undefined): void {
-  const store = deps.getStore();
-  const errorMessage = error?.message || '生成失败';
-  store.failTask(taskId, errorMessage);
-
-  // 触发操作上下文回调
-  const context = deps.operationContextRef.current.get(taskId);
-  context?.onError?.(new Error(errorMessage));
-  deps.operationContextRef.current.delete(taskId);
-
-  cleanupTaskSubscription(deps, taskId);
-}
-
-/** 将缓冲的 chunk 批量刷新到 store */
-export function flushChunkBuffer(deps: HandlerDeps): void {
-  const buffer = deps.chunkBufferRef.current;
-  if (buffer.size === 0) return;
-
-  const store = deps.getStore();
-  buffer.forEach((bufferData, messageId) => {
-    const { conversationId } = bufferData;
-    if (conversationId) {
-      // 定向更新（跳过 getMessage 全局查找）
-      store.appendStreamingContent(conversationId, bufferData.chunk);
-    } else {
-      // fallback: 旧路径（理论上不应该走到这里）
-      store.appendContent(messageId, bufferData.chunk);
-    }
-  });
-  buffer.clear();
-  deps.flushTimerRef.current = null;
-}
-
-// ============================================================
-// 独立 handler 函数（从工厂提取，降低单函数复杂度）
-// ============================================================
-
-/** 处理生成完成消息 */
-function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
-  const { task_id, message_id, conversation_id } = msg;
-  const messageData = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
-
-  // L1: 完成前立即 flush 缓冲的 chunk
-  if (deps.chunkBufferRef.current.size > 0) {
-    if (deps.flushTimerRef.current) {
-      clearTimeout(deps.flushTimerRef.current);
-      deps.flushTimerRef.current = null;
-    }
-    flushChunkBuffer(deps);
-  }
-
-  logger.info('ws:message', 'done received', {
-    taskId: task_id,
-    messageId: message_id || messageData?.id,
-    conversationId: conversation_id,
-  });
-
-  const store = deps.getStore();
-
-  // conversation_id 兜底：从 taskConversationMap 查找（后端可能不发送该字段）
-  const effectiveConversationId = conversation_id
-    || (task_id ? deps.taskConversationMapRef.current.get(task_id) : undefined);
-
-  // 跟踪是否为新处理的消息（控制 toast 显示）
-  let isNewlyCompleted = true;
-
-  // 1. 有 task_id：处理任务完成
-  if (task_id) {
-    if (messageData && effectiveConversationId) {
-      isNewlyCompleted = handleTaskDoneWithMessage(deps, task_id, messageData, effectiveConversationId);
-    } else if (message_id) {
-      store.setStatus(message_id, 'completed');
-      store.completeTask(task_id);
-    }
-    cleanupTaskSubscription(deps, task_id);
-  }
-  // 2. 无 task_id 但有 messageData
-  else if (messageData) {
-    const normalized = normalizeMessage(messageData as NormalizeInput);
-    const msgStatus = normalized.status === 'failed' ? 'failed' as const : 'completed' as const;
-    store.updateMessage(message_id || (messageData.id as string), { ...normalized, status: msgStatus });
-  }
-  // 3. 只有 message_id
-  else if (message_id) {
-    store.setStatus(message_id, 'completed');
-  }
-
-  // 完成流式状态（仅在新完成时更新，避免重复触发）
-  if (effectiveConversationId && isNewlyCompleted) {
-    store.completeStreaming(effectiveConversationId);
-    store.markConversationCompleted(effectiveConversationId);
-    store.setIsSending(false);
-    tabSync.broadcast('message_completed', { conversationId: effectiveConversationId, messageId: message_id });
-  }
-
-  // Toast 提示（仅在消息确实是新完成时才显示）
-  if (isNewlyCompleted) {
-    const isFailed = messageData && (messageData.status as string) === 'failed';
-    import('react-hot-toast').then(({ default: toast }) => {
-      if (isFailed) {
-        toast.error('生成失败');
-      } else {
-        toast.success('生成完成');
-      }
-    });
-  }
-
-  // L3 批次完成兜底:任一 content_part 含 workspace_path → 通知工作区刷新
-  // (覆盖 image_partial_update 可能漏推的场景,如单图直接走 message_done)
-  const finalContent = (messageData?.content ?? []) as Array<{ workspace_path?: string }>;
-  if (Array.isArray(finalContent) && finalContent.some((p) => p && p.workspace_path)) {
-    window.dispatchEvent(new CustomEvent('workspace:changed'));
-  }
-}
-
-/** 处理生成失败消息 */
-function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
-  const { task_id, message_id, conversation_id } = msg;
-  const error = (msg.error ?? msg.payload?.error) as { code?: string; message?: string } | undefined;
-
-  // L1: 错误时丢弃缓冲（避免 flush 到已失败的消息）
-  if (message_id) {
-    deps.chunkBufferRef.current.delete(message_id);
-  }
-  if (deps.flushTimerRef.current && deps.chunkBufferRef.current.size === 0) {
-    clearTimeout(deps.flushTimerRef.current);
-    deps.flushTimerRef.current = null;
-  }
-
-  logger.error('ws:message', 'error received', undefined, {
-    taskId: task_id,
-    messageId: message_id,
-    error,
-  });
-
-  const store = deps.getStore();
-
-  // 更新消息状态：媒体错误保持媒体结构，聊天错误保留文本结构
-  if (message_id) {
-    const errorText = error?.message || '生成失败';
-    const existing = store.getMessage(message_id);
-    const generationParams = existing?.generation_params;
-    const mediaType = generationParams?.type;
-    if (mediaType === 'image') {
-      const imageCount = Math.max(1, Number(generationParams?.num_images ?? 1));
-      const currentContent = existing?.content || [];
-      const content = Array.from({ length: imageCount }, (_, index) => {
-        const part = currentContent[index];
-        if (part?.type === 'image' && part.url) return part;
-        return {
-          type: 'image' as const,
-          url: null,
-          failed: true,
-          error: errorText,
-          error_code: error?.code,
-        };
-      });
-      store.updateMessage(message_id, {
-        status: 'failed',
-        is_error: false,
-        error: { code: error?.code ?? 'UNKNOWN', message: errorText },
-        content,
-      });
-    } else {
-      store.updateMessage(message_id, {
-        status: 'failed',
-        is_error: true,
-        error: { code: error?.code ?? 'UNKNOWN', message: errorText },
-        content: [{ type: 'text', text: errorText }],
-      });
-    }
-  }
-
-  // 处理任务失败
-  if (task_id) {
-    handleTaskFailure(deps, task_id, error);
-  }
-
-  // 完成流式状态
-  if (conversation_id) {
-    store.completeStreaming(conversation_id);
-  }
-
-  // 设置发送状态
-  store.setIsSending(false);
-
-  // Toast 提示
-  import('react-hot-toast').then(({ default: toast }) => {
-    toast.error(error?.message || '生成失败');
-  });
-}
-
-/** 处理多图批次单张图片完成/失败通知 */
-function handleImagePartialUpdate(deps: HandlerDeps, msg: WSIncomingMessage): void {
-  const { message_id } = msg;
-  const payload = (msg.payload || {}) as {
-    image_index?: number;
-    content_part?: Message['content'][number];
-    completed_count?: number;
-    total_count?: number;
-    error?: string;
-    error_code?: string;
-  };
-  const { image_index, content_part, completed_count, total_count, error, error_code } = payload;
-
-  if (!message_id || image_index === undefined) return;
-
-  logger.info('ws:image', 'partial update', {
-    messageId: message_id,
-    imageIndex: image_index,
-    progress: `${completed_count}/${total_count}`,
-    hasError: !!error,
-  });
-
-  const store = deps.getStore();
-  const existing = store.getMessage(message_id);
-  if (!existing) return;
-
-  // 克隆 content 数组，在对应 index 插入/替换
-  const content = [...(existing.content || [])];
-
-  // 确保数组长度足够
-  while (content.length <= image_index) {
-    content.push({ type: 'image', url: null } as unknown as Message['content'][number]);
-  }
-
-  if (error) {
-    content[image_index] = {
-      type: 'image',
-      url: null,
-      failed: true,
-      error,
-      error_code,
-    } as unknown as Message['content'][number];
-  } else if (content_part) {
-    content[image_index] = content_part;
-  }
-
-  store.updateMessage(message_id, { content });
-
-  // L3 单图落工作区成功 → 通知工作区面板刷新(silent)
-  if (content_part && (content_part as { workspace_path?: string }).workspace_path) {
-    window.dispatchEvent(new CustomEvent('workspace:changed'));
-  }
-}
-
-// ============================================================
-// Handler 工厂
-// ============================================================
-
-export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg: WSMessage) => void> {
-  // 内部使用 WSIncomingMessage 访问后端可能发送的额外字段
-  const handlers: Record<string, (msg: WSIncomingMessage) => void> = {
-    message_start: (msg) => {
+const handlerDefinitions: Record<string, HandlerDefinition> = {
+  message_start: (deps, msg) => {
       const { message_id } = msg;
       if (!message_id) return;
 
@@ -412,7 +45,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       deps.getStore().setStatus(message_id, 'streaming');
     },
 
-    message_chunk: (msg) => {
+  message_chunk: (deps, msg) => {
       const { message_id, task_id, conversation_id } = msg;
       const chunk = msg.chunk || (msg.payload?.chunk as string | undefined);
       if (!message_id || !chunk || !conversation_id) return;
@@ -450,7 +83,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
     // stream_end：LLM 流结束信号（对标 Anthropic message_stop）
     // 在 DB 持久化之前发送，前端立即退出 streaming 状态
-    stream_end: (msg) => {
+  stream_end: (deps, msg) => {
       const { message_id, conversation_id } = msg;
       logger.info('ws:message', 'stream_end received', { messageId: message_id, conversationId: conversation_id });
 
@@ -475,7 +108,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       window.dispatchEvent(new CustomEvent('workspace:changed'));
     },
 
-    message_progress: (msg) => {
+  message_progress: (deps, msg) => {
       const { task_id } = msg;
       const progress = msg.progress ?? (msg.payload?.progress as number | undefined);
       if (!task_id || progress === undefined) return;
@@ -484,13 +117,13 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       deps.getStore().updateTaskProgress(task_id, progress);
     },
 
-    message_done: (msg) => handleMessageDone(deps, msg),
+  message_done: (deps, msg) => handleMessageDone(deps, msg),
 
-    message_error: (msg) => handleMessageError(deps, msg),
+  message_error: (deps, msg) => handleMessageError(deps, msg),
 
-    image_partial_update: (msg) => handleImagePartialUpdate(deps, msg),
+  image_partial_update: (deps, msg) => handleImagePartialUpdate(deps, msg),
 
-    credits_changed: (msg) => {
+  credits_changed: (_deps, msg) => {
       const credits = msg.credits ?? (msg.payload?.credits as number | undefined);
       if (credits === undefined) return;
 
@@ -502,7 +135,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
-    subscribed: (msg) => {
+  subscribed: (deps, msg) => {
       const { task_id, accumulated, accumulated_blocks } = (msg.payload || {}) as {
         task_id?: string;
         accumulated?: string;
@@ -529,7 +162,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
-    memory_extracted: (msg) => {
+  memory_extracted: (_deps, msg) => {
       const data = (msg.data ?? msg.payload) as { memories?: unknown[]; count?: number };
       if (!data?.memories) return;
 
@@ -540,7 +173,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       });
     },
 
-    thinking_chunk: (msg) => {
+  thinking_chunk: (deps, msg) => {
       const { conversation_id } = msg;
       const chunk = msg.chunk || (msg.payload?.chunk as string | undefined);
       if (!conversation_id || !chunk) return;
@@ -548,7 +181,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       deps.getStore().appendStreamingThinking(conversation_id, chunk);
     },
 
-    agent_step: (msg) => {
+  agent_step: (deps, msg) => {
       const { conversation_id } = msg;
       const toolName = msg.payload?.tool_name as string | undefined;
       if (!conversation_id || !toolName) return;
@@ -557,7 +190,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       deps.getStore().setAgentStepHint(conversation_id, hint);
     },
 
-    routing_complete: (msg) => {
+  routing_complete: (deps, msg) => {
       const { conversation_id, message_id } = msg;
       const genType = msg.payload?.generation_type as string | undefined;
       const model = msg.payload?.model as string | undefined;
@@ -593,7 +226,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
-    conversation_updated: (msg) => {
+  conversation_updated: (deps, msg) => {
       const { conversation_id } = msg;
       if (!conversation_id) return;
 
@@ -613,7 +246,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       store.markForceRefresh(conversation_id);
     },
 
-    tool_call: (msg) => {
+  tool_call: (deps, msg) => {
       const { conversation_id } = msg;
       const toolCalls = msg.payload?.tool_calls as Array<{ name: string }> | undefined;
       const turn = msg.payload?.turn as number | undefined;
@@ -627,7 +260,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:tool', 'tool_call', { conversationId: conversation_id, tools: toolCalls.map(t => t.name), turn });
     },
 
-    tool_result: (msg) => {
+  tool_result: (deps, msg) => {
       const { conversation_id } = msg;
       const toolName = msg.payload?.tool_name as string | undefined;
       const success = msg.payload?.success as boolean | undefined;
@@ -639,7 +272,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:tool', 'tool_result', { conversationId: conversation_id, tool: toolName, success });
     },
 
-    content_block_add: (msg) => {
+  content_block_add: (deps, msg) => {
       const { conversation_id } = msg;
       const block = msg.payload?.block as Record<string, unknown> | undefined;
       if (!conversation_id || !block) return;
@@ -675,7 +308,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
-    suggestions_ready: (msg) => {
+  suggestions_ready: (deps, msg) => {
       const { conversation_id } = msg;
       const suggestions = msg.payload?.suggestions as string[] | undefined;
       if (!conversation_id || !suggestions?.length) return;
@@ -684,7 +317,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:suggestions', 'suggestions_ready', { conversationId: conversation_id, count: suggestions.length });
     },
 
-    tool_confirm_request: (msg) => {
+  tool_confirm_request: (deps, msg) => {
       const { conversation_id, task_id } = msg;
       const toolCallId = msg.payload?.tool_call_id as string | undefined;
       const toolName = msg.payload?.tool_name as string | undefined;
@@ -708,13 +341,13 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:tool', 'confirm_request', { conversationId: conversation_id, tool: toolName, taskId: task_id });
     },
 
-    error: (msg) => {
+  error: (_deps, msg) => {
       const message = msg.message ?? msg.payload?.message;
       logger.error('ws:error', 'error received', undefined, { error: message });
     },
 
     // ── 定时任务事件 ──
-    scheduled_task_started: (msg) => {
+  scheduled_task_started: (_deps, msg) => {
       const data = (msg.data || msg.payload) as { task_id?: string; task_name?: string };
       if (!data?.task_id) return;
       logger.info('ws:scheduled-task', 'started', data);
@@ -726,7 +359,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       });
     },
 
-    scheduled_task_completed: (msg) => {
+  scheduled_task_completed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
         task_name?: string;
@@ -748,7 +381,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       });
     },
 
-    scheduled_task_failed: (msg) => {
+  scheduled_task_failed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
         task_name?: string;
@@ -768,7 +401,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       });
     },
 
-    scheduled_task_notification: (msg) => {
+  scheduled_task_notification: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
         task_name?: string;
@@ -779,7 +412,13 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.warn('ws:scheduled-task', 'notification', data);
       // 这里只记日志，实际 UI 提示由 toast 组件处理（如果有）
     },
-  };
-  // WSIncomingMessage extends WSMessage — 运行时对象包含所有字段，类型断言安全
-  return handlers as Record<string, (msg: WSMessage) => void>;
+};
+
+export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg: WSMessage) => void> {
+  return Object.fromEntries(
+    Object.entries(handlerDefinitions).map(([type, handler]) => [
+      type,
+      (msg: WSMessage) => handler(deps, msg as WSIncomingMessage),
+    ]),
+  );
 }

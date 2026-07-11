@@ -441,8 +441,8 @@ class TestStreamOptimizations:
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
     @patch("services.handlers.chat_handler.ws_manager")
-    async def test_prefetched_memory_passed_to_build_llm_messages(self, mock_ws, mock_factory):
-        """_prefetched_memory 从 _params 传递到 _build_llm_messages"""
+    async def test_prefetched_memory_is_not_passed_to_build_llm_messages(self, mock_ws, mock_factory):
+        """记忆由 PromptBuilder 单一入口加载，不再透传旧预取参数。"""
         handler = _make_handler()
 
         captured_kwargs = {}
@@ -475,7 +475,7 @@ class TestStreamOptimizations:
             _params={"_prefetched_memory": "用户喜欢Python"},
         )
 
-        assert captured_kwargs.get("prefetched_memory") == "用户喜欢Python"
+        assert "prefetched_memory" not in captured_kwargs
 
 
 # -- TestUserLocationPassthrough --

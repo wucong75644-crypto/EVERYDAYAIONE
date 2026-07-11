@@ -14,6 +14,13 @@ import pytest
 
 from services.agent.file_path_cache import get_file_cache
 from services.handlers.chat_context_mixin import ChatContextMixin
+from tests.prompt_builder_test_utils import isolated_parallel_fetch
+
+
+@pytest.fixture(autouse=True)
+def isolate_prompt_builder(monkeypatch):
+    from services.prompt_builder.builder import PromptBuilder
+    monkeypatch.setattr(PromptBuilder, "_parallel_fetch", isolated_parallel_fetch)
 
 # 模块级独立 conv_id，避免与其他测试 cache 串扰
 _CONV = "test-attachments-xml-conv"
@@ -255,7 +262,8 @@ class TestAttachmentsAsSystem:
         from services.handlers.chat_handler import ChatHandler
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
-        return ChatHandler(db=db)
+        handler = ChatHandler(db=db)
+        return handler
 
     @pytest.mark.asyncio
     async def test_layer67_system_injected_user_pure(self, chat_handler_db):
@@ -272,9 +280,6 @@ class TestAttachmentsAsSystem:
             ),
         ]
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -301,9 +306,6 @@ class TestAttachmentsAsSystem:
         from unittest.mock import AsyncMock, patch
 
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -336,9 +338,6 @@ class TestAttachmentsAsSystem:
             ),
         ]
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -388,9 +387,6 @@ class TestAttachmentsLegacyPath:
             ),
         ]
         with patch.object(
-            handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):

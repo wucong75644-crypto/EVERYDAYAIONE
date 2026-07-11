@@ -355,6 +355,17 @@
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
 | `sendMessage` | `frontend/src/services/messageSender.ts` | 统一消息发送（send/retry/regenerate） | options: SendOptions | Promise<string> |
+| `createWSMessageHandlers` | `frontend/src/contexts/wsMessageHandlers.ts` | 创建 WebSocket 事件名到处理函数的统一映射 | deps | Record<string, handler> |
+| `flushChunkBuffer` | `frontend/src/contexts/wsMessageHandlerShared.ts` | 将 16ms 窗口内累积的流式 chunk 批量写入 Store | deps | void |
+| `handleMessageDone` | `frontend/src/contexts/wsTaskMessageHandlers.ts` | 处理任务最终消息、幂等完成、订阅清理与 toast | deps, msg | void |
+| `handleMessageError` | `frontend/src/contexts/wsTaskMessageHandlers.ts` | 处理聊天/媒体失败状态、错误回调和订阅清理 | deps, msg | void |
+| `handleImagePartialUpdate` | `frontend/src/contexts/wsTaskMessageHandlers.ts` | 原位替换多图批次的指定图片槽位 | deps, msg | void |
+| `applyOptimisticUpdate` | `frontend/src/services/messageSendLifecycle.ts` | 创建用户乐观消息与助手占位状态 | options, ctx | void |
+| `processApiResponse` | `frontend/src/services/messageSendLifecycle.ts` | 替换占位状态、创建任务追踪并校验 task_id | response, options, ctx | void |
+| `rollbackOnError` | `frontend/src/services/messageSendLifecycle.ts` | 发送失败时恢复原消息或构造统一失败状态 | error, options, ctx | void |
+| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 统一输入提交；仅在后端接受请求后清空输入与附件 | options | handlers |
+| `useInputTaskControls` | `frontend/src/components/chat/input/useInputTaskControls.ts` | 停止当前任务、ESC 中断和 steer 信号发送 | options | handlers |
+| `useInputExternalEvents` | `frontend/src/components/chat/input/useInputExternalEvents.ts` | 注册并清理电商确认、建议发送窗口事件 | options | void |
 | `toApiRequestError` | `frontend/src/services/api.ts` | 提取后端结构化业务错误并保留中文消息 | error: unknown | ApiRequestError |
 | `getMessages` | `frontend/src/services/message.ts` | 获取消息列表 | conversationId, limit, offset, beforeId | Promise<MessageListResponse> |
 | `deleteMessage` | `frontend/src/services/message.ts` | 删除单条消息 | messageId | Promise<DeleteMessageResponse> |
@@ -451,8 +462,10 @@
 | `BatchCompletionService.handle_image_complete` | `backend/services/batch_completion_service.py` | 处理单个图片 task 成功（确认积分、推送 partial update、finalize） | task, content_parts | bool |
 | `BatchCompletionService.handle_image_failure` | `backend/services/batch_completion_service.py` | 处理单个图片 task 失败（退回积分、推送 partial update、finalize） | task, error_code, error_message | bool |
 | `BatchCompletionService._dispatch_finalize` | `backend/services/batch_completion_service.py` | 根据操作类型分发到 _finalize_batch 或 _finalize_single_image | batch_id, batch_tasks | None |
-| `BatchCompletionService._finalize_single_image` | `backend/services/batch_completion_service.py` | 单图重新生成最终处理（merge-update 现有消息的 content[image_index]） | batch_id, batch_tasks | None |
-| `BatchCompletionService._finalize_batch` | `backend/services/batch_completion_service.py` | 批次全部终态后最终处理（upsert 消息、推送 message_done） | batch_id, batch_tasks | None |
+| `BatchCompletionService._finalize_single_image` | `backend/services/batch_completion_service.py` | 兼容代理：调用 BatchMessageFinalizer 合并单图重生结果 | batch_id, batch_tasks | None |
+| `BatchCompletionService._finalize_batch` | `backend/services/batch_completion_service.py` | 兼容代理：调用 BatchMessageFinalizer 汇总批次消息 | batch_id, batch_tasks | None |
+| `BatchMessageFinalizer.finalize_single_image` | `backend/services/batch_message_finalizer.py` | 单图重新生成最终处理（merge-update 目标槽位、message_done、释放槽位） | batch_id, batch_tasks | None |
+| `BatchMessageFinalizer.finalize_batch` | `backend/services/batch_message_finalizer.py` | 批次终态汇总（upsert 消息、message_done、对话预览、释放槽位） | batch_id, batch_tasks | None |
 
 ### KIE 适配器模块 (KIE Adapter)
 

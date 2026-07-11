@@ -13,6 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from schemas.message import ContentPart, ImagePart, TextPart, VideoPart
+from tests.prompt_builder_test_utils import isolated_parallel_fetch
+
+
+@pytest.fixture(autouse=True)
+def isolate_prompt_builder(monkeypatch):
+    from services.prompt_builder.builder import PromptBuilder
+    monkeypatch.setattr(PromptBuilder, "_parallel_fetch", isolated_parallel_fetch)
 
 
 def _make_handler():
@@ -51,7 +58,6 @@ class TestGenerateCompleteBasic:
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
-             patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="你好"):
             gen_result = await handler.generate_complete(
                 content=[TextPart(text="你好")],
@@ -76,7 +82,6 @@ class TestGenerateCompleteBasic:
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
-             patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="test"):
             gen_result = await handler.generate_complete(
                 content=[TextPart(text="test")],
@@ -103,7 +108,6 @@ class TestGenerateCompleteBasic:
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
-             patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="画猫"):
             gen_result = await handler.generate_complete(
                 content=[TextPart(text="画猫")],
@@ -127,7 +131,6 @@ class TestGenerateCompleteBasic:
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
-             patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="test"):
             await handler.generate_complete(
                 content=[TextPart(text="test")], user_id="u1", conversation_id="c1",
@@ -154,7 +157,6 @@ class TestGenerateCompleteBasic:
 
         with patch("services.adapters.factory.create_chat_adapter", side_effect=capture_adapter), \
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
-             patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="test"):
             await handler.generate_complete(
                 content=[TextPart(text="test")], user_id="u1", conversation_id="c1",
@@ -177,7 +179,6 @@ class TestGenerateCompleteBasic:
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
-             patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="test"):
             gen_result = await handler.generate_complete(
                 content=[TextPart(text="test")], user_id="u1", conversation_id="c1",

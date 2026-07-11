@@ -119,6 +119,8 @@ EVERYDAYAIONE/
 │   │   ├── task_limit_service.py     # 任务限制服务
 │   │   ├── background_task_worker.py # 后台任务轮询器（兜底模式，120s 间隔）
 │   │   ├── task_completion_service.py # 统一任务完成处理服务（Webhook/轮询共用）
+│   │   ├── batch_completion_service.py # 图片批次任务终态、积分与 partial update 协调
+│   │   ├── batch_message_finalizer.py # 图片批次/单图重生的最终消息落库与通知
 │   │   ├── websocket_manager.py      # WebSocket 连接管理
 │   │   ├── intent_router.py         # 智能意图路由器（千问 Function Calling）
 │   │   ├── memory_config.py         # 记忆基础设施（Mem0 配置/单例/缓存/格式化）
@@ -239,6 +241,10 @@ EVERYDAYAIONE/
         │       ├── MessageActions.tsx        # 消息操作工具栏
         │       ├── MessageToolbar.tsx        # 消息工具栏（旧版，待删除）
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）
+        │       ├── useInputSubmission.ts     # 输入提交、新对话创建与成功后清理
+        │       ├── useInputTaskControls.ts   # 停止、ESC 中断与 steer 控制
+        │       ├── useInputExternalEvents.ts # 电商确认与建议发送事件监听
+        │       ├── inputCompletions.ts       # 电商模式 Tab 补全词典
         │       ├── InputControls.tsx         # 输入控制（文本框、按钮、上传）
         │       ├── ModelSelector.tsx         # 模型选择器
         │       ├── AdvancedSettingsMenu.tsx  # 高级设置菜单（图像/视频/推理参数）
@@ -267,6 +273,7 @@ EVERYDAYAIONE/
         │   ├── conversation.ts           # 对话 API
         │   ├── message.ts                # 消息 API
         │   ├── messageSender.ts          # 统一消息发送器（chat/image/video）
+        │   ├── messageSendLifecycle.ts   # 消息乐观更新、API 响应替换与错误回滚
         │   ├── upload.ts                 # 文件上传服务
         │   └── audio.ts                  # 音频服务
         ├── types/                    # TypeScript 类型
@@ -274,6 +281,11 @@ EVERYDAYAIONE/
         │   ├── message.ts                # 消息相关类型（ContentPart、Message、Task 等）
         │   ├── task.ts                   # 任务相关类型（兼容旧格式）
         │   └── websocket.ts              # WebSocket 消息类型
+        ├── contexts/                  # React 上下文与 WebSocket 事件处理
+        │   ├── WebSocketContext.tsx      # WebSocket 连接、订阅和 handler 依赖注入
+        │   ├── wsMessageHandlers.ts      # WebSocket 事件工厂与流式/通知事件
+        │   ├── wsMessageHandlerShared.ts # handler 共享类型、订阅清理与 chunk flush
+        │   └── wsTaskMessageHandlers.ts  # 任务完成/失败与图片 partial update
         ├── hooks/                    # 自定义 Hooks
         │   ├── useImageUpload.ts         # 图片上传逻辑
         │   ├── useAudioRecording.ts      # 录音逻辑

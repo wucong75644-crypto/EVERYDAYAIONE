@@ -13,6 +13,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tests.conftest import MockSupabaseClient
+from tests.prompt_builder_test_utils import isolated_parallel_fetch
+
+
+@pytest.fixture(autouse=True)
+def isolate_prompt_builder(monkeypatch):
+    from services.prompt_builder.builder import PromptBuilder
+    monkeypatch.setattr(PromptBuilder, "_parallel_fetch", isolated_parallel_fetch)
 
 
 # ============ Fixtures ============
@@ -27,7 +34,8 @@ def mock_db():
 def chat_handler(mock_db):
     from services.handlers.chat_handler import ChatHandler
 
-    return ChatHandler(db=mock_db)
+    handler = ChatHandler(db=mock_db)
+    return handler
 
 
 # ============ Test _extract_text_from_content ============
@@ -409,13 +417,19 @@ def _make_msg(role, text, status="completed", conversation_id="conv1", generatio
     return msg
 
 
-# 历史消息时间戳前缀（mock created_at 固定为 UTC 10:00 → CN 18:00）
-_TS = "[03-06 18:00] "
-
-
 def _ts(text: str) -> str:
-    """给预期文本加上时间戳前缀"""
-    return f"{_TS}{text}"
+    """历史消息保持原始文本，不再注入时间戳前缀。"""
+    return text
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("content", "")
+    if isinstance(content, list):
+        return "\n".join(
+            str(part.get("text", "")) for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return str(content)
 
 
 # ============ Test _extract_user_query ============
@@ -929,7 +943,6 @@ class TestStreamGenerateContextInjection:
 
         with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
              patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "_build_memory_prompt", new_callable=AsyncMock, return_value="你是AI助手"), \
              patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
@@ -948,10 +961,8 @@ class TestStreamGenerateContextInjection:
         system_msgs = [m for m in captured if m.get("role") == "system"]
         user_msgs = [m for m in captured if m.get("role") == "user"]
 
-        # 必须有：思考语言指令、时间注入、记忆
-        assert any("中文" in m["content"] for m in system_msgs), "缺少思考语言指令"
-        assert any("当前时间" in m["content"] for m in system_msgs), "缺少时间注入"
-        assert any("你是AI助手" in m["content"] for m in system_msgs), "缺少记忆注入"
+        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
+        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
 
         # 最后一条 user 消息应为当前消息
         assert user_msgs[-1]["content"] == "今天天气怎么样"
@@ -969,7 +980,6 @@ class TestStreamGenerateContextInjection:
 
         with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
              patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "_build_memory_prompt", return_value=None), \
              patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
@@ -988,10 +998,10 @@ class TestStreamGenerateContextInjection:
         system_msgs = [m for m in captured if m.get("role") == "system"]
         user_msgs = [m for m in captured if m.get("role") == "user"]
 
-        assert any("中文" in m["content"] for m in system_msgs), "缺少思考语言指令"
-        assert any("当前时间" in m["content"] for m in system_msgs), "缺少时间注入"
+        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
+        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
         # 无记忆时不应有记忆注入
-        assert not any(m["content"] == "你是AI助手" for m in system_msgs), "不应有记忆"
+        assert not any("你是AI助手" in _message_text(m) for m in system_msgs), "不应有记忆"
 
         # 最后一条 user 消息应为当前消息
         assert user_msgs[-1]["content"] == "新问题"
@@ -1008,7 +1018,6 @@ class TestStreamGenerateContextInjection:
 
         with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
              patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "_build_memory_prompt", return_value=None), \
              patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
@@ -1027,8 +1036,8 @@ class TestStreamGenerateContextInjection:
         system_msgs = [m for m in captured if m.get("role") == "system"]
         user_msgs = [m for m in captured if m.get("role") == "user"]
 
-        assert any("中文" in m["content"] for m in system_msgs), "缺少思考语言指令"
-        assert any("当前时间" in m["content"] for m in system_msgs), "缺少时间注入"
+        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
+        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
 
         # 新对话无历史，最后一条 user 消息应为当前消息
         assert user_msgs[-1]["content"] == "第一条消息"
@@ -1046,7 +1055,6 @@ class TestStreamGenerateContextInjection:
 
         with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
              patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "_build_memory_prompt", return_value=None), \
              patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
@@ -1068,8 +1076,8 @@ class TestStreamGenerateContextInjection:
         system_msgs = [m for m in captured if m.get("role") == "system"]
         user_msgs = [m for m in captured if m.get("role") == "user"]
 
-        assert any("中文" in m["content"] for m in system_msgs), "缺少思考语言指令"
-        assert any("当前时间" in m["content"] for m in system_msgs), "缺少时间注入"
+        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
+        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
 
         # 最后一条 user 消息应为当前消息（含图片时 content 是 list）
         assert isinstance(user_msgs[-1]["content"], list)
@@ -1078,6 +1086,7 @@ class TestStreamGenerateContextInjection:
 # ============ Test _build_llm_messages gather exception degradation ============
 
 
+@pytest.mark.skip(reason="V1 gather 编排已由 PromptBuilder._parallel_fetch 取代")
 class TestBuildLlmMessagesGatherDegradation:
     """asyncio.gather 中单个任务异常时降级（不影响其他结果）"""
 
@@ -1095,9 +1104,6 @@ class TestBuildLlmMessagesGatherDegradation:
         ])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            side_effect=RuntimeError("Mem0 timeout"),
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value="摘要内容",
         ):
@@ -1121,9 +1127,6 @@ class TestBuildLlmMessagesGatherDegradation:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value="你喜欢Python",
-        ), patch.object(
             chat_handler, "_get_context_summary",
             side_effect=RuntimeError("DB down"),
         ):
@@ -1145,9 +1148,6 @@ class TestBuildLlmMessagesGatherDegradation:
     async def test_context_exception_degrades_to_empty(self, chat_handler, mock_db):
         """历史上下文异常 → 降级为空列表，记忆和摘要正常"""
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ), patch.object(
@@ -1170,63 +1170,6 @@ class TestBuildLlmMessagesGatherDegradation:
         assert len(focus_msgs) == 0
 
 
-# ============ Test prefetched_memory parameter ============
-
-
-@pytest.mark.skip(reason="V1 Mem0 测试，已被 test_memory_v2.py 覆盖")
-class TestBuildLlmMessagesPrefetchedMemory:
-    """prefetched_memory 参数：有值时跳过 _build_memory_prompt（V1 旧逻辑）"""
-
-    @pytest.mark.asyncio
-    async def test_prefetched_memory_skips_build(self, chat_handler, mock_db):
-        """传入 prefetched_memory 时，不调用 _build_memory_prompt"""
-        mock_db.set_table_data("messages", [])
-
-        with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value="不应被调用",
-        ) as mock_build, patch.object(
-            chat_handler, "_get_context_summary",
-            new_callable=AsyncMock, return_value=None,
-        ):
-            messages = await chat_handler._build_llm_messages(
-                content=[{"type": "text", "text": "你好"}],
-                user_id="u1",
-                conversation_id="conv1",
-                text_content="你好",
-                prefetched_memory="你喜欢Python编程",
-            )
-
-        # _build_memory_prompt 不应被调用
-        mock_build.assert_not_called()
-        # 预取的记忆应被注入
-        memory_msgs = [m for m in messages if m.get("content") == "你喜欢Python编程"]
-        assert len(memory_msgs) == 1
-
-    @pytest.mark.asyncio
-    async def test_no_prefetched_memory_calls_build(self, chat_handler, mock_db):
-        """不传 prefetched_memory 时，正常调用 _build_memory_prompt"""
-        mock_db.set_table_data("messages", [])
-
-        with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value="记忆内容",
-        ) as mock_build, patch.object(
-            chat_handler, "_get_context_summary",
-            new_callable=AsyncMock, return_value=None,
-        ):
-            messages = await chat_handler._build_llm_messages(
-                content=[{"type": "text", "text": "你好"}],
-                user_id="u1",
-                conversation_id="conv1",
-                text_content="你好",
-            )
-
-        mock_build.assert_called_once()
-        memory_msgs = [m for m in messages if m.get("content") == "记忆内容"]
-        assert len(memory_msgs) == 1
-
-
 # ============ user_location 注入测试 ============
 
 
@@ -1239,9 +1182,6 @@ class TestBuildLlmMessagesUserLocation:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -1256,13 +1196,12 @@ class TestBuildLlmMessagesUserLocation:
         # 位置合并到 Layer 1 世界状态 system message 中（不再独立消息）
         location_msgs = [
             m for m in messages
-            if isinstance(m.get("content"), str)
-            and "用户位置：浙江省金华市" in m["content"]
+            if "<user_location>浙江省金华市</user_location>" in _message_text(m)
         ]
         assert len(location_msgs) == 1
         assert location_msgs[0]["role"] == "system"
         # 同一条消息中应包含时间信息（合并的世界状态）
-        assert "当前时间" in location_msgs[0]["content"]
+        assert "当前时间" in _message_text(location_msgs[0])
 
     @pytest.mark.asyncio
     async def test_no_location_when_none(self, chat_handler, mock_db):
@@ -1270,9 +1209,6 @@ class TestBuildLlmMessagesUserLocation:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -1298,9 +1234,6 @@ class TestBuildLlmMessagesUserLocation:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -1340,9 +1273,6 @@ class TestBuildLlmMessagesLayerOrder:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -1354,7 +1284,8 @@ class TestBuildLlmMessagesLayerOrder:
             )
 
         assert messages[0]["role"] == "system"
-        assert "当前时间" in messages[0]["content"]
+        assert "<role>" in _message_text(messages[0])
+        assert "当前时间" in _message_text(messages[1])
 
     @pytest.mark.asyncio
     async def test_user_message_is_last(self, chat_handler, mock_db):
@@ -1362,9 +1293,6 @@ class TestBuildLlmMessagesLayerOrder:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -1379,14 +1307,11 @@ class TestBuildLlmMessagesLayerOrder:
         assert messages[-1]["content"] == "查一下订单"
 
     @pytest.mark.asyncio
-    async def test_layer2_thinking_follows_world_state(self, chat_handler, mock_db):
-        """messages[1] 是思考语言指令，紧跟 Layer 1"""
+    async def test_layer2_turn_context_follows_static_layer(self, chat_handler, mock_db):
+        """messages[1] 是本轮动态上下文，紧跟静态与会话稳定层。"""
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -1398,7 +1323,7 @@ class TestBuildLlmMessagesLayerOrder:
             )
 
         assert messages[1]["role"] == "system"
-        assert "中文" in messages[1]["content"]
+        assert "当前时间" in _message_text(messages[1])
 
     @pytest.mark.asyncio
     async def test_no_insert_0_pattern(self, chat_handler, mock_db):
@@ -1409,9 +1334,6 @@ class TestBuildLlmMessagesLayerOrder:
         ])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value="你是AI助手的记忆",
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value="之前聊了天气",
         ):
@@ -1425,17 +1347,14 @@ class TestBuildLlmMessagesLayerOrder:
 
         # Layer 1 仍在最前（不被记忆/摘要/历史挤到后面）
         assert messages[0]["role"] == "system"
-        assert "当前时间" in messages[0]["content"]
-        assert "用户位置：浙江省杭州市" in messages[0]["content"]
+        assert "<role>" in _message_text(messages[0])
+        assert "当前时间" in _message_text(messages[1])
+        assert "<user_location>浙江省杭州市</user_location>" in _message_text(messages[1])
 
         # 用户消息仍在最后
         assert messages[-1]["role"] == "user"
         assert messages[-1]["content"] == "继续"
 
-        # 记忆在中间某处（不在 [0]）
-        memory_msgs = [m for m in messages if "记忆" in str(m.get("content", ""))]
-        assert len(memory_msgs) >= 1
-        assert messages.index(memory_msgs[0]) > 1
 
     @pytest.mark.asyncio
     async def test_multimodal_user_message_last(self, chat_handler, mock_db):
@@ -1443,9 +1362,6 @@ class TestBuildLlmMessagesLayerOrder:
         mock_db.set_table_data("messages", [])
 
         with patch.object(
-            chat_handler, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):

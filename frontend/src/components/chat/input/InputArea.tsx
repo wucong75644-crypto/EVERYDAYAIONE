@@ -3,12 +3,9 @@
  *
  * 统一聊天和图像生成界面，根据选择的模型自动判断功能
  */
-
 import { useState, useEffect, useCallback } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
-import toast from 'react-hot-toast';
-import { createConversation, updateConversation } from '../../../services/conversation';
-import { uploadAudio } from '../../../services/audio';
+import { updateConversation } from '../../../services/conversation';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
 import { useImageUpload } from '../../../hooks/useImageUpload';
 import { useFileUpload } from '../../../hooks/useFileUpload';
@@ -19,24 +16,15 @@ import { type UnifiedModel, type ModelType } from '../../../constants/models';
 import { isSmartModel } from '../../../constants/smartModel';
 import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
-import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
-import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
-
-// 电商图模式 Tab 补全词典（模块级常量，不随渲染重建）
-const ECOM_TAB_COMPLETIONS: Record<string, string> = {
-  "淘": "淘宝", "京": "京东", "拼": "拼多多", "抖": "抖音", "小红": "小红书",
-  "白底": "白底主图 800×800", "场景": "场景图 800×800",
-  "详情": "详情页 750×宽", "竖": "竖图 750×1000",
-  "极简": "极简风格", "网感": "网感风格", "种草": "种草风格",
-  "奢华": "高端奢华风格", "清新": "清新自然风格",
-  "国潮": "国潮风格", "复古": "复古文艺风格", "暖": "暖调生活风格",
-};
-const ECOM_TAB_KEYS_SORTED = Object.keys(ECOM_TAB_COMPLETIONS).sort((a, b) => b.length - a.length);
+import { useInputTaskControls } from './useInputTaskControls';
+import { useInputSubmission } from './useInputSubmission';
+import { useInputExternalEvents } from './useInputExternalEvents';
+import { ECOM_TAB_COMPLETIONS, ECOM_TAB_KEYS_SORTED } from './inputCompletions';
 
 interface InputAreaProps {
   conversationId: string | null;
@@ -95,12 +83,9 @@ export default function InputArea({
   const setPrompt = controlledOnPromptChange ?? setInternalPrompt;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-
   const [sendError, setSendError] = useState<string | null>(null);
-
   // 用户积分（用于禁用积分不足的数量选项）
   const userCredits = useAuthStore((s) => s.user?.credits);
-
   // 设置管理 Hook（图像/视频/聊天参数，含智能模式子模式）
   const {
     imageSettings,
@@ -161,7 +146,6 @@ export default function InputArea({
 
   // @ 文件提及 Hook
   const fileMention = useFileMention();
-
   // @ 提及选中文件：添加到 workspaceFiles + 用 hook 精准移除 @keyword
   const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => {
     onAddWorkspaceFile?.(file);
@@ -250,7 +234,6 @@ export default function InputArea({
       : smartSubMode as ModelType)
     : selectedModel.type;
   const isEcomMode = smartSubMode === 'image-ecom';
-
   // 切换到非智能模型时重置子模式
   useEffect(() => {
     if (!isSmart) setSmartSubMode('chat');
@@ -286,96 +269,11 @@ export default function InputArea({
     conversationId ? s.streamingMessages.get(conversationId) ?? null : null
   );
 
-  // 停止生成
-  const handleStop = useCallback(() => {
-    if (!streamingMessageId || !conversationId) return;
-
-    const store = useMessageStore.getState();
-
-    // 1. 保留未 commit 的 thinking 内容（取消时 thinking 可能还没写入 content blocks）
-    const thinkingText = store.streamingThinking.get(conversationId);
-    if (thinkingText) {
-      // 计算已 commit 的 thinking 长度，只保存增量部分
-      const msg = store.getMessage(streamingMessageId);
-      const committedLen = msg?.content
-        ?.filter((p) => p.type === 'thinking')
-        .reduce((sum, p) => sum + (('text' in p && typeof p.text === 'string') ? p.text.length : 0), 0) ?? 0;
-      const livePart = thinkingText.slice(committedLen);
-      if (livePart.trim()) {
-        store.appendContentBlock(conversationId, { type: 'thinking', text: livePart });
-      }
-    }
-
-    // 2. 把所有 running tool_step 改为 cancelled（前端立即视觉反馈，
-    //    后端落锚后的状态更新会被 WS 闸门 drop，所以前端必须自己改）
-    //    详见 TECH_用户中断与恢复机制.md §15.5
-    const cancelledAt = new Date().toISOString();
-    const msgForCancel = store.getMessage(streamingMessageId);
-    if (msgForCancel && Array.isArray(msgForCancel.content)) {
-      const updatedContent = msgForCancel.content.map((p) => {
-        if (
-          p.type === 'tool_step' &&
-          (p as { status?: string }).status === 'running'
-        ) {
-          return {
-            ...p,
-            status: 'cancelled' as const,
-            cancelled_at: cancelledAt,
-          };
-        }
-        return p;
-      });
-      // 末尾追加 interrupt_marker（前端不渲染独立卡片，仅供"停止于 X 前"灰字识别）
-      updatedContent.push({
-        type: 'interrupt_marker',
-        interrupted_at: cancelledAt,
-        reason: 'user_cancel',
-      } as never);
-      store.updateMessage(streamingMessageId, {
-        status: 'interrupted',
-        content: updatedContent,
-      });
-    } else {
-      store.updateMessage(streamingMessageId, { status: 'interrupted' });
-    }
-    // 3. 清理流式状态
-    store.completeStreaming(conversationId);
-    // 4. 后端取消任务（fire-and-forget）
-    cancelTaskByMessageId(streamingMessageId).catch((err) => {
-      logger.error('inputArea', '取消任务失败', err);
-    });
-  }, [streamingMessageId, conversationId]);
-
-  // 全局 ESC 快捷键停止生成（textarea 没有 focus 时也能用）
-  useEffect(() => {
-    if (!isStreaming) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      // 有 dialog/modal 打开时不拦截，让 Radix 自行处理关闭
-      if (document.querySelector('[role="dialog"]')) return;
-      e.preventDefault();
-      handleStop();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isStreaming, handleStop]);
-
-  // 打断当前执行（用户在 AI 执行中发送新消息）
-  const sendSteer = useCallback((message: string) => {
-    // 获取当前 streaming 任务的 task_id
-    const streamingMsg = streamingMessageId
-      ? useMessageStore.getState().getMessage(streamingMessageId)
-      : undefined;
-    const taskId = streamingMsg?.task_id;
-    if (!taskId || !conversationId) return;
-
-    // 通过 CustomEvent 通知 WebSocketContext 发送 user_steer
-    window.dispatchEvent(new CustomEvent('chat:user-steer', {
-      detail: { taskId, conversationId, message },
-    }));
-    logger.info('inputArea', '发送打断信号', { taskId, msgLen: message.length });
-  }, [streamingMessageId, conversationId]);
-
+  const { handleStop, sendSteer } = useInputTaskControls({
+    conversationId,
+    isStreaming,
+    streamingMessageId,
+  });
   // 对话切换时重置提交状态
   useEffect(() => {
     setIsSubmitting(false);
@@ -431,155 +329,17 @@ export default function InputArea({
     removeImageById(imageId);
     setUploadError(null);
   }, [removeImageById]);
-
-  // 发送音频消息
-  const handleAudioSubmit = async (audioBlob: Blob) => {
-    if (isSubmitting) return;
-
-    setIsSubmitting(true);
-
-    try {
-      let currentConversationId = conversationId;
-
-      // 如果是新对话，先创建对话（同时保存当前模型）
-      if (!currentConversationId) {
-        const conversation = await createConversation({
-          title: '语音对话',
-          model_id: selectedModel.id,
-          chat_settings: buildChatSettingsPayload(),
-        });
-        currentConversationId = conversation.id;
-        onConversationCreated(currentConversationId, '语音对话');
-      }
-
-      // 上传音频文件
-      const uploadResult = await uploadAudio(audioBlob);
-
-      // 发送消息（将音频 URL 作为附件）
-      await handleChatMessage(`[语音消息]`, currentConversationId, [uploadResult.audio_url]);
-    } catch (error) {
-      logger.error('inputArea', '发送语音消息失败', error);
-      setUploadError(error instanceof Error ? error.message : '语音上传失败');
-      onMessageSent(null);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // 发送消息
-  const handleSubmit = async () => {
-    // 如果有音频，调用音频提交处理
-    if (audioBlob) {
-      await handleAudioSubmit(audioBlob);
-      clearRecording();
-      return;
-    }
-
-    const anyUploading = isUploading || isFileUploading;
-    const hasWorkspaceFiles = workspaceFiles.length > 0;
-    const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles || hasWorkspaceFiles));
-    if (sendButtonState.disabled) return;
-
-    // 图生图模式必须上传图片
-    if (smartSubMode === 'image-i2i' && !hasImages) {
-      toast.error('图生图模式请先上传参考图片');
-      return;
-    }
-    // 电商图-图生图模式也需要图片
-    if (smartSubMode === 'image-ecom' && hasImages && uploadedImageUrls.length === 0) {
-      toast.error('图片还在上传中，请稍候');
-      return;
-    }
-
-    // 路径协议:任务限流由后端 task_limit_service 做单一事实来源
-    // 超限会返回 429 + 友好 message,api.ts 拦截器统一弹 toast,前端不再预检
-    const messageContent = prompt.trim();
-
-    // 打断：如果 AI 正在执行，先发 steer 信号
-    if (isStreaming && messageContent) {
-      sendSteer(messageContent);
-    }
-
-    // 准备图片 URL 数组：使用服务器 URL（确保图片已上传完成）
-    const imageUrls = uploadedImageUrls.length > 0 ? [...uploadedImageUrls] : null;
-    // 完整图片元数据（含 workspace_path/name），chat 分支用以构造 ImagePart
-    const imageInputs = uploadedImages.length > 0 ? [...uploadedImages] : null;
-    // 准备文件数组（PDF 上传 + 工作区插入的文件合并）
-    const wsFileMapped = workspaceFiles.map((f) => ({
-      url: toOriginalImageUrl(f.cdn_url),
-      name: f.name,
-      mime_type: f.mime_type || 'application/octet-stream',
-      size: f.size,
-      workspace_path: f.workspace_path,
-    }));
-    const mergedFiles = [...uploadedFileUrls, ...wsFileMapped];
-    const fileData = mergedFiles.length > 0 ? mergedFiles : null;
-
-    setIsSubmitting(true);
-
-    // 发送消息时滚动到底部（用户可能在上方浏览历史）
-    window.dispatchEvent(new Event('chat:scroll-to-bottom'));
-
-    try {
-      const isNewConversation = !conversationId;
-      const title = messageContent.slice(0, 20) || '新对话';
-
-      // 获取真实的对话 ID（新对话需先创建）
-      let currentConversationId = conversationId;
-
-      if (isNewConversation) {
-        // 新对话：必须先创建对话，获取真实 ID
-        const conversation = await createConversation({
-          title,
-          model_id: selectedModel.id,
-          chat_settings: buildChatSettingsPayload(),
-        });
-        currentConversationId = conversation.id;
-        // 通知父组件对话已创建
-        onConversationCreated(conversation.id, title);
-      }
-
-      // 发送消息（使用真实对话 ID）
-      // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
-      if (isEcomMode) {
-        // 电商图模式 v2：发送到 EcomImageHandler
-        // 不带 image_task_meta → Phase 1（方案策划）
-        // 带 image_task_meta → Phase 2（批量生图）
-        await handleImageGeneration(
-          currentConversationId!,
-          messageContent,
-          imageUrls,
-          {
-            generation_type_override: 'image_ecom',
-          },
-        );
-      } else if (effectiveModelType === 'chat') {
-        // 聊天消息（传完整图片元数据，让 ImagePart 带 workspace_path/name）
-        await handleChatMessage(
-          messageContent,
-          currentConversationId!,
-          imageInputs ?? imageUrls,
-          fileData,
-        );
-      } else if (effectiveModelType === 'video') {
-        await handleVideoGeneration(currentConversationId!, messageContent, imageUrls);
-      } else {
-        await handleImageGeneration(currentConversationId!, messageContent, imageUrls);
-      }
-
-      // 只在后端成功接受请求后清空；同步校验失败时保留全部输入。
-      setPrompt('');
-      handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
-      handleRemoveAllFiles();
-      onWorkspaceFilesConsumed?.();
-    } catch (error) {
-      logger.error('inputArea', '发送消息失败', error);
-      setSendError(error instanceof Error ? error.message : '发送失败，请重试');
-      onMessageSent(null);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const { handleAudioSubmit, handleSubmit } = useInputSubmission({
+    conversationId, selectedModel, prompt, setPrompt, audioBlob, clearRecording,
+    isSubmitting, setIsSubmitting, setUploadError, setSendError,
+    buildChatSettingsPayload, onConversationCreated, onMessageSent,
+    handleChatMessage, handleImageGeneration, handleVideoGeneration,
+    isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer,
+    isUploading, isFileUploading, hasImages, hasFiles,
+    uploadedImageUrls, uploadedImages, uploadedFileUrls, workspaceFiles,
+    getSendButtonState, handleRemoveAllImages, handleRemoveAllFiles,
+    onWorkspaceFilesConsumed,
+  });
 
   // 键盘快捷键（Tab 补全用模块级常量 ECOM_TAB_COMPLETIONS / ECOM_TAB_KEYS_SORTED）
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -610,51 +370,13 @@ export default function InputArea({
     }
   };
 
-  // 监听电商图方案确认事件 → 触发图片生成
-  useEffect(() => {
-    const handler = async (e: Event) => {
-      const { images, conversationId: cid } = (e as CustomEvent).detail || {};
-      if (!images || !cid) return;
-      try {
-        const imgUrls = uploadedImageUrls.length > 0 ? uploadedImageUrls : [];
-        await handleImageGeneration(cid, prompt || '电商主图生成', imgUrls, {
-          generation_type_override: 'image_ecom',
-          image_task_meta: images,
-          num_images: images.length,
-          product_image_urls: imgUrls,
-          style_ref_urls: [],
-        });
-      } catch (error) {
-        logger.error('inputArea', '电商图生成失败', error);
-        toast.error('图片生成失败，请重试');
-      }
-    };
-    window.addEventListener('ecom:confirm-generate', handler);
-    return () => window.removeEventListener('ecom:confirm-generate', handler);
-  }, [conversationId, prompt, uploadedImageUrls, handleImageGeneration]);
-
-  // 监听建议按钮点击事件 → 自动发送
-  useEffect(() => {
-    const handler = async (e: Event) => {
-      const text = (e as CustomEvent<{ text: string }>).detail?.text;
-      if (!text || !conversationId) return;
-
-      // 清除建议
-      useMessageStore.getState().clearSuggestions(conversationId);
-
-      // 滚动到底部
-      window.dispatchEvent(new Event('chat:scroll-to-bottom'));
-
-      try {
-        await handleChatMessage(text, conversationId);
-      } catch (error) {
-        logger.error('inputArea', '发送建议失败', error);
-      }
-    };
-
-    window.addEventListener('chat:send-suggestion', handler);
-    return () => window.removeEventListener('chat:send-suggestion', handler);
-  }, [conversationId, handleChatMessage]);
+  useInputExternalEvents({
+    conversationId,
+    prompt,
+    uploadedImageUrls,
+    handleImageGeneration,
+    handleChatMessage,
+  });
 
   const anyUploadingState = isUploading || isFileUploading;
   const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || hasImages || hasFiles || workspaceFiles.length > 0));

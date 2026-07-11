@@ -45,8 +45,8 @@ class TestFileMetaV2Fields:
         reason="真实数据未提供，跳过 V2 端到端",
     )
     @pytest.mark.skipif(
-        os.environ.get("SKIP_LLM_INTEGRATION") == "1",
-        reason="SKIP_LLM_INTEGRATION=1 时跳过真实 LLM 集成",
+        os.environ.get("RUN_LLM_INTEGRATION") != "1",
+        reason="仅在 RUN_LLM_INTEGRATION=1 时运行真实 LLM 集成",
     )
     async def test_ai_decision_persisted(self, tmp_path):
         from services.agent.data_query_cache import ensure_parquet_cache
@@ -78,8 +78,8 @@ class TestCacheHit:
         reason="真实数据未提供",
     )
     @pytest.mark.skipif(
-        os.environ.get("SKIP_LLM_INTEGRATION") == "1",
-        reason="SKIP_LLM_INTEGRATION=1",
+        os.environ.get("RUN_LLM_INTEGRATION") != "1",
+        reason="仅在 RUN_LLM_INTEGRATION=1 时运行真实 LLM 集成",
     )
     async def test_second_call_hits_cache(self, tmp_path):
         import time

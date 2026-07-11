@@ -15,6 +15,13 @@ import pytest
 
 from services.agent.file_path_cache import get_file_cache
 from services.handlers.chat_context_mixin import ChatContextMixin
+from tests.prompt_builder_test_utils import isolated_parallel_fetch
+
+
+@pytest.fixture(autouse=True)
+def isolate_prompt_builder(monkeypatch):
+    from services.prompt_builder.builder import PromptBuilder
+    monkeypatch.setattr(PromptBuilder, "_parallel_fetch", isolated_parallel_fetch)
 
 _CONV = "test-attachment-routing-baseline"
 
@@ -195,7 +202,8 @@ class TestNoDoubleInjection:
         from services.handlers.chat_handler import ChatHandler
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
-        return ChatHandler(db=db)
+        handler = ChatHandler(db=db)
+        return handler
 
     @pytest.mark.asyncio
     async def test_xlsx_file_analyze_hint_appears_only_once(
@@ -217,9 +225,6 @@ class TestNoDoubleInjection:
             ),
         ]
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -239,13 +244,12 @@ class TestNoDoubleInjection:
             str(m.get("content", "")) for m in system_msgs
             if "账单.xlsx" in str(m.get("content", ""))
         ]
-        # 统计含文件名的 system messages 中 file_analyze 引导出现的总次数
-        total = sum(s.count("file_analyze") for s in file_related_systems)
-        # 期望：只在 attachments XML 的 <action> 里出现一次
-        assert total <= 1, (
-            f"file_analyze 引导在文件相关的 system messages 里出现 {total} 次，"
-            f"期望 ≤ 1（DRY 原则）。当前疑似 build_workspace_prompt 重复注入。"
-        )
+        # workspace 注意力锚点不应重复工具指引；具体动作只由 attachments XML 声明。
+        assert len(file_related_systems) == 2
+        workspace_block = next(s for s in file_related_systems if "<attachments" not in s)
+        attachments_block = next(s for s in file_related_systems if "<attachments" in s)
+        assert "file_analyze" not in workspace_block
+        assert attachments_block.count("<action>调 file_analyze") == 1
 
     @pytest.mark.asyncio
     async def test_xlsx_file_in_at_most_2_system_messages(
@@ -273,9 +277,6 @@ class TestNoDoubleInjection:
             ),
         ]
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -523,7 +524,8 @@ class TestE2EImageOnlyScenario:
         from services.handlers.chat_handler import ChatHandler
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
-        return ChatHandler(db=db)
+        handler = ChatHandler(db=db)
+        return handler
 
     @pytest.mark.asyncio
     async def test_image_user_content_has_image_url_block(
@@ -543,9 +545,6 @@ class TestE2EImageOnlyScenario:
             ),
         ]
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):
@@ -583,9 +582,6 @@ class TestE2EImageOnlyScenario:
             ),
         ]
         with patch.object(
-            chat_handler_db, "_build_memory_prompt",
-            new_callable=AsyncMock, return_value=None,
-        ), patch.object(
             chat_handler_db, "_get_context_summary",
             new_callable=AsyncMock, return_value=None,
         ):

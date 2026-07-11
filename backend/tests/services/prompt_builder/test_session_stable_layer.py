@@ -14,7 +14,7 @@ class TestSessionStableLayer:
         ctx = SessionStableContext(permission_mode="auto")
         out = SessionStableLayer.render(ctx)
         assert "<context>" in out
-        assert "<permission_mode>auto</permission_mode>" in out
+        assert "<current_mode>auto</current_mode>" in out
         assert "<user_preferences>" not in out
         assert "<user_facts>" not in out
         assert "<user_memory>" not in out
@@ -53,7 +53,7 @@ class TestSessionStableLayer:
         """plan 模式正确呈现."""
         ctx = SessionStableContext(permission_mode="plan")
         out = SessionStableLayer.render(ctx)
-        assert "<permission_mode>plan</permission_mode>" in out
+        assert "<current_mode>plan</current_mode>" in out
 
     def test_no_current_time(self):
         """L2a 不应包含 current_time (这是 L2b 的职责)."""

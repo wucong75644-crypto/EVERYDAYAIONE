@@ -92,8 +92,14 @@
 |---|---|
 | `frontend/src/services/api.ts` | 提供统一业务错误提取能力 |
 | `frontend/src/services/messageSender.ts` | 区分发送/媒体重试回滚，保留原消息快照 |
+| `frontend/src/services/messageSendLifecycle.ts` | 独立承载乐观更新、API 响应替换、任务追踪和失败回滚，`messageSender.ts` 保留单一公开入口 |
+| `frontend/src/components/chat/input/useInputSubmission.ts` | 独立承载发送校验、新对话创建和成功后输入清理，失败时保留输入与附件 |
+| `frontend/src/components/chat/input/useInputTaskControls.ts` | 独立承载停止、ESC 中断和 steer 控制，保持原任务协议 |
+| `frontend/src/components/chat/input/useInputExternalEvents.ts` | 独立承载电商确认和建议发送事件，并在 effect cleanup 时移除监听 |
 | `frontend/src/hooks/useRegenerateHandlers.ts` | 失败消息使用 `retry`，单图使用 `regenerate_single` |
 | `frontend/src/contexts/wsMessageHandlers.ts` | 媒体最终失败使用完整消息快照，不转成文字错误 |
+| `frontend/src/contexts/wsMessageHandlerShared.ts` | 统一 handler 依赖类型、订阅清理和 chunk 批量 flush，不创建额外状态 |
+| `frontend/src/contexts/wsTaskMessageHandlers.ts` | 独立承载任务完成/失败、图片 partial update 及 `error_code` 实时更新 |
 | `frontend/src/components/chat/message/MessageMedia.tsx` | 固定槽位渲染成功、生成中和失败状态 |
 | `frontend/src/components/chat/media/AiImageGrid.tsx` | 失败槽位展示中文原因和重新生成按钮 |
 | `backend/api/routes/message.py` | 图片消息修改前执行积分预检；捕获提交阶段失败 |
@@ -102,6 +108,7 @@
 | `backend/services/handlers/image_handler.py` | 复用同一套提交/计费参数，正式提交时再次校验余额 |
 | `backend/services/handlers/image_request_settings.py` | 集中解析图片模型、分辨率、数量和总积分 |
 | `backend/services/batch_completion_service.py` | 保证最终媒体快照包含一致状态和失败图片块 |
+| `backend/services/batch_message_finalizer.py` | 独立负责批次/单图重生的最终消息落库、完成通知和槽位释放 |
 
 ## 7. 测试范围
 

@@ -84,7 +84,7 @@ def create_test_message(
 
 # ============ Test Handler 实现 ============
 
-class TestHandler(BaseHandler):
+class ConcreteHandler(BaseHandler):
     """
     用于测试的具体 Handler 实现
     """
@@ -147,7 +147,7 @@ class TestBaseHandlerHelperMethods:
 
     @pytest.fixture
     def handler(self, mock_db):
-        return TestHandler(mock_db)
+        return ConcreteHandler(mock_db)
 
     def test_serialize_params_basic_types(self, handler):
         """测试：序列化基本类型"""
@@ -284,7 +284,7 @@ class TestBaseHandlerCredits:
 
     @pytest.fixture
     def handler(self, mock_db):
-        return TestHandler(mock_db)
+        return ConcreteHandler(mock_db)
 
     def test_get_user_balance_success(self, handler, mock_db):
         """测试：获取用户余额成功"""
@@ -412,7 +412,7 @@ class TestBaseHandlerTaskManagement:
 
     @pytest.fixture
     def handler(self, mock_db):
-        return TestHandler(mock_db)
+        return ConcreteHandler(mock_db)
 
     def test_get_task_success(self, handler, mock_db):
         """测试：获取任务成功"""
@@ -519,7 +519,7 @@ class TestBaseHandlerCreditsIntegration:
 
     @pytest.fixture
     def handler(self, mock_db):
-        return TestHandler(mock_db)
+        return ConcreteHandler(mock_db)
 
     @pytest.mark.asyncio
     async def test_handle_credits_on_complete_image_task(self, handler, mock_db):
@@ -581,7 +581,7 @@ class TestBaseHandlerEdgeCases:
 
     @pytest.fixture
     def handler(self, mock_db):
-        return TestHandler(mock_db)
+        return ConcreteHandler(mock_db)
 
     def test_lock_zero_credits(self, handler, mock_db):
         """测试：锁定 0 积分"""
@@ -693,7 +693,7 @@ class TestHandleCompleteCommonTaskReuse:
 
     @pytest.fixture
     def handler(self, mock_db):
-        return TestHandler(mock_db)
+        return ConcreteHandler(mock_db)
 
     @pytest.mark.asyncio
     async def test_passes_task_to_complete_task(self, handler):
@@ -743,7 +743,7 @@ class TestCreditMixinOrgId:
 
     @pytest.fixture
     def handler(self, mock_db):
-        h = TestHandler(mock_db)
+        h = ConcreteHandler(mock_db)
         h.org_id = "org-test"
         return h
 
@@ -822,12 +822,12 @@ class TestBaseHandlerOrgIdDefault:
 
     def test_default_org_id_is_none(self, mock_db):
         """BaseHandler 默认 org_id=None"""
-        h = TestHandler(mock_db)
+        h = ConcreteHandler(mock_db)
         assert h.org_id is None
 
     def test_org_id_can_be_set(self, mock_db):
         """org_id 可以外部设置"""
-        h = TestHandler(mock_db)
+        h = ConcreteHandler(mock_db)
         h.org_id = "org-test"
         assert h.org_id == "org-test"
 

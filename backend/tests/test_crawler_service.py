@@ -30,6 +30,7 @@ from services.crawler.errors import (
     CrawlerTimeoutError,
 )
 from services.crawler.service import CrawlerService, _safe_int
+from core.config import Settings
 
 
 # ============================================================
@@ -74,6 +75,10 @@ def _sample_item(**overrides) -> CrawlItem:
 # ============================================================
 # TestSafeInt
 # ============================================================
+
+
+def test_default_crawler_dir_is_relative_to_backend_working_directory():
+    assert Settings.model_fields["crawler_dir"].default == "external/mediacrawler"
 
 
 class TestSafeInt:

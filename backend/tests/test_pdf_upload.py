@@ -18,6 +18,13 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from tests.prompt_builder_test_utils import isolated_parallel_fetch
+
+
+@pytest.fixture(autouse=True)
+def isolate_prompt_builder(monkeypatch):
+    from services.prompt_builder.builder import PromptBuilder
+    monkeypatch.setattr(PromptBuilder, "_parallel_fetch", isolated_parallel_fetch)
 from core.exceptions import ValidationError
 from schemas.message import TextPart, ImagePart, FilePart
 from tests.conftest import MockSupabaseClient
@@ -122,7 +129,8 @@ class TestExtractFileUrls:
     @pytest.fixture
     def handler(self, mock_db):
         from services.handlers.chat_handler import ChatHandler
-        return ChatHandler(db=mock_db)
+        handler = ChatHandler(db=mock_db)
+        return handler
 
     # _extract_file_urls 已按 mime 分流：仅 image/* 的 FilePart 进 image_url 多模态块
     # PDF/Excel 等非图片 FilePart 不再被错塞进多模态，改走 <attachments> XML 块
@@ -213,7 +221,8 @@ class TestBuildLlmMessagesFilePart:
     @pytest.fixture
     def chat_handler(self, mock_db):
         from services.handlers.chat_handler import ChatHandler
-        return ChatHandler(db=mock_db)
+        handler = ChatHandler(db=mock_db)
+        return handler
 
     @pytest.mark.asyncio
     async def test_text_only(self, chat_handler, mock_db):
@@ -221,13 +230,9 @@ class TestBuildLlmMessagesFilePart:
         mock_db.set_table_data("messages", [])
 
         content = [TextPart(text="你好")]
-        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
-            result = await chat_handler._build_llm_messages(
-                content=content,
-                user_id="u1",
-                conversation_id="c1",
-                text_content="你好",
-            )
+        result = await chat_handler._build_llm_messages(
+            content=content, user_id="u1", conversation_id="c1", text_content="你好",
+        )
 
         # 最后一条是用户消息
         user_msg = result[-1]
@@ -247,13 +252,9 @@ class TestBuildLlmMessagesFilePart:
             TextPart(text="分析这份PDF"),
             FilePart(url="https://cdn.example.com/report.pdf", name="report.pdf", mime_type="application/pdf"),
         ]
-        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
-            result = await chat_handler._build_llm_messages(
-                content=content,
-                user_id="u1",
-                conversation_id="c1",
-                text_content="分析这份PDF",
-            )
+        result = await chat_handler._build_llm_messages(
+            content=content, user_id="u1", conversation_id="c1", text_content="分析这份PDF",
+        )
 
         user_msg = result[-1]
         # 无 workspace_path 时 content 是纯字符串（没有 image_url 多模态块）
@@ -270,13 +271,9 @@ class TestBuildLlmMessagesFilePart:
             ImagePart(url="https://cdn.example.com/photo.png"),
             FilePart(url="https://cdn.example.com/doc.pdf", name="doc.pdf", mime_type="application/pdf"),
         ]
-        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
-            result = await chat_handler._build_llm_messages(
-                content=content,
-                user_id="u1",
-                conversation_id="c1",
-                text_content="对比这些",
-            )
+        result = await chat_handler._build_llm_messages(
+            content=content, user_id="u1", conversation_id="c1", text_content="对比这些",
+        )
 
         user_msg = result[-1]
         # 有图片时 content 是 list；仅 1 个 image_url（图片），无 PDF
@@ -427,7 +424,8 @@ class TestBuildLlmMessagesWorkspace:
     @pytest.fixture
     def chat_handler(self, mock_db):
         from services.handlers.chat_handler import ChatHandler
-        return ChatHandler(db=mock_db)
+        handler = ChatHandler(db=mock_db)
+        return handler
 
     @pytest.fixture(autouse=True)
     def _patch_workspace_root(self, tmp_path):
@@ -458,13 +456,10 @@ class TestBuildLlmMessagesWorkspace:
                 workspace_path="上传/2026-06/sales.csv",
             ),
         ]
-        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
-            result = await chat_handler._build_llm_messages(
-                content=content,
-                user_id="u1",
-                conversation_id="c1",
-                text_content="分析这个CSV",
-            )
+        result = await chat_handler._build_llm_messages(
+            content=content, user_id="u1", conversation_id="c1",
+            text_content="分析这个CSV",
+        )
 
         # user 纯净
         user_msg = result[-1]
@@ -503,13 +498,10 @@ class TestBuildLlmMessagesWorkspace:
                 workspace_path="上传/2026-06/data.csv",
             ),
         ]
-        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
-            result = await chat_handler._build_llm_messages(
-                content=content,
-                user_id="u1",
-                conversation_id="c1",
-                text_content="对比这些",
-            )
+        result = await chat_handler._build_llm_messages(
+            content=content, user_id="u1", conversation_id="c1",
+            text_content="对比这些",
+        )
 
         user_msg = result[-1]
         assert user_msg["role"] == "user"
@@ -549,13 +541,10 @@ class TestBuildLlmMessagesWorkspace:
         content = [
             TextPart(text="普通问题"),
         ]
-        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
-            result = await chat_handler._build_llm_messages(
-                content=content,
-                user_id="u1",
-                conversation_id="c1",
-                text_content="普通问题",
-            )
+        result = await chat_handler._build_llm_messages(
+            content=content, user_id="u1", conversation_id="c1",
+            text_content="普通问题",
+        )
 
         system_prompts = [m["content"] for m in result if m["role"] == "system"]
         ws_prompt = [p for p in system_prompts if "file_read" in p]
