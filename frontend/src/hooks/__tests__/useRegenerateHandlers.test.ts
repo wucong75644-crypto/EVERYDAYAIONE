@@ -132,6 +132,27 @@ describe('useRegenerateHandlers', () => {
     );
   });
 
+  it('should retry failed media messages without legacy is_error', async () => {
+    const { result } = renderHook(() =>
+      useRegenerateHandlers({ conversationId: 'conv-1', setMessages: vi.fn() })
+    );
+    const targetMessage = createTestMessage({
+      id: 'failed-image',
+      is_error: false,
+      status: 'failed',
+      generation_params: { type: 'image' },
+    });
+
+    await act(async () => {
+      await result.current.handleRegenerate(targetMessage, createUserMessage());
+    });
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      operation: 'retry',
+      originalMessageId: 'failed-image',
+    }));
+  });
+
   it('should call sendMessage with "regenerate" operation for successful messages', async () => {
     const { result } = renderHook(() =>
       useRegenerateHandlers({

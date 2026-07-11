@@ -77,6 +77,8 @@ interface FailedMediaPlaceholderProps {
   onRetry?: () => void;
   /** 重试按钮文案 */
   retryLabel?: string;
+  /** 失败原因 */
+  errorMessage?: string;
 }
 
 /** 失败的媒体占位符（裂开图标 + hover 重试按钮） */
@@ -87,6 +89,7 @@ export function FailedMediaPlaceholder({
   height,
   onRetry,
   retryLabel = '重新生成',
+  errorMessage,
 }: FailedMediaPlaceholderProps) {
   const Icon = FAILED_ICON_MAP[type] || ImageOff;
 
@@ -97,10 +100,15 @@ export function FailedMediaPlaceholder({
 
   return (
     <div
-      className="group rounded-xl bg-hover dark:bg-surface-dark-card flex items-center justify-center text-text-disabled dark:text-text-tertiary relative"
+      className="group rounded-xl bg-hover dark:bg-surface-dark-card flex flex-col gap-2 items-center justify-center text-text-disabled dark:text-text-tertiary relative"
       style={sizeStyle}
     >
       <Icon className="w-10 h-10" />
+      {errorMessage && (
+        <span className="max-w-[85%] text-center text-xs leading-5" role="alert">
+          {errorMessage}
+        </span>
+      )}
       {onRetry && (
         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
           <button

@@ -19,8 +19,9 @@ vi.mock('react-intersection-observer', () => ({
 
 vi.mock('../media/MediaPlaceholder', () => ({
   default: ({ type }: { type: string }) => <div data-testid={`placeholder-${type}`} />,
-  FailedMediaPlaceholder: ({ onRetry }: { onRetry?: () => void }) => (
+  FailedMediaPlaceholder: ({ onRetry, errorMessage }: { onRetry?: () => void; errorMessage?: string }) => (
     <div data-testid="failed-placeholder">
+      {errorMessage && <span>{errorMessage}</span>}
       {onRetry && <button onClick={onRetry}>重试</button>}
     </div>
   ),
@@ -138,8 +139,31 @@ describe('MessageMedia', () => {
         isGenerating={false}
         failedMediaType="image"
         onRegenerate={vi.fn()}
+        content={[{ type: 'image', url: null, failed: true, error: '图片生成超时' }]}
       />,
     );
     expect(screen.getByTestId('failed-placeholder')).toBeInTheDocument();
+    expect(screen.getByText('图片生成超时')).toBeInTheDocument();
+  });
+
+  it('多图全部失败时仍按数量渲染 AiImageGrid', () => {
+    render(
+      <MessageMedia
+        messageId="msg-failed"
+        isUser={false}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+        failedMediaType="image"
+        numImages={3}
+        content={[
+          { type: 'image', url: null, failed: true },
+          { type: 'image', url: null, failed: true },
+          { type: 'image', url: null, failed: true },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('ai-image-grid')).toHaveAttribute('data-num-images', '3');
+    expect(screen.queryByTestId('failed-placeholder')).not.toBeInTheDocument();
   });
 });

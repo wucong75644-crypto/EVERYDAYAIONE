@@ -443,6 +443,34 @@ describe('wsMessageHandlers', () => {
       expect(store.setIsSending).toHaveBeenCalledWith(false);
     });
 
+    it('should keep image errors as failed media content', () => {
+      vi.mocked(store.getMessage).mockReturnValue({
+        id: 'msg_1',
+        conversation_id: 'conv_1',
+        role: 'assistant',
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        generation_params: { type: 'image', num_images: 2 },
+        content: [],
+      });
+
+      handlers.message_error({
+        task_id: 'task_1',
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        error: { code: 'TIMEOUT', message: '图片生成超时' },
+      });
+
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', expect.objectContaining({
+        status: 'failed',
+        is_error: false,
+        content: [
+          expect.objectContaining({ type: 'image', failed: true }),
+          expect.objectContaining({ type: 'image', failed: true }),
+        ],
+      }));
+    });
+
     it('should clear chunk buffer for failed message', () => {
       deps.chunkBufferRef.current.set('msg_1', { chunk: 'stale', conversationId: 'conv_1' });
 

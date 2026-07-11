@@ -338,16 +338,24 @@
 | `ChatRoutingMixin._route_and_stream` | `backend/services/handlers/chat_routing_mixin.py` | Smart mode 异步路由：Agent Loop + 记忆并行，路由完成后分发 | task_id, message_id, conversation_id, user_id, content, _params, metadata | None |
 | `ChatRoutingMixin._reroute_to_media` | `backend/services/handlers/chat_routing_mixin.py` | 重路由到 Image/Video Handler（非 chat 路由结果） | task_id, message_id, ..., gen_type, model_id | None |
 | `ImageHandler.start` | `backend/services/handlers/image_handler.py` | 启动图片生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
+| `ImageHandler.preflight` | `backend/services/handlers/image_handler.py` | 图片消息变更前校验本次请求总积分 | user_id, content, params | None |
+| `resolve_image_generation_settings` | `backend/services/handlers/image_request_settings.py` | 统一解析图片提交与计费参数 | params, has_image_urls | Dict[str, Any] |
 | `VideoHandler.start` | `backend/services/handlers/video_handler.py` | 启动视频生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
 | `_reset_message_for_retry` | `backend/api/routes/message.py` | 重置失败消息用于重试 | db, message_id, gen_type, model, params | Message |
 | `_create_assistant_placeholder` | `backend/api/routes/message.py` | 创建助手消息占位符 | db, conversation_id, message_id, gen_type, model, params | Message |
 | `handle_regenerate_single_operation` | `backend/api/routes/message_generation_helpers.py` | 单图重新生成操作（复用现有消息，仅更新指定 image_index） | db, body, user_id | dict |
+| `resolve_generation_context` | `backend/api/routes/message_request_preparation.py` | 解析生成类型并注入请求位置上下文 | request, body | GenerationType |
+| `preflight_image_request` | `backend/api/routes/message_request_preparation.py` | 用正式任务参数执行图片积分预检 | handler, user_id, content, params, model, operation | None |
+| `prepare_generation_request` | `backend/api/routes/message_request_preparation.py` | 权限校验、图片预检和用户消息创建 | db, conversation_id, body, gen_type, user_id, org_id, dependencies | tuple |
+| `prepare_assistant_message` | `backend/api/routes/message_generation_helpers.py` | 按操作类型创建或重置助手消息 | db, conversation_id, body, gen_type | tuple |
+| `finalize_image_request_failure` | `backend/api/routes/message_generation_helpers.py` | 将提交阶段失败持久化为失败图片快照 | db, message_id, operation, params, error_code, error_message | None |
 
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
 | `sendMessage` | `frontend/src/services/messageSender.ts` | 统一消息发送（send/retry/regenerate） | options: SendOptions | Promise<string> |
+| `toApiRequestError` | `frontend/src/services/api.ts` | 提取后端结构化业务错误并保留中文消息 | error: unknown | ApiRequestError |
 | `getMessages` | `frontend/src/services/message.ts` | 获取消息列表 | conversationId, limit, offset, beforeId | Promise<MessageListResponse> |
 | `deleteMessage` | `frontend/src/services/message.ts` | 删除单条消息 | messageId | Promise<DeleteMessageResponse> |
 | `handleRegenerate` | `frontend/src/hooks/useRegenerateHandlers.ts` | 处理消息重新生成/重试请求 | targetMessage, userMessage | Promise<void> |

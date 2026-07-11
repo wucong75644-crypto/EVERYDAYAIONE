@@ -314,6 +314,35 @@ async def handle_regenerate_or_send_operation(
     return assistant_message_id, assistant_message
 
 
+async def prepare_assistant_message(
+    db: Any,
+    conversation_id: str,
+    body: Any,
+    gen_type: GenerationType,
+) -> tuple[str, Message]:
+    """按操作类型创建或重置本次生成使用的助手消息。"""
+    if body.operation == MessageOperation.RETRY:
+        return await handle_retry_operation(
+            db, conversation_id, body.original_message_id,
+            gen_type, body.model, body.params,
+        )
+    if body.operation == MessageOperation.REGENERATE_SINGLE:
+        return await handle_regenerate_single_operation(
+            db, conversation_id, body.original_message_id, body.params,
+        )
+    return await handle_regenerate_or_send_operation(
+        db=db,
+        conversation_id=conversation_id,
+        operation=body.operation,
+        original_message_id=body.original_message_id,
+        assistant_message_id=body.assistant_message_id,
+        placeholder_created_at=body.placeholder_created_at,
+        gen_type=gen_type,
+        model=body.model,
+        params=body.params,
+    )
+
+
 async def start_generation_task(
     db,
     handler,
@@ -406,3 +435,52 @@ async def start_generation_task(
     return external_task_id
 
 
+def finalize_image_request_failure(
+    db,
+    message_id: str,
+    operation: MessageOperation,
+    params: Optional[Dict[str, Any]],
+    error_code: str,
+    error_message: str,
+) -> None:
+    """将尚未创建外部任务的图片请求收尾成可持久化的失败媒体消息。"""
+    failure_part = {
+        "type": "image",
+        "url": None,
+        "failed": True,
+        "error": error_message,
+    }
+    request_params = params or {}
+
+    if operation == MessageOperation.REGENERATE_SINGLE:
+        result = db.table("messages").select("content").eq(
+            "id", message_id
+        ).maybe_single().execute()
+        content = result.data.get("content", []) if result.data else []
+        if isinstance(content, str):
+            content = json.loads(content)
+        image_index = int(request_params.get("image_index", 0))
+        if not isinstance(content, list):
+            content = []
+        while len(content) <= image_index:
+            content.append({"type": "image", "url": None})
+        content[image_index] = failure_part
+        has_success = any(
+            part.get("type") == "image" and part.get("url")
+            for part in content if isinstance(part, dict)
+        )
+        status = MessageStatus.COMPLETED.value if has_success else MessageStatus.FAILED.value
+    else:
+        num_images = max(1, min(4, int(request_params.get("num_images", 1))))
+        content = [dict(failure_part) for _ in range(num_images)]
+        status = MessageStatus.FAILED.value
+
+    db.table("messages").update({
+        "content": content,
+        "status": status,
+        "is_error": False,
+    }).eq("id", message_id).execute()
+    logger.warning(
+        f"Image request finalized as media failure | message_id={message_id} | "
+        f"operation={operation.value} | code={error_code}"
+    )

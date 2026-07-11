@@ -21,6 +21,34 @@ import { silentRefresh } from '../utils/tokenManager';
 // 优先使用环境变量，默认使用相对路径（适用于同域名部署）
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
+export class ApiRequestError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status?: number,
+    public readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
+export function toApiRequestError(error: unknown): ApiRequestError {
+  if (error instanceof ApiRequestError) return error;
+  if (axios.isAxiosError<ApiErrorResponse>(error)) {
+    const apiError = error.response?.data?.error;
+    if (apiError?.message) {
+      return new ApiRequestError(
+        apiError.code || 'API_ERROR', apiError.message,
+        error.response?.status, apiError.details,
+      );
+    }
+  }
+  return new ApiRequestError(
+    'NETWORK_ERROR', error instanceof Error ? error.message : '网络请求失败',
+  );
+}
+
 // 创建 axios 实例
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -85,8 +113,12 @@ api.interceptors.response.use(
  * 通用请求方法
  */
 export async function request<T>(config: AxiosRequestConfig): Promise<T> {
-  const response = await api.request<T>(config);
-  return response.data;
+  try {
+    const response = await api.request<T>(config);
+    return response.data;
+  } catch (error) {
+    throw toApiRequestError(error);
+  }
 }
 
 export default api;

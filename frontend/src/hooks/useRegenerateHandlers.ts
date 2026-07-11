@@ -32,7 +32,9 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
         const type = determineMessageType(targetMessage);
 
         // 判断操作类型：错误消息重试，成功消息重新生成
-        const operation = targetMessage.is_error ? 'retry' : 'regenerate';
+        const operation = targetMessage.status === 'failed' || targetMessage.is_error
+          ? 'retry'
+          : 'regenerate';
 
         // 提取模型 ID
         const modelId = extractModelId(targetMessage);

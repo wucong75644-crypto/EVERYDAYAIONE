@@ -54,6 +54,7 @@ interface AiImageGridProps {
 interface GridCellProps {
   imageAsset: ImageAsset | null;
   failed?: boolean;
+  errorMessage?: string;
   index: number;
   messageId: string;
   placeholderSize: { width: number; height: number };
@@ -69,6 +70,7 @@ function gridCellAreEqual(prev: GridCellProps, next: GridCellProps): boolean {
     prev.imageAsset?.originalUrl === next.imageAsset?.originalUrl &&
     prev.imageAsset?.thumbnailUrl === next.imageAsset?.thumbnailUrl &&
     prev.failed === next.failed &&
+    prev.errorMessage === next.errorMessage &&
     prev.index === next.index &&
     prev.messageId === next.messageId &&
     prev.isGenerating === next.isGenerating
@@ -79,6 +81,7 @@ function gridCellAreEqual(prev: GridCellProps, next: GridCellProps): boolean {
 const GridCell = memo(function GridCell({
   imageAsset,
   failed,
+  errorMessage,
   index,
   messageId,
   placeholderSize,
@@ -164,6 +167,7 @@ const GridCell = memo(function GridCell({
         aspectRatio={aspectRatio}
         onRetry={onRegenerateSingle ? () => onRegenerateSingle(index) : undefined}
         retryLabel="重新生成"
+        errorMessage={errorMessage || '图片生成失败'}
       />
     );
   }
@@ -285,7 +289,7 @@ export default function AiImageGrid({
 }: AiImageGridProps) {
   // 构建 cells 数组：确保有 numImages 个 cell
   const cells = useMemo(() => {
-    const result: Array<{ asset: ImageAsset | null; failed?: boolean }> = [];
+    const result: Array<{ asset: ImageAsset | null; failed?: boolean; errorMessage?: string }> = [];
 
     for (let i = 0; i < numImages; i++) {
       const part = content[i];
@@ -302,6 +306,7 @@ export default function AiImageGrid({
             sourcePart: imgPart,
           } : null,
           failed: imgPart.failed || false,
+          ...(imgPart.error ? { errorMessage: imgPart.error } : {}),
         });
       } else {
         // 未到达的 slot
@@ -320,6 +325,7 @@ export default function AiImageGrid({
             key={`${messageId}-cell-${index}`}
             imageAsset={cell.asset}
             failed={cell.failed}
+            errorMessage={cell.errorMessage}
             index={index}
             messageId={messageId}
             placeholderSize={placeholderSize}

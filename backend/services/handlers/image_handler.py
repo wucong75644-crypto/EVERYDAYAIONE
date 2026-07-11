@@ -18,8 +18,12 @@ from schemas.message import (
     ImagePart,
     Message,
 )
-from services.adapters.factory import DEFAULT_IMAGE_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
+from services.handlers.image_request_settings import (
+    build_image_generate_kwargs,
+    resolve_image_generation_settings,
+    resolve_batch_item_kwargs,
+)
 
 
 class ImageHandler(BaseHandler):
@@ -38,6 +42,19 @@ class ImageHandler(BaseHandler):
     @property
     def handler_type(self) -> GenerationType:
         return GenerationType.IMAGE
+
+    def preflight(
+        self,
+        user_id: str,
+        content: List[ContentPart],
+        params: Dict[str, Any],
+    ) -> None:
+        """在消息占位符变更前校验本次图片请求的积分。"""
+        settings = resolve_image_generation_settings(
+            params=params,
+            has_image_urls=bool(self._extract_image_urls(content)),
+        )
+        self._check_balance(user_id, settings["total_credits"])
 
     async def start(
         self,
@@ -62,54 +79,24 @@ class ImageHandler(BaseHandler):
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_urls = self._extract_image_urls(content)
-        model_id = params.get("model") or DEFAULT_IMAGE_MODEL_ID
-        # 有参考图时自动切图生图模型
-        if image_urls and "text-to-image" in model_id:
-            model_id = model_id.replace("text-to-image", "image-to-image")
-        aspect_ratio = params.get("aspect_ratio") or "1:1"
+        settings = resolve_image_generation_settings(
+            params=params,
+            has_image_urls=bool(image_urls),
+        )
+        model_id = settings["model_id"]
+        aspect_ratio = settings["aspect_ratio"]
         output_format = params.get("output_format") or "png"
-        resolution = params.get("resolution") or None
-        # 归一化旧格式的 resolution 值（如 "1024x1024" → "1K"）
-        _RESOLUTION_NORMALIZE = {
-            "1024x1024": "1K", "1024": "1K",
-            "2048x2048": "2K", "2048": "2K", "2560x1440": "2K",
-            "4096x4096": "4K", "4096": "4K",
-        }
-        if resolution and resolution not in ("1K", "2K", "4K"):
-            resolution = _RESOLUTION_NORMALIZE.get(resolution, "1K")
-        # 支持分辨率的模型（如 nano-banana-pro）未指定时默认 1K
-        from config.kie_models import get_model_config
-        model_config = get_model_config(model_id)
-        if model_config and model_config.get("supports_resolution") and not resolution:
-            resolution = "1K"
-        # KIE API 限制：auto 只能 1K，1:1 不能 4K
-        if resolution:
-            if aspect_ratio == "auto" and resolution != "1K":
-                resolution = "1K"
-            elif aspect_ratio == "1:1" and resolution == "4K":
-                resolution = "2K"
 
         # regenerate_single：仅生成 1 张，使用指定 image_index
         is_regenerate_single = params.get("operation") == "regenerate_single"
         # Agent Loop 批量生图：每张图有独立提示词
         batch_prompts = params.get("_batch_prompts")
+        num_images = settings["num_images"]
         if is_regenerate_single:
-            num_images = 1
             single_image_index = int(params.get("image_index", 0))
-        elif batch_prompts:
-            num_images = min(len(batch_prompts), 8)
-        else:
-            num_images = max(1, min(4, int(params.get("num_images", 1))))
 
         # 2. 计算总积分并校验余额
-        from config.kie_models import calculate_image_cost
-
-        cost_result = calculate_image_cost(
-            model_name=model_id,
-            image_count=num_images,
-            resolution=resolution,
-        )
-        total_credits = cost_result["user_credits"]
+        total_credits = settings["total_credits"]
         per_image_credits = total_credits // num_images
 
         self._check_balance(user_id, total_credits)
@@ -129,16 +116,14 @@ class ImageHandler(BaseHandler):
         adapter = create_image_adapter(model_id)
 
         # 构建生成参数（所有图片共用）
-        generate_kwargs = {
-            "prompt": prompt,
-            "image_urls": image_urls if image_urls else None,
-            "size": aspect_ratio,
-            "output_format": output_format,
-            "callback_url": self._build_callback_url(adapter.provider.value),
-            "wait_for_result": False,
-        }
-        if resolution and adapter.supports_resolution:
-            generate_kwargs["resolution"] = resolution
+        generate_kwargs = build_image_generate_kwargs(
+            prompt=prompt,
+            image_urls=image_urls,
+            settings=settings,
+            output_format=output_format,
+            callback_url=self._build_callback_url(adapter.provider.value),
+            supports_resolution=adapter.supports_resolution,
+        )
 
         try:
             for i in range(num_images):
@@ -152,19 +137,9 @@ class ImageHandler(BaseHandler):
                 task_kwargs = generate_kwargs
                 task_prompt = prompt
                 if batch_prompts and i < len(batch_prompts):
-                    item = batch_prompts[i]
-                    task_kwargs = {
-                        **generate_kwargs,
-                        "prompt": item.get("prompt", prompt),
-                        "size": item.get("aspect_ratio", aspect_ratio),
-                    }
-                    # per-image 参考图覆盖（ecom 白底图只传产品主图，不传风格参考）
-                    if item.get("image_urls") is not None:
-                        task_kwargs["image_urls"] = item["image_urls"] or None
-                    # per-image quality/resolution 覆盖（ecom 有文字的图用 high）
-                    if item.get("resolution"):
-                        task_kwargs["resolution"] = item["resolution"]
-                    task_prompt = item.get("prompt", prompt)
+                    task_kwargs, task_prompt = resolve_batch_item_kwargs(
+                        generate_kwargs, prompt, aspect_ratio, batch_prompts[i],
+                    )
 
                 ext_task_id = await self._create_single_task(
                     adapter=adapter,

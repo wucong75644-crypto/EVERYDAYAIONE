@@ -13,6 +13,7 @@ from loguru import logger
 
 from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB, TaskLimitSvc
 from core.limiter import limiter, RATE_LIMITS
+from core.exceptions import AppException
 from schemas.message import (
     DeleteMessageResponse,
     GenerateRequest,
@@ -23,7 +24,6 @@ from schemas.message import (
     MessageOperation,
     MessageResponse,
     MessageSearchResult,
-    infer_generation_type,
 )
 from services.message_service import MessageService
 from services.conversation_service import ConversationService
@@ -36,6 +36,12 @@ from api.routes.message_generation_helpers import (
     handle_regenerate_single_operation,
     start_generation_task,
     create_user_message,
+    finalize_image_request_failure,
+    prepare_assistant_message,
+)
+from api.routes.message_request_preparation import (
+    prepare_generation_request,
+    resolve_generation_context,
 )
 
 # 向后兼容别名：test_placeholder_to_db.py 使用了带下划线前缀的名称
@@ -201,81 +207,20 @@ async def _do_generate_message(
 ) -> GenerateResponse:
     """generate_message 的实际执行逻辑（拆分以支持 try/except 槽位释放）"""
 
-    # 1.5 异步获取用户 IP 位置（与路由并行，不阻塞主流程）
-    from services.ip_location_service import extract_client_ip, get_location_by_ip
+    # 1.5+2. 解析生成类型与请求位置上下文
+    gen_type = await resolve_generation_context(request, body)
 
-    client_ip = extract_client_ip(request)
-    location_task = asyncio.create_task(get_location_by_ip(client_ip))
-
-    # 2. 推断生成类型
-    from config.smart_model_config import SMART_MODEL_ID, resolve_auto_model
-
-    _is_smart = body.model == SMART_MODEL_ID
-
-    if _is_smart:
-        # 智能模式：前端如果明确指定了图片/视频子模式，尊重它走对应 Handler
-        if body.generation_type in (GenerationType.IMAGE, GenerationType.IMAGE_ECOM, GenerationType.VIDEO):
-            gen_type = body.generation_type
-            body.model = resolve_auto_model(gen_type, body.content, None)
-        else:
-            # 默认走 CHAT → ChatHandler 工具循环
-            gen_type = GenerationType.CHAT
-            if body.params is None:
-                body.params = {}
-            body.params["_is_smart_mode"] = True
-            body.model = resolve_auto_model(gen_type, body.content, None)
-    elif body.generation_type:
-        # 非智能模式 + 客户端指定类型 → 直接使用
-        gen_type = body.generation_type
-    else:
-        # 非智能模式 + 未指定类型 → 关键词推断
-        gen_type = infer_generation_type(body.content)
-
-    # 2.5 等待 IP 位置结果并注入 params（与路由并行完成，此处仅 await 结果）
-    try:
-        user_location = await location_task
-    except Exception as e:
-        logger.warning(f"IP location lookup failed | ip={client_ip} | {e}")
-        user_location = None
-    if user_location:
-        if body.params is None:
-            body.params = {}
-        body.params["_user_location"] = user_location
-
-    # 3+4. 验证对话权限 + 创建用户消息（并行执行，两者独立无数据依赖）
-    conversation_service = get_conversation_service(db)
-    user_message: Optional[Message] = None
-    needs_user_message = body.operation not in (
-        MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE,
+    # 3+4. 权限校验、图片积分预检和用户消息创建
+    handler = get_handler(
+        gen_type, db, org_id=ctx.org_id, user_id=user_id,
+        request_id=request.headers.get("X-Request-Id", ""),
     )
-
-    if needs_user_message:
-        conv_result, msg_result = await asyncio.gather(
-            conversation_service.get_conversation(conversation_id, user_id, ctx.org_id),
-            create_user_message(
-                db=db,
-                conversation_id=conversation_id,
-                content=body.content,
-                created_at=body.created_at,
-                client_request_id=body.client_request_id,
-            ),
-        )
-        conversation = conv_result
-        user_message = msg_result
-        record_user_activity(
-            db,
-            user_id=user_id,
-            event_type="message_sent",
-            org_id=ctx.org_id,
-            source="web",
-            resource_type="message",
-            resource_id=user_message.id,
-            metadata={"conversation_id": conversation_id},
-        )
-    else:
-        conversation = await conversation_service.get_conversation(
-            conversation_id, user_id, ctx.org_id,
-        )
+    handler, conversation, user_message = await prepare_generation_request(
+        db=db, conversation_id=conversation_id, body=body, gen_type=gen_type,
+        user_id=user_id, org_id=ctx.org_id, handler=handler,
+        conversation_service=get_conversation_service(db),
+        create_user_message_fn=create_user_message,
+    )
 
     if body.params is None:
         body.params = {}
@@ -283,34 +228,9 @@ async def _do_generate_message(
     body.params["_org_id"] = ctx.org_id
 
     # 5. 处理助手消息（根据操作类型）
-    if body.operation == MessageOperation.RETRY:
-        assistant_message_id, assistant_message = await handle_retry_operation(
-            db=db,
-            conversation_id=conversation_id,
-            original_message_id=body.original_message_id,
-            gen_type=gen_type,
-            model=body.model,
-            params=body.params,
-        )
-    elif body.operation == MessageOperation.REGENERATE_SINGLE:
-        assistant_message_id, assistant_message = await handle_regenerate_single_operation(
-            db=db,
-            conversation_id=conversation_id,
-            original_message_id=body.original_message_id,
-            params=body.params,
-        )
-    else:
-        assistant_message_id, assistant_message = await handle_regenerate_or_send_operation(
-            db=db,
-            conversation_id=conversation_id,
-            operation=body.operation,
-            original_message_id=body.original_message_id,
-            assistant_message_id=body.assistant_message_id,
-            placeholder_created_at=body.placeholder_created_at,
-            gen_type=gen_type,
-            model=body.model,
-            params=body.params,
-        )
+    assistant_message_id, assistant_message = await prepare_assistant_message(
+        db, conversation_id, body, gen_type,
+    )
 
     # 5.1 记录用户反馈信号（retry/regenerate = 用户对生成结果的隐式反馈）
     if body.operation in (
@@ -328,27 +248,32 @@ async def _do_generate_message(
             conversation_id=conversation_id,
         )
 
-    # 6. 获取 Handler（工厂统一注入 org_id + request_ctx）
-    handler = get_handler(
-        gen_type, db,
-        org_id=ctx.org_id,
-        user_id=user_id,
-        request_id=request.headers.get("X-Request-Id", ""),
-    )
-
-    external_task_id = await start_generation_task(
-        db=db,
-        handler=handler,
-        assistant_message_id=assistant_message_id,
-        conversation_id=conversation_id,
-        user_id=user_id,
-        content=body.content,
-        model=body.model,
-        params=body.params,
-        client_task_id=body.client_task_id,
-        placeholder_created_at=body.placeholder_created_at,
-        operation=body.operation,
-    )
+    # 6. 启动生成任务
+    try:
+        external_task_id = await start_generation_task(
+            db=db,
+            handler=handler,
+            assistant_message_id=assistant_message_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            content=body.content,
+            model=body.model,
+            params=body.params,
+            client_task_id=body.client_task_id,
+            placeholder_created_at=body.placeholder_created_at,
+            operation=body.operation,
+        )
+    except AppException as exc:
+        if gen_type == GenerationType.IMAGE and exc.code == "IMAGE_GENERATION_FAILED":
+            finalize_image_request_failure(
+                db=db,
+                message_id=assistant_message_id,
+                operation=body.operation,
+                params=body.params,
+                error_code=exc.code,
+                error_message=exc.message,
+            )
+        raise
     record_user_activity(
         db,
         user_id=user_id,

@@ -65,6 +65,10 @@ export default memo(function MessageMedia({
   onRegenerate,
 }: MessageMediaProps) {
   const videoUrl = videoUrls[0] || null;
+  const failedImageError = useMemo(() => {
+    const failedPart = content.find((part) => part.type === 'image' && part.failed);
+    return failedPart?.type === 'image' ? failedPart.error : undefined;
+  }, [content]);
 
   const imagePlaceholderSize = useMemo(
     () => getImagePlaceholderSize(imageAspectRatio),
@@ -101,7 +105,9 @@ export default memo(function MessageMedia({
   return (
     <>
       {/* 图片渲染 */}
-      {(imageAssets.length > 0 || (isGenerating && generatingType === 'image')) && (
+      {(imageAssets.length > 0
+        || (isGenerating && generatingType === 'image')
+        || (failedMediaType === 'image' && numImages > 1)) && (
         isUser ? (
           // 用户图片：直接显示，无占位符，支持多图横排
           <UserImageGallery
@@ -137,13 +143,14 @@ export default memo(function MessageMedia({
       )}
 
       {/* 失败的图片占位符（裂开状态 + hover 重新生成） */}
-      {failedMediaType === 'image' && imageAssets.length === 0 && !isGenerating && (
+      {failedMediaType === 'image' && numImages === 1 && imageAssets.length === 0 && !isGenerating && (
         <div className="mt-3">
           <FailedMediaPlaceholder
             type="image"
             width={imagePlaceholderSize.width}
             height={imagePlaceholderSize.height}
             onRetry={onRegenerate}
+            errorMessage={failedImageError || '图片生成失败'}
           />
         </div>
       )}

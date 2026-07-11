@@ -91,6 +91,7 @@ EVERYDAYAIONE/
 │   │       ├── health.py                 # 健康检查
 │   │       ├── conversation.py           # 对话路由
 │   │       ├── message.py                # 统一消息路由（/generate）
+│   │       ├── message_request_preparation.py # 消息生成前权限、积分与上下文准备
 │   │       ├── image.py                  # 图像上传路由
 │   │       ├── audio.py                  # 音频上传路由
 │   │       ├── task.py                   # 任务管理路由
@@ -129,6 +130,7 @@ EVERYDAYAIONE/
 │   │   │   ├── base.py                   # Handler 基类
 │   │   │   ├── chat_handler.py           # 聊天处理器（流式）
 │   │   │   ├── image_handler.py          # 图片生成处理器
+│   │   │   ├── image_request_settings.py # 图片提交与计费参数解析
 │   │   │   └── video_handler.py          # 视频生成处理器
 │   │   ├── wecom/                   # 企业微信服务
 │   │   │   ├── wecom_message_service.py # 企微消息处理核心（继承 WecomAIMixin）

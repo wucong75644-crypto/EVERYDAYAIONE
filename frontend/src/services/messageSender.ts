@@ -10,7 +10,7 @@
  * OPTIMISTIC (乐观更新) → PENDING (后端确认) → STREAMING/PROCESSING → COMPLETED
  */
 
-import { request } from './api';
+import { ApiRequestError, request, toApiRequestError } from './api';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { getPlaceholderText } from '../constants/placeholder';
@@ -78,6 +78,7 @@ interface SendContext {
   clientTaskId: string;
   now: Date;
   placeholderCreatedAt: string;
+  originalAssistant?: Message;
 }
 
 // ============================================================
@@ -222,8 +223,9 @@ function processApiResponse(
 
 /** 错误回滚 — 取消订阅 + 清理状态 + 添加错误消息 */
 function rollbackOnError(error: unknown, options: SendOptions, ctx: SendContext): void {
-  const { conversationId, unsubscribeTask } = options;
+  const { conversationId, generationType, params, operation = 'send', unsubscribeTask } = options;
   const messageStore = useMessageStore.getState();
+  const apiError = toApiRequestError(error);
 
   logger.error('messageSender', 'send failed', error);
 
@@ -234,6 +236,50 @@ function rollbackOnError(error: unknown, options: SendOptions, ctx: SendContext)
 
   messageStore.completeStreaming(conversationId);
   messageStore.setIsSending(false);
+
+  if (apiError.code === 'INSUFFICIENT_CREDITS') {
+    if (ctx.originalAssistant) {
+      messageStore.updateMessage(ctx.assistantMessageId, ctx.originalAssistant);
+    } else {
+      messageStore.removeMessage(ctx.assistantMessageId);
+      messageStore.removeMessage(ctx.userMessageId);
+    }
+    return;
+  }
+
+  if (apiError.code === 'IMAGE_GENERATION_FAILED' && generationType === 'image') {
+    const imageCount = Math.max(1, Math.min(4, Number(params?.num_images ?? 1)));
+    const failedPart = {
+      type: 'image' as const,
+      url: null,
+      failed: true,
+      error: apiError.message,
+    };
+    let failedContent: ContentPart[] = Array.from({ length: imageCount }, () => ({ ...failedPart }));
+    if (operation === 'regenerate_single' && ctx.originalAssistant) {
+      failedContent = [...ctx.originalAssistant.content];
+      const imageIndex = Number(params?.image_index ?? 0);
+      failedContent[imageIndex] = failedPart;
+    }
+    messageStore.updateMessage(ctx.assistantMessageId, {
+      content: failedContent,
+      status: 'failed',
+      is_error: false,
+      error: { code: apiError.code, message: apiError.message },
+      generation_params: {
+        ...ctx.originalAssistant?.generation_params,
+        ...params,
+        type: 'image',
+      },
+    });
+    return;
+  }
+
+  if (ctx.originalAssistant) {
+    messageStore.updateMessage(ctx.assistantMessageId, ctx.originalAssistant);
+    return;
+  }
+
   messageStore.removeMessage(ctx.assistantMessageId);
 
   messageStore.addMessage(conversationId, {
@@ -245,7 +291,7 @@ function rollbackOnError(error: unknown, options: SendOptions, ctx: SendContext)
     is_error: true,
     error: {
       code: 'SEND_FAILED',
-      message: error instanceof Error ? error.message : '发送失败',
+      message: apiError.message,
     },
     created_at: new Date().toISOString(),
   });
@@ -284,6 +330,10 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     now,
     placeholderCreatedAt: new Date(now.getTime() + 1).toISOString(),
   };
+  if ((operation === 'retry' || operation === 'regenerate_single') && originalMessageId) {
+    const original = useMessageStore.getState().getMessage(originalMessageId);
+    if (original) ctx.originalAssistant = structuredClone(original);
+  }
 
   logger.info('messageSender', 'sending message', {
     conversationId, operation, generationType,
@@ -333,7 +383,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
 
   } catch (error) {
     rollbackOnError(error, options, ctx);
-    throw error;
+    throw error instanceof ApiRequestError ? error : toApiRequestError(error);
   }
 }
 

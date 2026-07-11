@@ -288,15 +288,34 @@ function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
 
   const store = deps.getStore();
 
-  // 更新消息状态（同步 content，与后端 on_error 保存的一致）
+  // 更新消息状态：媒体错误保持媒体结构，聊天错误保留文本结构
   if (message_id) {
     const errorText = error?.message || '生成失败';
-    store.updateMessage(message_id, {
-      status: 'failed',
-      is_error: true,
-      error: { code: error?.code ?? 'UNKNOWN', message: error?.message ?? errorText },
-      content: [{ type: 'text', text: errorText }],
-    });
+    const existing = store.getMessage(message_id);
+    const generationParams = existing?.generation_params;
+    const mediaType = generationParams?.type;
+    if (mediaType === 'image') {
+      const imageCount = Math.max(1, Number(generationParams?.num_images ?? 1));
+      const currentContent = existing?.content || [];
+      const content = Array.from({ length: imageCount }, (_, index) => {
+        const part = currentContent[index];
+        if (part?.type === 'image' && part.url) return part;
+        return { type: 'image' as const, url: null, failed: true, error: errorText };
+      });
+      store.updateMessage(message_id, {
+        status: 'failed',
+        is_error: false,
+        error: { code: error?.code ?? 'UNKNOWN', message: errorText },
+        content,
+      });
+    } else {
+      store.updateMessage(message_id, {
+        status: 'failed',
+        is_error: true,
+        error: { code: error?.code ?? 'UNKNOWN', message: errorText },
+        content: [{ type: 'text', text: errorText }],
+      });
+    }
   }
 
   // 处理任务失败
