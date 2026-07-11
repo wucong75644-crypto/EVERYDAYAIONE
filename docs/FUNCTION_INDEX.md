@@ -423,10 +423,15 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `handle_webhook` | `backend/api/routes/webhook.py` | 统一 Webhook 入口（按 provider 分发） | provider: str, request, db | JSONResponse |
+| `_track_processing_task` | `backend/api/routes/webhook.py` | 托管 Webhook 后台任务强引用并记录异常/兜底 | task, provider, external_task_id | None |
+| `_is_authorized_callback` | `backend/api/routes/webhook.py` | 使用常量时间比较验证 Webhook Token | request | bool |
+| `_start_processing` | `backend/api/routes/webhook.py` | 立即启动并托管统一任务完成处理 | service, provider, external_task_id, result | None |
+| `handle_webhook` | `backend/api/routes/webhook.py` | 验证 Token、按 provider 解析回调并立即启动后台处理 | provider: str, request, db | JSONResponse |
 | `TaskCompletionService.__init__` | `backend/services/task_completion_service.py` | 初始化统一任务完成服务 | db: Client | - |
 | `TaskCompletionService.get_task` | `backend/services/task_completion_service.py` | 根据 external_task_id 查询任务 | external_task_id: str | Optional[Dict] |
-| `TaskCompletionService.process_result` | `backend/services/task_completion_service.py` | 统一处理入口（幂等，分发成功/失败） | external_task_id, result: TaskResult | bool |
+| `TaskCompletionService.process_result` | `backend/services/task_completion_service.py` | 统一处理入口（Redis 互斥 + DB 幂等） | external_task_id, result: TaskResult | bool |
+| `TaskCompletionService._renew_completion_lock` | `backend/services/task_completion_service.py` | 定期续期媒体完成处理锁 | lock_key, lock_token | None |
+| `TaskCompletionService._process_result_locked` | `backend/services/task_completion_service.py` | 持有分布式锁时执行原有成功/失败分流 | external_task_id, result | bool |
 | `TaskCompletionService._handle_success` | `backend/services/task_completion_service.py` | 处理成功结果（OSS 上传 → handler.on_complete） | task, result | bool |
 | `TaskCompletionService._handle_failure` | `backend/services/task_completion_service.py` | 处理失败结果（handler.on_error） | task, result | bool |
 | `TaskCompletionService._upload_urls_to_oss` | `backend/services/task_completion_service.py` | 批量上传媒体到 OSS（降级返回原 URL） | urls, user_id, task_type | List[str] |
@@ -441,7 +446,7 @@
 | `KieImageAdapter.parse_callback` | `backend/services/adapters/kie/image_adapter.py` | 解析 KIE 图片回调（taskId+state+resultJson） | payload: Dict | ImageGenerateResult |
 | `KieVideoAdapter.extract_task_id` | `backend/services/adapters/kie/video_adapter.py` | KIE 视频回调提取 taskId | payload: Dict | str |
 | `KieVideoAdapter.parse_callback` | `backend/services/adapters/kie/video_adapter.py` | 解析 KIE 视频回调（taskId+state+resultJson） | payload: Dict | VideoGenerateResult |
-| `BaseHandler._build_callback_url` | `backend/services/handlers/base.py` | 构建 Webhook 回调 URL（未配置则返回 None） | provider_value: str | Optional[str] |
+| `BaseHandler._build_callback_url` | `backend/services/handlers/base.py` | 构建带 Token 的 Webhook URL（base/token 任一未配置则返回 None） | provider_value: str | Optional[str] |
 | `BatchCompletionService.handle_image_complete` | `backend/services/batch_completion_service.py` | 处理单个图片 task 成功（确认积分、推送 partial update、finalize） | task, content_parts | bool |
 | `BatchCompletionService.handle_image_failure` | `backend/services/batch_completion_service.py` | 处理单个图片 task 失败（退回积分、推送 partial update、finalize） | task, error_code, error_message | bool |
 | `BatchCompletionService._dispatch_finalize` | `backend/services/batch_completion_service.py` | 根据操作类型分发到 _finalize_batch 或 _finalize_single_image | batch_id, batch_tasks | None |

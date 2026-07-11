@@ -72,6 +72,7 @@ class Settings(BaseSettings):
 
     # Webhook 回调配置
     callback_base_url: Optional[str] = None  # 公网可访问的回调地址，未配置则纯轮询模式
+    callback_token: Optional[str] = None  # Provider 回调鉴权 Token，与回调地址必须同时配置
     poll_interval_seconds: int = 0  # 轮询间隔秒数（0=自动：有回调120s，无回调15s）
 
     # 应用配置

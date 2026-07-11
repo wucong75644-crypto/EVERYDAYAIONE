@@ -7,6 +7,8 @@ Webhook 和轮询兜底的统一入口，保证：
 3. OSS 上传：在调用 handler 前完成（临时 URL → 持久化）
 """
 
+import asyncio
+from contextlib import suppress
 from typing import Dict, Any, List, Optional, Tuple, Union
 from datetime import datetime, timezone
 
@@ -21,6 +23,9 @@ from services.adapters.base import (
 from services.oss_service import get_oss_service
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
+
+_COMPLETION_LOCK_TTL_SECONDS = 300
+_COMPLETION_LOCK_RENEW_SECONDS = 60
 
 
 # ============================================================
@@ -86,10 +91,10 @@ class TaskCompletionService:
 
     async def process_result(self, external_task_id: str, result: TaskResult) -> bool:
         """
-        统一处理入口（原子锁防并发）
+        统一处理入口（Redis 分布式锁 + DB 乐观锁）
 
-        通过 version 字段的乐观锁机制，原子抢占任务处理权，
-        防止 Webhook 和轮询同时处理同一任务。
+        Redis 锁覆盖整个媒体持久化和积分结算过程，防止 Webhook
+        与轮询错时进入；DB version 检查保留为第二层幂等保护。
 
         Args:
             external_task_id: 外部任务 ID
@@ -98,6 +103,90 @@ class TaskCompletionService:
         Returns:
             True = 已处理（含幂等跳过），False = 处理失败
         """
+        if result.status not in (TaskStatus.SUCCESS, TaskStatus.FAILED):
+            return True
+
+        # 终态和不存在的任务无需依赖 Redis，保持原有幂等语义。
+        existing_task = self.get_task(external_task_id)
+        if not existing_task:
+            logger.warning(f"Task not found | task_id={external_task_id}")
+            return False
+        if existing_task["status"] in ("completed", "failed", "cancelled"):
+            logger.info(
+                f"Task already {existing_task['status']}, skipping | "
+                f"task_id={external_task_id}"
+            )
+            from services.task_limit_service import release_task_slot
+            await release_task_slot(existing_task)
+            return True
+
+        from core.redis import RedisClient
+
+        lock_key = f"task_completion:{external_task_id}"
+        try:
+            lock_token = await RedisClient.acquire_lock(
+                lock_key,
+                timeout=_COMPLETION_LOCK_TTL_SECONDS,
+            )
+        except Exception as e:
+            logger.error(
+                f"Task completion lock unavailable | task_id={external_task_id} | "
+                f"error={e}"
+            )
+            return False
+
+        if not lock_token:
+            logger.info(
+                f"Task completion already in progress | task_id={external_task_id}"
+            )
+            return True
+
+        renewal_task = asyncio.create_task(
+            self._renew_completion_lock(lock_key, lock_token),
+            name=f"completion-lock:{external_task_id}",
+        )
+        try:
+            return await self._process_result_locked(external_task_id, result)
+        finally:
+            renewal_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await renewal_task
+            try:
+                await RedisClient.release_lock(lock_key, lock_token)
+            except Exception as e:
+                logger.error(
+                    f"Task completion lock release failed | "
+                    f"task_id={external_task_id} | error={e}"
+                )
+
+    async def _renew_completion_lock(self, lock_key: str, lock_token: str) -> None:
+        """定期续期处理锁，覆盖大图下载和存储重试。"""
+        from core.redis import RedisClient
+
+        while True:
+            await asyncio.sleep(_COMPLETION_LOCK_RENEW_SECONDS)
+            try:
+                extended = await RedisClient.extend_lock(
+                    lock_key,
+                    lock_token,
+                    timeout=_COMPLETION_LOCK_TTL_SECONDS,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Task completion lock renewal failed | "
+                    f"key={lock_key} | error={e}"
+                )
+                return
+            if not extended:
+                logger.error(f"Task completion lock lost | key={lock_key}")
+                return
+
+    async def _process_result_locked(
+        self,
+        external_task_id: str,
+        result: TaskResult,
+    ) -> bool:
+        """持有分布式锁时执行原有完成处理。"""
         # pending/processing 状态忽略（轮询场景，任务仍在进行中）
         if result.status not in (TaskStatus.SUCCESS, TaskStatus.FAILED):
             return True

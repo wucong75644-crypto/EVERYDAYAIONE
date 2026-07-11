@@ -672,8 +672,9 @@ TaskCompletionService.process_result():
 
 **保障**：
 - 两者都经过 `TaskCompletionService`
-- 第一个进入的正常处理
-- 第二个发现 status 已 completed，直接返回
+- Redis 分布式锁覆盖下载、NAS/OSS、积分和消息更新整个过程
+- 锁持有期间每 60 秒续期，防止长耗时处理中锁过期
+- 未获得锁的通道幂等退出，数据库终态/version 检查作为第二层保护
 
 **结论**：幂等保证
 
@@ -682,7 +683,7 @@ TaskCompletionService.process_result():
 **场景**：回调 URL 不可达、Provider 故障
 
 **保障**：
-- 轮询兜底每 2 分钟检查
+- 保留生产现有 `POLL_INTERVAL_SECONDS` 和任务抖动行为，本次不修改
 - `cleanup_stale_tasks()` 超时清理（image 30分钟 / video 120分钟）
 
 **结论**：轮询兜底
@@ -717,7 +718,7 @@ TaskCompletionService:
 
 **保障**：
 - Provider 回调收到非 200 会重试
-- 即使重试也失败，轮询兜底会在 2 分钟内发现
+- 即使重试也失败，现有轮询兜底仍会发现
 
 **结论**：双重保障
 
@@ -753,6 +754,7 @@ async def handle_webhook(provider: str, ...):
 ```python
 # core/config.py 新增
 callback_base_url: Optional[str] = None
+callback_token: Optional[str] = None
 ```
 
 ```bash
@@ -760,6 +762,7 @@ callback_base_url: Optional[str] = None
 # Webhook 回调地址（需公网可访问，未配置则退回轮询模式）
 # 所有 Provider 共用同一个 base URL，通过路径区分
 CALLBACK_BASE_URL=
+CALLBACK_TOKEN=
 ```
 
 ## 9. 开发任务拆分

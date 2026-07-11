@@ -261,11 +261,23 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         """
         from core.config import get_settings
 
-        base_url = get_settings().callback_base_url
+        settings = get_settings()
+        base_url = settings.callback_base_url
+        callback_token = settings.callback_token
         if not base_url:
             return None
+        if not callback_token:
+            logger.error(
+                "Webhook callback disabled: CALLBACK_TOKEN is not configured | "
+                f"provider={provider_value}"
+            )
+            return None
         # 去掉末尾斜杠
-        return f"{base_url.rstrip('/')}/api/webhook/{provider_value}"
+        from urllib.parse import quote
+        return (
+            f"{base_url.rstrip('/')}/api/webhook/{provider_value}"
+            f"?token={quote(callback_token, safe='')}"
+        )
 
     def _extract_text_content(self, content: List[ContentPart]) -> str:
         """从 ContentPart 数组提取文本"""

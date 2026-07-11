@@ -5,12 +5,15 @@ Webhook 回调路由
 根据 provider 路径参数分发到对应的回调解析器。
 """
 
-from typing import Dict, Any, Type
+import asyncio
+import secrets
+from typing import Dict, Any, Set, Type
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from api.deps import Database
+from core.config import get_settings
 from services.adapters.base import (
     ModelProvider,
 )
@@ -19,6 +22,67 @@ from services.adapters.kie.video_adapter import KieVideoAdapter
 from services.task_completion_service import TaskCompletionService
 
 router = APIRouter(prefix="/webhook", tags=["Webhook 回调"])
+
+# 保留强引用，避免 fire-and-forget 任务在执行中被回收。
+_processing_tasks: Set[asyncio.Task] = set()
+
+
+def _track_processing_task(
+    task: asyncio.Task,
+    provider: str,
+    external_task_id: str,
+) -> None:
+    """跟踪 Webhook 后台任务并消费异常。"""
+    _processing_tasks.add(task)
+
+    def _on_done(done_task: asyncio.Task) -> None:
+        _processing_tasks.discard(done_task)
+        if done_task.cancelled():
+            logger.warning(
+                f"Webhook processing cancelled | provider={provider} | "
+                f"task_id={external_task_id}"
+            )
+            return
+        error = done_task.exception()
+        if error:
+            logger.error(
+                f"Webhook background processing failed | provider={provider} | "
+                f"task_id={external_task_id} | error={error}",
+                exc_info=error,
+            )
+            return
+        if done_task.result() is False:
+            logger.warning(
+                f"Webhook background processing deferred to polling | "
+                f"provider={provider} | task_id={external_task_id}"
+            )
+
+    task.add_done_callback(_on_done)
+
+
+def _is_authorized_callback(request: Request) -> bool:
+    """Provider 回调无用户会话，使用专用 Token 验证来源。"""
+    expected_token = get_settings().callback_token
+    supplied_token = request.query_params.get("token")
+    return bool(
+        expected_token
+        and supplied_token
+        and secrets.compare_digest(supplied_token, expected_token)
+    )
+
+
+def _start_processing(
+    service: TaskCompletionService,
+    provider: str,
+    external_task_id: str,
+    result: Any,
+) -> None:
+    """立即启动统一处理，不让 Provider 等待后续持久化。"""
+    task = asyncio.create_task(
+        service.process_result(external_task_id, result),
+        name=f"webhook:{provider}:{external_task_id}",
+    )
+    _track_processing_task(task, provider, external_task_id)
 
 
 # Provider → 适配器类映射（回调解析用）
@@ -42,16 +106,14 @@ async def handle_webhook(
     request: Request,
     db: Database,
 ) -> JSONResponse:
-    """
-    统一 webhook 入口，根据 provider 分发到对应解析器
+    """验证 Provider 回调，解析统一结果并立即启动后台处理。"""
+    if not _is_authorized_callback(request):
+        logger.warning(f"Webhook: unauthorized callback | provider={provider}")
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized callback"},
+        )
 
-    流程：
-    1. 验证 provider 有效性
-    2. 解析 payload，提取 task_id
-    3. 查询任务记录获取 task_type（image/video）
-    4. 调用对应适配器的 parse_callback()
-    5. 传递统一结果给 TaskCompletionService
-    """
     # 1. 验证 provider
     try:
         model_provider = ModelProvider(provider)
@@ -147,22 +209,10 @@ async def handle_webhook(
             content={"error": f"Invalid callback payload: {e}"},
         )
 
-    # 6. 调用统一处理
-    try:
-        await service.process_result(external_task_id, result)
-    except Exception as e:
-        logger.error(
-            f"Webhook: process_result failed | provider={provider} | "
-            f"task_id={external_task_id} | error={e}"
-        )
-        # 返回 500 让 Provider 重试
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Internal processing error"},
-        )
+    _start_processing(service, provider, external_task_id, result)
 
     logger.info(
-        f"Webhook processed | provider={provider} | "
+        f"Webhook accepted | provider={provider} | "
         f"task_id={external_task_id} | type={task_type} | "
         f"status={result.status.value}"
     )
