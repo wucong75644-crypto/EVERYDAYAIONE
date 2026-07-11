@@ -31,6 +31,7 @@ from .models import (
     UsageRecord,
     KieModelType,
     TaskState,
+    extract_callback_data,
 )
 from .configs import IMAGE_MODEL_CONFIGS
 
@@ -413,7 +414,7 @@ class KieImageAdapter(BaseImageAdapter):
     @classmethod
     def extract_task_id(cls, payload: Dict[str, Any]) -> str:
         """从 KIE 回调 payload 提取任务 ID"""
-        task_id = payload.get("taskId")
+        task_id = extract_callback_data(payload).get("taskId")
         if not task_id:
             raise ValueError("Missing taskId in KIE callback payload")
         return task_id
@@ -433,13 +434,16 @@ class KieImageAdapter(BaseImageAdapter):
             "costTime": 12345
         }
         """
-        task_id = cls.extract_task_id(payload)
-        state = payload.get("state")
-        cost_time = payload.get("costTime")
+        callback_data = extract_callback_data(payload)
+        task_id = callback_data.get("taskId")
+        if not task_id:
+            raise ValueError("Missing taskId in KIE callback payload")
+        state = callback_data.get("state")
+        cost_time = callback_data.get("costTime")
 
         if state == "success":
             # 解析 resultJson
-            result_json_raw = payload.get("resultJson", "{}")
+            result_json_raw = callback_data.get("resultJson", "{}")
             if isinstance(result_json_raw, str):
                 try:
                     result_data = json.loads(result_json_raw)
@@ -478,7 +482,7 @@ class KieImageAdapter(BaseImageAdapter):
             return ImageGenerateResult(
                 task_id=task_id,
                 status=TaskStatus.FAILED,
-                fail_code=payload.get("failCode", "UNKNOWN"),
-                fail_msg=payload.get("failMsg", "任务失败"),
+                fail_code=callback_data.get("failCode", "UNKNOWN"),
+                fail_msg=callback_data.get("failMsg", "任务失败"),
                 cost_time_ms=cost_time,
             )

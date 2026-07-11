@@ -13,12 +13,10 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from api.routes.webhook import (
-    _describe_payload_shape,
-    _processing_tasks,
-    handle_webhook,
-)
+from api.routes.webhook import _processing_tasks, handle_webhook
 from services.adapters.base import ImageGenerateResult, TaskStatus
+from services.adapters.kie.image_adapter import KieImageAdapter
+from services.adapters.kie.video_adapter import KieVideoAdapter
 from services.handlers.base import BaseHandler
 from services.task_completion_service import TaskCompletionService
 
@@ -49,9 +47,16 @@ def _request(payload: dict, token: str | None = "secret-token") -> Request:
 
 def _success_payload() -> dict:
     return {
-        "taskId": "kie-task-1",
-        "state": "success",
-        "resultJson": json.dumps({"resultUrls": ["https://kie.example/image.png"]}),
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "taskId": "kie-task-1",
+            "state": "success",
+            "resultJson": json.dumps({
+                "resultUrls": ["https://kie.example/image.png"],
+            }),
+            "costTime": 1234,
+        },
     }
 
 
@@ -74,26 +79,55 @@ def test_callback_url_contains_encoded_token() -> None:
     )
 
 
-def test_payload_shape_hides_all_values() -> None:
+def test_image_callback_parses_unified_market_envelope() -> None:
+    result = KieImageAdapter.parse_callback(_success_payload())
+
+    assert result.task_id == "kie-task-1"
+    assert result.status == TaskStatus.SUCCESS
+    assert result.image_urls == ["https://kie.example/image.png"]
+    assert result.cost_time_ms == 1234
+
+
+def test_video_callback_parses_unified_market_envelope() -> None:
+    payload = _success_payload()
+    payload["data"]["resultJson"] = json.dumps({
+        "resultUrls": ["https://kie.example/video.mp4"],
+    })
+
+    result = KieVideoAdapter.parse_callback(payload)
+
+    assert result.task_id == "kie-task-1"
+    assert result.status == TaskStatus.SUCCESS
+    assert result.video_url == "https://kie.example/video.mp4"
+
+
+def test_callback_parses_failure_from_data() -> None:
     payload = {
         "code": 200,
+        "msg": "success",
         "data": {
-            "taskId": "secret-task-id",
-            "resultUrls": ["https://private.example/image.png"],
+            "taskId": "kie-task-1",
+            "state": "fail",
+            "failCode": "MODEL_TIMEOUT",
+            "failMsg": "Model timed out",
         },
     }
 
-    shape = _describe_payload_shape(payload)
+    result = KieImageAdapter.parse_callback(payload)
 
-    assert shape == {
-        "code": "int",
-        "data": {
-            "taskId": "str",
-            "resultUrls": {"type": "list", "item": "str"},
-        },
-    }
-    assert "secret-task-id" not in str(shape)
-    assert "private.example" not in str(shape)
+    assert result.status == TaskStatus.FAILED
+    assert result.fail_code == "MODEL_TIMEOUT"
+    assert result.fail_msg == "Model timed out"
+
+
+@pytest.mark.parametrize("payload", [
+    {"taskId": "legacy-flat", "state": "success"},
+    {"code": 200, "msg": "success", "data": None},
+    {"code": 500, "msg": "provider error", "data": {}},
+])
+def test_callback_rejects_non_market_envelope(payload: dict) -> None:
+    with pytest.raises(ValueError):
+        KieImageAdapter.extract_task_id(payload)
 
 
 @pytest.mark.asyncio

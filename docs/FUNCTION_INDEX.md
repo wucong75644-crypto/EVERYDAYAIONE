@@ -426,7 +426,6 @@
 | `_track_processing_task` | `backend/api/routes/webhook.py` | 托管 Webhook 后台任务强引用并记录异常/兜底 | task, provider, external_task_id | None |
 | `_is_authorized_callback` | `backend/api/routes/webhook.py` | 使用常量时间比较验证 Webhook Token | request | bool |
 | `_start_processing` | `backend/api/routes/webhook.py` | 立即启动并托管统一任务完成处理 | service, provider, external_task_id, result | None |
-| `_describe_payload_shape` | `backend/api/routes/webhook.py` | 输出仅含字段名和类型的回调结构，不记录实际值 | value, depth | Any |
 | `handle_webhook` | `backend/api/routes/webhook.py` | 验证 Token、按 provider 解析回调并立即启动后台处理 | provider: str, request, db | JSONResponse |
 | `TaskCompletionService.__init__` | `backend/services/task_completion_service.py` | 初始化统一任务完成服务 | db: Client | - |
 | `TaskCompletionService.get_task` | `backend/services/task_completion_service.py` | 根据 external_task_id 查询任务 | external_task_id: str | Optional[Dict] |
@@ -447,6 +446,7 @@
 | `KieImageAdapter.parse_callback` | `backend/services/adapters/kie/image_adapter.py` | 解析 KIE 图片回调（taskId+state+resultJson） | payload: Dict | ImageGenerateResult |
 | `KieVideoAdapter.extract_task_id` | `backend/services/adapters/kie/video_adapter.py` | KIE 视频回调提取 taskId | payload: Dict | str |
 | `KieVideoAdapter.parse_callback` | `backend/services/adapters/kie/video_adapter.py` | 解析 KIE 视频回调（taskId+state+resultJson） | payload: Dict | VideoGenerateResult |
+| `extract_callback_data` | `backend/services/adapters/kie/models.py` | 校验并解包 KIE Market 统一 `{code,msg,data}` 回调信封 | payload: Dict | Dict |
 | `BaseHandler._build_callback_url` | `backend/services/handlers/base.py` | 构建带 Token 的 Webhook URL（base/token 任一未配置则返回 None） | provider_value: str | Optional[str] |
 | `BatchCompletionService.handle_image_complete` | `backend/services/batch_completion_service.py` | 处理单个图片 task 成功（确认积分、推送 partial update、finalize） | task, content_parts | bool |
 | `BatchCompletionService.handle_image_failure` | `backend/services/batch_completion_service.py` | 处理单个图片 task 失败（退回积分、推送 partial update、finalize） | task, error_code, error_message | bool |

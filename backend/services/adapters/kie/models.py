@@ -232,6 +232,19 @@ class CreateTaskResponse(BaseModel):
         return self.code == 200
 
 
+def extract_callback_data(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """校验并解包 KIE Market 统一回调信封。"""
+    if payload.get("code") != 200:
+        raise ValueError(
+            f"KIE callback failed: code={payload.get('code')}, "
+            f"msg={payload.get('msg', 'unknown')}"
+        )
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("Missing data in KIE callback payload")
+    return data
+
+
 class TaskResultJson(BaseModel):
     """任务结果 JSON"""
     resultUrls: Optional[List[str]] = None  # 图像/视频 URL
