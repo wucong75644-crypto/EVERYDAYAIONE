@@ -65,9 +65,9 @@ export default memo(function MessageMedia({
   onRegenerate,
 }: MessageMediaProps) {
   const videoUrl = videoUrls[0] || null;
-  const failedImageError = useMemo(() => {
+  const failedImage = useMemo(() => {
     const failedPart = content.find((part) => part.type === 'image' && part.failed);
-    return failedPart?.type === 'image' ? failedPart.error : undefined;
+    return failedPart?.type === 'image' ? failedPart : undefined;
   }, [content]);
 
   const imagePlaceholderSize = useMemo(
@@ -150,7 +150,8 @@ export default memo(function MessageMedia({
             width={imagePlaceholderSize.width}
             height={imagePlaceholderSize.height}
             onRetry={onRegenerate}
-            errorMessage={failedImageError || '图片生成失败'}
+            errorMessage={failedImage?.error || '图片生成失败'}
+            errorCode={failedImage?.error_code}
           />
         </div>
       )}

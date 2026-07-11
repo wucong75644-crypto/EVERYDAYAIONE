@@ -140,6 +140,7 @@ def build_image_partial_update(
     image_index: int, completed_count: int, total_count: int,
     content_part: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
+    error_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建多图批次中单张图片完成/失败的通知"""
     payload: Dict[str, Any] = {
@@ -150,6 +151,8 @@ def build_image_partial_update(
     }
     if error:
         payload["error"] = error
+    if error_code:
+        payload["error_code"] = error_code
     return _build_ws_message(
         WSMessageType.IMAGE_PARTIAL_UPDATE, payload,
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,

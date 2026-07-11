@@ -308,6 +308,7 @@ class TestBatchCompletionServiceHandleFailure:
         )
         assert ws_msg["type"] == "image_partial_update"
         assert ws_msg["payload"]["error"] == "模型超时"
+        assert ws_msg["payload"]["error_code"] == "GENERATION_FAILED"
         assert ws_msg["payload"]["content_part"] is None
 
     @pytest.mark.asyncio
@@ -370,7 +371,9 @@ class TestBatchCompletionServiceFinalize:
             create_batch_task(0, batch_id, status="completed",
                               result_data=create_content_part(), credits_locked=5),
             create_batch_task(1, batch_id, status="failed",
-                              error_message="超时", credits_locked=5),
+                              error_message="超时", credits_locked=5,
+                              result_data={"type": "image", "url": None, "failed": True,
+                                           "error": "超时", "error_code": "MODEL_TIMEOUT"}),
             create_batch_task(2, batch_id, status="failed",
                               error_message="限流", credits_locked=5),
         ]
@@ -390,6 +393,7 @@ class TestBatchCompletionServiceFinalize:
         # 第 1 个成功，第 2/3 个失败
         assert content[0]["url"] is not None
         assert content[1].get("failed") is True
+        assert content[1]["error_code"] == "MODEL_TIMEOUT"
         assert content[2].get("failed") is True
         # 状态应为 completed（至少 1 张成功）
         assert msg_data["status"] == "completed"

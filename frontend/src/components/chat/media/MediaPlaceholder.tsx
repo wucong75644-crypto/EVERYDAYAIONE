@@ -5,7 +5,7 @@
  * 支持动态尺寸、淡入动画、深色模式
  */
 
-import { Image as ImageIcon, Video as VideoIcon, Music as MusicIcon, Box as BoxIcon, ImageOff, VideoOff, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon, Video as VideoIcon, Music as MusicIcon, Box as BoxIcon, ImageOff, VideoOff, RefreshCw, AlertTriangle } from 'lucide-react';
 import styles from '../menus/shared.module.css';
 
 /** 媒体类型（可扩展） */
@@ -79,6 +79,8 @@ interface FailedMediaPlaceholderProps {
   retryLabel?: string;
   /** 失败原因 */
   errorMessage?: string;
+  /** 结构化错误码 */
+  errorCode?: string;
 }
 
 /** 失败的媒体占位符（裂开图标 + hover 重试按钮） */
@@ -90,8 +92,11 @@ export function FailedMediaPlaceholder({
   onRetry,
   retryLabel = '重新生成',
   errorMessage,
+  errorCode,
 }: FailedMediaPlaceholderProps) {
-  const Icon = FAILED_ICON_MAP[type] || ImageOff;
+  const isInsufficientCredits = errorCode === 'INSUFFICIENT_CREDITS';
+  const Icon = isInsufficientCredits ? AlertTriangle : (FAILED_ICON_MAP[type] || ImageOff);
+  const displayError = isInsufficientCredits ? '积分不足' : errorMessage;
 
   // 尺寸：优先用 aspectRatio（grid cell 场景），否则用固定宽高
   const sizeStyle: React.CSSProperties = aspectRatio
@@ -103,10 +108,10 @@ export function FailedMediaPlaceholder({
       className="group rounded-xl bg-hover dark:bg-surface-dark-card flex flex-col gap-2 items-center justify-center text-text-disabled dark:text-text-tertiary relative"
       style={sizeStyle}
     >
-      <Icon className="w-10 h-10" />
-      {errorMessage && (
+      <Icon className={`w-10 h-10 ${isInsufficientCredits ? 'text-amber-500' : ''}`} />
+      {displayError && (
         <span className="max-w-[85%] text-center text-xs leading-5" role="alert">
-          {errorMessage}
+          {displayError}
         </span>
       )}
       {onRetry && (

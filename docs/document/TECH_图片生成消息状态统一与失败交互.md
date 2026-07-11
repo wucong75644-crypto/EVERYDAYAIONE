@@ -82,6 +82,9 @@
 - 前端读取 `response.data.error.message`，不使用 Axios 英文 `error.message`。
 - 首次生成积分不足：不创建图片任务。
 - 重新生成积分不足：保留原失败占位符。
+- 发送前校验失败：不清空文字、参考图、附件和工作区引用。
+- 异步失败：在任务 `result_data` 和消息图片块保存 `error_code`，WebSocket 实时更新携带同一字段。
+- 前端遇到 `INSUFFICIENT_CREDITS` 时保持原占位符尺寸和重试交互，仅将中心图标改为警告三角，文字固定为“积分不足”。
 
 ## 6. 计划修改文件
 

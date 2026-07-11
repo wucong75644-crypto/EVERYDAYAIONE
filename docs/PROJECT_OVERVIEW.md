@@ -65,6 +65,7 @@ EVERYDAYAIONE/
 │   └── document/
 │       ├── TECH_ARCHITECTURE.md      # 技术架构
 │       ├── PAGE_DESIGN.md            # 页面设计
+│       ├── UI_主图详情制作页面.md      # 独立主图/详情图五步制作页面 UI 设计
 │       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
 │       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
 │       ├── SUPER_ADMIN_FEATURES.md   # 超级管理员功能
@@ -248,6 +249,7 @@ EVERYDAYAIONE/
         │       ├── ImagePreviewModal.tsx     # 图片预览弹窗（全屏缩放下载）
         │       ├── LoadingPlaceholder.tsx    # 统一加载占位符（文字 + 跳动圆点）
         │       ├── MediaPlaceholder.tsx      # 统一媒体占位符（灰色框 + 图标）
+        │       ├── __tests__/MediaPlaceholder.test.tsx # 媒体失败占位符（积分不足/普通失败）回归测试
         │       ├── AudioPreview.tsx          # 音频预览
         │       ├── AudioRecorder.tsx         # 录音组件
         │       ├── ConflictAlert.tsx         # 模型冲突提示
@@ -285,7 +287,8 @@ EVERYDAYAIONE/
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
         │   └── handlers/                 # 消息处理器子模块
         │       ├── useTextMessageHandler.ts   # 文本消息处理
-        │       └── useMediaMessageHandler.ts  # 统一媒体消息处理（图片/视频）
+        │       ├── useMediaMessageHandler.ts  # 统一媒体消息处理（图片/视频）
+        │       └── __tests__/messageHandlers.test.tsx # 发送异常向上传播回归测试
         ├── constants/                # 常量配置
         │   ├── models.ts                 # 模型配置（UnifiedModel）
         │   ├── placeholder.ts            # 占位符常量（PLACEHOLDER_TEXT）

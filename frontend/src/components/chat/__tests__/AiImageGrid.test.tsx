@@ -19,8 +19,8 @@ vi.mock('react-intersection-observer', () => ({
 }));
 
 vi.mock('../media/MediaPlaceholder', () => ({
-  FailedMediaPlaceholder: ({ onRetry, retryLabel }: { onRetry?: () => void; retryLabel?: string }) => (
-    <div data-testid="failed-placeholder">
+  FailedMediaPlaceholder: ({ onRetry, retryLabel, errorCode }: { onRetry?: () => void; retryLabel?: string; errorCode?: string }) => (
+    <div data-testid="failed-placeholder" data-error-code={errorCode}>
       {onRetry && <button onClick={onRetry}>{retryLabel}</button>}
     </div>
   ),
@@ -115,6 +115,28 @@ describe('AiImageGrid', () => {
       />,
     );
     expect(screen.getByTestId('failed-placeholder')).toBeInTheDocument();
+  });
+
+  it('多图失败单元格传递积分不足错误码', () => {
+    const content: ContentPart[] = [{
+      type: 'image', url: null, failed: true,
+      error: 'provider raw error', error_code: 'INSUFFICIENT_CREDITS',
+    }];
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={1}
+        messageId="msg-credits"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+
+    expect(screen.getByTestId('failed-placeholder')).toHaveAttribute(
+      'data-error-code',
+      'INSUFFICIENT_CREDITS',
+    );
   });
 
   it('onRegenerateSingle 在失败占位符点击时传递正确的 index', () => {

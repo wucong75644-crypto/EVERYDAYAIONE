@@ -117,10 +117,19 @@ class BatchCompletionService:
                     f"tx={transaction_id} | error={refund_err}"
                 )
 
-        # 2. 标记 task failed
+        failed_part = {
+            "type": "image",
+            "url": None,
+            "failed": True,
+            "error": error_message,
+            "error_code": error_code,
+        }
+
+        # 2. 保存结构化失败结果 + 标记 task failed
         self.db.table("tasks").update({
             "status": "failed",
             "error_message": error_message,
+            "result_data": failed_part,
         }).eq("external_task_id", ext_task_id).execute()
 
         # 3. 查询批次进度
@@ -135,6 +144,7 @@ class BatchCompletionService:
             completed_count=completed_count,
             total_count=total_count,
             error=error_message,
+            error_code=error_code,
         )
 
         # 5. 全部终态 → finalize（区分 regenerate_single 和批次生成）
@@ -180,6 +190,7 @@ class BatchCompletionService:
         completed_count: int,
         total_count: int,
         error: str = None,
+        error_code: str = None,
     ) -> None:
         """推送 image_partial_update WebSocket 事件"""
         client_task_id = task.get("client_task_id")
@@ -196,6 +207,7 @@ class BatchCompletionService:
             completed_count=completed_count,
             total_count=total_count,
             error=error,
+            error_code=error_code,
         )
 
         # 优先推送到 task 订阅者，fallback 到 user
@@ -278,7 +290,7 @@ class BatchCompletionService:
                 content[image_index] = the_task["result_data"]
                 current_credits += the_task.get("credits_locked", 0)
             else:
-                content[image_index] = {
+                content[image_index] = the_task.get("result_data") or {
                     "type": "image",
                     "url": None,
                     "failed": True,
@@ -370,7 +382,7 @@ class BatchCompletionService:
                 total_credits += task.get("credits_locked", 0)
             else:
                 # 失败的图片：标记 failed
-                content_dicts.append({
+                content_dicts.append(task.get("result_data") or {
                     "type": "image",
                     "url": None,
                     "failed": True,

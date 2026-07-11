@@ -19,8 +19,8 @@ vi.mock('react-intersection-observer', () => ({
 
 vi.mock('../media/MediaPlaceholder', () => ({
   default: ({ type }: { type: string }) => <div data-testid={`placeholder-${type}`} />,
-  FailedMediaPlaceholder: ({ onRetry, errorMessage }: { onRetry?: () => void; errorMessage?: string }) => (
-    <div data-testid="failed-placeholder">
+  FailedMediaPlaceholder: ({ onRetry, errorMessage, errorCode }: { onRetry?: () => void; errorMessage?: string; errorCode?: string }) => (
+    <div data-testid="failed-placeholder" data-error-code={errorCode}>
       {errorMessage && <span>{errorMessage}</span>}
       {onRetry && <button onClick={onRetry}>重试</button>}
     </div>
@@ -144,6 +144,26 @@ describe('MessageMedia', () => {
     );
     expect(screen.getByTestId('failed-placeholder')).toBeInTheDocument();
     expect(screen.getByText('图片生成超时')).toBeInTheDocument();
+  });
+
+  it('单图积分不足时传递结构化错误码', () => {
+    render(
+      <MessageMedia
+        messageId="msg-credits"
+        isUser={false}
+        onImageClick={vi.fn()}
+        failedMediaType="image"
+        content={[{
+          type: 'image', url: null, failed: true,
+          error: 'provider raw error', error_code: 'INSUFFICIENT_CREDITS',
+        }]}
+      />,
+    );
+
+    expect(screen.getByTestId('failed-placeholder')).toHaveAttribute(
+      'data-error-code',
+      'INSUFFICIENT_CREDITS',
+    );
   });
 
   it('多图全部失败时仍按数量渲染 AiImageGrid', () => {

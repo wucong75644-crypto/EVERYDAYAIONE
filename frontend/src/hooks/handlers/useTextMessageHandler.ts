@@ -7,7 +7,7 @@
 
 import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
-import { sendMessage, createTextContent, createTextWithImages, createTextWithFiles, createErrorMessage, type ImageInputInfo } from '../../services/messageSender';
+import { sendMessage, createTextContent, createTextWithImages, createTextWithFiles, type ImageInputInfo } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { tabSync } from '../../utils/tabSync';
 import { logger } from '../../utils/logger';
@@ -36,7 +36,6 @@ export function useTextMessageHandler({
   topK,
   maxOutputTokens,
   onMessagePending,
-  onMessageSent,
 }: UseTextMessageHandlerParams) {
   // 获取 WebSocket 订阅函数
   const { subscribeTaskWithMapping } = useWebSocketContext();
@@ -93,7 +92,7 @@ export function useTextMessageHandler({
 
     } catch (error) {
       logger.error('chatHandler', 'Chat message failed', error);
-      onMessageSent(createErrorMessage(currentConversationId, error, '发送失败'));
+      throw error;
     }
   };
 

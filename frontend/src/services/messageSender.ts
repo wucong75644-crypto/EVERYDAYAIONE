@@ -392,25 +392,6 @@ export async function sendMessage(options: SendOptions): Promise<string> {
 // ============================================================
 
 /**
- * 创建错误消息（供 handler 使用）
- */
-export function createErrorMessage(
-  conversationId: string,
-  error: unknown,
-  defaultText = '发送失败'
-): Message {
-  return {
-    id: crypto.randomUUID(),
-    conversation_id: conversationId,
-    role: 'assistant',
-    content: [{ type: 'text', text: error instanceof Error ? error.message : defaultText }],
-    status: 'failed',
-    is_error: true,
-    created_at: new Date().toISOString(),
-  };
-}
-
-/**
  * 创建文本消息内容
  */
 export function createTextContent(text: string): ContentPart[] {

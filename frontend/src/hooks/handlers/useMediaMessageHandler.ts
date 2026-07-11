@@ -6,7 +6,7 @@
 
 import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
-import { sendMessage, createTextContent, createTextWithImages, createErrorMessage, type GenerationType } from '../../services/messageSender';
+import { sendMessage, createTextContent, createTextWithImages, type GenerationType } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { logger } from '../../utils/logger';
 
@@ -45,7 +45,6 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
     videoAspectRatio,
     removeWatermark,
     onMessagePending,
-    onMessageSent,
   } = params;
 
   // 获取 WebSocket 订阅/取消订阅函数
@@ -109,7 +108,7 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
 
     } catch (error) {
       logger.error('mediaHandler', 'Media generation failed', error);
-      onMessageSent(createErrorMessage(conversationId, error, '生成失败'));
+      throw error;
     }
   };
 

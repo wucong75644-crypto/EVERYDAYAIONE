@@ -300,7 +300,13 @@ function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
       const content = Array.from({ length: imageCount }, (_, index) => {
         const part = currentContent[index];
         if (part?.type === 'image' && part.url) return part;
-        return { type: 'image' as const, url: null, failed: true, error: errorText };
+        return {
+          type: 'image' as const,
+          url: null,
+          failed: true,
+          error: errorText,
+          error_code: error?.code,
+        };
       });
       store.updateMessage(message_id, {
         status: 'failed',
@@ -346,8 +352,9 @@ function handleImagePartialUpdate(deps: HandlerDeps, msg: WSIncomingMessage): vo
     completed_count?: number;
     total_count?: number;
     error?: string;
+    error_code?: string;
   };
-  const { image_index, content_part, completed_count, total_count, error } = payload;
+  const { image_index, content_part, completed_count, total_count, error, error_code } = payload;
 
   if (!message_id || image_index === undefined) return;
 
@@ -371,7 +378,13 @@ function handleImagePartialUpdate(deps: HandlerDeps, msg: WSIncomingMessage): vo
   }
 
   if (error) {
-    content[image_index] = { type: 'image', url: null, failed: true, error } as unknown as Message['content'][number];
+    content[image_index] = {
+      type: 'image',
+      url: null,
+      failed: true,
+      error,
+      error_code,
+    } as unknown as Message['content'][number];
   } else if (content_part) {
     content[image_index] = content_part;
   }

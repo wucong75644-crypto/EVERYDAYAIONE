@@ -563,11 +563,11 @@
 | `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览（输入区小图预览，引用图片蓝色边框+引号图标+引用角标） |
 | `ImagePreviewModal` | `frontend/src/components/chat/ImagePreviewModal.tsx` | 图片预览弹窗（全屏缩放下载） |
 | `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
-| `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 统一媒体占位符（灰色框 + 图标，支持图片/视频/音频等） |
+| `MediaPlaceholder` / `FailedMediaPlaceholder` | `frontend/src/components/chat/media/MediaPlaceholder.tsx` | 统一媒体占位符；失败状态支持错误码、积分不足警告和重新生成 |
 | `ImageContextMenu` | `frontend/src/components/chat/ImageContextMenu.tsx` | 图片右键上下文菜单（引用/复制/下载，dispatch chat:quote-image 事件） |
-| `AiImageGrid` | `frontend/src/components/chat/AiImageGrid.tsx` | AI 多图网格组件（2/3/4 张自适应布局，含失败占位符、单图重新生成、右键菜单） |
-| `GridCell` | `frontend/src/components/chat/AiImageGrid.tsx` | 单个网格单元（memo + gridCellAreEqual 自定义比较，仅数据 props 变化时重渲染） |
-| `gridCellAreEqual` | `frontend/src/components/chat/AiImageGrid.tsx` | GridCell 自定义 memo 比较函数（比较 imageUrl/failed/index/messageId/isGenerating，忽略函数引用） |
+| `AiImageGrid` | `frontend/src/components/chat/media/AiImageGrid.tsx` | AI 多图网格组件，各失败单元格独立传递错误码并支持单图重新生成 |
+| `GridCell` | `frontend/src/components/chat/media/AiImageGrid.tsx` | 单个网格单元（memo + gridCellAreEqual 自定义比较，仅数据 props 变化时重渲染） |
+| `gridCellAreEqual` | `frontend/src/components/chat/media/AiImageGrid.tsx` | GridCell 自定义 memo 比较函数（包括 errorCode，忽略函数引用） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
 | `AudioRecorder` | `frontend/src/components/chat/AudioRecorder.tsx` | 录音组件 |
 | `ConflictAlert` | `frontend/src/components/chat/ConflictAlert.tsx` | 模型冲突提示 |

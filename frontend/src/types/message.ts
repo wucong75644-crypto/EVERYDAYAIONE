@@ -42,6 +42,7 @@ export interface ImagePart {
   alt?: string;
   failed?: boolean;
   error?: string;
+  error_code?: string;
   /** 工作区文件名（用户上传/引用时填充，AI 生成图不填）—— 后端用于注册 file_path_cache 和 attachments 渲染 */
   name?: string;
   /** 工作区相对路径（如 上传/2026-06/xxx.png）。有值时后端注册 file_path_cache，

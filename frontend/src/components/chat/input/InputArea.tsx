@@ -515,11 +515,6 @@ export default function InputArea({
     const mergedFiles = [...uploadedFileUrls, ...wsFileMapped];
     const fileData = mergedFiles.length > 0 ? mergedFiles : null;
 
-    // 立即清空输入（提升响应速度）
-    setPrompt('');
-    handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
-    handleRemoveAllFiles();
-    onWorkspaceFilesConsumed?.();  // 清空工作区待发送文件
     setIsSubmitting(true);
 
     // 发送消息时滚动到底部（用户可能在上方浏览历史）
@@ -571,9 +566,14 @@ export default function InputArea({
       } else {
         await handleImageGeneration(currentConversationId!, messageContent, imageUrls);
       }
+
+      // 只在后端成功接受请求后清空；同步校验失败时保留全部输入。
+      setPrompt('');
+      handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
+      handleRemoveAllFiles();
+      onWorkspaceFilesConsumed?.();
     } catch (error) {
       logger.error('inputArea', '发送消息失败', error);
-      setPrompt(messageContent);
       setSendError(error instanceof Error ? error.message : '发送失败，请重试');
       onMessageSent(null);
     } finally {

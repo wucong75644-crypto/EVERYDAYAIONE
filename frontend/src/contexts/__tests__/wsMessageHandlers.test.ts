@@ -465,8 +465,8 @@ describe('wsMessageHandlers', () => {
         status: 'failed',
         is_error: false,
         content: [
-          expect.objectContaining({ type: 'image', failed: true }),
-          expect.objectContaining({ type: 'image', failed: true }),
+          expect.objectContaining({ type: 'image', failed: true, error_code: 'TIMEOUT' }),
+          expect.objectContaining({ type: 'image', failed: true, error_code: 'TIMEOUT' }),
         ],
       }));
     });
@@ -717,6 +717,7 @@ describe('wsMessageHandlers', () => {
           completed_count: 2,
           total_count: 2,
           error: '模型超时',
+          error_code: 'MODEL_TIMEOUT',
         },
       });
 
@@ -725,6 +726,7 @@ describe('wsMessageHandlers', () => {
       expect(content[0].url).toBe('https://oss/img0.png');
       expect(content[1].failed).toBe(true);
       expect(content[1].error).toBe('模型超时');
+      expect(content[1].error_code).toBe('MODEL_TIMEOUT');
     });
 
     it('should expand content array if image_index exceeds length', () => {

@@ -58,12 +58,14 @@ class TestBuildImagePartialUpdate:
             total_count=4,
             content_part=None,
             error="模型超时",
+            error_code="MODEL_TIMEOUT",
         )
 
         assert msg["type"] == "image_partial_update"
         assert msg["payload"]["image_index"] == 2
         assert msg["payload"]["content_part"] is None
         assert msg["payload"]["error"] == "模型超时"
+        assert msg["payload"]["error_code"] == "MODEL_TIMEOUT"
         assert msg["payload"]["completed_count"] == 3
         assert msg["payload"]["total_count"] == 4
 
