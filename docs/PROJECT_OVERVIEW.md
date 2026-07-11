@@ -66,6 +66,7 @@ EVERYDAYAIONE/
 │       ├── TECH_ARCHITECTURE.md      # 技术架构
 │       ├── PAGE_DESIGN.md            # 页面设计
 │       ├── UI_主图详情制作页面.md      # 独立主图/详情图五步制作页面 UI 设计
+│       ├── TECH_主图详情制作页面_UI第一阶段.md # 第一阶段 UI+Mock 技术设计
 │       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
 │       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
 │       ├── SUPER_ADMIN_FEATURES.md   # 超级管理员功能
@@ -213,6 +214,7 @@ EVERYDAYAIONE/
         │   ├── Home.tsx                  # 首页（含认证弹窗入口）
         │   ├── ForgotPassword.tsx        # 忘记密码页
         │   ├── Chat.tsx                  # 聊天页（主功能页）
+        │   ├── DetailPage.tsx            # 主图/详情图独立五步制作页
         │   └── WecomCallback.tsx         # 企微 OAuth 回调着陆页
         ├── components/               # 组件
         │   ├── common/                   # 通用组件
@@ -223,6 +225,17 @@ EVERYDAYAIONE/
         │   │   ├── RegisterForm.tsx          # 注册表单（手机号+验证码）
         │   │   ├── WecomQrLogin.tsx          # 企微二维码扫码登录组件
         │   │   └── ProtectedRoute.tsx        # 路由守卫组件
+        │   ├── detail-page/              # 主图详情制作页组件
+        │   │   ├── DetailPageHeader.tsx      # 顶部导航
+        │   │   ├── StepBar.tsx               # 五步进度条
+        │   │   ├── ProductImageSection.tsx   # 产品图/参考图选择器
+        │   │   ├── GenerationSettings.tsx    # Step 1生成设置
+        │   │   ├── AnalyzingPanel.tsx         # Step 2分析进度
+        │   │   ├── PlanReviewPanel.tsx        # Step 3规划确认
+        │   │   ├── PlanCard.tsx               # 单张规划编辑
+        │   │   ├── GenerationProgress.tsx     # Step 4生成进度
+        │   │   ├── GenerationCard.tsx         # 单张生成状态
+        │   │   └── ResultGallery.tsx           # Step 5结果画廊
         │   └── chat/                     # 聊天相关组件
         │       ├── Sidebar.tsx               # 左侧栏（对话列表、用户菜单）
         │       ├── ConversationList.tsx      # 对话列表（按日期分组，302行）
@@ -266,6 +279,7 @@ EVERYDAYAIONE/
         │   ├── useAuthStore.ts           # 认证状态（用户信息、Token）
         │   ├── useAuthModalStore.ts      # 认证弹窗状态（开关、模式切换）
         │   ├── useMessageStore.ts        # 统一消息 Store（消息、任务、缓存）
+        │   ├── useDetailPageStore.ts     # 主图详情制作页专用状态
         │   └── useTaskRestorationStore.ts # 任务恢复状态
         ├── services/                 # API 调用
         │   ├── api.ts                    # Axios 配置

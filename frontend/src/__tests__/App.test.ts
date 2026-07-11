@@ -43,6 +43,10 @@ describe('getRouteKey', () => {
     expect(getRouteKey('/forgot-password')).toBe('/forgot-password');
   });
 
+  it('/detail-page 返回 /detail-page（独立制作页）', () => {
+    expect(getRouteKey('/detail-page')).toBe('/detail-page');
+  });
+
   it('/auth/wecom/callback 返回 /auth（企微 callback 正确归一化）', () => {
     expect(getRouteKey('/auth/wecom/callback')).toBe('/auth');
   });

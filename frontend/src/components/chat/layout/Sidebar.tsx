@@ -13,7 +13,7 @@ import { useAuthStore } from '../../../stores/useAuthStore';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { useClickOutside } from '../../../hooks/useClickOutside';
 import { useLogout } from '../../../hooks/useLogout';
-import { Brain, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } from 'lucide-react';
+import { Brain, Images, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } from 'lucide-react';
 import ConversationList from './ConversationList';
 import SettingsModal from '../modals/SettingsModal';
 import MemoryModal from '../modals/MemoryModal';
@@ -184,6 +184,18 @@ export default function Sidebar({
           onDelete={onDelete}
           searchQuery={searchQuery}
         />
+      </div>
+
+      {/* 主图详情制作入口 */}
+      <div className="px-3 pb-1">
+        <button
+          onClick={() => navigate('/detail-page')}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-hover rounded-lg transition-base"
+        >
+          <Images className="w-4 h-4" />
+          <span>主图&详情图</span>
+          <span className="ml-auto px-1.5 py-0.5 rounded-full bg-accent/10 text-accent text-[10px]">新</span>
+        </button>
       </div>
 
       {/* 记忆入口 */}

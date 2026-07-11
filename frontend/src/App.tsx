@@ -24,6 +24,7 @@ const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const WecomCallback = lazy(() => import('./pages/WecomCallback'));
 const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
 const Admin = lazy(() => import('./pages/Admin'));
+const DetailPage = lazy(() => import('./pages/DetailPage'));
 // PromptGallery 已内嵌到首页，保留路由做重定向
 
 /**
@@ -69,6 +70,14 @@ function AnimatedRoutes() {
             element={
               <ProtectedRoute>
                 <Chat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/detail-page"
+            element={
+              <ProtectedRoute>
+                <DetailPage />
               </ProtectedRoute>
             }
           />

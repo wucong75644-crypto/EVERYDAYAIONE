@@ -323,6 +323,35 @@
 | `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
 | `InputArea` | `frontend/src/components/chat/InputArea.tsx` | 输入区域，模型选择、图片上传、高级设置、流式发送 |
 
+### 主图详情制作页面（UI 第一阶段）
+
+| 函数/组件 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|---|---|---|---|---|
+| `DetailPage` | `frontend/src/pages/DetailPage.tsx` | 独立五步制作页面骨架 | - | JSX |
+| `DetailPageHeader` | `frontend/src/components/detail-page/DetailPageHeader.tsx` | 顶部返回、积分和用户入口 | - | JSX |
+| `StepBar` | `frontend/src/components/detail-page/StepBar.tsx` | 五步进度展示 | step | JSX |
+| `ProductImageSection` | `frontend/src/components/detail-page/ProductImageSection.tsx` | 产品图/参考图本地选择与共享上限展示 | images, actions | JSX |
+| `GenerationSettings` | `frontend/src/components/detail-page/GenerationSettings.tsx` | Step 1生成参数表单 | form, actions | JSX |
+| `AnalyzingPanel` | `frontend/src/components/detail-page/AnalyzingPanel.tsx` | Step 2 分阶段分析反馈与取消 | stage, onCancel | JSX |
+| `PlanReviewPanel` | `frontend/src/components/detail-page/PlanReviewPanel.tsx` | Step 3 规划确认与页面操作 | plan, actions | JSX |
+| `PlanCard` | `frontend/src/components/detail-page/PlanCard.tsx` | 单张规划编辑、折叠提示词与删除 | item, actions | JSX |
+| `GenerationProgress` | `frontend/src/components/detail-page/GenerationProgress.tsx` | Step 4 整组生成进度和条目列表 | items, onRetry | JSX |
+| `GenerationCard` | `frontend/src/components/detail-page/GenerationCard.tsx` | 单张等待、生成、完成和失败状态 | item, onRetry | JSX |
+| `ResultGallery` | `frontend/src/components/detail-page/ResultGallery.tsx` | Step 5 结果统计与操作 | items, actions | JSX |
+| `useDetailPageStore` | `frontend/src/stores/useDetailPageStore.ts` | 页面专用 Zustand 状态 | - | DetailPageState |
+| `addImages` | `frontend/src/stores/useDetailPageStore.ts` | 校验并添加本地预览图片 | category, files | void |
+| `removeImage` | `frontend/src/stores/useDetailPageStore.ts` | 删除图片并释放 ObjectURL | id | void |
+| `setStep` | `frontend/src/stores/useDetailPageStore.ts` | 切换当前步骤 | step | void |
+| `updateForm` | `frontend/src/stores/useDetailPageStore.ts` | 更新表单并同步类型默认比例 | patch | void |
+| `startAnalysis` / `cancelAnalysis` | `frontend/src/stores/useDetailPageStore.ts` | 启动或取消 Mock 分阶段分析 | - | void |
+| `updatePlanItem` / `removePlanItem` | `frontend/src/stores/useDetailPageStore.ts` | 编辑或删除规划并保证至少一张 | id, patch | void |
+| `replan` | `frontend/src/stores/useDetailPageStore.ts` | 按当前数量重建 Mock 规划 | - | void |
+| `startGeneration` | `frontend/src/stores/useDetailPageStore.ts` | 启动逐张 Mock 生成并处理失败退款 | - | void |
+| `retryGeneration` | `frontend/src/stores/useDetailPageStore.ts` | 重试单张并追加结果版本 | id | void |
+| `backToPlan` / `restart` | `frontend/src/stores/useDetailPageStore.ts` | 返回规划或保留输入再次制作 | - | void |
+| `setMockScenario` | `frontend/src/stores/useDetailPageStore.ts` | 选择 Mock 演示场景 | scenario | void |
+| `reset` | `frontend/src/stores/useDetailPageStore.ts` | 恢复页面默认状态 | - | void |
+
 ### 消息服务模块 (Message Service)
 
 #### 后端函数
