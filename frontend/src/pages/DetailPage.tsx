@@ -65,7 +65,7 @@ export default function DetailPage() {
           <p className="mt-2 text-[var(--s-text-secondary)]">上传产品图，AI 智能分析并规划多角度、多场景的电商图片</p>
         </section>
         <StepBar step={step} />
-        <section className="mt-6 grid lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
+        <section className="mt-6 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
           <Card variant="elevated" padding="lg" className="min-h-[520px]">
             <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
             <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} onChange={updateForm} onAnalyze={startAnalysis} />

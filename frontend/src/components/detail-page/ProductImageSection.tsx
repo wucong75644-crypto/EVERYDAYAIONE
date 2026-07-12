@@ -21,6 +21,7 @@ function ImageGroup({
   required,
   description,
   images,
+  remaining,
   disabled,
   onAdd,
   onWorkspaceAdd,
@@ -31,6 +32,7 @@ function ImageGroup({
   required?: boolean;
   description: string;
   images: DetailLocalImage[];
+  remaining: number;
   disabled: boolean;
   onAdd: ProductImageSectionProps['onAdd'];
   onWorkspaceAdd: ProductImageSectionProps['onWorkspaceAdd'];
@@ -41,14 +43,14 @@ function ImageGroup({
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
           <h3 className="text-sm font-medium text-[var(--s-text-primary)]">
             {title}{required && <span className="text-[var(--s-error)]"> *</span>}
           </h3>
           <p className="mt-0.5 text-xs text-[var(--s-text-tertiary)]">{description}</p>
         </div>
-        <div className="flex gap-1"><Button variant="ghost" size="sm" disabled={disabled} onClick={() => setPickerOpen(true)}>工作区</Button><Button variant="secondary" size="sm" icon={<ImagePlus className="w-4 h-4" />} disabled={disabled} onClick={() => inputRef.current?.click()}>上传</Button></div>
+        <div className="flex shrink-0 gap-2 whitespace-nowrap"><Button variant="ghost" size="sm" disabled={disabled} onClick={() => setPickerOpen(true)}>工作区</Button><Button variant="secondary" size="sm" icon={<ImagePlus className="w-4 h-4" />} disabled={disabled} onClick={() => inputRef.current?.click()}>上传</Button></div>
       </div>
       <input
         ref={inputRef}
@@ -64,7 +66,7 @@ function ImageGroup({
           event.target.value = '';
         }}
       />
-      <div className="mt-3 grid grid-cols-3 gap-2">
+      <div className="mt-3 grid grid-cols-4 gap-2 max-h-[196px] overflow-y-auto overscroll-contain pr-1">
         {images.map((image) => (
           <div key={image.id} className="group relative aspect-square rounded-[var(--s-radius-control)] overflow-hidden border border-[var(--s-border-default)] bg-[var(--s-surface-secondary)]">
             {(() => {
@@ -81,13 +83,13 @@ function ImageGroup({
           </div>
         ))}
         {!images.length && (
-          <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()} className="col-span-3 min-h-24 rounded-[var(--s-radius-control)] border border-dashed border-[var(--s-border-default)] text-sm text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)] disabled:pointer-events-none disabled:opacity-50">
+          <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()} className="col-span-4 min-h-24 rounded-[var(--s-radius-control)] border border-dashed border-[var(--s-border-default)] text-sm text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)] disabled:pointer-events-none disabled:opacity-50">
             <ImagePlus className="w-5 h-5 mx-auto mb-1" aria-hidden="true" />
             点击上传{title}
           </button>
         )}
       </div>
-      <WorkspaceImagePicker open={pickerOpen} remaining={9 - images.length} onClose={() => setPickerOpen(false)} onSelect={(paths) => onWorkspaceAdd(category, paths)} />
+      <WorkspaceImagePicker open={pickerOpen} remaining={remaining} onClose={() => setPickerOpen(false)} onSelect={(paths) => onWorkspaceAdd(category, paths)} />
     </div>
   );
 }
@@ -103,8 +105,8 @@ export function ProductImageSection({ images, error, disabled = false, onAdd, on
         <span className="text-xs text-[var(--s-text-tertiary)]">{images.length} / 9</span>
       </div>
       <div className="mt-4 space-y-5">
-        <ImageGroup category="product" title="产品图" required description="用于识别产品外观、包装和结构" images={productImages} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
-        <ImageGroup category="reference" title="参考图" description="用于参考氛围、构图、风格或细节" images={referenceImages} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
+        <ImageGroup category="product" title="产品图" required description="用于识别产品外观、包装和结构" images={productImages} remaining={9 - images.length} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
+        <ImageGroup category="reference" title="参考图" description="用于参考氛围、构图、风格或细节" images={referenceImages} remaining={9 - images.length} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
       </div>
       {error && <p className="mt-3 text-xs text-[var(--s-error)]" role="alert">{error}</p>}
       <p className="mt-3 text-xs text-[var(--s-text-tertiary)]">两个板块合计最多 9 张，至少上传 1 张产品图</p>
