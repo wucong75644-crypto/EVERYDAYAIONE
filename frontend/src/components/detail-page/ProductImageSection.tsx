@@ -1,4 +1,4 @@
-import { ImagePlus, Trash2 } from 'lucide-react';
+import { FolderOpen, ImagePlus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { DetailImageCategory, DetailLocalImage } from '../../types/detailPage';
 import { Button } from '../ui/Button';
@@ -50,7 +50,7 @@ function ImageGroup({
           </h3>
           <p className="mt-0.5 text-xs text-[var(--s-text-tertiary)]">{description}</p>
         </div>
-        <div className="flex shrink-0 gap-2 whitespace-nowrap"><Button variant="ghost" size="sm" disabled={disabled} onClick={() => setPickerOpen(true)}>工作区</Button><Button variant="secondary" size="sm" icon={<ImagePlus className="w-4 h-4" />} disabled={disabled} onClick={() => inputRef.current?.click()}>上传</Button></div>
+        <div className="flex shrink-0 gap-2 whitespace-nowrap"><Button variant="secondary" size="sm" icon={<FolderOpen className="w-4 h-4" />} disabled={disabled} onClick={() => setPickerOpen(true)}>工作区</Button><Button variant="secondary" size="sm" icon={<ImagePlus className="w-4 h-4" />} disabled={disabled} onClick={() => inputRef.current?.click()}>上传</Button></div>
       </div>
       <input
         ref={inputRef}
