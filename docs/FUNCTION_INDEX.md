@@ -348,6 +348,7 @@
 | `getCurrentDetailProject` / `attachDetailImage` / `saveDetailSettings` / `removeDetailImage` | `frontend/src/services/detailProject.ts` | 主图详情页真实草稿 API 客户端 | project/image/form | project/null |
 | `useDetailPageStore.hydrateDraft` / `addImages` / `removeImage` | `frontend/src/stores/useDetailPageStore.ts` | 草稿恢复、串行真实上传关联与引用删除 | files/project | store state |
 | `WorkspaceImagePicker` | `frontend/src/components/detail-page/WorkspaceImagePicker.tsx` | 复用工作区列表、搜索和预览选择已有图片 | remaining/selection | workspace paths |
+| `Select` | `frontend/src/components/ui/Select.tsx` | 基于 Radix Dropdown 的锚定式表单选择器 | value/options | selected value |
 | `addImages` | `frontend/src/stores/useDetailPageStore.ts` | 校验并添加本地预览图片 | category, files | void |
 | `removeImage` | `frontend/src/stores/useDetailPageStore.ts` | 删除图片并释放 ObjectURL | id | void |
 | `setStep` | `frontend/src/stores/useDetailPageStore.ts` | 切换当前步骤 | step | void |

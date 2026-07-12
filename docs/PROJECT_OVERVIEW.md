@@ -223,6 +223,8 @@ EVERYDAYAIONE/
         ├── components/               # 组件
         │   ├── common/                   # 通用组件
         │   │   └── Modal.tsx                 # 通用弹窗组件（动画、ESC关闭、遮罩层）
+        │   ├── ui/                       # 表单与基础 UI 组件
+        │   │   └── Select.tsx                # 锚定式自定义下拉选择器
         │   ├── auth/                     # 认证相关组件
         │   │   ├── AuthModal.tsx             # 认证弹窗容器（登录/注册切换）
         │   │   ├── LoginForm.tsx             # 登录表单（密码/验证码双模式）

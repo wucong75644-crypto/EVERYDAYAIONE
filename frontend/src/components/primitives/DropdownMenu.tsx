@@ -41,7 +41,7 @@ interface DropdownMenuProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /** 菜单最小宽度 */
-  minWidth?: number;
+  minWidth?: number | string;
 }
 
 export function DropdownMenu({
