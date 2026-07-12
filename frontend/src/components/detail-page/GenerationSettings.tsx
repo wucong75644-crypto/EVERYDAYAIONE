@@ -23,7 +23,7 @@ export function GenerationSettings({ form, hasProductImage, disabled = false, on
   const requirementLabel = form.contentType === 'main_image' ? '主图要求' : '详情图要求';
 
   return (
-    <section className="mt-6 pt-6 border-t border-[var(--s-border-subtle)] space-y-5">
+    <section className="mt-4 pt-4 border-t border-[var(--s-border-subtle)] space-y-3">
       <div className="grid grid-cols-2 gap-2" aria-label="生成类型">
         {([['main_image', '主图'], ['detail_page', '详情图']] as const).map(([value, label]) => (
           <button key={value} type="button" disabled={disabled} aria-pressed={form.contentType === value} onClick={() => onChange({ contentType: value })} className={cn('px-3 py-2 rounded-[var(--s-radius-control)] border text-sm font-medium disabled:opacity-50', form.contentType === value ? 'bg-[var(--c-button-primary-bg)] text-[var(--c-button-primary-fg)] border-transparent' : 'bg-[var(--s-surface-card)] text-[var(--s-text-secondary)] border-[var(--s-border-default)]')}>
@@ -45,7 +45,7 @@ export function GenerationSettings({ form, hasProductImage, disabled = false, on
           <label htmlFor="detail-requirement" className="text-sm font-medium text-[var(--s-text-secondary)]">{requirementLabel}</label>
           <Button variant="ghost" size="sm" icon={<Sparkles className="w-4 h-4" />} disabled={disabled} onClick={() => onChange({ requirement: '突出产品核心卖点，画面简洁，适合目标电商平台展示。' })}>AI 帮写</Button>
         </div>
-        <textarea id="detail-requirement" disabled={disabled} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="建议输入：产品名称、核心卖点、目标人群、图片风格等" className={`${selectClass} min-h-24 resize-y`} />
+        <textarea id="detail-requirement" disabled={disabled} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="建议输入：产品名称、核心卖点、目标人群、图片风格等" className={`${selectClass} min-h-20 lg:min-h-[72px] resize-y`} />
       </div>
 
       <Button fullWidth size="lg" disabled={disabled || !hasProductImage} icon={<Sparkles className="w-4 h-4" />} onClick={onAnalyze}>分析产品</Button>

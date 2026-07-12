@@ -66,7 +66,7 @@ function ImageGroup({
           event.target.value = '';
         }}
       />
-      <div className="mt-3 grid grid-cols-4 gap-2 max-h-[196px] overflow-y-auto overscroll-contain pr-1">
+      <div className="mt-2 grid grid-cols-4 gap-2 max-h-[196px] overflow-y-auto overscroll-contain pr-1">
         {images.map((image) => (
           <div key={image.id} className="group relative aspect-square rounded-[var(--s-radius-control)] overflow-hidden border border-[var(--s-border-default)] bg-[var(--s-surface-secondary)]">
             {(() => {
@@ -84,7 +84,7 @@ function ImageGroup({
           </div>
         ))}
         {!images.length && (
-          <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()} className="col-span-4 min-h-24 rounded-[var(--s-radius-control)] border border-dashed border-[var(--s-border-default)] text-sm text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)] disabled:pointer-events-none disabled:opacity-50">
+          <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()} className="col-span-4 min-h-20 lg:min-h-[72px] rounded-[var(--s-radius-control)] border border-dashed border-[var(--s-border-default)] text-sm text-[var(--s-text-tertiary)] hover:bg-[var(--s-hover)] disabled:pointer-events-none disabled:opacity-50">
             <ImagePlus className="w-5 h-5 mx-auto mb-1" aria-hidden="true" />
             点击上传{title}
           </button>
@@ -105,12 +105,12 @@ export function ProductImageSection({ images, error, disabled = false, onAdd, on
         <h2 id="product-images-title" className="font-semibold">产品图片</h2>
         <span className="text-xs text-[var(--s-text-tertiary)]">{images.length} / 9</span>
       </div>
-      <div className="mt-4 space-y-5">
+      <div className="mt-3 space-y-4">
         <ImageGroup category="product" title="产品图" required description="用于识别产品外观、包装和结构" images={productImages} remaining={9 - images.length} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
         <ImageGroup category="reference" title="参考图" description="用于参考氛围、构图、风格或细节" images={referenceImages} remaining={9 - images.length} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
       </div>
       {error && <p className="mt-3 text-xs text-[var(--s-error)]" role="alert">{error}</p>}
-      <p className="mt-3 text-xs text-[var(--s-text-tertiary)]">两个板块合计最多 9 张，至少上传 1 张产品图</p>
+      <p className="mt-2 text-xs text-[var(--s-text-tertiary)]">两个板块合计最多 9 张，至少上传 1 张产品图</p>
     </section>
   );
 }

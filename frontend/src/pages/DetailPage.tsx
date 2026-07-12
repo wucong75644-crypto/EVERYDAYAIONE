@@ -55,10 +55,10 @@ export default function DetailPage() {
   return (
     <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
       <DetailPageHeader />
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-5 sm:py-6">
         <StepBar step={step} />
-        <section className="mt-6 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
-          <Card variant="elevated" padding="lg" className="min-h-[520px]">
+        <section className="mt-4 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
+          <Card variant="elevated" padding="md" className="min-h-[520px]">
             <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
             <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} onChange={updateForm} onAnalyze={startAnalysis} />
           </Card>
