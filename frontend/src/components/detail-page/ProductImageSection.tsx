@@ -1,13 +1,15 @@
 import { ImagePlus, Trash2 } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { DetailImageCategory, DetailLocalImage } from '../../types/detailPage';
 import { Button } from '../ui/Button';
+import { WorkspaceImagePicker } from './WorkspaceImagePicker';
 
 interface ProductImageSectionProps {
   images: DetailLocalImage[];
   error: string | null;
   disabled?: boolean;
   onAdd: (category: DetailImageCategory, files: File[]) => void;
+  onWorkspaceAdd: (category: DetailImageCategory, paths: string[]) => void;
   onRemove: (id: string) => void;
 }
 
@@ -21,6 +23,7 @@ function ImageGroup({
   images,
   disabled,
   onAdd,
+  onWorkspaceAdd,
   onRemove,
 }: {
   category: DetailImageCategory;
@@ -30,9 +33,11 @@ function ImageGroup({
   images: DetailLocalImage[];
   disabled: boolean;
   onAdd: ProductImageSectionProps['onAdd'];
+  onWorkspaceAdd: ProductImageSectionProps['onWorkspaceAdd'];
   onRemove: ProductImageSectionProps['onRemove'];
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <div>
@@ -43,9 +48,7 @@ function ImageGroup({
           </h3>
           <p className="mt-0.5 text-xs text-[var(--s-text-tertiary)]">{description}</p>
         </div>
-        <Button variant="secondary" size="sm" icon={<ImagePlus className="w-4 h-4" />} disabled={disabled} onClick={() => inputRef.current?.click()}>
-          上传
-        </Button>
+        <div className="flex gap-1"><Button variant="ghost" size="sm" disabled={disabled} onClick={() => setPickerOpen(true)}>工作区</Button><Button variant="secondary" size="sm" icon={<ImagePlus className="w-4 h-4" />} disabled={disabled} onClick={() => inputRef.current?.click()}>上传</Button></div>
       </div>
       <input
         ref={inputRef}
@@ -64,12 +67,17 @@ function ImageGroup({
       <div className="mt-3 grid grid-cols-3 gap-2">
         {images.map((image) => (
           <div key={image.id} className="group relative aspect-square rounded-[var(--s-radius-control)] overflow-hidden border border-[var(--s-border-default)] bg-[var(--s-surface-secondary)]">
-            <img src={image.previewUrl} alt={`${title} ${image.file.name}`} className="w-full h-full object-cover" />
+            {(() => {
+              const imageName = image.name || image.file?.name || '图片';
+              return <>
+                {image.previewUrl ? <img src={image.previewUrl} alt={`${title} ${imageName}`} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs text-[var(--s-text-tertiary)]">{image.status === 'missing' ? '原图缺失' : '处理中'}</div>}
             {!disabled && (
-              <button type="button" onClick={() => onRemove(image.id)} className="absolute top-1 right-1 p-1 rounded-full bg-[var(--s-surface-card)] text-[var(--s-error)] shadow-[var(--s-shadow-whisper)]" aria-label={`删除 ${image.file.name}`}>
+              <button type="button" onClick={() => void onRemove(image.id)} className="absolute top-1 right-1 p-1 rounded-full bg-[var(--s-surface-card)] text-[var(--s-error)] shadow-[var(--s-shadow-whisper)]" aria-label={`删除 ${imageName}`}>
                 <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
               </button>
             )}
+              </>;
+            })()}
           </div>
         ))}
         {!images.length && (
@@ -79,11 +87,12 @@ function ImageGroup({
           </button>
         )}
       </div>
+      <WorkspaceImagePicker open={pickerOpen} remaining={9 - images.length} onClose={() => setPickerOpen(false)} onSelect={(paths) => onWorkspaceAdd(category, paths)} />
     </div>
   );
 }
 
-export function ProductImageSection({ images, error, disabled = false, onAdd, onRemove }: ProductImageSectionProps) {
+export function ProductImageSection({ images, error, disabled = false, onAdd, onWorkspaceAdd, onRemove }: ProductImageSectionProps) {
   const productImages = images.filter((image) => image.category === 'product');
   const referenceImages = images.filter((image) => image.category === 'reference');
 
@@ -94,8 +103,8 @@ export function ProductImageSection({ images, error, disabled = false, onAdd, on
         <span className="text-xs text-[var(--s-text-tertiary)]">{images.length} / 9</span>
       </div>
       <div className="mt-4 space-y-5">
-        <ImageGroup category="product" title="产品图" required description="用于识别产品外观、包装和结构" images={productImages} disabled={disabled} onAdd={onAdd} onRemove={onRemove} />
-        <ImageGroup category="reference" title="参考图" description="用于参考氛围、构图、风格或细节" images={referenceImages} disabled={disabled} onAdd={onAdd} onRemove={onRemove} />
+        <ImageGroup category="product" title="产品图" required description="用于识别产品外观、包装和结构" images={productImages} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
+        <ImageGroup category="reference" title="参考图" description="用于参考氛围、构图、风格或细节" images={referenceImages} disabled={disabled} onAdd={onAdd} onWorkspaceAdd={onWorkspaceAdd} onRemove={onRemove} />
       </div>
       {error && <p className="mt-3 text-xs text-[var(--s-error)]" role="alert">{error}</p>}
       <p className="mt-3 text-xs text-[var(--s-text-tertiary)]">两个板块合计最多 9 张，至少上传 1 张产品图</p>

@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DetailPage from '../DetailPage';
 import { useDetailPageStore } from '../../stores/useDetailPageStore';
 
+vi.mock('../../services/detailProject', () => ({
+  getCurrentDetailProject: vi.fn(() => new Promise(() => undefined)),
+  attachDetailImage: vi.fn(), removeDetailImage: vi.fn(), saveDetailSettings: vi.fn(),
+}));
+
 vi.mock('../../stores/useAuthStore', () => ({
   useAuthStore: (selector: (state: { user: { nickname: string; credits: number } }) => unknown) =>
     selector({ user: { nickname: '测试用户', credits: 100 } }),

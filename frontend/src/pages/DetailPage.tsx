@@ -30,6 +30,7 @@ export default function DetailPage() {
   const plan = useDetailPageStore((state) => state.plan);
   const generationItems = useDetailPageStore((state) => state.generationItems);
   const addImages = useDetailPageStore((state) => state.addImages);
+  const attachWorkspaceImages = useDetailPageStore((state) => state.attachWorkspaceImages);
   const removeImage = useDetailPageStore((state) => state.removeImage);
   const updateForm = useDetailPageStore((state) => state.updateForm);
   const setStep = useDetailPageStore((state) => state.setStep);
@@ -43,9 +44,13 @@ export default function DetailPage() {
   const backToPlan = useDetailPageStore((state) => state.backToPlan);
   const restart = useDetailPageStore((state) => state.restart);
   const reset = useDetailPageStore((state) => state.reset);
+  const hydrateDraft = useDetailPageStore((state) => state.hydrateDraft);
   const hasProductImage = images.some((image) => image.category === 'product');
 
-  useEffect(() => reset, [reset]);
+  useEffect(() => {
+    void hydrateDraft();
+    return reset;
+  }, [hydrateDraft, reset]);
 
   return (
     <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
@@ -62,7 +67,7 @@ export default function DetailPage() {
         <StepBar step={step} />
         <section className="mt-6 grid lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
           <Card variant="elevated" padding="lg" className="min-h-[520px]">
-            <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onRemove={removeImage} />
+            <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
             <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} onChange={updateForm} onAnalyze={startAnalysis} />
           </Card>
           <Card variant="elevated" padding="lg" className="min-h-[520px] flex items-center justify-center text-center">

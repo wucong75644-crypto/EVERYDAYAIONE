@@ -1,5 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDetailPageStore } from '../useDetailPageStore';
+import { getCurrentDetailProject } from '../../services/detailProject';
+
+vi.mock('../../services/upload', () => ({ uploadImageFile: vi.fn(() => new Promise(() => undefined)) }));
+vi.mock('../../services/detailProject', () => ({
+  getCurrentDetailProject: vi.fn().mockResolvedValue(null),
+  attachDetailImage: vi.fn(), removeDetailImage: vi.fn(), saveDetailSettings: vi.fn(),
+}));
 
 const createObjectURL = vi.fn(() => 'blob:preview');
 const revokeObjectURL = vi.fn();
@@ -19,6 +26,16 @@ describe('useDetailPageStore', () => {
     const state = useDetailPageStore.getState();
     expect(state.step).toBe(1);
     expect(state.form).toMatchObject({ contentType: 'main_image', language: 'zh-CN', aspectRatio: '1:1', count: 1 });
+  });
+
+  it('页面卸载后忽略迟到的草稿恢复结果', async () => {
+    let resolveDraft: (value: null) => void = () => undefined;
+    vi.mocked(getCurrentDetailProject).mockImplementationOnce(() => new Promise((resolve) => { resolveDraft = resolve; }));
+    const hydration = useDetailPageStore.getState().hydrateDraft();
+    useDetailPageStore.getState().reset();
+    resolveDraft(null);
+    await hydration;
+    expect(useDetailPageStore.getState().isHydrating).toBe(false);
   });
 
   it('切换详情图时自动设置 3:4 比例', () => {

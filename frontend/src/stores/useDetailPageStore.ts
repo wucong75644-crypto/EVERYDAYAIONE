@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { createMockResultUrl, DEFAULT_DETAIL_FORM, MOCK_DETAIL_PLAN } from '../mocks/detailPageMocks';
+import { attachDetailImage, getCurrentDetailProject, removeDetailImage, saveDetailSettings } from '../services/detailProject';
+import { uploadImageFile } from '../services/upload';
+import { toApiRequestError } from '../services/api';
 import type {
   DetailGenerationForm,
   DetailGenerationItem,
@@ -18,10 +21,15 @@ interface DetailPageState {
   generationItems: DetailGenerationItem[];
   isTransitioning: boolean;
   formError: string | null;
+  projectId: string | null;
+  projectVersion: number | null;
+  isHydrating: boolean;
   mockScenario: DetailMockScenario;
   setStep: (step: DetailPageStep) => void;
-  addImages: (category: DetailLocalImage['category'], files: File[]) => void;
-  removeImage: (id: string) => void;
+  hydrateDraft: () => Promise<void>;
+  attachWorkspaceImages: (category: DetailLocalImage['category'], paths: string[]) => Promise<void>;
+  addImages: (category: DetailLocalImage['category'], files: File[]) => Promise<void>;
+  removeImage: (id: string) => Promise<void>;
   updateForm: (patch: Partial<DetailGenerationForm>) => void;
   startAnalysis: () => void;
   cancelAnalysis: () => void;
@@ -46,12 +54,17 @@ const initialState = {
   isTransitioning: false,
   formError: null as string | null,
   mockScenario: 'success' as DetailMockScenario,
+  projectId: null as string | null,
+  projectVersion: null as number | null,
+  isHydrating: false,
 };
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_IMAGES = 9;
 let analysisTimer: ReturnType<typeof setInterval> | null = null;
 let generationTimer: ReturnType<typeof setInterval> | null = null;
+let settingsTimer: ReturnType<typeof setTimeout> | null = null;
+let lifecycleVersion = 0;
 
 function clearAnalysisTimer() {
   if (analysisTimer) clearInterval(analysisTimer);
@@ -61,6 +74,11 @@ function clearAnalysisTimer() {
 function clearGenerationTimer() {
   if (generationTimer) clearInterval(generationTimer);
   generationTimer = null;
+}
+
+function clearSettingsTimer() {
+  if (settingsTimer) clearTimeout(settingsTimer);
+  settingsTimer = null;
 }
 
 function createPlan(count: number) {
@@ -74,10 +92,54 @@ function releasePreview(image: DetailLocalImage) {
   if (image.previewUrl.startsWith('blob:')) URL.revokeObjectURL(image.previewUrl);
 }
 
+function applyDraft(project: import('../types/detailPage').DetailProjectDraft | null) {
+  if (!project) return { projectId: null, projectVersion: null, images: [] as DetailLocalImage[] };
+  return {
+    projectId: project.id,
+    projectVersion: project.version,
+    form: {
+      contentType: project.content_type, platform: project.platform, requirement: project.requirement,
+      language: project.language, aspectRatio: project.aspect_ratio, quality: project.quality, count: project.image_count,
+    },
+    images: project.images.map((image) => ({
+      id: image.id, category: image.category, workspacePath: image.workspace_path,
+      previewUrl: image.thumbnail_url || image.original_url || '', error: null,
+      status: image.status, sortOrder: image.sort_order, name: image.workspace_path.split('/').pop() || '图片',
+    })),
+  };
+}
+
 export const useDetailPageStore = create<DetailPageState>((set, get) => ({
   ...initialState,
   setStep: (step) => set({ step }),
-  addImages: (category, files) => {
+  hydrateDraft: async () => {
+    const requestVersion = lifecycleVersion;
+    set({ isHydrating: true, formError: null });
+    try {
+      const project = await getCurrentDetailProject();
+      if (requestVersion !== lifecycleVersion) return;
+      set({ ...applyDraft(project), isHydrating: false });
+    } catch (error) {
+      if (requestVersion !== lifecycleVersion) return;
+      set({ isHydrating: false, formError: toApiRequestError(error).message });
+    }
+  },
+  attachWorkspaceImages: async (category, paths) => {
+    if (get().images.length + paths.length > MAX_IMAGES) {
+      set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
+      return;
+    }
+    for (const path of paths) {
+      try {
+        const project = await attachDetailImage(path, category);
+        set({ ...applyDraft(project), formError: null });
+      } catch (error) {
+        set({ formError: toApiRequestError(error).message });
+        break;
+      }
+    }
+  },
+  addImages: async (category, files) => {
     const currentImages = get().images;
     if (currentImages.length + files.length > MAX_IMAGES) {
       set({ formError: `产品图和参考图合计最多上传 ${MAX_IMAGES} 张` });
@@ -94,13 +156,42 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
       file,
       previewUrl: URL.createObjectURL(file),
       error: null,
+      status: 'local',
+      name: file.name,
     }));
     set((state) => ({ images: [...state.images, ...newImages], formError: null }));
+    for (const image of newImages) {
+      try {
+        set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'uploading' } : item) }));
+        const uploaded = await uploadImageFile(image.file!);
+        if (!uploaded.workspace_path) throw new Error('上传结果缺少工作区路径');
+        set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'attaching', workspacePath: uploaded.workspace_path } : item) }));
+        const project = await attachDetailImage(uploaded.workspace_path, category);
+        releasePreview(image);
+        set((state) => {
+          const draft = applyDraft(project);
+          const pending = state.images.filter((item) => item.id !== image.id && ['local', 'uploading', 'attaching', 'failed'].includes(item.status));
+          return { ...draft, images: [...draft.images, ...pending], formError: null };
+        });
+      } catch (error) {
+        set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'failed', error: toApiRequestError(error).message } : item), formError: toApiRequestError(error).message }));
+      }
+    }
   },
-  removeImage: (id) => {
+  removeImage: async (id) => {
     const image = get().images.find((item) => item.id === id);
-    if (image) releasePreview(image);
-    set((state) => ({ images: state.images.filter((item) => item.id !== id), formError: null }));
+    if (!image) return;
+    if (!get().projectId || get().projectVersion === null || image.status !== 'ready') {
+      releasePreview(image);
+      set((state) => ({ images: state.images.filter((item) => item.id !== id), formError: null }));
+      return;
+    }
+    try {
+      const project = await removeDetailImage(get().projectId!, id, get().projectVersion!);
+      set({ ...applyDraft(project), formError: null });
+    } catch (error) {
+      set({ formError: toApiRequestError(error).message });
+    }
   },
   updateForm: (patch) => {
     set((state) => {
@@ -110,6 +201,18 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
       }
       return { form: { ...state.form, ...nextPatch } };
     });
+    clearSettingsTimer();
+    settingsTimer = setTimeout(() => {
+      const { projectId, projectVersion, form } = get();
+      if (!projectId || projectVersion === null) return;
+      void saveDetailSettings(projectId, projectVersion, form).then((project) => {
+        if (project) set({ ...applyDraft(project), formError: null });
+      }).catch((error) => {
+        const apiError = toApiRequestError(error);
+        set({ formError: apiError.message });
+        if (apiError.code === 'DETAIL_PROJECT_VERSION_CONFLICT') void get().hydrateDraft();
+      });
+    }, 500);
   },
   startAnalysis: () => {
     if (get().isTransitioning) return;
@@ -182,12 +285,17 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
   },
   setMockScenario: (mockScenario) => set({ mockScenario }),
   reset: () => {
+    lifecycleVersion += 1;
     clearAnalysisTimer();
     clearGenerationTimer();
+    clearSettingsTimer();
     get().images.forEach(releasePreview);
     set({
       ...initialState,
       images: [],
+      projectId: null,
+      projectVersion: null,
+      isHydrating: false,
       form: { ...DEFAULT_DETAIL_FORM },
       plan: MOCK_DETAIL_PLAN.map((item) => ({ ...item })),
     });

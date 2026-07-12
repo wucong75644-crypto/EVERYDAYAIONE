@@ -22,7 +22,7 @@ from typing import Any
 
 from loguru import logger
 
-# ── 需要租户隔离的 36 个表 ──────────────────────────────────
+# ── 需要租户隔离的业务表 ────────────────────────────────────
 # 维护规则：新增租户表时同步加入此集合，豁免表不加。
 # 豁免表：organizations, org_members, org_configs, org_invitations,
 #         users, models, admin_action_logs, user_subscriptions
@@ -41,6 +41,8 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "credits_history", "credit_transactions",
     # 媒体
     "image_generations",
+    # 主图详情制作
+    "detail_projects", "detail_project_images",
     # 记忆/知识
     "user_memory_settings", "knowledge_nodes",
     "knowledge_metrics", "knowledge_edges", "scoring_audit_log",

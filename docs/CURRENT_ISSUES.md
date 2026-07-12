@@ -222,6 +222,7 @@
 
 ## 更新记录
 
+- **2026-07-12**：主图详情页 `118` 迁移预执行发现误用 Supabase `auth.uid()`，真实 RPC 验证继续发现返回列与表字段同名；前者事务回滚，后者通过表别名修复，迁移统一采用阿里云自建 PostgreSQL 的 `OrgScopedDB + user_id + RPC 成员校验` 权限模型。
 - **2026-07-11**：修复后端全量部署误删未纳入主仓库的 `backend/external/mediacrawler` 运行目录；已恢复生产文件，并在 rsync `--delete` 中永久排除该目录。
 - **2026-07-01**：图片缩略图根治改造（后端生成 `workspace-thumbnails` 独立缩略图对象；实时消息保留 `original_url/thumbnail_url/preview_url/download_url`；NAS 工作区返回 `thumbnail_url`；前端停止生成 `x-oss-process` 缩略图 URL）
 - **2026-07-01**：完成历史图片 URL 数据回填（messages/tasks JSON 图片 payload 补 `original_url` + `thumbnail_url`，生产复扫待回填数为 0；`url:null` 占位对象保持不回填）

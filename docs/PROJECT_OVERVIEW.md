@@ -67,6 +67,7 @@ EVERYDAYAIONE/
 │       ├── PAGE_DESIGN.md            # 页面设计
 │       ├── UI_主图详情制作页面.md      # 独立主图/详情图五步制作页面 UI 设计
 │       ├── TECH_主图详情制作页面_UI第一阶段.md # 第一阶段 UI+Mock 技术设计
+│       ├── TECH_主图详情页真实上传与草稿恢复.md # 第二阶段真实上传与草稿恢复设计
 │       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
 │       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
 │       ├── SUPER_ADMIN_FEATURES.md   # 超级管理员功能
@@ -95,6 +96,7 @@ EVERYDAYAIONE/
 │   │       ├── message.py                # 统一消息路由（/generate）
 │   │       ├── message_request_preparation.py # 消息生成前权限、积分与上下文准备
 │   │       ├── image.py                  # 图像上传路由
+│   │       ├── detail_project.py         # 主图详情页草稿恢复与图片关联路由
 │   │       ├── audio.py                  # 音频上传路由
 │   │       ├── task.py                   # 任务管理路由
 │   │       ├── webhook.py                # Webhook 回调路由（多 Provider 分发）
@@ -104,6 +106,7 @@ EVERYDAYAIONE/
 │   │   ├── conversation.py           # 对话相关 Schema
 │   │   ├── message.py                # 消息相关 Schema
 │   │   ├── image.py                  # 图像上传 Schema
+│   │   ├── detail_project.py         # 主图详情页请求与统一响应 Schema
 │   │   └── websocket.py              # WebSocket 消息 Schema
 │   ├── services/                 # 业务逻辑层
 │   │   ├── auth_service.py           # 认证服务
@@ -113,6 +116,7 @@ EVERYDAYAIONE/
 │   │   ├── message_ai_helpers.py     # AI 调用辅助函数
 │   │   ├── audio_service.py          # 音频处理服务
 │   │   ├── storage_service.py        # 文件存储服务
+│   │   ├── detail_project_service.py # 主图详情页草稿恢复与工作区图片关联
 │   │   ├── oss_service.py            # OSS 存储服务
 │   │   ├── sms_service.py            # 短信服务
 │   │   ├── credit_service.py         # 积分服务
@@ -289,6 +293,7 @@ EVERYDAYAIONE/
         │   ├── messageSender.ts          # 统一消息发送器（chat/image/video）
         │   ├── messageSendLifecycle.ts   # 消息乐观更新、API 响应替换与错误回滚
         │   ├── upload.ts                 # 文件上传服务
+        │   ├── detailProject.ts          # 主图详情页草稿读取、关联与设置 API
         │   └── audio.ts                  # 音频服务
         ├── types/                    # TypeScript 类型
         │   ├── auth.ts                   # 认证相关类型

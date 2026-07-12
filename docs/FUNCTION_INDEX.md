@@ -339,6 +339,15 @@
 | `GenerationCard` | `frontend/src/components/detail-page/GenerationCard.tsx` | 单张等待、生成、完成和失败状态 | item, onRetry | JSX |
 | `ResultGallery` | `frontend/src/components/detail-page/ResultGallery.tsx` | Step 5 结果统计与操作 | items, actions | JSX |
 | `useDetailPageStore` | `frontend/src/stores/useDetailPageStore.ts` | 页面专用 Zustand 状态 | - | DetailPageState |
+| `attach_detail_project_image` | `backend/migrations/118_detail_projects.sql` | 原子创建/获取详情草稿并关联工作区图片 | user/org/path/category | project/image IDs |
+| `DetailProjectService.get_current` | `backend/services/detail_project_service.py` | 恢复当前用户与企业空间的详情草稿及图片状态 | DB/user/org | project/null |
+| `DetailProjectService.attach_image` | `backend/services/detail_project_service.py` | 校验工作区图片并调用原子关联函数 | workspace_path/category | latest project |
+| `DetailProjectService.update_settings` | `backend/services/detail_project_service.py` | 使用版本锁保存草稿白名单设置 | project/version/settings | latest project |
+| `DetailProjectService.remove_image` / `update_category` / `reorder_images` | `backend/services/detail_project_service.py` | 事务内编辑图片引用并递增草稿版本 | project/image/version | latest project |
+| `get_current_detail_project` / `attach_detail_project_image` | `backend/api/routes/detail_project.py` | 主图详情页草稿读取和图片关联 API | OrgCtx/request | unified envelope |
+| `getCurrentDetailProject` / `attachDetailImage` / `saveDetailSettings` / `removeDetailImage` | `frontend/src/services/detailProject.ts` | 主图详情页真实草稿 API 客户端 | project/image/form | project/null |
+| `useDetailPageStore.hydrateDraft` / `addImages` / `removeImage` | `frontend/src/stores/useDetailPageStore.ts` | 草稿恢复、串行真实上传关联与引用删除 | files/project | store state |
+| `WorkspaceImagePicker` | `frontend/src/components/detail-page/WorkspaceImagePicker.tsx` | 复用工作区列表、搜索和预览选择已有图片 | remaining/selection | workspace paths |
 | `addImages` | `frontend/src/stores/useDetailPageStore.ts` | 校验并添加本地预览图片 | category, files | void |
 | `removeImage` | `frontend/src/stores/useDetailPageStore.ts` | 删除图片并释放 ObjectURL | id | void |
 | `setStep` | `frontend/src/stores/useDetailPageStore.ts` | 切换当前步骤 | step | void |

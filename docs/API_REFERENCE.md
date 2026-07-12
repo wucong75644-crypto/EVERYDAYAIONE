@@ -363,6 +363,17 @@ cost = calculate_video_cost("sora-2-text-to-video", duration_seconds=15)
 ## 代码文件清单
 
 ```
+
+## 主图详情页草稿
+
+- `GET /api/detail-projects/current`：读取当前用户、当前企业空间最近的草稿；没有草稿时返回 `project: null`。
+- `POST /api/detail-projects/current/images`：校验工作区 JPG/PNG/WebP 图片（最大 10MB）并原子关联到草稿。
+- `PATCH /api/detail-projects/{project_id}`：携带版本号保存白名单设置。
+- `DELETE /api/detail-projects/{project_id}/images/{image_id}`：仅移除项目引用，不删除工作区或 OSS 文件。
+- `PATCH /api/detail-projects/{project_id}/images/{image_id}`：切换产品图/参考图分类。
+- `PUT /api/detail-projects/{project_id}/images/order`：保存完整图片顺序。
+
+两者统一返回 `success/data/error/meta`，且必须携带登录 Token；企业模式继续使用 `X-Org-Id`。
 backend/services/adapters/
 ├── kie/
 │   ├── __init__.py

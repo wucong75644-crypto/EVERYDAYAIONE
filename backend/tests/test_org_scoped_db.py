@@ -67,6 +67,10 @@ class TestTenantTables:
         for t in ("conversations", "messages", "tasks"):
             assert t in TENANT_TABLES
 
+    def test_detail_project_tables_present(self):
+        for table in ("detail_projects", "detail_project_images"):
+            assert table in TENANT_TABLES
+
     def test_erp_tables_present(self):
         for t in ("erp_products", "erp_stock_status", "erp_document_items"):
             assert t in TENANT_TABLES
