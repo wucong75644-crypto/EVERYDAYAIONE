@@ -73,6 +73,7 @@ function ImageGroup({
               const imageName = image.name || image.file?.name || '图片';
               return <>
                 {image.previewUrl ? <img src={image.previewUrl} alt={`${title} ${imageName}`} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs text-[var(--s-text-tertiary)]">{image.status === 'missing' ? '原图缺失' : '处理中'}</div>}
+                {(image.status === 'uploading' || image.status === 'attaching') && <div className="absolute inset-x-0 bottom-0 py-1 text-center text-[11px] text-white bg-black/55">{image.status === 'uploading' ? '上传中…' : '保存中…'}</div>}
             {!disabled && (
               <button type="button" onClick={() => void onRemove(image.id)} className="absolute top-1 right-1 p-1 rounded-full bg-[var(--s-surface-card)] text-[var(--s-error)] shadow-[var(--s-shadow-whisper)]" aria-label={`删除 ${imageName}`}>
                 <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />

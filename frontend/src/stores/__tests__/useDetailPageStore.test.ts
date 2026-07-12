@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDetailPageStore } from '../useDetailPageStore';
 import { getCurrentDetailProject } from '../../services/detailProject';
+import { attachDetailImage } from '../../services/detailProject';
+import { uploadImageFile } from '../../services/upload';
 
 vi.mock('../../services/upload', () => ({ uploadImageFile: vi.fn(() => new Promise(() => undefined)) }));
 vi.mock('../../services/detailProject', () => ({
@@ -36,6 +38,26 @@ describe('useDetailPageStore', () => {
     resolveDraft(null);
     await hydration;
     expect(useDetailPageStore.getState().isHydrating).toBe(false);
+  });
+
+  it('上传关联后保留本地预览直到远程图片加载完成', async () => {
+    vi.mocked(uploadImageFile).mockResolvedValueOnce({ url: 'https://cdn/result.png', workspace_path: '上传/result.png' });
+    vi.mocked(attachDetailImage).mockResolvedValueOnce({
+      id: 'project-1', version: 2, content_type: 'main_image', platform: 'auto', requirement: '',
+      language: 'zh-CN', aspect_ratio: '1:1', quality: '1k', image_count: 1,
+      images: [{ id: 'server-image', category: 'product', workspace_path: '上传/result.png', sort_order: 0, status: 'ready', original_url: 'https://cdn/result.png', thumbnail_url: null }],
+    });
+    let triggerLoad = () => undefined;
+    const OriginalImage = globalThis.Image;
+    vi.stubGlobal('Image', class {
+      onload: (() => void) | null = null;
+      set src(_value: string) { triggerLoad = () => this.onload?.(); }
+    });
+    await useDetailPageStore.getState().addImages('product', [new File(['x'], 'product.png', { type: 'image/png' })]);
+    expect(useDetailPageStore.getState().images[0].previewUrl).toBe('blob:preview');
+    triggerLoad();
+    expect(useDetailPageStore.getState().images[0].previewUrl).toBe('https://cdn/result.png');
+    vi.stubGlobal('Image', OriginalImage);
   });
 
   it('切换详情图时自动设置 3:4 比例', () => {

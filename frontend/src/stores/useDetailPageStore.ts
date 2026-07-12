@@ -167,12 +167,27 @@ export const useDetailPageStore = create<DetailPageState>((set, get) => ({
         if (!uploaded.workspace_path) throw new Error('上传结果缺少工作区路径');
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'attaching', workspacePath: uploaded.workspace_path } : item) }));
         const project = await attachDetailImage(uploaded.workspace_path, category);
-        releasePreview(image);
+        const remotePreview = uploaded.thumbnail_url || uploaded.preview_url || uploaded.url;
+        const requestVersion = lifecycleVersion;
         set((state) => {
           const draft = applyDraft(project);
+          const images = draft.images.map((item) => item.workspacePath === uploaded.workspace_path
+            ? { ...item, previewUrl: image.previewUrl }
+            : item);
           const pending = state.images.filter((item) => item.id !== image.id && ['local', 'uploading', 'attaching', 'failed'].includes(item.status));
-          return { ...draft, images: [...draft.images, ...pending], formError: null };
+          return { ...draft, images: [...images, ...pending], formError: null };
         });
+        if (remotePreview) {
+          const remoteImage = new Image();
+          remoteImage.onload = () => {
+            if (requestVersion !== lifecycleVersion) return;
+            set((state) => ({ images: state.images.map((item) => item.workspacePath === uploaded.workspace_path
+              ? { ...item, previewUrl: remotePreview }
+              : item) }));
+            setTimeout(() => URL.revokeObjectURL(image.previewUrl), 30000);
+          };
+          remoteImage.src = remotePreview;
+        }
       } catch (error) {
         set((state) => ({ images: state.images.map((item) => item.id === image.id ? { ...item, status: 'failed', error: toApiRequestError(error).message } : item), formError: toApiRequestError(error).message }));
       }
