@@ -21,9 +21,10 @@ export function DetailPageHeader() {
         <div className="w-9 h-9 rounded-[var(--s-radius-control)] bg-[var(--c-button-primary-bg)] text-[var(--c-button-primary-fg)] flex items-center justify-center shrink-0">
           <Sparkles className="w-5 h-5" aria-hidden="true" />
         </div>
-        <div className="min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <p className="font-semibold text-[var(--s-text-primary)] truncate">每日AI</p>
-          <p className="text-xs text-[var(--s-text-tertiary)] truncate">主图&详情图</p>
+          <span className="h-4 w-px bg-[var(--s-border-default)] shrink-0" aria-hidden="true" />
+          <p className="text-sm text-[var(--s-text-secondary)] truncate">主图详情</p>
         </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-4">

@@ -56,14 +56,6 @@ export default function DetailPage() {
     <PageTransition className="min-h-screen bg-[var(--s-surface-base)] text-[var(--s-text-primary)]">
       <DetailPageHeader />
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8">
-        <section className="text-center mb-7">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--s-border-default)] bg-[var(--s-surface-card)] text-sm">
-            <Sparkles className="w-4 h-4" aria-hidden="true" />
-            AI 主图&详情页
-          </div>
-          <h1 className="mt-4 text-2xl sm:text-3xl font-semibold">AI 帮写需求，一键生成详情图组</h1>
-          <p className="mt-2 text-[var(--s-text-secondary)]">上传产品图，AI 智能分析并规划多角度、多场景的电商图片</p>
-        </section>
         <StepBar step={step} />
         <section className="mt-6 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
           <Card variant="elevated" padding="lg" className="min-h-[520px]">

@@ -21,7 +21,7 @@ describe('DetailPageHeader', () => {
 
   it('显示页面名称、积分和用户头像', () => {
     render(<DetailPageHeader />);
-    expect(screen.getByText('主图&详情图')).toBeInTheDocument();
+    expect(screen.getByText('主图详情')).toBeInTheDocument();
     expect(screen.getByText('872')).toBeInTheDocument();
     expect(screen.getByLabelText('测试用户')).toHaveTextContent('测');
   });

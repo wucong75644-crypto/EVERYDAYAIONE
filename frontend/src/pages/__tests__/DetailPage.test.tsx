@@ -31,7 +31,8 @@ describe('DetailPage 页面骨架', () => {
 
   it('显示标题、五步进度和双栏骨架', () => {
     renderPage();
-    expect(screen.getByRole('heading', { name: 'AI 帮写需求，一键生成详情图组' })).toBeInTheDocument();
+    expect(screen.queryByText('AI 帮写需求，一键生成详情图组')).not.toBeInTheDocument();
+    expect(screen.queryByText('上传产品图，AI 智能分析并规划多角度、多场景的电商图片')).not.toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(5);
     expect(screen.getByText('产品图片')).toBeInTheDocument();
     expect(screen.getByText('目标平台')).toBeInTheDocument();
