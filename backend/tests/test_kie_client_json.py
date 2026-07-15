@@ -7,7 +7,13 @@ KIE client .json() 保护测试
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.adapters.kie.client import KieClient, KieAPIError
+from services.adapters.kie.client import (
+    KieAPIError,
+    KieAuthenticationError,
+    KieClient,
+    KieInsufficientBalanceError,
+    KieRateLimitError,
+)
 
 
 @pytest.fixture
@@ -73,3 +79,60 @@ class TestQueryTaskJsonProtection:
         with patch.object(client, "_get_client", return_value=mock_http):
             with pytest.raises(KieAPIError, match="非 JSON 响应"):
                 await client.query_task("task-123")
+
+
+class TestInsufficientBalanceAlert:
+    def test_402_logs_sanitized_alert_and_preserves_exception(self, client):
+        response = {"code": 402, "msg": "Credits insufficient", "token": "secret"}
+
+        with patch("services.adapters.kie.client.logger.error") as mock_error:
+            with pytest.raises(KieInsufficientBalanceError):
+                client._handle_error_response(402, response, model="test-model")
+
+        message = mock_error.call_args.args[0]
+        assert message.endswith("provider=kie | model=test-model | code=402")
+        assert "env=" in message
+        assert "secret" not in message
+
+    @pytest.mark.asyncio
+    async def test_body_402_uses_request_model(self, client):
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"code": 402, "msg": "Credits insufficient"}
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+        request = MagicMock(model="image-model")
+        request.model_dump.return_value = {"model": "image-model", "input": {}}
+
+        with patch.object(client, "_get_client", return_value=mock_http):
+            with patch("services.adapters.kie.client.logger.error") as mock_error:
+                with pytest.raises(KieInsufficientBalanceError):
+                    await client.create_task(request)
+
+        assert "model=image-model" in mock_error.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_query_body_402_uses_unknown_model(self, client):
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"code": 402, "msg": "Credits insufficient"}
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(client, "_get_client", return_value=mock_http):
+            with patch("services.adapters.kie.client.logger.error") as mock_error:
+                with pytest.raises(KieInsufficientBalanceError):
+                    await client.query_task("task-123")
+
+        assert "model=unknown" in mock_error.call_args.args[0]
+
+    @pytest.mark.parametrize(
+        ("status_code", "error_type"),
+        [(401, KieAuthenticationError), (429, KieRateLimitError)],
+    )
+    def test_other_kie_errors_do_not_log_balance_alert(self, client, status_code, error_type):
+        with patch("services.adapters.kie.client.logger.error") as mock_error:
+            with pytest.raises(error_type):
+                client._handle_error_response(
+                    status_code, {"code": status_code, "msg": "provider error"}
+                )
+
+        mock_error.assert_not_called()

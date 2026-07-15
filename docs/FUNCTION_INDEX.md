@@ -515,6 +515,7 @@
 | `chat` | `backend/services/adapters/kie/chat_adapter.py` | 发送聊天请求（支持流式/非流式） | messages, stream, tools, etc | ChatCompletionChunk or AsyncIterator |
 | `chat_simple` | `backend/services/adapters/kie/chat_adapter.py` | 简化聊天接口 | user_message, system_prompt, history, stream | ChatCompletionChunk or AsyncIterator |
 | `estimate_cost` | `backend/services/adapters/kie/chat_adapter.py` | 估算积分消耗 | input_tokens, output_tokens | CostEstimate |
+| `KieClient._handle_error_response` | `backend/services/adapters/kie/client.py` | 分类 KIE 错误并记录余额不足告警事件 | status_code, response_data, model | NoReturn |
 | `chat_completions` | `backend/services/adapters/kie/client.py` | 非流式 Chat API | model, request | ChatCompletionChunk |
 | `chat_completions_stream` | `backend/services/adapters/kie/client.py` | 流式 Chat API（SSE） | model, request | AsyncIterator[ChatCompletionChunk] |
 
@@ -1054,7 +1055,7 @@
 - **图像生成模块**：3个后端函数 + 5个前端函数
 - **视频生成模块**：5个后端函数 + 6个前端函数
 - **用户设置模块**：3个前端函数
-- **KIE 适配器模块**：5个后端函数
+- **KIE 适配器模块**：6个后端函数
 - **预定义常量**：13个性能标记常量 + 3个媒体默认值常量
 - **总计**：约 270+ 个函数/类型
 

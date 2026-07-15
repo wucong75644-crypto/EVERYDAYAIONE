@@ -17,6 +17,8 @@ from tenacity import (
     retry_if_exception_type,
 )
 
+from core.config import settings
+
 from .models import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -150,7 +152,7 @@ class KieClient:
     async def __aexit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> None:
         await self.close()
 
-    def _handle_error_response(self, status_code: int, response_data: Dict[str, Any]) -> NoReturn:
+    def _handle_error_response(self, status_code: int, response_data: Dict[str, Any], model: str = "unknown") -> NoReturn:
         """处理错误响应"""
         msg = response_data.get("msg", "Unknown error")
         code = response_data.get("code")
@@ -162,6 +164,7 @@ class KieClient:
                 error_code=str(code),
             )
         elif status_code == 402:
+            logger.error(f"KIE_INSUFFICIENT_BALANCE | env={settings.app_env} | provider=kie | model={model} | code=402")
             raise KieInsufficientBalanceError(
                 f"Insufficient balance: {msg}",
                 status_code=status_code,
@@ -213,12 +216,12 @@ class KieClient:
 
             # 检查 HTTP 状态码
             if response.status_code != 200:
-                self._handle_error_response(response.status_code, response_data)
+                self._handle_error_response(response.status_code, response_data, model)
 
             # 检查响应体中的错误码（KIE API 可能返回 HTTP 200 但 body 包含错误）
             if "code" in response_data and response_data.get("code") != 200:
                 self._handle_error_response(
-                    response_data.get("code", 500), response_data
+                    response_data.get("code", 500), response_data, model
                 )
 
             return ChatCompletionChunk(**response_data)
@@ -268,7 +271,7 @@ class KieClient:
                     error_content = await response.aread()
                     try:
                         error_data = json.loads(error_content)
-                        self._handle_error_response(response.status_code, error_data)
+                        self._handle_error_response(response.status_code, error_data, model)
                     except json.JSONDecodeError:
                         raise KieAPIError(
                             f"API error: {error_content.decode()}",
@@ -286,7 +289,7 @@ class KieClient:
                             error_data = json.loads(line)
                             if "code" in error_data and error_data.get("code") != 200:
                                 self._handle_error_response(
-                                    error_data.get("code", 500), error_data
+                                    error_data.get("code", 500), error_data, model
                                 )
                         except json.JSONDecodeError:
                             pass  # 不是 JSON，继续处理
@@ -304,7 +307,7 @@ class KieClient:
                             # 检查 SSE 数据中的错误码
                             if "code" in chunk_data and chunk_data.get("code") != 200:
                                 self._handle_error_response(
-                                    chunk_data.get("code", 500), chunk_data
+                                    chunk_data.get("code", 500), chunk_data, model
                                 )
                             yield ChatCompletionChunk(**chunk_data)
                         except json.JSONDecodeError as e:
@@ -356,8 +359,7 @@ class KieClient:
 
         if response.status_code != 200 or response_data.get("code") != 200:
             self._handle_error_response(
-                response.status_code,
-                response_data,
+                response_data.get("code", response.status_code), response_data, request.model,
             )
 
         result = CreateTaskResponse(**response_data)
@@ -396,8 +398,7 @@ class KieClient:
 
         if response.status_code != 200 or response_data.get("code") != 200:
             self._handle_error_response(
-                response.status_code,
-                response_data,
+                response_data.get("code", response.status_code), response_data,
             )
 
         return QueryTaskResponse(**response_data)

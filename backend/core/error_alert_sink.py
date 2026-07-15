@@ -9,6 +9,7 @@
 - DB 连接失败（connection refused / too many connections / pool）
 - Redis 连接失败（Redis 连接获取失败 / Redis 健康检查失败）
 - AI 全挂（all models failed / circuit.*breaker.*open / Provider.*熔断中）
+- KIE 平台余额不足（KIE_INSUFFICIENT_BALANCE）
 - 积分丢失（CREDIT_LOSS_RISK）
 - logger.critical() 级别的所有日志
 """
@@ -51,6 +52,8 @@ _CRITICAL_PATTERNS = [
     re.compile(r"circuit.*breaker.*open|Provider.*熔断中", re.I),
     # 积分丢失
     re.compile(r"CREDIT_LOSS_RISK"),
+    # KIE 平台余额不足
+    re.compile(r"KIE_INSUFFICIENT_BALANCE"),
 ]
 
 # ── 去重窗口：同指纹致命告警 30 分钟内只推一次 ───────────────
@@ -78,6 +81,8 @@ def _get_queue() -> asyncio.Queue:
 
 def _fingerprint(module: str, function: str, message: str) -> str:
     """生成错误指纹 — 同一位置同类错误聚合为一条"""
+    if "KIE_INSUFFICIENT_BALANCE" in message:
+        return hashlib.md5(b"provider:kie:insufficient_balance").hexdigest()
     # 去掉消息中的动态部分（数字、UUID、时间戳）用于聚合
     stable_msg = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<uuid>", message)
     stable_msg = re.sub(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", "<ts>", stable_msg)

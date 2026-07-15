@@ -69,6 +69,17 @@ class TestFingerprint:
         assert len(fp) == 32
         assert all(c in "0123456789abcdef" for c in fp)
 
+    def test_kie_balance_fingerprint_is_global(self):
+        image_fp = _fingerprint(
+            "kie.client", "create_task",
+            "KIE_INSUFFICIENT_BALANCE | env=production | provider=kie | model=image-model | code=402",
+        )
+        chat_fp = _fingerprint(
+            "kie.client", "chat_completions",
+            "KIE_INSUFFICIENT_BALANCE | env=production | provider=kie | model=chat-model | code=402",
+        )
+        assert image_fp == chat_fp
+
 
 # ── _is_critical ─────────────────────────────────────────
 
@@ -107,6 +118,9 @@ class TestIsCritical:
     def test_credit_loss_risk(self):
         assert _is_critical("ERROR", "CREDIT_LOSS_RISK: refund failed for user 123") is True
 
+    def test_kie_insufficient_balance(self):
+        assert _is_critical("ERROR", "KIE_INSUFFICIENT_BALANCE | provider=kie") is True
+
     def test_normal_error_not_critical(self):
         assert _is_critical("ERROR", "File not found: /tmp/test.txt") is False
 
@@ -117,6 +131,9 @@ class TestIsCritical:
     def test_partial_redis_match_not_critical(self):
         """Redis 关键词必须搭配失败相关词"""
         assert _is_critical("ERROR", "Redis cache set OK") is False
+
+    def test_other_kie_error_not_critical(self):
+        assert _is_critical("ERROR", "KIE API error: invalid image format") is False
 
 
 # ── _extract_org_id ──────────────────────────────────────
