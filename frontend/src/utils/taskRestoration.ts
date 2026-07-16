@@ -28,6 +28,7 @@ import {
   VIDEO_TASK_TIMEOUT,
 } from '../config/task';
 import { getPlaceholderText, type MessageType } from '../constants/placeholder';
+import { parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
 
 interface TaskRequestParams {
   prompt?: string;
@@ -58,8 +59,8 @@ export interface PendingTask {
   // WS 订阅用的客户端任务 ID
   client_task_id?: string | null;
   // chat 任务特有字段
-  accumulated_content?: string | null;
-  accumulated_blocks?: Array<Record<string, unknown>> | null;
+  accumulated_content?: unknown;
+  accumulated_blocks?: unknown;
   model_id?: string | null;
   error_message?: string | null;
   assistant_message_id?: string | null;
@@ -275,26 +276,37 @@ function createChatPlaceholder(task: PendingTask) {
   store.startStreaming(task.conversation_id, streamingId, { generationParams });
 
   // 如果有累积内容，立即显示
-  if (task.accumulated_blocks && task.accumulated_blocks.length > 0) {
-    const remaining = calcRemainingText(task.accumulated_blocks, task.accumulated_content);
-    store.restoreStreamingBlocks(task.conversation_id, task.accumulated_blocks, remaining);
+  const accumulatedContent = parseProtocolString(
+    task.accumulated_content,
+    'accumulated_content',
+    { source: 'task:restore', conversationId: task.conversation_id },
+  );
+  const accumulatedBlocks = task.accumulated_blocks === undefined || task.accumulated_blocks === null
+    ? []
+    : parseContentParts(task.accumulated_blocks, {
+      source: 'task:restore',
+      conversationId: task.conversation_id,
+    });
+  if (accumulatedBlocks.length > 0) {
+    const remaining = calcRemainingText(accumulatedBlocks, accumulatedContent);
+    store.restoreStreamingBlocks(task.conversation_id, accumulatedBlocks, remaining);
     logger.debug('task:restore:p1', '设置累积 blocks', {
       taskId: task.id,
-      blocksCount: task.accumulated_blocks.length,
+      blocksCount: accumulatedBlocks.length,
       remainingLen: remaining.length,
     });
-  } else if (task.accumulated_content) {
-    store.setStreamingContent(task.conversation_id, task.accumulated_content);
+  } else if (accumulatedContent) {
+    store.setStreamingContent(task.conversation_id, accumulatedContent);
     logger.debug('task:restore:p1', '设置累积内容', {
       taskId: task.id,
-      contentLen: task.accumulated_content.length,
+      contentLen: accumulatedContent.length,
     });
   }
 
   logger.info('task:restore:p1', '聊天占位符已创建', {
     taskId: task.id,
     streamingId,
-    hasContent: !!(task.accumulated_content || task.accumulated_blocks),
+    hasContent: !!(accumulatedContent || accumulatedBlocks.length),
   });
 }
 

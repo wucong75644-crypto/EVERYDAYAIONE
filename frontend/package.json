@@ -40,7 +40,6 @@
     "react-markdown": "^10.1.0",
     "react-pdf": "^9.2.1",
     "react-router-dom": "^7.6.2",
-    "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
@@ -50,6 +49,7 @@
     "vega-embed": "^7.1.0",
     "vega-lite": "^6.4.3",
     "xlsx": "^0.18.5",
+    "zod": "4.3.5",
     "zustand": "^5.0.5"
   },
   "devDependencies": {

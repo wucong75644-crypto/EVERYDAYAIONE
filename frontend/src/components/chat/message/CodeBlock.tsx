@@ -5,13 +5,15 @@
  * 由 MarkdownRenderer 内部通过 react-markdown 的 components.code 映射使用。
  */
 
-import { useState, useCallback, useRef, useEffect, memo } from 'react';
+import { useState, useCallback, useRef, useEffect, memo, useMemo } from 'react';
+import hljs from 'highlight.js/lib/common';
+import 'highlight.js/styles/github-dark.css';
 
 interface CodeBlockProps {
   /** 代码语言标识（如 python、typescript） */
   language?: string;
-  /** 代码文本内容 */
-  children: string;
+  /** 唯一可信的原始代码文本；展示高亮和复制都从它派生。 */
+  rawCode: string;
 }
 
 /** 语言标识到显示名的映射 */
@@ -51,7 +53,7 @@ function getDisplayLanguage(lang?: string): string {
   return LANGUAGE_DISPLAY[lang.toLowerCase()] || lang.toUpperCase();
 }
 
-export default memo(function CodeBlock({ language, children }: CodeBlockProps) {
+export default memo(function CodeBlock({ language, rawCode }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -63,7 +65,7 @@ export default memo(function CodeBlock({ language, children }: CodeBlockProps) {
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(children);
+      await navigator.clipboard.writeText(rawCode);
       setCopied(true);
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
@@ -73,9 +75,19 @@ export default memo(function CodeBlock({ language, children }: CodeBlockProps) {
     } catch {
       // 静默处理（Safari 兼容）
     }
-  }, [children]);
+  }, [rawCode]);
 
   const displayLang = getDisplayLanguage(language);
+  const highlightedHtml = useMemo(() => {
+    try {
+      if (language && hljs.getLanguage(language)) {
+        return hljs.highlight(rawCode, { language }).value;
+      }
+      return hljs.highlightAuto(rawCode).value;
+    } catch {
+      return null;
+    }
+  }, [language, rawCode]);
 
   return (
     <div className="rounded-lg overflow-hidden my-3 border border-border-dark">
@@ -104,12 +116,17 @@ export default memo(function CodeBlock({ language, children }: CodeBlockProps) {
           )}
         </button>
       </div>
-      {/* 代码区域：rehype-highlight 已注入高亮 class，这里只做容器 */}
+      {/* highlight.js 的 value 已对源码做 HTML 转义；失败时直接渲染原始文本。 */}
       <div className="bg-surface-dark overflow-x-auto">
         <pre className="p-4 text-sm leading-relaxed m-0 whitespace-pre-wrap break-words">
-          <code className={language ? `hljs language-${language}` : 'hljs'}>
-            {children}
-          </code>
+          {highlightedHtml === null ? (
+            <code className="hljs">{rawCode}</code>
+          ) : (
+            <code
+              className={language ? `hljs language-${language}` : 'hljs'}
+              dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+            />
+          )}
         </pre>
       </div>
     </div>

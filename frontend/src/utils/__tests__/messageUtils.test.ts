@@ -335,6 +335,34 @@ describe('normalizeMessage', () => {
     expect(result.content).toEqual([{ type: 'text', text: 'Parsed' }]);
   });
 
+  it('should recover structured text values as readable JSON', () => {
+    const msg = {
+      id: 'msg-1',
+      content: [{ type: 'text', text: [{ name: 'A' }, { name: 'B' }] }],
+    } as unknown as Message;
+
+    const result = normalizeMessage(msg);
+
+    expect(result.content).toEqual([{
+      type: 'text',
+      text: '[\n  {\n    "name": "A"\n  },\n  {\n    "name": "B"\n  }\n]',
+    }]);
+  });
+
+  it('should reject unknown content block types', () => {
+    const msg = {
+      id: 'msg-1',
+      content: [
+        { type: 'unknown_block', value: 'bad' },
+        { type: 'text', text: 'valid' },
+      ],
+    } as unknown as Message;
+
+    const result = normalizeMessage(msg);
+
+    expect(result.content).toEqual([{ type: 'text', text: 'valid' }]);
+  });
+
   it('should set status from is_error flag', () => {
     const msg = {
       id: 'msg-1',

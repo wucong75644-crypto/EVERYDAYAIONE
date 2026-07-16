@@ -13,10 +13,12 @@
 
 import { memo, useState, useCallback, useMemo, type ChangeEvent } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
-import { Calendar, CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, X } from 'lucide-react';
 import type { FormPart, FormField } from '../../../types/message';
 import { cn } from '../../../utils/cn';
+import { formatFormValue } from '../../../utils/displayValue';
 import { SOFT_SPRING } from '../../../utils/motion';
+import { FormBlockContent } from './FormBlockContent';
 
 // ════════════════════════════════════════════════════════
 // 子组件
@@ -211,6 +213,55 @@ interface FormBlockProps {
   form: FormPart;
 }
 
+function FormFields({
+  fields,
+  values,
+  isVisible,
+  onChange,
+}: {
+  fields: FormField[];
+  values: Record<string, unknown>;
+  isVisible: (field: FormField) => boolean;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const renderField = (field: FormField) => {
+    const value = formatFormValue(values[field.name]);
+    const update = (next: unknown) => onChange(field.name, next);
+    if (field.type === 'text') return <TextField field={field} value={value} onChange={update} />;
+    if (field.type === 'textarea') return <TextareaField field={field} value={value} onChange={update} />;
+    if (field.type === 'select') return <SelectField field={field} value={value} onChange={update} />;
+    if (field.type === 'time') return <TimeField field={field} value={value} onChange={update} />;
+    if (field.type === 'number') return <NumberField field={field} value={value} onChange={update} />;
+    if (field.type === 'checkbox_group') {
+      const selected = Array.isArray(values[field.name]) ? values[field.name] as number[] : [];
+      return <CheckboxGroupField field={field} value={selected} onChange={update} />;
+    }
+    return null;
+  };
+
+  return (
+    <div className="space-y-3 px-4 py-3">
+      <AnimatePresence mode="sync">
+        {fields.map((field) => {
+          if (field.type === 'hidden' || !isVisible(field)) return null;
+          return (
+            <m.div key={field.name} initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.15 }}>
+              {field.label && (
+                <label className="mb-1 block text-xs font-medium text-text-secondary">
+                  {field.label}{field.required && <span className="ml-0.5 text-red-500">*</span>}
+                </label>
+              )}
+              {renderField(field)}
+            </m.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default memo(function FormBlock({ form }: FormBlockProps) {
   // 初始化表单值
   const initialValues = useMemo(() => {
@@ -273,7 +324,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   const isFieldVisible = useCallback(
     (field: FormField) => {
       if (!field.visible_when) return true;
-      return String(values[field.visible_when.field]) === field.visible_when.value;
+      return formatFormValue(values[field.visible_when.field]) === field.visible_when.value;
     },
     [values],
   );
@@ -298,159 +349,9 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   }
 
   return (
-    <m.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={SOFT_SPRING}
-      className={cn(
-        'my-3 rounded-[var(--s-radius-card)] border overflow-hidden',
-        'border-border-default bg-surface',
-        'shadow-sm',
-      )}
-    >
-      {/* 标题栏 */}
-      <div
-        className={cn(
-          'flex items-center gap-2 px-4 py-3',
-          'border-b border-border-default',
-          'bg-surface-elevated',
-        )}
-      >
-        <Calendar size={16} className="text-accent" />
-        <span className="text-sm font-medium text-text-primary">
-          {form.title}
-        </span>
-      </div>
-
-      {/* 描述 */}
-      {form.description && (
-        <p className="px-4 pt-3 text-xs text-text-tertiary">
-          {form.description}
-        </p>
-      )}
-
-      {/* 字段 */}
-      <div className="space-y-3 px-4 py-3">
-        <AnimatePresence mode="sync">
-          {form.fields.map((field) => {
-            if (field.type === 'hidden') return null;
-            if (!isFieldVisible(field)) return null;
-
-            return (
-              <m.div
-                key={field.name}
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.15 }}
-              >
-                {field.label && (
-                  <label className="mb-1 block text-xs font-medium text-text-secondary">
-                    {field.label}
-                    {field.required && (
-                      <span className="ml-0.5 text-red-500">*</span>
-                    )}
-                  </label>
-                )}
-                {field.type === 'text' && (
-                  <TextField
-                    field={field}
-                    value={String(values[field.name] ?? '')}
-                    onChange={(v) => updateField(field.name, v)}
-                  />
-                )}
-                {field.type === 'textarea' && (
-                  <TextareaField
-                    field={field}
-                    value={String(values[field.name] ?? '')}
-                    onChange={(v) => updateField(field.name, v)}
-                  />
-                )}
-                {field.type === 'select' && (
-                  <SelectField
-                    field={field}
-                    value={String(values[field.name] ?? '')}
-                    onChange={(v) => updateField(field.name, v)}
-                  />
-                )}
-                {field.type === 'time' && (
-                  <TimeField
-                    field={field}
-                    value={String(values[field.name] ?? '')}
-                    onChange={(v) => updateField(field.name, v)}
-                  />
-                )}
-                {field.type === 'number' && (
-                  <NumberField
-                    field={field}
-                    value={String(values[field.name] ?? '')}
-                    onChange={(v) => updateField(field.name, v)}
-                  />
-                )}
-                {field.type === 'checkbox_group' && (
-                  <CheckboxGroupField
-                    field={field}
-                    value={
-                      Array.isArray(values[field.name])
-                        ? (values[field.name] as number[])
-                        : []
-                    }
-                    onChange={(v) => updateField(field.name, v)}
-                  />
-                )}
-              </m.div>
-            );
-          })}
-        </AnimatePresence>
-      </div>
-
-      {/* 操作栏 */}
-      <div
-        className={cn(
-          'flex items-center gap-3 px-4 py-3',
-          'border-t border-border-default',
-          'bg-surface-elevated',
-        )}
-      >
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={submitting}
-          className={cn(
-            'flex flex-1 items-center justify-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-2 text-sm font-medium',
-            'bg-accent text-text-on-accent',
-            'hover:opacity-90 active:opacity-80',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
-            'transition-opacity duration-150',
-          )}
-        >
-          {submitting ? (
-            <>
-              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              提交中…
-            </>
-          ) : (
-            <>
-              <CheckCircle2 size={14} />
-              {form.submit_text || '确认'}
-            </>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={handleCancel}
-          className={cn(
-            'flex items-center justify-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-2 text-sm',
-            'border border-border-default',
-            'text-text-secondary hover:text-text-primary',
-            'hover:bg-hover',
-            'transition-colors duration-150',
-          )}
-        >
-          <X size={14} />
-          {form.cancel_text || '取消'}
-        </button>
-      </div>
-    </m.div>
+    <FormBlockContent form={form} submitting={submitting}
+      onSubmit={handleSubmit} onCancel={handleCancel}
+      fields={<FormFields fields={form.fields} values={values}
+        isVisible={isFieldVisible} onChange={updateField} />} />
   );
 });

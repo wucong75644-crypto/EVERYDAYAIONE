@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import Modal from '../../common/Modal';
 import { Button } from '../../ui/Button';
+import { formatDisplayValue } from '../../../utils/displayValue';
 
 /** 工具名称映射 */
 const TOOL_LABELS: Record<string, string> = {
@@ -43,7 +44,7 @@ export default function ToolConfirmModal({
   // 倒计时
   useEffect(() => {
     if (!request) return;
-    setCountdown(request.timeout || 60);
+    const resetTimer = setTimeout(() => setCountdown(request.timeout || 60), 0);
 
     const timer = setInterval(() => {
       setCountdown((prev) => {
@@ -56,7 +57,10 @@ export default function ToolConfirmModal({
       });
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(resetTimer);
+      clearInterval(timer);
+    };
   }, [request, onReject]);
 
   if (!request) return null;
@@ -89,7 +93,7 @@ export default function ToolConfirmModal({
             <div key={key} className="flex gap-2 text-text-secondary">
               <span className="text-text-tertiary shrink-0">{key}:</span>
               <span className="truncate">
-                {typeof value === 'string' ? value : JSON.stringify(value)}
+                {formatDisplayValue(value)}
               </span>
             </div>
           ))}

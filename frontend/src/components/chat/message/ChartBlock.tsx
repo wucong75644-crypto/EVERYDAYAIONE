@@ -12,6 +12,7 @@ import { useRef, useEffect, useState, useCallback, useMemo, memo } from 'react';
 import { useTheme } from '../../../hooks/useTheme';
 import { getEChartsThemeName } from '../../../constants/echartsThemes';
 import { logger } from '../../../utils/logger';
+import { formatDisplayValue } from '../../../utils/displayValue';
 import PlotlyBlock from './PlotlyBlock';
 import VegaLiteBlock from './VegaLiteBlock';
 
@@ -27,13 +28,13 @@ interface ChartBlockProps {
 // ============================================================
 
 async function loadECharts() {
-  const [{ use }, { CanvasRenderer }, charts, components] = await Promise.all([
+  const [{ use: register }, { CanvasRenderer }, charts, components] = await Promise.all([
     import('echarts/core'),
     import('echarts/renderers'),
     import('echarts/charts'),
     import('echarts/components'),
   ]);
-  use([
+  register([
     CanvasRenderer,
     charts.LineChart, charts.BarChart, charts.PieChart, charts.ScatterChart,
     charts.RadarChart, charts.HeatmapChart, charts.FunnelChart, charts.BoxplotChart,
@@ -252,7 +253,11 @@ function DataViewOverlay({ data, onClose }: { data: ChartData; onClose: () => vo
                 <td className="px-3 py-1.5 text-left font-medium border border-border-light text-text-primary">{name}</td>
                 {data.values.map((vals, j) => (
                   <td key={j} className="px-3 py-1.5 text-right border border-border-light text-text-secondary">
-                    {typeof vals[i] === 'number' ? vals[i].toLocaleString() : (vals[i] ?? '-')}
+                    {vals[i] === null || vals[i] === undefined
+                      ? '-'
+                      : typeof vals[i] === 'number'
+                        ? vals[i].toLocaleString()
+                        : formatDisplayValue(vals[i])}
                   </td>
                 ))}
               </tr>
@@ -260,6 +265,24 @@ function DataViewOverlay({ data, onClose }: { data: ChartData; onClose: () => vo
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function ChartError({ message, option }: { message: string; option: Record<string, unknown> }) {
+  return (
+    <div className="my-3 rounded-xl border border-border-default bg-surface-card p-4">
+      <div className="flex items-center gap-2 text-error mb-2">
+        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
+        </svg>
+        <span className="text-sm font-medium">图表渲染失败</span>
+      </div>
+      <p className="text-xs text-text-tertiary">{message}</p>
+      <details className="mt-2">
+        <summary className="text-xs text-text-tertiary cursor-pointer">查看原始配置</summary>
+        <pre className="mt-1 text-xs bg-hover rounded p-2 overflow-auto max-h-40">{JSON.stringify(option, null, 2)}</pre>
+      </details>
     </div>
   );
 }
@@ -293,7 +316,10 @@ function EChartsBlockInner({ option, title }: ChartBlockProps) {
 
   // 稳定化 option 引用（DB JSONB 每次反序列化都是新对象）
   const optionKey = useMemo(() => JSON.stringify(option), [option]);
-  const stableOption = useMemo(() => option, [optionKey]);
+  const stableOption = useMemo(
+    () => JSON.parse(optionKey) as Record<string, unknown>,
+    [optionKey],
+  );
 
   // 类型切换
   const originalType = useMemo(() => getOriginalType(stableOption), [stableOption]);
@@ -375,21 +401,7 @@ function EChartsBlockInner({ option, title }: ChartBlockProps) {
 
   // 错误降级
   if (error) {
-    return (
-      <div className="my-3 rounded-xl border border-border-default bg-surface-card p-4">
-        <div className="flex items-center gap-2 text-error mb-2">
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
-          </svg>
-          <span className="text-sm font-medium">图表渲染失败</span>
-        </div>
-        <p className="text-xs text-text-tertiary">{error}</p>
-        <details className="mt-2">
-          <summary className="text-xs text-text-tertiary cursor-pointer">查看原始配置</summary>
-          <pre className="mt-1 text-xs bg-hover rounded p-2 overflow-auto max-h-40">{JSON.stringify(option, null, 2)}</pre>
-        </details>
-      </div>
-    );
+    return <ChartError message={error} option={option} />;
   }
 
   return (

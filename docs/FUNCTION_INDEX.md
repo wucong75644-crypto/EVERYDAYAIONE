@@ -9,6 +9,22 @@
 
 ## 函数列表
 
+### 前端消息运行时协议与展示安全
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `parseProtocolString` | `frontend/src/schemas/messageProtocol.ts` | 校验 WebSocket/恢复链路中的字符串字段，拒绝对象隐式转换 | input, field, context? | `string \| null` |
+| `parseContentPart` | `frontend/src/schemas/messageProtocol.ts` | 在 Store 写入前校验单个 ContentPart；兼容恢复结构化 text | input, context? | `ContentPart \| null` |
+| `parseContentParts` | `frontend/src/schemas/messageProtocol.ts` | 校验内容块数组并隔离非法块 | input, context? | `ContentPart[]` |
+| `formatDisplayValue` | `frontend/src/utils/displayValue.ts` | 将未知值稳定转换为可展示文本，处理 BigInt 与循环引用 | value | `string` |
+| `formatFormValue` | `frontend/src/utils/displayValue.ts` | 仅允许标量进入表单控件，拒绝结构化值 | value | `string` |
+| `createStreamingLifecycleActions` | `frontend/src/stores/slices/streamingLifecycleActions.ts` | 创建流式消息启动、注册、完成和查询 actions | set, get | lifecycle actions |
+| `createOptimisticMessageActions` | `frontend/src/stores/slices/optimisticMessageActions.ts` | 创建乐观消息幂等写入、替换、移除 actions | set, get | optimistic actions |
+| `createStreamingUiActions` | `frontend/src/stores/slices/streamingUiActions.ts` | 创建思考、步骤提示、建议和工具确认 actions | set, get | UI actions |
+| `handleRoutingComplete` | `frontend/src/contexts/wsRoutingCompleteHandler.ts` | 处理模型路由完成后的媒体占位符或聊天参数更新 | deps, msg | void |
+| `parseSpreadsheetCsv` | `frontend/src/preview/adapters/spreadsheetData.ts` | 解析支持引号、换行和自定义分隔符的表格文本 | text, separator | `string[][]` |
+| `clearMergedCells` | `frontend/src/preview/adapters/spreadsheetData.ts` | 清除 Excel 合并区域中非左上角重复单元格 | worksheet | void |
+
 ### 任务管理模块 (Task Management)
 
 #### 后端函数

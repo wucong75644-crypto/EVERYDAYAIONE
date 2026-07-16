@@ -267,6 +267,7 @@ EVERYDAYAIONE/
         │       │   ├── MessageBubbleContent.tsx # 气泡内容状态分发
         │       │   ├── MessageContentBlocks.tsx # AI 多内容块渲染
         │       │   ├── MessageMedia.tsx      # 消息媒体容器（图片、视频、文件）
+        │       │   ├── FormBlockContent.tsx  # 聊天表单活动态展示外壳与操作栏
         │       │   ├── MessageImageBlocks.tsx # 图片块渲染（缩略图展示、原图下载）
         │       │   └── InlineChartImage.tsx  # 内容块内联图片
         │       ├── MessageActions.tsx        # 消息操作工具栏
@@ -306,6 +307,10 @@ EVERYDAYAIONE/
         │   ├── useMessageStore.ts        # 统一消息 Store（消息、任务、缓存）
         │   ├── useDetailPageStore.ts     # 主图详情制作页专用状态
         │   └── useTaskRestorationStore.ts # 任务恢复状态
+        │   └── slices/                  # Store slice 与按职责拆分的 action factories
+        │       ├── streamingLifecycleActions.ts # 流式消息启动、注册与完成
+        │       ├── optimisticMessageActions.ts  # 乐观消息增删改与错误替换
+        │       └── streamingUiActions.ts        # 思考、提示、建议与工具确认状态
         ├── services/                 # API 调用
         │   └── ecomRequirement.ts        # AI 帮写请求快照与可取消长请求
         │   ├── api.ts                    # Axios 配置
@@ -323,11 +328,14 @@ EVERYDAYAIONE/
         │   ├── message.ts                # 消息相关类型（ContentPart、Message、Task 等）
         │   ├── task.ts                   # 任务相关类型（兼容旧格式）
         │   └── websocket.ts              # WebSocket 消息类型
+        ├── schemas/                  # 外部数据运行时协议
+        │   └── messageProtocol.ts        # ContentPart Zod 校验、兼容恢复与隔离日志
         ├── contexts/                  # React 上下文与 WebSocket 事件处理
         │   ├── WebSocketContext.tsx      # WebSocket 连接、订阅和 handler 依赖注入
         │   ├── wsMessageHandlers.ts      # WebSocket 事件工厂与流式/通知事件
         │   ├── wsMessageHandlerShared.ts # handler 共享类型、订阅清理与 chunk flush
         │   └── wsTaskMessageHandlers.ts  # 任务完成/失败与图片 partial update
+        │   └── wsRoutingCompleteHandler.ts # 路由完成后的媒体占位符与聊天参数更新
         ├── hooks/                    # 自定义 Hooks
         │   └── useDetailRequirementAssist.ts # AI 帮写弹窗请求、竞态和三方案编辑状态
         │   ├── useImageUpload.ts         # 图片上传逻辑
@@ -352,6 +360,7 @@ EVERYDAYAIONE/
             ├── settingsStorage.ts        # 用户设置存储
             ├── modelConflict.ts          # 模型冲突检测
             ├── messageUtils.ts           # 消息工具函数（getTextContent、normalizeMessage）
+            ├── displayValue.ts           # 结构化值安全展示与表单标量适配
             ├── imageUrlRules.ts          # 图片 URL 规则（原图/缩略图语义入口）
             ├── messageCoordinator.ts     # 消息协调器
             ├── mergeOptimisticMessages.ts # 合并乐观更新消息（去重逻辑）
@@ -360,6 +369,10 @@ EVERYDAYAIONE/
             ├── taskNotification.ts       # 任务通知工具
             ├── taskRestoration.ts        # 任务恢复工具（WebSocket 恢复）
             └── tabSync.ts                # 跨标签页同步（BroadcastChannel）
+        ├── preview/adapters/          # 文件预览适配器
+        │   ├── SpreadsheetPreview.tsx    # 电子表格加载、Sheet 状态与取消清理
+        │   ├── SpreadsheetTable.tsx      # 电子表格纯展示与 Sheet Tabs
+        │   └── spreadsheetData.ts        # CSV/TSV 解析与合并单元格清理
 │
 └── tests/                    # 单元测试
     ├── __init__.py               # 测试模块标识

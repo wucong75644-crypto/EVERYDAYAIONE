@@ -3,6 +3,7 @@
 import { normalizeMessage, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { tabSync } from '../utils/tabSync';
+import { parseContentPart } from '../schemas/messageProtocol';
 import {
   cleanupTaskSubscription,
   flushChunkBuffer,
@@ -61,17 +62,66 @@ function handleTaskFailure(
   cleanupTaskSubscription(deps, taskId);
 }
 
+function flushPendingChunks(deps: HandlerDeps): void {
+  if (deps.chunkBufferRef.current.size === 0) return;
+  if (deps.flushTimerRef.current) {
+    clearTimeout(deps.flushTimerRef.current);
+    deps.flushTimerRef.current = null;
+  }
+  flushChunkBuffer(deps);
+}
+
+function completeConversation(
+  deps: HandlerDeps,
+  conversationId: string | undefined,
+  messageId: string | undefined,
+  isNewlyCompleted: boolean,
+): void {
+  if (!conversationId || !isNewlyCompleted) return;
+  const store = deps.getStore();
+  store.completeStreaming(conversationId);
+  store.markConversationCompleted(conversationId);
+  store.setIsSending(false);
+  tabSync.broadcast('message_completed', { conversationId, messageId });
+}
+
+function notifyMessageDone(messageData: Record<string, unknown> | undefined, enabled: boolean): void {
+  if (!enabled) return;
+  const isFailed = messageData?.status === 'failed';
+  import('react-hot-toast').then(({ default: toast }) => {
+    if (isFailed) toast.error('生成失败');
+    else toast.success('生成完成');
+  });
+}
+
+function notifyWorkspaceChanged(messageData: Record<string, unknown> | undefined): void {
+  const content = messageData?.content;
+  if (!Array.isArray(content)) return;
+  const hasWorkspaceFile = content.some((part) => (
+    part && typeof part === 'object' && typeof part.workspace_path === 'string'
+  ));
+  if (hasWorkspaceFile) window.dispatchEvent(new CustomEvent('workspace:changed'));
+}
+
+function finishMessageWithoutTask(
+  deps: HandlerDeps,
+  messageId: string | undefined,
+  messageData: Record<string, unknown> | undefined,
+): void {
+  const store = deps.getStore();
+  if (messageData) {
+    const normalized = normalizeMessage(messageData as NormalizeInput);
+    const status = normalized.status === 'failed' ? 'failed' as const : 'completed' as const;
+    store.updateMessage(messageId || normalized.id, { ...normalized, status });
+  } else if (messageId) {
+    store.setStatus(messageId, 'completed');
+  }
+}
+
 export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
   const { task_id, message_id, conversation_id } = msg;
   const messageData = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
-
-  if (deps.chunkBufferRef.current.size > 0) {
-    if (deps.flushTimerRef.current) {
-      clearTimeout(deps.flushTimerRef.current);
-      deps.flushTimerRef.current = null;
-    }
-    flushChunkBuffer(deps);
-  }
+  flushPendingChunks(deps);
 
   logger.info('ws:message', 'done received', {
     taskId: task_id,
@@ -79,7 +129,6 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
     conversationId: conversation_id,
   });
 
-  const store = deps.getStore();
   const effectiveConversationId = conversation_id
     || (task_id ? deps.taskConversationMapRef.current.get(task_id) : undefined);
   let isNewlyCompleted = true;
@@ -93,40 +142,50 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
         effectiveConversationId,
       );
     } else if (message_id) {
+      const store = deps.getStore();
       store.setStatus(message_id, 'completed');
       store.completeTask(task_id);
     }
     cleanupTaskSubscription(deps, task_id);
-  } else if (messageData) {
-    const normalized = normalizeMessage(messageData as NormalizeInput);
-    const status = normalized.status === 'failed' ? 'failed' as const : 'completed' as const;
-    store.updateMessage(message_id || (messageData.id as string), { ...normalized, status });
-  } else if (message_id) {
-    store.setStatus(message_id, 'completed');
+  } else {
+    finishMessageWithoutTask(deps, message_id, messageData);
   }
 
-  if (effectiveConversationId && isNewlyCompleted) {
-    store.completeStreaming(effectiveConversationId);
-    store.markConversationCompleted(effectiveConversationId);
-    store.setIsSending(false);
-    tabSync.broadcast('message_completed', {
-      conversationId: effectiveConversationId,
-      messageId: message_id,
+  completeConversation(deps, effectiveConversationId, message_id, isNewlyCompleted);
+  notifyMessageDone(messageData, isNewlyCompleted);
+  notifyWorkspaceChanged(messageData);
+}
+
+function buildImageFailureContent(existing: Message, errorText: string, errorCode?: string): Message['content'] {
+  const count = Math.max(1, Number(existing.generation_params?.num_images ?? 1));
+  return Array.from({ length: count }, (_, index) => {
+    const part = existing.content[index];
+    if (part?.type === 'image' && part.url) return part;
+    return { type: 'image' as const, url: null, failed: true, error: errorText, error_code: errorCode };
+  });
+}
+
+function failMessage(
+  deps: HandlerDeps,
+  messageId: string,
+  error: { code?: string; message?: string } | undefined,
+): void {
+  const store = deps.getStore();
+  const errorText = error?.message || '生成失败';
+  const existing = store.getMessage(messageId);
+  if (existing?.generation_params?.type === 'image') {
+    store.updateMessage(messageId, {
+      status: 'failed', is_error: false,
+      error: { code: error?.code ?? 'UNKNOWN', message: errorText },
+      content: buildImageFailureContent(existing, errorText, error?.code),
     });
+    return;
   }
-
-  if (isNewlyCompleted) {
-    const isFailed = messageData && messageData.status === 'failed';
-    import('react-hot-toast').then(({ default: toast }) => {
-      if (isFailed) toast.error('生成失败');
-      else toast.success('生成完成');
-    });
-  }
-
-  const content = (messageData?.content ?? []) as Array<{ workspace_path?: string }>;
-  if (Array.isArray(content) && content.some(part => part?.workspace_path)) {
-    window.dispatchEvent(new CustomEvent('workspace:changed'));
-  }
+  store.updateMessage(messageId, {
+    status: 'failed', is_error: true,
+    error: { code: error?.code ?? 'UNKNOWN', message: errorText },
+    content: [{ type: 'text', text: errorText }],
+  });
 }
 
 export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
@@ -146,39 +205,7 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   });
 
   const store = deps.getStore();
-  if (message_id) {
-    const errorText = error?.message || '生成失败';
-    const existing = store.getMessage(message_id);
-    const generationParams = existing?.generation_params;
-    if (generationParams?.type === 'image') {
-      const count = Math.max(1, Number(generationParams.num_images ?? 1));
-      const current = existing?.content || [];
-      const content = Array.from({ length: count }, (_, index) => {
-        const part = current[index];
-        if (part?.type === 'image' && part.url) return part;
-        return {
-          type: 'image' as const,
-          url: null,
-          failed: true,
-          error: errorText,
-          error_code: error?.code,
-        };
-      });
-      store.updateMessage(message_id, {
-        status: 'failed',
-        is_error: false,
-        error: { code: error?.code ?? 'UNKNOWN', message: errorText },
-        content,
-      });
-    } else {
-      store.updateMessage(message_id, {
-        status: 'failed',
-        is_error: true,
-        error: { code: error?.code ?? 'UNKNOWN', message: errorText },
-        content: [{ type: 'text', text: errorText }],
-      });
-    }
-  }
+  if (message_id) failMessage(deps, message_id, error);
 
   if (task_id) handleTaskFailure(deps, task_id, error);
   if (conversation_id) store.completeStreaming(conversation_id);
@@ -195,7 +222,7 @@ export function handleImagePartialUpdate(
   const { message_id } = msg;
   const payload = (msg.payload || {}) as {
     image_index?: number;
-    content_part?: Message['content'][number];
+    content_part?: unknown;
     completed_count?: number;
     total_count?: number;
     error?: string;
@@ -224,11 +251,17 @@ export function handleImagePartialUpdate(
       type: 'image', url: null, failed: true, error, error_code,
     } as Message['content'][number];
   } else if (content_part) {
-    content[image_index] = content_part;
+    const parsed = parseContentPart(content_part, {
+      messageId: message_id,
+      source: 'ws:image_partial_update',
+    });
+    if (!parsed || parsed.type !== 'image') return;
+    content[image_index] = parsed;
   }
   store.updateMessage(message_id, { content });
 
-  if (content_part && 'workspace_path' in content_part && content_part.workspace_path) {
+  const updatedPart = content[image_index];
+  if (updatedPart.type === 'image' && updatedPart.workspace_path) {
     window.dispatchEvent(new CustomEvent('workspace:changed'));
   }
 }

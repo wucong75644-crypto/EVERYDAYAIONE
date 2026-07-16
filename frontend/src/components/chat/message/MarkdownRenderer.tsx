@@ -1,7 +1,7 @@
 /**
  * Markdown 渲染器
  *
- * 基于 react-markdown + remark-gfm + rehype-highlight，
+ * 基于 react-markdown + remark-gfm，
  * 将 AI 回复的 Markdown 文本渲染为富文本。
  *
  * 自定义组件映射：
@@ -15,16 +15,11 @@ import Markdown, { type Components } from 'react-markdown';
 import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
 import { escapeChineseMath } from '../../../utils/markdownPreprocess';
 import { downloadFile } from '../../../utils/downloadFile';
 import './markdown.css';
-
-// highlight.js 暗色主题（按需加载，仅注册常用语言）
-import 'highlight.js/styles/github-dark.css';
-import 'highlight.js/lib/common';
 
 // KaTeX 数学公式样式
 import 'katex/dist/katex.min.css';
@@ -64,8 +59,15 @@ function isImageUrl(text: string): boolean {
 const remarkPlugins: PluggableList = [remarkGfm, remarkMath];
 const rehypePlugins: PluggableList = [
   [rehypeKatex, { strict: 'ignore' }],
-  rehypeHighlight,
 ];
+
+function extractAstText(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const record = node as { value?: unknown; children?: unknown };
+  if (typeof record.value === 'string') return record.value;
+  if (!Array.isArray(record.children)) return '';
+  return record.children.map(extractAstText).join('');
+}
 
 /**
  * 自定义组件映射
@@ -75,16 +77,17 @@ const rehypePlugins: PluggableList = [
  */
 const markdownComponents: Components = {
   // 代码块：区分行内代码、Mermaid 图表、普通代码块
-  code({ children, className, node: _node, ...rest }) {
+  code({ children, className, node, ...rest }) {
     const match = /language-(\w+)/.exec(className || '');
-    const isInline = !match && !String(children).includes('\n');
+    const rawCode = extractAstText(node);
+    const isInline = !match && !rawCode.includes('\n');
 
     if (isInline) {
       return <code className={className} {...rest}>{children}</code>;
     }
 
     const language = match?.[1];
-    const codeText = String(children).replace(/\n$/, '');
+    const codeText = rawCode.replace(/\n$/, '');
 
     // Mermaid 图表：懒加载渲染为 SVG
     if (language === 'mermaid') {
@@ -95,7 +98,7 @@ const markdownComponents: Components = {
       );
     }
 
-    return <CodeBlock language={language}>{codeText}</CodeBlock>;
+    return <CodeBlock language={language} rawCode={codeText} />;
   },
 
   // pre：去掉默认 pre 包裹（CodeBlock 自带容器）
@@ -104,7 +107,8 @@ const markdownComponents: Components = {
   },
 
   // 表格：外层加横向滚动容器
-  table({ children, node: _node, ...rest }) {
+  table({ children, node, ...rest }) {
+    void node;
     return (
       <div className="markdown-table-wrapper">
         <table {...rest}>{children}</table>
@@ -113,8 +117,8 @@ const markdownComponents: Components = {
   },
 
   // 表格单元格：检测图片 URL 并渲染为缩略图
-  td({ children, node: _node, ...rest }) {
-    const text = String(children ?? '').trim();
+  td({ children, node, ...rest }) {
+    const text = extractAstText(node).trim();
 
     if (isImageUrl(text)) {
       return (
@@ -138,7 +142,8 @@ const markdownComponents: Components = {
   },
 
   // 链接：workspace/CDN 文件链接走 downloadFile()，其他新窗口打开
-  a({ children, node: _node, href, ...rest }) {
+  a({ children, node, href, ...rest }) {
+    void node;
     // 匹配文件后缀 或 workspace/CDN 路径（中文编码后后缀可能丢失）
     const isFileUrl = href && (
       /\.(xlsx|xls|csv|pdf|zip|txt|parquet|json)(\?|$)/i.test(href) ||
@@ -179,7 +184,7 @@ export default memo(function MarkdownRenderer({
   const hasMarkdown = useMemo(() => {
     if (!content) return false;
     // 快速检测常见 Markdown 语法（含 $ 数学公式）
-    return /[#*`~\[\]|>$-]/.test(content) || content.includes('```');
+    return /[#*`~[\]|>$-]/.test(content) || content.includes('```');
   }, [content]);
 
   // 预处理：转义"含中文的伪 LaTeX 公式"，防止 KaTeX 对汉字 console.warn

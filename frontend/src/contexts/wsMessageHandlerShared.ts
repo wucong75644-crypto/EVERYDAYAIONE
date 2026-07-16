@@ -2,13 +2,13 @@
 
 import type { OperationContext } from './WebSocketContext';
 import type { WSMessage } from '../hooks/useWebSocket';
-import type { MessageStatus } from '../types/message';
+import type { ContentPart, MessageStatus, TextPart, ToolStepPart } from '../types/message';
 import type { Message } from '../stores/useMessageStore';
 
 export interface WSIncomingMessage extends WSMessage {
   message_id?: string;
   message?: unknown;
-  chunk?: string;
+  chunk?: unknown;
   accumulated?: string;
   error?: { code?: string; message?: string };
   credits?: number;
@@ -31,13 +31,13 @@ export interface MessageStoreActions {
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;
   setStreamingContent: (conversationId: string, content: string) => void;
-  restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
-  replaceLastTextBlock: (conversationId: string, block: { type: 'text'; text: string }) => void;
+  restoreStreamingBlocks: (conversationId: string, blocks: ContentPart[], remainingText: string) => void;
+  replaceLastTextBlock: (conversationId: string, block: TextPart) => void;
   setAgentStepHint: (conversationId: string, hint: string) => void;
   clearAgentStepHint: (conversationId: string) => void;
   appendStreamingThinking: (conversationId: string, chunk: string) => void;
-  appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
-  updateContentBlock: (conversationId: string, toolCallId: string, updates: Record<string, unknown>) => void;
+  appendContentBlock: (conversationId: string, block: ContentPart) => void;
+  updateContentBlock: (conversationId: string, toolCallId: string, updates: Partial<ToolStepPart>) => void;
   markForceRefresh: (conversationId: string) => void;
   setSuggestions: (conversationId: string, suggestions: string[]) => void;
   setToolConfirmRequest: (request: {

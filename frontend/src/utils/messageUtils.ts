@@ -14,6 +14,7 @@ import type {
   FilePart,
 } from '../types/message';
 import { pickOriginalImageUrl } from './imageUrlRules';
+import { parseContentParts } from '../schemas/messageProtocol';
 
 // ============================================================
 // 内容提取函数
@@ -44,7 +45,7 @@ export function getTextContent(message: Message): string {
  * 返回差值（当前轮正在流式输出的文字）。
  */
 export function calcRemainingText(
-  blocks: Array<Record<string, unknown>>,
+  blocks: ContentPart[],
   accumulated: string | null | undefined,
 ): string {
   const blocksText = blocks
@@ -127,10 +128,15 @@ function resolveStatus(status?: string, isError?: boolean): MessageStatus {
 /** 转换旧格式消息为新格式（兼容 Message 和 API 原始数据） */
 export function normalizeMessage(msg: RawApiMessage | Message): Message {
   const status = resolveStatus(msg.status as string | undefined, msg.is_error);
+  const context = {
+    messageId: msg.id,
+    conversationId: msg.conversation_id,
+    source: 'normalizeMessage',
+  };
 
-  // 如果 content 已经是数组，直接返回
+  // 外部数组必须经过运行时协议解析，不能仅依赖 TypeScript 类型断言。
   if (Array.isArray(msg.content)) {
-    return { ...msg, status } as Message;
+    return { ...msg, content: parseContentParts(msg.content, context), status } as Message;
   }
 
   // 检查是否为 JSON 字符串数组（后端保存为 JSONB 但返回为字符串的情况）
@@ -138,7 +144,7 @@ export function normalizeMessage(msg: RawApiMessage | Message): Message {
     try {
       const parsed = JSON.parse(msg.content);
       if (Array.isArray(parsed)) {
-        return { ...msg, content: parsed, status } as Message;
+        return { ...msg, content: parseContentParts(parsed, context), status } as Message;
       }
     } catch {
       // 不是有效 JSON，继续正常处理

@@ -12,6 +12,29 @@
 
 ---
 
+### 2026-07-16 结构化消息运行时边界与渲染治理 — 已完成
+
+**根因**：`rehype-highlight` 将代码文本转换为 React 节点后，渲染组件调用 `String(children)`，最终得到 `[object Object]`。同时 WebSocket、HTTP 恢复与 Store 曾依赖 TypeScript 断言，缺少运行时协议边界。
+
+**架构治理**：
+- 使用 Zod 在 WebSocket、历史消息、任务恢复和图片局部更新入口校验 `ContentPart`。
+- Store 只接收已验证的 `ContentPart`；非法块隔离并记录业务上下文，结构化 text 兼容恢复为 JSON 文本。
+- Markdown 原始代码、高亮 HTML和剪贴板内容分离；原始代码是唯一可信数据源。
+- Form、Table、Spreadsheet 统一经过安全展示适配器，禁止对象隐式字符串化。
+
+**验证**：前端完整回归 110 个测试文件、1170 个测试通过；TypeScript 构建检查通过。协议核心覆盖率 98.57% statements / 100% functions；展示适配器 100% statements / 100% functions。
+
+**后续治理完成（2026-07-17）**：
+- Markdown/CodeBlock 达到 97.54% 行、88.4% 分支、100% 函数覆盖率。
+- 结构化消费者组合达到 90% 行、80.52% 分支、81.63% 函数覆盖率。
+- `streamingSlice` 从 500 行拆为 254 行主 slice + 三组 action factory，公开 Store shape 不变。
+- WS 完成、失败和 routing handler 复杂度降至 15 以下；移除相关既有 `any`。
+- `FormBlock`、Spreadsheet、Chart 相关主函数均降至 120 行以下，Fast Refresh 与 Hook Lint 清零。
+
+**关联文档**：[TECH_结构化消息运行时边界与渲染安全.md](document/TECH_结构化消息运行时边界与渲染安全.md)
+
+---
+
 ### 2026-07-16 用户消息气泡浏览器兼容性 — 已修复
 
 **问题**：部分浏览器无法渲染用户消息气泡的 CSS 渐变，透明背景与白色文字叠加后表现为消息内容空白。

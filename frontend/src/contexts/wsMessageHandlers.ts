@@ -10,8 +10,11 @@
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
 import { calcRemainingText } from '../utils/messageUtils';
+import { parseContentPart, parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
 import type { WSMessage } from '../hooks/useWebSocket';
-import { getAgentStepText, getToolCallText, getPlaceholderText } from '../constants/placeholder';
+import type { TaskStatus } from '../types/scheduledTask';
+import { getAgentStepText, getToolCallText } from '../constants/placeholder';
+import { handleRoutingComplete } from './wsRoutingCompleteHandler';
 import {
   flushChunkBuffer,
   type HandlerDeps,
@@ -47,7 +50,11 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   message_chunk: (deps, msg) => {
       const { message_id, task_id, conversation_id } = msg;
-      const chunk = msg.chunk || (msg.payload?.chunk as string | undefined);
+      const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
+        messageId: message_id,
+        conversationId: conversation_id,
+        source: 'ws:message_chunk',
+      });
       if (!message_id || !chunk || !conversation_id) return;
 
       const bufferData = deps.chunkBufferRef.current.get(message_id);
@@ -136,24 +143,27 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
     },
 
   subscribed: (deps, msg) => {
-      const { task_id, accumulated, accumulated_blocks } = (msg.payload || {}) as {
-        task_id?: string;
-        accumulated?: string;
-        accumulated_blocks?: Array<Record<string, unknown>>;
-      };
+      const payload = msg.payload || {};
+      const task_id = typeof payload.task_id === 'string' ? payload.task_id : undefined;
+      const accumulated = parseProtocolString(payload.accumulated, 'accumulated', {
+        source: 'ws:subscribed',
+      });
+      const accumulatedBlocks = payload.accumulated_blocks === undefined
+        ? []
+        : parseContentParts(payload.accumulated_blocks, { source: 'ws:subscribed' });
 
       logger.info('ws:subscribe', 'confirmed', {
         taskId: task_id,
         accumulatedLen: accumulated?.length ?? 0,
-        blocksCount: accumulated_blocks?.length ?? 0,
+        blocksCount: accumulatedBlocks.length,
       });
 
       if (task_id) {
         const conversationId = deps.taskConversationMapRef.current.get(task_id);
         if (conversationId) {
-          if (accumulated_blocks && accumulated_blocks.length > 0) {
-            const remaining = calcRemainingText(accumulated_blocks, accumulated);
-            deps.getStore().restoreStreamingBlocks(conversationId, accumulated_blocks, remaining);
+          if (accumulatedBlocks.length > 0) {
+            const remaining = calcRemainingText(accumulatedBlocks, accumulated);
+            deps.getStore().restoreStreamingBlocks(conversationId, accumulatedBlocks, remaining);
           } else if (accumulated && accumulated.length > 0) {
             // 向后兼容：无 blocks 时仅恢复纯文字
             deps.getStore().setStreamingContent(conversationId, accumulated);
@@ -175,7 +185,10 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   thinking_chunk: (deps, msg) => {
       const { conversation_id } = msg;
-      const chunk = msg.chunk || (msg.payload?.chunk as string | undefined);
+      const chunk = parseProtocolString(msg.chunk ?? msg.payload?.chunk, 'chunk', {
+        conversationId: conversation_id,
+        source: 'ws:thinking_chunk',
+      });
       if (!conversation_id || !chunk) return;
 
       deps.getStore().appendStreamingThinking(conversation_id, chunk);
@@ -190,41 +203,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       deps.getStore().setAgentStepHint(conversation_id, hint);
     },
 
-  routing_complete: (deps, msg) => {
-      const { conversation_id, message_id } = msg;
-      const genType = msg.payload?.generation_type as string | undefined;
-      const model = msg.payload?.model as string | undefined;
-      const genParams = msg.payload?.generation_params as Record<string, unknown> | undefined;
-      if (!conversation_id || !genType || !message_id) return;
-
-      const store = deps.getStore();
-
-      if (genType === 'image' || genType === 'image_ecom' || genType === 'video' || genType === 'audio') {
-        // 占位符变形：旋转圆点 → 媒体生成占位符
-        const render = genParams?._render as Record<string, string> | undefined;
-        // image_ecom 复用 image 的占位符文字
-        const placeholderType = genType === 'image_ecom' ? 'image' : genType;
-        const loadingText = render?.placeholder_text
-          || getPlaceholderText(placeholderType as 'image' | 'video' | 'audio');
-
-        store.completeStreamingWithMessage(conversation_id, {
-          id: message_id,
-          conversation_id,
-          role: 'assistant',
-          content: [{ type: 'text', text: loadingText }],
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          generation_params: genParams ?? { model },
-          task_id: msg.task_id,
-        });
-        store.setIsSending(true);
-      } else {
-        // chat 类型：更新 generation_params（路由确定的模型信息）
-        store.updateMessage(message_id, {
-          generation_params: genParams ?? { model },
-        });
-      }
-    },
+  routing_complete: handleRoutingComplete,
 
   conversation_updated: (deps, msg) => {
       const { conversation_id } = msg;
@@ -274,14 +253,18 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   content_block_add: (deps, msg) => {
       const { conversation_id } = msg;
-      const block = msg.payload?.block as Record<string, unknown> | undefined;
+      const block = parseContentPart(msg.payload?.block, {
+        messageId: msg.message_id,
+        conversationId: conversation_id,
+        source: 'ws:content_block_add',
+      });
       if (!conversation_id || !block) return;
 
       const store = deps.getStore();
 
       // tool_step 状态更新：非 running 的 tool_step 是对已有 block 的更新
       if (block.type === 'tool_step' && block.tool_call_id && block.status !== 'running') {
-        store.updateContentBlock(conversation_id, block.tool_call_id as string, block);
+        store.updateContentBlock(conversation_id, block.tool_call_id, block);
         logger.info('ws:content', 'tool_step_update', {
           conversationId: conversation_id,
           toolCallId: block.tool_call_id,
@@ -293,7 +276,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       // text block 去重：message_chunk 已逐字累积出相同的 text block，
       // content_block_add 的 text 是完整版——替换最后一个 text block 而非追加
       if (block.type === 'text') {
-        store.replaceLastTextBlock(conversation_id, block as { type: 'text'; text: string });
+        store.replaceLastTextBlock(conversation_id, block);
         logger.info('ws:content', 'text_block_replace', { conversationId: conversation_id });
         return;
       }
@@ -391,10 +374,14 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         will_retry?: boolean;
       };
       if (!data?.task_id) return;
+      const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
+      const status = validStatuses.includes(data.status as TaskStatus)
+        ? data.status as TaskStatus
+        : 'error';
       logger.warn('ws:scheduled-task', 'failed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status: (data.status as any) || 'error',
+          status,
           consecutive_failures: data.consecutive_failures || 0,
         });
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);

@@ -5,8 +5,10 @@
  */
 
 import type { StateCreator } from 'zustand';
-import type { Message, GenerationParams } from '../../types/message';
-import { normalizeMessage } from '../../utils/messageUtils';
+import type { ContentPart, Message, GenerationParams, TextPart, ToolStepPart } from '../../types/message';
+import { createOptimisticMessageActions } from './optimisticMessageActions';
+import { createStreamingLifecycleActions } from './streamingLifecycleActions';
+import { createStreamingUiActions } from './streamingUiActions';
 
 // ============================================================
 // 类型定义
@@ -30,12 +32,12 @@ export interface StreamingSlice {
   }) => void;
   registerStreamingId: (conversationId: string, messageId: string) => void;
   appendStreamingContent: (conversationId: string, chunk: string) => void;
-  appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
+  appendContentBlock: (conversationId: string, block: ContentPart) => void;
   /** text block 去重：替换最后一个 text block（message_chunk 已累积），不追加重复 */
-  replaceLastTextBlock: (conversationId: string, block: { type: 'text'; text: string }) => void;
+  replaceLastTextBlock: (conversationId: string, block: TextPart) => void;
   setStreamingContent: (conversationId: string, content: string) => void;
   /** 刷新恢复：设置结构化 content blocks + 剩余流式文字 */
-  restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
+  restoreStreamingBlocks: (conversationId: string, blocks: ContentPart[], remainingText: string) => void;
   completeStreaming: (conversationId: string) => void;
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
   getStreamingMessageId: (conversationId: string) => string | null;
@@ -49,7 +51,7 @@ export interface StreamingSlice {
   getOptimisticMessages: (conversationId: string) => Message[];
 
   /** 按 tool_call_id 更新已有 content block（tool_step 状态更新） */
-  updateContentBlock: (conversationId: string, toolCallId: string, updates: Record<string, unknown>) => void;
+  updateContentBlock: (conversationId: string, toolCallId: string, updates: Partial<ToolStepPart>) => void;
 
   // 思考内容流式状态
   /** 流式思考内容: conversationId -> accumulated thinking text */
@@ -105,45 +107,13 @@ export const createStreamingSlice: StateCreator<
   agentStepHint: new Map<string, string>(),
   suggestions: new Map<string, string[]>(),
   toolConfirmRequest: null,
+  ...createStreamingLifecycleActions(set, get),
+  ...createOptimisticMessageActions(set, get),
+  ...createStreamingUiActions(set, get),
 
   // ========================================
   // 流式消息操作
   // ========================================
-
-  startStreaming: (conversationId, messageId, options) => {
-    set((state) => {
-      const streamingMessages = new Map(state.streamingMessages);
-      const targetId = messageId;
-      streamingMessages.set(conversationId, targetId);
-
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId) || [];
-
-      // 幂等性检查
-      if (!list.some((m) => m.id === targetId)) {
-        const streamingMessage: Message = {
-          id: targetId,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: [{ type: 'text', text: options?.initialContent ?? '' }],
-          status: 'streaming',
-          created_at: options?.createdAt || new Date().toISOString(),
-          generation_params: options?.generationParams,
-        };
-        optimisticMessages.set(conversationId, [...list, streamingMessage]);
-      }
-
-      return { streamingMessages, optimisticMessages, isSending: true };
-    });
-  },
-
-  registerStreamingId: (conversationId, messageId) => {
-    set((state) => {
-      const streamingMessages = new Map(state.streamingMessages);
-      streamingMessages.set(conversationId, messageId);
-      return { streamingMessages, isSending: true };
-    });
-  },
 
   appendStreamingContent: (conversationId, chunk) => {
     set((state) => {
@@ -193,7 +163,7 @@ export const createStreamingSlice: StateCreator<
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const content = [...target.content, block as unknown as Message['content'][number]];
+      const content = [...target.content, block];
 
       const updatedList = [...list];
       updatedList[targetIndex] = { ...target, content };
@@ -235,29 +205,6 @@ export const createStreamingSlice: StateCreator<
     });
   },
 
-  updateContentBlock: (conversationId, toolCallId, updates) => {
-    set((state) => {
-      const streamingId = state.streamingMessages.get(conversationId);
-      if (!streamingId) return state;
-      const list = state.optimisticMessages.get(conversationId);
-      if (!list) return state;
-      const targetIndex = list.findIndex((m) => m.id === streamingId);
-      if (targetIndex === -1) return state;
-      const target = list[targetIndex];
-      const content = target.content.map((block) =>
-        block.type === 'tool_step' &&
-        (block as { tool_call_id?: string }).tool_call_id === toolCallId
-          ? { ...block, ...updates }
-          : block,
-      );
-      const updatedList = [...list];
-      updatedList[targetIndex] = { ...target, content };
-      const optimisticMessages = new Map(state.optimisticMessages);
-      optimisticMessages.set(conversationId, updatedList);
-      return { optimisticMessages };
-    });
-  },
-
   setStreamingContent: (conversationId, content) => {
     set((state) => {
       const streamingId = state.streamingMessages.get(conversationId);
@@ -288,7 +235,7 @@ export const createStreamingSlice: StateCreator<
       if (!list) return state;
 
       // 构建 content：结构化 blocks + 剩余流式文字
-      const content = [...blocks] as unknown as Message['content'];
+      const content = [...blocks];
       if (remainingText) {
         content.push({ type: 'text' as const, text: remainingText });
       }
@@ -304,197 +251,4 @@ export const createStreamingSlice: StateCreator<
     });
   },
 
-  completeStreaming: (conversationId) => {
-    set((state) => {
-      const streamingMessages = new Map(state.streamingMessages);
-      streamingMessages.delete(conversationId);
-      const streamingThinking = new Map(state.streamingThinking);
-      streamingThinking.delete(conversationId);
-      const agentStepHint = new Map(state.agentStepHint);
-      agentStepHint.delete(conversationId);
-      const suggestions = new Map(state.suggestions);
-      suggestions.delete(conversationId);
-      return { streamingMessages, streamingThinking, agentStepHint, suggestions, isSending: false };
-    });
-  },
-
-  completeStreamingWithMessage: (conversationId, message) => {
-    set((state) => {
-      const streamingMessages = new Map(state.streamingMessages);
-      const streamingId = streamingMessages.get(conversationId);
-      streamingMessages.delete(conversationId);
-
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId) || [];
-      const filteredList = list.filter((m) => m.id !== streamingId);
-      optimisticMessages.set(conversationId, [...filteredList, normalizeMessage(message)]);
-
-      const streamingThinking = new Map(state.streamingThinking);
-      streamingThinking.delete(conversationId);
-      const agentStepHint = new Map(state.agentStepHint);
-      agentStepHint.delete(conversationId);
-      const suggestions = new Map(state.suggestions);
-      suggestions.delete(conversationId);
-
-      return { streamingMessages, optimisticMessages, streamingThinking, agentStepHint, suggestions, isSending: false };
-    });
-  },
-
-  getStreamingMessageId: (conversationId) => {
-    return get().streamingMessages.get(conversationId) || null;
-  },
-
-  // ========================================
-  // 乐观消息操作
-  // ========================================
-
-  addOptimisticMessage: (conversationId, message) => {
-    set((state) => {
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId) || [];
-
-      // 幂等性检查：已存在则不重复添加
-      if (list.some((m) => m.id === message.id)) {
-        return state;
-      }
-
-      optimisticMessages.set(conversationId, [...list, normalizeMessage(message)]);
-      return { optimisticMessages };
-    });
-  },
-
-  addOptimisticUserMessage: (conversationId, message) => {
-    set((state) => {
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId) || [];
-
-      // 幂等性检查：已存在则不重复添加
-      if (list.some((m) => m.id === message.id)) {
-        return state;
-      }
-
-      optimisticMessages.set(conversationId, [...list, normalizeMessage(message)]);
-      return { optimisticMessages, isSending: true };
-    });
-  },
-
-  updateOptimisticMessageId: (conversationId, clientRequestId, newId) => {
-    set((state) => {
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId);
-      if (!list) return state;
-
-      const updatedList = list.map((msg) =>
-        msg.client_request_id === clientRequestId
-          ? { ...msg, id: newId, status: 'completed' as const }
-          : msg
-      );
-
-      optimisticMessages.set(conversationId, updatedList);
-      return { optimisticMessages };
-    });
-  },
-
-  addErrorMessage: (conversationId, errorMessage) => {
-    set((state) => {
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId) || [];
-
-      if (list.some((m) => m.id === errorMessage.id)) {
-        return state;
-      }
-
-      const streamingMessages = new Map(state.streamingMessages);
-      const streamingId = streamingMessages.get(conversationId);
-      const filteredList = list.filter((m) => m.id !== streamingId);
-      optimisticMessages.set(conversationId, [...filteredList, normalizeMessage(errorMessage)]);
-
-      streamingMessages.delete(conversationId);
-
-      return { optimisticMessages, streamingMessages, isSending: false };
-    });
-  },
-
-  removeOptimisticMessage: (conversationId, messageId) => {
-    set((state) => {
-      const optimisticMessages = new Map(state.optimisticMessages);
-      const list = optimisticMessages.get(conversationId);
-      if (!list) return state;
-
-      optimisticMessages.set(
-        conversationId,
-        list.filter((m) => m.id !== messageId)
-      );
-      return { optimisticMessages };
-    });
-  },
-
-  getOptimisticMessages: (conversationId) => {
-    return get().optimisticMessages.get(conversationId) || [];
-  },
-
-  // ========================================
-  // 思考内容流式状态
-  // ========================================
-
-  appendStreamingThinking: (conversationId, chunk) => {
-    set((state) => {
-      const streamingThinking = new Map(state.streamingThinking);
-      const prev = streamingThinking.get(conversationId) || '';
-      streamingThinking.set(conversationId, prev + chunk);
-      return { streamingThinking };
-    });
-  },
-
-  getStreamingThinking: (conversationId) => {
-    return get().streamingThinking.get(conversationId) || '';
-  },
-
-  // ========================================
-  // 发送状态
-  // ========================================
-
-  // ========================================
-  // Agent Loop 步骤提示
-  // ========================================
-
-  setAgentStepHint: (conversationId, hint) => {
-    set((state) => {
-      const agentStepHint = new Map(state.agentStepHint);
-      agentStepHint.set(conversationId, hint);
-      return { agentStepHint };
-    });
-  },
-
-  clearAgentStepHint: (conversationId) => {
-    set((state) => {
-      const agentStepHint = new Map(state.agentStepHint);
-      agentStepHint.delete(conversationId);
-      return { agentStepHint };
-    });
-  },
-
-  // ========================================
-  // 建议问题
-  // ========================================
-
-  setSuggestions: (conversationId, suggestions) => {
-    set((state) => {
-      const newSuggestions = new Map(state.suggestions);
-      newSuggestions.set(conversationId, suggestions);
-      return { suggestions: newSuggestions };
-    });
-  },
-
-  clearSuggestions: (conversationId) => {
-    set((state) => {
-      const newSuggestions = new Map(state.suggestions);
-      newSuggestions.delete(conversationId);
-      return { suggestions: newSuggestions };
-    });
-  },
-
-  setToolConfirmRequest: (request) => set({ toolConfirmRequest: request }),
-
-  setIsSending: (sending) => set({ isSending: sending }),
 });

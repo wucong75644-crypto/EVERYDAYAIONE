@@ -5,6 +5,7 @@
  * 不引入额外依赖,纯 HTML table + Tailwind
  */
 import { memo, useMemo } from 'react';
+import { formatDisplayValue } from '../../../utils/displayValue';
 
 interface TableBlockProps {
   title?: string;
@@ -31,8 +32,7 @@ function formatCell(value: unknown): string {
     if (Number.isInteger(value)) return value.toLocaleString();
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   }
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
+  return formatDisplayValue(value);
 }
 
 const TableBlockComponent = ({ title, columns, rows, truncated }: TableBlockProps) => {

@@ -257,6 +257,17 @@ describe('wsMessageHandlers', () => {
 
       expect(deps.chunkBufferRef.current.size).toBe(0);
     });
+
+    it('should reject object chunks instead of coercing them to object Object', () => {
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        chunk: [{ type: 'text', text: 'invalid' }],
+      });
+
+      expect(store.appendStreamingContent).not.toHaveBeenCalled();
+      expect(deps.chunkBufferRef.current.size).toBe(0);
+    });
   });
 
   // ========================================
@@ -584,7 +595,7 @@ describe('wsMessageHandlers', () => {
 
       const blocks = [
         { type: 'text', text: 'turn1' },
-        { type: 'tool_step', tool_name: 'data_query', status: 'completed' },
+        { type: 'tool_step', tool_name: 'data_query', tool_call_id: 'call_1', status: 'completed' },
       ];
       handlers.subscribed({
         payload: {
@@ -615,11 +626,26 @@ describe('wsMessageHandlers', () => {
       expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'plain text');
     });
 
+    it('should discard invalid restored blocks and keep valid accumulated text', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          accumulated: 'safe fallback',
+          accumulated_blocks: [{ type: 'tool_result', tool_name: 'erp_agent', text: {} }],
+        },
+      });
+
+      expect(store.restoreStreamingBlocks).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'safe fallback');
+    });
+
     it('should handle blocks without accumulated text', () => {
       deps.taskConversationMapRef.current.set('task_1', 'conv_1');
 
       const blocks = [
-        { type: 'tool_step', tool_name: 'data_query', status: 'running' },
+        { type: 'tool_step', tool_name: 'data_query', tool_call_id: 'call_1', status: 'running' },
       ];
       handlers.subscribed({
         payload: {
@@ -631,6 +657,44 @@ describe('wsMessageHandlers', () => {
       expect(store.restoreStreamingBlocks).toHaveBeenCalledWith(
         'conv_1', blocks, '',
       );
+    });
+  });
+
+  describe('content_block_add', () => {
+    it('should append a validated content block', () => {
+      const block = { type: 'file', url: '/a.txt', name: 'a.txt', mime_type: 'text/plain' };
+
+      handlers.content_block_add({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        payload: { block },
+      });
+
+      expect(store.appendContentBlock).toHaveBeenCalledWith('conv_1', block);
+    });
+
+    it('should reject malformed content blocks before the store', () => {
+      handlers.content_block_add({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        payload: { block: { type: 'tool_result', tool_name: 'erp_agent', text: {} } },
+      });
+
+      expect(store.appendContentBlock).not.toHaveBeenCalled();
+      expect(store.replaceLastTextBlock).not.toHaveBeenCalled();
+    });
+
+    it('should recover structured text before replacing the store block', () => {
+      handlers.content_block_add({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        payload: { block: { type: 'text', text: { answer: 42 } } },
+      });
+
+      expect(store.replaceLastTextBlock).toHaveBeenCalledWith('conv_1', {
+        type: 'text',
+        text: '{\n  "answer": 42\n}',
+      });
     });
   });
 
@@ -786,6 +850,23 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(store.getMessage).not.toHaveBeenCalled();
+    });
+
+    it('should reject malformed partial image blocks', () => {
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({
+        id: 'msg_1',
+        content: [{ type: 'image', url: null }],
+      });
+
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {
+          image_index: 0,
+          content_part: { type: 'image', url: { invalid: true } },
+        },
+      });
+
+      expect(store.updateMessage).not.toHaveBeenCalled();
     });
 
     it('should dispatch workspace:changed when content_part has workspace_path (L3)', () => {
