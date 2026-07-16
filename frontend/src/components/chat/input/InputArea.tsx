@@ -24,6 +24,7 @@ import UploadErrorBar from './UploadErrorBar';
 import { useInputTaskControls } from './useInputTaskControls';
 import { useInputSubmission } from './useInputSubmission';
 import { useInputExternalEvents } from './useInputExternalEvents';
+import { hasValidWorkspaceImage } from './attachmentNormalization';
 import { useInputDraftTransaction } from './useInputDraftTransaction';
 import { ECOM_TAB_COMPLETIONS, ECOM_TAB_KEYS_SORTED } from './inputCompletions';
 
@@ -182,7 +183,7 @@ export default function InputArea({
     }
   }, [conversationId]);
 
-  // 模型选择 Hook（包含对话恢复和智能切换逻辑）
+  const hasWorkspaceImage = hasValidWorkspaceImage(workspaceFiles); // 纳入模型图片能力判断
   const {
     selectedModel,
     modelConflict,
@@ -193,7 +194,7 @@ export default function InputArea({
     getEstimatedCredits,
     getModelSelectorLockState,
   } = useModelSelection({
-    hasImage: hasImages,
+    hasImage: hasImages || hasWorkspaceImage,
     hasQuotedImage,
     conversationId,
     conversationModelId,

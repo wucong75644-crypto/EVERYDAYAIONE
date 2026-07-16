@@ -5,17 +5,10 @@ import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';
 import type { ModelType, UnifiedModel } from '../../../constants/models';
 import type { ImageInputInfo } from '../../../services/messageSender';
+import type { WorkspaceFile } from '../../../services/workspace';
 import type { Message } from '../../../stores/useMessageStore';
-import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import { logger } from '../../../utils/logger';
-
-interface WorkspaceFile {
-  name: string;
-  workspace_path: string;
-  cdn_url: string | null;
-  mime_type: string | null;
-  size: number;
-}
+import { normalizeSubmissionAttachments } from './attachmentNormalization';
 
 export interface UseInputSubmissionOptions {
   conversationId: string | null;
@@ -114,7 +107,14 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       !!(options.prompt.trim() || options.hasImages || options.hasFiles || hasWorkspaceFiles),
     );
     if (state.disabled) return;
-    if (options.smartSubMode === 'image-i2i' && !options.hasImages) {
+    const attachments = normalizeSubmissionAttachments({
+      uploadedImageUrls: options.uploadedImageUrls,
+      uploadedImages: options.uploadedImages,
+      uploadedFiles: options.uploadedFileUrls,
+      workspaceFiles: options.workspaceFiles,
+    });
+    const hasSubmissionImages = attachments.imageUrls.length > 0;
+    if (options.smartSubMode === 'image-i2i' && !hasSubmissionImages) {
       toast.error('图生图模式请先上传参考图片');
       return;
     }
@@ -124,24 +124,21 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       toast.error('图片还在上传中，请稍候');
       return;
     }
+    if (options.effectiveModelType !== 'chat' && attachments.invalidWorkspaceImages.length > 0) {
+      toast.error('工作区图片缺少可用原图地址');
+      return;
+    }
+    const maxImages = options.selectedModel.capabilities?.maxImages;
+    if (maxImages && attachments.imageUrls.length > maxImages) {
+      toast.error(`最多只能上传 ${maxImages} 张图片`);
+      return;
+    }
 
     const message = options.prompt.trim();
     if (options.isStreaming && message) options.sendSteer(message);
-    const imageUrls = options.uploadedImageUrls.length
-      ? [...options.uploadedImageUrls]
-      : null;
-    const imageInputs = options.uploadedImages.length
-      ? [...options.uploadedImages]
-      : null;
-    const workspaceFiles = options.workspaceFiles.map(file => ({
-      url: toOriginalImageUrl(file.cdn_url),
-      name: file.name,
-      mime_type: file.mime_type || 'application/octet-stream',
-      size: file.size,
-      workspace_path: file.workspace_path,
-    }));
-    const mergedFiles = [...options.uploadedFileUrls, ...workspaceFiles];
-    const fileData = mergedFiles.length ? mergedFiles : null;
+    const imageUrls = attachments.imageUrls.length ? attachments.imageUrls : null;
+    const imageInputs = attachments.imageInputs.length ? attachments.imageInputs : null;
+    const fileData = attachments.files.length ? attachments.files : null;
 
     options.clearPromptForSubmission();
     const restoreImages = options.detachImagesForSubmission();

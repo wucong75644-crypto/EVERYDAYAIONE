@@ -11,16 +11,6 @@ import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
-import { getFileIcon } from '../../../utils/fileUtils';
-import {
-  type UnifiedModel,
-  type AspectRatio,
-  type ImageResolution,
-  type ImageOutputFormat,
-  type ImageCount,
-  type VideoFrames,
-  type VideoAspectRatio,
-} from '../../../constants/models';
 import ImagePreview from '../media/ImagePreview';
 import FilePreview from '../media/FilePreview';
 import AudioPreview from '../media/AudioPreview';
@@ -29,119 +19,10 @@ import AdvancedSettingsMenu from './AdvancedSettingsMenu';
 import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import FileMentionDropdown from './FileMentionDropdown';
-import type { MentionResult } from '../../../hooks/useFileMention';
-import { type UploadedImage } from '../../../hooks/useImageUpload';
-import { type UploadedFile } from '../../../hooks/useFileUpload';
-import { type RecordingState } from '../../../hooks/useAudioRecording';
+import WorkspaceAttachmentPreview from './WorkspaceAttachmentPreview';
+import type { InputControlsProps } from './InputControls.types';
 import { useDragDropUpload } from '../../../hooks/useDragDropUpload';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../../constants/animations';
-
-interface InputControlsProps {
-  prompt: string;
-  onPromptChange: (value: string) => void;
-  onSubmit: () => void;
-  onAudioSubmit?: (audioBlob: Blob) => void;
-  onKeyDown: (e: React.KeyboardEvent) => void;
-  isSubmitting: boolean;
-  sendButtonDisabled: boolean;
-  sendButtonTooltip: string;
-  // 音频录制相关
-  recordingState: RecordingState;
-  audioBlob: Blob | null;
-  audioDuration: number;
-  onStartRecording: () => Promise<void>;
-  onStopRecording: () => void;
-  onClearRecording: () => void;
-  selectedModel: UnifiedModel;
-  availableModels: UnifiedModel[];
-  modelSelectorLocked: boolean;
-  modelSelectorLockTooltip: string;
-  onSelectModel: (model: UnifiedModel) => void;
-  estimatedCredits: string;
-  creditsHighlight: boolean;
-  aspectRatio: AspectRatio;
-  onAspectRatioChange: (ratio: AspectRatio) => void;
-  resolution: ImageResolution;
-  onResolutionChange: (res: ImageResolution) => void;
-  outputFormat: ImageOutputFormat;
-  onOutputFormatChange: (format: ImageOutputFormat) => void;
-  numImages: ImageCount;
-  onNumImagesChange: (count: ImageCount) => void;
-  userCredits?: number;
-  videoFrames: VideoFrames;
-  onVideoFramesChange: (frames: VideoFrames) => void;
-  videoAspectRatio: VideoAspectRatio;
-  onVideoAspectRatioChange: (ratio: VideoAspectRatio) => void;
-  removeWatermark: boolean;
-  onRemoveWatermarkChange: (remove: boolean) => void;
-  thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  onThinkingEffortChange?: (effort: 'minimal' | 'low' | 'medium' | 'high') => void;
-  deepThinkMode?: boolean;
-  onDeepThinkModeChange?: (enabled: boolean) => void;
-  permissionMode?: 'auto' | 'ask' | 'plan';
-  onPermissionModeChange?: (mode: 'auto' | 'ask' | 'plan') => void;
-  temperature?: number;
-  onTemperatureChange?: (value: number) => void;
-  topP?: number;
-  onTopPChange?: (value: number) => void;
-  topK?: number;
-  onTopKChange?: (value: number) => void;
-  maxOutputTokens?: number;
-  onMaxOutputTokensChange?: (value: number) => void;
-  onSaveSettings: () => void;
-  onResetSettings: () => void;
-  images: UploadedImage[];
-  isUploading: boolean;
-  onRemoveImage: (imageId: string) => void;
-  /** 文档/数据文件列表 */
-  files: UploadedFile[];
-  /** 删除文档文件 */
-  onRemoveFile: (fileId: string) => void;
-  /** 工作区待发送文件 */
-  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
-  /** 移除工作区文件 */
-  onRemoveWorkspaceFile?: (workspacePath: string) => void;
-  /** 切换工作区视图（开/关） */
-  onOpenWorkspace?: () => void;
-  /** 统一文件上传入口（UploadMenu → InputArea.handleUnifiedFiles，按 mime 分流）*/
-  onUnifiedFiles?: (files: File[]) => void;
-  /** 工作区是否已打开（用于 toggle 按钮状态） */
-  workspaceOpen?: boolean;
-  /** 是否需要上传图片（用于显示引导提示） */
-  requiresImageUpload?: boolean;
-  /** 发送错误信息（用于显示错误状态） */
-  sendError?: string | null;
-  /** 是否有引用图片（用于切换 placeholder） */
-  hasQuotedImage?: boolean;
-  /** 是否正在流式生成 */
-  isStreaming?: boolean;
-  /** 停止生成回调 */
-  onStop?: () => void;
-  /** 实际生效的模型类型（智能模式用子模式，单模型用模型自身类型） */
-  effectiveModelType?: 'chat' | 'image' | 'video';
-  /** 智能模式子模式（仅智能模式有值） */
-  smartSubMode?: string;
-  /** 切换智能模式子模式 */
-  onSmartSubModeChange?: (mode: string) => void;
-  /** 电商图模式：AI提示词增强回调 */
-  onEnhancePrompt?: () => void;
-  /** 电商图模式：是否正在增强中 */
-  isEnhancing?: boolean;
-  /** @ 文件提及：是否显示下拉 */
-  mentionDropdownVisible?: boolean;
-  /** @ 文件提及：搜索结果 */
-  mentionResults?: MentionResult[];
-  /** @ 文件提及：当前高亮索引 */
-  mentionActiveIndex?: number;
-  /** @ 文件提及：是否搜索中 */
-  mentionLoading?: boolean;
-  /** @ 文件提及：选中文件 */
-  onMentionSelect?: (file: MentionResult) => void;
-  /** @ 文件提及：鼠标悬停索引 */
-  onMentionHover?: (index: number) => void;
-  /** @ 文件提及：输入变化通知（传光标位置） */
-  onMentionInputChange?: (value: string, cursorPos: number) => void;
-}
 
 export default function InputControls(props: InputControlsProps) {
   const {
@@ -310,27 +191,7 @@ export default function InputControls(props: InputControlsProps) {
                 <FilePreview files={files} onRemove={onRemoveFile} />
               </div>
             )}
-            {/* 工作区文件 */}
-            {workspaceFiles.map((wf) => (
-              <div
-                key={wf.workspace_path}
-                className="shrink-0 relative flex items-center gap-2 rounded-lg border border-[var(--s-accent)] bg-[var(--s-accent-soft)] px-3 py-2 text-sm"
-              >
-                <span className="text-base shrink-0">{getFileIcon(wf.name)}</span>
-                <span className="truncate max-w-[160px] font-medium text-[var(--s-text-primary)]">{wf.name}</span>
-                {onRemoveWorkspaceFile && (
-                  <button
-                    onClick={() => onRemoveWorkspaceFile(wf.workspace_path)}
-                    className="shrink-0 rounded p-0.5 text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)] transition-colors"
-                    title="移除"
-                  >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            ))}
+            <WorkspaceAttachmentPreview files={workspaceFiles} onRemove={onRemoveWorkspaceFile} />
           </div>
         )}
 

@@ -68,6 +68,7 @@ EVERYDAYAIONE/
 │       ├── UI_主图详情制作页面.md      # 独立主图/详情图五步制作页面 UI 设计
 │       ├── TECH_主图详情制作页面_UI第一阶段.md # 第一阶段 UI+Mock 技术设计
 │       ├── TECH_主图详情页真实上传与草稿恢复.md # 第二阶段真实上传与草稿恢复设计
+│       ├── TECH_工作区图片插入与聊天附件标准化.md # 工作区图片正确渲染与聊天附件提交标准化
 │       ├── TECH_AI帮写通用创作简报.md # 电商图三套通用简报与共享入口适配架构
 │       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
 │       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
@@ -271,12 +272,15 @@ EVERYDAYAIONE/
         │       ├── MessageActions.tsx        # 消息操作工具栏
         │       ├── MessageToolbar.tsx        # 消息工具栏（旧版，待删除）
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）
+        │       ├── attachmentNormalization.ts # 上传/引用/工作区附件提交前标准化
         │       ├── useInputSubmission.ts     # 输入提交与草稿事务结算
         │       ├── useInputDraftTransaction.ts # 文本/工作区附件草稿移出与合并恢复
         │       ├── useInputTaskControls.ts   # 停止、ESC 中断与 steer 控制
         │       ├── useInputExternalEvents.ts # 电商确认与建议发送事件监听
         │       ├── inputCompletions.ts       # 电商模式 Tab 补全词典
         │       ├── InputControls.tsx         # 输入控制（文本框、按钮、上传）
+        │       ├── InputControls.types.ts   # 输入控制 Props 类型边界
+        │       ├── WorkspaceAttachmentPreview.tsx # 工作区图片/文件草稿预览
         │       ├── ModelSelector.tsx         # 模型选择器
         │       ├── AdvancedSettingsMenu.tsx  # 高级设置菜单（图像/视频/推理参数）
         │       ├── SettingsModal.tsx         # 个人设置弹框

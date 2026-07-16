@@ -408,7 +408,10 @@
 | `processApiResponse` | `frontend/src/services/messageSendLifecycle.ts` | 替换占位状态、创建任务追踪并校验 task_id | response, options, ctx | void |
 | `rollbackOnError` | `frontend/src/services/messageSendLifecycle.ts` | 发送失败时恢复原消息或构造统一失败状态 | error, options, ctx | void |
 | `getSendFailureDisposition` | `frontend/src/services/messageSendLifecycle.ts` | 将发送错误分类为明确拒绝、已记录失败或结果未知 | error | SendFailureDisposition |
-| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 统一输入提交；校验后立即移出草稿并按发送结果结算 | options | handlers |
+| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 统一输入提交；标准化上传/引用/工作区附件后贯通聊天与媒体模式，并按发送结果结算草稿 | options | handlers |
+| `normalizeSubmissionAttachments` | `frontend/src/components/chat/input/attachmentNormalization.ts` | 按媒体语义将上传、引用和工作区附件收口为图片 URL、完整图片元数据与普通文件 | input | NormalizedSubmissionAttachments |
+| `hasValidWorkspaceImage` | `frontend/src/components/chat/input/attachmentNormalization.ts` | 判断工作区附件中是否存在具备有效原图地址的图片，供模型能力判断复用 | files | boolean |
+| `WorkspaceAttachmentPreview` | `frontend/src/components/chat/input/WorkspaceAttachmentPreview.tsx` | 工作区图片显示缩略预览，普通文件保留文件卡片，移除时传递 workspace_path | files, onRemove? | JSX |
 | `useInputDraftTransaction` | `frontend/src/components/chat/input/useInputDraftTransaction.ts` | 管理文本和工作区附件草稿的立即移出、合并恢复与引用文字监听 | options | draft transaction handlers |
 | `detachImagesForSubmission` | `frontend/src/hooks/useImageUpload.ts` | 提交时移出图片并返回可合并恢复函数 | - | restore function |
 | `detachFilesForSubmission` | `frontend/src/hooks/useFileUpload.ts` | 提交时移出文件并返回可合并恢复函数 | - | restore function |
