@@ -137,4 +137,21 @@ describe('useImageUpload - addQuotedImage', () => {
     const { result } = renderHook(() => useImageUpload());
     expect(result.current.hasQuotedImage).toBe(false);
   });
+
+  it('should detach submitted images and merge them back before newer images', () => {
+    const { result } = renderHook(() => useImageUpload());
+    act(() => result.current.addQuotedImage('https://cdn.example.com/submitted.png'));
+
+    let restore = () => undefined;
+    act(() => { restore = result.current.detachImagesForSubmission(); });
+    expect(result.current.images).toHaveLength(0);
+
+    act(() => result.current.addQuotedImage('https://cdn.example.com/new.png'));
+    act(() => restore());
+
+    expect(result.current.images.map((image) => image.url)).toEqual([
+      'https://cdn.example.com/submitted.png',
+      'https://cdn.example.com/new.png',
+    ]);
+  });
 });

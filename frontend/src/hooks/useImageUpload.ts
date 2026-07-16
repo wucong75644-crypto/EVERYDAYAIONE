@@ -229,6 +229,27 @@ export function useImageUpload() {
     }
   };
 
+  /** 提交时暂时移出图片；返回的函数可在明确拒绝时无损合并恢复。 */
+  const detachImagesForSubmission = (): (() => void) => {
+    const snapshot = images;
+    setImages([]);
+    setUploadError(null);
+    const urlsToRevoke = snapshot
+      .map((image) => image.preview)
+      .filter((url) => url.startsWith('blob:'));
+    const cleanupTimer = urlsToRevoke.length > 0
+      ? window.setTimeout(() => urlsToRevoke.forEach(URL.revokeObjectURL), 30000)
+      : undefined;
+
+    return () => {
+      if (cleanupTimer !== undefined) window.clearTimeout(cleanupTimer);
+      setImages((current) => {
+        const currentIds = new Set(current.map((image) => image.id));
+        return [...snapshot.filter((image) => !currentIds.has(image.id)), ...current];
+      });
+    };
+  };
+
   /**
    * 添加引用图片（已有 CDN URL，无需上传）
    * - 支持多张引用图，同一 URL 不重复添加
@@ -244,7 +265,7 @@ export function useImageUpload() {
       // 同一张图不重复引用
       if (prev.some((img) => img.isQuoted && img.url === originalUrl)) return prev;
       const quotedImage: UploadedImage = {
-        id: `quoted-${Date.now()}`,
+        id: `quoted-${crypto.randomUUID()}`,
         file: new File([], 'quoted-image'),
         preview: toDisplayThumbnailUrl(thumbnailUrl, originalUrl),
         url: originalUrl,
@@ -307,6 +328,7 @@ export function useImageUpload() {
     handleImageFiles, // 通用 File[] 入口（供 InputArea handleUnifiedFiles 统一分流后调用）
     handleRemoveImage, // 移除单张图片
     handleRemoveAllImages, // 移除所有图片
+    detachImagesForSubmission, // 提交事务：立即移出并支持明确拒绝恢复
     addQuotedImage, // 添加引用图片
     clearUploadError, // 清除错误
   };

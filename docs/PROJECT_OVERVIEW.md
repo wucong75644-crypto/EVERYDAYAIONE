@@ -86,6 +86,7 @@ EVERYDAYAIONE/
 │   │   ├── security.py               # JWT/密码处理
 │   │   ├── exceptions.py             # 自定义异常
 │   │   ├── redis.py                  # Redis 客户端
+│   │   ├── message_idempotency_cleanup.py # 消息幂等记录 24 小时 TTL 清理循环
 │   │   └── limiter.py                # 频率限制器
 │   ├── api/                      # API 层
 │   │   └── routes/ecom_requirement.py # 电商图 AI 帮写三方案薄路由
@@ -115,6 +116,7 @@ EVERYDAYAIONE/
 │   │   ├── auth_service.py           # 认证服务
 │   │   ├── conversation_service.py   # 对话服务
 │   │   ├── message_service.py        # 消息服务（CRUD）
+│   │   ├── message_idempotency_service.py # 消息生成幂等抢占、指纹与响应重放
 │   │   ├── message_utils.py          # 消息工具函数
 │   │   ├── message_ai_helpers.py     # AI 调用辅助函数
 │   │   ├── audio_service.py          # 音频处理服务
@@ -269,7 +271,8 @@ EVERYDAYAIONE/
         │       ├── MessageActions.tsx        # 消息操作工具栏
         │       ├── MessageToolbar.tsx        # 消息工具栏（旧版，待删除）
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）
-        │       ├── useInputSubmission.ts     # 输入提交、新对话创建与成功后清理
+        │       ├── useInputSubmission.ts     # 输入提交与草稿事务结算
+        │       ├── useInputDraftTransaction.ts # 文本/工作区附件草稿移出与合并恢复
         │       ├── useInputTaskControls.ts   # 停止、ESC 中断与 steer 控制
         │       ├── useInputExternalEvents.ts # 电商确认与建议发送事件监听
         │       ├── inputCompletions.ts       # 电商模式 Tab 补全词典
@@ -597,6 +600,14 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-07-16**：新增消息发送草稿事务与幂等协议技术设计
+  - 统一文字、图片、视频和电商图的输入草稿提交时序
+  - 设计 `Idempotency-Key`、请求指纹、响应重放和不确定结果安全重试
+  - 规划 `message_generation_requests` 专用表、原子 claim RPC 与完整回滚路径
+  - 详见 [TECH_消息发送草稿事务与幂等协议.md](document/TECH_消息发送草稿事务与幂等协议.md)
+  - 前端发送协议已接入固定 request/task/message ID 与 `Idempotency-Key`
+  - timeout、网络错误、无业务错误码的 502/503/504 最多使用同一请求安全重试 2 次
+  - 结果未知时保留乐观消息和任务订阅，等待后续恢复；明确业务拒绝保持原回滚行为
 - **2026-06-22**：工作区分类筛选 + 图片视频预览 + 批量下载 ZIP
   - 新增 `frontend/src/utils/fileCategory.ts`：扩展名白名单 + mime 兜底分类（image/video/document）
   - 新增 `frontend/src/components/workspace/WorkspaceCategoryTabs.tsx`：3 个 Tab（全部/文档/图片与视频）+ 蓝色下划线

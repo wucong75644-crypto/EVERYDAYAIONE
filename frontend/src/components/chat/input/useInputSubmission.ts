@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import toast from 'react-hot-toast';
 import { uploadAudio } from '../../../services/audio';
+import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';
 import type { ModelType, UnifiedModel } from '../../../constants/models';
 import type { ImageInputInfo } from '../../../services/messageSender';
@@ -20,7 +21,8 @@ export interface UseInputSubmissionOptions {
   conversationId: string | null;
   selectedModel: UnifiedModel;
   prompt: string;
-  setPrompt: (value: string) => void;
+  clearPromptForSubmission: () => void;
+  restorePromptAfterRejection: (submittedPrompt: string) => void;
   audioBlob: Blob | null;
   clearRecording: () => void;
   isSubmitting: boolean;
@@ -67,9 +69,9 @@ export interface UseInputSubmissionOptions {
   }>;
   workspaceFiles: WorkspaceFile[];
   getSendButtonState: (isSubmitting: boolean, isUploading: boolean, hasContent: boolean) => { disabled: boolean };
-  handleRemoveAllImages: () => void;
-  handleRemoveAllFiles: () => void;
-  onWorkspaceFilesConsumed?: () => void;
+  detachImagesForSubmission: () => () => void;
+  detachFilesForSubmission: () => () => void;
+  detachWorkspaceFilesForSubmission: () => () => void;
 }
 
 export function useInputSubmission(options: UseInputSubmissionOptions) {
@@ -141,6 +143,11 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     const mergedFiles = [...options.uploadedFileUrls, ...workspaceFiles];
     const fileData = mergedFiles.length ? mergedFiles : null;
 
+    options.clearPromptForSubmission();
+    const restoreImages = options.detachImagesForSubmission();
+    const restoreFiles = options.detachFilesForSubmission();
+    const restoreWorkspaceFiles = options.detachWorkspaceFilesForSubmission();
+
     options.setIsSubmitting(true);
     window.dispatchEvent(new Event('chat:scroll-to-bottom'));
     try {
@@ -168,13 +175,21 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
         await options.handleImageGeneration(currentId, message, imageUrls);
       }
 
-      options.setPrompt('');
-      options.handleRemoveAllImages();
-      options.handleRemoveAllFiles();
-      options.onWorkspaceFilesConsumed?.();
     } catch (error) {
       logger.error('inputArea', '发送消息失败', error);
-      options.setSendError(error instanceof Error ? error.message : '发送失败，请重试');
+      const disposition = error instanceof ApiRequestError
+        ? error.sendDisposition ?? 'rejected'
+        : 'rejected';
+      if (disposition === 'rejected') {
+        options.restorePromptAfterRejection(message);
+        restoreImages();
+        restoreFiles();
+        restoreWorkspaceFiles();
+      }
+      const fallbackMessage = disposition === 'uncertain'
+        ? '发送状态确认中，请勿重复发送'
+        : '发送失败，请重试';
+      options.setSendError(error instanceof Error ? error.message : fallbackMessage);
       options.onMessageSent(null);
     } finally {
       options.setIsSubmitting(false);

@@ -18,6 +18,14 @@ export interface SendOptions {
   originalMessageId?: string;
   subscribeTask?: (taskId: string, conversationId: string) => void;
   unsubscribeTask?: (taskId: string) => void;
+  identifiers?: SendIdentifiers;
+}
+
+export interface SendIdentifiers {
+  clientRequestId: string;
+  userMessageId: string;
+  assistantMessageId: string;
+  clientTaskId: string;
 }
 
 export interface GenerateResponse {
@@ -36,6 +44,20 @@ export interface SendContext {
   now: Date;
   placeholderCreatedAt: string;
   originalAssistant?: Message;
+}
+
+/** 区分明确拒绝、已记录失败和结果未知，避免未知结果被错误回滚。 */
+export function getSendFailureDisposition(
+  error: unknown,
+): 'rejected' | 'recorded_failure' | 'uncertain' {
+  const apiError = toApiRequestError(error);
+  if (apiError.code === 'IMAGE_GENERATION_FAILED') return 'recorded_failure';
+  if (apiError.transport === 'timeout' || apiError.transport === 'network') return 'uncertain';
+  if (apiError.status === 409 && apiError.code === 'IDEMPOTENCY_REQUEST_IN_PROGRESS') {
+    return 'uncertain';
+  }
+  if (apiError.status !== undefined && apiError.status >= 500) return 'uncertain';
+  return 'rejected';
 }
 
 /** Phase 1：创建用户乐观消息与助手占位符。 */

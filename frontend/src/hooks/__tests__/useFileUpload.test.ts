@@ -179,6 +179,36 @@ describe('useFileUpload', () => {
     expect(result.current.uploadError).toBeNull();
   });
 
+  it('should detach submitted files and merge them back before newer files', async () => {
+    const { uploadFile } = await import('../../services/fileUpload');
+    (uploadFile as ReturnType<typeof vi.fn>)
+      .mockImplementation(async (file: File) => ({
+        url: `https://cdn.example.com/${file.name}`,
+        name: file.name,
+      }));
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.handleFileUpload([
+        new File(['old'], 'submitted.pdf', { type: 'application/pdf' }),
+      ]);
+    });
+    let restore = () => undefined;
+    act(() => { restore = result.current.detachFilesForSubmission(); });
+    expect(result.current.files).toHaveLength(0);
+
+    await act(async () => {
+      await result.current.handleFileUpload([
+        new File(['new'], 'new.pdf', { type: 'application/pdf' }),
+      ]);
+    });
+    act(() => restore());
+
+    expect(result.current.files.map((file) => file.name)).toEqual([
+      'submitted.pdf', 'new.pdf',
+    ]);
+  });
+
   it('should clear upload error', async () => {
     const { result } = renderHook(() => useFileUpload());
 

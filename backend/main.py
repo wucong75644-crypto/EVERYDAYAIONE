@@ -300,8 +300,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from core.database import get_async_db, close_async_db
     _error_monitor_db = await get_async_db()
     from core.error_alert_sink import error_log_consumer, error_log_cleanup_loop
+    from core.message_idempotency_cleanup import message_idempotency_cleanup_loop
     error_consumer_task = asyncio.create_task(error_log_consumer(_error_monitor_db))
     error_cleanup_task = asyncio.create_task(error_log_cleanup_loop(_error_monitor_db))
+    idempotency_cleanup_task = asyncio.create_task(
+        message_idempotency_cleanup_loop(_error_monitor_db)
+    )
 
     # 以下后台任务已迁移到 everydayai-sync.service 独立进程，避免与 API 进程争抢
     # DB 连接池 + 简化生命周期管理：
@@ -338,7 +342,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     # 停止全局错误监控
-    for _t in (error_consumer_task, error_cleanup_task):
+    for _t in (error_consumer_task, error_cleanup_task, idempotency_cleanup_task):
         _t.cancel()
         try:
             await _t

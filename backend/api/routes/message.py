@@ -29,6 +29,7 @@ from services.message_service import MessageService
 from services.conversation_service import ConversationService
 from services.handlers import get_handler
 from services.user_activity_service import record_user_activity
+from services.message_idempotency_service import MessageIdempotencyService
 
 from api.routes.message_generation_helpers import (
     handle_retry_operation,
@@ -161,24 +162,25 @@ async def generate_message(
     """
     user_id = ctx.user_id
 
+    idempotency_service = MessageIdempotencyService(db, user_id, ctx.org_id)
+    idempotency_claim = idempotency_service.claim(request, conversation_id, body)
+    if idempotency_claim and idempotency_claim.replay_response:
+        return idempotency_claim.replay_response
+
     # 1. 检查任务限制，获取 slot_id
     slot_id: str | None = None
-    if task_limit_service:
-        slot_id = await task_limit_service.check_and_acquire(
-            user_id, conversation_id, org_id=ctx.org_id,
-        )
-
-    # 将 slot_id 注入 params，供后续释放路径使用
-    if slot_id:
-        if body.params is None:
-            body.params = {}
-        body.params["_task_slot_id"] = slot_id
-
-    # slot 生命周期：
-    # - 正常返回 = task 已落库，slot 由 task 终态化路径释放（on_complete/on_error/cancel/timeout/batch_completion）
-    # - 任何异常（含 asyncio.CancelledError，不被 except Exception 接住）= task 未落库，由 finally 释放，避免泄漏
     slot_handed_off = False
     try:
+        if task_limit_service:
+            slot_id = await task_limit_service.check_and_acquire(
+                user_id, conversation_id, org_id=ctx.org_id,
+            )
+
+        if slot_id:
+            if body.params is None:
+                body.params = {}
+            body.params["_task_slot_id"] = slot_id
+
         response = await _do_generate_message(
             request=request,
             conversation_id=conversation_id,
@@ -188,7 +190,14 @@ async def generate_message(
             user_id=user_id,
         )
         slot_handed_off = True
+        idempotency_service.complete(idempotency_claim, response)
         return response
+    except AppException as exc:
+        idempotency_service.fail(idempotency_claim, exc)
+        raise
+    except Exception as exc:
+        idempotency_service.fail_unexpected(idempotency_claim, exc)
+        raise
     finally:
         if not slot_handed_off and slot_id and task_limit_service:
             await task_limit_service.release(

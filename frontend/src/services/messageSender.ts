@@ -18,6 +18,7 @@ import {
   applyOptimisticUpdate,
   processApiResponse,
   rollbackOnError,
+  getSendFailureDisposition,
   type GenerateResponse,
   type GenerationType,
   type MessageOperation,
@@ -26,6 +27,8 @@ import {
 } from './messageSendLifecycle';
 
 export type { GenerationType, MessageOperation, SendOptions } from './messageSendLifecycle';
+
+const RETRY_DELAYS_MS = [500, 1500] as const;
 
 // ============================================================
 // 类型定义
@@ -64,13 +67,16 @@ export async function sendMessage(options: SendOptions): Promise<string> {
 
   // 生成上下文 ID 和时间戳
   const now = new Date();
+  const identifiers = options.identifiers;
   const ctx: SendContext = {
-    clientRequestId: crypto.randomUUID(),
-    userMessageId: crypto.randomUUID(),
-    assistantMessageId: (operation === 'retry' || operation === 'regenerate_single') && originalMessageId
-      ? originalMessageId
-      : crypto.randomUUID(),
-    clientTaskId: crypto.randomUUID(),
+    clientRequestId: identifiers?.clientRequestId ?? crypto.randomUUID(),
+    userMessageId: identifiers?.userMessageId ?? crypto.randomUUID(),
+    assistantMessageId: identifiers?.assistantMessageId ?? (
+      (operation === 'retry' || operation === 'regenerate_single') && originalMessageId
+        ? originalMessageId
+        : crypto.randomUUID()
+    ),
+    clientTaskId: identifiers?.clientTaskId ?? crypto.randomUUID(),
     now,
     placeholderCreatedAt: new Date(now.getTime() + 1).toISOString(),
   };
@@ -95,10 +101,11 @@ export async function sendMessage(options: SendOptions): Promise<string> {
 
   try {
     // Phase 2: 调用后端 API
-    const response = await request<GenerateResponse>({
+    const response = await requestWithIdempotentRetry({
       url: `/conversations/${conversationId}/messages/generate`,
       method: 'POST',
       timeout: 60000,
+      headers: { 'Idempotency-Key': ctx.clientRequestId },
       data: {
         operation, content, generation_type: generationType,
         model, params, original_message_id: originalMessageId,
@@ -126,9 +133,45 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     return ctx.clientTaskId;
 
   } catch (error) {
-    rollbackOnError(error, options, ctx);
-    throw error instanceof ApiRequestError ? error : toApiRequestError(error);
+    const apiError = error instanceof ApiRequestError ? error : toApiRequestError(error);
+    const disposition = getSendFailureDisposition(apiError);
+    const classifiedError = new ApiRequestError(
+      apiError.code, apiError.message, apiError.status, apiError.details,
+      apiError.transport, disposition,
+    );
+    if (disposition !== 'uncertain') rollbackOnError(classifiedError, options, ctx);
+    throw classifiedError;
   }
+}
+
+interface GenerateRequestConfig {
+  url: string;
+  method: 'POST';
+  timeout: number;
+  headers: Record<string, string>;
+  data: GenerateRequest;
+}
+
+async function requestWithIdempotentRetry(
+  config: GenerateRequestConfig,
+): Promise<GenerateResponse> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await request<GenerateResponse>(config);
+    } catch (error) {
+      const apiError = toApiRequestError(error);
+      if (attempt >= RETRY_DELAYS_MS.length || !isSafelyRetryable(apiError)) throw apiError;
+      const delay = apiError.retryAfterMs ?? RETRY_DELAYS_MS[attempt];
+      await new Promise<void>(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
+function isSafelyRetryable(error: ApiRequestError): boolean {
+  if (error.transport === 'timeout' || error.transport === 'network') return true;
+  if (error.code === 'IDEMPOTENCY_REQUEST_IN_PROGRESS' && error.status === 409) return true;
+  if (error.code !== 'API_ERROR') return false;
+  return error.status === 502 || error.status === 503 || error.status === 504;
 }
 
 // ============================================================

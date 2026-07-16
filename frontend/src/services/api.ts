@@ -27,9 +27,16 @@ export class ApiRequestError extends Error {
     message: string,
     public readonly status?: number,
     public readonly details?: Record<string, unknown>,
+    public readonly transport: 'http' | 'timeout' | 'network' = 'http',
+    public readonly sendDisposition?: 'rejected' | 'recorded_failure' | 'uncertain',
   ) {
     super(message);
     this.name = 'ApiRequestError';
+  }
+
+  get retryAfterMs(): number | undefined {
+    const seconds = Number(this.details?.retry_after);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
   }
 }
 
@@ -40,12 +47,24 @@ export function toApiRequestError(error: unknown): ApiRequestError {
     if (apiError?.message) {
       return new ApiRequestError(
         apiError.code || 'API_ERROR', apiError.message,
-        error.response?.status, apiError.details,
+        error.response?.status, apiError.details, 'http',
       );
     }
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      return new ApiRequestError('REQUEST_TIMEOUT', '请求超时', undefined, undefined, 'timeout');
+    }
+    if (!error.response) {
+      return new ApiRequestError(
+        'NETWORK_ERROR', error.message || '网络请求失败', undefined, undefined, 'network',
+      );
+    }
+    return new ApiRequestError(
+      'API_ERROR', error.message || '请求失败', error.response.status, undefined, 'http',
+    );
   }
   return new ApiRequestError(
     'NETWORK_ERROR', error instanceof Error ? error.message : '网络请求失败',
+    undefined, undefined, 'network',
   );
 }
 

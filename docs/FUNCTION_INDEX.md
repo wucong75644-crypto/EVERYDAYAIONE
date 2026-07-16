@@ -369,6 +369,11 @@
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
 | `generate_message` | `backend/api/routes/message.py` | 统一消息生成入口（send/retry/regenerate） | body: GenerateRequest | GenerateResponse |
+| `MessageIdempotencyService.claim` | `backend/services/message_idempotency_service.py` | 原子抢占消息生成请求，处理指纹冲突、处理中状态与终态重放 | request, conversation_id, body | IdempotencyClaim \| None |
+| `MessageIdempotencyService.build_fingerprint` | `backend/services/message_idempotency_service.py` | 对稳定业务请求字段生成 SHA-256 指纹 | conversation_id, body | str |
+| `MessageIdempotencyService.complete` / `fail` | `backend/services/message_idempotency_service.py` | 持久化可重放的成功或业务失败终态 | claim, response/error | None |
+| `MessageIdempotencyService.fail_unexpected` | `backend/services/message_idempotency_service.py` | 最佳努力持久化脱敏的未知异常终态且不覆盖原异常 | claim, error | None |
+| `message_idempotency_cleanup_loop` | `backend/core/message_idempotency_cleanup.py` | 每小时调用数据库函数清理超过 24 小时的幂等记录 | db | None |
 | `MessageResponse.parse_generation_params` | `backend/schemas/message.py` | Supabase JSONB 字符串自动转 dict（field_validator） | v: Any | Any |
 | `get_messages` | `backend/services/message_service.py` | 获取对话消息列表 | conversation_id, user_id, limit, offset, before_id | dict |
 | `delete_message` | `backend/services/message_service.py` | 删除单条消息（权限验证后物理删除） | message_id, user_id | dict |
@@ -393,7 +398,7 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `sendMessage` | `frontend/src/services/messageSender.ts` | 统一消息发送（send/retry/regenerate） | options: SendOptions | Promise<string> |
+| `sendMessage` | `frontend/src/services/messageSender.ts` | 使用固定请求标识和幂等键统一发送，并安全重试不确定结果 | options: SendOptions | Promise<string> |
 | `createWSMessageHandlers` | `frontend/src/contexts/wsMessageHandlers.ts` | 创建 WebSocket 事件名到处理函数的统一映射 | deps | Record<string, handler> |
 | `flushChunkBuffer` | `frontend/src/contexts/wsMessageHandlerShared.ts` | 将 16ms 窗口内累积的流式 chunk 批量写入 Store | deps | void |
 | `handleMessageDone` | `frontend/src/contexts/wsTaskMessageHandlers.ts` | 处理任务最终消息、幂等完成、订阅清理与 toast | deps, msg | void |
@@ -402,10 +407,14 @@
 | `applyOptimisticUpdate` | `frontend/src/services/messageSendLifecycle.ts` | 创建用户乐观消息与助手占位状态 | options, ctx | void |
 | `processApiResponse` | `frontend/src/services/messageSendLifecycle.ts` | 替换占位状态、创建任务追踪并校验 task_id | response, options, ctx | void |
 | `rollbackOnError` | `frontend/src/services/messageSendLifecycle.ts` | 发送失败时恢复原消息或构造统一失败状态 | error, options, ctx | void |
-| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 统一输入提交；仅在后端接受请求后清空输入与附件 | options | handlers |
+| `getSendFailureDisposition` | `frontend/src/services/messageSendLifecycle.ts` | 将发送错误分类为明确拒绝、已记录失败或结果未知 | error | SendFailureDisposition |
+| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 统一输入提交；校验后立即移出草稿并按发送结果结算 | options | handlers |
+| `useInputDraftTransaction` | `frontend/src/components/chat/input/useInputDraftTransaction.ts` | 管理文本和工作区附件草稿的立即移出、合并恢复与引用文字监听 | options | draft transaction handlers |
+| `detachImagesForSubmission` | `frontend/src/hooks/useImageUpload.ts` | 提交时移出图片并返回可合并恢复函数 | - | restore function |
+| `detachFilesForSubmission` | `frontend/src/hooks/useFileUpload.ts` | 提交时移出文件并返回可合并恢复函数 | - | restore function |
 | `useInputTaskControls` | `frontend/src/components/chat/input/useInputTaskControls.ts` | 停止当前任务、ESC 中断和 steer 信号发送 | options | handlers |
 | `useInputExternalEvents` | `frontend/src/components/chat/input/useInputExternalEvents.ts` | 注册并清理电商确认、建议发送窗口事件 | options | void |
-| `toApiRequestError` | `frontend/src/services/api.ts` | 提取后端结构化业务错误并保留中文消息 | error: unknown | ApiRequestError |
+| `toApiRequestError` | `frontend/src/services/api.ts` | 提取结构化业务错误并区分 HTTP、超时与网络故障 | error: unknown | ApiRequestError |
 | `getMessages` | `frontend/src/services/message.ts` | 获取消息列表 | conversationId, limit, offset, beforeId | Promise<MessageListResponse> |
 | `deleteMessage` | `frontend/src/services/message.ts` | 删除单条消息 | messageId | Promise<DeleteMessageResponse> |
 | `handleRegenerate` | `frontend/src/hooks/useRegenerateHandlers.ts` | 处理消息重新生成/重试请求 | targetMessage, userMessage | Promise<void> |

@@ -130,6 +130,19 @@ export function useFileUpload() {
     setUploadError(null);
   };
 
+  /** 提交时暂时移出文件；返回的函数可在明确拒绝时无损合并恢复。 */
+  const detachFilesForSubmission = (): (() => void) => {
+    const snapshot = files;
+    setFiles([]);
+    setUploadError(null);
+    return () => {
+      setFiles((current) => {
+        const currentIds = new Set(current.map((file) => file.id));
+        return [...snapshot.filter((file) => !currentIds.has(file.id)), ...current];
+      });
+    };
+  };
+
   const clearUploadError = () => setUploadError(null);
 
   const isUploading = files.some((f) => f.isUploading);
@@ -155,6 +168,7 @@ export function useFileUpload() {
     handleFileUpload,       // 暴露：供 InputArea handleUnifiedFiles 统一分流后直接调用
     handleRemoveFile,
     handleRemoveAllFiles,
+    detachFilesForSubmission,
     clearUploadError,
   };
 }

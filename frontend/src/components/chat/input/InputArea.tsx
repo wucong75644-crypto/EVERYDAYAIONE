@@ -24,6 +24,7 @@ import UploadErrorBar from './UploadErrorBar';
 import { useInputTaskControls } from './useInputTaskControls';
 import { useInputSubmission } from './useInputSubmission';
 import { useInputExternalEvents } from './useInputExternalEvents';
+import { useInputDraftTransaction } from './useInputDraftTransaction';
 import { ECOM_TAB_COMPLETIONS, ECOM_TAB_KEYS_SORTED } from './inputCompletions';
 
 interface InputAreaProps {
@@ -116,6 +117,7 @@ export default function InputArea({
     handleImageFiles,
     handleRemoveImage: removeImageById,
     handleRemoveAllImages,
+    detachImagesForSubmission,
     addQuotedImage,
     clearUploadError,
   } = useImageUpload();
@@ -129,7 +131,7 @@ export default function InputArea({
     hasFiles,
     handleFileUpload,
     handleRemoveFile,
-    handleRemoveAllFiles,
+    detachFilesForSubmission,
     clearUploadError: clearFileUploadError,
   } = useFileUpload();
 
@@ -249,18 +251,6 @@ export default function InputArea({
     return () => window.removeEventListener('chat:quote-image', handleQuoteImage);
   }, [addQuotedImage]);
 
-  // 监听文字引用事件（从用户消息右键菜单触发）
-  // 直接把引用文字插到输入框开头：空 prompt 直接铺；非空时加单换行分隔
-  useEffect(() => {
-    const handleQuoteText = (e: Event) => {
-      const { text } = (e as CustomEvent<{ text: string; messageId: string }>).detail;
-      if (!text || !text.trim()) return;
-      setPrompt(prompt ? `${text}\n${prompt}` : text);
-    };
-    window.addEventListener('chat:quote-text', handleQuoteText);
-    return () => window.removeEventListener('chat:quote-text', handleQuoteText);
-  }, [prompt, setPrompt]);
-
   // 流式状态检测
   const isStreaming = useMessageStore((s) =>
     conversationId ? s.streamingMessages.has(conversationId) : false
@@ -329,16 +319,26 @@ export default function InputArea({
     removeImageById(imageId);
     setUploadError(null);
   }, [removeImageById]);
+  const {
+    clearPromptForSubmission,
+    restorePromptAfterRejection,
+    detachWorkspaceFilesForSubmission,
+  } = useInputDraftTransaction({
+    prompt, setPrompt, workspaceFiles,
+    consumeWorkspaceFiles: onWorkspaceFilesConsumed,
+    addWorkspaceFile: onAddWorkspaceFile,
+  });
   const { handleAudioSubmit, handleSubmit } = useInputSubmission({
-    conversationId, selectedModel, prompt, setPrompt, audioBlob, clearRecording,
+    conversationId, selectedModel, prompt, clearPromptForSubmission,
+    restorePromptAfterRejection, audioBlob, clearRecording,
     isSubmitting, setIsSubmitting, setUploadError, setSendError,
     buildChatSettingsPayload, onConversationCreated, onMessageSent,
     handleChatMessage, handleImageGeneration, handleVideoGeneration,
     isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer,
     isUploading, isFileUploading, hasImages, hasFiles,
     uploadedImageUrls, uploadedImages, uploadedFileUrls, workspaceFiles,
-    getSendButtonState, handleRemoveAllImages, handleRemoveAllFiles,
-    onWorkspaceFilesConsumed,
+    getSendButtonState, detachImagesForSubmission, detachFilesForSubmission,
+    detachWorkspaceFilesForSubmission,
   });
 
   // 键盘快捷键（Tab 补全用模块级常量 ECOM_TAB_COMPLETIONS / ECOM_TAB_KEYS_SORTED）
