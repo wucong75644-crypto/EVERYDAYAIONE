@@ -4,7 +4,7 @@
  * 调用方涉及三种来源：
  *   1. WorkspaceView：WorkspaceFileItem（list_workspace 返回结构）
  *   2. FileCard：FilePart（消息 content[] 内的文件项）
- *   3. ImagePreview：UploadedImage（输入框待发送的本地图）
+ *   3. ChatAttachmentPreview：ChatImageAttachment（输入框待发送图片）
  */
 
 import type { WorkspaceFileItem } from '../services/workspace';

@@ -61,7 +61,7 @@ export interface WorkspaceMoveResponse {
   new_path: string;
 }
 
-/** 供 Chat.tsx pendingWorkspaceFiles 使用 */
+/** 工作区插入聊天时交给统一附件控制器的数据结构。 */
 export interface WorkspaceFile {
   name: string;
   workspace_path: string;

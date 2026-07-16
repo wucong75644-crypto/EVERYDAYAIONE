@@ -11,15 +11,13 @@ import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
-import ImagePreview from '../media/ImagePreview';
-import FilePreview from '../media/FilePreview';
 import AudioPreview from '../media/AudioPreview';
 import ModelSelector from './ModelSelector';
 import AdvancedSettingsMenu from './AdvancedSettingsMenu';
 import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import FileMentionDropdown from './FileMentionDropdown';
-import WorkspaceAttachmentPreview from './WorkspaceAttachmentPreview';
+import ChatAttachmentPreview from '../attachments/ChatAttachmentPreview';
 import type { InputControlsProps } from './InputControls.types';
 import { useDragDropUpload } from '../../../hooks/useDragDropUpload';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../../constants/animations';
@@ -38,9 +36,7 @@ export default function InputControls(props: InputControlsProps) {
     temperature, onTemperatureChange, topP, onTopPChange, topK, onTopKChange,
     maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
-    images, onRemoveImage,
-    files, onRemoveFile,
-    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, onUnifiedFiles, workspaceOpen = false,
+    attachments, onRemoveAttachment, onOpenWorkspace, onUnifiedFiles, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
     isStreaming = false, onStop,
@@ -134,7 +130,7 @@ export default function InputControls(props: InputControlsProps) {
 
   // 判断条件
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
-  const hasContent = prompt.trim().length > 0 || images.length > 0 || files.length > 0 || workspaceFiles.length > 0;
+  const hasContent = prompt.trim().length > 0 || attachments.length > 0;
   const canSubmit = !sendButtonDisabled && (hasContent || audioBlob);
 
   // 发送/语音按钮互斥显示
@@ -177,21 +173,9 @@ export default function InputControls(props: InputControlsProps) {
 
       <div className="px-3 pt-2 pb-2">
         {/* 附件横排区域：图片 + PDF + 工作区文件 */}
-        {(images.length > 0 || files.length > 0 || workspaceFiles.length > 0) && (
+        {attachments.length > 0 && (
           <div className="mb-2 flex items-end gap-2 overflow-x-auto scrollbar-hide p-1">
-            {/* 图片 */}
-            {images.length > 0 && (
-              <div className="shrink-0">
-                <ImagePreview images={images} onRemove={onRemoveImage} />
-              </div>
-            )}
-            {/* PDF */}
-            {files.length > 0 && (
-              <div className="shrink-0">
-                <FilePreview files={files} onRemove={onRemoveFile} />
-              </div>
-            )}
-            <WorkspaceAttachmentPreview files={workspaceFiles} onRemove={onRemoveWorkspaceFile} />
+            <ChatAttachmentPreview attachments={attachments} onRemove={onRemoveAttachment} />
           </div>
         )}
 

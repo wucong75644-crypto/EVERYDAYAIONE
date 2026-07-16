@@ -14,6 +14,7 @@ import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
 import { toOriginalImageUrl } from '../../../utils/imageUrlRules';
 import BaseContextMenu, { type ContextMenuItem } from '../menus/BaseContextMenu';
+import { useChatAttachmentContext } from '../attachments/ChatAttachmentContext';
 
 interface ImageContextMenuProps {
   x: number;
@@ -34,6 +35,7 @@ export default function ImageContextMenu({
   closing = false,
   onClose,
 }: ImageContextMenuProps) {
+  const { addQuotedImage } = useChatAttachmentContext();
   const originalUrl = toOriginalImageUrl(imageUrl);
 
   const handleQuote = () => {
@@ -42,11 +44,7 @@ export default function ImageContextMenu({
       onClose();
       return;
     }
-    window.dispatchEvent(
-      new CustomEvent('chat:quote-image', {
-        detail: { url: originalUrl, thumbnailUrl, messageId },
-      }),
-    );
+    addQuotedImage({ url: originalUrl, thumbnailUrl });
     onClose();
   };
 

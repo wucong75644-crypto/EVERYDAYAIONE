@@ -27,7 +27,8 @@ import WorkspaceFileGrid from './WorkspaceFileGrid';
 import WorkspaceEmptyState from './WorkspaceEmptyState';
 import WorkspaceDropZone from './WorkspaceDropZone';
 import { getFullPath } from './WorkspaceFileItem';
-import type { WorkspaceFileItem, WorkspaceFile } from '../../services/workspace';
+import type { WorkspaceFileItem } from '../../services/workspace';
+import { useChatAttachmentContext } from '../chat/attachments/ChatAttachmentContext';
 import { downloadWorkspaceZip } from '../../services/workspace';
 import { downloadFile } from '../../utils/downloadFile';
 import { categorize, matchesFilter } from '../../utils/fileCategory';
@@ -35,10 +36,10 @@ import { toOriginalImageUrl } from '../../utils/imageUrlRules';
 
 interface WorkspaceViewProps {
   onBack: () => void;
-  onSendToChat: (file: WorkspaceFile) => void;
 }
 
-export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewProps) {
+export default function WorkspaceView({ onBack }: WorkspaceViewProps) {
+  const { addWorkspaceFile } = useChatAttachmentContext();
   const ws = useWorkspace();
   const selection = useFileSelection();
   const preview = usePreview();
@@ -125,7 +126,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         (it) => !it.is_dir && selection.selectedPaths.has(getFullPath(ws.currentPath, it.name)),
       );
       for (const it of selectedItems) {
-        onSendToChat({
+        addWorkspaceFile({
           name: it.name,
           workspace_path: getFullPath(ws.currentPath, it.name),
           cdn_url: it.cdn_url ? toOriginalImageUrl(it.cdn_url) : null,
@@ -134,7 +135,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         });
       }
     } else {
-      onSendToChat({
+      addWorkspaceFile({
         name: item.name,
         workspace_path: getFullPath(ws.currentPath, item.name),
         cdn_url: item.cdn_url ? toOriginalImageUrl(item.cdn_url) : null,
@@ -142,7 +143,7 @@ export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewPro
         size: item.size,
       });
     }
-  }, [ws.currentPath, ws.items, onSendToChat, selection.selectedCount, selection.selectedPaths]);
+  }, [ws.currentPath, ws.items, addWorkspaceFile, selection.selectedCount, selection.selectedPaths]);
 
   // 删除（支持批量）
   const handleDelete = useCallback((path: string) => {

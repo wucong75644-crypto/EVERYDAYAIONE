@@ -408,11 +408,11 @@
 | `processApiResponse` | `frontend/src/services/messageSendLifecycle.ts` | 替换占位状态、创建任务追踪并校验 task_id | response, options, ctx | void |
 | `rollbackOnError` | `frontend/src/services/messageSendLifecycle.ts` | 发送失败时恢复原消息或构造统一失败状态 | error, options, ctx | void |
 | `getSendFailureDisposition` | `frontend/src/services/messageSendLifecycle.ts` | 将发送错误分类为明确拒绝、已记录失败或结果未知 | error | SendFailureDisposition |
-| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 统一输入提交；标准化上传/引用/工作区附件后贯通聊天与媒体模式，并按发送结果结算草稿 | options | handlers |
-| `normalizeSubmissionAttachments` | `frontend/src/components/chat/input/attachmentNormalization.ts` | 按媒体语义将上传、引用和工作区附件收口为图片 URL、完整图片元数据与普通文件 | input | NormalizedSubmissionAttachments |
-| `hasValidWorkspaceImage` | `frontend/src/components/chat/input/attachmentNormalization.ts` | 判断工作区附件中是否存在具备有效原图地址的图片，供模型能力判断复用 | files | boolean |
-| `WorkspaceAttachmentPreview` | `frontend/src/components/chat/input/WorkspaceAttachmentPreview.tsx` | 工作区图片显示缩略预览，普通文件保留文件卡片，移除时传递 workspace_path | files, onRemove? | JSX |
-| `useInputDraftTransaction` | `frontend/src/components/chat/input/useInputDraftTransaction.ts` | 管理文本和工作区附件草稿的立即移出、合并恢复与引用文字监听 | options | draft transaction handlers |
+| `useInputSubmission` | `frontend/src/components/chat/input/useInputSubmission.ts` | 消费统一附件快照，贯通聊天、图片、视频和电商模式，并按发送结果结算草稿 | options | handlers |
+| `useChatAttachments` | `frontend/src/components/chat/attachments/useChatAttachments.ts` | 统一上传、引用、工作区附件的添加、删除、派生状态和草稿事务 | - | ChatAttachmentController |
+| `createAttachmentSubmissionSnapshot` | `frontend/src/components/chat/attachments/attachmentSubmission.ts` | 将统一附件转换为原图输入、图片元数据和文件提交结构 | attachments | AttachmentSubmissionSnapshot |
+| `ChatAttachmentPreview` | `frontend/src/components/chat/attachments/ChatAttachmentPreview.tsx` | 所有图片显示统一缩略图，普通文件显示文件卡片，并按附件 ID 删除 | attachments, onRemove | JSX |
+| `useInputDraftTransaction` | `frontend/src/components/chat/input/useInputDraftTransaction.ts` | 管理文本草稿的立即移出、明确拒绝合并恢复与引用文字监听 | options | draft transaction handlers |
 | `detachImagesForSubmission` | `frontend/src/hooks/useImageUpload.ts` | 提交时移出图片并返回可合并恢复函数 | - | restore function |
 | `detachFilesForSubmission` | `frontend/src/hooks/useFileUpload.ts` | 提交时移出文件并返回可合并恢复函数 | - | restore function |
 | `useInputTaskControls` | `frontend/src/components/chat/input/useInputTaskControls.ts` | 停止当前任务、ESC 中断和 steer 信号发送 | options | handlers |
@@ -625,11 +625,10 @@
 | `AdvancedSettingsMenu` | `frontend/src/components/chat/AdvancedSettingsMenu.tsx` | 高级设置菜单 |
 | `SettingsModal` | `frontend/src/components/chat/SettingsModal.tsx` | 个人设置弹框 |
 | `UploadMenu` | `frontend/src/components/chat/UploadMenu.tsx` | 上传菜单 |
-| `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览（输入区小图预览，引用图片蓝色边框+引号图标+引用角标） |
 | `ImagePreviewModal` | `frontend/src/components/chat/ImagePreviewModal.tsx` | 图片预览弹窗（全屏缩放下载） |
 | `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
 | `MediaPlaceholder` / `FailedMediaPlaceholder` | `frontend/src/components/chat/media/MediaPlaceholder.tsx` | 统一媒体占位符；失败状态支持错误码、积分不足警告和重新生成 |
-| `ImageContextMenu` | `frontend/src/components/chat/ImageContextMenu.tsx` | 图片右键上下文菜单（引用/复制/下载，dispatch chat:quote-image 事件） |
+| `ImageContextMenu` | `frontend/src/components/chat/ImageContextMenu.tsx` | 图片右键上下文菜单；引用操作调用统一附件 Context 命令 |
 | `AiImageGrid` | `frontend/src/components/chat/media/AiImageGrid.tsx` | AI 多图网格组件，各失败单元格独立传递错误码并支持单图重新生成 |
 | `GridCell` | `frontend/src/components/chat/media/AiImageGrid.tsx` | 单个网格单元（memo + gridCellAreEqual 自定义比较，仅数据 props 变化时重渲染） |
 | `gridCellAreEqual` | `frontend/src/components/chat/media/AiImageGrid.tsx` | GridCell 自定义 memo 比较函数（包括 errorCode，忽略函数引用） |
@@ -1126,6 +1125,7 @@
 | `getImageAssets` | `frontend/src/utils/messageUtils.ts` | 从消息 content 提取图片资产对象，保留 `originalUrl` / `thumbnailUrl` 语义 |
 | `fromImageAsset` | `frontend/src/preview/toPreviewItem.ts` | 将图片资产转换为 PreviewItem，主体预览/下载用原图，缩略条用缩略图 |
 | `useImageUpload.addQuotedImage` | `frontend/src/hooks/useImageUpload.ts` | 引用图片加入输入框；显示可用缩略图，发送与入库保留原图 URL |
+| `createAttachmentSubmissionSnapshot` | `frontend/src/components/chat/attachments/attachmentSubmission.ts` | 所有聊天附件的模型提交边界；图片只输出合法原图 URL，缩略图仅作为显示元数据 |
 
 ### 架构文档
 - [项目概览](./PROJECT_OVERVIEW.md) - 项目整体架构和目录结构

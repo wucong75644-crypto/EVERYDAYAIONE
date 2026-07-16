@@ -34,7 +34,7 @@ export interface PreviewItem {
  * - `siblings`：同分类的兄弟项列表（单文件预览时 = [item]）
  * - `index`：当前项在 siblings 中的索引
  * - `onNavigate`：切换索引（图片/视频用，文档类通常忽略）
- * - `onDelete`：可选删除回调（仅 ImagePreview 输入框场景使用）
+ * - `onDelete`：可选删除回调（仅聊天附件预览场景使用）
  */
 export interface PreviewCommonProps {
   item: PreviewItem;

@@ -8,12 +8,32 @@ import {
   useInputSubmission,
   type UseInputSubmissionOptions,
 } from '../useInputSubmission';
+import { createAttachmentSubmissionSnapshot } from '../../attachments/attachmentSubmission';
+import type { ChatAttachment } from '../../attachments/ChatAttachment.types';
 
 vi.mock('../../../../services/conversation', () => ({
   createConversation: vi.fn(),
 }));
 vi.mock('../../../../services/audio', () => ({ uploadAudio: vi.fn() }));
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn() } }));
+
+function image(name: string, originalUrl: string | null): ChatAttachment {
+  return {
+    id: `workspace:${name}`, sourceId: name, kind: 'image', source: 'workspace',
+    status: originalUrl ? 'ready' : 'error', name, mimeType: `image/${name.split('.').pop()}`,
+    size: 1024, previewUrl: 'https://cdn.example.com/thumbnail.webp', originalUrl,
+    workspacePath: `上传/${name}`,
+  };
+}
+
+function file(name: string, url: string): ChatAttachment {
+  return {
+    id: `workspace:${name}`, sourceId: name, kind: 'file', source: 'workspace', status: 'ready',
+    name, mimeType: 'application/pdf', size: 4096, url, workspacePath: `上传/${name}`,
+  };
+}
+
+const snapshot = (attachments: ChatAttachment[]) => createAttachmentSubmissionSnapshot(attachments);
 
 function makeOptions(
   overrides: Partial<UseInputSubmissionOptions> = {},
@@ -42,17 +62,11 @@ function makeOptions(
     isStreaming: false,
     sendSteer: vi.fn(),
     isUploading: false,
-    isFileUploading: false,
     hasImages: false,
     hasFiles: false,
-    uploadedImageUrls: [],
-    uploadedImages: [],
-    uploadedFileUrls: [],
-    workspaceFiles: [],
+    attachmentSnapshot: snapshot([]),
     getSendButtonState: vi.fn(() => ({ disabled: false })),
-    detachImagesForSubmission: vi.fn(() => vi.fn()),
-    detachFilesForSubmission: vi.fn(() => vi.fn()),
-    detachWorkspaceFilesForSubmission: vi.fn(() => vi.fn()),
+    detachAttachmentsForSubmission: vi.fn(() => ({ restore: vi.fn() })),
     ...overrides,
   };
 }
@@ -74,9 +88,7 @@ describe('useInputSubmission', () => {
 
     expect(options.clearPromptForSubmission).toHaveBeenCalledOnce();
     expect(options.restorePromptAfterRejection).toHaveBeenCalledWith('保留这段输入');
-    expect(options.detachImagesForSubmission).toHaveBeenCalledOnce();
-    expect(options.detachFilesForSubmission).toHaveBeenCalledOnce();
-    expect(options.detachWorkspaceFilesForSubmission).toHaveBeenCalledOnce();
+    expect(options.detachAttachmentsForSubmission).toHaveBeenCalledOnce();
     expect(options.setSendError).toHaveBeenCalledWith('积分不足');
     expect(options.onMessageSent).toHaveBeenCalledWith(null);
   });
@@ -88,26 +100,20 @@ describe('useInputSubmission', () => {
     await act(() => result.current.handleSubmit());
 
     expect(options.clearPromptForSubmission).toHaveBeenCalledOnce();
-    expect(options.detachImagesForSubmission).toHaveBeenCalledOnce();
-    expect(options.detachFilesForSubmission).toHaveBeenCalledOnce();
-    expect(options.detachWorkspaceFilesForSubmission).toHaveBeenCalledOnce();
+    expect(options.detachAttachmentsForSubmission).toHaveBeenCalledOnce();
     expect(options.restorePromptAfterRejection).not.toHaveBeenCalled();
     expect(options.setSendError).not.toHaveBeenCalled();
   });
 
   it('发送结果未知时保持编辑器清空且不恢复附件', async () => {
-    const restoreImages = vi.fn();
-    const restoreFiles = vi.fn();
-    const restoreWorkspaceFiles = vi.fn();
+    const restoreAttachments = vi.fn();
     const options = makeOptions({
       handleChatMessage: vi.fn(async () => {
         throw new ApiRequestError(
           'NETWORK_ERROR', '网络连接中断', undefined, undefined, 'network', 'uncertain',
         );
       }),
-      detachImagesForSubmission: vi.fn(() => restoreImages),
-      detachFilesForSubmission: vi.fn(() => restoreFiles),
-      detachWorkspaceFilesForSubmission: vi.fn(() => restoreWorkspaceFiles),
+      detachAttachmentsForSubmission: vi.fn(() => ({ restore: restoreAttachments })),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -115,9 +121,7 @@ describe('useInputSubmission', () => {
 
     expect(options.clearPromptForSubmission).toHaveBeenCalledOnce();
     expect(options.restorePromptAfterRejection).not.toHaveBeenCalled();
-    expect(restoreImages).not.toHaveBeenCalled();
-    expect(restoreFiles).not.toHaveBeenCalled();
-    expect(restoreWorkspaceFiles).not.toHaveBeenCalled();
+    expect(restoreAttachments).not.toHaveBeenCalled();
   });
 
   it('新对话创建后使用真实 conversation id 发送', async () => {
@@ -141,22 +145,10 @@ describe('useInputSubmission', () => {
 
   it('聊天模式将工作区图片作为图片、普通文件作为文件发送', async () => {
     const options = makeOptions({
-      workspaceFiles: [
-        {
-          name: 'product.png',
-          workspace_path: '上传/product.png',
-          cdn_url: 'https://cdn.example.com/workspace/product.png',
-          mime_type: 'image/png',
-          size: 2048,
-        },
-        {
-          name: 'report.pdf',
-          workspace_path: '上传/report.pdf',
-          cdn_url: 'https://cdn.example.com/workspace/report.pdf',
-          mime_type: 'application/pdf',
-          size: 4096,
-        },
-      ],
+      attachmentSnapshot: snapshot([
+        { ...image('product.png', 'https://cdn.example.com/workspace/product.png'), size: 2048 },
+        file('report.pdf', 'https://cdn.example.com/workspace/report.pdf'),
+      ]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -189,13 +181,9 @@ describe('useInputSubmission', () => {
   ] as const)('%s 模式会传递工作区图片原图 URL', async (modelType, handlerName) => {
     const options = makeOptions({
       effectiveModelType: modelType,
-      workspaceFiles: [{
-        name: 'reference.webp',
-        workspace_path: '上传/reference.webp',
-        cdn_url: 'https://cdn.example.com/workspace/reference.webp',
-        mime_type: 'image/webp',
-        size: 1024,
-      }],
+      attachmentSnapshot: snapshot([
+        image('reference.webp', 'https://cdn.example.com/workspace/reference.webp'),
+      ]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -213,13 +201,9 @@ describe('useInputSubmission', () => {
       isEcomMode: true,
       effectiveModelType: 'image',
       smartSubMode: 'image-ecom',
-      workspaceFiles: [{
-        name: 'product.jpg',
-        workspace_path: '上传/product.jpg',
-        cdn_url: 'https://cdn.example.com/workspace/product.jpg',
-        mime_type: 'image/jpeg',
-        size: 1024,
-      }],
+      attachmentSnapshot: snapshot([
+        image('product.jpg', 'https://cdn.example.com/workspace/product.jpg'),
+      ]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -237,13 +221,9 @@ describe('useInputSubmission', () => {
     const options = makeOptions({
       effectiveModelType: 'image',
       smartSubMode: 'image-i2i',
-      workspaceFiles: [{
-        name: 'reference.png',
-        workspace_path: '上传/reference.png',
-        cdn_url: 'https://cdn.example.com/workspace/reference.png',
-        mime_type: 'image/png',
-        size: 1024,
-      }],
+      attachmentSnapshot: snapshot([
+        image('reference.png', 'https://cdn.example.com/workspace/reference.png'),
+      ]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -259,13 +239,7 @@ describe('useInputSubmission', () => {
   it('媒体模式遇到无有效原图的工作区图片时不清空草稿', async () => {
     const options = makeOptions({
       effectiveModelType: 'video',
-      workspaceFiles: [{
-        name: 'broken.jpg',
-        workspace_path: '上传/broken.jpg',
-        cdn_url: 'https://cdn.example.com/workspace-thumbnails/broken.w360.webp',
-        mime_type: 'image/jpeg',
-        size: 1024,
-      }],
+      attachmentSnapshot: snapshot([image('broken.jpg', null)]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -273,7 +247,7 @@ describe('useInputSubmission', () => {
 
     expect(options.handleVideoGeneration).not.toHaveBeenCalled();
     expect(options.clearPromptForSubmission).not.toHaveBeenCalled();
-    expect(options.detachWorkspaceFilesForSubmission).not.toHaveBeenCalled();
+    expect(options.detachAttachmentsForSubmission).not.toHaveBeenCalled();
   });
 
   it('按合并后的本地与工作区图片数校验模型上限', async () => {
@@ -281,12 +255,10 @@ describe('useInputSubmission', () => {
       selectedModel: {
         id: 'model-1', type: 'chat', capabilities: { maxImages: 1 },
       } as UnifiedModel,
-      uploadedImageUrls: ['https://cdn.example.com/upload.png'],
-      uploadedImages: [{ url: 'https://cdn.example.com/upload.png' }],
-      workspaceFiles: [{
-        name: 'workspace.png', workspace_path: '上传/workspace.png',
-        cdn_url: 'https://cdn.example.com/workspace.png', mime_type: 'image/png', size: 10,
-      }],
+      attachmentSnapshot: snapshot([
+        { ...image('upload.png', 'https://cdn.example.com/upload.png'), source: 'upload' },
+        image('workspace.png', 'https://cdn.example.com/workspace.png'),
+      ]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -324,7 +296,9 @@ describe('useInputSubmission', () => {
       effectiveModelType: 'image',
       isEcomMode: true,
       hasImages: true,
-      uploadedImageUrls: [],
+      attachmentSnapshot: snapshot([{
+        ...image('uploading.png', null), source: 'upload', status: 'uploading',
+      }]),
     });
     const { result } = renderHook(() => useInputSubmission(options));
 

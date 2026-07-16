@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - 渲染三个菜单项（引用/复制/下载）
- * - 点击引用触发 chat:quote-image 自定义事件
+ * - 点击引用调用统一附件命令
  * - ESC 关闭菜单
  * - 点击外部关闭菜单
  */
@@ -11,6 +11,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ImageContextMenu from '../media/ImageContextMenu';
+
+const attachmentMocks = vi.hoisted(() => ({ addQuotedImage: vi.fn() }));
+vi.mock('../attachments/ChatAttachmentContext', () => ({
+  useChatAttachmentContext: () => attachmentMocks,
+}));
 
 describe('ImageContextMenu', () => {
   const defaultProps = {
@@ -30,27 +35,19 @@ describe('ImageContextMenu', () => {
     expect(screen.getByText('下载')).toBeInTheDocument();
   });
 
-  it('should dispatch chat:quote-image event on quote click', () => {
-    const eventHandler = vi.fn();
-    window.addEventListener('chat:quote-image', eventHandler);
-
+  it('should add the quoted image through the attachment controller', () => {
     render(<ImageContextMenu {...defaultProps} />);
     fireEvent.click(screen.getByText('引用'));
 
-    expect(eventHandler).toHaveBeenCalledTimes(1);
-    const detail = (eventHandler.mock.calls[0][0] as CustomEvent).detail;
-    expect(detail.url).toBe('https://cdn.example.com/test.png');
-    expect(detail.thumbnailUrl).toBe('https://cdn.example.com/test-thumb.png');
-    expect(detail.messageId).toBe('msg-123');
+    expect(attachmentMocks.addQuotedImage).toHaveBeenCalledWith({
+      url: 'https://cdn.example.com/test.png',
+      thumbnailUrl: 'https://cdn.example.com/test-thumb.png',
+    });
     expect(defaultProps.onClose).toHaveBeenCalled();
-
-    window.removeEventListener('chat:quote-image', eventHandler);
   });
 
-  it('should not dispatch quote event when only thumbnail URL is provided as imageUrl', () => {
-    const eventHandler = vi.fn();
-    window.addEventListener('chat:quote-image', eventHandler);
-
+  it('should not add a quote when only thumbnail URL is provided', () => {
+    attachmentMocks.addQuotedImage.mockClear();
     render(
       <ImageContextMenu
         {...defaultProps}
@@ -59,8 +56,7 @@ describe('ImageContextMenu', () => {
     );
     fireEvent.click(screen.getByText('引用'));
 
-    expect(eventHandler).not.toHaveBeenCalled();
-    window.removeEventListener('chat:quote-image', eventHandler);
+    expect(attachmentMocks.addQuotedImage).not.toHaveBeenCalled();
   });
 
   it('should call onClose when ESC is pressed', () => {

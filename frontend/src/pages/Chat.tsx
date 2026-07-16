@@ -19,7 +19,7 @@ import { ChatHeader } from '../components/chat/layout/ChatHeader';
 import SearchPanel from '../components/chat/search/SearchPanel';
 import ScheduledTaskPanel from '../components/scheduled-tasks/ScheduledTaskPanel';
 import WorkspaceView from '../components/workspace/WorkspaceView';
-import type { WorkspaceFile } from '../services/workspace';
+import { ChatAttachmentProvider } from '../components/chat/attachments/ChatAttachmentProvider';
 import { PageTransition } from '../components/motion';
 import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
@@ -81,8 +81,6 @@ export default function Chat() {
   const [view, setView] = useState<'chat' | 'workspace'>('chat');
   // prompt 状态提升（从 InputArea 移到 Chat.tsx，避免切换 view 时丢失用户输入）
   const [prompt, setPrompt] = useState('');
-  // 工作区文件待发送队列（"插入到聊天"功能）
-  const [pendingWorkspaceFiles, setPendingWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   // 工作区面板宽度（可拖拽调整）
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(480);
   // 从缓存预读初始对话 ID，实现消息并行加载
@@ -325,24 +323,6 @@ export default function Chat() {
     setView((prev) => prev === 'chat' ? 'workspace' : 'chat');
   }, []);
 
-  // 工作区："插入到聊天"回调（按 workspace_path 去重，不自动关闭工作区）
-  const handleSendFromWorkspace = useCallback((file: WorkspaceFile) => {
-    setPendingWorkspaceFiles((prev) =>
-      prev.some((f) => f.workspace_path === file.workspace_path) ? prev : [...prev, file],
-    );
-    // 并排模式下不自动关闭工作区，用户可以继续选文件
-  }, []);
-
-  // 移除单个待发送的 workspace 文件
-  const handleRemoveWorkspaceFile = useCallback((workspacePath: string) => {
-    setPendingWorkspaceFiles((prev) => prev.filter((f) => f.workspace_path !== workspacePath));
-  }, []);
-
-  // 发送后清空 workspace 文件队列
-  const handleWorkspaceFilesConsumed = useCallback(() => {
-    setPendingWorkspaceFiles([]);
-  }, []);
-
   // 删除消息回调：更新侧边栏最后一条消息预览
   const handleMessageDelete = useCallback(
     (_messageId: string, newLastMessage?: string) => {
@@ -369,7 +349,8 @@ export default function Chat() {
   );
 
   return (
-    <PageTransition className="h-screen flex bg-surface">
+    <ChatAttachmentProvider>
+      <PageTransition className="h-screen flex bg-surface">
       {/* 邀请通知 */}
       <InvitationNotice />
 
@@ -437,10 +418,6 @@ export default function Chat() {
             onModelChange={setCurrentSelectedModel}
             prompt={prompt}
             onPromptChange={setPrompt}
-            workspaceFiles={pendingWorkspaceFiles}
-            onAddWorkspaceFile={handleSendFromWorkspace}
-            onRemoveWorkspaceFile={handleRemoveWorkspaceFile}
-            onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
             onOpenWorkspace={handleToggleWorkspace}
             workspaceOpen={view === 'workspace'}
           />
@@ -482,7 +459,6 @@ export default function Chat() {
             <div className="flex-1 flex flex-col overflow-hidden bg-[var(--s-surface-base)]">
               <WorkspaceView
                 onBack={() => setView('chat')}
-                onSendToChat={handleSendFromWorkspace}
               />
             </div>
           </div>
@@ -508,6 +484,7 @@ export default function Chat() {
         isOpen={scheduledTaskPanelOpen}
         onClose={() => setScheduledTaskPanelOpen(false)}
       />
-    </PageTransition>
+      </PageTransition>
+    </ChatAttachmentProvider>
   );
 }

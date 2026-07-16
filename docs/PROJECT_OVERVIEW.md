@@ -271,22 +271,25 @@ EVERYDAYAIONE/
         │       │   └── InlineChartImage.tsx  # 内容块内联图片
         │       ├── MessageActions.tsx        # 消息操作工具栏
         │       ├── MessageToolbar.tsx        # 消息工具栏（旧版，待删除）
+        │       ├── attachments/              # 聊天草稿附件统一领域层
+        │       │   ├── ChatAttachment.types.ts # 统一图片/文件附件类型
+        │       │   ├── attachmentAdapters.ts # 上传、引用、工作区来源适配
+        │       │   ├── attachmentSubmission.ts # 原图与文件提交快照转换
+        │       │   ├── useChatAttachments.ts # 统一添加、删除、状态与草稿事务
+        │       │   └── ChatAttachmentPreview.tsx # 统一缩略图/文件预览
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）
-        │       ├── attachmentNormalization.ts # 上传/引用/工作区附件提交前标准化
         │       ├── useInputSubmission.ts     # 输入提交与草稿事务结算
-        │       ├── useInputDraftTransaction.ts # 文本/工作区附件草稿移出与合并恢复
+        │       ├── useInputDraftTransaction.ts # 文本草稿移出与合并恢复
         │       ├── useInputTaskControls.ts   # 停止、ESC 中断与 steer 控制
         │       ├── useInputExternalEvents.ts # 电商确认与建议发送事件监听
         │       ├── inputCompletions.ts       # 电商模式 Tab 补全词典
         │       ├── InputControls.tsx         # 输入控制（文本框、按钮、上传）
         │       ├── InputControls.types.ts   # 输入控制 Props 类型边界
-        │       ├── WorkspaceAttachmentPreview.tsx # 工作区图片/文件草稿预览
         │       ├── ModelSelector.tsx         # 模型选择器
         │       ├── AdvancedSettingsMenu.tsx  # 高级设置菜单（图像/视频/推理参数）
         │       ├── SettingsModal.tsx         # 个人设置弹框
         │       ├── UploadMenu.tsx            # 上传菜单
         │       ├── ImageContextMenu.tsx       # 图片右键上下文菜单（引用/复制/下载）
-        │       ├── ImagePreview.tsx          # 图片预览（输入区小图，含引用图片标识）
         │       ├── ImagePreviewModal.tsx     # 图片预览弹窗（全屏缩放下载）
         │       ├── LoadingPlaceholder.tsx    # 统一加载占位符（文字 + 跳动圆点）
         │       ├── MediaPlaceholder.tsx      # 统一媒体占位符（灰色框 + 图标）

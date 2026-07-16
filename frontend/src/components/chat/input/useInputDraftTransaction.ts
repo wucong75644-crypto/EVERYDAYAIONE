@@ -1,26 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
 
-interface WorkspaceFile {
-  name: string;
-  workspace_path: string;
-  cdn_url: string | null;
-  mime_type: string | null;
-  size: number;
-}
-
 interface DraftTransactionOptions {
   prompt: string;
   setPrompt: (value: string) => void;
-  workspaceFiles: WorkspaceFile[];
-  consumeWorkspaceFiles?: () => void;
-  addWorkspaceFile?: (file: WorkspaceFile) => void;
 }
 
 /** 管理编辑器草稿的立即移出和明确拒绝恢复，不覆盖等待期间的新草稿。 */
 export function useInputDraftTransaction(options: DraftTransactionOptions) {
-  const {
-    prompt, setPrompt, workspaceFiles, consumeWorkspaceFiles, addWorkspaceFile,
-  } = options;
+  const { prompt, setPrompt } = options;
   const promptRef = useRef(prompt);
 
   useEffect(() => {
@@ -52,15 +39,8 @@ export function useInputDraftTransaction(options: DraftTransactionOptions) {
     setPrompt(restored);
   }, [setPrompt]);
 
-  const detachWorkspaceFilesForSubmission = useCallback(() => {
-    const snapshot = [...workspaceFiles];
-    consumeWorkspaceFiles?.();
-    return () => snapshot.forEach((file) => addWorkspaceFile?.(file));
-  }, [addWorkspaceFile, consumeWorkspaceFiles, workspaceFiles]);
-
   return {
     clearPromptForSubmission,
     restorePromptAfterRejection,
-    detachWorkspaceFilesForSubmission,
   };
 }

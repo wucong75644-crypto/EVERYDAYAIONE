@@ -31,7 +31,6 @@ describe('useFileUpload', () => {
     const { result } = renderHook(() => useFileUpload());
 
     expect(result.current.files).toEqual([]);
-    expect(result.current.uploadedFileUrls).toEqual([]);
     expect(result.current.isUploading).toBe(false);
     expect(result.current.uploadError).toBeNull();
     expect(result.current.hasFiles).toBe(false);
@@ -96,8 +95,6 @@ describe('useFileUpload', () => {
     expect(result.current.files[0].url).toBe('https://cdn.example.com/report.pdf');
     expect(result.current.files[0].isUploading).toBe(false);
     expect(result.current.hasFiles).toBe(true);
-    expect(result.current.uploadedFileUrls).toHaveLength(1);
-    expect(result.current.uploadedFileUrls[0].url).toBe('https://cdn.example.com/report.pdf');
   });
 
   it('should handle upload failure gracefully', async () => {

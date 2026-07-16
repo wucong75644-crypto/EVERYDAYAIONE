@@ -34,16 +34,6 @@ describe('useImageUpload - addQuotedImage', () => {
     expect(quoted.id).toMatch(/^quoted-/);
   });
 
-  it('should include quoted image in uploadedImageUrls', () => {
-    const { result } = renderHook(() => useImageUpload());
-
-    act(() => {
-      result.current.addQuotedImage('https://cdn.example.com/image1.png');
-    });
-
-    expect(result.current.uploadedImageUrls).toContain('https://cdn.example.com/image1.png');
-  });
-
   it('should display quoted thumbnail but keep original URL for sending', () => {
     const { result } = renderHook(() => useImageUpload());
 
@@ -57,8 +47,8 @@ describe('useImageUpload - addQuotedImage', () => {
     const quoted = result.current.images[0];
     expect(quoted.preview).toBe('https://cdn.example.com/thumb.png');
     expect(quoted.url).toBe('https://cdn.example.com/original.png');
-    expect(result.current.uploadedImages[0].original_url).toBe('https://cdn.example.com/original.png');
-    expect(result.current.uploadedImages[0].thumbnail_url).toBe('https://cdn.example.com/thumb.png');
+    expect(quoted.original_url).toBe('https://cdn.example.com/original.png');
+    expect(quoted.thumbnail_url).toBe('https://cdn.example.com/thumb.png');
   });
 
   it('should reject quoted thumbnail URL when original URL is missing', () => {

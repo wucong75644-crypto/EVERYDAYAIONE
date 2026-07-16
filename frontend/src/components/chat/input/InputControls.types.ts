@@ -9,10 +9,8 @@ import type {
   VideoFrames,
 } from '../../../constants/models';
 import type { RecordingState } from '../../../hooks/useAudioRecording';
-import type { UploadedFile } from '../../../hooks/useFileUpload';
 import type { MentionResult } from '../../../hooks/useFileMention';
-import type { UploadedImage } from '../../../hooks/useImageUpload';
-import type { WorkspaceFile } from '../../../services/workspace';
+import type { ChatAttachment } from '../attachments/ChatAttachment.types';
 
 export interface InputControlsProps {
   prompt: string;
@@ -67,13 +65,8 @@ export interface InputControlsProps {
   onMaxOutputTokensChange?: (value: number) => void;
   onSaveSettings: () => void;
   onResetSettings: () => void;
-  images: UploadedImage[];
-  isUploading: boolean;
-  onRemoveImage: (imageId: string) => void;
-  files: UploadedFile[];
-  onRemoveFile: (fileId: string) => void;
-  workspaceFiles?: WorkspaceFile[];
-  onRemoveWorkspaceFile?: (workspacePath: string) => void;
+  attachments: ChatAttachment[];
+  onRemoveAttachment: (id: string) => void;
   onOpenWorkspace?: () => void;
   onUnifiedFiles?: (files: File[]) => void;
   workspaceOpen?: boolean;

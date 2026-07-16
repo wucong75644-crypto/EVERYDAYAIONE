@@ -14,7 +14,7 @@ interface PreviewHostProps {
   onClose: () => void;
   /** 切换索引（图片/视频上下张）*/
   onIndexChange: (i: number) => void;
-  /** 删除当前预览项（仅聊天输入框的 ImagePreview 场景使用）*/
+  /** 删除当前预览项（仅聊天输入框的附件预览场景使用）*/
   onDelete?: () => void;
 }
 

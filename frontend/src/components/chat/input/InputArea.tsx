@@ -7,8 +7,6 @@ import { useState, useEffect, useCallback } from 'react';
 // lucide-react icons moved to InputControls (AI button now inside input)
 import { updateConversation } from '../../../services/conversation';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
-import { useImageUpload } from '../../../hooks/useImageUpload';
-import { useFileUpload } from '../../../hooks/useFileUpload';
 import { useModelSelection } from '../../../hooks/useModelSelection';
 import { useAudioRecording } from '../../../hooks/useAudioRecording';
 import { useSettingsManager } from '../../../hooks/useSettingsManager';
@@ -24,9 +22,9 @@ import UploadErrorBar from './UploadErrorBar';
 import { useInputTaskControls } from './useInputTaskControls';
 import { useInputSubmission } from './useInputSubmission';
 import { useInputExternalEvents } from './useInputExternalEvents';
-import { hasValidWorkspaceImage } from './attachmentNormalization';
 import { useInputDraftTransaction } from './useInputDraftTransaction';
 import { ECOM_TAB_COMPLETIONS, ECOM_TAB_KEYS_SORTED } from './inputCompletions';
+import { useChatAttachmentContext } from '../attachments/ChatAttachmentContext';
 
 interface InputAreaProps {
   conversationId: string | null;
@@ -45,14 +43,6 @@ interface InputAreaProps {
   prompt?: string;
   /** prompt 变更回调 */
   onPromptChange?: (value: string) => void;
-  /** 工作区待发送文件（"插入到聊天"功能） */
-  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
-  /** 添加单个工作区文件（@ 提及选中时调用） */
-  onAddWorkspaceFile?: (file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => void;
-  /** 移除单个工作区文件 */
-  onRemoveWorkspaceFile?: (workspacePath: string) => void;
-  /** 发送后清空工作区文件队列 */
-  onWorkspaceFilesConsumed?: () => void;
   /** 切换工作区视图 */
   onOpenWorkspace?: () => void;
   /** 工作区是否已打开 */
@@ -71,10 +61,6 @@ export default function InputArea({
   onModelChange,
   prompt: controlledPrompt,
   onPromptChange: controlledOnPromptChange,
-  workspaceFiles = [],
-  onAddWorkspaceFile,
-  onRemoveWorkspaceFile,
-  onWorkspaceFilesConsumed,
   onOpenWorkspace,
   workspaceOpen = false,
   compact = false,
@@ -106,35 +92,12 @@ export default function InputArea({
     setChatSetting('smartSubMode', mode as import('../../../hooks/useSettingsManager').SmartSubMode);
   }, [setChatSetting]);
 
-  // 图片上传 Hook
   const {
-    images,
-    uploadedImageUrls,
-    uploadedImages,
-    isUploading,
-    uploadError: imageUploadError,
-    hasImages,
-    hasQuotedImage,
-    handleImageFiles,
-    handleRemoveImage: removeImageById,
-    handleRemoveAllImages,
-    detachImagesForSubmission,
-    addQuotedImage,
-    clearUploadError,
-  } = useImageUpload();
-
-  // 通用文档/数据/文本上传 Hook（非图片走这条）
-  const {
-    files,
-    uploadedFileUrls,
-    isUploading: isFileUploading,
-    uploadError: fileUploadError,
-    hasFiles,
-    handleFileUpload,
-    handleRemoveFile,
-    detachFilesForSubmission,
-    clearUploadError: clearFileUploadError,
-  } = useFileUpload();
+    attachments, submissionSnapshot,
+    isUploading, hasImages, hasQuotedImage, hasFiles, uploadError: attachmentUploadError,
+    addLocalFiles, addWorkspaceFile, removeAttachment,
+    clearImages, detachForSubmission, clearUploadErrors,
+  } = useChatAttachmentContext();
 
   // 音频录制 Hook
   const {
@@ -149,12 +112,13 @@ export default function InputArea({
 
   // @ 文件提及 Hook
   const fileMention = useFileMention();
+  const consumeMention = fileMention.consumeMention;
   // @ 提及选中文件：添加到 workspaceFiles + 用 hook 精准移除 @keyword
   const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => {
-    onAddWorkspaceFile?.(file);
+    addWorkspaceFile(file);
     // consumeMention 用 hook 内部记录的精准 @ 起始位置做替换，不依赖 lastIndexOf
-    setPrompt(fileMention.consumeMention(prompt));
-  }, [onAddWorkspaceFile, prompt, setPrompt, fileMention.consumeMention]);
+    setPrompt(consumeMention(prompt));
+  }, [addWorkspaceFile, consumeMention, prompt, setPrompt]);
 
   // 构建当前 chat_settings 快照（创建对话时保存）
   const buildChatSettingsPayload = useCallback(() => ({
@@ -183,7 +147,9 @@ export default function InputArea({
     }
   }, [conversationId]);
 
-  const hasWorkspaceImage = hasValidWorkspaceImage(workspaceFiles); // 纳入模型图片能力判断
+  const hasWorkspaceImage = attachments.some(
+    (item) => item.kind === 'image' && item.source === 'workspace' && item.status === 'ready',
+  );
   const {
     selectedModel,
     modelConflict,
@@ -216,17 +182,16 @@ export default function InputArea({
         else docs.push(f);
       }
       if (images.length > 0) {
-        handleImageFiles(
-          images,
-          selectedModel.capabilities.maxImages,
-          selectedModel.capabilities.maxFileSize,
-        );
+        void addLocalFiles(images, {
+          maxImages: selectedModel.capabilities.maxImages,
+          maxImageSizeMB: selectedModel.capabilities.maxFileSize,
+        });
       }
-      if (docs.length > 0) {
-        handleFileUpload(docs, selectedModel.capabilities.maxPDFSize);
-      }
+      if (docs.length > 0) void addLocalFiles(docs, {
+        maxFileSizeMB: selectedModel.capabilities.maxPDFSize,
+      });
     },
-    [handleImageFiles, handleFileUpload, selectedModel],
+    [addLocalFiles, selectedModel],
   );
 
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
@@ -241,16 +206,6 @@ export default function InputArea({
   useEffect(() => {
     if (!isSmart) setSmartSubMode('chat');
   }, [isSmart]);
-
-  // 监听图片引用事件（从 AI 生成图片右键菜单触发）
-  useEffect(() => {
-    const handleQuoteImage = (e: Event) => {
-      const { url, thumbnailUrl } = (e as CustomEvent<{ url: string; thumbnailUrl?: string; messageId: string }>).detail;
-      addQuotedImage(url, thumbnailUrl);
-    };
-    window.addEventListener('chat:quote-image', handleQuoteImage);
-    return () => window.removeEventListener('chat:quote-image', handleQuoteImage);
-  }, [addQuotedImage]);
 
   // 流式状态检测
   const isStreaming = useMessageStore((s) =>
@@ -298,10 +253,10 @@ export default function InputArea({
 
   // 同步上传错误（移到 useEffect 避免渲染期间 setState）
   useEffect(() => {
-    if (imageUploadError && !uploadError) {
-      setUploadError(imageUploadError);
+    if (attachmentUploadError && !uploadError) {
+      setUploadError(attachmentUploadError);
     }
-  }, [imageUploadError, uploadError]);
+  }, [attachmentUploadError, uploadError]);
 
   useEffect(() => {
     if (audioRecordingError && !uploadError) {
@@ -309,25 +264,8 @@ export default function InputArea({
     }
   }, [audioRecordingError, uploadError]);
 
-  useEffect(() => {
-    if (fileUploadError && !uploadError) {
-      setUploadError(fileUploadError);
-    }
-  }, [fileUploadError, uploadError]);
-
-  // 包装 handleRemoveImage 以清除错误
-  const handleRemoveImage = useCallback((imageId: string) => {
-    removeImageById(imageId);
-    setUploadError(null);
-  }, [removeImageById]);
-  const {
-    clearPromptForSubmission,
-    restorePromptAfterRejection,
-    detachWorkspaceFilesForSubmission,
-  } = useInputDraftTransaction({
-    prompt, setPrompt, workspaceFiles,
-    consumeWorkspaceFiles: onWorkspaceFilesConsumed,
-    addWorkspaceFile: onAddWorkspaceFile,
+  const { clearPromptForSubmission, restorePromptAfterRejection } = useInputDraftTransaction({
+    prompt, setPrompt,
   });
   const { handleAudioSubmit, handleSubmit } = useInputSubmission({
     conversationId, selectedModel, prompt, clearPromptForSubmission,
@@ -336,10 +274,9 @@ export default function InputArea({
     buildChatSettingsPayload, onConversationCreated, onMessageSent,
     handleChatMessage, handleImageGeneration, handleVideoGeneration,
     isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer,
-    isUploading, isFileUploading, hasImages, hasFiles,
-    uploadedImageUrls, uploadedImages, uploadedFileUrls, workspaceFiles,
-    getSendButtonState, detachImagesForSubmission, detachFilesForSubmission,
-    detachWorkspaceFilesForSubmission,
+    isUploading, hasImages, hasFiles,
+    attachmentSnapshot: submissionSnapshot,
+    getSendButtonState, detachAttachmentsForSubmission: detachForSubmission,
   });
 
   // 键盘快捷键（Tab 补全用模块级常量 ECOM_TAB_COMPLETIONS / ECOM_TAB_KEYS_SORTED）
@@ -374,13 +311,13 @@ export default function InputArea({
   useInputExternalEvents({
     conversationId,
     prompt,
-    uploadedImageUrls,
+    attachmentSnapshot: submissionSnapshot,
     handleImageGeneration,
     handleChatMessage,
   });
 
-  const anyUploadingState = isUploading || isFileUploading;
-  const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || hasImages || hasFiles || workspaceFiles.length > 0));
+  const anyUploadingState = isUploading;
+  const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || attachments.length > 0));
 
   // 输入变化时清除发送错误状态 + 隐藏建议
   const handlePromptChange = useCallback((value: string) => {
@@ -400,8 +337,7 @@ export default function InputArea({
           error={uploadError}
           onDismiss={() => {
             setUploadError(null);
-            clearUploadError();
-            clearFileUploadError();
+            clearUploadErrors();
           }}
         />
 
@@ -409,7 +345,7 @@ export default function InputArea({
         <ConflictAlert
           conflict={modelConflict?.type === 'requires_image' ? null : modelConflict}
           onSwitchModel={handleUserSelectModel}
-          onRemoveImage={handleRemoveAllImages}
+          onRemoveImage={clearImages}
         />
 
         {/* 主输入控件 */}
@@ -461,13 +397,8 @@ export default function InputArea({
           onMaxOutputTokensChange={(v) => setChatSetting('maxOutputTokens', v)}
           onSaveSettings={handleSaveSettings}
           onResetSettings={handleResetSettings}
-          images={images}
-          isUploading={isUploading}
-          onRemoveImage={handleRemoveImage}
-          files={files}
-          onRemoveFile={handleRemoveFile}
-          workspaceFiles={workspaceFiles}
-          onRemoveWorkspaceFile={onRemoveWorkspaceFile}
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
           onOpenWorkspace={onOpenWorkspace}
           onUnifiedFiles={handleUnifiedFiles}
           workspaceOpen={workspaceOpen}

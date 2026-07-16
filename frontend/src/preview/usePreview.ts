@@ -3,7 +3,7 @@
  *
  * 取代调用方各自维护的多个预览 state：
  *   - WorkspaceView 原本有 previewFile / previewImageIndex / previewVideoIndex 三个 state
- *   - FileCard、ImagePreview、MessageItem 各自有 previewFile / previewIndex
+ *   - FileCard、ChatAttachmentPreview、MessageItem 各自有 previewFile / previewIndex
  *
  * 现在都收敛到一个 hook。
  */

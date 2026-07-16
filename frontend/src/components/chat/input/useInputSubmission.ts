@@ -5,10 +5,12 @@ import { ApiRequestError } from '../../../services/api';
 import { createConversation, type ChatSettings } from '../../../services/conversation';
 import type { ModelType, UnifiedModel } from '../../../constants/models';
 import type { ImageInputInfo } from '../../../services/messageSender';
-import type { WorkspaceFile } from '../../../services/workspace';
 import type { Message } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
-import { normalizeSubmissionAttachments } from './attachmentNormalization';
+import type {
+  AttachmentDraftTransaction,
+  AttachmentSubmissionSnapshot,
+} from '../attachments/ChatAttachment.types';
 
 export interface UseInputSubmissionOptions {
   conversationId: string | null;
@@ -48,23 +50,11 @@ export interface UseInputSubmissionOptions {
   isStreaming: boolean;
   sendSteer: (message: string) => void;
   isUploading: boolean;
-  isFileUploading: boolean;
   hasImages: boolean;
   hasFiles: boolean;
-  uploadedImageUrls: string[];
-  uploadedImages: ImageInputInfo[];
-  uploadedFileUrls: Array<{
-    url: string;
-    name: string;
-    mime_type: string;
-    size: number;
-    workspace_path?: string;
-  }>;
-  workspaceFiles: WorkspaceFile[];
+  attachmentSnapshot: AttachmentSubmissionSnapshot;
   getSendButtonState: (isSubmitting: boolean, isUploading: boolean, hasContent: boolean) => { disabled: boolean };
-  detachImagesForSubmission: () => () => void;
-  detachFilesForSubmission: () => () => void;
-  detachWorkspaceFilesForSubmission: () => () => void;
+  detachAttachmentsForSubmission: () => AttachmentDraftTransaction;
 }
 
 export function useInputSubmission(options: UseInputSubmissionOptions) {
@@ -100,19 +90,14 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
       return;
     }
 
-    const hasWorkspaceFiles = options.workspaceFiles.length > 0;
+    const hasAttachments = options.attachmentSnapshot.attachments.length > 0;
     const state = options.getSendButtonState(
       options.isSubmitting,
-      options.isUploading || options.isFileUploading,
-      !!(options.prompt.trim() || options.hasImages || options.hasFiles || hasWorkspaceFiles),
+      options.isUploading,
+      !!(options.prompt.trim() || options.hasImages || options.hasFiles || hasAttachments),
     );
     if (state.disabled) return;
-    const attachments = normalizeSubmissionAttachments({
-      uploadedImageUrls: options.uploadedImageUrls,
-      uploadedImages: options.uploadedImages,
-      uploadedFiles: options.uploadedFileUrls,
-      workspaceFiles: options.workspaceFiles,
-    });
+    const attachments = options.attachmentSnapshot;
     const hasSubmissionImages = attachments.imageUrls.length > 0;
     if (options.smartSubMode === 'image-i2i' && !hasSubmissionImages) {
       toast.error('图生图模式请先上传参考图片');
@@ -120,12 +105,12 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     }
     if (options.smartSubMode === 'image-ecom'
       && options.hasImages
-      && options.uploadedImageUrls.length === 0) {
+      && attachments.imageUrls.length === 0) {
       toast.error('图片还在上传中，请稍候');
       return;
     }
-    if (options.effectiveModelType !== 'chat' && attachments.invalidWorkspaceImages.length > 0) {
-      toast.error('工作区图片缺少可用原图地址');
+    if (options.effectiveModelType !== 'chat' && attachments.invalidImages.length > 0) {
+      toast.error('图片缺少可用原图地址');
       return;
     }
     const maxImages = options.selectedModel.capabilities?.maxImages;
@@ -141,9 +126,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     const fileData = attachments.files.length ? attachments.files : null;
 
     options.clearPromptForSubmission();
-    const restoreImages = options.detachImagesForSubmission();
-    const restoreFiles = options.detachFilesForSubmission();
-    const restoreWorkspaceFiles = options.detachWorkspaceFilesForSubmission();
+    const attachmentTransaction = options.detachAttachmentsForSubmission();
 
     options.setIsSubmitting(true);
     window.dispatchEvent(new Event('chat:scroll-to-bottom'));
@@ -179,9 +162,7 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
         : 'rejected';
       if (disposition === 'rejected') {
         options.restorePromptAfterRejection(message);
-        restoreImages();
-        restoreFiles();
-        restoreWorkspaceFiles();
+        attachmentTransaction.restore();
       }
       const fallbackMessage = disposition === 'uncertain'
         ? '发送状态确认中，请勿重复发送'

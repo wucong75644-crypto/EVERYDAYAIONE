@@ -2,11 +2,12 @@ import { useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
+import type { AttachmentSubmissionSnapshot } from '../attachments/ChatAttachment.types';
 
 interface UseInputExternalEventsOptions {
   conversationId: string | null;
   prompt: string;
-  uploadedImageUrls: string[];
+  attachmentSnapshot: AttachmentSubmissionSnapshot;
   handleImageGeneration: (
     conversationId: string,
     prompt: string,
@@ -17,17 +18,18 @@ interface UseInputExternalEventsOptions {
 }
 
 export function useInputExternalEvents(options: UseInputExternalEventsOptions) {
+  const {
+    attachmentSnapshot, conversationId, handleChatMessage, handleImageGeneration, prompt,
+  } = options;
   useEffect(() => {
     const handler = async (event: Event) => {
       const { images, conversationId } = (event as CustomEvent).detail || {};
       if (!images || !conversationId) return;
       try {
-        const imageUrls = options.uploadedImageUrls.length > 0
-          ? options.uploadedImageUrls
-          : [];
-        await options.handleImageGeneration(
+        const imageUrls = attachmentSnapshot.imageUrls;
+        await handleImageGeneration(
           conversationId,
-          options.prompt || '电商主图生成',
+          prompt || '电商主图生成',
           imageUrls,
           {
             generation_type_override: 'image_ecom',
@@ -44,21 +46,21 @@ export function useInputExternalEvents(options: UseInputExternalEventsOptions) {
     };
     window.addEventListener('ecom:confirm-generate', handler);
     return () => window.removeEventListener('ecom:confirm-generate', handler);
-  }, [options.prompt, options.uploadedImageUrls, options.handleImageGeneration]);
+  }, [attachmentSnapshot, handleImageGeneration, prompt]);
 
   useEffect(() => {
     const handler = async (event: Event) => {
       const text = (event as CustomEvent<{ text: string }>).detail?.text;
-      if (!text || !options.conversationId) return;
-      useMessageStore.getState().clearSuggestions(options.conversationId);
+      if (!text || !conversationId) return;
+      useMessageStore.getState().clearSuggestions(conversationId);
       window.dispatchEvent(new Event('chat:scroll-to-bottom'));
       try {
-        await options.handleChatMessage(text, options.conversationId);
+        await handleChatMessage(text, conversationId);
       } catch (error) {
         logger.error('inputArea', '发送建议失败', error);
       }
     };
     window.addEventListener('chat:send-suggestion', handler);
     return () => window.removeEventListener('chat:send-suggestion', handler);
-  }, [options.conversationId, options.handleChatMessage]);
+  }, [conversationId, handleChatMessage]);
 }

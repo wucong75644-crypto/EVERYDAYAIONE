@@ -146,20 +146,10 @@ export function useFileUpload() {
   const clearUploadError = () => setUploadError(null);
 
   const isUploading = files.some((f) => f.isUploading);
-  const uploadedFileUrls = files
-    .filter((f) => f.url !== null)
-    .map((f) => ({
-      url: f.url as string,
-      name: f.name,
-      mime_type: f.mime_type,
-      size: f.size,
-      workspace_path: f.workspace_path,
-    }));
   const hasFiles = files.length > 0;
 
   return {
     files,
-    uploadedFileUrls,
     isUploading,
     uploadError,
     hasFiles,

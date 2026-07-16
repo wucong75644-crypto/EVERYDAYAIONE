@@ -210,6 +210,25 @@ function createOriginalImagePart(url: string): ContentPart {
   };
 }
 
+function toImagePart(image: string | ImageInputInfo): ContentPart {
+  if (typeof image === 'string') return createOriginalImagePart(image);
+  return {
+    type: 'image',
+    url: pickOriginalImageUrl(image.url, image.original_url, image.download_url, image.preview_url),
+    original_url: pickOriginalImageUrl(image.original_url, image.download_url, image.preview_url, image.url),
+    ...(image.thumbnail_url ? { thumbnail_url: image.thumbnail_url } : {}),
+    preview_url: pickOriginalImageUrl(image.preview_url, image.original_url, image.download_url, image.url),
+    download_url: pickOriginalImageUrl(image.download_url, image.original_url, image.preview_url, image.url),
+    ...(image.asset_id ? { asset_id: image.asset_id } : {}),
+    ...(image.name ? { name: image.name } : {}),
+    ...(image.workspace_path ? { workspace_path: image.workspace_path } : {}),
+    ...(image.mime_type ? { mime_type: image.mime_type } : {}),
+    ...(image.size ? { size: image.size } : {}),
+    ...(image.width ? { width: image.width } : {}),
+    ...(image.height ? { height: image.height } : {}),
+  };
+}
+
 /**
  * 创建图文混合内容（多图）
  *
@@ -221,27 +240,9 @@ export function createTextWithImages(
   text: string,
   images: string[] | ImageInputInfo[],
 ): ContentPart[] {
-  const normalize = (img: string | ImageInputInfo) =>
-    typeof img === 'string'
-      ? createOriginalImagePart(img)
-      : {
-          type: 'image' as const,
-          url: pickOriginalImageUrl(img.url, img.original_url, img.download_url, img.preview_url),
-          original_url: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url),
-          ...(img.thumbnail_url ? { thumbnail_url: img.thumbnail_url } : {}),
-          preview_url: pickOriginalImageUrl(img.preview_url, img.original_url, img.download_url, img.url),
-          download_url: pickOriginalImageUrl(img.download_url, img.original_url, img.preview_url, img.url),
-          ...(img.asset_id ? { asset_id: img.asset_id } : {}),
-          ...(img.name ? { name: img.name } : {}),
-          ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
-          ...(img.mime_type ? { mime_type: img.mime_type } : {}),
-          ...(img.size ? { size: img.size } : {}),
-          ...(img.width ? { width: img.width } : {}),
-          ...(img.height ? { height: img.height } : {}),
-        };
   return [
     { type: 'text', text },
-    ...(images as Array<string | ImageInputInfo>).map(normalize),
+    ...(images as Array<string | ImageInputInfo>).map(toImagePart),
   ];
 }
 
@@ -255,28 +256,10 @@ export function createTextWithFiles(
   imageUrls: string[] | ImageInputInfo[] | null,
   files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[],
 ): ContentPart[] {
-  const normalizeImg = (img: string | ImageInputInfo) =>
-    typeof img === 'string'
-      ? createOriginalImagePart(img)
-      : {
-          type: 'image' as const,
-          url: pickOriginalImageUrl(img.url, img.original_url, img.download_url, img.preview_url),
-          original_url: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url),
-          ...(img.thumbnail_url ? { thumbnail_url: img.thumbnail_url } : {}),
-          preview_url: pickOriginalImageUrl(img.preview_url, img.original_url, img.download_url, img.url),
-          download_url: pickOriginalImageUrl(img.download_url, img.original_url, img.preview_url, img.url),
-          ...(img.asset_id ? { asset_id: img.asset_id } : {}),
-          ...(img.name ? { name: img.name } : {}),
-          ...(img.workspace_path ? { workspace_path: img.workspace_path } : {}),
-          ...(img.mime_type ? { mime_type: img.mime_type } : {}),
-          ...(img.size ? { size: img.size } : {}),
-          ...(img.width ? { width: img.width } : {}),
-          ...(img.height ? { height: img.height } : {}),
-        };
   const images = (imageUrls || []) as Array<string | ImageInputInfo>;
   return [
     { type: 'text', text },
-    ...images.map(normalizeImg),
+    ...images.map(toImagePart),
     ...files.map(f => ({
       type: 'file' as const,
       url: f.url,

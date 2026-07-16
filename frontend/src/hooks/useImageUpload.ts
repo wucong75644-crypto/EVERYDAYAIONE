@@ -292,32 +292,11 @@ export function useImageUpload() {
 
   // 计算派生状态
   const isUploading = images.some((img) => img.isUploading);
-  const uploadedImageUrls = images
-    .filter((img) => img.url !== null)
-    .map((img) => toOriginalImageUrl(img.url as string));
-  // 完整图片元数据（含 workspace_path/name），构造 ImagePart 时透传
-  const uploadedImages = images
-    .filter((img) => img.url !== null)
-    .map((img) => ({
-      url: toOriginalImageUrl(img.url as string),
-      original_url: pickOriginalImageUrl(img.original_url, img.download_url, img.preview_url, img.url as string),
-      thumbnail_url: img.thumbnail_url,
-      preview_url: pickOriginalImageUrl(img.preview_url, img.original_url, img.download_url, img.url as string),
-      download_url: pickOriginalImageUrl(img.download_url, img.original_url, img.preview_url, img.url as string),
-      name: img.name,
-      workspace_path: img.workspace_path,
-      mime_type: img.mime_type,
-      size: img.size,
-    }));
-  const previewUrls = images.map((img) => img.preview);
   const hasImages = images.length > 0;
   const hasQuotedImage = images.some((img) => img.isQuoted);
 
   return {
     images, // 所有图片记录
-    uploadedImageUrls, // 已上传/引用的原图 URL 数组（给图片/视频生成接口使用）
-    uploadedImages, // 完整元数据数组（含 workspace_path，构造 ImagePart 用）
-    previewUrls, // 本地预览 URL 数组（ObjectURL，用于消息显示）
     isUploading, // 是否有图片正在上传
     uploadError, // 上传错误信息
     hasImages, // 是否有图片
