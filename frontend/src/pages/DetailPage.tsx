@@ -8,8 +8,10 @@ import { AnalyzingPanel } from '../components/detail-page/AnalyzingPanel';
 import { PlanReviewPanel } from '../components/detail-page/PlanReviewPanel';
 import { GenerationProgress } from '../components/detail-page/GenerationProgress';
 import { ResultGallery } from '../components/detail-page/ResultGallery';
+import { RequirementAssistModal } from '../components/detail-page/RequirementAssistModal';
 import { Card } from '../components/ui/Card';
 import { PageTransition } from '../components/motion/PageTransition';
+import { useDetailRequirementAssist } from '../hooks/useDetailRequirementAssist';
 import { DETAIL_STEP_LABELS } from '../mocks/detailPageMocks';
 import { useDetailPageStore } from '../stores/useDetailPageStore';
 
@@ -25,6 +27,8 @@ export default function DetailPage() {
   const step = useDetailPageStore((state) => state.step);
   const images = useDetailPageStore((state) => state.images);
   const form = useDetailPageStore((state) => state.form);
+  const projectId = useDetailPageStore((state) => state.projectId);
+  const isHydrating = useDetailPageStore((state) => state.isHydrating);
   const formError = useDetailPageStore((state) => state.formError);
   const analysisStage = useDetailPageStore((state) => state.analysisStage);
   const plan = useDetailPageStore((state) => state.plan);
@@ -46,6 +50,20 @@ export default function DetailPage() {
   const reset = useDetailPageStore((state) => state.reset);
   const hydrateDraft = useDetailPageStore((state) => state.hydrateDraft);
   const hasProductImage = images.some((image) => image.category === 'product');
+  const hasReadyProductImage = images.some((image) => image.category === 'product' && image.status === 'ready');
+  const hasPendingImage = images.some((image) => ['local', 'uploading', 'attaching'].includes(image.status));
+  const requirementAssist = useDetailRequirementAssist();
+  const requirementAssistDisabled = isHydrating || !projectId || !hasReadyProductImage || hasPendingImage;
+
+  const openRequirementAssist = () => {
+    if (!projectId || requirementAssistDisabled) return;
+    void requirementAssist.open(projectId, form);
+  };
+
+  const confirmRequirementAssist = (brief: string) => {
+    updateForm({ requirement: brief });
+    requirementAssist.close();
+  };
 
   useEffect(() => {
     void hydrateDraft();
@@ -60,7 +78,7 @@ export default function DetailPage() {
         <section className="mt-4 grid lg:grid-cols-[440px_minmax(0,1fr)] gap-5">
           <Card variant="elevated" padding="md" className="min-h-[520px]">
             <ProductImageSection images={images} error={formError} disabled={step !== 1} onAdd={addImages} onWorkspaceAdd={attachWorkspaceImages} onRemove={removeImage} />
-            <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} onChange={updateForm} onAnalyze={startAnalysis} />
+            <GenerationSettings form={form} hasProductImage={hasProductImage} disabled={step !== 1} requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={startAnalysis} />
           </Card>
           <Card variant="elevated" padding="lg" className="min-h-[520px] flex items-center justify-center text-center">
             {step === 2 ? <AnalyzingPanel stage={analysisStage} onCancel={cancelAnalysis} /> : step === 3 ? <PlanReviewPanel plan={plan} error={formError} onChange={updatePlanItem} onRemove={removePlanItem} onBack={() => setStep(1)} onReplan={replan} onConfirm={startGeneration} /> : step === 4 ? <GenerationProgress items={generationItems} onRetry={retryGeneration} /> : step === 5 ? <ResultGallery items={generationItems} onRetry={retryGeneration} onRestart={restart} onBack={backToPlan} /> : <div>
@@ -73,6 +91,19 @@ export default function DetailPage() {
           </Card>
         </section>
       </main>
+      <RequirementAssistModal
+        isOpen={requirementAssist.isOpen}
+        isLoading={requirementAssist.isLoading}
+        result={requirementAssist.result}
+        selectedId={requirementAssist.selectedId}
+        selectedBrief={requirementAssist.selectedBrief}
+        error={requirementAssist.error}
+        onClose={requirementAssist.close}
+        onSelect={requirementAssist.selectSuggestion}
+        onDraftChange={requirementAssist.updateDraft}
+        onRegenerate={() => void requirementAssist.regenerate()}
+        onConfirm={confirmRequirementAssist}
+      />
     </PageTransition>
   );
 }

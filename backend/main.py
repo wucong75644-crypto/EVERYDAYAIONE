@@ -17,7 +17,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
-    admin_users, audio, auth, conversation, detail_project, error_monitor, file, health, image, image_ecom,
+    admin_users, audio, auth, conversation, detail_project, ecom_requirement, error_monitor, file, health, image, image_ecom,
     kuaimai_external, memory, message, models, org, org_members_assignments,
     pdd, qimen, scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
     wecom_chat_targets, ws,
@@ -509,6 +509,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 电商图模式（提示词增强 + 单张重试）
     app.include_router(image_ecom.router, prefix="/api")
+
+    # 电商图 AI 帮写（三套通用创作简报）
+    app.include_router(ecom_requirement.router, prefix="/api")
 
     # 文件上传（PDF 等文档）
     app.include_router(file.router, prefix="/api")

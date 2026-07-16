@@ -78,6 +78,40 @@ def test_get_current_does_not_create_empty_draft(tmp_path) -> None:
     assert service.get_current() is None
 
 
+def test_get_ai_input_project_requires_product_image(tmp_path) -> None:
+    service = _service(tmp_path)
+    project = {
+        "id": "project-1",
+        "images": [{"category": "reference", "status": "ready", "original_url": "https://cdn/ref.png"}],
+    }
+    with patch.object(service, "_require_project", return_value=project):
+        with pytest.raises(AppException) as exc:
+            service.get_ai_input_project("project-1")
+    assert exc.value.code == "DETAIL_PRODUCT_IMAGE_REQUIRED"
+
+
+def test_get_ai_input_project_rejects_missing_image(tmp_path) -> None:
+    service = _service(tmp_path)
+    project = {
+        "id": "project-1",
+        "images": [{"category": "product", "status": "missing", "original_url": None}],
+    }
+    with patch.object(service, "_require_project", return_value=project):
+        with pytest.raises(AppException) as exc:
+            service.get_ai_input_project("project-1")
+    assert exc.value.code == "DETAIL_IMAGE_NOT_READY"
+
+
+def test_get_ai_input_project_returns_ready_images(tmp_path) -> None:
+    service = _service(tmp_path)
+    project = {
+        "id": "project-1",
+        "images": [{"category": "product", "status": "ready", "original_url": "https://cdn/p.png"}],
+    }
+    with patch.object(service, "_require_project", return_value=project):
+        assert service.get_ai_input_project("project-1") is project
+
+
 def test_attach_calls_atomic_function_and_returns_current(tmp_path) -> None:
     service = _service(tmp_path)
     target = service.executor.resolve_safe_path("valid.png")

@@ -8,7 +8,9 @@ interface GenerationSettingsProps {
   form: DetailGenerationForm;
   hasProductImage: boolean;
   disabled?: boolean;
+  requirementAssistDisabled?: boolean;
   onChange: (patch: Partial<DetailGenerationForm>) => void;
+  onRequirementAssist: () => void;
   onAnalyze: () => void;
 }
 
@@ -19,7 +21,7 @@ const ratioOptions = ['1:1', '3:4', '4:5', '16:9'].map((value) => ({ value, labe
 const qualityOptions = [{ value: '1k', label: '1K 标准' }, { value: '2k', label: '2K 高清' }, { value: '4k', label: '4K 超清' }] as const;
 const countOptions = Array.from({ length: 9 }, (_, index) => ({ value: String(index + 1), label: `${index + 1} 张` }));
 
-export function GenerationSettings({ form, hasProductImage, disabled = false, onChange, onAnalyze }: GenerationSettingsProps) {
+export function GenerationSettings({ form, hasProductImage, disabled = false, requirementAssistDisabled = false, onChange, onRequirementAssist, onAnalyze }: GenerationSettingsProps) {
   const requirementLabel = form.contentType === 'main_image' ? '主图要求' : '详情图要求';
 
   return (
@@ -43,7 +45,7 @@ export function GenerationSettings({ form, hasProductImage, disabled = false, on
       <div>
         <div className="flex items-center justify-between gap-3">
           <label htmlFor="detail-requirement" className="text-sm font-medium text-[var(--s-text-secondary)]">{requirementLabel}</label>
-          <Button variant="ghost" size="sm" icon={<Sparkles className="w-4 h-4" />} disabled={disabled} onClick={() => onChange({ requirement: '突出产品核心卖点，画面简洁，适合目标电商平台展示。' })}>AI 帮写</Button>
+          <Button variant="ghost" size="sm" icon={<Sparkles className="w-4 h-4" />} disabled={disabled || requirementAssistDisabled} onClick={onRequirementAssist}>AI 帮写</Button>
         </div>
         <textarea id="detail-requirement" disabled={disabled} value={form.requirement} onChange={(event) => onChange({ requirement: event.target.value })} placeholder="建议输入：产品名称、核心卖点、目标人群、图片风格等" className={`${selectClass} min-h-20 lg:min-h-[72px] resize-y`} />
       </div>

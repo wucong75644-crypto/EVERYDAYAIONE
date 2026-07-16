@@ -44,6 +44,16 @@ class DetailProjectService:
         project["images"] = [self._serialize_image(dict(item)) for item in images]
         return project
 
+    def get_ai_input_project(self, project_id: str) -> dict:
+        """读取当前用户可用于 AI 分析的草稿，并验证图片就绪状态。"""
+        project = self._require_project(project_id)
+        images = project.get("images") or []
+        if not any(image.get("category") == "product" for image in images):
+            raise AppException("DETAIL_PRODUCT_IMAGE_REQUIRED", "请至少上传1张产品图", 400)
+        if any(image.get("status") != "ready" or not image.get("original_url") for image in images):
+            raise AppException("DETAIL_IMAGE_NOT_READY", "项目图片仍在上传或已失效", 409)
+        return project
+
     def attach_image(self, workspace_path: str, category: str) -> dict:
         self._validate_workspace_image(workspace_path)
         try:

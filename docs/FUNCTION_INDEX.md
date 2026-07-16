@@ -327,11 +327,11 @@
 
 | 函数/组件 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |---|---|---|---|---|
-| `DetailPage` | `frontend/src/pages/DetailPage.tsx` | 独立五步制作页面骨架 | - | JSX |
+| `DetailPage` | `frontend/src/pages/DetailPage.tsx` | 独立五步制作页，连接 AI 帮写请求、弹窗和需求回填 | - | JSX |
 | `DetailPageHeader` | `frontend/src/components/detail-page/DetailPageHeader.tsx` | 顶部返回、积分和用户入口 | - | JSX |
 | `StepBar` | `frontend/src/components/detail-page/StepBar.tsx` | 五步进度展示 | step | JSX |
 | `ProductImageSection` | `frontend/src/components/detail-page/ProductImageSection.tsx` | 产品图/参考图本地选择与共享上限展示 | images, actions | JSX |
-| `GenerationSettings` | `frontend/src/components/detail-page/GenerationSettings.tsx` | Step 1生成参数表单 | form, actions | JSX |
+| `GenerationSettings` | `frontend/src/components/detail-page/GenerationSettings.tsx` | Step 1生成参数表单及 AI 帮写入口 | form, requirementAssistDisabled, actions | JSX |
 | `AnalyzingPanel` | `frontend/src/components/detail-page/AnalyzingPanel.tsx` | Step 2 分阶段分析反馈与取消 | stage, onCancel | JSX |
 | `PlanReviewPanel` | `frontend/src/components/detail-page/PlanReviewPanel.tsx` | Step 3 规划确认与页面操作 | plan, actions | JSX |
 | `PlanCard` | `frontend/src/components/detail-page/PlanCard.tsx` | 单张规划编辑、折叠提示词与删除 | item, actions | JSX |
@@ -1269,3 +1269,28 @@
 | `build_thumbnail_resolver` | `backend/scripts/backfill_media_asset_urls.py` | 生产回填时从 NAS 原图生成并上传独立缩略图对象 |
 | `merge_stats` | `backend/scripts/backfill_media_asset_urls.py` | 合并回填统计 |
 | `main` | `backend/scripts/backfill_media_asset_urls.py` | CLI 入口，支持 `--dry-run` / `--apply` / `--limit` / `--sync-thumbnails` |
+| `encode_image` | `backend/scripts/poc_ecom_requirement_assist.py` | 将本地产品图/参考图编码为多模态 data URL |
+| `parse_json_response` | `backend/scripts/poc_ecom_requirement_assist.py` | 解析并清理模型返回的 JSON 方案 |
+| `validate_result` | `backend/scripts/poc_ecom_requirement_assist.py` | 校验共享事实与三套创作简报的结构 |
+| `evaluate_result` | `backend/scripts/poc_ecom_requirement_assist.py` | 检查结构、参考图分析、用户要求和参考商品污染 |
+| `build_messages` | `backend/scripts/poc_ecom_requirement_assist.py` | 构造明确区分产品图和参考图的多模态消息 |
+| `run_scenario` | `backend/scripts/poc_ecom_requirement_assist.py` | 执行单次真实 VL 模型验证并记录用量和评估 |
+| `parse_args` | `backend/scripts/poc_ecom_requirement_assist.py` | 解析隔离 POC 的命令行参数 |
+| `main` | `backend/scripts/poc_ecom_requirement_assist.py` | 依次运行仅文字、仅参考图和组合输入三种场景 |
+| `RequirementAssistInput.validate_total_images` | `backend/schemas/ecom_requirement.py` | 校验产品图与参考图合计不超过 9 张 |
+| `RequirementAssistResult.validate_suggestion_ids` | `backend/schemas/ecom_requirement.py` | 校验三套固定策略方案完整且不重复 |
+| `build_context_prompt` | `backend/services/agent/image/requirement_assist_prompts.py` | 构造表单快照、用户原文和图片角色上下文 |
+| `build_multimodal_messages` | `backend/services/agent/image/requirement_assist_prompts.py` | 构造明确区分产品图与参考图的多模态消息 |
+| `DetailProjectService.get_ai_input_project` | `backend/services/detail_project_service.py` | 校验项目归属、产品图必填和全部图片就绪后返回 AI 输入草稿 |
+| `DetailProjectRequirementAdapter.adapt` | `backend/services/agent/image/input_adapters.py` | 将详情项目图片和表单快照转换为共享 AI 帮写输入 |
+| `RequirementAssistService.generate` | `backend/services/agent/image/requirement_assist_service.py` | 在 100 秒总预算内调用主/备模型并返回安全三方案 |
+| `parse_requirement_result` | `backend/services/agent/image/requirement_assist_service.py` | 解析模型 JSON 并执行三方案 Schema 校验 |
+| `validate_reference_ids` | `backend/services/agent/image/requirement_assist_service.py` | 禁止模型引用输入集合之外的参考图 |
+| `validate_no_output_urls` | `backend/services/agent/image/requirement_assist_service.py` | 禁止模型在通用创作简报中生成外部 URL |
+| `apply_conflict_gate` | `backend/services/agent/image/requirement_assist_service.py` | 从可执行简报移除冲突卖点和事实规避表达 |
+| `generate_requirement_suggestions` | `backend/api/routes/ecom_requirement.py` | 适配详情项目输入并返回三套安全通用创作简报 |
+| `RequirementAssistRateLimiter.check` | `backend/services/agent/image/requirement_assist_rate_limiter.py` | 使用 Redis 在多 worker 间执行每用户每分钟 5 次的原子限流 |
+| `buildRequirementSuggestionsRequest` | `frontend/src/services/ecomRequirement.ts` | 将详情页表单转换为 AI 帮写后端设置快照 |
+| `generateRequirementSuggestions` | `frontend/src/services/ecomRequirement.ts` | 调用可取消的三方案接口并使用 105 秒独立超时 |
+| `useDetailRequirementAssist` | `frontend/src/hooks/useDetailRequirementAssist.ts` | 管理 AI 帮写弹窗、请求取消、过期响应隔离和三套独立编辑状态 |
+| `RequirementAssistModal` | `frontend/src/components/detail-page/RequirementAssistModal.tsx` | 展示产品事实、参考图分析、冲突和三套可编辑 AI 帮写方案 |
