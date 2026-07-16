@@ -359,7 +359,7 @@ export default memo(function MessageItem({
           onContextMenu={isUser ? handleUserBubbleContextMenu : undefined}
           className={`${
             isUser
-              ? 'rounded-2xl px-5 py-3 bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
+              ? 'rounded-2xl px-5 py-3 bg-[#6366f1] bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
               : 'text-text-primary'
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}

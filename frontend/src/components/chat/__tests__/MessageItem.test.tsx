@@ -130,6 +130,22 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
   };
 }
 
+describe('MessageItem 用户消息气泡', () => {
+  it('同时提供纯色背景和渐变背景，确保不支持渐变的浏览器仍可显示白色文字', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          role: 'user',
+          content: [{ type: 'text', text: '兼容性测试消息' }],
+        })}
+      />,
+    );
+
+    const bubble = screen.getByText('兼容性测试消息').closest('.rounded-2xl');
+    expect(bubble).toHaveClass('bg-[#6366f1]', 'bg-gradient-to-r', 'text-text-on-accent');
+  });
+});
+
 describe('MessageItem 回调稳定性', () => {
   beforeEach(() => {
     capturedMediaProps = {};
