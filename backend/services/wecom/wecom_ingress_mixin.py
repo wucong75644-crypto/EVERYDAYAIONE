@@ -89,7 +89,7 @@ class WecomIngressMixin:
             stream_id = str(uuid.uuid4())
             reply_ctx.active_stream_id = stream_id
             await self._push_stream_chunk(
-                reply_ctx, stream_id, "正在接收并排队处理…", finish=False,
+                reply_ctx, stream_id, "🤔 思考中…", finish=False,
             )
             from services.wecom.stream_keepalive import StreamKeepAlive
             keepalive = StreamKeepAlive(reply_ctx, self._push_stream_chunk)

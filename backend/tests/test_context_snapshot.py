@@ -1,7 +1,7 @@
 """ContextSnapshot 不可变历史边界测试。"""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -237,6 +237,92 @@ async def test_prompt_builder_snapshot_bypasses_mutable_history_cache():
     assert snapshot.history_messages[0]["content"] == "固定历史"
     get_cached.assert_not_awaited()
     get_summary.assert_not_awaited()
+
+
+def test_prompt_builder_prioritizes_current_user_message_after_history():
+    from types import SimpleNamespace
+
+    from services.prompt_builder.builder import PromptBuilder
+
+    messages = PromptBuilder._compose_messages(
+        static_content="静态规则",
+        session_stable_content="会话规则",
+        turn_dynamic_content="本轮时间",
+        history_messages=[
+            {"role": "user", "content": "分析销售文件"},
+            {"role": "assistant", "content": "销售分析已完成"},
+        ],
+        summary_prompt=None,
+        user_result=SimpleNamespace(
+            workspace_system_block=None,
+            attachments_system_block="<attachments>当前附件</attachments>",
+            user_message={"role": "user", "content": "你好"},
+        ),
+    )
+
+    focus_index = next(
+        index for index, message in enumerate(messages)
+        if "以用户最新一条消息为准" in str(message.get("content"))
+    )
+    attachment_index = next(
+        index for index, message in enumerate(messages)
+        if "当前附件" in str(message.get("content"))
+    )
+    assert messages[-1] == {"role": "user", "content": "你好"}
+    assert focus_index < attachment_index < len(messages) - 1
+    assert "不要续写或重复已经完成的历史任务" in str(
+        messages[focus_index]["content"]
+    )
+
+
+def test_prompt_builder_omits_history_focus_for_new_conversation():
+    from types import SimpleNamespace
+
+    from services.prompt_builder.builder import PromptBuilder
+
+    messages = PromptBuilder._compose_messages(
+        static_content="静态规则",
+        session_stable_content="会话规则",
+        turn_dynamic_content="本轮时间",
+        history_messages=[],
+        summary_prompt=None,
+        user_result=SimpleNamespace(
+            workspace_system_block=None,
+            attachments_system_block=None,
+            user_message={"role": "user", "content": "你好"},
+        ),
+    )
+
+    assert all(
+        "以用户最新一条消息为准" not in str(message.get("content"))
+        for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_history_query_uses_stable_turn_order():
+    from services.handlers.chat_context.history_loader import (
+        build_context_messages,
+    )
+
+    query = _query([])
+    db = MagicMock()
+    db.table.return_value = query
+
+    await build_context_messages(
+        db,
+        conversation_id="conv-1",
+        current_text="你好",
+        base_revision=6,
+        strict=True,
+    )
+
+    assert query.order.call_args_list == [
+        call("created_at", desc=True),
+        call("context_revision", desc=True),
+        call("role", desc=False),
+        call("id", desc=True),
+    ]
 
 
 @pytest.mark.asyncio

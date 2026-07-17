@@ -349,6 +349,7 @@
 
 ## 更新记录
 
+- **2026-07-17**：修复 PromptBuilder 重构遗漏的“最新用户消息优先”约束：Web 与企微共用链路在存在历史时明确禁止擅自续写或重复已完成任务；固定 revision 历史增加 `created_at/context_revision/role/id` 稳定排序，避免同时间戳 user/assistant 次序漂移；企微智能机器人移除“正在接收并排队处理…”文案，直接显示既有思考状态。新增有历史、无历史、附件邻接、固定 revision 排序和企微初始状态回归测试。
 - **2026-07-17**：修复 `file_analyze` 的 Parquet 路径契约断裂：CSV/TSV 虽已实际转换为内容指纹命名的 Parquet，但简化 meta 没有 `xml_view`，结果边界退回旧视图后遗漏真实路径。统一由 `file_analysis_service` 使用转换函数实际返回的 `cache_path` 生成沙盒 `staging/...` 访问描述；Excel、CSV、TSV、首次生成和缓存命中共享同一契约，并拒绝不存在或越出当前 staging 的缓存路径。
 - **2026-07-17**：企微智能机器人终态回复恢复原消息位置更新：Actor 入队持久化真实 `req_id/stream_id`，复用现有 `StreamKeepAlive` 保活，Outbox 合并全部 `TextPart` 后完成同一 stream；流过期或进程重启时回退主动消息。图片、视频、自建应用通道及 Web 展示不变，`ChartPart` 继续跳过；仅图表结果用简短完成提示结束占位。生产待部署验证。
 - **2026-07-17**：回退企业微信结构化图表交付：Web 继续保留 ECharts、Plotly、Vega-Lite `ChartPart`，企微 Outbox 在通道末端明确跳过所有 chart，仅投递文字、图片和视频。删除企微 Playwright/Chromium/ECharts runtime、PNG 素材上传及部署安装链路；chart-only 消息不生成错误兜底，Outbox 可直接完成。生产 pending/dead 记录待部署后只读核查，未经确认不修改。

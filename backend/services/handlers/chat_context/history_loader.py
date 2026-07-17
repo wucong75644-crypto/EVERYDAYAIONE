@@ -206,11 +206,16 @@ async def build_context_messages(
 
         for batch in range(5):
             query = _build_history_query(db, conversation_id, base_revision)
-            result = (
-                query.order("created_at", desc=True)
-                .range(batch * 20, batch * 20 + 19)
-                .execute()
-            )
+            query = query.order("created_at", desc=True)
+            if base_revision is not None:
+                query = (
+                    query.order("context_revision", desc=True)
+                    .order("role", desc=False)
+                    .order("id", desc=True)
+                )
+            result = query.range(
+                batch * 20, batch * 20 + 19,
+            ).execute()
             rows = result.data if result else None
             if not rows:
                 break

@@ -258,6 +258,14 @@ class PromptBuilder:
         messages.extend(history_messages)
         if summary_prompt and len(history_messages) > 5:
             messages.append({"role": "system", "content": summary_prompt})
+        if history_messages:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "以用户最新一条消息为准。历史仅用于理解上下文；"
+                    "除非用户明确要求继续，否则不要续写或重复已经完成的历史任务。"
+                ),
+            })
         if user_result.attachments_system_block:
             messages.append({
                 "role": "system",

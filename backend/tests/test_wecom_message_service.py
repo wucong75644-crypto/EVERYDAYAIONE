@@ -162,7 +162,7 @@ class TestHandleMessage:
         ctx.ws_client.send_stream_chunk.assert_any_await(
             req_id=ctx.req_id,
             stream_id=ANY,
-            content="正在接收并排队处理…",
+            content="🤔 思考中…",
             finish=False,
             feedback_id=None,
         )
