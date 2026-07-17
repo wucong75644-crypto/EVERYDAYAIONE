@@ -349,6 +349,7 @@
 
 ## 更新记录
 
+- **2026-07-17**：修复企微附件跨轮污染：迁移 131 将已绑定任务的附件集合持续保留为 `active`，导致后续“你好”“天气”等纯文本消息仍被数据库拼入旧 CSV，并再次触发文件分析。迁移 133 恢复“当前附件单次消费”语义：首次任务先冻结 `task_attachment_refs`，再原子转为 `referenced`；部署时仅修复已有任务绑定的活动附件，未使用的待处理附件保持 `active`；重放继续复用冻结输入，rollback 不重新激活历史附件。Web 消息附件列表仍由当前请求显式决定，不受影响。
 - **2026-07-17**：修复 PromptBuilder 重构遗漏的“最新用户消息优先”约束：Web 与企微共用链路在存在历史时明确禁止擅自续写或重复已完成任务；固定 revision 历史增加 `created_at/context_revision/role/id` 稳定排序，避免同时间戳 user/assistant 次序漂移；企微智能机器人移除“正在接收并排队处理…”文案，直接显示既有思考状态。新增有历史、无历史、附件邻接、固定 revision 排序和企微初始状态回归测试。
 - **2026-07-17**：修复 `file_analyze` 的 Parquet 路径契约断裂：CSV/TSV 虽已实际转换为内容指纹命名的 Parquet，但简化 meta 没有 `xml_view`，结果边界退回旧视图后遗漏真实路径。统一由 `file_analysis_service` 使用转换函数实际返回的 `cache_path` 生成沙盒 `staging/...` 访问描述；Excel、CSV、TSV、首次生成和缓存命中共享同一契约，并拒绝不存在或越出当前 staging 的缓存路径。
 - **2026-07-17**：企微智能机器人终态回复恢复原消息位置更新：Actor 入队持久化真实 `req_id/stream_id`，复用现有 `StreamKeepAlive` 保活，Outbox 合并全部 `TextPart` 后完成同一 stream；流过期或进程重启时回退主动消息。图片、视频、自建应用通道及 Web 展示不变，`ChartPart` 继续跳过；仅图表结果用简短完成提示结束占位。生产待部署验证。

@@ -136,6 +136,7 @@ EVERYDAYAIONE/
 │   │   ├── 129_conversation_attachments.sql # 会话附件状态机与企微 FILE 原子暂存
 │   │   ├── 131_attachment_asset_lifecycle.sql # 资产身份、附件集合和 task 不可变引用
 │   │   ├── 132_wecom_channel_task_enqueue.sql # 企微 user/channel Actor task 写入
+│   │   ├── 133_wecom_attachment_single_consumption.sql # 企微当前附件绑定后转历史资源
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -148,7 +149,8 @@ EVERYDAYAIONE/
 │   │       ├── 128_wecom_channel_conversations_rollback.sql
 │   │       ├── 129_conversation_attachments_rollback.sql
 │   │       ├── 131_attachment_asset_lifecycle_rollback.sql
-│   │       └── 132_wecom_channel_task_enqueue_rollback.sql
+│   │       ├── 132_wecom_channel_task_enqueue_rollback.sql
+│   │       └── 133_wecom_attachment_single_consumption_rollback.sql
 │   ├── scripts/
 │   │   └── reconcile_wecom_attachments.py # 历史企微附件 dry-run/事务调和
 │   ├── services/                 # 业务逻辑层
