@@ -9,6 +9,8 @@ import pytest
 from schemas.message import GenerationType, TextPart
 from services.adapters.base import CostEstimate, StreamChunk
 from services.handlers.chat_handler import ChatHandler
+from services.handlers.base import TaskMetadata
+from services.handlers.context_snapshot import ContextAnchor
 
 
 # -- Helpers --
@@ -97,6 +99,38 @@ class TestCalculateCredits:
 
 
 class TestStreamGenerate:
+
+    @pytest.mark.asyncio
+    async def test_start_passes_bound_context_anchor_to_stream(self):
+        handler = _make_handler()
+        anchor = ContextAnchor(
+            task_id="db-task", conversation_id="conv-1", turn_id="turn-1",
+            input_message_id="input-1", base_revision=5,
+            through_message_id="assistant-4", org_id="org-1",
+        )
+        handler._save_task = MagicMock(return_value=anchor)
+        handler._stream_generate = AsyncMock()
+
+        def close_created_coroutine(coroutine):
+            coroutine.close()
+            return MagicMock()
+
+        with patch(
+            "services.handlers.chat_handler.asyncio.create_task",
+            side_effect=close_created_coroutine,
+        ):
+            await handler.start(
+                message_id="assistant-1",
+                conversation_id="conv-1",
+                user_id="user-1",
+                content=[TextPart(text="你好")],
+                params={"model": "test-model"},
+                metadata=TaskMetadata(
+                    input_message_id="input-1", turn_id="turn-1",
+                ),
+            )
+
+        assert handler._stream_generate.call_args.kwargs["context_anchor"] is anchor
 
     @pytest.mark.asyncio
     async def test_direct_reply_removed(self):
@@ -699,8 +733,7 @@ class TestContentBlocksMixedRendering:
 
     def test_image_block_becomes_image_part(self):
         """_content_blocks 含 image 块 → 构建为 ImagePart"""
-        from schemas.message import ImagePart, FilePart
-        from services.handlers.media_extractor import extract_media_parts
+        from schemas.message import ImagePart, TextPart
 
         blocks = [
             {"type": "text", "text": "分析结果如下"},
@@ -711,7 +744,7 @@ class TestContentBlocksMixedRendering:
         result_parts = []
         for block in blocks:
             if block["type"] == "text":
-                result_parts.extend(extract_media_parts(block["text"]))
+                result_parts.append(TextPart(text=block["text"]))
             elif block["type"] == "image":
                 result_parts.append(ImagePart(
                     url=block["url"], alt=block.get("alt"),
@@ -726,8 +759,7 @@ class TestContentBlocksMixedRendering:
 
     def test_file_block_becomes_file_part(self):
         """_content_blocks 含 file 块 → 构建为 FilePart"""
-        from schemas.message import FilePart
-        from services.handlers.media_extractor import extract_media_parts
+        from schemas.message import FilePart, TextPart
 
         blocks = [
             {"type": "text", "text": "已导出数据"},
@@ -739,7 +771,7 @@ class TestContentBlocksMixedRendering:
         result_parts = []
         for block in blocks:
             if block["type"] == "text":
-                result_parts.extend(extract_media_parts(block["text"]))
+                result_parts.append(TextPart(text=block["text"]))
             elif block["type"] == "file":
                 result_parts.append(FilePart(
                     url=block["url"], name=block["name"],
@@ -753,8 +785,7 @@ class TestContentBlocksMixedRendering:
 
     def test_mixed_blocks_preserve_order(self):
         """text + image + file + text 混排保持顺序"""
-        from schemas.message import ImagePart, FilePart
-        from services.handlers.media_extractor import extract_media_parts
+        from schemas.message import ImagePart, FilePart, TextPart
 
         blocks = [
             {"type": "text", "text": "开始分析"},
@@ -768,7 +799,7 @@ class TestContentBlocksMixedRendering:
         result_parts = []
         for block in blocks:
             if block["type"] == "text":
-                result_parts.extend(extract_media_parts(block["text"]))
+                result_parts.append(TextPart(text=block["text"]))
             elif block["type"] == "image":
                 result_parts.append(ImagePart(
                     url=block["url"], alt=block.get("alt"),
@@ -781,6 +812,21 @@ class TestContentBlocksMixedRendering:
 
         types = [p.type for p in result_parts]
         assert types == ["text", "image", "file", "text"]
+
+    def test_text_urls_and_file_markers_remain_text(self):
+        """普通文本中的媒体 URL 和旧 FILE marker 不升级为结构化媒体。"""
+        from schemas.message import TextPart
+
+        text = (
+            '{"image": "https://example.com/example.jpg"}\n'
+            '[FILE]https://example.com/report.xlsx|report.xlsx|text/plain|10[/FILE]'
+        )
+
+        result_parts = [TextPart(text=text)]
+
+        assert len(result_parts) == 1
+        assert result_parts[0].type == "text"
+        assert result_parts[0].text == text
 
     def test_pending_file_parts_insertion(self):
         """_pending_file_parts 按 mime 分流插入 _content_blocks"""

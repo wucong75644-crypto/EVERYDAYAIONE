@@ -1,5 +1,10 @@
 # 技术设计：沙盒文件生成与下载
 
+> **取代说明（2026-07-17）**：本文中的文本 URL 扫描、`extract_media_parts()`
+> 和 `[FILE]...[/FILE]` marker 方案已经废止。文件、图片等产物只允许通过
+> `emit_file/emit_image` 的结构化 payload 生成，现行设计以
+> [TECH_Turn快照与显式媒体协议治理.md](TECH_Turn快照与显式媒体协议治理.md) 为准。
+
 ## 1. 现有代码分析
 
 ### 已阅读文件及关键理解

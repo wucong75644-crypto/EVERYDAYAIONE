@@ -619,7 +619,10 @@ class TestBuildContextMessages:
         await chat_handler._build_context_messages("conv1", "current")
 
         chat_handler.db.table.assert_called_once_with("messages")
-        mock_table.select.assert_called_once_with("role, content, status, created_at, generation_params")
+        mock_table.select.assert_called_once_with(
+            "role, content, status, created_at, generation_params, "
+            "context_revision, message_kind"
+        )
         eq_calls = mock_table.eq.call_args_list
         assert ("conversation_id", "conv1") in [c.args for c in eq_calls]
         # status 改用 in_ 加载 completed + interrupted（含中断标记，让 LLM 知道被打断）

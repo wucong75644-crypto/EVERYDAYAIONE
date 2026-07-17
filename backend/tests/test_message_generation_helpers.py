@@ -22,6 +22,7 @@ from api.routes.message_generation_helpers import (
     handle_regenerate_single_operation,
     build_generation_params,
 )
+from api.routes.message_turn_anchors import resolve_existing_turn_anchor
 from schemas.message import GenerationType, MessageOperation, MessageStatus
 
 
@@ -548,6 +549,69 @@ class TestBuildGenerationParams:
         """测试：chat 类型"""
         result = build_generation_params(GenerationType.CHAT)
         assert result == {"type": "chat"}
+
+
+class _TurnQuery:
+    def __init__(self, db, operation, data=None):
+        self.db = db
+        self.operation = operation
+        self.data = data
+
+    def select(self, *_args): return self
+    def eq(self, *_args): return self
+    def lt(self, *_args): return self
+    def order(self, *_args, **_kwargs): return self
+    def limit(self, *_args): return self
+    def maybe_single(self): return self
+    def update(self, data):
+        self.operation = "update"
+        self.data = data
+        return self
+    def execute(self):
+        result = MagicMock()
+        if self.operation == "assistant":
+            result.data = self.db.assistant
+            self.db.next_operation = "previous"
+        elif self.operation == "previous":
+            result.data = self.db.previous
+        else:
+            self.db.updates.append(self.data)
+            result.data = [self.data]
+        return result
+
+
+class _TurnDB:
+    def __init__(self, assistant, previous=None):
+        self.assistant = assistant
+        self.previous = previous or []
+        self.next_operation = "assistant"
+        self.updates = []
+
+    def table(self, _name):
+        return _TurnQuery(self, self.next_operation)
+
+
+def test_resolve_existing_turn_anchor_uses_explicit_relation():
+    db = _TurnDB({
+        "id": "a1", "conversation_id": "c1", "turn_id": "t1",
+        "reply_to_message_id": "u1", "created_at": "2026-01-01T00:00:01Z",
+    })
+
+    assert resolve_existing_turn_anchor(db, "c1", "a1") == ("u1", "t1")
+
+
+def test_resolve_existing_turn_anchor_recovers_legacy_user_message():
+    db = _TurnDB(
+        {"id": "a1", "conversation_id": "c1", "created_at": "2026-01-01T00:00:01Z"},
+        previous=[{"id": "u1"}],
+    )
+
+    input_id, turn_id = resolve_existing_turn_anchor(db, "c1", "a1")
+
+    assert input_id == "u1"
+    assert len(turn_id) == 36
+
+
 
 
 if __name__ == "__main__":

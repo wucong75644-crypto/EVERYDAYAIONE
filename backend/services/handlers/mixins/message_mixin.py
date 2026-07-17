@@ -51,6 +51,8 @@ class MessageMixin:
         is_error: bool = False,
         error_dict: Optional[Dict[str, str]] = None,
         extra_generation_params: Optional[Dict[str, Any]] = None,
+        turn_id: Optional[str] = None,
+        reply_to_message_id: Optional[str] = None,
     ) -> tuple[Message, Dict[str, Any]]:
         """
         通用的助手消息 upsert 方法
@@ -122,6 +124,10 @@ class MessageMixin:
             "task_id": client_task_id,
             "generation_params": gen_params,
         }
+        if turn_id:
+            message_data["turn_id"] = turn_id
+        if reply_to_message_id:
+            message_data["reply_to_message_id"] = reply_to_message_id
 
         if is_error:
             message_data["is_error"] = True
@@ -285,6 +291,28 @@ class MessageMixin:
 
         await ws_manager.send_to_task_or_user(client_task_id, user_id, ws_msg)
 
+    def _close_task_turn(
+        self,
+        task: Dict[str, Any],
+        conversation_id: str,
+        message_id: str,
+    ) -> None:
+        """关闭已绑定任务的 Turn；未绑定的历史 task 保持兼容。"""
+        if not task.get("turn_id") or not task.get("input_message_id"):
+            return
+        from services.turn_binding import close_bound_turn
+
+        close_result = close_bound_turn(
+            self.db, conversation_id, task["id"], message_id,
+        )
+        logger.info(
+            "turn_closed | "
+            f"org_id={task.get('org_id')} | conversation_id={conversation_id} | "
+            f"task_id={task['id']} | turn_id={task.get('turn_id')} | "
+            f"base_revision={task.get('base_context_revision')} | "
+            f"result={close_result.data if close_result else None}"
+        )
+
     async def _handle_complete_common(
         self,
         task_id: str,
@@ -326,7 +354,11 @@ class MessageMixin:
             generation_type=self.handler_type.value,
             model_id=model_id,
             extra_generation_params=extra_gen_params,
+            turn_id=task.get("turn_id"),
+            reply_to_message_id=task.get("input_message_id"),
         )
+
+        self._close_task_turn(task, conversation_id, message_id)
 
         # WebSocket 推送
         from schemas.websocket import build_message_done

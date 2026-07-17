@@ -80,10 +80,11 @@ class TestEcomImageHandlerStart:
     @pytest.mark.asyncio
     async def test_no_meta_triggers_phase1(self):
         """无 image_task_meta → Phase 1（异步方案策划），立刻返回 task_id。"""
+        from services.handlers.base import TaskMetadata
+
         handler = self._make_handler()
         params: dict = {}  # 无 meta
-        metadata = MagicMock()
-        metadata.client_task_id = "task_plan_123"
+        metadata = TaskMetadata(client_task_id="task_plan_123")
 
         with patch.object(handler, "_phase1_plan", new_callable=AsyncMock) as mock_plan:
             result = await handler.start("msg1", "conv1", "user1", [], params, metadata)

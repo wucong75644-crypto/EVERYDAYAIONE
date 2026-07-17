@@ -242,6 +242,47 @@ class TestTaskRouteSlotRelease:
         mock_release.assert_awaited_once_with(task_row)
 
     @pytest.mark.asyncio
+    async def test_cancel_actor_uses_atomic_cancel_rpc_path(self):
+        from starlette.requests import Request as Req
+
+        task_row = {
+            "id": "internal",
+            "client_task_id": "client",
+            "user_id": "u1",
+            "conversation_id": "c1",
+            "org_id": None,
+            "request_params": {"_task_slot_id": "slot-actor"},
+            "delivery_context": {"actor": True},
+        }
+        db, chain = self._make_scoped_db([task_row])
+
+        with patch(
+            "services.conversation_task.cancel_actor_task",
+            return_value=True,
+        ) as mock_cancel, patch(
+            "api.routes.task.release_task_slot",
+            new_callable=AsyncMock,
+        ), patch("services.websocket_manager.ws_manager"):
+            from api.routes.task import cancel_task_by_message_id
+
+            result = await cancel_task_by_message_id(
+                request=Req(scope={
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/",
+                    "headers": [],
+                    "query_string": b"",
+                }),
+                ctx=OrgContext(user_id="u1"),
+                db=db,
+                message_id="msg-1",
+            )
+
+        assert result["cancelled_count"] == 1
+        mock_cancel.assert_called_once_with(db, task_row, "u1", None)
+        chain.update.assert_called()
+
+    @pytest.mark.asyncio
     async def test_mark_task_failed_releases_slot(self):
         """mark_task_failed 找到 task → release_task_slot 被调"""
         from starlette.requests import Request as Req

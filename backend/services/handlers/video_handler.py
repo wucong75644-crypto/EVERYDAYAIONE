@@ -384,4 +384,4 @@ class VideoHandler(BaseHandler):
         )
 
         # 3. 保存到数据库
-        self.db.table("tasks").insert(task_data).execute()
+        self._insert_task_with_turn_binding(task_data, metadata)

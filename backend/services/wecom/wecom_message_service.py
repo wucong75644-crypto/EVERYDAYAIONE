@@ -7,13 +7,8 @@ Agent Loop 路由 → AI 生成 → 流式回复到企微。
 两个渠道共用此服务，仅回复方式不同。
 """
 
-import asyncio
-import json
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from services.handlers.chat_generate_mixin import GenerateResult
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -27,36 +22,23 @@ from schemas.wecom import (
     WecomReplyContext,
 )
 from services.conversation_service import ConversationService
-from services.websocket_manager import ws_manager
 from services.wecom.user_mapping_service import WecomUserMappingService
 from services.wecom.wecom_ai_mixin import WecomAIMixin
 from services.wecom.wecom_file_mixin import WecomFileMixin
+from services.wecom.wecom_ingress_mixin import WecomIngressMixin
+from services.wecom.wecom_reply_mixin import WecomReplyMixin
 
 
-class WecomMessageService(WecomAIMixin, WecomFileMixin):
+class WecomMessageService(
+    WecomIngressMixin, WecomReplyMixin, WecomAIMixin, WecomFileMixin,
+):
     """企微消息处理核心：用户映射 → 对话管理 → Agent Loop 路由 → AI 生成 → 回复"""
-
-    # 企微会话级设置缓存（内存级，进程重启后重置）
-    # key = conversation_id, value = {"model": "...", "thinking_mode": "..."}
-    _session_settings: Dict[str, Dict[str, str]] = {}
 
     def __init__(self, db):
         self.db = db
         self.settings = get_settings()
         self._user_svc = WecomUserMappingService(db)
         self._conv_svc = ConversationService(db)
-
-    @classmethod
-    def get_session_setting(cls, conv_id: str, key: str) -> Optional[str]:
-        """获取企微会话级设置"""
-        return cls._session_settings.get(conv_id, {}).get(key)
-
-    @classmethod
-    def set_session_setting(cls, conv_id: str, key: str, value: str) -> None:
-        """设置企微会话级设置"""
-        if conv_id not in cls._session_settings:
-            cls._session_settings[conv_id] = {}
-        cls._session_settings[conv_id][key] = value
 
     async def handle_message(
         self,
@@ -118,57 +100,9 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             # 3. 多模态资源下载（图片 URL → OSS 永久 URL，需在保存前完成）
             oss_image_urls = await self._download_media(msg, user_id)
 
-            # 4. 保存用户消息到 DB（FILE 类型在 _handle_file 内自行保存）
-            if msg.msgtype != WecomMsgType.FILE:
-                await self._save_user_message(
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    text_content=msg.text_content or "",
-                    image_urls=oss_image_urls,
-                )
-
-            # 4.5 通知 Web 前端对话列表有更新
-            await self._notify_web_conversation_updated(
-                user_id, conversation_id, org_id=org_id,
+            await self._process_incoming_content(
+                msg, reply_ctx, user_id, conversation_id, oss_image_urls,
             )
-
-            # 5. 创建 assistant 占位消息
-            assistant_message_id = await self._create_assistant_placeholder(
-                conversation_id=conversation_id,
-            )
-
-            # 6. 根据消息类型处理
-            if msg.msgtype in (
-                WecomMsgType.TEXT, WecomMsgType.VOICE,
-                WecomMsgType.IMAGE, WecomMsgType.MIXED,
-            ):
-                await self._handle_text(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    message_id=assistant_message_id,
-                    text_content=msg.text_content or "",
-                    reply_ctx=reply_ctx,
-                    image_urls=oss_image_urls,
-                    org_id=org_id,
-                )
-            elif msg.msgtype == WecomMsgType.FILE:
-                await self._handle_file(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    message_id=assistant_message_id,
-                    msg=msg,
-                    reply_ctx=reply_ctx,
-                    org_id=org_id,
-                )
-            elif msg.msgtype == WecomMsgType.VIDEO:
-                await self._reply_text(
-                    reply_ctx,
-                    "收到你的视频，目前暂不支持视频内容分析，发文字或图片给我试试~",
-                )
-            else:
-                await self._reply_text(
-                    reply_ctx, "暂时不支持这种消息类型，发文字或图片给我试试~"
-                )
 
             elapsed = int((time.monotonic() - start_time) * 1000)
             logger.info(
@@ -227,12 +161,17 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
         reply_ctx: WecomReplyContext,
         image_urls: Optional[List[str]] = None,
         org_id: Optional[str] = None,
+        input_message_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> None:
         """文本/多模态消息处理：Agent Loop 路由 → 按类型分发"""
         from schemas.message import ImagePart
         from services.wecom.stream_keepalive import StreamKeepAlive
 
         keepalive: StreamKeepAlive | None = None
+        task_record_id: Optional[str] = None
+        context_anchor = None
+        reply_dispatched = False
         try:
             # 积分检查：余额为 0 时拒绝生成
             balance = self._get_user_balance(user_id)
@@ -274,6 +213,13 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 request_id=f"wecom_{conversation_id}",
             )
 
+            if input_message_id and turn_id:
+                from services.wecom.turn_lifecycle import create_wecom_turn_task
+                task_record_id, context_anchor = create_wecom_turn_task(
+                    handler, conversation_id, user_id, message_id,
+                    input_message_id, turn_id, text_content, org_id,
+                )
+
             # 停止保活（即将发送真实内容）
             if keepalive:
                 await keepalive.stop()
@@ -283,119 +229,34 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 content=content_parts,
                 user_id=user_id,
                 conversation_id=conversation_id,
+                context_anchor=context_anchor,
             )
 
             # 按内容类型分发到企微
             await self._dispatch_result_to_wecom(
                 gen_result, reply_ctx, message_id, org_id,
             )
+            reply_dispatched = True
+
+            if task_record_id:
+                from services.wecom.turn_lifecycle import complete_wecom_turn_task
+                complete_wecom_turn_task(
+                    self.db, conversation_id, task_record_id,
+                    message_id, turn_id or "", org_id,
+                )
 
         except Exception as e:
+            if task_record_id:
+                from services.wecom.turn_lifecycle import fail_wecom_turn_task
+                fail_wecom_turn_task(
+                    self.db, task_record_id, conversation_id, turn_id, e,
+                )
             logger.error(f"Wecom _handle_text failed | user_id={user_id} | error={e}")
-            await self._reply_text(reply_ctx, "生成回复时遇到了问题，请稍后再试。")
+            if not reply_dispatched:
+                await self._reply_text(reply_ctx, "生成回复时遇到了问题，请稍后再试。")
         finally:
             if keepalive:
                 await keepalive.stop()
-
-    async def _dispatch_result_to_wecom(
-        self,
-        gen_result: "GenerateResult",
-        reply_ctx: WecomReplyContext,
-        message_id: str,
-        org_id: Optional[str] = None,
-    ) -> None:
-        """将 ChatHandler 生成结果按类型分发到企微"""
-        from schemas.message import ImagePart, VideoPart
-        from services.wecom.markdown_adapter import clean_for_stream
-
-        result_parts = gen_result.parts
-        text_parts = []
-        media_urls = {"image": [], "video": []}
-
-        for part in result_parts:
-            if isinstance(part, TextPart) and part.text:
-                text_parts.append(part.text)
-            elif isinstance(part, ImagePart) and part.url:
-                media_urls["image"].append(part.url)
-            elif isinstance(part, VideoPart) and part.url:
-                media_urls["video"].append(part.url)
-
-        # 先推送文本到企微
-        if text_parts:
-            text = "\n".join(text_parts)
-            display = clean_for_stream(text)
-            if reply_ctx.active_stream_id:
-                await self._push_stream_chunk(
-                    reply_ctx, reply_ctx.active_stream_id,
-                    display, finish=True, feedback_id=message_id,
-                )
-                reply_ctx.active_stream_id = None
-            else:
-                await self._reply_text(reply_ctx, display)
-
-        # 再推送媒体到企微
-        for media_type in ("image", "video"):
-            urls = media_urls[media_type]
-            if urls:
-                await self._send_media_to_wecom(
-                    reply_ctx, urls, media_type, message_id=None,  # 不让内部更新 DB
-                )
-
-        # 无任何内容
-        if not text_parts and not media_urls["image"] and not media_urls["video"]:
-            await self._reply_text(reply_ctx, "抱歉，AI 没有生成回复内容。")
-            return
-
-        # 构建 content_dicts：tool_step 块 + 最终文本/媒体（对齐 Web 端结构）
-        content_dicts = []
-        content_blocks = gen_result.content_blocks or []
-        if content_blocks:
-            # 有 tool_step 块：按 Web 端结构保存（tool_step + text + image）
-            for block in content_blocks:
-                if block.get("type") == "tool_step":
-                    content_dicts.append(block)
-                elif block.get("type") == "text":
-                    content_dicts.append(block)
-            # 追加非 text 块中的媒体
-            for part in result_parts:
-                if isinstance(part, ImagePart) and part.url:
-                    content_dicts.append({"type": "image", "url": part.url})
-                elif isinstance(part, VideoPart) and part.url:
-                    content_dicts.append({"type": "video", "url": part.url})
-        else:
-            # 无工具调用：保持原逻辑
-            for part in result_parts:
-                if isinstance(part, TextPart) and part.text:
-                    content_dicts.append({"type": "text", "text": part.text})
-                elif isinstance(part, ImagePart) and part.url:
-                    content_dicts.append({"type": "image", "url": part.url})
-                elif isinstance(part, VideoPart) and part.url:
-                    content_dicts.append({"type": "video", "url": part.url})
-
-        # 构建 generation_params（含 tool_digest，对齐 Web 端）
-        gen_params: dict = {"type": "chat"}
-        tool_digest = gen_result.tool_digest
-        if tool_digest:
-            gen_params["tool_digest"] = tool_digest
-            # 大小保护：与 Web 端 _upsert_assistant_message 一致
-            _GP_MAX = 8192
-            _gp_size = len(json.dumps(gen_params, sort_keys=True, ensure_ascii=False).encode())
-            if _gp_size > _GP_MAX:
-                gen_params["tool_digest"].pop("tools", None)
-                _gp_size = len(json.dumps(gen_params, sort_keys=True, ensure_ascii=False).encode())
-            if _gp_size > _GP_MAX:
-                gen_params = {"type": "chat"}
-                logger.warning(f"Wecom generation_params truncated | original={_gp_size}B")
-
-        try:
-            update_data: dict = {
-                "content": content_dicts,
-                "status": "completed",
-                "generation_params": gen_params,
-            }
-            self.db.table("messages").update(update_data).eq("id", message_id).execute()
-        except Exception as e:
-            logger.warning(f"Update assistant message failed | msg_id={message_id} | error={e}")
 
     # ── 对话管理 ──────────────────────────────────────────
 
@@ -450,6 +311,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
         user_id: str,
         text_content: str,
         image_urls: Optional[List[str]] = None,
+        turn_id: Optional[str] = None,
     ) -> str:
         """保存用户消息到 DB（支持多模态内容）"""
         content: List[Dict[str, str]] = []
@@ -466,6 +328,8 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             "content": content,
             "status": "completed",
         }
+        if turn_id:
+            msg_data["turn_id"] = turn_id
         result = self.db.table("messages").insert(msg_data).execute()
         msg_id = result.data[0]["id"]
 
@@ -479,6 +343,8 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
     async def _create_assistant_placeholder(
         self,
         conversation_id: str,
+        input_message_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> str:
         """创建 assistant 占位消息"""
         msg_data = {
@@ -487,6 +353,10 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             "content": [{"type": "text", "text": ""}],
             "status": "generating",
         }
+        if turn_id:
+            msg_data["turn_id"] = turn_id
+        if input_message_id:
+            msg_data["reply_to_message_id"] = input_message_id
         result = self.db.table("messages").insert(msg_data).execute()
         return result.data[0]["id"]
 
@@ -500,115 +370,6 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             "content": [{"type": "text", "text": text}],
             "status": "completed",
         }).eq("id", message_id).execute()
-
-    # ── 回复发送 ──────────────────────────────────────────
-
-    async def _push_stream_chunk(
-        self,
-        reply_ctx: WecomReplyContext,
-        stream_id: str,
-        content: str,
-        finish: bool,
-        feedback_id: Optional[str] = None,
-    ) -> None:
-        """推送流式 chunk 到企微"""
-        if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
-            await reply_ctx.ws_client.send_stream_chunk(
-                req_id=reply_ctx.req_id,
-                stream_id=stream_id,
-                content=content,
-                finish=finish,
-                feedback_id=feedback_id,
-            )
-        elif reply_ctx.channel == "app" and finish:
-            await self._send_app_message(reply_ctx, content)
-
-    async def _reply_text(
-        self, reply_ctx: WecomReplyContext, text: str
-    ) -> None:
-        """发送文本回复（有活跃 stream 时用 stream finish 替换占位内容）"""
-        if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
-            if reply_ctx.active_stream_id:
-                # 用 stream finish 替换"正在思考..."占位
-                await reply_ctx.ws_client.send_stream_chunk(
-                    req_id=reply_ctx.req_id,
-                    stream_id=reply_ctx.active_stream_id,
-                    content=text,
-                    finish=True,
-                )
-                reply_ctx.active_stream_id = None
-            else:
-                await reply_ctx.ws_client.send_reply(
-                    req_id=reply_ctx.req_id,
-                    msgtype="text",
-                    content={"content": text},
-                )
-        elif reply_ctx.channel == "app":
-            await self._send_app_message(reply_ctx, text)
-
-    async def _reply_credits_insufficient(
-        self, reply_ctx: WecomReplyContext,
-        needed: int, balance: int, action: str,
-    ) -> None:
-        """积分不足时回复模板卡片（智能机器人）或文本（自建应用）"""
-        if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
-            from services.wecom.card_builder import WecomCardBuilder
-            card = WecomCardBuilder.credits_insufficient_card(needed, balance, action)
-            await reply_ctx.ws_client.send_template_card(reply_ctx.req_id, card)
-        else:
-            await self._reply_text(
-                reply_ctx,
-                f"积分不足，生成{action}需要 {needed} 积分，当前余额 {balance}。",
-            )
-
-    async def _send_app_message(
-        self, reply_ctx: WecomReplyContext, text: str
-    ) -> None:
-        """自建应用消息发送：格式适配 + 长消息分割"""
-        from services.wecom.app_message_sender import (
-            send_text, send_markdown, OrgWecomCreds,
-        )
-        from services.wecom.markdown_adapter import adapt_for_app, split_long_message
-
-        adapted, msgtype = adapt_for_app(text)
-        chunks = split_long_message(adapted, max_bytes=2000)
-
-        # 构建企业凭证
-        creds = OrgWecomCreds(
-            org_id=reply_ctx.org_id or "",
-            corp_id=reply_ctx.corp_id or "",
-            agent_id=reply_ctx.agent_id or 0,
-            agent_secret=reply_ctx.agent_secret or "",
-        )
-
-        uid = reply_ctx.wecom_userid
-        for i, chunk in enumerate(chunks):
-            sent = False
-            if msgtype == "markdown":
-                sent = await send_markdown(wecom_userid=uid, content=chunk, creds=creds)
-            if not sent:
-                await send_text(wecom_userid=uid, content=chunk, creds=creds)
-            if i < len(chunks) - 1:
-                await asyncio.sleep(0.3)
-
-    # ── Web 前端通知 ─────────────────────────────────────
-
-    @staticmethod
-    async def _notify_web_conversation_updated(
-        user_id: str, conversation_id: str,
-        org_id: str | None = None,
-    ) -> None:
-        """通知 Web 前端：企微对话有新消息，刷新对话列表"""
-        try:
-            await ws_manager.send_to_user(user_id, {
-                "type": "conversation_updated",
-                "conversation_id": conversation_id,
-            }, org_id=org_id)
-        except Exception as e:
-            logger.warning(
-                f"WS notify conversation_updated failed | "
-                f"user_id={user_id} | error={e}"
-            )
 
     # ── 工具方法 ──────────────────────────────────────────
 

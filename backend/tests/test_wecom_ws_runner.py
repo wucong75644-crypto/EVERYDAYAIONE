@@ -412,6 +412,9 @@ class TestSignalHandling:
         mock_manager.start = AsyncMock()
         mock_manager.stop = AsyncMock()
         mock_manager.clients = {}
+        mock_delivery_worker = MagicMock()
+        mock_delivery_worker.start = AsyncMock()
+        mock_delivery_worker.stop = AsyncMock()
 
         registered_handlers = {}
 
@@ -421,7 +424,13 @@ class TestSignalHandling:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_db", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_async_db", new=AsyncMock(return_value=MagicMock())),
+            patch("wecom_ws_runner.close_async_db", new=AsyncMock()),
             patch("wecom_ws_runner.WecomWSManager", return_value=mock_manager),
+            patch(
+                "services.wecom.delivery_worker.WecomDeliveryWorker",
+                return_value=mock_delivery_worker,
+            ),
             patch("asyncio.Event", return_value=mock_stop_event),
             patch("asyncio.get_running_loop") as mock_loop,
         ):
@@ -435,6 +444,7 @@ class TestSignalHandling:
         assert signal.SIGTERM in registered_handlers
 
         # 触发信号处理器 -> 应调用 stop_event.set()
+        mock_stop_event.set.reset_mock()
         registered_handlers[signal.SIGTERM]()
         mock_stop_event.set.assert_called_once()
 
@@ -448,11 +458,20 @@ class TestSignalHandling:
         mock_manager.start = AsyncMock()
         mock_manager.stop = AsyncMock()
         mock_manager.clients = {"org-1": MagicMock()}
+        mock_delivery_worker = MagicMock()
+        mock_delivery_worker.start = AsyncMock()
+        mock_delivery_worker.stop = AsyncMock()
 
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_db", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_async_db", new=AsyncMock(return_value=MagicMock())),
+            patch("wecom_ws_runner.close_async_db", new=AsyncMock()),
             patch("wecom_ws_runner.WecomWSManager", return_value=mock_manager),
+            patch(
+                "services.wecom.delivery_worker.WecomDeliveryWorker",
+                return_value=mock_delivery_worker,
+            ),
             patch("asyncio.Event", return_value=mock_stop_event),
             patch("asyncio.get_running_loop") as mock_loop,
         ):

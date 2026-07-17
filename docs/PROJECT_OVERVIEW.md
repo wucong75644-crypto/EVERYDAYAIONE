@@ -48,6 +48,8 @@ EVERYDAYAIONE/
 │   ├── FLOW_DIAGRAMS.md          # 程序流转图（架构/组件/流程）
 │   ├── FUNCTION_INDEX.md         # 函数索引
 │   ├── CURRENT_ISSUES.md         # 当前问题
+│   ├── document/TECH_Conversation_Actor持久执行架构.md # Chat 持久队列、fencing、原子完成与恢复设计
+│   ├── document/TECH_Conversation_Actor实施与验收附录.md # Actor 观测、发布、回滚与测试矩阵
 │   ├── API_REFERENCE.md          # API 接口文档
 │   ├── database/
 │   │   ├── DATABASE_GUIDE.md     # 数据库使用指南
@@ -81,6 +83,7 @@ EVERYDAYAIONE/
 │   ├── .env                      # 后端环境变量（git 忽略）
 │   ├── .env.example              # 环境变量模板
 │   ├── main.py                   # FastAPI 应用入口
+│   ├── conversation_worker_main.py # Conversation Actor 独立 Worker 入口
 │   ├── core/                     # 核心模块
 │   │   ├── config.py                 # 配置管理（pydantic-settings）
 │   │   ├── database.py               # Supabase 客户端
@@ -99,6 +102,7 @@ EVERYDAYAIONE/
 │   │       ├── conversation.py           # 对话路由
 │   │       ├── message.py                # 统一消息路由（/generate）
 │   │       ├── message_request_preparation.py # 消息生成前权限、积分与上下文准备
+│   │       ├── message_turn_anchors.py # retry/send 的 Turn 输入锚点解析与消息关系写入
 │   │       ├── image.py                  # 图像上传路由
 │   │       ├── detail_project.py         # 主图详情页草稿恢复与图片关联路由
 │   │       ├── audio.py                  # 音频上传路由
@@ -113,12 +117,46 @@ EVERYDAYAIONE/
 │   │   ├── image.py                  # 图像上传 Schema
 │   │   ├── detail_project.py         # 主图详情页请求与统一响应 Schema
 │   │   └── websocket.py              # WebSocket 消息 Schema
+│   ├── migrations/               # 数据库增量迁移
+│   │   ├── 120_turn_revision_foundation.sql # Turn/revision 字段、索引与事务 RPC
+│   │   ├── 121_conversation_actor_queue.sql # Actor 队列字段、索引与执行权 RPC
+│   │   ├── 122_conversation_actor_terminal.sql # Actor 原子完成、失败与取消 RPC
+│   │   ├── 123_conversation_actor_progress.sql # Actor fencing 临时进度 RPC
+│   │   ├── 124_conversation_delivery_outbox.sql # Actor 企微终态事务 Outbox 与投递租约 RPC
+│   │   ├── 125_wecom_actor_enqueue.sql # 企微消息与 Actor task 原子幂等入队
+│   │   ├── 126_wecom_conversation_settings.sql # 企微模型/思考模式按租户原子持久化
+│   │   └── rollback/              # 数据库迁移回滚脚本
+│   │       ├── 120_turn_revision_foundation_rollback.sql
+│   │       ├── 121_conversation_actor_queue_rollback.sql
+│   │       ├── 122_conversation_actor_terminal_rollback.sql
+│   │       ├── 123_conversation_actor_progress_rollback.sql
+│   │       ├── 124_conversation_delivery_outbox_rollback.sql
+│   │       ├── 125_wecom_actor_enqueue_rollback.sql
+│   │       └── 126_wecom_conversation_settings_rollback.sql
 │   ├── services/                 # 业务逻辑层
 │   │   ├── auth_service.py           # 认证服务
 │   │   ├── conversation_service.py   # 对话服务
+│   │   ├── conversation_execution.py # Actor claim、租约、执行器与原子终态协调
+│   │   ├── conversation_delivery.py  # Actor 数据库终态后的 WS 投递与槽位释放
+│   │   ├── conversation_worker.py    # Actor 数据库扫描、并发调度与 Redis 唤醒
+│   │   ├── conversation_runtime.py   # Actor 独立进程装配与 Kernel/Worker 生命周期
+│   │   ├── conversation_task.py      # Actor 任务识别与原子取消入口
+│   │   ├── wecom/actor_enqueue.py    # 企微稳定 ID 与 Actor 原子入队适配
+│   │   ├── wecom/conversation_settings.py # 企微对话设置数据库事实源
+│   │   ├── wecom/delivery_sender.py  # 企微 Outbox 稳定分项与双通道发送适配
+│   │   ├── wecom/delivery_worker.py  # 企微 Outbox 租约、检查点、重试与 dead 消费
+│   │   ├── wecom/wecom_ingress_mixin.py # 企微 Actor 灰度与旧链路入站分发
+│   │   ├── wecom/wecom_reply_mixin.py # 企微结果格式化与双通道回复职责
+│   │   ├── handlers/chat/            # Chat 流式与无头执行内核
+│   │   │   ├── execution_engine.py   # 通道无关模型流、工具循环、预算与结果构造
+│   │   │   ├── execution_sink.py     # 通道过程事件协议与无副作用收集器
+│   │   │   ├── actor_sink.py         # Actor fencing 进度持久化与 Web/无头 Sink
+│   │   │   ├── actor_enqueue.py      # Web Chat 稳定幂等 enqueue 与 Redis 唤醒
+│   │   │   └── executor.py           # Actor GenerationExecutor 实现与多模态输入恢复
 │   │   ├── message_service.py        # 消息服务（CRUD）
 │   │   ├── message_idempotency_service.py # 消息生成幂等抢占、指纹与响应重放
 │   │   ├── message_utils.py          # 消息工具函数
+│   │   ├── turn_binding.py           # task 插入绑定与 Turn 关闭的统一 RPC 出口
 │   │   ├── message_ai_helpers.py     # AI 调用辅助函数
 │   │   ├── audio_service.py          # 音频处理服务
 │   │   ├── storage_service.py        # 文件存储服务
@@ -143,11 +181,25 @@ EVERYDAYAIONE/
 │   │   │   ├── __init__.py               # Handler 工厂
 │   │   │   ├── base.py                   # Handler 基类
 │   │   │   ├── chat_handler.py           # 聊天处理器（流式）
+│   │   │   ├── context_snapshot.py       # 固定 task revision 的不可变上下文快照
+│   │   │   ├── conversation_cache.py     # revision + through-message 精确匹配的闭合历史 v2 缓存
+│   │   │   ├── emit_payloads.py           # 显式 emit payload → content block/ContentPart 转换
+│   │   │   ├── chat/                      # Chat 流式执行内核
+│   │   │   │   ├── outcome_builder.py     # 内容块收尾与 ContentPart 协议构造
+│   │   │   │   ├── stream_finalize.py     # 预算合成、结果收割与 stream_end
+│   │   │   │   ├── stream_lifecycle.py    # 错误分类、资源清理与旧终态持久化边界
+│   │   │   │   ├── stream_loop.py         # 多轮流式工具循环协调器
+│   │   │   │   ├── stream_runner.py       # 旧 Web 流协议兼容执行入口
+│   │   │   │   ├── stream_setup.py        # Context/Provider/权限/预算执行前准备
+│   │   │   │   ├── stream_session.py      # 单轮 Provider 流读取与请求累积状态
+│   │   │   │   └── tool_loop.py           # 工具轮次、emit/form 与上下文压缩
 │   │   │   ├── image_handler.py          # 图片生成处理器
 │   │   │   ├── image_request_settings.py # 图片提交与计费参数解析
 │   │   │   └── video_handler.py          # 视频生成处理器
 │   │   ├── wecom/                   # 企业微信服务
 │   │   │   ├── wecom_message_service.py # 企微消息处理核心（继承 WecomAIMixin）
+│   │   │   ├── wecom_file_mixin.py     # 企微原始文件稳定落 Workspace/OSS 并构造 FilePart
+│   │   │   ├── turn_lifecycle.py      # 企微同步生成的 task/Turn 生命周期适配
 │   │   │   ├── wecom_ai_mixin.py        # AI 路由 + 生成能力 Mixin
 │   │   │   ├── app_message_sender.py    # 自建应用消息发送（文本/图片/视频）
 │   │   │   ├── ws_client.py             # 智能机器人 WebSocket 客户端
@@ -620,6 +672,8 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-07-17**：企微 FILE 统一为原始资产 `FilePart` 后，删除已无生产调用的
+  `services/wecom/file_parser.py` 及其孤立测试；文件内容理解统一由标准工具链按需完成。
 - **2026-07-16**：新增消息发送草稿事务与幂等协议技术设计
   - 统一文字、图片、视频和电商图的输入草稿提交时序
   - 设计 `Idempotency-Key`、请求指纹、响应重放和不确定结果安全重试

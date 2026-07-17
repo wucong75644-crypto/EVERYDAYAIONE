@@ -126,16 +126,22 @@ class CommandHandler:
             from services.conversation_service import ConversationService
             conv_svc = ConversationService(self.db)
             await conv_svc.create_conversation(
-                user_id, title="企微对话", model_id="auto"
+                user_id,
+                title="企微对话",
+                model_id="auto",
+                org_id=org_id,
+                source="wecom",
             )
             await ws.send_template_card(
                 reply_ctx.req_id, WecomCardBuilder.new_conversation_card()
             )
 
         elif cmd_name == "thinking":
-            from services.wecom.wecom_message_service import WecomMessageService
-            current = WecomMessageService.get_session_setting(
-                conversation_id, "thinking_mode"
+            from services.wecom.conversation_settings import (
+                get_wecom_conversation_setting,
+            )
+            current = get_wecom_conversation_setting(
+                self.db, conversation_id, user_id, "thinking_mode", org_id,
             )
             await ws.send_template_card(
                 reply_ctx.req_id,
@@ -143,9 +149,11 @@ class CommandHandler:
             )
 
         elif cmd_name == "switch_model":
-            from services.wecom.wecom_message_service import WecomMessageService
-            current = WecomMessageService.get_session_setting(
-                conversation_id, "model"
+            from services.wecom.conversation_settings import (
+                get_wecom_conversation_setting,
+            )
+            current = get_wecom_conversation_setting(
+                self.db, conversation_id, user_id, "model", org_id,
             )
             await ws.send_template_card(
                 reply_ctx.req_id,
@@ -154,7 +162,8 @@ class CommandHandler:
 
         elif cmd_name == "switch_model_direct":
             await self._switch_model_direct(
-                match.group(1).strip(), user_id, conversation_id, reply_ctx
+                match.group(1).strip(), user_id, conversation_id, reply_ctx,
+                org_id,
             )
 
     async def _switch_model_direct(
@@ -163,6 +172,7 @@ class CommandHandler:
         user_id: str,
         conversation_id: str,
         reply_ctx: WecomReplyContext,
+        org_id: str | None,
     ) -> None:
         """直接切换模型（"用deepseek""换gemini"）"""
         model_id = self._fuzzy_match_model(model_text)
@@ -177,8 +187,12 @@ class CommandHandler:
             )
             return
 
-        from services.wecom.wecom_message_service import WecomMessageService
-        WecomMessageService.set_session_setting(conversation_id, "model", model_id)
+        from services.wecom.conversation_settings import (
+            set_wecom_conversation_setting,
+        )
+        set_wecom_conversation_setting(
+            self.db, conversation_id, user_id, "model", model_id, org_id,
+        )
 
         model_name = model_id
         for m in WECOM_MODEL_OPTIONS:

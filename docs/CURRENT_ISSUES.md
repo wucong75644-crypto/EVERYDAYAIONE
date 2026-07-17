@@ -330,6 +330,22 @@
 
 ## 更新记录
 
+- **2026-07-17**：完成 Conversation Actor 企微持久投递阶段 1.4：删除进程内 `_session_settings`，模型写入 `conversations.model_id`、思考模式由行锁 RPC 原子合并到 `chat_settings`，并按 user/org/source 强校验；企微 FILE 不再扫描或转写正文，原始字节按 msgid 稳定落共享 Workspace、同步 OSS，以标准 `FilePart` 原子入队，未知格式保留为二进制；无生产调用的旧企微 `file_parser.py` 及孤立测试已删除。FILE 已按决策取消旧链路兼容并固定进入 Actor，因此生产必须先应用 120-126 迁移、启动 Actor Worker 和企微 Outbox consumer，再部署本版本应用；当前尚未部署或应用迁移。
+- **2026-07-17**：完成 Conversation Actor 企微持久投递阶段 1.3（默认关闭）：`wecom_ws_runner` 增加 PostgreSQL Outbox consumer；按 delivery lease/fencing 认领，长发送期间续租，文本/图片/视频逐项持久化检查点，失败指数退避并在上限后 dead；企微 Actor 改用无头进度 Sink，不再误发 Web 过程/终态事件；Outbox 适配器用发送结果与发送后连接状态共同识别本地 WS 失败。企微主动消息无业务幂等 ACK，仍是可审计的 at-least-once，发送成功与检查点提交之间崩溃可能产生极小概率重复。迁移未应用、开关未开启。
+- **2026-07-17**：完成 Conversation Actor 阶段 5.2（默认关闭）：Web Chat 可通过稳定内部 UUID 幂等 enqueue；新增独立 Actor Worker 入口和 Worker/Web 双开关；Worker 扫描与数据库 claim 双重限定 `delivery_context.actor=true`；用户取消改走 fencing RPC，旧 orphan recovery/超时清理跳过 Actor；刷新与迟到 WS 订阅识别 cancelled。尚未应用迁移、启动生产 Worker或打开 Web 流量。
+- **2026-07-17**：完成 Conversation Actor 阶段 5.1 Web 基础设施（默认关闭）：新增 `update_generation_progress` fencing RPC 与 rollback、ActorWebSink 流式事件/恢复进度、原子终态后的 best-effort WS 投递及任务槽释放；ConversationExecutionService 只在数据库确认终态后调用 observer，丢权与续约失败不产生外部终态。新增 `conversation_actor_web_enabled=false`，尚未切换 Web enqueue 或启动 Worker。
+- **2026-07-17**：完成 Conversation Actor 阶段 4.2 生成内核：新增通道无关 `execute_chat`、过程事件 Sink 和 `ChatGenerationExecutor`；Actor 从 `input_message_id` 恢复并校验完整多模态输入，显式映射 ContextAnchor，响应租约取消且只返回 GenerationOutcome；企微 `generate_complete` 删除独立工具循环并复用 Web 已采用的 prepare/apply/compact/outcome 原语。Actor 异步队列 DB 与现有 Handler 同步上下文 DB 在 Executor 边界隔离。尚未接入 Worker 生命周期、Web enqueue 或企微持久投递。
+- **2026-07-17**：完成 Conversation Actor 阶段 4.1 Web ChatHandler 等价拆分：旧 `_stream_generate` 保持原签名并收口为兼容门面；执行前准备、单轮流读取、多轮工具循环、emit/form、上下文压缩、预算结果收尾、错误清理和旧终态持久化按职责拆入 `handlers/chat/`。尚未实现 GenerationExecutor、接入 Worker 或改变 Web/企微生命周期。
+- **2026-07-17**：完成 Conversation Actor 阶段 3.2 Worker：新增以数据库为事实源的有界扫描与调度，serial 按 conversation 去重、branch 按 task 去重；Redis 仅作 best-effort 唤醒并支持断连退避重连；停机先停止认领、限时等待后取消本地执行。尚未接入应用生命周期或现有 Web/企微业务链路，生产行为不变。
+- **2026-07-17**：完成 Conversation Actor 阶段 3.1 执行协调器：新增类型化 GenerationClaim/GenerationOutcome/GenerationExecutor 与 ConversationExecutionService；统一 serial/branch claim、独立租约续期、连续续约失败丢权、本地执行取消及原子 commit/fail 出口。尚未新增扫描 Worker、Redis 唤醒或应用生命周期接入，现有业务行为不变。
+- **2026-07-17**：完成 Conversation Actor 数据库阶段 2.2：新增原子 commit/fail/cancel RPC 与 rollback；完成提交将消息、积分、Turn revision、task 终态及 owner 释放纳入同一事务；取消采用数据库终态先到先得并立即使旧 token 失效。现有 Web/企微链路仍未切换，真实 PostgreSQL 并发验证留待测试库/部署阶段。
+- **2026-07-17**：完成 Conversation Actor 数据库阶段 2.1：新增兼容队列字段、稳定序列和索引；实现原子 enqueue、serial/branch claim、租约续期与 fencing token 协议及 rollback。现有 Web/企微链路尚未调用这些 RPC；原子 commit/fail/cancel、Worker 和业务切换仍待后续阶段。
+- **2026-07-17**：完成 Conversation Actor 持久执行架构设计：普通 Chat 使用数据库事实队列串行认领，内部 branch 固定快照并行；执行权采用租约与 fencing token；消息、积分、Turn revision、task 终态和 owner 释放纳入原子完成协议；Redis 仅唤醒，Web/企业微信统一通过持久 Worker 执行。实现将按数据库、协调器、Chat 拆分、Web、企微、恢复七阶段推进。
+- **2026-07-17**：完成缓存与工具上下文隔离：Redis 从可变 messages 数组切换为 v2 闭合历史信封；仅 `revision + through_message_id` 精确匹配可命中，旧数组/损坏值主动失效，Redis 故障回源 DB；删除工具循环、legacy loader 和无锚点 PromptBuilder 对共享上下文的整数组覆盖。
+- **2026-07-17**：完成 ContextSnapshot：Web/企业微信正式 task 使用 `base_context_revision` 构造不可变闭合历史，严格校验 `input_message_id/turn_id`，不读取共享 Redis 决定历史边界；相同文本不再被猜测去重；任务私有副本独立压缩；企微首轮恢复小预算配置；旧任务保留受监控 legacy 路径。
+- **2026-07-17**：完成 Web/企业微信 Turn 绑定：所有正式 AI 生成 task 绑定 `input_message_id/turn_id/base_context_revision`；assistant 写入 `reply_to_message_id`；企微同步生成纳入正式 task 生命周期；成功关闭 Turn，失败不推进 revision；旧 retry 消息保留受监控的输入锚点降级。
+- **2026-07-17**：完成 Turn/revision 数据库基础：messages/tasks/conversations 增加兼容字段与索引，新增幂等 `bind_generation_turn`、`close_generation_turn` 事务 RPC 及 rollback；业务链路将在后续阶段接入。
+- **2026-07-17**：完成显式媒体协议收口第一阶段：删除普通模型文本 URL 和 `[FILE]` marker 扫描；Web 流式与企微非流式统一消费 `emit_*` 结构化 payload；多图网格完成态只按实际 ImagePart 渲染。历史错误消息不回填。
 - **2026-07-12**：主图详情页 `118` 迁移预执行发现误用 Supabase `auth.uid()`，真实 RPC 验证继续发现返回列与表字段同名；前者事务回滚，后者通过表别名修复，迁移统一采用阿里云自建 PostgreSQL 的 `OrgScopedDB + user_id + RPC 成员校验` 权限模型。
 - **2026-07-11**：修复后端全量部署误删未纳入主仓库的 `backend/external/mediacrawler` 运行目录；已恢复生产文件，并在 rsync `--delete` 中永久排除该目录。
 - **2026-07-01**：图片缩略图根治改造（后端生成 `workspace-thumbnails` 独立缩略图对象；实时消息保留 `original_url/thumbnail_url/preview_url/download_url`；NAS 工作区返回 `thumbnail_url`；前端停止生成 `x-oss-process` 缩略图 URL）

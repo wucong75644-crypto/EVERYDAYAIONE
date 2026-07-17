@@ -237,6 +237,50 @@ class TestBaseHandlerHelperMethods:
         assert task_data["credits_locked"] == 50
         assert task_data["credit_transaction_id"] == "tx_123"
 
+    def test_insert_task_binds_turn_with_database_task_id(self):
+        db = MagicMock()
+        db.rpc.return_value.execute.return_value = MagicMock(data={"base_context_revision": 3})
+        handler = ConcreteHandler(db)
+        metadata = TaskMetadata(
+            input_message_id="input_1", turn_id="turn_1", execution_mode="serial",
+        )
+        task_data = handler._build_task_data(
+            task_id="external_1", message_id="assistant_1", conversation_id="conv_1",
+            user_id="user_1", task_type="chat", status="running",
+            model_id="model_1", request_params={}, metadata=metadata,
+        )
+
+        anchor = handler._insert_task_with_turn_binding(task_data, metadata)
+
+        assert task_data["id"]
+        assert anchor is metadata.context_anchor
+        assert anchor is not None
+        assert anchor.task_id == task_data["id"]
+        assert anchor.base_revision == 3
+        db.rpc.assert_called_once_with("bind_generation_turn", {
+            "p_conversation_id": "conv_1",
+            "p_task_id": task_data["id"],
+            "p_input_message_id": "input_1",
+            "p_turn_id": "turn_1",
+            "p_execution_mode": "serial",
+        })
+
+    def test_insert_task_removes_row_when_turn_bind_fails(self):
+        db = MagicMock()
+        db.rpc.return_value.execute.side_effect = RuntimeError("bind failed")
+        handler = ConcreteHandler(db)
+        metadata = TaskMetadata(input_message_id="input_1", turn_id="turn_1")
+        task_data = handler._build_task_data(
+            task_id="external_1", message_id="assistant_1", conversation_id="conv_1",
+            user_id="user_1", task_type="chat", status="running",
+            model_id="model_1", request_params={}, metadata=metadata,
+        )
+
+        with pytest.raises(RuntimeError, match="bind failed"):
+            handler._insert_task_with_turn_binding(task_data, metadata)
+
+        db.table.return_value.delete.assert_called_once()
+
     def test_extract_text_content(self, handler):
         """测试：提取文本内容"""
         content = [
@@ -731,6 +775,38 @@ class TestHandleCompleteCommonTaskReuse:
 
         # 核心断言：_complete_task 收到 task=task_data
         handler._complete_task.assert_called_once_with("task_123", task=task_data)
+
+    @pytest.mark.asyncio
+    async def test_closes_bound_turn_before_completing_task(self, handler):
+        task_data = {
+            "id": "db_task_1", "external_task_id": "task_1",
+            "placeholder_message_id": "assistant_1", "conversation_id": "conv_1",
+            "user_id": "user_1", "model_id": "model_1", "status": "running",
+            "version": 1, "turn_id": "turn_1", "input_message_id": "input_1",
+            "base_context_revision": 4,
+        }
+        handler._get_task_context = MagicMock(return_value=task_data)
+        handler._check_idempotency = MagicMock(return_value=None)
+        handler._upsert_assistant_message = MagicMock(return_value=(
+            create_test_message(message_id="assistant_1"),
+            {"id": "assistant_1", "content": [], "created_at": "2026-03-13T00:00:00+00:00"},
+        ))
+        handler._extract_extra_gen_params = MagicMock(return_value=None)
+        handler._complete_task = MagicMock()
+        handler.db.rpc = MagicMock()
+        handler.db.rpc.return_value.execute.return_value = MagicMock(
+            data={"closed_revision": 5},
+        )
+
+        with patch("services.websocket_manager.ws_manager") as mock_ws:
+            mock_ws.send_to_task_or_user = AsyncMock()
+            await handler._handle_complete_common("task_1", [TextPart(text="ok")], 0)
+
+        handler.db.rpc.assert_called_once_with("close_generation_turn", {
+            "p_conversation_id": "conv_1",
+            "p_task_id": "db_task_1",
+            "p_output_message_id": "assistant_1",
+        })
 
 
 # ============================================================

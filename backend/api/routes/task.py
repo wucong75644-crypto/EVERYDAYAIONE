@@ -46,7 +46,7 @@ async def get_pending_tasks(
 
     返回：
     - 进行中的任务 (status in ['pending', 'running'])
-    - 最近 5 分钟内终结的任务 (status in ['completed', 'failed'])，包括所有类型
+    - 最近 5 分钟内终结的任务 (status in ['completed', 'failed', 'cancelled'])
 
     速率限制：每分钟最多 30 次请求
     """
@@ -70,7 +70,7 @@ async def get_pending_tasks(
         # 查询最近 5 分钟内终结的任务
         recent_completed_response = db.table("tasks").select(task_fields).eq(
             "user_id", ctx.user_id
-        ).in_("status", ["completed", "failed"]).gte(
+        ).in_("status", ["completed", "failed", "cancelled"]).gte(
             "completed_at", cutoff_time
         ).order("started_at", desc=False).execute()
 
@@ -274,7 +274,8 @@ async def cancel_task_by_message_id(
     try:
         for field in ("placeholder_message_id", "assistant_message_id"):
             q = db.table("tasks").select(
-                "id, external_task_id, user_id, conversation_id, org_id, request_params"
+                "id, external_task_id, client_task_id, user_id, conversation_id, "
+                "org_id, request_params, delivery_context"
             ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
@@ -288,18 +289,32 @@ async def cancel_task_by_message_id(
 
             if result.data:
                 from services.websocket_manager import ws_manager
+                from services.conversation_task import (
+                    cancel_actor_task,
+                    is_actor_task,
+                )
 
                 for task in result.data:
-                    db.table("tasks").update({
-                        "status": "failed",
-                        "error_message": "用户取消了任务",
-                        "completed_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", task["id"]).execute()
+                    actor_task = is_actor_task(task)
+                    if actor_task:
+                        if not cancel_actor_task(
+                            db, task, ctx.user_id, ctx.org_id,
+                        ):
+                            continue
+                    else:
+                        db.table("tasks").update({
+                            "status": "failed",
+                            "error_message": "用户取消了任务",
+                            "completed_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", task["id"]).execute()
 
                     # 向运行中的 Agent 循环发送取消信号 + 标记 WS 闸门
                     # 闸门防止"工具鬼显"（旧 task 跑完后向已取消 task_id 推 WS）
                     # 详见 docs/document/TECH_用户中断与恢复机制.md §四.5
-                    ext_id = task.get("external_task_id")
+                    ext_id = (
+                        task.get("client_task_id")
+                        or task.get("external_task_id")
+                    )
                     if ext_id:
                         # Phase 2: 记录取消起始时刻，供 cancel.latency metric 计算
                         from services.cancel_metrics import (

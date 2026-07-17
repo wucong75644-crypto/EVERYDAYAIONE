@@ -50,4 +50,8 @@ def format_message(message: dict) -> dict:
         "generation_params": message.get("generation_params"),
         "task_id": message.get("task_id"),
         "client_request_id": message.get("client_request_id"),
+        "turn_id": message.get("turn_id"),
+        "reply_to_message_id": message.get("reply_to_message_id"),
+        "context_revision": message.get("context_revision"),
+        "message_kind": message.get("message_kind", "conversation"),
     }

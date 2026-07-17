@@ -291,14 +291,15 @@ export default function AiImageGrid({
   isGenerating,
   onRegenerateSingle,
 }: AiImageGridProps) {
-  // 构建 cells 数组：确保有 numImages 个 cell
+  // 只消费显式 ImagePart。生成中按请求数量补占位；结束后只展示实际结果。
   const cells = useMemo(() => {
     const result: Array<{ asset: ImageAsset | null; failed?: boolean; errorMessage?: string; errorCode?: string }> = [];
+    const imageParts = content.filter((part): part is ImagePart => part.type === 'image');
+    const cellCount = isGenerating ? Math.max(numImages, imageParts.length) : imageParts.length;
 
-    for (let i = 0; i < numImages; i++) {
-      const part = content[i];
-      if (part && part.type === 'image') {
-        const imgPart = part as ImagePart;
+    for (let i = 0; i < cellCount; i++) {
+      const imgPart = imageParts[i];
+      if (imgPart) {
         const originalUrl = resolveImageOriginalUrl(imgPart);
         result.push({
           asset: originalUrl ? {
@@ -320,7 +321,7 @@ export default function AiImageGrid({
     }
 
     return result;
-  }, [content, numImages]);
+  }, [content, isGenerating, numImages]);
 
   return (
     <div className="mt-3 w-full">

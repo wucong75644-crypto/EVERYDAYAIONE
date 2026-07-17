@@ -73,6 +73,7 @@ async def prepare_generation_request(
     handler: Any,
     conversation_service: Any,
     create_user_message_fn: Any,
+    turn_id: Optional[str] = None,
 ) -> tuple[Any, Dict[str, Any], Optional[Message]]:
     """完成权限校验、图片预检和可选用户消息创建。"""
     user_message: Optional[Message] = None
@@ -88,6 +89,7 @@ async def prepare_generation_request(
             user_message = await create_user_message_fn(
                 db=db, conversation_id=conversation_id, content=body.content,
                 created_at=body.created_at, client_request_id=body.client_request_id,
+                turn_id=turn_id,
             )
     elif needs_user_message:
         conversation, user_message = await asyncio.gather(
@@ -95,6 +97,7 @@ async def prepare_generation_request(
             create_user_message_fn(
                 db=db, conversation_id=conversation_id, content=body.content,
                 created_at=body.created_at, client_request_id=body.client_request_id,
+                turn_id=turn_id,
             ),
         )
     else:

@@ -8,6 +8,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -95,8 +96,8 @@ class TestGenerateCompleteBasic:
         assert "问题" in result[0].text
 
     @pytest.mark.asyncio
-    async def test_extracts_image_url_as_imagepart(self):
-        """回复中包含图片 URL → 提取为 ImagePart"""
+    async def test_preserves_image_url_as_text(self):
+        """普通回复中的图片 URL 保持文本，不推断为 ImagePart。"""
         handler = _make_handler()
 
         async def mock_stream(*args, **kwargs):
@@ -116,9 +117,9 @@ class TestGenerateCompleteBasic:
             )
 
         result = gen_result.parts
-        images = [p for p in result if isinstance(p, ImagePart)]
-        assert len(images) == 1
-        assert "cat.png" in images[0].url
+        assert len(result) == 1
+        assert isinstance(result[0], TextPart)
+        assert result[0].text == "图片已生成：\nhttps://cdn.example.com/cat.png"
 
     @pytest.mark.asyncio
     async def test_adapter_always_closed(self):
@@ -188,6 +189,55 @@ class TestGenerateCompleteBasic:
         assert gen_result.content_blocks[0]["type"] == "text"
         assert gen_result.content_blocks[0]["text"] == "回复内容"
         assert gen_result.tool_digest is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_emit_image_is_returned_by_non_streaming_path(self):
+        """非流式工具循环消费 emit payload，不依赖文本 URL 扫描。"""
+        handler = _make_handler()
+        stream_calls = 0
+
+        async def mock_stream(*args, **kwargs):
+            nonlocal stream_calls
+            stream_calls += 1
+            if stream_calls == 1:
+                yield MockChunk(tool_calls=[SimpleNamespace(
+                    index=0,
+                    id="call-1",
+                    name="code_execute",
+                    arguments_delta='{"code":"emit_image()"}',
+                )])
+            else:
+                yield MockChunk(content="图片已生成")
+
+        async def mock_execute(*args, **kwargs):
+            handler._pending_emit_payloads = [{
+                "kind": "image",
+                "url": "https://cdn.example.com/real.png",
+                "name": "real.png",
+            }]
+            return [(
+                {"id": "call-1", "name": "code_execute", "arguments": "{}"},
+                "ok", False, "ok",
+            )]
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = mock_stream
+        mock_adapter.close = AsyncMock()
+
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
+             patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
+             patch.object(handler, "_extract_text_content", return_value="画猫"), \
+             patch.object(handler, "_execute_tool_calls", side_effect=mock_execute):
+            gen_result = await handler.generate_complete(
+                content=[TextPart(text="画猫")], user_id="u1", conversation_id="c1",
+            )
+
+        images = [part for part in gen_result.parts if isinstance(part, ImagePart)]
+        assert [image.url for image in images] == ["https://cdn.example.com/real.png"]
+        assert any(
+            block.get("type") == "image" and block.get("url") == images[0].url
+            for block in gen_result.content_blocks
+        )
 
 
 # ── unpack_tool_result ──

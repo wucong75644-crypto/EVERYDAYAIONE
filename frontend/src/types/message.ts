@@ -232,6 +232,10 @@ export interface Message {
   created_at: string;
   updated_at?: string;
   client_request_id?: string;
+  turn_id?: string;
+  reply_to_message_id?: string;
+  context_revision?: number;
+  message_kind?: 'conversation' | 'synthetic' | 'tool_internal';
   is_error?: boolean;
   /** AI 主动沟通：消息交互类型 */
   interaction_type?: 'response' | 'question';

@@ -10,6 +10,7 @@
 from datetime import datetime, timezone
 from loguru import logger
 from services.task_utils import save_accumulated_to_message, refund_task_credits
+from services.conversation_task import is_actor_task
 
 
 async def recover_orphan_tasks(db) -> int:
@@ -26,7 +27,8 @@ async def recover_orphan_tasks(db) -> int:
     try:
         response = db.table("tasks").select(
             "id, type, external_task_id, placeholder_message_id, conversation_id, "
-            "model_id, client_task_id, accumulated_content, accumulated_blocks, credit_transaction_id"
+            "model_id, client_task_id, accumulated_content, accumulated_blocks, "
+            "credit_transaction_id, delivery_context"
         ).in_(
             "status", ["pending", "running"]
         ).execute()
@@ -40,6 +42,8 @@ async def recover_orphan_tasks(db) -> int:
     recovered = 0
 
     for task in response.data:
+        if is_actor_task(task):
+            continue
         accumulated = (task.get("accumulated_content") or "").strip()
         message_id = task.get("placeholder_message_id")
 

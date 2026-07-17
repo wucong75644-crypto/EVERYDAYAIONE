@@ -288,6 +288,89 @@ class TestHandleMessage:
         assert call_kwargs["user_id"] == "uid1"
         assert call_kwargs["conversation_id"] == "conv1"
         assert call_kwargs["text_content"] == "你好"
+        assert call_kwargs["input_message_id"] == "umsg1"
+        assert call_kwargs["turn_id"]
+
+    @pytest.mark.asyncio
+    async def test_actor_flag_enqueues_without_legacy_messages(self):
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc.settings = MagicMock(conversation_actor_wecom_enabled=True)
+        svc._user_svc = MagicMock()
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._enqueue_actor_message = AsyncMock()
+        svc._save_user_message = AsyncMock()
+        svc._create_assistant_placeholder = AsyncMock()
+
+        msg = _make_msg()
+        ctx = _make_reply_ctx()
+        await svc.handle_message(msg, ctx)
+
+        svc._enqueue_actor_message.assert_awaited_once_with(
+            msg, ctx, "uid1", "conv1", [],
+        )
+        svc._save_user_message.assert_not_awaited()
+        svc._create_assistant_placeholder.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_actor_enqueue_checks_balance_and_acknowledges_new_task(self):
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=10)
+        svc._reply_text = AsyncMock()
+        svc._notify_web_conversation_updated = AsyncMock()
+        ctx = _make_reply_ctx()
+        result = MagicMock(already_enqueued=False)
+
+        with patch(
+            "services.wecom.actor_enqueue.enqueue_wecom_message",
+            new=AsyncMock(return_value=result),
+        ) as mock_enqueue, patch(
+            "services.handlers.get_handler",
+            return_value=MagicMock(),
+        ):
+            await svc._enqueue_actor_message(
+                _make_msg(), ctx, "uid1", "conv1", [],
+            )
+
+        mock_enqueue.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_actor_file_prepares_asset_before_atomic_enqueue(self):
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=10)
+        svc._reply_text = AsyncMock()
+        svc._notify_web_conversation_updated = AsyncMock()
+        file_payload = {
+            "url": "https://cdn/report.csv",
+            "workspace_path": "上传/企微/stable_report.csv",
+            "name": "report.csv",
+            "mime_type": "text/csv",
+            "size": 10,
+        }
+        svc._prepare_actor_file = AsyncMock(return_value=file_payload)
+        result = MagicMock(already_enqueued=False)
+        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.actor_enqueue.enqueue_wecom_message",
+            new=AsyncMock(return_value=result),
+        ) as mock_enqueue, patch(
+            "services.handlers.get_handler",
+            return_value=MagicMock(),
+        ):
+            await svc._enqueue_actor_message(
+                msg, ctx, "uid1", "conv1", [],
+            )
+
+        assert mock_enqueue.call_args.kwargs["file_payload"] == file_payload
+        svc._reply_text.assert_awaited_once_with(ctx, "已收到，正在处理中。")
 
     @pytest.mark.asyncio
     async def test_image_message_calls_handle_text(self):
@@ -635,6 +718,84 @@ class TestHandleText:
 
         svc._reply_credits_insufficient.assert_called_once()
         mock_get_handler.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bound_wecom_task_closes_turn_after_success(self):
+        from schemas.message import TextPart
+        from services.handlers.chat_generate_mixin import GenerateResult
+        from services.handlers.context_snapshot import ContextAnchor
+
+        db = _make_db_mock()
+        db.rpc.return_value.execute.return_value = MagicMock(data={"closed_revision": 2})
+        svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
+        svc._dispatch_result_to_wecom = AsyncMock()
+
+        with patch("services.handlers.get_handler") as mock_get_handler:
+            handler = MagicMock()
+            handler._build_task_data.return_value = {
+                "id": "db_task_1", "conversation_id": "c1", "org_id": "org1",
+            }
+            anchor = ContextAnchor(
+                task_id="db_task_1", conversation_id="c1", turn_id="t1",
+                input_message_id="m1", base_revision=1,
+                through_message_id="a0", org_id="org1",
+            )
+            handler._insert_task_with_turn_binding.return_value = anchor
+            handler.generate_complete = AsyncMock(
+                return_value=GenerateResult(parts=[TextPart(text="ok")]),
+            )
+            mock_get_handler.return_value = handler
+
+            await svc._handle_text(
+                "u1", "c1", "a1", "你好", _make_reply_ctx(), org_id="org1",
+                input_message_id="m1", turn_id="t1",
+            )
+
+        handler._insert_task_with_turn_binding.assert_called_once()
+        handler.generate_complete.assert_awaited_once_with(
+            content=[TextPart(text="你好")],
+            user_id="u1",
+            conversation_id="c1",
+            context_anchor=anchor,
+        )
+        db.rpc.assert_called_once_with("close_generation_turn", {
+            "p_conversation_id": "c1",
+            "p_task_id": "db_task_1",
+            "p_output_message_id": "a1",
+        })
+
+    @pytest.mark.asyncio
+    async def test_failed_wecom_generation_does_not_close_turn(self):
+        from services.handlers.context_snapshot import ContextAnchor
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
+        svc._reply_text = AsyncMock()
+
+        with patch("services.handlers.get_handler") as mock_get_handler:
+            handler = MagicMock()
+            handler._build_task_data.return_value = {
+                "id": "db_task_1", "conversation_id": "c1", "org_id": "org1",
+            }
+            handler._insert_task_with_turn_binding.return_value = ContextAnchor(
+                task_id="db_task_1", conversation_id="c1", turn_id="t1",
+                input_message_id="m1", base_revision=1,
+                through_message_id=None, org_id="org1",
+            )
+            handler.generate_complete = AsyncMock(side_effect=RuntimeError("boom"))
+            mock_get_handler.return_value = handler
+
+            await svc._handle_text(
+                "u1", "c1", "a1", "你好", _make_reply_ctx(), org_id="org1",
+                input_message_id="m1", turn_id="t1",
+            )
+
+        db.rpc.assert_not_called()
+        tasks = db._table_mocks["tasks"]
+        failed_update = tasks.update.call_args[0][0]
+        assert failed_update["status"] == "failed"
 
 
 # ============================================================
@@ -1117,27 +1278,6 @@ class TestDownloadMedia:
 
 
 # ============================================================
-# TestSessionSettings
-# ============================================================
-
-
-class TestSessionSettings:
-    """会话级设置缓存"""
-
-    def test_set_and_get(self):
-        WecomMessageService.set_session_setting("c1", "model", "deepseek-v3.2")
-        assert WecomMessageService.get_session_setting("c1", "model") == "deepseek-v3.2"
-
-    def test_get_nonexistent(self):
-        assert WecomMessageService.get_session_setting("nonexistent", "model") is None
-
-    def test_overwrite(self):
-        WecomMessageService.set_session_setting("c2", "model", "gpt-4")
-        WecomMessageService.set_session_setting("c2", "model", "deepseek-r1")
-        assert WecomMessageService.get_session_setting("c2", "model") == "deepseek-r1"
-
-
-# ============================================================
 # TestReplyTextWithStream — 有活跃 stream 时用 stream finish 替换
 # ============================================================
 
@@ -1281,23 +1421,24 @@ class TestCommandInterception:
 
 
 # ============================================================
-# TestFileVideoHint — FILE/VIDEO 不支持提示
+# TestFileVideoHint — FILE Actor / VIDEO 不支持提示
 # ============================================================
 
 
 class TestFileVideoHint:
-    """FILE → _handle_file 调用, VIDEO → 提示不支持"""
+    """FILE → Actor，VIDEO → 提示不支持"""
 
     @pytest.mark.asyncio
-    async def test_file_calls_handle_file(self):
-        """FILE 消息 → 调用 _handle_file"""
+    async def test_file_always_uses_actor_without_legacy_messages(self):
         db = _make_db_mock()
         svc = WecomMessageService(db)
+        svc.settings = MagicMock(conversation_actor_wecom_enabled=False)
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._download_media = AsyncMock(return_value=[])
+        svc._enqueue_actor_message = AsyncMock()
         svc._save_user_message = AsyncMock(return_value="m1")
         svc._create_assistant_placeholder = AsyncMock(return_value="a1")
 
@@ -1306,31 +1447,11 @@ class TestFileVideoHint:
         msg.file_name = "test.pdf"
         ctx = _make_reply_ctx()
 
-        with patch.object(svc, "_handle_file", new=AsyncMock()) as mock_hf:
-            await svc.handle_message(msg, ctx)
-            mock_hf.assert_called_once()
+        await svc.handle_message(msg, ctx)
 
-    @pytest.mark.asyncio
-    async def test_file_skips_save_user_message(self):
-        """FILE 消息 → 不调用 _save_user_message（由 _handle_file 自行保存）"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
-        svc._user_svc.update_last_chatid = AsyncMock()
-        svc._user_svc.upsert_chat_target = AsyncMock()
-        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
-
-        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
-        msg.file_url = "https://example.com/test.pdf"
-        msg.file_name = "test.pdf"
-        ctx = _make_reply_ctx()
-
-        with patch.object(svc, "_handle_file", new=AsyncMock()):
-            await svc.handle_message(msg, ctx)
-            svc._save_user_message.assert_not_called()
+        svc._enqueue_actor_message.assert_awaited_once()
+        svc._save_user_message.assert_not_awaited()
+        svc._create_assistant_placeholder.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_video_replies_hint(self):
@@ -1353,97 +1474,6 @@ class TestFileVideoHint:
             mock_reply.assert_called_once()
             assert "暂不支持" in mock_reply.call_args[0][1]
 
-    @pytest.mark.asyncio
-    async def test_file_unsupported_format_replies_hint(self):
-        """不支持的文件格式 → 提示"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
-        svc._user_svc.update_last_chatid = AsyncMock()
-        svc._user_svc.upsert_chat_target = AsyncMock()
-        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
-
-        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
-        msg.file_url = "https://example.com/test.zip"
-        msg.file_name = "test.zip"
-        ctx = _make_reply_ctx()
-
-        with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
-            with patch.object(svc, "_update_assistant_message", new=AsyncMock()):
-                await svc.handle_message(msg, ctx)
-                mock_reply.assert_called_once()
-                assert "暂不支持" in mock_reply.call_args[0][1]
-
-    @pytest.mark.asyncio
-    async def test_file_download_failure_replies_error(self):
-        """文件下载失败 → 提示用户"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
-        svc._user_svc.update_last_chatid = AsyncMock()
-        svc._user_svc.upsert_chat_target = AsyncMock()
-        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
-
-        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
-        msg.file_url = "https://example.com/test.txt"
-        msg.file_name = "test.txt"
-        ctx = _make_reply_ctx()
-
-        with patch(
-            "services.wecom.media_downloader.WecomMediaDownloader.download_and_decrypt",
-            new=AsyncMock(return_value=None),
-        ):
-            with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
-                with patch.object(svc, "_update_assistant_message", new=AsyncMock()):
-                    await svc.handle_message(msg, ctx)
-                    assert any("下载失败" in str(c) for c in mock_reply.call_args_list)
-
-    @pytest.mark.asyncio
-    async def test_file_success_calls_handle_text(self):
-        """文件下载+解析成功 → 调用 _handle_text"""
-        db = _make_db_mock()
-        # 设置 messages.insert 返回值
-        msg_table = MagicMock()
-        msg_table.insert.return_value.execute.return_value = MagicMock(
-            data=[{"id": "m1"}]
-        )
-        db.table = MagicMock(side_effect=lambda name: msg_table if name == "messages" else MagicMock())
-        db.rpc = MagicMock(return_value=MagicMock(execute=MagicMock()))
-
-        svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
-        svc._user_svc.update_last_chatid = AsyncMock()
-        svc._user_svc.upsert_chat_target = AsyncMock()
-        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
-        svc._notify_web_conversation_updated = AsyncMock()
-        svc._upload_file_to_oss = AsyncMock(return_value="https://oss.example.com/file.txt")
-
-        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
-        msg.file_url = "https://example.com/test.txt"
-        msg.file_name = "test.txt"
-        ctx = _make_reply_ctx()
-
-        with patch(
-            "services.wecom.media_downloader.WecomMediaDownloader.download_and_decrypt",
-            new=AsyncMock(return_value=b"Hello file content"),
-        ):
-            with patch.object(svc, "_handle_text", new=AsyncMock()) as mock_ht:
-                await svc.handle_message(msg, ctx)
-                mock_ht.assert_called_once()
-                call_kwargs = mock_ht.call_args[1]
-                assert "test.txt" in call_kwargs["text_content"]
-                assert "Hello file content" in call_kwargs["text_content"]
-
-
 # ============================================================
 # TestNotifyWebConversationUpdated
 # ============================================================
@@ -1456,7 +1486,7 @@ class TestNotifyWebConversationUpdated:
     async def test_sends_to_user_via_ws_manager(self):
         """正常调用 → ws_manager.send_to_user 被调用"""
         with patch(
-            "services.wecom.wecom_message_service.ws_manager"
+            "services.wecom.wecom_reply_mixin.ws_manager"
         ) as mock_ws:
             mock_ws.send_to_user = AsyncMock()
             await WecomMessageService._notify_web_conversation_updated(
@@ -1472,7 +1502,7 @@ class TestNotifyWebConversationUpdated:
     async def test_exception_does_not_propagate(self):
         """ws_manager 异常 → 不抛出，仅 warning"""
         with patch(
-            "services.wecom.wecom_message_service.ws_manager"
+            "services.wecom.wecom_reply_mixin.ws_manager"
         ) as mock_ws:
             mock_ws.send_to_user = AsyncMock(
                 side_effect=ConnectionError("redis down")

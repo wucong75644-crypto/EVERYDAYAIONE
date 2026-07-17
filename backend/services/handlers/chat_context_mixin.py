@@ -13,7 +13,7 @@ Phase 8: 结构化附件元数据（XML <attachments> + status 行动指引）
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -36,6 +36,9 @@ from services.handlers.chat_context.summary_manager import (
     update_summary_if_needed,
 )
 from utils.time_context import RequestContext
+
+if TYPE_CHECKING:
+    from services.handlers.context_snapshot import ContextAnchor
 
 
 class ChatContextMixin:
@@ -66,6 +69,7 @@ class ChatContextMixin:
         prefetched_summary: Optional[str] = None,
         user_location: Optional[str] = None,
         permission_mode: str = "auto",
+        context_anchor: Optional["ContextAnchor"] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表。
 
@@ -117,6 +121,14 @@ class ChatContextMixin:
             file_urls = [u for u in file_urls if u not in ws_urls]
 
         # 调 PromptBuilder 统一构造
+        context_snapshot = None
+        if context_anchor is not None:
+            from services.handlers.context_snapshot import build_context_snapshot
+
+            context_snapshot = await build_context_snapshot(
+                self.db, context_anchor, text_content,
+            )
+
         inp = BuildInput(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -130,6 +142,7 @@ class ChatContextMixin:
             user_preferences=None,  # TODO 阶段 4.4: 从 user_preferences 表读取
             db=self.db,
             prefetched_summary=prefetched_summary,
+            context_snapshot=context_snapshot,
             request_ctx=getattr(self, "request_ctx", None),
             attachments_as_system=get_settings().messages_attachments_as_system,
         )
@@ -199,34 +212,15 @@ class ChatContextMixin:
     async def _build_context_messages(
         self, conversation_id: str, current_text: str
     ) -> List[Dict[str, Any]]:
-        """对话历史加载 — V3.3 Redis cache 优先 + DB 重建降级。
-
-        路径(对齐 OpenAI Assistants thread 模式):
-          1. Redis.get(conv_id) → hit 直接返回(99% 流程)
-          2. miss → DB 重建 → 调统一压缩入口 → 回填 Redis(冷启动 / 过期)
-
-        Redis 故障时自动降级走 DB 路径,不阻塞主流程。
-        """
-        from services.handlers import conversation_cache
+        """Legacy 对话历史加载；正式任务统一使用 ContextSnapshot。"""
         from services.handlers.context_compressor import compress_messages_if_needed
 
-        org_id = getattr(self, "org_id", None)
-
-        # 1. Redis hit 直接用
-        cached = await conversation_cache.get_messages(conversation_id, org_id)
-        if cached is not None:
-            return cached
-
-        # 2. Redis miss → DB 重建(history_loader 已删 budget break,返回完整)
         messages = await build_context_messages(
             self.db, conversation_id, current_text,
         )
         if not messages:
             return messages
 
-        # 3. 重建后调统一压缩入口(防大 file_analyze 历史撑爆下游)
-        # 注:DB 重建是冷启动路径,默认 web 压缩策略(大预算容量触发)
-        # wecom 路径在主流程内已被层 4/5/6 压缩,cache miss 后 messages 已是压缩态
         try:
             messages, state = await compress_messages_if_needed(
                 messages, conv_source="web",
@@ -237,9 +231,6 @@ class ChatContextMixin:
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"compress on rebuild failed | conv={conversation_id} | {e}")
-
-        # 4. 回填 cache(下次直接 hit)
-        await conversation_cache.set_messages(conversation_id, messages, org_id)
 
         return messages
 

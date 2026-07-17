@@ -23,7 +23,7 @@ if __name__ == "__main__" and "wecom_ws_runner" not in sys.modules:
 
 from loguru import logger
 
-from core.database import get_db
+from core.database import close_async_db, get_async_db, get_db
 from core.logging_config import setup_logging
 from schemas.wecom import (
     WecomIncomingMessage,
@@ -276,6 +276,18 @@ async def main() -> None:
     _manager = WecomWSManager(db)
     await _manager.start()
 
+    async_db = await get_async_db()
+    from services.wecom.delivery_sender import WecomDeliverySender
+    from services.wecom.delivery_worker import WecomDeliveryWorker
+    delivery_worker = WecomDeliveryWorker(
+        async_db,
+        WecomDeliverySender(async_db, get_ws_client),
+    )
+    delivery_task = asyncio.create_task(
+        delivery_worker.start(),
+        name="wecom_delivery_worker",
+    )
+
     # 定时任务推送订阅器（跨进程 IPC：web 进程 publish → ws_runner 这里 subscribe）
     # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.4
     from services.scheduler.push_dispatcher import start_proactive_subscriber
@@ -306,7 +318,14 @@ async def main() -> None:
     except asyncio.CancelledError:
         pass
 
+    await delivery_worker.stop()
+    try:
+        await asyncio.wait_for(delivery_task, timeout=10)
+    except asyncio.TimeoutError:
+        delivery_task.cancel()
+        await asyncio.gather(delivery_task, return_exceptions=True)
     await _manager.stop()
+    await close_async_db()
     logger.info("Wecom WS runner stopped")
 
 

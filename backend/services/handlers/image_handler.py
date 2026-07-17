@@ -475,7 +475,7 @@ class ImageHandler(BaseHandler):
             batch_id=batch_id,
         )
 
-        self.db.table("tasks").insert(task_data).execute()
+        self._insert_task_with_turn_binding(task_data, metadata)
 
         logger.info(
             f"Task saved | external_task_id={task_id} | "

@@ -200,6 +200,80 @@
 | `enforce_tool_budget` | `backend/services/handlers/context_compressor/budget.py` | 工具结果桶：超预算从最旧 tool 开始归档 | messages, max_tokens | None |
 | `enforce_history_budget_sync` | `backend/services/handlers/context_compressor/budget.py` | 历史消息桶：超预算反向累积找切点 | messages, max_tokens | None |
 | `ChatGenerateMixin._get_conv_source` | `backend/services/handlers/chat_generate_mixin.py` | 读取并缓存 conversations.source（Web/企微分流用） | conversation_id | str |
+| `ChatGenerateMixin.generate_complete` | `backend/services/handlers/chat_generate_mixin.py` | 企微非流式兼容门面；调用统一 Chat 执行内核并把执行异常转换为通道友好提示 | content, user_id, conversation_id, model_id, context_anchor | GenerateResult |
+| `execute_chat` | `backend/services/handlers/chat/execution_engine.py` | 通道无关模型流、工具循环、预算、结构化产物和 usage 执行内核；不提交任务终态 | handler, request, cancellation_event?, sink? | ChatExecutionResult |
+| `ChatGenerationExecutor.execute` | `backend/services/handlers/chat/executor.py` | 校验 Actor task/claim，从输入消息恢复完整 ContentPart 与固定 ContextAnchor，返回纯 GenerationOutcome | task, claim, cancellation_event | GenerationOutcome |
+| `CollectingExecutionSink` | `backend/services/handlers/chat/execution_sink.py` | 无 WebSocket、无数据库副作用的文本、思考和内容块过程事件收集器 | - | ExecutionSink |
+| `ActorWebSink` | `backend/services/handlers/chat/actor_sink.py` | 推送 Actor 流式过程事件；临时进度通过 execution token 条件 RPC 持久化，WS 故障不改变执行结果 | db, delivery, cancellation_event, websocket | ExecutionSink |
+| `ActorPersistenceSink` | `backend/services/handlers/chat/actor_sink.py` | 企微 Actor 无头执行：只保存 fencing 恢复进度，不发送 Web 过程事件 | db, delivery, cancellation_event | ExecutionSink |
+| `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；Web best-effort 推终态，企微交给事务 Outbox | task, terminal_result | None |
+| `enqueue_web_chat` | `backend/services/handlers/chat/actor_enqueue.py` | 以稳定内部 UUID 调用原子 enqueue RPC，并 best-effort 发布 Redis 唤醒 | handler, content, user_id, conversation_id, external_task_id, model_id, metadata, params | str |
+| `ConversationActorRuntime.start/stop` | `backend/services/conversation_runtime.py` | 装配独立 Worker、执行器、按 delivery channel 选择 Web/无头 Sink、终态观察器和 Kernel 生命周期 | - | None |
+| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将终态消息展开为稳定检查点分项，并通过智能机器人主动消息或自建应用 API 发送 | task, message / context, item | list / bool |
+| `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
+| `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
+| `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
+| `build_running_step` | `backend/services/handlers/chat/tool_loop.py` | Web 与无头执行内核共用的 running tool_step 构造原语 | call | Dict |
+| `build_block_from_payload` | `backend/services/handlers/emit_payloads.py` | 将可信 emit payload 转成流式推送与持久化使用的 content block | payload | Optional[Dict] |
+| `build_part_from_payload` | `backend/services/handlers/emit_payloads.py` | 将可信 emit payload 转成非流式链路使用的 ContentPart | payload | Optional[ContentPart] |
+| `context_anchor_from_binding` | `backend/services/handlers/context_snapshot.py` | 将 Turn 绑定事务结果转换为不可变任务上下文锚点 | task_data, input_message_id, turn_id, binding_data | ContextAnchor |
+| `build_context_snapshot` | `backend/services/handlers/context_snapshot.py` | 校验任务输入锚点，按 base revision 严格构造闭合历史与兼容摘要 | db, anchor, current_text | ContextSnapshot |
+| `get_closed_messages` | `backend/services/handlers/conversation_cache.py` | 仅在 revision 与 through-message 精确匹配时读取 v2 闭合历史；旧值/坏值失效，Redis 故障降级 miss | conv_id, requested_revision, through_message_id, org_id, task_id?, turn_id? | Optional[List[Dict]] |
+| `set_closed_messages` | `backend/services/handlers/conversation_cache.py` | 写入带 schema/revision/through-message 的闭合历史信封，不接收任务私有工具循环 | conv_id, revision, through_message_id, messages, org_id, ttl, task_id?, turn_id? | bool |
+| `build_context_messages` | `backend/services/handlers/chat_context/history_loader.py` | legacy 模式按时间加载；快照模式仅加载不超过 base revision 的闭合 conversation 消息 | db, conversation_id, current_text, base_revision?, strict? | List[Dict] |
+| `_build_history_query` | `backend/services/handlers/chat_context/history_loader.py` | 构造 legacy 或固定 revision 的闭合历史查询 | db, conversation_id, base_revision | query |
+| `_row_to_oai_messages` | `backend/services/handlers/chat_context/history_loader.py` | 将数据库 content 转为标准消息并限制历史图片 | row, remaining_images | messages, image_count |
+| `_estimate_message_tokens` | `backend/services/handlers/chat_context/history_loader.py` | 估算一组标准消息 token，仅控制加载批次与日志 | messages | int |
+| `_append_tool_digest` | `backend/services/handlers/chat_context/history_loader.py` | 将持久化工具摘要追加到最近的普通 assistant 内容 | context, row | None |
+| `_finalize_history` | `backend/services/handlers/chat_context/history_loader.py` | 补全工具配对、中断提示和 legacy 文本去重 | context, interrupt_marker, current_text, is_legacy | List[Dict] |
+| `PromptBuilder._compose_messages` | `backend/services/prompt_builder/builder.py` | 按缓存稳定边界拼接系统层、快照历史、附件与当前用户消息 | static/session/turn/history/summary/user_result | List[Dict] |
+| `bind_generation_turn` | `backend/migrations/120_turn_revision_foundation.sql` | 原子绑定 task 的输入消息、Turn 和上下文基线；相同参数重复调用幂等 | conversation_id, task_id, input_message_id, turn_id, execution_mode | JSONB |
+| `close_generation_turn` | `backend/migrations/120_turn_revision_foundation.sql` | 原子关闭 Turn、标记输入输出 revision 并推进会话版本 | conversation_id, task_id, output_message_id | JSONB |
+| `enqueue_generation_turn` | `backend/migrations/121_conversation_actor_queue.sql` | 原子创建 pending Chat task 并校验、绑定输入/输出消息的 Turn 关系 | task_data, input_message_id, turn_id, execution_mode, delivery_context | JSONB |
+| `claim_next_serial_generation_turn` | `backend/migrations/121_conversation_actor_queue.sql` | 锁定 conversation，按稳定队列顺序认领最早 serial task 并绑定 ContextSnapshot 基线 | conversation_id, lease_seconds, max_attempts | JSONB |
+| `claim_branch_generation_turn` | `backend/migrations/121_conversation_actor_queue.sql` | 按 task_id 认领内部 branch task，不占用 serial owner | task_id, lease_seconds, max_attempts | JSONB |
+| `renew_generation_lease` | `backend/migrations/121_conversation_actor_queue.sql` | 仅允许当前 fencing token 延长 running task 租约 | task_id, execution_token, lease_seconds | JSONB |
+| `commit_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 在有效租约内原子提交 Chat 消息、扣积分、关闭 Turn、完成 task 并释放 owner | task_id, execution_token, output_message_id, result_content, usage, credits_cost, tool_digest | JSONB |
+| `fail_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 仅允许当前 fencing token 原子失败 running Chat task 并释放 owner | task_id, execution_token, error_code, error_message | JSONB |
+| `cancel_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 用户与租户范围校验后立即取消 pending/running Chat task 并使旧 token 失效 | task_id, user_id, org_id | JSONB |
+| `create_actor_terminal_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | Actor 企微 task 进入完成/失败终态时，在同一事务幂等创建投递 Outbox | trigger | trigger |
+| `claim_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 使用 SKIP LOCKED、租约和稳定顺序认领一条待投递记录 | lease_seconds, max_attempts | JSONB |
+| `renew_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 当前 fencing token 续租并保存分项投递检查点 | delivery_id, lease_token, lease_seconds, delivered_items | JSONB |
+| `complete_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 当前有效投递权将 Outbox 原子标记为 delivered | delivery_id, lease_token, delivered_items | JSONB |
+| `fail_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 当前投递权按有界指数退避重新排队，超限进入 dead | delivery_id, lease_token, error, delivered_items, max_attempts | JSONB |
+| `enqueue_wecom_generation_turn` | `backend/migrations/125_wecom_actor_enqueue.sql` | 按稳定 ID 原子创建企微输入/助手消息并幂等进入 Actor serial queue | task_data, input/output ids, turn_id, input_content, delivery_context | JSONB |
+| `update_wecom_conversation_setting` | `backend/migrations/126_wecom_conversation_settings.sql` | 行锁内按 user/org/source 校验并原子更新模型或思考模式 | conversation_id, user_id, setting_key/value, org_id | JSONB |
+| `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
+| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，捕获对话设置并以结构化 FilePart 调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload | WecomActorEnqueueResult |
+| `WecomFileMixin._prepare_actor_file` | `backend/services/wecom/wecom_file_mixin.py` | 原始字节按 msgid 稳定路径原子保存到共享 Workspace、同步 OSS 并返回标准 FilePart | msg, reply_ctx, user_id, org_id | dict \| None |
+| `WecomReplyMixin` | `backend/services/wecom/wecom_reply_mixin.py` | 旧同步链路的结果格式化、企微双通道回复和 Web 会话更新通知 | - | mixin |
+| `WecomIngressMixin._process_incoming_content` | `backend/services/wecom/wecom_ingress_mixin.py` | FILE 固定进入 Actor；其他支持类型按企微 Actor 开关分流原子入队或旧同步生命周期 | msg, reply_ctx, user_id, conversation_id, image_urls | None |
+| `GenerationClaim.from_rpc` | `backend/services/conversation_execution.py` | 校验 claimed RPC 结果并构造不可变执行权对象；非 claimed 结果返回 None | data, conversation_id, execution_mode | GenerationClaim \| None |
+| `ConversationExecutionService.claim_serial` | `backend/services/conversation_execution.py` | 通过数据库 RPC 认领 conversation 最早 serial task | conversation_id | GenerationClaim \| None |
+| `ConversationExecutionService.claim_branch` | `backend/services/conversation_execution.py` | 通过数据库 RPC 精确认领内部 branch task | task_id, conversation_id | GenerationClaim \| None |
+| `ConversationExecutionService.execute_claim` | `backend/services/conversation_execution.py` | 协调纯执行器、租约续期、丢权取消以及原子 commit/fail；shutdown 不伪造终态 | claim | Dict |
+| `RedisConversationWakeup.publish` | `backend/services/conversation_worker.py` | Best-effort 发布 conversation 唤醒；Redis 故障不影响数据库兜底扫描 | conversation_id, org_id | bool |
+| `RedisConversationWakeup.listen` | `backend/services/conversation_worker.py` | 订阅 Actor 唤醒频道并在断连后退避重连 | handler | None |
+| `ConversationWorker.start` | `backend/services/conversation_worker.py` | 启动有界数据库扫描循环和可选 Redis 唤醒监听 | - | None |
+| `ConversationWorker.stop` | `backend/services/conversation_worker.py` | 停止扫描、关闭监听，并在超时后取消本地执行 | - | None |
+| `ConversationWorker.wake` | `backend/services/conversation_worker.py` | 合并同 conversation 的本地或 Redis 唤醒 | conversation_id | None |
+| `ConversationWorker.scan_once` | `backend/services/conversation_worker.py` | 扫描 pending/running Chat task，按 serial conversation 或 branch task 去重并受并发上限调度 | - | int |
+| `append_final_turn_blocks` | `backend/services/handlers/chat/outcome_builder.py` | 按流式时序将最后一轮尚未收割的 thinking/text 追加到内容块 | blocks, thinking, thinking_committed, thinking_duration_ms, text | None |
+| `build_content_parts` | `backend/services/handlers/chat/outcome_builder.py` | 将可信内部内容块转换为 ContentPart；空块回退为普通文本且不扫描媒体标记 | blocks, fallback_text, fallback_thinking, fallback_thinking_duration_ms | List[ContentPart] |
+| `finalize_stream_result` | `backend/services/handlers/chat/stream_finalize.py` | 执行预算总结、收割内容块和 tool digest、构造完成参数并发送 stream_end；不提交 completed 终态 | handler, adapter, budget, delivery, state, websocket, save_blocks | StreamFinalizationResult |
+| `handle_stream_error` | `backend/services/handlers/chat/stream_lifecycle.py` | 分类 Provider 可重试错误与业务错误，不处理持久化阶段异常 | handler, error, request fields | None |
+| `cleanup_stream_resources` | `backend/services/handlers/chat/stream_lifecycle.py` | 关闭 Provider、WS 监听器和请求级工具结果资源 | adapter, task_id, websocket | None |
+| `persist_stream_completion` | `backend/services/handlers/chat/stream_lifecycle.py` | 在模型成功后提交旧链路终态；持久化失败不触发 Provider 重试 | handler, completion_args, request/result fields | None |
+| `ChatStreamLoop.run` | `backend/services/handlers/chat/stream_loop.py` | 协调多轮 Provider 流、工具执行、取消、steer 与上下文压缩，不构造或提交最终终态 | - | None |
+| `run_legacy_chat_stream` | `backend/services/handlers/chat/stream_runner.py` | 兼容旧 Web 流协议并串联准备、循环、收尾、错误、清理和持久化边界 | handler, request, websocket | None |
+| `prepare_chat_stream` | `backend/services/handlers/chat/stream_setup.py` | 基于固定上下文准备 Provider、权限工具、trace、staging 与执行预算，不读写任务终态 | handler, content, user_id, conversation_id, task_id, model_id, permission_mode, needs_google_search, params, context_anchor | PreparedChatStream |
+| `read_stream_turn` | `backend/services/handlers/chat/stream_session.py` | 读取单轮 Provider 流，累积 thinking/text/usage/tool-call 并处理 stream 内取消；不执行工具或写终态 | adapter, messages, stream_kwargs, delivery, totals, content_blocks, websocket, save_accumulated | StreamTurnResult |
+| `prepare_tool_turn` | `backend/services/handlers/chat/tool_loop.py` | 构建动态工具列表并追加上下文、退出附件和权限提醒 | core_tools, discovered_names, org_id, turn, messages, tool_context, permission | List[Dict] |
+| `begin_tool_calls` | `backend/services/handlers/chat/tool_loop.py` | 追加 assistant tool_calls，推送调用事件并创建 running tool_step | completed_calls, turn_text, turn, messages, content_blocks, delivery, websocket, save_blocks | Dict[str, float] |
+| `apply_tool_results` | `backend/services/handlers/chat/tool_loop.py` | 将工具结果回填模型消息和 tool_step，并返回待注入图片 URL | tool_results, messages, content_blocks, start_times, tool_context | List[str] |
+| `push_emit_payloads` | `backend/services/handlers/chat/tool_loop.py` | 按显式协议推送并持久化 emit 内容块 | payloads, content_blocks, delivery, websocket, save_blocks | None |
+| `push_form_block` | `backend/services/handlers/chat/tool_loop.py` | 推送表单块及固定确认提示，返回提示文本 | form, content_blocks, delivery, websocket, save_blocks | str |
+| `compact_tool_context` | `backend/services/handlers/chat/tool_loop.py` | 按 Web/企微既有预算压缩完成的工具轮次 | messages, conversation_source, turn | None |
 
 ### 滚动管理模块 (Scroll Management)
 
@@ -407,6 +481,12 @@
 | `resolve_generation_context` | `backend/api/routes/message_request_preparation.py` | 解析生成类型并注入请求位置上下文 | request, body | GenerationType |
 | `preflight_image_request` | `backend/api/routes/message_request_preparation.py` | 用正式任务参数执行图片积分预检 | handler, user_id, content, params, model, operation | None |
 | `prepare_generation_request` | `backend/api/routes/message_request_preparation.py` | 权限校验、图片预检和用户消息创建 | db, conversation_id, body, gen_type, user_id, org_id, dependencies | tuple |
+| `resolve_existing_turn_anchor` | `backend/api/routes/message_turn_anchors.py` | retry/单图重生读取原 Turn；旧消息缺字段时回退到此前最近 user 消息 | db, conversation_id, assistant_message_id | tuple[input_message_id, turn_id] |
+| `insert_task_with_turn_binding` | `backend/services/turn_binding.py` | 插入 task 后调用事务 RPC 固定输入和上下文基线，失败补偿删除 task | db, task_data, input_message_id, turn_id, execution_mode | None |
+| `close_bound_turn` | `backend/services/turn_binding.py` | 统一调用关闭 Turn 的事务 RPC | db, conversation_id, task_id, output_message_id | RPC result |
+| `create_wecom_turn_task` | `backend/services/wecom/turn_lifecycle.py` | 为企微同步生成创建正式 chat task 并绑定 Turn | handler, conversation/user/message/turn fields | task UUID |
+| `complete_wecom_turn_task` | `backend/services/wecom/turn_lifecycle.py` | 企微生成成功后关闭 Turn 并完成 task | db, conversation_id, task_id, message_id, turn_id, org_id | None |
+| `fail_wecom_turn_task` | `backend/services/wecom/turn_lifecycle.py` | 企微生成失败时只标记 task failed，不推进 revision | db, task_id, conversation_id, turn_id, error | None |
 | `prepare_assistant_message` | `backend/api/routes/message_generation_helpers.py` | 按操作类型创建或重置助手消息 | db, conversation_id, body, gen_type | tuple |
 | `finalize_image_request_failure` | `backend/api/routes/message_generation_helpers.py` | 将提交阶段失败持久化为失败图片快照 | db, message_id, operation, params, error_code, error_message | None |
 
@@ -645,7 +725,7 @@
 | `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
 | `MediaPlaceholder` / `FailedMediaPlaceholder` | `frontend/src/components/chat/media/MediaPlaceholder.tsx` | 统一媒体占位符；失败状态支持错误码、积分不足警告和重新生成 |
 | `ImageContextMenu` | `frontend/src/components/chat/ImageContextMenu.tsx` | 图片右键上下文菜单；引用操作调用统一附件 Context 命令 |
-| `AiImageGrid` | `frontend/src/components/chat/media/AiImageGrid.tsx` | AI 多图网格组件，各失败单元格独立传递错误码并支持单图重新生成 |
+| `AiImageGrid` | `frontend/src/components/chat/media/AiImageGrid.tsx` | AI 多图网格组件；仅消费 ImagePart，生成中补请求占位，完成后只展示实际图片 |
 | `GridCell` | `frontend/src/components/chat/media/AiImageGrid.tsx` | 单个网格单元（memo + gridCellAreEqual 自定义比较，仅数据 props 变化时重渲染） |
 | `gridCellAreEqual` | `frontend/src/components/chat/media/AiImageGrid.tsx` | GridCell 自定义 memo 比较函数（包括 errorCode，忽略函数引用） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
@@ -974,7 +1054,7 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `format_message` | `backend/services/message_utils.py` | 格式化消息响应 | message_data | dict |
+| `format_message` | `backend/services/message_utils.py` | 格式化消息响应，并透传可选 Turn/reply/revision 字段 | message_data | dict |
 | `deduct_user_credits` | `backend/services/message_utils.py` | 扣除用户积分 | db, user_id, credits, description | None |
 | `_generate_with_credits` | `backend/services/video_service.py` | 通用视频生成流程 | user_id, model, ... | Dict[str, Any] |
 | `_get_user` | `backend/services/base_generation_service.py` | 获取用户信息 | user_id | dict |

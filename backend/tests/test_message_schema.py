@@ -5,6 +5,7 @@ ThinkingPart / ToolStepPart schema 单元测试
 """
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 backend_dir = str(Path(__file__).resolve().parent.parent)
@@ -16,6 +17,9 @@ from schemas.message import (
     ThinkingPart,
     ToolStepPart,
     ContentPart,
+    Message,
+    MessageResponse,
+    MessageRole,
     TextPart,
 )
 from pydantic import TypeAdapter
@@ -152,3 +156,25 @@ class TestContentPartDiscriminator:
         assert isinstance(parts[0], ThinkingPart)
         assert isinstance(parts[1], ToolStepPart)
         assert isinstance(parts[2], TextPart)
+
+
+def test_message_response_preserves_turn_relationship_fields():
+    """列表/搜索响应不能丢失正式 Turn 与上下文 revision。"""
+    message = Message(
+        id="00000000-0000-0000-0000-000000000002",
+        conversation_id="00000000-0000-0000-0000-000000000001",
+        role=MessageRole.ASSISTANT,
+        content=[TextPart(text="完成")],
+        turn_id="00000000-0000-0000-0000-000000000003",
+        reply_to_message_id="00000000-0000-0000-0000-000000000004",
+        context_revision=7,
+        message_kind="conversation",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    response = MessageResponse.from_message(message)
+
+    assert response.turn_id == message.turn_id
+    assert response.reply_to_message_id == message.reply_to_message_id
+    assert response.context_revision == 7
+    assert response.message_kind == "conversation"

@@ -97,8 +97,8 @@ class TestBuildBlockFromPayload:
     """chat_handler._build_block_from_payload 把 emit_payload 转 block"""
 
     def test_chart_payload_to_block(self):
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "chart",
             "title": "销售趋势",
             "option": {
@@ -116,8 +116,8 @@ class TestBuildBlockFromPayload:
         Bug: _build_block_from_payload 之前丢了 spec_format 字段,
         前端拿到 undefined 默认走 ECharts → plotly spec 渲染失败。
         """
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "chart",
             "spec_format": "plotly",
             "title": "plotly 图",
@@ -127,8 +127,8 @@ class TestBuildBlockFromPayload:
 
     def test_chart_payload_transmits_spec_format_vegalite(self):
         """vegalite emit 的 spec_format 必须透传到 block"""
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "chart",
             "spec_format": "vegalite",
             "title": "altair 图",
@@ -138,8 +138,8 @@ class TestBuildBlockFromPayload:
 
     def test_chart_payload_no_spec_format_defaults_echarts(self):
         """未指定 spec_format (老的手动 emit_chart) 默认 echarts,向后兼容。"""
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "chart",
             "title": "ECharts 图",
             "option": {"series": [{"type": "bar", "data": [1, 2, 3]}]},
@@ -147,8 +147,8 @@ class TestBuildBlockFromPayload:
         assert block.get("spec_format") == "echarts"
 
     def test_table_payload_to_block(self):
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "table",
             "title": "TOP10",
             "columns": ["name", "count"],
@@ -160,8 +160,8 @@ class TestBuildBlockFromPayload:
         assert block["rows"][0]["name"] == "A"
 
     def test_image_payload_to_block_with_dims(self):
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "image",
             "url": "https://cdn/img.png",
             "name": "img.png",
@@ -175,8 +175,8 @@ class TestBuildBlockFromPayload:
         assert block["workspace_path"] == "下载/img.png"
 
     def test_failed_image_payload_includes_retry(self):
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "image",
             "url": None,
             "failed": True,
@@ -189,8 +189,8 @@ class TestBuildBlockFromPayload:
 
     def test_file_payload_to_block_keeps_dual_path(self):
         """双轨字段:url(CDN) + workspace_path(本地相对路径) 都保留"""
-        from services.handlers.chat_handler import _build_block_from_payload
-        block = _build_block_from_payload({
+        from services.handlers.emit_payloads import build_block_from_payload
+        block = build_block_from_payload({
             "kind": "file",
             "url": "https://cdn/x.xlsx",
             "name": "x.xlsx",
@@ -203,8 +203,8 @@ class TestBuildBlockFromPayload:
         assert block["workspace_path"] == "下载/x.xlsx"
 
     def test_unknown_kind_returns_none(self):
-        from services.handlers.chat_handler import _build_block_from_payload
-        assert _build_block_from_payload({"kind": "unknown"}) is None
+        from services.handlers.emit_payloads import build_block_from_payload
+        assert build_block_from_payload({"kind": "unknown"}) is None
 
 
 # ============================================================

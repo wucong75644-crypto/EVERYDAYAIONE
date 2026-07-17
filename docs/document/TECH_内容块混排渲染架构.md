@@ -2,6 +2,10 @@
 
 > **版本**：v1.0 | **日期**：2026-04-24 | **等级**：A级 | **状态**：方案确认
 
+> **协议更新（2026-07-17）**：普通 text block 直接构造 `TextPart`，不再调用
+> `extract_media_parts()` 扫描 URL；image/file/chart 仅由显式 emit payload 产生。
+> 现行边界见 [TECH_Turn快照与显式媒体协议治理.md](TECH_Turn快照与显式媒体协议治理.md)。
+
 ## 背景与目标
 
 ### 问题

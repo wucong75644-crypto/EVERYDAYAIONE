@@ -358,7 +358,7 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
             return
 
         status = task.get("status")
-        if status not in ["completed", "failed"]:
+        if status not in ["completed", "failed", "cancelled"]:
             logger.debug(f"Task not in final state | task_id={task_id} | status={status}")
             return
 
@@ -401,6 +401,14 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
                 error_message=task.get("error_message", "生成失败"),
             ))
             logger.info(f"Sent failed {task_type} task | conn={conn_id} | task={task_id}")
+        else:
+            await ws_manager.send_to_connection(conn_id, build_message_error(
+                task_id=push_task_id,
+                conversation_id=conversation_id or "",
+                message_id=message_id,
+                error_code="TASK_CANCELLED",
+                error_message="任务已取消",
+            ))
 
     except Exception as e:
         logger.warning(f"Failed to check completed task | task={task_id} | error={e}")

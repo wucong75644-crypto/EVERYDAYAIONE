@@ -1,0 +1,30 @@
+[Unit]
+Description=EVERYDAYAI Conversation Actor Worker
+After=network.target postgresql.service redis.service everydayai-backend.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/var/www/everydayai/backend
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="TZ=Asia/Shanghai"
+EnvironmentFile=/var/www/everydayai/backend/.env
+ExecStart=/var/www/everydayai/backend/venv/bin/python conversation_worker_main.py
+
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=5
+
+LimitNOFILE=65535
+LimitNPROC=4096
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=everydayai-conversation-actor
+
+[Install]
+WantedBy=multi-user.target

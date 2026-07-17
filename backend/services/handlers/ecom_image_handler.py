@@ -64,7 +64,7 @@ class EcomImageHandler(ImageHandler):
             request_params={"phase": "plan"},
             metadata=metadata,
         )
-        self.db.table("tasks").insert(task_data).execute()
+        self._insert_task_with_turn_binding(task_data, metadata)
 
         # 后台异步执行（start 立刻返回，不阻塞 HTTP 响应）
         asyncio.create_task(self._phase1_plan(

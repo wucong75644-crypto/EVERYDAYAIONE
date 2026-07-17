@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -40,6 +41,7 @@ from api.routes.message_generation_helpers import (
     finalize_image_request_failure,
     prepare_assistant_message,
 )
+from api.routes.message_turn_anchors import resolve_existing_turn_anchor
 from api.routes.message_request_preparation import (
     prepare_generation_request,
     resolve_generation_context,
@@ -218,6 +220,7 @@ async def _do_generate_message(
 
     # 1.5+2. 解析生成类型与请求位置上下文
     gen_type = await resolve_generation_context(request, body)
+    requested_turn_id = str(uuid.uuid4())
 
     # 3+4. 权限校验、图片积分预检和用户消息创建
     handler = get_handler(
@@ -229,6 +232,7 @@ async def _do_generate_message(
         user_id=user_id, org_id=ctx.org_id, handler=handler,
         conversation_service=get_conversation_service(db),
         create_user_message_fn=create_user_message,
+        turn_id=requested_turn_id,
     )
 
     if body.params is None:
@@ -240,6 +244,17 @@ async def _do_generate_message(
     assistant_message_id, assistant_message = await prepare_assistant_message(
         db, conversation_id, body, gen_type,
     )
+
+    if user_message:
+        input_message_id, turn_id = user_message.id, requested_turn_id
+    else:
+        input_message_id, turn_id = resolve_existing_turn_anchor(
+            db, conversation_id, assistant_message_id,
+        )
+    if user_message:
+        user_message.turn_id = turn_id
+    assistant_message.turn_id = turn_id
+    assistant_message.reply_to_message_id = input_message_id
 
     # 5.1 记录用户反馈信号（retry/regenerate = 用户对生成结果的隐式反馈）
     if body.operation in (
@@ -271,6 +286,8 @@ async def _do_generate_message(
             client_task_id=body.client_task_id,
             placeholder_created_at=body.placeholder_created_at,
             operation=body.operation,
+            input_message_id=input_message_id,
+            turn_id=turn_id,
         )
     except AppException as exc:
         if gen_type == GenerationType.IMAGE and exc.code == "IMAGE_GENERATION_FAILED":

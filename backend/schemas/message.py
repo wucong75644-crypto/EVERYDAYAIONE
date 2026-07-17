@@ -277,6 +277,10 @@ class Message(BaseModel):
     # 生成相关
     task_id: Optional[str] = None
     generation_params: Optional[GenerationParams] = None
+    turn_id: Optional[str] = None
+    reply_to_message_id: Optional[str] = None
+    context_revision: Optional[int] = Field(None, ge=0)
+    message_kind: Literal["conversation", "synthetic", "tool_internal"] = "conversation"
 
     # 计费
     credits_cost: int = 0
@@ -424,6 +428,10 @@ class MessageResponse(BaseModel):
     # 生成相关
     task_id: Optional[str] = None
     generation_params: Optional[Dict[str, Any]] = None
+    turn_id: Optional[str] = None
+    reply_to_message_id: Optional[str] = None
+    context_revision: Optional[int] = Field(None, ge=0)
+    message_kind: Literal["conversation", "synthetic", "tool_internal"] = "conversation"
 
     @field_validator('generation_params', mode='before')
     @classmethod
@@ -467,6 +475,10 @@ class MessageResponse(BaseModel):
             is_error=msg.error is not None,
             task_id=msg.task_id,
             generation_params=msg.generation_params.model_dump() if msg.generation_params else None,
+            turn_id=msg.turn_id,
+            reply_to_message_id=msg.reply_to_message_id,
+            context_revision=msg.context_revision,
+            message_kind=msg.message_kind,
             credits_cost=msg.credits_cost,
             created_at=msg.created_at,
             client_request_id=msg.client_request_id,

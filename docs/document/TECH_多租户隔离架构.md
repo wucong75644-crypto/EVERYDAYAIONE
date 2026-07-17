@@ -1254,7 +1254,6 @@ resolved_org = org_id or _default_org
 | knowledge search cache 全局 | `knowledge_config.py:133-149` |
 | data_consistency_checker 全局 SELECT | `data_consistency_checker.py:35` |
 | data_consistency_checker 全局 UPDATE | `data_consistency_checker.py:217,227` |
-| increment_message_count 调用无 org_id | `wecom_message_service.py:419`, `wecom_file_mixin.py:119` |
 
 #### A.8 知识库/图谱（V1.1+V1.2 新增）
 

@@ -217,7 +217,7 @@ export async function restoreTaskPlaceholders(): Promise<RestorationResult | nul
 
     // 3. 处理已终结的任务（标记强制刷新）
     const terminatedTasks = tasks.filter(
-      t => t.status === 'completed' || t.status === 'failed'
+      t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled'
     );
     if (terminatedTasks.length > 0) {
       handleTerminatedTasks(terminatedTasks);

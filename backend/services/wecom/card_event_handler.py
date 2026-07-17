@@ -132,8 +132,12 @@ class WecomCardEventHandler:
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
         """发送模型选择卡片"""
-        from services.wecom.wecom_message_service import WecomMessageService
-        current = WecomMessageService.get_session_setting(conv_id, "model")
+        from services.wecom.conversation_settings import (
+            get_wecom_conversation_setting,
+        )
+        current = get_wecom_conversation_setting(
+            self.db, conv_id, user_id, "model", self._org_id,
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_template_card(
@@ -152,14 +156,22 @@ class WecomCardEventHandler:
             return
 
         from services.wecom.card_builder import WECOM_MODEL_OPTIONS
+        allowed = {model["id"] for model in WECOM_MODEL_OPTIONS}
+        if model_id not in allowed:
+            await self._reply_text(reply_ctx, "模型选项无效，请重新选择")
+            return
         model_name = model_id
         for m in WECOM_MODEL_OPTIONS:
             if m["id"] == model_id:
                 model_name = m["text"]
                 break
 
-        from services.wecom.wecom_message_service import WecomMessageService
-        WecomMessageService.set_session_setting(conv_id, "model", model_id)
+        from services.wecom.conversation_settings import (
+            set_wecom_conversation_setting,
+        )
+        set_wecom_conversation_setting(
+            self.db, conv_id, user_id, "model", model_id, self._org_id,
+        )
 
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
@@ -174,7 +186,13 @@ class WecomCardEventHandler:
     ) -> None:
         from services.conversation_service import ConversationService
         conv_svc = ConversationService(self.db)
-        await conv_svc.create_conversation(user_id, title="企微对话", model_id="auto")
+        await conv_svc.create_conversation(
+            user_id,
+            title="企微对话",
+            model_id="auto",
+            org_id=self._org_id,
+            source="wecom",
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_template_card(
@@ -185,8 +203,12 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.wecom.wecom_message_service import WecomMessageService
-        current = WecomMessageService.get_session_setting(conv_id, "thinking_mode")
+        from services.wecom.conversation_settings import (
+            get_wecom_conversation_setting,
+        )
+        current = get_wecom_conversation_setting(
+            self.db, conv_id, user_id, "thinking_mode", self._org_id,
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_template_card(
@@ -198,8 +220,12 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.wecom.wecom_message_service import WecomMessageService
-        WecomMessageService.set_session_setting(conv_id, "thinking_mode", "deep")
+        from services.wecom.conversation_settings import (
+            set_wecom_conversation_setting,
+        )
+        set_wecom_conversation_setting(
+            self.db, conv_id, user_id, "thinking_mode", "deep", self._org_id,
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_update_card(
@@ -211,8 +237,12 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.wecom.wecom_message_service import WecomMessageService
-        WecomMessageService.set_session_setting(conv_id, "thinking_mode", "fast")
+        from services.wecom.conversation_settings import (
+            set_wecom_conversation_setting,
+        )
+        set_wecom_conversation_setting(
+            self.db, conv_id, user_id, "thinking_mode", "fast", self._org_id,
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_update_card(

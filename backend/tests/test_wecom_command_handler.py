@@ -1,5 +1,7 @@
 """CommandHandler 单元测试 — 指令匹配/不匹配/边界"""
 
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +19,12 @@ def _make_reply_ctx():
 
 
 def _make_db():
-    return MagicMock()
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value = SimpleNamespace(data={
+        "model_id": "auto",
+        "chat_settings": {"thinking_mode": "fast"},
+    })
+    return db
 
 
 class TestCommandMatching:

@@ -1,22 +1,7 @@
-"""会话级 messages 内存缓存(Redis)。
+"""带版本的闭合会话历史缓存。
 
-V3.3: 让 messages 数组跨轮在 Redis 持续累积,避免每轮从 DB 重建丢失上下文。
-对齐 OpenAI Assistants thread 模式 — 服务器持有 messages 状态。
-
-链路:
-  常规路径(99%):
-    第 1 轮 tool_loop 结束 → 压缩后 messages 写 Redis
-    第 2 轮 _build_llm_messages → Redis hit → 直接用(无 DB 重建,无 budget 砍)
-    第 2 轮 tool_loop 结束 → 更新 Redis
-
-  冷启动路径(1%):
-    Redis miss(过期 / 服务器重启 / 用户隔天回来)
-    → DB 重建 messages(完整,history_loader 不再 budget break)
-    → 调统一压缩入口
-    → 回填 Redis
-
-DB 仍是归档 SSOT(完整 messages),Redis 是热数据(已压缩)。
-故障降级: Redis 故障 → cache miss → 走 DB 重建路径。
+数据库是上下文事实来源。Redis 只保存某个 conversation revision 已闭合的历史，
+不得保存当前任务的 user message、工具调用或工具结果。
 """
 from __future__ import annotations
 
@@ -27,86 +12,161 @@ from loguru import logger
 
 from core.redis import get_redis
 
-# 30 分钟空闲过期 — 跟用户连续对话节奏匹配
 _CACHE_TTL = 1800
-
-# 单 conversation cache value 上限 250KB
-# 超出表示压缩没有效果,写入前由上层压缩处理
 _MAX_VALUE_BYTES = 250 * 1024
-
-# Redis key 格式: conv:msgs:{org_id}:{conv_id}
 _KEY_PREFIX = "conv:msgs"
+_SCHEMA_VERSION = 2
 
 
 def _make_key(conv_id: str, org_id: Optional[str]) -> str:
-    """构建 Redis key,含 org_id 隔离多租户。"""
-    org = org_id or "global"
-    return f"{_KEY_PREFIX}:{org}:{conv_id}"
+    """构建带租户隔离的 Redis key。"""
+    return f"{_KEY_PREFIX}:{org_id or 'global'}:{conv_id}"
 
 
-async def get_messages(
+async def _delete_key(redis: Any, key: str, conv_id: str) -> None:
+    """删除无法安全复用的缓存值；删除失败不阻塞数据库回源。"""
+    try:
+        await redis.delete(key)
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            f"context_cache_delete_failed | conversation_id={conv_id} | error={error}"
+        )
+
+
+async def get_closed_messages(
     conv_id: str,
+    requested_revision: int,
+    through_message_id: Optional[str],
     org_id: Optional[str] = None,
+    *,
+    task_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
 ) -> Optional[List[Dict[str, Any]]]:
-    """从 Redis 取 messages。
-
-    Returns:
-        messages list 或 None(miss / 故障 / 解析失败均返回 None,触发降级)
-    """
-    if not conv_id:
+    """仅在 revision 和闭合消息边界精确匹配时返回缓存历史。"""
+    if not conv_id or requested_revision < 0:
         return None
     try:
-        r = await get_redis()
-        if r is None:
+        redis = await get_redis()
+        if redis is None:
             return None
-        raw = await r.get(_make_key(conv_id, org_id))
+        key = _make_key(conv_id, org_id)
+        raw = await redis.get(key)
         if raw is None:
             return None
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, list):
-            logger.warning(f"ConversationCache: invalid type | conv={conv_id}")
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "context_cache_malformed_invalidated | "
+                f"conversation_id={conv_id} | task_id={task_id} | turn_id={turn_id}"
+            )
+            await _delete_key(redis, key, conv_id)
             return None
-        return data
-    except Exception as e:  # noqa: BLE001
-        # 任何异常都降级到 cache miss,不阻塞主流程
-        logger.warning(f"ConversationCache get failed | conv={conv_id} | {e}")
+        if isinstance(data, list):
+            logger.info(
+                f"context_cache_legacy_invalidated | conversation_id={conv_id}"
+            )
+            await _delete_key(redis, key, conv_id)
+            return None
+        if not _is_valid_envelope(data):
+            logger.warning(
+                f"context_cache_invalidated | conversation_id={conv_id}"
+            )
+            await _delete_key(redis, key, conv_id)
+            return None
+        if (
+            data["revision"] != requested_revision
+            or data.get("through_message_id") != through_message_id
+        ):
+            logger.debug(
+                "context_cache_revision_miss | "
+                f"conversation_id={conv_id} | requested_revision={requested_revision} | "
+                f"cached_revision={data['revision']} | task_id={task_id} | "
+                f"turn_id={turn_id}"
+            )
+            return None
+        logger.debug(
+            "context_cache_hit | "
+            f"conversation_id={conv_id} | revision={requested_revision} | "
+            f"task_id={task_id} | turn_id={turn_id}"
+        )
+        return data["closed_messages"]
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "context_cache_get_failed | "
+            f"conversation_id={conv_id} | requested_revision={requested_revision} | "
+            f"task_id={task_id} | turn_id={turn_id} | error={error}"
+        )
         return None
 
 
-async def set_messages(
+def _is_valid_envelope(data: Any) -> bool:
+    """校验 v2 信封的最小结构。"""
+    if not isinstance(data, dict) or data.get("schema_version") != _SCHEMA_VERSION:
+        return False
+    revision = data.get("revision")
+    through_message_id = data.get("through_message_id")
+    messages = data.get("closed_messages")
+    return (
+        isinstance(revision, int)
+        and revision >= 0
+        and (
+            (revision == 0 and through_message_id is None)
+            or (
+                revision > 0
+                and isinstance(through_message_id, str)
+                and bool(through_message_id)
+            )
+        )
+        and isinstance(messages, list)
+        and all(isinstance(message, dict) for message in messages)
+    )
+
+
+async def set_closed_messages(
     conv_id: str,
+    revision: int,
+    through_message_id: Optional[str],
     messages: List[Dict[str, Any]],
     org_id: Optional[str] = None,
     ttl: int = _CACHE_TTL,
+    *,
+    task_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
 ) -> bool:
-    """写 messages 到 Redis。
-
-    超过 _MAX_VALUE_BYTES 不写(让上层压缩后再尝试)。
-    任何故障都吞掉异常,不阻塞主流程。
-
-    Returns:
-        True 写成功,False 跳过或故障
-    """
-    if not conv_id or not messages:
+    """写入 v2 闭合历史信封；空历史也可作为 revision 0 的有效快照。"""
+    if not conv_id or revision < 0:
         return False
+    envelope = {
+        "schema_version": _SCHEMA_VERSION,
+        "revision": revision,
+        "through_message_id": through_message_id,
+        "closed_messages": messages,
+    }
     try:
-        r = await get_redis()
-        if r is None:
+        redis = await get_redis()
+        if redis is None:
             return False
-        serialized = json.dumps(messages, ensure_ascii=False, default=str)
+        serialized = json.dumps(envelope, ensure_ascii=False, default=str)
         size = len(serialized.encode("utf-8"))
         if size > _MAX_VALUE_BYTES:
             logger.warning(
-                f"ConversationCache skip | conv={conv_id} | "
-                f"size={size} > max={_MAX_VALUE_BYTES} (压缩未生效?)"
+                "context_cache_write_skipped | "
+                f"conversation_id={conv_id} | revision={revision} | "
+                f"task_id={task_id} | turn_id={turn_id} | "
+                f"size={size} | max_size={_MAX_VALUE_BYTES}"
             )
             return False
-        await r.setex(_make_key(conv_id, org_id), ttl, serialized)
+        await redis.setex(_make_key(conv_id, org_id), ttl, serialized)
         return True
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"ConversationCache set failed | conv={conv_id} | {e}")
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "context_cache_set_failed | "
+            f"conversation_id={conv_id} | revision={revision} | "
+            f"task_id={task_id} | turn_id={turn_id} | error={error}"
+        )
         return False
 
 
@@ -114,13 +174,14 @@ async def delete_messages(
     conv_id: str,
     org_id: Optional[str] = None,
 ) -> None:
-    """删 cache(用户主动清空对话 / 测试清理用)。"""
+    """删除会话闭合历史缓存。"""
     if not conv_id:
         return
     try:
-        r = await get_redis()
-        if r is None:
-            return
-        await r.delete(_make_key(conv_id, org_id))
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"ConversationCache delete failed | conv={conv_id} | {e}")
+        redis = await get_redis()
+        if redis is not None:
+            await redis.delete(_make_key(conv_id, org_id))
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            f"context_cache_delete_failed | conversation_id={conv_id} | error={error}"
+        )

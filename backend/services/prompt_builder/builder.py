@@ -28,8 +28,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -43,6 +44,9 @@ from services.prompt_builder.layers.turn_dynamic_layer import (
 )
 from services.prompt_builder.layers.user_layer import UserLayer, UserMessageInput
 from services.prompt_builder.persona_gate import PersonaGate, default_gate
+
+if TYPE_CHECKING:
+    from services.handlers.context_snapshot import ContextSnapshot
 
 
 @dataclass
@@ -70,6 +74,7 @@ class BuildInput:
 
     # 可选注入 (chat_context_mixin 兼容)
     prefetched_summary: Optional[str] = None
+    context_snapshot: Optional["ContextSnapshot"] = None
     # V2 阶段 4.1: prefetched_memory 已删除
     # mem0 调用统一到 PromptBuilder._memory() 内部 + session cache
     persona_gate_instance: Optional[PersonaGate] = None
@@ -183,59 +188,14 @@ class PromptBuilder:
         )
         user_result = UserLayer.render(user_inp)
 
-        # ── Step 5: 拼接 messages ──
-        # V2 cache_control 布局 (Anthropic 风格, 千问 OpenAI 兼容):
-        #   L1 (静态) + L2a (会话稳定)合并到 1 个 system block,
-        #   末尾的 text part 标 cache_control: ephemeral
-        #   → 长期 cache 命中, 跨会话同 org/user 几乎不重算
-        #   L2b (本轮动态) + workspace + 历史 + attachments 不 cache
-        from core.config import get_settings as _get_cfg
-        _cache_enabled = _get_cfg().prompt_cache_control_enabled
-
-        messages: List[Dict[str, Any]] = []
-
-        # Layer 1 + L2a 合并为一个 system message (cache 边界在 L2a 末尾)
-        # 用 content list 格式塞 cache_control (Anthropic 风格, 千问兼容)
-        if _cache_enabled:
-            l1_l2a_content = [
-                {"type": "text", "text": static_content},
-                {
-                    "type": "text",
-                    "text": session_stable_content,
-                    "cache_control": {"type": "ephemeral"},
-                },
-            ]
-            messages.append({"role": "system", "content": l1_l2a_content})
-        else:
-            # 兼容降级路径: 不开 cache_control 时, 拆 2 个 system block
-            messages.append({"role": "system", "content": static_content})
-            messages.append({"role": "system", "content": session_stable_content})
-
-        # L2b 本轮动态 (current_time), 不 cache
-        messages.append({"role": "system", "content": turn_dynamic_content})
-
-        # Workspace 文件清单 (workspace_files 存在时, 独立 system block 做注意力锚点)
-        if user_result.workspace_system_block:
-            messages.append(
-                {"role": "system", "content": user_result.workspace_system_block}
-            )
-
-        # 历史对话
-        if history_messages:
-            messages.extend(history_messages)
-
-        # 对话摘要 (短对话不注入)
-        if summary_prompt and history_messages and len(history_messages) > 5:
-            messages.append({"role": "system", "content": summary_prompt})
-
-        # 附件 XML (attachments_as_system=True 时独立 system block, 紧贴 user 前)
-        if user_result.attachments_system_block:
-            messages.append(
-                {"role": "system", "content": user_result.attachments_system_block}
-            )
-
-        # Layer 3: user message (最终)
-        messages.append(user_result.user_message)
+        messages = self._compose_messages(
+            static_content=static_content,
+            session_stable_content=session_stable_content,
+            turn_dynamic_content=turn_dynamic_content,
+            history_messages=history_messages,
+            summary_prompt=summary_prompt,
+            user_result=user_result,
+        )
 
         # ── Step 6: budget 控制 (保留 V3.3 三层兜底) ──
         state = await self._apply_budgets(messages, inp.text_content)
@@ -250,6 +210,55 @@ class PromptBuilder:
             state=state,
         )
 
+    @staticmethod
+    def _compose_messages(
+        static_content: str,
+        session_stable_content: str,
+        turn_dynamic_content: str,
+        history_messages: List[Dict[str, Any]],
+        summary_prompt: Optional[str],
+        user_result: Any,
+    ) -> List[Dict[str, Any]]:
+        """按稳定缓存边界拼接 system、历史、附件和当前 user。"""
+        from core.config import get_settings
+
+        messages: List[Dict[str, Any]] = []
+        if get_settings().prompt_cache_control_enabled:
+            messages.append({
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": static_content},
+                    {
+                        "type": "text",
+                        "text": session_stable_content,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                ],
+            })
+        else:
+            messages.append({"role": "system", "content": static_content})
+            messages.append({
+                "role": "system",
+                "content": session_stable_content,
+            })
+
+        messages.append({"role": "system", "content": turn_dynamic_content})
+        if user_result.workspace_system_block:
+            messages.append({
+                "role": "system",
+                "content": user_result.workspace_system_block,
+            })
+        messages.extend(history_messages)
+        if summary_prompt and len(history_messages) > 5:
+            messages.append({"role": "system", "content": summary_prompt})
+        if user_result.attachments_system_block:
+            messages.append({
+                "role": "system",
+                "content": user_result.attachments_system_block,
+            })
+        messages.append(user_result.user_message)
+        return messages
+
     async def _parallel_fetch(self) -> tuple[Optional[str], Optional[str], List[Dict[str, Any]]]:
         """并行获取 memory / summary / history。
 
@@ -258,7 +267,6 @@ class PromptBuilder:
         """
         from services.memory.memory_service_v2 import MemoryServiceV2
         from services.handlers.chat_context.summary_manager import get_context_summary
-        from services.handlers import conversation_cache
         from services.handlers.context_compressor import compress_messages_if_needed
         from services.handlers.chat_context.history_loader import build_context_messages
 
@@ -303,6 +311,8 @@ class PromptBuilder:
                 return None, ""
 
         async def _summary() -> Optional[str]:
+            if inp.context_snapshot is not None:
+                return inp.context_snapshot.summary_prompt
             try:
                 return await get_context_summary(
                     inp.db, inp.conversation_id, prefetched=inp.prefetched_summary,
@@ -312,14 +322,11 @@ class PromptBuilder:
                 return None
 
         async def _history() -> List[Dict[str, Any]]:
+            if inp.context_snapshot is not None:
+                # 每个 PromptBuilder 只消费副本，后续预算压缩和工具循环
+                # 不得修改冻结在 ContextSnapshot 中的历史。
+                return copy.deepcopy(inp.context_snapshot.history_messages)
             try:
-                # 先走 Redis cache (V3.3)
-                cached = await conversation_cache.get_messages(
-                    inp.conversation_id, inp.org_id,
-                )
-                if cached is not None:
-                    return cached
-                # cache miss → DB rebuild + 统一压缩 + 回填
                 msgs = await build_context_messages(
                     inp.db, inp.conversation_id, inp.text_content,
                 )
@@ -329,9 +336,6 @@ class PromptBuilder:
                     msgs, _ = await compress_messages_if_needed(msgs, conv_source="web")
                 except Exception as e:
                     logger.warning(f"PromptBuilder compress on rebuild failed | {e}")
-                await conversation_cache.set_messages(
-                    inp.conversation_id, msgs, inp.org_id,
-                )
                 return msgs
             except Exception as e:
                 logger.warning(f"PromptBuilder history fetch failed | {e}")
@@ -376,12 +380,18 @@ class PromptBuilder:
             _s = get_settings()
             inp = self.inp
 
-            # 是否企微 conv (小预算)
-            # PromptBuilder 不依赖 ChatHandler.self, 简化为统一 web 预算
-            # wecom 走独立路径 (wecom_handler), 不复用 PromptBuilder
-            tool_budget = _s.context_web_tool_token_budget
-            history_budget = _s.context_web_history_token_budget
-            total_budget = _s.context_web_max_tokens
+            source = (
+                inp.context_snapshot.conversation_source
+                if inp.context_snapshot is not None else ""
+            )
+            if source == "wecom":
+                tool_budget = _s.context_tool_token_budget
+                history_budget = _s.context_history_token_budget
+                total_budget = _s.context_max_tokens
+            else:
+                tool_budget = _s.context_web_tool_token_budget
+                history_budget = _s.context_web_history_token_budget
+                total_budget = _s.context_web_max_tokens
 
             enforce_tool_budget(messages, tool_budget)
             await enforce_history_budget(

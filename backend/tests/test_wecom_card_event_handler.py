@@ -1,5 +1,7 @@
 """WecomCardEventHandler 单元测试 — 每个 event_key 的处理逻辑"""
 
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,7 +20,12 @@ def _make_reply_ctx():
 
 
 def _make_db():
-    return MagicMock()
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value = SimpleNamespace(data={
+        "model_id": "auto",
+        "chat_settings": {"thinking_mode": "fast"},
+    })
+    return db
 
 
 class TestStartChat:
@@ -132,6 +139,25 @@ class TestSubmitModel:
         await handler.handle("submit_model", "t1", "multiple_interaction",
                              None, "u1", "c1", ctx)
         ctx.ws_client.send_reply.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_forged_model_selection_is_rejected(self):
+        handler = WecomCardEventHandler(_make_db())
+        ctx = _make_reply_ctx()
+        selected = {
+            "selected_item": [{
+                "question_key": "model_select",
+                "option_ids": {"option_id": ["forged-model"]},
+            }]
+        }
+
+        await handler.handle(
+            "submit_model", "t1", "multiple_interaction",
+            selected, "u1", "c1", ctx,
+        )
+
+        ctx.ws_client.send_reply.assert_awaited_once()
+        handler.db.rpc.assert_not_called()
 
 
 class TestNewConversation:

@@ -1,15 +1,18 @@
 """
 企微文件消息处理 Mixin
 
-提供 WecomMessageService 的文件处理能力：
+提供 WecomMessageService 的文件资产入口：
 - 文件下载 + AES 解密
-- 文件内容解析（PDF/Word/Excel/TXT/CSV/JSON 等）
-- 文件上传 OSS 归档
-- 构建 prompt 发给 AI 分析
+- 原始字节以稳定路径原子保存到共享 Workspace
+- 同步 OSS，构建标准 FilePart 交给 Conversation Actor
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
+import mimetypes
+import os
+import uuid
+from pathlib import Path
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -19,60 +22,76 @@ from schemas.wecom import WecomIncomingMessage, WecomReplyContext
 class WecomFileMixin:
     """文件消息处理能力（被 WecomMessageService 继承）"""
 
-    async def _handle_file(
+    async def _prepare_actor_file(
         self,
-        user_id: str,
-        conversation_id: str,
-        message_id: str,
         msg: WecomIncomingMessage,
         reply_ctx: WecomReplyContext,
+        user_id: str,
         org_id: Optional[str] = None,
-    ) -> None:
-        """处理文件消息：下载 → 解析文本 → 发给 AI 分析"""
-        from services.wecom.file_parser import is_supported, parse_file
+    ) -> dict[str, Any] | None:
+        """保存原始文件资产并返回标准 FilePart payload。"""
+        if not msg.msgid:
+            raise RuntimeError("WECOM_FILE_MSGID_MISSING")
+        safe_name = Path(msg.file_name or "file.bin").name or "file.bin"
+        target = self._actor_file_path(msg.msgid, safe_name, user_id, org_id)
+        if not await asyncio.to_thread(target.is_file):
+            raw_data = await self._download_and_decrypt_file(msg, reply_ctx)
+            if raw_data is None:
+                return None
+            try:
+                await asyncio.to_thread(_atomic_write, target, raw_data)
+            except OSError as error:
+                logger.error(
+                    "Wecom file workspace write failed | "
+                    f"msgid={msg.msgid} | user_id={user_id} | "
+                    f"error={type(error).__name__}"
+                )
+                await self._reply_text(reply_ctx, "文件保存失败，请稍后重新发送。")
+                return None
 
-        filename = msg.file_name or "unknown"
+        from services.file_upload import upload_to_payload
 
-        # 1. 检查文件类型是否支持
-        if not is_supported(filename):
-            ext = filename.rsplit(".", 1)[-1] if "." in filename else "未知"
-            hint = (
-                f"收到你的文件 {filename}，暂不支持 .{ext} 格式的解析。\n"
-                "目前支持：PDF、Word、Excel、TXT、CSV、JSON、代码文件等。"
-            )
-            await self._reply_text(reply_ctx, hint)
-            await self._update_assistant_message(message_id, hint)
-            return
-
-        # 2. 下载 + 解密
-        raw_data = await self._download_and_decrypt_file(msg, reply_ctx)
-        if raw_data is None:
-            await self._update_assistant_message(message_id, "文件处理失败")
-            return
-
-        # 3. 解析文件内容 + 上传 OSS 归档
-        file_text, truncated = parse_file(raw_data, filename)
-        oss_url = await self._upload_file_to_oss(raw_data, user_id, filename)
-
-        # 4. 保存用户消息到 DB
-        self._save_file_message(conversation_id, filename, file_text, oss_url)
-
-        # 5. 构建提示词发给 AI
-        hint = "（注意：文件内容较长，以上仅为前 5000 字的节选）\n\n" if truncated else ""
-        text_for_ai = (
-            f"用户发送了文件「{filename}」，以下是文件内容：\n\n"
-            f"{file_text}\n\n{hint}"
-            "请分析这个文件的内容，给出要点总结或回答用户可能的问题。"
-        )
-
-        await self._handle_text(
+        size = await asyncio.to_thread(lambda: target.stat().st_size)
+        payload = await upload_to_payload(
+            filename=target.name,
+            size=size,
+            output_dir=str(target.parent),
             user_id=user_id,
-            conversation_id=conversation_id,
-            message_id=message_id,
-            text_content=text_for_ai,
-            reply_ctx=reply_ctx,
             org_id=org_id,
         )
+        if (
+            not payload
+            or not payload.get("url")
+            or not payload.get("workspace_path")
+        ):
+            await self._reply_text(reply_ctx, "文件保存失败，请稍后重新发送。")
+            return None
+        return {
+            "url": str(payload["url"]),
+            "workspace_path": str(payload["workspace_path"]),
+            "name": safe_name,
+            "mime_type": (
+                mimetypes.guess_type(safe_name)[0]
+                or "application/octet-stream"
+            ),
+            "size": size,
+        }
+
+    @staticmethod
+    def _actor_file_path(
+        msgid: str,
+        filename: str,
+        user_id: str,
+        org_id: Optional[str],
+    ) -> Path:
+        from core.config import get_settings
+        from core.workspace import resolve_workspace_dir
+
+        root = Path(resolve_workspace_dir(
+            get_settings().file_workspace_root, user_id, org_id,
+        ))
+        token = uuid.uuid5(uuid.NAMESPACE_URL, f"wecom-file:{msgid}").hex[:16]
+        return root / "上传" / "企微" / f"{token}_{filename}"
 
     async def _download_and_decrypt_file(
         self,
@@ -95,53 +114,12 @@ class WecomFileMixin:
 
         return raw_data
 
-    def _save_file_message(
-        self,
-        conversation_id: str,
-        filename: str,
-        file_text: str,
-        oss_url: Optional[str],
-    ) -> None:
-        """保存文件类用户消息到 DB"""
-        content_parts: List[Dict[str, Any]] = []
-        if oss_url:
-            content_parts.append({"type": "file", "url": oss_url, "name": filename})
-        content_parts.append({
-            "type": "text",
-            "text": f"[文件: {filename}]\n{file_text}",
-        })
-        self.db.table("messages").insert({
-            "conversation_id": conversation_id,
-            "role": "user",
-            "content": content_parts,
-            "status": "completed",
-        }).execute()
-        self.db.rpc("increment_message_count", {
-            "conv_id": conversation_id,
-            "p_org_id": getattr(self.db, "org_id", None),
-        }).execute()
 
-    @staticmethod
-    async def _upload_file_to_oss(
-        data: bytes, user_id: str, filename: str,
-    ) -> Optional[str]:
-        """将文件字节上传到 OSS，返回永久 URL"""
-        try:
-            from services.oss_service import get_oss_service
-            from services.wecom.media_downloader import WecomMediaDownloader
-
-            ext = WecomMediaDownloader._guess_ext(filename, "file")
-            content_type = WecomMediaDownloader._guess_content_type(ext)
-            oss_svc = get_oss_service()
-            result = await asyncio.to_thread(
-                oss_svc.upload_bytes,
-                content=data,
-                user_id=user_id,
-                ext=ext,
-                category="wecom_upload",
-                content_type=content_type,
-            )
-            return result.get("url")
-        except Exception as e:
-            logger.warning(f"File OSS upload failed | filename={filename} | error={e}")
-            return None
+def _atomic_write(target: Path, data: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
+    try:
+        temporary.write_bytes(data)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)

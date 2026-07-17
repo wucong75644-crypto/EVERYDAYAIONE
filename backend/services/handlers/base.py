@@ -11,8 +11,9 @@ Handler 基类
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from datetime import datetime
+import uuid
 
 from loguru import logger
 
@@ -25,6 +26,9 @@ from schemas.message import (
 )
 from .mixins import TaskMixin, CreditMixin, MessageMixin
 
+if TYPE_CHECKING:
+    from services.handlers.context_snapshot import ContextAnchor
+
 
 @dataclass
 class TaskMetadata:
@@ -35,6 +39,10 @@ class TaskMetadata:
     """
     client_task_id: Optional[str] = None
     placeholder_created_at: Optional[datetime] = None
+    input_message_id: Optional[str] = None
+    turn_id: Optional[str] = None
+    execution_mode: str = "serial"
+    context_anchor: Optional["ContextAnchor"] = None
 
 
 class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
@@ -214,6 +222,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         org_id = request_params.pop("_org_id", None) if request_params else None
 
         task_data = {
+            "id": str(uuid.uuid4()),
             "external_task_id": task_id,
             "conversation_id": conversation_id,
             "user_id": user_id,
@@ -222,6 +231,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             "status": status,
             "model_id": model_id,
             "placeholder_message_id": message_id,
+            "assistant_message_id": message_id,
             "request_params": request_params,
             # 元数据字段
             "client_task_id": metadata.client_task_id,
@@ -245,6 +255,21 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             task_data["batch_id"] = batch_id
 
         return task_data
+
+    def _insert_task_with_turn_binding(
+        self,
+        task_data: Dict[str, Any],
+        metadata: TaskMetadata,
+    ) -> Optional["ContextAnchor"]:
+        """插入任务，并在需要时原子绑定输入 Turn 和上下文基线。"""
+        from services.turn_binding import insert_task_with_turn_binding
+
+        anchor = insert_task_with_turn_binding(
+            self.db, task_data, metadata.input_message_id,
+            metadata.turn_id, metadata.execution_mode,
+        )
+        metadata.context_anchor = anchor
+        return anchor
 
     def _build_callback_url(self, provider_value: str) -> Optional[str]:
         """

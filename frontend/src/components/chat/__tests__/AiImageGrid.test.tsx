@@ -76,6 +76,27 @@ describe('AiImageGrid', () => {
     expect(images[1]).toHaveAttribute('src', 'https://img2.png');
   });
 
+  it('生成结束后忽略非图片内容且不补空白单元格', () => {
+    const content: ContentPart[] = [
+      { type: 'text', text: '{"image":"https://example.com/fake.jpg"}' },
+      { type: 'image', url: 'https://cdn.example.com/real.png' },
+      { type: 'file', url: 'https://cdn.example.com/report.xlsx', name: 'report.xlsx', mime_type: 'application/vnd.ms-excel' },
+    ];
+    const { container } = render(
+      <AiImageGrid
+        content={content}
+        numImages={4}
+        messageId="msg-mixed"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+
+    expect(container.querySelector('.grid')?.children).toHaveLength(1);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://cdn.example.com/real.png');
+  });
+
   it('uses thumbnail_url for grid display while keeping original_url in content', () => {
     const content: ContentPart[] = [{
       type: 'image',

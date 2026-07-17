@@ -251,6 +251,9 @@ class BackgroundTaskWorker:
         cleaned_count = 0
 
         for task in response.data:
+            from services.conversation_task import is_actor_task
+            if is_actor_task(task):
+                continue
             # 跳过没有 started_at 的任务（可能是旧数据或创建时未设置）
             if not task.get("started_at"):
                 continue

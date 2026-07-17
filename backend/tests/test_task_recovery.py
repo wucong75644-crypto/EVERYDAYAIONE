@@ -131,6 +131,21 @@ async def test_skip_task_without_accumulated_content():
 
 
 @pytest.mark.asyncio
+async def test_actor_task_is_left_for_actor_worker():
+    task = {
+        "id": "actor-task",
+        "delivery_context": {"actor": True, "channel": "web"},
+        "accumulated_content": "",
+    }
+    db = _mock_db([task])
+
+    result = await recover_orphan_tasks(db)
+
+    assert result == 0
+    db.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_skip_task_without_message_id():
     """无 placeholder_message_id 的任务应跳过"""
     tasks = [{

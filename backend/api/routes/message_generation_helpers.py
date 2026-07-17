@@ -355,6 +355,9 @@ async def start_generation_task(
     client_task_id: Optional[str],
     placeholder_created_at: Optional[datetime],
     operation: MessageOperation,
+    input_message_id: str,
+    turn_id: str,
+    execution_mode: str = "serial",
 ) -> str:
     """
     启动生成任务
@@ -389,6 +392,9 @@ async def start_generation_task(
     metadata = TaskMetadata(
         client_task_id=client_task_id,
         placeholder_created_at=placeholder_created_at,
+        input_message_id=input_message_id,
+        turn_id=turn_id,
+        execution_mode=execution_mode,
     )
 
     # 构建纯业务参数（排除元数据字段）
