@@ -330,6 +330,7 @@
 
 ## 更新记录
 
+- **2026-07-17**：生产 FILE 冒烟发现 `OrgScopedDB` 自动注入 `p_org_id`，但 120/121/125 新增的四个租户 RPC 缺少对应签名，导致企微 FILE 无法入队、旧企微 Turn 无法绑定并遗留“思考中”。新增 127 租户 RPC 门面统一校验 org 后委托原子核心；Actor 入站统一建立/结束 stream，旧同步异常将 assistant 占位持久化为 failed。修复已通过全量回归与真实 PostgreSQL 事务预演，生产应用 127 后恢复。
 - **2026-07-17**：完成 Conversation Actor 企微持久投递阶段 1.4：删除进程内 `_session_settings`，模型写入 `conversations.model_id`、思考模式由行锁 RPC 原子合并到 `chat_settings`，并按 user/org/source 强校验；企微 FILE 不再扫描或转写正文，原始字节按 msgid 稳定落共享 Workspace、同步 OSS，以标准 `FilePart` 原子入队，未知格式保留为二进制；无生产调用的旧企微 `file_parser.py` 及孤立测试已删除。FILE 已按决策取消旧链路兼容并固定进入 Actor，因此生产必须先应用 120-126 迁移、启动 Actor Worker 和企微 Outbox consumer，再部署本版本应用；当前尚未部署或应用迁移。
 - **2026-07-17**：完成 Conversation Actor 企微持久投递阶段 1.3（默认关闭）：`wecom_ws_runner` 增加 PostgreSQL Outbox consumer；按 delivery lease/fencing 认领，长发送期间续租，文本/图片/视频逐项持久化检查点，失败指数退避并在上限后 dead；企微 Actor 改用无头进度 Sink，不再误发 Web 过程/终态事件；Outbox 适配器用发送结果与发送后连接状态共同识别本地 WS 失败。企微主动消息无业务幂等 ACK，仍是可审计的 at-least-once，发送成功与检查点提交之间崩溃可能产生极小概率重复。迁移未应用、开关未开启。
 - **2026-07-17**：完成 Conversation Actor 阶段 5.2（默认关闭）：Web Chat 可通过稳定内部 UUID 幂等 enqueue；新增独立 Actor Worker 入口和 Worker/Web 双开关；Worker 扫描与数据库 claim 双重限定 `delivery_context.actor=true`；用户取消改走 fencing RPC，旧 orphan recovery/超时清理跳过 Actor；刷新与迟到 WS 订阅识别 cancelled。尚未应用迁移、启动生产 Worker或打开 Web 流量。

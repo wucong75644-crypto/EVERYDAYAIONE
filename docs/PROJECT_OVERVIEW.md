@@ -125,6 +125,7 @@ EVERYDAYAIONE/
 │   │   ├── 124_conversation_delivery_outbox.sql # Actor 企微终态事务 Outbox 与投递租约 RPC
 │   │   ├── 125_wecom_actor_enqueue.sql # 企微消息与 Actor task 原子幂等入队
 │   │   ├── 126_wecom_conversation_settings.sql # 企微模型/思考模式按租户原子持久化
+│   │   ├── 127_actor_tenant_rpc_contract.sql # Actor 租户 RPC 门面及 org 强校验
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -132,7 +133,8 @@ EVERYDAYAIONE/
 │   │       ├── 123_conversation_actor_progress_rollback.sql
 │   │       ├── 124_conversation_delivery_outbox_rollback.sql
 │   │       ├── 125_wecom_actor_enqueue_rollback.sql
-│   │       └── 126_wecom_conversation_settings_rollback.sql
+│   │       ├── 126_wecom_conversation_settings_rollback.sql
+│   │       └── 127_actor_tenant_rpc_contract_rollback.sql
 │   ├── services/                 # 业务逻辑层
 │   │   ├── auth_service.py           # 认证服务
 │   │   ├── conversation_service.py   # 对话服务

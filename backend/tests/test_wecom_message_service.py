@@ -13,7 +13,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from typing import Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -321,7 +321,6 @@ class TestHandleMessage:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._get_user_balance = MagicMock(return_value=10)
-        svc._reply_text = AsyncMock()
         svc._notify_web_conversation_updated = AsyncMock()
         ctx = _make_reply_ctx()
         result = MagicMock(already_enqueued=False)
@@ -338,6 +337,14 @@ class TestHandleMessage:
             )
 
         mock_enqueue.assert_awaited_once()
+        assert ctx.active_stream_id is None
+        ctx.ws_client.send_stream_chunk.assert_any_await(
+            req_id=ctx.req_id,
+            stream_id=ANY,
+            content="正在接收并排队处理…",
+            finish=False,
+            feedback_id=None,
+        )
 
     @pytest.mark.asyncio
     async def test_actor_file_prepares_asset_before_atomic_enqueue(self):
@@ -371,6 +378,32 @@ class TestHandleMessage:
 
         assert mock_enqueue.call_args.kwargs["file_payload"] == file_payload
         svc._reply_text.assert_awaited_once_with(ctx, "已收到，正在处理中。")
+
+    @pytest.mark.asyncio
+    async def test_actor_replay_always_finishes_stream_acknowledgement(self):
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=10)
+        svc._notify_web_conversation_updated = AsyncMock()
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.actor_enqueue.enqueue_wecom_message",
+            new=AsyncMock(return_value=MagicMock(already_enqueued=True)),
+        ), patch(
+            "services.handlers.get_handler",
+            return_value=MagicMock(),
+        ):
+            await svc._enqueue_actor_message(
+                _make_msg(), ctx, "uid1", "conv1", [],
+            )
+
+        assert ctx.active_stream_id is None
+        assert ctx.ws_client.send_stream_chunk.await_count == 2
+        assert (
+            ctx.ws_client.send_stream_chunk.await_args_list[-1].kwargs["content"]
+            == "该消息已经收到，正在处理中。"
+        )
 
     @pytest.mark.asyncio
     async def test_image_message_calls_handle_text(self):
@@ -796,6 +829,9 @@ class TestHandleText:
         tasks = db._table_mocks["tasks"]
         failed_update = tasks.update.call_args[0][0]
         assert failed_update["status"] == "failed"
+        messages = db._table_mocks["messages"]
+        message_update = messages.update.call_args[0][0]
+        assert message_update["status"] == "failed"
 
 
 # ============================================================

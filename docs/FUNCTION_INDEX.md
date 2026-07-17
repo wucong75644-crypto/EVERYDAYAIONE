@@ -243,6 +243,7 @@
 | `fail_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 当前投递权按有界指数退避重新排队，超限进入 dead | delivery_id, lease_token, error, delivered_items, max_attempts | JSONB |
 | `enqueue_wecom_generation_turn` | `backend/migrations/125_wecom_actor_enqueue.sql` | 按稳定 ID 原子创建企微输入/助手消息并幂等进入 Actor serial queue | task_data, input/output ids, turn_id, input_content, delivery_context | JSONB |
 | `update_wecom_conversation_setting` | `backend/migrations/126_wecom_conversation_settings.sql` | 行锁内按 user/org/source 校验并原子更新模型或思考模式 | conversation_id, user_id, setting_key/value, org_id | JSONB |
+| Actor tenant RPC facades | `backend/migrations/127_actor_tenant_rpc_contract.sql` | 接收 OrgScopedDB 注入的 p_org_id，强校验租户后委托既有原子核心 | 原核心参数 + org_id | JSONB |
 | `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
 | `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，捕获对话设置并以结构化 FilePart 调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload | WecomActorEnqueueResult |
 | `WecomFileMixin._prepare_actor_file` | `backend/services/wecom/wecom_file_mixin.py` | 原始字节按 msgid 稳定路径原子保存到共享 Workspace、同步 OSS 并返回标准 FilePart | msg, reply_ctx, user_id, org_id | dict \| None |

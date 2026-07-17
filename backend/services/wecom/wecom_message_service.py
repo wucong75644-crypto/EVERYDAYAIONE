@@ -253,6 +253,20 @@ class WecomMessageService(
                 )
             logger.error(f"Wecom _handle_text failed | user_id={user_id} | error={e}")
             if not reply_dispatched:
+                try:
+                    self.db.table("messages").update({
+                        "content": [{
+                            "type": "text",
+                            "text": "生成回复时遇到了问题，请稍后再试。",
+                        }],
+                        "status": "failed",
+                    }).eq("id", message_id).execute()
+                except Exception as update_error:
+                    logger.warning(
+                        "Wecom assistant failure persistence failed | "
+                        f"message_id={message_id} | "
+                        f"error={type(update_error).__name__}"
+                    )
                 await self._reply_text(reply_ctx, "生成回复时遇到了问题，请稍后再试。")
         finally:
             if keepalive:

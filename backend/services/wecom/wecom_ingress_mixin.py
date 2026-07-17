@@ -72,6 +72,12 @@ class WecomIngressMixin:
                 reply_ctx, needed=1, balance=0, action="回复",
             )
             return
+        if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
+            stream_id = str(uuid.uuid4())
+            reply_ctx.active_stream_id = stream_id
+            await self._push_stream_chunk(
+                reply_ctx, stream_id, "正在接收并排队处理…", finish=False,
+            )
         from services.handlers import get_handler
         from services.wecom.actor_enqueue import enqueue_wecom_message
 
@@ -100,8 +106,12 @@ class WecomIngressMixin:
         await self._notify_web_conversation_updated(
             user_id, conversation_id, org_id=msg.org_id,
         )
-        if not result.already_enqueued:
-            await self._reply_text(reply_ctx, "已收到，正在处理中。")
+        acknowledgement = (
+            "该消息已经收到，正在处理中。"
+            if result.already_enqueued
+            else "已收到，正在处理中。"
+        )
+        await self._reply_text(reply_ctx, acknowledgement)
 
     async def _dispatch_legacy_message(
         self,
