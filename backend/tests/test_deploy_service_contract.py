@@ -51,6 +51,9 @@ def test_backend_deploy_gates_restart_on_chart_runtime_smoke() -> None:
     setup = 'bash ../deploy/setup-chart-runtime.sh "$PWD"'
     assert setup in SCRIPT
     assert SCRIPT.index(setup) < SCRIPT.index('sudo systemctl restart "$service"')
+    assert "command -v apt-get" in CHART_SETUP
+    assert "python -m playwright install --with-deps chromium" in CHART_SETUP
+    assert "command -v dnf" in CHART_SETUP
+    assert "dnf install -y atk at-spi2-atk at-spi2-core" in CHART_SETUP
     assert "python -m playwright install chromium" in CHART_SETUP
-    assert "--with-deps" not in CHART_SETUP
-    assert "python scripts/smoke_chart_renderer.py" in CHART_SETUP
+    assert "PYTHONPATH=. python scripts/smoke_chart_renderer.py" in CHART_SETUP
