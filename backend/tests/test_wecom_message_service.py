@@ -144,13 +144,21 @@ class TestHandleMessage:
         ) as mock_enqueue, patch(
             "services.handlers.get_handler",
             return_value=MagicMock(),
+        ), patch(
+            "services.wecom.stream_keepalive.register_stream_keepalive",
+            return_value=True,
+        ), patch(
+            "services.wecom.actor_enqueue.stable_wecom_task_id",
+            return_value="task-1",
         ):
             await svc._enqueue_actor_message(
                 _make_msg(), ctx, "uid1", "conv1", [],
             )
 
         mock_enqueue.assert_awaited_once()
-        assert ctx.active_stream_id is None
+        assert ctx.active_stream_id is not None
+        assert mock_enqueue.await_args.kwargs["stream_context"]["req_id"] == "req001"
+        assert ctx.ws_client.send_stream_chunk.await_count == 1
         ctx.ws_client.send_stream_chunk.assert_any_await(
             req_id=ctx.req_id,
             stream_id=ANY,

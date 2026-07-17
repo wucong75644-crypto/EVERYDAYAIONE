@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
 
@@ -32,6 +32,7 @@ async def enqueue_wecom_message(
     conversation_id: str,
     image_urls: list[str],
     file_payload: dict[str, Any] | None = None,
+    stream_context: Mapping[str, Any] | None = None,
 ) -> WecomActorEnqueueResult:
     """使用稳定 ID 原子创建消息和 Actor task，并 best-effort 唤醒 Worker。"""
     if not msg.msgid:
@@ -65,7 +66,7 @@ async def enqueue_wecom_message(
         metadata=metadata,
     )
     task_data["id"] = ids["task"]
-    delivery_context = _delivery_context(msg)
+    delivery_context = _delivery_context(msg, ids["task"], stream_context)
     response = handler.db.rpc(
         "enqueue_wecom_generation_turn_v2",
         {
@@ -100,6 +101,11 @@ def _stable_ids(msg: WecomIncomingMessage, user_id: str) -> dict[str, str]:
     }
 
 
+def stable_wecom_task_id(msg: WecomIncomingMessage, user_id: str) -> str:
+    """返回与企微原子入队一致的稳定 task ID。"""
+    return _stable_ids(msg, user_id)["task"]
+
+
 def _load_chat_settings(db: Any, conversation_id: str) -> tuple[str, dict[str, Any]]:
     response = db.table("conversations").select(
         "model_id,chat_settings"
@@ -129,8 +135,12 @@ def _build_content(
     return [part.model_dump(exclude_none=True) for part in parts]
 
 
-def _delivery_context(msg: WecomIncomingMessage) -> dict[str, Any]:
-    return {
+def _delivery_context(
+    msg: WecomIncomingMessage,
+    task_id: str,
+    stream_context: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    context = {
         "actor": True,
         "channel": "wecom",
         "transport": msg.channel,
@@ -140,3 +150,11 @@ def _delivery_context(msg: WecomIncomingMessage) -> dict[str, Any]:
         "chattype": msg.chattype,
         "wecom_userid": msg.wecom_userid,
     }
+    if msg.channel == "smart_robot" and stream_context:
+        context.update({
+            "stream_task_id": task_id,
+            "stream_req_id": stream_context.get("req_id"),
+            "stream_id": stream_context.get("stream_id"),
+            "stream_started_at": stream_context.get("started_at"),
+        })
+    return context

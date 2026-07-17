@@ -209,7 +209,7 @@
 | `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；Web best-effort 推终态，企微交给事务 Outbox | task, terminal_result | None |
 | `enqueue_web_chat` | `backend/services/handlers/chat/actor_enqueue.py` | 以稳定内部 UUID 调用原子 enqueue RPC，并 best-effort 发布 Redis 唤醒 | handler, content, user_id, conversation_id, external_task_id, model_id, metadata, params | str |
 | `ConversationActorRuntime.start/stop` | `backend/services/conversation_runtime.py` | 装配独立 Worker、执行器、按 delivery channel 选择 Web/无头 Sink、终态观察器和 Kernel 生命周期 | - | None |
-| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将终态消息展开为稳定检查点分项，并通过智能机器人主动消息或自建应用 API 发送 | task, message / context, item | list / bool |
+| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将智能机器人终态文字合并后完成原 stream，流失效时回退主动消息；自建应用继续按稳定检查点分项发送 | task, message / context, item | list / bool |
 | `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
 | `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
@@ -245,7 +245,8 @@
 | `update_wecom_conversation_setting` | `backend/migrations/126_wecom_conversation_settings.sql` | 行锁内按 user/org/source 校验并原子更新模型或思考模式 | conversation_id, user_id, setting_key/value, org_id | JSONB |
 | Actor tenant RPC facades | `backend/migrations/127_actor_tenant_rpc_contract.sql` | 接收 OrgScopedDB 注入的 p_org_id，强校验租户后委托既有原子核心 | 原核心参数 + org_id | JSONB |
 | `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
-| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，捕获对话设置并以结构化 FilePart 调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload | WecomActorEnqueueResult |
+| `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，将智能机器人 stream 上下文写入 delivery_context，并以结构化内容调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload, stream_context | WecomActorEnqueueResult |
+| `stable_wecom_task_id` | `backend/services/wecom/actor_enqueue.py` | 返回与企微原子入队完全一致的稳定 task ID，供入站在唤醒 Worker 前注册 stream 保活 | msg, user_id | str |
 | `identify_file` | `backend/services/assets/file_identity.py` | 依据解密后内容识别 CSV/TSV、Office、PDF 和媒体类型，生成安全规范名、MIME 与 SHA-256 | data, stable_id, provider_name?, content_disposition? | AssetIdentity |
 | `WecomMediaDownloader.download_and_decrypt` | `backend/services/wecom/media_downloader.py` | 限流下载并可选解密企微媒体，保留 Content-Type 与 Content-Disposition 响应元数据 | url, aeskey? | DownloadedMedia \| None |
 | `normalize_wecom_message` / `parse_message_content` | `backend/services/wecom/message_normalizer.py` | 规范化智能机器人回调；私聊缺少 chatid 时使用发送者，群聊强制 chatid，并统一解析媒体字段 | body, org_id, corp_id | WecomIncomingMessage |

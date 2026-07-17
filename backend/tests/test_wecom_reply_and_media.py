@@ -5,6 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from schemas.wecom import WecomIncomingMessage, WecomReplyContext
+from services.wecom.stream_keepalive import (
+    register_stream_keepalive,
+    stop_stream_keepalive,
+)
 from services.wecom.wecom_message_service import WecomMessageService
 
 
@@ -45,6 +49,21 @@ def test_balance_defaults_to_zero_for_missing_user() -> None:
     query.single.return_value.execute.return_value.data = None
 
     assert service._get_user_balance("missing") == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_keepalive_registry_rejects_duplicate_and_stops_owner():
+    first = MagicMock()
+    first.stop = AsyncMock()
+    duplicate = MagicMock()
+
+    assert register_stream_keepalive("task-registry", first) is True
+    assert register_stream_keepalive("task-registry", duplicate) is False
+
+    await stop_stream_keepalive("task-registry")
+
+    first.stop.assert_awaited_once()
+    duplicate.stop.assert_not_called()
 
 
 @pytest.mark.asyncio

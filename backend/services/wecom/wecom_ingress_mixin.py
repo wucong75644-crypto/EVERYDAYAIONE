@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import List
 
@@ -90,8 +91,26 @@ class WecomIngressMixin:
             await self._push_stream_chunk(
                 reply_ctx, stream_id, "正在接收并排队处理…", finish=False,
             )
+            from services.wecom.stream_keepalive import StreamKeepAlive
+            keepalive = StreamKeepAlive(reply_ctx, self._push_stream_chunk)
+            await keepalive.start()
+            stream_context = {
+                "req_id": reply_ctx.req_id,
+                "stream_id": stream_id,
+                "started_at": time.time(),
+            }
+        else:
+            keepalive = None
+            stream_context = None
         from services.handlers import get_handler
-        from services.wecom.actor_enqueue import enqueue_wecom_message
+        from services.wecom.actor_enqueue import (
+            enqueue_wecom_message,
+            stable_wecom_task_id,
+        )
+        from services.wecom.stream_keepalive import (
+            register_stream_keepalive,
+            stop_stream_keepalive,
+        )
 
         handler = get_handler(
             GenerationType.CHAT,
@@ -100,17 +119,33 @@ class WecomIngressMixin:
             user_id=user_id,
             request_id=f"wecom_{msg.msgid}",
         )
-        result = await enqueue_wecom_message(
-            handler=handler,
-            msg=msg,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            image_urls=image_urls,
-            file_payload=None,
+        task_id = stable_wecom_task_id(msg, user_id)
+        keepalive_registered = bool(
+            keepalive and register_stream_keepalive(task_id, keepalive)
         )
+        if keepalive and not keepalive_registered:
+            await keepalive.stop()
+        try:
+            result = await enqueue_wecom_message(
+                handler=handler,
+                msg=msg,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                image_urls=image_urls,
+                file_payload=None,
+                stream_context=stream_context,
+            )
+        except Exception:
+            if keepalive_registered:
+                await stop_stream_keepalive(task_id)
+            raise
         await self._notify_web_conversation_updated(
             user_id, conversation_id, org_id=msg.org_id,
         )
+        if keepalive_registered and not result.already_enqueued:
+            return
+        if keepalive_registered:
+            await stop_stream_keepalive(task_id)
         acknowledgement = (
             "该消息已经收到，正在处理中。"
             if result.already_enqueued

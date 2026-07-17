@@ -78,3 +78,36 @@ class StreamKeepAlive:
             pass
         except Exception as e:
             logger.warning(f"Stream keepalive error: {e}")
+
+
+_ACTIVE_KEEPALIVES: dict[str, StreamKeepAlive] = {}
+
+
+def register_stream_keepalive(
+    task_id: str,
+    keepalive: StreamKeepAlive,
+) -> bool:
+    """按 task 保留当前进程的企微 stream 保活实例。"""
+    if task_id in _ACTIVE_KEEPALIVES:
+        return False
+    _ACTIVE_KEEPALIVES[task_id] = keepalive
+    if keepalive._task:
+        keepalive._task.add_done_callback(
+            lambda _task: _discard_if_current(task_id, keepalive)
+        )
+    return True
+
+
+async def stop_stream_keepalive(task_id: str) -> None:
+    """终态投递前停止并移除 task 对应的 stream 保活。"""
+    keepalive = _ACTIVE_KEEPALIVES.pop(task_id, None)
+    if keepalive:
+        await keepalive.stop()
+
+
+def _discard_if_current(
+    task_id: str,
+    keepalive: StreamKeepAlive,
+) -> None:
+    if _ACTIVE_KEEPALIVES.get(task_id) is keepalive:
+        _ACTIVE_KEEPALIVES.pop(task_id, None)

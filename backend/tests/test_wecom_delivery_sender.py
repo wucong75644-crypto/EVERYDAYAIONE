@@ -1,5 +1,6 @@
 """WecomDeliverySender 单元测试。"""
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,6 +29,44 @@ def test_build_items_keeps_stable_indexes_and_skips_charts():
 
     assert [(item.key, item.kind) for item in items] == [
         ("text:1", "text"), ("image:2", "image"), ("video:4", "video"),
+    ]
+
+
+def test_build_items_combines_stream_text_into_one_checkpoint():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {"id": "task-1", "status": "completed"},
+        {"content": [
+            {"type": "text", "text": "第一段"},
+            {"type": "chart", "spec_format": "plotly", "option": {}},
+            {"type": "text", "text": "第二段"},
+            {"type": "image", "url": "https://cdn/a.png"},
+        ]},
+        {"transport": "smart_robot", "stream_id": "stream-1"},
+    )
+
+    assert items == [
+        WecomDeliveryItem("stream:text", "text", "第一段\n\n第二段"),
+        WecomDeliveryItem("image:3", "image", "https://cdn/a.png"),
+    ]
+
+
+def test_build_items_finishes_stream_when_result_has_no_text():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {"id": "task-1", "status": "completed"},
+        {"content": [{
+            "type": "chart",
+            "spec_format": "plotly",
+            "option": {},
+        }]},
+        {"transport": "smart_robot", "stream_id": "stream-1"},
+    )
+
+    assert items == [
+        WecomDeliveryItem("stream:text", "text", "分析已完成。"),
     ]
 
 
@@ -85,6 +124,70 @@ async def test_smart_robot_requires_connected_client():
     )
 
     assert sent is False
+
+
+@pytest.mark.asyncio
+async def test_smart_robot_finishes_current_stream_in_original_message():
+    client = MagicMock(is_connected=True)
+    client.send_stream_chunk = AsyncMock()
+    sender = WecomDeliverySender(object(), lambda _org_id: client)
+    context = {
+        "transport": "smart_robot",
+        "org_id": "org",
+        "chatid": "chat",
+        "stream_task_id": "task-1",
+        "stream_req_id": "req-1",
+        "stream_id": "stream-1",
+        "stream_started_at": time.time(),
+    }
+
+    with patch(
+        "services.wecom.delivery_sender.stop_stream_keepalive",
+        new=AsyncMock(),
+    ) as stop:
+        sent = await sender.send(
+            context,
+            WecomDeliveryItem("stream:text", "text", "**完成**"),
+        )
+
+    assert sent is True
+    stop.assert_awaited_once_with("task-1")
+    client.send_stream_chunk.assert_awaited_once_with(
+        req_id="req-1",
+        stream_id="stream-1",
+        content="**完成**",
+        finish=True,
+    )
+    client.send_proactive.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_smart_robot_falls_back_when_stream_expired():
+    client = MagicMock(is_connected=True)
+    client.send_proactive = AsyncMock(return_value=True)
+    sender = WecomDeliverySender(object(), lambda _org_id: client)
+
+    with patch(
+        "services.wecom.delivery_sender.stop_stream_keepalive",
+        new=AsyncMock(),
+    ) as stop:
+        sent = await sender.send(
+            {
+                "transport": "smart_robot",
+                "org_id": "org",
+                "chatid": "chat",
+                "stream_task_id": "task-1",
+                "stream_req_id": "req-1",
+                "stream_id": "stream-1",
+                "stream_started_at": 0,
+            },
+            WecomDeliveryItem("stream:text", "text", "完成"),
+        )
+
+    assert sent is True
+    stop.assert_awaited_once_with("task-1")
+    client.send_stream_chunk.assert_not_called()
+    client.send_proactive.assert_awaited_once()
 
 
 @pytest.mark.asyncio

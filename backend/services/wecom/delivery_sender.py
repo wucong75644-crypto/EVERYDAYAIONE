@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -12,6 +13,10 @@ from services.wecom.markdown_adapter import (
     adapt_for_app,
     clean_for_stream,
     split_long_message,
+)
+from services.wecom.stream_keepalive import (
+    KEEPALIVE_TIMEOUT,
+    stop_stream_keepalive,
 )
 
 
@@ -41,11 +46,19 @@ class WecomDeliverySender:
     ) -> list[WecomDeliveryItem]:
         if task.get("status") == "failed":
             text = str(task.get("error_message") or "生成失败，请稍后重试。")
-            return self._text_items("error:0", text, context)
+            key = "stream:text" if context.get("stream_id") else "error:0"
+            return self._text_items(key, text, context)
 
         items: list[WecomDeliveryItem] = []
         chart_skipped = False
-        for index, part in enumerate(parse_content((message or {}).get("content"))):
+        parts = parse_content((message or {}).get("content"))
+        stream_text = "\n\n".join(
+            str(part["text"])
+            for part in parts
+            if part.get("type") == "text" and part.get("text")
+        )
+        stream_text_added = False
+        for index, part in enumerate(parts):
             kind = part.get("type")
             if kind == "chart":
                 chart_skipped = True
@@ -59,11 +72,26 @@ class WecomDeliverySender:
             if kind not in {"text", "image", "video"} or not value:
                 continue
             if kind == "text":
+                if context.get("stream_id"):
+                    if stream_text_added:
+                        continue
+                    items.append(
+                        WecomDeliveryItem("stream:text", "text", stream_text)
+                    )
+                    stream_text_added = True
+                    continue
                 items.extend(
                     self._text_items(f"text:{index}", str(value), context)
                 )
             else:
                 items.append(WecomDeliveryItem(f"{kind}:{index}", kind, str(value)))
+        if context.get("stream_id") and not stream_text_added and (
+            items or chart_skipped
+        ):
+            items.insert(
+                0,
+                WecomDeliveryItem("stream:text", "text", "分析已完成。"),
+            )
         if not items and not chart_skipped:
             items.extend(
                 self._text_items(
@@ -109,6 +137,17 @@ class WecomDeliverySender:
         chatid = _required_str(context, "chatid")
         if not client or not client.is_connected:
             return False
+        if item.kind == "text" and context.get("stream_task_id"):
+            task_id = str(context["stream_task_id"])
+            await stop_stream_keepalive(task_id)
+            if _stream_is_current(context):
+                await client.send_stream_chunk(
+                    req_id=_required_str(context, "stream_req_id"),
+                    stream_id=_required_str(context, "stream_id"),
+                    content=clean_for_stream(item.content),
+                    finish=True,
+                )
+                return bool(client.is_connected)
         msgtype = "markdown" if item.kind in {"text", "image"} else "text"
         content = item.content
         if item.kind == "text":
@@ -175,3 +214,13 @@ def _required_str(context: Mapping[str, Any], key: str) -> str:
 
 def _optional_str(value: Any) -> str | None:
     return str(value) if value else None
+
+
+def _stream_is_current(context: Mapping[str, Any]) -> bool:
+    required = ("stream_task_id", "stream_req_id", "stream_id")
+    if any(not context.get(key) for key in required):
+        return False
+    started_at = context.get("stream_started_at")
+    return isinstance(started_at, (int, float)) and (
+        0 <= time.time() - started_at < KEEPALIVE_TIMEOUT
+    )

@@ -5,7 +5,10 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from schemas.wecom import WecomIncomingMessage
-from services.wecom.actor_enqueue import enqueue_wecom_message
+from services.wecom.actor_enqueue import (
+    enqueue_wecom_message,
+    stable_wecom_task_id,
+)
 
 
 def _message() -> WecomIncomingMessage:
@@ -56,6 +59,11 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
             user_id="user",
             conversation_id="conversation",
             image_urls=[],
+            stream_context={
+                "req_id": "req-1",
+                "stream_id": "stream-1",
+                "started_at": 123.0,
+            },
         )
         first_params = handler.db.rpc.call_args.args[1]
         second = await enqueue_wecom_message(
@@ -68,6 +76,9 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
         second_params = handler.db.rpc.call_args.args[1]
 
     assert first.task_id == second.task_id == "internal"
+    assert first_params["p_task_data"].obj["id"] == stable_wecom_task_id(
+        _message(), "user",
+    )
     assert first_params["p_task_data"].obj["id"] == second_params["p_task_data"].obj["id"]
     assert first_params["p_input_message_id"] == second_params["p_input_message_id"]
     assert first_params["p_output_message_id"] == second_params["p_output_message_id"]
@@ -76,6 +87,10 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
     delivery = first_params["p_delivery_context"].obj
     assert delivery["channel"] == "wecom"
     assert delivery["chatid"] == "chat"
+    assert delivery["stream_req_id"] == "req-1"
+    assert delivery["stream_id"] == "stream-1"
+    assert delivery["stream_started_at"] == 123.0
+    assert delivery["stream_task_id"] == first_params["p_task_data"].obj["id"]
     assert "agent_secret" not in delivery
     wakeup.assert_awaited()
 
