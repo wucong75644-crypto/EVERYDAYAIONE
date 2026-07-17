@@ -710,12 +710,11 @@ cache = client.caches.create(
     文件、Sandbox、ERP 与图片产物统一进入 channel Workspace
 - **2026-07-17**：企微 FILE 统一为原始资产 `FilePart` 后，删除已无生产调用的
   `services/wecom/file_parser.py` 及其孤立测试；文件内容理解统一由标准工具链按需完成。
-- **2026-07-17**：企业微信图表交付治理
-  - Web 继续直接渲染统一 `ChartPart`，企微通道末端转为 PNG
-  - 新增 `services/wecom/chart_renderer.py` 与独立 `chart_runtime/`
-  - 智能机器人按官方 WebSocket 分片协议上传并发送 image media_id
-  - Outbox 使用原有稳定 part index 检查点防止重试重复发送
-  - 部署通过 `deploy/setup-chart-runtime.sh` 安装并 smoke test Chromium
+- **2026-07-17**：企业微信图表能力回退
+  - Web 继续渲染统一 `ChartPart`，支持 ECharts、Plotly 和 Vega-Lite
+  - 企微通道末端明确跳过所有 chart，仅投递文字、图片和视频
+  - Outbox 保留原始 content index 检查点；chart 不产生投递项或重试
+  - 删除企微 Playwright/Chromium/ECharts runtime 与部署安装链路
 - **2026-07-16**：新增消息发送草稿事务与幂等协议技术设计
   - 统一文字、图片、视频和电商图的输入草稿提交时序
   - 设计 `Idempotency-Key`、请求指纹、响应重放和不确定结果安全重试

@@ -157,11 +157,10 @@ rsync 排除 `.env*`、SQLite、日志、缓存、运行时和外部目录。迁
 
 ## 12. 企业微信图表交付
 
-统一消息仍只保存一个 `ChartPart`。Web 消费原始 option 并提供交互式 ECharts；
-企业微信 Outbox 在通道末端将其转换为 PNG，不扫描模型文本，也不改写消息事实。
+统一消息仍保存原始 `ChartPart`，Web 按 `spec_format` 渲染 ECharts、Plotly 或
+Vega-Lite。企业微信不承担结构化图表展示职责，Outbox 在通道末端明确跳过所有
+chart，不渲染 PNG、不上传图表素材，也不创建 chart 投递检查点。
 
-渲染运行时由锁定的 Playwright、Chromium 和 ECharts npm runtime 构成，页面禁止所有
-网络请求，option 限制为 1MB，固定 1200×720，15 秒超时。智能机器人使用官方
-`aibot_upload_media_init/chunk/finish` 协议上传 PNG，收到 ACK 和 media_id 后发送
-原生 image 消息；自建应用使用既有临时素材 HTTP API。每个 chart 沿用
-`chart:{content_index}` Outbox 检查点，失败重试但不提前标记已交付。
+文字、图片和视频继续沿用原始 content index 作为稳定检查点。文字与 chart 并存时
+只投递文字；chart-only 消息不发送错误兜底，Outbox 直接完成。数据库消息事实不被
+改写，因此 Web 刷新后仍能看到完整结构化图表。

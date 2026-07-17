@@ -120,6 +120,23 @@ async def test_worker_skips_checkpointed_item_after_retry():
 
 
 @pytest.mark.asyncio
+async def test_worker_completes_when_sender_skips_chart_only_message():
+    db = _DB({
+        "claim_conversation_delivery": [_claim(["text:0"])],
+        "complete_conversation_delivery": [{"outcome": "delivered"}],
+    })
+    sender = MagicMock()
+    sender.build_items.return_value = []
+    sender.send = AsyncMock(return_value=True)
+
+    await WecomDeliveryWorker(db, sender).run_once()
+
+    sender.send.assert_not_awaited()
+    complete = [call for call in db.calls if call[0].startswith("complete_")][0]
+    assert complete[1]["p_delivered_items"].obj == ["text:0"]
+
+
+@pytest.mark.asyncio
 async def test_worker_schedules_retry_with_saved_checkpoints_on_send_failure():
     db = _DB({
         "claim_conversation_delivery": [_claim(["text:0"])],

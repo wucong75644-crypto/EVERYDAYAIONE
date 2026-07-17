@@ -349,7 +349,7 @@
 
 ## 更新记录
 
-- **2026-07-17**：Web 图表正常但企业微信静默丢弃 `ChartPart`。治理方案改为通道末端适配：Web 保留交互式 ECharts；企微 Outbox 识别 chart，使用禁网 Playwright/Chromium 和锁定 ECharts runtime 渲染 PNG，再按智能机器人官方 `init/chunk/finish` WebSocket 素材协议获取 `media_id` 并发送原生 image。发送成功后才提交逐项检查点；部署增加真实 Chromium→PNG smoke gate。开发验证完成，尚未提交部署。
+- **2026-07-17**：回退企业微信结构化图表交付：Web 继续保留 ECharts、Plotly、Vega-Lite `ChartPart`，企微 Outbox 在通道末端明确跳过所有 chart，仅投递文字、图片和视频。删除企微 Playwright/Chromium/ECharts runtime、PNG 素材上传及部署安装链路；chart-only 消息不生成错误兜底，Outbox 可直接完成。生产 pending/dead 记录待部署后只读核查，未经确认不修改。
 - **2026-07-17**：企微会话与附件上下文治理阶段 3.1：新增数据库派生的 `ExecutionScope`，分离真实发言人、会话作用域与 Workspace owner。群聊关闭个人 Memory/persona/偏好/位置注入，禁止个人积分、记忆、新对话和定时任务操作；ContextSnapshot 继续提供群共享历史。FILE、file_analyze、Sandbox、ERP 导出、普通图片生成和电商图片生成统一写入稳定 channel Workspace，积分和审计仍归真实发言人。`get_conversation_context` 因与 ContextSnapshot 重复且依赖个人 owner 权限，从群工具目录移除。受影响的三个超限工具文件已按纯辅助、会话读取和文件描述职责拆至 500 行以内。尚未部署。
 - **2026-07-17**：企微会话与附件上下文治理阶段 2.2：TEXT/VOICE/IMAGE/MIXED 已统一进入 Conversation Actor，删除企微专属灰度开关和入站旧链路分发；迁移 130 在会话锁内仅为首次稳定消息 ID 消费 active 附件，冻结为输入消息 `FilePart` 并标记 referenced，重复投递复用原输入而不误消费新附件；群聊入队校验 channel binding 并保留真实发送人。同步生成、旧消息持久化、旧结果分发、旧记忆注入和旧直接扣积分尾链已完整删除，`wecom_message_service.py` 从 382 行降至 178 行；企微测试按入站与回复职责拆分，均低于 500 行。128-130 及 130 回滚已通过真实 PostgreSQL 单事务预演，尚未部署。
 - **2026-07-17**：企微会话与附件上下文治理阶段 2.1：新增迁移 129 和 `conversation_attachment_refs`；FILE 按 msgid 幂等暂存为 completed 用户消息与 ready 活动附件，不再无指令启动模型。私聊文件进入个人 Workspace，群聊文件进入独立 channel Workspace。128/129 已通过真实 PostgreSQL 事务预演，尚未部署。

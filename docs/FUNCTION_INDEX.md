@@ -1346,10 +1346,6 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ConversationToolMixin` | `backend/services/agent/conversation_tool_mixin.py` | ToolExecutor 的当前会话历史读取职责 |
 | `FileDescribeMixin` | `backend/services/agent/file_describe_mixin.py` | 文件搜索命中单文件后的描述和图片多模态返回 |
 | `ERPChildFactoryMixin` | `backend/services/agent/erp_child_factory_mixin.py` | 按执行 Workspace scope 创建 ERP 部门子 Agent |
-| `WecomChartRenderer.render` | `backend/services/wecom/chart_renderer.py` | 在禁网 Chromium 中把受限 ECharts ChartPart 渲染为 PNG |
-| `WecomOutboundMixin.upload_media` | `backend/services/wecom/ws_outbound.py` | 按企微官方 WebSocket init/chunk/finish 协议上传临时素材 |
-| `WecomOutboundMixin.send_media_message` | `backend/services/wecom/ws_outbound.py` | 使用 ACK 确认的 media_id 主动发送企微媒体消息 |
-| `upload_temp_media_bytes` | `backend/services/wecom/app_message_sender.py` | 自建应用通道上传内存 PNG 并返回 media_id |
 
 ### 工作区分类与批量下载
 

@@ -89,7 +89,6 @@ class WecomWSClient(WecomOutboundMixin):
         self._should_run = True
         self._processed_msgs: OrderedDict[str, None] = OrderedDict()
         self._connect_task: Optional[asyncio.Task] = None
-        self._pending_requests: Dict[str, asyncio.Future] = {}
         self._last_recv_time: float = 0  # 最后收到数据的时间戳
         self._connect_start_time: float = 0  # 连接建立时间（诊断用）
         self._hb_sent: int = 0  # 心跳发送计数（诊断用）
@@ -369,10 +368,7 @@ class WecomWSClient(WecomOutboundMixin):
             cmd = data.get("cmd")
             req_id = data.get("headers", {}).get("req_id", "")
 
-            pending = self._pending_requests.pop(req_id, None)
-            if pending is not None and not pending.done():
-                pending.set_result(data)
-            elif cmd == WecomCommand.MSG_CALLBACK:
+            if cmd == WecomCommand.MSG_CALLBACK:
                 asyncio.create_task(self._handle_msg_callback(data))
             elif cmd == WecomCommand.EVENT_CALLBACK:
                 asyncio.create_task(self._handle_event_callback(data))
@@ -479,10 +475,6 @@ class WecomWSClient(WecomOutboundMixin):
     async def _force_close(self) -> None:
         """强制关闭连接，触发重连"""
         self._is_connected = False
-        for future in self._pending_requests.values():
-            if not future.done():
-                future.set_exception(ConnectionError("WECOM_WS_DISCONNECTED"))
-        self._pending_requests.clear()
         if self._ws:
             try:
                 await self._ws.close()

@@ -1,14 +1,11 @@
-"""企业微信 WebSocket 出站消息与素材上传能力。"""
+"""企业微信 WebSocket 出站消息能力。"""
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import hashlib
 import json
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from loguru import logger
 
@@ -98,54 +95,6 @@ class WecomOutboundMixin:
         })
         return self.is_connected
 
-    async def upload_media(
-        self, data: bytes, *, media_type: str, filename: str,
-    ) -> str:
-        chunks = [
-            data[index:index + 512 * 1024]
-            for index in range(0, len(data), 512 * 1024)
-        ]
-        if not data or len(chunks) > 100:
-            raise ValueError("WECOM_MEDIA_SIZE_INVALID")
-        initialized = await self._request(
-            WecomCommand.UPLOAD_MEDIA_INIT,
-            {
-                "type": media_type, "filename": filename,
-                "total_size": len(data), "total_chunks": len(chunks),
-                "md5": hashlib.md5(data, usedforsecurity=False).hexdigest(),
-            },
-        )
-        upload_id = initialized.get("body", {}).get("upload_id")
-        if not upload_id:
-            raise RuntimeError("WECOM_MEDIA_UPLOAD_INIT_INVALID")
-        for index, chunk in enumerate(chunks):
-            await self._request(
-                WecomCommand.UPLOAD_MEDIA_CHUNK,
-                {
-                    "upload_id": upload_id, "chunk_index": index,
-                    "base64_data": base64.b64encode(chunk).decode("ascii"),
-                },
-            )
-        finished = await self._request(
-            WecomCommand.UPLOAD_MEDIA_FINISH, {"upload_id": upload_id},
-        )
-        media_id = finished.get("body", {}).get("media_id")
-        if not media_id:
-            raise RuntimeError("WECOM_MEDIA_UPLOAD_FINISH_INVALID")
-        return str(media_id)
-
-    async def send_media_message(
-        self, chatid: str, media_type: str, media_id: str,
-    ) -> bool:
-        await self._request(
-            WecomCommand.SEND_MSG,
-            {
-                "chatid": chatid, "msgtype": media_type,
-                media_type: {"media_id": media_id},
-            },
-        )
-        return self.is_connected
-
     async def _safe_send(self, msg: dict) -> None:
         try:
             if self._ws and self.is_connected:
@@ -153,27 +102,3 @@ class WecomOutboundMixin:
         except Exception as error:
             logger.warning(f"Wecom WS send failed: {error}")
             await self._force_close()
-
-    async def _request(
-        self, cmd: str, body: dict, *, timeout: float = 15,
-    ) -> dict:
-        if not self._ws or not self.is_connected:
-            raise ConnectionError("WECOM_WS_NOT_CONNECTED")
-        req_id = _request_id(cmd)
-        future = asyncio.get_running_loop().create_future()
-        self._pending_requests[req_id] = future
-        try:
-            await self._ws.send(json.dumps({
-                "cmd": cmd,
-                "headers": {"req_id": req_id},
-                "body": body,
-            }))
-            response = await asyncio.wait_for(future, timeout=timeout)
-        finally:
-            self._pending_requests.pop(req_id, None)
-        errcode = response.get("errcode")
-        if errcode is None:
-            errcode = response.get("body", {}).get("errcode", 0)
-        if errcode != 0:
-            raise RuntimeError(f"WECOM_REQUEST_FAILED:{cmd}:{errcode}")
-        return response

@@ -6,9 +6,6 @@ from pathlib import Path
 SCRIPT = (
     Path(__file__).resolve().parents[2] / "deploy/deploy.sh"
 ).read_text()
-CHART_SETUP = (
-    Path(__file__).resolve().parents[2] / "deploy/setup-chart-runtime.sh"
-).read_text()
 
 
 def test_backend_deploy_restarts_all_required_services() -> None:
@@ -47,13 +44,6 @@ def test_missing_required_service_fails_deployment() -> None:
     assert 'systemctl list-unit-files "${service}.service"' in SCRIPT
 
 
-def test_backend_deploy_gates_restart_on_chart_runtime_smoke() -> None:
-    setup = 'bash ../deploy/setup-chart-runtime.sh "$PWD"'
-    assert setup in SCRIPT
-    assert SCRIPT.index(setup) < SCRIPT.index('sudo systemctl restart "$service"')
-    assert "command -v apt-get" in CHART_SETUP
-    assert "python -m playwright install --with-deps chromium" in CHART_SETUP
-    assert "command -v dnf" in CHART_SETUP
-    assert "dnf install -y atk at-spi2-atk at-spi2-core" in CHART_SETUP
-    assert "python -m playwright install chromium" in CHART_SETUP
-    assert "PYTHONPATH=. python scripts/smoke_chart_renderer.py" in CHART_SETUP
+def test_backend_deploy_does_not_install_chart_runtime() -> None:
+    assert "setup-chart-runtime" not in SCRIPT
+    assert "playwright" not in SCRIPT

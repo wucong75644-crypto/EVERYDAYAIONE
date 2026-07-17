@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from loguru import logger
 from services.message_utils import parse_content
 from services.org.config_resolver import AsyncOrgConfigResolver
-from services.wecom.chart_renderer import WecomChartRenderer
 from services.wecom.markdown_adapter import (
     adapt_for_app,
     clean_for_stream,
@@ -19,7 +19,7 @@ from services.wecom.markdown_adapter import (
 class WecomDeliveryItem:
     key: str
     kind: str
-    content: Any
+    content: str
 
 
 class WecomDeliverySender:
@@ -29,11 +29,9 @@ class WecomDeliverySender:
         self,
         db: Any,
         ws_client_getter: Callable[[str | None], Any],
-        chart_renderer: WecomChartRenderer | None = None,
     ) -> None:
         self._resolver = AsyncOrgConfigResolver(db)
         self._ws_client_getter = ws_client_getter
-        self._chart_renderer = chart_renderer or WecomChartRenderer()
 
     def build_items(
         self,
@@ -46,10 +44,16 @@ class WecomDeliverySender:
             return self._text_items("error:0", text, context)
 
         items: list[WecomDeliveryItem] = []
+        chart_skipped = False
         for index, part in enumerate(parse_content((message or {}).get("content"))):
             kind = part.get("type")
-            if kind == "chart" and part.get("option"):
-                items.append(WecomDeliveryItem(f"chart:{index}", kind, part))
+            if kind == "chart":
+                chart_skipped = True
+                logger.info(
+                    "wecom_chart_skipped | "
+                    f"task_id={task.get('id')} | content_index={index} | "
+                    f"spec_format={part.get('spec_format', 'echarts')}"
+                )
                 continue
             value = part.get("text") if kind == "text" else part.get("url")
             if kind not in {"text", "image", "video"} or not value:
@@ -60,7 +64,7 @@ class WecomDeliverySender:
                 )
             else:
                 items.append(WecomDeliveryItem(f"{kind}:{index}", kind, str(value)))
-        if not items:
+        if not items and not chart_skipped:
             items.extend(
                 self._text_items(
                     "empty:0", "抱歉，AI 没有生成回复内容。", context,
@@ -105,12 +109,6 @@ class WecomDeliverySender:
         chatid = _required_str(context, "chatid")
         if not client or not client.is_connected:
             return False
-        if item.kind == "chart":
-            png = await self._chart_renderer.render(item.content)
-            media_id = await client.upload_media(
-                png, media_type="image", filename="chart.png",
-            )
-            return await client.send_media_message(chatid, "image", media_id)
         msgtype = "markdown" if item.kind in {"text", "image"} else "text"
         content = item.content
         if item.kind == "text":
@@ -138,7 +136,6 @@ class WecomDeliverySender:
             send_text,
             send_video,
             upload_temp_media,
-            upload_temp_media_bytes,
         )
 
         org_id = _required_str(context, "org_id")
@@ -157,12 +154,6 @@ class WecomDeliverySender:
             if item.kind == "markdown":
                 return await send_markdown(userid, item.content, creds)
             return await send_text(userid, item.content, creds)
-        if item.kind == "chart":
-            png = await self._chart_renderer.render(item.content)
-            media_id = await upload_temp_media_bytes(
-                png, creds, "image", "chart.png",
-            )
-            return bool(media_id and await send_image(userid, media_id, creds))
         media_id = await upload_temp_media(item.content, creds, item.kind)
         if not media_id:
             return await send_text(
