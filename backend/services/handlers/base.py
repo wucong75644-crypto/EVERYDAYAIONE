@@ -382,6 +382,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             wp = None
             if isinstance(part, FilePart) and part.workspace_path:
                 wp = {
+                    "asset_id": part.asset_id,
                     "workspace_path": part.workspace_path,
                     "name": part.name,
                     "size": part.size,
@@ -402,6 +403,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                 ptype = part.get("type")
                 if ptype == "file" and part.get("workspace_path"):
                     wp = {
+                        "asset_id": part.get("asset_id"),
                         "workspace_path": part["workspace_path"],
                         "name": part.get("name", ""),
                         "size": part.get("size"),

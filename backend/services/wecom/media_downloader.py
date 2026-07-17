@@ -12,6 +12,7 @@
 
 import asyncio
 import base64
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import httpx
@@ -23,6 +24,15 @@ from services.oss_service import get_oss_service
 # 单文件大小上限（10MB）
 MAX_FILE_SIZE = 10 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 15  # 秒
+
+
+@dataclass(frozen=True)
+class DownloadedMedia:
+    """下载得到的内容及上游响应元数据。"""
+
+    data: bytes
+    content_type: Optional[str] = None
+    content_disposition: Optional[str] = None
 
 
 class WecomMediaDownloader:
@@ -49,15 +59,16 @@ class WecomMediaDownloader:
             OSS 永久 URL，失败返回 None
         """
         try:
-            raw_data = await self._download(url)
-            if raw_data is None:
+            media = await self._download(url)
+            if media is None:
                 return None
 
             # AES 解密（长连接模式）
             if aeskey:
-                raw_data = self._aes_decrypt(raw_data, aeskey)
-                if raw_data is None:
+                decrypted = self._aes_decrypt(media.data, aeskey)
+                if decrypted is None:
                     return None
+                media = replace(media, data=decrypted)
 
             # 推断扩展名
             ext = self._guess_ext(filename, media_type)
@@ -66,7 +77,7 @@ class WecomMediaDownloader:
             oss_svc = get_oss_service()
             result = await asyncio.to_thread(
                 oss_svc.upload_bytes,
-                content=raw_data,
+                content=media.data,
                 user_id=user_id,
                 ext=ext,
                 category="wecom_upload",
@@ -75,44 +86,51 @@ class WecomMediaDownloader:
             oss_url = result.get("url")
             logger.info(
                 f"Wecom media uploaded | type={media_type} | "
-                f"size={len(raw_data)} | oss_url={oss_url}"
+                f"size={len(media.data)} | oss_url={oss_url}"
             )
             return oss_url
 
         except Exception as e:
-            logger.error(f"Wecom media download failed | url={url[:100]} | error={e}")
+            logger.error(
+                f"Wecom media download failed | error={type(e).__name__}"
+            )
             return None
 
     async def download_and_decrypt(
         self,
         url: str,
         aeskey: Optional[str] = None,
-    ) -> Optional[bytes]:
-        """下载企微资源 + AES 解密（如有 aeskey），返回原始字节
+    ) -> Optional[DownloadedMedia]:
+        """下载企微资源 + AES 解密（如有 aeskey），返回内容及响应元数据
 
         与 download_and_store 不同，本方法不上传 OSS，仅返回解密后的 bytes。
         用于需要先解析内容再决定是否上传的场景（如文件消息）。
         """
         try:
-            raw_data = await self._download(url)
-            if raw_data is None:
+            media = await self._download(url)
+            if media is None:
                 return None
             if aeskey:
-                raw_data = self._aes_decrypt(raw_data, aeskey)
-            return raw_data
+                decrypted = self._aes_decrypt(media.data, aeskey)
+                if decrypted is None:
+                    return None
+                media = replace(media, data=decrypted)
+            return media
         except Exception as e:
-            logger.error(f"Wecom media download+decrypt failed | url={url[:100]} | error={e}")
+            logger.error(
+                "Wecom media download+decrypt failed | "
+                f"error={type(e).__name__}"
+            )
             return None
 
-    async def _download(self, url: str) -> Optional[bytes]:
+    async def _download(self, url: str) -> Optional[DownloadedMedia]:
         """流式下载，限制 10MB"""
         try:
             async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT) as client:
                 async with client.stream("GET", url) as resp:
                     if resp.status_code != 200:
                         logger.warning(
-                            f"Wecom media download HTTP {resp.status_code} | "
-                            f"url={url[:100]}"
+                            f"Wecom media download HTTP {resp.status_code}"
                         )
                         return None
 
@@ -122,16 +140,22 @@ class WecomMediaDownloader:
                         total += len(chunk)
                         if total > MAX_FILE_SIZE:
                             logger.warning(
-                                f"Wecom media too large (>{MAX_FILE_SIZE//1024//1024}MB) | "
-                                f"url={url[:100]}"
+                                "Wecom media too large "
+                                f"(>{MAX_FILE_SIZE//1024//1024}MB)"
                             )
                             return None
                         chunks.append(chunk)
 
-                    return b"".join(chunks)
+                    return DownloadedMedia(
+                        data=b"".join(chunks),
+                        content_type=resp.headers.get("content-type"),
+                        content_disposition=resp.headers.get(
+                            "content-disposition"
+                        ),
+                    )
 
         except httpx.TimeoutException:
-            logger.warning(f"Wecom media download timeout | url={url[:100]}")
+            logger.warning("Wecom media download timeout")
             return None
 
     @staticmethod

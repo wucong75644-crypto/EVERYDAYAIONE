@@ -336,7 +336,8 @@ class TestExtractOaiMessagesFromContent:
         assert msgs[0]["role"] == "user"
         assert "读取这个文件" in msgs[0]["content"]
         assert "[附件] report.xlsx" in msgs[0]["content"]
-        assert "workspace_path: 已整理表格/report.xlsx" in msgs[0]["content"]
+        assert "[附件] report.xlsx" in msgs[0]["content"]
+        assert "workspace_path" not in msgs[0]["content"]
 
     def test_file_only_user_message_creates_user_msg(self, chat_handler):
         """user 消息只有 file 块没有 text → 新建 user 消息纯文件引用"""
@@ -352,7 +353,8 @@ class TestExtractOaiMessagesFromContent:
         assert msgs[0]["role"] == "user"
         assert msgs[0]["content"].startswith("[03-06 18:00] ")
         assert "[附件] data.csv" in msgs[0]["content"]
-        assert "uploads/data.csv" in msgs[0]["content"]
+        assert "[附件] data.csv" in msgs[0]["content"]
+        assert "uploads/data.csv" not in msgs[0]["content"]
 
     def test_multiple_file_blocks(self, chat_handler):
         """多个 file 块 → 多行 [附件] 追加"""

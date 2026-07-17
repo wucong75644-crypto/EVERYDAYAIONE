@@ -234,9 +234,16 @@ sync_backend() {
         --exclude 'venv' \
         --exclude '__pycache__' \
         --exclude '*.pyc' \
-        --exclude '.env' \
+        --exclude '.env*' \
         --exclude '*.log' \
+        --exclude '*.db' \
+        --exclude '*.sqlite' \
+        --exclude '*.sqlite3' \
         --exclude '.pytest_cache' \
+        --exclude '.coverage' \
+        --exclude 'coverage/' \
+        --exclude 'tmp/' \
+        --exclude 'outputs/' \
         --exclude 'external/mediacrawler' \
         backend/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/
@@ -261,61 +268,54 @@ deploy_backend() {
 
     remote_exec bash << 'ENDSSH'
         set -e
-
-        echo "1. 进入后端目录"
         cd /var/www/everydayai/backend
-
-        echo "2. 创建虚拟环境（如果不存在）"
         if [ ! -d "venv" ]; then
             python3 -m venv venv
         fi
-
-        echo "3. 激活虚拟环境并安装依赖"
         source venv/bin/activate
         pip install -q -r requirements.txt
-
-        echo "4. 检查.env文件"
         if [ ! -f ".env" ]; then
-            echo "警告: .env 文件不存在，请手动配置"
-        fi
-
-        echo "5. 清理残留 Kernel 进程（nsjail 沙盒）"
-        pkill -f kernel_worker 2>/dev/null || true
-        echo "已清理"
-
-        echo "6. 重启后端服务（瘦身后只跑 API + chat 后台任务）"
-        sudo systemctl restart everydayai-backend
-
-        echo "7. 确认 backend 已不再启动 ERP 同步（防双跑）"
-        sleep 5
-        if sudo journalctl -u everydayai-backend --since '15 seconds ago' --no-pager 2>/dev/null \
-                | grep -q -E 'ErpSyncOrchestrator started|kuaimai_external_sync_loop started'; then
-            echo "❌ backend 仍在启动 ERP 同步，停止部署以防双跑！"
+            echo "❌ .env 文件不存在"
             exit 1
         fi
-        echo "✅ backend 已不再启动 ERP 同步"
-
-        echo "8. 重启同步服务（独立进程承载 ERP/oss_purge/kuaimai_external）"
-        if systemctl list-unit-files everydayai-sync.service &>/dev/null; then
-            sudo systemctl restart everydayai-sync
-            echo "同步服务已重启"
-        else
-            echo "⚠️  everydayai-sync.service 未安装，请先执行："
-            echo "    scp deploy/everydayai-sync.service root@SERVER:/etc/systemd/system/"
-            echo "    sudo systemctl daemon-reload && sudo systemctl enable --now everydayai-sync"
-        fi
-
-        echo "9. 重启企微服务（共享后端代码）"
-        if systemctl is-enabled everydayai-wecom &>/dev/null; then
-            sudo systemctl restart everydayai-wecom
-            echo "企微服务已重启"
-        fi
-
-        echo "10. 检查服务状态"
-        sudo systemctl status everydayai-backend --no-pager
-        if systemctl is-enabled everydayai-sync &>/dev/null; then
-            sudo systemctl status everydayai-sync --no-pager
-        fi
+        pkill -f kernel_worker 2>/dev/null || true
+        services=(
+            everydayai-backend
+            everydayai-sync
+            everydayai-wecom
+            everydayai-conversation-actor
+        )
+        for service in "${services[@]}"; do
+            if ! systemctl list-unit-files "${service}.service" --no-legend \
+                | grep -q "^${service}.service"; then
+                echo "❌ 缺少必需服务: ${service}.service"
+                exit 1
+            fi
+            sudo systemctl restart "$service"
+            sudo systemctl is-active --quiet "$service" || {
+                sudo journalctl -u "$service" -n 50 --no-pager
+                exit 1
+            }
+        done
+        for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8000/api/health \
+                | grep -q '"status":"ok"'; then
+                break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+                echo "❌ 后端 readiness 超时"
+                sudo journalctl -u everydayai-backend -n 80 --no-pager
+                exit 1
+            fi
+            sleep 2
+        done
+        sudo journalctl -u everydayai-backend --since '30 seconds ago' \
+            --no-pager | grep -q -E \
+            'ErpSyncOrchestrator started|kuaimai_external_sync_loop started' && {
+                echo "❌ backend 仍在启动 ERP 同步"
+                exit 1
+            }
+        echo "✅ 后端四服务和 readiness 检查通过"
 ENDSSH
 
     log_success "后端部署完成"
@@ -381,6 +381,10 @@ show_status() {
         else
             echo "（未安装）"
         fi
+
+        echo -e "\n【企微与 Actor】"
+        sudo systemctl status everydayai-wecom --no-pager | head -n 10
+        sudo systemctl status everydayai-conversation-actor --no-pager | head -n 10
 
         echo -e "\n【Nginx服务】"
         sudo systemctl status nginx --no-pager | head -n 10

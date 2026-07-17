@@ -135,6 +135,7 @@ class ChatContextMixin:
             context_snapshot = await build_context_snapshot(
                 self.db, context_anchor, text_content,
             )
+            self._resource_manifest = context_snapshot.resource_manifest
 
         inp = BuildInput(
             user_id=user_id,

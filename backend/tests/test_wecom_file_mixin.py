@@ -8,6 +8,7 @@ import pytest
 
 from schemas.wecom import WecomIncomingMessage, WecomMsgType, WecomReplyContext
 from services.wecom.wecom_message_service import WecomMessageService
+from services.wecom.media_downloader import DownloadedMedia
 
 
 def _message(filename: str = "report.csv") -> WecomIncomingMessage:
@@ -46,7 +47,9 @@ def _settings(tmp_path: Path) -> SimpleNamespace:
 @pytest.mark.asyncio
 async def test_wecom_file_persists_raw_bytes_and_returns_filepart_payload(tmp_path):
     service = _service()
-    service._download_and_decrypt_file = AsyncMock(return_value=b"a,b\n1,2")
+    service._download_and_decrypt_file = AsyncMock(
+        return_value=DownloadedMedia(b"a,b\n1,2")
+    )
     uploaded = {
         "url": "https://cdn/report.csv",
         "workspace_path": "上传/企微/stable_report.csv",
@@ -72,6 +75,15 @@ async def test_wecom_file_persists_raw_bytes_and_returns_filepart_payload(tmp_pa
         "name": "report.csv",
         "mime_type": "text/csv",
         "size": 7,
+        "asset_identity": {
+            "provider_name": "report.csv",
+            "canonical_name": "report.csv",
+            "detected_mime_type": "text/csv",
+            "detection_source": "content",
+            "content_sha256": (
+                "aeedab1ee7a1043753c9ab768594bc8420d7b85491d0be9421edc3813c237f4c"
+            ),
+        },
     }
     saved = list((tmp_path / "org" / "org" / "user" / "上传" / "企微").iterdir())
     assert len(saved) == 1
@@ -81,7 +93,9 @@ async def test_wecom_file_persists_raw_bytes_and_returns_filepart_payload(tmp_pa
 @pytest.mark.asyncio
 async def test_wecom_file_replay_reuses_stable_workspace_asset(tmp_path):
     service = _service()
-    service._download_and_decrypt_file = AsyncMock(return_value=b"first")
+    service._download_and_decrypt_file = AsyncMock(
+        return_value=DownloadedMedia(b"a,b\n1,2")
+    )
     upload = AsyncMock(return_value={
         "url": "https://cdn/report.csv",
         "workspace_path": "上传/企微/stable.csv",
@@ -104,7 +118,9 @@ async def test_wecom_file_replay_reuses_stable_workspace_asset(tmp_path):
 @pytest.mark.asyncio
 async def test_wecom_file_sanitizes_provider_filename(tmp_path):
     service = _service()
-    service._download_and_decrypt_file = AsyncMock(return_value=b"safe")
+    service._download_and_decrypt_file = AsyncMock(
+        return_value=DownloadedMedia(b"safe")
+    )
     with (
         patch("core.config.get_settings", return_value=_settings(tmp_path)),
         patch(
@@ -122,14 +138,16 @@ async def test_wecom_file_sanitizes_provider_filename(tmp_path):
             _message("../../passwd"), _context(), "user", "org",
         )
 
-    assert payload["name"] == "passwd"
+    assert payload["name"] == "passwd.bin"
     assert ".." not in payload["workspace_path"]
 
 
 @pytest.mark.asyncio
 async def test_group_file_uses_channel_workspace(tmp_path):
     service = _service()
-    service._download_and_decrypt_file = AsyncMock(return_value=b"group")
+    service._download_and_decrypt_file = AsyncMock(
+        return_value=DownloadedMedia(b"group")
+    )
     msg = _message()
     msg.chattype = "group"
     msg.chatid = "group-chat"
@@ -165,7 +183,9 @@ async def test_wecom_file_download_failure_does_not_enqueue_asset(tmp_path):
 @pytest.mark.asyncio
 async def test_wecom_file_requires_dual_track_workspace_payload(tmp_path):
     service = _service()
-    service._download_and_decrypt_file = AsyncMock(return_value=b"content")
+    service._download_and_decrypt_file = AsyncMock(
+        return_value=DownloadedMedia(b"content")
+    )
     with (
         patch("core.config.get_settings", return_value=_settings(tmp_path)),
         patch(
@@ -194,7 +214,9 @@ async def test_wecom_file_rejects_missing_stable_msgid():
 @pytest.mark.asyncio
 async def test_wecom_file_workspace_write_failure_replies(tmp_path):
     service = _service()
-    service._download_and_decrypt_file = AsyncMock(return_value=b"content")
+    service._download_and_decrypt_file = AsyncMock(
+        return_value=DownloadedMedia(b"content")
+    )
 
     with (
         patch("core.config.get_settings", return_value=_settings(tmp_path)),

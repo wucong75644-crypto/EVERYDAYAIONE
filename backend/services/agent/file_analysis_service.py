@@ -28,6 +28,11 @@ async def analyze_file(
     if isinstance(resolved, AgentResult):
         return resolved
     abs_path, display_path = resolved
+    scope_error = _validate_resource_scope(
+        owner, executor, args, abs_path, display_path,
+    )
+    if scope_error:
+        return scope_error
     validation = _validate_analysis_file(
         abs_path, display_path, owner._ANALYZE_EXTENSIONS,
     )
@@ -55,6 +60,31 @@ async def analyze_file(
         cache_path,
         sheet_names,
         round(time.monotonic() - started_at, 2),
+    )
+
+
+def _validate_resource_scope(
+    owner: Any,
+    executor: Any,
+    args: dict[str, Any],
+    abs_path: str,
+    display_path: str,
+) -> AgentResult | None:
+    manifest = getattr(owner, "resource_manifest", None)
+    if manifest is None or args.get("scope") == "workspace":
+        return None
+    try:
+        relative = str(
+            Path(abs_path).relative_to(Path(executor.workspace_root))
+        )
+    except ValueError:
+        relative = ""
+    if relative in manifest.allowed_paths:
+        return None
+    return _error(
+        f"文件不属于当前任务资源: {display_path}",
+        "RESOURCE_PATH_NOT_IN_MANIFEST",
+        False,
     )
 
 

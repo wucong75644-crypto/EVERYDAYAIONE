@@ -67,7 +67,7 @@ async def enqueue_wecom_message(
     task_data["id"] = ids["task"]
     delivery_context = _delivery_context(msg)
     response = handler.db.rpc(
-        "enqueue_wecom_generation_turn",
+        "enqueue_wecom_generation_turn_v2",
         {
             "p_task_data": Jsonb(task_data),
             "p_input_message_id": ids["input"],

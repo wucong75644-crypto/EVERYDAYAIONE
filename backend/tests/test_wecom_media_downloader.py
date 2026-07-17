@@ -5,7 +5,7 @@ import base64
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.wecom.media_downloader import WecomMediaDownloader
+from services.wecom.media_downloader import DownloadedMedia, WecomMediaDownloader
 
 
 class TestAESDecrypt:
@@ -94,7 +94,9 @@ class TestDownloadAndStore:
         downloader = WecomMediaDownloader()
 
         with patch.object(
-            downloader, "_download", new=AsyncMock(return_value=b"imagedata")
+            downloader,
+            "_download",
+            new=AsyncMock(return_value=DownloadedMedia(b"imagedata")),
         ), patch(
             "services.wecom.media_downloader.get_oss_service"
         ) as mock_oss_factory:
@@ -131,7 +133,9 @@ class TestDownloadAndStore:
         downloader = WecomMediaDownloader()
 
         with patch.object(
-            downloader, "_download", new=AsyncMock(return_value=b"baddata")
+            downloader,
+            "_download",
+            new=AsyncMock(return_value=DownloadedMedia(b"baddata")),
         ):
             result = await downloader.download_and_store(
                 url="https://wecom.example.com/img.jpg",
@@ -150,7 +154,9 @@ class TestDownloadAndStore:
 
         with (
             patch.object(
-                downloader, "_download", new=AsyncMock(return_value=b"encrypted"),
+                downloader,
+                "_download",
+                new=AsyncMock(return_value=DownloadedMedia(b"encrypted")),
             ),
             patch.object(downloader, "_aes_decrypt", return_value=decrypted),
             patch(
@@ -184,13 +190,15 @@ class TestDownloadAndDecrypt:
         downloader = WecomMediaDownloader()
 
         with patch.object(
-            downloader, "_download", new=AsyncMock(return_value=b"rawdata")
+            downloader,
+            "_download",
+            new=AsyncMock(return_value=DownloadedMedia(b"rawdata")),
         ):
             result = await downloader.download_and_decrypt(
                 "https://wecom.example.com/file.txt",
             )
 
-        assert result == b"rawdata"
+        assert result == DownloadedMedia(b"rawdata")
 
     @pytest.mark.asyncio
     async def test_success_with_aeskey(self):
@@ -200,7 +208,9 @@ class TestDownloadAndDecrypt:
 
         with (
             patch.object(
-                downloader, "_download", new=AsyncMock(return_value=b"encrypted"),
+                downloader,
+                "_download",
+                new=AsyncMock(return_value=DownloadedMedia(b"encrypted")),
             ),
             patch.object(downloader, "_aes_decrypt", return_value=decrypted),
         ):
@@ -209,7 +219,7 @@ class TestDownloadAndDecrypt:
                 aeskey="some_aes_key",
             )
 
-        assert result == decrypted
+        assert result == DownloadedMedia(decrypted)
 
     @pytest.mark.asyncio
     async def test_download_failure_returns_none(self):
@@ -232,7 +242,9 @@ class TestDownloadAndDecrypt:
 
         with (
             patch.object(
-                downloader, "_download", new=AsyncMock(return_value=b"encrypted"),
+                downloader,
+                "_download",
+                new=AsyncMock(return_value=DownloadedMedia(b"encrypted")),
             ),
             patch.object(downloader, "_aes_decrypt", return_value=None),
         ):

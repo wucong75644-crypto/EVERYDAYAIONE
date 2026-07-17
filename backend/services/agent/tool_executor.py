@@ -47,12 +47,14 @@ class ToolExecutor(
         org_id: str | None = None,
         request_ctx=None,
         workspace_user_id: str | None = None,
+        resource_manifest=None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
+        self.resource_manifest = resource_manifest
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
         self.request_ctx = request_ctx

@@ -13,6 +13,16 @@ from services.handlers.context_snapshot import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _resource_manifest_boundary():
+    manifest = MagicMock(assets=(), allowed_paths=frozenset())
+    with patch(
+        "services.handlers.resource_manifest.build_resource_manifest",
+        return_value=manifest,
+    ):
+        yield
+
+
 def _query(data):
     query = MagicMock()
     for method in (

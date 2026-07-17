@@ -70,6 +70,7 @@ class ChatToolMixin(ChatToolResultMixin):
             conversation_id=conversation_id, org_id=self.org_id,
             request_ctx=_request_ctx,
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
+            resource_manifest=getattr(self, "_resource_manifest", None),
         )
         # 每轮上下文
         executor._task_id = task_id

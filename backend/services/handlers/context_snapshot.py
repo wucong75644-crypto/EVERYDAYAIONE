@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from services.handlers.resource_manifest import ResourceManifest
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,7 @@ class ContextSnapshot:
     summary_prompt: Optional[str]
     summary_revision: int
     conversation_source: str
+    resource_manifest: "ResourceManifest | None" = None
 
 
 def context_anchor_from_binding(
@@ -62,7 +66,7 @@ async def build_context_snapshot(
     """严格构造固定 revision 的历史；读取失败时禁止静默使用不确定历史。"""
     input_result = (
         db.table("messages")
-        .select("id, conversation_id, role, turn_id")
+        .select("id, conversation_id, role, turn_id, content")
         .eq("id", anchor.input_message_id)
         .maybe_single()
         .execute()
@@ -117,6 +121,17 @@ async def build_context_snapshot(
     summary_prompt, summary_revision, conversation_source = (
         _load_snapshot_metadata(db, anchor)
     )
+    from services.handlers.resource_manifest import build_resource_manifest
+
+    resource_manifest = build_resource_manifest(
+        db,
+        task_id=anchor.task_id,
+        input_message_id=anchor.input_message_id,
+        conversation_id=anchor.conversation_id,
+        turn_id=anchor.turn_id,
+        org_id=anchor.org_id,
+        input_content=input_message.get("content"),
+    )
 
     logger.info(
         "context_snapshot_built | "
@@ -132,6 +147,7 @@ async def build_context_snapshot(
         summary_prompt=summary_prompt,
         summary_revision=summary_revision,
         conversation_source=conversation_source,
+        resource_manifest=resource_manifest,
     )
 
 

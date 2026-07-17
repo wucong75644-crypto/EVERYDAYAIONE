@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict
 
@@ -100,6 +101,9 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
         """file_search 实现：搜索/列目录/定位文件，返回路径。不做 Parquet 转换。"""
         from services.agent.agent_result import AgentResult
 
+        scope = str(args.get("scope") or "current").strip().lower()
+        if getattr(self, "resource_manifest", None) is not None and scope != "workspace":
+            return await self._search_manifest(executor, args)
         path = args.get("path", "")
         keyword = args.get("keyword", "")
         file_pattern = args.get("file_pattern", "")
@@ -132,6 +136,78 @@ class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
 
         # ── 无参数 → 列出根目录 ──
         return await self._list_directory(executor, args)
+
+    async def _search_manifest(
+        self,
+        executor: Any,
+        args: Dict[str, Any],
+    ) -> Any:
+        """只检索当前任务冻结的资源，不扫描 Workspace。"""
+        from services.agent.agent_result import AgentResult
+        from services.agent.file_id import compute_fid
+        from services.agent.file_path_cache import get_file_cache
+
+        path = str(args.get("path") or "").strip()
+        keyword = str(args.get("keyword") or "").strip().lower()
+        pattern = str(args.get("file_pattern") or "").strip()
+        assets = list(self.resource_manifest.assets)
+        if path:
+            assets = [
+                asset for asset in assets
+                if asset.workspace_path == path or asset.name == path
+            ]
+        if keyword:
+            assets = [
+                asset for asset in assets
+                if keyword in asset.name.lower()
+                or keyword in asset.workspace_path.lower()
+            ]
+        if pattern:
+            assets = [
+                asset for asset in assets
+                if fnmatch(asset.name, pattern)
+                or fnmatch(asset.workspace_path, pattern)
+            ]
+        if not assets:
+            return AgentResult(
+                summary="当前任务资源中未找到匹配文件",
+                status="empty",
+                metadata={"resource_scope": "current"},
+            )
+        if path and len(assets) == 1:
+            try:
+                target = executor.resolve_safe_path(assets[0].workspace_path)
+            except (FileNotFoundError, PermissionError, ValueError) as error:
+                return AgentResult(
+                    summary=f"当前任务文件不可用: {assets[0].name}",
+                    status="error",
+                    error_message=str(error),
+                    metadata={"resource_scope": "current", "retryable": False},
+                )
+            return await self._describe_single_file(executor, str(target))
+
+        cache = get_file_cache(self.conversation_id)
+        lines = [f"当前任务资源 | 共 {len(assets)} 项", "─" * 50]
+        for asset in assets:
+            fid = compute_fid(self.org_id, asset.workspace_path)
+            lines.append(
+                f"  [{fid}] {asset.workspace_path}  "
+                f"({executor._format_size(asset.size or 0)})"
+            )
+            try:
+                target = executor.resolve_safe_path(asset.workspace_path)
+                cache.register(asset.name, workspace=str(target))
+                cache.register(asset.workspace_path, workspace=str(target))
+            except (FileNotFoundError, PermissionError, ValueError):
+                continue
+        return AgentResult(
+            summary="\n".join(lines),
+            status="success",
+            metadata={
+                "resource_scope": "current",
+                "asset_ids": [asset.asset_id for asset in assets],
+            },
+        )
 
     async def _list_directory(
         self, executor: Any, args: Dict[str, Any],

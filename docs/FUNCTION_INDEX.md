@@ -246,10 +246,20 @@
 | Actor tenant RPC facades | `backend/migrations/127_actor_tenant_rpc_contract.sql` | 接收 OrgScopedDB 注入的 p_org_id，强校验租户后委托既有原子核心 | 原核心参数 + org_id | JSONB |
 | `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
 | `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，捕获对话设置并以结构化 FilePart 调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload | WecomActorEnqueueResult |
+| `identify_file` | `backend/services/assets/file_identity.py` | 依据解密后内容识别 CSV/TSV、Office、PDF 和媒体类型，生成安全规范名、MIME 与 SHA-256 | data, stable_id, provider_name?, content_disposition? | AssetIdentity |
+| `WecomMediaDownloader.download_and_decrypt` | `backend/services/wecom/media_downloader.py` | 限流下载并可选解密企微媒体，保留 Content-Type 与 Content-Disposition 响应元数据 | url, aeskey? | DownloadedMedia \| None |
 | `normalize_wecom_message` / `parse_message_content` | `backend/services/wecom/message_normalizer.py` | 规范化智能机器人回调；私聊缺少 chatid 时使用发送者，群聊强制 chatid，并统一解析媒体字段 | body, org_id, corp_id | WecomIncomingMessage |
 | `resolve_channel_conversation` / `resolve_wecom_conversation` | `backend/services/wecom/channel_conversation.py`、`backend/migrations/128_wecom_channel_conversations.sql` | 按 org/corp/chatid 原子解析私聊或群共享 conversation；首次私聊可认领未绑定的历史企微对话 | user/corp/chat/type/org | conversation UUID |
 | `stage_wecom_attachment` | `backend/services/wecom/attachment_service.py`、`backend/migrations/129_conversation_attachments.sql` | 以企微 msgid 幂等创建 completed 文件消息和 ready 活动附件，不创建生成任务 | conversation/sender/file/scope/org | StagedAttachment |
-| `WecomFileMixin._prepare_wecom_file` | `backend/services/wecom/wecom_file_mixin.py` | 原始字节按 msgid 保存；私聊进入个人 Workspace，群聊进入 channel Workspace，同步 OSS 后返回 FilePart | msg, reply_ctx, user_id, org_id | dict \| None |
+| `stage_wecom_attachment_v2` | `backend/migrations/131_attachment_asset_lifecycle.sql` | 在会话行锁内校验资产哈希；连续上传加入 collecting 集合，已绑定集合在新上传时转为 replaced | conversation/message/provider/asset/scope/org | JSONB |
+| `bind_task_attachments` / `current_attachment_parts` | `backend/migrations/131_attachment_asset_lifecycle.sql` | 冻结当前附件集合到 task/input/turn，不消费 active 集合；任务失败和重放继续使用原集合 | task/turn/input/conversation/org | int / JSONB |
+| `enqueue_wecom_task_record` | `backend/migrations/132_wecom_channel_task_enqueue.sql` | 在上层完成渠道绑定校验后，幂等写入 user 或 channel 企微会话的 Actor task | task_data, input, turn, mode, delivery | JSONB |
+| `build_resource_manifest` | `backend/services/handlers/resource_manifest.py` | 优先按 task_attachment_refs 构造不可变资源清单；Web/旧任务只回退到固定输入消息内的媒体块 | db, task/input/conversation/turn/org/content | ResourceManifest |
+| `FileToolMixin._search_manifest` | `backend/services/agent/file_tool_mixin.py` | file_search 默认只查询当前任务资源，返回资产 ID 和稳定路径，不扫描 Workspace | executor, args | AgentResult |
+| `_validate_resource_scope` | `backend/services/agent/file_analysis_service.py` | file_analyze 默认拒绝不属于当前 ResourceManifest 的路径；workspace scope 必须显式声明 | owner, executor, args, path | AgentResult \| None |
+| `build_plan` / `apply_plan` | `backend/scripts/reconcile_wecom_attachments.py` | 从租户隔离的 Workspace 原文件重建资产身份；显式 apply 时原子更新附件事实与源消息 FilePart | row/workspace, cursor/plan | ReconcilePlan / None |
+| `resolve_asset_path` | `backend/scripts/reconcile_wecom_attachments.py` | 按 user/channel scope 重算资产根目录并拒绝路径穿越，不信任历史绝对路径 | attachment row, workspace_root | Path |
+| `WecomFileMixin._prepare_wecom_file` | `backend/services/wecom/wecom_file_mixin.py` | 解密后按真实内容识别类型和规范名，再按 msgid 稳定保存；私聊进入个人 Workspace，群聊进入 channel Workspace | msg, reply_ctx, user_id, org_id | dict \| None |
 | `WecomReplyMixin` | `backend/services/wecom/wecom_reply_mixin.py` | 旧同步链路的结果格式化、企微双通道回复和 Web 会话更新通知 | - | mixin |
 | `WecomIngressMixin._process_incoming_content` | `backend/services/wecom/wecom_ingress_mixin.py` | FILE 固定进入 Actor；其他支持类型按企微 Actor 开关分流原子入队或旧同步生命周期 | msg, reply_ctx, user_id, conversation_id, image_urls | None |
 | `GenerationClaim.from_rpc` | `backend/services/conversation_execution.py` | 校验 claimed RPC 结果并构造不可变执行权对象；非 claimed 结果返回 None | data, conversation_id, execution_mode | GenerationClaim \| None |

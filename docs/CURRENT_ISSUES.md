@@ -12,6 +12,20 @@
 
 ---
 
+### 2026-07-17 企微附件资产与上下文资源治理 — 阶段 1-5 已完成
+
+- 智能机器人 FILE 回调不再假设存在文件名；缺名是合法的上游协议输入。
+- 下载层保留响应 Content-Type/Content-Disposition，且日志不再输出临时下载 URL。
+- 新增内容优先的统一资产识别：CSV/TSV、Office、PDF、图片和视频由解密后字节确定类型，错误扩展名会被纠正，未知内容才进入 `.bin`。
+- 文件规范名、MIME、SHA-256 和大小在同一识别边界生成；同一 msgid 重放复用稳定 Workspace 资产。
+- 迁移 131/132 引入附件集合和 `task_attachment_refs`：任务绑定不再消费 active 附件，失败/重试可继续使用；已绑定集合之后的新上传才替换旧集合；同 provider msgid 不同哈希明确冲突。
+- 企微 user/channel 会话拥有独立的 Actor task 写入函数，不再复用只允许个人 owner 的旧核心校验。
+- ContextSnapshot 新增不可变 `ResourceManifest`：企微从 task_attachment_refs 加载，Web/旧任务只从固定输入消息回退；`FilePart.asset_id` 不再被 Pydantic 丢弃。
+- `file_search` 和 `file_analyze` 默认只能访问当前任务资源，只有显式 `scope=workspace` 才能检索工作区；历史消息仅保留附件名叙事，不再向模型注入旧 `workspace_path`。
+- 新增历史调和脚本，默认 dry-run；按真实 Workspace 内容重建名称、MIME、SHA-256 和大小，显式 apply 才在单事务内同步附件事实及源消息 FilePart。脚本不改物理文件、不输出 URL/密钥，并拒绝越权路径和缺失的群绑定。
+- 部署脚本固定重启并校验 backend、sync、wecom、conversation-actor 四项服务；缺失服务立即失败，后端使用有界 readiness，rsync 保护 `.env*`、数据库、缓存、临时输出和外部运行目录。
+- 验证：资源与上下文相关回归 254 项通过、5 项跳过；调和脚本覆盖率 85%；迁移状态机已在生产 Schema 上完成单事务行为测试并回滚。
+
 ### 2026-07-17 企微上下文治理结构约束 — 已完成
 
 - 工具结果、文件分析、媒体生成和电商图片 Agent 已完成职责拆分。

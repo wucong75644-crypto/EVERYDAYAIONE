@@ -42,6 +42,7 @@
 本轮企微上下文治理新增的核心服务：
 - `backend/services/agent/file_analysis_service.py`：隔离表格分析的路径授权、格式转换、结构化错误与缓存登记。
 - `backend/services/handlers/chat_tool_result_mixin.py`：统一 Chat 工具结果分类、WebSocket 投递与审计。
+- `backend/services/assets/file_identity.py`：按解密后内容统一识别文件类型、规范名称与内容摘要。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
@@ -118,6 +119,7 @@ EVERYDAYAIONE/
 │   │   ├── auth.py                   # 认证相关 Schema
 │   │   ├── conversation.py           # 对话相关 Schema
 │   │   ├── message.py                # 消息相关 Schema
+│   │   ├── media_parts.py            # 文本/图片/视频/音频/文件 ContentPart
 │   │   ├── image.py                  # 图像上传 Schema
 │   │   ├── detail_project.py         # 主图详情页请求与统一响应 Schema
 │   │   └── websocket.py              # WebSocket 消息 Schema
@@ -132,6 +134,8 @@ EVERYDAYAIONE/
 │   │   ├── 127_actor_tenant_rpc_contract.sql # Actor 租户 RPC 门面及 org 强校验
 │   │   ├── 128_wecom_channel_conversations.sql # 企微渠道会话稳定绑定与群共享 scope
 │   │   ├── 129_conversation_attachments.sql # 会话附件状态机与企微 FILE 原子暂存
+│   │   ├── 131_attachment_asset_lifecycle.sql # 资产身份、附件集合和 task 不可变引用
+│   │   ├── 132_wecom_channel_task_enqueue.sql # 企微 user/channel Actor task 写入
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -142,7 +146,11 @@ EVERYDAYAIONE/
 │   │       ├── 126_wecom_conversation_settings_rollback.sql
 │   │       ├── 127_actor_tenant_rpc_contract_rollback.sql
 │   │       ├── 128_wecom_channel_conversations_rollback.sql
-│   │       └── 129_conversation_attachments_rollback.sql
+│   │       ├── 129_conversation_attachments_rollback.sql
+│   │       ├── 131_attachment_asset_lifecycle_rollback.sql
+│   │       └── 132_wecom_channel_task_enqueue_rollback.sql
+│   ├── scripts/
+│   │   └── reconcile_wecom_attachments.py # 历史企微附件 dry-run/事务调和
 │   ├── services/                 # 业务逻辑层
 │   │   ├── auth_service.py           # 认证服务
 │   │   ├── conversation_service.py   # 对话服务
@@ -151,6 +159,8 @@ EVERYDAYAIONE/
 │   │   ├── conversation_worker.py    # Actor 数据库扫描、并发调度与 Redis 唤醒
 │   │   ├── conversation_runtime.py   # Actor 独立进程装配与 Kernel/Worker 生命周期
 │   │   ├── conversation_task.py      # Actor 任务识别与原子取消入口
+│   │   ├── assets/file_identity.py    # 内容优先的统一文件资产身份识别
+│   │   ├── handlers/resource_manifest.py # task/input 冻结的当前资源权限清单
 │   │   ├── wecom/actor_enqueue.py    # 企微稳定 ID 与 Actor 原子入队适配
 │   │   ├── wecom/message_normalizer.py # 企微回调身份与媒体字段统一规范化
 │   │   ├── wecom/channel_conversation.py # 企微外部 chatid 到内部 conversation 解析

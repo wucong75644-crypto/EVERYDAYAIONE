@@ -92,9 +92,8 @@ def _parse_media(
             result["image_urls"].append(url)
     else:
         result["file_url"] = url
-        result["file_name"] = str(
-            media.get("filename") or media.get("name") or ""
-        )
+        candidate_name = media.get("filename") or media.get("name")
+        result["file_name"] = str(candidate_name) if candidate_name else None
     aeskey = media.get("aeskey")
     if url and aeskey:
         result["aeskeys"][url] = aeskey

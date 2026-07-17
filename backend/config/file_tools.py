@@ -25,6 +25,7 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "path": {"type": "string"},
             "keyword": {"type": "string"},
             "file_pattern": {"type": "string"},
+            "scope": {"type": "string", "enum": ["current", "workspace"]},
         },
     },
     "restore_file": {
@@ -37,6 +38,7 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["path"],
         "properties": {
             "path": {"type": "string"},
+            "scope": {"type": "string", "enum": ["current", "workspace"]},
         },
     },
     "file_delete": {
@@ -86,6 +88,14 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "type": "string",
                             "description": "文件名通配符（如 *.csv、report*）",
                         },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["current", "workspace"],
+                            "description": (
+                                "默认 current，仅检索当前任务附件；只有用户明确要求"
+                                "搜索整个工作区时才使用 workspace。"
+                            ),
+                        },
                     },
                 },
             },
@@ -119,6 +129,14 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         "path": {
                             "type": "string",
                             "description": "（兼容老协议）文件名或相对路径。仅在没有 file_id 时使用。",
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["current", "workspace"],
+                            "description": (
+                                "默认 current；只有用户明确指定工作区历史文件时"
+                                "才使用 workspace。"
+                            ),
                         },
                     },
                 },

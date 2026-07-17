@@ -72,6 +72,7 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
     assert first_params["p_input_message_id"] == second_params["p_input_message_id"]
     assert first_params["p_output_message_id"] == second_params["p_output_message_id"]
     assert isinstance(first_params["p_input_content"], Jsonb)
+    assert handler.db.rpc.call_args.args[0] == "enqueue_wecom_generation_turn_v2"
     delivery = first_params["p_delivery_context"].obj
     assert delivery["channel"] == "wecom"
     assert delivery["chatid"] == "chat"

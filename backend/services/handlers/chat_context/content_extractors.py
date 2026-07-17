@@ -121,8 +121,7 @@ def extract_oai_messages_from_content(
                      → {role: "tool", tool_call_id, content: "<output>"}
       - tool_step (running) → 跳过（未完成无意义）
       - tool_result  → 退化为 assistant content（无 tool_call_id 无法配对）
-      - file (user 角色) → 追加 "[附件] name (workspace_path: ...)" 到 user text
-                     防止历史轮文件丢失（中断后 LLM 看不到附件名/路径）。
+      - file (user 角色) → 只追加叙事性附件名，不注入历史 workspace_path。
                      image 由上层 build_context_messages 走多模态 image_url 分支。
 
     所有 tool_step 的 input/code 优先级：input(JSON) > {code: ...}
@@ -161,10 +160,7 @@ def extract_oai_messages_from_content(
             name = (part.get("name") or "").strip()
             if not name:
                 continue
-            wp = (part.get("workspace_path") or "").strip()
             ref = f"[附件] {name}"
-            if wp:
-                ref += f" (workspace_path: {wp})"
             file_refs.append(ref)
 
     ts_consumed = False  # ts_prefix 只用一次，避免每个 text block 重复

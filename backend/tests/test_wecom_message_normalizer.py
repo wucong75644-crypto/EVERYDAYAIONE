@@ -29,6 +29,23 @@ def test_private_file_callback_uses_sender_as_missing_chatid() -> None:
     assert message.aeskeys == {"https://example.test/file": "secret"}
 
 
+def test_official_file_callback_does_not_require_filename() -> None:
+    message = normalize_wecom_message(
+        {
+            "msgid": "file-msg-no-name",
+            "from": {"userid": "WuCong"},
+            "chattype": "single",
+            "msgtype": "file",
+            "file": {"url": "https://example.test/file", "aeskey": "secret"},
+        },
+        org_id="org-1",
+        corp_id="corp-1",
+    )
+
+    assert message.file_name is None
+    assert message.file_url == "https://example.test/file"
+
+
 def test_group_callback_requires_chatid() -> None:
     with pytest.raises(
         WecomMessageNormalizationError,

@@ -8,7 +8,6 @@
 """
 
 import asyncio
-import mimetypes
 import os
 import uuid
 from pathlib import Path
@@ -17,6 +16,8 @@ from typing import Any, Optional
 from loguru import logger
 
 from schemas.wecom import WecomIncomingMessage, WecomReplyContext
+from services.assets import AssetIdentity, identify_file
+from services.wecom.media_downloader import DownloadedMedia
 
 
 class WecomFileMixin:
@@ -32,15 +33,31 @@ class WecomFileMixin:
         """保存原始文件资产并返回标准 FilePart payload。"""
         if not msg.msgid:
             raise RuntimeError("WECOM_FILE_MSGID_MISSING")
-        safe_name = Path(msg.file_name or "file.bin").name or "file.bin"
         scope_root = self._file_scope_root(msg, user_id, org_id)
-        target = self._file_path(scope_root, msg.msgid, safe_name)
-        if not await asyncio.to_thread(target.is_file):
-            raw_data = await self._download_and_decrypt_file(msg, reply_ctx)
-            if raw_data is None:
+        existing = await asyncio.to_thread(
+            self._find_existing_file, scope_root, msg.msgid,
+        )
+        if existing:
+            target = existing
+            data = await asyncio.to_thread(target.read_bytes)
+            identity = identify_file(
+                data, stable_id=msg.msgid, provider_name=target.name.split("_", 1)[-1],
+            )
+        else:
+            media = await self._download_and_decrypt_file(msg, reply_ctx)
+            if media is None:
                 return None
+            identity = identify_file(
+                media.data,
+                stable_id=msg.msgid,
+                provider_name=msg.file_name,
+                content_disposition=media.content_disposition,
+            )
+            target = self._file_path(
+                scope_root, msg.msgid, identity.canonical_name,
+            )
             try:
-                await asyncio.to_thread(_atomic_write, target, raw_data)
+                await asyncio.to_thread(_atomic_write, target, media.data)
             except OSError as error:
                 logger.error(
                     "Wecom file workspace write failed | "
@@ -72,12 +89,16 @@ class WecomFileMixin:
         return {
             "url": str(payload["url"]),
             "workspace_path": str(payload["workspace_path"]),
-            "name": safe_name,
-            "mime_type": (
-                mimetypes.guess_type(safe_name)[0]
-                or "application/octet-stream"
-            ),
+            "name": identity.canonical_name,
+            "mime_type": identity.detected_mime_type,
             "size": size,
+            "asset_identity": {
+                "provider_name": identity.provider_name,
+                "canonical_name": identity.canonical_name,
+                "detected_mime_type": identity.detected_mime_type,
+                "detection_source": identity.detection_source,
+                "content_sha256": identity.content_sha256,
+            },
         }
 
     @staticmethod
@@ -88,6 +109,16 @@ class WecomFileMixin:
     ) -> Path:
         token = uuid.uuid5(uuid.NAMESPACE_URL, f"wecom-file:{msgid}").hex[:16]
         return scope_root / "上传" / "企微" / f"{token}_{filename}"
+
+    @classmethod
+    def _find_existing_file(
+        cls,
+        scope_root: Path,
+        msgid: str,
+    ) -> Optional[Path]:
+        token = uuid.uuid5(uuid.NAMESPACE_URL, f"wecom-file:{msgid}").hex[:16]
+        matches = list((scope_root / "上传" / "企微").glob(f"{token}_*"))
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _file_scope_root(
@@ -118,7 +149,7 @@ class WecomFileMixin:
         self,
         msg: WecomIncomingMessage,
         reply_ctx: WecomReplyContext,
-    ) -> Optional[bytes]:
+    ) -> Optional[DownloadedMedia]:
         """下载企微文件 + AES 解密，失败时自动回复用户并返回 None"""
         if not msg.file_url:
             await self._reply_text(reply_ctx, "文件下载链接无效，请重新发送。")
@@ -128,12 +159,12 @@ class WecomFileMixin:
         downloader = WecomMediaDownloader()
 
         aeskey = msg.aeskeys.get(msg.file_url)
-        raw_data = await downloader.download_and_decrypt(msg.file_url, aeskey)
-        if raw_data is None:
+        media = await downloader.download_and_decrypt(msg.file_url, aeskey)
+        if media is None:
             await self._reply_text(reply_ctx, "文件下载失败，请稍后重新发送。")
             return None
 
-        return raw_data
+        return media
 
 
 def _atomic_write(target: Path, data: bytes) -> None:

@@ -30,20 +30,29 @@ def stage_wecom_attachment(
     storage_scope: str,
 ) -> StagedAttachment:
     message_id = str(uuid.uuid5(_ATTACHMENT_NAMESPACE, f"{msgid}:message"))
-    content = [{"type": "file", **file_payload}]
-    response = db.rpc("stage_wecom_attachment", {
+    identity = file_payload.get("asset_identity")
+    if not isinstance(identity, dict):
+        raise RuntimeError("WECOM_ATTACHMENT_IDENTITY_MISSING")
+    file_part = {
+        key: value
+        for key, value in file_payload.items()
+        if key != "asset_identity"
+    }
+    content = [{"type": "file", **file_part}]
+    response = db.rpc("stage_wecom_attachment_v2", {
         "p_conversation_id": conversation_id,
         "p_source_message_id": message_id,
         "p_source_provider_id": msgid,
         "p_sender_user_id": sender_user_id,
         "p_sender_channel_identity": sender_identity,
         "p_content": Jsonb(content),
-        "p_original_name": file_payload["name"],
-        "p_url": file_payload["url"],
-        "p_workspace_path": file_payload["workspace_path"],
+        "p_original_name": file_part["name"],
+        "p_url": file_part["url"],
+        "p_workspace_path": file_part["workspace_path"],
         "p_storage_scope": storage_scope,
-        "p_mime_type": file_payload["mime_type"],
-        "p_size": file_payload["size"],
+        "p_mime_type": file_part["mime_type"],
+        "p_size": file_part["size"],
+        "p_asset_identity": Jsonb(identity),
     }).execute()
     result = response.data if response else None
     if not isinstance(result, dict) or not result.get("attachment_id"):
