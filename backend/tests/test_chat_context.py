@@ -1477,11 +1477,11 @@ class TestFilterKnowledgeBySimilarity:
 
 
 class TestBuildContextMessagesStructured:
-    """Phase 4.2: tool_step 在 history 中被还原为 assistant.tool_calls + tool 消息"""
+    """已关闭 Turn 只注入最终文本与 Tool Digest。"""
 
     @pytest.mark.asyncio
-    async def test_tool_step_emits_tool_calls_and_tool_message(self, chat_handler, mock_db):
-        """含 tool_step 的 assistant 历史 → assistant.tool_calls + tool 配对"""
+    async def test_closed_turn_omits_raw_tool_protocol(self, chat_handler, mock_db):
+        """已完成 assistant 历史不回灌代码、工具输出或资源路径。"""
         # 旧到新: user 提问 → assistant 调 file_analyze → assistant 回复
         mock_db.set_table_data("messages", [
             # current（会被去重）
@@ -1494,50 +1494,34 @@ class TestBuildContextMessagesStructured:
                     "tool_name": "file_analyze",
                     "tool_call_id": "call_fa_1",
                     "status": "completed",
-                    "input": '{"path": "销售.xlsx"}',
-                    "output": "[文件已就绪] schema: ...",
+                    "input": '{"path": "staging/old.parquet"}',
+                    "output": "错误堆栈 staging/old.parquet",
                 },
                 {"type": "text", "text": "分析完成"},
-            ]),
+            ], generation_params={
+                "tool_digest": {
+                    "tools": [{
+                        "name": "file_analyze",
+                        "hint": "读取 staging/old.parquet",
+                        "ok": False,
+                    }],
+                },
+            }),
             _make_msg("user", "读取这个文件"),
         ])
 
         result = await chat_handler._build_context_messages("conv1", "新问题")
 
-        # 期望: user(读取) → assistant.tool_calls(file_analyze) → tool(...) → assistant(分析完成)
-        assert len(result) >= 4
+        assert len(result) == 2
         assert result[0]["role"] == "user"
         assert "读取这个文件" in result[0]["content"]
-
-        # 找到 file_analyze 的 assistant.tool_calls
-        assistant_with_tool = next(
-            (m for m in result if m.get("role") == "assistant" and m.get("tool_calls")),
-            None,
-        )
-        assert assistant_with_tool is not None
-        tc = assistant_with_tool["tool_calls"][0]
-        assert tc["id"] == "call_fa_1"
-        assert tc["function"]["name"] == "file_analyze"
-        assert "销售.xlsx" in tc["function"]["arguments"]
-
-        # 找到配对的 tool 消息
-        tool_msg = next(
-            (m for m in result if m.get("role") == "tool" and m.get("tool_call_id") == "call_fa_1"),
-            None,
-        )
-        assert tool_msg is not None
-        assert "schema" in tool_msg["content"]
-
-        # 最后一条 assistant text 消息
-        last_assistant_text = next(
-            (m for m in reversed(result)
-             if m.get("role") == "assistant"
-             and isinstance(m.get("content"), str)
-             and not m.get("tool_calls")),
-            None,
-        )
-        assert last_assistant_text is not None
-        assert "分析完成" in last_assistant_text["content"]
+        assistant_text = result[1]["content"]
+        assert "分析完成" in assistant_text
+        assert "file_analyze" in assistant_text
+        assert "staging/" not in assistant_text
+        assert "错误堆栈" not in assistant_text
+        assert not any(message.get("tool_calls") for message in result)
+        assert not any(message.get("role") == "tool" for message in result)
 
     @pytest.mark.asyncio
     async def test_thinking_block_does_not_appear_in_history(self, chat_handler, mock_db):
@@ -1626,6 +1610,39 @@ class TestBuildContextMessagesInterruptMarker:
         assert "分钟前" in last["content"]
 
     @pytest.mark.asyncio
+    async def test_latest_interrupted_turn_preserves_tool_recovery_protocol(
+        self, chat_handler, mock_db,
+    ):
+        """最新中断 Turn 保留完整工具配对，供服务重启后恢复。"""
+        marker_content = [
+            {
+                "type": "tool_step",
+                "tool_name": "file_analyze",
+                "tool_call_id": "call-recover",
+                "status": "cancelled",
+                "input": '{"path":"current.csv"}',
+            },
+            {
+                "type": "interrupt_marker",
+                "interrupted_at": "2026-07-17T10:00:00+08:00",
+                "reason": "user_cancel",
+            },
+        ]
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", marker_content, status="interrupted"),
+            _make_msg("user", "分析当前文件"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "继续")
+
+        assert any(message.get("tool_calls") for message in result)
+        assert any(
+            message.get("role") == "tool"
+            and message.get("tool_call_id") == "call-recover"
+            for message in result
+        )
+
+    @pytest.mark.asyncio
     async def test_only_latest_marker_injected(self, chat_handler, mock_db):
         """连续两次中断 → 只注入最近一次的 marker
 
@@ -1636,6 +1653,14 @@ class TestBuildContextMessagesInterruptMarker:
         new_marker = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
         old_content = [
             {"type": "text", "text": "旧的尝试"},
+            {
+                "type": "tool_step",
+                "tool_name": "code_execute",
+                "tool_call_id": "old-call",
+                "status": "error",
+                "input": '{"code":"pd.read_parquet(\'staging/old.parquet\')"}',
+                "output": "失败堆栈 staging/old.parquet",
+            },
             {"type": "interrupt_marker", "interrupted_at": old_marker, "reason": "user_cancel"},
         ]
         new_content = [
@@ -1679,6 +1704,9 @@ class TestBuildContextMessagesInterruptMarker:
             m.get("role") == "system" and "任务恢复" in m.get("content", "")
             for m in result
         )
+        assert not any(m.get("tool_calls") for m in result)
+        assert not any(m.get("role") == "tool" for m in result)
+        assert "staging/old.parquet" not in json.dumps(result, ensure_ascii=False)
 
 
 # ============ messages 净化：历史加载剥离旧 attachments XML ============

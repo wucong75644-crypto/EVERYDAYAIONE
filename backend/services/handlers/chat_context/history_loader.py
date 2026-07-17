@@ -51,13 +51,22 @@ def _build_history_query(
 def _row_to_oai_messages(
     row: Dict[str, Any],
     remaining_images: int,
+    preserve_tool_protocol: bool = False,
 ) -> tuple[List[Dict[str, Any]], int]:
-    """把一条数据库消息转换为标准消息，并限制历史图片数量。"""
+    """把数据库消息投影为闭合历史，并限制历史图片数量。
+
+    已关闭 assistant Turn 只保留用户可见文本；仅最新中断 Turn 为任务恢复
+    保留完整 tool call/result 协议。
+    """
     raw_content = row.get("content")
     role = row["role"]
-    messages = extract_oai_messages_from_content(
-        raw_content, role=role, ts_prefix="",
-    )
+    if role == "assistant" and not preserve_tool_protocol:
+        text = extract_text_from_content(raw_content)
+        messages = [{"role": "assistant", "content": text}] if text else []
+    else:
+        messages = extract_oai_messages_from_content(
+            raw_content, role=role, ts_prefix="",
+        )
     images = extract_image_urls_from_content(raw_content)[:remaining_images]
     if not images:
         return messages, 0
@@ -125,10 +134,10 @@ def _estimate_message_tokens(messages: List[Dict[str, Any]]) -> int:
 
 
 def _append_tool_digest(
-    context: List[Dict[str, Any]],
+    messages: List[Dict[str, Any]],
     row: Dict[str, Any],
 ) -> None:
-    """把 assistant 的工具摘要追加到最近的普通 assistant 内容。"""
+    """把工具摘要追加到当前 assistant 行的用户可见文本。"""
     params = row.get("generation_params") or {}
     digest = params.get("tool_digest") if isinstance(params, dict) else None
     if not digest:
@@ -141,7 +150,7 @@ def _append_tool_digest(
         return
     target = next(
         (
-            message for message in reversed(context)
+            message for message in reversed(messages)
             if message.get("role") == "assistant"
             and not message.get("tool_calls")
             and isinstance(message.get("content"), (str, list))
@@ -220,19 +229,23 @@ async def build_context_messages(
             if not rows:
                 break
             for row in rows:
+                preserve_tool_protocol = False
                 if row["role"] == "assistant" and not first_assistant_seen:
                     first_assistant_seen = True
                     latest_marker = extract_interrupt_marker(row.get("content"))
+                    preserve_tool_protocol = latest_marker is not None
                 messages, image_count = _row_to_oai_messages(
-                    row, max(0, max_images - total_images),
+                    row,
+                    max(0, max_images - total_images),
+                    preserve_tool_protocol=preserve_tool_protocol,
                 )
                 if not messages:
                     continue
+                if row["role"] == "assistant":
+                    _append_tool_digest(messages, row)
                 context.extend(messages)
                 total_images += image_count
                 total_tokens += _estimate_message_tokens(messages)
-                if row["role"] == "assistant":
-                    _append_tool_digest(context, row)
             if len(rows) < 20 or total_tokens >= budget:
                 break
 

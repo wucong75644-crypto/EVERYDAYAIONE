@@ -1,10 +1,8 @@
 """
 工具执行摘要（Tool Execution Digest）
 
-从工具循环 messages 数组中提取结构化摘要，持久化到 generation_params.tool_digest，
-下轮加载历史时注入 LLM 上下文，补全跨轮信息断裂。
-
-设计文档：docs/document/TECH_工具执行摘要.md（待补）
+从当前工具循环提取结构化摘要，持久化到 generation_params.tool_digest。
+下轮闭合历史只注入工具名、安全叙事参数和状态，不注入代码或资源路径。
 """
 
 from __future__ import annotations
@@ -15,11 +13,8 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 
-# V3.3: 删除 staging 路径正则提取
-# 行业对齐(Anthropic Tool Use Best Practices / OpenAI Assistants):
-# tool result 完整保留在 messages 里,LLM 自己读 XML 拿 parquet_path,
-# 不需要正则二次提取(易出错且冗余)。
-# digest 只负责告诉 LLM "上轮做了什么"(tool_name + hint),不告诉"数据在哪"。
+# 当前执行循环保留完整 tool result；关闭 Turn 后仅加载本摘要。
+# 文件资源位置必须由当前 ResourceManifest、附件或本轮 file_analyze 提供。
 
 # 错误标记（字面量匹配，不是正则）
 _ERROR_MARKERS = ("❌", "执行错误", "查询超时", "执行异常")
@@ -44,7 +39,7 @@ def build_tool_digest(
     - 工具名 + 参数摘要
     - 成功/失败状态
 
-    V3.3: 不再提取 staging 路径(让 LLM 自己读 tool result XML 拿)。
+    code_execute 不提取代码；任何工具都不从结果文本提取资源路径。
 
     Args:
         messages: 工具循环内的完整消息列表
@@ -82,7 +77,7 @@ def build_tool_digest(
             name = func.get("name", "unknown")
             args_str = func.get("arguments", "{}")
 
-            # 提取参数摘要（query/code 字段优先）
+            # 仅提取安全的叙事参数；代码和文件路径不进入历史摘要。
             hint = _extract_hint(name, args_str)
 
             # V3.3: 只看状态,不提取 staging 路径
@@ -131,8 +126,9 @@ def format_tool_digest(digest: Dict[str, Any]) -> str:
     for t in digest["tools"]:
         status = "✓" if t.get("ok", True) else "✗"
         line = f"- {status} {t['name']}"
-        if t.get("hint"):
-            line += f": {t['hint']}"
+        hint = _safe_history_hint(t)
+        if hint:
+            line += f": {hint}"
         lines.append(line)
 
     return "\n".join(lines)
@@ -145,23 +141,30 @@ def format_tool_digest(digest: Dict[str, Any]) -> str:
 
 def _extract_hint(tool_name: str, args_str: str) -> str:
     """从工具参数 JSON 中提取关键字段作为摘要。"""
+    if tool_name == "code_execute":
+        return ""
     try:
         args = json.loads(args_str)
     except (json.JSONDecodeError, TypeError):
-        return args_str[:_HINT_MAX_LEN] if args_str else ""
+        return ""
 
-    # 按优先级取关键字段
-    for key in ("query", "question", "code", "keyword", "prompt"):
+    for key in ("query", "question", "keyword", "prompt"):
         val = args.get(key)
         if val and isinstance(val, str):
             return val[:_HINT_MAX_LEN]
-
-    # 兜底：取第一个字符串值
-    for val in args.values():
-        if isinstance(val, str) and val:
-            return val[:_HINT_MAX_LEN]
-
     return ""
+
+
+def _safe_history_hint(entry: Dict[str, Any]) -> str:
+    """兼容旧 Digest，同时阻止代码和历史资源路径回灌。"""
+    if entry.get("name") == "code_execute":
+        return ""
+    hint = entry.get("hint")
+    if not isinstance(hint, str):
+        return ""
+    if "staging/" in hint or "STAGING_DIR" in hint:
+        return ""
+    return hint
 
 
 def _is_error(result_text: str) -> bool:

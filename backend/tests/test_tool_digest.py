@@ -108,6 +108,7 @@ class TestBuildToolDigest:
         assert digest["tools"][0]["name"] == "erp_agent"
         assert "最近七天" in digest["tools"][0]["hint"]
         assert digest["tools"][0]["ok"] is True
+        assert digest["tools"][1]["hint"] == ""
         # V3.3: 不再有 staged 字段(LLM 自己从 tool result XML 读路径)
         assert "staged" not in digest["tools"][0]
 
@@ -183,7 +184,8 @@ class TestFormatToolDigest:
         result = format_tool_digest(digest)
         assert "[上轮工具执行记录]" in result
         assert "✓ erp_agent: 查订单" in result
-        assert "✓ code_execute: df.groupby" in result
+        assert "✓ code_execute" in result
+        assert "df.groupby" not in result
         # V3.3: 不再注入 staging 路径
         assert "staging/" not in result
 
@@ -306,11 +308,21 @@ class TestHelpers:
         assert "查订单" in _extract_hint("erp_agent", '{"query": "查订单数据"}')
 
     def test_extract_hint_code(self):
-        assert "df.head" in _extract_hint("code_execute", '{"code": "df.head(10)"}')
+        assert _extract_hint("code_execute", '{"code": "df.head(10)"}') == ""
 
     def test_extract_hint_invalid_json(self):
         result = _extract_hint("tool", "not json")
-        assert result == "not json"[:50]
+        assert result == ""
+
+    def test_format_drops_legacy_staging_hint(self):
+        result = format_tool_digest({
+            "tools": [{
+                "name": "file_analyze",
+                "hint": "读取 staging/old.parquet",
+                "ok": False,
+            }],
+        })
+        assert "staging/" not in result
 
     def test_is_error_markers(self):
         assert _is_error("❌ 执行错误") is True

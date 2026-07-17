@@ -221,9 +221,9 @@
 | `set_closed_messages` | `backend/services/handlers/conversation_cache.py` | 写入带 schema/revision/through-message 的闭合历史信封，不接收任务私有工具循环 | conv_id, revision, through_message_id, messages, org_id, ttl, task_id?, turn_id? | bool |
 | `build_context_messages` | `backend/services/handlers/chat_context/history_loader.py` | legacy 模式按时间加载；快照模式仅加载不超过 base revision 的闭合 conversation 消息 | db, conversation_id, current_text, base_revision?, strict? | List[Dict] |
 | `_build_history_query` | `backend/services/handlers/chat_context/history_loader.py` | 构造 legacy 或固定 revision 的闭合历史查询 | db, conversation_id, base_revision | query |
-| `_row_to_oai_messages` | `backend/services/handlers/chat_context/history_loader.py` | 将数据库 content 转为标准消息并限制历史图片 | row, remaining_images | messages, image_count |
+| `_row_to_oai_messages` | `backend/services/handlers/chat_context/history_loader.py` | 将数据库消息投影为闭合历史；完成 Turn 仅保留文本，最新中断 Turn 保留工具恢复协议，并限制历史图片 | row, remaining_images, preserve_tool_protocol? | messages, image_count |
 | `_estimate_message_tokens` | `backend/services/handlers/chat_context/history_loader.py` | 估算一组标准消息 token，仅控制加载批次与日志 | messages | int |
-| `_append_tool_digest` | `backend/services/handlers/chat_context/history_loader.py` | 将持久化工具摘要追加到最近的普通 assistant 内容 | context, row | None |
+| `_append_tool_digest` | `backend/services/handlers/chat_context/history_loader.py` | 将持久化工具摘要追加到当前 assistant 行的用户可见文本 | messages, row | None |
 | `_finalize_history` | `backend/services/handlers/chat_context/history_loader.py` | 补全工具配对、中断提示和 legacy 文本去重 | context, interrupt_marker, current_text, is_legacy | List[Dict] |
 | `PromptBuilder._compose_messages` | `backend/services/prompt_builder/builder.py` | 按缓存稳定边界拼接系统层、快照历史、附件与当前用户消息 | static/session/turn/history/summary/user_result | List[Dict] |
 | `bind_generation_turn` | `backend/migrations/120_turn_revision_foundation.sql` | 原子绑定 task 的输入消息、Turn 和上下文基线；相同参数重复调用幂等 | conversation_id, task_id, input_message_id, turn_id, execution_mode | JSONB |

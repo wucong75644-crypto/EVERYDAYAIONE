@@ -1209,3 +1209,15 @@ context_tool_token_budget: int = 6000      # 工具结果专属 token 预算
 | 5 | 压缩时复用增量记忆 | compact 触发时确认跳过 LLM |
 | 6 | 闲聊不注入知识库 | "今天天气" → 确认无知识库注入 |
 | 全量 | 后端测试全绿 | `pytest backend/tests/ -q` |
+
+## 十二、关闭 Turn 的工具内容投影
+
+数据库保存完整结构化消息作为审计事实，但发送给模型的历史采用生命周期投影：
+
+- 当前正在执行的工具循环保留完整 `assistant.tool_calls + tool result`。
+- 最新且带 `interrupt_marker` 的中断 Turn 保留完整工具协议，用于恢复和 orphan 配对。
+- 其他已完成或更早的中断 Turn 只保留用户问题、助手可见文本和 Tool Digest。
+- Tool Digest 保存工具名、成功状态及安全叙事参数；`code_execute` 不保存代码，历史 Digest 不输出 staging 路径。
+- 当前可执行资源位置只由 ResourceManifest、附件或本轮 `file_analyze` 提供。
+
+Redis、缓存或摘要缺失时，闭合历史降级为用户问题与助手可见文本，不恢复原始代码和工具输出。

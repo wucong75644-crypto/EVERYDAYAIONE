@@ -12,6 +12,12 @@
 
 ---
 
+### 2026-07-17 历史工具内容污染治理 — 已完成
+
+- 已关闭 Turn 仅向模型注入用户问题、助手可见回答和结构化 Tool Digest，不再恢复原始 tool call、代码、长输出或失败堆栈。
+- 只有最新且带 interrupt marker 的中断 Turn 保留完整工具协议，用于任务恢复和 orphan tool-call 配对。
+- `code_execute` Digest 不保存代码；兼容读取旧 Digest 时丢弃代码提示和历史 staging 路径。当前任务资源仍由 ResourceManifest、附件和本轮 `file_analyze` 提供。
+
 ### 2026-07-17 企微与 Web 实时同步治理 — 已完成
 
 - Redis publisher 与本进程 subscriber listener 生命周期解耦，无头企微和 Conversation Actor 进程也可跨进程发布。
