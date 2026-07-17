@@ -1315,7 +1315,9 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `file_rename` | `backend/services/file_write_extensions.py` | 重命名（同目录） |
 | `file_move` | `backend/services/file_write_extensions.py` | 移动文件到目标目录 |
 | `_restore_file` | `backend/services/agent/file_tool_mixin.py` | 从registry查找备份并恢复workspace文件（restore_file工具执行逻辑） |
-| `analyze_file` | `backend/services/agent/file_analysis_service.py` | 编排 file_analyze 的安全路径解析、Parquet 转换、超时错误与缓存登记 |
+| `analyze_file` | `backend/services/agent/file_analysis_service.py` | 编排 file_analyze 的安全路径解析、Parquet 转换、超时错误、真实 Parquet 访问契约与缓存登记 |
+| `_sandbox_parquet_path` | `backend/services/agent/file_analysis_service.py` | 校验真实缓存文件位于当前 staging，并投影为 code_execute 可直接读取的相对路径 |
+| `_sandbox_original_path` | `backend/services/agent/file_analysis_service.py` | 将原始文件路径转换为沙盒相对路径，外部资源仅暴露文件名 |
 | `ChatToolResultMixin` | `backend/services/handlers/chat_tool_result_mixin.py` | 统一分类、推送、审计单次工具执行结果 |
 | `_register_workspace_backups` | `backend/services/agent/tool_executor.py` | 将workspace备份注册到对话级session_file_registry |
 

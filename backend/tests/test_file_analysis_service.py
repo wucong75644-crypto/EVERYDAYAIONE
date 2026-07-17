@@ -1,8 +1,11 @@
 """file_analysis_service 阶段边界测试。"""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from xml.etree import ElementTree
 
+import pandas as pd
 import pytest
 
 from services.agent.agent_result import AgentResult
@@ -11,9 +14,11 @@ from services.agent.file_analysis_service import (
     _convert_to_parquet,
     _register_source,
     _resolve_analysis_path,
+    _sandbox_parquet_path,
     _validate_analysis_file,
     analyze_file,
 )
+from services.agent.file_meta import FileMeta
 
 
 def _owner() -> SimpleNamespace:
@@ -183,18 +188,24 @@ def test_build_result_registers_parquet_and_sheets(tmp_path):
     source = tmp_path / "sales.csv"
     source.write_text("month,sales\n1,10\n", encoding="utf-8")
     parquet = tmp_path / "sales.parquet"
+    parquet.write_bytes(b"parquet")
     cache = MagicMock()
     executor = SimpleNamespace(workspace_root=str(tmp_path))
+    meta = FileMeta(
+        source_file=str(source),
+        summary={"row_count": 1, "col_count": 2, "sheet_count": 2},
+    )
 
     with patch(
         "services.agent.file_meta.read_file_meta",
-        return_value=None,
+        return_value=meta,
     ):
         result = _build_analysis_result(
             executor,
             cache,
             str(source),
             str(parquet),
+            str(tmp_path),
             ["一月", "二月"],
             0.2,
         )
@@ -203,6 +214,188 @@ def test_build_result_registers_parquet_and_sheets(tmp_path):
     assert "Sheet 列表" in result.summary
     cache.set_parquet.assert_called_once_with("sales.csv", str(parquet))
     cache.set_analyzed.assert_called_once_with("sales.csv", True)
+
+
+def test_build_result_rejects_missing_metadata(tmp_path):
+    source = tmp_path / "sales.csv"
+    source.write_text("month,sales\n1,10\n", encoding="utf-8")
+    staging = tmp_path / "staging" / "conv-1"
+    staging.mkdir(parents=True)
+    parquet = staging / "cache.parquet"
+    parquet.write_bytes(b"parquet")
+    cache = MagicMock()
+
+    with patch(
+        "services.agent.file_meta.read_file_meta",
+        return_value=None,
+    ):
+        result = _build_analysis_result(
+            SimpleNamespace(workspace_root=str(tmp_path)),
+            cache,
+            str(source),
+            str(parquet),
+            str(staging),
+            None,
+            0.1,
+        )
+
+    assert result.status == "error"
+    assert result.error_message == "PARQUET_METADATA_MISSING"
+    assert result.metadata["retryable"] is True
+    cache.set_parquet.assert_not_called()
+    cache.set_analyzed.assert_not_called()
+
+
+def test_build_result_renders_real_parquet_path_for_simplified_csv_meta(tmp_path):
+    source = tmp_path / "sales.csv"
+    source.write_text("month,sales\n1,10\n", encoding="utf-8")
+    staging = tmp_path / "staging" / "conv-1"
+    staging.mkdir(parents=True)
+    parquet = staging / "_cache_v3.0_real_csv.parquet"
+    parquet.write_bytes(b"parquet")
+    meta = FileMeta(
+        source_file=str(source),
+        summary={"row_count": 1, "col_count": 2, "sheet_count": 1},
+    )
+
+    with patch(
+        "services.agent.file_meta.read_file_meta",
+        return_value=meta,
+    ):
+        result = _build_analysis_result(
+            SimpleNamespace(workspace_root=str(tmp_path)),
+            MagicMock(),
+            str(source),
+            str(parquet),
+            str(staging),
+            None,
+            0.1,
+        )
+
+    expected = "staging/_cache_v3.0_real_csv.parquet"
+    assert result.status == "success"
+    assert f"<parquet_path>{expected}</parquet_path>" in result.summary
+    assert expected in result.summary
+
+
+def test_build_result_replaces_stale_cached_xml_path(tmp_path):
+    source = tmp_path / "report.xlsx"
+    source.write_bytes(b"xlsx")
+    staging = tmp_path / "staging" / "conv-1"
+    staging.mkdir(parents=True)
+    parquet = staging / "_cache_v3.0_actual_sheet0.parquet"
+    parquet.write_bytes(b"parquet")
+    meta = FileMeta(
+        source_file=str(source),
+        summary={"row_count": 1, "col_count": 1, "sheet_count": 1},
+        xml_view="<parquet_path>staging/guessed.parquet</parquet_path>",
+    )
+
+    with patch(
+        "services.agent.file_meta.read_file_meta",
+        return_value=meta,
+    ):
+        result = _build_analysis_result(
+            SimpleNamespace(workspace_root=str(tmp_path)),
+            MagicMock(),
+            str(source),
+            str(parquet),
+            str(staging),
+            None,
+            0.1,
+        )
+
+    assert "staging/_cache_v3.0_actual_sheet0.parquet" in result.summary
+    assert "staging/guessed.parquet" not in result.summary
+
+
+def test_build_result_rejects_parquet_outside_current_staging(tmp_path):
+    source = tmp_path / "sales.csv"
+    source.write_text("month,sales\n1,10\n", encoding="utf-8")
+    staging = tmp_path / "staging" / "conv-1"
+    staging.mkdir(parents=True)
+    parquet = tmp_path / "other" / "cache.parquet"
+    parquet.parent.mkdir()
+    parquet.write_bytes(b"parquet")
+    cache = MagicMock()
+
+    result = _build_analysis_result(
+        SimpleNamespace(workspace_root=str(tmp_path)),
+        cache,
+        str(source),
+        str(parquet),
+        str(staging),
+        None,
+        0.1,
+    )
+
+    assert result.status == "error"
+    assert result.metadata["retryable"] is True
+    cache.set_parquet.assert_not_called()
+    cache.set_analyzed.assert_not_called()
+
+
+def test_sandbox_parquet_path_requires_existing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        _sandbox_parquet_path(
+            str(tmp_path / "staging" / "missing.parquet"),
+            str(tmp_path / "staging"),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suffix", "separator"),
+    [(".csv", ","), (".tsv", "\t")],
+)
+async def test_real_delimited_conversion_returns_executable_stable_path(
+    tmp_path, suffix, separator,
+):
+    from services.agent.data_query_cache import ensure_parquet_cache_csv
+
+    source = tmp_path / f"sales{suffix}"
+    source.write_text(
+        f"month{separator}sales\n1{separator}10\n",
+        encoding="utf-8",
+    )
+    staging = tmp_path / "staging" / "conv-1"
+    staging.mkdir(parents=True)
+    executor = SimpleNamespace(workspace_root=str(tmp_path))
+
+    first_cache_path, _ = await ensure_parquet_cache_csv(
+        str(source), str(staging),
+    )
+    first_result = _build_analysis_result(
+        executor,
+        MagicMock(),
+        str(source),
+        first_cache_path,
+        str(staging),
+        None,
+        0.1,
+    )
+    second_cache_path, _ = await ensure_parquet_cache_csv(
+        str(source), str(staging),
+    )
+    second_result = _build_analysis_result(
+        executor,
+        MagicMock(),
+        str(source),
+        second_cache_path,
+        str(staging),
+        None,
+        0.1,
+    )
+
+    first_xml = ElementTree.fromstring(first_result.summary)
+    second_xml = ElementTree.fromstring(second_result.summary)
+    first_path = first_xml.findtext("./data_access/parquet_path")
+    second_path = second_xml.findtext("./data_access/parquet_path")
+    assert first_path == second_path
+    assert first_path == f"staging/{Path(first_cache_path).name}"
+    sandbox_file = tmp_path / "staging" / "conv-1" / Path(first_path).name
+    frame = pd.read_parquet(sandbox_file)
+    assert frame.to_dict(orient="records") == [{"month": 1, "sales": 10}]
 
 
 def test_register_source_ignores_external_relative_path(tmp_path):

@@ -58,6 +58,7 @@ async def analyze_file(
         cache,
         abs_path,
         cache_path,
+        staging_dir,
         sheet_names,
         round(time.monotonic() - started_at, 2),
     )
@@ -234,18 +235,41 @@ def _build_analysis_result(
     cache: Any,
     abs_path: str,
     cache_path: str,
+    staging_dir: str,
     sheet_names: list[str] | None,
     elapsed: float,
 ) -> AgentResult:
-    from services.agent.file_meta import format_file_view, read_file_meta
+    from services.agent.file_meta import read_file_meta
+    from services.agent.file_xml_renderer import render_xml
 
+    try:
+        parquet_path = _sandbox_parquet_path(cache_path, staging_dir)
+    except (FileNotFoundError, ValueError) as error:
+        logger.error(
+            f"file_analyze parquet contract invalid | "
+            f"file={Path(abs_path).name} | reason={error}"
+        )
+        return _error(
+            "文件转换完成，但 Parquet 访问路径无效，请重新分析。",
+            f"PARQUET_PATH_CONTRACT_INVALID:{type(error).__name__}",
+            True,
+        )
     meta = read_file_meta(cache_path)
     if meta is None:
-        file_view = f"文件已转为 Parquet: staging/{Path(cache_path).name}"
-    elif getattr(meta, "xml_view", ""):
-        file_view = meta.xml_view
-    else:
-        file_view = format_file_view(meta)
+        logger.error(
+            f"file_analyze metadata missing | file={Path(abs_path).name}"
+        )
+        return _error(
+            "文件转换完成，但分析元数据缺失，请重新分析。",
+            "PARQUET_METADATA_MISSING",
+            True,
+        )
+    file_view = render_xml(
+        meta,
+        parquet_path=parquet_path,
+        original_path=_sandbox_original_path(abs_path, executor.workspace_root),
+        related_files=meta.related_files,
+    )
     name = Path(abs_path).name
     _register_source(executor, cache, abs_path)
     cache.set_parquet(name, cache_path)
@@ -255,6 +279,29 @@ def _build_analysis_result(
         lines.extend(["", f"Sheet 列表: {', '.join(sheet_names)}"])
     _log_analysis_success(name, meta, elapsed)
     return AgentResult(summary="\n".join(lines), status="success")
+
+
+def _sandbox_parquet_path(cache_path: str, staging_dir: str) -> str:
+    """把真实缓存路径投影为 code_execute 可直接读取的 staging 相对路径。"""
+    resolved_cache = Path(cache_path).resolve()
+    if not resolved_cache.is_file():
+        raise FileNotFoundError("converted parquet does not exist")
+    resolved_staging = Path(staging_dir).resolve()
+    try:
+        relative = resolved_cache.relative_to(resolved_staging)
+    except ValueError as error:
+        raise ValueError("converted parquet is outside staging") from error
+    return (Path("staging") / relative).as_posix()
+
+
+def _sandbox_original_path(abs_path: str, workspace_root: str) -> str:
+    """返回沙盒视角的原文件路径；外部资源仅暴露文件名。"""
+    try:
+        return Path(abs_path).resolve().relative_to(
+            Path(workspace_root).resolve()
+        ).as_posix()
+    except ValueError:
+        return Path(abs_path).name
 
 
 def _register_source(
