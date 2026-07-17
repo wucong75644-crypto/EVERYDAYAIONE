@@ -166,6 +166,41 @@ async def upload_temp_media(
         return None
 
 
+async def upload_temp_media_bytes(
+    data: bytes,
+    creds: OrgWecomCreds,
+    media_type: str,
+    filename: str,
+) -> Optional[str]:
+    """把内存产物上传为企微临时素材。"""
+    token = await get_access_token(creds.org_id, creds.corp_id, creds.agent_secret)
+    if not token or not data:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                UPLOAD_MEDIA_URL,
+                params={"access_token": token, "type": media_type},
+                files={"media": (filename, data, "image/png")},
+            )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("errcode", 0) != 0:
+            logger.warning(
+                "Wecom memory upload failed | "
+                f"org_id={creds.org_id} | errcode={payload.get('errcode')}"
+            )
+            return None
+        media_id = payload.get("media_id")
+        return str(media_id) if media_id else None
+    except (httpx.HTTPError, ValueError) as error:
+        logger.error(
+            "Wecom memory upload error | "
+            f"org_id={creds.org_id} | error={type(error).__name__}"
+        )
+        return None
+
+
 async def _send(payload: dict, creds: OrgWecomCreds) -> bool:
     """发送消息到企微 API"""
     token = await get_access_token(creds.org_id, creds.corp_id, creds.agent_secret)

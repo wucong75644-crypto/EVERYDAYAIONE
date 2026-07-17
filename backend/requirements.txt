@@ -64,6 +64,7 @@ fastexcel==0.20.2
 matplotlib==3.10.8
 seaborn==0.13.2
 Pillow==12.2.0
+playwright==1.58.0
 XlsxWriter==3.2.9
 # Jupyter 生态: 行业标准 Code Interpreter 需要真 IPython kernel
 # (matplotlib_inline / plotly _repr_mimebundle_ / altair Chart.show 都依赖)

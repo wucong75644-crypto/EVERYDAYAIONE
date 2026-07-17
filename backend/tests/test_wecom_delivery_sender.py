@@ -15,13 +15,14 @@ def test_build_items_uses_stable_content_indexes_and_ignores_internal_blocks():
             {"type": "thinking", "text": "内部推理"},
             {"type": "text", "text": "完成"},
             {"type": "image", "url": "https://cdn/a.png"},
+            {"type": "chart", "option": {"series": []}},
             {"type": "tool_step", "output": "raw"},
         ]},
         {"transport": "smart_robot"},
     )
 
     assert [(item.key, item.kind) for item in items] == [
-        ("text:1", "text"), ("image:2", "image"),
+        ("text:1", "text"), ("image:2", "image"), ("chart:3", "chart"),
     ]
 
 
@@ -82,6 +83,33 @@ async def test_smart_robot_sends_image_as_markdown():
 
 
 @pytest.mark.asyncio
+async def test_smart_robot_renders_uploads_and_sends_chart_image():
+    client = MagicMock(is_connected=True)
+    client.upload_media = AsyncMock(return_value="media-1")
+    client.send_media_message = AsyncMock(return_value=True)
+    renderer = MagicMock()
+    renderer.render = AsyncMock(return_value=b"png")
+    sender = WecomDeliverySender(
+        object(), lambda _org_id: client, chart_renderer=renderer,
+    )
+    chart = {"type": "chart", "option": {"series": []}}
+
+    sent = await sender.send(
+        {"transport": "smart_robot", "org_id": "org", "chatid": "chat"},
+        WecomDeliveryItem("chart:1", "chart", chart),
+    )
+
+    assert sent is True
+    renderer.render.assert_awaited_once_with(chart)
+    client.upload_media.assert_awaited_once_with(
+        b"png", media_type="image", filename="chart.png",
+    )
+    client.send_media_message.assert_awaited_once_with(
+        "chat", "image", "media-1",
+    )
+
+
+@pytest.mark.asyncio
 async def test_smart_robot_detects_connection_lost_during_send():
     client = MagicMock(is_connected=True)
 
@@ -133,3 +161,34 @@ async def test_app_text_uses_resolved_credentials():
 
     assert sent is True
     assert send_text.call_args.args[2].agent_id == 1001
+
+
+@pytest.mark.asyncio
+async def test_app_chart_renders_uploads_and_sends_image():
+    renderer = MagicMock()
+    renderer.render = AsyncMock(return_value=b"png")
+    sender = WecomDeliverySender(
+        object(), MagicMock(), chart_renderer=renderer,
+    )
+    sender._resolver.get = AsyncMock(side_effect=["1001", "secret"])
+    with patch(
+        "services.wecom.app_message_sender.upload_temp_media_bytes",
+        new=AsyncMock(return_value="media-1"),
+    ) as upload, patch(
+        "services.wecom.app_message_sender.send_image",
+        new=AsyncMock(return_value=True),
+    ) as send_image:
+        sent = await sender.send(
+            {
+                "transport": "app", "org_id": "org", "corp_id": "corp",
+                "wecom_userid": "user",
+            },
+            WecomDeliveryItem(
+                "chart:1", "chart",
+                {"type": "chart", "option": {"series": []}},
+            ),
+        )
+
+    assert sent is True
+    upload.assert_awaited_once()
+    send_image.assert_awaited_once()

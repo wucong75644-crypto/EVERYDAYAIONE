@@ -21,7 +21,12 @@ from services.wecom.access_token_manager import (
     get_access_token,
     _fetch_and_cache_token,
 )
-from services.wecom.app_message_sender import send_text, send_markdown, OrgWecomCreds
+from services.wecom.app_message_sender import (
+    OrgWecomCreds,
+    send_markdown,
+    send_text,
+    upload_temp_media_bytes,
+)
 
 # 测试用常量
 TEST_ORG_ID = "org_test"
@@ -240,6 +245,32 @@ class TestAppMessageSender:
             ok = await send_text("user123", "hi", creds)
 
         assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_upload_memory_image_returns_media_id(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"errcode": 0, "media_id": "media-1"}
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "services.wecom.app_message_sender.get_access_token",
+            new=AsyncMock(return_value="token"),
+        ), patch(
+            "services.wecom.app_message_sender.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            media_id = await upload_temp_media_bytes(
+                b"png", _make_creds(), "image", "chart.png",
+            )
+
+        assert media_id == "media-1"
+        mock_resp.raise_for_status.assert_called_once_with()
+        uploaded = mock_client.post.call_args.kwargs["files"]["media"]
+        assert uploaded == ("chart.png", b"png", "image/png")
 
     @pytest.mark.asyncio
     async def test_send_fails_on_api_error(self):

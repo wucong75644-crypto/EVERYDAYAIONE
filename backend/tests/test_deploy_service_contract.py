@@ -42,3 +42,9 @@ def test_rsync_preserves_runtime_and_sensitive_files() -> None:
 def test_missing_required_service_fails_deployment() -> None:
     assert "缺少必需服务" in SCRIPT
     assert 'systemctl list-unit-files "${service}.service"' in SCRIPT
+
+
+def test_backend_deploy_gates_restart_on_chart_runtime_smoke() -> None:
+    setup = 'bash ../deploy/setup-chart-runtime.sh "$PWD"'
+    assert setup in SCRIPT
+    assert SCRIPT.index(setup) < SCRIPT.index('sudo systemctl restart "$service"')

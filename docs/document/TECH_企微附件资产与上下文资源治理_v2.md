@@ -154,3 +154,14 @@ rsync 排除 `.env*`、SQLite、日志、缓存、运行时和外部目录。迁
 - 代码回滚可继续读取 original_name/workspace_path。
 - rollback 先删除 task_attachment_refs，再移除新增字段和函数。
 - reconciliation 不删除文件，执行前输出 dry-run，更新在单事务内完成。
+
+## 12. 企业微信图表交付
+
+统一消息仍只保存一个 `ChartPart`。Web 消费原始 option 并提供交互式 ECharts；
+企业微信 Outbox 在通道末端将其转换为 PNG，不扫描模型文本，也不改写消息事实。
+
+渲染运行时由锁定的 Playwright、Chromium 和 ECharts npm runtime 构成，页面禁止所有
+网络请求，option 限制为 1MB，固定 1200×720，15 秒超时。智能机器人使用官方
+`aibot_upload_media_init/chunk/finish` 协议上传 PNG，收到 ACK 和 media_id 后发送
+原生 image 消息；自建应用使用既有临时素材 HTTP API。每个 chart 沿用
+`chart:{content_index}` Outbox 检查点，失败重试但不提前标记已交付。

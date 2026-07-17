@@ -1,0 +1,8 @@
+{
+  "name": "everydayai-chart-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "echarts": "6.1.0"
+  }
+}

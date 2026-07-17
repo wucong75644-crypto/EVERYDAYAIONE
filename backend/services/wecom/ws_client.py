@@ -20,6 +20,7 @@ import websockets
 from loguru import logger
 
 from schemas.wecom import WecomCommand
+from services.wecom.ws_outbound import WecomOutboundMixin
 
 WSS_URL = "wss://openws.work.weixin.qq.com"
 HEARTBEAT_INTERVAL = 30          # 心跳间隔（秒）
@@ -66,7 +67,7 @@ async def verify_bot_credentials(bot_id: str, secret: str) -> tuple[bool, str]:
         return False, f"连接失败: {str(e)[:200]}"
 
 
-class WecomWSClient:
+class WecomWSClient(WecomOutboundMixin):
     """企微智能机器人 WebSocket 长连接客户端"""
 
     def __init__(
@@ -88,6 +89,7 @@ class WecomWSClient:
         self._should_run = True
         self._processed_msgs: OrderedDict[str, None] = OrderedDict()
         self._connect_task: Optional[asyncio.Task] = None
+        self._pending_requests: Dict[str, asyncio.Future] = {}
         self._last_recv_time: float = 0  # 最后收到数据的时间戳
         self._connect_start_time: float = 0  # 连接建立时间（诊断用）
         self._hb_sent: int = 0  # 心跳发送计数（诊断用）
@@ -219,78 +221,6 @@ class WecomWSClient:
             },
         }
         await self._safe_send(msg)
-
-    async def send_msg(
-        self,
-        chatid: str,
-        msgtype: str,
-        content: dict,
-        chattype: str = "single",
-    ) -> bool:
-        """主动发送消息（用 chatid 寻址，无需 req_id）"""
-        if not self._ws or not self._is_connected:
-            logger.warning("Wecom WS: cannot send_msg, not connected")
-            return False
-
-        req_id = _gen_req_id("send_msg")
-        msg = {
-            "cmd": WecomCommand.SEND_MSG,
-            "headers": {"req_id": req_id},
-            "body": {
-                "chatid": chatid,
-                "chattype": chattype,
-                "msgtype": msgtype,
-                msgtype: content,
-            },
-        }
-        await self._safe_send(msg)
-        logger.info(
-            f"Wecom send_msg | chatid={chatid} | msgtype={msgtype} | "
-            f"req_id={req_id}"
-        )
-        return True
-
-    async def send_proactive(
-        self,
-        chatid: str,
-        msgtype: str,
-        content: dict,
-    ) -> bool:
-        """主动推送消息（aibot_send_msg 协议，定时任务专用）
-
-        参考官方 SDK: https://github.com/WecomTeam/aibot-node-sdk/blob/main/src/client.ts
-        sendMessage(chatid, body) — 只传 chatid，企微服务器通过 chatid 自动判断会话类型
-
-        Args:
-            chatid: 目标会话 ID
-                - 单聊：填用户的 userid
-                - 群聊：填群聊的 chatid
-            msgtype: markdown / text / file / image / template_card / voice / video
-            content: msgtype 对应的内容字典，例如 {"content": "..."}
-
-        现有 ws_client 没有 ACK 机制，发送后直接返回 True。
-        如果发送失败会抛 WS 异常，由调用方捕获。
-        """
-        if not self._ws or not self._is_connected:
-            logger.warning("Wecom WS: cannot send_proactive, not connected")
-            return False
-
-        req_id = _gen_req_id("scheduled")
-        msg = {
-            "cmd": WecomCommand.SEND_MSG,
-            "headers": {"req_id": req_id},
-            "body": {
-                "chatid": chatid,
-                "msgtype": msgtype,
-                msgtype: content,
-            },
-        }
-        await self._safe_send(msg)
-        logger.info(
-            f"Wecom send_proactive | chatid={chatid} | "
-            f"msgtype={msgtype} | req_id={req_id}"
-        )
-        return True
 
     @property
     def is_connected(self) -> bool:
@@ -439,7 +369,10 @@ class WecomWSClient:
             cmd = data.get("cmd")
             req_id = data.get("headers", {}).get("req_id", "")
 
-            if cmd == WecomCommand.MSG_CALLBACK:
+            pending = self._pending_requests.pop(req_id, None)
+            if pending is not None and not pending.done():
+                pending.set_result(data)
+            elif cmd == WecomCommand.MSG_CALLBACK:
                 asyncio.create_task(self._handle_msg_callback(data))
             elif cmd == WecomCommand.EVENT_CALLBACK:
                 asyncio.create_task(self._handle_event_callback(data))
@@ -543,18 +476,13 @@ class WecomWSClient:
 
     # ── 工具方法 ──────────────────────────────────────────
 
-    async def _safe_send(self, msg: dict) -> None:
-        """安全发送 JSON 消息（失败时标记断连，触发重连）"""
-        try:
-            if self._ws and self._is_connected:
-                await self._ws.send(json.dumps(msg))
-        except Exception as e:
-            logger.warning(f"Wecom WS send failed: {e}")
-            await self._force_close()
-
     async def _force_close(self) -> None:
         """强制关闭连接，触发重连"""
         self._is_connected = False
+        for future in self._pending_requests.values():
+            if not future.done():
+                future.set_exception(ConnectionError("WECOM_WS_DISCONNECTED"))
+        self._pending_requests.clear()
         if self._ws:
             try:
                 await self._ws.close()

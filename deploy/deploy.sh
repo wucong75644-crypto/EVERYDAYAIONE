@@ -274,6 +274,7 @@ deploy_backend() {
         fi
         source venv/bin/activate
         pip install -q -r requirements.txt
+        bash ../deploy/setup-chart-runtime.sh "$PWD"
         if [ ! -f ".env" ]; then
             echo "❌ .env 文件不存在"
             exit 1

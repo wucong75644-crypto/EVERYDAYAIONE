@@ -63,6 +63,9 @@ class WecomCommand:
     RESPOND_UPDATE = "aibot_respond_update_msg"
     RESPOND_WELCOME = "aibot_respond_welcome_msg"
     SEND_MSG = "aibot_send_msg"
+    UPLOAD_MEDIA_INIT = "aibot_upload_media_init"
+    UPLOAD_MEDIA_CHUNK = "aibot_upload_media_chunk"
+    UPLOAD_MEDIA_FINISH = "aibot_upload_media_finish"
 
 
 # 企微消息类型常量
