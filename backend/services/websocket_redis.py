@@ -208,7 +208,13 @@ class RedisPubSubMixin:
 
         elif target_type == "user":
             connections = self._connections.get(target_id, {})
-            for conn_id in list(connections.keys()):
+            target_org_id = data.get("org_id")
+            for conn_id, connection in list(connections.items()):
+                if (
+                    target_org_id is not None
+                    and connection.org_id != target_org_id
+                ):
+                    continue
                 await self.send_to_connection(conn_id, message)
 
         elif target_type == "broadcast":
@@ -225,10 +231,11 @@ class RedisPubSubMixin:
         message: Dict[str, Any],
         org_id: str | None = None,
     ) -> None:
-        """发布消息到 Redis Channel，供其他 Worker 接收"""
-        if not self._redis_available:
-            return
+        """发布消息到 Redis Channel，供其他 Worker 接收。
 
+        发布能力不依赖本进程是否启动订阅 listener。企微和 Conversation
+        Actor 等无 WebSocket 连接的进程也必须能向 Web 进程发布通知。
+        """
         try:
             from core.redis import RedisClient
             client = await RedisClient.get_client()

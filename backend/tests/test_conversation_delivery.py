@@ -135,7 +135,7 @@ async def test_ownership_loss_has_no_delivery_or_slot_release(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_wecom_terminal_releases_slot_without_web_delivery(monkeypatch):
+async def test_wecom_terminal_releases_slot_and_notifies_web(monkeypatch):
     released = []
 
     async def fake_release(task):
@@ -148,9 +148,9 @@ async def test_wecom_terminal_releases_slot_without_web_delivery(monkeypatch):
     task = _task("completed", {"actor": True, "channel": "wecom"})
     websocket = _WebSocket()
 
-    await ActorTerminalDelivery(_DB(task), websocket).notify(
+    await ActorTerminalDelivery(_DB(task, _message()), websocket).notify(
         _task("running"), {"outcome": "committed"},
     )
 
     assert released == ["task-1"]
-    assert websocket.messages == []
+    assert websocket.messages[0][3]["type"] == "message_done"

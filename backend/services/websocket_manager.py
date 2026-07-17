@@ -267,7 +267,7 @@ class WebSocketManager(RedisPubSubMixin):
             if await self.send_to_connection(conn_id, message):
                 delivered += 1
 
-        await self._publish("task", task_id, message)
+        await self._publish("task", task_id, message, org_id=org_id)
 
         return delivered
 
@@ -313,7 +313,7 @@ class WebSocketManager(RedisPubSubMixin):
                 for conn_id in list(local_conns.keys()):
                     await self.send_to_connection(conn_id, message)
 
-        await self._publish("user", user_id, message)
+        await self._publish("user", user_id, message, org_id=org_id)
 
     async def broadcast_all(self, message: Dict[str, Any], org_id: str | None = None):
         """广播消息到所有连接（本地 + 跨进程）

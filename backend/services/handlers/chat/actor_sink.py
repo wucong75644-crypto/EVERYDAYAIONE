@@ -156,18 +156,3 @@ class ActorWebSink:
                 f"message_type={message.get('type')} | "
                 f"error={type(error).__name__}"
             )
-
-
-class ActorPersistenceSink(ActorWebSink):
-    """企微 Actor 使用的无头 Sink：保存恢复进度，不发送 Web 过程事件。"""
-
-    def __init__(
-        self,
-        db: Any,
-        delivery: ActorDelivery,
-        cancellation_event: asyncio.Event,
-    ) -> None:
-        super().__init__(db, delivery, cancellation_event, websocket=None)
-
-    async def _send(self, message: dict[str, Any]) -> None:
-        return None

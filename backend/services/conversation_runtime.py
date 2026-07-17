@@ -9,11 +9,7 @@ from typing import Any, Callable, Mapping
 from services.conversation_delivery import ActorTerminalDelivery
 from services.conversation_execution import GenerationClaim, ConversationExecutionService
 from services.conversation_worker import ConversationWorker, RedisConversationWakeup
-from services.handlers.chat.actor_sink import (
-    ActorDelivery,
-    ActorPersistenceSink,
-    ActorWebSink,
-)
+from services.handlers.chat.actor_sink import ActorDelivery, ActorWebSink
 from services.handlers.chat.executor import ChatGenerationExecutor, _normalize_model_id
 
 
@@ -74,14 +70,8 @@ class ConversationActorRuntime:
         task: Mapping[str, Any],
         claim: GenerationClaim,
         cancellation_event: asyncio.Event,
-    ) -> ActorWebSink | ActorPersistenceSink:
+    ) -> ActorWebSink:
         delivery = _build_delivery(task, claim)
-        if _delivery_channel(task) == "wecom":
-            return ActorPersistenceSink(
-                self._db,
-                delivery,
-                cancellation_event,
-            )
         return ActorWebSink(
             self._db,
             delivery,
@@ -116,16 +106,6 @@ def _build_delivery(
         org_id=str(task["org_id"]) if task.get("org_id") else None,
         model_id=_normalize_model_id(task.get("model_id")),
     )
-
-
-def _delivery_channel(task: Mapping[str, Any]) -> str | None:
-    context = task.get("delivery_context")
-    if not isinstance(context, Mapping):
-        return None
-    channel = context.get("channel")
-    return str(channel) if channel else None
-
-
 def create_kernel_manager() -> Any:
     from services.sandbox.kernel_manager import KernelManager
 

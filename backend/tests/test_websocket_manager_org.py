@@ -85,3 +85,13 @@ class TestSendToUserOrgFilter:
         self.manager._publish.assert_called_once_with(
             "user", "user1", {"type": "test"}, org_id=ORG_A,
         )
+
+    @pytest.mark.asyncio
+    async def test_task_or_user_publish_receives_org_id(self):
+        """Actor 跨进程发布必须保留组织隔离信息。"""
+        await self.manager.send_to_task_or_user(
+            "task-1", "user1", {"type": "message_chunk"}, org_id=ORG_A,
+        )
+        self.manager._publish.assert_called_once_with(
+            "user", "user1", {"type": "message_chunk"}, org_id=ORG_A,
+        )

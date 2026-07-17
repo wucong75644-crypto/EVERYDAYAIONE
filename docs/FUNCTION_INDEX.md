@@ -205,10 +205,9 @@
 | `ChatGenerationExecutor.execute` | `backend/services/handlers/chat/executor.py` | 校验 Actor task/claim，从输入消息恢复完整 ContentPart 与固定 ContextAnchor，返回纯 GenerationOutcome | task, claim, cancellation_event | GenerationOutcome |
 | `CollectingExecutionSink` | `backend/services/handlers/chat/execution_sink.py` | 无 WebSocket、无数据库副作用的文本、思考和内容块过程事件收集器 | - | ExecutionSink |
 | `ActorWebSink` | `backend/services/handlers/chat/actor_sink.py` | 推送 Actor 流式过程事件；临时进度通过 execution token 条件 RPC 持久化，WS 故障不改变执行结果 | db, delivery, cancellation_event, websocket | ExecutionSink |
-| `ActorPersistenceSink` | `backend/services/handlers/chat/actor_sink.py` | 企微 Actor 无头执行：只保存 fencing 恢复进度，不发送 Web 过程事件 | db, delivery, cancellation_event | ExecutionSink |
-| `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；Web best-effort 推终态，企微交给事务 Outbox | task, terminal_result | None |
+| `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；所有通道均向 Web best-effort 推送终态，企微结果另由事务 Outbox 投递 | task, terminal_result | None |
 | `enqueue_web_chat` | `backend/services/handlers/chat/actor_enqueue.py` | 以稳定内部 UUID 调用原子 enqueue RPC，并 best-effort 发布 Redis 唤醒 | handler, content, user_id, conversation_id, external_task_id, model_id, metadata, params | str |
-| `ConversationActorRuntime.start/stop` | `backend/services/conversation_runtime.py` | 装配独立 Worker、执行器、按 delivery channel 选择 Web/无头 Sink、终态观察器和 Kernel 生命周期 | - | None |
+| `ConversationActorRuntime.start/stop` | `backend/services/conversation_runtime.py` | 装配独立 Worker、执行器、统一实时 Sink、终态观察器和 Kernel 生命周期 | - | None |
 | `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将智能机器人终态文字合并后完成原 stream，流失效时回退主动消息；自建应用继续按稳定检查点分项发送 | task, message / context, item | list / bool |
 | `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |

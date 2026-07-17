@@ -35,8 +35,6 @@ class ActorTerminalDelivery:
         await release_task_slot(current)
         if status == "cancelled":
             return
-        if _delivery_channel(current) == "wecom":
-            return
         if status == "completed":
             await self._send_completed(current)
         else:
@@ -107,11 +105,3 @@ def _push_task_id(task: Mapping[str, Any]) -> str:
         logger.error(f"actor_delivery_task_id_missing | task={task.get('id')}")
         raise RuntimeError("ACTOR_DELIVERY_TASK_ID_MISSING")
     return str(value)
-
-
-def _delivery_channel(task: Mapping[str, Any]) -> str | None:
-    context = task.get("delivery_context")
-    if not isinstance(context, Mapping):
-        return None
-    channel = context.get("channel")
-    return str(channel) if channel else None

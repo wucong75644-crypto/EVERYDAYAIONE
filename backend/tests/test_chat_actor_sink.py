@@ -9,7 +9,6 @@ import pytest
 
 from services.handlers.chat.actor_sink import (
     ActorDelivery,
-    ActorPersistenceSink,
     ActorWebSink,
 )
 
@@ -120,15 +119,3 @@ async def test_sink_delivery_failure_does_not_abort_generation():
 
     await sink.start()
     await sink.on_text("继续生成")
-
-
-@pytest.mark.asyncio
-async def test_persistence_sink_saves_progress_without_web_delivery():
-    db = _DB([{"outcome": "updated"}])
-    sink = ActorPersistenceSink(db, _delivery(), asyncio.Event())
-
-    await sink.start()
-    await sink.on_text("企微结果")
-    await sink.flush()
-
-    assert db.calls[-1][1]["p_accumulated_content"] == "企微结果"

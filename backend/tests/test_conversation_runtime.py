@@ -4,7 +4,7 @@ import pytest
 
 from services.conversation_execution import GenerationClaim
 from services.conversation_runtime import ConversationActorRuntime, _build_delivery
-from services.handlers.chat.actor_sink import ActorPersistenceSink, ActorWebSink
+from services.handlers.chat.actor_sink import ActorWebSink
 from services.sandbox.kernel_manager import get_kernel_manager
 
 
@@ -79,8 +79,11 @@ def test_build_delivery_uses_external_task_id():
     assert delivery.execution_token == "token"
 
 
-def test_runtime_uses_headless_sink_for_wecom_actor():
-    runtime = ConversationActorRuntime(object(), object(), _Kernel(), worker_factory=_Worker)
+def test_runtime_uses_web_sink_for_wecom_actor():
+    websocket = object()
+    runtime = ConversationActorRuntime(
+        object(), websocket, _Kernel(), worker_factory=_Worker,
+    )
     claim = GenerationClaim(
         task_id="internal", execution_token="token",
         conversation_id="conversation", turn_id="turn",
@@ -96,5 +99,5 @@ def test_runtime_uses_headless_sink_for_wecom_actor():
 
     sink = runtime._create_sink(task, claim, asyncio.Event())
 
-    assert isinstance(sink, ActorPersistenceSink)
-    assert not isinstance(sink, ActorWebSink) or type(sink) is ActorPersistenceSink
+    assert isinstance(sink, ActorWebSink)
+    assert sink._websocket is websocket
