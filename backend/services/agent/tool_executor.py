@@ -24,22 +24,33 @@ from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
 from config.file_tools import FILE_INFO_TOOLS
 from services.agent.erp_tool_executor import ErpToolMixin
+from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
 
 
-class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin, SandboxToolMixin, CreditMixin):
+class ToolExecutor(
+    ConversationToolMixin,
+    FileToolMixin,
+    CrawlerToolMixin,
+    MediaToolMixin,
+    ErpToolMixin,
+    SandboxToolMixin,
+    CreditMixin,
+):
     """同步工具执行器"""
 
     def __init__(
         self, db, user_id: str, conversation_id: str,
         org_id: str | None = None,
         request_ctx=None,
+        workspace_user_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
+        self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
@@ -71,6 +82,9 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
                 self._handlers[tool_name] = self._make_erp_handler(tool_name)
             for tool_name in ERP_LOCAL_TOOLS:
                 self._handlers[tool_name] = self._make_local_handler(tool_name)
+        if self.workspace_user_id != self.user_id:
+            self._handlers.pop("get_conversation_context", None)
+            self._handlers.pop("manage_scheduled_task", None)
 
     def has_handler(self, tool_name: str) -> bool:
         """检查工具是否有已注册的 handler（兜底扩充用）"""
@@ -94,53 +108,6 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
     # ========================================
     # 通用工具实现
     # ========================================
-
-    async def _get_conversation_context(self, args: Dict[str, Any]) -> str:
-        """获取近期对话记录（含图片 URL）"""
-        from services.message_service import MessageService
-
-        limit = min(args.get("limit", 10), 20)
-
-        service = MessageService(self.db)
-        result = await service.get_messages(
-            conversation_id=self.conversation_id,
-            user_id=self.user_id,
-            limit=limit,
-            org_id=self.org_id,
-        )
-
-        messages = result.get("messages", [])
-        if not messages:
-            return "当前对话暂无历史消息"
-
-        lines = []
-        for msg in reversed(messages):  # 从旧到新
-            role = msg.get("role", "unknown")
-            content_parts = msg.get("content", [])
-            text_parts = []
-            image_urls = []
-
-            for part in content_parts:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    elif part.get("type") == "image":
-                        url = part.get("url", "")
-                        if url:
-                            image_urls.append(url)
-
-            line = f"[{role}] {' '.join(text_parts)}"
-            if image_urls:
-                line += f" [图片: {', '.join(image_urls)}]"
-            lines.append(line)
-
-        context_text = "\n".join(lines)
-        logger.debug(
-            f"get_conversation_context result | conv={self.conversation_id} "
-            f"| msg_count={len(messages)} | len={len(context_text)} "
-            f"| preview={context_text[:500]}"
-        )
-        return context_text
 
     async def _search_knowledge(self, args: Dict[str, Any]) -> "AgentResult":
         """查询 AI 知识库"""
@@ -238,6 +205,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             message_id=getattr(self, "_message_id", None),
             request_ctx=self.request_ctx,
             budget=_parent_budget,
+            workspace_user_id=self.workspace_user_id,
         )
 
         result = await agent.execute(
@@ -288,6 +256,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             org_id=self.org_id,
             task_id=getattr(self, "_task_id", None),
             message_id=getattr(self, "_message_id", None),
+            workspace_user_id=self.workspace_user_id,
         )
         return await agent.execute(
             task=args.get("task", ""),
@@ -340,6 +309,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             conversation_id=self.conversation_id,
             org_id=self.org_id,
             request_ctx=self.request_ctx,
+            workspace_user_id=self.workspace_user_id,
         )
 
         return await agent.analyze(task, conversation_context=conversation_context)
@@ -471,7 +441,10 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
 
         _conv = self.conversation_id or "default"
         staging_dir = Path(resolve_staging_dir(
-            settings.file_workspace_root, self.user_id, self.org_id, _conv,
+            settings.file_workspace_root,
+            self.workspace_user_id,
+            self.org_id,
+            _conv,
         ))
 
         import pandas as _pd
@@ -523,4 +496,3 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
 
     # 代码执行沙盒：继承自 SandboxToolMixin (sandbox_tool_mixin.py)
     # 文件操作工具 + 社交爬虫：继承自 FileToolMixin / CrawlerToolMixin (file_tool_mixin.py)
-

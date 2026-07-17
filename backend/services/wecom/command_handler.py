@@ -31,6 +31,9 @@ _COMMAND_PATTERNS: List[Tuple[re.Pattern, str]] = [
     # "用xxx" / "换xxx" / "切换到xxx" → 直接切换
     (re.compile(r"^(?:用|切换到?|使用|换)\s*(.+)$"), "switch_model_direct"),
 ]
+_PERSONAL_COMMANDS = {
+    "credits", "memory", "clear_memory", "new_conversation",
+}
 
 
 class CommandHandler:
@@ -47,6 +50,7 @@ class CommandHandler:
         conversation_id: str,
         reply_ctx: WecomReplyContext,
         org_id: str | None = None,
+        chat_type: str = "single",
     ) -> bool:
         """尝试匹配并处理指令。
 
@@ -69,6 +73,12 @@ class CommandHandler:
                     f"Command matched | cmd={cmd_name} | text={stripped} | "
                     f"user_id={user_id}"
                 )
+                if (
+                    chat_type == "group"
+                    and cmd_name in _PERSONAL_COMMANDS
+                ):
+                    await self._reply_private_only(reply_ctx)
+                    return True
                 await self._dispatch(
                     cmd_name, match, user_id, conversation_id, reply_ctx,
                     org_id=org_id,
@@ -76,6 +86,16 @@ class CommandHandler:
                 return True
 
         return False
+
+    @staticmethod
+    async def _reply_private_only(reply_ctx: WecomReplyContext) -> None:
+        ws = reply_ctx.ws_client
+        if ws and reply_ctx.req_id:
+            await ws.send_reply(
+                reply_ctx.req_id,
+                "text",
+                {"content": "该操作涉及个人数据，请在与机器人的私聊中使用。"},
+            )
 
     async def _dispatch(
         self,

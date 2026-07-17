@@ -90,6 +90,10 @@ class ChatContextMixin:
         image_urls = self._extract_image_urls(content)
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
+        workspace_user_id = getattr(self, "_workspace_user_id", user_id)
+        personal_context_allowed = getattr(
+            self, "_personal_context_allowed", True,
+        )
 
         # 注册 workspace 文件到会话级路径缓存 (保留旧逻辑, PromptBuilder 不负责文件管理)
         if workspace_files:
@@ -99,11 +103,14 @@ class ChatContextMixin:
                 _org_id = getattr(self, "org_id", None)
                 _settings = get_settings()
                 _ws_dir = resolve_workspace_dir(
-                    _settings.file_workspace_root, user_id, _org_id,
+                    _settings.file_workspace_root, workspace_user_id, _org_id,
                 )
                 _cache = get_file_cache(conversation_id)
                 _staging = resolve_staging_dir(
-                    _settings.file_workspace_root, user_id, _org_id, conversation_id,
+                    _settings.file_workspace_root,
+                    workspace_user_id,
+                    _org_id,
+                    conversation_id,
                 )
                 _cache.set_staging_dir(_staging)
                 for f in workspace_files:
@@ -145,6 +152,7 @@ class ChatContextMixin:
             context_snapshot=context_snapshot,
             request_ctx=getattr(self, "request_ctx", None),
             attachments_as_system=get_settings().messages_attachments_as_system,
+            personal_context_allowed=personal_context_allowed,
         )
 
         builder = PromptBuilder(inp)

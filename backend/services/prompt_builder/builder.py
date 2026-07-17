@@ -84,6 +84,7 @@ class BuildInput:
 
     # 配置开关
     attachments_as_system: bool = True                           # 配合 messages_attachments_as_system
+    personal_context_allowed: bool = True
 
 
 @dataclass
@@ -155,7 +156,10 @@ class PromptBuilder:
         # L2b 每条新 user 才变 (current_time) → 不 cache, 但小
         session_stable_ctx = SessionStableContext(
             permission_mode=inp.permission_mode,
-            user_preferences=inp.user_preferences,
+            user_preferences=(
+                inp.user_preferences
+                if inp.personal_context_allowed else None
+            ),
             user_facts=gated_persona,       # mem0 短事实 (原 persona)
             user_memory=memory_prompt,      # mem0 召回
         )
@@ -163,7 +167,10 @@ class PromptBuilder:
 
         turn_dynamic_ctx = TurnDynamicContext(
             current_time_text=time_text,
-            user_location=inp.user_location,
+            user_location=(
+                inp.user_location
+                if inp.personal_context_allowed else None
+            ),
         )
         turn_dynamic_content = TurnDynamicLayer.render(turn_dynamic_ctx)
 
@@ -280,6 +287,8 @@ class PromptBuilder:
               - 学到的新事实异步抽取存 DB, 等下次新会话生效
               - prefetched_memory 路径已删除 (chat_handler / chat_generate_mixin 不再预取)
             """
+            if not inp.personal_context_allowed:
+                return None, ""
             # 学到的新事实异步抽取存 DB, 等下次新会话生效
             from services.prompt_builder import session_memory_cache
             cached = await session_memory_cache.get_session_memory(

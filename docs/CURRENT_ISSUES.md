@@ -12,6 +12,11 @@
 
 ---
 
+### 2026-07-17 企微上下文治理结构约束 — 已完成
+
+- 工具结果、文件分析、媒体生成和电商图片 Agent 已完成职责拆分。
+- 目标文件均满足文件不超过 500 行、函数不超过 120 行；核心回归 942 通过、15 跳过，新增文件分析服务覆盖率 84%。
+
 ### 2026-07-16 结构化消息运行时边界与渲染治理 — 已完成
 
 **根因**：`rehype-highlight` 将代码文本转换为 React 节点后，渲染组件调用 `String(children)`，最终得到 `[object Object]`。同时 WebSocket、HTTP 恢复与 Store 曾依赖 TypeScript 断言，缺少运行时协议边界。
@@ -330,6 +335,11 @@
 
 ## 更新记录
 
+- **2026-07-17**：企微会话与附件上下文治理阶段 3.1：新增数据库派生的 `ExecutionScope`，分离真实发言人、会话作用域与 Workspace owner。群聊关闭个人 Memory/persona/偏好/位置注入，禁止个人积分、记忆、新对话和定时任务操作；ContextSnapshot 继续提供群共享历史。FILE、file_analyze、Sandbox、ERP 导出、普通图片生成和电商图片生成统一写入稳定 channel Workspace，积分和审计仍归真实发言人。`get_conversation_context` 因与 ContextSnapshot 重复且依赖个人 owner 权限，从群工具目录移除。受影响的三个超限工具文件已按纯辅助、会话读取和文件描述职责拆至 500 行以内。尚未部署。
+- **2026-07-17**：企微会话与附件上下文治理阶段 2.2：TEXT/VOICE/IMAGE/MIXED 已统一进入 Conversation Actor，删除企微专属灰度开关和入站旧链路分发；迁移 130 在会话锁内仅为首次稳定消息 ID 消费 active 附件，冻结为输入消息 `FilePart` 并标记 referenced，重复投递复用原输入而不误消费新附件；群聊入队校验 channel binding 并保留真实发送人。同步生成、旧消息持久化、旧结果分发、旧记忆注入和旧直接扣积分尾链已完整删除，`wecom_message_service.py` 从 382 行降至 178 行；企微测试按入站与回复职责拆分，均低于 500 行。128-130 及 130 回滚已通过真实 PostgreSQL 单事务预演，尚未部署。
+- **2026-07-17**：企微会话与附件上下文治理阶段 2.1：新增迁移 129 和 `conversation_attachment_refs`；FILE 按 msgid 幂等暂存为 completed 用户消息与 ready 活动附件，不再无指令启动模型。私聊文件进入个人 Workspace，群聊文件进入独立 channel Workspace。128/129 已通过真实 PostgreSQL 事务预演，尚未部署。
+- **2026-07-17**：企微会话与附件上下文治理阶段 1.2：新增渠道会话绑定和 `user/channel` scope；私聊按稳定外部身份绑定并可事务认领最近未绑定历史企微对话，群聊创建无个人 owner 的共享 conversation，避免跨群复用及首位发言者删除导致群上下文丢失。迁移 128 尚未部署。
+- **2026-07-17**：企微会话与附件上下文治理阶段 1.1：新增回调规范化边界，私聊 FILE 缺失 `chatid` 时稳定回退 `from.userid`，群聊缺失 `chatid` 明确拒绝，文件名同时识别 `filename/name`；`wecom_ws_runner` 不再直接拼装未校验消息。后续仍需完成渠道会话绑定、附件状态机和企微全量 Actor 化。
 - **2026-07-17**：生产 FILE 冒烟发现 `OrgScopedDB` 自动注入 `p_org_id`，但 120/121/125 新增的四个租户 RPC 缺少对应签名，导致企微 FILE 无法入队、旧企微 Turn 无法绑定并遗留“思考中”。新增 127 租户 RPC 门面统一校验 org 后委托原子核心；Actor 入站统一建立/结束 stream，旧同步异常将 assistant 占位持久化为 failed。修复已通过全量回归与真实 PostgreSQL 事务预演，生产应用 127 后恢复。
 - **2026-07-17**：完成 Conversation Actor 企微持久投递阶段 1.4：删除进程内 `_session_settings`，模型写入 `conversations.model_id`、思考模式由行锁 RPC 原子合并到 `chat_settings`，并按 user/org/source 强校验；企微 FILE 不再扫描或转写正文，原始字节按 msgid 稳定落共享 Workspace、同步 OSS，以标准 `FilePart` 原子入队，未知格式保留为二进制；无生产调用的旧企微 `file_parser.py` 及孤立测试已删除。FILE 已按决策取消旧链路兼容并固定进入 Actor，因此生产必须先应用 120-126 迁移、启动 Actor Worker 和企微 Outbox consumer，再部署本版本应用；当前尚未部署或应用迁移。
 - **2026-07-17**：完成 Conversation Actor 企微持久投递阶段 1.3（默认关闭）：`wecom_ws_runner` 增加 PostgreSQL Outbox consumer；按 delivery lease/fencing 认领，长发送期间续租，文本/图片/视频逐项持久化检查点，失败指数退避并在上限后 dead；企微 Actor 改用无头进度 Sink，不再误发 Web 过程/终态事件；Outbox 适配器用发送结果与发送后连接状态共同识别本地 WS 失败。企微主动消息无业务幂等 ACK，仍是可审计的 at-least-once，发送成功与检查点提交之间崩溃可能产生极小概率重复。迁移未应用、开关未开启。

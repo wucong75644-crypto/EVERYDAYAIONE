@@ -40,6 +40,7 @@ class ChatExecutionRequest:
     permission_mode: str = "auto"
     needs_google_search: bool = False
     calculate_credits: bool = True
+    execution_scope: Any = None
 
 
 @dataclass(frozen=True)

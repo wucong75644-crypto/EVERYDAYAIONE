@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from utils.time_context import RequestContext
 
 from services.agent.agent_result import AgentResult
+from services.agent.erp_child_factory_mixin import ERPChildFactoryMixin
 
 _VALID_DOMAINS = frozenset({"warehouse", "purchase", "trade", "aftersale"})
 _DOMAIN_LABEL = {"warehouse": "库存", "purchase": "采购", "trade": "订单", "aftersale": "售后"}
@@ -36,7 +37,7 @@ class ExecutionPlan:
     dependency: str = "parallel"  # "parallel" | "serial"
 
 
-class ERPAgent:
+class ERPAgent(ERPChildFactoryMixin):
     """ERP 编排 Agent — 计划提取 + 并行部门执行 + 结构化返回。"""
 
     def __init__(
@@ -44,8 +45,10 @@ class ERPAgent:
         task_id: Optional[str] = None, message_id: Optional[str] = None,
         request_ctx: Optional["RequestContext"] = None,
         budget: Optional["ExecutionBudget"] = None,
+        workspace_user_id: Optional[str] = None,
     ) -> None:
         self.db, self.user_id = db, user_id
+        self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id, self.org_id = conversation_id, org_id
         self.task_id, self.message_id = task_id, message_id
         self._budget = budget
@@ -460,36 +463,6 @@ class ERPAgent:
         进度信息通过 result.thinking_text 保留，供 ToolStepCard 展开区展示。"""
         self._thinking_parts.append(f"→ {text}")
 
-    def _create_agent(self, domain: str) -> Any:
-        from services.agent.departments.warehouse_agent import WarehouseAgent
-        from services.agent.departments.purchase_agent import PurchaseAgent
-        from services.agent.departments.trade_agent import TradeAgent
-        from services.agent.departments.aftersale_agent import AftersaleAgent
-
-        cls = {"warehouse": WarehouseAgent, "purchase": PurchaseAgent,
-               "trade": TradeAgent, "aftersale": AftersaleAgent}.get(domain)
-        if cls is None:
-            return None
-        staging_dir = None
-        try:
-            from core.config import get_settings
-            from core.workspace import resolve_staging_dir
-            staging_dir = resolve_staging_dir(
-                get_settings().file_workspace_root,
-                self.user_id, self.org_id, self.conversation_id or "default",
-            )
-        except Exception as e:
-            logger.warning(f"resolve staging_dir failed: {e}")
-        child_budget = self._budget.fork(max_turns=5) if self._budget else None
-        agent = cls(
-            db=self.db, org_id=self.org_id, request_ctx=self.request_ctx,
-            staging_dir=staging_dir, budget=child_budget,
-            user_id=self.user_id, conversation_id=self.conversation_id,
-        )
-        # 注入进度回调，子进程 export 可实时推送 thinking
-        agent._push_thinking = self._push_thinking
-        return agent
-
     @staticmethod
     def build_tool_description() -> str:
         """从 capability manifest 格式化为 5 段式描述文本。"""
@@ -497,4 +470,3 @@ class ERPAgent:
         return build_tool_description()
 
     # NAS 替代后不再需要 staging 清理（容量充足）
-

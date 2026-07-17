@@ -27,6 +27,19 @@ from pathlib import Path
 from typing import Optional
 
 
+def build_wecom_channel_workspace_owner(
+    corp_id: str,
+    external_chat_id: str,
+) -> str:
+    """生成仅供服务端使用的稳定企微群 Workspace owner。"""
+    if not corp_id or not external_chat_id:
+        raise ValueError("WECOM_CHANNEL_WORKSPACE_IDENTITY_MISSING")
+    channel_key = hashlib.sha256(
+        f"{corp_id}:{external_chat_id}".encode()
+    ).hexdigest()[:24]
+    return f"channels/wecom/{channel_key}"
+
+
 def _ensure_dir(p: Path) -> Path:
     """idempotent mkdir,失败不阻塞(权限/磁盘满等场景由上层报错)。"""
     try:

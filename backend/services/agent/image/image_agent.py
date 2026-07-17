@@ -48,9 +48,11 @@ class ImageAgent(CreditMixin):
         org_id: str | None = None,
         task_id: str | None = None,
         message_id: str | None = None,
+        workspace_user_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
+        self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.task_id = task_id
@@ -83,100 +85,22 @@ class ImageAgent(CreditMixin):
         """
         from core.config import get_settings
 
-        product_name = user_text.strip() or ""
-
-        # 信息充足判断
-        missing = []
-        if not image_urls:
-            missing.append("产品图片（请上传至少1张产品照片）")
-        if not product_name:
-            missing.append("产品描述（请告诉我这是什么产品）")
-
-        if missing:
-            guide = "我需要以下信息来为你策划电商主图方案：\n\n"
-            for i, item in enumerate(missing, 1):
-                guide += f"{i}. {item}\n"
-            guide += "\n💡 示例：上传产品图后输入「221色拼豆收纳盒 淘宝5张主图 核心卖点大容量分类收纳」"
-            return AgentResult(
-                status="error",
-                summary=guide,
-                source="image_agent",
-                error_message=guide,
-            )
-
+        product_name = user_text.strip()
+        validation_error = self._validate_plan_request(
+            product_name, image_urls,
+        )
+        if validation_error:
+            return validation_error
         settings = get_settings()
-
-        # 组装千问VL请求
-        system_prompt = self._prompt_builder.build_system_prompt(platform)
-
-        # 读取已有风格（多轮对话风格延续）
-        existing_style = self._read_style_directive()
-        if existing_style:
-            system_prompt += (
-                f"\n\n## 风格延续\n"
-                f"上一轮的视觉策略：{existing_style}\n"
-                f"请在此基础上保持风格一致性，除非用户明确要求调整。"
-            )
-
-        user_prompt = self._prompt_builder.build_user_message(
-            product_name=product_name,
-            platform=platform,
-            product_image_count=len(image_urls or []),
+        messages = self._build_plan_messages(
+            product_name, platform, image_urls or [],
         )
-
-        # 构建多模态消息
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-        ]
-        if image_urls:
-            content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
-            for url in image_urls:
-                content_parts.append({"type": "image_url", "image_url": {"url": url}})
-            messages.append({"role": "user", "content": content_parts})
-        else:
-            messages.append({"role": "user", "content": user_prompt})
-
-        # 调千问VL
-        from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
-
-        model = settings.image_enhance_vl_model if image_urls else settings.image_enhance_model
-        timeout = settings.image_enhance_timeout
-
-        response = None
-        adapter = DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key or "",
-            model=model,
-            base_url=settings.dashscope_base_url,
-            stream_timeout=timeout,
+        response, model, request_error = await self._request_plan(
+            settings, messages, bool(image_urls),
         )
-        try:
-            response = await adapter.chat_sync(messages=messages)
-        except Exception as e:
-            logger.warning(f"ecom_plan primary model failed: {e}, trying fallback")
-        finally:
-            await adapter.close()
-
-        if response is None:
-            fallback = settings.image_enhance_fallback_model
-            adapter_fb = DashScopeChatAdapter(
-                api_key=settings.dashscope_api_key or "",
-                model=fallback,
-                base_url=settings.dashscope_base_url,
-                stream_timeout=timeout,
-            )
-            try:
-                response = await adapter_fb.chat_sync(messages=messages)
-                model = fallback
-            except Exception as e:
-                logger.error(f"ecom_plan fallback also failed: {e}")
-                return AgentResult(
-                    status="error",
-                    summary="方案生成失败，请稍后重试",
-                    source="image_agent",
-                    error_message=f"LLM调用失败: {e}",
-                )
-            finally:
-                await adapter_fb.close()
+        if request_error:
+            return request_error
+        assert response is not None
 
         # 解析JSON
         plan = self._parse_plan_json(response.content)
@@ -217,6 +141,110 @@ class ImageAgent(CreditMixin):
                 },
             },
         )
+
+    def _validate_plan_request(
+        self,
+        product_name: str,
+        image_urls: list[str] | None,
+    ) -> AgentResult | None:
+        missing = []
+        if not image_urls:
+            missing.append("产品图片（请上传至少1张产品照片）")
+        if not product_name:
+            missing.append("产品描述（请告诉我这是什么产品）")
+        if not missing:
+            return None
+        items = "\n".join(
+            f"{index}. {item}"
+            for index, item in enumerate(missing, 1)
+        )
+        guide = (
+            f"我需要以下信息来为你策划电商主图方案：\n\n{items}\n\n"
+            "💡 示例：上传产品图后输入「221色拼豆收纳盒 淘宝5张主图 "
+            "核心卖点大容量分类收纳」"
+        )
+        return AgentResult(
+            status="error",
+            summary=guide,
+            source="image_agent",
+            error_message=guide,
+        )
+
+    def _build_plan_messages(
+        self,
+        product_name: str,
+        platform: str,
+        image_urls: list[str],
+    ) -> list[dict[str, Any]]:
+        system_prompt = self._prompt_builder.build_system_prompt(platform)
+        existing_style = self._read_style_directive()
+        if existing_style:
+            system_prompt += (
+                "\n\n## 风格延续\n"
+                f"上一轮的视觉策略：{existing_style}\n"
+                "请在此基础上保持风格一致性，除非用户明确要求调整。"
+            )
+        user_prompt = self._prompt_builder.build_user_message(
+            product_name=product_name,
+            platform=platform,
+            product_image_count=len(image_urls),
+        )
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+        ]
+        if not image_urls:
+            messages.append({"role": "user", "content": user_prompt})
+            return messages
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": user_prompt},
+        ]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in image_urls
+        )
+        messages.append({"role": "user", "content": content})
+        return messages
+
+    async def _request_plan(
+        self,
+        settings: Any,
+        messages: list[dict[str, Any]],
+        has_images: bool,
+    ) -> tuple[Any | None, str, AgentResult | None]:
+        from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+
+        model = (
+            settings.image_enhance_vl_model
+            if has_images else settings.image_enhance_model
+        )
+        models = [model, settings.image_enhance_fallback_model]
+        last_error: Exception | None = None
+        for index, candidate in enumerate(models):
+            adapter = DashScopeChatAdapter(
+                api_key=settings.dashscope_api_key or "",
+                model=candidate,
+                base_url=settings.dashscope_base_url,
+                stream_timeout=settings.image_enhance_timeout,
+            )
+            try:
+                return (
+                    await adapter.chat_sync(messages=messages),
+                    candidate,
+                    None,
+                )
+            except Exception as error:
+                last_error = error
+                log = logger.warning if index == 0 else logger.error
+                log(f"ecom_plan model failed | model={candidate} | {error}")
+            finally:
+                await adapter.close()
+        error_result = AgentResult(
+            status="error",
+            summary="方案生成失败，请稍后重试",
+            source="image_agent",
+            error_message=f"LLM调用失败: {last_error}",
+        )
+        return None, models[-1], error_result
 
     # ----------------------------------------------------------
     # Phase 2：单张图片生成（原 execute，保持不变）
@@ -280,72 +308,14 @@ class ImageAgent(CreditMixin):
             )
 
         try:
-            # 3. 构建最终提示词（注入全局风格约束）
-            final_prompt = self._prompt_builder.build_final_prompt(task, style_directive)
-
-            # 4. 预处理（白底图去背景 — 当前直接返回原图，rembg 在后续迭代实现）
-            ref_images = image_urls
-
-            # 5. 调 KIE adapter 生成图片
-            aspect_ratio = detect_aspect_ratio(task)
-            adapter = create_image_adapter(model_id)
-            try:
-                result = await adapter.generate(
-                    prompt=final_prompt,
-                    image_urls=ref_images if ref_images else None,
-                    size=aspect_ratio,
-                    wait_for_result=True,
-                    max_wait_time=90.0,
-                    poll_interval=2.0,
-                )
-            finally:
-                await adapter.close()
-
-            if not result.image_urls:
-                self._refund_credits(tx_id)
-                return self._error_result(
-                    f"图片生成失败：{result.fail_msg or '未知错误'}",
-                    task, image_urls, platform, style_directive,
-                )
-
-            # 6. 确认扣费
-            self._confirm_deduct(tx_id)
-
-            # 7. 返回成功结果
-            width, height = detect_dimensions(task, platform)
-
-            logger.info(
-                f"ImageAgent success | user={self.user_id} | model={model_id} "
-                f"| size={width}x{height} | task={task[:50]} | "
-                f"count={len(result.image_urls)}"
+            return await self._generate_ecom_image(
+                task=task,
+                image_urls=image_urls,
+                platform=platform,
+                style_directive=style_directive,
+                model_id=model_id,
+                tx_id=tx_id,
             )
-
-            from services.file_upload import persist_media_urls_to_workspace
-            emit_payloads = await persist_media_urls_to_workspace(
-                urls=result.image_urls,
-                user_id=self.user_id,
-                org_id=self.org_id,
-                media_type="image",
-                meta={
-                    "prompt": task,
-                    "model": model_id,
-                    "platform": platform,
-                    "style_directive": style_directive,
-                    "reference_images": image_urls,
-                    "width": width,
-                    "height": height,
-                },
-                extra_fields={"width": width, "height": height, "alt": task[:50]},
-            )
-
-            return AgentResult(
-                status="success",
-                summary=f"已生成图片：{task[:30]}",
-                source="image_agent",
-                emit_payloads=emit_payloads,
-                metadata={"platform": platform, "model": model_id},
-            )
-
         except Exception as e:
             if tx_id:
                 try:
@@ -359,6 +329,76 @@ class ImageAgent(CreditMixin):
             return self._error_result(
                 f"图片生成异常：{e}", task, image_urls, platform, style_directive,
             )
+
+    async def _generate_ecom_image(
+        self,
+        task: str,
+        image_urls: list[str],
+        platform: str,
+        style_directive: str,
+        model_id: str,
+        tx_id: str,
+    ) -> AgentResult:
+        final_prompt = self._prompt_builder.build_final_prompt(
+            task, style_directive,
+        )
+        adapter = create_image_adapter(model_id)
+        try:
+            result = await adapter.generate(
+                prompt=final_prompt,
+                image_urls=image_urls or None,
+                size=detect_aspect_ratio(task),
+                wait_for_result=True,
+                max_wait_time=90.0,
+                poll_interval=2.0,
+            )
+        finally:
+            await adapter.close()
+        if not result.image_urls:
+            self._refund_credits(tx_id)
+            return self._error_result(
+                f"图片生成失败：{result.fail_msg or '未知错误'}",
+                task,
+                image_urls,
+                platform,
+                style_directive,
+            )
+        self._confirm_deduct(tx_id)
+        width, height = detect_dimensions(task, platform)
+        logger.info(
+            f"ImageAgent success | user={self.user_id} | model={model_id} "
+            f"| size={width}x{height} | task={task[:50]} | "
+            f"count={len(result.image_urls)}"
+        )
+        from services.file_upload import persist_media_urls_to_workspace
+
+        emit_payloads = await persist_media_urls_to_workspace(
+            urls=result.image_urls,
+            user_id=self.workspace_user_id,
+            org_id=self.org_id,
+            media_type="image",
+            meta={
+                "prompt": task,
+                "model": model_id,
+                "platform": platform,
+                "style_directive": style_directive,
+                "reference_images": image_urls,
+                "width": width,
+                "height": height,
+            },
+            extra_fields={
+                "width": width,
+                "height": height,
+                "alt": task[:50],
+            },
+        )
+        return AgentResult(
+            status="success",
+            summary=f"已生成图片：{task[:30]}",
+            source="image_agent",
+            emit_payloads=emit_payloads,
+            metadata={"platform": platform, "model": model_id},
+        )
 
     # ----------------------------------------------------------
     # 内部方法

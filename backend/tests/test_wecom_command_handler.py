@@ -88,6 +88,23 @@ class TestCommandMatching:
         result = await handler.try_handle("切换模型", "u1", "c1", ctx)
         assert result is True
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        ["查积分", "我的记忆", "清空记忆", "新对话"],
+    )
+    async def test_group_blocks_personal_commands(self, command):
+        handler = CommandHandler(_make_db())
+        ctx = _make_reply_ctx()
+
+        result = await handler.try_handle(
+            command, "u1", "c1", ctx, chat_type="group",
+        )
+
+        assert result is True
+        text = ctx.ws_client.send_reply.await_args.args[2]["content"]
+        assert "私聊" in text
+
 
 class TestCommandNotMatching:
     """不应拦截的文本"""

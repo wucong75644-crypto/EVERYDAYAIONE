@@ -77,7 +77,7 @@ class SandboxToolMixin:
             executor = build_sandbox_executor(
                 timeout=_timeout,
                 max_result_chars=settings.sandbox_max_result_chars,
-                user_id=self.user_id,
+                user_id=self.workspace_user_id,
                 org_id=self.org_id,
                 conversation_id=self.conversation_id,
                 kernel_manager=get_kernel_manager(),
@@ -293,7 +293,9 @@ class SandboxToolMixin:
             from core.workspace import resolve_staging_dir
             settings = get_settings()
             return resolve_staging_dir(
-                settings.file_workspace_root, self.user_id, self.org_id,
+                settings.file_workspace_root,
+                self.workspace_user_id,
+                self.org_id,
                 self.conversation_id or "default",
             )
         except Exception:
@@ -306,7 +308,9 @@ class SandboxToolMixin:
             from core.workspace import resolve_workspace_dir
             settings = get_settings()
             return resolve_workspace_dir(
-                settings.file_workspace_root, self.user_id, self.org_id,
+                settings.file_workspace_root,
+                self.workspace_user_id,
+                self.org_id,
             )
         except Exception:
             return ""

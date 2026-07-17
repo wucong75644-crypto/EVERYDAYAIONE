@@ -38,6 +38,10 @@
 - **管理员后台**：用户管理、积分充值、数据统计
 
 ## 目录结构
+
+本轮企微上下文治理新增的核心服务：
+- `backend/services/agent/file_analysis_service.py`：隔离表格分析的路径授权、格式转换、结构化错误与缓存登记。
+- `backend/services/handlers/chat_tool_result_mixin.py`：统一 Chat 工具结果分类、WebSocket 投递与审计。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
@@ -126,6 +130,8 @@ EVERYDAYAIONE/
 │   │   ├── 125_wecom_actor_enqueue.sql # 企微消息与 Actor task 原子幂等入队
 │   │   ├── 126_wecom_conversation_settings.sql # 企微模型/思考模式按租户原子持久化
 │   │   ├── 127_actor_tenant_rpc_contract.sql # Actor 租户 RPC 门面及 org 强校验
+│   │   ├── 128_wecom_channel_conversations.sql # 企微渠道会话稳定绑定与群共享 scope
+│   │   ├── 129_conversation_attachments.sql # 会话附件状态机与企微 FILE 原子暂存
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -134,7 +140,9 @@ EVERYDAYAIONE/
 │   │       ├── 124_conversation_delivery_outbox_rollback.sql
 │   │       ├── 125_wecom_actor_enqueue_rollback.sql
 │   │       ├── 126_wecom_conversation_settings_rollback.sql
-│   │       └── 127_actor_tenant_rpc_contract_rollback.sql
+│   │       ├── 127_actor_tenant_rpc_contract_rollback.sql
+│   │       ├── 128_wecom_channel_conversations_rollback.sql
+│   │       └── 129_conversation_attachments_rollback.sql
 │   ├── services/                 # 业务逻辑层
 │   │   ├── auth_service.py           # 认证服务
 │   │   ├── conversation_service.py   # 对话服务
@@ -144,6 +152,9 @@ EVERYDAYAIONE/
 │   │   ├── conversation_runtime.py   # Actor 独立进程装配与 Kernel/Worker 生命周期
 │   │   ├── conversation_task.py      # Actor 任务识别与原子取消入口
 │   │   ├── wecom/actor_enqueue.py    # 企微稳定 ID 与 Actor 原子入队适配
+│   │   ├── wecom/message_normalizer.py # 企微回调身份与媒体字段统一规范化
+│   │   ├── wecom/channel_conversation.py # 企微外部 chatid 到内部 conversation 解析
+│   │   ├── wecom/attachment_service.py # 企微 FILE 幂等暂存与附件引用
 │   │   ├── wecom/conversation_settings.py # 企微对话设置数据库事实源
 │   │   ├── wecom/delivery_sender.py  # 企微 Outbox 稳定分项与双通道发送适配
 │   │   ├── wecom/delivery_worker.py  # 企微 Outbox 租约、检查点、重试与 dead 消费
@@ -674,6 +685,19 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-07-17**：企微入站统一 Actor 与附件原子消费
+  - 新增 `130_wecom_actor_attachment_consumption.sql` 及可独立执行的回滚脚本
+  - TEXT/VOICE/IMAGE/MIXED 不再由企微同步旧链路处理
+  - 下一条指令在数据库会话锁内原子消费 active 附件，重试不会误消费后续附件
+  - 群聊 Actor 入队按 `conversation_channel_bindings` 校验 corp/chatid，并在消息上保留真实发送人
+  - 删除 `conversation_actor_wecom_enabled`；企微生成入口不再存在运行时双轨切换
+  - 删除企微旧同步生成与结果持久化尾链；新增
+    `backend/tests/test_wecom_reply_and_media.py`，将超限测试按职责拆分
+  - 新增 `services/handlers/chat/execution_scope.py`，群聊执行分离操作者与资源 owner
+  - 新增 `chat_tool_helpers.py`、`conversation_tool_mixin.py`、
+    `file_describe_mixin.py`、`erp_child_factory_mixin.py`，使受影响工具文件均低于 500 行
+  - 群聊不读取个人 Memory/偏好/位置，不开放个人数据及定时任务工具；
+    文件、Sandbox、ERP 与图片产物统一进入 channel Workspace
 - **2026-07-17**：企微 FILE 统一为原始资产 `FilePart` 后，删除已无生产调用的
   `services/wecom/file_parser.py` 及其孤立测试；文件内容理解统一由标准工具链按需完成。
 - **2026-07-16**：新增消息发送草稿事务与幂等协议技术设计

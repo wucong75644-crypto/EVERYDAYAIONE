@@ -305,3 +305,33 @@ class TestHandleError:
         # send_reply(req_id, "text", {"content": "操作失败..."})
         assert call_args[1] == "text"
         assert "操作失败" in call_args[2]["content"]
+
+
+class TestGroupPrivacy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "event_key",
+        [
+            "check_credits",
+            "manage_memory",
+            "clear_all_memory",
+            "new_conversation",
+        ],
+    )
+    async def test_personal_events_are_blocked_in_group(self, event_key):
+        handler = WecomCardEventHandler(_make_db())
+        ctx = _make_reply_ctx()
+
+        await handler.handle(
+            event_key,
+            "t1",
+            "button_interaction",
+            None,
+            "u1",
+            "c1",
+            ctx,
+            chat_type="group",
+        )
+
+        text = ctx.ws_client.send_reply.await_args.args[2]["content"]
+        assert "私聊" in text

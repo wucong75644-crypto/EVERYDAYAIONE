@@ -25,82 +25,16 @@ from loguru import logger
 
 from core.database import close_async_db, get_async_db, get_db
 from core.logging_config import setup_logging
-from schemas.wecom import (
-    WecomIncomingMessage,
-    WecomMsgType,
-    WecomReplyContext,
-)
+from schemas.wecom import WecomReplyContext
 from services.wecom.wecom_message_service import WecomMessageService
+from services.wecom.message_normalizer import (
+    normalize_wecom_message,
+    parse_message_content as _parse_message_content,
+)
 from services.wecom.ws_client import WecomWSClient
 
 
 # ── 消息解析（从 data 中提取各类消息内容）──────────────
-
-
-def _parse_message_content(body: dict) -> dict:
-    """解析企微消息 body，返回 text_content / image_urls / file_url / file_name / aeskeys"""
-    msgtype = body.get("msgtype", "")
-    text_content = None
-    image_urls: list[str] = []
-    file_url = None
-    file_name = None
-    aeskeys: dict = {}
-
-    if msgtype == WecomMsgType.TEXT:
-        text_content = body.get("text", {}).get("content", "")
-
-    elif msgtype == WecomMsgType.VOICE:
-        text_content = body.get("voice", {}).get("content", "")
-
-    elif msgtype == WecomMsgType.IMAGE:
-        img = body.get("image", {})
-        url = img.get("url", "")
-        if url:
-            image_urls.append(url)
-            aes = img.get("aeskey")
-            if aes:
-                aeskeys[url] = aes
-
-    elif msgtype == WecomMsgType.FILE:
-        f = body.get("file", {})
-        file_url = f.get("url", "")
-        file_name = f.get("name", "")
-        aes = f.get("aeskey")
-        if aes and file_url:
-            aeskeys[file_url] = aes
-
-    elif msgtype == WecomMsgType.VIDEO:
-        vid = body.get("video", {})
-        file_url = vid.get("url", "")
-        file_name = vid.get("name", "")
-        aes = vid.get("aeskey")
-        if aes and file_url:
-            aeskeys[file_url] = aes
-
-    elif msgtype == WecomMsgType.MIXED:
-        for item in body.get("mixed", {}).get("msg_item", []):
-            item_type = item.get("type", "")
-            if item_type == "text":
-                text_content = (text_content or "") + item.get(
-                    "text", {}
-                ).get("content", "")
-            elif item_type == "image":
-                img = item.get("image", {})
-                url = img.get("url", "")
-                if url:
-                    image_urls.append(url)
-                    aes = img.get("aeskey")
-                    if aes:
-                        aeskeys[url] = aes
-
-    return {
-        "msgtype": msgtype,
-        "text_content": text_content,
-        "image_urls": image_urls,
-        "file_url": file_url,
-        "file_name": file_name,
-        "aeskeys": aeskeys,
-    }
 
 
 # ── 多企业 WS 管理器 ──────────────────────────────────
@@ -164,23 +98,8 @@ class WecomWSManager:
         async def handler(data: dict) -> None:
             body = data.get("body", {})
             req_id = data.get("headers", {}).get("req_id", "")
-            parsed = _parse_message_content(body)
-
-            msg = WecomIncomingMessage(
-                msgid=body.get("msgid", ""),
-                wecom_userid=body.get("from", {}).get("userid", ""),
-                corp_id=corp_id,
-                chatid=body.get("chatid", ""),
-                chattype=body.get("chattype", "single"),
-                msgtype=parsed["msgtype"],
-                channel="smart_robot",
-                org_id=org_id,
-                text_content=parsed["text_content"],
-                image_urls=parsed["image_urls"],
-                file_url=parsed["file_url"],
-                file_name=parsed["file_name"],
-                aeskeys=parsed["aeskeys"],
-                raw_data=body,
+            msg = normalize_wecom_message(
+                body, org_id=org_id, corp_id=corp_id,
             )
 
             reply_ctx = WecomReplyContext(
@@ -223,6 +142,7 @@ class WecomWSManager:
                 user_id=user_id,
                 chatid=chatid,
                 chattype=body.get("chattype", "single"),
+                corp_id=corp_id,
                 org_id=org_id,
             )
 
@@ -243,6 +163,7 @@ class WecomWSManager:
                 conversation_id=conversation_id,
                 reply_ctx=reply_ctx,
                 org_id=org_id,
+                chat_type=body.get("chattype", "single"),
             )
 
         return handler

@@ -71,6 +71,7 @@ async def prepare_chat_stream(
     permission, core_tools = _prepare_permission_and_tools(
         permission_mode,
         handler.org_id,
+        getattr(handler, "_personal_context_allowed", True),
     )
     stream_kwargs = _prepare_provider_tools(
         adapter,
@@ -82,6 +83,7 @@ async def prepare_chat_stream(
     tool_context = _prepare_request_context(
         handler,
         user_id,
+        getattr(handler, "_workspace_user_id", user_id),
         conversation_id,
         task_id,
     )
@@ -110,16 +112,33 @@ def _normalize_permission_mode(permission_mode: Any) -> str:
 def _prepare_permission_and_tools(
     permission_mode: str,
     org_id: str | None,
+    personal_context_allowed: bool,
 ) -> tuple[Any, list[dict[str, Any]]]:
     from config.chat_tools import get_tools_for_mode
     from services.handlers.permission_mode import PermissionMode
 
     permission = PermissionMode(mode=permission_mode)
     logger.info(f"Permission mode | mode={permission.mode.value}")
-    return (
-        permission,
-        get_tools_for_mode(permission.mode.value, org_id=org_id),
-    )
+    tools = get_tools_for_mode(permission.mode.value, org_id=org_id)
+    if not personal_context_allowed:
+        tools = [
+            tool for tool in tools
+            if _tool_name(tool) not in _PERSONAL_TOOLS
+        ]
+    return permission, tools
+
+
+def _tool_name(tool: dict[str, Any]) -> str:
+    function = tool.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name") or "")
+    return str(tool.get("name") or "")
+
+
+_PERSONAL_TOOLS = {
+    "get_conversation_context",
+    "manage_scheduled_task",
+}
 
 
 def _prepare_provider_tools(
@@ -144,6 +163,7 @@ def _prepare_provider_tools(
 def _prepare_request_context(
     handler: Any,
     user_id: str,
+    workspace_user_id: str,
     conversation_id: str,
     task_id: str,
 ) -> Any:
@@ -167,7 +187,7 @@ def _prepare_request_context(
     set_staging_dir(
         resolve_staging_dir(
             settings.file_workspace_root,
-            user_id,
+            workspace_user_id,
             handler.org_id,
             conversation_id,
         )

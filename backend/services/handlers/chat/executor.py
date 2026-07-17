@@ -14,6 +14,7 @@ from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
     execute_chat,
 )
+from services.handlers.chat.execution_scope import resolve_execution_scope
 from services.handlers.context_snapshot import ContextAnchor
 
 
@@ -44,9 +45,17 @@ class ChatGenerationExecutor:
         cancellation_event: asyncio.Event,
     ) -> GenerationOutcome:
         _validate_task(task, claim)
-        content = await self._load_input_content(claim)
+        content, execution_scope = await asyncio.gather(
+            self._load_input_content(claim),
+            resolve_execution_scope(self._db, task, claim.conversation_id),
+        )
         handler = self._handler_factory(self._handler_db_factory())
         handler.org_id = task.get("org_id")
+        handler.execution_scope = execution_scope
+        handler._workspace_user_id = execution_scope.workspace_owner_id
+        handler._personal_context_allowed = (
+            execution_scope.personal_context_allowed
+        )
         params = _parse_params(task.get("request_params"))
         result = await execute_chat(
             handler=handler,
@@ -61,6 +70,7 @@ class ChatGenerationExecutor:
                 params=params,
                 permission_mode=str(params.get("permission_mode") or "auto"),
                 needs_google_search=bool(params.get("_needs_google_search")),
+                execution_scope=execution_scope,
             ),
             cancellation_event=cancellation_event,
             sink=(

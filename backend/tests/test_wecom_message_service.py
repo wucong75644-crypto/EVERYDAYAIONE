@@ -1,8 +1,7 @@
 """
 WecomMessageService 单元测试
 
-覆盖：handle_message 流程分发、_reply_text 双通道、
-      _push_stream_chunk 双通道、_extract_text_from_content 解析
+覆盖：handle_message Actor 分发、_reply_text 与 _push_stream_chunk 双通道。
 """
 
 import sys
@@ -77,183 +76,8 @@ def _make_reply_ctx(channel: str = "smart_robot") -> WecomReplyContext:
 
 
 # ============================================================
-# TestExtractTextFromContent
-# ============================================================
-
-
-class TestExtractTextFromContent:
-    """_extract_text_from_content 文本提取"""
-
-    def test_string_input(self):
-        assert WecomMessageService._extract_text_from_content("hello") == "hello"
-
-    def test_content_parts_list(self):
-        parts = [{"type": "text", "text": "你好世界"}]
-        assert WecomMessageService._extract_text_from_content(parts) == "你好世界"
-
-    def test_mixed_parts(self):
-        parts = [
-            {"type": "image", "url": "http://..."},
-            {"type": "text", "text": "描述"},
-        ]
-        assert WecomMessageService._extract_text_from_content(parts) == "描述"
-
-    def test_empty_list(self):
-        assert WecomMessageService._extract_text_from_content([]) is None
-
-    def test_none_input(self):
-        assert WecomMessageService._extract_text_from_content(None) is None
-
-    def test_dict_without_text_type(self):
-        parts = [{"type": "image", "url": "http://..."}]
-        assert WecomMessageService._extract_text_from_content(parts) is None
-
-    def test_empty_string(self):
-        assert WecomMessageService._extract_text_from_content("") == ""
-
-
-# ============================================================
-# TestReplyText
-# ============================================================
-
-
-class TestReplyText:
-    """_reply_text 双通道回复"""
-
-    @pytest.mark.asyncio
-    async def test_smart_robot_channel(self):
-        """smart_robot 通道 → 调用 ws_client.send_reply"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("smart_robot")
-
-        await svc._reply_text(ctx, "hello")
-
-        ctx.ws_client.send_reply.assert_called_once_with(
-            req_id="req001",
-            msgtype="text",
-            content={"content": "hello"},
-        )
-
-    @pytest.mark.asyncio
-    async def test_app_channel_plain_text(self):
-        """app 通道纯文本 → 调用 send_text"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ):
-            await svc._reply_text(ctx, "hi from app")
-
-        mock_send.assert_called_once()
-        call_kwargs = mock_send.call_args.kwargs
-        assert call_kwargs["wecom_userid"] == "user_abc"
-        assert call_kwargs["content"] == "hi from app"
-        assert call_kwargs["creds"].agent_id == 1000006
-
-    @pytest.mark.asyncio
-    async def test_app_channel_markdown(self):
-        """app 通道含 Markdown → 调用 send_markdown"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ), patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ) as mock_md:
-            await svc._reply_text(ctx, "# 标题\n\n**加粗**内容")
-
-        mock_md.assert_called_once()
-        call_kwargs = mock_md.call_args.kwargs
-        assert call_kwargs["wecom_userid"] == "user_abc"
-        assert "# 标题" in call_kwargs["content"]
-
-    @pytest.mark.asyncio
-    async def test_unknown_channel_no_op(self):
-        """未知通道 → 不发送"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = WecomReplyContext(channel="unknown")
-        # 不应抛出异常
-        await svc._reply_text(ctx, "test")
-
-
-# ============================================================
-# TestPushStreamChunk
-# ============================================================
-
-
-class TestPushStreamChunk:
-    """_push_stream_chunk 流式推送"""
-
-    @pytest.mark.asyncio
-    async def test_smart_robot_sends_every_chunk(self):
-        """smart_robot 通道 → 每次都调用 ws_client"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("smart_robot")
-
-        await svc._push_stream_chunk(ctx, "s1", "partial", finish=False)
-        ctx.ws_client.send_stream_chunk.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_app_only_sends_on_finish(self):
-        """app 通道 → 仅 finish=True 时发送"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ):
-            # finish=False → 不发送
-            await svc._push_stream_chunk(ctx, "s1", "partial", finish=False)
-            mock_send.assert_not_called()
-
-            # finish=True → 发送完整内容（纯文本走 send_text）
-            await svc._push_stream_chunk(ctx, "s1", "full text", finish=True)
-            mock_send.assert_called_once()
-            call_kwargs = mock_send.call_args.kwargs
-            assert call_kwargs["wecom_userid"] == "user_abc"
-            assert call_kwargs["content"] == "full text"
-            assert call_kwargs["creds"].agent_id == 1000006
-
-    @pytest.mark.asyncio
-    async def test_app_finish_with_markdown_sends_markdown(self):
-        """app 通道 finish=True 含 Markdown → send_markdown"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ), patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ) as mock_md:
-            await svc._push_stream_chunk(
-                ctx, "s1", "# 标题\n\n代码：\n```py\nprint(1)\n```",
-                finish=True,
-            )
-            mock_md.assert_called_once()
-
-
-# ============================================================
+# TestReplyText# ============================================================
+# TestHandleMessage# ============================================================
 # TestHandleMessage
 # ============================================================
 
@@ -262,8 +86,8 @@ class TestHandleMessage:
     """handle_message 完整流程"""
 
     @pytest.mark.asyncio
-    async def test_text_message_calls_handle_text(self):
-        """文本消息 → 调用 _handle_text"""
+    async def test_text_message_always_enqueues_actor(self):
+        """文本消息统一进入 Actor，不再回退旧链路。"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
@@ -273,29 +97,22 @@ class TestHandleMessage:
         svc._user_svc.upsert_chat_target = AsyncMock()
 
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._save_user_message = AsyncMock(return_value="umsg1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
-        svc._handle_text = AsyncMock()
-        svc._reply_text = AsyncMock()
+        svc._download_media = AsyncMock(return_value=[])
+        svc._enqueue_actor_message = AsyncMock()
 
         msg = _make_msg()
         ctx = _make_reply_ctx()
 
         await svc.handle_message(msg, ctx)
 
-        svc._handle_text.assert_called_once()
-        call_kwargs = svc._handle_text.call_args.kwargs
-        assert call_kwargs["user_id"] == "uid1"
-        assert call_kwargs["conversation_id"] == "conv1"
-        assert call_kwargs["text_content"] == "你好"
-        assert call_kwargs["input_message_id"] == "umsg1"
-        assert call_kwargs["turn_id"]
+        svc._enqueue_actor_message.assert_awaited_once_with(
+            msg, ctx, "uid1", "conv1", [],
+        )
 
     @pytest.mark.asyncio
-    async def test_actor_flag_enqueues_without_legacy_messages(self):
+    async def test_actor_enqueue_does_not_create_legacy_messages(self):
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc.settings = MagicMock(conversation_actor_wecom_enabled=True)
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
         svc._user_svc.update_last_chatid = AsyncMock()
@@ -303,8 +120,6 @@ class TestHandleMessage:
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._download_media = AsyncMock(return_value=[])
         svc._enqueue_actor_message = AsyncMock()
-        svc._save_user_message = AsyncMock()
-        svc._create_assistant_placeholder = AsyncMock()
 
         msg = _make_msg()
         ctx = _make_reply_ctx()
@@ -313,8 +128,6 @@ class TestHandleMessage:
         svc._enqueue_actor_message.assert_awaited_once_with(
             msg, ctx, "uid1", "conv1", [],
         )
-        svc._save_user_message.assert_not_awaited()
-        svc._create_assistant_placeholder.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_actor_enqueue_checks_balance_and_acknowledges_new_task(self):
@@ -347,7 +160,7 @@ class TestHandleMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_actor_file_prepares_asset_before_atomic_enqueue(self):
+    async def test_file_is_staged_without_starting_generation(self):
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._get_user_balance = MagicMock(return_value=10)
@@ -360,24 +173,23 @@ class TestHandleMessage:
             "mime_type": "text/csv",
             "size": 10,
         }
-        svc._prepare_actor_file = AsyncMock(return_value=file_payload)
-        result = MagicMock(already_enqueued=False)
+        svc._prepare_wecom_file = AsyncMock(return_value=file_payload)
         msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
         ctx = _make_reply_ctx()
 
         with patch(
-            "services.wecom.actor_enqueue.enqueue_wecom_message",
-            new=AsyncMock(return_value=result),
-        ) as mock_enqueue, patch(
-            "services.handlers.get_handler",
-            return_value=MagicMock(),
-        ):
-            await svc._enqueue_actor_message(
-                msg, ctx, "uid1", "conv1", [],
+            "services.wecom.attachment_service.stage_wecom_attachment",
+            return_value=MagicMock(already_staged=False),
+        ) as stage:
+            await svc._stage_file_message(
+                msg, ctx, "uid1", "conv1",
             )
 
-        assert mock_enqueue.call_args.kwargs["file_payload"] == file_payload
-        svc._reply_text.assert_awaited_once_with(ctx, "已收到，正在处理中。")
+        assert stage.call_args.kwargs["file_payload"] == file_payload
+        assert stage.call_args.kwargs["storage_scope"] == "user"
+        svc._reply_text.assert_awaited_once_with(
+            ctx, "文件已收到，请告诉我需要如何处理。",
+        )
 
     @pytest.mark.asyncio
     async def test_actor_replay_always_finishes_stream_acknowledgement(self):
@@ -406,8 +218,8 @@ class TestHandleMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_image_message_calls_handle_text(self):
-        """图片消息 → 走 _handle_text（多模态）"""
+    async def test_image_message_always_enqueues_actor(self):
+        """图片消息统一进入 Actor 多模态链路。"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
@@ -416,19 +228,17 @@ class TestHandleMessage:
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._save_user_message = AsyncMock(return_value="umsg1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
-        svc._handle_text = AsyncMock()
-        svc._reply_text = AsyncMock()
+        svc._download_media = AsyncMock(return_value=[])
+        svc._enqueue_actor_message = AsyncMock()
 
         msg = _make_msg(msgtype=WecomMsgType.IMAGE)
         ctx = _make_reply_ctx()
 
         await svc.handle_message(msg, ctx)
 
-        svc._handle_text.assert_called_once()
-        call_kwargs = svc._handle_text.call_args.kwargs
-        assert call_kwargs["image_urls"] == []
+        svc._enqueue_actor_message.assert_awaited_once_with(
+            msg, ctx, "uid1", "conv1", [],
+        )
 
     @pytest.mark.asyncio
     async def test_unsupported_msgtype_replies_hint(self):
@@ -441,9 +251,6 @@ class TestHandleMessage:
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._save_user_message = AsyncMock(return_value="umsg1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
-        svc._handle_text = AsyncMock()
         svc._reply_text = AsyncMock()
 
         msg = _make_msg(msgtype="location")
@@ -451,7 +258,6 @@ class TestHandleMessage:
 
         await svc.handle_message(msg, ctx)
 
-        svc._handle_text.assert_not_called()
         svc._reply_text.assert_called_once()
         reply_text = svc._reply_text.call_args[0][1]
         assert "文字" in reply_text or "图片" in reply_text
@@ -479,7 +285,7 @@ class TestHandleMessage:
 
     @pytest.mark.asyncio
     async def test_voice_message_treated_as_text(self):
-        """语音消息 → 走文本处理流程"""
+        """语音消息 → 统一进入 Actor。"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
@@ -488,528 +294,22 @@ class TestHandleMessage:
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
-        svc._save_user_message = AsyncMock(return_value="umsg1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
-        svc._handle_text = AsyncMock()
+        svc._download_media = AsyncMock(return_value=[])
+        svc._enqueue_actor_message = AsyncMock()
 
         msg = _make_msg(msgtype=WecomMsgType.VOICE)
         ctx = _make_reply_ctx()
 
         await svc.handle_message(msg, ctx)
 
-        svc._handle_text.assert_called_once()
-
-
-# ============================================================
-# TestSendAppMessage
-# ============================================================
-
-
-class TestSendAppMessage:
-    """_send_app_message 格式适配 + 长消息分割"""
-
-    @pytest.mark.asyncio
-    async def test_plain_text_sends_text(self):
-        """纯文本 → send_text"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ):
-            await svc._send_app_message(ctx, "普通文本消息")
-
-        mock_send.assert_called_once()
-        call_kwargs = mock_send.call_args.kwargs
-        assert call_kwargs["wecom_userid"] == "user_abc"
-        assert call_kwargs["content"] == "普通文本消息"
-        assert call_kwargs["creds"].agent_id == 1000006
-
-    @pytest.mark.asyncio
-    async def test_markdown_sends_markdown(self):
-        """含 Markdown → send_markdown"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ), patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ) as mock_md:
-            await svc._send_app_message(ctx, "# 标题\n\n**内容**")
-
-        mock_md.assert_called_once()
-        call_kwargs = mock_md.call_args.kwargs
-        assert call_kwargs["wecom_userid"] == "user_abc"
-
-    @pytest.mark.asyncio
-    async def test_markdown_fallback_to_text(self):
-        """send_markdown 失败 → 降级 send_text"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ) as mock_text, patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(return_value=False),
-        ) as mock_md:
-            await svc._send_app_message(ctx, "# 标题\n\n**内容**")
-
-        mock_md.assert_called_once()
-        mock_text.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_long_message_splits(self):
-        """超长消息 → 分割为多条"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        ctx = _make_reply_ctx("app")
-
-        # 构造超过 2000 字节的纯文本
-        long_text = "A" * 3000
-
-        with patch(
-            "services.wecom.app_message_sender.send_text",
-            new=AsyncMock(),
-        ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown",
-            new=AsyncMock(),
-        ):
-            await svc._send_app_message(ctx, long_text)
-
-        assert mock_send.call_count >= 2
-
-
-# ============================================================
-# TestHandleText
-# ============================================================
-
-
-class TestHandleText:
-    """_handle_text ChatHandler 统一生成 + 分发"""
-
-    @pytest.mark.asyncio
-    async def test_text_response_dispatched(self):
-        """ChatHandler 返回 TextPart → 推送到企微"""
-        from schemas.message import TextPart
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-
-        svc._dispatch_result_to_wecom = AsyncMock()
-
-        with patch(
-            "services.handlers.get_handler"
-        ) as mock_get_handler:
-            mock_instance = MagicMock()
-            from services.handlers.chat_generate_mixin import GenerateResult
-            mock_instance.generate_complete = AsyncMock(
-                return_value=GenerateResult(parts=[TextPart(text="你好，这是回复")])
-            )
-            mock_get_handler.return_value = mock_instance
-
-            ctx = _make_reply_ctx("smart_robot")
-            await svc._handle_text("u1", "c1", "m1", "你好", ctx)
-
-        svc._dispatch_result_to_wecom.assert_called_once()
-        gen_result = svc._dispatch_result_to_wecom.call_args[0][0]
-        assert any(isinstance(p, TextPart) for p in gen_result.parts)
-
-    @pytest.mark.asyncio
-    async def test_image_response_dispatched(self):
-        """ChatHandler 返回 ImagePart → 推送图片到企微"""
-        from schemas.message import ImagePart, TextPart
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-
-        svc._dispatch_result_to_wecom = AsyncMock()
-
-        with patch(
-            "services.handlers.get_handler"
-        ) as mock_get_handler:
-            mock_instance = MagicMock()
-            from services.handlers.chat_generate_mixin import GenerateResult
-            mock_instance.generate_complete = AsyncMock(
-                return_value=GenerateResult(parts=[
-                    TextPart(text="图片如下"),
-                    ImagePart(url="https://example.com/cat.png"),
-                ])
-            )
-            mock_get_handler.return_value = mock_instance
-
-            ctx = _make_reply_ctx("smart_robot")
-            await svc._handle_text("u1", "c1", "m1", "画猫", ctx)
-
-        gen_result = svc._dispatch_result_to_wecom.call_args[0][0]
-        assert any(isinstance(p, ImagePart) for p in gen_result.parts)
-
-    @pytest.mark.asyncio
-    async def test_video_response_dispatched(self):
-        """ChatHandler 返回 VideoPart → 推送视频到企微"""
-        from schemas.message import TextPart, VideoPart
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-
-        svc._dispatch_result_to_wecom = AsyncMock()
-
-        with patch(
-            "services.handlers.get_handler"
-        ) as mock_get_handler:
-            mock_instance = MagicMock()
-            from services.handlers.chat_generate_mixin import GenerateResult
-            mock_instance.generate_complete = AsyncMock(
-                return_value=GenerateResult(parts=[VideoPart(url="https://example.com/demo.mp4")])
-            )
-            mock_get_handler.return_value = mock_instance
-
-            ctx = _make_reply_ctx("smart_robot")
-            await svc._handle_text("u1", "c1", "m1", "生成视频", ctx)
-
-        gen_result = svc._dispatch_result_to_wecom.call_args[0][0]
-        assert any(isinstance(p, VideoPart) for p in gen_result.parts)
-
-    @pytest.mark.asyncio
-    async def test_generate_failure_replies_error(self):
-        """ChatHandler 异常 → 回复错误信息"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-
-        svc._reply_text = AsyncMock()
-
-        with patch(
-            "services.handlers.get_handler"
-        ) as mock_get_handler:
-            mock_instance = MagicMock()
-            mock_instance.generate_complete = AsyncMock(side_effect=RuntimeError("boom"))
-            mock_get_handler.return_value = mock_instance
-
-            ctx = _make_reply_ctx("smart_robot")
-            await svc._handle_text("u1", "c1", "m1", "你好", ctx)
-
-        svc._reply_text.assert_called_once()
-        assert "问题" in svc._reply_text.call_args[0][1]
-
-    @pytest.mark.asyncio
-    async def test_handler_receives_org_id(self):
-        """ChatHandler.org_id 正确传递"""
-        from schemas.message import TextPart
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-
-        svc._dispatch_result_to_wecom = AsyncMock()
-
-        with patch(
-            "services.handlers.get_handler"
-        ) as mock_get_handler:
-            mock_instance = MagicMock()
-            from services.handlers.chat_generate_mixin import GenerateResult
-            mock_instance.generate_complete = AsyncMock(
-                return_value=GenerateResult(parts=[TextPart(text="ok")])
-            )
-            mock_get_handler.return_value = mock_instance
-
-            ctx = _make_reply_ctx("smart_robot")
-            await svc._handle_text("u1", "c1", "m1", "你好", ctx, org_id="org123")
-
-        # factory 统一注入：验证 get_handler 收到正确的 org_id
-        mock_get_handler.assert_called_once()
-        call_kwargs = mock_get_handler.call_args
-        assert call_kwargs.kwargs.get("org_id") == "org123"
-
-    @pytest.mark.asyncio
-    async def test_credits_insufficient_replies_card(self):
-        """余额为 0 → 调用 _reply_credits_insufficient，不调 ChatHandler"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=0)
-        svc._reply_credits_insufficient = AsyncMock()
-
-        with patch(
-            "services.handlers.get_handler"
-        ) as mock_get_handler:
-            ctx = _make_reply_ctx("smart_robot")
-            await svc._handle_text("u1", "c1", "m1", "你好", ctx)
-
-        svc._reply_credits_insufficient.assert_called_once()
-        mock_get_handler.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_bound_wecom_task_closes_turn_after_success(self):
-        from schemas.message import TextPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-        from services.handlers.context_snapshot import ContextAnchor
-
-        db = _make_db_mock()
-        db.rpc.return_value.execute.return_value = MagicMock(data={"closed_revision": 2})
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-        svc._dispatch_result_to_wecom = AsyncMock()
-
-        with patch("services.handlers.get_handler") as mock_get_handler:
-            handler = MagicMock()
-            handler._build_task_data.return_value = {
-                "id": "db_task_1", "conversation_id": "c1", "org_id": "org1",
-            }
-            anchor = ContextAnchor(
-                task_id="db_task_1", conversation_id="c1", turn_id="t1",
-                input_message_id="m1", base_revision=1,
-                through_message_id="a0", org_id="org1",
-            )
-            handler._insert_task_with_turn_binding.return_value = anchor
-            handler.generate_complete = AsyncMock(
-                return_value=GenerateResult(parts=[TextPart(text="ok")]),
-            )
-            mock_get_handler.return_value = handler
-
-            await svc._handle_text(
-                "u1", "c1", "a1", "你好", _make_reply_ctx(), org_id="org1",
-                input_message_id="m1", turn_id="t1",
-            )
-
-        handler._insert_task_with_turn_binding.assert_called_once()
-        handler.generate_complete.assert_awaited_once_with(
-            content=[TextPart(text="你好")],
-            user_id="u1",
-            conversation_id="c1",
-            context_anchor=anchor,
+        svc._enqueue_actor_message.assert_awaited_once_with(
+            msg, ctx, "uid1", "conv1", [],
         )
-        db.rpc.assert_called_once_with("close_generation_turn", {
-            "p_conversation_id": "c1",
-            "p_task_id": "db_task_1",
-            "p_output_message_id": "a1",
-        })
-
-    @pytest.mark.asyncio
-    async def test_failed_wecom_generation_does_not_close_turn(self):
-        from services.handlers.context_snapshot import ContextAnchor
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._get_user_balance = MagicMock(return_value=100)
-        svc._reply_text = AsyncMock()
-
-        with patch("services.handlers.get_handler") as mock_get_handler:
-            handler = MagicMock()
-            handler._build_task_data.return_value = {
-                "id": "db_task_1", "conversation_id": "c1", "org_id": "org1",
-            }
-            handler._insert_task_with_turn_binding.return_value = ContextAnchor(
-                task_id="db_task_1", conversation_id="c1", turn_id="t1",
-                input_message_id="m1", base_revision=1,
-                through_message_id=None, org_id="org1",
-            )
-            handler.generate_complete = AsyncMock(side_effect=RuntimeError("boom"))
-            mock_get_handler.return_value = handler
-
-            await svc._handle_text(
-                "u1", "c1", "a1", "你好", _make_reply_ctx(), org_id="org1",
-                input_message_id="m1", turn_id="t1",
-            )
-
-        db.rpc.assert_not_called()
-        tasks = db._table_mocks["tasks"]
-        failed_update = tasks.update.call_args[0][0]
-        assert failed_update["status"] == "failed"
-        messages = db._table_mocks["messages"]
-        message_update = messages.update.call_args[0][0]
-        assert message_update["status"] == "failed"
 
 
 # ============================================================
-# TestDispatchResultToWecom
-# ============================================================
-
-
-class TestDispatchResultToWecom:
-    """_dispatch_result_to_wecom 分发 + DB统一写入"""
-
-    @pytest.mark.asyncio
-    async def test_text_only_dispatched(self):
-        """纯文字 → 推送文字 + DB 写入 TextPart"""
-        from schemas.message import TextPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        gen_result = GenerateResult(parts=[TextPart(text="回复内容")])
-        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
-
-        # DB messages 表应被 update
-        msg_mock = db._table_mocks["messages"]
-        msg_mock.update.assert_called_once()
-        update_args = msg_mock.update.call_args[0][0]
-        assert update_args["status"] == "completed"
-        assert any(c["type"] == "text" for c in update_args["content"])
-
-    @pytest.mark.asyncio
-    async def test_mixed_text_and_image(self):
-        """文字+图片 → 都推送 + DB 一次性包含两种类型"""
-        from schemas.message import ImagePart, TextPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-        svc._send_media_to_wecom = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        gen_result = GenerateResult(parts=[TextPart(text="图如下"), ImagePart(url="https://example.com/cat.png")])
-        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
-
-        # 媒体应推送（message_id=None，不让内部更新 DB）
-        svc._send_media_to_wecom.assert_called_once()
-        call_kwargs = svc._send_media_to_wecom.call_args[1]
-        assert call_kwargs.get("message_id") is None
-
-        # DB 应包含 text + image
-        msg_mock = db._table_mocks["messages"]
-        update_args = msg_mock.update.call_args[0][0]
-        types = [c["type"] for c in update_args["content"]]
-        assert "text" in types
-        assert "image" in types
-
-    @pytest.mark.asyncio
-    async def test_empty_result_replies_error(self):
-        """空结果 → 回复错误信息"""
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        await svc._dispatch_result_to_wecom(GenerateResult(parts=[]), ctx, "m1")
-
-        svc._reply_text.assert_called_once()
-        assert "没有生成" in svc._reply_text.call_args[0][1]
-
-    @pytest.mark.asyncio
-    async def test_video_dispatched(self):
-        """视频 → 推送视频 + DB 包含 video"""
-        from schemas.message import TextPart, VideoPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-        svc._send_media_to_wecom = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        gen_result = GenerateResult(parts=[TextPart(text="视频如下"), VideoPart(url="https://example.com/demo.mp4")])
-        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
-
-        msg_mock = db._table_mocks["messages"]
-        update_args = msg_mock.update.call_args[0][0]
-        types = [c["type"] for c in update_args["content"]]
-        assert "video" in types
-
-    @pytest.mark.asyncio
-    async def test_tool_step_blocks_saved_to_content(self):
-        """有 tool_step 块 → DB content 包含 tool_step + text"""
-        from schemas.message import TextPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        gen_result = GenerateResult(
-            parts=[TextPart(text="查询结果：100笔")],
-            content_blocks=[
-                {"type": "tool_step", "tool_name": "erp_agent", "tool_call_id": "call_1",
-                 "status": "completed", "summary": "订单100笔", "elapsed_ms": 3000},
-                {"type": "text", "text": "查询结果：100笔"},
-            ],
-            tool_digest={"tools": [{"name": "erp_agent", "ok": True, "hint": "订单查询"}]},
-        )
-        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
-
-        msg_mock = db._table_mocks["messages"]
-        update_args = msg_mock.update.call_args[0][0]
-
-        # content 应包含 tool_step 和 text
-        types = [c["type"] for c in update_args["content"]]
-        assert "tool_step" in types
-        assert "text" in types
-
-        # tool_step 应包含完整信息
-        tool_steps = [c for c in update_args["content"] if c["type"] == "tool_step"]
-        assert tool_steps[0]["tool_name"] == "erp_agent"
-        assert tool_steps[0]["summary"] == "订单100笔"
-
-    @pytest.mark.asyncio
-    async def test_generation_params_saved_with_tool_digest(self):
-        """有 tool_digest → DB generation_params 包含 tool_digest"""
-        from schemas.message import TextPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        digest = {"tools": [{"name": "erp_agent", "ok": True, "hint": "订单"}], "staging_dir": "staging/c1"}
-        gen_result = GenerateResult(
-            parts=[TextPart(text="ok")],
-            content_blocks=[{"type": "text", "text": "ok"}],
-            tool_digest=digest,
-        )
-        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
-
-        msg_mock = db._table_mocks["messages"]
-        update_args = msg_mock.update.call_args[0][0]
-
-        assert "generation_params" in update_args
-        gen_params = update_args["generation_params"]
-        assert gen_params["type"] == "chat"
-        assert gen_params["tool_digest"] == digest
-
-    @pytest.mark.asyncio
-    async def test_no_tool_digest_minimal_generation_params(self):
-        """无 tool_digest → generation_params 只有 type"""
-        from schemas.message import TextPart
-        from services.handlers.chat_generate_mixin import GenerateResult
-
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
-
-        ctx = _make_reply_ctx("smart_robot")
-        gen_result = GenerateResult(parts=[TextPart(text="纯文字回复")])
-        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
-
-        msg_mock = db._table_mocks["messages"]
-        update_args = msg_mock.update.call_args[0][0]
-
-        gen_params = update_args["generation_params"]
-        assert gen_params == {"type": "chat"}
-        assert "tool_digest" not in gen_params
-
-
-# ============================================================
+# TestGetOrCreateConversation# ============================================================
+# TestGetOrCreateConversation# ============================================================
 # TestGetOrCreateConversation
 # ============================================================
 
@@ -1018,387 +318,28 @@ class TestGetOrCreateConversation:
     """_get_or_create_conversation 对话管理"""
 
     @pytest.mark.asyncio
-    async def test_existing_conversation(self):
-        """已有对话 → 返回 id"""
+    @pytest.mark.parametrize("chat_type", ["single", WecomChatType.GROUP])
+    async def test_resolves_provider_conversation(self, chat_type):
         db = _make_db_mock()
         svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.like.return_value = chain
-        chain.is_.return_value = chain
-        chain.order.return_value = chain
-        chain.limit.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [{"id": "conv-existing"}]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        result = await svc._get_or_create_conversation("u1", "chat1", "single")
-        assert result == "conv-existing"
-
-    @pytest.mark.asyncio
-    async def test_create_new_single(self):
-        """无对话 → 创建单聊"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.like.return_value = chain
-        chain.is_.return_value = chain
-        chain.order.return_value = chain
-        chain.limit.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = []
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        svc._conv_svc = MagicMock()
-        svc._conv_svc.create_conversation = AsyncMock(
-            return_value={"id": "conv-new"},
-        )
-
-        result = await svc._get_or_create_conversation("u1", "chat1", "single")
-        assert result == "conv-new"
-
-        create_call = svc._conv_svc.create_conversation.call_args
-        assert create_call.kwargs["title"] == "企微对话"
-
-    @pytest.mark.asyncio
-    async def test_create_new_group(self):
-        """无对话 + 群聊 → 创建群聊对话"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.like.return_value = chain
-        chain.is_.return_value = chain
-        chain.order.return_value = chain
-        chain.limit.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = []
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        svc._conv_svc = MagicMock()
-        svc._conv_svc.create_conversation = AsyncMock(
-            return_value={"id": "conv-group"},
+        db.rpc.return_value.execute.return_value = MagicMock(
+            data={"conversation_id": "conv-existing"},
         )
 
         result = await svc._get_or_create_conversation(
-            "u1", "chat1", WecomChatType.GROUP,
+            "u1", "chat1", chat_type, "corp1",
         )
-        assert result == "conv-group"
-
-        create_call = svc._conv_svc.create_conversation.call_args
-        assert create_call.kwargs["title"] == "企微群聊"
-
-
-# ============================================================
-# TestMessagePersistence
-# ============================================================
-
-
-class TestMessagePersistence:
-    """_save_user_message / _create_assistant_placeholder / _update_assistant_message"""
-
-    @pytest.mark.asyncio
-    async def test_save_user_message(self):
-        """保存用户消息 + 递增计数"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.insert.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [{"id": "msg-u1"}]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        msg_id = await svc._save_user_message("c1", "u1", "你好")
-
-        assert msg_id == "msg-u1"
-        # 验证 insert 的内容
-        insert_data = chain.insert.call_args[0][0]
-        assert insert_data["role"] == "user"
-        assert insert_data["status"] == "completed"
-        # 验证 rpc 递增（含 p_org_id 参数）
-        db.rpc.assert_called_once()
-        rpc_args = db.rpc.call_args[0]
-        assert rpc_args[0] == "increment_message_count"
-        assert rpc_args[1]["conv_id"] == "c1"
-        assert "p_org_id" in rpc_args[1]
-
-    @pytest.mark.asyncio
-    async def test_create_assistant_placeholder(self):
-        """创建 assistant 占位"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.insert.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [{"id": "msg-a1"}]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        msg_id = await svc._create_assistant_placeholder("c1")
-
-        assert msg_id == "msg-a1"
-        insert_data = chain.insert.call_args[0][0]
-        assert insert_data["role"] == "assistant"
-        assert insert_data["status"] == "generating"
-
-    @pytest.mark.asyncio
-    async def test_update_assistant_message(self):
-        """更新 assistant 消息"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.update.return_value = chain
-        chain.eq.return_value = chain
-        chain.execute.return_value = MagicMock()
-        db.table = MagicMock(return_value=chain)
-
-        await svc._update_assistant_message("m1", "回复内容")
-
-        update_data = chain.update.call_args[0][0]
-        assert update_data["status"] == "completed"
-        assert update_data["content"][0]["text"] == "回复内容"
-        chain.eq.assert_called_with("id", "m1")
-
-    @pytest.mark.asyncio
-    async def test_save_user_message_with_images(self):
-        """保存含图片的用户消息"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.insert.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [{"id": "msg-u2"}]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        msg_id = await svc._save_user_message(
-            "c1", "u1", "看这张图",
-            image_urls=["https://oss.example.com/img1.jpg"],
-        )
-        assert msg_id == "msg-u2"
-
-        insert_data = chain.insert.call_args[0][0]
-        content = insert_data["content"]
-        assert len(content) == 2
-        assert content[0] == {"type": "text", "text": "看这张图"}
-        assert content[1] == {"type": "image", "url": "https://oss.example.com/img1.jpg"}
-
-    @pytest.mark.asyncio
-    async def test_save_user_message_image_only(self):
-        """只有图片无文本"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.insert.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [{"id": "msg-u3"}]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        msg_id = await svc._save_user_message(
-            "c1", "u1", "",
-            image_urls=["https://oss.example.com/img1.jpg"],
-        )
-        assert msg_id == "msg-u3"
-
-        insert_data = chain.insert.call_args[0][0]
-        content = insert_data["content"]
-        assert len(content) == 1
-        assert content[0]["type"] == "image"
-
-    @pytest.mark.asyncio
-    async def test_save_user_message_no_content(self):
-        """无文本无图片 → 兜底空文本"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.insert.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [{"id": "msg-u4"}]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        msg_id = await svc._save_user_message("c1", "u1", "", image_urls=[])
-        assert msg_id == "msg-u4"
-
-        insert_data = chain.insert.call_args[0][0]
-        content = insert_data["content"]
-        assert content == [{"type": "text", "text": ""}]
+        assert result == "conv-existing"
+        db.rpc.assert_called_once_with("resolve_wecom_conversation", {
+            "p_user_id": "u1",
+            "p_corp_id": "corp1",
+            "p_external_chat_id": "chat1",
+            "p_chat_type": chat_type,
+        })
 
 
 # ============================================================
-# TestDownloadMedia
-# ============================================================
-
-
-class TestDownloadMedia:
-    """_download_media 多媒体下载"""
-
-    @pytest.mark.asyncio
-    async def test_no_images_returns_empty(self):
-        """无图片 → 空列表"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        msg = _make_msg()
-
-        result = await svc._download_media(msg, "u1")
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_downloads_images_to_oss(self):
-        """有图片 → 调用 downloader → 返回 OSS URL"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        msg = WecomIncomingMessage(
-            msgid="msg002",
-            wecom_userid="user_abc",
-            corp_id="corp1",
-            chatid="user_abc",
-            chattype=WecomChatType.SINGLE,
-            msgtype=WecomMsgType.IMAGE,
-            channel="smart_robot",
-            image_urls=["https://wecom.example.com/img1.jpg"],
-            aeskeys={"https://wecom.example.com/img1.jpg": "aes123"},
-        )
-
-        with patch(
-            "services.wecom.media_downloader.WecomMediaDownloader.download_and_store",
-            new=AsyncMock(return_value="https://oss.example.com/stored.jpg"),
-        ):
-            result = await svc._download_media(msg, "u1")
-
-        assert result == ["https://oss.example.com/stored.jpg"]
-
-    @pytest.mark.asyncio
-    async def test_download_failure_skips(self):
-        """下载失败 → 跳过该图片"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        msg = WecomIncomingMessage(
-            msgid="msg003",
-            wecom_userid="user_abc",
-            corp_id="corp1",
-            chatid="user_abc",
-            chattype=WecomChatType.SINGLE,
-            msgtype=WecomMsgType.IMAGE,
-            channel="smart_robot",
-            image_urls=["https://wecom.example.com/img_bad.jpg"],
-        )
-
-        with patch(
-            "services.wecom.media_downloader.WecomMediaDownloader.download_and_store",
-            new=AsyncMock(return_value=None),
-        ):
-            result = await svc._download_media(msg, "u1")
-
-        assert result == []
-
-
-# ============================================================
-# TestReplyTextWithStream — 有活跃 stream 时用 stream finish 替换
-# ============================================================
-
-
-class TestReplyTextWithStream:
-    """_reply_text 在 active_stream_id 存在时走 stream finish 路径"""
-
-    @pytest.mark.asyncio
-    async def test_reply_text_uses_stream_finish(self):
-        """有 active_stream_id → 用 send_stream_chunk finish 替换占位"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        ctx = _make_reply_ctx("smart_robot")
-        ctx.active_stream_id = "stream_existing_123"
-
-        await svc._reply_text(ctx, "AI 的回复内容")
-
-        ctx.ws_client.send_stream_chunk.assert_called_once_with(
-            req_id="req001",
-            stream_id="stream_existing_123",
-            content="AI 的回复内容",
-            finish=True,
-        )
-        # stream 用完后应清空
-        assert ctx.active_stream_id is None
-
-    @pytest.mark.asyncio
-    async def test_reply_text_no_stream_uses_send_reply(self):
-        """无 active_stream_id → 用 send_reply 发送"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        ctx = _make_reply_ctx("smart_robot")
-        assert ctx.active_stream_id is None
-
-        await svc._reply_text(ctx, "直接回复")
-
-        ctx.ws_client.send_reply.assert_called_once_with(
-            req_id="req001",
-            msgtype="text",
-            content={"content": "直接回复"},
-        )
-
-
-# ============================================================
-# TestReplyCreditsInsufficient — 积分不足回复
-# ============================================================
-
-
-class TestReplyCreditsInsufficient:
-    """_reply_credits_insufficient 双通道回复"""
-
-    @pytest.mark.asyncio
-    async def test_smart_robot_sends_card(self):
-        """智能机器人通道 → 发送积分不足卡片"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        ctx = _make_reply_ctx("smart_robot")
-
-        await svc._reply_credits_insufficient(ctx, 100, 20, "图片")
-
-        ctx.ws_client.send_template_card.assert_called_once()
-        card = ctx.ws_client.send_template_card.call_args[0][1]
-        assert "card_type" in card
-
-    @pytest.mark.asyncio
-    async def test_app_sends_text(self):
-        """自建应用通道 → 发送文本"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        ctx = _make_reply_ctx("app")
-
-        with patch.object(svc, "_send_app_message", new=AsyncMock()) as mock_send:
-            await svc._reply_credits_insufficient(ctx, 100, 20, "图片")
-
-            mock_send.assert_called_once()
-            text_arg = mock_send.call_args[0][1]
-            assert "100" in text_arg
-            assert "20" in text_arg
-
-
-# ============================================================
+# TestCommandInterception# ============================================================
 # TestCommandInterception — 指令拦截早期返回
 # ============================================================
 
@@ -1408,7 +349,7 @@ class TestCommandInterception:
 
     @pytest.mark.asyncio
     async def test_command_match_skips_ai(self):
-        """文本"帮助"匹配指令 → try_handle=True → 不调用 _handle_text"""
+        """文本“帮助”匹配指令后，不进入 Actor。"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
@@ -1417,6 +358,7 @@ class TestCommandInterception:
 
         # mock _get_or_create_conversation
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._enqueue_actor_message = AsyncMock()
 
         msg = _make_msg(text="帮助")
         ctx = _make_reply_ctx()
@@ -1425,11 +367,10 @@ class TestCommandInterception:
             "services.wecom.command_handler.CommandHandler.try_handle",
             new=AsyncMock(return_value=True),
         ) as mock_try:
-            with patch.object(svc, "_handle_text", new=AsyncMock()) as mock_handle:
-                await svc.handle_message(msg, ctx)
+            await svc.handle_message(msg, ctx)
 
-                mock_try.assert_called_once()
-                mock_handle.assert_not_called()
+            mock_try.assert_called_once()
+            svc._enqueue_actor_message.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_command_continues_to_ai(self):
@@ -1441,8 +382,7 @@ class TestCommandInterception:
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+        svc._enqueue_actor_message = AsyncMock()
 
         msg = _make_msg(text="今天天气怎么样")
         ctx = _make_reply_ctx()
@@ -1451,9 +391,10 @@ class TestCommandInterception:
             "services.wecom.command_handler.CommandHandler.try_handle",
             new=AsyncMock(return_value=False),
         ):
-            with patch.object(svc, "_handle_text", new=AsyncMock()) as mock_handle:
-                await svc.handle_message(msg, ctx)
-                mock_handle.assert_called_once()
+            await svc.handle_message(msg, ctx)
+            svc._enqueue_actor_message.assert_awaited_once_with(
+                msg, ctx, "uid1", "conv1", [],
+            )
 
 
 # ============================================================
@@ -1462,21 +403,18 @@ class TestCommandInterception:
 
 
 class TestFileVideoHint:
-    """FILE → Actor，VIDEO → 提示不支持"""
+    """FILE → 持久化暂存，VIDEO → 提示不支持"""
 
     @pytest.mark.asyncio
-    async def test_file_always_uses_actor_without_legacy_messages(self):
+    async def test_file_is_staged_without_legacy_messages(self):
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc.settings = MagicMock(conversation_actor_wecom_enabled=False)
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._download_media = AsyncMock(return_value=[])
-        svc._enqueue_actor_message = AsyncMock()
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+        svc._stage_file_message = AsyncMock()
 
         msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
         msg.file_url = "https://example.com/test.pdf"
@@ -1485,9 +423,7 @@ class TestFileVideoHint:
 
         await svc.handle_message(msg, ctx)
 
-        svc._enqueue_actor_message.assert_awaited_once()
-        svc._save_user_message.assert_not_awaited()
-        svc._create_assistant_placeholder.assert_not_awaited()
+        svc._stage_file_message.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_video_replies_hint(self):
@@ -1499,8 +435,6 @@ class TestFileVideoHint:
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
 
         msg = _make_msg(msgtype=WecomMsgType.VIDEO, text="")
         ctx = _make_reply_ctx()
@@ -1508,53 +442,19 @@ class TestFileVideoHint:
         with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
             await svc.handle_message(msg, ctx)
             mock_reply.assert_called_once()
-            assert "暂不支持" in mock_reply.call_args[0][1]
+            assert "不支持" in mock_reply.call_args[0][1]
 
 # ============================================================
-# TestNotifyWebConversationUpdated
+# TestHandleMessageNotify
 # ============================================================
-
-
-class TestNotifyWebConversationUpdated:
-    """_notify_web_conversation_updated WS 推送"""
-
-    @pytest.mark.asyncio
-    async def test_sends_to_user_via_ws_manager(self):
-        """正常调用 → ws_manager.send_to_user 被调用"""
-        with patch(
-            "services.wecom.wecom_reply_mixin.ws_manager"
-        ) as mock_ws:
-            mock_ws.send_to_user = AsyncMock()
-            await WecomMessageService._notify_web_conversation_updated(
-                "uid1", "conv1",
-            )
-            mock_ws.send_to_user.assert_awaited_once_with(
-                "uid1",
-                {"type": "conversation_updated", "conversation_id": "conv1"},
-                org_id=None,
-            )
-
-    @pytest.mark.asyncio
-    async def test_exception_does_not_propagate(self):
-        """ws_manager 异常 → 不抛出，仅 warning"""
-        with patch(
-            "services.wecom.wecom_reply_mixin.ws_manager"
-        ) as mock_ws:
-            mock_ws.send_to_user = AsyncMock(
-                side_effect=ConnectionError("redis down")
-            )
-            # 不应抛出异常
-            await WecomMessageService._notify_web_conversation_updated(
-                "uid1", "conv1",
-            )
 
 
 class TestHandleMessageNotify:
     """handle_message 流程中 _notify_web_conversation_updated 被调用"""
 
     @pytest.mark.asyncio
-    async def test_notify_called_after_save_user_message(self):
-        """保存用户消息后 → 调用 notify"""
+    async def test_notify_called_after_actor_enqueue(self):
+        """Actor 入队后 → 调用 notify。"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
@@ -1564,14 +464,18 @@ class TestHandleMessageNotify:
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._download_media = AsyncMock(return_value=[])
-        svc._save_user_message = AsyncMock(return_value="m1")
-        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
-        svc._handle_text = AsyncMock()
+        svc._get_user_balance = MagicMock(return_value=10)
 
         msg = _make_msg()
         ctx = _make_reply_ctx()
 
-        with patch.object(
+        with patch(
+            "services.wecom.actor_enqueue.enqueue_wecom_message",
+            new=AsyncMock(return_value=MagicMock(already_enqueued=False)),
+        ), patch(
+            "services.handlers.get_handler",
+            return_value=MagicMock(),
+        ), patch.object(
             WecomMessageService,
             "_notify_web_conversation_updated",
             new=AsyncMock(),

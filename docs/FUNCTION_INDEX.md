@@ -246,7 +246,10 @@
 | Actor tenant RPC facades | `backend/migrations/127_actor_tenant_rpc_contract.sql` | 接收 OrgScopedDB 注入的 p_org_id，强校验租户后委托既有原子核心 | 原核心参数 + org_id | JSONB |
 | `get_wecom_conversation_setting` / `set_wecom_conversation_setting` | `backend/services/wecom/conversation_settings.py` | 读取企微对话设置并通过原子 RPC 持久化，数据库为唯一事实源 | db, conversation/user/key/value/org | str \| dict |
 | `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，捕获对话设置并以结构化 FilePart 调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload | WecomActorEnqueueResult |
-| `WecomFileMixin._prepare_actor_file` | `backend/services/wecom/wecom_file_mixin.py` | 原始字节按 msgid 稳定路径原子保存到共享 Workspace、同步 OSS 并返回标准 FilePart | msg, reply_ctx, user_id, org_id | dict \| None |
+| `normalize_wecom_message` / `parse_message_content` | `backend/services/wecom/message_normalizer.py` | 规范化智能机器人回调；私聊缺少 chatid 时使用发送者，群聊强制 chatid，并统一解析媒体字段 | body, org_id, corp_id | WecomIncomingMessage |
+| `resolve_channel_conversation` / `resolve_wecom_conversation` | `backend/services/wecom/channel_conversation.py`、`backend/migrations/128_wecom_channel_conversations.sql` | 按 org/corp/chatid 原子解析私聊或群共享 conversation；首次私聊可认领未绑定的历史企微对话 | user/corp/chat/type/org | conversation UUID |
+| `stage_wecom_attachment` | `backend/services/wecom/attachment_service.py`、`backend/migrations/129_conversation_attachments.sql` | 以企微 msgid 幂等创建 completed 文件消息和 ready 活动附件，不创建生成任务 | conversation/sender/file/scope/org | StagedAttachment |
+| `WecomFileMixin._prepare_wecom_file` | `backend/services/wecom/wecom_file_mixin.py` | 原始字节按 msgid 保存；私聊进入个人 Workspace，群聊进入 channel Workspace，同步 OSS 后返回 FilePart | msg, reply_ctx, user_id, org_id | dict \| None |
 | `WecomReplyMixin` | `backend/services/wecom/wecom_reply_mixin.py` | 旧同步链路的结果格式化、企微双通道回复和 Web 会话更新通知 | - | mixin |
 | `WecomIngressMixin._process_incoming_content` | `backend/services/wecom/wecom_ingress_mixin.py` | FILE 固定进入 Actor；其他支持类型按企微 Actor 开关分流原子入队或旧同步生命周期 | msg, reply_ctx, user_id, conversation_id, image_urls | None |
 | `GenerationClaim.from_rpc` | `backend/services/conversation_execution.py` | 校验 claimed RPC 结果并构造不可变执行权对象；非 claimed 结果返回 None | data, conversation_id, execution_mode | GenerationClaim \| None |
@@ -1063,23 +1066,16 @@
 | `_deduct_credits` | `backend/services/base_generation_service.py` | 扣除积分 | user_id, credits, description | int |
 | `record_user_activity` | `backend/services/user_activity_service.py` | 记录用户活跃事件并更新 users.last_active_at（失败不阻断） | db, user_id, event_type, org_id?, source?, resource_type?, resource_id?, occurred_at?, metadata? | None |
 
-### 企业微信 AI 路由模块 (WeChat Work AI Routing)
+### 企业微信入站余额校验
 
 #### 后端函数 — WecomAIMixin (`backend/services/wecom/wecom_ai_mixin.py`)
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `_run_agent_loop` | `backend/services/wecom/wecom_ai_mixin.py` | Agent Loop 路由（失败降级 IntentRouter → 兜底 CHAT） | user_id, conversation_id, content | AgentResult |
-| `_build_memory_prompt` | `backend/services/wecom/wecom_ai_mixin.py` | 构建记忆 system prompt | user_id, query | Optional[str] |
-| `_handle_chat_response` | `backend/services/wecom/wecom_ai_mixin.py` | 处理 CHAT 类型（direct_reply 或流式生成） | user_id, conversation_id, message_id, text_content, reply_ctx, agent_result, memory_prompt | None |
-| `_handle_image_response` | `backend/services/wecom/wecom_ai_mixin.py` | 处理 IMAGE 类型（积分检查 → 生成 → 发送） | user_id, conversation_id, message_id, text_content, reply_ctx, agent_result | None |
-| `_handle_video_response` | `backend/services/wecom/wecom_ai_mixin.py` | 处理 VIDEO 类型（积分检查 → 生成 → 发送） | user_id, conversation_id, message_id, text_content, reply_ctx, agent_result | None |
-| `_send_media_to_wecom` | `backend/services/wecom/wecom_ai_mixin.py` | 统一媒体发送（两渠道差异封装）+ 更新 DB | reply_ctx, urls, media_type, message_id | None |
-| `_handle_chat_fallback` | `backend/services/wecom/wecom_ai_mixin.py` | 兜底：默认模型直接聊天 | user_id, conversation_id, message_id, text_content, reply_ctx | None |
-| `_stream_and_reply` | `backend/services/wecom/wecom_ai_mixin.py` | 流式生成 + 推送到企微 + 更新 DB | adapter, messages, reply_ctx, message_id | None |
-| `_build_chat_messages` | `backend/services/wecom/wecom_ai_mixin.py` | 构建 LLM 消息列表（记忆/人设/搜索上下文） | user_id, conversation_id, text_content, system_prompt, memory_prompt, search_context | List[Dict] |
 | `_get_user_balance` | `backend/services/wecom/wecom_ai_mixin.py` | 获取用户积分余额 | user_id | int |
-| `_deduct_credits` | `backend/services/wecom/wecom_ai_mixin.py` | 直接扣除积分 | user_id, amount, reason | None |
+
+企微生成、上下文构建、积分扣除和结果投递已统一由 Conversation Actor、
+ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二条同步链路。
 
 #### 后端函数 — 企微消息发送 (`backend/services/wecom/app_message_sender.py`)
 
@@ -1309,6 +1305,8 @@
 | `file_rename` | `backend/services/file_write_extensions.py` | 重命名（同目录） |
 | `file_move` | `backend/services/file_write_extensions.py` | 移动文件到目标目录 |
 | `_restore_file` | `backend/services/agent/file_tool_mixin.py` | 从registry查找备份并恢复workspace文件（restore_file工具执行逻辑） |
+| `analyze_file` | `backend/services/agent/file_analysis_service.py` | 编排 file_analyze 的安全路径解析、Parquet 转换、超时错误与缓存登记 |
+| `ChatToolResultMixin` | `backend/services/handlers/chat_tool_result_mixin.py` | 统一分类、推送、审计单次工具执行结果 |
 | `_register_workspace_backups` | `backend/services/agent/tool_executor.py` | 将workspace备份注册到对话级session_file_registry |
 
 ### 文件 ID 协议（file_id）
@@ -1322,6 +1320,22 @@
 | `resolve_fid_to_workspace` | `backend/services/agent/file_id.py` | 从 file_path_cache 反查 fid 对应的 workspace 绝对路径 |
 | `format_attachments` | `backend/services/handlers/chat_context/attachments.py` | XML 渲染附件，每个 `<file>` 含 `<id>fid_xxx</id>` + `<name>` + `<path>` + 附件使用规则 |
 | `build_workspace_prompt` | `backend/services/handlers/chat_context/attachments.py` | 工作区清单，每行带 `[fid_xxx]` 前缀 |
+
+### 企业微信会话与附件入口
+
+| 函数/对象 | 文件路径 | 功能描述 |
+|-----------|---------|---------|
+| `normalize_wecom_message` | `backend/services/wecom/message_normalizer.py` | 将智能机器人回调规范化为稳定的企微消息协议 |
+| `resolve_wecom_conversation` | `backend/services/wecom/channel_conversation.py` | 按私聊用户或群聊 channel binding 解析会话 |
+| `stage_wecom_attachment` | `backend/services/wecom/attachment_service.py` | 按企微 msgid 幂等暂存 FILE 资产，不启动生成任务 |
+| `consume_active_conversation_attachments` | `backend/migrations/130_wecom_actor_attachment_consumption.sql` | 在会话事务锁内消费活动附件并生成冻结 FilePart |
+| `enqueue_wecom_generation_turn` | `backend/migrations/130_wecom_actor_attachment_consumption.sql` | 原子创建企微输入/输出消息、消费附件并进入 Actor 队列 |
+| `resolve_execution_scope` | `backend/services/handlers/chat/execution_scope.py` | 从数据库会话和企微 delivery context 解析可信 user/channel 执行作用域 |
+| `build_wecom_channel_workspace_owner` | `backend/core/workspace.py` | 生成稳定且不可由客户端指定的企微群 Workspace owner |
+| `partition_tool_calls` / `resolve_file_ids` | `backend/services/handlers/chat_tool_helpers.py` | Chat 工具分批与文件 ID 安全路径转换 |
+| `ConversationToolMixin` | `backend/services/agent/conversation_tool_mixin.py` | ToolExecutor 的当前会话历史读取职责 |
+| `FileDescribeMixin` | `backend/services/agent/file_describe_mixin.py` | 文件搜索命中单文件后的描述和图片多模态返回 |
+| `ERPChildFactoryMixin` | `backend/services/agent/erp_child_factory_mixin.py` | 按执行 Workspace scope 创建 ERP 部门子 Agent |
 
 ### 工作区分类与批量下载
 

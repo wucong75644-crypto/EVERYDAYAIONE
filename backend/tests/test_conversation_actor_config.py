@@ -12,6 +12,3 @@ def test_web_actor_is_disabled_by_default(monkeypatch):
     assert Settings.model_fields[
         "conversation_actor_worker_enabled"
     ].default is False
-    assert Settings.model_fields[
-        "conversation_actor_wecom_enabled"
-    ].default is False

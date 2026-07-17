@@ -33,12 +33,21 @@ class _Query:
 
 
 class _DB:
-    def __init__(self, row):
-        self.row = row
+    def __init__(self, row, conversation=None):
+        self.rows = {
+            "messages": row,
+            "conversations": conversation or {
+                "id": "conv-1",
+                "org_id": "org-1",
+                "user_id": "user-1",
+                "source": "wecom",
+                "scope_type": "user",
+                "scope_id": "user-1",
+            },
+        }
 
     def table(self, name):
-        assert name == "messages"
-        return _Query(self.row)
+        return _Query(self.rows[name])
 
 
 def _claim() -> GenerationClaim:
@@ -116,6 +125,9 @@ async def test_executor_loads_multimodal_content_from_input_message(monkeypatch)
     assert captured["request"].context_anchor.base_revision == 4
     assert received_db["value"] is handler_db
     assert received_db["handler"].org_id == "org-1"
+    assert received_db["handler"].execution_scope.context_scope == "user"
+    assert received_db["handler"]._workspace_user_id == "user-1"
+    assert received_db["handler"]._personal_context_allowed is True
     assert outcome.result_content == [{"type": "text", "text": "完成"}]
     assert outcome.credits_cost == 2
 
@@ -221,3 +233,94 @@ async def test_executor_injects_task_scoped_sink(monkeypatch):
     await executor.execute(_task(), _claim(), asyncio.Event())
 
     assert captured["sink"] is sink
+
+
+@pytest.mark.asyncio
+async def test_executor_builds_channel_scope_from_conversation(monkeypatch):
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "分析群文件"}],
+    }
+    conversation = {
+        "id": "conv-1",
+        "org_id": "org-1",
+        "user_id": None,
+        "source": "wecom",
+        "scope_type": "channel",
+        "scope_id": "group-1",
+    }
+    task = _task()
+    task["delivery_context"] = {
+        "channel": "wecom",
+        "chattype": "group",
+        "corp_id": "corp-1",
+        "chatid": "group-1",
+    }
+    captured = {}
+
+    async def fake_execute_chat(**kwargs):
+        captured["request"] = kwargs["request"]
+        return ChatExecutionResult(
+            parts=[TextPart(text="完成")],
+            content_blocks=[],
+            usage={},
+            credits_cost=0,
+            tool_digest=None,
+        )
+
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        fake_execute_chat,
+    )
+    handler = SimpleNamespace(org_id=None)
+    executor = ChatGenerationExecutor(
+        _DB(row, conversation),
+        lambda _db: handler,
+        handler_db_factory=lambda: object(),
+    )
+
+    await executor.execute(task, _claim(), asyncio.Event())
+
+    scope = captured["request"].execution_scope
+    assert scope.context_scope == "channel"
+    assert scope.actor_user_id == "user-1"
+    assert scope.personal_context_allowed is False
+    assert scope.workspace_owner_id.startswith("channels/wecom/")
+    assert handler._workspace_user_id == scope.workspace_owner_id
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_channel_delivery_scope_mismatch():
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "test"}],
+    }
+    conversation = {
+        "id": "conv-1",
+        "org_id": "org-1",
+        "user_id": None,
+        "source": "wecom",
+        "scope_type": "channel",
+        "scope_id": "group-1",
+    }
+    task = _task()
+    task["delivery_context"] = {
+        "channel": "wecom",
+        "chattype": "group",
+        "corp_id": "corp-1",
+        "chatid": "other-group",
+    }
+    executor = ChatGenerationExecutor(
+        _DB(row, conversation),
+        lambda _db: SimpleNamespace(org_id=None),
+        handler_db_factory=lambda: object(),
+    )
+
+    with pytest.raises(RuntimeError, match="ACTOR_EXECUTION_SCOPE_MISMATCH"):
+        await executor.execute(task, _claim(), asyncio.Event())

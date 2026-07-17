@@ -71,79 +71,102 @@ class MediaToolMixin:
                 metadata={"retryable": False},
             )
 
-        # 3. 调用 adapter 同步等待
         adapter = create_image_adapter(model_id)
         try:
-            result = await adapter.generate(
+            return await self._run_image_generation(
+                adapter=adapter,
+                tx_id=tx_id,
+                task_id=task_id,
                 prompt=prompt,
-                image_urls=image_urls if image_urls else None,
-                size=aspect_ratio,
-                wait_for_result=True,
-                max_wait_time=90.0,
-                poll_interval=2.0,
+                image_urls=image_urls,
+                aspect_ratio=aspect_ratio,
+                model_id=model_id,
             )
-
-            if result.image_urls:
-                from services.file_upload import persist_media_urls_to_workspace
-
-                self._confirm_deduct(tx_id)
-                urls = "\n".join(result.image_urls)
-                emit_payloads = await persist_media_urls_to_workspace(
-                    urls=result.image_urls,
-                    user_id=self.user_id,
-                    org_id=self.org_id,
-                    media_type="image",
-                    meta={
-                        "prompt": prompt,
-                        "model": model_id,
-                        "aspect_ratio": aspect_ratio,
-                        "task_id": task_id,
-                        "reference_images": image_urls,
-                    },
-                )
-                return AgentResult(
-                    summary=f"图片已生成：\n{urls}",
-                    status="success",
-                    emit_payloads=emit_payloads,
-                )
-            else:
-                self._refund_credits(tx_id)
-                fail_msg = result.fail_msg or "未知错误"
-                return AgentResult(
-                    summary=f"图片生成失败：{fail_msg}",
-                    status="error",
-                    error_message=fail_msg,
-                    metadata={"retryable": True},
-                    emit_payloads=[{
-                        "kind": "image", "url": None,
-                        "failed": True, "error": fail_msg,
-                        "retry_context": {
-                            "prompt": prompt,
-                            "aspect_ratio": aspect_ratio,
-                            "model_id": model_id,
-                        },
-                    }],
-                )
         except Exception as e:
             self._refund_credits(tx_id)
             logger.error(f"Image generation error | error={e}")
-            return AgentResult(
-                summary=f"图片生成失败：{e}",
-                status="error",
-                error_message=str(e),
-                metadata={"retryable": True},
-                emit_payloads=[{
-                    "kind": "image", "url": None,
-                    "failed": True, "error": str(e),
-                    "retry_context": {
-                        "prompt": prompt,
-                        "aspect_ratio": aspect_ratio,
-                        "model_id": model_id,
-                    },
-                }],
+            return self._image_failure_result(
+                str(e), prompt, aspect_ratio, model_id,
             )
         finally:
             await adapter.close()
+
+    async def _run_image_generation(
+        self,
+        adapter: Any,
+        tx_id: str,
+        task_id: str,
+        prompt: str,
+        image_urls: list[str],
+        aspect_ratio: str,
+        model_id: str,
+    ) -> "AgentResult":
+        from services.agent.agent_result import AgentResult
+        from services.file_upload import persist_media_urls_to_workspace
+
+        result = await adapter.generate(
+            prompt=prompt,
+            image_urls=image_urls or None,
+            size=aspect_ratio,
+            wait_for_result=True,
+            max_wait_time=90.0,
+            poll_interval=2.0,
+        )
+        if not result.image_urls:
+            self._refund_credits(tx_id)
+            return self._image_failure_result(
+                result.fail_msg or "未知错误",
+                prompt,
+                aspect_ratio,
+                model_id,
+            )
+        self._confirm_deduct(tx_id)
+        emit_payloads = await persist_media_urls_to_workspace(
+            urls=result.image_urls,
+            user_id=getattr(self, "workspace_user_id", self.user_id),
+            org_id=self.org_id,
+            media_type="image",
+            meta={
+                "prompt": prompt,
+                "model": model_id,
+                "aspect_ratio": aspect_ratio,
+                "task_id": task_id,
+                "reference_images": image_urls,
+            },
+        )
+        urls = "\n".join(result.image_urls)
+        return AgentResult(
+            summary=f"图片已生成：\n{urls}",
+            status="success",
+            emit_payloads=emit_payloads,
+        )
+
+    @staticmethod
+    def _image_failure_result(
+        error: str,
+        prompt: str,
+        aspect_ratio: str,
+        model_id: str,
+    ) -> "AgentResult":
+        from services.agent.agent_result import AgentResult
+
+        return AgentResult(
+            summary=f"图片生成失败：{error}",
+            status="error",
+            error_message=error,
+            metadata={"retryable": True},
+            emit_payloads=[{
+                "kind": "image",
+                "url": None,
+                "failed": True,
+                "error": error,
+                "retry_context": {
+                    "prompt": prompt,
+                    "aspect_ratio": aspect_ratio,
+                    "model_id": model_id,
+                },
+            }],
+        )
 
     async def _generate_video(self, args: Dict[str, Any]) -> "AgentResult":
         """生成视频：锁积分 → adapter 同步等待 → confirm/refund"""

@@ -13,21 +13,21 @@
 """
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Dict, Optional
+from typing import Any, Callable, Coroutine, Dict
 
 from loguru import logger
 
 from services.agent.crawler_tool_mixin import CrawlerToolMixin
 from services.agent.file_delete_mixin import FileDeleteMixin
+from services.agent.file_describe_mixin import FileDescribeMixin
 
 
 __all__ = ["FileToolMixin", "CrawlerToolMixin"]
 
 
-class FileToolMixin(FileDeleteMixin):
+class FileToolMixin(FileDescribeMixin, FileDeleteMixin):
     """文件操作工具 Mixin（搜索 + 分析 + 删除恢复继承自 FileDeleteMixin）"""
 
     def _make_file_handler(
@@ -57,7 +57,7 @@ class FileToolMixin(FileDeleteMixin):
 
         executor = FileExecutor(
             workspace_root=settings.file_workspace_root,
-            user_id=self.user_id,
+            user_id=self.workspace_user_id,
             org_id=self.org_id,
         )
 
@@ -246,302 +246,12 @@ class FileToolMixin(FileDeleteMixin):
     async def _file_analyze(
         self, executor: Any, args: Dict[str, Any], settings: Any,
     ) -> Any:
-        """读取 Excel/CSV 文件结构，自动转 Parquet 缓存，返回元数据。"""
-        import time
-        from services.agent.agent_result import AgentResult
-        from services.agent.file_path_cache import get_file_cache
-        from services.agent.data_query_cache import ensure_parquet_cache
-        from services.agent.file_meta import read_file_meta, format_file_view
-        from core.workspace import resolve_staging_dir
+        """Analyze tabular files via the staged service.
 
-        # 路径解析：优先 file_id（fid 协议），兜底 path（老协议）
-        cache = get_file_cache(self.conversation_id)
-        file_id = (args.get("file_id") or "").strip()
-        path = (args.get("path") or "").strip()
-        abs_path: Optional[str] = None
-
-        if file_id:
-            from services.agent.file_id import is_valid_fid, resolve_fid_to_workspace
-            if not is_valid_fid(file_id):
-                return AgentResult(
-                    summary=f"file_id 格式错误: {file_id}",
-                    status="error",
-                    error_message=(
-                        f"file_id 必须是 fid_xxx 格式（fid_ + 8 位十六进制）。"
-                        f"你传的是 {file_id!r}。请从 <attachments> 的 <id> 字段 copy。"
-                    ),
-                    metadata={"retryable": True},
-                )
-            abs_path = resolve_fid_to_workspace(
-                file_id, getattr(self, "org_id", None), cache,
-            )
-            if not abs_path:
-                return AgentResult(
-                    summary=f"未找到 file_id={file_id}",
-                    status="error",
-                    error_message=(
-                        f"file_id={file_id} 在当前对话的附件里找不到。"
-                        f"请检查 <attachments> 块的 <id> 字段。"
-                    ),
-                    metadata={"retryable": True},
-                )
-            path = file_id  # 后续日志/错误消息显示用
-
-        if not abs_path and not path:
-            return AgentResult(
-                summary="请提供 file_id 或 path",
-                status="error",
-                error_message="file_id 或 path 至少传一个",
-                metadata={"retryable": True},
-            )
-
-        # 老协议兜底：path → 缓存(workspace) → resolve_safe_path
-        if not abs_path:
-            abs_path = cache.resolve(path, usage="analyze")
-        if not abs_path:
-            try:
-                target = executor.resolve_safe_path(path)
-                abs_path = str(target)
-            except (FileNotFoundError, IsADirectoryError) as e:
-                # 文件不存在 / 是目录 → 可重试（用户可能正在上传）
-                return AgentResult(
-                    summary=f"文件不存在: {path}",
-                    status="error",
-                    error_message=str(e),
-                    metadata={"retryable": True},
-                )
-            except (PermissionError, OSError, ValueError) as e:
-                # 权限拒绝 / 路径越界 / 非法路径 → 不可重试 + 安全审计日志
-                logger.warning(
-                    f"file_analyze path rejected | conv={self.conversation_id} "
-                    f"| path={path!r} | reason={type(e).__name__}: {e}"
-                )
-                return AgentResult(
-                    summary=f"路径不允许: {path}",
-                    status="error",
-                    error_message=str(e),
-                    metadata={"retryable": False},
-                )
-            except Exception as e:
-                # 其他未预期异常 → 兜底可重试
-                return AgentResult(
-                    summary=f"路径解析失败: {path}",
-                    status="error",
-                    error_message=str(e),
-                    metadata={"retryable": True},
-                )
-
-        if not os.path.isfile(abs_path):
-            return AgentResult(
-                summary=f"文件不存在: {path}",
-                status="error",
-                error_message=f"Not a file: {abs_path}",
-                metadata={"retryable": True},
-            )
-
-        # 扩展名检查
-        ext = ("." + abs_path.rsplit(".", 1)[-1].lower()) if "." in abs_path else ""
-        if ext not in self._ANALYZE_EXTENSIONS:
-            return AgentResult(
-                summary=f"file_analyze 仅支持 Excel/CSV 文件，当前文件类型: {ext}",
-                status="error",
-                error_message=f"Unsupported extension: {ext}",
-                metadata={"retryable": False},
-            )
-
-        # prescan → parquet 转换
-        start = time.monotonic()
-        staging_dir = resolve_staging_dir(
-            settings.file_workspace_root,
-            self.user_id,
-            getattr(self, "org_id", None),
-            self.conversation_id,
-        )
-        # 确保 cache 有 staging_dir（用户没上传文件时 chat_context_mixin 不会设置）
-        if not cache._staging_dir:
-            cache.set_staging_dir(staging_dir)
-
-        # Phase 5: FileAnalyzeError 必须在 _file_dispatch 顶层 except Exception 之前捕获
-        # （顶层会吞 metadata，丢失结构化错误信息）
-        import asyncio as _aio
-        from services.agent.file_ai_judge import FileAnalyzeError as _FileAnalyzeError
-        from services.agent.data_query_cache import (
-            _ENSURE_CACHE_TIMEOUT, validate_xlsx_safety,
-        )
-        try:
-            # V2.2 #38: xlsx zip bomb 防御（magic / entry 数 / 压缩比）
-            if ext in (".xlsx", ".xls"):
-                validate_xlsx_safety(abs_path)
-            # CSV/TSV 走独立路径（fastexcel 不支持 csv，否则 make_scanner 会崩）
-            # V2.2 #19: 总超时包裹（覆盖 AI 失败链 + 转换 + 写盘最坏 65+30s）
-            if ext in (".csv", ".tsv"):
-                from services.agent.data_query_cache import ensure_parquet_cache_csv
-                cache_path, sheet_names = await _aio.wait_for(
-                    ensure_parquet_cache_csv(abs_path, staging_dir),
-                    timeout=_ENSURE_CACHE_TIMEOUT,
-                )
-            else:
-                cache_path, sheet_names = await _aio.wait_for(
-                    ensure_parquet_cache(abs_path, None, staging_dir),
-                    timeout=_ENSURE_CACHE_TIMEOUT,
-                )
-        except _aio.TimeoutError:
-            # V2.2 #19: 总超时 → 结构化 timeout 错误，标记 retryable
-            _name = Path(abs_path).name
-            cache.register(_name, workspace=abs_path)
-            return AgentResult(
-                summary=f"文件「{_name}」分析超时（> {_ENSURE_CACHE_TIMEOUT}s）",
-                status="error",
-                error_message=f"ensure_parquet_cache timeout ({_ENSURE_CACHE_TIMEOUT}s)",
-                metadata={
-                    "retryable": True,
-                    "error_category": "timeout",
-                    "suggested_action": "retry_immediately",
-                },
-            )
-        except _FileAnalyzeError as e:
-            # 即使 AI 失败也保留原文件注册（让用户后续能找到文件再试）
-            _name = Path(abs_path).name
-            cache.register(_name, workspace=abs_path)
-            try:
-                _rel = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
-                cache.register(_rel, workspace=abs_path)
-            except ValueError:
-                pass
-            return AgentResult(
-                summary=e.user_message or e.error_summary,
-                status="error",
-                error_message=e.error_summary,
-                metadata=e.to_metadata(),
-            )
-        except ValueError as e:
-            # 空文件等
-            return AgentResult(
-                summary=str(e), status="error",
-                error_message=str(e),
-                metadata={"retryable": False},
-            )
-        except Exception as e:
-            return AgentResult(
-                summary=f"文件解析失败: {e}",
-                status="error",
-                error_message=str(e),
-                metadata={"retryable": False},
-            )
-
-        elapsed = round(time.monotonic() - start, 2)
-
-        # 读取元数据 → 优先用 V2 XML（meta.xml_view），降级到 markdown
-        meta = read_file_meta(cache_path)
-        if meta is None:
-            # 路径协议:LLM 看相对路径,不暴露 host 绝对路径
-            file_view = f"文件已转为 Parquet: staging/{Path(cache_path).name}"
-        elif getattr(meta, "xml_view", "") and meta.xml_view:
-            file_view = meta.xml_view
-        else:
-            file_view = format_file_view(meta)
-
-        # 注册到路径缓存：workspace + parquet 分开写
-        name = Path(abs_path).name
-        cache.register(name, workspace=abs_path)
-        try:
-            rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
-            cache.register(rel_path, workspace=abs_path)
-        except ValueError:
-            pass
-        # 设置 parquet 路径（后续 get_file usage="code" 返回 parquet）
-        cache.set_parquet(name, cache_path)
-        # 标记已分析（跨轮持久，驱动下一轮 <attachments> status 切换为"已分析"）
-        cache.set_analyzed(name, True)
-
-        # 构建返回内容
-        # 删除"## 后续操作"重复段 — get_file/duckdb 用法已在 code_execute 工具描述里
-        lines = [file_view]
-        if sheet_names and len(sheet_names) > 1:
-            lines.append("")
-            lines.append(f"Sheet 列表: {', '.join(sheet_names)}")
-
-        # V2.2 #18: 扩展日志维度（path_type / cache_hit / attempt_count / model / elapsed）
-        _ai = (meta.ai_decision if meta else None) or {}
-        _path_type = (meta.schema.get("path_type") if meta and meta.schema else None) or "?"
-        logger.info(
-            f"file_analyze OK | {name} | "
-            f"{meta.summary.get('row_count', '?') if meta else '?'}×"
-            f"{meta.summary.get('col_count', '?') if meta else '?'} | "
-            f"path={_path_type} | "
-            f"model={_ai.get('model_used', '?')} | "
-            f"ai_attempts={_ai.get('attempt_count', '?')} | "
-            f"ai_ms={_ai.get('elapsed_ms', '?')} | "
-            f"total={elapsed}s"
-        )
-
-        return AgentResult(summary="\n".join(lines), status="success")
-
-    async def _describe_single_file(
-        self, executor: Any, abs_path: str,
-    ) -> Any:
-        """返回单个文件的基本信息和 workspace 相对路径，注册到共享缓存。
-
-        命中图片时返回 FileReadResult(type="image")，让 chat_handler 在下一轮
-        把 image_url 多模态块注入 messages —— 多模态模型直接看到图，
-        无需再走 file_read（P1 file_search 多模态化）。
+        Security and timeout behavior remains explicit in the service:
+        FileNotFoundError, PermissionError, retryable=False, wait_for,
+        and _ENSURE_CACHE_TIMEOUT.
         """
-        from services.agent.agent_result import AgentResult
-        from services.agent.file_path_cache import get_file_cache
+        from services.agent.file_analysis_service import analyze_file
 
-        name = Path(abs_path).name
-        size = os.path.getsize(abs_path)
-        size_str = self._fmt_size(size)
-
-        try:
-            rel_path = str(Path(abs_path).relative_to(Path(executor.workspace_root)))
-        except ValueError:
-            rel_path = name
-
-        # 注册到共享缓存拿编号
-        cache = get_file_cache(self.conversation_id)
-        cache.register(name, workspace=abs_path)
-        cache.register(rel_path, workspace=abs_path)
-
-        # ── 图片：返回 FileReadResult(type="image") 走多模态注入 ──
-        ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
-        _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
-        if ext in _IMG_EXTS:
-            from schemas.multimodal import FileReadResult
-            cdn_url = executor.get_cdn_url(rel_path) if hasattr(executor, "get_cdn_url") else ""
-            if cdn_url:
-                return FileReadResult(
-                    type="image",
-                    text=f"{name} ({size_str}) — 图片已注入视觉，可直接观察。",
-                    image_url=cdn_url,
-                )
-            # OSS URL 拿不到时退回文本结果（极少见），保持原行为
-            logger.warning(f"file_search image | no CDN URL for {abs_path}")
-
-        # 数据文件 → 引导 file_analyze；其他 → 给相对路径直接读
-        if ext in self._ANALYZE_EXTENSIONS:
-            hint = f"数据文件需先 file_analyze('{rel_path}') 治理后用 pd.read_parquet 读"
-        else:
-            hint = f"在 code_execute 中用相对路径 '{rel_path}' 直接读取"
-        lines = [
-            f"{name} ({size_str})",
-            "",
-            hint,
-        ]
-
-        return AgentResult(summary="\n".join(lines), status="success")
-
-    # ================================================================
-    # 工具函数
-    # ================================================================
-
-    @staticmethod
-    def _fmt_size(size: int) -> str:
-        """格式化文件大小"""
-        if size < 1024:
-            return f"{size} B"
-        elif size < 1024 * 1024:
-            return f"{size / 1024:.1f} KB"
-        elif size < 1024 * 1024 * 1024:
-            return f"{size / (1024 * 1024):.1f} MB"
-        return f"{size / (1024 * 1024 * 1024):.1f} GB"
+        return await analyze_file(self, executor, args, settings)

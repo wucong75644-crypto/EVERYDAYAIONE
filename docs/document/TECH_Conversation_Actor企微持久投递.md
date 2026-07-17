@@ -119,8 +119,9 @@ Redis Stream 方案不采用：它会引入 PostgreSQL 与 Redis 双写窗口，
 
 ## 6. 开关、部署与回滚
 
-- `CONVERSATION_ACTOR_WECOM_ENABLED` 默认 false，仅控制文本、语音、图片和混合消息。
-- FILE 不保留旧链路兼容，始终进入 Actor。
+- 该阶段曾使用 `CONVERSATION_ACTOR_WECOM_ENABLED` 灰度文本、语音、图片和混合
+  消息；会话与附件治理阶段 2.2 已删除此双轨开关，上述类型统一进入 Actor。
+- FILE 不保留旧链路兼容，先进入附件状态机，由下一条指令原子消费后进入 Actor。
 - 必须先应用 120-126 迁移、启动 delivery consumer 和 Actor Worker，再部署包含
   FILE 新入口的应用版本；不能先发布应用再补基础设施。
 - 回滚先关闭企微入队，等待 generation/delivery 排空，再停止 consumer。

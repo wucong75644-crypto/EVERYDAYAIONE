@@ -32,6 +32,7 @@ class WecomCardEventHandler:
         conversation_id: str,
         reply_ctx: WecomReplyContext,
         org_id: str | None = None,
+        chat_type: str = "single",
     ) -> None:
         """根据 event_key 路由到对应处理逻辑。
 
@@ -45,6 +46,12 @@ class WecomCardEventHandler:
             reply_ctx: 回复上下文
         """
         self._org_id = org_id
+        if chat_type == "group" and event_key in _PERSONAL_EVENT_KEYS:
+            await self._reply_text(
+                reply_ctx,
+                "该操作涉及个人数据，请在与机器人的私聊中使用。",
+            )
+            return
 
         logger.info(
             f"Card event | key={event_key} | task_id={task_id} | "
@@ -299,3 +306,11 @@ class WecomCardEventHandler:
         "thinking_fast": _handle_thinking_fast,
         "gen_confirm": _handle_gen_confirm,
     }
+
+
+_PERSONAL_EVENT_KEYS = {
+    "check_credits",
+    "manage_memory",
+    "clear_all_memory",
+    "new_conversation",
+}

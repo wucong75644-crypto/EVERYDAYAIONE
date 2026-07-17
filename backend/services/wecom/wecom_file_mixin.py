@@ -22,7 +22,7 @@ from schemas.wecom import WecomIncomingMessage, WecomReplyContext
 class WecomFileMixin:
     """文件消息处理能力（被 WecomMessageService 继承）"""
 
-    async def _prepare_actor_file(
+    async def _prepare_wecom_file(
         self,
         msg: WecomIncomingMessage,
         reply_ctx: WecomReplyContext,
@@ -33,7 +33,8 @@ class WecomFileMixin:
         if not msg.msgid:
             raise RuntimeError("WECOM_FILE_MSGID_MISSING")
         safe_name = Path(msg.file_name or "file.bin").name or "file.bin"
-        target = self._actor_file_path(msg.msgid, safe_name, user_id, org_id)
+        scope_root = self._file_scope_root(msg, user_id, org_id)
+        target = self._file_path(scope_root, msg.msgid, safe_name)
         if not await asyncio.to_thread(target.is_file):
             raw_data = await self._download_and_decrypt_file(msg, reply_ctx)
             if raw_data is None:
@@ -59,6 +60,8 @@ class WecomFileMixin:
             user_id=user_id,
             org_id=org_id,
         )
+        if payload and msg.chattype == "group":
+            payload["workspace_path"] = str(target.relative_to(scope_root))
         if (
             not payload
             or not payload.get("url")
@@ -78,20 +81,38 @@ class WecomFileMixin:
         }
 
     @staticmethod
-    def _actor_file_path(
+    def _file_path(
+        scope_root: Path,
         msgid: str,
         filename: str,
+    ) -> Path:
+        token = uuid.uuid5(uuid.NAMESPACE_URL, f"wecom-file:{msgid}").hex[:16]
+        return scope_root / "上传" / "企微" / f"{token}_{filename}"
+
+    @staticmethod
+    def _file_scope_root(
+        msg: WecomIncomingMessage,
         user_id: str,
         org_id: Optional[str],
     ) -> Path:
         from core.config import get_settings
-        from core.workspace import resolve_workspace_dir
+        from core.workspace import (
+            build_wecom_channel_workspace_owner,
+            resolve_workspace_dir,
+        )
 
-        root = Path(resolve_workspace_dir(
-            get_settings().file_workspace_root, user_id, org_id,
+        if msg.chattype != "group":
+            return Path(resolve_workspace_dir(
+                get_settings().file_workspace_root, user_id, org_id,
+            ))
+        if not org_id or not msg.chatid:
+            raise RuntimeError("WECOM_GROUP_FILE_SCOPE_MISSING")
+        owner_id = build_wecom_channel_workspace_owner(
+            msg.corp_id, msg.chatid,
+        )
+        return Path(resolve_workspace_dir(
+            get_settings().file_workspace_root, owner_id, org_id,
         ))
-        token = uuid.uuid5(uuid.NAMESPACE_URL, f"wecom-file:{msgid}").hex[:16]
-        return root / "上传" / "企微" / f"{token}_{filename}"
 
     async def _download_and_decrypt_file(
         self,
