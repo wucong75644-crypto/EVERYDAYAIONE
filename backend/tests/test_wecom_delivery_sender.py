@@ -99,6 +99,41 @@ def test_build_items_creates_failed_result_without_message():
     assert items == [WecomDeliveryItem("error:0", "text", "超时")]
 
 
+def test_build_items_labels_web_user_text_and_ignores_task_failure():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {"status": "failed", "error_message": "不应发送"},
+        {"content": [
+            {"type": "text", "text": "今天上海天气怎么样？"},
+            {"type": "image", "url": "https://cdn/input.png"},
+        ]},
+        {"transport": "smart_robot"},
+        delivery_kind="web_user_message",
+    )
+
+    assert items == [
+        WecomDeliveryItem(
+            "web-user:text",
+            "text",
+            "来自 Web：\n今天上海天气怎么样？",
+        )
+    ]
+
+
+def test_build_items_completes_empty_web_user_mirror_without_fallback():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {"status": "pending"},
+        {"content": [{"type": "image", "url": "https://cdn/input.png"}]},
+        {"transport": "smart_robot"},
+        delivery_kind="web_user_message",
+    )
+
+    assert items == []
+
+
 def test_build_items_splits_app_text_into_independent_checkpoints():
     sender = WecomDeliverySender(object(), MagicMock())
 

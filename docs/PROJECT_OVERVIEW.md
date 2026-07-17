@@ -137,6 +137,7 @@ EVERYDAYAIONE/
 │   │   ├── 131_attachment_asset_lifecycle.sql # 资产身份、附件集合和 task 不可变引用
 │   │   ├── 132_wecom_channel_task_enqueue.sql # 企微 user/channel Actor task 写入
 │   │   ├── 133_wecom_attachment_single_consumption.sql # 企微当前附件绑定后转历史资源
+│   │   ├── 134_web_user_wecom_delivery.sql # Web 用户输入按真实企微绑定写入事务 Outbox
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql

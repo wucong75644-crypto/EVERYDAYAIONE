@@ -40,6 +40,7 @@ class _DB:
         self.task = task or {
             "id": "task", "status": "completed",
             "assistant_message_id": "message",
+            "input_message_id": "input-message",
         }
         self.message = message or {
             "id": "message", "content": [{"type": "text", "text": "完成"}],
@@ -54,9 +55,10 @@ class _DB:
         return _Query(self.task if name == "tasks" else self.message)
 
 
-def _claim(delivered=None):
+def _claim(delivered=None, delivery_kind="assistant_terminal"):
     return {
         "outcome": "claimed", "delivery_id": "delivery", "task_id": "task",
+        "delivery_kind": delivery_kind,
         "lease_token": "token", "target_context": {
             "org_id": "org", "transport": "smart_robot", "chatid": "chat",
         },
@@ -86,7 +88,7 @@ async def test_worker_checkpoints_each_item_then_completes():
         "complete_conversation_delivery": [{"outcome": "delivered"}],
     })
     sender = MagicMock()
-    sender.build_items.side_effect = lambda task, message, _context: [
+    sender.build_items.side_effect = lambda task, message, _context, **_kwargs: [
         WecomDeliveryItem("text:0", "text", "A"),
         WecomDeliveryItem("image:1", "image", "url"),
     ]
@@ -107,7 +109,7 @@ async def test_worker_skips_checkpointed_item_after_retry():
         "complete_conversation_delivery": [{"outcome": "delivered"}],
     })
     sender = MagicMock()
-    sender.build_items.side_effect = lambda task, message, _context: [
+    sender.build_items.side_effect = lambda task, message, _context, **_kwargs: [
         WecomDeliveryItem("text:0", "text", "A"),
         WecomDeliveryItem("image:1", "image", "url"),
     ]
@@ -143,7 +145,7 @@ async def test_worker_schedules_retry_with_saved_checkpoints_on_send_failure():
         "fail_conversation_delivery": [{"outcome": "retry_scheduled"}],
     })
     sender = MagicMock()
-    sender.build_items.side_effect = lambda task, message, _context: [
+    sender.build_items.side_effect = lambda task, message, _context, **_kwargs: [
         WecomDeliveryItem("image:1", "image", "url"),
     ]
     sender.send = AsyncMock(return_value=False)
@@ -161,7 +163,7 @@ async def test_worker_stops_when_checkpoint_ownership_is_lost():
         "renew_conversation_delivery": [{"outcome": "ownership_lost"}],
     })
     sender = MagicMock()
-    sender.build_items.side_effect = lambda task, message, _context: [
+    sender.build_items.side_effect = lambda task, message, _context, **_kwargs: [
         WecomDeliveryItem("text:0", "text", "A"),
     ]
     sender.send = AsyncMock(return_value=True)
@@ -178,6 +180,34 @@ async def test_worker_returns_false_when_outbox_is_empty():
     sender = MagicMock()
 
     assert await WecomDeliveryWorker(db, sender).run_once() is False
+
+
+@pytest.mark.asyncio
+async def test_worker_loads_input_message_for_web_user_delivery():
+    db = _DB({
+        "claim_conversation_delivery": [
+            _claim(delivery_kind="web_user_message")
+        ],
+        "renew_conversation_delivery": [{"outcome": "renewed"}],
+        "complete_conversation_delivery": [{"outcome": "delivered"}],
+    })
+    sender = MagicMock()
+    sender.build_items.return_value = [
+        WecomDeliveryItem("web-user:text", "text", "来自 Web：\n天气")
+    ]
+    sender.send = AsyncMock(return_value=True)
+
+    await WecomDeliveryWorker(db, sender).run_once()
+
+    assert sender.build_items.call_args.kwargs == {
+        "delivery_kind": "web_user_message"
+    }
+    assert sender.build_items.call_args.args[1]["id"] == "message"
+
+
+def test_claim_rejects_unknown_delivery_kind():
+    with pytest.raises(RuntimeError, match="CLAIM_INVALID"):
+        WecomDeliveryClaim.from_result(_claim(delivery_kind="unknown"))
 
 
 @pytest.mark.asyncio

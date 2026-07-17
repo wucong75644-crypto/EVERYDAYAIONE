@@ -43,13 +43,14 @@ Redis Stream 方案不采用：它会引入 PostgreSQL 与 Redis 双写窗口，
 
 ## 3. 数据库设计
 
-新增 `conversation_deliveries`：
+`conversation_deliveries` 同时承载企微 AI 终态和 Web 用户输入镜像：
 
 | 字段 | 说明 |
 |---|---|
 | id | delivery UUID |
 | task_id | 关联 Actor task |
 | channel | 当前为 wecom |
+| delivery_kind | `assistant_terminal` 或 `web_user_message` |
 | target_context | org/chatid/chattype/userid/transport，不含 Secret |
 | status | pending/delivering/delivered/dead |
 | attempt_count | 投递次数 |
@@ -60,9 +61,12 @@ Redis Stream 方案不采用：它会引入 PostgreSQL 与 Redis 双写窗口，
 | delivered_at | 完成时间 |
 | created_at / updated_at | 审计时间 |
 
-唯一约束为 `(task_id, channel)`。claim 使用 `FOR UPDATE SKIP LOCKED`。
+唯一约束为 `(task_id, channel, delivery_kind)`。claim 使用
+`FOR UPDATE SKIP LOCKED`。
 数据库触发器在 Actor task 进入 completed/failed 时插入 Outbox，保证与业务终态
-同事务提交。
+同事务提交。Web task 入队时，另一个触发器仅从同会话最近一次、且与 channel
+binding 一致的真实企微 task 复制目标上下文，移除旧 stream 字段后写入用户消息
+镜像；无真实目标时不创建，不推导地址。
 
 新增 RPC：
 
@@ -79,6 +83,9 @@ Redis Stream 方案不采用：它会引入 PostgreSQL 与 Redis 双写窗口，
 | 相同 msgid 重放 | 稳定 UUID + 原子 enqueue |
 | 连续消息 | conversation serial queue |
 | Web/企微同时发送 | 共享同一数据库 owner |
+| Web 输入镜像企微 | 带“来自 Web”来源标识的主动消息，不冒充企微用户 |
+| 找不到真实企微目标 | 不创建镜像，Web 入队与 AI 执行不受影响 |
+| 历史企微 stream 已结束 | 镜像上下文移除 stream 字段，不覆盖旧消息 |
 | Redis 中断 | 数据库轮询 |
 | 企微 WS 断线 | delivery 保持 pending 并重试 |
 | Worker 崩溃 | lease 过期后重新认领 |

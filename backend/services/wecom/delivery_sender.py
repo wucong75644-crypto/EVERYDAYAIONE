@@ -43,7 +43,20 @@ class WecomDeliverySender:
         task: Mapping[str, Any],
         message: Mapping[str, Any] | None,
         context: Mapping[str, Any],
+        *,
+        delivery_kind: str = "assistant_terminal",
     ) -> list[WecomDeliveryItem]:
+        if delivery_kind == "web_user_message":
+            text = "\n\n".join(
+                str(part["text"])
+                for part in parse_content((message or {}).get("content"))
+                if part.get("type") == "text" and part.get("text")
+            )
+            if not text:
+                return []
+            return self._text_items(
+                "web-user:text", f"来自 Web：\n{text}", context,
+            )
         if task.get("status") == "failed":
             text = str(task.get("error_message") or "生成失败，请稍后重试。")
             key = "stream:text" if context.get("stream_id") else "error:0"

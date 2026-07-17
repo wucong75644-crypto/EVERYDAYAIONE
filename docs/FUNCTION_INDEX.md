@@ -208,8 +208,8 @@
 | `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；所有通道均向 Web best-effort 推送终态，企微结果另由事务 Outbox 投递 | task, terminal_result | None |
 | `enqueue_web_chat` | `backend/services/handlers/chat/actor_enqueue.py` | 以稳定内部 UUID 调用原子 enqueue RPC，并 best-effort 发布 Redis 唤醒 | handler, content, user_id, conversation_id, external_task_id, model_id, metadata, params | str |
 | `ConversationActorRuntime.start/stop` | `backend/services/conversation_runtime.py` | 装配独立 Worker、执行器、统一实时 Sink、终态观察器和 Kernel 生命周期 | - | None |
-| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将智能机器人终态文字合并后完成原 stream，流失效时回退主动消息；自建应用继续按稳定检查点分项发送 | task, message / context, item | list / bool |
-| `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
+| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将 AI 终态或带来源标识的 Web 用户文本展开为稳定分项；智能机器人终态可完成原 stream，自建应用按检查点分项发送 | task, message, context, delivery_kind / context, item | list / bool |
+| `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，按 delivery_kind 加载输入或助手消息，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
 | `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
 | `build_running_step` | `backend/services/handlers/chat/tool_loop.py` | Web 与无头执行内核共用的 running tool_step 构造原语 | call | Dict |
@@ -236,6 +236,7 @@
 | `fail_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 仅允许当前 fencing token 原子失败 running Chat task 并释放 owner | task_id, execution_token, error_code, error_message | JSONB |
 | `cancel_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 用户与租户范围校验后立即取消 pending/running Chat task 并使旧 token 失效 | task_id, user_id, org_id | JSONB |
 | `create_actor_terminal_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | Actor 企微 task 进入完成/失败终态时，在同一事务幂等创建投递 Outbox | trigger | trigger |
+| `create_web_user_wecom_delivery` | `backend/migrations/134_web_user_wecom_delivery.sql` | Web task 入队时从同会话最近一次已校验企微 task 复制真实目标，移除旧 stream 状态并原子创建用户消息镜像 Outbox | trigger | trigger |
 | `claim_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 使用 SKIP LOCKED、租约和稳定顺序认领一条待投递记录 | lease_seconds, max_attempts | JSONB |
 | `renew_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 当前 fencing token 续租并保存分项投递检查点 | delivery_id, lease_token, lease_seconds, delivered_items | JSONB |
 | `complete_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 当前有效投递权将 Outbox 原子标记为 delivered | delivery_id, lease_token, delivered_items | JSONB |

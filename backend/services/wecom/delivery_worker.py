@@ -19,6 +19,7 @@ _OWNERSHIP_LOST = {"ownership_lost", "lease_expired"}
 class WecomDeliveryClaim:
     delivery_id: str
     task_id: str
+    delivery_kind: str
     lease_token: str
     target_context: Mapping[str, Any]
     delivered_items: frozenset[str]
@@ -34,9 +35,15 @@ class WecomDeliveryClaim:
         items = result.get("delivered_items")
         if not isinstance(context, Mapping) or not isinstance(items, list):
             raise RuntimeError("WECOM_DELIVERY_CLAIM_INVALID")
+        delivery_kind = str(
+            result.get("delivery_kind") or "assistant_terminal"
+        )
+        if delivery_kind not in {"assistant_terminal", "web_user_message"}:
+            raise RuntimeError("WECOM_DELIVERY_CLAIM_INVALID")
         return cls(
             delivery_id=str(result["delivery_id"]),
             task_id=str(result["task_id"]),
+            delivery_kind=delivery_kind,
             lease_token=str(result["lease_token"]),
             target_context=context,
             delivered_items=frozenset(str(item) for item in items),
@@ -125,9 +132,12 @@ class WecomDeliveryWorker:
         checkpoints = set(claim.delivered_items)
         try:
             task = await self._load_row("tasks", claim.task_id)
-            message = await self._load_message(task)
+            message = await self._load_message(task, claim.delivery_kind)
             for item in self._sender.build_items(
-                task, message, claim.target_context,
+                task,
+                message,
+                claim.target_context,
+                delivery_kind=claim.delivery_kind,
             ):
                 if item.key in checkpoints:
                     continue
@@ -247,10 +257,19 @@ class WecomDeliveryWorker:
     async def _load_message(
         self,
         task: Mapping[str, Any],
+        delivery_kind: str,
     ) -> Mapping[str, Any] | None:
-        if task.get("status") == "failed":
+        if (
+            delivery_kind == "assistant_terminal"
+            and task.get("status") == "failed"
+        ):
             return None
-        message_id = task.get("assistant_message_id")
+        message_field = (
+            "input_message_id"
+            if delivery_kind == "web_user_message"
+            else "assistant_message_id"
+        )
+        message_id = task.get(message_field)
         if not message_id:
             raise RuntimeError("WECOM_DELIVERY_MESSAGE_ID_MISSING")
         return await self._load_row("messages", str(message_id))
