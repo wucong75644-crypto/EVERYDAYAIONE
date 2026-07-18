@@ -17,6 +17,7 @@ from schemas.message import (
     ThinkingPart,
     ToolStepPart,
     ContentPart,
+    DiagramPart,
     Message,
     MessageResponse,
     MessageRole,
@@ -141,6 +142,33 @@ class TestContentPartDiscriminator:
         """type=text 仍正确反序列化为 TextPart（向后兼容）"""
         obj = self.adapter.validate_python({"type": "text", "text": "hello"})
         assert isinstance(obj, TextPart)
+
+    def test_diagram_discriminator(self):
+        obj = self.adapter.validate_python({
+            "type": "diagram",
+            "format": "mermaid",
+            "source": "flowchart TD\nA-->B",
+            "title": "流程",
+        })
+        assert isinstance(obj, DiagramPart)
+        assert obj.source == "flowchart TD\nA-->B"
+
+    @pytest.mark.parametrize("source", ["", " \n "])
+    def test_diagram_rejects_empty_source(self, source):
+        with pytest.raises(ValueError):
+            self.adapter.validate_python({
+                "type": "diagram",
+                "format": "mermaid",
+                "source": source,
+            })
+
+    def test_diagram_rejects_unknown_format(self):
+        with pytest.raises(ValueError):
+            self.adapter.validate_python({
+                "type": "diagram",
+                "format": "plantuml",
+                "source": "@startuml",
+            })
 
     def test_mixed_content_list(self):
         """混合类型列表正确反序列化"""

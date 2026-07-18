@@ -88,8 +88,8 @@ class AgentResult:
 
     # ── 第四层：Agent 专属（工具调用时不填）──
     emit_payloads: list[dict[str, Any]] = field(default_factory=list)
-    """统一产物列表(沙盒 emit_chart/file/image/table + ImageAgent 等).
-    每项 dict 必含 kind: "chart" | "file" | "image" | "table"。
+    """统一产物列表(沙盒 emit_chart/diagram/file/image/table + ImageAgent 等).
+    每项 dict 必含 kind: "chart" | "diagram" | "file" | "image" | "table"。
     file/image 含 url(CDN) + workspace_path(本地相对路径) 双轨字段。
     """
     tokens_used: int = 0

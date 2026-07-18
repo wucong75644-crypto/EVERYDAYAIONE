@@ -11,6 +11,8 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 import json
 
+from schemas.chart import ChartPart
+from schemas.diagram import DiagramPart
 from schemas.media_parts import (
     AudioPart,
     FilePart,
@@ -117,21 +119,6 @@ class FormPart(BaseModel):
     cancel_text: str = "取消"
 
 
-class ChartPart(BaseModel):
-    """交互式图表内容块
-
-    沙盒 emit 协议 → 后端 → 前端 ChartBlock。spec_format 决定渲染器:
-      - echarts (默认) — 手动 emit_chart / 内置图表
-      - plotly  — plotly fig.show() / display(fig) hook 产出
-      - vegalite — altair Chart.show() hook 产出
-    """
-    type: Literal["chart"] = "chart"
-    option: Dict[str, Any]                # 图表 spec(echarts option / plotly fig dict / vega-lite spec)
-    title: str = ""                       # 图表标题(用于无障碍和导出)
-    chart_type: str = ""                  # 类型标识(line/bar/pie,日志用)
-    spec_format: Literal["echarts", "plotly", "vegalite"] = "echarts"
-
-
 class EcomPlanPart(BaseModel):
     """电商图方案卡片内容块
 
@@ -147,7 +134,7 @@ class EcomPlanPart(BaseModel):
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
           ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart,
-          EcomPlanPart],
+          DiagramPart, EcomPlanPart],
     Field(discriminator="type"),
 ]
 

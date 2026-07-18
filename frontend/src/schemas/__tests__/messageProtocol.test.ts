@@ -15,6 +15,7 @@ describe('messageProtocol', () => {
       { type: 'tool_result', tool_name: 'erp_agent', text: 'done' },
       { type: 'table', columns: ['name'], rows: [{ name: 'A' }] },
       { type: 'chart', option: { series: [] } },
+      { type: 'diagram', format: 'mermaid', source: 'flowchart TD\nA-->B' },
       { type: 'interrupt_marker', interrupted_at: '2026-07-16', reason: 'user_cancel' },
     ];
 
@@ -48,5 +49,38 @@ describe('messageProtocol', () => {
 
   it('rejects non-array content collections', () => {
     expect(parseContentParts({ type: 'text', text: 'hello' })).toEqual([]);
+  });
+
+  it('rejects invalid diagram formats and empty sources', () => {
+    expect(parseContentPart({
+      type: 'diagram',
+      format: 'plantuml',
+      source: '@startuml',
+    })).toBeNull();
+    expect(parseContentPart({
+      type: 'diagram',
+      format: 'mermaid',
+      source: ' \n ',
+    })).toBeNull();
+  });
+
+  it('rejects oversized Mermaid source', () => {
+    expect(parseContentPart({
+      type: 'diagram',
+      format: 'mermaid',
+      source: 'A'.repeat(100_001),
+    })).toBeNull();
+  });
+
+  it('preserves unknown historical chart formats as readable fallback data', () => {
+    expect(parseContentPart({
+      type: 'chart',
+      option: { value: 42 },
+      spec_format: 'future-engine',
+    })).toEqual({
+      type: 'chart',
+      option: { value: 42 },
+      spec_format: 'unknown',
+    });
   });
 });

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { getEChartsThemeName } from '../echartsThemes';
+import { describe, it, expect, vi } from 'vitest';
+import { getEChartsThemeName, registerAllThemes } from '../echartsThemes';
 import type { ThemeName } from '../../hooks/useTheme';
 
 describe('getEChartsThemeName', () => {
@@ -20,5 +20,17 @@ describe('getEChartsThemeName', () => {
       results.add(getEChartsThemeName(theme, false));
     }
     expect(results.size).toBe(6);
+  });
+
+  it('registers all themes through the caller-provided ECharts boundary', () => {
+    const registerTheme = vi.fn();
+
+    registerAllThemes(registerTheme);
+
+    expect(registerTheme).toHaveBeenCalledTimes(6);
+    expect(registerTheme).toHaveBeenCalledWith(
+      'classic-light',
+      expect.objectContaining({ backgroundColor: '#ffffff' }),
+    );
   });
 });

@@ -18,6 +18,13 @@
 - `p_metadata` 已改用 psycopg `Jsonb` 适配，覆盖显式 metadata 和缺省空对象；管理员接口继续按 `last_active_at DESC NULLS LAST, created_at DESC` 排序，前端无需修改。
 - 回归测试覆盖 JSONB 参数适配、空 metadata、异常降级和管理员排序契约。
 
+### 2026-07-18 企业微信历史孤儿账号清理 — 已完成
+
+- 生产巡检发现 4 个 `created_by='wecom'` 但无 `wecom_user_mappings` 的历史账号，均创建于 2026 年 4 月、从未登录，且没有可可靠还原的企微 userid。
+- 逐项核对全部 30 个用户外键：无会话、消息、任务、组织、附件、定时任务或其他业务引用，仅有 58 条注册赠送/历史积分调整流水；当前原子创建 RPC、合并 RPC和唯一索引均已生效，2026 年 5 月后新增孤儿数为 0。
+- 删除前已在生产服务器生成 root-only 用户与积分流水备份并记录 SHA-256；随后通过 SERIALIZABLE 单事务锁定、保护条件复核和精确 ID 删除 4 个历史账号，积分流水按外键级联清理。
+- 提交后数据库复核 `orphan_users=0`、目标用户和目标积分流水均为 0；手动运行 `WecomDuplicateMonitor` 返回 `orphan_users=0`、`duplicate_groups=0`。
+
 ### 2026-07-18 旧文件元数据提取器退役清理 — 已完成
 
 - `file_metadata_extractor.py` 已增长至 1,217 行，但生产调用早已分别从 workspace prompt 和 file_list/file_search 链路移除；全仓仅剩孤立测试和过期文档引用。
@@ -381,6 +388,8 @@
 
 ## 更新记录
 
+- **2026-07-18**：ECharts/Mermaid 职责治理阶段 4：主 Agent 与 code_execute 提示词统一规定数据统计使用 `emit_chart(ECharts)`、逻辑关系使用 `emit_diagram(Mermaid)`，普通文字足够时不生成图形，同一内容不得重复生成；Plotly/Vega-Lite 调整为历史只读兼容。企微通道由“跳过图形”改为 chart 输出格式化 JSON、diagram 输出原始 Mermaid 源码，并合并进入原 stream；ECharts/Mermaid 错误日志仅记录消息 ID、内容类型、渲染器、错误类型和源码长度，不记录 option、DSL 或解析异常正文。本结论取代 2026-07-17 的企微 chart 跳过策略。
+- **2026-07-18**：Plotly/Vega-Lite 退出审计暂不删除依赖：代码与测试确认沙盒自动 MIME hook 仍可接收显式 Plotly/Altair 输出，前端继续承担历史只读恢复；生产构建中 `plotly-basic` 约 1.12 MB、Vega embed 约 759 KB，均为独立异步 Chunk，不进入普通文本首屏。当前工作区无法证明生产数据库历史消息数量，删除前仍需只读统计 `spec_format` 分布并确认没有 ECharts 无法覆盖的业务场景。
 - **2026-07-17**：修复企微附件跨轮污染：迁移 131 将已绑定任务的附件集合持续保留为 `active`，导致后续“你好”“天气”等纯文本消息仍被数据库拼入旧 CSV，并再次触发文件分析。迁移 133 恢复“当前附件单次消费”语义：首次任务先冻结 `task_attachment_refs`，再原子转为 `referenced`；部署时仅修复已有任务绑定的活动附件，未使用的待处理附件保持 `active`；重放继续复用冻结输入，rollback 不重新激活历史附件。Web 消息附件列表仍由当前请求显式决定，不受影响。
 - **2026-07-17**：修复 PromptBuilder 重构遗漏的“最新用户消息优先”约束：Web 与企微共用链路在存在历史时明确禁止擅自续写或重复已完成任务；固定 revision 历史增加 `created_at/context_revision/role/id` 稳定排序，避免同时间戳 user/assistant 次序漂移；企微智能机器人移除“正在接收并排队处理…”文案，直接显示既有思考状态。新增有历史、无历史、附件邻接、固定 revision 排序和企微初始状态回归测试。
 - **2026-07-17**：修复 `file_analyze` 的 Parquet 路径契约断裂：CSV/TSV 虽已实际转换为内容指纹命名的 Parquet，但简化 meta 没有 `xml_view`，结果边界退回旧视图后遗漏真实路径。统一由 `file_analysis_service` 使用转换函数实际返回的 `cache_path` 生成沙盒 `staging/...` 访问描述；Excel、CSV、TSV、首次生成和缓存命中共享同一契约，并拒绝不存在或越出当前 staging 的缓存路径。

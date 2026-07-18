@@ -1,6 +1,79 @@
-# 交互式图表（ECharts 替代 matplotlib）
+# ECharts 数据图表与 Mermaid 关系图渲染架构
 
-> **版本**：v1.0 | **状态**：设计完成 | **日期**：2026-05-03
+> **版本**：v2.0 | **状态**：已实现 | **更新日期**：2026-07-18
+
+> v2.0 说明：现行链路已改为沙盒 `emit_*` 结构化协议。本文第 2～13
+> 节保留 v1.0 的 `.echart.json` 方案作为历史背景，不再代表生产实现。
+
+## v2.0 现行架构
+
+### 职责与模型选择
+
+- 数值、趋势、统计、分类比较和占比使用 `emit_chart(ECharts option)`。
+- 流程、状态、时序、类图、调用关系和甘特图使用
+  `emit_diagram(Mermaid source)`。
+- 普通文字足够清楚时不生成图形，同一内容不得同时生成两种图形。
+- Plotly/Vega-Lite 仅保留历史只读兼容，模型提示词不再引导新消息生成。
+
+### 结构化协议
+
+```text
+LLM → code_execute → emit_chart / emit_diagram
+  → sandbox emit_payloads
+  → build_block_from_payload
+  → WebSocket 流式块 + GenerationOutcome
+  → ContentPart 持久化与任务恢复
+  → 前端 Zod 运行时校验
+  → MessageContentBlocks 分发
+```
+
+数据图表使用 `ChartPart`：
+
+```json
+{"type":"chart","spec_format":"echarts","title":"销售趋势","option":{}}
+```
+
+关系图使用 `DiagramPart`，原始 `source` 是唯一可信数据：
+
+```json
+{"type":"diagram","format":"mermaid","title":"订单流程","source":"flowchart TD\nA-->B"}
+```
+
+### 前端组件与状态
+
+```text
+MessageContentBlocks
+├── ChartBlock
+│   ├── EChartsRenderer
+│   └── PlotlyBlock / VegaLiteBlock（历史只读）
+└── DiagramBlock
+    └── MermaidRenderer
+```
+
+两种正式渲染器统一遵循
+`idle → loading → ready / error → fallback`。ECharts 失败展示格式化
+JSON/数据视图，Mermaid 失败展示原始 DSL；动态 Chunk 加载失败允许重试。
+Effect cleanup 和请求序列隔离保证卸载或快速切换后旧结果不会覆盖新状态。
+
+### 按需加载与安全
+
+- ECharts 和 Mermaid 分别由独立动态 import 入口加载，普通文本聊天不加载二者。
+- `echartsThemes.ts` 只提供主题数据和注册回调，不再自行导入 ECharts。
+- Mermaid 使用 `securityLevel: strict`、关闭 HTML label，并经 DOMPurify SVG
+  profile 清理；脚本、外部资源、链接、事件属性和 `foreignObject` 不进入 DOM。
+- ECharts option 来自 JSON 协议，不接收可执行函数；字符串 formatter 仅使用
+  ECharts 模板语法。
+- 错误日志只记录 message ID、内容类型、渲染器、错误类型和源码长度，
+  不记录 option、Mermaid DSL 或解析异常正文。
+
+### 历史与渠道兼容
+
+- Markdown `mermaid` 代码块继续经 `MarkdownRenderer → MermaidBlock` 读取，
+  但不再作为新消息正式协议。
+- 未知 chart 格式恢复为可读 JSON，不因收紧枚举导致历史消息丢失。
+- 企业微信不运行浏览器渲染器：chart 降级为格式化 JSON，diagram 降级为
+  原始 Mermaid 源码。
+- 无数据库迁移，不批量改写生产历史消息。
 
 ## 概述
 

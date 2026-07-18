@@ -43,6 +43,10 @@
 - `backend/services/agent/file_analysis_service.py`：隔离表格分析的路径授权、格式转换、结构化错误与缓存登记。
 - `backend/services/handlers/chat_tool_result_mixin.py`：统一 Chat 工具结果分类、WebSocket 投递与审计。
 - `backend/services/assets/file_identity.py`：按解密后内容统一识别文件类型、规范名称与内容摘要。
+
+本轮图形渲染治理新增的核心模块：
+- `backend/config/image_agent_prompt.py`：从主工具配置中拆出的电商图片提示词片段，保持 `chat_tools.py` 满足文件长度阈值。
+- `frontend/src/components/chat/message/useEChartsRender.ts`：封装 ECharts Chunk 加载、初始化、重试、卸载清理和 ResizeObserver 生命周期。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
@@ -115,6 +119,8 @@ EVERYDAYAIONE/
 │   │       ├── webhook.py                # Webhook 回调路由（多 Provider 分发）
 │   │       └── ws.py                     # WebSocket 路由
 │   ├── schemas/                  # 请求/响应模型
+│   │   ├── chart.py                  # ECharts正式协议与历史图表格式兼容
+│   │   ├── diagram.py                # Mermaid 逻辑关系图 ContentPart 协议
 │   │   └── ecom_requirement.py       # 电商图 AI 帮写请求、标准输入与响应协议
 │   │   ├── auth.py                   # 认证相关 Schema
 │   │   ├── conversation.py           # 对话相关 Schema
@@ -343,6 +349,9 @@ EVERYDAYAIONE/
         │       │   ├── MessageItem.tsx       # 单条消息编排（预览、工具栏、删除）
         │       │   ├── MessageBubbleContent.tsx # 气泡内容状态分发
         │       │   ├── MessageContentBlocks.tsx # AI 多内容块渲染
+        │       │   ├── DiagramBlock.tsx      # 结构化 Mermaid 关系图正式入口
+        │       │   ├── MermaidRenderer.tsx   # Mermaid 按需加载、安全清理、缓存与源码降级
+        │       │   ├── EChartsRenderer.tsx   # ECharts按需加载、状态机、重试与数据降级
         │       │   ├── MessageMedia.tsx      # 消息媒体容器（图片、视频、文件）
         │       │   ├── FormBlockContent.tsx  # 聊天表单活动态展示外壳与操作栏
         │       │   ├── MessageImageBlocks.tsx # 图片块渲染（缩略图展示、原图下载）
@@ -713,10 +722,10 @@ cache = client.caches.create(
     文件、Sandbox、ERP 与图片产物统一进入 channel Workspace
 - **2026-07-17**：企微 FILE 统一为原始资产 `FilePart` 后，删除已无生产调用的
   `services/wecom/file_parser.py` 及其孤立测试；文件内容理解统一由标准工具链按需完成。
-- **2026-07-17**：企业微信图表能力回退
+- **2026-07-17**：企业微信图表能力回退（已被 2026-07-18 文本降级策略取代）
   - Web 继续渲染统一 `ChartPart`，支持 ECharts、Plotly 和 Vega-Lite
-  - 企微通道末端明确跳过所有 chart，仅投递文字、图片和视频
-  - Outbox 保留原始 content index 检查点；chart 不产生投递项或重试
+  - 企微通道不运行浏览器图形渲染器；当前 chart 降级为格式化 JSON，diagram 降级为原始 Mermaid 源码
+  - Outbox 保留原始 content index 检查点，并为结构化图形产生稳定文本投递项
   - 删除企微 Playwright/Chromium/ECharts runtime 与部署安装链路
 - **2026-07-16**：新增消息发送草稿事务与幂等协议技术设计
   - 统一文字、图片、视频和电商图的输入草稿提交时序

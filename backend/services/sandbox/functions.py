@@ -22,7 +22,7 @@ def build_sandbox_executor(
 ) -> SandboxExecutor:
     """构建沙盒执行器(Kernel 模式)。
 
-    产物协议:LLM 在沙盒里调 emit_chart/file/image/table 主动声明产物 →
+    产物协议:LLM 在沙盒里调 emit_chart/diagram/file/image/table 主动声明产物 →
     sandbox 收集到 emit_payloads → kernel JSON-Line IPC 独立字段透传 →
     AgentResult.emit_payloads(流派 2 多字段协议,对齐 OpenAI Code Interpreter)。
     """

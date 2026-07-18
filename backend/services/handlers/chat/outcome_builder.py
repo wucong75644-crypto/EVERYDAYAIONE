@@ -7,6 +7,7 @@ from typing import Any
 from schemas.message import (
     ChartPart,
     ContentPart,
+    DiagramPart,
     FilePart,
     FormPart,
     ImagePart,
@@ -115,6 +116,12 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             title=block.get("title", ""),
             chart_type=block.get("chart_type", ""),
             spec_format=block.get("spec_format", "echarts"),
+        )
+    if block_type == "diagram":
+        return DiagramPart(
+            format=block.get("format", "mermaid"),
+            source=block["source"],
+            title=block.get("title", ""),
         )
     if block_type == "form":
         return FormPart(**block)

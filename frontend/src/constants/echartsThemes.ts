@@ -6,7 +6,7 @@
  *
  * 使用方式：
  *   import { getEChartsThemeName, registerAllThemes } from './echartsThemes';
- *   registerAllThemes();  // 启动时注册一次
+ *   registerAllThemes(echarts.registerTheme);
  *   echarts.init(dom, getEChartsThemeName('classic', true));
  */
 
@@ -141,14 +141,14 @@ const THEMES: Record<string, EChartsThemeConfig> = {
 // ============================================================
 
 /**
- * 注册所有 ECharts 主题（应用启动时调用一次）
- *
- * 延迟导入 echarts，避免未使用图表时加载整个库。
+ * 注册所有 ECharts 主题。ECharts 实例由调用方动态加载，避免本模块
+ * 同时静态、动态导入 echarts/core 而破坏异步 Chunk 边界。
  */
-export async function registerAllThemes(): Promise<void> {
-  const echarts = await import('echarts/core');
+export function registerAllThemes(
+  registerTheme: (name: string, config: EChartsThemeConfig) => void,
+): void {
   for (const [name, config] of Object.entries(THEMES)) {
-    echarts.registerTheme(name, config);
+    registerTheme(name, config);
   }
 }
 

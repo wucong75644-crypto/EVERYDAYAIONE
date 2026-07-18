@@ -7,7 +7,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.message import ChartPart, FilePart, ImagePart
+from schemas.message import ChartPart, DiagramPart, FilePart, ImagePart
 from services.handlers.emit_payloads import build_block_from_payload, build_part_from_payload
 
 
@@ -73,6 +73,34 @@ def test_chart_payload_uses_option_title_and_builds_chart_part():
     assert block["title"] == "销售趋势"
     assert block["chart_type"] == "line"
     assert isinstance(part, ChartPart)
+
+
+def test_diagram_payload_builds_block_and_part():
+    payload = {
+        "kind": "diagram",
+        "format": "mermaid",
+        "title": "订单流程",
+        "source": "flowchart TD\nA-->B",
+    }
+
+    block = build_block_from_payload(payload)
+    part = build_part_from_payload(payload)
+
+    assert block == {
+        "type": "diagram",
+        "format": "mermaid",
+        "title": "订单流程",
+        "source": "flowchart TD\nA-->B",
+    }
+    assert isinstance(part, DiagramPart)
+    assert part.source == payload["source"]
+
+
+def test_empty_diagram_payload_is_rejected():
+    payload = {"kind": "diagram", "format": "mermaid", "source": "  "}
+
+    assert build_block_from_payload(payload) is None
+    assert build_part_from_payload(payload) is None
 
 
 def test_invalid_image_payload_is_rejected():

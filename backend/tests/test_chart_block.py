@@ -68,6 +68,10 @@ class TestChartPartSchema:
         cp = ChartPart(option={"series": []})
         assert cp.spec_format == "echarts"
 
+    def test_chart_part_unknown_spec_format_is_preserved_as_fallback(self):
+        cp = ChartPart(option={"future": True}, spec_format="future-engine")
+        assert cp.spec_format == "unknown"
+
     def test_chart_part_roundtrip_with_spec_format(self):
         """ChartPart spec_format 序列化往返"""
         original = ChartPart(

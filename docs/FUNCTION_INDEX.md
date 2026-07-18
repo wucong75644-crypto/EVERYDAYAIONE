@@ -16,6 +16,12 @@
 | `parseProtocolString` | `frontend/src/schemas/messageProtocol.ts` | 校验 WebSocket/恢复链路中的字符串字段，拒绝对象隐式转换 | input, field, context? | `string \| null` |
 | `parseContentPart` | `frontend/src/schemas/messageProtocol.ts` | 在 Store 写入前校验单个 ContentPart；兼容恢复结构化 text | input, context? | `ContentPart \| null` |
 | `parseContentParts` | `frontend/src/schemas/messageProtocol.ts` | 校验内容块数组并隔离非法块 | input, context? | `ContentPart[]` |
+| `DiagramPart.validate_source` | `backend/schemas/diagram.py` | 校验 Mermaid 结构化消息源码非空且不超过协议上限 | value | `str` |
+| `ChartPart.normalize_spec_format` | `backend/schemas/chart.py` | 保留三种已知图表格式并将未知历史格式归一化为可读降级类型 | value | `str` |
+| `MermaidRenderer` | `frontend/src/components/chat/message/MermaidRenderer.tsx` | 按需加载 Mermaid、安全清理 SVG，并处理缓存、竞态、重试和源码降级 | source, messageId? | React element |
+| `DiagramBlock` | `frontend/src/components/chat/message/DiagramBlock.tsx` | 结构化 DiagramPart 正式展示入口，复制操作始终使用原始 Mermaid 源码 | diagram, messageId | React element |
+| `EChartsRenderer` | `frontend/src/components/chat/message/EChartsRenderer.tsx` | 按需加载 ECharts并处理主题、统一状态、重试、脱敏错误日志和 JSON/表格降级 | option, title?, messageId? | React element |
+| `useEChartsRender` | `frontend/src/components/chat/message/useEChartsRender.ts` | 管理 ECharts 异步 Chunk、实例初始化、错误重试、卸载清理和响应式尺寸监听 | containerRef, chartRef, option, theme, messageId? | render state |
 | `formatDisplayValue` | `frontend/src/utils/displayValue.ts` | 将未知值稳定转换为可展示文本，处理 BigInt 与循环引用 | value | `string` |
 | `formatFormValue` | `frontend/src/utils/displayValue.ts` | 仅允许标量进入表单控件，拒绝结构化值 | value | `string` |
 | `createStreamingLifecycleActions` | `frontend/src/stores/slices/streamingLifecycleActions.ts` | 创建流式消息启动、注册、完成和查询 actions | set, get | lifecycle actions |
@@ -208,12 +214,14 @@
 | `ActorTerminalDelivery.notify` | `backend/services/conversation_delivery.py` | 数据库终态确认后释放任务槽；所有通道均向 Web best-effort 推送终态，企微结果另由事务 Outbox 投递 | task, terminal_result | None |
 | `enqueue_web_chat` | `backend/services/handlers/chat/actor_enqueue.py` | 以稳定内部 UUID 调用原子 enqueue RPC，并 best-effort 发布 Redis 唤醒 | handler, content, user_id, conversation_id, external_task_id, model_id, metadata, params | str |
 | `ConversationActorRuntime.start/stop` | `backend/services/conversation_runtime.py` | 装配独立 Worker、执行器、统一实时 Sink、终态观察器和 Kernel 生命周期 | - | None |
-| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将 AI 终态或带来源标识的 Web 用户文本展开为稳定分项；智能机器人终态可完成原 stream，自建应用按检查点分项发送 | task, message, context, delivery_kind / context, item | list / bool |
+| `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将 AI 终态或带来源标识的 Web 用户文本展开为稳定分项；chart 降级为格式化 JSON、diagram 降级为原始 Mermaid 源码，智能机器人终态可完成原 stream | task, message, context, delivery_kind / context, item | list / bool |
+| `_graphic_fallback` | `backend/services/wecom/delivery_sender.py` | 将企微不支持的结构化 chart/diagram 转换为仍可读取的文本数据 | part | str / None |
 | `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，按 delivery_kind 加载输入或助手消息，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
 | `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
 | `build_running_step` | `backend/services/handlers/chat/tool_loop.py` | Web 与无头执行内核共用的 running tool_step 构造原语 | call | Dict |
 | `build_block_from_payload` | `backend/services/handlers/emit_payloads.py` | 将可信 emit payload 转成流式推送与持久化使用的 content block | payload | Optional[Dict] |
+| `build_diagram_payload` | `backend/services/sandbox/emit_protocol.py` | 构造 Mermaid diagram emit payload并校验格式、空值和长度 | source, title, format | dict |
 | `build_part_from_payload` | `backend/services/handlers/emit_payloads.py` | 将可信 emit payload 转成非流式链路使用的 ContentPart | payload | Optional[ContentPart] |
 | `context_anchor_from_binding` | `backend/services/handlers/context_snapshot.py` | 将 Turn 绑定事务结果转换为不可变任务上下文锚点 | task_data, input_message_id, turn_id, binding_data | ContextAnchor |
 | `build_context_snapshot` | `backend/services/handlers/context_snapshot.py` | 校验任务输入锚点，按 base revision 严格构造闭合历史与兼容摘要 | db, anchor, current_text | ContextSnapshot |

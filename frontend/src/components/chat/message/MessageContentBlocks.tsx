@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import toast from 'react-hot-toast';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import api from '../../../services/api';
@@ -16,6 +17,8 @@ import { TableBlock } from './TableBlock';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
+
+const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
 interface MessageContentBlocksProps {
   message: Message;
@@ -170,8 +173,19 @@ export default function MessageContentBlocks({
                 option={cp.option}
                 title={cp.title}
                 spec_format={cp.spec_format}
+                messageId={message.id}
               />
             </div>
+          );
+        }
+        if (part.type === 'diagram') {
+          return (
+            <Suspense
+              key={`diagram-${idx}`}
+              fallback={<div className="my-3 p-4 text-sm text-text-disabled">关系图组件加载中...</div>}
+            >
+              <DiagramBlock diagram={part} messageId={message.id} />
+            </Suspense>
           );
         }
         if (part.type === 'table') {

@@ -2,6 +2,7 @@
 
 from schemas.message import (
     ChartPart,
+    DiagramPart,
     FilePart,
     FormPart,
     ImagePart,
@@ -38,6 +39,12 @@ def test_build_content_parts_preserves_mixed_block_order() -> None:
         },
         {"type": "chart", "option": {"series": []}, "title": "趋势"},
         {
+            "type": "diagram",
+            "format": "mermaid",
+            "source": "flowchart TD\nA-->B",
+            "title": "流程",
+        },
+        {
             "type": "form",
             "form_id": "form-1",
             "form_type": "confirmation",
@@ -56,6 +63,7 @@ def test_build_content_parts_preserves_mixed_block_order() -> None:
         ImagePart,
         FilePart,
         ChartPart,
+        DiagramPart,
         FormPart,
     ]
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from schemas.message import ChartPart, ContentPart, FilePart, ImagePart
+from schemas.message import ChartPart, ContentPart, DiagramPart, FilePart, ImagePart
 
 
 def _extract_chart_title(option: Dict[str, Any]) -> str:
@@ -36,6 +36,16 @@ def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
             "title": payload.get("title") or _extract_chart_title(option),
             "chart_type": _extract_chart_type(option),
             "spec_format": payload.get("spec_format") or "echarts",
+        }
+    if kind == "diagram":
+        source = payload.get("source")
+        if not isinstance(source, str) or not source.strip():
+            return None
+        return {
+            "type": "diagram",
+            "format": payload.get("format") or "mermaid",
+            "source": source,
+            "title": payload.get("title") or "",
         }
     if kind == "table":
         return {
@@ -90,4 +100,6 @@ def build_part_from_payload(payload: Dict[str, Any]) -> Optional[ContentPart]:
         return FilePart(**block)
     if block_type == "chart":
         return ChartPart(**block)
+    if block_type == "diagram":
+        return DiagramPart(**block)
     return None

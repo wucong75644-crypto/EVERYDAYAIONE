@@ -8,7 +8,7 @@ import pytest
 from services.wecom.delivery_sender import WecomDeliveryItem, WecomDeliverySender
 
 
-def test_build_items_keeps_stable_indexes_and_skips_charts():
+def test_build_items_keeps_stable_indexes_and_downgrades_charts():
     sender = WecomDeliverySender(object(), MagicMock())
     items = sender.build_items(
         {"id": "task-1", "status": "completed"},
@@ -28,8 +28,10 @@ def test_build_items_keeps_stable_indexes_and_skips_charts():
     )
 
     assert [(item.key, item.kind) for item in items] == [
-        ("text:1", "text"), ("image:2", "image"), ("video:4", "video"),
+        ("text:1", "text"), ("image:2", "image"), ("chart:3", "text"),
+        ("video:4", "video"),
     ]
+    assert '"data": []' in items[2].content
 
 
 def test_build_items_combines_stream_text_into_one_checkpoint():
@@ -47,7 +49,11 @@ def test_build_items_combines_stream_text_into_one_checkpoint():
     )
 
     assert items == [
-        WecomDeliveryItem("stream:text", "text", "第一段\n\n第二段"),
+        WecomDeliveryItem(
+            "stream:text",
+            "text",
+            "第一段\n\n第二段\n\n数据图表（原始数据）\n\n```json\n{}\n```",
+        ),
         WecomDeliveryItem("image:3", "image", "https://cdn/a.png"),
     ]
 
@@ -66,7 +72,11 @@ def test_build_items_finishes_stream_when_result_has_no_text():
     )
 
     assert items == [
-        WecomDeliveryItem("stream:text", "text", "分析已完成。"),
+        WecomDeliveryItem(
+            "stream:text",
+            "text",
+            "数据图表（原始数据）\n\n```json\n{}\n```",
+        ),
     ]
 
 
@@ -84,7 +94,36 @@ def test_build_items_chart_only_completes_without_false_empty_reply(spec_format)
         {"transport": "smart_robot"},
     )
 
-    assert items == []
+    assert items == [
+        WecomDeliveryItem(
+            "chart:0",
+            "text",
+            '数据图表（原始数据）\n\n```json\n{\n  "series": []\n}\n```',
+        )
+    ]
+
+
+def test_build_items_downgrades_diagram_to_original_source():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {"id": "task-1", "status": "completed"},
+        {"content": [{
+            "type": "diagram",
+            "format": "mermaid",
+            "title": "订单流程",
+            "source": "flowchart TD\nA-->B",
+        }]},
+        {"transport": "smart_robot"},
+    )
+
+    assert items == [
+        WecomDeliveryItem(
+            "diagram:0",
+            "text",
+            "关系图：订单流程\n\n```text\nflowchart TD\nA-->B\n```",
+        )
+    ]
 
 
 def test_build_items_creates_failed_result_without_message():

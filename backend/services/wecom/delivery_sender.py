@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -63,23 +64,36 @@ class WecomDeliverySender:
             return self._text_items(key, text, context)
 
         items: list[WecomDeliveryItem] = []
-        chart_skipped = False
         parts = parse_content((message or {}).get("content"))
-        stream_text = "\n\n".join(
+        text_parts = [
             str(part["text"])
             for part in parts
             if part.get("type") == "text" and part.get("text")
-        )
+        ]
+        graphic_fallbacks = [
+            fallback
+            for part in parts
+            if (fallback := _graphic_fallback(part)) is not None
+        ]
+        stream_text = "\n\n".join([*text_parts, *graphic_fallbacks])
         stream_text_added = False
         for index, part in enumerate(parts):
             kind = part.get("type")
-            if kind == "chart":
-                chart_skipped = True
+            if kind in {"chart", "diagram"}:
                 logger.info(
-                    "wecom_chart_skipped | "
+                    "wecom_graphic_fallback | "
                     f"task_id={task.get('id')} | content_index={index} | "
-                    f"spec_format={part.get('spec_format', 'echarts')}"
+                    f"content_type={kind} | renderer="
+                    f"{part.get('spec_format') or part.get('format') or 'unknown'}"
                 )
+                if not context.get("stream_id"):
+                    fallback = _graphic_fallback(part)
+                    if fallback:
+                        items.extend(
+                            self._text_items(
+                                f"{kind}:{index}", fallback, context,
+                            )
+                        )
                 continue
             value = part.get("text") if kind == "text" else part.get("url")
             if kind not in {"text", "image", "video"} or not value:
@@ -98,14 +112,17 @@ class WecomDeliverySender:
                 )
             else:
                 items.append(WecomDeliveryItem(f"{kind}:{index}", kind, str(value)))
-        if context.get("stream_id") and not stream_text_added and (
-            items or chart_skipped
-        ):
+        if context.get("stream_id") and not stream_text_added and stream_text:
+            items.insert(
+                0,
+                WecomDeliveryItem("stream:text", "text", stream_text),
+            )
+        elif context.get("stream_id") and not stream_text_added and items:
             items.insert(
                 0,
                 WecomDeliveryItem("stream:text", "text", "分析已完成。"),
             )
-        if not items and not chart_skipped:
+        if not items:
             items.extend(
                 self._text_items(
                     "empty:0", "抱歉，AI 没有生成回复内容。", context,
@@ -227,6 +244,25 @@ def _required_str(context: Mapping[str, Any], key: str) -> str:
 
 def _optional_str(value: Any) -> str | None:
     return str(value) if value else None
+
+
+def _graphic_fallback(part: Mapping[str, Any]) -> str | None:
+    kind = part.get("type")
+    title = str(part.get("title") or "").strip()
+    if kind == "diagram":
+        source = part.get("source")
+        if not isinstance(source, str) or not source.strip():
+            return None
+        heading = f"关系图：{title}" if title else "关系图（Mermaid 源码）"
+        return f"{heading}\n\n```text\n{source}\n```"
+    if kind != "chart":
+        return None
+    option = part.get("option")
+    if not isinstance(option, Mapping):
+        return None
+    heading = f"数据图表：{title}" if title else "数据图表（原始数据）"
+    formatted = json.dumps(option, ensure_ascii=False, indent=2)
+    return f"{heading}\n\n```json\n{formatted}\n```"
 
 
 def _stream_is_current(context: Mapping[str, Any]) -> bool:

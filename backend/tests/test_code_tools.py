@@ -58,6 +58,19 @@ class TestCodeToolsDefinition:
         assert "code_execute" in CODE_ROUTING_PROMPT
         assert "fetch_all_pages" in CODE_ROUTING_PROMPT
 
+    def test_graphic_protocol_has_explicit_renderer_boundaries(self):
+        desc = build_code_tools()[0]["function"]["description"]
+        assert "emit_chart" in desc
+        assert "emit_diagram" in desc
+        assert "Plotly/Vega-Lite 仅供历史消息读取" in desc
+        assert "同一内容禁止同时生成 chart 和 diagram" in desc
+        assert "plotly.express + fig.show()" not in desc
+
+    def test_routing_prompt_prefers_structured_graphic_protocols(self):
+        assert "emit_chart(ECharts option)" in CODE_ROUTING_PROMPT
+        assert "emit_diagram(Mermaid source)" in CODE_ROUTING_PROMPT
+        assert "新消息禁止生成 Plotly/Vega-Lite" in CODE_ROUTING_PROMPT
+
     def test_routing_prompt_mentions_fetch_all_pages(self):
         """CODE_ROUTING_PROMPT 包含 fetch_all_pages 协议"""
         assert "fetch_all_pages" in CODE_ROUTING_PROMPT

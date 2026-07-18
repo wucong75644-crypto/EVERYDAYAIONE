@@ -105,6 +105,14 @@ class TestGetChatTools:
         assert isinstance(tools, list)
         assert len(tools) > 0
 
+    def test_system_prompt_uses_structured_graphic_protocols(self):
+        from config.chat_tools import get_tool_system_prompt
+        prompt = get_tool_system_prompt()
+        assert "emit_chart(ECharts option)" in prompt
+        assert "emit_diagram(Mermaid source)" in prompt
+        assert "Plotly/Vega-Lite 仅保留历史读取兼容" in prompt
+        assert "plotly.express + fig.show()" not in prompt
+
     def test_tool_format(self):
         """每个工具符合 OpenAI function calling 格式"""
         from config.chat_tools import get_chat_tools

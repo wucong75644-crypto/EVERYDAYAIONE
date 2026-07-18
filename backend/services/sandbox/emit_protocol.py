@@ -13,6 +13,7 @@ LLM 调用 emit_xxx() → buffer 收集 payload → _exec_code 返回 (stdout, p
 
 产物 payload kind:
   chart: {kind, spec_format, title, option}   — ECharts/plotly/vegalite spec
+  diagram: {kind, format, title, source}      — Mermaid 原始源码
   file:  {kind, path, label, name, size, url} — 文件下载卡片
   image: {kind, path, alt, name, width, height, url} — 图片
   table: {kind, title, columns, rows, truncated, total_rows} — 表格
@@ -45,6 +46,30 @@ def build_chart_payload(option: dict, title: str = "") -> dict:
         "spec_format": "echarts",
         "title": title or "",
         "option": option,
+    }
+
+
+def build_diagram_payload(
+    source: str,
+    title: str = "",
+    format: str = "mermaid",
+) -> dict:
+    """构造 Mermaid diagram payload，保留原始源码作为唯一可信数据。"""
+    if format != "mermaid":
+        raise ValueError(f"emit_diagram format 不支持: {format}")
+    if not isinstance(source, str):
+        raise TypeError(
+            f"emit_diagram source 必须是 str,收到 {type(source).__name__}"
+        )
+    if not source.strip():
+        raise ValueError("emit_diagram source 不能为空")
+    if len(source) > 100_000:
+        raise ValueError("emit_diagram source 不能超过 100000 字符")
+    return {
+        "kind": "diagram",
+        "format": "mermaid",
+        "title": title or "",
+        "source": source,
     }
 
 
@@ -146,6 +171,11 @@ def install_emit_in_globals(sandbox_globals: dict, buffer: list[dict]) -> None:
     """
     sandbox_globals["emit_chart"] = (
         lambda option, title="": buffer.append(build_chart_payload(option, title))
+    )
+    sandbox_globals["emit_diagram"] = (
+        lambda source, title="", format="mermaid": buffer.append(
+            build_diagram_payload(source, title, format)
+        )
     )
     sandbox_globals["emit_file"] = (
         lambda path, label=None: buffer.append(build_file_payload(path, label))

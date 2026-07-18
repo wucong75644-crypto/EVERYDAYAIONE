@@ -20,6 +20,7 @@ export type ContentPart =
   | ToolResultPart
   | FormPart
   | ChartPart
+  | DiagramPart
   | TablePart
   | EcomPlanPart
   | InterruptMarkerPart;
@@ -168,7 +169,15 @@ export interface ChartPart {
   option: Record<string, unknown>;
   title?: string;
   chart_type?: string;
-  spec_format?: 'echarts' | 'plotly' | 'vegalite';
+  spec_format?: 'echarts' | 'plotly' | 'vegalite' | 'unknown';
+}
+
+/** Mermaid 逻辑关系图；source 是持久化和复制使用的唯一可信数据。 */
+export interface DiagramPart {
+  type: 'diagram';
+  format: 'mermaid';
+  source: string;
+  title?: string;
 }
 
 /** 交互式表格内容块(沙盒 emit_table 触发,前端 TableBlock 渲染) */

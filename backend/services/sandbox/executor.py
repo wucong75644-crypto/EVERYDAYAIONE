@@ -10,7 +10,7 @@
   B. Runtime 写盘 diff(_auto_emit_missed):
      扫 output_dir 新增/修改文件 → 按扩展名自动构造 emit_image/file payload
   C. LLM 显式 emit(emit_protocol.py):
-     emit_chart/file/image/table 显式声明,提供 title/label
+     emit_chart/diagram/file/image/table 显式声明,提供 title/label
 
 去重: LLM emit + auto diff 触发同一文件时,以 LLM emit 为准(保留 title/label)。
 详见 docs/document/TECH_沙盒产物协议.md
@@ -30,6 +30,7 @@ from services.sandbox.validators import validate_code
 # 产物 → LLM 占位提示模板(让 LLM 知道已 emit,防止重复)
 _EMIT_HINT_TEMPLATES = {
     "chart": "📊 图表已生成: {label}（前端将自动渲染）",
+    "diagram": "🧭 关系图已生成: {label}（前端将自动渲染）",
     "file":  "📎 文件已生成: {label}（下载卡片将自动展示）",
     "image": "🖼️ 图片已生成: {label}（前端将自动展示）",
     "table": "📋 表格已生成: {label}（前端将自动渲染）",

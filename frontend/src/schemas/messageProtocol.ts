@@ -7,6 +7,15 @@ import { logger } from '../utils/logger';
 const optionalString = z.string().optional();
 const optionalNumber = z.number().optional();
 
+function normalizeChartFormat(
+  value: string,
+): 'echarts' | 'plotly' | 'vegalite' | 'unknown' {
+  if (value === 'echarts' || value === 'plotly' || value === 'vegalite') {
+    return value;
+  }
+  return 'unknown';
+}
+
 const fileRefSchema = z.object({
   url: z.string(),
   name: z.string(),
@@ -109,7 +118,13 @@ const contentPartSchema = z.discriminatedUnion('type', [
     option: z.record(z.string(), z.unknown()),
     title: optionalString,
     chart_type: optionalString,
-    spec_format: z.enum(['echarts', 'plotly', 'vegalite']).optional(),
+    spec_format: z.string().transform(normalizeChartFormat).optional(),
+  }).passthrough(),
+  z.object({
+    type: z.literal('diagram'),
+    format: z.literal('mermaid'),
+    source: z.string().min(1).max(100_000).refine((value) => value.trim().length > 0),
+    title: optionalString,
   }).passthrough(),
   z.object({
     type: z.literal('table'),

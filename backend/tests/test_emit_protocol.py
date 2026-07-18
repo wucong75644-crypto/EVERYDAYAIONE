@@ -19,11 +19,13 @@ import pytest
 
 from services.sandbox.emit_protocol import (
     build_chart_payload,
+    build_diagram_payload,
     build_file_payload,
     build_image_payload,
     build_table_payload,
     install_emit_in_globals,
 )
+from services.sandbox.executor import _append_emit_hints
 
 
 # ============================================================
@@ -33,11 +35,12 @@ from services.sandbox.emit_protocol import (
 class TestInstallEmitInGlobals:
     """生产路径:emit_xxx 通过闭包绑定 buffer,不打 print"""
 
-    def test_install_creates_4_functions(self):
+    def test_install_creates_emit_functions(self):
         g: dict = {}
         buf: list = []
         install_emit_in_globals(g, buf)
         assert "emit_chart" in g
+        assert "emit_diagram" in g
         assert "emit_file" in g
         assert "emit_image" in g
         assert "emit_table" in g
@@ -90,6 +93,31 @@ class TestInstallEmitInGlobals:
         assert len(buf) == 3
         assert [p["kind"] for p in buf] == ["chart", "chart", "image"]
 
+    def test_emit_diagram_appends_source_to_buffer(self, capsys):
+        g: dict = {}
+        buf: list = []
+        install_emit_in_globals(g, buf)
+
+        source = "flowchart TD\nA-->B"
+        g["emit_diagram"](source, title="流程")
+
+        assert buf == [{
+            "kind": "diagram",
+            "format": "mermaid",
+            "title": "流程",
+            "source": source,
+        }]
+        assert capsys.readouterr().out == ""
+
+    def test_emit_diagram_adds_renderer_hint_for_model(self):
+        output = _append_emit_hints("", [{
+            "kind": "diagram",
+            "format": "mermaid",
+            "title": "订单流程",
+            "source": "flowchart TD\nA-->B",
+        }])
+        assert output == "🧭 关系图已生成: 订单流程（前端将自动渲染）"
+
 
 # ============================================================
 # payload 构造函数(纯函数,无副作用)
@@ -111,6 +139,28 @@ class TestBuildPayloadPureFunctions:
     def test_build_chart_payload_validates_dict(self):
         with pytest.raises(TypeError, match="必须是 dict"):
             build_chart_payload("not dict", "x")  # type: ignore
+
+    def test_build_diagram_payload(self):
+        source = "sequenceDiagram\nA->>B: hello"
+        assert build_diagram_payload(source, "调用链") == {
+            "kind": "diagram",
+            "format": "mermaid",
+            "title": "调用链",
+            "source": source,
+        }
+
+    @pytest.mark.parametrize("source", ["", " \n "])
+    def test_build_diagram_payload_rejects_empty_source(self, source):
+        with pytest.raises(ValueError, match="source 不能为空"):
+            build_diagram_payload(source)
+
+    def test_build_diagram_payload_rejects_unknown_format(self):
+        with pytest.raises(ValueError, match="format 不支持"):
+            build_diagram_payload("flowchart TD\nA-->B", format="plantuml")
+
+    def test_build_diagram_payload_rejects_oversized_source(self):
+        with pytest.raises(ValueError, match="不能超过"):
+            build_diagram_payload("A" * 100_001)
 
     def test_build_file_payload(self, tmp_path):
         f = tmp_path / "y.txt"
