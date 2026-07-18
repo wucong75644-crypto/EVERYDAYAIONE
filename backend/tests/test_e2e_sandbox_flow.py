@@ -2,12 +2,8 @@
 E2E 模拟测试：code_execute 结果分流全链路
 
 模拟真实场景：用户上传 308×1404 宽表利润表 → AI 探索 → 计算。
-验证元信息→沙盒→信封→messages 全链路的正确行为。
+验证沙盒→信封→messages 全链路的正确行为。
 """
-
-import csv
-import os
-import tempfile
 
 import pytest
 
@@ -17,89 +13,10 @@ from services.agent.tool_result_envelope import (
     set_staging_dir, clear_staging_dir,
     PERSISTED_OUTPUT_TAG, CODE_EXECUTE_BUDGET,
 )
-from services.file_metadata_extractor import (
-    extract_spreadsheet_metadata,
-    _detect_wide_table_pattern,
-    _format_standard,
-)
 
 
 # ============================================================
-# 场景 1：308×1404 宽表利润表 — 元信息流
-# ============================================================
-
-
-class TestE2EWideTableMetadata:
-    """模拟用户上传 308×1404 利润表，验证 AI 看到的元信息"""
-
-    @pytest.fixture
-    def profit_table(self, tmp_path):
-        """构造模拟利润表 CSV（店铺×月份宽表）"""
-        stores = [
-            "蓝创旗舰店(淘宝)", "蓝创专卖店(京东)", "蓝创官方(拼多多)",
-            "蓝创自营(抖音)", "蓝创特卖(快手)", "蓝创精品(小红书)",
-        ]
-        months = [f"2024-{m:02d}" for m in range(1, 13)]
-
-        # 索引列 + 72 值列 = 73 列（>50 触发宽表检测）
-        headers = ["科目"]
-        for s in stores:
-            for m in months:
-                headers.append(f"{s}_{m}")
-
-        path = str(tmp_path / "利润表.csv")
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            # 写 50 行数据（科目：营业收入、广告费、利润等）
-            subjects = [
-                "营业收入", "广告费", "退款金额", "佣金", "运费",
-                "利润", "毛利率", "客单价", "订单数", "退货率",
-            ] * 5
-            for subj in subjects:
-                row = [subj] + [str(i * 100.5) for i in range(len(headers) - 1)]
-                writer.writerow(row)
-
-        return path
-
-    def test_metadata_extracts_wide_table_info(self, profit_table):
-        """元信息应正确识别宽表结构"""
-        meta = extract_spreadsheet_metadata(profit_table)
-        assert meta is not None
-        assert meta["col_count"] == 73  # 1 索引 + 72 值
-        assert meta["row_count"] == 50
-
-    def test_format_standard_shows_pattern(self, profit_table):
-        """格式化后 AI 看到的是模式描述，不是 '显示前8列'"""
-        meta = extract_spreadsheet_metadata(profit_table)
-        result = _format_standard("利润表.csv", "2.1MB", meta)
-
-        # 应包含宽表模式信息
-        assert "宽表" in result
-        assert "前缀" in result
-        assert "蓝创旗舰店(淘宝)" in result
-
-        # 不应出现旧的 "显示前8列"
-        assert "显示前8列" not in result
-
-        # 应包含值类型和范围
-        assert "值类型" in result
-
-        print("=== AI 看到的元信息 ===")
-        print(result)
-        print("=== 结束 ===")
-
-    def test_pattern_detects_date_suffix(self, profit_table):
-        """模式识别应检测到后缀是日期"""
-        meta = extract_spreadsheet_metadata(profit_table)
-        pattern = _detect_wide_table_pattern(meta["columns"])
-        assert pattern is not None
-        assert "日期" in pattern["description"]
-        assert pattern["value_col_count"] == 72
-
-
-# ============================================================
-# 场景 2：code_execute 探索宽表 — 结果分流链路
+# 场景 1：code_execute 探索宽表 — 结果分流链路
 # ============================================================
 
 
@@ -225,7 +142,7 @@ class TestE2ECodeExecuteFlow:
 
 
 # ============================================================
-# 场景 3：对比旧行为 — 确认改善
+# 场景 2：对比旧行为 — 确认改善
 # ============================================================
 
 

@@ -251,9 +251,10 @@ Path(meta_path).write_text(json.dumps(asdict(report), ensure_ascii=False))
 ### 不改的文件
 
 - `file_executor.py`（仅安全路径校验，不涉及 Parquet 转换）
-- `file_metadata_extractor.py`（元数据提取独立于数据清洗）
 - `tool_executor.py`（消费 Parquet，不关心清洗过程）
 - CSV/Parquet 文件链路（不存在合并单元格）
+
+> 实施修订（2026-07-18）：独立元数据提取器后续已退出全部生产调用链，本次作为退役死代码删除；Excel 清洗与 `file_analyze` 的 `.meta.json` 链路不受影响。
 
 ### 函数调用顺序
 
