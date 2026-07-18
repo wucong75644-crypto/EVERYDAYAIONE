@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+from psycopg.types.json import Jsonb
+
 from services.user_activity_service import record_user_activity
 
 
@@ -30,8 +32,23 @@ def test_record_user_activity_calls_rpc_with_expected_payload():
     assert params["p_source"] == "web"
     assert params["p_resource_type"] == "message"
     assert params["p_resource_id"] == "msg-1"
-    assert params["p_metadata"] == {"conversation_id": "conv-1"}
+    assert isinstance(params["p_metadata"], Jsonb)
+    assert params["p_metadata"].obj == {"conversation_id": "conv-1"}
     rpc_chain.execute.assert_called_once()
+
+
+def test_record_user_activity_wraps_default_metadata_as_jsonb():
+    db = MagicMock()
+
+    record_user_activity(
+        db,
+        user_id="user-1",
+        event_type="login_success",
+    )
+
+    _, params = db.rpc.call_args[0]
+    assert isinstance(params["p_metadata"], Jsonb)
+    assert params["p_metadata"].obj == {}
 
 
 def test_record_user_activity_skips_invalid_event_type():

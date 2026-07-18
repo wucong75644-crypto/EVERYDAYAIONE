@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from loguru import logger
+from psycopg.types.json import Jsonb
 
 
 ALLOWED_ACTIVITY_EVENTS = frozenset({
@@ -58,7 +59,7 @@ def record_user_activity(
                 "p_resource_type": resource_type,
                 "p_resource_id": resource_id,
                 "p_occurred_at": event_time.isoformat(),
-                "p_metadata": dict(metadata or {}),
+                "p_metadata": Jsonb(dict(metadata or {})),
             },
         ).execute()
     except Exception as e:

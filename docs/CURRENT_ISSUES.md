@@ -12,6 +12,12 @@
 
 ---
 
+### 2026-07-18 管理员用户活跃时间与排序 — 已完成
+
+- 根因是 `record_user_activity` 将 JSONB 参数作为 Python `dict` 传给 psycopg，导致活跃事件写入和 `users.last_active_at` 更新一并失败；该旁路异常不影响登录、发消息、创建任务或上传文件主流程。
+- `p_metadata` 已改用 psycopg `Jsonb` 适配，覆盖显式 metadata 和缺省空对象；管理员接口继续按 `last_active_at DESC NULLS LAST, created_at DESC` 排序，前端无需修改。
+- 回归测试覆盖 JSONB 参数适配、空 metadata、异常降级和管理员排序契约。
+
 ### 2026-07-18 旧文件元数据提取器退役清理 — 已完成
 
 - `file_metadata_extractor.py` 已增长至 1,217 行，但生产调用早已分别从 workspace prompt 和 file_list/file_search 链路移除；全仓仅剩孤立测试和过期文档引用。

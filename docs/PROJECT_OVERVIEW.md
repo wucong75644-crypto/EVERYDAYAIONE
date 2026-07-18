@@ -455,6 +455,7 @@ EVERYDAYAIONE/
     ├── __init__.py               # 测试模块标识
     ├── conftest.py               # pytest fixtures（mock 对象）
     ├── test_auth_service.py      # 认证服务测试（12个用例）
+    ├── test_admin_user_activity_ordering.py # 管理员用户活跃时间排序契约测试
     ├── test_conversation_service.py  # 对话服务测试（11个用例）
     ├── test_message_service.py   # 消息服务测试（12个用例）
     └── test_chat_payload_blocks.py # 聊天 emit_payload 图片 URL 字段保留测试
