@@ -18,8 +18,30 @@ class DataContextSnapshot:
     evidence: tuple[ArtifactEvidence, ...] = ()
 
     def render_prompt(self) -> str:
-        """证据只供 Runtime 使用，禁止注入模型上下文。"""
-        return ""
+        """向模型提供紧凑证据目录；完整数据仍只保留在 Runtime。"""
+        entries: list[str] = []
+        for item in self.evidence:
+            payload = item.payload or {}
+            columns = payload.get("columns")
+            names = [
+                str(column.get("name"))
+                for column in columns
+                if isinstance(column, dict) and column.get("name")
+            ] if isinstance(columns, list) else []
+            rows = payload.get("data")
+            count = len(rows) if isinstance(rows, list) else "file"
+            entries.append(
+                f"- artifact_id={item.fingerprint}; rows={count}; "
+                f"columns={','.join(names)}"
+            )
+        if not entries:
+            return ""
+        return (
+            "[历史可信数据证据]\n"
+            + "\n".join(entries)
+            + "\n需要复用历史数据时，请基于现有工具上下文或文件引用完成；"
+            "证据不足时再调用数据源工具。"
+        )
 
 
 def load_data_context_snapshot(

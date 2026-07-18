@@ -15,31 +15,20 @@ from services.handlers.chat.execution_engine import (
 )
 
 
-def _grounded_runtime_state():
+def _evidence_runtime_state():
     from services.agent.agent_result import AgentResult
     from services.agent.runtime.artifact_collector import collect_tool_result
     from services.agent.runtime.runtime_state import RuntimeState
 
     state = RuntimeState.observing()
     result = AgentResult(
-        summary="确定性计算完成",
+        summary="沙盒计算完成",
         data=[{"有效订单合计": 1056}],
-        source="runtime_validator",
+        source="code_execute",
     )
     state.ledger.record(
         collect_tool_result(result, tool_call_id="compute-1")[0]
     )
-    state.requires_validation = True
-    state.request_verified_final()
-    return state
-
-
-def _blocked_runtime_state():
-    from services.agent.runtime.runtime_state import RuntimeState
-
-    state = RuntimeState.observing()
-    state.requires_validation = True
-    state.validation_error = "字段缺失"
     return state
 
 
@@ -129,7 +118,10 @@ async def test_execute_chat_stops_before_provider_when_cancelled(monkeypatch):
         permission=SimpleNamespace(need_exit_attachment=False),
         core_tools=[],
         stream_kwargs={},
-        tool_context=SimpleNamespace(discovered_tools=set()),
+        tool_context=SimpleNamespace(
+            discovered_tools=set(),
+            build_context_prompt=lambda: "",
+        ),
         messages=[],
         budget=SimpleNamespace(stop_reason=None, turns_used=0),
     )
@@ -221,17 +213,17 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_chat_returns_verified_final_without_calling_model(
+async def test_execute_chat_retries_invalid_draft_then_returns_model_correction(
     monkeypatch,
 ):
-    called = False
+    responses = iter(
+        ["我猜是1457单", "重新计算后有效订单合计是1,056单"]
+    )
 
     async def stream_chat(**_kwargs):
-        nonlocal called
-        called = True
         yield SimpleNamespace(
-            content="我猜是1457单",
-            thinking_content="未经验证",
+            content=next(responses),
+            thinking_content=None,
             tool_calls=None,
             prompt_tokens=1,
             completion_tokens=1,
@@ -258,7 +250,7 @@ async def test_execute_chat_returns_verified_final_without_calling_model(
         ),
         messages=[],
         budget=budget,
-        runtime_state=_grounded_runtime_state(),
+        runtime_state=_evidence_runtime_state(),
     )
 
     async def fake_prepare(**_kwargs):
@@ -276,19 +268,26 @@ async def test_execute_chat_returns_verified_final_without_calling_model(
 
     result = await execute_chat(handler=handler, request=_request())
 
-    assert result.parts[-1].text == "重新计算结果：有效订单合计：1,056。"
+    assert result.parts[-1].text == "重新计算后有效订单合计是1,056单"
     assert "1457" not in result.parts[-1].text
-    assert called is False
+    assert budget.turns_used == 2
+    assert "evidence_validation_error" in prepared.messages[-1]["content"]
 
 
 @pytest.mark.asyncio
-async def test_execute_chat_blocks_failed_validation_before_model(monkeypatch):
-    called = False
+async def test_execute_chat_blocks_after_repeated_unsupported_claims(monkeypatch):
+    responses = iter(["1457单", "1457单", "1457单"])
 
     async def stream_chat(**_kwargs):
-        nonlocal called
-        called = True
-        yield SimpleNamespace(content="不应出现")
+        yield SimpleNamespace(
+            content=next(responses),
+            thinking_content=None,
+            tool_calls=None,
+            prompt_tokens=1,
+            completion_tokens=1,
+            credits_consumed=None,
+            finish_reason="stop",
+        )
 
     adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
     budget = SimpleNamespace(stop_reason=None, turns_used=0)
@@ -303,10 +302,13 @@ async def test_execute_chat_blocks_failed_validation_before_model(monkeypatch):
         ),
         core_tools=[],
         stream_kwargs={},
-        tool_context=SimpleNamespace(discovered_tools=set()),
+        tool_context=SimpleNamespace(
+            discovered_tools=set(),
+            build_context_prompt=lambda: "",
+        ),
         messages=[],
         budget=budget,
-        runtime_state=_blocked_runtime_state(),
+        runtime_state=_evidence_runtime_state(),
     )
 
     async def fake_prepare(**_kwargs):
@@ -324,5 +326,5 @@ async def test_execute_chat_blocks_failed_validation_before_model(monkeypatch):
 
     result = await execute_chat(handler=handler, request=_request())
 
-    assert "未通过一致性校验" in result.parts[-1].text
-    assert called is False
+    assert "未能通过证据一致性校验" in result.parts[-1].text
+    assert budget.turns_used == 3

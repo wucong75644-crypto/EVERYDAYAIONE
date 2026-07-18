@@ -138,16 +138,18 @@ async def test_budget_without_any_output_records_error_and_skips_completion() ->
 
 
 @pytest.mark.asyncio
-async def test_grounded_blocked_budget_skips_model_wrap_up() -> None:
-    from services.agent.runtime.grounded_final import GROUNDED_FINAL_BLOCKED
+async def test_safety_blocked_budget_skips_model_wrap_up() -> None:
+    from services.agent.runtime.evidence_guard.finalize import (
+        GUARD_BLOCKED_TEXT,
+    )
 
     handler = MagicMock()
     handler._calculate_credits.return_value = 0
     handler.on_error = AsyncMock()
     websocket = MagicMock()
     websocket.send_to_task_or_user = AsyncMock()
-    state = _state(GROUNDED_FINAL_BLOCKED)
-    state.grounded_blocked = True
+    state = _state(GUARD_BLOCKED_TEXT)
+    state.safety_blocked = True
 
     with patch(
         "services.agent.stop_policy.synthesize_wrap_up",
@@ -165,5 +167,5 @@ async def test_grounded_blocked_budget_skips_model_wrap_up() -> None:
 
     synthesize.assert_not_awaited()
     assert result.completion_args["result"] == [
-        TextPart(text=GROUNDED_FINAL_BLOCKED)
+        TextPart(text=GUARD_BLOCKED_TEXT)
     ]

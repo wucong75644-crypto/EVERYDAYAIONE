@@ -12,6 +12,84 @@
 
 ---
 
+### 2026-07-18 通用任务交付运行时与跨 Turn 数据证据 — Evidence Guard 重构
+
+- 已纠正生产临时方案的职责越界：删除关键词 Data Validator、提前计算和 Grounded Final
+  抢答路径；恢复原模型上下文、ERP、沙盒、工具 Observation 和模型最终表达。
+- 新增通用 Evidence Guard，位于模型最终草稿与 emit/persist 之间；当前严格校验数值
+  Claim，不包含订单、平台或问法关键词。数值必须与问题/声明提到的结构化字段关联，
+  避免其他字段中的相同数字被误当作证据。
+- 校验失败草稿不发送前端，以 `evidence_validation_error` 返回原模型循环；模型自行决定
+  复用工具结果、调用沙盒、重新查询或修正答案。最多纠正两次，之后阻断可疑数字。
+- `conversation_data_evidence`、ArtifactLedger、Actor 原子提交和固定 revision 恢复继续保留；
+  历史证据目录重新进入模型上下文，完整行仍只留在 Runtime/受控文件。
+- 定向测试56项通过，Guard核心覆盖率94%；全量回归7,621项通过，6项失败与修改前
+  基线一致（2项旧测试夹具、2项环境目录、2项外部数据库网络限制），无新增失败。
+
+### 2026-07-18 旧生产临时方案记录（已被本次重构取代）
+
+- 已将通用 Run 交付治理与 ERP 跨 Turn 数据上下文合并为唯一运行时标准；原 `AgentResult`、模型 observation、emit payload 和 ContentPart 消费协议保持不变。
+- Phase 1 已在 Web 与无头 Chat 共用的 `apply_tool_results` 消费点接入观察模式，结构化 `AgentResult.data/file_ref/columns/metadata` 旁路登记到 Run 内 ArtifactLedger。
+- Markdown、普通字符串和模型回答不会升级为可信数据证据；非 ready 数据不进入 ready 账本；稳定 fingerprint 防止同一结果重复登记。
+- Phase 2 已接入统一 CompletionGate：只有调用方显式 `_run_contract` 才启用；缺少必需产物时继续执行，证据满足后只允许一次 `tools=[]` 文字收尾，预算耗尽记录 fallback/blocked。
+- Phase 3 已实现确定性 `data_compute`：按完整 artifact_id 消费当前 Run 的可信数据，支持 eq/ne/in/not_in、分组、sum 和 count；模型只看到证据目录和字段，不复制整份数据。
+- `data_compute` 仅在当前 Run 存在 ready DATA_RESULT 时注入，两套 Chat 循环通过原 ToolExecutor 消费同一 RuntimeState；普通 ToolExecutor 构造调用保持兼容。
+- 付款订单验收样例已固定：排除拼多多后总订单 1439、有效订单 1056、明细和结论一致、重复计算稳定。
+- Phase 4 新增迁移 135 和回滚：8 参数 `commit_generation_turn` 在同一事务复用原 7 参数 Actor 终态，并按 closed revision 幂等写入最多 20 项、每项最多 200 行的 ready 数据证据；失权、租约过期和非 committed 结果不写证据。
+- ContextSnapshot 按 base revision 加载最多 50 项数据证据，PromptBuilder 只注入证据目录；RuntimeState 恢复完整结构化行供 `data_compute` 使用。历史证据标记 persisted，可计算但不会重复提交。
+- Phase 5 已实现 Grounded Final：存在历史数据证据时，高置信度“排除/合计/切换有效指标/重新计算”追问必须进入 data_compute；Web 与无头流在验证前缓冲模型文本和 thinking，不向用户发送模型猜测数字。
+- data_compute 成功后关闭工具，最终数字或明细表由 ready 计算证据确定性生成；即使模型收尾输出错误的 1457，持久消息和用户可见结果只保留 1056。
+- 模型拒绝计算直到预算耗尽时，不再调用模型 wrap-up，而是返回固定的“无法完成可信重算”降级说明。
+- Web 流、Actor/企微 Sink、取消、预算降级、消息持久化、ContextSnapshot 和旧工具消费兼容回归 145 项通过；Grounded Final 与流边界定向覆盖率 94%。
+- 功能阶段已完成；下一阶段执行全量测试、质量门禁、迁移审查和任务完成后的全方位审查。
+
+---
+
+### 2026-07-18 Agent Runtime 全项目对标 — 调研中
+
+- 已完成项目全景/组件装配、Session Actor 和 Agent 定义/能力装配第一轮源码对标；当前只更新研究文档，不修改业务实现。
+- 阶段结论：保留 PostgreSQL Claim、Lease、Fencing 和原子终态；参考 Grok 补齐统一 Session 命令、持久 Prompt 队列、send-now 和等待交互。
+- Agent 阶段结论：采用可版本化 `AgentDefinition` 与 Session-bound `AgentInstance` 分层，保留现有 PromptBuilder、多租户工具过滤和专业执行器；不复制 Grok 的超大集中式 Builder。
+- 待验证风险：主 Chat 的 Agent 运行状态分散在 Handler、Prepared Stream 和 ContextVar，工具过滤分布在组织、Domain、Permission、Personal Context 与 Provider 多处，当前没有可审计、可恢复的最终能力快照。
+- Model Loop 阶段结论：未来以通道无关 `execute_chat` 为唯一主循环，迁移旧 Web 循环的空输出恢复、steer 和分阶段取消，并提取 `ToolLoopExecutor` 的失败分类与停滞策略为共享 Policy。
+- Model Loop 风险：新旧主 Chat 循环行为不等价；Tool Call 当前最终按 ID 而非原始 ordinal 排序；墙钟预算不会强制中断正在运行的模型流或工具；外层任务重试是否可能重复副作用需在 Persistence 和端到端板块继续核验。
+- Policy 阶段结论：用户明确要求生成可作为本 Run 授权，但必须持久化为绑定原始消息、Action 类型、数量、成本上限和资源范围的 `AuthorizationGrant`；模型文本或 Prompt 本身不能授权执行。
+- Policy 高风险候选：积分余额扣减与 `credit_transactions` 插入不是同一数据库事务；危险工具在 headless 或确认异常时存在 fail-open；Pending Confirm 依赖进程内状态；未登记 SafetyLevel 的新工具默认 SAFE。后续 ToolBridge、Executors 和 Persistence 板块必须复核并纳入重构。
+- ToolBridge 阶段结论：当前工具可以调用，但 Schema Builder、选择 Registry、Safety 表、Executor handler 与结果协议并非同一事实源；目标采用 `Tool Catalog → EffectiveToolset → 薄 ToolBridge → 专业 Executor → ToolRunResult`，不建设万能执行器。
+- ToolBridge 高风险候选：动态工具不在 `selected_tools` 时参数校验会跳过；`erp_api_search` 依赖结果文本正则发现工具；执行可返回 `str | AgentResult`；新增工具可能出现可见/可执行/可授权状态漂移。后续 Executors、MCP、Context 和 Persistence 板块继续核验迁移边界。
+- Tool Executors 阶段结论：保留 Media、ERP、File、Sandbox 等专业执行器，统一外层 `submit → accepted/completed/unknown → progress → reconcile → settlement`；超过一秒且需要恢复的外部任务不应阻塞模型 ToolCall。
+- Tool Executors 高风险候选：聊天 `generate_image/video` 同步等待链路绕过媒体异步 tasks 主链路；Provider submit 成功而任务落库失败会产生未归属任务；完成锁续期丢失不终止当前处理；ERP 写入只用 Redis 参数哈希做 10 分钟幂等；图片与视频 Workspace 持久化不一致。
+- Goal Orchestrator 阶段结论：采用“小 Harness、大 Worker”，模型继续负责工作，Goal 层只持久化 Objective/Contract/预算/缺口/证据并确定性控制继续、等待、暂停、验证和完成；普通聊天不默认创建 Goal。
+- Goal Orchestrator 高风险候选：现有 ExecutionBudget、StopPolicy 和循环检测只覆盖单次进程内 Tool Loop；ERP Plan、图片方案和 Permission plan 含义不同；模型自述无法证明完成；异步任务完成后没有父 Goal 的幂等续跑边界。
+- Context Engineering 阶段结论：保留固定 revision ContextSnapshot 和工具/历史分桶优势，将上下文统一为 `ContextPlan → ContextAssembler → ContextCompactor → ContextReceipt`；完整事实留在 DB/Workspace/Artifact Store，模型只接收常驻控制面、近期工作集、带覆盖边界的摘要和可按需 Get 的引用。
+- Context Engineering 高风险候选：Web/企微预算按通道固定而非按模型能力派生；会话摘要、循环摘要、Session Memory 与 Memory V2 职责重叠；工具归档后缺少稳定原文引用；压缩失败没有 suppression/in-flight/fingerprint；两套 context compressor 仍并存。
+- Skills Runtime 阶段结论：Skill 定位为可发现、按需加载的指令/资源包，不是 Executor 或授权主体；目标采用 `Skill Registry → Catalog View → Resolver/Policy → Skill Instance → Agent/Tool Loop`，短流程使用 Instruction Skill，需异步恢复和幂等的长流程使用 Workflow SkillRun。
+- Skills Runtime 高风险候选：产品 Agent 当前没有 Skill Registry/Selector/Tool，`backend/skills` 只是沙盒只读指南；开发 `.cursor/skills` 与产品 Skill 信任域不能混用；Grok 的 `allowed-tools` 在当前源码主要解析和展示，不能照搬为执行授权；Skill 热更新、脚本、Prompt 注入和多段生成重复扣费需要 hash 固定、Policy 求交及步骤幂等。
+- MCP / Plugins / Hooks 阶段结论：MCP 是外部能力协议、Plugin 是安装和版本单元、Hook 是生命周期拦截点；SaaS 目标采用平台/租户 Extension Registry、共享隔离 MCP Gateway、渐进式 Tool/Resource Catalog 和强类型 Runtime Hook，所有外部调用仍回到 Core Policy、Action、Artifact 与审计协议。
+- MCP / Plugins / Hooks 高风险候选：产品 Runtime 当前没有 MCP/Plugin；现有 LoopHook 只覆盖部分 Agent 循环；租户任意 stdio、6000 秒同步超时、本地目录自动信任及 Hook fail-open 都不能直接照搬；MCP 写操作超时必须支持 Unknown/状态查询，Plugin trust 不能等价为数据或副作用授权。
+- Subagents / Background 阶段结论：Subagent 是带输入/输出合同、独立上下文、受限能力和预算的 Child Run，只用于上下文隔离、独立并行和专业化；顺序工作流由 Goal/SkillRun 管理，媒体和外部等待继续使用 Background Action。目标在现有 Actor/branch claim/lease/fencing 上新增持久 `SubRun`，默认深度 1、只选择必要上下文并回传摘要、Artifact 与证据。
+- Subagents / Background 高风险候选：产品当前没有通用 SubRun/委派协议；`BackgroundTaskWorker` 是媒体轮询器而非通用后台运行时；父授权是否可委派、Child usage 结算、取消/完成竞态、共享 Workspace 写冲突和 Parent wake event 尚无统一边界；不能照搬 Grok 进程内 Coordinator、600 秒 Web 前台等待或默认 full capability。
+- Persistence 阶段结论：采用“当前状态表 + append-only RuntimeEvent + Transactional Outbox + Artifact Store + Checkpoint/Projection”的混合持久化，不做纯事件溯源；保留现有 Actor、revision、lease/fencing 和原子终态，逐步新增 Run、Action/Attempt、Artifact、Goal/SkillRun/SubRun 关系，避免继续膨胀万能 `tasks`。
+- Persistence 高风险候选：ToolCall/Action 尚无可恢复实体；Artifact 缺统一 lineage；Goal/SkillRun/SubRun 和 Parent wake 不存在；进度、UI、审计事件信封未统一；不同 Worker 混用 PostgreSQL、Redis 和进程锁；后续必须通过双写、版本化信封和分阶段切读迁移，禁止一次性重写现有任务主链。
+- Protocol / UI 阶段结论：保留现有 ContentPart、WebSocket、Actor 进度恢复和企微 Outbox，新增版本化 `RuntimeEvent` 信封、Run 单调 sequence、Snapshot + Replay、持久 Interaction 与 Channel Capability Adapter；高频 token/progress 可合并，Action/Artifact/Interaction/Run terminal 必须可重放。
+- Protocol / UI 高风险候选：当前 WS 无 event ID、sequence、durability 和 aggregate version，`last_index/current_index` 已停用却仍留在协议；前端按到达顺序拼 chunk，`stream_end` 先于数据库终态即标记 completed；确认请求只在进程内且前端仅能容纳一个；Goal/SubRun/Background Action 无可恢复 UI Projection。
+- Observability / Config 阶段结论：建立 vendor-neutral `TelemetryContext + Typed Telemetry Schema + UsageLedger + 多 Sink`，复用 Loguru、Sentry、Langfuse、ToolAudit、KnowledgeMetrics 和 Error sink；配置采用 `Config Catalog → Layered Resolver → Policy Clamp → EffectiveConfigSnapshot`，按 immediate/next action/next run/restart/immutable 控制生效。
+- Observability / Config 高风险候选：当前 trace 主要等同 task ID，Langfuse 仅局部接入；ToolAudit/KnowledgeMetrics/专项日志互不统一，Error sink 满时静默丢弃，Sentry 缺显式全字段脱敏，企微反馈只写日志；Settings、OrgConfig、注册表和模块常量没有统一 source/revision/snapshot，同一超时和预算概念存在多组参数且运行时无法回溯实际值。
+- Testing / Operations 阶段结论：采用确定性状态机、真实依赖契约、Runtime Trace 回放、Eval/Chaos、Release Evidence、灰度和对账回滚的分层体系。
+- Testing / Operations 高风险候选：部署脚本允许测试失败后继续；迁移多为 SQL 文本断言，尚缺统一 Trace、自动真实数据库竞态、Actor 排空、按组织 canary 和自动回滚门槛。
+- 端到端阶段结论：保留 Conversation Actor、`execute_chat`、媒体/ERP/文件专业执行器和企微 Outbox，以统一 Session、Run、Action、Artifact、RuntimeEvent 消除状态机断层。
+- 端到端高风险候选：Skill、Goal、通用 Subagent、MCP 尚未进入产品主链；媒体任务、ERP 内部 Loop 和前端恢复各自成岛，缺少统一幂等、对账、事件序列与恢复快照。
+- 目标架构候选：采用模块化单体 Runtime，不扩充巨型 ChatHandler、不提前拆微服务；PostgreSQL 持有 Session/Run/Action/Event 事实，现有能力通过单向 compatibility adapter 渐进接入。
+- 目标架构待评审风险：新旧 task/action、消息投影、积分和媒体完成器双映射必须保持单终态 owner；状态机与数据库原子边界未冻结前不得开始实现。
+- 状态机候选：业务状态与 lease/attempt 分离；Run、Action、Message、Delivery 各自建模，Action `unknown` 非终态，Run 取消不隐含已受理外部 Action 取消。
+- 状态机待评审风险：所有 Tool Call 持久 Action 会增加写放大；必须用单终态 owner、状态 CAS、callback inbox、reconcile SLA 和 Goal 唯一 continuation owner 控制重复副作用。
+- 数据库候选：新增 `agent_*` 状态表并以 RPC-only CAS 推进，旧 `tasks/messages` 通过映射和 shadow write 渐进接入；状态与 RuntimeEvent/Projection Outbox 同事务。
+- 数据库待评审风险：表/RPC 数量、租户冗余字段、事件写放大和新旧双写均为高风险，必须固定锁顺序、JSON 大小、single owner、真实 PostgreSQL 并发验证和 additive 回滚。
+- 待验证风险：Actor steer 当前使用进程内状态，API 与独立 Actor Worker 的跨进程贯通尚无源码证据；历史 `pending_interaction` 表已由迁移 112 删除，但 API 启动仍保留降级清理引用。
+- 后续按 Agent、Model Loop、Policy、ToolBridge、Goal、Context、Skills、MCP、Persistence 和 UI Event 顺序继续调研，全部完成后再提交总体重构方案。
+
+---
+
 ### 2026-07-18 管理员用户活跃时间与排序 — 已完成
 
 - 根因是 `record_user_activity` 将 JSONB 参数作为 Python `dict` 传给 psycopg，导致活跃事件写入和 `users.last_active_at` 更新一并失败；该旁路异常不影响登录、发消息、创建任务或上传文件主流程。
@@ -388,6 +466,13 @@
 
 ## 更新记录
 
+- **2026-07-18**：Agent Runtime Projection 与发布保障总体设计冻结：Web/企微统一消费有序 RuntimeEvent 和 Snapshot/Replay，持久 Interaction 采用数据库 CAS，`stream.closed` 不再冒充业务终态；测试按状态机、真实依赖、Trace、通道 E2E、Eval/Chaos 分层，发布采用不可变 ReleaseManifest、expand/contract、Actor drain、按组织 Canary 和自动门禁，应用回滚不得重提 Accepted/Unknown 外部 Action。
+- **2026-07-18**：Agent Runtime 扩展层总体设计冻结：Skill、MCP、Plugin、Hook 和 Subagent 分别建模并统一接入 Catalog/Policy/Action/Executor/Artifact；产品 Skill 与开发 `.cursor/skills` 隔离，Skill 采用 Instruction/Workflow 双模式，MCP 通过多租户 Gateway 与 Secret Broker，Plugin 固定签名版本和租户启用，Hook 不能替代 Core Policy；Subagent 是受限 Child Run，默认 selected Context、read-only、深度 1，并与媒体 Background Action 明确分工。
+- **2026-07-18**：Agent Runtime Executor 总体设计冻结：采用统一 SPI 与专业执行器，Action 经 Policy 后只携带受限 Capability；同步查询可直接完成，媒体/外部长任务返回持久 TaskRef，submit 超时进入 Unknown 对账；结果统一为 model/display/artifact/audit 四视图，并以 Action/Attempt/Provider request 贯穿幂等、回调、轮询、取消、结算和恢复，逐步收口聊天同步媒体与异步任务双链。
+- **2026-07-18**：Agent Runtime Context 总体设计冻结：保留不可变 ContextSnapshot，将消息数组升级为可解释的 ContextPlan/Block/Receipt；完整事实、大 ToolOutput 和媒体进入 Artifact/Workspace，模型按预算接收摘要与稳定引用；预算由模型窗口、输出保留、工具 Schema 和控制面动态推导，并统一 Search/Get、压缩抑制、群聊隐私及 Skill/MCP/Subagent 隔离上下文。
+- **2026-07-18**：Agent Runtime 总体设计冻结统一 Policy Gate：明确用户直接执行指令可形成有范围授权，提示词讨论不执行；模型、Skill、MCP、Hook 与子 Agent 均不能扩权；所有 Action 在调度前统一完成工具元数据、组织权限、数据范围、成本预留和持久 Interaction 决策，逐步替代默认 SAFE、仅日志 CONFIRM 和进程内 60 秒危险工具确认。
+- **2026-07-18**：生产首轮验收发现 `data_compute` 作为模型工具时，模型可将“按平台划分”错误改写为无分组全局求和，数学结果正确但破坏用户输出意图。架构调整为内部 Data Validator：删除模型 Tool Schema、ToolExecutor handler、动态工具注入、`role=tool` 回填、前端工具步骤和历史证据 Prompt；Runtime 根据当前问题生成 ValidationPlan，结果只进入 ArtifactLedger，由 CompletionGate 成功后直接确定性输出，失败时阻断未经验证的数字。旧 `source=data_compute` 证据仅兼容读取历史操作，不再作为原始数据源。
+- **2026-07-18**：完成通用任务交付运行时与跨 Turn 数据证据链：保留现有 `AgentResult` 和工具循环协议，在 Web/Actor 两条执行链内部统一接入 `RunContract → ArtifactLedger → Policy → CompletionGate`；只有结构化工具结果进入数据证据，历史证据按 `base_context_revision` 恢复，`data_compute` 仅在存在可计算证据时动态开放，高置信数据追问必须经确定性重算后输出。验收样例固定为排除拼多多总订单 `1,439`、有效订单 `1,056`，重复计算一致。新增迁移 135 及 rollback，迁移尚未应用；跨 Turn 证据持久化走 Conversation Actor 原子提交，旧 Web 同步链仅具备单次 Run 内校验，切换跨 Turn 能力需开启既有 Actor Web 路径。聚焦测试 75 passed、运行时覆盖率 89%；排除两组既有 helper 失败后全量测试 7,596 passed、24 skipped、4 xfailed，剩余 2 项需要外部 PostgreSQL 的企微并发测试因当前沙箱禁止联网而未完成。
 - **2026-07-18**：ECharts/Mermaid 职责治理阶段 4：主 Agent 与 code_execute 提示词统一规定数据统计使用 `emit_chart(ECharts)`、逻辑关系使用 `emit_diagram(Mermaid)`，普通文字足够时不生成图形，同一内容不得重复生成；Plotly/Vega-Lite 调整为历史只读兼容。企微通道由“跳过图形”改为 chart 输出格式化 JSON、diagram 输出原始 Mermaid 源码，并合并进入原 stream；ECharts/Mermaid 错误日志仅记录消息 ID、内容类型、渲染器、错误类型和源码长度，不记录 option、DSL 或解析异常正文。本结论取代 2026-07-17 的企微 chart 跳过策略。
 - **2026-07-18**：Plotly/Vega-Lite 退出审计暂不删除依赖：代码与测试确认沙盒自动 MIME hook 仍可接收显式 Plotly/Altair 输出，前端继续承担历史只读恢复；生产构建中 `plotly-basic` 约 1.12 MB、Vega embed 约 759 KB，均为独立异步 Chunk，不进入普通文本首屏。当前工作区无法证明生产数据库历史消息数量，删除前仍需只读统计 `spec_format` 分布并确认没有 ECharts 无法覆盖的业务场景。
 - **2026-07-17**：修复企微附件跨轮污染：迁移 131 将已绑定任务的附件集合持续保留为 `active`，导致后续“你好”“天气”等纯文本消息仍被数据库拼入旧 CSV，并再次触发文件分析。迁移 133 恢复“当前附件单次消费”语义：首次任务先冻结 `task_attachment_refs`，再原子转为 `referenced`；部署时仅修复已有任务绑定的活动附件，未使用的待处理附件保持 `active`；重放继续复用冻结输入，rollback 不重新激活历史附件。Web 消息附件列表仍由当前请求显式决定，不受影响。
@@ -417,16 +502,4 @@
 - **2026-07-17**：完成 Web/企业微信 Turn 绑定：所有正式 AI 生成 task 绑定 `input_message_id/turn_id/base_context_revision`；assistant 写入 `reply_to_message_id`；企微同步生成纳入正式 task 生命周期；成功关闭 Turn，失败不推进 revision；旧 retry 消息保留受监控的输入锚点降级。
 - **2026-07-17**：完成 Turn/revision 数据库基础：messages/tasks/conversations 增加兼容字段与索引，新增幂等 `bind_generation_turn`、`close_generation_turn` 事务 RPC 及 rollback；业务链路将在后续阶段接入。
 - **2026-07-17**：完成显式媒体协议收口第一阶段：删除普通模型文本 URL 和 `[FILE]` marker 扫描；Web 流式与企微非流式统一消费 `emit_*` 结构化 payload；多图网格完成态只按实际 ImagePart 渲染。历史错误消息不回填。
-- **2026-07-12**：主图详情页 `118` 迁移预执行发现误用 Supabase `auth.uid()`，真实 RPC 验证继续发现返回列与表字段同名；前者事务回滚，后者通过表别名修复，迁移统一采用阿里云自建 PostgreSQL 的 `OrgScopedDB + user_id + RPC 成员校验` 权限模型。
-- **2026-07-11**：修复后端全量部署误删未纳入主仓库的 `backend/external/mediacrawler` 运行目录；已恢复生产文件，并在 rsync `--delete` 中永久排除该目录。
-- **2026-07-01**：图片缩略图根治改造（后端生成 `workspace-thumbnails` 独立缩略图对象；实时消息保留 `original_url/thumbnail_url/preview_url/download_url`；NAS 工作区返回 `thumbnail_url`；前端停止生成 `x-oss-process` 缩略图 URL）
-- **2026-07-01**：完成历史图片 URL 数据回填（messages/tasks JSON 图片 payload 补 `original_url` + `thumbnail_url`，生产复扫待回填数为 0；`url:null` 占位对象保持不回填）
-- **2026-07-01**：前端图片资产协议改造（聊天/预览/右键引用/管理员资产页改用 `ImageAsset{originalUrl, thumbnailUrl}`，小图展示用缩略图，放大/下载/模型传输用原图）
-- **2026-07-01**：聊天消息渲染组件拆分（`MessageItem`/`MessageMedia` 均低于 500 行；多内容块和图片块渲染拆入独立组件，行为保持回归测试覆盖）
-- **2026-06-30**：管理员列表“上次活跃”口径升级（新增 `user_activity_events` + `users.last_active_at`，核心登录/消息/任务/企微/上传链路写活跃事件，列表改按 `last_active_at` 展示和排序）
-- **2026-04-11**：快麦同步加固（4 Bug + 5 技术债，3478 测试全绿，新增 22 测试）
-- **2026-03-01**：修复刷新恢复场景僵尸消息（generation_params 类型 + WS 订阅 ID 不匹配 + debug print 清理）
-- **2026-02-02**：完成阶段5-7（状态管理重设计、占位符持久化、性能优化）
-- **2026-02-01**：完成聊天系统综合重构阶段0-4（缓存统一、发送器合并、轮询管理）
-- **2026-01-31**：完成登录/注册弹窗化重构、消息重复修复、图片上传优化
-- 2026-07-11：后端测试基线已对齐当前 PromptBuilder、清洗层与 PermissionMode 协议；相关变更测试 518 passed、5 skipped、4 xfailed。真实 LLM 文件分析测试改为仅在 `RUN_LLM_INTEGRATION=1` 时执行，避免单元测试依赖外网。
+- 较早更新记录见 `docs/archive/CURRENT_ISSUES_UPDATES_2026H1.md`。

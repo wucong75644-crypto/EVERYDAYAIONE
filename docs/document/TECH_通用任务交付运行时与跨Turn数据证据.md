@@ -5,10 +5,9 @@
 > 任务等级：A级
 > 对标基线：Grok Build `c68e39f60462f28d9be5e683d9cbe2c57b1a5027`
 
-> 2026-07-18 生产验收修订：数据校验权属于 Runtime 控制面。Data
-> Validator 不注册为模型工具、不产生 `role=tool` 消息、不注入模型上下文、
-> 不产生前端工具步骤；只有通过校验的 `verified_result` 可以越过
-> CompletionGate，失败由运行时直接阻断。
+> 2026-07-18 架构纠偏：保留原模型上下文、工具循环、ERP、沙盒和最终表达方式。
+> 数据安全能力收口为最终提交前的通用 Evidence Guard；它不理解业务意图、不替模型
+> 计算或渲染。失败以结构化 Observation 返回原模型循环纠正，连续失败才阻断。
 > 合并来源：通用任务交付运行时方案 + ERP 跨 Turn 数据上下文方案
 
 ## 1. 最终结论
@@ -22,7 +21,8 @@
 → ArtifactLedger
 → DomainPolicy
 → CompletionGate
-→ Grounded Final
+→ 模型最终草稿
+→ Evidence Guard
 → Actor 原子提交
 → 下一 Turn ContextSnapshot
 ```
@@ -154,7 +154,7 @@ class DomainPolicy(Protocol):
 - 计算结果与输入行确定性复核；
 - 明细合计与最终结论一致性；
 - 空数据、查询失败和计算失败的区分；
-- 禁止未验证的精确数字进入 Grounded Final。
+- 禁止没有结构化证据支持的精确数字通过最终提交边界。
 
 ### 3.6 CompletionGate
 
@@ -239,20 +239,23 @@ base_revision
    )
 → PromptBuilder
 → 模型获得数据目录和口径摘要
-→ Runtime Data Validator 按 artifact_id 执行过滤 / 聚合 / 重算
+→ 模型继续按原方式选择 ERP、沙盒或直接回答
 ```
 
 `ContextSnapshot` 冻结本 Turn 可见的数据 revision。PromptBuilder 不直接查数据库，避免一次生成过程中读到变化状态。
 
-### 4.4 Grounded Final
+### 4.4 Universal Evidence Guard
 
-包含精确业务数字的最终回答按以下优先级生成：
+包含精确业务数字的最终回答仍由模型生成。提交前执行：
 
-1. Runtime Data Validator 返回的已验证结论；
-2. 已验证 `DataResultArtifact` 的确定性模板；
-3. 无法验证时返回明确降级说明。
+1. 从最终草稿提取通用数值 Claim；
+2. 结合用户问题和声明局部上下文，与 Ledger 中对应字段的 ready `DATA_RESULT`
+   结构化数值、行数及沙盒派生结果匹配，不能用其他字段中的相同数字冒充证据；
+3. 不一致时丢弃草稿，把 `evidence_validation_error` 返回原模型循环；
+4. 最多纠正两次，仍失败才输出不含可疑数字的固定降级说明。
 
-模型可以组织解释和建议，但不能覆盖已验证数字。流式输出在验证前不得向用户暴露未经确认的精确结果。
+Guard 不认识订单、平台或自然语言关键词。模型继续负责理解、工具选择、沙盒计算和
+最终表达；最终一轮在验证通过前缓冲，未经确认的精确结果不得流向用户。
 
 ## 5. 接口接线清单
 
@@ -266,8 +269,8 @@ base_revision
 | Actor commit | `commit_generation_turn` | evidence projection | 同一事务、同一 fencing |
 | `ContextSnapshot` | history/summary/resources | `data_context` | 新字段缺省为空 |
 | `PromptBuilder` | snapshot | data context renderer | 无数据时输出完全不变 |
-| Runtime validator | ArtifactLedger | 内部 `ValidationPlan` | 不注册模型工具，不产生前端工具事件 |
-| 最终回答 | model stream | `GroundedFinalPolicy` | 非数据回答保持原流式行为 |
+| Evidence Guard | 最终模型草稿 + ArtifactLedger | `GuardReceipt` | 不注册模型工具，不产生前端工具事件 |
+| 最终回答 | model stream | PASS/RETRY/BLOCK | PASS 原样释放；RETRY 回原模型循环 |
 
 ## 6. 持久化边界
 
@@ -297,7 +300,8 @@ base_revision
 | `AgentResult.data` 为空 | 登记 empty，不伪造统计 |
 | 仅有 Markdown 表格 | 可展示，不升级为可信 DATA_RESULT |
 | 工具成功但证据校验失败 | 原 observation 保留，完成门不放行精确结论 |
-| Data Validator 口径不明确 | CompletionGate 阻断，不猜测字段 |
+| 最终草稿数字无证据 | 丢弃草稿并返回结构化纠错 Observation |
+| 连续两次纠正仍失败 | 阻断可疑数字并返回固定安全说明 |
 | Actor lease 丢失 | 消息和证据都不提交 |
 | 重试同一 Turn | fingerprint 幂等，不重复写证据 |
 | 并发新消息 | 依据 base_revision 读取固定快照 |
@@ -322,12 +326,13 @@ base_revision
 
 - 新增 `DATA_RESULT` 映射、持久化投影和 Actor 原子提交。
 - 扩展 ContextSnapshot。
-- 新增 Runtime 内部 Data Validator 和确定性数据验证。
+- 模型继续消费紧凑证据目录和原工具 Observation。
 
-### Phase 4：Grounded Final
+### Phase 4：Universal Evidence Guard
 
-- 精确数字回答消费验证后的计算结果。
-- 验证前禁止暴露未落地数字。
+- 在模型最终草稿与 emit/persist 之间校验通用数值 Claim。
+- 校验失败返回原模型循环，由模型自行决定调用沙盒、ERP或修正回答。
+- 删除关键词 Data Validator 和正常答案直接渲染路径。
 - 完成 Web、企微和非 WebSocket 渠道兼容回归。
 
 ## 9. 计划修改的代码路径
@@ -339,7 +344,7 @@ base_revision
 - `backend/services/agent/runtime/runtime_state.py`
 - `backend/services/agent/runtime/artifact_collector.py`
 - `backend/services/agent/runtime/policies/data_accuracy.py`
-- `backend/services/agent/runtime/data_validator.py`
+- `backend/services/agent/runtime/evidence_guard/`
 - 新版本数据库 migration 与 rollback
 
 修改：
@@ -368,9 +373,9 @@ base_revision
 核心用例：
 
 1. 首轮查询“昨天付款订单按平台划分”，保存结构化平台数据及有效订单口径。
-2. 下一轮“除了拼多多以外，其他平台共多少单”消费同一 evidence，确定性过滤后求和。
-3. 下一轮“按照有效订单计算”切换指标并重新聚合。
-4. 连续“重新计算”返回同一结果，明细之和等于结论。
+2. 下一轮追问仍由模型理解并选择沙盒或ERP，不由Guard接管意图。
+3. 模型草稿中的错误合计不会展示，而是收到结构化纠错Observation。
+4. 沙盒生成正确派生Evidence后，模型修正答案通过Guard并原样展示。
 5. 新数据查询产生新 revision，旧 Turn 仍只能看见其 base revision 内证据。
 6. 普通聊天、图表、文件、企微和 Web 原有投递内容不变。
 7. Actor 重试不重复扣费、不重复提交消息、不重复写 evidence。

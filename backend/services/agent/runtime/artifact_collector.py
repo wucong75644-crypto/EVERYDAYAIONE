@@ -70,6 +70,28 @@ def collect_tool_result(
                     renderer_format=_renderer_format(payload),
                 )
             )
+            if kind == ArtifactKind.TABLE:
+                evidence.append(
+                    _evidence(
+                        ArtifactKind.DATA_RESULT,
+                        status,
+                        {
+                            "summary": payload.get("title") or result.summary,
+                            "data": payload.get("rows"),
+                            "columns": _table_columns(payload),
+                            "file_ref": None,
+                            "source": result.source or "tool_emit_table",
+                            "metadata": {
+                                "derived_from": result.metadata.get(
+                                    "derived_from",
+                                    [],
+                                ),
+                                "sandbox_table": True,
+                            },
+                        },
+                        tool_call_id=tool_call_id,
+                    )
+                )
     return tuple(evidence)
 
 
@@ -135,3 +157,19 @@ def _normalize(value: Any) -> Any:
 def _renderer_format(payload: dict[str, Any]) -> str | None:
     value = payload.get("spec_format") or payload.get("format")
     return str(value) if value else None
+
+
+def _table_columns(payload: dict[str, Any]) -> list[dict[str, str]]:
+    rows = payload.get("rows")
+    first = rows[0] if isinstance(rows, list) and rows else {}
+    columns = payload.get("columns")
+    if not isinstance(columns, list):
+        return []
+    return [
+        {
+            "name": str(name),
+            "label": str(name),
+            "dtype": type(first.get(name)).__name__,
+        }
+        for name in columns
+    ]

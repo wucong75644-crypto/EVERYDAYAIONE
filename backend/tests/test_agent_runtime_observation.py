@@ -117,7 +117,7 @@ def test_apply_tool_results_observes_without_changing_protocol() -> None:
     assert state.ledger.ready_kinds() == frozenset({ArtifactKind.DATA_RESULT})
 
 
-def test_internal_validator_never_appends_model_tool_message() -> None:
+def test_tool_result_records_evidence_without_extra_model_message() -> None:
     state = RuntimeState.observing()
     state.user_text = "查询昨天付款订单，按照平台划分"
     messages: list[dict] = []
@@ -153,8 +153,8 @@ def test_internal_validator_never_appends_model_tool_message() -> None:
     assert len(messages) == 1
     assert messages[0]["tool_call_id"] == "erp-1"
     assert "runtime_validator" not in str(messages)
-    assert len(state.ledger.snapshot().evidence) == 2
-    assert state.verified_final_pending is True
+    assert len(state.ledger.snapshot().evidence) == 1
+    assert state.should_guard_output is True
 
 
 @pytest.mark.parametrize("status", ["error", "timeout", "empty", "partial"])

@@ -224,18 +224,6 @@ def _observe_tool_result(
         ):
             continue
         runtime_state.ledger.record(evidence)
-        if (
-            call.get("name") == "erp_agent"
-            and evidence.kind == ArtifactKind.DATA_RESULT
-        ):
-            from services.agent.runtime.data_validator import (
-                requires_source_validation,
-                run_internal_validation,
-            )
-
-            if requires_source_validation(runtime_state.user_text):
-                runtime_state.requires_validation = True
-                run_internal_validation(runtime_state)
 
 
 def _complete_tool_step(

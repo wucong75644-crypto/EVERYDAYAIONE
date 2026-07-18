@@ -8,7 +8,11 @@ from typing import Any
 
 from loguru import logger
 
-from schemas.websocket import build_content_block_add
+from schemas.websocket import (
+    build_content_block_add,
+    build_message_chunk,
+    build_thinking_chunk,
+)
 from services.handlers.chat.stream_session import (
     StreamDelivery,
     StreamTotals,
@@ -49,6 +53,7 @@ class ChatStreamLoop:
         self.content_blocks: list[dict[str, Any]] = []
         self.turn_result = _empty_turn_result()
         self.empty_output_retried = False
+        self._buffering_output = False
         from services.agent.runtime.runtime_state import RuntimeState
 
         self.runtime_state = getattr(
@@ -59,12 +64,6 @@ class ChatStreamLoop:
 
     async def run(self) -> None:
         while not self.prepared.budget.stop_reason:
-            if self.runtime_state.validation_blocked:
-                await self._replace_with_validation_error()
-                break
-            if self.runtime_state.verified_final_pending:
-                await self._replace_with_grounded_final()
-                break
             if await self._cancel_at("loop_top"):
                 break
             self.prepared.budget.use_turn()
@@ -82,7 +81,41 @@ class ChatStreamLoop:
                 if self.runtime_state.should_continue_after_plain_text():
                     self._append_completion_reminder()
                     continue
+                from services.agent.runtime.evidence_guard.finalize import (
+                    GuardDecision,
+                    append_retry_context,
+                    review_final_draft,
+                )
+
+                decision = review_final_draft(
+                    self.runtime_state,
+                    self.turn_result.text,
+                )
+                if decision.decision == GuardDecision.RETRY:
+                    logger.warning(
+                        f"Evidence guard retry | task={self.delivery.task_id} | "
+                        f"attempt={self.runtime_state.guard_attempts} | "
+                        f"issues={len(decision.receipt.issues)}"
+                    )
+                    append_retry_context(
+                        self.prepared.messages,
+                        self.turn_result.text,
+                        decision,
+                    )
+                    self.turn_result = _empty_turn_result()
+                    continue
+                if decision.decision == GuardDecision.BLOCK:
+                    logger.error(
+                        f"Evidence guard blocked | "
+                        f"task={self.delivery.task_id} | "
+                        f"attempts={self.runtime_state.guard_attempts}"
+                    )
+                self.turn_result.text = decision.text
+                if self._buffering_output:
+                    await self._release_buffered_turn()
                 break
+            if self._buffering_output:
+                await self._release_buffered_turn()
             await self._append_intermediate_blocks()
             form_submitted = await self._execute_tool_turn(turn)
             if form_submitted or await self._cancel_at("post_tool"):
@@ -108,6 +141,7 @@ class ChatStreamLoop:
         self.prepared.stream_kwargs["tools"] = self.runtime_state.final_tools(
             tools
         )
+        self._buffering_output = self.runtime_state.should_guard_output
         self.turn_result = await read_stream_turn(
             adapter=self.prepared.adapter,
             messages=self.prepared.messages,
@@ -119,18 +153,28 @@ class ChatStreamLoop:
             content_blocks=self.content_blocks,
             websocket=self.websocket,
             save_accumulated=self.handler._save_accumulated_content,
-            buffer_output=self.runtime_state.should_buffer_output,
+            buffer_output=self._buffering_output,
         )
-    async def _replace_with_grounded_final(self) -> None:
-        from services.agent.runtime.grounded_final import build_grounded_final
-        from schemas.websocket import build_message_chunk
 
-        text = build_grounded_final(self.runtime_state)
-        self.turn_result.text = text
-        self.turn_result.thinking = ""
-        self.turn_result.thinking_committed = True
-        self.totals.text += text
+    async def _release_buffered_turn(self) -> None:
+        thinking = self.turn_result.thinking
+        text = self.turn_result.text
+        if thinking:
+            self.totals.thinking += thinking
+            await self.websocket.send_to_task_or_user(
+                self.delivery.task_id,
+                self.delivery.user_id,
+                build_thinking_chunk(
+                    task_id=self.delivery.task_id,
+                    conversation_id=self.delivery.conversation_id,
+                    message_id=self.delivery.message_id,
+                    chunk=thinking,
+                    accumulated=self.totals.thinking,
+                ),
+            )
         if text:
+            self.totals.text += text
+            self.totals.chunk_count += 1
             await self.websocket.send_to_task_or_user(
                 self.delivery.task_id,
                 self.delivery.user_id,
@@ -141,27 +185,6 @@ class ChatStreamLoop:
                     chunk=text,
                 ),
             )
-
-    async def _replace_with_validation_error(self) -> None:
-        from schemas.websocket import build_message_chunk
-        from services.agent.runtime.grounded_final import (
-            GROUNDED_FINAL_BLOCKED,
-        )
-
-        self.turn_result.text = GROUNDED_FINAL_BLOCKED
-        self.turn_result.thinking = ""
-        self.turn_result.thinking_committed = True
-        self.totals.text += GROUNDED_FINAL_BLOCKED
-        await self.websocket.send_to_task_or_user(
-            self.delivery.task_id,
-            self.delivery.user_id,
-            build_message_chunk(
-                task_id=self.delivery.task_id,
-                conversation_id=self.delivery.conversation_id,
-                message_id=self.delivery.message_id,
-                chunk=GROUNDED_FINAL_BLOCKED,
-            ),
-        )
 
     def _retry_empty_output(self, turn: int) -> bool:
         if self.turn_result.text or self.prepared.budget.turns_used <= 1:

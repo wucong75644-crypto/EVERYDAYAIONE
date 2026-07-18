@@ -47,6 +47,47 @@
 本轮图形渲染治理新增的核心模块：
 - `backend/config/image_agent_prompt.py`：从主工具配置中拆出的电商图片提示词片段，保持 `chat_tools.py` 满足文件长度阈值。
 - `frontend/src/components/chat/message/useEChartsRender.ts`：封装 ECharts Chunk 加载、初始化、重试、卸载清理和 ResizeObserver 生命周期。
+
+本轮 Agent Runtime 全项目对标新增的架构研究文档：
+- `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
+- `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，并在最终提交前通过通用 Evidence Guard 校验结构化事实。
+- `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
+- `docs/document/research/AGENT_02_Session_Actor与持久执行.md`：对照 Session 命令、Prompt 队列、send-now、Claim/Lease/Fencing、取消竞态、等待交互和恢复语义。
+- `docs/document/research/AGENT_03_Agent定义与能力装配.md`：对照 AgentDefinition、Session-bound Agent、PromptBuilder、权限/工具/预算装配和专业 Agent 分流。
+- `docs/document/research/AGENT_04_Model_Loop模型循环.md`：对照模型采样、流式事件、工具并发、停止、重试、取消、预算和完成验证。
+- `docs/document/research/AGENT_05_Policy权限成本与副作用治理.md`：对照 Hooks、用户授权、租户权限、积分事务、沙盒和副作用工具策略。
+- `docs/document/research/AGENT_06_ToolBridge工具桥接与结构化输出.md`：对照工具注册、会话能力冻结、参数规范化、动态发现、执行桥接、流式终态和结构化结果分层。
+- `docs/document/research/AGENT_07_Tool_Executors专业执行链.md`：对照即时查询、Web、文件、沙盒、ERP、图片/视频异步任务的参数、超时、并发、幂等、取消、计费和产物语义。
+- `docs/document/research/AGENT_08_Goal_Orchestrator持续目标编排.md`：对照 Goal 状态机、验收契约、Planner、Completion Verifier、停滞策略、续跑、预算和跨 Worker 恢复。
+- `docs/document/research/AGENT_09_Context_Engineering上下文工程.md`：对照上下文信息分层、模型预算、压缩抑制、摘要、长期记忆、按需检索、引用恢复和组装回执。
+- `docs/document/research/AGENT_10_Skills_Runtime技能运行时.md`：对照 Skill 发现、选择、渐进加载、指令与工作流双模式、工具权限求交、资源隔离、版本固定和步骤恢复。
+- `docs/document/research/AGENT_11_MCP_Plugins_Hooks扩展运行时.md`：对照 MCP 外部能力协议、Plugin 安装信任单元、Hook 生命周期拦截、Gateway 隔离、认证、目录热更新和故障恢复。
+- `docs/document/research/AGENT_12_Subagents_Background子代理与后台任务.md`：对照子 Agent 独立上下文、能力继承、委派合同、并发、后台化、取消、结果回传、Workspace 隔离和持久恢复。
+- `docs/document/research/AGENT_13_Persistence持久化与恢复.md`：对照状态表、追加事件、事务 Outbox、Artifact、Checkpoint、lease/fencing、幂等、重放、分支和 Schema 迁移。
+- `docs/document/research/AGENT_14_Protocol_UI协议与交互投影.md`：对照运行时事件信封、高频流合并、顺序去重、Snapshot/Replay、持久交互、UI Projection、Artifact 展示和多通道降级。
+- `docs/document/research/AGENT_14_Protocol_UI参数与迁移附录.md`：记录 UI Projection、通道能力、协议参数、边界场景、差距矩阵、迁移顺序和验证清单。
+- `docs/document/research/AGENT_15_Observability_Config可观测性与配置运行时.md`：对照结构化日志、Trace、Metrics、Usage/成本、脱敏、告警、反馈、配置优先级、热更新、last-known-good 和运行快照。
+- `docs/document/research/AGENT_15_Config_Feedback配置与反馈附录.md`：记录 Config Catalog、配置快照、生效模式、反馈闭环、风险、差距矩阵和实施顺序。
+- `docs/document/research/AGENT_16_Testing_Operations测试与生产运维.md`：对照状态机测试、确定性 Trace 回放、真实依赖契约、故障注入、CI 门禁、Release Manifest、迁移、Actor 排空、灰度和回滚。
+- `docs/document/research/AGENT_17_端到端链路与运行时收口.md`：串联 Grok 与本项目的 Session、Model、Tool、Skill、Goal、Subagent、MCP、媒体、文件、ERP、企微、持久化、恢复和展示完整路径。
+- `docs/document/research/AGENT_17_全项目差距矩阵与优先级.md`：汇总 17 层架构与业务能力差距，冻结 P0/P1/P2 优先级、必须保留的项目优势、禁止方案和九个迁移波次。
+- `docs/document/TECH_AGENT_RUNTIME目标架构与模块边界.md`：定义模块化单体 Runtime、PostgreSQL Actor、专业 Executor、多通道 Projection 的目标模块图、职责、依赖规则、进程边界和现有能力迁移归属。
+- `docs/document/TECH_AGENT_RUNTIME核心状态机.md`：定义 Run、ModelStep、Action、ActionAttempt 的状态、合法转移、终态所有权、取消、重试、Unknown 对账和现有 task 映射。
+- `docs/document/TECH_AGENT_RUNTIME_Action恢复与不变量附录.md`：记录 ActionAttempt、重试分类、幂等、single terminal owner、恢复参数、旧状态映射、边界和数据库不变量。
+- `docs/document/TECH_AGENT_RUNTIME交互与Goal状态机附录.md`：定义 Interaction、AuthorizationGrant、Goal、Continuation Controller 与 SubRun 父子关系及恢复规则。
+- `docs/document/TECH_AGENT_RUNTIME数据库模型.md`：定义 `agent_*` 状态表、完整字段/约束/索引、租户范围、Artifact、Usage、旧表映射与保留策略。
+- `docs/document/TECH_AGENT_RUNTIME数据库RPC与原子边界.md`：定义锁顺序、Run/ModelStep/Action/Interaction/Goal 原子 RPC、Callback Inbox、事件追加、兼容迁移和回滚边界。
+- `docs/document/TECH_AGENT_RUNTIME事件存储与保留附录.md`：定义 RuntimeEvent 信封、Projection Outbox、Snapshot/Replay、流事件合并、索引、分区触发条件、隐私与保留参数。
+- `docs/document/TECH_AGENT_RUNTIME_Policy授权成本与副作用.md`：定义统一 Policy Gate、用户意图授权、工具风险元数据、组织权限、数据范围、成本预留、批量 Action、持久 Interaction 与扩展能力不扩权原则。
+- `docs/document/TECH_AGENT_RUNTIME_Context分层额度与召回.md`：定义事实层、ContextPlan/Block/Receipt、模型能力派生预算、渐进式 Search/Get、结构化摘要、压缩抑制及 Skill/MCP/Subagent 隔离上下文。
+- `docs/document/TECH_AGENT_RUNTIME_Context回执边界与迁移附录.md`：记录 ContextReceipt、边界场景、方案比较、架构影响、计划接口、迁移顺序和验收门禁。
+- `docs/document/TECH_AGENT_RUNTIME_Executor_SPI与专业执行链.md`：定义统一 Executor SPI、Descriptor、四种提交结果、TaskRef、Worker/Reconciler、四视图 ActionResult，以及媒体、ERP、文件、Sandbox、MCP 和子 Agent 专业执行边界。
+- `docs/document/TECH_AGENT_RUNTIME_Executor并发边界与迁移附录.md`：记录 Executor 并发池、资源冲突、失败场景、方案比较、架构影响、计划文件、迁移顺序和验收门禁。
+- `docs/document/TECH_AGENT_RUNTIME_扩展运行时Skill_MCP_Plugin_Hook.md`：定义 Extension Registry、Skill 双模式、MCP Gateway、Plugin 信任与版本、Runtime Hook 分类及多租户安全边界。
+- `docs/document/TECH_AGENT_RUNTIME_扩展运行时迁移附录.md`：记录扩展层架构影响、计划目录、渐进迁移顺序和安全验收门禁。
+- `docs/document/TECH_AGENT_RUNTIME_Subagent与后台任务.md`：定义受限 Child Run、委派合同、隔离 Context/Capability、预算、Workspace isolation、父级唤醒及 Background Action 分界。
+- `docs/document/TECH_AGENT_RUNTIME_多通道Projection与交互协议.md`：定义 RuntimeEvent 有序信封、Snapshot/Replay、Projection reducer、持久 Interaction、ChannelCapability 及 Web/企微确定性降级。
+- `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、Canary、自动门禁、双写对账与回滚。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
@@ -249,6 +290,8 @@ EVERYDAYAIONE/
 │   │   │   ├── client.py                # 快麦 API 客户端
 │   │   │   └── dispatcher.py            # API 调度器
 │   │   ├── agent/                    # Agent 架构层（多Agent单一职责）
+│   │   │   ├── runtime/              # Run合同、证据账本、完成门与最终安全边界
+│   │   │   │   └── evidence_guard/   # 通用数值Claim提取、证据匹配和PASS/RETRY/BLOCK
 │   │   │   ├── image/requirement_assist_prompts.py # AI 帮写事实边界与多模态 Prompt
 │   │   │   ├── image/input_adapters.py # 详情项目到共享 AI 帮写输入的安全适配器
 │   │   │   ├── image/requirement_assist_service.py # 三方案模型调用、降级、校验与事实冲突闸门

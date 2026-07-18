@@ -148,31 +148,6 @@ async def _execute_stream(
         thinking_mode=request.thinking_mode,
     )
     await loop.run()
-    grounded_blocked = (
-        prepared.budget.stop_reason
-        and loop.runtime_state.requires_validation
-        and not loop.runtime_state.verified_final_pending
-    )
-    if grounded_blocked:
-        from services.agent.runtime.grounded_final import (
-            GROUNDED_FINAL_BLOCKED,
-        )
-        from schemas.websocket import build_message_chunk
-
-        loop.turn_result.text = GROUNDED_FINAL_BLOCKED
-        loop.turn_result.thinking = ""
-        loop.turn_result.thinking_committed = True
-        loop.totals.text += GROUNDED_FINAL_BLOCKED
-        await websocket.send_to_task_or_user(
-            delivery.task_id,
-            delivery.user_id,
-            build_message_chunk(
-                task_id=delivery.task_id,
-                conversation_id=delivery.conversation_id,
-                message_id=delivery.message_id,
-                chunk=GROUNDED_FINAL_BLOCKED,
-            ),
-        )
     finalized = await finalize_stream_result(
         handler=handler,
         adapter=prepared.adapter,
@@ -188,7 +163,7 @@ async def _execute_stream(
             thinking_committed=loop.turn_result.thinking_committed,
             thinking_started_at=loop.turn_result.thinking_started_at,
             usage=loop.totals.usage,
-            grounded_blocked=grounded_blocked,
+            safety_blocked=loop.runtime_state.guard_blocked,
         ),
         websocket=websocket,
         save_blocks=handler._save_accumulated_blocks,
