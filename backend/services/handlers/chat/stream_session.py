@@ -60,6 +60,7 @@ async def read_stream_turn(
     content_blocks: list[dict[str, Any]],
     websocket: Any,
     save_accumulated: Callable[[str, str], Awaitable[None]],
+    buffer_output: bool = False,
 ) -> StreamTurnResult:
     """读取一轮模型流并产生工具调用；不执行工具、不决定任务终态。"""
     turn_text = ""
@@ -96,20 +97,21 @@ async def read_stream_turn(
             if thinking_started_at is None:
                 thinking_started_at = time.monotonic()
             turn_thinking += chunk.thinking_content
-            totals.thinking += chunk.thinking_content
-            await websocket.send_to_task_or_user(
-                delivery.task_id,
-                delivery.user_id,
-                build_thinking_chunk(
-                    task_id=delivery.task_id,
-                    conversation_id=delivery.conversation_id,
-                    message_id=delivery.message_id,
-                    chunk=chunk.thinking_content,
-                    accumulated=totals.thinking,
-                ),
-            )
+            if not buffer_output:
+                totals.thinking += chunk.thinking_content
+                await websocket.send_to_task_or_user(
+                    delivery.task_id,
+                    delivery.user_id,
+                    build_thinking_chunk(
+                        task_id=delivery.task_id,
+                        conversation_id=delivery.conversation_id,
+                        message_id=delivery.message_id,
+                        chunk=chunk.thinking_content,
+                        accumulated=totals.thinking,
+                    ),
+                )
 
-        if chunk.content and not thinking_committed:
+        if chunk.content and not thinking_committed and not buffer_output:
             thinking_committed = True
             duration_ms = _thinking_duration(
                 thinking_started_at,
@@ -125,22 +127,23 @@ async def read_stream_turn(
 
         if chunk.content:
             turn_text += chunk.content
-            totals.text += chunk.content
-            totals.chunk_count += 1
-            await websocket.send_to_task_or_user(
-                delivery.task_id,
-                delivery.user_id,
-                build_message_chunk(
-                    task_id=delivery.task_id,
-                    conversation_id=delivery.conversation_id,
-                    message_id=delivery.message_id,
-                    chunk=chunk.content,
-                ),
-            )
-            if totals.chunk_count % 20 == 0:
-                asyncio.create_task(
-                    save_accumulated(delivery.task_id, totals.text)
+            if not buffer_output:
+                totals.text += chunk.content
+                totals.chunk_count += 1
+                await websocket.send_to_task_or_user(
+                    delivery.task_id,
+                    delivery.user_id,
+                    build_message_chunk(
+                        task_id=delivery.task_id,
+                        conversation_id=delivery.conversation_id,
+                        message_id=delivery.message_id,
+                        chunk=chunk.content,
+                    ),
                 )
+                if totals.chunk_count % 20 == 0:
+                    asyncio.create_task(
+                        save_accumulated(delivery.task_id, totals.text)
+                    )
 
         if chunk.tool_calls:
             accumulate_tool_call_delta(tool_calls, chunk.tool_calls)

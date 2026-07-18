@@ -12,20 +12,19 @@
 """
 
 from __future__ import annotations
-
 from typing import Any, Callable, Coroutine, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.agent.agent_result import AgentResult
 
 from loguru import logger
-
 from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
 from config.file_tools import FILE_INFO_TOOLS
 from services.agent.erp_tool_executor import ErpToolMixin
 from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
+from services.agent.runtime.data_compute import DataComputeToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
@@ -38,6 +37,7 @@ class ToolExecutor(
     MediaToolMixin,
     ErpToolMixin,
     SandboxToolMixin,
+    DataComputeToolMixin,
     CreditMixin,
 ):
     """同步工具执行器"""
@@ -47,14 +47,14 @@ class ToolExecutor(
         org_id: str | None = None,
         request_ctx=None,
         workspace_user_id: str | None = None,
-        resource_manifest=None,
+        resource_manifest=None, runtime_state=None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
-        self.resource_manifest = resource_manifest
+        self.resource_manifest, self.runtime_state = resource_manifest, runtime_state
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
         self.request_ctx = request_ctx
@@ -65,6 +65,7 @@ class ToolExecutor(
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
+            "data_compute": self._execute_data_compute,
             "web_search": self._web_search,
             "generate_image": self._generate_image,
             "generate_video": self._generate_video,
@@ -110,7 +111,6 @@ class ToolExecutor(
     # ========================================
     # 通用工具实现
     # ========================================
-
     async def _search_knowledge(self, args: Dict[str, Any]) -> "AgentResult":
         """查询 AI 知识库"""
         from services.agent.agent_result import AgentResult

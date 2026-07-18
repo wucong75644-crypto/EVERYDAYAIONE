@@ -191,6 +191,44 @@ async def test_execute_claim_commits_executor_outcome() -> None:
         "prompt_tokens": 2,
         "completion_tokens": 1,
     }
+    assert commit[1]["p_data_evidence"].obj == []
+
+
+@pytest.mark.asyncio
+async def test_execute_claim_commits_data_evidence_in_same_rpc() -> None:
+    class _EvidenceExecutor:
+        async def execute(self, task, claim, cancellation_event):
+            return GenerationOutcome(
+                result_content=[{"type": "text", "text": "1056"}],
+                usage={},
+                credits_cost=0,
+                data_evidence=[
+                    {
+                        "artifact_id": "artifact-1",
+                        "source": "data_compute",
+                        "columns": [],
+                        "rows": [{"valid_orders": 1056}],
+                        "file_ref": None,
+                        "query_scope": {},
+                        "metric_definitions": {},
+                        "lineage": {},
+                        "validation_status": "ready",
+                    }
+                ],
+            )
+
+    db = _FakeDB()
+    db.queue("commit_generation_turn", {"outcome": "committed"})
+    service = ConversationExecutionService(db, _EvidenceExecutor())
+
+    await service.execute_claim(
+        GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+    )
+
+    commit = next(call for call in db.calls if call[0] == "commit_generation_turn")
+    evidence = commit[1]["p_data_evidence"].obj
+    assert evidence[0]["artifact_id"] == "artifact-1"
+    assert evidence[0]["rows"] == [{"valid_orders": 1056}]
 
 
 @pytest.mark.asyncio

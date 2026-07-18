@@ -41,6 +41,7 @@ class ChatToolMixin(ChatToolResultMixin):
         turn: int,
         messages: Optional[List[Dict[str, Any]]] = None,
         budget=None,
+        runtime_state=None,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
@@ -71,6 +72,7 @@ class ChatToolMixin(ChatToolResultMixin):
             request_ctx=_request_ctx,
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
             resource_manifest=getattr(self, "_resource_manifest", None),
+            runtime_state=runtime_state,
         )
         # 每轮上下文
         executor._task_id = task_id

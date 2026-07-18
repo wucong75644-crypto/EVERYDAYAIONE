@@ -145,3 +145,37 @@ async def test_read_stream_turn_stops_on_cancel_with_org_context() -> None:
         had_partial=False,
         tools_in_flight=0,
     )
+
+
+@pytest.mark.asyncio
+async def test_buffered_turn_does_not_stream_unverified_numbers() -> None:
+    adapter = _Adapter(
+        [
+            StreamChunk(thinking_content="我猜可能是1457"),
+            StreamChunk(content="重新计算是1457单"),
+        ]
+    )
+    websocket = MagicMock()
+    websocket.is_cancelled.return_value = False
+    websocket.send_to_task_or_user = AsyncMock()
+    totals = StreamTotals()
+
+    result = await read_stream_turn(
+        adapter=adapter,
+        messages=[],
+        stream_kwargs={"tools": []},
+        thinking_effort=None,
+        thinking_mode=None,
+        delivery=_delivery(),
+        totals=totals,
+        content_blocks=[],
+        websocket=websocket,
+        save_accumulated=AsyncMock(),
+        buffer_output=True,
+    )
+
+    assert result.text == "重新计算是1457单"
+    assert result.thinking == "我猜可能是1457"
+    assert totals.text == ""
+    assert totals.thinking == ""
+    websocket.send_to_task_or_user.assert_not_awaited()

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from loguru import logger
 
 if TYPE_CHECKING:
+    from services.handlers.data_context_snapshot import DataContextSnapshot
     from services.handlers.resource_manifest import ResourceManifest
 
 
@@ -38,6 +39,7 @@ class ContextSnapshot:
     summary_revision: int
     conversation_source: str
     resource_manifest: "ResourceManifest | None" = None
+    data_context: "DataContextSnapshot | None" = None
 
 
 def context_anchor_from_binding(
@@ -132,6 +134,15 @@ async def build_context_snapshot(
         org_id=anchor.org_id,
         input_content=input_message.get("content"),
     )
+    from services.handlers.data_context_snapshot import (
+        load_data_context_snapshot,
+    )
+
+    data_context = load_data_context_snapshot(
+        db,
+        conversation_id=anchor.conversation_id,
+        base_revision=anchor.base_revision,
+    )
 
     logger.info(
         "context_snapshot_built | "
@@ -148,6 +159,7 @@ async def build_context_snapshot(
         summary_revision=summary_revision,
         conversation_source=conversation_source,
         resource_manifest=resource_manifest,
+        data_context=data_context,
     )
 
 

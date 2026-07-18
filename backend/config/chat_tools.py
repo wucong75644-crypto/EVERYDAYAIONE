@@ -64,6 +64,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "social_crawler",
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
+    "data_compute",
     # 文件操作（只读；file_search 命中图片自动多模态返回）
     "file_search", "file_analyze",
     # 定时任务（表单返回 + 列表查询）

@@ -20,6 +20,7 @@ class PreparedChatStream:
     stream_kwargs: dict[str, Any]
     tool_context: Any
     budget: Any
+    runtime_state: Any
 
 
 async def prepare_chat_stream(
@@ -88,6 +89,25 @@ async def prepare_chat_stream(
         task_id,
     )
     budget = _prepare_budget()
+    from services.agent.runtime.runtime_contract import build_run_contract
+    from services.agent.runtime.runtime_state import RuntimeState
+
+    runtime_state = RuntimeState(
+        contract=build_run_contract(params),
+        observation_only=False,
+    )
+    data_context = getattr(handler, "_data_context_snapshot", None)
+    if data_context is not None:
+        runtime_state.restore(data_context.evidence)
+    from services.agent.runtime.data_compute import has_computable_data
+    from services.agent.runtime.grounded_final import (
+        is_data_compute_follow_up,
+    )
+
+    runtime_state.requires_data_compute = is_data_compute_follow_up(
+        text_content,
+        has_data_context=has_computable_data(runtime_state),
+    )
     return PreparedChatStream(
         text_content=text_content,
         messages=messages,
@@ -98,6 +118,7 @@ async def prepare_chat_stream(
         stream_kwargs=stream_kwargs,
         tool_context=tool_context,
         budget=budget,
+        runtime_state=runtime_state,
     )
 
 

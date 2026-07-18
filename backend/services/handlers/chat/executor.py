@@ -85,6 +85,7 @@ class ChatGenerationExecutor:
             usage=result.usage,
             credits_cost=result.credits_cost,
             tool_digest=result.tool_digest,
+            data_evidence=result.data_evidence,
         )
 
     async def _load_input_content(

@@ -224,7 +224,7 @@
 | `build_diagram_payload` | `backend/services/sandbox/emit_protocol.py` | 构造 Mermaid diagram emit payload并校验格式、空值和长度 | source, title, format | dict |
 | `build_part_from_payload` | `backend/services/handlers/emit_payloads.py` | 将可信 emit payload 转成非流式链路使用的 ContentPart | payload | Optional[ContentPart] |
 | `context_anchor_from_binding` | `backend/services/handlers/context_snapshot.py` | 将 Turn 绑定事务结果转换为不可变任务上下文锚点 | task_data, input_message_id, turn_id, binding_data | ContextAnchor |
-| `build_context_snapshot` | `backend/services/handlers/context_snapshot.py` | 校验任务输入锚点，按 base revision 严格构造闭合历史与兼容摘要 | db, anchor, current_text | ContextSnapshot |
+| `build_context_snapshot` | `backend/services/handlers/context_snapshot.py` | 校验任务输入锚点，按 base revision 严格构造闭合历史、摘要、资源和跨 Turn 数据证据 | db, anchor, current_text | ContextSnapshot |
 | `get_closed_messages` | `backend/services/handlers/conversation_cache.py` | 仅在 revision 与 through-message 精确匹配时读取 v2 闭合历史；旧值/坏值失效，Redis 故障降级 miss | conv_id, requested_revision, through_message_id, org_id, task_id?, turn_id? | Optional[List[Dict]] |
 | `set_closed_messages` | `backend/services/handlers/conversation_cache.py` | 写入带 schema/revision/through-message 的闭合历史信封，不接收任务私有工具循环 | conv_id, revision, through_message_id, messages, org_id, ttl, task_id?, turn_id? | bool |
 | `build_context_messages` | `backend/services/handlers/chat_context/history_loader.py` | legacy 模式按时间加载；快照模式仅加载不超过 base revision 的闭合 conversation 消息 | db, conversation_id, current_text, base_revision?, strict? | List[Dict] |
@@ -240,7 +240,7 @@
 | `claim_next_serial_generation_turn` | `backend/migrations/121_conversation_actor_queue.sql` | 锁定 conversation，按稳定队列顺序认领最早 serial task 并绑定 ContextSnapshot 基线 | conversation_id, lease_seconds, max_attempts | JSONB |
 | `claim_branch_generation_turn` | `backend/migrations/121_conversation_actor_queue.sql` | 按 task_id 认领内部 branch task，不占用 serial owner | task_id, lease_seconds, max_attempts | JSONB |
 | `renew_generation_lease` | `backend/migrations/121_conversation_actor_queue.sql` | 仅允许当前 fencing token 延长 running task 租约 | task_id, execution_token, lease_seconds | JSONB |
-| `commit_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 在有效租约内原子提交 Chat 消息、扣积分、关闭 Turn、完成 task 并释放 owner | task_id, execution_token, output_message_id, result_content, usage, credits_cost, tool_digest | JSONB |
+| `commit_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql`、`135_conversation_data_evidence.sql` | 7 参数函数保留原 Actor 终态；8 参数重载在同一事务复用原终态并按 closed revision 幂等提交数据证据 | task_id, execution_token, output_message_id, result_content, usage, credits_cost, tool_digest, data_evidence? | JSONB |
 | `fail_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 仅允许当前 fencing token 原子失败 running Chat task 并释放 owner | task_id, execution_token, error_code, error_message | JSONB |
 | `cancel_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 用户与租户范围校验后立即取消 pending/running Chat task 并使旧 token 失效 | task_id, user_id, org_id | JSONB |
 | `create_actor_terminal_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | Actor 企微 task 进入完成/失败终态时，在同一事务幂等创建投递 Outbox | trigger | trigger |
@@ -297,6 +297,17 @@
 | `push_emit_payloads` | `backend/services/handlers/chat/tool_loop.py` | 按显式协议推送并持久化 emit 内容块 | payloads, content_blocks, delivery, websocket, save_blocks | None |
 | `push_form_block` | `backend/services/handlers/chat/tool_loop.py` | 推送表单块及固定确认提示，返回提示文本 | form, content_blocks, delivery, websocket, save_blocks | str |
 | `compact_tool_context` | `backend/services/handlers/chat/tool_loop.py` | 按 Web/企微既有预算压缩完成的工具轮次 | messages, conversation_source, turn | None |
+| `collect_tool_result` | `backend/services/agent/runtime/artifact_collector.py` | 将结构化 AgentResult 旁路映射为 Run 内产物证据，禁止从 Markdown 反向取数 | result, tool_call_id | Tuple[ArtifactEvidence, ...] |
+| `ArtifactLedger.record` | `backend/services/agent/runtime/artifact_ledger.py` | 按稳定 fingerprint 幂等登记 Run 内产物证据 | evidence | bool |
+| `DataAccuracyPolicy.validate_artifact` | `backend/services/agent/runtime/policies/data_accuracy.py` | 校验数据产物状态、行结构、列结构和受控文件引用 | contract, evidence, payload | PolicyResult |
+| `build_run_contract` | `backend/services/agent/runtime/runtime_contract.py` | 从调用方私有参数构建显式交付合同，不从用户文本或模型输出推断授权 | params | RunContract |
+| `evaluate_completion` | `backend/services/agent/runtime/completion_gate.py` | 根据必需产物、ready 证据和预算状态确定继续、完成或降级 | contract, snapshot, budget_exhausted | CompletionResult |
+| `execute_data_compute` | `backend/services/agent/runtime/data_compute.py` | 按可信 artifact_id 确定性执行过滤、排除、分组、求和和计数 | runtime_state, arguments | AgentResult |
+| `build_data_context_prompt` | `backend/services/agent/runtime/data_compute.py` | 向模型暴露可计算证据目录和字段，不复制完整数据 | runtime_state | str |
+| `RuntimeState.persistence_projection` | `backend/services/agent/runtime/runtime_state.py` | 将 ready DATA_RESULT 投影为 Actor 可原子提交的受限 JSON 证据 | - | List[Dict] |
+| `load_data_context_snapshot` | `backend/services/handlers/data_context_snapshot.py` | 按 conversation 和 base revision 加载、去重跨 Turn 数据证据 | db, conversation_id, base_revision | DataContextSnapshot |
+| `build_grounded_final` | `backend/services/agent/runtime/grounded_final.py` | 从最后一个已验证 data_compute 产物确定性生成用户最终数字或明细表 | runtime_state | str |
+| `is_data_compute_follow_up` | `backend/services/agent/runtime/grounded_final.py` | 在存在历史数据证据时识别高置信度排除、合计、切换指标和重算追问 | text, has_data_context | bool |
 
 ### 滚动管理模块 (Scroll Management)
 

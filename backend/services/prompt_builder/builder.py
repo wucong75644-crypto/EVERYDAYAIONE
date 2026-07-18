@@ -202,6 +202,13 @@ class PromptBuilder:
             history_messages=history_messages,
             summary_prompt=summary_prompt,
             user_result=user_result,
+            data_context_prompt=(
+                getattr(inp.context_snapshot, "data_context", None).render_prompt()
+                if inp.context_snapshot is not None
+                and getattr(inp.context_snapshot, "data_context", None)
+                is not None
+                else None
+            ),
         )
 
         # ── Step 6: budget 控制 (保留 V3.3 三层兜底) ──
@@ -225,6 +232,7 @@ class PromptBuilder:
         history_messages: List[Dict[str, Any]],
         summary_prompt: Optional[str],
         user_result: Any,
+        data_context_prompt: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """按稳定缓存边界拼接 system、历史、附件和当前 user。"""
         from core.config import get_settings
@@ -265,6 +273,11 @@ class PromptBuilder:
                     "以用户最新一条消息为准。历史仅用于理解上下文；"
                     "除非用户明确要求继续，否则不要续写或重复已经完成的历史任务。"
                 ),
+            })
+        if data_context_prompt:
+            messages.append({
+                "role": "system",
+                "content": data_context_prompt,
             })
         if user_result.attachments_system_block:
             messages.append({

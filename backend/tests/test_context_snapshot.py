@@ -85,8 +85,11 @@ async def test_snapshot_uses_revision_boundary_and_keeps_duplicate_text():
         "summary_revision": 2,
         "source": "wecom",
     })
+    evidence_query = _query([])
     db = MagicMock()
-    db.table.side_effect = [input_query, history_query, conversation_query]
+    db.table.side_effect = [
+        input_query, history_query, conversation_query, evidence_query,
+    ]
 
     snapshot = await build_context_snapshot(db, _anchor(), "重复问题")
 
@@ -98,6 +101,8 @@ async def test_snapshot_uses_revision_boundary_and_keeps_duplicate_text():
     assert "更早的事实" in (snapshot.summary_prompt or "")
     assert snapshot.summary_revision == 2
     assert snapshot.conversation_source == "wecom"
+    evidence_query.lte.assert_called_once_with("context_revision", 3)
+    evidence_query.range.assert_called_once_with(0, 49)
 
 
 @pytest.mark.asyncio
@@ -114,8 +119,11 @@ async def test_snapshot_rejects_future_summary():
         "summary_revision": 4,
         "source": "",
     })
+    evidence_query = _query([])
     db = MagicMock()
-    db.table.side_effect = [input_query, history_query, conversation_query]
+    db.table.side_effect = [
+        input_query, history_query, conversation_query, evidence_query,
+    ]
 
     snapshot = await build_context_snapshot(db, _anchor(base_revision=3), "当前")
 
@@ -167,8 +175,9 @@ async def test_snapshot_cache_hit_does_not_query_history_database():
         "summary_revision": 0,
         "source": "web",
     })
+    evidence_query = _query([])
     db = MagicMock()
-    db.table.side_effect = [input_query, conversation_query]
+    db.table.side_effect = [input_query, conversation_query, evidence_query]
 
     with (
         patch(
@@ -192,7 +201,59 @@ async def test_snapshot_cache_hit_does_not_query_history_database():
         turn_id="turn-1",
     )
     set_cached.assert_not_awaited()
-    assert db.table.call_count == 2
+    assert db.table.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_snapshot_loads_only_evidence_within_base_revision():
+    input_query = _query({
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "role": "user",
+        "turn_id": "turn-1",
+    })
+    history_query = _query([])
+    conversation_query = _query({
+        "context_summary": None,
+        "summary_revision": 0,
+        "source": "web",
+    })
+    evidence_query = _query([
+        {
+            "artifact_id": "artifact-1",
+            "source": "erp_agent",
+            "columns": [
+                {"name": "platform", "dtype": "str", "label": "平台"},
+                {"name": "valid_orders", "dtype": "int", "label": "有效订单"},
+            ],
+            "rows": [
+                {"platform": "淘宝", "valid_orders": 414},
+                {"platform": "拼多多", "valid_orders": 3541},
+            ],
+            "file_ref": None,
+            "query_scope": {"date": "2026-07-17"},
+            "metric_definitions": {},
+            "lineage": {"tool_call_id": "call-1"},
+            "validation_status": "ready",
+            "context_revision": 3,
+        }
+    ])
+    db = MagicMock()
+    db.table.side_effect = [
+        input_query, history_query, conversation_query, evidence_query,
+    ]
+
+    snapshot = await build_context_snapshot(db, _anchor(), "重新计算")
+
+    evidence_query.eq.assert_called_once_with("conversation_id", "conv-1")
+    evidence_query.lte.assert_called_once_with("context_revision", 3)
+    assert snapshot.data_context is not None
+    assert len(snapshot.data_context.evidence) == 1
+    assert snapshot.data_context.evidence[0].fingerprint == "artifact-1"
+    prompt = snapshot.data_context.render_prompt()
+    assert "artifact-1" in prompt
+    assert "platform,valid_orders" in prompt
+    assert "拼多多" not in prompt
 
 
 @pytest.mark.asyncio

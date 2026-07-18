@@ -50,6 +50,7 @@ class ChatExecutionResult:
     usage: dict[str, Any]
     credits_cost: int
     tool_digest: dict[str, Any] | None
+    data_evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def execute_chat(
@@ -62,6 +63,8 @@ async def execute_chat(
     """执行固定上下文的一次生成，不提交任务、消息或 revision 终态。"""
     event = cancellation_event or asyncio.Event()
     output = sink or CollectingExecutionSink()
+    from services.agent.runtime.runtime_state import RuntimeState
+
     prepared = await prepare_chat_stream(
         handler=handler,
         content=request.content,
@@ -74,6 +77,7 @@ async def execute_chat(
         params=request.params,
         context_anchor=request.context_anchor,
     )
+    runtime_state = getattr(prepared, "runtime_state", RuntimeState.observing())
     handler._adapter = prepared.adapter
     handler._pending_emit_payloads = []
     handler._pending_form_block = None
@@ -89,8 +93,26 @@ async def execute_chat(
             sink=output,
             totals=totals,
             blocks=blocks,
+            runtime_state=runtime_state,
         )
-        await _apply_budget_stop(prepared, totals, blocks)
+        if prepared.budget.stop_reason and runtime_state.contract.enabled:
+            runtime_state.evaluate(budget_exhausted=True)
+        if (
+            prepared.budget.stop_reason
+            and runtime_state.requires_data_compute
+            and not runtime_state.grounded_final_pending
+        ):
+            from services.agent.runtime.grounded_final import (
+                GROUNDED_FINAL_BLOCKED,
+            )
+
+            totals.text += GROUNDED_FINAL_BLOCKED
+            block = {"type": "text", "text": GROUNDED_FINAL_BLOCKED}
+            blocks.append(block)
+            await output.on_text(GROUNDED_FINAL_BLOCKED)
+            await output.on_block(block)
+        else:
+            await _apply_budget_stop(prepared, totals, blocks)
         await _consume_emit_payloads(handler, blocks, output)
         await output.flush()
         parts = build_content_parts(
@@ -111,6 +133,7 @@ async def execute_chat(
                 request.conversation_id,
                 prepared.budget.turns_used,
             ),
+            data_evidence=runtime_state.persistence_projection(),
         )
     finally:
         await prepared.adapter.close()
@@ -125,6 +148,7 @@ async def _run_loop(
     sink: ExecutionSink,
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
+    runtime_state: Any,
 ) -> None:
     while not prepared.budget.stop_reason:
         _raise_if_cancelled(cancellation_event)
@@ -138,14 +162,27 @@ async def _run_loop(
             messages=prepared.messages,
             tool_context=prepared.tool_context,
             permission=prepared.permission,
+            runtime_state=runtime_state,
         )
+        tools = runtime_state.final_tools(tools)
         turn_text, turn_thinking, calls = await _read_turn(
             prepared,
             tools,
             cancellation_event,
             sink,
             totals,
+            buffer_output=runtime_state.should_buffer_output,
         )
+        if runtime_state.grounded_final_pending and not calls:
+            from services.agent.runtime.grounded_final import (
+                build_grounded_final,
+            )
+
+            turn_text = build_grounded_final(runtime_state)
+            turn_thinking = ""
+            totals.text += turn_text
+            if turn_text:
+                await sink.on_text(turn_text)
         await _append_turn_blocks(
             blocks,
             sink,
@@ -153,6 +190,9 @@ async def _run_loop(
             text=turn_text,
         )
         if not calls:
+            if runtime_state.should_continue_after_plain_text():
+                _append_completion_reminder(prepared.messages, runtime_state)
+                continue
             return
         await _execute_tools(
             handler=handler,
@@ -164,7 +204,14 @@ async def _run_loop(
             cancellation_event=cancellation_event,
             sink=sink,
             blocks=blocks,
+            runtime_state=runtime_state,
         )
+        if (
+            runtime_state.contract.enabled
+            and runtime_state.evaluate().decision.value == "finalize"
+        ):
+            runtime_state.request_final_synthesis()
+            _append_final_synthesis_prompt(prepared.messages)
 
 
 async def _read_turn(
@@ -173,6 +220,8 @@ async def _read_turn(
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     totals: StreamTotals,
+    *,
+    buffer_output: bool = False,
 ) -> tuple[str, str, list[dict[str, Any]]]:
     turn_text = ""
     turn_thinking = ""
@@ -185,12 +234,14 @@ async def _read_turn(
         _raise_if_cancelled(cancellation_event)
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
-            totals.thinking += chunk.thinking_content
-            await sink.on_thinking(chunk.thinking_content)
+            if not buffer_output:
+                totals.thinking += chunk.thinking_content
+                await sink.on_thinking(chunk.thinking_content)
         if chunk.content:
             turn_text += chunk.content
-            totals.text += chunk.content
-            await sink.on_text(chunk.content)
+            if not buffer_output:
+                totals.text += chunk.content
+                await sink.on_text(chunk.content)
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
         _accumulate_usage(totals, chunk)
@@ -228,6 +279,7 @@ async def _execute_tools(
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     blocks: list[dict[str, Any]],
+    runtime_state: Any,
 ) -> None:
     prepared.messages.append(_assistant_tool_message(turn_text, calls))
     start_times: dict[str, float] = {}
@@ -246,6 +298,7 @@ async def _execute_tools(
         turn + 1,
         messages=prepared.messages,
         budget=prepared.budget,
+        runtime_state=runtime_state,
     )
     _raise_if_cancelled(cancellation_event)
     image_urls = apply_tool_results(
@@ -254,8 +307,10 @@ async def _execute_tools(
         content_blocks=blocks,
         start_times=start_times,
         tool_context=prepared.tool_context,
+        runtime_state=runtime_state,
     )
     append_tool_images(prepared.messages, image_urls)
+    _append_data_context(prepared.messages, runtime_state)
     await _consume_emit_payloads(handler, blocks, sink)
     await compact_tool_context(
         messages=prepared.messages,
@@ -287,6 +342,48 @@ def _assistant_tool_message(
             for call in calls
         ],
     }
+
+
+def _append_completion_reminder(
+    messages: list[dict[str, Any]],
+    runtime_state: Any,
+) -> None:
+    reason = runtime_state.last_completion.reason
+    messages.append(
+        {
+            "role": "system",
+            "content": (
+                "交付合同尚未满足，请继续使用可用工具完成缺失产物。"
+                f"当前状态：{reason}"
+            ),
+        }
+    )
+
+
+def _append_final_synthesis_prompt(messages: list[dict[str, Any]]) -> None:
+    messages.append(
+        {
+            "role": "system",
+            "content": (
+                "必需产物已经通过运行时验证。请基于现有工具结果完成一次"
+                "简洁文字收尾；不得再次调用工具。"
+            ),
+        }
+    )
+
+
+def _append_data_context(
+    messages: list[dict[str, Any]],
+    runtime_state: Any,
+) -> None:
+    from services.agent.runtime.data_compute import build_data_context_prompt
+
+    prompt = build_data_context_prompt(runtime_state)
+    if prompt and not any(
+        message.get("role") == "system" and message.get("content") == prompt
+        for message in messages
+    ):
+        messages.append({"role": "system", "content": prompt})
 
 
 async def _consume_emit_payloads(

@@ -15,6 +15,25 @@ from services.handlers.chat.execution_engine import (
 )
 
 
+def _grounded_runtime_state():
+    from services.agent.agent_result import AgentResult
+    from services.agent.runtime.artifact_collector import collect_tool_result
+    from services.agent.runtime.runtime_state import RuntimeState
+
+    state = RuntimeState.observing()
+    result = AgentResult(
+        summary="确定性计算完成",
+        data=[{"有效订单合计": 1056}],
+        source="data_compute",
+    )
+    state.ledger.record(
+        collect_tool_result(result, tool_call_id="compute-1")[0]
+    )
+    state.requires_data_compute = True
+    state.request_grounded_final()
+    return state
+
+
 def _request() -> ChatExecutionRequest:
     return ChatExecutionRequest(
         content=[TextPart(text="你好")],
@@ -190,3 +209,59 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
     assert [part.type for part in result.parts] == ["thinking", "text"]
     assert result.parts[0].text == "分析中"
     assert result.parts[1].text == "结论"
+
+
+@pytest.mark.asyncio
+async def test_execute_chat_replaces_unverified_final_with_grounded_value(
+    monkeypatch,
+):
+    async def stream_chat(**_kwargs):
+        yield SimpleNamespace(
+            content="我猜是1457单",
+            thinking_content="未经验证",
+            tool_calls=None,
+            prompt_tokens=1,
+            completion_tokens=1,
+            credits_consumed=None,
+            finish_reason="stop",
+        )
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    budget = SimpleNamespace(stop_reason=None, turns_used=0)
+    budget.use_turn = lambda: setattr(
+        budget, "turns_used", budget.turns_used + 1
+    )
+    prepared = SimpleNamespace(
+        adapter=adapter,
+        permission=SimpleNamespace(
+            need_exit_attachment=False,
+            get_reminder=lambda _turn: "",
+        ),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(
+            discovered_tools=set(),
+            build_context_prompt=lambda: "",
+        ),
+        messages=[],
+        budget=budget,
+        runtime_state=_grounded_runtime_state(),
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+    handler = SimpleNamespace(
+        org_id=None,
+        _adapter=None,
+        _calculate_credits=lambda _usage: 0,
+    )
+
+    result = await execute_chat(handler=handler, request=_request())
+
+    assert result.parts[-1].text == "重新计算结果：有效订单合计：1,056。"
+    assert "1457" not in result.parts[-1].text

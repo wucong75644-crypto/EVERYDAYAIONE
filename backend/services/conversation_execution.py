@@ -61,6 +61,7 @@ class GenerationOutcome:
     usage: dict[str, Any]
     credits_cost: int
     tool_digest: dict[str, Any] | None = None
+    data_evidence: list[dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.result_content, list):
@@ -71,6 +72,10 @@ class GenerationOutcome:
             raise ValueError("credits_cost must be non-negative")
         if self.tool_digest is not None and not isinstance(self.tool_digest, dict):
             raise TypeError("tool_digest must be a dict or None")
+        if self.data_evidence is not None and not isinstance(
+            self.data_evidence, list
+        ):
+            raise TypeError("data_evidence must be a list or None")
 
 
 class GenerationExecutor(Protocol):
@@ -290,6 +295,7 @@ class ConversationExecutionService:
                     Jsonb(outcome.tool_digest)
                     if outcome.tool_digest is not None else None
                 ),
+                "p_data_evidence": Jsonb(outcome.data_evidence or []),
             },
         )
 

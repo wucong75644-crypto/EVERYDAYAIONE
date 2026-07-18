@@ -29,9 +29,16 @@ def prepare_tool_turn(
     messages: list[dict[str, Any]],
     tool_context: Any,
     permission: Any,
+    runtime_state: Any = None,
 ) -> list[dict[str, Any]]:
     """构建本轮工具列表并追加动态上下文、退出附件与权限提醒。"""
     current_tools = list(core_tools)
+    if runtime_state is not None:
+        from config.runtime_tools import build_data_compute_tool
+        from services.agent.runtime.data_compute import has_computable_data
+
+        if has_computable_data(runtime_state):
+            current_tools.append(build_data_compute_tool())
     if discovered_names:
         from config.chat_tools import get_tools_by_names
         from config.tool_domains import filter_tools_for_domain
@@ -169,10 +176,12 @@ def apply_tool_results(
     content_blocks: list[dict[str, Any]],
     start_times: dict[str, float],
     tool_context: Any,
+    runtime_state: Any = None,
 ) -> list[str]:
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
     for call, result, is_error, display_text in tool_results:
+        _observe_tool_result(runtime_state, call, result)
         tool_context.update_from_result(
             call["name"],
             display_text,
@@ -199,6 +208,33 @@ def apply_tool_results(
             start_times.get(call["id"]),
         )
     return image_urls
+
+
+def _observe_tool_result(
+    runtime_state: Any,
+    call: dict[str, Any],
+    result: Any,
+) -> None:
+    if runtime_state is None:
+        return
+    from services.agent.runtime.artifact_collector import collect_tool_result
+    from services.agent.runtime.policies.data_accuracy import (
+        validate_data_evidence,
+    )
+    from services.agent.runtime.artifact_ledger import ArtifactKind
+
+    for evidence in collect_tool_result(result, tool_call_id=call.get("id")):
+        if (
+            evidence.kind == ArtifactKind.DATA_RESULT
+            and not validate_data_evidence(evidence).accepted
+        ):
+            continue
+        runtime_state.ledger.record(evidence)
+        if (
+            call.get("name") == "data_compute"
+            and evidence.kind == ArtifactKind.DATA_RESULT
+        ):
+            runtime_state.request_grounded_final()
 
 
 def _complete_tool_step(
