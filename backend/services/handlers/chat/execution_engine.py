@@ -99,8 +99,8 @@ async def execute_chat(
             runtime_state.evaluate(budget_exhausted=True)
         if (
             prepared.budget.stop_reason
-            and runtime_state.requires_data_compute
-            and not runtime_state.grounded_final_pending
+            and runtime_state.requires_validation
+            and not runtime_state.verified_final_pending
         ):
             from services.agent.runtime.grounded_final import (
                 GROUNDED_FINAL_BLOCKED,
@@ -152,6 +152,33 @@ async def _run_loop(
 ) -> None:
     while not prepared.budget.stop_reason:
         _raise_if_cancelled(cancellation_event)
+        if runtime_state.validation_blocked:
+            from services.agent.runtime.grounded_final import (
+                GROUNDED_FINAL_BLOCKED,
+            )
+
+            totals.text += GROUNDED_FINAL_BLOCKED
+            await _append_turn_blocks(
+                blocks,
+                sink,
+                thinking="",
+                text=GROUNDED_FINAL_BLOCKED,
+            )
+            return
+        if runtime_state.verified_final_pending:
+            from services.agent.runtime.grounded_final import (
+                build_grounded_final,
+            )
+
+            text = build_grounded_final(runtime_state)
+            totals.text += text
+            await _append_turn_blocks(
+                blocks,
+                sink,
+                thinking="",
+                text=text,
+            )
+            return
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
         tools = prepare_tool_turn(
@@ -173,16 +200,6 @@ async def _run_loop(
             totals,
             buffer_output=runtime_state.should_buffer_output,
         )
-        if runtime_state.grounded_final_pending and not calls:
-            from services.agent.runtime.grounded_final import (
-                build_grounded_final,
-            )
-
-            turn_text = build_grounded_final(runtime_state)
-            turn_thinking = ""
-            totals.text += turn_text
-            if turn_text:
-                await sink.on_text(turn_text)
         await _append_turn_blocks(
             blocks,
             sink,
@@ -310,7 +327,6 @@ async def _execute_tools(
         runtime_state=runtime_state,
     )
     append_tool_images(prepared.messages, image_urls)
-    _append_data_context(prepared.messages, runtime_state)
     await _consume_emit_payloads(handler, blocks, sink)
     await compact_tool_context(
         messages=prepared.messages,
@@ -370,20 +386,6 @@ def _append_final_synthesis_prompt(messages: list[dict[str, Any]]) -> None:
             ),
         }
     )
-
-
-def _append_data_context(
-    messages: list[dict[str, Any]],
-    runtime_state: Any,
-) -> None:
-    from services.agent.runtime.data_compute import build_data_context_prompt
-
-    prompt = build_data_context_prompt(runtime_state)
-    if prompt and not any(
-        message.get("role") == "system" and message.get("content") == prompt
-        for message in messages
-    ):
-        messages.append({"role": "system", "content": prompt})
 
 
 async def _consume_emit_payloads(

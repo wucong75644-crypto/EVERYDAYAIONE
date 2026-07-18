@@ -205,7 +205,7 @@ async def test_execute_claim_commits_data_evidence_in_same_rpc() -> None:
                 data_evidence=[
                     {
                         "artifact_id": "artifact-1",
-                        "source": "data_compute",
+                        "source": "runtime_validator",
                         "columns": [],
                         "rows": [{"valid_orders": 1056}],
                         "file_ref": None,

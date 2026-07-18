@@ -251,9 +251,7 @@ async def test_snapshot_loads_only_evidence_within_base_revision():
     assert len(snapshot.data_context.evidence) == 1
     assert snapshot.data_context.evidence[0].fingerprint == "artifact-1"
     prompt = snapshot.data_context.render_prompt()
-    assert "artifact-1" in prompt
-    assert "platform,valid_orders" in prompt
-    assert "拼多多" not in prompt
+    assert prompt == ""
 
 
 @pytest.mark.asyncio

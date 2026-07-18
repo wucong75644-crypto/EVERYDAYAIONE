@@ -24,13 +24,22 @@ def _grounded_runtime_state():
     result = AgentResult(
         summary="确定性计算完成",
         data=[{"有效订单合计": 1056}],
-        source="data_compute",
+        source="runtime_validator",
     )
     state.ledger.record(
         collect_tool_result(result, tool_call_id="compute-1")[0]
     )
-    state.requires_data_compute = True
-    state.request_grounded_final()
+    state.requires_validation = True
+    state.request_verified_final()
+    return state
+
+
+def _blocked_runtime_state():
+    from services.agent.runtime.runtime_state import RuntimeState
+
+    state = RuntimeState.observing()
+    state.requires_validation = True
+    state.validation_error = "字段缺失"
     return state
 
 
@@ -212,10 +221,14 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_chat_replaces_unverified_final_with_grounded_value(
+async def test_execute_chat_returns_verified_final_without_calling_model(
     monkeypatch,
 ):
+    called = False
+
     async def stream_chat(**_kwargs):
+        nonlocal called
+        called = True
         yield SimpleNamespace(
             content="我猜是1457单",
             thinking_content="未经验证",
@@ -265,3 +278,51 @@ async def test_execute_chat_replaces_unverified_final_with_grounded_value(
 
     assert result.parts[-1].text == "重新计算结果：有效订单合计：1,056。"
     assert "1457" not in result.parts[-1].text
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_execute_chat_blocks_failed_validation_before_model(monkeypatch):
+    called = False
+
+    async def stream_chat(**_kwargs):
+        nonlocal called
+        called = True
+        yield SimpleNamespace(content="不应出现")
+
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    budget = SimpleNamespace(stop_reason=None, turns_used=0)
+    budget.use_turn = lambda: setattr(
+        budget, "turns_used", budget.turns_used + 1
+    )
+    prepared = SimpleNamespace(
+        adapter=adapter,
+        permission=SimpleNamespace(
+            need_exit_attachment=False,
+            get_reminder=lambda _turn: "",
+        ),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(discovered_tools=set()),
+        messages=[],
+        budget=budget,
+        runtime_state=_blocked_runtime_state(),
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+    handler = SimpleNamespace(
+        org_id=None,
+        _adapter=None,
+        _calculate_credits=lambda _usage: 0,
+    )
+
+    result = await execute_chat(handler=handler, request=_request())
+
+    assert "未通过一致性校验" in result.parts[-1].text
+    assert called is False

@@ -51,7 +51,6 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
 
     # === shared: 多个域的 Agent 内部都能用 ===
     "code_execute":     ToolDomain.SHARED,
-    "data_compute":     ToolDomain.SHARED,
     # data_query 已删除（AI 在 code_execute 中用 duckdb 查询）
 
     # === erp: 仅 erp_agent 内部可用 ===

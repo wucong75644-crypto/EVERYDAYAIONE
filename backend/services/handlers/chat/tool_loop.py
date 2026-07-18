@@ -33,12 +33,6 @@ def prepare_tool_turn(
 ) -> list[dict[str, Any]]:
     """构建本轮工具列表并追加动态上下文、退出附件与权限提醒。"""
     current_tools = list(core_tools)
-    if runtime_state is not None:
-        from config.runtime_tools import build_data_compute_tool
-        from services.agent.runtime.data_compute import has_computable_data
-
-        if has_computable_data(runtime_state):
-            current_tools.append(build_data_compute_tool())
     if discovered_names:
         from config.chat_tools import get_tools_by_names
         from config.tool_domains import filter_tools_for_domain
@@ -231,10 +225,17 @@ def _observe_tool_result(
             continue
         runtime_state.ledger.record(evidence)
         if (
-            call.get("name") == "data_compute"
+            call.get("name") == "erp_agent"
             and evidence.kind == ArtifactKind.DATA_RESULT
         ):
-            runtime_state.request_grounded_final()
+            from services.agent.runtime.data_validator import (
+                requires_source_validation,
+                run_internal_validation,
+            )
+
+            if requires_source_validation(runtime_state.user_text):
+                runtime_state.requires_validation = True
+                run_internal_validation(runtime_state)
 
 
 def _complete_tool_step(

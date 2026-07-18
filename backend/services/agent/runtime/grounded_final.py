@@ -1,4 +1,4 @@
-"""从已验证 data_compute 产物生成不可篡改的最终文本。"""
+"""从内部 Validator 产物生成不可篡改的最终文本。"""
 
 from __future__ import annotations
 
@@ -8,37 +8,10 @@ from typing import Any
 from services.agent.runtime.artifact_ledger import ArtifactKind, ArtifactStatus
 
 
-_FOLLOW_UP_TERMS = (
-    "重新计算",
-    "再计算",
-    "重算",
-    "共多少",
-    "总和",
-    "合计",
-    "求和",
-    "排除",
-    "除了",
-    "按照有效",
-    "按有效",
-    "recalculate",
-    "recompute",
-    "excluding",
-    "exclude",
-    "total",
-    "sum",
-)
-
 GROUNDED_FINAL_BLOCKED = (
-    "无法完成可信重算：本轮没有产生通过验证的计算结果。"
-    "请重试，或重新查询原始数据后再计算。"
+    "当前数据未通过一致性校验，因此没有输出统计数字。"
+    "请重试，或重新查询原始数据。"
 )
-
-
-def is_data_compute_follow_up(text: str, *, has_data_context: bool) -> bool:
-    if not has_data_context:
-        return False
-    normalized = text.replace(" ", "")
-    return any(term in normalized for term in _FOLLOW_UP_TERMS)
 
 
 def build_grounded_final(runtime_state: Any) -> str:
@@ -70,7 +43,7 @@ def _latest_compute_evidence(runtime_state: Any) -> Any:
         if (
             evidence.kind == ArtifactKind.DATA_RESULT
             and evidence.status == ArtifactStatus.READY
-            and payload.get("source") == "data_compute"
+            and payload.get("source") == "runtime_validator"
         ):
             return evidence
     return None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from services.agent.runtime.artifact_ledger import ArtifactLedger
 from services.agent.runtime.completion_gate import (
@@ -23,8 +24,11 @@ class RuntimeState:
     observation_only: bool = True
     final_synthesis_pending: bool = False
     last_completion: CompletionResult | None = None
-    requires_data_compute: bool = False
-    grounded_final_pending: bool = False
+    user_text: str = ""
+    requires_validation: bool = False
+    verified_final_pending: bool = False
+    validation_plan: dict[str, Any] | None = None
+    validation_error: str | None = None
 
     @classmethod
     def observing(cls) -> "RuntimeState":
@@ -44,7 +48,7 @@ class RuntimeState:
             self.final_synthesis_pending = True
 
     def should_continue_after_plain_text(self) -> bool:
-        if self.requires_data_compute and not self.grounded_final_pending:
+        if self.requires_validation and not self.verified_final_pending:
             return True
         result = self.evaluate()
         return (
@@ -56,16 +60,24 @@ class RuntimeState:
     def final_tools(self, tools: list[dict]) -> list[dict]:
         return (
             []
-            if self.final_synthesis_pending or self.grounded_final_pending
+            if self.final_synthesis_pending or self.verified_final_pending
             else tools
         )
 
-    def request_grounded_final(self) -> None:
-        self.grounded_final_pending = True
+    def request_verified_final(self) -> None:
+        self.verified_final_pending = True
+
+    @property
+    def validation_blocked(self) -> bool:
+        return (
+            self.requires_validation
+            and not self.verified_final_pending
+            and self.validation_error is not None
+        )
 
     @property
     def should_buffer_output(self) -> bool:
-        return self.requires_data_compute or self.grounded_final_pending
+        return self.requires_validation or self.verified_final_pending
 
     def persistence_projection(self) -> list[dict]:
         """投影可跨 Turn 复用的 ready 数据证据。"""

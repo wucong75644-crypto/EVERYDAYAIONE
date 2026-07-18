@@ -302,12 +302,13 @@
 | `DataAccuracyPolicy.validate_artifact` | `backend/services/agent/runtime/policies/data_accuracy.py` | 校验数据产物状态、行结构、列结构和受控文件引用 | contract, evidence, payload | PolicyResult |
 | `build_run_contract` | `backend/services/agent/runtime/runtime_contract.py` | 从调用方私有参数构建显式交付合同，不从用户文本或模型输出推断授权 | params | RunContract |
 | `evaluate_completion` | `backend/services/agent/runtime/completion_gate.py` | 根据必需产物、ready 证据和预算状态确定继续、完成或降级 | contract, snapshot, budget_exhausted | CompletionResult |
-| `execute_data_compute` | `backend/services/agent/runtime/data_compute.py` | 按可信 artifact_id 确定性执行过滤、排除、分组、求和和计数 | runtime_state, arguments | AgentResult |
-| `build_data_context_prompt` | `backend/services/agent/runtime/data_compute.py` | 向模型暴露可计算证据目录和字段，不复制完整数据 | runtime_state | str |
+| `execute_validation_plan` | `backend/services/agent/runtime/data_validator.py` | Runtime 内部按可信 artifact_id 确定性执行过滤、排除、分组、求和和计数；不注册为模型工具 | runtime_state, arguments | AgentResult |
+| `run_internal_validation` | `backend/services/agent/runtime/data_validator.py` | 根据当前用户问题和历史验证计划执行内部校验，只写 Runtime 账本，不写模型上下文或前端工具事件 | runtime_state | bool |
+| `requires_validation` | `backend/services/agent/runtime/data_validator.py` | 在存在历史数据证据时识别高置信排除、合计、切换指标和重算追问 | text, has_data_context | bool |
+| `requires_source_validation` | `backend/services/agent/runtime/data_validator.py` | 识别首轮明确分组展示请求，触发保持源结果形态的内部校验 | text | bool |
 | `RuntimeState.persistence_projection` | `backend/services/agent/runtime/runtime_state.py` | 将 ready DATA_RESULT 投影为 Actor 可原子提交的受限 JSON 证据 | - | List[Dict] |
 | `load_data_context_snapshot` | `backend/services/handlers/data_context_snapshot.py` | 按 conversation 和 base revision 加载、去重跨 Turn 数据证据 | db, conversation_id, base_revision | DataContextSnapshot |
-| `build_grounded_final` | `backend/services/agent/runtime/grounded_final.py` | 从最后一个已验证 data_compute 产物确定性生成用户最终数字或明细表 | runtime_state | str |
-| `is_data_compute_follow_up` | `backend/services/agent/runtime/grounded_final.py` | 在存在历史数据证据时识别高置信度排除、合计、切换指标和重算追问 | text, has_data_context | bool |
+| `build_grounded_final` | `backend/services/agent/runtime/grounded_final.py` | 从当前内部 Validator 的 verified result 确定性生成最终数字或明细表，不经过模型改写 | runtime_state | str |
 
 ### 滚动管理模块 (Scroll Management)
 

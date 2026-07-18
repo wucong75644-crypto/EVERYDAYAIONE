@@ -59,6 +59,12 @@ class ChatStreamLoop:
 
     async def run(self) -> None:
         while not self.prepared.budget.stop_reason:
+            if self.runtime_state.validation_blocked:
+                await self._replace_with_validation_error()
+                break
+            if self.runtime_state.verified_final_pending:
+                await self._replace_with_grounded_final()
+                break
             if await self._cancel_at("loop_top"):
                 break
             self.prepared.budget.use_turn()
@@ -115,12 +121,6 @@ class ChatStreamLoop:
             save_accumulated=self.handler._save_accumulated_content,
             buffer_output=self.runtime_state.should_buffer_output,
         )
-        if (
-            self.runtime_state.grounded_final_pending
-            and not self.turn_result.tool_calls
-        ):
-            await self._replace_with_grounded_final()
-
     async def _replace_with_grounded_final(self) -> None:
         from services.agent.runtime.grounded_final import build_grounded_final
         from schemas.websocket import build_message_chunk
@@ -141,6 +141,27 @@ class ChatStreamLoop:
                     chunk=text,
                 ),
             )
+
+    async def _replace_with_validation_error(self) -> None:
+        from schemas.websocket import build_message_chunk
+        from services.agent.runtime.grounded_final import (
+            GROUNDED_FINAL_BLOCKED,
+        )
+
+        self.turn_result.text = GROUNDED_FINAL_BLOCKED
+        self.turn_result.thinking = ""
+        self.turn_result.thinking_committed = True
+        self.totals.text += GROUNDED_FINAL_BLOCKED
+        await self.websocket.send_to_task_or_user(
+            self.delivery.task_id,
+            self.delivery.user_id,
+            build_message_chunk(
+                task_id=self.delivery.task_id,
+                conversation_id=self.delivery.conversation_id,
+                message_id=self.delivery.message_id,
+                chunk=GROUNDED_FINAL_BLOCKED,
+            ),
+        )
 
     def _retry_empty_output(self, turn: int) -> bool:
         if self.turn_result.text or self.prepared.budget.turns_used <= 1:
@@ -261,7 +282,6 @@ class ChatStreamLoop:
             )
         )
         append_tool_images(self.prepared.messages, image_urls)
-        self._append_data_context()
         await self._push_pending_payloads()
         if (
             self.runtime_state.contract.enabled
@@ -292,18 +312,6 @@ class ChatStreamLoop:
                 ),
             }
         )
-
-    def _append_data_context(self) -> None:
-        from services.agent.runtime.data_compute import build_data_context_prompt
-
-        prompt = build_data_context_prompt(self.runtime_state)
-        if prompt and not any(
-            message.get("role") == "system" and message.get("content") == prompt
-            for message in self.prepared.messages
-        ):
-            self.prepared.messages.append(
-                {"role": "system", "content": prompt}
-            )
 
     async def _push_pending_payloads(self) -> None:
         payloads = self.handler._pending_emit_payloads

@@ -150,8 +150,8 @@ async def _execute_stream(
     await loop.run()
     grounded_blocked = (
         prepared.budget.stop_reason
-        and loop.runtime_state.requires_data_compute
-        and not loop.runtime_state.grounded_final_pending
+        and loop.runtime_state.requires_validation
+        and not loop.runtime_state.verified_final_pending
     )
     if grounded_blocked:
         from services.agent.runtime.grounded_final import (

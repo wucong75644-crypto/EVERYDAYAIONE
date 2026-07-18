@@ -4,6 +4,11 @@
 > 日期：2026-07-18
 > 任务等级：A级
 > 对标基线：Grok Build `c68e39f60462f28d9be5e683d9cbe2c57b1a5027`
+
+> 2026-07-18 生产验收修订：数据校验权属于 Runtime 控制面。Data
+> Validator 不注册为模型工具、不产生 `role=tool` 消息、不注入模型上下文、
+> 不产生前端工具步骤；只有通过校验的 `verified_result` 可以越过
+> CompletionGate，失败由运行时直接阻断。
 > 合并来源：通用任务交付运行时方案 + ERP 跨 Turn 数据上下文方案
 
 ## 1. 最终结论
@@ -234,7 +239,7 @@ base_revision
    )
 → PromptBuilder
 → 模型获得数据目录和口径摘要
-→ data_compute 按 artifact_id 执行过滤 / 聚合 / 重算
+→ Runtime Data Validator 按 artifact_id 执行过滤 / 聚合 / 重算
 ```
 
 `ContextSnapshot` 冻结本 Turn 可见的数据 revision。PromptBuilder 不直接查数据库，避免一次生成过程中读到变化状态。
@@ -243,7 +248,7 @@ base_revision
 
 包含精确业务数字的最终回答按以下优先级生成：
 
-1. `data_compute` 返回的已验证结论；
+1. Runtime Data Validator 返回的已验证结论；
 2. 已验证 `DataResultArtifact` 的确定性模板；
 3. 无法验证时返回明确降级说明。
 
@@ -261,7 +266,7 @@ base_revision
 | Actor commit | `commit_generation_turn` | evidence projection | 同一事务、同一 fencing |
 | `ContextSnapshot` | history/summary/resources | `data_context` | 新字段缺省为空 |
 | `PromptBuilder` | snapshot | data context renderer | 无数据时输出完全不变 |
-| Tool registry | 现有 tools | `data_compute` | 普通请求不暴露无关工具 |
+| Runtime validator | ArtifactLedger | 内部 `ValidationPlan` | 不注册模型工具，不产生前端工具事件 |
 | 最终回答 | model stream | `GroundedFinalPolicy` | 非数据回答保持原流式行为 |
 
 ## 6. 持久化边界
@@ -292,7 +297,7 @@ base_revision
 | `AgentResult.data` 为空 | 登记 empty，不伪造统计 |
 | 仅有 Markdown 表格 | 可展示，不升级为可信 DATA_RESULT |
 | 工具成功但证据校验失败 | 原 observation 保留，完成门不放行精确结论 |
-| data_compute 口径不明确 | `NEEDS_INPUT`，不猜测字段 |
+| Data Validator 口径不明确 | CompletionGate 阻断，不猜测字段 |
 | Actor lease 丢失 | 消息和证据都不提交 |
 | 重试同一 Turn | fingerprint 幂等，不重复写证据 |
 | 并发新消息 | 依据 base_revision 读取固定快照 |
@@ -317,7 +322,7 @@ base_revision
 
 - 新增 `DATA_RESULT` 映射、持久化投影和 Actor 原子提交。
 - 扩展 ContextSnapshot。
-- 新增 `data_compute` 和确定性数据验证。
+- 新增 Runtime 内部 Data Validator 和确定性数据验证。
 
 ### Phase 4：Grounded Final
 
@@ -334,7 +339,7 @@ base_revision
 - `backend/services/agent/runtime/runtime_state.py`
 - `backend/services/agent/runtime/artifact_collector.py`
 - `backend/services/agent/runtime/policies/data_accuracy.py`
-- `backend/services/agent/runtime/data_compute.py`
+- `backend/services/agent/runtime/data_validator.py`
 - 新版本数据库 migration 与 rollback
 
 修改：

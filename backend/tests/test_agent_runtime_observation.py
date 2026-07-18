@@ -117,6 +117,46 @@ def test_apply_tool_results_observes_without_changing_protocol() -> None:
     assert state.ledger.ready_kinds() == frozenset({ArtifactKind.DATA_RESULT})
 
 
+def test_internal_validator_never_appends_model_tool_message() -> None:
+    state = RuntimeState.observing()
+    state.user_text = "查询昨天付款订单，按照平台划分"
+    messages: list[dict] = []
+    result = AgentResult(
+        summary="按平台统计",
+        data=[
+            {"platform": "tb", "total_orders": 10},
+            {"platform": "pdd", "total_orders": 20},
+        ],
+        columns=[
+            ColumnMeta(name="platform", dtype="str", label="平台"),
+            ColumnMeta(name="total_orders", dtype="int", label="总订单数"),
+        ],
+        source="erp_agent",
+    )
+
+    apply_tool_results(
+        tool_results=[
+            (
+                {"id": "erp-1", "name": "erp_agent"},
+                result,
+                False,
+                result.summary,
+            )
+        ],
+        messages=messages,
+        content_blocks=[],
+        start_times={},
+        tool_context=SimpleNamespace(update_from_result=lambda *_: None),
+        runtime_state=state,
+    )
+
+    assert len(messages) == 1
+    assert messages[0]["tool_call_id"] == "erp-1"
+    assert "runtime_validator" not in str(messages)
+    assert len(state.ledger.snapshot().evidence) == 2
+    assert state.verified_final_pending is True
+
+
 @pytest.mark.parametrize("status", ["error", "timeout", "empty", "partial"])
 def test_non_ready_data_does_not_enter_observation_ledger(status: str) -> None:
     state = RuntimeState.observing()

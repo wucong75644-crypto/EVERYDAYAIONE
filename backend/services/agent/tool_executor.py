@@ -24,7 +24,6 @@ from config.file_tools import FILE_INFO_TOOLS
 from services.agent.erp_tool_executor import ErpToolMixin
 from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
-from services.agent.runtime.data_compute import DataComputeToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
@@ -37,7 +36,6 @@ class ToolExecutor(
     MediaToolMixin,
     ErpToolMixin,
     SandboxToolMixin,
-    DataComputeToolMixin,
     CreditMixin,
 ):
     """同步工具执行器"""
@@ -65,7 +63,6 @@ class ToolExecutor(
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
-            "data_compute": self._execute_data_compute,
             "web_search": self._web_search,
             "generate_image": self._generate_image,
             "generate_video": self._generate_video,

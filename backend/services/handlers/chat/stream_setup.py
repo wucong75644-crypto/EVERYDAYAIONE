@@ -95,19 +95,23 @@ async def prepare_chat_stream(
     runtime_state = RuntimeState(
         contract=build_run_contract(params),
         observation_only=False,
+        user_text=text_content,
     )
     data_context = getattr(handler, "_data_context_snapshot", None)
     if data_context is not None:
         runtime_state.restore(data_context.evidence)
-    from services.agent.runtime.data_compute import has_computable_data
-    from services.agent.runtime.grounded_final import (
-        is_data_compute_follow_up,
+    from services.agent.runtime.data_validator import (
+        has_computable_data,
+        requires_validation,
+        run_internal_validation,
     )
 
-    runtime_state.requires_data_compute = is_data_compute_follow_up(
+    runtime_state.requires_validation = requires_validation(
         text_content,
         has_data_context=has_computable_data(runtime_state),
     )
+    if runtime_state.requires_validation:
+        run_internal_validation(runtime_state)
     return PreparedChatStream(
         text_content=text_content,
         messages=messages,
