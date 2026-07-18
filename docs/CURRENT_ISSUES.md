@@ -12,21 +12,21 @@
 
 ---
 
-### 2026-07-18 通用任务交付运行时与跨 Turn 数据证据 — Evidence Guard 重构
+### 2026-07-18 通用任务交付运行时与跨 Turn 数据证据 — 工具边界校验收口
 
 - 已纠正生产临时方案的职责越界：删除关键词 Data Validator、提前计算和 Grounded Final
   抢答路径；恢复原模型上下文、ERP、沙盒、工具 Observation 和模型最终表达。
-- 新增通用 Evidence Guard，位于模型最终草稿与 emit/persist 之间；当前严格校验数值
-  Claim，不包含订单、平台或问法关键词。数值必须与问题/声明提到的结构化字段关联，
-  避免其他字段中的相同数字被误当作证据。
-- 校验失败草稿不发送前端，以 `evidence_validation_error` 返回原模型循环；模型自行决定
-  复用工具结果、调用沙盒、重新查询或修正答案。最多纠正两次，之后阻断可疑数字。
+- 行业实现复核后删除最终答案 Claim Guard：不再从 Markdown 反向提取数字、猜测字段或
+  阻断模型收尾。Web 与 Actor 均恢复“模型无 Tool Call 即正常结束”的原生语义。
+- 只保留确定性的工具边界：参数 Schema、执行状态、结构化 ToolOutput、沙盒安全、
+  超时、权限和预算；可恢复错误继续通过原 Tool Observation 返回模型。
 - `conversation_data_evidence`、ArtifactLedger、Actor 原子提交和固定 revision 恢复继续保留；
-  历史证据目录重新进入模型上下文，完整行仍只留在 Runtime/受控文件。
-- 定向测试56项通过，Guard核心覆盖率94%；全量回归7,621项通过，6项失败与修改前
-  基线一致（2项旧测试夹具、2项环境目录、2项外部数据库网络限制），无新增失败。
+  历史证据目录继续进入模型上下文，完整行仍只留在 Runtime/受控文件；Ledger 只负责
+  证据来源、状态、完成判断和审计，不解释最终自然语言。
+- Web/Actor 定向回归 85 项通过；全量后端回归 7609 项通过、24 项跳过、4 项 xfail。
+  现存 6 项失败与修改前基线一致：4 项测试夹具目录/字段问题，2 项生产数据库网络隔离。
 
-### 2026-07-18 旧生产临时方案记录（已被本次重构取代）
+### 2026-07-18 旧生产临时方案记录（已被工具边界方案取代）
 
 - 已将通用 Run 交付治理与 ERP 跨 Turn 数据上下文合并为唯一运行时标准；原 `AgentResult`、模型 observation、emit payload 和 ContentPart 消费协议保持不变。
 - Phase 1 已在 Web 与无头 Chat 共用的 `apply_tool_results` 消费点接入观察模式，结构化 `AgentResult.data/file_ref/columns/metadata` 旁路登记到 Run 内 ArtifactLedger。

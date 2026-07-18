@@ -135,37 +135,3 @@ async def test_budget_without_any_output_records_error_and_skips_completion() ->
         error_code="BUDGET_EXCEEDED",
         error_message="任务耗时过长，请稍后重试。",
     )
-
-
-@pytest.mark.asyncio
-async def test_safety_blocked_budget_skips_model_wrap_up() -> None:
-    from services.agent.runtime.evidence_guard.finalize import (
-        GUARD_BLOCKED_TEXT,
-    )
-
-    handler = MagicMock()
-    handler._calculate_credits.return_value = 0
-    handler.on_error = AsyncMock()
-    websocket = MagicMock()
-    websocket.send_to_task_or_user = AsyncMock()
-    state = _state(GUARD_BLOCKED_TEXT)
-    state.safety_blocked = True
-
-    with patch(
-        "services.agent.stop_policy.synthesize_wrap_up",
-        new_callable=AsyncMock,
-    ) as synthesize:
-        result = await finalize_stream_result(
-            handler=handler,
-            adapter=MagicMock(),
-            budget=SimpleNamespace(stop_reason="max_turns", turns_used=5),
-            delivery=_delivery(),
-            state=state,
-            websocket=websocket,
-            save_blocks=AsyncMock(),
-        )
-
-    synthesize.assert_not_awaited()
-    assert result.completion_args["result"] == [
-        TextPart(text=GUARD_BLOCKED_TEXT)
-    ]

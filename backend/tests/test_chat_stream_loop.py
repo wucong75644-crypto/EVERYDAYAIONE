@@ -173,6 +173,51 @@ async def test_loop_executes_tools_then_continues_to_final_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_loop_does_not_recheck_final_text_against_evidence() -> None:
+    from services.agent.agent_result import AgentResult
+    from services.agent.runtime.artifact_collector import collect_tool_result
+    from services.agent.runtime.runtime_state import RuntimeState
+
+    state = RuntimeState.observing()
+    state.ledger.record(
+        collect_tool_result(
+            AgentResult(
+                summary="结构化数据",
+                data=[{"有效订单": 1053}],
+                source="erp_agent",
+            ),
+            tool_call_id="erp-1",
+        )[0]
+    )
+    prepared = _prepared()
+    prepared.runtime_state = state
+    loop = ChatStreamLoop(
+        handler=_handler(),
+        prepared=prepared,
+        delivery=_delivery(),
+        websocket=_websocket(),
+        thinking_effort=None,
+        thinking_mode=None,
+    )
+    with (
+        patch(
+            "services.handlers.chat.stream_loop.prepare_tool_turn",
+            return_value=[],
+        ),
+        patch(
+            "services.handlers.chat.stream_loop.read_stream_turn",
+            new_callable=AsyncMock,
+            return_value=_turn(text="模型最终回答1457单"),
+        ) as read_turn,
+    ):
+        await loop.run()
+
+    assert loop.turn_result.text == "模型最终回答1457单"
+    assert loop.prepared.budget.turns_used == 1
+    read_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_empty_output_retries_once_then_uses_tool_fallback() -> None:
     loop = ChatStreamLoop(
         handler=_handler(),
@@ -202,55 +247,3 @@ async def test_empty_output_retries_once_then_uses_tool_fallback() -> None:
     assert loop.thinking_mode is None
     assert "工具原始结果" in loop.turn_result.text
     assert loop.totals.text == loop.turn_result.text
-
-
-@pytest.mark.asyncio
-async def test_loop_hides_rejected_draft_and_releases_model_correction() -> None:
-    from services.agent.agent_result import AgentResult
-    from services.agent.runtime.artifact_collector import collect_tool_result
-    from services.agent.runtime.runtime_state import RuntimeState
-
-    state = RuntimeState.observing()
-    state.ledger.record(
-        collect_tool_result(
-            AgentResult(
-                summary="沙盒结果",
-                data=[{"有效订单": 1053}],
-                source="code_execute",
-            ),
-            tool_call_id="compute-1",
-        )[0]
-    )
-    prepared = _prepared()
-    prepared.runtime_state = state
-    websocket = _websocket()
-    loop = ChatStreamLoop(
-        handler=_handler(),
-        prepared=prepared,
-        delivery=_delivery(),
-        websocket=websocket,
-        thinking_effort=None,
-        thinking_mode=None,
-    )
-    with (
-        patch(
-            "services.handlers.chat.stream_loop.prepare_tool_turn",
-            return_value=[],
-        ),
-        patch(
-            "services.handlers.chat.stream_loop.read_stream_turn",
-            new_callable=AsyncMock,
-            side_effect=[
-                _turn(text="错误结果1457单"),
-                _turn(text="校正后有效订单1,053单"),
-            ],
-        ),
-    ):
-        await loop.run()
-
-    assert loop.turn_result.text == "校正后有效订单1,053单"
-    assert loop.totals.text == "校正后有效订单1,053单"
-    sent = str(websocket.send_to_task_or_user.await_args_list)
-    assert "1457" not in sent
-    assert "1,053" in sent
-    assert "evidence_validation_error" in prepared.messages[-1]["content"]

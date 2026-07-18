@@ -302,10 +302,6 @@
 | `DataAccuracyPolicy.validate_artifact` | `backend/services/agent/runtime/policies/data_accuracy.py` | 校验数据产物状态、行结构、列结构和受控文件引用 | contract, evidence, payload | PolicyResult |
 | `build_run_contract` | `backend/services/agent/runtime/runtime_contract.py` | 从调用方私有参数构建显式交付合同，不从用户文本或模型输出推断授权 | params | RunContract |
 | `evaluate_completion` | `backend/services/agent/runtime/completion_gate.py` | 根据必需产物、ready 证据和预算状态确定继续、完成或降级 | contract, snapshot, budget_exhausted | CompletionResult |
-| `EvidenceGuard.verify` | `backend/services/agent/runtime/evidence_guard/guard.py` | 在最终提交前结合用户问题，将模型草稿中的通用数值 Claim 与对应字段的 ready 结构化证据匹配，不参与意图识别和工具选择 | draft, evidence, question? | GuardReceipt |
-| `review_final_draft` | `backend/services/agent/runtime/evidence_guard/finalize.py` | 统一推进 PASS/RETRY/BLOCK；校验失败最多两次返回原模型循环纠正 | runtime_state, draft | FinalDraftDecision |
-| `extract_numeric_claims` | `backend/services/agent/runtime/evidence_guard/claim_extractor.py` | 提取金额、百分比、数量和日期片段等通用数值声明，忽略列表序号 | text | Tuple[NumericClaim, ...] |
-| `collect_evidence_values` | `backend/services/agent/runtime/evidence_guard/evidence_values.py` | 从 ready DATA_RESULT 的结构化行、元数据和行数提取可证明数值 | snapshot | EvidenceValueSet |
 | `RuntimeState.persistence_projection` | `backend/services/agent/runtime/runtime_state.py` | 将 ready DATA_RESULT 投影为 Actor 可原子提交的受限 JSON 证据 | - | List[Dict] |
 | `load_data_context_snapshot` | `backend/services/handlers/data_context_snapshot.py` | 按 conversation 和 base revision 加载、去重跨 Turn 数据证据 | db, conversation_id, base_revision | DataContextSnapshot |
 

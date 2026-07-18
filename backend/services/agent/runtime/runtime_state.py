@@ -25,9 +25,6 @@ class RuntimeState:
     final_synthesis_pending: bool = False
     last_completion: CompletionResult | None = None
     user_text: str = ""
-    guard_attempts: int = 0
-    guard_blocked: bool = False
-    last_guard_receipt: Any = None
 
     @classmethod
     def observing(cls) -> "RuntimeState":
@@ -56,19 +53,6 @@ class RuntimeState:
 
     def final_tools(self, tools: list[dict]) -> list[dict]:
         return [] if self.final_synthesis_pending else tools
-
-    @property
-    def should_guard_output(self) -> bool:
-        from services.agent.runtime.artifact_ledger import (
-            ArtifactKind,
-            ArtifactStatus,
-        )
-
-        return any(
-            evidence.kind == ArtifactKind.DATA_RESULT
-            and evidence.status == ArtifactStatus.READY
-            for evidence in self.ledger.snapshot().evidence
-        )
 
     def persistence_projection(self) -> list[dict]:
         """投影可跨 Turn 复用的 ready 数据证据。"""

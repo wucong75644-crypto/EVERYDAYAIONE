@@ -154,7 +154,6 @@ def test_tool_result_records_evidence_without_extra_model_message() -> None:
     assert messages[0]["tool_call_id"] == "erp-1"
     assert "runtime_validator" not in str(messages)
     assert len(state.ledger.snapshot().evidence) == 1
-    assert state.should_guard_output is True
 
 
 @pytest.mark.parametrize("status", ["error", "timeout", "empty", "partial"])

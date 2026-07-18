@@ -15,23 +15,6 @@ from services.handlers.chat.execution_engine import (
 )
 
 
-def _evidence_runtime_state():
-    from services.agent.agent_result import AgentResult
-    from services.agent.runtime.artifact_collector import collect_tool_result
-    from services.agent.runtime.runtime_state import RuntimeState
-
-    state = RuntimeState.observing()
-    result = AgentResult(
-        summary="沙盒计算完成",
-        data=[{"有效订单合计": 1056}],
-        source="code_execute",
-    )
-    state.ledger.record(
-        collect_tool_result(result, tool_call_id="compute-1")[0]
-    )
-    return state
-
-
 def _request() -> ChatExecutionRequest:
     return ChatExecutionRequest(
         content=[TextPart(text="你好")],
@@ -213,16 +196,16 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_chat_retries_invalid_draft_then_returns_model_correction(
+async def test_execute_chat_does_not_recheck_final_text_against_evidence(
     monkeypatch,
 ):
-    responses = iter(
-        ["我猜是1457单", "重新计算后有效订单合计是1,056单"]
-    )
+    from services.agent.agent_result import AgentResult
+    from services.agent.runtime.artifact_collector import collect_tool_result
+    from services.agent.runtime.runtime_state import RuntimeState
 
     async def stream_chat(**_kwargs):
         yield SimpleNamespace(
-            content=next(responses),
+            content="模型最终回答1457单",
             thinking_content=None,
             tool_calls=None,
             prompt_tokens=1,
@@ -231,10 +214,23 @@ async def test_execute_chat_retries_invalid_draft_then_returns_model_correction(
             finish_reason="stop",
         )
 
+    state = RuntimeState.observing()
+    state.ledger.record(
+        collect_tool_result(
+            AgentResult(
+                summary="结构化数据",
+                data=[{"有效订单": 1053}],
+                source="erp_agent",
+            ),
+            tool_call_id="erp-1",
+        )[0]
+    )
     adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
     budget = SimpleNamespace(stop_reason=None, turns_used=0)
     budget.use_turn = lambda: setattr(
-        budget, "turns_used", budget.turns_used + 1
+        budget,
+        "turns_used",
+        budget.turns_used + 1,
     )
     prepared = SimpleNamespace(
         adapter=adapter,
@@ -250,7 +246,7 @@ async def test_execute_chat_retries_invalid_draft_then_returns_model_correction(
         ),
         messages=[],
         budget=budget,
-        runtime_state=_evidence_runtime_state(),
+        runtime_state=state,
     )
 
     async def fake_prepare(**_kwargs):
@@ -268,63 +264,5 @@ async def test_execute_chat_retries_invalid_draft_then_returns_model_correction(
 
     result = await execute_chat(handler=handler, request=_request())
 
-    assert result.parts[-1].text == "重新计算后有效订单合计是1,056单"
-    assert "1457" not in result.parts[-1].text
-    assert budget.turns_used == 2
-    assert "evidence_validation_error" in prepared.messages[-1]["content"]
-
-
-@pytest.mark.asyncio
-async def test_execute_chat_blocks_after_repeated_unsupported_claims(monkeypatch):
-    responses = iter(["1457单", "1457单", "1457单"])
-
-    async def stream_chat(**_kwargs):
-        yield SimpleNamespace(
-            content=next(responses),
-            thinking_content=None,
-            tool_calls=None,
-            prompt_tokens=1,
-            completion_tokens=1,
-            credits_consumed=None,
-            finish_reason="stop",
-        )
-
-    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
-    budget = SimpleNamespace(stop_reason=None, turns_used=0)
-    budget.use_turn = lambda: setattr(
-        budget, "turns_used", budget.turns_used + 1
-    )
-    prepared = SimpleNamespace(
-        adapter=adapter,
-        permission=SimpleNamespace(
-            need_exit_attachment=False,
-            get_reminder=lambda _turn: "",
-        ),
-        core_tools=[],
-        stream_kwargs={},
-        tool_context=SimpleNamespace(
-            discovered_tools=set(),
-            build_context_prompt=lambda: "",
-        ),
-        messages=[],
-        budget=budget,
-        runtime_state=_evidence_runtime_state(),
-    )
-
-    async def fake_prepare(**_kwargs):
-        return prepared
-
-    monkeypatch.setattr(
-        "services.handlers.chat.execution_engine.prepare_chat_stream",
-        fake_prepare,
-    )
-    handler = SimpleNamespace(
-        org_id=None,
-        _adapter=None,
-        _calculate_credits=lambda _usage: 0,
-    )
-
-    result = await execute_chat(handler=handler, request=_request())
-
-    assert "未能通过证据一致性校验" in result.parts[-1].text
-    assert budget.turns_used == 3
+    assert result.parts[-1].text == "模型最终回答1457单"
+    assert budget.turns_used == 1

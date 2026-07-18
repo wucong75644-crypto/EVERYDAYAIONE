@@ -150,67 +150,25 @@ async def _run_loop(
             runtime_state=runtime_state,
         )
         tools = runtime_state.final_tools(tools)
-        buffer_output = runtime_state.should_guard_output
         turn_text, turn_thinking, calls = await _read_turn(
             prepared,
             tools,
             cancellation_event,
             sink,
             totals,
-            buffer_output=buffer_output,
+            buffer_output=False,
         )
-        if not calls:
-            if runtime_state.should_continue_after_plain_text():
-                _append_completion_reminder(prepared.messages, runtime_state)
-                continue
-            from services.agent.runtime.evidence_guard.finalize import (
-                GuardDecision,
-                append_retry_context,
-                review_final_draft,
-            )
-
-            decision = review_final_draft(runtime_state, turn_text)
-            if decision.decision == GuardDecision.RETRY:
-                logger.warning(
-                    f"Evidence guard retry | task={request.task_id} | "
-                    f"attempt={runtime_state.guard_attempts} | "
-                    f"issues={len(decision.receipt.issues)}"
-                )
-                append_retry_context(prepared.messages, turn_text, decision)
-                continue
-            if decision.decision == GuardDecision.BLOCK:
-                logger.error(
-                    f"Evidence guard blocked | task={request.task_id} | "
-                    f"attempts={runtime_state.guard_attempts}"
-                )
-            final_text = decision.text
-            if buffer_output:
-                await _release_buffered_turn(
-                    totals,
-                    sink,
-                    thinking=turn_thinking,
-                    text=final_text,
-                )
-            await _append_turn_blocks(
-                blocks,
-                sink,
-                thinking=turn_thinking,
-                text=final_text,
-            )
-            return
-        if buffer_output:
-            await _release_buffered_turn(
-                totals,
-                sink,
-                thinking=turn_thinking,
-                text=turn_text,
-            )
         await _append_turn_blocks(
             blocks,
             sink,
             thinking=turn_thinking,
             text=turn_text,
         )
+        if not calls:
+            if runtime_state.should_continue_after_plain_text():
+                _append_completion_reminder(prepared.messages, runtime_state)
+                continue
+            return
         await _execute_tools(
             handler=handler,
             request=request,
@@ -283,21 +241,6 @@ async def _append_turn_blocks(
         if block:
             blocks.append(block)
             await sink.on_block(block)
-
-
-async def _release_buffered_turn(
-    totals: StreamTotals,
-    sink: ExecutionSink,
-    *,
-    thinking: str,
-    text: str,
-) -> None:
-    if thinking:
-        totals.thinking += thinking
-        await sink.on_thinking(thinking)
-    if text:
-        totals.text += text
-        await sink.on_text(text)
 
 
 async def _execute_tools(

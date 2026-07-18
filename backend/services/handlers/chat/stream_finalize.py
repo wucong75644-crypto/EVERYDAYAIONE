@@ -28,7 +28,6 @@ class StreamFinalizationInput:
     thinking_committed: bool
     thinking_started_at: float | None
     usage: dict[str, Any]
-    safety_blocked: bool = False
 
 
 @dataclass
@@ -50,7 +49,7 @@ async def finalize_stream_result(
 ) -> StreamFinalizationResult:
     """执行预算合成并构造完成参数；不提交 completed 终态。"""
     budget_failed = False
-    if budget.stop_reason and not state.safety_blocked:
+    if budget.stop_reason:
         state.accumulated_text, budget_failed = await _apply_budget_stop(
             handler=handler,
             adapter=adapter,

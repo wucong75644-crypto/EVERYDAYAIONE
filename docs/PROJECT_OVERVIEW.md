@@ -50,7 +50,7 @@
 
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
-- `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，并在最终提交前通过通用 Evidence Guard 校验结构化事实。
+- `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
 - `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
 - `docs/document/research/AGENT_02_Session_Actor与持久执行.md`：对照 Session 命令、Prompt 队列、send-now、Claim/Lease/Fencing、取消竞态、等待交互和恢复语义。
 - `docs/document/research/AGENT_03_Agent定义与能力装配.md`：对照 AgentDefinition、Session-bound Agent、PromptBuilder、权限/工具/预算装配和专业 Agent 分流。
@@ -290,8 +290,7 @@ EVERYDAYAIONE/
 │   │   │   ├── client.py                # 快麦 API 客户端
 │   │   │   └── dispatcher.py            # API 调度器
 │   │   ├── agent/                    # Agent 架构层（多Agent单一职责）
-│   │   │   ├── runtime/              # Run合同、证据账本、完成门与最终安全边界
-│   │   │   │   └── evidence_guard/   # 通用数值Claim提取、证据匹配和PASS/RETRY/BLOCK
+│   │   │   ├── runtime/              # Run合同、证据账本、工具产物策略与完成门
 │   │   │   ├── image/requirement_assist_prompts.py # AI 帮写事实边界与多模态 Prompt
 │   │   │   ├── image/input_adapters.py # 详情项目到共享 AI 帮写输入的安全适配器
 │   │   │   ├── image/requirement_assist_service.py # 三方案模型调用、降级、校验与事实冲突闸门

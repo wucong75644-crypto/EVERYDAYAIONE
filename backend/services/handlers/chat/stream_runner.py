@@ -163,7 +163,6 @@ async def _execute_stream(
             thinking_committed=loop.turn_result.thinking_committed,
             thinking_started_at=loop.turn_result.thinking_started_at,
             usage=loop.totals.usage,
-            safety_blocked=loop.runtime_state.guard_blocked,
         ),
         websocket=websocket,
         save_blocks=handler._save_accumulated_blocks,
