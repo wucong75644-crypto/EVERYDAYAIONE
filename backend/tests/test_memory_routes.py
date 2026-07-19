@@ -37,7 +37,7 @@ def mock_ctx(user_id):
 
 @pytest.fixture
 def mock_memory_service():
-    """Mock MemoryService 实例"""
+    """Mock ManualMemoryService 实例"""
     service = AsyncMock()
     service.get_settings = AsyncMock(return_value={
         "memory_enabled": True,
@@ -75,6 +75,16 @@ def mock_memory_service():
     service.delete_memory = AsyncMock(return_value=None)
     service.delete_all_memories = AsyncMock(return_value=None)
     return service
+
+
+def test_memory_dependency_uses_manual_curated_service(mock_db):
+    from api.routes.memory import get_memory_service
+    from services.memory.manual_memory_service import ManualMemoryService
+
+    service = get_memory_service(mock_db)
+
+    assert isinstance(service, ManualMemoryService)
+    assert service.db is mock_db
 
 
 # ============ 设置接口测试 ============

@@ -83,7 +83,7 @@ class ChatContextMixin:
           Layer 2 (动态): 时间 + 位置 + 偏好 + persona + 相关记忆
           Layer 3 (user): 附件 XML + user text (不加时间戳前缀)
 
-        V2 阶段 4.1: 移除 prefetched_memory 参数, mem0 查询统一到 PromptBuilder 内部
+        Curated Memory 查询统一由 PromptBuilder 执行。
         (session cache 在 builder._memory() 内, 单一入口避免双查)
         """
         from services.prompt_builder import PromptBuilder, BuildInput
@@ -180,7 +180,7 @@ class ChatContextMixin:
         return result.messages
 
     # V2 阶段 4.1: _build_memory_prompt 已删除
-    # mem0 查询统一到 PromptBuilder._parallel_fetch._memory() 内部
+    # Curated Memory 查询统一到 PromptBuilder._parallel_fetch._memory()
     # 配合 session_memory_cache 实现"新会话首查 + 整会话固定"
     #
     # V2 阶段 6.6 (2026-06-14): _fetch_knowledge 已删除
@@ -193,31 +193,21 @@ class ChatContextMixin:
         conversation_id: str,
         user_text: str,
         assistant_text: str,
+        input_message_id: Optional[str] = None,
+        output_message_id: Optional[str] = None,
+        through_revision: Optional[int] = None,
     ) -> None:
-        """异步从对话中提取记忆（V2 管道调度器）
-
-        V2 改造：不再直接调 Mem0，而是通知 PipelineScheduler。
-        调度器根据 Warm-up 阈值 / 稳态计数决定何时触发 L1 提取。
-        L1→L2→L3 全部由调度器自动编排。
-        """
+        """通知调度器按闭合 revision 执行 Session Flush。"""
         try:
-            if len(user_text) < 10:
-                return
-
-            from services.memory.memory_service_v2 import MemoryServiceV2, get_scheduler
+            from services.memory.memory_service_v2 import get_scheduler
 
             scheduler = await get_scheduler(db_pool=self.db)
-
-            messages = [
-                {"role": "user", "content": user_text, "id": str(conversation_id), "timestamp": __import__("time").time() * 1000},
-                {"role": "assistant", "content": assistant_text, "id": "", "timestamp": __import__("time").time() * 1000},
-            ]
 
             await scheduler.on_turn_committed(
                 user_id=user_id,
                 org_id=self.org_id,
                 session_id=conversation_id,
-                messages=messages,
+                through_revision=through_revision,
             )
 
         except Exception as e:

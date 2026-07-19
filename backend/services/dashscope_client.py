@@ -2,7 +2,7 @@
 DashScope HTTP 客户端工厂
 
 提供统一的 httpx.AsyncClient 创建和生命周期管理，
-消除 context_summarizer / memory_filter / knowledge_extractor 中的重复代码。
+供 context_summarizer、knowledge_extractor 等服务复用。
 """
 
 from typing import Optional

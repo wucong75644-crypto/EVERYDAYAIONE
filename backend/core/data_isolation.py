@@ -53,15 +53,3 @@ def get_org_id_for_insert(ctx: OrgContext) -> str | None:
     用于 INSERT 时填充 org_id 字段。
     """
     return ctx.org_id
-
-
-def get_mem0_user_id(ctx: OrgContext) -> str:
-    """
-    获取 Mem0 记忆系统的 user_id。
-
-    企业：org_{org_id}:{user_id}（企业内隔离）
-    散客：personal:{user_id}
-    """
-    if ctx.org_id:
-        return f"org_{ctx.org_id}:{ctx.user_id}"
-    return f"personal:{ctx.user_id}"

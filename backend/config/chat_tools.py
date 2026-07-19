@@ -68,6 +68,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "file_search", "file_analyze",
     "evidence_search", "evidence_get",
     "artifact_search", "artifact_get", "artifact_read",
+    "memory_search", "memory_get",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }

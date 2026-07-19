@@ -2,7 +2,6 @@
 知识库基础设施
 
 PostgreSQL 直连（psycopg）管理、DashScope embedding 客户端、TTL 缓存。
-从 memory_config.py 模式镜像，独立于 Mem0 连接。
 """
 
 import asyncio

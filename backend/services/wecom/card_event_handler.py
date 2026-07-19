@@ -110,8 +110,8 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.memory_service import MemoryService
-        mem_svc = MemoryService()
+        from services.memory.manual_memory_service import ManualMemoryService
+        mem_svc = ManualMemoryService(self.db)
         memories = await mem_svc.get_all_memories(user_id, org_id=self._org_id)
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
@@ -125,8 +125,8 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.memory_service import MemoryService
-        mem_svc = MemoryService()
+        from services.memory.manual_memory_service import ManualMemoryService
+        mem_svc = ManualMemoryService(self.db)
         await mem_svc.delete_all_memories(user_id, org_id=self._org_id)
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:

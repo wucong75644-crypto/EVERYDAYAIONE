@@ -73,6 +73,11 @@ class ChatToolMixin(ChatToolResultMixin):
             workspace_user_id=getattr(self, "_workspace_user_id", user_id),
             resource_manifest=getattr(self, "_resource_manifest", None),
             runtime_state=runtime_state,
+            personal_context_allowed=getattr(
+                self,
+                "_personal_context_allowed",
+                True,
+            ),
         )
         # 每轮上下文
         executor._task_id = task_id

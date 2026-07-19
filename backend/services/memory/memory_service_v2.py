@@ -1,18 +1,16 @@
 """
 记忆系统 V2 统一 Facade
 
-对外接口保持和旧 memory_service.py 兼容，内部转发到新模块。
-支持 v1(Mem0)/v2(四层架构) 灰度切换。
+通用 Curated Memory 的 Search/Get、Prompt 注入与调度 Facade。
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
 from .config import get_memory_config
-from .l1_extractor import L1Extractor
-from .l1_dedup import L1DedupService
 from .retrieval_pipeline import RetrievalPipeline, ScoredMemory
 from .pipeline_scheduler import PipelineScheduler
 from .context_compressor import ContextCompressor
@@ -94,7 +92,7 @@ class MemoryServiceV2:
     """
     记忆系统 V2 统一入口
 
-    对外方法与旧 MemoryService 兼容：
+    通用记忆运行时入口：
     - get_relevant_memories() → 检索
     - extract_memories_from_conversation() → 提取
     - add_memory() / delete_memory() → CRUD
@@ -120,7 +118,7 @@ class MemoryServiceV2:
         return self._db
 
     # ============================
-    # 检索（替代旧的 Mem0 搜索+千问精排）
+    # Curated Memory 检索
     # ============================
 
     async def get_relevant_memories(
@@ -128,18 +126,13 @@ class MemoryServiceV2:
         user_id: str,
         query: str,
         limit: int = 5,
-        org_id: str = "",
-        domain: str | None = None,
+        org_id: str | None = None,
     ) -> list[dict]:
         """
         检索相关记忆（兼容旧接口）
 
         旧接口返回 [{id, memory, metadata, created_at, updated_at}]
 
-        V2 阶段 4.3:
-          - 加 domain 参数, 按 metadata->>'domain' 过滤
-          - 防止"Apple 案例 (tech 域)"污染"利润分析 (finance 域)"召回
-          - 当前调用方暂时不传 domain (等数据积累后再启用)
         """
         if not query or not self._cfg.enabled:
             return []
@@ -150,28 +143,52 @@ class MemoryServiceV2:
             user_id=user_id,
             org_id=org_id,
             max_results=limit,
-            domain=domain,
         )
 
-        # V2 阶段 4.1: 按 atom_id 排序保证字节稳定
-        # 防止 RRF 分值微变导致顺序漂移, 漂移会破坏 prompt cache
-        # 召回相关性已经在 search 阶段决定, 注入顺序不影响 LLM 行为
-        scored_sorted = sorted(scored, key=lambda m: m.atom_id)
         return [
             {
                 "id": m.atom_id,
                 "memory": m.content,
                 "metadata": {
-                    "type": m.type,
+                    "kind": m.kind,
                     "priority": m.priority,
-                    "scene_name": m.scene_name,
                     "score": m.score,
                 },
                 "created_at": "",
                 "updated_at": "",
             }
-            for m in scored_sorted
+            for m in scored
         ]
+
+    async def get_memory(
+        self,
+        user_id: str,
+        memory_id: str,
+        org_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """严格读取一条当前可用且属于该用户和组织的 Curated Memory。"""
+        if not memory_id or not user_id or not self._cfg.enabled:
+            return None
+        await self._ensure_db()
+        memory = await self._retrieval.get(
+            atom_id=memory_id,
+            user_id=user_id,
+            org_id=org_id,
+        )
+        if memory is None:
+            return None
+        return {
+            "id": memory.atom_id,
+            "memory": memory.content,
+            "metadata": {
+                "kind": memory.kind,
+                "priority": memory.priority,
+                "score": memory.score,
+                "valid_from": memory.valid_from,
+                "valid_until": memory.valid_until,
+                "source_message_ids": list(memory.source_message_ids),
+            },
+        }
 
     # ============================
     # 记忆注入（双部分架构）
@@ -180,65 +197,81 @@ class MemoryServiceV2:
     async def build_memory_context(
         self,
         user_id: str,
-        org_id: str,
+        org_id: str | None,
         query: str,
     ) -> tuple[str, str]:
         """
-        构建记忆上下文（双部分注入）
+        构建 Curated Memory 上下文。
 
         Returns:
-            (prepend_context, append_system_context)
-            - prepend_context: 动态 L1 记忆，注入 user prompt 前面
-            - append_system_context: 稳定 L3 persona，注入 system prompt 末尾
+            (curated_memory_context, legacy_persona_context)
+            legacy_persona_context 固定为空，保留元组形状兼容调用方。
         """
         await self._ensure_db()
 
         # 动态部分：L1 相关记忆
         scored = await self._retrieval.search(
-            query=query, user_id=user_id, org_id=org_id,
+            query=query, user_id=user_id, org_id=org_id, max_results=3,
         )
-
-        # V2 阶段 6.5: 千问 LLM 精排过滤召回噪音
-        # RRF 只保证语义近的排前面, 无法过滤"语义近但与当前问题无关"的条目
-        # (如查"昨天销售"时召回"Apple 案例 102837880383")
-        # filter_memories 内部已含: ≤3 条跳过 + qwen-turbo→qwen-plus 降级链 + 失败回退原始列表
-        if scored and len(scored) > 3:
-            try:
-                from services.memory_filter import filter_memories
-                memory_dicts = [
-                    {"id": m.atom_id, "memory": m.content} for m in scored
-                ]
-                filtered = await filter_memories(query, memory_dicts)
-                kept_ids = {m["id"] for m in filtered}
-                scored = [m for m in scored if m.atom_id in kept_ids]
-                logger.info(
-                    f"mem0 LLM filter | before={len(memory_dicts)} after={len(scored)}"
-                )
-            except Exception as e:
-                logger.warning(f"mem0 LLM filter failed, using raw recall: {e}")
 
         prepend = self._retrieval.format_for_injection(scored)
 
-        # 稳定部分：L3 persona
-        append = await self._get_persona_context(user_id, org_id)
+        shadow_claims = await self.get_session_memory_shadow(user_id)
+        shadow_overlap = sum(
+            claim in (prepend or "") for claim in shadow_claims
+        )
+        logger.info(
+            "Session Memory shadow compared | user_id={} | "
+            "session_count={} | legacy_exact_overlap={}",
+            user_id,
+            len(shadow_claims),
+            shadow_overlap,
+        )
+        return prepend, ""
 
-        return prepend, append
-
-    async def _get_persona_context(self, user_id: str, org_id: str) -> str:
-        """获取 persona 注入文本"""
+    async def get_session_memory_shadow(
+        self,
+        user_id: str,
+        limit: int = 25,
+    ) -> list[str]:
+        """只读最近 Session Memory 候选；调用方不得将其注入模型。"""
+        await self._ensure_db()
         try:
-            row = await self._db.fetchrow(
-                "SELECT content FROM memory_personas WHERE org_id = $1 AND user_id = $2",
-                uuid.UUID(org_id), uuid.UUID(user_id),
+            rows = await self._db.fetch(
+                """SELECT content
+                   FROM memory_session_logs
+                   WHERE user_id = $1::uuid AND status = 'ready'
+                   ORDER BY created_at DESC
+                   LIMIT $2""",
+                user_id,
+                limit,
             )
-            if row and row["content"]:
-                return f"<user-persona>\n{row['content']}\n</user-persona>"
-        except Exception:
-            pass
-        return ""
+        except Exception as exc:
+            logger.warning(
+                "Session Memory shadow read failed | user_id={} | "
+                "error_type={}",
+                user_id,
+                type(exc).__name__,
+            )
+            return []
+        claims: list[str] = []
+        for row in rows:
+            payload = row.get("content")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except ValueError:
+                    continue
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            claims.extend(
+                str(item["claim"])
+                for item in items
+                if isinstance(item, dict) and item.get("claim")
+            )
+        return claims[:50]
 
     # ============================
-    # 对话提取（替代旧的 Mem0 extract）
+    # 对话提取调度
     # ============================
 
     async def extract_memories_from_conversation(
@@ -256,116 +289,14 @@ class MemoryServiceV2:
         if not messages or not self._cfg.enabled:
             return []
 
-        scheduler = get_scheduler(db_pool=self._db)
+        scheduler = await get_scheduler(db_pool=self._db)
         await scheduler.on_turn_committed(
             user_id=user_id,
             org_id=org_id,
             session_id=conversation_id,
-            messages=messages,
         )
 
         return []  # 异步提取，不立即返回结果
-
-    # ============================
-    # CRUD（直接操作 memory_atoms）
-    # ============================
-
-    async def add_memory(
-        self,
-        user_id: str,
-        content: str,
-        source: str = "manual",
-        org_id: str = "",
-    ) -> list[dict]:
-        """手动添加记忆"""
-        from .l1_extractor import _insert_atom, MemoryAtom
-
-        atom = MemoryAtom(
-            content=content,
-            type="persona",  # 手动添加默认为 persona 类型
-            priority=70,
-        )
-        atom_id = await _insert_atom(self._db, atom, user_id, org_id, "")
-        if atom_id:
-            return [{"id": atom_id, "memory": content, "metadata": {"source": source}}]
-        return []
-
-    async def get_all_memories(
-        self,
-        user_id: str,
-        org_id: str = "",
-    ) -> list[dict]:
-        """获取用户所有记忆"""
-        try:
-            rows = await self._db.fetch(
-                """SELECT id::text, content, type, priority, scene_name,
-                          created_at::text, updated_at::text
-                   FROM memory_atoms
-                   WHERE org_id = $1 AND user_id = $2 AND NOT is_deleted
-                   ORDER BY updated_at DESC""",
-                uuid.UUID(org_id), uuid.UUID(user_id),
-            )
-            return [
-                {
-                    "id": r["id"],
-                    "memory": r["content"],
-                    "metadata": {
-                        "type": r["type"],
-                        "priority": r["priority"],
-                        "scene_name": r["scene_name"],
-                    },
-                    "created_at": r["created_at"],
-                    "updated_at": r["updated_at"],
-                }
-                for r in rows
-            ]
-        except Exception as e:
-            logger.error(f"MemoryV2: get_all failed: {e}")
-            return []
-
-    async def delete_memory(
-        self,
-        memory_id: str,
-        user_id: str,
-        org_id: str = "",
-    ) -> None:
-        """删除单条记忆"""
-        try:
-            await self._db.execute(
-                "UPDATE memory_atoms SET is_deleted = TRUE, updated_at = NOW() WHERE id = $1 AND user_id = $2",
-                uuid.UUID(memory_id), uuid.UUID(user_id),
-            )
-        except Exception as e:
-            logger.error(f"MemoryV2: delete failed: {e}")
-
-    async def delete_all_memories(
-        self,
-        user_id: str,
-        org_id: str = "",
-    ) -> None:
-        """删除用户所有记忆"""
-        try:
-            await self._db.execute(
-                "UPDATE memory_atoms SET is_deleted = TRUE, updated_at = NOW() WHERE org_id = $1 AND user_id = $2",
-                uuid.UUID(org_id), uuid.UUID(user_id),
-            )
-        except Exception as e:
-            logger.error(f"MemoryV2: delete_all failed: {e}")
-
-    async def get_memory_count(
-        self,
-        user_id: str,
-        org_id: str = "",
-    ) -> int:
-        """获取记忆总数"""
-        try:
-            row = await self._db.fetchrow(
-                "SELECT COUNT(*) as cnt FROM memory_atoms WHERE org_id = $1 AND user_id = $2 AND NOT is_deleted",
-                uuid.UUID(org_id), uuid.UUID(user_id),
-            )
-            return row["cnt"] if row else 0
-        except Exception:
-            return 0
 
     # ============================
     # 上下文压缩

@@ -10,7 +10,7 @@ v2 设计:
     把"整会话稳定"和"每次变"混在一起 → time 每次变破坏 cache.
     拆开后 L2a 命中 cache, L2b 每次重算 (小, 几十字符).
 
-  mem0 改造 (v2 阶段 4): 召回结果只在会话首次拉一次, 整会话固定,
+  Curated Memory 召回结果只在会话首次拉一次，整会话固定，
   所以 user_facts + user_memory 应放 L2a 而不是 L2b.
 """
 
@@ -26,8 +26,8 @@ class SessionStableContext:
 
     permission_mode: str = "auto"               # 'auto' | 'plan' | 'ask'
     user_preferences: Optional[str] = None      # Custom Instructions (用户手写)
-    user_facts: Optional[str] = None            # mem0 短事实清单 (已过 PersonaGate)
-    user_memory: Optional[str] = None           # mem0 召回 (按会话首条 query, 一次性)
+    user_facts: Optional[str] = None
+    user_memory: Optional[str] = None
 
 
 def _xml_section(tag: str, body: str) -> str:
@@ -67,12 +67,12 @@ class SessionStableLayer:
         if ctx.user_preferences and ctx.user_preferences.strip():
             sections.append(_xml_section("user_preferences", ctx.user_preferences))
 
-        # mem0 短事实 (已过 gate, 进来即注入)
+        # 已通过个人上下文 gate 的短事实
         if ctx.user_facts and ctx.user_facts.strip():
             facts_body = _strip_outer_tag(ctx.user_facts, "user_facts")
             sections.append(_xml_section("user_facts", facts_body))
 
-        # mem0 召回 (会话首次拉一次, 整会话固定)
+        # Curated Memory 在会话首次召回后固定
         if ctx.user_memory and ctx.user_memory.strip():
             sections.append(_xml_section("user_memory", ctx.user_memory))
 

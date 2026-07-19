@@ -98,12 +98,11 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_app_title: str = "EverydayAI"
 
-    # 记忆功能配置（Mem0）
+    # 通用记忆与知识库配置
     @property
     def effective_db_url(self) -> str:
-        """Mem0/知识库用的 PostgreSQL URL（与主数据库相同）"""
+        """知识库使用的 PostgreSQL URL（与主数据库相同）"""
         return self.database_url
-    memory_extraction_model: str = "qwen3.5-plus"  # 记忆提取用 LLM（DashScope）
     memory_embedding_model: str = "text-embedding-v3"  # 嵌入模型（1024维，DashScope）
     memory_enabled_default: bool = True  # 新用户默认开启记忆
     memory_filter_model: str = "qwen3.5-flash"  # 记忆精排主模型

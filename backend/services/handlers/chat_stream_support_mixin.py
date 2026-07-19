@@ -71,6 +71,9 @@ class ChatStreamSupportMixin:
         final_usage: Dict[str, Any],
         elapsed_ms: int,
         retry_context: Optional[Any],
+        input_message_id: Optional[str] = None,
+        output_message_id: Optional[str] = None,
+        through_revision: Optional[int] = None,
     ) -> None:
         """分发 fire-and-forget 后置任务（记忆提取、摘要更新、指标记录）"""
         asyncio.create_task(
@@ -79,6 +82,9 @@ class ChatStreamSupportMixin:
                 conversation_id=conversation_id,
                 user_text=text_content,
                 assistant_text=accumulated_text,
+                input_message_id=input_message_id,
+                output_message_id=output_message_id,
+                through_revision=through_revision,
             )
         )
         asyncio.create_task(

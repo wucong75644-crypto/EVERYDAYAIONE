@@ -58,10 +58,31 @@ class TestCommandMatching:
     async def test_memory_command(self):
         handler = CommandHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.memory_service.MemoryService") as MockMS:
+        with patch(
+            "services.memory.manual_memory_service.ManualMemoryService"
+        ) as MockMS:
             MockMS.return_value.get_all_memories = AsyncMock(return_value=[])
             result = await handler.try_handle("我的记忆", "u1", "c1", ctx)
+            MockMS.assert_called_once_with(handler.db)
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_clear_memory_command_uses_curated_service(self):
+        handler = CommandHandler(_make_db())
+        ctx = _make_reply_ctx()
+        with patch(
+            "services.memory.manual_memory_service.ManualMemoryService"
+        ) as MockMS:
+            MockMS.return_value.delete_all_memories = AsyncMock()
+            result = await handler.try_handle(
+                "清空记忆", "u1", "c1", ctx, org_id="org-1"
+            )
+
+        assert result is True
+        MockMS.assert_called_once_with(handler.db)
+        MockMS.return_value.delete_all_memories.assert_awaited_once_with(
+            "u1", org_id="org-1"
+        )
 
     @pytest.mark.asyncio
     async def test_new_conversation(self):

@@ -49,6 +49,34 @@
 - `frontend/src/components/chat/message/useEChartsRender.ts`：封装 ECharts Chunk 加载、初始化、重试、卸载清理和 ResizeObserver 生命周期。
 
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
+- `docs/document/TECH_Grok式通用记忆运行时重构.md`：将现有业务硬编码的 L1/L2/L3 记忆管道收口为 Grok 式通用 Session Flush、Session Memory、Consolidation、Curated Memory 与 Search/Get 生命周期；领域差异仅允许通过受限 Skill Profile 提供。
+- `backend/services/memory/contracts.py`、`candidate_validator.py`：Grok 式通用记忆候选协议与 fail-closed 原文证据门禁；首期只建立契约和误提取基线，尚未切换生产写入。
+- `backend/tests/test_l1_generic_memory.py`：通用 `NO_MEMORY/CANDIDATES` 解析、精确用户证据、整批拒绝、去重失败关闭及真实消息 ID 传递回归测试。
+- `backend/migrations/140_generic_memory_session_runtime.sql`：通用 Session Memory 日志、固定 revision 幂等约束，以及 `memory_atoms` 生命周期、溯源、时效和召回兼容字段；rollback 停止写入但保留已提交事实。
+- `backend/services/memory/session_flush.py`、`backend/migrations/141_memory_session_flush_cas.sql`：从闭合 revision 增量读取最多 20 条消息，区分 `NO_MEMORY` 与非法模型输出，并通过数据库行锁与 cursor CAS 原子提交 Session Log；应用回滚保留 cursor 和历史日志。
+- `backend/services/memory/embedding.py`：记忆提取、Session semantic dedup 与旧检索共用的批量 embedding 边界；批次缺项或 Provider 异常时 fail-closed。
+- `backend/tests/test_memory_session_flush.py`、`test_memory_shadow.py`、`test_memory_embedding.py`：Session single-flight/CAS、完整 revision 窗口、exact/semantic 去重、Embedding 失败关闭和 PromptBuilder shadow 非注入回归。
+- `backend/migrations/142_memory_consolidation_runtime.sql`：Grok Dream 式 Consolidation Run、至少 3 份/至多 25 份 Session 来源约束、幂等 source hash、终态 Receipt，以及 Session Log 的一致消费标记；rollback 仅停止写入并保留来源链。
+- `backend/services/memory/consolidator.py`、`backend/migrations/143_memory_consolidation_commit.sql`：至少 3 份新 Session Log、完成间隔不少于 4 小时的通用巩固；模型仅判定 novel/duplicate/supersedes/conflicts 关系，候选原文重新过 Evidence Validator，embedding、Curated Atom、Run 与 Session 消费由单 RPC 原子提交。
+- `backend/tests/test_memory_consolidator.py`、`test_memory_consolidation_migration.py`：覆盖最小来源数、显式性、证据复验、embedding 失败关闭、同用户 singleflight、受限关系输出及原子提交/保留数据回滚协议。
+- `backend/services/memory/recall_policy.py`、`retrieval_pipeline.py`：通用 Curated Memory Search/Get；只读取 active、未删除且处于有效期内的事实，以向量/BM25 融合、硬阈值、时间衰减和 MMR 控制相关性与重复，并在 Get 时重新执行组织、用户和生命周期校验。Runtime 只暴露通用 `kind`，不读取或注入历史 `type/scene_name`。
+- `backend/tests/test_memory_recall_policy.py`：覆盖低分拒绝、时间衰减、MMR、多通道归一、生命周期 SQL、跨租户 Get 边界、溯源返回与数据库失败关闭。
+- `backend/config/memory_tools.py`、`backend/services/agent/memory_tool_mixin.py`：个人上下文获准时向主 Agent 暴露只读 `memory_search/memory_get`；采用 `memory:<atom_id>` 稳定 ref，Search 最多 6 条，Get 再次执行用户、组织和生命周期校验。
+- `backend/services/prompt_builder/builder.py`：首轮自动注入最多 3 条 Runtime 已筛选 Curated Memory；Context Compaction 后先删除旧会话缓存再重新检索，刷新失败时不复用压缩前记忆。
+- `backend/tests/test_memory_tools.py`、`test_memory_prompt_refresh.py`：覆盖工具 schema、个人上下文隔离、稳定 ref、来源返回、无 scope 失败关闭，以及压缩后缓存失效/重新检索/失败不回退。
+- `backend/services/memory/pipeline_scheduler.py`：生产调度只接受闭合 revision 并执行 Session Flush → Consolidation；缺失 revision 时不读取或更新 pipeline state，历史 Scene/L2/L3 状态字段不再由 Runtime 维护。
+- `backend/services/memory/l1_extractor.py`：仅生成和验证无数据库副作用的通用候选；旧 L1 直写、Dedup 服务及其 Prompt 已删除。
+- `backend/services/memory/memory_service_v2.py`：仅提供通用召回、闭合 revision 调度、压缩及历史管理读取；零调用的旧 Atom 手动 CRUD 已删除，公共手动记忆仍由 Phase 4.3 迁移。
+- `backend/services/memory/config.py`：仅保留通用提取、Consolidation、调度、召回、压缩与 Embedding 配置；停用的旧 Dedup、L2 Scene/L3 Persona 配置已物理删除。
+- `backend/tests/test_memory_legacy_exit.py`：固定 Scheduler 不再暴露 L2/L3 运行入口、无 revision 不触碰数据库、旧 Redis Session cache 中的 Persona 不能再次进入 Prompt。
+- `backend/migrations/144_manual_curated_memory.sql`：为通用 Curated Memory 增加个人 `org_id=NULL` scope、来源标记和仅限 `service_role` 的手动创建、更新、软删除、清空 RPC；rollback 停止写入但保留个人 scope 与来源事实。
+- `backend/tests/test_manual_curated_memory_migration.py`：固定个人/组织 scope、并发锁、容量与内容边界、去重、手动来源限制、软删除、RPC 权限和保留数据回滚协议。
+- `backend/services/memory/manual_memory_service.py`：手动 Curated Memory 的唯一服务边界；原文经过通用 embedding 后调用原子 RPC，统一处理个人/组织 scope、容量、重复、跨 scope 隐藏与失败关闭。
+- `backend/services/memory/retrieval_pipeline.py`、`memory_service_v2.py`、`backend/services/agent/memory_tool_mixin.py`：Search/Get、Prompt 自动注入和 Agent 只读工具使用同一 NULL-safe scope，个人用户无需虚拟组织 ID 即可召回。
+- `backend/tests/test_manual_memory_service.py`：覆盖手动原文写入、embedding 失败关闭、上限、个人列表、跨 scope 隐藏、软删除/清空 RPC 映射和数据库异常。
+- `backend/api/routes/memory.py`、`backend/services/wecom/command_handler.py`、`card_event_handler.py`：Web CRUD/设置与企微查看/清空入口统一依赖 `ManualMemoryService`，保持原 API 和卡片协议不变。
+- `backend/services/memory_settings.py`：记忆开关只由用户设置决定，不再因旧 Mem0 Provider 不可用而关闭通用 Curated Memory Runtime。
+- 旧 `backend/services/memory_service.py`、`memory_config.py`、`memory_filter.py`、启动预热与 `mem0ai` 依赖已删除；生产运行时不再初始化或调用 Mem0。
 - `docs/document/TECH_长期单会话上下文与Token治理.md`、`TECH_长期单会话上下文与Token治理_实施附录.md`：面向长期单会话体验收口 Grok Build 对标、跨 Turn Evidence、活动工作集、模型能力预算、结构化摘要、Search/Get、Prompt Cache 与 ContextReceipt。
 - `docs/document/TECH_统一会话上下文Artifact与Compaction引擎.md`：方案 B 的实施合同，统一 ConversationItem、通用工具 Artifact、跨 Turn 召回、模型能力预算、结构化 Compaction、原子提交、历史回填和直接切换流程。
 - `backend/services/agent/runtime/artifacts/`：通用工具结果规范化、Run 内完整事实存储、40KB 模型视图、稳定引用和 UTF-8 游标分页读取。
@@ -260,9 +288,8 @@ EVERYDAYAIONE/
 │   │   ├── batch_message_finalizer.py # 图片批次/单图重生的最终消息落库与通知
 │   │   ├── websocket_manager.py      # WebSocket 连接管理
 │   │   ├── intent_router.py         # 智能意图路由器（千问 Function Calling）
-│   │   ├── memory_config.py         # 记忆基础设施（Mem0 配置/单例/缓存/格式化）
-│   │   ├── memory_service.py        # 记忆服务（CRUD、对话提取、智能检索）
-│   │   ├── memory_filter.py         # 记忆智能过滤器（千问精排，降级链）
+│   │   ├── memory/                  # 通用提取、巩固、Curated Search/Get 与手动记忆
+│   │   ├── memory_settings.py       # 通用记忆开关与保留设置
 │   │   ├── agent/runtime/context/    # 全通道共享模型预算、Evidence/Receipt，以及 Run/跨 Worker 压缩协调
 │   │   ├── agent/evidence_tool_mixin.py # 固定 conversation/revision 的 Evidence Search/Get
 │   │   ├── wecom_oauth_service.py  # 企微 OAuth 扫码登录服务（state管理、code换userid、登录/创建/绑定/解绑）

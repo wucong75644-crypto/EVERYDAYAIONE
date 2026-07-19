@@ -9,6 +9,23 @@
 
 ## 函数列表
 
+### 通用 Curated Memory 数据库协议
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `create_manual_memory` | `backend/migrations/144_manual_curated_memory.sql` | 在个人或组织 scope 内串行执行容量检查与内容哈希去重，创建用户确认的手动 Curated Memory | org_id, user_id, content, content_hash, embedding, priority | JSONB outcome |
+| `update_manual_memory` | `backend/migrations/144_manual_curated_memory.sql` | 仅更新当前 scope 内的手动记忆，并同步重建向量、全文索引和内容哈希 | org_id, user_id, memory_id, content, content_hash, embedding | JSONB outcome |
+| `delete_memory_atom` | `backend/migrations/144_manual_curated_memory.sql` | 软删除当前 scope 内指定的 active Curated Memory | org_id, user_id, memory_id | JSONB outcome |
+| `clear_memory_atoms` | `backend/migrations/144_manual_curated_memory.sql` | 软删除当前 scope 内全部 active Curated Memory | org_id, user_id | JSONB outcome |
+| `ManualMemoryService.get_all_memories` | `backend/services/memory/manual_memory_service.py` | NULL-safe 列出当前用户 scope 内最多 100 条 active Curated Memory | user_id, org_id? | list[dict] |
+| `ManualMemoryService.get_memory_count` | `backend/services/memory/manual_memory_service.py` | 统计当前用户 scope 内可管理的 active Curated Memory | user_id, org_id? | int |
+| `ManualMemoryService.add_memory` | `backend/services/memory/manual_memory_service.py` | 原文归一化、生成 embedding 并通过原子 RPC 创建或复用手动记忆 | user_id, content, source, org_id? | list[dict] |
+| `ManualMemoryService.update_memory` | `backend/services/memory/manual_memory_service.py` | 校验 UUID、生成新 embedding 并仅更新当前 scope 的 manual 记忆 | memory_id, content, user_id, org_id? | dict |
+| `ManualMemoryService.delete_memory` | `backend/services/memory/manual_memory_service.py` | 通过原子 RPC 软删除当前 scope 的指定记忆 | memory_id, user_id, org_id? | None |
+| `ManualMemoryService.delete_all_memories` | `backend/services/memory/manual_memory_service.py` | 通过原子 RPC 软删除当前 scope 的全部 active 记忆 | user_id, org_id? | None |
+| `get_memory_service` | `backend/api/routes/memory.py` | 为 Web 记忆设置与 CRUD 路由创建 scoped `ManualMemoryService` | db | ManualMemoryService |
+| `MemorySettingsService.is_memory_enabled` | `backend/services/memory_settings.py` | 仅依据用户设置判断通用记忆是否开启，不依赖旧 Mem0 Provider | user_id | bool |
+
 ### 前端消息运行时协议与展示安全
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
@@ -871,22 +888,34 @@
 
 ### 记忆模块 (Memory Module)
 
-> **新增于记忆智能过滤**：Mem0 向量检索 + 千问二次精排，两级过滤确保注入上下文的记忆高度相关。
+> 通用 Session Memory、Consolidation、Curated Memory 与 Search/Get。
 
 #### 后端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `MemoryService.get_relevant_memories` | `backend/services/memory_service.py` | 检索相关记忆（两级过滤：Mem0 阈值初筛 → 千问精排） | user_id, query, limit | List[Dict] |
-| `MemoryService.extract_memories_from_conversation` | `backend/services/memory_service.py` | 从对话中自动提取记忆（Mem0 LLM） | user_id, messages, conversation_id | List[Dict] |
-| `MemoryService.get_all_memories` | `backend/services/memory_service.py` | 获取用户所有记忆（带内存缓存） | user_id | List[Dict] |
-| `MemoryService.add_memory` | `backend/services/memory_service.py` | 添加记忆 | user_id, content, source | List[Dict] |
-| `MemoryService.is_memory_enabled` | `backend/services/memory_service.py` | 检查用户是否开启记忆 | user_id | bool |
-| `filter_memories` | `backend/services/memory_filter.py` | 千问精排过滤（降级链：turbo → plus → 跳过） | query, memories | List[Dict] |
-| `format_memory` | `backend/services/memory_config.py` | 格式化单条 Mem0 记忆（含 score） | raw | Dict |
-| `build_memory_system_prompt` | `backend/services/memory_config.py` | 将记忆列表构建为 system prompt | memories | str |
+| `parse_memory_candidate` | `backend/services/memory/contracts.py` | 严格解析通用记忆候选、原文证据与有效期 | raw | MemoryCandidate |
+| `validate_memory_candidate` | `backend/services/memory/candidate_validator.py` | fail-closed 校验候选类型、时效、用户消息来源和精确原文引用 | candidate, messages | MemoryValidationResult |
+| `_parse_extraction_result` | `backend/services/memory/l1_extractor.py` | 严格解析 `NO_MEMORY/CANDIDATES`，整批执行原文证据门禁并映射迁移期旧表协议 | raw, source_messages | List[SceneSegment] |
+| `L1Extractor.propose` | `backend/services/memory/l1_extractor.py` | 生成并验证无数据库副作用的通用 Flush 提议，明确区分 NO_MEMORY 与非法输出 | messages, background?, previous_scene_name? | L1ProposalResult |
+| `SessionFlushService.flush` | `backend/services/memory/session_flush.py` | 对固定闭合 revision 执行单进程 single-flight、20 消息窗口、Session Log 与 cursor CAS 提交 | user_id, org_id, conversation_id, through_revision, trigger? | SessionFlushResult |
+| `get_embedding` / `get_embeddings` | `backend/services/memory/embedding.py` | 单条兼容与批量向量生成；批次结果缺失或 Provider 失败时整批返回 None | text / texts | embedding / embeddings / None |
+| `MemoryConsolidator.consolidate` | `backend/services/memory/consolidator.py` | 对至少 3 份新 Session Log 执行同用户 singleflight、证据复验、受限关系判断、批量 embedding 与原子 Curated 晋升 | user_id, org_id | ConsolidationResult |
+| `format_consolidation_prompt` | `backend/services/memory/prompts/consolidation.py` | 将 Session 候选与现有 Curated Memory 作为不可信 JSON 数据传给只读关系分类器 | session_candidates, curated_memories | str |
+| `normalize_relevance` / `rank_for_recall` | `backend/services/memory/recall_policy.py` | 归一向量/BM25 相关性，执行硬阈值、时间衰减和字符 MMR 多样化 | channel scores / candidates, max_results, threshold | float / ranked candidates |
+| `RetrievalPipeline.search` / `get` | `backend/services/memory/retrieval_pipeline.py` | 混合搜索或按 ID 严格读取 active 且处于有效期内的租户隔离 Curated Memory；Runtime 仅返回通用 kind，不读取旧 type/scene | query or atom_id, user_id, org_id | List[ScoredMemory] / ScoredMemory / None |
+| `MemoryServiceV2.get_relevant_memories` | `backend/services/memory/memory_service_v2.py` | 按用户与组织范围执行通用 Curated Memory 召回，仅输出 kind、优先级与相关性元数据 | user_id, query, limit, org_id | List[Dict] |
+| `MemoryServiceV2.get_memory` | `backend/services/memory/memory_service_v2.py` | Facade 层严格 Get，并返回 kind、有效期和原始消息溯源 | user_id, memory_id, org_id | Dict / None |
+| `build_memory_tools` | `backend/config/memory_tools.py` | 构建个人上下文范围内只读 memory_search/memory_get Schema | — | List[ToolSchema] |
+| `MemoryToolMixin._memory_search` / `_memory_get` | `backend/services/agent/memory_tool_mixin.py` | 在 ToolExecutor 用户/组织范围内主动搜索或按稳定 ref 获取 Curated Memory | args | AgentResult |
+| `PromptBuilder._refresh_memory_after_compaction` | `backend/services/prompt_builder/builder.py` | Context Compaction 后失效旧 Session Memory cache 并按当前问题重新检索，失败返回空 | — | Tuple[memory, persona] |
+| `PipelineScheduler._run_l1` | `backend/services/memory/pipeline_scheduler.py` | 仅对闭合 revision 执行 Session Flush→Consolidation；缺失 revision 时失败关闭且不写状态 | state, through_revision? | None |
+| `MemoryServiceV2.build_memory_context` | `backend/services/memory/memory_service_v2.py` | 构建最多 3 条 Curated Memory 上下文；第二个兼容返回值固定为空，不再读取 L3 Persona | user_id, org_id, query | Tuple[memory, empty] |
+| `MemoryServiceV2.get_session_memory_shadow` | `backend/services/memory/memory_service_v2.py` | 只读最近 Session Memory 候选供对账，不参与 Prompt 注入 | user_id, limit? | List[str] |
+| `commit_memory_session_flush` | `backend/migrations/141_memory_session_flush_cas.sql` | 锁定 pipeline state，原子写入 Session Log 并以 expected revision 推进 cursor | org_id, user_id, conversation_id, expected_revision, through_revision, trigger, content, source_refs, content_hash, model, prompt_version | JSONB |
+| `commit_memory_consolidation` | `backend/migrations/143_memory_consolidation_commit.sql` | 锁定 Session 来源和相关 Curated Atom，原子提交晋升、生命周期关系、Run 与来源消费 | org_id, user_id, source_log_ids, source_hash, operations, model, prompt_version, receipt | JSONB |
 | `ChatContextMixin._build_llm_messages` | `backend/services/handlers/chat_context_mixin.py` | 按固定快照组装模型上下文，并将请求级模型与组织范围传入统一 PromptBuilder | content, user_id, conversation_id, text_content, prefetched_summary?, user_location?, permission_mode, context_anchor?, model_id?, org_id? | List[Dict] |
-| `ChatContextMixin._extract_memories_async` | `backend/services/handlers/chat_context_mixin.py` | 异步提取记忆（fire-and-forget） | user_id, conversation_id, user_text, assistant_text | None |
+| `ChatContextMixin._extract_memories_async` | `backend/services/handlers/chat_context_mixin.py` | 异步提取记忆并向调度器传递已提交的输入/输出消息证据 ID 与闭合 revision | user_id, conversation_id, user_text, assistant_text, input_message_id?, output_message_id?, through_revision? | None |
 
 #### 前端函数
 
@@ -900,13 +929,6 @@
 
 | 常量名 | 值 | 文件路径 | 说明 |
 |--------|-----|----------|------|
-| `MEMORY_SEARCH_THRESHOLD` | 0.5 | `backend/services/memory_config.py` | Mem0 向量搜索相似度阈值 |
-| `MAX_INJECTION_COUNT` | 20 | `backend/services/memory_config.py` | 单次对话注入最大记忆数 |
-| `MAX_MEMORIES_PER_USER` | 100 | `backend/services/memory_config.py` | 每用户记忆上限 |
-| `MEM0_TIMEOUT` | 45s | `backend/services/memory_config.py` | Mem0 操作超时 |
-| `memory_filter_model` | qwen-turbo | `backend/core/config.py` | 记忆精排主模型 |
-| `memory_filter_fallback_model` | qwen-plus | `backend/core/config.py` | 记忆精排备用模型 |
-| `memory_filter_timeout` | 3.0s | `backend/core/config.py` | 精排单次超时 |
 
 ### 模型动态评分模块 (Model Scoring)
 
@@ -950,7 +972,6 @@
 | `AgentLoop.run` | `backend/services/agent_loop.py` | 执行 Agent Loop，返回路由结果 | content, thinking_mode?, task_id? | AgentResult |
 | `AgentLoop._record_loop_signal` | `backend/services/agent_loop.py` | 记录 Agent Loop 路由信号（含 loop_turns/tokens） | result, input_length, has_image | None |
 | `_record_user_feedback_signal` | `backend/api/routes/message.py` | 记录用户反馈信号（retry/regenerate/regenerate_single） | db, user_id, operation, model, gen_type, original_message_id, conversation_id | None |
-| `MemoryService._record_memory_search_signal` | `backend/services/memory_service.py` | 记录记忆检索效果信号（mem0_returned/filtered_count/latency） | user_id, mem0_returned, filtered_count, filter_latency_ms, query_length | None |
 
 #### 信号类型（task_type 值）
 
@@ -959,7 +980,6 @@
 | `image` / `video` | 成功/失败回调 | cost_time_ms, retried, retry_from_model |
 | `routing` | IntentRouter / AgentLoop | routing_tool, routed_by, recommended_model, input_length, has_image |
 | `user_feedback` | message.py 操作分发 | feedback_type, original_model, new_model, original_task_type |
-| `memory_search` | MemoryService | mem0_returned, filtered_count, filter_latency_ms, query_length |
 
 ---
 

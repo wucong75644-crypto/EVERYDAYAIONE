@@ -1,7 +1,7 @@
 """
 RRF 混合检索管道
 
-替代原有的 Mem0 向量搜索 + 千问精排，实现：
+实现通用 Curated Memory 检索：
 - pgvector 余弦相似度搜索
 - tsvector BM25 关键词搜索
 - RRF (Reciprocal Rank Fusion) 融合
@@ -11,15 +11,17 @@ RRF 混合检索管道
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import jieba
 from loguru import logger
 
 from .config import get_memory_config
-from .l1_extractor import _get_embedding
+from .embedding import get_embedding
+from .recall_policy import normalize_relevance, rank_for_recall
 
 
 # ============================================================
@@ -31,12 +33,14 @@ class ScoredMemory:
     """带分数的记忆检索结果"""
     atom_id: str
     content: str
-    type: str
+    kind: str
     priority: int
-    scene_name: str
     score: float
     activity_start: str | None = None
     activity_end: str | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
+    source_message_ids: tuple[str, ...] = ()
 
 
 # ============================================================
@@ -54,10 +58,9 @@ class RetrievalPipeline:
         self,
         query: str,
         user_id: str,
-        org_id: str,
+        org_id: str | None,
         max_results: int | None = None,
         strategy: Literal["hybrid", "embedding", "keyword"] | None = None,
-        domain: str | None = None,
     ) -> list[ScoredMemory]:
         """
         混合检索：向量 + BM25 + RRF 融合
@@ -67,10 +70,9 @@ class RetrievalPipeline:
             user_id, org_id: 租户隔离
             max_results: 最大返回数（默认5）
             strategy: 检索策略（默认hybrid）
-            domain: V2 阶段 4.3 — 可选 domain 过滤
-                    匹配 metadata->>'domain' = domain
-                    防 Apple 案例 (tech 域) 污染利润分析 (finance 域)
         """
+        if not query.strip():
+            return []
         cfg = self._cfg
         max_results = max_results or cfg.retrieval_max_results
         strategy = strategy or cfg.retrieval_strategy
@@ -80,26 +82,52 @@ class RetrievalPipeline:
         bm25_results: list[dict] = []
 
         if strategy in ("hybrid", "embedding"):
-            embedding = await _get_embedding(query)
+            embedding = await get_embedding(query)
             if embedding:
                 vector_results = await self._search_vector(
-                    embedding, user_id, org_id, extend_limit, domain
+                    embedding, user_id, org_id, extend_limit
                 )
 
         if strategy in ("hybrid", "keyword"):
             bm25_results = await self._search_bm25(
-                query, user_id, org_id, extend_limit, domain
+                query, user_id, org_id, extend_limit
             )
 
         # 融合
         if strategy == "hybrid" and vector_results and bm25_results:
-            merged = self._rrf_merge(vector_results, bm25_results, max_results)
+            merged = self._rrf_merge(
+                vector_results,
+                bm25_results,
+                extend_limit,
+            )
         elif vector_results:
-            merged = vector_results[:max_results]
+            merged = [
+                {
+                    **item,
+                    "relevance_score": normalize_relevance(
+                        vector_score=float(item.get("score") or 0.0),
+                    ),
+                }
+                for item in vector_results
+            ]
         elif bm25_results:
-            merged = bm25_results[:max_results]
+            merged = [
+                {
+                    **item,
+                    "relevance_score": normalize_relevance(
+                        keyword_score=float(item.get("score") or 0.0),
+                    ),
+                }
+                for item in bm25_results
+            ]
         else:
             merged = []
+
+        merged = rank_for_recall(
+            merged,
+            max_results=max_results,
+            score_threshold=cfg.retrieval_score_threshold,
+        )
 
         # V2 阶段 6.1: 召回质量监控
         # 记录每次召回的关键指标, 用于离线评估 Recall@k / Precision@k
@@ -113,32 +141,76 @@ class RetrievalPipeline:
             score_min = min(scores) if scores else 0
             score_mid = sorted(scores)[len(scores) // 2] if scores else 0
             logger.info(
-                f"mem0 recall | strategy={strategy} | "
+                f"curated memory recall | strategy={strategy} | "
                 f"vector_n={len(vector_results)} bm25_n={len(bm25_results)} | "
                 f"final_top_k={len(merged)} | "
                 f"score_max={score_max:.3f} mid={score_mid:.3f} min={score_min:.3f} | "
-                f"domain={domain or 'all'} | user={user_id[:8]}"
+                f"user={user_id[:8]}"
             )
         else:
             logger.info(
-                f"mem0 recall EMPTY | strategy={strategy} | "
+                f"curated memory recall EMPTY | strategy={strategy} | "
                 f"vector_n={len(vector_results)} bm25_n={len(bm25_results)} | "
-                f"domain={domain or 'all'} | user={user_id[:8]} | query={query[:30]}"
+                f"user={user_id[:8]} | query={query[:30]}"
             )
 
         return [
             ScoredMemory(
                 atom_id=r["record_id"],
                 content=r["content"],
-                type=r["type"],
+                kind=str(r.get("kind") or "memory"),
                 priority=r["priority"],
-                scene_name=r.get("scene_name", ""),
-                score=r.get("rrf_score", r.get("score", 0)),
+                score=float(r.get("score") or 0.0),
                 activity_start=r.get("activity_start"),
                 activity_end=r.get("activity_end"),
+                valid_from=_text_or_none(r.get("valid_from")),
+                valid_until=_text_or_none(r.get("valid_until")),
+                source_message_ids=tuple(
+                    str(value) for value in (r.get("source_message_ids") or [])
+                ),
             )
             for r in merged
         ]
+
+    async def get(
+        self,
+        atom_id: str,
+        user_id: str,
+        org_id: str | None,
+    ) -> ScoredMemory | None:
+        """按 ID 严格读取当前仍可用的 Curated Memory。"""
+        try:
+            row = await asyncio.wait_for(
+                self._db.fetchrow(
+                    """SELECT id::text AS record_id, content, priority,
+                          metadata->>'kind' AS kind,
+                          activity_start_time::text AS activity_start,
+                          activity_end_time::text AS activity_end,
+                          valid_from::text, valid_until::text,
+                          source_message_ids
+                   FROM memory_atoms
+                   WHERE id = $1::uuid
+                     AND org_id IS NOT DISTINCT FROM $2::uuid
+                     AND user_id = $3::uuid AND NOT is_deleted
+                     AND status = 'active'
+                     AND (valid_from IS NULL OR valid_from <= NOW())
+                     AND (valid_until IS NULL OR valid_until > NOW())
+                   LIMIT 1""",
+                    atom_id,
+                    org_id,
+                    user_id,
+                ),
+                timeout=self._cfg.retrieval_timeout,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Memory Get failed | user_id={} | atom_id={} | error_type={}",
+                user_id,
+                atom_id,
+                type(exc).__name__,
+            )
+            return None
+        return _to_scored_memory(dict(row), score=1.0) if row else None
 
     # ============================
     # 向量检索
@@ -148,31 +220,36 @@ class RetrievalPipeline:
         self,
         query_embedding: list[float],
         user_id: str,
-        org_id: str,
+        org_id: str | None,
         limit: int,
-        domain: str | None = None,
     ) -> list[dict]:
-        """pgvector 余弦相似度搜索 (V2 阶段 4.3: 加 domain pre-filter)"""
+        """仅召回状态与有效期均允许注入的 Curated Memory。"""
         try:
             # psycopg %s 不支持同参数复用，所以 embedding 传两次
             embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
-            domain_clause = "AND metadata->>'domain' = $6" if domain else ""
-            sql = f"""
-                SELECT id::text as record_id, content, type, priority, scene_name,
+            sql = """
+                SELECT id::text as record_id, content, priority,
                        activity_start_time::text as activity_start,
                        activity_end_time::text as activity_end,
+                       metadata->>'kind' AS kind,
+                       valid_from::text, valid_until::text, updated_at::text,
+                       source_message_ids,
                        1 - (embedding <=> $1::vector) as score
                 FROM memory_atoms
-                WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
+                WHERE org_id IS NOT DISTINCT FROM $2::uuid
+                      AND user_id = $3::uuid
+                      AND NOT is_deleted AND status = 'active'
+                      AND (valid_from IS NULL OR valid_from <= NOW())
+                      AND (valid_until IS NULL OR valid_until > NOW())
                       AND embedding IS NOT NULL
-                      {domain_clause}
                 ORDER BY embedding <=> $4::vector
                 LIMIT $5
             """
             params = [embedding_str, org_id, user_id, embedding_str, limit]
-            if domain:
-                params.append(domain)
-            rows = await self._db.fetch(sql, *params)
+            rows = await asyncio.wait_for(
+                self._db.fetch(sql, *params),
+                timeout=self._cfg.retrieval_timeout,
+            )
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Retrieval: vector search failed: {e}")
@@ -186,11 +263,10 @@ class RetrievalPipeline:
         self,
         query: str,
         user_id: str,
-        org_id: str,
+        org_id: str | None,
         limit: int,
-        domain: str | None = None,
     ) -> list[dict]:
-        """tsvector BM25 关键词搜索 (V2 阶段 4.3: 加 domain pre-filter)"""
+        """关键词召回同样执行 Curated 生命周期硬过滤。"""
         try:
             # jieba 分词 → tsquery
             tokens = [t for t in jieba.cut_for_search(query) if len(t) > 1]
@@ -198,23 +274,29 @@ class RetrievalPipeline:
                 return []
             tsquery = " | ".join(tokens)  # OR 逻辑，更宽容
 
-            domain_clause = "AND metadata->>'domain' = $6" if domain else ""
-            sql = f"""
-                SELECT id::text as record_id, content, type, priority, scene_name,
+            sql = """
+                SELECT id::text as record_id, content, priority,
                        activity_start_time::text as activity_start,
                        activity_end_time::text as activity_end,
+                       metadata->>'kind' AS kind,
+                       valid_from::text, valid_until::text, updated_at::text,
+                       source_message_ids,
                        ts_rank_cd(content_tsv, to_tsquery('simple', $1::text)) as score
                 FROM memory_atoms
-                WHERE org_id = $2 AND user_id = $3 AND NOT is_deleted
+                WHERE org_id IS NOT DISTINCT FROM $2::uuid
+                      AND user_id = $3::uuid
+                      AND NOT is_deleted AND status = 'active'
+                      AND (valid_from IS NULL OR valid_from <= NOW())
+                      AND (valid_until IS NULL OR valid_until > NOW())
                       AND content_tsv @@ to_tsquery('simple', $4::text)
-                      {domain_clause}
                 ORDER BY score DESC
                 LIMIT $5
             """
             params = [tsquery, org_id, user_id, tsquery, limit]
-            if domain:
-                params.append(domain)
-            rows = await self._db.fetch(sql, *params)
+            rows = await asyncio.wait_for(
+                self._db.fetch(sql, *params),
+                timeout=self._cfg.retrieval_timeout,
+            )
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Retrieval: BM25 search failed: {e}")
@@ -248,7 +330,12 @@ class RetrievalPipeline:
             if rid in scored:
                 scored[rid]["rrf_score"] += rrf_score
             else:
-                scored[rid] = {**item, "rrf_score": rrf_score}
+                scored[rid] = {
+                    **item,
+                    "rrf_score": rrf_score,
+                    "vector_score": float(item.get("score") or 0.0),
+                    "keyword_score": 0.0,
+                }
 
         # BM25 结果
         for rank, item in enumerate(bm25_results):
@@ -256,8 +343,23 @@ class RetrievalPipeline:
             rrf_score = 1.0 / (k + rank + 1)
             if rid in scored:
                 scored[rid]["rrf_score"] += rrf_score
+                scored[rid]["keyword_score"] = float(item.get("score") or 0.0)
             else:
-                scored[rid] = {**item, "rrf_score": rrf_score}
+                scored[rid] = {
+                    **item,
+                    "rrf_score": rrf_score,
+                    "vector_score": 0.0,
+                    "keyword_score": float(item.get("score") or 0.0),
+                }
+
+        for item in scored.values():
+            item["relevance_score"] = normalize_relevance(
+                vector_score=float(item["vector_score"]),
+                keyword_score=float(item["keyword_score"]),
+                matched_both=bool(
+                    item["vector_score"] and item["keyword_score"]
+                ),
+            )
 
         # 按 RRF 分值降序
         sorted_results = sorted(scored.values(), key=lambda x: x["rrf_score"], reverse=True)
@@ -271,20 +373,14 @@ class RetrievalPipeline:
         """
         格式化为注入 user prompt 的文本
 
-        格式：- [type|scene] content (活动时间: start ~ end)
+        格式：- [kind] content (活动时间: start ~ end)
         """
         if not memories:
             return ""
 
         lines = []
         for m in memories:
-            # 类型标签
-            if m.scene_name:
-                tag = f"[{m.type}|{m.scene_name}]"
-            else:
-                tag = f"[{m.type}]"
-
-            # 时间标注（episodic）
+            tag = f"[{m.kind or 'memory'}]"
             time_note = ""
             if m.activity_start and m.activity_end:
                 time_note = f" (活动时间: {m.activity_start[:10]} ~ {m.activity_end[:10]})"
@@ -294,3 +390,24 @@ class RetrievalPipeline:
             lines.append(f"- {tag} {m.content}{time_note}")
 
         return "\n".join(lines)
+
+
+def _to_scored_memory(row: dict[str, Any], *, score: float) -> ScoredMemory:
+    return ScoredMemory(
+        atom_id=str(row["record_id"]),
+        content=str(row["content"]),
+        kind=str(row.get("kind") or "memory"),
+        priority=int(row["priority"]),
+        score=score,
+        activity_start=_text_or_none(row.get("activity_start")),
+        activity_end=_text_or_none(row.get("activity_end")),
+        valid_from=_text_or_none(row.get("valid_from")),
+        valid_until=_text_or_none(row.get("valid_until")),
+        source_message_ids=tuple(
+            str(value) for value in (row.get("source_message_ids") or [])
+        ),
+    )
+
+
+def _text_or_none(value: Any) -> str | None:
+    return str(value) if value is not None else None

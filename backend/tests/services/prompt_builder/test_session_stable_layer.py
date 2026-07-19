@@ -40,7 +40,7 @@ class TestSessionStableLayer:
         assert "LCWJ" in out
 
     def test_user_memory_injection(self):
-        """mem0 召回结果进来即注入 (会话首次拉一次)."""
+        """Curated Memory 召回结果在会话首次加载后注入。"""
         ctx = SessionStableContext(
             permission_mode="auto",
             user_memory="- 用户偏好淘宝平台",

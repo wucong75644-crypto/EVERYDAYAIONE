@@ -5,7 +5,6 @@ OrgContext 依赖注入 + 数据隔离工具函数测试
 - get_org_context: 散客/企业/异常场景
 - apply_data_isolation: 散客/企业过滤
 - apply_org_filter: 纯企业维度过滤
-- get_mem0_user_id: 记忆系统 user_id 生成
 """
 
 import sys
@@ -24,7 +23,6 @@ from api.deps import OrgContext, get_org_context
 from core.data_isolation import (
     apply_data_isolation,
     apply_org_filter,
-    get_mem0_user_id,
     get_org_id_for_insert,
 )
 
@@ -270,17 +268,3 @@ class TestGetOrgIdForInsert:
     def test_org(self):
         ctx = OrgContext(user_id="u1", org_id="org-1", org_role="member")
         assert get_org_id_for_insert(ctx) == "org-1"
-
-
-# ── get_mem0_user_id 测试 ──────────────────────────────────
-
-
-class TestGetMem0UserId:
-
-    def test_personal(self):
-        ctx = OrgContext(user_id="u1")
-        assert get_mem0_user_id(ctx) == "personal:u1"
-
-    def test_org(self):
-        ctx = OrgContext(user_id="u1", org_id="org-1", org_role="member")
-        assert get_mem0_user_id(ctx) == "org_org-1:u1"

@@ -7,7 +7,6 @@ from loguru import logger
 
 from core.config import settings
 from core.exceptions import AppException
-from services.memory_config import _get_mem0
 
 
 class MemorySettingsService:
@@ -95,9 +94,6 @@ class MemorySettingsService:
 
     async def is_memory_enabled(self, user_id: str) -> bool:
         """检查用户是否开启了记忆功能"""
-        mem0 = await _get_mem0()
-        if mem0 is None:
-            return False
         s = await self.get_settings(user_id)
         return s.get("memory_enabled", False)
 

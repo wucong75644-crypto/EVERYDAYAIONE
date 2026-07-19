@@ -232,6 +232,10 @@ def _prepare_permission_and_tools(
     from config.artifact_tools import build_artifact_tools
 
     tools.extend(build_artifact_tools())
+    if personal_context_allowed:
+        from config.memory_tools import build_memory_tools
+
+        tools.extend(build_memory_tools())
     if not personal_context_allowed:
         tools = [
             tool for tool in tools
@@ -255,6 +259,8 @@ def _tool_name(tool: dict[str, Any]) -> str:
 _PERSONAL_TOOLS = {
     "get_conversation_context",
     "manage_scheduled_task",
+    "memory_search",
+    "memory_get",
 }
 
 

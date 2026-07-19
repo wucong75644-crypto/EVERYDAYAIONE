@@ -70,10 +70,13 @@ class TestManageMemory:
         handler = WecomCardEventHandler(_make_db())
         ctx = _make_reply_ctx()
         memories = [{"memory": "test memory"}]
-        with patch("services.memory_service.MemoryService") as MockMS:
+        with patch(
+            "services.memory.manual_memory_service.ManualMemoryService"
+        ) as MockMS:
             MockMS.return_value.get_all_memories = AsyncMock(return_value=memories)
             await handler.handle("manage_memory", "t1", "button_interaction",
                                  None, "u1", "c1", ctx)
+            MockMS.assert_called_once_with(handler.db)
         card = ctx.ws_client.send_template_card.call_args[0][1]
         assert card["card_type"] == "button_interaction"
         assert "共 1 条" in card["main_title"]["title"]
@@ -82,7 +85,9 @@ class TestManageMemory:
     async def test_empty_memories(self):
         handler = WecomCardEventHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.memory_service.MemoryService") as MockMS:
+        with patch(
+            "services.memory.manual_memory_service.ManualMemoryService"
+        ) as MockMS:
             MockMS.return_value.get_all_memories = AsyncMock(return_value=[])
             await handler.handle("manage_memory", "t1", "button_interaction",
                                  None, "u1", "c1", ctx)
@@ -96,7 +101,9 @@ class TestClearAllMemory:
     async def test_clears_and_updates_card(self):
         handler = WecomCardEventHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.memory_service.MemoryService") as MockMS:
+        with patch(
+            "services.memory.manual_memory_service.ManualMemoryService"
+        ) as MockMS:
             MockMS.return_value.delete_all_memories = AsyncMock()
             await handler.handle("clear_all_memory", "t1", "button_interaction",
                                  None, "u1", "c1", ctx)

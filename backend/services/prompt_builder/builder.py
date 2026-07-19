@@ -77,7 +77,7 @@ class BuildInput:
     prefetched_summary: Optional[str] = None
     context_snapshot: Optional["ContextSnapshot"] = None
     # V2 阶段 4.1: prefetched_memory 已删除
-    # mem0 调用统一到 PromptBuilder._memory() 内部 + session cache
+    # Curated Memory 查询统一到 PromptBuilder._memory() + session cache
     persona_gate_instance: Optional[PersonaGate] = None
 
     # request context (含时间 + 位置, 来自上游)
@@ -140,6 +140,11 @@ class PromptBuilder:
             resolve_context_budget(inp.model_id),
         )
         history_messages = context_plan.messages
+        if context_plan.compaction:
+            memory_prompt, persona_text = (
+                await self._refresh_memory_after_compaction()
+            )
+            self._persona_text = persona_text
 
         # 提取 persona (memory_service_v2.build_memory_context 同时返回 prepend + persona)
         # 注: persona 已在 _parallel_fetch 内通过 self._persona_text 暂存
@@ -172,8 +177,8 @@ class PromptBuilder:
                 inp.user_preferences
                 if inp.personal_context_allowed else None
             ),
-            user_facts=gated_persona,       # mem0 短事实 (原 persona)
-            user_memory=memory_prompt,      # mem0 召回
+            user_facts=gated_persona,
+            user_memory=memory_prompt,
         )
         session_stable_content = SessionStableLayer.render(session_stable_ctx)
 
@@ -317,7 +322,7 @@ class PromptBuilder:
             """返回 (l1_prepend, persona_text)。
 
             V2 阶段 4.1: 单一入口 + 会话级缓存
-              - 新会话开头查一次 mem0, 整会话固定
+              - 新会话开头查询一次 Curated Memory，整会话固定
               - 学到的新事实异步抽取存 DB, 等下次新会话生效
               - prefetched_memory 路径已删除 (chat_handler / chat_generate_mixin 不再预取)
             """
@@ -329,26 +334,25 @@ class PromptBuilder:
                 inp.conversation_id, inp.org_id,
             )
             if cached is not None:
-                prepend, persona = cached
+                prepend, _legacy_persona = cached
                 logger.info(
-                    f"mem0 session cache HIT | conv={inp.conversation_id} | "
-                    f"l1_len={len(prepend) if prepend else 0} | persona={'yes' if persona else 'no'}"
+                    f"Curated memory session cache HIT | conv={inp.conversation_id} | "
+                    f"memory_len={len(prepend) if prepend else 0}"
                 )
-                return prepend, persona
+                return prepend, ""
             try:
                 svc = MemoryServiceV2(db_pool=inp.db)
-                prepend, persona = await svc.build_memory_context(
+                prepend, _legacy_persona = await svc.build_memory_context(
                     user_id=inp.user_id,
                     org_id=inp.org_id,
                     query=inp.text_content,
                 )
                 prepend = prepend or None
-                persona = persona or ""
                 # 写回 session cache, 整会话内后续轮次命中
                 await session_memory_cache.set_session_memory(
-                    inp.conversation_id, prepend, persona, inp.org_id,
+                    inp.conversation_id, prepend, "", inp.org_id,
                 )
-                return prepend, persona
+                return prepend, ""
             except Exception as e:
                 logger.warning(f"PromptBuilder memory fetch failed | {e}")
                 return None, ""
@@ -405,6 +409,44 @@ class PromptBuilder:
         self._persona_text = persona_text
 
         return l1_prepend, summary_prompt, history
+
+    async def _refresh_memory_after_compaction(
+        self,
+    ) -> tuple[Optional[str], str]:
+        """压缩后废弃旧缓存并基于当前问题重新检索；失败时不复用旧记忆。"""
+        from services.memory.memory_service_v2 import MemoryServiceV2
+        from services.prompt_builder import session_memory_cache
+
+        inp = self.inp
+        await session_memory_cache.delete_session_memory(
+            inp.conversation_id,
+            inp.org_id,
+        )
+        if not inp.personal_context_allowed:
+            return None, ""
+        try:
+            prepend, _legacy_persona = await MemoryServiceV2(
+                db_pool=inp.db,
+            ).build_memory_context(
+                user_id=inp.user_id,
+                org_id=inp.org_id,
+                query=inp.text_content,
+            )
+            await session_memory_cache.set_session_memory(
+                inp.conversation_id,
+                prepend or None,
+                "",
+                inp.org_id,
+            )
+            return prepend or None, ""
+        except Exception as exc:
+            logger.warning(
+                "PromptBuilder memory refresh after compaction failed | "
+                "conversation_id={} | error_type={}",
+                inp.conversation_id,
+                type(exc).__name__,
+            )
+            return None, ""
 
     async def _apply_budgets(
         self, messages: List[Dict[str, Any]], _current_text: str,

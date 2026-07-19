@@ -20,14 +20,14 @@ from schemas.memory import (
     MemoryUpdateRequest,
     MemoryUpdateResponse,
 )
-from services.memory_service import MemoryService
+from services.memory.manual_memory_service import ManualMemoryService
 
 router = APIRouter(prefix="/memories", tags=["记忆"])
 
 
-def get_memory_service(db: ScopedDB) -> MemoryService:
+def get_memory_service(db: ScopedDB) -> ManualMemoryService:
     """获取记忆服务实例（租户隔离）"""
-    return MemoryService(db)
+    return ManualMemoryService(db)
 
 
 # ===== 记忆设置 =====
@@ -36,7 +36,7 @@ def get_memory_service(db: ScopedDB) -> MemoryService:
 @router.get("/settings", response_model=MemorySettingsResponse, summary="获取记忆设置")
 async def get_memory_settings(
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """获取当前用户的记忆功能设置"""
     try:
@@ -58,7 +58,7 @@ async def get_memory_settings(
 async def update_memory_settings(
     body: MemorySettingsUpdateRequest,
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """更新当前用户的记忆功能设置（开关、保留天数）"""
     try:
@@ -86,7 +86,7 @@ async def update_memory_settings(
 @router.get("", response_model=MemoryListResponse, summary="获取记忆列表")
 async def get_memories(
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """获取当前用户的所有记忆"""
     current_user_id = ctx.user_id
@@ -110,7 +110,7 @@ async def get_memories(
 async def add_memory(
     body: MemoryAddRequest,
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """手动添加一条记忆"""
     current_user_id = ctx.user_id
@@ -140,7 +140,7 @@ async def update_memory(
     memory_id: str,
     body: MemoryUpdateRequest,
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """更新一条记忆的内容"""
     current_user_id = ctx.user_id
@@ -169,7 +169,7 @@ async def update_memory(
 async def delete_memory(
     memory_id: str,
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """删除一条记忆"""
     current_user_id = ctx.user_id
@@ -193,7 +193,7 @@ async def delete_memory(
 @router.delete("", response_model=MemoryDeleteAllResponse, summary="清空所有记忆")
 async def delete_all_memories(
     ctx: OrgCtx,
-    service: MemoryService = Depends(get_memory_service),
+    service: ManualMemoryService = Depends(get_memory_service),
 ):
     """清空当前用户的所有记忆"""
     current_user_id = ctx.user_id

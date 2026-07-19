@@ -125,8 +125,10 @@ class CommandHandler:
             )
 
         elif cmd_name == "memory":
-            from services.memory_service import MemoryService
-            mem_svc = MemoryService()
+            from services.memory.manual_memory_service import (
+                ManualMemoryService,
+            )
+            mem_svc = ManualMemoryService(self.db)
             memories = await mem_svc.get_all_memories(user_id, org_id=org_id)
             if memories:
                 card = WecomCardBuilder.memory_list_card(memories)
@@ -135,8 +137,10 @@ class CommandHandler:
             await ws.send_template_card(reply_ctx.req_id, card)
 
         elif cmd_name == "clear_memory":
-            from services.memory_service import MemoryService
-            mem_svc = MemoryService()
+            from services.memory.manual_memory_service import (
+                ManualMemoryService,
+            )
+            mem_svc = ManualMemoryService(self.db)
             await mem_svc.delete_all_memories(user_id, org_id=org_id)
             await ws.send_reply(
                 reply_ctx.req_id, "text", {"content": "已清空所有记忆"}

@@ -469,41 +469,6 @@ class TestUserFeedbackSignal:
             assert kw["params"]["original_model"] is None
 
 
-# ============ 记忆检索效果信号测试 ============
-
-
-class TestMemorySearchSignal:
-    """测试 MemoryService._record_memory_search_signal"""
-
-    @pytest.mark.asyncio
-    async def test_memory_search_signal_params(self):
-        """记忆检索信号携带正确的指标"""
-        from services.memory_service import MemoryService
-
-        with patch(
-            "services.knowledge_service.record_metric",
-            new_callable=AsyncMock,
-        ) as mock_metric:
-            MemoryService._record_memory_search_signal(
-                user_id="user_5",
-                mem0_returned=12,
-                filtered_count=3,
-                filter_latency_ms=450,
-                query_length=60,
-            )
-            import asyncio
-            await asyncio.sleep(0.05)
-
-            mock_metric.assert_called_once()
-            kw = mock_metric.call_args[1]
-            assert kw["task_type"] == "memory_search"
-            assert kw["model_id"] == "mem0"
-            assert kw["params"]["mem0_returned"] == 12
-            assert kw["params"]["filtered_count"] == 3
-            assert kw["params"]["filter_latency_ms"] == 450
-            assert kw["params"]["query_length"] == 60
-
-
 # ============ 集成测试：信号在业务流程中被调用 ============
 
 
@@ -559,52 +524,6 @@ class TestRouteSignalIntegration:
             # 位置参数：decision, user_id, input_length, has_image, router_model
             assert call_args[1] == "user-1"  # user_id
             assert call_args[4] == "qwen-plus"  # router_model
-
-
-class TestMemorySearchSignalIntegration:
-    """验证 get_relevant_memories() 完成后 _record_memory_search_signal 被调用"""
-
-    @pytest.mark.asyncio
-    async def test_search_calls_record_signal(self):
-        """语义搜索完成后触发信号记录"""
-        import services.memory_config as cfg
-        from services.memory_service import MemoryService
-
-        # 注入 mock Mem0
-        mock_mem0 = AsyncMock()
-        mock_mem0.search = AsyncMock(return_value=[
-            {"id": "m1", "memory": "用户是程序员", "metadata": {}},
-            {"id": "m2", "memory": "用户喜欢Python", "metadata": {}},
-        ])
-        cfg._mem0_instance = mock_mem0
-        cfg._mem0_available = True
-
-        service = MemoryService(db=MagicMock())
-
-        with patch(
-            "services.memory_service.filter_memories",
-            new_callable=AsyncMock,
-            return_value=[
-                {"id": "m1", "memory": "用户是程序员", "metadata": {}},
-            ],
-        ), patch.object(
-            MemoryService, "_record_memory_search_signal"
-        ) as mock_signal:
-            result = await service.get_relevant_memories(
-                user_id="u1", query="用户的职业是什么"
-            )
-
-            assert len(result) == 1
-            mock_signal.assert_called_once()
-            kw = mock_signal.call_args[1]
-            assert kw["mem0_returned"] == 2
-            assert kw["filtered_count"] == 1
-            assert kw["query_length"] == len("用户的职业是什么")
-            assert isinstance(kw["filter_latency_ms"], int)
-
-        # 清理
-        cfg._mem0_instance = None
-        cfg._mem0_available = None
 
 
 if __name__ == "__main__":

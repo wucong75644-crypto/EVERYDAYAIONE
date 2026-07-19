@@ -18,32 +18,16 @@ class MemoryV2Config:
 
     # --- L1 提取 ---
     l1_extraction_model: str = "qwen-plus"
-    l1_dedup_model: str = "qwen-turbo"
-    l1_max_messages_per_extraction: int = 10
-    l1_max_background_messages: int = 5
-    l1_max_memories_per_session: int = 20
     l1_extraction_timeout: float = 30.0   # 秒
-    l1_dedup_timeout: float = 20.0        # 秒
 
-    # --- L2 场景 ---
-    l2_scene_model: str = "qwen-plus"
-    l2_max_scenes: int = 15
-    l2_scene_timeout: float = 60.0        # 秒
-
-    # --- L3 画像 ---
-    l3_persona_model: str = "qwen-plus"
-    l3_trigger_every_n: int = 50
-    l3_max_chars: int = 2000
-    l3_persona_timeout: float = 60.0      # 秒
+    # --- Consolidation ---
+    consolidation_model: str = "qwen-turbo"
+    consolidation_timeout: float = 20.0   # 秒
 
     # --- 管道调度 ---
     pipeline_every_n_conversations: int = 5
     pipeline_enable_warmup: bool = True
     pipeline_l1_idle_timeout: int = 60      # 秒
-    pipeline_l2_delay_after_l1: int = 90    # 秒
-    pipeline_l2_min_interval: int = 900     # 秒（15分钟）
-    pipeline_l2_max_interval: int = 3600    # 秒（1小时）
-    pipeline_session_active_hours: int = 24
 
     # --- 检索 ---
     retrieval_strategy: str = "hybrid"      # hybrid / embedding / keyword

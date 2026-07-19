@@ -16,7 +16,7 @@ from loguru import logger
 from core.config import settings
 from services.dashscope_client import DashScopeClient
 
-# 模块级 HTTP 客户端（复用 memory_filter 同款模式）
+# 模块级 HTTP 客户端
 _ds_client = DashScopeClient("suggestion_generator_timeout", default_timeout=5.0)
 
 SYSTEM_PROMPT = """你是一个对话建议生成器。根据用户的问题和 AI 的回复，生成 2-3 条用户可能想继续追问的问题。

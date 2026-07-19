@@ -44,11 +44,15 @@ class ActorTerminalDelivery:
         if status == "cancelled":
             return
         if status == "completed":
-            await self._send_completed(current)
+            await self._send_completed(current, terminal_result)
         else:
             await self._send_failed(current)
 
-    async def _send_completed(self, task: Mapping[str, Any]) -> None:
+    async def _send_completed(
+        self,
+        task: Mapping[str, Any],
+        terminal_result: Mapping[str, Any],
+    ) -> None:
         message = await self._load_message(str(task["assistant_message_id"]))
         push_task_id = _push_task_id(task)
         await self._websocket.send_to_task_or_user(
@@ -62,7 +66,7 @@ class ActorTerminalDelivery:
             ),
             org_id=task.get("org_id"),
         )
-        self._dispatch_completed_hooks(task, message)
+        self._dispatch_completed_hooks(task, message, terminal_result)
 
     async def _send_failed(self, task: Mapping[str, Any]) -> None:
         push_task_id = _push_task_id(task)
@@ -84,6 +88,7 @@ class ActorTerminalDelivery:
         self,
         task: Mapping[str, Any],
         message: Mapping[str, Any],
+        terminal_result: Mapping[str, Any],
     ) -> None:
         handler = self._build_post_handler(task)
         if handler is None:
@@ -108,6 +113,9 @@ class ActorTerminalDelivery:
             final_usage=usage,
             elapsed_ms=0,
             retry_context=None,
+            input_message_id=str(task.get("input_message_id") or ""),
+            output_message_id=str(task.get("assistant_message_id") or ""),
+            through_revision=_committed_revision(task, terminal_result),
         )
         retry_from_model = params.get("_retry_from_model")
         if retry_from_model:
@@ -189,6 +197,23 @@ def _push_task_id(task: Mapping[str, Any]) -> str:
         logger.error(f"actor_delivery_task_id_missing | task={task.get('id')}")
         raise RuntimeError("ACTOR_DELIVERY_TASK_ID_MISSING")
     return str(value)
+
+
+def _committed_revision(
+    task: Mapping[str, Any],
+    terminal_result: Mapping[str, Any],
+) -> int | None:
+    """优先采用原子提交返回的闭合 revision，兼容旧结果推导。"""
+    closed_revision = terminal_result.get("closed_revision")
+    if isinstance(closed_revision, int) and not isinstance(
+        closed_revision,
+        bool,
+    ) and closed_revision > 0:
+        return closed_revision
+    base_revision = task.get("base_context_revision")
+    if isinstance(base_revision, bool) or not isinstance(base_revision, int):
+        return None
+    return base_revision + 1 if base_revision >= 0 else None
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

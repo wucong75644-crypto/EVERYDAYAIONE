@@ -198,17 +198,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 启动 WebSocket Redis Pub/Sub 监听（跨 Worker 消息投递）
     await ws_manager.start_redis_listener()
 
-    # 预热 Mem0 记忆服务连接（避免首次请求慢）
-    try:
-        from services.memory_config import _get_mem0
-        mem0 = await _get_mem0()
-        if mem0:
-            logger.info("Mem0 connection pre-warmed successfully")
-        else:
-            logger.info("Mem0 not configured, memory feature disabled")
-    except Exception as e:
-        logger.warning(f"Mem0 pre-warm failed (non-critical) | error={e}")
-
     # 预热知识库连接 + 导入种子知识（用锁避免多 worker 重复加载）
     try:
         from services.knowledge_config import _get_pg_pool, is_kb_available

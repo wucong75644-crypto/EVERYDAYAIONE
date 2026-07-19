@@ -90,7 +90,10 @@ async def test_completed_delivery_releases_slot_then_pushes_message(monkeypatch)
         websocket,
     )
 
-    await delivery.notify(_task("running"), {"outcome": "committed"})
+    await delivery.notify(
+        _task("running"),
+        {"outcome": "committed", "closed_revision": 9},
+    )
 
     assert released == ["task-1"]
     assert websocket.messages[0][0] == "client-1"
@@ -169,6 +172,8 @@ async def test_completed_delivery_dispatches_post_commit_hooks(monkeypatch):
     )
     task = _task("completed")
     task["model_id"] = "fallback-model"
+    task["input_message_id"] = "input-message-1"
+    task["base_context_revision"] = 6
     task["request_params"] = {
         "content": "用户问题",
         "_retry_from_model": "failed-model",
@@ -187,7 +192,10 @@ async def test_completed_delivery_dispatches_post_commit_hooks(monkeypatch):
         post_handler_factory=lambda: handler,
     )
 
-    await delivery.notify(_task("running"), {"outcome": "committed"})
+    await delivery.notify(
+        _task("running"),
+        {"outcome": "committed", "closed_revision": 9},
+    )
     await asyncio.sleep(0)
 
     handler._dispatch_post_tasks.assert_called_once()
@@ -195,6 +203,9 @@ async def test_completed_delivery_dispatches_post_commit_hooks(monkeypatch):
     assert call["text_content"] == "用户问题"
     assert call["accumulated_text"] == "完成"
     assert call["final_usage"]["prompt_tokens"] == 3
+    assert call["input_message_id"] == "input-message-1"
+    assert call["output_message_id"] == "message-1"
+    assert call["through_revision"] == 9
     handler._extract_retry_knowledge.assert_awaited_once_with(
         task_type="chat",
         model_id="fallback-model",

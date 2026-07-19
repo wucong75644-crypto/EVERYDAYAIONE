@@ -4,11 +4,7 @@
 执行 Agent Loop / ChatHandler 工具循环中的工具。
 异常不在此处 catch — 调用方统一处理并回传大脑。
 
-拆分结构：
-- tool_executor.py (本文件): 核心调度 + 通用工具
-- sandbox_tool_mixin.py: 代码执行沙盒 + 指标 + 文件注册 (SandboxToolMixin)
-- media_tool_executor.py: 图片/视频生成 (MediaToolMixin)
-- erp_tool_executor.py: ERP远程/本地调度 (ErpToolMixin)
+通用调度位于本文件，领域执行逻辑由各 ToolMixin 承担。
 """
 
 from __future__ import annotations
@@ -23,6 +19,7 @@ from config.erp_tools import ERP_SYNC_TOOLS
 from config.file_tools import FILE_INFO_TOOLS
 from services.agent.erp_tool_executor import ErpToolMixin
 from services.agent.artifact_tool_mixin import ArtifactToolMixin
+from services.agent.memory_tool_mixin import MemoryToolMixin
 from services.agent.evidence_tool_mixin import EvidenceToolMixin
 from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
@@ -30,7 +27,7 @@ from services.agent.sandbox_tool_mixin import SandboxToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
 class ToolExecutor(
-    ArtifactToolMixin, ConversationToolMixin,
+    ArtifactToolMixin, MemoryToolMixin, ConversationToolMixin,
     FileToolMixin, CrawlerToolMixin,
     MediaToolMixin, EvidenceToolMixin,
     ErpToolMixin, SandboxToolMixin,
@@ -44,6 +41,7 @@ class ToolExecutor(
         request_ctx=None,
         workspace_user_id: str | None = None,
         resource_manifest=None, runtime_state=None,
+        personal_context_allowed: bool = True,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -74,10 +72,13 @@ class ToolExecutor(
             "artifact_search": self._artifact_search, "artifact_get": self._artifact_get,
             "artifact_read": self._artifact_read,
         }
-        # 注册文件操作工具
+        if personal_context_allowed:
+            self._handlers.update({
+                "memory_search": self._memory_search,
+                "memory_get": self._memory_get,
+            })
         for tool_name in FILE_INFO_TOOLS:
             self._handlers[tool_name] = self._make_file_handler(tool_name)
-        # 散客不注册 ERP 工具（散客无 ERP 功能）
         if org_id is not None:
             self._handlers["fetch_all_pages"] = self._fetch_all_pages
             for tool_name in ERP_SYNC_TOOLS:
