@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { extractTables, exportToCsv, exportToExcel } from '../../../utils/tableExport';
 
 interface TableExportModalProps {
@@ -62,7 +63,6 @@ export default function TableExportModal({
       }
       onClose();
     } catch {
-      const toast = (await import('react-hot-toast')).default;
       toast.error('导出失败，请重试');
     } finally {
       setExporting(false);

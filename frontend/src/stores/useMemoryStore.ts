@@ -7,6 +7,7 @@
 import { AxiosError } from 'axios';
 import { create } from 'zustand';
 import type { MemoryItem, MemorySettings } from '../services/memory';
+import { registerSessionStoreReset } from './sessionStoreResetRegistry';
 import {
   getMemories,
   addMemory as apiAddMemory,
@@ -282,3 +283,5 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       searchQuery: '',
     }),
 }));
+
+registerSessionStoreReset('memory', () => useMemoryStore.getState().reset());

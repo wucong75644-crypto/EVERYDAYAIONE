@@ -13,7 +13,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import MarkdownRenderer from '../MarkdownRenderer';
+import LazyMarkdownRenderer from '../MarkdownRenderer';
+import MarkdownRenderer from '../RichMarkdownRenderer';
 
 const { downloadFileMock } = vi.hoisted(() => ({ downloadFileMock: vi.fn() }));
 
@@ -63,7 +64,7 @@ describe('MarkdownRenderer — 中文伪 LaTeX 转义集成', () => {
 
   it('纯文本（无 Markdown 语法）走快速路径，不调 react-markdown', () => {
     const content = '这是纯文本消息，没有任何 Markdown 标记';
-    const { container } = render(<MarkdownRenderer content={content} />);
+    const { container } = render(<LazyMarkdownRenderer content={content} />);
 
     // 快速路径下不渲染 markdown-body 容器
     expect(container.querySelector('.markdown-body')).toBeNull();
@@ -72,7 +73,7 @@ describe('MarkdownRenderer — 中文伪 LaTeX 转义集成', () => {
   });
 
   it('空 content 安全渲染，不崩溃', () => {
-    const { container } = render(<MarkdownRenderer content="" />);
+    const { container } = render(<LazyMarkdownRenderer content="" />);
     expect(container).toBeTruthy();
   });
 
@@ -136,12 +137,19 @@ describe('MarkdownRenderer — 中文伪 LaTeX 转义集成', () => {
 
   it('流式纯文本显示光标并移除末尾空白', () => {
     const { container } = render(
-      <MarkdownRenderer content={'正在生成\n\n'} isStreaming className="custom" />,
+      <LazyMarkdownRenderer content={'正在生成\n\n'} isStreaming className="custom" />,
     );
 
     expect(container.firstElementChild).toHaveClass('custom');
     expect(container.textContent).toBe('正在生成');
     expect(container.querySelector('.animate-cursor-blink')).toBeInTheDocument();
+  });
+
+  it('Markdown 内容通过懒加载入口渲染为富文本', async () => {
+    render(<LazyMarkdownRenderer content="[官网](https://example.com/page)" />);
+
+    const link = await screen.findByRole('link', { name: '官网' });
+    expect(link).toHaveAttribute('target', '_blank');
   });
 
   it('行内代码保持文本节点且普通表格单元格不转图片', () => {

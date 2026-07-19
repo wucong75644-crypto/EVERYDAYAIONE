@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/block-dev-server.sh",
+        "failClosed": true
+      },
+      {
+        "command": ".cursor/hooks/warn-long-commands.sh"
+      },
+      {
+        "command": ".cursor/hooks/warn-git-push.sh"
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": ".cursor/hooks/after-shell-gh-pr.sh"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": ".cursor/hooks/after-file-edit.sh",
+        "matcher": "\\.(ts|tsx|js|jsx)$"
+      }
+    ]
+  }
+}

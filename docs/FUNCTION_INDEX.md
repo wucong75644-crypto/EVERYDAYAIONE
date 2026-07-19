@@ -39,6 +39,10 @@
 | `DiagramBlock` | `frontend/src/components/chat/message/DiagramBlock.tsx` | 结构化 DiagramPart 正式展示入口，复制操作始终使用原始 Mermaid 源码 | diagram, messageId | React element |
 | `EChartsRenderer` | `frontend/src/components/chat/message/EChartsRenderer.tsx` | 按需加载 ECharts并处理主题、统一状态、重试、脱敏错误日志和 JSON/表格降级 | option, title?, messageId? | React element |
 | `useEChartsRender` | `frontend/src/components/chat/message/useEChartsRender.ts` | 管理 ECharts 异步 Chunk、实例初始化、错误重试、卸载清理和响应式尺寸监听 | containerRef, chartRef, option, theme, messageId? | render state |
+| `echartsRuntime.init` | `frontend/src/components/chat/message/echartsRuntime.ts` | 在独立动态边界内具名注册受支持图表、组件、Canvas 渲染器与主题，并导出 ECharts 初始化函数 | DOM element, theme? | ECharts instance |
+| `PdfPreview` | `frontend/src/preview/adapters/PdfPreview.tsx` | 功能触发后加载 PDF.js，渲染 PDF 并管理翻页、缩放、进度与错误状态 | PreviewCommonProps | React element |
+| `PdfPreviewControls` | `frontend/src/preview/adapters/PdfPreviewControls.tsx` | PDF 与 Office 预览共用的翻页、页码和缩放控制栏 | control props | React element |
+| `PptxPreview` | `frontend/src/preview/adapters/PptxPreview.tsx` | 功能触发后转换 Office 文档并使用 PDF.js 渲染，包含取消与 Blob URL 清理 | PreviewCommonProps | React element |
 | `formatDisplayValue` | `frontend/src/utils/displayValue.ts` | 将未知值稳定转换为可展示文本，处理 BigInt 与循环引用 | value | `string` |
 | `formatFormValue` | `frontend/src/utils/displayValue.ts` | 仅允许标量进入表单控件，拒绝结构化值 | value | `string` |
 | `createStreamingLifecycleActions` | `frontend/src/stores/slices/streamingLifecycleActions.ts` | 创建流式消息启动、注册、完成和查询 actions | set, get | lifecycle actions |
@@ -72,6 +76,8 @@
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
 | `useMessageStore` | `frontend/src/stores/useMessageStore.ts` | Zustand 统一消息状态管理 | - | MessageStore |
+| `registerSessionStoreReset` | `frontend/src/stores/sessionStoreResetRegistry.ts` | 按稳定 Store 名注册同步会话清理回调，重复注册时覆盖旧回调 | name, reset | void |
+| `resetSessionStores` | `frontend/src/stores/sessionStoreResetRegistry.ts` | 同步清理当前已加载的消息、记忆与订阅 Store，避免认证 Store 静态依赖业务 Store | - | void |
 | `submitTask` | `frontend/services/taskService.ts` | 提交新任务到后端 | conversationId, prompt, modelConfig | Promise<Task> |
 | `checkTaskLimits` | `frontend/services/taskService.ts` | 检查任务数量限制 | conversationId | boolean |
 | `subscribeTaskUpdates` | `frontend/services/websocket.ts` | 订阅任务实时更新 | taskIds | void |
@@ -431,6 +437,14 @@
 
 ### 测试工具模块 (Testing Utils)
 
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `pytest_configure` | `backend/testing/pytest_policy.py` | 在应用模块导入前固定测试环境并关闭空闲数据库连接 | - | None |
+| `classify_nodeid` | `backend/testing/pytest_policy.py` | 为无法直接修改的旧测试节点返回执行层级 | nodeid | str \| None |
+| `pytest_collection_modifyitems` | `backend/testing/pytest_policy.py` | 收集阶段为旧测试应用集中式层级 marker | items | None |
+
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
@@ -776,6 +790,8 @@
 | `MessageItem` | `frontend/src/components/chat/message/MessageItem.tsx` | 单条消息编排（memo 包裹，useCallback 稳定回调：handleImageClick/handleRegenerateSingle/handleRegenerate） |
 | `MessageBubbleContent` | `frontend/src/components/chat/message/MessageBubbleContent.tsx` | 气泡内容分发：加载、取消、错误、Markdown、多内容块 |
 | `MessageContentBlocks` | `frontend/src/components/chat/message/MessageContentBlocks.tsx` | AI 多内容块渲染：thinking/tool/text/image/file/chart/table/form/ecom_plan |
+| `MarkdownRenderer` | `frontend/src/components/chat/message/MarkdownRenderer.tsx` | 普通文本快速渲染；检测到 Markdown 或公式语法后按需加载富文本引擎 | content, isStreaming?, className? | React element |
+| `RichMarkdownRenderer` | `frontend/src/components/chat/message/RichMarkdownRenderer.tsx` | Markdown、GFM、KaTeX、代码高亮、Mermaid 与安全文件链接的重型渲染实现 | content, isStreaming?, className? | React element |
 | `MessageMedia` | `frontend/src/components/chat/message/MessageMedia.tsx` | 消息媒体容器（图片、视频、文件、生成占位符） |
 | `MessageImageBlocks` | `frontend/src/components/chat/message/MessageImageBlocks.tsx` | 图片块渲染：小图用 thumbnailUrl，下载/菜单用 originalUrl |
 | `InlineChartImage` | `frontend/src/components/chat/message/InlineChartImage.tsx` | 内容块内联图片，固定占位并按缩略图规则展示 |

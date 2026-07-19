@@ -5,6 +5,7 @@
 import { useState, useCallback, useRef, type DragEvent, type ReactNode } from 'react';
 import { Upload } from 'lucide-react';
 import { m, AnimatePresence } from 'framer-motion';
+import toast from 'react-hot-toast';
 import { WORKSPACE_ALLOWED_EXTENSIONS, WORKSPACE_MAX_FILE_SIZE } from '../../services/workspace';
 
 interface WorkspaceDropZoneProps {
@@ -56,10 +57,7 @@ export default function WorkspaceDropZone({ children, onDrop }: WorkspaceDropZon
     if (validFiles.length > 0) {
       onDrop(validFiles);
     } else if (fileList.length > 0) {
-      // 所有文件都被过滤了 — 动态导入 toast 提示
-      import('react-hot-toast').then(({ default: toast }) => {
-        toast.error('不支持的文件类型或文件过大（上限 50MB）');
-      });
+      toast.error('不支持的文件类型或文件过大（上限 50MB）');
     }
   }, [onDrop]);
 

@@ -46,7 +46,8 @@
 
 本轮图形渲染治理新增的核心模块：
 - `backend/config/image_agent_prompt.py`：从主工具配置中拆出的电商图片提示词片段，保持 `chat_tools.py` 满足文件长度阈值。
-- `frontend/src/components/chat/message/useEChartsRender.ts`：封装 ECharts Chunk 加载、初始化、重试、卸载清理和 ResizeObserver 生命周期。
+- `frontend/src/components/chat/message/useEChartsRender.ts`：封装 ECharts Runtime 动态加载、初始化、重试、卸载清理和 ResizeObserver 生命周期。
+- `frontend/src/components/chat/message/echartsRuntime.ts`：集中具名注册项目支持的 ECharts 图表、组件、Canvas 渲染器和主题，作为图表触发后的独立加载边界。
 
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
 - `docs/document/TECH_Grok式通用记忆运行时重构.md`：将现有业务硬编码的 L1/L2/L3 记忆管道收口为 Grok 式通用 Session Flush、Session Memory、Consolidation、Curated Memory 与 Search/Get 生命周期；领域差异仅允许通过受限 Skill Profile 提供。
@@ -132,6 +133,8 @@
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
+├── .claude/skills/everydayai-test-coverage/SKILL.md # Claude 按需加载测试规则的轻量入口
+├── scripts/run_tests.sh      # 后端 target/fast/pr/full/large/external 分层测试入口
 ├── CLAUDE.md                 # Claude Code 开发规则
 ├── .env                      # 环境变量（本地）
 ├── docs/                     # 项目文档
@@ -435,9 +438,12 @@ EVERYDAYAIONE/
         │       │   ├── MessageItem.tsx       # 单条消息编排（预览、工具栏、删除）
         │       │   ├── MessageBubbleContent.tsx # 气泡内容状态分发
         │       │   ├── MessageContentBlocks.tsx # AI 多内容块渲染
+        │       │   ├── MarkdownRenderer.tsx  # 纯文本快速入口与富文本按需加载边界
+        │       │   ├── RichMarkdownRenderer.tsx # Markdown/KaTeX/高亮重型渲染实现
         │       │   ├── DiagramBlock.tsx      # 结构化 Mermaid 关系图正式入口
         │       │   ├── MermaidRenderer.tsx   # Mermaid 按需加载、安全清理、缓存与源码降级
         │       │   ├── EChartsRenderer.tsx   # ECharts按需加载、状态机、重试与数据降级
+        │       │   ├── echartsRuntime.ts     # ECharts具名注册与动态加载边界
         │       │   ├── MessageMedia.tsx      # 消息媒体容器（图片、视频、文件）
         │       │   ├── FormBlockContent.tsx  # 聊天表单活动态展示外壳与操作栏
         │       │   ├── MessageImageBlocks.tsx # 图片块渲染（缩略图展示、原图下载）
@@ -476,6 +482,7 @@ EVERYDAYAIONE/
         ├── stores/                   # 状态管理（Zustand）
         │   ├── useAuthStore.ts           # 认证状态（用户信息、Token）
         │   ├── useAuthModalStore.ts      # 认证弹窗状态（开关、模式切换）
+        │   ├── sessionStoreResetRegistry.ts # 已加载会话 Store 的同步清理注册表
         │   ├── useMessageStore.ts        # 统一消息 Store（消息、任务、缓存）
         │   ├── useDetailPageStore.ts     # 主图详情制作页专用状态
         │   └── useTaskRestorationStore.ts # 任务恢复状态
@@ -542,6 +549,11 @@ EVERYDAYAIONE/
             ├── taskRestoration.ts        # 任务恢复工具（WebSocket 恢复）
             └── tabSync.ts                # 跨标签页同步（BroadcastChannel）
         ├── preview/adapters/          # 文件预览适配器
+        │   ├── PdfAdapter.tsx            # PDF 轻量匹配入口与按需加载壳
+        │   ├── PdfPreview.tsx            # PDF.js 重型渲染实现
+        │   ├── PdfPreviewControls.tsx    # PDF/Office 共用翻页缩放工具栏
+        │   ├── PptxAdapter.tsx           # Office 轻量匹配入口与按需加载壳
+        │   ├── PptxPreview.tsx           # Office 转 PDF 后的重型渲染实现
         │   ├── SpreadsheetPreview.tsx    # 电子表格加载、Sheet 状态与取消清理
         │   ├── SpreadsheetTable.tsx      # 电子表格纯展示与 Sheet Tabs
         │   └── spreadsheetData.ts        # CSV/TSV 解析与合并单元格清理
@@ -557,6 +569,10 @@ EVERYDAYAIONE/
     ├── test_summary_revision_atomic.py # 摘要闭合 revision 选择与数据库 CAS 契约测试
     └── test_chat_payload_blocks.py # 聊天 emit_payload 图片 URL 字段保留测试
 ```
+
+测试执行与 AI Token 控制规范见
+`docs/document/TECH_TEST_EXECUTION.md`；详细流程按需加载
+`.cursor/skills/everydayai-test-coverage/SKILL.md`。
 
 ## 开发规范
 - 遵循 `.cursorrules` 中定义的所有规则

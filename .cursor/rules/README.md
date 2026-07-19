@@ -1,292 +1,104 @@
-# 阶段工作流使用指南
+# 阶段工作流使用指南（Claude 对齐版）
 
-> **更新日期**：2026-01-21
-> **版本**：V1.1（优化版）
+> **更新日期**：2026-07-09
+> **版本**：V2.0（与 Claude Code 配置同步）
 
-**最新优化**：
-- ✅ 修正代码块嵌套问题（阶段1、阶段3）
-- ✅ 补充任务分级说明（阶段4）
-- ✅ 补充阶段回退规则（底层规则）
+本目录已与 `~/.claude/` 对齐：底层规则、阶段 skill、commands、hooks、project memory 均以 Claude 为真源回写。
 
 ---
 
-## 📁 文件结构
+## 文件结构
 
 ```
 EVERYDAYAIONE/
-├── .cursorrules                      # 底层核心规则（适用所有阶段）
-└── .cursor/rules/                    # 阶段工作流规则
-    ├── 1-requirement.md              # 阶段1：需求挖掘
-    ├── 2-ui-design.md                # 阶段2：UI设计
-    ├── 3-dev-doc.md                  # 阶段3：技术设计
-    ├── 4-implementation.md           # 阶段4：开发执行
-    └── 5-testing.md                  # 阶段5：测试修复
+├── AGENTS.md / .cursorrules          # 底层核心规则（V3.3，与 ~/.claude/CLAUDE.md 对齐）
+└── .cursor/
+    ├── hooks.json                    # 从 Claude hooks 移植
+    ├── hooks/                        # hook 脚本
+    ├── memory/                       # Claude project memory 副本
+    ├── rules/
+    │   ├── 1-requirement.md … 5-testing.md
+    │   ├── git-workflow.md           # 来自 ~/.claude/rules/
+    │   ├── patterns.md               # 来自 ~/.claude/rules/
+    │   ├── project-memory.mdc        # alwaysApply memory
+    │   └── README.md
+    └── skills/
+        ├── requirement-analysis/     # ← everydayai-requirement
+        ├── ui-design/                # ← everydayai-ui-design
+        ├── dev-doc/                  # ← everydayai-tech-design
+        ├── implementation/           # ← everydayai-implementation
+        ├── testing-bugfix/          # ← everydayai-testing
+        ├── everydayai-deploy/
+        ├── everydayai-evaluate/
+        ├── everydayai-git-push/
+        ├── everydayai-restart/
+        ├── everydayai-review/
+        └── everydayai-test-coverage/
 ```
+
+用户级同步位置：
+- `~/.agents/skills/source-command-everydayai-*`
+- `~/.cursor/skills/everydayai-*/SKILL.md`
 
 ---
 
-## 🎯 使用方式
+## 使用方式
 
-### 方式1：使用 `@` 符号引用（推荐）
-```
-用户：@1-requirement 我想要一个任务历史记录功能
-AI：[自动加载需求挖掘规则，开始结构化提问]
-```
+### 自动触发（推荐）
+AI 根据描述自动加载对应 skill：
+- "我想要…""实现一个…" → requirement
+- "界面设计""页面布局" → ui-design
+- "技术方案""数据库设计" → tech-design / evaluate
+- "开始开发""写代码" → implementation
+- "有 bug""报错" → testing
+- "检查测试""测试覆盖" → test-coverage
+- 代码修改、新建、拆分或 Bug 修复完成 → test-coverage
+- "评审方案""讨论一下" → evaluate
+- "审查""review" → review
+- "部署""上线" → deploy
+- "推送代码""push" → git-push
+- "重启服务" → restart
 
-### 方式2：使用指令切换
-```
-用户：进入需求阶段
-AI：[切换到需求挖掘阶段]
-```
-
-### 方式3：AI自动识别（已配置）
-AI 会根据你的请求自动判断阶段：
-- "我想要...""实现一个..." → 自动进入 `@1-requirement`
-- "界面设计""页面布局" → 自动进入 `@2-ui-design`
-- "技术方案""数据库设计" → 自动进入 `@3-dev-doc`
-- "开始开发""写代码" → 自动进入 `@4-implementation`
-- "有bug""报错" → 自动进入 `@5-testing`
-- "改颜色""修改文案" → 无需阶段流程，直接执行
-
----
-
-## 🚀 完整流程示例
-
-### 场景：新增"任务历史记录"功能
-
-#### 1️⃣ 需求阶段
-```
-你：@1-requirement 我想要一个任务历史记录功能
-
-AI：
-我的理解：用户想在对话页面查看历史生成的任务记录。
-
-待澄清问题：
-1. 【目标用户】历史记录是显示在当前对话还是全局所有对话？
-2. 【功能边界】需要支持筛选（按日期/状态）吗？
-3. 【数据来源】历史记录是否需要分页？每页显示多少条？
-...
-
-你：只显示当前对话的历史，需要分页，每页20条
-
-AI：
-✅ 需求阶段完成
-
-## 需求清单
-### 核心功能
-1. 显示当前对话的任务历史记录
-2. 支持分页（每页20条）
-...
-
----
-**下一步**：进入UI设计（`@2-ui-design`）
-```
-
-#### 2️⃣ UI设计阶段
-```
-你：@2-ui-design
-
-AI：
-## UI设计文档
-
-### 1. 页面结构
-#### 页面1：对话页面（修改）
-- 新增组件：
-  - TaskHistory：历史记录列表
-  - Pagination：分页组件
-...
-
-你：UI OK
-
-AI：
-✅ UI设计完成
-UI文档已保存至：`docs/document/UI_任务历史记录.md`
-
----
-**下一步**：进入技术设计（`@3-dev-doc`）
-```
-
-#### 3️⃣ 技术设计阶段
-```
-你：@3-dev-doc
-
-AI：
-## 技术设计：任务历史记录
-
-### 3. 数据库设计
-#### 表：task_history
-| 字段 | 类型 | 约束 | 说明 |
-...
-
-### 4. API设计
-#### GET /api/tasks/history
-...
-
-### 6. 开发任务拆分
-- [ ] 任务1.1：创建数据库表
-- [ ] 任务1.2：实现API
-- [ ] 任务2.1：前端组件
-...
-
-你：设计OK
-
-AI：
-✅ 技术设计完成
-设计文档已保存至：`docs/document/TECH_任务历史记录.md`
-
----
-**下一步**：进入开发（`@4-implementation`）
-请指定开发任务：任务1.1 / 任务1.2 / ...
-```
-
-#### 4️⃣ 开发阶段
-```
-你：@4-implementation 开发任务1.1
-
-AI：
-好的，我将实现【任务1.1：创建数据库表】
-...
-[创建数据库迁移文件]
-
-✅ 任务1.1完成
-
-**创建的文件**：
-- database/migrations/001_create_task_history.sql
-
-**测试方法**：
-1. 连接数据库：psql -U postgres -d dbname
-2. 执行迁移：\i database/migrations/001_create_task_history.sql
-...
-
----
-**下一步**：请确认是否继续开发任务1.2
-
-你：继续
-
-AI：[开始任务1.2]
-```
-
-#### 5️⃣ 测试阶段
-```
-你：@5-testing 点击历史记录按钮后，页面报错：Cannot read property 'map' of undefined
-
-AI：
-## 问题分析
-### 根因定位
-`taskHistoryStore.ts` 中 `historyList` 初始值为 `undefined`，应该初始化为空数组 `[]`
-
-## 修复方案
-**文件**：src/store/taskHistoryStore.ts
-**改动**：将 `historyList: undefined` 改为 `historyList: []`
-...
-请确认是否执行？
-
-你：确认
-
-AI：
-✅ 问题已修复
-...
-```
+### 手动引用
+- `@1-requirement` / `@requirement-analysis`
+- `@2-ui-design` / `@ui-design`
+- `@3-dev-doc` / `@dev-doc`
+- `@4-implementation` / `@implementation`
+- `@5-testing` / `@testing-bugfix`
 
 ---
 
-## 📊 阶段对照表
+## Hooks（与 Claude 行为对齐）
 
-| 阶段 | 触发指令 | 自动触发词 | 产出文档 | 是否写代码 |
-|------|---------|-----------|---------|----------|
-| 需求讨论 | @1-requirement | "我想要...""实现一个..." | REQ_xx.md | ❌ 否 |
-| UI设计 | @2-ui-design | "界面设计""页面布局" | UI_xx.md | ❌ 否 |
-| 技术设计 | @3-dev-doc | "技术方案""数据库设计" | TECH_xx.md | ❌ 否 |
-| 开发执行 | @4-implementation | "开始开发""写代码" | - | ✅ 是 |
-| 测试修复 | @5-testing | "有bug""报错" | - | ✅ 是 |
-
----
-
-## ⚡ 快捷指令
-
-### 阶段切换
-- `进入需求阶段` / `@1-requirement`
-- `进入UI阶段` / `@2-ui-design`
-- `进入设计阶段` / `@3-dev-doc`
-- `进入开发阶段` / `@4-implementation`
-- `进入测试阶段` / `@5-testing`
-
-### 阶段确认
-- `需求OK` / `需求确认` → 完成需求阶段
-- `UI OK` / `UI确认` → 完成UI阶段
-- `设计OK` / `方案确认` → 完成技术设计阶段
-- `开发完成` → 完成开发阶段
-- `问题解决` → 完成测试阶段
-
-### 阶段回退
-- `回到需求阶段` → 从其他阶段回退到需求讨论
-- `回到UI阶段` → 回退到UI设计
-- `回到设计阶段` → 回退到技术设计
-
-### 跳过阶段（不推荐）
-- `跳过需求分析` → 直接进入UI设计（AI会警告风险）
-- `跳过UI设计` → 直接进入技术设计
-- `跳过设计` → 直接进入开发（AI会强烈警告）
+| 事件 | 行为 |
+|------|------|
+| beforeShellExecution | 拦截直接 `npm/pnpm/yarn/bun run dev`，要求 tmux |
+| beforeShellExecution | 长命令（install/test 等）提示使用 tmux |
+| beforeShellExecution | `git push` 前提醒 review |
+| afterShellExecution | `gh pr create` 后输出 PR URL |
+| afterFileEdit | TS/JS 编辑后 prettier；tsc 报错提示；`console.log` 警告 |
 
 ---
 
-## ⚠️ 重要说明
+## 规则优先级
 
-### 1. 阶段规则与底层规则的关系
-- **底层规则**（`.cursorrules`）：代码质量、安全、文档维护，**适用所有阶段**
-- **阶段规则**（`.cursor/rules/`）：职责分离的工作流规则，**按需加载**
-- **冲突时**：底层规则 > 阶段规则
+1. `AGENTS.md` / `.cursorrules`（底层，最高）
+2. `project-memory.mdc`（项目记忆，alwaysApply）
+3. 阶段 skills / rules（按需）
+4. hooks（运行时拦截与后处理）
 
-### 2. 小改动无需走阶段流程
-以下情况直接执行，无需进入阶段流程：
-- 修改样式（改颜色、调整间距）
-- 修改文案
-- 修复简单bug（单文件、<20行改动）
-- 性能优化（不改架构）
-
-### 3. Token消耗优化
-- 阶段规则是**按需加载**的（仅在使用 `@阶段规则` 时加载）
-- 不使用阶段规则时，只加载 `.cursorrules`（约1,800 tokens）
-- 使用阶段规则时，额外加载对应规则文件（约2,500-5,500 tokens）
-
-### 4. 文档保存位置
-阶段产出的文档保存至 `docs/document/` 目录：
-- 需求文档：`docs/document/REQ_[功能名].md`
-- UI文档：`docs/document/UI_[功能名].md`
-- 技术方案：`docs/document/TECH_[功能名].md`
+冲突时：底层规则 > 阶段规则。
 
 ---
 
-## 🐛 常见问题
+## 同步说明
 
-### Q1：AI没有自动进入阶段怎么办？
-A：手动使用 `@阶段规则` 引用，如 `@1-requirement`
-
-### Q2：我想跳过某个阶段可以吗？
-A：可以使用跳过指令（如 `跳过需求分析`），但AI会警告风险
-
-### Q3：如何知道当前在哪个阶段？
-A：AI会在回复中明确说明当前阶段，如"✅ 需求阶段完成"
-
-### Q4：阶段规则会影响日常bug修复吗？
-A：不会。简单bug修复AI会自动判断无需走阶段流程，直接进入 `@5-testing`
-
-### Q5：如何修改阶段规则？
-A：直接编辑 `.cursor/rules/` 目录下的对应文件
-
----
-
-## 📝 反馈与改进
-
-如果你发现：
-- 阶段规则不合理
-- AI没有正确识别阶段
-- Token消耗过高
-- 流程太繁琐
-
-请随时向我反馈，我会持续优化规则。
+- **真源**：`~/.claude/CLAUDE.md` + `~/.claude/commands/` + `~/.claude/rules/` + Claude project memory
+- **回写目标**：本仓库 `.cursor/`、`AGENTS.md`、`.cursorrules`，以及 `~/.agents/skills`、`~/.cursor/skills`、`~/AGENTS.md`
+- **测试 Skill 真源**：`.cursor/skills/everydayai-test-coverage/SKILL.md`；`.claude/skills/` 使用轻量转发，避免规则漂移
+- 小改动（改颜色/文案/单文件小 bug）无需走完整阶段流程
 
 ---
 
 **维护者**：技术团队  
-**最后更新**：2026-01-21
+**最后同步**：2026-07-09（Claude → Cursor）

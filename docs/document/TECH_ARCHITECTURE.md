@@ -2408,6 +2408,8 @@ async def stream_chat(prompt: str):
 - 严禁修改数组引用触发全局渲染
 - 必须用 Map/原子状态实现局部更新
 - WebSocket 更新必须按 taskId 精准定位单个组件
+- WebSocketProvider 仅在受保护的 Chat 路由动态加载；首页、后台和组织设置不加载聊天消息运行时
+- 认证 Store 通过轻量同步注册表清理已加载的会话 Store，禁止反向静态依赖消息、记忆或订阅 Store
 
 **详细说明**：参见 [PAGE_DESIGN.md - 3.2 多任务并发架构](./PAGE_DESIGN.md#32-多任务并发架构)
 

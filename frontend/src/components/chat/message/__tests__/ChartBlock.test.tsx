@@ -57,13 +57,26 @@ describe('ChartBlock data view', () => {
     render(<ChartBlock option={{ value: 42 }} spec_format="unknown" />);
 
     expect(screen.getByText(/不支持的图表格式/)).toBeInTheDocument();
-    expect(screen.getByText(/\"value\": 42/)).toBeInTheDocument();
+    expect(screen.getByText(/"value": 42/)).toBeInTheDocument();
   });
 
   it('does not initialize ECharts for an empty option', async () => {
     render(<ChartBlock option={{}} />);
 
     expect(await screen.findByText('图表配置为空')).toBeInTheDocument();
+    expect(screen.getByText('{}')).toBeInTheDocument();
+  });
+
+  it('falls back immediately when a rendered option becomes empty', async () => {
+    const { rerender } = render(<ChartBlock option={{
+      xAxis: { data: ['A'] },
+      series: [{ type: 'bar', data: [1] }],
+    }} />);
+    await waitFor(() => expect(screen.getByTitle('数据视图')).toBeInTheDocument());
+
+    rerender(<ChartBlock option={{}} />);
+
+    expect(screen.getByText('图表配置为空')).toBeInTheDocument();
     expect(screen.getByText('{}')).toBeInTheDocument();
   });
 

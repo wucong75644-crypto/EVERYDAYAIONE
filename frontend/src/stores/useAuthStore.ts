@@ -5,10 +5,8 @@
 import { create } from 'zustand';
 import type { Organization, User } from '../types/auth';
 import { getCurrentUser, listMyOrganizations } from '../services/auth';
-import { useSubscriptionStore } from './useSubscriptionStore';
-import { useMemoryStore } from './useMemoryStore';
-import { useMessageStore } from './useMessageStore';
 import { logger } from '../utils/logger';
+import { resetSessionStores } from './sessionStoreResetRegistry';
 
 interface AuthState {
   user: User | null;
@@ -67,9 +65,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     // 切换企业后清除缓存（不同企业数据隔离）
     localStorage.removeItem('everydayai_conversations_cache');
     localStorage.removeItem('everydayai_message_cache');
-    useSubscriptionStore.getState().clearSubscriptions();
-    useMemoryStore.getState().reset();
-    useMessageStore.getState().reset();
+    resetSessionStores();
     set({ currentOrgId: org?.org_id ?? null, currentOrg: org });
   },
 
@@ -81,9 +77,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem('current_org');
     localStorage.removeItem('everydayai_conversations_cache');
     localStorage.removeItem('everydayai_message_cache');
-    useSubscriptionStore.getState().clearSubscriptions();
-    useMemoryStore.getState().reset();
-    useMessageStore.getState().reset();
+    resetSessionStores();
     set({
       user: null, isAuthenticated: false,
       currentOrgId: null, currentOrg: null, organizations: [],

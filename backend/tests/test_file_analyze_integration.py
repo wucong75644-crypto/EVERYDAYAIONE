@@ -9,7 +9,7 @@
   - Bug-1 真实回归（小发票文件 → XML 不再造谣 _is_summary）
 
 标记：
-  @pytest.mark.integration → 需要真实 DashScope API（CI 跳过）
+  @pytest.mark.external → 需要真实 DashScope API（默认排除）
 """
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ class TestFileMetaV2Fields:
     """FileMeta v2 新字段写入 meta.json。"""
 
     @pytest.mark.asyncio
+    @pytest.mark.external
     @pytest.mark.skipif(
         not os.path.exists(REAL_BUG_FILE),
         reason="真实数据未提供，跳过 V2 端到端",
@@ -73,6 +74,7 @@ class TestCacheHit:
     """二次调用同一文件命中缓存（snapshot 匹配）。"""
 
     @pytest.mark.asyncio
+    @pytest.mark.external
     @pytest.mark.skipif(
         not os.path.exists(REAL_BUG_FILE),
         reason="真实数据未提供",

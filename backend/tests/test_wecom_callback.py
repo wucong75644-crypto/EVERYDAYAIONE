@@ -137,10 +137,9 @@ class TestReceiveMessage:
         with patch(
             "api.routes.wecom.get_settings", return_value=mock_settings,
         ), patch(
-            "api.routes.wecom.WecomMessageService",
-        ) as mock_svc_cls:
-            # Mock WecomMessageService 防止实际调用
-            mock_svc_cls.return_value.handle_message = AsyncMock()
+            "api.routes.wecom._process_callback_xml",
+            new_callable=AsyncMock,
+        ) as mock_process:
 
             resp = client.post(
                 "/api/wecom/callback",
@@ -154,6 +153,7 @@ class TestReceiveMessage:
 
         assert resp.status_code == 200
         assert resp.text == "success"
+        mock_process.assert_awaited_once()
 
     def test_receive_bad_signature(self, client, crypt, mock_settings):
         """签名错误 → 403"""

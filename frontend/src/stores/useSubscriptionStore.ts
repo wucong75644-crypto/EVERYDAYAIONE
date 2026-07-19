@@ -13,6 +13,7 @@ import {
   unsubscribeModel,
 } from '../services/subscription';
 import { logger } from '../utils/logger';
+import { registerSessionStoreReset } from './sessionStoreResetRegistry';
 
 interface SubscriptionState {
   /** 已订阅的模型 ID 列表 */
@@ -128,3 +129,8 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
     set({ subscribedModelIds: [], subscribingIds: [] });
   },
 }));
+
+registerSessionStoreReset(
+  'subscriptions',
+  () => useSubscriptionStore.getState().clearSubscriptions(),
+);

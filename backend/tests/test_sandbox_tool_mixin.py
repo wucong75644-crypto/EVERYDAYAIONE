@@ -28,6 +28,7 @@ class FakeSandboxMixin(SandboxToolMixin):
 
     def __init__(self, user_id="u1", org_id="org1", conversation_id="conv1"):
         self.user_id = user_id
+        self.workspace_user_id = user_id
         self.org_id = org_id
         self.conversation_id = conversation_id
 

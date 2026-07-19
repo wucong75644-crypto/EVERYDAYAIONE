@@ -2,7 +2,7 @@
  * 代码块组件
  *
  * 提供语法高亮 + 语言标签 + 一键复制功能。
- * 由 MarkdownRenderer 内部通过 react-markdown 的 components.code 映射使用。
+ * 由 RichMarkdownRenderer 通过 react-markdown 的 components.code 映射使用。
  */
 
 import { useState, useCallback, useRef, useEffect, memo, useMemo } from 'react';

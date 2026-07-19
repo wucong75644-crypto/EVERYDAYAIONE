@@ -4,7 +4,7 @@
 验证 migration 116 三件套（唯一索引 + advisory lock + 单事务）能在真实并发下
 保证同一 wecom_userid 不会创建多个 user 行。
 
-跳过条件：DATABASE_URL 未设置时跳过（CI 环境）。
+启用条件：同时设置 RUN_EXTERNAL_TESTS=1 和 DATABASE_URL。
 清理：使用一个独立的虚拟 wecom_userid 前缀 (concurrent_test_xxx)，
      测试结束后 DELETE 所有匹配数据，保证可重复执行不污染生产。
 """
@@ -24,10 +24,14 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("DATABASE_URL"),
-    reason="无 DATABASE_URL，跳过集成测试",
-)
+pytestmark = [
+    pytest.mark.external,
+    pytest.mark.skipif(
+        os.environ.get("RUN_EXTERNAL_TESTS") != "1"
+        or not os.environ.get("DATABASE_URL"),
+        reason="需要 RUN_EXTERNAL_TESTS=1 和 DATABASE_URL",
+    ),
+]
 
 
 def _get_pg_conn():

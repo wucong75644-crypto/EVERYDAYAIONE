@@ -5,9 +5,10 @@
  * 不用关心是哪个 Modal/adapter 在工作 —— 由 registry 路由。
  */
 
-import { memo } from 'react';
+import { memo, Suspense } from 'react';
 import type { PreviewState } from './types';
 import { resolveAdapter } from './registry';
+import PreviewFrame from './PreviewFrame';
 
 interface PreviewHostProps {
   state: PreviewState;
@@ -35,7 +36,6 @@ export default memo(function PreviewHost({
     // registry 应该至少包含 fallbackAdapter（priority=0, always-match），
     // 走到这里说明 registry 还未加载 adapter（Phase 1 框架初始化阶段）
     if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
       console.warn('[PreviewHost] no adapter resolved; registry empty?', current);
     }
     return null;
@@ -43,13 +43,25 @@ export default memo(function PreviewHost({
 
   const { Component } = adapter;
   return (
-    <Component
-      item={current}
-      siblings={items}
-      index={index}
-      onClose={onClose}
-      onNavigate={onIndexChange}
-      onDelete={onDelete}
-    />
+    <Suspense
+      fallback={
+        <PreviewFrame
+          item={current}
+          onClose={onClose}
+          loading
+          loadingText="正在加载文件预览器..."
+        />
+      }
+    >
+      <Component
+        key={current.url ?? current.workspacePath ?? current.filename}
+        item={current}
+        siblings={items}
+        index={index}
+        onClose={onClose}
+        onNavigate={onIndexChange}
+        onDelete={onDelete}
+      />
+    </Suspense>
   );
 });

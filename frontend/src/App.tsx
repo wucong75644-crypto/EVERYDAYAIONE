@@ -3,9 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './stores/useAuthStore';
-import { WebSocketProvider } from './contexts/WebSocketContext';
+import { useAuthModalStore } from './stores/useAuthModalStore';
 import ProtectedRoute from './components/auth/ProtectedRoute';
-import AuthModal from './components/auth/AuthModal';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 
@@ -25,7 +24,34 @@ const WecomCallback = lazy(() => import('./pages/WecomCallback'));
 const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
 const Admin = lazy(() => import('./pages/Admin'));
 const DetailPage = lazy(() => import('./pages/DetailPage'));
+const AuthModal = lazy(() => import('./components/auth/AuthModal'));
+const ChatRuntime = lazy(() =>
+  import('./contexts/WebSocketContext').then((module) => ({
+    default: module.WebSocketProvider,
+  }))
+);
 // PromptGallery 已内嵌到首页，保留路由做重定向
+
+export function DeferredAuthModal() {
+  const isOpen = useAuthModalStore((state) => state.isOpen);
+  if (!isOpen) return null;
+
+  return (
+    <Suspense fallback={null}>
+      <AuthModal />
+    </Suspense>
+  );
+}
+
+export function ProtectedChatRoute() {
+  return (
+    <ProtectedRoute>
+      <ChatRuntime>
+        <Chat />
+      </ChatRuntime>
+    </ProtectedRoute>
+  );
+}
 
 /**
  * 路由动画包装器
@@ -59,19 +85,11 @@ function AnimatedRoutes() {
           {/* 受保护的路由：需要登录才能访问 */}
           <Route
             path="/chat"
-            element={
-              <ProtectedRoute>
-                <Chat />
-              </ProtectedRoute>
-            }
+            element={<ProtectedChatRoute />}
           />
           <Route
             path="/chat/:id"
-            element={
-              <ProtectedRoute>
-                <Chat />
-              </ProtectedRoute>
-            }
+            element={<ProtectedChatRoute />}
           />
           <Route
             path="/detail-page"
@@ -125,9 +143,8 @@ function App() {
   return (
     <ErrorBoundary>
     <BrowserRouter>
-      <WebSocketProvider>
-        {/* 全局认证弹窗 */}
-        <AuthModal />
+        {/* 认证弹窗只在打开后加载表单和 Dialog 依赖 */}
+        <DeferredAuthModal />
 
         {/* 全局 Toast 通知（样式跟随主题 token） */}
         <Toaster
@@ -159,7 +176,6 @@ function App() {
         />
 
         <AnimatedRoutes />
-      </WebSocketProvider>
     </BrowserRouter>
     </ErrorBoundary>
   );

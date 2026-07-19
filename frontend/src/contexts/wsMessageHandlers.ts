@@ -8,6 +8,7 @@
  */
 
 import { useAuthStore } from '../stores/useAuthStore';
+import { useMemoryStore } from '../stores/useMemoryStore';
 import { logger } from '../utils/logger';
 import { calcRemainingText } from '../utils/messageUtils';
 import { parseContentPart, parseContentParts, parseProtocolString } from '../schemas/messageProtocol';
@@ -178,9 +179,9 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
       logger.info('ws:memory', 'memories extracted', { count: data.count });
 
-      import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
-        useMemoryStore.getState().onMemoryExtracted(data.memories! as Array<{ id: string; memory: string }>);
-      });
+      useMemoryStore.getState().onMemoryExtracted(
+        data.memories as Array<{ id: string; memory: string }>,
+      );
     },
 
   thinking_chunk: (deps, msg) => {

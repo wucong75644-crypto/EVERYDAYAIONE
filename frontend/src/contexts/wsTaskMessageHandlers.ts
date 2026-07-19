@@ -1,5 +1,6 @@
 /** WebSocket 任务完成、失败与图片 partial update 处理。 */
 
+import toast from 'react-hot-toast';
 import { normalizeMessage, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { tabSync } from '../utils/tabSync';
@@ -88,10 +89,8 @@ function completeConversation(
 function notifyMessageDone(messageData: Record<string, unknown> | undefined, enabled: boolean): void {
   if (!enabled) return;
   const isFailed = messageData?.status === 'failed';
-  import('react-hot-toast').then(({ default: toast }) => {
-    if (isFailed) toast.error('生成失败');
-    else toast.success('生成完成');
-  });
+  if (isFailed) toast.error('生成失败');
+  else toast.success('生成完成');
 }
 
 function notifyWorkspaceChanged(messageData: Record<string, unknown> | undefined): void {
@@ -210,9 +209,7 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   if (task_id) handleTaskFailure(deps, task_id, error);
   if (conversation_id) store.completeStreaming(conversation_id);
   store.setIsSending(false);
-  import('react-hot-toast').then(({ default: toast }) => {
-    toast.error(error?.message || '生成失败');
-  });
+  toast.error(error?.message || '生成失败');
 }
 
 export function handleImagePartialUpdate(

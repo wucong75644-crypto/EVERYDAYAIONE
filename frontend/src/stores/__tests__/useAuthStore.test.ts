@@ -8,6 +8,9 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useAuthStore } from '../useAuthStore';
+import { useMemoryStore } from '../useMemoryStore';
+import { useMessageStore } from '../useMessageStore';
+import { useSubscriptionStore } from '../useSubscriptionStore';
 
 beforeEach(() => {
   localStorage.clear();
@@ -72,6 +75,22 @@ describe('clearAuth', () => {
     expect(state.user).toBeNull();
     expect(state.isAuthenticated).toBe(false);
     expect(state.currentOrgId).toBeNull();
+  });
+
+  it('同步重置已加载的会话级 Store', () => {
+    useMemoryStore.setState({ isModalOpen: true });
+    useMessageStore.setState({ messages: { 'conversation-1': [] } });
+    useSubscriptionStore.setState({
+      subscribedModelIds: ['model-1'],
+      subscribingIds: ['model-2'],
+    });
+
+    useAuthStore.getState().clearAuth();
+
+    expect(useMemoryStore.getState().isModalOpen).toBe(false);
+    expect(useMessageStore.getState().messages).toEqual({});
+    expect(useSubscriptionStore.getState().subscribedModelIds).toEqual([]);
+    expect(useSubscriptionStore.getState().subscribingIds).toEqual([]);
   });
 });
 

@@ -12,6 +12,43 @@
 
 ---
 
+### 2026-07-19 测试分层与 AI Token 治理
+
+- 后端测试按 Small/Medium/Large/External 分层，默认 pytest 使用简洁输出并排除 Large/External；统一入口为 `scripts/run_tests.sh`。
+- 真实 PostgreSQL、DashScope 和路由评测必须显式进入 External；仅存在 `DATABASE_URL` 不再触发生产/测试库连接。
+- 两条各约 30 秒的单元测试已修正过期 mock 边界，相关 ERP 集合 24 项耗时 0.31 秒，企微回调 9 项耗时 0.43 秒。
+- `AGENTS.md` 只保留 Skill 路由大纲，详细测试选择、覆盖率和输出规则按需加载 test-coverage Skill，避免每轮常驻上下文膨胀。
+- PR 测试门禁耗时 116.43 秒：7,781 passed、15 skipped、13 deselected、4 xfailed；4 个既有 fixture 失败与改造前一致，测试环境未再尝试连接真实 PostgreSQL。
+
+### 2026-07-19 Grok 式通用记忆运行时 — Phase 1 通用 Flush 已接入
+
+- Phase 2 任务 2.1 已建立 additive 数据库协议：`memory_session_logs` 固定 from/through revision、prompt version 幂等键和有界 JSON；`memory_atoms` 增加通用 lifecycle、Session lineage、valid time、hash、recall 与 Skill 来源字段。迁移尚未应用，运行时接线将在任务 2.2 完成。
+- Phase 2 任务 2.2 已接入 Actor 原子提交返回的 `closed_revision`（旧终态结果兼容使用 `base_context_revision + 1` 推导）：Session Flush 从 cursor 后读取最多 20 条已闭合 user/assistant 消息；非法输出、空窗口和模型失败均不推进 cursor，`NO_MEMORY` 作为有效可审计日志推进。进程内 keyed lock 避免重复模型调用，跨 Worker 由数据库 `FOR UPDATE`、唯一键和 cursor CAS 保证单次成功提交。迁移 140/141 均尚未应用；无 revision 入口已在 Phase 4.2a 失败关闭。
+- Phase 2 任务 2.3 已完成 Session exact/semantic dedup 与 shadow 对账：claim 经 NFKC/casefold/空白归一化生成 hash，与最近 25 份 Session Log 及 50 条 active 旧 atom 比较；非 exact 候选单次批量 embedding，以 0.92 阈值去重，同批候选也互相去重。Embedding 失败不写、不推进 cursor。Session Log 的 Receipt 记录输入、接受、exact/semantic 重复数、旧/新比较数和逐候选 outcome。PromptBuilder 仅在旧记忆会话缓存 miss 时读取新 Session 候选并记录数量/字面重合指标，不注入模型、不改变回答。
+- Phase 3 任务 3.1a/3.1b 已完成通用 Consolidation：Run 强制关联 3–25 份 Session Log，以 user/source hash 幂等；同用户进程内 singleflight，跨进程由 Session/Curated 行锁兜底；距上次完成至少 4 小时才运行。模型只能在 novel/duplicate/supersedes/conflicts 中判关系，不能生成或改写事实；所有候选再次校验精确 user 原文，非 explicit、关系非法或 embedding 失败均不提交。迁移 142/143 尚未应用，下一步为 Phase 3.2 通用 Search/Get 召回。
+- Phase 3 任务 3.2a 已完成通用 Search/Get 内核：底层不再执行 domain 业务过滤；Search/Get 都只允许 active、未删除、已经生效且尚未过期的 Curated Memory。向量与 BM25 经统一相关性、0.3 硬阈值、180 天时间衰减和字符 MMR 后返回；Get 必须同时匹配 memory_id、org_id、user_id 并返回原始消息溯源。兼容层暂保留未生效的 `domain` 参数，待 Phase 3.3 清理旧 API；PromptBuilder fail-closed 注入接线属于 3.2b。
+- Phase 3 任务 3.2b 已完成召回接线：PromptBuilder 新会话首轮自动注入上限为 3 条，取消旧 LLM 精排失败后回退未过滤结果；Context Compaction 后删除旧 Session cache 并按当前问题重新 Search，失败返回空而不是复用旧记忆。个人上下文允许时主 Agent 获得只读 `memory_search/memory_get`，Search 最多 6 条并返回 `memory:<atom_id>` 稳定 ref；个人上下文关闭或组织 scope 缺失时工具隐藏/拒绝。下一步为 Phase 3.3 退出旧 L2 Scene、L3 Persona 权威写入和默认注入。
+- Phase 3 任务 3.3 已完成旧权威链退出：Scheduler 已删除业务关键词/数字门禁及全部 L2/L3 timer、生成和状态触发入口。MemoryService 不再读取 Persona 构建 Prompt，PromptBuilder 对新检索和旧 Redis cache 都强制忽略 Persona。`memory_scenes/memory_personas` 历史表及显式管理读取 API 暂保留只读兼容，没有生产写入或默认注入调用；物理删除需等待迁移 140–143 应用、旧数据对账和回滚窗口结束后另行执行。
+- Phase 4 任务 4.1 已完成停用代码清理：物理删除零生产调用的 L2 Scene/L3 Persona manager 与 Prompt 文件，移除对应模型/定时配置、旧 Prompt 测试及通用召回接口中未生效的 `domain` 参数。历史数据库表和显式管理读取 API 仍保留，避免破坏旧数据查看与回滚能力。
+- Phase 4 任务 4.2a 已切断旧 L1 直写链：Scheduler 只接受闭合 revision，缺失 revision 时不读取或更新 pipeline state；`L1Extractor` 仅保留无副作用候选提议，旧 Dedup 服务/Prompt/配置和关键词质量门已删除。Consolidation 使用独立通用模型配置；Scene/L2/L3 历史数据库字段保留但 Runtime 不再维护。
+- Phase 4 任务 4.2b 已清除召回旧语义：`ScoredMemory`、Search/Get SQL、MemoryService V2 输出、Agent 工具和 Prompt 注入均只使用通用 `kind`；历史 kind 缺失时固定为 `memory`，不回退 `persona/episodic/scene_name`。零生产调用的 V2 Atom 手动 CRUD 与底层直接插入函数已删除。当前真正的 `/memories` 和企微手动管理仍使用 Mem0，必须在 Phase 4.3 通过独立数据库/API迁移切换，不能视为已完成。
+- Phase 4 任务 4.3a 已建立手动 Curated Memory 数据库协议：`memory_atoms.org_id` 允许 `NULL` 表示个人 scope，`source_kind` 区分 conversation/manual/skill；四个 RPC 使用 null-safe scope、事务级并发锁、100 条容量上限、内容哈希去重和软删除，并撤销 `PUBLIC` 执行权，仅授权 `service_role`。迁移 144 尚未应用，公共 `/memories` 与企微入口仍未切换；下一步为 4.3b 服务层与个人 scope 召回接线。
+- Phase 4 任务 4.3b 已完成服务与个人召回内核：`ManualMemoryService` 直接保存用户原文，不调用 LLM 改写；embedding 或数据库失败时关闭写入且不回退 Mem0。Search/Get、Prompt 自动注入和 Agent Memory 工具均允许 `org_id=NULL`，并使用 user_id + NULL-safe scope 隔离。公共 `/memories` 与企微仍使用旧 `MemoryService`，需在 4.3c 切换依赖后才会使用新服务。
+- Phase 4 任务 4.3c 已完成入口切换：Web `/memories` 设置与 CRUD、企微文本指令及卡片查看/清空均使用 `ManualMemoryService(self.db)`，保持请求、响应与 scope 传递兼容；记忆开关不再依赖 Mem0 可用性。旧 `MemoryService` 代码仍保留供 4.3d 做零调用确认与清理；迁移 140–144 未应用前不得部署当前应用代码。
+- Phase 4 任务 4.3d 已完成旧 Mem0 运行时退出：删除旧 CRUD/提取/精排服务、Mem0 配置与缓存、应用启动预热、`mem0ai` 依赖及专属测试；通用 Session 级 Redis cache 保留并改用 Curated Memory 命名。`core.config` 的三个 `memory_filter_*` 字段仍被非记忆的 `suggestion_generator.py` 复用，暂不能在本任务删除，建议后续独立重命名。迁移 140–144 仍未应用，当前代码不得部署。
+- L1 提取协议已由业务化 Scene/三类旧记忆 JSON 改为通用 `NO_MEMORY/CANDIDATES`；仅允许显式、可复用信息，禁止电商领域分类和 assistant/tool 单独举证。
+- 所有候选必须引用本轮真实 user message ID 与精确原文；任一候选格式、类型、证据或时效校验失败时整批拒绝。
+- Actor 后置钩子只传递 conversation 与闭合 revision；Session Flush 从数据库窗口读取真实消息 ID 和原文，不再信任调用方拼装的消息证据。
+- 旧 L1 去重直写已经删除；去重与关系判断统一由 Session Flush 和 Consolidation 的失败关闭链路执行。
+- 兼容策略：通用 kind 暂映射到旧 `persona/episodic/instruction` 表字段；Session Memory、Consolidation 和旧 L2/L3 退出仍按后续阶段实施。
+
+### 2026-07-19 Grok 式通用记忆运行时 — Phase 0 契约与误提取基线
+
+- 已确认 Memory Runtime 去除电商关键词、固定 domain/category 和业务专属权威层；领域差异后续仅通过受限 Skill Profile 提供。
+- 新增通用 `MemoryCandidate`、Evidence、ValidationResult 协议及纯函数 Evidence Validator；长期记忆必须是显式表达并包含可在 user 原消息中精确定位的引用。
+- 已固定未知类型、缺失来源、伪造引用、assistant 单独支持、假设、示例、问题、临时长期规则、非法有效期和重复消息 ID 等负例；当前仅建立契约与测试，尚未接入生产提取和写入链路。
+- 下一阶段将替换旧提取 Prompt、删除所有 `fallback_store_all` 并接入 fail-closed Validator；未完成前不能宣称生产误提取已解决。
+
 ### 2026-07-19 统一会话上下文方案 B — 数据库持久层已完成
 
 - 已固化 Web、企业微信共用的 ConversationItem、Artifact、ContextReceipt 和
@@ -503,6 +540,13 @@
 
 ## 更新记录
 
+- **2026-07-19**：前端 Chunk 治理任务 6 完成部署产物卫生治理：仓库继续全局忽略 `.DS_Store`，生产部署在前端构建前显式清理旧 `dist`，前端 rsync 增加 `.DS_Store` 排除规则；本地现存 Finder 元数据同步清理，避免旧产物或部署期间重新生成的系统文件进入服务器目录。
+- **2026-07-19**：前端 Chunk 治理任务 5 完成主入口压缩：WebSocketProvider 下移为受保护 Chat 路由动态 Runtime，AuthModal 仅在打开后加载；认证 Store 通过同步 reset 注册表清理已加载的消息、记忆和订阅 Store，不再反向静态导入聊天状态链。生产构建主入口从 564.01 kB 降至 368.35 kB（gzip 180.19 → 123.92 kB），达到 350–400 kB 验收目标；AuthModal 为 19.49 kB、WebSocketContext 为 124.17 kB 动态入口，未使用 `manualChunks`。501.94 kB 同名 `index` 经 sourcemap 确认为 Mammoth/JSZip 文档预览动态包，不属于主入口。
+- **2026-07-19**：前端 Chunk 治理任务 4 完成 ECharts/Mermaid 按需加载收口：ECharts 新增具名注册 Runtime，图表出现后才由 `EChartsRenderer` 动态加载，原 core/charts/components/Axis/graphic 等多入口收敛为单个 793.30 kB（gzip 263.34 kB）Runtime；失败 Promise 仍可清空重试。Mermaid 保持库级动态加载、SVG 安全清理与 50 条缓存，并补充相同源码不重复解析测试。生产 manifest 确认 Chat 静态依赖不含 ECharts/Mermaid，Chat 为 299.46 kB；无图表或 Mermaid 内容时不下载对应引擎。
+- **2026-07-19**：修复 `useEChartsRender` 空配置分支在 Effect 内同步设置派生状态的问题；`fallback` 和“图表配置为空”现由 `hasOption` 直接派生，空配置不加载 ECharts，并补充有效配置切换为空配置的回归测试；同时清理该测试文件正则中的多余双引号转义。
+- **2026-07-19**：前端 Chunk 治理任务 3 完成 Chat 主 Chunk 拆分：`MarkdownRenderer` 保留纯文本快速路径，仅在检测到 Markdown/公式语法时动态加载 `RichMarkdownRenderer`，KaTeX、highlight.js、react-markdown 与 unified/micromark 不再进入普通文本聊天静态依赖。生产构建 Chat 从 899.79 kB 降至 299.49 kB（gzip 273.74 → 87.71 kB），Chat CSS 从 35.16 kB 降至 4.85 kB；富文本渲染器为独立 340.87 kB 动态入口，达到 Chat `<500 kB` 验收目标，未使用 `manualChunks`。
+- **2026-07-19**：前端 Chunk 治理任务 2 完成重型预览库隔离：Plotly、Vega、ExcelJS、XLSX 保持既有功能内动态导入；PDF/PPT 适配器拆为轻量匹配入口与动态渲染器，`react-pdf`/PDF.js/Worker 不再进入预览公共静态依赖。生产 manifest 显示 `PdfPreview`、`PptxPreview` 为独立动态入口，预览公共 `useFileSelection` Chunk 从 379.38 kB 降至 29.82 kB；Chat 静态依赖不包含上述重型库。Chat 自身仍为 899.79 kB，继续由后续聊天主 Chunk 拆分任务治理。
+- **2026-07-19**：前端 Chunk 治理任务 1 完成导入语义收口：`react-hot-toast` 统一使用既有静态入口，Memory 作为聊天首屏能力统一静态加载；ECharts 主题入口已由现有 `ChartBlock → EChartsRenderer → useEChartsRender` 拆分消除混用。生产构建不再出现静态/动态导入冲突警告；Chat 仍为 899.83 kB，重型预览库隔离与聊天主 Chunk 拆分继续作为后续任务。
 - **2026-07-19**：定位并修复统一 Artifact 上线后的工具 Turn 提交回滚：`materialize_artifacts` 曾同时输出 `inline_content/storage_ref`，非活动字段的 Python `None` 经 JSONB 成为 JSON `null`，不满足 `conversation_artifacts_content_check` 要求的 SQL `NULL`。因此工具结果已流式展示但 Actor commit 触发 `CheckViolation`，同一任务被重跑三次，后续消息排队且 Web 永久显示正在输出。现改为应用只输出活动存储字段，迁移 139 在数据库边界再次按 `storage_kind` 清除互斥字段；确定性 `IntegrityError` 立即走 fenced fail 并通知终态，租约尝试耗尽同步关闭 streaming assistant。全量回归 7,636 passed、24 skipped、4 xfailed，6 个失败与既有 Workspace 夹具/本地网络基线一致；核心模块覆盖率 90%。生产已应用迁移 139 并部署提交 `324ad4de`，三个遗留 task/message 均闭合为 failed，生产核心回归 85 passed，Actor/企微/同步错误日志为 0，公网健康正常。生产 Linux 另暴露 `test_wakeup_during_scan_triggers_next_scan_without_poll_delay` 的既有调度敏感断言（预期一次、实际两次），本次未修改 Worker，列为独立测试竞态问题。
 - **2026-07-19**：修复统一长期上下文上线后的聊天阻断：执行入口已显式传递请求级 `model_id/org_id`，但 `ChatContextMixin._build_llm_messages` 仅接入 `model_id`，导致 Web/企微在上下文组装前抛出 `unexpected keyword argument`。现已补齐 `org_id` 正式接口并统一用于 Workspace 与 PromptBuilder 的租户范围，未显式传入的旧调用继续兼容 Handler 组织值；基础生成测试改为 autospec 校验真实方法签名，避免宽松 AsyncMock 再次掩盖调用协议漂移。
 - **2026-07-19**：Web Actor 正式主链与统一长期上下文已部署生产。维护窗口内确认 Actor 活跃任务为 0，完成数据库 schema、上下文表数据和旧后端代码备份；迁移 136–138 以单事务正式应用，历史回填写入 130 条消息、433 个 ContextItem、87 个 Artifact，重复 sequence、缺失 Artifact 引用、无 group tool_result 和租户不匹配均为 0。生产相关测试 64 passed，外部 `/api/health` 正常，Backend、Conversation Actor、企微、同步四服务 active，启动后 5 分钟 error 日志为 0。发布提交为 `2a6bf6a8`。

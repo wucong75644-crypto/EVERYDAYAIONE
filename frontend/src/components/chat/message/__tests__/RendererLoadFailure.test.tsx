@@ -17,6 +17,7 @@ afterEach(() => {
   vi.doUnmock('echarts/renderers');
   vi.doUnmock('echarts/charts');
   vi.doUnmock('echarts/components');
+  vi.doUnmock('../echartsRuntime');
   vi.resetModules();
 });
 
@@ -51,24 +52,11 @@ describe('renderer chunk loading retries', () => {
 
   it('retries ECharts after its dynamic import fails', async () => {
     chartInstance.setOption.mockReset();
-    vi.doMock('echarts/core', () => {
+    vi.doMock('../echartsRuntime', () => {
       throw new Error('echarts chunk unavailable');
     });
-    vi.doMock('echarts/renderers', () => ({ CanvasRenderer: {} }));
-    vi.doMock('echarts/charts', () => ({
-      LineChart: {}, BarChart: {}, PieChart: {}, ScatterChart: {}, RadarChart: {},
-      HeatmapChart: {}, FunnelChart: {}, BoxplotChart: {}, TreemapChart: {},
-      SunburstChart: {}, SankeyChart: {}, GaugeChart: {}, CandlestickChart: {},
-    }));
-    vi.doMock('echarts/components', () => ({
-      GridComponent: {}, TooltipComponent: {}, LegendComponent: {},
-      ToolboxComponent: {}, DataZoomComponent: {}, TitleComponent: {},
-      VisualMapComponent: {}, MarkLineComponent: {}, MarkPointComponent: {},
-      DatasetComponent: {},
-    }));
     vi.doMock('../../../../constants/echartsThemes', () => ({
       getEChartsThemeName: vi.fn(() => 'light'),
-      registerAllThemes: vi.fn(),
     }));
     vi.doMock('../../../../hooks/useTheme', () => ({
       useTheme: () => ({ theme: 'classic', isDark: false }),
@@ -81,11 +69,9 @@ describe('renderer chunk loading retries', () => {
     render(<EChartsRenderer option={{ series: [{ type: 'bar', data: [1] }] }} />);
     expect(await screen.findByText('图表渲染失败')).toBeInTheDocument();
 
-    vi.doUnmock('echarts/core');
-    vi.doMock('echarts/core', () => ({
-      use: vi.fn(),
+    vi.doUnmock('../echartsRuntime');
+    vi.doMock('../echartsRuntime', () => ({
       init: vi.fn(() => chartInstance),
-      registerTheme: vi.fn(),
     }));
     fireEvent.click(screen.getByRole('button', { name: '重新渲染' }));
 

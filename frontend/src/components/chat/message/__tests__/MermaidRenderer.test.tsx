@@ -92,4 +92,20 @@ describe('MermaidRenderer', () => {
 
     expect(screen.queryByText('obsolete')).toBeNull();
   });
+
+  it('reuses cached SVG for repeated source', async () => {
+    const source = 'flowchart TD\nCacheSource-->SingleRender';
+    renderMock.mockResolvedValue({
+      svg: '<svg><text>cached result</text></svg>',
+    });
+
+    const first = render(<MermaidRenderer source={source} />);
+    await screen.findByTestId('mermaid-svg');
+    first.unmount();
+
+    render(<MermaidRenderer source={source} />);
+    await screen.findByTestId('mermaid-svg');
+
+    expect(renderMock).toHaveBeenCalledTimes(1);
+  });
 });

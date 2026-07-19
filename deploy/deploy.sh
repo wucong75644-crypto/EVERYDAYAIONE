@@ -157,6 +157,7 @@ build_frontend() {
 
     # 构建
     log_info "执行前端构建..."
+    rm -rf dist
     npm run build
 
     if [ ! -d "dist" ]; then
@@ -219,6 +220,7 @@ sync_frontend() {
         --exclude 'node_modules' \
         --exclude '.env' \
         --exclude '.env.local' \
+        --exclude '.DS_Store' \
         frontend/dist/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_FRONTEND_DIR}/
 

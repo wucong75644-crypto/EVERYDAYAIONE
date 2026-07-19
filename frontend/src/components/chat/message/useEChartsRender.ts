@@ -1,42 +1,25 @@
-import { useEffect, useState, type MutableRefObject, type RefObject } from 'react';
-import { getEChartsThemeName, registerAllThemes } from '../../../constants/echartsThemes';
+import { useEffect, useMemo, useState, type MutableRefObject, type RefObject } from 'react';
+import { getEChartsThemeName } from '../../../constants/echartsThemes';
 import type { ThemeName } from '../../../hooks/useTheme';
 import { logger } from '../../../utils/logger';
 
-export type ChartInstance = ReturnType<typeof import('echarts/core').init>;
+export type ChartInstance = ReturnType<typeof import('./echartsRuntime').init>;
 type RenderStatus = 'idle' | 'loading' | 'ready' | 'error' | 'fallback';
+type RenderResult = {
+  key: object;
+  status: RenderStatus;
+  error: string;
+};
 
-let echartsPromise: Promise<typeof import('echarts/core')> | null = null;
-
-async function loadECharts() {
-  const [{ use: register }, { CanvasRenderer }, charts, components] = await Promise.all([
-    import('echarts/core'),
-    import('echarts/renderers'),
-    import('echarts/charts'),
-    import('echarts/components'),
-  ]);
-  register([
-    CanvasRenderer,
-    charts.LineChart, charts.BarChart, charts.PieChart, charts.ScatterChart,
-    charts.RadarChart, charts.HeatmapChart, charts.FunnelChart, charts.BoxplotChart,
-    charts.TreemapChart, charts.SunburstChart, charts.SankeyChart,
-    charts.GaugeChart, charts.CandlestickChart,
-    components.GridComponent, components.TooltipComponent, components.LegendComponent,
-    components.ToolboxComponent, components.DataZoomComponent, components.TitleComponent,
-    components.VisualMapComponent, components.MarkLineComponent,
-    components.MarkPointComponent, components.DatasetComponent,
-  ]);
-  const echarts = await import('echarts/core');
-  registerAllThemes(echarts.registerTheme);
-  return echarts;
-}
+let echartsPromise: Promise<typeof import('./echartsRuntime')> | null = null;
 
 function getECharts() {
   if (!echartsPromise) {
-    echartsPromise = loadECharts().catch((error: unknown) => {
-      echartsPromise = null;
-      throw error;
-    });
+    echartsPromise = import('./echartsRuntime')
+      .catch((error: unknown) => {
+        echartsPromise = null;
+        throw error;
+      });
   }
   return echartsPromise;
 }
@@ -60,19 +43,28 @@ export function useEChartsRender({
   hasOption: boolean;
   messageId?: string;
 }) {
-  const [status, setStatus] = useState<RenderStatus>('idle');
-  const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const renderKey = useMemo(() => ({
+    activeType,
+    attempt,
+    hasOption,
+    isDark,
+    messageId,
+    option,
+    theme,
+  }), [activeType, attempt, hasOption, isDark, messageId, option, theme]);
+  const [result, setResult] = useState<RenderResult>(() => ({
+    key: renderKey,
+    status: 'idle',
+    error: '',
+  }));
 
   useEffect(() => {
     if (!containerRef.current) return;
     let disposed = false;
     if (!hasOption) {
-      setError('图表配置为空');
-      setStatus('fallback');
       return () => { disposed = true; };
     }
-    setStatus('loading');
     void getECharts()
       .then((echarts) => {
         if (disposed || !containerRef.current) return;
@@ -80,14 +72,16 @@ export function useEChartsRender({
         const themeName = getEChartsThemeName(theme, isDark);
         chartRef.current = echarts.init(containerRef.current, themeName);
         chartRef.current.setOption(option);
-        setStatus('ready');
-        setError('');
+        setResult({ key: renderKey, status: 'ready', error: '' });
         logger.info('ChartBlock', `rendered | type=${activeType} | theme=${themeName}`);
       })
       .catch((caught: unknown) => {
         if (disposed) return;
-        setError(caught instanceof Error ? caught.message : String(caught));
-        setStatus('error');
+        setResult({
+          key: renderKey,
+          status: 'error',
+          error: caught instanceof Error ? caught.message : String(caught),
+        });
         logger.error('chart:render', 'ECharts render failed', undefined, {
           messageId,
           contentType: 'chart',
@@ -100,10 +94,7 @@ export function useEChartsRender({
       chartRef.current?.dispose();
       chartRef.current = null;
     };
-  }, [
-    activeType, attempt, chartRef, containerRef, hasOption, isDark,
-    messageId, option, theme,
-  ]);
+  }, [activeType, chartRef, containerRef, hasOption, isDark, messageId, option, renderKey, theme]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -112,11 +103,11 @@ export function useEChartsRender({
     return () => observer.disconnect();
   }, [chartRef, containerRef]);
 
+  const status = result.key === renderKey ? result.status : 'loading';
   return {
-    status,
-    error,
+    status: hasOption ? status : 'fallback',
+    error: hasOption ? result.error : '图表配置为空',
     retry: () => {
-      setStatus('loading');
       setAttempt((value) => value + 1);
     },
   };

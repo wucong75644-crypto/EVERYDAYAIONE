@@ -287,6 +287,7 @@ class TestEvalDataset:
     not USE_REAL_API,
     reason="Real API eval: set ROUTING_EVAL_REAL=1 to run",
 )
+@pytest.mark.external
 class TestRoutingEvalReal:
     """真实 API 评测"""
 

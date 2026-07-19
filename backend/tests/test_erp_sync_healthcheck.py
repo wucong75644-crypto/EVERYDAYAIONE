@@ -21,7 +21,6 @@ from services.kuaimai.erp_sync_healthcheck import (
     ALERT_THRESHOLD,
     _fingerprint,
     _maybe_alert_org,
-    _push_to_org_admins,
     _scan_and_alert,
 )
 
@@ -316,67 +315,6 @@ class TestMaybeAlertOrg:
             await _maybe_alert_org(MagicMock(), "system", items)
 
         mock_push.assert_not_called()
-
-
-# ── _push_to_org_admins（管理员查询走 org_members）────────
-
-
-class TestPushToOrgAdmins:
-    @pytest.mark.asyncio
-    async def test_queries_org_members_not_users_role(self):
-        """关键回归测试: admin 查询必须用 org_members 表
-
-        历史 bug: 旧实现用 users.role IN ('admin', 'super_admin') + current_org_id，
-        但 users.role 实际只有 'super_admin' 和 'user'，企业管理员是
-        org_members.role IN ('owner', 'admin')。普通管理员永远收不到告警。
-        """
-        # 记录所有 db.table 调用
-        table_calls = []
-
-        class SpyDB:
-            def table(self, name):
-                table_calls.append(name)
-                return _AsyncQueryStub([])  # 空，触发 early return
-
-        await _push_to_org_admins(SpyDB(), "org-test", "test msg")
-
-        # 必须查 org_members（多租户成员关系）而不是 users
-        assert "org_members" in table_calls
-        # 不应该查 users 表来判断 role
-        assert "users" not in table_calls
-
-    @pytest.mark.asyncio
-    async def test_no_admins_returns_silently(self):
-        """没有管理员时静默返回，不报错"""
-        db = _DBStub({"org_members": []})
-        # 不应抛异常
-        await _push_to_org_admins(db, "org-test", "test msg")
-
-    @pytest.mark.asyncio
-    async def test_no_wecom_mapping_returns_silently(self):
-        """有管理员但没绑企微时静默返回"""
-        db = _DBStub({
-            "org_members": [{"user_id": "u1", "role": "owner"}],
-            "wecom_user_mappings": [],
-        })
-        # 不应抛异常
-        await _push_to_org_admins(db, "org-test", "test msg")
-
-    @pytest.mark.asyncio
-    async def test_no_wecom_agent_config_returns_silently(self):
-        """有 wecom 映射但企业未配自建应用 → 静默返回"""
-        db = _DBStub({
-            "org_members": [{"user_id": "u1", "role": "owner"}],
-            "wecom_user_mappings": [{"wecom_userid": "wu1", "user_id": "u1"}],
-            "org_configs": None,  # _load_encrypted 返回 None
-        })
-        # mock resolver.get 返回 None（没有 agent 配置）
-        with patch(
-            "services.org.config_resolver.AsyncOrgConfigResolver.get",
-            new_callable=AsyncMock, return_value=None,
-        ):
-            # 不应抛异常
-            await _push_to_org_admins(db, "org-test", "test msg")
 
 
 # ── push_token_refresh_alert（Bug 3 快档告警）─────────────

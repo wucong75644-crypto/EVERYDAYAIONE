@@ -13,6 +13,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { registerSessionStoreReset } from './sessionStoreResetRegistry';
 import { useTaskRestorationStore } from './useTaskRestorationStore';
 
 // Slice 导入
@@ -89,3 +90,5 @@ export const useMessageStore = create<MessageStore>()(
     }
   )
 );
+
+registerSessionStoreReset('messages', () => useMessageStore.getState().reset());

@@ -73,13 +73,18 @@ def test_evidence_tools_open_only_when_snapshot_has_evidence() -> None:
 
     assert {
         tool["function"]["name"] for tool in without_evidence
-    } == {"artifact_search", "artifact_get", "artifact_read"}
+    } == {
+        "artifact_search", "artifact_get", "artifact_read",
+        "memory_search", "memory_get",
+    }
     assert {
         tool["function"]["name"] for tool in with_evidence
     } == {
         "artifact_search",
         "artifact_get",
         "artifact_read",
+        "memory_search",
+        "memory_get",
         "evidence_search",
         "evidence_get",
     }
