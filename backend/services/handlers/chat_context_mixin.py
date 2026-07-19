@@ -71,6 +71,7 @@ class ChatContextMixin:
         permission_mode: str = "auto",
         context_anchor: Optional["ContextAnchor"] = None,
         model_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表。
 
@@ -92,6 +93,9 @@ class ChatContextMixin:
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
         workspace_user_id = getattr(self, "_workspace_user_id", user_id)
+        effective_org_id = (
+            org_id if org_id is not None else getattr(self, "org_id", None)
+        )
         personal_context_allowed = getattr(
             self, "_personal_context_allowed", True,
         )
@@ -101,16 +105,17 @@ class ChatContextMixin:
             try:
                 from services.agent.file_path_cache import get_file_cache
                 from core.workspace import resolve_workspace_dir, resolve_staging_dir
-                _org_id = getattr(self, "org_id", None)
                 _settings = get_settings()
                 _ws_dir = resolve_workspace_dir(
-                    _settings.file_workspace_root, workspace_user_id, _org_id,
+                    _settings.file_workspace_root,
+                    workspace_user_id,
+                    effective_org_id,
                 )
                 _cache = get_file_cache(conversation_id)
                 _staging = resolve_staging_dir(
                     _settings.file_workspace_root,
                     workspace_user_id,
-                    _org_id,
+                    effective_org_id,
                     conversation_id,
                 )
                 _cache.set_staging_dir(_staging)
@@ -142,7 +147,7 @@ class ChatContextMixin:
         inp = BuildInput(
             user_id=user_id,
             conversation_id=conversation_id,
-            org_id=getattr(self, "org_id", None),
+            org_id=effective_org_id,
             text_content=text_content,
             workspace_files=workspace_files,
             image_urls=image_urls,

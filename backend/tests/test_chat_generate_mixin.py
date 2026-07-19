@@ -58,7 +58,7 @@ class TestGenerateCompleteBasic:
         mock_adapter.close = AsyncMock()
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
+             patch.object(handler, "_build_llm_messages", autospec=True, return_value=[]), \
              patch.object(handler, "_extract_text_content", return_value="你好"):
             gen_result = await handler.generate_complete(
                 content=[TextPart(text="你好")],

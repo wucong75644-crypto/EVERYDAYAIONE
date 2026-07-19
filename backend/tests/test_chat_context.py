@@ -8,6 +8,7 @@
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1067,6 +1068,60 @@ class TestBuildLlmMessagesUserLocation:
             and "用户位置" in m["content"]
         ]
         assert len(location_msgs) == 0
+
+
+class TestBuildLlmMessagesOrgScope:
+    """请求级组织范围必须进入统一 PromptBuilder。"""
+
+    @pytest.mark.asyncio
+    async def test_explicit_org_id_is_forwarded_to_prompt_builder(
+        self,
+        chat_handler,
+    ):
+        chat_handler.org_id = "handler-org"
+        result = SimpleNamespace(
+            messages=[],
+            compaction=None,
+            static_block_chars=0,
+            dynamic_block_chars=0,
+            persona_injected=False,
+            memory_injected=False,
+        )
+
+        with patch("services.prompt_builder.PromptBuilder") as builder_class:
+            builder_class.return_value.build = AsyncMock(return_value=result)
+            await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+                org_id="request-org",
+            )
+
+        assert builder_class.call_args.args[0].org_id == "request-org"
+
+    @pytest.mark.asyncio
+    async def test_missing_org_id_uses_handler_scope(self, chat_handler):
+        chat_handler.org_id = "handler-org"
+        result = SimpleNamespace(
+            messages=[],
+            compaction=None,
+            static_block_chars=0,
+            dynamic_block_chars=0,
+            persona_injected=False,
+            memory_injected=False,
+        )
+
+        with patch("services.prompt_builder.PromptBuilder") as builder_class:
+            builder_class.return_value.build = AsyncMock(return_value=result)
+            await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        assert builder_class.call_args.args[0].org_id == "handler-org"
 
 
 # ============ Test 分层 append 顺序 ============

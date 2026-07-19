@@ -876,7 +876,7 @@
 | `filter_memories` | `backend/services/memory_filter.py` | 千问精排过滤（降级链：turbo → plus → 跳过） | query, memories | List[Dict] |
 | `format_memory` | `backend/services/memory_config.py` | 格式化单条 Mem0 记忆（含 score） | raw | Dict |
 | `build_memory_system_prompt` | `backend/services/memory_config.py` | 将记忆列表构建为 system prompt | memories | str |
-| `ChatContextMixin._build_memory_prompt` | `backend/services/handlers/chat_context_mixin.py` | 构建记忆 system prompt（对话注入入口） | user_id, query | Optional[str] |
+| `ChatContextMixin._build_llm_messages` | `backend/services/handlers/chat_context_mixin.py` | 按固定快照组装模型上下文，并将请求级模型与组织范围传入统一 PromptBuilder | content, user_id, conversation_id, text_content, prefetched_summary?, user_location?, permission_mode, context_anchor?, model_id?, org_id? | List[Dict] |
 | `ChatContextMixin._extract_memories_async` | `backend/services/handlers/chat_context_mixin.py` | 异步提取记忆（fire-and-forget） | user_id, conversation_id, user_text, assistant_text | None |
 
 #### 前端函数
