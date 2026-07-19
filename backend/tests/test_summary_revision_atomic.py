@@ -111,6 +111,7 @@ def test_migration_locks_validates_and_cas_updates_summary() -> None:
     assert "summary_through_message_id = p_through_message_id" in sql
     assert "SECURITY INVOKER" in sql
     assert "TO service_role" in sql
+    assert "rolname = 'service_role'" in sql
 
 
 def test_rollback_removes_only_summary_rpc() -> None:

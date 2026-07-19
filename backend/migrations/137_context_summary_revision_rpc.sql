@@ -84,9 +84,15 @@ $$;
 REVOKE ALL ON FUNCTION apply_context_summary(
     UUID, BIGINT, BIGINT, UUID, TEXT, INTEGER
 ) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION apply_context_summary(
-    UUID, BIGINT, BIGINT, UUID, TEXT, INTEGER
-) TO service_role;
+DO $grant$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT EXECUTE ON FUNCTION apply_context_summary(
+            UUID, BIGINT, BIGINT, UUID, TEXT, INTEGER
+        ) TO service_role;
+    END IF;
+END
+$grant$;
 
 COMMENT ON FUNCTION apply_context_summary(UUID, BIGINT, BIGINT, UUID, TEXT, INTEGER)
     IS '以 conversation 行锁和 expected revision 原子提交闭合 Turn 摘要，拒绝旧结果覆盖';
