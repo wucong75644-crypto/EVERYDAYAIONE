@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from psycopg.errors import CheckViolation
 
 from services.conversation_execution import (
     ConversationExecutionService,
@@ -426,6 +427,30 @@ async def test_commit_connection_error_does_not_write_false_failure() -> None:
         await service.execute_claim(claim)
 
     assert not any(name == "fail_generation_turn" for name, _ in db.calls)
+
+
+@pytest.mark.asyncio
+async def test_commit_integrity_error_writes_confirmed_failure() -> None:
+    db = _FakeDB()
+    db.queue(
+        "commit_generation_turn",
+        CheckViolation("artifact storage contract violated"),
+    )
+    db.queue("fail_generation_turn", {"outcome": "failed"})
+    observer = _Observer()
+    service = ConversationExecutionService(
+        db,
+        _SuccessExecutor(),
+        terminal_observer=observer,
+    )
+    claim = GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+
+    result = await service.execute_claim(claim)
+
+    assert result == {"outcome": "failed"}
+    assert [name for name, _ in db.calls].count("commit_generation_turn") == 1
+    assert [name for name, _ in db.calls].count("fail_generation_turn") == 1
+    assert observer.calls[0][1] == result
 
 
 def test_invalid_claim_result_is_rejected() -> None:

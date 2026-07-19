@@ -54,6 +54,7 @@
 - `backend/services/agent/runtime/artifacts/`：通用工具结果规范化、Run 内完整事实存储、40KB 模型视图、稳定引用和 UTF-8 游标分页读取。
 - `backend/services/agent/artifact_tool_mixin.py`、`backend/config/artifact_tools.py`：所有聊天入口共用的只读 `artifact_search/get/read` 执行与工具协议。
 - `backend/services/agent/runtime/artifacts/persistence.py`：Actor 提交前将小 Artifact 内联、大 Artifact 上传租户隔离 OSS，并生成迁移 138 的提交参数。
+- `backend/migrations/139_actor_artifact_terminal_integrity.sql`：在数据库边界归一化 Artifact 互斥存储字段，并保证 Actor 重试耗尽后 assistant 消息不残留 streaming。
 - `backend/services/agent/runtime/artifacts/repository.py`：按会话、组织和固定 revision 跨轮检索、获取、分页读取 inline/OSS/message_slice Artifact。
 - `backend/services/agent/runtime/context/assembler.py`：模型能力预算驱动的 ContextPlan、结构化双模型压缩、确定性降级、工具组/最近 Turn 保护与硬上限门禁。
 - `backend/services/handlers/chat_context/unified_history_loader.py`：将持久 ConversationItem 重建为模型历史；新主链存在时不与旧 messages 历史混合。

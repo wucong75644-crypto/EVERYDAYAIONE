@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
 from loguru import logger
+from psycopg import IntegrityError
 from psycopg.types.json import Jsonb
 
 
@@ -211,11 +212,15 @@ class ConversationExecutionService:
                     str(output_message_id),
                     outcome,
                 )
-            except BaseException:
+            except BaseException as error:
                 await self._cleanup_artifacts(
                     outcome,
                     task_id=claim.task_id,
                 )
+                if isinstance(error, IntegrityError):
+                    result = await self._fail(claim, error)
+                    await self._notify_terminal(task, result)
+                    return result
                 raise
             if result.get("outcome") != "committed":
                 await self._cleanup_artifacts(

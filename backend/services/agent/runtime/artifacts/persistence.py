@@ -95,7 +95,6 @@ async def _materialize_one(
             **base,
             "storage_kind": "inline",
             "inline_content": draft.content,
-            "storage_ref": None,
         }
 
     from services.oss_service import get_oss_service
@@ -113,7 +112,6 @@ async def _materialize_one(
     return {
         **base,
         "storage_kind": "oss",
-        "inline_content": None,
         "storage_ref": {
             "object_key": uploaded["object_key"],
             "url": uploaded["url"],

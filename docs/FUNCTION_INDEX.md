@@ -286,7 +286,7 @@
 | `GenerationClaim.from_rpc` | `backend/services/conversation_execution.py` | 校验 claimed RPC 结果并构造不可变执行权对象；非 claimed 结果返回 None | data, conversation_id, execution_mode | GenerationClaim \| None |
 | `ConversationExecutionService.claim_serial` | `backend/services/conversation_execution.py` | 通过数据库 RPC 认领 conversation 最早 serial task | conversation_id | GenerationClaim \| None |
 | `ConversationExecutionService.claim_branch` | `backend/services/conversation_execution.py` | 通过数据库 RPC 精确认领内部 branch task | task_id, conversation_id | GenerationClaim \| None |
-| `ConversationExecutionService.execute_claim` | `backend/services/conversation_execution.py` | 协调纯执行器、租约续期、丢权取消以及原子 commit/fail；shutdown 不伪造终态 | claim | Dict |
+| `ConversationExecutionService.execute_claim` | `backend/services/conversation_execution.py` | 协调纯执行器、租约续期、丢权取消以及原子 commit/fail；确定性数据库完整性错误立即落正式失败终态，连接结果未知时保留重试语义 | claim | Dict |
 | `RedisConversationWakeup.publish` | `backend/services/conversation_worker.py` | Best-effort 发布 conversation 唤醒；Redis 故障不影响数据库兜底扫描 | conversation_id, org_id | bool |
 | `RedisConversationWakeup.listen` | `backend/services/conversation_worker.py` | 订阅 Actor 唤醒频道并在断连后退避重连 | handler | None |
 | `ConversationWorker.start` | `backend/services/conversation_worker.py` | 启动有界数据库扫描循环和可选 Redis 唤醒监听 | - | None |
@@ -1459,7 +1459,9 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ArtifactToolMixin._artifact_get` | `backend/services/agent/artifact_tool_mixin.py` | 获取当前 Run 或会话历史中指定 Artifact 的元数据和模型视图 |
 | `ArtifactToolMixin._artifact_read` | `backend/services/agent/artifact_tool_mixin.py` | 按 cursor/max_tokens 分页读取当前或跨轮完整规范内容 |
 | `build_artifact_tools` | `backend/config/artifact_tools.py` | 构建通用只读 Artifact Search/Get/Read Schema |
-| `materialize_artifacts` | `backend/services/agent/runtime/artifacts/persistence.py` | Actor 提交前将 ≤64KB 完整事实内联，将更大 JSON 上传租户隔离 OSS |
+| `materialize_artifacts` | `backend/services/agent/runtime/artifacts/persistence.py` | Actor 提交前将 ≤64KB 完整事实内联，将更大 JSON 上传租户隔离 OSS；提交参数只携带当前 storage_kind 的有效字段 |
+| `normalize_conversation_artifact_storage` | `backend/migrations/139_actor_artifact_terminal_integrity.sql` | 在数据库写入边界按 storage_kind 强制清除互斥存储字段，防止 JSON null 破坏 SQL NULL 约束 |
+| `close_exhausted_actor_message` | `backend/migrations/139_actor_artifact_terminal_integrity.sql` | Actor 租约尝试耗尽时同步将 streaming assistant 消息闭合为 failed |
 | `cleanup_materialized_artifacts` | `backend/services/agent/runtime/artifacts/persistence.py` | Actor 未成功提交或物化中断时 best-effort 删除本次新上传的 OSS Artifact，避免永久孤儿 |
 | `build_turn_context_items` | `backend/services/agent/runtime/context/items.py` | 将输入消息、输出块和工具 Artifact 投影为有序 typed ConversationItem，保持 tool pair 原子组 |
 | `assemble_history` | `backend/services/agent/runtime/context/assembler.py` | 按模型软/硬预算保留最近两个用户 Turn 与完整工具组，压缩稳定旧前缀并生成 Actor 原子提交 payload |

@@ -101,6 +101,7 @@ async def test_small_artifact_materializes_inline_without_oss() -> None:
 
     assert materialized[0]["storage_kind"] == "inline"
     assert materialized[0]["inline_content"] == {"rows": [{"id": 1}]}
+    assert "storage_ref" not in materialized[0]
     get_oss.assert_not_called()
 
 
@@ -130,7 +131,7 @@ async def test_large_artifact_uploads_before_actor_commit() -> None:
 
     item = materialized[0]
     assert item["storage_kind"] == "oss"
-    assert item["inline_content"] is None
+    assert "inline_content" not in item
     assert item["storage_ref"]["object_key"].endswith("result.json")
     upload = oss.upload_bytes.call_args
     assert upload.args[2:5] == (
@@ -193,3 +194,26 @@ def test_migration_scopes_context_item_to_turn_messages() -> None:
     assert "v_task.input_message_id, p_output_message_id" in migration
     assert "(v_item->>'source_message_id')::UUID" in migration
     assert "ON CONFLICT (id) DO NOTHING" in migration
+
+
+def test_artifact_terminal_integrity_migration_closes_both_contracts() -> None:
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "139_actor_artifact_terminal_integrity.sql"
+    ).read_text(encoding="utf-8")
+    rollback = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "rollback"
+        / "139_actor_artifact_terminal_integrity_rollback.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "NEW.storage_ref := NULL" in migration
+    assert "NEW.inline_content := NULL" in migration
+    assert "lease_attempts_exhausted" in migration
+    assert "status = 'failed'" in migration
+    assert "trg_normalize_conversation_artifact_storage" in rollback
+    assert "trg_close_exhausted_actor_message" in rollback
