@@ -52,6 +52,7 @@
 - `docs/document/TECH_长期单会话上下文与Token治理.md`、`TECH_长期单会话上下文与Token治理_实施附录.md`：面向长期单会话体验收口 Grok Build 对标、跨 Turn Evidence、活动工作集、模型能力预算、结构化摘要、Search/Get、Prompt Cache 与 ContextReceipt。
 - `docs/document/TECH_统一会话上下文Artifact与Compaction引擎.md`：方案 B 的实施合同，统一 ConversationItem、通用工具 Artifact、跨 Turn 召回、模型能力预算、结构化 Compaction、原子提交、历史回填和直接切换流程。
 - `backend/services/agent/runtime/artifacts/`：通用工具结果规范化、Run 内完整事实存储、40KB 模型视图、稳定引用和 UTF-8 游标分页读取。
+- `backend/services/agent/runtime/validation/`：统一 Tool 终态协议、结构化结果归一、失败指纹追踪、有界恢复纯决策和 Validation Receipt；主Chat已接入fail-open观察模式，尚未接管循环控制。
 - `backend/services/agent/artifact_tool_mixin.py`、`backend/config/artifact_tools.py`：所有聊天入口共用的只读 `artifact_search/get/read` 执行与工具协议。
 - `backend/services/agent/runtime/artifacts/persistence.py`：Actor 提交前将小 Artifact 内联、大 Artifact 上传租户隔离 OSS，并生成迁移 138 的提交参数。
 - `backend/migrations/139_actor_artifact_terminal_integrity.sql`：在数据库边界归一化 Artifact 互斥存储字段，并保证 Actor 重试耗尽后 assistant 消息不残留 streaming。
@@ -62,6 +63,7 @@
 - `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
 - `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
+- `docs/document/TECH_统一Validation与Recovery运行时.md`及实施附录：参考 Grok Build 的 typed result、结构化错误回填、有界恢复和 Completion Requirement，规划全项目唯一的通用校验与恢复内核；不包含 Skill 或业务专属校验。
 - `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
 - `docs/document/research/AGENT_02_Session_Actor与持久执行.md`：对照 Session 命令、Prompt 队列、send-now、Claim/Lease/Fencing、取消竞态、等待交互和恢复语义。
 - `docs/document/research/AGENT_03_Agent定义与能力装配.md`：对照 AgentDefinition、Session-bound Agent、PromptBuilder、权限/工具/预算装配和专业 Agent 分流。
@@ -311,6 +313,7 @@ EVERYDAYAIONE/
 │   │   │   ├── erp_agent.py              # ERP 独立 Agent（路由层）
 │   │   │   ├── tool_executor.py          # 同步工具执行器
 │   │   │   ├── tool_loop_executor.py     # LLM 工具循环引擎
+│   │   │   ├── tool_loop_execution.py    # 工具执行阶段与统一Validation旁路观察
 │   │   │   ├── tool_output.py            # 结构化工具输出协议（ToolOutput）
 │   │   │   ├── session_file_registry.py  # 会话级文件注册表
 │   │   │   ├── department_agent.py       # 部门Agent基类

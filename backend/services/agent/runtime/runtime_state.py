@@ -14,6 +14,7 @@ from services.agent.runtime.completion_gate import (
     evaluate_completion,
 )
 from services.agent.runtime.runtime_contract import RunContract
+from services.agent.runtime.validation import ValidationRuntime
 
 
 @dataclass
@@ -33,6 +34,11 @@ class RuntimeState:
     model_id: str = ""
     org_id: str | None = None
     context_receipts: list[dict[str, Any]] = field(default_factory=list)
+    validation: ValidationRuntime = field(default_factory=ValidationRuntime)
+
+    def __post_init__(self) -> None:
+        if not self.validation.task_id and self.task_id:
+            self.validation.task_id = self.task_id
 
     @classmethod
     def observing(cls) -> "RuntimeState":

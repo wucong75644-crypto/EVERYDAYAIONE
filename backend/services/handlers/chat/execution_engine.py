@@ -328,7 +328,7 @@ async def _execute_tools(
         content_blocks=blocks,
         start_times=start_times,
         tool_context=prepared.tool_context,
-        runtime_state=runtime_state,
+        runtime_state=runtime_state, model_step=turn + 1, turns_remaining=prepared.budget.turns_remaining,
     )
     append_tool_images(prepared.messages, image_urls)
     await _consume_emit_payloads(handler, blocks, sink)

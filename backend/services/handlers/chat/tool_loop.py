@@ -95,12 +95,20 @@ def apply_tool_results(
     start_times: dict[str, float],
     tool_context: Any,
     runtime_state: Any = None,
+    model_step: int = 0,
+    turns_remaining: int = 0,
 ) -> list[str]:
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
     for call, result, is_error, display_text in tool_results:
         artifact = _observe_tool_result(
-            runtime_state, call, result, is_error=is_error
+            runtime_state,
+            call,
+            result,
+            is_error=is_error,
+            model_step=model_step,
+            turns_remaining=turns_remaining,
+            duration_ms=_elapsed_ms(start_times.get(call["id"])),
         )
         tool_context.update_from_result(
             call["name"],
@@ -136,6 +144,9 @@ def _observe_tool_result(
     result: Any,
     *,
     is_error: bool,
+    model_step: int,
+    turns_remaining: int,
+    duration_ms: int,
 ) -> Any:
     if runtime_state is None:
         return None
@@ -154,6 +165,15 @@ def _observe_tool_result(
         conversation_id=str(runtime_state.conversation_id or ""),
     )
     runtime_state.artifacts.add(artifact)
+    _observe_validation_result(
+        runtime_state,
+        call,
+        result,
+        is_error=is_error,
+        model_step=model_step,
+        turns_remaining=turns_remaining,
+        duration_ms=duration_ms,
+    )
     for evidence in collect_tool_result(result, tool_call_id=call.get("id")):
         if (
             evidence.kind == ArtifactKind.DATA_RESULT
@@ -162,6 +182,54 @@ def _observe_tool_result(
             continue
         runtime_state.ledger.record(evidence)
     return artifact
+
+
+def _observe_validation_result(
+    runtime_state: Any,
+    call: dict[str, Any],
+    result: Any,
+    *,
+    is_error: bool,
+    model_step: int,
+    turns_remaining: int,
+    duration_ms: int,
+) -> None:
+    validation = getattr(runtime_state, "validation", None)
+    if validation is None:
+        return
+    try:
+        validated, decision = validation.observe_result(
+            result,
+            tool_call_id=str(call.get("id") or ""),
+            tool_name=str(call.get("name") or ""),
+            model_step=model_step,
+            turns_remaining=turns_remaining,
+            audit_status="error" if is_error else "success",
+            effect=_resolve_tool_effect(str(call.get("name") or "")),
+            duration_ms=duration_ms,
+        )
+    except Exception as error:
+        logger.warning(
+            "validation_observer_failed | "
+            f"task_id={runtime_state.task_id} | model_step={model_step} | "
+            f"tool_call_id={call.get('id')} | tool_name={call.get('name')} | "
+            f"error={type(error).__name__}"
+        )
+        return
+    logger.info(
+        "validation_result_classified | "
+        f"task_id={runtime_state.task_id} | model_step={model_step} | "
+        f"tool_call_id={validated.tool_call_id} | "
+        f"tool_name={validated.effective_tool_name} | "
+        f"result_class={validated.result_class.value} | "
+        f"decision={decision.value} | observation_only=true"
+    )
+
+
+def _resolve_tool_effect(tool_name: str) -> Any:
+    from services.agent.runtime.validation import resolve_tool_effect
+
+    return resolve_tool_effect(tool_name)
 
 
 def _project_result(result: Any, artifact: Any) -> Any:
@@ -181,10 +249,7 @@ def _complete_tool_step(
     output: str,
     started_at: float | None,
 ) -> None:
-    elapsed_ms = (
-        int((time.monotonic() - started_at) * 1000)
-        if started_at else 0
-    )
+    elapsed_ms = _elapsed_ms(started_at)
     for block in blocks:
         if (
             block.get("type") == "tool_step"
@@ -194,6 +259,13 @@ def _complete_tool_step(
             block["elapsed_ms"] = elapsed_ms
             block["output"] = output
             return
+
+
+def _elapsed_ms(started_at: float | None) -> int:
+    return (
+        int((time.monotonic() - started_at) * 1000)
+        if started_at else 0
+    )
 
 
 def append_tool_images(

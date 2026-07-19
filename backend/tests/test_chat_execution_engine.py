@@ -269,6 +269,117 @@ async def test_execute_chat_preserves_thinking_as_structured_part(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_turn_passes_step_and_remaining_budget_to_validation(
+    monkeypatch,
+):
+    from services.agent.agent_result import AgentResult
+    from services.agent.runtime.runtime_state import RuntimeState
+
+    stream_calls = 0
+
+    async def stream_chat(**_kwargs):
+        nonlocal stream_calls
+        stream_calls += 1
+        if stream_calls == 1:
+            yield SimpleNamespace(
+                content=None,
+                thinking_content=None,
+                tool_calls=[SimpleNamespace(
+                    index=0,
+                    id="call-1",
+                    name="code_execute",
+                    arguments_delta='{"code":"bad"}',
+                )],
+                prompt_tokens=1,
+                completion_tokens=1,
+                credits_consumed=None,
+                finish_reason="tool_calls",
+            )
+            return
+        yield SimpleNamespace(
+            content="已结束",
+            thinking_content=None,
+            tool_calls=None,
+            prompt_tokens=1,
+            completion_tokens=1,
+            credits_consumed=None,
+            finish_reason="stop",
+        )
+
+    state = RuntimeState(task_id="task-1")
+    adapter = SimpleNamespace(stream_chat=stream_chat, close=AsyncMock())
+    budget = SimpleNamespace(
+        stop_reason=None,
+        turns_used=0,
+        turns_remaining=1,
+    )
+    budget.use_turn = lambda: setattr(
+        budget,
+        "turns_used",
+        budget.turns_used + 1,
+    )
+    prepared = SimpleNamespace(
+        adapter=adapter,
+        permission=SimpleNamespace(
+            need_exit_attachment=False,
+            get_reminder=lambda _turn: "",
+        ),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(
+            discovered_tools=set(),
+            build_context_prompt=lambda: "",
+            update_from_result=lambda *_args: None,
+        ),
+        messages=[],
+        budget=budget,
+        runtime_state=state,
+        context_budget=SimpleNamespace(),
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    async def execute_tools(*_args, **_kwargs):
+        return [(
+            {
+                "id": "call-1",
+                "name": "code_execute",
+                "arguments": '{"code":"bad"}',
+            },
+            AgentResult(
+                summary="执行失败",
+                status="error",
+                metadata={"retryable": True},
+            ),
+            True,
+            "执行失败",
+        )]
+
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.compact_tool_context",
+        AsyncMock(),
+    )
+    handler = SimpleNamespace(
+        org_id=None,
+        _adapter=None,
+        _execute_tool_calls=execute_tools,
+        _calculate_credits=lambda _usage: 0,
+    )
+
+    result = await execute_chat(handler=handler, request=_request())
+
+    receipt = state.validation.receipts[0]
+    assert receipt.model_step == 1
+    assert receipt.decision.value == "wrap_up"
+    assert result.parts[-1].text == "已结束"
+
+
+@pytest.mark.asyncio
 async def test_execute_chat_does_not_recheck_final_text_against_evidence(
     monkeypatch,
 ):

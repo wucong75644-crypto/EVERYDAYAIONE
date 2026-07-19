@@ -311,6 +311,15 @@
 | `collect_tool_result` | `backend/services/agent/runtime/artifact_collector.py` | 将结构化 AgentResult 旁路映射为 Run 内产物证据，禁止从 Markdown 反向取数 | result, tool_call_id | Tuple[ArtifactEvidence, ...] |
 | `ArtifactLedger.record` | `backend/services/agent/runtime/artifact_ledger.py` | 按稳定 fingerprint 幂等登记 Run 内产物证据 | evidence | bool |
 | `DataAccuracyPolicy.validate_artifact` | `backend/services/agent/runtime/policies/data_accuracy.py` | 校验数据产物状态、行结构、列结构和受控文件引用 | contract, evidence, payload | PolicyResult |
+| `normalize_tool_result` | `backend/services/agent/runtime/validation/normalizer.py` | 将 AgentResult、旧字符串结果与执行异常确定性归一为唯一工具终态，结构化信号优先 | result, tool_call_id, tool_name, audit_status?, effect?, effective_tool_name? | ValidatedToolResult |
+| `resolve_tool_effect` | `backend/services/agent/runtime/validation/effects.py` | 将项目现有SafetyLevel投影为副作用类型；危险工具按非幂等写处理，缺失元数据安全默认只读 | tool_name | ToolEffect |
+| `ValidationTracker.observe` | `backend/services/agent/runtime/validation/tracker.py` | 记录单 Run 连续失败、同错误指纹和有效进展 | result | int |
+| `decide_recovery` | `backend/services/agent/runtime/validation/recovery.py` | 基于统一终态、失败轨迹、剩余轮次和固定策略生成纯恢复决策 | result, tracker, turns_remaining, policy? | RecoveryDecision |
+| `build_recovery_observation` | `backend/services/agent/runtime/validation/observation.py` | 将校验失败投影为不包含系统事实的稳定模型 Observation | result | str |
+| `ValidationRuntime.observe_result` | `backend/services/agent/runtime/validation/runtime.py` | 单 Run 统一归一、追踪、恢复决策和 Receipt 登记门面；主Chat已以fail-open观察模式消费，不执行工具或写数据库 | result, tool_call_id, tool_name, model_step, turns_remaining, audit_status?, effect?, duration_ms? | Tuple[ValidatedToolResult, RecoveryDecision] |
+| `ToolLoopExecutionMixin._execute_tools` | `backend/services/agent/tool_loop_execution.py` | 保持ERP/定时任务原工具执行协议，并在真实结果后以fail-open方式旁路记录统一Validation Receipt | completed, selected_tools, turn_text, hook_ctx, turn_prompt_tokens?, turn_completion_tokens? | str |
+| `ToolLoopExecutionMixin._observe_validation_result` | `backend/services/agent/tool_loop_execution.py` | 将工具终态结果、轮次、剩余预算、审计状态和耗时送入单Run ValidationRuntime；不控制旧StopPolicy | result, tool_call_id, tool_name, hook_ctx, audit_status, elapsed_ms | None |
+| `ToolLoopExecutionMixin._compare_validation_decision` | `backend/services/agent/tool_loop_execution.py` | 将旧StopPolicy与新Recovery按继续/停止控制意图进行旁路比较，保留双方原始决策且fail-open | old_decision, model_step | None |
 | `build_run_contract` | `backend/services/agent/runtime/runtime_contract.py` | 从调用方私有参数构建显式交付合同，不从用户文本或模型输出推断授权 | params | RunContract |
 | `evaluate_completion` | `backend/services/agent/runtime/completion_gate.py` | 根据必需产物、ready 证据和预算状态确定继续、完成或降级 | contract, snapshot, budget_exhausted | CompletionResult |
 | `RuntimeState.persistence_projection` | `backend/services/agent/runtime/runtime_state.py` | 将 ready DATA_RESULT 投影为 Actor 可原子提交的受限 JSON 证据 | - | List[Dict] |

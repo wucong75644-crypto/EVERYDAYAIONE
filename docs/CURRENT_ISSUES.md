@@ -108,6 +108,14 @@
 - Testing / Operations 高风险候选：部署脚本允许测试失败后继续；迁移多为 SQL 文本断言，尚缺统一 Trace、自动真实数据库竞态、Actor 排空、按组织 canary 和自动回滚门槛。
 - 端到端阶段结论：保留 Conversation Actor、`execute_chat`、媒体/ERP/文件专业执行器和企微 Outbox，以统一 Session、Run、Action、Artifact、RuntimeEvent 消除状态机断层。
 - 端到端高风险候选：Skill、Goal、通用 Subagent、MCP 尚未进入产品主链；媒体任务、ERP 内部 Loop 和前端恢复各自成岛，缺少统一幂等、对账、事件序列与恢复快照。
+- Validation / Recovery 阶段结论：采用独立纯判断 Runtime，统一 Tool Call 输入、终态结果、错误分类、失败追踪、恢复决策、Completion 与 Receipt；主 Chat 和 ToolLoopExecutor 分阶段从观察模式切到同一权威内核，Provider 重试、上下文恢复和副作用 UNKNOWN 保持独立 Owner。
+- Validation / Recovery 高风险候选：当前 `stop_policy.py` 主要依赖关键词分类，动态工具缺 Schema 时会跳过参数校验，主 Chat 未消费 FailureTracker，专业 Agent 未消费主 Chat Completion/Artifact 状态；实施时必须阻止嵌套重试和副作用 UNKNOWN 自动重放。
+- Validation / Recovery Phase 1内核：统一协议、Normalizer、Tracker、Recovery纯函数、Observation、Effect映射和Run门面已实现。33项核心专项测试通过，核心包覆盖率100%；自动测试基线存在6个既有失败，其中4个为旧fixture问题、2个因沙盒禁止连接生产数据库。
+- Validation / Recovery 主Chat观察接入：`apply_tool_results` 在保持原模型Observation、Tool Step、Artifact和Evidence协议不变的前提下记录分类、恢复决策和Receipt；观察器异常fail-open。接入专项35项及关联Actor、上下文回归通过；尚未接管循环决策或持久化Receipt。
+- Validation / Recovery ToolLoopExecutor观察接入：ERP与ScheduledTask共用执行器每次Run建立隔离的ValidationRuntime，真实工具结果在不改变messages、Hook、steer及旧StopPolicy的前提下旁路分类；观察器异常fail-open。工具循环、ERP和定时任务相关245项通过，新拆分执行模块覆盖率93%；尚未接管循环决策或持久化Receipt。
+- Validation / Recovery Phase 1决策对比：ToolLoopExecutor按模型轮次比较旧StopPolicy与新Recovery的“继续/停止”控制意图，同时记录原始决策；并行工具采用最保守的新决策聚合，比较器异常fail-open。4项专项测试覆盖一致、真实分歧、并行聚合和异常；该数据当前仅在Run内及结构化日志中观察，不持久化、不改变循环。
+- Validation / Recovery副作用边界：主Chat与ToolLoopExecutor共用现有SafetyLevel到ToolEffect的确定性映射，DANGEROUS按非幂等写处理，元数据缺失安全默认只读；观察日志不记录工具结果或异常正文。当前仍不自动重放任何副作用工具。
+- Validation / Recovery Phase 1部署前验收：聚焦回归385项通过；后端全量自动测试7679 passed、24 skipped、4 xfailed、6个既有失败，与修改前失败集合一致；统一Validation包覆盖率100%，ToolLoop执行模块93%。观察模式未改变生产循环控制，可进入生产部署验证。
 - 目标架构候选：采用模块化单体 Runtime，不扩充巨型 ChatHandler、不提前拆微服务；PostgreSQL 持有 Session/Run/Action/Event 事实，现有能力通过单向 compatibility adapter 渐进接入。
 - 目标架构待评审风险：新旧 task/action、消息投影、积分和媒体完成器双映射必须保持单终态 owner；状态机与数据库原子边界未冻结前不得开始实现。
 - 状态机候选：业务状态与 lease/attempt 分离；Run、Action、Message、Delivery 各自建模，Action `unknown` 非终态，Run 取消不隐含已受理外部 Action 取消。

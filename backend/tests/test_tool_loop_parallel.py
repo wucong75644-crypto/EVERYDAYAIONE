@@ -10,6 +10,7 @@ ToolLoopExecutor 并行执行单元测试
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,8 @@ import pytest
 from services.agent.loop_types import (
     HookContext, LoopConfig, LoopStrategy,
 )
+from services.agent.agent_result import AgentResult
+from services.agent.runtime.validation import ResultClass
 from services.agent.tool_loop_executor import ToolLoopExecutor
 from services.agent.tool_result_cache import ToolResultCache
 
@@ -386,3 +389,102 @@ class TestHooksTiming:
         assert hook.on_tool_start.await_count == 2
         # on_tool_end 被调用 2 次
         assert hook.on_tool_end.await_count == 2
+
+
+class TestValidationObservation:
+    """统一 Validation Runtime 只观察，不改变 ToolLoopExecutor 协议。"""
+
+    @pytest.mark.asyncio
+    async def test_records_structured_result_with_turn_budget(self):
+        tle = _make_executor()
+        tle._start_validation_observation("task-validation")
+        hook_ctx = _make_hook_ctx(task_id=None, turn=2)
+        failure = AgentResult(
+            summary="查询超时",
+            status="timeout",
+            error_message="Timeout: 30s",
+        )
+
+        with patch(
+            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            new_callable=AsyncMock,
+            return_value=(failure, "timeout", False, 27),
+        ):
+            result = await tle._execute_tools(
+                [_tc("tc-validation", "local_data")], [], "", hook_ctx,
+            )
+
+        receipt = tle._validation_runtime.receipts[0]
+        assert "查询超时" in result
+        assert receipt.task_id == "task-validation"
+        assert receipt.tool_call_id == "tc-validation"
+        assert receipt.model_step == 2
+        assert receipt.duration_ms == 27
+        assert receipt.result_class == ResultClass.RETRYABLE
+        assert tle._turn_tool_outcomes == [
+            ("local_data", failure, "timeout"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_observer_failure_is_fail_open(self):
+        tle = _make_executor()
+        tle._start_validation_observation("task-fail-open")
+        tle._validation_runtime.observe_result = MagicMock(
+            side_effect=RuntimeError("observer unavailable"),
+        )
+        hook_ctx = _make_hook_ctx(turn=1)
+
+        with patch(
+            "services.agent.tool_loop_helpers.invoke_tool_with_cache",
+            new_callable=AsyncMock,
+            return_value=("订单数据: 10条", "success", False, 8),
+        ):
+            result = await tle._execute_tools(
+                [_tc("tc-fail-open", "local_data")], [], "", hook_ctx,
+            )
+
+        assert "订单数据" in result
+        assert hook_ctx.messages[-1]["tool_call_id"] == "tc-fail-open"
+        assert tle._turn_tool_outcomes == [
+            ("local_data", "订单数据: 10条", "success"),
+        ]
+
+    def test_start_observation_resets_validation_state(self):
+        tle = _make_executor()
+        tle._start_validation_observation("task-first")
+        first_runtime = tle._validation_runtime
+        first_runtime.observe_result(
+            "ok",
+            tool_call_id="tc-first",
+            tool_name="local_data",
+            model_step=1,
+            turns_remaining=4,
+            audit_status="success",
+        )
+
+        tle._start_validation_observation("task-second")
+
+        assert tle._validation_runtime is not first_runtime
+        assert tle._validation_runtime.task_id == "task-second"
+        assert tle._validation_runtime.receipts == []
+
+    @pytest.mark.asyncio
+    async def test_run_initializes_task_scoped_observer(self):
+        tle = _make_executor()
+        tle.strategy = LoopStrategy(force_tool_use_first=False)
+        hook_ctx = _make_hook_ctx(task_id="task-from-run")
+
+        async def stream_chat(**_kwargs):
+            yield SimpleNamespace(
+                content="执行完成",
+                tool_calls=None,
+                prompt_tokens=3,
+                completion_tokens=2,
+            )
+
+        tle.adapter.stream_chat = stream_chat
+        result = await tle.run([], [], [], hook_ctx)
+
+        assert result.text == "执行完成"
+        assert tle._validation_runtime.task_id == "task-from-run"
+        assert tle._validation_runtime.receipts == []

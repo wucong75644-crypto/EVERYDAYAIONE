@@ -13,8 +13,6 @@ Anthropic Claude Code AgentLoop 的"配置 + 策略 + 中间件"模式。
 from __future__ import annotations
 
 import hashlib
-import json
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from loguru import logger
@@ -24,7 +22,7 @@ from services.agent.loop_hooks import LoopHook
 from services.agent.loop_types import (
     HookContext, LoopConfig, LoopResult, LoopStrategy,
 )
-from services.agent.tool_output import ToolOutput
+from services.agent.tool_loop_execution import ToolLoopExecutionMixin
 from services.agent.tool_result_cache import ToolResultCache
 
 # 产物通道:SandboxExecutor.execute 直接产出 AgentResult.emit_payloads
@@ -32,7 +30,7 @@ from services.agent.tool_result_cache import ToolResultCache
 # 此处只聚合 result.emit_payloads → self._emit_payloads,见 _register_result_files
 
 
-class ToolLoopExecutor:
+class ToolLoopExecutor(ToolLoopExecutionMixin):
     """通用工具循环执行器
 
     构造参数：
@@ -97,6 +95,7 @@ class ToolLoopExecutor:
         hook_ctx.selected_tools = selected_tools
         hook_ctx.tools_called = tools_called
         hook_ctx.budget = budget
+        self._start_validation_observation(hook_ctx.task_id or "")
 
         accumulated_text = ""
         total_tokens = 0
@@ -109,7 +108,6 @@ class ToolLoopExecutor:
         # ── 停止策略：初始化追踪器和配置 ──
         from services.agent.stop_policy import (
             FailureTracker, StopPolicyConfig,
-            classify_tool_result, evaluate, StopDecision, ResultClass,
         )
         stop_config = self.config.stop_config or StopPolicyConfig()
         tracker = FailureTracker()
@@ -169,50 +167,15 @@ class ToolLoopExecutor:
                 is_llm_synthesis = bool(turn_text)
                 break
 
-            # ── 停止策略：分类 + 追踪 + 决策 ──
-            # 遍历本轮所有工具结果，取最严重的做决策
-            from services.agent.stop_policy import most_severe
-            from services.agent.agent_result import AgentResult
-
-            turn_classes: List[ResultClass] = []
-            worst_tool_name = ""
-            for _tn, _res, _aud in self._turn_tool_outcomes:
-                rc = classify_tool_result(_res, _aud)
-                turn_classes.append(rc)
-                if rc == ResultClass.SUCCESS:
-                    tracker.record_success()
-                else:
-                    error_text = ""
-                    if isinstance(_res, AgentResult):
-                        error_text = _res.error_message
-                    elif isinstance(_res, str):
-                        error_text = _res
-                    tracker.record_failure(_tn, error_text)
-                    worst_tool_name = _tn
-            self._turn_tool_outcomes.clear()
-
-            result_class = most_severe(turn_classes)
-            decision = evaluate(
-                tracker, result_class, stop_config,
+            should_wrap, failure_reason = self._evaluate_turn_outcomes(
+                tracker,
+                stop_config,
+                model_step=turn + 1,
                 turns_remaining=self.config.max_turns - (turn + 1),
             )
-
-            # ── 决策日志（非 CONTINUE 时记录） ──
-            if decision != StopDecision.CONTINUE:
-                logger.info(
-                    f"StopPolicy decision | tool={worst_tool_name or 'multi'} | "
-                    f"result_class={result_class.value} | decision={decision.value} | "
-                    f"consecutive={tracker.consecutive_failures} | "
-                    f"same_streak={tracker.same_error_streak} | "
-                    f"turns_remaining={self.config.max_turns - (turn + 1)}"
-                )
-
-            if decision == StopDecision.WRAP_UP:
+            if should_wrap:
                 stop_reason = "wrap_up_failure"
-                wrap_up_reason = (
-                    f"consecutive_failures={tracker.consecutive_failures} | "
-                    f"result_class={result_class.value}"
-                )
+                wrap_up_reason = failure_reason
                 break
             # CONTINUE / HARD_FAIL(不在此层处理) → 继续循环
 
@@ -226,6 +189,67 @@ class ToolLoopExecutor:
             is_llm_synthesis, hook_ctx,
             stop_reason=stop_reason, wrap_up_reason=wrap_up_reason,
         )
+
+    def _evaluate_turn_outcomes(
+        self,
+        tracker: Any,
+        stop_config: Any,
+        *,
+        model_step: int,
+        turns_remaining: int,
+    ) -> tuple[bool, str]:
+        """运行旧StopPolicy并返回是否收尾；观察模式不消费此结果。"""
+        from services.agent.agent_result import AgentResult
+        from services.agent.stop_policy import (
+            ResultClass,
+            StopDecision,
+            classify_tool_result,
+            evaluate,
+            most_severe,
+        )
+
+        turn_classes: List[ResultClass] = []
+        worst_tool_name = ""
+        for tool_name, result, audit_status in self._turn_tool_outcomes:
+            result_class = classify_tool_result(result, audit_status)
+            turn_classes.append(result_class)
+            if result_class == ResultClass.SUCCESS:
+                tracker.record_success()
+                continue
+            error_text = ""
+            if isinstance(result, AgentResult):
+                error_text = result.error_message
+            elif isinstance(result, str):
+                error_text = result
+            tracker.record_failure(tool_name, error_text)
+            worst_tool_name = tool_name
+        self._turn_tool_outcomes.clear()
+
+        result_class = most_severe(turn_classes)
+        decision = evaluate(
+            tracker,
+            result_class,
+            stop_config,
+            turns_remaining=turns_remaining,
+        )
+        self._compare_validation_decision(
+            old_decision=decision,
+            model_step=model_step,
+        )
+        if decision != StopDecision.CONTINUE:
+            logger.info(
+                f"StopPolicy decision | tool={worst_tool_name or 'multi'} | "
+                f"result_class={result_class.value} | "
+                f"decision={decision.value} | "
+                f"consecutive={tracker.consecutive_failures} | "
+                f"same_streak={tracker.same_error_streak} | "
+                f"turns_remaining={turns_remaining}"
+            )
+        reason = (
+            f"consecutive_failures={tracker.consecutive_failures} | "
+            f"result_class={result_class.value}"
+        )
+        return decision == StopDecision.WRAP_UP, reason
 
     def _is_loop_detected(
         self,
@@ -452,305 +476,3 @@ class ToolLoopExecutor:
                 turn_tokens = _prompt_tokens + _completion_tokens
 
         return tc_acc, turn_text, turn_tokens, _prompt_tokens, _completion_tokens
-
-    # ========================================
-    # 写操作确认（Phase 3 B5）
-    # ========================================
-
-    async def _request_user_confirm(
-        self,
-        tool_name: str,
-        args: Dict[str, Any],
-        tool_call_id: str,
-        hook_ctx: HookContext,
-    ) -> str | None:
-        """向前端发起写操作确认，等待用户响应。
-
-        Returns:
-            None = 用户确认（继续执行）
-            str = 拒绝/超时的提示文本（跳过执行）
-        """
-        if not hook_ctx.task_id:
-            # headless 模式（无 WS 连接）：直接放行
-            return None
-
-        try:
-            from schemas.websocket_builders import build_tool_confirm_request
-            from services.websocket_manager import ws_manager
-
-            # 构建参数摘要供前端展示
-            args_summary = json.dumps(args, ensure_ascii=False)
-            if len(args_summary) > 200:
-                args_summary = args_summary[:200] + "..."
-
-            await ws_manager.send_to_task_or_user(
-                hook_ctx.task_id,
-                hook_ctx.user_id,
-                build_tool_confirm_request(
-                    task_id=hook_ctx.task_id,
-                    conversation_id=hook_ctx.conversation_id,
-                    message_id="",
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    arguments=args,
-                    description=f"AI 要执行写操作: {tool_name}",
-                    safety_level="dangerous",
-                    timeout=60,
-                ),
-            )
-
-            approved = await ws_manager.wait_for_confirm(
-                tool_call_id, timeout=60.0,
-            )
-            if approved:
-                logger.info(
-                    f"Tool confirm approved | tool={tool_name} | "
-                    f"tool_call_id={tool_call_id}"
-                )
-                return None  # 继续执行
-
-            logger.info(
-                f"Tool confirm rejected/timeout | tool={tool_name} | "
-                f"tool_call_id={tool_call_id}"
-            )
-            return (
-                f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
-                f"请告知用户操作未执行，询问是否需要重新确认。"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Tool confirm error | tool={tool_name} | error={e}"
-            )
-            # 确认机制异常时放行（fail-open），不阻塞工具执行
-            return None
-
-    # ========================================
-    # 单轮工具执行
-    # ========================================
-
-    async def _execute_tools(
-        self,
-        completed: List[Dict[str, Any]],
-        selected_tools: List[Dict[str, Any]],
-        turn_text: str,
-        hook_ctx: HookContext,
-        turn_prompt_tokens: int = 0,
-        turn_completion_tokens: int = 0,
-    ) -> str:
-        """执行一轮工具调用（含退出信号短路、缓存、超时、hook 触发、自动扩展）"""
-        messages = hook_ctx.messages
-        tools_called = hook_ctx.tools_called
-        self._turn_tool_outcomes.clear()  # 清空上一轮残留
-
-        asst_msg: Dict[str, Any] = {
-            "role": "assistant", "content": turn_text or None,
-        }
-        asst_msg["tool_calls"] = [
-            {
-                "id": tc["id"], "type": "function",
-                "function": {"name": tc["name"], "arguments": tc["arguments"]},
-            }
-            for tc in completed
-        ]
-        messages.append(asst_msg)
-
-        # ============================================================
-        # 阶段 1：预处理（串行）
-        # 退出信号短路 / JSON 解析 / 安全检查 / 参数校验
-        # 通过的工具收集到 ready 列表，待并行执行
-        # ============================================================
-        from config.chat_tools import SafetyLevel, get_safety_level
-        from services.agent.tool_args_validator import validate_tool_args
-
-        accumulated = turn_text
-        ready: List[Tuple[Dict, str, Dict]] = []  # (tc, tool_name, args)
-        exit_hit = False
-
-        for tc in completed:
-            tool_name = tc["name"]
-            tools_called.append(tool_name)
-
-            # 退出信号工具：不实际执行，记 OK 后短路
-            if tool_name in self.strategy.exit_signals:
-                accumulated = turn_text if turn_text else ""
-                messages.append({
-                    "role": "tool", "tool_call_id": tc["id"], "content": "OK",
-                })
-                exit_hit = True
-                break
-
-            # JSON 解析失败 → 错误信息回灌给 LLM
-            try:
-                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    f"ToolLoop bad JSON | tool={tool_name} | error={e}"
-                )
-                result = f"工具参数JSON格式错误: {e}，请检查参数格式"
-                messages.append({
-                    "role": "tool", "tool_call_id": tc["id"], "content": result,
-                })
-                accumulated = result
-                continue
-
-            # ── 安全检查：DANGEROUS 工具需用户确认 ──
-            safety = get_safety_level(tool_name)
-            if safety == SafetyLevel.DANGEROUS:
-                confirm_result = await self._request_user_confirm(
-                    tool_name, args, tc["id"], hook_ctx,
-                )
-                if confirm_result is not None:
-                    messages.append({
-                        "role": "tool", "tool_call_id": tc["id"],
-                        "content": confirm_result,
-                    })
-                    accumulated = confirm_result
-                    continue
-
-            # ── 参数校验网关：过滤幻觉参数 + 必填检查 ──
-            args, validation_error = validate_tool_args(
-                tool_name, args, selected_tools,
-            )
-            if validation_error:
-                messages.append({
-                    "role": "tool", "tool_call_id": tc["id"],
-                    "content": validation_error,
-                })
-                accumulated = validation_error
-                continue
-
-            ready.append((tc, tool_name, args))
-
-        if exit_hit or not ready:
-            return accumulated
-
-        # ============================================================
-        # 阶段 2：执行（并行，对齐 LangGraph ToolNode asyncio.gather）
-        # 单工具走快路径，多工具 gather 并行
-        # ============================================================
-        import asyncio as _aio
-        from services.agent.tool_loop_helpers import invoke_tool_with_cache
-
-        async def _invoke_safe(
-            tc: Dict, tool_name: str, args: Dict,
-        ) -> Tuple[Dict, str, Dict, Any, str, bool, int]:
-            """安全执行单个工具，异常不扩散（对齐行业 return_exceptions 模式）"""
-            try:
-                r, status, cached, ms = await invoke_tool_with_cache(
-                    self.executor, self._cache, tool_name, args,
-                    hook_ctx.budget, self.config.tool_timeout,
-                )
-                return tc, tool_name, args, r, status, cached, ms
-            except Exception as e:
-                logger.opt(exception=True).error(f"ToolLoop parallel error | tool={tool_name} | error={e}")
-                return tc, tool_name, args, f"工具执行失败: {e}", "error", False, 0
-
-        # Hook 链：所有工具执行前
-        for tc, tool_name, args in ready:
-            for hook in self.hooks:
-                await hook.on_tool_start(hook_ctx, tool_name, args)
-
-        # 并行执行（单工具时等价于直接 await，无额外开销）
-        if len(ready) == 1:
-            results = [await _invoke_safe(*ready[0])]
-        else:
-            results = await _aio.gather(
-                *[_invoke_safe(tc, tn, a) for tc, tn, a in ready],
-            )
-            logger.info(
-                f"ToolLoop parallel done | count={len(results)} | "
-                f"tools={[r[1] for r in results]}"
-            )
-
-        # ============================================================
-        # 阶段 3：后处理（串行，按原始顺序）
-        # 归一化 / 文件收集 / 截断 / 入 messages / hooks / steer
-        # ============================================================
-        steer_hit = False
-
-        for idx, (tc, tool_name, args, result, audit_status, is_cached, elapsed_ms) in enumerate(results):
-            now_iso = datetime.now(timezone.utc).isoformat()
-
-            # Step 1: 归一化为 content 字符串
-            if isinstance(result, ToolOutput):
-                _warnings = result.validate()
-                if _warnings:
-                    logger.warning(
-                        f"ToolOutput validation | tool={tool_name} | "
-                        f"issues={_warnings}",
-                    )
-                content = result.to_tool_content()
-                is_truncated = False
-
-                self._register_result_files(result, tool_name)
-            else:
-                content = result or ""
-                is_truncated = False
-                self._register_result_files(result, tool_name)
-
-            # Step 2: emit_payloads 已由 SandboxExecutor.execute 通过 IPC 独立字段拿到,
-            # _register_result_files 已聚合到 self._emit_payloads,此处无需再处理产物
-
-            # Step 3: 信封分流(按工具名自动选预算,大结果落盘 staging)
-            if not isinstance(result, ToolOutput):
-                from services.agent.tool_result_envelope import (
-                    wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
-                )
-                content = wrap_for_erp_agent(tool_name, content, tight=False)
-                # 检测实际截断/落盘（而非猜内容长度）
-                is_truncated = (
-                    PERSISTED_OUTPUT_TAG in content
-                    or "⚠ 输出过长" in content
-                ) if content else False
-
-            # Step 4: 入 messages
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "timestamp": now_iso,
-                "content": content,
-            })
-            accumulated = content
-
-            # 停止策略：记录本轮工具结果（供 run() 中 classify 使用）
-            self._turn_tool_outcomes.append((tool_name, result, audit_status))
-
-            # Hook 链：单工具执行后（审计 + 失败反思等）
-            for hook in self.hooks:
-                await hook.on_tool_end(
-                    hook_ctx, tool_name, args, result,
-                    audit_status, elapsed_ms,
-                    is_cached, is_truncated, tc["id"],
-                    turn_prompt_tokens=turn_prompt_tokens,
-                    turn_completion_tokens=turn_completion_tokens,
-                )
-
-            # ── 打断检查点：用户在工具执行期间发了新消息 ──
-            if hook_ctx.task_id and not steer_hit:
-                from services.websocket_manager import ws_manager
-                _steer = ws_manager.check_steer(hook_ctx.task_id)
-                if _steer:
-                    logger.info(
-                        f"ToolLoop steer | task={hook_ctx.task_id} | "
-                        f"msg={_steer[:50]}"
-                    )
-                    # 跳过剩余工具结果，注入用户消息
-                    for r_tc_tuple in results[idx + 1:]:
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": r_tc_tuple[0]["id"],
-                            "content": "⚠ 用户发送了新消息，跳过此工具调用。",
-                        })
-                    messages.append({"role": "user", "content": _steer})
-                    steer_hit = True
-                    break
-
-            # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
-            if self.strategy.enable_tool_expansion:
-                from services.agent.tool_loop_helpers import inject_tool
-                inject_tool(
-                    tool_name, selected_tools, self.all_tools,
-                    self.strategy.exit_signals, hook_ctx.org_id,
-                )
-
-        return accumulated

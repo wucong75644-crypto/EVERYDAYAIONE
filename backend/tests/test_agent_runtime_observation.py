@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,6 +22,7 @@ from services.agent.runtime.runtime_contract import (
     build_run_contract,
 )
 from services.agent.runtime.runtime_state import RuntimeState
+from services.agent.runtime.validation import ToolEffect
 from services.agent.tool_output import ColumnMeta
 from services.handlers.chat.tool_loop import apply_tool_results
 
@@ -152,6 +154,153 @@ def test_apply_tool_results_observes_without_changing_protocol() -> None:
     }
     assert blocks[0]["status"] == "completed"
     assert state.ledger.ready_kinds() == frozenset({ArtifactKind.DATA_RESULT})
+
+
+def test_apply_tool_results_records_validation_without_changing_protocol() -> None:
+    state = RuntimeState(task_id="task-1")
+    messages: list[dict] = []
+    blocks = [
+        {
+            "type": "tool_step",
+            "tool_call_id": "call-1",
+            "status": "running",
+        }
+    ]
+    result = AgentResult(
+        summary="执行失败",
+        status="error",
+        error_message="字段不存在",
+        metadata={"retryable": True, "error_code": "BINDER_ERROR"},
+    )
+
+    apply_tool_results(
+        tool_results=[
+            (
+                {"id": "call-1", "name": "code_execute"},
+                result,
+                True,
+                result.summary,
+            )
+        ],
+        messages=messages,
+        content_blocks=blocks,
+        start_times={},
+        tool_context=SimpleNamespace(update_from_result=lambda *_: None),
+        runtime_state=state,
+        model_step=2,
+        turns_remaining=5,
+    )
+
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["tool_call_id"] == "call-1"
+    assert blocks[0]["status"] == "error"
+    assert state.validation.receipt_projection()[0] == {
+        "task_id": "task-1",
+        "model_step": 2,
+        "tool_call_id": "call-1",
+        "tool_name": "code_execute",
+        "stage": "output",
+        "result_class": "retryable",
+        "decision": "retry_model",
+        "attempt": 0,
+        "fingerprint": state.validation.receipts[0].fingerprint,
+        "reason_code": "BINDER_ERROR",
+        "duration_ms": 0,
+    }
+
+
+def test_validation_observer_failure_does_not_change_tool_result() -> None:
+    state = RuntimeState(task_id="task-1")
+    state.validation.observe_result = lambda *_args, **_kwargs: 1 / 0
+    messages: list[dict] = []
+    blocks = [
+        {
+            "type": "tool_step",
+            "tool_call_id": "call-1",
+            "status": "running",
+        }
+    ]
+
+    apply_tool_results(
+        tool_results=[
+            (
+                {"id": "call-1", "name": "code_execute"},
+                AgentResult(summary="完成", status="success"),
+                False,
+                "完成",
+            )
+        ],
+        messages=messages,
+        content_blocks=blocks,
+        start_times={},
+        tool_context=SimpleNamespace(update_from_result=lambda *_: None),
+        runtime_state=state,
+    )
+
+    assert messages[0]["role"] == "tool"
+    assert blocks[0]["status"] == "completed"
+    assert state.validation.receipts == []
+
+
+def test_chat_observer_passes_existing_write_effect_metadata() -> None:
+    state = RuntimeState(task_id="task-write")
+    state.validation.observe_result = MagicMock(return_value=(
+        SimpleNamespace(
+            tool_call_id="call-write",
+            effective_tool_name="erp_execute",
+            result_class=SimpleNamespace(value="success"),
+        ),
+        SimpleNamespace(value="continue"),
+    ))
+
+    apply_tool_results(
+        tool_results=[(
+            {"id": "call-write", "name": "erp_execute"},
+            AgentResult(summary="完成", status="success"),
+            False,
+            "完成",
+        )],
+        messages=[],
+        content_blocks=[],
+        start_times={},
+        tool_context=SimpleNamespace(update_from_result=lambda *_: None),
+        runtime_state=state,
+    )
+
+    kwargs = state.validation.observe_result.call_args.kwargs
+    assert kwargs["effect"] == ToolEffect.NON_IDEMPOTENT_WRITE
+
+
+def test_missing_validation_runtime_keeps_legacy_protocol() -> None:
+    state = RuntimeState(task_id="task-1")
+    state.validation = None
+    messages: list[dict] = []
+    blocks = [
+        {
+            "type": "tool_step",
+            "tool_call_id": "call-1",
+            "status": "running",
+        }
+    ]
+
+    apply_tool_results(
+        tool_results=[
+            (
+                {"id": "call-1", "name": "code_execute"},
+                AgentResult(summary="完成", status="success"),
+                False,
+                "完成",
+            )
+        ],
+        messages=messages,
+        content_blocks=blocks,
+        start_times={},
+        tool_context=SimpleNamespace(update_from_result=lambda *_: None),
+        runtime_state=state,
+    )
+
+    assert messages[0]["role"] == "tool"
+    assert blocks[0]["status"] == "completed"
 
 
 def test_tool_result_records_evidence_without_extra_model_message() -> None:
