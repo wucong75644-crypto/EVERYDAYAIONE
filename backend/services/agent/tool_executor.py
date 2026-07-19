@@ -22,20 +22,18 @@ from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
 from config.file_tools import FILE_INFO_TOOLS
 from services.agent.erp_tool_executor import ErpToolMixin
+from services.agent.artifact_tool_mixin import ArtifactToolMixin
+from services.agent.evidence_tool_mixin import EvidenceToolMixin
 from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
-
-
 class ToolExecutor(
-    ConversationToolMixin,
-    FileToolMixin,
-    CrawlerToolMixin,
-    MediaToolMixin,
-    ErpToolMixin,
-    SandboxToolMixin,
+    ArtifactToolMixin, ConversationToolMixin,
+    FileToolMixin, CrawlerToolMixin,
+    MediaToolMixin, EvidenceToolMixin,
+    ErpToolMixin, SandboxToolMixin,
     CreditMixin,
 ):
     """同步工具执行器"""
@@ -71,6 +69,10 @@ class ToolExecutor(
             "erp_analyze": self._erp_analyze,
             "manage_scheduled_task": self._manage_scheduled_task,
             "image_agent": self._image_agent,
+            "evidence_search": self._evidence_search,
+            "evidence_get": self._evidence_get,
+            "artifact_search": self._artifact_search, "artifact_get": self._artifact_get,
+            "artifact_read": self._artifact_read,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:

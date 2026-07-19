@@ -66,6 +66,8 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "code_execute",
     # 文件操作（只读；file_search 命中图片自动多模态返回）
     "file_search", "file_analyze",
+    "evidence_search", "evidence_get",
+    "artifact_search", "artifact_get", "artifact_read",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }

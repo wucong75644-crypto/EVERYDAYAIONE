@@ -23,6 +23,15 @@ class ExecutionSink(Protocol):
     async def flush(self) -> None:
         """提交剩余过程状态并结束流。"""
 
+    def take_steer(self) -> str | None:
+        """非阻塞取得用户插话；不支持的通道返回 None。"""
+
+    def is_cancelled(self) -> bool:
+        """返回通道侧是否已收到用户取消。"""
+
+    async def close(self) -> None:
+        """释放通道级监听资源。"""
+
 
 class CollectingExecutionSink:
     """企微和 Actor 使用的无副作用收集器。"""
@@ -45,4 +54,13 @@ class CollectingExecutionSink:
         self.blocks.append(block)
 
     async def flush(self) -> None:
+        return None
+
+    def take_steer(self) -> str | None:
+        return None
+
+    def is_cancelled(self) -> bool:
+        return False
+
+    async def close(self) -> None:
         return None

@@ -153,6 +153,11 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                     usage = chunk.get("usage") or {}
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
+                    prompt_details = usage.get("prompt_tokens_details") or {}
+                    cached_tokens = prompt_details.get("cached_tokens", 0)
+                    cache_creation = usage.get(
+                        "cache_creation_input_tokens", 0
+                    )
 
                     # OpenRouter 独有：直接返回 USD 成本
                     cost_usd = usage.get("cost")
@@ -166,6 +171,8 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                         finish_reason=finish_reason,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
+                        cached_tokens=cached_tokens,
+                        cache_creation_tokens=cache_creation,
                         credits_consumed=credits_consumed,
                     )
 

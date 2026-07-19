@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from schemas.message import TextPart
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
+    _last_tool_output,
     execute_chat,
 )
+from services.handlers.chat.execution_sink import CollectingExecutionSink
 
 
 def _request() -> ChatExecutionRequest:
@@ -27,6 +29,18 @@ def _request() -> ChatExecutionRequest:
     )
 
 
+def test_last_tool_output_uses_latest_tool_block_and_limits_size():
+    blocks = [
+        {"type": "tool_result", "output": "旧结果"},
+        {"type": "text", "text": "中间文字"},
+        {"type": "tool_step", "output": "新" * 3000},
+    ]
+
+    result = _last_tool_output(blocks)
+
+    assert result == "新" * 2000
+
+
 @pytest.mark.asyncio
 async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     async def stream_chat(**_kwargs):
@@ -36,6 +50,8 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
             tool_calls=None,
             prompt_tokens=3,
             completion_tokens=2,
+            cached_tokens=2,
+            cache_creation_tokens=1,
             credits_consumed=None,
             finish_reason="stop",
         )
@@ -88,7 +104,12 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     assert result.usage == {
         "prompt_tokens": 3,
         "completion_tokens": 2,
+        "cached_tokens": 2,
+        "cache_creation_tokens": 1,
     }
+    assert len(result.context_receipts) == 1
+    assert result.context_receipts[0]["model_step"] == 0
+    assert result.context_receipts[0]["plan_hash"]
     assert result.credits_cost == 2
     adapter.close.assert_awaited_once()
 
@@ -127,6 +148,58 @@ async def test_execute_chat_stops_before_provider_when_cancelled(monkeypatch):
             cancellation_event=event,
         )
 
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_chat_stops_on_channel_cancel_and_interrupts_kernel(
+    monkeypatch,
+):
+    adapter = SimpleNamespace(close=AsyncMock())
+    prepared = SimpleNamespace(
+        adapter=adapter,
+        permission=SimpleNamespace(need_exit_attachment=False),
+        core_tools=[],
+        stream_kwargs={},
+        tool_context=SimpleNamespace(
+            discovered_tools=set(),
+            build_context_prompt=lambda: "",
+        ),
+        messages=[],
+        budget=SimpleNamespace(stop_reason=None, turns_used=0),
+    )
+    prepared.budget.use_turn = lambda: setattr(
+        prepared.budget,
+        "turns_used",
+        prepared.budget.turns_used + 1,
+    )
+
+    async def fake_prepare(**_kwargs):
+        return prepared
+
+    class _CancelledSink(CollectingExecutionSink):
+        def is_cancelled(self):
+            return True
+
+    kernel = SimpleNamespace(interrupt=MagicMock())
+    monkeypatch.setattr(
+        "services.handlers.chat.execution_engine.prepare_chat_stream",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "services.sandbox.kernel_manager.get_kernel_manager",
+        lambda: kernel,
+    )
+    handler = SimpleNamespace(org_id=None, _adapter=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        await execute_chat(
+            handler=handler,
+            request=_request(),
+            sink=_CancelledSink(),
+        )
+
+    kernel.interrupt.assert_called_once_with("conv-1")
     adapter.close.assert_awaited_once()
 
 

@@ -76,6 +76,8 @@ class StreamChunk:
     # Token 使用量（通常在最后一帧返回）
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_tokens: int = 0
+    cache_creation_tokens: int = 0
     # API 报告的实际积分消耗（优先使用，无则走本地估算）
     credits_consumed: Optional[float] = None
     # 工具调用增量（流式累积，每帧可能只有 arguments 片段）
@@ -91,7 +93,12 @@ class StreamChunk:
 
     @property
     def has_usage(self) -> bool:
-        return self.prompt_tokens > 0 or self.completion_tokens > 0
+        return any((
+            self.prompt_tokens,
+            self.completion_tokens,
+            self.cached_tokens,
+            self.cache_creation_tokens,
+        ))
 
     @property
     def has_tool_calls(self) -> bool:

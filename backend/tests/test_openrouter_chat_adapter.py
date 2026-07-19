@@ -153,6 +153,8 @@ class TestStreamChat:
                 "usage": {
                     "prompt_tokens": 100,
                     "completion_tokens": 50,
+                    "prompt_tokens_details": {"cached_tokens": 40},
+                    "cache_creation_input_tokens": 5,
                     "cost": cost_usd,
                 },
                 "model": "openai/gpt-4.1",
@@ -172,6 +174,8 @@ class TestStreamChat:
         last = chunks[-1]
         assert last.prompt_tokens == 100
         assert last.completion_tokens == 50
+        assert last.cached_tokens == 40
+        assert last.cache_creation_tokens == 5
         assert last.credits_consumed == expected_credits
 
     @pytest.mark.asyncio

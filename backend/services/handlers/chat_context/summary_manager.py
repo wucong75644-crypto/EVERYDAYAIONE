@@ -4,7 +4,7 @@
 - update_summary_if_needed: 检查并更新摘要（fire-and-forget）
 """
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -84,11 +84,12 @@ async def update_summary_if_needed(
 
         if not settings.context_summary_enabled:
             return
-
-        # 查询对话信息（含已有摘要，一次查完）
         conv_result = (
             db.table("conversations")
-            .select("message_count, summary_message_count, context_summary")
+            .select(
+                "message_count, summary_message_count, context_summary, "
+                "context_revision, summary_revision"
+            )
             .eq("id", conversation_id)
             .single()
             .execute()
@@ -100,95 +101,248 @@ async def update_summary_if_needed(
         message_count = conv_result.data.get("message_count", 0)
         summary_count = conv_result.data.get("summary_message_count", 0)
         existing_summary: Optional[str] = conv_result.data.get("context_summary")
+        summary_revision = int(conv_result.data.get("summary_revision") or 0)
         context_limit = settings.chat_context_limit
 
-        # 不需要摘要（≤20 条消息）
         if message_count <= context_limit:
             return
 
-        # 已有摘要且不需要更新（新增消息 < update_interval）
-        if summary_count > 0 and (message_count - summary_count) < settings.context_summary_update_interval:
+        if (
+            summary_count > 0
+            and (message_count - summary_count)
+            < settings.context_summary_update_interval
+        ):
             return
 
-        # 获取所有已完成的 user/assistant 消息（按时间正序）
         all_result = (
             db.table("messages")
-            .select("role, content")
+            .select("id, role, content, context_revision, message_kind")
             .eq("conversation_id", conversation_id)
             .eq("status", "completed")
             .in_("role", ["user", "assistant"])
+            .order("context_revision", desc=False)
             .order("created_at", desc=False)
             .execute()
         )
 
         if not all_result.data:
             return
-
-        all_msgs = all_result.data
-
-        # 取除最近 N 条之外的消息进行压缩
-        if len(all_msgs) <= context_limit:
+        summary_rows, new_rows, through_revision, through_message_id = (
+            _select_closed_summary_window(
+                all_result.data,
+                context_limit=context_limit,
+                current_summary_revision=summary_revision,
+            )
+        )
+        if not summary_rows or not through_message_id:
             return
 
-        msgs_to_summarize = all_msgs[:-context_limit]
-
-        # 提取纯文本
-        text_messages = []
-        for msg in msgs_to_summarize:
-            text = extract_text_from_content(msg.get("content"))
-            if text:
-                text_messages.append(
-                    {"role": msg["role"], "content": text}
-                )
-
+        text_messages = _extract_text_messages(summary_rows)
         if not text_messages:
             return
 
-        # 增量路径：有旧摘要时只传新增消息（对标 Claude PARTIAL_COMPACT_PROMPT）
-        summary = None
-        if existing_summary and summary_count > 0:
-            from services.context_summarizer import update_summary
-
-            # new_total = 新增消息数（所有角色），用作 msgs_to_summarize 尾部切片上界
-            # 偏大（含 tool/system）无害——LLM 增量 prompt 会自动去重
-            new_total = message_count - summary_count
-            if new_total > 0:
-                new_slice = msgs_to_summarize[-new_total:] if new_total < len(msgs_to_summarize) else msgs_to_summarize
-                new_text_messages = []
-                for msg in new_slice:
-                    text = extract_text_from_content(msg.get("content"))
-                    if text:
-                        new_text_messages.append({"role": msg["role"], "content": text})
-                if new_text_messages:
-                    summary = await update_summary(existing_summary, new_text_messages)
-                    if summary:
-                        logger.info(
-                            f"Context summary incremental update | "
-                            f"conversation_id={conversation_id} | "
-                            f"new_msgs={len(new_text_messages)}"
-                        )
-
-        # 全量降级：增量失败或无旧摘要
-        if not summary:
-            from services.context_summarizer import summarize_messages
-            summary = await summarize_messages(text_messages)
-
-        if summary:
-            db.table("conversations").update({
-                "context_summary": summary,
-                "summary_message_count": message_count,
-            }).eq("id", conversation_id).execute()
-
-            logger.info(
-                f"Context summary updated | "
-                f"conversation_id={conversation_id} | "
-                f"message_count={message_count} | "
-                f"compressed={len(msgs_to_summarize)} msgs | "
-                f"summary_len={len(summary)}"
-            )
+        await _coordinate_summary_update(
+            db=db,
+            conversation_id=conversation_id,
+            summary_revision=summary_revision,
+            through_revision=through_revision,
+            through_message_id=through_message_id,
+            existing_summary=existing_summary,
+            text_messages=text_messages,
+            new_rows=new_rows,
+            message_count=message_count,
+            compressed_count=len(summary_rows),
+        )
 
     except Exception as e:
         logger.warning(
             f"Context summary update failed | "
             f"conversation_id={conversation_id} | error={e}"
         )
+
+
+async def _coordinate_summary_update(
+    *,
+    db: Any,
+    conversation_id: str,
+    summary_revision: int,
+    through_revision: int,
+    through_message_id: str,
+    existing_summary: Optional[str],
+    text_messages: List[Dict[str, str]],
+    new_rows: List[Dict[str, Any]],
+    message_count: int,
+    compressed_count: int,
+) -> None:
+    """协调跨 Worker 摘要生成，并以数据库 CAS 提交。"""
+    from services.agent.runtime.context import (
+        acquire_summary_coordination,
+        finish_summary_coordination,
+    )
+
+    coordination = await acquire_summary_coordination(
+        conversation_id,
+        summary_revision,
+        through_revision,
+    )
+    if not coordination.should_run:
+        logger.info(
+            f"Context summary skipped | conversation_id={conversation_id} | "
+            f"reason={coordination.outcome}"
+        )
+        return
+
+    summary: Optional[str] = None
+    try:
+        summary = await _generate_summary(
+            existing_summary=existing_summary,
+            summary_revision=summary_revision,
+            text_messages=text_messages,
+            new_rows=new_rows,
+            conversation_id=conversation_id,
+        )
+        if not summary:
+            return
+        applied = _apply_summary(
+            db,
+            conversation_id=conversation_id,
+            expected_revision=summary_revision,
+            through_revision=through_revision,
+            through_message_id=through_message_id,
+            summary=summary,
+            message_count=message_count,
+        )
+        logger.info(
+            f"Context summary updated | conversation_id={conversation_id} | "
+            f"outcome={applied} | through_revision={through_revision} | "
+            f"compressed={compressed_count} msgs | summary_len={len(summary)}"
+        )
+    finally:
+        await finish_summary_coordination(
+            coordination,
+            failed=not summary,
+        )
+
+
+async def _generate_summary(
+    *,
+    existing_summary: Optional[str],
+    summary_revision: int,
+    text_messages: List[Dict[str, str]],
+    new_rows: List[Dict[str, Any]],
+    conversation_id: str,
+) -> Optional[str]:
+    """优先增量生成摘要，失败时回退全量摘要。"""
+    if existing_summary and summary_revision > 0:
+        from services.context_summarizer import update_summary
+
+        new_text_messages = _extract_text_messages(new_rows)
+        if new_text_messages:
+            summary = await update_summary(
+                existing_summary,
+                new_text_messages,
+            )
+            if summary:
+                logger.info(
+                    f"Context summary incremental update | "
+                    f"conversation_id={conversation_id} | "
+                    f"new_msgs={len(new_text_messages)}"
+                )
+                return summary
+
+    from services.context_summarizer import summarize_messages
+
+    return await summarize_messages(text_messages)
+
+
+def _select_closed_summary_window(
+    rows: List[Dict[str, Any]],
+    *,
+    context_limit: int,
+    current_summary_revision: int,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, Optional[str]]:
+    """选择连续闭合 Turn，且不覆盖需要完整保留的最近消息。"""
+    valid = [
+        row for row in rows
+        if row.get("message_kind", "conversation") == "conversation"
+        and isinstance(row.get("context_revision"), int)
+        and row["context_revision"] > 0
+        and row.get("id")
+    ]
+    if len(valid) <= context_limit:
+        return [], [], 0, None
+
+    first_recent_revision = valid[-context_limit]["context_revision"]
+    candidates = [
+        row for row in valid
+        if row["context_revision"] < first_recent_revision
+    ]
+    rows_by_revision: Dict[int, List[Dict[str, Any]]] = {}
+    for row in candidates:
+        rows_by_revision.setdefault(row["context_revision"], []).append(row)
+
+    expected_revision = current_summary_revision + 1
+    selected: List[Dict[str, Any]] = []
+    boundary_id: Optional[str] = None
+    through_revision = current_summary_revision
+    for revision in sorted(rows_by_revision):
+        turn_rows = rows_by_revision[revision]
+        if revision <= current_summary_revision:
+            selected.extend(turn_rows)
+            continue
+        if revision != expected_revision:
+            break
+        roles = {row.get("role") for row in turn_rows}
+        assistant = next(
+            (row for row in reversed(turn_rows) if row.get("role") == "assistant"),
+            None,
+        )
+        if roles != {"user", "assistant"} or assistant is None:
+            break
+        selected.extend(turn_rows)
+        boundary_id = str(assistant["id"])
+        through_revision = revision
+        expected_revision += 1
+
+    if through_revision <= current_summary_revision:
+        return [], [], 0, None
+    new_rows = [
+        row for row in selected
+        if row["context_revision"] > current_summary_revision
+    ]
+    return selected, new_rows, through_revision, boundary_id
+
+
+def _extract_text_messages(
+    rows: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """将闭合摘要窗口转换为纯文本消息。"""
+    messages: List[Dict[str, str]] = []
+    for row in rows:
+        text = extract_text_from_content(row.get("content"))
+        if text:
+            messages.append({"role": str(row["role"]), "content": text})
+    return messages
+
+
+def _apply_summary(
+    db: Any,
+    *,
+    conversation_id: str,
+    expected_revision: int,
+    through_revision: int,
+    through_message_id: str,
+    summary: str,
+    message_count: int,
+) -> str:
+    """通过数据库 CAS RPC 原子提交摘要覆盖边界。"""
+    result = db.rpc("apply_context_summary", {
+        "p_conversation_id": conversation_id,
+        "p_expected_summary_revision": expected_revision,
+        "p_through_revision": through_revision,
+        "p_through_message_id": through_message_id,
+        "p_summary": summary,
+        "p_summary_message_count": message_count,
+    }).execute()
+    data = result.data if result else None
+    return str((data or {}).get("outcome") or "unknown")

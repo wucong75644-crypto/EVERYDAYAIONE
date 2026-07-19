@@ -84,30 +84,58 @@ async def build_context_snapshot(
 
     from services.handlers import conversation_cache
     from services.handlers.chat_context.history_loader import build_context_messages
+    from services.handlers.chat_context.unified_history_loader import (
+        load_unified_context_messages,
+    )
 
+    summary_prompt, summary_revision, conversation_source = (
+        _load_snapshot_metadata(db, anchor)
+    )
     history = await conversation_cache.get_closed_messages(
         anchor.conversation_id,
         anchor.base_revision,
         anchor.through_message_id,
         anchor.org_id,
+        summary_revision=summary_revision,
         task_id=anchor.task_id,
         turn_id=anchor.turn_id,
     )
+    from services.agent.runtime.context import record_context_event
+
+    record_context_event(
+        "context_cache",
+        outcome="hit" if history is not None else "miss",
+        org_id=anchor.org_id,
+        conversation_id=anchor.conversation_id,
+        task_id=anchor.task_id,
+        summary_revision=summary_revision,
+        base_revision=anchor.base_revision,
+    )
     try:
         if history is None:
-            history = await build_context_messages(
+            history, unified = load_unified_context_messages(
                 db,
-                anchor.conversation_id,
-                current_text,
+                conversation_id=anchor.conversation_id,
                 base_revision=anchor.base_revision,
-                strict=True,
+                summary_revision=summary_revision,
+                org_id=anchor.org_id,
             )
+            if not unified:
+                history = await build_context_messages(
+                    db,
+                    anchor.conversation_id,
+                    current_text,
+                    base_revision=anchor.base_revision,
+                    summary_revision=summary_revision,
+                    strict=True,
+                )
             await conversation_cache.set_closed_messages(
                 anchor.conversation_id,
                 anchor.base_revision,
                 anchor.through_message_id,
                 history,
                 anchor.org_id,
+                summary_revision=summary_revision,
                 task_id=anchor.task_id,
                 turn_id=anchor.turn_id,
             )
@@ -120,9 +148,6 @@ async def build_context_snapshot(
             f"base_revision={anchor.base_revision} | error={error}"
         )
         raise
-    summary_prompt, summary_revision, conversation_source = (
-        _load_snapshot_metadata(db, anchor)
-    )
     from services.handlers.resource_manifest import build_resource_manifest
 
     resource_manifest = build_resource_manifest(

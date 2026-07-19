@@ -202,7 +202,10 @@
 | `_identify_tool_turns` | `backend/services/handlers/context_compressor/archive.py` | 按 `assistant+tool_calls` 切分工具轮次（企微用） | messages | List[List[int]] |
 | `_identify_user_turns` | `backend/services/handlers/context_compressor/archive.py` | 按 `role=user` 切分用户对话回合（**Web 用**） | messages | List[Tuple[int,int]] |
 | `compact_stale_by_user_turns` | `backend/services/handlers/context_compressor/archive.py` | Web 端工具结果归档：按用户对话回合 + 容量触发 | messages, keep_user_turns=10, capacity_trigger=0.7, max_tokens=200000 | int |
-| `compact_loop_with_summary` | `backend/services/handlers/context_compressor/summary.py` | 层5 循环内摘要：超阈值时调便宜模型压缩为摘要 | messages, max_tokens, trigger_ratio=0.8 | bool |
+| `compact_loop_with_summary` | `backend/services/handlers/context_compressor/summary.py` | 层5 当前 Run 临时摘要：按 task scope 对 stale prefix 做 single-flight、失败 suppression 和应用前 fingerprint 复核 | messages, max_tokens, trigger_ratio=0.8, suppression_scope? | bool |
+| `compaction_prefix_fingerprint` | `backend/services/agent/runtime/context/compaction_guard.py` | 对实际待替换消息稳定序列化并生成 SHA-256，不存储正文 | messages, indices | str |
+| `acquire_loop_compaction/finish_loop_compaction` | `backend/services/agent/runtime/context/compaction_guard.py` | 当前 Run 相同 prefix 的进程内 single-flight 与失败 suppression；状态有界保存 | scope, prefix_fingerprint | str / None |
+| `clear_loop_compaction_scope` | `backend/services/agent/runtime/context/compaction_guard.py` | Run 结束时清除对应 task scope 的 suppression 与 in-flight 状态 | scope | None |
 | `enforce_tool_budget` | `backend/services/handlers/context_compressor/budget.py` | 工具结果桶：超预算从最旧 tool 开始归档 | messages, max_tokens | None |
 | `enforce_history_budget_sync` | `backend/services/handlers/context_compressor/budget.py` | 历史消息桶：超预算反向累积找切点 | messages, max_tokens | None |
 | `ChatGenerateMixin._get_conv_source` | `backend/services/handlers/chat_generate_mixin.py` | 读取并缓存 conversations.source（Web/企微分流用） | conversation_id | str |
@@ -225,15 +228,24 @@
 | `build_part_from_payload` | `backend/services/handlers/emit_payloads.py` | 将可信 emit payload 转成非流式链路使用的 ContentPart | payload | Optional[ContentPart] |
 | `context_anchor_from_binding` | `backend/services/handlers/context_snapshot.py` | 将 Turn 绑定事务结果转换为不可变任务上下文锚点 | task_data, input_message_id, turn_id, binding_data | ContextAnchor |
 | `build_context_snapshot` | `backend/services/handlers/context_snapshot.py` | 校验任务输入锚点，按 base revision 严格构造闭合历史、摘要、资源和跨 Turn 数据证据 | db, anchor, current_text | ContextSnapshot |
-| `get_closed_messages` | `backend/services/handlers/conversation_cache.py` | 仅在 revision 与 through-message 精确匹配时读取 v2 闭合历史；旧值/坏值失效，Redis 故障降级 miss | conv_id, requested_revision, through_message_id, org_id, task_id?, turn_id? | Optional[List[Dict]] |
-| `set_closed_messages` | `backend/services/handlers/conversation_cache.py` | 写入带 schema/revision/through-message 的闭合历史信封，不接收任务私有工具循环 | conv_id, revision, through_message_id, messages, org_id, ttl, task_id?, turn_id? | bool |
-| `build_context_messages` | `backend/services/handlers/chat_context/history_loader.py` | legacy 模式按时间加载；快照模式仅加载不超过 base revision 的闭合 conversation 消息 | db, conversation_id, current_text, base_revision?, strict? | List[Dict] |
-| `_build_history_query` | `backend/services/handlers/chat_context/history_loader.py` | 构造 legacy 或固定 revision 的闭合历史查询 | db, conversation_id, base_revision | query |
-| `_row_to_oai_messages` | `backend/services/handlers/chat_context/history_loader.py` | 将数据库消息投影为闭合历史；完成 Turn 仅保留文本，最新中断 Turn 保留工具恢复协议，并限制历史图片 | row, remaining_images, preserve_tool_protocol? | messages, image_count |
+| `get_closed_messages` | `backend/services/handlers/conversation_cache.py` | 从隔离的 v4 key 读取 summary-revision/revision/through-message 三重边界精确匹配的闭合历史；旧 key 按 TTL 退出，Redis 故障降级 miss | conv_id, requested_revision, through_message_id, org_id, summary_revision?, task_id?, turn_id? | Optional[List[Dict]] |
+| `set_closed_messages` | `backend/services/handlers/conversation_cache.py` | 写入 v4 schema 及摘要下界、快照上界、闭合消息边界，不接收任务私有工具循环 | conv_id, revision, through_message_id, messages, org_id, ttl, summary_revision?, task_id?, turn_id? | bool |
+| `build_context_messages` | `backend/services/handlers/chat_context/history_loader.py` | legacy 模式按时间加载；快照模式只加载 `(summary_revision, base_revision]`；最近 3 个历史用户 Turn 恢复安全成功工具对 | db, conversation_id, current_text, base_revision?, summary_revision?, strict? | List[Dict] |
+| `_build_history_query` | `backend/services/handlers/chat_context/history_loader.py` | 构造 legacy 或摘要下界之后、固定快照上界以内的闭合历史查询 | db, conversation_id, base_revision, summary_revision? | query |
+| `_row_to_oai_messages` | `backend/services/handlers/chat_context/history_loader.py` | 将数据库消息投影为闭合历史；近期正常 Turn 仅恢复成功、闭合、≤8KB 且无明显凭证的工具对，中断 Turn 保留恢复协议 | row, remaining_images, preserve_tool_protocol?, preserve_safe_completed_tools? | messages, image_count |
+| `_extract_user_file_refs` | `backend/services/handlers/chat_context/content_extractors.py` | 提取历史用户附件的叙事性文件名，不向模型暴露 workspace_path | blocks | List[str] |
+| `_project_tool_step` | `backend/services/handlers/chat_context/content_extractors.py` | 将单个持久化工具步骤投影为闭合 OAI tool pair，并执行正常历史的成功状态、大小和凭证筛选 | part, sequence_index, safe_completed_only, max_output_bytes | List[Dict] |
+| `update_summary_if_needed` | `backend/services/handlers/chat_context/summary_manager.py` | 按连续闭合 Turn 生成摘要，并通过 expected revision CAS 原子提交覆盖边界 | db, conversation_id | None |
+| `_coordinate_summary_update` | `backend/services/handlers/chat_context/summary_manager.py` | 获取跨 Worker 摘要协调资格，生成摘要并通过数据库 revision CAS 提交，最后记录失败 suppression 和释放锁 | db, conversation/revision/window fields | None |
+| `_select_closed_summary_window` | `backend/services/handlers/chat_context/summary_manager.py` | 排除近期完整消息，只选择 summary revision 后连续且 user/assistant 闭合的 Turn | rows, context_limit, current_summary_revision | rows, new_rows, through_revision, through_message_id |
+| `_apply_summary` | `backend/services/handlers/chat_context/summary_manager.py` | 调用数据库 RPC 原子提交摘要 revision、边界消息和兼容消息计数 | db, conversation_id, expected_revision, through_revision, through_message_id, summary, message_count | str |
+| `apply_context_summary` | `backend/migrations/137_context_summary_revision_rpc.sql` | 锁定 conversation 并以 expected revision CAS 提交闭合摘要，拒绝旧结果和非法消息边界 | conversation_id, expected_revision, through_revision, through_message_id, summary, message_count | JSONB |
 | `_estimate_message_tokens` | `backend/services/handlers/chat_context/history_loader.py` | 估算一组标准消息 token，仅控制加载批次与日志 | messages | int |
 | `_append_tool_digest` | `backend/services/handlers/chat_context/history_loader.py` | 将持久化工具摘要追加到当前 assistant 行的用户可见文本 | messages, row | None |
 | `_finalize_history` | `backend/services/handlers/chat_context/history_loader.py` | 补全工具配对、中断提示和 legacy 文本去重 | context, interrupt_marker, current_text, is_legacy | List[Dict] |
-| `PromptBuilder._compose_messages` | `backend/services/prompt_builder/builder.py` | 按缓存稳定边界拼接系统层、快照历史、附件与当前用户消息 | static/session/turn/history/summary/user_result | List[Dict] |
+| `PromptBuilder._compose_messages` | `backend/services/prompt_builder/builder.py` | 按稳定前缀顺序拼接静态层、会话层、活动摘要、recent history 和 Evidence，再注入动态时间、当前资源与用户输入 | static/session/turn/history/summary/user_result | List[Dict] |
+| `StreamChunk` | `backend/services/adapters/types.py` | Provider 流式响应统一结构；除输入输出 Token 外透传 cached_tokens 与 cache_creation_tokens，缺省为零 | content, usage, tool_calls | dataclass |
+| `accumulate_cache_usage` | `backend/services/handlers/chat/stream_session.py` | Web 流式与 Headless 共用的 Provider 缓存命中/创建 Token 累积原语 | totals, chunk | None |
 | `bind_generation_turn` | `backend/migrations/120_turn_revision_foundation.sql` | 原子绑定 task 的输入消息、Turn 和上下文基线；相同参数重复调用幂等 | conversation_id, task_id, input_message_id, turn_id, execution_mode | JSONB |
 | `close_generation_turn` | `backend/migrations/120_turn_revision_foundation.sql` | 原子关闭 Turn、标记输入输出 revision 并推进会话版本 | conversation_id, task_id, output_message_id | JSONB |
 | `enqueue_generation_turn` | `backend/migrations/121_conversation_actor_queue.sql` | 原子创建 pending Chat task 并校验、绑定输入/输出消息的 Turn 关系 | task_data, input_message_id, turn_id, execution_mode, delivery_context | JSONB |
@@ -283,20 +295,19 @@
 | `ConversationWorker.scan_once` | `backend/services/conversation_worker.py` | 扫描 pending/running Chat task，按 serial conversation 或 branch task 去重并受并发上限调度 | - | int |
 | `append_final_turn_blocks` | `backend/services/handlers/chat/outcome_builder.py` | 按流式时序将最后一轮尚未收割的 thinking/text 追加到内容块 | blocks, thinking, thinking_committed, thinking_duration_ms, text | None |
 | `build_content_parts` | `backend/services/handlers/chat/outcome_builder.py` | 将可信内部内容块转换为 ContentPart；空块回退为普通文本且不扫描媒体标记 | blocks, fallback_text, fallback_thinking, fallback_thinking_duration_ms | List[ContentPart] |
-| `finalize_stream_result` | `backend/services/handlers/chat/stream_finalize.py` | 执行预算总结、收割内容块和 tool digest、构造完成参数并发送 stream_end；不提交 completed 终态 | handler, adapter, budget, delivery, state, websocket, save_blocks | StreamFinalizationResult |
-| `handle_stream_error` | `backend/services/handlers/chat/stream_lifecycle.py` | 分类 Provider 可重试错误与业务错误，不处理持久化阶段异常 | handler, error, request fields | None |
-| `cleanup_stream_resources` | `backend/services/handlers/chat/stream_lifecycle.py` | 关闭 Provider、WS 监听器和请求级工具结果资源 | adapter, task_id, websocket | None |
-| `persist_stream_completion` | `backend/services/handlers/chat/stream_lifecycle.py` | 在模型成功后提交旧链路终态；持久化失败不触发 Provider 重试 | handler, completion_args, request/result fields | None |
-| `ChatStreamLoop.run` | `backend/services/handlers/chat/stream_loop.py` | 协调多轮 Provider 流、工具执行、取消、steer 与上下文压缩，不构造或提交最终终态 | - | None |
-| `run_legacy_chat_stream` | `backend/services/handlers/chat/stream_runner.py` | 兼容旧 Web 流协议并串联准备、循环、收尾、错误、清理和持久化边界 | handler, request, websocket | None |
-| `prepare_chat_stream` | `backend/services/handlers/chat/stream_setup.py` | 基于固定上下文准备 Provider、权限工具、trace、staging 与执行预算，不读写任务终态 | handler, content, user_id, conversation_id, task_id, model_id, permission_mode, needs_google_search, params, context_anchor | PreparedChatStream |
-| `read_stream_turn` | `backend/services/handlers/chat/stream_session.py` | 读取单轮 Provider 流，累积 thinking/text/usage/tool-call 并处理 stream 内取消；不执行工具或写终态 | adapter, messages, stream_kwargs, delivery, totals, content_blocks, websocket, save_accumulated | StreamTurnResult |
+| `prepare_chat_stream` | `backend/services/handlers/chat/stream_setup.py` | 基于固定上下文准备 Provider、权限工具、trace、staging、执行预算与当前模型 ContextBudget，不读写任务终态 | handler, content, user_id, conversation_id, task_id, model_id, permission_mode, needs_google_search, params, context_anchor | PreparedChatStream |
+| `build_context_receipt` | `backend/services/agent/runtime/context/receipt.py` | 只读生成不含正文的影子上下文回执，记录消息块、工具 Schema、Token 估算与稳定 hash | messages, tools, conversation_id, task_id, model_id | ContextReceipt |
+| `derive_context_budget` | `backend/services/agent/runtime/context/budget.py` | 按模型窗口与最大输出推导 output reserve、safety margin、usable input 及 75%/85%/92% 压缩阈值 | context_window, max_output_tokens | ContextBudget |
+| `resolve_context_budget` | `backend/services/agent/runtime/context/budget.py` | 从统一模型注册表解析 ContextBudget，未知模型使用 128K/8K 保守默认能力 | model_id | ContextBudget |
+| `summary_prefix_fingerprint` | `backend/services/agent/runtime/context/summary_coordination.py` | 对 conversation、当前摘要 revision 和待覆盖 revision 生成不暴露会话 ID 的稳定 SHA-256 | conversation_id, summary_revision, through_revision | str |
+| `acquire_summary_coordination` | `backend/services/agent/runtime/context/summary_coordination.py` | 检查 5 分钟失败 suppression 并尝试获取 60 秒 Redis 分布式锁；Redis 故障时降级继续依赖 DB CAS | conversation_id, summary_revision, through_revision | SummaryCoordination |
+| `finish_summary_coordination` | `backend/services/agent/runtime/context/summary_coordination.py` | 摘要模型失败时写 suppression，并按 token 所有权释放分布式锁；清理失败不影响聊天主流程 | coordination, failed | None |
+| `record_context_event` | `backend/services/agent/runtime/context/telemetry.py` | 以 `gen_ai.context_*` 稳定名称记录不含正文的 Receipt、缓存、压缩和 Evidence 结构化观测事件 | event, fields | None |
+| `build_evidence_model_view` | `backend/services/agent/runtime/context/providers/evidence.py` | 按 8KB/64KB 阈值把结构化 Evidence 投影为完整、采样、元数据或引用视图 | artifact_id, source, rows, columns, file_ref, query_scope, metric_definitions | EvidenceModelProjection |
+| `build_evidence_tools` | `backend/config/evidence_tools.py` | 构建仅在固定 Snapshot 存在 Evidence 时开放的只读 Search/Get 工具 Schema | - | List[Dict] |
 | `prepare_tool_turn` | `backend/services/handlers/chat/tool_loop.py` | 构建动态工具列表并追加上下文、退出附件和权限提醒 | core_tools, discovered_names, org_id, turn, messages, tool_context, permission | List[Dict] |
-| `begin_tool_calls` | `backend/services/handlers/chat/tool_loop.py` | 追加 assistant tool_calls，推送调用事件并创建 running tool_step | completed_calls, turn_text, turn, messages, content_blocks, delivery, websocket, save_blocks | Dict[str, float] |
 | `apply_tool_results` | `backend/services/handlers/chat/tool_loop.py` | 将工具结果回填模型消息和 tool_step，并返回待注入图片 URL | tool_results, messages, content_blocks, start_times, tool_context | List[str] |
-| `push_emit_payloads` | `backend/services/handlers/chat/tool_loop.py` | 按显式协议推送并持久化 emit 内容块 | payloads, content_blocks, delivery, websocket, save_blocks | None |
-| `push_form_block` | `backend/services/handlers/chat/tool_loop.py` | 推送表单块及固定确认提示，返回提示文本 | form, content_blocks, delivery, websocket, save_blocks | str |
-| `compact_tool_context` | `backend/services/handlers/chat/tool_loop.py` | 按 Web/企微既有预算压缩完成的工具轮次 | messages, conversation_source, turn | None |
+| `compact_tool_context` | `backend/services/handlers/chat/tool_loop.py` | 按当前模型 ContextBudget 的 75%/85%/92% 阈值统一归档、摘要和兜底，并把 task scope 传给循环压缩协调器 | messages, context_budget, turn, compaction_scope? | None |
 | `collect_tool_result` | `backend/services/agent/runtime/artifact_collector.py` | 将结构化 AgentResult 旁路映射为 Run 内产物证据，禁止从 Markdown 反向取数 | result, tool_call_id | Tuple[ArtifactEvidence, ...] |
 | `ArtifactLedger.record` | `backend/services/agent/runtime/artifact_ledger.py` | 按稳定 fingerprint 幂等登记 Run 内产物证据 | evidence | bool |
 | `DataAccuracyPolicy.validate_artifact` | `backend/services/agent/runtime/policies/data_accuracy.py` | 校验数据产物状态、行结构、列结构和受控文件引用 | contract, evidence, payload | PolicyResult |
@@ -1420,6 +1431,42 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `build_thumbnail_resolver` | `backend/scripts/backfill_media_asset_urls.py` | 生产回填时从 NAS 原图生成并上传独立缩略图对象 |
 | `merge_stats` | `backend/scripts/backfill_media_asset_urls.py` | 合并回填统计 |
 | `main` | `backend/scripts/backfill_media_asset_urls.py` | CLI 入口，支持 `--dry-run` / `--apply` / `--limit` / `--sync-thumbnails` |
+
+### 统一会话上下文历史回填
+
+| 函数 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `canonical_json` / `content_hash` | `backend/scripts/backfill_conversation_context_items.py` | 生成跨进程稳定的 JSON 与 SHA-256 内容身份 |
+| `stable_uuid` | `backend/scripts/backfill_conversation_context_items.py` | 按历史消息、块和 Artifact 身份生成可重跑 UUID |
+| `decode_content` | `backend/scripts/backfill_conversation_context_items.py` | 将历史 `messages.content` 统一为结构化 block 列表 |
+| `project_message` | `backend/scripts/backfill_conversation_context_items.py` | 将单条历史消息投影为 typed ConversationItem 和 `message_slice` Artifact |
+| `iter_rows` | `backend/scripts/backfill_conversation_context_items.py` | 使用可跨批次提交的 server-side cursor 流式读取历史消息 |
+| `insert_projection` | `backend/scripts/backfill_conversation_context_items.py` | 依靠稳定 ID 和唯一约束幂等写入一个历史投影 |
+| `load_env` | `backend/scripts/backfill_conversation_context_items.py` | 加载项目数据库环境变量且不覆盖现有进程环境 |
+| `main` | `backend/scripts/backfill_conversation_context_items.py` | 默认 dry-run，支持 apply、批大小和扫描上限的回填 CLI |
+
+### 通用工具 Artifact Runtime
+
+| 函数/类 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `normalize_tool_result` | `backend/services/agent/runtime/artifacts/normalizer.py` | 将任意工具返回规范化为带稳定 ID、完整正文、哈希和双层模型视图的 ArtifactDraft |
+| `canonical_json` | `backend/services/agent/runtime/artifacts/normalizer.py` | 规范化 dataclass、Decimal、日期、UUID 和枚举后生成稳定 JSON |
+| `ArtifactStore` | `backend/services/agent/runtime/artifacts/store.py` | Run 内幂等登记、目录检索和 UTF-8 字节游标分页读取完整工具事实 |
+| `page_content` | `backend/services/agent/runtime/artifacts/store.py` | 为 Run 内与持久 Artifact 提供统一 UTF-8 游标分页协议 |
+| `PersistentArtifactRepository` | `backend/services/agent/runtime/artifacts/repository.py` | 按 conversation、base revision 和 org 隔离检索/读取 inline、OSS 与 message_slice 历史 Artifact |
+| `project_tool_result` | `backend/services/agent/runtime/artifacts/projector.py` | 小结果保持旧协议，大结果返回 40KB 有界预览、Artifact 引用和强制读取指令 |
+| `ArtifactToolMixin._artifact_search` | `backend/services/agent/artifact_tool_mixin.py` | 合并搜索当前 Run 与固定 revision 内的历史 Artifact 目录 |
+| `ArtifactToolMixin._artifact_get` | `backend/services/agent/artifact_tool_mixin.py` | 获取当前 Run 或会话历史中指定 Artifact 的元数据和模型视图 |
+| `ArtifactToolMixin._artifact_read` | `backend/services/agent/artifact_tool_mixin.py` | 按 cursor/max_tokens 分页读取当前或跨轮完整规范内容 |
+| `build_artifact_tools` | `backend/config/artifact_tools.py` | 构建通用只读 Artifact Search/Get/Read Schema |
+| `materialize_artifacts` | `backend/services/agent/runtime/artifacts/persistence.py` | Actor 提交前将 ≤64KB 完整事实内联，将更大 JSON 上传租户隔离 OSS |
+| `cleanup_materialized_artifacts` | `backend/services/agent/runtime/artifacts/persistence.py` | Actor 未成功提交或物化中断时 best-effort 删除本次新上传的 OSS Artifact，避免永久孤儿 |
+| `build_turn_context_items` | `backend/services/agent/runtime/context/items.py` | 将输入消息、输出块和工具 Artifact 投影为有序 typed ConversationItem，保持 tool pair 原子组 |
+| `assemble_history` | `backend/services/agent/runtime/context/assembler.py` | 按模型软/硬预算保留最近两个用户 Turn 与完整工具组，压缩稳定旧前缀并生成 Actor 原子提交 payload |
+| `ContextPlan` | `backend/services/agent/runtime/context/assembler.py` | 描述 Provider 历史、持久 compaction、被覆盖 sequence 和估算 Token |
+| `record_provider_context_receipt` | `backend/services/agent/runtime/context/provider_receipt.py` | 在每次真实 Provider 请求前生成并登记无正文、可审计的消费回执 |
+| `load_unified_context_messages` | `backend/services/handlers/chat_context/unified_history_loader.py` | 先加载最新有效 Compaction，再分页投影其 through_sequence 后的 ConversationItem；仅新主链完全为空时回退旧 messages |
+| `ChatExecutionResult` | `backend/services/handlers/chat/execution_result.py` | 通道无关的纯执行结果，携带消息块、usage、Evidence、Artifact drafts 与 ContextReceipt |
 | `encode_image` | `backend/scripts/poc_ecom_requirement_assist.py` | 将本地产品图/参考图编码为多模态 data URL |
 | `parse_json_response` | `backend/scripts/poc_ecom_requirement_assist.py` | 解析并清理模型返回的 JSON 方案 |
 | `validate_result` | `backend/scripts/poc_ecom_requirement_assist.py` | 校验共享事实与三套创作简报的结构 |

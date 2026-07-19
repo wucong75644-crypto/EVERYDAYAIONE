@@ -49,6 +49,43 @@ def test_collector_builds_stable_data_evidence() -> None:
     assert first[0].payload["data"][0]["valid_orders"] == "414"
 
 
+def test_persistence_projection_includes_reusable_model_view() -> None:
+    state = RuntimeState.observing()
+    state.ledger.record(
+        collect_tool_result(_data_result(), tool_call_id="call-1")[0]
+    )
+
+    item = state.persistence_projection()[0]
+
+    assert item["model_view"]["tier"] == "full"
+    assert item["model_view"]["rows"] == [
+        {"platform": "淘宝", "valid_orders": "414"},
+    ]
+    assert item["model_view"]["metric_definitions"] == {}
+    assert item["byte_size"] > 0
+    assert len(item["content_hash"]) == 64
+    assert item["expires_at"] is None
+
+
+def test_oversized_rows_keep_metadata_view_instead_of_dropping_evidence() -> None:
+    state = RuntimeState.observing()
+    result = AgentResult(
+        summary="超大结果",
+        data=[{"payload": "数" * 1_100_000}],
+        columns=[ColumnMeta(name="payload", dtype="str", label="数据")],
+        source="erp_agent",
+    )
+    state.ledger.record(
+        collect_tool_result(result, tool_call_id="call-large")[0]
+    )
+
+    item = state.persistence_projection()[0]
+
+    assert item["rows"] is None
+    assert item["model_view"]["tier"] == "metadata"
+    assert item["model_view"]["row_count"] == 1
+
+
 def test_collector_ignores_plain_text_and_markdown() -> None:
     assert collect_tool_result("平台 | 有效订单\n淘宝 | 414", tool_call_id="call-1") == ()
     result = AgentResult(summary="平台 | 有效订单\n淘宝 | 414")

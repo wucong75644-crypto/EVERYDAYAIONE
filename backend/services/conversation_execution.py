@@ -62,6 +62,10 @@ class GenerationOutcome:
     credits_cost: int
     tool_digest: dict[str, Any] | None = None
     data_evidence: list[dict[str, Any]] | None = None
+    context_items: list[dict[str, Any]] | None = None
+    artifacts: list[dict[str, Any]] | None = None
+    context_receipts: list[dict[str, Any]] | None = None
+    compaction: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.result_content, list):
@@ -76,6 +80,14 @@ class GenerationOutcome:
             self.data_evidence, list
         ):
             raise TypeError("data_evidence must be a list or None")
+        for name in ("context_items", "artifacts", "context_receipts"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, list):
+                raise TypeError(f"{name} must be a list or None")
+        if self.compaction is not None and not isinstance(
+            self.compaction, dict
+        ):
+            raise TypeError("compaction must be a dict or None")
 
 
 class GenerationExecutor(Protocol):
@@ -188,12 +200,28 @@ class ConversationExecutionService:
                 return result
 
             if ownership_lost.is_set():
+                await self._cleanup_artifacts(
+                    outcome,
+                    task_id=claim.task_id,
+                )
                 return {"outcome": "ownership_lost"}
-            result = await self._commit(
-                claim,
-                str(output_message_id),
-                outcome,
-            )
+            try:
+                result = await self._commit(
+                    claim,
+                    str(output_message_id),
+                    outcome,
+                )
+            except BaseException:
+                await self._cleanup_artifacts(
+                    outcome,
+                    task_id=claim.task_id,
+                )
+                raise
+            if result.get("outcome") != "committed":
+                await self._cleanup_artifacts(
+                    outcome,
+                    task_id=claim.task_id,
+                )
             await self._notify_terminal(task, result)
             return result
         finally:
@@ -296,7 +324,31 @@ class ConversationExecutionService:
                     if outcome.tool_digest is not None else None
                 ),
                 "p_data_evidence": Jsonb(outcome.data_evidence or []),
+                "p_context_items": Jsonb(outcome.context_items or []),
+                "p_artifacts": Jsonb(outcome.artifacts or []),
+                "p_context_receipts": Jsonb(
+                    outcome.context_receipts or []
+                ),
+                "p_compaction": (
+                    Jsonb(outcome.compaction)
+                    if outcome.compaction is not None else None
+                ),
             },
+        )
+
+    async def _cleanup_artifacts(
+        self,
+        outcome: GenerationOutcome,
+        *,
+        task_id: str,
+    ) -> None:
+        from services.agent.runtime.artifacts import (
+            cleanup_materialized_artifacts,
+        )
+
+        await cleanup_materialized_artifacts(
+            outcome.artifacts or [],
+            task_id=task_id,
         )
 
     async def _fail(

@@ -53,6 +53,12 @@ class ActorWebSink:
         self._chunks_since_persist = 0
 
     async def start(self) -> None:
+        self._websocket.register_steer_listener(
+            self._delivery.push_task_id,
+        )
+        self._websocket.register_cancel_listener(
+            self._delivery.push_task_id,
+        )
         await self._send(
             build_message_start(
                 task_id=self._delivery.push_task_id,
@@ -108,6 +114,20 @@ class ActorWebSink:
                 conversation_id=self._delivery.conversation_id,
                 message_id=self._delivery.message_id,
             )
+        )
+
+    def take_steer(self) -> str | None:
+        return self._websocket.check_steer(self._delivery.push_task_id)
+
+    def is_cancelled(self) -> bool:
+        return self._websocket.is_cancelled(self._delivery.push_task_id)
+
+    async def close(self) -> None:
+        self._websocket.unregister_steer_listener(
+            self._delivery.push_task_id,
+        )
+        self._websocket.unregister_cancel_listener(
+            self._delivery.push_task_id,
         )
 
     async def _persist(self) -> None:

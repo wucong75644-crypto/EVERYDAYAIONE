@@ -80,7 +80,6 @@ class Settings(BaseSettings):
     app_debug: bool = True
     app_host: str = "0.0.0.0"
     app_port: int = 8000
-    conversation_actor_web_enabled: bool = False
     conversation_actor_worker_enabled: bool = False
 
     # CORS 允许的域名（逗号分隔，生产环境必须配置）

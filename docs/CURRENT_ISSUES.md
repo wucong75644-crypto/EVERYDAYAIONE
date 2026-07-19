@@ -12,6 +12,35 @@
 
 ---
 
+### 2026-07-19 统一会话上下文方案 B — 数据库持久层已完成
+
+- 已固化 Web、企业微信共用的 ConversationItem、Artifact、ContextReceipt 和
+  Compaction 实施合同；所有工具统一消费，不按工具名设置上下文白名单。
+- 迁移 138 新增四张租户隔离事实表，并以 12 参数 `commit_generation_turn` 重载复用
+  现有 Actor fencing、积分、消息和 revision 原子提交；旧 7/8 参数入口保持不变。
+- 历史回填脚本默认 dry-run，使用稳定 UUID、内容哈希和唯一约束保证幂等；历史大工具
+  结果建立 `message_slice` Artifact，不复制或截断完整消息事实。
+- 当前只完成持久层和回填边界，运行时尚未调用新 RPC，因此未改变生产聊天链路。
+- 新增 16 项迁移与回填测试全部通过，回填脚本语句覆盖率 89%；排除 manual 的自动化
+  回归为 7588 passed、24 skipped、4 xfailed，6 项既有失败与修改前记录一致。
+- Artifact Runtime 已接入 Chat 唯一工具结果消费点：任意工具返回都会形成完整 Run-local
+  Artifact；小结果保持原模型协议，大于 40KB 的结果返回稳定引用、首尾预览和分页读取
+  指令。`artifact_search/get/read` 从对话开始注册，首个大结果后可立即调用。
+- 当前 Artifact 仍只在本次 Run 内完整可读，尚未接入迁移 138 的 Actor 原子提交，也尚未
+  替换旧 `tool_result_envelope` 的工具名预算；这两项分别属于后续持久化接线和旧逻辑
+  清理阶段，不能提前宣称跨 Turn 已完成。
+- Actor 持久化接线已完成：`ChatExecutionResult -> GenerationOutcome -> 12 参数
+  commit_generation_turn` 同时携带 ConversationItem、Artifact、ContextReceipt 和
+  Evidence。≤64KB Artifact 内联，大结果在提交前上传租户隔离 OSS；上传失败不提交消息
+  终态。RPC 只接受 task 已绑定的 input/output message 作为 ContextItem 来源。
+- 当前尚未实现下一 Turn 从 `conversation_context_items/conversation_artifacts` 重建模型
+  上下文，因此“已经原子写入”不等于“跨 Turn 已被模型消费”；消费主链属于下一阶段。
+- Actor 持久化新增模块定向覆盖率 98%，Context/Actor/Artifact 相关回归 118 项通过；
+  幂等审查已取消“相同内容跨调用合并”，Artifact ID 由会话、tool_call 和内容共同稳定
+  生成，避免第二次相同结果被去重后产生悬空引用。
+- 仓库默认全量 pytest 会收集 `backend/tests/manual` 的真实依赖 E2E，7 分 28 秒仅完成
+  8 项；自动化基线需排除 manual，真实依赖场景在部署前 smoke 单独执行。
+
 ### 2026-07-18 通用任务交付运行时与跨 Turn 数据证据 — 工具边界校验收口
 
 - 已纠正生产临时方案的职责越界：删除关键词 Data Validator、提前计算和 Grounded Final
@@ -61,8 +90,8 @@
 - Tool Executors 高风险候选：聊天 `generate_image/video` 同步等待链路绕过媒体异步 tasks 主链路；Provider submit 成功而任务落库失败会产生未归属任务；完成锁续期丢失不终止当前处理；ERP 写入只用 Redis 参数哈希做 10 分钟幂等；图片与视频 Workspace 持久化不一致。
 - Goal Orchestrator 阶段结论：采用“小 Harness、大 Worker”，模型继续负责工作，Goal 层只持久化 Objective/Contract/预算/缺口/证据并确定性控制继续、等待、暂停、验证和完成；普通聊天不默认创建 Goal。
 - Goal Orchestrator 高风险候选：现有 ExecutionBudget、StopPolicy 和循环检测只覆盖单次进程内 Tool Loop；ERP Plan、图片方案和 Permission plan 含义不同；模型自述无法证明完成；异步任务完成后没有父 Goal 的幂等续跑边界。
-- Context Engineering 阶段结论：保留固定 revision ContextSnapshot 和工具/历史分桶优势，将上下文统一为 `ContextPlan → ContextAssembler → ContextCompactor → ContextReceipt`；完整事实留在 DB/Workspace/Artifact Store，模型只接收常驻控制面、近期工作集、带覆盖边界的摘要和可按需 Get 的引用。
-- Context Engineering 高风险候选：Web/企微预算按通道固定而非按模型能力派生；会话摘要、循环摘要、Session Memory 与 Memory V2 职责重叠；工具归档后缺少稳定原文引用；压缩失败没有 suppression/in-flight/fingerprint；两套 context compressor 仍并存。
+- Context Engineering 阶段结论：保留固定 revision ContextSnapshot 和工具/历史分桶优势，将 Web、企微及未来入口统一到唯一 `ContextPlan → ContextAssembler → ContextCompactor → ContextReceipt`；完整事实留在 DB/Workspace/Artifact Store，模型只接收常驻控制面、近期工作集、带覆盖边界的摘要和可按需 Get 的引用；全通道长期会话及 Hot/Warm/Cold 模型缓存策略见 `TECH_长期单会话上下文与Token治理.md`。
+- Context Engineering 高风险候选：工具归档后缺少稳定原文引用；压缩失败没有 suppression/in-flight/fingerprint；两套 context compressor 公共能力仍并存。PromptBuilder 与工具循环已共用模型 ContextBudget，不再使用 Web 200K/企微 32K 分叉。
 - Skills Runtime 阶段结论：Skill 定位为可发现、按需加载的指令/资源包，不是 Executor 或授权主体；目标采用 `Skill Registry → Catalog View → Resolver/Policy → Skill Instance → Agent/Tool Loop`，短流程使用 Instruction Skill，需异步恢复和幂等的长流程使用 Workflow SkillRun。
 - Skills Runtime 高风险候选：产品 Agent 当前没有 Skill Registry/Selector/Tool，`backend/skills` 只是沙盒只读指南；开发 `.cursor/skills` 与产品 Skill 信任域不能混用；Grok 的 `allowed-tools` 在当前源码主要解析和展示，不能照搬为执行授权；Skill 热更新、脚本、Prompt 注入和多段生成重复扣费需要 hash 固定、Policy 求交及步骤幂等。
 - MCP / Plugins / Hooks 阶段结论：MCP 是外部能力协议、Plugin 是安装和版本单元、Hook 是生命周期拦截点；SaaS 目标采用平台/租户 Extension Registry、共享隔离 MCP Gateway、渐进式 Tool/Resource Catalog 和强类型 Runtime Hook，所有外部调用仍回到 Core Policy、Action、Artifact 与审计协议。
@@ -466,6 +495,9 @@
 
 ## 更新记录
 
+- **2026-07-19**：统一上下文上线前审查修复四项接线/可靠性缺陷：历史回填 Artifact 稳定 ID 现包含 message、block 和 tool_call 身份，禁止相同内容跨调用静默合并；`prepare_chat_stream` 将 org_id 写入 RuntimeState，使跨轮 Artifact Repository 实际执行 conversation/revision/org 三重范围；大 Artifact 物化中途失败、Actor 丢失租约、提交异常或非 committed 结果会 best-effort 删除本次新上传的 OSS 对象，避免无数据库行的永久孤儿；迁移 138/rollback 仅在 `service_role` 存在时执行 Supabase 授权，兼容生产自建 PostgreSQL 的 `everydayai` owner 角色。群聊工具目录测试同步确认 Artifact Search/Get/Read 为通道通用能力，同时继续排除个人上下文与定时任务工具。全量排除 4 个既有 workspace 夹具失败和 2 个受沙箱网络限制的 PostgreSQL 集成测试后为 7,630 passed、24 skipped、4 xfailed；最终相关回归 64 passed。生产 PostgreSQL 16.13 已在 3 秒锁超时/60 秒语句超时的单事务中完成迁移及 rollback 预演，事务后确认 4 张表和 12 参数 RPC 均无遗留；真实历史只读 dry-run 扫描 130 条消息，生成 433 个 ContextItem 和 87 个 Artifact，未写入数据。尚未正式应用迁移、回填或部署。
+- **2026-07-19**：统一会话上下文 Phase 6 完成结构化 Compaction 与最终 Assembler：按所选模型 ContextBudget 在软阈值压缩稳定旧前缀，至少保留最近两个用户 Turn 和完整 tool call/result；主/备摘要模型均失败时使用有界结构化确定性降级，required/protected 仍超过硬上限则明确失败，不再由 PromptBuilder 静默归档当前输入。压缩 payload 随 GenerationOutcome 进入 Actor fenced 原子提交；下一轮先读取最新 ready compaction，再分页读取其 `through_sequence` 后原始项。扫描超过 5,000 项明确失败，禁止固定 200 项静默丢旧事实。相关回归 137 passed，Assembler/loader 组合覆盖率 85%。迁移 138 尚未应用，未部署。
+- **2026-07-19**：统一会话上下文 Phase 5 完成跨 Turn 消费：ContextSnapshot 在缓存未命中时优先从固定 `base_revision/summary_revision/org` 的 `conversation_context_items` 重建历史，只在新表完全没有事实时回退旧 messages，禁止两套历史混合；Redis 投影升级 v5。Artifact Search/Get/Read 同时覆盖当前 Run 和持久历史，并按会话/revision/org 读取 inline、OSS 或历史 `message_slice` 完整结果。聚焦测试 48 passed，新增模块覆盖率组合 82%。结构化 Compaction/Assembler 仍是下一阶段，迁移 138 尚未应用，未部署。
 - **2026-07-18**：Agent Runtime Projection 与发布保障总体设计冻结：Web/企微统一消费有序 RuntimeEvent 和 Snapshot/Replay，持久 Interaction 采用数据库 CAS，`stream.closed` 不再冒充业务终态；测试按状态机、真实依赖、Trace、通道 E2E、Eval/Chaos 分层，发布采用不可变 ReleaseManifest、expand/contract、Actor drain、按组织 Canary 和自动门禁，应用回滚不得重提 Accepted/Unknown 外部 Action。
 - **2026-07-18**：Agent Runtime 扩展层总体设计冻结：Skill、MCP、Plugin、Hook 和 Subagent 分别建模并统一接入 Catalog/Policy/Action/Executor/Artifact；产品 Skill 与开发 `.cursor/skills` 隔离，Skill 采用 Instruction/Workflow 双模式，MCP 通过多租户 Gateway 与 Secret Broker，Plugin 固定签名版本和租户启用，Hook 不能替代 Core Policy；Subagent 是受限 Child Run，默认 selected Context、read-only、深度 1，并与媒体 Background Action 明确分工。
 - **2026-07-18**：Agent Runtime Executor 总体设计冻结：采用统一 SPI 与专业执行器，Action 经 Policy 后只携带受限 Capability；同步查询可直接完成，媒体/外部长任务返回持久 TaskRef，submit 超时进入 Unknown 对账；结果统一为 model/display/artifact/audit 四视图，并以 Action/Attempt/Provider request 贯穿幂等、回调、轮询、取消、结算和恢复，逐步收口聊天同步媒体与异步任务双链。
@@ -497,7 +529,14 @@
 - **2026-07-17**：完成 Conversation Actor 数据库阶段 2.2：新增原子 commit/fail/cancel RPC 与 rollback；完成提交将消息、积分、Turn revision、task 终态及 owner 释放纳入同一事务；取消采用数据库终态先到先得并立即使旧 token 失效。现有 Web/企微链路仍未切换，真实 PostgreSQL 并发验证留待测试库/部署阶段。
 - **2026-07-17**：完成 Conversation Actor 数据库阶段 2.1：新增兼容队列字段、稳定序列和索引；实现原子 enqueue、serial/branch claim、租约续期与 fencing token 协议及 rollback。现有 Web/企微链路尚未调用这些 RPC；原子 commit/fail/cancel、Worker 和业务切换仍待后续阶段。
 - **2026-07-17**：完成 Conversation Actor 持久执行架构设计：普通 Chat 使用数据库事实队列串行认领，内部 branch 固定快照并行；执行权采用租约与 fencing token；消息、积分、Turn revision、task 终态和 owner 释放纳入原子完成协议；Redis 仅唤醒，Web/企业微信统一通过持久 Worker 执行。实现将按数据库、协调器、Chat 拆分、Web、企微、恢复七阶段推进。
-- **2026-07-17**：完成缓存与工具上下文隔离：Redis 从可变 messages 数组切换为 v2 闭合历史信封；仅 `revision + through_message_id` 精确匹配可命中，旧数组/损坏值主动失效，Redis 故障回源 DB；删除工具循环、legacy loader 和无锚点 PromptBuilder 对共享上下文的整数组覆盖。
+- **2026-07-18**：长期单会话上下文治理完成 Phase 2：Redis 闭合历史升级为滚动兼容的 v4 key，缓存精确绑定 `summary_revision + base_revision + through_message_id`；正常历史恢复最近 3 个安全工具对；摘要仅覆盖连续闭合 Turn，并通过 `expected_summary_revision` CAS 原子提交。ContextSnapshot 先冻结可用摘要边界，再只查询 `(summary_revision, base_revision]`；PromptBuilder 始终按“active summary → recent history”消费。循环摘要只总结当前 Run 实际淘汰的 stale tool messages；删除 Web 独占且会混入保留轮次的请求级 Session Memory，使 Web、企微和 Headless 压缩语义一致。
+- **2026-07-18**：长期单会话上下文治理 Phase 3 已统一初始输入与工具循环预算：新增模型能力驱动的 ContextBudget，按 `context_window - max(max_output, 12.5% window) - max(2048, 5% window)` 得到 usable input，并生成 75%/85%/92% 阈值；model_id 由 Web/企微共用执行入口透传，未知模型按 128K/8K 保守能力处理。ContextBudget 随 PreparedChatStream 进入流式及 Headless 循环，依次控制旧工具归档、工具/历史桶与循环摘要、保尾总量兜底；循环不再读取 conversation source 或通道固定 Token 常量。
+- **2026-07-18**：长期单会话上下文治理 Phase 3 完成稳定前缀与缓存 usage：PromptBuilder 固定按静态规则、会话稳定层、活动摘要、recent history、Evidence、动态时间/位置、当前资源和用户输入组装，动态时间不再截断历史前缀；统一 StreamChunk 新增 cached_tokens/cache_creation_tokens，DashScope、Google、OpenRouter 解析实际 Provider 字段，Web 流式与 Headless 共用累积逻辑并随既有 usage 持久化。未创建 24 小时显式缓存，缓存 miss 仍只影响成本和延迟。
+- **2026-07-18**：长期单会话上下文治理 Phase 4 子任务 1 完成当前 Run 压缩可靠性：流式与 Headless 均以 task_id 作为 suppression scope，对实际 stale messages 生成稳定 SHA-256；相同 prefix 单 in-flight，主/备摘要失败后本 Run 不重复调用，摘要返回时 prefix 变化则放弃应用并保留原消息；Run 结束统一清理协调状态，失败集合有 1024 项上限。跨 Worker 的跨 Turn 摘要仍待 Redis 分布式锁与 5 分钟失败 suppression。
+- **2026-07-18**：长期单会话上下文治理 Phase 4 子任务 2 完成跨 Worker 摘要协调：跨 Turn DB 摘要以 conversation、summary revision、through revision 的哈希前缀获取 60 秒 Redis 锁；锁冲突不等待，模型双路失败后相同 prefix 抑制 5 分钟，新 revision 可立即重试。Redis 全链路异常降级到既有数据库 revision CAS，不阻断 Web、企业微信或 Headless 聊天。
+- **2026-07-19**：Web Conversation Actor 正式转正：`ChatHandler.start` 固定原子入队，删除 `conversation_actor_web_enabled`、`_stream_generate`、LegacyStreamRequest 以及旧 Web runner/loop/lifecycle。空输出恢复、steer、分阶段取消、智能换模型重试、Provider 熔断统计和终态后记忆/摘要/知识钩子均已迁入 Actor 主链；Web、企微和 Headless 继续共享 `prepare_chat_stream`、`execute_chat`、工具、上下文与预算能力。
+- **2026-07-18**：长期单会话上下文治理完成统一观测：ContextReceipt、固定 revision 缓存、当前 Run 压缩和 Evidence Search/Get 统一输出 `gen_ai.context_*` 结构化事件；记录估算 Token、类型分布、hit/miss、压缩前后差值和检索 outcome，不写消息或证据正文。Provider 实际 input/cache Token 继续沿既有 usage 持久化。
+- **2026-07-19**：取消长期上下文内部独立 `ContextRollout` 灰度及 org/channel/model allowlist；Evidence、Search/Get、当前 Run 与跨 Turn LLM compaction 统一进入 Web、企微和 Headless 共用主链。Agent Runtime 发布灰度设计保留，避免两套灰度控制面和 `shadow` 语义冲突。
 - **2026-07-17**：完成 ContextSnapshot：Web/企业微信正式 task 使用 `base_context_revision` 构造不可变闭合历史，严格校验 `input_message_id/turn_id`，不读取共享 Redis 决定历史边界；相同文本不再被猜测去重；任务私有副本独立压缩；企微首轮恢复小预算配置；旧任务保留受监控 legacy 路径。
 - **2026-07-17**：完成 Web/企业微信 Turn 绑定：所有正式 AI 生成 task 绑定 `input_message_id/turn_id/base_context_revision`；assistant 写入 `reply_to_message_id`；企微同步生成纳入正式 task 生命周期；成功关闭 Turn，失败不推进 revision；旧 retry 消息保留受监控的输入锚点降级。
 - **2026-07-17**：完成 Turn/revision 数据库基础：messages/tasks/conversations 增加兼容字段与索引，新增幂等 `bind_generation_turn`、`close_generation_turn` 事务 RPC 及 rollback；业务链路将在后续阶段接入。

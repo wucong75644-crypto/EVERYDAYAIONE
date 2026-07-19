@@ -49,6 +49,16 @@
 - `frontend/src/components/chat/message/useEChartsRender.ts`：封装 ECharts Chunk 加载、初始化、重试、卸载清理和 ResizeObserver 生命周期。
 
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
+- `docs/document/TECH_长期单会话上下文与Token治理.md`、`TECH_长期单会话上下文与Token治理_实施附录.md`：面向长期单会话体验收口 Grok Build 对标、跨 Turn Evidence、活动工作集、模型能力预算、结构化摘要、Search/Get、Prompt Cache 与 ContextReceipt。
+- `docs/document/TECH_统一会话上下文Artifact与Compaction引擎.md`：方案 B 的实施合同，统一 ConversationItem、通用工具 Artifact、跨 Turn 召回、模型能力预算、结构化 Compaction、原子提交、历史回填和直接切换流程。
+- `backend/services/agent/runtime/artifacts/`：通用工具结果规范化、Run 内完整事实存储、40KB 模型视图、稳定引用和 UTF-8 游标分页读取。
+- `backend/services/agent/artifact_tool_mixin.py`、`backend/config/artifact_tools.py`：所有聊天入口共用的只读 `artifact_search/get/read` 执行与工具协议。
+- `backend/services/agent/runtime/artifacts/persistence.py`：Actor 提交前将小 Artifact 内联、大 Artifact 上传租户隔离 OSS，并生成迁移 138 的提交参数。
+- `backend/services/agent/runtime/artifacts/repository.py`：按会话、组织和固定 revision 跨轮检索、获取、分页读取 inline/OSS/message_slice Artifact。
+- `backend/services/agent/runtime/context/assembler.py`：模型能力预算驱动的 ContextPlan、结构化双模型压缩、确定性降级、工具组/最近 Turn 保护与硬上限门禁。
+- `backend/services/handlers/chat_context/unified_history_loader.py`：将持久 ConversationItem 重建为模型历史；新主链存在时不与旧 messages 历史混合。
+- `backend/services/agent/runtime/context/items.py`、`provider_receipt.py`：构建本 Turn 的原子 ConversationItem 组，并在每次真实 Provider 请求前登记无正文 ContextReceipt。
+- `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
 - `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
 - `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
@@ -185,6 +195,8 @@ EVERYDAYAIONE/
 │   │   ├── 132_wecom_channel_task_enqueue.sql # 企微 user/channel Actor task 写入
 │   │   ├── 133_wecom_attachment_single_consumption.sql # 企微当前附件绑定后转历史资源
 │   │   ├── 134_web_user_wecom_delivery.sql # Web 用户输入按真实企微绑定写入事务 Outbox
+│   │   ├── 136_conversation_evidence_model_view.sql # Evidence 分级模型视图、hash、大小与过期字段
+│   │   ├── 137_context_summary_revision_rpc.sql # 连续闭合 Turn 摘要的 revision CAS 原子提交
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -248,6 +260,8 @@ EVERYDAYAIONE/
 │   │   ├── memory_config.py         # 记忆基础设施（Mem0 配置/单例/缓存/格式化）
 │   │   ├── memory_service.py        # 记忆服务（CRUD、对话提取、智能检索）
 │   │   ├── memory_filter.py         # 记忆智能过滤器（千问精排，降级链）
+│   │   ├── agent/runtime/context/    # 全通道共享模型预算、Evidence/Receipt，以及 Run/跨 Worker 压缩协调
+│   │   ├── agent/evidence_tool_mixin.py # 固定 conversation/revision 的 Evidence Search/Get
 │   │   ├── wecom_oauth_service.py  # 企微 OAuth 扫码登录服务（state管理、code换userid、登录/创建/绑定/解绑）
 │   │   ├── wecom_account_merge.py  # 企微账号合并服务（数据迁移+积分合并+用户删除）
 │   │   ├── handlers/                 # 统一消息处理器
@@ -255,14 +269,12 @@ EVERYDAYAIONE/
 │   │   │   ├── base.py                   # Handler 基类
 │   │   │   ├── chat_handler.py           # 聊天处理器（流式）
 │   │   │   ├── context_snapshot.py       # 固定 task revision 的不可变上下文快照
-│   │   │   ├── conversation_cache.py     # revision + through-message 精确匹配的闭合历史 v2 缓存
+│   │   │   ├── conversation_cache.py     # summary/base revision + through-message 精确匹配的闭合历史 v4 缓存
+│   │   │   ├── context_compressor/        # 当前 Run 工具归档、临时循环摘要与 Token 预算
 │   │   │   ├── emit_payloads.py           # 显式 emit payload → content block/ContentPart 转换
 │   │   │   ├── chat/                      # Chat 流式执行内核
 │   │   │   │   ├── outcome_builder.py     # 内容块收尾与 ContentPart 协议构造
 │   │   │   │   ├── stream_finalize.py     # 预算合成、结果收割与 stream_end
-│   │   │   │   ├── stream_lifecycle.py    # 错误分类、资源清理与旧终态持久化边界
-│   │   │   │   ├── stream_loop.py         # 多轮流式工具循环协调器
-│   │   │   │   ├── stream_runner.py       # 旧 Web 流协议兼容执行入口
 │   │   │   │   ├── stream_setup.py        # Context/Provider/权限/预算执行前准备
 │   │   │   │   ├── stream_session.py      # 单轮 Provider 流读取与请求累积状态
 │   │   │   │   └── tool_loop.py           # 工具轮次、emit/form 与上下文压缩
@@ -337,6 +349,7 @@ EVERYDAYAIONE/
 │   │   └── kie_models.py             # KIE 模型配置
 │   ├── scripts/                  # 运维/数据修复与隔离 POC 脚本
 │   │   ├── backfill_media_asset_urls.py # 历史图片 original_url/thumbnail_url 回填脚本
+│   │   ├── backfill_conversation_context_items.py # 历史消息到 ConversationItem/Artifact 的幂等回填
 │   │   └── poc_ecom_requirement_assist.py # 主图/详情图 AI 帮写三方案多模态 POC（不写业务数据）
 │   └── migrations/              # 数据库迁移脚本
 │       └── 034_wecom_oauth_support.sql  # 企微 OAuth 数据库迁移
@@ -509,6 +522,8 @@ EVERYDAYAIONE/
     ├── test_admin_user_activity_ordering.py # 管理员用户活跃时间排序契约测试
     ├── test_conversation_service.py  # 对话服务测试（11个用例）
     ├── test_message_service.py   # 消息服务测试（12个用例）
+    ├── test_recent_tool_history.py # 最近 3 个用户回合的安全工具历史投影测试
+    ├── test_summary_revision_atomic.py # 摘要闭合 revision 选择与数据库 CAS 契约测试
     └── test_chat_payload_blocks.py # 聊天 emit_payload 图片 URL 字段保留测试
 ```
 

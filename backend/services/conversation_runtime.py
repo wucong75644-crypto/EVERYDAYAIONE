@@ -32,7 +32,11 @@ class ConversationActorRuntime:
             db,
             executor,
             renew_interval_seconds=5,
-            terminal_observer=ActorTerminalDelivery(db, websocket),
+            terminal_observer=ActorTerminalDelivery(
+                db,
+                websocket,
+                post_handler_factory=_create_post_handler,
+            ),
         )
         self._worker = worker_factory(
             db,
@@ -113,3 +117,10 @@ def create_kernel_manager() -> Any:
         os.path.dirname(__file__), "..", "..", "deploy", "sandbox.cfg",
     )
     return KernelManager(nsjail_cfg=config if os.path.exists(config) else None)
+
+
+def _create_post_handler() -> Any:
+    from core.database import get_db
+    from services.handlers.chat_handler import ChatHandler
+
+    return ChatHandler(get_db())

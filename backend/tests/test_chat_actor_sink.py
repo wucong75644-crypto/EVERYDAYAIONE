@@ -35,12 +35,52 @@ class _DB:
 class _WebSocket:
     def __init__(self):
         self.messages = []
+        self.steer_messages = {}
+        self.registered = []
+        self.unregistered = []
+        self.cancelled = False
 
     async def send_to_task_or_user(self, task_id, user_id, message, org_id=None):
         self.messages.append((task_id, user_id, org_id, message))
 
+    def register_steer_listener(self, task_id):
+        self.registered.append(task_id)
+
+    def check_steer(self, task_id):
+        return self.steer_messages.pop(task_id, None)
+
+    def unregister_steer_listener(self, task_id):
+        self.unregistered.append(task_id)
+
+    def register_cancel_listener(self, task_id):
+        self.registered.append(f"cancel:{task_id}")
+
+    def is_cancelled(self, _task_id):
+        return self.cancelled
+
+    def unregister_cancel_listener(self, task_id):
+        self.unregistered.append(f"cancel:{task_id}")
+
 
 class _FailingWebSocket:
+    def register_steer_listener(self, _task_id):
+        return None
+
+    def register_cancel_listener(self, _task_id):
+        return None
+
+    def check_steer(self, _task_id):
+        return None
+
+    def is_cancelled(self, _task_id):
+        return False
+
+    def unregister_steer_listener(self, _task_id):
+        return None
+
+    def unregister_cancel_listener(self, _task_id):
+        return None
+
     async def send_to_task_or_user(self, *_args, **_kwargs):
         raise ConnectionError("redis down")
 
@@ -69,6 +109,7 @@ async def test_sink_streams_and_persists_with_execution_token():
     block = {"type": "text", "text": "你好"}
     await sink.on_block(block)
     await sink.flush()
+    await sink.close()
 
     assert [item[3]["type"] for item in websocket.messages] == [
         "message_start",
@@ -79,6 +120,24 @@ async def test_sink_streams_and_persists_with_execution_token():
     assert db.calls[-1][1]["p_execution_token"] == "token-1"
     assert db.calls[-1][1]["p_accumulated_content"] == "你好"
     assert db.calls[-1][1]["p_accumulated_blocks"].obj == [block]
+    assert websocket.registered == ["client-1", "cancel:client-1"]
+    assert websocket.unregistered == ["client-1", "cancel:client-1"]
+
+
+@pytest.mark.asyncio
+async def test_sink_exposes_pending_web_steer():
+    websocket = _WebSocket()
+    websocket.steer_messages["client-1"] = "改查库存"
+    sink = ActorWebSink(
+        _DB([{"outcome": "updated"}]),
+        _delivery(),
+        asyncio.Event(),
+        websocket,
+    )
+
+    await sink.start()
+
+    assert sink.take_steer() == "改查库存"
 
 
 @pytest.mark.asyncio

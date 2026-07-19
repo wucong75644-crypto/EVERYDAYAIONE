@@ -7,17 +7,18 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from core.exceptions import ConfigurationError
-from services.adapters.base import ModelProvider, ModelConfig
+from services.adapters.base import ModelProvider, ModelConfig, StreamChunk
 from services.adapters.factory import (
     MODEL_REGISTRY,
     IMAGE_MODEL_REGISTRY,
@@ -53,6 +54,45 @@ def _mock_settings(**overrides):
     for k, v in defaults.items():
         setattr(s, k, v)
     return s
+
+
+def test_stream_chunk_cache_metrics_count_as_usage() -> None:
+    assert StreamChunk(cached_tokens=1).has_usage is True
+    assert StreamChunk(cache_creation_tokens=1).has_usage is True
+
+
+@pytest.mark.asyncio
+async def test_google_stream_exposes_cached_tokens() -> None:
+    from services.adapters.google.chat_adapter import GoogleChatAdapter
+
+    async def generate_content_stream(**_kwargs):
+        yield SimpleNamespace(
+            text="ok",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=100,
+                candidates_token_count=20,
+                cached_content_token_count=70,
+            ),
+            candidates=[],
+        )
+
+    adapter = GoogleChatAdapter.__new__(GoogleChatAdapter)
+    adapter._model_id = "gemini-2.5-flash"
+    adapter.client = SimpleNamespace(
+        generate_content_stream=generate_content_stream,
+    )
+    adapter._convert_to_google_format = AsyncMock(
+        return_value=[{"role": "user", "parts": [{"text": "hi"}]}],
+    )
+
+    chunks = [
+        chunk
+        async for chunk in adapter.stream_chat(
+            [{"role": "user", "content": "hi"}],
+        )
+    ]
+
+    assert chunks[0].cached_tokens == 70
 
 
 # ============================================================

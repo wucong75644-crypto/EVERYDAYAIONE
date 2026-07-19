@@ -14,6 +14,7 @@ _ATTACHMENTS_RE = re.compile(
     r'\n*<attachments\s+count="\d+"[^>]*hint="[^"]*">.*?</attachments>\s*',
     flags=re.DOTALL,
 )
+SAFE_HISTORY_TOOL_OUTPUT_BYTES = 8192
 
 
 def strip_attachments_xml(text: str) -> str:
@@ -106,6 +107,8 @@ def extract_oai_messages_from_content(
     content: Any,
     role: str,
     ts_prefix: str = "",
+    safe_completed_tools_only: bool = False,
+    max_tool_output_bytes: int = SAFE_HISTORY_TOOL_OUTPUT_BYTES,
 ) -> List[Dict[str, Any]]:
     """把一条 DB 消息的 content blocks 拆成多条 OpenAI 标准消息。
 
@@ -126,6 +129,8 @@ def extract_oai_messages_from_content(
 
     所有 tool_step 的 input/code 优先级：input(JSON) > {code: ...}
     ts_prefix 仅注入到首个 text/assistant 消息上（避免重复噪声）。
+    safe_completed_tools_only 用于正常历史：仅恢复成功、闭合且有界的工具对；
+    中断恢复保持默认行为，不受该筛选影响。
     """
     msgs: List[Dict[str, Any]] = []
 
@@ -150,18 +155,7 @@ def extract_oai_messages_from_content(
     else:
         return msgs
 
-    # 预收集 user 上传的文件引用（只对 user 角色生效；assistant 不上传文件，
-    # 若 assistant 有 file block 通常是生成产物，走多模态/图表渲染分支）
-    file_refs: List[str] = []
-    if role == "user":
-        for part in blocks:
-            if not isinstance(part, dict) or part.get("type") != "file":
-                continue
-            name = (part.get("name") or "").strip()
-            if not name:
-                continue
-            ref = f"[附件] {name}"
-            file_refs.append(ref)
+    file_refs = _extract_user_file_refs(blocks) if role == "user" else []
 
     ts_consumed = False  # ts_prefix 只用一次，避免每个 text block 重复
     for part in blocks:
@@ -182,48 +176,16 @@ def extract_oai_messages_from_content(
             continue
 
         elif ptype == "tool_step":
-            status = part.get("status")
-            if status not in ("completed", "error", "cancelled"):
-                continue
-            tool_name = part.get("tool_name") or "unknown"
-            tool_call_id = part.get("tool_call_id") or ""
-            if not tool_call_id:
-                # 历史数据兜底：生成稳定 id
-                seed = f"{tool_name}|{part.get('input') or part.get('code') or ''}|{len(msgs)}"
-                tool_call_id = "call_" + hashlib.md5(seed.encode()).hexdigest()[:24]
-            arguments = part.get("input") or ""
-            if not arguments and part.get("code"):
-                arguments = json.dumps({"code": part["code"]}, ensure_ascii=False)
-            if not isinstance(arguments, str):
-                arguments = json.dumps(arguments, ensure_ascii=False)
-
-            # assistant 消息携带 tool_calls
-            msgs.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": arguments,
-                    },
-                }],
-            })
-            # 紧跟的 tool 消息（OpenAI 协议要求配对）
-            output = part.get("output") or ""
-            if status == "error" and not output:
-                output = "[工具执行失败]"
-            elif status == "cancelled":
-                from services.handlers.interrupt_anchor import INTERRUPTED_TOOL_RESULT
-                output = INTERRUPTED_TOOL_RESULT.format(tool_name=tool_name)
-            msgs.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": output,
-            })
+            msgs.extend(_project_tool_step(
+                part,
+                sequence_index=len(msgs),
+                safe_completed_only=safe_completed_tools_only,
+                max_output_bytes=max_tool_output_bytes,
+            ))
 
         elif ptype == "tool_result":
+            if safe_completed_tools_only:
+                continue
             # 独立的 tool_result block 没有 tool_call_id，无法配对到 assistant.tool_calls
             # 退化为 assistant content（保留信息但不进入工具协议链）
             text = (part.get("text") or "").strip()
@@ -257,3 +219,110 @@ def extract_oai_messages_from_content(
             msgs.append({"role": role, "content": f"{prefix}{refs_text}"})
 
     return msgs
+
+
+def _extract_user_file_refs(blocks: List[Any]) -> List[str]:
+    """提取历史用户附件的叙事性名称，不暴露 workspace_path。"""
+    refs: List[str] = []
+    for part in blocks:
+        if not isinstance(part, dict) or part.get("type") != "file":
+            continue
+        name = (part.get("name") or "").strip()
+        if name:
+            refs.append(f"[附件] {name}")
+    return refs
+
+
+def _project_tool_step(
+    part: Dict[str, Any],
+    *,
+    sequence_index: int,
+    safe_completed_only: bool,
+    max_output_bytes: int,
+) -> List[Dict[str, Any]]:
+    """将单个持久化工具步骤投影为闭合 OAI tool pair。"""
+    status = part.get("status")
+    if status not in ("completed", "error", "cancelled"):
+        return []
+    output = part.get("output") or ""
+    if safe_completed_only and (
+        status != "completed"
+        or not isinstance(output, str)
+        or not output
+        or len(output.encode("utf-8")) > max_output_bytes
+        or _contains_sensitive_arguments(part.get("input"))
+        or _contains_sensitive_text(output)
+    ):
+        return []
+
+    tool_name = part.get("tool_name") or "unknown"
+    tool_call_id = part.get("tool_call_id") or ""
+    if not tool_call_id:
+        seed = (
+            f"{tool_name}|{part.get('input') or part.get('code') or ''}|"
+            f"{sequence_index}"
+        )
+        tool_call_id = "call_" + hashlib.md5(seed.encode()).hexdigest()[:24]
+    arguments = part.get("input") or ""
+    if not arguments and part.get("code"):
+        arguments = json.dumps({"code": part["code"]}, ensure_ascii=False)
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments, ensure_ascii=False)
+
+    if status == "error" and not output:
+        output = "[工具执行失败]"
+    elif status == "cancelled":
+        from services.handlers.interrupt_anchor import INTERRUPTED_TOOL_RESULT
+        output = INTERRUPTED_TOOL_RESULT.format(tool_name=tool_name)
+    return [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": tool_call_id,
+                "type": "function",
+                "function": {"name": tool_name, "arguments": arguments},
+            }],
+        },
+        {"role": "tool", "tool_call_id": tool_call_id, "content": output},
+    ]
+
+
+def _contains_sensitive_arguments(arguments: Any) -> bool:
+    """检测工具参数中的常见凭证字段；命中时整对不回灌历史。"""
+    if not arguments:
+        return False
+    raw_arguments = arguments if isinstance(arguments, str) else ""
+    try:
+        value = json.loads(arguments) if isinstance(arguments, str) else arguments
+    except (json.JSONDecodeError, TypeError):
+        return _contains_sensitive_text(raw_arguments)
+
+    sensitive = re.compile(
+        r"(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)",
+        flags=re.IGNORECASE,
+    )
+
+    def contains(item: Any) -> bool:
+        if isinstance(item, dict):
+            return any(
+                sensitive.search(str(key)) is not None or contains(child)
+                for key, child in item.items()
+            )
+        if isinstance(item, list):
+            return any(contains(child) for child in item)
+        return False
+
+    return contains(value)
+
+
+def _contains_sensitive_text(text: str) -> bool:
+    """识别正文中带值的常见凭证表达式。"""
+    if not text:
+        return False
+    return re.search(
+        r"(?i)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
+        r"[\"']?\s*[=:]\s*[\"']?[^\s,\"'}]{4,}"
+        r"|bearer\s+[^\s,\"'}]{4,}",
+        text,
+    ) is not None

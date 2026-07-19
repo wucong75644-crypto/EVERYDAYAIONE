@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from services.agent.runtime.artifact_ledger import ArtifactLedger
+from services.agent.runtime.artifacts import ArtifactStore
 from services.agent.runtime.completion_gate import (
     CompletionDecision,
     CompletionResult,
@@ -21,10 +22,17 @@ class RuntimeState:
 
     contract: RunContract = field(default_factory=RunContract.empty)
     ledger: ArtifactLedger = field(default_factory=ArtifactLedger)
+    artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     observation_only: bool = True
     final_synthesis_pending: bool = False
     last_completion: CompletionResult | None = None
     user_text: str = ""
+    conversation_id: str | None = None
+    base_revision: int | None = None
+    task_id: str = ""
+    model_id: str = ""
+    org_id: str | None = None
+    context_receipts: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def observing(cls) -> "RuntimeState":
@@ -56,6 +64,9 @@ class RuntimeState:
 
     def persistence_projection(self) -> list[dict]:
         """投影可跨 Turn 复用的 ready 数据证据。"""
+        from services.agent.runtime.context.providers.evidence import (
+            build_evidence_model_view,
+        )
         from services.agent.runtime.artifact_ledger import (
             ArtifactKind,
             ArtifactStatus,
@@ -74,24 +85,45 @@ class RuntimeState:
             if metadata.get("persisted") is True:
                 continue
             rows = payload.get("data")
-            if isinstance(rows, list) and len(rows) > 200:
-                rows = None
+            query_scope = metadata.get("query_scope") or metadata
+            metric_definitions = metadata.get("metric_definitions") or {}
+            projection = build_evidence_model_view(
+                artifact_id=evidence.fingerprint,
+                source=str(payload.get("source") or ""),
+                rows=rows,
+                columns=payload.get("columns") or [],
+                file_ref=payload.get("file_ref"),
+                query_scope=query_scope,
+                metric_definitions=metric_definitions,
+            )
+            persisted_rows = rows
+            if isinstance(persisted_rows, list) and len(persisted_rows) > 200:
+                persisted_rows = None
             item = {
                 "artifact_id": evidence.fingerprint,
                 "source": str(payload.get("source") or ""),
                 "columns": payload.get("columns") or [],
-                "rows": rows,
+                "rows": persisted_rows,
                 "file_ref": payload.get("file_ref"),
-                "query_scope": metadata.get("query_scope") or metadata,
-                "metric_definitions": metadata.get("metric_definitions") or {},
+                "query_scope": query_scope,
+                "metric_definitions": metric_definitions,
                 "lineage": {
                     "tool_call_id": evidence.tool_call_id,
                     "derived_from": metadata.get("derived_from") or [],
                     "operation": metadata.get("operation") or {},
                 },
                 "validation_status": "ready",
+                "model_view": projection.model_view,
+                "content_hash": projection.content_hash,
+                "byte_size": projection.byte_size,
+                "expires_at": None,
             }
             encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+            if len(encoded.encode("utf-8")) > 1_048_576:
+                item["rows"] = None
+                encoded = json.dumps(
+                    item, ensure_ascii=False, separators=(",", ":"),
+                )
             if len(encoded.encode("utf-8")) <= 1_048_576:
                 projected.append(item)
         return projected[:20]

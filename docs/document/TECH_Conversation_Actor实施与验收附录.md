@@ -52,20 +52,20 @@
 3. [x] ConversationExecutionService、数据库扫描 Worker、Redis 唤醒与假执行器测试。
 4. [x] ChatHandler Web 流式内核按职责拆分并保持行为等价。
 5. [x] 通道无关生成内核、企微兼容入口和 ChatGenerationExecutor。
-6. [x] Web fencing 进度、终态投递、槽位释放与默认关闭开关。
+6. [x] Web fencing 进度、终态投递与槽位释放。
 7. [x] Web enqueue、独立 Worker、恢复隔离、排队状态与取消。
 8. 企业微信持久投递。
 9. branch、摘要版本化、崩溃恢复和灰度开关。
-10. 全量回归、压力测试、生产演练和旧路径删除。
+10. [x] Web Actor 生产演练、正式切换和旧 Web 执行路径删除。
 
 每项独立迁移、测试、评审和确认，禁止跨项一次性切换。
 
-### 3.1 阶段 5.2 开关与启停顺序
+### 3.1 正式版本启停顺序
 
 - `CONVERSATION_ACTOR_WORKER_ENABLED` 只控制独立 Worker 进程是否允许启动。
-- `CONVERSATION_ACTOR_WEB_ENABLED` 只控制新的 Web Chat 是否进入 Actor 队列。
-- 上线先启 Worker、保持 Web enqueue 关闭；健康检查通过后再灰度 Web enqueue。
-- 回滚先关闭 Web enqueue，等待 Actor pending/running 排空，再停止 Worker。
+- Web Chat 已固定进入 Actor 队列，不再保留 Web 路由灰度开关或旧执行器。
+- 上线必须先确认 Worker 服务和 `CONVERSATION_ACTOR_WORKER_ENABLED=true`，再启动接收 Web 请求的后端服务。
+- 回滚使用上一完整应用版本；停止当前版本前，应先停止接收新请求并等待 Actor pending/running 排空。
 - Worker 和数据库 claim 都要求 `delivery_context.actor=true`，不会认领旧 Chat。
 - 取消经 `cancel_generation_turn` 原子终态使 token 失效；Worker 最迟在 5 秒续租周期内中止本地执行。
 

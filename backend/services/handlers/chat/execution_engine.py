@@ -14,8 +14,12 @@ from services.handlers.chat.execution_sink import (
     CollectingExecutionSink,
     ExecutionSink,
 )
+from services.handlers.chat.execution_result import ChatExecutionResult
 from services.handlers.chat.outcome_builder import build_content_parts
-from services.handlers.chat.stream_session import StreamTotals
+from services.handlers.chat.stream_session import (
+    StreamTotals,
+    accumulate_cache_usage,
+)
 from services.handlers.chat.stream_setup import prepare_chat_stream
 from services.handlers.chat.tool_loop import (
     append_tool_images,
@@ -41,16 +45,6 @@ class ChatExecutionRequest:
     needs_google_search: bool = False
     calculate_credits: bool = True
     execution_scope: Any = None
-
-
-@dataclass(frozen=True)
-class ChatExecutionResult:
-    parts: list[ContentPart]
-    content_blocks: list[dict[str, Any]]
-    usage: dict[str, Any]
-    credits_cost: int
-    tool_digest: dict[str, Any] | None
-    data_evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def execute_chat(
@@ -85,16 +79,20 @@ async def execute_chat(
     blocks: list[dict[str, Any]] = []
     try:
         await output.start()
-        await _run_loop(
-            handler=handler,
-            request=request,
-            prepared=prepared,
-            cancellation_event=event,
-            sink=output,
-            totals=totals,
-            blocks=blocks,
-            runtime_state=runtime_state,
-        )
+        try:
+            await _run_loop(
+                handler=handler,
+                request=request,
+                prepared=prepared,
+                cancellation_event=event,
+                sink=output,
+                totals=totals,
+                blocks=blocks,
+                runtime_state=runtime_state,
+            )
+        except asyncio.CancelledError:
+            _interrupt_kernel(request.conversation_id, request.task_id)
+            raise
         if prepared.budget.stop_reason and runtime_state.contract.enabled:
             runtime_state.evaluate(budget_exhausted=True)
         await _apply_budget_stop(prepared, totals, blocks)
@@ -119,8 +117,15 @@ async def execute_chat(
                 prepared.budget.turns_used,
             ),
             data_evidence=runtime_state.persistence_projection(),
+            artifact_drafts=runtime_state.artifacts.snapshot(),
+            context_receipts=list(runtime_state.context_receipts),
+            compaction=getattr(handler, "_pending_context_compaction", None),
         )
     finally:
+        from services.agent.runtime.context import clear_loop_compaction_scope
+
+        await clear_loop_compaction_scope(request.task_id)
+        await output.close()
         await prepared.adapter.close()
 
 
@@ -135,8 +140,9 @@ async def _run_loop(
     blocks: list[dict[str, Any]],
     runtime_state: Any,
 ) -> None:
+    empty_output_retried = False
     while not prepared.budget.stop_reason:
-        _raise_if_cancelled(cancellation_event)
+        _raise_if_cancelled(cancellation_event, sink)
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
         tools = prepare_tool_turn(
@@ -156,6 +162,7 @@ async def _run_loop(
             cancellation_event,
             sink,
             totals,
+            runtime_state,
             buffer_output=False,
         )
         await _append_turn_blocks(
@@ -165,6 +172,37 @@ async def _run_loop(
             text=turn_text,
         )
         if not calls:
+            if not turn_text and prepared.budget.turns_used > 1:
+                logger.warning(
+                    "Empty output detected | "
+                    f"task={request.task_id} | turn={turn + 1} | "
+                    f"finish_reason={totals.last_finish_reason} | "
+                    f"thinking_len={len(turn_thinking)} | "
+                    f"retried={empty_output_retried}"
+                )
+                if not empty_output_retried:
+                    empty_output_retried = True
+                    prepared.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "请根据刚才的工具执行结果，直接告诉我结论。"
+                            ),
+                        }
+                    )
+                    continue
+                fallback = _last_tool_output(blocks)
+                fallback_text = (
+                    "抱歉，我在整理回复时遇到了问题。以下是工具返回的原始结果：\n\n"
+                    + (fallback or "（无工具输出）")
+                )
+                totals.text += fallback_text
+                await _append_turn_blocks(
+                    blocks,
+                    sink,
+                    thinking="",
+                    text=fallback_text,
+                )
             if runtime_state.should_continue_after_plain_text():
                 _append_completion_reminder(prepared.messages, runtime_state)
                 continue
@@ -195,18 +233,26 @@ async def _read_turn(
     cancellation_event: asyncio.Event,
     sink: ExecutionSink,
     totals: StreamTotals,
+    runtime_state: Any,
     *,
     buffer_output: bool = False,
 ) -> tuple[str, str, list[dict[str, Any]]]:
     turn_text = ""
     turn_thinking = ""
     calls: dict[int, dict[str, Any]] = {}
+    from services.agent.runtime.context import record_provider_context_receipt
+
+    record_provider_context_receipt(
+        runtime_state,
+        messages=prepared.messages,
+        tools=tools,
+    )
     async for chunk in prepared.adapter.stream_chat(
         messages=prepared.messages,
         tools=tools,
         **prepared.stream_kwargs,
     ):
-        _raise_if_cancelled(cancellation_event)
+        _raise_if_cancelled(cancellation_event, sink)
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
             if not buffer_output:
@@ -263,7 +309,7 @@ async def _execute_tools(
         blocks.append(block)
         start_times[call["id"]] = time.monotonic()
         await sink.on_block(block)
-    _raise_if_cancelled(cancellation_event)
+    _raise_if_cancelled(cancellation_event, sink)
     results = await handler._execute_tool_calls(
         calls,
         request.task_id,
@@ -275,7 +321,7 @@ async def _execute_tools(
         budget=prepared.budget,
         runtime_state=runtime_state,
     )
-    _raise_if_cancelled(cancellation_event)
+    _raise_if_cancelled(cancellation_event, sink)
     image_urls = apply_tool_results(
         tool_results=results,
         messages=prepared.messages,
@@ -286,10 +332,20 @@ async def _execute_tools(
     )
     append_tool_images(prepared.messages, image_urls)
     await _consume_emit_payloads(handler, blocks, sink)
+    steer_message = sink.take_steer()
+    if steer_message:
+        logger.info(
+            f"Steer detected | task={request.task_id} | "
+            f"msg={steer_message[:50]}"
+        )
+        prepared.messages.append(
+            {"role": "user", "content": steer_message}
+        )
     await compact_tool_context(
         messages=prepared.messages,
-        conversation_source=handler._get_conv_source(request.conversation_id),
+        context_budget=prepared.context_budget,
         turn=turn,
+        compaction_scope=request.task_id,
     )
     logger.info(
         f"Headless tool turn complete | task={request.task_id} | "
@@ -346,6 +402,14 @@ def _append_final_synthesis_prompt(messages: list[dict[str, Any]]) -> None:
     )
 
 
+def _last_tool_output(blocks: list[dict[str, Any]]) -> str:
+    for block in reversed(blocks):
+        text = block.get("output") or block.get("text")
+        if block.get("type") in {"tool_result", "tool_step"} and text:
+            return str(text)[:2000]
+    return ""
+
+
 async def _consume_emit_payloads(
     handler: Any,
     blocks: list[dict[str, Any]],
@@ -392,6 +456,7 @@ async def _apply_budget_stop(
 def _accumulate_usage(totals: StreamTotals, chunk: Any) -> None:
     totals.usage["prompt_tokens"] += chunk.prompt_tokens or 0
     totals.usage["completion_tokens"] += chunk.completion_tokens or 0
+    accumulate_cache_usage(totals, chunk)
     if chunk.credits_consumed is not None:
         totals.usage["api_credits"] = chunk.credits_consumed
     if chunk.finish_reason:
@@ -414,6 +479,22 @@ def _build_digest(
         return None
 
 
-def _raise_if_cancelled(event: asyncio.Event) -> None:
-    if event.is_set():
+def _raise_if_cancelled(
+    event: asyncio.Event,
+    sink: ExecutionSink,
+) -> None:
+    if event.is_set() or sink.is_cancelled():
         raise asyncio.CancelledError
+
+
+def _interrupt_kernel(conversation_id: str, task_id: str) -> None:
+    try:
+        from services.sandbox.kernel_manager import get_kernel_manager
+
+        manager = get_kernel_manager()
+        if manager is not None:
+            manager.interrupt(conversation_id)
+    except Exception as error:
+        logger.warning(
+            f"Kernel interrupt failed | task={task_id} | error={error}"
+        )

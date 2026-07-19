@@ -59,7 +59,14 @@ def test_channel_tool_catalog_omits_personal_tools() -> None:
         )
 
     names = [tool["function"]["name"] for tool in selected]
-    assert names == ["file_search"]
+    assert names == [
+        "artifact_get",
+        "artifact_read",
+        "artifact_search",
+        "file_search",
+    ]
+    assert "get_conversation_context" not in names
+    assert "manage_scheduled_task" not in names
 
 
 def test_tool_executor_separates_actor_and_workspace_owner() -> None:

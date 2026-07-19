@@ -228,7 +228,12 @@ class TestStreamChat:
             "",
             _sse_line({
                 "choices": [],
-                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "prompt_tokens_details": {"cached_tokens": 60},
+                    "cache_creation_input_tokens": 10,
+                },
                 "model": "qwen3.5-plus",
             }),
             "",
@@ -255,6 +260,8 @@ class TestStreamChat:
         last = chunks[-1]
         assert last.prompt_tokens == 100
         assert last.completion_tokens == 50
+        assert last.cached_tokens == 60
+        assert last.cache_creation_tokens == 10
 
     @pytest.mark.asyncio
     async def test_done_signal_stops_iteration(self):

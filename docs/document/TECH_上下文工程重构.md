@@ -5,6 +5,10 @@
 > V1.1 修正：batch embedding / 同步异步分离 / ContextVar 安全 / 分批加载 / 反向门控关键词
 > V1.2 修正：Phase 1 缩进+双层break / Phase 5 增量提取传已有实体 / Phase 6 通用QA排除误命中
 > V1.3 修正：chat_context_limit 保留（摘要触发阈值）/ 删 chat_context_max_chars / MAX_BATCHES 安全上限 / 测试影响分析
+>
+> **2026-07-18 取代说明**：Phase 5 请求级 Session Memory 已由
+> `TECH_长期单会话上下文与Token治理.md` Phase 2 取代并删除。循环摘要现在只消费
+> 当前 Run 实际淘汰的工具消息；跨 Turn 状态由带 revision 的 DB 摘要负责。
 
 ## 一、问题概述
 
@@ -39,7 +43,7 @@
 | `backend/services/handlers/context_compressor.py` | **重写** `enforce_budget` → 分桶 | 2,3 |
 | `backend/services/handlers/message_scorer.py` | **新建** 消息价值打分器（规则+Embedding） | 3 |
 | `backend/services/context_summarizer.py` | 修改（结构化提示词+校验） | 4,5 |
-| `backend/services/handlers/session_memory.py` | **新建** 增量提取服务 | 5 |
+| `backend/services/handlers/session_memory.py` | **已删除**，由带 revision 的持久摘要与当前 Run 精确循环摘要取代 | 5 |
 | `backend/services/handlers/chat_handler.py` | 修改（接入增量提取 hook） | 5 |
 | `backend/config/phase_tools.py` | 修改（循环摘要提示词） | 4 |
 
@@ -1221,3 +1225,13 @@ context_tool_token_budget: int = 6000      # 工具结果专属 token 预算
 - 当前可执行资源位置只由 ResourceManifest、附件或本轮 `file_analyze` 提供。
 
 Redis、缓存或摘要缺失时，闭合历史降级为用户问题与助手可见文本，不恢复原始代码和工具输出。
+
+## 十三、摘要与原文的互斥消费
+
+正式 Web 与企业微信任务统一由 `ContextSnapshot` 先读取任务基线以内的活动摘要，再构造历史：
+
+- 有效摘要满足 `0 < summary_revision <= base_revision`，历史 SQL 只读取 `(summary_revision, base_revision]`。
+- 摘要为空、版本为 0 或版本晚于任务基线时，摘要下界降为 0，历史仍完整读取至 `base_revision`。
+- Redis 使用独立 v4 key，信封同时精确绑定 `summary_revision`、`base_revision` 和 `through_message_id`；任一边界变化都回源数据库。
+- 旧 v2/v3 key 不被新实例读取，依靠既有 TTL 自然退出，避免滚动发布期间新旧投影互相污染。
+- Legacy 非正式任务不传摘要下界，继续保持原有历史加载行为。

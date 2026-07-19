@@ -4,7 +4,7 @@
 测试 ChatHandler 的历史消息上下文构建：
 - _extract_text_from_content: 从 DB content 字段提取纯文本
 - _build_context_messages: 构建对话历史上下文
-- _stream_generate 集成: 验证上下文正确注入到消息列表
+- PromptBuilder 集成：验证上下文正确注入模型消息
 """
 
 import json
@@ -898,196 +898,6 @@ class TestExtractImageUrlsFromContent:
         assert chat_handler._extract_image_urls_from_content(None) == []
 
 
-# ============ Test _stream_generate context injection ============
-
-
-def _make_mock_chunk(content="hi", prompt_tokens=0, completion_tokens=0):
-    """构造 mock stream chunk"""
-    chunk = MagicMock()
-    chunk.content = content
-    chunk.thinking_content = None
-    chunk.tool_calls = None
-    chunk.prompt_tokens = prompt_tokens
-    chunk.completion_tokens = completion_tokens
-    chunk.credits_consumed = None
-    return chunk
-
-
-class TestStreamGenerateContextInjection:
-    """验证 _stream_generate 正确组装消息列表"""
-
-    @pytest.fixture
-    def mock_adapter(self):
-        """Mock chat adapter（estimate_cost_unified 是同步方法）"""
-        adapter = AsyncMock()
-        adapter.estimate_cost_unified = MagicMock(
-            return_value=MagicMock(estimated_credits=0)
-        )
-        adapter.close = AsyncMock()
-        return adapter
-
-    def _make_capture_stream(self, captured_messages):
-        """创建捕获 messages 的 mock stream_chat"""
-        async def capture_stream(messages, **kwargs):
-            captured_messages.extend(messages)
-            yield _make_mock_chunk("reply", 10, 5)
-        return capture_stream
-
-    @pytest.mark.asyncio
-    async def test_context_injected_between_memory_and_current(
-        self, chat_handler, mock_db, mock_adapter
-    ):
-        """上下文应插入在 memory system prompt 和当前用户消息之间"""
-        mock_db.set_table_data("messages", [
-            _make_msg("assistant", "你好！有什么可以帮你的？"),
-            _make_msg("user", "你好"),
-        ])
-
-        captured = []
-        mock_adapter.stream_chat = self._make_capture_stream(captured)
-
-        with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
-             patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
-             patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_or_user = AsyncMock()
-            mock_ws.is_cancelled.return_value = False
-
-            await chat_handler._stream_generate(
-                task_id="t1", message_id="m1", conversation_id="conv1",
-                user_id="u1",
-                content=[{"type": "text", "text": "今天天气怎么样"}],
-                model_id="gemini-3-flash",
-            )
-
-        # 按语义检查（不依赖固定索引，系统提示词重构后顺序可能变化）
-        system_msgs = [m for m in captured if m.get("role") == "system"]
-        user_msgs = [m for m in captured if m.get("role") == "user"]
-
-        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
-        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
-
-        # 最后一条 user 消息应为当前消息
-        assert user_msgs[-1]["content"] == "今天天气怎么样"
-
-    @pytest.mark.asyncio
-    async def test_context_without_memory(self, chat_handler, mock_db, mock_adapter):
-        """无记忆时：上下文 + 当前消息"""
-        mock_db.set_table_data("messages", [
-            _make_msg("assistant", "之前的回答"),
-            _make_msg("user", "之前的问题"),
-        ])
-
-        captured = []
-        mock_adapter.stream_chat = self._make_capture_stream(captured)
-
-        with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
-             patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
-             patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_or_user = AsyncMock()
-            mock_ws.is_cancelled.return_value = False
-
-            await chat_handler._stream_generate(
-                task_id="t1", message_id="m1", conversation_id="conv1",
-                user_id="u1",
-                content=[{"type": "text", "text": "新问题"}],
-                model_id="gemini-3-flash",
-            )
-
-        # 按语义检查
-        system_msgs = [m for m in captured if m.get("role") == "system"]
-        user_msgs = [m for m in captured if m.get("role") == "user"]
-
-        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
-        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
-        # 无记忆时不应有记忆注入
-        assert not any("你是AI助手" in _message_text(m) for m in system_msgs), "不应有记忆"
-
-        # 最后一条 user 消息应为当前消息
-        assert user_msgs[-1]["content"] == "新问题"
-
-    @pytest.mark.asyncio
-    async def test_no_context_new_conversation(
-        self, chat_handler, mock_db, mock_adapter
-    ):
-        """新对话无历史：只有当前消息"""
-        mock_db.set_table_data("messages", [])
-
-        captured = []
-        mock_adapter.stream_chat = self._make_capture_stream(captured)
-
-        with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
-             patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
-             patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_or_user = AsyncMock()
-            mock_ws.is_cancelled.return_value = False
-
-            await chat_handler._stream_generate(
-                task_id="t1", message_id="m1", conversation_id="conv1",
-                user_id="u1",
-                content=[{"type": "text", "text": "第一条消息"}],
-                model_id="gemini-3-flash",
-            )
-
-        # 按语义检查
-        system_msgs = [m for m in captured if m.get("role") == "system"]
-        user_msgs = [m for m in captured if m.get("role") == "user"]
-
-        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
-        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
-
-        # 新对话无历史，最后一条 user 消息应为当前消息
-        assert user_msgs[-1]["content"] == "第一条消息"
-
-    @pytest.mark.asyncio
-    async def test_context_with_vqa_image(self, chat_handler, mock_db, mock_adapter):
-        """带图片的 VQA 模式：上下文是纯文本，当前消息保留图片"""
-        mock_db.set_table_data("messages", [
-            _make_msg("assistant", "之前的回复"),
-            _make_msg("user", "之前的对话"),
-        ])
-
-        captured = []
-        mock_adapter.stream_chat = self._make_capture_stream(captured)
-
-        with patch("services.handlers.chat_handler.ws_manager") as mock_ws, \
-             patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch.object(chat_handler, "on_complete", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
-             patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
-             patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_or_user = AsyncMock()
-            mock_ws.is_cancelled.return_value = False
-
-            await chat_handler._stream_generate(
-                task_id="t1", message_id="m1", conversation_id="conv1",
-                user_id="u1",
-                content=[
-                    {"type": "text", "text": "这张图是什么"},
-                    {"type": "image", "url": "https://img.png"},
-                ],
-                model_id="gemini-3-flash",
-            )
-
-        # 按语义检查
-        system_msgs = [m for m in captured if m.get("role") == "system"]
-        user_msgs = [m for m in captured if m.get("role") == "user"]
-
-        assert any("<role>" in _message_text(m) for m in system_msgs), "缺少静态角色层"
-        assert any("当前时间" in _message_text(m) for m in system_msgs), "缺少时间注入"
-
-        # 最后一条 user 消息应为当前消息（含图片时 content 是 list）
-        assert isinstance(user_msgs[-1]["content"], list)
-
-
 # ============ Test _build_llm_messages gather exception degradation ============
 
 
@@ -1353,8 +1163,19 @@ class TestBuildLlmMessagesLayerOrder:
         # Layer 1 仍在最前（不被记忆/摘要/历史挤到后面）
         assert messages[0]["role"] == "system"
         assert "<role>" in _message_text(messages[0])
-        assert "当前时间" in _message_text(messages[1])
-        assert "<user_location>浙江省杭州市</user_location>" in _message_text(messages[1])
+        history_index = next(
+            index for index, message in enumerate(messages)
+            if _message_text(message) == "之前的问题"
+        )
+        dynamic_index = next(
+            index for index, message in enumerate(messages)
+            if "当前时间" in _message_text(message)
+        )
+        assert history_index < dynamic_index < len(messages) - 1
+        assert (
+            "<user_location>浙江省杭州市</user_location>"
+            in _message_text(messages[dynamic_index])
+        )
 
         # 用户消息仍在最后
         assert messages[-1]["role"] == "user"
@@ -1477,7 +1298,7 @@ class TestFilterKnowledgeBySimilarity:
 
 
 class TestBuildContextMessagesStructured:
-    """已关闭 Turn 只注入最终文本与 Tool Digest。"""
+    """已关闭 Turn 注入正文，并仅恢复近期安全工具对。"""
 
     @pytest.mark.asyncio
     async def test_closed_turn_omits_raw_tool_protocol(self, chat_handler, mock_db):
@@ -1493,7 +1314,7 @@ class TestBuildContextMessagesStructured:
                     "type": "tool_step",
                     "tool_name": "file_analyze",
                     "tool_call_id": "call_fa_1",
-                    "status": "completed",
+                    "status": "error",
                     "input": '{"path": "staging/old.parquet"}',
                     "output": "错误堆栈 staging/old.parquet",
                 },

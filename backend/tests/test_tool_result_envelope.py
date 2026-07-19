@@ -446,38 +446,6 @@ class TestStagingPathAlignment:
 
 
 # ============================================================
-# _async_cleanup_staging（原 _delayed_cleanup_staging，已重构为文件级 TTL 清理）
-# ============================================================
-
-class TestAsyncCleanupStaging:
-    """chat_handler._async_cleanup_staging 文件级清理测试"""
-
-    @pytest.mark.asyncio
-    async def test_cleanup_removes_old_files(self, tmp_path):
-        """清理后超 TTL 的文件被删除"""
-        from services.handlers.chat_handler import _async_cleanup_staging
-
-        # _async_cleanup_staging is now a no-op (NAS replaced staging cleanup)
-        # Just verify it runs without error
-        await _async_cleanup_staging("conv-cleanup", "u1", "org1")
-
-    @pytest.mark.asyncio
-    async def test_cleanup_noop_when_no_dir(self, tmp_path):
-        """staging 目录不存在时不报错"""
-        from services.handlers.chat_handler import _async_cleanup_staging
-        from unittest.mock import patch, MagicMock
-
-        mock_settings = MagicMock()
-        mock_settings.file_workspace_root = str(tmp_path)
-        mock_settings.staging_file_ttl_seconds = 86400
-        mock_settings.staging_max_size_mb = 500
-
-        with patch("core.config.get_settings", return_value=mock_settings):
-            # 不应抛异常
-            await _async_cleanup_staging("nonexistent-conv", "u1", "org1")
-
-
-# ============================================================
 # 路径协议:TestScopedOpen 已删除
 # 原因:测试用 SandboxExecutor 跑 STAGING_DIR/OUTPUT_DIR 变量绝对路径,
 # 新协议下这些变量已删,沙盒只用相对路径。

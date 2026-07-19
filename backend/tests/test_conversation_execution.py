@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -192,6 +193,46 @@ async def test_execute_claim_commits_executor_outcome() -> None:
         "completion_tokens": 1,
     }
     assert commit[1]["p_data_evidence"].obj == []
+    assert commit[1]["p_context_items"].obj == []
+    assert commit[1]["p_artifacts"].obj == []
+    assert commit[1]["p_context_receipts"].obj == []
+    assert commit[1]["p_compaction"] is None
+
+
+@pytest.mark.asyncio
+async def test_non_committed_result_cleans_new_oss_artifacts() -> None:
+    class _ArtifactExecutor:
+        async def execute(self, task, claim, cancellation_event):
+            return GenerationOutcome(
+                result_content=[],
+                usage={},
+                credits_cost=0,
+                artifacts=[{
+                    "storage_kind": "oss",
+                    "storage_ref": {"object_key": "artifact/new.json"},
+                }],
+            )
+
+    db = _FakeDB()
+    db.queue("commit_generation_turn", {"outcome": "ownership_lost"})
+    service = ConversationExecutionService(db, _ArtifactExecutor())
+
+    with patch(
+        "services.agent.runtime.artifacts.cleanup_materialized_artifacts",
+        new=AsyncMock(),
+    ) as cleanup:
+        result = await service.execute_claim(
+            GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+        )
+
+    assert result == {"outcome": "ownership_lost"}
+    cleanup.assert_awaited_once_with(
+        [{
+            "storage_kind": "oss",
+            "storage_ref": {"object_key": "artifact/new.json"},
+        }],
+        task_id="task-1",
+    )
 
 
 @pytest.mark.asyncio

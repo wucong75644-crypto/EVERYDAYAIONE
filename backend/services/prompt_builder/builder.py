@@ -66,6 +66,7 @@ class BuildInput:
 
     # 运行时配置
     permission_mode: str = "auto"                                # 'auto' | 'plan' | 'ask'
+    model_id: Optional[str] = None
     user_location: Optional[str] = None
     user_preferences: Optional[str] = None                       # Custom Instructions
 
@@ -97,6 +98,7 @@ class BuildResult:
     persona_injected: bool                                       # persona 是否进入 prompt
     memory_injected: bool                                        # L1 memory 是否注入
     state: str                                                   # NORMAL / ARCHIVED / SUMMARIZED / ENFORCED
+    compaction: Optional[Dict[str, Any]] = None
 
 
 class PromptBuilder:
@@ -128,6 +130,16 @@ class PromptBuilder:
 
         # ── Step 1: 并行 fetch ──
         memory_prompt, summary_prompt, history_messages = await self._parallel_fetch()
+        from services.agent.runtime.context import (
+            assemble_history,
+            resolve_context_budget,
+        )
+
+        context_plan = await assemble_history(
+            history_messages,
+            resolve_context_budget(inp.model_id),
+        )
+        history_messages = context_plan.messages
 
         # 提取 persona (memory_service_v2.build_memory_context 同时返回 prepend + persona)
         # 注: persona 已在 _parallel_fetch 内通过 self._persona_text 暂存
@@ -222,6 +234,7 @@ class PromptBuilder:
             persona_injected=gated_persona is not None,
             memory_injected=memory_prompt is not None,
             state=state,
+            compaction=context_plan.compaction,
         )
 
     @staticmethod
@@ -257,16 +270,10 @@ class PromptBuilder:
                 "content": session_stable_content,
             })
 
-        messages.append({"role": "system", "content": turn_dynamic_content})
-        if user_result.workspace_system_block:
-            messages.append({
-                "role": "system",
-                "content": user_result.workspace_system_block,
-            })
-        messages.extend(history_messages)
-        if summary_prompt and len(history_messages) > 5:
+        if summary_prompt:
             messages.append({"role": "system", "content": summary_prompt})
-        if history_messages:
+        messages.extend(history_messages)
+        if summary_prompt or history_messages:
             messages.append({
                 "role": "system",
                 "content": (
@@ -278,6 +285,12 @@ class PromptBuilder:
             messages.append({
                 "role": "system",
                 "content": data_context_prompt,
+            })
+        messages.append({"role": "system", "content": turn_dynamic_content})
+        if user_result.workspace_system_block:
+            messages.append({
+                "role": "system",
+                "content": user_result.workspace_system_block,
             })
         if user_result.attachments_system_block:
             messages.append({
@@ -394,43 +407,17 @@ class PromptBuilder:
         return l1_prepend, summary_prompt, history
 
     async def _apply_budgets(
-        self, messages: List[Dict[str, Any]], current_text: str,
+        self, messages: List[Dict[str, Any]], _current_text: str,
     ) -> str:
-        """复用 V3.3 三层 budget 控制, 防止超长。
+        """最终硬门禁；禁止旧兜底静默归档当前输入或拆散工具组。"""
+        from services.agent.runtime.context import resolve_context_budget
+        from services.handlers.context_compressor.tokens import estimate_tokens
 
-        返回 budget state (NORMAL / ARCHIVED / SUMMARIZED / ENFORCED)。
-        """
-        try:
-            from core.config import get_settings
-            from services.handlers.context_compressor import (
-                enforce_tool_budget, enforce_history_budget, enforce_budget,
-                compress_messages_if_needed,
+        budget = resolve_context_budget(self.inp.model_id)
+        estimated = estimate_tokens(messages)
+        if estimated > budget.hard_compaction:
+            raise RuntimeError(
+                "CONTEXT_PLAN_EXCEEDS_HARD_LIMIT:"
+                f"{estimated}>{budget.hard_compaction}"
             )
-
-            _s = get_settings()
-            inp = self.inp
-
-            source = (
-                inp.context_snapshot.conversation_source
-                if inp.context_snapshot is not None else ""
-            )
-            if source == "wecom":
-                tool_budget = _s.context_tool_token_budget
-                history_budget = _s.context_history_token_budget
-                total_budget = _s.context_max_tokens
-            else:
-                tool_budget = _s.context_web_tool_token_budget
-                history_budget = _s.context_web_history_token_budget
-                total_budget = _s.context_web_max_tokens
-
-            enforce_tool_budget(messages, tool_budget)
-            await enforce_history_budget(
-                messages, history_budget, current_query=current_text,
-            )
-            enforce_budget(messages, total_budget)
-
-            # 状态: 简化为 NORMAL (具体压缩状态由 compress_messages_if_needed 自管理)
-            return "NORMAL"
-        except Exception as e:
-            logger.warning(f"PromptBuilder budget enforcement failed | {e}")
-            return "ERROR"
+        return "NORMAL"

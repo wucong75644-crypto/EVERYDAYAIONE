@@ -11,6 +11,10 @@ from services.agent.runtime.artifact_ledger import (
     ArtifactSource,
     ArtifactStatus,
 )
+from services.agent.runtime.context.providers.evidence import (
+    build_evidence_model_view,
+    render_evidence_model_view,
+)
 
 
 @dataclass(frozen=True)
@@ -18,29 +22,33 @@ class DataContextSnapshot:
     evidence: tuple[ArtifactEvidence, ...] = ()
 
     def render_prompt(self) -> str:
-        """向模型提供紧凑证据目录；完整数据仍只保留在 Runtime。"""
+        """向模型提供最近的有界可信数据视图。"""
         entries: list[str] = []
-        for item in self.evidence:
+        for item in self.evidence[:5]:
             payload = item.payload or {}
-            columns = payload.get("columns")
-            names = [
-                str(column.get("name"))
-                for column in columns
-                if isinstance(column, dict) and column.get("name")
-            ] if isinstance(columns, list) else []
-            rows = payload.get("data")
-            count = len(rows) if isinstance(rows, list) else "file"
+            model_view = payload.get("model_view")
+            if not isinstance(model_view, dict):
+                metadata = payload.get("metadata")
+                metadata = metadata if isinstance(metadata, dict) else {}
+                model_view = build_evidence_model_view(
+                    artifact_id=item.fingerprint,
+                    source=str(payload.get("source") or ""),
+                    rows=payload.get("data"),
+                    columns=payload.get("columns"),
+                    file_ref=payload.get("file_ref"),
+                    query_scope=metadata.get("query_scope"),
+                    metric_definitions=metadata.get("metric_definitions"),
+                ).model_view
             entries.append(
-                f"- artifact_id={item.fingerprint}; rows={count}; "
-                f"columns={','.join(names)}"
+                f"- {render_evidence_model_view(model_view)}"
             )
         if not entries:
             return ""
         return (
             "[历史可信数据证据]\n"
             + "\n".join(entries)
-            + "\n需要复用历史数据时，请基于现有工具上下文或文件引用完成；"
-            "证据不足时再调用数据源工具。"
+            + "\n这些视图可直接用于连续追问和确定性计算；"
+            "用户要求最新数据、视图不含所需行或证据不足时，再调用数据源工具。"
         )
 
 
@@ -54,7 +62,8 @@ def load_data_context_snapshot(
         db.table("conversation_data_evidence")
         .select(
             "artifact_id,source,columns,rows,file_ref,query_scope,"
-            "metric_definitions,lineage,validation_status,context_revision"
+            "metric_definitions,lineage,validation_status,context_revision,"
+            "model_view,content_hash,byte_size,expires_at"
         )
         .eq("conversation_id", conversation_id)
         .lte("context_revision", base_revision)
@@ -97,6 +106,10 @@ def _to_evidence(row: dict[str, Any], artifact_id: str) -> ArtifactEvidence:
             "columns": row.get("columns") or [],
             "file_ref": row.get("file_ref"),
             "source": row.get("source") or "",
+            "model_view": row.get("model_view"),
+            "content_hash": row.get("content_hash"),
+            "byte_size": row.get("byte_size"),
+            "expires_at": row.get("expires_at"),
             "metadata": metadata,
         },
     )

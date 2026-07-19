@@ -1,7 +1,7 @@
 """
 权限模式 E2E 模拟测试
 
-模拟 chat_handler._stream_generate 中的真实路径：
+模拟 execute_chat 中的真实路径：
   1. 前端参数 → PermissionMode 初始化 → 工具列表构建 → 提示词注入
   2. Tool loop 内 reminder 注入
   3. Plan 模式冻结 → 恢复 → exit_plan → 工具解锁

@@ -70,6 +70,7 @@ class ChatContextMixin:
         user_location: Optional[str] = None,
         permission_mode: str = "auto",
         context_anchor: Optional["ContextAnchor"] = None,
+        model_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表。
 
@@ -147,6 +148,7 @@ class ChatContextMixin:
             image_urls=image_urls,
             file_urls=file_urls,
             permission_mode=permission_mode,
+            model_id=model_id,
             user_location=user_location,
             user_preferences=None,  # TODO 阶段 4.4: 从 user_preferences 表读取
             db=self.db,
@@ -159,6 +161,7 @@ class ChatContextMixin:
 
         builder = PromptBuilder(inp)
         result = await builder.build()
+        self._pending_context_compaction = result.compaction
 
         logger.info(
             f"PromptBuilder done | conv={conversation_id} | "
@@ -251,7 +254,8 @@ class ChatContextMixin:
         return await get_context_summary(self.db, conversation_id, prefetched)
 
     async def _update_summary_if_needed(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
     ) -> None:
         """检查并更新对话摘要（fire-and-forget）—— 委托 summary_manager."""
         await update_summary_if_needed(self.db, conversation_id)

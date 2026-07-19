@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -154,3 +156,80 @@ async def test_wecom_terminal_releases_slot_and_notifies_web(monkeypatch):
 
     assert released == ["task-1"]
     assert websocket.messages[0][3]["type"] == "message_done"
+
+
+@pytest.mark.asyncio
+async def test_completed_delivery_dispatches_post_commit_hooks(monkeypatch):
+    async def fake_release(_task):
+        return None
+
+    monkeypatch.setattr(
+        "services.conversation_delivery.release_task_slot",
+        fake_release,
+    )
+    task = _task("completed")
+    task["model_id"] = "fallback-model"
+    task["request_params"] = {
+        "content": "用户问题",
+        "_retry_from_model": "failed-model",
+    }
+    task["result"] = {
+        "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+    }
+    handler = SimpleNamespace(
+        org_id=None,
+        _dispatch_post_tasks=MagicMock(),
+        _extract_retry_knowledge=AsyncMock(),
+    )
+    delivery = ActorTerminalDelivery(
+        _DB(task, _message()),
+        _WebSocket(),
+        post_handler_factory=lambda: handler,
+    )
+
+    await delivery.notify(_task("running"), {"outcome": "committed"})
+    await asyncio.sleep(0)
+
+    handler._dispatch_post_tasks.assert_called_once()
+    call = handler._dispatch_post_tasks.call_args.kwargs
+    assert call["text_content"] == "用户问题"
+    assert call["accumulated_text"] == "完成"
+    assert call["final_usage"]["prompt_tokens"] == 3
+    handler._extract_retry_knowledge.assert_awaited_once_with(
+        task_type="chat",
+        model_id="fallback-model",
+        retry_from_model="failed-model",
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_dispatches_failure_hooks(monkeypatch):
+    async def fake_release(_task):
+        return None
+
+    monkeypatch.setattr(
+        "services.conversation_delivery.release_task_slot",
+        fake_release,
+    )
+    task = _task("failed")
+    task["model_id"] = "model-1"
+    handler = SimpleNamespace(
+        org_id=None,
+        _record_knowledge_metric=AsyncMock(),
+        _extract_failure_knowledge=AsyncMock(),
+    )
+    delivery = ActorTerminalDelivery(
+        _DB(task),
+        _WebSocket(),
+        post_handler_factory=lambda: handler,
+    )
+
+    await delivery.notify(_task("running"), {"outcome": "failed"})
+    await asyncio.sleep(0)
+
+    handler._record_knowledge_metric.assert_awaited_once()
+    handler._extract_failure_knowledge.assert_awaited_once_with(
+        task_type="chat",
+        model_id="model-1",
+        error_message="provider down",
+    )

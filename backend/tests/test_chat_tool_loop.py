@@ -2,33 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from schemas.multimodal import FileReadResult
-from services.handlers.chat.stream_session import StreamDelivery
+from services.handlers.context_compressor import compact_loop_with_summary
 from services.handlers.chat.tool_loop import (
     append_tool_images,
     apply_tool_results,
-    begin_tool_calls,
     compact_tool_context,
     prepare_tool_turn,
-    push_emit_payloads,
-    push_form_block,
 )
-
-
-def _delivery() -> StreamDelivery:
-    return StreamDelivery(
-        task_id="task-1",
-        conversation_id="conv-1",
-        message_id="message-1",
-        user_id="user-1",
-        org_id="org-1",
-    )
 
 
 def test_prepare_tool_turn_appends_context_and_permission_prompts() -> None:
@@ -61,8 +47,7 @@ def test_prepare_tool_turn_appends_context_and_permission_prompts() -> None:
     ]
 
 
-@pytest.mark.asyncio
-async def test_begin_and_apply_tool_results_preserve_protocol() -> None:
+def test_apply_tool_results_preserves_protocol() -> None:
     calls = [
         {
             "id": "call-1",
@@ -72,20 +57,25 @@ async def test_begin_and_apply_tool_results_preserve_protocol() -> None:
     ]
     messages: list[dict] = []
     blocks: list[dict] = []
-    websocket = MagicMock()
-    websocket.send_to_task_or_user = AsyncMock()
-    save_blocks = AsyncMock()
-
-    start_times = await begin_tool_calls(
-        completed_calls=calls,
-        turn_text="处理中",
-        turn=0,
-        messages=messages,
-        content_blocks=blocks,
-        delivery=_delivery(),
-        websocket=websocket,
-        save_blocks=save_blocks,
-    )
+    messages.append({
+        "role": "assistant",
+        "content": "处理中",
+        "tool_calls": [{
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "code_execute",
+                "arguments": '{"code":"print(1)"}',
+            },
+        }],
+    })
+    blocks.append({
+        "type": "tool_step",
+        "tool_name": "code_execute",
+        "tool_call_id": "call-1",
+        "status": "running",
+        "code": "print(1)",
+    })
     image_urls = apply_tool_results(
         tool_results=[
             (
@@ -101,10 +91,9 @@ async def test_begin_and_apply_tool_results_preserve_protocol() -> None:
         ],
         messages=messages,
         content_blocks=blocks,
-        start_times=start_times,
+        start_times={"call-1": 0},
         tool_context=MagicMock(),
     )
-    await asyncio.sleep(0)
 
     assert messages[0]["role"] == "assistant"
     assert messages[1] == {
@@ -116,7 +105,6 @@ async def test_begin_and_apply_tool_results_preserve_protocol() -> None:
     assert blocks[0]["status"] == "completed"
     assert blocks[0]["output"] == "完成"
     assert image_urls == ["https://cdn.test/image.png"]
-    save_blocks.assert_awaited_once()
 
 
 def test_append_tool_images_adds_multimodal_user_message() -> None:
@@ -129,88 +117,120 @@ def test_append_tool_images_adds_multimodal_user_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_push_emit_payloads_and_form_keep_delivery_order() -> None:
-    blocks: list[dict] = []
-    websocket = MagicMock()
-    websocket.send_to_task_or_user = AsyncMock()
-    save_blocks = AsyncMock()
-
-    await push_emit_payloads(
-        payloads=[
-            {
-                "kind": "image",
-                "url": "https://cdn.test/image.png",
-                "name": "image.png",
-            }
-        ],
-        content_blocks=blocks,
-        delivery=_delivery(),
-        websocket=websocket,
-        save_blocks=save_blocks,
-    )
-    hint = await push_form_block(
-        form={
-            "type": "form",
-            "form_id": "form-1",
-            "form_type": "confirmation",
-            "title": "确认",
-            "fields": [],
-        },
-        content_blocks=blocks,
-        delivery=_delivery(),
-        websocket=websocket,
-        save_blocks=save_blocks,
-    )
-    await asyncio.sleep(0)
-
-    assert [block["type"] for block in blocks] == ["image", "form"]
-    assert hint == "请在上方表单中确认信息后点击提交。"
-    assert save_blocks.await_count == 2
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("source", ["wecom", "web"])
-async def test_compact_tool_context_uses_source_budget(source: str) -> None:
-    settings = SimpleNamespace(
-        context_tool_keep_turns=2,
-        context_tool_token_budget=100,
-        context_history_token_budget=200,
-        context_max_tokens=300,
-        context_loop_summary_trigger=250,
-        context_web_keep_user_turns=3,
-        context_web_compact_trigger=400,
-        context_web_max_tokens=500,
-        context_web_tool_token_budget=150,
-        context_web_history_token_budget=350,
+async def test_compact_tool_context_uses_model_budget() -> None:
+    context_budget = SimpleNamespace(
+        usable_input=1_000,
+        soft_compaction=750,
+        hard_compaction=850,
+        emergency_trim=920,
     )
     with (
-        patch("core.config.get_settings", return_value=settings),
-        patch(
-            "services.handlers.context_compressor.compact_stale_tool_results"
-        ) as compact_wecom,
         patch(
             "services.handlers.context_compressor.compact_stale_by_user_turns"
-        ) as compact_web,
+        ) as compact_stale,
         patch(
             "services.handlers.context_compressor.enforce_tool_budget"
-        ),
+        ) as enforce_tool,
         patch(
             "services.handlers.context_compressor.enforce_history_budget_sync"
-        ),
+        ) as enforce_history,
+        patch(
+            "services.handlers.context_compressor.enforce_budget"
+        ) as enforce_total,
         patch(
             "services.handlers.context_compressor.compact_loop_with_summary",
             new_callable=AsyncMock,
-        ),
+        ) as compact_summary,
     ):
         await compact_tool_context(
             messages=[],
-            conversation_source=source,
+            context_budget=context_budget,
             turn=3,
         )
 
-    if source == "wecom":
-        compact_wecom.assert_called_once()
-        compact_web.assert_not_called()
-    else:
-        compact_web.assert_called_once()
-        compact_wecom.assert_not_called()
+    compact_stale.assert_called_once_with(
+        [],
+        keep_user_turns=3,
+        capacity_trigger=0.75,
+        max_tokens=1_000,
+    )
+    enforce_tool.assert_called_once_with([], 850)
+    enforce_history.assert_called_once_with([], 850)
+    compact_summary.assert_awaited_once_with(
+        [],
+        1_000,
+        0.85,
+        suppression_scope=None,
+    )
+    enforce_total.assert_called_once_with([], 920)
+
+
+@pytest.mark.asyncio
+async def test_compact_tool_context_defers_summary_before_third_turn() -> None:
+    context_budget = SimpleNamespace(
+        usable_input=1_000,
+        soft_compaction=750,
+        hard_compaction=850,
+        emergency_trim=920,
+    )
+    with (
+        patch(
+            "services.handlers.context_compressor.compact_stale_by_user_turns"
+        ),
+        patch("services.handlers.context_compressor.enforce_tool_budget"),
+        patch(
+            "services.handlers.context_compressor.enforce_history_budget_sync"
+        ),
+        patch("services.handlers.context_compressor.enforce_budget"),
+        patch(
+            "services.handlers.context_compressor.compact_loop_with_summary",
+            new_callable=AsyncMock,
+        ) as compact_summary,
+    ):
+        await compact_tool_context(
+            messages=[],
+            context_budget=context_budget,
+            turn=2,
+        )
+
+    compact_summary.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_loop_summary_only_uses_messages_it_replaces() -> None:
+    messages: list[dict] = []
+    for index in range(4):
+        call_id = f"call-{index}"
+        messages.extend([
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "erp_agent", "arguments": "{}"},
+                }],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": f"第{index}轮结果",
+            },
+        ])
+
+    with patch(
+        "services.context_summarizer._call_summary_model",
+        new=AsyncMock(return_value="旧工具轮次摘要"),
+    ) as summarize:
+        compacted = await compact_loop_with_summary(
+            messages,
+            max_tokens=1,
+            trigger_ratio=0.01,
+        )
+
+    assert compacted is True
+    summary_input = summarize.await_args.args[1]
+    assert "第0轮结果" in summary_input
+    assert "第1轮结果" in summary_input
+    assert "第2轮结果" not in summary_input
+    assert "第3轮结果" not in summary_input

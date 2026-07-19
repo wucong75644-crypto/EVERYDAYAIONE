@@ -508,6 +508,8 @@ class TestUpdateSummaryIfNeeded:
         message_count: int = 25,
         summary_message_count: int = 0,
         messages_data: list = None,
+        summary_revision: int = 0,
+        context_summary: str = None,
     ):
         """构建 mock DB，支持 conversations 和 messages 两个表"""
         # conversations 查询
@@ -519,6 +521,9 @@ class TestUpdateSummaryIfNeeded:
             data={
                 "message_count": message_count,
                 "summary_message_count": summary_message_count,
+                "summary_revision": summary_revision,
+                "context_revision": (message_count + 1) // 2,
+                "context_summary": context_summary,
             }
         )
         conv_table.update.return_value = conv_table
@@ -529,9 +534,14 @@ class TestUpdateSummaryIfNeeded:
         msg_table.eq.return_value = msg_table
         msg_table.in_.return_value = msg_table
         msg_table.order.return_value = msg_table
-        msg_table.execute.return_value = MagicMock(
-            data=messages_data or []
-        )
+        normalized_messages = []
+        for index, message in enumerate(messages_data or []):
+            normalized = dict(message)
+            normalized.setdefault("id", f"message-{index}")
+            normalized.setdefault("context_revision", index // 2 + 1)
+            normalized.setdefault("message_kind", "conversation")
+            normalized_messages.append(normalized)
+        msg_table.execute.return_value = MagicMock(data=normalized_messages)
 
         mock_db = MagicMock()
 
@@ -541,6 +551,9 @@ class TestUpdateSummaryIfNeeded:
             return msg_table
 
         mock_db.table.side_effect = table_router
+        mock_db.rpc.return_value.execute.return_value = MagicMock(
+            data={"outcome": "applied"}
+        )
         return mock_db, conv_table
 
     @pytest.mark.asyncio
@@ -603,16 +616,19 @@ class TestUpdateSummaryIfNeeded:
         ) as mock_summarize:
             await chat_handler._update_summary_if_needed("conv1")
 
-        # 压缩前 5 条（25 - 20 = 5，chat_context_limit=20）
+        # 切点落在 revision 3 内，只压缩完整的 revision 1-2。
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
-        assert len(summarized_msgs) == 5
+        assert len(summarized_msgs) == 4
 
-        # 验证更新了 conversations 表
-        conv_table.update.assert_called_once()
-        update_data = conv_table.update.call_args.args[0]
-        assert update_data["context_summary"] == "压缩后的摘要内容"
-        assert update_data["summary_message_count"] == 25
+        mock_db.rpc.assert_called_once_with("apply_context_summary", {
+            "p_conversation_id": "conv1",
+            "p_expected_summary_revision": 0,
+            "p_through_revision": 2,
+            "p_through_message_id": "message-3",
+            "p_summary": "压缩后的摘要内容",
+            "p_summary_message_count": 25,
+        })
 
     @pytest.mark.asyncio
     async def test_updates_stale_summary(self, chat_handler):
@@ -640,10 +656,10 @@ class TestUpdateSummaryIfNeeded:
         ) as mock_summarize:
             await chat_handler._update_summary_if_needed("conv1")
 
-        # 压缩前 15 条（35 - 20 = 15，chat_context_limit=20）
+        # 切点落在 revision 8 内，只压缩完整的 revision 1-7。
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
-        assert len(summarized_msgs) == 15
+        assert len(summarized_msgs) == 14
 
     @pytest.mark.asyncio
     async def test_incremental_update_path(self, chat_handler):
@@ -662,6 +678,8 @@ class TestUpdateSummaryIfNeeded:
             message_count=35,
             summary_message_count=25,
             messages_data=messages,
+            summary_revision=5,
+            context_summary="旧摘要内容",
         )
         # _mock_db_for_update 的 conversations 表需要额外支持查 context_summary
         # 增量路径会查一次 context_summary
@@ -676,6 +694,8 @@ class TestUpdateSummaryIfNeeded:
                     "message_count": 35,
                     "summary_message_count": 25,
                     "context_summary": "旧摘要内容",
+                    "summary_revision": 5,
+                    "context_revision": 18,
                 })
             return original_execute()
 
@@ -714,6 +734,8 @@ class TestUpdateSummaryIfNeeded:
             message_count=35,
             summary_message_count=25,
             messages_data=messages,
+            summary_revision=5,
+            context_summary="旧摘要",
         )
         call_count = [0]
 
@@ -724,6 +746,8 @@ class TestUpdateSummaryIfNeeded:
                     "message_count": 35,
                     "summary_message_count": 25,
                     "context_summary": "旧摘要",
+                    "summary_revision": 5,
+                    "context_revision": 18,
                 })
             return MagicMock(data=[])
 
@@ -766,7 +790,7 @@ class TestUpdateSummaryIfNeeded:
         ):
             await chat_handler._update_summary_if_needed("conv1")
 
-        conv_table.update.assert_not_called()
+        mock_db.rpc.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_graceful_on_db_error(self, chat_handler):

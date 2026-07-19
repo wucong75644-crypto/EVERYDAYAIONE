@@ -210,13 +210,15 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     usage = chunk.get("usage") or {}
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
+                    details = usage.get("prompt_tokens_details") or {}
+                    cached_tokens = details.get("cached_tokens", 0)
+                    cache_creation = usage.get(
+                        "cache_creation_input_tokens", 0
+                    )
 
                     # V2: 读 prompt cache 命中指标 (千问 OpenAI 兼容字段)
                     # 用于监控 cache 命中率, 验证 cache_control 配置是否生效
                     if prompt_tokens > 0:
-                        details = usage.get("prompt_tokens_details") or {}
-                        cached_tokens = details.get("cached_tokens", 0)
-                        cache_creation = usage.get("cache_creation_input_tokens", 0)
                         if cached_tokens > 0 or cache_creation > 0:
                             hit_rate = cached_tokens / prompt_tokens if prompt_tokens else 0
                             logger.info(
@@ -231,6 +233,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
                         finish_reason=finish_reason,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
+                        cached_tokens=cached_tokens,
+                        cache_creation_tokens=cache_creation,
                         tool_calls=tc_deltas,
                     )
 

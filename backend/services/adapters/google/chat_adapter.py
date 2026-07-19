@@ -287,6 +287,7 @@ class GoogleChatAdapter(BaseChatAdapter):
                 # 提取 token 使用量（通常在最后一个 chunk）
                 prompt_tokens = 0
                 completion_tokens = 0
+                cached_tokens = 0
                 if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
                     prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0)
                     completion_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0)
@@ -318,6 +319,7 @@ class GoogleChatAdapter(BaseChatAdapter):
                     finish_reason=None,  # Google 在最后一个 chunk 返回
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
                 )
 
             logger.info(f"Stream chat completed | chunks={chunk_count}")

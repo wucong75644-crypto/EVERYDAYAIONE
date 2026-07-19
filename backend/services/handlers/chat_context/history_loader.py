@@ -28,8 +28,13 @@ def _build_history_query(
     db: Any,
     conversation_id: str,
     base_revision: Optional[int],
+    summary_revision: int = 0,
 ) -> Any:
     """构造 legacy 或固定 revision 的历史查询。"""
+    if summary_revision < 0 or (
+        base_revision is not None and summary_revision > base_revision
+    ):
+        raise ValueError("INVALID_HISTORY_REVISION_BOUNDARY")
     query = (
         db.table("messages")
         .select(
@@ -45,6 +50,8 @@ def _build_history_query(
             query.eq("message_kind", "conversation")
             .lte("context_revision", base_revision)
         )
+        if summary_revision > 0:
+            query = query.gt("context_revision", summary_revision)
     return query
 
 
@@ -52,20 +59,28 @@ def _row_to_oai_messages(
     row: Dict[str, Any],
     remaining_images: int,
     preserve_tool_protocol: bool = False,
+    preserve_safe_completed_tools: bool = False,
 ) -> tuple[List[Dict[str, Any]], int]:
     """把数据库消息投影为闭合历史，并限制历史图片数量。
 
-    已关闭 assistant Turn 只保留用户可见文本；仅最新中断 Turn 为任务恢复
-    保留完整 tool call/result 协议。
+    已关闭 assistant Turn 默认只保留用户可见文本；近期正常 Turn 恢复安全、
+    成功且有界的 tool call/result，最新中断 Turn 为任务恢复保留完整协议。
     """
     raw_content = row.get("content")
     role = row["role"]
-    if role == "assistant" and not preserve_tool_protocol:
+    if (
+        role == "assistant"
+        and not preserve_tool_protocol
+        and not preserve_safe_completed_tools
+    ):
         text = extract_text_from_content(raw_content)
         messages = [{"role": "assistant", "content": text}] if text else []
     else:
         messages = extract_oai_messages_from_content(
-            raw_content, role=role, ts_prefix="",
+            raw_content,
+            role=role,
+            ts_prefix="",
+            safe_completed_tools_only=preserve_safe_completed_tools,
         )
     images = extract_image_urls_from_content(raw_content)[:remaining_images]
     if not images:
@@ -199,9 +214,10 @@ async def build_context_messages(
     conversation_id: str,
     current_text: str,
     base_revision: Optional[int] = None,
+    summary_revision: int = 0,
     strict: bool = False,
 ) -> List[Dict[str, Any]]:
-    """加载 legacy 时间线或固定 revision 的闭合历史。"""
+    """加载 legacy 时间线或摘要之后、固定 revision 以内的闭合历史。"""
     try:
         from core.config import settings
 
@@ -211,10 +227,17 @@ async def build_context_messages(
         total_tokens = 0
         total_images = 0
         first_assistant_seen = False
+        recent_user_turns = 0
+        current_user_skipped = False
         latest_marker: Optional[Dict[str, Any]] = None
 
         for batch in range(5):
-            query = _build_history_query(db, conversation_id, base_revision)
+            query = _build_history_query(
+                db,
+                conversation_id,
+                base_revision,
+                summary_revision,
+            )
             query = query.order("created_at", desc=True)
             if base_revision is not None:
                 query = (
@@ -229,15 +252,33 @@ async def build_context_messages(
             if not rows:
                 break
             for row in rows:
+                if row["role"] == "user":
+                    row_text = extract_text_from_content(row.get("content"))
+                    is_current_user = (
+                        not current_user_skipped
+                        and not first_assistant_seen
+                        and row_text.strip() == current_text.strip()
+                    )
+                    if is_current_user:
+                        current_user_skipped = True
+                    else:
+                        recent_user_turns += 1
                 preserve_tool_protocol = False
                 if row["role"] == "assistant" and not first_assistant_seen:
                     first_assistant_seen = True
                     latest_marker = extract_interrupt_marker(row.get("content"))
                     preserve_tool_protocol = latest_marker is not None
+                preserve_safe_completed_tools = (
+                    row["role"] == "assistant"
+                    and row.get("status") == "completed"
+                    and recent_user_turns < 3
+                    and not preserve_tool_protocol
+                )
                 messages, image_count = _row_to_oai_messages(
                     row,
                     max(0, max_images - total_images),
                     preserve_tool_protocol=preserve_tool_protocol,
+                    preserve_safe_completed_tools=preserve_safe_completed_tools,
                 )
                 if not messages:
                     continue

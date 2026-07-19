@@ -10,6 +10,7 @@ import pytest
 from schemas.message import TextPart
 from services.handlers.base import TaskMetadata
 from services.handlers.chat.actor_enqueue import enqueue_web_chat
+from services.handlers.chat_handler import ChatHandler
 
 
 class _RPC:
@@ -67,6 +68,29 @@ def _metadata():
         turn_id="turn-1",
         execution_mode="serial",
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_handler_start_always_enqueues_actor(monkeypatch):
+    enqueue = AsyncMock(return_value="client-1")
+    monkeypatch.setattr(
+        "services.handlers.chat.actor_enqueue.enqueue_web_chat",
+        enqueue,
+    )
+    handler = ChatHandler(SimpleNamespace())
+
+    result = await handler.start(
+        message_id="message-1",
+        conversation_id="conv-1",
+        user_id="user-1",
+        content=[TextPart(text="你好")],
+        params={"model": "model-1"},
+        metadata=_metadata(),
+    )
+
+    assert result == "client-1"
+    enqueue.assert_awaited_once()
+    assert enqueue.await_args.kwargs["external_task_id"] == "client-1"
 
 
 @pytest.mark.asyncio

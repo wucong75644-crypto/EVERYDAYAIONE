@@ -13,16 +13,23 @@ from schemas.message import ImagePart, TextPart
 from services.conversation_execution import GenerationClaim
 from services.handlers.chat.execution_engine import ChatExecutionResult
 from services.handlers.chat.executor import ChatGenerationExecutor
+from services.agent.runtime.artifacts import normalize_tool_result
 
 
 class _Query:
-    def __init__(self, row):
+    def __init__(self, row, updates=None):
         self._row = row
+        self._updates = updates
 
     def select(self, _fields):
         return self
 
     def eq(self, _field, _value):
+        return self
+
+    def update(self, values):
+        if self._updates is not None:
+            self._updates.append(values)
         return self
 
     def maybe_single(self):
@@ -34,6 +41,7 @@ class _Query:
 
 class _DB:
     def __init__(self, row, conversation=None):
+        self.updates = []
         self.rows = {
             "messages": row,
             "conversations": conversation or {
@@ -47,7 +55,7 @@ class _DB:
         }
 
     def table(self, name):
-        return _Query(self.rows[name])
+        return _Query(self.rows.get(name), self.updates)
 
 
 def _claim() -> GenerationClaim:
@@ -92,12 +100,33 @@ async def test_executor_loads_multimodal_content_from_input_message(monkeypatch)
 
     async def fake_execute_chat(**kwargs):
         captured["request"] = kwargs["request"]
+        draft = normalize_tool_result(
+            "完整结果",
+            tool_call_id="call-1",
+            tool_name="erp_agent",
+        )
         return ChatExecutionResult(
             parts=[TextPart(text="完成")],
             content_blocks=[{"type": "text", "text": "完成"}],
             usage={"prompt_tokens": 3, "completion_tokens": 2},
             credits_cost=2,
             tool_digest=None,
+            artifact_drafts=(draft,),
+            context_receipts=[{
+                "model_step": 0,
+                "base_revision": 4,
+                "plan_hash": "plan-hash",
+                "model": "qwen3.5-plus",
+                "block_refs": [],
+                "estimated_tokens": 10,
+                "provider_tokens": None,
+                "trimmed_refs": [],
+                "compaction_id": None,
+            }],
+            compaction={
+                "id": "compaction-1",
+                "source_hash": "source-hash",
+            },
         )
 
     monkeypatch.setattr(
@@ -130,6 +159,15 @@ async def test_executor_loads_multimodal_content_from_input_message(monkeypatch)
     assert received_db["handler"]._personal_context_allowed is True
     assert outcome.result_content == [{"type": "text", "text": "完成"}]
     assert outcome.credits_cost == 2
+    assert outcome.artifacts[0]["storage_kind"] == "inline"
+    assert outcome.artifacts[0]["inline_content"] == "完整结果"
+    assert outcome.context_items[0]["item_type"] == "user"
+    assert outcome.context_items[1]["item_type"] == "assistant"
+    assert outcome.context_receipts[0]["plan_hash"] == "plan-hash"
+    assert outcome.compaction == {
+        "id": "compaction-1",
+        "source_hash": "source-hash",
+    }
 
 
 @pytest.mark.asyncio
@@ -176,6 +214,86 @@ async def test_executor_propagates_generation_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="provider down"):
         await executor.execute(_task(), _claim(), asyncio.Event())
+
+
+@pytest.mark.asyncio
+async def test_executor_retries_smart_mode_inside_actor(monkeypatch):
+    from services.adapters.factory import DEFAULT_MODEL_ID
+    from services.intent_router import RetryContext
+    from schemas.message import GenerationType
+
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "test"}],
+    }
+    task = _task()
+    task["client_task_id"] = "client-1"
+    task["request_params"] = {"_is_smart_mode": True}
+    requests = []
+
+    async def fake_execute_chat(**kwargs):
+        requests.append(kwargs["request"])
+        if len(requests) == 1:
+            raise RuntimeError("provider down")
+        return ChatExecutionResult(
+            parts=[TextPart(text="重试成功")],
+            content_blocks=[],
+            usage={},
+            credits_cost=0,
+            tool_digest=None,
+        )
+
+    retry_context = RetryContext(
+        is_smart_mode=True,
+        original_content="test",
+        generation_type=GenerationType.CHAT,
+    )
+    retry_context.add_failure(DEFAULT_MODEL_ID, "provider down")
+    handler = SimpleNamespace(
+        org_id=None,
+        _build_retry_context=lambda **_kwargs: retry_context,
+        _route_retry=AsyncMock(
+            return_value=SimpleNamespace(recommended_model="fallback-model"),
+        ),
+        _send_retry_notification=AsyncMock(),
+    )
+    db = _DB(row)
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        fake_execute_chat,
+    )
+    executor = ChatGenerationExecutor(
+        db,
+        lambda _db: handler,
+        handler_db_factory=lambda: object(),
+    )
+
+    outcome = await executor.execute(task, _claim(), asyncio.Event())
+
+    assert outcome.result_content[0]["text"] == "重试成功"
+    assert [request.model_id for request in requests] == [
+        DEFAULT_MODEL_ID,
+        "fallback-model",
+    ]
+    handler._send_retry_notification.assert_awaited_once_with(
+        "client-1",
+        "conv-1",
+        "user-1",
+        "fallback-model",
+        1,
+    )
+    assert db.updates == [
+        {
+            "model_id": "fallback-model",
+            "request_params": {
+                "_is_smart_mode": True,
+                "_retry_from_model": DEFAULT_MODEL_ID,
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

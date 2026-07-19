@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from loguru import logger
 
 from schemas.multimodal import FileReadResult
-from schemas.websocket import (
-    build_content_block_add,
-    build_message_chunk,
-    build_tool_call,
-)
-from services.handlers.chat.stream_session import StreamDelivery
-from services.handlers.chat_generate_mixin import unpack_tool_result
-from services.handlers.emit_payloads import build_block_from_payload
+from services.agent.runtime.context import ContextBudget
 
 
 def prepare_tool_turn(
@@ -75,74 +67,6 @@ def prepare_tool_turn(
     return current_tools
 
 
-async def begin_tool_calls(
-    *,
-    completed_calls: list[dict[str, Any]],
-    turn_text: str,
-    turn: int,
-    messages: list[dict[str, Any]],
-    content_blocks: list[dict[str, Any]],
-    delivery: StreamDelivery,
-    websocket: Any,
-    save_blocks: Callable[[str, list[dict[str, Any]]], Awaitable[None]],
-) -> dict[str, float]:
-    """追加 assistant tool_calls，推送调用事件并创建 running tool_step。"""
-    messages.append(
-        {
-            "role": "assistant",
-            "content": turn_text or None,
-            "tool_calls": [
-                {
-                    "id": call["id"],
-                    "type": "function",
-                    "function": {
-                        "name": call["name"],
-                        "arguments": call["arguments"],
-                    },
-                }
-                for call in completed_calls
-            ],
-        }
-    )
-    await websocket.send_to_task_or_user(
-        delivery.task_id,
-        delivery.user_id,
-        build_tool_call(
-            task_id=delivery.task_id,
-            conversation_id=delivery.conversation_id,
-            message_id=delivery.message_id,
-            tool_calls=[
-                {"name": call["name"], "id": call["id"]}
-                for call in completed_calls
-            ],
-            turn=turn + 1,
-        ),
-    )
-
-    start_times: dict[str, float] = {}
-    for call in completed_calls:
-        block = build_running_step(call)
-        content_blocks.append(block)
-        start_times[call["id"]] = time.monotonic()
-        try:
-            await websocket.send_to_task_or_user(
-                delivery.task_id,
-                delivery.user_id,
-                build_content_block_add(
-                    task_id=delivery.task_id,
-                    conversation_id=delivery.conversation_id,
-                    message_id=delivery.message_id,
-                    block=block,
-                ),
-            )
-        except Exception as error:
-            logger.warning(
-                f"tool_step push failed | tc={call['id']} | {error}"
-            )
-    asyncio.create_task(save_blocks(delivery.task_id, content_blocks))
-    return start_times
-
-
 def build_running_step(call: dict[str, Any]) -> dict[str, Any]:
     block: dict[str, Any] = {
         "type": "tool_step",
@@ -175,7 +99,9 @@ def apply_tool_results(
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
     for call, result, is_error, display_text in tool_results:
-        _observe_tool_result(runtime_state, call, result)
+        artifact = _observe_tool_result(
+            runtime_state, call, result, is_error=is_error
+        )
         tool_context.update_from_result(
             call["name"],
             display_text,
@@ -191,7 +117,7 @@ def apply_tool_results(
             {
                 "role": "tool",
                 "tool_call_id": call["id"],
-                "content": unpack_tool_result(result),
+                "content": _project_result(result, artifact),
             }
         )
         _complete_tool_step(
@@ -208,15 +134,26 @@ def _observe_tool_result(
     runtime_state: Any,
     call: dict[str, Any],
     result: Any,
-) -> None:
+    *,
+    is_error: bool,
+) -> Any:
     if runtime_state is None:
-        return
+        return None
+    from services.agent.runtime.artifacts import normalize_tool_result
     from services.agent.runtime.artifact_collector import collect_tool_result
     from services.agent.runtime.policies.data_accuracy import (
         validate_data_evidence,
     )
     from services.agent.runtime.artifact_ledger import ArtifactKind
 
+    artifact = normalize_tool_result(
+        result,
+        tool_call_id=str(call.get("id") or ""),
+        tool_name=str(call.get("name") or ""),
+        is_error=is_error,
+        conversation_id=str(runtime_state.conversation_id or ""),
+    )
+    runtime_state.artifacts.add(artifact)
     for evidence in collect_tool_result(result, tool_call_id=call.get("id")):
         if (
             evidence.kind == ArtifactKind.DATA_RESULT
@@ -224,6 +161,17 @@ def _observe_tool_result(
         ):
             continue
         runtime_state.ledger.record(evidence)
+    return artifact
+
+
+def _project_result(result: Any, artifact: Any) -> Any:
+    if artifact is None:
+        from services.handlers.chat_generate_mixin import unpack_tool_result
+
+        return unpack_tool_result(result)
+    from services.agent.runtime.artifacts import project_tool_result
+
+    return project_tool_result(result, artifact)
 
 
 def _complete_tool_step(
@@ -267,125 +215,59 @@ def append_tool_images(
     messages.append({"role": "user", "content": parts})
 
 
-async def push_emit_payloads(
-    *,
-    payloads: list[dict[str, Any]],
-    content_blocks: list[dict[str, Any]],
-    delivery: StreamDelivery,
-    websocket: Any,
-    save_blocks: Callable[[str, list[dict[str, Any]]], Awaitable[None]],
-) -> None:
-    if not payloads:
-        return
-    for payload in payloads:
-        block = build_block_from_payload(payload)
-        if not block:
-            continue
-        content_blocks.append(block)
-        await websocket.send_to_task_or_user(
-            delivery.task_id,
-            delivery.user_id,
-            build_content_block_add(
-                task_id=delivery.task_id,
-                conversation_id=delivery.conversation_id,
-                message_id=delivery.message_id,
-                block=block,
-            ),
-        )
-    asyncio.create_task(save_blocks(delivery.task_id, content_blocks))
-    logger.info(
-        f"Emit payloads pushed | count={len(payloads)} | "
-        f"kinds={[payload.get('kind') for payload in payloads]} | "
-        f"task={delivery.task_id}"
-    )
-
-
-async def push_form_block(
-    *,
-    form: dict[str, Any] | None,
-    content_blocks: list[dict[str, Any]],
-    delivery: StreamDelivery,
-    websocket: Any,
-    save_blocks: Callable[[str, list[dict[str, Any]]], Awaitable[None]],
-) -> str:
-    if not form:
-        return ""
-    content_blocks.append(form)
-    await websocket.send_to_task_or_user(
-        delivery.task_id,
-        delivery.user_id,
-        build_content_block_add(
-            task_id=delivery.task_id,
-            conversation_id=delivery.conversation_id,
-            message_id=delivery.message_id,
-            block=form,
-        ),
-    )
-    hint = "请在上方表单中确认信息后点击提交。"
-    await websocket.send_to_task_or_user(
-        delivery.task_id,
-        delivery.user_id,
-        build_message_chunk(
-            task_id=delivery.task_id,
-            conversation_id=delivery.conversation_id,
-            message_id=delivery.message_id,
-            chunk=hint,
-        ),
-    )
-    asyncio.create_task(save_blocks(delivery.task_id, content_blocks))
-    logger.info(f"FormBlock pushed + persisted | task={delivery.task_id}")
-    return hint
-
-
 async def compact_tool_context(
     *,
     messages: list[dict[str, Any]],
-    conversation_source: str,
+    context_budget: ContextBudget,
     turn: int,
+    compaction_scope: str | None = None,
 ) -> None:
-    """按 Web/企微既有预算压缩已完成工具轮次。"""
-    from core.config import get_settings
+    """按当前模型预算压缩已完成工具轮次。"""
+    from services.agent.runtime.context import record_context_event
     from services.handlers.context_compressor import (
         compact_loop_with_summary,
         compact_stale_by_user_turns,
-        compact_stale_tool_results,
+        enforce_budget,
         enforce_history_budget_sync,
         enforce_tool_budget,
+        estimate_tokens,
     )
 
-    settings = get_settings()
-    if conversation_source == "wecom":
-        compact_stale_tool_results(
-            messages,
-            settings.context_tool_keep_turns,
-        )
-        enforce_tool_budget(messages, settings.context_tool_token_budget)
-        enforce_history_budget_sync(
-            messages,
-            settings.context_history_token_budget,
-        )
-        if turn >= 3:
-            await compact_loop_with_summary(
-                messages,
-                settings.context_max_tokens,
-                settings.context_loop_summary_trigger,
-            )
-        return
-
+    tokens_before = estimate_tokens(messages)
     compact_stale_by_user_turns(
         messages,
-        keep_user_turns=settings.context_web_keep_user_turns,
-        capacity_trigger=settings.context_web_compact_trigger,
-        max_tokens=settings.context_web_max_tokens,
+        keep_user_turns=3,
+        capacity_trigger=(
+            context_budget.soft_compaction / context_budget.usable_input
+        ),
+        max_tokens=context_budget.usable_input,
     )
-    enforce_tool_budget(messages, settings.context_web_tool_token_budget)
+    enforce_tool_budget(messages, context_budget.hard_compaction)
     enforce_history_budget_sync(
         messages,
-        settings.context_web_history_token_budget,
+        context_budget.hard_compaction,
     )
     if turn >= 3:
-        await compact_loop_with_summary(
+        summarized = await compact_loop_with_summary(
             messages,
-            settings.context_web_max_tokens,
-            settings.context_web_compact_trigger,
+            context_budget.usable_input,
+            context_budget.hard_compaction / context_budget.usable_input,
+            suppression_scope=compaction_scope,
         )
+    else:
+        summarized = False
+    enforce_budget(messages, context_budget.emergency_trim)
+    tokens_after = estimate_tokens(messages)
+    record_context_event(
+        "context_compaction",
+        task_id=compaction_scope,
+        turn=turn,
+        outcome=(
+            "summarized"
+            if summarized else "trimmed"
+            if tokens_after < tokens_before else "unchanged"
+        ),
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
+        trimmed_tokens=max(0, tokens_before - tokens_after),
+    )
