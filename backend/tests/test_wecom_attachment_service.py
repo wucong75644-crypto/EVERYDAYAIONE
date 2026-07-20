@@ -1,10 +1,13 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from services.wecom.attachment_service import stage_wecom_attachment
 
 
-def test_stage_attachment_uses_stable_message_id_and_filepart() -> None:
+@patch("services.assets.register_wecom_attachment_best_effort")
+def test_stage_attachment_uses_stable_message_id_and_filepart(
+    register_asset: MagicMock,
+) -> None:
     db = MagicMock()
     db.rpc.return_value.execute.return_value = SimpleNamespace(data={
         "attachment_id": "asset-1",
@@ -34,6 +37,8 @@ def test_stage_attachment_uses_stable_message_id_and_filepart() -> None:
         sender_identity="wx-user",
         file_payload=payload,
         storage_scope="user",
+        storage_owner_id="user-1",
+        org_id="org-1",
     )
 
     params = db.rpc.call_args.args[1]
@@ -47,6 +52,17 @@ def test_stage_attachment_uses_stable_message_id_and_filepart() -> None:
     assert params["p_asset_identity"].obj == payload["asset_identity"]
     assert db.rpc.call_args.args[0] == "stage_wecom_attachment_v2"
     assert result.attachment_id == "asset-1"
+    register_asset.assert_called_once_with(
+        db,
+        attachment_id="asset-1",
+        message_id="message-1",
+        conversation_id="conversation-1",
+        actor_user_id="user-1",
+        org_id="org-1",
+        storage_scope="user",
+        storage_owner_key="user-1",
+        file_payload=payload,
+    )
 
 
 def test_stage_attachment_requires_normalized_identity() -> None:
@@ -67,6 +83,8 @@ def test_stage_attachment_requires_normalized_identity() -> None:
             sender_identity="wx-user",
             file_payload=payload,
             storage_scope="user",
+            storage_owner_id="user-1",
+            org_id=None,
         )
     except RuntimeError as error:
         assert str(error) == "WECOM_ATTACHMENT_IDENTITY_MISSING"

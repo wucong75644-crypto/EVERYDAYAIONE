@@ -15,6 +15,7 @@ from schemas.message import (
     ThinkingPart,
     ToolResultPart,
     ToolStepPart,
+    VideoPart,
 )
 
 
@@ -109,6 +110,12 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             mime_type=block["mime_type"],
             size=block.get("size"),
             workspace_path=block.get("workspace_path"),
+        )
+    if block_type == "video":
+        return VideoPart(
+            url=block["url"],
+            duration=block.get("duration"),
+            thumbnail=block.get("thumbnail"),
         )
     if block_type == "chart":
         return ChartPart(

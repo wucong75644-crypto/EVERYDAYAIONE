@@ -101,10 +101,25 @@ class ChatGenerationExecutor:
             input_message_id=claim.input_message_id,
             output_message_id=str(task["assistant_message_id"]),
         )
+        result_content = [
+            part.model_dump(exclude_none=True) for part in result.parts
+        ]
+        from services.assets import register_message_media_best_effort
+
+        register_message_media_best_effort(
+            self._db,
+            actor_user_id=execution_scope.actor_user_id,
+            org_id=task.get("org_id"),
+            storage_scope=execution_scope.context_scope,
+            storage_owner_key=execution_scope.workspace_owner_id,
+            conversation_id=claim.conversation_id,
+            source_message_id=str(task["assistant_message_id"]),
+            indexed_parts=_indexed_asset_parts(
+                result_content, getattr(handler, "_asset_emissions", []),
+            ),
+        )
         return GenerationOutcome(
-            result_content=[
-                part.model_dump(exclude_none=True) for part in result.parts
-            ],
+            result_content=result_content,
             usage=result.usage,
             credits_cost=result.credits_cost,
             tool_digest=result.tool_digest,
@@ -240,6 +255,24 @@ class ChatGenerationExecutor:
         if isinstance(raw, str):
             raw = json.loads(raw)
         return ContentPartsAdapter.validate_python(raw)
+
+
+def _indexed_asset_parts(
+    result_content: list[dict[str, Any]],
+    asset_emissions: list[dict[str, Any]],
+) -> list[tuple[int, dict[str, Any]]]:
+    indexed: list[tuple[int, dict[str, Any]]] = []
+    next_block = 0
+    for index, part in enumerate(result_content):
+        if part.get("type") not in ("image", "video"):
+            continue
+        for block_index in range(next_block, len(asset_emissions)):
+            block = asset_emissions[block_index]
+            if block.get("url") == part.get("url"):
+                indexed.append((index, block))
+                next_block = block_index + 1
+                break
+    return indexed
 
 
 def _validate_task(

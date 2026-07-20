@@ -28,6 +28,8 @@ def stage_wecom_attachment(
     sender_identity: str,
     file_payload: dict[str, Any],
     storage_scope: str,
+    storage_owner_id: str,
+    org_id: str | None,
 ) -> StagedAttachment:
     message_id = str(uuid.uuid5(_ATTACHMENT_NAMESPACE, f"{msgid}:message"))
     identity = file_payload.get("asset_identity")
@@ -57,8 +59,22 @@ def stage_wecom_attachment(
     result = response.data if response else None
     if not isinstance(result, dict) or not result.get("attachment_id"):
         raise RuntimeError("WECOM_ATTACHMENT_STAGE_INVALID")
-    return StagedAttachment(
+    staged = StagedAttachment(
         attachment_id=str(result["attachment_id"]),
         message_id=str(result.get("message_id") or message_id),
         already_staged=bool(result.get("already_staged")),
     )
+    from services.assets import register_wecom_attachment_best_effort
+
+    register_wecom_attachment_best_effort(
+        db,
+        attachment_id=staged.attachment_id,
+        message_id=staged.message_id,
+        conversation_id=conversation_id,
+        actor_user_id=sender_user_id,
+        org_id=org_id,
+        storage_scope=storage_scope,
+        storage_owner_key=storage_owner_id,
+        file_payload=file_payload,
+    )
+    return staged

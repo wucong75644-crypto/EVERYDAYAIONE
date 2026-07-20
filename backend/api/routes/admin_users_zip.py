@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -17,6 +18,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from api.deps import CurrentUserId, Database
+from services.assets import is_allowed_asset_url as _is_allowed_asset_url
 
 from .admin_users_helpers import (
     _ascii_zip_name,
@@ -34,17 +36,17 @@ _ZIP_MAX_TOTAL_BYTES = 1 * 1024 ** 3   # 1 GB
 _ZIP_PER_FILE_MAX = 100 * 1024 ** 2    # 100 MB
 
 
-class DownloadZipRequest(BaseModel):
-    urls: list[str] = Field(..., min_length=1, max_length=_ZIP_MAX_FILES)
-    filenames: Optional[list[str]] = Field(None, description="可选，与 urls 同长，自定义 ZIP 内文件名")
-    zip_name: Optional[str] = Field(None, max_length=120)
+class DownloadAssetsZipRequest(BaseModel):
+    asset_ids: list[UUID] = Field(
+        ..., min_length=1, max_length=_ZIP_MAX_FILES,
+    )
 
 
 async def _fetch_url(client: httpx.AsyncClient, url: str) -> tuple[str, Optional[bytes], Optional[str]]:
     """返回 (suggested_name, content, error)"""
     name = _filename_from_url(url)
     try:
-        resp = await client.get(url, follow_redirects=True)
+        resp = await client.get(url, follow_redirects=False)
         if resp.status_code != 200:
             return name, None, f"HTTP {resp.status_code}"
         content = resp.content
@@ -57,14 +59,17 @@ async def _fetch_url(client: httpx.AsyncClient, url: str) -> tuple[str, Optional
         return name, None, str(e)[:120]
 
 
-@zip_router.post("/users/{uid}/download_zip", summary="批量下载用户资产 ZIP（超管）")
+@zip_router.post(
+    "/users/{uid}/assets/download-zip",
+    summary="批量下载用户资产 ZIP（超管）",
+)
 async def download_user_assets_zip(
     uid: str,
-    body: DownloadZipRequest,
+    body: DownloadAssetsZipRequest,
     user_id: CurrentUserId,
     db: Database,
 ):
-    """OSS CDN URL 数组 → 流式 ZIP"""
+    """资产 ID 经归属复验后下载并打包。"""
     from zipstream import ZIP_DEFLATED, ZipStream
 
     _require_super_admin(user_id, db)
@@ -73,10 +78,44 @@ async def download_user_assets_zip(
     if not user_check or not user_check.data:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    urls = body.urls
-    custom_names = body.filenames or []
-    if custom_names and len(custom_names) != len(urls):
-        raise HTTPException(status_code=400, detail="filenames 长度必须与 urls 一致")
+    asset_ids = [str(asset_id) for asset_id in body.asset_ids]
+    if len(set(asset_ids)) != len(asset_ids):
+        raise HTTPException(status_code=422, detail="asset_ids 不能重复")
+    ref_result = (
+        db.table("user_asset_refs")
+        .select("asset_id")
+        .eq("actor_user_id", uid)
+        .in_("asset_id", asset_ids)
+        .execute()
+    )
+    authorized_ids = {
+        str(asset_ref["asset_id"])
+        for asset_ref in (ref_result.data or [])
+    }
+    if authorized_ids != set(asset_ids):
+        raise HTTPException(
+            status_code=403,
+            detail="包含不存在、已删除或无权访问的资产",
+        )
+
+    asset_result = (
+        db.table("user_assets")
+        .select("id,download_url,name")
+        .eq("status", "ready")
+        .in_("id", asset_ids)
+        .execute()
+    )
+    assets = asset_result.data or []
+    asset_map = {str(asset["id"]): asset for asset in assets}
+    if len(asset_map) != len(set(asset_ids)):
+        raise HTTPException(
+            status_code=403,
+            detail="包含不存在、已删除或无权访问的资产",
+        )
+    ordered_assets = [asset_map[asset_id] for asset_id in asset_ids]
+    urls = [str(asset.get("download_url") or "") for asset in ordered_assets]
+    if any(not _is_allowed_asset_url(url) for url in urls):
+        raise HTTPException(status_code=422, detail="资产下载地址无效")
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=10.0),
@@ -91,10 +130,9 @@ async def download_user_assets_zip(
     added = 0
 
     for idx, (default_name, content, err) in enumerate(fetched):
-        display_url = urls[idx]
-        preferred = (custom_names[idx] if custom_names else None) or default_name
+        preferred = ordered_assets[idx].get("name") or default_name
         if err or content is None:
-            errors.append(f"{preferred} ({display_url}): {err or '空内容'}")
+            errors.append(f"{preferred}: {err or '空内容'}")
             continue
 
         if total_bytes + len(content) > _ZIP_MAX_TOTAL_BYTES:
@@ -120,9 +158,10 @@ async def download_user_assets_zip(
     if added == 0 and not errors:
         raise HTTPException(status_code=404, detail="无可下载内容")
 
-    zip_name = body.zip_name or f"user-{uid[:8]}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
-    if not zip_name.lower().endswith(".zip"):
-        zip_name = f"{zip_name}.zip"
+    zip_name = (
+        f"user-{uid[:8]}-"
+        f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    )
 
     logger.info(
         f"Admin ZIP | operator={user_id} | target_user={uid} | "
@@ -132,7 +171,7 @@ async def download_user_assets_zip(
         db,
         admin_id=user_id,
         action_type="download_user_assets",
-        description=f"下载用户资产 ZIP ({added}/{len(urls)} 文件)",
+        description=f"下载用户资产 ZIP ({added}/{len(asset_ids)} 文件)",
         target_user_id=uid,
         target_resource_type="user_assets",
         changes_data={"files_count": added, "total_bytes": total_bytes, "errors_count": len(errors)},

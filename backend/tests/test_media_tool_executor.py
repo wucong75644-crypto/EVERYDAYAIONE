@@ -109,6 +109,8 @@ class TestGenerateImage:
         p = result.emit_payloads[0]
         assert p["workspace_path"] == "下载/AI图片/IMG_xxx.png"
         assert p["url"].startswith("https://oss.cdn/")
+        assert p["_asset_source_kind"] == "media_tool"
+        assert p["_asset_prompt"] == "a cute cat"
 
     @pytest.mark.asyncio
     async def test_success_multi_image_emits_all(self):
@@ -191,13 +193,44 @@ class TestGenerateVideo:
         mock_adapter = AsyncMock()
         mock_adapter.generate = AsyncMock(return_value=mock_result)
         mock_adapter.close = AsyncMock()
+        persisted = {
+            "kind": "video",
+            "url": "https://oss.example.com/demo.mp4",
+            "workspace_path": "下载/AI视频/demo.mp4",
+            "name": "demo.mp4",
+            "mime_type": "video/mp4",
+            "size": 1024,
+        }
 
         with patch("services.adapters.factory.create_video_adapter", return_value=mock_adapter), \
-             patch("config.kie_models.calculate_video_cost", return_value={"user_credits": 30}):
+             patch("config.kie_models.calculate_video_cost", return_value={"user_credits": 30}), \
+             patch("services.file_upload.download_url_to_workspace",
+                   new=AsyncMock(return_value=persisted)):
             result = await exe._generate_video({"prompt": "a sunset scene"})
 
         assert "https://cdn.example.com/demo.mp4" in result
         assert "视频已生成" in result
+        assert result.emit_payloads[0]["url"] == "https://oss.example.com/demo.mp4"
+        assert result.emit_payloads[0]["duration"] == 10
+        assert result.emit_payloads[0]["_asset_source_kind"] == "media_tool"
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_refunds(self):
+        exe = _make_executor()
+        mock_result = MockVideoResult(video_url="https://cdn.example.com/demo.mp4")
+        mock_adapter = AsyncMock(
+            generate=AsyncMock(return_value=mock_result),
+            close=AsyncMock(),
+        )
+
+        with patch("services.adapters.factory.create_video_adapter", return_value=mock_adapter), \
+             patch("config.kie_models.calculate_video_cost", return_value={"user_credits": 30}), \
+             patch("services.file_upload.persist_media_urls_to_workspace",
+                   new=AsyncMock(side_effect=RuntimeError("storage down"))):
+            result = await exe._generate_video({"prompt": "test"})
+
+        assert result.status == "error"
+        exe.db.rpc.assert_called()
 
     @pytest.mark.asyncio
     async def test_adapter_failure_refunds(self):

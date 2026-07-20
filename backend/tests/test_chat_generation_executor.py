@@ -442,3 +442,56 @@ async def test_executor_rejects_channel_delivery_scope_mismatch():
 
     with pytest.raises(RuntimeError, match="ACTOR_EXECUTION_SCOPE_MISMATCH"):
         await executor.execute(task, _claim(), asyncio.Event())
+
+
+@pytest.mark.asyncio
+async def test_executor_registers_marked_asset_at_final_content_index(monkeypatch):
+    row = {
+        "id": "input-1",
+        "conversation_id": "conv-1",
+        "turn_id": "turn-1",
+        "role": "user",
+        "content": [{"type": "text", "text": "画图"}],
+    }
+    captured = {}
+    handler = SimpleNamespace(
+        org_id=None, _asset_emissions=[{
+            "type": "image", "url": "https://cdn.example/generated.png",
+            "_asset_source_kind": "media_tool", "_asset_prompt": "画一只猫",
+        }],
+    )
+
+    async def fake_execute_chat(**_kwargs):
+        return ChatExecutionResult(
+            parts=[
+                TextPart(text="完成"),
+                ImagePart(url="https://cdn.example/generated.png"),
+            ],
+            content_blocks=[],
+            usage={},
+            credits_cost=0,
+            tool_digest=None,
+        )
+
+    monkeypatch.setattr(
+        "services.handlers.chat.executor.execute_chat",
+        fake_execute_chat,
+    )
+    monkeypatch.setattr(
+        "services.assets.register_message_media_best_effort",
+        lambda db, **kwargs: captured.update(db=db, **kwargs),
+    )
+
+    outcome = await ChatGenerationExecutor(
+        _DB(row),
+        lambda _db: handler,
+        handler_db_factory=lambda: object(),
+    ).execute(_task(), _claim(), asyncio.Event())
+
+    assert outcome.result_content[1] == {
+        "type": "image",
+        "url": "https://cdn.example/generated.png",
+    }
+    assert captured["source_message_id"] == "output-1"
+    assert captured["indexed_parts"][0][0] == 1
+    assert captured["indexed_parts"][0][1]["_asset_source_kind"] == "media_tool"

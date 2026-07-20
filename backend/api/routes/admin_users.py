@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,7 +16,6 @@ from api.deps import CurrentUserId, Database
 
 from .admin_users_helpers import (
     _extract_upload_parts,
-    _asset_url_fields,
     _mask_phone,
     _require_super_admin,
     _safe_parse_content,
@@ -25,11 +23,10 @@ from .admin_users_helpers import (
     admin_adjust_credits,
 )
 from .admin_users_zip import zip_router
-
-
+from .admin_user_assets import assets_router
 router = APIRouter(prefix="/admin", tags=["admin-users"])
+router.include_router(assets_router)
 router.include_router(zip_router)
-
 
 # ── 请求/响应模型 ────────────────────────────────────────
 
@@ -38,13 +35,6 @@ class RechargeRequest(BaseModel):
     delta: int = Field(..., description="正=充值，负=扣减，禁止 0")
     reason: str = Field("", max_length=200, description="操作备注")
     org_id: Optional[str] = Field(None, description="可选，记录到 credits_history 的 org_id")
-
-
-# ── 常量 ─────────────────────────────────────────────────
-
-
-_DEFAULT_UPLOADS_DAYS = 90
-_DEFAULT_GENERATIONS_LIMIT = 1000
 
 
 # ── API：用户列表 ────────────────────────────────────────
@@ -315,186 +305,4 @@ async def get_conversation_messages(
         "conversation": {"id": cid, "title": conv.data.get("title")},
         "items": messages,
         "total": len(messages),
-    }
-
-
-# ── API：上传资产 ────────────────────────────────────────
-
-
-@router.get("/users/{uid}/uploads", summary="用户上传资产（超管）")
-async def list_user_uploads(
-    uid: str,
-    user_id: CurrentUserId,
-    db: Database,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(24, ge=1, le=100),
-    days: int = Query(_DEFAULT_UPLOADS_DAYS, ge=1, le=365),
-) -> dict:
-    """扫描该用户的 user 消息（默认近 90 天），从 content JSONB 提取附件 URL。"""
-    _require_super_admin(user_id, db)
-
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-
-    convs = db.table("conversations").select("id").eq("user_id", uid).execute()
-    conv_ids = [c["id"] for c in (convs.data or [])]
-    if not conv_ids:
-        return {"items": [], "total": 0, "page": page, "page_size": page_size}
-
-    msgs = (
-        db.table("messages")
-        .select("id, conversation_id, content, created_at")
-        .in_("conversation_id", conv_ids).eq("role", "user")
-        .gte("created_at", since).order("created_at", desc=True)
-        .limit(_DEFAULT_GENERATIONS_LIMIT).execute()
-    )
-
-    assets: list[dict] = []
-    for m in (msgs.data or []):
-        parsed = _safe_parse_content(m.get("content"))
-        for part in _extract_upload_parts(parsed):
-            assets.append({
-                **part,
-                "message_id": m["id"],
-                "conversation_id": m["conversation_id"],
-                "created_at": m["created_at"],
-            })
-
-    total = len(assets)
-    start = (page - 1) * page_size
-    return {
-        "items": assets[start:start + page_size],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
-
-
-# ── API：生成资产 ────────────────────────────────────────
-
-
-@router.get("/users/{uid}/generations", summary="用户 AI 生成资产（超管）")
-async def list_user_generations(
-    uid: str,
-    user_id: CurrentUserId,
-    db: Database,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(24, ge=1, le=100),
-    kind: Optional[str] = Query(None, description="image / video / 不传则全部"),
-) -> dict:
-    """聚合 image_generations + tasks(type=video, status=completed)"""
-    _require_super_admin(user_id, db)
-
-    items: list[dict] = []
-
-    if kind in (None, "image"):
-        img = (
-            db.table("image_generations")
-            .select(
-                "id, conversation_id, prompt, negative_prompt, image_size, "
-                "image_url, credits_cost, created_at, model_id"
-            )
-            .eq("user_id", uid).order("created_at", desc=True)
-            .limit(_DEFAULT_GENERATIONS_LIMIT).execute()
-        )
-        for r in (img.data or []):
-            if not r.get("image_url"):
-                continue
-            items.append({
-                "kind": "image",
-                "id": r["id"],
-                "url": r["image_url"],
-                **_asset_url_fields(r["image_url"], "image"),
-                "prompt": r.get("prompt"),
-                "negative_prompt": r.get("negative_prompt"),
-                "model_id": r.get("model_id"),
-                "size": r.get("image_size"),
-                "credits_cost": r.get("credits_cost") or 0,
-                "conversation_id": r.get("conversation_id"),
-                "created_at": r["created_at"],
-            })
-
-    if kind in (None, "video"):
-        vid = (
-            db.table("tasks")
-            .select("id, conversation_id, request_params, result, credits_used, created_at")
-            .eq("user_id", uid).eq("type", "video").eq("status", "completed")
-            .order("created_at", desc=True).limit(500).execute()
-        )
-        for r in (vid.data or []):
-            res = r.get("result") or {}
-            params = r.get("request_params") or {}
-            url = res.get("video_url")
-            if not url:
-                continue
-            items.append({
-                "kind": "video",
-                "id": r["id"],
-                "url": url,
-                **_asset_url_fields(url, "video"),
-                "prompt": params.get("prompt") or res.get("prompt"),
-                "negative_prompt": params.get("negative_prompt"),
-                "model_id": params.get("model_id"),
-                "size": None,
-                "credits_cost": r.get("credits_used") or 0,
-                "conversation_id": r.get("conversation_id"),
-                "created_at": r["created_at"],
-            })
-
-    # 新链路：assistant 消息的生成图存在 messages.content JSONB（非 image_generations 表）
-    # 例：gpt-image-2 / 电商图链路 — 不写 image_generations，直接塞进 message.content
-    # 用 url 去重（避免与 image_generations 重复）
-    convs = db.table("conversations").select("id").eq("user_id", uid).execute()
-    conv_ids = [c["id"] for c in (convs.data or [])]
-    existing_urls = {it["url"] for it in items}
-    if conv_ids:
-        ai_msgs = (
-            db.table("messages")
-            .select("id, conversation_id, content, generation_params, credits_cost, created_at")
-            .in_("conversation_id", conv_ids).eq("role", "assistant")
-            .order("created_at", desc=True)
-            .limit(_DEFAULT_GENERATIONS_LIMIT).execute()
-        )
-        for m in (ai_msgs.data or []):
-            parsed = _safe_parse_content(m.get("content"))
-            params = m.get("generation_params") or {}
-            gen_type = params.get("type") if isinstance(params, dict) else None
-            for part in _extract_upload_parts(parsed):
-                url = part["url"]
-                if url in existing_urls:
-                    continue
-                # 推断 kind：generation_params.type 优先 / 按 url 后缀兜底
-                if gen_type == "video":
-                    item_kind = "video"
-                elif gen_type == "image":
-                    item_kind = "image"
-                else:
-                    item_kind = "video" if url.lower().endswith((".mp4", ".mov", ".webm")) else "image"
-
-                if kind and item_kind != kind:
-                    continue
-
-                items.append({
-                    "kind": item_kind,
-                    "id": m["id"],
-                    "url": url,
-                    **_asset_url_fields(url, item_kind, part),
-                    "prompt": params.get("prompt") if isinstance(params, dict) else None,
-                    "negative_prompt": params.get("negative_prompt") if isinstance(params, dict) else None,
-                    "model_id": params.get("model") or params.get("model_id") if isinstance(params, dict) else None,
-                    "size": params.get("resolution") or params.get("aspect_ratio") if isinstance(params, dict) else None,
-                    "credits_cost": m.get("credits_cost") or 0,
-                    "conversation_id": m.get("conversation_id"),
-                    "created_at": m["created_at"],
-                })
-                existing_urls.add(url)
-
-    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-
-    total = len(items)
-    start = (page - 1) * page_size
-    return {
-        "items": items[start:start + page_size],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
     }

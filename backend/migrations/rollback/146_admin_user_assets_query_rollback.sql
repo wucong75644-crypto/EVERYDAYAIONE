@@ -1,0 +1,3 @@
+DROP FUNCTION IF EXISTS list_admin_user_assets(
+    UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
+);

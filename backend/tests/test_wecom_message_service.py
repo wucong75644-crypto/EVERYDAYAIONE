@@ -168,7 +168,8 @@ class TestHandleMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_file_is_staged_without_starting_generation(self):
+    @pytest.mark.parametrize("chat_type", [WecomChatType.SINGLE, WecomChatType.GROUP])
+    async def test_file_is_staged_without_starting_generation(self, chat_type):
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._get_user_balance = MagicMock(return_value=10)
@@ -183,6 +184,9 @@ class TestHandleMessage:
         }
         svc._prepare_wecom_file = AsyncMock(return_value=file_payload)
         msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        msg.chattype = chat_type
+        if chat_type == WecomChatType.GROUP:
+            msg.chatid = "group-1"
         ctx = _make_reply_ctx()
 
         with patch(
@@ -194,7 +198,10 @@ class TestHandleMessage:
             )
 
         assert stage.call_args.kwargs["file_payload"] == file_payload
-        assert stage.call_args.kwargs["storage_scope"] == "user"
+        expected_scope = "channel" if chat_type == WecomChatType.GROUP else "user"
+        assert stage.call_args.kwargs["storage_scope"] == expected_scope
+        owner = stage.call_args.kwargs["storage_owner_id"]
+        assert owner.startswith("channels/wecom/") if expected_scope == "channel" else owner == "uid1"
         svc._reply_text.assert_awaited_once_with(
             ctx, "文件已收到，请告诉我需要如何处理。",
         )

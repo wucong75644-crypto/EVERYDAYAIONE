@@ -7,8 +7,9 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.message import ChartPart, DiagramPart, FilePart, ImagePart
+from schemas.message import ChartPart, DiagramPart, FilePart, ImagePart, VideoPart
 from services.handlers.emit_payloads import build_block_from_payload, build_part_from_payload
+from services.handlers.chat.outcome_builder import build_content_parts
 
 
 def test_image_payload_block_preserves_media_url_fields():
@@ -20,6 +21,7 @@ def test_image_payload_block_preserves_media_url_fields():
         "preview_url": "https://cdn.example.com/workspace/a.png",
         "download_url": "https://cdn.example.com/workspace/a.png",
         "workspace_path": "下载/AI图片/a.png",
+        "_asset_source_kind": "media_tool",
     })
 
     assert block == {
@@ -56,6 +58,26 @@ def test_explicit_file_payload_builds_file_part():
 
     assert isinstance(part, FilePart)
     assert part.name == "a.xlsx"
+
+
+def test_video_payload_builds_video_part_and_final_content():
+    payload = {
+        "kind": "video",
+        "url": "https://cdn.example.com/demo.mp4",
+        "duration": 10,
+        "thumbnail_url": "https://cdn.example.com/thumb.jpg",
+    }
+
+    block = build_block_from_payload(payload)
+    part = build_part_from_payload(payload)
+    final_parts = build_content_parts(
+        [block], fallback_text="",
+    )
+
+    assert isinstance(part, VideoPart)
+    assert part.duration == 10
+    assert isinstance(final_parts[0], VideoPart)
+    assert final_parts[0].thumbnail.endswith("thumb.jpg")
 
 
 def test_chart_payload_uses_option_title_and_builds_chart_part():

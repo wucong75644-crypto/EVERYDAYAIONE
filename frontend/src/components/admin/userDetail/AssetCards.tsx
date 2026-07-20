@@ -1,7 +1,7 @@
 /**
  * 资产卡片组件（从 AssetSpaceTab 拆出，避免单文件超过 500 行硬约束）
  *
- * - UploadCard：用户上传的图片/文件
+ * - UploadCard：用户上传的图片/视频/文件
  * - GenerationCard：AI 生成的图片/视频（含提示词折叠 + 复制）
  *
  * 行为：
@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { Copy, Download, ZoomIn } from 'lucide-react';
-import type { UploadAsset, GenerationAsset } from '../../../services/adminUser';
+import type { UserAsset } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
 import { pickOriginalImageUrl, toThumbnailImageUrl } from '../../../utils/imageUrlRules';
@@ -25,14 +25,14 @@ export function UploadCard({
   onToggle,
   onPreview,
 }: {
-  asset: UploadAsset;
+  asset: UserAsset;
   selected: boolean;
   onToggle: () => void;
   onPreview: (url: string) => void;
 }) {
-  const originalUrl = pickOriginalImageUrl(asset.original_url, asset.download_url, asset.url);
-  const downloadUrl = pickOriginalImageUrl(asset.download_url, asset.original_url, asset.url);
-  const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.url, 360);
+  const originalUrl = pickOriginalImageUrl(asset.original_url, asset.download_url);
+  const downloadUrl = pickOriginalImageUrl(asset.download_url, asset.original_url);
+  const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.original_url, 360);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -50,7 +50,7 @@ export function UploadCard({
         selected ? 'border-[var(--s-accent)] ring-2 ring-[var(--s-accent)]/30' : 'border-[var(--s-border-default)]'
       }`}
     >
-      {asset.type === 'image' ? (
+      {asset.media_type === 'image' ? (
         <img
           src={thumbnailUrl}
           alt={asset.name}
@@ -81,7 +81,7 @@ export function UploadCard({
       </div>
 
       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        {asset.type === 'image' && (
+        {asset.media_type === 'image' && (
           <button
             type="button"
             onClick={handlePreview}
@@ -121,20 +121,19 @@ export function GenerationCard({
   onToggle,
   onPreview,
 }: {
-  asset: GenerationAsset;
+  asset: UserAsset;
   selected: boolean;
   onToggle: () => void;
   onPreview: (url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const originalUrl = pickOriginalImageUrl(asset.original_url, asset.download_url, asset.url);
-  const downloadUrl = pickOriginalImageUrl(asset.download_url, asset.original_url, asset.url);
-  const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.url, 360);
+  const originalUrl = pickOriginalImageUrl(asset.original_url, asset.download_url);
+  const downloadUrl = pickOriginalImageUrl(asset.download_url, asset.original_url);
+  const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.original_url, 360);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const ext = asset.kind === 'video' ? 'mp4' : 'jpg';
-    downloadFile(downloadUrl, `${asset.id}.${ext}`).catch((err) => toast.error(err?.message || '下载失败'));
+    downloadFile(downloadUrl, asset.name).catch((err) => toast.error(err?.message || '下载失败'));
   };
 
   const handlePreview = (e: React.MouseEvent) => {
@@ -155,7 +154,7 @@ export function GenerationCard({
         selected ? 'border-[var(--s-accent)] ring-2 ring-[var(--s-accent)]/30' : 'border-[var(--s-border-default)]'
       }`}
     >
-      {asset.kind === 'image' ? (
+      {asset.media_type === 'image' ? (
         <img
           src={thumbnailUrl}
           alt={asset.prompt || ''}
@@ -170,7 +169,7 @@ export function GenerationCard({
           className="relative w-full aspect-square bg-black flex items-center justify-center cursor-pointer"
           onClick={onToggle}
         >
-          <video src={asset.url} className="w-full h-full object-cover" muted preload="metadata" />
+          <video src={asset.original_url} className="w-full h-full object-cover" muted preload="metadata" />
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-10 h-10 rounded-full bg-white/30 backdrop-blur flex items-center justify-center">
               <span className="text-white text-xl">▶</span>
@@ -189,12 +188,12 @@ export function GenerationCard({
           aria-label="选中"
         />
         <span className="text-[10px] px-1.5 py-0.5 bg-black/60 text-white rounded">
-          {asset.kind === 'image' ? '🖼' : '🎬'}
+          {asset.media_type === 'image' ? '🖼' : '🎬'}
         </span>
       </div>
 
       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        {asset.kind === 'image' && (
+        {asset.media_type === 'image' && (
           <button
             type="button"
             onClick={handlePreview}
@@ -254,7 +253,7 @@ export function GenerationCard({
 
         <div className="flex justify-between text-[var(--s-text-tertiary)]">
           <span className="truncate">{asset.model_id || '—'}</span>
-          <span>💰 {asset.credits_cost}</span>
+          <span>{asset.source_kind}</span>
         </div>
         <div className="text-[var(--s-text-tertiary)]">{formatRelativeCN(asset.created_at)}</div>
       </div>

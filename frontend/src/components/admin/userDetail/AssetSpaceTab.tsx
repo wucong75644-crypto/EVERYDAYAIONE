@@ -1,7 +1,7 @@
 /**
  * 图片空间 Tab — [上传 | 生成] 切换 + 网格 + 多选 + 批量 ZIP 下载
  *
- * 复用 useFileSelection（URL 作为 key）+ adminUser.downloadUserAssetsZip
+ * 复用 useFileSelection（资产 ID 作为 key）+ adminUser.downloadUserAssetsZip
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -10,11 +10,9 @@ import { Download } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import { useFileSelection } from '../../../hooks/useFileSelection';
 import {
-  listUserUploads,
-  listUserGenerations,
+  listUserAssets,
   downloadUserAssetsZip,
-  type UploadAsset,
-  type GenerationAsset,
+  type UserAsset,
 } from '../../../services/adminUser';
 import { usePreview } from '../../../preview/usePreview';
 import PreviewHost from '../../../preview/PreviewHost';
@@ -22,7 +20,7 @@ import type { PreviewItem } from '../../../preview/types';
 import { UploadCard, GenerationCard } from './AssetCards';
 import { pickOriginalImageUrl } from '../../../utils/imageUrlRules';
 
-type Mode = 'uploads' | 'generations';
+type Mode = 'upload' | 'generated';
 
 interface Props {
   userId: string;
@@ -31,10 +29,12 @@ interface Props {
 const PAGE_SIZE = 24;
 
 export default function AssetSpaceTab({ userId }: Props) {
-  const [mode, setMode] = useState<Mode>('uploads');
+  const [mode, setMode] = useState<Mode>('upload');
   const [page, setPage] = useState(1);
-  const [uploads, setUploads] = useState<UploadAsset[]>([]);
-  const [generations, setGenerations] = useState<GenerationAsset[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [cursorHistory, setCursorHistory] = useState<(string | undefined)[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [assets, setAssets] = useState<UserAsset[]>([]);
   const [totals, setTotals] = useState({ uploads: 0, generations: 0 });
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -44,23 +44,23 @@ export default function AssetSpaceTab({ userId }: Props) {
 
   // 当前页所有可预览图片（按显示顺序，作为 lightbox 上下张轮播池）
   const previewItems = useMemo<PreviewItem[]>(() => {
-    if (mode === 'uploads') {
-      return uploads
-        .filter((u) => u.type === 'image')
+    if (mode === 'upload') {
+      return assets
+        .filter((asset) => asset.media_type === 'image')
         .map((u) => ({
-          url: pickOriginalImageUrl(u.original_url, u.download_url, u.url),
+          url: pickOriginalImageUrl(u.original_url, u.download_url),
           thumbnailUrl: u.thumbnail_url || undefined,
           filename: u.name,
         }));
     }
-    return generations
-      .filter((g) => g.kind === 'image')
+    return assets
+      .filter((asset) => asset.media_type === 'image')
       .map((g) => ({
-        url: pickOriginalImageUrl(g.original_url, g.download_url, g.url),
+        url: pickOriginalImageUrl(g.original_url, g.download_url),
         thumbnailUrl: g.thumbnail_url || undefined,
-        filename: `${g.id}.jpg`,
+        filename: g.name,
       }));
-  }, [mode, uploads, generations]);
+  }, [mode, assets]);
 
   const openLightbox = useCallback((url: string) => {
     const idx = previewItems.findIndex((i) => i.url === url);
@@ -68,64 +68,71 @@ export default function AssetSpaceTab({ userId }: Props) {
     preview.open(previewItems, idx);
   }, [previewItems, preview]);
 
-  // 加载数据（page / mode 变化）
+  // 加载数据（cursor / mode 变化），取消旧请求避免竞态覆盖。
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
       setLoading(true);
       try {
-        if (mode === 'uploads') {
-          const data = await listUserUploads(userId, { page, page_size: PAGE_SIZE });
-          setUploads(data.items);
-          setTotals((t) => ({ ...t, uploads: data.total }));
-        } else {
-          const data = await listUserGenerations(userId, { page, page_size: PAGE_SIZE });
-          setGenerations(data.items);
-          setTotals((t) => ({ ...t, generations: data.total }));
-        }
-      } catch (err: any) {
-        toast.error(err?.response?.data?.detail || '加载资产失败');
+        const data = await listUserAssets(userId, {
+          source_type: mode,
+          limit: PAGE_SIZE,
+          ...(cursor ? { cursor } : {}),
+        }, controller.signal);
+        setAssets(data.items);
+        setNextCursor(data.next_cursor);
+        setTotals((current) => ({
+          ...current,
+          [mode === 'upload' ? 'uploads' : 'generations']: data.total,
+        }));
+      } catch (error: unknown) {
+        if (!controller.signal.aborted) toast.error(assetErrorMessage(error));
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     })();
-  }, [userId, mode, page]);
+    return () => controller.abort();
+  }, [userId, mode, cursor]);
 
-  // 同时加载另一个 tab 的 total（首次）
+  // 独立加载两个 Tab 的总数。
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
       try {
-        if (mode === 'uploads' && totals.generations === 0) {
-          const data = await listUserGenerations(userId, { page: 1, page_size: 1 });
-          setTotals((t) => ({ ...t, generations: data.total }));
-        }
-        if (mode === 'generations' && totals.uploads === 0) {
-          const data = await listUserUploads(userId, { page: 1, page_size: 1 });
-          setTotals((t) => ({ ...t, uploads: data.total }));
-        }
+        const [uploads, generations] = await Promise.all([
+          listUserAssets(userId, {
+            source_type: 'upload', limit: 1,
+          }, controller.signal),
+          listUserAssets(userId, {
+            source_type: 'generated', limit: 1,
+          }, controller.signal),
+        ]);
+        setTotals({
+          uploads: uploads.total,
+          generations: generations.total,
+        });
       } catch { /* silent */ }
     })();
-  }, [userId, mode, totals.uploads, totals.generations]);
+    return () => controller.abort();
+  }, [userId]);
 
   // 切换 mode 时清空选中 + 回到第一页
   const handleSwitchMode = (next: Mode) => {
     if (next === mode) return;
     setMode(next);
     setPage(1);
+    setCursor(undefined);
+    setCursorHistory([]);
+    setNextCursor(null);
     sel.clear();
   };
 
-  const currentItems = useMemo(() => {
-    return mode === 'uploads'
-      ? uploads.map((u) => ({ url: pickOriginalImageUrl(u.download_url, u.original_url, u.url), name: u.name }))
-      : generations.map((g) => ({ url: pickOriginalImageUrl(g.download_url, g.original_url, g.url), name: g.id }));
-  }, [mode, uploads, generations]);
-
-  const currentUrls = useMemo(() => currentItems.map((i) => i.url), [currentItems]);
-  const allSelected = currentUrls.length > 0 && currentUrls.every((u) => sel.isSelected(u));
+  const currentIds = useMemo(() => assets.map((asset) => asset.id), [assets]);
+  const allSelected = currentIds.length > 0 && currentIds.every((id) => sel.isSelected(id));
 
   const handleToggleAll = () => {
     if (allSelected) sel.clear();
-    else sel.selectAll(currentUrls);
+    else sel.selectAll(currentIds);
   };
 
   const handleDownloadSelected = useCallback(async () => {
@@ -135,21 +142,34 @@ export default function AssetSpaceTab({ userId }: Props) {
     }
     setDownloading(true);
     try {
-      const urls = Array.from(sel.selectedPaths);
-      await downloadUserAssetsZip(userId, {
-        urls,
-        zip_name: `${mode}-${urls.length}.zip`,
-      });
+      await downloadUserAssetsZip(
+        userId, Array.from(sel.selectedPaths),
+      );
       toast.success('下载已开始');
-    } catch (err: any) {
-      toast.error(err?.message || '下载失败');
+    } catch (error: unknown) {
+      toast.error(assetErrorMessage(error));
     } finally {
       setDownloading(false);
     }
-  }, [sel, userId, mode]);
+  }, [sel, userId]);
 
-  const total = mode === 'uploads' ? totals.uploads : totals.generations;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const total = mode === 'upload' ? totals.uploads : totals.generations;
+
+  const handleNextPage = () => {
+    if (!nextCursor) return;
+    setCursorHistory((history) => [...history, cursor]);
+    setCursor(nextCursor);
+    setPage((current) => current + 1);
+    sel.clear();
+  };
+
+  const handlePreviousPage = () => {
+    const previous = cursorHistory.at(-1);
+    setCursorHistory((history) => history.slice(0, -1));
+    setCursor(previous);
+    setPage((current) => Math.max(1, current - 1));
+    sel.clear();
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -161,16 +181,16 @@ export default function AssetSpaceTab({ userId }: Props) {
       {/* 顶部切换 */}
       <div className="flex gap-1 border-b border-[var(--s-border-default)]">
         <ModeTab
-          active={mode === 'uploads'}
+          active={mode === 'upload'}
           label="📤 上传"
           count={totals.uploads}
-          onClick={() => handleSwitchMode('uploads')}
+          onClick={() => handleSwitchMode('upload')}
         />
         <ModeTab
-          active={mode === 'generations'}
+          active={mode === 'generated'}
           label="✨ 生成"
           count={totals.generations}
-          onClick={() => handleSwitchMode('generations')}
+          onClick={() => handleSwitchMode('generated')}
         />
       </div>
 
@@ -181,7 +201,7 @@ export default function AssetSpaceTab({ userId }: Props) {
             type="checkbox"
             checked={allSelected}
             onChange={handleToggleAll}
-            disabled={currentUrls.length === 0}
+            disabled={currentIds.length === 0}
           />
           <span>全选本页</span>
         </label>
@@ -207,26 +227,26 @@ export default function AssetSpaceTab({ userId }: Props) {
           <div className="text-center py-12 text-[var(--s-text-tertiary)] text-sm">加载中...</div>
         ) : total === 0 ? (
           <div className="text-center py-12 text-[var(--s-text-tertiary)] text-sm">
-            {mode === 'uploads' ? '该用户无上传内容' : '该用户无生成内容'}
+            {mode === 'upload' ? '该用户无上传内容' : '该用户无生成内容'}
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {mode === 'uploads'
-              ? uploads.map((a) => (
+            {mode === 'upload'
+              ? assets.map((asset) => (
                   <UploadCard
-                    key={a.message_id + a.url}
-                    asset={a}
-                    selected={sel.isSelected(pickOriginalImageUrl(a.download_url, a.original_url, a.url))}
-                    onToggle={() => sel.toggle(pickOriginalImageUrl(a.download_url, a.original_url, a.url))}
+                    key={asset.id}
+                    asset={asset}
+                    selected={sel.isSelected(asset.id)}
+                    onToggle={() => sel.toggle(asset.id)}
                     onPreview={openLightbox}
                   />
                 ))
-              : generations.map((g) => (
+              : assets.map((asset) => (
                   <GenerationCard
-                    key={g.id + g.url}
-                    asset={g}
-                    selected={sel.isSelected(pickOriginalImageUrl(g.download_url, g.original_url, g.url))}
-                    onToggle={() => sel.toggle(pickOriginalImageUrl(g.download_url, g.original_url, g.url))}
+                    key={asset.id}
+                    asset={asset}
+                    selected={sel.isSelected(asset.id)}
+                    onToggle={() => sel.toggle(asset.id)}
                     onPreview={openLightbox}
                   />
                 ))}
@@ -235,14 +255,14 @@ export default function AssetSpaceTab({ userId }: Props) {
       </div>
 
       {/* 分页 */}
-      {total > PAGE_SIZE && (
+      {(page > 1 || nextCursor) && (
         <div className="flex items-center justify-between text-sm text-[var(--s-text-secondary)]">
-          <span>第 {page} / {totalPages} 页</span>
+          <span>第 {page} 页</span>
           <div className="flex gap-2">
-            <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            <Button size="sm" variant="ghost" disabled={page <= 1} onClick={handlePreviousPage}>
               上一页
             </Button>
-            <Button size="sm" variant="ghost" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+            <Button size="sm" variant="ghost" disabled={!nextCursor} onClick={handleNextPage}>
               下一页
             </Button>
           </div>
@@ -252,6 +272,9 @@ export default function AssetSpaceTab({ userId }: Props) {
   );
 }
 
+function assetErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '操作失败';
+}
 
 function ModeTab({ active, label, count, onClick }: {
   active: boolean; label: string; count: number; onClick: () => void;

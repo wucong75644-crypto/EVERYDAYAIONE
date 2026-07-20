@@ -392,6 +392,12 @@ class ImageAgent(CreditMixin):
                 "alt": task[:50],
             },
         )
+        for payload in emit_payloads:
+            payload.update({
+                "_asset_source_kind": "ecom_image",
+                "_asset_prompt": task,
+                "_asset_model_id": model_id,
+            })
         return AgentResult(
             status="success",
             summary=f"已生成图片：{task[:30]}",

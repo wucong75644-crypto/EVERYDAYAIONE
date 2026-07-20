@@ -43,6 +43,18 @@
 - `backend/services/agent/file_analysis_service.py`：隔离表格分析的路径授权、格式转换、结构化错误与缓存登记。
 - `backend/services/handlers/chat_tool_result_mixin.py`：统一 Chat 工具结果分类、WebSocket 投递与审计。
 - `backend/services/assets/file_identity.py`：按解密后内容统一识别文件类型、规范名称与内容摘要。
+- `backend/services/assets/asset_identity.py`：按真实 Workspace/OSS 对象解析 canonical
+  存储身份，统一个人、企业和企微群聊 owner key，并执行精确 HTTPS 主机与路径安全校验。
+- `backend/services/assets/asset_registry.py`：构造 canonical 资产与来源 Draft，并通过
+  `register_user_asset` RPC 原子登记；在线失败保持原业务结果并输出结构化日志。
+
+统一用户资产索引的已确认技术设计：
+- `docs/document/TECH_统一用户资产索引与管理员图片空间重构.md`：统一资产登记、
+  管理端游标分页、历史回填、短维护窗口直接切换与回滚边界；聊天展示保持独立。
+- `frontend/src/services/__tests__/adminUserAssets.test.ts`：统一资产游标请求、取消信号与
+  仅资产 ID ZIP 协议测试。
+- `frontend/src/components/admin/userDetail/__tests__/AssetSpaceTab.test.tsx`：管理员资产
+  空间来源切换、资产 ID 选择和前后游标分页测试。
 
 本轮图形渲染治理新增的核心模块：
 - `backend/config/image_agent_prompt.py`：从主工具配置中拆出的电商图片提示词片段，保持 `chat_tools.py` 满足文件长度阈值。
@@ -91,6 +103,7 @@
 - `backend/services/agent/runtime/context/items.py`、`provider_receipt.py`：构建本 Turn 的原子 ConversationItem 组，并在每次真实 Provider 请求前登记无正文 ContextReceipt。
 - `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
+- `docs/document/TECH_AGENT_RUNTIME统一Session运行时与上下文加载合同.md`：以 Grok Build 最新源码为基线，定义统一 Session 状态推进、Context Epoch、ModelStep、首轮/多轮/工具循环/Compaction/冷恢复加载合同，以及 A+ 分波次迁移、灰度和回滚边界。
 - `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
 - `docs/document/TECH_统一Validation与Recovery运行时.md`及实施附录：参考 Grok Build 的 typed result、结构化错误回填、有界恢复和 Completion Requirement，规划全项目唯一的通用校验与恢复内核；不包含 Skill 或业务专属校验。
 - `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
@@ -178,6 +191,9 @@ EVERYDAYAIONE/
 │   ├── .env.example              # 环境变量模板
 │   ├── main.py                   # FastAPI 应用入口
 │   ├── conversation_worker_main.py # Conversation Actor 独立 Worker 入口
+│   ├── migrations/146_admin_user_assets_query.sql # 管理资产 ref 过滤、代表来源与稳定游标 RPC
+│   ├── scripts/backfill_user_assets.py # 五类历史资产 dry-run/apply、checkpoint 与对账
+│   ├── scripts/backfill_user_assets_sql.py # 历史资产回填固定 keyset/RPC SQL
 │   ├── core/                     # 核心模块
 │   │   ├── config.py                 # 配置管理（pydantic-settings）
 │   │   ├── database.py               # Supabase 客户端
@@ -198,6 +214,7 @@ EVERYDAYAIONE/
 │   │       ├── message_request_preparation.py # 消息生成前权限、积分与上下文准备
 │   │       ├── message_turn_anchors.py # retry/send 的 Turn 输入锚点解析与消息关系写入
 │   │       ├── image.py                  # 图像上传路由
+│   │       ├── admin_user_assets.py      # 超管统一用户资产复合游标查询
 │   │       ├── detail_project.py         # 主图详情页草稿恢复与图片关联路由
 │   │       ├── audio.py                  # 音频上传路由
 │   │       ├── task.py                   # 任务管理路由
@@ -565,6 +582,11 @@ EVERYDAYAIONE/
     ├── test_admin_user_activity_ordering.py # 管理员用户活跃时间排序契约测试
     ├── test_conversation_service.py  # 对话服务测试（11个用例）
     ├── test_message_service.py   # 消息服务测试（12个用例）
+    ├── test_image_ecom_retry.py  # 电商图片失败占位原位替换、会话隔离与资产登记测试
+    ├── test_admin_user_assets.py # 超管统一资产列表、复合游标与权限边界测试
+    ├── test_admin_asset_routes.py # 统一资产 ZIP 与旧资产端点删除测试
+    ├── test_admin_users_helpers.py # 管理员会话解析和通用 helper 测试
+    ├── test_backfill_user_assets.py # 五类历史资产投影、checkpoint 与失败续跑测试
     ├── test_recent_tool_history.py # 最近 3 个用户回合的安全工具历史投影测试
     ├── test_summary_revision_atomic.py # 摘要闭合 revision 选择与数据库 CAS 契约测试
     └── test_chat_payload_blocks.py # 聊天 emit_payload 图片 URL 字段保留测试

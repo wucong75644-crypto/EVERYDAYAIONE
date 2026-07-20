@@ -72,6 +72,7 @@ class MockRoutingTable:
 def make_image_task(batch_id=None):
     """创建图片任务"""
     task = {
+        "id": "task-img-1",
         "external_task_id": "ext_img_1",
         "type": "image",
         "status": "pending",
@@ -93,6 +94,7 @@ def make_image_task(batch_id=None):
 def make_video_task():
     """创建视频任务"""
     return {
+        "id": "task-vid-1",
         "external_task_id": "ext_vid_1",
         "type": "video",
         "status": "pending",
@@ -155,10 +157,11 @@ class TestHandleSuccessRouting:
         return TaskCompletionService(MockRoutingDB())
 
     @pytest.mark.asyncio
+    @patch("services.task_completion_service.register_task_media_best_effort")
     @patch("services.file_upload.persist_media_urls_to_workspace")
     @patch("services.batch_completion_service.BatchCompletionService.handle_image_complete")
     async def test_image_with_batch_id_routes_to_batch_service(
-        self, mock_batch_complete, mock_persist, service
+        self, mock_batch_complete, mock_persist, mock_register, service
     ):
         """测试：图片任务 + batch_id → BatchCompletionService + persist 走工作区"""
         mock_persist.return_value = [{
@@ -188,12 +191,18 @@ class TestHandleSuccessRouting:
         assert len(passed_content_parts) == 1
         assert passed_content_parts[0]["workspace_path"] == "下载/AI图片/IMG_xxx.png"
         assert call_args[0][0]["batch_id"] == "batch_abc"
+        mock_register.assert_called_once_with(
+            service.db,
+            task=task,
+            content_parts=passed_content_parts,
+        )
 
     @pytest.mark.asyncio
+    @patch("services.task_completion_service.register_task_media_best_effort")
     @patch("services.file_upload.persist_media_urls_to_workspace")
     @patch("services.handlers.image_handler.ImageHandler.on_complete")
     async def test_image_without_batch_id_routes_to_handler(
-        self, mock_on_complete, mock_persist, service
+        self, mock_on_complete, mock_persist, mock_register, service
     ):
         """测试：图片任务 + 无 batch_id（历史数据）→ ImageHandler + persist 走工作区"""
         mock_persist.return_value = [{
@@ -212,12 +221,14 @@ class TestHandleSuccessRouting:
         assert success is True
         mock_persist.assert_called_once()
         mock_on_complete.assert_called_once()
+        mock_register.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("services.task_completion_service.register_task_media_best_effort")
     @patch("services.task_completion_service.TaskCompletionService._upload_urls_to_oss")
     @patch("services.handlers.video_handler.VideoHandler.on_complete")
     async def test_video_task_routes_to_video_handler(
-        self, mock_on_complete, mock_oss, service
+        self, mock_on_complete, mock_oss, mock_register, service
     ):
         """测试：视频任务 → VideoHandler（不走批次处理）"""
         mock_oss.return_value = ["https://oss/video.mp4"]
@@ -230,6 +241,7 @@ class TestHandleSuccessRouting:
 
         assert success is True
         mock_on_complete.assert_called_once()
+        mock_register.assert_called_once()
 
 
 class TestHandleFailureRouting:

@@ -134,6 +134,12 @@ class MediaToolMixin:
                 "reference_images": image_urls,
             },
         )
+        for payload in emit_payloads:
+            payload.update({
+                "_asset_source_kind": "media_tool",
+                "_asset_prompt": prompt,
+                "_asset_model_id": model_id,
+            })
         urls = "\n".join(result.image_urls)
         return AgentResult(
             summary=f"图片已生成：\n{urls}",
@@ -226,10 +232,32 @@ class MediaToolMixin:
             )
 
             if result.video_url:
+                from services.file_upload import persist_media_urls_to_workspace
+
+                emit_payloads = await persist_media_urls_to_workspace(
+                    urls=[result.video_url],
+                    user_id=getattr(
+                        self, "workspace_user_id", self.user_id,
+                    ),
+                    org_id=self.org_id,
+                    media_type="video",
+                    meta={
+                        "prompt": prompt,
+                        "duration": duration,
+                        "task_id": task_id,
+                    },
+                    extra_fields={"duration": duration},
+                )
+                for payload in emit_payloads:
+                    payload.update({
+                        "_asset_source_kind": "media_tool",
+                        "_asset_prompt": prompt,
+                    })
                 self._confirm_deduct(tx_id)
                 return AgentResult(
                     summary=f"视频已生成：\n{result.video_url}",
                     status="success",
+                    emit_payloads=emit_payloads,
                 )
             else:
                 self._refund_credits(tx_id)

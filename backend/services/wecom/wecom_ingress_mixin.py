@@ -54,6 +54,15 @@ class WecomIngressMixin:
             return
         from services.wecom.attachment_service import stage_wecom_attachment
 
+        storage_scope = (
+            "channel" if msg.chattype == "group" else "user"
+        )
+        storage_owner_id = user_id
+        if storage_scope == "channel":
+            from core.workspace import build_wecom_channel_workspace_owner
+            storage_owner_id = build_wecom_channel_workspace_owner(
+                msg.corp_id, msg.chatid,
+            )
         stage_wecom_attachment(
             self.db,
             msgid=msg.msgid,
@@ -61,9 +70,9 @@ class WecomIngressMixin:
             sender_user_id=user_id,
             sender_identity=msg.wecom_userid,
             file_payload=file_payload,
-            storage_scope=(
-                "channel" if msg.chattype == "group" else "user"
-            ),
+            storage_scope=storage_scope,
+            storage_owner_id=storage_owner_id,
+            org_id=msg.org_id,
         )
         await self._notify_web_conversation_updated(
             user_id, conversation_id, org_id=msg.org_id,

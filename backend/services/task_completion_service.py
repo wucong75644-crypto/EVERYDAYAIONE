@@ -20,6 +20,7 @@ from services.adapters.base import (
     VideoGenerateResult,
     TaskStatus,
 )
+from services.assets.asset_registry import register_task_media_best_effort
 from services.oss_service import get_oss_service
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
@@ -286,6 +287,12 @@ class TaskCompletionService:
             return await self._handle_failure(task, _empty_result(
                 result, "NO_RESULT", "生成结果为空",
             ))
+
+        register_task_media_best_effort(
+            self.db,
+            task=task,
+            content_parts=content_parts,
+        )
 
         # 5. 图片任务统一走批次处理（含 num_images=1）
         if task_type == "image" and task.get("batch_id"):

@@ -8,11 +8,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { Copy, Download } from 'lucide-react';
-import { Button } from '../../ui/Button';
 import {
   listUserConversations,
   getUserConversationMessages,
-  downloadUserAssetsZip,
   type ConversationListItem,
   type ConversationMessage,
 } from '../../../services/adminUser';
@@ -34,7 +32,6 @@ export default function ConversationViewTab({ userId }: Props) {
 
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const preview = usePreview();
 
@@ -82,20 +79,6 @@ export default function ConversationViewTab({ userId }: Props) {
     }
   }, [msgLoading, messages]);
 
-  // 收集本对话所有可下载 URL
-  const allUrls = useMemo(() => {
-    const urls: string[] = [];
-    for (const m of messages) {
-      m.attachments?.forEach((a) => {
-        const url = pickOriginalImageUrl(a.download_url, a.original_url, a.url);
-        if (url) urls.push(url);
-      });
-      if (m.image_url) urls.push(m.image_url);
-      if (m.video_url) urls.push(m.video_url);
-    }
-    return urls;
-  }, [messages]);
-
   // 收集本对话所有可预览图片（按消息顺序）作为 lightbox 上下张轮播池
   const previewItems = useMemo<PreviewItem[]>(() => {
     const items: PreviewItem[] = [];
@@ -121,27 +104,6 @@ export default function ConversationViewTab({ userId }: Props) {
     const idx = previewItems.findIndex((i) => i.url === url);
     preview.open(previewItems, idx >= 0 ? idx : 0);
   }, [previewItems, preview]);
-
-  const handleDownloadAll = async () => {
-    if (allUrls.length === 0) {
-      toast.error('本对话没有可下载素材');
-      return;
-    }
-    setDownloading(true);
-    try {
-      const conv = conversations.find((c) => c.id === selectedConvId);
-      const safeTitle = (conv?.title || 'conversation').replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
-      await downloadUserAssetsZip(userId, {
-        urls: allUrls,
-        zip_name: `${safeTitle}.zip`,
-      });
-      toast.success('下载已开始');
-    } catch (err: any) {
-      toast.error(err?.message || '下载失败');
-    } finally {
-      setDownloading(false);
-    }
-  };
 
   return (
     <div className="flex gap-4 h-full -m-6 relative">
@@ -178,23 +140,6 @@ export default function ConversationViewTab({ userId }: Props) {
 
       {/* 右：消息流 */}
       <div className="flex-1 flex flex-col min-w-0">
-        {selectedConvId && (
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--s-border-default)]">
-            <div className="text-xs text-[var(--s-text-tertiary)]">
-              {allUrls.length > 0 ? `共 ${allUrls.length} 个素材` : '无素材'}
-            </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Download className="w-3.5 h-3.5" />}
-              disabled={allUrls.length === 0}
-              loading={downloading}
-              onClick={handleDownloadAll}
-            >
-              下载本对话全部素材
-            </Button>
-          </div>
-        )}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {msgLoading ? (
             <div className="text-center py-12 text-[var(--s-text-tertiary)] text-sm">加载中...</div>

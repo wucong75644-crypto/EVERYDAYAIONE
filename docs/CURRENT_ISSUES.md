@@ -10,6 +10,37 @@
 
 ## 会话交接记录
 
+### 2026-07-19 Agent Runtime 统一 Session 与上下文加载总体设计
+
+- Grok Build 核验基线已更新到 `7cfcb20d2b50b0d18801a6c0af2e401c0e060894`；确认其运行方式是 Session Actor 持有 Model/Tool 循环，50% ToolResult 确定性 Pruning、85% LLM Compaction、首轮 Memory 固定和 `x_grok_conv_id` 前缀缓存，而不是“轻 Prompt + 单一压缩器”。
+- 总体设计采用 A+：保留 PostgreSQL Conversation Actor、revision、Curated Memory、Artifact、媒体异步任务和多租户权限，在其上收口统一 Session Runtime、ContextPlan、Context Epoch、ModelStep 和 Provider Cache 合同。
+- Context Epoch 首期逻辑派生，不新增权威表；同一 Epoch 内 Provider 输入只追加，Compaction 是正常流程中唯一允许重写活动前缀的入口。当前时间、位置和附件作用域必须成为可持久 TurnContext。
+- 后续按 Shadow → Context 单一投影 → Pruning/Compaction 收口 → Session Model Loop → Action Runtime → Skill/Goal/Subagent/MCP → 旧链退出分波次实施；禁止新旧链同时产生外部副作用。
+- 迁移 138–144 尚未应用仍是生产部署门禁；总体设计完成不代表可以直接部署。
+
+### 2026-07-19 管理员图片空间超时与统一资产索引 — 实施中
+
+- 管理员资产列表扫描 `messages.content` 并聚合 `image_generations`、`tasks` 后内存分页，
+  生产请求已在前端 30 秒超时处取消。
+- 已确认采用 canonical `user_assets` 本体 + `user_asset_refs` 来源关联；聊天继续从
+  消息事实展示，管理端改用 `(created_at,id)` 游标分页。
+- 上传后尚未发送的文件也进入资产索引，后续补充消息关联；所有来源使用稳定幂等键。
+- 用户决定不做灰度或双读。生产采用短维护窗口停写、回填、对账和直接切换；新版本
+  删除管理员旧扫描逻辑，但不删除消息、任务和生成记录等业务事实。
+- 已完成双表 migration/RPC、个人/企业/企微群聊 canonical identity resolver、现阶段
+  六类写入接点、管理员游标 API、安全资产 ID ZIP 和前端切换；前端不再提供按会话
+  URL 批量打包入口。
+- Registry 已切换为 canonical identity + `register_user_asset` 原子 RPC；四类登记 helper
+  已分离资产本体和来源 ref，企微 staging 外部合同保持不变。
+- 管理列表已切换 `list_admin_user_assets` RPC，通过 ref 过滤并按 canonical 资产游标
+  分页；ZIP 已改为先按 `user_asset_refs` 复验完整归属，再读取 ready 资产。
+- 历史回填/对账脚本已完成：五类来源独立 keyset checkpoint、默认 dry-run、显式
+  apply、RPC savepoint、失败批次不推进游标，并输出创建/复用/冲突/失败/orphan 统计。
+- 管理员旧 `/uploads`、`/generations` 扫描端点及仅旧链使用的 URL 映射 helper
+  已删除；管理员会话视图继续保留自己的消息 ContentPart 解析。
+- 待完成全量验证和生产维护窗口执行。
+- 详细设计见 `docs/document/TECH_统一用户资产索引与管理员图片空间重构.md`。
+
 ---
 
 ### 2026-07-19 测试分层与 AI Token 治理

@@ -137,13 +137,10 @@
 | `get_credits_history` | `backend/api/routes/admin_users.py` | 积分流水（带 operator 昵称） | uid, page, page_size | dict |
 | `list_user_conversations` | `backend/api/routes/admin_users.py` | 用户对话列表 | uid, page, page_size | dict |
 | `get_conversation_messages` | `backend/api/routes/admin_users.py` | 对话内消息（含 content JSONB 解析的附件） | uid, cid, limit? | dict |
-| `list_user_uploads` | `backend/api/routes/admin_users.py` | 用户上传资产（扫 messages.content JSONB 提取附件） | uid, page, page_size, days? | dict |
-| `list_user_generations` | `backend/api/routes/admin_users.py` | AI 生成资产（聚合 image_generations + tasks/video） | uid, page, page_size, kind? | dict |
-| `download_user_assets_zip` | `backend/api/routes/admin_users_zip.py` | OSS CDN URL 数组流式打包 ZIP（500 文件/1GB/单文件 100MB） | uid, urls, filenames?, zip_name? | StreamingResponse |
+| `download_user_assets_zip` | `backend/api/routes/admin_users_zip.py` | 按资产 ID 复验用户归属、ready 状态和 HTTPS CDN/OSS 主机后流式打包 ZIP | uid, asset_ids | StreamingResponse |
 | `_require_super_admin` | `backend/api/routes/admin_users_helpers.py` | super_admin 权限校验依赖 | user_id, db | None |
 | `_safe_parse_content` | `backend/api/routes/admin_users_helpers.py` | messages.content JSONB 容错解析 | raw | Any |
 | `_extract_upload_parts` | `backend/api/routes/admin_users_helpers.py` | 从 content 数组提取 file/image/image_url ContentPart | parts | list[dict] |
-| `_asset_url_fields` | `backend/api/routes/admin_users_helpers.py` | 统一管理员资产 original/preview/download/thumbnail URL 字段 | url, kind, part? | dict |
 | `_log_admin_action` | `backend/api/routes/admin_users_helpers.py` | 写 admin_action_logs（失败不阻断） | db, admin_id, action_type, ... | None |
 
 #### 前端函数
@@ -156,15 +153,14 @@
 | `getUserCreditsHistory` | `frontend/src/services/adminUser.ts` | 流水 API | uid, { page?, page_size? } | Promise<CreditsHistoryResponse> |
 | `listUserConversations` | `frontend/src/services/adminUser.ts` | 对话列表 API | uid, { page?, page_size? } | Promise<ConversationListResponse> |
 | `getUserConversationMessages` | `frontend/src/services/adminUser.ts` | 对话消息 API | uid, cid, { limit? } | Promise<ConversationMessagesResponse> |
-| `listUserUploads` | `frontend/src/services/adminUser.ts` | 上传资产 API | uid, { page?, page_size?, days? } | Promise<UploadAssetsResponse> |
-| `listUserGenerations` | `frontend/src/services/adminUser.ts` | 生成资产 API | uid, { page?, page_size?, kind? } | Promise<GenerationAssetsResponse> |
-| `downloadUserAssetsZip` | `frontend/src/services/adminUser.ts` | 触发批量 ZIP 下载（fetch + Blob） | uid, { urls, filenames?, zip_name? } | Promise<void> |
+| `listUserAssets` | `frontend/src/services/adminUser.ts` | 统一用户资产列表，支持来源/媒体筛选、复合游标和请求取消 | uid, { source_type, media_type?, limit?, cursor? }, signal? | Promise<UserAssetsResponse> |
+| `downloadUserAssetsZip` | `frontend/src/services/adminUser.ts` | 提交资产 ID 并触发安全批量 ZIP 下载（fetch + Blob） | uid, assetIds | Promise<void> |
 | `formatRelativeCN` | `frontend/src/utils/formatRelativeCN.ts` | 相对时间中文格式化 | iso | string |
 | `UserManagePanel` | `frontend/src/components/admin/UserManagePanel.tsx` | 用户列表 + 搜索 + 分页 + 详情抽屉 | — | JSX |
 | `UserDetailDrawer` | `frontend/src/components/admin/UserDetailDrawer.tsx` | 右侧滑入抽屉，含 3 Tab | userId, onClose, onChanged? | JSX |
 | `CreditsTab` | `frontend/src/components/admin/userDetail/CreditsTab.tsx` | 余额 + 充值表单（二次确认）+ 流水 | userId, balance, status?, onChanged | JSX |
-| `ConversationViewTab` | `frontend/src/components/admin/userDetail/ConversationViewTab.tsx` | 左对话列表 + 右消息流 + 一键下载本对话素材 | userId | JSX |
-| `AssetSpaceTab` | `frontend/src/components/admin/userDetail/AssetSpaceTab.tsx` | [上传/生成] 切换 + 网格 + 多选 + 批量 ZIP | userId | JSX |
+| `ConversationViewTab` | `frontend/src/components/admin/userDetail/ConversationViewTab.tsx` | 左对话列表 + 右消息流，保留单素材下载，不再向服务端提交 URL 批量打包 | userId | JSX |
+| `AssetSpaceTab` | `frontend/src/components/admin/userDetail/AssetSpaceTab.tsx` | 统一资产 [上传/生成] 切换 + 复合游标分页 + 资产 ID 多选下载 | userId | JSX |
 
 ### 对话管理模块 (Conversation Management)
 
@@ -291,6 +287,28 @@
 | `enqueue_wecom_message` | `backend/services/wecom/actor_enqueue.py` | 从企微 msgid 派生稳定 task/message/turn ID，将智能机器人 stream 上下文写入 delivery_context，并以结构化内容调用原子入队 RPC | handler, msg, user_id, conversation_id, image_urls, file_payload, stream_context | WecomActorEnqueueResult |
 | `stable_wecom_task_id` | `backend/services/wecom/actor_enqueue.py` | 返回与企微原子入队完全一致的稳定 task ID，供入站在唤醒 Worker 前注册 stream 保活 | msg, user_id | str |
 | `identify_file` | `backend/services/assets/file_identity.py` | 依据解密后内容识别 CSV/TSV、Office、PDF 和媒体类型，生成安全规范名、MIME 与 SHA-256 | data, stable_id, provider_name?, content_disposition? | AssetIdentity |
+| `resolve_asset_identity` | `backend/services/assets/asset_identity.py` | 将可信 Workspace/OSS URL 与 owner key 解析为不受 CDN 域名和 query 影响的 canonical provider/key | original_url, workspace_path?, org/scope/owner, allowed_hosts? | CanonicalAssetIdentity |
+| `configured_asset_hosts` | `backend/services/assets/asset_identity.py` | 从当前 OSS/CDN 配置生成精确允许主机集合 | — | frozenset[str] |
+| `is_allowed_asset_url` | `backend/services/assets/asset_identity.py` | 校验 HTTPS、精确主机、端口、认证信息和安全对象路径 | url, allowed_hosts? | bool |
+| `_resolve_user_asset` | `backend/migrations/145_user_assets.sql` | 按 org/scope/owner key/provider/storage key 原子解析或创建 canonical 资产，并只补充空字段 | canonical asset fields | JSONB |
+| `_bind_user_asset_ref` | `backend/migrations/145_user_assets.sql` | 按稳定 ref key 原子绑定业务来源，拒绝跨资产、actor、org 或来源事实冲突 | asset id + source fields | JSONB |
+| `register_user_asset` | `backend/migrations/145_user_assets.sql` | 校验输入并在单个数据库事务中组合 canonical 资产解析与来源绑定 | asset draft + ref draft | JSONB |
+| `list_admin_user_assets` | `backend/migrations/146_admin_user_assets_query.sql` | 通过用户来源关联过滤 ready canonical 资产，选择确定性代表 ref，并按 `(created_at,id)` 游标返回去重页和总数 | actor user/source/media/limit/cursor | JSONB |
+| `AssetRegistryService.register_ready_asset` | `backend/services/assets/asset_registry.py` | 解析 canonical storage identity，并调用数据库 RPC 原子创建/复用资产本体与来源 ref | ReadyAssetDraft, AssetRefDraft | dict |
+| `ReadyAssetDraft` | `backend/services/assets/asset_registry.py` | 已持久化资产本体的类型化登记协议，不携带业务来源字段 | storage scope/owner, media, URL/path/hash/metadata | dataclass |
+| `AssetRefDraft` | `backend/services/assets/asset_registry.py` | 上传、任务、消息、生成记录或企微附件的稳定来源关联协议 | ref key, actor, source/ref kind, source IDs/metadata | dataclass |
+| `register_web_upload_best_effort` | `backend/services/assets/asset_registry.py` | Web 文件持久化成功后登记未关联消息的 upload 资产；索引异常记录上下文但不改判上传失败 | db, user/org, URL/name/mime/size/path/thumbnail | dict \| None |
+| `register_task_media_best_effort` | `backend/services/assets/asset_registry.py` | 普通图片/视频任务完成持久化后逐条登记 generated 资产；单条索引异常不改判任务失败 | db, task, content_parts | list[dict] |
+| `register_wecom_attachment_best_effort` | `backend/services/assets/asset_registry.py` | 企微附件 RPC 暂存成功后，按 attachment ID 幂等登记用户或频道 upload 资产；索引异常不回滚附件 | db, attachment/message/conversation, actor/org/storage, file_payload | dict \| None |
+| `register_message_media_best_effort` | `backend/services/assets/asset_registry.py` | 按 assistant 消息最终 content 序号登记 MediaTool/ImageAgent generated 资产；索引异常不影响 Actor 结果 | db, actor/org/storage, conversation/message, indexed_parts | list[dict] |
+| `project_row` / `media_parts` | `backend/scripts/backfill_user_assets.py` | 将五类历史事实和旧 ContentPart/result 形态确定性投影为现有资产本体与来源 ref 协议 | source, row/content | list[(ReadyAssetDraft, AssetRefDraft)] |
+| `run` | `backend/scripts/backfill_user_assets.py` | 按来源独立复合 checkpoint 批量 dry-run/apply；复用原子登记 RPC，失败批次不推进游标并输出孤儿对账 | conn, apply, batch_size, checkpoint, limit? | BackfillStats |
+| `PsycopgRpcClient` | `backend/scripts/backfill_user_assets.py` | 在维护窗口的 psycopg 事务中为既有 AssetRegistryService 提供 register_user_asset RPC 适配 | conn, rpc params | RPC payload |
+| `MediaToolMixin._generate_video` | `backend/services/media_tool_executor.py` | Chat 视频工具成功后先持久化到 Workspace/OSS，再确认扣费并输出标准 video emit payload；临时 URL 降级不登记 ready 资产 | prompt/tool context | AgentResult |
+| `_update_message_image_part` | `backend/api/routes/image_ecom.py` | 在指定 conversation/message 内把失败图片按图片序号原位替换为公开 ImagePart，拒绝越界并返回真实 content 数组下标 | db, message/conversation ID, image ordinal, emit payload | int |
+| `list_user_assets` | `backend/api/routes/admin_user_assets.py` | 超管校验目标用户后调用资产查询 RPC，按来源/媒体类型和不透明复合游标读取 ready canonical 资产 | uid, source_type, media_type?, limit, cursor? | items/next_cursor/has_more/total |
+| `_encode_cursor` / `_decode_cursor` | `backend/api/routes/admin_user_assets.py` | 编解码并严格校验用户资产复合游标中的 ISO 时间和 UUID | created_at/id 或 opaque cursor | str / tuple |
+| `download_user_assets_zip` | `backend/api/routes/admin_users_zip.py` | 超管提交 asset_ids 后先由 user_asset_refs 完整复验目标用户归属，再校验 canonical 资产 ready 状态和安全下载主机并流式打包 | uid, asset_ids | StreamingResponse |
 | `WecomMediaDownloader.download_and_decrypt` | `backend/services/wecom/media_downloader.py` | 限流下载并可选解密企微媒体，保留 Content-Type 与 Content-Disposition 响应元数据 | url, aeskey? | DownloadedMedia \| None |
 | `normalize_wecom_message` / `parse_message_content` | `backend/services/wecom/message_normalizer.py` | 规范化智能机器人回调；私聊缺少 chatid 时使用发送者，群聊强制 chatid，并统一解析媒体字段 | body, org_id, corp_id | WecomIncomingMessage |
 | `resolve_channel_conversation` / `resolve_wecom_conversation` | `backend/services/wecom/channel_conversation.py`、`backend/migrations/128_wecom_channel_conversations.sql` | 按 org/corp/chatid 原子解析私聊或群共享 conversation；首次私聊可认领未绑定的历史企微对话 | user/corp/chat/type/org | conversation UUID |

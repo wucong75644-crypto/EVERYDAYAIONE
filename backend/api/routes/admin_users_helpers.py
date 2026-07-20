@@ -2,7 +2,7 @@
 
 包含：
 - _require_super_admin：权限校验依赖
-- _safe_parse_content / _extract_upload_parts：messages.content JSONB 解析
+- _safe_parse_content / _extract_upload_parts：管理员会话视图的消息解析
 - _filename_from_url / _mask_phone / _ascii_zip_name：通用工具
 - _log_admin_action：审计日志写入
 - admin_adjust_credits：调用 RPC admin_adjust_credits（manager 后台专用）
@@ -73,31 +73,12 @@ def _extract_upload_parts(parts: Any) -> list[dict]:
             continue
         out.append({
             "url": url,
-            **_asset_url_fields(url, t, p),
             "name": p.get("name") or p.get("filename") or _filename_from_url(url),
             "type": t,
             "size": p.get("size"),
             "mime": p.get("mime") or p.get("mime_type"),
         })
     return out
-
-
-def _asset_url_fields(
-    url: str,
-    kind: str = "image",
-    part: Optional[dict] = None,
-) -> dict[str, Optional[str]]:
-    """统一资产 URL 语义字段；缩略仅用于小图展示，下载/预览默认原图。"""
-    part = part or {}
-    original_url = part.get("original_url") or part.get("download_url") or part.get("preview_url") or url
-    return {
-        "original_url": original_url,
-        "preview_url": part.get("preview_url") or original_url,
-        "download_url": part.get("download_url") or original_url,
-        "thumbnail_url": part.get("thumbnail_url") if kind == "image" else None,
-    }
-
-
 # ── 通用工具 ─────────────────────────────────────────────
 
 

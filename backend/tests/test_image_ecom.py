@@ -370,6 +370,8 @@ class TestImageAgentExecute:
         # width/height/alt 字段已合并
         assert "width" in p and "height" in p
         assert p["alt"] == "白底主图"
+        assert p["_asset_source_kind"] == "ecom_image"
+        assert p["_asset_prompt"] == "白底主图"
 
     @pytest.mark.asyncio
     async def test_execute_multi_image_emits_all(self):

@@ -128,6 +128,12 @@ class ChatToolMixin(ChatToolResultMixin):
                 if not hasattr(self, "_pending_emit_payloads"):
                     self._pending_emit_payloads = []
                 self._pending_emit_payloads.extend(payloads)
+                if not hasattr(self, "_asset_emissions"):
+                    self._asset_emissions = []
+                self._asset_emissions.extend(
+                    payload for payload in payloads
+                    if payload.get("_asset_source_kind")
+                )
             # 展示文本(供 content_block_add 推送)
             self._last_erp_display_text = result.summary
             self._last_erp_display_files = payloads

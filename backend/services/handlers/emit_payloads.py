@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from schemas.message import ChartPart, ContentPart, DiagramPart, FilePart, ImagePart
+from schemas.message import (
+    ChartPart, ContentPart, DiagramPart, FilePart, ImagePart, VideoPart,
+)
 
 
 def _extract_chart_title(option: Dict[str, Any]) -> str:
@@ -67,6 +69,7 @@ def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
         for field in (
             "width", "height", "workspace_path", "original_url",
             "thumbnail_url", "preview_url", "download_url",
+            "name", "mime_type", "size",
         ):
             if payload.get(field):
                 block[field] = payload[field]
@@ -85,6 +88,13 @@ def build_block_from_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
             "size": payload.get("size"),
             "workspace_path": payload.get("workspace_path"),
         }
+    if kind == "video" and payload.get("url"):
+        return {
+            "type": "video",
+            "url": payload["url"],
+            "duration": payload.get("duration"),
+            "thumbnail": payload.get("thumbnail_url"),
+        }
     return None
 
 
@@ -98,6 +108,8 @@ def build_part_from_payload(payload: Dict[str, Any]) -> Optional[ContentPart]:
         return ImagePart(**block)
     if block_type == "file":
         return FilePart(**block)
+    if block_type == "video":
+        return VideoPart(**block)
     if block_type == "chart":
         return ChartPart(**block)
     if block_type == "diagram":

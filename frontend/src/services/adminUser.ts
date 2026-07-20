@@ -113,50 +113,33 @@ export interface ConversationMessagesResponse {
   total: number;
 }
 
-export interface UploadAsset {
-  url: string;
-  original_url?: string;
-  thumbnail_url?: string | null;
-  preview_url?: string;
-  download_url?: string;
-  name: string;
-  type: 'file' | 'image';
-  size: number | null;
-  mime: string | null;
-  message_id: string;
-  conversation_id: string;
-  created_at: string;
-}
-
-export interface UploadAssetsResponse {
-  items: UploadAsset[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-export interface GenerationAsset {
-  kind: 'image' | 'video';
+export interface UserAsset {
   id: string;
-  url: string;
-  original_url?: string;
-  thumbnail_url?: string | null;
-  preview_url?: string;
-  download_url?: string;
-  prompt: string | null;
-  negative_prompt: string | null;
-  model_id: string | null;
-  size: string | null;
-  credits_cost: number;
+  source_type: 'upload' | 'generated';
+  source_kind: 'web_upload' | 'wecom_upload' | 'image_task' | 'video_task' | 'media_tool' | 'ecom_image';
+  media_type: 'image' | 'video' | 'file';
+  status: 'ready' | 'deleted';
+  original_url: string;
+  thumbnail_url: string | null;
+  download_url: string;
+  workspace_path: string | null;
+  name: string;
+  size: number | null;
+  mime_type: string | null;
   conversation_id: string | null;
+  source_message_id: string | null;
+  source_task_id: string | null;
+  model_id: string | null;
+  prompt: string | null;
+  metadata: Record<string, unknown>;
   created_at: string;
 }
 
-export interface GenerationAssetsResponse {
-  items: GenerationAsset[];
+export interface UserAssetsResponse {
+  items: UserAsset[];
   total: number;
-  page: number;
-  page_size: number;
+  next_cursor: string | null;
+  has_more: boolean;
 }
 
 // ── 用户列表 / 概览 ────────────────────────────────────
@@ -213,43 +196,47 @@ export function getUserConversationMessages(
 
 // ── 资产 ───────────────────────────────────────────────
 
-export function listUserUploads(
+export function listUserAssets(
   uid: string,
-  params: { page?: number; page_size?: number; days?: number } = {},
-): Promise<UploadAssetsResponse> {
-  return request({ method: 'GET', url: `/admin/users/${uid}/uploads`, params });
-}
-
-export function listUserGenerations(
-  uid: string,
-  params: { page?: number; page_size?: number; kind?: 'image' | 'video' } = {},
-): Promise<GenerationAssetsResponse> {
-  return request({ method: 'GET', url: `/admin/users/${uid}/generations`, params });
+  params: {
+    source_type: 'upload' | 'generated';
+    media_type?: 'image' | 'video' | 'file';
+    limit?: number;
+    cursor?: string;
+  },
+  signal?: AbortSignal,
+): Promise<UserAssetsResponse> {
+  return request({
+    method: 'GET',
+    url: `/admin/users/${uid}/assets`,
+    params,
+    signal,
+  });
 }
 
 // ── 批量 ZIP 下载 ──────────────────────────────────────
 
 /**
- * 触发批量 ZIP 下载（接受 OSS CDN URL 数组）。
+ * 触发批量 ZIP 下载（服务端按资产 ID 复验归属）。
  *
  * 内部用 fetch 拉取流式 ZIP → Blob → a.download，避免 axios 把流读到内存的额外成本。
  * 与 services/workspace.ts:downloadWorkspaceZip 同样的下载范式。
  */
 export async function downloadUserAssetsZip(
   uid: string,
-  body: { urls: string[]; filenames?: string[]; zip_name?: string },
+  assetIds: string[],
 ): Promise<void> {
   const token = localStorage.getItem('access_token');
   const orgId = localStorage.getItem('current_org_id');
 
-  const resp = await fetch(`${API_BASE_URL}/admin/users/${uid}/download_zip`, {
+  const resp = await fetch(`${API_BASE_URL}/admin/users/${uid}/assets/download-zip`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(orgId ? { 'X-Org-Id': orgId } : {}),
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ asset_ids: assetIds }),
   });
 
   if (!resp.ok) {
@@ -267,7 +254,7 @@ export async function downloadUserAssetsZip(
   const disposition = resp.headers.get('Content-Disposition') || '';
   const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const asciiMatch = disposition.match(/filename="([^"]+)"/i);
-  let filename = body.zip_name || 'download.zip';
+  let filename = 'download.zip';
   if (utf8Match) {
     try {
       filename = decodeURIComponent(utf8Match[1]);

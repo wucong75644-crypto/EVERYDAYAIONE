@@ -321,7 +321,7 @@ async def retry_image(
     复用 retry_context 中的完整提示词+图片+风格，
     成功后原位替换消息中对应位置的 ImagePart。
     """
-    conv_check = db.table("conversations").select("id").eq(
+    conv_check = db.table("conversations").select("id,org_id").eq(
         "id", req.conversation_id,
     ).eq("user_id", user_id).maybe_single().execute()
     if not conv_check or not conv_check.data:
@@ -333,6 +333,7 @@ async def retry_image(
         db=db,
         user_id=user_id,
         conversation_id=req.conversation_id,
+        org_id=conv_check.data.get("org_id"),
     )
     result = await agent.execute(
         task=req.task,
@@ -342,32 +343,63 @@ async def retry_image(
     )
 
     if result.status == "success" and result.emit_payloads:
+        payload = result.emit_payloads[0]
         try:
-            _update_message_image_part(
-                db, req.message_id, req.part_index, result.emit_payloads[0],
+            content_index = _update_message_image_part(
+                db, req.message_id, req.conversation_id,
+                req.part_index, payload,
+            )
+            from services.assets import register_message_media_best_effort
+
+            register_message_media_best_effort(
+                db,
+                actor_user_id=user_id,
+                org_id=conv_check.data.get("org_id"),
+                storage_scope="user",
+                storage_owner_key=user_id,
+                conversation_id=req.conversation_id,
+                source_message_id=req.message_id,
+                indexed_parts=[(content_index, payload)],
             )
         except Exception as e:
             logger.error(f"retry update message failed: {e}")
-        return {"success": True, "image_url": result.emit_payloads[0].get("url", "")}
+        return {"success": True, "image_url": payload.get("url", "")}
 
     return {"success": False, "error": result.summary}
 
 
 def _update_message_image_part(
-    db: Any, message_id: str, part_index: int, new_part: dict,
-) -> None:
-    """更新消息 content 中指定位置的 ImagePart（原位替换）。"""
-    row = db.table("messages").select("content").eq("id", message_id).single().execute()
+    db: Any,
+    message_id: str,
+    conversation_id: str,
+    part_index: int,
+    new_part: dict,
+) -> int:
+    """原位替换指定图片并返回消息 content 的真实数组下标。"""
+    row = db.table("messages").select("content").eq(
+        "id", message_id,
+    ).eq("conversation_id", conversation_id).single().execute()
     content: list = row.data.get("content") or []
+    from services.handlers.emit_payloads import build_block_from_payload
 
     img_count = 0
+    content_index = None
     for i, part in enumerate(content):
         if isinstance(part, dict) and part.get("type") == "image":
             if img_count == part_index:
-                content[i] = new_part
+                public_part = build_block_from_payload(new_part)
+                if not public_part:
+                    raise RuntimeError("ECOM_RETRY_IMAGE_PAYLOAD_INVALID")
+                content[i] = public_part
+                content_index = i
                 break
             img_count += 1
+    if content_index is None:
+        raise RuntimeError("ECOM_RETRY_IMAGE_PART_NOT_FOUND")
 
     db.table("messages").update(
         {"content": json.dumps(content, ensure_ascii=False)}
-    ).eq("id", message_id).execute()
+    ).eq("id", message_id).eq(
+        "conversation_id", conversation_id,
+    ).execute()
+    return content_index
