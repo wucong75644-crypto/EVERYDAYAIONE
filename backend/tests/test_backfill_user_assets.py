@@ -210,6 +210,9 @@ def test_process_projection_classifies_conflict() -> None:
 
     assert stats.conflicts == 1
     assert stats.failures == 0
+    assert stats.failure_reasons == {
+        "image_task:USER_ASSET_REF_CONFLICT": 1,
+    }
 
 
 def test_run_dry_run_never_writes_checkpoint(tmp_path: Path) -> None:
@@ -333,6 +336,9 @@ def test_run_counts_projection_error_without_advancing_checkpoint(
 
     assert stats.failures == 1
     assert stats.skipped == 0
+    assert stats.failure_reasons == {
+        "user_messages:WECOM_CHANNEL_WORKSPACE_IDENTITY_MISSING": 1,
+    }
     assert "user_messages" not in load_checkpoint(checkpoint_path)
 
 

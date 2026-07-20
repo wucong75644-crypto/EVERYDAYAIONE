@@ -8,7 +8,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, Iterable
@@ -53,6 +53,7 @@ class BackfillStats:
     conflicts: int = 0
     failures: int = 0
     orphan_assets: int = 0
+    failure_reasons: dict[str, int] = field(default_factory=dict)
 
 
 class PsycopgRpcClient:
@@ -356,6 +357,19 @@ def process_projection(
             stats.conflicts += 1
         else:
             stats.failures += 1
+        _record_failure(stats, ref.source_kind, error)
+
+
+def _record_failure(
+    stats: BackfillStats,
+    source: str,
+    error: Exception,
+) -> None:
+    code = str(getattr(error, "code", "") or str(error)).strip()
+    if not code or len(code) > 80:
+        code = type(error).__name__
+    key = f"{source}:{code}"
+    stats.failure_reasons[key] = stats.failure_reasons.get(key, 0) + 1
 
 
 def count_orphans(conn: psycopg.Connection[Any]) -> int:
@@ -399,8 +413,9 @@ def run(
                 row_errors_before = stats.conflicts + stats.failures
                 try:
                     projections = project_row(source, row)
-                except Exception:
+                except Exception as error:
                     stats.failures += 1
+                    _record_failure(stats, source, error)
                     projections = []
                 if not projections:
                     if stats.conflicts + stats.failures == row_errors_before:
