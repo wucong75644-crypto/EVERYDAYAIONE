@@ -304,6 +304,7 @@
 | `project_row` / `media_parts` | `backend/scripts/backfill_user_assets.py` | 将五类历史事实和旧 ContentPart/result 形态确定性投影为现有资产本体与来源 ref 协议 | source, row/content | list[(ReadyAssetDraft, AssetRefDraft)] |
 | `run` | `backend/scripts/backfill_user_assets.py` | 按来源独立复合 checkpoint 批量 dry-run/apply；复用原子登记 RPC，失败批次不推进游标并输出孤儿对账 | conn, apply, batch_size, checkpoint, limit? | BackfillStats |
 | `PsycopgRpcClient` | `backend/scripts/backfill_user_assets.py` | 在维护窗口的 psycopg 事务中为既有 AssetRegistryService 提供 register_user_asset RPC 适配 | conn, rpc params | RPC payload |
+| `prepare_archive_rows` | `backend/services/kuaimai/erp_sync_executor.py` | 在 ERP 热表写入冷表前将查询返回的 `exception_tags` list 恢复为 PostgreSQL `TEXT[]` 字面量 | rows | normalized rows |
 | `MediaToolMixin._generate_video` | `backend/services/media_tool_executor.py` | Chat 视频工具成功后先持久化到 Workspace/OSS，再确认扣费并输出标准 video emit payload；临时 URL 降级不登记 ready 资产 | prompt/tool context | AgentResult |
 | `_update_message_image_part` | `backend/api/routes/image_ecom.py` | 在指定 conversation/message 内把失败图片按图片序号原位替换为公开 ImagePart，拒绝越界并返回真实 content 数组下标 | db, message/conversation ID, image ordinal, emit payload | int |
 | `list_user_assets` | `backend/api/routes/admin_user_assets.py` | 超管校验目标用户后调用资产查询 RPC，按来源/媒体类型和不透明复合游标读取 ready canonical 资产 | uid, source_type, media_type?, limit, cursor? | items/next_cursor/has_more/total |

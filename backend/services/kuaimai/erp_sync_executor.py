@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+from typing import Any
 
 from loguru import logger
 
@@ -17,6 +18,27 @@ from utils.time_context import now_cn
 
 # 删除检测间隔（秒）：7天
 DELETION_INTERVAL = 604800
+
+
+def prepare_archive_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """将查询结果中的 PostgreSQL 数组恢复为可写入的数组字面量。"""
+    prepared: list[dict[str, Any]] = []
+    for row in rows:
+        tags = row.get("exception_tags")
+        if not isinstance(tags, list):
+            prepared.append(row)
+            continue
+        encoded = []
+        for tag in tags:
+            if tag is None:
+                encoded.append("NULL")
+                continue
+            value = str(tag).replace("\\", "\\\\").replace('"', '\\"')
+            encoded.append(f'"{value}"')
+        prepared.append({**row, "exception_tags": f"{{{','.join(encoded)}}}"})
+    return prepared
 
 
 class ErpSyncExecutor:
@@ -118,7 +140,8 @@ class ErpSyncExecutor:
                     break
 
                 await self.db.table("erp_document_items_archive").upsert(
-                    rows, on_conflict="doc_type,doc_id,item_index,org_id",
+                    prepare_archive_rows(rows),
+                    on_conflict="doc_type,doc_id,item_index,org_id",
                 ).execute()
 
                 ids = [r["id"] for r in rows]

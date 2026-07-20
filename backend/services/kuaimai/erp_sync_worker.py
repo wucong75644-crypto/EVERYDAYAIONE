@@ -14,6 +14,7 @@ from loguru import logger
 
 
 from core.config import get_settings
+from services.kuaimai.erp_sync_executor import prepare_archive_rows
 from utils.time_context import now_cn
 
 
@@ -431,7 +432,7 @@ class ErpSyncWorker:
 
                 # UPSERT 到归档表（幂等）
                 await self.db.table("erp_document_items_archive").upsert(
-                    rows,
+                    prepare_archive_rows(rows),
                     on_conflict="doc_type,doc_id,item_index,org_id",
                 ).execute()
 

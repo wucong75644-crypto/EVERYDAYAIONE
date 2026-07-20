@@ -805,6 +805,27 @@ class TestRefreshKitStock:
 class TestRunArchive:
     """_run_archive: 热表→冷表归档"""
 
+    def test_prepare_archive_rows_encodes_text_array(self):
+        """TEXT[] 使用 PG 数组格式，并正确转义特殊字符。"""
+        from services.kuaimai.erp_sync_executor import prepare_archive_rows
+
+        source = [
+            {"id": "1", "exception_tags": ["EX_INSUFFICIENT"]},
+            {"id": "2", "exception_tags": ['a,b', 'say "hi"', "a\\b", None]},
+            {"id": "3", "exception_tags": []},
+            {"id": "4", "exception_tags": None},
+        ]
+
+        result = prepare_archive_rows(source)
+
+        assert result[0]["exception_tags"] == '{"EX_INSUFFICIENT"}'
+        assert result[1]["exception_tags"] == (
+            '{"a,b","say \\"hi\\"","a\\\\b",NULL}'
+        )
+        assert result[2]["exception_tags"] == "{}"
+        assert result[3] is source[3]
+        assert source[0]["exception_tags"] == ["EX_INSUFFICIENT"]
+
     @pytest.mark.asyncio
     async def test_run_archive_moves_old_rows(self):
         """正常归档：SELECT→UPSERT→DELETE"""
@@ -829,6 +850,85 @@ class TestRunArchive:
         # 验证数据写入归档表
         archive_table = db.table("erp_document_items_archive")
         assert len(archive_table._data) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_archive_normalizes_exception_tags(self):
+        """归档前将查询返回的 TEXT[] list 恢复为 PG 数组字面量。"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        db.set_table_data("erp_document_items", [{
+            "id": "row-tags",
+            "doc_id": "doc-tags",
+            "item_index": 0,
+            "doc_type": "order",
+            "doc_modified_at": "2024-01-01T00:00:00+00:00",
+            "doc_created_at": "2024-01-01T00:00:00+00:00",
+            "exception_tags": ["EX_INSUFFICIENT"],
+        }])
+
+        worker = ErpSyncWorker(db)
+        with patch.object(worker, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await worker._run_archive()
+
+        archived = db.table("erp_document_items_archive")._data
+        assert count == 1
+        assert archived[0]["exception_tags"] == '{"EX_INSUFFICIENT"}'
+        assert db.table("erp_document_items")._data == []
+
+    @pytest.mark.asyncio
+    async def test_executor_archive_normalizes_exception_tags(self):
+        """生产 WorkerPool 使用的 Executor 同样执行 TEXT[] 规范化。"""
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
+
+        db = MockErpAsyncDBClient()
+        db.set_table_data("erp_document_items", [{
+            "id": "row-executor-tags",
+            "doc_id": "doc-executor-tags",
+            "item_index": 0,
+            "doc_type": "order",
+            "doc_modified_at": "2024-01-01T00:00:00+00:00",
+            "doc_created_at": "2024-01-01T00:00:00+00:00",
+            "exception_tags": ["EX_INSUFFICIENT"],
+        }])
+
+        executor = ErpSyncExecutor(db)
+        with patch.object(executor, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await executor._run_archive()
+
+        archived = db.table("erp_document_items_archive")._data
+        assert count == 1
+        assert archived[0]["exception_tags"] == '{"EX_INSUFFICIENT"}'
+        assert db.table("erp_document_items")._data == []
+
+    @pytest.mark.asyncio
+    async def test_executor_archive_keeps_hot_rows_when_upsert_fails(self):
+        """冷表写入失败时不得删除热表，下一轮可以安全重试。"""
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
+
+        row = {
+            "id": "row-write-failure",
+            "doc_id": "doc-write-failure",
+            "item_index": 0,
+            "doc_type": "order",
+            "doc_modified_at": "2024-01-01T00:00:00+00:00",
+            "doc_created_at": "2024-01-01T00:00:00+00:00",
+            "exception_tags": ["EX_INSUFFICIENT"],
+        }
+        db = MockErpAsyncDBClient()
+        db.set_table_data("erp_document_items", [row])
+        archive_table = db.table("erp_document_items_archive")
+        archive_table.execute = AsyncMock(side_effect=RuntimeError("write failed"))
+
+        executor = ErpSyncExecutor(db)
+        with patch.object(executor, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await executor._run_archive()
+
+        assert count == 0
+        assert db.table("erp_document_items")._data == [row]
 
     @pytest.mark.asyncio
     async def test_run_archive_empty_table(self):
