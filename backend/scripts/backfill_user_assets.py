@@ -8,7 +8,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, Iterable
@@ -24,6 +24,7 @@ if str(BACKEND) not in sys.path:
 
 from core.workspace import build_wecom_channel_workspace_owner
 from services.assets import (
+    AssetIdentityError,
     AssetRefDraft,
     AssetRegistryService,
     ReadyAssetDraft,
@@ -53,7 +54,9 @@ class BackfillStats:
     conflicts: int = 0
     failures: int = 0
     orphan_assets: int = 0
+    normalized_workspace_paths: int = 0
     failure_reasons: dict[str, int] = field(default_factory=dict)
+    skipped_reasons: dict[str, int] = field(default_factory=dict)
 
 
 class PsycopgRpcClient:
@@ -78,8 +81,6 @@ class PsycopgRpcClient:
         with self.conn.cursor() as cursor:
             cursor.execute(RPC_SQL, params)
             return SimpleNamespace(data=cursor.fetchone()[0])
-
-
 def decode_content(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, str):
         try:
@@ -89,8 +90,6 @@ def decode_content(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [part for part in value if isinstance(part, dict)]
-
-
 def media_parts(value: Any) -> list[tuple[int, dict[str, Any]]]:
     """提取 ContentPart 或历史 task result 中的持久化媒体。"""
     parts = decode_content(value)
@@ -119,8 +118,6 @@ def media_parts(value: Any) -> list[tuple[int, dict[str, Any]]]:
         if media_type in ("image", "video", "file") and isinstance(url, str):
             extracted.append((index, {**part, "type": media_type, "url": url}))
     return extracted
-
-
 def project_row(
     source: str,
     row: dict[str, Any],
@@ -141,8 +138,6 @@ def project_row(
         if projection:
             projections.append(projection)
     return projections
-
-
 def _image_generation_projection(
     row: dict[str, Any],
 ) -> tuple[ReadyAssetDraft, AssetRefDraft]:
@@ -159,8 +154,6 @@ def _image_generation_projection(
         prompt=row.get("prompt"),
     )
     return asset, ref
-
-
 def _attachment_projection(
     row: dict[str, Any],
 ) -> tuple[ReadyAssetDraft, AssetRefDraft]:
@@ -183,8 +176,6 @@ def _attachment_projection(
         source_attachment_id=str(row["id"]),
     )
     return asset, ref
-
-
 def _part_projection(
     source: str,
     row: dict[str, Any],
@@ -224,8 +215,6 @@ def _part_projection(
         prompt=params.get("prompt") or part.get("_asset_prompt"),
     )
     return asset, ref
-
-
 def _asset(
     row: dict[str, Any],
     part: dict[str, Any],
@@ -248,12 +237,8 @@ def _asset(
         size=part.get("size"),
         created_at=str(row["created_at"]),
     )
-
-
 def _storage_scope(row: dict[str, Any]) -> str:
     return "channel" if row.get("scope_type") == "channel" else "user"
-
-
 def _storage_owner(row: dict[str, Any], storage_scope: str) -> str:
     if storage_scope == "user":
         return str(row["actor_user_id"])
@@ -261,8 +246,6 @@ def _storage_owner(row: dict[str, Any], storage_scope: str) -> str:
         str(row.get("corp_id") or ""),
         str(row.get("external_chat_id") or ""),
     )
-
-
 def _media_type(mime_type: Any) -> str:
     value = str(mime_type or "")
     if value.startswith("image/"):
@@ -270,12 +253,8 @@ def _media_type(mime_type: Any) -> str:
     if value.startswith("video/"):
         return "video"
     return "file"
-
-
 def _optional_str(value: Any) -> str | None:
     return str(value) if value is not None else None
-
-
 def load_checkpoint(path: Path) -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
@@ -291,8 +270,6 @@ def load_checkpoint(path: Path) -> dict[str, dict[str, str]]:
         ):
             raise ValueError("checkpoint cursor is invalid")
     return value
-
-
 def save_checkpoint(
     path: Path,
     checkpoint: dict[str, dict[str, str]],
@@ -304,8 +281,6 @@ def save_checkpoint(
         encoding="utf-8",
     )
     temporary.replace(path)
-
-
 def fetch_batch(
     conn: psycopg.Connection[Any],
     source: str,
@@ -320,8 +295,6 @@ def fetch_batch(
     with conn.cursor(row_factory=psycopg.rows.dict_row) as db_cursor:
         db_cursor.execute(SOURCE_QUERIES[source], params)
         return list(db_cursor.fetchall())
-
-
 def process_projection(
     registry: AssetRegistryService,
     projection: tuple[ReadyAssetDraft, AssetRefDraft],
@@ -332,13 +305,22 @@ def process_projection(
 ) -> None:
     asset, ref = projection
     try:
-        identity = resolve_asset_identity(
-            original_url=asset.original_url,
-            workspace_path=asset.workspace_path,
-            org_id=asset.org_id,
-            storage_scope=asset.storage_scope,
-            storage_owner_key=asset.storage_owner_key,
-        )
+        try:
+            identity = _resolve_draft_identity(asset)
+        except AssetIdentityError as error:
+            if str(error) == "ASSET_URL_NOT_PERSISTED":
+                stats.skipped += 1
+                _record_reason(
+                    stats.skipped_reasons,
+                    ref.source_kind,
+                    str(error),
+                )
+                return
+            if str(error) != "ASSET_WORKSPACE_URL_MISMATCH":
+                raise
+            asset = replace(asset, workspace_path=None)
+            identity = _resolve_draft_identity(asset)
+            stats.normalized_workspace_paths += 1
         identities.add((
             asset.org_id, asset.storage_scope, asset.storage_owner_key,
             identity.storage_provider, identity.storage_key,
@@ -360,6 +342,16 @@ def process_projection(
         _record_failure(stats, ref.source_kind, error)
 
 
+def _resolve_draft_identity(asset: ReadyAssetDraft) -> Any:
+    return resolve_asset_identity(
+        original_url=asset.original_url,
+        workspace_path=asset.workspace_path,
+        org_id=asset.org_id,
+        storage_scope=asset.storage_scope,
+        storage_owner_key=asset.storage_owner_key,
+    )
+
+
 def _record_failure(
     stats: BackfillStats,
     source: str,
@@ -368,8 +360,16 @@ def _record_failure(
     code = str(getattr(error, "code", "") or str(error)).strip()
     if not code or len(code) > 80:
         code = type(error).__name__
+    _record_reason(stats.failure_reasons, source, code)
+
+
+def _record_reason(
+    reasons: dict[str, int],
+    source: str,
+    code: str,
+) -> None:
     key = f"{source}:{code}"
-    stats.failure_reasons[key] = stats.failure_reasons.get(key, 0) + 1
+    reasons[key] = reasons.get(key, 0) + 1
 
 
 def count_orphans(conn: psycopg.Connection[Any]) -> int:

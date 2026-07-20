@@ -18,6 +18,7 @@ from scripts.backfill_user_assets import (
     save_checkpoint,
 )
 from scripts.backfill_user_assets_sql import SOURCE_QUERIES
+from services.assets import AssetIdentityError
 
 
 USER_ID = "00000000-0000-4000-8000-000000000001"
@@ -213,6 +214,61 @@ def test_process_projection_classifies_conflict() -> None:
     assert stats.failure_reasons == {
         "image_task:USER_ASSET_REF_CONFLICT": 1,
     }
+
+
+def test_process_projection_skips_unpersisted_url() -> None:
+    projection = project_row(
+        "image_generations",
+        _base_row(url=URL, model_id=None, prompt=None),
+    )[0]
+    stats = BackfillStats()
+    with patch(
+        "scripts.backfill_user_assets.resolve_asset_identity",
+        side_effect=AssetIdentityError("ASSET_URL_NOT_PERSISTED"),
+    ):
+        process_projection(
+            MagicMock(), projection, stats, set(), apply=False,
+        )
+
+    assert stats.failures == 0
+    assert stats.skipped == 1
+    assert stats.skipped_reasons == {
+        "image_task:ASSET_URL_NOT_PERSISTED": 1,
+    }
+
+
+def test_process_projection_drops_stale_historical_workspace_path() -> None:
+    asset, ref = project_row("user_messages", _base_row(
+        content=[{
+            "type": "file",
+            "url": URL,
+            "workspace_path": "legacy/path/image.png",
+        }],
+        scope_type="user",
+    ))[0]
+    registry = MagicMock()
+    registry.db.conn.transaction.return_value.__enter__.return_value = None
+    registry.register_ready_asset.return_value = {
+        "asset_created": True,
+        "ref_created": True,
+    }
+    identity = MagicMock(storage_provider="oss", storage_key="image.png")
+    stats = BackfillStats()
+    with patch(
+        "scripts.backfill_user_assets.resolve_asset_identity",
+        side_effect=[
+            AssetIdentityError("ASSET_WORKSPACE_URL_MISMATCH"),
+            identity,
+        ],
+    ):
+        process_projection(
+            registry, (asset, ref), stats, set(), apply=True,
+        )
+
+    registered_asset = registry.register_ready_asset.call_args.args[0]
+    assert registered_asset.workspace_path is None
+    assert stats.normalized_workspace_paths == 1
+    assert stats.failures == 0
 
 
 def test_run_dry_run_never_writes_checkpoint(tmp_path: Path) -> None:

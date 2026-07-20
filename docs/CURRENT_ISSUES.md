@@ -36,6 +36,8 @@
   分页；ZIP 已改为先按 `user_asset_refs` 复验完整归属，再读取 ready 资产。
 - 历史回填/对账脚本已完成：五类来源独立 keyset checkpoint、默认 dry-run、显式
   apply、RPC savepoint、失败批次不推进游标，并输出创建/复用/冲突/失败/orphan 统计。
+- 历史临时 Provider URL 作为可解释 skipped，不登记 ready 资产；受信公开 object key 与
+  历史 workspace_path 冲突时以 object key 为 canonical 身份并丢弃索引中的陈旧本地路径。
 - 管理员旧 `/uploads`、`/generations` 扫描端点及仅旧链使用的 URL 映射 helper
   已删除；管理员会话视图继续保留自己的消息 ContentPart 解析。
 - 待完成全量验证和生产维护窗口执行。
