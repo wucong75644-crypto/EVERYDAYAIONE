@@ -221,7 +221,10 @@ def _asset(
     storage_scope: str,
 ) -> ReadyAssetDraft:
     url = str(part["url"])
+    mime_type = part.get("mime_type") or part.get("mime")
     media_type = str(part["type"])
+    if media_type == "file" and mime_type:
+        media_type = _media_type(mime_type)
     name = part.get("name") or PurePosixPath(urlparse(url).path).name
     return ReadyAssetDraft(
         org_id=_optional_str(row.get("org_id")),
@@ -233,7 +236,7 @@ def _asset(
         download_url=part.get("download_url") or url,
         workspace_path=part.get("workspace_path"),
         name=name or f"historical-{row['id']}",
-        mime_type=part.get("mime_type") or part.get("mime"),
+        mime_type=mime_type,
         size=part.get("size"),
         created_at=str(row["created_at"]),
     )

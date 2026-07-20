@@ -113,6 +113,29 @@ def test_project_user_message_maps_upload_and_nested_image() -> None:
     assert ref.ref_key == f"message:{ROW_ID}:0"
 
 
+@pytest.mark.parametrize(
+    ("mime_type", "expected_media_type"),
+    (("image/jpeg", "image"), ("video/mp4", "video")),
+)
+def test_project_user_message_normalizes_historical_file_media_type(
+    mime_type: str,
+    expected_media_type: str,
+) -> None:
+    row = _base_row(
+        content=[{
+            "type": "file",
+            "url": URL,
+            "mime_type": mime_type,
+        }],
+        scope_type="user",
+    )
+
+    asset, _ = project_row("user_messages", row)[0]
+
+    assert asset.media_type == expected_media_type
+    assert asset.mime_type == mime_type
+
+
 def test_project_attachment_rebuilds_channel_owner() -> None:
     row = _base_row(
         source_message_id=MESSAGE_ID,
