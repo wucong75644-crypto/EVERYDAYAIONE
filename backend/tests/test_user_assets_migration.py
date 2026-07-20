@@ -106,6 +106,8 @@ def test_admin_query_uses_refs_and_stable_asset_cursor() -> None:
     assert "(p_cursor_created_at, p_cursor_id)" in sql
     assert "<" in sql
     assert "SECURITY DEFINER" in sql
+    assert "IF EXISTS (SELECT 1 FROM pg_roles" in sql
+    assert "rolname = 'service_role'" in sql
     assert ") TO service_role;" in sql
 
 

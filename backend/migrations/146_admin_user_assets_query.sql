@@ -123,6 +123,12 @@ $function$;
 REVOKE ALL ON FUNCTION list_admin_user_assets(
     UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
 ) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION list_admin_user_assets(
-    UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
-) TO service_role;
+DO $grant$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT EXECUTE ON FUNCTION list_admin_user_assets(
+            UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
+        ) TO service_role;
+    END IF;
+END
+$grant$;
