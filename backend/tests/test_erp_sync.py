@@ -842,9 +842,9 @@ class TestRunArchive:
         db.set_table_data("erp_document_items", [old_row])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         assert count == 1
         # 验证数据写入归档表
@@ -868,9 +868,9 @@ class TestRunArchive:
         }])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         archived = db.table("erp_document_items_archive")._data
         assert count == 1
@@ -931,6 +931,35 @@ class TestRunArchive:
         assert db.table("erp_document_items")._data == [row]
 
     @pytest.mark.asyncio
+    async def test_executor_archive_isolates_org_rows(self):
+        """企业维护只能归档并删除目标企业的数据。"""
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
+
+        org_a = "00000000-0000-4000-8000-00000000000a"
+        org_b = "00000000-0000-4000-8000-00000000000b"
+        rows = [{
+            "id": f"row-{suffix}",
+            "doc_id": f"doc-{suffix}",
+            "item_index": 0,
+            "doc_type": "order",
+            "org_id": org_id,
+            "doc_modified_at": "2024-01-01T00:00:00+00:00",
+            "doc_created_at": "2024-01-01T00:00:00+00:00",
+        } for suffix, org_id in (("a", org_a), ("b", org_b))]
+        db = MockErpAsyncDBClient()
+        db.set_table_data("erp_document_items", rows)
+
+        executor = ErpSyncExecutor(db)
+        with patch.object(executor, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await executor._run_archive(org_id=org_a)
+
+        archived = db.table("erp_document_items_archive")._data
+        assert count == 1
+        assert [row["org_id"] for row in archived] == [org_a]
+        assert db.table("erp_document_items")._data == [rows[1]]
+
+    @pytest.mark.asyncio
     async def test_run_archive_empty_table(self):
         """无可归档数据时返回 0"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
@@ -939,9 +968,9 @@ class TestRunArchive:
         db.set_table_data("erp_document_items", [])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         assert count == 0
 
@@ -963,10 +992,10 @@ class TestRunArchive:
         db.set_table_data("erp_document_items", [old_row])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
             # 不应抛异常
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         assert count == 1
 
@@ -989,9 +1018,9 @@ class TestRunArchive:
         db.set_table_data("erp_document_items", [recent_created_row])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         assert count == 0
         # 主表数据不应被删除
@@ -1015,9 +1044,9 @@ class TestRunArchive:
         db.set_table_data("erp_document_items", [both_old_row])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         assert count == 1
         archive_table = db.table("erp_document_items_archive")
@@ -1041,9 +1070,9 @@ class TestRunArchive:
         db.set_table_data("erp_document_items", [row])
 
         worker = ErpSyncWorker(db)
-        with patch.object(worker, "settings") as mock_settings:
+        with patch.object(worker._executor, "settings") as mock_settings:
             mock_settings.erp_archive_retention_days = 90
-            count = await worker._run_archive()
+            count = await worker._executor._run_archive()
 
         assert count == 1, "synced_at 近期不应阻止归档"
 
@@ -1060,7 +1089,7 @@ class TestRunReaggregation:
         db.set_rpc_result("erp_aggregate_daily_stats_batch", 42)
 
         worker = ErpSyncWorker(db)
-        count = await worker._run_daily_reaggregation()
+        count = await worker._executor._run_daily_reaggregation()
 
         assert count == 42
 
@@ -1086,9 +1115,10 @@ class TestRunReaggregation:
 
         worker = ErpSyncWorker(db)
         with patch.object(
-            worker, "_reaggregate_fallback", new_callable=AsyncMock, return_value=5,
+            worker._executor, "_reaggregate_fallback",
+            new_callable=AsyncMock, return_value=5,
         ) as mock_fallback:
-            count = await worker._run_daily_reaggregation()
+            count = await worker._executor._run_daily_reaggregation()
 
         assert count == 5
         mock_fallback.assert_called_once()
@@ -1126,7 +1156,7 @@ class TestRunDeletionDetection:
             "services.kuaimai.erp_sync_service.ErpSyncService",
             return_value=mock_svc,
         ):
-            count = await worker._run_deletion_detection()
+            count = await worker._executor._run_deletion_detection()
 
         # B(SPU) + A-02(SKU) + B-01(SKU) = 3
         assert count == 3
@@ -1148,7 +1178,7 @@ class TestRunDeletionDetection:
             "services.kuaimai.erp_sync_service.ErpSyncService",
             return_value=mock_svc,
         ):
-            count = await worker._run_deletion_detection()
+            count = await worker._executor._run_deletion_detection()
 
         assert count == 0
 
@@ -1179,11 +1209,19 @@ class TestDailyMaintenanceOrchestration:
             return 2
 
         with (
-            patch.object(worker, "_run_archive", side_effect=mock_archive),
-            patch.object(worker, "_run_daily_reaggregation", side_effect=mock_reagg),
-            patch.object(worker, "_run_deletion_detection", side_effect=mock_deletion),
+            patch.object(
+                worker._executor, "_run_archive", side_effect=mock_archive,
+            ),
+            patch.object(
+                worker._executor, "_run_daily_reaggregation",
+                side_effect=mock_reagg,
+            ),
+            patch.object(
+                worker._executor, "_run_deletion_detection",
+                side_effect=mock_deletion,
+            ),
         ):
-            await worker._run_daily_maintenance()
+            await worker._executor.run_daily_maintenance()
 
         assert call_order == ["archive", "reagg", "deletion"]
 
@@ -1377,7 +1415,7 @@ class TestCollectApiProductIds:
     """_collect_api_product_ids：从 API 商品列表收集 SPU/SKU ID"""
 
     def test_collects_spu_and_sku(self):
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         products = [
             {"outerId": "SPU1", "skus": [
@@ -1385,30 +1423,30 @@ class TestCollectApiProductIds:
             ]},
             {"outerId": "SPU2", "skus": [{"skuOuterId": "SKU3"}]},
         ]
-        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids(products)
+        spu_ids, sku_ids = ErpSyncExecutor._collect_api_product_ids(products)
         assert spu_ids == {"SPU1", "SPU2"}
         assert sku_ids == {"SKU1", "SKU2", "SKU3"}
 
     def test_skips_none_outer_id(self):
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         products = [{"outerId": None, "skus": [{"skuOuterId": "S1"}]}]
-        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids(products)
+        spu_ids, sku_ids = ErpSyncExecutor._collect_api_product_ids(products)
         assert spu_ids == set()
         assert sku_ids == {"S1"}
 
     def test_empty_skus(self):
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         products = [{"outerId": "SPU1", "skus": None}]
-        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids(products)
+        spu_ids, sku_ids = ErpSyncExecutor._collect_api_product_ids(products)
         assert spu_ids == {"SPU1"}
         assert sku_ids == set()
 
     def test_empty_list(self):
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
-        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids([])
+        spu_ids, sku_ids = ErpSyncExecutor._collect_api_product_ids([])
         assert spu_ids == set()
         assert sku_ids == set()
 
@@ -1706,14 +1744,12 @@ class TestMarkDeletedItems:
     @pytest.mark.asyncio
     async def test_marks_items_deleted(self):
         """批量标记已删除的条目"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
-        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
-            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
-            worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
-        count = await worker._mark_deleted_items(
+        count = await executor._mark_deleted_items(
             "erp_products", "outer_id", {"P01", "P02"}
         )
 
@@ -1722,29 +1758,26 @@ class TestMarkDeletedItems:
     @pytest.mark.asyncio
     async def test_marks_empty_set_returns_zero(self):
         """空集合返回 0"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
-        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
-            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
-            worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
-        count = await worker._mark_deleted_items("erp_products", "outer_id", set())
+        count = await executor._mark_deleted_items(
+            "erp_products", "outer_id", set(),
+        )
         assert count == 0
 
     @pytest.mark.asyncio
     async def test_partial_failure_continues(self):
         """单条失败不阻塞后续"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
-
-        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
-            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
-            worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
         # 正常执行，2 个都成功（MockErpAsyncDBClient 不会报错）
-        count = await worker._mark_deleted_items(
+        count = await executor._mark_deleted_items(
             "erp_products", "outer_id", {"P01", "P02"}
         )
         assert count == 2
@@ -1824,30 +1857,30 @@ class TestPaginatedSelectIds:
     @pytest.mark.asyncio
     async def test_single_batch(self):
         """数据量 < batch_size，一次查完"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
         db.set_table_data("erp_products", [
             {"outer_id": "A", "active_status": 1},
             {"outer_id": "B", "active_status": 1},
         ])
-        worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
-        ids = await worker._paginated_select_ids("erp_products", "outer_id")
+        ids = await executor._paginated_select_ids("erp_products", "outer_id")
         assert ids == {"A", "B"}
 
     @pytest.mark.asyncio
     async def test_multi_batch_pagination(self):
         """数据量 > batch_size，验证多批拼接完整"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
         # 5 条数据，batch_size=2 → 需要 3 批（2+2+1）
         rows = [{"outer_id": f"P{i}", "active_status": 1} for i in range(5)]
         db.set_table_data("erp_products", rows)
-        worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
-        ids = await worker._paginated_select_ids(
+        ids = await executor._paginated_select_ids(
             "erp_products", "outer_id", batch_size=2,
         )
         assert ids == {f"P{i}" for i in range(5)}
@@ -1855,27 +1888,27 @@ class TestPaginatedSelectIds:
     @pytest.mark.asyncio
     async def test_empty_table(self):
         """空表返回空集合"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
-        worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
-        ids = await worker._paginated_select_ids("erp_products", "outer_id")
+        ids = await executor._paginated_select_ids("erp_products", "outer_id")
         assert ids == set()
 
     @pytest.mark.asyncio
     async def test_filters_deleted(self):
         """active_status=-1 的记录不包含在结果中"""
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        from services.kuaimai.erp_sync_executor import ErpSyncExecutor
 
         db = MockErpAsyncDBClient()
         db.set_table_data("erp_products", [
             {"outer_id": "alive", "active_status": 1},
             {"outer_id": "deleted", "active_status": -1},
         ])
-        worker = ErpSyncWorker(db)
+        executor = ErpSyncExecutor(db)
 
-        ids = await worker._paginated_select_ids("erp_products", "outer_id")
+        ids = await executor._paginated_select_ids("erp_products", "outer_id")
         assert ids == {"alive"}
 
 
@@ -1966,11 +1999,19 @@ class TestDailyMaintenanceFaultIsolation:
             return 2
 
         with (
-            patch.object(worker, "_run_archive", side_effect=failing_archive),
-            patch.object(worker, "_run_daily_reaggregation", side_effect=mock_reagg),
-            patch.object(worker, "_run_deletion_detection", side_effect=mock_deletion),
+            patch.object(
+                worker._executor, "_run_archive", side_effect=failing_archive,
+            ),
+            patch.object(
+                worker._executor, "_run_daily_reaggregation",
+                side_effect=mock_reagg,
+            ),
+            patch.object(
+                worker._executor, "_run_deletion_detection",
+                side_effect=mock_deletion,
+            ),
         ):
-            await worker._run_daily_maintenance()
+            await worker._executor.run_daily_maintenance()
 
         assert call_order == ["archive", "reagg", "deletion"]
 
@@ -1997,11 +2038,19 @@ class TestDailyMaintenanceFaultIsolation:
             return 1
 
         with (
-            patch.object(worker, "_run_archive", side_effect=mock_archive),
-            patch.object(worker, "_run_daily_reaggregation", side_effect=failing_reagg),
-            patch.object(worker, "_run_deletion_detection", side_effect=mock_deletion),
+            patch.object(
+                worker._executor, "_run_archive", side_effect=mock_archive,
+            ),
+            patch.object(
+                worker._executor, "_run_daily_reaggregation",
+                side_effect=failing_reagg,
+            ),
+            patch.object(
+                worker._executor, "_run_deletion_detection",
+                side_effect=mock_deletion,
+            ),
         ):
-            await worker._run_daily_maintenance()
+            await worker._executor.run_daily_maintenance()
 
         assert call_order == ["archive", "reagg", "deletion"]
 
@@ -2015,20 +2064,22 @@ class TestDailyMaintenanceFaultIsolation:
 
         with (
             patch.object(
-                worker, "_run_archive",
+                worker._executor, "_run_archive",
                 side_effect=RuntimeError("archive fail"),
             ),
             patch.object(
-                worker, "_run_daily_reaggregation",
+                worker._executor, "_run_daily_reaggregation",
                 side_effect=RuntimeError("reagg fail"),
             ),
-            patch.object(worker, "_should_run_deletion", return_value=True),
             patch.object(
-                worker, "_run_deletion_detection",
+                worker._executor, "_should_run_deletion", return_value=True,
+            ),
+            patch.object(
+                worker._executor, "_run_deletion_detection",
                 side_effect=RuntimeError("deletion fail"),
             ),
         ):
-            await worker._run_daily_maintenance()
+            await worker._executor.run_daily_maintenance()
 
 
 # ============================================================
@@ -2106,6 +2157,33 @@ class TestAggregationConsumerPendingDiscard:
 
 class TestMultiTenantSync:
     """多企业场景下的同步隔离验证"""
+
+    @pytest.mark.asyncio
+    async def test_worker_delegates_daily_maintenance_with_org(self):
+        """旧 Worker 只编排，并把企业上下文原样交给 Executor。"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        worker = ErpSyncWorker(MockErpAsyncDBClient())
+        worker.is_running = True
+        worker.HIGH_FREQ_TYPES = []
+        worker.CONFIG_TYPES = []
+        worker.WAREHOUSE_TYPES = []
+        client = MagicMock()
+
+        with (
+            patch.object(worker, "_should_run_warehouse", return_value=False),
+            patch.object(worker, "_should_run_low_freq", return_value=False),
+            patch.object(worker, "_should_run_config", return_value=False),
+            patch.object(worker, "_should_run_daily", return_value=True),
+            patch.object(worker, "_extend_lock", new_callable=AsyncMock),
+            patch.object(
+                worker._executor, "run_daily_maintenance",
+                new_callable=AsyncMock,
+            ) as maintenance,
+        ):
+            await worker._run_org_sync("org-A", client)
+
+        maintenance.assert_awaited_once_with(org_id="org-A", client=client)
 
     def test_org_timing_isolation(self):
         """每个企业独立计时"""

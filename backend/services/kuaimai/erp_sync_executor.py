@@ -134,6 +134,8 @@ class ErpSyncExecutor:
                     .lt("doc_modified_at", cutoff)
                     .lt("doc_created_at", cutoff)
                 )
+                if org_id is not None:
+                    q = q.eq("org_id", org_id)
                 result = await q.limit(batch_size).execute()
                 rows = result.data or []
                 if not rows:
@@ -145,9 +147,14 @@ class ErpSyncExecutor:
                 ).execute()
 
                 ids = [r["id"] for r in rows]
-                await self.db.table("erp_document_items").delete().in_(
+                delete_query = self.db.table(
+                    "erp_document_items",
+                ).delete().in_(
                     "id", ids,
-                ).execute()
+                )
+                if org_id is not None:
+                    delete_query = delete_query.eq("org_id", org_id)
+                await delete_query.execute()
 
                 total_archived += len(rows)
             except Exception as e:

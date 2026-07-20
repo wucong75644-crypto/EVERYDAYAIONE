@@ -557,15 +557,13 @@ GROUP BY outer_id;
 #### 归档流程
 
 ```
-每日凌晨 03:00（BackgroundTaskWorker 定时触发）：
+每日维护（WorkerPool/旧 Worker 均委托 ErpSyncExecutor）：
 1. 查询热表中 doc_modified_at < (NOW - 90天) 的记录 ID 列表
-2. 分批（每批1000条），每批在同一事务（BEGIN...COMMIT）内执行：
+   - 企业任务同时使用 org_id 过滤；org_id=None 为全局兼容模式
+2. 分批（每批300条，控制 PostgreSQL 参数数量）执行：
    a. INSERT INTO erp_document_items_archive SELECT ... ON CONFLICT DO UPDATE（upsert 幂等）
-   b. DELETE FROM erp_document_items WHERE id IN (该批 ID)
-   c. COMMIT
-   ⚠ 事务性保证：INSERT 和 DELETE 必须在同一事务内。若步骤 a 成功但 b 前崩溃，
-   无事务保护时重启后会重复 INSERT 到 archive。archive 表的 UNIQUE 约束 + upsert
-   作为第二层兜底，但不能替代事务（避免垃圾数据堆积）。
+   b. 仅在步骤 a 成功后 DELETE 热表对应 ID；企业模式同时校验 org_id
+   c. 任一步失败立即停止本轮；冷表唯一约束 + upsert 保证下轮可幂等重试
 3. 更新 sync_state(sync_type='archive')
 ```
 

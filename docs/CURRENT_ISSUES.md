@@ -3,7 +3,8 @@
 ## 2026-07-21 快麦 ERP 归档 TEXT[] 序列化修复
 
 - 热表查询返回的 `exception_tags` 为 Python list，通用数据库客户端会按 JSON 编码，导致冷表 `TEXT[]` 拒绝写入。
-- 归档边界现统一恢复 PostgreSQL 数组字面量，新旧归档入口共用同一规范化逻辑，且写入失败时不删除热表数据。
+- 归档边界现统一恢复 PostgreSQL 数组字面量，且写入失败时不删除热表数据。
+- ERP 日维护业务已统一收敛到 `ErpSyncExecutor`；旧 Worker 只负责调度与锁。归档 SELECT/DELETE 在企业模式下均按 `org_id` 隔离，`org_id=None` 保留全局兼容语义。
 
 ## 2026-07-21 用户资产历史媒体类型归一
 
