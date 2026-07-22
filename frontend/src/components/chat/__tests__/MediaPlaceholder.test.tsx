@@ -33,6 +33,35 @@ describe('媒体生成中文字', () => {
     expect(screen.getByText('图片生成中')).toBeInTheDocument();
     expect(screen.queryByText(/已取消/)).not.toBeInTheDocument();
   });
+
+  it('失败且无正文时显示统一中文重试提醒', () => {
+    const message: Message = {
+      id: 'message-1', conversation_id: 'conversation-1', role: 'assistant',
+      content: [], status: 'failed', created_at: '2026-07-22T00:00:00Z',
+      generation_params: { type: 'image' },
+    };
+    render(
+      <MessageBubbleContent
+        message={message}
+        isUser={false}
+        hasMultiBlocks={false}
+        imageAssets={[]}
+        fileBlocks={[]}
+        isStreaming={false}
+        isRegenerating={false}
+        textContent=""
+        hasImage={false}
+        hasVideo={false}
+        hasFiles={false}
+        isErrorMessage={true}
+        bubbleTextInfo={null}
+        onImageClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('生成失败，请点击「重新生成」重试')).toBeInTheDocument();
+    expect(screen.queryByText('Error occurred')).not.toBeInTheDocument();
+  });
 });
 
 describe('FailedMediaPlaceholder', () => {

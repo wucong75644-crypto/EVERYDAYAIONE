@@ -88,7 +88,7 @@ export default function MessageBubbleContent({
         ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !hasMultiBlocks && !isErrorMessage && !isStreaming && !isRegenerating && !(suggestions && suggestions.length > 0)) ? (
           <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
         ) : isErrorMessage ? (
-          <span className="text-[15px]">{textContent || 'Error occurred'}</span>
+          <span className="text-[15px]">{textContent || '生成失败，请点击「重新生成」重试'}</span>
         ) : isUser ? (
           <>{textContent}</>
         ) : hasMultiBlocks ? (
