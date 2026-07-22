@@ -10,6 +10,7 @@ const store = {
   registerStreamingId: vi.fn(),
   getMessage: vi.fn(),
   createTask: vi.fn(),
+  completeStreamingWithMessage: vi.fn(),
 };
 const requestMock = vi.fn();
 
@@ -116,6 +117,38 @@ describe('sendMessage idempotent retry', () => {
     expect(store.completeStreaming).toHaveBeenCalledWith('conv-1');
     expect(store.setIsSending).toHaveBeenCalledWith(false);
     expect(unsubscribeTask).toHaveBeenCalledWith('task-1');
+  });
+
+  it('restores the shared media placeholder after an image retry is accepted', async () => {
+    store.getMessage.mockReturnValue({
+      id: 'assistant-1', conversation_id: 'conv-1', role: 'assistant',
+      content: [{ type: 'image', url: null, failed: true }], status: 'failed',
+      created_at: '2026-07-16T00:00:00.000Z', generation_params: { type: 'image' },
+    });
+    requestMock.mockResolvedValue({
+      ...response,
+      operation: 'retry',
+      generation_type: 'image',
+      assistant_message: {
+        ...response.assistant_message,
+        content: [{ type: 'text', text: '图片生成中' }],
+        generation_params: { type: 'image', model: 'gpt-image-2' },
+      },
+    });
+
+    await expect(sendMessage({
+      conversationId: 'conv-1', content: [], generationType: 'image',
+      operation: 'retry', originalMessageId: 'assistant-1', identifiers,
+    })).resolves.toBe('task-1');
+
+    expect(store.completeStreamingWithMessage).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        id: 'assistant-1', status: 'pending',
+        content: [{ type: 'text', text: '图片生成中' }],
+        generation_params: { type: 'image', model: 'gpt-image-2' },
+      }),
+    );
   });
 
   it('retries an in-progress idempotency claim after the backend delay', async () => {

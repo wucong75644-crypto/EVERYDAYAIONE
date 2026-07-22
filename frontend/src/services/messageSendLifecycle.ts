@@ -129,7 +129,14 @@ export function processApiResponse(
   store.updateMessage(ctx.assistantMessageId, { task_id: response.task_id });
 
   const actualType = response.generation_type;
-  if (actualType && operation !== 'retry' && operation !== 'regenerate_single') {
+  if (actualType && actualType !== 'chat' && operation === 'retry') {
+    replaceWithMediaPlaceholder(
+      response,
+      options,
+      ctx,
+      actualType === 'image_ecom' ? 'image' : actualType,
+    );
+  } else if (actualType && operation !== 'retry' && operation !== 'regenerate_single') {
     if (actualType === 'chat') {
       store.updateMessage(ctx.assistantMessageId, {
         generation_params: response.assistant_message.generation_params,
