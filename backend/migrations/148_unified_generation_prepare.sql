@@ -127,7 +127,7 @@ BEGIN
     UPDATE messages SET turn_id = v_turn_id WHERE id = v_input_id;
     UPDATE messages SET turn_id = v_turn_id, reply_to_message_id = v_input_id,
         content = CASE WHEN p_operation IN ('retry', 'regenerate_single')
-            THEN COALESCE(p_output_message->'content', v_output.content) ELSE content END,
+            THEN COALESCE((p_output_message->'content')::TEXT, v_output.content) ELSE content END,
         status = CASE WHEN p_operation IN ('retry', 'regenerate_single')
             THEN COALESCE(NULLIF(p_output_message->>'status', ''), status::TEXT) ELSE status END,
         generation_params = CASE WHEN p_operation IN ('retry', 'regenerate_single')

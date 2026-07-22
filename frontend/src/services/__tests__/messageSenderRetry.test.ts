@@ -102,6 +102,22 @@ describe('sendMessage idempotent retry', () => {
     expect(unsubscribeTask).not.toHaveBeenCalled();
   });
 
+  it('rolls back streaming state when backend returns an explicit 500', async () => {
+    requestMock.mockRejectedValue(new ApiRequestError(
+      'INTERNAL_ERROR', '服务器内部错误', 500, undefined, 'http',
+    ));
+    const unsubscribeTask = vi.fn();
+
+    await expect(sendMessage({
+      conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }],
+      identifiers, unsubscribeTask,
+    })).rejects.toMatchObject({ sendDisposition: 'rejected' });
+
+    expect(store.completeStreaming).toHaveBeenCalledWith('conv-1');
+    expect(store.setIsSending).toHaveBeenCalledWith(false);
+    expect(unsubscribeTask).toHaveBeenCalledWith('task-1');
+  });
+
   it('retries an in-progress idempotency claim after the backend delay', async () => {
     requestMock
       .mockRejectedValueOnce(new ApiRequestError(

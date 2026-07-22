@@ -5,6 +5,7 @@ from pathlib import Path
 
 MIGRATIONS = Path(__file__).parent.parent / "migrations"
 MIGRATION = MIGRATIONS / "148_unified_generation_prepare.sql"
+HOTFIX_MIGRATION = MIGRATIONS / "149_generation_message_content_type.sql"
 ROLLBACK = MIGRATIONS / "rollback" / "148_unified_generation_prepare_rollback.sql"
 
 
@@ -72,9 +73,18 @@ def test_retry_accepts_anchor_only_input_and_resets_failed_output_atomically() -
     assert "p_operation NOT IN ('retry', 'regenerate_single') AND v_input_id IS NULL" in function
     assert "p_operation = 'retry' AND v_output.status::TEXT <> 'failed'" in function
     assert "status IN ('preparing', 'pending', 'running')" in function
-    assert "THEN COALESCE(p_output_message->'content', v_output.content)" in function
+    assert "THEN COALESCE((p_output_message->'content')::TEXT, v_output.content)" in function
     assert "p_output_message->'generation_params', v_output.generation_params" in function
     assert "THEN FALSE" in function
+
+
+def test_hotfix_replaces_function_with_explicit_jsonb_to_text_boundary() -> None:
+    sql = _read(HOTFIX_MIGRATION)
+
+    assert "CREATE OR REPLACE FUNCTION _prepare_generation_messages(" in sql
+    assert "COALESCE((p_output_message->'content')::TEXT, v_output.content)" in sql
+    assert "COALESCE(p_output_message->'content', v_output.content)" not in sql
+    assert "REVOKE ALL ON FUNCTION _prepare_generation_messages(" in sql
 
 
 def test_prepare_creates_messages_tasks_and_returns_authoritative_anchor() -> None:

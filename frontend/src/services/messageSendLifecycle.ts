@@ -56,6 +56,7 @@ export function getSendFailureDisposition(
   if (apiError.status === 409 && apiError.code === 'IDEMPOTENCY_REQUEST_IN_PROGRESS') {
     return 'uncertain';
   }
+  if (apiError.transport === 'http' && apiError.status === 500) return 'rejected';
   if (apiError.status !== undefined && apiError.status >= 500) return 'uncertain';
   return 'rejected';
 }
