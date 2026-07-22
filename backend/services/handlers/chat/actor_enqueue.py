@@ -45,10 +45,14 @@ async def enqueue_web_chat(
         request_params=request_params,
         metadata=metadata,
     )
-    task_data["id"] = _stable_task_id(
-        user_id=user_id,
-        conversation_id=conversation_id,
-        external_task_id=external_task_id,
+    task_data["id"] = (
+        metadata.context_anchor.task_id
+        if metadata.context_anchor
+        else stable_actor_task_id(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            external_task_id=external_task_id,
+        )
     )
     delivery_context = {"actor": True, "channel": "web"}
     response = handler.db.rpc(
@@ -74,7 +78,7 @@ async def enqueue_web_chat(
     return external_task_id
 
 
-def _stable_task_id(
+def stable_actor_task_id(
     *,
     user_id: str,
     conversation_id: str,

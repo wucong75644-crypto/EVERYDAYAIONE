@@ -72,7 +72,7 @@ async def test_replayed_request_skips_slot_and_generation() -> None:
 @pytest.mark.asyncio
 async def test_first_request_records_completed_response() -> None:
     response = _response()
-    claim = SimpleNamespace(replay_response=None)
+    claim = SimpleNamespace(request_id="request-row", replay_response=None)
     service = MagicMock()
     service.claim.return_value = claim
 
@@ -97,7 +97,7 @@ async def test_first_request_records_completed_response() -> None:
 
 @pytest.mark.asyncio
 async def test_business_rejection_records_replayable_failure() -> None:
-    claim = SimpleNamespace(replay_response=None)
+    claim = SimpleNamespace(request_id="request-row", replay_response=None)
     service = MagicMock()
     service.claim.return_value = claim
     rejection = AppException("INSUFFICIENT_CREDITS", "积分不足", 402)
@@ -123,7 +123,7 @@ async def test_business_rejection_records_replayable_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_unexpected_failure_records_generic_terminal_state_and_reraises() -> None:
-    claim = SimpleNamespace(replay_response=None)
+    claim = SimpleNamespace(request_id="request-row", replay_response=None)
     service = MagicMock()
     service.claim.return_value = claim
     unexpected = RuntimeError("database disconnected")

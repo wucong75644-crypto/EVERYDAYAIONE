@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -12,7 +13,7 @@ from fastapi import Request
 from loguru import logger
 
 from core.exceptions import AppException
-from schemas.message import GenerateRequest, GenerateResponse
+from schemas.message import GenerateRequest, GenerateResponse, MessageOperation
 
 
 _RUNTIME_PARAM_KEYS = {
@@ -21,6 +22,8 @@ _RUNTIME_PARAM_KEYS = {
     "_org_id",
     "_user_location",
 }
+_CLIENT_TASK_NAMESPACE = uuid.UUID("16012b8a-f9aa-4a65-943b-e3002ce22831")
+_ASSISTANT_MESSAGE_NAMESPACE = uuid.UUID("f94bb2af-b530-48c8-9fc4-2e23c2fa70c4")
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,30 @@ class MessageIdempotencyService:
         self.db = db
         self.user_id = user_id
         self.org_id = org_id
+
+    def ensure_identity(
+        self,
+        request: Request,
+        conversation_id: str,
+        body: GenerateRequest,
+    ) -> None:
+        """为旧客户端补齐统一生成事务需要的幂等标识。"""
+        header_key = request.headers.get("idempotency-key")
+        if not body.client_request_id:
+            body.client_request_id = header_key or str(uuid.uuid4())
+        identity_key = (
+            f"{self.user_id}:{self.org_id or ''}:{conversation_id}:"
+            f"{body.client_request_id}"
+        )
+        if not body.client_task_id:
+            body.client_task_id = str(uuid.uuid5(_CLIENT_TASK_NAMESPACE, identity_key))
+        if body.operation in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
+            if body.original_message_id:
+                body.assistant_message_id = body.original_message_id
+        elif not body.assistant_message_id:
+            body.assistant_message_id = str(
+                uuid.uuid5(_ASSISTANT_MESSAGE_NAMESPACE, identity_key)
+            )
 
     def claim(
         self,

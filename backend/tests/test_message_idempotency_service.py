@@ -67,6 +67,51 @@ def test_legacy_request_without_key_bypasses_idempotency() -> None:
     assert service.claim(_request(), "conversation-1", body) is None
 
 
+def test_ensure_identity_upgrades_legacy_request() -> None:
+    body = _body(
+        client_request_id=None,
+        client_task_id=None,
+        assistant_message_id=None,
+    )
+
+    service = MessageIdempotencyService(MagicMock(), "user-1", None)
+    service.ensure_identity(_request(), "conversation-1", body)
+
+    assert body.client_request_id
+    assert body.client_task_id
+    assert body.assistant_message_id
+
+
+def test_ensure_identity_reuses_retry_output_message() -> None:
+    original_id = "00000000-0000-0000-0000-000000000099"
+    body = _body(
+        operation=MessageOperation.RETRY,
+        original_message_id=original_id,
+        assistant_message_id=None,
+    )
+
+    service = MessageIdempotencyService(MagicMock(), "user-1", None)
+    service.ensure_identity(_request(), "conversation-1", body)
+
+    assert body.assistant_message_id == original_id
+
+
+def test_ensure_identity_is_stable_for_header_only_replay() -> None:
+    first = _body(
+        client_request_id=None, client_task_id=None, assistant_message_id=None,
+    )
+    second = _body(
+        client_request_id=None, client_task_id=None, assistant_message_id=None,
+    )
+    service = MessageIdempotencyService(MagicMock(), "user-1", "org-1")
+
+    service.ensure_identity(_request("stable-key"), "conversation-1", first)
+    service.ensure_identity(_request("stable-key"), "conversation-1", second)
+
+    assert first.client_task_id == second.client_task_id
+    assert first.assistant_message_id == second.assistant_message_id
+
+
 def test_header_and_body_key_must_match() -> None:
     service = MessageIdempotencyService(MagicMock(), "user-1", None)
 

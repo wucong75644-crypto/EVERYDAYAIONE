@@ -1,16 +1,17 @@
 """任务槽位泄漏修复 — 回归测试
 
-覆盖 6 处修复：
+覆盖任务槽位生命周期：
 1. message.py 路由 try/finally + slot_handed_off（含 CancelledError 路径）
 2. task.py cancel-by-message / mark_task_failed 调 release_task_slot
 3. task_completion_service.py 终态分支兜底 release
-4. image_handler/video_handler _save_task 失败退积分 + 终止该 task
+4. video_handler 旧 _save_task 失败退积分（待视频旧链删除）
 """
 
 import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,7 +21,9 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.message import GenerationType, Message, MessageOperation, TextPart  # noqa: E402
+from schemas.message import (  # noqa: E402
+    GenerateResponse, GenerationType, Message, MessageOperation, TextPart,
+)
 from api.deps import OrgContext  # noqa: E402
 
 
@@ -55,6 +58,21 @@ def _make_body(params=None):
     return body
 
 
+def _idempotency_service():
+    service = MagicMock()
+    service.claim.return_value = SimpleNamespace(
+        request_id="request-row", replay_response=None,
+    )
+    return service
+
+
+def _chat_response():
+    return GenerateResponse(
+        task_id="ct1", assistant_message=_make_message("msg_a1"),
+        operation=MessageOperation.SEND, generation_type="chat",
+    )
+
+
 # ============================================================
 # 修复 1: message.py try/finally + slot_handed_off
 # ============================================================
@@ -83,6 +101,8 @@ class TestMessageRouteSlotLifecycle:
         mock_conv_service.get_conversation = AsyncMock(return_value={"id": "c1"})
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler"), \
@@ -114,7 +134,8 @@ class TestMessageRouteSlotLifecycle:
         mock_conv_service = MagicMock()
         mock_conv_service.get_conversation = AsyncMock(side_effect=RuntimeError("boom"))
 
-        with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service):
+        with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()):
             from api.routes.message import generate_message
             with pytest.raises(RuntimeError):
                 await generate_message(
@@ -140,7 +161,8 @@ class TestMessageRouteSlotLifecycle:
             side_effect=asyncio.CancelledError(),
         )
 
-        with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service):
+        with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()):
             from api.routes.message import generate_message
             with pytest.raises((asyncio.CancelledError, BaseException)):
                 await generate_message(
@@ -164,6 +186,8 @@ class TestMessageRouteSlotLifecycle:
         mock_conv_service.get_conversation = AsyncMock(return_value={"id": "c1"})
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler"), \
@@ -343,150 +367,6 @@ class TestTaskCompletionTerminalRelease:
 
         assert ok is True
         mock_release.assert_awaited_once_with(task_row)
-
-
-# ============================================================
-# 修复 4a/4b: image_handler _save_task 失败 → 退积分 + return None
-# ============================================================
-
-class TestImageHandlerSaveTaskFailure:
-    """image_handler 主路径 + retry 路径 _save_task 失败时退积分"""
-
-    def _make_handler(self):
-        """构造一个最小可用的 ImageHandler mock，跳过基类初始化"""
-        from services.handlers.image_handler import ImageHandler
-        h = ImageHandler.__new__(ImageHandler)
-        h.db = MagicMock()
-        h.org_id = None
-        h._refund_credits = MagicMock()
-        h._save_task = MagicMock(side_effect=RuntimeError("DB insert failed"))
-        h._lock_credits = MagicMock(return_value="tx-1")
-        return h
-
-    @pytest.mark.asyncio
-    async def test_main_path_save_task_failure_refunds_and_returns_none(self):
-        """主路径 _save_task 抛错 → _refund_credits(transaction_id) + return None"""
-        h = self._make_handler()
-
-        # 模拟 adapter.generate 成功返回 task_id
-        adapter = MagicMock()
-        adapter.generate = AsyncMock(return_value=MagicMock(task_id="kie-ext-1"))
-
-        from services.handlers.base import TaskMetadata
-        metadata = TaskMetadata(client_task_id="ct1", placeholder_created_at=None)
-
-        result = await h._create_single_task(
-            adapter=adapter, index=0, batch_id="b1",
-            generate_kwargs={"prompt": "a cat"},
-            message_id="msg1", conversation_id="c1", user_id="u1",
-            model_id="flux-pro", per_image_credits=10,
-            params={"_task_slot_id": "slot-x"}, prompt="a cat",
-            metadata=metadata,
-        )
-
-        # 验证 _save_task 被调用并失败
-        h._save_task.assert_called_once()
-        # 验证退积分
-        h._refund_credits.assert_called_once_with("tx-1")
-        # 验证返回 None
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_retry_path_save_task_failure_refunds_and_returns_none(self):
-        """retry 路径 _save_task 抛错 → 退积分 + return None"""
-        h = self._make_handler()
-        h._route_retry = AsyncMock(return_value=MagicMock(recommended_model="flux-retry"))
-
-        retry_adapter = MagicMock()
-        retry_adapter.provider = MagicMock(value="kie")
-        retry_adapter.generate = AsyncMock(return_value=MagicMock(task_id="kie-retry-1"))
-        retry_adapter.close = AsyncMock()
-        retry_adapter.supports_resolution = False
-
-        from services.handlers.base import TaskMetadata
-        metadata = TaskMetadata(client_task_id="ct1", placeholder_created_at=None)
-
-        h._lock_credits = MagicMock(return_value="tx-retry")
-        h._build_callback_url = MagicMock(return_value="http://cb")
-
-        # 用 fake context class 替代复杂 mock：can_retry 仅第一次 True
-        class FakeRetryCtx:
-            def __init__(self, *args, **kwargs):
-                self._calls = 0
-                self.failed_attempts = []
-            @property
-            def can_retry(self):
-                self._calls += 1
-                return self._calls == 1
-            def add_failure(self, *_args, **_kwargs):
-                self.failed_attempts.append(_args)
-
-        with patch("services.adapters.factory.create_image_adapter", return_value=retry_adapter), \
-             patch("services.intent_router.RetryContext", FakeRetryCtx):
-            result = await h._attempt_image_sync_retry(
-                prompt="a cat", model_id="flux-pro", error="orig fail",
-                params={"_is_smart_mode": True},
-                generate_kwargs={"prompt": "a cat"},
-                user_id="u1", per_image_credits=10,
-                index=0, batch_id="b1",
-                message_id="msg1", conversation_id="c1",
-                metadata=metadata,
-            )
-
-        # _save_task 失败后必须退 retry 锁的积分
-        h._refund_credits.assert_any_call("tx-retry")
-        # 返回 None（修复关键：原本会 return result.task_id 泄漏 slot）
-        assert result is None
-
-
-# ============================================================
-# 修复 4c/4d: video_handler _save_task 失败
-# ============================================================
-
-class TestVideoHandlerSaveTaskFailure:
-    """video_handler 主路径 + retry 路径 _save_task 失败时退积分"""
-
-    def _make_handler(self):
-        from services.handlers.video_handler import VideoHandler
-        h = VideoHandler.__new__(VideoHandler)
-        h.db = MagicMock()
-        h.org_id = None
-        h._refund_credits = MagicMock()
-        h._save_task = MagicMock(side_effect=RuntimeError("DB insert failed"))
-        h._lock_credits = MagicMock(return_value="tx-vid-1")
-        return h
-
-    @pytest.mark.asyncio
-    async def test_main_path_save_task_failure_refunds_and_raises(self):
-        """主路径 _save_task 抛错 → 退积分 + raise（让 message.py finally 释放 slot）"""
-        h = self._make_handler()
-
-        adapter = MagicMock()
-        adapter.generate = AsyncMock(return_value=MagicMock(task_id="kie-vid-1"))
-        adapter.close = AsyncMock()
-
-        from services.handlers.base import TaskMetadata
-        metadata = TaskMetadata(client_task_id="ct1", placeholder_created_at=None)
-
-        # 直接调内部 _save_task 块对应的逻辑（构造一个 try/except 包裹）
-        # 这里直接验证 _save_task 抛错后的副作用
-        h._refund_credits.reset_mock()
-
-        with pytest.raises(RuntimeError, match="DB insert failed"):
-            try:
-                h._save_task(
-                    task_id="kie-vid-1", message_id="msg1",
-                    conversation_id="c1", user_id="u1",
-                    model_id="veo3", prompt="a dance",
-                    params={}, metadata=metadata,
-                    credits_locked=100, transaction_id="tx-vid-1",
-                )
-            except Exception:
-                h._refund_credits("tx-vid-1")
-                raise
-
-        # 验证退积分被调用
-        h._refund_credits.assert_called_once_with("tx-vid-1")
 
 
 # ============================================================

@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
@@ -14,7 +15,7 @@ from starlette.requests import Request as StarletteRequest
 
 from datetime import datetime, timezone
 
-from schemas.message import GenerationType, Message, TextPart, MessageOperation
+from schemas.message import GenerateResponse, GenerationType, Message, TextPart, MessageOperation
 from api.deps import OrgContext
 
 
@@ -35,6 +36,21 @@ def _make_request():
         "query_string": b"",
     }
     return StarletteRequest(scope)
+
+
+def _idempotency_service():
+    service = MagicMock()
+    service.claim.return_value = SimpleNamespace(
+        request_id="request-row", replay_response=None,
+    )
+    return service
+
+
+def _chat_response():
+    return GenerateResponse(
+        task_id="ct1", assistant_message=_make_message("msg_a1"),
+        operation=MessageOperation.SEND, generation_type="chat",
+    )
 
 
 # -- TestPrefetchedSummaryInjection --
@@ -67,6 +83,8 @@ class TestPrefetchedSummaryInjection:
         mock_conv_service.get_conversation = AsyncMock(return_value=conversation)
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler") as mock_get_handler, \
@@ -97,6 +115,8 @@ class TestPrefetchedSummaryInjection:
         mock_conv_service.get_conversation = AsyncMock(return_value=conversation)
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler") as mock_get_handler, \
@@ -162,6 +182,8 @@ class TestUserLocationInjection:
         mock_conv_service.get_conversation = AsyncMock(return_value=conversation)
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler") as mock_get_handler, \
@@ -194,6 +216,8 @@ class TestUserLocationInjection:
         mock_conv_service.get_conversation = AsyncMock(return_value=conversation)
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler") as mock_get_handler, \
@@ -226,6 +250,8 @@ class TestUserLocationInjection:
         mock_conv_service.get_conversation = AsyncMock(return_value=conversation)
 
         with patch("api.routes.message.get_conversation_service", return_value=mock_conv_service), \
+             patch("api.routes.message.MessageIdempotencyService", return_value=_idempotency_service()), \
+             patch("api.routes.message.prepare_and_start_chat_generation", new_callable=AsyncMock, return_value=_chat_response()), \
              patch("api.routes.message.create_user_message", new_callable=AsyncMock) as mock_create_msg, \
              patch("api.routes.message.handle_regenerate_or_send_operation", new_callable=AsyncMock) as mock_send, \
              patch("api.routes.message.get_handler") as mock_get_handler, \

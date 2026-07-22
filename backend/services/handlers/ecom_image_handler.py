@@ -54,17 +54,8 @@ class EcomImageHandler(ImageHandler):
 
         # Phase 1：没有方案 → 调 ImageAgent 策划方案
         task_id = metadata.client_task_id if metadata else message_id
-
-        # 先保存 task 到 DB（前端 WS 订阅需要 task 存在）
-        task_data = self._build_task_data(
-            task_id=task_id, message_id=message_id,
-            conversation_id=conversation_id, user_id=user_id,
-            task_type="image", status="running",  # DB check 约束只允许 chat/image/video
-            model_id="qwen-vl-max",
-            request_params={"phase": "plan"},
-            metadata=metadata,
-        )
-        self._insert_task_with_turn_binding(task_data, metadata)
+        if not getattr(metadata, "prepared_task_id", None):
+            raise RuntimeError("ECOM_PREPARED_TASK_MISSING")
 
         # 后台异步执行（start 立刻返回，不阻塞 HTTP 响应）
         asyncio.create_task(self._phase1_plan(
@@ -149,37 +140,13 @@ class EcomImageHandler(ImageHandler):
         metadata: Any,
     ) -> str:
         """有 image_task_meta → 构建 batch_prompts → 委托给 ImageHandler 批量生图。"""
-        image_task_meta = params["image_task_meta"]
-
-        all_image_urls = self._extract_image_urls(content)
-        product_urls = params.get("product_image_urls") or all_image_urls
-        style_ref_urls = params.get("style_ref_urls") or []
-
-        full_refs = list(product_urls) + list(style_ref_urls)
-        primary_ref = [product_urls[0]] if product_urls else []
-
-        batch_prompts = []
-        for item in image_task_meta:
-            prompt = item.get("prompt") or item.get("description", "")
-            if not prompt:
-                continue
-            image_type = item.get("image_type", "marketing")
-            refs = primary_ref if image_type == "white_bg" else full_refs
-
-            batch_prompts.append({
-                "prompt": prompt,
-                "aspect_ratio": item.get("aspect_ratio", "1:1"),
-                "image_urls": refs if refs else None,
-            })
+        batch_prompts = self.prepare_phase2_params(content, params)
 
         if not batch_prompts:
             logger.warning("EcomImageHandler Phase2: empty batch")
             return await super().start(
                 message_id, conversation_id, user_id, content, params, metadata,
             )
-
-        params["_batch_prompts"] = batch_prompts
-        params["model"] = _I2I_MODEL
 
         logger.info(
             f"EcomImageHandler Phase2 start | message_id={message_id} "
@@ -189,3 +156,27 @@ class EcomImageHandler(ImageHandler):
         return await super().start(
             message_id, conversation_id, user_id, content, params, metadata,
         )
+
+    def prepare_phase2_params(
+        self, content: List[Any], params: Dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """构造 Phase 2 批次参数，供原子准备入口与 Handler 共用。"""
+        product_urls = params.get("product_image_urls") or self._extract_image_urls(content)
+        style_ref_urls = params.get("style_ref_urls") or []
+        full_refs = list(product_urls) + list(style_ref_urls)
+        primary_ref = [product_urls[0]] if product_urls else []
+        prompts = []
+        for item in params["image_task_meta"]:
+            prompt = item.get("prompt") or item.get("description", "")
+            if not prompt:
+                continue
+            refs = primary_ref if item.get("image_type", "marketing") == "white_bg" else full_refs
+            prompts.append({
+                "prompt": prompt,
+                "aspect_ratio": item.get("aspect_ratio", "1:1"),
+                "image_urls": refs or None,
+            })
+        if prompts:
+            params["_batch_prompts"] = prompts
+            params["model"] = _I2I_MODEL
+        return prompts

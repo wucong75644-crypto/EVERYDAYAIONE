@@ -6,7 +6,6 @@
 """
 
 import asyncio
-import uuid
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -23,6 +22,7 @@ from services.handlers.image_request_settings import (
     build_image_generate_kwargs,
     resolve_image_generation_settings,
     resolve_batch_item_kwargs,
+    resolve_prepared_batch,
 )
 
 
@@ -108,7 +108,7 @@ class ImageHandler(BaseHandler):
         )
 
         # 3. 统一批次逻辑
-        batch_id = str(uuid.uuid4())
+        batch_id, prepared_task_ids = resolve_prepared_batch(metadata, num_images)
         tasks_created: List[str] = []
 
         from services.adapters.factory import create_image_adapter
@@ -146,14 +146,12 @@ class ImageHandler(BaseHandler):
                     index=actual_index,
                     batch_id=batch_id,
                     generate_kwargs=task_kwargs,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
                     user_id=user_id,
                     model_id=model_id,
                     per_image_credits=per_image_credits,
                     params=params,
                     prompt=task_prompt,
-                    metadata=metadata,
+                    prepared_task_id=prepared_task_ids[i],
                 )
                 if ext_task_id:
                     tasks_created.append(ext_task_id)
@@ -182,196 +180,21 @@ class ImageHandler(BaseHandler):
         index: int,
         batch_id: str,
         generate_kwargs: Dict[str, Any],
-        message_id: str,
-        conversation_id: str,
         user_id: str,
         model_id: str,
         per_image_credits: int,
         params: Dict[str, Any],
         prompt: str,
-        metadata: TaskMetadata,
+        prepared_task_id: str,
     ) -> Optional[str]:
-        """
-        创建单个图片生成任务（锁积分 → API → 保存 task）
-
-        Returns:
-            external_task_id 或 None（失败时）
-        """
-        temp_task_id = str(uuid.uuid4())
-        transaction_id = self._lock_credits(
-            task_id=temp_task_id,
-            user_id=user_id,
-            amount=per_image_credits,
-            reason=f"Image[{index}]: {model_id}",
-            org_id=self.org_id,
+        """使用已原子准备的本地 task 锁积分并提交供应商。"""
+        from services.handlers.image_prepared_submission import submit_prepared_image_task
+        return await submit_prepared_image_task(
+            handler=self, local_task_id=prepared_task_id, adapter=adapter,
+            index=index, batch_id=batch_id, generate_kwargs=generate_kwargs,
+            user_id=user_id, model_id=model_id,
+            per_image_credits=per_image_credits, params=params, prompt=prompt,
         )
-
-        try:
-            result = await adapter.generate(**generate_kwargs)
-            external_task_id = result.task_id
-        except Exception as e:
-            try:
-                self._refund_credits(transaction_id)
-            except Exception as refund_err:
-                logger.critical(f"Image refund also failed | tx={transaction_id} | error={refund_err}")
-            logger.warning(
-                f"Image task[{index}] API failed | "
-                f"batch_id={batch_id} | error={e}"
-            )
-
-            # Smart mode: 尝试用替代模型重试
-            retry_result = await self._attempt_image_sync_retry(
-                prompt=prompt, model_id=model_id, error=str(e),
-                params=params, generate_kwargs=generate_kwargs,
-                user_id=user_id, per_image_credits=per_image_credits,
-                index=index, batch_id=batch_id, message_id=message_id,
-                conversation_id=conversation_id, metadata=metadata,
-            )
-            return retry_result  # None if retry also failed
-
-        try:
-            self._save_task(
-                task_id=external_task_id,
-                message_id=message_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                model_id=model_id,
-                prompt=prompt,
-                params=params,
-                metadata=metadata,
-                credits_locked=per_image_credits,
-                transaction_id=transaction_id,
-                image_index=index,
-                batch_id=batch_id,
-            )
-        except Exception as save_err:
-            # task 没落库 → webhook 回调时 get_task 找不到 → 永远不会确认/退积分
-            # 必须主动退积分 + 返回 None，与"adapter 失败"路径一致，避免积分锁定 + slot 泄漏
-            logger.critical(
-                f"Image _save_task failed, refunding | external_task_id={external_task_id} | "
-                f"batch_id={batch_id} | transaction_id={transaction_id} | "
-                f"error={save_err}"
-            )
-            try:
-                self._refund_credits(transaction_id)
-            except Exception as refund_err:
-                logger.critical(
-                    f"Image _save_task refund also failed | tx={transaction_id} | "
-                    f"error={refund_err}"
-                )
-            return None
-
-        return external_task_id
-
-    async def _attempt_image_sync_retry(
-        self,
-        prompt: str,
-        model_id: str,
-        error: str,
-        params: Dict[str, Any],
-        generate_kwargs: Dict[str, Any],
-        user_id: str,
-        per_image_credits: int,
-        index: int,
-        batch_id: str,
-        message_id: str,
-        conversation_id: str,
-        metadata: TaskMetadata,
-    ) -> Optional[str]:
-        """Smart mode 同步重试：API 调用失败时尝试替代模型"""
-        if not params.get("_is_smart_mode"):
-            return None
-
-        from services.intent_router import RetryContext
-
-        ctx = RetryContext(
-            is_smart_mode=True,
-            original_content=prompt,
-            generation_type=GenerationType.IMAGE,
-        )
-        ctx.add_failure(model_id, error)
-
-        while ctx.can_retry:
-            decision = await self._route_retry(ctx)
-            if not decision or not decision.recommended_model:
-                break
-
-            new_model = decision.recommended_model
-            attempt = len(ctx.failed_attempts)
-            logger.info(
-                f"Image sync retry | index={index} | attempt={attempt} | "
-                f"{model_id} → {new_model}"
-            )
-
-            from services.adapters.factory import create_image_adapter
-
-            new_adapter = create_image_adapter(new_model)
-            new_tx = self._lock_credits(
-                task_id=str(uuid.uuid4()),
-                user_id=user_id,
-                amount=per_image_credits,
-                reason=f"Image[{index}] retry: {new_model}",
-                org_id=self.org_id,
-            )
-
-            try:
-                new_kwargs = {**generate_kwargs}
-                new_kwargs["callback_url"] = self._build_callback_url(
-                    new_adapter.provider.value
-                )
-                result = await new_adapter.generate(**new_kwargs)
-            except Exception as retry_err:
-                try:
-                    self._refund_credits(new_tx)
-                except Exception as refund_err:
-                    logger.critical(f"Image retry refund failed | tx={new_tx} | error={refund_err}")
-                ctx.add_failure(new_model, str(retry_err))
-                logger.warning(
-                    f"Image sync retry failed | index={index} | "
-                    f"model={new_model} | error={retry_err}"
-                )
-                continue
-            finally:
-                await new_adapter.close()
-
-            # API 成功 → 持久化。落库失败必须退积分 + 返回 None，
-            # 否则 webhook 找不到 task 永远不退积分，且本张图的 slot 也会泄漏
-            try:
-                retry_params = {
-                    **params,
-                    "_retried": True,
-                    "_retry_from_model": model_id,
-                }
-                self._save_task(
-                    task_id=result.task_id,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    model_id=new_model,
-                    prompt=prompt,
-                    params=retry_params,
-                    metadata=metadata,
-                    credits_locked=per_image_credits,
-                    transaction_id=new_tx,
-                    image_index=index,
-                    batch_id=batch_id,
-                )
-            except Exception as save_err:
-                logger.critical(
-                    f"Image retry _save_task failed, refunding | index={index} | "
-                    f"external_task_id={result.task_id} | tx={new_tx} | error={save_err}"
-                )
-                try:
-                    self._refund_credits(new_tx)
-                except Exception as refund_err:
-                    logger.critical(
-                        f"Image retry _save_task refund also failed | tx={new_tx} | "
-                        f"error={refund_err}"
-                    )
-                return None
-            return result.task_id
-
-        return None
 
     # ========================================
     # 基类抽象方法实现
@@ -436,49 +259,3 @@ class ImageHandler(BaseHandler):
     ) -> Message:
         """错误回调（调用基类通用流程）"""
         return await self._handle_error_common(task_id, error_code, error_message)
-
-    def _save_task(
-        self,
-        task_id: str,
-        message_id: str,
-        conversation_id: str,
-        user_id: str,
-        model_id: str,
-        prompt: str,
-        params: Dict[str, Any],
-        metadata: TaskMetadata,
-        credits_locked: int = 0,
-        transaction_id: Optional[str] = None,
-        image_index: Optional[int] = None,
-        batch_id: Optional[str] = None,
-    ) -> None:
-        """保存任务到数据库"""
-        request_params = {
-            "prompt": prompt,
-            "model": model_id,
-            **self._serialize_params(params),
-        }
-
-        task_data = self._build_task_data(
-            task_id=task_id,
-            message_id=message_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            task_type="image",
-            status="pending",
-            model_id=model_id,
-            request_params=request_params,
-            metadata=metadata,
-            credits_locked=credits_locked,
-            transaction_id=transaction_id,
-            image_index=image_index,
-            batch_id=batch_id,
-        )
-
-        self._insert_task_with_turn_binding(task_data, metadata)
-
-        logger.info(
-            f"Task saved | external_task_id={task_id} | "
-            f"client_task_id={metadata.client_task_id} | "
-            f"image_index={image_index} | batch_id={batch_id}"
-        )

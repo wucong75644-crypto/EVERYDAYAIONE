@@ -80,11 +80,13 @@ class TestEcomImageHandlerStart:
     @pytest.mark.asyncio
     async def test_no_meta_triggers_phase1(self):
         """无 image_task_meta → Phase 1（异步方案策划），立刻返回 task_id。"""
-        from services.handlers.base import TaskMetadata
+        from api.routes.message_ecom_preparation import PreparedEcomPlanMetadata
 
         handler = self._make_handler()
         params: dict = {}  # 无 meta
-        metadata = TaskMetadata(client_task_id="task_plan_123")
+        metadata = PreparedEcomPlanMetadata(
+            client_task_id="task_plan_123", prepared_task_id="local-task-123",
+        )
 
         with patch.object(handler, "_phase1_plan", new_callable=AsyncMock) as mock_plan:
             result = await handler.start("msg1", "conv1", "user1", [], params, metadata)
@@ -93,6 +95,18 @@ class TestEcomImageHandlerStart:
         assert result == "task_plan_123"
         # _phase1_plan 在后台被调用（通过 asyncio.create_task）
         await asyncio.sleep(0.01)  # 让 create_task 有机会执行
+
+    @pytest.mark.asyncio
+    async def test_phase1_rejects_unprepared_task(self):
+        """Phase 1 不得退回到 Handler 内直接插入 task。"""
+        from services.handlers.base import TaskMetadata
+
+        handler = self._make_handler()
+        with pytest.raises(RuntimeError, match="ECOM_PREPARED_TASK_MISSING"):
+            await handler.start(
+                "msg1", "conv1", "user1", [], {},
+                TaskMetadata(client_task_id="task_plan_123"),
+            )
 
     @pytest.mark.asyncio
     async def test_empty_prompts_skipped(self):

@@ -9,6 +9,7 @@ import pytest
 
 from schemas.message import TextPart
 from services.handlers.base import TaskMetadata
+from services.handlers.context_snapshot import ContextAnchor
 from services.handlers.chat.actor_enqueue import enqueue_web_chat
 from services.handlers.chat_handler import ChatHandler
 
@@ -138,6 +139,28 @@ async def test_enqueue_uses_stable_internal_id_and_jsonb(monkeypatch):
     }
     assert publish.await_count == 2
     publish.assert_awaited_with("conv-1", "org-1")
+
+
+@pytest.mark.asyncio
+async def test_enqueue_reuses_prepared_context_anchor_task_id(monkeypatch):
+    monkeypatch.setattr(
+        "services.handlers.chat.actor_enqueue._publish_wakeup", AsyncMock(),
+    )
+    handler = _Handler()
+    metadata = _metadata()
+    metadata.context_anchor = ContextAnchor(
+        task_id="prepared-task", conversation_id="conv-1", turn_id="turn-1",
+        input_message_id="input-1", base_revision=2,
+        through_message_id=None, org_id="org-1",
+    )
+
+    await enqueue_web_chat(
+        handler=handler, external_task_id="client-1", message_id="message-1",
+        conversation_id="conv-1", user_id="user-1", model_id="model-1",
+        content=[TextPart(text="你好")], params={}, metadata=metadata,
+    )
+
+    assert handler.db.calls[0][1]["p_task_data"].obj["id"] == "prepared-task"
 
 
 @pytest.mark.asyncio

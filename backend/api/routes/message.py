@@ -46,6 +46,10 @@ from api.routes.message_request_preparation import (
     prepare_generation_request,
     resolve_generation_context,
 )
+from api.routes.message_chat_preparation import prepare_and_start_chat_generation
+from api.routes.message_image_preparation import prepare_and_start_image_generation
+from api.routes.message_ecom_preparation import prepare_and_start_ecom_generation
+from api.routes.message_video_preparation import prepare_and_start_video_generation
 
 # 向后兼容别名：test_placeholder_to_db.py 使用了带下划线前缀的名称
 _handle_retry_operation = handle_retry_operation
@@ -134,6 +138,25 @@ def _record_user_feedback_signal(
     asyncio.create_task(_do_record())
 
 
+def _record_generation_feedback(
+    db, user_id: str, body: GenerateRequest,
+    gen_type: GenerationType, conversation_id: str,
+) -> None:
+    """仅为重新生成类操作记录隐式反馈。"""
+    if body.operation not in (
+        MessageOperation.RETRY,
+        MessageOperation.REGENERATE,
+        MessageOperation.REGENERATE_SINGLE,
+    ):
+        return
+    _record_user_feedback_signal(
+        db=db, user_id=user_id, operation=body.operation.value,
+        model=body.model, gen_type=gen_type.value,
+        original_message_id=body.original_message_id,
+        conversation_id=conversation_id,
+    )
+
+
 # ============================================================
 # 统一消息生成 API
 # ============================================================
@@ -165,9 +188,12 @@ async def generate_message(
     user_id = ctx.user_id
 
     idempotency_service = MessageIdempotencyService(db, user_id, ctx.org_id)
+    idempotency_service.ensure_identity(request, conversation_id, body)
     idempotency_claim = idempotency_service.claim(request, conversation_id, body)
     if idempotency_claim and idempotency_claim.replay_response:
         return idempotency_claim.replay_response
+    if idempotency_claim is None:
+        raise RuntimeError("GENERATION_IDEMPOTENCY_CLAIM_MISSING")
 
     # 1. 检查任务限制，获取 slot_id
     slot_id: str | None = None
@@ -190,6 +216,7 @@ async def generate_message(
             ctx=ctx,
             db=db,
             user_id=user_id,
+            request_id=idempotency_claim.request_id,
         )
         slot_handed_off = True
         idempotency_service.complete(idempotency_claim, response)
@@ -215,24 +242,48 @@ async def _do_generate_message(
     ctx: OrgCtx,
     db: ScopedDB,
     user_id: str,
+    request_id: str,
 ) -> GenerateResponse:
     """generate_message 的实际执行逻辑（拆分以支持 try/except 槽位释放）"""
 
-    # 1.5+2. 解析生成类型与请求位置上下文
     gen_type = await resolve_generation_context(request, body)
     requested_turn_id = str(uuid.uuid4())
-
-    # 3+4. 权限校验、图片积分预检和用户消息创建
     handler = get_handler(
         gen_type, db, org_id=ctx.org_id, user_id=user_id,
-        request_id=request.headers.get("X-Request-Id", ""),
-    )
+        request_id=request.headers.get("X-Request-Id", ""))
+    if gen_type == GenerationType.CHAT:
+        return await _do_generate_chat_message(
+            conversation_id=conversation_id, body=body, ctx=ctx, db=db,
+            user_id=user_id, request_id=request_id, handler=handler,
+        )
+    if gen_type == GenerationType.IMAGE:
+        _record_generation_feedback(db, user_id, body, gen_type, conversation_id)
+        return await prepare_and_start_image_generation(
+            db=db, handler=handler,
+            conversation_service=get_conversation_service(db),
+            conversation_id=conversation_id, user_id=user_id, org_id=ctx.org_id,
+            request_id=request_id, body=body,
+        )
+    if gen_type == GenerationType.IMAGE_ECOM:
+        _record_generation_feedback(db, user_id, body, gen_type, conversation_id)
+        return await prepare_and_start_ecom_generation(
+            db=db, handler=handler, conversation_service=get_conversation_service(db),
+            conversation_id=conversation_id, user_id=user_id, org_id=ctx.org_id,
+            request_id=request_id, body=body,
+        )
+    if gen_type == GenerationType.VIDEO:
+        _record_generation_feedback(db, user_id, body, gen_type, conversation_id)
+        return await prepare_and_start_video_generation(
+            db=db, handler=handler, conversation_service=get_conversation_service(db),
+            conversation_id=conversation_id, user_id=user_id, org_id=ctx.org_id,
+            request_id=request_id, body=body,
+        )
+
     handler, conversation, user_message = await prepare_generation_request(
         db=db, conversation_id=conversation_id, body=body, gen_type=gen_type,
         user_id=user_id, org_id=ctx.org_id, handler=handler,
         conversation_service=get_conversation_service(db),
-        create_user_message_fn=create_user_message,
-        turn_id=requested_turn_id,
+        create_user_message_fn=create_user_message, turn_id=requested_turn_id,
     )
 
     if body.params is None:
@@ -240,7 +291,6 @@ async def _do_generate_message(
     body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
 
-    # 5. 处理助手消息（根据操作类型）
     assistant_message_id, assistant_message = await prepare_assistant_message(
         db, conversation_id, body, gen_type,
     )
@@ -256,37 +306,16 @@ async def _do_generate_message(
     assistant_message.turn_id = turn_id
     assistant_message.reply_to_message_id = input_message_id
 
-    # 5.1 记录用户反馈信号（retry/regenerate = 用户对生成结果的隐式反馈）
-    if body.operation in (
-        MessageOperation.RETRY,
-        MessageOperation.REGENERATE,
-        MessageOperation.REGENERATE_SINGLE,
-    ):
-        _record_user_feedback_signal(
-            db=db,
-            user_id=user_id,
-            operation=body.operation.value,
-            model=body.model,
-            gen_type=gen_type.value,
-            original_message_id=body.original_message_id,
-            conversation_id=conversation_id,
-        )
-
-    # 6. 启动生成任务
+    _record_generation_feedback(db, user_id, body, gen_type, conversation_id)
     try:
         external_task_id = await start_generation_task(
-            db=db,
-            handler=handler,
+            db=db, handler=handler,
             assistant_message_id=assistant_message_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            content=body.content,
-            model=body.model,
-            params=body.params,
+            conversation_id=conversation_id, user_id=user_id,
+            content=body.content, model=body.model, params=body.params,
             client_task_id=body.client_task_id,
             placeholder_created_at=body.placeholder_created_at,
-            operation=body.operation,
-            input_message_id=input_message_id,
+            operation=body.operation, input_message_id=input_message_id,
             turn_id=turn_id,
         )
     except AppException as exc:
@@ -315,10 +344,7 @@ async def _do_generate_message(
         },
     )
 
-    # 7. 确定返回的 client_task_id（Handler 已保存到数据库）
     client_task_id = body.client_task_id or external_task_id
-
-    # 8. 返回结果
     return GenerateResponse(
         task_id=client_task_id,
         user_message=user_message,
@@ -326,6 +352,43 @@ async def _do_generate_message(
         operation=body.operation,
         generation_type=gen_type.value,
     )
+
+
+async def _do_generate_chat_message(
+    *,
+    conversation_id: str,
+    body: GenerateRequest,
+    ctx: OrgCtx,
+    db: ScopedDB,
+    user_id: str,
+    request_id: str,
+    handler,
+) -> GenerateResponse:
+    """校验 Web Chat 对话并进入统一原子准备链路。"""
+    conversation = await get_conversation_service(db).get_conversation(
+        conversation_id, user_id, ctx.org_id,
+    )
+    if body.params is None:
+        body.params = {}
+    body.params["_prefetched_summary"] = conversation.get("context_summary")
+    body.params["_org_id"] = ctx.org_id
+    _record_generation_feedback(
+        db, user_id, body, GenerationType.CHAT, conversation_id,
+    )
+    response = await prepare_and_start_chat_generation(
+        db=db, handler=handler, conversation_id=conversation_id,
+        user_id=user_id, org_id=ctx.org_id, request_id=request_id, body=body,
+    )
+    record_user_activity(
+        db, user_id=user_id, event_type="task_created", org_id=ctx.org_id,
+        source="web", resource_type="task", resource_id=response.task_id,
+        metadata={
+            "conversation_id": conversation_id,
+            "generation_type": GenerationType.CHAT.value,
+            "operation": body.operation.value,
+        },
+    )
+    return response
 
 
 # ============================================================

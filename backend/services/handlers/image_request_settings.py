@@ -96,3 +96,19 @@ def resolve_batch_item_kwargs(
     if item.get("resolution"):
         task_kwargs["resolution"] = item["resolution"]
     return task_kwargs, item.get("prompt", default_prompt)
+
+
+def resolve_prepared_batch(
+    metadata: Any,
+    num_images: int,
+) -> tuple[str, tuple[str, ...]]:
+    """验证图片专用准备元数据并返回稳定批次信息。"""
+    task_ids = getattr(metadata, "prepared_task_ids", ())
+    if not task_ids:
+        raise RuntimeError("IMAGE_PREPARED_TASKS_MISSING")
+    if len(task_ids) != num_images:
+        raise RuntimeError("IMAGE_PREPARED_TASK_COUNT_MISMATCH")
+    batch_id = getattr(metadata, "prepared_batch_id", None)
+    if not batch_id:
+        raise RuntimeError("IMAGE_PREPARED_BATCH_MISSING")
+    return batch_id, task_ids
