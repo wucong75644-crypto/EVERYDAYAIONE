@@ -88,11 +88,12 @@ export const WORKSPACE_MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 // ============================================================
 
 /** 列出 workspace 文件 */
-export function listWorkspace(path = '.'): Promise<WorkspaceListResponse> {
+export function listWorkspace(path = '.', signal?: AbortSignal): Promise<WorkspaceListResponse> {
   return request<WorkspaceListResponse>({
     method: 'GET',
     url: '/files/workspace/list',
     params: { path },
+    signal,
   });
 }
 

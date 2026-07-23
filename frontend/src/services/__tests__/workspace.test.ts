@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { searchWorkspace } from '../workspace';
+import { listWorkspace, searchWorkspace } from '../workspace';
 
 // Mock request 函数
 vi.mock('../api', () => ({
@@ -17,6 +17,26 @@ vi.mock('../api', () => ({
 import { request } from '../api';
 
 const mockRequest = vi.mocked(request);
+
+describe('listWorkspace', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('passes the cancellation signal to the directory request', async () => {
+    const controller = new AbortController();
+    mockRequest.mockResolvedValue({ path: '上传', items: [], total: 0 });
+
+    await listWorkspace('上传', controller.signal);
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      method: 'GET',
+      url: '/files/workspace/list',
+      params: { path: '上传' },
+      signal: controller.signal,
+    });
+  });
+});
 
 describe('searchWorkspace', () => {
   beforeEach(() => {
