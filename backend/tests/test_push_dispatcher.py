@@ -160,6 +160,7 @@ class TestDispatch:
         args = mock_wm.send_to_user.call_args
         assert args[0][0] == "user_1"
         assert args[0][1]["type"] == "scheduled_task_result"
+        assert args.kwargs["org_id"] == "org_1"
 
 
 # ════════════════════════════════════════════════════════

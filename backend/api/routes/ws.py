@@ -26,10 +26,10 @@ from schemas.websocket import (
     build_message_error,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
+from services.websocket_task_scope import find_task_in_connection_scope
 from core.database import get_db
 
 router = APIRouter(tags=["WebSocket"])
-
 
 async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
     """
@@ -90,8 +90,12 @@ async def websocket_endpoint(
                 verified_org_id = org_id
             else:
                 logger.warning(f"WS org_id rejected | user={user_id} | org_id={org_id}")
+                await websocket.close(code=4003, reason="Organization access denied")
+                return
         except Exception as e:
             logger.warning(f"WS org_id verify failed | error={e}")
+            await websocket.close(code=4003, reason="Organization verification failed")
+            return
 
     # 2. 注册连接
     conn_id = await ws_manager.connect(websocket, user_id, org_id=verified_org_id)
@@ -106,7 +110,7 @@ async def websocket_endpoint(
         while True:
             try:
                 data = await websocket.receive_json()
-                await _handle_message(conn_id, user_id, data)
+                await _handle_message(conn_id, user_id, verified_org_id, data)
             except json.JSONDecodeError:
                 await ws_manager.send_to_connection(conn_id, build_error(
                     "Invalid JSON",
@@ -145,7 +149,12 @@ async def _heartbeat_loop(conn_id: str, websocket: WebSocket):
         pass
 
 
-async def _handle_message(conn_id: str, user_id: str, data: dict):
+async def _handle_message(
+    conn_id: str,
+    user_id: str,
+    org_id: str | None,
+    data: dict,
+):
     """
     处理客户端消息
 
@@ -162,37 +171,9 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         await ws_manager.update_heartbeat(conn_id)
 
     elif msg_type == WSMessageType.SUBSCRIBE.value:
-        # 订阅任务
-        task_id = payload.get("task_id")
-
-        if task_id:
-            success = await ws_manager.subscribe_task(conn_id, task_id)
-
-            if success:
-                # 查询最新累积内容 + 结构化内容块（补全刷新期间的差异）
-                accumulated, accumulated_blocks = await _get_task_accumulated_state(task_id, user_id)
-
-                await ws_manager.send_to_connection(conn_id, build_subscribed(
-                    task_id=task_id,
-                    accumulated=accumulated or "",
-                    accumulated_blocks=accumulated_blocks or [],
-                    current_index=-1  # 不再使用索引
-                ))
-
-                logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')} | blocks={len(accumulated_blocks or [])}")
-
-                # 检查任务是否已完成（解决订阅晚于任务完成的问题）
-                await _check_and_send_completed_task(conn_id, task_id, user_id)
-            else:
-                await ws_manager.send_to_connection(conn_id, build_error(
-                    "Connection not found",
-                    code="CONN_NOT_FOUND"
-                ))
-        else:
-            await ws_manager.send_to_connection(conn_id, build_error(
-                "task_id is required",
-                code="MISSING_TASK_ID"
-            ))
+        await _handle_task_subscription(
+            conn_id, user_id, org_id, payload.get("task_id"),
+        )
 
     elif msg_type == WSMessageType.UNSUBSCRIBE.value:
         # 取消订阅
@@ -206,7 +187,9 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         tool_call_id = payload.get("tool_call_id")
         approved = payload.get("approved", False)
         if tool_call_id:
-            resolved = ws_manager.resolve_confirm(tool_call_id, bool(approved))
+            resolved = await ws_manager.resolve_confirm(
+                tool_call_id, user_id, org_id, bool(approved),
+            )
             logger.info(
                 f"Tool confirm response | conn={conn_id} | "
                 f"tool_call_id={tool_call_id} | approved={approved} | "
@@ -219,20 +202,10 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
             ))
 
     elif msg_type == WSMessageType.USER_STEER.value:
-        # 用户在 AI 执行中发送新消息（打断当前工具循环）
-        task_id = payload.get("task_id")
-        message = payload.get("message", "")
-        if task_id and message:
-            resolved = ws_manager.resolve_steer(task_id, message)
-            logger.info(
-                f"User steer | conn={conn_id} | task={task_id} | "
-                f"msg={message[:50]} | resolved={resolved}"
-            )
-        else:
-            await ws_manager.send_to_connection(conn_id, build_error(
-                "task_id and message are required",
-                code="MISSING_STEER_PARAMS",
-            ))
+        await _handle_user_steer(
+            conn_id, user_id, org_id,
+            payload.get("task_id"), payload.get("message", ""),
+        )
 
     elif msg_type == WSMessageType.FORM_SUBMIT.value:
         # 用户在聊天中提交表单（定时任务创建/修改等）
@@ -241,7 +214,7 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         conversation_id = payload.get("conversation_id", "")
         if form_type and form_data:
             asyncio.create_task(_handle_form_submit(
-                conn_id, user_id, form_type, form_data, conversation_id,
+                conn_id, user_id, org_id, form_type, form_data, conversation_id,
             ))
         else:
             await ws_manager.send_to_connection(conn_id, build_error(
@@ -253,9 +226,86 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
 
 
+async def _handle_task_subscription(
+    conn_id: str,
+    user_id: str,
+    org_id: str | None,
+    task_id: str | None,
+) -> None:
+    """验证任务租户边界后建立订阅。"""
+    if not task_id:
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "task_id is required", code="MISSING_TASK_ID",
+        ))
+        return
+
+    task = find_task_in_connection_scope(get_db(), task_id, user_id, org_id)
+    if not task:
+        logger.warning(
+            f"WS task scope rejected | conn={conn_id} | "
+            f"user={user_id} | org={org_id} | task={task_id}"
+        )
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "Task is not available in this tenant context",
+            code="TASK_SCOPE_MISMATCH",
+        ))
+        return
+
+    if not await ws_manager.subscribe_task(conn_id, task_id):
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "Connection not found", code="CONN_NOT_FOUND",
+        ))
+        return
+
+    accumulated, accumulated_blocks = _get_task_accumulated_state(task)
+    await ws_manager.send_to_connection(conn_id, build_subscribed(
+        task_id=task_id,
+        accumulated=accumulated or "",
+        accumulated_blocks=accumulated_blocks or [],
+        current_index=-1,
+    ))
+    logger.info(
+        f"Task subscribed | conn={conn_id} | task={task_id} | "
+        f"accumulated_len={len(accumulated or '')} | "
+        f"blocks={len(accumulated_blocks or [])}"
+    )
+    await _check_and_send_completed_task(conn_id, task_id, task)
+
+
+async def _handle_user_steer(
+    conn_id: str,
+    user_id: str,
+    org_id: str | None,
+    task_id: str | None,
+    message: str,
+) -> None:
+    """验证任务租户边界后处理执行中追加消息。"""
+    if not task_id or not message:
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "task_id and message are required",
+            code="MISSING_STEER_PARAMS",
+        ))
+        return
+
+    task = find_task_in_connection_scope(get_db(), task_id, user_id, org_id)
+    if not task:
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "Task is not available in this tenant context",
+            code="TASK_SCOPE_MISMATCH",
+        ))
+        return
+
+    resolved = ws_manager.resolve_steer(task_id, message, org_id=org_id)
+    logger.info(
+        f"User steer | conn={conn_id} | task={task_id} | "
+        f"msg={message[:50]} | resolved={resolved}"
+    )
+
+
 async def _handle_form_submit(
     conn_id: str,
     user_id: str,
+    org_id: str | None,
     form_type: str,
     form_data: Dict[str, Any],
     conversation_id: str,
@@ -265,17 +315,6 @@ async def _handle_form_submit(
     from services.scheduler.chat_task_manager import handle_form_submit
 
     try:
-        db = get_db()
-
-        # 查用户的 org_id
-        member = db.table("org_members") \
-            .select("org_id") \
-            .eq("user_id", user_id) \
-            .eq("status", "active") \
-            .limit(1) \
-            .execute()
-        org_id = member.data[0]["org_id"] if member.data else None
-
         if not org_id:
             await ws_manager.send_to_connection(conn_id, {
                 "type": WSMessageType.FORM_SUBMIT_RESULT.value,
@@ -285,7 +324,9 @@ async def _handle_form_submit(
             })
             return
 
-        result = await handle_form_submit(db, user_id, org_id, form_type, form_data)
+        result = await handle_form_submit(
+            get_db(), user_id, org_id, form_type, form_data,
+        )
 
         await ws_manager.send_to_connection(conn_id, {
             "type": WSMessageType.FORM_SUBMIT_RESULT.value,
@@ -308,7 +349,9 @@ async def _handle_form_submit(
         })
 
 
-async def _get_task_accumulated_state(task_id: str, user_id: str) -> Tuple[Optional[str], Optional[list]]:
+def _get_task_accumulated_state(
+    task: Dict[str, Any],
+) -> Tuple[Optional[str], Optional[list]]:
     """
     查询任务的累积内容和结构化内容块（用于 subscribe 时返回最新状态）
 
@@ -317,29 +360,18 @@ async def _get_task_accumulated_state(task_id: str, user_id: str) -> Tuple[Optio
     Returns:
         (accumulated_content, accumulated_blocks)
     """
-    try:
-        db = get_db()
-        for field in ["external_task_id", "client_task_id"]:
-            result = db.table("tasks").select(
-                "accumulated_content, accumulated_blocks"
-            ).eq(field, task_id).eq(
-                "user_id", user_id
-            ).eq("type", "chat").eq(
-                "status", "running"
-            ).maybe_single().execute()
-
-            if result and result.data:
-                content = result.data.get("accumulated_content")
-                blocks = result.data.get("accumulated_blocks")
-                if content or blocks:
-                    return content, blocks or []
+    if task.get("type") != "chat" or task.get("status") != "running":
         return None, None
-    except Exception as e:
-        logger.warning(f"Failed to get accumulated_state | task_id={task_id} | error={e}")
-        return None, None
+    content = task.get("accumulated_content")
+    blocks = task.get("accumulated_blocks")
+    return (content, blocks or []) if (content or blocks) else (None, None)
 
 
-async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
+async def _check_and_send_completed_task(
+    conn_id: str,
+    task_id: str,
+    task: Dict[str, Any],
+):
     """
     检查任务是否已完成，如果已完成则推送完成消息
 
@@ -349,14 +381,6 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
     解决问题：前端订阅时任务可能已完成，需要补发完成消息
     """
     try:
-        db = get_db()
-
-        # 1. 查询任务（支持 id 或 external_task_id）
-        task = await _find_task_by_any_id(db, task_id, user_id)
-        if not task:
-            logger.debug(f"Task not found for subscription check | task_id={task_id}")
-            return
-
         status = task.get("status")
         if status not in ["completed", "failed", "cancelled"]:
             logger.debug(f"Task not in final state | task_id={task_id} | status={status}")
@@ -375,7 +399,7 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
         )
 
         # 3. 查询消息（优先使用数据库中的消息）
-        message_data = await _find_message_by_id(db, message_id)
+        message_data = await _find_message_by_id(get_db(), message_id)
         if not message_data:
             # 如果消息不存在（极端情况），构建基础消息
             message_data = _build_fallback_message(task, message_id, conversation_id)
@@ -412,39 +436,6 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
 
     except Exception as e:
         logger.warning(f"Failed to check completed task | task={task_id} | error={e}")
-
-
-async def _find_task_by_any_id(db, task_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-    """
-    查询任务（支持 id、external_task_id 或 client_task_id）
-
-    查询优先级：
-    1. client_task_id（前端生成的 ID，用于乐观订阅）
-    2. external_task_id（KIE 等第三方 API 返回的 ID）
-    3. id（chat 任务的主键 ID）
-    """
-    # 1. 先尝试用 client_task_id 查询（乐观订阅场景）
-    result = db.table("tasks").select("*").eq(
-        "client_task_id", task_id
-    ).eq("user_id", user_id).maybe_single().execute()
-
-    if result and result.data:
-        return result.data
-
-    # 2. 再尝试用 external_task_id 查询（image/video 任务）
-    result = db.table("tasks").select("*").eq(
-        "external_task_id", task_id
-    ).eq("user_id", user_id).maybe_single().execute()
-
-    if result and result.data:
-        return result.data
-
-    # 3. 最后尝试用 id 查询（chat 任务）
-    result = db.table("tasks").select("*").eq(
-        "id", task_id
-    ).eq("user_id", user_id).maybe_single().execute()
-
-    return result.data if (result and result.data) else None
 
 
 async def _find_message_by_id(db, message_id: str) -> Optional[Dict[str, Any]]:
@@ -496,7 +487,6 @@ def _build_fallback_message(task: Dict[str, Any], message_id: str, conversation_
 
 
 # === 健康检查端点（用于负载均衡器检测 WebSocket 可用性）===
-
 @router.get("/ws/health")
 async def websocket_health():
     """WebSocket 服务健康检查"""

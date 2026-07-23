@@ -54,7 +54,7 @@ class ActorWebSink:
 
     async def start(self) -> None:
         self._websocket.register_steer_listener(
-            self._delivery.push_task_id,
+            self._delivery.push_task_id, self._delivery.org_id,
         )
         self._websocket.register_cancel_listener(
             self._delivery.push_task_id,
@@ -117,14 +117,16 @@ class ActorWebSink:
         )
 
     def take_steer(self) -> str | None:
-        return self._websocket.check_steer(self._delivery.push_task_id)
+        return self._websocket.check_steer(
+            self._delivery.push_task_id, self._delivery.org_id,
+        )
 
     def is_cancelled(self) -> bool:
         return self._websocket.is_cancelled(self._delivery.push_task_id)
 
     async def close(self) -> None:
         self._websocket.unregister_steer_listener(
-            self._delivery.push_task_id,
+            self._delivery.push_task_id, self._delivery.org_id,
         )
         self._websocket.unregister_cancel_listener(
             self._delivery.push_task_id,

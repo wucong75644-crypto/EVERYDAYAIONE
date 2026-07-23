@@ -43,13 +43,13 @@ class _WebSocket:
     async def send_to_task_or_user(self, task_id, user_id, message, org_id=None):
         self.messages.append((task_id, user_id, org_id, message))
 
-    def register_steer_listener(self, task_id):
+    def register_steer_listener(self, task_id, org_id=None):
         self.registered.append(task_id)
 
-    def check_steer(self, task_id):
+    def check_steer(self, task_id, org_id=None):
         return self.steer_messages.pop(task_id, None)
 
-    def unregister_steer_listener(self, task_id):
+    def unregister_steer_listener(self, task_id, org_id=None):
         self.unregistered.append(task_id)
 
     def register_cancel_listener(self, task_id):
@@ -63,19 +63,19 @@ class _WebSocket:
 
 
 class _FailingWebSocket:
-    def register_steer_listener(self, _task_id):
+    def register_steer_listener(self, _task_id, _org_id=None):
         return None
 
     def register_cancel_listener(self, _task_id):
         return None
 
-    def check_steer(self, _task_id):
+    def check_steer(self, _task_id, _org_id=None):
         return None
 
     def is_cancelled(self, _task_id):
         return False
 
-    def unregister_steer_listener(self, _task_id):
+    def unregister_steer_listener(self, _task_id, _org_id=None):
         return None
 
     def unregister_cancel_listener(self, _task_id):

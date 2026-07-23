@@ -284,7 +284,7 @@ class TestPhase3PostProcess:
             # mock ws_manager.check_steer: 第一个工具后处理时触发
             call_count = 0
 
-            def mock_check_steer(task_id):
+            def mock_check_steer(task_id, org_id=None):
                 nonlocal call_count
                 call_count += 1
                 # 第一次检查就触发

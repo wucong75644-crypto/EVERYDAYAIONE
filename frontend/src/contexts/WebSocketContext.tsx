@@ -13,6 +13,7 @@
 import { createContext, useContext, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useWebSocket, type WSMessageType, type WSMessage } from '../hooks/useWebSocket';
 import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
+import { useAuthStore } from '../stores/useAuthStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
 import {
   restoreTaskPlaceholders,
@@ -54,6 +55,7 @@ interface WebSocketProviderProps {
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const ws = useWebSocket();
+  const currentOrgId = useAuthStore((state) => state.currentOrgId);
   // 注意：不订阅整个 store（会导致每次 state 变化重建 handler）
   // handler 内部通过 useMessageStore.getState() 获取最新状态和方法
 
@@ -128,6 +130,19 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // Phase 1 结果缓存（供 Phase 2 使用）
   const restorationResultRef = useRef<RestorationResult | null>(null);
 
+  // 企业上下文变化后，旧连接的所有临时映射都必须失效。
+  useEffect(() => {
+    subscribedTasksRef.current.clear();
+    taskConversationMapRef.current.clear();
+    operationContextRef.current.clear();
+    chunkBufferRef.current.clear();
+    restorationResultRef.current = null;
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }, [currentOrgId]);
+
   // Phase 1：hydrate 完成后立即执行（不等 WS）
   // 使用 zustand subscribe 监听 hydrateComplete，避免空依赖 useEffect 的竞态
   useEffect(() => {
@@ -166,7 +181,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     });
     return unsub;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentOrgId]);
 
   // Phase 2：WS 就绪后，对 Phase 1 的任务执行 subscribe
   // 幂等：subscribedTasksRef 防止重复订阅

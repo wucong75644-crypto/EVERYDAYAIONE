@@ -119,7 +119,7 @@ class ProgressNotifyHook(LoopHook):
                 estimated_s=estimated_s,
             )
             await ws_manager.send_to_task_or_user(
-                ctx.task_id, ctx.user_id, msg,
+                ctx.task_id, ctx.user_id, msg, org_id=ctx.org_id,
             )
         except Exception as e:
             logger.debug(

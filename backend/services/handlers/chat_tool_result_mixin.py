@@ -187,6 +187,7 @@ class ChatToolResultMixin:
                 summary=summary,
                 turn=context.turn,
             ),
+            org_id=self.org_id,
         )
 
     async def _finish_tool_step(

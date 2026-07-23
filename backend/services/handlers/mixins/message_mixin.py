@@ -9,7 +9,7 @@ MessageMixin - 消息处理
 
 import asyncio
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 
 from loguru import logger
 
@@ -17,9 +17,9 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
-    MessageRole,
     MessageStatus,
 )
+from .message_persistence_mixin import MessagePersistenceMixin
 
 
 async def _release_task_limit(task: Dict[str, Any], conversation_id: str) -> None:
@@ -28,7 +28,7 @@ async def _release_task_limit(task: Dict[str, Any], conversation_id: str) -> Non
     await release_task_slot(task)
 
 
-class MessageMixin:
+class MessageMixin(MessagePersistenceMixin):
     """
     消息处理 Mixin
 
@@ -37,222 +37,6 @@ class MessageMixin:
     - 完成处理（积分 + 消息 + WebSocket + 任务状态）
     - 错误处理（退回积分 + 错误消息 + WebSocket + 任务状态）
     """
-
-    def _upsert_assistant_message(
-        self,
-        message_id: str,
-        conversation_id: str,
-        content_dicts: List[Dict[str, Any]],
-        status: MessageStatus,
-        credits_cost: int,
-        client_task_id: str,
-        generation_type: str,
-        model_id: str,
-        is_error: bool = False,
-        error_dict: Optional[Dict[str, str]] = None,
-        extra_generation_params: Optional[Dict[str, Any]] = None,
-        turn_id: Optional[str] = None,
-        reply_to_message_id: Optional[str] = None,
-    ) -> tuple[Message, Dict[str, Any]]:
-        """
-        通用的助手消息 upsert 方法
-
-        Args:
-            message_id: 消息 ID
-            conversation_id: 对话 ID
-            content_dicts: 内容字典列表
-            status: 消息状态
-            credits_cost: 积分消耗
-            client_task_id: 客户端任务 ID
-            generation_type: 生成类型（chat/image/video）
-            model_id: 模型 ID
-            is_error: 是否为错误消息
-            error_dict: 错误详情（is_error=True 时提供）
-            extra_generation_params: 额外的生成参数（如 aspect_ratio），合并到 generation_params
-
-        Returns:
-            (Message 对象, 原始字典数据)
-        """
-        # 1. 构建消息数据
-        # 先从现有 placeholder 拿 generation_params（如果存在），合并新值避免丢失
-        # 场景：chat task 启动时预创建 placeholder（含 _render 等前端渲染参数），
-        # on_complete upsert 时如果直接重新构造 gen_params 会覆盖丢失。
-        existing_gen_params: Dict[str, Any] = {}
-        try:
-            existing = (
-                self.db.table("messages")
-                .select("generation_params")
-                .eq("id", message_id)
-                .maybe_single()
-                .execute()
-            )
-            if existing and existing.data:
-                _existing_gp = existing.data.get("generation_params") or {}
-                if isinstance(_existing_gp, dict):
-                    existing_gen_params = _existing_gp
-        except Exception:
-            # 查不到不影响主流程，按新建处理
-            pass
-
-        gen_params: Dict[str, Any] = {**existing_gen_params}
-        gen_params["type"] = generation_type
-        gen_params["model"] = model_id
-        if extra_generation_params:
-            gen_params.update(extra_generation_params)
-
-        # DB CHECK 约束：pg_column_size(generation_params) < 10240
-        # 超限时逐步裁剪 tool_digest，防止写入被拒
-        import json as _json
-        _GP_MAX = 8192  # 留 2KB 余量给 JSONB TOAST 开销
-        _gp_size = len(_json.dumps(gen_params, ensure_ascii=False).encode())
-        if _gp_size > _GP_MAX:
-            digest = gen_params.get("tool_digest")
-            if digest and isinstance(digest, dict):
-                digest.pop("tools", None)
-                _gp_size = len(_json.dumps(gen_params, ensure_ascii=False).encode())
-            if _gp_size > _GP_MAX:
-                gen_params = {"type": generation_type, "model": model_id}
-                logger.warning(f"generation_params truncated | original={_gp_size}B")
-
-        message_data = {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "role": MessageRole.ASSISTANT.value,
-            "content": content_dicts,
-            "status": status.value,
-            "credits_cost": credits_cost,
-            "task_id": client_task_id,
-            "generation_params": gen_params,
-        }
-        if turn_id:
-            message_data["turn_id"] = turn_id
-        if reply_to_message_id:
-            message_data["reply_to_message_id"] = reply_to_message_id
-
-        if is_error:
-            message_data["is_error"] = True
-
-        # 2. Upsert 到数据库
-        upsert_result = self.db.table("messages").upsert(
-            message_data, on_conflict="id"
-        ).execute()
-
-        if not upsert_result or not upsert_result.data:
-            logger.error(f"Failed to upsert message | message_id={message_id}")
-            raise Exception("创建/更新消息失败")
-
-        msg_data = upsert_result.data[0]
-
-        # 3. 构建 Message 对象（注意：Message 类没有 is_error 字段）
-        from schemas.message import MessageError
-
-        message = Message(
-            id=msg_data["id"],
-            conversation_id=msg_data["conversation_id"],
-            role=MessageRole(msg_data["role"]),
-            content=content_dicts,
-            status=status,
-            error=MessageError(**error_dict) if error_dict else None,
-            created_at=datetime.fromisoformat(
-                msg_data["created_at"].replace("Z", "+00:00")
-            ),
-        )
-
-        return message, msg_data
-
-    def _get_task_context(self, task_id: str) -> Dict[str, Any]:
-        """获取任务基本信息，不存在则抛异常"""
-        task = self._get_task(task_id)
-        if not task:
-            logger.error(f"Task not found | task_id={task_id}")
-            raise Exception("任务不存在")
-        return task
-
-    def _check_idempotency(
-        self, task: Dict[str, Any], task_id: str
-    ) -> Optional[Message]:
-        """幂等性检查：任务已终态则返回已有消息，否则返回 None
-
-        特殊情况：用户取消（failed + error_message='用户取消了任务'）时，
-        cancel API 只改了 task status，消息内容可能还是空的占位符。
-        此时应允许 on_complete 写入部分结果，而非跳过。
-        """
-        if task.get('status') not in ('completed', 'failed', 'cancelled'):
-            return None
-
-        message_id = task["placeholder_message_id"]
-
-        # 用户取消场景：cancel API + chat_handler persist_interrupt_anchor 已经
-        # 把 message 写到 DB（status='interrupted' + cancelled tool_step + marker），
-        # on_complete 绝对不能再 upsert，否则会覆盖中断状态导致 LLM 失忆。
-        # 兼容两种 task 状态：
-        # - 'cancelled'（chat_handler persist 成功写 tasks 之后）
-        # - 'failed' + error_message='用户取消了任务'（cancel API 写、persist 未跑完时）
-        # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
-        is_user_cancelled = (
-            task.get('status') == 'cancelled'
-            or (
-                task.get('status') == 'failed'
-                and task.get('error_message') == '用户取消了任务'
-            )
-        )
-        if is_user_cancelled:
-            logger.info(
-                f"Cancel-triggered task, skipping on_complete persistence | "
-                f"task_id={task_id} | message_id={message_id} | "
-                f"status={task.get('status')}"
-            )
-            # 返回 stub Message 让 _handle_complete_common 早返回。
-            # 不查 DB —— OrgScopedDB org_id 过滤可能误判为 missing 导致 data-inconsistency 兜底
-            # 重新跑 _upsert，又覆盖了中断状态（这是线上观察到的 bug）。
-            return Message(
-                id=message_id,
-                conversation_id=task["conversation_id"],
-                role=MessageRole.ASSISTANT,
-                content=[],
-                status=MessageStatus.FAILED,
-                error=None,
-                created_at=datetime.now(timezone.utc),
-            )
-
-        logger.warning(
-            f"Task already in terminal state, skipping duplicate processing | "
-            f"task_id={task_id} | status={task.get('status')}"
-        )
-        try:
-            existing_msg = (
-                self.db.table("messages").select("*")
-                .eq("id", message_id).maybe_single().execute()
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to fetch existing message | task_id={task_id} | error={e}"
-            )
-            raise Exception(f"无法读取已有消息: {e}")
-
-        if existing_msg and existing_msg.data:
-            from schemas.message import MessageError
-            error_obj = None
-            if existing_msg.data.get("is_error"):
-                error_obj = MessageError(code="UNKNOWN", message="任务失败")
-            return Message(
-                id=existing_msg.data["id"],
-                conversation_id=existing_msg.data["conversation_id"],
-                role=MessageRole(existing_msg.data["role"]),
-                content=existing_msg.data["content"],
-                status=MessageStatus(existing_msg.data.get("status", "completed")),
-                error=error_obj,
-                created_at=datetime.fromisoformat(
-                    existing_msg.data["created_at"].replace("Z", "+00:00")
-                ),
-            )
-
-        # 数据不一致：任务已终态但消息不存在，允许继续重建
-        logger.critical(
-            f"Data inconsistency: task terminal but message missing | "
-            f"task_id={task_id} | message_id={message_id}"
-        )
-        return None
 
     @staticmethod
     def _calc_task_elapsed_ms(task: Dict[str, Any]) -> Optional[int]:
@@ -284,12 +68,18 @@ class MessageMixin:
         return extra
 
     async def _push_ws_message(
-        self, client_task_id: str, user_id: str, ws_msg: Dict[str, Any]
+        self,
+        client_task_id: str,
+        user_id: str,
+        org_id: str | None,
+        ws_msg: Dict[str, Any],
     ) -> None:
         """推送 WebSocket 消息（Chat 走 task 订阅，Media 走 user 投递）"""
         from services.websocket_manager import ws_manager
 
-        await ws_manager.send_to_task_or_user(client_task_id, user_id, ws_msg)
+        await ws_manager.send_to_task_or_user(
+            client_task_id, user_id, ws_msg, org_id=org_id,
+        )
 
     def _close_task_turn(
         self,
@@ -369,7 +159,9 @@ class MessageMixin:
             message=msg_data,
             credits_consumed=actual_credits,
         )
-        await self._push_ws_message(client_task_id, task["user_id"], done_msg)
+        await self._push_ws_message(
+            client_task_id, task["user_id"], task.get("org_id"), done_msg,
+        )
 
         # 更新任务状态 + 对话预览（复用已查询的 task 数据，省去重复 SELECT）
         self._complete_task(task_id, task=task)
@@ -422,6 +214,7 @@ class MessageMixin:
                 self._generate_suggestions(
                     conversation_id=conversation_id,
                     user_id=task["user_id"],
+                    org_id=task.get("org_id"),
                     user_query=self._extract_user_query(task),
                     ai_reply=self._extract_text_from_content(content_dicts),
                 )
@@ -498,6 +291,7 @@ class MessageMixin:
         self,
         conversation_id: str,
         user_id: str,
+        org_id: str | None,
         user_query: str,
         ai_reply: str,
     ) -> None:
@@ -515,7 +309,7 @@ class MessageMixin:
             from services.websocket_manager import ws_manager
 
             ws_msg = build_suggestions_ready(conversation_id, suggestions)
-            await ws_manager.send_to_user(user_id, ws_msg)
+            await ws_manager.send_to_user(user_id, ws_msg, org_id=org_id)
 
             logger.debug(
                 f"Suggestions sent | conversation_id={conversation_id} | "
@@ -592,7 +386,9 @@ class MessageMixin:
                 error_code=error_code,
                 error_message=error_message,
             )
-            await self._push_ws_message(client_task_id, task["user_id"], error_msg)
+            await self._push_ws_message(
+                client_task_id, task["user_id"], task.get("org_id"), error_msg,
+            )
         except Exception as ws_err:
             logger.warning(f"Error WS push failed | task_id={task_id} | error={ws_err}")
 

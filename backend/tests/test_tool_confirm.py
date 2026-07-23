@@ -38,45 +38,76 @@ class TestWebSocketManagerConfirm:
         """用户确认 → wait_for_confirm 返回 True"""
         async def approve_later():
             await asyncio.sleep(0.05)
-            manager.resolve_confirm("tc_001", True)
+            await manager.resolve_confirm("tc_001", "user-1", "org-1", True)
 
         asyncio.create_task(approve_later())
-        result = await manager.wait_for_confirm("tc_001", timeout=5.0)
+        result = await manager.wait_for_confirm(
+            "tc_001", "user-1", "org-1", timeout=5.0,
+        )
         assert result is True
         # 确认后 pending 已清理
-        assert "tc_001" not in manager._pending_confirms
+        assert ("tc_001", "user-1", "org-1") not in manager._pending_confirms
 
     @pytest.mark.asyncio
     async def test_confirm_rejected(self, manager):
         """用户拒绝 → wait_for_confirm 返回 False"""
         async def reject_later():
             await asyncio.sleep(0.05)
-            manager.resolve_confirm("tc_002", False)
+            await manager.resolve_confirm("tc_002", "user-1", None, False)
 
         asyncio.create_task(reject_later())
-        result = await manager.wait_for_confirm("tc_002", timeout=5.0)
+        result = await manager.wait_for_confirm(
+            "tc_002", "user-1", None, timeout=5.0,
+        )
         assert result is False
 
     @pytest.mark.asyncio
     async def test_confirm_timeout(self, manager):
         """超时 → 返回 False"""
-        result = await manager.wait_for_confirm("tc_003", timeout=0.1)
+        result = await manager.wait_for_confirm(
+            "tc_003", "user-1", "org-1", timeout=0.1,
+        )
         assert result is False
         # 超时后 pending 已清理
-        assert "tc_003" not in manager._pending_confirms
+        assert ("tc_003", "user-1", "org-1") not in manager._pending_confirms
 
-    def test_resolve_missing_tool_call_id(self, manager):
+    @pytest.mark.asyncio
+    async def test_resolve_missing_tool_call_id(self, manager):
         """resolve 不存在的 tool_call_id → 返回 False"""
-        result = manager.resolve_confirm("nonexistent", True)
+        result = await manager.resolve_confirm(
+            "nonexistent", "user-1", "org-1", True,
+        )
         assert result is False
 
     @pytest.mark.asyncio
     async def test_resolve_after_timeout_is_noop(self, manager):
         """超时后再 resolve → 不报错（幂等）"""
-        await manager.wait_for_confirm("tc_004", timeout=0.05)
+        await manager.wait_for_confirm(
+            "tc_004", "user-1", "org-1", timeout=0.05,
+        )
         # 此时 pending 已清理，resolve 应返回 False 但不报错
-        result = manager.resolve_confirm("tc_004", True)
+        result = await manager.resolve_confirm(
+            "tc_004", "user-1", "org-1", True,
+        )
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_same_tool_call_id_is_isolated_by_user_and_org(self, manager):
+        wait_task = asyncio.create_task(manager.wait_for_confirm(
+            "tc_shared", "user-1", "org-a", timeout=1.0,
+        ))
+        await asyncio.sleep(0)
+
+        assert await manager.resolve_confirm(
+            "tc_shared", "user-2", "org-a", True,
+        ) is False
+        assert await manager.resolve_confirm(
+            "tc_shared", "user-1", "org-b", True,
+        ) is False
+        assert await manager.resolve_confirm(
+            "tc_shared", "user-1", "org-a", True,
+        ) is True
+        assert await wait_task is True
 
 
 # ════════════════════════════════════════════════════════

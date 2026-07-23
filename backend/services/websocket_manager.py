@@ -15,12 +15,13 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 from fastapi import WebSocket
 from loguru import logger
 
 from services.cancel_gate import CancelManager
+from services.websocket_interactions import WebSocketInteractionMixin
 from services.websocket_redis import RedisPubSubMixin
 
 
@@ -41,10 +42,10 @@ class Connection:
     org_id: str | None = None
     connected_at: float = field(default_factory=time.time)
     last_heartbeat: float = field(default_factory=time.time)
-    subscribed_tasks: Set[str] = field(default_factory=set)
+    subscribed_tasks: Set[Tuple[str, Optional[str]]] = field(default_factory=set)
 
 
-class WebSocketManager(RedisPubSubMixin):
+class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
     """
     WebSocket 连接管理器（分布式版）
 
@@ -56,19 +57,11 @@ class WebSocketManager(RedisPubSubMixin):
     def __init__(self):
         # 本地连接管理
         self._connections: Dict[str, Dict[str, Connection]] = {}
-        self._task_subscribers: Dict[str, Set[str]] = {}
+        self._task_subscribers: Dict[Tuple[str, Optional[str]], Set[str]] = {}
         self._conn_index: Dict[str, Connection] = {}
         self._lock = asyncio.Lock()
 
-        # 工具确认等待机制（Phase 3 B5）
-        # key = tool_call_id → (Event, approved: bool | None)
-        self._pending_confirms: Dict[str, Tuple[asyncio.Event, List]] = {}
-
-        # 用户打断机制（Steer）
-        # key = task_id → Event（打断信号）
-        self._steer_signals: Dict[str, asyncio.Event] = {}
-        # key = task_id → str（打断消息内容）
-        self._steer_messages: Dict[str, str] = {}
+        self._init_interaction_state()
 
         # 用户取消机制（Cancel）— 整合 asyncio.Event 信号 + WS 闸门
         # 详见 docs/document/TECH_用户中断与恢复机制.md §13.2 / §四.5
@@ -135,11 +128,11 @@ class WebSocketManager(RedisPubSubMixin):
             if not self._connections[user_id]:
                 del self._connections[user_id]
 
-        for task_id in list(connection.subscribed_tasks):
-            if task_id in self._task_subscribers:
-                self._task_subscribers[task_id].discard(conn_id)
-                if not self._task_subscribers[task_id]:
-                    del self._task_subscribers[task_id]
+        for task_scope in list(connection.subscribed_tasks):
+            if task_scope in self._task_subscribers:
+                self._task_subscribers[task_scope].discard(conn_id)
+                if not self._task_subscribers[task_scope]:
+                    del self._task_subscribers[task_scope]
 
         return connection
 
@@ -172,10 +165,9 @@ class WebSocketManager(RedisPubSubMixin):
             if not connection:
                 return False
 
-            if task_id not in self._task_subscribers:
-                self._task_subscribers[task_id] = set()
-            self._task_subscribers[task_id].add(conn_id)
-            connection.subscribed_tasks.add(task_id)
+            task_scope = (task_id, connection.org_id)
+            self._task_subscribers.setdefault(task_scope, set()).add(conn_id)
+            connection.subscribed_tasks.add(task_scope)
 
             return True
 
@@ -184,12 +176,12 @@ class WebSocketManager(RedisPubSubMixin):
         async with self._lock:
             connection = self._conn_index.get(conn_id)
             if connection:
-                connection.subscribed_tasks.discard(task_id)
-
-            if task_id in self._task_subscribers:
-                self._task_subscribers[task_id].discard(conn_id)
-                if not self._task_subscribers[task_id]:
-                    del self._task_subscribers[task_id]
+                task_scope = (task_id, connection.org_id)
+                connection.subscribed_tasks.discard(task_scope)
+                if task_scope in self._task_subscribers:
+                    self._task_subscribers[task_scope].discard(conn_id)
+                    if not self._task_subscribers[task_scope]:
+                        del self._task_subscribers[task_scope]
 
     # ================================================================
     # 消息发送（本地投递 + Redis 跨进程投递）
@@ -215,11 +207,7 @@ class WebSocketManager(RedisPubSubMixin):
         self, user_id: str, message: Dict[str, Any],
         org_id: str | None = None,
     ):
-        """发送消息到用户的连接（按 org 过滤，本地 + 跨进程）
-
-        Args:
-            org_id: 传入时只发给该 org 的连接；None 时发给所有连接（向后兼容）
-        """
+        """仅发送到用户在精确企业上下文中的连接；None 表示个人空间。"""
         connections = self._connections.get(user_id, {})
 
         logger.debug(
@@ -229,7 +217,7 @@ class WebSocketManager(RedisPubSubMixin):
         )
 
         for conn_id, conn in list(connections.items()):
-            if org_id is not None and getattr(conn, "org_id", None) != org_id:
+            if conn.org_id != org_id:
                 continue
             await self.send_to_connection(conn_id, message)
 
@@ -241,11 +229,7 @@ class WebSocketManager(RedisPubSubMixin):
         message: Dict[str, Any],
         org_id: str | None = None,
     ) -> int:
-        """发送消息到任务的所有订阅者（本地 + 跨进程）。
-
-        Args:
-            org_id: 用于闸门复合 key 匹配（可选向后兼容）
-        """
+        """发送到任务在精确企业上下文中的订阅者；None 表示个人空间。"""
         # === Phase 1: WS 闸门 ===
         if self.is_in_cancelled_gate(task_id, org_id):
             logger.debug(
@@ -254,7 +238,7 @@ class WebSocketManager(RedisPubSubMixin):
             )
             return 0
 
-        subscribers = self._task_subscribers.get(task_id, set())
+        subscribers = self._task_subscribers.get((task_id, org_id), set())
 
         logger.debug(
             f"send_to_task_subscribers | task={task_id} | "
@@ -295,7 +279,7 @@ class WebSocketManager(RedisPubSubMixin):
             )
             return
 
-        local_subscribers = self._task_subscribers.get(task_id, set())
+        local_subscribers = self._task_subscribers.get((task_id, org_id), set())
         if local_subscribers:
             logger.info(
                 f"send_to_task_or_user | task={task_id} | "
@@ -310,7 +294,9 @@ class WebSocketManager(RedisPubSubMixin):
                     f"send_to_task_or_user | task={task_id} | "
                     f"path=local_user | user={user_id}"
                 )
-                for conn_id in list(local_conns.keys()):
+                for conn_id, connection in list(local_conns.items()):
+                    if connection.org_id != org_id:
+                        continue
                     await self.send_to_connection(conn_id, message)
 
         await self._publish("user", user_id, message, org_id=org_id)
@@ -328,93 +314,6 @@ class WebSocketManager(RedisPubSubMixin):
             await self.send_to_connection(conn_id, message)
 
         await self._publish("broadcast", "", message, org_id=org_id)
-
-    # ================================================================
-    # 工具确认等待（Phase 3 B5）
-    # ================================================================
-
-    async def wait_for_confirm(
-        self, tool_call_id: str, timeout: float = 60.0,
-    ) -> bool:
-        """等待用户确认写操作。
-
-        Args:
-            tool_call_id: 工具调用 ID（唯一标识）
-            timeout: 超时秒数
-
-        Returns:
-            True = 用户确认执行，False = 用户拒绝或超时
-        """
-        event = asyncio.Event()
-        result_holder: List = [None]  # [bool | None]
-        self._pending_confirms[tool_call_id] = (event, result_holder)
-        try:
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-            return result_holder[0] is True
-        except asyncio.TimeoutError:
-            logger.info(
-                f"Tool confirm timeout | tool_call_id={tool_call_id}"
-            )
-            return False
-        finally:
-            self._pending_confirms.pop(tool_call_id, None)
-
-    def resolve_confirm(self, tool_call_id: str, approved: bool) -> bool:
-        """前端确认/拒绝后调用，唤醒等待方。
-
-        Returns:
-            True = 找到并唤醒了等待方，False = 无匹配（已超时或不存在）
-        """
-        pending = self._pending_confirms.get(tool_call_id)
-        if not pending:
-            logger.warning(
-                f"Tool confirm resolve miss | tool_call_id={tool_call_id}"
-            )
-            return False
-        event, result_holder = pending
-        result_holder[0] = approved
-        event.set()
-        return True
-
-    # ================================================================
-    # 用户打断（Steer）— 参考 Claude Code steering 队列
-    # ================================================================
-
-    def register_steer_listener(self, task_id: str) -> None:
-        """注册打断监听（工具循环开始时调用）"""
-        self._steer_signals[task_id] = asyncio.Event()
-
-    def check_steer(self, task_id: str) -> str | None:
-        """非阻塞检查是否有打断信号（每个工具执行完后调用）
-
-        Returns:
-            打断消息文本，无打断时返回 None
-        """
-        event = self._steer_signals.get(task_id)
-        if event and event.is_set():
-            msg = self._steer_messages.pop(task_id, None)
-            self._steer_signals.pop(task_id, None)
-            return msg
-        return None
-
-    def resolve_steer(self, task_id: str, message: str) -> bool:
-        """前端打断消息到达时调用，唤醒等待方
-
-        Returns:
-            True = 找到并唤醒了监听方，False = 无匹配
-        """
-        self._steer_messages[task_id] = message
-        event = self._steer_signals.get(task_id)
-        if event:
-            event.set()
-            return True
-        logger.warning(f"Steer resolve miss | task_id={task_id}")
-        return False
-
-    def unregister_steer_listener(self, task_id: str) -> None:
-        """清理打断监听（工具循环结束时调用）"""
-        self._steer_signals.pop(task_id, None)
-        self._steer_messages.pop(task_id, None)
 
     # ================================================================
     # 用户取消（Cancel）— 转发到 CancelManager（services/cancel_gate.py）

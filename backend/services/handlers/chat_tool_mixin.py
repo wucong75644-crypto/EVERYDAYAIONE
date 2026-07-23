@@ -249,9 +249,10 @@ class ChatToolMixin(ChatToolResultMixin):
                 description=f"AI 要执行写操作: {tc['name']}",
                 safety_level=safety.value,
             ),
+            org_id=self.org_id,
         )
         approved = await ws_manager.wait_for_confirm(
-            tc["id"], timeout=60.0,
+            tc["id"], user_id, self.org_id, timeout=60.0,
         )
         if approved:
             return args
@@ -284,6 +285,7 @@ class ChatToolMixin(ChatToolResultMixin):
                     message_id=message_id,
                     block=_step_update,
                 ),
+                org_id=self.org_id,
             )
         except Exception as e:
             logger.warning(f"tool_step update push failed | tc={tool_call_id} | {e}")

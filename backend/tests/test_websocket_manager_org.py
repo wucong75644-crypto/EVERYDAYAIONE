@@ -3,7 +3,7 @@ WebSocket send_to_user org_id 过滤测试
 
 验证多租户场景下：
 - send_to_user(org_id=X) 只发给该 org 的连接
-- send_to_user(org_id=None) 发给所有连接（向后兼容）
+- send_to_user(org_id=None) 只发给个人空间连接
 """
 
 import sys
@@ -65,10 +65,12 @@ class TestSendToUserOrgFilter:
         self.manager.send_to_connection.assert_called_once_with("conn_b", {"type": "test"})
 
     @pytest.mark.asyncio
-    async def test_no_org_sends_to_all(self):
-        """不指定 org_id 发给所有连接（向后兼容）"""
+    async def test_no_org_sends_to_personal_only(self):
+        """org_id=None 只发给个人空间连接。"""
         await self.manager.send_to_user("user1", {"type": "test"})
-        assert self.manager.send_to_connection.call_count == 3
+        self.manager.send_to_connection.assert_called_once_with(
+            "conn_p", {"type": "test"},
+        )
 
     @pytest.mark.asyncio
     async def test_nonexistent_org_sends_nothing(self):
@@ -95,3 +97,52 @@ class TestSendToUserOrgFilter:
         self.manager._publish.assert_called_once_with(
             "user", "user1", {"type": "message_chunk"}, org_id=ORG_A,
         )
+
+    @pytest.mark.asyncio
+    async def test_task_subscribers_are_partitioned_by_org(self):
+        """相同 task_id 的本地订阅按 org_id 使用复合键隔离。"""
+        self.manager._task_subscribers = {
+            ("task-1", ORG_A): {"conn_a"},
+            ("task-1", ORG_B): {"conn_b"},
+        }
+
+        await self.manager.send_to_task_subscribers(
+            "task-1", {"type": "message_chunk"}, org_id=ORG_A,
+        )
+
+        self.manager.send_to_connection.assert_called_once_with(
+            "conn_a", {"type": "message_chunk"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_task_or_user_fallback_is_partitioned_by_org(self):
+        """无本地订阅时，用户兜底也只能命中目标 org。"""
+        await self.manager.send_to_task_or_user(
+            "task-1", "user1", {"type": "message_chunk"}, org_id=ORG_B,
+        )
+
+        self.manager.send_to_connection.assert_called_once_with(
+            "conn_b", {"type": "message_chunk"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_subscribe_and_unsubscribe_use_composite_task_scope(self):
+        """订阅生命周期始终使用连接自身的 org_id 构造复合键。"""
+        from services.websocket_manager import Connection
+
+        connection = Connection(
+            websocket=MagicMock(),
+            user_id="user1",
+            conn_id="conn_a",
+            org_id=ORG_A,
+        )
+        self.manager._conn_index["conn_a"] = connection
+
+        assert await self.manager.subscribe_task("conn_a", "task-1") is True
+        assert self.manager._task_subscribers == {
+            ("task-1", ORG_A): {"conn_a"},
+        }
+
+        await self.manager.unsubscribe_task("conn_a", "task-1")
+        assert self.manager._task_subscribers == {}
+        assert connection.subscribed_tasks == set()

@@ -126,6 +126,7 @@ function isAuthenticated(): boolean {
 // === Hook 实现 ===
 
 export function useWebSocket(): UseWebSocketReturn {
+  const currentOrgId = useAuthStore((state) => state.currentOrgId);
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<WSMessageType, Set<MessageHandler>>>(new Map());
   const reconnectAttemptsRef = useRef(0);
@@ -238,7 +239,7 @@ export function useWebSocket(): UseWebSocketReturn {
     cleanup();
     setConnectionState('connecting');
 
-    const orgId = localStorage.getItem('current_org_id');
+    const orgId = currentOrgId;
     const orgParam = orgId ? `&org_id=${encodeURIComponent(orgId)}` : '';
     const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}${orgParam}`;
     logger.info('ws:connection', 'Connecting', { url: wsUrl.replace(/token=.*/, 'token=***') });
@@ -349,7 +350,14 @@ export function useWebSocket(): UseWebSocketReturn {
         logger.error('ws:message', 'Message parse error', error);
       }
     };
-  }, [cleanup, startHeartbeat, getReconnectDelay, dispatchMessage, handleServerRestart]);
+  }, [
+    cleanup,
+    currentOrgId,
+    startHeartbeat,
+    getReconnectDelay,
+    dispatchMessage,
+    handleServerRestart,
+  ]);
 
   // 更新 connectRef，供 handleServerRestart 使用（避免渲染期间修改 ref）
   useLayoutEffect(() => {
@@ -446,6 +454,11 @@ export function useWebSocket(): UseWebSocketReturn {
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, []);
+
+  // 企业上下文切换时，禁止把旧租户断线期间排队的订阅带入新连接。
+  useEffect(() => {
+    pendingSubscriptionsRef.current.clear();
+  }, [currentOrgId]);
 
   // 监听认证状态变化（Zustand 状态驱动，同 tab 登录/退出也能感知）
   useEffect(() => {

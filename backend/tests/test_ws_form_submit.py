@@ -1,7 +1,7 @@
 """WS form_submit 处理单测
 
 覆盖 api/routes/ws.py 中的 _handle_form_submit：
-- org_id 查找成功/失败
+- 使用连接已验证的 org_id
 - handle_form_submit 调用 + 结果回传
 - 异常捕获 + 错误回传
 """
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 @patch("api.routes.ws.ws_manager")
 @patch("api.routes.ws.get_db")
 async def test_form_submit_success(mock_get_db, mock_ws):
-    """正常路径：查到 org_id → 调用 handle_form_submit → 回传成功"""
+    """正常路径：使用连接绑定 org_id 调用并回传成功。"""
     from api.routes.ws import _handle_form_submit
 
     db = MagicMock()
@@ -31,7 +31,7 @@ async def test_form_submit_success(mock_get_db, mock_ws):
         return_value={"success": True, "message": "✅ 已创建"},
     ):
         await _handle_form_submit(
-            "conn-1", "user-1", "scheduled_task_create",
+            "conn-1", "user-1", "org-123", "scheduled_task_create",
             {"name": "日报", "prompt": "推日报"}, "conv-1",
         )
 
@@ -48,7 +48,7 @@ async def test_form_submit_success(mock_get_db, mock_ws):
 @patch("api.routes.ws.ws_manager")
 @patch("api.routes.ws.get_db")
 async def test_form_submit_no_org(mock_get_db, mock_ws):
-    """用户不属于任何企业 → 返回错误"""
+    """散客连接不能提交企业表单。"""
     from api.routes.ws import _handle_form_submit
 
     db = MagicMock()
@@ -61,7 +61,8 @@ async def test_form_submit_no_org(mock_get_db, mock_ws):
     mock_ws.send_to_connection = AsyncMock()
 
     await _handle_form_submit(
-        "conn-1", "user-1", "scheduled_task_create", {"name": "x"}, "conv-1",
+        "conn-1", "user-1", None,
+        "scheduled_task_create", {"name": "x"}, "conv-1",
     )
 
     msg = mock_ws.send_to_connection.call_args[0][1]
@@ -92,7 +93,8 @@ async def test_form_submit_exception(mock_get_db, mock_ws):
         side_effect=Exception("DB connection lost"),
     ):
         await _handle_form_submit(
-            "conn-1", "user-1", "scheduled_task_create", {}, "conv-1",
+            "conn-1", "user-1", "org-1",
+            "scheduled_task_create", {}, "conv-1",
         )
 
     msg = mock_ws.send_to_connection.call_args[0][1]

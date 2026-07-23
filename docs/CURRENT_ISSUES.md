@@ -1,5 +1,30 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-23 多租户通用 Agent Session Runtime — 技术设计确认
+
+- 已确认采用方案 A：保留 PostgreSQL Conversation Actor 作为第一期唯一 Turn Executor，
+  在其上增量建立 Session Kernel、AgentDefinition、Policy/Config Resolver、
+  Capability Snapshot 和 Extension Runtime。
+- 全局管理员、企业、个人、Session 四层配置与策略继承已冻结；企业员工保留个人能力，
+  但在企业 Session 中必须与企业策略求交。
+- Skill 必须支持系统发布、企业共享、个人私有，以及推荐、自动、强制和禁止四种绑定；
+  MCP、Goal 和 Subagent 同期进入 Runtime 总体合同。
+- 冲突消解完成：继续复用既有 `agent_*` 数据模型和 `backend/services/agent_runtime/`
+  目标目录，禁止新增平行 `runtime_sessions/runtime_goals` 或第二套 Event Store。
+- WebSocket 前置门禁已完成前两个子阶段：连接固定绑定 `(user_id, org_id)`，非法企业
+  请求直接拒绝；订阅/steer 按用户与精确企业（个人为 null）校验；前端切换企业会
+  关闭旧连接、清空旧订阅并重连；本地与 Redis 投递已使用精确 org 和
+  `(task_id, org_id)` 复合订阅键，`org_id=null` 只表示个人空间。所有正式消息
+  生产者已显式贯通 `org_id`，并增加静态架构合同测试防止新增漏传。
+- Tool Confirm 已使用 `(tool_call_id, user_id, org_id)`，Steer 已使用
+  `(task_id, org_id)` 复合等待键。
+- Tool Confirm 与 Steer 已增加短期 Redis 响应队列：Web Worker 可唤醒独立
+  Conversation Actor 进程中的等待者；Redis key 使用复合租户身份的 SHA-256，
+  不暴露 user_id/org_id，队列带 120 秒 TTL。本地 Event 保留为同进程快速路径，
+  Redis 暂时不可用时按原超时/无打断语义降级。
+- 其余实施前置门禁仍包括迁移账本/checksum 和租户数据库纵深防御。
+- 详细设计见 `docs/document/TECH_SESSION_RUNTIME多租户通用Agent架构.md`。
+
 ## 2026-07-21 快麦 ERP 归档 TEXT[] 序列化修复
 
 - 热表查询返回的 `exception_tags` 为 Python list，通用数据库客户端会按 JSON 编码，导致冷表 `TEXT[]` 拒绝写入。
@@ -12,6 +37,56 @@
 - 用户资产回填现按 MIME 将这类旧记录归一为 `image` 或 `video`，避免同一存储对象因历史类型漂移触发 canonical 身份冲突。
 
 > 本文档记录项目中当前存在的已知问题、待修复的Bug、技术债务等。
+
+### 2026-07-22 统一生成 Turn 事务与任务生命周期 — 实施完成，待部署验证
+
+- 生产最近 7 天记录到 31 次图片 `_save_task` CRITICAL，全部为
+  `TURN_MESSAGE_RELATION_MISMATCH`；其中 30 次集中于 2026-07-22。
+- 根因是 Web 生成链分步创建用户消息、助手占位、task 和 Turn；历史助手缺少
+  `turn_id/reply_to_message_id` 时，时间邻近 fallback 又为已有 Turn 的用户消息生成随机新 Turn。
+- 生产只读审计发现 12,224 条缺完整锚点且有此前用户消息的助手记录，其中 79 条按旧 fallback
+  会确定冲突。
+- 已确认采用统一 `prepare_generation` 原子入口建立 request/Turn/input/output/local task；Chat Actor、
+  图片、视频和电商图保留专用执行状态机。媒体必须先有本地 task，再调用供应商。
+- 历史数据只按 task/显式 reply/一致 Turn/唯一关系分级回填；默认 dry-run，模糊关系禁止自动修改。
+- 详细设计见 `docs/document/TECH_统一生成Turn事务与任务生命周期.md`；计划使用迁移 148，当前未开发、
+  未修改生产数据。
+- Phase 1.1 已完成：新增迁移 148 与 rollback，建立 `prepare_generation`、
+  `attach_generation_external_task`、`fail_prepared_generation_task`，并用 `preparing` 状态保证媒体本地
+  task 先于供应商提交存在；迁移 contract 专项 25 个用例通过。应用调用链尚未切换，不可部署。
+- Phase 1.2 已完成：新增类型化 `GenerationLifecycle`/`GenerationPreparation`，统一 Jsonb payload、
+  RPC 返回校验、ContextAnchor 构造及 attach/fail 业务上下文日志；专项 20 个用例通过，服务语句覆盖率
+  100%。Web、Actor 和媒体 Handler 尚未接入，不可部署。
+- Phase 2 已完成：Web Chat 主链先原子准备 request/Turn/input/output/task，再携带数据库权威
+  `ContextAnchor` 入队 Conversation Actor；旧客户端缺失 ID 时按租户、对话和幂等键确定性补齐，
+  Chat Retry 不再调用最近用户消息 fallback。媒体 Handler 尚未接入，不可部署。
+- Phase 3.1 普通图片已完成：Web 图片批次在供应商调用前一次性创建 1–4 个 preparing task；积分锁定
+  使用稳定本地 task ID，跨模型重试保留同一逻辑 task 和多次账本记录，最终成功原子 attach 实际模型。
+  明确拒绝退款并失败，网络超时保持 preparing/锁定并记录 `submission_unknown`，等待补偿处理。
+  ImageHandler 已删除“先调供应商、再保存 task”的旧提交/重试路径，缺少 prepared task/batch
+  时在 adapter 创建前失败关闭；视频旧 provider-first 路径也已删除，缺少预创建任务时在余额检查和 adapter 创建前失败关闭。
+- Phase 3.2 视频已完成：Web 视频在供应商调用前创建 preparing task，积分锁定与跨模型重试复用
+  稳定本地 task，成功后 attach 实际模型和最终交易；明确失败退款并终态化，结果未知保持 preparing
+  并记录 `submission_unknown`。旧 provider-first 路径已删除。
+- Phase 4.2 错误边界已完成：`prepare_generation` 声明的消息、Turn、task、request 与锚点关系冲突
+  （含 `TURN_MESSAGE_RELATION_MISMATCH`）统一脱敏映射为 `GENERATION_PREPARE_CONFLICT` / HTTP 409；
+  连接、超时和未知数据库故障仍保留为 5xx，避免把基础设施故障误报成客户端冲突。
+- 生产验收发现迁移 148 在更新 `messages.content` 时把 JSONB payload 与 TEXT 列直接用于 `COALESCE`，
+  导致请求返回 500。迁移 149 显式执行 JSONB→TEXT 并替换同签名函数；前端同时将明确 HTTP 500
+  收口为 rejected，清除 streaming/订阅并恢复草稿。网络、超时及 502/503/504 继续保持 uncertain。
+- 失败媒体 retry 已统一复用首次生成的媒体占位恢复入口；`pending` 媒体占位文字的渲染优先级高于
+  空消息“已取消”提示，避免任务和灰色占位符已恢复但文字仍显示旧终态。
+- AI 失败消息无正文时的英文兜底已统一为“生成失败，请点击「重新生成」重试”；媒体失败占位符内部
+  仍保留具体中文原因，兼顾操作引导与故障可解释性。
+- Phase 3.3 电商图已完成：Phase 1 策划任务与 Phase 2 生图批次均在 Handler 执行前通过
+  `prepare_generation` 原子绑定 Turn/input/output/local task，Handler 不再直接调用
+  `_insert_task_with_turn_binding`。统一事务上限放宽为 16，普通图片仍在路由层保持 1–4，
+  电商批次保留现有最多 8 张语义。历史回填仍未完成，不可部署。
+- Phase 4.1 历史 Turn 回填工具已完成：`backfill_generation_turns.py` 默认 dry-run，按已绑定
+  task、显式 reply、相同 Turn、唯一前序输入四级证据确定关系；冲突或歧义不写入。
+  支持 keyset 分页、维护窗口阻塞行锁、批次事务、checkpoint、无正文审计和前后不变量统计；
+  禁用 `SKIP LOCKED`，避免 checkpoint 越过被锁历史行。
+  脚本尚未在生产执行 dry-run/apply，部署前仍需审核生产分类结果。
 
 ## 问题状态
 

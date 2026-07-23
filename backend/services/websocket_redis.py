@@ -202,7 +202,8 @@ class RedisPubSubMixin:
             return
 
         if target_type == "task":
-            subscribers = self._task_subscribers.get(target_id, set())
+            task_scope = (target_id, data.get("org_id"))
+            subscribers = self._task_subscribers.get(task_scope, set())
             for conn_id in list(subscribers):
                 await self.send_to_connection(conn_id, message)
 
@@ -210,10 +211,7 @@ class RedisPubSubMixin:
             connections = self._connections.get(target_id, {})
             target_org_id = data.get("org_id")
             for conn_id, connection in list(connections.items()):
-                if (
-                    target_org_id is not None
-                    and connection.org_id != target_org_id
-                ):
+                if connection.org_id != target_org_id:
                     continue
                 await self.send_to_connection(conn_id, message)
 
@@ -245,8 +243,7 @@ class RedisPubSubMixin:
                 "target_id": target_id,
                 "message": message,
             }
-            if org_id is not None:
-                data["org_id"] = org_id
+            data["org_id"] = org_id
             payload = json.dumps(data, ensure_ascii=False)
             await client.publish(WS_CHANNEL, payload)
         except Exception as e:

@@ -39,6 +39,32 @@
 
 ## 目录结构
 
+统一生成 Turn 事务与任务生命周期设计：
+- `docs/document/TECH_统一生成Turn事务与任务生命周期.md`：将 Web、企微、Chat Actor、图片、视频和
+  电商图的 request/Turn/input/output/local task 收口为统一数据库原子准备入口；外部执行状态机保持
+  分离，并定义历史锚点回填、媒体供应商孤儿任务治理、灰度部署和回滚边界。
+- `backend/migrations/148_unified_generation_prepare.sql`：统一生成准备、供应商任务附加和 preparing
+  失败终态 RPC；rollback 在无 preparing task 时恢复旧 task 状态约束。
+- `backend/migrations/149_generation_message_content_type.sql`：修复统一准备函数中 JSONB payload 与
+  TEXT 消息内容的显式类型边界，供已应用迁移 148 的环境增量升级。
+- `backend/api/routes/message_chat_preparation.py`：Web Chat 原子准备 payload、权威上下文锚点与 Actor 启动编排。
+- `backend/api/routes/message_image_preparation.py`：Web 普通图片批次的原子准备、占位消息响应和 Handler 启动编排。
+- `backend/api/routes/message_ecom_preparation.py`：Web 电商图 Phase 1 策划任务与 Phase 2 生图批次的原子准备编排。
+- `backend/services/handlers/image_prepared_submission.py`：已准备图片 task 的积分锁定、供应商提交、跨模型重试和最终 attach。
+- `backend/api/routes/message_video_preparation.py`：Web 视频消息、Turn 和本地 preparing task 的原子准备编排。
+- `backend/services/handlers/video_prepared_submission.py`：视频参数计费解析、稳定 task 积分绑定、跨模型重试和最终 attach。
+- `backend/tests/test_unified_generation_prepare_migration.py`：固定迁移 scope、锁顺序、显式 Retry 锚点、
+  task 状态转换、权限和回滚门禁。
+- `backend/services/generation_lifecycle.py`：统一生成准备、供应商 task 附加和 preparing 失败的类型化
+  Python 边界，严格解析数据库权威锚点并输出完整业务上下文日志。
+- `backend/tests/test_generation_lifecycle.py`：覆盖 payload 序列化、RPC 非法返回、task ID 完整性、
+  ContextAnchor 与 attach/fail 幂等结果。
+- `backend/tests/test_message_image_preparation.py`：覆盖图片批次先落库、稳定 task 积分绑定、明确失败、提交结果未知和跨模型重试。
+- `backend/tests/test_message_ecom_preparation.py`：覆盖电商图 Phase 1 的 running task 先落库与 Phase 2 复用原子图片批次。
+- `backend/tests/test_message_video_preparation.py`：覆盖视频先落库、参数计费、稳定 task 积分绑定、明确失败、结果未知和跨模型重试。
+- `backend/scripts/backfill_generation_turns.py`：历史 assistant Turn/reply 关系的默认 dry-run、确定性分类、分批 apply、checkpoint 与无正文审计。
+- `backend/tests/test_backfill_generation_turns.py`：覆盖四级证据、冲突拒绝、条件更新、批次失败和 dry-run/apply 语义。
+
 本轮企微上下文治理新增的核心服务：
 - `backend/services/agent/file_analysis_service.py`：隔离表格分析的路径授权、格式转换、结构化错误与缓存登记。
 - `backend/services/handlers/chat_tool_result_mixin.py`：统一 Chat 工具结果分类、WebSocket 投递与审计。
@@ -109,6 +135,9 @@
 - `backend/services/agent/runtime/context/items.py`、`provider_receipt.py`：构建本 Turn 的原子 ConversationItem 组，并在每次真实 Provider 请求前登记无正文 ContextReceipt。
 - `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
+- `docs/document/TECH_SESSION_RUNTIME多租户通用Agent架构.md`：在现有 Conversation Actor 和既有
+  `agent_*` Runtime 设计上冻结方案 A；补充全局管理员、企业、个人、Session 四层配置与策略继承，
+  企业 Skill 共享、系统推荐/自动/强制安装，以及 MCP/Goal 第一阶段边界，禁止另建平行 Runtime 表。
 - `docs/document/TECH_AGENT_RUNTIME统一Session运行时与上下文加载合同.md`：以 Grok Build 最新源码为基线，定义统一 Session 状态推进、Context Epoch、ModelStep、首轮/多轮/工具循环/Compaction/冷恢复加载合同，以及 A+ 分波次迁移、灰度和回滚边界。
 - `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
 - `docs/document/TECH_统一Validation与Recovery运行时.md`及实施附录：参考 Grok Build 的 typed result、结构化错误回填、有界恢复和 Completion Requirement，规划全项目唯一的通用校验与恢复内核；不包含 Skill 或业务专属校验。
@@ -313,6 +342,8 @@ EVERYDAYAIONE/
 │   │   ├── batch_completion_service.py # 图片批次任务终态、积分与 partial update 协调
 │   │   ├── batch_message_finalizer.py # 图片批次/单图重生的最终消息落库与通知
 │   │   ├── websocket_manager.py      # WebSocket 连接管理
+│   │   ├── websocket_interactions.py # Tool Confirm/Steer 用户与企业复合等待键
+│   │   ├── websocket_task_scope.py   # WebSocket 任务订阅的用户/企业精确边界查询
 │   │   ├── intent_router.py         # 智能意图路由器（千问 Function Calling）
 │   │   ├── memory/                  # 通用提取、巩固、Curated Search/Get 与手动记忆
 │   │   ├── memory_settings.py       # 通用记忆开关与保留设置
@@ -323,6 +354,9 @@ EVERYDAYAIONE/
 │   │   ├── handlers/                 # 统一消息处理器
 │   │   │   ├── __init__.py               # Handler 工厂
 │   │   │   ├── base.py                   # Handler 基类
+│   │   │   ├── retry_knowledge_mixin.py  # Handler 智能重试、WS 重试通知与知识钩子
+│   │   │   ├── mixins/message_mixin.py   # 消息完成/失败生命周期与租户投递
+│   │   │   ├── mixins/message_persistence_mixin.py # 助手消息持久化与幂等检查
 │   │   │   ├── chat_handler.py           # 聊天处理器（流式）
 │   │   │   ├── context_snapshot.py       # 固定 task revision 的不可变上下文快照
 │   │   │   ├── conversation_cache.py     # base revision + through-message 精确匹配的统一历史 v6 缓存

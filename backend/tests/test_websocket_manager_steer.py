@@ -33,9 +33,11 @@ class TestSteerRegistration:
 
     def test_register_creates_event(self, ws_manager):
         ws_manager.register_steer_listener("task_1")
-        assert "task_1" in ws_manager._steer_signals
-        assert isinstance(ws_manager._steer_signals["task_1"], asyncio.Event)
-        assert not ws_manager._steer_signals["task_1"].is_set()
+        assert ("task_1", None) in ws_manager._steer_signals
+        assert isinstance(
+            ws_manager._steer_signals[("task_1", None)], asyncio.Event,
+        )
+        assert not ws_manager._steer_signals[("task_1", None)].is_set()
 
     def test_unregister_cleans_up(self, ws_manager):
         ws_manager.register_steer_listener("task_1")
@@ -87,7 +89,7 @@ class TestResolveSteer:
         ws_manager.register_steer_listener("task_1")
         result = ws_manager.resolve_steer("task_1", "我想改查别的")
         assert result is True
-        assert ws_manager._steer_signals["task_1"].is_set()
+        assert ws_manager._steer_signals[("task_1", None)].is_set()
 
     def test_resolve_without_listener(self, ws_manager):
         result = ws_manager.resolve_steer("no_task", "消息")
@@ -96,7 +98,7 @@ class TestResolveSteer:
     def test_resolve_stores_message(self, ws_manager):
         ws_manager.register_steer_listener("task_1")
         ws_manager.resolve_steer("task_1", "新消息内容")
-        assert ws_manager._steer_messages["task_1"] == "新消息内容"
+        assert ws_manager._steer_messages[("task_1", None)] == "新消息内容"
 
 
 # ============================================================

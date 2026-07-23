@@ -139,9 +139,13 @@ class ToolLoopExecutionMixin:
                     safety_level="dangerous",
                     timeout=60,
                 ),
+                org_id=hook_ctx.org_id,
             )
             approved = await ws_manager.wait_for_confirm(
-                tool_call_id, timeout=60.0,
+                tool_call_id,
+                hook_ctx.user_id,
+                hook_ctx.org_id,
+                timeout=60.0,
             )
             if approved:
                 logger.info(
@@ -418,7 +422,9 @@ class ToolLoopExecutionMixin:
     ) -> bool:
         from services.websocket_manager import ws_manager
 
-        steer = ws_manager.check_steer(hook_ctx.task_id)
+        steer = ws_manager.check_steer(
+            hook_ctx.task_id, hook_ctx.org_id,
+        )
         if not steer:
             return False
         logger.info(

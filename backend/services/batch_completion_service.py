@@ -215,6 +215,7 @@ class BatchCompletionService:
             task_id=client_task_id or task["external_task_id"],
             user_id=user_id,
             message=msg,
+            org_id=task.get("org_id"),
         )
 
     async def _dispatch_finalize(

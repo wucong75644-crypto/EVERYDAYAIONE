@@ -81,3 +81,13 @@ class TestSteerMechanism:
         # 重新注册（新的 Event，未 set）
         manager.register_steer_listener("task-1")
         assert manager.check_steer("task-1") is None
+
+    def test_same_task_id_is_isolated_by_org(self, manager):
+        manager.register_steer_listener("task-shared", "org-a")
+        manager.register_steer_listener("task-shared", "org-b")
+
+        assert manager.resolve_steer(
+            "task-shared", "A消息", org_id="org-a",
+        ) is True
+        assert manager.check_steer("task-shared", "org-b") is None
+        assert manager.check_steer("task-shared", "org-a") == "A消息"

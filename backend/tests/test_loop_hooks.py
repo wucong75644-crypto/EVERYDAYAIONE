@@ -118,6 +118,7 @@ class TestProgressNotifyHook:
         ):
             await hook.on_turn_start(ctx)
             mock_publish.assert_called_once()
+            assert mock_publish.call_args.kwargs["org_id"] == ctx.org_id
 
     @pytest.mark.asyncio
     async def test_exit_signal_tools_skipped(self):
@@ -492,5 +493,4 @@ class TestToolAuditHookV6:
             ctx, "test", {}, "result", "success", 100, False, False, "tc1",
             turn_prompt_tokens=500, turn_completion_tokens=200,
         )
-
 

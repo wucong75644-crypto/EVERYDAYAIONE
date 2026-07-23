@@ -531,6 +531,7 @@ class TestPushToolStepUpdate:
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
+        mixin.org_id = "org-1"
         mock_ws.send_to_task_or_user = AsyncMock()
 
         await ChatToolMixin._push_tool_step_update(
@@ -540,6 +541,7 @@ class TestPushToolStepUpdate:
         )
 
         mock_ws.send_to_task_or_user.assert_called_once()
+        assert mock_ws.send_to_task_or_user.call_args.kwargs["org_id"] == "org-1"
         call_args = mock_ws.send_to_task_or_user.call_args[0]
         ws_msg = call_args[2]
         assert ws_msg["type"] == "content_block_add"

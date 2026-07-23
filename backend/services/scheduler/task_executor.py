@@ -28,7 +28,13 @@ class ScheduledTaskExecutor:
     def __init__(self, db: Any) -> None:
         self.db = db
 
-    async def _push_ws_event(self, user_id: str, event_type: str, data: Dict[str, Any]) -> None:
+    async def _push_ws_event(
+        self,
+        user_id: str,
+        org_id: str,
+        event_type: str,
+        data: Dict[str, Any],
+    ) -> None:
         """通过 WebSocketManager 推送事件到任务创建者前端
 
         Args:
@@ -43,7 +49,7 @@ class ScheduledTaskExecutor:
             await ws_manager.send_to_user(user_id, {
                 "type": event_type,
                 "data": data,
-            })
+            }, org_id=org_id)
         except Exception as e:
             logger.warning(f"_push_ws_event failed | event={event_type} | error={e}")
 
@@ -62,7 +68,7 @@ class ScheduledTaskExecutor:
         agent_run_started_at = datetime.now(timezone.utc)
 
         # 推送"开始执行"事件
-        await self._push_ws_event(task["user_id"], "scheduled_task_started", {
+        await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_started", {
             "task_id": task["id"],
             "task_name": task["name"],
             "run_id": run_id,
@@ -303,7 +309,7 @@ class ScheduledTaskExecutor:
             logger.error(f"_on_success update run failed | {e}")
 
         # WebSocket 推送"完成"事件
-        await self._push_ws_event(task["user_id"], "scheduled_task_completed", {
+        await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_completed", {
             "task_id": task["id"],
             "task_name": task["name"],
             "run_id": run_id,
@@ -406,7 +412,7 @@ class ScheduledTaskExecutor:
         # WebSocket 推送"失败"事件
         # will_retry: 任务下次仍会自动执行（不论是 5min 重试还是按 cron 正常时间）
         will_retry = update.get("status") == "active"
-        await self._push_ws_event(task["user_id"], "scheduled_task_failed", {
+        await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_failed", {
             "task_id": task["id"],
             "task_name": task["name"],
             "run_id": run_id,
@@ -429,7 +435,7 @@ class ScheduledTaskExecutor:
         )
 
         # 1. WS 推送
-        await self._push_ws_event(task["user_id"], "scheduled_task_notification", {
+        await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_notification", {
             "task_id": task["id"],
             "task_name": task["name"],
             "level": "error",

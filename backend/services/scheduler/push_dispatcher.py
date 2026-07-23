@@ -42,7 +42,7 @@ class PushDispatcher:
                 ok = await self._push_wecom(org_id, target, text, files)
                 return "pushed" if ok else "push_failed"
             elif t == "web":
-                await self._push_web(target, text, files)
+                await self._push_web(org_id, target, text, files)
                 return "pushed"
             elif t == "multi":
                 results = await asyncio.gather(*[
@@ -122,6 +122,7 @@ class PushDispatcher:
 
     async def _push_web(
         self,
+        org_id: str,
         target: Dict[str, Any],
         text: str,
         files: List[Dict[str, Any]],
@@ -140,7 +141,7 @@ class PushDispatcher:
                     "text": text,
                     "files": files,
                 },
-            })
+            }, org_id=org_id)
         except Exception as e:
             logger.error(f"_push_web failed: {e}")
 
