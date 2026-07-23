@@ -37,6 +37,7 @@ def create_batch_task(
     result_data: dict = None,
     error_message: str = None,
     client_task_id: str = "client_task_1",
+    org_id: str = None,
 ) -> dict:
     """创建测试用的批次 task 数据"""
     return {
@@ -53,6 +54,7 @@ def create_batch_task(
         "result_data": result_data,
         "error_message": error_message,
         "client_task_id": client_task_id,
+        "org_id": org_id,
         "type": "image",
     }
 
@@ -361,6 +363,7 @@ class TestBatchCompletionServiceFinalize:
             or mock_ws.send_to_task_or_user.call_args[1].get("message")
         )
         assert ws_msg["type"] == "message_done"
+        assert mock_ws.send_to_task_or_user.call_args.kwargs["org_id"] is None
 
     @pytest.mark.asyncio
     @patch("services.batch_completion_service.ws_manager")
@@ -404,8 +407,12 @@ class TestBatchCompletionServiceFinalize:
         """测试：全部失败时 message status=failed"""
         batch_id = str(uuid4())
         batch_tasks = [
-            create_batch_task(0, batch_id, status="failed", error_message="err1"),
-            create_batch_task(1, batch_id, status="failed", error_message="err2"),
+            create_batch_task(
+                0, batch_id, status="failed", error_message="err1", org_id="org_1",
+            ),
+            create_batch_task(
+                1, batch_id, status="failed", error_message="err2", org_id="org_1",
+            ),
         ]
         db.set_table_data("tasks", batch_tasks)
         mock_ws.send_to_task_or_user = AsyncMock()
@@ -419,6 +426,7 @@ class TestBatchCompletionServiceFinalize:
         msg_data = ws_msg.get("payload", {}).get("message", {})
         assert msg_data["status"] == "failed"
         assert msg_data["credits_cost"] == 0  # 全部失败，无积分
+        assert mock_ws.send_to_task_or_user.call_args.kwargs["org_id"] == "org_1"
 
     @pytest.mark.asyncio
     @patch("services.batch_completion_service.ws_manager")
@@ -688,7 +696,7 @@ class TestFinalizeSingleImage:
         batch_id = str(uuid4())
         batch_tasks = [
             {**create_batch_task(0, batch_id, status="failed",
-                                 error_message="超时"),
+                                 error_message="超时", org_id="org_1"),
              "request_params": {"operation": "regenerate_single"},
              "image_index": 0},
         ]
@@ -711,6 +719,7 @@ class TestFinalizeSingleImage:
         )
         msg_data = ws_msg.get("payload", {}).get("message", {})
         assert msg_data["status"] == "failed"
+        assert mock_ws.send_to_task_or_user.call_args.kwargs["org_id"] == "org_1"
 
     @pytest.mark.asyncio
     @patch("services.batch_completion_service.ws_manager")

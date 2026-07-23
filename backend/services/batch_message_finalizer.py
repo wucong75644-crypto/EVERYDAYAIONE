@@ -109,6 +109,7 @@ class BatchMessageFinalizer:
                 task_id=task_id,
                 user_id=user_id,
                 message=done_msg,
+                org_id=task.get("org_id"),
             )
 
             logger.info(
@@ -202,6 +203,7 @@ class BatchMessageFinalizer:
             task_id=task_id,
             user_id=user_id,
             message=done_msg,
+            org_id=first_task.get("org_id"),
         )
 
         preview = f"[图片×{len(batch_tasks)}]" if len(batch_tasks) > 1 else "[图片]"

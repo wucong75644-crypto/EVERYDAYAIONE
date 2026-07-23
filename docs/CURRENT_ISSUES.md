@@ -1,5 +1,14 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-23 企业空间图片失败后持续显示“生成中” — 已修复，待生产验证
+
+- KIE 异步失败后 task 与 assistant message 已正确落为 `failed`，单图失败事件也携带
+  `org_id`；但图片批次和单图重新生成的最终 `message_done` 漏传 `org_id`，导致企业空间
+  WebSocket 连接收不到退出 `pending` 的终态事件。
+- `BatchMessageFinalizer` 的普通批次与 `regenerate_single` 分支现统一把任务租户传给
+  `send_to_task_or_user`；个人空间继续显式使用 `org_id=None`。
+- 待生产分别验证企业空间真实 KIE 失败、失败后重新生成，以及个人空间图片成功链路。
+
 ## 2026-07-23 多租户通用 Agent Session Runtime — 技术设计确认
 
 - 已确认采用方案 A：保留 PostgreSQL Conversation Actor 作为第一期唯一 Turn Executor，
