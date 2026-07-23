@@ -186,6 +186,80 @@ describe('useWorkspace directory navigation', () => {
     );
   });
 
+  it('does not let an upload refresh replace a directory opened later', async () => {
+    const uploadRequest = deferred<Awaited<ReturnType<typeof uploadToWorkspace>>>();
+    mockListWorkspace.mockImplementation(async (path) => ({
+      path,
+      items: path === '下载'
+        ? [{
+          name: 'current.txt',
+          is_dir: false,
+          size: 1,
+          modified: '1',
+          cdn_url: null,
+          mime_type: 'text/plain',
+        }]
+        : [],
+      total: path === '下载' ? 1 : 0,
+    }));
+    mockUploadToWorkspace.mockReturnValue(uploadRequest.promise);
+    const { result } = renderHook(() => useWorkspace());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let uploadPromise!: Promise<boolean>;
+    act(() => {
+      uploadPromise = result.current.upload([
+        new File(['abc'], 'report.txt', { type: 'text/plain' }),
+      ]);
+    });
+    await waitFor(() => expect(mockUploadToWorkspace).toHaveBeenCalled());
+
+    act(() => result.current.navigateTo('下载'));
+    await waitFor(() => expect(result.current.items[0]?.name).toBe('current.txt'));
+
+    uploadRequest.resolve({
+      filename: 'report.txt',
+      path: 'report.txt',
+      size: 3,
+      cdn_url: null,
+    });
+    await act(async () => expect(await uploadPromise).toBe(true));
+
+    expect(result.current.currentPath).toBe('下载');
+    expect(result.current.items[0]?.name).toBe('current.txt');
+    expect(mockListWorkspace.mock.calls.filter(([path]) => path === '.')).toHaveLength(1);
+  });
+
+  it('does not show an old directory upload error in the current directory', async () => {
+    const uploadRequest = deferred<Awaited<ReturnType<typeof uploadToWorkspace>>>();
+    mockListWorkspace.mockImplementation(async (path) => ({
+      path,
+      items: [],
+      total: 0,
+    }));
+    mockUploadToWorkspace.mockReturnValue(uploadRequest.promise);
+    const { result } = renderHook(() => useWorkspace());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let uploadPromise!: Promise<boolean>;
+    act(() => {
+      uploadPromise = result.current.upload([
+        new File(['abc'], 'report.txt', { type: 'text/plain' }),
+      ]);
+    });
+    await waitFor(() => expect(mockUploadToWorkspace).toHaveBeenCalled());
+
+    act(() => result.current.navigateTo('下载'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    uploadRequest.reject(new Error('上传网络中断'));
+    await act(async () => expect(await uploadPromise).toBe(false));
+
+    expect(result.current.currentPath).toBe('下载');
+    expect(result.current.error).toBeNull();
+    expect(mockListWorkspace.mock.calls.filter(([path]) => path === '.')).toHaveLength(1);
+  });
+
   it('preserves workspace mutation behavior after extraction', async () => {
     mockListWorkspace.mockResolvedValue({ path: '.', items: [], total: 0 });
     mockDeleteWorkspaceItem.mockResolvedValue(undefined);

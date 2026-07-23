@@ -12,8 +12,10 @@ export function useWorkspaceBrowser(
   const [error, setError] = useState<string | null>(null);
   const fetchSeqRef = useRef(0);
   const fetchAbortRef = useRef<AbortController | null>(null);
+  const activePathRef = useRef('.');
 
   const fetchList = useCallback(async (path: string, silent = false) => {
+    if (path !== activePathRef.current) return;
     fetchAbortRef.current?.abort();
     const controller = new AbortController();
     fetchAbortRef.current = controller;
@@ -23,15 +25,21 @@ export function useWorkspaceBrowser(
 
     try {
       const result = await listWorkspace(path, controller.signal);
-      if (seq !== fetchSeqRef.current) return;
+      if (seq !== fetchSeqRef.current || path !== activePathRef.current) return;
       if (result.path !== path) throw new Error('工作区返回了不匹配的目录');
       setItems(result.items);
     } catch (err) {
-      if (controller.signal.aborted || seq !== fetchSeqRef.current) return;
+      if (
+        controller.signal.aborted ||
+        seq !== fetchSeqRef.current ||
+        path !== activePathRef.current
+      ) return;
       setError(err instanceof Error ? err.message : '加载文件列表失败');
       logger.error('useWorkspace', '列表加载失败', err);
     } finally {
-      if (seq === fetchSeqRef.current) setLoading(false);
+      if (seq === fetchSeqRef.current && path === activePathRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -49,6 +57,7 @@ export function useWorkspaceBrowser(
 
   const navigateTo = useCallback((path: string) => {
     if (path === currentPath) return;
+    activePathRef.current = path;
     fetchAbortRef.current?.abort();
     setItems([]);
     setLoading(true);
@@ -61,12 +70,16 @@ export function useWorkspaceBrowser(
     () => fetchList(currentPath),
     [currentPath, fetchList],
   );
+  const isActivePath = useCallback(
+    (path: string) => path === activePathRef.current,
+    [],
+  );
 
   const breadcrumbs = useMemo(() => buildBreadcrumbs(currentPath), [currentPath]);
 
   return {
     currentPath, items, loading, error, navigateTo, breadcrumbs,
-    refresh, fetchList, setError,
+    refresh, fetchList, isActivePath, setError,
   };
 }
 

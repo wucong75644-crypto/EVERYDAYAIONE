@@ -44,8 +44,11 @@ export default function WorkspaceFileArea(props: WorkspaceFileAreaProps) {
             <div style={rubberBandStyle(selectionActions.rubberBand.rect)} />
           )}
           {ws.loading && ws.items.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center h-full">
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 h-full">
               <Loader2 className="w-8 h-8 text-[var(--s-text-tertiary)] animate-spin" />
+              <span className="text-sm text-[var(--s-text-secondary)]">
+                正在加载文件夹…
+              </span>
             </div>
           ) : ws.items.length === 0 ? (
             <WorkspaceEmptyState />

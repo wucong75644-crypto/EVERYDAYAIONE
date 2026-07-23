@@ -84,6 +84,7 @@ export function useWorkspace(): UseWorkspaceReturn {
   const uploadState = useWorkspaceUpload(
     browser.currentPath,
     browser.fetchList,
+    browser.isActivePath,
     browser.setError,
   );
   const mutations = useWorkspaceMutations(

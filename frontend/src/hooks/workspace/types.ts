@@ -18,6 +18,7 @@ export interface WorkspaceBrowserState {
   breadcrumbs: { label: string; path: string }[];
   refresh: () => Promise<void>;
   fetchList: FetchWorkspaceList;
+  isActivePath: (path: string) => boolean;
   setError: SetWorkspaceError;
 }
 

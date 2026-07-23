@@ -9,33 +9,36 @@ import type { FetchWorkspaceList, SetWorkspaceError } from './types';
 export function useWorkspaceUpload(
   currentPath: string,
   fetchList: FetchWorkspaceList,
+  isActivePath: (path: string) => boolean,
   setError: SetWorkspaceError,
 ) {
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, WorkspaceFileItem>>(
     new Map(),
   );
-
   const upload = useCallback(async (files: File[]): Promise<boolean> => {
+    const uploadPath = currentPath;
     setError(null);
-    setUploadingFiles((previous) => addPlaceholders(previous, files, currentPath));
+    setUploadingFiles((previous) => addPlaceholders(previous, files, uploadPath));
 
     for (const file of files) {
       try {
-        await uploadToWorkspace(file, currentPath, (percent) => {
+        await uploadToWorkspace(file, uploadPath, (percent) => {
           setUploadingFiles((previous) => updateProgress(previous, file.name, percent));
         });
         setUploadingFiles((previous) => removePlaceholder(previous, file.name));
       } catch (err) {
-        setError(err instanceof Error ? err.message : '上传失败');
+        if (isActivePath(uploadPath)) {
+          setError(err instanceof Error ? err.message : '上传失败');
+        }
         logger.error('useWorkspace', `上传失败: ${file.name}`, err);
         setUploadingFiles((previous) => removePlaceholder(previous, file.name));
-        await fetchList(currentPath);
+        if (isActivePath(uploadPath)) await fetchList(uploadPath);
         return false;
       }
     }
-    await fetchList(currentPath);
+    if (isActivePath(uploadPath)) await fetchList(uploadPath);
     return true;
-  }, [currentPath, fetchList, setError]);
+  }, [currentPath, fetchList, isActivePath, setError]);
 
   return { uploadingFiles, upload };
 }
