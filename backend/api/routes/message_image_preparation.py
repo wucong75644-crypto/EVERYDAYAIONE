@@ -49,7 +49,6 @@ async def prepare_and_start_image_generation(
     )
     if body.params is None:
         body.params = {}
-    body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = org_id
     handler.preflight(user_id, body.content, _business_params(body))
     settings = resolve_image_generation_settings(

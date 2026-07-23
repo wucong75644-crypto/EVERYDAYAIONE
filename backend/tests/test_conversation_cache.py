@@ -21,9 +21,8 @@ def _redis_with_value(value):
 @pytest.mark.asyncio
 async def test_exact_revision_and_boundary_returns_closed_history():
     redis = _redis_with_value(json.dumps({
-        "schema_version": 5,
+        "schema_version": 6,
         "revision": 7,
-        "summary_revision": 4,
         "through_message_id": "assistant-7",
         "closed_messages": [{"role": "user", "content": "历史"}],
     }))
@@ -33,11 +32,11 @@ async def test_exact_revision_and_boundary_returns_closed_history():
         new=AsyncMock(return_value=redis),
     ):
         result = await get_closed_messages(
-            "conv-1", 7, "assistant-7", "org-1", summary_revision=4,
+            "conv-1", 7, "assistant-7", "org-1",
         )
 
     assert result == [{"role": "user", "content": "历史"}]
-    redis.get.assert_awaited_once_with("conv:msgs:v5:org-1:conv-1")
+    redis.get.assert_awaited_once_with("conv:msgs:v6:org-1:conv-1")
     redis.delete.assert_not_awaited()
 
 
@@ -50,9 +49,8 @@ async def test_revision_or_boundary_mismatch_is_cache_miss(
     revision, through_message_id,
 ):
     redis = _redis_with_value(json.dumps({
-        "schema_version": 5,
+        "schema_version": 6,
         "revision": 7,
-        "summary_revision": 4,
         "through_message_id": "assistant-7",
         "closed_messages": [],
     }))
@@ -63,32 +61,9 @@ async def test_revision_or_boundary_mismatch_is_cache_miss(
     ):
         result = await get_closed_messages(
             "conv-1", revision, through_message_id, "org-1",
-            summary_revision=4,
         )
 
     assert result is None
-
-
-@pytest.mark.asyncio
-async def test_summary_revision_mismatch_is_cache_miss():
-    redis = _redis_with_value(json.dumps({
-        "schema_version": 5,
-        "revision": 7,
-        "summary_revision": 4,
-        "through_message_id": "assistant-7",
-        "closed_messages": [],
-    }))
-
-    with patch(
-        "services.handlers.conversation_cache.get_redis",
-        new=AsyncMock(return_value=redis),
-    ):
-        result = await get_closed_messages(
-            "conv-1", 7, "assistant-7", "org-1", summary_revision=5,
-        )
-
-    assert result is None
-    redis.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -104,16 +79,14 @@ async def test_summary_revision_mismatch_is_cache_miss():
             "closed_messages": [{"role": "assistant", "content": "旧纯文本投影"}],
         }),
         json.dumps({
-            "schema_version": 5,
+            "schema_version": 6,
             "revision": 1,
-            "summary_revision": 0,
             "through_message_id": None,
             "closed_messages": [],
         }),
         json.dumps({
-            "schema_version": 5,
+            "schema_version": 6,
             "revision": 1,
-            "summary_revision": 0,
             "through_message_id": "assistant-1",
             "closed_messages": ["not-a-message"],
         }),
@@ -147,17 +120,15 @@ async def test_write_uses_versioned_closed_history_envelope():
             "assistant-3",
             [{"role": "assistant", "content": "闭合回复"}],
             "org-1",
-            summary_revision=2,
         )
 
     assert written is True
     key, ttl, raw = redis.setex.await_args.args
-    assert key == "conv:msgs:v5:org-1:conv-1"
+    assert key == "conv:msgs:v6:org-1:conv-1"
     assert ttl == 1800
     assert json.loads(raw) == {
-        "schema_version": 5,
+        "schema_version": 6,
         "revision": 3,
-        "summary_revision": 2,
         "through_message_id": "assistant-3",
         "closed_messages": [{"role": "assistant", "content": "闭合回复"}],
     }
@@ -190,9 +161,8 @@ async def test_empty_identity_and_unavailable_redis_are_safe_misses():
 @pytest.mark.asyncio
 async def test_bytes_payload_is_supported():
     redis = _redis_with_value(json.dumps({
-        "schema_version": 5,
+        "schema_version": 6,
         "revision": 0,
-        "summary_revision": 0,
         "through_message_id": None,
         "closed_messages": [],
     }).encode("utf-8"))

@@ -206,22 +206,15 @@ class TestFormatConversation:
     def conversation_service(self, mock_db):
         return ConversationService(mock_db)
 
-    def test_includes_context_summary(self, conversation_service):
-        """context_summary 字段正确传递"""
+    def test_legacy_context_summary_remains_read_only_compatible(
+        self, conversation_service,
+    ):
         conversation = create_test_conversation()
-        conversation["context_summary"] = "用户讨论了Python编程"
+        conversation["context_summary"] = "旧摘要"
 
         result = conversation_service._format_conversation(conversation)
 
-        assert result["context_summary"] == "用户讨论了Python编程"
-
-    def test_context_summary_defaults_to_none(self, conversation_service):
-        """无 context_summary 字段时默认 None"""
-        conversation = create_test_conversation()
-
-        result = conversation_service._format_conversation(conversation)
-
-        assert result["context_summary"] is None
+        assert result["context_summary"] == "旧摘要"
 
 
 class TestConversationServiceUpdate:

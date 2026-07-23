@@ -70,7 +70,6 @@ async def _prepare_and_start_plan(
     conversation = await conversation_service.get_conversation(
         conversation_id, user_id, org_id,
     )
-    body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = org_id
     created_at = body.created_at or datetime.now(timezone.utc)
     placeholder_at = body.placeholder_created_at or datetime.now(timezone.utc)

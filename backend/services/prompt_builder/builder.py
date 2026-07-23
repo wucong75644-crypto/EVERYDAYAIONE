@@ -17,8 +17,7 @@
   - services.handlers.chat_context.attachments.format_attachments
   - services.handlers.chat_context.attachments.build_workspace_prompt
   - services.memory.memory_service_v2.MemoryServiceV2 (memory 提取)
-  - services.handlers.chat_context.summary_manager (对话摘要)
-  - services.handlers.chat_context.history_loader.build_context_messages (历史)
+  - services.handlers.context_snapshot.ContextSnapshot (统一历史快照)
   - services.handlers.conversation_cache (V3.3 Redis 缓存)
   - services.handlers.context_compressor (V3.3 六层压缩, 末尾保留 budget 控制)
   - services.knowledge_service.search_relevant (知识库召回)
@@ -74,7 +73,6 @@ class BuildInput:
     db: Any = None
 
     # 可选注入 (chat_context_mixin 兼容)
-    prefetched_summary: Optional[str] = None
     context_snapshot: Optional["ContextSnapshot"] = None
     # V2 阶段 4.1: prefetched_memory 已删除
     # Curated Memory 查询统一到 PromptBuilder._memory() + session cache
@@ -98,6 +96,7 @@ class BuildResult:
     persona_injected: bool                                       # persona 是否进入 prompt
     memory_injected: bool                                        # L1 memory 是否注入
     state: str                                                   # NORMAL / ARCHIVED / SUMMARIZED / ENFORCED
+    stable_prefix_blocks: int                                   # Provider 缓存稳定前缀消息数
     compaction: Optional[Dict[str, Any]] = None
 
 
@@ -120,7 +119,6 @@ class PromptBuilder:
                        *history, attach_sys (可选), user]
           6. 末尾 budget 控制: enforce_tool_budget / enforce_history_budget / enforce_budget
         """
-        from utils.time_context import RequestContext
         from services.handlers.chat_context.attachments import (
             build_workspace_prompt,
             format_attachments,
@@ -129,22 +127,11 @@ class PromptBuilder:
         inp = self.inp
 
         # ── Step 1: 并行 fetch ──
-        memory_prompt, summary_prompt, history_messages = await self._parallel_fetch()
-        from services.agent.runtime.context import (
-            assemble_history,
-            resolve_context_budget,
-        )
-
-        context_plan = await assemble_history(
+        memory_prompt, history_messages = await self._parallel_fetch()
+        memory_prompt, history_messages, compaction = await self._assemble_history(
+            memory_prompt,
             history_messages,
-            resolve_context_budget(inp.model_id),
         )
-        history_messages = context_plan.messages
-        if context_plan.compaction:
-            memory_prompt, persona_text = (
-                await self._refresh_memory_after_compaction()
-            )
-            self._persona_text = persona_text
 
         # 提取 persona (memory_service_v2.build_memory_context 同时返回 prepend + persona)
         # 注: persona 已在 _parallel_fetch 内通过 self._persona_text 暂存
@@ -154,16 +141,7 @@ class PromptBuilder:
         static_content = StaticLayer.render()
 
         # ── Step 3: Layer 2 动态段 ──
-        if inp.request_ctx is None:
-            request_ctx = RequestContext.build(
-                user_id=inp.user_id,
-                org_id=inp.org_id,
-                request_id=inp.conversation_id or "",
-            )
-        else:
-            request_ctx = inp.request_ctx
-
-        time_text = request_ctx.for_prompt_injection()
+        time_text = self._request_context().for_prompt_injection()
 
         # persona gate 过滤
         gated_persona = self._gate.filter(persona_text)
@@ -212,12 +190,14 @@ class PromptBuilder:
         )
         user_result = UserLayer.render(user_inp)
 
+        from core.config import get_settings
+
+        cache_control_enabled = get_settings().prompt_cache_control_enabled
         messages = self._compose_messages(
             static_content=static_content,
             session_stable_content=session_stable_content,
             turn_dynamic_content=turn_dynamic_content,
             history_messages=history_messages,
-            summary_prompt=summary_prompt,
             user_result=user_result,
             data_context_prompt=(
                 getattr(inp.context_snapshot, "data_context", None).render_prompt()
@@ -226,6 +206,7 @@ class PromptBuilder:
                 is not None
                 else None
             ),
+            cache_control_enabled=cache_control_enabled,
         )
 
         # ── Step 6: budget 控制 (保留 V3.3 三层兜底) ──
@@ -239,8 +220,43 @@ class PromptBuilder:
             persona_injected=gated_persona is not None,
             memory_injected=memory_prompt is not None,
             state=state,
-            compaction=context_plan.compaction,
+            stable_prefix_blocks=1 if cache_control_enabled else 2,
+            compaction=compaction,
         )
+
+    def _request_context(self) -> Any:
+        """返回显式传入或按当前请求构建的时间上下文。"""
+        if self.inp.request_ctx is not None:
+            return self.inp.request_ctx
+        from utils.time_context import RequestContext
+
+        return RequestContext.build(
+            user_id=self.inp.user_id,
+            org_id=self.inp.org_id,
+            request_id=self.inp.conversation_id or "",
+        )
+
+    async def _assemble_history(
+        self,
+        memory_prompt: Optional[str],
+        history_messages: List[Dict[str, Any]],
+    ) -> tuple[Optional[str], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """组装历史，并在生成新压缩后刷新记忆快照。"""
+        from services.agent.runtime.context import (
+            assemble_history,
+            resolve_context_budget,
+        )
+
+        plan = await assemble_history(
+            history_messages,
+            resolve_context_budget(self.inp.model_id),
+        )
+        if plan.compaction:
+            memory_prompt, persona_text = (
+                await self._refresh_memory_after_compaction()
+            )
+            self._persona_text = persona_text
+        return memory_prompt, plan.messages, plan.compaction
 
     @staticmethod
     def _compose_messages(
@@ -248,15 +264,17 @@ class PromptBuilder:
         session_stable_content: str,
         turn_dynamic_content: str,
         history_messages: List[Dict[str, Any]],
-        summary_prompt: Optional[str],
         user_result: Any,
         data_context_prompt: Optional[str] = None,
+        cache_control_enabled: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """按稳定缓存边界拼接 system、历史、附件和当前 user。"""
         from core.config import get_settings
 
         messages: List[Dict[str, Any]] = []
-        if get_settings().prompt_cache_control_enabled:
+        if cache_control_enabled is None:
+            cache_control_enabled = get_settings().prompt_cache_control_enabled
+        if cache_control_enabled:
             messages.append({
                 "role": "system",
                 "content": [
@@ -275,10 +293,8 @@ class PromptBuilder:
                 "content": session_stable_content,
             })
 
-        if summary_prompt:
-            messages.append({"role": "system", "content": summary_prompt})
         messages.extend(history_messages)
-        if summary_prompt or history_messages:
+        if history_messages:
             messages.append({
                 "role": "system",
                 "content": (
@@ -305,16 +321,13 @@ class PromptBuilder:
         messages.append(user_result.user_message)
         return messages
 
-    async def _parallel_fetch(self) -> tuple[Optional[str], Optional[str], List[Dict[str, Any]]]:
-        """并行获取 memory / summary / history。
+    async def _parallel_fetch(self) -> tuple[Optional[str], List[Dict[str, Any]]]:
+        """并行获取 memory 与统一历史快照。
 
-        返回 (memory_prompt, summary_prompt, history_messages)。
+        返回 (memory_prompt, history_messages)。
         persona 文本通过 self._persona_text 暂存。
         """
         from services.memory.memory_service_v2 import MemoryServiceV2
-        from services.handlers.chat_context.summary_manager import get_context_summary
-        from services.handlers.context_compressor import compress_messages_if_needed
-        from services.handlers.chat_context.history_loader import build_context_messages
 
         inp = self.inp
 
@@ -357,39 +370,15 @@ class PromptBuilder:
                 logger.warning(f"PromptBuilder memory fetch failed | {e}")
                 return None, ""
 
-        async def _summary() -> Optional[str]:
-            if inp.context_snapshot is not None:
-                return inp.context_snapshot.summary_prompt
-            try:
-                return await get_context_summary(
-                    inp.db, inp.conversation_id, prefetched=inp.prefetched_summary,
-                )
-            except Exception as e:
-                logger.warning(f"PromptBuilder summary fetch failed | {e}")
-                return None
-
         async def _history() -> List[Dict[str, Any]]:
-            if inp.context_snapshot is not None:
-                # 每个 PromptBuilder 只消费副本，后续预算压缩和工具循环
-                # 不得修改冻结在 ContextSnapshot 中的历史。
-                return copy.deepcopy(inp.context_snapshot.history_messages)
-            try:
-                msgs = await build_context_messages(
-                    inp.db, inp.conversation_id, inp.text_content,
-                )
-                if not msgs:
-                    return msgs
-                try:
-                    msgs, _ = await compress_messages_if_needed(msgs, conv_source="web")
-                except Exception as e:
-                    logger.warning(f"PromptBuilder compress on rebuild failed | {e}")
-                return msgs
-            except Exception as e:
-                logger.warning(f"PromptBuilder history fetch failed | {e}")
-                return []
+            if inp.context_snapshot is None:
+                raise RuntimeError("CONTEXT_SNAPSHOT_REQUIRED")
+            # 每个 PromptBuilder 只消费副本，后续预算压缩和工具循环
+            # 不得修改冻结在 ContextSnapshot 中的历史。
+            return copy.deepcopy(inp.context_snapshot.history_messages)
 
-        memory_result, summary_result, history_result = await asyncio.gather(
-            _memory(), _summary(), _history(),
+        memory_result, history_result = await asyncio.gather(
+            _memory(), _history(),
             return_exceptions=True,
         )
 
@@ -398,17 +387,14 @@ class PromptBuilder:
         else:
             l1_prepend, persona_text = memory_result
 
-        summary_prompt = (
-            None if isinstance(summary_result, BaseException) else summary_result
-        )
-        history = (
-            [] if isinstance(history_result, BaseException) else (history_result or [])
-        )
+        if isinstance(history_result, BaseException):
+            raise history_result
+        history = history_result or []
 
         # persona 暂存到 self, build() 主流程后续取用
         self._persona_text = persona_text
 
-        return l1_prepend, summary_prompt, history
+        return l1_prepend, history
 
     async def _refresh_memory_after_compaction(
         self,

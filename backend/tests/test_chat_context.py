@@ -8,7 +8,7 @@
 """
 
 import json
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,8 +34,13 @@ def mock_db():
 @pytest.fixture
 def chat_handler(mock_db):
     from services.handlers.chat_handler import ChatHandler
+    from services.handlers.chat_context.history_loader import build_context_messages
 
     handler = ChatHandler(db=mock_db)
+    handler._get_context_summary = AsyncMock(return_value=None)
+    async def _legacy_test_loader(self, conversation_id, current_text):
+        return await build_context_messages(self.db, conversation_id, current_text)
+    handler._build_context_messages = MethodType(_legacy_test_loader, handler)
     return handler
 
 

@@ -232,16 +232,18 @@ class TestContextCompressorListContent:
         assert _is_archived({"content": [{"type": "text", "text": "[已归档]..."}]}) is True
         assert _is_archived({"content": [{"type": "text", "text": "正常内容"}]}) is False
 
-    def test_build_loop_summary_with_list_content(self):
-        """_build_loop_summary_input 处理 list content 不崩"""
-        from services.handlers.context_compressor import _build_loop_summary_input
+    def test_build_compaction_input_with_list_content(self):
+        """_build_compaction_input 处理 list content 不崩。"""
+        from services.agent.runtime.context.compaction import (
+            _build_compaction_input,
+        )
         messages = [
             {"role": "tool", "content": [
                 {"type": "text", "text": "共 945 条刷单订单"},
                 {"type": "file_ref", "file_ref": {"path": "staging/x.parquet"}},
             ]},
         ]
-        text = _build_loop_summary_input(messages, [0])
+        text = _build_compaction_input(messages, [0])
         assert "945" in text
 
 

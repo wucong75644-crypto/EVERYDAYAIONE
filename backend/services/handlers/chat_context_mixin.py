@@ -27,13 +27,8 @@ from services.handlers.chat_context.content_extractors import (
     extract_oai_messages_from_content,
     extract_text_from_content,
 )
-from services.handlers.chat_context.history_loader import build_context_messages
 from services.handlers.chat_context.knowledge import (
     filter_knowledge_by_similarity,
-)
-from services.handlers.chat_context.summary_manager import (
-    get_context_summary,
-    update_summary_if_needed,
 )
 from utils.time_context import RequestContext
 
@@ -66,7 +61,6 @@ class ChatContextMixin:
         user_id: str,
         conversation_id: str,
         text_content: str,
-        prefetched_summary: Optional[str] = None,
         user_location: Optional[str] = None,
         permission_mode: str = "auto",
         context_anchor: Optional["ContextAnchor"] = None,
@@ -133,7 +127,6 @@ class ChatContextMixin:
             ws_urls = {f["url"] for f in workspace_files if f.get("url")}
             file_urls = [u for u in file_urls if u not in ws_urls]
 
-        # 调 PromptBuilder 统一构造
         context_snapshot = None
         if context_anchor is not None:
             from services.handlers.context_snapshot import build_context_snapshot
@@ -157,7 +150,6 @@ class ChatContextMixin:
             user_location=user_location,
             user_preferences=None,  # TODO 阶段 4.4: 从 user_preferences 表读取
             db=self.db,
-            prefetched_summary=prefetched_summary,
             context_snapshot=context_snapshot,
             request_ctx=getattr(self, "request_ctx", None),
             attachments_as_system=get_settings().messages_attachments_as_system,
@@ -167,6 +159,11 @@ class ChatContextMixin:
         builder = PromptBuilder(inp)
         result = await builder.build()
         self._pending_context_compaction = result.compaction
+        self._context_stable_prefix_blocks = getattr(
+            result,
+            "stable_prefix_blocks",
+            None,
+        )
 
         logger.info(
             f"PromptBuilder done | conv={conversation_id} | "
@@ -216,41 +213,3 @@ class ChatContextMixin:
                 f"conversation_id={conversation_id} | "
                 f"error_type={type(e).__name__} | error={e!r}"
             )
-
-    async def _build_context_messages(
-        self, conversation_id: str, current_text: str
-    ) -> List[Dict[str, Any]]:
-        """Legacy 对话历史加载；正式任务统一使用 ContextSnapshot。"""
-        from services.handlers.context_compressor import compress_messages_if_needed
-
-        messages = await build_context_messages(
-            self.db, conversation_id, current_text,
-        )
-        if not messages:
-            return messages
-
-        try:
-            messages, state = await compress_messages_if_needed(
-                messages, conv_source="web",
-            )
-            if state != "NORMAL":
-                logger.debug(
-                    f"DB rebuild compressed | conv={conversation_id} | state={state}"
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"compress on rebuild failed | conv={conversation_id} | {e}")
-
-        return messages
-
-    async def _get_context_summary(
-        self, conversation_id: str, prefetched: Optional[str] = None
-    ) -> Optional[str]:
-        """读取已存的对话摘要 —— 委托 summary_manager."""
-        return await get_context_summary(self.db, conversation_id, prefetched)
-
-    async def _update_summary_if_needed(
-        self,
-        conversation_id: str,
-    ) -> None:
-        """检查并更新对话摘要（fire-and-forget）—— 委托 summary_manager."""
-        await update_summary_if_needed(self.db, conversation_id)

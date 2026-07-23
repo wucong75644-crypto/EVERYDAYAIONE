@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.agent.runtime.context.assembler import assemble_history
+from services.agent.runtime.context.assembler import (
+    HistoryAssemblyPlan,
+    assemble_history,
+)
 from services.agent.runtime.context.budget import (
     ContextBudget,
     derive_context_budget,
@@ -46,6 +49,7 @@ async def test_under_soft_limit_preserves_history_and_strips_internal_metadata()
         derive_context_budget(10_000, 1_000),
     )
 
+    assert isinstance(plan, HistoryAssemblyPlan)
     assert plan.compaction is None
     assert plan.trimmed_refs == ()
     assert plan.messages == [
@@ -91,7 +95,7 @@ async def test_compacts_stable_prefix_and_keeps_latest_two_user_turns():
     }, ensure_ascii=False)
 
     with patch(
-        "services.context_summarizer._call_summary_model",
+        "services.agent.runtime.context.summary_model.call_summary_model",
         new=AsyncMock(return_value=summary),
     ):
         plan = await assemble_history(
@@ -126,7 +130,7 @@ async def test_two_model_failures_use_deterministic_structured_fallback():
     ]
 
     with patch(
-        "services.context_summarizer._call_summary_model",
+        "services.agent.runtime.context.summary_model.call_summary_model",
         new=AsyncMock(return_value=None),
     ) as summarize:
         plan = await assemble_history(

@@ -21,10 +21,7 @@ async def test_channel_prompt_omits_personal_dynamic_context() -> None:
         text_content="分析群文件",
         user_preferences="PRIVATE_PREFERENCE",
         user_location="PRIVATE_LOCATION",
-        context_snapshot=SimpleNamespace(
-            summary_prompt=None,
-            history_messages=[],
-        ),
+        context_snapshot=SimpleNamespace(history_messages=[]),
         request_ctx=request_ctx,
         personal_context_allowed=False,
     ))
@@ -36,6 +33,11 @@ async def test_channel_prompt_omits_personal_dynamic_context() -> None:
     assert "PRIVATE_LOCATION" not in serialized
     assert result.memory_injected is False
     assert result.persona_injected is False
+    assert result.stable_prefix_blocks in (1, 2)
+    assert all(
+        message["role"] == "system"
+        for message in result.messages[:result.stable_prefix_blocks]
+    )
 
 
 def test_channel_tool_catalog_omits_personal_tools() -> None:

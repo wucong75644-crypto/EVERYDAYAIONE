@@ -18,7 +18,6 @@ from schemas.message import GenerateRequest, GenerateResponse, MessageOperation
 
 _RUNTIME_PARAM_KEYS = {
     "_task_slot_id",
-    "_prefetched_summary",
     "_org_id",
     "_user_location",
 }

@@ -28,13 +28,8 @@ def _build_history_query(
     db: Any,
     conversation_id: str,
     base_revision: Optional[int],
-    summary_revision: int = 0,
 ) -> Any:
-    """构造 legacy 或固定 revision 的历史查询。"""
-    if summary_revision < 0 or (
-        base_revision is not None and summary_revision > base_revision
-    ):
-        raise ValueError("INVALID_HISTORY_REVISION_BOUNDARY")
+    """构造固定 revision 的消息审计查询。"""
     query = (
         db.table("messages")
         .select(
@@ -50,8 +45,6 @@ def _build_history_query(
             query.eq("message_kind", "conversation")
             .lte("context_revision", base_revision)
         )
-        if summary_revision > 0:
-            query = query.gt("context_revision", summary_revision)
     return query
 
 
@@ -214,7 +207,6 @@ async def build_context_messages(
     conversation_id: str,
     current_text: str,
     base_revision: Optional[int] = None,
-    summary_revision: int = 0,
     strict: bool = False,
 ) -> List[Dict[str, Any]]:
     """加载 legacy 时间线或摘要之后、固定 revision 以内的闭合历史。"""
@@ -236,7 +228,6 @@ async def build_context_messages(
                 db,
                 conversation_id,
                 base_revision,
-                summary_revision,
             )
             query = query.order("created_at", desc=True)
             if base_revision is not None:

@@ -1,6 +1,7 @@
 """近期正常 Turn 的安全工具历史投影测试。"""
 
 import json
+from types import MethodType
 
 import pytest
 
@@ -23,8 +24,13 @@ def _message(role: str, content: object) -> dict[str, object]:
 @pytest.fixture
 def chat_handler():
     from services.handlers.chat_handler import ChatHandler
+    from services.handlers.chat_context.history_loader import build_context_messages
 
-    return ChatHandler(db=MockSupabaseClient())
+    handler = ChatHandler(db=MockSupabaseClient())
+    async def _legacy_test_loader(self, conversation_id, current_text):
+        return await build_context_messages(self.db, conversation_id, current_text)
+    handler._build_context_messages = MethodType(_legacy_test_loader, handler)
+    return handler
 
 
 @pytest.mark.asyncio

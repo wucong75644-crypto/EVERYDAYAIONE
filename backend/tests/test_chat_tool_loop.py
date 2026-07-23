@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from schemas.multimodal import FileReadResult
-from services.handlers.context_compressor import compact_loop_with_summary
+from services.agent.runtime.context import compact_context
 from services.handlers.chat.tool_loop import (
     append_tool_images,
     apply_tool_results,
@@ -124,43 +124,55 @@ async def test_compact_tool_context_uses_model_budget() -> None:
         hard_compaction=850,
         emergency_trim=920,
     )
+    pruning_receipt = SimpleNamespace(
+        outcome="below_threshold",
+        to_dict=lambda: {"model_step": 4, "outcome": "below_threshold"},
+    )
+    runtime_state = SimpleNamespace(pruning_receipts=[], compaction_receipts=[])
     with (
         patch(
-            "services.handlers.context_compressor.compact_stale_by_user_turns"
-        ) as compact_stale,
-        patch(
-            "services.handlers.context_compressor.enforce_tool_budget"
-        ) as enforce_tool,
-        patch(
-            "services.handlers.context_compressor.enforce_history_budget_sync"
-        ) as enforce_history,
+            "services.agent.runtime.context.prune_context",
+            return_value=pruning_receipt,
+        ) as prune,
         patch(
             "services.handlers.context_compressor.enforce_budget"
         ) as enforce_total,
         patch(
-            "services.handlers.context_compressor.compact_loop_with_summary",
+            "services.agent.runtime.context.compact_context",
             new_callable=AsyncMock,
         ) as compact_summary,
     ):
+        compact_summary.return_value = SimpleNamespace(
+            outcome="below_threshold",
+            to_dict=lambda: {
+                "model_step": 4,
+                "outcome": "below_threshold",
+            },
+        )
         await compact_tool_context(
             messages=[],
             context_budget=context_budget,
             turn=3,
+            runtime_state=runtime_state,
         )
 
-    compact_stale.assert_called_once_with(
+    prune.assert_called_once_with(
         [],
-        keep_user_turns=3,
-        capacity_trigger=0.75,
-        max_tokens=1_000,
+        usable_input=1_000,
+        model_step=4,
     )
-    enforce_tool.assert_called_once_with([], 850)
-    enforce_history.assert_called_once_with([], 850)
+    assert runtime_state.pruning_receipts == [
+        {"model_step": 4, "outcome": "below_threshold"}
+    ]
+    assert runtime_state.compaction_receipts == [
+        {"model_step": 4, "outcome": "below_threshold"}
+    ]
     compact_summary.assert_awaited_once_with(
         [],
-        1_000,
-        0.85,
+        usable_input=1_000,
+        trigger_ratio=0.85,
         suppression_scope=None,
+        model_step=4,
     )
     enforce_total.assert_called_once_with([], 920)
 
@@ -173,17 +185,18 @@ async def test_compact_tool_context_defers_summary_before_third_turn() -> None:
         hard_compaction=850,
         emergency_trim=920,
     )
+    pruning_receipt = SimpleNamespace(
+        outcome="below_threshold",
+        to_dict=lambda: {"model_step": 3},
+    )
     with (
         patch(
-            "services.handlers.context_compressor.compact_stale_by_user_turns"
-        ),
-        patch("services.handlers.context_compressor.enforce_tool_budget"),
-        patch(
-            "services.handlers.context_compressor.enforce_history_budget_sync"
+            "services.agent.runtime.context.prune_context",
+            return_value=pruning_receipt,
         ),
         patch("services.handlers.context_compressor.enforce_budget"),
         patch(
-            "services.handlers.context_compressor.compact_loop_with_summary",
+            "services.agent.runtime.context.compact_context",
             new_callable=AsyncMock,
         ) as compact_summary,
     ):
@@ -219,16 +232,16 @@ async def test_loop_summary_only_uses_messages_it_replaces() -> None:
         ])
 
     with patch(
-        "services.context_summarizer._call_summary_model",
+        "services.agent.runtime.context.summary_model.call_summary_model",
         new=AsyncMock(return_value="旧工具轮次摘要"),
     ) as summarize:
-        compacted = await compact_loop_with_summary(
+        receipt = await compact_context(
             messages,
-            max_tokens=1,
+            usable_input=1,
             trigger_ratio=0.01,
         )
 
-    assert compacted is True
+    assert receipt.outcome == "compacted"
     summary_input = summarize.await_args.args[1]
     assert "第0轮结果" in summary_input
     assert "第1轮结果" in summary_input

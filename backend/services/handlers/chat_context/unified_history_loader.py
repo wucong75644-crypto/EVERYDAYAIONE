@@ -17,10 +17,9 @@ def load_unified_context_messages(
     *,
     conversation_id: str,
     base_revision: int,
-    summary_revision: int,
     org_id: str | None,
-) -> tuple[list[dict[str, Any]], bool]:
-    """返回新事实投影和是否命中新主链；空会话允许 legacy 回退。"""
+) -> list[dict[str, Any]]:
+    """只从统一事实表返回固定 revision 历史；缺失历史时失败关闭。"""
     compaction = _load_latest_compaction(
         db,
         conversation_id=conversation_id,
@@ -39,8 +38,6 @@ def load_unified_context_messages(
     )
     if org_id:
         query = query.eq("org_id", org_id)
-    if summary_revision > 0:
-        query = query.gt("context_revision", summary_revision)
     if compaction is not None:
         query = query.gt(
             "sequence",
@@ -52,7 +49,9 @@ def load_unified_context_messages(
         if isinstance(row, dict) and row.get("item_type")
     ]
     if not rows and compaction is None:
-        return [], False
+        if base_revision > 0:
+            raise RuntimeError("UNIFIED_CONTEXT_HISTORY_MISSING")
+        return []
     rows.sort(key=lambda row: int(row.get("sequence") or 0))
     messages = _project_compaction(compaction) + [
         {
@@ -63,7 +62,7 @@ def load_unified_context_messages(
         for row in rows
         for message in _project_item(row)
     ]
-    return fix_orphan_tool_calls(messages), True
+    return fix_orphan_tool_calls(messages)
 
 
 def _load_context_rows(query: Any) -> list[dict[str, Any]]:

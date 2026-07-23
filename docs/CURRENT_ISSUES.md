@@ -27,6 +27,15 @@
 - 总体设计采用 A+：保留 PostgreSQL Conversation Actor、revision、Curated Memory、Artifact、媒体异步任务和多租户权限，在其上收口统一 Session Runtime、ContextPlan、Context Epoch、ModelStep 和 Provider Cache 合同。
 - Context Epoch 首期逻辑派生，不新增权威表；同一 Epoch 内 Provider 输入只追加，Compaction 是正常流程中唯一允许重写活动前缀的入口。当前时间、位置和附件作用域必须成为可持久 TurnContext。
 - 后续按 Shadow → Context 单一投影 → Pruning/Compaction 收口 → Session Model Loop → Action Runtime → Skill/Goal/Subagent/MCP → 旧链退出分波次实施；禁止新旧链同时产生外部副作用。
+- Wave 0 子任务 1.1 已完成：旧历史组装结果改名为 `HistoryAssemblyPlan`，Provider 影子回执新增 `ContextEpoch` 与 `CacheIdentity`，开始分别归因稳定前缀、动态后缀和 Tool Schema；仍未改变 Provider payload。
+- Wave 0 子任务 1.2 已完成：PromptBuilder 显式输出稳定前缀消息数，并经 Handler/RuntimeState 传入每次 Provider Receipt；生产主链不再依赖稳定前缀启发式推断。
+- Wave 0 子任务 1.3 已完成：每个 ModelStep 的 prompt/completion/cache Token 已回填 Receipt；迁移 147 通过 v2 原子提交 RPC 持久 ContextEpoch、CacheIdentity 和 ProviderUsage。代码部署前必须先应用 138–147 迁移。
+- Wave 1 子任务 2.1–2.2 已完成：`ProviderContextPlan` 已成为真实 Provider messages/tools 的唯一投影来源；旧直接发送路径和回退分支已删除，Plan 构建失败或投影不一致会在 Provider 调用前终止。
+- Wave 2 子任务 3.1 已完成：聊天共用工具循环改由唯一 `prune_context()` 在可用输入 50% 时确定性裁剪旧 ToolResult，固定保护最近 3 个用户 Turn、完整并行工具组和孤立结果；删除主链原有按 Turn 归档、Tool 桶和历史打分三段重复裁剪，PruningReceipt 绑定下一 Provider ModelStep。85% LLM Compaction、跨 Worker 摘要与 92% emergency gate 留待后续收口。
+- Wave 2 子任务 3.2 已完成当前 Run LLM Compaction 收口：`compact_context()` 成为聊天工具循环及旧跨轮压缩调用的唯一 85% 摘要实现，返回类型化 CompactionReceipt 并绑定下一 Provider ModelStep；旧 `context_compressor/summary.py` 与 `compact_loop_with_summary` 已物理删除，无回退入口。跨 Turn Redis+CAS 持久摘要和 92% emergency gate 仍待后续子任务。
+- Wave 2 子任务 3.2 质量门禁已闭环：原 708 行 `test_context_compressor.py` 拆为基础归档、Runtime Compaction、预算兜底三个职责文件（均低于 500 行），定向 50 个测试保持通过。
+- Wave 2 子任务 3.3a 已完成历史回填只读门禁：`verify_conversation_context_backfill.py` 核对可投影消息覆盖率、孤立 ToolResult、重复 sequence、非法 revision/sequence 及缺失 Artifact 引用；支持单会话诊断，任一不变量违规返回非零退出码。脚本尚未连接生产执行，读取路径尚未硬切换。
+- Wave 2 子任务 3.3b 已完成运行时硬切：ContextSnapshot 只读取 `conversation_compactions + conversation_context_items`，既有 revision 缺失投影时失败关闭；Redis 历史信封升级 v6 并删除 summary revision；PromptBuilder、消息路由和成功后置任务不再读取、透传、注入或更新 `context_summary`。旧 `summary_manager.py`、`context_summarizer.py` 与跨 Worker summary coordination 已物理删除，数据库旧字段/RPC 仅为回滚保留。生产迁移、回填和 3.3a 门禁仍未执行，因此当前代码不可部署。
 - 迁移 138–144 尚未应用仍是生产部署门禁；总体设计完成不代表可以直接部署。
 
 ### 2026-07-19 管理员图片空间超时与统一资产索引 — 实施中

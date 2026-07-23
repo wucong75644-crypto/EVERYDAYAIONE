@@ -35,8 +35,6 @@ class ContextSnapshot:
 
     anchor: ContextAnchor
     history_messages: List[Dict[str, Any]]
-    summary_prompt: Optional[str]
-    summary_revision: int
     conversation_source: str
     resource_manifest: "ResourceManifest | None" = None
     data_context: "DataContextSnapshot | None" = None
@@ -83,20 +81,16 @@ async def build_context_snapshot(
         raise ValueError("CONTEXT_INPUT_ANCHOR_MISMATCH")
 
     from services.handlers import conversation_cache
-    from services.handlers.chat_context.history_loader import build_context_messages
     from services.handlers.chat_context.unified_history_loader import (
         load_unified_context_messages,
     )
 
-    summary_prompt, summary_revision, conversation_source = (
-        _load_snapshot_metadata(db, anchor)
-    )
+    conversation_source = _load_conversation_source(db, anchor)
     history = await conversation_cache.get_closed_messages(
         anchor.conversation_id,
         anchor.base_revision,
         anchor.through_message_id,
         anchor.org_id,
-        summary_revision=summary_revision,
         task_id=anchor.task_id,
         turn_id=anchor.turn_id,
     )
@@ -108,34 +102,22 @@ async def build_context_snapshot(
         org_id=anchor.org_id,
         conversation_id=anchor.conversation_id,
         task_id=anchor.task_id,
-        summary_revision=summary_revision,
         base_revision=anchor.base_revision,
     )
     try:
         if history is None:
-            history, unified = load_unified_context_messages(
+            history = load_unified_context_messages(
                 db,
                 conversation_id=anchor.conversation_id,
                 base_revision=anchor.base_revision,
-                summary_revision=summary_revision,
                 org_id=anchor.org_id,
             )
-            if not unified:
-                history = await build_context_messages(
-                    db,
-                    anchor.conversation_id,
-                    current_text,
-                    base_revision=anchor.base_revision,
-                    summary_revision=summary_revision,
-                    strict=True,
-                )
             await conversation_cache.set_closed_messages(
                 anchor.conversation_id,
                 anchor.base_revision,
                 anchor.through_message_id,
                 history,
                 anchor.org_id,
-                summary_revision=summary_revision,
                 task_id=anchor.task_id,
                 turn_id=anchor.turn_id,
             )
@@ -174,43 +156,30 @@ async def build_context_snapshot(
         f"org_id={anchor.org_id} | conversation_id={anchor.conversation_id} | "
         f"task_id={anchor.task_id} | turn_id={anchor.turn_id} | "
         f"input_message_id={anchor.input_message_id} | "
-        f"base_revision={anchor.base_revision} | history_count={len(history)} | "
-        f"summary_revision={summary_revision}"
+        f"base_revision={anchor.base_revision} | history_count={len(history)}"
     )
     return ContextSnapshot(
         anchor=anchor,
         history_messages=history,
-        summary_prompt=summary_prompt,
-        summary_revision=summary_revision,
         conversation_source=conversation_source,
         resource_manifest=resource_manifest,
         data_context=data_context,
     )
 
 
-def _load_snapshot_metadata(
+def _load_conversation_source(
     db: Any,
     anchor: ContextAnchor,
-) -> tuple[Optional[str], int, str]:
-    """读取预算来源，并只接纳基线以内的版本化摘要。"""
+) -> str:
+    """读取预算来源；跨 Turn 压缩只来自 conversation_compactions。"""
     result = (
         db.table("conversations")
-        .select("context_summary, summary_revision, source")
+        .select("source")
         .eq("id", anchor.conversation_id)
         .maybe_single()
         .execute()
     )
     conversation = result.data if result else None
     if not conversation:
-        return None, 0, ""
-
-    source = str(conversation.get("source") or "")
-    summary = conversation.get("context_summary")
-    revision = int(conversation.get("summary_revision") or 0)
-    if not summary or revision <= 0 or revision > anchor.base_revision:
-        return None, 0, source
-    return (
-        f"以下是之前对话的摘要（截至 revision {revision}）：\n{summary}",
-        revision,
-        source,
-    )
+        return ""
+    return str(conversation.get("source") or "")

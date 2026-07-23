@@ -62,83 +62,61 @@ def test_context_anchor_from_binding_preserves_transaction_boundary():
 
 
 @pytest.mark.asyncio
-async def test_snapshot_uses_summary_and_revision_boundaries():
+async def test_snapshot_uses_unified_revision_boundary():
     input_query = _query({
         "id": "input-1",
         "conversation_id": "conv-1",
         "role": "user",
         "turn_id": "turn-1",
     })
-    history_query = _query([
+    unified_query = _query([
         {
-            "role": "user",
-            "content": [{"type": "text", "text": "重复问题"}],
-            "status": "completed",
-            "created_at": "2026-07-17T01:00:00Z",
-            "generation_params": {},
+            "item_type": "user",
+            "sequence": 3000,
             "context_revision": 3,
-            "message_kind": "conversation",
+            "payload": {
+                "content": [{"type": "text", "text": "重复问题"}],
+            },
         },
     ])
-    conversation_query = _query({
-        "context_summary": "更早的事实",
-        "summary_revision": 2,
-        "source": "wecom",
-    })
+    conversation_query = _query({"source": "wecom"})
     evidence_query = _query([])
     compaction_query = _query([])
-    unified_query = _query([])
     db = MagicMock()
     db.table.side_effect = [
         input_query, conversation_query, compaction_query, unified_query,
-        history_query,
         evidence_query,
     ]
 
     snapshot = await build_context_snapshot(db, _anchor(), "重复问题")
 
-    history_query.lte.assert_called_once_with("context_revision", 3)
-    history_query.gt.assert_called_once_with("context_revision", 2)
-    history_query.eq.assert_any_call("message_kind", "conversation")
-    assert snapshot.history_messages == [
-        {"role": "user", "content": "重复问题"},
-    ]
-    assert "更早的事实" in (snapshot.summary_prompt or "")
-    assert snapshot.summary_revision == 2
+    unified_query.lte.assert_called_once_with("context_revision", 3)
+    assert snapshot.history_messages[0]["role"] == "user"
+    assert snapshot.history_messages[0]["content"] == "重复问题"
+    assert snapshot.history_messages[0]["_context_revision"] == 3
     assert snapshot.conversation_source == "wecom"
     evidence_query.lte.assert_called_once_with("context_revision", 3)
     evidence_query.range.assert_called_once_with(0, 49)
 
 
 @pytest.mark.asyncio
-async def test_snapshot_rejects_future_summary():
+async def test_snapshot_missing_unified_history_fails_closed():
     input_query = _query({
         "id": "input-1",
         "conversation_id": "conv-1",
         "role": "user",
         "turn_id": "turn-1",
     })
-    history_query = _query([])
-    conversation_query = _query({
-        "context_summary": "未来摘要",
-        "summary_revision": 4,
-        "source": "",
-    })
-    evidence_query = _query([])
+    conversation_query = _query({"source": ""})
     compaction_query = _query([])
     unified_query = _query([])
     db = MagicMock()
     db.table.side_effect = [
         input_query, conversation_query, compaction_query, unified_query,
-        history_query,
-        evidence_query,
     ]
 
-    snapshot = await build_context_snapshot(db, _anchor(base_revision=3), "当前")
-
-    assert snapshot.summary_prompt is None
-    assert snapshot.summary_revision == 0
-    history_query.gt.assert_not_called()
+    with pytest.raises(RuntimeError, match="UNIFIED_CONTEXT_HISTORY_MISSING"):
+        await build_context_snapshot(db, _anchor(base_revision=3), "当前")
 
 
 @pytest.mark.asyncio
@@ -163,19 +141,12 @@ async def test_snapshot_propagates_history_database_failure():
         "role": "user",
         "turn_id": "turn-1",
     })
-    history_query = _query([])
-    history_query.execute.side_effect = RuntimeError("database unavailable")
-    conversation_query = _query({
-        "context_summary": None,
-        "summary_revision": 0,
-        "source": "",
-    })
+    conversation_query = _query({"source": ""})
     compaction_query = _query([])
-    unified_query = _query([])
+    compaction_query.execute.side_effect = RuntimeError("database unavailable")
     db = MagicMock()
     db.table.side_effect = [
-        input_query, conversation_query, compaction_query, unified_query,
-        history_query,
+        input_query, conversation_query, compaction_query,
     ]
 
     with pytest.raises(RuntimeError, match="database unavailable"):
@@ -190,11 +161,7 @@ async def test_snapshot_cache_hit_does_not_query_history_database():
         "role": "user",
         "turn_id": "turn-1",
     })
-    conversation_query = _query({
-        "context_summary": None,
-        "summary_revision": 0,
-        "source": "web",
-    })
+    conversation_query = _query({"source": "web"})
     evidence_query = _query([])
     db = MagicMock()
     db.table.side_effect = [input_query, conversation_query, evidence_query]
@@ -217,7 +184,6 @@ async def test_snapshot_cache_hit_does_not_query_history_database():
         3,
         "assistant-0",
         "org-1",
-        summary_revision=0,
         task_id="task-1",
         turn_id="turn-1",
     )
@@ -233,12 +199,7 @@ async def test_snapshot_loads_only_evidence_within_base_revision():
         "role": "user",
         "turn_id": "turn-1",
     })
-    history_query = _query([])
-    conversation_query = _query({
-        "context_summary": None,
-        "summary_revision": 0,
-        "source": "web",
-    })
+    conversation_query = _query({"source": "web"})
     evidence_query = _query([
         {
             "artifact_id": "artifact-1",
@@ -281,11 +242,15 @@ async def test_snapshot_loads_only_evidence_within_base_revision():
         }
     ])
     compaction_query = _query([])
-    unified_query = _query([])
+    unified_query = _query([{
+        "item_type": "user",
+        "sequence": 1000,
+        "context_revision": 1,
+        "payload": {"content": [{"type": "text", "text": "历史"}]},
+    }])
     db = MagicMock()
     db.table.side_effect = [
         input_query, conversation_query, compaction_query, unified_query,
-        history_query,
         evidence_query,
     ]
 
@@ -392,8 +357,6 @@ async def test_prompt_builder_snapshot_bypasses_mutable_history_cache():
     snapshot = ContextSnapshot(
         anchor=_anchor(),
         history_messages=[{"role": "user", "content": "固定历史"}],
-        summary_prompt="固定摘要",
-        summary_revision=2,
         conversation_source="",
     )
     builder = PromptBuilder(BuildInput(
@@ -414,19 +377,13 @@ async def test_prompt_builder_snapshot_bypasses_mutable_history_cache():
             "services.handlers.conversation_cache.get_closed_messages",
             new=AsyncMock(),
         ) as get_cached,
-        patch(
-            "services.handlers.chat_context.summary_manager.get_context_summary",
-            new=AsyncMock(),
-        ) as get_summary,
     ):
-        _, summary, history = await builder._parallel_fetch()
+        _, history = await builder._parallel_fetch()
 
-    assert summary == "固定摘要"
     assert history == [{"role": "user", "content": "固定历史"}]
     history[0]["content"] = "任务私有修改"
     assert snapshot.history_messages[0]["content"] == "固定历史"
     get_cached.assert_not_awaited()
-    get_summary.assert_not_awaited()
 
 
 def test_prompt_builder_prioritizes_current_user_message_after_history():
@@ -442,7 +399,6 @@ def test_prompt_builder_prioritizes_current_user_message_after_history():
             {"role": "user", "content": "分析销售文件"},
             {"role": "assistant", "content": "销售分析已完成"},
         ],
-        summary_prompt=None,
         user_result=SimpleNamespace(
             workspace_system_block=None,
             attachments_system_block="<attachments>当前附件</attachments>",
@@ -475,7 +431,6 @@ def test_prompt_builder_omits_history_focus_for_new_conversation():
         session_stable_content="会话规则",
         turn_dynamic_content="本轮时间",
         history_messages=[],
-        summary_prompt=None,
         user_result=SimpleNamespace(
             workspace_system_block=None,
             attachments_system_block=None,
@@ -516,27 +471,6 @@ async def test_history_query_uses_stable_turn_order():
 
 
 @pytest.mark.asyncio
-async def test_history_query_rejects_summary_beyond_snapshot_revision():
-    from services.handlers.chat_context.history_loader import (
-        build_context_messages,
-    )
-
-    db = MagicMock()
-
-    with pytest.raises(ValueError, match="INVALID_HISTORY_REVISION_BOUNDARY"):
-        await build_context_messages(
-            db,
-            conversation_id="conv-1",
-            current_text="你好",
-            base_revision=6,
-            summary_revision=7,
-            strict=True,
-        )
-
-    db.table.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_snapshot_uses_selected_model_budget_for_every_channel():
     from services.agent.runtime.context import resolve_context_budget
     from services.prompt_builder.builder import BuildInput, PromptBuilder
@@ -544,8 +478,6 @@ async def test_snapshot_uses_selected_model_budget_for_every_channel():
     snapshot = ContextSnapshot(
         anchor=_anchor(),
         history_messages=[],
-        summary_prompt=None,
-        summary_revision=0,
         conversation_source="wecom",
     )
     builder = PromptBuilder(BuildInput(

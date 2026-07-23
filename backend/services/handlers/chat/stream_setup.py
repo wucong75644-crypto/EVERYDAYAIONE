@@ -51,7 +51,6 @@ async def prepare_chat_stream(
         user_id,
         conversation_id,
         text_content,
-        prefetched_summary=params.get("_prefetched_summary"),
         user_location=params.get("_user_location"),
         permission_mode=permission_mode,
         context_anchor=context_anchor,
@@ -113,6 +112,11 @@ async def prepare_chat_stream(
         task_id=task_id,
         model_id=model_id,
         org_id=handler.org_id,
+        stable_prefix_blocks=getattr(
+            handler,
+            "_context_stable_prefix_blocks",
+            None,
+        ),
     )
     data_context = getattr(handler, "_data_context_snapshot", None)
     if data_context is not None:
@@ -141,6 +145,7 @@ def _record_context_receipt(
     model_id: str,
     model_step: int = 0,
     base_revision: int = 0,
+    stable_prefix_blocks: int | None = None,
 ) -> dict[str, Any] | None:
     """Best-effort 记录影子回执，观测失败不得影响模型请求。"""
     try:
@@ -155,6 +160,8 @@ def _record_context_receipt(
             conversation_id=conversation_id,
             task_id=task_id,
             model_id=model_id,
+            base_revision=base_revision,
+            stable_prefix_blocks=stable_prefix_blocks,
         )
         logger.bind(
             context_receipt=receipt.to_log_fields(),
@@ -180,6 +187,22 @@ def _record_context_receipt(
             "model_step": model_step,
             "base_revision": base_revision,
             "plan_hash": receipt.prefix_hash,
+            "context_epoch_id": receipt.epoch.epoch_id,
+            "stable_prefix_blocks": receipt.epoch.stable_prefix_blocks,
+            "stable_prefix_hash": receipt.cache_identity.stable_prefix_hash,
+            "dynamic_suffix_hash": receipt.cache_identity.dynamic_suffix_hash,
+            "tool_schema_hash": receipt.cache_identity.tool_schema_hash,
+            "cache_route_hash": receipt.cache_identity.route_hash,
+            "cache_identity": {
+                "route_hash": receipt.cache_identity.route_hash,
+                "stable_prefix_hash": (
+                    receipt.cache_identity.stable_prefix_hash
+                ),
+                "dynamic_suffix_hash": (
+                    receipt.cache_identity.dynamic_suffix_hash
+                ),
+                "tool_schema_hash": receipt.cache_identity.tool_schema_hash,
+            },
             "model": model_id,
             "block_refs": [
                 {
@@ -195,7 +218,13 @@ def _record_context_receipt(
                 receipt.estimated_prompt_tokens
                 + receipt.estimated_tool_tokens
             ),
-            "provider_tokens": None,
+            "provider_tokens": 0,
+            "provider_usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cached_tokens": 0,
+                "cache_creation_tokens": 0,
+            },
             "trimmed_refs": [],
             "compaction_id": None,
         }

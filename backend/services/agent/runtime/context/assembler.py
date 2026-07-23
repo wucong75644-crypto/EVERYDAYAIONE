@@ -18,7 +18,7 @@ _MAX_SUMMARY_CHARS = 8_000
 
 
 @dataclass(frozen=True)
-class ContextPlan:
+class HistoryAssemblyPlan:
     """一次 Prompt 将消费的历史和可随 Actor 原子提交的压缩产物。"""
 
     messages: list[dict[str, Any]]
@@ -30,18 +30,18 @@ class ContextPlan:
 async def assemble_history(
     messages: list[dict[str, Any]],
     budget: ContextBudget,
-) -> ContextPlan:
+) -> HistoryAssemblyPlan:
     """软阈值内原样消费；超阈值时按完整 Turn 压缩稳定前缀。"""
     clean = [_provider_message(message) for message in messages]
     current_tokens = estimate_tokens(clean)
     if current_tokens <= budget.soft_compaction:
-        return ContextPlan(clean, None, (), current_tokens)
+        return HistoryAssemblyPlan(clean, None, (), current_tokens)
 
     cut = _stable_prefix_cut(messages)
     if cut <= 0:
         if current_tokens > budget.hard_compaction:
             raise RuntimeError("CONTEXT_REQUIRED_BLOCKS_EXCEED_HARD_LIMIT")
-        return ContextPlan(clean, None, (), current_tokens)
+        return HistoryAssemblyPlan(clean, None, (), current_tokens)
 
     prefix = messages[:cut]
     tail = clean[cut:]
@@ -78,7 +78,7 @@ async def assemble_history(
         )
         if sequences else None
     )
-    return ContextPlan(
+    return HistoryAssemblyPlan(
         planned,
         compaction,
         sequences,
@@ -117,7 +117,7 @@ async def _summarize_prefix(
         "不得推测，不得输出 JSON 之外文字。"
     )
     from core.config import settings
-    from services.context_summarizer import _call_summary_model
+    from services.agent.runtime.context.summary_model import call_summary_model
 
     for pass_count, model in enumerate(
         (
@@ -126,10 +126,10 @@ async def _summarize_prefix(
         ),
         start=1,
     ):
-        raw = await _call_summary_model(
+        raw = await call_summary_model(
             model,
             source,
-            system_prompt_override=prompt,
+            system_prompt=prompt,
         )
         payload = _parse_summary(raw)
         if payload is not None:

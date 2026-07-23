@@ -2,6 +2,7 @@
 
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -102,24 +103,16 @@ async def test_cached_legacy_persona_is_ignored() -> None:
         org_id="org-1",
         conversation_id="conversation-1",
         text_content="当前问题",
+        context_snapshot=SimpleNamespace(history_messages=[]),
     ))
     with (
         patch(
             "services.prompt_builder.session_memory_cache.get_session_memory",
             new=AsyncMock(return_value=("通用记忆", "旧画像")),
         ),
-        patch(
-            "services.handlers.chat_context.summary_manager.get_context_summary",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "services.handlers.chat_context.history_loader.build_context_messages",
-            new=AsyncMock(return_value=[]),
-        ),
     ):
-        memory, summary, history = await builder._parallel_fetch()
+        memory, history = await builder._parallel_fetch()
 
     assert memory == "通用记忆"
     assert builder._persona_text == ""
-    assert summary is None
     assert history == []

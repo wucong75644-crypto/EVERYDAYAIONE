@@ -3,7 +3,10 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from services.handlers.chat_context.unified_history_loader import (
+    _project_item,
     load_unified_context_messages,
 )
 
@@ -61,15 +64,13 @@ def test_projects_ordered_turn_and_preserves_atomic_tool_protocol():
     ]
     db, query = _db_with_rows(rows)
 
-    messages, found = load_unified_context_messages(
+    messages = load_unified_context_messages(
         db,
         conversation_id="conv-1",
         base_revision=8,
-        summary_revision=3,
         org_id="org-1",
     )
 
-    assert found is True
     assert [message["role"] for message in messages] == [
         "user", "assistant", "tool", "assistant",
     ]
@@ -78,24 +79,36 @@ def test_projects_ordered_turn_and_preserves_atomic_tool_protocol():
     assert "artifact-1" in messages[2]["content"]
     assert messages[3]["content"] == "分析完成"
     query.lte.assert_called_once_with("context_revision", 8)
-    query.gt.assert_called_once_with("context_revision", 3)
+    query.gt.assert_not_called()
     query.eq.assert_any_call("org_id", "org-1")
     query.range.assert_called_once_with(0, 199)
 
 
-def test_empty_items_explicitly_allows_legacy_fallback():
+def test_empty_new_conversation_is_valid():
     db, _ = _db_with_rows([])
 
-    messages, found = load_unified_context_messages(
+    messages = load_unified_context_messages(
         db,
         conversation_id="conv-1",
         base_revision=0,
-        summary_revision=0,
         org_id=None,
     )
 
     assert messages == []
-    assert found is False
+
+
+def test_missing_projected_history_fails_closed():
+    db, _ = _db_with_rows([])
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="UNIFIED_CONTEXT_HISTORY_MISSING"):
+        load_unified_context_messages(
+            db,
+            conversation_id="conv-1",
+            base_revision=1,
+            org_id=None,
+        )
 
 
 def test_latest_compaction_replaces_covered_prefix():
@@ -114,15 +127,13 @@ def test_latest_compaction_replaces_covered_prefix():
         }],
     )
 
-    messages, found = load_unified_context_messages(
+    messages = load_unified_context_messages(
         db,
         conversation_id="conv-1",
         base_revision=2,
-        summary_revision=0,
         org_id="org-1",
     )
 
-    assert found is True
     assert [message["role"] for message in messages] == ["system", "user"]
     assert "旧事实" in messages[0]["content"]
     assert messages[1]["content"] == "近期问题"
@@ -150,6 +161,24 @@ def test_scan_limit_fails_instead_of_silently_dropping_old_items():
             db,
             conversation_id="conv-1",
             base_revision=2,
-            summary_revision=0,
             org_id=None,
         )
+
+
+@pytest.mark.parametrize(
+    ("item_type", "payload", "role", "fragment"),
+    [
+        ("assistant", {"content": {"type": "text", "text": "回答"}}, "assistant", "回答"),
+        ("artifact_ref", {"artifact_id": "artifact-1"}, "assistant", "artifact-1"),
+        ("interrupt", {"reason": "user_cancelled"}, "system", "user_cancelled"),
+        ("compaction", {"facts": ["事实"]}, "system", "事实"),
+        ("tool_result", {"tool_call_id": "call-1", "value": 7}, "tool", "call-1"),
+    ],
+)
+def test_projects_supported_unified_item_types(
+    item_type, payload, role, fragment,
+):
+    messages = _project_item({"item_type": item_type, "payload": payload})
+
+    assert messages[0]["role"] == role
+    assert fragment in str(messages[0])

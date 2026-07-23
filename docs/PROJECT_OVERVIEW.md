@@ -98,8 +98,14 @@
 - `backend/services/agent/runtime/artifacts/persistence.py`：Actor 提交前将小 Artifact 内联、大 Artifact 上传租户隔离 OSS，并生成迁移 138 的提交参数。
 - `backend/migrations/139_actor_artifact_terminal_integrity.sql`：在数据库边界归一化 Artifact 互斥存储字段，并保证 Actor 重试耗尽后 assistant 消息不残留 streaming。
 - `backend/services/agent/runtime/artifacts/repository.py`：按会话、组织和固定 revision 跨轮检索、获取、分页读取 inline/OSS/message_slice Artifact。
-- `backend/services/agent/runtime/context/assembler.py`：模型能力预算驱动的 ContextPlan、结构化双模型压缩、确定性降级、工具组/最近 Turn 保护与硬上限门禁。
-- `backend/services/handlers/chat_context/unified_history_loader.py`：将持久 ConversationItem 重建为模型历史；新主链存在时不与旧 messages 历史混合。
+- `backend/services/agent/runtime/context/assembler.py`：模型能力预算驱动的 HistoryAssemblyPlan、结构化双模型压缩、确定性降级、工具组/最近 Turn 保护与硬上限门禁。
+- `backend/services/agent/runtime/context/receipt.py`：生成不含正文的 ContextReceipt、ContextEpoch 和 CacheIdentity，分别归因稳定前缀、动态后缀与 Tool Schema。
+- `backend/services/agent/runtime/context/provider_plan.py`：冻结单个 ModelStep 的完整 ProviderContextPlan，并作为 Provider messages/tools 的唯一投影来源；构建或非无损投影失败时发送前终止。
+- `backend/services/agent/runtime/context/pruning.py`：统一 Provider 前确定性 ToolResult Pruning；在可用输入达到 50% 后只处理最近 3 个用户 Turn 之前的完整工具组，孤立/缺失工具结果不裁剪，并生成无正文回执。
+- `backend/services/agent/runtime/context/compaction.py`：当前 Run 唯一 85% LLM Compaction 合同；统一主/备摘要、prefix single-flight、失败 suppression、过期结果拒绝和无正文 CompactionReceipt，旧 `handlers/context_compressor/summary.py` 已删除。
+- `backend/tests/test_context_compressor.py`、`test_runtime_context_compaction.py`、`test_context_compressor_budgets.py`：分别覆盖基础 Token/归档、Runtime LLM Compaction、旧预算兜底；原 708 行单体测试已按职责拆分且各文件低于 500 行。
+- `backend/migrations/147_context_receipt_cache_identity.sql`：持久 Context Epoch、CacheIdentity 和单个 ModelStep Provider 用量，通过 v2 包装 RPC 与原生成提交保持同一事务。
+- `backend/services/handlers/chat_context/unified_history_loader.py`：将持久 ConversationItem/Compaction 重建为唯一模型历史；既有 revision 缺少投影时失败关闭。
 - `backend/services/agent/runtime/context/items.py`、`provider_receipt.py`：构建本 Turn 的原子 ConversationItem 组，并在每次真实 Provider 请求前登记无正文 ContextReceipt。
 - `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
@@ -319,7 +325,7 @@ EVERYDAYAIONE/
 │   │   │   ├── base.py                   # Handler 基类
 │   │   │   ├── chat_handler.py           # 聊天处理器（流式）
 │   │   │   ├── context_snapshot.py       # 固定 task revision 的不可变上下文快照
-│   │   │   ├── conversation_cache.py     # summary/base revision + through-message 精确匹配的闭合历史 v4 缓存
+│   │   │   ├── conversation_cache.py     # base revision + through-message 精确匹配的统一历史 v6 缓存
 │   │   │   ├── context_compressor/        # 当前 Run 工具归档、临时循环摘要与 Token 预算
 │   │   │   ├── emit_payloads.py           # 显式 emit payload → content block/ContentPart 转换
 │   │   │   ├── chat/                      # Chat 流式执行内核
@@ -401,6 +407,7 @@ EVERYDAYAIONE/
 │   ├── scripts/                  # 运维/数据修复与隔离 POC 脚本
 │   │   ├── backfill_media_asset_urls.py # 历史图片 original_url/thumbnail_url 回填脚本
 │   │   ├── backfill_conversation_context_items.py # 历史消息到 ConversationItem/Artifact 的幂等回填
+│   │   ├── verify_conversation_context_backfill.py # 统一上下文回填完整性的只读硬切换门禁
 │   │   └── poc_ecom_requirement_assist.py # 主图/详情图 AI 帮写三方案多模态 POC（不写业务数据）
 │   └── migrations/              # 数据库迁移脚本
 │       └── 034_wecom_oauth_support.sql  # 企微 OAuth 数据库迁移
@@ -588,7 +595,7 @@ EVERYDAYAIONE/
     ├── test_admin_users_helpers.py # 管理员会话解析和通用 helper 测试
     ├── test_backfill_user_assets.py # 五类历史资产投影、checkpoint 与失败续跑测试
     ├── test_recent_tool_history.py # 最近 3 个用户回合的安全工具历史投影测试
-    ├── test_summary_revision_atomic.py # 摘要闭合 revision 选择与数据库 CAS 契约测试
+    ├── test_legacy_summary_migration_retained.py # 旧摘要数据库回滚合同保留测试
     └── test_chat_payload_blocks.py # 聊天 emit_payload 图片 URL 字段保留测试
 ```
 

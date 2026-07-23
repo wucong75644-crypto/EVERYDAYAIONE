@@ -288,7 +288,6 @@ async def _do_generate_message(
 
     if body.params is None:
         body.params = {}
-    body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
 
     assistant_message_id, assistant_message = await prepare_assistant_message(
@@ -370,7 +369,6 @@ async def _do_generate_chat_message(
     )
     if body.params is None:
         body.params = {}
-    body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = ctx.org_id
     _record_generation_feedback(
         db, user_id, body, GenerationType.CHAT, conversation_id,

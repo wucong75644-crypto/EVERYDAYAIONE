@@ -2,17 +2,16 @@
 
 六层压缩：
 - 层1: tool_result_envelope.wrap() — 工具结果截断+信号（chat_tool_mixin / erp_agent）
-- 层2: 滑动窗口 N=10（config.chat_context_limit，chat_context_mixin）
-- 层3: 对话级滚动摘要（context_summarizer → DB，chat_context_mixin）
+- 层2: 历史预算兜底（仅保留给离线消息审计）
+- 跨 Turn 压缩由 conversation_compactions 持久事实承担
 - 层4: compact_stale_tool_results / compact_stale_by_user_turns — 旧轮次工具结果归档（零 API）
-- 层5: compact_loop_with_summary — 循环内 LLM 摘要（触发式）
+- 层5: Runtime Context compact_context — 循环内 LLM 摘要（触发式）
 - 层6: enforce_budget / enforce_tool_budget / enforce_history_budget — Token 预算兜底
 
 子模块：
 - tokens:   token 估算 + 文本提取 + 归档判断 + system prompt 去重
 - archive:  层4 工具结果归档（含轮次识别）
 - budget:   层6 Token 预算管理
-- summary:  层5 LLM 摘要
 """
 
 from services.handlers.context_compressor.tokens import (
@@ -41,13 +40,6 @@ from services.handlers.context_compressor.budget import (
     enforce_history_budget_sync,
     enforce_tool_budget,
 )
-from services.handlers.context_compressor.summary import (
-    _LOOP_SUMMARY_PROMPT,
-    _build_loop_summary_input,
-    compact_loop_with_summary,
-)
-
-
 async def compress_messages_if_needed(
     messages: list,
     conv_source: str = "web",
@@ -71,6 +63,7 @@ async def compress_messages_if_needed(
         state: "NORMAL" | "ARCHIVED" | "SUMMARIZED" | "ENFORCED"
     """
     from core.config import get_settings
+    from services.agent.runtime.context.compaction import compact_context
     _s = get_settings()
 
     initial_tokens = estimate_tokens(messages)
@@ -113,14 +106,17 @@ async def compress_messages_if_needed(
     # 层 5 — LLM 摘要(超 trigger * max 才触发)
     if tokens_after_layer4 > max_tokens * summary_trigger:
         try:
-            await compact_loop_with_summary(
-                messages, max_tokens, summary_trigger,
+            receipt = await compact_context(
+                messages,
+                usable_input=max_tokens,
+                trigger_ratio=summary_trigger,
             )
-            state = "SUMMARIZED"
+            if receipt.outcome == "compacted":
+                state = "SUMMARIZED"
         except Exception as e:  # noqa: BLE001
             # LLM 摘要失败不阻塞,继续走层 6 兜底
             from loguru import logger
-            logger.warning(f"compact_loop_with_summary failed: {e}")
+            logger.warning(f"compact_context failed: {e}")
 
     # 层 6 — 分桶兜底(强制截断)
     tokens_after_layer5 = estimate_tokens(messages)
@@ -156,10 +152,6 @@ __all__ = [
     "enforce_history_budget",
     "enforce_history_budget_sync",
     "enforce_tool_budget",
-    # summary
-    "_LOOP_SUMMARY_PROMPT",
-    "_build_loop_summary_input",
-    "compact_loop_with_summary",
     # V3.3 统一入口
     "compress_messages_if_needed",
 ]

@@ -33,7 +33,11 @@ class RuntimeState:
     task_id: str = ""
     model_id: str = ""
     org_id: str | None = None
+    stable_prefix_blocks: int | None = None
+    current_context_plan: Any | None = None
     context_receipts: list[dict[str, Any]] = field(default_factory=list)
+    pruning_receipts: list[dict[str, Any]] = field(default_factory=list)
+    compaction_receipts: list[dict[str, Any]] = field(default_factory=list)
     validation: ValidationRuntime = field(default_factory=ValidationRuntime)
 
     def __post_init__(self) -> None:

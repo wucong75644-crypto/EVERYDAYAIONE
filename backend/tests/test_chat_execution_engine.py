@@ -43,7 +43,10 @@ def test_last_tool_output_uses_latest_tool_block_and_limits_size():
 
 @pytest.mark.asyncio
 async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
+    provider_payload = {}
+
     async def stream_chat(**_kwargs):
+        provider_payload.update(_kwargs)
         yield SimpleNamespace(
             content="你好",
             thinking_content=None,
@@ -100,6 +103,10 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
 
     result = await execute_chat(handler=handler, request=_request())
 
+    assert provider_payload["messages"] == prepared.messages
+    assert provider_payload["messages"] is not prepared.messages
+    assert provider_payload["tools"] == prepared.core_tools
+    assert provider_payload["tools"] is not prepared.core_tools
     assert result.parts[0].text == "你好"
     assert result.usage == {
         "prompt_tokens": 3,
@@ -110,6 +117,17 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     assert len(result.context_receipts) == 1
     assert result.context_receipts[0]["model_step"] == 0
     assert result.context_receipts[0]["plan_hash"]
+    assert result.context_receipts[0]["context_plan_projection_match"] is True
+    assert result.context_receipts[0]["context_plan_hash"] == (
+        result.context_receipts[0]["plan_hash"]
+    )
+    assert result.context_receipts[0]["provider_tokens"] == 3
+    assert result.context_receipts[0]["provider_usage"] == {
+        "prompt_tokens": 3,
+        "completion_tokens": 2,
+        "cached_tokens": 2,
+        "cache_creation_tokens": 1,
+    }
     assert result.credits_cost == 2
     adapter.close.assert_awaited_once()
 

@@ -11,6 +11,7 @@ ChatContextMixin._format_attachments 专项测试(路径协议 v2:纯状态)
 """
 
 import pytest
+from unittest.mock import AsyncMock
 
 from services.agent.file_path_cache import get_file_cache
 from services.handlers.chat_context_mixin import ChatContextMixin
@@ -263,6 +264,8 @@ class TestAttachmentsAsSystem:
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
         handler = ChatHandler(db=db)
+        handler._get_context_summary = AsyncMock(return_value=None)
+        handler._get_context_summary = AsyncMock(return_value=None)
         return handler
 
     @pytest.mark.asyncio
@@ -377,6 +380,7 @@ class TestAttachmentsLegacyPath:
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
         handler = ChatHandler(db=db)
+        handler._get_context_summary = AsyncMock(return_value=None)
 
         content = [
             {"type": "text", "text": "分析下"},

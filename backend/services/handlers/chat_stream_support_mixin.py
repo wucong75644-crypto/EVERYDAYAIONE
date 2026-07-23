@@ -88,9 +88,6 @@ class ChatStreamSupportMixin:
             )
         )
         asyncio.create_task(
-            self._update_summary_if_needed(conversation_id)
-        )
-        asyncio.create_task(
             self._record_knowledge_metric(
                 task_type="chat", model_id=model_id, status="success",
                 cost_time_ms=elapsed_ms,

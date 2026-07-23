@@ -316,7 +316,7 @@ class ConversationExecutionService:
         outcome: GenerationOutcome,
     ) -> dict[str, Any]:
         return await self._rpc(
-            "commit_generation_turn",
+            "commit_generation_turn_with_context_v2",
             {
                 "p_task_id": claim.task_id,
                 "p_execution_token": claim.execution_token,

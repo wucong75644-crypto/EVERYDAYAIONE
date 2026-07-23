@@ -53,10 +53,10 @@ def _chat_response():
     )
 
 
-# -- TestPrefetchedSummaryInjection --
+# -- TestLegacySummaryExit --
 
-class TestPrefetchedSummaryInjection:
-    """generate_message 中 _prefetched_summary 注入到 body.params"""
+class TestLegacySummaryExit:
+    """generate_message 不再把旧 context_summary 带入运行时参数。"""
 
     def _make_body(self, params=None):
         body = MagicMock()
@@ -74,8 +74,7 @@ class TestPrefetchedSummaryInjection:
         return body
 
     @pytest.mark.asyncio
-    async def test_summary_injected_from_conversation(self):
-        """conversation['context_summary'] → body.params['_prefetched_summary']"""
+    async def test_existing_summary_is_not_injected(self):
         body = self._make_body(params={})
         conversation = {"id": "c1", "context_summary": "之前讨论了Python"}
 
@@ -103,11 +102,10 @@ class TestPrefetchedSummaryInjection:
                 task_limit_service=None,
             )
 
-        assert body.params["_prefetched_summary"] == "之前讨论了Python"
+        assert "_prefetched_summary" not in body.params
 
     @pytest.mark.asyncio
-    async def test_summary_none_when_conversation_has_no_summary(self):
-        """conversation 无 context_summary → _prefetched_summary=None"""
+    async def test_missing_summary_does_not_add_internal_param(self):
         body = self._make_body(params=None)
         conversation = {"id": "c1"}
 
@@ -136,7 +134,7 @@ class TestPrefetchedSummaryInjection:
             )
 
         assert body.params is not None
-        assert body.params["_prefetched_summary"] is None
+        assert "_prefetched_summary" not in body.params
 
 
 # -- TestUserLocationInjection --

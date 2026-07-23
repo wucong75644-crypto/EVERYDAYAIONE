@@ -118,7 +118,6 @@ class Settings(BaseSettings):
 
     # 对话上下文配置（token 预算驱动，替代旧的固定条数滑窗）
     # 设计文档：docs/document/TECH_上下文工程重构.md
-    chat_context_limit: int = 20  # 摘要触发阈值（消息数超此值才生成摘要，_update_summary_if_needed 用）
     chat_context_max_images: int = 5  # 上下文历史图片最大数量
     context_history_token_budget: int = 8000  # 历史消息专属 token 预算（替代旧 chat_context_limit + chat_context_max_chars）
     context_tool_token_budget: int = 6000  # 工具结果专属 token 预算
@@ -135,13 +134,10 @@ class Settings(BaseSettings):
     # 紧急回滚: 设 False, 重启 backend 即可
     prompt_cache_control_enabled: bool = True
 
-    # 对话历史摘要压缩配置
-    context_summary_enabled: bool = True  # 是否启用摘要压缩
+    # Context Runtime LLM Compaction 配置
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
     context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
     context_summary_timeout: float = 30.0  # 摘要读取超时（秒），connect=5s
-    context_summary_max_chars: int = 2000  # 摘要最大字符数（结构化模板需更多空间，原 1000）
-    context_summary_update_interval: int = 5  # 每N条新消息更新摘要
 
     # 工具循环上下文压缩配置（层4+层5）
     context_tool_keep_turns: int = 10  # 层4: 安全网兜底（企微链路用），主力归档靠 enforce_tool_budget 的 token 预算

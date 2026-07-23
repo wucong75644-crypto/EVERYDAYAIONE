@@ -18,7 +18,7 @@ from services.handlers.chat.execution_result import ChatExecutionResult
 from services.handlers.chat.outcome_builder import build_content_parts
 from services.handlers.chat.stream_session import (
     StreamTotals,
-    accumulate_cache_usage,
+    accumulate_usage,
 )
 from services.handlers.chat.stream_setup import prepare_chat_stream
 from services.handlers.chat.tool_loop import (
@@ -240,16 +240,17 @@ async def _read_turn(
     turn_text = ""
     turn_thinking = ""
     calls: dict[int, dict[str, Any]] = {}
-    from services.agent.runtime.context import record_provider_context_receipt
+    from services.agent.runtime.context import prepare_provider_context_plan
 
-    record_provider_context_receipt(
+    context_plan = prepare_provider_context_plan(
         runtime_state,
         messages=prepared.messages,
         tools=tools,
     )
+    provider_messages, provider_tools = context_plan.project()
     async for chunk in prepared.adapter.stream_chat(
-        messages=prepared.messages,
-        tools=tools,
+        messages=provider_messages,
+        tools=provider_tools,
         **prepared.stream_kwargs,
     ):
         _raise_if_cancelled(cancellation_event, sink)
@@ -265,7 +266,7 @@ async def _read_turn(
                 await sink.on_text(chunk.content)
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
-        _accumulate_usage(totals, chunk)
+        accumulate_usage(totals, chunk, runtime_state)
     return (
         turn_text,
         turn_thinking,
@@ -346,6 +347,7 @@ async def _execute_tools(
         context_budget=prepared.context_budget,
         turn=turn,
         compaction_scope=request.task_id,
+        runtime_state=runtime_state,
     )
     logger.info(
         f"Headless tool turn complete | task={request.task_id} | "
@@ -451,16 +453,6 @@ async def _apply_budget_stop(
         blocks.append({"type": "text", "text": synthesis})
     elif not totals.text:
         raise RuntimeError("CHAT_BUDGET_EXHAUSTED_WITHOUT_OUTPUT")
-
-
-def _accumulate_usage(totals: StreamTotals, chunk: Any) -> None:
-    totals.usage["prompt_tokens"] += chunk.prompt_tokens or 0
-    totals.usage["completion_tokens"] += chunk.completion_tokens or 0
-    accumulate_cache_usage(totals, chunk)
-    if chunk.credits_consumed is not None:
-        totals.usage["api_credits"] = chunk.credits_consumed
-    if chunk.finish_reason:
-        totals.last_finish_reason = chunk.finish_reason
 
 
 def _build_digest(

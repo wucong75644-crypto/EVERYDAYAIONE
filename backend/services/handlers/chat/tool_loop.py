@@ -293,41 +293,41 @@ async def compact_tool_context(
     context_budget: ContextBudget,
     turn: int,
     compaction_scope: str | None = None,
+    runtime_state: Any = None,
 ) -> None:
     """按当前模型预算压缩已完成工具轮次。"""
-    from services.agent.runtime.context import record_context_event
+    from services.agent.runtime.context import (
+        compact_context,
+        prune_context,
+        record_context_event,
+    )
     from services.handlers.context_compressor import (
-        compact_loop_with_summary,
-        compact_stale_by_user_turns,
         enforce_budget,
-        enforce_history_budget_sync,
-        enforce_tool_budget,
         estimate_tokens,
     )
 
     tokens_before = estimate_tokens(messages)
-    compact_stale_by_user_turns(
+    pruning_receipt = prune_context(
         messages,
-        keep_user_turns=3,
-        capacity_trigger=(
-            context_budget.soft_compaction / context_budget.usable_input
-        ),
-        max_tokens=context_budget.usable_input,
+        usable_input=context_budget.usable_input,
+        model_step=turn + 1,
     )
-    enforce_tool_budget(messages, context_budget.hard_compaction)
-    enforce_history_budget_sync(
-        messages,
-        context_budget.hard_compaction,
-    )
+    if runtime_state is not None:
+        runtime_state.pruning_receipts.append(pruning_receipt.to_dict())
     if turn >= 3:
-        summarized = await compact_loop_with_summary(
+        compaction_receipt = await compact_context(
             messages,
-            context_budget.usable_input,
-            context_budget.hard_compaction / context_budget.usable_input,
+            usable_input=context_budget.usable_input,
+            trigger_ratio=(
+                context_budget.hard_compaction / context_budget.usable_input
+            ),
             suppression_scope=compaction_scope,
+            model_step=turn + 1,
         )
     else:
-        summarized = False
+        compaction_receipt = None
+    if runtime_state is not None and compaction_receipt is not None:
+        runtime_state.compaction_receipts.append(compaction_receipt.to_dict())
     enforce_budget(messages, context_budget.emergency_trim)
     tokens_after = estimate_tokens(messages)
     record_context_event(
@@ -336,10 +336,12 @@ async def compact_tool_context(
         turn=turn,
         outcome=(
             "summarized"
-            if summarized else "trimmed"
+            if compaction_receipt
+            and compaction_receipt.outcome == "compacted" else "trimmed"
             if tokens_after < tokens_before else "unchanged"
         ),
         tokens_before=tokens_before,
         tokens_after=tokens_after,
         trimmed_tokens=max(0, tokens_before - tokens_after),
+        reason=pruning_receipt.outcome,
     )

@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.agent.runtime.context import clear_loop_compaction_scope
-from services.handlers.context_compressor import compact_loop_with_summary
+from services.agent.runtime.context import (
+    clear_loop_compaction_scope,
+    compact_context,
+)
 
 
 def _messages(turns: int = 5) -> list[dict]:
@@ -41,25 +43,25 @@ async def test_failure_suppresses_same_prefix_in_run() -> None:
     messages = _messages()
     summarize = AsyncMock(return_value=None)
     with patch(
-        "services.context_summarizer._call_summary_model",
+        "services.agent.runtime.context.summary_model.call_summary_model",
         new=summarize,
     ):
-        first = await compact_loop_with_summary(
+        first = await compact_context(
             messages,
-            10,
-            0.01,
+            usable_input=10,
+            trigger_ratio=0.01,
             suppression_scope="task-failure",
         )
-        second = await compact_loop_with_summary(
+        second = await compact_context(
             messages,
-            10,
-            0.01,
+            usable_input=10,
+            trigger_ratio=0.01,
             suppression_scope="task-failure",
         )
     await clear_loop_compaction_scope("task-failure")
 
-    assert first is False
-    assert second is False
+    assert first.outcome == "failed"
+    assert second.outcome == "suppressed"
     assert summarize.await_count == 2
 
 
@@ -76,28 +78,28 @@ async def test_same_prefix_has_single_in_flight_summary() -> None:
         return "摘要"
 
     with patch(
-        "services.context_summarizer._call_summary_model",
+        "services.agent.runtime.context.summary_model.call_summary_model",
         new=AsyncMock(side_effect=summarize),
     ) as call:
-        first_task = asyncio.create_task(compact_loop_with_summary(
+        first_task = asyncio.create_task(compact_context(
             first_messages,
-            10,
-            0.01,
+            usable_input=10,
+            trigger_ratio=0.01,
             suppression_scope="task-concurrent",
         ))
         await started.wait()
-        second = await compact_loop_with_summary(
+        second = await compact_context(
             second_messages,
-            10,
-            0.01,
+            usable_input=10,
+            trigger_ratio=0.01,
             suppression_scope="task-concurrent",
         )
         release.set()
         first = await first_task
     await clear_loop_compaction_scope("task-concurrent")
 
-    assert first is True
-    assert second is False
+    assert first.outcome == "compacted"
+    assert second.outcome == "in_flight"
     assert call.await_count == 1
 
 
@@ -111,20 +113,43 @@ async def test_changed_prefix_discards_generated_summary() -> None:
         return "过期摘要"
 
     with patch(
-        "services.context_summarizer._call_summary_model",
+        "services.agent.runtime.context.summary_model.call_summary_model",
         new=AsyncMock(side_effect=summarize),
     ):
-        result = await compact_loop_with_summary(
+        result = await compact_context(
             messages,
-            10,
-            0.01,
+            usable_input=10,
+            trigger_ratio=0.01,
             suppression_scope="task-prefix-change",
         )
     await clear_loop_compaction_scope("task-prefix-change")
 
-    assert result is False
+    assert result.outcome == "stale_prefix"
     assert len(messages) == original_len
     assert all(
         "[工具循环摘要]" not in str(message.get("content"))
         for message in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_model_exception_returns_failed_receipt_and_preserves_input() -> None:
+    messages = _messages()
+    original = copy.deepcopy(messages)
+    with patch(
+        "services.agent.runtime.context.summary_model.call_summary_model",
+        new=AsyncMock(side_effect=RuntimeError("provider unavailable")),
+    ):
+        receipt = await compact_context(
+            messages,
+            usable_input=10,
+            trigger_ratio=0.01,
+            suppression_scope="task-exception",
+            model_step=3,
+        )
+    await clear_loop_compaction_scope("task-exception")
+
+    assert messages == original
+    assert receipt.outcome == "failed"
+    assert receipt.model_step == 3
+    assert receipt.to_dict()["prefix_hash"]

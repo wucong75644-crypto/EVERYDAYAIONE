@@ -12,6 +12,7 @@
 """
 
 import pytest
+from unittest.mock import AsyncMock
 
 from services.agent.file_path_cache import get_file_cache
 from services.handlers.chat_context_mixin import ChatContextMixin
@@ -203,6 +204,7 @@ class TestNoDoubleInjection:
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
         handler = ChatHandler(db=db)
+        handler._get_context_summary = AsyncMock(return_value=None)
         return handler
 
     @pytest.mark.asyncio
@@ -525,6 +527,7 @@ class TestE2EImageOnlyScenario:
         db = MockSupabaseClient()
         db.set_table_data("messages", [])
         handler = ChatHandler(db=db)
+        handler._get_context_summary = AsyncMock(return_value=None)
         return handler
 
     @pytest.mark.asyncio

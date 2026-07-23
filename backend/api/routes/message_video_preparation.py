@@ -40,7 +40,6 @@ async def prepare_and_start_video_generation(
     )
     if body.params is None:
         body.params = {}
-    body.params["_prefetched_summary"] = conversation.get("context_summary")
     body.params["_org_id"] = org_id
     params = _business_params(body)
     settings = resolve_video_submission_settings(handler, body.content, params)
