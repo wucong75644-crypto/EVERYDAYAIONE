@@ -43,14 +43,43 @@ def _write_env_files(directory: Path) -> None:
         path.chmod(0o600)
 
 
-def _run(directory: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    directory: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(SCRIPT), str(directory)],
-        env=os.environ,
+        env=env or os.environ,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def _fake_stat_environment(
+    tmp_path: Path,
+    implementation: str,
+) -> dict[str, str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_stat = fake_bin / "stat"
+    if implementation == "gnu":
+        behavior = (
+            "if [ \"$1\" = \"-c\" ]; then echo 600; exit 0; fi\n"
+            "echo '?p'; exit 0\n"
+        )
+    else:
+        behavior = (
+            "if [ \"$1\" = \"-c\" ]; then exit 1; fi\n"
+            "if [ \"$1\" = \"-f\" ]; then echo 600; exit 0; fi\n"
+            "exit 1\n"
+        )
+    fake_stat.write_text(f"#!/bin/sh\n{behavior}", encoding="utf-8")
+    fake_stat.chmod(0o755)
+    return {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
 
 
 def test_role_env_templates_are_safe_placeholders() -> None:
@@ -81,6 +110,26 @@ def test_role_env_contract_accepts_isolated_role_files(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "合同验证通过" in result.stdout
     assert "secret" not in result.stdout + result.stderr
+
+
+def test_role_env_contract_accepts_gnu_stat(tmp_path: Path) -> None:
+    _write_env_files(tmp_path)
+    env = _fake_stat_environment(tmp_path, "gnu")
+
+    result = _run(tmp_path, env)
+
+    assert result.returncode == 0
+    assert "合同验证通过" in result.stdout
+
+
+def test_role_env_contract_accepts_bsd_stat(tmp_path: Path) -> None:
+    _write_env_files(tmp_path)
+    env = _fake_stat_environment(tmp_path, "bsd")
+
+    result = _run(tmp_path, env)
+
+    assert result.returncode == 0
+    assert "合同验证通过" in result.stdout
 
 
 def test_role_env_contract_rejects_missing_file(tmp_path: Path) -> None:

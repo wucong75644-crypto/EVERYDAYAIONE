@@ -6,7 +6,19 @@ env_directory=${1:-/var/www/everydayai/backend}
 
 file_mode() {
     local path=$1
-    stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path"
+    local mode
+    mode=$(stat -c '%a' "$path" 2>/dev/null || true)
+    if [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
+        printf '%s' "$mode"
+        return 0
+    fi
+    mode=$(stat -f '%Lp' "$path" 2>/dev/null || true)
+    if [[ "$mode" =~ ^[0-7]{3,4}$ ]]; then
+        printf '%s' "$mode"
+        return 0
+    fi
+    echo "❌ 无法读取 ${path} 的文件权限" >&2
+    return 1
 }
 
 read_contract_value() {
