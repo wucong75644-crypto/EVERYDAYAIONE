@@ -33,8 +33,9 @@ from services.kuaimai.registry.base import ApiEntry
 class ErpDispatcher:
     """ERP API统一调度器"""
 
-    def __init__(self, client: KuaiMaiClient) -> None:
+    def __init__(self, client: KuaiMaiClient, db_source: Any = None) -> None:
         self._client = client
+        self._db_source = db_source
 
     async def execute(
         self,
@@ -83,6 +84,7 @@ class ErpDispatcher:
             self._record_param_knowledge(
                 tool_name, action,
                 f"缺少必填参数: {', '.join(missing)}，支持: {', '.join(valid)}",
+                db_source=self._db_source,
             )
             return ToolOutput(
                 summary=(
@@ -108,96 +110,123 @@ class ErpDispatcher:
                 tool_name, action,
                 f"无效参数: {', '.join(param_warnings)}，"
                 f"支持: {', '.join(sorted(entry.param_map.keys()))}",
+                db_source=self._db_source,
             )
         logger.info(
             f"ErpDispatcher | tool={tool_name} action={action} "
             f"method={entry.method} params={api_params}"
         )
 
-        # 4. 构建网关参数 + 编码宽泛化预处理 + 调用API
-        base_url, system_params = self._build_gateway_params(entry)
-        broadening = apply_code_broadening(entry, params, api_params)
-
-        broadened_note = ""
-        if broadening:
-            original_codes, packed_codes, api_keys, is_batch = broadening
-            if is_batch:
-                data, broadened_note = await try_batch_dual_query(
-                    entry, api_params, original_codes, packed_codes,
-                    api_keys, self._client, base_url, system_params,
-                )
-            else:
-                data, broadened_note = await try_broadened_queries(
-                    entry, api_params, original_codes, packed_codes,
-                    api_keys, self._client, base_url, system_params,
-                )
-        else:
-            # 正常模式（无编码参数、或写操作）
-            try:
-                if entry.fetch_all:
-                    data = await self._fetch_all_pages(
-                        entry, api_params, base_url, system_params,
-                    )
-                else:
-                    data = await self._client.request_with_retry(
-                        entry.method,
-                        api_params,
-                        base_url=base_url,
-                        extra_system_params=system_params,
-                    )
-            except Exception as e:
-                logger.error(
-                    f"ErpDispatcher API error | tool={tool_name} "
-                    f"action={action} error={e}"
-                )
-                return ToolOutput(
-                    summary=f"ERP接口调用失败: {e}",
-                    source="erp",
-                    status=OutputStatus.ERROR,
-                    error_message=str(e),
-                )
-
-        # 5. 格式化返回（附带无效参数警告）
-        result = self._format_response(data, entry, action)
-
-        # 5.3 宽泛查询说明
-        if broadened_note:
-            result = broadened_note + "\n\n" + result
-
-        # 5.5 参数自动纠正记录
-        if corrections:
-            result = (
-                "⚙ 参数自动纠正: "
-                + "; ".join(corrections) + "\n\n"
-                + result
-            )
-
-        # 5.6 零结果诊断建议
-        suggestion = diagnose_empty_result(entry, params, data)
-        if suggestion:
-            result += suggestion
-
-        if param_warnings:
-            valid = sorted(entry.param_map.keys())
-            result += (
-                f"\n\n⚠ 忽略了无效参数: {', '.join(param_warnings)}。"
-                f"该操作支持的参数: {', '.join(valid)}"
-            )
+        api_result = await self._call_api(
+            tool_name, action, entry, params, api_params,
+        )
+        if isinstance(api_result, ToolOutput):
+            return api_result
+        data, broadened_note = api_result
+        result = self._decorate_response(
+            data=data,
+            entry=entry,
+            action=action,
+            params=params,
+            corrections=corrections,
+            param_warnings=param_warnings,
+            broadened_note=broadened_note,
+        )
         return ToolOutput(
             summary=result,
             source="erp",
             metadata={"tool_name": tool_name, "action": action},
         )
 
+    async def _call_api(
+        self,
+        tool_name: str,
+        action: str,
+        entry: ApiEntry,
+        params: Dict[str, Any],
+        api_params: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], str] | ToolOutput:
+        """执行宽泛化或普通 ERP API 请求。"""
+        base_url, system_params = self._build_gateway_params(entry)
+        broadening = apply_code_broadening(entry, params, api_params)
+        if broadening:
+            original_codes, packed_codes, api_keys, is_batch = broadening
+            query = (
+                try_batch_dual_query if is_batch
+                else try_broadened_queries
+            )
+            return await query(
+                entry, api_params, original_codes, packed_codes,
+                api_keys, self._client, base_url, system_params,
+            )
+
+        try:
+            if entry.fetch_all:
+                data = await self._fetch_all_pages(
+                    entry, api_params, base_url, system_params,
+                )
+            else:
+                data = await self._client.request_with_retry(
+                    entry.method,
+                    api_params,
+                    base_url=base_url,
+                    extra_system_params=system_params,
+                )
+            return data, ""
+        except Exception as exc:
+            logger.error(
+                f"ErpDispatcher API error | tool={tool_name} "
+                f"action={action} error={exc}"
+            )
+            return ToolOutput(
+                summary=f"ERP接口调用失败: {exc}",
+                source="erp",
+                status=OutputStatus.ERROR,
+                error_message=str(exc),
+            )
+
+    def _decorate_response(
+        self,
+        *,
+        data: Dict[str, Any],
+        entry: ApiEntry,
+        action: str,
+        params: Dict[str, Any],
+        corrections: list[str],
+        param_warnings: list[str],
+        broadened_note: str,
+    ) -> str:
+        """格式化响应并追加纠正、诊断和参数警告。"""
+        result = self._format_response(data, entry, action)
+        if broadened_note:
+            result = broadened_note + "\n\n" + result
+        if corrections:
+            result = (
+                "⚙ 参数自动纠正: "
+                + "; ".join(corrections) + "\n\n" + result
+            )
+        suggestion = diagnose_empty_result(entry, params, data)
+        if suggestion:
+            result += suggestion
+        if param_warnings:
+            valid = sorted(entry.param_map.keys())
+            result += (
+                f"\n\n⚠ 忽略了无效参数: {', '.join(param_warnings)}。"
+                f"该操作支持的参数: {', '.join(valid)}"
+            )
+        return result
+
     @staticmethod
     def _record_param_knowledge(
         tool_name: str, action: str, error_message: str,
+        db_source: Any = None,
     ) -> None:
         """Fire-and-forget 记录参数错误知识"""
         try:
             from services.knowledge_extractor import extract_and_save
             asyncio.create_task(
                 extract_and_save(
+                    db_source=db_source,
                     task_type="param_validation",
                     model_id=f"{tool_name}:{action}",
                     status="failed",

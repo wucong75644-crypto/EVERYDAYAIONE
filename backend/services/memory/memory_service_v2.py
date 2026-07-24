@@ -16,20 +16,15 @@ from .pipeline_scheduler import PipelineScheduler
 from .context_compressor import ContextCompressor
 from loguru import logger
 
-
-
-# 全局调度器单例
-_scheduler: PipelineScheduler | None = None
+from core.db_scope import (
+    AsyncScopedConnectionPool,
+    database_scope_from_client,
+)
 
 
 async def get_scheduler(db_pool=None) -> PipelineScheduler:
-    """获取全局管道调度器（自动适配 DB 连接）"""
-    global _scheduler
-    if _scheduler is None:
-        pool = await _get_memory_db()
-        adapted = _PsycopgAdapter(pool) if pool else db_pool
-        _scheduler = PipelineScheduler(db_pool=adapted)
-    return _scheduler
+    """为当前调用身份创建独立管道调度器。"""
+    return PipelineScheduler(db_pool=await _resolve_memory_db(db_pool))
 
 
 async def _get_memory_db():
@@ -85,7 +80,19 @@ class _PsycopgAdapter:
         async with self._pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, args if args else None)
-            await conn.commit()
+
+
+async def _resolve_memory_db(db_source):
+    """把 scoped client 或既有 DB adapter 解析为 Memory SQL adapter。"""
+    if isinstance(db_source, _PsycopgAdapter):
+        return db_source
+    scope = database_scope_from_client(db_source)
+    if scope is None:
+        raise RuntimeError("MEMORY_DATABASE_SCOPE_REQUIRED")
+    pool = await _get_memory_db()
+    if pool is None:
+        raise RuntimeError("Memory V2: database pool not available")
+    return _PsycopgAdapter(AsyncScopedConnectionPool(pool, scope))
 
 
 class MemoryServiceV2:
@@ -100,7 +107,7 @@ class MemoryServiceV2:
     """
 
     def __init__(self, db_pool=None):
-        self._raw_pool = db_pool  # 可能是 Supabase client（忽略）
+        self._raw_pool = db_pool
         self._db = None  # 延迟初始化
         self._cfg = get_memory_config()
         self._retrieval = None
@@ -109,12 +116,8 @@ class MemoryServiceV2:
     async def _ensure_db(self):
         """确保 DB 适配器已初始化"""
         if self._db is None:
-            pool = await _get_memory_db()
-            if pool:
-                self._db = _PsycopgAdapter(pool)
-                self._retrieval = RetrievalPipeline(db_pool=self._db)
-            else:
-                raise RuntimeError("Memory V2: database pool not available")
+            self._db = await _resolve_memory_db(self._raw_pool)
+            self._retrieval = RetrievalPipeline(db_pool=self._db)
         return self._db
 
     # ============================

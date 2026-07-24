@@ -6,10 +6,11 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from api.deps import CurrentUser, Database, OrgCtx
+from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
 from schemas.auth import (
     CurrentMember,
     CurrentOrgInfo,
@@ -34,9 +35,15 @@ from services.permissions.effective_perms import (
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
-def get_auth_service(db: Database) -> AuthService:
-    """获取认证服务实例（认证路由为公开接口，使用无需登录的 Database）"""
-    return AuthService(db)
+def get_auth_service(request: Request, db: Database) -> AuthService:
+    """为公开认证请求创建无 actor/org 的 runtime 数据库 Scope。"""
+    scope = DatabaseScope(
+        actor_user_id=None,
+        org_id=None,
+        access_kind=DatabaseAccessKind.RUNTIME,
+        request_id=request.headers.get("X-Request-Id", ""),
+    )
+    return AuthService(ScopedDatabaseClient(db, scope))
 
 
 @router.post("/send-code", summary="发送验证码")
@@ -342,11 +349,5 @@ async def logout(
     客户端同时需要清除本地存储的 token。
     """
     if req.refresh_token:
-        from core.security import hash_refresh_token
-        from datetime import datetime as _dt, timezone as _tz
-        token_hash = hash_refresh_token(req.refresh_token)
-        auth_service.db.table("refresh_tokens").update({
-            "revoked": True,
-            "revoked_at": _dt.now(_tz.utc).isoformat(),
-        }).eq("token_hash", token_hash).execute()
+        auth_service.revoke_refresh_token(req.refresh_token)
     return {"message": "已退出登录"}

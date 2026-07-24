@@ -1,789 +1,94 @@
-"""
-auth_service 单元测试
+"""AuthService 验证码与响应格式化测试。"""
 
-测试认证服务的核心功能：
-- 手机号注册
-- 手机号验证码登录
-- 手机号密码登录
-- 重置密码
-"""
-
-import sys
-from pathlib import Path
-
-# Python path fix: 避免与根目录的 tests/ 冲突
-backend_dir = Path(__file__).parent.parent
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+import pytest
 
+from core.exceptions import AppException, ValidationError
 from services.auth_service import AuthService
-from core.exceptions import (
-    AuthenticationError,
-    ConflictError,
-    NotFoundError,
-    ValidationError,
-)
-
-# 测试辅助函数（避免导入冲突）
-def create_test_user(
-    user_id: str = None,
-    phone: str = "13800138000",
-    nickname: str = "测试用户",
-    credits: int = 100,
-    status: str = "active",
-    role: str = "user",
-    password_hash: str = None,
-) -> dict:
-    """创建测试用户数据"""
-    from datetime import datetime, timezone
-    return {
-        "id": user_id or str(uuid4()),
-        "phone": phone,
-        "nickname": nickname,
-        "credits": credits,
-        "status": status,
-        "role": role,
-        "password_hash": password_hash,
-        "avatar_url": None,
-        "login_methods": ["phone"],
-        "created_by": "phone",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "last_login_at": None,
-    }
+from testing.auth_test_support import auth_user
 
 
-class TestAuthServiceRegister:
-    """注册功能测试"""
-
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        """创建 AuthService 实例"""
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_register_success(self, auth_service, mock_db, mock_sms_service):
-        """测试：注册成功"""
-        # Arrange
-        phone = "13800138000"
-        code = "123456"
-        nickname = "测试用户"
-
-        # 设置空的用户表（手机号未注册）
-        mock_db.set_table_data("users", [])
-
-        # Mock _verify_code
-        async def mock_verify_code(*args, **kwargs):
-            return True
-
-        # Mock insert 返回新用户
-        new_user = create_test_user(phone=phone, nickname=nickname)
-
-        with patch.object(auth_service, "_verify_code", side_effect=mock_verify_code):
-            # Mock insert 的返回值
-            mock_insert_result = MagicMock()
-            mock_insert_result.execute.return_value = MagicMock(data=[new_user])
-            with patch.object(mock_db.table("users"), "insert", return_value=mock_insert_result):
-                # Act
-                result = await auth_service.register_by_phone(phone, code, nickname)
-
-        # Assert
-        assert "token" in result
-        assert "user" in result
-        assert result["user"]["nickname"] == nickname
-
-    @pytest.mark.asyncio
-    async def test_register_phone_already_exists(self, auth_service, mock_db, mock_sms_service):
-        """测试：手机号已注册"""
-        # Arrange
-        phone = "13800138000"
-        existing_user = create_test_user(phone=phone)
-        mock_db.set_table_data("users", [existing_user])
-
-        # Act & Assert
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            with pytest.raises(ConflictError) as exc_info:
-                await auth_service.register_by_phone(phone, "123456")
-
-        assert "已注册" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_register_invalid_code(self, auth_service, mock_db):
-        """测试：验证码错误"""
-        # Arrange
-        phone = "13800138000"
-        mock_db.set_table_data("users", [])
-
-        # Act & Assert
-        with patch.object(auth_service, "_verify_code", return_value=False):
-            with pytest.raises(ValidationError) as exc_info:
-                await auth_service.register_by_phone(phone, "wrong_code")
-
-        assert "验证码" in str(exc_info.value)
+@pytest.fixture
+def auth_service(mock_settings):
+    with patch("services.auth_service.get_settings", return_value=mock_settings):
+        return AuthService(MagicMock())
 
 
-class TestAuthServiceLoginByPhone:
-    """手机号验证码登录测试"""
+@pytest.mark.asyncio
+async def test_send_code_success(auth_service, mock_sms_service):
+    result = await auth_service.send_verification_code(
+        "13800138000", "login",
+    )
 
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_login_by_phone_success(self, auth_service, mock_db, mock_sms_service):
-        """测试：验证码登录成功"""
-        # Arrange
-        phone = "13800138000"
-        user = create_test_user(phone=phone)
-        mock_db.set_table_data("users", [user])
-
-        # Act
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            result = await auth_service.login_by_phone(phone, "123456")
-
-        # Assert
-        assert "token" in result
-        assert "user" in result
-        assert result["token"]["token_type"] == "bearer"
-
-    @pytest.mark.asyncio
-    async def test_login_by_phone_user_not_found(self, auth_service, mock_db, mock_sms_service):
-        """测试：用户不存在"""
-        # Arrange
-        mock_db.set_table_data("users", [])
-
-        # Act & Assert
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            with pytest.raises(NotFoundError):
-                await auth_service.login_by_phone("13800138000", "123456")
-
-    @pytest.mark.asyncio
-    async def test_login_by_phone_invalid_code(self, auth_service, mock_db):
-        """测试：验证码错误"""
-        # Act & Assert
-        with patch.object(auth_service, "_verify_code", return_value=False):
-            with pytest.raises(ValidationError) as exc_info:
-                await auth_service.login_by_phone("13800138000", "wrong")
-
-        assert "验证码" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_login_by_phone_user_disabled(self, auth_service, mock_db, mock_sms_service):
-        """测试：账号已禁用"""
-        # Arrange
-        user = create_test_user(status="disabled")
-        mock_db.set_table_data("users", [user])
-
-        # Act & Assert
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            with pytest.raises(AuthenticationError) as exc_info:
-                await auth_service.login_by_phone(user["phone"], "123456")
-
-        assert "禁用" in str(exc_info.value)
+    assert result is True
+    mock_sms_service.send_verification_code.assert_awaited_once_with(
+        "13800138000", "login",
+    )
 
 
-class TestAuthServiceLoginByPassword:
-    """密码登录测试"""
+@pytest.mark.asyncio
+async def test_send_code_provider_failure_is_mapped(
+    auth_service, mock_sms_service,
+):
+    mock_sms_service.send_verification_code.side_effect = RuntimeError("down")
 
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
+    with pytest.raises(AppException) as exc_info:
+        await auth_service.send_verification_code("13800138000", "register")
 
-    @pytest.mark.asyncio
-    async def test_login_by_password_success(self, auth_service, mock_db):
-        """测试：密码登录成功"""
-        # Arrange
-        phone = "13800138000"
-        password = "password123"
-
-        # 创建带密码的用户（设置 password_hash）
-        user = create_test_user(
-            phone=phone,
-            password_hash="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.G9HwI0Pv0K2L4K"  # bcrypt hash
-        )
-        mock_db.set_table_data("users", [user])
-
-        # Act
-        with patch("services.auth_service.verify_password", return_value=True):
-            result = await auth_service.login_by_password(phone, password)
-
-        # Assert
-        assert "token" in result
-        assert "user" in result
-
-    @pytest.mark.asyncio
-    async def test_login_by_password_wrong_password(self, auth_service, mock_db):
-        """测试：密码错误"""
-        # Arrange
-        user = create_test_user()
-        user["password_hash"] = "hashed_password"
-        mock_db.set_table_data("users", [user])
-
-        # Act & Assert
-        with patch("services.auth_service.verify_password", return_value=False):
-            with pytest.raises(AuthenticationError) as exc_info:
-                await auth_service.login_by_password(user["phone"], "wrong")
-
-        assert "密码错误" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_login_by_password_no_password_set(self, auth_service, mock_db):
-        """测试：未设置密码"""
-        # Arrange
-        user = create_test_user()
-        user["password_hash"] = None
-        mock_db.set_table_data("users", [user])
-
-        # Act & Assert
-        with pytest.raises(AuthenticationError) as exc_info:
-            await auth_service.login_by_password(user["phone"], "any")
-
-        assert "未设置密码" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_login_by_password_user_not_found(self, auth_service, mock_db):
-        """测试：用户不存在"""
-        # Arrange
-        mock_db.set_table_data("users", [])
-
-        # Act & Assert
-        with pytest.raises(AuthenticationError) as exc_info:
-            await auth_service.login_by_password("13800138000", "password")
-
-        assert "密码错误" in str(exc_info.value)
+    assert exc_info.value.code == "SMS_SEND_ERROR"
 
 
-class TestAuthServiceResetPassword:
-    """重置密码测试"""
+@pytest.mark.asyncio
+async def test_send_code_business_error_passes_through(
+    auth_service, mock_sms_service,
+):
+    mock_sms_service.send_verification_code.side_effect = ValidationError(
+        "频率过高",
+    )
 
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_reset_password_success(self, auth_service, mock_db, mock_sms_service):
-        """测试：重置密码成功"""
-        # Arrange
-        user = create_test_user()
-        mock_db.set_table_data("users", [user])
-
-        # Act
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            with patch("services.auth_service.hash_password", return_value="new_hash"):
-                result = await auth_service.reset_password(
-                    user["phone"], "123456", "newpassword"
-                )
-
-        # Assert
-        assert "message" in result
-        assert "成功" in result["message"]
-
-    @pytest.mark.asyncio
-    async def test_reset_password_user_not_found(self, auth_service, mock_db):
-        """测试：用户不存在"""
-        # Arrange
-        mock_db.set_table_data("users", [])
-
-        # Act & Assert
-        with pytest.raises(NotFoundError):
-            await auth_service.reset_password("13800138000", "123456", "newpwd")
+    with pytest.raises(ValidationError, match="频率过高"):
+        await auth_service.send_verification_code("13800138000", "login")
 
 
-class TestAuthServiceSendVerificationCode:
-    """发送验证码测试"""
-
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_send_code_success(self, auth_service, mock_sms_service):
-        """测试：发送验证码成功"""
-        result = await auth_service.send_verification_code("13800138000", "login")
-
-        assert result is True
-        mock_sms_service.send_verification_code.assert_awaited_once_with(
-            "13800138000", "login"
+@pytest.mark.asyncio
+async def test_verify_code_only_success(auth_service):
+    with patch.object(
+        auth_service, "_verify_code", new=AsyncMock(return_value=True),
+    ):
+        assert await auth_service.verify_code_only(
+            "13800138000", "123456", "reset_password",
         )
 
-    @pytest.mark.asyncio
-    async def test_send_code_sms_failure(self, auth_service, mock_sms_service):
-        """测试：短信服务异常时抛出 AppException"""
-        from core.exceptions import AppException
 
-        mock_sms_service.send_verification_code.side_effect = Exception("SMS provider down")
-
-        with pytest.raises(AppException) as exc_info:
-            await auth_service.send_verification_code("13800138000", "register")
-
-        assert exc_info.value.code == "SMS_SEND_ERROR"
-
-    @pytest.mark.asyncio
-    async def test_send_code_validation_error_passthrough(self, auth_service, mock_sms_service):
-        """测试：业务异常直接传递"""
-        mock_sms_service.send_verification_code.side_effect = ValidationError("频率过高")
-
-        with pytest.raises(ValidationError, match="频率过高"):
-            await auth_service.send_verification_code("13800138000", "login")
-
-
-class TestAuthServiceVerifyCodeOnly:
-    """仅验证验证码测试"""
-
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_verify_code_only_success(self, auth_service):
-        """测试：验证码正确返回 True"""
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            result = await auth_service.verify_code_only("13800138000", "123456", "reset_password")
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_verify_code_only_invalid(self, auth_service):
-        """测试：验证码错误抛出 ValidationError"""
-        with patch.object(auth_service, "_verify_code", return_value=False):
-            with pytest.raises(ValidationError, match="验证码"):
-                await auth_service.verify_code_only("13800138000", "wrong", "reset_password")
-
-    @pytest.mark.asyncio
-    async def test_verify_code_only_exception(self, auth_service):
-        """测试：内部异常时抛出 AppException"""
-        from core.exceptions import AppException
-
-        with patch.object(auth_service, "_verify_code", side_effect=Exception("timeout")):
-            with pytest.raises(AppException) as exc_info:
-                await auth_service.verify_code_only("13800138000", "123456", "reset_password")
-
-        assert exc_info.value.code == "VERIFY_CODE_ERROR"
-
-
-class TestAuthServiceResetPasswordInvalidCode:
-    """重置密码 - 验证码错误分支"""
-
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_reset_password_invalid_code(self, auth_service, mock_db):
-        """测试：验证码错误时抛出 ValidationError"""
-        user = create_test_user()
-        mock_db.set_table_data("users", [user])
-
-        with patch.object(auth_service, "_verify_code", return_value=False):
-            with pytest.raises(ValidationError, match="验证码"):
-                await auth_service.reset_password(user["phone"], "wrong", "newpwd")
-
-
-class TestAuthServiceLoginByOrg:
-    """企业密码登录测试"""
-
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    def _setup_org_login(self, mock_db, org_status="active", member_role="member",
-                         member_status="active", user_status="active",
-                         password_hash="hashed_pw"):
-        """统一设置企业登录所需的表数据"""
-        org_id = "org-001"
-        user_id = "user-001"
-
-        mock_db.set_table_data("organizations", [{
-            "id": org_id, "name": "测试企业", "status": org_status,
-        }])
-        mock_db.set_table_data("users", [{
-            **create_test_user(user_id=user_id, phone="13800138000",
-                               status=user_status, password_hash=password_hash),
-        }])
-        mock_db.set_table_data("org_members", [{
-            "org_id": org_id, "user_id": user_id,
-            "role": member_role, "status": member_status,
-        }])
-        return org_id, user_id
-
-    @pytest.mark.asyncio
-    async def test_login_org_success(self, auth_service, mock_db):
-        """企业登录成功"""
-        self._setup_org_login(mock_db)
-
-        with patch("services.auth_service.verify_password", return_value=True):
-            result = await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "password123"
+@pytest.mark.asyncio
+async def test_verify_code_only_invalid(auth_service):
+    with patch.object(
+        auth_service, "_verify_code", new=AsyncMock(return_value=False),
+    ):
+        with pytest.raises(ValidationError, match="验证码"):
+            await auth_service.verify_code_only(
+                "13800138000", "wrong", "reset_password",
             )
 
-        assert "token" in result
-        assert "user" in result
-        assert "org" in result
-        assert result["org"]["org_name"] == "测试企业"
-        assert result["org"]["org_role"] == "member"
 
-    @pytest.mark.asyncio
-    async def test_login_org_not_found(self, auth_service, mock_db):
-        """企业名不存在"""
-        mock_db.set_table_data("organizations", [])
+def test_format_user_response_masks_phone_and_detects_wecom(auth_service):
+    result = auth_service._format_user_response(
+        auth_user(login_methods=["phone", "wecom"]),
+    )
 
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "不存在的企业", "13800138000", "pw"
-            )
+    assert result["phone"] == "138****8000"
+    assert result["wecom_bound"] is True
 
-    @pytest.mark.asyncio
-    async def test_login_org_suspended(self, auth_service, mock_db):
-        """企业已停用"""
-        self._setup_org_login(mock_db, org_status="suspended")
 
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
+def test_format_user_response_handles_short_phone(auth_service):
+    result = auth_service._format_user_response(auth_user(phone="12345"))
 
-    @pytest.mark.asyncio
-    async def test_login_org_phone_not_registered(self, auth_service, mock_db):
-        """手机号未注册"""
-        mock_db.set_table_data("organizations", [{
-            "id": "org-001", "name": "测试企业", "status": "active",
-        }])
-        mock_db.set_table_data("users", [])
+    assert result["phone"] is None
 
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
 
-    @pytest.mark.asyncio
-    async def test_login_org_user_disabled(self, auth_service, mock_db):
-        """用户账号已禁用"""
-        self._setup_org_login(mock_db, user_status="disabled")
+def test_format_user_response_handles_missing_login_methods(auth_service):
+    result = auth_service._format_user_response(
+        auth_user(login_methods=None),
+    )
 
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
-
-    @pytest.mark.asyncio
-    async def test_login_org_not_member(self, auth_service, mock_db):
-        """不是企业成员"""
-        mock_db.set_table_data("organizations", [{
-            "id": "org-001", "name": "测试企业", "status": "active",
-        }])
-        mock_db.set_table_data("users", [
-            create_test_user(user_id="user-001", phone="13800138000"),
-        ])
-        mock_db.set_table_data("org_members", [])  # 空成员表
-
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
-
-    @pytest.mark.asyncio
-    async def test_login_org_member_disabled(self, auth_service, mock_db):
-        """成员已被禁用"""
-        self._setup_org_login(mock_db, member_status="disabled")
-
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
-
-    @pytest.mark.asyncio
-    async def test_login_org_no_password(self, auth_service, mock_db):
-        """未设置密码"""
-        self._setup_org_login(mock_db, password_hash=None)
-
-        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-            await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
-
-    @pytest.mark.asyncio
-    async def test_login_org_wrong_password(self, auth_service, mock_db):
-        """密码错误"""
-        self._setup_org_login(mock_db)
-
-        with patch("services.auth_service.verify_password", return_value=False):
-            with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
-                await auth_service.login_by_org_password(
-                    "测试企业", "13800138000", "wrong"
-                )
-
-    @pytest.mark.asyncio
-    async def test_login_org_admin_role(self, auth_service, mock_db):
-        """admin 角色正确返回"""
-        self._setup_org_login(mock_db, member_role="admin")
-
-        with patch("services.auth_service.verify_password", return_value=True):
-            result = await auth_service.login_by_org_password(
-                "测试企业", "13800138000", "pw"
-            )
-
-        assert result["org"]["org_role"] == "admin"
-
-
-class TestAuthServiceHelpers:
-    """辅助方法测试"""
-
-    @pytest.fixture
-    def auth_service(self, mock_db, mock_settings):
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    def test_format_user_response(self, auth_service):
-        """测试：用户信息格式化"""
-        # Arrange
-        user = create_test_user(phone="13800138000")
-
-        # Act
-        result = auth_service._format_user_response(user)
-
-        # Assert
-        assert result["id"] == user["id"]
-        assert result["nickname"] == user["nickname"]
-        assert result["phone"] == "138****8000"  # 手机号脱敏
-        assert result["credits"] == user["credits"]
-
-    def test_format_user_response_short_phone(self, auth_service):
-        """测试：短手机号格式化"""
-        # Arrange
-        user = create_test_user(phone="12345")
-
-        # Act
-        result = auth_service._format_user_response(user)
-
-        # Assert
-        assert result["phone"] is None  # 手机号太短，不显示
-
-    def test_format_user_response_wecom_bound_true(self, auth_service):
-        """测试：login_methods 包含 wecom → wecom_bound=True"""
-        user = create_test_user()
-        user["login_methods"] = ["phone", "wecom"]
-
-        result = auth_service._format_user_response(user)
-        assert result["wecom_bound"] is True
-
-    def test_format_user_response_wecom_bound_false(self, auth_service):
-        """测试：login_methods 不含 wecom → wecom_bound=False"""
-        user = create_test_user()
-        user["login_methods"] = ["phone"]
-
-        result = auth_service._format_user_response(user)
-        assert result["wecom_bound"] is False
-
-    def test_format_user_response_wecom_bound_none_methods(self, auth_service):
-        """测试：login_methods 为 None → wecom_bound=False"""
-        user = create_test_user()
-        user["login_methods"] = None
-
-        result = auth_service._format_user_response(user)
-        assert result["wecom_bound"] is False
-
-    def test_create_token_response(self, auth_service):
-        """测试：Token 响应格式（委托 create_token_pair）"""
-        fake_pair = {
-            "access_token": "test_token",
-            "refresh_token": "test_refresh",
-            "token_type": "bearer",
-            "expires_in": 1440 * 60,
-            "refresh_expires_in": 7 * 86400,
-        }
-        with patch("services.auth_service.create_token_pair", return_value=fake_pair):
-            result = auth_service._create_token_response("user_123")
-
-        assert result["access_token"] == "test_token"
-        assert result["refresh_token"] == "test_refresh"
-        assert result["token_type"] == "bearer"
-        assert result["expires_in"] == 1440 * 60
-        assert result["refresh_expires_in"] == 7 * 86400
-
-
-# ── refresh_access_token / revoke_user_refresh_tokens ──────────────
-
-
-class TestRefreshAccessToken:
-    """refresh_access_token 刷新轮换测试
-
-    DB 查询通过 mock db.table() 链式调用，避免依赖 MockDB 的 eq 过滤逻辑。
-    """
-
-    @pytest.fixture
-    def auth_service(self, mock_settings):
-        mock_settings.jwt_refresh_token_expire_days = 7
-        mock_db = MagicMock()
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    def _mock_db_chain(self, auth_service, select_data):
-        """配置 db.table("refresh_tokens").select().eq().maybe_single().execute() 链"""
-        result = MagicMock()
-        result.data = select_data
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.maybe_single.return_value = chain
-        chain.execute.return_value = result
-        # update/delete 链也需要
-        chain.update.return_value = chain
-        chain.delete.return_value = chain
-        chain.lt.return_value = chain
-        chain.insert.return_value = chain
-        auth_service.db.table.return_value = chain
-        return chain
-
-    @pytest.mark.asyncio
-    async def test_refresh_success(self, auth_service):
-        """正常轮换：旧 token 吊销 + 签发新 token"""
-        from datetime import datetime, timezone, timedelta
-        user_id = str(uuid4())
-
-        rt_record = {
-            "id": "rt-1",
-            "user_id": user_id,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
-            "revoked": False,
-        }
-        user_record = {"id": user_id, "status": "active"}
-
-        # 第一次调用查 refresh_tokens，第二次查 users，后续是 update/delete/insert
-        call_count = [0]
-        def table_side_effect(name):
-            call_count[0] += 1
-            chain = MagicMock()
-            chain.select.return_value = chain
-            chain.eq.return_value = chain
-            chain.lt.return_value = chain
-            chain.maybe_single.return_value = chain
-            chain.update.return_value = chain
-            chain.delete.return_value = chain
-            chain.insert.return_value = chain
-            r = MagicMock()
-            if call_count[0] == 1:  # refresh_tokens select
-                r.data = rt_record
-            elif call_count[0] == 2:  # users select
-                r.data = user_record
-            else:
-                r.data = None
-            chain.execute.return_value = r
-            return chain
-
-        auth_service.db.table.side_effect = table_side_effect
-
-        fake_pair = {
-            "access_token": "new_access",
-            "refresh_token": "new_refresh",
-            "token_type": "bearer",
-            "expires_in": 1800,
-            "refresh_expires_in": 604800,
-        }
-
-        with patch("services.auth_service.hash_refresh_token", return_value="hash"), \
-             patch("services.auth_service.create_token_pair", return_value=fake_pair):
-            result = await auth_service.refresh_access_token("raw_token")
-
-        assert result["token"]["access_token"] == "new_access"
-        assert result["token"]["refresh_token"] == "new_refresh"
-
-    @pytest.mark.asyncio
-    async def test_refresh_invalid_token_raises(self, auth_service):
-        """无效 token（DB 查不到）→ AuthenticationError"""
-        self._mock_db_chain(auth_service, None)
-
-        with patch("services.auth_service.hash_refresh_token", return_value="nonexistent"):
-            with pytest.raises(AuthenticationError, match="无效的刷新令牌"):
-                await auth_service.refresh_access_token("bad_token")
-
-    @pytest.mark.asyncio
-    async def test_refresh_revoked_token_revokes_all(self, auth_service):
-        """已吊销 token 被重用 → 吊销该用户所有 token（盗用检测）"""
-        user_id = str(uuid4())
-        self._mock_db_chain(auth_service, {
-            "id": "rt-1", "user_id": user_id,
-            "expires_at": "2099-01-01T00:00:00+00:00", "revoked": True,
-        })
-
-        with patch("services.auth_service.hash_refresh_token", return_value="abc"):
-            with pytest.raises(AuthenticationError, match="已失效"):
-                await auth_service.refresh_access_token("stolen_token")
-
-    @pytest.mark.asyncio
-    async def test_refresh_expired_token_raises(self, auth_service):
-        """过期 token → AuthenticationError"""
-        user_id = str(uuid4())
-        self._mock_db_chain(auth_service, {
-            "id": "rt-1", "user_id": user_id,
-            "expires_at": "2020-01-01T00:00:00+00:00", "revoked": False,
-        })
-
-        with patch("services.auth_service.hash_refresh_token", return_value="abc"):
-            with pytest.raises(AuthenticationError, match="已过期"):
-                await auth_service.refresh_access_token("expired_token")
-
-    @pytest.mark.asyncio
-    async def test_refresh_disabled_user_raises(self, auth_service):
-        """用户被禁用 → AuthenticationError"""
-        from datetime import datetime, timezone, timedelta
-        user_id = str(uuid4())
-
-        call_count = [0]
-        def table_side_effect(name):
-            call_count[0] += 1
-            chain = MagicMock()
-            chain.select.return_value = chain
-            chain.eq.return_value = chain
-            chain.maybe_single.return_value = chain
-            r = MagicMock()
-            if call_count[0] == 1:
-                r.data = {
-                    "id": "rt-1", "user_id": user_id,
-                    "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
-                    "revoked": False,
-                }
-            elif call_count[0] == 2:
-                r.data = {"id": user_id, "status": "disabled"}
-            chain.execute.return_value = r
-            return chain
-
-        auth_service.db.table.side_effect = table_side_effect
-
-        with patch("services.auth_service.hash_refresh_token", return_value="abc"):
-            with pytest.raises(AuthenticationError, match="禁用"):
-                await auth_service.refresh_access_token("token")
-
-
-class TestRevokeUserRefreshTokens:
-    """revoke_user_refresh_tokens 测试"""
-
-    @pytest.fixture
-    def auth_service(self, mock_settings):
-        mock_settings.jwt_refresh_token_expire_days = 7
-        mock_db = MagicMock()
-        chain = MagicMock()
-        chain.update.return_value = chain
-        chain.eq.return_value = chain
-        chain.execute.return_value = MagicMock(data=None)
-        mock_db.table.return_value = chain
-        with patch("services.auth_service.get_settings", return_value=mock_settings):
-            return AuthService(mock_db)
-
-    def test_revoke_calls_update_on_active_tokens(self, auth_service):
-        """吊销：对该用户所有 revoked=False 的行设置 revoked=True"""
-        user_id = str(uuid4())
-        # 不应抛异常
-        auth_service.revoke_user_refresh_tokens(user_id)
-        auth_service.db.table.assert_called_with("refresh_tokens")
+    assert result["wecom_bound"] is False

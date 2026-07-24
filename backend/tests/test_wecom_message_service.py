@@ -24,6 +24,7 @@ from schemas.wecom import (
 )
 from services.wecom.wecom_message_service import WecomMessageService
 
+USER_ID = "f566f6cc-3e7a-4383-befe-42c05fbfbff8"
 
 def _make_db_mock():
     """按表名隔离的 DB mock"""
@@ -92,7 +93,7 @@ class TestHandleMessage:
         svc = WecomMessageService(db)
 
         svc._user_svc = MagicMock()
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
 
@@ -106,7 +107,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, "uid1", "conv1", [],
+            msg, ctx, USER_ID, "conv1", [],
         )
 
     @pytest.mark.asyncio
@@ -114,7 +115,7 @@ class TestHandleMessage:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc = MagicMock()
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -126,7 +127,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, "uid1", "conv1", [],
+            msg, ctx, USER_ID, "conv1", [],
         )
 
     @pytest.mark.asyncio
@@ -152,7 +153,7 @@ class TestHandleMessage:
             return_value="task-1",
         ):
             await svc._enqueue_actor_message(
-                _make_msg(), ctx, "uid1", "conv1", [],
+                _make_msg(), ctx, USER_ID, "conv1", [],
             )
 
         mock_enqueue.assert_awaited_once()
@@ -194,14 +195,14 @@ class TestHandleMessage:
             return_value=MagicMock(already_staged=False),
         ) as stage:
             await svc._stage_file_message(
-                msg, ctx, "uid1", "conv1",
+                msg, ctx, USER_ID, "conv1",
             )
 
         assert stage.call_args.kwargs["file_payload"] == file_payload
         expected_scope = "channel" if chat_type == WecomChatType.GROUP else "user"
         assert stage.call_args.kwargs["storage_scope"] == expected_scope
         owner = stage.call_args.kwargs["storage_owner_id"]
-        assert owner.startswith("channels/wecom/") if expected_scope == "channel" else owner == "uid1"
+        assert owner.startswith("channels/wecom/") if expected_scope == "channel" else owner == USER_ID
         svc._reply_text.assert_awaited_once_with(
             ctx, "文件已收到，请告诉我需要如何处理。",
         )
@@ -222,7 +223,7 @@ class TestHandleMessage:
             return_value=MagicMock(),
         ):
             await svc._enqueue_actor_message(
-                _make_msg(), ctx, "uid1", "conv1", [],
+                _make_msg(), ctx, USER_ID, "conv1", [],
             )
 
         assert ctx.active_stream_id is None
@@ -239,7 +240,7 @@ class TestHandleMessage:
         svc = WecomMessageService(db)
 
         svc._user_svc = MagicMock()
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -252,7 +253,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, "uid1", "conv1", [],
+            msg, ctx, USER_ID, "conv1", [],
         )
 
     @pytest.mark.asyncio
@@ -262,7 +263,7 @@ class TestHandleMessage:
         svc = WecomMessageService(db)
 
         svc._user_svc = MagicMock()
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -305,7 +306,7 @@ class TestHandleMessage:
         svc = WecomMessageService(db)
 
         svc._user_svc = MagicMock()
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -318,7 +319,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, "uid1", "conv1", [],
+            msg, ctx, USER_ID, "conv1", [],
         )
 
 
@@ -367,7 +368,7 @@ class TestCommandInterception:
         """文本“帮助”匹配指令后，不进入 Actor。"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
 
@@ -392,7 +393,7 @@ class TestCommandInterception:
         """普通文本 → try_handle=False → 正常路由到 AI"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -408,7 +409,7 @@ class TestCommandInterception:
         ):
             await svc.handle_message(msg, ctx)
             svc._enqueue_actor_message.assert_awaited_once_with(
-                msg, ctx, "uid1", "conv1", [],
+                msg, ctx, USER_ID, "conv1", [],
             )
 
 
@@ -424,7 +425,7 @@ class TestFileVideoHint:
     async def test_file_is_staged_without_legacy_messages(self):
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -445,7 +446,7 @@ class TestFileVideoHint:
         """VIDEO 消息 → 提示暂不支持"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -474,7 +475,7 @@ class TestHandleMessageNotify:
         svc = WecomMessageService(db)
 
         svc._user_svc = MagicMock()
-        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -496,4 +497,4 @@ class TestHandleMessageNotify:
             new=AsyncMock(),
         ) as mock_notify:
             await svc.handle_message(msg, ctx)
-            mock_notify.assert_awaited_once_with("uid1", "conv1", org_id=None)
+            mock_notify.assert_awaited_once_with(USER_ID, "conv1", org_id=None)

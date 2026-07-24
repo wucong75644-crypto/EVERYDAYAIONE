@@ -1,14 +1,13 @@
 /**
  * 企微 OAuth 回调着陆页
  *
- * 从 URL 解析 token + user（base64 编码）或 error，
- * 成功时存储认证信息并跳转到首页，失败时显示错误提示。
+ * 从 URL 读取一次性交接码，通过 POST 原子消费登录结果。
  */
 
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
-import type { User, TokenInfo } from '../types/auth';
+import { exchangeWecomHandoff } from '../services/auth';
 
 const ERROR_MESSAGES: Record<string, string> = {
   state_invalid: '二维码已过期，请重新扫码',
@@ -25,8 +24,7 @@ export default function WecomCallback() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const tokenB64 = searchParams.get('token');
-    const userB64 = searchParams.get('user');
+    const handoff = searchParams.get('handoff');
     const errorCode = searchParams.get('error');
     const errorMessage = searchParams.get('message');
 
@@ -37,35 +35,30 @@ export default function WecomCallback() {
     }
 
     // 成功情况
-    if (tokenB64 && userB64) {
-      try {
-        const tokenData: TokenInfo = JSON.parse(atob(tokenB64));
-        const userData: User = JSON.parse(atob(userB64));
-
-        setTokens(tokenData.access_token, tokenData.refresh_token);
-        setUser(userData);
-
-        // 自动切入企业（如果有 org 参数）
-        const orgB64 = searchParams.get('org');
-        if (orgB64) {
-          try {
-            const orgData = JSON.parse(atob(orgB64));
-            setCurrentOrg(orgData);
-            localStorage.setItem('login_org_id', orgData.org_id);
-          } catch { /* ignore invalid org data */ }
-        }
-
-        // 跳转到首页（与密码/验证码登录一致，用户手动点"开始聊天"进入）
-        const loginOrgId = localStorage.getItem('login_org_id');
-        navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
-      } catch {
-        setError('登录数据解析失败，请重试');
-      }
-      return;
+    if (handoff) {
+      const controller = new AbortController();
+      void exchangeWecomHandoff(handoff, controller.signal)
+        .then(({ token, user, org }) => {
+          if (controller.signal.aborted) return;
+          setTokens(token.access_token, token.refresh_token);
+          setUser(user);
+          if (org) {
+            setCurrentOrg(org);
+            localStorage.setItem('login_org_id', org.org_id);
+          }
+          const loginOrgId = org?.org_id || localStorage.getItem('login_org_id');
+          navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setError('登录交接码已失效，请重新扫码');
+          }
+        });
+      return () => controller.abort();
     }
 
     setError('无效的回调参数');
-  }, [searchParams, setTokens, setUser, navigate]);
+  }, [searchParams, setTokens, setUser, setCurrentOrg, navigate]);
 
   if (!error) {
     return (

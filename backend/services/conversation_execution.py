@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from loguru import logger
 from psycopg import IntegrityError
 from psycopg.types.json import Jsonb
+
+from services.conversation_db_scope import ActorTaskDatabases
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,15 @@ class ConversationExecutionService:
         max_renew_failures: int = 2,
         max_attempts: int = 3,
         terminal_observer: TerminalObserver | None = None,
+        task_db_factory: (
+            Callable[[Mapping[str, Any]], ActorTaskDatabases] | None
+        ) = None,
+        executor_factory: (
+            Callable[[ActorTaskDatabases], GenerationExecutor] | None
+        ) = None,
+        terminal_observer_factory: (
+            Callable[[ActorTaskDatabases], TerminalObserver] | None
+        ) = None,
     ) -> None:
         if not 15 <= lease_seconds <= 300:
             raise ValueError("lease_seconds must be between 15 and 300")
@@ -147,6 +158,15 @@ class ConversationExecutionService:
         self._max_renew_failures = max_renew_failures
         self._max_attempts = max_attempts
         self._terminal_observer = terminal_observer
+        self._task_db_factory = task_db_factory or (
+            lambda _task: ActorTaskDatabases(
+                control=self._db,
+                application=self._db,
+                handler=self._db,
+            )
+        )
+        self._executor_factory = executor_factory
+        self._terminal_observer_factory = terminal_observer_factory
 
     async def claim_serial(self, conversation_id: str) -> GenerationClaim | None:
         data = await self._rpc(
@@ -181,13 +201,24 @@ class ConversationExecutionService:
         output_message_id = task.get("assistant_message_id")
         if not output_message_id:
             raise RuntimeError("ACTOR_TASK_OUTPUT_MISSING")
+        databases = self._task_db_factory(task)
+        executor = (
+            self._executor_factory(databases)
+            if self._executor_factory else self._executor
+        )
+        observer = (
+            self._terminal_observer_factory(databases)
+            if self._terminal_observer_factory else self._terminal_observer
+        )
 
         ownership_lost = asyncio.Event()
-        renew_task = asyncio.create_task(self._renew_loop(claim, ownership_lost))
+        renew_task = asyncio.create_task(
+            self._renew_loop(claim, ownership_lost, databases.control)
+        )
         try:
             try:
                 outcome = await self._execute_until_lost(
-                    task, claim, ownership_lost,
+                    task, claim, ownership_lost, executor,
                 )
             except _OwnershipLost:
                 return {"outcome": "ownership_lost"}
@@ -196,8 +227,8 @@ class ConversationExecutionService:
             except Exception as error:
                 if ownership_lost.is_set():
                     return {"outcome": "ownership_lost"}
-                result = await self._fail(claim, error)
-                await self._notify_terminal(task, result)
+                result = await self._fail(claim, error, databases.control)
+                await self._notify_terminal(task, result, observer)
                 return result
 
             if ownership_lost.is_set():
@@ -211,6 +242,7 @@ class ConversationExecutionService:
                     claim,
                     str(output_message_id),
                     outcome,
+                    databases.control,
                 )
             except BaseException as error:
                 await self._cleanup_artifacts(
@@ -218,8 +250,10 @@ class ConversationExecutionService:
                     task_id=claim.task_id,
                 )
                 if isinstance(error, IntegrityError):
-                    result = await self._fail(claim, error)
-                    await self._notify_terminal(task, result)
+                    result = await self._fail(
+                        claim, error, databases.control,
+                    )
+                    await self._notify_terminal(task, result, observer)
                     return result
                 raise
             if result.get("outcome") != "committed":
@@ -227,7 +261,7 @@ class ConversationExecutionService:
                     outcome,
                     task_id=claim.task_id,
                 )
-            await self._notify_terminal(task, result)
+            await self._notify_terminal(task, result, observer)
             return result
         finally:
             renew_task.cancel()
@@ -241,9 +275,10 @@ class ConversationExecutionService:
         task: Mapping[str, Any],
         claim: GenerationClaim,
         ownership_lost: asyncio.Event,
+        executor: GenerationExecutor,
     ) -> GenerationOutcome:
         execution_task = asyncio.create_task(
-            self._executor.execute(task, claim, ownership_lost)
+            executor.execute(task, claim, ownership_lost)
         )
         lost_task = asyncio.create_task(ownership_lost.wait())
         try:
@@ -274,6 +309,7 @@ class ConversationExecutionService:
         self,
         claim: GenerationClaim,
         ownership_lost: asyncio.Event,
+        db: Any,
     ) -> None:
         failures = 0
         while not ownership_lost.is_set():
@@ -286,6 +322,7 @@ class ConversationExecutionService:
                         "p_execution_token": claim.execution_token,
                         "p_lease_seconds": self._lease_seconds,
                     },
+                    db=db,
                 )
                 outcome = result.get("outcome")
                 if outcome == "renewed":
@@ -314,6 +351,7 @@ class ConversationExecutionService:
         claim: GenerationClaim,
         output_message_id: str,
         outcome: GenerationOutcome,
+        db: Any,
     ) -> dict[str, Any]:
         return await self._rpc(
             "commit_generation_turn_with_context_v2",
@@ -339,6 +377,7 @@ class ConversationExecutionService:
                     if outcome.compaction is not None else None
                 ),
             },
+            db=db,
         )
 
     async def _cleanup_artifacts(
@@ -360,6 +399,7 @@ class ConversationExecutionService:
         self,
         claim: GenerationClaim,
         error: Exception,
+        db: Any,
     ) -> dict[str, Any]:
         logger.error(
             "actor_execution_failed | "
@@ -374,6 +414,7 @@ class ConversationExecutionService:
                 "p_error_code": type(error).__name__.upper()[:50],
                 "p_error_message": str(error) or type(error).__name__,
             },
+            db=db,
         )
 
     async def _load_task(self, task_id: str) -> dict[str, Any]:
@@ -392,11 +433,12 @@ class ConversationExecutionService:
         self,
         task: Mapping[str, Any],
         result: Mapping[str, Any],
+        observer: TerminalObserver | None,
     ) -> None:
-        if not self._terminal_observer:
+        if not observer:
             return
         try:
-            await self._terminal_observer.notify(task, result)
+            await observer.notify(task, result)
         except Exception as error:
             logger.warning(
                 "actor_terminal_observer_failed | "
@@ -407,8 +449,10 @@ class ConversationExecutionService:
         self,
         name: str,
         params: dict[str, Any],
+        *,
+        db: Any | None = None,
     ) -> dict[str, Any]:
-        result = await self._db.rpc(name, params).execute()
+        result = await (db or self._db).rpc(name, params).execute()
         if not result or not isinstance(result.data, dict):
             raise RuntimeError(f"ACTOR_RPC_RESULT_INVALID:{name}")
         return result.data

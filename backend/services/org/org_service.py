@@ -4,12 +4,14 @@
 处理企业 CRUD、成员管理（邀请/移除/角色变更）。
 """
 
-import secrets
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
-from supabase import Client
+
+if TYPE_CHECKING:
+    from supabase import Client
 
 from core.exceptions import (
     ConflictError,
@@ -17,9 +19,10 @@ from core.exceptions import (
     PermissionDeniedError,
     ValidationError,
 )
+from services.org.org_invitation_mixin import OrgInvitationMixin
 
 
-class OrgService:
+class OrgService(OrgInvitationMixin):
     """企业管理服务"""
 
     INVITE_TOKEN_BYTES = 32
@@ -304,145 +307,6 @@ class OrgService:
             f"new_role={new_role} | by={operator_id}"
         )
         return result.data[0] if result.data else {}
-
-    # ----------------------------------------------------------------
-    # 邀请
-    # ----------------------------------------------------------------
-
-    def create_invitation(
-        self, org_id: str, operator_id: str, phone: str, role: str = "member",
-    ) -> dict:
-        """
-        创建成员邀请（发送邀请链接/token）。
-
-        Raises:
-            ConflictError: 已是成员 / 已有待处理邀请
-        """
-        self.require_role(org_id, operator_id, ("owner", "admin"))
-        if role not in ("admin", "member"):
-            raise ValidationError("邀请角色只能是 admin 或 member")
-
-        user_result = self.db.table("users").select("id").eq("phone", phone).execute()
-        if user_result.data:
-            existing_member = (
-                self.db.table("org_members")
-                .select("user_id")
-                .eq("org_id", org_id)
-                .eq("user_id", user_result.data[0]["id"])
-                .execute()
-            )
-            if existing_member.data:
-                raise ConflictError("该用户已是企业成员")
-
-        pending = (
-            self.db.table("org_invitations")
-            .select("id")
-            .eq("org_id", org_id)
-            .eq("phone", phone)
-            .eq("status", "pending")
-            .execute()
-        )
-        if pending.data:
-            raise ConflictError("该手机号已有待处理的邀请")
-
-        token = secrets.token_urlsafe(self.INVITE_TOKEN_BYTES)
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(days=self.INVITE_EXPIRE_DAYS)
-        ).isoformat()
-
-        result = self.db.table("org_invitations").insert({
-            "org_id": org_id,
-            "phone": phone,
-            "role": role,
-            "invite_token": token,
-            "invited_by": operator_id,
-            "expires_at": expires_at,
-        }).execute()
-
-        logger.info(f"Invitation created | org_id={org_id} | phone={phone} | by={operator_id}")
-        return result.data[0] if result.data else {}
-
-    def accept_invitation(self, invite_token: str, user_id: str) -> dict:
-        """
-        接受邀请加入企业。
-
-        Raises:
-            NotFoundError: 邀请不存在
-            ValidationError: 邀请已过期/已使用
-            ConflictError: 已是成员
-        """
-        result = (
-            self.db.table("org_invitations")
-            .select("*")
-            .eq("invite_token", invite_token)
-            .single()
-            .execute()
-        )
-        if not result.data:
-            raise NotFoundError("邀请", invite_token)
-
-        inv = result.data
-        if inv["status"] != "pending":
-            raise ValidationError("邀请已使用或已过期")
-
-        expires_at = datetime.fromisoformat(inv["expires_at"].replace("Z", "+00:00"))
-        if datetime.now(timezone.utc) > expires_at:
-            self.db.table("org_invitations").update(
-                {"status": "expired"}
-            ).eq("id", inv["id"]).execute()
-            raise ValidationError("邀请已过期")
-
-        # 验证接受人手机号与邀请手机号匹配
-        user_result = (
-            self.db.table("users")
-            .select("phone")
-            .eq("id", user_id)
-            .single()
-            .execute()
-        )
-        if not user_result.data:
-            raise NotFoundError("用户", user_id)
-        if user_result.data.get("phone") != inv["phone"]:
-            raise ValidationError("该邀请不是发给您的（手机号不匹配）")
-
-        org_id = inv["org_id"]
-
-        # 校验企业存在且活跃（同时取 max_members，避免二次查询）
-        org = self.get_organization(org_id)
-        if org["status"] != "active":
-            raise PermissionDeniedError("该企业已被停用")
-
-        existing = (
-            self.db.table("org_members")
-            .select("user_id")
-            .eq("org_id", org_id)
-            .eq("user_id", user_id)
-            .execute()
-        )
-        if existing.data:
-            self.db.table("org_invitations").update(
-                {"status": "accepted"}
-            ).eq("id", inv["id"]).execute()
-            raise ConflictError("您已是该企业成员")
-
-        max_m = org.get("max_members", 50)
-        current_count = self._member_count(org_id)
-        if current_count >= max_m:
-            raise ValidationError(f"企业成员数已达上限({max_m}人)")
-
-        self.db.table("org_members").insert({
-            "org_id": org_id,
-            "user_id": user_id,
-            "role": inv["role"],
-            "invited_by": inv["invited_by"],
-        }).execute()
-
-        self.db.table("org_invitations").update(
-            {"status": "accepted"}
-        ).eq("id", inv["id"]).execute()
-
-        logger.info(f"Invitation accepted | org_id={org_id} | user_id={user_id}")
-        return {"org_id": org_id, "role": inv["role"], "org_name": org["name"]}
 
     # ----------------------------------------------------------------
     # 用户查询自己的企业

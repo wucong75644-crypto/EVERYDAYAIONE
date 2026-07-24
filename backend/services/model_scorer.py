@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
+from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.knowledge_config import create_dedicated_connection, is_kb_available
 from services.knowledge_service import add_knowledge
 
@@ -58,7 +59,16 @@ async def aggregate_model_scores(org_id: str | None = None) -> None:
     if not is_kb_available():
         return
 
-    conn = await create_dedicated_connection(statement_timeout_s=15)
+    database_scope = DatabaseScope(
+        actor_user_id=None,
+        org_id=org_id,
+        access_kind=DatabaseAccessKind.WORKER,
+        request_id="model-scorer",
+    )
+    conn = await create_dedicated_connection(
+        statement_timeout_s=15,
+        database_scope=database_scope,
+    )
     if conn is None:
         return
 
@@ -86,6 +96,7 @@ async def aggregate_model_scores(org_id: str | None = None) -> None:
                     if status == "auto_applied":
                         node_id = await _write_score_to_knowledge(
                             row, ema_score, confidence, org_id=org_id,
+                            db_source=database_scope,
                         )
                         applied_count += 1
                     else:
@@ -266,6 +277,7 @@ async def _get_latest_score(
 async def _write_score_to_knowledge(
     row: Dict[str, Any], score: float, confidence: float,
     org_id: str | None = None,
+    db_source: Any = None,
 ) -> Optional[str]:
     """将评分作为知识节点写入（add_knowledge 自动 hash 去重/更新）"""
     model_id = row["model_id"]
@@ -299,6 +311,7 @@ async def _write_score_to_knowledge(
     }
 
     return await add_knowledge(
+        db_source=db_source,
         category="model",
         subcategory=task_type,
         node_type="performance",

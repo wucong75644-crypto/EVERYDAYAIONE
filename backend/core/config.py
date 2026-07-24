@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # 数据库配置（本地 PostgreSQL）
     database_url: str  # PostgreSQL 连接串（必填）
+    worker_database_url: Optional[str] = None  # Web 内后台任务专用 Worker 连接
     db_pool_min: int = 2  # 连接池最小连接数
     db_pool_max: int = 20  # 连接池最大连接数（支持 10 Worker 并发 + 聚合/死信消费者）
 

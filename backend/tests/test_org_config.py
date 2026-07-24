@@ -3,7 +3,6 @@
 
 覆盖:
 - AES-256-GCM 加解密正确性
-- AsyncOrgConfigResolver: 异步版加密读取、降级、ERP 凭证加载
 - OrgConfigResolver: 加密读写、降级到系统默认、ERP 凭证加载
 """
 
@@ -15,14 +14,14 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from core.crypto import aes_encrypt, aes_decrypt, generate_encrypt_key
 from services.org.config_resolver import (
     OrgConfigResolver,
-    AsyncOrgConfigResolver,
     _ConfigResolverCore,
 )
+from testing.org_config_test_support import FakeQueryBuilder
 
 
 # ── AES 加解密 ─────────────────────────────────────────
@@ -107,23 +106,7 @@ class TestAESCrypto:
 # ── OrgConfigResolver ──────────────────────────────────
 
 
-class FakeDB:
-    def __init__(self):
-        self._tables: dict[str, list] = {}
-
-    def set_table(self, name: str, data):
-        from tests.test_org_service import FakeQueryBuilder
-        if name not in self._tables:
-            self._tables[name] = []
-        self._tables[name].append(FakeQueryBuilder(data))
-
-    def table(self, name: str):
-        from tests.test_org_service import FakeQueryBuilder
-        builders = self._tables.get(name, [])
-        if builders:
-            return builders.pop(0)
-        return FakeQueryBuilder()
-
+from testing.org_config_test_support import FakeDB
 
 TEST_KEY = generate_encrypt_key()
 
@@ -198,12 +181,14 @@ class TestOrgConfigResolver:
 
     def test_list_keys(self, resolver, db):
         """列出已配置的 key"""
-        db.set_table("org_configs", [
-            {"config_key": "kuaimai_app_key"},
-            {"config_key": "kuaimai_app_secret"},
+        db.set_rpc([
+            {"key": "kuaimai_app_key", "configured": True},
+            {"key": "kuaimai_app_secret", "configured": True},
+            {"key": "wecom_bot_id", "configured": False},
         ])
         keys = resolver.list_keys("org-1")
         assert set(keys) == {"kuaimai_app_key", "kuaimai_app_secret"}
+        assert db.rpc_calls[0][0] == "list_governed_org_config_status"
 
     def test_get_erp_credentials_success(self, resolver, db):
         """ERP 凭证完整时返回全部"""
@@ -231,22 +216,45 @@ class TestOrgConfigResolver:
             resolver.get_erp_credentials("org-1")
 
     def test_set_and_get_roundtrip(self, resolver, db):
-        """set 写入后 get 能读到"""
-        # set 会调 upsert，FakeQueryBuilder 的 insert 会记录数据
-        # 但我们不能真正验证 DB 写入，只验证不报错
-        # 真正的 roundtrip 需要 mock upsert 后再 mock select
-        resolver.set("org-1", "test_key", "test_value", updated_by="admin-1")
-        # 验证 set 不抛异常即可（实际加密+写入链路正确）
+        """set 加密后通过治理 RPC 写入"""
+        resolver.set(
+            "org-1", "ai_google_api_key", "test_value",
+            updated_by="admin-1",
+        )
+        name, params = db.rpc_calls[0]
+        assert name == "set_governed_org_config"
+        assert params["p_config_key"] == "ai_google_api_key"
+        assert params["p_config_value_encrypted"] != "test_value"
+        assert aes_decrypt(
+            params["p_config_value_encrypted"], TEST_KEY,
+        ) == "test_value"
 
     def test_delete_no_error(self, resolver, db):
-        """delete 不报错"""
-        resolver.delete("org-1", "test_key")
+        """delete 通过治理 RPC 幂等删除"""
+        resolver.delete("org-1", "ai_google_api_key")
+        assert db.rpc_calls == [(
+            "delete_governed_org_config",
+            {
+                "p_org_id": "org-1",
+                "p_config_key": "ai_google_api_key",
+            },
+        )]
 
     def test_list_keys_empty(self, resolver, db):
         """无配置时返回空列表"""
-        db.set_table("org_configs", [])
+        db.set_rpc([])
         keys = resolver.list_keys("org-1")
         assert keys == []
+
+    def test_set_rejects_unknown_key_before_encryption(self, resolver, db):
+        with pytest.raises(ValueError, match="不支持"):
+            resolver.set("org-1", "unknown_key", "value", "admin-1")
+        assert db.rpc_calls == []
+
+    def test_set_rejects_empty_plaintext(self, resolver, db):
+        with pytest.raises(ValueError, match="不能为空"):
+            resolver.set("org-1", "ai_google_api_key", "", "admin-1")
+        assert db.rpc_calls == []
 
     def test_erp_credentials_no_fallback_to_system(self, resolver, db):
         """ERP 凭证不降级到系统默认（即使系统有 kuaimai_app_key）"""
@@ -261,8 +269,6 @@ class TestOrgConfigResolver:
 
     def test_load_encrypted_db_error_returns_none(self, resolver, db):
         """DB 查询异常时 _load_encrypted 返回 None（降级到系统默认）"""
-        from tests.test_org_service import FakeQueryBuilder
-
         db.set_table("organizations", {"encrypt_key": None})
 
         # 创建一个会抛异常的 builder
@@ -327,8 +333,8 @@ class TestOrgConfigResolver:
         assert orgs == []
 
     def test_update_erp_token_sync_persists_both_keys(self, resolver):
-        """同步版 update_erp_token 测试（供 erp_tool_executor 用）"""
-        upsert_calls = []
+        """同步版通过单次 runtime RPC 原子持久化两个 Token"""
+        rpc_calls = []
 
         class SpyBuilder:
             def __init__(self, record=True):
@@ -336,28 +342,30 @@ class TestOrgConfigResolver:
             def select(self, *a, **kw): return self
             def eq(self, *a, **kw): return self
             def maybe_single(self): return self
-            def upsert(self, data, on_conflict=""):
-                if self._record:
-                    upsert_calls.append({"data": data, "on_conflict": on_conflict})
-                return self
             def execute(self):
                 return MagicMock(data={"encrypt_key": None})
 
         class SpyDB:
             def table(self, name):
-                return SpyBuilder(record=(name == "org_configs"))
+                return SpyBuilder(record=False)
+            def rpc(self, name, params):
+                rpc_calls.append((name, params))
+                return SpyBuilder(record=False)
 
         resolver.db = SpyDB()
         resolver.update_erp_token(
             "org-sync", "access_v2", "refresh_v2",
         )
 
-        assert len(upsert_calls) == 2
-        keys = {c["data"]["config_key"] for c in upsert_calls}
-        assert keys == {"kuaimai_access_token", "kuaimai_refresh_token"}
-        for call in upsert_calls:
-            assert call["data"]["updated_by"] is None
-            assert call["on_conflict"] == "org_id,config_key"
+        assert len(rpc_calls) == 1
+        name, params = rpc_calls[0]
+        assert name == "set_governed_org_erp_tokens"
+        assert aes_decrypt(
+            params["p_access_token_encrypted"], TEST_KEY,
+        ) == "access_v2"
+        assert aes_decrypt(
+            params["p_refresh_token_encrypted"], TEST_KEY,
+        ) == "refresh_v2"
 
     def test_encrypt_key_not_configured_returns_fallback(self, db):
         """加密密钥未配置时 _load_encrypted 静默失败，非企业key降级到 settings"""
@@ -374,242 +382,3 @@ class TestOrgConfigResolver:
 
             result = resolver.get("org-1", "some_ai_key")
             assert result == "fallback"
-
-
-# ── AsyncOrgConfigResolver ────────────────────────────
-
-
-class AsyncFakeQueryBuilder:
-    """异步版 FakeQueryBuilder — execute 返回 awaitable"""
-
-    def __init__(self, data=None):
-        if isinstance(data, dict):
-            self._data = [data]
-        else:
-            self._data = data if data is not None else []
-        self._is_single = False
-
-    def select(self, *a, **kw): return self
-    def eq(self, *a, **kw): return self
-    def single(self):
-        self._is_single = True
-        return self
-    def maybe_single(self):
-        self._is_single = True
-        return self
-
-    async def execute(self):
-        result = MagicMock()
-        if self._is_single:
-            result.data = self._data[0] if self._data else None
-        else:
-            result.data = self._data
-        return result
-
-
-class AsyncFakeDB:
-    """异步版 FakeDB"""
-
-    def __init__(self):
-        self._tables: dict[str, list] = {}
-
-    def set_table(self, name: str, data):
-        if name not in self._tables:
-            self._tables[name] = []
-        self._tables[name].append(AsyncFakeQueryBuilder(data))
-
-    def table(self, name: str):
-        builders = self._tables.get(name, [])
-        if builders:
-            return builders.pop(0)
-        return AsyncFakeQueryBuilder()
-
-
-class TestAsyncOrgConfigResolver:
-
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        """每个测试前清空 per-org 密钥缓存"""
-        AsyncOrgConfigResolver._org_key_cache.clear()
-
-    @pytest.fixture
-    def db(self):
-        return AsyncFakeDB()
-
-    @pytest.fixture
-    def resolver(self, db):
-        with patch("services.org.config_resolver.get_settings") as mock_settings:
-            settings = MagicMock(spec=[])
-            settings.org_config_encrypt_key = TEST_KEY
-            settings.kuaimai_app_key = "system_default_key"
-            settings.kuaimai_app_secret = None
-            # 非企业专属 key，用于测试降级
-            settings.some_ai_key = "system_ai_default"
-            mock_settings.return_value = settings
-            return AsyncOrgConfigResolver(db)
-
-    @pytest.mark.asyncio
-    async def test_get_from_org_config(self, resolver, db):
-        """企业配置存在时返回解密值"""
-        db.set_table("organizations", {"encrypt_key": None})
-        encrypted = aes_encrypt("org_secret_key", TEST_KEY)
-        db.set_table("org_configs", {"config_value_encrypted": encrypted})
-
-        result = await resolver.get("org-1", "kuaimai_app_key")
-        assert result == "org_secret_key"
-
-    @pytest.mark.asyncio
-    async def test_get_fallback_to_system_default(self, resolver, db):
-        """企业未配置非企业专属 key 时降级到系统默认"""
-        db.set_table("organizations", {"encrypt_key": None})
-        db.set_table("org_configs", None)
-
-        result = await resolver.get("org-1", "some_ai_key")
-        assert result == "system_ai_default"
-
-    @pytest.mark.asyncio
-    async def test_get_enterprise_key_no_fallback(self, resolver, db):
-        """企业专属 key 未配置时返回 None"""
-        db.set_table("organizations", {"encrypt_key": None})
-        db.set_table("org_configs", None)
-
-        result = await resolver.get("org-1", "kuaimai_app_key")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_personal_returns_system_default(self, resolver):
-        """散客直接返回系统默认（非企业专属 key）"""
-        result = await resolver.get(None, "some_ai_key")
-        assert result == "system_ai_default"
-
-    @pytest.mark.asyncio
-    async def test_get_personal_enterprise_key_returns_none(self, resolver):
-        """散客查询企业专属 key 返回 None"""
-        result = await resolver.get(None, "kuaimai_app_key")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_nonexistent_key_returns_none(self, resolver, db):
-        """系统也没有的 key 返回 None"""
-        db.set_table("organizations", {"encrypt_key": None})
-        db.set_table("org_configs", None)
-        result = await resolver.get("org-1", "nonexistent_key_xyz")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_erp_credentials_success(self, resolver, db):
-        """ERP 凭证完整时返回全部"""
-        db.set_table("organizations", {"encrypt_key": None})
-        for key in ["kuaimai_app_key", "kuaimai_app_secret",
-                     "kuaimai_access_token", "kuaimai_refresh_token"]:
-            encrypted = aes_encrypt(f"value_{key}", TEST_KEY)
-            db.set_table("org_configs", {"config_value_encrypted": encrypted})
-
-        creds = await resolver.get_erp_credentials("org-1")
-        assert creds["kuaimai_app_key"] == "value_kuaimai_app_key"
-        assert len(creds) == 4
-
-    @pytest.mark.asyncio
-    async def test_get_erp_credentials_missing_key_raises(self, resolver, db):
-        """ERP 凭证缺失时报错"""
-        db.set_table("organizations", {"encrypt_key": None})
-        encrypted = aes_encrypt("val", TEST_KEY)
-        db.set_table("org_configs", {"config_value_encrypted": encrypted})
-        for _ in range(3):
-            db.set_table("org_configs", None)
-
-        with pytest.raises(ValueError, match="未配置"):
-            await resolver.get_erp_credentials("org-1")
-
-    @pytest.mark.asyncio
-    async def test_erp_credentials_no_fallback_to_system(self, resolver, db):
-        """ERP 凭证不降级到系统默认"""
-        db.set_table("organizations", {"encrypt_key": None})
-        for _ in range(4):
-            db.set_table("org_configs", None)
-
-        with pytest.raises(ValueError, match="未配置"):
-            await resolver.get_erp_credentials("org-1")
-
-    @pytest.mark.asyncio
-    async def test_load_encrypted_db_error_returns_none(self, resolver, db):
-        """DB 异常时 _load_encrypted 返回 None（降级到系统默认）"""
-        db.set_table("organizations", {"encrypt_key": None})
-
-        class ErrorBuilder(AsyncFakeQueryBuilder):
-            async def execute(self):
-                raise RuntimeError("DB connection lost")
-
-        db._tables["org_configs"] = [ErrorBuilder()]
-
-        # 用非企业专属 key 测试降级逻辑
-        result = await resolver.get("org-1", "some_ai_key")
-        assert result == "system_ai_default"
-
-    @pytest.mark.asyncio
-    async def test_update_erp_token_persists_both_keys(self, resolver):
-        """关键回归测试：update_erp_token 必须 upsert access + refresh 两个 key
-
-        Why: 这是 2026-04-10 token 雪崩根因的修复核心 — 自动 refresh 后必须
-        把新 token 加密回写到 org_configs，否则下次 client 重建会回到死态。
-        """
-        # 用 SpyDB 记录 upsert 调用
-        upsert_calls = []
-
-        class SpyBuilder:
-            def __init__(self, record=True):
-                self._record = record
-            def select(self, *a, **kw): return self
-            def eq(self, *a, **kw): return self
-            def maybe_single(self): return self
-            def upsert(self, data, on_conflict=""):
-                if self._record:
-                    upsert_calls.append({"data": data, "on_conflict": on_conflict})
-                return self
-            async def execute(self):
-                return MagicMock(data={"encrypt_key": None})
-
-        class SpyDB:
-            def table(self, name):
-                # organizations 查询返回无 per-org key
-                return SpyBuilder(record=(name == "org_configs"))
-
-        # 替换 resolver 的 db
-        resolver.db = SpyDB()
-
-        await resolver.update_erp_token(
-            "org-spy", "new_access_xyz", "new_refresh_abc",
-        )
-
-        # 必须写入 access + refresh 两条记录
-        assert len(upsert_calls) == 2
-        keys = {c["data"]["config_key"] for c in upsert_calls}
-        assert keys == {"kuaimai_access_token", "kuaimai_refresh_token"}
-
-        # 验证 on_conflict 是复合唯一键
-        from datetime import datetime, timezone
-        for call in upsert_calls:
-            assert call["on_conflict"] == "org_id,config_key"
-            assert call["data"]["org_id"] == "org-spy"
-            assert call["data"]["updated_by"] is None  # 系统自动刷新无用户上下文
-            # 加密后的值不应等于原文（验证经过 AES）
-            assert call["data"]["config_value_encrypted"] not in (
-                "new_access_xyz", "new_refresh_abc",
-            )
-            # 必须显式传 updated_at（UPSERT 不会刷新列默认值）
-            assert "updated_at" in call["data"], (
-                "updated_at 必须显式传入，否则 UPSERT 触发 ON CONFLICT 时不会刷新"
-            )
-            assert isinstance(call["data"]["updated_at"], datetime)
-            assert call["data"]["updated_at"].tzinfo is not None  # 必须 timezone-aware
-
-        # 解密验证：能反向解出原文
-        from core.crypto import aes_decrypt
-        access_call = next(
-            c for c in upsert_calls
-            if c["data"]["config_key"] == "kuaimai_access_token"
-        )
-        decrypted = aes_decrypt(
-            access_call["data"]["config_value_encrypted"], TEST_KEY,
-        )
-        assert decrypted == "new_access_xyz"

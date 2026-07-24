@@ -23,6 +23,7 @@ from services.agent.memory_tool_mixin import MemoryToolMixin
 from services.agent.evidence_tool_mixin import EvidenceToolMixin
 from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
+from services.agent.knowledge_tool_mixin import KnowledgeToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
@@ -30,7 +31,7 @@ class ToolExecutor(
     ArtifactToolMixin, MemoryToolMixin, ConversationToolMixin,
     FileToolMixin, CrawlerToolMixin,
     MediaToolMixin, EvidenceToolMixin,
-    ErpToolMixin, SandboxToolMixin,
+    ErpToolMixin, KnowledgeToolMixin, SandboxToolMixin,
     CreditMixin,
 ):
     """同步工具执行器"""
@@ -107,38 +108,6 @@ class ToolExecutor(
         if not handler:
             raise ValueError(f"Unknown sync tool: {tool_name}")
         return await handler(arguments)
-
-    # ========================================
-    # 通用工具实现
-    # ========================================
-    async def _search_knowledge(self, args: Dict[str, Any]) -> "AgentResult":
-        """查询 AI 知识库"""
-        from services.agent.agent_result import AgentResult
-        from services.knowledge_service import search_relevant
-
-        query = args.get("query", "")
-        if not query:
-            return AgentResult(
-                summary="查询关键词不能为空",
-                status="error",
-                error_message="Validation: query is required",
-                metadata={"retryable": True},
-            )
-
-        items = await search_relevant(query=query, limit=5, org_id=self.org_id)
-        if not items:
-            return AgentResult(
-                summary=f"知识库中未找到与「{query}」相关的经验",
-                status="empty",
-            )
-
-        lines = []
-        for item in items:
-            title = item.get("title", "")
-            content = item.get("content", "")
-            lines.append(f"- {title}: {content}")
-
-        return AgentResult(summary="\n".join(lines), status="success")
 
     # ========================================
     # 互联网搜索（Gemini + Google Search Grounding）

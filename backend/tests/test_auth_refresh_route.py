@@ -5,10 +5,8 @@
 """
 
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -53,12 +51,11 @@ class TestRefreshEndpoint:
         """无效 token → AuthenticationError (会被 FastAPI 转为 401)"""
         from services.auth_service import AuthService
         mock_db = MagicMock()
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.maybe_single.return_value = chain
-        chain.execute.return_value = MagicMock(data=None)
-        mock_db.table.return_value = chain
+        caller = MagicMock()
+        caller.execute.return_value = MagicMock(
+            data={"outcome": "invalid"},
+        )
+        mock_db.rpc.return_value = caller
 
         mock_settings = MagicMock()
         mock_settings.jwt_access_token_expire_minutes = 30
@@ -75,35 +72,30 @@ class TestRefreshEndpoint:
 class TestLogoutEndpoint:
     """POST /auth/logout 端点逻辑"""
 
-    def test_logout_with_refresh_token_revokes_in_db(self):
-        """传 refresh_token → 调用 DB 吊销"""
-        from core.security import hash_refresh_token
+    @pytest.mark.asyncio
+    async def test_logout_with_refresh_token_uses_service_facade(self):
+        from api.routes.auth import _OptionalRefreshRequest, logout
 
-        mock_db = MagicMock()
-        chain = MagicMock()
-        chain.update.return_value = chain
-        chain.eq.return_value = chain
-        chain.execute.return_value = MagicMock(data=None)
-        mock_db.table.return_value = chain
+        service = MagicMock()
+        result = await logout(
+            _OptionalRefreshRequest(refresh_token="test-refresh-token"),
+            service,
+        )
 
-        raw_token = "test-refresh-token"
-        expected_hash = hash_refresh_token(raw_token)
+        service.revoke_refresh_token.assert_called_once_with(
+            "test-refresh-token",
+        )
+        assert result == {"message": "已退出登录"}
 
-        # 模拟 logout 端点内部逻辑
-        token_hash = hash_refresh_token(raw_token)
-        mock_db.table("refresh_tokens").update({
-            "revoked": True,
-            "revoked_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("token_hash", token_hash).execute()
+    @pytest.mark.asyncio
+    async def test_logout_without_refresh_token_is_noop(self):
+        from api.routes.auth import _OptionalRefreshRequest, logout
 
-        assert token_hash == expected_hash
-        mock_db.table.assert_called_with("refresh_tokens")
+        service = MagicMock()
+        result = await logout(_OptionalRefreshRequest(), service)
 
-    def test_logout_without_refresh_token_is_noop(self):
-        """不传 refresh_token → 不操作 DB，返回成功"""
-        # logout 端点：req.refresh_token 为 None 时跳过 DB 操作
-        refresh_token = None
-        assert refresh_token is None  # 端点会跳过 if 分支
+        service.revoke_refresh_token.assert_not_called()
+        assert result == {"message": "已退出登录"}
 
     def test_refresh_token_request_schema_validates(self):
         """RefreshTokenRequest schema 校验：空字符串仍是有效输入"""

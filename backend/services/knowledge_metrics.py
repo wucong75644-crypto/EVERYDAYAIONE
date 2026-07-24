@@ -23,12 +23,13 @@ async def record_metric(
     retry_from_model: Optional[str] = None,
     user_id: Optional[str] = None,
     org_id: Optional[str] = None,
+    db_source: Any = None,
 ) -> None:
     """记录任务执行指标（fire-and-forget，不抛异常）"""
     if not is_kb_available():
         return
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return
 
@@ -64,6 +65,5 @@ async def record_metric(
                         "org_id": org_id,
                     },
                 )
-            await conn.commit()
     except Exception as e:
         logger.warning(f"Knowledge metric record failed | model={model_id} | error={e}")

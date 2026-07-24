@@ -1,298 +1,250 @@
-"""
-wecom_auth 路由单元测试
+"""WeCom OAuth HTTP route orchestration tests."""
 
-覆盖：/qr-url、/callback、/binding、/binding-status
-"""
-
-import base64
-import json
-import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
-backend_dir = Path(__file__).parent.parent
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
-
-from api.routes.wecom_auth import _classify_error
-
-
-class TestClassifyError:
-    """_classify_error 错误分类"""
-
-    def test_state_invalid(self):
-        assert _classify_error("state 无效或已过期") == "state_invalid"
-
-    def test_not_member(self):
-        assert _classify_error("仅限企业成员使用") == "not_member"
-
-    def test_user_disabled(self):
-        assert _classify_error("账号已被禁用") == "user_disabled"
-
-    def test_already_bound(self):
-        assert _classify_error("该账号已绑定其他企微用户") == "already_bound"
-
-    def test_generic_error(self):
-        assert _classify_error("unknown error") == "api_error"
+from api.routes.wecom_auth import (
+    _classify_error,
+    get_binding_status,
+    get_qr_url,
+    oauth_callback,
+    consume_oauth_handoff,
+    OAuthHandoffRequest,
+    unbind_wecom,
+)
+from core.exceptions import ValidationError
 
 
-class TestGetQrUrl:
-    """GET /auth/wecom/qr-url 测试"""
+def _request() -> MagicMock:
+    request = MagicMock()
+    request.headers = {"X-Request-Id": "request-1"}
+    return request
 
-    @pytest.mark.asyncio
-    async def test_returns_qr_url_for_login_with_org_id(self):
-        """org_id 指定 -> 返回 login 模式 QR URL（per-org）"""
-        from api.routes.wecom_auth import get_qr_url
 
-        mock_svc = MagicMock()
-        mock_svc.generate_state = AsyncMock(return_value="state_123")
-        mock_svc.build_qr_url.return_value = {
-            "qr_url": "https://login.work.weixin.qq.com/...",
-            "state": "state_123",
-            "appid": "ww_corp",
-            "agentid": "1000006",
-            "redirect_uri": "https://example.com/api/auth/wecom/callback",
-        }
+def _settings() -> MagicMock:
+    settings = MagicMock()
+    settings.frontend_url = "https://example.com"
+    settings.wecom_oauth_redirect_uri = "https://example.com/callback"
+    settings.wecom_corp_id = "ww-system"
+    settings.wecom_agent_id = 1000006
+    return settings
 
-        settings_mock = MagicMock()
-        settings_mock.wecom_oauth_redirect_uri = "https://example.com/api/auth/wecom/callback"
 
-        # mock db: organizations 查询返回 corp_id
-        mock_db = MagicMock()
-        org_chain = MagicMock()
-        org_chain.select.return_value = org_chain
-        org_chain.eq.return_value = org_chain
-        org_chain.maybe_single.return_value = org_chain
-        org_chain.execute.return_value = MagicMock(
-            data={"wecom_corp_id": "ww_corp", "status": "active"}
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        ("state 无效或已过期", "state_invalid"),
+        ("仅限企业成员使用", "not_member"),
+        ("账号已被禁用", "user_disabled"),
+        ("该账号已绑定其他企微用户", "already_bound"),
+        ("请联系管理员审核合并", "already_bound"),
+        ("unknown", "api_error"),
+    ],
+)
+def test_classify_error(message: str, code: str) -> None:
+    assert _classify_error(message) == code
+
+
+@pytest.mark.asyncio
+async def test_qr_url_uses_scoped_public_config() -> None:
+    service = MagicMock()
+    service.generate_state = AsyncMock(return_value="state-1")
+    service.build_qr_url.return_value = {"state": "state-1"}
+    identity = MagicMock()
+    identity.get_public_config.return_value = {
+        "corp_id": "ww-org", "agent_id": "1000009",
+    }
+    with (
+        patch("api.routes.wecom_auth.get_settings", return_value=_settings()),
+        patch(
+            "api.routes.wecom_auth.WecomOAuthIdentityService.for_login",
+            return_value=identity,
+        ) as factory,
+    ):
+        result = await get_qr_url(
+            request=_request(),
+            user_id=None,
+            db=MagicMock(),
+            org_id="00000000-0000-0000-0000-000000000001",
+            svc=service,
         )
-        mock_db.table.return_value = org_chain
+    assert result["state"] == "state-1"
+    factory.assert_called_once()
+    service.build_qr_url.assert_called_once_with(
+        "state-1", corp_id="ww-org", agent_id="1000009",
+    )
 
-        # mock resolver for agent_id
-        mock_resolver = MagicMock()
-        mock_resolver.get.return_value = "1000006"
 
-        with (
-            patch("api.routes.wecom_auth.get_settings", return_value=settings_mock),
-            patch("services.org.config_resolver.OrgConfigResolver", return_value=mock_resolver),
-        ):
-            result = await get_qr_url(
-                user_id=None, db=mock_db, org_id="org-1", svc=mock_svc,
+@pytest.mark.asyncio
+async def test_qr_url_without_org_requires_authenticated_bind() -> None:
+    with patch("api.routes.wecom_auth.get_settings", return_value=_settings()):
+        with pytest.raises(HTTPException) as exc:
+            await get_qr_url(
+                request=_request(),
+                user_id=None,
+                db=MagicMock(),
+                org_id=None,
+                svc=MagicMock(),
             )
+    assert exc.value.status_code == 400
 
-        assert result["state"] == "state_123"
-        mock_svc.generate_state.assert_called_once_with(
-            "login", user_id=None, org_id="org-1",
+
+@pytest.mark.asyncio
+async def test_qr_url_builds_authenticated_bind_state() -> None:
+    service = MagicMock()
+    service.generate_state = AsyncMock(return_value="bind-state")
+    service.build_qr_url.return_value = {"state": "bind-state"}
+    with patch("api.routes.wecom_auth.get_settings", return_value=_settings()):
+        await get_qr_url(
+            request=_request(),
+            user_id="user-1",
+            db=MagicMock(),
+            org_id=None,
+            svc=service,
         )
+    service.generate_state.assert_awaited_once_with(
+        "bind", user_id="user-1", org_id=None,
+    )
 
-    @pytest.mark.asyncio
-    async def test_no_org_no_user_raises_400(self):
-        """未登录 + 无 org_id -> 400"""
-        from api.routes.wecom_auth import get_qr_url
-        from fastapi import HTTPException
 
-        mock_svc = MagicMock()
-        settings_mock = MagicMock()
-        settings_mock.wecom_oauth_redirect_uri = "https://example.com/callback"
+@pytest.mark.asyncio
+async def test_callback_login_uses_exchange_and_login_scopes() -> None:
+    transport = AsyncMock()
+    transport.db = MagicMock()
+    transport.validate_state.return_value = {
+        "type": "login",
+        "user_id": None,
+        "org_id": "00000000-0000-0000-0000-000000000001",
+    }
+    transport.exchange_code.return_value = {"userid": "zhangsan"}
+    transport.create_handoff.return_value = "h" * 43
+    identity = MagicMock()
+    identity.get_exchange_config.return_value = {
+        "corp_id": "ww-org", "agent_secret": "secret",
+    }
+    identity.login_or_create.return_value = {
+        "token": {"access_token": "jwt", "refresh_token": "refresh"},
+        "user": {"id": "user-1", "nickname": "张三"},
+        "org": {"org_id": "org-1", "name": "企业", "role": "member"},
+    }
+    with (
+        patch("api.routes.wecom_auth.get_settings", return_value=_settings()),
+        patch(
+            "api.routes.wecom_auth.WecomOAuthIdentityService.for_login",
+            return_value=identity,
+        ),
+    ):
+        response = await oauth_callback(
+            request=_request(), code="code", state="state", svc=transport,
+        )
+    assert response.status_code == 302
+    assert response.headers["location"].endswith(f"handoff={'h' * 43}")
+    assert "token=" not in response.headers["location"]
+    transport.create_handoff.assert_awaited_once_with(
+        identity.login_or_create.return_value,
+    )
+    identity.login_or_create.assert_called_once_with(
+        wecom_userid="zhangsan", corp_id="ww-org",
+    )
 
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            with pytest.raises(HTTPException) as exc_info:
-                await get_qr_url(
-                    user_id=None, db=MagicMock(), org_id=None, svc=mock_svc,
-                )
-            assert exc_info.value.status_code == 400
 
-    @pytest.mark.asyncio
-    async def test_returns_qr_url_for_bind(self):
-        """已登录 + 无 org_id -> 返回 bind 模式 QR URL"""
-        from api.routes.wecom_auth import get_qr_url
+@pytest.mark.asyncio
+async def test_callback_bind_uses_actor_scope() -> None:
+    transport = AsyncMock()
+    transport.db = MagicMock()
+    transport.validate_state.return_value = {
+        "type": "bind", "user_id": "user-1", "org_id": None,
+    }
+    transport.exchange_code.return_value = {"userid": "zhangsan"}
+    transport.create_handoff.return_value = "h" * 43
+    identity = MagicMock()
+    identity.bind_account.return_value = {
+        "token": {"access_token": "jwt"},
+        "user": {"id": "user-1"},
+    }
+    with (
+        patch("api.routes.wecom_auth.get_settings", return_value=_settings()),
+        patch(
+            "api.routes.wecom_auth.WecomOAuthIdentityService.for_actor",
+            return_value=identity,
+        ) as factory,
+    ):
+        response = await oauth_callback(
+            request=_request(), code="code", state="state", svc=transport,
+        )
+    assert response.status_code == 302
+    factory.assert_called_once_with(
+        transport.db, user_id="user-1", request_id="request-1",
+    )
+    identity.bind_account.assert_called_once_with(
+        wecom_userid="zhangsan", corp_id="ww-system",
+    )
 
-        mock_svc = MagicMock()
-        mock_svc.generate_state = AsyncMock(return_value="state_bind")
-        mock_svc.build_qr_url.return_value = {"state": "state_bind"}
 
-        settings_mock = MagicMock()
-        settings_mock.wecom_corp_id = "ww_corp"
-        settings_mock.wecom_agent_id = 1000006
-        settings_mock.wecom_oauth_redirect_uri = "https://example.com/callback"
+@pytest.mark.asyncio
+async def test_handoff_endpoint_consumes_code_once() -> None:
+    service = AsyncMock()
+    service.consume_handoff.return_value = {
+        "token": {"access_token": "jwt"},
+        "user": {"id": "user-1"},
+    }
+    payload = OAuthHandoffRequest(code="h" * 43)
+    result = await consume_oauth_handoff(payload=payload, svc=service)
+    assert result["user"]["id"] == "user-1"
+    service.consume_handoff.assert_awaited_once_with("h" * 43)
 
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await get_qr_url(
-                user_id="uid-123", db=MagicMock(), org_id=None, svc=mock_svc,
+
+@pytest.mark.asyncio
+async def test_callback_business_error_redirects_without_exception() -> None:
+    transport = AsyncMock()
+    transport.validate_state.side_effect = ValidationError("登录链接已失效")
+    with patch("api.routes.wecom_auth.get_settings", return_value=_settings()):
+        response = await oauth_callback(
+            request=_request(), code="code", state="state", svc=transport,
+        )
+    assert "error=state_invalid" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_unbind_and_status_use_actor_facade() -> None:
+    service = MagicMock()
+    service.db = MagicMock()
+    identity = MagicMock()
+    identity.unbind_account.return_value = {
+        "success": True, "message": "企微账号已解绑",
+    }
+    identity.get_binding_status.return_value = {
+        "bound": False, "wecom_nickname": None, "bound_at": None,
+    }
+    with patch(
+        "api.routes.wecom_auth.WecomOAuthIdentityService.for_actor",
+        return_value=identity,
+    ) as factory:
+        unbound = await unbind_wecom(
+            request=_request(), user_id="user-1", svc=service,
+        )
+        status = await get_binding_status(
+            request=_request(), user_id="user-1", svc=service,
+        )
+    assert unbound["success"] is True
+    assert status["bound"] is False
+    assert factory.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unbind_missing_binding_maps_to_404() -> None:
+    service = MagicMock()
+    service.db = MagicMock()
+    identity = MagicMock()
+    identity.unbind_account.side_effect = ValidationError("当前账号未绑定企微")
+    with patch(
+        "api.routes.wecom_auth.WecomOAuthIdentityService.for_actor",
+        return_value=identity,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await unbind_wecom(
+                request=_request(), user_id="user-1", svc=service,
             )
-
-        mock_svc.generate_state.assert_called_once_with(
-            "bind", user_id="uid-123", org_id=None,
-        )
-
-
-class TestOAuthCallback:
-    """GET /auth/wecom/callback 测试"""
-
-    @pytest.mark.asyncio
-    async def test_success_redirects_with_token(self):
-        """登录成功 → 302 重定向到前端（带 token+user）"""
-        from api.routes.wecom_auth import oauth_callback
-
-        mock_svc = AsyncMock()
-        mock_svc.validate_state.return_value = {"type": "login", "user_id": None}
-        mock_svc.exchange_code.return_value = {"userid": "zhangsan", "user_ticket": None}
-        mock_svc.login_or_create.return_value = {
-            "token": {"access_token": "jwt_abc", "token_type": "bearer", "expires_in": 86400},
-            "user": {"id": "uid-1", "nickname": "张三"},
-        }
-
-        settings_mock = MagicMock()
-        settings_mock.frontend_url = "https://example.com"
-
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await oauth_callback(code="auth_code", state="state_123", svc=mock_svc)
-
-        assert result.status_code == 302
-        location = result.headers["location"]
-        assert "https://example.com/auth/wecom/callback?" in location
-        assert "token=" in location
-        assert "user=" in location
-
-        # 验证 base64 解码正确
-        token_b64 = location.split("token=")[1].split("&")[0]
-        token_data = json.loads(base64.b64decode(token_b64))
-        assert token_data["access_token"] == "jwt_abc"
-
-    @pytest.mark.asyncio
-    async def test_invalid_state_redirects_with_error(self):
-        """state 无效 → 302 重定向到前端（带 error）"""
-        from api.routes.wecom_auth import oauth_callback
-
-        mock_svc = AsyncMock()
-        mock_svc.validate_state.side_effect = ValueError("state 无效或已过期")
-
-        settings_mock = MagicMock()
-        settings_mock.frontend_url = "https://example.com"
-
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await oauth_callback(code="any", state="bad", svc=mock_svc)
-
-        assert result.status_code == 302
-        assert "error=state_invalid" in result.headers["location"]
-
-    @pytest.mark.asyncio
-    async def test_non_member_redirects_with_error(self):
-        """非企业成员 → 302 重定向到前端（带 error）"""
-        from api.routes.wecom_auth import oauth_callback
-
-        mock_svc = AsyncMock()
-        mock_svc.validate_state.return_value = {"type": "login", "user_id": None}
-        mock_svc.exchange_code.side_effect = ValueError("仅限企业成员使用扫码登录")
-
-        settings_mock = MagicMock()
-        settings_mock.frontend_url = "https://example.com"
-
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await oauth_callback(code="ext_code", state="ok", svc=mock_svc)
-
-        assert result.status_code == 302
-        assert "error=not_member" in result.headers["location"]
-
-    @pytest.mark.asyncio
-    async def test_bind_mode_calls_bind_account(self):
-        """bind 模式 → 调用 bind_account"""
-        from api.routes.wecom_auth import oauth_callback
-
-        mock_svc = AsyncMock()
-        mock_svc.validate_state.return_value = {"type": "bind", "user_id": "uid-bind"}
-        mock_svc.exchange_code.return_value = {"userid": "wecom_user", "user_ticket": None}
-        mock_svc.bind_account.return_value = {
-            "token": {"access_token": "jwt_bind", "token_type": "bearer", "expires_in": 86400},
-            "user": {"id": "uid-bind", "nickname": "绑定用户"},
-        }
-
-        settings_mock = MagicMock()
-        settings_mock.frontend_url = "https://example.com"
-
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await oauth_callback(code="bind_code", state="state_bind", svc=mock_svc)
-
-        assert result.status_code == 302
-        mock_svc.bind_account.assert_called_once_with(
-            user_id="uid-bind", wecom_userid="wecom_user"
-        )
-
-
-class TestUnbindWecom:
-    """DELETE /auth/wecom/binding 测试"""
-
-    @pytest.mark.asyncio
-    async def test_unbind_success(self):
-        """解绑成功"""
-        from api.routes.wecom_auth import unbind_wecom
-
-        mock_svc = AsyncMock()
-        mock_svc.unbind_account.return_value = {"success": True, "message": "企微账号已解绑"}
-
-        result = await unbind_wecom(user_id="uid-1", svc=mock_svc)
-        assert result["success"] is True
-        mock_svc.unbind_account.assert_called_once_with("uid-1")
-
-    @pytest.mark.asyncio
-    async def test_unbind_not_bound_raises_404(self):
-        """未绑定 → HTTPException 404"""
-        from api.routes.wecom_auth import unbind_wecom
-        from fastapi import HTTPException
-
-        mock_svc = AsyncMock()
-        mock_svc.unbind_account.side_effect = ValueError("当前账号未绑定企微")
-
-        with pytest.raises(HTTPException) as exc_info:
-            await unbind_wecom(user_id="uid-1", svc=mock_svc)
-        assert exc_info.value.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_unbind_only_method_raises_400(self):
-        """唯一登录方式 → HTTPException 400"""
-        from api.routes.wecom_auth import unbind_wecom
-        from fastapi import HTTPException
-
-        mock_svc = AsyncMock()
-        mock_svc.unbind_account.side_effect = ValueError("解绑后将无法登录")
-
-        with pytest.raises(HTTPException) as exc_info:
-            await unbind_wecom(user_id="uid-1", svc=mock_svc)
-        assert exc_info.value.status_code == 400
-
-
-class TestGetBindingStatus:
-    """GET /auth/wecom/binding-status 测试"""
-
-    @pytest.mark.asyncio
-    async def test_returns_bound_status(self):
-        """已绑定 → 返回详情"""
-        from api.routes.wecom_auth import get_binding_status
-
-        mock_svc = AsyncMock()
-        mock_svc.get_binding_status.return_value = {
-            "bound": True,
-            "wecom_nickname": "张三",
-            "bound_at": "2026-03-22T00:00:00+08:00",
-        }
-
-        result = await get_binding_status(user_id="uid-1", svc=mock_svc)
-        assert result["bound"] is True
-        assert result["wecom_nickname"] == "张三"
-
-    @pytest.mark.asyncio
-    async def test_returns_unbound_status(self):
-        """未绑定 → bound=False"""
-        from api.routes.wecom_auth import get_binding_status
-
-        mock_svc = AsyncMock()
-        mock_svc.get_binding_status.return_value = {
-            "bound": False,
-            "wecom_nickname": None,
-            "bound_at": None,
-        }
-
-        result = await get_binding_status(user_id="uid-1", svc=mock_svc)
-        assert result["bound"] is False
+    assert exc.value.status_code == 404

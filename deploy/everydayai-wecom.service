@@ -14,6 +14,8 @@ Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §4.4 / §17
 Environment="TZ=Asia/Shanghai"
 EnvironmentFile=/var/www/everydayai/backend/.env
+EnvironmentFile=/var/www/everydayai/backend/.env.wecom-runtime
+EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
 
 # 启动命令（单进程，避免多连接竞争）
 ExecStart=/var/www/everydayai/backend/venv/bin/python wecom_ws_runner.py

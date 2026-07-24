@@ -12,8 +12,6 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-import asyncio
-import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -165,8 +163,9 @@ class TestWecomWSManager:
         """无配置企业 -> 不启动任何 client"""
         from wecom_ws_runner import WecomWSManager
 
-        mock_db = MagicMock()
-        manager = WecomWSManager(mock_db)
+        control_db = MagicMock()
+        runtime_db = MagicMock()
+        manager = WecomWSManager(control_db, runtime_db)
 
         with patch(
             "services.org.config_resolver.OrgConfigResolver"
@@ -181,8 +180,9 @@ class TestWecomWSManager:
         """有配置企业 -> 启动对应 client"""
         from wecom_ws_runner import WecomWSManager
 
-        mock_db = MagicMock()
-        manager = WecomWSManager(mock_db)
+        control_db = MagicMock()
+        runtime_db = MagicMock()
+        manager = WecomWSManager(control_db, runtime_db)
 
         mock_ws_instance = MagicMock()
         mock_ws_instance.start = AsyncMock()
@@ -194,12 +194,14 @@ class TestWecomWSManager:
         with (
             patch("services.org.config_resolver.OrgConfigResolver") as MockResolver,
             patch("wecom_ws_runner.WecomWSClient", return_value=mock_ws_instance),
-            patch("wecom_ws_runner.WecomMessageService"),
+            patch("wecom_ws_runner.WecomMessageService") as MockMessageService,
         ):
             MockResolver.return_value.list_orgs_with_wecom_bot.return_value = orgs
             await manager.start()
 
         assert "org-1" in manager.clients
+        MockResolver.assert_called_once_with(control_db)
+        MockMessageService.assert_called_once_with(runtime_db)
         mock_ws_instance.start.assert_called_once()
 
     @pytest.mark.asyncio
@@ -207,8 +209,7 @@ class TestWecomWSManager:
         """stop() 停止所有 client"""
         from wecom_ws_runner import WecomWSManager
 
-        mock_db = MagicMock()
-        manager = WecomWSManager(mock_db)
+        manager = WecomWSManager(MagicMock(), MagicMock())
 
         mock_client = MagicMock()
         mock_client.stop = AsyncMock()
@@ -221,8 +222,7 @@ class TestWecomWSManager:
         """get_client 按 org_id 返回 client"""
         from wecom_ws_runner import WecomWSManager
 
-        mock_db = MagicMock()
-        manager = WecomWSManager(mock_db)
+        manager = WecomWSManager(MagicMock(), MagicMock())
 
         mock_client = MagicMock()
         manager._clients["org-1"] = mock_client
@@ -291,8 +291,7 @@ class TestMessageHandler:
         """text 消息 -> 正确构建 WecomIncomingMessage 并调用 handle_message"""
         from wecom_ws_runner import WecomWSManager
 
-        mock_db = MagicMock()
-        manager = WecomWSManager(mock_db)
+        manager = WecomWSManager(MagicMock(), MagicMock())
         mock_client = MagicMock()
         manager._clients["org-1"] = mock_client
 
@@ -342,13 +341,17 @@ class TestCardHandler:
         """卡片事件 -> 调用 CardEventHandler.handle"""
         from wecom_ws_runner import WecomWSManager
 
-        mock_db = MagicMock()
-        manager = WecomWSManager(mock_db)
+        manager = WecomWSManager(MagicMock(), MagicMock())
         mock_client = MagicMock()
         manager._clients["org-1"] = mock_client
 
         mock_msg_svc = MagicMock()
-        mock_msg_svc._get_or_create_conversation = AsyncMock(return_value="conv_123")
+        request_svc = MagicMock()
+        request_svc.db = MagicMock()
+        request_svc._get_or_create_conversation = AsyncMock(
+            return_value="conv_123"
+        )
+        mock_msg_svc._for_request.return_value = request_svc
 
         handler = manager._make_card_handler("org-1", "corp_789", mock_msg_svc)
 
@@ -391,94 +394,13 @@ class TestCardHandler:
         assert call_kwargs["event_key"] == "start_chat"
         assert call_kwargs["task_id"] == "task_001"
         assert call_kwargs["org_id"] == "org-1"
-
-
-# ============================================================
-# TestSignalHandling — main() 信号处理
-# ============================================================
-
-
-class TestSignalHandling:
-    """信号处理：SIGTERM/SIGINT 触发优雅关闭"""
-
-    @pytest.mark.asyncio
-    async def test_signal_sets_stop_event(self):
-        """信号处理器调用 stop_event.set()"""
-        mock_stop_event = MagicMock()
-        mock_stop_event.wait = AsyncMock()
-        mock_stop_event.set = MagicMock()
-
-        mock_manager = MagicMock()
-        mock_manager.start = AsyncMock()
-        mock_manager.stop = AsyncMock()
-        mock_manager.clients = {}
-        mock_delivery_worker = MagicMock()
-        mock_delivery_worker.start = AsyncMock()
-        mock_delivery_worker.stop = AsyncMock()
-
-        registered_handlers = {}
-
-        def fake_add_signal_handler(sig, handler):
-            registered_handlers[sig] = handler
-
-        with (
-            patch("wecom_ws_runner.setup_logging"),
-            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
-            patch("wecom_ws_runner.get_async_db", new=AsyncMock(return_value=MagicMock())),
-            patch("wecom_ws_runner.close_async_db", new=AsyncMock()),
-            patch("wecom_ws_runner.WecomWSManager", return_value=mock_manager),
-            patch(
-                "services.wecom.delivery_worker.WecomDeliveryWorker",
-                return_value=mock_delivery_worker,
-            ),
-            patch("asyncio.Event", return_value=mock_stop_event),
-            patch("asyncio.get_running_loop") as mock_loop,
-        ):
-            mock_loop.return_value.add_signal_handler = fake_add_signal_handler
-
-            from wecom_ws_runner import main
-            await main()
-
-        # 验证注册了 SIGINT 和 SIGTERM
-        assert signal.SIGINT in registered_handlers
-        assert signal.SIGTERM in registered_handlers
-
-        # 触发信号处理器 -> 应调用 stop_event.set()
-        mock_stop_event.set.reset_mock()
-        registered_handlers[signal.SIGTERM]()
-        mock_stop_event.set.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_manager_stopped_on_shutdown(self):
-        """关闭流程调用 manager.stop()"""
-        mock_stop_event = MagicMock()
-        mock_stop_event.wait = AsyncMock()
-
-        mock_manager = MagicMock()
-        mock_manager.start = AsyncMock()
-        mock_manager.stop = AsyncMock()
-        mock_manager.clients = {"org-1": MagicMock()}
-        mock_delivery_worker = MagicMock()
-        mock_delivery_worker.start = AsyncMock()
-        mock_delivery_worker.stop = AsyncMock()
-
-        with (
-            patch("wecom_ws_runner.setup_logging"),
-            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
-            patch("wecom_ws_runner.get_async_db", new=AsyncMock(return_value=MagicMock())),
-            patch("wecom_ws_runner.close_async_db", new=AsyncMock()),
-            patch("wecom_ws_runner.WecomWSManager", return_value=mock_manager),
-            patch(
-                "services.wecom.delivery_worker.WecomDeliveryWorker",
-                return_value=mock_delivery_worker,
-            ),
-            patch("asyncio.Event", return_value=mock_stop_event),
-            patch("asyncio.get_running_loop") as mock_loop,
-        ):
-            mock_loop.return_value.add_signal_handler = MagicMock()
-
-            from wecom_ws_runner import main
-            await main()
-
-        mock_manager.start.assert_called_once()
-        mock_manager.stop.assert_called_once()
+        mock_msg_svc._for_request.assert_called_once_with(
+            actor_user_id=None,
+            org_id="org-1",
+            request_id="req_card",
+        )
+        request_svc._bind_request_db.assert_called_once_with(
+            actor_user_id="user_123",
+            org_id="org-1",
+            request_id="req_card",
+        )

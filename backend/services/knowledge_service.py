@@ -8,13 +8,11 @@
 """
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
 from core.config import settings
-from services.graph_service import graph_service
 from services.knowledge_config import (
     compute_content_hash,
     compute_embedding,
@@ -147,6 +145,7 @@ async def _insert_node_row(
 
 async def add_knowledge(
     *,
+    db_source: Any = None,
     category: str,
     subcategory: Optional[str] = None,
     node_type: str,
@@ -181,7 +180,7 @@ async def add_knowledge(
     if not is_kb_available():
         return None
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return None
 
@@ -231,7 +230,6 @@ async def add_knowledge(
                     confidence=confidence, scope=scope,
                     content_hash=content_hash, org_id=org_id,
                 )
-                await conn.commit()
                 invalidate_search_cache()
                 logger.info(
                     f"Knowledge added | id={node_id} | category={category} | "
@@ -259,6 +257,7 @@ async def search_relevant(
     min_confidence: Optional[float] = None,
     scope: str = "global",
     org_id: Optional[str] = None,
+    db_source: Any = None,
 ) -> List[Dict[str, Any]]:
     """
     向量检索相关知识（用于路由注入）
@@ -294,7 +293,7 @@ async def search_relevant(
     if not embedding:
         return []
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return []
 
@@ -355,8 +354,6 @@ async def search_relevant(
                         """,
                         {"ids": hit_ids, "boost": settings.kb_confidence_boost},
                     )
-                    await conn.commit()
-
                 formatted = [format_knowledge_node(r) for r in results]
                 set_cached_search(cache_key, formatted)
                 return formatted
@@ -371,12 +368,13 @@ async def get_node_by_metadata(
     value: str,
     category: Optional[str] = None,
     org_id: Optional[str] = None,
+    db_source: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """根据 metadata 字段查找节点（用于查找模型/工具实体节点）"""
     if not is_kb_available():
         return None
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return None
 
@@ -412,101 +410,5 @@ async def get_node_by_metadata(
         return None
 
 
-# ===== 种子知识导入 =====
-
-
-async def load_seed_knowledge(seed_file: Optional[str] = None) -> int:
-    """
-    从 JSON 文件导入种子知识（先清理旧种子再重新导入，确保内容最新）
-
-    Returns:
-        成功导入的条目数
-    """
-    if not is_kb_available():
-        return 0
-
-    if seed_file is None:
-        seed_file = str(Path(__file__).parent.parent / "data" / "seed_knowledge.json")
-
-    seed_path = Path(seed_file)
-    if not seed_path.exists():
-        logger.warning(f"Seed knowledge file not found | path={seed_file}")
-        return 0
-
-    try:
-        with open(seed_path, encoding="utf-8") as f:
-            seeds = json.load(f)
-    except Exception as e:
-        logger.error(f"Seed knowledge parse failed | error={e}")
-        return 0
-
-    # 清理旧种子（source='seed'），确保内容更新后不产生重复
-    conn_ctx = await get_pg_connection()
-    if conn_ctx:
-        try:
-            async with conn_ctx as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "DELETE FROM knowledge_nodes WHERE source = 'seed' AND org_id IS NULL"
-                    )
-                    deleted = cur.rowcount
-                    # 清理孤立边（两端节点已不存在的边，全局清理）
-                    await cur.execute("""
-                        DELETE FROM knowledge_edges
-                        WHERE source_id NOT IN (SELECT id FROM knowledge_nodes)
-                           OR target_id NOT IN (SELECT id FROM knowledge_nodes)
-                    """)
-                await conn.commit()
-                if deleted:
-                    logger.info(f"Old seed knowledge cleared | deleted={deleted}")
-        except Exception as e:
-            logger.warning(f"Failed to clear old seeds | error={e}")
-
-    imported = 0
-    for item in seeds:
-        node_id = await add_knowledge(
-            category=item["category"],
-            subcategory=item.get("subcategory"),
-            node_type=item.get("node_type", "model"),
-            title=item["title"],
-            content=item["content"],
-            metadata=item.get("metadata"),
-            source="seed",
-            confidence=item.get("confidence", 1.0),
-        )
-        if node_id:
-            imported += 1
-
-    # 构建种子知识之间的关系边
-    await _build_seed_edges(seeds)
-
-    # 清理搜索缓存（种子更新后旧缓存失效）
-    invalidate_search_cache()
-
-    logger.info(f"Seed knowledge loaded | total={len(seeds)} | imported={imported}")
-    return imported
-
-
-async def _build_seed_edges(seeds: List[Dict[str, Any]]) -> None:
-    """根据种子知识的 metadata.related_models 构建关系边"""
-    for item in seeds:
-        meta = item.get("metadata", {})
-        model_id = meta.get("model_id")
-        related_models = meta.get("related_models", [])
-
-        if not model_id and not related_models:
-            continue
-
-        # 查找当前节点
-        current = await get_node_by_metadata("model_id", model_id) if model_id else None
-        if not current:
-            continue
-
-        for related_model_id in related_models:
-            related = await get_node_by_metadata("model_id", related_model_id)
-            if related:
-                await graph_service.add_edge(
-                    source_id=str(current["id"]),
-                    target_id=str(related["id"]),
-                    relation_type="related_to",
-                )
+# 向后兼容：种子导入实现已按职责拆至独立模块。
+from services.knowledge_seed_service import load_seed_knowledge  # noqa: E402,F401

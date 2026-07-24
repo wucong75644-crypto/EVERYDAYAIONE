@@ -78,7 +78,7 @@ BACKEND_PORT=8000
 FRONTEND_PORT=3000
 
 # 数据库迁移（可选）
-RUN_MIGRATIONS=true
+RUN_MIGRATIONS=false
 EOF
         log_error "请编辑 deploy/config.env 填写服务器信息后重新运行"
         exit 1
@@ -268,7 +268,7 @@ remote_exec() {
 deploy_backend() {
     log_info "在服务器上部署后端..."
 
-    remote_exec bash << 'ENDSSH'
+    remote_exec "RUN_MIGRATIONS=${RUN_MIGRATIONS:-false} bash -s" << 'ENDSSH'
         set -e
         cd /var/www/everydayai/backend
         if [ ! -d "venv" ]; then
@@ -280,6 +280,7 @@ deploy_backend() {
             echo "❌ .env 文件不存在"
             exit 1
         fi
+        bash ../deploy/run-migrations.sh
         pkill -f kernel_worker 2>/dev/null || true
         services=(
             everydayai-backend

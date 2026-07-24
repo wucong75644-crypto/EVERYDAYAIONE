@@ -324,8 +324,8 @@ Goal、Interaction、Run 和 SubRun 状态继续采用
 
 ### 11.2 迁移治理先行
 
-当前仓库存在重复迁移编号，生产不存在迁移账本，`deploy.sh` 也没有执行
-`RUN_MIGRATIONS`。任何 Runtime 新表之前必须先建立：
+仓库历史存在重复迁移编号。当前已实现部署前 plan/apply 门禁和以下账本合同；
+生产已在 120–149 核心结构审计通过后完成 138 个既有迁移的 legacy baseline：
 
 - migration identity
 - SHA-256 checksum
@@ -443,7 +443,9 @@ backend/services/agent_runtime/
 切换清理、本地/Redis 消息投递复合租户键，以及生产者 `org_id` 贯通已完成。
 Tool Confirm 与 Steer 交互等待键的用户/企业绑定也已完成；WebSocket 租户隔离
 通过带 TTL 的 Redis 短期队列贯通 Web Worker 与 Conversation Actor，并保留
-本地 Event 快速路径；进入最终审查与部署前验证。迁移账本和数据库纵深防御仍未开始。
+本地 Event 快速路径。迁移账本内核与部署重启前 plan/apply 门禁已完成，使用完整
+文件名 identity、SHA-256、advisory lock、事务状态和显式 legacy baseline；生产
+账本已完成且无 checksum 漂移，数据库租户纵深防御仍未开始。
 
 ## 16. 部署与回滚
 

@@ -191,7 +191,7 @@ class FileDeleteMixin:
             from services.knowledge_config import get_pg_connection, is_kb_available
             if not is_kb_available():
                 return None
-            conn_ctx = await get_pg_connection()
+            conn_ctx = await get_pg_connection(self.db)
             if conn_ctx is None:
                 return None
             async with conn_ctx as conn:
@@ -225,7 +225,7 @@ class FileDeleteMixin:
             from services.knowledge_config import get_pg_connection, is_kb_available
             if not is_kb_available():
                 return
-            conn_ctx = await get_pg_connection()
+            conn_ctx = await get_pg_connection(self.db)
             if conn_ctx is None:
                 return
             async with conn_ctx as conn:

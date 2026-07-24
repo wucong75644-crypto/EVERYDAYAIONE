@@ -320,6 +320,12 @@
 | `PsycopgRpcClient` | `backend/scripts/backfill_user_assets.py` | 在维护窗口的 psycopg 事务中为既有 AssetRegistryService 提供 register_user_asset RPC 适配 | conn, rpc params | RPC payload |
 | `prepare_archive_rows` | `backend/services/kuaimai/erp_sync_executor.py` | 在 ERP 热表写入冷表前将查询返回的 `exception_tags` list 恢复为 PostgreSQL `TEXT[]` 字面量 | rows | normalized rows |
 | `MediaToolMixin._generate_video` | `backend/services/media_tool_executor.py` | Chat 视频工具成功后先持久化到 Workspace/OSS，再确认扣费并输出标准 video emit payload；临时 URL 降级不登记 ready 资产 | prompt/tool context | AgentResult |
+| `KnowledgeToolMixin._search_knowledge` | `backend/services/agent/knowledge_tool_mixin.py` | 在当前企业范围查询知识库并返回标准 AgentResult | query、executor db/org scope | AgentResult |
+| `ErpToolMixin._erp_dispatch` | `backend/services/agent/erp_tool_executor.py` | 按工具类型委托两步查询或带 Redis 幂等锁的写入辅助函数 | tool_name、args | AgentResult/工具结果 |
+| `ErpDispatcher.execute` | `backend/services/kuaimai/dispatcher.py` | 校验注册表与参数后，委托 API 调用和响应装饰辅助函数 | tool_name、action、params | ToolOutput |
+| `IntentRouterRuntimeMixin` | `backend/services/intent_router_runtime_mixin.py` | 提供路由知识增强、DashScope 客户端复用和脱敏路由指标记录 | router runtime context | runtime helpers |
+| `load_seed_knowledge` | `backend/services/knowledge_seed_service.py` | 清理并重新导入全局种子知识、重建关系边；由 knowledge_service 兼容导出 | seed_file、db_source | 导入数量 |
+| `OrgInvitationMixin` | `backend/services/org/org_invitation_mixin.py` | 创建企业邀请并校验手机号、状态、容量后接受邀请 | org/user/invite context | 邀请或成员结果 |
 | `_update_message_image_part` | `backend/api/routes/image_ecom.py` | 在指定 conversation/message 内把失败图片按图片序号原位替换为公开 ImagePart，拒绝越界并返回真实 content 数组下标 | db, message/conversation ID, image ordinal, emit payload | int |
 | `list_user_assets` | `backend/api/routes/admin_user_assets.py` | 超管校验目标用户后调用资产查询 RPC，按来源/媒体类型和不透明复合游标读取 ready canonical 资产 | uid, source_type, media_type?, limit, cursor? | items/next_cursor/has_more/total |
 | `_encode_cursor` / `_decode_cursor` | `backend/api/routes/admin_user_assets.py` | 编解码并严格校验用户资产复合游标中的 ISO 时间和 UUID | created_at/id 或 opaque cursor | str / tuple |
@@ -1231,23 +1237,19 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `WecomOAuthService.generate_state` | `backend/services/wecom_oauth_service.py` | 生成 OAuth state token | state_type, user_id? | str |
 | `WecomOAuthService.validate_state` | `backend/services/wecom_oauth_service.py` | 校验并消费 state（Redis GETDEL） | state | dict |
 | `WecomOAuthService.exchange_code` | `backend/services/wecom_oauth_service.py` | 用授权 code 换取企微 userid | code | str |
-| `WecomOAuthService.login_or_create` | `backend/services/wecom_oauth_service.py` | 企微用户登录或自动创建账号 | wecom_userid, nickname? | User |
-| `WecomOAuthService.bind_account` | `backend/services/wecom_oauth_service.py` | 绑定企微账号到已有用户 | user_id, wecom_userid, nickname? | None |
-| `WecomOAuthService.unbind_account` | `backend/services/wecom_oauth_service.py` | 解绑企微账号 | user_id | None |
-| `WecomOAuthService.get_binding_status` | `backend/services/wecom_oauth_service.py` | 查询用户企微绑定状态 | user_id | dict |
 | `WecomOAuthService.build_qr_url` | `backend/services/wecom_oauth_service.py` | 构建企微扫码登录 URL | state | str |
-
-#### 后端函数 — 账号合并 (`backend/services/wecom_account_merge.py`)
-
-| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
-|--------|----------|----------|------|--------|
-| `merge_users` | `backend/services/wecom_account_merge.py` | 合并两个用户的数据（对话/消息/积分等） | db, keep_user_id, remove_user_id, ... | None |
+| `WecomOAuthService.create_handoff` / `consume_handoff` | `backend/services/wecom_oauth_service.py` | 以 Redis 60 秒随机码保存登录结果，并用 GETDEL 原子消费；重放、过期和非法 payload 失败关闭 | payload/code | code/payload |
+| `WecomOAuthIdentityService.for_login` / `for_actor` | `backend/services/wecom/oauth_identity_service.py` | 创建不可变的未登录企业 Scope 或已登录 actor Scope | db, org/user/request | service |
+| `get_public_config` / `get_exchange_config` | `backend/services/wecom/oauth_identity_service.py` | 通过 155 精确 RPC 获取并解密二维码或 code exchange 配置 | - | dict |
+| `login_or_create` / `bind_account` | `backend/services/wecom/oauth_identity_service.py` | 生成 token material，并由 155 RPC 原子提交身份事实与 refresh hash | identity/corp/nickname | token/user/org |
+| `unbind_account` / `get_binding_status` | `backend/services/wecom/oauth_identity_service.py` | 通过 actor Scope RPC 解绑或查询最小绑定状态 | - | dict |
 
 #### 后端函数 — 企微 OAuth 路由 (`backend/api/routes/wecom_auth.py`)
 
 | 路由 | 文件路径 | 功能描述 | 方法 | 返回值 |
 |------|----------|----------|------|--------|
 | `/api/auth/wecom/qr-url` | `backend/api/routes/wecom_auth.py` | 获取企微扫码登录 URL | GET | `{url, state}` |
+| `/api/auth/wecom/handoff` | `backend/api/routes/wecom_auth.py` | POST 原子消费一次性交接码，Token/User 仅在响应体返回 | POST | token/user/org |
 | `/api/auth/wecom/callback` | `backend/api/routes/wecom_auth.py` | OAuth 授权回调处理 | GET | 重定向/Token |
 | `/api/auth/wecom/binding` | `backend/api/routes/wecom_auth.py` | 解绑企微账号 | DELETE | `{success}` |
 | `/api/auth/wecom/binding-status` | `backend/api/routes/wecom_auth.py` | 查询企微绑定状态 | GET | `{bound, wecom_userid}` |
@@ -1313,7 +1315,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 - **积分操作**：`lock_credits`, `confirm_deduct`, `refund_credits`, `credit_lock`, `deduct_atomic`, `get_balance`
 - **对话管理**：`create_conversation`, `update_conversation_title`, `get_conversation_list`, `delete_conversation`
 - **标题管理**：`generate_auto_title`, `generateAutoTitle`, `updateConversationTitle`, `syncTitleToNavbar`, `handleTitleEdit`
-- **企微 OAuth 认证**：`WecomOAuthService.generate_state`, `validate_state`, `exchange_code`, `login_or_create`, `bind_account`, `unbind_account`, `build_qr_url`, `merge_users`
+- **企微 OAuth 认证**：`WecomOAuthService.generate_state`, `validate_state`, `exchange_code`, `build_qr_url`；身份事实由 `WecomOAuthIdentityService` 的配置、登录、绑定、解绑和状态 RPC 门面负责
 
 ---
 
@@ -1488,6 +1490,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `_collect_zip_targets` | `backend/api/routes/file_download.py` | 解析 + 校验 + 递归展开路径列表为 (绝对路径, arcname) 元组列表（自动排除 `.` 开头隐藏文件，与 listdir/search 对齐） |
 | `_resolve_archive_name` | `backend/api/routes/file_download.py` | 决定 ZIP 文件名（单文件夹→folder.zip / 多个→workspace-{ts}.zip） |
 | `get_executor` | `backend/api/routes/file_common.py` | workspace 路由共用的 FileExecutor 工厂（拆分时提取自原 `_get_executor`） |
+| `list_workspace` | `backend/api/routes/file_browse.py` | 列出指定工作区目录；真实空目录返回空列表，不存在/非目录返回 404，存储 I/O 异常返回 503 |
 
 #### 前端函数
 
@@ -1497,8 +1500,18 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `matchesFilter` | `frontend/src/utils/fileCategory.ts` | 判断文件是否属于当前 Tab 筛选 |
 | `canPreviewImage` / `canPreviewVideo` | `frontend/src/utils/fileCategory.ts` | 双击是否应弹图片/视频预览 |
 | `downloadWorkspaceZip` | `frontend/src/services/workspace.ts` | POST ZIP 接口 + blob 接收 + 触发浏览器下载（含 RFC 5987 文件名解析） |
+| `listWorkspace` | `frontend/src/services/workspace.ts` | 请求指定工作区目录列表，支持通过 AbortSignal 取消过期请求 |
 | `WorkspaceCategoryTabs` | `frontend/src/components/workspace/WorkspaceCategoryTabs.tsx` | 分类 Tab 组件（蓝色下划线选中态） |
 | `VideoPreviewModal` | `frontend/src/components/chat/media/VideoPreviewModal.tsx` | 视频全屏预览 Modal（Portal + `<video controls>` + ESC + ←→ 切换） |
+| `useWorkspace` | `frontend/src/hooks/useWorkspace.ts` | 组合工作区浏览、上传、变更操作与视图状态，保持统一公共接口 |
+| `useWorkspaceBrowser` | `frontend/src/hooks/workspace/useWorkspaceBrowser.ts` | 管理目录导航、取消旧请求、有效目录身份隔离、路径匹配和 Agent 变更刷新 |
+| `useWorkspaceUpload` | `frontend/src/hooks/workspace/useWorkspaceUpload.ts` | 管理上传占位、进度和失败清理；仅在仍停留于上传启动目录时刷新或显示错误 |
+| `useWorkspaceMutations` | `frontend/src/hooks/workspace/useWorkspaceMutations.ts` | 管理删除、新建、重命名和移动操作 |
+| `useWorkspaceViewState` | `frontend/src/hooks/workspace/useWorkspaceViewState.ts` | 管理视图、筛选、排序、多选状态及偏好持久化 |
+| `WorkspaceView` | `frontend/src/components/workspace/WorkspaceView.tsx` | 组合工作区状态、交互控制和展示子组件 |
+| `useWorkspaceItemActions` | `frontend/src/components/workspace/useWorkspaceItemActions.ts` | 管理打开预览、发送聊天、上传与批量下载 |
+| `useWorkspaceSelectionActions` | `frontend/src/components/workspace/useWorkspaceSelectionActions.ts` | 管理选择、框选、删除确认和多选切换 |
+| `useWorkspaceKeyboard` | `frontend/src/components/workspace/useWorkspaceKeyboard.ts` | 管理工作区全选、退出、删除、重命名和打开快捷键 |
 | `useWorkspace.categoryFilter` | `frontend/src/hooks/useWorkspace.ts` | 当前 Tab 筛选状态（不持久化，切目录重置 all） |
 
 ### AI 媒体产物落盘
@@ -1547,6 +1560,123 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `VerificationResult` | `backend/scripts/verify_conversation_context_backfill.py` | 汇总历史消息覆盖和统一上下文结构不变量，任一违规即关闭硬切换门禁 |
 | `verify_backfill` | `backend/scripts/verify_conversation_context_backfill.py` | 在只读事务中核对消息覆盖、工具原子组、序列/revision 与 Artifact 引用完整性 |
 | `main` | `backend/scripts/verify_conversation_context_backfill.py` | 执行全库或单会话只读验收，以 JSON 输出结果并用非零退出码阻断切换 |
+
+### 数据库迁移账本
+
+| 函数/类 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `Migration` / `discover_migrations` | `backend/scripts/migration_runner.py` | 以完整文件名发现 SQL/Python 历史迁移，计算 SHA-256 并关联精确 rollback 文件 |
+| `validate_ledger` | `backend/scripts/migration_runner.py` | 对账仓库与数据库身份，拒绝 checksum 漂移、失败记录及仓库缺失的历史迁移 |
+| `baseline_through` | `backend/scripts/migration_runner.py` | 在显式结构审计确认后登记 legacy schema，不重新执行历史 SQL/Python |
+| `apply_pending` | `backend/scripts/migration_runner.py` | 在单迁移事务内执行 SQL 和成功账本写入；非 SQL 或缺少 rollback 时执行前失败 |
+| `run` | `backend/scripts/migration_runner.py` | 持有 PostgreSQL advisory lock 执行 check/plan/apply/baseline 并保证释放 |
+| `_database_url` / `main` | `backend/scripts/migration_runner.py` | 仅从 `MIGRATION_DATABASE_URL` 获取迁移身份；缺失时在连接前失败关闭 |
+
+### 数据库租户纵深防御
+
+| 函数/类 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `TenantTableKind` / `TenantTableSpec` | `backend/core/tenant_registry.py` | 分类个人/企业事实、企业控制、Worker、系统与分区对象，并记录身份来源、父事实和应用过滤激活状态 |
+| `TENANT_TABLE_REGISTRY` | `backend/core/tenant_registry.py` | 全项目唯一租户数据库对象 Registry；新增 Agent Runtime 表先登记但不提前改变旧过滤行为 |
+| `SchemaTenantTable` | `backend/core/tenant_registry.py` | 表示 pg_catalog 返回的表/物化视图/分区、列与父表合同 |
+| `validate_schema_inventory` | `backend/core/tenant_registry.py` | 双向拒绝未登记含 org_id 对象、缺表、缺 org/user 身份列及分区父表漂移 |
+| `DatabaseScope` / `DatabaseAccessKind` | `backend/core/db_scope.py` | 校验并规范化事务身份；固定携带 actor、org、runtime/worker 和 request ID |
+| `ScopedQueryBuilder` / `AsyncScopedQueryBuilder` | `backend/core/db_scope.py` | 复用既有 SQL builder，在同一同步/异步事务中先注入 Scope 再执行查询 |
+| `ScopedRpcCaller` / `AsyncScopedRpcCaller` | `backend/core/db_scope.py` | 在同一同步/异步事务中注入 Scope 并调用既有 RPC |
+| `ScopedDatabaseClient` / `AsyncScopedDatabaseClient` | `backend/core/db_scope.py` | 共享基础 client 连接池的显式作用域门面，不修改旧 client 或隐式保存请求身份 |
+| `ScopedAsyncConnection` | `backend/core/db_scope.py` | 代理异步 psycopg 连接，并禁止显式 commit、rollback 或修改 autocommit 逃逸 Scope 事务 |
+| `AsyncScopedConnectionPool` | `backend/core/db_scope.py` | 从 raw async pool 获取连接后开启事务、注入 DatabaseScope，并按退出状态自动提交或回滚 |
+| `database_scope_from_client` | `backend/core/db_scope.py` | 从显式 DatabaseScope、scoped client 或 OrgScopedDB 门面解析可信身份 |
+| `get_worker_db` / `get_async_worker_db` | `backend/core/database.py` | 仅从 WORKER_DATABASE_URL 创建同步/异步 Worker 单例连接池，禁止回退 runtime URL |
+| `close_worker_db` / `close_async_worker_db` | `backend/core/database.py` | 独立关闭并清除 Worker 同步/异步连接池单例 |
+| `close_db` | `backend/core/database.py` | 关闭并清除 runtime 同步数据库连接池单例 |
+| `WecomWSManager` | `backend/wecom_ws_runner.py` | 使用 Worker control DB 发现企业 bot，并用 runtime DB 为每条入站消息建立租户 Scope |
+| `get_pg_connection` | `backend/services/knowledge_config.py` | 拒绝缺失 Scope 的 raw SQL 访问，并返回事务级 scoped 连接上下文 |
+| `create_dedicated_connection` | `backend/services/knowledge_config.py` | 为后台批量任务创建独立连接，在业务 SQL 前注入显式 Worker Scope |
+| `close_pg_pools` | `backend/services/knowledge_config.py` | 在 Web 退出时关闭并清除 runtime/worker 两类 knowledge raw pool |
+| `warm_knowledge_base` | `backend/services/web_database_runtime.py` | 预热 runtime 知识池，并通过 Worker Scope/URL 执行加锁的全局 Seed 导入 |
+| `start_web_database_runtime` / `WebDatabaseRuntime.stop` | `backend/services/web_database_runtime.py` | 使用独立 Worker client 启停 Web 内恢复、清理、轮询和错误监控任务并关闭两类连接池 |
+| `setup-tenant-db-roles.sh` | `deploy/setup-tenant-db-roles.sh` | 幂等创建 owner、一次性 config-import-reader、migrator 和运行角色，校验全部独立密码并显式收紧角色能力 |
+| `build_psql_environment` / `main` | `deploy/run-psql-admin.py` | 将管理员 PostgreSQL URL 严格解析为 libpq 环境并启动 psql，避免凭证出现在进程参数 |
+| `validate-tenant-db-env.sh` | `deploy/validate-tenant-db-env.sh` | 在服务切换前验证三类角色环境文件、0600 权限、登录角色与连接串独立性 |
+| `transfer-agent-runtime-ownership.sh` | `deploy/transfer-agent-runtime-ownership.sh` | 原子转移迁移账本、首组 13 表及三项资产函数 owner，并用临时 owner 成员关系保持旧服务穿越既有无 policy RLS 中间态 |
+| `rollback-agent-runtime-ownership.sh` | `deploy/rollback-agent-runtime-ownership.sh` | 在显式开关且目标表均未 FORCE RLS 时，恢复迁移账本、13 表、资产函数 owner 与新角色 schema USAGE |
+| `finalize-tenant-db-role-cutover.sh` | `deploy/finalize-tenant-db-role-cutover.sh` | 校验 150–159、33 个对象 Owner、独立服务切换及旧连接归零后撤销旧角色临时 owner 成员关系 |
+| `transfer-runtime-message-ownership.sh` | `deploy/transfer-runtime-message-ownership.sh` | 原子转移第二批 18 张 Runtime/Message/治理表、其真实列 sequence 和 25 个固定函数签名，同时保留旧角色兼容能力 |
+| `rollback-runtime-message-ownership.sh` | `deploy/rollback-runtime-message-ownership.sh` | 要求服务已切回旧连接且目标表未 FORCE RLS，再恢复第二批表、sequence 和函数 owner |
+| `tenant_actor_user_id` / `tenant_org_id` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 从事务级 GUC 安全解析用户与企业 UUID；缺失或非法值返回 NULL |
+| `tenant_database_role_matches_scope` | `backend/migrations/150_agent_runtime_tenant_defense.sql`、`152_wecom_runtime_capability.sql` | 使用真实连接 `session_user` 校验 Web/WeCom runtime 或 worker 角色与 access_kind 一致 |
+| `tenant_actor_is_active_member` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 校验当前用户、企业成员与企业本身均为 active |
+| `tenant_user_fact_visible` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 对直接用户事实强制精确用户，并校验个人或企业 Scope |
+| `tenant_conversation_visible` / `tenant_task_visible` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 经父事实区分用户私有会话与企业 Channel 共享，并校验子表 org 一致 |
+| `tenant_asset_visible` / `tenant_asset_ref_visible` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 用户资产按 storage_owner_key 私有，Channel 资产对 active 企业成员共享 |
+| `resolve_wecom_ingress_user` | `backend/migrations/152_wecom_runtime_capability.sql` | 校验 WeCom 数据库角色、runtime Scope、唯一 active org/corp，并原子解析或创建用户、积分和成员关系 |
+| `WecomUserMappingService.update_last_chatid` | `backend/services/wecom/user_mapping_service.py` | 显式携带 `org_id` 调用 WeCom 聊天地址安全门面，避免只凭 corp/user 更新跨租户记录 |
+| `_assert_wecom_ingress_scope` | `backend/migrations/152_wecom_runtime_capability.sql` | 内部统一校验 WeCom 登录角色、runtime Scope 和唯一 active org/corp；不向任何登录角色授权 |
+| `update_wecom_ingress_chat_address` | `backend/migrations/152_wecom_runtime_capability.sql` | 仅更新当前 org/corp 映射的最近聊天地址，缺失映射失败关闭 |
+| `upsert_wecom_ingress_chat_target` | `backend/migrations/152_wecom_runtime_capability.sql` | 在唯一 org/corp 边界内登记聊天目标，并安全认领历史 org_id 为空记录 |
+| `_assert_web_auth_scope` | `backend/migrations/153_runtime_message_rls_and_auth.sql` | 仅接受无 actor/org 的 Web runtime 认证前事务；内部 helper 不向登录角色授权 |
+| `lookup_web_auth_candidate` | `backend/migrations/153_runtime_message_rls_and_auth.sql` | 按精确手机号和可选企业名返回最小密码校验候选，不提供列表能力 |
+| `register_web_identity` | `backend/migrations/153_runtime_message_rls_and_auth.sql` | 接收 Python 预生成 user_id，advisory lock 下原子创建用户、注册积分和首个 refresh token hash |
+| `commit_web_login` | `backend/migrations/153_runtime_message_rls_and_auth.sql` | 重新锁定校验用户/企业/成员状态后原子更新登录/活跃事实、登录活动和 refresh token hash |
+| `rotate_web_refresh_token` | `backend/migrations/153_runtime_message_rls_and_auth.sql` | 锁定旧 token，原子处理失效、重放吊销和新 token hash 写入 |
+| `reset_web_password` / `revoke_web_refresh_token` | `backend/migrations/153_runtime_message_rls_and_auth.sql` | 在认证前受控门面中重置密码并吊销会话，或幂等吊销精确 refresh token |
+| `TokenMaterial` / `create_token_material` / `create_token_material_from_refresh` | `backend/core/security.py` | 生成或补齐绑定数据库 user_id 的 token 材料但不写库；公开响应不暴露 refresh hash |
+| `TenantRoleMatrixConfig.from_mapping` | `backend/testing/tenant_role_matrix.py` | 仅接受显式开启、同一 PostgreSQL 测试库、数据库名二次确认及精确 Web/WeCom/Worker 登录角色的真实矩阵配置 |
+| `get_auth_service` | `backend/api/routes/auth.py` | 为公开 Web 认证请求绑定无 actor/org 的 runtime DatabaseScope，并传播请求 ID |
+| `AuthService._lookup_candidate` / `_commit_login` | `backend/services/auth_service.py` | 执行认证候选查询与原子登录提交，数据库重检失败映射为统一认证错误 |
+| `AuthService.refresh_access_token` / `revoke_refresh_token` | `backend/services/auth_service.py` | 通过认证 RPC 原子轮换 refresh token 或幂等吊销精确 token hash |
+| `_assert_wecom_message_scope` | `backend/migrations/154_wecom_message_rpc_facades.sql` | 校验独立 WeCom runtime、runtime Scope、精确企业/用户和 active 成员；仅供 owner 门面内部调用 |
+| `resolve_wecom_conversation` / `stage_wecom_attachment_v2` | `backend/migrations/154_wecom_message_rpc_facades.sql` | SECURITY DEFINER 消息门面；新角色执行强 Scope 校验，切换前保留旧角色行为 |
+| `enqueue_wecom_generation_turn_v2` / `update_wecom_conversation_setting` | `backend/migrations/154_wecom_message_rpc_facades.sql` | 将任务入队和会话设置写入收口到最小授权门面，底层 core 不授权登录角色 |
+| `record_user_activity` | `backend/migrations/154_wecom_message_rpc_facades.sql` | 校验服务角色、租户身份和事件枚举后写活动事实，并撤销 runtime 直表权限 |
+| `_assert_web_wecom_oauth_scope` | `backend/migrations/155_web_wecom_oauth_capabilities.sql` | 区分未登录 OAuth 企业 Scope 与已登录绑定 actor Scope，并校验 Web runtime 真实连接角色 |
+| `get_web_wecom_oauth_public_config` / `get_web_wecom_oauth_exchange_config` | `backend/migrations/155_web_wecom_oauth_capabilities.sql` | 仅按精确 active 企业返回二维码或 code exchange 所需的加密配置材料，不提供配置列表 |
+| `commit_web_wecom_login` | `backend/migrations/155_web_wecom_oauth_capabilities.sql` | advisory lock 下原子解析或创建企微用户、映射、成员、积分、登录活动和 refresh token hash |
+| `bind_web_wecom_identity` | `backend/migrations/155_web_wecom_oauth_capabilities.sql` | 将未占用企微身份绑定当前 actor；身份属于另一用户时失败关闭并要求管理员审核，不自动合并 |
+| `unbind_web_wecom_identity` / `get_web_wecom_binding_status` | `backend/migrations/155_web_wecom_oauth_capabilities.sql` | 在当前 actor/org Scope 内校验最后登录方式并解绑，或返回最小绑定状态 |
+| `_assert_governance_authority` | `backend/migrations/156_governance_authority_foundation.sql` | 只接受 Web runtime 精确 actor/org Scope，数据库核验 active super_admin 或 active 企业成员角色；仅供治理门面内部调用 |
+| `_record_governance_audit` | `backend/migrations/156_governance_authority_foundation.sql` | 在治理业务事务内记录 actor、authority、request_id 和非秘密元数据，配置值禁止进入审计账本 |
+| `_assert_governance_self_scope` / `list_actor_organizations` / `list_actor_pending_invitations` | `backend/migrations/156_governance_authority_foundation.sql` | 校验 active Web actor 后读取本人全部 active 企业或按本人手机号读取待处理邀请，不依赖当前企业 Scope |
+| `get_governed_organization` / `list_governed_members` | `backend/migrations/156_governance_authority_foundation.sql` | active 企业成员可读取安全企业字段和手机号掩码成员列表；明确排除企业加密密钥与历史 Secret |
+| `list_all_governed_organizations` / `search_governed_user_by_phone` | `backend/migrations/156_governance_authority_foundation.sql` | 数据库核验 active super_admin 后提供跨企业汇总或精确手机号搜索，手机号响应保持掩码 |
+| `create_governed_organization` / `update_governed_organization` | `backend/migrations/157_governance_write_capabilities.sql` | super_admin 创建企业和 owner/admin 更新白名单字段；响应排除企业加密密钥与历史 Secret，并同事务审计 |
+| `add_governed_member` / `remove_governed_member` / `change_governed_member_role` | `backend/migrations/157_governance_write_capabilities.sql` | 企业行锁下执行成员上限、owner、自操作和 admin 层级不变量，并同事务记录角色变化 |
+| `create_governed_invitation` / `accept_governed_invitation` | `backend/migrations/157_governance_write_capabilities.sql` | 按企业+手机号串行创建邀请；接收人手机号、企业状态和成员容量全部在同一事务重检，接受动作使用 self 审计 |
+| `ConfigDefinition.contract` / `contract_json` / `contract_hash` | `backend/services/configuration/definitions.py` | 将代码 Registry 定义投影为 canonical JSON，并生成数据库契约校验使用的 SHA-256 |
+| `ConfigDefinitionRegistry.get` / `get_bundle` / `get_config_definition` | `backend/services/configuration/definitions.py` | 按稳定键或固定 Bundle 读取只读定义；未知名称直接失败关闭 |
+| `LocalKEKProvider.from_environment` / `wrap_dek` / `unwrap_dek` | `backend/services/configuration/envelope.py` | 从独立 KEK keyring 环境读取 current/previous AES-256 KEK，包装或解包每条 Secret 的随机 DEK |
+| `SecretMaterialService.encrypt_payload` / `decrypt_payload` | `backend/services/configuration/material_service.py` | 使用 scope、secret_name 和 payload_version AAD 加解密 JSON payload；上下文替换、篡改或缺失 KEK 均失败关闭 |
+| `get_configuration_registry_contract` | `backend/migrations/159_configuration_management_core.sql` | 仅向服务角色返回 active Registry 的版本、键和契约哈希，供启动漂移门禁使用 |
+| `_write_configuration_entry` / `_disable_configuration_entry` / `_list_configuration_status` | `backend/migrations/159_configuration_management_core.sql` | Owner 域内校验 Scope/类型、执行版本 CAS、维护 Secret 生命周期，并只投影无秘密值状态 |
+| `set_*_configuration` / `delete_*_configuration` / `list_*_configuration_status` | `backend/migrations/159_configuration_management_facades.sql` | 分离平台、企业和个人授权面；企业不允许 super_admin 绕过，个人写入绑定当前 actor，成功变更同事务脱敏审计 |
+| `verify_configuration_registry` | `backend/services/configuration/control_service.py` | 启动时精确比较代码 Registry 与数据库迁移投影；缺失、多余、版本或哈希漂移均失败关闭 |
+| `ConfigurationControlService` | `backend/services/configuration/control_service.py` | 为平台、企业、个人提供显式 set/delete/status 方法；应用层先校验值和 Scope，再生成 envelope 并调用窄 RPC |
+| `EffectiveConfigResolver.parse` | `backend/services/configuration/resolver.py` | 严格解析数据库选定的固定 Bundle；校验 Registry 版本、键顺序、Scope、版本、普通值和 SecretRef 契约 |
+| `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 11 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段 |
+| `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
+| `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
+| `build_legacy_preflight` | `backend/services/configuration/legacy_migration.py` | 根据旧键存在性、Corp ID 来源一致性和外部 Cookie 加密/状态事实生成不含配置值的迁移就绪报告；组合缺项、未知键、来源冲突或明文 Cookie 均阻断 |
+| `LegacyConfigurationFactCollector.collect` | `backend/services/configuration/legacy_migration.py` | 以三次批量只读查询采集旧组织、配置和快麦凭证；仅在局部内存验证企业/全局旧密钥、密文与 Corp ID 相等性，输出每企业无秘密值预检报告 |
+| `import_legacy_configuration_batch` | `backend/migrations/161_configuration_legacy_import.sql` | 仅允许 everydayai_migrator 在显式 apply 会话中一次性导入 1–10000 个目标；全批使用 expected_version=0 CAS，任一失败整事务回滚并仅记录无秘密值审计 |
+| `export_legacy_configuration_snapshot` | `backend/migrations/161_configuration_legacy_import.sql` | 仅允许 everydayai_config_import_reader 在显式 read GUC 下，以 owner 权限一次固定导出 organizations/org_configs/外部凭证精确字段；Reader 无旧表直读权 |
+| `LegacyImportPlanner.build` | `backend/services/configuration/legacy_import.py` | 仅接收全部预检通过且组织集合精确一致的数据，将旧普通值和原子 Secret 组合转换为 Registry v1 导入项；Secret 立即生成 payload_version=1 envelope，expired/invalid 外部凭证保持未配置 |
+| `LegacyImportSourceReader.read` / `read_export` | `backend/services/configuration/legacy_import_source.py` | 将兼容三查询或正式 export 三数组生成解密值与无秘密值预检，精确形状、重复、孤儿和畸形行均失败关闭 |
+| `read_legacy_import_snapshot` | `backend/services/configuration/legacy_import_source_executor.py` | 在专用 Reader 单连接只读事务中依次校验 session_user、设置 read GUC、执行一次 export RPC 并严格解析一致性快照 |
+| `apply_legacy_import` | `backend/services/configuration/legacy_import_executor.py` | 精确确认 import_id 且 session_user 为 everydayai_migrator 后，在同一连接事务和游标中执行 SET LOCAL 门禁与 161 原子 RPC，并严格校验返回计数 |
+| `migrate_legacy_configuration.main` | `backend/scripts/migrate_legacy_configuration.py` | 默认仅输出无秘密值 dry-run 摘要；apply 要求固定 import_id、精确确认字符串和独立 MIGRATION_DATABASE_URL |
+| `start_web_database_runtime` | `backend/services/web_database_runtime.py` | 初始化 Web 数据库 Runtime，先验证 Registry 契约，再启动恢复和知识库后台任务 |
+| `get_scoped_db` | `backend/api/deps.py` | 复用已验证 OrgContext，组合事务级 DatabaseScope 与应用层 OrgScopedDB |
+| `WecomMessageService._for_request` | `backend/services/wecom/wecom_message_service.py` | 为每条企微消息复制独立服务与子服务，避免并发请求共享可变数据库身份 |
+| `WecomMessageService._bind_request_db` | `backend/services/wecom/wecom_message_service.py` | 在用户映射前绑定企业 Scope，映射后将当前消息提升为真实用户/企业 Scope |
+| `ActorTaskDatabases` | `backend/services/conversation_db_scope.py` | 绑定同一任务身份的异步控制面、异步应用层和同步 Handler 数据库门面 |
+| `build_actor_worker_db` | `backend/services/conversation_db_scope.py` | 创建仅供跨租户扫描、claim 和任务身份读取的无租户 Worker Scope |
+| `build_actor_task_databases` | `backend/services/conversation_db_scope.py` | 从已认领任务校验用户/企业 UUID，并创建不可共享的精确 Worker Scope |
+| `ConversationExecutionService.execute_claim` | `backend/services/conversation_execution.py` | Worker DB 读取任务后切换任务 DB，续租、执行、提交、失败和终态观察均使用任务绑定 |
+| `ConversationActorRuntime._create_executor` | `backend/services/conversation_runtime.py` | 为每次 claim 创建任务专属 Chat executor，并分别注入同步 Handler 与异步 Sink DB |
+| `get_scheduler` | `backend/services/memory/memory_service_v2.py` | 按当前调用身份创建独立 Memory PipelineScheduler，不再复用跨租户全局单例 |
+| `_resolve_memory_db` | `backend/services/memory/memory_service_v2.py` | 将可信 scoped client 转为 raw SQL scoped adapter；缺少 Scope 时失败关闭 |
+| `_PsycopgAdapter` | `backend/services/memory/memory_service_v2.py` | 转换 asyncpg 占位符并依赖 scoped connection context 管理提交/回滚，不显式 commit |
 
 ### 通用工具 Artifact Runtime
 

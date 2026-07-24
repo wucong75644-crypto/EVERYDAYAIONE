@@ -5,7 +5,7 @@
 """
 
 import ssl
-from typing import Optional
+from typing import Any, Optional
 
 import certifi
 import redis
@@ -17,6 +17,8 @@ from core.config import get_settings
 _redis_client: Optional[redis.Redis] = None
 _local_db_client = None
 _async_db_client = None
+_worker_db_client = None
+_async_worker_db_client = None
 
 
 def get_redis_client() -> redis.Redis:
@@ -59,6 +61,14 @@ def get_db():
     return _local_db_client
 
 
+def close_db() -> None:
+    """关闭 runtime 同步数据库连接池。"""
+    global _local_db_client
+    if _local_db_client is not None:
+        _local_db_client.close()
+        _local_db_client = None
+
+
 async def get_async_db():
     """获取异步数据库客户端（单例模式，AsyncLocalDBClient）
 
@@ -84,3 +94,56 @@ async def close_async_db() -> None:
     if _async_db_client is not None:
         await _async_db_client.close()
         _async_db_client = None
+
+
+def get_worker_db() -> Any:
+    """获取独立 Worker 同步数据库客户端；禁止回退 runtime URL。"""
+    global _worker_db_client
+    if _worker_db_client is None:
+        from core.local_db import LocalDBClient
+
+        settings = get_settings()
+        if not settings.worker_database_url:
+            raise RuntimeError("WORKER_DATABASE_URL_REQUIRED")
+        _worker_db_client = LocalDBClient(
+            settings.worker_database_url,
+            min_size=settings.db_pool_min,
+            max_size=settings.db_pool_max,
+        )
+        logger.info("Worker 数据库连接池已创建 | LocalDB")
+    return _worker_db_client
+
+
+async def get_async_worker_db() -> Any:
+    """获取独立 Worker 异步数据库客户端；禁止回退 runtime URL。"""
+    global _async_worker_db_client
+    if _async_worker_db_client is None:
+        from core.local_db import AsyncLocalDBClient
+
+        settings = get_settings()
+        if not settings.worker_database_url:
+            raise RuntimeError("WORKER_DATABASE_URL_REQUIRED")
+        _async_worker_db_client = AsyncLocalDBClient(
+            settings.worker_database_url,
+            min_size=settings.db_pool_min,
+            max_size=settings.db_pool_max,
+        )
+        await _async_worker_db_client.open()
+        logger.info("Worker 异步数据库连接池已创建 | AsyncLocalDB")
+    return _async_worker_db_client
+
+
+def close_worker_db() -> None:
+    """关闭 Worker 同步数据库连接池。"""
+    global _worker_db_client
+    if _worker_db_client is not None:
+        _worker_db_client.close()
+        _worker_db_client = None
+
+
+async def close_async_worker_db() -> None:
+    """关闭 Worker 异步数据库连接池。"""
+    global _async_worker_db_client
+    if _async_worker_db_client is not None:
+        await _async_worker_db_client.close()
+        _async_worker_db_client = None

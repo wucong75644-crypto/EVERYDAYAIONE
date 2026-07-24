@@ -13,6 +13,13 @@ import httpx
 from loguru import logger
 
 from core.config import settings
+from core.db_scope import (
+    AsyncScopedConnectionPool,
+    DatabaseAccessKind,
+    DatabaseScope,
+    SET_DATABASE_SCOPE_SQL,
+    database_scope_from_client,
+)
 
 # ===== 常量 =====
 
@@ -28,8 +35,11 @@ _search_cache: Dict[str, Dict[str, Any]] = {}
 # ===== PostgreSQL 直连管理 =====
 
 _pg_pool = None
+_worker_pg_pool = None
 _kb_available: Optional[bool] = None  # None=未检查, True=可用, False=不可用
+_worker_kb_available: Optional[bool] = None
 _kb_lock = asyncio.Lock()
+_worker_kb_lock = asyncio.Lock()
 
 
 async def _get_pg_pool():
@@ -80,16 +90,88 @@ async def _get_pg_pool():
             return None
 
 
-async def get_pg_connection():
-    """获取一个 psycopg 异步连接（context manager）"""
-    pool = await _get_pg_pool()
+async def _get_worker_pg_pool():
+    """获取只使用 WORKER_DATABASE_URL 的后台知识库连接池。"""
+    global _worker_pg_pool, _worker_kb_available
+
+    if _worker_kb_available is False:
+        return None
+    if _worker_pg_pool is not None:
+        return _worker_pg_pool
+
+    async with _worker_kb_lock:
+        if _worker_kb_available is False:
+            return None
+        if _worker_pg_pool is not None:
+            return _worker_pg_pool
+
+        db_url = settings.worker_database_url
+        if not db_url:
+            raise RuntimeError("WORKER_DATABASE_URL_REQUIRED")
+
+        try:
+            from psycopg_pool import AsyncConnectionPool
+
+            _worker_pg_pool = AsyncConnectionPool(
+                conninfo=db_url,
+                min_size=1,
+                max_size=3,
+                kwargs={"options": "-c timezone=Asia/Shanghai"},
+                check=AsyncConnectionPool.check_connection,
+                max_lifetime=600,
+                open=False,
+            )
+            await _worker_pg_pool.open()
+            _worker_kb_available = True
+            logger.info(
+                "Worker knowledge PostgreSQL pool initialized | tz=Asia/Shanghai"
+            )
+            return _worker_pg_pool
+        except Exception as exc:
+            _worker_kb_available = False
+            logger.error(
+                "Worker knowledge PostgreSQL init failed | "
+                f"error_type={type(exc).__name__}"
+            )
+            return None
+
+
+async def close_pg_pools() -> None:
+    """关闭 runtime/worker knowledge raw pools 并清除进程状态。"""
+    global _pg_pool, _worker_pg_pool, _kb_available, _worker_kb_available
+
+    for pool in (_pg_pool, _worker_pg_pool):
+        if pool is not None:
+            await pool.close()
+    _pg_pool = None
+    _worker_pg_pool = None
+    _kb_available = None
+    _worker_kb_available = None
+
+
+async def get_pg_connection(
+    db_source: Any = None,
+    *,
+    database_scope: DatabaseScope | None = None,
+):
+    """获取已注入可信数据库身份的 psycopg 异步连接上下文。"""
+    resolved_scope = database_scope or database_scope_from_client(db_source)
+    if resolved_scope is None:
+        raise RuntimeError("DATABASE_SCOPE_REQUIRED")
+    pool = (
+        await _get_worker_pg_pool()
+        if resolved_scope.access_kind == DatabaseAccessKind.WORKER
+        else await _get_pg_pool()
+    )
     if pool is None:
         return None
-    return pool.connection()
+    return AsyncScopedConnectionPool(pool, resolved_scope).connection()
 
 
 async def create_dedicated_connection(
     statement_timeout_s: int = 15,
+    *,
+    database_scope: DatabaseScope,
 ):
     """
     创建独立的 psycopg 异步连接（不走共享池）。
@@ -102,16 +184,24 @@ async def create_dedicated_connection(
     """
     import psycopg
 
-    db_url = settings.effective_db_url
+    db_url = (
+        settings.worker_database_url
+        if database_scope.access_kind == DatabaseAccessKind.WORKER
+        else settings.effective_db_url
+    )
     if not db_url:
+        if database_scope.access_kind == DatabaseAccessKind.WORKER:
+            raise RuntimeError("WORKER_DATABASE_URL_REQUIRED")
         return None
 
-    return await psycopg.AsyncConnection.connect(
+    connection = await psycopg.AsyncConnection.connect(
         conninfo=db_url,
         autocommit=False,
         options=f"-c timezone=Asia/Shanghai -c statement_timeout={statement_timeout_s * 1000}",
         connect_timeout=PG_CONNECT_TIMEOUT,
     )
+    await connection.execute(SET_DATABASE_SCOPE_SQL, database_scope.settings)
+    return connection
 
 
 def is_kb_available() -> bool:

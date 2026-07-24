@@ -22,6 +22,7 @@ class GraphService:
         depth: int = 2,
         relation_types: Optional[List[str]] = None,
         org_id: Optional[str] = None,
+        db_source: Any = None,
     ) -> List[Dict[str, Any]]:
         """
         查找 N 跳以内的相关节点
@@ -34,7 +35,7 @@ class GraphService:
         Returns:
             相关节点列表，每项包含 node 信息 + 路径深度 + 关系类型
         """
-        conn_ctx = await get_pg_connection()
+        conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return []
 
@@ -113,6 +114,7 @@ class GraphService:
         to_id: str,
         max_depth: int = 3,
         org_id: Optional[str] = None,
+        db_source: Any = None,
     ) -> List[Dict[str, Any]]:
         """
         查找两个节点间的最短路径（按 org 隔离 edges）
@@ -120,7 +122,7 @@ class GraphService:
         Returns:
             路径上的节点列表（含关系），空列表表示无路径
         """
-        conn_ctx = await get_pg_connection()
+        conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return []
 
@@ -180,6 +182,7 @@ class GraphService:
         weight: float = 1.0,
         metadata: Optional[Dict[str, Any]] = None,
         org_id: Optional[str] = None,
+        db_source: Any = None,
     ) -> Optional[str]:
         """
         添加关系边（重复边则更新权重，按 org 隔离）
@@ -187,7 +190,7 @@ class GraphService:
         Returns:
             边的 ID，失败返回 None
         """
-        conn_ctx = await get_pg_connection()
+        conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return None
 
@@ -211,7 +214,6 @@ class GraphService:
                         "org_id": org_id,
                     })
                     result = await cur.fetchone()
-                    await conn.commit()
                     return str(result[0]) if result else None
         except Exception as e:
             logger.error(
@@ -224,6 +226,7 @@ class GraphService:
         node_ids: List[str],
         include_edges: bool = True,
         org_id: Optional[str] = None,
+        db_source: Any = None,
     ) -> Dict[str, Any]:
         """
         获取指定节点的子图
@@ -231,7 +234,7 @@ class GraphService:
         Returns:
             {"nodes": [...], "edges": [...]}
         """
-        conn_ctx = await get_pg_connection()
+        conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return {"nodes": [], "edges": []}
 

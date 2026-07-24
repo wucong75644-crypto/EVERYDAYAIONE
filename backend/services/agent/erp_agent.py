@@ -57,7 +57,9 @@ class ERPAgent(ERPChildFactoryMixin):
             user_id=user_id, org_id=org_id, request_id=task_id or "",
         )
         from services.agent.experience_recorder import ExperienceRecorder
-        self._experience = ExperienceRecorder(org_id=org_id, writer="erp_agent")
+        self._experience = ExperienceRecorder(
+            db=db, org_id=org_id, writer="erp_agent",
+        )
         self._tokens_used: int = 0
         self._thinking_parts: list[str] = []
 

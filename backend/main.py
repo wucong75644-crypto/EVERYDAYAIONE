@@ -4,6 +4,7 @@ FastAPI 应用入口
 EVERYDAYAI - AI 图片/视频生成平台后端服务
 """
 
+import asyncio
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -28,7 +29,6 @@ from core.local_db import RowNotFoundError
 from core.limiter import limiter
 from core.redis import RedisClient
 from core.logging_config import setup_logging
-from services.background_task_worker import BackgroundTaskWorker
 from services.websocket_manager import ws_manager
 
 # ============================================================
@@ -198,103 +198,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 启动 WebSocket Redis Pub/Sub 监听（跨 Worker 消息投递）
     await ws_manager.start_redis_listener()
 
-    # 预热知识库连接 + 导入种子知识（用锁避免多 worker 重复加载）
-    try:
-        from services.knowledge_config import _get_pg_pool, is_kb_available
-        pool = await _get_pg_pool()
-        if pool and is_kb_available():
-            lock_token = await RedisClient.acquire_lock("seed_knowledge_load", timeout=60)
-            if lock_token:
-                try:
-                    from services.knowledge_service import load_seed_knowledge
-                    imported = await load_seed_knowledge()
-                    logger.info(f"Knowledge base ready | seed_imported={imported}")
-                finally:
-                    await RedisClient.release_lock("seed_knowledge_load", lock_token)
-            else:
-                logger.info("Knowledge base seed loading skipped (another worker is loading)")
-        else:
-            logger.info("Knowledge base not configured or disabled")
-    except Exception as e:
-        logger.warning(f"Knowledge base init failed (non-critical) | error={e}")
-
-    # 启动后台任务工作器
-    from core.database import get_db
-    import asyncio
-
-    db = get_db()
-
-    # OrgScopedDB schema 反射：扫描含 org_id 的复合唯一索引所属的表，
-    # 让 upsert on_conflict 自动追加 ",org_id" 仅对真正有此索引的表生效，
-    # 避免对 messages/tasks 等 PK 仅 id 的表生成无效 ON CONFLICT 子句。
-    try:
-        from core.org_scoped_db import load_composite_org_id_tables
-        load_composite_org_id_tables(db)
-    except Exception as e:
-        logger.error(
-            f"OrgScopedDB schema reflection failed (non-critical) | error={e}"
-        )
-
-    # 恢复孤儿任务：部署重启后，将中断的流式内容从 tasks.accumulated_content 回写到 messages 表
-    # 用 Redis 锁确保多 worker 只执行一次
-    _recovery_lock = await RedisClient.acquire_lock("orphan_task_recovery", timeout=30)
-    if _recovery_lock:
-        try:
-            from services.task_recovery import recover_orphan_tasks
-            recovered = await recover_orphan_tasks(db)
-            if recovered > 0:
-                logger.info(f"Orphan task recovery completed | recovered={recovered}")
-        except Exception as e:
-            logger.error(f"Orphan task recovery failed (non-critical) | error={e}")
-
-    # 落锚自愈：扫描 status='interrupted' 但 tasks 表不一致的项目，以 messages 为准重建
-    # 详见 docs/document/TECH_用户中断与恢复机制.md §17.4
-    _reconcile_lock = await RedisClient.acquire_lock("interrupt_anchor_reconcile", timeout=30)
-    if _reconcile_lock:
-        try:
-            from services.handlers.interrupt_anchor import reconcile_interrupted_messages
-            result = await reconcile_interrupted_messages(db)
-            if result.get("reconciled", 0) > 0:
-                logger.info(
-                    f"Interrupt anchor reconcile completed | "
-                    f"scanned={result.get('scanned')} | reconciled={result.get('reconciled')}"
-                )
-        except Exception as e:
-            logger.error(f"Interrupt anchor reconcile failed (non-critical) | error={e}")
-        finally:
-            await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
-
-    # NAS 替代后不再需要 staging 文件清理（NAS 容量充足）
-
-    # 清理过期的 pending_interaction（24h 过期）
-    try:
-        from datetime import datetime, timezone
-        expired = db.table("pending_interaction") \
-            .update({"status": "expired"}) \
-            .eq("status", "pending") \
-            .lt("expired_at", datetime.now(timezone.utc).isoformat()) \
-            .execute()
-        _expired_count = len(expired.data) if expired.data else 0
-        if _expired_count:
-            logger.info(f"Pending interaction cleanup | expired={_expired_count}")
-    except Exception as e:
-        logger.debug(f"Pending interaction cleanup skipped | error={e}")
-
-    worker = BackgroundTaskWorker(db)
-    worker_task = asyncio.create_task(worker.start())
-    logger.info("BackgroundTaskWorker started")
-
-    # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
-    import os
-    from core.database import get_async_db, close_async_db
-    _error_monitor_db = await get_async_db()
-    from core.error_alert_sink import error_log_consumer, error_log_cleanup_loop
-    from core.message_idempotency_cleanup import message_idempotency_cleanup_loop
-    error_consumer_task = asyncio.create_task(error_log_consumer(_error_monitor_db))
-    error_cleanup_task = asyncio.create_task(error_log_cleanup_loop(_error_monitor_db))
-    idempotency_cleanup_task = asyncio.create_task(
-        message_idempotency_cleanup_loop(_error_monitor_db)
+    from services.web_database_runtime import (
+        start_web_database_runtime,
+        warm_knowledge_base,
     )
+
+    await warm_knowledge_base()
+    web_database_runtime = await start_web_database_runtime()
 
     # 以下后台任务已迁移到 everydayai-sync.service 独立进程，避免与 API 进程争抢
     # DB 连接池 + 简化生命周期管理：
@@ -322,34 +232,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 停止 WebSocket Redis Pub/Sub 监听
     await ws_manager.stop_redis_listener()
 
-    # 停止后台工作器
-    await worker.stop()
-    worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
-
-    # 停止全局错误监控
-    for _t in (error_consumer_task, error_cleanup_task, idempotency_cleanup_task):
-        _t.cancel()
-        try:
-            await _t
-        except asyncio.CancelledError:
-            pass
+    await web_database_runtime.stop()
 
     # 关闭 KernelManager（销毁所有 Kernel 进程）
     if _kernel_manager is not None:
         await _kernel_manager.shutdown()
         set_kernel_manager(None)
         logger.info("KernelManager shutdown")
-
-    # 关闭异步数据库连接池
-    try:
-        from core.database import close_async_db
-        await close_async_db()
-    except Exception:
-        pass
 
     # 关闭 Redis 连接
     await RedisClient.close()

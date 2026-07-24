@@ -1,13 +1,12 @@
 """
 WecomUserMappingService 单元测试
 
-覆盖（commit 116 重构后）：
-- 快速路径：已有 mapping → 直接复用 + 刷新 last_login_at
-- 慢速路径：mapping 不存在 → 调原子 RPC wecom_get_or_create_user
+覆盖（迁移 152 安全门面）：
+- 所有身份解析统一调用 resolve_wecom_ingress_user
 - RPC 并发输家：返回 is_new=False → 复用赢家的 user_id
 - RPC 失败 → 抛 RuntimeError
 - display_name 解析优先级（传入 nickname > 企微 user/get > 兜底）
-- is_new + org_id → 自动加入企业成员（_ensure_org_member_safe）
+- org/corp/member 处理完全位于数据库安全门面
 - update_nickname 不变
 """
 
@@ -63,14 +62,14 @@ def _rpc_params(db, fn_name: str):
     return matches[0][0][1]
 
 
-class TestFastPath:
-    """快速路径：已有 mapping 直接复用"""
+class TestIdentityFacade:
+    """已有和新用户统一通过数据库安全门面解析。"""
 
     @pytest.mark.asyncio
     async def test_returns_existing_user(self):
         db = _make_db_mock()
-        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(
-            data=[{"user_id": "existing-uuid-123", "wecom_nickname": "张三"}]
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "existing-uuid-123", "is_new": False}
         )
 
         svc = WecomUserMappingService(db)
@@ -78,32 +77,28 @@ class TestFastPath:
             user_id = await svc.get_or_create_user("zhangsan", "corp1")
 
         assert user_id == "existing-uuid-123"
-        # 刷新 last_login_at
-        db._table_mocks["users"].update.assert_called_once()
-        update_payload = db._table_mocks["users"].update.call_args[0][0]
-        assert "last_login_at" in update_payload
-        # 不应该调创建用户 RPC；只允许记录活跃事件
-        db.rpc.assert_called_once()
-        assert db.rpc.call_args[0][0] == "record_user_activity"
+        identity_params = _rpc_params(db, "resolve_wecom_ingress_user")
+        assert identity_params["p_wecom_userid"] == "zhangsan"
+        assert identity_params["p_corp_id"] == "corp1"
+        db.table.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_refresh_last_login_failure_no_raise(self):
-        """刷新失败不阻断业务，仍返回 user_id"""
+    async def test_existing_user_does_not_touch_mapping_tables(self):
         db = _make_db_mock()
-        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(
-            data=[{"user_id": "u-x"}]
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"user_id": "u-x", "is_new": False}
         )
-        db._table_mocks["users"].update.side_effect = RuntimeError("DB write down")
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
             user_id = await svc.get_or_create_user("z", "c")
 
         assert user_id == "u-x"
+        db.table.assert_not_called()
 
 
 class TestSlowPathRPC:
-    """慢路径：mapping 不存在 → 调 wecom_get_or_create_user RPC"""
+    """安全门面负责并发创建与成员关系。"""
 
     @pytest.mark.asyncio
     async def test_creates_new_user_via_rpc(self):
@@ -121,14 +116,14 @@ class TestSlowPathRPC:
 
         assert user_id == "new-uuid-456"
 
-        # 验证创建用户 RPC 调用参数正确（活跃事件会额外调用 record_user_activity）
+        # 验证身份门面参数正确（活跃事件会额外调用 record_user_activity）
         create_calls = [
             call for call in db.rpc.call_args_list
-            if call[0][0] == "wecom_get_or_create_user"
+            if call[0][0] == "resolve_wecom_ingress_user"
         ]
         assert len(create_calls) == 1
         rpc_call = create_calls[0]
-        assert rpc_call[0][0] == "wecom_get_or_create_user"
+        assert rpc_call[0][0] == "resolve_wecom_ingress_user"
         params = rpc_call[0][1]
         assert params["p_wecom_userid"] == "lisi"
         assert params["p_corp_id"] == "corp2"
@@ -160,30 +155,31 @@ class TestSlowPathRPC:
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            with pytest.raises(RuntimeError, match="wecom_get_or_create_user RPC 失败"):
+            with pytest.raises(
+                RuntimeError,
+                match="resolve_wecom_ingress_user RPC 失败",
+            ):
                 await svc.get_or_create_user("fail_user", "corp")
 
     @pytest.mark.asyncio
-    async def test_is_new_auto_joins_org(self):
-        """is_new=True + org_id → 调 _ensure_org_member_safe"""
+    async def test_org_membership_is_owned_by_facade(self):
         db = _make_db_mock()
-        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
         db._rpc_chain.execute.return_value = MagicMock(
             data={"user_id": "new-u", "is_new": True}
         )
-        # 模拟 org_members 查询：用户尚不在 org 中
-        db._table_mocks["org_members"].execute.return_value = MagicMock(data=None)
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            await svc.get_or_create_user("u", "c", org_id="org-1")
+            await svc.get_or_create_user(
+                "u",
+                "c",
+                org_id="org-1",
+                nickname="成员",
+            )
 
-        # 应该 INSERT org_members
-        db._table_mocks["org_members"].insert.assert_called_once()
-        insert_payload = db._table_mocks["org_members"].insert.call_args[0][0]
-        assert insert_payload["org_id"] == "org-1"
-        assert insert_payload["user_id"] == "new-u"
-        assert insert_payload["role"] == "member"
+        params = _rpc_params(db, "resolve_wecom_ingress_user")
+        assert params["p_org_id"] == "org-1"
+        db.table.assert_not_called()
 
 
 class TestDisplayNameResolution:
@@ -201,7 +197,7 @@ class TestDisplayNameResolution:
         with patch.object(svc, "settings", MagicMock()):
             await svc.get_or_create_user("ww001", "corp", nickname="自定义昵称")
 
-        params = _rpc_params(db, "wecom_get_or_create_user")
+        params = _rpc_params(db, "resolve_wecom_ingress_user")
         assert params["p_display_name"] == "自定义昵称"
 
     @pytest.mark.asyncio
@@ -223,7 +219,7 @@ class TestDisplayNameResolution:
              ):
             await svc.get_or_create_user("wangwu", "corp", org_id="org-1")
 
-        params = _rpc_params(db, "wecom_get_or_create_user")
+        params = _rpc_params(db, "resolve_wecom_ingress_user")
         assert params["p_display_name"] == "王五"
 
     @pytest.mark.asyncio
@@ -245,7 +241,7 @@ class TestDisplayNameResolution:
              ):
             await svc.get_or_create_user("abcdefgh_long", "corp", org_id="org-1")
 
-        params = _rpc_params(db, "wecom_get_or_create_user")
+        params = _rpc_params(db, "resolve_wecom_ingress_user")
         assert params["p_display_name"] == "企微用户_abcdefgh"
 
 
@@ -272,3 +268,43 @@ class TestUpdateNickname:
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
             await svc.update_nickname("ww001", "corp1", "新昵称")
+
+
+class TestChatTargetFacade:
+    """聊天目标只通过安全门面登记。"""
+
+    @pytest.mark.asyncio
+    async def test_upsert_uses_scoped_facade(self):
+        db = _make_db_mock()
+        svc = WecomUserMappingService(db)
+
+        await svc.upsert_chat_target(
+            "chat-1",
+            "group",
+            "corp-1",
+            org_id="org-1",
+        )
+
+        db.rpc.assert_called_once_with(
+            "upsert_wecom_ingress_chat_target",
+            {
+                "p_chatid": "chat-1",
+                "p_chattype": "group",
+                "p_corp_id": "corp-1",
+                "p_org_id": "org-1",
+            },
+        )
+        db.table.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_upsert_failure_remains_best_effort(self):
+        db = _make_db_mock()
+        db.rpc.side_effect = RuntimeError("DB unavailable")
+        svc = WecomUserMappingService(db)
+
+        await svc.upsert_chat_target(
+            "chat-1",
+            "group",
+            "corp-1",
+            org_id="org-1",
+        )

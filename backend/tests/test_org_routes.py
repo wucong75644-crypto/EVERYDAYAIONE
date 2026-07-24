@@ -74,7 +74,9 @@ def _build_app(db, org_service=None):
     app.include_router(router, prefix="/api")
 
     # override dependencies
-    app.dependency_overrides[get_current_user_id] = lambda: "user-1"
+    app.dependency_overrides[get_current_user_id] = (
+        lambda: "f566f6cc-3e7a-4383-befe-42c05fbfbff8"
+    )
     app.dependency_overrides[get_db] = lambda: db
 
     return app

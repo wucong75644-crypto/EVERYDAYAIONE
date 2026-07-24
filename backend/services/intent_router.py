@@ -11,7 +11,6 @@
 重试降级链：千问主模型 → 千问备用 → 确定性兜底 → 放弃
 """
 
-import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -20,6 +19,7 @@ import httpx
 from loguru import logger
 
 from core.config import settings
+from services.intent_router_runtime_mixin import IntentRouterRuntimeMixin
 from schemas.message import ContentPart, GenerationType, TextPart, ImagePart
 from config.smart_model_config import (
     TOOL_TO_TYPE,
@@ -131,7 +131,7 @@ from config.smart_model_config import SMART_MODEL_ID, resolve_auto_model  # noqa
 # ============================================================
 
 
-class IntentRouter:
+class IntentRouter(IntentRouterRuntimeMixin):
     """智能意图路由器（DashScope Function Calling）"""
 
     def __init__(self) -> None:
@@ -145,6 +145,7 @@ class IntentRouter:
         user_id: str,
         conversation_id: str,
         org_id: str | None = None,
+        db_source: Any = None,
     ) -> RoutingDecision:
         """分析用户消息，返回路由决策"""
         from core.config import get_settings
@@ -158,6 +159,7 @@ class IntentRouter:
             decision = self._keyword_fallback(content)
             self._record_routing_signal(
                 decision, user_id, input_length, has_image, "disabled", org_id=org_id,
+                db_source=db_source,
             )
             return decision
 
@@ -166,6 +168,7 @@ class IntentRouter:
             decision = self._keyword_fallback(content)
             self._record_routing_signal(
                 decision, user_id, input_length, has_image, "no_api_key", org_id=org_id,
+                db_source=db_source,
             )
             return decision
 
@@ -176,6 +179,7 @@ class IntentRouter:
             )
             self._record_routing_signal(
                 decision, user_id, input_length, has_image, "skip_empty", org_id=org_id,
+                db_source=db_source,
             )
             return decision
 
@@ -186,7 +190,9 @@ class IntentRouter:
             context_prefix = f"[上下文：用户附带了{image_count}张图片]\n"
 
         # 查询知识库，增强路由 system prompt
-        enhanced_prompt = await self._enhance_with_knowledge(text, org_id=org_id)
+        enhanced_prompt = await self._enhance_with_knowledge(
+            text, org_id=org_id, db_source=db_source,
+        )
 
         # 过滤熔断 Provider 的模型
         active_tools = self._filter_tools_by_breaker(ROUTER_TOOLS)
@@ -216,6 +222,7 @@ class IntentRouter:
                     )
                     self._record_routing_signal(
                         decision, user_id, input_length, has_image, model, org_id=org_id,
+                        db_source=db_source,
                     )
                     return decision
             except Exception as e:
@@ -228,6 +235,7 @@ class IntentRouter:
         decision = self._keyword_fallback(content)
         self._record_routing_signal(
             decision, user_id, input_length, has_image, "all_failed", org_id=org_id,
+            db_source=db_source,
         )
         return decision
 
@@ -473,82 +481,11 @@ class IntentRouter:
             routed_by="keyword",
         )
 
-    async def _enhance_with_knowledge(self, text: str, org_id: str | None = None) -> str:
-        """查询知识库，将相关知识注入路由 system prompt"""
-        try:
-            from services.knowledge_service import search_relevant
-
-            knowledge_items = await search_relevant(query=text, limit=5, org_id=org_id)
-            if knowledge_items:
-                knowledge_text = "\n".join(
-                    f"- {k['title']}: {k['content']}" for k in knowledge_items
-                )
-                return (
-                    ROUTER_SYSTEM_PROMPT
-                    + f"\n\n你已掌握的经验知识：\n{knowledge_text}"
-                )
-        except Exception as e:
-            logger.debug(f"Knowledge injection skipped | error={e}")
-
-        return ROUTER_SYSTEM_PROMPT
-
     def _extract_text(self, content: List[ContentPart]) -> str:
         """从 ContentPart 列表提取文本"""
         return " ".join(
             part.text for part in content if isinstance(part, TextPart)
         ).strip()
-
-    async def _get_client(
-        self, api_key: str, timeout: float
-    ) -> httpx.AsyncClient:
-        """获取或创建 HTTP 客户端"""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=DASHSCOPE_BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=httpx.Timeout(
-                    connect=5.0,
-                    read=timeout,
-                    write=10.0,
-                    pool=5.0,
-                ),
-            )
-        return self._client
-
-    @staticmethod
-    def _record_routing_signal(
-        decision: RoutingDecision,
-        user_id: str,
-        input_length: int,
-        has_image: bool,
-        router_model: str = "keyword",
-        org_id: str | None = None,
-    ) -> None:
-        """记录路由决策信号到 knowledge_metrics（fire-and-forget）"""
-        async def _do_record() -> None:
-            try:
-                from services.knowledge_service import record_metric
-                await record_metric(
-                    task_type="routing",
-                    model_id=router_model,
-                    status="success",
-                    user_id=user_id,
-                    org_id=org_id,
-                    params={
-                        "routing_tool": decision.raw_tool_name,
-                        "routed_by": decision.routed_by,
-                        "recommended_model": decision.recommended_model,
-                        "input_length": input_length,
-                        "has_image": has_image,
-                    },
-                )
-            except Exception as e:
-                logger.debug(f"Routing signal record skipped | error={e}")
-
-        asyncio.create_task(_do_record())
 
     async def close(self) -> None:
         """关闭 HTTP 客户端"""

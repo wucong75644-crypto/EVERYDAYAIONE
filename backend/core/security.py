@@ -6,6 +6,7 @@
 
 import hashlib
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -14,6 +15,28 @@ from jose import JWTError, jwt
 
 from core.config import get_settings
 from core.exceptions import InvalidTokenError, TokenExpiredError
+
+
+@dataclass(frozen=True)
+class TokenMaterial:
+    """尚未持久化的 access/refresh token 材料。"""
+
+    access_token: str
+    refresh_token: str
+    refresh_token_hash: str
+    refresh_expires_at: datetime
+    access_expires_in: int
+    refresh_expires_in: int
+
+    def response(self) -> dict[str, str | int]:
+        """返回公开 TokenResponse 字段，不暴露 refresh hash。"""
+        return {
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token,
+            "token_type": "bearer",
+            "expires_in": self.access_expires_in,
+            "refresh_expires_in": self.refresh_expires_in,
+        }
 
 
 def hash_password(password: str) -> str:
@@ -136,7 +159,33 @@ def hash_refresh_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode()).hexdigest()
 
 
-def create_token_pair(db: Any, user_id: str) -> dict:
+def create_token_material(user_id: str) -> TokenMaterial:
+    """生成双 token 材料，不执行任何数据库写入。"""
+    raw_refresh, token_hash, refresh_expires_at = create_refresh_token()
+    return create_token_material_from_refresh(
+        user_id, raw_refresh, token_hash, refresh_expires_at,
+    )
+
+
+def create_token_material_from_refresh(
+    user_id: str,
+    refresh_token: str,
+    refresh_token_hash: str,
+    refresh_expires_at: datetime,
+) -> TokenMaterial:
+    """用已生成的 refresh 材料补齐绑定用户的 access token。"""
+    settings = get_settings()
+    return TokenMaterial(
+        access_token=create_access_token({"sub": str(user_id)}),
+        refresh_token=refresh_token,
+        refresh_token_hash=refresh_token_hash,
+        refresh_expires_at=refresh_expires_at,
+        access_expires_in=settings.jwt_access_token_expire_minutes * 60,
+        refresh_expires_in=settings.jwt_refresh_token_expire_days * 86400,
+    )
+
+
+def create_token_pair(db: Any, user_id: str) -> dict[str, str | int]:
     """
     签发 access + refresh token 并将 refresh hash 存入 DB。
 
@@ -149,24 +198,16 @@ def create_token_pair(db: Any, user_id: str) -> dict:
     Returns:
         符合 TokenResponse schema 的 dict
     """
-    settings = get_settings()
-    access_token = create_access_token({"sub": str(user_id)})
-    raw_refresh, token_hash, refresh_expires_at = create_refresh_token()
+    material = create_token_material(user_id)
 
     # refresh token 哈希存 DB（明文不落盘）
     db.table("refresh_tokens").insert({
         "user_id": user_id,
-        "token_hash": token_hash,
-        "expires_at": refresh_expires_at.isoformat(),
+        "token_hash": material.refresh_token_hash,
+        "expires_at": material.refresh_expires_at.isoformat(),
     }).execute()
 
-    return {
-        "access_token": access_token,
-        "refresh_token": raw_refresh,
-        "token_type": "bearer",
-        "expires_in": settings.jwt_access_token_expire_minutes * 60,
-        "refresh_expires_in": settings.jwt_refresh_token_expire_days * 86400,
-    }
+    return material.response()
 
 
 def generate_verification_code(length: int = 6) -> str:

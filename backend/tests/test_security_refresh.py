@@ -21,6 +21,8 @@ if str(backend_dir) not in sys.path:
 
 from core.security import (
     create_refresh_token,
+    create_token_material,
+    create_token_material_from_refresh,
     create_token_pair,
     hash_refresh_token,
 )
@@ -151,3 +153,44 @@ class TestCreateTokenPair:
         r1 = create_token_pair(mock_db, "user-1")
         r2 = create_token_pair(mock_db, "user-1")
         assert r1["refresh_token"] != r2["refresh_token"]
+
+
+class TestCreateTokenMaterial:
+
+    @pytest.fixture(autouse=True)
+    def _mock_settings(self):
+        settings = MagicMock()
+        settings.jwt_access_token_expire_minutes = 30
+        settings.jwt_refresh_token_expire_days = 7
+        settings.jwt_secret_key = "test-secret"
+        settings.jwt_algorithm = "HS256"
+        with patch("core.security.get_settings", return_value=settings):
+            yield
+
+    def test_generates_material_without_database_dependency(self):
+        material = create_token_material("user-123")
+
+        assert material.refresh_token_hash == hash_refresh_token(
+            material.refresh_token
+        )
+        assert material.refresh_expires_at.tzinfo is timezone.utc
+        assert material.access_expires_in == 1800
+        assert material.refresh_expires_in == 604800
+
+    def test_response_excludes_internal_hash_and_expiry_timestamp(self):
+        response = create_token_material("user-123").response()
+
+        assert "refresh_token_hash" not in response
+        assert "refresh_expires_at" not in response
+        assert response["token_type"] == "bearer"
+
+    def test_completes_existing_refresh_material_for_database_user(self):
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+        material = create_token_material_from_refresh(
+            "database-user-id", "raw", "a" * 64, expires_at,
+        )
+
+        assert material.refresh_token == "raw"
+        assert material.refresh_token_hash == "a" * 64
+        assert material.refresh_expires_at is expires_at

@@ -13,6 +13,7 @@ import type {
   PhoneRegisterRequest,
   SendCodeRequest,
   User,
+  TokenInfo,
   WecomQrUrlResponse,
 } from '../types/auth';
 
@@ -88,6 +89,24 @@ export async function getWecomQrUrl(orgId?: string): Promise<WecomQrUrlResponse>
   });
 }
 
+export interface WecomHandoffResponse {
+  token: TokenInfo;
+  user: User;
+  org?: Organization | null;
+}
+
+export async function exchangeWecomHandoff(
+  code: string,
+  signal?: AbortSignal,
+): Promise<WecomHandoffResponse> {
+  return request({
+    method: 'POST',
+    url: '/auth/wecom/handoff',
+    data: { code },
+    signal,
+  });
+}
+
 /**
  * 查询企微绑定状态
  */
@@ -132,4 +151,3 @@ export async function listMyOrganizations(): Promise<Organization[]> {
     url: '/org',
   });
 }
-

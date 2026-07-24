@@ -40,106 +40,15 @@ class ErpToolMixin:
     async def _erp_dispatch(
         self, tool_name: str, args: Dict[str, Any],
     ) -> str:
-        """ERP工具统一调度（两步模式）
-
-        查询工具：
-        - Step 1: 只传 action → 返回参数文档（纯本地，无 API 调用）
-        - Step 2: 传 action + params → 映射参数 → 调API → 格式化
-        写入工具(erp_execute)：保持原逻辑不变
-        """
-        # erp_execute 用 category 查找注册表（不走两步模式）
+        """按写入或两步查询模式调度 ERP 工具。"""
         if tool_name == "erp_execute":
-            dispatcher = await self._get_erp_dispatcher()
-            if isinstance(dispatcher, AgentResult):
-                return dispatcher
-            try:
-                category = args.get("category", "")
-                action = args.get("action", "")
-                params = args.get("params") or {}
+            return await self._execute_erp_write(args)
+        return await self._execute_erp_query(tool_name, args)
 
-                # [B5] 写操作幂等保护（10 分钟内相同操作不重复执行）
-                import hashlib as _hl
-                import json as _json
-                _idempotency_payload = _json.dumps(
-                    {"c": category, "a": action, "p": params},
-                    sort_keys=True, ensure_ascii=False,
-                )
-                _idempotency_hash = _hl.md5(_idempotency_payload.encode()).hexdigest()[:16]
-                _result_key = f"erp_write_done:{self.user_id}:{_idempotency_hash}"
-                _lock_key = f"erp_write:{self.user_id}:{_idempotency_hash}"
-                _lock_token = None
-
-                from core.redis import get_redis, RedisClient
-                _redis = await get_redis()
-                if not _redis:
-                    return AgentResult(
-                        summary="系统缓存服务暂时不可用，写操作已暂停。请稍后重试。",
-                        status="error",
-                        error_message="Redis unavailable",
-                        metadata={"retryable": True},
-                    )
-                # 1. 先查是否已完成（10 分钟内）
-                _done = await _redis.get(_result_key)
-                if _done:
-                    return AgentResult(
-                        summary=(
-                            f"该写操作（{category}/{action}）10 分钟内已执行过，"
-                            f"避免重复执行。如需再次执行请稍后重试。"
-                        ),
-                        status="error",
-                        error_message="Idempotency: duplicate write within 10min",
-                        metadata={"retryable": False},
-                    )
-                # 2. 尝试获取锁（防止并发重复）
-                _lock_token = await RedisClient.acquire_lock(_lock_key, timeout=120)
-                if not _lock_token:
-                    return AgentResult(
-                        summary=f"相同操作（{category}/{action}）正在执行中，请稍候再试。",
-                        status="error",
-                        error_message="Concurrent write lock",
-                        metadata={"retryable": True},
-                    )
-
-                cat_tool_map = {
-                    "basic": "erp_info_query",
-                    "product": "erp_product_query",
-                    "trade": "erp_trade_query",
-                    "aftersales": "erp_aftersales_query",
-                    "warehouse": "erp_warehouse_query",
-                    "purchase": "erp_purchase_query",
-                    "distribution": "erp_execute",
-                }
-                actual_tool = cat_tool_map.get(category, "erp_execute")
-                result = await dispatcher.execute(actual_tool, action, params)
-
-                # [B5] 执行成功，标记完成（10 分钟 TTL）
-                if _redis:
-                    try:
-                        await _redis.set(_result_key, "1", ex=600)
-                    except Exception:
-                        pass  # 标记失败不影响结果返回
-
-                return result
-            except Exception as e:
-                logger.error(
-                    f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"
-                )
-                return AgentResult(
-                    summary=f"ERP操作失败：{e}",
-                    status="error",
-                    error_message=str(e),
-                    metadata={"retryable": True},
-                )
-            finally:
-                await dispatcher.close()
-                # [B5] 释放锁
-                if _lock_token and _redis:
-                    try:
-                        await RedisClient.release_lock(_lock_key, _lock_token)
-                    except Exception:
-                        pass
-
-        # 查询工具：两步模式
+    async def _execute_erp_query(
+        self, tool_name: str, args: Dict[str, Any],
+    ) -> str:
+        """执行 ERP 两步查询。"""
         action = args.get("action", "")
         if not action:
             return AgentResult(
@@ -182,6 +91,96 @@ class ErpToolMixin:
         finally:
             await dispatcher.close()
 
+    async def _execute_erp_write(self, args: Dict[str, Any]) -> str:
+        """执行带 Redis 幂等锁的 ERP 写操作。"""
+        import hashlib
+        import json
+
+        dispatcher = await self._get_erp_dispatcher()
+        if isinstance(dispatcher, AgentResult):
+            return dispatcher
+
+        category = args.get("category", "")
+        action = args.get("action", "")
+        params = args.get("params") or {}
+        payload = json.dumps(
+            {"c": category, "a": action, "p": params},
+            sort_keys=True, ensure_ascii=False,
+        )
+        operation_hash = hashlib.md5(payload.encode()).hexdigest()[:16]
+        result_key = f"erp_write_done:{self.user_id}:{operation_hash}"
+        lock_key = f"erp_write:{self.user_id}:{operation_hash}"
+        lock_token = None
+        redis = None
+
+        from core.redis import RedisClient, get_redis
+
+        try:
+            redis = await get_redis()
+            if not redis:
+                return AgentResult(
+                    summary="系统缓存服务暂时不可用，写操作已暂停。请稍后重试。",
+                    status="error",
+                    error_message="Redis unavailable",
+                    metadata={"retryable": True},
+                )
+            if await redis.get(result_key):
+                return AgentResult(
+                    summary=(
+                        f"该写操作（{category}/{action}）10 分钟内已执行过，"
+                        f"避免重复执行。如需再次执行请稍后重试。"
+                    ),
+                    status="error",
+                    error_message="Idempotency: duplicate write within 10min",
+                    metadata={"retryable": False},
+                )
+            lock_token = await RedisClient.acquire_lock(
+                lock_key, timeout=120,
+            )
+            if not lock_token:
+                return AgentResult(
+                    summary=f"相同操作（{category}/{action}）正在执行中，请稍候再试。",
+                    status="error",
+                    error_message="Concurrent write lock",
+                    metadata={"retryable": True},
+                )
+
+            tool_map = {
+                "basic": "erp_info_query",
+                "product": "erp_product_query",
+                "trade": "erp_trade_query",
+                "aftersales": "erp_aftersales_query",
+                "warehouse": "erp_warehouse_query",
+                "purchase": "erp_purchase_query",
+                "distribution": "erp_execute",
+            }
+            result = await dispatcher.execute(
+                tool_map.get(category, "erp_execute"), action, params,
+            )
+            try:
+                await redis.set(result_key, "1", ex=600)
+            except Exception:
+                pass
+            return result
+        except Exception as exc:
+            logger.error(
+                f"ToolExecutor erp_dispatch | "
+                f"tool=erp_execute | error={exc}"
+            )
+            return AgentResult(
+                summary=f"ERP操作失败：{exc}",
+                status="error",
+                error_message=str(exc),
+                metadata={"retryable": True},
+            )
+        finally:
+            await dispatcher.close()
+            if lock_token and redis:
+                try:
+                    await RedisClient.release_lock(lock_key, lock_token)
+                except Exception:
+                    pass
+
     async def _get_erp_dispatcher(self):
         """获取ERP调度器实例，企业用户优先用企业凭证（带 token 双写闭环）"""
         from services.kuaimai.client import KuaiMaiClient
@@ -211,7 +210,7 @@ class ErpToolMixin:
                     token_persister=_persist,
                 )
                 await client.load_cached_token()  # 从 Redis 拿最新热缓存
-                return ErpDispatcher(client)
+                return ErpDispatcher(client, db_source=self.db)
             except ValueError as e:
                 return AgentResult(
                     summary=str(e),
@@ -230,7 +229,7 @@ class ErpToolMixin:
                 metadata={"retryable": False},
             )
         await client.load_cached_token()
-        return ErpDispatcher(client)
+        return ErpDispatcher(client, db_source=self.db)
 
     # ========================================
     # 本地查询工具

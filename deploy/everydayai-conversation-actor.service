@@ -10,6 +10,8 @@ WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="TZ=Asia/Shanghai"
 EnvironmentFile=/var/www/everydayai/backend/.env
+EnvironmentFile=/var/www/everydayai/backend/.env.worker
+EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
 ExecStart=/var/www/everydayai/backend/venv/bin/python conversation_worker_main.py
 
 KillMode=mixed

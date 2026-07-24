@@ -2,6 +2,8 @@ import asyncio
 
 import pytest
 
+from core.db_scope import AsyncScopedDatabaseClient
+from services.conversation_db_scope import ActorTaskDatabases
 from services.conversation_execution import GenerationClaim
 from services.conversation_runtime import ConversationActorRuntime, _build_delivery
 from services.handlers.chat.actor_sink import ActorWebSink
@@ -22,6 +24,8 @@ class _Kernel:
 
 class _Worker:
     def __init__(self, *args, **kwargs):
+        self.db = args[0]
+        self.execution = args[1]
         self.started = asyncio.Event()
         self.stopped = False
 
@@ -101,3 +105,24 @@ def test_runtime_uses_web_sink_for_wecom_actor():
 
     assert isinstance(sink, ActorWebSink)
     assert sink._websocket is websocket
+
+
+def test_runtime_routes_worker_and_task_databases_by_scope():
+    runtime = ConversationActorRuntime(
+        object(), object(), _Kernel(), worker_factory=_Worker,
+    )
+    control = object()
+    application = object()
+    handler = object()
+    databases = ActorTaskDatabases(control, application, handler)
+
+    executor = runtime._create_executor(databases)
+    observer = runtime._create_terminal_observer(databases)
+
+    assert isinstance(runtime._worker.db, AsyncScopedDatabaseClient)
+    assert runtime._worker.db.scope.settings[2] == "worker"
+    assert runtime._worker.db.scope.actor_user_id is None
+    assert executor._db is application
+    assert executor._handler_db_factory() is handler
+    assert observer._db is application
+    assert observer._post_handler_factory().db is handler

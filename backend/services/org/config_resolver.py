@@ -12,6 +12,13 @@ from loguru import logger
 
 from core.config import get_settings
 from core.crypto import aes_decrypt, aes_encrypt
+from core.db_scope import (
+    AsyncScopedDatabaseClient,
+    DatabaseAccessKind,
+    DatabaseScope,
+    database_scope_from_client,
+)
+from core.exceptions import PermissionDeniedError
 
 
 # ── 核心逻辑层（不碰 DB）────────────────────────────
@@ -26,6 +33,20 @@ class _ConfigResolverCore:
         "kuaimai_access_token",
         "kuaimai_refresh_token",
     ]
+    SUPPORTED_CONFIG_KEYS = frozenset({
+        "ai_google_api_key",
+        "ai_kie_api_key",
+        "ai_openrouter_api_key",
+        "erp_warehouse_ids",
+        "kuaimai_access_token",
+        "kuaimai_app_key",
+        "kuaimai_app_secret",
+        "kuaimai_refresh_token",
+        "wecom_agent_id",
+        "wecom_agent_secret",
+        "wecom_bot_id",
+        "wecom_bot_secret",
+    })
 
     # 企业专属 key — 未配置时返回 None，不降级到 .env
     # 这些凭证指向企业自己的资源，降级到别人的会导致数据泄露
@@ -79,6 +100,27 @@ class _ConfigResolverCore:
         """降级到系统默认配置"""
         return getattr(self._settings, key, None)
 
+    @classmethod
+    def _validate_config_key(cls, key: str) -> str:
+        normalized = key.strip()
+        if normalized not in cls.SUPPORTED_CONFIG_KEYS:
+            raise ValueError("不支持的企业配置键")
+        return normalized
+
+    @staticmethod
+    def _raise_capability_error(exc: Exception) -> None:
+        error = str(exc)
+        if (
+            "GOVERNANCE_CONFIG_KEY_INVALID" in error
+            or "GOVERNANCE_CONFIG_VALUE_INVALID" in error
+        ):
+            raise ValueError("企业配置参数无效") from exc
+        if (
+            "GOVERNANCE_" in error
+            or "WORKER_ERP_TOKEN_SCOPE_MISMATCH" in error
+        ):
+            raise PermissionDeniedError("无权修改该企业配置") from exc
+
 
 # ── 同步版（API 路由、ToolExecutor 用）────────────────
 
@@ -120,36 +162,57 @@ class OrgConfigResolver(_ConfigResolverCore):
         self, org_id: str, key: str, value: str, updated_by: str,
     ) -> None:
         """写入企业配置（AES 加密存储）"""
+        config_key = self._validate_config_key(key)
+        if not value:
+            raise ValueError("企业配置值不能为空")
         self._load_org_encrypt_key(org_id)
         encrypt_key = self._get_encrypt_key(org_id)
         encrypted = aes_encrypt(value, encrypt_key)
-        self.db.table("org_configs").upsert(
-            {
-                "org_id": org_id,
-                "config_key": key,
-                "config_value_encrypted": encrypted,
-                "updated_by": updated_by,
-            },
-            on_conflict="org_id,config_key",
-        ).execute()
-        logger.info(f"Org config set | org_id={org_id} | key={key} | by={updated_by}")
+        try:
+            self.db.rpc("set_governed_org_config", {
+                "p_org_id": org_id,
+                "p_config_key": config_key,
+                "p_config_value_encrypted": encrypted,
+            }).execute()
+        except Exception as exc:
+            self._raise_capability_error(exc)
+            raise
+        logger.info(
+            f"Org config set | org_id={org_id} | key={config_key} | "
+            f"by={updated_by}"
+        )
 
     def delete(self, org_id: str, key: str) -> None:
         """删除企业配置"""
-        self.db.table("org_configs").delete().eq(
-            "org_id", org_id,
-        ).eq("config_key", key).execute()
-        logger.info(f"Org config deleted | org_id={org_id} | key={key}")
+        config_key = self._validate_config_key(key)
+        try:
+            self.db.rpc("delete_governed_org_config", {
+                "p_org_id": org_id,
+                "p_config_key": config_key,
+            }).execute()
+        except Exception as exc:
+            self._raise_capability_error(exc)
+            raise
+        logger.info(f"Org config deleted | org_id={org_id} | key={config_key}")
 
     def list_keys(self, org_id: str) -> list[str]:
         """列出企业已配置的 key（不返回值）"""
-        result = (
-            self.db.table("org_configs")
-            .select("config_key")
-            .eq("org_id", org_id)
-            .execute()
-        )
-        return [r["config_key"] for r in (result.data or [])]
+        return [
+            item["key"]
+            for item in self.get_config_status(org_id)
+            if item.get("configured")
+        ]
+
+    def get_config_status(self, org_id: str) -> list[dict]:
+        """返回企业配置状态事实，不读取或解密配置值。"""
+        try:
+            result = self.db.rpc("list_governed_org_config_status", {
+                "p_org_id": org_id,
+            }).execute()
+        except Exception as exc:
+            self._raise_capability_error(exc)
+            raise
+        return result.data or []
 
     def get_erp_credentials(self, org_id: str) -> dict:
         """加载企业 ERP 凭证，缺失则报错。不降级到系统默认。"""
@@ -166,28 +229,25 @@ class OrgConfigResolver(_ConfigResolverCore):
     ) -> None:
         """ERP token 自动刷新成功后回写 DB（同步版）。
 
-        原子性: 单条 upsert × 2 — schema 反射白名单已覆盖 org_configs
-        的复合唯一键 (org_id, config_key)，不需要显式事务。
+        两份密文通过 runtime 管理员能力在同一数据库事务原子更新。
         """
-        from datetime import datetime, timezone
+        if not access_token or not refresh_token:
+            raise ValueError("ERP Token 不能为空")
         self._load_org_encrypt_key(org_id)
         encrypt_key = self._get_encrypt_key(org_id)
-        now = datetime.now(timezone.utc)
-        for key, val in [
-            ("kuaimai_access_token", access_token),
-            ("kuaimai_refresh_token", refresh_token),
-        ]:
-            encrypted = aes_encrypt(val, encrypt_key)
-            self.db.table("org_configs").upsert(
-                {
-                    "org_id": org_id,
-                    "config_key": key,
-                    "config_value_encrypted": encrypted,
-                    "updated_by": None,  # 系统自动刷新
-                    "updated_at": now,
-                },
-                on_conflict="org_id,config_key",
-            ).execute()
+        try:
+            self.db.rpc("set_governed_org_erp_tokens", {
+                "p_org_id": org_id,
+                "p_access_token_encrypted": aes_encrypt(
+                    access_token, encrypt_key,
+                ),
+                "p_refresh_token_encrypted": aes_encrypt(
+                    refresh_token, encrypt_key,
+                ),
+            }).execute()
+        except Exception as exc:
+            self._raise_capability_error(exc)
+            raise
         logger.info(f"ERP token auto-refreshed and persisted | org_id={org_id}")
 
     def list_orgs_with_wecom_bot(self) -> list[dict]:
@@ -308,30 +368,47 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
     ) -> None:
         """ERP token 自动刷新成功后回写 DB（异步版，供 worker / dead letter 用）。
 
-        原子性: 单条 upsert × 2 — schema 反射白名单已覆盖 org_configs
-        的复合唯一键 (org_id, config_key)，不需要显式事务。
+        两份密文通过 actorless 精确企业 Worker 能力在同一事务原子更新。
         """
-        from datetime import datetime, timezone
+        if not access_token or not refresh_token:
+            raise ValueError("ERP Token 不能为空")
         encrypt_key = await self._async_get_encrypt_key(org_id)
-        now = datetime.now(timezone.utc)
-        for key, val in [
-            ("kuaimai_access_token", access_token),
-            ("kuaimai_refresh_token", refresh_token),
-        ]:
-            encrypted = aes_encrypt(val, encrypt_key)
-            await (
-                self.db.table("org_configs").upsert(
-                    {
-                        "org_id": org_id,
-                        "config_key": key,
-                        "config_value_encrypted": encrypted,
-                        "updated_by": None,  # 系统自动刷新
-                        "updated_at": now,
-                    },
-                    on_conflict="org_id,config_key",
-                ).execute()
-            )
+        worker_db = self._worker_db_for_org(org_id)
+        try:
+            await worker_db.rpc("commit_worker_org_erp_tokens", {
+                "p_org_id": org_id,
+                "p_access_token_encrypted": aes_encrypt(
+                    access_token, encrypt_key,
+                ),
+                "p_refresh_token_encrypted": aes_encrypt(
+                    refresh_token, encrypt_key,
+                ),
+            }).execute()
+        except Exception as exc:
+            self._raise_capability_error(exc)
+            raise
         logger.info(f"ERP token auto-refreshed and persisted | org_id={org_id}")
+
+    def _worker_db_for_org(self, org_id: str):
+        """复用合法 Worker Scope，或为后台自动刷新构造精确 actorless Scope。"""
+        scope = database_scope_from_client(self.db)
+        if scope is None:
+            return AsyncScopedDatabaseClient(
+                self.db,
+                DatabaseScope(
+                    actor_user_id=None,
+                    org_id=org_id,
+                    access_kind=DatabaseAccessKind.WORKER,
+                    request_id="erp-token-refresh",
+                ),
+            )
+        if (
+            scope.access_kind is not DatabaseAccessKind.WORKER
+            or scope.actor_user_id is not None
+            or scope.org_id != org_id
+        ):
+            raise PermissionDeniedError("ERP Token Worker 数据库 Scope 不匹配")
+        return self.db
 
     async def _load_encrypted(self, org_id: str, key: str) -> str | None:
         """从 org_configs 表读取并解密（异步）"""

@@ -6,6 +6,11 @@ import asyncio
 import os
 from typing import Any, Callable, Mapping
 
+from services.conversation_db_scope import (
+    ActorTaskDatabases,
+    build_actor_task_databases,
+    build_actor_worker_db,
+)
 from services.conversation_delivery import ActorTerminalDelivery
 from services.conversation_execution import GenerationClaim, ConversationExecutionService
 from services.conversation_worker import ConversationWorker, RedisConversationWakeup
@@ -23,23 +28,23 @@ class ConversationActorRuntime:
         kernel_manager: Any,
         *,
         worker_factory: Callable[..., ConversationWorker] = ConversationWorker,
+        handler_db_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._db = db
         self._websocket = websocket
         self._kernel_manager = kernel_manager
-        executor = ChatGenerationExecutor(db, sink_factory=self._create_sink)
+        self._handler_db_factory = handler_db_factory or _get_handler_db
+        worker_db = build_actor_worker_db(db)
         execution = ConversationExecutionService(
-            db,
-            executor,
+            worker_db,
+            ChatGenerationExecutor(worker_db),
             renew_interval_seconds=5,
-            terminal_observer=ActorTerminalDelivery(
-                db,
-                websocket,
-                post_handler_factory=_create_post_handler,
-            ),
+            task_db_factory=self._build_task_databases,
+            executor_factory=self._create_executor,
+            terminal_observer_factory=self._create_terminal_observer,
         )
         self._worker = worker_factory(
-            db,
+            worker_db,
             execution,
             wakeup_bus=RedisConversationWakeup(),
         )
@@ -74,13 +79,54 @@ class ConversationActorRuntime:
         task: Mapping[str, Any],
         claim: GenerationClaim,
         cancellation_event: asyncio.Event,
+        *,
+        db: Any | None = None,
     ) -> ActorWebSink:
         delivery = _build_delivery(task, claim)
         return ActorWebSink(
-            self._db,
+            db or self._db,
             delivery,
             cancellation_event,
             self._websocket,
+        )
+
+    def _create_executor(
+        self,
+        databases: ActorTaskDatabases,
+    ) -> ChatGenerationExecutor:
+        return ChatGenerationExecutor(
+            databases.application,
+            handler_db_factory=lambda: databases.handler,
+            sink_factory=lambda task, claim, cancellation_event: (
+                self._create_sink(
+                    task,
+                    claim,
+                    cancellation_event,
+                    db=databases.control,
+                )
+            ),
+        )
+
+    def _create_terminal_observer(
+        self,
+        databases: ActorTaskDatabases,
+    ) -> ActorTerminalDelivery:
+        return ActorTerminalDelivery(
+            databases.application,
+            self._websocket,
+            post_handler_factory=lambda: _create_post_handler(
+                databases.handler,
+            ),
+        )
+
+    def _build_task_databases(
+        self,
+        task: Mapping[str, Any],
+    ) -> ActorTaskDatabases:
+        return build_actor_task_databases(
+            self._db,
+            task,
+            handler_db=self._handler_db_factory(),
         )
 
 
@@ -119,8 +165,13 @@ def create_kernel_manager() -> Any:
     return KernelManager(nsjail_cfg=config if os.path.exists(config) else None)
 
 
-def _create_post_handler() -> Any:
-    from core.database import get_db
+def _create_post_handler(db: Any) -> Any:
     from services.handlers.chat_handler import ChatHandler
 
-    return ChatHandler(get_db())
+    return ChatHandler(db)
+
+
+def _get_handler_db() -> Any:
+    from core.database import get_db
+
+    return get_db()

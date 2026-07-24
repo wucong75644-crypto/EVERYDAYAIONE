@@ -1,5 +1,24 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-24 上传过程中切换目录导致当前目录被覆盖 — 已修复
+
+- 上传任务现固定绑定启动目录；用户切换目录后，旧上传成功或失败都不会刷新、取消或写入
+  当前目录请求，也不会把旧目录错误显示到当前目录。
+- 工作区浏览状态增加当前有效目录门禁，所有异步目录响应只有身份仍匹配时才能更新界面。
+- 空列表加载状态增加“正在加载文件夹…”文字，避免慢网络时仅显示无语义动画。
+- 新增上传成功/失败期间切换目录的竞态测试，相关 Hook 测试由 10 个增加到 12 个。
+
+## 2026-07-24 工作区前端结构与 React Lint 债务 — 已修复
+
+- `useWorkspace` 原先在单个约 294 行 Hook 中混合目录浏览、上传、CRUD、排序和视图偏好；
+  现按浏览、上传、变更操作和视图状态拆分，公共返回接口保持不变。
+- `WorkspaceView` 原先在单个约 418 行组件中混合文件动作、选择、键盘、框选和渲染；
+  现拆为职责 Hook、文件区域和删除弹窗，主组件只负责组合。
+- 删除目录变化 Effect 内的同步 `setState`，改为导航事件内清理选择和重命名状态；
+  callback 使用精确依赖，相关 ESLint 从 2 errors + 2 warnings 降为 0。
+- 相关行为测试从 27 个增加到 34 个，覆盖导航状态重置、非法目录名、上传、
+  CRUD 失败处理及视图偏好兼容。
+
 ## 2026-07-23 企业空间图片失败后持续显示“生成中” — 已修复，待生产验证
 
 - KIE 异步失败后 task 与 assistant message 已正确落为 `failed`，单图失败事件也携带
@@ -8,6 +27,18 @@
 - `BatchMessageFinalizer` 的普通批次与 `regenerate_single` 分支现统一把任务租户传给
   `send_to_task_or_user`；个人空间继续显式使用 `org_id=None`。
 - 待生产分别验证企业空间真实 KIE 失败、失败后重新生成，以及个人空间图片成功链路。
+
+## 2026-07-23 工作区文件夹进入后空白卡住 — 已修复
+
+- 生产日志确认目录切换后旧列表仍可操作，曾连续请求
+  `上传/2026-07/2026-07` 等重复路径；无效目录又被后端作为 `200 + 空列表`
+  返回，导致用户停留在看似正常的空目录。
+- 前端切换目录时现会立即隔离旧条目、取消上一目录请求，并只接受路径匹配的最新响应；
+  组件卸载时同步取消请求。
+- 后端现在区分真实空目录与无效目录：空目录仍返回 `200`，不存在或非目录路径返回
+  `WORKSPACE_DIRECTORY_NOT_FOUND (404)`，NAS 权限或 I/O 异常返回
+  `WORKSPACE_DIRECTORY_UNAVAILABLE (503)`；前端错误状态提供重试入口。
+- 已增加前端取消/竞态/路径校验测试和后端空目录/无效目录契约测试。
 
 ## 2026-07-23 多租户通用 Agent Session Runtime — 技术设计确认
 
@@ -31,7 +62,249 @@
   Conversation Actor 进程中的等待者；Redis key 使用复合租户身份的 SHA-256，
   不暴露 user_id/org_id，队列带 120 秒 TTL。本地 Event 保留为同进程快速路径，
   Redis 暂时不可用时按原超时/无打断语义降级。
-- 其余实施前置门禁仍包括迁移账本/checksum 和租户数据库纵深防御。
+- 迁移账本/checksum 内核与部署前门禁已完成：完整文件名是唯一 identity，SQL/Python
+  历史迁移只能在外部结构审计后显式 baseline；checksum 漂移、失败/未知记录、非 SQL
+  pending、新迁移缺少 rollback 均失败关闭。部署在服务重启前执行 plan/apply，
+  `RUN_MIGRATIONS=false` 且存在 pending 时停止部署。
+- 生产已完成 120–149 结构审计并建立 legacy baseline：13 张核心表、44 个 RPC、
+  45 个索引、7 组关键字段及关键重载签名均无缺失；账本共 138 条，全部为
+  `applied + baseline`，failed、checksum 漂移和未知 identity 均为 0。
+- 剩余实施前置门禁为租户数据库纵深防御。
+- 租户数据库纵深防御生产审计已完成：80 张含 org_id 表全部由应用角色持有，
+  FORCE RLS 与 policy 均为 0；现有 7 张 ENABLE RLS 表仍被 owner 绕过。代码 Registry
+  仅覆盖 55 张，Agent Runtime 等 13 张关键事实表未进入旧清单。
+- 已确认采用独立 owner/migrator/runtime/worker 角色、事务级 DatabaseScope 和分领域
+  FORCE RLS；第一实施组固定为 Registry、Scope 基础设施及 Agent Runtime 13 表，
+  不一次性切换 ERP/企业控制平面，也不做流量灰度。
+- 第一实施组任务 1 已完成：新增唯一租户 Registry，并由 OrgScopedDB 导入兼容激活集合；
+  13 张 Agent Runtime 表已登记但未激活，因此查询行为不变。生产 pg_catalog 双向合同
+  扫描 95 个表/分区/物化视图，缺表、缺 org/user 身份列、未知对象和分区父表错误均为 0。
+- 第一实施组任务 2 已完成：新增不可变 DatabaseScope 和同步/异步 Query、RPC、client
+  显式包装器；Scope 与业务 SQL 固定处于同一事务，异常退出自动回滚，连接池继续复用。
+  旧 LocalDBClient 未修改，业务调用链和生产行为尚未切换；下一任务是 Web/Actor/企微贯通。
+- 第一实施组任务 3.1 已完成：HTTP ScopedDB 复用已验证 OrgContext，并组合事务 Scope 与
+  既有应用层企业过滤；企微改为每条消息独立服务，用户映射前绑定企业、映射后绑定真实
+  用户，根服务不再保存首条消息的 OrgScopedDB。Actor Worker/执行链 Scope 属于任务 3.2，
+  尚未接入，FORCE RLS 仍未启用。
+- 第一实施组任务 3.2 已完成：Actor Worker 扫描、claim 和任务身份读取使用无租户
+  `worker` Scope；读取任务后按 `user_id/org_id` 失败关闭并创建异步控制面、异步应用层、
+  同步 Handler 三套同身份 DB。执行、续租、提交、失败、进度 Sink、终态读取和 post hook
+  已切换到任务 DB。Memory/Knowledge 独立全局连接池仍需在 FORCE RLS 前完成 scoped
+  connection 治理，不能将当前阶段解释为已具备启用 FORCE RLS 的全部条件。
+- 第一实施组任务 3.3a 已完成：新增异步 raw SQL scoped pool，连接获取后在同一事务注入
+  DatabaseScope，异常自动回滚，并禁止调用方显式 commit/rollback、修改 autocommit 或
+  通过 `getconn` 绕过。当前仅完成基础设施，Memory/Knowledge/Graph/Metrics 等调用方仍
+  使用旧全局连接，必须完成任务 3.3b 后才能进入 FORCE RLS。
+- 第一实施组任务 3.3b.1 已完成：MemoryServiceV2 不再忽略调用方 DB，而是解析可信
+  DatabaseScope 后包装全局 psycopg pool；无 Scope 失败关闭。进程级 `_scheduler` 已删除，
+  每个请求/任务创建独立 Scheduler；Memory Adapter 写入不再显式 commit。
+- 第一实施组任务 3.3b.2 已完成：Knowledge、Graph、Metrics、文件删除/恢复、
+  Sandbox、ERP 参数知识和经验记录均从当前 scoped DB 显式继承身份；无可信
+  Scope 的 raw PostgreSQL 连接入口直接拒绝。Seed 导入、模型评分和 OSS 清理改用
+  显式 Worker Scope，scoped connection 内的显式 commit 已清除。下一步是任务 4
+  的数据库角色与密钥配置，FORCE RLS 仍未启用。
+- 第一实施组任务 4.1 已完成代码准备：新增幂等角色初始化脚本，固定创建无登录 owner
+  以及独立 migrator/runtime/worker 登录角色；四个角色均显式禁止 superuser、createdb、
+  createrole、replication 与 bypassrls，runtime/worker 被显式撤销 owner 成员资格。脚本只
+  从环境变量读取三组不同且不少于 24 字符的密码，不输出密码。本阶段未连接生产、未创建
+  真实角色、未转移对象所有权，也未切换服务连接；下一步为 4.2 迁移 URL 隔离。
+- 第一实施组任务 4.2 已完成：迁移 Runner 只读取 `MIGRATION_DATABASE_URL`，不再回退
+  应用 `DATABASE_URL` 或 Settings；部署迁移门禁在调用 Python 前检查该变量，缺失立即停止。
+  plan/apply 仍保持既有 pending 与 `RUN_MIGRATIONS` 语义，未切换任何运行中服务连接。
+- 第一实施组任务 4.3 已完成配置合同：新增 runtime/worker/migrator 三份无真实凭证模板，
+  真实 `.env.*` 已由 gitignore 统一保护；验证器要求三个文件均存在、权限为 0600、各自
+  使用正确数据库角色、无模板占位符且连接串相互独立。Systemd 仍读取原 `.env`，任务 5
+  grant/policy 和测试库隔离矩阵通过前不得切换角色文件。
+- 第一实施组任务 5.1 已完成代码准备：新增管理员执行的 Agent Runtime 13 表首次 owner
+  转移与显式保护回滚脚本。转移前验证固定角色、完整表清单和允许的旧/新 owner；转移后
+  migrator 获得 schema/迁移账本必要权限，runtime/worker 在 policy 就绪前保持无表权限，
+  旧应用角色暂时保留 CRUD，避免当前服务因 owner 变化中断。回滚要求显式危险操作开关，
+  且检测到任何目标表仍处于 FORCE RLS 时拒绝执行。本阶段未连接或修改真实数据库。
+- 第一实施组任务 5.2 已完成代码准备：迁移 150 为精确 13 表创建用户事实、会话、
+  任务和资产父事实辅助谓词及 `USING + WITH CHECK` policy；个人事实始终精确到用户，
+  企业 Channel 允许 active member 共享，员工或企业停用后失败关闭。当前未启用
+  FORCE RLS、未连接真实数据库；辅助函数的 runtime/worker EXECUTE 与表权限由 5.3
+  配套授予，因此迁移 150 不得脱离 5.3 单独上线。
+- 第一实施组任务 5.3a 已完成代码准备：管理员 owner 脚本同步接管三项资产
+  `SECURITY DEFINER` 函数并为新角色授予 schema USAGE；迁移 151 按 runtime/worker
+  实际操作拆分首组 13 表权限，授予租户辅助函数及公开资产登记入口 EXECUTE。普通角色
+  无 DELETE、无资产表直读写、无内部资产函数 EXECUTE。完整既有 RPC 与非首组表权限仍
+  属于 5.3b，完成前不得切换服务数据库角色；本阶段未连接或修改真实数据库。
+- 第一实施组任务 5.3b.1 第一子步已完成代码准备：四个 Systemd 服务保留公共 `.env`
+  后再加载数据库角色覆盖文件；Backend/WeCom 使用 `.env.runtime`，Conversation Actor
+  使用 `.env.worker`，Sync 使用独立 `.env.sync` 并暂留旧角色。验证器要求四类连接串
+  互不复用且文件权限为 0600。Web 内嵌后台任务的独立 worker client 尚未完成，因此这些
+  unit 文件仍不得部署切换；本阶段未执行 systemctl、未创建真实角色文件。
+- 第一实施组任务 5.3b.1 第二子步已完成代码准备：新增必填
+  `WORKER_DATABASE_URL` 的独立同步/异步 Worker client，Web 的恢复、清理、
+  BackgroundTaskWorker、错误监控和知识 Seed 不再复用 runtime 连接；知识 raw pool 按
+  DatabaseScope 选择 runtime/worker URL。缺少 Worker URL 时失败关闭，不回退
+  `DATABASE_URL`。原 586 行 main 已将本次后台数据库生命周期外科拆分到独立 service，
+  当前降至 467 行；拆分时同时修复 recovery/reconcile 两把 Redis 锁错误共用释放 token
+  的问题。由于全局扫描仍需 5.3b.3 受控 RPC，本阶段仍不得部署切换。
+- 第一实施组任务 5.3b.1 第三子步已完成代码准备：WeCom 进程改为双客户端，
+  企业 bot 配置发现与 Outbox 投递使用 Worker 连接，入站消息及卡片事件使用 runtime
+  连接并建立请求级 org/user Scope；WeCom unit 同时加载 `.env.runtime` 与
+  `.env.worker-client`。任一 Worker URL 初始化失败时先于 WS 启动失败关闭，停机关闭
+  三个连接池。本阶段未部署、未连接真实数据库；完整权限清单和受控全局 RPC 完成前仍
+  不得切换服务角色。
+- 第一实施组任务 5.3b.2 已确认采用独立 `everydayai_wecom_runtime` 方案并完成详细设计：
+  该角色仍属于 runtime Scope，但与 Web runtime 使用不同登录凭证和 EXECUTE 能力；
+  WeCom 身份映射、首次创建、聊天地址和目标登记收口到校验 org/corp/角色的
+  SECURITY DEFINER 门面，两个 runtime 均不直访 mapping/target 表。实施必须连续完成
+  第五角色环境合同、安全门面、第二批 owner/grant 三个子波次。由于 Backend 同进程仍有
+  企业治理、管理员、ERP、Scheduler 和系统监控路由，本阶段实现完成后也不得立即切换
+  Backend 数据库角色。
+- 第一实施组任务 5.3b.2a 已完成代码准备：角色初始化脚本新增独立 WeCom runtime 密码、
+  LOGIN/NOBYPASSRLS 和 owner 成员资格撤销；新增 `.env.wecom-runtime` 单键无凭证模板，
+  环境验证器要求 0600、正确角色及五类服务连接相互独立。WeCom unit 改为该 runtime
+  连接并继续加载 worker-client。当前未创建真实角色/环境文件、未执行 systemctl；
+  5.3b.2b 安全门面完成前不得部署。
+- 第一实施组任务 5.3b.2b 已完成代码准备：新增迁移 152，以增量方式让 WeCom 登录角色
+  匹配 runtime Scope，未修改已入账的 150/151 checksum；身份解析、首次用户/积分/成员
+  创建、最近聊天地址和聊天目标登记收口到固定 search_path 的 SECURITY DEFINER 门面，
+  并撤销旧身份函数及新门面的 PUBLIC EXECUTE。消息面不再直读写 mapping/member/target。
+  历史 org_id 为空的 mapping/target 只有在 corp 唯一属于当前 active 企业时才原子认领，
+  否则失败关闭。当前未授予新角色 EXECUTE、未应用迁移或连接真实数据库，必须继续完成
+  5.3b.2c owner/grant 和测试库矩阵。
+- 第一实施组任务 5.3b.2c-1 已完成代码准备：第二批 owner 脚本固定接管 18 张基础事实表、
+  由 pg_catalog 发现的实际列 sequence 和 25 个 Web/WeCom 业务函数签名；两个
+  `enqueue_wecom_generation_turn_v2` 重载均纳入；转移时撤销 PUBLIC
+  及新服务角色权限，仅保留旧角色兼容权限。回滚要求显式危险开关、服务已切回旧数据库
+  URL 且目标表未 FORCE RLS。当前未执行脚本；下一步为迁移 153 的第二批 RLS/policy
+  和最小角色授权。
+- 第一实施组任务 5.3b.2c-2/153 已完成代码准备：生产只读审计确认第二批 17 表真实字段、
+  owner 和未启用 RLS 状态；迁移 153 创建无 actor/org 的 Web runtime 认证 Scope 门禁，
+  并提供候选查询、注册、登录提交、refresh 原子轮换、密码重置和登出六个门面。17 表已
+  配置 ENABLE RLS 与用户/企业/父事实 policy；refresh、mapping、target 保持 owner-only，
+  认证门面撤销 PUBLIC/WeCom/Worker 后只授予 Web runtime。
+- 第一实施组任务 5.3b.2c-2/154 已完成代码准备：既有 WeCom 消息 RPC 已重命名为
+  owner-only core，公开同名函数改为固定 search_path 的 SECURITY DEFINER 门面，
+  对新 WeCom 角色强制校验角色、runtime Scope、企业、用户、active 成员和 corp。
+  runtime/Worker 的活动记录改走校验门面并撤销直表权限；迁移期仅对存在的旧
+  `everydayai` 角色保留原行为，避免迁移应用到角色切换之间中断。当前未应用迁移，
+  下一步为 153d 联合回归、测试库角色矩阵和最终审查。
+- 第一实施组任务 153b 已完成代码准备：`TokenMaterial` 将双 token 生成与 refresh
+  持久化拆分，明文和内部 hash 不混入公开响应；旧 `create_token_pair` 继续保留原
+  写库语义供 WeCom OAuth 兼容。Web 公开认证依赖现绑定无 actor/org 的 runtime
+  DatabaseScope，并传播 request ID；对应 AuthService RPC 已在 153c 完成切换。
+- 第一实施组任务 153c 已完成代码准备：Web 注册、手机号验证码登录、手机号密码登录、
+  企业密码登录、refresh 轮换、密码重置和登出均切换到迁移 153 的六个认证 RPC。
+  注册由 Python 预生成 user_id 与完整 token material，数据库原子创建用户、积分和
+  refresh；登录提交原子更新登录/活跃时间、写 `login_success` 活动和 refresh。
+  refresh outcome 与数据库竞态错误保持现有 HTTP 认证语义。认证测试已按职责拆分，
+  当前仍未应用迁移或切换 Backend 数据库角色。
+- 第一实施组任务 153d 的真实数据库阶段已完成：生产只读审计确认当前仅有旧
+  `everydayai` 登录角色，30 张目标表及迁移账本均归旧角色，7 张表 ENABLE RLS 但
+  `pg_policies=0`，FORCE 全部关闭。基于生产 Schema-only 克隆的本地 PostgreSQL 16.14
+  已验证：旧非超级角色通过临时 owner 成员关系可继续读取这 7 张表；迁移账本与两组对象
+  转给 `everydayai_owner` 后，migrator 成功连续应用 150–154；真实个人/企业、停用员工、
+  敏感表和 Web/WeCom/Worker 权限矩阵 5 项通过。生产仅执行只读元数据/Schema 审计，
+  未创建角色、未转移 Owner、未应用迁移或切换服务。
+- Owner 切换链路已按生产事实修正：管理员 URL 通过独立安全启动器转换为 libpq 环境，
+  不进入进程参数；首组脚本同时接管迁移账本，并在转移前临时将旧角色加入 owner，
+  避免“仅 CRUD 无法穿越无 policy RLS”的生产中断；最终撤销脚本要求 150–159、33 个
+  Owner、服务角色切换和旧连接归零全部满足。本地克隆库已真实执行最终撤销，确认旧角色
+  成员关系变为 false、首组无 Scope 查询返回零行、第二组敏感表直接拒绝；能力域尚未
+  闭合，生产当前不得执行最终撤销。
+- WeCom OAuth 数据库能力迁移 155 已完成代码准备：真实生产 schema 审计确认旧
+  Python 合并只覆盖少量用户引用，而 `user_extra_grants`、`user_revocations` 仍属于
+  后续企业治理 Owner 域。当前方案因此禁止跨用户自动合并，返回
+  `MERGE_REVIEW_REQUIRED`；首次登录、空闲身份绑定、状态查询和安全解绑由 owner RPC
+  原子处理。Python 已切换到 `WecomOAuthIdentityService` 的不可变 login/actor Scope，
+  旧跨表合并服务已删除；绑定、refresh hash 和登录活动现由同一 RPC 提交。OAuth
+  回调已改为 Redis 60 秒一次性交接码，URL 不再暴露 token/user/org，前端 POST 原子
+  消费并处理卸载 Abort。最终审查补齐历史 `org_id = NULL` 映射兼容：仅在已验证
+  Corp 属于当前 active 企业后于同一事务归属，非空跨企业映射继续拒绝。真实
+  PostgreSQL 回滚事务、后端/前端全量测试、类型检查和生产构建均通过；生产尚未应用
+  155。
+- 管理员与企业治理迁移 156a 已完成代码准备：生产只读审计确认当前 1 个企业、50 名
+  active 成员、1 名 super_admin 和 13 个企业配置键，五张治理表仍由旧角色持有且
+  RLS/FORCE RLS 均关闭。新增统一 runtime/actor/org 授权根与不含秘密值的
+  `governance_audit_log`，审计表从创建起启用 FORCE RLS 且服务角色无直接权限。真实
+  PostgreSQL 已验证 owner、member 拒绝、停用账号、super_admin 和同事务审计行为，
+  测试事务已回滚。156b-1 同时完成本人企业/邀请、企业安全详情/成员和超管企业/用户
+  六条只读门面；真实克隆库发现并修复 `org_invitations` 未进入 Owner 域及回滚脚本
+  先改列序列 owner 导致 PostgreSQL 拒绝的问题。第二批 Owner 表现为 18 张，最终撤权
+  门禁检查 150–159 和 33 个 Owner 对象。迁移 157 已完成企业创建/更新、成员增删/角色
+  变更、邀请创建/接受七条原子写门面；真实 PostgreSQL 验证 7 条同事务审计、成员上限、
+  自删除和普通成员写入拒绝。回滚保留已有 `authority=self` 审计事实。迁移 158 已完成
+  12 键企业配置状态、密文 upsert/delete 与无秘密值审计门面；真实 PostgreSQL 验证
+  owner/admin 成功、member/跨企业/历史重复键拒绝，rollback 保留配置和审计事实。
+  迁移 159 已完成 runtime 管理员与 actorless 精确企业 Worker 两条 ERP Token 原子轮换
+  能力；真实 PostgreSQL 验证双 Token 同时间戳、Worker `updated_by=NULL`、跨企业与携带
+  actor 拒绝、runtime 单条无密文审计及 rollback 保留事实。156–159 尚未应用生产，
+  Python/API 接线仍需继续完成。
+  审查同时发现 156 授权根允许 super_admin 在企业 active 检查前返回；158 已用二次断言
+  封闭配置链路，157 企业/成员/邀请门面的同类停用企业边界应在后续迁移统一修正。
+- **2026-07-24 配置/Secret 架构复审**：暂停原 158/159 接线。全链审计确认企业明文
+  DEK 与配置密文同库、生产仍启用全局密钥回退、快麦 Web Cookie 存在第二套加密链、
+  DashScope 键未进入旧白名单、Image/Video BYOK 上下文未闭合。新方案采用代码 Registry、
+  普通配置与 Secret 分离、wrapped DEK + 库外 KEK、固定命名 Bundle、Worker
+  Discovery/Execution 两阶段 Scope 和 ERP token_pair 版本 CAS。完整待确认设计见
+  `docs/document/TECH_统一配置与Secret控制平面.md`。第一实施波次的 156/157 授权顺序
+  修复已完成：非空企业必须先通过 active 校验，super_admin 才可继续；平台级
+  `org_id=NULL` 能力保持不变。临时 PostgreSQL 16 真实验证分别得到
+  `active=super_admin`、`suspended=GOVERNANCE_ORG_INACTIVE` 和
+  `platform=super_admin`。新迁移 158 已按统一设计完成 Registry v1 投影、
+  configuration entries/policies 与 envelope secret records，三张事实表从创建起
+  FORCE RLS 且服务角色无直权；临时 PostgreSQL 16 已验证约束、权限及 rollback。
+  159A 已完成 Local current/previous KEK Provider、每 Secret 随机 DEK、绑定
+  scope/name/version 的 AES-GCM AAD 和独立 0600 KEK 文件门禁；定向覆盖率 93%。
+  159B 已完成 Registry 启动漂移门禁、平台/企业/个人配置管理门面、expected_version
+  CAS、Secret 生命周期和无秘密值状态/审计响应；管理 core 与 facades 拆为同编号顺序
+  迁移以满足文件阈值。临时真实 PostgreSQL 已验证 14 条契约、平台 1→2→删除 3、
+  旧版本冲突、super_admin 企业越权拒绝、企业 owner 写入、个人冒用拒绝、Secret
+  `active/retired/revoked` 状态、5 条脱敏审计及完整 rollback。159A/159B 均未部署；
+  160 已完成 15 条配置定义与 11 条显式 Bundle 契约、OAuth agent_id/agent_secret
+  最小材料拆分、user→organization→platform 有效层解析、企业 override/locked 策略、
+  固定无参数 Bundle Facade、runtime/worker/wecom 角色矩阵及请求内 Secret 解密校验。
+  真实 PostgreSQL 已验证三类登录角色、OAuth public 无 SecretRef、enterprise-only
+  不回退、可选键缺失、Secret 过期失败关闭和完整 rollback。迁移执行器已实测保证同编号
+  `160 core → facades` 顺序。生产只读审计进一步确认线上仍只有单一 `everydayai`
+  角色，150–160 台账记录为 0，新配置表/角色/RLS 均不存在；生产 Resolver 仍直接
+  upsert 旧表，四个服务共用旧 `.env`，新 KEK 尚未注入。生产 1 个企业的 13 条旧配置
+  完整，快麦两条 Cookie 均已加密但状态为 expired。161.1 已实现旧键不可变组合契约
+  与无秘密值预检：原子组合缺项、未知键、Corp ID 双来源未确认一致、明文 Cookie
+  均失败关闭，expired 凭证保持禁用。161.2 已增加固定三表批量只读采集器，以企业
+  密钥优先、旧全局密钥兜底在局部内存验证全部旧密文与 Corp ID 一致性；数据库异常、
+  畸形/孤儿行、缺失密钥和损坏 Cookie 均转为稳定失败。两步合计定向 24 个测试、
+  覆盖率 100%。161.3A 已增加 migrator-only 原子批量导入能力：要求显式 apply 会话、
+  1–10000 项精确输入、版本 0 CAS，任一失败整批回滚；导入审计不含配置材料并启用
+  FORCE RLS，已有审计时 rollback 拒绝删表。角色最终收口同步要求 161 台账及全部配置表
+  owner 正确。161.3B1 已实现纯转换计划：组织集合必须与预检精确一致，Secret 固定
+  组合后立即生成 v1 envelope，仓库 ID 归一化去重，expired/invalid 外部凭证不导入；
+  同时修正外部凭证缺少 `cookie_full` 时预检误放行的问题。相关 38 个定向测试和全部
+  145 个 configuration 测试通过，转换/预检模块覆盖率 100%。158–161 均未部署；
+  161.3B2 已增加旧值转换读取器、默认 dry-run CLI 及 source/migrator 双 DSN 隔离；
+  apply 要求固定 import_id 和精确确认字符串，并在同一 migrator 事务/游标执行
+  `SET LOCAL + RPC`。真实 PostgreSQL 首轮验证发现 161.3A 将 JSONB `null` 直接传给
+  内部写函数、未转换为 SQL NULL，导致合法普通值/Secret 被拒绝；迁移已修正为
+  `NULLIF(..., 'null'::JSONB)`。真实门禁测试又发现缺失自定义 GUC 时
+  `NULL <> 'apply'` 不成立，已改为 `IS DISTINCT FROM 'apply'` 失败关闭。最终隔离
+  PostgreSQL 验证确认：缺失 GUC 拒绝、普通值与 Secret 同批成功、2 条脱敏审计写入、
+  重复 create-only 冲突整批回滚且审计不增加。相关 Python 定向 75 个测试、全部 176 个
+  configuration/CLI 测试通过，五个核心模块覆盖率 100%。161.3B 已闭环但尚未部署；
+  后续审查发现原三次连接池查询不构成 PostgreSQL 一致性快照，且模板中的专用只读角色
+  尚未实现。161.3C1 已补充无 owner membership/无表权限的一次性
+  `everydayai_config_import_reader`，以及 session_user + read GUC 双门禁的 owner-held
+  固定 export RPC；migrator 即使继承 owner 也会被 session_user 门禁拒绝。隔离
+  PostgreSQL 已验证 Reader 直读表拒绝、缺 GUC 拒绝、单只读事务返回 3 个固定数组，
+  旧版 161 无 export 函数时 rollback 也可重放。161.3C2 已将正式 CLI 从 LocalDB 三查询
+  切换为 psycopg Reader 单连接只读事务，固定执行角色校验、read GUC 与单次 export；
+  source/migrator URL 相同会在打开 migrator 连接前拒绝。54 个定向测试和五个模块
+  100% 覆盖，隔离 PostgreSQL 另验证随机旧密文经 Reader export 后可被 Python 解密并
+  生成通过预检，测试行已清理。161.3C 已闭环。
+  161.4.1 已增加生产数据库只读 preflight：要求独立管理员身份，在显式 READ ONLY
+  事务中校验 158–161 台账、六类角色属性、导入/export RPC owner/grant、四张敏感表 FORCE
+  RLS、15/11 Registry 固定计数及四类目标全空，最终始终 ROLLBACK。36 个关联部署/
+  配置测试通过。隔离 PostgreSQL 首轮发现字符串 `PUBLIC` 不能作为角色传给
+  `has_function_privilege`，已改用 PostgreSQL PUBLIC OID 0；修正版真实运行通过，
+  执行前后四类目标均为 0、测试台账保持 6 条。161.4.2 已固化生产运行手册：先应用
+  158–161，再执行只读数据库 preflight、同 import_id dry-run、双人精确确认、原子
+  apply 和脱敏只读核验；任何失败都保持旧消费者作为业务真相源，成功后也禁止删除
+  新数据、持久审计或手改迁移账本。运行手册契约测试与环境模板测试已补齐，尚未部署，
+  仍不得提前切换业务消费者。
 - 详细设计见 `docs/document/TECH_SESSION_RUNTIME多租户通用Agent架构.md`。
 
 ## 2026-07-21 快麦 ERP 归档 TEXT[] 序列化修复

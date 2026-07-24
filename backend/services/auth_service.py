@@ -4,8 +4,8 @@
 处理用户注册、登录、验证码等业务逻辑。
 """
 
-from datetime import datetime, timezone
 from typing import Optional
+from uuid import uuid4
 
 from loguru import logger
 
@@ -18,13 +18,15 @@ from core.exceptions import (
     ValidationError,
 )
 from core.security import (
-    create_token_pair,
+    TokenMaterial,
+    create_refresh_token,
+    create_token_material,
+    create_token_material_from_refresh,
     hash_password,
     hash_refresh_token,
     verify_password,
 )
 from services.sms_service import get_sms_service
-from services.user_activity_service import record_user_activity
 
 
 class AuthService:
@@ -61,48 +63,29 @@ class AuthService:
         if not await self._verify_code(phone, code, "register"):
             raise ValidationError("验证码错误或已过期")
 
-        # 2. 检查手机号是否已注册
-        existing = self.db.table("users").select("id").eq("phone", phone).execute()
-        if existing.data:
-            raise ConflictError("该手机号已注册")
-
-        # 3. 创建用户
-        user_data = {
-            "phone": phone,
-            "nickname": nickname or f"用户{phone[-4:]}",
-            "login_methods": ["phone"],
-            "created_by": "phone",
-            "role": "user",
-            "credits": 100,
-            "status": "active",
-        }
-
-        if password:
-            user_data["password_hash"] = hash_password(password)
-
-        result = self.db.table("users").insert(user_data).execute()
-
+        user_id = str(uuid4())
+        material = create_token_material(user_id)
+        try:
+            result = self.db.rpc("register_web_identity", {
+                "p_user_id": user_id,
+                "p_phone": phone,
+                "p_nickname": nickname or f"用户{phone[-4:]}",
+                "p_password_hash": hash_password(password) if password else None,
+                **self._refresh_params(material),
+            }).execute()
+        except Exception as exc:
+            if "WEB_AUTH_PHONE_CONFLICT" in str(exc):
+                raise ConflictError("该手机号已注册") from exc
+            raise
         if not result.data:
-            logger.error(f"Failed to create user | phone={phone}")
             raise ValidationError("注册失败，请稍后重试")
-
-        user = result.data[0]
-        logger.info(f"User registered | user_id={user['id']} | phone={phone}")
-
-        # 4. 记录积分赠送
-        self.db.table("credits_history").insert({
-            "user_id": user["id"],
-            "change_amount": 100,
-            "balance_after": 100,
-            "change_type": "register_gift",
-            "description": "新用户注册赠送积分",
-        }).execute()
-
-        # 5. 生成 token
-        token = self._create_token_response(user["id"])
+        user = result.data
+        if str(user["id"]) != user_id:
+            raise AuthenticationError("注册身份校验失败")
+        logger.info(f"User registered | user_id={user['id']}")
 
         return {
-            "token": token,
+            "token": material.response(),
             "user": self._format_user_response(user),
         }
 
@@ -125,36 +108,17 @@ class AuthService:
         if not await self._verify_code(phone, code, "login"):
             raise ValidationError("验证码错误或已过期")
 
-        # 2. 查找用户
-        result = self.db.table("users").select("*").eq("phone", phone).execute()
-
-        if not result.data:
+        user = self._lookup_candidate(phone)
+        if not user:
             raise NotFoundError("用户", phone)
-
-        user = result.data[0]
-
-        # 3. 检查账号状态
         if user["status"] != "active":
             raise AuthenticationError("账号已被禁用")
-
-        # 4. 更新最后登录时间
-        self.db.table("users").update({
-            "last_login_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", user["id"]).execute()
-        record_user_activity(
-            self.db,
-            user_id=user["id"],
-            event_type="login_success",
-            source="web",
-        )
-
-        logger.info(f"User logged in by phone code | user_id={user['id']} | phone={phone}")
-
-        # 5. 生成 token
-        token = self._create_token_response(user["id"])
+        material = create_token_material(str(user["id"]))
+        user = self._commit_login(user, material)
+        logger.info(f"User logged in by phone code | user_id={user['id']}")
 
         return {
-            "token": token,
+            "token": material.response(),
             "user": self._format_user_response(user),
         }
 
@@ -172,44 +136,21 @@ class AuthService:
         Raises:
             AuthenticationError: 用户名或密码错误
         """
-        # 1. 查找用户
-        result = self.db.table("users").select("*").eq("phone", phone).execute()
-
-        if not result.data:
+        user = self._lookup_candidate(phone)
+        if not user:
             raise AuthenticationError("用户名或密码错误")
-
-        user = result.data[0]
-
-        # 2. 检查是否设置了密码
         if not user.get("password_hash"):
             raise AuthenticationError("该账号未设置密码，请使用验证码登录")
-
-        # 3. 验证密码
         if not verify_password(password, user["password_hash"]):
             raise AuthenticationError("用户名或密码错误")
-
-        # 4. 检查账号状态
         if user["status"] != "active":
             raise AuthenticationError("账号已被禁用")
-
-        # 5. 更新最后登录时间
-        self.db.table("users").update({
-            "last_login_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", user["id"]).execute()
-        record_user_activity(
-            self.db,
-            user_id=user["id"],
-            event_type="login_success",
-            source="web",
-        )
-
-        logger.info(f"User logged in by password | user_id={user['id']} | phone={phone}")
-
-        # 6. 生成 token
-        token = self._create_token_response(user["id"])
+        material = create_token_material(str(user["id"]))
+        user = self._commit_login(user, material)
+        logger.info(f"User logged in by password | user_id={user['id']}")
 
         return {
-            "token": token,
+            "token": material.response(),
             "user": self._format_user_response(user),
         }
 
@@ -229,87 +170,31 @@ class AuthService:
         """
         LOGIN_FAILED = "企业名称、手机号或密码错误"
 
-        # 1. 精确匹配企业
-        org_result = (
-            self.db.table("organizations")
-            .select("id, name, status")
-            .eq("name", org_name)
-            .execute()
-        )
-        if not org_result.data:
+        candidate = self._lookup_candidate(phone, org_name)
+        if (
+            not candidate
+            or candidate["status"] != "active"
+            or candidate.get("org_status") != "active"
+            or candidate.get("member_status") != "active"
+            or not candidate.get("password_hash")
+            or not verify_password(password, candidate["password_hash"])
+        ):
             raise AuthenticationError(LOGIN_FAILED)
 
-        org = org_result.data[0]
-        if org["status"] != "active":
-            raise AuthenticationError(LOGIN_FAILED)
-
-        org_id = str(org["id"])
-
-        # 2. 查找用户
-        user_result = (
-            self.db.table("users")
-            .select("*")
-            .eq("phone", phone)
-            .execute()
-        )
-        if not user_result.data:
-            raise AuthenticationError(LOGIN_FAILED)
-
-        user = user_result.data[0]
-        user_id = str(user["id"])
-
-        # 3. 检查账号状态
-        if user["status"] != "active":
-            raise AuthenticationError(LOGIN_FAILED)
-
-        # 4. 校验成员资格
-        member_result = (
-            self.db.table("org_members")
-            .select("role, status")
-            .eq("org_id", org_id)
-            .eq("user_id", user_id)
-            .single()
-            .execute()
-        )
-        if not member_result.data:
-            raise AuthenticationError(LOGIN_FAILED)
-        if member_result.data["status"] != "active":
-            raise AuthenticationError(LOGIN_FAILED)
-
-        # 5. 验证密码
-        if not user.get("password_hash"):
-            raise AuthenticationError(LOGIN_FAILED)
-        if not verify_password(password, user["password_hash"]):
-            raise AuthenticationError(LOGIN_FAILED)
-
-        # 6. 更新 current_org_id + last_login_at
-        self.db.table("users").update({
-            "current_org_id": org_id,
-            "last_login_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", user_id).execute()
-        record_user_activity(
-            self.db,
-            user_id=user_id,
-            event_type="login_success",
-            org_id=org_id,
-            source="web",
-        )
-
+        org_id = str(candidate["org_id"])
+        material = create_token_material(str(candidate["id"]))
+        user = self._commit_login(candidate, material, org_id)
         logger.info(
-            f"User logged in via org | user_id={user_id} | "
-            f"org_id={org_id} | org_name={org_name}"
+            f"User logged in via org | user_id={user['id']} | org_id={org_id}"
         )
-
-        # 7. 返回 token + 用户信息 + 企业信息
-        token = self._create_token_response(user_id)
 
         return {
-            "token": token,
+            "token": material.response(),
             "user": self._format_user_response(user),
             "org": {
                 "org_id": org_id,
-                "org_name": org["name"],
-                "org_role": member_result.data["role"],
+                "org_name": candidate["org_name"],
+                "org_role": candidate["org_role"],
             },
         }
 
@@ -389,25 +274,17 @@ class AuthService:
             ValidationError: 验证码错误
         """
         try:
-            # 1. 先检查用户是否存在
-            result = self.db.table("users").select("id").eq("phone", phone).execute()
-
-            if not result.data:
+            if not self._lookup_candidate(phone):
                 raise NotFoundError("用户", phone)
-
-            user_id = result.data[0]["id"]
-
-            # 2. 验证验证码
             if not await self._verify_code(phone, code, "reset_password"):
                 raise ValidationError("验证码错误或已过期")
-
-            # 3. 更新密码
-            password_hash = hash_password(new_password)
-            self.db.table("users").update({
-                "password_hash": password_hash
-            }).eq("id", user_id).execute()
-
-            logger.info(f"User password reset | user_id={user_id} | phone={phone}")
+            result = self.db.rpc("reset_web_password", {
+                "p_phone": phone,
+                "p_password_hash": hash_password(new_password),
+            }).execute()
+            if result.data is not True:
+                raise NotFoundError("用户", phone)
+            logger.info("User password reset")
 
             return {"message": "密码重置成功"}
         except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
@@ -458,87 +335,69 @@ class AuthService:
         2. 校验：未吊销 + 未过期 + 用户有效
         3. 吊销旧 refresh → 签发新双 token
         """
-        token_hash = hash_refresh_token(raw_refresh_token)
-
-        # 查 DB
-        result = (
-            self.db.table("refresh_tokens")
-            .select("id, user_id, expires_at, revoked")
-            .eq("token_hash", token_hash)
-            .maybe_single()
-            .execute()
+        raw_refresh, refresh_hash, refresh_expires_at = create_refresh_token()
+        result = self.db.rpc("rotate_web_refresh_token", {
+            "p_old_hash": hash_refresh_token(raw_refresh_token),
+            "p_new_hash": refresh_hash,
+            "p_new_expires_at": refresh_expires_at.isoformat(),
+        }).execute()
+        outcome = (result.data or {}).get("outcome")
+        errors = {
+            "invalid": "无效的刷新令牌",
+            "reuse": "刷新令牌已失效，请重新登录",
+            "expired": "刷新令牌已过期，请重新登录",
+            "inactive": "账号已被禁用",
+        }
+        if outcome != "rotated":
+            raise AuthenticationError(errors.get(outcome, "无效的刷新令牌"))
+        user_id = str(result.data["user_id"])
+        token = create_token_material_from_refresh(
+            user_id, raw_refresh, refresh_hash, refresh_expires_at,
         )
-
-        if not result.data:
-            raise AuthenticationError("无效的刷新令牌")
-
-        record = result.data
-
-        if record["revoked"]:
-            # 可能被盗用：吊销该用户所有 refresh token（安全降级）
-            self.db.table("refresh_tokens").update({
-                "revoked": True,
-                "revoked_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("user_id", record["user_id"]).eq("revoked", False).execute()
-            logger.warning(
-                f"Refresh token reuse detected, revoking all tokens | "
-                f"user_id={record['user_id']}"
-            )
-            raise AuthenticationError("刷新令牌已失效，请重新登录")
-
-        # 检查过期
-        expires_at = datetime.fromisoformat(str(record["expires_at"]))
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at < datetime.now(timezone.utc):
-            raise AuthenticationError("刷新令牌已过期，请重新登录")
-
-        # 检查用户状态
-        user_result = (
-            self.db.table("users")
-            .select("id, status")
-            .eq("id", record["user_id"])
-            .maybe_single()
-            .execute()
-        )
-        if not user_result.data or user_result.data["status"] != "active":
-            raise AuthenticationError("账号已被禁用")
-
-        user_id = str(record["user_id"])
-
-        now = datetime.now(timezone.utc)
-
-        # 吊销旧 refresh token
-        self.db.table("refresh_tokens").update({
-            "revoked": True,
-            "revoked_at": now.isoformat(),
-        }).eq("id", record["id"]).execute()
-
-        # 写路径清理：删除该用户已吊销或已过期的 token 行（防表膨胀）
-        self.db.table("refresh_tokens").delete().eq(
-            "user_id", user_id
-        ).eq("revoked", True).execute()
-
-        self.db.table("refresh_tokens").delete().eq(
-            "user_id", user_id
-        ).lt("expires_at", now.isoformat()).execute()
-
-        # 签发新双 token
-        token = self._create_token_response(user_id)
-
         logger.info(f"Token refreshed | user_id={user_id}")
-        return {"token": token}
+        return {"token": token.response()}
 
-    def revoke_user_refresh_tokens(self, user_id: str) -> None:
-        """吊销用户所有 refresh token（用于登出/密码重置）"""
-        self.db.table("refresh_tokens").update({
-            "revoked": True,
-            "revoked_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("user_id", user_id).eq("revoked", False).execute()
+    def revoke_refresh_token(self, raw_refresh_token: str) -> None:
+        """通过认证门面幂等吊销精确 refresh token。"""
+        self.db.rpc("revoke_web_refresh_token", {
+            "p_token_hash": hash_refresh_token(raw_refresh_token),
+        }).execute()
 
-    def _create_token_response(self, user_id: str) -> dict:
-        """创建双 token 响应（委托 security.create_token_pair）"""
-        return create_token_pair(self.db, user_id)
+    def _lookup_candidate(
+        self, phone: str, org_name: str | None = None,
+    ) -> dict[str, object] | None:
+        result = self.db.rpc("lookup_web_auth_candidate", {
+            "p_phone": phone,
+            "p_org_name": org_name,
+        }).execute()
+        return result.data
+
+    def _commit_login(
+        self,
+        candidate: dict[str, object],
+        material: TokenMaterial,
+        org_id: str | None = None,
+    ) -> dict[str, object]:
+        try:
+            result = self.db.rpc("commit_web_login", {
+                "p_user_id": str(candidate["id"]),
+                "p_org_id": org_id,
+                **self._refresh_params(material),
+            }).execute()
+        except Exception as exc:
+            if "WEB_AUTH_PRINCIPAL_INACTIVE" in str(exc):
+                raise AuthenticationError("账号或企业状态已变更") from exc
+            raise
+        if not result.data:
+            raise AuthenticationError("账号已被禁用")
+        return result.data
+
+    @staticmethod
+    def _refresh_params(material: TokenMaterial) -> dict[str, str]:
+        return {
+            "p_refresh_hash": material.refresh_token_hash,
+            "p_refresh_expires_at": material.refresh_expires_at.isoformat(),
+        }
 
     def _format_user_response(self, user: dict) -> dict:
         """格式化用户响应"""

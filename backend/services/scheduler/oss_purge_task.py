@@ -49,12 +49,20 @@ async def _sleep_until_target() -> None:
 
 async def _purge_expired_files() -> int:
     """扫描过期记录，逐条删除 OSS 文件并标记 purged。"""
+    from core.db_scope import DatabaseAccessKind, DatabaseScope
     from services.knowledge_config import get_pg_connection, is_kb_available
 
     if not is_kb_available():
         return 0
 
-    conn_ctx = await get_pg_connection()
+    conn_ctx = await get_pg_connection(
+        DatabaseScope(
+            actor_user_id=None,
+            org_id=None,
+            access_kind=DatabaseAccessKind.WORKER,
+            request_id="oss-purge",
+        ),
+    )
     if conn_ctx is None:
         return 0
 

@@ -63,6 +63,246 @@
 - `backend/tests/test_message_ecom_preparation.py`：覆盖电商图 Phase 1 的 running task 先落库与 Phase 2 复用原子图片批次。
 - `backend/tests/test_message_video_preparation.py`：覆盖视频先落库、参数计费、稳定 task 积分绑定、明确失败、结果未知和跨模型重试。
 - `backend/scripts/backfill_generation_turns.py`：历史 assistant Turn/reply 关系的默认 dry-run、确定性分类、分批 apply、checkpoint 与无正文审计。
+- `backend/scripts/migration_runner.py`：完整文件名身份、SHA-256、显式 legacy baseline、事务执行和 advisory lock 的数据库迁移账本 Runner。
+- `deploy/run-migrations.sh`：部署重启前执行迁移 plan/apply；关闭迁移但存在 pending 时失败关闭。
+- `docs/document/TECH_数据库租户纵深防御.md`：基于生产角色/RLS/policy 审计，设计租户 Registry、
+  事务级 DatabaseScope、owner/migrator/Web runtime/WeCom runtime/worker 角色和 Agent
+  Runtime 第一组 FORCE RLS；WeCom 消息面使用独立 runtime 登录能力，控制面继续使用 Worker。
+- `docs/document/TECH_Web认证数据库能力门面.md`：设计认证前 runtime Scope、最小候选查询、
+  注册/登录提交/refresh轮换/密码重置/登出数据库门面，以及第二批 RLS 权限边界。
+- `backend/core/tenant_registry.py`：租户表类别、个人身份来源、父事实和应用过滤激活状态的唯一
+  Registry；提供生产 pg_catalog 双向合同，首步不改变旧 OrgScopedDB 过滤集合。
+- `backend/core/db_scope.py`：以不可变 DatabaseScope 包装同步/异步 Query、RPC 和数据库 client，
+  在同一事务中先注入用户、企业、访问类别与请求标识；复用原连接池且不改变旧 client 行为。
+- `backend/tests/test_wecom_request_scope.py`：验证企微不同企业消息使用独立请求级 DatabaseScope，
+  用户映射后只提升当前消息身份，且不修改共享根服务。
+- `backend/services/conversation_db_scope.py`：装配 Actor 跨租户 Worker 扫描 Scope，以及 claim
+  后共享同一身份的异步控制面、异步应用层和同步 Handler 数据库门面。
+- `backend/tests/test_conversation_db_scope.py`、`backend/tests/test_conversation_execution_scope.py`：
+  覆盖 Worker 无租户身份、任务身份失败关闭及执行/提交/通知切换到任务 DB。
+- `backend/tests/test_db_scope_raw_connection.py`：覆盖异步 raw SQL 连接在同一事务注入 Scope、
+  异常回滚、禁止显式结束事务、禁止绕过 scoped pool 取裸连接及双租户身份独立。
+- `backend/tests/test_memory_scoped_database.py`：覆盖 Memory 从调用方解析可信 Scope、全局
+  psycopg pool 的事务包装、跨租户 Scheduler 隔离、无 Scope 失败关闭及 Adapter 提交语义。
+- `backend/services/knowledge_config.py`：Knowledge/Graph/Metrics 共享的 raw PostgreSQL 入口
+  必须解析显式 DatabaseScope，并通过 `AsyncScopedConnectionPool` 在事务内注入；
+  独立评分连接同样在业务 SQL 前注入 Worker Scope。
+- `backend/services/knowledge_service.py`、`graph_service.py`、`knowledge_metrics.py`：在线调用
+  显式透传 scoped DB，事务由 scoped connection context 统一提交/回滚。
+- `deploy/setup-tenant-db-roles.sh`：由 PostgreSQL 管理员显式执行的幂等角色初始化入口；
+  包含一次性 config-import-reader、migrator 与各运行角色，密码完全独立；
+  密码只从环境变量读取，创建 NOLOGIN owner 和独立 migrator/runtime/worker，且不修改
+  业务对象 owner、grant、policy 或现有服务连接。
+- `deploy/run-psql-admin.py`：将管理员 PostgreSQL URL 安全解析为 libpq 环境变量后
+  `exec psql`，避免凭证进入进程参数，并拒绝未知、重复或不安全连接参数。
+- `backend/tests/test_run_psql_admin.py`：覆盖 URL 解码、TLS/超时参数及不安全连接串拒绝。
+- `backend/tests/test_tenant_db_roles_script.py`：覆盖缺失/弱/复用密码拒绝、角色能力边界、
+  SQL 字面量转义、密码不进入日志以及 psql 失败传播。
+- `deploy/env-templates/*.env.template`：runtime、worker、migrator 的无凭证连接文件合同，
+  分别约束 `DATABASE_URL` 或 `MIGRATION_DATABASE_URL` 的数据库登录角色。
+- `deploy/validate-tenant-db-env.sh`：切换服务前验证三个真实角色文件的存在性、0600 权限、
+  固定配置键、角色用户名、占位符清理和连接串独立性，不输出连接内容。
+- `backend/tests/test_tenant_db_env_contract.py`：覆盖模板安全性及角色环境合同的成功/失败边界。
+- `deploy/env-templates/sync.env.template`：Sync/ERP 分阶段切换期间使用的独立旧角色连接
+  文件模板，避免与 runtime/Actor worker 共用数据库凭证。
+- `backend/tests/test_service_database_role_files.py`：固定 Backend/WeCom、Actor、Sync 的
+  Systemd 数据库角色覆盖文件映射，防止服务再次全部回退到共享 `.env`。
+- `deploy/env-templates/worker-client.env.template`：Web 内后台任务与 Actor raw SQL 使用的
+  `WORKER_DATABASE_URL` 无凭证模板；必须与 `.env.worker` 指向同一 Worker 连接。
+- `deploy/env-templates/wecom-runtime.env.template`：WeCom 入站消息面使用的独立
+  `everydayai_wecom_runtime` 无凭证连接合同；与 Web runtime 和 Worker 连接完全分离。
+- `backend/services/web_database_runtime.py`：集中管理 Web 内知识 Seed、恢复/清理、
+  BackgroundTaskWorker、错误监控及 runtime/worker 数据库池关闭生命周期。
+- `backend/tests/test_worker_database_client.py`、`backend/tests/test_web_database_runtime.py`：
+  覆盖缺失 Worker URL 失败关闭、独立池创建/关闭、runtime schema 与 worker 后台身份分离。
+- `backend/wecom_ws_runner.py`：WeCom 单进程内分离 control/runtime 数据库身份；bot
+  配置发现与 Outbox 投递走 Worker client，入站消息与卡片事件走请求级 runtime Scope。
+- `backend/tests/test_wecom_ws_runner.py`、`backend/tests/test_wecom_ws_runner_main.py`、
+  `backend/tests/test_wecom_request_scope.py`：固定 WeCom 双客户端装配、消息级企业/用户
+  作用域和三类连接池关闭合同。
+- `backend/migrations/152_wecom_runtime_capability.sql`：以不可变迁移增量扩展 WeCom
+  runtime 角色匹配，并提供 org/corp/角色校验的身份、聊天地址和聊天目标安全门面。
+- `backend/migrations/rollback/152_wecom_runtime_capability_rollback.sql`：删除 WeCom
+  门面并恢复原 runtime/worker 角色匹配，不重新开放旧函数的 PUBLIC EXECUTE。
+- `backend/tests/test_wecom_runtime_capability_migration.py`：固定 SECURITY DEFINER、
+  search_path、PUBLIC revoke、历史 NULL 认领、跨企业冲突及 rollback 合同。
+- `deploy/transfer-agent-runtime-ownership.sh`：管理员执行的迁移账本、首组 13 表和资产函数
+  原子 owner 转移；先赋予旧角色临时 owner 成员关系，兼容生产既有无 policy RLS 表。
+- `deploy/rollback-agent-runtime-ownership.sh`：受显式危险操作开关保护的 owner 恢复入口；
+  恢复迁移账本、13 表和资产函数；任一目标表仍启用 FORCE RLS 时失败关闭。
+- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–159 已应用、全部目标对象 Owner
+  正确、服务已切换且旧连接归零后，撤销旧角色的临时 owner 成员关系。
+- `backend/tests/test_tenant_db_role_finalize_script.py`：覆盖最终撤销双重人工门禁、迁移、
+  Owner、独立管理员、旧连接检查及旧角色名注入拒绝。
+- `backend/tests/test_agent_runtime_ownership_scripts.py`：覆盖精确 13 表范围、前置检查、
+  owner 辅助读取授权、旧服务兼容授权、无提前 RLS、管理员 URL 隐藏及回滚保护。
+- `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 18 张表、
+  实际列 sequence 和 25 个固定业务函数签名（含两个 WeCom enqueue 重载）；撤销
+  PUBLIC/新角色权限并保留旧服务兼容权限。
+- `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
+  FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
+- `backend/tests/test_runtime_message_ownership_scripts.py`：覆盖第二批精确对象、动态列
+  sequence、权限收紧、管理员 URL 隐藏和双重回滚保护。
+- `backend/migrations/153_runtime_message_rls_and_auth.sql`：建立六个 Web 认证事务门面、
+  第二批 17 表 ENABLE RLS/policy、Web 普通能力及 152 WeCom 门面最小授权。
+- `backend/migrations/rollback/153_runtime_message_rls_and_auth_rollback.sql`：撤销 153
+  权限和 policy、恢复迁移前 RLS 状态并删除认证门面，不删除业务事实。
+- `backend/tests/test_runtime_message_rls_and_auth_migration.py`：覆盖认证角色/Scope、
+  注册与 refresh 原子性、精确 policy 表集合、敏感表 owner-only 和 rollback。
+- `backend/testing/auth_test_support.py`：集中构造认证 RPC 测试用户事实，避免拆分后的
+  登录与 token 测试重复维护敏感字段契约。
+- `backend/testing/tenant_role_matrix.py`：真实 PostgreSQL 角色矩阵的失败关闭配置门禁；
+  要求显式开关、同一测试库、数据库名二次确认及三个精确运行角色。
+- `backend/tests/test_tenant_role_matrix_config.py`：覆盖矩阵开关、URL、测试库确认、
+  数据库一致性和角色身份校验。
+- `backend/tests/test_tenant_role_matrix_external.py`：在显式隔离测试库中验证 17 表 RLS、
+  个人/企业隔离、停用员工失权、敏感表直访拒绝及 Web/WeCom/Worker RPC 能力分区。
+- `backend/migrations/154_wecom_message_rpc_facades.sql`：将既有 WeCom 消息函数改为
+  owner-only core，并以角色、企业、用户和 corp 校验的 SECURITY DEFINER 门面对外。
+- `backend/migrations/rollback/154_wecom_message_rpc_facades_rollback.sql`：撤销消息门面、
+  恢复原函数名与迁移前活动记录权限。
+- `backend/tests/test_wecom_message_rpc_facades_migration.py`：覆盖 core 隐藏、Scope 门禁、
+  最小授权、旧角色切换窗口和 rollback 对称性。
+- `backend/migrations/155_web_wecom_oauth_capabilities.sql`：建立 Web WeCom OAuth
+  未登录/已登录双 Scope、企业配置精确读取、原子登录及绑定管理门面；跨用户身份冲突
+  失败关闭，禁止在企业治理能力就绪前自动合并账号。
+- `backend/migrations/rollback/155_web_wecom_oauth_capabilities_rollback.sql`：仅撤销
+  OAuth RPC 与授权，不删除用户、映射、成员、token 或活动事实。
+- `backend/tests/test_web_wecom_oauth_capabilities_migration.py`：覆盖 Scope 门禁、
+  原子提交组成、跨用户绑定拒绝、最小角色授权与 rollback 对称性。
+- `backend/migrations/156_governance_authority_foundation.sql`：建立管理员与企业治理的
+  runtime/actor/org 统一授权根，以及不记录秘密值、仅 owner 可访问的 FORCE RLS
+  审计账本；第一批只读门面覆盖本人企业/邀请、企业安全详情/成员和超管企业/用户查询。
+- `backend/tests/test_governance_authority_foundation_migration.py`：覆盖治理授权 Scope、
+  服务角色撤权、审计来源、FORCE RLS 和 rollback 顺序。
+- `backend/migrations/157_governance_write_capabilities.sql`：原子执行企业创建/更新、
+  成员增删/角色变更和邀请创建/接受，并在同一事务写入不含秘密值的治理审计。
+- `backend/tests/test_governance_write_capabilities_migration.py`：覆盖最小授权、角色不变量、
+  企业/邀请并发锁、成员上限、审计原子性和历史审计兼容回滚。
+- `backend/services/configuration/definitions.py`：平台、企业和个人配置的代码 Registry
+  唯一来源；提供 canonical JSON 与契约 SHA-256，首版覆盖 AI、ERP、企微和快麦 Web。
+- `backend/migrations/158_configuration_control_plane_foundation.sql`：固化 Registry v1
+  数据库投影，创建 configuration entries/policies 和 envelope secret records；
+  三张业务事实表从创建起启用 FORCE RLS，服务角色没有直表权限。
+- `backend/migrations/rollback/158_configuration_control_plane_foundation_rollback.sql`：
+  按外键依赖顺序撤销 158 的四张空基础表。
+- `backend/tests/test_configuration_definitions.py` 与
+  `backend/tests/test_configuration_control_plane_foundation_migration.py`：逐项校验代码
+  Registry 与 SQL 快照、Scope/Secret 约束、FORCE RLS、最小权限和回滚对称性。
+- `backend/services/configuration/envelope.py`：定义可替换的 KEK Provider 边界、
+  Local current/previous keyring 和数据库安全的 SecretEnvelope。
+- `backend/services/configuration/material_service.py`：为每条 Secret 生成随机 DEK，
+  以 scope/name/version AAD 执行 payload 加解密，不复用旧企业密钥。
+- `deploy/env-templates/kek.env.template` 与 `deploy/validate-kek-env.sh`：提供无真实密钥
+  的 KEK 文件格式，并强制真实文件为 0600、仅包含 current version 与 keyring。
+- `backend/tests/test_configuration_envelope.py` 与 `backend/tests/test_kek_env_contract.py`：
+  覆盖信封随机性、AAD 防替换、KEK 轮换/缺失、篡改失败关闭及部署权限合同。
+- `backend/migrations/159_configuration_management_core.sql` 与
+  `backend/migrations/159_configuration_management_facades.sql`：提供 Registry 契约读取、
+  owner-only 配置写入核心，以及平台/企业/个人最小授权管理门面；使用版本 CAS，
+  状态和审计不返回 Secret 材料。
+- `backend/migrations/rollback/159_configuration_management_core_rollback.sql` 与
+  `backend/migrations/rollback/159_configuration_management_facades_rollback.sql`：
+  先撤销公开门面，再撤销内部管理核心，不删除 158 基础表。
+- `backend/services/configuration/control_service.py`：校验代码 Registry 与数据库投影
+  完全一致，并为三种 Scope 提供分离的配置 set/delete/status 调用。
+- `backend/services/configuration/resolver.py`：严格校验固定 Bundle RPC 返回的键顺序、
+  来源、版本、普通值与 SecretRef，拒绝 Registry、Scope 或 envelope 漂移。
+- `backend/services/configuration/bundles.py`：仅暴露 11 个固定命名 Bundle 方法，在
+  请求/任务内按数据库选定 Scope 解密 Secret，并再次校验 payload 字段。
+- `backend/services/web_database_runtime.py`：Web 数据库启动在创建后台任务前执行
+  Registry 漂移门禁，不一致时失败关闭。
+- `backend/tests/test_configuration_management_migrations.py`、
+  `backend/tests/test_configuration_control_service.py` 与
+  `backend/tests/test_web_database_runtime.py`：覆盖权限、CAS、Secret 脱敏、错误映射和
+  启动顺序；真实临时 PostgreSQL 另验证 apply/行为/rollback。
+- `backend/migrations/160_configuration_resolution_core.sql` 与
+  `backend/migrations/160_configuration_resolution_facades.sql`：固化 Bundle Registry，
+  执行 user→organization→platform 有效层解析，并按 runtime/worker/wecom 角色仅开放
+  无参数固定 Bundle 能力。
+- `backend/tests/test_configuration_resolution_core_migration.py`、
+  `backend/tests/test_configuration_bundle_facades_migration.py`、
+  `backend/tests/test_configuration_resolver.py` 与
+  `backend/tests/test_configuration_bundles.py`：覆盖继承、企业策略、角色矩阵、
+  SecretRef/解密 Schema 和固定 RPC 映射。
+- `backend/services/configuration/legacy_migration.py`：定义旧 `org_configs` 与快麦
+  外部凭证到 Registry v1 的不可变组合契约；固定三次批量读取旧表，在内存中验证旧
+  密文与 Corp ID 来源，再生成不含配置值的失败关闭预检报告。
+- `backend/tests/test_configuration_legacy_migration.py` 与
+  `backend/tests/test_configuration_legacy_collector.py`：覆盖原子 Secret 组合、未知键、
+  Corp ID 双来源冲突、企业/全局旧密钥、损坏密文、孤儿/畸形行、明文 Cookie 拒绝和
+  过期凭证保持禁用。
+- `backend/migrations/161_configuration_legacy_import.sql`：仅向 migrator 开放显式 apply
+  门控的全量原子导入 RPC；所有目标固定使用版本 0 CAS，并写入 FORCE RLS 脱敏审计。
+- `backend/migrations/rollback/161_configuration_legacy_import_rollback.sql`：撤销未使用的
+  导入能力；已有导入审计时拒绝删除，避免抹除持久证据。
+- `backend/tests/test_configuration_legacy_import_migration.py`：覆盖 migrator 独占授权、
+  批量边界、输入精确形状、单事务 CAS、脱敏响应/审计和有数据回滚拒绝。
+- `backend/services/configuration/legacy_import.py`：将预检通过的旧配置值转换为 Registry
+  v1 普通值或 envelope；固定组合 Secret、仓库 ID 去重、Corp ID 来源选择，并保持
+  expired/invalid 外部凭证不配置。
+- `backend/tests/test_configuration_legacy_import_planner.py`：覆盖转换映射、密文计划、
+  预检/组织集合一致性、外部凭证状态、缺值失败关闭和计划对象脱敏。
+- `backend/services/configuration/legacy_import_source.py`：把固定旧数据集合转换为对齐的
+  预检报告和解密值；保留三查询兼容入口，正式 CLI 只使用 export payload 入口。
+- `backend/services/configuration/legacy_import_source_executor.py`：使用专用 Reader 单连接，
+  在一个只读事务/游标中执行角色校验、read GUC 和单次 export RPC，再交给严格解析器。
+- `backend/services/configuration/legacy_import_executor.py`：验证显式确认和
+  `everydayai_migrator` session_user 后，在同一 psycopg 事务/游标执行 `SET LOCAL` 与
+  161 批量 RPC，并严格校验脱敏响应。
+- `backend/scripts/migrate_legacy_configuration.py`：默认 dry-run 的一次性迁移入口；
+  source/migrator DSN 分离，apply 要求固定 import_id 与精确确认字符串。
+- `deploy/env-templates/legacy-config-import.env.template`：161 一次性迁移的旧库只读 DSN、
+  migrator DSN、旧密钥兜底和新 KEK 示例，不包含真实材料。
+- `backend/migrations/161_configuration_legacy_import.sql` 同时提供
+  `export_legacy_configuration_snapshot`：仅允许一次性 Reader 在显式 read GUC 下，
+  通过 owner-held SECURITY DEFINER 固定导出三张旧表的精确字段；Reader 无表权限。
+- `backend/tests/test_configuration_legacy_import_source.py`、
+  `backend/tests/test_configuration_legacy_import_source_executor.py`、
+  `backend/tests/test_configuration_legacy_import_source_external.py`、
+  `backend/tests/test_configuration_legacy_import_executor.py`、
+  `backend/tests/test_migrate_legacy_configuration_script.py` 与
+  `backend/tests/test_configuration_legacy_import_external.py`：覆盖单快照、角色/事务门禁、
+  CLI 默认只读、Reader 单事务 export 和显式隔离 PostgreSQL 行为。
+- `deploy/preflight-legacy-config-import.sh`：通过安全管理员 psql 启动器，在只读事务中
+  检查 158–161 台账、角色属性、导入函数 owner/grant、配置表 FORCE RLS、Registry
+  固定计数和导入目标全空。
+- `backend/tests/test_configuration_legacy_import_preflight_script.py`：覆盖管理员 URL 门禁、
+  只读/回滚合同、无写 SQL、迁移/角色/授权/RLS/空目标和旧来源表检查。
+- `backend/testing/org_config_test_support.py`：提供同步/异步企业配置测试共用的隔离
+  QueryBuilder 与 FakeDB，测试文件不再互相导入。
+- `backend/tests/test_org_config.py` 与 `backend/tests/test_org_config_async.py`：分别覆盖
+  同步和异步企业配置解析，均保持在 500 行以内。
+- `backend/testing/knowledge_test_support.py`：集中提供知识服务测试的隔离数据库与配置
+  fixture；`test_knowledge_service.py`、`test_knowledge_features.py` 和
+  `test_knowledge_policies.py` 分别覆盖核心、提取/图谱及 Schema/淘汰职责。
+- `backend/tests/test_erp_agent.py`、`test_erp_agent_analysis.py`、
+  `test_erp_agent_plans.py`、`test_erp_agent_contracts.py` 与
+  `test_erp_agent_reliability.py`：按入口、分析、计划、契约和可靠性拆分 ERP Agent
+  单元测试，所有文件保持在 500 行以内。
+- `docs/document/RUNBOOK_161_旧配置迁移.md`：固定 158–161 应用、数据库只读 preflight、
+  同 import_id dry-run/apply、双人确认、导入后核验和不删除持久审计的回退边界。
+- `backend/tests/test_legacy_config_import_runbook.py`：防止运行手册阶段顺序、确认协议、
+  角色隔离、旧真相源保留和一次性环境模板发生漂移。
+- `docs/document/TECH_管理员企业配置与Skill共享治理.md`：定义平台、企业、个人配置
+  与 Skill 共享边界，以及迁移 156–163 的实施顺序。
+- `docs/document/TECH_统一配置与Secret控制平面.md`：取代原 158 以后配置存储设计，
+  统一定义 platform/org/user 继承、信封加密、命名 Bundle、Worker 两阶段 Scope、
+  ERP Token CAS、Kuaimai Cookie 迁移和 Skill SecretRef。
+- `docs/document/TECH_统一配置与Secret控制平面_迁移附录.md`：保存 158–165 实施顺序、
+  生产只读审计结论与 161 分阶段验证证据，主设计文档保持在 500 行以内。
+- `backend/migrations/150_agent_runtime_tenant_defense.sql`：为 Agent Runtime 首组 13 表
+  创建失败关闭的租户身份辅助函数和 `USING + WITH CHECK` policy；仅 ENABLE，不 FORCE。
+- `backend/migrations/rollback/150_agent_runtime_tenant_defense_rollback.sql`：移除首组 policy
+  与辅助函数，并仅对迁移前未启用 RLS 的 6 张表恢复 DISABLE 状态。
+- `backend/tests/test_agent_runtime_rls_migration.py`：静态约束 policy 表集合、个人与 Channel
+  语义、连接角色/Scope 匹配、停用员工失权、函数公开权限及回滚对称性。
+- `backend/migrations/151_agent_runtime_role_grants.sql`：按 runtime/worker 真实操作拆分首组
+  表权限，授予租户辅助函数和公开资产登记入口，并仅让资产 policy 接受 owner 执行链。
+- `backend/migrations/rollback/151_agent_runtime_role_grants_rollback.sql`：撤销首组表/function
+  权限，并恢复资产 policy 的普通角色集合。
+- `backend/tests/test_agent_runtime_role_grants_migration.py`：覆盖无 DELETE、无资产表直权、
+  内部资产函数不公开、辅助函数完整授权和精确回滚表集合。
 - `backend/tests/test_backfill_generation_turns.py`：覆盖四级证据、冲突拒绝、条件更新、批次失败和 dry-run/apply 语义。
 
 本轮企微上下文治理新增的核心服务：
@@ -283,6 +523,8 @@ EVERYDAYAIONE/
 │   │   ├── 134_web_user_wecom_delivery.sql # Web 用户输入按真实企微绑定写入事务 Outbox
 │   │   ├── 136_conversation_evidence_model_view.sql # Evidence 分级模型视图、hash、大小与过期字段
 │   │   ├── 137_context_summary_revision_rpc.sql # 连续闭合 Turn 摘要的 revision CAS 原子提交
+│   │   ├── 150_agent_runtime_tenant_defense.sql # Agent Runtime 首组 13 表租户 RLS policy
+│   │   ├── 151_agent_runtime_role_grants.sql # Agent Runtime 首组最小角色授权
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -296,7 +538,9 @@ EVERYDAYAIONE/
 │   │       ├── 129_conversation_attachments_rollback.sql
 │   │       ├── 131_attachment_asset_lifecycle_rollback.sql
 │   │       ├── 132_wecom_channel_task_enqueue_rollback.sql
-│   │       └── 133_wecom_attachment_single_consumption_rollback.sql
+│   │       ├── 133_wecom_attachment_single_consumption_rollback.sql
+│   │       ├── 150_agent_runtime_tenant_defense_rollback.sql
+│   │       └── 151_agent_runtime_role_grants_rollback.sql
 │   ├── scripts/
 │   │   └── reconcile_wecom_attachments.py # 历史企微附件 dry-run/事务调和
 │   ├── services/                 # 业务逻辑层
@@ -349,8 +593,8 @@ EVERYDAYAIONE/
 │   │   ├── memory_settings.py       # 通用记忆开关与保留设置
 │   │   ├── agent/runtime/context/    # 全通道共享模型预算、Evidence/Receipt，以及 Run/跨 Worker 压缩协调
 │   │   ├── agent/evidence_tool_mixin.py # 固定 conversation/revision 的 Evidence Search/Get
-│   │   ├── wecom_oauth_service.py  # 企微 OAuth 扫码登录服务（state管理、code换userid、登录/创建/绑定/解绑）
-│   │   ├── wecom_account_merge.py  # 企微账号合并服务（数据迁移+积分合并+用户删除）
+│   │   ├── wecom_oauth_service.py  # 企微 OAuth state、code exchange、二维码与 Redis 一次性交接
+│   │   ├── wecom/oauth_identity_service.py # 迁移 155 scoped OAuth 身份能力客户端
 │   │   ├── handlers/                 # 统一消息处理器
 │   │   │   ├── __init__.py               # Handler 工厂
 │   │   │   ├── base.py                   # Handler 基类
@@ -398,7 +642,11 @@ EVERYDAYAIONE/
 │   │   │   ├── image/requirement_assist_service.py # 三方案模型调用、降级、校验与事实冲突闸门
 │   │   │   ├── image/requirement_assist_rate_limiter.py # Redis 跨进程用户级 AI 帮写限流
 │   │   │   ├── erp_agent.py              # ERP 独立 Agent（路由层）
-│   │   │   ├── tool_executor.py          # 同步工具执行器
+│   │   │   ├── tool_executor.py          # 同步工具执行器与 handler 注册
+│   │   │   ├── knowledge_tool_mixin.py   # 租户范围知识库工具执行
+│   │   ├── intent_router_runtime_mixin.py # 路由知识增强、HTTP 客户端与观测
+│   │   ├── knowledge_seed_service.py      # 种子知识导入与关系边重建
+│   │   │   ├── org_invitation_mixin.py    # 企业邀请创建与接受
 │   │   │   ├── tool_loop_executor.py     # LLM 工具循环引擎
 │   │   │   ├── tool_loop_execution.py    # 工具执行阶段与统一Validation旁路观察
 │   │   │   ├── tool_output.py            # 结构化工具输出协议（ToolOutput）
@@ -439,11 +687,13 @@ EVERYDAYAIONE/
 │   ├── config/                   # 配置文件
 │   │   └── kie_models.py             # KIE 模型配置
 │   ├── scripts/                  # 运维/数据修复与隔离 POC 脚本
+│   │   ├── migration_runner.py   # PostgreSQL 迁移身份/checksum/baseline/事务执行门禁
 │   │   ├── backfill_media_asset_urls.py # 历史图片 original_url/thumbnail_url 回填脚本
 │   │   ├── backfill_conversation_context_items.py # 历史消息到 ConversationItem/Artifact 的幂等回填
 │   │   ├── verify_conversation_context_backfill.py # 统一上下文回填完整性的只读硬切换门禁
 │   │   └── poc_ecom_requirement_assist.py # 主图/详情图 AI 帮写三方案多模态 POC（不写业务数据）
 │   └── migrations/              # 数据库迁移脚本
+│       ├── 000_migration_ledger.sql # 完整文件名身份与 SHA-256 权威迁移账本
 │       └── 034_wecom_oauth_support.sql  # 企微 OAuth 数据库迁移
 │
 └── frontend/                 # 前端代码（React/TypeScript）
@@ -484,6 +734,13 @@ EVERYDAYAIONE/
         │   │   ├── GenerationProgress.tsx     # Step 4生成进度
         │   │   ├── GenerationCard.tsx         # 单张生成状态
         │   │   └── ResultGallery.tsx           # Step 5结果画廊
+        │   ├── workspace/                # 工作区页面、文件区域与交互 Hooks
+        │   │   ├── WorkspaceView.tsx
+        │   │   ├── WorkspaceFileArea.tsx
+        │   │   ├── WorkspaceDeleteDialog.tsx
+        │   │   ├── useWorkspaceItemActions.ts
+        │   │   ├── useWorkspaceSelectionActions.ts
+        │   │   └── useWorkspaceKeyboard.ts
         │   └── chat/                     # 聊天相关组件
         │       ├── Sidebar.tsx               # 左侧栏（对话列表、用户菜单）
         │       ├── ConversationList.tsx      # 对话列表（按日期分组，302行）
@@ -576,12 +833,19 @@ EVERYDAYAIONE/
         ├── hooks/                    # 自定义 Hooks
         │   └── useDetailRequirementAssist.ts # AI 帮写弹窗请求、竞态和三方案编辑状态
         │   ├── useImageUpload.ts         # 图片上传逻辑
+        │   ├── workspace/                # 工作区浏览、上传、变更和视图状态子 Hooks
+        │   │   ├── useWorkspaceBrowser.ts
+        │   │   ├── useWorkspaceUpload.ts
+        │   │   ├── useWorkspaceMutations.ts
+        │   │   └── useWorkspaceViewState.ts
         │   ├── useAudioRecording.ts      # 录音逻辑
         │   ├── useDragDropUpload.ts      # 拖拽上传逻辑
         │   ├── useMessageLoader.ts       # 消息加载逻辑（含缓存）
         │   ├── useMessageHandlers.ts     # 消息发送处理逻辑（组合器）
         │   ├── useRegenerateHandlers.ts  # 消息重新生成逻辑
         │   ├── useModelSelection.ts      # 模型选择逻辑（含用户选择保护）
+        │   ├── useWorkspace.ts           # 工作区状态组合公共 Hook
+        │   ├── __tests__/useWorkspace.test.ts # 工作区切换、取消和竞态回归测试
         │   ├── useVirtuaScroll.ts        # Virtua 滚动管理（统一入口）
         │   ├── useUnifiedMessages.ts     # 统一消息读取（合并持久化+临时消息）
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
@@ -619,7 +883,9 @@ EVERYDAYAIONE/
 └── tests/                    # 单元测试
     ├── __init__.py               # 测试模块标识
     ├── conftest.py               # pytest fixtures（mock 对象）
-    ├── test_auth_service.py      # 认证服务测试（12个用例）
+    ├── test_auth_service.py      # 认证短信与用户响应格式测试
+    ├── test_auth_service_login.py # Web 注册、手机号/密码/企业登录 RPC 测试
+    ├── test_auth_service_tokens.py # 密码重置、refresh 轮换与登出 RPC 测试
     ├── test_admin_user_activity_ordering.py # 管理员用户活跃时间排序契约测试
     ├── test_conversation_service.py  # 对话服务测试（11个用例）
     ├── test_message_service.py   # 消息服务测试（12个用例）
@@ -630,6 +896,7 @@ EVERYDAYAIONE/
     ├── test_backfill_user_assets.py # 五类历史资产投影、checkpoint 与失败续跑测试
     ├── test_recent_tool_history.py # 最近 3 个用户回合的安全工具历史投影测试
     ├── test_legacy_summary_migration_retained.py # 旧摘要数据库回滚合同保留测试
+    ├── test_file_browse.py       # 工作区空目录、无效目录和存储故障契约测试
     └── test_chat_payload_blocks.py # 聊天 emit_payload 图片 URL 字段保留测试
 ```
 

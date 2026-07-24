@@ -88,23 +88,29 @@ class TestChatidRegistry:
 
     @pytest.mark.asyncio
     async def test_update_last_chatid(self):
-        """更新 chatid → 调用 DB update"""
+        """更新 chatid → 调用安全 RPC"""
         from services.wecom.user_mapping_service import WecomUserMappingService
 
         db = MagicMock()
         chain = MagicMock()
-        chain.update.return_value = chain
-        chain.eq.return_value = chain
         chain.execute.return_value = MagicMock()
-        db.table = MagicMock(return_value=chain)
+        db.rpc = MagicMock(return_value=chain)
 
         svc = WecomUserMappingService(db)
-        await svc.update_last_chatid("user_abc", "corp1", "chat_123", "single")
+        await svc.update_last_chatid(
+            "user_abc", "corp1", "chat_123", "single", "org-1",
+        )
 
-        chain.update.assert_called_once()
-        update_data = chain.update.call_args[0][0]
-        assert update_data["last_chatid"] == "chat_123"
-        assert update_data["last_chat_type"] == "single"
+        db.rpc.assert_called_once_with(
+            "update_wecom_ingress_chat_address",
+            {
+                "p_wecom_userid": "user_abc",
+                "p_corp_id": "corp1",
+                "p_chatid": "chat_123",
+                "p_chattype": "single",
+                "p_org_id": "org-1",
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_update_last_chatid_error_no_raise(self):
@@ -112,10 +118,12 @@ class TestChatidRegistry:
         from services.wecom.user_mapping_service import WecomUserMappingService
 
         db = MagicMock()
-        db.table = MagicMock(side_effect=RuntimeError("DB down"))
+        db.rpc = MagicMock(side_effect=RuntimeError("DB down"))
         svc = WecomUserMappingService(db)
         # 不应抛出
-        await svc.update_last_chatid("user", "corp", "chat", "single")
+        await svc.update_last_chatid(
+            "user", "corp", "chat", "single", "org-1",
+        )
 
     @pytest.mark.asyncio
     async def test_get_chatid_found(self):

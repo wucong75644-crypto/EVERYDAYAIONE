@@ -178,8 +178,89 @@ BACKEND_PORT=8000                 # 后端API端口
 FRONTEND_PORT=3000                # 前端开发端口（生产环境不用）
 
 # 数据库迁移
-RUN_MIGRATIONS=true               # 是否自动运行数据库迁移
+RUN_MIGRATIONS=false              # 有 pending 时阻断部署；完成账本 baseline 后才可设 true
+MIGRATION_DATABASE_URL=postgresql://everydayai_migrator:<独立密码>@127.0.0.1:5432/everydayai
+# 仅部署迁移使用；不得复用 Backend/Worker 的 DATABASE_URL
 ```
+
+数据库角色环境文件模板位于 `deploy/env-templates/`。真实文件必须安装为：
+
+- `backend/.env.runtime`：仅包含 runtime `DATABASE_URL`
+- `backend/.env.wecom-runtime`：仅包含 WeCom runtime `DATABASE_URL`
+- `backend/.env.worker`：仅包含 worker `DATABASE_URL`
+- `backend/.env.migrator`：仅包含 `MIGRATION_DATABASE_URL`
+
+上述数据库角色文件权限必须为 `0600`，并在切换服务前执行：
+
+```bash
+bash deploy/validate-tenant-db-env.sh /var/www/everydayai/backend
+```
+
+Secret-capable 服务另使用 `backend/.env.kek`，格式参考
+`deploy/env-templates/kek.env.template`。该文件不得放入公共 `.env`，必须为 `0600`，
+current/previous keyring 中每个值均为 base64 编码的 32 字节 KEK。安装后执行：
+
+```bash
+bash deploy/validate-kek-env.sh /var/www/everydayai/backend/.env.kek
+```
+
+在 Secret 管理能力和对应服务接线完成前，不得提前把 `.env.kek` 加入 Systemd
+`EnvironmentFile`；后续只向确实需要加解密的进程注入。
+
+在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
+`EnvironmentFile` 指向这些角色文件。
+
+首次所有权转移必须由 PostgreSQL 管理员执行，且必须先完成数据库备份：
+
+```bash
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/transfer-agent-runtime-ownership.sh
+```
+
+脚本转移迁移账本、首组 13 张 Agent Runtime 表及资产函数，不启用 RLS。生产已有
+7 张表处于“ENABLE RLS、无 policy”状态，因此脚本会先将旧应用角色临时加入
+`everydayai_owner`，保持其原有 owner 能力；单独授予 CRUD 不能绕过 RLS。
+所有权回滚必须先关闭 FORCE RLS，并显式设置：
+
+```bash
+ALLOW_TENANT_DB_OWNERSHIP_ROLLBACK=true \
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/rollback-agent-runtime-ownership.sh
+```
+
+第二批 Runtime/Message 对象必须在迁移 153 前由管理员原子接管；脚本不会启用 RLS，
+并继续保留旧服务角色：
+
+```bash
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/transfer-runtime-message-ownership.sh
+```
+
+第二批回滚必须先把相关服务切回旧数据库 URL，并关闭这些表的 FORCE RLS：
+
+```bash
+ALLOW_RUNTIME_MESSAGE_OWNERSHIP_ROLLBACK=true \
+RUNTIME_MESSAGE_SERVICES_RESTORED=true \
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/rollback-runtime-message-ownership.sh
+```
+
+只有在 150–159 全部应用、所有服务已切换独立角色、旧角色活动连接归零后，才能撤销
+临时 owner 兼容能力：
+
+```bash
+ALLOW_TENANT_DB_ROLE_FINALIZE=true \
+TENANT_SERVICES_USE_ISOLATED_ROLES=true \
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/finalize-tenant-db-role-cutover.sh
+```
+
+该步骤必须使用不同于旧应用角色的数据库管理员连接；能力域未闭合时禁止执行。
 
 ---
 

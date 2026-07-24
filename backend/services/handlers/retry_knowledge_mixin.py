@@ -82,7 +82,7 @@ class RetryKnowledgeMixin:
         """记录任务指标到知识库（fire-and-forget）"""
         try:
             from services.knowledge_service import record_metric
-            await record_metric(**kwargs)
+            await record_metric(db_source=self.db, **kwargs)
         except Exception as e:
             logger.debug(f"Knowledge metric record skipped | error={e}")
 
@@ -93,6 +93,7 @@ class RetryKnowledgeMixin:
         try:
             from services.knowledge_extractor import extract_and_save
             await extract_and_save(
+                db_source=self.db,
                 task_type=task_type, model_id=model_id, status="retry_success",
                 retry_from_model=retry_from_model,
             )
@@ -106,6 +107,7 @@ class RetryKnowledgeMixin:
         try:
             from services.knowledge_extractor import extract_and_save
             await extract_and_save(
+                db_source=self.db,
                 task_type=task_type, model_id=model_id, status="failed",
                 error_message=error_message,
             )

@@ -9,6 +9,7 @@
 import asyncio
 import signal
 import sys
+from typing import Any
 from pathlib import Path
 
 # 确保 backend 目录在 sys.path 中（systemd 启动时 cwd 可能不同）
@@ -23,7 +24,14 @@ if __name__ == "__main__" and "wecom_ws_runner" not in sys.modules:
 
 from loguru import logger
 
-from core.database import close_async_db, get_async_db, get_db
+from core.database import (
+    close_async_worker_db,
+    close_db,
+    close_worker_db,
+    get_async_worker_db,
+    get_db,
+    get_worker_db,
+)
 from core.logging_config import setup_logging
 from schemas.wecom import WecomReplyContext
 from services.wecom.wecom_message_service import WecomMessageService
@@ -43,8 +51,9 @@ from services.wecom.ws_client import WecomWSClient
 class WecomWSManager:
     """管理多个企业的 WS 长连接，每个企业独立一条连接。"""
 
-    def __init__(self, db):
-        self._db = db
+    def __init__(self, control_db: Any, runtime_db: Any) -> None:
+        self._control_db = control_db
+        self._runtime_db = runtime_db
         self._clients: dict[str, WecomWSClient] = {}  # org_id → client
 
     @property
@@ -58,7 +67,7 @@ class WecomWSManager:
     async def start(self) -> None:
         """扫描所有配了 bot 凭证的企业，逐个建立 WS 连接"""
         from services.org.config_resolver import OrgConfigResolver
-        resolver = OrgConfigResolver(self._db)
+        resolver = OrgConfigResolver(self._control_db)
         orgs = resolver.list_orgs_with_wecom_bot()
 
         if not orgs:
@@ -67,7 +76,7 @@ class WecomWSManager:
 
         for org in orgs:
             org_id = org["org_id"]
-            msg_svc = WecomMessageService(self._db)
+            msg_svc = WecomMessageService(self._runtime_db)
 
             client = WecomWSClient(
                 bot_id=org["bot_id"],
@@ -93,8 +102,6 @@ class WecomWSManager:
 
     def _make_message_handler(self, org_id: str, corp_id: str, msg_svc: WecomMessageService):
         """为每个企业创建独立的消息处理闭包"""
-        db = self._db
-
         async def handler(data: dict) -> None:
             body = data.get("body", {})
             req_id = data.get("headers", {}).get("req_id", "")
@@ -114,8 +121,6 @@ class WecomWSManager:
 
     def _make_card_handler(self, org_id: str, corp_id: str, msg_svc: WecomMessageService):
         """为每个企业创建独立的卡片事件处理闭包"""
-        db = self._db
-
         async def handler(data: dict) -> None:
             body = data.get("body", {})
             event = body.get("event", {})
@@ -131,14 +136,24 @@ class WecomWSManager:
             req_id = data.get("headers", {}).get("req_id", "")
 
             from services.wecom.user_mapping_service import WecomUserMappingService
-            user_svc = WecomUserMappingService(db)
+            request_svc = msg_svc._for_request(
+                actor_user_id=None,
+                org_id=org_id,
+                request_id=req_id,
+            )
+            user_svc = WecomUserMappingService(request_svc.db)
             user_id = await user_svc.get_or_create_user(
                 wecom_userid=wecom_userid,
                 corp_id=corp_id,
                 channel="smart_robot",
                 org_id=org_id,
             )
-            conversation_id = await msg_svc._get_or_create_conversation(
+            request_svc._bind_request_db(
+                actor_user_id=user_id,
+                org_id=org_id,
+                request_id=req_id,
+            )
+            conversation_id = await request_svc._get_or_create_conversation(
                 user_id=user_id,
                 chatid=chatid,
                 chattype=body.get("chattype", "single"),
@@ -153,7 +168,7 @@ class WecomWSManager:
             )
 
             from services.wecom.card_event_handler import WecomCardEventHandler
-            card_handler = WecomCardEventHandler(db)
+            card_handler = WecomCardEventHandler(request_svc.db)
             await card_handler.handle(
                 event_key=event_key,
                 task_id=task_id,
@@ -191,13 +206,14 @@ def get_ws_client(org_id: str | None = None) -> WecomWSClient | None:
 async def main() -> None:
     setup_logging()
 
-    db = get_db()
+    runtime_db = get_db()
+    control_db = get_worker_db()
+    async_db = await get_async_worker_db()
 
     global _manager
-    _manager = WecomWSManager(db)
+    _manager = WecomWSManager(control_db, runtime_db)
     await _manager.start()
 
-    async_db = await get_async_db()
     from services.wecom.delivery_sender import WecomDeliverySender
     from services.wecom.delivery_worker import WecomDeliveryWorker
     delivery_worker = WecomDeliveryWorker(
@@ -246,7 +262,9 @@ async def main() -> None:
         delivery_task.cancel()
         await asyncio.gather(delivery_task, return_exceptions=True)
     await _manager.stop()
-    await close_async_db()
+    await close_async_worker_db()
+    close_worker_db()
+    close_db()
     logger.info("Wecom WS runner stopped")
 
 

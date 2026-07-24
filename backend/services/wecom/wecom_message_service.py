@@ -7,6 +7,9 @@ Agent Loop 路由 → AI 生成 → 流式回复到企微。
 两个渠道共用此服务，仅回复方式不同。
 """
 
+from __future__ import annotations
+
+from copy import copy
 import time
 from typing import List, Optional
 
@@ -14,6 +17,12 @@ from loguru import logger
 
 
 from core.config import get_settings
+from core.db_scope import (
+    DatabaseAccessKind,
+    DatabaseScope,
+    ScopedDatabaseClient,
+)
+from core.org_scoped_db import OrgScopedDB
 from schemas.wecom import (
     WecomChatType,
     WecomIncomingMessage,
@@ -45,18 +54,23 @@ class WecomMessageService(
         reply_ctx: WecomReplyContext,
     ) -> None:
         """处理企微消息的完整流程。"""
+        request_service = self._for_request(
+            actor_user_id=None,
+            org_id=msg.org_id,
+            request_id=msg.msgid or "",
+        )
+        await request_service._handle_message(msg, reply_ctx)
+
+    async def _handle_message(
+        self,
+        msg: WecomIncomingMessage,
+        reply_ctx: WecomReplyContext,
+    ) -> None:
+        """在单条消息独占的服务实例中处理企微消息。"""
         start_time = time.monotonic()
 
         try:
             org_id = msg.org_id
-
-            # 用 OrgScopedDB 包装 db（企微回调没有 HTTP 上下文，需手动构造）
-            from core.org_scoped_db import OrgScopedDB
-            if not isinstance(self.db, OrgScopedDB):
-                self.db = OrgScopedDB(self.db, org_id)
-                # 同步子服务的 db 引用（不重建实例，避免覆盖外部 mock）
-                self._user_svc.db = self.db
-                self._conv_svc.db = self.db
 
             # 1. 用户映射
             user_id = await self._user_svc.get_or_create_user(
@@ -65,10 +79,16 @@ class WecomMessageService(
                 channel=msg.channel,
                 org_id=org_id,
             )
+            self._bind_request_db(
+                actor_user_id=user_id,
+                org_id=org_id,
+                request_id=msg.msgid or "",
+            )
 
             # 1.5 更新 chatid（主动推送用）
             await self._user_svc.update_last_chatid(
                 msg.wecom_userid, msg.corp_id, msg.chatid, msg.chattype,
+                org_id,
             )
 
             # 1.6 记录聊天目标（定时任务推送目标选择用）
@@ -117,6 +137,46 @@ class WecomMessageService(
                 f"error={e}"
             )
             await self._reply_text(reply_ctx, "抱歉，处理消息时出了点问题，请稍后再试。")
+
+    def _for_request(
+        self,
+        *,
+        actor_user_id: str | None,
+        org_id: str | None,
+        request_id: str,
+    ) -> WecomMessageService:
+        """创建隔离的消息级服务，避免并发请求共享可变 DB Scope。"""
+        service = copy(self)
+        service._base_db = getattr(self, "_base_db", self.db)
+        service._user_svc = copy(self._user_svc)
+        service._conv_svc = copy(self._conv_svc)
+        service._bind_request_db(
+            actor_user_id=actor_user_id,
+            org_id=org_id,
+            request_id=request_id,
+        )
+        return service
+
+    def _bind_request_db(
+        self,
+        *,
+        actor_user_id: str | None,
+        org_id: str | None,
+        request_id: str,
+    ) -> None:
+        """为当前消息实例绑定事务 Scope 和兼容应用层企业过滤。"""
+        scope = DatabaseScope(
+            actor_user_id=actor_user_id,
+            org_id=org_id,
+            access_kind=DatabaseAccessKind.RUNTIME,
+            request_id=request_id,
+        )
+        self.db = OrgScopedDB(
+            ScopedDatabaseClient(self._base_db, scope),
+            org_id,
+        )
+        self._user_svc.db = self.db
+        self._conv_svc.db = self.db
 
     # ── 多媒体下载 ──────────────────────────────────────
 

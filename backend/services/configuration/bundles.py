@@ -1,0 +1,166 @@
+"""Fixed Bundle RPC orchestration and request-local Secret decryption."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Mapping
+
+from services.configuration.definitions import CONFIG_REGISTRY, ConfigDefinition
+from services.configuration.envelope import (
+    KekVersionMissingError,
+    SecretMaterialError,
+)
+from services.configuration.material_service import SecretMaterialService
+from services.configuration.resolver import (
+    ConfigurationResolutionError,
+    EffectiveConfigResolver,
+    SecretReference,
+)
+
+
+@dataclass(frozen=True)
+class ResolvedConfigurationBundle:
+    """Request-local values plus non-secret source/version diagnostics."""
+
+    name: str
+    values: Mapping[str, object | None]
+    sources: Mapping[str, str | None]
+    versions: Mapping[str, int]
+
+
+class SecretBundleResolver:
+    """Expose only fixed named Bundle methods to application consumers."""
+
+    def __init__(
+        self,
+        db: Any,
+        material_service: SecretMaterialService,
+        effective_resolver: EffectiveConfigResolver | None = None,
+    ) -> None:
+        self._db = db
+        self._material_service = material_service
+        self._effective_resolver = effective_resolver or EffectiveConfigResolver()
+
+    def ai_dashscope(self) -> ResolvedConfigurationBundle:
+        return self._resolve("ai.provider.dashscope", "get_ai_dashscope_bundle")
+
+    def ai_openrouter(self) -> ResolvedConfigurationBundle:
+        return self._resolve("ai.provider.openrouter", "get_ai_openrouter_bundle")
+
+    def ai_kie(self) -> ResolvedConfigurationBundle:
+        return self._resolve("ai.provider.kie", "get_ai_kie_bundle")
+
+    def ai_google(self) -> ResolvedConfigurationBundle:
+        return self._resolve("ai.provider.google", "get_ai_google_bundle")
+
+    def erp_runtime(self) -> ResolvedConfigurationBundle:
+        return self._resolve("erp.runtime", "get_erp_runtime_bundle")
+
+    def wecom_bot(self) -> ResolvedConfigurationBundle:
+        return self._resolve("wecom.bot", "get_wecom_bot_bundle")
+
+    def wecom_oauth_public(self) -> ResolvedConfigurationBundle:
+        return self._resolve(
+            "wecom.oauth.public",
+            "get_wecom_oauth_public_bundle",
+        )
+
+    def wecom_oauth_exchange(self) -> ResolvedConfigurationBundle:
+        return self._resolve(
+            "wecom.oauth.exchange",
+            "get_wecom_oauth_exchange_bundle",
+        )
+
+    def wecom_contact(self) -> ResolvedConfigurationBundle:
+        return self._resolve("wecom.contact", "get_wecom_contact_bundle")
+
+    def kuaimai_thinktank(self) -> ResolvedConfigurationBundle:
+        return self._resolve(
+            "kuaimai_external.thinktank",
+            "get_kuaimai_thinktank_bundle",
+        )
+
+    def kuaimai_viperp(self) -> ResolvedConfigurationBundle:
+        return self._resolve(
+            "kuaimai_external.viperp",
+            "get_kuaimai_viperp_bundle",
+        )
+
+    def _resolve(
+        self,
+        bundle_name: str,
+        rpc_name: str,
+    ) -> ResolvedConfigurationBundle:
+        try:
+            response = self._db.rpc(rpc_name).execute()
+        except Exception as error:
+            raise ConfigurationResolutionError(
+                self._database_error_code(error)
+            ) from error
+        effective = self._effective_resolver.parse(bundle_name, response.data)
+        values: dict[str, object | None] = {}
+        sources: dict[str, str | None] = {}
+        versions: dict[str, int] = {}
+        for key, item in effective.items.items():
+            sources[key] = item.source
+            versions[key] = item.version
+            if not item.configured:
+                values[key] = None
+            elif item.secret_ref is None:
+                values[key] = item.value
+            else:
+                values[key] = self._decrypt_secret(
+                    CONFIG_REGISTRY.get(key),
+                    item.secret_ref,
+                )
+        return ResolvedConfigurationBundle(
+            name=bundle_name,
+            values=MappingProxyType(values),
+            sources=MappingProxyType(sources),
+            versions=MappingProxyType(versions),
+        )
+
+    def _decrypt_secret(
+        self,
+        definition: ConfigDefinition,
+        reference: SecretReference,
+    ) -> object:
+        try:
+            payload = self._material_service.decrypt_payload(
+                reference.envelope,
+                scope_kind=reference.source,
+                scope_id=reference.scope_id,
+                secret_name=reference.secret_name,
+            )
+        except KekVersionMissingError as error:
+            raise ConfigurationResolutionError(
+                "KEK_VERSION_MISSING"
+            ) from error
+        except (SecretMaterialError, ValueError) as error:
+            raise ConfigurationResolutionError(
+                "SECRET_MATERIAL_UNAVAILABLE"
+            ) from error
+        required = set(definition.validation.get("required", ()))
+        if set(payload) != required or any(
+            not isinstance(value, str) or not value
+            for value in payload.values()
+        ):
+            raise ConfigurationResolutionError(
+                "SECRET_MATERIAL_UNAVAILABLE"
+            )
+        return payload
+
+    @staticmethod
+    def _database_error_code(error: Exception) -> str:
+        message = str(error)
+        for code in (
+            "CONFIG_BUNDLE_AUTHORITY_DENIED",
+            "CONFIG_BUNDLE_INCOMPLETE",
+            "CONFIG_BUNDLE_UNKNOWN",
+            "CONFIG_SECRET_UNAVAILABLE",
+            "CONFIG_REGISTRY_DRIFT",
+        ):
+            if code in message:
+                return code
+        return "CONFIG_BUNDLE_UNAVAILABLE"

@@ -21,67 +21,13 @@ from __future__ import annotations
 from typing import Any
 
 from loguru import logger
-
-# ── 需要租户隔离的业务表 ────────────────────────────────────
-# 维护规则：新增租户表时同步加入此集合，豁免表不加。
-# 豁免表：organizations, org_members, org_configs, org_invitations,
-#         users, models, admin_action_logs, user_subscriptions
+from core.tenant_registry import TENANT_TABLES
 
 # ── 复合唯一索引含 org_id 的表（启动时 schema 反射填充）─────
 # 由 load_composite_org_id_tables() 在应用启动时调用 pg_indexes 自动收集，
 # 永远不要手写——schema 才是唯一源。在 loader 调用之前为空 frozenset，
 # 此时 _TenantScopedTable.upsert 不会自动追加 org_id（行为退化为透传）。
 _COMPOSITE_ORG_ID_TABLES: frozenset[str] = frozenset()
-
-
-TENANT_TABLES: frozenset[str] = frozenset({
-    # 对话/消息
-    "conversations", "messages", "tasks",
-    # 积分/账单
-    "credits_history", "credit_transactions",
-    # 媒体
-    "image_generations",
-    # 主图详情制作
-    "detail_projects", "detail_project_images",
-    # 记忆/知识
-    "user_memory_settings", "knowledge_nodes",
-    "knowledge_metrics", "knowledge_edges", "scoring_audit_log",
-    # 企微
-    "wecom_user_mappings", "wecom_chat_targets",
-    "wecom_departments", "wecom_employees",
-    # ERP 主数据
-    "erp_products", "erp_product_skus", "erp_stock_status",
-    "erp_suppliers", "erp_shops", "erp_warehouses",
-    "erp_tags", "erp_categories", "erp_logistics_companies",
-    # ERP 单据/库存
-    "erp_document_items", "erp_document_items_archive",
-    # erp_batch_stock: 同步链路 sync_batch_stock 已于 2026-04-11 删除（业务无保质期商品）
-    # 表本身保留以避免不可逆 DROP；将来真正清理表时此行也要删除
-    "erp_batch_stock", "erp_product_daily_stats",
-    "erp_product_platform_map",
-    # ERP 搭便车
-    "erp_order_logs", "erp_order_packages", "erp_aftersale_logs",
-    # ERP 同步
-    "erp_sync_state", "erp_sync_dead_letter",
-    # ERP 物化视图
-    "mv_kit_stock",
-    # 审计
-    "tool_audit_log",
-    # 权限模型 V1（migration 060-068）
-    "org_departments", "org_positions", "org_roles",
-    "org_member_assignments", "position_default_roles",
-    "user_extra_grants", "user_revocations", "permission_audit_log",
-    # 定时任务（migration 069）
-    "scheduled_tasks", "scheduled_task_runs",
-    # 快麦 Web 外部数据接入（migration 114）
-    "kuaimai_external_credentials",
-    "erp_thinktank_profit_shop",
-    "erp_viperp_sale_finance",
-    "kuaimai_sync_logs",
-    "kuaimai_field_audit",
-    "erp_shop_operators",
-    "erp_operators",
-})
 
 
 class OrgScopedDB:
