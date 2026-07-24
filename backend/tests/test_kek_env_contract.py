@@ -54,8 +54,8 @@ def test_valid_kek_file_requires_exact_keys_and_mode_0600(
     path = tmp_path / ".env.kek"
     path.write_text(
         "CONFIG_KEK_CURRENT_VERSION=v1\n"
-        'CONFIG_KEK_KEYRING_JSON={"v1":"'
-        'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}\n',
+        "CONFIG_KEK_KEYRING_JSON='{\"v1\":\""
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\"}'\n",
         encoding="utf-8",
     )
     path.chmod(0o600)
@@ -70,7 +70,7 @@ def test_valid_kek_file_accepts_gnu_stat(tmp_path: Path) -> None:
     path = tmp_path / ".env.kek"
     path.write_text(
         "CONFIG_KEK_CURRENT_VERSION=v1\n"
-        'CONFIG_KEK_KEYRING_JSON={"v1":"key"}\n',
+        "CONFIG_KEK_KEYRING_JSON='{\"v1\":\"key\"}'\n",
         encoding="utf-8",
     )
     path.chmod(0o600)
@@ -85,7 +85,7 @@ def test_valid_kek_file_accepts_bsd_stat(tmp_path: Path) -> None:
     path = tmp_path / ".env.kek"
     path.write_text(
         "CONFIG_KEK_CURRENT_VERSION=v1\n"
-        'CONFIG_KEK_KEYRING_JSON={"v1":"key"}\n',
+        "CONFIG_KEK_KEYRING_JSON='{\"v1\":\"key\"}'\n",
         encoding="utf-8",
     )
     path.chmod(0o600)
@@ -100,7 +100,7 @@ def test_kek_file_rejects_non_private_permissions(tmp_path: Path) -> None:
     path = tmp_path / ".env.kek"
     path.write_text(
         "CONFIG_KEK_CURRENT_VERSION=v1\n"
-        'CONFIG_KEK_KEYRING_JSON={"v1":"key"}\n',
+        "CONFIG_KEK_KEYRING_JSON='{\"v1\":\"key\"}'\n",
         encoding="utf-8",
     )
     path.chmod(0o644)
@@ -118,11 +118,26 @@ def test_kek_file_rejects_template_placeholder(tmp_path: Path) -> None:
     assert "0600" in result.stderr or "占位符" in result.stderr
 
 
+def test_kek_file_rejects_unquoted_json(tmp_path: Path) -> None:
+    path = tmp_path / ".env.kek"
+    path.write_text(
+        "CONFIG_KEK_CURRENT_VERSION=v1\n"
+        'CONFIG_KEK_KEYRING_JSON={"v1":"key"}\n',
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    result = _run(path)
+
+    assert result.returncode == 1
+    assert "必须使用单引号包裹" in result.stderr
+
+
 def test_kek_file_rejects_extra_configuration(tmp_path: Path) -> None:
     path = tmp_path / ".env.kek"
     path.write_text(
         "CONFIG_KEK_CURRENT_VERSION=v1\n"
-        'CONFIG_KEK_KEYRING_JSON={"v1":"key"}\n'
+        "CONFIG_KEK_KEYRING_JSON='{\"v1\":\"key\"}'\n"
         "UNEXPECTED=value\n",
         encoding="utf-8",
     )

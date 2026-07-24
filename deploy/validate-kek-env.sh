@@ -38,13 +38,18 @@ fi
 
 current_version=$(printf '%s\n' "$values" |
     sed -n 's/^CONFIG_KEK_CURRENT_VERSION=//p')
-keyring_json=$(printf '%s\n' "$values" |
+keyring_json_raw=$(printf '%s\n' "$values" |
     sed -n 's/^CONFIG_KEK_KEYRING_JSON=//p')
 
 if [[ ! "$current_version" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
     echo "❌ CONFIG_KEK_CURRENT_VERSION 无效" >&2
     exit 1
 fi
+if [[ "$keyring_json_raw" != \'*\' ]]; then
+    echo "❌ CONFIG_KEK_KEYRING_JSON 必须使用单引号包裹" >&2
+    exit 1
+fi
+keyring_json=${keyring_json_raw:1:${#keyring_json_raw}-2}
 if [ -z "$keyring_json" ] \
     || [[ "$keyring_json" == *"<"* ]] \
     || [[ "$keyring_json" == *">"* ]] \
