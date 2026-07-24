@@ -130,7 +130,7 @@
   原子 owner 转移；先赋予旧角色临时 owner 成员关系，兼容生产既有无 policy RLS 表。
 - `deploy/rollback-agent-runtime-ownership.sh`：受显式危险操作开关保护的 owner 恢复入口；
   恢复迁移账本、13 表和资产函数；任一目标表仍启用 FORCE RLS 时失败关闭。
-- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–159 已应用、全部目标对象 Owner
+- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–162 已应用、全部目标对象 Owner
   正确、服务已切换且旧连接归零后，撤销旧角色的临时 owner 成员关系。
 - `backend/tests/test_tenant_db_role_finalize_script.py`：覆盖最终撤销双重人工门禁、迁移、
   Owner、独立管理员、旧连接检查及旧角色名注入拒绝。
@@ -141,10 +141,10 @@
   PUBLIC/新角色权限并保留旧服务兼容权限。
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
-- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–161 checksum/状态、
+- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–162 checksum/状态、
   两批对象 owner、数据库角色、RLS、旧/新配置计数和角色连接数，并输出当前切换阶段。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批
-  owner 转移、150–161 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
+  owner 转移、150–162 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
   边界；明确两批 owner 先就绪，再由标准 Runner 一次性应用全部 pending 迁移。
 - `backend/tests/test_runtime_message_ownership_scripts.py`：覆盖第二批精确对象、动态列
   sequence、权限收紧、管理员 URL 隐藏和双重回滚保护。
@@ -241,6 +241,13 @@
   门控的全量原子导入 RPC；所有目标固定使用版本 0 CAS，并写入 FORCE RLS 脱敏审计。
 - `backend/migrations/rollback/161_configuration_legacy_import_rollback.sql`：撤销未使用的
   导入能力；已有导入审计时拒绝删除，避免抹除持久证据。
+- `deploy/grant-legacy-config-export-access.sh` 与
+  `deploy/rollback-legacy-config-export-access.sh`：由独立数据库管理员精确授予或撤销
+  `everydayai_owner` 对快麦旧凭证源表的单表只读权限，不改变旧表 owner 或 Reader 权限。
+- `backend/migrations/162_configuration_legacy_export_access.sql` 与对应 rollback：把上述
+  管理员 ACL 固化为迁移账本合同；授权缺失或 Reader 获得直表权限时失败关闭。
+- `backend/tests/test_configuration_legacy_export_access.py`：覆盖管理员门禁、最小 ACL、
+  精确撤销、迁移状态验证和 rollback 执行顺序。
 - `backend/tests/test_configuration_legacy_import_migration.py`：覆盖 migrator 独占授权、
   批量边界、输入精确形状、单事务 CAS、脱敏响应/审计和有数据回滚拒绝。
 - `backend/services/configuration/legacy_import.py`：将预检通过的旧配置值转换为 Registry
@@ -270,8 +277,8 @@
   `backend/tests/test_configuration_legacy_import_external.py`：覆盖单快照、角色/事务门禁、
   CLI 默认只读、Reader 单事务 export 和显式隔离 PostgreSQL 行为。
 - `deploy/preflight-legacy-config-import.sh`：通过安全管理员 psql 启动器，在只读事务中
-  检查 158–161 台账、角色属性、导入函数 owner/grant、配置表 FORCE RLS、Registry
-  固定计数和导入目标全空。
+  检查 158–162 台账、角色属性、导入函数 owner/grant、definer 三张旧源表读取能力、
+  Reader 无直表权限、配置表 FORCE RLS、Registry 固定计数和导入目标全空。
 - `backend/tests/test_configuration_legacy_import_preflight_script.py`：覆盖管理员 URL 门禁、
   只读/回滚合同、无写 SQL、迁移/角色/授权/RLS/空目标和旧来源表检查。
 - `backend/testing/org_config_test_support.py`：提供同步/异步企业配置测试共用的隔离
@@ -285,7 +292,7 @@
   `test_erp_agent_plans.py`、`test_erp_agent_contracts.py` 与
   `test_erp_agent_reliability.py`：按入口、分析、计划、契约和可靠性拆分 ERP Agent
   单元测试，所有文件保持在 500 行以内。
-- `docs/document/RUNBOOK_161_旧配置迁移.md`：固定 158–161 应用、数据库只读 preflight、
+- `docs/document/RUNBOOK_161_旧配置迁移.md`：固定 158–162 应用、数据库只读 preflight、
   同 import_id dry-run/apply、双人确认、导入后核验和不删除持久审计的回退边界。
 - `backend/tests/test_legacy_config_import_runbook.py`：防止运行手册阶段顺序、确认协议、
   角色隔离、旧真相源保留和一次性环境模板发生漂移。

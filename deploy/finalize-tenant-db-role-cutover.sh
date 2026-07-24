@@ -56,7 +56,8 @@ BEGIN
           '159_configuration_management_facades.sql',
           '160_configuration_resolution_core.sql',
           '160_configuration_resolution_facades.sql',
-          '161_configuration_legacy_import.sql'
+          '161_configuration_legacy_import.sql',
+          '162_configuration_legacy_export_access.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1

@@ -77,7 +77,8 @@ DECLARE
         '159_configuration_management_facades.sql',
         '160_configuration_resolution_core.sql',
         '160_configuration_resolution_facades.sql',
-        '161_configuration_legacy_import.sql'
+        '161_configuration_legacy_import.sql',
+        '162_configuration_legacy_export_access.sql'
     ];
     expected_checksums CONSTANT TEXT[] := ARRAY[
         '60d765312928e92b525197b778fb64c505c59c60d104c4d7281e2ab713ceface',
@@ -93,7 +94,8 @@ DECLARE
         '72567b9ec906dff5d05c87a0c1d340d59d989cee482a1ddd913d6416e026771c',
         '88bf3ce251a44d510b475334874bc070efe618658909197f39b93e1bdf09122f',
         'e6eea45babe80d13c294ac0e78d33bfe777a59cb4365426d44cb92daaa2cb18c',
-        '134ea6fa6f4a769e2e9aac121642849dbd37317193b1e610053f0ed3d75fcfc7'
+        '134ea6fa6f4a769e2e9aac121642849dbd37317193b1e610053f0ed3d75fcfc7',
+        '6f0017406a3e9e4d8993b6d1cab237efdb987d796e8cdcd232c1514b2fd50d64'
     ];
     key_functions CONSTANT TEXT[] := ARRAY[
         'register_user_asset(uuid,text,text,text,text,text,text,text,text,text,text,text,bigint,text,jsonb,text,uuid,text,text,text,uuid,uuid,uuid,uuid,uuid,integer,text,text,jsonb,timestamp with time zone)',
@@ -298,6 +300,17 @@ BEGIN
     END IF;
 
     IF applied_migrations = cardinality(expected_migrations) THEN
+        IF NOT has_table_privilege(
+            'everydayai_owner',
+            'public.kuaimai_external_credentials',
+            'SELECT'
+        ) OR has_table_privilege(
+            'everydayai_config_import_reader',
+            'public.kuaimai_external_credentials',
+            'SELECT'
+        ) THEN
+            RAISE EXCEPTION 'TENANT_CUTOVER_CONFIG_EXPORT_ACCESS_INVALID';
+        END IF;
         SELECT string_agg(required_table, ', ' ORDER BY required_table)
           INTO invalid_items
           FROM unnest(rls_tables) AS required_table
@@ -374,4 +387,4 @@ SQL
 } | python3 "$(dirname "$0")/run-psql-admin.py" \
     --no-psqlrc --set=ON_ERROR_STOP=1
 
-echo "✅ 150–161 生产租户切换只读前置检查通过"
+echo "✅ 150–162 生产租户切换只读前置检查通过"

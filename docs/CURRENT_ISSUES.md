@@ -188,10 +188,15 @@
   已改为只接受 GNU `stat -c` 或 BSD `stat -f` 返回的纯八进制权限，并新增两种平台
   合同测试。生产角色与六个 `0600` 文件已安全创建，服务仍未切换。
 - KEK 环境验证器的同类 GNU/BSD `stat` 兼容问题已按相同失败关闭合同修复，并新增
-  两个平台分支测试；生产尚未创建 `.env.kek`，修复完成前没有 KEK 被服务加载。
+  两个平台分支测试；生产 `.env.kek` 已创建为 `0600 root:root`，尚未被服务加载。
 - KEK keyring 的 shell 文件合同已统一为单引号包裹 JSON；验证器会先校验并移除
   外层单引号后再检查 JSON 结构，避免 `source` 时 JSON 属性引号丢失。裸 JSON
   现在明确拒绝，KEK 与 legacy import 两份模板保持一致。
+- 生产已应用 150–161 后，官方旧配置 CLI dry-run 暴露出 export definer 无法读取仍由
+  旧角色持有的 `kuaimai_external_credentials`；Reader 无直表权限、函数 owner、
+  `SECURITY DEFINER` 与 search_path 均符合设计。修复采用独立管理员精确授予
+  `everydayai_owner` 单表 SELECT，再由迁移 162 固化 ACL 状态；不转移旧表 owner，
+  不扩大 Reader 权限。目标配置与导入审计仍为 0 行，尚未执行 apply。
 - 第一实施组任务 5.3b.2c-2/153 已完成代码准备：生产只读审计确认第二批 17 表真实字段、
   owner 和未启用 RLS 状态；迁移 153 创建无 actor/org 的 Web runtime 认证 Scope 门禁，
   并提供候选查询、注册、登录提交、refresh 原子轮换、密码重置和登出六个门面。17 表已

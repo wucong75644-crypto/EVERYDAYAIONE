@@ -84,6 +84,7 @@ def test_preflight_checks_migrations_roles_grants_rls_and_empty_target(
         "160_configuration_resolution_core.sql",
         "160_configuration_resolution_facades.sql",
         "161_configuration_legacy_import.sql",
+        "162_configuration_legacy_export_access.sql",
     ):
         assert identity in sql
     for role in (
@@ -105,6 +106,7 @@ def test_preflight_checks_migrations_roles_grants_rls_and_empty_target(
     assert "acl.privilege_type = 'EXECUTE'" in sql
     assert "has_table_privilege" in sql
     assert "CONFIG_EXPORT_READER_TABLE_ACCESS_INVALID" in sql
+    assert "CONFIG_EXPORT_OWNER_SOURCE_ACCESS_INVALID" in sql
     assert "0::OID" in sql
     assert "'PUBLIC'," not in sql
     assert "relrowsecurity" in sql

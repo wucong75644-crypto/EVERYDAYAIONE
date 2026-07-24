@@ -250,7 +250,7 @@ LEGACY_DATABASE_OWNER=everydayai \
 bash deploy/rollback-runtime-message-ownership.sh
 ```
 
-只有在 150–159 全部应用、所有服务已切换独立角色、旧角色活动连接归零后，才能撤销
+只有在 150–162 全部应用、所有服务已切换独立角色、旧角色活动连接归零后，才能撤销
 临时 owner 兼容能力：
 
 ```bash
@@ -263,7 +263,7 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 
 该步骤必须使用不同于旧应用角色的数据库管理员连接；能力域未闭合时禁止执行。
 
-150–161 的完整生产执行顺序、检查点和停止条件见
+150–162 的完整生产执行顺序、检查点和停止条件见
 `docs/document/RUNBOOK_150_161_生产租户架构切换.md`。普通 `deploy.sh` 不替代该
 架构迁移流程。在初始审计、两批 owner 均完成后及迁移完成后，使用
 `deploy/preflight-tenant-cutover.sh` 进行只读状态核验。

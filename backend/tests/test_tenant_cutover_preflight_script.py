@@ -1,7 +1,8 @@
-"""150–161 production tenant cutover preflight contract tests."""
+"""150–162 production tenant cutover preflight contract tests."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -24,6 +25,7 @@ MIGRATION_IDENTITIES = (
     "160_configuration_resolution_core.sql",
     "160_configuration_resolution_facades.sql",
     "161_configuration_legacy_import.sql",
+    "162_configuration_legacy_export_access.sql",
 )
 
 
@@ -118,6 +120,21 @@ def test_preflight_pins_complete_migration_ledger_contract(
     assert "applied_migrations NOT IN (0, cardinality(expected_migrations))" in sql
 
 
+def test_preflight_pins_current_162_checksum(tmp_path: Path) -> None:
+    env, sql_path = _environment(tmp_path)
+
+    assert _run(env).returncode == 0
+
+    checksum = hashlib.sha256(
+        (
+            ROOT
+            / "backend/migrations"
+            / "162_configuration_legacy_export_access.sql"
+        ).read_bytes()
+    ).hexdigest()
+    assert checksum in sql_path.read_text(encoding="utf-8")
+
+
 def test_preflight_checks_roles_owners_and_object_boundaries(
     tmp_path: Path,
 ) -> None:
@@ -146,6 +163,7 @@ def test_preflight_checks_roles_owners_and_object_boundaries(
         "TENANT_CUTOVER_OWNER_UNEXPECTED",
         "TENANT_CUTOVER_FUNCTION_OWNER_INVALID",
         "TENANT_CUTOVER_FORCE_RLS_UNEXPECTED",
+        "TENANT_CUTOVER_CONFIG_EXPORT_ACCESS_INVALID",
     ):
         assert contract in sql
     assert sql.count("'conversation_artifacts'") >= 1

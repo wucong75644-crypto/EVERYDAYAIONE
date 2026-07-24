@@ -1,6 +1,6 @@
 # RUNBOOK 161：旧配置原子迁移
 
-> 状态：158–161 已实现并通过隔离 PostgreSQL 验证，尚未部署
+> 状态：158–161 已部署生产；162 ACL 合同与正式导入待执行
 > 适用：`org_configs`、`organizations.encrypt_key`、快麦外部 Cookie
 > 不包含：消费者切换、旧表删除、Reader 能力清理
 
@@ -31,8 +31,9 @@
 前置结构顺序：
 
 1. 150–157 角色、所有权、RLS 和治理能力已经按各自 Runbook 验证。
-2. 使用标准 Migration Runner 应用 158–161。
-3. 不执行消费者切换，不运行角色最终收口。
+2. 使用管理员脚本建立 export definer 单表 ACL。
+3. 使用标准 Migration Runner 应用 158–162。
+4. 不执行消费者切换，不运行角色最终收口。
 
 ## 3. 一次性环境文件
 
@@ -72,9 +73,16 @@ set +a
 
 不要打印环境变量，不使用 `set -x`。
 
-## 4. 应用数据库迁移
+## 4. 建立管理员 ACL 并应用数据库迁移
 
-进入后端目录并使用标准 Runner：
+先由独立数据库管理员建立 export definer 的单表只读权限：
+
+```bash
+TENANT_DB_ADMIN_URL='postgresql://...' \
+  bash /var/www/everydayai/deploy/grant-legacy-config-export-access.sh
+```
+
+然后进入后端目录并使用标准 Runner：
 
 ```bash
 cd /var/www/everydayai/backend
@@ -92,6 +100,7 @@ python scripts/migration_runner.py check --applied-by config-import-161
 160_configuration_resolution_core.sql
 160_configuration_resolution_facades.sql
 161_configuration_legacy_import.sql
+162_configuration_legacy_export_access.sql
 ```
 
 同编号迁移必须保持完整文件名顺序，禁止手工执行片段 SQL。
@@ -113,9 +122,10 @@ TENANT_DB_ADMIN_URL='postgresql://...' \
 
 该脚本验证：
 
-- 158–161 台账完整。
+- 158–162 台账完整。
 - Reader、migrator 和运行角色属性正确。
 - export/import RPC owner 与 ACL 正确。
+- export definer 可读取三张固定旧源表。
 - Reader 无旧表直读权。
 - 四张敏感表启用 FORCE RLS。
 - Registry 为 15 个配置定义、11 个固定 Bundle。
@@ -263,7 +273,7 @@ SELECT COUNT(DISTINCT import_id) AS import_batch_count
 | 阶段 | 处理 |
 |---|---|
 | 迁移应用前失败 | 停止；生产保持原状 |
-| 158–161 应用后、dry-run 前失败 | 保留未使用的新能力；不要手改台账 |
+| 158–162 应用后、dry-run 前失败 | 保留未使用的新能力；不要手改台账 |
 | dry-run 失败 | 停止；新目标仍为空，旧配置继续服务 |
 | apply 返回失败 | 确认审计和目标仍为空；事务已整体回滚 |
 | apply 成功、验证通过 | 保留旧真相源，进入下一独立阶段 |

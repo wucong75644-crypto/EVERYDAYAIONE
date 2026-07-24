@@ -45,7 +45,8 @@ BEGIN
           '159_configuration_management_facades.sql',
           '160_configuration_resolution_core.sql',
           '160_configuration_resolution_facades.sql',
-          '161_configuration_legacy_import.sql'
+          '161_configuration_legacy_import.sql',
+          '162_configuration_legacy_export_access.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1
@@ -187,8 +188,25 @@ BEGIN
            'everydayai_config_import_reader',
            'public.kuaimai_external_credentials',
            'SELECT'
-       ) THEN
+    ) THEN
         RAISE EXCEPTION 'CONFIG_EXPORT_READER_TABLE_ACCESS_INVALID';
+    END IF;
+    IF NOT has_table_privilege(
+           'everydayai_owner',
+           'public.organizations',
+           'SELECT'
+       )
+       OR NOT has_table_privilege(
+           'everydayai_owner',
+           'public.org_configs',
+           'SELECT'
+       )
+       OR NOT has_table_privilege(
+           'everydayai_owner',
+           'public.kuaimai_external_credentials',
+           'SELECT'
+       ) THEN
+        RAISE EXCEPTION 'CONFIG_EXPORT_OWNER_SOURCE_ACCESS_INVALID';
     END IF;
 
     SELECT string_agg(required_table, ', ' ORDER BY required_table)

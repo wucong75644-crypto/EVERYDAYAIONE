@@ -77,6 +77,7 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "'160_configuration_resolution_core.sql'" in sql
     assert "'160_configuration_resolution_facades.sql'" in sql
     assert "'161_configuration_legacy_import.sql'" in sql
+    assert "'162_configuration_legacy_export_access.sql'" in sql
     assert "'159_org_erp_token_capabilities.sql'" not in sql
     assert "schema_migration_ledger" in sql
     assert "TENANT_OWNER_CUTOVER_INCOMPLETE" in sql
