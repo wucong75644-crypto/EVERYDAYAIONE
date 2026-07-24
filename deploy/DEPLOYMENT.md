@@ -230,8 +230,9 @@ LEGACY_DATABASE_OWNER=everydayai \
 bash deploy/rollback-agent-runtime-ownership.sh
 ```
 
-第二批 Runtime/Message 对象必须在迁移 153 前由管理员原子接管；脚本不会启用 RLS，
-并继续保留旧服务角色：
+第二批 Runtime/Message 对象必须在迁移 152 前由管理员原子接管；152 会收紧
+`wecom_get_or_create_user` 等第二批函数的权限，153 则继续建立第二批表的 RLS。
+脚本不会启用 RLS，并继续保留旧服务角色：
 
 ```bash
 TENANT_DB_ADMIN_URL='postgresql://...' \
@@ -261,6 +262,11 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 ```
 
 该步骤必须使用不同于旧应用角色的数据库管理员连接；能力域未闭合时禁止执行。
+
+150–161 的完整生产执行顺序、检查点和停止条件见
+`docs/document/RUNBOOK_150_161_生产租户架构切换.md`。普通 `deploy.sh` 不替代该
+架构迁移流程。在初始审计、两批 owner 均完成后及迁移完成后，使用
+`deploy/preflight-tenant-cutover.sh` 进行只读状态核验。
 
 ---
 

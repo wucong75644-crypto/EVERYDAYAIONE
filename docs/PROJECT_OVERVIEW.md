@@ -141,6 +141,11 @@
   PUBLIC/新角色权限并保留旧服务兼容权限。
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
+- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–161 checksum/状态、
+  两批对象 owner、数据库角色、RLS、旧/新配置计数和角色连接数，并输出当前切换阶段。
+- `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批
+  owner 转移、150–161 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
+  边界；明确两批 owner 先就绪，再由标准 Runner 一次性应用全部 pending 迁移。
 - `backend/tests/test_runtime_message_ownership_scripts.py`：覆盖第二批精确对象、动态列
   sequence、权限收紧、管理员 URL 隐藏和双重回滚保护。
 - `backend/migrations/153_runtime_message_rls_and_auth.sql`：建立六个 Web 认证事务门面、
