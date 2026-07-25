@@ -15,15 +15,10 @@ def get_wecom_conversation_setting(
     """读取模型或思考模式；租户范围由 OrgScopedDB 追加。"""
     if key not in {"model", "thinking_mode"}:
         raise ValueError("unsupported wecom conversation setting")
-    query = (
-        db.table("conversations")
-        .select("model_id,chat_settings")
-        .eq("id", conversation_id)
-        .eq("user_id", user_id)
-        .eq("source", "wecom")
-    )
-    query = query.eq("org_id", org_id) if org_id else query.is_("org_id", "null")
-    response = query.maybe_single().execute()
+    response = db.rpc("get_wecom_generation_context", {
+        "p_user_id": user_id,
+        "p_conversation_id": conversation_id,
+    }).execute()
     row = response.data if response else None
     if not row:
         return None

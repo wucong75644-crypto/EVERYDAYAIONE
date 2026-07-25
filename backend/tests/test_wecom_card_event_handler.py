@@ -24,6 +24,7 @@ def _make_db():
     db.rpc.return_value.execute.return_value = SimpleNamespace(data={
         "model_id": "auto",
         "chat_settings": {"thinking_mode": "fast"},
+        "credits": 999,
     })
     return db
 
@@ -55,10 +56,8 @@ class TestCheckCredits:
     async def test_sends_credits_card(self):
         handler = WecomCardEventHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.credit_service.CreditService") as MockCS:
-            MockCS.return_value.get_balance = AsyncMock(return_value=999)
-            await handler.handle("check_credits", "t1", "button_interaction",
-                                 None, "u1", "c1", ctx)
+        await handler.handle("check_credits", "t1", "button_interaction",
+                             None, "u1", "c1", ctx)
         ctx.ws_client.send_template_card.assert_called_once()
         card = ctx.ws_client.send_template_card.call_args[0][1]
         assert card["emphasis_content"]["title"] == "999"
@@ -68,15 +67,12 @@ class TestManageMemory:
     @pytest.mark.asyncio
     async def test_with_memories(self):
         handler = WecomCardEventHandler(_make_db())
+        handler.db.rpc.return_value.execute.return_value = SimpleNamespace(
+            data=[{"memory": "test memory"}],
+        )
         ctx = _make_reply_ctx()
-        memories = [{"memory": "test memory"}]
-        with patch(
-            "services.memory.manual_memory_service.ManualMemoryService"
-        ) as MockMS:
-            MockMS.return_value.get_all_memories = AsyncMock(return_value=memories)
-            await handler.handle("manage_memory", "t1", "button_interaction",
-                                 None, "u1", "c1", ctx)
-            MockMS.assert_called_once_with(handler.db)
+        await handler.handle("manage_memory", "t1", "button_interaction",
+                             None, "u1", "c1", ctx, org_id="org-1")
         card = ctx.ws_client.send_template_card.call_args[0][1]
         assert card["card_type"] == "button_interaction"
         assert "共 1 条" in card["main_title"]["title"]
@@ -84,13 +80,10 @@ class TestManageMemory:
     @pytest.mark.asyncio
     async def test_empty_memories(self):
         handler = WecomCardEventHandler(_make_db())
+        handler.db.rpc.return_value.execute.return_value = SimpleNamespace(data=[])
         ctx = _make_reply_ctx()
-        with patch(
-            "services.memory.manual_memory_service.ManualMemoryService"
-        ) as MockMS:
-            MockMS.return_value.get_all_memories = AsyncMock(return_value=[])
-            await handler.handle("manage_memory", "t1", "button_interaction",
-                                 None, "u1", "c1", ctx)
+        await handler.handle("manage_memory", "t1", "button_interaction",
+                             None, "u1", "c1", ctx, org_id="org-1")
         card = ctx.ws_client.send_template_card.call_args[0][1]
         assert card["card_type"] == "text_notice"
         assert "暂无" in card["main_title"]["title"]
@@ -100,14 +93,12 @@ class TestClearAllMemory:
     @pytest.mark.asyncio
     async def test_clears_and_updates_card(self):
         handler = WecomCardEventHandler(_make_db())
+        handler.db.rpc.return_value.execute.return_value = SimpleNamespace(
+            data={"outcome": "cleared"},
+        )
         ctx = _make_reply_ctx()
-        with patch(
-            "services.memory.manual_memory_service.ManualMemoryService"
-        ) as MockMS:
-            MockMS.return_value.delete_all_memories = AsyncMock()
-            await handler.handle("clear_all_memory", "t1", "button_interaction",
-                                 None, "u1", "c1", ctx)
-            MockMS.return_value.delete_all_memories.assert_called_once_with("u1", org_id=None)
+        await handler.handle("clear_all_memory", "t1", "button_interaction",
+                             None, "u1", "c1", ctx, org_id="org-1")
         ctx.ws_client.send_update_card.assert_called_once()
 
 
@@ -172,12 +163,16 @@ class TestNewConversation:
     async def test_creates_and_confirms(self):
         handler = WecomCardEventHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.conversation_service.ConversationService") as MockCS:
-            MockCS.return_value.create_conversation = AsyncMock(
-                return_value={"id": "new"}
-            )
-            await handler.handle("new_conversation", "t1", "button_interaction",
-                                 None, "u1", "c1", ctx)
+        await handler.handle("new_conversation", "t1", "button_interaction",
+                             None, "u1", "c1", ctx)
+        handler.db.rpc.assert_called_with(
+            "reset_wecom_conversation",
+            {
+                "p_conversation_id": "c1",
+                "p_user_id": "u1",
+                "p_org_id": None,
+            },
+        )
         card = ctx.ws_client.send_template_card.call_args[0][1]
         assert "新对话" in card["main_title"]["title"]
 

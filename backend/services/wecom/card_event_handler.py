@@ -97,9 +97,11 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.credit_service import CreditService
-        credit_svc = CreditService(self.db, redis=None)
-        balance = await credit_svc.get_balance(user_id)
+        context = self.db.rpc("get_wecom_generation_context", {
+            "p_user_id": user_id,
+            "p_conversation_id": conv_id,
+        }).execute()
+        balance = int((context.data or {}).get("credits", 0))
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_template_card(
@@ -110,9 +112,10 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.memory.manual_memory_service import ManualMemoryService
-        mem_svc = ManualMemoryService(self.db)
-        memories = await mem_svc.get_all_memories(user_id, org_id=self._org_id)
+        from services.wecom.memory_commands import get_wecom_manual_memories
+        memories = get_wecom_manual_memories(
+            self.db, user_id=user_id, org_id=self._org_id or "",
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             if memories:
@@ -125,9 +128,10 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.memory.manual_memory_service import ManualMemoryService
-        mem_svc = ManualMemoryService(self.db)
-        await mem_svc.delete_all_memories(user_id, org_id=self._org_id)
+        from services.wecom.memory_commands import clear_wecom_manual_memories
+        clear_wecom_manual_memories(
+            self.db, user_id=user_id, org_id=self._org_id or "",
+        )
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_update_card(
@@ -191,15 +195,11 @@ class WecomCardEventHandler:
         self, user_id: str, conv_id: str,
         reply_ctx: WecomReplyContext, _sel: Any,
     ) -> None:
-        from services.conversation_service import ConversationService
-        conv_svc = ConversationService(self.db)
-        await conv_svc.create_conversation(
-            user_id,
-            title="企微对话",
-            model_id="auto",
-            org_id=self._org_id,
-            source="wecom",
-        )
+        self.db.rpc("reset_wecom_conversation", {
+            "p_conversation_id": conv_id,
+            "p_user_id": user_id,
+            "p_org_id": self._org_id,
+        }).execute()
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_template_card(

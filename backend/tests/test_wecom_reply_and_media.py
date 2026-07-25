@@ -37,16 +37,19 @@ def _app_context() -> WecomReplyContext:
 
 def test_balance_reads_user_credits() -> None:
     service = _service()
-    query = service.db.table.return_value.select.return_value.eq.return_value
-    query.single.return_value.execute.return_value.data = {"credits": 42}
+    service.db.rpc.return_value.execute.return_value.data = {"credits": 42}
 
     assert service._get_user_balance("user-1") == 42
+    service.db.rpc.assert_called_once_with(
+        "get_wecom_generation_context",
+        {"p_user_id": "user-1", "p_conversation_id": None},
+    )
+    service.db.table.assert_not_called()
 
 
 def test_balance_defaults_to_zero_for_missing_user() -> None:
     service = _service()
-    query = service.db.table.return_value.select.return_value.eq.return_value
-    query.single.return_value.execute.return_value.data = None
+    service.db.rpc.return_value.execute.return_value.data = None
 
     assert service._get_user_balance("missing") == 0
 

@@ -117,19 +117,22 @@ class CommandHandler:
             )
 
         elif cmd_name == "credits":
-            from services.credit_service import CreditService
-            credit_svc = CreditService(self.db, redis=None)
-            balance = await credit_svc.get_balance(user_id)
+            context = self.db.rpc("get_wecom_generation_context", {
+                "p_user_id": user_id,
+                "p_conversation_id": conversation_id,
+            }).execute()
+            balance = int((context.data or {}).get("credits", 0))
             await ws.send_template_card(
                 reply_ctx.req_id, WecomCardBuilder.credits_card(balance)
             )
 
         elif cmd_name == "memory":
-            from services.memory.manual_memory_service import (
-                ManualMemoryService,
+            from services.wecom.memory_commands import (
+                get_wecom_manual_memories,
             )
-            mem_svc = ManualMemoryService(self.db)
-            memories = await mem_svc.get_all_memories(user_id, org_id=org_id)
+            memories = get_wecom_manual_memories(
+                self.db, user_id=user_id, org_id=org_id or "",
+            )
             if memories:
                 card = WecomCardBuilder.memory_list_card(memories)
             else:
@@ -137,25 +140,22 @@ class CommandHandler:
             await ws.send_template_card(reply_ctx.req_id, card)
 
         elif cmd_name == "clear_memory":
-            from services.memory.manual_memory_service import (
-                ManualMemoryService,
+            from services.wecom.memory_commands import (
+                clear_wecom_manual_memories,
             )
-            mem_svc = ManualMemoryService(self.db)
-            await mem_svc.delete_all_memories(user_id, org_id=org_id)
+            clear_wecom_manual_memories(
+                self.db, user_id=user_id, org_id=org_id or "",
+            )
             await ws.send_reply(
                 reply_ctx.req_id, "text", {"content": "已清空所有记忆"}
             )
 
         elif cmd_name == "new_conversation":
-            from services.conversation_service import ConversationService
-            conv_svc = ConversationService(self.db)
-            await conv_svc.create_conversation(
-                user_id,
-                title="企微对话",
-                model_id="auto",
-                org_id=org_id,
-                source="wecom",
-            )
+            self.db.rpc("reset_wecom_conversation", {
+                "p_conversation_id": conversation_id,
+                "p_user_id": user_id,
+                "p_org_id": org_id,
+            }).execute()
             await ws.send_template_card(
                 reply_ctx.req_id, WecomCardBuilder.new_conversation_card()
             )

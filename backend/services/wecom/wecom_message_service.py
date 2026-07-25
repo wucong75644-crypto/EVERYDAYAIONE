@@ -84,6 +84,23 @@ class WecomMessageService(
                 org_id=org_id,
                 request_id=msg.msgid or "",
             )
+            await self._user_svc.refresh_display_name(
+                user_id=user_id,
+                wecom_userid=msg.wecom_userid,
+                corp_id=msg.corp_id,
+                org_id=org_id,
+            )
+            from services.user_activity_service import record_user_activity
+            record_user_activity(
+                self.db,
+                user_id=user_id,
+                event_type="wecom_message_received",
+                org_id=org_id,
+                source="wecom",
+                resource_type="wecom_user",
+                resource_id=msg.wecom_userid,
+                metadata={"corp_id": msg.corp_id, "channel": msg.channel},
+            )
 
             # 1.5 更新 chatid（主动推送用）
             await self._user_svc.update_last_chatid(

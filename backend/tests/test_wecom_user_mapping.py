@@ -201,7 +201,7 @@ class TestDisplayNameResolution:
         assert params["p_display_name"] == "自定义昵称"
 
     @pytest.mark.asyncio
-    async def test_uses_wecom_real_name_when_no_nickname(self):
+    async def test_identity_resolution_uses_safe_fallback_before_actor_scope(self):
         db = _make_db_mock()
         db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
         db._rpc_chain.execute.return_value = MagicMock(
@@ -220,7 +220,63 @@ class TestDisplayNameResolution:
             await svc.get_or_create_user("wangwu", "corp", org_id="org-1")
 
         params = _rpc_params(db, "resolve_wecom_ingress_user")
-        assert params["p_display_name"] == "王五"
+        assert params["p_display_name"] == "企微用户_wangwu"
+        assert db.rpc.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_refreshes_real_name_after_actor_scope_is_bound(self):
+        db = _make_db_mock()
+        db._rpc_chain.execute.return_value = MagicMock(
+            data={"outcome": "updated"}
+        )
+
+        async def fake_fetch(d, oid, uid, **kw):
+            return "王五"
+
+        svc = WecomUserMappingService(db)
+        with patch(
+            "services.wecom.wecom_contact_api.fetch_wecom_real_name",
+            new=fake_fetch,
+        ):
+            await svc.refresh_display_name(
+                user_id="u3",
+                wecom_userid="wangwu",
+                corp_id="corp",
+                org_id="org-1",
+            )
+
+        params = _rpc_params(db, "update_wecom_ingress_display_name")
+        assert params == {
+            "p_user_id": "u3",
+            "p_wecom_userid": "wangwu",
+            "p_corp_id": "corp",
+            "p_org_id": "org-1",
+            "p_display_name": "王五",
+        }
+
+    @pytest.mark.asyncio
+    async def test_failed_real_name_lookup_does_not_overwrite_with_fallback(self):
+        db = _make_db_mock()
+
+        async def fake_fetch(d, oid, uid, **kw):
+            return None
+
+        svc = WecomUserMappingService(db)
+        with patch(
+            "services.wecom.wecom_contact_api.fetch_wecom_real_name",
+            new=fake_fetch,
+        ):
+            await svc.refresh_display_name(
+                user_id="u3",
+                wecom_userid="wangwu",
+                corp_id="corp",
+                org_id="org-1",
+            )
+
+        assert not any(
+            call.args[0] == "update_wecom_ingress_display_name"
+            for call in db.rpc.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_fallback_when_no_real_name(self):

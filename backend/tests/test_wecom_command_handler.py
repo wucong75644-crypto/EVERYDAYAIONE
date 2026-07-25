@@ -23,6 +23,7 @@ def _make_db():
     db.rpc.return_value.execute.return_value = SimpleNamespace(data={
         "model_id": "auto",
         "chat_settings": {"thinking_mode": "fast"},
+        "credits": 500,
     })
     return db
 
@@ -49,51 +50,56 @@ class TestCommandMatching:
     async def test_credits_command(self):
         handler = CommandHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.credit_service.CreditService") as MockCS:
-            MockCS.return_value.get_balance = AsyncMock(return_value=500)
-            result = await handler.try_handle("查积分", "u1", "c1", ctx)
+        result = await handler.try_handle("查积分", "u1", "c1", ctx)
         assert result is True
 
     @pytest.mark.asyncio
     async def test_memory_command(self):
         handler = CommandHandler(_make_db())
+        handler.db.rpc.return_value.execute.return_value = SimpleNamespace(data=[])
         ctx = _make_reply_ctx()
-        with patch(
-            "services.memory.manual_memory_service.ManualMemoryService"
-        ) as MockMS:
-            MockMS.return_value.get_all_memories = AsyncMock(return_value=[])
-            result = await handler.try_handle("我的记忆", "u1", "c1", ctx)
-            MockMS.assert_called_once_with(handler.db)
+        result = await handler.try_handle(
+            "我的记忆", "u1", "c1", ctx, org_id="org-1",
+        )
         assert result is True
+        handler.db.rpc.assert_called_with(
+            "get_wecom_manual_memories",
+            {"p_user_id": "u1", "p_org_id": "org-1"},
+        )
 
     @pytest.mark.asyncio
     async def test_clear_memory_command_uses_curated_service(self):
         handler = CommandHandler(_make_db())
+        handler.db.rpc.return_value.execute.return_value = SimpleNamespace(
+            data={"outcome": "cleared"},
+        )
         ctx = _make_reply_ctx()
-        with patch(
-            "services.memory.manual_memory_service.ManualMemoryService"
-        ) as MockMS:
-            MockMS.return_value.delete_all_memories = AsyncMock()
-            result = await handler.try_handle(
-                "清空记忆", "u1", "c1", ctx, org_id="org-1"
-            )
+        result = await handler.try_handle(
+            "清空记忆", "u1", "c1", ctx, org_id="org-1"
+        )
 
         assert result is True
-        MockMS.assert_called_once_with(handler.db)
-        MockMS.return_value.delete_all_memories.assert_awaited_once_with(
-            "u1", org_id="org-1"
+        handler.db.rpc.assert_called_with(
+            "clear_wecom_manual_memories",
+            {"p_user_id": "u1", "p_org_id": "org-1"},
         )
 
     @pytest.mark.asyncio
     async def test_new_conversation(self):
         handler = CommandHandler(_make_db())
         ctx = _make_reply_ctx()
-        with patch("services.conversation_service.ConversationService") as MockCS:
-            MockCS.return_value.create_conversation = AsyncMock(
-                return_value={"id": "new_conv"}
-            )
-            result = await handler.try_handle("新对话", "u1", "c1", ctx)
+        result = await handler.try_handle(
+            "新对话", "u1", "c1", ctx, org_id="org-1",
+        )
         assert result is True
+        handler.db.rpc.assert_called_with(
+            "reset_wecom_conversation",
+            {
+                "p_conversation_id": "c1",
+                "p_user_id": "u1",
+                "p_org_id": "org-1",
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_thinking_mode(self):

@@ -11,9 +11,6 @@ from loguru import logger
 
 
 from core.config import get_settings
-from services.user_activity_service import record_user_activity
-
-
 class WecomUserMappingService:
     """企微用户 → 系统用户映射"""
 
@@ -35,7 +32,7 @@ class WecomUserMappingService:
         安全门面在同一事务校验数据库角色、org/corp、用户映射、企业成员和注册积分，
         并通过 advisory lock + 唯一索引保证并发首次消息只创建一个用户。
         """
-        display_name = await self._resolve_display_name(nickname, wecom_userid, org_id)
+        display_name = nickname or f"企微用户_{wecom_userid[:8]}"
 
         result = self.db.rpc(
             "resolve_wecom_ingress_user",
@@ -57,16 +54,6 @@ class WecomUserMappingService:
             )
 
         is_new = data.get("is_new", False)
-        record_user_activity(
-            self.db,
-            user_id=user_id,
-            event_type="wecom_message_received",
-            org_id=org_id,
-            source="wecom",
-            resource_type="wecom_user",
-            resource_id=wecom_userid,
-            metadata={"corp_id": corp_id, "channel": channel},
-        )
         if is_new:
             logger.info(
                 f"Wecom user created (atomic RPC) | wecom_userid={wecom_userid} | "
@@ -79,6 +66,38 @@ class WecomUserMappingService:
             )
 
         return user_id
+
+    async def refresh_display_name(
+        self,
+        *,
+        user_id: str,
+        wecom_userid: str,
+        corp_id: str,
+        org_id: str,
+        nickname: Optional[str] = None,
+    ) -> None:
+        """在消息 Actor Scope 绑定后解析并安全更新企微显示名。"""
+        display_name = nickname
+        if not display_name:
+            from services.wecom.wecom_contact_api import fetch_wecom_real_name
+            display_name = await fetch_wecom_real_name(
+                self.db, org_id, wecom_userid,
+            )
+        if not display_name:
+            return
+        try:
+            self.db.rpc("update_wecom_ingress_display_name", {
+                "p_user_id": user_id,
+                "p_wecom_userid": wecom_userid,
+                "p_corp_id": corp_id,
+                "p_org_id": org_id,
+                "p_display_name": display_name,
+            }).execute()
+        except Exception as error:
+            logger.warning(
+                "Wecom display name refresh failed | "
+                f"user_id={user_id} | error={type(error).__name__}"
+            )
 
     async def _resolve_display_name(
         self,

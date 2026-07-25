@@ -94,6 +94,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
 
@@ -116,6 +117,7 @@ class TestHandleMessage:
         svc = WecomMessageService(db)
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -241,6 +243,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -264,6 +267,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -307,6 +311,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -369,6 +374,7 @@ class TestCommandInterception:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
 
@@ -394,6 +400,7 @@ class TestCommandInterception:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -426,6 +433,7 @@ class TestFileVideoHint:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -447,6 +455,7 @@ class TestFileVideoHint:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
@@ -476,6 +485,7 @@ class TestHandleMessageNotify:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value=USER_ID)
+        svc._user_svc.refresh_display_name = AsyncMock()
         svc._user_svc.update_last_chatid = AsyncMock()
         svc._user_svc.upsert_chat_target = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")

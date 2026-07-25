@@ -6,7 +6,8 @@ class WecomAIMixin:
 
     def _get_user_balance(self, user_id: str) -> int:
         """获取用户积分余额"""
-        result = self.db.table("users").select("credits").eq(
-            "id", user_id,
-        ).single().execute()
+        result = self.db.rpc("get_wecom_generation_context", {
+            "p_user_id": user_id,
+            "p_conversation_id": None,
+        }).execute()
         return result.data.get("credits", 0) if result.data else 0

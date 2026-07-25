@@ -107,9 +107,10 @@ def stable_wecom_task_id(msg: WecomIncomingMessage, user_id: str) -> str:
 
 
 def _load_chat_settings(db: Any, conversation_id: str) -> tuple[str, dict[str, Any]]:
-    response = db.table("conversations").select(
-        "model_id,chat_settings"
-    ).eq("id", conversation_id).single().execute()
+    response = db.rpc("get_wecom_generation_context", {
+        "p_user_id": None,
+        "p_conversation_id": conversation_id,
+    }).execute()
     row = response.data if response else None
     if not row:
         raise RuntimeError("WECOM_ACTOR_CONVERSATION_MISSING")

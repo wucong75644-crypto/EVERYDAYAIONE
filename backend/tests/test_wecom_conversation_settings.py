@@ -15,7 +15,9 @@ def _db(row=None, rpc_result=None):
     query.eq.return_value = query
     query.is_.return_value = query
     query.maybe_single.return_value.execute.return_value = SimpleNamespace(data=row)
-    db.rpc.return_value.execute.return_value = SimpleNamespace(data=rpc_result)
+    db.rpc.return_value.execute.return_value = SimpleNamespace(
+        data=rpc_result if rpc_result is not None else row,
+    )
     return db
 
 
@@ -68,6 +70,10 @@ def test_read_and_update_preserve_explicit_org_scope():
         db, "conv", "user", "model", "qwen3.5-plus", "org",
     )
 
-    query = db.table.return_value.select.return_value
-    assert any(call.args == ("org_id", "org") for call in query.eq.call_args_list)
+    read_call = db.rpc.call_args_list[0]
+    assert read_call.args == (
+        "get_wecom_generation_context",
+        {"p_user_id": "user", "p_conversation_id": "conv"},
+    )
+    db.table.assert_not_called()
     assert db.rpc.call_args.args[1]["p_org_id"] == "org"
