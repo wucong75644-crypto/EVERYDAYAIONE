@@ -1,24 +1,7 @@
 """测试 erp_tool_executor — ErpToolMixin AgentResult 错误返回"""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-backend_dir = Path(__file__).parent.parent
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
-
-# Mock pydantic_settings + 依赖链模块 以避免环境依赖
-if "pydantic_settings" not in sys.modules:
-    sys.modules["pydantic_settings"] = MagicMock()
-
-# 预注入无法 import 的模块（它们内部依赖 pydantic_settings）
-# 注意：不注入 core.redis（会污染其他测试的真实模块），改用 fixture patch
-import types
-for mod_path in ["services.org", "services.org.config_resolver"]:
-    if mod_path not in sys.modules:
-        sys.modules[mod_path] = types.ModuleType(mod_path)
 
 import pytest
 
