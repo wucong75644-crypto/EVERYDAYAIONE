@@ -30,6 +30,7 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
         ),
         "EVERYDAYAI_MIGRATOR_PASSWORD": "migrator-password-000001",
         "EVERYDAYAI_RUNTIME_PASSWORD": "runtime-password-00000001",
+        "EVERYDAYAI_SYNC_PASSWORD": "sync-password-000000000001",
         "EVERYDAYAI_WECOM_RUNTIME_PASSWORD": "wecom-runtime-password-0001",
         "EVERYDAYAI_WORKER_PASSWORD": "worker-password-0000000001",
     }, captured_sql
@@ -141,6 +142,7 @@ def test_role_script_enforces_role_boundaries(tmp_path: Path) -> None:
         "everydayai_config_import_reader",
         "everydayai_migrator",
         "everydayai_runtime",
+        "everydayai_sync",
         "everydayai_wecom_runtime",
         "everydayai_worker",
     ):
@@ -149,6 +151,7 @@ def test_role_script_enforces_role_boundaries(tmp_path: Path) -> None:
     assert "GRANT everydayai_owner TO everydayai_migrator" in sql
     assert "REVOKE everydayai_owner FROM everydayai_config_import_reader" in sql
     assert "REVOKE everydayai_owner FROM everydayai_runtime" in sql
+    assert "REVOKE everydayai_owner FROM everydayai_sync" in sql
     assert "REVOKE everydayai_owner FROM everydayai_wecom_runtime" in sql
     assert "REVOKE everydayai_owner FROM everydayai_worker" in sql
 
@@ -190,6 +193,7 @@ def test_role_script_does_not_print_passwords(tmp_path: Path) -> None:
     assert env["EVERYDAYAI_MIGRATOR_PASSWORD"] not in output
     assert env["EVERYDAYAI_CONFIG_IMPORT_READER_PASSWORD"] not in output
     assert env["EVERYDAYAI_RUNTIME_PASSWORD"] not in output
+    assert env["EVERYDAYAI_SYNC_PASSWORD"] not in output
     assert env["EVERYDAYAI_WECOM_RUNTIME_PASSWORD"] not in output
     assert env["EVERYDAYAI_WORKER_PASSWORD"] not in output
 

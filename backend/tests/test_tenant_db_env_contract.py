@@ -34,7 +34,7 @@ def _write_env_files(directory: Path) -> None:
         ),
         ".env.sync": (
             "DATABASE_URL="
-            "postgresql://everydayai:sync-secret@localhost/everydayai"
+            "postgresql://everydayai_sync:sync-secret@localhost/everydayai"
         ),
     }
     for filename, value in values.items():
@@ -91,7 +91,7 @@ def test_role_env_templates_are_safe_placeholders() -> None:
         "worker.env.template": "everydayai_worker:<worker-password>",
         "worker-client.env.template": "everydayai_worker:<worker-password>",
         "migrator.env.template": "everydayai_migrator:<migrator-password>",
-        "sync.env.template": "everydayai:<legacy-password>",
+        "sync.env.template": "everydayai_sync:<sync-password>",
         "legacy-config-import.env.template": (
             "everydayai_config_import_reader:<reader-password>"
         ),
@@ -169,7 +169,7 @@ def test_role_env_contract_rejects_sync_using_runtime_role(
     result = _run(tmp_path)
 
     assert result.returncode == 1
-    assert "必须使用 everydayai 数据库角色" in result.stderr
+    assert "必须使用 everydayai_sync 数据库角色" in result.stderr
 
 
 def test_role_env_contract_rejects_insecure_permissions(tmp_path: Path) -> None:

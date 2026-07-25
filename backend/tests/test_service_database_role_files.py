@@ -25,6 +25,7 @@ def test_backend_and_wecom_use_isolated_runtime_role_overrides() -> None:
     assert _environment_files("everydayai-backend.service") == [
         *backend_expected,
         "/var/www/everydayai/backend/.env.worker-client",
+        "/var/www/everydayai/backend/.env.kek",
     ]
     assert _environment_files("everydayai-wecom.service") == [
         "/var/www/everydayai/backend/.env",
@@ -42,8 +43,9 @@ def test_actor_uses_runtime_and_worker_clients() -> None:
     ]
 
 
-def test_sync_remains_on_isolated_legacy_role_override() -> None:
+def test_sync_uses_isolated_role_and_kek() -> None:
     assert _environment_files("everydayai-sync.service") == [
         "/var/www/everydayai/backend/.env",
         "/var/www/everydayai/backend/.env.sync",
+        "/var/www/everydayai/backend/.env.kek",
     ]
