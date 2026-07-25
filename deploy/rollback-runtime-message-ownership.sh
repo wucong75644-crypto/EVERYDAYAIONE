@@ -63,6 +63,7 @@ DECLARE
         'enqueue_wecom_generation_turn_v2(jsonb,uuid,uuid,uuid,jsonb,jsonb,uuid)',
         'update_wecom_conversation_setting(uuid,uuid,text,text,uuid)',
         'get_wecom_generation_context(uuid,uuid)',
+        'get_wecom_generation_context(uuid,uuid,uuid)',
         'update_wecom_ingress_display_name(uuid,text,text,uuid,text)',
         'reset_wecom_conversation(uuid,uuid,uuid)',
         'get_wecom_manual_memories(uuid,uuid)',
