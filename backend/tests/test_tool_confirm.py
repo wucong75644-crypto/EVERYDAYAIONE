@@ -31,7 +31,14 @@ class TestWebSocketManagerConfirm:
 
     @pytest.fixture
     def manager(self):
-        return WebSocketManager()
+        manager = WebSocketManager()
+
+        async def wait_until_cancelled(*_args):
+            await asyncio.Future()
+
+        manager._poll_redis = AsyncMock(side_effect=wait_until_cancelled)
+        manager._push_redis = AsyncMock(return_value=False)
+        return manager
 
     @pytest.mark.asyncio
     async def test_confirm_approved(self, manager):
