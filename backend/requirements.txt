@@ -1,5 +1,6 @@
 # FastAPI 框架
 fastapi==0.115.6
+python-multipart==0.0.21
 uvicorn[standard]==0.34.0
 
 # PostgreSQL 客户端（LocalDB 兼容层）

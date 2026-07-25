@@ -11,7 +11,7 @@
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ if str(_backend_dir) not in sys.path:
 
 from core.crypto import aes_encrypt, aes_decrypt, generate_encrypt_key
 from core.db_scope import DatabaseAccessKind, DatabaseScope
+from services.configuration.sync_resolver import SyncErpCredentials
 from services.org.config_resolver import (
     OrgConfigResolver,
     AsyncOrgConfigResolver,
@@ -29,6 +30,18 @@ from services.org.config_resolver import (
 
 GLOBAL_KEY = generate_encrypt_key()
 ORG_KEY = generate_encrypt_key()
+
+
+def _sync_credentials(org_id: str) -> SyncErpCredentials:
+    return SyncErpCredentials(
+        org_id=org_id,
+        app_key="async_secret",
+        app_secret="async_app_secret",
+        access_token="async_access",
+        refresh_token="async_refresh",
+        warehouse_ids=("WH-1",),
+        token_version=7,
+    )
 
 
 # ── Fake DB helpers ──────────────────────────────────
@@ -194,28 +207,25 @@ class TestPerOrgKeyAsync:
 
     @pytest.mark.asyncio
     async def test_async_per_org_key_decrypt(self):
-        """异步版：企业有 encrypt_key 时用企业密钥解密"""
+        """异步版：ERP key 由受治理的 Sync Bundle 提供。"""
         db = AsyncFakeDB()
         resolver = _make_resolver(AsyncOrgConfigResolver, db)
+        org_id = "10000000-0000-0000-0000-000000000001"
+        resolver._sync_resolver.erp_credentials = AsyncMock(
+            return_value=_sync_credentials(org_id)
+        )
 
-        db.enqueue("organizations", {"encrypt_key": ORG_KEY})
-        encrypted = aes_encrypt("async_secret", ORG_KEY)
-        db.enqueue("org_configs", {"config_value_encrypted": encrypted})
-
-        result = await resolver.get("org-E", "kuaimai_app_key")
+        result = await resolver.get(org_id, "kuaimai_app_key")
         assert result == "async_secret"
 
     @pytest.mark.asyncio
     async def test_async_fallback_to_global(self):
-        """异步版：企业无 encrypt_key 时降级全局密钥"""
+        """异步版：非企业 key 仍可从系统默认配置读取。"""
         db = AsyncFakeDB()
         resolver = _make_resolver(AsyncOrgConfigResolver, db)
+        resolver._settings.ai_google_api_key = "global_async"
 
-        db.enqueue("organizations", {"encrypt_key": None})
-        encrypted = aes_encrypt("global_async", GLOBAL_KEY)
-        db.enqueue("org_configs", {"config_value_encrypted": encrypted})
-
-        result = await resolver.get("org-F", "kuaimai_app_key")
+        result = await resolver.get(None, "ai_google_api_key")
         assert result == "global_async"
 
     @pytest.mark.asyncio
@@ -224,17 +234,14 @@ class TestPerOrgKeyAsync:
         db = AsyncFakeDB()
         resolver = _make_resolver(AsyncOrgConfigResolver, db)
 
-        db.enqueue("organizations", {"encrypt_key": ORG_KEY})
-        encrypted1 = aes_encrypt("v1", ORG_KEY)
-        db.enqueue("org_configs", {"config_value_encrypted": encrypted1})
-        r1 = await resolver.get("org-G", "kuaimai_app_key")
-        assert r1 == "v1"
+        org_id = "10000000-0000-0000-0000-000000000002"
+        lookup = AsyncMock(return_value=_sync_credentials(org_id))
+        resolver._sync_resolver.erp_credentials = lookup
 
-        # 第二次不 enqueue organizations
-        encrypted2 = aes_encrypt("v2", ORG_KEY)
-        db.enqueue("org_configs", {"config_value_encrypted": encrypted2})
-        r2 = await resolver.get("org-G", "kuaimai_app_key")
-        assert r2 == "v2"
+        r1 = await resolver.get(org_id, "kuaimai_app_key")
+        r2 = await resolver.get(org_id, "kuaimai_app_key")
+        assert r1 == r2 == "async_secret"
+        lookup.assert_awaited_once_with(org_id)
 
     @pytest.mark.asyncio
     async def test_async_update_erp_token_uses_org_key(self):
@@ -242,47 +249,21 @@ class TestPerOrgKeyAsync:
         db = AsyncFakeDB()
         resolver = _make_resolver(AsyncOrgConfigResolver, db)
 
-        rpc_calls = []
         org_id = "10000000-0000-0000-0000-000000000001"
-
-        class SpyBuilder:
-            def __init__(self, record=True):
-                self._record = record
-            def select(self, *a, **kw): return self
-            def eq(self, *a, **kw): return self
-            def maybe_single(self): return self
-            async def execute(self):
-                return MagicMock(data={"encrypt_key": ORG_KEY})
-
-        class SpyDB:
-            scope = DatabaseScope(
-                actor_user_id=None,
-                org_id=org_id,
-                access_kind=DatabaseAccessKind.WORKER,
-                request_id="review-simulation",
-            )
-
-            def table(self, name):
-                return SpyBuilder(record=False)
-            def rpc(self, name, params):
-                rpc_calls.append((name, params))
-                return SpyBuilder(record=False)
-
-        resolver.db = SpyDB()
+        credentials = _sync_credentials(org_id)
+        resolver._sync_resolver.erp_credentials = AsyncMock(
+            return_value=credentials
+        )
+        resolver._sync_resolver.commit_erp_token_pair = AsyncMock(
+            return_value=credentials.token_version + 1
+        )
         await resolver.update_erp_token(
             org_id, "access_new", "refresh_new",
         )
-
-        assert len(rpc_calls) == 1
-        name, params = rpc_calls[0]
-        assert name == "commit_worker_org_erp_tokens"
-        for key, expected in (
-            ("p_access_token_encrypted", "access_new"),
-            ("p_refresh_token_encrypted", "refresh_new"),
-        ):
-            assert aes_decrypt(params[key], ORG_KEY) == expected
-            with pytest.raises(ValueError):
-                aes_decrypt(params[key], GLOBAL_KEY)
+        resolver._sync_resolver.commit_erp_token_pair.assert_awaited_once_with(
+            credentials, "access_new", "refresh_new"
+        )
+        assert org_id not in resolver._erp_cache
 
 
 # ============================================================
@@ -471,19 +452,17 @@ class TestLoadOrgKeyDbError:
 
     @pytest.mark.asyncio
     async def test_async_db_error_returns_none_and_no_cache_pollution(self):
-        """异步版：organizations 查询异常 → 返回 None，不写入缓存"""
-        class ErrorBuilder(AsyncFakeBuilder):
-            async def execute(self):
-                raise RuntimeError("DB timeout")
-
+        """异步治理 Bundle 查询异常时失败关闭且不污染缓存。"""
         db = AsyncFakeDB()
         resolver = _make_resolver(AsyncOrgConfigResolver, db)
+        org_id = "10000000-0000-0000-0000-000000000099"
+        resolver._sync_resolver.erp_credentials = AsyncMock(
+            side_effect=RuntimeError("DB timeout")
+        )
 
-        db._queue.append(("organizations", ErrorBuilder()))
-
-        result = await resolver._load_org_encrypt_key("org-err-async")
-        assert result is None
-        assert "org-err-async" not in AsyncOrgConfigResolver._org_key_cache
+        with pytest.raises(RuntimeError, match="DB timeout"):
+            await resolver.get(org_id, "kuaimai_app_key")
+        assert org_id not in resolver._erp_cache
 
 
 # ============================================================
