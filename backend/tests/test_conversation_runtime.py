@@ -5,7 +5,11 @@ import pytest
 from core.db_scope import AsyncScopedDatabaseClient
 from services.conversation_db_scope import ActorTaskDatabases
 from services.conversation_execution import GenerationClaim
-from services.conversation_runtime import ConversationActorRuntime, _build_delivery
+from services.conversation_runtime import (
+    ConversationActorRuntime,
+    _build_delivery,
+    _get_handler_db,
+)
 from services.handlers.chat.actor_sink import ActorWebSink
 from services.sandbox.kernel_manager import get_kernel_manager
 
@@ -130,3 +134,19 @@ def test_runtime_routes_worker_and_task_databases_by_scope():
     assert executor._handler_db_factory() is handler
     assert observer._db is control
     assert observer._post_handler_factory().db is handler
+
+
+def test_default_handler_database_uses_worker_role(monkeypatch):
+    worker_db = object()
+    runtime_db_called = False
+
+    def fail_runtime_db():
+        nonlocal runtime_db_called
+        runtime_db_called = True
+        raise AssertionError("Actor Handler must not use runtime DB")
+
+    monkeypatch.setattr("core.database.get_db", fail_runtime_db)
+    monkeypatch.setattr("core.database.get_worker_db", lambda: worker_db)
+
+    assert _get_handler_db() is worker_db
+    assert runtime_db_called is False

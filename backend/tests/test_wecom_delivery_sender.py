@@ -135,7 +135,34 @@ def test_build_items_creates_failed_result_without_message():
         {"transport": "smart_robot"},
     )
 
-    assert items == [WecomDeliveryItem("error:0", "text", "超时")]
+    assert items == [
+        WecomDeliveryItem(
+            "error:0",
+            "text",
+            "抱歉，处理消息时出了点问题，请稍后再试。",
+        )
+    ]
+
+
+def test_build_items_does_not_expose_internal_failure_details():
+    sender = WecomDeliverySender(object(), MagicMock())
+
+    items = sender.build_items(
+        {
+            "status": "failed",
+            "error_message": "permission denied for table messages",
+        },
+        None,
+        {"transport": "smart_robot", "stream_id": "stream-1"},
+    )
+
+    assert items == [
+        WecomDeliveryItem(
+            "stream:text",
+            "text",
+            "抱歉，处理消息时出了点问题，请稍后再试。",
+        )
+    ]
 
 
 def test_build_items_labels_web_user_text_and_ignores_task_failure():

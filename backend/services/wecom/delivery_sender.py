@@ -59,7 +59,7 @@ class WecomDeliverySender:
                 "web-user:text", f"来自 Web：\n{text}", context,
             )
         if task.get("status") == "failed":
-            text = str(task.get("error_message") or "生成失败，请稍后重试。")
+            text = "抱歉，处理消息时出了点问题，请稍后再试。"
             key = "stream:text" if context.get("stream_id") else "error:0"
             return self._text_items(key, text, context)
 

@@ -1,5 +1,18 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-26 Conversation Actor Handler 数据库角色错配 — 已修复，待部署验证
+
+- 生产企微入站和 Actor 入队均成功，但 Actor 执行时以
+  `permission denied for table messages` 失败；生产角色矩阵确认
+  `everydayai_runtime` 无 `messages` 直访权限，`everydayai_worker` 保留受 RLS
+  约束的 SELECT。
+- 根因是 Actor 的异步控制面已使用 Worker 数据库，而同步 ChatHandler 默认工厂仍调用
+  `get_db()`，形成“runtime 会话角色 + worker DatabaseScope”的身份错配。
+- Actor Handler 默认连接已改为现有 `get_worker_db()`；Web 普通聊天的 Handler 默认
+  行为不变，也未向 runtime 或 WeCom 角色补表权限。
+- 企微终态失败投递不再回显数据库和内部异常原文，统一返回稳定用户文案；原始错误继续
+  保留在任务记录与服务日志。待部署后用真实企微消息验证 Actor 执行、终态和 Outbox。
+
 ## 2026-07-25 WeCom runtime 角色切换后消息热路径断裂
 
 - 生产证据：19:54 两条独立企微消息均在 Actor 入队前因

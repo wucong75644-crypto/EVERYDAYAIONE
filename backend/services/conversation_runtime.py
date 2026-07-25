@@ -172,6 +172,6 @@ def _create_post_handler(db: Any) -> Any:
 
 
 def _get_handler_db() -> Any:
-    from core.database import get_db
+    from core.database import get_worker_db
 
-    return get_db()
+    return get_worker_db()
