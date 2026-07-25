@@ -522,10 +522,10 @@ class RpcCaller:
             named_args = ", ".join(
                 f"{k} := %s" for k in self._params
             )
-            sql = f'SELECT "{self._func_name}"({named_args})'
+            sql = f'SELECT * FROM "{self._func_name}"({named_args})'
             params = list(self._params.values())
         else:
-            sql = f'SELECT "{self._func_name}"()'
+            sql = f'SELECT * FROM "{self._func_name}"()'
             params = []
 
         with self._pool.connection() as conn:
@@ -657,10 +657,10 @@ class AsyncRpcCaller(RpcCaller):
             named_args = ", ".join(
                 f"{k} := %s" for k in self._params
             )
-            sql = f'SELECT "{self._func_name}"({named_args})'
+            sql = f'SELECT * FROM "{self._func_name}"({named_args})'
             params = list(self._params.values())
         else:
-            sql = f'SELECT "{self._func_name}"()'
+            sql = f'SELECT * FROM "{self._func_name}"()'
             params = []
 
         async with self._pool.connection() as conn:

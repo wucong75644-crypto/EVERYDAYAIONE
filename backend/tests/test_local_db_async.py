@@ -370,6 +370,7 @@ class TestAsyncRpcCaller:
 
         assert result.data == 42
         sql = cur.execute.call_args[0][0]
+        assert sql.startswith("SELECT * FROM ")
         assert '"my_func"' in sql
         assert "p_id := %s" in sql
 
@@ -384,6 +385,7 @@ class TestAsyncRpcCaller:
 
         assert result.data == "ok"
         sql = cur.execute.call_args[0][0]
+        assert sql.startswith("SELECT * FROM ")
         assert '"ping"()' in sql
 
     @pytest.mark.asyncio
@@ -437,7 +439,7 @@ class TestAsyncRpcCaller:
 
     @pytest.mark.asyncio
     async def test_rpc_multiple_rows(self):
-        """RPC 返回多行"""
+        """RETURNS TABLE RPC 返回展开后的多行字典。"""
         pool, conn, cur = _mock_async_pool()
         cur.description = [("id",), ("name",)]
         cur.fetchall = AsyncMock(return_value=[
@@ -447,7 +449,11 @@ class TestAsyncRpcCaller:
 
         result = await AsyncRpcCaller(pool, "list_items", {}).execute()
 
-        assert len(result.data) == 2
+        assert result.data == [
+            {"id": 1, "name": "A"},
+            {"id": 2, "name": "B"},
+        ]
+        assert cur.execute.call_args[0][0].startswith("SELECT * FROM ")
 
 
 # ============================================================
