@@ -290,7 +290,10 @@ class TestRetryWithJitter:
         mock_oss.is_oss_url.return_value = False
         mock_oss.upload_from_url = mock_upload_from_url
 
-        with patch('services.task_completion_service.get_oss_service', return_value=mock_oss):
+        with patch(
+            "services.media_result_persistence.get_oss_service",
+            return_value=mock_oss,
+        ):
             with pytest.raises(ValueError, match="URL 已失效"):
                 await service._upload_single_to_oss(
                     url="https://kie.com/expired.png",
@@ -323,7 +326,10 @@ class TestRetryWithJitter:
         mock_oss.is_oss_url.return_value = False
         mock_oss.upload_from_url = mock_upload_from_url
 
-        with patch('services.task_completion_service.get_oss_service', return_value=mock_oss):
+        with patch(
+            "services.media_result_persistence.get_oss_service",
+            return_value=mock_oss,
+        ):
             result = await service._upload_single_to_oss(
                 url="https://kie.com/img.png",
                 user_id="user_123",
@@ -349,7 +355,10 @@ class TestRetryWithJitter:
         mock_oss.is_oss_url.return_value = False
         mock_oss.upload_from_url = mock_upload_from_url
 
-        with patch('services.task_completion_service.get_oss_service', return_value=mock_oss):
+        with patch(
+            "services.media_result_persistence.get_oss_service",
+            return_value=mock_oss,
+        ):
             with pytest.raises(Exception, match="媒体持久化失败.*已重试3次"):
                 await service._upload_single_to_oss(
                     url="https://kie.com/img.png",
