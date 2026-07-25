@@ -7,6 +7,8 @@
 - 数据一致性专用日志文件
 """
 
+import logging
+import re
 import warnings
 from pathlib import Path
 from loguru import logger
@@ -24,9 +26,36 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+_TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&\s]+", re.IGNORECASE)
+
+
+class _UvicornAccessTokenFilter(logging.Filter):
+    """在标准 access logger 格式化前清除 URL 中的认证 Token。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _TOKEN_QUERY_RE.sub(r"\1***", value)
+                if isinstance(value, str) else value
+                for value in record.args
+            )
+        return True
+
+
+def _install_access_token_filter() -> None:
+    access_logger = logging.getLogger("uvicorn.access")
+    if any(
+        isinstance(item, _UvicornAccessTokenFilter)
+        for item in access_logger.filters
+    ):
+        return
+    access_logger.addFilter(_UvicornAccessTokenFilter())
+
 
 def setup_logging():
     """配置应用日志"""
+
+    _install_access_token_filter()
 
     # 创建日志目录
     log_dir = Path(__file__).parent.parent / "logs"

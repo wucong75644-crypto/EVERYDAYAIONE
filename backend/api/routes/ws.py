@@ -15,8 +15,6 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
-from core.security import decode_access_token
-from core.exceptions import TokenExpiredError
 from schemas.websocket import (
     WSMessageType,
     build_error,
@@ -26,30 +24,11 @@ from schemas.websocket import (
     build_message_error,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
+from services.websocket_auth import get_user_from_token, reject_websocket
 from services.websocket_task_scope import find_task_in_connection_scope
 from core.database import get_db
 
 router = APIRouter(tags=["WebSocket"])
-
-async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
-    """
-    从 token 获取用户 ID
-
-    Args:
-        token: JWT token
-
-    Returns:
-        (用户 ID, 错误类型)。成功时 error_type 为空字符串
-    """
-    try:
-        payload = decode_access_token(token)
-        return payload.get("sub"), ""
-    except TokenExpiredError:
-        logger.debug("Token expired")
-        return None, "expired"
-    except Exception as e:
-        logger.warning(f"Token invalid | error={e}")
-        return None, "invalid"
 
 
 # TODO(time-context PR3): WebSocket 入口注入 RequestContext，全链路请求级 SSOT
@@ -75,7 +54,7 @@ async def websocket_endpoint(
     if not user_id:
         code = 4002 if error_type == "expired" else 4001
         reason = "Token expired" if error_type == "expired" else "Unauthorized"
-        await websocket.close(code=code, reason=reason)
+        await reject_websocket(websocket, code=code, reason=reason)
         return
 
     # 1.5 验证 org_id 归属（防止伪造）
@@ -90,11 +69,19 @@ async def websocket_endpoint(
                 verified_org_id = org_id
             else:
                 logger.warning(f"WS org_id rejected | user={user_id} | org_id={org_id}")
-                await websocket.close(code=4003, reason="Organization access denied")
+                await reject_websocket(
+                    websocket,
+                    code=4003,
+                    reason="Organization access denied",
+                )
                 return
         except Exception as e:
             logger.warning(f"WS org_id verify failed | error={e}")
-            await websocket.close(code=4003, reason="Organization verification failed")
+            await reject_websocket(
+                websocket,
+                code=4003,
+                reason="Organization verification failed",
+            )
             return
 
     # 2. 注册连接

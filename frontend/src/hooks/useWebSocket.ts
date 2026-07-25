@@ -289,11 +289,12 @@ export function useWebSocket(): UseWebSocketReturn {
         heartbeatIntervalRef.current = null;
       }
 
-      // 认证失败：只有后端明确返回 4001/4002 才是 token 无效
+      // 认证或租户访问失败：后端明确返回业务关闭码后统一退出
       // 1006 是"异常关闭"（网络断开/服务器重启），不代表认证失败
       const isAuthError =
         event.code === 4001 ||
-        event.code === 4002;
+        event.code === 4002 ||
+        event.code === 4003;
 
       if (isAuthError) {
         logger.warn('ws:connection', 'Auth failed, unified logout', { code: event.code });

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '../../stores/useAuthStore';
+import { logoutOnce } from '../../utils/tokenManager';
 import { useWebSocket } from '../useWebSocket';
 
 vi.mock('../../utils/logger', () => ({
@@ -50,6 +51,7 @@ class MockWebSocket {
 
 describe('useWebSocket tenant connection', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     localStorage.clear();
     localStorage.setItem('access_token', 'token-1');
     MockWebSocket.instances = [];
@@ -67,6 +69,23 @@ describe('useWebSocket tenant connection', () => {
       organizations: [],
     });
   });
+
+  it.each([4001, 4002, 4003])(
+    'logs out without reconnecting after close code %s',
+    async (code) => {
+      renderHook(() => useWebSocket());
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances).toHaveLength(1);
+      });
+      act(() => {
+        MockWebSocket.instances[0].onclose?.({ code, reason: 'denied' });
+      });
+
+      expect(logoutOnce).toHaveBeenCalledOnce();
+      expect(MockWebSocket.instances).toHaveLength(1);
+    },
+  );
 
   it('closes the old connection and reconnects for the new organization', async () => {
     const { result } = renderHook(() => useWebSocket());
