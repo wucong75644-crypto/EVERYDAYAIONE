@@ -76,6 +76,8 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert "缺少 MIGRATION_DATABASE_URL" in MIGRATION_SCRIPT
     assert "source .env.migrator" in MIGRATION_SCRIPT
     assert "venv/bin/python -m pytest" in SCRIPT
+    assert 'command -v python3.12 || command -v python3' in SCRIPT
+    assert '"$PYTHON_BIN" -m venv venv' in SCRIPT
 
 
 def test_deploy_fails_closed_and_requires_pushed_release_source() -> None:

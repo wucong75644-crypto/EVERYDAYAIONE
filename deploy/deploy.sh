@@ -33,6 +33,7 @@ log_error() {
 }
 
 source deploy/deploy-helpers.sh
+PYTHON_BIN="${PYTHON_BIN:-}"
 
 # 显示帮助信息
 show_help() {
@@ -111,6 +112,13 @@ check_dependencies() {
         missing_deps+=("ssh")
     fi
 
+    if [ -z "$PYTHON_BIN" ]; then
+        PYTHON_BIN="$(command -v python3.12 || command -v python3 || true)"
+    fi
+    if [ -z "$PYTHON_BIN" ]; then
+        missing_deps+=("python3.12")
+    fi
+
     if [ ${#missing_deps[@]} -gt 0 ]; then
         log_error "缺少必要工具: ${missing_deps[*]}"
         log_info "请先安装: brew install ${missing_deps[*]}"
@@ -186,7 +194,7 @@ build_backend() {
     # 检查虚拟环境
     if [ ! -d "venv" ]; then
         log_info "创建Python虚拟环境..."
-        python3 -m venv venv
+        "$PYTHON_BIN" -m venv venv
     fi
 
     # 激活虚拟环境
@@ -204,7 +212,7 @@ build_backend() {
 
     # 语法检查
     log_info "Python语法检查..."
-    python3 -m py_compile main.py || {
+    "$PYTHON_BIN" -m py_compile main.py || {
         log_error "Python语法检查失败"
         exit 1
     }
