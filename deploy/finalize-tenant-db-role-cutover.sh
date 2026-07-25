@@ -33,6 +33,7 @@ BEGIN;
 DO \$finalize\$
 DECLARE
     missing_migrations TEXT;
+    invalid_actor_capabilities TEXT;
     unexpected_owners TEXT;
     legacy_sessions INTEGER;
 BEGIN
@@ -57,7 +58,8 @@ BEGIN
           '160_configuration_resolution_core.sql',
           '160_configuration_resolution_facades.sql',
           '161_configuration_legacy_import.sql',
-          '162_configuration_legacy_export_access.sql'
+          '162_configuration_legacy_export_access.sql',
+          '163_conversation_actor_worker_discovery.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1
@@ -68,6 +70,68 @@ BEGIN
     IF missing_migrations IS NOT NULL THEN
         RAISE EXCEPTION 'TENANT_MIGRATIONS_NOT_APPLIED: %',
             missing_migrations;
+    END IF;
+
+    SELECT string_agg(required_function, ', ' ORDER BY required_function)
+      INTO invalid_actor_capabilities
+      FROM unnest(ARRAY[
+          'discover_generation_turn_candidates(integer)',
+          'worker_claim_next_serial_generation_turn(uuid,integer,integer)',
+          'worker_claim_branch_generation_turn(uuid,integer,integer)',
+          'worker_get_claimed_generation_task(uuid,uuid)',
+          'worker_renew_generation_lease(uuid,uuid,integer)',
+          'worker_commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+          'worker_fail_generation_turn(uuid,uuid,text,text)'
+      ]) AS required_function
+      LEFT JOIN pg_catalog.pg_proc procedure
+        ON procedure.oid = to_regprocedure('public.' || required_function)
+      LEFT JOIN pg_catalog.pg_roles owner_role
+        ON owner_role.oid = procedure.proowner
+     WHERE procedure.oid IS NULL
+        OR owner_role.rolname <> 'everydayai_owner'
+        OR NOT procedure.prosecdef
+        OR NOT has_function_privilege(
+            'everydayai_worker', procedure.oid, 'EXECUTE'
+        )
+        OR has_function_privilege(
+            'everydayai_runtime', procedure.oid, 'EXECUTE'
+        )
+        OR has_function_privilege(
+            'everydayai_wecom_runtime', procedure.oid, 'EXECUTE'
+        )
+        OR EXISTS (
+            SELECT 1
+              FROM aclexplode(COALESCE(
+                  procedure.proacl,
+                  acldefault('f', procedure.proowner)
+              )) acl
+             WHERE acl.grantee = 0
+               AND acl.privilege_type = 'EXECUTE'
+        );
+    IF invalid_actor_capabilities IS NOT NULL
+       OR has_table_privilege(
+           'everydayai_worker', 'public.tasks', 'SELECT'
+       )
+       OR has_table_privilege(
+           'everydayai_worker', 'public.tasks', 'INSERT'
+       )
+       OR has_table_privilege(
+           'everydayai_worker', 'public.tasks', 'UPDATE'
+       )
+       OR has_table_privilege(
+           'everydayai_worker', 'public.tasks', 'DELETE'
+       )
+       OR has_any_column_privilege(
+           'everydayai_worker', 'public.tasks', 'SELECT'
+       )
+       OR has_any_column_privilege(
+           'everydayai_worker', 'public.tasks', 'INSERT'
+       )
+       OR has_any_column_privilege(
+           'everydayai_worker', 'public.tasks', 'UPDATE'
+       ) THEN
+        RAISE EXCEPTION 'ACTOR_WORKER_CAPABILITY_CUTOVER_INCOMPLETE: %',
+            COALESCE(invalid_actor_capabilities, 'direct_tasks_access');
     END IF;
 
     SELECT string_agg(c.relname || '=' || owner_role.rolname, ', '

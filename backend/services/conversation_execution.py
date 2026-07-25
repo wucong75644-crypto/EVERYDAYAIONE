@@ -26,6 +26,8 @@ class GenerationClaim:
     context_through_message_id: str | None
     execution_attempt: int
     execution_mode: str
+    user_id: str
+    org_id: str | None
 
     @classmethod
     def from_rpc(
@@ -36,7 +38,13 @@ class GenerationClaim:
     ) -> "GenerationClaim | None":
         if data.get("outcome") != "claimed":
             return None
-        required = ("task_id", "execution_token", "turn_id", "input_message_id")
+        required = (
+            "task_id",
+            "execution_token",
+            "turn_id",
+            "input_message_id",
+            "user_id",
+        )
         if any(not data.get(field) for field in required):
             raise RuntimeError("ACTOR_CLAIM_RESULT_INVALID")
         base_revision = data.get("base_context_revision")
@@ -53,6 +61,11 @@ class GenerationClaim:
             context_through_message_id=data.get("context_through_message_id"),
             execution_attempt=attempt,
             execution_mode=execution_mode,
+            user_id=str(data["user_id"]),
+            org_id=(
+                str(data["org_id"])
+                if data.get("org_id") is not None else None
+            ),
         )
 
 
@@ -170,7 +183,7 @@ class ConversationExecutionService:
 
     async def claim_serial(self, conversation_id: str) -> GenerationClaim | None:
         data = await self._rpc(
-            "claim_next_serial_generation_turn",
+            "worker_claim_next_serial_generation_turn",
             {
                 "p_conversation_id": conversation_id,
                 "p_lease_seconds": self._lease_seconds,
@@ -185,7 +198,7 @@ class ConversationExecutionService:
         conversation_id: str,
     ) -> GenerationClaim | None:
         data = await self._rpc(
-            "claim_branch_generation_turn",
+            "worker_claim_branch_generation_turn",
             {
                 "p_task_id": task_id,
                 "p_lease_seconds": self._lease_seconds,
@@ -195,13 +208,23 @@ class ConversationExecutionService:
         return GenerationClaim.from_rpc(data, conversation_id, "branch")
 
     async def execute_claim(self, claim: GenerationClaim) -> dict[str, Any]:
-        task = await self._load_task(claim.task_id)
-        if task.get("conversation_id") != claim.conversation_id:
+        databases = self._task_db_factory(
+            {
+                "id": claim.task_id,
+                "user_id": claim.user_id,
+                "org_id": claim.org_id,
+            }
+        )
+        task = await self._load_task(claim, databases.control)
+        if (
+            task.get("conversation_id") != claim.conversation_id
+            or str(task.get("user_id")) != claim.user_id
+            or self._normalize_id(task.get("org_id")) != claim.org_id
+        ):
             raise RuntimeError("ACTOR_TASK_SCOPE_MISMATCH")
         output_message_id = task.get("assistant_message_id")
         if not output_message_id:
             raise RuntimeError("ACTOR_TASK_OUTPUT_MISSING")
-        databases = self._task_db_factory(task)
         executor = (
             self._executor_factory(databases)
             if self._executor_factory else self._executor
@@ -316,7 +339,7 @@ class ConversationExecutionService:
             await asyncio.sleep(self._renew_interval)
             try:
                 result = await self._rpc(
-                    "renew_generation_lease",
+                    "worker_renew_generation_lease",
                     {
                         "p_task_id": claim.task_id,
                         "p_execution_token": claim.execution_token,
@@ -354,7 +377,7 @@ class ConversationExecutionService:
         db: Any,
     ) -> dict[str, Any]:
         return await self._rpc(
-            "commit_generation_turn_with_context_v2",
+            "worker_commit_generation_turn_with_context_v2",
             {
                 "p_task_id": claim.task_id,
                 "p_execution_token": claim.execution_token,
@@ -407,7 +430,7 @@ class ConversationExecutionService:
             f"turn_id={claim.turn_id} | error={type(error).__name__}"
         )
         return await self._rpc(
-            "fail_generation_turn",
+            "worker_fail_generation_turn",
             {
                 "p_task_id": claim.task_id,
                 "p_execution_token": claim.execution_token,
@@ -417,17 +440,25 @@ class ConversationExecutionService:
             db=db,
         )
 
-    async def _load_task(self, task_id: str) -> dict[str, Any]:
-        result = await (
-            self._db.table("tasks")
-            .select("*")
-            .eq("id", task_id)
-            .maybe_single()
-            .execute()
-        )
+    async def _load_task(
+        self,
+        claim: GenerationClaim,
+        db: Any,
+    ) -> dict[str, Any]:
+        result = await db.rpc(
+            "worker_get_claimed_generation_task",
+            {
+                "p_task_id": claim.task_id,
+                "p_execution_token": claim.execution_token,
+            },
+        ).execute()
         if not result.data:
             raise RuntimeError("ACTOR_TASK_NOT_FOUND")
         return dict(result.data)
+
+    @staticmethod
+    def _normalize_id(value: Any) -> str | None:
+        return str(value) if value is not None else None
 
     async def _notify_terminal(
         self,

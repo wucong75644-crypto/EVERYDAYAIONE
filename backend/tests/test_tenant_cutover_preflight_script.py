@@ -1,4 +1,4 @@
-"""150–162 production tenant cutover preflight contract tests."""
+"""150–163 production tenant cutover preflight contract tests."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ MIGRATION_IDENTITIES = (
     "160_configuration_resolution_facades.sql",
     "161_configuration_legacy_import.sql",
     "162_configuration_legacy_export_access.sql",
+    "163_conversation_actor_worker_discovery.sql",
 )
 
 
@@ -133,6 +134,45 @@ def test_preflight_pins_current_162_checksum(tmp_path: Path) -> None:
         ).read_bytes()
     ).hexdigest()
     assert checksum in sql_path.read_text(encoding="utf-8")
+
+
+def test_preflight_pins_current_163_checksum(tmp_path: Path) -> None:
+    env, sql_path = _environment(tmp_path)
+
+    assert _run(env).returncode == 0
+
+    checksum = hashlib.sha256(
+        (
+            ROOT
+            / "backend/migrations"
+            / "163_conversation_actor_worker_discovery.sql"
+        ).read_bytes()
+    ).hexdigest()
+    assert checksum in sql_path.read_text(encoding="utf-8")
+
+
+def test_preflight_checks_actor_worker_capability_boundary(
+    tmp_path: Path,
+) -> None:
+    env, sql_path = _environment(tmp_path)
+
+    assert _run(env).returncode == 0
+
+    sql = sql_path.read_text(encoding="utf-8")
+    for function in (
+        "discover_generation_turn_candidates(integer)",
+        "worker_get_claimed_generation_task(uuid,uuid)",
+        "worker_commit_generation_turn_with_context_v2",
+        "worker_fail_generation_turn(uuid,uuid,text,text)",
+    ):
+        assert function in sql
+    assert "procedure.prosecdef" in sql
+    assert "acl.grantee = 0" in sql
+    assert "TENANT_CUTOVER_ACTOR_WORKER_CAPABILITY_INVALID" in sql
+    assert "TENANT_CUTOVER_ACTOR_WORKER_DIRECT_ACCESS_INVALID" in sql
+    for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        assert f"'public.tasks', '{privilege}'" in sql
+    assert sql.count("has_any_column_privilege(") == 3
 
 
 def test_preflight_checks_roles_owners_and_object_boundaries(

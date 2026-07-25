@@ -78,7 +78,8 @@ DECLARE
         '160_configuration_resolution_core.sql',
         '160_configuration_resolution_facades.sql',
         '161_configuration_legacy_import.sql',
-        '162_configuration_legacy_export_access.sql'
+        '162_configuration_legacy_export_access.sql',
+        '163_conversation_actor_worker_discovery.sql'
     ];
     expected_checksums CONSTANT TEXT[] := ARRAY[
         '60d765312928e92b525197b778fb64c505c59c60d104c4d7281e2ab713ceface',
@@ -95,13 +96,23 @@ DECLARE
         '88bf3ce251a44d510b475334874bc070efe618658909197f39b93e1bdf09122f',
         'e6eea45babe80d13c294ac0e78d33bfe777a59cb4365426d44cb92daaa2cb18c',
         '134ea6fa6f4a769e2e9aac121642849dbd37317193b1e610053f0ed3d75fcfc7',
-        '6f0017406a3e9e4d8993b6d1cab237efdb987d796e8cdcd232c1514b2fd50d64'
+        '6f0017406a3e9e4d8993b6d1cab237efdb987d796e8cdcd232c1514b2fd50d64',
+        '06fb7bdf519464cd42fd344adfd358e8c7277ee1afd59f5e6f28c8b222a7e682'
     ];
     key_functions CONSTANT TEXT[] := ARRAY[
         'register_user_asset(uuid,text,text,text,text,text,text,text,text,text,text,text,bigint,text,jsonb,text,uuid,text,text,text,uuid,uuid,uuid,uuid,uuid,integer,text,text,jsonb,timestamp with time zone)',
         'wecom_get_or_create_user(text,text,uuid,text,text)',
         'prepare_generation(uuid,text,uuid,uuid,uuid,uuid,jsonb,jsonb,jsonb)',
         'enqueue_generation_turn(jsonb,uuid,uuid,text,jsonb,uuid)'
+    ];
+    actor_worker_functions CONSTANT TEXT[] := ARRAY[
+        'discover_generation_turn_candidates(integer)',
+        'worker_claim_next_serial_generation_turn(uuid,integer,integer)',
+        'worker_claim_branch_generation_turn(uuid,integer,integer)',
+        'worker_get_claimed_generation_task(uuid,uuid)',
+        'worker_renew_generation_lease(uuid,uuid,integer)',
+        'worker_commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+        'worker_fail_generation_turn(uuid,uuid,text,text)'
     ];
     existing_isolated_roles INTEGER;
     applied_migrations INTEGER;
@@ -300,6 +311,77 @@ BEGIN
     END IF;
 
     IF applied_migrations = cardinality(expected_migrations) THEN
+        SELECT string_agg(
+                   required_function, ', ' ORDER BY required_function
+               )
+          INTO invalid_items
+          FROM unnest(actor_worker_functions) AS required_function
+          LEFT JOIN pg_catalog.pg_proc procedure
+            ON procedure.oid = to_regprocedure(
+                'public.' || required_function
+            )
+          LEFT JOIN pg_catalog.pg_roles owner_role
+            ON owner_role.oid = procedure.proowner
+         WHERE procedure.oid IS NULL
+            OR owner_role.rolname <> 'everydayai_owner'
+            OR NOT procedure.prosecdef
+            OR NOT has_function_privilege(
+                'everydayai_worker', procedure.oid, 'EXECUTE'
+            )
+            OR has_function_privilege(
+                'everydayai_runtime', procedure.oid, 'EXECUTE'
+            )
+            OR has_function_privilege(
+                'everydayai_wecom_runtime', procedure.oid, 'EXECUTE'
+            )
+            OR EXISTS (
+                SELECT 1
+                  FROM aclexplode(COALESCE(
+                      procedure.proacl,
+                      acldefault('f', procedure.proowner)
+                  )) acl
+                 WHERE acl.grantee = 0
+                   AND acl.privilege_type = 'EXECUTE'
+            );
+        IF invalid_items IS NOT NULL THEN
+            RAISE EXCEPTION
+                'TENANT_CUTOVER_ACTOR_WORKER_CAPABILITY_INVALID: %',
+                invalid_items;
+        END IF;
+        IF has_function_privilege(
+               'everydayai_worker',
+               'public._assert_actor_worker_discovery_scope()',
+               'EXECUTE'
+           )
+           OR has_function_privilege(
+               'everydayai_worker',
+               'public._assert_actor_worker_task_scope(uuid)',
+               'EXECUTE'
+           )
+           OR has_table_privilege(
+               'everydayai_worker', 'public.tasks', 'SELECT'
+           )
+           OR has_table_privilege(
+               'everydayai_worker', 'public.tasks', 'INSERT'
+           )
+           OR has_table_privilege(
+               'everydayai_worker', 'public.tasks', 'UPDATE'
+           )
+           OR has_table_privilege(
+               'everydayai_worker', 'public.tasks', 'DELETE'
+           )
+           OR has_any_column_privilege(
+               'everydayai_worker', 'public.tasks', 'SELECT'
+           )
+           OR has_any_column_privilege(
+               'everydayai_worker', 'public.tasks', 'INSERT'
+           )
+           OR has_any_column_privilege(
+               'everydayai_worker', 'public.tasks', 'UPDATE'
+           ) THEN
+            RAISE EXCEPTION
+                'TENANT_CUTOVER_ACTOR_WORKER_DIRECT_ACCESS_INVALID';
+        END IF;
         IF NOT has_table_privilege(
             'everydayai_owner',
             'public.kuaimai_external_credentials',
@@ -387,4 +469,4 @@ SQL
 } | python3 "$(dirname "$0")/run-psql-admin.py" \
     --no-psqlrc --set=ON_ERROR_STOP=1
 
-echo "✅ 150–162 生产租户切换只读前置检查通过"
+echo "✅ 150–163 生产租户切换只读前置检查通过"

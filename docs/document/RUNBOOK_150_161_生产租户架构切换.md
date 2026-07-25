@@ -1,4 +1,4 @@
-# RUNBOOK 150–162：生产租户架构切换
+# RUNBOOK 150–163：生产租户架构切换
 
 > 状态：生产已完成角色/owner 准备及 150–161；162 与旧配置导入待执行
 > 范围：数据库角色、对象所有权、RLS、能力门面、治理控制面、配置控制面及旧配置导入
@@ -71,7 +71,7 @@ worker client 必须与 worker 使用同一身份。
 3. 第一批 Agent Runtime 对象所有权转移。
 4. 第二批 Runtime/Message 对象所有权转移。
 5. 建立旧配置 export definer 的单表只读 ACL。
-6. 使用标准 Migration Runner 一次性应用 150–162。
+6. 使用标准 Migration Runner 一次性应用 150–163。
 7. 执行旧配置 dry-run/import。
 8. 分服务切换数据库角色并完成业务验证。
 9. 确认旧角色连接归零。
@@ -81,7 +81,7 @@ worker client 必须与 worker 使用同一身份。
 owner 转移必须发生在 152 之前，而不是仅在 153 之前。
 
 标准 Migration Runner 的 `apply` 会应用全部 pending migration，不支持按 `--through`
-分批 apply。因此两批 owner 和旧源表 ACL 必须先就绪，再一次性应用 150–162；不得假设 Runner 会
+分批 apply。因此两批 owner 和旧源表 ACL 必须先就绪，再一次性应用 150–163；不得假设 Runner 会
 停在 151 或 160。
 
 ## 5. 检查点 A：生产只读审计
@@ -94,7 +94,7 @@ LEGACY_DATABASE_OWNER=everydayai \
 bash deploy/preflight-tenant-cutover.sh
 ```
 
-脚本只接受 150–162 全部未应用或全部已应用状态；部分应用、failed、checksum 漂移、
+脚本只接受 150–163 全部未应用或全部已应用状态；部分应用、failed、checksum 漂移、
 部分角色、部分 owner 或未知 owner 都会失败关闭。成功时只输出阶段、事实计数和各角色
 连接数，不输出连接串或配置值。
 
@@ -102,7 +102,7 @@ bash deploy/preflight-tenant-cutover.sh
 
 - 生产 commit 与计划 commit 的关系。
 - 迁移账本已应用边界及 checksum 无漂移。
-- 150–162 均未出现 `failed` 记录。
+- 150–163 均未出现 `failed` 记录。
 - 第一批 13 张表及资产函数存在。
 - 第二批 18 张表、列 sequence 及固定业务函数存在。
 - 当前 owner 只属于允许的旧角色或 `everydayai_owner`。
@@ -169,7 +169,7 @@ owner 兼容权限。
 - 所有权脚本失败。
 - 第一批 owner、旧服务兼容 ACL 或健康检查不符合预期。
 
-## 8. 检查点 D：第二批所有权与迁移 150–162
+## 8. 检查点 D：第二批所有权与迁移 150–163
 
 ### 8.1 转移第二批对象
 
@@ -197,7 +197,7 @@ bash deploy/grant-legacy-config-export-access.sh
 脚本只授予 `everydayai_owner` 对 `kuaimai_external_credentials` 的 `SELECT`，
 不转移旧表 owner，也不授予 Reader 直表权限。
 
-### 8.3 一次性应用 150–162
+### 8.3 一次性应用 150–163
 
 Migration Runner 计划必须按完整文件名保持：
 
@@ -217,6 +217,7 @@ Migration Runner 计划必须按完整文件名保持：
 160_configuration_resolution_facades.sql
 161_configuration_legacy_import.sql
 162_configuration_legacy_export_access.sql
+163_conversation_actor_worker_discovery.sql
 ```
 
 同编号迁移按完整文件名字典序执行；不得把 core/facades 合并或手工拆开。
@@ -224,9 +225,9 @@ Migration Runner 计划必须按完整文件名保持：
 
 ```bash
 cd /var/www/everydayai/backend
-python scripts/migration_runner.py plan --applied-by tenant-cutover-150-162
-python scripts/migration_runner.py apply --applied-by tenant-cutover-150-162
-python scripts/migration_runner.py check --applied-by tenant-cutover-150-162
+python scripts/migration_runner.py plan --applied-by tenant-cutover-150-163
+python scripts/migration_runner.py apply --applied-by tenant-cutover-150-163
+python scripts/migration_runner.py check --applied-by tenant-cutover-150-163
 ```
 
 Migration Runner 任一文件失败会停止；不得跳过失败记录继续执行。
@@ -281,6 +282,13 @@ Migration Runner 任一文件失败会停止；不得跳过失败记录继续执
 - 企业治理、个人配置、企业共享配置和平台配置权限。
 - 跨企业、停用成员、空 Scope 和伪造 Scope 均被拒绝。
 
+Conversation Actor 必须作为第一个独立切换单元。切换前确认迁移 163 的 7 个 Worker
+Facade 均由 `everydayai_owner` 持有、启用 `SECURITY DEFINER`，且仅
+`everydayai_worker` 可执行；该角色不得拥有 `tasks` 的 SELECT/INSERT/UPDATE/DELETE。
+切换后至少完成一次真实 Actor task 的发现、claim、受控任务读取、续租和原子终态，并确认
+日志中没有 `InsufficientPrivilege`、Scope mismatch 或 ownership lost 异常增长。失败时只
+恢复 Actor unit 与旧数据库 URL，Backend、WeCom 和 Sync 不得跟随切换。
+
 任一服务失败，先把该服务恢复到旧 URL，再评估数据库 rollback；不得同时继续切换
 其他服务。
 
@@ -288,7 +296,7 @@ Migration Runner 任一文件失败会停止；不得跳过失败记录继续执
 
 只有同时满足以下条件才能最终收口：
 
-- 150–162 全部在账本中为 `applied`。
+- 150–163 全部在账本中为 `applied`。
 - 第一批、第二批和配置/治理对象 owner 均为 `everydayai_owner`。
 - 所有业务服务已使用独立角色。
 - 旧角色活动连接为零。
@@ -314,7 +322,7 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 | 角色创建后、owner 转移前 | 不切服务即可停止 |
 | 第一批 owner 转移后、150 前 | 使用第一批 owner rollback |
 | 第二批 owner 转移后、152 前 | 使用第二批 owner rollback |
-| 150–162 应用后、服务未切换 | 旧角色兼容权限继续承载，先停止推进 |
+| 150–163 应用后、服务未切换 | 旧角色兼容权限继续承载，先停止推进 |
 | 162 rollback | 先执行 `rollback-legacy-config-export-access.sh`，再执行 SQL rollback |
 | 单个服务切换失败 | 只恢复该服务旧 URL |
 | 161 导入成功后 | 不执行 161 rollback，不删除已导入事实 |
@@ -327,7 +335,7 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 
 只有以下证据齐全才能宣布生产租户架构切换完成：
 
-- 迁移账本 150–162 完整且 checksum 一致。
+- 迁移账本 150–163 完整且 checksum 一致。
 - 所有目标对象 owner 与 ACL 符合角色矩阵。
 - FORCE RLS 表和 policy 与迁移合同一致。
 - 服务只使用其指定数据库身份。

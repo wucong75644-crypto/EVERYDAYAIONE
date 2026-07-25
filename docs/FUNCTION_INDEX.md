@@ -288,6 +288,9 @@
 | `commit_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql`、`135_conversation_data_evidence.sql` | 7 参数函数保留原 Actor 终态；8 参数重载在同一事务复用原终态并按 closed revision 幂等提交数据证据 | task_id, execution_token, output_message_id, result_content, usage, credits_cost, tool_digest, data_evidence? | JSONB |
 | `fail_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 仅允许当前 fencing token 原子失败 running Chat task 并释放 owner | task_id, execution_token, error_code, error_message | JSONB |
 | `cancel_generation_turn` | `backend/migrations/122_conversation_actor_terminal.sql` | 用户与租户范围校验后立即取消 pending/running Chat task 并使旧 token 失效 | task_id, user_id, org_id | JSONB |
+| `discover_generation_turn_candidates` | `backend/migrations/163_conversation_actor_worker_discovery.sql` | 仅允许无租户 Worker Scope 有界发现 Actor task 路由标识，不暴露任务载荷或租户身份 | limit | JSONB |
+| `worker_claim_next_serial_generation_turn` / `worker_claim_branch_generation_turn` | `backend/migrations/163_conversation_actor_worker_discovery.sql` | 在无租户 Worker Scope 下保留原队列锁语义，领取后返回建立任务 Scope 所需的精确用户/企业身份 | conversation_id 或 task_id, lease_seconds, max_attempts | JSONB |
+| `worker_get_claimed_generation_task` / `worker_renew_generation_lease` / `worker_commit_generation_turn_with_context_v2` / `worker_fail_generation_turn` | `backend/migrations/163_conversation_actor_worker_discovery.sql` | 校验 Worker session 与任务级用户/企业 Scope；任务读取额外校验 running 状态和 fencing token，写操作委托既有原子函数 | 原函数参数 | JSONB |
 | `create_actor_terminal_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | Actor 企微 task 进入完成/失败终态时，在同一事务幂等创建投递 Outbox | trigger | trigger |
 | `create_web_user_wecom_delivery` | `backend/migrations/134_web_user_wecom_delivery.sql` | Web task 入队时从同会话最近一次已校验企微 task 复制真实目标，移除旧 stream 状态并原子创建用户消息镜像 Outbox | trigger | trigger |
 | `claim_conversation_delivery` | `backend/migrations/124_conversation_delivery_outbox.sql` | 使用 SKIP LOCKED、租约和稳定顺序认领一条待投递记录 | lease_seconds, max_attempts | JSONB |
@@ -1601,7 +1604,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `validate-tenant-db-env.sh` | `deploy/validate-tenant-db-env.sh` | 在服务切换前验证三类角色环境文件、0600 权限、登录角色与连接串独立性 |
 | `transfer-agent-runtime-ownership.sh` | `deploy/transfer-agent-runtime-ownership.sh` | 原子转移迁移账本、首组 13 表及三项资产函数 owner，并用临时 owner 成员关系保持旧服务穿越既有无 policy RLS 中间态 |
 | `rollback-agent-runtime-ownership.sh` | `deploy/rollback-agent-runtime-ownership.sh` | 在显式开关且目标表均未 FORCE RLS 时，恢复迁移账本、13 表、资产函数 owner 与新角色 schema USAGE |
-| `finalize-tenant-db-role-cutover.sh` | `deploy/finalize-tenant-db-role-cutover.sh` | 校验 150–159、33 个对象 Owner、独立服务切换及旧连接归零后撤销旧角色临时 owner 成员关系 |
+| `finalize-tenant-db-role-cutover.sh` | `deploy/finalize-tenant-db-role-cutover.sh` | 校验 150–163、Actor Worker Facade、目标对象 Owner、独立服务切换及旧连接归零后撤销旧角色临时 owner 成员关系 |
 | `transfer-runtime-message-ownership.sh` | `deploy/transfer-runtime-message-ownership.sh` | 原子转移第二批 18 张 Runtime/Message/治理表、其真实列 sequence 和 25 个固定函数签名，同时保留旧角色兼容能力 |
 | `rollback-runtime-message-ownership.sh` | `deploy/rollback-runtime-message-ownership.sh` | 要求服务已切回旧连接且目标表未 FORCE RLS，再恢复第二批表、sequence 和函数 owner |
 | `tenant_actor_user_id` / `tenant_org_id` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 从事务级 GUC 安全解析用户与企业 UUID；缺失或非法值返回 NULL |
@@ -1672,7 +1675,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ActorTaskDatabases` | `backend/services/conversation_db_scope.py` | 绑定同一任务身份的异步控制面、异步应用层和同步 Handler 数据库门面 |
 | `build_actor_worker_db` | `backend/services/conversation_db_scope.py` | 创建仅供跨租户扫描、claim 和任务身份读取的无租户 Worker Scope |
 | `build_actor_task_databases` | `backend/services/conversation_db_scope.py` | 从已认领任务校验用户/企业 UUID，并创建不可共享的精确 Worker Scope |
-| `ConversationExecutionService.execute_claim` | `backend/services/conversation_execution.py` | Worker DB 读取任务后切换任务 DB，续租、执行、提交、失败和终态观察均使用任务绑定 |
+| `ConversationExecutionService.execute_claim` | `backend/services/conversation_execution.py` | 从 claim 身份先建立任务 DB，再读取并复核任务；续租、执行、提交、失败和终态观察均使用任务绑定 |
 | `ConversationActorRuntime._create_executor` | `backend/services/conversation_runtime.py` | 为每次 claim 创建任务专属 Chat executor，并分别注入同步 Handler 与异步 Sink DB |
 | `get_scheduler` | `backend/services/memory/memory_service_v2.py` | 按当前调用身份创建独立 Memory PipelineScheduler，不再复用跨租户全局单例 |
 | `_resolve_memory_db` | `backend/services/memory/memory_service_v2.py` | 将可信 scoped client 转为 raw SQL scoped adapter；缺少 Scope 时失败关闭 |

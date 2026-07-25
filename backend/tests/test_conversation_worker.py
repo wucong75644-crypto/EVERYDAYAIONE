@@ -17,10 +17,9 @@ from services.conversation_worker import (
 
 def _row(task: str, conversation: str, mode: str = "serial") -> dict[str, Any]:
     return {
-        "id": task,
+        "task_id": task,
         "conversation_id": conversation,
         "execution_mode": mode,
-        "delivery_context": {"actor": True},
     }
 
 
@@ -35,6 +34,8 @@ def _claim(task: str, conversation: str, mode: str) -> GenerationClaim:
         context_through_message_id=None,
         execution_attempt=1,
         execution_mode=mode,
+        user_id=f"user-{task}",
+        org_id=None,
     )
 
 
@@ -42,35 +43,21 @@ class _Query:
     def __init__(self, db: "_DB") -> None:
         self._db = db
 
-    def select(self, _fields: str) -> "_Query":
-        return self
-
-    def eq(self, _field: str, _value: Any) -> "_Query":
-        return self
-
-    def in_(self, _field: str, _values: list[str]) -> "_Query":
-        return self
-
-    def order(self, _field: str) -> "_Query":
-        return self
-
-    def limit(self, value: int) -> "_Query":
-        self._limit = value
-        return self
-
     async def execute(self) -> SimpleNamespace:
         if self._db.error:
             raise self._db.error
-        return SimpleNamespace(data=self._db.rows[: self._limit])
+        return SimpleNamespace(data=self._db.rows[: self._db.limit])
 
 
 class _DB:
     def __init__(self, rows: list[dict[str, str]] | None = None) -> None:
         self.rows = rows or []
         self.error: Exception | None = None
+        self.limit = 0
 
-    def table(self, name: str) -> _Query:
-        assert name == "tasks"
+    def rpc(self, name: str, params: dict[str, Any]) -> _Query:
+        assert name == "discover_generation_turn_candidates"
+        self.limit = params["p_limit"]
         return _Query(self)
 
 
@@ -85,8 +72,13 @@ class _WakeDuringScanDB(_DB):
         super().__init__()
         self.on_scan = None
 
-    def table(self, name: str) -> _WakeDuringScanQuery:
-        assert name == "tasks"
+    def rpc(
+        self,
+        name: str,
+        params: dict[str, Any],
+    ) -> _WakeDuringScanQuery:
+        assert name == "discover_generation_turn_candidates"
+        self.limit = params["p_limit"]
         return _WakeDuringScanQuery(self)
 
 
@@ -192,10 +184,10 @@ async def test_database_scan_failure_is_non_fatal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_ignores_legacy_chat_tasks() -> None:
-    legacy = _row("legacy", "c1")
-    legacy.pop("delivery_context")
-    worker = ConversationWorker(_DB([legacy]), _Execution())
+async def test_scan_ignores_malformed_discovery_rows() -> None:
+    malformed = _row("malformed", "c1")
+    malformed.pop("task_id")
+    worker = ConversationWorker(_DB([malformed]), _Execution())
 
     assert await worker.scan_once() == 0
 

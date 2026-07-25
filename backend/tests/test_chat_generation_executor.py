@@ -69,6 +69,8 @@ def _claim() -> GenerationClaim:
         context_through_message_id="closed-1",
         execution_attempt=1,
         execution_mode="serial",
+        user_id="user-1",
+        org_id="org-1",
     )
 
 

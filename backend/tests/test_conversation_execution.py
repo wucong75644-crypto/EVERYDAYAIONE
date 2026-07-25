@@ -29,6 +29,8 @@ def _claimed(mode: str = "serial") -> dict[str, Any]:
         "context_through_message_id": "closed-1",
         "execution_attempt": 1,
         "execution_mode": mode,
+        "user_id": "user-1",
+        "org_id": "org-1",
     }
 
 
@@ -42,29 +44,14 @@ class _AsyncCaller:
         return SimpleNamespace(data=self._value)
 
 
-class _TaskQuery:
-    def __init__(self, task: dict[str, Any] | None) -> None:
-        self._task = task
-
-    def select(self, _fields: str) -> "_TaskQuery":
-        return self
-
-    def eq(self, _field: str, _value: Any) -> "_TaskQuery":
-        return self
-
-    def maybe_single(self) -> "_TaskQuery":
-        return self
-
-    async def execute(self) -> SimpleNamespace:
-        return SimpleNamespace(data=self._task)
-
-
 class _FakeDB:
     def __init__(self) -> None:
         self.task = {
             "id": "task-1",
             "conversation_id": "conv-1",
             "assistant_message_id": "output-1",
+            "user_id": "user-1",
+            "org_id": "org-1",
         }
         self.results: dict[str, list[Any]] = defaultdict(list)
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -74,13 +61,11 @@ class _FakeDB:
 
     def rpc(self, name: str, params: dict[str, Any]) -> _AsyncCaller:
         self.calls.append((name, params))
+        if name == "worker_get_claimed_generation_task":
+            return _AsyncCaller(self.task)
         values = self.results[name]
         value = values.pop(0) if values else {"outcome": "renewed"}
         return _AsyncCaller(value)
-
-    def table(self, name: str) -> _TaskQuery:
-        assert name == "tasks"
-        return _TaskQuery(self.task)
 
 
 class _SuccessExecutor:
@@ -131,52 +116,12 @@ class _Observer:
 
 
 @pytest.mark.asyncio
-async def test_claim_serial_returns_typed_claim() -> None:
-    db = _FakeDB()
-    db.queue("claim_next_serial_generation_turn", _claimed())
-    service = ConversationExecutionService(db, _SuccessExecutor())
-
-    claim = await service.claim_serial("conv-1")
-
-    assert claim is not None
-    assert claim.conversation_id == "conv-1"
-    assert claim.base_context_revision == 4
-    assert claim.execution_mode == "serial"
-
-
-@pytest.mark.asyncio
-async def test_claim_returns_none_when_queue_is_busy() -> None:
-    db = _FakeDB()
-    db.queue("claim_next_serial_generation_turn", {"outcome": "busy"})
-    service = ConversationExecutionService(db, _SuccessExecutor())
-
-    assert await service.claim_serial("conv-1") is None
-
-
-@pytest.mark.asyncio
-async def test_claim_branch_uses_exact_task_without_serial_owner() -> None:
-    db = _FakeDB()
-    db.queue("claim_branch_generation_turn", _claimed("branch"))
-    service = ConversationExecutionService(db, _SuccessExecutor())
-
-    claim = await service.claim_branch("task-1", "conv-1")
-
-    assert claim is not None
-    assert claim.execution_mode == "branch"
-    assert db.calls[0] == (
-        "claim_branch_generation_turn",
-        {
-            "p_task_id": "task-1",
-            "p_lease_seconds": 90,
-            "p_max_attempts": 3,
-        },
-    )
-
-
-@pytest.mark.asyncio
 async def test_execute_claim_commits_executor_outcome() -> None:
     db = _FakeDB()
-    db.queue("commit_generation_turn_with_context_v2", {"outcome": "committed"})
+    db.queue(
+        "worker_commit_generation_turn_with_context_v2",
+        {"outcome": "committed"},
+    )
     service = ConversationExecutionService(db, _SuccessExecutor())
     claim = GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
 
@@ -185,7 +130,7 @@ async def test_execute_claim_commits_executor_outcome() -> None:
     assert result == {"outcome": "committed"}
     commit = next(
         call for call in db.calls
-        if call[0] == "commit_generation_turn_with_context_v2"
+        if call[0] == "worker_commit_generation_turn_with_context_v2"
     )
     assert commit[1]["p_output_message_id"] == "output-1"
     assert commit[1]["p_credits_cost"] == 3
@@ -219,7 +164,7 @@ async def test_non_committed_result_cleans_new_oss_artifacts() -> None:
 
     db = _FakeDB()
     db.queue(
-        "commit_generation_turn_with_context_v2",
+        "worker_commit_generation_turn_with_context_v2",
         {"outcome": "ownership_lost"},
     )
     service = ConversationExecutionService(db, _ArtifactExecutor())
@@ -266,7 +211,10 @@ async def test_execute_claim_commits_data_evidence_in_same_rpc() -> None:
             )
 
     db = _FakeDB()
-    db.queue("commit_generation_turn_with_context_v2", {"outcome": "committed"})
+    db.queue(
+        "worker_commit_generation_turn_with_context_v2",
+        {"outcome": "committed"},
+    )
     service = ConversationExecutionService(db, _EvidenceExecutor())
 
     await service.execute_claim(
@@ -275,7 +223,7 @@ async def test_execute_claim_commits_data_evidence_in_same_rpc() -> None:
 
     commit = next(
         call for call in db.calls
-        if call[0] == "commit_generation_turn_with_context_v2"
+        if call[0] == "worker_commit_generation_turn_with_context_v2"
     )
     evidence = commit[1]["p_data_evidence"].obj
     assert evidence[0]["artifact_id"] == "artifact-1"
@@ -285,7 +233,10 @@ async def test_execute_claim_commits_data_evidence_in_same_rpc() -> None:
 @pytest.mark.asyncio
 async def test_execute_claim_notifies_after_confirmed_commit() -> None:
     db = _FakeDB()
-    db.queue("commit_generation_turn_with_context_v2", {"outcome": "committed"})
+    db.queue(
+        "worker_commit_generation_turn_with_context_v2",
+        {"outcome": "committed"},
+    )
     observer = _Observer()
     service = ConversationExecutionService(
         db,
@@ -304,7 +255,10 @@ async def test_execute_claim_notifies_after_confirmed_commit() -> None:
 @pytest.mark.asyncio
 async def test_terminal_observer_failure_does_not_change_database_outcome() -> None:
     db = _FakeDB()
-    db.queue("commit_generation_turn_with_context_v2", {"outcome": "committed"})
+    db.queue(
+        "worker_commit_generation_turn_with_context_v2",
+        {"outcome": "committed"},
+    )
     service = ConversationExecutionService(
         db,
         _SuccessExecutor(),
@@ -321,17 +275,20 @@ async def test_terminal_observer_failure_does_not_change_database_outcome() -> N
 @pytest.mark.asyncio
 async def test_executor_failure_uses_atomic_fail_rpc() -> None:
     db = _FakeDB()
-    db.queue("fail_generation_turn", {"outcome": "failed"})
+    db.queue("worker_fail_generation_turn", {"outcome": "failed"})
     service = ConversationExecutionService(db, _FailingExecutor())
     claim = GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
 
     result = await service.execute_claim(claim)
 
     assert result == {"outcome": "failed"}
-    failure = next(call for call in db.calls if call[0] == "fail_generation_turn")
+    failure = next(
+        call for call in db.calls
+        if call[0] == "worker_fail_generation_turn"
+    )
     assert failure[1]["p_error_code"] == "VALUEERROR"
     assert not any(
-        name == "commit_generation_turn_with_context_v2"
+        name == "worker_commit_generation_turn_with_context_v2"
         for name, _ in db.calls
     )
 
@@ -339,21 +296,24 @@ async def test_executor_failure_uses_atomic_fail_rpc() -> None:
 @pytest.mark.asyncio
 async def test_invalid_executor_result_uses_atomic_fail_rpc() -> None:
     db = _FakeDB()
-    db.queue("fail_generation_turn", {"outcome": "failed"})
+    db.queue("worker_fail_generation_turn", {"outcome": "failed"})
     service = ConversationExecutionService(db, _InvalidExecutor())
     claim = GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
 
     result = await service.execute_claim(claim)
 
     assert result == {"outcome": "failed"}
-    failure = next(call for call in db.calls if call[0] == "fail_generation_turn")
+    failure = next(
+        call for call in db.calls
+        if call[0] == "worker_fail_generation_turn"
+    )
     assert failure[1]["p_error_code"] == "TYPEERROR"
 
 
 @pytest.mark.asyncio
 async def test_ownership_loss_cancels_local_executor() -> None:
     db = _FakeDB()
-    db.queue("renew_generation_lease", {"outcome": "ownership_lost"})
+    db.queue("worker_renew_generation_lease", {"outcome": "ownership_lost"})
     executor = _BlockingExecutor()
     service = ConversationExecutionService(
         db, executor, renew_interval_seconds=0.001,
@@ -366,8 +326,8 @@ async def test_ownership_loss_cancels_local_executor() -> None:
     assert executor.cancelled is True
     assert not any(
         name in {
-            "commit_generation_turn_with_context_v2",
-            "fail_generation_turn",
+            "worker_commit_generation_turn_with_context_v2",
+            "worker_fail_generation_turn",
         }
         for name, _ in db.calls
     )
@@ -377,7 +337,7 @@ async def test_ownership_loss_cancels_local_executor() -> None:
 async def test_consecutive_renew_errors_cancel_execution() -> None:
     db = _FakeDB()
     db.queue(
-        "renew_generation_lease",
+        "worker_renew_generation_lease",
         ConnectionError("db down"),
         ConnectionError("db down"),
     )
@@ -411,8 +371,8 @@ async def test_external_shutdown_does_not_write_false_terminal() -> None:
 
     assert not any(
         name in {
-            "commit_generation_turn_with_context_v2",
-            "fail_generation_turn",
+            "worker_commit_generation_turn_with_context_v2",
+            "worker_fail_generation_turn",
         }
         for name, _ in db.calls
     )
@@ -422,7 +382,7 @@ async def test_external_shutdown_does_not_write_false_terminal() -> None:
 async def test_cancel_winning_commit_race_is_returned_as_terminal() -> None:
     db = _FakeDB()
     db.queue(
-        "commit_generation_turn_with_context_v2",
+        "worker_commit_generation_turn_with_context_v2",
         {"outcome": "terminal", "status": "cancelled"},
     )
     service = ConversationExecutionService(db, _SuccessExecutor())
@@ -431,14 +391,16 @@ async def test_cancel_winning_commit_race_is_returned_as_terminal() -> None:
     result = await service.execute_claim(claim)
 
     assert result == {"outcome": "terminal", "status": "cancelled"}
-    assert not any(name == "fail_generation_turn" for name, _ in db.calls)
+    assert not any(
+        name == "worker_fail_generation_turn" for name, _ in db.calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_commit_connection_error_does_not_write_false_failure() -> None:
     db = _FakeDB()
     db.queue(
-        "commit_generation_turn_with_context_v2",
+        "worker_commit_generation_turn_with_context_v2",
         ConnectionError("response lost"),
     )
     service = ConversationExecutionService(db, _SuccessExecutor())
@@ -447,17 +409,19 @@ async def test_commit_connection_error_does_not_write_false_failure() -> None:
     with pytest.raises(ConnectionError, match="response lost"):
         await service.execute_claim(claim)
 
-    assert not any(name == "fail_generation_turn" for name, _ in db.calls)
+    assert not any(
+        name == "worker_fail_generation_turn" for name, _ in db.calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_commit_integrity_error_writes_confirmed_failure() -> None:
     db = _FakeDB()
     db.queue(
-        "commit_generation_turn_with_context_v2",
+        "worker_commit_generation_turn_with_context_v2",
         CheckViolation("artifact storage contract violated"),
     )
-    db.queue("fail_generation_turn", {"outcome": "failed"})
+    db.queue("worker_fail_generation_turn", {"outcome": "failed"})
     observer = _Observer()
     service = ConversationExecutionService(
         db,
@@ -470,15 +434,46 @@ async def test_commit_integrity_error_writes_confirmed_failure() -> None:
 
     assert result == {"outcome": "failed"}
     assert [name for name, _ in db.calls].count(
-        "commit_generation_turn_with_context_v2"
+        "worker_commit_generation_turn_with_context_v2"
     ) == 1
-    assert [name for name, _ in db.calls].count("fail_generation_turn") == 1
+    assert [name for name, _ in db.calls].count(
+        "worker_fail_generation_turn"
+    ) == 1
     assert observer.calls[0][1] == result
 
 
 def test_invalid_claim_result_is_rejected() -> None:
     data = _claimed()
     data["execution_token"] = None
+
+    with pytest.raises(RuntimeError, match="ACTOR_CLAIM_RESULT_INVALID"):
+        GenerationClaim.from_rpc(data, "conv-1", "serial")
+
+
+@pytest.mark.asyncio
+async def test_execute_claim_rejects_task_identity_mismatch() -> None:
+    db = _FakeDB()
+    db.task["user_id"] = "other-user"
+    service = ConversationExecutionService(db, _SuccessExecutor())
+    claim = GenerationClaim.from_rpc(_claimed(), "conv-1", "serial")
+
+    with pytest.raises(RuntimeError, match="ACTOR_TASK_SCOPE_MISMATCH"):
+        await service.execute_claim(claim)
+
+    assert db.calls == [
+        (
+            "worker_get_claimed_generation_task",
+            {
+                "p_task_id": "task-1",
+                "p_execution_token": "token-1",
+            },
+        )
+    ]
+
+
+def test_claim_without_user_identity_is_rejected() -> None:
+    data = _claimed()
+    data["user_id"] = None
 
     with pytest.raises(RuntimeError, match="ACTOR_CLAIM_RESULT_INVALID"):
         GenerationClaim.from_rpc(data, "conv-1", "serial")

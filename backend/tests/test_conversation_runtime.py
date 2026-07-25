@@ -64,6 +64,8 @@ def test_build_delivery_uses_external_task_id():
         context_through_message_id="input",
         execution_attempt=1,
         execution_mode="serial",
+        user_id="user",
+        org_id="org",
     )
 
     delivery = _build_delivery(
@@ -94,6 +96,8 @@ def test_runtime_uses_web_sink_for_wecom_actor():
         input_message_id="input", base_context_revision=1,
         context_through_message_id="input", execution_attempt=1,
         execution_mode="serial",
+        user_id="user",
+        org_id=None,
     )
     task = {
         "id": "internal", "assistant_message_id": "assistant",

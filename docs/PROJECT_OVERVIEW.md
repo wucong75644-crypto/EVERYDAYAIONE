@@ -78,8 +78,9 @@
   用户映射后只提升当前消息身份，且不修改共享根服务。
 - `backend/services/conversation_db_scope.py`：装配 Actor 跨租户 Worker 扫描 Scope，以及 claim
   后共享同一身份的异步控制面、异步应用层和同步 Handler 数据库门面。
-- `backend/tests/test_conversation_db_scope.py`、`backend/tests/test_conversation_execution_scope.py`：
-  覆盖 Worker 无租户身份、任务身份失败关闭及执行/提交/通知切换到任务 DB。
+- `backend/tests/test_conversation_db_scope.py`、`backend/tests/test_conversation_execution_scope.py`、
+  `backend/tests/test_conversation_execution_claims.py`：覆盖 Worker 无租户身份、claim RPC、
+  任务身份失败关闭及执行/提交/通知切换到任务 DB。
 - `backend/tests/test_db_scope_raw_connection.py`：覆盖异步 raw SQL 连接在同一事务注入 Scope、
   异常回滚、禁止显式结束事务、禁止绕过 scoped pool 取裸连接及双租户身份独立。
 - `backend/tests/test_memory_scoped_database.py`：覆盖 Memory 从调用方解析可信 Scope、全局
@@ -130,7 +131,8 @@
   原子 owner 转移；先赋予旧角色临时 owner 成员关系，兼容生产既有无 policy RLS 表。
 - `deploy/rollback-agent-runtime-ownership.sh`：受显式危险操作开关保护的 owner 恢复入口；
   恢复迁移账本、13 表和资产函数；任一目标表仍启用 FORCE RLS 时失败关闭。
-- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–162 已应用、全部目标对象 Owner
+- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–163 已应用、Actor Worker
+  Facade 权限完整、全部目标对象 Owner
   正确、服务已切换且旧连接归零后，撤销旧角色的临时 owner 成员关系。
 - `backend/tests/test_tenant_db_role_finalize_script.py`：覆盖最终撤销双重人工门禁、迁移、
   Owner、独立管理员、旧连接检查及旧角色名注入拒绝。
@@ -141,10 +143,10 @@
   PUBLIC/新角色权限并保留旧服务兼容权限。
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
-- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–162 checksum/状态、
+- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–163 checksum/状态、
   两批对象 owner、数据库角色、RLS、旧/新配置计数和角色连接数，并输出当前切换阶段。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批
-  owner 转移、150–162 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
+  owner 转移、150–163 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
   边界；明确两批 owner 先就绪，再由标准 Runner 一次性应用全部 pending 迁移。
 - `backend/tests/test_runtime_message_ownership_scripts.py`：覆盖第二批精确对象、动态列
   sequence、权限收紧、管理员 URL 隐藏和双重回滚保护。
@@ -537,6 +539,7 @@ EVERYDAYAIONE/
 │   │   ├── 137_context_summary_revision_rpc.sql # 连续闭合 Turn 摘要的 revision CAS 原子提交
 │   │   ├── 150_agent_runtime_tenant_defense.sql # Agent Runtime 首组 13 表租户 RLS policy
 │   │   ├── 151_agent_runtime_role_grants.sql # Agent Runtime 首组最小角色授权
+│   │   ├── 163_conversation_actor_worker_discovery.sql # Actor 无租户发现与任务级 Worker Facade
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -548,6 +551,7 @@ EVERYDAYAIONE/
 │   │       ├── 127_actor_tenant_rpc_contract_rollback.sql
 │   │       ├── 128_wecom_channel_conversations_rollback.sql
 │   │       ├── 129_conversation_attachments_rollback.sql
+│   │       ├── 163_conversation_actor_worker_discovery_rollback.sql
 │   │       ├── 131_attachment_asset_lifecycle_rollback.sql
 │   │       ├── 132_wecom_channel_task_enqueue_rollback.sql
 │   │       ├── 133_wecom_attachment_single_consumption_rollback.sql

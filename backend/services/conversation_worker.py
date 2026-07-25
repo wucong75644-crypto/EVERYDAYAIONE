@@ -237,15 +237,10 @@ class ConversationWorker:
 
     async def _load_candidates(self) -> list[_Candidate]:
         try:
-            result = await (
-                self._db.table("tasks")
-                .select("id, conversation_id, execution_mode, delivery_context")
-                .eq("type", "chat")
-                .in_("status", ["pending", "running"])
-                .order("queue_sequence")
-                .limit(self._scan_batch_size)
-                .execute()
-            )
+            result = await self._db.rpc(
+                "discover_generation_turn_candidates",
+                {"p_limit": self._scan_batch_size},
+            ).execute()
         except Exception as error:
             logger.warning(
                 f"actor_scan_failed | error={type(error).__name__}"
@@ -254,10 +249,7 @@ class ConversationWorker:
 
         candidates: list[_Candidate] = []
         for row in result.data or []:
-            from services.conversation_task import is_actor_task
-            if not is_actor_task(row):
-                continue
-            task_id = row.get("id")
+            task_id = row.get("task_id")
             conversation_id = row.get("conversation_id")
             mode = row.get("execution_mode", "serial")
             if task_id and conversation_id and mode in {"serial", "branch"}:

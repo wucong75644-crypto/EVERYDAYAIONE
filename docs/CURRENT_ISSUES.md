@@ -183,6 +183,12 @@
   配置计数及角色连接数；部分角色、部分 owner、部分迁移和未知中间态全部失败关闭。
   已新增 6 个合同测试，并与既有 ownership、161 preflight、finalize 和安全 psql
   runner 测试组成 46 项定向回归全部通过；脚本仍未连接生产数据库。
+- Actor 独立 Worker 角色切换的 `InsufficientPrivilege` 根因已收口到迁移 163：
+  无租户 Scope 只能发现和 claim 路由标识，领取后通过用户/企业 Scope 与 fencing token
+  受控读取任务、续租和写终态；`everydayai_worker` 不获得 `tasks` 表级权限。生产总
+  preflight、最终 owner 收口和 Runbook 已升级到 150–163，并固定校验 7 个 Facade 的
+  owner、SECURITY DEFINER、角色 ACL 与零表直权。当前代码和合同测试已完成，迁移 163
+  尚未应用生产，Actor 仍运行旧数据库身份。
 - 生产创建租户数据库角色后发现环境验证器优先执行 BSD `stat -f`，GNU `stat` 会返回
   非权限文本但退出成功，导致真实 `0600` 文件被误判。`validate-tenant-db-env.sh`
   已改为只接受 GNU `stat -c` 或 BSD `stat -f` 返回的纯八进制权限，并新增两种平台
