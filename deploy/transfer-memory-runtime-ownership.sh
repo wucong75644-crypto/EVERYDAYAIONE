@@ -69,7 +69,9 @@ BEGIN
 END
 \$preflight\$;
 
-GRANT everydayai_owner TO ${legacy_owner};
+SELECT format('GRANT everydayai_owner TO %I', '${legacy_owner}')
+ WHERE NOT pg_has_role('${legacy_owner}', 'everydayai_owner', 'MEMBER')
+\gexec
 ALTER TABLE public.memory_pipeline_state OWNER TO everydayai_owner;
 ALTER TABLE public.memory_session_logs OWNER TO everydayai_owner;
 ALTER TABLE public.memory_consolidation_runs OWNER TO everydayai_owner;

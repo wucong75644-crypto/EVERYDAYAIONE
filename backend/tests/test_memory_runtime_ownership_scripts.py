@@ -27,6 +27,10 @@ def test_transfer_has_preflight_and_atomic_owner_change() -> None:
     assert "MEMORY_RUNTIME_REQUIRED_ROLE_MISSING" in TRANSFER
     assert "MEMORY_RUNTIME_TABLE_MISSING" in TRANSFER
     assert "MEMORY_RUNTIME_OWNER_UNEXPECTED" in TRANSFER
+    assert (
+        "WHERE NOT pg_has_role("
+        "'${legacy_owner}', 'everydayai_owner', 'MEMBER')"
+    ) in TRANSFER
     for table in TABLES:
         assert (
             f"ALTER TABLE public.{table} OWNER TO everydayai_owner"
