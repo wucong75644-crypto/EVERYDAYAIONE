@@ -663,76 +663,37 @@ class TestWorkerExecuteSync:
 
 
 class TestRefreshKitStock:
-    """_refresh_kit_stock: 套件库存物化视图刷新"""
+    """_refresh_kit_stock: 只能通过 Sync 数据库能力刷新。"""
 
     @pytest.mark.asyncio
     async def test_refresh_success(self):
         """正常刷新物化视图"""
-        from contextlib import asynccontextmanager
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        mock_cursor = AsyncMock()
-        # advisory lock 返回 True（获取成功）
-        mock_cursor.fetchone = AsyncMock(return_value={"locked": True})
-
-        mock_conn = AsyncMock()
-        mock_conn.set_autocommit = AsyncMock()
-
-        @asynccontextmanager
-        async def _mock_cursor():
-            yield mock_cursor
-
-        mock_conn.cursor = _mock_cursor
-
-        @asynccontextmanager
-        async def _mock_connection():
-            yield mock_conn
-
         db = MagicMock()
-        db.pool.connection = _mock_connection
+        caller = MagicMock()
+        caller.execute = AsyncMock(return_value=MagicMock(data=True))
+        db.rpc.return_value = caller
 
         worker = ErpSyncWorker(db)
         await worker._refresh_kit_stock()
 
-        calls = [c.args[0] for c in mock_cursor.execute.call_args_list]
-        assert any("pg_try_advisory_lock" in c for c in calls)
-        assert any("REFRESH MATERIALIZED VIEW" in c for c in calls)
-        assert any("pg_advisory_unlock" in c for c in calls)
+        db.rpc.assert_called_once_with("sync_refresh_kit_stock")
 
     @pytest.mark.asyncio
     async def test_refresh_skip_when_locked(self):
         """另一个进程持有锁时跳过刷新"""
-        from contextlib import asynccontextmanager
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        mock_cursor = AsyncMock()
-        # advisory lock 返回 False（已被其他进程持有）
-        mock_cursor.fetchone = AsyncMock(return_value={"locked": False})
-
-        mock_conn = AsyncMock()
-        mock_conn.set_autocommit = AsyncMock()
-
-        @asynccontextmanager
-        async def _mock_cursor():
-            yield mock_cursor
-
-        mock_conn.cursor = _mock_cursor
-
-        @asynccontextmanager
-        async def _mock_connection():
-            yield mock_conn
-
         db = MagicMock()
-        db.pool.connection = _mock_connection
+        caller = MagicMock()
+        caller.execute = AsyncMock(return_value=MagicMock(data=False))
+        db.rpc.return_value = caller
 
         worker = ErpSyncWorker(db)
         await worker._refresh_kit_stock()
 
-        calls = [c.args[0] for c in mock_cursor.execute.call_args_list]
-        assert any("pg_try_advisory_lock" in c for c in calls)
-        # 不应执行 REFRESH 和 unlock
-        assert not any("REFRESH" in c for c in calls)
-        assert not any("pg_advisory_unlock" in c for c in calls)
+        db.rpc.assert_called_once_with("sync_refresh_kit_stock")
 
     @pytest.mark.asyncio
     async def test_refresh_view_not_exist(self):
@@ -740,7 +701,9 @@ class TestRefreshKitStock:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
         db = MagicMock()
-        db.pool.connection.side_effect = Exception("relation mv_kit_stock does not exist")
+        caller = MagicMock()
+        caller.execute = AsyncMock(side_effect=Exception("capability unavailable"))
+        db.rpc.return_value = caller
 
         worker = ErpSyncWorker(db)
         # 不应抛异常
@@ -2261,12 +2224,24 @@ class TestMultiTenantSync:
         with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
             ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
             worker = ErpSyncWorker(db)
-        with patch("services.org.config_resolver.AsyncOrgConfigResolver") as MR:
-            MR.return_value = MagicMock(get_erp_credentials=AsyncMock(return_value={
-                "kuaimai_app_key": "k", "kuaimai_app_secret": "s",
-                "kuaimai_access_token": "t", "kuaimai_refresh_token": "r",
-            }))
-            orgs = await worker._load_erp_orgs()
+        with patch(
+            "services.configuration.sync_resolver.SyncConfigurationResolver"
+        ) as MR:
+            MR.return_value.discover_erp_org_ids = AsyncMock(
+                return_value=["org-2"]
+            )
+            with patch(
+                "services.org.config_resolver.AsyncOrgConfigResolver"
+            ) as org_resolver:
+                org_resolver.return_value = MagicMock(
+                    get_erp_credentials=AsyncMock(return_value={
+                        "kuaimai_app_key": "k",
+                        "kuaimai_app_secret": "s",
+                        "kuaimai_access_token": "t",
+                        "kuaimai_refresh_token": "r",
+                    })
+                )
+                orgs = await worker._load_erp_orgs()
         assert len(orgs) == 1
         assert orgs[0][0] == "org-2"
 

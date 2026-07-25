@@ -374,7 +374,7 @@ class TestCheckTokenRefresh:
         old_time = (datetime.now(timezone.utc) - timedelta(days=25)).isoformat()
         mock_result = MagicMock()
         mock_result.data = [{"org_id": "org-a", "updated_at": old_time}]
-        s.db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute = AsyncMock(return_value=mock_result)
+        s.db.rpc.return_value.execute = AsyncMock(return_value=mock_result)
         s._enqueue_task = AsyncMock(return_value=True)
 
         await s._check_token_refresh(["org-a"])
@@ -388,7 +388,7 @@ class TestCheckTokenRefresh:
         fresh_time = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         mock_result = MagicMock()
         mock_result.data = [{"org_id": "org-a", "updated_at": fresh_time}]
-        s.db.table.return_value.select.return_value.eq.return_value.in_.return_value.execute = AsyncMock(return_value=mock_result)
+        s.db.rpc.return_value.execute = AsyncMock(return_value=mock_result)
         s._enqueue_task = AsyncMock()
 
         await s._check_token_refresh(["org-a"])

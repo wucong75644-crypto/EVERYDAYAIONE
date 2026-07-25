@@ -496,22 +496,20 @@ class TestLocalStockQueryKitFallback:
         from services.kuaimai.erp_local_query import local_stock_query
         db = _make_db(
             erp_stock_status=[],
-            mv_kit_stock=[
-                {
-                    "outer_id": "TJ-KIT01",
-                    "sku_outer_id": "TJ-KIT01-01",
-                    "item_name": "套件测试",
-                    "properties_name": "规格A",
-                    "warehouse_id": "",
-                    "sellable_num": 100,
-                    "total_stock": 150,
-                    "lock_stock": 0,
-                    "purchase_num": 50,
-                    "stock_status": 1,
-                },
-            ],
             erp_sync_state=[_sync_state("stock")],
         )
+        db.set_rpc_result("runtime_list_kit_stock", [{
+            "outer_id": "TJ-KIT01",
+            "sku_outer_id": "TJ-KIT01-01",
+            "item_name": "套件测试",
+            "properties_name": "规格A",
+            "warehouse_id": "",
+            "sellable_num": 100,
+            "total_stock": 150,
+            "lock_stock": 0,
+            "purchase_num": 50,
+            "stock_status": 1,
+        }])
         result = await local_stock_query(db, "TJ-KIT01-01")
         assert "套件" in result.summary
         assert "100" in result.summary
@@ -522,22 +520,13 @@ class TestLocalStockQueryKitFallback:
         from services.kuaimai.erp_local_query import local_stock_query
         db = _make_db(
             erp_stock_status=[],
-            mv_kit_stock=[
-                {
-                    "outer_id": "TJ-KIT01",
-                    "sku_outer_id": "TJ-KIT01-01",
-                    "item_name": "套件测试",
-                    "properties_name": "规格A",
-                    "warehouse_id": "",
-                    "sellable_num": 100,
-                    "total_stock": 150,
-                    "lock_stock": 0,
-                    "purchase_num": 50,
-                    "stock_status": 1,
-                },
-            ],
             erp_sync_state=[_sync_state("stock")],
         )
+        db.set_rpc_result("runtime_list_kit_stock", [{
+            "outer_id": "TJ-KIT01",
+            "sku_outer_id": "TJ-KIT01-01",
+            "stock_status": 1,
+        }])
         # stock_status=3(无货) 不匹配 status=1 的数据 → 无结果
         result = await local_stock_query(db, "TJ-KIT01-01", stock_status="3")
         assert "无库存记录" in result.summary or "无" in result.summary

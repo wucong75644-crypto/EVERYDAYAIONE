@@ -125,11 +125,19 @@
   SQL 字面量转义、密码不进入日志以及 psql 失败传播。
 - `deploy/env-templates/*.env.template`：runtime、worker、migrator 的无凭证连接文件合同，
   分别约束 `DATABASE_URL` 或 `MIGRATION_DATABASE_URL` 的数据库登录角色。
-- `deploy/validate-tenant-db-env.sh`：切换服务前验证三个真实角色文件的存在性、0600 权限、
+- `deploy/validate-tenant-db-env.sh`：切换服务前验证四个真实角色文件的存在性、0600 权限、
   固定配置键、角色用户名、占位符清理和连接串独立性，不输出连接内容。
 - `backend/tests/test_tenant_db_env_contract.py`：覆盖模板安全性及角色环境合同的成功/失败边界。
-- `deploy/env-templates/sync.env.template`：Sync/ERP 分阶段切换期间使用的独立旧角色连接
-  文件模板，避免与 runtime/Actor worker 共用数据库凭证。
+- `deploy/env-templates/sync.env.template`：Sync/ERP 使用独立
+  `everydayai_sync` 数据库角色的环境模板
+- `backend/services/configuration/external_control.py`：快麦外部凭证的 Runtime
+  管理员配置控制面适配器。
+- `backend/services/kuaimai_external/manual_worker.py`：Sync 服务持久手动同步队列
+  消费器。
+- `backend/api/routes/kuaimai_external_credentials.py`：拆分后的快麦凭证管理与探活
+  路由。
+- `deploy/transfer-sync-domain-ownership.sh` /
+  `deploy/rollback-sync-domain-ownership.sh`：Sync 数据域 owner 原子切换与回滚。
 - `backend/tests/test_service_database_role_files.py`：固定 Backend/WeCom、Actor、Sync 的
   Systemd 数据库角色覆盖文件映射，防止服务再次全部回退到共享 `.env`。
 - `deploy/env-templates/worker-client.env.template`：Web 内后台任务与 Actor raw SQL 使用的
@@ -156,7 +164,7 @@
   原子 owner 转移；先赋予旧角色临时 owner 成员关系，兼容生产既有无 policy RLS 表。
 - `deploy/rollback-agent-runtime-ownership.sh`：受显式危险操作开关保护的 owner 恢复入口；
   恢复迁移账本、13 表和资产函数；任一目标表仍启用 FORCE RLS 时失败关闭。
-- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–164 已应用、Actor Worker
+- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–180 已应用、Actor/媒体/定时 Worker
   Facade 权限完整、全部目标对象 Owner
   正确、服务已切换且旧连接归零后，撤销旧角色的临时 owner 成员关系。
 - `backend/tests/test_tenant_db_role_finalize_script.py`：覆盖最终撤销双重人工门禁、迁移、
@@ -173,6 +181,11 @@
   `test_memory_runtime_ownership_scripts.py`、
   `test_memory_runtime_role_matrix_external.py`：覆盖迁移/回滚静态合同、所有权脚本门禁及
   真实 PostgreSQL Worker 跨租户隔离矩阵。
+- `deploy/transfer-worker-control-ownership.sh`、
+  `deploy/rollback-worker-control-ownership.sh`：原子转移或受保护地恢复错误日志、知识指标、
+  定时任务和执行记录四表及其列序列 owner；保留 Sync 旧角色兼容，但不授予 Worker 直表权限。
+- `backend/migrations/180_scheduled_task_tenant_boundary.sql`：对定时任务定义和运行记录启用
+  FORCE RLS，只向 Web Runtime 开放企业 Scope 内的任务管理与运行历史读取。
 - `backend/migrations/166_wecom_worker_discovery.sql`：提供无 Secret 的 WeCom 企业目标
   Discovery，只向 actorless Worker 返回 active 企业 ID 与凭证版本；rollback 仅撤销
   新能力。
@@ -184,8 +197,13 @@
   PUBLIC/新角色权限并保留旧服务兼容权限。
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
-- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–164 checksum/状态、
-  两批对象 owner、数据库角色、RLS、旧/新配置计数和角色连接数，并输出当前切换阶段。
+- `deploy/preflight-tenant-cutover.sh`：兼容总入口，编排
+  `deploy/preflight/tenant-core.sh` 与 `deploy/preflight/worker-control.sh`，分别核验
+  150–164 核心域及 165–180 Worker Control 域的 checksum、owner、ACL、RLS 和能力边界。
+- `backend/scripts/verify_worker_control_preconditions.py`：部署发现 171–180 pending 时，
+  在 apply 前验证四张依赖表及其列序列均已属于 `everydayai_owner`，否则失败关闭。
+- `docs/document/RUNBOOK_171_180_Worker_Control生产恢复.md`：固定 179 failed 协调、
+  owner 转移、迁移重放、服务重启与真实链路验收顺序。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批
   owner 转移、150–164 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
   边界；明确两批 owner 先就绪，再由标准 Runner 一次性应用全部 pending 迁移。

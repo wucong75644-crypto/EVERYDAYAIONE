@@ -315,17 +315,13 @@ class ErpSyncScheduler:
         无企业时返回 [None] 代表散客模式。
         """
         try:
-            result = await (
-                self.db.table("organizations")
-                .select("id, features")
-                .eq("status", "active")
-                .execute()
+            from services.configuration.sync_resolver import (
+                SyncConfigurationResolver,
             )
-            org_ids: list[str | None] = []
-            for org in (result.data or []):
-                features = org.get("features") or {}
-                if features.get("erp"):
-                    org_ids.append(str(org["id"]))
+
+            org_ids: list[str | None] = await SyncConfigurationResolver(
+                self.db
+            ).discover_erp_org_ids()
 
             if not org_ids:
                 # 散客降级：检查全局凭证是否配置
@@ -352,20 +348,19 @@ class ErpSyncScheduler:
             return
 
         try:
-            result = await (
-                self.db.table("org_configs")
-                .select("org_id, updated_at")
-                .eq("config_key", "kuaimai_access_token")
-                .in_("org_id", real_org_ids)
-                .execute()
-            )
+            result = await self.db.rpc(
+                "sync_list_erp_token_versions"
+            ).execute()
         except Exception as e:
             logger.warning(f"Token age batch query failed | error={e}")
             return
 
         now_utc = datetime.now(timezone.utc)
+        target_orgs = set(real_org_ids)
         for row in (result.data or []):
             org_id = str(row["org_id"])
+            if org_id not in target_orgs:
+                continue
             updated_at = _parse_utc_timestamp(row["updated_at"])
             if updated_at is None:
                 continue

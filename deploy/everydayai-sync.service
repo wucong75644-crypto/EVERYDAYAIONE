@@ -18,6 +18,7 @@ Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/
 Environment="TZ=Asia/Shanghai"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.sync
+EnvironmentFile=/var/www/everydayai/backend/.env.kek
 
 # 启动命令（单进程，无需 leader election）
 ExecStart=/var/www/everydayai/backend/venv/bin/python sync_worker_main.py

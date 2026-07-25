@@ -123,12 +123,9 @@ async def _scan_and_alert(db: Any) -> None:
         from services.kuaimai.erp_sync_scheduler import _parse_utc_timestamp
 
         now_utc = datetime.now(timezone.utc)
-        token_rows = await (
-            db.table("org_configs")
-            .select("org_id, updated_at")
-            .eq("config_key", "kuaimai_access_token")
-            .execute()
-        )
+        token_rows = await db.rpc(
+            "sync_list_erp_token_versions"
+        ).execute()
         for r in (token_rows.data or []):
             org_id = str(r["org_id"])
             updated_at = _parse_utc_timestamp(r["updated_at"])
@@ -263,60 +260,12 @@ async def _push_to_org_admins(db: Any, org_id: str, msg: str) -> None:
     更不能用 users.current_org_id 因为那只代表"当前切换到哪个 org"，
     不代表 ta 是这个 org 的管理员。
     """
-    # 1) 找该 org 的 owner / admin（多租户成员关系）
-    member_rows = await (
-        db.table("org_members")
-        .select("user_id, role")
-        .eq("org_id", org_id)
-        .in_("role", ["owner", "admin"])
-        .eq("status", "active")
-        .limit(10)
-        .execute()
-    )
-    admin_ids = [m["user_id"] for m in (member_rows.data or [])]
-    if not admin_ids:
-        logger.info(
-            f"ErpSyncHealthcheck no org owner/admin to notify | org={org_id}"
-        )
-        return
+    from services.sync_alert_service import send_org_alert
 
-    # 2) 查这些管理员的 wecom_userid 映射
-    mapping_rows = await (
-        db.table("wecom_user_mappings")
-        .select("wecom_userid, user_id")
-        .in_("user_id", admin_ids)
-        .eq("org_id", org_id)
-        .execute()
-    )
-    mappings = mapping_rows.data or []
-    if not mappings:
+    if not await send_org_alert(db, org_id, msg):
         logger.info(
-            f"ErpSyncHealthcheck no wecom mapping for admins | org={org_id}"
+            f"ErpSyncHealthcheck no alert recipient reached | org={org_id}"
         )
-        return
-
-    # 3) 通过 MessageGateway 统一存消息 + 推企微（先存后推）
-    # MessageGateway 内部 .execute() 是同步调用，必须传同步 db
-    from core.database import get_db
-    from services.message_gateway import MessageGateway
-    gateway = MessageGateway(get_db())
-    for m in mappings:
-        try:
-            await gateway.save_system_message(
-                user_id=m["user_id"],
-                org_id=org_id,
-                text=msg,
-                source="error_alert",
-            )
-            logger.info(
-                f"ErpSyncHealthcheck alert saved+pushed | "
-                f"org={org_id} | user_id={m['user_id']}"
-            )
-        except Exception as e:
-            logger.error(
-                f"ErpSyncHealthcheck push failed | "
-                f"user_id={m['user_id']} | error={e}"
-            )
 
 
 # ── Token 刷新失败实时告警（快档） ────────────────────────

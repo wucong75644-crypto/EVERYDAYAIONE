@@ -197,17 +197,14 @@ class ErpSyncWorker:
         orgs: list[tuple[str | None, KuaiMaiClient | None]] = []
 
         try:
-            result = await (
-                self.db.table("organizations")
-                .select("id, features")
-                .eq("status", "active")
-                .execute()
+            from services.configuration.sync_resolver import (
+                SyncConfigurationResolver,
             )
-            for org in (result.data or []):
-                features = org.get("features") or {}
-                if not features.get("erp"):
-                    continue
-                org_id = str(org["id"])
+
+            org_ids = await SyncConfigurationResolver(
+                self.db
+            ).discover_erp_org_ids()
+            for org_id in org_ids:
                 try:
                     from services.org.config_resolver import AsyncOrgConfigResolver
                     resolver = AsyncOrgConfigResolver(self.db)
@@ -306,29 +303,9 @@ class ErpSyncWorker:
 
     async def _refresh_kit_stock(self) -> None:
         """刷新套件库存物化视图（stock 同步后调用，~1s）"""
-        try:
-            async with self.db.pool.connection() as conn:
-                await conn.set_autocommit(True)
-                async with conn.cursor() as cur:
-                    # advisory lock 防止多进程并发刷新
-                    await cur.execute(
-                        "SELECT pg_try_advisory_lock(hashtext('mv_kit_stock')) AS locked"
-                    )
-                    row = await cur.fetchone()
-                    locked = row["locked"] if isinstance(row, dict) else row[0]
-                    if not locked:
-                        return  # 另一个进程正在刷新，跳过
-                    try:
-                        await cur.execute(
-                            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
-                        )
-                    finally:
-                        await cur.execute(
-                            "SELECT pg_advisory_unlock(hashtext('mv_kit_stock'))"
-                        )
-            logger.debug("Kit stock materialized view refreshed")
-        except Exception as e:
-            logger.warning(f"Kit stock refresh failed | error={e}")
+        from services.kuaimai.erp_sync_kit_stock import refresh_kit_stock
+
+        await refresh_kit_stock(self.db)
 
     def _should_run_low_freq(self, org_id: str | None = None) -> bool:
         """判断低频任务是否到期（按企业隔离计时）"""

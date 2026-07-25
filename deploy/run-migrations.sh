@@ -30,6 +30,10 @@ migration_plan=$(
     "$migration_python" scripts/migration_runner.py plan \
         --applied-by deploy-script
 )
+if printf '%s\n' "$migration_plan" | grep -Eq \
+    '^(171_|172_|173_|174_|175_|176_|177_|178_|179_|180_|181_|182_|183_|184_|185_)'; then
+    "$migration_python" scripts/verify_worker_control_preconditions.py
+fi
 if [ "$RUN_MIGRATIONS" = "true" ]; then
     "$migration_python" scripts/migration_runner.py apply \
         --applied-by deploy-script

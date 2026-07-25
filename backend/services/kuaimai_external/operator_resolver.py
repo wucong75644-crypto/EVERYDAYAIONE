@@ -34,15 +34,11 @@ async def resolve_operator(
 
     name = operator_name.strip()
 
-    resp = await (
-        db.table("wecom_employees")
-        .select("wecom_userid, name, status")
-        .eq("org_id", org_id)
-        .eq("name", name)
-        .eq("status", 1)
-        .execute()
-    )
-    rows = resp.data or []
+    rows = [
+        row
+        for row in await _active_employees(db, org_id)
+        if row.get("name") == name
+    ]
 
     if len(rows) == 0:
         return ResolveResult(operator_name=name, status="not_found", matched_count=0)
@@ -73,13 +69,17 @@ async def verify_binding_still_valid(
     if not wecom_userid:
         return False
 
-    resp = await (
-        db.table("wecom_employees")
-        .select("wecom_userid")
-        .eq("org_id", org_id)
-        .eq("wecom_userid", wecom_userid)
-        .eq("status", 1)
-        .limit(1)
-        .execute()
+    return any(
+        row.get("wecom_userid") == wecom_userid
+        for row in await _active_employees(db, org_id)
     )
-    return bool(resp.data)
+
+
+async def _active_employees(db: Any, org_id: str) -> list[dict]:
+    response = await db.rpc(
+        "sync_list_wecom_employees",
+        {"p_org_id": org_id},
+    ).execute()
+    return [
+        row for row in (response.data or []) if isinstance(row, dict)
+    ]

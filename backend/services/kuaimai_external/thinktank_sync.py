@@ -21,16 +21,18 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from services.kuaimai_external import (
-    credential_store,
     field_auditor,
     http_base,
     wecom_alert,
 )
+
+if TYPE_CHECKING:
+    from services.configuration.sync_resolver import SyncExternalCredentials
 
 
 THINKTANK_URL = "https://erp.superboss.cc/kmzk/profit/report/shop"
@@ -189,16 +191,11 @@ async def _finish_sync_log(
 
 async def _get_org_label(db: Any, org_id: str) -> str:
     """拿企业可读名（用于告警）。"""
-    resp = await (
-        db.table("organizations")
-        .select("name")
-        .eq("id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if resp and resp.data:
-        return resp.data.get("name", "未知")
-    return "未知"
+    resp = await db.rpc(
+        "sync_get_org_label",
+        {"p_org_id": org_id},
+    ).execute()
+    return str(resp.data or "未知")
 
 
 # ──────────────────────── 主入口 ────────────────────────
@@ -220,6 +217,7 @@ async def sync_thinktank(
     sync_type: str = "manual",
     start_date: date | None = None,
     end_date: date | None = None,
+    credentials: SyncExternalCredentials | None = None,
 ) -> SyncResult:
     """
     智库同步主流程（一个 org，一次）。
@@ -235,9 +233,16 @@ async def sync_thinktank(
         SyncResult
     """
     # 1. 凭证
-    cred = await credential_store.get_active_credential(
-        db, org_id=org_id, source="thinktank"
-    )
+    cred = credentials
+    if cred is None:
+        from services.configuration.sync_resolver import (
+            SyncConfigurationResolver,
+        )
+
+        cred = await SyncConfigurationResolver(db).external_credentials(
+            org_id,
+            "thinktank",
+        )
     if not cred:
         logger.warning(
             f"thinktank_sync 跳过 | 无 active 凭证 | org={org_id}"
@@ -283,7 +288,6 @@ async def sync_thinktank(
             referer=THINKTANK_REFERER,
         )
     except http_base.CookieExpiredError as e:
-        await credential_store.mark_expired(db, credential_id=cred.id, error_msg=str(e))
         await _finish_sync_log(
             db,
             log_id=log_id,
@@ -301,9 +305,6 @@ async def sync_thinktank(
             success=False, log_id=log_id, error=str(e), cookie_expired=True
         )
     except Exception as e:
-        await credential_store.record_sync_failure(
-            db, credential_id=cred.id, error_msg=str(e)
-        )
         await _finish_sync_log(
             db, log_id=log_id, status="failed", error_message=str(e)
         )
@@ -315,7 +316,6 @@ async def sync_thinktank(
     rows = (result.json_body or {}).get("data", {}).get("list", [])
     if not rows:
         await _finish_sync_log(db, log_id=log_id, status="success", rows_synced=0)
-        await credential_store.record_sync_success(db, credential_id=cred.id)
         logger.info(f"thinktank_sync 完成（空数据）| org={org_id}")
         return SyncResult(success=True, log_id=log_id, rows_synced=0)
 
@@ -379,7 +379,6 @@ async def sync_thinktank(
             "sync_batch_id": sync_batch_id,
         },
     )
-    await credential_store.record_sync_success(db, credential_id=cred.id)
     return SyncResult(success=True, log_id=log_id, rows_synced=upsert_count)
 
 

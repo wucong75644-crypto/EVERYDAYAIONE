@@ -7,6 +7,7 @@ required_variables=(
     EVERYDAYAI_CONFIG_IMPORT_READER_PASSWORD
     EVERYDAYAI_MIGRATOR_PASSWORD
     EVERYDAYAI_RUNTIME_PASSWORD
+    EVERYDAYAI_SYNC_PASSWORD
     EVERYDAYAI_WECOM_RUNTIME_PASSWORD
     EVERYDAYAI_WORKER_PASSWORD
 )
@@ -27,6 +28,7 @@ passwords=(
     "$EVERYDAYAI_CONFIG_IMPORT_READER_PASSWORD"
     "$EVERYDAYAI_MIGRATOR_PASSWORD"
     "$EVERYDAYAI_RUNTIME_PASSWORD"
+    "$EVERYDAYAI_SYNC_PASSWORD"
     "$EVERYDAYAI_WECOM_RUNTIME_PASSWORD"
     "$EVERYDAYAI_WORKER_PASSWORD"
 )
@@ -46,7 +48,7 @@ for left_index in "${!passwords[@]}"; do
     for right_index in "${!passwords[@]}"; do
         if [ "$left_index" -lt "$right_index" ] \
             && [ "${passwords[$left_index]}" = "${passwords[$right_index]}" ]; then
-            echo "❌ config-import-reader、migrator、runtime、wecom-runtime、worker 必须使用不同密码" >&2
+            echo "❌ config-import-reader、migrator、runtime、sync、wecom-runtime、worker 必须使用不同密码" >&2
             exit 1
         fi
     done
@@ -62,6 +64,7 @@ config_import_reader_password=$(
 )
 migrator_password=$(sql_literal "$EVERYDAYAI_MIGRATOR_PASSWORD")
 runtime_password=$(sql_literal "$EVERYDAYAI_RUNTIME_PASSWORD")
+sync_password=$(sql_literal "$EVERYDAYAI_SYNC_PASSWORD")
 wecom_runtime_password=$(sql_literal "$EVERYDAYAI_WECOM_RUNTIME_PASSWORD")
 worker_password=$(sql_literal "$EVERYDAYAI_WORKER_PASSWORD")
 
@@ -111,6 +114,17 @@ WHERE NOT EXISTS (
 \gexec
 
 SELECT format(
+    'CREATE ROLE everydayai_sync LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',
+SQL
+    printf "    '%s'\n" "$sync_password"
+    cat <<'SQL'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'everydayai_sync'
+)
+\gexec
+
+SELECT format(
     'CREATE ROLE everydayai_wecom_runtime LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',
 SQL
     printf "    '%s'\n" "$wecom_runtime_password"
@@ -138,6 +152,7 @@ SQL
     printf "ALTER ROLE everydayai_config_import_reader LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" "$config_import_reader_password"
     printf "ALTER ROLE everydayai_migrator LOGIN PASSWORD '%s' INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" "$migrator_password"
     printf "ALTER ROLE everydayai_runtime LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" "$runtime_password"
+    printf "ALTER ROLE everydayai_sync LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" "$sync_password"
     printf "ALTER ROLE everydayai_wecom_runtime LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" "$wecom_runtime_password"
     printf "ALTER ROLE everydayai_worker LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" "$worker_password"
     cat <<'SQL'
@@ -145,6 +160,7 @@ SQL
 GRANT everydayai_owner TO everydayai_migrator;
 REVOKE everydayai_owner FROM everydayai_config_import_reader;
 REVOKE everydayai_owner FROM everydayai_runtime;
+REVOKE everydayai_owner FROM everydayai_sync;
 REVOKE everydayai_owner FROM everydayai_wecom_runtime;
 REVOKE everydayai_owner FROM everydayai_worker;
 SQL

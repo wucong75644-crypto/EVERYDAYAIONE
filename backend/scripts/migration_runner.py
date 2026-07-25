@@ -232,6 +232,7 @@ def run(
 
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", (LOCK_KEY,))
+    connection.commit()
     try:
         if command == "baseline":
             if not through:
@@ -240,6 +241,7 @@ def run(
             return []
 
         pending = validate_ledger(migrations, _ledger_rows(connection))
+        connection.commit()
         if command == "apply":
             apply_pending(connection, pending, applied_by)
         return [migration.identity for migration in pending]

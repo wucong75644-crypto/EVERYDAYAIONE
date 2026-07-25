@@ -165,6 +165,8 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_task public.scheduled_tasks%ROWTYPE;
+    v_conversation_id UUID;
+    v_message_id UUID;
 BEGIN
     PERFORM public._assert_scheduled_run_scope(
         p_task_id, p_run_id, p_execution_token

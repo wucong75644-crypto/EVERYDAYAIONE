@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from services.configuration.sync_resolver import SyncExternalCredentials
 from services.kuaimai_external import cookie_crypto
 
 
@@ -241,12 +242,17 @@ async def list_credentials(db: Any, *, org_id: str) -> list[Credential]:
     return [await _row_to_credential(r) for r in (resp.data or [])]
 
 
-async def list_all_active_credentials(db: Any) -> list[Credential]:
-    """跨 org 列出所有 active 凭证（定时任务用）。"""
-    resp = await (
-        db.table("kuaimai_external_credentials")
-        .select("*")
-        .eq("status", "active")
-        .execute()
-    )
-    return [await _row_to_credential(r) for r in (resp.data or [])]
+async def list_all_active_credentials(
+    db: Any,
+) -> list[SyncExternalCredentials]:
+    """Resolve all configured Sync targets from the governed control plane."""
+    from services.configuration.sync_resolver import SyncConfigurationResolver
+
+    resolver = SyncConfigurationResolver(db)
+    targets = await resolver.discover_external_targets()
+    credentials = []
+    for org_id, source in targets:
+        credentials.append(
+            await resolver.external_credentials(org_id, source)
+        )
+    return credentials

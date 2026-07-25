@@ -77,18 +77,19 @@ async def local_stock_query(
     is_kit = False
     if not rows:
         try:
-            kit_q = (
-                db.table("mv_kit_stock")
-                .select("*")
-                .or_(
-                    f"outer_id.eq.{product_code},"
-                    f"sku_outer_id.eq.{product_code}"
+            kit_result = db.rpc("runtime_list_kit_stock").execute()
+            rows = [
+                row
+                for row in (kit_result.data or [])
+                if product_code in {
+                    row.get("outer_id"),
+                    row.get("sku_outer_id"),
+                }
+                and (
+                    not stock_status
+                    or str(row.get("stock_status")) == str(stock_status)
                 )
-            )
-            if stock_status:
-                kit_q = kit_q.eq("stock_status", stock_status)
-            kit_result = kit_q.limit(100).execute()
-            rows = kit_result.data or []
+            ][:100]
             is_kit = bool(rows)
         except Exception as e:
             logger.debug(f"Kit stock query failed | code={product_code} | error={e}")

@@ -17,6 +17,7 @@ Environment="TZ=Asia/Shanghai"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.runtime
 EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
+EnvironmentFile=/var/www/everydayai/backend/.env.kek
 
 # 启动命令（生产环境使用uvicorn）
 ExecStart=/var/www/everydayai/backend/venv/bin/uvicorn main:app \

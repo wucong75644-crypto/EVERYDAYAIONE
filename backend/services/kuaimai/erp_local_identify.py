@@ -249,7 +249,7 @@ async def _api_fallback_identify(
 ) -> ToolOutput | None:
     """本地未找到时，调 item.single.get API 兜底
 
-    有结果→写入本地→返回 ToolOutput；无结果→返回 None。
+    有结果→直接返回只读结果；持久化仍由 Sync Worker 负责。
     """
     try:
         from services.kuaimai.client import KuaiMaiClient
@@ -271,99 +271,35 @@ async def _api_fallback_identify(
         if not data or not data.get("outerId"):
             return None
 
-        # 写入本地 erp_products（复用 sync handler 字段映射）
-        _upsert_product_from_api(db, data, org_id=org_id)
-        # 重新走本地查询
-        result = db.table("erp_products").select("*").eq("outer_id", data["outerId"]).limit(1).execute()
-        if result.data:
-            return ToolOutput(
-                summary=_format_product(db, code, result.data[0], org_id=org_id),
-                source="warehouse",
-                metadata={"code": code, "match_type": "api_fallback"},
-            )
-        return None
+        return ToolOutput(
+            summary=_format_api_product(code, data),
+            source="warehouse",
+            metadata={"code": code, "match_type": "api_fallback"},
+        )
     except Exception as e:
         logger.debug(f"API fallback identify failed | code={code} | {e}")
         return None
 
 
-def _upsert_product_from_api(db, p: dict, org_id: str | None = None) -> None:
-    """将 API 单条商品数据 upsert 到本地 erp_products + erp_product_skus"""
-    import re
-    outer_id = p.get("outerId")
-    if not outer_id:
-        return
-
-    html_re = re.compile(r"<[^>]+>")
-    remark = p.get("remark")
-    if remark:
-        remark = html_re.sub("", remark).strip()
-
-    spu_row = {
-        "outer_id": outer_id,
-        "org_id": org_id,
-        "title": p.get("title"),
-        "item_type": p.get("type", 0),
-        "is_virtual": bool(p.get("isVirtual")),
-        "active_status": p.get("activeStatus", 1),
-        "barcode": p.get("barcode"),
-        "purchase_price": p.get("purchasePrice"),
-        "selling_price": p.get("priceOutput"),
-        "market_price": p.get("marketPrice"),
-        "weight": p.get("weight"),
-        "unit": p.get("unit"),
-        "is_gift": bool(p.get("makeGift")),
-        "sys_item_id": p.get("sysItemId"),
-        "brand": p.get("brand"),
-        "shipper": p.get("shipper"),
-        "remark": remark,
-        "created_at": p.get("created"),
-        "modified_at": p.get("modified"),
-        "pic_url": p.get("picPath"),
-        "suit_singles": p.get("singleList"),
-        "classify_name": (p.get("classify") or {}).get("name"),
-        "seller_cat_name": (
-            (p.get("sellerCats") or [{}])[-1].get("fullName")
-            if p.get("sellerCats") else None
-        ),
-    }
-    try:
-        db.table("erp_products").upsert(
-            spu_row, on_conflict="outer_id,org_id",
-        ).execute()
-    except Exception as e:
-        logger.warning(f"Upsert product failed | outer_id={outer_id} | {e}")
-
-    # SKU 行
-    for sku in p.get("skus") or []:
-        sku_outer_id = sku.get("skuOuterId")
-        if not sku_outer_id:
-            continue
-        sku_row = {
-            "outer_id": outer_id,
-            "org_id": org_id,
-            "sku_outer_id": sku_outer_id,
-            "properties_name": sku.get("propertiesName"),
-            "barcode": sku.get("barcode"),
-            "purchase_price": sku.get("purchasePrice"),
-            "selling_price": sku.get("priceOutput"),
-            "market_price": sku.get("marketPrice"),
-            "weight": sku.get("weight"),
-            "unit": sku.get("unit"),
-            "shipper": sku.get("shipper"),
-            "pic_url": sku.get("skuPicPath"),
-            "sys_sku_id": sku.get("sysSkuId"),
-            "active_status": sku.get("activeStatus", 1),
-            "sku_remark": sku.get("skuRemark") or None,
-        }
-        try:
-            db.table("erp_product_skus").upsert(
-                sku_row, on_conflict="sku_outer_id,org_id",
-            ).execute()
-        except Exception as e:
-            logger.warning(
-                f"Upsert sku failed | sku={sku_outer_id} | {e}",
-            )
+def _format_api_product(code: str, product: dict) -> str:
+    """Format a read-only ERP API fallback without mutating local indexes."""
+    lines = [
+        f"编码识别: {code}",
+        "✓ ERP 实时查询命中（本地索引将在后台同步）",
+        f"名称: {product.get('title', '')}",
+    ]
+    if product.get("barcode"):
+        lines.append(f"条码: {product['barcode']}")
+    if product.get("priceOutput") is not None:
+        lines.append(f"售价: ¥{product['priceOutput']}")
+    skus = product.get("skus") or []
+    if skus:
+        sku_text = ", ".join(
+            f"{sku.get('skuOuterId', '')}({sku.get('propertiesName', '')})"
+            for sku in skus[:10]
+        )
+        lines.append(f"SKU({len(skus)}个): {sku_text}")
+    return "\n".join(lines)
 
 
 # ── 格式化 ────────────────────────────────────────────

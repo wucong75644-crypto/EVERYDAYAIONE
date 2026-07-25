@@ -21,7 +21,7 @@ import hashlib
 import re
 import traceback as _traceback_mod
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -150,7 +150,10 @@ def error_sink(message) -> None:
 # ── 后台消费协程 ─────────────────────────────────────────
 
 
-async def error_log_consumer(db: Any) -> None:
+async def error_log_consumer(
+    db: Any,
+    capability: Literal["worker", "sync"] = "worker",
+) -> None:
     """后台协程：从队列批量消费错误日志 → 写 DB + 致命推企微。
 
     Args:
@@ -178,7 +181,7 @@ async def error_log_consumer(db: Any) -> None:
                 except asyncio.TimeoutError:
                     break
 
-            await _flush_batch(db, batch)
+            await _flush_batch(db, batch, capability)
 
         except asyncio.CancelledError:
             # 关闭前刷完队列残留
@@ -189,7 +192,7 @@ async def error_log_consumer(db: Any) -> None:
                     break
             if batch:
                 try:
-                    await _flush_batch(db, batch)
+                    await _flush_batch(db, batch, capability)
                 except Exception:
                     pass
             logger.info(f"{_SINK_INTERNAL_TAG} error_log_consumer stopped")
@@ -199,7 +202,11 @@ async def error_log_consumer(db: Any) -> None:
             await asyncio.sleep(2)
 
 
-async def _flush_batch(db: Any, batch: list[dict]) -> None:
+async def _flush_batch(
+    db: Any,
+    batch: list[dict],
+    capability: Literal["worker", "sync"] = "worker",
+) -> None:
     """批量写入 DB + 致命告警推企微"""
     if not batch:
         return
@@ -225,7 +232,10 @@ async def _flush_batch(db: Any, batch: list[dict]) -> None:
     # 2) 写 DB（逐条 upsert：已有未解决的同指纹 → count+1 + 更新 last_seen）
     for fp, entry in merged.items():
         try:
-            await _upsert_error_log(db, entry)
+            if capability == "worker":
+                await _upsert_error_log(db, entry)
+            else:
+                await _upsert_error_log(db, entry, capability)
         except Exception as e:
             logger.warning(
                 f"{_SINK_INTERNAL_TAG} DB write failed | fp={fp[:8]} | {e}"
@@ -237,7 +247,11 @@ async def _flush_batch(db: Any, batch: list[dict]) -> None:
         await _push_critical_alerts(db, criticals)
 
 
-async def _upsert_error_log(db: Any, entry: dict) -> None:
+async def _upsert_error_log(
+    db: Any,
+    entry: dict,
+    capability: Literal["worker", "sync"] = "worker",
+) -> None:
     """单条 upsert：fingerprint 未解决的已存在 → 累加 count + 更新 last_seen，
     否则插入新行。
 
@@ -247,7 +261,12 @@ async def _upsert_error_log(db: Any, entry: dict) -> None:
     ts_str = entry["last_seen_at"].isoformat() if isinstance(entry["last_seen_at"], datetime) else str(entry["last_seen_at"])
     first_str = entry["first_seen_at"].isoformat() if isinstance(entry["first_seen_at"], datetime) else str(entry["first_seen_at"])
 
-    result = await db.rpc("worker_record_error_log", {
+    rpc_name = (
+        "sync_record_error_log"
+        if capability == "sync"
+        else "worker_record_error_log"
+    )
+    result = await db.rpc(rpc_name, {
         "p_fingerprint": entry["fingerprint"],
         "p_level": entry["level"],
         "p_module": entry["module"],
@@ -332,32 +351,9 @@ async def _push_to_admins(db: Any, org_id: str, msg: str) -> None:
 async def _push_to_super_admins(db: Any, msg: str) -> None:
     """致命错误无 org 上下文时，推给平台 super_admin"""
     try:
-        result = await (
-            db.table("users")
-            .select("id")
-            .eq("role", "super_admin")
-            .limit(5)
-            .execute()
-        )
-        admin_ids = [r["id"] for r in (result.data or [])]
-        if not admin_ids:
-            return
+        from services.sync_alert_service import send_platform_alert
 
-        # 查 super_admin 所属的第一个 org（用于获取企微推送凭证）
-        for admin_id in admin_ids:
-            member_result = await (
-                db.table("org_members")
-                .select("org_id")
-                .eq("user_id", admin_id)
-                .in_("role", ["owner", "admin"])
-                .eq("status", "active")
-                .limit(1)
-                .execute()
-            )
-            if member_result.data:
-                org_id = member_result.data[0]["org_id"]
-                await _push_to_admins(db, org_id, msg)
-                return  # 推一个 org 就够了
+        await send_platform_alert(db, msg)
     except Exception as e:
         logger.warning(f"{_SINK_INTERNAL_TAG} super_admin push failed | {e}")
 
@@ -365,13 +361,24 @@ async def _push_to_super_admins(db: Any, msg: str) -> None:
 # ── 30 天清理协程 ────────────────────────────────────────
 
 
-async def error_log_cleanup_loop(db: Any) -> None:
+async def error_log_cleanup_loop(
+    db: Any,
+    capability: Literal["worker", "sync"] = "worker",
+) -> None:
     """每天凌晨 3 点清理 30 天前的已解决错误日志"""
     logger.info(f"{_SINK_INTERNAL_TAG} cleanup loop started | retention=30d")
     while True:
         try:
             await asyncio.sleep(_seconds_until_3am())
-            result = await db.rpc("cleanup_old_error_logs", {"retention_days": 30}).execute()
+            rpc_name = (
+                "sync_cleanup_error_logs"
+                if capability == "sync"
+                else "worker_cleanup_error_logs"
+            )
+            result = await db.rpc(
+                rpc_name,
+                {"p_retention_days": 30},
+            ).execute()
             deleted = result.data if result.data else 0
             if deleted:
                 logger.info(

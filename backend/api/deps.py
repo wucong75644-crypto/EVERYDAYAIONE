@@ -13,6 +13,7 @@ from loguru import logger
 
 from core.database import get_db
 from core.db_scope import (
+    AsyncScopedDatabaseClient,
     DatabaseAccessKind,
     DatabaseScope,
     ScopedDatabaseClient,
@@ -209,6 +210,23 @@ async def get_scoped_db(
     return OrgScopedDB(ScopedDatabaseClient(db, scope), org_ctx.org_id)
 
 
+async def get_async_scoped_db(
+    request: Request,
+    org_ctx: OrgContext = Depends(get_org_context),
+):
+    """Build the transaction-scoped async Runtime database client."""
+    from core.database import get_async_db
+
+    db = await get_async_db()
+    scope = DatabaseScope(
+        actor_user_id=org_ctx.user_id,
+        org_id=org_ctx.org_id,
+        access_kind=DatabaseAccessKind.RUNTIME,
+        request_id=request.headers.get("X-Request-Id", ""),
+    )
+    return AsyncScopedDatabaseClient(db, scope)
+
+
 # ── 时间事实层 RequestContext ────────────────────────────
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B11)
 # 在 HTTP 入口构造一次，全链路传递，禁止下游重新计算 now（避免跨午夜漂移）。
@@ -237,6 +255,7 @@ OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
 Database = Annotated[Any, Depends(get_db)]
 OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
 ScopedDB = Annotated[OrgScopedDB, Depends(get_scoped_db)]
+AsyncScopedDB = Annotated[Any, Depends(get_async_scoped_db)]
 TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]
 # 时间事实层依赖 — 用法：def endpoint(req_ctx: RequestCtx, ...)
 RequestCtx = Annotated["Any", Depends(get_request_ctx)]

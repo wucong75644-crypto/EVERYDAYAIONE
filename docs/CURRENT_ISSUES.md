@@ -1101,6 +1101,47 @@
 - **2026-07-17**：完成 Turn/revision 数据库基础：messages/tasks/conversations 增加兼容字段与索引，新增幂等 `bind_generation_turn`、`close_generation_turn` 事务 RPC 及 rollback；业务链路将在后续阶段接入。
 - **2026-07-17**：完成显式媒体协议收口第一阶段：删除普通模型文本 URL 和 `[FILE]` marker 扫描；Web 流式与企微非流式统一消费 `emit_*` 结构化 payload；多图网格完成态只按实际 ImagePart 渲染。历史错误消息不回填。
 - 较早更新记录见 `docs/archive/CURRENT_ISSUES_UPDATES_2026H1.md`。
+# 2026-07-26 Worker Control 生产迁移闭环缺失 — 根因修复已实现，待生产恢复
+
+- 生产发布在 `179_scheduled_run_fencing.sql` 失败，数据库报
+  `must be owner of table scheduled_task_runs`。事务回滚后 171–178 未入账，179 留下
+  `failed` 账本；未留下新增列，但后续标准 Runner 会因 failed history 失败关闭。
+- 全库只读审计确认 `error_logs`、`knowledge_metrics`、`scheduled_tasks`、
+  `scheduled_task_runs` 及 `error_logs_id_seq` 仍归旧角色；`everydayai_owner` 和
+  `everydayai_worker` 对四表均无 ACL，Backend Runtime 对两张定时表也无 ACL。
+- 已建立独立 Worker Control owner 转移/回滚脚本、迁移 180 的企业 Scope FORCE RLS、
+  部署前 owner 门禁，并把 preflight/finalize 扩展到 165–180。Worker 继续零直表权限，
+  Web Runtime 只管理同企业任务并只读运行历史。
+- Migration Runner 已在 advisory lock 和账本读取后显式结束事务。真实 PostgreSQL
+  验证确认第三项迁移失败时，前两项及账本仍独立提交；迁移 180 的真实角色矩阵确认
+  跨企业不可见、停用员工不可见、Worker 直表被拒绝。
+- 当前生产磁盘已同步新代码，但服务进程早于同步时间启动。完成恢复前不得重启服务；
+  后续严格按 `RUNBOOK_171_180_Worker_Control生产恢复.md` 执行。
+- 事后审查发现最终角色收口仍被 Sync 域阻塞：`everydayai-sync` 明确加载
+  `.env.sync` 并继续使用旧登录角色 `everydayai`，而 finalize 要求该角色连接归零。
+  临时停 Sync 后 finalize 再以旧角色启动只会伪造完成状态。生产恢复前需先确认是否按
+  推荐方案建立独立 `everydayai_sync` 登录角色并完成 Sync 数据域 owner/ACL 切换。
+
+# 2026-07-26 Sync 数据域隔离 — 隔离 PostgreSQL 验证完成，待生产切换
+
+- 新增独立 `everydayai_sync` 角色、Sync 域 owner 转移/回滚脚本及迁移
+  181–185；ERP/快麦租户表统一启用 FORCE RLS，Runtime、Worker、Sync 不继承
+  owner。
+- ERP 物化视图刷新、OSS 清理、错误日志、企微告警、配置发现与 Token 轮换均已
+  收口为按角色校验的窄 RPC；Runtime 不再直接写 ERP 同步索引或旧快麦凭证表。
+- 快麦外部凭证改由统一配置控制面管理；手动同步改为数据库持久队列，由 Sync 使用
+  lease + fencing token 消费，Backend 仅负责管理员鉴权与入队。
+- 已从生产只读导出 schema-only 基线（不含业务数据），在本机 PostgreSQL 16.14
+  隔离实例中按生产账本状态应用 171–185。验证发现并修复迁移 179 中两个未声明 UUID
+  局部变量，以及迁移 185 抢占 RPC 返回更新前行快照的问题。
+- 真实角色矩阵已确认 Runtime 跨企业不可见且不能写 ERP 表，Worker 不能读 ERP 表，
+  Runtime/Sync 不能直读外部同步队列表，Runtime 不能调用 Sync 抢占 RPC；六张目标表
+  均为 FORCE RLS，队列表 owner 为 `everydayai_owner`。
+- 外部同步队列已验证错误 fencing token 拒绝、正确 token 续租/完成，以及两个并发
+  Sync 消费者对同一请求恰有一个成功 claim；181–185 rollback 均在事务内实际执行并
+  回滚，持久 schema 保持不变。隔离验证门禁已通过，下一步才可按生产 Runbook 执行
+  迁移、角色切换和服务验收。
+
 # 2026-07-25 定时任务角色隔离收尾
 
 - 已完成代码与迁移：Worker 控制面和 Runtime 工具面分离，定时 run 的读取、

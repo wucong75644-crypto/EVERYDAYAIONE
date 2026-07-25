@@ -35,6 +35,7 @@ DECLARE
     missing_migrations TEXT;
     invalid_actor_capabilities TEXT;
     invalid_actor_dependencies TEXT;
+    invalid_worker_capabilities TEXT;
     unexpected_owners TEXT;
     legacy_sessions INTEGER;
 BEGIN
@@ -61,7 +62,28 @@ BEGIN
           '161_configuration_legacy_import.sql',
           '162_configuration_legacy_export_access.sql',
           '163_conversation_actor_worker_discovery.sql',
-          '164_actor_task_execution_capabilities.sql'
+          '164_actor_task_execution_capabilities.sql',
+          '165_memory_runtime_tenant_boundary.sql',
+          '166_wecom_worker_discovery.sql',
+          '167_wecom_role_cutover_completion.sql',
+          '168_wecom_runtime_read_capabilities.sql',
+          '169_wecom_generation_context_org_scope.sql',
+          '170_wecom_actor_enqueue_role_grant.sql',
+          '171_worker_media_task_control.sql',
+          '172_worker_video_terminal.sql',
+          '173_worker_media_retry.sql',
+          '174_worker_error_log_capability.sql',
+          '175_worker_media_metric.sql',
+          '176_worker_scheduled_scanner.sql',
+          '177_worker_scheduled_execution.sql',
+          '178_worker_scheduled_credits.sql',
+          '179_scheduled_run_fencing.sql',
+          '180_scheduled_task_tenant_boundary.sql',
+          '181_sync_data_domain_boundary.sql',
+          '182_sync_cross_domain_capabilities.sql',
+          '183_sync_configuration_capabilities.sql',
+          '184_runtime_erp_operator_control.sql',
+          '185_external_sync_request_queue.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1
@@ -176,6 +198,56 @@ BEGIN
             invalid_actor_dependencies;
     END IF;
 
+    SELECT string_agg(required_function, ', ' ORDER BY required_function)
+      INTO invalid_worker_capabilities
+      FROM unnest(ARRAY[
+          'worker_discover_media_tasks',
+          'worker_get_media_task',
+          'worker_touch_media_task',
+          'worker_claim_media_task_completion',
+          'worker_settle_media_batch_item',
+          'worker_discover_legacy_active_tasks',
+          'worker_fail_legacy_stale_task',
+          'worker_get_media_batch_message',
+          'worker_commit_media_batch_message',
+          'worker_commit_video_terminal',
+          'worker_prepare_media_retry',
+          'worker_abort_media_retry',
+          'worker_commit_media_retry',
+          'worker_record_error_log',
+          'worker_record_media_metric',
+          'worker_claim_due_scheduled_tasks',
+          'worker_list_stale_scheduled_tasks',
+          'worker_recover_stale_scheduled_task',
+          'worker_create_scheduled_run',
+          'worker_renew_scheduled_run',
+          'worker_get_scheduled_task',
+          'worker_append_scheduled_result_message',
+          'worker_complete_scheduled_run',
+          'worker_fail_scheduled_run',
+          'worker_lock_scheduled_credits',
+          'worker_settle_scheduled_credits'
+      ]) AS required_function
+     WHERE NOT EXISTS (
+         SELECT 1
+           FROM pg_catalog.pg_proc procedure
+           JOIN pg_catalog.pg_namespace namespace
+             ON namespace.oid = procedure.pronamespace
+           JOIN pg_catalog.pg_roles owner_role
+             ON owner_role.oid = procedure.proowner
+          WHERE namespace.nspname = 'public'
+            AND procedure.proname = required_function
+            AND procedure.prosecdef
+            AND owner_role.rolname = 'everydayai_owner'
+            AND has_function_privilege(
+                'everydayai_worker', procedure.oid, 'EXECUTE'
+            )
+     );
+    IF invalid_worker_capabilities IS NOT NULL THEN
+        RAISE EXCEPTION 'WORKER_CONTROL_CAPABILITY_CUTOVER_INCOMPLETE: %',
+            invalid_worker_capabilities;
+    END IF;
+
     SELECT string_agg(c.relname || '=' || owner_role.rolname, ', '
                       ORDER BY c.relname)
       INTO unexpected_owners
@@ -200,10 +272,74 @@ BEGIN
           'messages', 'tasks', 'credits_history', 'credit_transactions',
           'image_generations', 'detail_projects', 'detail_project_images',
           'refresh_tokens', 'user_subscriptions', 'user_memory_settings'
+          , 'memory_pipeline_state', 'memory_session_logs',
+          'memory_consolidation_runs', 'error_logs', 'knowledge_metrics',
+          'scheduled_tasks', 'scheduled_task_runs'
        ])
        AND owner_role.rolname <> 'everydayai_owner';
     IF unexpected_owners IS NOT NULL THEN
         RAISE EXCEPTION 'TENANT_OWNER_CUTOVER_INCOMPLETE: %',
+            unexpected_owners;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM unnest(ARRAY[
+              'error_logs',
+              'knowledge_metrics',
+              'scheduled_tasks',
+              'scheduled_task_runs'
+          ]) AS table_name
+         WHERE has_table_privilege(
+                   'everydayai_worker',
+                   'public.' || table_name,
+                   'SELECT'
+               )
+            OR has_table_privilege(
+                   'everydayai_worker',
+                   'public.' || table_name,
+                   'INSERT'
+               )
+            OR has_table_privilege(
+                   'everydayai_worker',
+                   'public.' || table_name,
+                   'UPDATE'
+               )
+            OR has_table_privilege(
+                   'everydayai_worker',
+                   'public.' || table_name,
+                   'DELETE'
+               )
+    ) THEN
+        RAISE EXCEPTION 'WORKER_CONTROL_DIRECT_TABLE_ACCESS_PRESENT';
+    END IF;
+
+    IF NOT has_table_privilege(
+        'everydayai_runtime', 'public.scheduled_tasks',
+        'SELECT, INSERT, UPDATE, DELETE'
+    ) OR NOT has_table_privilege(
+        'everydayai_runtime', 'public.scheduled_task_runs', 'SELECT'
+    ) OR has_table_privilege(
+        'everydayai_runtime', 'public.scheduled_task_runs',
+        'INSERT, UPDATE, DELETE'
+    ) THEN
+        RAISE EXCEPTION 'WORKER_CONTROL_RUNTIME_ACL_INVALID';
+    END IF;
+
+    SELECT string_agg(relation.relname, ', ' ORDER BY relation.relname)
+      INTO unexpected_owners
+      FROM pg_catalog.pg_class relation
+     WHERE relation.oid = ANY(ARRAY[
+         'public.memory_pipeline_state'::regclass,
+         'public.memory_session_logs'::regclass,
+         'public.memory_consolidation_runs'::regclass,
+         'public.memory_atoms'::regclass,
+         'public.scheduled_tasks'::regclass,
+         'public.scheduled_task_runs'::regclass
+     ])
+       AND NOT relation.relforcerowsecurity;
+    IF unexpected_owners IS NOT NULL THEN
+        RAISE EXCEPTION 'TENANT_FORCE_RLS_CUTOVER_INCOMPLETE: %',
             unexpected_owners;
     END IF;
 
@@ -218,7 +354,8 @@ BEGIN
            AND member_role.rolname IN (
                'everydayai_runtime',
                'everydayai_wecom_runtime',
-               'everydayai_worker'
+               'everydayai_worker',
+               'everydayai_sync'
            )
     ) THEN
         RAISE EXCEPTION 'SERVICE_ROLE_HAS_OWNER_MEMBERSHIP';

@@ -232,7 +232,43 @@ def test_run_always_unlocks_when_validation_fails() -> None:
     lock_sql = [call.args[0] for call in cursor.execute.call_args_list]
     assert any("pg_advisory_lock" in sql for sql in lock_sql)
     assert any("pg_advisory_unlock" in sql for sql in lock_sql)
-    connection.commit.assert_called_once()
+    assert connection.commit.call_count == 2
+
+
+def test_run_closes_ledger_transaction_before_applying() -> None:
+    bootstrap = _migration(migration_runner.LEDGER_IDENTITY)
+    pending = Migration(
+        "171_change.sql",
+        Path("171_change.sql"),
+        "a" * 64,
+        "171_change_rollback.sql",
+    )
+    connection = MagicMock()
+    events: list[str] = []
+    connection.commit.side_effect = lambda: events.append("commit")
+
+    with (
+        patch.object(
+            migration_runner,
+            "discover_migrations",
+            return_value=[bootstrap, pending],
+        ),
+        patch.object(migration_runner, "_bootstrap"),
+        patch.object(migration_runner, "_ledger_rows", return_value={}),
+        patch.object(
+            migration_runner,
+            "validate_ledger",
+            return_value=[pending],
+        ),
+        patch.object(
+            migration_runner,
+            "apply_pending",
+            side_effect=lambda *_args: events.append("apply"),
+        ),
+    ):
+        run(connection, "apply", "tester")
+
+    assert events == ["commit", "commit", "apply", "commit"]
 
 
 def test_run_baseline_requires_through_and_delegates() -> None:

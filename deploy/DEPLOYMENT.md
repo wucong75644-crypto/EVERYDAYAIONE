@@ -188,6 +188,7 @@ MIGRATION_DATABASE_URL=postgresql://everydayai_migrator:<独立密码>@127.0.0.1
 - `backend/.env.runtime`：仅包含 runtime `DATABASE_URL`
 - `backend/.env.wecom-runtime`：仅包含 WeCom runtime `DATABASE_URL`
 - `backend/.env.worker`：仅包含 worker `DATABASE_URL`
+- `backend/.env.sync`：仅包含 Sync `everydayai_sync` 的 `DATABASE_URL`
 - `backend/.env.migrator`：仅包含 `MIGRATION_DATABASE_URL`
 
 上述数据库角色文件权限必须为 `0600`，并在切换服务前执行：
@@ -204,8 +205,8 @@ current/previous keyring 中每个值均为 base64 编码的 32 字节 KEK。安
 bash deploy/validate-kek-env.sh /var/www/everydayai/backend/.env.kek
 ```
 
-在 Secret 管理能力和对应服务接线完成前，不得提前把 `.env.kek` 加入 Systemd
-`EnvironmentFile`；后续只向确实需要加解密的进程注入。
+Backend 配置管理接口与 Sync Bundle 解析均需要加解密，因此两个服务单元必须加载
+`.env.kek`；Actor、WeCom 和普通 Worker 不得加载该文件。
 
 在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
 `EnvironmentFile` 指向这些角色文件。
@@ -270,7 +271,41 @@ LEGACY_DATABASE_OWNER=everydayai \
 bash deploy/rollback-memory-runtime-ownership.sh
 ```
 
-只有在 150–163 全部应用、Actor Worker Facade 门禁通过、所有服务已切换独立角色、
+Worker Control 在应用 171–180 前，必须由管理员转移错误日志、知识指标、定时任务和
+执行记录四表及实际列序列：
+
+```bash
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/transfer-worker-control-ownership.sh
+```
+
+迁移 180 会对 `scheduled_tasks`、`scheduled_task_runs` 启用 FORCE RLS；Worker 只调用
+171–179 的受控函数，Web Runtime 只获得企业 Scope 内的任务管理和运行历史读取。
+所有权回滚必须先应用 180 rollback 关闭 FORCE RLS：
+
+```bash
+ALLOW_DESTRUCTIVE_TENANT_DB_ROLLBACK=true \
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/rollback-worker-control-ownership.sh
+```
+
+Sync 数据域在应用 181–185 前，必须先创建独立 `everydayai_sync` 登录角色并转移
+ERP/快麦表、序列、物化视图及函数 owner：
+
+```bash
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/transfer-sync-domain-ownership.sh
+```
+
+迁移完成后 Sync 仅通过 `.env.sync` 使用独立角色；Runtime 只经窄 RPC 读取或入队，
+Worker 不获得 Sync 表直权。回滚必须先逆序执行 185–181 rollback，再运行
+`rollback-sync-domain-ownership.sh`。
+
+只有在 150–185 全部应用、Actor/媒体/定时 Worker 与 Sync Facade 门禁通过、
+所有服务已切换独立角色、
 旧角色活动连接归零后，才能撤销
 临时 owner 兼容能力：
 
@@ -284,10 +319,12 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 
 该步骤必须使用不同于旧应用角色的数据库管理员连接；能力域未闭合时禁止执行。
 
-150–163 的完整生产执行顺序、检查点和停止条件见
+150–164 的核心切换见
 `docs/document/RUNBOOK_150_161_生产租户架构切换.md`。普通 `deploy.sh` 不替代该
 架构迁移流程。在初始审计、两批 owner 均完成后及迁移完成后，使用
 `deploy/preflight-tenant-cutover.sh` 进行只读状态核验。
+171–185、Sync 角色切换及 failed 账本恢复见
+`docs/document/RUNBOOK_171_180_Worker_Control生产恢复.md`。
 
 ---
 

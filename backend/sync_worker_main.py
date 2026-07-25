@@ -82,6 +82,47 @@ if _settings.sentry_dsn:
 # ============================================================
 
 
+async def _graceful_shutdown(
+    erp_orchestrator,
+    tasks: list[asyncio.Task],
+) -> None:
+    """Stop the orchestrator, background tasks, and shared resources."""
+    from core.database import close_async_db
+
+    logger.info("[sync] stopping ErpSyncOrchestrator ...")
+    try:
+        await asyncio.wait_for(erp_orchestrator.stop(), timeout=15)
+    except asyncio.TimeoutError:
+        logger.warning("[sync] ErpSyncOrchestrator.stop() timed out")
+    except Exception as e:
+        logger.error(f"[sync] ErpSyncOrchestrator.stop() error | {e}")
+
+    logger.info("[sync] cancelling remaining tasks ...")
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for task, result in zip(tasks, results):
+        if isinstance(result, asyncio.CancelledError):
+            continue
+        if isinstance(result, BaseException):
+            logger.warning(
+                f"[sync] task {task.get_name()} exited with error | {result}"
+            )
+
+    logger.info("[sync] closing DB pool ...")
+    try:
+        await close_async_db()
+    except Exception as e:
+        logger.warning(f"[sync] close_async_db error | {e}")
+
+    logger.info("[sync] closing Redis ...")
+    try:
+        await RedisClient.close()
+    except Exception as e:
+        logger.warning(f"[sync] RedisClient.close error | {e}")
+
+
 async def _run() -> None:
     """启动所有常驻 task → 等待 shutdown 信号 → 优雅停止"""
     logger.info(f"Starting EVERYDAYAI Sync Worker | pid={os.getpid()}")
@@ -95,7 +136,7 @@ async def _run() -> None:
         logger.warning(f"[sync] Redis 连接失败，将走 fallback 模式 | error={e}")
 
     # AsyncDB（连接池）
-    from core.database import get_db, get_async_db, close_async_db
+    from core.database import get_db, get_async_db
     db = get_db()
     async_db = await get_async_db()
 
@@ -115,10 +156,12 @@ async def _run() -> None:
     # 1. 全局错误监控（loguru ERROR sink → DB 持久化）
     from core.error_alert_sink import error_log_consumer, error_log_cleanup_loop
     tasks.append(asyncio.create_task(
-        error_log_consumer(async_db), name="error_log_consumer"
+        error_log_consumer(async_db, capability="sync"),
+        name="error_log_consumer"
     ))
     tasks.append(asyncio.create_task(
-        error_log_cleanup_loop(async_db), name="error_log_cleanup"
+        error_log_cleanup_loop(async_db, capability="sync"),
+        name="error_log_cleanup"
     ))
 
     # 2. ERP 同步编排器 + 健康检查（单实例，无 leader election）
@@ -155,6 +198,14 @@ async def _run() -> None:
     ))
     logger.info("[sync] kuaimai_external_keepalive_loop started")
 
+    from services.kuaimai_external.manual_worker import (
+        external_manual_sync_loop,
+    )
+    tasks.append(asyncio.create_task(
+        external_manual_sync_loop(), name="kuaimai_external_manual"
+    ))
+    logger.info("[sync] external_manual_sync_loop started")
+
     # ── 等待 shutdown 信号 ──────────────────────────────────
 
     shutdown_event = asyncio.Event()
@@ -169,41 +220,7 @@ async def _run() -> None:
 
     await shutdown_event.wait()
 
-    # ── 优雅停止 ────────────────────────────────────────────
-
-    logger.info("[sync] stopping ErpSyncOrchestrator ...")
-    try:
-        # orchestrator.stop() 内部会 await 所有子 task，确保连接归还
-        await asyncio.wait_for(erp_orchestrator.stop(), timeout=15)
-    except asyncio.TimeoutError:
-        logger.warning("[sync] ErpSyncOrchestrator.stop() timed out")
-    except Exception as e:
-        logger.error(f"[sync] ErpSyncOrchestrator.stop() error | {e}")
-
-    logger.info("[sync] cancelling remaining tasks ...")
-    for t in tasks:
-        if not t.done():
-            t.cancel()
-    # 等所有 task 真正结束，给协程的 finally / __aexit__ 机会归还连接
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for t, r in zip(tasks, results):
-        if isinstance(r, asyncio.CancelledError):
-            continue
-        if isinstance(r, BaseException):
-            logger.warning(f"[sync] task {t.get_name()} exited with error | {r}")
-
-    logger.info("[sync] closing DB pool ...")
-    try:
-        await close_async_db()
-    except Exception as e:
-        logger.warning(f"[sync] close_async_db error | {e}")
-
-    logger.info("[sync] closing Redis ...")
-    try:
-        await RedisClient.close()
-    except Exception as e:
-        logger.warning(f"[sync] RedisClient.close error | {e}")
-
+    await _graceful_shutdown(erp_orchestrator, tasks)
     logger.info("[sync] Shutdown complete")
 
 

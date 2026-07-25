@@ -80,6 +80,8 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "'162_configuration_legacy_export_access.sql'" in sql
     assert "'163_conversation_actor_worker_discovery.sql'" in sql
     assert "'164_actor_task_execution_capabilities.sql'" in sql
+    for migration_number in range(165, 186):
+        assert f"'{migration_number}_" in sql
     assert "'159_org_erp_token_capabilities.sql'" not in sql
     assert "schema_migration_ledger" in sql
     assert "TENANT_OWNER_CUTOVER_INCOMPLETE" in sql
@@ -92,6 +94,10 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "worker_get_generation_terminal_snapshot(uuid,uuid)" in sql
     assert "ACTOR_WORKER_CAPABILITY_CUTOVER_INCOMPLETE" in sql
     assert "ACTOR_CORE_OWNER_CUTOVER_INCOMPLETE" in sql
+    assert "WORKER_CONTROL_CAPABILITY_CUTOVER_INCOMPLETE" in sql
+    assert "WORKER_CONTROL_DIRECT_TABLE_ACCESS_PRESENT" in sql
+    assert "WORKER_CONTROL_RUNTIME_ACL_INVALID" in sql
+    assert "TENANT_FORCE_RLS_CUTOVER_INCOMPLETE" in sql
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert f"'public.tasks', '{privilege}'" in sql
     assert sql.count("has_any_column_privilege(") == 3

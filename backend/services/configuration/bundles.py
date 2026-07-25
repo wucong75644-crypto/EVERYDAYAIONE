@@ -184,6 +184,62 @@ class SecretBundleResolver:
         return "CONFIG_BUNDLE_UNAVAILABLE"
 
 
+class AsyncSecretBundleResolver(SecretBundleResolver):
+    """Async database variant with the same fixed Bundle contract."""
+
+    async def erp_runtime(self) -> ResolvedConfigurationBundle:
+        return await self._resolve_async(
+            "erp.runtime",
+            "get_erp_runtime_bundle",
+        )
+
+    async def kuaimai_thinktank(self) -> ResolvedConfigurationBundle:
+        return await self._resolve_async(
+            "kuaimai_external.thinktank",
+            "get_kuaimai_thinktank_bundle",
+        )
+
+    async def kuaimai_viperp(self) -> ResolvedConfigurationBundle:
+        return await self._resolve_async(
+            "kuaimai_external.viperp",
+            "get_kuaimai_viperp_bundle",
+        )
+
+    async def _resolve_async(
+        self,
+        bundle_name: str,
+        rpc_name: str,
+    ) -> ResolvedConfigurationBundle:
+        try:
+            response = await self._db.rpc(rpc_name).execute()
+        except Exception as error:
+            raise ConfigurationResolutionError(
+                self._database_error_code(error)
+            ) from error
+        effective = self._effective_resolver.parse(bundle_name, response.data)
+        values: dict[str, object | None] = {}
+        sources: dict[str, str | None] = {}
+        versions: dict[str, int] = {}
+        for key, item in effective.items.items():
+            sources[key] = item.source
+            versions[key] = item.version
+            if not item.configured:
+                values[key] = None
+            elif item.secret_ref is None:
+                values[key] = item.value
+            else:
+                values[key] = self._decrypt_secret(
+                    CONFIG_REGISTRY.get(key),
+                    item.secret_ref,
+                )
+        return ResolvedConfigurationBundle(
+            name=bundle_name,
+            values=MappingProxyType(values),
+            sources=MappingProxyType(sources),
+            versions=MappingProxyType(versions),
+        )
+
+
 class WecomBotTargetResolver:
     """Discover organizations without secrets, then resolve each exact Bundle."""
 

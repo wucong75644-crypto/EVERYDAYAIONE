@@ -100,6 +100,11 @@ class _DBStub:
     def table(self, name):
         return _AsyncQueryStub(self._tables.get(name, []))
 
+    def rpc(self, name, params=None):
+        if name == "sync_list_erp_token_versions":
+            return _AsyncQueryStub(self._tables.get("org_configs", []))
+        return _AsyncQueryStub([])
+
 
 @pytest.fixture
 def mock_redis_no_persist_failures():

@@ -17,6 +17,8 @@
    `scheduled_<id>` 会话上下文。
 6. 工具描述白名单和 `ToolExecutor` handler 白名单同时生效，防止隐藏工具
    被程序化调用。
+7. `scheduled_tasks` 与 `scheduled_task_runs` 归 `everydayai_owner`，启用
+   FORCE RLS；Web Runtime 只能访问当前 active 企业，Worker 保持零直表权限。
 
 ## 数据与控制流
 
@@ -81,6 +83,7 @@ run 离开 `running` 时触发器清空 token 和租约，并退回该 run 遗�
 - 路由测试：验证立即执行使用双连接并保持权限检查。
 - fencing 合同测试：验证所有数据库副作用依赖有效 token/租约，终态清理
   token，租约丢失取消执行。
+- 真实 PostgreSQL 角色矩阵：验证跨企业不可见、停用员工不可见、Worker 直表拒绝。
 
 ## 回滚
 

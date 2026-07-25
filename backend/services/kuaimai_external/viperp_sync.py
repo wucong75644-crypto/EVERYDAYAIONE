@@ -23,17 +23,19 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import InvalidOperation
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from services.kuaimai_external import (
-    credential_store,
     field_auditor,
     http_base,
     shop_operator_sync,
     wecom_alert,
 )
+
+if TYPE_CHECKING:
+    from services.configuration.sync_resolver import SyncExternalCredentials
 
 
 LIST_URL = "https://erp.superboss.cc/report/sale/dimensions/finance/list"
@@ -185,16 +187,11 @@ async def _finish_sync_log(
 
 
 async def _get_org_label(db: Any, org_id: str) -> str:
-    resp = await (
-        db.table("organizations")
-        .select("name")
-        .eq("id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if resp and resp.data:
-        return resp.data.get("name", "未知")
-    return "未知"
+    resp = await db.rpc(
+        "sync_get_org_label",
+        {"p_org_id": org_id},
+    ).execute()
+    return str(resp.data or "未知")
 
 
 # ──────────────────────── 主入口 ────────────────────────
@@ -219,6 +216,7 @@ async def sync_viperp(
     start_date: date | None = None,
     end_date: date | None = None,
     dimension: str = "shop",
+    credentials: SyncExternalCredentials | None = None,
 ) -> SyncResult:
     """
     viperp 同步主流程（一个 org，一次）。
@@ -227,9 +225,16 @@ async def sync_viperp(
     所以我们用 (start, end, dimension) 作为唯一键的一部分。
     """
     # 1. 凭证
-    cred = await credential_store.get_active_credential(
-        db, org_id=org_id, source="viperp"
-    )
+    cred = credentials
+    if cred is None:
+        from services.configuration.sync_resolver import (
+            SyncConfigurationResolver,
+        )
+
+        cred = await SyncConfigurationResolver(db).external_credentials(
+            org_id,
+            "viperp",
+        )
     if not cred:
         logger.warning(f"viperp_sync 跳过 | 无 active 凭证 | org={org_id}")
         return SyncResult(success=False, log_id=None, error="无 active 凭证")
@@ -288,7 +293,6 @@ async def sync_viperp(
         amount_data = amount_result.json_body or {}
 
     except http_base.CookieExpiredError as e:
-        await credential_store.mark_expired(db, credential_id=cred.id, error_msg=str(e))
         await _finish_sync_log(
             db, log_id=log_id, status="failed",
             error_message=f"cookie_expired: {e}",
@@ -304,7 +308,6 @@ async def sync_viperp(
             success=False, log_id=log_id, error=str(e), cookie_expired=True,
         )
     except Exception as e:
-        await credential_store.record_sync_failure(db, credential_id=cred.id, error_msg=str(e))
         await _finish_sync_log(db, log_id=log_id, status="failed", error_message=str(e))
         logger.error(f"viperp_sync 失败 | org={org_id} | err={e}")
         return SyncResult(success=False, log_id=log_id, error=str(e))
@@ -336,7 +339,6 @@ async def sync_viperp(
             db, log_id=log_id, status="success", rows_synced=0,
             metadata={"summary_amount": summary_amount, "summary_total": summary_total},
         )
-        await credential_store.record_sync_success(db, credential_id=cred.id)
         logger.info(f"viperp_sync 完成（空数据）| org={org_id}")
         return SyncResult(success=True, log_id=log_id, rows_synced=0)
 
@@ -430,8 +432,6 @@ async def sync_viperp(
         db, log_id=log_id, status="success", rows_synced=upsert_count,
         metadata=summary_dict,
     )
-    await credential_store.record_sync_success(db, credential_id=cred.id)
-
     return SyncResult(
         success=True,
         log_id=log_id,

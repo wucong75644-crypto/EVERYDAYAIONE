@@ -12,12 +12,6 @@ from loguru import logger
 
 from core.config import get_settings
 from core.crypto import aes_decrypt, aes_encrypt
-from core.db_scope import (
-    AsyncScopedDatabaseClient,
-    DatabaseAccessKind,
-    DatabaseScope,
-    database_scope_from_client,
-)
 from core.exceptions import PermissionDeniedError
 
 
@@ -275,117 +269,57 @@ class OrgConfigResolver(_ConfigResolverCore):
 
 
 class AsyncOrgConfigResolver(_ConfigResolverCore):
-    """异步企业配置解析器（传入 AsyncLocalDBClient）"""
+    """Compatibility adapter backed by the governed Sync configuration plane."""
 
-    async def _load_org_encrypt_key(self, org_id: str) -> str | None:
-        """从 organizations 表读取企业专属加密密钥（异步，带内存缓存）"""
-        if org_id in self._org_key_cache:
-            return self._org_key_cache[org_id]
-        try:
-            result = await (
-                self.db.table("organizations")
-                .select("encrypt_key")
-                .eq("id", org_id)
-                .maybe_single()
-                .execute()
-            )
-            key = (result.data or {}).get("encrypt_key")
-            self._org_key_cache[org_id] = key
-            return key
-        except Exception as e:
-            logger.warning(f"Failed to load org encrypt_key | org_id={org_id} | error={e}")
-            return None
+    def __init__(self, db):
+        super().__init__(db)
+        from services.configuration.sync_resolver import (
+            SyncConfigurationResolver,
+        )
+
+        self._sync_resolver = SyncConfigurationResolver(db)
+        self._erp_cache = {}
 
     async def get(self, org_id: str | None, key: str) -> str | None:
-        """获取配置值。企业专属 key 不降级，AI/平台级 key 降级到 .env。"""
-        if org_id:
-            val = await self._load_encrypted(org_id, key)
-            if val is not None:
-                return val
-        # 企业专属 key：未配置时不降级到 .env
-        if key in self.ENTERPRISE_ONLY_KEYS:
-            return None
-        return self._get_default(key)
+        """Resolve the legacy ERP key names from one governed bundle."""
+        if org_id is None:
+            return None if key in self.ENTERPRISE_ONLY_KEYS else self._get_default(key)
+        credentials = await self._credentials(org_id)
+        values = {
+            "kuaimai_app_key": credentials.app_key,
+            "kuaimai_app_secret": credentials.app_secret,
+            "kuaimai_access_token": credentials.access_token,
+            "kuaimai_refresh_token": credentials.refresh_token,
+            "erp_warehouse_ids": ",".join(credentials.warehouse_ids),
+        }
+        return values.get(key)
 
     async def get_erp_credentials(self, org_id: str) -> dict:
-        """加载企业 ERP 凭证，缺失则报错。不降级到系统默认。"""
-        creds = {}
-        for k in self.ERP_CREDENTIAL_KEYS:
-            val = await self._load_encrypted(org_id, k)
-            if not val:
-                raise ValueError(f"企业 ERP 未配置 {k}，请联系管理员")
-            creds[k] = val
-        return creds
-
-    async def _async_get_encrypt_key(self, org_id: str | None) -> str:
-        """异步版获取加密密钥：先 await 预热缓存，再走同步链路。"""
-        if org_id:
-            await self._load_org_encrypt_key(org_id)
-        return self._get_encrypt_key(org_id)
+        """Expose the legacy dictionary shape without reading legacy tables."""
+        credentials = await self._credentials(org_id)
+        return {
+            "kuaimai_app_key": credentials.app_key,
+            "kuaimai_app_secret": credentials.app_secret,
+            "kuaimai_access_token": credentials.access_token,
+            "kuaimai_refresh_token": credentials.refresh_token,
+        }
 
     async def update_erp_token(
         self, org_id: str, access_token: str, refresh_token: str,
     ) -> None:
-        """ERP token 自动刷新成功后回写 DB（异步版，供 worker / dead letter 用）。
-
-        两份密文通过 actorless 精确企业 Worker 能力在同一事务原子更新。
-        """
-        if not access_token or not refresh_token:
-            raise ValueError("ERP Token 不能为空")
-        encrypt_key = await self._async_get_encrypt_key(org_id)
-        worker_db = self._worker_db_for_org(org_id)
-        try:
-            await worker_db.rpc("commit_worker_org_erp_tokens", {
-                "p_org_id": org_id,
-                "p_access_token_encrypted": aes_encrypt(
-                    access_token, encrypt_key,
-                ),
-                "p_refresh_token_encrypted": aes_encrypt(
-                    refresh_token, encrypt_key,
-                ),
-            }).execute()
-        except Exception as exc:
-            self._raise_capability_error(exc)
-            raise
+        """Atomically rotate the governed ERP token pair."""
+        credentials = await self._credentials(org_id)
+        await self._sync_resolver.commit_erp_token_pair(
+            credentials,
+            access_token,
+            refresh_token,
+        )
+        self._erp_cache.pop(org_id, None)
         logger.info(f"ERP token auto-refreshed and persisted | org_id={org_id}")
 
-    def _worker_db_for_org(self, org_id: str):
-        """复用合法 Worker Scope，或为后台自动刷新构造精确 actorless Scope。"""
-        scope = database_scope_from_client(self.db)
-        if scope is None:
-            return AsyncScopedDatabaseClient(
-                self.db,
-                DatabaseScope(
-                    actor_user_id=None,
-                    org_id=org_id,
-                    access_kind=DatabaseAccessKind.WORKER,
-                    request_id="erp-token-refresh",
-                ),
-            )
-        if (
-            scope.access_kind is not DatabaseAccessKind.WORKER
-            or scope.actor_user_id is not None
-            or scope.org_id != org_id
-        ):
-            raise PermissionDeniedError("ERP Token Worker 数据库 Scope 不匹配")
-        return self.db
-
-    async def _load_encrypted(self, org_id: str, key: str) -> str | None:
-        """从 org_configs 表读取并解密（异步）"""
-        try:
-            # 预热缓存：确保 _decrypt_result 能同步拿到 org 密钥
-            await self._load_org_encrypt_key(org_id)
-            result = await (
-                self.db.table("org_configs")
-                .select("config_value_encrypted")
-                .eq("org_id", org_id)
-                .eq("config_key", key)
-                .maybe_single()
-                .execute()
-            )
-            return self._decrypt_result(result.data, org_id)
-        except Exception as e:
-            logger.warning(
-                f"Failed to load org config | org_id={org_id} | key={key} | error={e}"
-            )
-            return None
+    async def _credentials(self, org_id: str):
+        credentials = self._erp_cache.get(org_id)
+        if credentials is None:
+            credentials = await self._sync_resolver.erp_credentials(org_id)
+            self._erp_cache[org_id] = credentials
+        return credentials

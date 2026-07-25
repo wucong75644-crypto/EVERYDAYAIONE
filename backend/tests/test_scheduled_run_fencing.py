@@ -45,6 +45,15 @@ def test_migration_binds_all_side_effects_to_active_fence() -> None:
     assert "DROP COLUMN IF EXISTS execution_token" in ROLLBACK
 
 
+def test_get_scheduled_task_declares_idempotency_variables() -> None:
+    body = SQL.split("CREATE FUNCTION worker_get_scheduled_task(", 1)[1]
+    body = body.split(
+        "CREATE FUNCTION worker_append_scheduled_result_message(", 1
+    )[0]
+    assert "v_conversation_id UUID;" in body
+    assert "v_message_id UUID;" in body
+
+
 def test_store_requires_token_from_create_result() -> None:
     db = MagicMock()
     db.rpc.return_value.execute.return_value.data = {

@@ -1635,9 +1635,20 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `validate-tenant-db-env.sh` | `deploy/validate-tenant-db-env.sh` | 在服务切换前验证三类角色环境文件、0600 权限、登录角色与连接串独立性 |
 | `transfer-agent-runtime-ownership.sh` | `deploy/transfer-agent-runtime-ownership.sh` | 原子转移迁移账本、首组 13 表及三项资产函数 owner，并用临时 owner 成员关系保持旧服务穿越既有无 policy RLS 中间态 |
 | `rollback-agent-runtime-ownership.sh` | `deploy/rollback-agent-runtime-ownership.sh` | 在显式开关且目标表均未 FORCE RLS 时，恢复迁移账本、13 表、资产函数 owner 与新角色 schema USAGE |
-| `finalize-tenant-db-role-cutover.sh` | `deploy/finalize-tenant-db-role-cutover.sh` | 校验 150–163、Actor Worker Facade、目标对象 Owner、独立服务切换及旧连接归零后撤销旧角色临时 owner 成员关系 |
+| `finalize-tenant-db-role-cutover.sh` | `deploy/finalize-tenant-db-role-cutover.sh` | 校验 150–180、Actor/媒体/定时 Worker Facade、目标对象 Owner、RLS/ACL、独立服务切换及旧连接归零后撤销旧角色临时 owner 成员关系 |
 | `transfer-runtime-message-ownership.sh` | `deploy/transfer-runtime-message-ownership.sh` | 原子转移第二批 18 张 Runtime/Message/治理表、其真实列 sequence 和 25 个固定函数签名，同时保留旧角色兼容能力 |
 | `rollback-runtime-message-ownership.sh` | `deploy/rollback-runtime-message-ownership.sh` | 要求服务已切回旧连接且目标表未 FORCE RLS，再恢复第二批表、sequence 和函数 owner |
+| `transfer-worker-control-ownership.sh` | `deploy/transfer-worker-control-ownership.sh` | 原子转移 error/knowledge/scheduled 四表及其实际列 sequence，并保留旧 Sync 角色兼容权限 |
+| `SyncConfigurationResolver` | `backend/services/configuration/sync_resolver.py` | 以 Sync 角色发现企业、解析 ERP/快麦 Bundle，并原子轮换 ERP Token |
+| `ExternalConfigurationControl` | `backend/services/configuration/external_control.py` | 企业管理员通过配置控制面原子管理快麦外部凭证 Bundle |
+| `external_manual_sync_loop` | `backend/services/kuaimai_external/manual_worker.py` | 以租约与 fencing token 消费持久化的快麦手动同步请求 |
+| `_graceful_shutdown` | `backend/sync_worker_main.py` | 有序停止 ERP 编排器与常驻任务，并关闭 Sync 数据库池和 Redis 连接 |
+| `refresh_kit_stock` | `backend/services/kuaimai/erp_sync_kit_stock.py` | 通过 Sync 专属数据库能力刷新套件库存物化视图 |
+| `transfer-sync-domain-ownership.sh` | `deploy/transfer-sync-domain-ownership.sh` | 原子转移 ERP/快麦 Sync 数据域对象 owner，并建立最小角色 ACL |
+| `rollback-worker-control-ownership.sh` | `deploy/rollback-worker-control-ownership.sh` | 在显式危险开关且四表未 FORCE RLS 时恢复 Worker Control 对象 owner |
+| `verify_preconditions` | `backend/scripts/verify_worker_control_preconditions.py` | 部署应用 171–180 前只读验证 Worker Control 表及列序列均归 everydayai_owner |
+| `preflight-tenant-cutover.sh` | `deploy/preflight-tenant-cutover.sh` | 编排核心域与 Worker Control 域两组只读生产门禁 |
+| `worker-control.sh` | `deploy/preflight/worker-control.sh` | 核验 165–180 账本、owner、Worker Facade、Runtime ACL 与 FORCE RLS |
 | `tenant_actor_user_id` / `tenant_org_id` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 从事务级 GUC 安全解析用户与企业 UUID；缺失或非法值返回 NULL |
 | `tenant_database_role_matches_scope` | `backend/migrations/150_agent_runtime_tenant_defense.sql`、`152_wecom_runtime_capability.sql` | 使用真实连接 `session_user` 校验 Web/WeCom runtime 或 worker 角色与 access_kind 一致 |
 | `tenant_actor_is_active_member` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 校验当前用户、企业成员与企业本身均为 active |

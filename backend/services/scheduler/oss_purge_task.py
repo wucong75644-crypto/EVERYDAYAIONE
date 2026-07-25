@@ -49,54 +49,44 @@ async def _sleep_until_target() -> None:
 
 async def _purge_expired_files() -> int:
     """扫描过期记录，逐条删除 OSS 文件并标记 purged。"""
-    from core.db_scope import DatabaseAccessKind, DatabaseScope
-    from services.knowledge_config import get_pg_connection, is_kb_available
+    from core.database import get_async_db
+    from services.knowledge_config import is_kb_available
 
     if not is_kb_available():
         return 0
 
-    conn_ctx = await get_pg_connection(
-        DatabaseScope(
-            actor_user_id=None,
-            org_id=None,
-            access_kind=DatabaseAccessKind.WORKER,
-            request_id="oss-purge",
-        ),
-    )
-    if conn_ctx is None:
-        return 0
-
+    db = await get_async_db()
     total_purged = 0
-    async with conn_ctx as conn:
-        while True:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT id, oss_object_key, relative_path
-                    FROM deleted_files
-                    WHERE purge_after < now() AND NOT purged
-                    ORDER BY purge_after
-                    LIMIT %s
-                    """,
-                    (_BATCH_SIZE,),
-                )
-                rows = await cur.fetchall()
+    while True:
+        response = await db.rpc(
+            "sync_list_oss_purge_candidates",
+            {"p_limit": _BATCH_SIZE},
+        ).execute()
+        rows = response.data or []
+        if not rows:
+            break
 
-            if not rows:
-                break
-
-            for row_id, oss_key, rel_path in rows:
-                ok = await _delete_oss_object(oss_key)
-                if ok:
-                    async with conn.cursor() as cur:
-                        await cur.execute(
-                            "UPDATE deleted_files SET purged = TRUE WHERE id = %s",
-                            (row_id,),
-                        )
+        successful = 0
+        for row in rows:
+            row_id = row["id"]
+            oss_key = row["oss_object_key"]
+            ok = await _delete_oss_object(oss_key)
+            if ok:
+                marked = await db.rpc(
+                    "sync_mark_oss_file_purged",
+                    {
+                        "p_id": row_id,
+                        "p_oss_object_key": oss_key,
+                    },
+                ).execute()
+                if marked.data:
+                    successful += 1
                     total_purged += 1
                     logger.debug(f"OSS purged | key={oss_key}")
-                else:
-                    logger.warning(f"OSS purge failed, skip | key={oss_key}")
+            else:
+                logger.warning(f"OSS purge failed, skip | key={oss_key}")
+        if successful == 0:
+            break
 
     return total_purged
 

@@ -205,6 +205,7 @@ def test_migrations_run_before_service_restart_and_fail_closed() -> None:
     assert migration_gate < restart
     assert "scripts/migration_runner.py plan" in MIGRATION_SCRIPT
     assert "scripts/migration_runner.py apply" in MIGRATION_SCRIPT
+    assert "scripts/verify_worker_control_preconditions.py" in MIGRATION_SCRIPT
     assert 'elif [ -n "$migration_plan" ]; then' in MIGRATION_SCRIPT
     assert "存在待执行迁移" in MIGRATION_SCRIPT
 
@@ -265,6 +266,51 @@ def test_migration_gate_plans_then_applies_when_enabled(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "scripts/migration_runner.py plan --applied-by deploy-script",
+        "scripts/migration_runner.py apply --applied-by deploy-script",
+    ]
+
+
+def test_migration_gate_checks_worker_control_ownership_before_apply(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> '{calls}'\n"
+        "case \"$1 $2\" in\n"
+        "  'scripts/migration_runner.py plan') "
+        "echo 171_worker_media_task_control.sql ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = {
+        **os.environ,
+        "RUN_MIGRATIONS": "true",
+        "MIGRATION_DATABASE_URL": "postgresql://migrator@example/db",
+        "MIGRATION_PYTHON": str(fake_python),
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                Path(__file__).resolve().parents[2]
+                / "deploy/run-migrations.sh"
+            ),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "scripts/migration_runner.py plan --applied-by deploy-script",
+        "scripts/verify_worker_control_preconditions.py",
         "scripts/migration_runner.py apply --applied-by deploy-script",
     ]
 

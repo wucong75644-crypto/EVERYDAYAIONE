@@ -1,4 +1,4 @@
-"""150–164 production tenant cutover preflight contract tests."""
+"""150–164 production tenant core preflight contract tests."""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "deploy/preflight-tenant-cutover.sh"
+SCRIPT = ROOT / "deploy/preflight/tenant-core.sh"
+WRAPPER = (
+    ROOT / "deploy/preflight-tenant-cutover.sh"
+).read_text(encoding="utf-8")
 MIGRATION_IDENTITIES = (
     "150_agent_runtime_tenant_defense.sql",
     "151_agent_runtime_role_grants.sql",
@@ -71,6 +74,11 @@ def test_preflight_requires_admin_url_before_psql(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "缺少 TENANT_DB_ADMIN_URL" in result.stderr
     assert not sql_path.exists()
+
+
+def test_public_preflight_entry_orchestrates_both_domains() -> None:
+    assert 'preflight/tenant-core.sh"' in WRAPPER
+    assert 'preflight/worker-control.sh"' in WRAPPER
 
 
 def test_preflight_rejects_unsafe_legacy_owner(tmp_path: Path) -> None:

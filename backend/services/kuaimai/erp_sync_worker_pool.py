@@ -17,14 +17,13 @@ from datetime import datetime
 from loguru import logger
 
 from core.config import get_settings
+from services.kuaimai.erp_sync_worker_pool_support import (
+    ErpSyncWorkerPoolSupport,
+    LockLostError,
+)
 
 
-class LockLostError(Exception):
-    """任务锁已丢失（续期失败/被其他 Worker 抢占），应中止当前任务。"""
-    pass
-
-
-class ErpSyncWorkerPool:
+class ErpSyncWorkerPool(ErpSyncWorkerPoolSupport):
     """协程工作池：并发消费 Redis 任务队列。"""
 
     def __init__(
@@ -348,32 +347,15 @@ class ErpSyncWorkerPool:
         """
         try:
             from core.redis import RedisClient
+            from services.kuaimai.erp_sync_kit_stock import refresh_kit_stock
+
             if not await RedisClient.try_throttle(
                 "erp_sync:kit_refresh",
                 self.settings.erp_sync_kit_refresh_throttle,
             ):
                 return  # 节流中，跳过
 
-            async with self.db.pool.connection() as conn:
-                await conn.set_autocommit(True)
-                async with conn.cursor() as cur:
-                    # advisory lock 防止多 worker 并发刷新
-                    await cur.execute(
-                        "SELECT pg_try_advisory_lock(hashtext('mv_kit_stock')) AS locked"
-                    )
-                    row = await cur.fetchone()
-                    locked = row["locked"] if isinstance(row, dict) else row[0]
-                    if not locked:
-                        return  # 另一个 worker 正在刷新，跳过
-                    try:
-                        await cur.execute(
-                            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
-                        )
-                    finally:
-                        await cur.execute(
-                            "SELECT pg_advisory_unlock(hashtext('mv_kit_stock'))"
-                        )
-            logger.debug("Kit stock materialized view refreshed")
+            await refresh_kit_stock(self.db)
         except Exception as e:
             logger.warning(f"Kit stock refresh failed | error={e}")
 
@@ -443,149 +425,3 @@ class ErpSyncWorkerPool:
             return None
 
     # ── Redis 队列操作 ────────────────────────────────
-
-    async def _dequeue(self) -> tuple[str, float] | None:
-        """从队列取出优先级最高的任务"""
-        try:
-            from core.redis import RedisClient
-            return await RedisClient.dequeue_task(
-                self.settings.erp_sync_queue_key,
-            )
-        except Exception:
-            return None
-
-    async def _requeue_task(self, task_id: str) -> None:
-        """将无法执行的任务放回队列（延迟 5 秒再被取出）"""
-        try:
-            from core.redis import RedisClient
-            import time
-            delay_score = time.time() + 5  # 5 秒后再被取出
-            await RedisClient.enqueue_task(
-                self.settings.erp_sync_queue_key, task_id, delay_score,
-            )
-        except Exception:
-            pass  # 放回失败不影响主流程，Scheduler 下轮会重新入队
-
-    # ── 分布式锁管理 ──────────────────────────────────
-
-    async def _acquire_task_lock(self, lock_key: str) -> str | None:
-        """获取 per-(org, sync_type) 任务锁"""
-        try:
-            from core.redis import RedisClient
-            token = await RedisClient.acquire_lock(
-                lock_key, timeout=self.settings.erp_sync_task_lock_ttl,
-            )
-            if token:
-                self._held_locks[lock_key] = token
-            return token
-        except Exception as e:
-            logger.warning(f"Task lock acquire failed | key={lock_key} error={e}")
-            # DB 降级锁
-            return await self._acquire_task_lock_db(lock_key)
-
-    async def _acquire_task_lock_db(self, lock_key: str) -> str | None:
-        """DB 锁降级：利用现有 RPC"""
-        try:
-            # 从 lock_key 解析 org_id
-            parts = lock_key.split(":")
-            org_id_str = parts[1] if len(parts) >= 3 else None
-            org_id = None if org_id_str == "__default__" else org_id_str
-
-            result = await self.db.rpc(
-                "erp_try_acquire_sync_lock",
-                {
-                    "p_lock_ttl_seconds": self.settings.erp_sync_task_lock_ttl,
-                    "p_org_id": org_id,
-                },
-            ).execute()
-            if bool(result.data):
-                # DB 锁用特殊 token 标记
-                self._held_locks[lock_key] = "__db_lock__"
-                return "__db_lock__"
-            return None
-        except Exception as e:
-            logger.error(f"DB task lock failed | key={lock_key} error={e}")
-            return None
-
-    def _make_extend_fn(
-        self, lock_key: str, lock_lost_event: asyncio.Event,
-    ):
-        """创建绑定当前任务 lock_key 的续期闭包。
-
-        ErpSyncService 在每个时间窗口后调用 extend_fn。
-        两个检测时机：
-        1. lock_lost_event 已被后台续期协程 set → 立即 raise
-        2. 自己调 extend_lock 失败 → set event + raise
-        """
-        async def _extend() -> None:
-            # 后台续期协程已发现锁丢失
-            if lock_lost_event.is_set():
-                raise LockLostError(
-                    f"Lock lost (detected by renew loop) | key={lock_key}"
-                )
-
-            token = self._held_locks.get(lock_key)
-            if not token or token == "__db_lock__":
-                return  # DB 锁无续期机制，靠 TTL
-
-            try:
-                from core.redis import RedisClient
-                ok = await RedisClient.extend_lock(
-                    lock_key, token,
-                    self.settings.erp_sync_task_lock_ttl,
-                )
-                if not ok:
-                    self._held_locks.pop(lock_key, None)
-                    lock_lost_event.set()
-                    raise LockLostError(
-                        f"Lock lost (token mismatch) | key={lock_key}"
-                    )
-            except LockLostError:
-                raise
-            except Exception as e:
-                # Redis 通信异常：保守处理，不中断任务
-                logger.warning(f"Lock extend Redis error | key={lock_key} error={e}")
-        return _extend
-
-    async def _release_task_lock(self, lock_key: str, token: str) -> None:
-        """释放任务锁"""
-        self._held_locks.pop(lock_key, None)
-        if token == "__db_lock__":
-            return  # DB 锁通过 TTL 自动释放
-
-        try:
-            from core.redis import RedisClient
-            await RedisClient.release_lock(lock_key, token)
-        except Exception:
-            pass
-
-    async def _release_all_locks(self) -> None:
-        """stop() 时释放所有持有的锁"""
-        for lock_key, token in list(self._held_locks.items()):
-            await self._release_task_lock(lock_key, token)
-        self._held_locks.clear()
-
-    # ── 企业并发限制 ──────────────────────────────────
-
-    async def _check_org_concurrency(self, org_id: str | None) -> bool:
-        """检查并递增企业并发计数，超限返回 False"""
-        try:
-            from core.redis import RedisClient
-            key = f"{self._concurrency_prefix}:{org_id or '__default__'}"
-            count = await RedisClient.incr_with_ttl(key, ttl=600)
-            if count > self.settings.erp_sync_max_org_concurrency:
-                # 超限，回退计数
-                await RedisClient.decr_floor(key)
-                return False
-            return True
-        except Exception:
-            return True  # Redis 不可用时不限制
-
-    async def _decr_org_concurrency(self, org_id: str | None) -> None:
-        """递减企业并发计数"""
-        try:
-            from core.redis import RedisClient
-            key = f"{self._concurrency_prefix}:{org_id or '__default__'}"
-            await RedisClient.decr_floor(key)
-        except Exception:
-            pass

@@ -318,61 +318,41 @@ class TestThrottledKitRefresh:
 
     @pytest.mark.asyncio
     async def test_lock_acquired_executes_refresh(self):
-        """获取 advisory lock 成功 → 执行 REFRESH"""
+        """节流通过后调用数据库拥有的刷新能力。"""
         pool = _make_pool()
-
-        mock_cur = AsyncMock()
-        mock_cur.fetchone = AsyncMock(return_value=(True,))
-        mock_conn = AsyncMock()
-        mock_conn.cursor = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_cur),
-            __aexit__=AsyncMock(return_value=False),
-        ))
-        mock_conn.set_autocommit = AsyncMock()
-        pool.db.pool.connection = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=False),
-        ))
 
         mock_redis = MagicMock()
         mock_redis.try_throttle = AsyncMock(return_value=True)
-        with patch("core.redis.RedisClient", mock_redis):
+        with (
+            patch("core.redis.RedisClient", mock_redis),
+            patch(
+                "services.kuaimai.erp_sync_kit_stock.refresh_kit_stock",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as refresh,
+        ):
             await pool._throttled_kit_refresh()
 
-        executed_sqls = [
-            call.args[0] for call in mock_cur.execute.call_args_list
-        ]
-        assert any("REFRESH" in sql for sql in executed_sqls)
-        assert any("advisory_unlock" in sql for sql in executed_sqls)
+        refresh.assert_awaited_once_with(pool.db)
 
     @pytest.mark.asyncio
     async def test_lock_not_acquired_skips_refresh(self):
-        """获取 advisory lock 失败 → 跳过 REFRESH"""
+        """能力返回未刷新时仍安全结束。"""
         pool = _make_pool()
-
-        mock_cur = AsyncMock()
-        mock_cur.fetchone = AsyncMock(return_value=(False,))
-        mock_conn = AsyncMock()
-        mock_conn.cursor = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_cur),
-            __aexit__=AsyncMock(return_value=False),
-        ))
-        mock_conn.set_autocommit = AsyncMock()
-        pool.db.pool.connection = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=False),
-        ))
 
         mock_redis = MagicMock()
         mock_redis.try_throttle = AsyncMock(return_value=True)
-        with patch("core.redis.RedisClient", mock_redis):
+        with (
+            patch("core.redis.RedisClient", mock_redis),
+            patch(
+                "services.kuaimai.erp_sync_kit_stock.refresh_kit_stock",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as refresh,
+        ):
             await pool._throttled_kit_refresh()
 
-        executed_sqls = [
-            call.args[0] for call in mock_cur.execute.call_args_list
-        ]
-        assert not any("REFRESH" in sql for sql in executed_sqls)
-        assert not any("advisory_unlock" in sql for sql in executed_sqls)
+        refresh.assert_awaited_once_with(pool.db)
 
     @pytest.mark.asyncio
     async def test_throttle_blocked_skips_all(self):

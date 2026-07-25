@@ -90,7 +90,7 @@ migrator_url=$(
         "MIGRATION_DATABASE_URL" \
         "everydayai_migrator"
 )
-sync_url=$(validate_role_file ".env.sync" "DATABASE_URL" "everydayai")
+sync_url=$(validate_role_file ".env.sync" "DATABASE_URL" "everydayai_sync")
 
 isolated_urls=(
     "$runtime_url"

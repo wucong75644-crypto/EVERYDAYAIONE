@@ -176,6 +176,21 @@ Context、Artifact、Attachment 等没有直接 `user_id` 的表，通过稳定�
 - 管理员跨租户读取使用独立 admin RPC；RPC 内校验 operator 身份和权限并写审计。
 - 普通 runtime 角色不能设置 `access_kind=admin` 获得绕过能力。
 
+### 8.1 Worker Control 独立对象域
+
+媒体、错误汇聚和定时执行新增能力依赖的控制对象固定为：
+
+- `error_logs` 及其列序列
+- `knowledge_metrics`
+- `scheduled_tasks`
+- `scheduled_task_runs`
+
+四表由独立管理员脚本原子转给 `everydayai_owner`。Worker 不获得直表权限，只调用
+171–179 的任务级 `SECURITY DEFINER` 函数。Web Runtime 通过迁移 180 获得
+`scheduled_tasks` 企业 Scope 内 CRUD 和 `scheduled_task_runs` 只读；两表启用
+FORCE RLS，企业成员或企业停用后数据库层失败关闭。ERP/快麦表由后续 Sync 数据域
+切换单独转移 owner，不与 Worker Control 的四表混合操作。
+
 ## 9. SECURITY DEFINER 与函数授权
 
 所有业务函数默认：

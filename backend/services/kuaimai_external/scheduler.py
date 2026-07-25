@@ -124,6 +124,7 @@ async def sync_all_active(
                     sync_type=sync_type,
                     start_date=start_date,
                     end_date=end_date,
+                    credentials=cred,
                 )
             elif cred.source == "viperp":
                 r = await viperp_sync.sync_viperp(
@@ -132,6 +133,7 @@ async def sync_all_active(
                     sync_type=sync_type,
                     start_date=start_date,
                     end_date=end_date,
+                    credentials=cred,
                 )
             else:
                 continue
@@ -241,19 +243,12 @@ async def keepalive_all_active() -> dict:
                 referer=_KEEPALIVE_REFERER,
                 content_type="application/json",
             )
-            # 成功 → 更新 last_health_check_at
-            await credential_store.record_sync_success(
-                db, credential_id=cred.id,
-            )
             stats["ok"] += 1
             logger.debug(
                 f"keepalive ok | org={cred.org_id} source={cred.source}"
             )
 
         except http_base.CookieExpiredError as e:
-            await credential_store.mark_expired(
-                db, credential_id=cred.id, error_msg=str(e),
-            )
             stats["expired"] += 1
             logger.warning(
                 f"keepalive cookie expired | "
