@@ -52,6 +52,8 @@
   task 终态，Worker 不获得底层退款函数的直接执行权。
 - `backend/migrations/187_worker_media_message_scope_types.sql`：在批次消息提交能力中
   以 TEXT 统一比较 JSON UUID 与历史 task 标识列，写入 messages 时仍执行 UUID 强校验。
+- `backend/migrations/188_worker_media_message_write_types.sql`：按生产 messages schema
+  显式转换 role、content 和 task_id，避免 JSON text 依赖 PostgreSQL 隐式赋值转换。
 - `backend/services/worker_media_tasks.py`：封装跨租户媒体发现、领取、触达和终态 RPC；
   JSONB 参数由 `core/local_db.py` 的共享 RPC 边界统一适配。
 
