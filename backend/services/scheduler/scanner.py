@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
 from loguru import logger
+from services.scheduler.worker_store import ScheduledWorkerStore
 
 
 # 任务卡在 running 超过此时间视为卡死（正常任务 timeout_sec 最大 600s）
@@ -33,8 +34,15 @@ class ScheduledTaskScanner:
     # 恢复检查间隔（不必每轮都查，每 5 分钟一次足够）
     _RECOVER_INTERVAL = timedelta(minutes=5)
 
-    def __init__(self, db: Any, executor: Any = None) -> None:
+    def __init__(
+        self,
+        db: Any,
+        executor: Any = None,
+        runtime_db: Any = None,
+    ) -> None:
         self.db = db
+        self._runtime_db = runtime_db
+        self._store = ScheduledWorkerStore(db)
         self._executor = executor  # ScheduledTaskExecutor 实例
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENCY)
         self._last_recover_check: datetime | None = None
@@ -54,7 +62,10 @@ class ScheduledTaskScanner:
         if self._executor is None:
             # 延迟导入避免循环依赖
             from services.scheduler.task_executor import ScheduledTaskExecutor
-            self._executor = ScheduledTaskExecutor(self.db)
+            self._executor = ScheduledTaskExecutor(
+                self.db,
+                runtime_db=self._runtime_db,
+            )
 
         # 0. 定期恢复卡死任务
         await self._recover_stale_running()
@@ -85,23 +96,7 @@ class ScheduledTaskScanner:
         db.rpc() 内部用 SELECT func() 调用，对 RETURNS SETOF 不兼容。
         """
         try:
-            with self.db.pool.connection() as conn:
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM claim_due_tasks(%s, %s)",
-                        [now, int(limit)],
-                    )
-                    rows = cur.fetchall()
-            # psycopg3 dict_row 返回 UUID 对象，统一转 str 防止下游
-            # Path 拼接 / JSON 序列化失败
-            from uuid import UUID as _UUID
-            result = []
-            for row in (rows or []):
-                result.append({
-                    k: str(v) if isinstance(v, _UUID) else v
-                    for k, v in row.items()
-                })
+            result = self._store.claim_due(now, int(limit))
             if result:
                 logger.info(
                     f"_claim_due_tasks | claimed={len(result)} | "
@@ -131,16 +126,8 @@ class ScheduledTaskScanner:
         self._last_recover_check = now
 
         try:
-            cutoff = (now - _STALE_RUNNING_THRESHOLD).isoformat()
-            # 找卡死任务：status=running 且 last_run_at 早于阈值（或为空）
-            result = (
-                self.db.table("scheduled_tasks")
-                .select("id, cron_expr, timezone, schedule_type")
-                .eq("status", "running")
-                .lt("updated_at", cutoff)
-                .execute()
-            )
-            stale = list(result.data or [])
+            cutoff = now - _STALE_RUNNING_THRESHOLD
+            stale = self._store.list_stale(cutoff)
             if not stale:
                 return
 
@@ -159,18 +146,9 @@ class ScheduledTaskScanner:
                     next_run = calc_next_run(cron_expr, tz) if cron_expr else None
                     new_status = "active"
 
-                self.db.table("scheduled_tasks").update({
-                    "status": new_status,
-                    "next_run_at": next_run.isoformat() if next_run else None,
-                    "updated_at": now.isoformat(),
-                }).eq("id", task_id).execute()
-
-                # 把遗留的 running 执行记录标记为 failed
-                self.db.table("scheduled_task_runs").update({
-                    "status": "failed",
-                    "error_message": "进程异常退出，任务自动恢复",
-                    "finished_at": now.isoformat(),
-                }).eq("task_id", task_id).eq("status", "running").execute()
+                self._store.recover_stale(
+                    task_id, cutoff, new_status, next_run, now,
+                )
 
                 logger.warning(
                     f"ScheduledTaskScanner | recovered stale task | "

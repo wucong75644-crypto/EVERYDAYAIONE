@@ -698,7 +698,10 @@ class TestRunsAndChatTargets:
             new=AsyncMock(return_value=True),
         ), patch(
             "services.scheduler.task_executor.ScheduledTaskExecutor"
-        ) as mock_exec_cls:
+        ) as mock_exec_cls, patch(
+            "core.database.get_worker_db",
+            return_value=MagicMock(name="worker_db"),
+        ) as get_worker_db:
             mock_executor = MagicMock()
             mock_executor.execute = AsyncMock(return_value=None)
             mock_exec_cls.return_value = mock_executor
@@ -710,6 +713,10 @@ class TestRunsAndChatTargets:
         body = resp.json()
         assert body["success"] is True
         assert "已开始执行" in body["message"]
+        mock_exec_cls.assert_called_once_with(
+            get_worker_db.return_value,
+            runtime_db=db,
+        )
 
 
 class TestParseNL:

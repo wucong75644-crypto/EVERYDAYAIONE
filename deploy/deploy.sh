@@ -6,7 +6,7 @@
 # 使用方法：./deploy/deploy.sh [选项]
 ###############################################################################
 
-set -e  # 遇到错误立即退出
+set -euo pipefail  # 任一门禁失败都停止部署
 
 # 颜色输出
 RED='\033[0;31m'
@@ -32,6 +32,8 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+source deploy/deploy-helpers.sh
+
 # 显示帮助信息
 show_help() {
     cat << EOF
@@ -44,6 +46,7 @@ show_help() {
     -b, --backend-only      仅部署后端
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
+    --expected-sha SHA     只部署指定且已推送的 Git 提交
 
 示例:
     $0 -s                   首次部署（包含服务器初始化）
@@ -152,7 +155,7 @@ build_frontend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行前端测试..."
-        npm run test:run || log_warning "前端测试失败，继续部署"
+        npm run test:run
     fi
 
     # 构建
@@ -253,6 +256,9 @@ sync_backend() {
     # 同步部署配置（sandbox.cfg 等）
     rsync -avz \
         -e "ssh -p ${SERVER_PORT}" \
+        --exclude '.env*' \
+        --exclude 'config.env*' \
+        --exclude '__pycache__' \
         deploy/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/../deploy/
 
@@ -369,45 +375,6 @@ ENDSSH
     log_success "服务器初始化完成"
 }
 
-# 显示部署状态
-show_status() {
-    log_info "检查部署状态..."
-
-    remote_exec bash << 'ENDSSH'
-        echo "========== 服务状态 =========="
-
-        echo -e "\n【后端服务】"
-        sudo systemctl status everydayai-backend --no-pager | head -n 10
-
-        echo -e "\n【同步服务】"
-        if systemctl is-enabled everydayai-sync &>/dev/null; then
-            sudo systemctl status everydayai-sync --no-pager | head -n 10
-        else
-            echo "（未安装）"
-        fi
-
-        echo -e "\n【企微与 Actor】"
-        sudo systemctl status everydayai-wecom --no-pager | head -n 10
-        sudo systemctl status everydayai-conversation-actor --no-pager | head -n 10
-
-        echo -e "\n【Nginx服务】"
-        sudo systemctl status nginx --no-pager | head -n 10
-
-        echo -e "\n【磁盘使用】"
-        df -h /var/www/everydayai
-
-        echo -e "\n【最近日志】"
-        echo "后端日志（最后10行）:"
-        sudo journalctl -u everydayai-backend -n 10 --no-pager
-        if systemctl is-enabled everydayai-sync &>/dev/null; then
-            echo -e "\n同步日志（最后10行）:"
-            sudo journalctl -u everydayai-sync -n 10 --no-pager
-        fi
-ENDSSH
-
-    log_success "状态检查完成"
-}
-
 # 主函数
 main() {
     echo -e "${GREEN}"
@@ -425,6 +392,7 @@ EOF
     BACKEND_ONLY=false
     SKIP_BUILD=false
     SKIP_TEST=false
+    EXPECTED_SHA=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -452,6 +420,14 @@ EOF
                 SKIP_TEST=true
                 shift
                 ;;
+            --expected-sha)
+                if [ $# -lt 2 ]; then
+                    log_error "--expected-sha 缺少值"
+                    exit 1
+                fi
+                EXPECTED_SHA="$2"
+                shift 2
+                ;;
             *)
                 log_error "未知选项: $1"
                 show_help
@@ -460,7 +436,13 @@ EOF
         esac
     done
 
+    if [ "$FRONTEND_ONLY" = true ] && [ "$BACKEND_ONLY" = true ]; then
+        log_error "不能同时选择仅前端和仅后端"
+        exit 1
+    fi
+
     # 检查配置和依赖
+    check_release_source
     check_config
     check_dependencies
     test_ssh_connection
@@ -485,6 +467,7 @@ EOF
 
     # 显示状态
     show_status
+    verify_public_endpoints
 
     # 完成提示
     echo ""

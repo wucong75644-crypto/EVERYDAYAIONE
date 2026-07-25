@@ -6,7 +6,6 @@
 """
 
 import json
-import uuid
 from typing import Any, Dict, Optional, Union
 
 from loguru import logger
@@ -17,6 +16,7 @@ from services.adapters.base import (
     ImageGenerateResult,
     VideoGenerateResult,
 )
+from services.worker_media_tasks import WorkerMediaTasks
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
 
@@ -26,6 +26,7 @@ class AsyncRetryService:
 
     def __init__(self, db):
         self.db = db
+        self._media_tasks = WorkerMediaTasks(db)
 
     async def attempt_retry(
         self,
@@ -145,7 +146,6 @@ class AsyncRetryService:
     ) -> Optional[str]:
         """用新模型重新提交生成任务，更新 task 记录"""
         task_type = task["type"]
-        user_id = task["user_id"]
         old_ext_id = task["external_task_id"]
 
         # 1. 创建适配器
@@ -183,42 +183,35 @@ class AsyncRetryService:
                 "aspect_ratio", "16:9"
             )
 
-        # 3. 锁定新积分
-        old_credits = task.get("credits_locked", 0)
-        from services.handlers.mixins import CreditMixin
-
-        credit_helper = CreditMixin()
-        credit_helper.db = self.db
-        new_tx = credit_helper._lock_credits(
-            task_id=str(uuid.uuid4()),
-            user_id=user_id,
-            amount=old_credits,
-            reason=f"Retry[{task_type}]: {new_model}",
+        # 3. 通过 Worker 能力原子锁定新积分
+        expected_version = task.get("version", 1)
+        new_tx = self._media_tasks.prepare_retry(
+            old_ext_id,
+            expected_version,
+            new_model,
         )
+        if not new_tx:
+            logger.warning(
+                f"Async retry credit preparation rejected | "
+                f"task_id={old_ext_id} | model={new_model}"
+            )
+            return None
 
         # 4. 提交 API 请求
         try:
             api_result = await adapter.generate(**generate_kwargs)
             new_ext_id = api_result.task_id
         except Exception:
-            credit_helper._refund_credits(new_tx)
+            self._media_tasks.abort_retry(
+                old_ext_id,
+                expected_version,
+                new_tx,
+            )
             raise
         finally:
             await adapter.close()
 
-        # 5. 退回旧积分
-        old_tx = task.get("credit_transaction_id")
-        if old_tx:
-            try:
-                self.db.rpc(
-                    "atomic_refund_credits", {"p_transaction_id": old_tx}
-                ).execute()
-            except Exception as e:
-                logger.warning(
-                    f"Failed to refund old credits | tx={old_tx} | error={e}"
-                )
-
-        # 6. 更新 task 记录（复用同一条记录，新 ext_id）
+        # 5. 原子退回旧积分并切换 task 到新供应商任务
         updated_params = {
             **request_params,
             "_retry_count": retry_count + 1,
@@ -228,15 +221,24 @@ class AsyncRetryService:
             ),
         }
 
-        self.db.table("tasks").update({
-            "external_task_id": new_ext_id,
-            "model_id": new_model,
-            "status": "pending",
-            "request_params": updated_params,
-            "credit_transaction_id": new_tx,
-            "credits_locked": old_credits,
-            "version": 1,
-            "error_message": None,
-        }).eq("external_task_id", old_ext_id).execute()
+        committed = self._media_tasks.commit_retry(
+            old_ext_id,
+            expected_version,
+            new_ext_id,
+            new_model,
+            updated_params,
+            new_tx,
+        )
+        if not committed:
+            self._media_tasks.abort_retry(
+                old_ext_id,
+                expected_version,
+                new_tx,
+            )
+            logger.error(
+                f"Async retry task switch rejected | old={old_ext_id} | "
+                f"new={new_ext_id}"
+            )
+            return None
 
         return new_ext_id

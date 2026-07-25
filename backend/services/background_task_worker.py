@@ -29,6 +29,7 @@ from services.adapters.base import (
     TaskStatus,
 )
 from services.task_completion_service import TaskCompletionService
+from services.worker_media_tasks import WorkerMediaTasks
 
 # 默认轮询间隔（秒）
 _DEFAULT_POLL_INTERVAL_WITH_WEBHOOK = 120  # 有回调时：兜底模式
@@ -47,8 +48,9 @@ def _resolve_poll_interval(settings: Settings) -> int:
 class BackgroundTaskWorker:
     """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
-    def __init__(self, db):
+    def __init__(self, db, runtime_db=None):
         self.db = db
+        self._media_tasks = WorkerMediaTasks(db)
         self.settings: Settings = get_settings()
         self.poll_interval = _resolve_poll_interval(self.settings)
         self.is_running = False
@@ -60,7 +62,10 @@ class BackgroundTaskWorker:
         # 定时任务扫描器（嵌入主循环）
         # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.2
         from services.scheduler.scanner import ScheduledTaskScanner
-        self._scheduled_scanner = ScheduledTaskScanner(db)
+        self._scheduled_scanner = ScheduledTaskScanner(
+            db,
+            runtime_db=runtime_db,
+        )
 
     async def _get_active_org_ids(self) -> list[str]:
         """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
@@ -119,21 +124,17 @@ class BackgroundTaskWorker:
         使用随机抖动避免惊群效应。
         """
         try:
-            response = self.db.table("tasks").select("*").in_(
-                "status", ["pending", "running"]
-            ).in_(
-                "type", ["image", "video"]
-            ).execute()
+            tasks = self._media_tasks.discover()
         except Exception as e:
             logger.warning(f"Failed to query pending tasks (DB connection error) | error={e}")
             return
 
-        if not response or not response.data:
+        if not tasks:
             return
 
-        logger.debug(f"Polling {len(response.data)} tasks (fallback)")
+        logger.debug(f"Polling {len(tasks)} tasks (fallback)")
 
-        tasks_shuffled = random.sample(response.data, len(response.data))
+        tasks_shuffled = random.sample(tasks, len(tasks))
         kie_qps_limit = getattr(self.settings, 'kie_qps_limit', 50)
         semaphore = asyncio.Semaphore(kie_qps_limit)
 
@@ -199,15 +200,11 @@ class BackgroundTaskWorker:
                 f"model={model_id} | error={e}",
                 exc_info=True
             )
-            self.db.table("tasks").update({
-                "last_polled_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("external_task_id", external_task_id).execute()
+            self._media_tasks.touch(external_task_id)
             return
 
         # 更新 last_polled_at 用于监控
-        self.db.table("tasks").update({
-            "last_polled_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("external_task_id", external_task_id).execute()
+        self._media_tasks.touch(external_task_id)
 
         # 完成/失败 → 交给统一处理服务（包含幂等检查）
         if query_result.status in (TaskStatus.SUCCESS, TaskStatus.FAILED):
@@ -238,19 +235,17 @@ class BackgroundTaskWorker:
         now = datetime.now(timezone.utc)
 
         try:
-            response = self.db.table("tasks").select("*").in_(
-                "status", ["pending", "running"]
-            ).execute()
+            tasks = self._media_tasks.discover_legacy_active()
         except Exception as e:
             logger.warning(f"Failed to query stale tasks (DB connection error) | error={e}")
             return
 
-        if not response or not response.data:
+        if not tasks:
             return
 
         cleaned_count = 0
 
-        for task in response.data:
+        for task in tasks:
             from services.conversation_task import is_actor_task
             if is_actor_task(task):
                 continue
@@ -333,35 +328,27 @@ class BackgroundTaskWorker:
             if transaction_id:
                 await self._refund_credits(transaction_id)
 
-            # Chat 超时：将已生成的部分内容回写到 messages 表（避免用户丢失内容）
+            # Chat 超时：将已生成的部分内容一并交给受控能力回写。
             accumulated = (task.get("accumulated_content") or "").strip()
-            message_id = task.get("placeholder_message_id")
-            if accumulated and message_id:
-                from services.task_utils import save_accumulated_to_message
-                client_task_id = task.get("client_task_id") or external_task_id
-                saved = save_accumulated_to_message(
-                    self.db,
-                    message_id=message_id,
-                    conversation_id=task["conversation_id"],
-                    accumulated_content=accumulated,
-                    model_id=task.get("model_id", "unknown"),
-                    client_task_id=client_task_id,
-                    task_type=task_type,
-                    accumulated_blocks=task.get("accumulated_blocks"),
-                    # chat 超时：任务真的失败了，状态应该 failed（之前硬编码 completed 是 bug）
-                    status="failed",
+            message_content = None
+            if accumulated and task.get("placeholder_message_id"):
+                from services.task_utils import merge_blocks_with_text
+                blocks = task.get("accumulated_blocks") or []
+                message_content = (
+                    merge_blocks_with_text(blocks, accumulated)
+                    if blocks
+                    else [{"type": "text", "text": accumulated}]
                 )
-                if saved:
-                    logger.info(
-                        f"Chat timeout: saved accumulated_content to messages | "
-                        f"task_id={external_task_id} | content_len={len(accumulated)}"
-                    )
 
-            self.db.table("tasks").update({
-                "status": "failed",
-                "error_message": error_msg,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", task["id"]).execute()
+            failed = self._media_tasks.fail_legacy_stale(
+                str(task["id"]),
+                error_msg,
+                message_content,
+            )
+            if not failed:
+                logger.warning(
+                    f"Timeout settlement skipped | task_id={external_task_id}"
+                )
 
             logger.warning(
                 f"Task timeout (direct) | id={task['id']} | "

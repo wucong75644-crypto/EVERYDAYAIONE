@@ -56,6 +56,7 @@ def create_batch_task(
         "client_task_id": client_task_id,
         "org_id": org_id,
         "type": "image",
+        "version": 2,
     }
 
 
@@ -86,7 +87,21 @@ class MockBatchDB:
 
     def rpc(self, fn_name: str, params: dict = None):
         mock = MagicMock()
-        result = self._rpc_results.get(fn_name, {"success": True})
+        if fn_name == "worker_settle_media_batch_item":
+            result = {
+                "outcome": "settled",
+                "batch_tasks": self._tables.get("tasks", []),
+            }
+        elif fn_name == "worker_get_media_batch_message":
+            messages = self._tables.get("messages", [])
+            result = messages[0] if messages else None
+        elif fn_name == "worker_commit_media_batch_message":
+            result = {
+                "outcome": "committed",
+                "message": params["p_message"],
+            }
+        else:
+            result = self._rpc_results.get(fn_name, {"success": True})
         mock.execute.return_value = MagicMock(data=result)
         return mock
 
@@ -739,10 +754,6 @@ class TestBatchCompletionServiceCredits:
     @pytest.fixture
     def service(self, db):
         return BatchCompletionService(db)
-
-    def test_confirm_credits_no_exception(self, service):
-        """测试：确认积分不抛异常"""
-        service._confirm_credits("tx_123")
 
     def test_refund_credits_success_no_exception(self, service):
         """测试：退回积分成功不抛异常"""

@@ -8,7 +8,7 @@
 """
 
 from __future__ import annotations
-from typing import Any, Callable, Coroutine, Dict, TYPE_CHECKING
+from typing import AbstractSet, Any, Callable, Coroutine, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.agent.agent_result import AgentResult
@@ -43,6 +43,7 @@ class ToolExecutor(
         workspace_user_id: str | None = None,
         resource_manifest=None, runtime_state=None,
         personal_context_allowed: bool = True,
+        allowed_tools: AbstractSet[str] | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -89,6 +90,12 @@ class ToolExecutor(
         if self.workspace_user_id != self.user_id:
             self._handlers.pop("get_conversation_context", None)
             self._handlers.pop("manage_scheduled_task", None)
+        if allowed_tools is not None:
+            self._handlers = {
+                name: handler
+                for name, handler in self._handlers.items()
+                if name in allowed_tools
+            }
 
     def has_handler(self, tool_name: str) -> bool:
         """检查工具是否有已注册的 handler（兜底扩充用）"""

@@ -9,8 +9,7 @@ Webhook 和轮询兜底的统一入口，保证：
 
 import asyncio
 from contextlib import suppress
-from typing import Dict, Any, List, Optional, Tuple, Union
-from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional, Union
 
 from loguru import logger
 
@@ -21,7 +20,12 @@ from services.adapters.base import (
     TaskStatus,
 )
 from services.assets.asset_registry import register_task_media_best_effort
-from services.oss_service import get_oss_service
+from services.media_result_persistence import (
+    MediaResultPersistence,
+    compute_image_dimensions as _compute_image_dimensions,
+    compute_video_duration as _compute_video_duration,
+)
+from services.worker_media_tasks import WorkerMediaTasks
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
 
@@ -29,46 +33,7 @@ _COMPLETION_LOCK_TTL_SECONDS = 300
 _COMPLETION_LOCK_RENEW_SECONDS = 60
 
 
-# ============================================================
-# 元数据计算常量
-# ============================================================
-
-# 分辨率基准像素（长边）
-_RESOLUTION_BASE: Dict[str, int] = {"1K": 1024, "2K": 2048, "4K": 4096}
-
-# 宽高比 → (w, h) 比例因子
-_ASPECT_RATIOS: Dict[str, Tuple[int, int]] = {
-    "1:1": (1, 1), "2:3": (2, 3), "3:2": (3, 2),
-    "3:4": (3, 4), "4:3": (4, 3), "4:5": (4, 5),
-    "5:4": (5, 4), "9:16": (9, 16), "16:9": (16, 9),
-    "21:9": (21, 9),
-}
-
-# KIE n_frames 值 → 视频秒数
-_FRAMES_TO_SECONDS: Dict[str, int] = {"10": 10, "15": 15, "25": 25}
-
-
-def _compute_image_dimensions(
-    aspect_ratio: str,
-    resolution: Optional[str] = None,
-) -> Tuple[int, int]:
-    """从宽高比和分辨率推算图片像素尺寸（长边=base）"""
-    base = _RESOLUTION_BASE.get(resolution or "1K", 1024)
-    ratios = _ASPECT_RATIOS.get(aspect_ratio)
-    if not ratios:
-        return base, base
-    w, h = ratios
-    if w >= h:
-        return base, int(base * h / w)
-    return int(base * w / h), base
-
-
-def _compute_video_duration(n_frames: str) -> int:
-    """从 n_frames 参数推算视频时长（秒）"""
-    return _FRAMES_TO_SECONDS.get(str(n_frames), 10)
-
-
-class TaskCompletionService:
+class TaskCompletionService(MediaResultPersistence):
     """
     统一任务完成处理入口
 
@@ -78,17 +43,11 @@ class TaskCompletionService:
 
     def __init__(self, db):
         self.db = db
+        self._media_tasks = WorkerMediaTasks(db)
 
     def get_task(self, external_task_id: str) -> Optional[Dict[str, Any]]:
         """根据 external_task_id 查询任务"""
-        result = (
-            self.db.table("tasks")
-            .select("*")
-            .eq("external_task_id", external_task_id)
-            .maybe_single()
-            .execute()
-        )
-        return result.data if result.data else None
+        return self._media_tasks.get(external_task_id)
 
     async def process_result(self, external_task_id: str, result: TaskResult) -> bool:
         """
@@ -221,27 +180,20 @@ class TaskCompletionService:
         # 4. 乐观锁抢占：通过 version 字段原子更新
         # 只有version未变化的任务才会被更新（防止并发冲突）
         current_version = task.get('version', 1)
-        lock_update = (
-            self.db.table("tasks")
-            .update({
-                "version": current_version + 1,
-                "started_at": task.get("started_at") or datetime.now(timezone.utc).isoformat()
-            })
-            .eq("external_task_id", external_task_id)
-            .eq("version", current_version)  # 乐观锁条件
-            .in_("status", ["pending", "running"])  # 双重保险
-            .execute()
+        claimed_task = self._media_tasks.claim_completion(
+            external_task_id,
+            current_version,
         )
 
         # 5. 检查是否抢到锁
-        if not lock_update.data:
+        if not claimed_task:
             logger.info(
                 f"Task lock failed (concurrent processing) | task_id={external_task_id}"
             )
             return True  # 其他进程已处理，幂等返回成功
 
-        # 6. 成功抢到锁，保留原始 task（get_task 返回完整行）
-        #    lock_update.data[0] 可能仅包含更新字段，缺少 type 等列
+        # 6. 使用原子领取返回的完整任务快照。
+        task = claimed_task
 
         # 7. 根据结果状态分发处理
         try:
@@ -302,6 +254,8 @@ class TaskCompletionService:
 
         # 6. 其他任务（video）走原有 Handler 路径
         handler = self._create_handler(task_type, org_id=task.get("org_id"))
+        if task_type == "video":
+            handler.worker_task_context = task
         await handler.on_complete(
             task_id=external_task_id,
             result=content_parts,
@@ -336,6 +290,8 @@ class TaskCompletionService:
 
         # 其他任务走原有 Handler 路径
         handler = self._create_handler(task_type, org_id=task.get("org_id"))
+        if task_type == "video":
+            handler.worker_task_context = task
         await handler.on_error(
             task_id=external_task_id,
             error_code=result.fail_code or "UNKNOWN",
@@ -367,229 +323,6 @@ class TaskCompletionService:
 
         # 过滤空白 URL
         return [url for url in urls if url and url.strip()]
-
-    async def _upload_urls_to_oss(
-        self,
-        urls: List[str],
-        user_id: str,
-        task_type: str,
-        max_concurrent: int = 3,
-        org_id: str | None = None,
-    ) -> List[str]:
-        """
-        批量上传媒体到 OSS（并发上传）
-
-        KIE 等 Provider 返回的临时 URL 会过期，需上传到 OSS 持久化。
-        使用并发上传提升性能，同时限制并发数防止资源耗尽。
-
-        Args:
-            urls: URL 列表
-            user_id: 用户 ID
-            task_type: 任务类型
-            max_concurrent: 最大并发数（默认 3）
-
-        Returns:
-            OSS URL 列表
-        """
-        if not urls:
-            return []
-
-        # 创建信号量限制并发数
-        import asyncio
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        async def upload_with_limit(url: str) -> str:
-            """带限流的上传"""
-            async with semaphore:
-                return await self._upload_single_to_oss(url, user_id, task_type, org_id=org_id)
-
-        # 并发上传所有 URL（部分成功模式）
-        results = await asyncio.gather(
-            *[upload_with_limit(url) for url in urls],
-            return_exceptions=True  # 收集所有结果，不因单个失败丢弃全部
-        )
-
-        # 成功的用 OSS URL，失败的降级用原始临时 URL
-        oss_urls = []
-        fail_count = 0
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                fail_count += 1
-                logger.warning(
-                    f"OSS upload failed for url[{i}], using temporary URL | "
-                    f"type={task_type} | error={result}"
-                )
-                oss_urls.append(urls[i])  # 降级使用原始临时 URL
-            else:
-                oss_urls.append(result)
-
-        if fail_count > 0:
-            logger.warning(
-                f"Batch OSS upload partial failure | type={task_type} | "
-                f"total={len(urls)} | failed={fail_count} | success={len(urls) - fail_count}"
-            )
-
-        return oss_urls
-
-    async def _upload_single_to_oss(
-        self,
-        url: str,
-        user_id: str,
-        media_type: str,
-        max_retries: int = 3,
-        org_id: str | None = None,
-    ) -> str:
-        """
-        上传单个 URL 到 OSS，失败抛异常
-
-        Args:
-            url: 临时 URL
-            user_id: 用户 ID
-            media_type: 媒体类型
-            max_retries: 最大重试次数
-
-        Returns:
-            持久化后的 OSS URL
-
-        Raises:
-            ValueError: URL为空或OSS未配置
-            Exception: 上传失败
-        """
-        if not url or not url.strip():
-            raise ValueError("Empty URL cannot be uploaded")
-
-        try:
-            oss_service = get_oss_service()
-        except ValueError as e:
-            # OSS 未配置，降级使用原始 URL（已知会过期的风险）
-            logger.warning(
-                f"OSS not configured, using temporary URL (will expire) | "
-                f"error={e}"
-            )
-            return url
-
-        # 已经是 OSS URL 则跳过
-        if oss_service.is_oss_url(url):
-            return url
-
-        # 重试上传（带 Full Jitter 退避）
-        # 参考：https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
-        import asyncio
-        import random
-
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                result = await oss_service.upload_from_url(
-                    url=url,
-                    user_id=user_id,
-                    category="generated",
-                    media_type=media_type,
-                    org_id=org_id,
-                )
-
-                logger.info(
-                    f"OSS upload success | type={media_type} | "
-                    f"user_id={user_id} | object_key={result['object_key']} | "
-                    f"attempt={attempt + 1}/{max_retries}"
-                )
-                return result["url"]
-
-            except ValueError as e:
-                # ValueError = URL 已失效（403/404/410）或文件过大 → 不可重试
-                logger.warning(
-                    f"Non-retryable error | type={media_type} | "
-                    f"attempt={attempt + 1}/{max_retries} | error={e}"
-                )
-                raise
-
-            except Exception as e:
-                # 其他错误（超时、网络）→ 可重试
-                last_error = e
-                logger.warning(
-                    f"OSS upload attempt {attempt + 1}/{max_retries} failed | "
-                    f"type={media_type} | error={e}"
-                )
-
-                # 最后一次尝试失败，抛出异常
-                if attempt == max_retries - 1:
-                    logger.error(
-                        f"OSS upload failed after {max_retries} attempts | "
-                        f"type={media_type} | user_id={user_id} | error={e}"
-                    )
-                    raise Exception(
-                        f"媒体持久化失败（已重试{max_retries}次）: {e}"
-                    ) from last_error
-
-                # Full Jitter 退避：random_between(0, min(cap, base * 2^attempt))
-                cap = 16.0
-                delay = min(cap, 2.0 ** attempt)
-                jitter = random.uniform(0, delay)
-                await asyncio.sleep(jitter)
-
-        # 理论上不会到这里（最后一次循环会抛异常）
-        raise Exception(f"媒体持久化失败: {last_error}")
-
-    async def _build_content_parts(
-        self,
-        urls: List[str],
-        task_type: str,
-        task: Dict[str, Any],
-    ) -> list:
-        """构建 ContentPart 字典列表（含元数据，供 handler.on_complete 使用）。
-
-        image: 走 persist_media_urls_to_workspace 落工作区「下载/AI图片」+ OSS 双轨,
-               额外字段 workspace_path/name/mime_type/size 对齐 emit_payload 协议。
-        video: 保留原 url 直接构建(不落工作区,视频任务沿用现有路径)。
-        """
-        request_params = task.get("request_params") or {}
-        parts: list = []
-
-        if task_type == "image" and urls:
-            from services.file_upload import persist_media_urls_to_workspace
-
-            width, height = _compute_image_dimensions(
-                aspect_ratio=request_params.get("aspect_ratio", "1:1"),
-                resolution=request_params.get("resolution"),
-            )
-            payloads = await persist_media_urls_to_workspace(
-                urls=urls,
-                user_id=task["user_id"],
-                org_id=task.get("org_id"),
-                media_type="image",
-                meta={
-                    "prompt": request_params.get("prompt") or "",
-                    "model": task.get("model_id") or "",
-                    "aspect_ratio": request_params.get("aspect_ratio"),
-                    "resolution": request_params.get("resolution"),
-                    "task_id": task.get("external_task_id"),
-                },
-                extra_fields={
-                    "type": "image",
-                    "width": width,
-                    "height": height,
-                },
-            )
-            for p in payloads:
-                if p.get("url"):
-                    parts.append(p)
-            return parts
-
-        # video 分支:保留原行为
-        for url in urls:
-            if not url:
-                continue
-            if task_type == "video":
-                duration = _compute_video_duration(
-                    request_params.get("n_frames", "10"),
-                )
-                parts.append({
-                    "type": "video",
-                    "url": url,
-                    "duration": duration,
-                })
-
-        return parts
 
     def _create_handler(self, task_type: str, org_id: str | None = None):
         """根据任务类型创建 Handler"""

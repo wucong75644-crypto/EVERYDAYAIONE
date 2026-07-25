@@ -23,10 +23,34 @@ async def record_metric(
     retry_from_model: Optional[str] = None,
     user_id: Optional[str] = None,
     org_id: Optional[str] = None,
+    task_id: Optional[str] = None,
     db_source: Any = None,
 ) -> None:
     """记录任务执行指标（fire-and-forget，不抛异常）"""
     if not is_kb_available():
+        return
+
+    if task_id and db_source is not None:
+        try:
+            result = await db_source.rpc("worker_record_media_metric", {
+                "p_task_id": task_id,
+                "p_status": status,
+                "p_error_code": error_code,
+                "p_cost_time_ms": cost_time_ms,
+                "p_prompt_tokens": prompt_tokens,
+                "p_completion_tokens": completion_tokens,
+                "p_prompt_category": prompt_category,
+                "p_params": params or {},
+                "p_retried": retried,
+                "p_retry_from_model": retry_from_model,
+            }).execute()
+            payload = result.data if result else None
+            if not isinstance(payload, dict) or payload.get("outcome") != "recorded":
+                raise RuntimeError("MEDIA_METRIC_RESULT_INVALID")
+        except Exception as e:
+            logger.warning(
+                f"Knowledge metric record failed | model={model_id} | error={e}"
+            )
         return
 
     conn_ctx = await get_pg_connection(db_source)

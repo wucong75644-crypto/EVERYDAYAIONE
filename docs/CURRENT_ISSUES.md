@@ -1101,3 +1101,13 @@
 - **2026-07-17**：完成 Turn/revision 数据库基础：messages/tasks/conversations 增加兼容字段与索引，新增幂等 `bind_generation_turn`、`close_generation_turn` 事务 RPC 及 rollback；业务链路将在后续阶段接入。
 - **2026-07-17**：完成显式媒体协议收口第一阶段：删除普通模型文本 URL 和 `[FILE]` marker 扫描；Web 流式与企微非流式统一消费 `emit_*` 结构化 payload；多图网格完成态只按实际 ImagePart 渲染。历史错误消息不回填。
 - 较早更新记录见 `docs/archive/CURRENT_ISSUES_UPDATES_2026H1.md`。
+# 2026-07-25 定时任务角色隔离收尾
+
+- 已完成代码与迁移：Worker 控制面和 Runtime 工具面分离，定时 run 的读取、
+  积分、结果消息和终态均绑定 fencing token 与租约。
+- 已完成定向自动化验证；尚未应用生产迁移 179，也尚未执行部署后真实定时任务
+  E2E，因此生产角色切换任务仍处于“待发布验证”，不能标记为生产完成。
+- 生产只读核对：权威迁移账本当前停在 `170_wecom_actor_enqueue_role_grant.sql`；
+  171–179 均未应用。生产 `scheduled_task_runs` 尚无 `execution_token`、
+  `lease_expires_at`、`result_message_id`，Actor unit 仍加载 `.env.worker`。
+  Backend、Actor、WeCom 三个服务核对时均为 `active`。

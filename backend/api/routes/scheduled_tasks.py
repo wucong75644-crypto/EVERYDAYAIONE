@@ -605,11 +605,20 @@ async def run_task_now(
 
     if not await check_permission(db, user_id, org_id, "task.execute", task):
         raise HTTPException(403, "无权立即执行此任务")
+    if task.get("status") == "running":
+        raise HTTPException(409, "任务正在执行中")
+
+    scoped_db.table("scheduled_tasks").update({
+        "status": "running",
+        "next_run_at": None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", task_id).execute()
 
     # 异步执行（不阻塞 HTTP 响应）
     import asyncio
+    from core.database import get_worker_db
     from services.scheduler.task_executor import ScheduledTaskExecutor
-    executor = ScheduledTaskExecutor(db)
+    executor = ScheduledTaskExecutor(get_worker_db(), runtime_db=db)
     asyncio.create_task(executor.execute(dict(task)))
 
     return {"success": True, "message": "任务已开始执行，请稍后查看执行历史"}

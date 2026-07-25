@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.scheduler.scanner import ScheduledTaskScanner
 from services.scheduler.task_executor import ScheduledTaskExecutor
+from services.scheduler.worker_store import ScheduledRunLease
 
 
 def make_task(**overrides):
@@ -64,6 +65,9 @@ class TestScanner:
         db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = []
+        scanner._store.claim_due.return_value = []
         count = await scanner.poll()
         assert count == 0
 
@@ -79,6 +83,9 @@ class TestScanner:
         executor.execute = AsyncMock()
 
         scanner = ScheduledTaskScanner(db, executor=executor)
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = []
+        scanner._store.claim_due.return_value = tasks
         count = await scanner.poll()
 
         assert count == 2
@@ -99,6 +106,9 @@ class TestScanner:
         executor.execute = AsyncMock(side_effect=RuntimeError("boom"))
 
         scanner = ScheduledTaskScanner(db, executor=executor)
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = []
+        scanner._store.claim_due.return_value = tasks
         # 不应该抛
         count = await scanner.poll()
         # 让 fire-and-forget 任务跑完
@@ -114,6 +124,8 @@ class TestScanner:
         db.pool.connection.side_effect = RuntimeError("db down")
 
         scanner = ScheduledTaskScanner(db)
+        scanner._store = MagicMock()
+        scanner._store.list_stale.side_effect = RuntimeError("db down")
         count = await scanner.poll()
         assert count == 0
 
@@ -149,11 +161,14 @@ class TestScanner:
         db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = [stale_task]
+        scanner._store.claim_due.return_value = []
         await scanner.poll()
 
-        # 验证 update 被调用且 status='active'
-        update_call_args = update_chain.eq.call_args_list
-        assert any("stale_1" in str(c) for c in update_call_args)
+        recover_args = scanner._store.recover_stale.call_args.args
+        assert recover_args[0] == "stale_1"
+        assert recover_args[2] == "active"
 
     @pytest.mark.asyncio
     async def test_recover_stale_running_pauses_once_task(self):
@@ -184,10 +199,15 @@ class TestScanner:
         db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = [stale_task]
+        scanner._store.claim_due.return_value = []
         await scanner.poll()
 
-        # update 应该被调用（任务表 + runs 表）
-        assert db.table.called
+        recover_args = scanner._store.recover_stale.call_args.args
+        assert recover_args[0] == "once_1"
+        assert recover_args[2] == "paused"
+        assert recover_args[3] is None
 
     @pytest.mark.asyncio
     async def test_recover_skips_when_no_stale(self):
@@ -212,10 +232,12 @@ class TestScanner:
         db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = []
+        scanner._store.claim_due.return_value = []
         await scanner.poll()
 
-        # data=[] 意味着没有 stale 任务，update 不应被调用
-        update_chain.execute.assert_not_called()
+        scanner._store.recover_stale.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_recover_interval_throttle(self):
@@ -235,14 +257,17 @@ class TestScanner:
         db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        scanner._store = MagicMock()
+        scanner._store.list_stale.return_value = []
+        scanner._store.claim_due.return_value = []
 
         # 第一次 poll → 触发恢复检查
         await scanner.poll()
-        first_call_count = select_chain.execute.call_count
+        first_call_count = scanner._store.list_stale.call_count
 
         # 第二次 poll → 节流跳过
         await scanner.poll()
-        second_call_count = select_chain.execute.call_count
+        second_call_count = scanner._store.list_stale.call_count
 
         # 第二次不应该增加查询次数（被节流）
         assert second_call_count == first_call_count
@@ -261,33 +286,15 @@ class TestScanner:
         """
         from datetime import datetime, timezone
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = []
-
-        mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-
         db = MagicMock()
-        db.pool = MagicMock()
-        db.pool.connection.return_value = mock_conn
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        scanner._store = MagicMock()
+        scanner._store.claim_due.return_value = []
         now = datetime.now(timezone.utc)
         await scanner._claim_due_tasks(now, 5)
 
-        # 验证 cursor.execute 被调用且参数类型正确
-        mock_cursor.execute.assert_called_once()
-        call_args = mock_cursor.execute.call_args
-        sql = call_args[0][0]
-        params = call_args[0][1]
-        assert "claim_due_tasks" in sql, "SQL 必须调用 claim_due_tasks"
-        assert isinstance(params[0], datetime), \
-            f"第一个参数必须是 datetime 对象，实际是 {type(params[0]).__name__}"
-        assert type(params[1]) is int, \
-            f"第二个参数必须是 Python int，实际是 {type(params[1]).__name__}"
+        scanner._store.claim_due.assert_called_once_with(now, 5)
 
 
 # ════════════════════════════════════════════════════════
@@ -315,15 +322,33 @@ class TestTaskExecutor:
     async def test_create_run(self):
         db = self._make_db()
         executor = ScheduledTaskExecutor(db)
-        run_id = await executor._create_run(make_task())
-        assert run_id  # uuid string
-        assert len(run_id) == 36
+        executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        run = await executor._create_run(make_task())
+        assert run
+        assert len(run.run_id) == 36
+        assert len(run.execution_token) == 36
 
     @pytest.mark.asyncio
     async def test_success_flow(self):
         """成功执行：积分锁 → Agent → 按量计费 → 推送 → 更新"""
         db = self._make_db()
-        executor = ScheduledTaskExecutor(db)
+        runtime_db = MagicMock(name="runtime_db")
+        executor = ScheduledTaskExecutor(db, runtime_db=runtime_db)
+        task = make_task(
+            user_id="11111111-1111-1111-1111-111111111111",
+            org_id="22222222-2222-2222-2222-222222222222",
+        )
+        executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        executor._store.get_task.return_value = task
+        executor._store.complete_run.return_value = True
 
         # mock credit_lock — yield CreditLockHandle
         from contextlib import asynccontextmanager
@@ -332,6 +357,8 @@ class TestTaskExecutor:
         @asynccontextmanager
         async def fake_lock(**kwargs):
             yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
+        executor._credits = MagicMock()
+        executor._credits.lock = lambda *_args: fake_lock(amount=10)
 
         # mock ScheduledTaskAgent
         from services.agent.scheduled_task_agent import ScheduledTaskResult
@@ -364,16 +391,28 @@ class TestTaskExecutor:
                 with patch.object(
                     ScheduledTaskExecutor, "_calc_actual_credits", return_value=3
                 ):
-                    await executor.execute(make_task())
+                    await executor.execute(task)
 
-        # 验证 update 被调用（用 update 才能确认 _on_success 跑了）
-        assert db.table.called
+        executor._store.complete_run.assert_called_once()
+        application_db = mock_agent_cls.call_args.args[0]
+        assert application_db._db._client is runtime_db
+        assert application_db._db.scope.actor_user_id == task["user_id"]
+        assert application_db._db.scope.org_id == task["org_id"]
+        assert application_db._db.scope.request_id == (
+            f"scheduled:{task['id']}"
+        )
 
     @pytest.mark.asyncio
     async def test_failure_first_time_retry(self):
         """第一次失败 → 5 分钟后重试"""
         db = self._make_db()
         executor = ScheduledTaskExecutor(db)
+        executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        executor._store.fail_run.return_value = True
 
         from contextlib import asynccontextmanager
         from services.credit_service import CreditLockHandle
@@ -381,6 +420,8 @@ class TestTaskExecutor:
         @asynccontextmanager
         async def fake_lock(**kwargs):
             yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
+        executor._credits = MagicMock()
+        executor._credits.lock = lambda *_args: fake_lock(amount=10)
 
         with patch("services.credit_service.CreditService") as mock_credit_cls:
             mock_credit_inst = MagicMock()
@@ -397,16 +438,22 @@ class TestTaskExecutor:
                 # 不会抛异常（被 except 捕获）
                 await executor.execute(make_task(retry_count=2))
 
-        assert db.table.called
+        executor._store.fail_run.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_failure_three_times_pause(self):
         """连续 3 次失败 → 暂停 + 通知"""
         db = self._make_db()
         executor = ScheduledTaskExecutor(db)
+        executor._store = MagicMock()
+        executor._store.create_run.return_value = ScheduledRunLease(
+            "11111111-1111-1111-1111-111111111111",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        executor._store.fail_run.return_value = True
 
         notify_calls = []
-        async def fake_notify(task, msg):
+        async def fake_notify(task, _run, msg):
             notify_calls.append((task["id"], msg))
 
         executor._notify_owner = fake_notify
@@ -417,6 +464,8 @@ class TestTaskExecutor:
         @asynccontextmanager
         async def fake_lock(**kwargs):
             yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
+        executor._credits = MagicMock()
+        executor._credits.lock = lambda *_args: fake_lock(amount=10)
 
         task = make_task(consecutive_failures=2)  # 已经 2 次失败了
 

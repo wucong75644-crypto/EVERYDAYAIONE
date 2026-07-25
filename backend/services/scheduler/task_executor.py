@@ -15,18 +15,51 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
-from uuid import uuid4
 
 from loguru import logger
 
 from services.scheduler.cron_utils import calc_next_run
+from services.scheduler.worker_credits import ScheduledWorkerCredits
+from services.scheduler.worker_store import (
+    ScheduledRunLease,
+    ScheduledWorkerStore,
+)
 
 
 class ScheduledTaskExecutor:
     """定时任务执行编排器"""
 
-    def __init__(self, db: Any) -> None:
+    def __init__(self, db: Any, runtime_db: Any = None) -> None:
         self.db = db
+        self._runtime_db = runtime_db
+        self._store = ScheduledWorkerStore(db)
+        self._credits = ScheduledWorkerCredits(db)
+
+    def _build_application_db(self, task: Dict[str, Any]) -> Any:
+        """构造仅限本次定时任务创建者与租户的 Runtime 数据库门面。"""
+        if self._runtime_db is None:
+            from core.database import get_db
+
+            runtime_db = get_db()
+        else:
+            runtime_db = self._runtime_db
+        from core.db_scope import (
+            DatabaseAccessKind,
+            DatabaseScope,
+            ScopedDatabaseClient,
+        )
+        from core.org_scoped_db import OrgScopedDB
+
+        scope = DatabaseScope(
+            actor_user_id=str(task["user_id"]),
+            org_id=str(task["org_id"]) if task.get("org_id") else None,
+            access_kind=DatabaseAccessKind.RUNTIME,
+            request_id=f"scheduled:{task['id']}"[:128],
+        )
+        return OrgScopedDB(
+            ScopedDatabaseClient(runtime_db, scope),
+            scope.org_id,
+        )
 
     async def _push_ws_event(
         self,
@@ -55,8 +88,8 @@ class ScheduledTaskExecutor:
 
     async def execute(self, task: Dict[str, Any]) -> None:
         """执行单个定时任务（被 Scanner.poll 调用）"""
-        run_id = await self._create_run(task)
-        if run_id is None:
+        run = await self._create_run(task)
+        if run is None:
             # 无法记录执行历史 → 放弃执行（防止 update WHERE id 全部静默失效）
             logger.error(
                 f"ScheduledTask aborted: cannot create run record | "
@@ -71,25 +104,37 @@ class ScheduledTaskExecutor:
         await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_started", {
             "task_id": task["id"],
             "task_name": task["name"],
-            "run_id": run_id,
+            "run_id": run.run_id,
         })
 
+        from services.scheduler.run_lease import execute_with_scheduled_lease
+
+        await execute_with_scheduled_lease(
+            self._store,
+            task["id"],
+            run,
+            self._execute_owned(task, run, agent_run_started_at),
+        )
+
+    async def _execute_owned(
+        self,
+        task: Dict[str, Any],
+        run: ScheduledRunLease,
+        agent_run_started_at: datetime,
+    ) -> None:
+        """在同一持续租约内完成 Agent、消息、积分和数据库终态。"""
+        result = None
         credit_handle = None
         push_status = "skipped"
         try:
+            application_db = self._build_application_db(task)
             # 1. 用 credit_lock 上下文管理器锁定积分（支持按量计费）
-            from services.credit_service import CreditService
-            credit_svc = CreditService(self.db, redis=None)
-            async with credit_svc.credit_lock(
-                task_id=run_id,
-                user_id=task["user_id"],
-                amount=task["max_credits"],
-                reason=f"定时任务: {task['name']}",
-                org_id=task["org_id"],
+            async with self._credits.lock(
+                task["id"], run,
             ) as credit_handle:
                 # 2. 跑 Agent
                 from services.agent.scheduled_task_agent import ScheduledTaskAgent
-                agent = ScheduledTaskAgent(self.db, task)
+                agent = ScheduledTaskAgent(application_db, task)
                 result = await agent.execute()
 
                 if result.status in ("error", "timeout"):
@@ -104,17 +149,19 @@ class ScheduledTaskExecutor:
                 credit_handle.set_actual(actual_credits)
 
                 # 4. 推送
-                push_status = await self._push_result(task, result)
+                push_status = await self._push_result(
+                    task, run, result,
+                )
 
             # 5. 成功收尾（在 credit_lock 之后，退回已完成，可读取最终状态）
             await self._on_success(
-                task, run_id, result, push_status,
+                task, run, result, push_status,
                 agent_run_started_at, credit_handle.final_credits_used,
             )
 
         except Exception as e:
             # credit_lock 会自动 refund
-            await self._on_failure(task, run_id, e, result, agent_run_started_at)
+            await self._on_failure(task, run, e, result, agent_run_started_at)
 
     # ════════════════════════════════════════════════════════
     # 内部方法
@@ -160,7 +207,10 @@ class ScheduledTaskExecutor:
         max_credits = task.get("max_credits", 10)
         return min(credits, max_credits)
 
-    async def _create_run(self, task: Dict[str, Any]) -> Optional[str]:
+    async def _create_run(
+        self,
+        task: Dict[str, Any],
+    ) -> Optional[ScheduledRunLease]:
         """创建执行记录
 
         Returns:
@@ -169,22 +219,17 @@ class ScheduledTaskExecutor:
         失败时返回 None 让调用方放弃执行，避免 _on_success/_on_failure
         的 update WHERE id 全部静默失效。
         """
-        run_id = str(uuid4())
         try:
-            self.db.table("scheduled_task_runs").insert({
-                "id": run_id,
-                "task_id": task["id"],
-                "org_id": task["org_id"],
-                "status": "running",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            }).execute()
-            return run_id
+            return self._store.create_run(task["id"])
         except Exception as e:
             logger.error(f"_create_run failed | task={task['id']} | error={e}")
             return None
 
     async def _push_result(
-        self, task: Dict[str, Any], result: Any
+        self,
+        task: Dict[str, Any],
+        run: ScheduledRunLease,
+        result: Any,
     ) -> str:
         """推送 Agent 执行结果到 push_target + 存入消息表
 
@@ -210,17 +255,18 @@ class ScheduledTaskExecutor:
             logger.error(f"_push_result failed | task={task['id']} | error={e}")
             push_status = "push_failed"
 
-        # 存入 messages 表 + 通知 Web（企微已由上面推过，skip_wecom=True）
+        # token 校验与消息写入在同一数据库事务中完成。
         try:
-            from services.message_gateway import MessageGateway
-            gateway = MessageGateway(self.db)
-            await gateway.save_system_message(
-                user_id=task["user_id"],
-                org_id=task["org_id"],
-                text=result.text,
-                source="scheduled_task",
-                skip_wecom=True,
+            message = self._store.append_result_message(
+                task["id"], run, result.text,
             )
+            if message and message.get("conversation_id"):
+                from services.message_gateway import MessageGateway
+                await MessageGateway._notify_web(
+                    task["user_id"],
+                    str(message["conversation_id"]),
+                    task["org_id"],
+                )
         except Exception as e:
             logger.warning(
                 f"_push_result save_system_message failed | "
@@ -232,7 +278,7 @@ class ScheduledTaskExecutor:
     async def _on_success(
         self,
         task: Dict[str, Any],
-        run_id: str,
+        run: ScheduledRunLease,
         result: Any,
         push_status: str,
         started_at: datetime,
@@ -251,11 +297,8 @@ class ScheduledTaskExecutor:
         # 重新读 DB 获取最新 cron_expr / schedule_type，
         # 防止执行期间用户修改了定时配置，完成后用旧 cron 覆盖新的 next_run_at
         try:
-            fresh = self.db.table("scheduled_tasks") \
-                .select("cron_expr, schedule_type, timezone") \
-                .eq("id", task["id"]).execute()
-            if fresh.data:
-                live = fresh.data[0]
+            live = self._store.get_task(task["id"], run)
+            if live:
                 cron_expr = live.get("cron_expr") or task.get("cron_expr")
                 schedule_type = live.get("schedule_type") or task.get("schedule_type")
                 tz = live.get("timezone") or task.get("timezone") or "Asia/Shanghai"
@@ -277,42 +320,33 @@ class ScheduledTaskExecutor:
             next_run = calc_next_run(cron_expr, tz)
 
         try:
-            self.db.table("scheduled_tasks").update({
-                "status": next_status,
-                "next_run_at": next_run.isoformat() if next_run else None,
-                "last_run_at": now.isoformat(),
-                "last_summary": result.summary,
-                "last_result": {
+            self._store.complete_run(
+                p_task_id=task["id"],
+                p_run_id=run.run_id,
+                p_execution_token=run.execution_token,
+                p_next_status=next_status,
+                p_next_run_at=next_run.isoformat() if next_run else None,
+                p_summary=result.summary,
+                p_result={
                     "tokens": result.tokens_used,
                     "turns": result.turns_used,
                     "files": result.files,
                 },
-                "run_count": (task.get("run_count") or 0) + 1,
-                "consecutive_failures": 0,
-                "updated_at": now.isoformat(),
-            }).eq("id", task["id"]).execute()
+                p_files=result.files,
+                p_push_status=push_status,
+                p_credits_used=credits_used,
+                p_tokens_used=result.tokens_used,
+                p_duration_ms=duration_ms,
+                p_now=now.isoformat(),
+            )
         except Exception as e:
-            logger.error(f"_on_success update task failed | {e}")
-
-        try:
-            self.db.table("scheduled_task_runs").update({
-                "status": "success",
-                "result_summary": result.summary,
-                "result_files": result.files,
-                "push_status": push_status,
-                "credits_used": credits_used,
-                "tokens_used": result.tokens_used,
-                "duration_ms": duration_ms,
-                "finished_at": now.isoformat(),
-            }).eq("id", run_id).execute()
-        except Exception as e:
-            logger.error(f"_on_success update run failed | {e}")
+            logger.error(f"_on_success settlement failed | {e}")
 
         # WebSocket 推送"完成"事件
         await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_completed", {
             "task_id": task["id"],
             "task_name": task["name"],
-            "run_id": run_id,
+            "run_id": run.run_id,
             "status": "success",
             "summary": result.summary,
             "files": result.files,
@@ -325,7 +359,7 @@ class ScheduledTaskExecutor:
     async def _on_failure(
         self,
         task: Dict[str, Any],
-        run_id: str,
+        run: ScheduledRunLease,
         error: Exception,
         result: Optional[Any],
         started_at: datetime,
@@ -334,18 +368,6 @@ class ScheduledTaskExecutor:
         consecutive = (task.get("consecutive_failures") or 0) + 1
         now = datetime.now(timezone.utc)
         duration_ms = int((now - started_at).total_seconds() * 1000)
-
-        # 写失败日志
-        try:
-            self.db.table("scheduled_task_runs").update({
-                "status": "failed",
-                "error_message": str(error)[:500],
-                "tokens_used": result.tokens_used if result else 0,
-                "duration_ms": duration_ms,
-                "finished_at": now.isoformat(),
-            }).eq("id", run_id).execute()
-        except Exception as e:
-            logger.error(f"_on_failure update run failed | {e}")
 
         # 决定下一步：重试 / 暂停 / 恢复
         # retry_count 语义：每次失败时额外的快速重试次数（5 分钟后再试）
@@ -369,6 +391,7 @@ class ScheduledTaskExecutor:
             )
             await self._notify_owner(
                 task,
+                run,
                 f"⚠️ 定时任务「{task['name']}」连续失败 {consecutive} 次已自动暂停\n"
                 f"最后错误: {str(error)[:200]}"
             )
@@ -384,10 +407,7 @@ class ScheduledTaskExecutor:
         else:
             # 重试用完 — 重新读 DB 获取最新 cron（用户可能在执行期间改了时间）
             try:
-                fresh = self.db.table("scheduled_tasks") \
-                    .select("cron_expr, schedule_type, timezone") \
-                    .eq("id", task["id"]).execute()
-                live = fresh.data[0] if fresh.data else {}
+                live = self._store.get_task(task["id"], run) or {}
             except Exception:
                 live = {}
             live_schedule = live.get("schedule_type") or task.get("schedule_type")
@@ -405,9 +425,20 @@ class ScheduledTaskExecutor:
                 update["status"] = "active"
 
         try:
-            self.db.table("scheduled_tasks").update(update).eq("id", task["id"]).execute()
+            self._store.fail_run(
+                p_task_id=task["id"],
+                p_run_id=run.run_id,
+                p_execution_token=run.execution_token,
+                p_next_status=update.get("status", "active"),
+                p_next_run_at=update.get("next_run_at"),
+                p_consecutive_failures=consecutive,
+                p_error_message=str(error)[:500],
+                p_tokens_used=result.tokens_used if result else 0,
+                p_duration_ms=duration_ms,
+                p_now=now.isoformat(),
+            )
         except Exception as e:
-            logger.error(f"_on_failure update task failed | {e}")
+            logger.error(f"_on_failure settlement failed | {e}")
 
         # WebSocket 推送"失败"事件
         # will_retry: 任务下次仍会自动执行（不论是 5min 重试还是按 cron 正常时间）
@@ -415,7 +446,7 @@ class ScheduledTaskExecutor:
         await self._push_ws_event(task["user_id"], task["org_id"], "scheduled_task_failed", {
             "task_id": task["id"],
             "task_name": task["name"],
-            "run_id": run_id,
+            "run_id": run.run_id,
             "status": update.get("status", "active"),
             "error": str(error)[:500],
             "consecutive_failures": consecutive,
@@ -423,7 +454,12 @@ class ScheduledTaskExecutor:
             "duration_ms": duration_ms,
         })
 
-    async def _notify_owner(self, task: Dict[str, Any], message: str) -> None:
+    async def _notify_owner(
+        self,
+        task: Dict[str, Any],
+        run: ScheduledRunLease,
+        message: str,
+    ) -> None:
         """失败通知任务创建者
 
         通过两个渠道：
@@ -445,13 +481,13 @@ class ScheduledTaskExecutor:
         # 2. 通过 MessageGateway 存消息 + 推企微（统一入口）
         try:
             from services.message_gateway import MessageGateway
-            gateway = MessageGateway(self.db)
-            await gateway.save_system_message(
-                user_id=task["user_id"],
-                org_id=task["org_id"],
-                text=message,
-                source="task_failure_alert",
-                skip_web=True,  # 上面 WS 已推过
+            stored = self._store.append_result_message(
+                task["id"], run, message,
             )
+            if stored:
+                gateway = MessageGateway(self._build_application_db(task))
+                await gateway.fanout_to_wecom(
+                    task["user_id"], task["org_id"], message,
+                )
         except Exception as e:
             logger.debug(f"_notify_owner gateway failed | {e}")

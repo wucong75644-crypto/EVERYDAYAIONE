@@ -247,40 +247,23 @@ async def _upsert_error_log(db: Any, entry: dict) -> None:
     ts_str = entry["last_seen_at"].isoformat() if isinstance(entry["last_seen_at"], datetime) else str(entry["last_seen_at"])
     first_str = entry["first_seen_at"].isoformat() if isinstance(entry["first_seen_at"], datetime) else str(entry["first_seen_at"])
 
-    sql = """
-        INSERT INTO error_logs
-            (fingerprint, level, module, function, line, message, traceback,
-             occurrence_count, first_seen_at, last_seen_at, org_id, is_critical)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (fingerprint) WHERE is_resolved = FALSE
-        DO UPDATE SET
-            occurrence_count = error_logs.occurrence_count + EXCLUDED.occurrence_count,
-            last_seen_at     = GREATEST(error_logs.last_seen_at, EXCLUDED.last_seen_at),
-            first_seen_at    = LEAST(error_logs.first_seen_at, EXCLUDED.first_seen_at),
-            level            = CASE WHEN EXCLUDED.level = 'CRITICAL' THEN 'CRITICAL'
-                                    ELSE error_logs.level END,
-            is_critical      = error_logs.is_critical OR EXCLUDED.is_critical,
-            message          = EXCLUDED.message,
-            traceback        = COALESCE(EXCLUDED.traceback, error_logs.traceback)
-    """
-    params = (
-        entry["fingerprint"],
-        entry["level"],
-        entry["module"],
-        entry["function"],
-        entry.get("line"),
-        entry["message"],
-        entry.get("traceback"),
-        entry["occurrence_count"],
-        first_str,
-        ts_str,
-        entry.get("org_id"),
-        entry["is_critical"],
-    )
-
-    async with db.pool.connection() as conn:
-        await conn.set_autocommit(True)
-        await conn.execute(sql, params)
+    result = await db.rpc("worker_record_error_log", {
+        "p_fingerprint": entry["fingerprint"],
+        "p_level": entry["level"],
+        "p_module": entry["module"],
+        "p_function": entry["function"],
+        "p_line": entry.get("line"),
+        "p_message": entry["message"],
+        "p_traceback": entry.get("traceback"),
+        "p_occurrence_count": entry["occurrence_count"],
+        "p_first_seen_at": first_str,
+        "p_last_seen_at": ts_str,
+        "p_org_id": entry.get("org_id"),
+        "p_is_critical": entry["is_critical"],
+    }).execute()
+    payload = result.data if result else None
+    if not isinstance(payload, dict) or payload.get("outcome") != "recorded":
+        raise RuntimeError("WORKER_ERROR_LOG_RESULT_INVALID")
 
 
 async def _push_critical_alerts(db: Any, criticals: list[dict]) -> None:

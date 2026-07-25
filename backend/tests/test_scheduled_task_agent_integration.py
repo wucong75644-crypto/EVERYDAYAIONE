@@ -162,6 +162,28 @@ def patch_agent_dependencies(adapter: FakeAdapter, executor: FakeToolExecutor):
 class TestExecuteHappyPath:
 
     @pytest.mark.asyncio
+    async def test_unattended_tools_exclude_task_management_and_context(self):
+        adapter = FakeAdapter([
+            {"text": "完成", "tool_calls": []},
+            {"text": "完成", "tool_calls": []},
+        ])
+        executor = FakeToolExecutor()
+
+        with patch(
+            "services.adapters.factory.create_chat_adapter",
+            return_value=adapter,
+        ), patch(
+            "services.agent.tool_executor.ToolExecutor",
+            return_value=executor,
+        ) as executor_factory:
+            agent = ScheduledTaskAgent(MagicMock(), make_task())
+            await agent.execute()
+
+        allowed = executor_factory.call_args.kwargs["allowed_tools"]
+        assert "manage_scheduled_task" not in allowed
+        assert "get_conversation_context" not in allowed
+
+    @pytest.mark.asyncio
     async def test_single_turn_direct_reply(self):
         """force_tool_use_first=True: 首轮纯文本被忽略，连续2次空工具后采用文本"""
         adapter = FakeAdapter([

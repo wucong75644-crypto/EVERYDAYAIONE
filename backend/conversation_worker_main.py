@@ -19,7 +19,10 @@ async def _run() -> None:
             "CONVERSATION_ACTOR_WORKER_ENABLED=false，拒绝启动 Actor Worker"
         )
 
-    from core.database import close_async_db, get_async_db
+    from core.database import (
+        close_async_worker_db,
+        get_async_worker_db,
+    )
     from core.redis import RedisClient
     from services.conversation_runtime import (
         ConversationActorRuntime,
@@ -27,7 +30,7 @@ async def _run() -> None:
     )
     from services.websocket_manager import ws_manager
 
-    db = await get_async_db()
+    db = await get_async_worker_db()
     runtime = ConversationActorRuntime(db, ws_manager, create_kernel_manager())
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -40,7 +43,7 @@ async def _run() -> None:
         await shutdown.wait()
     finally:
         await runtime.stop()
-        await close_async_db()
+        await close_async_worker_db()
         await RedisClient.close()
         logger.info("Conversation Actor Worker stopped")
 

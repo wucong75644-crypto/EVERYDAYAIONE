@@ -12,7 +12,6 @@
 """
 
 import json
-from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -22,6 +21,7 @@ from schemas.websocket import (
     build_image_partial_update,
 )
 from services.batch_message_finalizer import BatchMessageFinalizer
+from services.worker_media_tasks import WorkerMediaTasks
 from services.websocket_manager import ws_manager
 
 
@@ -30,6 +30,7 @@ class BatchCompletionService:
 
     def __init__(self, db):
         self.db = db
+        self._media_tasks = WorkerMediaTasks(db)
 
     async def handle_image_complete(
         self,
@@ -50,23 +51,22 @@ class BatchCompletionService:
         batch_id = task["batch_id"]
         image_index = task.get("image_index", 0)
 
-        # 1. 确认积分扣除
-        transaction_id = task.get("credit_transaction_id")
-        if transaction_id:
-            self._confirm_credits(transaction_id)
-
-        # 2. 存储 result_data + 标记 task completed
+        # 1. 原子确认积分、存储结果并返回批次快照
         result_data = content_parts[0] if content_parts else None
-        self.db.table("tasks").update({
-            "status": "completed",
-            "result_data": result_data,
-        }).eq("external_task_id", ext_task_id).execute()
+        batch_tasks = self._media_tasks.settle_batch_item(
+            ext_task_id,
+            task["version"],
+            "completed",
+            result_data or {},
+        )
+        if batch_tasks is None:
+            logger.info(f"Batch task settlement skipped | task_id={ext_task_id}")
+            return True
 
-        # 3. 查询批次进度
-        batch_tasks = self._get_batch_tasks(batch_id)
+        # 2. 统计批次进度
         completed_count, total_count = self._count_terminal(batch_tasks)
 
-        # 4. 推送 image_partial_update
+        # 3. 推送 image_partial_update
         await self._push_partial_update(
             task=task,
             image_index=image_index,
@@ -75,7 +75,7 @@ class BatchCompletionService:
             total_count=total_count,
         )
 
-        # 5. 全部终态 → finalize（区分 regenerate_single 和批次生成）
+        # 4. 全部终态 → finalize（区分 regenerate_single 和批次生成）
         if completed_count >= total_count:
             await self._dispatch_finalize(batch_id, batch_tasks)
 
@@ -125,15 +125,19 @@ class BatchCompletionService:
             "error_code": error_code,
         }
 
-        # 2. 保存结构化失败结果 + 标记 task failed
-        self.db.table("tasks").update({
-            "status": "failed",
-            "error_message": error_message,
-            "result_data": failed_part,
-        }).eq("external_task_id", ext_task_id).execute()
+        # 2. 保存结构化失败结果并返回批次快照
+        batch_tasks = self._media_tasks.settle_batch_item(
+            ext_task_id,
+            task["version"],
+            "failed",
+            failed_part,
+            error_message,
+        )
+        if batch_tasks is None:
+            logger.info(f"Batch task settlement skipped | task_id={ext_task_id}")
+            return True
 
-        # 3. 查询批次进度
-        batch_tasks = self._get_batch_tasks(batch_id)
+        # 3. 统计批次进度
         completed_count, total_count = self._count_terminal(batch_tasks)
 
         # 4. 推送 image_partial_update（error）
@@ -161,17 +165,6 @@ class BatchCompletionService:
     # ========================================
     # 内部方法
     # ========================================
-
-    def _get_batch_tasks(self, batch_id: str) -> List[Dict[str, Any]]:
-        """查询同 batch_id 的所有 tasks"""
-        result = (
-            self.db.table("tasks")
-            .select("*")
-            .eq("batch_id", batch_id)
-            .order("image_index")
-            .execute()
-        )
-        return result.data or []
 
     def _count_terminal(self, batch_tasks: List[Dict[str, Any]]) -> tuple:
         """统计终态数量，返回 (terminal_count, total_count)"""
@@ -267,16 +260,6 @@ class BatchCompletionService:
         """释放任务限制槽位"""
         from services.task_limit_service import release_task_slot
         await release_task_slot(task)
-
-    def _confirm_credits(self, transaction_id: str) -> None:
-        """确认积分扣除（复用 CreditMixin 逻辑）"""
-        try:
-            self.db.table("credit_transactions").update({
-                "status": "confirmed",
-                "confirmed_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", transaction_id).eq("status", "pending").execute()
-        except Exception as e:
-            logger.error(f"Failed to confirm credits | tx={transaction_id} | error={e}")
 
     def _refund_credits(self, transaction_id: str) -> None:
         """

@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable, Dict, List
 from loguru import logger
 
 from schemas.websocket import build_message_done
+from services.worker_media_tasks import WorkerMediaTasks
 
 
 ReleaseSlot = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -22,6 +23,7 @@ class BatchMessageFinalizer:
         release_slot: ReleaseSlot,
     ) -> None:
         self.db = db
+        self._media_tasks = WorkerMediaTasks(db)
         self._ws_sender = ws_sender
         self._release_slot = release_slot
 
@@ -42,23 +44,17 @@ class BatchMessageFinalizer:
         conversation_id = task["conversation_id"]
 
         try:
-            msg_result = (
-                self.db.table("messages")
-                .select("content, credits_cost, generation_params, created_at")
-                .eq("id", message_id)
-                .single()
-                .execute()
-            )
-            if not msg_result.data:
+            existing_message = self._media_tasks.get_batch_message(batch_id)
+            if not existing_message:
                 raise ValueError(
                     "Message not found for single image finalize | "
                     f"message_id={message_id}"
                 )
 
-            content = msg_result.data.get("content", [])
+            content = existing_message.get("content", [])
             if isinstance(content, str):
                 content = json.loads(content)
-            current_credits = msg_result.data.get("credits_cost", 0)
+            current_credits = existing_message.get("credits_cost", 0)
 
             while len(content) <= image_index:
                 content.append({"type": "image", "url": None})
@@ -82,12 +78,6 @@ class BatchMessageFinalizer:
             )
             msg_status = "completed" if has_valid else "failed"
 
-            self.db.table("messages").update({
-                "content": content,
-                "status": msg_status,
-                "credits_cost": current_credits,
-            }).eq("id", message_id).execute()
-
             msg_data = {
                 "id": message_id,
                 "conversation_id": conversation_id,
@@ -95,9 +85,18 @@ class BatchMessageFinalizer:
                 "content": content,
                 "status": msg_status,
                 "credits_cost": current_credits,
-                "generation_params": msg_result.data.get("generation_params"),
-                "created_at": msg_result.data.get("created_at"),
+                "task_id": client_task_id or task["external_task_id"],
+                "generation_params": existing_message.get("generation_params"),
             }
+            msg_data = self._media_tasks.commit_batch_message(
+                batch_id,
+                msg_data,
+            )
+            if not msg_data:
+                raise ValueError(
+                    "Message commit failed for single image finalize | "
+                    f"message_id={message_id}"
+                )
             task_id = client_task_id or task["external_task_id"]
             done_msg = build_message_done(
                 task_id=task_id,
@@ -184,19 +183,20 @@ class BatchMessageFinalizer:
             "task_id": task_id,
             "generation_params": generation_params,
         }
-        upsert_result = (
-            self.db.table("messages")
-            .upsert(message_data, on_conflict="id")
-            .execute()
+        preview = f"[图片×{len(batch_tasks)}]" if len(batch_tasks) > 1 else "[图片]"
+        committed_message = self._media_tasks.commit_batch_message(
+            batch_id,
+            message_data,
+            preview,
         )
-        if not upsert_result or not upsert_result.data:
+        if not committed_message:
             logger.error(f"Failed to finalize batch message | batch_id={batch_id}")
             return
 
         done_msg = build_message_done(
             task_id=task_id,
             conversation_id=conversation_id,
-            message=upsert_result.data[0],
+            message=committed_message,
             credits_consumed=total_credits,
         )
         await self._ws_sender(
@@ -205,17 +205,6 @@ class BatchMessageFinalizer:
             message=done_msg,
             org_id=first_task.get("org_id"),
         )
-
-        preview = f"[图片×{len(batch_tasks)}]" if len(batch_tasks) > 1 else "[图片]"
-        try:
-            self.db.table("conversations").update({
-                "last_message_preview": preview,
-            }).eq("id", conversation_id).execute()
-        except Exception as error:
-            logger.warning(
-                "Failed to update conversation preview | "
-                f"conversation_id={conversation_id} | error={error}"
-            )
 
         logger.info(
             f"Batch finalized | batch_id={batch_id} | "

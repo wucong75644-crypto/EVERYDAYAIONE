@@ -126,7 +126,10 @@ async def test_web_runtime_separates_runtime_and_worker_clients() -> None:
     verify_registry.assert_called_once_with(runtime_db)
     recovery.assert_awaited_once_with(worker_db)
     expire.assert_called_once_with(worker_db)
-    worker_factory.assert_called_once_with(worker_db)
+    worker_factory.assert_called_once_with(
+        worker_db,
+        runtime_db=runtime_db,
+    )
 
 
 @pytest.mark.asyncio

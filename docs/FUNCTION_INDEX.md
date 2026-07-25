@@ -15,6 +15,23 @@
 |--------|----------|----------|
 | `build_wecom_delivery_worker_db` | `backend/services/wecom/delivery_worker.py` | 为跨租户 Outbox RPC 绑定无用户、无企业的可信 Worker Scope |
 | `worker_get_conversation_delivery_payload` | `backend/migrations/167_wecom_role_cutover_completion.sql` | 校验 Worker 角色、有效租约与 fencing token 后返回单条投递所需的任务和消息载荷 |
+| `get_wecom_generation_context` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 校验 WeCom Actor/Org 后返回当前用户积分及可选企微会话模型设置 |
+| `get_wecom_generation_context(UUID, UUID, UUID)` | `backend/migrations/169_wecom_generation_context_org_scope.sql` | 接收 OrgScopedDB 自动注入的企业参数，验证其与事务 Scope 一致后委托两参数核心能力 |
+| `update_wecom_ingress_display_name` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 在身份解析并绑定 Actor Scope 后更新企微映射显示名及兜底用户昵称 |
+| `reset_wecom_conversation` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 行锁保护下创建新企微会话并原子旋转渠道绑定 |
+| `get_wecom_manual_memories` / `clear_wecom_manual_memories` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 按 Actor/Org 查看最多 100 条记忆或清空当前企业个人记忆 |
+| `get_wecom_manual_memories` / `clear_wecom_manual_memories` | `backend/services/wecom/memory_commands.py` | 企微指令对安全记忆 RPC 的应用层适配 |
+| `WecomUserMappingService.refresh_display_name` | `backend/services/wecom/user_mapping_service.py` | Actor Scope 绑定后按需解析真实姓名；仅在明确取得姓名时调用安全更新门面 |
+
+### Git 与发布脚本
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `is_forbidden_path` | `git-push.sh` | 按集中发布策略判断任务文件是否禁止提交 | path | shell status |
+| `check_release_source` | `deploy/deploy-helpers.sh` | 校验部署 SHA 已推送且部署目录不存在额外工作区变更 | `EXPECTED_SHA` | shell status |
+| `show_status` | `deploy/deploy-helpers.sh` | 输出远端服务、磁盘和近期日志状态 | 部署配置 | shell status |
+| `verify_public_endpoints` | `deploy/deploy-helpers.sh` | 从公网入口验证前端可访问且后端健康 | DOMAIN | shell status |
+| `cleanup` | `deploy/release.sh` | 发布完成或失败后移除隔离 Git 工作树 | release_dir | shell status |
 
 ### 通用 Curated Memory 数据库协议
 
@@ -77,6 +94,10 @@
 | `BackgroundTaskWorker.poll_pending_tasks` | `backend/services/background_task_worker.py` | 轮询 pending/running 的 image/video 任务（兜底模式，120s 间隔） | - | None |
 | `BackgroundTaskWorker.query_and_process` | `backend/services/background_task_worker.py` | 查询 Provider 任务状态，完成/失败交给 TaskCompletionService | task: dict | None |
 | `BackgroundTaskWorker.cleanup_stale_tasks` | `backend/services/background_task_worker.py` | 清理超时任务（image/video 走 TaskCompletionService，chat 直接更新） | - | None |
+| `ScheduledTaskExecutor._build_application_db` | `backend/services/scheduler/task_executor.py` | 为单次定时任务构造绑定创建者、企业和 task request id 的 Runtime 数据库门面 | task | OrgScopedDB |
+| `ToolExecutor.__init__(..., allowed_tools=...)` | `backend/services/agent/tool_executor.py` | 可选执行层工具白名单；定时任务用它阻断无人值守禁用工具 | allowed_tools | None |
+| `execute_with_scheduled_lease` | `backend/services/scheduler/run_lease.py` | 在持续续租下执行定时任务完整业务与终态，租约丢失时取消执行 | store, task_id, run, execution | Any |
+| `ScheduledWorkerStore.append_result_message` | `backend/services/scheduler/worker_store.py` | 通过 fencing token 能力原子写入定时任务结果消息 | task_id, run, text | dict \| None |
 
 #### 前端函数
 
@@ -629,6 +650,8 @@
 | `prepare_assistant_message` | `backend/api/routes/message_generation_helpers.py` | 按操作类型创建或重置助手消息 | db, conversation_id, body, gen_type | tuple |
 | `finalize_image_request_failure` | `backend/api/routes/message_generation_helpers.py` | 将提交阶段失败持久化为失败图片快照 | db, message_id, operation, params, error_code, error_message | None |
 | `find_task_in_connection_scope` | `backend/services/websocket_task_scope.py` | 按连接绑定的 user_id 与精确 org_id（含个人 null）查询可订阅任务 | db, task_id, user_id, org_id | dict \| None |
+| `get_user_from_token` | `backend/services/websocket_auth.py` | 解析 WebSocket 访问令牌并返回稳定的过期/非法失败类型 | token | tuple[user_id, error_type] |
+| `reject_websocket` | `backend/services/websocket_auth.py` | 先完成握手再返回浏览器可观察的 4001/4002/4003 业务关闭码 | websocket, code, reason | None |
 | `_handle_task_subscription` | `backend/api/routes/ws.py` | 校验任务租户边界后建立 WebSocket 订阅并恢复任务状态 | conn_id, user_id, org_id, task_id | None |
 | `_handle_user_steer` | `backend/api/routes/ws.py` | 校验任务租户边界后处理执行中追加消息 | conn_id, user_id, org_id, task_id, message | None |
 | `WebSocketManager.send_to_user` | `backend/services/websocket_manager.py` | 按用户与精确 org_id 投递；org_id=None 仅表示个人空间 | user_id, message, org_id | None |

@@ -52,6 +52,20 @@ class TestExecuteDispatch:
         result = await exe.execute("web_search", {"search_query": "test"})
         assert result == "result"
 
+    @pytest.mark.asyncio
+    async def test_allowed_tools_blocks_registered_handler(self):
+        exe = ToolExecutor(
+            db=MagicMock(),
+            user_id="u1",
+            conversation_id="c1",
+            org_id=None,
+            allowed_tools=frozenset({"web_search"}),
+        )
+        assert exe.has_handler("web_search")
+        assert not exe.has_handler("manage_scheduled_task")
+        with pytest.raises(ValueError, match="Unknown sync tool"):
+            await exe.execute("manage_scheduled_task", {})
+
 
 # ============================================================
 # TestWebSearch
@@ -887,4 +901,3 @@ class TestWebSearchInline:
             result = await exe._web_search({"query": "测试"})
 
         assert result.status == "empty"
-

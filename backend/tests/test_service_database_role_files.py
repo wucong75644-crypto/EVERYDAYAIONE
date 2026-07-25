@@ -34,10 +34,10 @@ def test_backend_and_wecom_use_isolated_runtime_role_overrides() -> None:
     ]
 
 
-def test_actor_uses_worker_role_override() -> None:
+def test_actor_uses_runtime_and_worker_clients() -> None:
     assert _environment_files("everydayai-conversation-actor.service") == [
         "/var/www/everydayai/backend/.env",
-        "/var/www/everydayai/backend/.env.worker",
+        "/var/www/everydayai/backend/.env.runtime",
         "/var/www/everydayai/backend/.env.worker-client",
     ]
 

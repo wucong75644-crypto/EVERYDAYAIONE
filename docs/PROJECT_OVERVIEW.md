@@ -39,6 +39,13 @@
 
 ## 目录结构
 
+定时任务委托执行边界：
+- `docs/document/TECH_定时任务委托执行边界.md`：定义 Worker 控制面、Runtime 工具面、
+  任务级数据库身份和无人值守工具白名单。
+- `backend/migrations/179_scheduled_run_fencing.sql`：为定时 run 增加 fencing token、
+  租约、原子结果消息、终态失效和遗留积分退款能力。
+- `backend/services/scheduler/run_lease.py`：持续续租并在执行权丢失时取消执行。
+
 统一生成 Turn 事务与任务生命周期设计：
 - `docs/document/TECH_统一生成Turn事务与任务生命周期.md`：将 Web、企微、Chat Actor、图片、视频和
   电商图的 request/Turn/input/output/local task 收口为统一数据库原子准备入口；外部执行状态机保持
@@ -65,10 +72,23 @@
 - `backend/scripts/backfill_generation_turns.py`：历史 assistant Turn/reply 关系的默认 dry-run、确定性分类、分批 apply、checkpoint 与无正文审计。
 - `backend/scripts/migration_runner.py`：完整文件名身份、SHA-256、显式 legacy baseline、事务执行和 advisory lock 的数据库迁移账本 Runner。
 - `deploy/run-migrations.sh`：部署重启前执行迁移 plan/apply；关闭迁移但存在 pending 时失败关闭。
+- `backend/uvicorn-log-config.json`：为 Uvicorn HTTP 与 WebSocket 日志统一安装认证
+  查询参数脱敏过滤器，避免访问 Token 进入生产日志。
 - `backend/migrations/167_wecom_role_cutover_completion.sql`：恢复 WeCom runtime
   消息门面，并提供不依赖业务表授权的 Worker Outbox 租约能力与载荷读取门面。
+- `backend/migrations/168_wecom_runtime_read_capabilities.sql`：将企微积分与生成设置读取、
+  身份后昵称刷新、新对话绑定旋转、记忆查看/清空收口为 Actor/Org 双重校验的
+  SECURITY DEFINER 能力门面，消息 runtime 不再依赖业务表直权。
+- `backend/migrations/169_wecom_generation_context_org_scope.sql`：为生成上下文能力增加
+  `OrgScopedDB` 三参数适配，并在委托核心能力前验证显式企业与事务 Scope 一致。
+- `backend/services/wecom/memory_commands.py`：企微记忆指令的专用 RPC 适配，避免复用
+  面向 Web 的直表查询服务。
 - `docs/document/TECH_企微数据库角色切换闭环修复.md`：记录角色切换 ACL 覆盖根因、
   Worker fencing 能力边界、异常回复协议及部署回滚验证。
+- `git-push.sh`：仅暂存当前任务显式文件，应用发布禁止路径与敏感内容门禁，并校验远端提交 SHA。
+- `deploy/release.sh`：统一“提交部署”入口；提交推送后从确定 SHA 创建隔离工作树，避免工作区其他文件进入生产。
+- `deploy/release-policy.conf`：集中定义 `.env`、`.cursor`、密钥、依赖和生成物等禁止提交路径。
+- `deploy/deploy-helpers.sh`：承载发布来源门禁和部署后远端状态检查，保持主部署脚本规模受控。
 - `docs/document/TECH_数据库租户纵深防御.md`：基于生产角色/RLS/policy 审计，设计租户 Registry、
   事务级 DatabaseScope、owner/migrator/Web runtime/WeCom runtime/worker 角色和 Agent
   Runtime 第一组 FORCE RLS；WeCom 消息面使用独立 runtime 登录能力，控制面继续使用 Worker。
@@ -630,6 +650,7 @@ EVERYDAYAIONE/
 │   │   ├── batch_completion_service.py # 图片批次任务终态、积分与 partial update 协调
 │   │   ├── batch_message_finalizer.py # 图片批次/单图重生的最终消息落库与通知
 │   │   ├── websocket_manager.py      # WebSocket 连接管理
+│   │   ├── websocket_auth.py         # Token 解析与握手拒绝业务关闭码
 │   │   ├── websocket_interactions.py # Tool Confirm/Steer 用户与企业复合等待键
 │   │   ├── websocket_task_scope.py   # WebSocket 任务订阅的用户/企业精确边界查询
 │   │   ├── intent_router.py         # 智能意图路由器（千问 Function Calling）

@@ -98,7 +98,7 @@ async def start_web_database_runtime() -> WebDatabaseRuntime:
     _expire_pending_interactions(worker_db)
     async_worker_db = await get_async_worker_db()
 
-    worker = BackgroundTaskWorker(worker_db)
+    worker = BackgroundTaskWorker(worker_db, runtime_db=runtime_db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 

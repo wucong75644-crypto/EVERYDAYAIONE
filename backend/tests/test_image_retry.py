@@ -48,7 +48,12 @@ class TestAsyncRetryService:
 
     @pytest.fixture
     def svc(self, retry_db):
-        return AsyncRetryService(retry_db)
+        service = AsyncRetryService(retry_db)
+        service._media_tasks = MagicMock()
+        service._media_tasks.prepare_retry.return_value = "new_tx"
+        service._media_tasks.commit_retry.return_value = {"id": "task-1"}
+        service._media_tasks.abort_retry.return_value = True
+        return service
 
     def _make_task(self, **overrides):
         """创建测试 task dict"""

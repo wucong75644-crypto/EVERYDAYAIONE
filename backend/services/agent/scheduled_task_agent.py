@@ -49,6 +49,10 @@ TOOL_TIMEOUT = 30.0                # 单工具超时上限
 CONTEXT_WINDOW = 50000             # 上下文窗口大小（压缩阈值基准）
 DEFAULT_DEADLINE = 180.0           # 默认总执行时间预算（秒）
 MAX_SCHEDULED_TURNS = 12           # 工具循环最大轮次（比 ERP 少，任务粒度更明确）
+SCHEDULED_BLOCKED_TOOLS = frozenset({
+    "get_conversation_context",
+    "manage_scheduled_task",
+})
 
 
 # ════════════════════════════════════════════════════════
@@ -91,7 +95,13 @@ class ScheduledTaskAgent:
 
             # 2. 构建工具列表（与主聊天流程一致的核心工具集）
             from config.chat_tools import get_core_tools
-            all_tools = get_core_tools(org_id=self.org_id)
+            all_tools = [
+                tool for tool in get_core_tools(org_id=self.org_id)
+                if tool["function"]["name"] not in SCHEDULED_BLOCKED_TOOLS
+            ]
+            allowed_tools = frozenset(
+                tool["function"]["name"] for tool in all_tools
+            )
 
             # 3. 构建轻量上下文
             messages = self._build_light_context()
@@ -115,6 +125,7 @@ class ScheduledTaskAgent:
                 conversation_id=self.conversation_id,
                 org_id=self.org_id,
                 request_ctx=self.request_ctx,
+                allowed_tools=allowed_tools,
             )
 
             # 6. 多维执行预算
@@ -140,7 +151,7 @@ class ScheduledTaskAgent:
 
             result = await tool_loop.run(
                 messages=messages,
-                selected_tools=all_tools,  # 全工具可见
+                selected_tools=all_tools,  # 仅无人值守白名单工具可见
                 tools_called=tools_called,
                 hook_ctx=hook_ctx,
                 budget=budget,

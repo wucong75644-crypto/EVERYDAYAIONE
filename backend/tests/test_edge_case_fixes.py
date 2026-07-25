@@ -472,16 +472,7 @@ class TestNormalFlowRegression:
         db = MagicMock()
 
         task = _make_task(status="completed")
-        task_response = MagicMock()
-        task_response.data = task
-
-        tasks_chain = MagicMock()
-        tasks_chain.select.return_value = tasks_chain
-        tasks_chain.eq.return_value = tasks_chain
-        tasks_chain.maybe_single.return_value = tasks_chain
-        tasks_chain.execute.return_value = task_response
-
-        db.table = MagicMock(return_value=tasks_chain)
+        db.rpc.return_value.execute.return_value = MagicMock(data=task)
 
         service = TaskCompletionService(db)
         result = ImageGenerateResult(
@@ -498,16 +489,7 @@ class TestNormalFlowRegression:
         """正常流程：任务不存在应返回 False"""
         db = MagicMock()
 
-        task_response = MagicMock()
-        task_response.data = None
-
-        tasks_chain = MagicMock()
-        tasks_chain.select.return_value = tasks_chain
-        tasks_chain.eq.return_value = tasks_chain
-        tasks_chain.maybe_single.return_value = tasks_chain
-        tasks_chain.execute.return_value = task_response
-
-        db.table = MagicMock(return_value=tasks_chain)
+        db.rpc.return_value.execute.return_value = MagicMock(data=None)
 
         service = TaskCompletionService(db)
         result = ImageGenerateResult(

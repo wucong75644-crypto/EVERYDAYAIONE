@@ -30,6 +30,7 @@ class FakeMockDB:
 
     def __init__(self):
         self._rpc_results = {}
+        self.rpc_calls = []
         self._table_mock = MagicMock()
         # 链式调用默认返回自身
         self._table_mock.select.return_value = self._table_mock
@@ -45,8 +46,14 @@ class FakeMockDB:
         self._rpc_results[name] = data
 
     def rpc(self, name: str, params: dict = None):
+        self.rpc_calls.append((name, params))
         mock = MagicMock()
-        data = self._rpc_results.get(name, {})
+        if name == "worker_discover_legacy_active_tasks":
+            data = self._table_mock.execute.return_value.data
+        elif name == "worker_fail_legacy_stale_task":
+            data = self._rpc_results.get(name, {"outcome": "failed"})
+        else:
+            data = self._rpc_results.get(name, {})
         mock.execute.return_value = MagicMock(data=data)
         return mock
 
@@ -168,11 +175,12 @@ class TestHandleTimeout:
         task = self._make_task("chat")
         await worker._handle_timeout(task, 10)
 
-        # 验证 task 表被更新为 failed
-        db._table_mock.update.assert_called()
-        update_args = db._table_mock.update.call_args[0][0]
-        assert update_args["status"] == "failed"
-        assert "超时" in update_args["error_message"]
+        fail_calls = [
+            params for name, params in db.rpc_calls
+            if name == "worker_fail_legacy_stale_task"
+        ]
+        assert len(fail_calls) == 1
+        assert "超时" in fail_calls[0]["p_error_message"]
 
     @pytest.mark.asyncio
     async def test_chat_timeout_no_transaction(self, worker, db):
@@ -180,14 +188,14 @@ class TestHandleTimeout:
         task = self._make_task("chat", credit_transaction_id=None)
         await worker._handle_timeout(task, 10)
 
-        # task 表仍被更新
-        db._table_mock.update.assert_called()
+        assert any(
+            name == "worker_fail_legacy_stale_task"
+            for name, _ in db.rpc_calls
+        )
 
     @pytest.mark.asyncio
-    @patch("services.task_utils.save_accumulated_to_message")
-    async def test_chat_timeout_saves_accumulated_with_correct_type(self, mock_save, worker, db):
-        """chat 超时回写时 task_type 应为实际任务类型"""
-        mock_save.return_value = True
+    async def test_chat_timeout_saves_accumulated_content(self, worker, db):
+        """chat 超时通过受控能力回写累计内容"""
         task = self._make_task("chat",
             accumulated_content="部分内容",
             placeholder_message_id="msg-1",
@@ -198,15 +206,17 @@ class TestHandleTimeout:
         )
         await worker._handle_timeout(task, 10)
 
-        mock_save.assert_called_once()
-        call_kwargs = mock_save.call_args
-        assert call_kwargs[1]["task_type"] == "chat"
+        fail_call = next(
+            params for name, params in db.rpc_calls
+            if name == "worker_fail_legacy_stale_task"
+        )
+        assert fail_call["p_message_content"] == [
+            {"type": "text", "text": "部分内容"}
+        ]
 
     @pytest.mark.asyncio
-    @patch("services.task_utils.save_accumulated_to_message")
-    async def test_timeout_fallback_saves_with_actual_task_type(self, mock_save, worker, db):
-        """fallback 路径超时回写时 task_type 应为实际任务类型（非硬编码 chat）"""
-        mock_save.return_value = True
+    async def test_timeout_fallback_saves_accumulated_content(self, worker, db):
+        """媒体 fallback 也通过受控能力回写累计内容"""
         # image 任务走 service 失败后 fallback
         with patch("services.background_task_worker.TaskCompletionService") as MockService:
             mock_instance = AsyncMock()
@@ -222,9 +232,13 @@ class TestHandleTimeout:
             )
             await worker._handle_timeout(task, 30)
 
-        mock_save.assert_called_once()
-        call_kwargs = mock_save.call_args
-        assert call_kwargs[1]["task_type"] == "image"
+        fail_call = next(
+            params for name, params in db.rpc_calls
+            if name == "worker_fail_legacy_stale_task"
+        )
+        assert fail_call["p_message_content"] == [
+            {"type": "text", "text": "fallback内容"}
+        ]
 
     @pytest.mark.asyncio
     @patch("services.background_task_worker.TaskCompletionService")
@@ -270,8 +284,10 @@ class TestHandleTimeout:
         task = self._make_task("image")
         await worker._handle_timeout(task, 30)
 
-        # fallback：task 表被直接更新
-        db._table_mock.update.assert_called()
+        assert any(
+            name == "worker_fail_legacy_stale_task"
+            for name, _ in db.rpc_calls
+        )
 
     @pytest.mark.asyncio
     @patch("services.background_task_worker.TaskCompletionService")
@@ -288,8 +304,10 @@ class TestHandleTimeout:
         task = self._make_task("image")
         await worker._handle_timeout(task, 30)
 
-        # fallback 触发
-        db._table_mock.update.assert_called()
+        assert any(
+            name == "worker_fail_legacy_stale_task"
+            for name, _ in db.rpc_calls
+        )
 
 
 # ── cleanup_stale_tasks 测试 ────────────────────────────────
