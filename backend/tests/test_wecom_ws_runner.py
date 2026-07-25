@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.configuration.bundles import WecomBotTarget
 from wecom_ws_runner import _parse_message_content
 
 
@@ -168,9 +169,9 @@ class TestWecomWSManager:
         manager = WecomWSManager(control_db, runtime_db)
 
         with patch(
-            "services.org.config_resolver.OrgConfigResolver"
+            "services.configuration.bundles.WecomBotTargetResolver"
         ) as MockResolver:
-            MockResolver.return_value.list_orgs_with_wecom_bot.return_value = []
+            MockResolver.return_value.list_targets.return_value = []
             await manager.start()
 
         assert len(manager.clients) == 0
@@ -187,16 +188,23 @@ class TestWecomWSManager:
         mock_ws_instance = MagicMock()
         mock_ws_instance.start = AsyncMock()
 
-        orgs = [
-            {"org_id": "org-1", "bot_id": "bot_123", "bot_secret": "sec_456", "corp_id": "corp_789"},
+        targets = [
+            WecomBotTarget(
+                org_id="org-1",
+                bot_id="bot_123",
+                bot_secret="sec_456",
+                corp_id="corp_789",
+            ),
         ]
 
         with (
-            patch("services.org.config_resolver.OrgConfigResolver") as MockResolver,
+            patch(
+                "services.configuration.bundles.WecomBotTargetResolver"
+            ) as MockResolver,
             patch("wecom_ws_runner.WecomWSClient", return_value=mock_ws_instance),
             patch("wecom_ws_runner.WecomMessageService") as MockMessageService,
         ):
-            MockResolver.return_value.list_orgs_with_wecom_bot.return_value = orgs
+            MockResolver.return_value.list_targets.return_value = targets
             await manager.start()
 
         assert "org-1" in manager.clients

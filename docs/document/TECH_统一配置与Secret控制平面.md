@@ -1,6 +1,6 @@
 # 统一配置与 Secret 控制平面
 
-> 状态：方案 B 已确认；158–161.3B2 已实现并通过隔离真实库验证、未部署
+> 状态：方案 B 已确认；158–162、165 已部署，166 WeCom 消费接线已实现待部署
 > 日期：2026-07-24
 > 范围：平台、企业、个人配置；AI BYOK、ERP、企微、快麦 Web Cookie；未来 Skill SecretRef
 > 前置：迁移 150–157 的数据库角色、Scope、RLS、治理授权与审计基础
@@ -263,6 +263,14 @@ request_id=<workload/task identity>
 ```
 
 随后只能读取对应命名 Bundle。跨企业循环不能复用已绑定 Scope 客户端。
+
+### 8.3 WeCom 正式接线
+
+迁移 166 的 `discover_wecom_bot_targets()` 只向满足精确 actorless Worker Scope 的调用
+返回 active 企业 `org_id` 和 `credential_version`。WeCom Manager 对每个候选企业重新
+创建精确 Worker Scope，并调用既有 `get_wecom_bot_bundle()`；KEK 仅通过该进程专属
+`.env.kek` 注入。旧 `OrgConfigResolver.list_orgs_with_wecom_bot()` 已删除，不再通过
+Worker 或旧共享角色直读 `org_configs`。
 
 ## 9. Secret 管理与消费流程
 

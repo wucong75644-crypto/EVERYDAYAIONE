@@ -336,7 +336,7 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 
 只有以下证据齐全才能宣布生产租户架构切换完成：
 
-- 迁移账本 150–164 完整且 checksum 一致。
+- 迁移账本 150–166 完整且 checksum 一致。
 - 所有目标对象 owner 与 ACL 符合角色矩阵。
 - FORCE RLS 表和 policy 与迁移合同一致。
 - 服务只使用其指定数据库身份。
@@ -345,3 +345,16 @@ bash deploy/finalize-tenant-db-role-cutover.sh
 - WebSocket、Actor、WeCom 和 Workspace 租户链路通过。
 - 161 导入审计和配置事实数量一致。
 - 旧配置仍保留，配置消费者切换作为独立后续任务。
+
+### 13.1 WeCom 配置消费者切换
+
+1. 确认 `.env.wecom-runtime`、`.env.worker-client`、`.env.kek` 均存在且权限为 `0600`。
+2. 通过标准 Migration Runner 应用 166，不手工赋予 `org_configs` 或配置控制表直权。
+3. 运行 `deploy/install-service-units.sh /var/www/everydayai/backend`，确认实际单元与
+   仓库一致并已加载 KEK 文件。
+4. 部署正式 `wecom_ws_runner.py`，删除现场临时 worker-client drop-in 和旧连接回退，
+   重启 WeCom。
+5. 验证日志无配置表权限错误、无 KEK/Bundle 错误，并分别完成 Bot 连接与真实消息烟测。
+
+若 166 或 Bundle 接线失败，先恢复上一版应用保持现场临时回退；不得通过授予 Worker
+配置表 SELECT 作为回滚手段。数据库 rollback 只删除 166 新函数，不改变配置事实。

@@ -1594,7 +1594,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `get_worker_db` / `get_async_worker_db` | `backend/core/database.py` | 仅从 WORKER_DATABASE_URL 创建同步/异步 Worker 单例连接池，禁止回退 runtime URL |
 | `close_worker_db` / `close_async_worker_db` | `backend/core/database.py` | 独立关闭并清除 Worker 同步/异步连接池单例 |
 | `close_db` | `backend/core/database.py` | 关闭并清除 runtime 同步数据库连接池单例 |
-| `WecomWSManager` | `backend/wecom_ws_runner.py` | 使用 Worker control DB 发现企业 bot，并用 runtime DB 为每条入站消息建立租户 Scope |
+| `WecomWSManager` | `backend/wecom_ws_runner.py` | 使用无 Secret Worker Discovery 和逐企业 Bundle 启动 bot，并用 runtime DB 为每条入站消息建立租户 Scope |
 | `get_pg_connection` | `backend/services/knowledge_config.py` | 拒绝缺失 Scope 的 raw SQL 访问，并返回事务级 scoped 连接上下文 |
 | `create_dedicated_connection` | `backend/services/knowledge_config.py` | 为后台批量任务创建独立连接，在业务 SQL 前注入显式 Worker Scope |
 | `close_pg_pools` | `backend/services/knowledge_config.py` | 在 Web 退出时关闭并清除 runtime/worker 两类 knowledge raw pool |
@@ -1658,6 +1658,9 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ConfigurationControlService` | `backend/services/configuration/control_service.py` | 为平台、企业、个人提供显式 set/delete/status 方法；应用层先校验值和 Scope，再生成 envelope 并调用窄 RPC |
 | `EffectiveConfigResolver.parse` | `backend/services/configuration/resolver.py` | 严格解析数据库选定的固定 Bundle；校验 Registry 版本、键顺序、Scope、版本、普通值和 SecretRef 契约 |
 | `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 11 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段 |
+| `WecomBotTargetResolver.list_targets` | `backend/services/configuration/bundles.py` | 先以 actorless Worker Scope 发现企业，再为每个企业建立独立精确 Scope 并解析 `wecom.bot` Bundle；单企业材料失败不影响其他企业 |
+| `_assert_wecom_worker_discovery_scope` / `discover_wecom_bot_targets` | `backend/migrations/166_wecom_worker_discovery.sql` | 仅允许 actorless Worker 发现具备有效 WeCom Bundle 的 active 企业，返回 org_id 与凭证版本且不返回 Secret |
+| `install-service-units.sh` | `deploy/install-service-units.sh` | 校验数据库角色及 KEK 文件，安装并核对四个生产 Systemd 单元后重新加载 daemon |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
 | `build_legacy_preflight` | `backend/services/configuration/legacy_migration.py` | 根据旧键存在性、Corp ID 来源一致性和外部 Cookie 加密/状态事实生成不含配置值的迁移就绪报告；组合缺项、未知键、来源冲突或明文 Cookie 均阻断 |

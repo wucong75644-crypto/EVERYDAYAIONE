@@ -6,9 +6,17 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from loguru import logger
+
+from core.db_scope import (
+    DatabaseAccessKind,
+    DatabaseScope,
+    ScopedDatabaseClient,
+)
 from services.configuration.definitions import CONFIG_REGISTRY, ConfigDefinition
 from services.configuration.envelope import (
     KekVersionMissingError,
+    LocalKEKProvider,
     SecretMaterialError,
 )
 from services.configuration.material_service import SecretMaterialService
@@ -27,6 +35,16 @@ class ResolvedConfigurationBundle:
     values: Mapping[str, object | None]
     sources: Mapping[str, str | None]
     versions: Mapping[str, int]
+
+
+@dataclass(frozen=True)
+class WecomBotTarget:
+    """Decrypted credentials for one exact organization workload."""
+
+    org_id: str
+    corp_id: str
+    bot_id: str
+    bot_secret: str
 
 
 class SecretBundleResolver:
@@ -164,3 +182,84 @@ class SecretBundleResolver:
             if code in message:
                 return code
         return "CONFIG_BUNDLE_UNAVAILABLE"
+
+
+class WecomBotTargetResolver:
+    """Discover organizations without secrets, then resolve each exact Bundle."""
+
+    def __init__(
+        self,
+        worker_db: Any,
+        material_service: SecretMaterialService | None = None,
+    ) -> None:
+        self._worker_db = worker_db
+        self._material_service = material_service or SecretMaterialService(
+            LocalKEKProvider.from_environment()
+        )
+
+    def list_targets(self) -> list[WecomBotTarget]:
+        discovery_db = self._scoped_worker_db(
+            org_id=None,
+            request_id="wecom-bot-discovery",
+        )
+        response = discovery_db.rpc("discover_wecom_bot_targets").execute()
+        targets: list[WecomBotTarget] = []
+        for candidate in response.data or []:
+            org_id = str(candidate.get("org_id", ""))
+            try:
+                target = self._resolve_target(org_id)
+            except (ConfigurationResolutionError, ValueError) as error:
+                logger.warning(
+                    "wecom_bot_bundle_unavailable | "
+                    f"org_id={org_id or 'invalid'} | "
+                    f"error={type(error).__name__}"
+                )
+                continue
+            targets.append(target)
+        return targets
+
+    def _resolve_target(self, org_id: str) -> WecomBotTarget:
+        execution_db = self._scoped_worker_db(
+            org_id=org_id,
+            request_id=f"wecom-bot:{org_id}",
+        )
+        bundle = SecretBundleResolver(
+            execution_db,
+            self._material_service,
+        ).wecom_bot()
+        credentials = bundle.values["wecom.bot_credentials"]
+        corp_id = bundle.values["wecom.corp_id"]
+        if (
+            not isinstance(corp_id, str)
+            or not corp_id
+            or not isinstance(credentials, Mapping)
+            or not isinstance(credentials.get("bot_id"), str)
+            or not credentials["bot_id"]
+            or not isinstance(credentials.get("bot_secret"), str)
+            or not credentials["bot_secret"]
+        ):
+            raise ConfigurationResolutionError(
+                "SECRET_MATERIAL_UNAVAILABLE"
+            )
+        return WecomBotTarget(
+            org_id=org_id,
+            corp_id=corp_id,
+            bot_id=credentials["bot_id"],
+            bot_secret=credentials["bot_secret"],
+        )
+
+    def _scoped_worker_db(
+        self,
+        *,
+        org_id: str | None,
+        request_id: str,
+    ) -> ScopedDatabaseClient:
+        return ScopedDatabaseClient(
+            self._worker_db,
+            DatabaseScope(
+                actor_user_id=None,
+                org_id=org_id,
+                access_kind=DatabaseAccessKind.WORKER,
+                request_id=request_id,
+            ),
+        )

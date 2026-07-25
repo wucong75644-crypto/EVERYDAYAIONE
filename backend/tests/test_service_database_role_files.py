@@ -30,6 +30,7 @@ def test_backend_and_wecom_use_isolated_runtime_role_overrides() -> None:
         "/var/www/everydayai/backend/.env",
         "/var/www/everydayai/backend/.env.wecom-runtime",
         "/var/www/everydayai/backend/.env.worker-client",
+        "/var/www/everydayai/backend/.env.kek",
     ]
 
 

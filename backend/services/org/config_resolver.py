@@ -250,46 +250,6 @@ class OrgConfigResolver(_ConfigResolverCore):
             raise
         logger.info(f"ERP token auto-refreshed and persisted | org_id={org_id}")
 
-    def list_orgs_with_wecom_bot(self) -> list[dict]:
-        """返回所有配了 wecom_bot_id + wecom_bot_secret 的企业。
-
-        Returns:
-            [{"org_id": ..., "bot_id": ..., "bot_secret": ..., "corp_id": ...}, ...]
-        """
-        # 查所有配了 wecom_bot_id 的 org_id
-        result = (
-            self.db.table("org_configs")
-            .select("org_id")
-            .eq("config_key", "wecom_bot_id")
-            .execute()
-        )
-        org_ids = [r["org_id"] for r in (result.data or [])]
-        if not org_ids:
-            return []
-
-        orgs = []
-        for oid in org_ids:
-            bot_id = self._load_encrypted(oid, "wecom_bot_id")
-            bot_secret = self._load_encrypted(oid, "wecom_bot_secret")
-            if not bot_id or not bot_secret:
-                continue
-            # 从 organizations 表取 corp_id
-            org_result = (
-                self.db.table("organizations")
-                .select("wecom_corp_id")
-                .eq("id", oid)
-                .maybe_single()
-                .execute()
-            )
-            corp_id = (org_result.data or {}).get("wecom_corp_id", "")
-            orgs.append({
-                "org_id": oid,
-                "bot_id": bot_id,
-                "bot_secret": bot_secret,
-                "corp_id": corp_id or "",
-            })
-        return orgs
-
     def _load_encrypted(self, org_id: str, key: str) -> str | None:
         """从 org_configs 表读取并解密（同步）"""
         try:

@@ -1,5 +1,17 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-25 WeCom 配置控制面接线与部署单元漂移 — 已修复，待部署
+
+- 生产 WeCom 使用 Worker 控制连接扫描旧 `org_configs`，最小权限角色按设计拒绝直表
+  读取；现场临时切回旧连接只用于恢复服务，尚未视为根治。
+- 迁移 166 新增 actorless Worker Discovery，只返回 active 企业的 `org_id` 与凭证版本；
+  应用随后为每个企业建立精确 Worker Scope，并通过固定 `wecom.bot` Bundle 获取信封材料，
+  使用独立 `.env.kek` 在进程内解密。runtime/wecom-runtime/PUBLIC 均无执行权。
+- 部署现在安装并核对仓库内四个 Systemd 单元，验证数据库角色与 KEK 文件后才重启；
+  Migration Runner 自行加载 `.env.migrator` 并固定使用 venv Python，本地测试失败会阻断。
+- 定向测试、Shell/Python 静态检查和临时 PostgreSQL 16 角色矩阵已通过；生产仍需应用
+  166、安装正式单元、撤销临时 drop-in 与旧连接回退，再执行 WeCom 消息烟测。
+
 ## 2026-07-25 Actor 消息已完成但 Web 持续“思考中” — 第 1 步已修复，待部署验证
 
 - 生产证据确认任务和助手消息均已 `completed`，但终态投递使用 `OrgScopedDB` 后被自动

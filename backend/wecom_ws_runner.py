@@ -66,30 +66,33 @@ class WecomWSManager:
 
     async def start(self) -> None:
         """扫描所有配了 bot 凭证的企业，逐个建立 WS 连接"""
-        from services.org.config_resolver import OrgConfigResolver
-        resolver = OrgConfigResolver(self._control_db)
-        orgs = resolver.list_orgs_with_wecom_bot()
+        from services.configuration.bundles import WecomBotTargetResolver
+        targets = WecomBotTargetResolver(self._control_db).list_targets()
 
-        if not orgs:
+        if not targets:
             logger.warning("No org with wecom bot configured, ws_runner idle")
             return
 
-        for org in orgs:
-            org_id = org["org_id"]
+        for target in targets:
+            org_id = target.org_id
             msg_svc = WecomMessageService(self._runtime_db)
 
             client = WecomWSClient(
-                bot_id=org["bot_id"],
-                secret=org["bot_secret"],
+                bot_id=target.bot_id,
+                secret=target.bot_secret,
                 org_id=org_id,
-                on_message=self._make_message_handler(org_id, org["corp_id"], msg_svc),
-                on_card_event=self._make_card_handler(org_id, org["corp_id"], msg_svc),
+                on_message=self._make_message_handler(
+                    org_id, target.corp_id, msg_svc,
+                ),
+                on_card_event=self._make_card_handler(
+                    org_id, target.corp_id, msg_svc,
+                ),
             )
             self._clients[org_id] = client
             await client.start()
             logger.info(
                 f"Wecom bot started | org_id={org_id} | "
-                f"corp_id={org['corp_id']} | bot_id={org['bot_id'][:8]}..."
+                f"corp_id={target.corp_id} | bot_id={target.bot_id[:8]}..."
             )
 
         logger.info(f"WecomWSManager: {len(self._clients)} bot(s) running")

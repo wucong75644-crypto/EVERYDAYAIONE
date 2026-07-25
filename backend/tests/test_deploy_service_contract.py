@@ -11,6 +11,9 @@ SCRIPT = (
 MIGRATION_SCRIPT = (
     Path(__file__).resolve().parents[2] / "deploy/run-migrations.sh"
 ).read_text()
+INSTALL_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "deploy/install-service-units.sh"
+).read_text()
 
 
 def test_backend_deploy_restarts_all_required_services() -> None:
@@ -59,6 +62,23 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert 'case "${RUN_MIGRATIONS:-false}" in' in MIGRATION_SCRIPT
     assert "RUN_MIGRATIONS 只能是 true 或 false" in MIGRATION_SCRIPT
     assert "缺少 MIGRATION_DATABASE_URL" in MIGRATION_SCRIPT
+    assert "source .env.migrator" in MIGRATION_SCRIPT
+    assert "venv/bin/python -m pytest" in SCRIPT
+
+
+def test_backend_deploy_installs_canonical_service_units() -> None:
+    assert "install-service-units.sh" in SCRIPT
+    assert "validate-tenant-db-env.sh" in INSTALL_SCRIPT
+    assert "validate-kek-env.sh" in INSTALL_SCRIPT
+    assert "sudo install -m 0644" in INSTALL_SCRIPT
+    assert "sudo systemctl daemon-reload" in INSTALL_SCRIPT
+    for service in (
+        "everydayai-backend",
+        "everydayai-sync",
+        "everydayai-wecom",
+        "everydayai-conversation-actor",
+    ):
+        assert service in INSTALL_SCRIPT
 
 
 def test_migrations_run_before_service_restart_and_fail_closed() -> None:
@@ -75,9 +95,7 @@ def test_migrations_run_before_service_restart_and_fail_closed() -> None:
 def test_migration_gate_blocks_pending_when_apply_is_disabled(
     tmp_path: Path,
 ) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_python = fake_bin / "python"
+    fake_python = tmp_path / "python"
     fake_python.write_text(
         "#!/bin/sh\necho 150_change.sql\n",
         encoding="utf-8",
@@ -85,9 +103,9 @@ def test_migration_gate_blocks_pending_when_apply_is_disabled(
     fake_python.chmod(0o755)
     env = {
         **os.environ,
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "RUN_MIGRATIONS": "false",
         "MIGRATION_DATABASE_URL": "postgresql://migrator@example/db",
+        "MIGRATION_PYTHON": str(fake_python),
     }
 
     result = subprocess.run(
@@ -104,10 +122,8 @@ def test_migration_gate_blocks_pending_when_apply_is_disabled(
 
 
 def test_migration_gate_plans_then_applies_when_enabled(tmp_path: Path) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
     calls = tmp_path / "calls"
-    fake_python = fake_bin / "python"
+    fake_python = tmp_path / "python"
     fake_python.write_text(
         f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{calls}'\n",
         encoding="utf-8",
@@ -115,9 +131,9 @@ def test_migration_gate_plans_then_applies_when_enabled(tmp_path: Path) -> None:
     fake_python.chmod(0o755)
     env = {
         **os.environ,
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "RUN_MIGRATIONS": "true",
         "MIGRATION_DATABASE_URL": "postgresql://migrator@example/db",
+        "MIGRATION_PYTHON": str(fake_python),
     }
 
     result = subprocess.run(
@@ -139,10 +155,8 @@ def test_migration_gate_plans_then_applies_when_enabled(tmp_path: Path) -> None:
 def test_migration_gate_fails_before_runner_without_migration_url(
     tmp_path: Path,
 ) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
     marker = tmp_path / "python-called"
-    fake_python = fake_bin / "python"
+    fake_python = tmp_path / "python"
     fake_python.write_text(
         f"#!/bin/sh\ntouch '{marker}'\n",
         encoding="utf-8",
@@ -150,8 +164,8 @@ def test_migration_gate_fails_before_runner_without_migration_url(
     fake_python.chmod(0o755)
     env = {
         **os.environ,
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "RUN_MIGRATIONS": "true",
+        "MIGRATION_PYTHON": str(fake_python),
     }
     env.pop("MIGRATION_DATABASE_URL", None)
 
@@ -167,3 +181,46 @@ def test_migration_gate_fails_before_runner_without_migration_url(
     assert result.returncode == 1
     assert "缺少 MIGRATION_DATABASE_URL" in result.stdout
     assert not marker.exists()
+
+
+def test_migration_gate_loads_dedicated_migrator_environment(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$MIGRATION_DATABASE_URL\" > '{calls}'\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    (tmp_path / ".env.migrator").write_text(
+        "MIGRATION_DATABASE_URL="
+        "postgresql://everydayai_migrator:secret@localhost/everydayai\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "RUN_MIGRATIONS": "false",
+        "MIGRATION_PYTHON": str(fake_python),
+    }
+    env.pop("MIGRATION_DATABASE_URL", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                Path(__file__).resolve().parents[2]
+                / "deploy/run-migrations.sh"
+            ),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert calls.read_text(encoding="utf-8").startswith(
+        "postgresql://everydayai_migrator:"
+    )

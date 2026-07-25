@@ -196,7 +196,7 @@ build_backend() {
     # 运行测试（可选）
     if [ "$SKIP_TEST" != true ]; then
         log_info "运行后端测试..."
-        pytest || log_warning "后端测试失败，继续部署"
+        venv/bin/python -m pytest
     fi
 
     # 语法检查
@@ -280,6 +280,7 @@ deploy_backend() {
             echo "❌ .env 文件不存在"
             exit 1
         fi
+        bash ../deploy/install-service-units.sh /var/www/everydayai/backend
         bash ../deploy/run-migrations.sh
         pkill -f kernel_worker 2>/dev/null || true
         services=(

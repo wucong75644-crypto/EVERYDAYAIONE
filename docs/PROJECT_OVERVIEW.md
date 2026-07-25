@@ -117,7 +117,8 @@
 - `backend/tests/test_worker_database_client.py`、`backend/tests/test_web_database_runtime.py`：
   覆盖缺失 Worker URL 失败关闭、独立池创建/关闭、runtime schema 与 worker 后台身份分离。
 - `backend/wecom_ws_runner.py`：WeCom 单进程内分离 control/runtime 数据库身份；bot
-  配置发现与 Outbox 投递走 Worker client，入站消息与卡片事件走请求级 runtime Scope。
+  先用 actorless Worker 发现企业，再以逐企业精确 Scope 读取固定 Bundle；Outbox 走
+  Worker client，入站消息与卡片事件走请求级 runtime Scope。
 - `backend/tests/test_wecom_ws_runner.py`、`backend/tests/test_wecom_ws_runner_main.py`、
   `backend/tests/test_wecom_request_scope.py`：固定 WeCom 双客户端装配、消息级企业/用户
   作用域和三类连接池关闭合同。
@@ -148,6 +149,11 @@
   `test_memory_runtime_ownership_scripts.py`、
   `test_memory_runtime_role_matrix_external.py`：覆盖迁移/回滚静态合同、所有权脚本门禁及
   真实 PostgreSQL Worker 跨租户隔离矩阵。
+- `backend/migrations/166_wecom_worker_discovery.sql`：提供无 Secret 的 WeCom 企业目标
+  Discovery，只向 actorless Worker 返回 active 企业 ID 与凭证版本；rollback 仅撤销
+  新能力。
+- `deploy/install-service-units.sh`：验证角色与 KEK 环境文件，安装并核对仓库内四个
+  Systemd 单元后执行 daemon-reload，防止生产继续运行旧单元。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 18 张表、
   实际列 sequence 和 33 个固定业务函数签名（含 Actor 核心依赖与两个 WeCom enqueue
   重载）；撤销
@@ -227,7 +233,8 @@
 - `backend/services/configuration/resolver.py`：严格校验固定 Bundle RPC 返回的键顺序、
   来源、版本、普通值与 SecretRef，拒绝 Registry、Scope 或 envelope 漂移。
 - `backend/services/configuration/bundles.py`：仅暴露 11 个固定命名 Bundle 方法，在
-  请求/任务内按数据库选定 Scope 解密 Secret，并再次校验 payload 字段。
+  请求/任务内按数据库选定 Scope 解密 Secret，并由 WeCom Target Resolver 执行
+  无 Secret Discovery → 逐企业精确 Scope → `wecom.bot` Bundle。
 - `backend/services/web_database_runtime.py`：Web 数据库启动在创建后台任务前执行
   Registry 漂移门禁，不一致时失败关闭。
 - `backend/tests/test_configuration_management_migrations.py`、
@@ -553,6 +560,7 @@ EVERYDAYAIONE/
 │   │   ├── 163_conversation_actor_worker_discovery.sql # Actor 无租户发现与任务级 Worker Facade
 │   │   ├── 164_actor_task_execution_capabilities.sql # Actor 任务级执行权限与终态 Facade
 │   │   ├── 165_memory_runtime_tenant_boundary.sql # Memory 四表 FORCE RLS 与最小角色能力
+│   │   ├── 166_wecom_worker_discovery.sql # WeCom 无 Secret Worker 发现能力
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -567,6 +575,7 @@ EVERYDAYAIONE/
 │   │       ├── 163_conversation_actor_worker_discovery_rollback.sql
 │   │       ├── 164_actor_task_execution_capabilities_rollback.sql
 │   │       ├── 165_memory_runtime_tenant_boundary_rollback.sql
+│   │       ├── 166_wecom_worker_discovery_rollback.sql
 │   │       ├── 131_attachment_asset_lifecycle_rollback.sql
 │   │       ├── 132_wecom_channel_task_enqueue_rollback.sql
 │   │       ├── 133_wecom_attachment_single_consumption_rollback.sql
