@@ -26,6 +26,14 @@ def pytest_configure() -> None:
     """Establish a deterministic test environment before app imports."""
     os.environ["APP_ENV"] = "testing"
     os.environ["DB_POOL_MIN"] = "0"
+    os.environ.setdefault(
+        "DATABASE_URL",
+        "postgresql://test:test@127.0.0.1:5432/everydayai_test",
+    )
+    os.environ.setdefault(
+        "JWT_SECRET_KEY",
+        "test-only-jwt-secret-key-not-for-production",
+    )
 
 
 def classify_nodeid(nodeid: str) -> str | None:

@@ -8,6 +8,8 @@ def test_pytest_disables_idle_database_connections() -> None:
 
     assert get_settings().app_env == "testing"
     assert get_settings().db_pool_min == 0
+    assert get_settings().database_url.endswith("/everydayai_test")
+    assert get_settings().jwt_secret_key.startswith("test-only-")
 
 
 def test_real_data_scanner_regressions_are_large() -> None:
