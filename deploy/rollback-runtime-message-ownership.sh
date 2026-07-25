@@ -38,7 +38,8 @@ DECLARE
         'wecom_user_mappings', 'wecom_chat_targets', 'conversations',
         'messages', 'tasks', 'credits_history', 'credit_transactions',
         'image_generations', 'detail_projects', 'detail_project_images',
-        'refresh_tokens', 'user_subscriptions', 'user_memory_settings'
+        'refresh_tokens', 'user_subscriptions', 'user_memory_settings',
+        'conversation_deliveries'
     ];
     target_functions CONSTANT TEXT[] := ARRAY[
         '_prepare_generation_messages(text,uuid,uuid,uuid,jsonb,jsonb)',

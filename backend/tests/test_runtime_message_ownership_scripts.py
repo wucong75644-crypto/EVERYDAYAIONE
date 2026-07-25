@@ -16,6 +16,7 @@ TABLES = {
     "messages", "tasks", "credits_history", "credit_transactions",
     "image_generations", "detail_projects", "detail_project_images",
     "refresh_tokens", "user_subscriptions", "user_memory_settings",
+    "conversation_deliveries",
 }
 FUNCTIONS = {
     "_prepare_generation_messages", "_prepare_generation_tasks",

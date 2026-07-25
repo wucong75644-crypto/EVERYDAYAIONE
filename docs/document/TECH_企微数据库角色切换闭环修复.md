@@ -22,6 +22,8 @@ Worker 业务表权限或切回旧数据库角色止血。
 新增迁移重新授予迁移 154 定义的企微消息门面，并同步修改所有权转移脚本。
 脚本在转移 owner、统一撤销旧权限后，必须重新建立与迁移一致的角色能力。
 这样首次切换、重复部署和新环境初始化不会再次覆盖 ACL。
+`conversation_deliveries` 必须与四个历史 Outbox 函数一起由所有权脚本转给
+`everydayai_owner`，否则 `SECURITY DEFINER` 门面无法访问旧 owner 表。
 
 ### Outbox Worker
 

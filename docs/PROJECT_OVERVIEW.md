@@ -158,7 +158,7 @@
   新能力。
 - `deploy/install-service-units.sh`：验证角色与 KEK 环境文件，安装并核对仓库内四个
   Systemd 单元后执行 daemon-reload，防止生产继续运行旧单元。
-- `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 18 张表、
+- `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
   实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue
   重载及四个 Outbox 租约函数）；撤销
   PUBLIC/新角色权限并保留旧服务兼容权限。

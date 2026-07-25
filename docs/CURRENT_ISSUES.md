@@ -9,6 +9,9 @@
 - 迁移 167 恢复 WeCom runtime 门面，并把 Outbox 领取、载荷读取、续租、完成和失败
   收口为校验 Worker Scope 与 fencing token 的 `SECURITY DEFINER` 能力；Worker 不获得
   业务表权限。
+- 部署后函数体实调进一步发现 `conversation_deliveries` 未进入第二批 owner 清单；
+  所有权脚本现将该表与四个 Outbox 函数原子转给 `everydayai_owner`，避免门面有执行权
+  但 definer 无表权限。
 - 所有权转移脚本在统一撤权后会重建迁移 154 的角色能力，避免新环境或再次切换复发。
   智能机器人异常文字改为一次性完成流，避免普通 text 回复触发企微 40008。
 - 联系人姓名解析改用迁移 160 的 `wecom.contact` 固定 Bundle，不再读取
