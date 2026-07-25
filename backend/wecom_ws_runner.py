@@ -218,10 +218,14 @@ async def main() -> None:
     await _manager.start()
 
     from services.wecom.delivery_sender import WecomDeliverySender
-    from services.wecom.delivery_worker import WecomDeliveryWorker
+    from services.wecom.delivery_worker import (
+        WecomDeliveryWorker,
+        build_wecom_delivery_worker_db,
+    )
+    delivery_db = build_wecom_delivery_worker_db(async_db)
     delivery_worker = WecomDeliveryWorker(
-        async_db,
-        WecomDeliverySender(async_db, get_ws_client),
+        delivery_db,
+        WecomDeliverySender(delivery_db, get_ws_client),
     )
     delivery_task = asyncio.create_task(
         delivery_worker.start(),

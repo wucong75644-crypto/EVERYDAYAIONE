@@ -9,6 +9,13 @@
 
 ## 函数列表
 
+### WeCom 数据库角色切换闭环
+
+| 函数名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `build_wecom_delivery_worker_db` | `backend/services/wecom/delivery_worker.py` | 为跨租户 Outbox RPC 绑定无用户、无企业的可信 Worker Scope |
+| `worker_get_conversation_delivery_payload` | `backend/migrations/167_wecom_role_cutover_completion.sql` | 校验 Worker 角色、有效租约与 fencing token 后返回单条投递所需的任务和消息载荷 |
+
 ### 通用 Curated Memory 数据库协议
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |

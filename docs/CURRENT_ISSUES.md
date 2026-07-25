@@ -1,5 +1,21 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-25 WeCom 数据库角色切换能力断层 — 已修复，待部署验证
+
+- 生产真实消息在 `resolve_wecom_conversation` 被拒绝，确认 WeCom 已使用目标角色，
+  但 Runtime/Message owner 转移脚本在迁移 154 后再次撤销了消息门面 ACL。
+- Worker 同时缺少 Outbox RPC 权限；即使仅补领取权限，旧实现继续直读 `tasks/messages`
+  仍会失败，因此没有采用直接表授权或切回旧角色止血。
+- 迁移 167 恢复 WeCom runtime 门面，并把 Outbox 领取、载荷读取、续租、完成和失败
+  收口为校验 Worker Scope 与 fencing token 的 `SECURITY DEFINER` 能力；Worker 不获得
+  业务表权限。
+- 所有权转移脚本在统一撤权后会重建迁移 154 的角色能力，避免新环境或再次切换复发。
+  智能机器人异常文字改为一次性完成流，避免普通 text 回复触发企微 40008。
+- 联系人姓名解析改用迁移 160 的 `wecom.contact` 固定 Bundle，不再读取
+  `organizations/org_configs`；Bundle 不可用时只退化显示名，不阻断消息。
+- 定向迁移、部署脚本、Worker Scope/租约与回复协议测试已通过；生产仍需应用 167、
+  部署应用并以真实消息验证入站、Actor、Outbox 和最终回复。
+
 ## 2026-07-25 WeCom 配置控制面接线与部署单元漂移 — 已修复，待部署
 
 - 生产 WeCom 使用 Worker 控制连接扫描旧 `org_configs`，最小权限角色按设计拒绝直表

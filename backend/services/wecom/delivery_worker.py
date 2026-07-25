@@ -9,10 +9,28 @@ from typing import Any, Mapping
 from loguru import logger
 from psycopg.types.json import Jsonb
 
+from core.db_scope import (
+    AsyncScopedDatabaseClient,
+    DatabaseAccessKind,
+    DatabaseScope,
+)
 from services.wecom.delivery_sender import WecomDeliverySender
 
 
 _OWNERSHIP_LOST = {"ownership_lost", "lease_expired"}
+
+
+def build_wecom_delivery_worker_db(db: Any) -> AsyncScopedDatabaseClient:
+    """为跨租户 Outbox 能力绑定可信 Worker Scope。"""
+    return AsyncScopedDatabaseClient(
+        db,
+        DatabaseScope(
+            actor_user_id=None,
+            org_id=None,
+            access_kind=DatabaseAccessKind.WORKER,
+            request_id="wecom-delivery-worker",
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -131,8 +149,7 @@ class WecomDeliveryWorker:
     async def _process(self, claim: WecomDeliveryClaim) -> None:
         checkpoints = set(claim.delivered_items)
         try:
-            task = await self._load_row("tasks", claim.task_id)
-            message = await self._load_message(task, claim.delivery_kind)
+            task, message = await self._load_payload(claim)
             for item in self._sender.build_items(
                 task,
                 message,
@@ -254,37 +271,28 @@ class WecomDeliveryWorker:
             f"error={type(error).__name__}"
         )
 
-    async def _load_message(
+    async def _load_payload(
         self,
-        task: Mapping[str, Any],
-        delivery_kind: str,
-    ) -> Mapping[str, Any] | None:
+        claim: WecomDeliveryClaim,
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any] | None]:
+        result = await self._rpc(
+            "worker_get_conversation_delivery_payload",
+            {
+                "p_delivery_id": claim.delivery_id,
+                "p_lease_token": claim.lease_token,
+            },
+        )
+        if result.get("outcome") in _OWNERSHIP_LOST:
+            raise _DeliveryOwnershipLost
+        task = result.get("task")
+        message = result.get("message")
         if (
-            delivery_kind == "assistant_terminal"
-            and task.get("status") == "failed"
+            result.get("outcome") != "loaded"
+            or not isinstance(task, Mapping)
+            or (message is not None and not isinstance(message, Mapping))
         ):
-            return None
-        message_field = (
-            "input_message_id"
-            if delivery_kind == "web_user_message"
-            else "assistant_message_id"
-        )
-        message_id = task.get(message_field)
-        if not message_id:
-            raise RuntimeError("WECOM_DELIVERY_MESSAGE_ID_MISSING")
-        return await self._load_row("messages", str(message_id))
-
-    async def _load_row(self, table: str, row_id: str) -> dict[str, Any]:
-        result = await (
-            self._db.table(table)
-            .select("*")
-            .eq("id", row_id)
-            .maybe_single()
-            .execute()
-        )
-        if not result.data:
-            raise RuntimeError(f"WECOM_DELIVERY_{table.upper()}_MISSING")
-        return dict(result.data)
+            raise RuntimeError("WECOM_DELIVERY_PAYLOAD_INVALID")
+        return task, message
 
     async def _rpc(
         self,

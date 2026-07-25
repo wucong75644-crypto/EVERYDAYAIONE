@@ -108,9 +108,14 @@ class TestSignalHandling:
         mock_manager.start.assert_awaited_once()
         mock_manager.stop.assert_awaited_once()
         MockManager.assert_called_once_with(control_db, runtime_db)
-        MockDeliverySender.assert_called_once_with(async_control_db, ANY)
+        delivery_db = MockDeliverySender.call_args.args[0]
+        assert delivery_db._client is async_control_db
+        assert delivery_db.scope.settings == (
+            "", "", "worker", "wecom-delivery-worker",
+        )
+        MockDeliverySender.assert_called_once_with(delivery_db, ANY)
         MockDeliveryWorker.assert_called_once_with(
-            async_control_db,
+            delivery_db,
             MockDeliverySender.return_value,
         )
         mock_close_async_worker.assert_awaited_once()

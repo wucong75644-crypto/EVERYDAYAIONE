@@ -84,17 +84,18 @@ async def test_robot_reply_uses_existing_stream() -> None:
 
 
 @pytest.mark.asyncio
-async def test_robot_reply_without_stream_uses_reply() -> None:
+async def test_robot_reply_without_stream_uses_completed_stream() -> None:
     service = _service()
     context = _robot_context()
 
     await service._reply_text(context, "完成")
 
-    context.ws_client.send_reply.assert_awaited_once_with(
-        req_id="req001",
-        msgtype="text",
-        content={"content": "完成"},
-    )
+    context.ws_client.send_reply.assert_not_awaited()
+    call = context.ws_client.send_stream_chunk.await_args
+    assert call.kwargs["req_id"] == "req001"
+    assert call.kwargs["stream_id"].startswith("error_")
+    assert call.kwargs["content"] == "完成"
+    assert call.kwargs["finish"] is True
 
 
 @pytest.mark.asyncio

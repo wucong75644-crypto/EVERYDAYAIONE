@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Optional
+from uuid import uuid4
 
 from loguru import logger
 
@@ -44,10 +45,11 @@ class WecomReplyMixin:
                 )
                 reply_ctx.active_stream_id = None
             else:
-                await reply_ctx.ws_client.send_reply(
+                await reply_ctx.ws_client.send_stream_chunk(
                     req_id=reply_ctx.req_id,
-                    msgtype="text",
-                    content={"content": text},
+                    stream_id=f"error_{uuid4().hex}",
+                    content=text,
+                    finish=True,
                 )
         elif reply_ctx.channel == "app":
             await self._send_app_message(reply_ctx, text)

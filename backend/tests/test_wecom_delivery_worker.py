@@ -6,29 +6,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.wecom.delivery_sender import WecomDeliveryItem
-from services.wecom.delivery_worker import WecomDeliveryClaim, WecomDeliveryWorker
+from services.wecom.delivery_worker import (
+    WecomDeliveryClaim,
+    WecomDeliveryWorker,
+    build_wecom_delivery_worker_db,
+)
 
 
 class _Call:
     def __init__(self, data):
         self._data = data
-
-    async def execute(self):
-        return SimpleNamespace(data=self._data)
-
-
-class _Query:
-    def __init__(self, data):
-        self._data = data
-
-    def select(self, _fields):
-        return self
-
-    def eq(self, _field, _value):
-        return self
-
-    def maybe_single(self):
-        return self
 
     async def execute(self):
         return SimpleNamespace(data=self._data)
@@ -49,10 +36,15 @@ class _DB:
 
     def rpc(self, name, params):
         self.calls.append((name, params))
-        return _Call(self.outcomes[name].pop(0))
-
-    def table(self, name):
-        return _Query(self.task if name == "tasks" else self.message)
+        if name in self.outcomes:
+            return _Call(self.outcomes[name].pop(0))
+        if name == "worker_get_conversation_delivery_payload":
+            return _Call({
+                "outcome": "loaded",
+                "task": self.task,
+                "message": self.message,
+            })
+        raise KeyError(name)
 
 
 def _claim(delivered=None, delivery_kind="assistant_terminal"):
@@ -76,6 +68,17 @@ def test_worker_rejects_invalid_timing_and_attempts():
         WecomDeliveryWorker(object(), MagicMock(), lease_seconds=10)
     with pytest.raises(ValueError, match="attempts"):
         WecomDeliveryWorker(object(), MagicMock(), max_attempts=0)
+
+
+def test_delivery_worker_db_uses_cross_tenant_worker_scope():
+    base_db = MagicMock()
+
+    scoped = build_wecom_delivery_worker_db(base_db)
+
+    assert scoped._client is base_db
+    assert scoped.scope.settings == (
+        "", "", "worker", "wecom-delivery-worker",
+    )
 
 
 @pytest.mark.asyncio
@@ -203,6 +206,22 @@ async def test_worker_loads_input_message_for_web_user_delivery():
         "delivery_kind": "web_user_message"
     }
     assert sender.build_items.call_args.args[1]["id"] == "message"
+
+
+@pytest.mark.asyncio
+async def test_worker_stops_when_payload_lease_is_lost():
+    db = _DB({
+        "claim_conversation_delivery": [_claim()],
+        "worker_get_conversation_delivery_payload": [
+            {"outcome": "ownership_lost"}
+        ],
+    })
+    sender = MagicMock(send=AsyncMock())
+
+    await WecomDeliveryWorker(db, sender).run_once()
+
+    sender.send.assert_not_awaited()
+    assert not any(name.startswith("fail_") for name, _ in db.calls)
 
 
 def test_claim_rejects_unknown_delivery_kind():

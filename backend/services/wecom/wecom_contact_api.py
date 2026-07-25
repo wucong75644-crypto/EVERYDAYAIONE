@@ -14,12 +14,14 @@
 调用方应该自行兜底。
 """
 from __future__ import annotations
-from typing import Optional
+from typing import Mapping, Optional
 
 import httpx
 from loguru import logger
 
-from services.org.config_resolver import OrgConfigResolver
+from services.configuration.bundles import SecretBundleResolver
+from services.configuration.envelope import LocalKEKProvider
+from services.configuration.material_service import SecretMaterialService
 from services.wecom.access_token_manager import get_access_token
 
 USER_GET_URL = "https://qyapi.weixin.qq.com/cgi-bin/user/get"
@@ -35,7 +37,7 @@ async def fetch_wecom_real_name(
     通过企微 user/get 拿单个员工的真实姓名。
 
     Args:
-        db: 裸 db（用于查 organizations 和 org_configs）
+        db: 已绑定消息级 Scope 的 WeCom runtime DB
         org_id: 企业 ID
         wecom_userid: 企微 userid
         timeout: HTTP 超时（默认 3s）。
@@ -50,31 +52,35 @@ async def fetch_wecom_real_name(
     if not org_id or not wecom_userid:
         return None
 
-    # 1. 解析凭证（corp_id 来自 organizations，agent_secret 来自 org_configs）
+    # 1. 通过固定 Bundle 解析当前企业凭证，不授予 runtime 直表权限。
     try:
-        org_resp = (
-            db.table("organizations")
-            .select("wecom_corp_id")
-            .eq("id", org_id)
-            .maybe_single()
-            .execute()
+        bundle = SecretBundleResolver(
+            db,
+            SecretMaterialService(LocalKEKProvider.from_environment()),
+        ).wecom_contact()
+        corp_id = bundle.values.get("wecom.corp_id")
+        secret_payload = bundle.values.get("wecom.oauth_agent_secret")
+        agent_secret = (
+            secret_payload.get("agent_secret")
+            if isinstance(secret_payload, Mapping)
+            else None
         )
-        corp_id = ((org_resp.data or {}).get("wecom_corp_id") or "").strip()
     except Exception as e:
-        logger.warning(f"fetch_wecom_real_name: read corp_id failed | org_id={org_id} | error={e}")
+        logger.warning(
+            "fetch_wecom_real_name: resolve contact bundle failed | "
+            f"org_id={org_id} | error={type(e).__name__}"
+        )
         return None
 
-    if not corp_id:
+    if (
+        not isinstance(corp_id, str)
+        or not corp_id.strip()
+        or not isinstance(agent_secret, str)
+        or not agent_secret.strip()
+    ):
         return None
-
-    try:
-        agent_secret = OrgConfigResolver(db).get(org_id, "wecom_agent_secret")
-    except Exception as e:
-        logger.warning(f"fetch_wecom_real_name: read agent_secret failed | org_id={org_id} | error={e}")
-        return None
-
-    if not agent_secret:
-        return None
+    corp_id = corp_id.strip()
+    agent_secret = agent_secret.strip()
 
     # 2. 拿 access_token
     token = await get_access_token(org_id, corp_id, agent_secret)

@@ -32,7 +32,9 @@ FUNCTIONS = {
     "bind_task_attachments", "enqueue_wecom_task_record",
     "renew_generation_lease", "update_generation_progress",
     "fail_generation_turn", "commit_generation_turn_with_context_v2",
-    "commit_generation_turn",
+    "commit_generation_turn", "claim_conversation_delivery",
+    "renew_conversation_delivery", "complete_conversation_delivery",
+    "fail_conversation_delivery",
 }
 
 
@@ -120,8 +122,19 @@ def test_transfer_preflights_exact_tables_and_functions(tmp_path: Path) -> None:
         "fail_generation_turn(uuid,uuid,text,text)",
         "commit_generation_turn_with_context_v2(",
         "close_generation_turn(uuid,uuid,uuid)",
+        "claim_conversation_delivery(integer,integer)",
+        "renew_conversation_delivery(uuid,uuid,integer,jsonb)",
+        "complete_conversation_delivery(uuid,uuid,jsonb)",
+        "fail_conversation_delivery(uuid,uuid,text,jsonb,integer)",
     ):
         assert signature in function_block
+
+    rollback_block = ROLLBACK.read_text(encoding="utf-8").split(
+        "target_functions CONSTANT TEXT[] := ARRAY[", 1,
+    )[1].split("];", 1)[0]
+    assert set(
+        re.findall(r"'([a-z0-9_]+)\(", rollback_block)
+    ) == FUNCTIONS
 
 
 def test_transfer_handles_owned_column_sequences_without_guessing(
@@ -164,6 +177,16 @@ def test_transfer_revokes_new_roles_and_preserves_legacy_service(
         "everydayai_runtime, everydayai_wecom_runtime, everydayai_worker"
     ) in sql
     assert "GRANT EXECUTE ON FUNCTION public.%s TO %I" in sql
+    assert (
+        "public.resolve_wecom_conversation(uuid,text,text,text,uuid)"
+        in sql
+    )
+    assert "TO everydayai_wecom_runtime;" in sql
+    assert (
+        "public.record_user_activity(\n"
+        "    uuid,text,uuid,text,text,text,timestamp with time zone,jsonb\n"
+        ") TO everydayai_runtime, everydayai_worker;"
+    ) in sql
     assert "ENABLE ROW LEVEL SECURITY" not in sql
     assert "FORCE ROW LEVEL SECURITY" not in sql
 

@@ -61,6 +61,10 @@ DECLARE
         'renew_generation_lease(uuid,uuid,integer)',
         'update_generation_progress(uuid,uuid,text,jsonb)',
         'fail_generation_turn(uuid,uuid,text,text)',
+        'claim_conversation_delivery(integer,integer)',
+        'renew_conversation_delivery(uuid,uuid,integer,jsonb)',
+        'complete_conversation_delivery(uuid,uuid,jsonb)',
+        'fail_conversation_delivery(uuid,uuid,text,jsonb,integer)',
         'commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
         'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
         'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb)',
@@ -205,6 +209,22 @@ END
 \$transfer\$;
 
 GRANT USAGE ON SCHEMA public TO everydayai_wecom_runtime;
+GRANT EXECUTE ON FUNCTION
+    public.resolve_wecom_conversation(uuid,text,text,text,uuid),
+    public.stage_wecom_attachment_v2(
+        uuid,uuid,text,uuid,text,jsonb,text,text,text,text,text,bigint,jsonb,uuid
+    ),
+    public.enqueue_wecom_generation_turn_v2(
+        jsonb,uuid,uuid,uuid,jsonb,jsonb
+    ),
+    public.update_wecom_conversation_setting(uuid,uuid,text,text,uuid),
+    public.record_user_activity(
+        uuid,text,uuid,text,text,text,timestamp with time zone,jsonb
+    )
+TO everydayai_wecom_runtime;
+GRANT EXECUTE ON FUNCTION public.record_user_activity(
+    uuid,text,uuid,text,text,text,timestamp with time zone,jsonb
+) TO everydayai_runtime, everydayai_worker;
 REVOKE ALL ON TABLE
     public.users, public.organizations, public.org_members, public.org_configs,
     public.org_invitations,

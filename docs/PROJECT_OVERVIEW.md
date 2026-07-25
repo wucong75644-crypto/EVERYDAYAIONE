@@ -65,6 +65,10 @@
 - `backend/scripts/backfill_generation_turns.py`：历史 assistant Turn/reply 关系的默认 dry-run、确定性分类、分批 apply、checkpoint 与无正文审计。
 - `backend/scripts/migration_runner.py`：完整文件名身份、SHA-256、显式 legacy baseline、事务执行和 advisory lock 的数据库迁移账本 Runner。
 - `deploy/run-migrations.sh`：部署重启前执行迁移 plan/apply；关闭迁移但存在 pending 时失败关闭。
+- `backend/migrations/167_wecom_role_cutover_completion.sql`：恢复 WeCom runtime
+  消息门面，并提供不依赖业务表授权的 Worker Outbox 租约能力与载荷读取门面。
+- `docs/document/TECH_企微数据库角色切换闭环修复.md`：记录角色切换 ACL 覆盖根因、
+  Worker fencing 能力边界、异常回复协议及部署回滚验证。
 - `docs/document/TECH_数据库租户纵深防御.md`：基于生产角色/RLS/policy 审计，设计租户 Registry、
   事务级 DatabaseScope、owner/migrator/Web runtime/WeCom runtime/worker 角色和 Agent
   Runtime 第一组 FORCE RLS；WeCom 消息面使用独立 runtime 登录能力，控制面继续使用 Worker。
@@ -155,8 +159,8 @@
 - `deploy/install-service-units.sh`：验证角色与 KEK 环境文件，安装并核对仓库内四个
   Systemd 单元后执行 daemon-reload，防止生产继续运行旧单元。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 18 张表、
-  实际列 sequence 和 33 个固定业务函数签名（含 Actor 核心依赖与两个 WeCom enqueue
-  重载）；撤销
+  实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue
+  重载及四个 Outbox 租约函数）；撤销
   PUBLIC/新角色权限并保留旧服务兼容权限。
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
