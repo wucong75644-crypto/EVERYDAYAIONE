@@ -2,11 +2,15 @@
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
 SCRIPT = (
     Path(__file__).resolve().parents[2] / "deploy/deploy.sh"
+).read_text()
+DEPLOY_HELPERS = (
+    Path(__file__).resolve().parents[2] / "deploy/deploy-helpers.sh"
 ).read_text()
 MIGRATION_SCRIPT = (
     Path(__file__).resolve().parents[2] / "deploy/run-migrations.sh"
@@ -14,6 +18,13 @@ MIGRATION_SCRIPT = (
 INSTALL_SCRIPT = (
     Path(__file__).resolve().parents[2] / "deploy/install-service-units.sh"
 ).read_text()
+GIT_PUSH_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "git-push.sh"
+RELEASE_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "deploy/release.sh"
+).read_text()
+RELEASE_POLICY_PATH = (
+    Path(__file__).resolve().parents[2] / "deploy/release-policy.conf"
+)
 
 
 def test_backend_deploy_restarts_all_required_services() -> None:
@@ -45,6 +56,7 @@ def test_rsync_preserves_runtime_and_sensitive_files() -> None:
         "external/mediacrawler",
     ):
         assert f"--exclude '{excluded}'" in SCRIPT
+    assert "--exclude 'config.env*'" in SCRIPT
 
 
 def test_missing_required_service_fails_deployment() -> None:
@@ -64,6 +76,107 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert "缺少 MIGRATION_DATABASE_URL" in MIGRATION_SCRIPT
     assert "source .env.migrator" in MIGRATION_SCRIPT
     assert "venv/bin/python -m pytest" in SCRIPT
+
+
+def test_deploy_fails_closed_and_requires_pushed_release_source() -> None:
+    assert "set -euo pipefail" in SCRIPT
+    assert "npm run test:run ||" not in SCRIPT
+    assert "--expected-sha" in SCRIPT
+    assert "source deploy/deploy-helpers.sh" in SCRIPT
+    assert "git ls-remote origin" in DEPLOY_HELPERS
+    assert "部署目录含未提交内容" in DEPLOY_HELPERS
+    assert "verify_public_endpoints" in SCRIPT
+    assert '"https://${DOMAIN}/api/health"' in DEPLOY_HELPERS
+
+
+def test_unified_release_uses_an_isolated_git_worktree() -> None:
+    assert "git-push.sh" in RELEASE_SCRIPT
+    assert 'worktree add --detach "$release_dir" "$release_sha"' in RELEASE_SCRIPT
+    assert '--expected-sha "$release_sha"' in RELEASE_SCRIPT
+    assert 'if (( ${#DEPLOY_ARGS[@]} > 0 )); then' in RELEASE_SCRIPT
+    assert "git add -A" not in RELEASE_SCRIPT
+
+
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _make_release_test_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    remote = tmp_path / "remote.git"
+    repo.mkdir()
+    (repo / "deploy").mkdir()
+    shutil.copy2(GIT_PUSH_SCRIPT_PATH, repo / "git-push.sh")
+    shutil.copy2(RELEASE_POLICY_PATH, repo / "deploy/release-policy.conf")
+    (repo / "allowed.txt").write_text("before\n", encoding="utf-8")
+
+    _run_git(repo, "init", "-b", "main")
+    _run_git(repo, "config", "user.name", "Release Test")
+    _run_git(repo, "config", "user.email", "release@example.com")
+    _run_git(repo, "add", ".")
+    _run_git(repo, "commit", "-m", "chore: baseline")
+    _run_git(tmp_path, "init", "--bare", str(remote))
+    _run_git(repo, "remote", "add", "origin", str(remote))
+    _run_git(repo, "push", "-u", "origin", "main")
+    return repo, remote
+
+
+def test_git_push_commits_only_explicit_task_files(tmp_path: Path) -> None:
+    repo, _ = _make_release_test_repo(tmp_path)
+    (repo / "allowed.txt").write_text("after\n", encoding="utf-8")
+    (repo / "unrelated.txt").write_text("keep local\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "git-push.sh",
+            "--message",
+            "fix: explicit task scope",
+            "--file",
+            "allowed.txt",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    changed = _run_git(repo, "show", "--name-only", "--format=").stdout.splitlines()
+    assert changed == ["allowed.txt"]
+    assert "?? unrelated.txt" in _run_git(repo, "status", "--short").stdout
+
+
+def test_git_push_rejects_forbidden_env_and_cursor_paths(
+    tmp_path: Path,
+) -> None:
+    repo, _ = _make_release_test_repo(tmp_path)
+    for forbidden in (".env", ".cursor/rules/private.md"):
+        target = repo / forbidden
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("private\n", encoding="utf-8")
+        result = subprocess.run(
+            [
+                "bash",
+                "git-push.sh",
+                "--message",
+                "chore: forbidden file",
+                "--file",
+                forbidden,
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1
+        assert "发布策略禁止提交" in result.stderr
 
 
 def test_backend_deploy_installs_canonical_service_units() -> None:

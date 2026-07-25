@@ -62,7 +62,11 @@ cp "$REPO_ROOT/deploy/config.env" "$release_dir/deploy/config.env"
 
 (
     cd "$release_dir"
-    ./deploy/deploy.sh --expected-sha "$release_sha" "${DEPLOY_ARGS[@]}"
+    if (( ${#DEPLOY_ARGS[@]} > 0 )); then
+        ./deploy/deploy.sh --expected-sha "$release_sha" "${DEPLOY_ARGS[@]}"
+    else
+        ./deploy/deploy.sh --expected-sha "$release_sha"
+    fi
 )
 
 echo "提交部署完成: $release_sha"
