@@ -46,6 +46,13 @@
   租约、原子结果消息、终态失效和遗留积分退款能力。
 - `backend/services/scheduler/run_lease.py`：持续续租并在执行权丢失时取消执行。
 
+媒体 Worker 终态边界：
+- `backend/migrations/186_worker_media_failure_settlement.sql`：由
+  `everydayai_worker` 专属 SECURITY DEFINER 能力在同一事务内完成失败退款与媒体
+  task 终态，Worker 不获得底层退款函数的直接执行权。
+- `backend/services/worker_media_tasks.py`：封装跨租户媒体发现、领取、触达和终态 RPC；
+  JSONB 参数由 `core/local_db.py` 的共享 RPC 边界统一适配。
+
 统一生成 Turn 事务与任务生命周期设计：
 - `docs/document/TECH_统一生成Turn事务与任务生命周期.md`：将 Web、企微、Chat Actor、图片、视频和
   电商图的 request/Turn/input/output/local task 收口为统一数据库原子准备入口；外部执行状态机保持

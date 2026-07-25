@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool, ConnectionPool
 from loguru import logger
 
@@ -523,7 +524,10 @@ class RpcCaller:
                 f"{k} := %s" for k in self._params
             )
             sql = f'SELECT * FROM "{self._func_name}"({named_args})'
-            params = list(self._params.values())
+            params = [
+                Jsonb(value) if isinstance(value, (dict, list)) else value
+                for value in self._params.values()
+            ]
         else:
             sql = f'SELECT * FROM "{self._func_name}"()'
             params = []
@@ -663,7 +667,10 @@ class AsyncRpcCaller(RpcCaller):
                 f"{k} := %s" for k in self._params
             )
             sql = f'SELECT * FROM "{self._func_name}"({named_args})'
-            params = list(self._params.values())
+            params = [
+                Jsonb(value) if isinstance(value, (dict, list)) else value
+                for value in self._params.values()
+            ]
         else:
             sql = f'SELECT * FROM "{self._func_name}"()'
             params = []

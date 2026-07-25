@@ -106,17 +106,6 @@ class BatchCompletionService:
         batch_id = task["batch_id"]
         image_index = task.get("image_index", 0)
 
-        # 1. 退回积分
-        transaction_id = task.get("credit_transaction_id")
-        if transaction_id:
-            try:
-                self._refund_credits(transaction_id)
-            except Exception as refund_err:
-                logger.critical(
-                    f"Batch image refund failed | ext_task_id={ext_task_id} | "
-                    f"tx={transaction_id} | error={refund_err}"
-                )
-
         failed_part = {
             "type": "image",
             "url": None,
@@ -125,7 +114,7 @@ class BatchCompletionService:
             "error_code": error_code,
         }
 
-        # 2. 保存结构化失败结果并返回批次快照
+        # 1. 原子退回积分、保存结构化失败结果并返回批次快照
         batch_tasks = self._media_tasks.settle_batch_item(
             ext_task_id,
             task["version"],
@@ -137,10 +126,10 @@ class BatchCompletionService:
             logger.info(f"Batch task settlement skipped | task_id={ext_task_id}")
             return True
 
-        # 3. 统计批次进度
+        # 2. 统计批次进度
         completed_count, total_count = self._count_terminal(batch_tasks)
 
-        # 4. 推送 image_partial_update（error）
+        # 3. 推送 image_partial_update（error）
         await self._push_partial_update(
             task=task,
             image_index=image_index,
@@ -151,7 +140,7 @@ class BatchCompletionService:
             error_code=error_code,
         )
 
-        # 5. 全部终态 → finalize（区分 regenerate_single 和批次生成）
+        # 4. 全部终态 → finalize（区分 regenerate_single 和批次生成）
         if completed_count >= total_count:
             await self._dispatch_finalize(batch_id, batch_tasks)
 
@@ -260,28 +249,3 @@ class BatchCompletionService:
         """释放任务限制槽位"""
         from services.task_limit_service import release_task_slot
         await release_task_slot(task)
-
-    def _refund_credits(self, transaction_id: str) -> None:
-        """
-        退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）。
-
-        失败时向上抛出异常，由调用方决策处理。
-        """
-        try:
-            result = self.db.rpc(
-                'atomic_refund_credits',
-                {'p_transaction_id': transaction_id}
-            ).execute()
-
-            data = result.data
-            if data and data.get('refunded'):
-                logger.info(
-                    f"Credits refunded | transaction_id={transaction_id} | "
-                    f"user_id={data.get('user_id')} | amount={data.get('amount')}"
-                )
-            else:
-                reason = data.get('reason', 'unknown') if data else 'no_response'
-                logger.warning(f"Refund skipped | tx={transaction_id} | reason={reason}")
-        except Exception as e:
-            logger.critical(f"CREDIT_LOSS_RISK: refund failed | tx={transaction_id} | error={e}")
-            raise

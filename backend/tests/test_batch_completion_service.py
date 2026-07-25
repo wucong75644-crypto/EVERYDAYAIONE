@@ -78,6 +78,7 @@ class MockBatchDB:
     def __init__(self):
         self._tables = {}
         self._rpc_results = {}
+        self.rpc_calls = []
 
     def table(self, name: str):
         return MockTableChain(self._tables.get(name, []))
@@ -86,6 +87,7 @@ class MockBatchDB:
         self._tables[name] = data
 
     def rpc(self, fn_name: str, params: dict = None):
+        self.rpc_calls.append((fn_name, params))
         mock = MagicMock()
         if fn_name == "worker_settle_media_batch_item":
             result = {
@@ -745,7 +747,7 @@ class TestFinalizeSingleImage:
 
 
 class TestBatchCompletionServiceCredits:
-    """测试积分确认/退回"""
+    """测试失败退款由 Worker 终态能力原子完成。"""
 
     @pytest.fixture
     def db(self):
@@ -755,48 +757,21 @@ class TestBatchCompletionServiceCredits:
     def service(self, db):
         return BatchCompletionService(db)
 
-    def test_refund_credits_success_no_exception(self, service):
-        """测试：退回积分成功不抛异常"""
-        service._refund_credits("tx_123")
-
-    def test_refund_credits_rpc_failure_raises(self, service, db):
-        """测试：退回积分 RPC 失败时向上抛出异常"""
-        # 让 rpc().execute() 抛异常
-        mock_rpc = MagicMock()
-        mock_rpc.execute.side_effect = Exception("DB connection lost")
-        db.rpc = MagicMock(return_value=mock_rpc)
-
-        with pytest.raises(Exception, match="DB connection lost"):
-            service._refund_credits("tx_fail")
-
-    def test_handle_image_failure_refund_error_no_crash(self, service, db):
-        """测试：handle_image_failure 中 refund 失败不崩溃"""
+    def test_handle_image_failure_uses_only_atomic_worker_settlement(
+        self, service, db
+    ):
+        """应用层不得绕过 Worker 终态能力直接调用退款函数。"""
         task = create_batch_task(
             index=0,
             batch_id="batch_1",
             transaction_id="tx_fail",
         )
-
-        # 让 refund RPC 失败
-        mock_rpc = MagicMock()
-        mock_rpc.execute.side_effect = Exception("refund RPC timeout")
-        original_rpc = db.rpc
-
-        def selective_rpc(fn_name, params=None):
-            if fn_name == "atomic_refund_credits":
-                return mock_rpc
-            return original_rpc(fn_name, params)
-
-        db.rpc = selective_rpc
-
-        # 设置 batch tasks 让它不进入 finalize
         db.set_table_data("tasks", [
             {**task, "status": "failed", "batch_id": "batch_1"},
             create_batch_task(index=1, batch_id="batch_1", status="pending"),
         ])
 
         import asyncio
-        # 不应崩溃
         loop = asyncio.new_event_loop()
         try:
             with patch("services.batch_completion_service.ws_manager") as mock_ws:
@@ -806,6 +781,10 @@ class TestBatchCompletionServiceCredits:
                 )
         finally:
             loop.close()
+
+        names = [name for name, _ in db.rpc_calls]
+        assert "worker_settle_media_batch_item" in names
+        assert "atomic_refund_credits" not in names
 
 
 # ============ Slot 释放测试 ============

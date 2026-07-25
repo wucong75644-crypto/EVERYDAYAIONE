@@ -101,6 +101,21 @@ class TestResolvePollInterval:
         assert _resolve_poll_interval(settings) == 15
 
 
+class TestPollPendingTasks:
+    @pytest.mark.asyncio
+    async def test_logs_processed_task_count_without_stale_response(self, worker, db):
+        """轮询完成后使用发现到的任务列表计数，不引用不存在的响应变量。"""
+        db.set_rpc_result(
+            "worker_discover_media_tasks",
+            [{"external_task_id": "ext-1", "type": "image"}],
+        )
+        worker.query_and_process = AsyncMock()
+
+        await worker.poll_pending_tasks()
+
+        worker.query_and_process.assert_awaited_once()
+
+
 # ── _refund_credits 测试 ────────────────────────────────────
 
 

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from core.local_db import (
     AsyncLocalDBClient,
@@ -377,6 +378,28 @@ class TestAsyncRpcCaller:
         assert sql.startswith("SELECT * FROM ")
         assert '"my_func"' in sql
         assert "p_id := %s" in sql
+
+    @pytest.mark.asyncio
+    async def test_rpc_wraps_mapping_and_list_params_as_jsonb(self):
+        """RPC 的 JSON 对象和数组参数由数据库边界统一适配。"""
+        pool, conn, cur = _mock_async_pool()
+        cur.description = [SimpleNamespace(name="store_payload")]
+        cur.fetchall = AsyncMock(return_value=[{"store_payload": True}])
+
+        await AsyncRpcCaller(
+            pool,
+            "store_payload",
+            {
+                "p_object": {"key": "value"},
+                "p_array": [{"id": 1}],
+                "p_text": "plain",
+            },
+        ).execute()
+
+        params = cur.execute.call_args[0][1]
+        assert isinstance(params[0], Jsonb)
+        assert isinstance(params[1], Jsonb)
+        assert params[2] == "plain"
 
     @pytest.mark.asyncio
     async def test_rpc_no_params(self):

@@ -1142,6 +1142,18 @@
   回滚，持久 schema 保持不变。隔离验证门禁已通过，下一步才可按生产 Runbook 执行
   迁移、角色切换和服务验收。
 
+# 2026-07-26 角色隔离生产收尾 — Sync 已恢复，媒体 Worker 修复待发布
+
+- 生产已应用迁移 171–185，Backend、Sync、WeCom、Conversation Actor 四服务均
+  active。Sync 的单行 `RETURNS TABLE` 被错误压成标量问题已在共享 RPC 返回边界修复；
+  上线后形状错误为 0，并成功完成 supplier、aftersale、order、product、stock 同步。
+- 生产媒体完成链路暴露三个独立缺口：RPC dict/list 参数未统一包装为 JSONB；图片失败
+  仍绕过 Worker 能力直接调用无权限的 `atomic_refund_credits`；轮询结束日志引用不存在
+  的 `response` 变量。错误会让已完成图片重复下载并无法落终态。
+- 根因修复已实现：共享 RPC 边界统一适配 JSON 参数；迁移 186 将失败退款和媒体 task
+  终态收口到同一 Worker SECURITY DEFINER 事务且不扩大底层退款权限；轮询使用实际
+  task 列表计数。相关定向自动化测试已通过，尚待生产迁移和卡住任务验收。
+
 # 2026-07-25 定时任务角色隔离收尾
 
 - 已完成代码与迁移：Worker 控制面和 Runtime 工具面分离，定时 run 的读取、

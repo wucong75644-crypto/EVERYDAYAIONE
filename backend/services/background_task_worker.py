@@ -158,7 +158,7 @@ class BackgroundTaskWorker:
             for i, task in enumerate(tasks_shuffled)
         ])
 
-        logger.info(f"Polled {len(response.data)} tasks (fallback)")
+        logger.info(f"Polled {len(tasks)} tasks (fallback)")
 
     async def query_and_process(self, task: dict):
         """
