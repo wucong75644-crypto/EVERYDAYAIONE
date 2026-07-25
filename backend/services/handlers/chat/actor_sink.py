@@ -136,7 +136,7 @@ class ActorWebSink:
         self._chunks_since_persist = 0
         try:
             response = await self._db.rpc(
-                "update_generation_progress",
+                "worker_update_generation_progress",
                 {
                     "p_task_id": self._delivery.task_id,
                     "p_execution_token": self._delivery.execution_token,

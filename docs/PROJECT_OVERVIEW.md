@@ -131,7 +131,7 @@
   原子 owner 转移；先赋予旧角色临时 owner 成员关系，兼容生产既有无 policy RLS 表。
 - `deploy/rollback-agent-runtime-ownership.sh`：受显式危险操作开关保护的 owner 恢复入口；
   恢复迁移账本、13 表和资产函数；任一目标表仍启用 FORCE RLS 时失败关闭。
-- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–163 已应用、Actor Worker
+- `deploy/finalize-tenant-db-role-cutover.sh`：仅在 150–164 已应用、Actor Worker
   Facade 权限完整、全部目标对象 Owner
   正确、服务已切换且旧连接归零后，撤销旧角色的临时 owner 成员关系。
 - `backend/tests/test_tenant_db_role_finalize_script.py`：覆盖最终撤销双重人工门禁、迁移、
@@ -139,14 +139,15 @@
 - `backend/tests/test_agent_runtime_ownership_scripts.py`：覆盖精确 13 表范围、前置检查、
   owner 辅助读取授权、旧服务兼容授权、无提前 RLS、管理员 URL 隐藏及回滚保护。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 18 张表、
-  实际列 sequence 和 25 个固定业务函数签名（含两个 WeCom enqueue 重载）；撤销
+  实际列 sequence 和 33 个固定业务函数签名（含 Actor 核心依赖与两个 WeCom enqueue
+  重载）；撤销
   PUBLIC/新角色权限并保留旧服务兼容权限。
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
-- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–163 checksum/状态、
+- `deploy/preflight-tenant-cutover.sh`：在只读事务内核验 150–164 checksum/状态、
   两批对象 owner、数据库角色、RLS、旧/新配置计数和角色连接数，并输出当前切换阶段。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批
-  owner 转移、150–163 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
+  owner 转移、150–164 迁移、旧配置原子导入、分服务角色切换、最终权限收口与回滚
   边界；明确两批 owner 先就绪，再由标准 Runner 一次性应用全部 pending 迁移。
 - `backend/tests/test_runtime_message_ownership_scripts.py`：覆盖第二批精确对象、动态列
   sequence、权限收紧、管理员 URL 隐藏和双重回滚保护。
@@ -540,6 +541,7 @@ EVERYDAYAIONE/
 │   │   ├── 150_agent_runtime_tenant_defense.sql # Agent Runtime 首组 13 表租户 RLS policy
 │   │   ├── 151_agent_runtime_role_grants.sql # Agent Runtime 首组最小角色授权
 │   │   ├── 163_conversation_actor_worker_discovery.sql # Actor 无租户发现与任务级 Worker Facade
+│   │   ├── 164_actor_task_execution_capabilities.sql # Actor 任务级执行权限与终态 Facade
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -552,6 +554,7 @@ EVERYDAYAIONE/
 │   │       ├── 128_wecom_channel_conversations_rollback.sql
 │   │       ├── 129_conversation_attachments_rollback.sql
 │   │       ├── 163_conversation_actor_worker_discovery_rollback.sql
+│   │       ├── 164_actor_task_execution_capabilities_rollback.sql
 │   │       ├── 131_attachment_asset_lifecycle_rollback.sql
 │   │       ├── 132_wecom_channel_task_enqueue_rollback.sql
 │   │       ├── 133_wecom_attachment_single_consumption_rollback.sql

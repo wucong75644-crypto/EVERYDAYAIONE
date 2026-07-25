@@ -79,6 +79,7 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "'161_configuration_legacy_import.sql'" in sql
     assert "'162_configuration_legacy_export_access.sql'" in sql
     assert "'163_conversation_actor_worker_discovery.sql'" in sql
+    assert "'164_actor_task_execution_capabilities.sql'" in sql
     assert "'159_org_erp_token_capabilities.sql'" not in sql
     assert "schema_migration_ledger" in sql
     assert "TENANT_OWNER_CUTOVER_INCOMPLETE" in sql
@@ -86,10 +87,18 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "LEGACY_DATABASE_SESSIONS_REMAIN" in sql
     assert "FINALIZE_REQUIRES_SEPARATE_ADMIN_ROLE" in sql
     assert "worker_get_claimed_generation_task(uuid,uuid)" in sql
+    assert "worker_update_generation_progress(uuid,uuid,text,jsonb)" in sql
+    assert "worker_update_generation_model(uuid,uuid,text,jsonb)" in sql
+    assert "worker_get_generation_terminal_snapshot(uuid,uuid)" in sql
     assert "ACTOR_WORKER_CAPABILITY_CUTOVER_INCOMPLETE" in sql
+    assert "ACTOR_CORE_OWNER_CUTOVER_INCOMPLETE" in sql
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert f"'public.tasks', '{privilege}'" in sql
     assert sql.count("has_any_column_privilege(") == 3
+    assert "'public.conversations', 'SELECT'" in sql
+    assert "'public.messages', 'SELECT'" in sql
+    assert "'INSERT, UPDATE, DELETE'" in sql
+    assert "close_generation_turn(uuid,uuid,uuid)" in sql
     assert "'everydayai_runtime', procedure.oid, 'EXECUTE'" in sql
     assert "'everydayai_wecom_runtime', procedure.oid, 'EXECUTE'" in sql
     assert "acl.grantee = 0" in sql

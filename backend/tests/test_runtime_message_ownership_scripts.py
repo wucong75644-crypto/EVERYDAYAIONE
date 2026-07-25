@@ -30,6 +30,9 @@ FUNCTIONS = {
     "update_wecom_conversation_setting", "wecom_get_or_create_user",
     "claim_legacy_wecom_conversation", "current_attachment_parts",
     "bind_task_attachments", "enqueue_wecom_task_record",
+    "renew_generation_lease", "update_generation_progress",
+    "fail_generation_turn", "commit_generation_turn_with_context_v2",
+    "commit_generation_turn",
 }
 
 
@@ -111,6 +114,14 @@ def test_transfer_preflights_exact_tables_and_functions(tmp_path: Path) -> None:
     assert "RUNTIME_MESSAGE_TABLE_MISSING" in sql
     assert "RUNTIME_MESSAGE_FUNCTION_MISSING" in sql
     assert "RUNTIME_MESSAGE_SEQUENCE_OWNER_UNEXPECTED" in sql
+    for signature in (
+        "renew_generation_lease(uuid,uuid,integer)",
+        "update_generation_progress(uuid,uuid,text,jsonb)",
+        "fail_generation_turn(uuid,uuid,text,text)",
+        "commit_generation_turn_with_context_v2(",
+        "close_generation_turn(uuid,uuid,uuid)",
+    ):
+        assert signature in function_block
 
 
 def test_transfer_handles_owned_column_sequences_without_guessing(

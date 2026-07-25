@@ -57,7 +57,15 @@ DECLARE
         'claim_legacy_wecom_conversation(uuid,text,text,uuid)',
         'current_attachment_parts(uuid,uuid)',
         'bind_task_attachments(uuid,uuid,uuid,uuid,uuid)',
-        'enqueue_wecom_task_record(jsonb,uuid,uuid,text,jsonb)'
+        'enqueue_wecom_task_record(jsonb,uuid,uuid,text,jsonb)',
+        'renew_generation_lease(uuid,uuid,integer)',
+        'update_generation_progress(uuid,uuid,text,jsonb)',
+        'fail_generation_turn(uuid,uuid,text,text)',
+        'commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+        'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+        'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb)',
+        'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb)',
+        'close_generation_turn(uuid,uuid,uuid)'
     ];
     missing_roles TEXT;
     missing_tables TEXT;

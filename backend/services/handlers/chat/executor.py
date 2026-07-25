@@ -198,6 +198,7 @@ class ChatGenerationExecutor:
                 )
                 await self._update_task_model(
                     claim.task_id,
+                    claim.execution_token,
                     new_model,
                     request.params,
                     request.model_id,
@@ -207,6 +208,7 @@ class ChatGenerationExecutor:
     async def _update_task_model(
         self,
         task_id: str,
+        execution_token: str,
         model_id: str,
         params: Mapping[str, Any],
         failed_model: str,
@@ -214,17 +216,15 @@ class ChatGenerationExecutor:
         try:
             updated_params = dict(params)
             updated_params["_retry_from_model"] = failed_model
-            await (
-                self._db.table("tasks")
-                .update(
-                    {
-                        "model_id": model_id,
-                        "request_params": updated_params,
-                    }
-                )
-                .eq("id", task_id)
-                .execute()
-            )
+            await self._db.rpc(
+                "worker_update_generation_model",
+                {
+                    "p_task_id": task_id,
+                    "p_execution_token": execution_token,
+                    "p_model_id": model_id,
+                    "p_request_params": updated_params,
+                },
+            ).execute()
         except Exception as error:
             logger.warning(
                 "actor_retry_model_update_failed | "

@@ -79,7 +79,7 @@ DECLARE
         '160_configuration_resolution_facades.sql',
         '161_configuration_legacy_import.sql',
         '162_configuration_legacy_export_access.sql',
-        '163_conversation_actor_worker_discovery.sql'
+        '163_conversation_actor_worker_discovery.sql', '164_actor_task_execution_capabilities.sql'
     ];
     expected_checksums CONSTANT TEXT[] := ARRAY[
         '60d765312928e92b525197b778fb64c505c59c60d104c4d7281e2ab713ceface',
@@ -97,7 +97,7 @@ DECLARE
         'e6eea45babe80d13c294ac0e78d33bfe777a59cb4365426d44cb92daaa2cb18c',
         '134ea6fa6f4a769e2e9aac121642849dbd37317193b1e610053f0ed3d75fcfc7',
         '6f0017406a3e9e4d8993b6d1cab237efdb987d796e8cdcd232c1514b2fd50d64',
-        '06fb7bdf519464cd42fd344adfd358e8c7277ee1afd59f5e6f28c8b222a7e682'
+        '06fb7bdf519464cd42fd344adfd358e8c7277ee1afd59f5e6f28c8b222a7e682', '3583dded9e92b9a0f5d9bf426c32eaea714f68303463b4080970fa0afb8f0084'
     ];
     key_functions CONSTANT TEXT[] := ARRAY[
         'register_user_asset(uuid,text,text,text,text,text,text,text,text,text,text,text,bigint,text,jsonb,text,uuid,text,text,text,uuid,uuid,uuid,uuid,uuid,integer,text,text,jsonb,timestamp with time zone)',
@@ -112,7 +112,15 @@ DECLARE
         'worker_get_claimed_generation_task(uuid,uuid)',
         'worker_renew_generation_lease(uuid,uuid,integer)',
         'worker_commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
-        'worker_fail_generation_turn(uuid,uuid,text,text)'
+        'worker_fail_generation_turn(uuid,uuid,text,text)',
+        'worker_update_generation_progress(uuid,uuid,text,jsonb)', 'worker_update_generation_model(uuid,uuid,text,jsonb)', 'worker_get_generation_terminal_snapshot(uuid,uuid)'
+    ];
+    actor_core_functions CONSTANT TEXT[] := ARRAY[
+        'renew_generation_lease(uuid,uuid,integer)', 'update_generation_progress(uuid,uuid,text,jsonb)',
+        'fail_generation_turn(uuid,uuid,text,text)', 'close_generation_turn(uuid,uuid,uuid)',
+        'commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+        'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+        'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb)', 'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb)'
     ];
     existing_isolated_roles INTEGER;
     applied_migrations INTEGER;
@@ -348,6 +356,17 @@ BEGIN
                 'TENANT_CUTOVER_ACTOR_WORKER_CAPABILITY_INVALID: %',
                 invalid_items;
         END IF;
+        SELECT string_agg(required_function, ', ' ORDER BY required_function)
+          INTO invalid_items
+          FROM unnest(actor_core_functions) AS required_function
+          LEFT JOIN pg_catalog.pg_proc procedure ON procedure.oid =
+               to_regprocedure('public.' || required_function)
+          LEFT JOIN pg_catalog.pg_roles owner_role ON owner_role.oid =
+               procedure.proowner
+         WHERE procedure.oid IS NULL
+            OR owner_role.rolname <> 'everydayai_owner';
+        IF invalid_items IS NOT NULL THEN RAISE EXCEPTION 'TENANT_CUTOVER_ACTOR_CORE_OWNER_INVALID: %', invalid_items;
+        END IF;
         IF has_function_privilege(
                'everydayai_worker',
                'public._assert_actor_worker_discovery_scope()',
@@ -378,7 +397,15 @@ BEGIN
            )
            OR has_any_column_privilege(
                'everydayai_worker', 'public.tasks', 'UPDATE'
-           ) THEN
+           )
+           OR NOT has_table_privilege('everydayai_worker',
+               'public.conversations', 'SELECT')
+           OR NOT has_table_privilege('everydayai_worker',
+               'public.messages', 'SELECT')
+           OR has_table_privilege('everydayai_worker',
+               'public.conversations', 'INSERT, UPDATE, DELETE')
+           OR has_table_privilege('everydayai_worker',
+               'public.messages', 'INSERT, UPDATE, DELETE') THEN
             RAISE EXCEPTION
                 'TENANT_CUTOVER_ACTOR_WORKER_DIRECT_ACCESS_INVALID';
         END IF;
@@ -469,4 +496,4 @@ SQL
 } | python3 "$(dirname "$0")/run-psql-admin.py" \
     --no-psqlrc --set=ON_ERROR_STOP=1
 
-echo "✅ 150–163 生产租户切换只读前置检查通过"
+echo "✅ 150–164 生产租户切换只读前置检查通过"

@@ -118,6 +118,7 @@ async def test_sink_streams_and_persists_with_execution_token():
         "stream_end",
     ]
     assert db.calls[-1][1]["p_execution_token"] == "token-1"
+    assert db.calls[-1][0] == "worker_update_generation_progress"
     assert db.calls[-1][1]["p_accumulated_content"] == "你好"
     assert db.calls[-1][1]["p_accumulated_blocks"].obj == [block]
     assert websocket.registered == ["client-1", "cancel:client-1"]

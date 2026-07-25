@@ -1,4 +1,4 @@
-"""150–163 production tenant cutover preflight contract tests."""
+"""150–164 production tenant cutover preflight contract tests."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ MIGRATION_IDENTITIES = (
     "161_configuration_legacy_import.sql",
     "162_configuration_legacy_export_access.sql",
     "163_conversation_actor_worker_discovery.sql",
+    "164_actor_task_execution_capabilities.sql",
 )
 
 
@@ -151,6 +152,21 @@ def test_preflight_pins_current_163_checksum(tmp_path: Path) -> None:
     assert checksum in sql_path.read_text(encoding="utf-8")
 
 
+def test_preflight_pins_current_164_checksum(tmp_path: Path) -> None:
+    env, sql_path = _environment(tmp_path)
+
+    assert _run(env).returncode == 0
+
+    checksum = hashlib.sha256(
+        (
+            ROOT
+            / "backend/migrations"
+            / "164_actor_task_execution_capabilities.sql"
+        ).read_bytes()
+    ).hexdigest()
+    assert checksum in sql_path.read_text(encoding="utf-8")
+
+
 def test_preflight_checks_actor_worker_capability_boundary(
     tmp_path: Path,
 ) -> None:
@@ -164,15 +180,23 @@ def test_preflight_checks_actor_worker_capability_boundary(
         "worker_get_claimed_generation_task(uuid,uuid)",
         "worker_commit_generation_turn_with_context_v2",
         "worker_fail_generation_turn(uuid,uuid,text,text)",
+        "worker_update_generation_progress(uuid,uuid,text,jsonb)",
+        "worker_update_generation_model(uuid,uuid,text,jsonb)",
+        "worker_get_generation_terminal_snapshot(uuid,uuid)",
     ):
         assert function in sql
     assert "procedure.prosecdef" in sql
     assert "acl.grantee = 0" in sql
     assert "TENANT_CUTOVER_ACTOR_WORKER_CAPABILITY_INVALID" in sql
     assert "TENANT_CUTOVER_ACTOR_WORKER_DIRECT_ACCESS_INVALID" in sql
+    assert "TENANT_CUTOVER_ACTOR_CORE_OWNER_INVALID" in sql
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert f"'public.tasks', '{privilege}'" in sql
     assert sql.count("has_any_column_privilege(") == 3
+    assert "'public.conversations', 'SELECT'" in sql
+    assert "'public.messages', 'SELECT'" in sql
+    assert "'INSERT, UPDATE, DELETE'" in sql
+    assert "close_generation_turn(uuid,uuid,uuid)" in sql
 
 
 def test_preflight_checks_roles_owners_and_object_boundaries(

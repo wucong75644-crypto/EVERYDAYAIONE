@@ -42,6 +42,7 @@ class _Query:
 class _DB:
     def __init__(self, row, conversation=None):
         self.updates = []
+        self.rpc_calls = []
         self.rows = {
             "messages": row,
             "conversations": conversation or {
@@ -56,6 +57,10 @@ class _DB:
 
     def table(self, name):
         return _Query(self.rows.get(name), self.updates)
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        return _Query({"outcome": "updated"})
 
 
 def _claim() -> GenerationClaim:
@@ -281,21 +286,17 @@ async def test_executor_retries_smart_mode_inside_actor(monkeypatch):
         "fallback-model",
     ]
     handler._send_retry_notification.assert_awaited_once_with(
-        "client-1",
-        "conv-1",
-        "user-1",
-        "fallback-model",
-        1,
+        "client-1", "conv-1", "user-1", "fallback-model", 1,
     )
-    assert db.updates == [
-        {
-            "model_id": "fallback-model",
-            "request_params": {
-                "_is_smart_mode": True,
-                "_retry_from_model": DEFAULT_MODEL_ID,
-            },
-        }
-    ]
+    rpc_name, rpc_params = db.rpc_calls[0]
+    assert rpc_name == "worker_update_generation_model"
+    assert rpc_params["p_task_id"] == "task-1"
+    assert rpc_params["p_execution_token"] == "token-1"
+    assert rpc_params["p_model_id"] == "fallback-model"
+    assert rpc_params["p_request_params"] == {
+        "_is_smart_mode": True,
+        "_retry_from_model": DEFAULT_MODEL_ID,
+    }
 
 
 @pytest.mark.asyncio

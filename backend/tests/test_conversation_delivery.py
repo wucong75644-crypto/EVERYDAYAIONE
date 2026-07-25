@@ -32,9 +32,14 @@ class _DB:
     def __init__(self, task, message=None):
         self.task = task
         self.message = message
+        self.rpc_calls = []
 
     def table(self, name):
-        return _Query(self.task if name == "tasks" else self.message)
+        return _Query(self.message)
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        return _Query({"outcome": "terminal", "task": self.task})
 
 
 class _WebSocket:
@@ -54,6 +59,7 @@ def _task(status, delivery_context=None):
         "assistant_message_id": "message-1",
         "user_id": "user-1",
         "org_id": "org-1",
+        "execution_token": "token-1",
         "status": status,
         "request_params": {"_task_slot_id": "slot-1"},
         "error_message": "provider down",
@@ -136,6 +142,28 @@ async def test_ownership_loss_has_no_delivery_or_slot_release(monkeypatch):
     await delivery.notify(_task("running"), {"outcome": "ownership_lost"})
 
     assert released == []
+    assert websocket.messages == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_delivery_releases_slot_without_web_push(monkeypatch):
+    released = []
+
+    async def fake_release(task):
+        released.append(task["id"])
+
+    monkeypatch.setattr(
+        "services.conversation_delivery.release_task_slot",
+        fake_release,
+    )
+    websocket = _WebSocket()
+
+    await ActorTerminalDelivery(
+        _DB(_task("cancelled")),
+        websocket,
+    ).notify(_task("running"), {"outcome": "terminal"})
+
+    assert released == ["task-1"]
     assert websocket.messages == []
 
 

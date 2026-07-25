@@ -36,7 +36,13 @@ class ActorTerminalDelivery:
             "lease_expired",
         }:
             return
-        current = await self._load_task(str(task["id"]))
+        execution_token = task.get("execution_token")
+        if not execution_token:
+            raise RuntimeError("ACTOR_DELIVERY_EXECUTION_TOKEN_MISSING")
+        current = await self._load_task(
+            str(task["id"]),
+            str(execution_token),
+        )
         status = current.get("status")
         if status not in {"completed", "failed", "cancelled"}:
             return
@@ -162,17 +168,27 @@ class ActorTerminalDelivery:
         handler.org_id = task.get("org_id")
         return handler
 
-    async def _load_task(self, task_id: str) -> dict[str, Any]:
-        result = await (
-            self._db.table("tasks")
-            .select("*")
-            .eq("id", task_id)
-            .maybe_single()
-            .execute()
-        )
-        if not result.data:
+    async def _load_task(
+        self,
+        task_id: str,
+        execution_token: str,
+    ) -> dict[str, Any]:
+        result = await self._db.rpc(
+            "worker_get_generation_terminal_snapshot",
+            {
+                "p_task_id": task_id,
+                "p_execution_token": execution_token,
+            },
+        ).execute()
+        payload = result.data if result else None
+        if not isinstance(payload, dict):
             raise RuntimeError("ACTOR_DELIVERY_TASK_MISSING")
-        return dict(result.data)
+        if payload.get("outcome") == "non_terminal":
+            return {"status": payload.get("status")}
+        task = payload.get("task")
+        if payload.get("outcome") != "terminal" or not isinstance(task, dict):
+            raise RuntimeError("ACTOR_DELIVERY_TASK_MISSING")
+        return dict(task)
 
     async def _load_message(self, message_id: str) -> dict[str, Any]:
         result = await (

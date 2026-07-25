@@ -34,6 +34,7 @@ DO \$finalize\$
 DECLARE
     missing_migrations TEXT;
     invalid_actor_capabilities TEXT;
+    invalid_actor_dependencies TEXT;
     unexpected_owners TEXT;
     legacy_sessions INTEGER;
 BEGIN
@@ -59,7 +60,8 @@ BEGIN
           '160_configuration_resolution_facades.sql',
           '161_configuration_legacy_import.sql',
           '162_configuration_legacy_export_access.sql',
-          '163_conversation_actor_worker_discovery.sql'
+          '163_conversation_actor_worker_discovery.sql',
+          '164_actor_task_execution_capabilities.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1
@@ -81,7 +83,10 @@ BEGIN
           'worker_get_claimed_generation_task(uuid,uuid)',
           'worker_renew_generation_lease(uuid,uuid,integer)',
           'worker_commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
-          'worker_fail_generation_turn(uuid,uuid,text,text)'
+          'worker_fail_generation_turn(uuid,uuid,text,text)',
+          'worker_update_generation_progress(uuid,uuid,text,jsonb)',
+          'worker_update_generation_model(uuid,uuid,text,jsonb)',
+          'worker_get_generation_terminal_snapshot(uuid,uuid)'
       ]) AS required_function
       LEFT JOIN pg_catalog.pg_proc procedure
         ON procedure.oid = to_regprocedure('public.' || required_function)
@@ -129,9 +134,46 @@ BEGIN
        )
        OR has_any_column_privilege(
            'everydayai_worker', 'public.tasks', 'UPDATE'
+       )
+       OR NOT has_table_privilege(
+           'everydayai_worker', 'public.conversations', 'SELECT'
+       )
+       OR NOT has_table_privilege(
+           'everydayai_worker', 'public.messages', 'SELECT'
+       )
+       OR has_table_privilege(
+           'everydayai_worker', 'public.conversations',
+           'INSERT, UPDATE, DELETE'
+       )
+       OR has_table_privilege(
+           'everydayai_worker', 'public.messages',
+           'INSERT, UPDATE, DELETE'
        ) THEN
         RAISE EXCEPTION 'ACTOR_WORKER_CAPABILITY_CUTOVER_INCOMPLETE: %',
             COALESCE(invalid_actor_capabilities, 'direct_tasks_access');
+    END IF;
+
+    SELECT string_agg(required_function, ', ' ORDER BY required_function)
+      INTO invalid_actor_dependencies
+      FROM unnest(ARRAY[
+          'renew_generation_lease(uuid,uuid,integer)',
+          'update_generation_progress(uuid,uuid,text,jsonb)',
+          'fail_generation_turn(uuid,uuid,text,text)',
+          'commit_generation_turn_with_context_v2(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+          'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+          'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb,jsonb)',
+          'commit_generation_turn(uuid,uuid,uuid,jsonb,jsonb,integer,jsonb)',
+          'close_generation_turn(uuid,uuid,uuid)'
+      ]) AS required_function
+      LEFT JOIN pg_catalog.pg_proc procedure
+        ON procedure.oid = to_regprocedure('public.' || required_function)
+      LEFT JOIN pg_catalog.pg_roles owner_role
+        ON owner_role.oid = procedure.proowner
+     WHERE procedure.oid IS NULL
+        OR owner_role.rolname <> 'everydayai_owner';
+    IF invalid_actor_dependencies IS NOT NULL THEN
+        RAISE EXCEPTION 'ACTOR_CORE_OWNER_CUTOVER_INCOMPLETE: %',
+            invalid_actor_dependencies;
     END IF;
 
     SELECT string_agg(c.relname || '=' || owner_role.rolname, ', '
