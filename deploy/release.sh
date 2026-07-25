@@ -12,7 +12,7 @@ show_help() {
     cat <<'EOF'
 用法:
   ./deploy/release.sh --message "feat: 描述" --file 路径 [--file 路径...]
-                      [--frontend-only|--backend-only]
+                      [--frontend-only|--backend-only] [--skip-test]
 
 默认部署前端和后端。正常路径不进行交互确认；任何门禁失败都会停止。
 EOF
@@ -34,6 +34,10 @@ while [[ $# -gt 0 ]]; do
         -f|--frontend-only|-b|--backend-only)
             DEPLOY_ARGS+=("$1")
             scope_count=$((scope_count + 1))
+            shift
+            ;;
+        --skip-test)
+            DEPLOY_ARGS+=("$1")
             shift
             ;;
         -h|--help)

@@ -96,6 +96,8 @@ def test_unified_release_uses_an_isolated_git_worktree() -> None:
     assert 'worktree add --detach "$release_dir" "$release_sha"' in RELEASE_SCRIPT
     assert '--expected-sha "$release_sha"' in RELEASE_SCRIPT
     assert 'if (( ${#DEPLOY_ARGS[@]} > 0 )); then' in RELEASE_SCRIPT
+    assert "--skip-test)" in RELEASE_SCRIPT
+    assert 'DEPLOY_ARGS+=("$1")' in RELEASE_SCRIPT
     assert "git add -A" not in RELEASE_SCRIPT
 
 
