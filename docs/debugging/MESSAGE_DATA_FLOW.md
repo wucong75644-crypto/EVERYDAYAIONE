@@ -401,7 +401,6 @@ useTextMessageHandler.handleChatMessage() (useTextMessageHandler.ts:32)
   ↓
   调用统一发送器 sendMessage() (messageSender.ts:88)
     ├─ Phase 1: 乐观更新（创建用户消息 + 占位符）
-    ├─ Phase 1.5: 提前订阅 WebSocket (subscribeTaskWithMapping)
     ├─ Phase 2: 调用后端 API ⚠️ 关键点
     │   ↓
     │   request<GenerateResponse>({
@@ -413,9 +412,11 @@ useTextMessageHandler.handleChatMessage() (useTextMessageHandler.ts:32)
     │       placeholder_created_at, ...
     │     }
     │   })
-    ├─ Phase 3: 更新消息状态（task_id）
-    ├─ Phase 4: 创建任务追踪
-    └─ Phase 5: 验证 task_id 一致性
+    ├─ Phase 3: API 创建任务成功后订阅 response.task_id
+    │   └─ 运行中补发 accumulated；已完成补发终态
+    ├─ Phase 4: 更新消息状态（task_id）
+    ├─ Phase 5: 创建任务追踪
+    └─ Phase 6: 验证 task_id 一致性
 ```
 
 ### ⚠️ 当前问题

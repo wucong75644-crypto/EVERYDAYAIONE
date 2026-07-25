@@ -117,7 +117,7 @@ export function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): v
   });
 }
 
-/** Phase 3-5：替换占位状态、建立任务追踪并校验 task_id。 */
+/** Phase 3-5：替换占位状态、建立任务追踪并订阅已创建的任务。 */
 export function processApiResponse(
   response: GenerateResponse,
   options: SendOptions,
@@ -170,8 +170,8 @@ export function processApiResponse(
       expected: ctx.clientTaskId,
       received: response.task_id,
     });
-    subscribeTask?.(response.task_id, conversationId);
   }
+  subscribeTask?.(response.task_id, conversationId);
 }
 
 function replaceWithMediaPlaceholder(

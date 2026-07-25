@@ -16,7 +16,7 @@
 | `frontend/src/hooks/useWebSocket.ts` | `subscribeTask` 只在 WS OPEN 时发送，**WS 断线时订阅静默丢弃，重连后不重新订阅** |
 | `frontend/src/contexts/wsMessageHandlers.ts` | chunk 缓冲 16ms flush，`message_done` 先 flush 再处理 |
 | `frontend/src/stores/slices/streamingSlice.ts` | `appendStreamingContent` 更新 optimisticMessages Map |
-| `frontend/src/services/messageSender.ts` | Phase 1.5 提前订阅 `subscribeTask(clientTaskId, conversationId)` |
+| `frontend/src/services/messageSender.ts` | HTTP 接受并创建任务后订阅 `response.task_id`；网络结果不确定时才用稳定 `client_task_id` 尝试恢复订阅，避免任务尚不存在时被租户门禁拒绝 |
 | `backend/services/wecom/wecom_message_service.py` | **企微完全独立**：用 `generate_complete()`（非流式）+ `ws_client.send_stream_chunk()`（企微协议）。不走 `WebSocketManager`。只在最后通知 Web 端 `send_to_user(conversation_updated)` |
 | `backend/wecom_ws_runner.py` | 独立进程，管理企微 WS 长连接，与 Web 4 Worker 无关 |
 

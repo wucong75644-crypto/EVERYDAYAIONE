@@ -250,6 +250,26 @@ LEGACY_DATABASE_OWNER=everydayai \
 bash deploy/rollback-runtime-message-ownership.sh
 ```
 
+Memory Runtime 在应用迁移 165 前，必须由管理员单独转移四张表与两个原子提交函数：
+
+```bash
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/transfer-memory-runtime-ownership.sh
+```
+
+随后才可通过标准迁移 Runner 应用
+`165_memory_runtime_tenant_boundary.sql`。迁移会对四张 Memory 表启用 FORCE RLS，
+撤销 `PUBLIC/service_role` 的旧提交能力，并为 Web runtime 与 Actor worker 授予
+最小权限。回滚必须先应用 165 rollback 关闭 FORCE RLS，再显式执行：
+
+```bash
+ALLOW_TENANT_DB_OWNERSHIP_ROLLBACK=true \
+TENANT_DB_ADMIN_URL='postgresql://...' \
+LEGACY_DATABASE_OWNER=everydayai \
+bash deploy/rollback-memory-runtime-ownership.sh
+```
+
 只有在 150–163 全部应用、Actor Worker Facade 门禁通过、所有服务已切换独立角色、
 旧角色活动连接归零后，才能撤销
 临时 owner 兼容能力：

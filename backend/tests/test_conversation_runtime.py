@@ -128,5 +128,5 @@ def test_runtime_routes_worker_and_task_databases_by_scope():
     assert runtime._worker.db.scope.actor_user_id is None
     assert executor._db is application
     assert executor._handler_db_factory() is handler
-    assert observer._db is application
+    assert observer._db is control
     assert observer._post_handler_factory().db is handler

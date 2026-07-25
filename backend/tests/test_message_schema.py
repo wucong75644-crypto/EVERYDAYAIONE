@@ -21,6 +21,7 @@ from schemas.message import (
     Message,
     MessageResponse,
     MessageRole,
+    MessageStatus,
     TextPart,
 )
 from pydantic import TypeAdapter
@@ -206,3 +207,16 @@ def test_message_response_preserves_turn_relationship_fields():
     assert response.reply_to_message_id == message.reply_to_message_id
     assert response.context_revision == 7
     assert response.message_kind == "conversation"
+
+
+def test_message_response_accepts_interrupted_status():
+    response = MessageResponse(
+        id="00000000-0000-0000-0000-000000000002",
+        conversation_id="00000000-0000-0000-0000-000000000001",
+        role=MessageRole.ASSISTANT,
+        content=[{"type": "interrupt_marker", "reason": "user_cancel"}],
+        status="interrupted",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    assert response.status is MessageStatus.INTERRUPTED

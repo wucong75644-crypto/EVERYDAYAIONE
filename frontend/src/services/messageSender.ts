@@ -93,12 +93,6 @@ export async function sendMessage(options: SendOptions): Promise<string> {
   // Phase 1: 乐观更新
   applyOptimisticUpdate(options, ctx);
 
-  // Phase 1.5: 提前订阅（在发送请求前）
-  if (subscribeTask) {
-    subscribeTask(ctx.clientTaskId, conversationId);
-    logger.info('messageSender', 'pre-subscribed to task', { clientTaskId: ctx.clientTaskId });
-  }
-
   try {
     // Phase 2: 调用后端 API
     const response = await requestWithIdempotentRetry({
@@ -139,6 +133,12 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       apiError.code, apiError.message, apiError.status, apiError.details,
       apiError.transport, disposition,
     );
+    if (disposition === 'uncertain' && subscribeTask) {
+      subscribeTask(ctx.clientTaskId, conversationId);
+      logger.info('messageSender', 'subscribed after uncertain outcome', {
+        clientTaskId: ctx.clientTaskId,
+      });
+    }
     if (disposition !== 'uncertain') rollbackOnError(classifiedError, options, ctx);
     throw classifiedError;
   }

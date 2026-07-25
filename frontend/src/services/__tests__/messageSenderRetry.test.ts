@@ -81,6 +81,25 @@ describe('sendMessage idempotent retry', () => {
     expect(store.addMessage).toHaveBeenCalledTimes(1);
     expect(store.startStreaming).toHaveBeenCalledTimes(1);
     expect(subscribeTask).toHaveBeenCalledTimes(1);
+    expect(subscribeTask).toHaveBeenCalledWith('task-1', 'conv-1');
+  });
+
+  it('subscribes only after the backend has created the task', async () => {
+    let resolveRequest: (value: typeof response) => void = () => undefined;
+    requestMock.mockReturnValue(new Promise<typeof response>((resolve) => {
+      resolveRequest = resolve;
+    }));
+    const subscribeTask = vi.fn();
+
+    const pending = sendMessage({
+      conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }],
+      identifiers, subscribeTask,
+    });
+
+    expect(subscribeTask).not.toHaveBeenCalled();
+    resolveRequest(response);
+    await expect(pending).resolves.toBe('task-1');
+    expect(subscribeTask).toHaveBeenCalledWith('task-1', 'conv-1');
   });
 
   it('keeps optimistic state when network outcome remains uncertain', async () => {
@@ -101,6 +120,24 @@ describe('sendMessage idempotent retry', () => {
     expect(store.completeStreaming).not.toHaveBeenCalled();
     expect(store.removeMessage).not.toHaveBeenCalled();
     expect(unsubscribeTask).not.toHaveBeenCalled();
+  });
+
+  it('subscribes after retries leave the request outcome uncertain', async () => {
+    requestMock.mockRejectedValue(new ApiRequestError(
+      'NETWORK_ERROR', 'Network Error', undefined, undefined, 'network',
+    ));
+    const subscribeTask = vi.fn();
+
+    const pending = sendMessage({
+      conversationId: 'conv-1', content: [{ type: 'text', text: 'hello' }],
+      identifiers, subscribeTask,
+    });
+    const rejection = expect(pending).rejects.toMatchObject({ sendDisposition: 'uncertain' });
+    await vi.runAllTimersAsync();
+    await rejection;
+
+    expect(subscribeTask).toHaveBeenCalledTimes(1);
+    expect(subscribeTask).toHaveBeenCalledWith('task-1', 'conv-1');
   });
 
   it('rolls back streaming state when backend returns an explicit 500', async () => {

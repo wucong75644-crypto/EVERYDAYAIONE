@@ -112,7 +112,7 @@ class ConversationActorRuntime:
         databases: ActorTaskDatabases,
     ) -> ActorTerminalDelivery:
         return ActorTerminalDelivery(
-            databases.application,
+            databases.control,
             self._websocket,
             post_handler_factory=lambda: _create_post_handler(
                 databases.handler,

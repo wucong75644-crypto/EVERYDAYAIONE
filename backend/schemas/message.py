@@ -41,6 +41,7 @@ class MessageStatus(str, Enum):
     GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 class MessageOperation(str, Enum):
@@ -304,7 +305,7 @@ class GenerateRequest(BaseModel):
 
     # 前端预分配 ID（用于乐观更新）
     client_request_id: Optional[str] = Field(None, max_length=100)
-    client_task_id: Optional[str] = Field(None, max_length=100)  # 🔥 前端生成的 task_id（用于提前订阅）
+    client_task_id: Optional[str] = Field(None, max_length=100)
     created_at: Optional[datetime] = None
     assistant_message_id: Optional[str] = Field(None, max_length=100)
     placeholder_created_at: Optional[datetime] = None  # 占位符创建时间（确保前后端时间戳一致）

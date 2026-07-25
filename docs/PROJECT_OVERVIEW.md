@@ -138,6 +138,16 @@
   Owner、独立管理员、旧连接检查及旧角色名注入拒绝。
 - `backend/tests/test_agent_runtime_ownership_scripts.py`：覆盖精确 13 表范围、前置检查、
   owner 辅助读取授权、旧服务兼容授权、无提前 RLS、管理员 URL 隐藏及回滚保护。
+- `deploy/transfer-memory-runtime-ownership.sh`、
+  `deploy/rollback-memory-runtime-ownership.sh`：原子转移或受保护地恢复 Memory Runtime
+  四表与两个提交函数 owner；回滚在任一目标表仍 FORCE RLS 时失败关闭。
+- `backend/migrations/165_memory_runtime_tenant_boundary.sql`：为 Pipeline State、
+  Session Log、Consolidation Run 与 Curated Atom 启用 FORCE RLS，绑定用户、企业、
+  会话及来源日志，并只授予 runtime/worker 实际所需能力。
+- `backend/tests/test_memory_runtime_tenant_boundary_migration.py`、
+  `test_memory_runtime_ownership_scripts.py`、
+  `test_memory_runtime_role_matrix_external.py`：覆盖迁移/回滚静态合同、所有权脚本门禁及
+  真实 PostgreSQL Worker 跨租户隔离矩阵。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 18 张表、
   实际列 sequence 和 33 个固定业务函数签名（含 Actor 核心依赖与两个 WeCom enqueue
   重载）；撤销
@@ -542,6 +552,7 @@ EVERYDAYAIONE/
 │   │   ├── 151_agent_runtime_role_grants.sql # Agent Runtime 首组最小角色授权
 │   │   ├── 163_conversation_actor_worker_discovery.sql # Actor 无租户发现与任务级 Worker Facade
 │   │   ├── 164_actor_task_execution_capabilities.sql # Actor 任务级执行权限与终态 Facade
+│   │   ├── 165_memory_runtime_tenant_boundary.sql # Memory 四表 FORCE RLS 与最小角色能力
 │   │   └── rollback/              # 数据库迁移回滚脚本
 │   │       ├── 120_turn_revision_foundation_rollback.sql
 │   │       ├── 121_conversation_actor_queue_rollback.sql
@@ -555,6 +566,7 @@ EVERYDAYAIONE/
 │   │       ├── 129_conversation_attachments_rollback.sql
 │   │       ├── 163_conversation_actor_worker_discovery_rollback.sql
 │   │       ├── 164_actor_task_execution_capabilities_rollback.sql
+│   │       ├── 165_memory_runtime_tenant_boundary_rollback.sql
 │   │       ├── 131_attachment_asset_lifecycle_rollback.sql
 │   │       ├── 132_wecom_channel_task_enqueue_rollback.sql
 │   │       ├── 133_wecom_attachment_single_consumption_rollback.sql

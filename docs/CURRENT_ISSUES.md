@@ -1,5 +1,18 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-25 Actor 消息已完成但 Web 持续“思考中” — 第 1 步已修复，待部署验证
+
+- 生产证据确认任务和助手消息均已 `completed`，但终态投递使用 `OrgScopedDB` 后被自动
+  注入额外 `p_org_id`，与二参数 Worker 终态函数不匹配，WebSocket 完成事件未发出。
+- 终态投递现使用已绑定任务身份的 `control` 门面；应用数据和后处理仍分别使用原有
+  `application`、`handler` 门面，不扩大 Worker 表权限。
+- 前端不再在任务创建前订阅；API 成功后订阅真实任务 ID，并复用后端运行中累计内容和
+  已完成终态补发。网络结果不确定时仍以稳定客户端任务 ID 尝试恢复。
+- 后端 `MessageStatus` 已补齐数据库、取消逻辑和前端都在使用的 `interrupted`，
+  消息列表不再因合法中断记录触发响应校验错误。
+- 企业配置控制面仍属于后续已确认步骤；Session Memory Worker 权限已由迁移 165
+  收口为完整 Memory Pipeline 租户边界，尚未应用生产。
+
 ## 2026-07-24 上传过程中切换目录导致当前目录被覆盖 — 已修复
 
 - 上传任务现固定绑定启动目录；用户切换目录后，旧上传成功或失败都不会刷新、取消或写入
@@ -191,6 +204,12 @@
   task-scoped Facade；8 个底层原子函数 owner 前置由管理员所有权脚本闭合，`tasks`
   继续保持零直接权限。代码与部署门禁
   已完成但 164 尚未应用生产，完成真实 PostgreSQL 角色测试前不得再次切换 Actor。
+- Memory Runtime 权限缺口已按完整调用链收口，而非只给 `memory_session_logs` 打补丁：
+  新迁移 165 同时覆盖 `memory_pipeline_state`、`memory_session_logs`、
+  `memory_consolidation_runs`、`memory_atoms`，启用 FORCE RLS，并以用户、企业、
+  会话和来源日志建立 policy；两个提交函数保留 `SECURITY INVOKER`，撤销
+  `PUBLIC/service_role` 后仅授权 runtime/worker。独立 owner 转移与受保护回滚脚本、
+  静态合同及真实 PostgreSQL 角色矩阵已加入；当前只完成本地代码，未操作生产。
 - 生产创建租户数据库角色后发现环境验证器优先执行 BSD `stat -f`，GNU `stat` 会返回
   非权限文本但退出成功，导致真实 `0600` 文件被误判。`validate-tenant-db-env.sh`
   已改为只接受 GNU `stat -c` 或 BSD `stat -f` 返回的纯八进制权限，并新增两种平台

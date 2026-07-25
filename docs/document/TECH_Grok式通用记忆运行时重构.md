@@ -526,3 +526,16 @@ Search/Get SQL、`ScoredMemory`、Facade、Agent 工具和 Prompt 注入只使�
 - 每阶段结论和遗留风险更新 `CURRENT_ISSUES.md`。
 - 先 shadow、再双读对账、再切读、最后停止旧写入。
 - 每阶段独立可回滚，不一次性删除旧表和旧数据。
+
+## 17. 多租户数据库执行边界
+
+迁移 165 将 Memory Runtime 作为一条完整流水线治理，而不是只处理 Session Log：
+
+- `memory_pipeline_state` 同时校验用户/企业事实和所属会话。
+- `memory_session_logs` 同时校验用户和可见 Conversation。
+- `memory_consolidation_runs` 要求全部来源日志在当前用户 Scope 内可见。
+- `memory_atoms` 沿用个人/企业事实隔离，并纳入 FORCE RLS。
+- `commit_memory_session_flush` 与 `commit_memory_consolidation` 保持
+  `SECURITY INVOKER`，因此函数内部读写继续受调用者 Scope 与 RLS 约束。
+- 所有权转移、迁移和回滚严格分步；真实 PostgreSQL 矩阵必须验证同租户可见、
+  跨租户不可见、越权写入被拒绝后，才可部署生产。

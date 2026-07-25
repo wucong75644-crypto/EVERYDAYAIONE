@@ -38,7 +38,9 @@ IETF 文档目前仍是 Internet-Draft，不是正式 RFC；本设计采用的�
 ### 3.1 架构现状
 
 1. `InputArea` 组合文本、图片、文件、工作区文件和音频状态，`useInputSubmission` 负责提交和成功后清理。
-2. `sendMessage` 在 HTTP 前通过 `applyOptimisticUpdate` 创建用户乐观消息和助手占位，并提前订阅 `client_task_id`。
+2. `sendMessage` 在 HTTP 前通过 `applyOptimisticUpdate` 创建用户乐观消息和助手占位；
+   HTTP 接受并创建任务后才订阅 `response.task_id`，运行中累计内容和已完成终态由后端
+   subscribe 补发。网络结果最终仍不确定时，使用稳定 `client_task_id` 尝试恢复订阅。
 3. 后端 `/messages/generate` 在返回前完成预检、用户消息、助手占位和任务创建；后续结果通过 WebSocket 和任务恢复处理。
 4. `/tasks/pending` 已支持刷新恢复和 WebSocket 重连补偿。
 5. `client_request_id` 当前只有普通索引，只用于消息匹配，不具备服务端幂等语义。
