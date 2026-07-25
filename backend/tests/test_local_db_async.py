@@ -9,6 +9,7 @@ import json
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -65,7 +66,10 @@ class TestAsyncQueryBuilderSelect:
     async def test_basic_select(self):
         """基础 SELECT * 查询"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("id",), ("name",)]
+        cur.description = [
+            SimpleNamespace(name="id"),
+            SimpleNamespace(name="name"),
+        ]
         cur.fetchall = AsyncMock(return_value=[
             {"id": 1, "name": "Alice"},
             {"id": 2, "name": "Bob"},
@@ -361,7 +365,7 @@ class TestAsyncRpcCaller:
     async def test_rpc_with_params(self):
         """RPC 带参数调用"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("result",)]
+        cur.description = [SimpleNamespace(name="my_func")]
         cur.fetchall = AsyncMock(return_value=[{"result": 42}])
 
         result = await AsyncRpcCaller(
@@ -378,7 +382,7 @@ class TestAsyncRpcCaller:
     async def test_rpc_no_params(self):
         """RPC 无参数调用"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("result",)]
+        cur.description = [SimpleNamespace(name="ping")]
         cur.fetchall = AsyncMock(return_value=[{"result": "ok"}])
 
         result = await AsyncRpcCaller(pool, "ping", {}).execute()
@@ -392,7 +396,7 @@ class TestAsyncRpcCaller:
     async def test_rpc_jsonb_auto_parse(self):
         """RPC 返回 JSONB 字符串自动解析"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("result",)]
+        cur.description = [SimpleNamespace(name="get_stats")]
         cur.fetchall = AsyncMock(return_value=[
             {"result": '{"status": "ok", "count": 5}'}
         ])
@@ -407,7 +411,7 @@ class TestAsyncRpcCaller:
     async def test_rpc_jsonb_array_parse(self):
         """RPC 返回 JSON 数组字符串自动解析"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("result",)]
+        cur.description = [SimpleNamespace(name="get_ids")]
         cur.fetchall = AsyncMock(return_value=[
             {"result": '[1, 2, 3]'}
         ])
@@ -420,7 +424,7 @@ class TestAsyncRpcCaller:
     async def test_rpc_plain_string_not_parsed(self):
         """RPC 返回普通字符串不触发 JSON 解析"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("result",)]
+        cur.description = [SimpleNamespace(name="greet")]
         cur.fetchall = AsyncMock(return_value=[{"result": "hello world"}])
 
         result = await AsyncRpcCaller(pool, "greet", {}).execute()
@@ -441,7 +445,10 @@ class TestAsyncRpcCaller:
     async def test_rpc_multiple_rows(self):
         """RETURNS TABLE RPC 返回展开后的多行字典。"""
         pool, conn, cur = _mock_async_pool()
-        cur.description = [("id",), ("name",)]
+        cur.description = [
+            SimpleNamespace(name="id"),
+            SimpleNamespace(name="name"),
+        ]
         cur.fetchall = AsyncMock(return_value=[
             {"id": 1, "name": "A"},
             {"id": 2, "name": "B"},
@@ -454,6 +461,23 @@ class TestAsyncRpcCaller:
             {"id": 2, "name": "B"},
         ]
         assert cur.execute.call_args[0][0].startswith("SELECT * FROM ")
+
+    @pytest.mark.asyncio
+    async def test_rpc_single_row_table_preserves_row_list(self):
+        """单行单列 RETURNS TABLE 不能被压缩成标量。"""
+        pool, conn, cur = _mock_async_pool()
+        cur.description = [SimpleNamespace(name="org_id")]
+        cur.fetchall = AsyncMock(return_value=[
+            {"org_id": "eadc4c11-7e83-4279-a849-cfe0cbf6982b"}
+        ])
+
+        result = await AsyncRpcCaller(
+            pool, "sync_discover_erp_targets", {}
+        ).execute()
+
+        assert result.data == [
+            {"org_id": "eadc4c11-7e83-4279-a849-cfe0cbf6982b"}
+        ]
 
 
 # ============================================================

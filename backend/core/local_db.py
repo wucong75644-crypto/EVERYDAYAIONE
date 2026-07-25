@@ -534,7 +534,12 @@ class RpcCaller:
                 cur.execute(sql, params)
                 if cur.description:
                     rows = cur.fetchall()
-                    if len(rows) == 1 and len(rows[0]) == 1:
+                    column_name = cur.description[0].name
+                    if (
+                        len(rows) == 1
+                        and len(rows[0]) == 1
+                        and column_name == self._func_name
+                    ):
                         val = list(rows[0].values())[0]
                         # JSONB 自动解析（字典或数组）
                         if isinstance(val, str):
@@ -669,7 +674,12 @@ class AsyncRpcCaller(RpcCaller):
                 await cur.execute(sql, params)
                 if cur.description:
                     rows = await cur.fetchall()
-                    if len(rows) == 1 and len(rows[0]) == 1:
+                    column_name = cur.description[0].name
+                    if (
+                        len(rows) == 1
+                        and len(rows[0]) == 1
+                        and column_name == self._func_name
+                    ):
                         val = list(rows[0].values())[0]
                         if isinstance(val, str):
                             stripped = val.strip()
