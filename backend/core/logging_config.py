@@ -29,7 +29,7 @@ warnings.filterwarnings(
 _TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&\s]+", re.IGNORECASE)
 
 
-class _UvicornAccessTokenFilter(logging.Filter):
+class UvicornAccessTokenFilter(logging.Filter):
     """在标准 access logger 格式化前清除 URL 中的认证 Token。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -45,11 +45,11 @@ class _UvicornAccessTokenFilter(logging.Filter):
 def _install_access_token_filter() -> None:
     access_logger = logging.getLogger("uvicorn.access")
     if any(
-        isinstance(item, _UvicornAccessTokenFilter)
+        isinstance(item, UvicornAccessTokenFilter)
         for item in access_logger.filters
     ):
         return
-    access_logger.addFilter(_UvicornAccessTokenFilter())
+    access_logger.addFilter(UvicornAccessTokenFilter())
 
 
 def setup_logging():

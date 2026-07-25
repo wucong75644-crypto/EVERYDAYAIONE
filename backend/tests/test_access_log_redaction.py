@@ -3,7 +3,7 @@
 import logging
 
 from core.logging_config import (
-    _UvicornAccessTokenFilter,
+    UvicornAccessTokenFilter,
     _install_access_token_filter,
 )
 
@@ -25,7 +25,7 @@ def test_access_filter_redacts_token_and_preserves_other_query_params() -> None:
         None,
     )
 
-    assert _UvicornAccessTokenFilter().filter(record)
+    assert UvicornAccessTokenFilter().filter(record)
     assert record.args[2] == "/api/ws?token=***&org_id=org-1"
     assert "secret.jwt" not in record.getMessage()
 
@@ -35,13 +35,13 @@ def test_access_filter_installation_is_idempotent() -> None:
     original_filters = list(access_logger.filters)
     access_logger.filters = [
         item for item in original_filters
-        if not isinstance(item, _UvicornAccessTokenFilter)
+        if not isinstance(item, UvicornAccessTokenFilter)
     ]
     try:
         _install_access_token_filter()
         _install_access_token_filter()
         assert sum(
-            isinstance(item, _UvicornAccessTokenFilter)
+            isinstance(item, UvicornAccessTokenFilter)
             for item in access_logger.filters
         ) == 1
     finally:
