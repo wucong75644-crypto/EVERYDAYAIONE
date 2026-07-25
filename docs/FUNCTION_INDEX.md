@@ -14,6 +14,7 @@
 | 函数名 | 文件路径 | 功能描述 |
 |--------|----------|----------|
 | `worker_settle_media_batch_item` | `backend/migrations/186_worker_media_failure_settlement.sql` | 仅允许 Worker 角色按版本结算图片批次项；成功时确认积分，失败时原子退款，并在同一事务写入任务终态和批次快照 |
+| `worker_commit_media_batch_message` | `backend/migrations/187_worker_media_message_scope_types.sql` | 校验批次消息与历史 task 的文本标识 Scope，随后以 UUID 类型写入或更新最终 assistant 消息 |
 
 ### WeCom 数据库角色切换闭环
 
