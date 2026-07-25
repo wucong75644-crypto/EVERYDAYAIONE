@@ -20,6 +20,7 @@ if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
 from core.crypto import aes_encrypt, aes_decrypt, generate_encrypt_key
+from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.org.config_resolver import (
     OrgConfigResolver,
     AsyncOrgConfigResolver,
@@ -241,7 +242,8 @@ class TestPerOrgKeyAsync:
         db = AsyncFakeDB()
         resolver = _make_resolver(AsyncOrgConfigResolver, db)
 
-        upsert_calls = []
+        rpc_calls = []
+        org_id = "10000000-0000-0000-0000-000000000001"
 
         class SpyBuilder:
             def __init__(self, record=True):
@@ -249,28 +251,38 @@ class TestPerOrgKeyAsync:
             def select(self, *a, **kw): return self
             def eq(self, *a, **kw): return self
             def maybe_single(self): return self
-            def upsert(self, data, on_conflict=""):
-                if self._record:
-                    upsert_calls.append(data)
-                return self
             async def execute(self):
                 return MagicMock(data={"encrypt_key": ORG_KEY})
 
         class SpyDB:
+            scope = DatabaseScope(
+                actor_user_id=None,
+                org_id=org_id,
+                access_kind=DatabaseAccessKind.WORKER,
+                request_id="review-simulation",
+            )
+
             def table(self, name):
-                return SpyBuilder(record=(name == "org_configs"))
+                return SpyBuilder(record=False)
+            def rpc(self, name, params):
+                rpc_calls.append((name, params))
+                return SpyBuilder(record=False)
 
         resolver.db = SpyDB()
-        await resolver.update_erp_token("org-H", "access_new", "refresh_new")
+        await resolver.update_erp_token(
+            org_id, "access_new", "refresh_new",
+        )
 
-        assert len(upsert_calls) == 2
-        # 用 ORG_KEY 加密的数据应能用 ORG_KEY 解密
-        for call in upsert_calls:
-            decrypted = aes_decrypt(call["config_value_encrypted"], ORG_KEY)
-            assert decrypted in ("access_new", "refresh_new")
-            # 用 GLOBAL_KEY 解不开
+        assert len(rpc_calls) == 1
+        name, params = rpc_calls[0]
+        assert name == "commit_worker_org_erp_tokens"
+        for key, expected in (
+            ("p_access_token_encrypted", "access_new"),
+            ("p_refresh_token_encrypted", "refresh_new"),
+        ):
+            assert aes_decrypt(params[key], ORG_KEY) == expected
             with pytest.raises(ValueError):
-                aes_decrypt(call["config_value_encrypted"], GLOBAL_KEY)
+                aes_decrypt(params[key], GLOBAL_KEY)
 
 
 # ============================================================
@@ -361,7 +373,7 @@ class TestSyncWriteWithOrgKey:
 
     def test_sync_update_erp_token_uses_org_key(self):
         """同步版 update_erp_token 用企业密钥加密"""
-        upsert_calls = []
+        rpc_calls = []
 
         class SpyBuilder:
             def __init__(self, record=True):
@@ -369,29 +381,33 @@ class TestSyncWriteWithOrgKey:
             def select(self, *a, **kw): return self
             def eq(self, *a, **kw): return self
             def maybe_single(self): return self
-            def upsert(self, data, on_conflict=""):
-                if self._record:
-                    upsert_calls.append(data)
-                return self
             def execute(self):
                 return MagicMock(data={"encrypt_key": ORG_KEY})
 
         class SpyDB:
             def table(self, name):
-                return SpyBuilder(record=(name == "org_configs"))
+                return SpyBuilder(record=False)
+            def rpc(self, name, params):
+                rpc_calls.append((name, params))
+                return SpyBuilder(record=False)
 
         db = SpyDB()
         resolver = _make_resolver(OrgConfigResolver, db)
         resolver.update_erp_token("org-sync", "at_new", "rt_new")
 
-        assert len(upsert_calls) == 2
-        for call in upsert_calls:
-            decrypted = aes_decrypt(call["config_value_encrypted"], ORG_KEY)
-            assert decrypted in ("at_new", "rt_new")
+        assert len(rpc_calls) == 1
+        name, params = rpc_calls[0]
+        assert name == "set_governed_org_erp_tokens"
+        assert aes_decrypt(
+            params["p_access_token_encrypted"], ORG_KEY,
+        ) == "at_new"
+        assert aes_decrypt(
+            params["p_refresh_token_encrypted"], ORG_KEY,
+        ) == "rt_new"
 
     def test_sync_set_uses_org_key(self):
         """同步版 set 用企业密钥加密"""
-        upsert_calls = []
+        rpc_calls = []
 
         class SpyBuilder:
             def __init__(self, record=True):
@@ -399,24 +415,27 @@ class TestSyncWriteWithOrgKey:
             def select(self, *a, **kw): return self
             def eq(self, *a, **kw): return self
             def maybe_single(self): return self
-            def upsert(self, data, on_conflict=""):
-                if self._record:
-                    upsert_calls.append(data)
-                return self
             def execute(self):
                 return MagicMock(data={"encrypt_key": ORG_KEY})
 
         class SpyDB:
             def table(self, name):
-                return SpyBuilder(record=(name == "org_configs"))
+                return SpyBuilder(record=False)
+            def rpc(self, name, params):
+                rpc_calls.append((name, params))
+                return SpyBuilder(record=False)
 
         db = SpyDB()
         resolver = _make_resolver(OrgConfigResolver, db)
-        resolver.set("org-set", "custom_key", "custom_val", "admin")
+        resolver.set(
+            "org-set", "ai_google_api_key", "custom_val", "admin",
+        )
 
-        assert len(upsert_calls) == 1
+        assert len(rpc_calls) == 1
+        name, params = rpc_calls[0]
+        assert name == "set_governed_org_config"
         decrypted = aes_decrypt(
-            upsert_calls[0]["config_value_encrypted"], ORG_KEY,
+            params["p_config_value_encrypted"], ORG_KEY,
         )
         assert decrypted == "custom_val"
 
