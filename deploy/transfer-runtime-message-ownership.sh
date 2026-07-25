@@ -224,6 +224,9 @@ GRANT EXECUTE ON FUNCTION
     public.enqueue_wecom_generation_turn_v2(
         jsonb,uuid,uuid,uuid,jsonb,jsonb
     ),
+    public.enqueue_wecom_generation_turn_v2(
+        jsonb,uuid,uuid,uuid,jsonb,jsonb,uuid
+    ),
     public.update_wecom_conversation_setting(uuid,uuid,text,text,uuid),
     public.record_user_activity(
         uuid,text,uuid,text,text,text,timestamp with time zone,jsonb

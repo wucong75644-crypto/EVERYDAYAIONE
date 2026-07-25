@@ -185,6 +185,12 @@ def test_transfer_revokes_new_roles_and_preserves_legacy_service(
         "public.resolve_wecom_conversation(uuid,text,text,text,uuid)"
         in sql
     )
+    assert (
+        "public.enqueue_wecom_generation_turn_v2(\n"
+        "        jsonb,uuid,uuid,uuid,jsonb,jsonb,uuid\n"
+        "    )"
+        in sql
+    )
     assert "TO everydayai_wecom_runtime;" in sql
     assert (
         "public.record_user_activity(\n"
