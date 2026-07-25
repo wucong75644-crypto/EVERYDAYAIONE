@@ -1,5 +1,18 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-26 Web Runtime 核心 ACL 在角色切换后丢失 — 修复实施中
+
+- 生产 Backend 已使用 `everydayai_runtime`，但 `users`、`conversations`、
+  `messages`、`tasks` 等核心表的 Runtime ACL 被后续 owner 转移脚本统一撤销，
+  导致登录态、历史记录、管理员页面和消息发送同时失败；业务数据未删除。
+- 根因是迁移 153 已建立的 Web ACL 与 `transfer-runtime-message-ownership.sh`
+  后续撤权顺序冲突，finalize 又没有校验 Web 核心权限矩阵。
+- 修复采用迁移 189 重建精确 ACL 和数据库验证的平台管理员只读 policy；Web HTTP
+  数据库依赖统一注入 actor/org Runtime Scope。WeCom、Worker、Sync 和 PUBLIC
+  不获得 Web 权限，Worker 既有会话/消息只读能力保持不变。
+- owner 转移和 finalize 同步增加 Web ACL 合同。完成定向、真实角色矩阵、部署及
+  Web/管理员/企微回归前不得标记为已修复。
+
 ## 2026-07-26 Conversation Actor Handler 数据库角色错配 — 已修复，待部署验证
 
 - 生产企微入站和 Actor 入队均成功，但 Actor 执行时以

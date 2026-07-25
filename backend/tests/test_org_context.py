@@ -26,6 +26,7 @@ from core.data_isolation import (
     get_org_id_for_insert,
 )
 
+USER_ID = "f566f6cc-3e7a-4383-befe-42c05fbfbff8"
 
 # ── Fixtures ────────────────────────────────────────────────
 
@@ -108,6 +109,12 @@ def _make_request(org_id: str | None = None) -> MagicMock:
 
 
 class TestGetOrgContext:
+    @pytest.fixture(autouse=True)
+    def _use_fake_database_without_localdb_adapter(self, monkeypatch):
+        monkeypatch.setattr(
+            "api.deps._runtime_scoped_db",
+            lambda _request, db, _user_id: db,
+        )
 
     @pytest.mark.asyncio
     async def test_no_header_returns_personal(self):
@@ -134,7 +141,7 @@ class TestGetOrgContext:
 
         request = _make_request(org_id="00000000-0000-0000-0000-000000000001")
         with pytest.raises(HTTPException) as exc_info:
-            await get_org_context(request, "user-1", db)
+            await get_org_context(request, USER_ID, db)
         assert exc_info.value.status_code == 403
         assert "无权访问" in exc_info.value.detail
 
@@ -146,7 +153,7 @@ class TestGetOrgContext:
 
         request = _make_request(org_id="00000000-0000-0000-0000-000000000001")
         with pytest.raises(HTTPException) as exc_info:
-            await get_org_context(request, "user-1", db)
+            await get_org_context(request, USER_ID, db)
         assert exc_info.value.status_code == 403
         assert "无权访问" in exc_info.value.detail
 
@@ -159,7 +166,7 @@ class TestGetOrgContext:
 
         request = _make_request(org_id="00000000-0000-0000-0000-000000000001")
         with pytest.raises(HTTPException) as exc_info:
-            await get_org_context(request, "user-1", db)
+            await get_org_context(request, USER_ID, db)
         assert exc_info.value.status_code == 403
         assert "无权访问" in exc_info.value.detail
 
@@ -172,7 +179,7 @@ class TestGetOrgContext:
 
         request = _make_request(org_id="00000000-0000-0000-0000-000000000001")
         with pytest.raises(HTTPException) as exc_info:
-            await get_org_context(request, "user-1", db)
+            await get_org_context(request, USER_ID, db)
         assert exc_info.value.status_code == 403
         assert "无权访问" in exc_info.value.detail
 
@@ -185,9 +192,9 @@ class TestGetOrgContext:
 
         org_id = "00000000-0000-0000-0000-000000000001"
         request = _make_request(org_id=org_id)
-        ctx = await get_org_context(request, "user-1", db)
+        ctx = await get_org_context(request, USER_ID, db)
 
-        assert ctx.user_id == "user-1"
+        assert ctx.user_id == USER_ID
         assert ctx.org_id == org_id
         assert ctx.org_role == "admin"
 
@@ -200,7 +207,7 @@ class TestGetOrgContext:
 
         org_id = "00000000-0000-0000-0000-000000000001"
         request = _make_request(org_id=org_id)
-        ctx = await get_org_context(request, "owner-1", db)
+        ctx = await get_org_context(request, USER_ID, db)
 
         assert ctx.org_role == "owner"
 

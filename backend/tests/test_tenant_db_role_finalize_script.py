@@ -80,6 +80,7 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "'162_configuration_legacy_export_access.sql'" in sql
     assert "'163_conversation_actor_worker_discovery.sql'" in sql
     assert "'164_actor_task_execution_capabilities.sql'" in sql
+    assert "'189_web_runtime_access_completion.sql'" in sql
     for migration_number in range(165, 186):
         assert f"'{migration_number}_" in sql
     assert "'159_org_erp_token_capabilities.sql'" not in sql
@@ -97,6 +98,9 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "WORKER_CONTROL_CAPABILITY_CUTOVER_INCOMPLETE" in sql
     assert "WORKER_CONTROL_DIRECT_TABLE_ACCESS_PRESENT" in sql
     assert "WORKER_CONTROL_RUNTIME_ACL_INVALID" in sql
+    assert "WEB_RUNTIME_CORE_ACL_INVALID" in sql
+    assert "AS required(table_name, privilege_name)" in sql
+    assert "AS forbidden(table_name, privilege_name)" in sql
     assert "TENANT_FORCE_RLS_CUTOVER_INCOMPLETE" in sql
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert f"'public.tasks', '{privilege}'" in sql

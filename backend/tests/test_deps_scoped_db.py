@@ -9,7 +9,7 @@ get_scoped_db 依赖注入测试
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -122,3 +122,66 @@ class TestGetAuthService:
 
         with pytest.raises(ValueError, match="request_id"):
             get_auth_service(request, MagicMock())
+
+
+class TestRequestDatabase:
+    @pytest.mark.asyncio
+    async def test_current_user_identity_ignores_untrusted_org_header(self):
+        from api.deps import get_current_user
+
+        request = MagicMock()
+        scoped = MagicMock()
+        scoped.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "id": USER_ID,
+        }
+        with patch(
+            "api.deps._runtime_scoped_db", return_value=scoped,
+        ) as build_scope:
+            result = await get_current_user(request, USER_ID, MagicMock())
+
+        assert result == {"id": USER_ID}
+        build_scope.assert_called_once()
+        assert build_scope.call_args.kwargs["include_org"] is False
+
+    @pytest.mark.asyncio
+    async def test_binds_authenticated_actor_and_org(self):
+        from api.deps import get_request_db
+
+        request = MagicMock()
+        request.headers.get.side_effect = lambda name, default="": {
+            "X-Org-Id": ORG_ID,
+            "X-Request-Id": "request-2",
+        }.get(name, default)
+        db = MagicMock()
+
+        result = await get_request_db(request, USER_ID, db)
+
+        assert result.scope.settings == (
+            USER_ID, ORG_ID, "runtime", "request-2",
+        )
+        assert result.pool is db.pool
+
+    @pytest.mark.asyncio
+    async def test_public_request_uses_actorless_runtime_scope(self):
+        from api.deps import get_request_db
+
+        request = MagicMock()
+        request.headers.get.side_effect = lambda _name, default="": default
+        result = await get_request_db(request, None, MagicMock())
+
+        assert result.scope.settings == ("", "", "runtime", "")
+
+    @pytest.mark.asyncio
+    async def test_invalid_org_header_fails_before_database_access(self):
+        from fastapi import HTTPException
+        from api.deps import get_request_db
+
+        request = MagicMock()
+        request.headers.get.side_effect = lambda name, default="": (
+            "invalid" if name == "X-Org-Id" else default
+        )
+
+        with pytest.raises(HTTPException) as error:
+            await get_request_db(request, USER_ID, MagicMock())
+
+        assert error.value.status_code == 400

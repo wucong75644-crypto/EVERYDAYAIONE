@@ -192,6 +192,11 @@ def test_transfer_revokes_new_roles_and_preserves_legacy_service(
         in sql
     )
     assert "TO everydayai_wecom_runtime;" in sql
+    assert "GRANT SELECT, UPDATE ON TABLE public.users TO everydayai_runtime;" in sql
+    assert (
+        "GRANT SELECT ON TABLE public.conversations, public.messages\n"
+        "TO everydayai_worker;"
+    ) in sql
     assert (
         "public.record_user_activity(\n"
         "    uuid,text,uuid,text,text,text,timestamp with time zone,jsonb\n"

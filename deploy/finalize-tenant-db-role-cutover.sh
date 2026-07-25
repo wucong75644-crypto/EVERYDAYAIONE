@@ -83,7 +83,8 @@ BEGIN
           '182_sync_cross_domain_capabilities.sql',
           '183_sync_configuration_capabilities.sql',
           '184_runtime_erp_operator_control.sql',
-          '185_external_sync_request_queue.sql'
+          '185_external_sync_request_queue.sql',
+          '189_web_runtime_access_completion.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1
@@ -324,6 +325,76 @@ BEGIN
         'INSERT, UPDATE, DELETE'
     ) THEN
         RAISE EXCEPTION 'WORKER_CONTROL_RUNTIME_ACL_INVALID';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM (VALUES
+              ('users', 'SELECT'), ('users', 'UPDATE'),
+              ('organizations', 'SELECT'), ('org_members', 'SELECT'),
+              ('org_configs', 'SELECT'), ('credits_history', 'SELECT'),
+              ('conversations', 'SELECT'), ('conversations', 'INSERT'),
+              ('conversations', 'UPDATE'), ('conversations', 'DELETE'),
+              ('messages', 'SELECT'), ('messages', 'INSERT'),
+              ('messages', 'UPDATE'), ('messages', 'DELETE'),
+              ('tasks', 'SELECT'), ('tasks', 'INSERT'),
+              ('tasks', 'UPDATE'), ('tasks', 'DELETE'),
+              ('detail_projects', 'SELECT'), ('detail_projects', 'INSERT'),
+              ('detail_projects', 'UPDATE'), ('detail_projects', 'DELETE'),
+              ('detail_project_images', 'SELECT'),
+              ('detail_project_images', 'INSERT'),
+              ('detail_project_images', 'UPDATE'),
+              ('detail_project_images', 'DELETE'),
+              ('user_subscriptions', 'SELECT'),
+              ('user_subscriptions', 'INSERT'),
+              ('user_subscriptions', 'UPDATE'),
+              ('user_subscriptions', 'DELETE'),
+              ('user_memory_settings', 'SELECT'),
+              ('user_memory_settings', 'INSERT'),
+              ('user_memory_settings', 'UPDATE'),
+              ('user_memory_settings', 'DELETE'),
+              ('credit_transactions', 'SELECT'),
+              ('credit_transactions', 'INSERT'),
+              ('credit_transactions', 'UPDATE'),
+              ('image_generations', 'SELECT'),
+              ('image_generations', 'INSERT'),
+              ('image_generations', 'UPDATE')
+          ) AS required(table_name, privilege_name)
+         WHERE NOT has_table_privilege(
+                   'everydayai_runtime',
+                   'public.' || required.table_name,
+                   required.privilege_name
+               )
+    ) OR EXISTS (
+        SELECT 1
+          FROM (VALUES
+              ('users', 'INSERT'), ('users', 'DELETE'),
+              ('organizations', 'INSERT'), ('organizations', 'UPDATE'),
+              ('organizations', 'DELETE'), ('org_members', 'INSERT'),
+              ('org_members', 'UPDATE'), ('org_members', 'DELETE'),
+              ('org_configs', 'INSERT'), ('org_configs', 'UPDATE'),
+              ('org_configs', 'DELETE'), ('credits_history', 'INSERT'),
+              ('credits_history', 'UPDATE'), ('credits_history', 'DELETE'),
+              ('credit_transactions', 'DELETE'),
+              ('image_generations', 'DELETE'),
+              ('refresh_tokens', 'SELECT'), ('refresh_tokens', 'INSERT'),
+              ('refresh_tokens', 'UPDATE'), ('refresh_tokens', 'DELETE'),
+              ('wecom_user_mappings', 'SELECT'),
+              ('wecom_user_mappings', 'INSERT'),
+              ('wecom_user_mappings', 'UPDATE'),
+              ('wecom_user_mappings', 'DELETE'),
+              ('wecom_chat_targets', 'SELECT'),
+              ('wecom_chat_targets', 'INSERT'),
+              ('wecom_chat_targets', 'UPDATE'),
+              ('wecom_chat_targets', 'DELETE')
+          ) AS forbidden(table_name, privilege_name)
+         WHERE has_table_privilege(
+                   'everydayai_runtime',
+                   'public.' || forbidden.table_name,
+                   forbidden.privilege_name
+               )
+    ) THEN
+        RAISE EXCEPTION 'WEB_RUNTIME_CORE_ACL_INVALID';
     END IF;
 
     SELECT string_agg(relation.relname, ', ' ORDER BY relation.relname)

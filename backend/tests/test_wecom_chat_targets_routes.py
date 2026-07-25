@@ -74,7 +74,13 @@ class FakeDB:
 
 def _build_app(db, user_id="user_owner", org_id="org_1"):
     from api.routes.wecom_chat_targets import router
-    from api.deps import get_current_user_id, get_org_context, get_scoped_db, OrgContext
+    from api.deps import (
+        OrgContext,
+        get_current_user_id,
+        get_org_context,
+        get_request_db,
+        get_scoped_db,
+    )
     from core.database import get_db
 
     app = FastAPI()
@@ -86,6 +92,7 @@ def _build_app(db, user_id="user_owner", org_id="org_1"):
     )
     app.dependency_overrides[get_scoped_db] = lambda: db
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_request_db] = lambda: db
 
     return app
 

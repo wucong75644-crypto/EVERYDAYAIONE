@@ -59,6 +59,7 @@ async def get_current_user_id(
 
 
 async def get_current_user(
+    request: Request,
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Annotated[Any, Depends(get_db)],
 ) -> dict:
@@ -75,7 +76,10 @@ async def get_current_user(
     Raises:
         AuthenticationError: 用户不存在
     """
-    response = db.table("users").select(
+    scoped_db = _runtime_scoped_db(
+        request, db, user_id, include_org=False,
+    )
+    response = scoped_db.table("users").select(
         "id, phone, nickname, avatar_url, role, credits, status, created_at"
     ).eq("id", user_id).single().execute()
 
@@ -102,6 +106,42 @@ async def get_optional_user_id(
         return payload.get("sub")
     except Exception:
         return None
+
+
+def _runtime_scoped_db(
+    request: Request,
+    db: Any,
+    actor_user_id: str | None,
+    *,
+    include_org: bool = True,
+) -> ScopedDatabaseClient:
+    """Bind an HTTP request to the PostgreSQL runtime tenant scope."""
+    raw_org_id = request.headers.get("X-Org-Id") if include_org else None
+    if raw_org_id:
+        try:
+            UUID(raw_org_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="X-Org-Id 格式无效",
+            ) from exc
+    return ScopedDatabaseClient(
+        db,
+        DatabaseScope(
+            actor_user_id=actor_user_id,
+            org_id=raw_org_id or None,
+            access_kind=DatabaseAccessKind.RUNTIME,
+            request_id=request.headers.get("X-Request-Id", ""),
+        ),
+    )
+
+
+async def get_request_db(
+    request: Request,
+    user_id: Annotated[Optional[str], Depends(get_optional_user_id)],
+    db: Annotated[Any, Depends(get_db)],
+) -> ScopedDatabaseClient:
+    """Return the request-scoped Web runtime database facade."""
+    return _runtime_scoped_db(request, db, user_id)
 
 
 async def get_task_limit_service() -> Optional[TaskLimitService]:
@@ -154,8 +194,9 @@ async def get_org_context(
     # 校验企业存在且活跃（统一错误信息防枚举）
     _deny = HTTPException(status_code=403, detail="无权访问该企业")
 
+    scoped_db = _runtime_scoped_db(request, db, user_id)
     org_result = (
-        db.table("organizations")
+        scoped_db.table("organizations")
         .select("status")
         .eq("id", raw_org_id)
         .maybe_single()
@@ -168,7 +209,7 @@ async def get_org_context(
 
     # 校验用户是该企业的有效成员
     member = (
-        db.table("org_members")
+        scoped_db.table("org_members")
         .select("role, status")
         .eq("org_id", raw_org_id)
         .eq("user_id", user_id)
@@ -252,7 +293,7 @@ async def get_request_ctx(
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
-Database = Annotated[Any, Depends(get_db)]
+Database = Annotated[Any, Depends(get_request_db)]
 OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
 ScopedDB = Annotated[OrgScopedDB, Depends(get_scoped_db)]
 AsyncScopedDB = Annotated[Any, Depends(get_async_scoped_db)]

@@ -124,7 +124,7 @@ FAKE_ERROR_ROW = {
 
 def _build_app(db, user_id: str = SUPER_ADMIN_ID) -> FastAPI:
     from api.routes.error_monitor import router
-    from api.deps import get_current_user_id
+    from api.deps import get_current_user_id, get_request_db
     from core.database import get_db
 
     app = FastAPI()
@@ -132,6 +132,7 @@ def _build_app(db, user_id: str = SUPER_ADMIN_ID) -> FastAPI:
 
     app.dependency_overrides[get_current_user_id] = lambda: user_id
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_request_db] = lambda: db
 
     return app
 

@@ -27,6 +27,15 @@
 | `update_wecom_ingress_display_name` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 在身份解析并绑定 Actor Scope 后更新企微映射显示名及兜底用户昵称 |
 | `reset_wecom_conversation` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 行锁保护下创建新企微会话并原子旋转渠道绑定 |
 | `get_wecom_manual_memories` / `clear_wecom_manual_memories` | `backend/migrations/168_wecom_runtime_read_capabilities.sql` | 按 Actor/Org 查看最多 100 条记忆或清空当前企业个人记忆 |
+
+### Web Runtime 角色切换闭环
+
+| 函数 | 文件 | 说明 |
+|---|---|---|
+| `get_request_db` | `backend/api/deps.py` | 将 Web HTTP 请求统一绑定到 actor、可选企业和 request ID 的 Runtime DatabaseScope |
+| `tenant_platform_admin` | `backend/migrations/189_web_runtime_access_completion.sql` | 由数据库验证 runtime Scope、active 用户与 super_admin 身份，仅供平台管理读取 policy 使用 |
+| `get_public_organization_name` | `backend/migrations/189_web_runtime_access_completion.sql` | 仅向 Web Runtime 返回指定企业的名称与状态，避免公开登录页直接穿越企业 RLS |
+| `get_org_name_public` | `backend/api/routes/org_public.py` | 校验企业 UUID，并通过窄能力返回登录页所需的 active 企业名称 |
 | `get_wecom_manual_memories` / `clear_wecom_manual_memories` | `backend/services/wecom/memory_commands.py` | 企微指令对安全记忆 RPC 的应用层适配 |
 | `WecomUserMappingService.refresh_display_name` | `backend/services/wecom/user_mapping_service.py` | Actor Scope 绑定后按需解析真实姓名；仅在明确取得姓名时调用安全更新门面 |
 

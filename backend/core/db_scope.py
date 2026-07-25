@@ -271,7 +271,11 @@ class ScopedDatabaseClient:
     """共享基础 client 连接池的同步 Scope 门面。"""
 
     def __init__(self, client: Any, scope: DatabaseScope):
-        self._client = client
+        self._client = (
+            client._client
+            if isinstance(client, ScopedDatabaseClient)
+            else client
+        )
         self.scope = scope
 
     @property

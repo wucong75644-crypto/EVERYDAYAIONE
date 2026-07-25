@@ -242,3 +242,14 @@ def test_scoped_clients_share_pool_without_mutating_base_client() -> None:
     assert scoped_async.pool is pool
     assert scoped_sync.table("items")._scope is scope
     assert scoped_async.rpc("run")._scope is scope
+
+
+def test_nested_sync_scope_reuses_base_client_and_replaces_scope() -> None:
+    base = MagicMock()
+    first = ScopedDatabaseClient(base, _scope())
+    replacement = _scope()
+
+    nested = ScopedDatabaseClient(first, replacement)
+
+    assert nested._client is base
+    assert nested.scope is replacement

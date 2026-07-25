@@ -89,7 +89,13 @@ class FakeDB:
 def _build_app(db, user_id="user_1", org_id="org_1", with_perm=True):
     """构建 mock app"""
     from api.routes.scheduled_tasks import router
-    from api.deps import get_current_user_id, get_org_context, get_scoped_db, OrgContext
+    from api.deps import (
+        OrgContext,
+        get_current_user_id,
+        get_org_context,
+        get_request_db,
+        get_scoped_db,
+    )
     from core.database import get_db
 
     app = FastAPI()
@@ -104,6 +110,7 @@ def _build_app(db, user_id="user_1", org_id="org_1", with_perm=True):
     )
     app.dependency_overrides[get_scoped_db] = lambda: db
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_request_db] = lambda: db
 
     return app
 

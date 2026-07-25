@@ -120,7 +120,7 @@ def _build_app(db, user_id: str = SUPER_ADMIN_ID) -> FastAPI:
     from fastapi import Request
     from fastapi.responses import JSONResponse
     from api.routes.admin_users import router
-    from api.deps import get_current_user_id
+    from api.deps import get_current_user_id, get_request_db
     from core.database import get_db
     from core.exceptions import AppException
 
@@ -128,6 +128,7 @@ def _build_app(db, user_id: str = SUPER_ADMIN_ID) -> FastAPI:
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_current_user_id] = lambda: user_id
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_request_db] = lambda: db
 
     @app.exception_handler(AppException)
     async def _handle_app_exc(_req: Request, exc: AppException) -> JSONResponse:

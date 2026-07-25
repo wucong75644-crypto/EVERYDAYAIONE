@@ -14,8 +14,10 @@ from api.deps import CurrentUserId, Database, ScopedDB
 from core.exceptions import AppException
 from services.org.config_resolver import OrgConfigResolver
 from services.org.org_service import OrgService
+from .org_public import router as public_router
 
 router = APIRouter(prefix="/org", tags=["企业管理"])
+router.include_router(public_router)
 
 
 def _get_org_service(db: ScopedDB) -> OrgService:
@@ -24,26 +26,6 @@ def _get_org_service(db: ScopedDB) -> OrgService:
 
 def _get_config_resolver(db: ScopedDB) -> OrgConfigResolver:
     return OrgConfigResolver(db)
-
-
-# ── 公开接口（无需认证）──────────────────────────────────────
-
-
-@router.get("/public/{org_id}/name", summary="获取企业名称（公开）")
-async def get_org_name_public(org_id: str, db: Database):
-    """登录页显示企业名称，不需要认证"""
-    result = (
-        db.table("organizations")
-        .select("name, status")
-        .eq("id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    if not result or not result.data:
-        raise HTTPException(status_code=404, detail="企业不存在")
-    if result.data["status"] != "active":
-        raise HTTPException(status_code=400, detail="企业已停用")
-    return {"name": result.data["name"]}
 
 
 # ── Request Models ──────────────────────────────────────────

@@ -245,6 +245,21 @@ REVOKE ALL ON TABLE
     public.detail_project_images, public.refresh_tokens,
     public.user_subscriptions, public.user_memory_settings
 FROM everydayai_runtime, everydayai_wecom_runtime, everydayai_worker;
+GRANT SELECT, UPDATE ON TABLE public.users TO everydayai_runtime;
+GRANT SELECT ON TABLE
+    public.organizations, public.org_members, public.org_configs,
+    public.credits_history
+TO everydayai_runtime;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+    public.conversations, public.messages, public.tasks,
+    public.detail_projects, public.detail_project_images,
+    public.user_subscriptions, public.user_memory_settings
+TO everydayai_runtime;
+GRANT SELECT, INSERT, UPDATE ON TABLE
+    public.credit_transactions, public.image_generations
+TO everydayai_runtime;
+GRANT SELECT ON TABLE public.conversations, public.messages
+TO everydayai_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
     public.users, public.organizations, public.org_members, public.org_configs,
     public.org_invitations,

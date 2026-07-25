@@ -222,6 +222,13 @@
   sequence、权限收紧、管理员 URL 隐藏和双重回滚保护。
 - `backend/migrations/153_runtime_message_rls_and_auth.sql`：建立六个 Web 认证事务门面、
   第二批 17 表 ENABLE RLS/policy、Web 普通能力及 152 WeCom 门面最小授权。
+- `backend/migrations/189_web_runtime_access_completion.sql`：在第二批 owner 转移后重建
+  Web Runtime 核心 ACL，并以数据库验证的 active super_admin 只读 policy 支持平台
+  管理页面；不扩大 WeCom、Worker 或 Sync 权限。
+- `backend/api/routes/org_public.py`：公开企业登录页的名称查询入口，只调用迁移 189
+  的窄能力，不直接穿越企业 RLS。
+- `docs/document/TECH_Web运行时角色切换闭环修复.md`：记录 Web ACL 覆盖根因、请求级
+  Runtime Scope、平台管理员读取、部署门禁、角色矩阵和回滚设计。
 - `backend/migrations/rollback/153_runtime_message_rls_and_auth_rollback.sql`：撤销 153
   权限和 policy、恢复迁移前 RLS 状态并删除认证门面，不删除业务事实。
 - `backend/tests/test_runtime_message_rls_and_auth_migration.py`：覆盖认证角色/Scope、

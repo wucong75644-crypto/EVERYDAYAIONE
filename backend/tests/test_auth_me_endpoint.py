@@ -74,7 +74,12 @@ def _build_app(db, current_user, org_id_from_header=None):
                             None = 散客（无 header）
     """
     from api.routes.auth import router
-    from api.deps import get_current_user, get_org_context, OrgContext
+    from api.deps import (
+        OrgContext,
+        get_current_user,
+        get_org_context,
+        get_request_db,
+    )
     from core.database import get_db
 
     app = FastAPI()
@@ -82,6 +87,7 @@ def _build_app(db, current_user, org_id_from_header=None):
 
     app.dependency_overrides[get_current_user] = lambda: current_user
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_request_db] = lambda: db
     # mock OrgCtx：默认散客；测试可通过 org_id_from_header 模拟带 X-Org-Id
     app.dependency_overrides[get_org_context] = lambda: OrgContext(
         user_id=current_user["id"],

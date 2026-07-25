@@ -62,12 +62,17 @@ class FakeDB:
             return builders.pop(0)
         return FakeQueryBuilder()
 
+    def rpc(self, name: str, _params=None):
+        assert name == "get_public_organization_name"
+        return self.table("organizations").maybe_single()
+
 
 def _build_app(db, org_service=None):
     """构建带 mock 依赖的 FastAPI app"""
     from fastapi import FastAPI
     from api.routes.org import router
-    from api.deps import get_current_user_id, get_db
+    from api.deps import get_current_user_id, get_request_db
+    from core.database import get_db
     from services.org.org_service import OrgService
 
     app = FastAPI()
@@ -78,6 +83,7 @@ def _build_app(db, org_service=None):
         lambda: "f566f6cc-3e7a-4383-befe-42c05fbfbff8"
     )
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_request_db] = lambda: db
 
     return app
 
@@ -290,11 +296,13 @@ class TestGetOrgNamePublic:
     def _build_app(self, db):
         from fastapi import FastAPI
         from api.routes.org import router
-        from api.deps import get_db
+        from api.deps import get_request_db
+        from core.database import get_db
 
         app = FastAPI()
         app.include_router(router, prefix="/api")
         app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_request_db] = lambda: db
         return app
 
     def test_returns_org_name(self):
@@ -304,7 +312,9 @@ class TestGetOrgNamePublic:
         app = self._build_app(db)
 
         client = TestClient(app)
-        resp = client.get("/api/org/public/org-123/name")
+        resp = client.get(
+            "/api/org/public/00000000-0000-0000-0000-000000000123/name"
+        )
         assert resp.status_code == 200
         assert resp.json()["name"] == "蓝创科技"
 
@@ -315,7 +325,9 @@ class TestGetOrgNamePublic:
         app = self._build_app(db)
 
         client = TestClient(app)
-        resp = client.get("/api/org/public/nonexistent/name")
+        resp = client.get(
+            "/api/org/public/00000000-0000-0000-0000-000000000999/name"
+        )
         assert resp.status_code == 404
 
     def test_returns_400_when_inactive(self):
@@ -325,6 +337,8 @@ class TestGetOrgNamePublic:
         app = self._build_app(db)
 
         client = TestClient(app)
-        resp = client.get("/api/org/public/org-456/name")
+        resp = client.get(
+            "/api/org/public/00000000-0000-0000-0000-000000000456/name"
+        )
         assert resp.status_code == 400
         assert "停用" in resp.json()["detail"]
