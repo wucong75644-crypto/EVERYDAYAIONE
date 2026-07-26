@@ -18,6 +18,11 @@ from loguru import logger
 
 
 from core.config import Settings, get_settings
+from core.db_scope import (
+    DatabaseAccessKind,
+    DatabaseScope,
+    ScopedDatabaseClient,
+)
 from core.task_config import IMAGE_TASK_TIMEOUT_MINUTES, VIDEO_TASK_TIMEOUT_MINUTES
 from services.adapters import (
     create_image_adapter,
@@ -70,7 +75,16 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
 
     async def _get_active_org_ids(self) -> list[str]:
         """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
-        result = self.db.rpc(
+        worker_db = ScopedDatabaseClient(
+            self.db,
+            DatabaseScope(
+                actor_user_id=None,
+                org_id=None,
+                access_kind=DatabaseAccessKind.WORKER,
+                request_id="worker-active-organizations",
+            ),
+        )
+        result = worker_db.rpc(
             "worker_list_active_organization_ids",
         ).execute()
         payload = result.data

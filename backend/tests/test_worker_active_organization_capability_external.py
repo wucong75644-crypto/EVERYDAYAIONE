@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import psycopg
 import pytest
 
 from core.db_scope import SET_DATABASE_SCOPE_SQL
+from core.local_db import LocalDBClient
+from services.background_task_worker import BackgroundTaskWorker
 from testing.tenant_role_matrix import (
     TenantMatrixConfigError,
     TenantRoleMatrixConfig,
@@ -93,6 +96,29 @@ def _verify_worker_contract(
                 )
 
 
+async def _verify_application_entry(
+    config: TenantRoleMatrixConfig,
+    active_id: str,
+    suspended_id: str,
+) -> None:
+    db = LocalDBClient(config.worker_url, min_size=1, max_size=1)
+    try:
+        with patch(
+            "services.background_task_worker.get_settings",
+            return_value=MagicMock(
+                callback_base_url=None,
+                poll_interval_seconds=0,
+            ),
+        ):
+            worker = BackgroundTaskWorker(db)
+        organization_ids = await worker._get_active_org_ids()
+    finally:
+        db.close()
+
+    assert active_id in organization_ids
+    assert suspended_id not in organization_ids
+
+
 def _verify_runtime_denial(config: TenantRoleMatrixConfig) -> None:
     with psycopg.connect(config.runtime_url) as runtime:
         with runtime.transaction():
@@ -129,13 +155,15 @@ def _verify_rollback(config: TenantRoleMatrixConfig) -> None:
             worker.execute("SELECT id FROM organizations LIMIT 1")
 
 
-def test_worker_rpc_role_scope_table_denial_and_rollback() -> None:
+@pytest.mark.asyncio
+async def test_worker_rpc_role_scope_table_denial_and_rollback() -> None:
     config = _matrix_config()
     active_id = str(uuid4())
     suspended_id = str(uuid4())
 
     _apply_and_seed(config, active_id, suspended_id)
     try:
+        await _verify_application_entry(config, active_id, suspended_id)
         _verify_worker_contract(config, active_id, suspended_id)
         _verify_runtime_denial(config)
     finally:
