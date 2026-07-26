@@ -117,6 +117,11 @@ CDN URL 不会因此自动改写。
   `task_queue_sequence_seq` 未授权。迁移 205 仅授予 Runtime `USAGE`；所有权切换
   脚本保留该终态能力，部署在迁移后、服务重启前以 Runtime 连接校验外层函数、两个
   helper 和精确序列，任一缺失即失败关闭。
+- 迁移 205 后的生产回滚复现证明：等价直接 INSERT 可通过 RLS，但 148 的 INVOKER
+  helper 在统一准备事务内仍被 `tasks` FORCE RLS 拒绝。206 不再扩张底层授权，而是
+  将原实现重命名为 owner 私有函数，并提供同签名 `SECURITY DEFINER` 包装门面；
+  包装门面校验真实 Runtime session、access kind、Actor、企业 Scope 与 active
+  user/member 事实后才调用私有事务。Runtime 不再直接执行 helper 或使用任务序列。
 
 ## 4. 边界与失败行为
 
@@ -127,6 +132,8 @@ CDN URL 不会因此自动改写。
 - JSONB 适配只处理 dict/list，UUID、时间、文本等现有参数语义不变。
 - 资产登记仍是 best effort；失败不回滚已持久化文件，但日志必须可定位。
 - CDN 证书未修复前，后端上传可成功，但图片展示仍标记为外部基础设施未恢复。
+- 206 门面校验失败统一返回 `GENERATION_PREPARE_ROLE_SCOPE_MISMATCH`，不得降级为
+  底表写入；跨用户、跨企业、失效成员和非 Runtime session 全部失败关闭。
 
 ## 5. 计划修改位置
 

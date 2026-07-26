@@ -1269,6 +1269,12 @@
   脚本转移序列后撤销新服务角色，却只恢复旧角色权限。迁移 205 补当前生产最小
   USAGE；切换脚本同步保留 Runtime 能力，并在每次迁移后、服务重启前执行完整生成
   函数与序列能力门禁。
+- 迁移 205 后真实文字和图片请求继续稳定复现 `tasks` FORCE RLS 拒绝。生产回滚
+  探针证明相同 Runtime Scope 的等价直接 INSERT 可通过，而经
+  `_prepare_generation_tasks(...)` 调用失败，确认 148 的 INVOKER 链仍依赖旧高权限
+  角色执行语义。迁移 206 将原子实现封闭为 owner 私有函数，公开同签名 DEFINER
+  门面先校验 session role、access kind、Actor 与企业 Scope，再执行原事务；Runtime
+  的 helper 与序列直权同步撤销。
 
 # 2026-07-25 定时任务角色隔离收尾
 

@@ -163,11 +163,8 @@ def test_transfer_handles_owned_column_sequences_without_guessing(
         "everydayai_wecom_runtime, everydayai_worker"
     ) in sql
     assert "GRANT USAGE, SELECT, UPDATE ON SEQUENCE public.%I TO %I" in sql
-    assert "sequence_record.relname = 'task_queue_sequence_seq'" in sql
-    assert (
-        "GRANT USAGE ON SEQUENCE public.task_queue_sequence_seq\n"
-        "            TO everydayai_runtime;"
-    ) in sql
+    assert "sequence_record.relname = 'task_queue_sequence_seq'" not in sql
+    assert "GRANT USAGE ON SEQUENCE public.task_queue_sequence_seq" not in sql
 
 
 def test_transfer_revokes_new_roles_and_preserves_legacy_service(

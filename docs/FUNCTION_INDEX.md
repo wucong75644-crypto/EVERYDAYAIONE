@@ -1766,7 +1766,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `read_legacy_import_snapshot` | `backend/services/configuration/legacy_import_source_executor.py` | 在专用 Reader 单连接只读事务中依次校验 session_user、设置 read GUC、执行一次 export RPC 并严格解析一致性快照 |
 | `apply_legacy_import` | `backend/services/configuration/legacy_import_executor.py` | 精确确认 import_id 且 session_user 为 everydayai_migrator 后，在同一连接事务和游标中执行 SET LOCAL 门禁与 161 原子 RPC，并严格校验返回计数 |
 | `migrate_legacy_configuration.main` | `backend/scripts/migrate_legacy_configuration.py` | 默认仅输出无秘密值 dry-run 摘要；apply 要求固定 import_id、精确确认字符串和独立 MIGRATION_DATABASE_URL |
-| `verify_capabilities` / `main` | `backend/scripts/verify_runtime_generation_capabilities.py` | 部署重启前以 Runtime 实际连接核验数据库角色、统一生成函数链和任务队列序列 USAGE；任一缺失即失败关闭 |
+| `prepare_generation` / `_prepare_generation_owner`（迁移 206 版本） | `backend/migrations/206_runtime_generation_capability_facade.sql` | 公开 DEFINER 门面校验 Runtime session、Actor 与企业 Scope 后调用 owner 私有原子准备实现；helper 和任务序列不再向 Runtime 暴露 |
+| `verify_capabilities` / `main` | `backend/scripts/verify_runtime_generation_capabilities.py` | 部署重启前核验 Runtime 仅能执行 owner DEFINER 公开门面，且不能直接执行私有实现/helper 或使用任务序列 |
 | `start_web_database_runtime` | `backend/services/web_database_runtime.py` | 初始化 Web 数据库 Runtime，先验证 Registry 契约，再启动恢复和知识库后台任务 |
 | `get_scoped_db` | `backend/api/deps.py` | 复用已验证 OrgContext，组合事务级 DatabaseScope 与应用层 OrgScopedDB |
 | `WecomMessageService._for_request` | `backend/services/wecom/wecom_message_service.py` | 为每条企微消息复制独立服务与子服务，避免并发请求共享可变数据库身份 |
