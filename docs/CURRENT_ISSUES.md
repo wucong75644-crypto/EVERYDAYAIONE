@@ -1260,6 +1260,10 @@
 - Memory 的真实 Worker Scope 回滚重放已通过，因此不盲目扩大策略。当前还需用户
   在已登录 Web 页面重新发送文字和上传图片，并验证企微消息；未完成这些真实链路
   前不得宣布最终切换完成。
+- 真实 Web 图片消息进一步确认外层 `prepare_generation(...)` 已可执行，但两个
+  `SECURITY INVOKER` helper 未向 runtime 授权，导致
+  `permission denied for function _prepare_generation_messages`。迁移 204 按完整
+  调用链只补 runtime 的两个 helper EXECUTE，并配套 rollback 与 ACL 契约测试。
 
 # 2026-07-25 定时任务角色隔离收尾
 

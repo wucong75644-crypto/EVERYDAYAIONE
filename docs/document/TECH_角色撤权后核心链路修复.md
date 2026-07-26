@@ -109,6 +109,10 @@ CDN URL 不会因此自动改写。
   `everydayai-images.oss-cn-hangzhou.aliyuncs.com`。
 - Worker AI Bundle 权限已恢复，但生产配置注册表返回 `CONFIG_REGISTRY_DRIFT`；
   Adapter 当前降级平台默认 Key，企业 BYOK 不视为已验收。
+- 真实 Web 图片消息在外层 `prepare_generation(...)` 内调用两个
+  `SECURITY INVOKER` helper 时暴露第二层 ACL 缺口。迁移 204 仅向
+  `everydayai_runtime` 授予 `_prepare_generation_messages(...)` 和
+  `_prepare_generation_tasks(...)` EXECUTE，不改变函数安全模式或表权限。
 
 ## 4. 边界与失败行为
 
