@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import Request
 from loguru import logger
+from psycopg import Error as PsycopgError
 
 from core.exceptions import AppException
 from schemas.message import GenerateRequest, GenerateResponse, MessageOperation
@@ -87,18 +88,28 @@ class MessageIdempotencyService:
             )
 
         fingerprint = self.build_fingerprint(conversation_id, body)
-        result = self.db.rpc(
-            "claim_message_generation_request",
-            {
-                "p_org_id": self.org_id,
-                "p_user_id": self.user_id,
-                "p_conversation_id": conversation_id,
-                "p_idempotency_key": key,
-                "p_request_fingerprint": fingerprint,
-                "p_client_task_id": body.client_task_id,
-                "p_assistant_message_id": body.assistant_message_id,
-            },
-        ).execute()
+        try:
+            result = self.db.rpc(
+                "claim_message_generation_request",
+                {
+                    "p_org_id": self.org_id,
+                    "p_user_id": self.user_id,
+                    "p_conversation_id": conversation_id,
+                    "p_idempotency_key": key,
+                    "p_request_fingerprint": fingerprint,
+                    "p_client_task_id": body.client_task_id,
+                    "p_assistant_message_id": body.assistant_message_id,
+                },
+            ).execute()
+        except PsycopgError as error:
+            primary = error.diag.message_primary or str(error).splitlines()[0]
+            if primary == "IDEMPOTENCY_CONVERSATION_ACCESS_DENIED":
+                raise AppException(
+                    code="NOT_FOUND",
+                    message="对话不存在",
+                    status_code=404,
+                ) from error
+            raise
         data = result.data
         if not isinstance(data, dict) or not data.get("request_id"):
             raise AppException(

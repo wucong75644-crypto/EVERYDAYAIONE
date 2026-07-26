@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from psycopg.errors import InsufficientPrivilege
 from starlette.requests import Request
 
 from core.exceptions import AppException
@@ -151,6 +152,35 @@ def test_claimed_request_returns_execution_right() -> None:
     assert claim is not None
     assert claim.request_id == "record-1"
     assert claim.replay_response is None
+
+
+def test_cross_user_conversation_claim_maps_to_not_found() -> None:
+    db = MagicMock()
+    db.rpc.return_value.execute.side_effect = InsufficientPrivilege(
+        "IDEMPOTENCY_CONVERSATION_ACCESS_DENIED"
+    )
+    service = MessageIdempotencyService(db, "user-1", "org-1")
+
+    with pytest.raises(AppException) as caught:
+        service.claim(_request("request-1"), "conversation-1", _body())
+
+    assert caught.value.code == "NOT_FOUND"
+    assert caught.value.status_code == 404
+    assert caught.value.details == {}
+
+
+def test_unknown_database_claim_error_is_not_hidden() -> None:
+    db = MagicMock()
+    database_error = InsufficientPrivilege(
+        "MESSAGE_IDEMPOTENCY_RUNTIME_SCOPE_MISMATCH"
+    )
+    db.rpc.return_value.execute.side_effect = database_error
+    service = MessageIdempotencyService(db, "user-1", "org-1")
+
+    with pytest.raises(InsufficientPrivilege) as caught:
+        service.claim(_request("request-1"), "conversation-1", _body())
+
+    assert caught.value is database_error
 
 
 @pytest.mark.parametrize(

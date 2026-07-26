@@ -37,6 +37,7 @@
 | `tenant_platform_admin` | `backend/migrations/189_web_runtime_access_completion.sql` | 由数据库验证 runtime Scope、active 用户与 super_admin 身份，仅供平台管理读取 policy 使用 |
 | `get_public_organization_name` | `backend/migrations/189_web_runtime_access_completion.sql` | 仅向 Web Runtime 返回指定企业的名称与状态，避免公开登录页直接穿越企业 RLS |
 | `claim_message_generation_request` | `backend/migrations/190_message_idempotency_role_capabilities.sql` | 校验 Runtime 角色、Actor 与企业 Scope 后原子领取或重放消息生成请求 |
+| `MessageIdempotencyService.claim` | `backend/services/message_idempotency_service.py` | 在业务副作用前领取幂等执行权；对话不存在或不属于当前 Actor/企业时统一返回 404，其他数据库权限异常保持失败关闭 |
 | `cleanup_expired_message_generation_requests` | `backend/migrations/190_message_idempotency_role_capabilities.sql` | 仅允许无 Actor/Org 的 Worker Scope 清理过期幂等事实 |
 | `get_governed_actor_authority` | `backend/migrations/191_governance_actor_authority.sql` | 复用治理权威校验返回当前 Runtime Actor 的企业角色，不开放控制表 ACL |
 | `OrgService._governance_rpc` | `backend/services/org/org_service.py` | 调用 owner 治理能力并将稳定数据库错误码映射为现有 API 业务异常 |
