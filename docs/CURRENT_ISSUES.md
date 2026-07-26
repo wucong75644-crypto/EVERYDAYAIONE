@@ -1085,7 +1085,8 @@
   Knowledge/Audit FORCE RLS 收口条件现已由 196/198 满足；新增迁移 202，为
   knowledge nodes/edges/metrics、scoring audit 和 tool audit 补齐 owner policy、
   FORCE RLS、表级/列级最小 ACL，并将 199–201 新表状态纳入最终角色撤销门禁。
-  尚未部署。
+  迁移 190–202 已应用生产，完整租户切换预检、Knowledge/Audit 完成检查和最终撤权
+  均通过；旧 `everydayai` 角色已不再继承 `everydayai_owner`。
 - **2026-07-19**：前端 Chunk 治理任务 6 完成部署产物卫生治理：仓库继续全局忽略 `.DS_Store`，生产部署在前端构建前显式清理旧 `dist`，前端 rsync 增加 `.DS_Store` 排除规则；本地现存 Finder 元数据同步清理，避免旧产物或部署期间重新生成的系统文件进入服务器目录。
 - **2026-07-19**：前端 Chunk 治理任务 5 完成主入口压缩：WebSocketProvider 下移为受保护 Chat 路由动态 Runtime，AuthModal 仅在打开后加载；认证 Store 通过同步 reset 注册表清理已加载的消息、记忆和订阅 Store，不再反向静态导入聊天状态链。生产构建主入口从 564.01 kB 降至 368.35 kB（gzip 180.19 → 123.92 kB），达到 350–400 kB 验收目标；AuthModal 为 19.49 kB、WebSocketContext 为 124.17 kB 动态入口，未使用 `manualChunks`。501.94 kB 同名 `index` 经 sourcemap 确认为 Mammoth/JSZip 文档预览动态包，不属于主入口。
 - **2026-07-19**：前端 Chunk 治理任务 4 完成 ECharts/Mermaid 按需加载收口：ECharts 新增具名注册 Runtime，图表出现后才由 `EChartsRenderer` 动态加载，原 core/charts/components/Axis/graphic 等多入口收敛为单个 793.30 kB（gzip 263.34 kB）Runtime；失败 Promise 仍可清空重试。Mermaid 保持库级动态加载、SVG 安全清理与 50 条缓存，并补充相同源码不重复解析测试。生产 manifest 确认 Chat 静态依赖不含 ECharts/Mermaid，Chat 为 299.46 kB；无图表或 Mermaid 内容时不下载对应引擎。
@@ -1204,7 +1205,7 @@
   已通过正式 Worker 函数恢复：两条消息 completed、一条 failed，未重跑供应商任务或
   重复退款。四服务 active，内部和公网健康检查通过。
 
-# 2026-07-26 企业治理角色切换收尾 — 原子初始化已实现，待后续链路与生产切换
+# 2026-07-26 企业治理角色切换收尾 — 已完成生产切换
 
 - 企业创建原先先提交 `organizations/org_members`，再由路由用 Python 分批初始化权限
   模型并吞掉异常，可能留下无法正常治理的半成品企业。
@@ -1236,7 +1237,9 @@
   Error Monitor 收口为五个超管窄能力，并对 `error_logs` 和尚无业务调用的
   `permission_audit_log` 启用 owner-only + FORCE RLS。迁移 200–201 又完成 Web
   WeCom 控制能力与企业级持久化 Callback Inbox，消除直表访问、跨进程内存依赖和
-  Backend/WeCom 数据库角色混用。迁移 192–202 均尚未进入生产。
+  Backend/WeCom 数据库角色混用。迁移 192–202 已应用生产；Backend、Sync、WeCom、
+  Conversation Actor 均使用独立角色且保持 active，登录二维码、内部与公网健康检查
+  通过，迁移计划及非 applied 账本记录均为 0，旧 owner 兼容继承已撤销。
 
 # 2026-07-25 定时任务角色隔离收尾
 
