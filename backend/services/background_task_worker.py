@@ -474,8 +474,8 @@ class BackgroundTaskWorker:
 
             # 按企业迭代 + 散客（多租户隔离）
             for oid in await self._get_active_org_ids():
-                await aggregate_model_scores(org_id=oid)
-            await aggregate_model_scores(org_id=None)
+                await aggregate_model_scores(org_id=oid, db_source=self.db)
+            await aggregate_model_scores(org_id=None, db_source=self.db)
         except Exception as e:
             logger.error(f"Model scoring aggregation failed | error={e}")
         finally:

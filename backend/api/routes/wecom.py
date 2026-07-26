@@ -1,43 +1,40 @@
 """
 企业微信自建应用回调路由
 
-- GET  /api/wecom/callback — URL 验证（企微配置回调 URL 时的验证请求）
-- POST /api/wecom/callback — 接收加密消息（立即返回，异步处理）
+- GET  /api/wecom/callback/{org_id} — 企业级 URL 验证
+- POST /api/wecom/callback/{org_id} — 验签解密并持久化入队
 """
 
 import asyncio
+import hashlib
 import xml.etree.ElementTree as ET
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 
-from api.deps import Database, ScopedDB
-from core.config import get_settings
-from schemas.wecom import (
-    WecomChatType,
-    WecomIncomingMessage,
-    WecomMsgType,
-    WecomReplyContext,
-)
+from api.deps import CurrentUserId, Database, OrgCtx
 from services.wecom.crypto import WXBizMsgCrypt
-from services.wecom.wecom_message_service import WecomMessageService
 
 router = APIRouter(prefix="/wecom", tags=["企业微信回调"])
 
 
-def _get_crypt() -> WXBizMsgCrypt:
-    """获取加解密器实例"""
-    s = get_settings()
+def _get_crypt(org_id: str) -> tuple[WXBizMsgCrypt, str]:
+    """获取指定企业的回调加解密器和 CorpID。"""
+    from core.database import get_worker_db
+    from services.wecom.callback_config import resolve_wecom_callback_config
+
+    config = resolve_wecom_callback_config(get_worker_db(), org_id)
     return WXBizMsgCrypt(
-        token=s.wecom_token,
-        encoding_aes_key=s.wecom_encoding_aes_key,
-        corp_id=s.wecom_corp_id,
-    )
+        token=config.token,
+        encoding_aes_key=config.encoding_aes_key,
+        corp_id=config.corp_id,
+    ), config.corp_id
 
 
-@router.get("/callback", summary="URL 验证")
+@router.get("/callback/{org_id}", summary="URL 验证")
 async def verify_url(
+    org_id: str,
     msg_signature: str = Query(...),
     timestamp: str = Query(...),
     nonce: str = Query(...),
@@ -48,7 +45,7 @@ async def verify_url(
 
     流程：验签 → 解密 echostr → 返回明文。
     """
-    crypt = _get_crypt()
+    crypt, _corp_id = await asyncio.to_thread(_get_crypt, org_id)
     ret, decrypted = crypt.verify_url(msg_signature, timestamp, nonce, echostr)
 
     if ret != 0:
@@ -62,8 +59,9 @@ async def verify_url(
 # TODO(time-context PR3): receive_message + _process_callback_xml 注入 RequestContext
 # 目前 ERPAgent 内部用 RequestContext.build() fallback，时区正确但失去"请求级 SSOT"。
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B13/B14)
-@router.post("/callback", summary="接收消息")
+@router.post("/callback/{org_id}", summary="接收消息")
 async def receive_message(
+    org_id: str,
     request: Request,
     db: Database,
     msg_signature: str = Query(...),
@@ -79,7 +77,7 @@ async def receive_message(
     body = await request.body()
     post_data = body.decode("utf-8")
 
-    crypt = _get_crypt()
+    crypt, corp_id = await asyncio.to_thread(_get_crypt, org_id)
     ret, xml_content = crypt.decrypt_msg(
         post_data, msg_signature, timestamp, nonce,
     )
@@ -88,74 +86,21 @@ async def receive_message(
         logger.warning(f"Wecom callback: decrypt failed | ret={ret}")
         return PlainTextResponse("decrypt failed", status_code=403)
 
-    # 解析明文 XML → 异步处理
-    asyncio.create_task(
-        _process_callback_xml(xml_content, db)
+    root = ET.fromstring(xml_content)
+    message_key = (
+        _xml_text(root, "MsgId")
+        or _xml_text(root, "NewMsgId")
+        or hashlib.sha256(xml_content.encode("utf-8")).hexdigest()
     )
+    db.rpc("enqueue_wecom_callback", {
+        "p_org_id": org_id,
+        "p_corp_id": corp_id,
+        "p_message_key": message_key,
+        "p_payload": {"xml_content": xml_content},
+    }).execute()
 
     # 立即返回（5 秒限制）
     return PlainTextResponse("success")
-
-
-async def _process_callback_xml(xml_content: str, db) -> None:
-    """解析回调 XML 并异步处理消息"""
-    try:
-        root = ET.fromstring(xml_content)
-        msg_type = _xml_text(root, "MsgType")
-
-        # 事件消息（如关注/进入聊天等），暂不处理
-        if msg_type == "event":
-            event_type = _xml_text(root, "Event")
-            logger.info(f"Wecom callback: event={event_type}, skipped")
-            return
-
-        settings = get_settings()
-        msgid = _xml_text(root, "MsgId") or _xml_text(root, "NewMsgId") or ""
-        from_user = _xml_text(root, "FromUserName") or ""
-
-        # 提取文本内容
-        text_content = _xml_text(root, "Content")
-
-        # 从 corp_id 查 org_id（自建应用 corp_id 在 .env 配置，org_id 在 DB 中）
-        corp_id = settings.wecom_corp_id or ""
-        org_id = None
-        if corp_id:
-            try:
-                result = db.table("organizations").select("id").eq(
-                    "wecom_corp_id", corp_id,
-                ).limit(1).execute()
-                if result.data:
-                    org_id = result.data[0]["id"]
-            except Exception as e:
-                logger.warning(f"Wecom callback: org_id lookup failed | corp_id={corp_id} | error={e}")
-
-        # 构建统一消息格式
-        msg = WecomIncomingMessage(
-            msgid=msgid,
-            wecom_userid=from_user,
-            corp_id=corp_id,
-            chatid=from_user,  # 私聊场景 chatid=userid
-            chattype=WecomChatType.SINGLE,
-            msgtype=msg_type or WecomMsgType.TEXT,
-            channel="app",
-            org_id=org_id,
-            text_content=text_content,
-        )
-
-        reply_ctx = WecomReplyContext(
-            channel="app",
-            wecom_userid=from_user,
-            org_id=org_id,
-            agent_id=settings.wecom_agent_id,
-            corp_id=corp_id,
-            agent_secret=settings.wecom_agent_secret,
-        )
-
-        svc = WecomMessageService(db)
-        await svc.handle_message(msg, reply_ctx)
-
-    except Exception as e:
-        logger.error(f"Wecom callback: process failed | error={e}")
 
 
 def _xml_text(root: ET.Element, tag: str) -> str | None:
@@ -179,39 +124,41 @@ class WecomPushRequest(BaseModel):
 
 
 @router.post("/push", summary="主动推送消息")
-async def push_message(req: WecomPushRequest, db: Database) -> dict:
+async def push_message(
+    req: WecomPushRequest,
+    user_id: CurrentUserId,
+    org_ctx: OrgCtx,
+    db: Database,
+) -> dict:
     """主动推送消息到企微用户（内部调用）
 
     通过 WS 长连接的 aibot_send_msg 向指定用户发送消息。
     """
-    from services.wecom.user_mapping_service import WecomUserMappingService
+    if not org_ctx.org_id or req.org_id != org_ctx.org_id:
+        raise HTTPException(status_code=403, detail="企微推送企业范围不匹配")
+    if req.msgtype not in ("text", "markdown"):
+        raise HTTPException(status_code=400, detail="企微推送消息类型无效")
+    try:
+        result = db.rpc("resolve_governed_wecom_push_target", {
+            "p_org_id": org_ctx.org_id,
+            "p_target_user_id": req.user_id,
+            "p_chatid": req.chatid,
+        }).execute()
+    except Exception as exc:
+        if "GOVERNANCE_AUTHORITY_DENIED" in str(exc):
+            raise HTTPException(
+                status_code=403, detail="仅老板/管理员可主动推送企微消息",
+            ) from exc
+        raise
+    target = result.data
+    if not isinstance(target, dict) or not target.get("chatid"):
+        return {"success": False, "error": "未找到企业内有效的企微推送目标"}
 
-    # 1. 获取该企业的 ws_client 实例
-    from wecom_ws_runner import get_ws_client
-    ws_client = get_ws_client(req.org_id)
-    if not ws_client or not ws_client.is_connected:
-        return {"success": False, "error": "该企业的 WS 长连接未就绪"}
-
-    # 2. 确定 chatid
-    from core.org_scoped_db import OrgScopedDB
-    scoped_db = OrgScopedDB(db, req.org_id)
-
-    chatid = req.chatid
-    chattype = "single"
-    if not chatid:
-        user_svc = WecomUserMappingService(scoped_db)
-        info = await user_svc.get_chatid_by_user_id(req.user_id)
-        if not info:
-            return {"success": False, "error": "未找到该用户的 chatid，请先让用户发送消息"}
-        chatid = info["chatid"]
-        chattype = info["chattype"]
-
-    # 3. 发送
-    ok = await ws_client.send_msg(
-        chatid=chatid,
+    from services.scheduler.push_dispatcher import push_dispatcher
+    ok = await push_dispatcher.publish_wecom_message(
+        org_id=org_ctx.org_id,
+        chatid=target["chatid"],
         msgtype=req.msgtype,
         content={"content": req.message},
-        chattype=chattype,
     )
-
     return {"success": ok}

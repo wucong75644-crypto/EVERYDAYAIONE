@@ -35,6 +35,11 @@
 | `get_request_db` | `backend/api/deps.py` | 将 Web HTTP 请求统一绑定到 actor、可选企业和 request ID 的 Runtime DatabaseScope |
 | `tenant_platform_admin` | `backend/migrations/189_web_runtime_access_completion.sql` | 由数据库验证 runtime Scope、active 用户与 super_admin 身份，仅供平台管理读取 policy 使用 |
 | `get_public_organization_name` | `backend/migrations/189_web_runtime_access_completion.sql` | 仅向 Web Runtime 返回指定企业的名称与状态，避免公开登录页直接穿越企业 RLS |
+| `claim_message_generation_request` | `backend/migrations/190_message_idempotency_role_capabilities.sql` | 校验 Runtime 角色、Actor 与企业 Scope 后原子领取或重放消息生成请求 |
+| `cleanup_expired_message_generation_requests` | `backend/migrations/190_message_idempotency_role_capabilities.sql` | 仅允许无 Actor/Org 的 Worker Scope 清理过期幂等事实 |
+| `get_governed_actor_authority` | `backend/migrations/191_governance_actor_authority.sql` | 复用治理权威校验返回当前 Runtime Actor 的企业角色，不开放控制表 ACL |
+| `OrgService._governance_rpc` | `backend/services/org/org_service.py` | 调用 owner 治理能力并将稳定数据库错误码映射为现有 API 业务异常 |
+| `OrgService.list_all_organizations` / `search_user_by_phone` / `list_pending_invitations` | `backend/services/org/org_service.py` | 平台企业、脱敏用户和当前 Actor 邀请的治理能力适配 |
 | `get_org_name_public` | `backend/api/routes/org_public.py` | 校验企业 UUID，并通过窄能力返回登录页所需的 active 企业名称 |
 | `get_wecom_manual_memories` / `clear_wecom_manual_memories` | `backend/services/wecom/memory_commands.py` | 企微指令对安全记忆 RPC 的应用层适配 |
 | `WecomUserMappingService.refresh_display_name` | `backend/services/wecom/user_mapping_service.py` | Actor Scope 绑定后按需解析真实姓名；仅在明确取得姓名时调用安全更新门面 |
@@ -666,6 +671,8 @@
 | `prepare_assistant_message` | `backend/api/routes/message_generation_helpers.py` | 按操作类型创建或重置助手消息 | db, conversation_id, body, gen_type | tuple |
 | `finalize_image_request_failure` | `backend/api/routes/message_generation_helpers.py` | 将提交阶段失败持久化为失败图片快照 | db, message_id, operation, params, error_code, error_message | None |
 | `find_task_in_connection_scope` | `backend/services/websocket_task_scope.py` | 按连接绑定的 user_id 与精确 org_id（含个人 null）查询可订阅任务 | db, task_id, user_id, org_id | dict \| None |
+| `get_task_accumulated_state` | `backend/services/websocket_task_completion.py` | 返回运行中聊天任务可恢复的文本与结构化块 | task | tuple |
+| `check_and_send_completed_task` | `backend/services/websocket_task_completion.py` | 使用连接级 Scoped DB 读取消息并补发任务终态，不修改持久状态 | conn_id, task_id, task, db | None |
 | `get_user_from_token` | `backend/services/websocket_auth.py` | 解析 WebSocket 访问令牌并返回稳定的过期/非法失败类型 | token | tuple[user_id, error_type] |
 | `reject_websocket` | `backend/services/websocket_auth.py` | 先完成握手再返回浏览器可观察的 4001/4002/4003 业务关闭码 | websocket, code, reason | None |
 | `_handle_task_subscription` | `backend/api/routes/ws.py` | 校验任务租户边界后建立 WebSocket 订阅并恢复任务状态 | conn_id, user_id, org_id, task_id | None |
@@ -1642,6 +1649,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `close_db` | `backend/core/database.py` | 关闭并清除 runtime 同步数据库连接池单例 |
 | `WecomWSManager` | `backend/wecom_ws_runner.py` | 使用无 Secret Worker Discovery 和逐企业 Bundle 启动 bot，并用 runtime DB 为每条入站消息建立租户 Scope |
 | `get_pg_connection` | `backend/services/knowledge_config.py` | 拒绝缺失 Scope 的 raw SQL 访问，并返回事务级 scoped 连接上下文 |
+| `resolve_knowledge_identity` | `backend/services/knowledge_config.py` | 从不可变 DatabaseScope 推导系统、企业或散客 Knowledge 所有者；显式跨企业参数失败关闭 |
 | `create_dedicated_connection` | `backend/services/knowledge_config.py` | 为后台批量任务创建独立连接，在业务 SQL 前注入显式 Worker Scope |
 | `close_pg_pools` | `backend/services/knowledge_config.py` | 在 Web 退出时关闭并清除 runtime/worker 两类 knowledge raw pool |
 | `warm_knowledge_base` | `backend/services/web_database_runtime.py` | 预热 runtime 知识池，并通过 Worker Scope/URL 执行加锁的全局 Seed 导入 |
@@ -1655,6 +1663,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `transfer-runtime-message-ownership.sh` | `deploy/transfer-runtime-message-ownership.sh` | 原子转移第二批 18 张 Runtime/Message/治理表、其真实列 sequence 和 25 个固定函数签名，同时保留旧角色兼容能力 |
 | `rollback-runtime-message-ownership.sh` | `deploy/rollback-runtime-message-ownership.sh` | 要求服务已切回旧连接且目标表未 FORCE RLS，再恢复第二批表、sequence 和函数 owner |
 | `transfer-worker-control-ownership.sh` | `deploy/transfer-worker-control-ownership.sh` | 原子转移 error/knowledge/scheduled 四表及其实际列 sequence，并保留旧 Sync 角色兼容权限 |
+| `transfer-knowledge-audit-ownership.sh` / `rollback-knowledge-audit-ownership.sh` | `deploy/` | 转移 Knowledge/Audit 六张基表、Tool Audit 动态分区、关联序列和分区维护函数；回滚要求未启用 FORCE RLS |
 | `SyncConfigurationResolver` | `backend/services/configuration/sync_resolver.py` | 以 Sync 角色发现企业、解析 ERP/快麦 Bundle，并原子轮换 ERP Token |
 | `ExternalConfigurationControl` | `backend/services/configuration/external_control.py` | 企业管理员通过配置控制面原子管理快麦外部凭证 Bundle |
 | `external_manual_sync_loop` | `backend/services/kuaimai_external/manual_worker.py` | 以租约与 fencing token 消费持久化的快麦手动同步请求 |
@@ -1702,6 +1711,33 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `get_governed_organization` / `list_governed_members` | `backend/migrations/156_governance_authority_foundation.sql` | active 企业成员可读取安全企业字段和手机号掩码成员列表；明确排除企业加密密钥与历史 Secret |
 | `list_all_governed_organizations` / `search_governed_user_by_phone` | `backend/migrations/156_governance_authority_foundation.sql` | 数据库核验 active super_admin 后提供跨企业汇总或精确手机号搜索，手机号响应保持掩码 |
 | `create_governed_organization` / `update_governed_organization` | `backend/migrations/157_governance_write_capabilities.sql` | super_admin 创建企业和 owner/admin 更新白名单字段；响应排除企业加密密钥与历史 Secret，并同事务审计 |
+| `_initialize_governed_org_positions` / `_initialize_governed_org_roles` / `_initialize_governed_org_structure` | `backend/migrations/192_atomic_organization_permission_initialization.sql` | owner 私有初始化 helper；在企业创建事务内建立固定职位、角色权限、默认部门/映射和 Owner Boss 任职，权限目录缺失时失败关闭 |
+| `create_governed_organization`（迁移 192 版本） | `backend/migrations/192_atomic_organization_permission_initialization.sql` | 将企业、Owner 成员、完整权限蓝图与治理审计合并为单个数据库事务；仅 Web Runtime 可执行公开门面 |
+| `get_runtime_member_assignment` / `list_runtime_member_assignments` | `backend/migrations/193_runtime_assignment_read_capabilities.sql` | active 企业成员按当前企业 Scope 读取单人或最多 500 个明确用户的主任职及部门/职位展示字段 |
+| `list_runtime_org_departments` / `list_runtime_org_positions` / `list_runtime_department_user_ids` | `backend/migrations/193_runtime_assignment_read_capabilities.sql` | 提供企业内部门职位目录和经归属校验的部门成员集合，底层权限模型表不向 Runtime 开放 |
+| `list_governed_member_assignments` / `list_governed_wecom_assignments` | `backend/migrations/194_governed_assignment_management.sql` | 数据库核验 owner/admin 后聚合 active 成员、脱敏手机号、企微映射和主任职展示，不向应用开放权限模型表 |
+| `_validate_governed_assignment_change` / `update_governed_member_assignment` | `backend/migrations/194_governed_assignment_management.sql` | 校验企业归属、角色层级、职位、部门和数据范围后原子 upsert 主任职、递增权限版本并记录治理审计 |
+| `update_governed_member_display_name` | `backend/migrations/195_organization_member_display_name.sql` | owner/admin 在企业 Scope 内更新成员企业显示名；admin 不可修改 owner/admin，且不写用户个人昵称 |
+| `record_runtime_tool_audit` | `backend/migrations/196_runtime_tool_audit_capability.sql` | 仅 Runtime 可按当前 Scope 的 task 写工具审计；conversation/user/org 均由任务事实反查，不接受调用方覆盖 |
+| `record_tool_audit` | `backend/services/agent/tool_audit.py` | 将工具审计条目投影为任务绑定 RPC 参数并在线程中执行；失败只记录 warning，不阻塞工具响应 |
+| `tenant_knowledge_visible` / `tenant_knowledge_writable` | `backend/migrations/197_runtime_knowledge_tenant_boundary.sql` | 区分双空系统知识、org 企业知识与 owner_user_id 散客知识，并校验 Runtime Actor/Org Scope 和 active membership |
+| `worker_model_scoring_snapshot` | `backend/migrations/198_worker_model_scoring_capabilities.sql` | Worker 按当前 org Scope 聚合七日指标和最近评分；散客按 user_id 独立分组 |
+| `worker_commit_model_score` | `backend/migrations/198_worker_model_scoring_capabilities.sql` | Worker 原子写入可选评分知识节点与必需审核日志，校验企业/散客 owner 和数值边界 |
+| `list_platform_error_logs` / `get_platform_error_stats` / `list_platform_error_summary` | `backend/migrations/199_platform_error_monitor_capabilities.sql` | 校验 Runtime 超管身份后提供错误列表、统计与 AI 摘要输入 |
+| `resolve_platform_error` / `clear_platform_errors` | `backend/migrations/199_platform_error_monitor_capabilities.sql` | 校验 Runtime 超管身份后处理或按截止时间清理错误日志 |
+| `list_runtime_wecom_chat_targets` / `list_governed_wecom_chat_targets` | `backend/migrations/200_web_wecom_control_capabilities.sql` | 按企业成员或 owner/admin 权限返回企微推送目标，不开放底表 |
+| `update_governed_wecom_chat_target_name` / `resolve_governed_wecom_push_target` | `backend/migrations/200_web_wecom_control_capabilities.sql` | owner/admin 在企业边界内修改群名或解析主动推送地址 |
+| `is_runtime_wecom_self_target` | `backend/migrations/200_web_wecom_control_capabilities.sql` | 判断定时任务企微单聊目标是否属于当前 Runtime Actor，避免直读映射表 |
+| `enqueue_wecom_callback` / `claim_wecom_callback` / `complete_wecom_callback` / `fail_wecom_callback` / `cleanup_wecom_callback_inbox` | `backend/migrations/201_wecom_callback_inbox.sql` | Runtime 幂等入队、WeCom Runtime 租约消费及 Worker 清理 30 天前终态回调 |
+| `resolve_wecom_callback_config` | `backend/services/wecom/callback_config.py` | 从企业 Callback Bundle 解密 CorpID、回调凭证和应用回复凭证 |
+| `WecomCallbackInboxWorker` | `backend/services/wecom/callback_inbox_worker.py` | 在独立 WeCom 进程领取、处理并完成或退避重试自建应用回调 |
+| `PushDispatcher.publish_wecom_message` | `backend/services/scheduler/push_dispatcher.py` | 将已鉴权并解析地址的主动企微消息发布到独立 WS Runner |
+| `WecomMessageService.handle_message` | `backend/services/wecom/wecom_message_service.py` | 处理单条企微消息并返回明确成功状态，供持久化 Inbox 决定完成或重试 |
+| `_build_score_knowledge` / `_commit_model_score` | `backend/services/model_scorer.py` | 保留 Python EMA 算法和 embedding 构造，通过 Worker Commit RPC 原子持久化，不再直读写 Knowledge 表 |
+| `resolve_schedule_fields` | `backend/api/routes/scheduled_task_support.py` | 将 once/cron/daily/weekly/monthly 请求字段解析为持久化计划与下一执行时间 | payload, tz | Dict |
+| `enrich_with_creator` | `backend/api/routes/scheduled_task_support.py` | 批量读取用户基础展示和 Runtime 任职能力，为定时任务补充创建者部门职位信息 | db, tasks, org_id | List[Dict] |
+| `PermissionChecker.get_assignment` | `backend/services/permissions/checker.py` | 调用 Runtime 任职窄能力读取用户在企业内的主任职；能力失败时记录用户与企业上下文并失败关闭 |
+| `get_users_in_depts` | `backend/services/permissions/scope_filter.py` | 通过显式 org_id 和部门集合能力计算数据范围内成员，不再直读任职表 | db, dept_ids, org_id, include_subtree | Set[str] |
 | `add_governed_member` / `remove_governed_member` / `change_governed_member_role` | `backend/migrations/157_governance_write_capabilities.sql` | 企业行锁下执行成员上限、owner、自操作和 admin 层级不变量，并同事务记录角色变化 |
 | `create_governed_invitation` / `accept_governed_invitation` | `backend/migrations/157_governance_write_capabilities.sql` | 按企业+手机号串行创建邀请；接收人手机号、企业状态和成员容量全部在同一事务重检，接受动作使用 self 审计 |
 | `ConfigDefinition.contract` / `contract_json` / `contract_hash` | `backend/services/configuration/definitions.py` | 将代码 Registry 定义投影为 canonical JSON，并生成数据库契约校验使用的 SHA-256 |

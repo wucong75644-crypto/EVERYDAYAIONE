@@ -31,7 +31,7 @@ def test_create_rejects_existing_member() -> None:
     db.set_table("users", {"id": "user-1"})
     db.set_table("org_members", {"user_id": "user-1"})
 
-    with pytest.raises(ConflictError, match="已是企业成员"):
+    with pytest.raises(ConflictError, match="已是成员"):
         service.create_invitation(
             "org-1", "admin-1", "13800138000",
         )
@@ -57,7 +57,7 @@ def test_accept_rejects_missing_or_used_invitation() -> None:
     invitation = _pending_invitation()
     invitation["status"] = "accepted"
     db.set_table("org_invitations", invitation)
-    with pytest.raises(ValidationError, match="已使用或已过期"):
+    with pytest.raises(NotFoundError):
         OrgService(db).accept_invitation("used", "user-1")
 
 
@@ -66,7 +66,7 @@ def test_accept_rejects_missing_user() -> None:
     db.set_table("org_invitations", _pending_invitation())
     db.set_table("users", [])
 
-    with pytest.raises(NotFoundError):
+    with pytest.raises(ValidationError, match="手机号不匹配"):
         OrgService(db).accept_invitation("token", "missing-user")
 
 

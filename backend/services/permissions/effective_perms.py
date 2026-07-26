@@ -90,12 +90,13 @@ async def get_member_context(
     if assignment["position_code"] == "vp" and assignment.get("data_scope_dept_ids"):
         try:
             dept_ids = assignment["data_scope_dept_ids"]
-            depts = db.table("org_departments") \
-                .select("id, name") \
-                .in_("id", dept_ids) \
-                .execute()
+            depts = db.rpc("list_runtime_org_departments", {
+                "p_org_id": org_id,
+            }).execute()
             result["managed_departments"] = [
-                {"id": d["id"], "name": d["name"]} for d in (depts.data or [])
+                {"id": d["id"], "name": d["name"]}
+                for d in (depts.data or [])
+                if d["id"] in dept_ids
             ]
         except Exception as e:
             logger.error(f"get_member_context managed_depts | error={e}")

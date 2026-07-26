@@ -5,6 +5,10 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from core.db_scope import (
+    DatabaseAccessKind,
+    database_scope_from_client,
+)
 from services.knowledge_config import get_pg_connection, is_kb_available
 
 
@@ -29,6 +33,16 @@ async def record_metric(
     """记录任务执行指标（fire-and-forget，不抛异常）"""
     if not is_kb_available():
         return
+
+    database_scope = database_scope_from_client(db_source)
+    if database_scope is not None:
+        if org_id is not None and org_id != database_scope.org_id:
+            raise ValueError("KNOWLEDGE_METRIC_ORG_SCOPE_MISMATCH")
+        org_id = database_scope.org_id
+        if database_scope.access_kind == DatabaseAccessKind.RUNTIME:
+            if database_scope.actor_user_id is None:
+                raise ValueError("KNOWLEDGE_METRIC_ACTOR_SCOPE_REQUIRED")
+            user_id = database_scope.actor_user_id
 
     if task_id and db_source is not None:
         try:

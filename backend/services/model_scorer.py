@@ -7,15 +7,24 @@
 由 BackgroundTaskWorker 定时调用，fire-and-forget 不阻塞主流程。
 """
 
-import json
+import asyncio
 from datetime import datetime, timezone
+import inspect
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from core.db_scope import DatabaseAccessKind, DatabaseScope
-from services.knowledge_config import create_dedicated_connection, is_kb_available
-from services.knowledge_service import add_knowledge
+from core.database import get_worker_db
+from core.db_scope import (
+    DatabaseAccessKind,
+    DatabaseScope,
+    ScopedDatabaseClient,
+)
+from services.knowledge_config import (
+    compute_content_hash,
+    compute_embedding,
+    is_kb_available,
+)
 
 # ===== 常量 =====
 
@@ -47,7 +56,10 @@ REVIEW_MIN_SAMPLE_COUNT = 20
 # ===== 主入口 =====
 
 
-async def aggregate_model_scores(org_id: str | None = None) -> None:
+async def aggregate_model_scores(
+    org_id: str | None = None,
+    db_source: Any = None,
+) -> None:
     """
     每小时聚合模型评分（由 BackgroundTaskWorker 按 org 迭代调用）
 
@@ -65,57 +77,56 @@ async def aggregate_model_scores(org_id: str | None = None) -> None:
         access_kind=DatabaseAccessKind.WORKER,
         request_id="model-scorer",
     )
-    conn = await create_dedicated_connection(
-        statement_timeout_s=15,
-        database_scope=database_scope,
+    db = ScopedDatabaseClient(
+        db_source or get_worker_db(),
+        database_scope,
     )
-    if conn is None:
-        return
 
     try:
-        async with conn:
-            rows = await _query_aggregated_metrics(conn, org_id=org_id)
-            if not rows:
-                logger.debug("Model scoring skipped | no metrics data")
-                return
+        rows = await _query_aggregated_metrics(db, org_id=org_id)
+        if not rows:
+            logger.debug("Model scoring skipped | no metrics data")
+            return
 
-            applied_count = 0
-            review_count = 0
+        applied_count = 0
+        review_count = 0
 
-            for row in rows:
-                try:
-                    raw_score = _compute_raw_score(row)
-                    old_score = await _get_latest_score(
-                        conn, row["model_id"], row["task_type"], org_id=org_id,
+        for row in rows:
+            try:
+                raw_score = _compute_raw_score(row)
+                old_score = (
+                    float(row["old_score"])
+                    if row.get("old_score") is not None else None
+                )
+                ema_score = _apply_ema(raw_score, old_score)
+                confidence = _get_confidence(row["total"])
+                status = _determine_status(
+                    ema_score, old_score, row["total"],
+                )
+
+                knowledge = None
+                if status == "auto_applied":
+                    knowledge = await _build_score_knowledge(
+                        row, ema_score, confidence,
                     )
-                    ema_score = _apply_ema(raw_score, old_score)
-                    confidence = _get_confidence(row["total"])
-                    status = _determine_status(ema_score, old_score, row["total"])
+                await _commit_model_score(
+                    db, row, old_score, ema_score, status, knowledge,
+                    org_id=org_id,
+                )
+                if status == "auto_applied":
+                    applied_count += 1
+                else:
+                    review_count += 1
+            except Exception as e:
+                logger.warning(
+                    f"Scoring failed for model | model={row['model_id']} | "
+                    f"task={row['task_type']} | error={e}"
+                )
 
-                    node_id = None
-                    if status == "auto_applied":
-                        node_id = await _write_score_to_knowledge(
-                            row, ema_score, confidence, org_id=org_id,
-                            db_source=database_scope,
-                        )
-                        applied_count += 1
-                    else:
-                        review_count += 1
-
-                    await _write_audit_log(
-                        conn, row, old_score, ema_score, status, node_id,
-                        org_id=org_id,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Scoring failed for model | model={row['model_id']} | "
-                        f"task={row['task_type']} | error={e}"
-                    )
-
-            logger.info(
-                f"Model scoring completed | models={len(rows)} | "
-                f"applied={applied_count} | pending_review={review_count}"
-            )
+        logger.info(
+            f"Model scoring completed | models={len(rows)} | "
+            f"applied={applied_count} | pending_review={review_count}"
+        )
     except Exception as e:
         logger.error(f"Model scoring connection failed | error={e}")
 
@@ -124,46 +135,16 @@ async def aggregate_model_scores(org_id: str | None = None) -> None:
 
 
 async def _query_aggregated_metrics(
-    conn, org_id: str | None = None,
+    db: Any, org_id: str | None = None,
 ) -> List[Dict[str, Any]]:
-    """从 knowledge_metrics 聚合 7 天内模型表现数据（按 org 隔离）"""
-    org_filter = (
-        "AND org_id = %(org_id)s" if org_id
-        else "AND org_id IS NULL"
-    )
-
-    sql = f"""
-    SELECT
-        model_id,
-        task_type,
-        COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE status = 'success') AS success_count,
-        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY cost_time_ms)
-            FILTER (WHERE status = 'success' AND cost_time_ms IS NOT NULL)
-            AS p75_latency,
-        COUNT(*) FILTER (WHERE retried = TRUE) AS retry_count,
-        COUNT(*) FILTER (WHERE error_code = 'timeout') AS timeout_count,
-        COUNT(*) FILTER (
-            WHERE error_code IS NOT NULL
-            AND error_code NOT IN ('timeout', 'rate_limit')
-        ) AS hard_error_count,
-        MIN(created_at) AS period_start,
-        MAX(created_at) AS period_end
-    FROM knowledge_metrics
-    WHERE created_at > NOW() - INTERVAL '{AGGREGATION_WINDOW_DAYS} days'
-      {org_filter}
-    GROUP BY model_id, task_type
-    HAVING COUNT(*) >= 1;
-    """
-
+    """通过 Worker 窄能力读取企业或逐散客模型指标快照。"""
     try:
-        async with conn.cursor() as cur:
-            await cur.execute(sql, {"org_id": org_id})
-            rows = await cur.fetchall()
-            if not rows:
-                return []
-            columns = [desc.name for desc in cur.description]
-            return [dict(zip(columns, row)) for row in rows]
+        payload = await _execute_rpc(
+            db, "worker_model_scoring_snapshot", {"p_org_id": org_id},
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("MODEL_SCORING_SNAPSHOT_INVALID")
+        return [row for row in payload if isinstance(row, dict)]
     except Exception as e:
         logger.error(f"Metrics aggregation query failed | error={e}")
         return []
@@ -235,51 +216,13 @@ def _determine_status(
     return "auto_applied"
 
 
-# ===== 历史评分查询 =====
-
-
-async def _get_latest_score(
-    conn, model_id: str, task_type: str, org_id: str | None = None,
-) -> Optional[float]:
-    """查询最近一次已生效的评分（auto_applied 或 approved，按 org 隔离）"""
-    org_filter = (
-        "AND org_id = %(org_id)s" if org_id
-        else "AND org_id IS NULL"
-    )
-
-    try:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                f"""
-                SELECT new_score FROM scoring_audit_log
-                WHERE model_id = %(model_id)s
-                    AND task_type = %(task_type)s
-                    AND status IN ('auto_applied', 'approved')
-                    {org_filter}
-                ORDER BY created_at DESC
-                LIMIT 1;
-                """,
-                {"model_id": model_id, "task_type": task_type, "org_id": org_id},
-            )
-            row = await cur.fetchone()
-            return float(row[0]) if row else None
-    except Exception as e:
-        logger.warning(
-            f"Get latest score failed | model={model_id} | "
-            f"task={task_type} | error={e}"
-        )
-        return None
-
-
 # ===== 知识库写入 =====
 
 
-async def _write_score_to_knowledge(
+async def _build_score_knowledge(
     row: Dict[str, Any], score: float, confidence: float,
-    org_id: str | None = None,
-    db_source: Any = None,
-) -> Optional[str]:
-    """将评分作为知识节点写入（add_knowledge 自动 hash 去重/更新）"""
+) -> Dict[str, Any]:
+    """构造由 Worker 提交能力写入的评分知识事实。"""
     model_id = row["model_id"]
     task_type = row["task_type"]
     total = row["total"]
@@ -310,33 +253,30 @@ async def _write_score_to_knowledge(
         "period": f"{period_start}~{period_end}",
     }
 
-    return await add_knowledge(
-        db_source=db_source,
-        category="model",
-        subcategory=task_type,
-        node_type="performance",
-        title=title,
-        content=content,
-        metadata=metadata,
-        source="aggregated",
-        confidence=confidence,
-        org_id=org_id,
-    )
+    embedding = await compute_embedding(f"{title} {content}")
+    return {
+        "title": title,
+        "content": content,
+        "metadata": metadata,
+        "confidence": confidence,
+        "content_hash": compute_content_hash("model", title, content),
+        "embedding": str(embedding) if embedding else None,
+    }
 
 
 # ===== 审核日志 =====
 
 
-async def _write_audit_log(
-    conn,
+async def _commit_model_score(
+    db: Any,
     row: Dict[str, Any],
     old_score: Optional[float],
     new_score: float,
     status: str,
-    knowledge_node_id: Optional[str],
+    knowledge: Optional[Dict[str, Any]],
     org_id: str | None = None,
-) -> None:
-    """写入 scoring_audit_log 审核记录（按 org 隔离）"""
+) -> Optional[str]:
+    """原子提交评分知识（可选）与审核记录。"""
     score_change = round(
         abs(new_score - (old_score if old_score is not None else new_score)), 4
     )
@@ -352,43 +292,45 @@ async def _write_audit_log(
         "timeout_count": row.get("timeout_count", 0),
     }
 
-    try:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO scoring_audit_log (
-                    model_id, task_type, old_score, new_score,
-                    score_change, sample_count, metrics,
-                    period_start, period_end, status, knowledge_node_id,
-                    org_id
-                ) VALUES (
-                    %(model_id)s, %(task_type)s, %(old_score)s, %(new_score)s,
-                    %(score_change)s, %(sample_count)s, %(metrics)s,
-                    %(period_start)s, %(period_end)s, %(status)s,
-                    %(knowledge_node_id)s, %(org_id)s
-                );
-                """,
-                {
-                    "model_id": row["model_id"],
-                    "task_type": row["task_type"],
-                    "old_score": old_score,
-                    "new_score": new_score,
-                    "score_change": score_change,
-                    "sample_count": row["total"],
-                    "metrics": json.dumps(metrics),
-                    "period_start": period_start,
-                    "period_end": period_end,
-                    "status": status,
-                    "knowledge_node_id": knowledge_node_id,
-                    "org_id": org_id,
-                },
-            )
-        await conn.commit()
-    except Exception as e:
-        logger.warning(
-            f"Audit log write failed | model={row['model_id']} | "
-            f"task={row['task_type']} | error={e}"
-        )
+    knowledge = knowledge or {}
+    payload = await _execute_rpc(db, "worker_commit_model_score", {
+        "p_org_id": org_id,
+        "p_owner_user_id": row.get("owner_user_id"),
+        "p_model_id": row["model_id"],
+        "p_task_type": row["task_type"],
+        "p_old_score": old_score,
+        "p_new_score": new_score,
+        "p_score_change": score_change,
+        "p_sample_count": row["total"],
+        "p_metrics": metrics,
+        "p_period_start": period_start,
+        "p_period_end": period_end,
+        "p_status": status,
+        "p_title": knowledge.get("title"),
+        "p_content": knowledge.get("content"),
+        "p_metadata": knowledge.get("metadata"),
+        "p_confidence": knowledge.get("confidence"),
+        "p_content_hash": knowledge.get("content_hash"),
+        "p_embedding": knowledge.get("embedding"),
+    })
+    if not isinstance(payload, dict) or payload.get("outcome") != "recorded":
+        raise RuntimeError("MODEL_SCORING_COMMIT_INVALID")
+    node_id = payload.get("knowledge_node_id")
+    return str(node_id) if node_id else None
+
+
+async def _execute_rpc(
+    db: Any,
+    name: str,
+    params: Dict[str, Any],
+) -> Any:
+    """在线程中执行同步 Worker client，并兼容异步测试客户端。"""
+    response = await asyncio.to_thread(
+        lambda: db.rpc(name, params).execute(),
+    )
+    if inspect.isawaitable(response):
+        response = await response
+    return response.data if response is not None else None
 
 
 # ===== 工具函数 =====

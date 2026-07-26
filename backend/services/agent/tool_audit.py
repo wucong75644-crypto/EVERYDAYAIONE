@@ -13,8 +13,9 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Dict
 
 from loguru import logger
@@ -57,10 +58,26 @@ async def record_tool_audit(db: Any, entry: ToolAuditEntry) -> None:
     import asyncio
 
     try:
-        row = asdict(entry)
-        await asyncio.to_thread(
-            lambda: db.table("tool_audit_log").insert(row).execute()
+        params = {
+            "p_task_id": entry.task_id,
+            "p_tool_name": entry.tool_name,
+            "p_tool_call_id": entry.tool_call_id,
+            "p_turn": entry.turn,
+            "p_args_hash": entry.args_hash,
+            "p_result_length": entry.result_length,
+            "p_elapsed_ms": entry.elapsed_ms,
+            "p_status": entry.status,
+            "p_is_cached": entry.is_cached,
+            "p_is_truncated": entry.is_truncated,
+            "p_prompt_tokens": entry.prompt_tokens,
+            "p_completion_tokens": entry.completion_tokens,
+            "p_trace_id": entry.trace_id,
+        }
+        result = await asyncio.to_thread(
+            lambda: db.rpc("record_runtime_tool_audit", params).execute()
         )
+        if inspect.isawaitable(result):
+            await result
     except Exception as e:
         logger.warning(
             f"Tool audit write failed | tool={entry.tool_name} | "

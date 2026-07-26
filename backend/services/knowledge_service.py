@@ -21,6 +21,7 @@ from services.knowledge_config import (
     get_pg_connection,
     invalidate_search_cache,
     is_kb_available,
+    resolve_knowledge_identity,
     set_cached_search,
 )
 from services.knowledge_dedup import (
@@ -108,6 +109,7 @@ async def _insert_node_row(
     title: str, content: str, metadata: Optional[Dict[str, Any]],
     embedding: Optional[list], source: str, confidence: float,
     scope: str, content_hash: str, org_id: Optional[str],
+    owner_user_id: Optional[str],
 ) -> Optional[str]:
     """执行 INSERT 并返回新节点 ID（不 commit，由调用方负责）"""
     emb_value = str(embedding) if embedding else None
@@ -116,11 +118,12 @@ async def _insert_node_row(
         INSERT INTO knowledge_nodes (
             category, subcategory, node_type, title, content,
             metadata, embedding, source, confidence, scope,
-            content_hash, org_id
+            content_hash, org_id, owner_user_id
         ) VALUES (
             %(category)s, %(subcategory)s, %(node_type)s, %(title)s,
             %(content)s, %(metadata)s, %(embedding)s::vector, %(source)s,
-            %(confidence)s, %(scope)s, %(hash)s, %(org_id)s
+            %(confidence)s, %(scope)s, %(hash)s, %(org_id)s,
+            %(owner_user_id)s
         )
         RETURNING id;
         """,
@@ -137,6 +140,7 @@ async def _insert_node_row(
             "scope": scope,
             "hash": content_hash,
             "org_id": org_id,
+            "owner_user_id": owner_user_id,
         },
     )
     result = await cur.fetchone()
@@ -176,6 +180,7 @@ async def add_knowledge(
         节点 ID（新增或已有），None 表示 DB 写入失败
     """
     _validate_node_schema(category, node_type, source, title)
+    org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
 
     if not is_kb_available():
         return None
@@ -192,6 +197,7 @@ async def add_knowledge(
                 # Hash 去重
                 dup_id = await dedup_by_hash(
                     cur, conn, content_hash, source, org_id=org_id,
+                    owner_user_id=owner_user_id,
                 )
                 if dup_id:
                     return dup_id
@@ -204,22 +210,27 @@ async def add_knowledge(
                         category=category, embedding=embedding,
                         source=source, title=title, content=content,
                         content_hash=content_hash, metadata=metadata,
-                        org_id=org_id,
+                        org_id=org_id, owner_user_id=owner_user_id,
                     )
                     if dup_id:
                         return dup_id
 
                 # 多维度淘汰（global → per-category → per-node_type）
-                await evict_global(cur, settings.kb_max_nodes, org_id=org_id)
+                await evict_global(
+                    cur, settings.kb_max_nodes, org_id=org_id,
+                    owner_user_id=owner_user_id,
+                )
                 if max_per_category:
                     await evict_by_dimension(
                         cur, dimension="category", value=category,
                         max_count=max_per_category, org_id=org_id,
+                        owner_user_id=owner_user_id,
                     )
                 if max_per_node_type:
                     await evict_by_dimension(
                         cur, dimension="node_type", value=node_type,
                         max_count=max_per_node_type, org_id=org_id,
+                        owner_user_id=owner_user_id,
                     )
 
                 # INSERT
@@ -229,6 +240,7 @@ async def add_knowledge(
                     metadata=metadata, embedding=embedding, source=source,
                     confidence=confidence, scope=scope,
                     content_hash=content_hash, org_id=org_id,
+                    owner_user_id=owner_user_id,
                 )
                 invalidate_search_cache()
                 logger.info(
@@ -276,6 +288,7 @@ async def search_relevant(
     """
     if not is_kb_available():
         return []
+    org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
 
     limit = limit or settings.kb_search_limit
     threshold = threshold or settings.kb_search_threshold
@@ -283,7 +296,8 @@ async def search_relevant(
     # 缓存检查（含 org_id + node_type + min_confidence 隔离）
     cache_key = (
         f"{query[:100]}|{category}|{node_type}|{min_confidence}|"
-        f"{scope}|{org_id or 'global'}|{limit}"
+        f"{scope}|{org_id or 'personal'}|"
+        f"{owner_user_id or 'system'}|{limit}"
     )
     cached = get_cached_search(cache_key)
     if cached is not None:
@@ -300,15 +314,20 @@ async def search_relevant(
     category_filter = "AND category = %(category)s" if category else ""
     node_type_filter = "AND node_type = %(node_type)s" if node_type else ""
     min_conf_filter = "AND confidence >= %(min_conf)s" if min_confidence is not None else ""
-    # 企业用户看到：系统知识(org_id IS NULL) + 本企业知识
-    # 散客看到：系统知识(org_id IS NULL)
-    org_filter = "AND (org_id = %(org_id)s OR org_id IS NULL)" if org_id else "AND org_id IS NULL"
+    owner_filter = (
+        "AND (org_id = %(org_id)s OR "
+        "(org_id IS NULL AND owner_user_id IS NULL))"
+        if org_id else
+        "AND (owner_user_id = %(owner_user_id)s OR "
+        "(org_id IS NULL AND owner_user_id IS NULL))"
+    )
     params: Dict[str, Any] = {
         "emb": str(embedding),
         "threshold": threshold,
         "limit": limit,
         "scope": scope,
         "org_id": org_id,
+        "owner_user_id": owner_user_id,
     }
     if category:
         params["category"] = category
@@ -325,7 +344,7 @@ async def search_relevant(
     WHERE is_deleted = FALSE
         AND embedding IS NOT NULL
         AND (scope = %(scope)s OR scope = 'global')
-        {org_filter}
+        {owner_filter}
         {category_filter}
         {node_type_filter}
         {min_conf_filter}
@@ -373,14 +392,24 @@ async def get_node_by_metadata(
     """根据 metadata 字段查找节点（用于查找模型/工具实体节点）"""
     if not is_kb_available():
         return None
+    org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
 
     conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return None
 
     category_filter = "AND category = %(category)s" if category else ""
-    org_filter = "AND (org_id = %(org_id)s OR org_id IS NULL)" if org_id else "AND org_id IS NULL"
-    params: Dict[str, Any] = {"key": key, "value": value, "org_id": org_id}
+    owner_filter = (
+        "AND (org_id = %(org_id)s OR "
+        "(org_id IS NULL AND owner_user_id IS NULL))"
+        if org_id else
+        "AND (owner_user_id = %(owner_user_id)s OR "
+        "(org_id IS NULL AND owner_user_id IS NULL))"
+    )
+    params: Dict[str, Any] = {
+        "key": key, "value": value, "org_id": org_id,
+        "owner_user_id": owner_user_id,
+    }
     if category:
         params["category"] = category
 
@@ -394,7 +423,7 @@ async def get_node_by_metadata(
                     FROM knowledge_nodes
                     WHERE is_deleted = FALSE
                         AND metadata->>%(key)s = %(value)s
-                        {org_filter}
+                        {owner_filter}
                         {category_filter}
                     LIMIT 1;
                     """,

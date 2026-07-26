@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 
@@ -31,6 +31,47 @@ class OrgService(OrgInvitationMixin):
     def __init__(self, db: Client):
         self.db = db
 
+    def _governance_rpc(
+        self,
+        name: str,
+        params: Optional[dict] = None,
+    ) -> Any:
+        """Execute one governance capability and preserve API error semantics."""
+        try:
+            return self.db.rpc(name, params).execute()
+        except Exception as error:
+            marker = str(error)
+            if "GOVERNANCE_ORG_NAME_CONFLICT" in marker:
+                raise ConflictError("企业名称已存在") from error
+            if "GOVERNANCE_MEMBER_EXISTS" in marker:
+                raise ConflictError("您已是该企业成员") from error
+            if "GOVERNANCE_INVITATION_CONFLICT" in marker:
+                raise ConflictError("该手机号已有待处理邀请或已是成员") from error
+            if "GOVERNANCE_ORG_INACTIVE" in marker:
+                raise PermissionDeniedError("该企业已被停用") from error
+            if "GOVERNANCE_INVITATION_RECIPIENT_MISMATCH" in marker:
+                raise ValidationError("邀请手机号不匹配") from error
+            if "GOVERNANCE_INVITATION_EXPIRED" in marker:
+                raise ValidationError("邀请已过期") from error
+            if "GOVERNANCE_MEMBER_LIMIT_REACHED" in marker:
+                raise ValidationError("企业成员数已达上限") from error
+            if "GOVERNANCE_SELF_MUTATION_DENIED" in marker:
+                raise ValidationError("不能修改自己") from error
+            if "GOVERNANCE_ARGUMENT_INVALID" in marker:
+                raise ValidationError("企业治理参数或状态无效") from error
+            if any(code in marker for code in (
+                "GOVERNANCE_MEMBER_MISSING",
+                "GOVERNANCE_INVITATION_MISSING",
+            )):
+                raise NotFoundError("企业治理对象", "unknown") from error
+            if any(code in marker for code in (
+                "GOVERNANCE_AUTHORITY_DENIED",
+                "GOVERNANCE_SCOPE_MISMATCH",
+                "GOVERNANCE_SELF_SCOPE_MISMATCH",
+            )):
+                raise PermissionDeniedError("无权执行此企业治理操作") from error
+            raise
+
     # ----------------------------------------------------------------
     # 企业 CRUD
     # ----------------------------------------------------------------
@@ -48,34 +89,17 @@ class OrgService(OrgInvitationMixin):
         if not name or len(name) > 100:
             raise ValidationError("企业名称不能为空且不超过100字符")
 
-        existing = (
-            self.db.table("organizations")
-            .select("id")
-            .eq("name", name)
-            .execute()
-        )
-        if existing.data:
-            raise ConflictError(f"企业名称「{name}」已存在")
-
-        result = (
-            self.db.table("organizations")
-            .insert({"name": name, "owner_id": owner_id})
-            .execute()
+        result = self._governance_rpc(
+            "create_governed_organization",
+            {"p_name": name, "p_owner_id": owner_id},
         )
         if not result.data:
             raise ValidationError("创建企业失败")
-
-        org = result.data[0]
-        org_id = org["id"]
-
-        self.db.table("org_members").insert({
-            "org_id": org_id,
-            "user_id": owner_id,
-            "role": "owner",
-            "status": "active",
-        }).execute()
-
-        logger.info(f"Organization created | org_id={org_id} | name={name} | owner={owner_id}")
+        org = result.data
+        logger.info(
+            f"Organization created | org_id={org['id']} | "
+            f"name={name} | owner={owner_id}"
+        )
         return org
 
     def get_organization(self, org_id: str) -> dict:
@@ -85,12 +109,8 @@ class OrgService(OrgInvitationMixin):
         Raises:
             NotFoundError: 企业不存在
         """
-        result = (
-            self.db.table("organizations")
-            .select("*")
-            .eq("id", org_id)
-            .single()
-            .execute()
+        result = self._governance_rpc(
+            "get_governed_organization", {"p_org_id": org_id},
         )
         if not result.data:
             raise NotFoundError("企业", org_id)
@@ -113,22 +133,11 @@ class OrgService(OrgInvitationMixin):
             PermissionDeniedError: 无权操作
             ConflictError: 名称重复
         """
-        self.require_role(org_id, user_id, ("owner", "admin"))
-
         updates: dict = {}
         if name is not None:
             name = name.strip()
             if not name or len(name) > 100:
                 raise ValidationError("企业名称不能为空且不超过100字符")
-            dup = (
-                self.db.table("organizations")
-                .select("id")
-                .eq("name", name)
-                .neq("id", org_id)
-                .execute()
-            )
-            if dup.data:
-                raise ConflictError(f"企业名称「{name}」已存在")
             updates["name"] = name
         if logo_url is not None:
             updates["logo_url"] = logo_url
@@ -140,17 +149,15 @@ class OrgService(OrgInvitationMixin):
         if not updates:
             raise ValidationError("没有需要更新的内容")
 
-        result = (
-            self.db.table("organizations")
-            .update(updates)
-            .eq("id", org_id)
-            .execute()
+        result = self._governance_rpc(
+            "update_governed_organization",
+            {"p_org_id": org_id, "p_changes": updates},
         )
         if not result.data:
             raise NotFoundError("企业", org_id)
 
         logger.info(f"Organization updated | org_id={org_id} | fields={list(updates.keys())}")
-        return result.data[0]
+        return result.data
 
     # ----------------------------------------------------------------
     # 成员管理
@@ -163,36 +170,10 @@ class OrgService(OrgInvitationMixin):
         Raises:
             PermissionDeniedError: 非企业成员
         """
-        self.require_role(org_id, user_id, ("owner", "admin", "member"))
-
-        result = (
-            self.db.table("org_members")
-            .select("user_id, role, status, joined_at")
-            .eq("org_id", org_id)
-            .order("joined_at")
-            .execute()
+        result = self._governance_rpc(
+            "list_governed_members", {"p_org_id": org_id},
         )
-        members = []
-        for row in result.data or []:
-            # 分步查用户信息（兼容 LocalDB，不依赖 PostgREST 嵌套语法）
-            user_info = {}
-            try:
-                u = self.db.table("users").select("nickname, phone").eq("id", row["user_id"]).single().execute()
-                if u.data:
-                    user_info = u.data
-            except Exception:
-                pass
-            phone = user_info.get("phone") or ""
-            masked = f"{phone[:3]}****{phone[-4:]}" if len(phone) >= 7 else phone
-            members.append({
-                "user_id": row["user_id"],
-                "role": row["role"],
-                "status": row["status"],
-                "joined_at": row["joined_at"],
-                "nickname": user_info.get("nickname"),
-                "phone": masked,
-            })
-        return members
+        return result.data or []
 
     def add_member(
         self,
@@ -208,38 +189,22 @@ class OrgService(OrgInvitationMixin):
             ConflictError: 已是成员
             PermissionDeniedError: 无权操作
         """
-        self.require_role(org_id, operator_id, ("owner", "admin"))
         if role not in ("admin", "member"):
             raise ValidationError("角色只能是 admin 或 member")
-
-        org = self.get_organization(org_id)
-        max_m = org.get("max_members", 50)
-        current_count = self._member_count(org_id)
-        if current_count >= max_m:
-            raise ValidationError(f"企业成员数已达上限({max_m}人)")
-
-        existing = (
-            self.db.table("org_members")
-            .select("user_id")
-            .eq("org_id", org_id)
-            .eq("user_id", target_user_id)
-            .execute()
+        result = self._governance_rpc(
+            "add_governed_member",
+            {
+                "p_org_id": org_id,
+                "p_target_user_id": target_user_id,
+                "p_role": role,
+            },
         )
-        if existing.data:
-            raise ConflictError("该用户已是企业成员")
-
-        result = self.db.table("org_members").insert({
-            "org_id": org_id,
-            "user_id": target_user_id,
-            "role": role,
-            "invited_by": operator_id,
-        }).execute()
 
         logger.info(
             f"Member added | org_id={org_id} | user_id={target_user_id} | "
             f"role={role} | by={operator_id}"
         )
-        return result.data[0] if result.data else {}
+        return result.data or {}
 
     def remove_member(self, org_id: str, operator_id: str, target_user_id: str) -> None:
         """
@@ -254,24 +219,10 @@ class OrgService(OrgInvitationMixin):
         if operator_id == target_user_id:
             raise ValidationError("不能移除自己")
 
-        self._check_org_active(org_id)
-        operator_role = self._get_member_role(org_id, operator_id)
-        target_role = self._get_member_role(org_id, target_user_id)
-
-        if target_role == "owner":
-            raise ValidationError("不能移除企业创建者")
-        if operator_role == "admin" and target_role == "admin":
-            raise PermissionDeniedError("管理员不能移除其他管理员")
-        if operator_role not in ("owner", "admin"):
-            raise PermissionDeniedError("无权移除成员")
-
-        self.db.table("org_members").delete().eq(
-            "org_id", org_id
-        ).eq("user_id", target_user_id).execute()
-
-        self.db.table("users").update(
-            {"current_org_id": None}
-        ).eq("id", target_user_id).eq("current_org_id", org_id).execute()
+        self._governance_rpc(
+            "remove_governed_member",
+            {"p_org_id": org_id, "p_target_user_id": target_user_id},
+        )
 
         logger.info(
             f"Member removed | org_id={org_id} | user_id={target_user_id} | by={operator_id}"
@@ -287,26 +238,24 @@ class OrgService(OrgInvitationMixin):
             PermissionDeniedError: 非 owner
             ValidationError: 无效角色 / 不能改自己
         """
-        self.require_role(org_id, operator_id, ("owner",))
         if new_role not in ("admin", "member"):
             raise ValidationError("目标角色只能是 admin 或 member")
         if operator_id == target_user_id:
             raise ValidationError("不能更改自己的角色")
 
-        self._get_member_role(org_id, target_user_id)
-
-        result = (
-            self.db.table("org_members")
-            .update({"role": new_role})
-            .eq("org_id", org_id)
-            .eq("user_id", target_user_id)
-            .execute()
+        result = self._governance_rpc(
+            "change_governed_member_role",
+            {
+                "p_org_id": org_id,
+                "p_target_user_id": target_user_id,
+                "p_role": new_role,
+            },
         )
         logger.info(
             f"Member role changed | org_id={org_id} | user_id={target_user_id} | "
             f"new_role={new_role} | by={operator_id}"
         )
-        return result.data[0] if result.data else {}
+        return result.data or {}
 
     # ----------------------------------------------------------------
     # 用户查询自己的企业
@@ -314,89 +263,38 @@ class OrgService(OrgInvitationMixin):
 
     def list_user_organizations(self, user_id: str) -> list[dict]:
         """列出用户所属的所有企业"""
-        result = (
-            self.db.table("org_members")
-            .select("org_id, role, status")
-            .eq("user_id", user_id)
-            .eq("status", "active")
-            .execute()
+        result = self._governance_rpc("list_actor_organizations")
+        return result.data or []
+
+    def list_all_organizations(self) -> list[dict]:
+        """列出平台企业；数据库能力负责验证全局管理员。"""
+        result = self._governance_rpc("list_all_governed_organizations")
+        return result.data or []
+
+    def search_user_by_phone(self, phone: str) -> dict:
+        """按手机号搜索用户；仅返回治理能力允许的脱敏字段。"""
+        result = self._governance_rpc(
+            "search_governed_user_by_phone", {"p_phone": phone},
         )
-        orgs = []
-        for row in result.data or []:
-            # 分步查企业信息（兼容 LocalDB）
-            try:
-                org_result = (
-                    self.db.table("organizations")
-                    .select("id, name, logo_url, status, features")
-                    .eq("id", row["org_id"])
-                    .single()
-                    .execute()
-                )
-                org_info = org_result.data or {}
-            except Exception:
-                continue
-            if org_info.get("status") != "active":
-                continue
-            orgs.append({
-                "org_id": str(org_info["id"]),
-                "name": org_info["name"],
-                "logo_url": org_info.get("logo_url"),
-                "role": row["role"],
-                "features": org_info.get("features", {}),
-            })
-        return orgs
+        return result.data or {"found": False, "user": None}
+
+    def list_pending_invitations(self) -> list[dict]:
+        """列出当前数据库 Actor 的有效待接受邀请。"""
+        result = self._governance_rpc("list_actor_pending_invitations")
+        return result.data or []
 
     # ----------------------------------------------------------------
     # 内部工具
     # ----------------------------------------------------------------
 
-    def _check_org_active(self, org_id: str) -> None:
-        """校验企业存在且状态为 active。"""
-        org_result = (
-            self.db.table("organizations")
-            .select("status")
-            .eq("id", org_id)
-            .single()
-            .execute()
-        )
-        if not org_result.data:
-            raise NotFoundError("企业", org_id)
-        if org_result.data["status"] != "active":
-            raise PermissionDeniedError("该企业已被停用")
-
     def require_role(
         self, org_id: str, user_id: str, allowed_roles: tuple[str, ...],
     ) -> str:
         """校验用户在企业中的角色（含企业状态检查），返回角色名。"""
-        self._check_org_active(org_id)
-        role = self._get_member_role(org_id, user_id)
+        result = self._governance_rpc(
+            "get_governed_actor_authority", {"p_org_id": org_id},
+        )
+        role = str(result.data or "")
         if role not in allowed_roles:
             raise PermissionDeniedError("无权执行此操作")
         return role
-
-    def _get_member_role(self, org_id: str, user_id: str) -> str:
-        """获取用户在企业中的角色。"""
-        result = (
-            self.db.table("org_members")
-            .select("role, status")
-            .eq("org_id", org_id)
-            .eq("user_id", user_id)
-            .single()
-            .execute()
-        )
-        if not result.data:
-            raise PermissionDeniedError("您不是该企业成员")
-        if result.data["status"] != "active":
-            raise PermissionDeniedError("您在该企业中已被禁用")
-        return result.data["role"]
-
-    def _member_count(self, org_id: str) -> int:
-        """当前企业有效成员数"""
-        result = (
-            self.db.table("org_members")
-            .select("user_id", count="exact")
-            .eq("org_id", org_id)
-            .eq("status", "active")
-            .execute()
-        )
-        return result.count or 0

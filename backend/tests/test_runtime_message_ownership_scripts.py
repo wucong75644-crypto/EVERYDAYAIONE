@@ -12,6 +12,8 @@ ROLLBACK = ROOT / "deploy/rollback-runtime-message-ownership.sh"
 TABLES = {
     "users", "organizations", "org_members", "org_configs",
     "org_invitations",
+    "org_departments", "org_positions", "org_roles", "permissions",
+    "role_permissions", "org_member_assignments", "position_default_roles",
     "wecom_user_mappings", "wecom_chat_targets", "conversations",
     "messages", "tasks", "credits_history", "credit_transactions",
     "image_generations", "detail_projects", "detail_project_images",
@@ -20,7 +22,8 @@ TABLES = {
 }
 FUNCTIONS = {
     "_prepare_generation_messages", "_prepare_generation_tasks",
-    "claim_message_generation_request", "prepare_generation",
+    "claim_message_generation_request",
+    "cleanup_expired_message_generation_requests", "prepare_generation",
     "attach_generation_external_task", "fail_prepared_generation_task",
     "enqueue_generation_turn", "bind_generation_turn",
     "close_generation_turn", "cancel_generation_turn",

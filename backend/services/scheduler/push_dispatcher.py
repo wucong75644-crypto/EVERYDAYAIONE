@@ -120,6 +120,22 @@ class PushDispatcher:
             logger.error(f"_publish_to_ws_runner failed: {e}")
             return False
 
+    async def publish_wecom_message(
+        self,
+        *,
+        org_id: str,
+        chatid: str,
+        msgtype: str,
+        content: Dict[str, Any],
+    ) -> bool:
+        """将已鉴权、已解析地址的企微消息发布给独立 WS Runner。"""
+        return await self._publish_to_ws_runner({
+            "org_id": org_id,
+            "chatid": chatid,
+            "msgtype": msgtype,
+            "content": content,
+        })
+
     async def _push_web(
         self,
         org_id: str,

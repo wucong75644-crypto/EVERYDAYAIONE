@@ -108,6 +108,127 @@ class FakeDB:
             return builders.pop(0)
         return FakeQueryBuilder()
 
+    def rpc(self, name: str, params=None):
+        params = params or {}
+        if name == "get_governed_actor_authority":
+            org = self.table("organizations").single().execute().data
+            if not org or org.get("status") != "active":
+                raise Exception("GOVERNANCE_ORG_INACTIVE")
+            member = self.table("org_members").single().execute().data
+            if not member or member.get("status") != "active":
+                raise Exception("GOVERNANCE_AUTHORITY_DENIED")
+            return FakeQueryBuilder(member["role"]).single()
+        if name == "create_governed_organization":
+            existing = self.table("organizations").execute().data
+            if existing:
+                raise Exception("GOVERNANCE_ORG_NAME_CONFLICT")
+            return FakeQueryBuilder({
+                "id": "new-id",
+                "name": params["p_name"],
+                "owner_id": params["p_owner_id"],
+            }).single()
+        if name == "get_governed_organization":
+            return self.table("organizations").single()
+        if name == "list_governed_members":
+            org = self.table("organizations").single().execute().data
+            if org and org.get("status") != "active":
+                raise Exception("GOVERNANCE_ORG_INACTIVE")
+            member = self.table("org_members").single().execute().data
+            if not member or member.get("status") != "active":
+                raise Exception("GOVERNANCE_AUTHORITY_DENIED")
+            rows = self.table("org_members").execute().data
+            result = []
+            for row in rows:
+                account = self.table("users").single().execute().data or {}
+                phone = account.get("phone") or ""
+                result.append({
+                    **row,
+                    "nickname": account.get("nickname"),
+                    "phone": (
+                        f"{phone[:3]}****{phone[-4:]}"
+                        if len(phone) >= 7 else phone
+                    ),
+                })
+            return FakeQueryBuilder(result)
+        if name in (
+            "add_governed_member",
+            "remove_governed_member",
+            "change_governed_member_role",
+            "create_governed_invitation",
+        ):
+            org = self.table("organizations").single().execute().data
+            if org and org.get("status") != "active":
+                raise Exception("GOVERNANCE_ORG_INACTIVE")
+            authority = self.table("org_members").single().execute().data or {}
+            role = authority.get("role")
+            if name == "change_governed_member_role" and role != "owner":
+                raise Exception("GOVERNANCE_AUTHORITY_DENIED")
+            if role not in ("owner", "admin"):
+                raise Exception("GOVERNANCE_AUTHORITY_DENIED")
+            if name == "remove_governed_member":
+                target = self.table("org_members").single().execute().data or {}
+                if target.get("role") == "owner":
+                    raise Exception("GOVERNANCE_AUTHORITY_DENIED")
+                return FakeQueryBuilder(True).single()
+            if name == "create_governed_invitation":
+                account = self.table("users").execute().data
+                if account:
+                    existing = self.table("org_members").execute().data
+                    if existing:
+                        raise Exception("GOVERNANCE_INVITATION_CONFLICT")
+                pending = self.table("org_invitations").execute().data
+                if pending:
+                    raise Exception("GOVERNANCE_INVITATION_CONFLICT")
+                return FakeQueryBuilder({
+                    "id": "new-id",
+                    "invite_token": params["p_invite_token"],
+                    **params,
+                }).single()
+            return FakeQueryBuilder({
+                "user_id": params["p_target_user_id"],
+                "role": params.get("p_role", "member"),
+            }).single()
+        if name == "accept_governed_invitation":
+            invitation = self.table("org_invitations").single().execute().data
+            if not invitation or invitation.get("status") != "pending":
+                raise Exception("GOVERNANCE_INVITATION_MISSING")
+            if invitation["expires_at"].startswith("2020"):
+                raise Exception("GOVERNANCE_INVITATION_EXPIRED")
+            account = self.table("users").single().execute().data
+            if not account:
+                raise Exception("GOVERNANCE_INVITATION_RECIPIENT_MISMATCH")
+            if account.get("phone") != invitation["phone"]:
+                raise Exception("GOVERNANCE_INVITATION_RECIPIENT_MISMATCH")
+            org = self.table("organizations").single().execute().data
+            if not org or org.get("status") != "active":
+                raise Exception("GOVERNANCE_ORG_INACTIVE")
+            existing = self.table("org_members").execute().data
+            if existing:
+                raise Exception("GOVERNANCE_MEMBER_EXISTS")
+            count = self.table("org_members").execute().count or 0
+            if count >= org.get("max_members", 50):
+                raise Exception("GOVERNANCE_MEMBER_LIMIT_REACHED")
+            return FakeQueryBuilder({
+                "org_id": invitation["org_id"],
+                "role": invitation["role"],
+                "org_name": org["name"],
+            }).single()
+        if name == "list_actor_organizations":
+            members = self.table("org_members").execute().data
+            result = []
+            for member in members:
+                org = self.table("organizations").single().execute().data or {}
+                if org.get("status") == "active":
+                    result.append({
+                        "org_id": org["id"],
+                        "name": org["name"],
+                        "logo_url": org.get("logo_url"),
+                        "role": member["role"],
+                        "features": org.get("features", {}),
+                    })
+            return FakeQueryBuilder(result)
+        raise AssertionError(f"unexpected rpc: {name}")
+
 
 @pytest.fixture
 def db():
@@ -201,7 +322,7 @@ class TestMemberManagement:
         db.set_table("org_members", data={"role": "owner", "status": "active"})
         # _get_member_role for target
         db.set_table("org_members", data={"role": "owner", "status": "active"})
-        with pytest.raises(ValidationError, match="创建者"):
+        with pytest.raises(PermissionDeniedError):
             svc.remove_member("org-1", "admin-1", "owner-1")
 
     def test_change_role_non_owner_rejected(self, db, svc):
@@ -313,3 +434,33 @@ class TestListUserOrgs:
         })
         orgs = svc.list_user_organizations("user-1")
         assert len(orgs) == 0
+
+
+class TestGovernanceCapabilityRouting:
+
+    @pytest.mark.parametrize(
+        ("method_name", "rpc_name", "args"),
+        (
+            ("list_all_organizations", "list_all_governed_organizations", ()),
+            (
+                "search_user_by_phone",
+                "search_governed_user_by_phone",
+                ("13800138000",),
+            ),
+            (
+                "list_pending_invitations",
+                "list_actor_pending_invitations",
+                (),
+            ),
+        ),
+    )
+    def test_control_reads_use_governance_rpc(
+        self, method_name, rpc_name, args,
+    ):
+        database = MagicMock()
+        database.rpc.return_value.execute.return_value.data = []
+        service = OrgService(database)
+
+        getattr(service, method_name)(*args)
+
+        assert database.rpc.call_args.args[0] == rpc_name

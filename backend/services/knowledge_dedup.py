@@ -25,19 +25,26 @@ from services.knowledge_config import invalidate_search_cache
 
 async def dedup_by_hash(
     cur, conn, content_hash: str, source: str,
-    org_id: Optional[str] = None,
+    org_id: Optional[str] = None, owner_user_id: Optional[str] = None,
 ) -> Optional[str]:
     """Hash 完全匹配去重：匹配则更新 confidence + hit_count，返回已有节点 ID。
 
     seed → auto 命中时不变更 confidence（保留人工 seed 的高 confidence）。
     """
-    org_filter = "AND org_id = %(org_id)s" if org_id else "AND org_id IS NULL"
+    owner_filter = (
+        "AND org_id = %(org_id)s" if org_id
+        else "AND org_id IS NULL "
+             "AND owner_user_id IS NOT DISTINCT FROM %(owner_user_id)s"
+    )
     await cur.execute(
         f"""
         SELECT id, source, confidence FROM knowledge_nodes
-        WHERE content_hash = %(hash)s AND is_deleted = FALSE {org_filter};
+        WHERE content_hash = %(hash)s AND is_deleted = FALSE {owner_filter};
         """,
-        {"hash": content_hash, "org_id": org_id},
+        {
+            "hash": content_hash, "org_id": org_id,
+            "owner_user_id": owner_user_id,
+        },
     )
     existing = await cur.fetchone()
     if not existing:
@@ -65,7 +72,7 @@ async def dedup_by_vector(
     cur, conn, *, category: str, embedding: list,
     source: str, title: str, content: str,
     content_hash: str, metadata: Optional[Dict[str, Any]],
-    org_id: Optional[str] = None,
+    org_id: Optional[str] = None, owner_user_id: Optional[str] = None,
 ) -> Optional[str]:
     """向量相似度 > 0.9 去重：匹配则合并新内容，返回已有节点 ID。
 
@@ -73,7 +80,11 @@ async def dedup_by_vector(
     """
     import json
 
-    org_filter = "AND org_id = %(org_id)s" if org_id else "AND org_id IS NULL"
+    owner_filter = (
+        "AND org_id = %(org_id)s" if org_id
+        else "AND org_id IS NULL "
+             "AND owner_user_id IS NOT DISTINCT FROM %(owner_user_id)s"
+    )
     await cur.execute(
         f"""
         SELECT id, source, confidence
@@ -82,11 +93,14 @@ async def dedup_by_vector(
             AND category = %(category)s
             AND embedding IS NOT NULL
             AND 1 - (embedding <=> %(emb)s::vector) > 0.9
-            {org_filter}
+            {owner_filter}
         ORDER BY embedding <=> %(emb)s::vector ASC
         LIMIT 1;
         """,
-        {"category": category, "emb": str(embedding), "org_id": org_id},
+        {
+            "category": category, "emb": str(embedding), "org_id": org_id,
+            "owner_user_id": owner_user_id,
+        },
     )
     similar = await cur.fetchone()
     if not similar:
@@ -122,15 +136,22 @@ async def dedup_by_vector(
 # ============ 淘汰 ============
 
 
-async def evict_global(cur, max_nodes: int, org_id: Optional[str] = None) -> None:
+async def evict_global(
+    cur, max_nodes: int, org_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
+) -> None:
     """全局节点上限淘汰：count >= max_nodes 时按 confidence 升序软删一条非 seed 节点。
 
     淘汰按 org 隔离计数（每个 org 独立配额）。
     """
-    org_filter = "AND org_id = %(oid)s" if org_id else "AND org_id IS NULL"
+    owner_filter = (
+        "AND org_id = %(oid)s" if org_id
+        else "AND org_id IS NULL "
+             "AND owner_user_id IS NOT DISTINCT FROM %(uid)s"
+    )
     await cur.execute(
-        f"SELECT COUNT(*) FROM knowledge_nodes WHERE is_deleted = FALSE {org_filter};",
-        {"oid": org_id},
+        f"SELECT COUNT(*) FROM knowledge_nodes WHERE is_deleted = FALSE {owner_filter};",
+        {"oid": org_id, "uid": owner_user_id},
     )
     count_row = await cur.fetchone()
     if not count_row or count_row[0] < max_nodes:
@@ -142,12 +163,12 @@ async def evict_global(cur, max_nodes: int, org_id: Optional[str] = None) -> Non
         WHERE id = (
             SELECT id FROM knowledge_nodes
             WHERE is_deleted = FALSE AND source != 'seed'
-            {org_filter}
+            {owner_filter}
             ORDER BY confidence ASC, updated_at ASC
             LIMIT 1
         );
         """,
-        {"oid": org_id},
+        {"oid": org_id, "uid": owner_user_id},
     )
 
 
@@ -158,6 +179,7 @@ async def evict_by_dimension(
     value: str,
     max_count: int,
     org_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
 ) -> None:
     """单维度淘汰：当 (dimension=value) 的活跃节点数 >= max_count 时软删最低 confidence 节点。
 
@@ -175,15 +197,19 @@ async def evict_by_dimension(
             f"must be 'category' or 'node_type'"
         )
 
-    org_filter = "AND org_id = %(oid)s" if org_id else "AND org_id IS NULL"
-    dim_filter = f"AND {dimension} = %(val)s {org_filter}"
+    owner_filter = (
+        "AND org_id = %(oid)s" if org_id
+        else "AND org_id IS NULL "
+             "AND owner_user_id IS NOT DISTINCT FROM %(uid)s"
+    )
+    dim_filter = f"AND {dimension} = %(val)s {owner_filter}"
 
     await cur.execute(
         f"""
         SELECT COUNT(*) FROM knowledge_nodes
         WHERE is_deleted = FALSE {dim_filter};
         """,
-        {"val": value, "oid": org_id},
+        {"val": value, "oid": org_id, "uid": owner_user_id},
     )
     cnt_row = await cur.fetchone()
     if not cnt_row or cnt_row[0] < max_count:
@@ -200,7 +226,7 @@ async def evict_by_dimension(
             LIMIT 1
         );
         """,
-        {"val": value, "oid": org_id},
+        {"val": value, "oid": org_id, "uid": owner_user_id},
     )
     logger.debug(
         f"Knowledge evicted | dimension={dimension} | value={value} | "

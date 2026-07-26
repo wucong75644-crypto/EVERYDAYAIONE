@@ -73,7 +73,7 @@ class TestRecordToolAudit:
     @pytest.mark.asyncio
     async def test_success_write(self):
         mock_db = MagicMock()
-        mock_db.table.return_value.insert.return_value.execute.return_value = None
+        mock_db.rpc.return_value.execute.return_value = None
 
         entry = ToolAuditEntry(
             task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
@@ -83,17 +83,17 @@ class TestRecordToolAudit:
         )
         await record_tool_audit(mock_db, entry)
 
-        mock_db.table.assert_called_once_with("tool_audit_log")
-        insert_call = mock_db.table.return_value.insert.call_args[0][0]
-        assert insert_call["tool_name"] == "local_stock_query"
-        assert insert_call["status"] == "success"
-        assert insert_call["elapsed_ms"] == 10
+        name, params = mock_db.rpc.call_args[0]
+        assert name == "record_runtime_tool_audit"
+        assert params["p_tool_name"] == "local_stock_query"
+        assert params["p_status"] == "success"
+        assert params["p_elapsed_ms"] == 10
 
     @pytest.mark.asyncio
     async def test_db_failure_does_not_raise(self):
         """DB 写入失败不应抛异常（fire-and-forget 安全）"""
         mock_db = MagicMock()
-        mock_db.table.side_effect = Exception("DB connection lost")
+        mock_db.rpc.side_effect = Exception("DB connection lost")
 
         entry = ToolAuditEntry(
             task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
@@ -107,7 +107,7 @@ class TestRecordToolAudit:
     @pytest.mark.asyncio
     async def test_error_entry_fields(self):
         mock_db = MagicMock()
-        mock_db.table.return_value.insert.return_value.execute.return_value = None
+        mock_db.rpc.return_value.execute.return_value = None
 
         entry = ToolAuditEntry(
             task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
@@ -118,14 +118,14 @@ class TestRecordToolAudit:
         )
         await record_tool_audit(mock_db, entry)
 
-        row = mock_db.table.return_value.insert.call_args[0][0]
-        assert row["status"] == "timeout"
-        assert row["elapsed_ms"] == 5000
+        params = mock_db.rpc.call_args[0][1]
+        assert params["p_status"] == "timeout"
+        assert params["p_elapsed_ms"] == 5000
 
     @pytest.mark.asyncio
     async def test_cached_entry(self):
         mock_db = MagicMock()
-        mock_db.table.return_value.insert.return_value.execute.return_value = None
+        mock_db.rpc.return_value.execute.return_value = None
 
         entry = ToolAuditEntry(
             task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
@@ -136,9 +136,9 @@ class TestRecordToolAudit:
         )
         await record_tool_audit(mock_db, entry)
 
-        row = mock_db.table.return_value.insert.call_args[0][0]
-        assert row["is_cached"] is True
-        assert row["elapsed_ms"] == 0
+        params = mock_db.rpc.call_args[0][1]
+        assert params["p_is_cached"] is True
+        assert params["p_elapsed_ms"] == 0
 
     @pytest.mark.asyncio
     async def test_to_thread_actually_calls_db(self):
@@ -149,15 +149,11 @@ class TestRecordToolAudit:
             def execute(self):
                 call_log.append("executed")
 
-        class FakeInsert:
-            def insert(self, row):
-                call_log.append(("insert", row["tool_name"]))
-                return FakeExecute()
-
         class FakeDB:
-            def table(self, name):
-                call_log.append(("table", name))
-                return FakeInsert()
+            def rpc(self, name, params):
+                call_log.append(("rpc", name))
+                call_log.append(("tool", params["p_tool_name"]))
+                return FakeExecute()
 
         entry = ToolAuditEntry(
             task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
@@ -167,8 +163,8 @@ class TestRecordToolAudit:
         )
         await record_tool_audit(FakeDB(), entry)
 
-        assert ("table", "tool_audit_log") in call_log
-        assert ("insert", "local_stock_query") in call_log
+        assert ("rpc", "record_runtime_tool_audit") in call_log
+        assert ("tool", "local_stock_query") in call_log
         assert "executed" in call_log
 
 

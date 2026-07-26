@@ -27,6 +27,9 @@ DECLARE
     target_tables CONSTANT TEXT[] := ARRAY[
         'users', 'organizations', 'org_members', 'org_configs',
         'org_invitations',
+        'org_departments', 'org_positions', 'org_roles', 'permissions',
+        'role_permissions', 'org_member_assignments',
+        'position_default_roles',
         'wecom_user_mappings', 'wecom_chat_targets', 'conversations',
         'messages', 'tasks', 'credits_history', 'credit_transactions',
         'image_generations', 'detail_projects', 'detail_project_images',
@@ -37,6 +40,7 @@ DECLARE
         '_prepare_generation_messages(text,uuid,uuid,uuid,jsonb,jsonb)',
         '_prepare_generation_tasks(jsonb,uuid,uuid,uuid,uuid,uuid,uuid,bigint,uuid)',
         'claim_message_generation_request(uuid,uuid,uuid,character varying,character,character varying,uuid)',
+        'cleanup_expired_message_generation_requests()',
         'prepare_generation(uuid,text,uuid,uuid,uuid,uuid,jsonb,jsonb,jsonb)',
         'attach_generation_external_task(uuid,text,uuid,uuid,text,jsonb)',
         'fail_prepared_generation_task(uuid,text,text,uuid)',
@@ -238,6 +242,9 @@ GRANT EXECUTE ON FUNCTION public.record_user_activity(
 REVOKE ALL ON TABLE
     public.users, public.organizations, public.org_members, public.org_configs,
     public.org_invitations,
+    public.org_departments, public.org_positions, public.org_roles,
+    public.permissions, public.role_permissions,
+    public.org_member_assignments, public.position_default_roles,
     public.wecom_user_mappings, public.wecom_chat_targets,
     public.conversations, public.messages, public.tasks,
     public.credits_history, public.credit_transactions,
@@ -263,6 +270,9 @@ TO everydayai_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
     public.users, public.organizations, public.org_members, public.org_configs,
     public.org_invitations,
+    public.org_departments, public.org_positions, public.org_roles,
+    public.permissions, public.role_permissions,
+    public.org_member_assignments, public.position_default_roles,
     public.wecom_user_mappings, public.wecom_chat_targets,
     public.conversations, public.messages, public.tasks,
     public.credits_history, public.credit_transactions,
@@ -276,4 +286,4 @@ SQL
 } | python3 "$(dirname "$0")/run-psql-admin.py" \
     --no-psqlrc --set=ON_ERROR_STOP=1
 
-echo "✅ Runtime/Message 第二批 18 张表、列序列和业务函数已转移"
+echo "✅ Runtime/Message 与企业权限域表、列序列和业务函数已转移"

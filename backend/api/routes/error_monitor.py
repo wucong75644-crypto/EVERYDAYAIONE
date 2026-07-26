@@ -1,14 +1,12 @@
 """系统错误监控 API — 管理面板查看/分析/处理错误日志
 
-权限：仅 super_admin 可访问。
-注意：Database 依赖注入的是同步 LocalDBClient，所有 DB 操作不加 await。
+权限由数据库能力函数基于当前 Runtime Actor 校验，仅 super_admin 可访问。
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Optional
-from zoneinfo import ZoneInfo
+from datetime import date
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
@@ -17,16 +15,6 @@ from pydantic import BaseModel
 from api.deps import CurrentUserId, Database
 
 router = APIRouter(prefix="/error-monitor", tags=["error-monitor"])
-
-
-# ── 权限校验 ─────────────────────────────────────────────
-
-
-def _require_super_admin(user_id: str, db) -> None:
-    """仅 super_admin 可访问"""
-    result = db.table("users").select("role").eq("id", user_id).maybe_single().execute()
-    if not result or not result.data or result.data.get("role") != "super_admin":
-        raise HTTPException(status_code=403, detail="仅超级管理员可访问")
 
 
 # ── 请求/响应模型 ────────────────────────────────────────
@@ -85,34 +73,19 @@ async def list_errors(
     search: Optional[str] = Query(None, description="搜索消息内容"),
     days: int = Query(7, ge=1, le=30, description="最近N天"),
 ) -> ErrorListResponse:
-    _require_super_admin(user_id, db)
-
-    tz = ZoneInfo("Asia/Shanghai")
-    since = (datetime.now(tz) - timedelta(days=days)).isoformat()
-
-    query = (
-        db.table("error_logs")
-        .select("*", count="exact")
-        .gte("last_seen_at", since)
-        .order("last_seen_at", desc=True)
-    )
-
-    if level:
-        query = query.eq("level", level.upper())
-    if is_critical is not None:
-        query = query.eq("is_critical", is_critical)
-    if is_resolved is not None:
-        query = query.eq("is_resolved", is_resolved)
-    if search:
-        safe_search = search.replace("%", "\\%").replace("_", "\\_")
-        query = query.ilike("message", f"%{safe_search}%")
-
-    offset = (page - 1) * page_size
-    query = query.range(offset, offset + page_size - 1)
-
-    result = query.execute()
-    items = result.data or []
-    total = result.count if hasattr(result, "count") and result.count is not None else len(items)
+    payload = _rpc_data(db, "list_platform_error_logs", {
+        "p_page": page,
+        "p_page_size": page_size,
+        "p_level": level,
+        "p_is_critical": is_critical,
+        "p_is_resolved": is_resolved,
+        "p_search": search,
+        "p_days": days,
+    })
+    items = payload.get("items")
+    total = payload.get("total")
+    if not isinstance(items, list) or not isinstance(total, int):
+        raise HTTPException(status_code=500, detail="错误日志查询结果无效")
 
     return ErrorListResponse(
         items=[ErrorLogItem(**_serialize_row(r)) for r in items],
@@ -127,70 +100,8 @@ async def get_stats(
     user_id: CurrentUserId,
     db: Database,
 ) -> ErrorStatsResponse:
-    _require_super_admin(user_id, db)
-
-    tz = ZoneInfo("Asia/Shanghai")
-    now = datetime.now(tz)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    week_start = (now - timedelta(days=7)).isoformat()
-
-    today_result = (
-        db.table("error_logs")
-        .select("id", count="exact")
-        .gte("last_seen_at", today_start)
-        .execute()
-    )
-    today_total = today_result.count if hasattr(today_result, "count") and today_result.count else 0
-
-    today_critical_result = (
-        db.table("error_logs")
-        .select("id", count="exact")
-        .gte("last_seen_at", today_start)
-        .eq("is_critical", True)
-        .execute()
-    )
-    today_critical = today_critical_result.count if hasattr(today_critical_result, "count") and today_critical_result.count else 0
-
-    week_result = (
-        db.table("error_logs")
-        .select("id", count="exact")
-        .gte("last_seen_at", week_start)
-        .execute()
-    )
-    week_total = week_result.count if hasattr(week_result, "count") and week_result.count else 0
-
-    unresolved_result = (
-        db.table("error_logs")
-        .select("id", count="exact")
-        .eq("is_resolved", False)
-        .execute()
-    )
-    unresolved = unresolved_result.count if hasattr(unresolved_result, "count") and unresolved_result.count else 0
-
-    top_modules_result = (
-        db.table("error_logs")
-        .select("module, occurrence_count")
-        .gte("last_seen_at", week_start)
-        .order("occurrence_count", desc=True)
-        .limit(10)
-        .execute()
-    )
-    module_counts: dict[str, int] = {}
-    for r in (top_modules_result.data or []):
-        mod = r.get("module") or "unknown"
-        module_counts[mod] = module_counts.get(mod, 0) + (r.get("occurrence_count") or 1)
-    top_modules = [
-        {"module": k, "count": v}
-        for k, v in sorted(module_counts.items(), key=lambda x: -x[1])[:10]
-    ]
-
-    return ErrorStatsResponse(
-        today_total=today_total,
-        today_critical=today_critical,
-        week_total=week_total,
-        unresolved=unresolved,
-        top_modules=top_modules,
-    )
+    payload = _rpc_data(db, "get_platform_error_stats", {})
+    return ErrorStatsResponse(**payload)
 
 
 @router.post("/summarize", response_model=SummarizeResponse, summary="AI 总结错误趋势")
@@ -199,20 +110,9 @@ async def summarize_errors(
     db: Database,
     days: int = Query(7, ge=1, le=30),
 ) -> SummarizeResponse:
-    _require_super_admin(user_id, db)
-
-    tz = ZoneInfo("Asia/Shanghai")
-    since = (datetime.now(tz) - timedelta(days=days)).isoformat()
-
-    result = (
-        db.table("error_logs")
-        .select("level, module, function, message, occurrence_count, is_critical, first_seen_at, last_seen_at")
-        .gte("last_seen_at", since)
-        .order("occurrence_count", desc=True)
-        .limit(100)
-        .execute()
-    )
-    errors = result.data or []
+    errors = _rpc_data(db, "list_platform_error_summary", {"p_days": days})
+    if not isinstance(errors, list):
+        raise HTTPException(status_code=500, detail="错误摘要查询结果无效")
 
     if not errors:
         return SummarizeResponse(summary=f"最近 {days} 天没有错误记录。")
@@ -245,23 +145,10 @@ async def resolve_error(
     user_id: CurrentUserId,
     db: Database,
 ) -> dict:
-    _require_super_admin(user_id, db)
-
-    tz = ZoneInfo("Asia/Shanghai")
-    now = datetime.now(tz).isoformat()
-
-    result = (
-        db.table("error_logs")
-        .update({
-            "is_resolved": True,
-            "resolved_at": now,
-            "resolved_by": user_id,
-        })
-        .eq("id", error_id)
-        .execute()
+    payload = _rpc_data(
+        db, "resolve_platform_error", {"p_error_id": error_id},
     )
-
-    if not result.data:
+    if payload.get("updated") != 1:
         raise HTTPException(status_code=404, detail="错误记录不存在")
 
     return {"success": True, "message": "已标记为已处理"}
@@ -271,26 +158,16 @@ async def resolve_error(
 async def clear_errors(
     user_id: CurrentUserId,
     db: Database,
-    before_date: Optional[str] = Query(None, description="清除此日期前的 (YYYY-MM-DD)"),
+    before_date: Optional[date] = Query(None, description="清除此日期前的 (YYYY-MM-DD)"),
     resolved_only: bool = Query(True, description="是否只清除已处理的"),
 ) -> dict:
-    _require_super_admin(user_id, db)
-
-    query = db.table("error_logs").delete()
-
-    if resolved_only:
-        query = query.eq("is_resolved", True)
-
-    if before_date:
-        query = query.lt("last_seen_at", before_date)
-    else:
-        tz = ZoneInfo("Asia/Shanghai")
-        cutoff = (datetime.now(tz) - timedelta(days=7)).isoformat()
-        query = query.lt("last_seen_at", cutoff)
-
-    result = query.execute()
-    deleted = len(result.data) if result.data else 0
-
+    payload = _rpc_data(db, "clear_platform_errors", {
+        "p_before_date": before_date.isoformat() if before_date else None,
+        "p_resolved_only": resolved_only,
+    })
+    deleted = payload.get("deleted")
+    if not isinstance(deleted, int):
+        raise HTTPException(status_code=500, detail="错误日志清理结果无效")
     return {"success": True, "deleted": deleted}
 
 
@@ -305,6 +182,19 @@ def _serialize_row(row: dict) -> dict:
     if "org_id" in row and row["org_id"] is not None:
         row["org_id"] = str(row["org_id"])
     return row
+
+
+def _rpc_data(db: Any, name: str, params: dict[str, Any]) -> Any:
+    """执行平台能力并规范化单行 JSONB 返回值。"""
+    try:
+        payload = db.rpc(name, params).execute().data
+    except Exception as exc:
+        if "PLATFORM_ADMIN_REQUIRED" in str(exc):
+            raise HTTPException(status_code=403, detail="仅超级管理员可访问") from exc
+        raise
+    if payload is None:
+        raise HTTPException(status_code=500, detail="错误监控能力未返回结果")
+    return payload
 
 
 async def _call_ai_summary(prompt: str) -> str:

@@ -18,7 +18,7 @@ from services.configuration.definitions import (
 
 def test_registry_has_stable_version_and_unique_keys() -> None:
     assert DEFINITION_VERSION == "v1"
-    assert len(CONFIG_DEFINITIONS) == 15
+    assert len(CONFIG_DEFINITIONS) == 16
     assert tuple(CONFIG_DEFINITIONS) == tuple(
         definition.key for definition in CONFIG_DEFINITIONS.values()
     )
@@ -93,6 +93,17 @@ def test_wecom_oauth_public_bundle_never_contains_secret_material() -> None:
         get_config_definition("wecom.oauth_agent_secret").value_kind
         == "secret"
     )
+
+
+def test_wecom_callback_bundle_reuses_enterprise_agent_credentials() -> None:
+    bundle = CONFIG_REGISTRY.get_bundle("wecom.callback")
+    assert bundle.required_keys == (
+        "wecom.corp_id",
+        "wecom.callback_credentials",
+        "wecom.oauth_agent_id",
+        "wecom.oauth_agent_secret",
+    )
+    assert bundle.allowed_consumers == ("worker_org",)
 
 
 def test_non_ai_integrations_are_organization_only() -> None:

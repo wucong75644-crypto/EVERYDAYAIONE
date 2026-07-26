@@ -81,6 +81,10 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "'163_conversation_actor_worker_discovery.sql'" in sql
     assert "'164_actor_task_execution_capabilities.sql'" in sql
     assert "'189_web_runtime_access_completion.sql'" in sql
+    assert "'196_runtime_tool_audit_capability.sql'" in sql
+    assert "'197_runtime_knowledge_tenant_boundary.sql'" in sql
+    assert "'198_worker_model_scoring_capabilities.sql'" in sql
+    assert "'202_knowledge_audit_force_rls_completion.sql'" in sql
     for migration_number in range(165, 186):
         assert f"'{migration_number}_" in sql
     assert "'159_org_erp_token_capabilities.sql'" not in sql
@@ -99,9 +103,21 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "WORKER_CONTROL_DIRECT_TABLE_ACCESS_PRESENT" in sql
     assert "WORKER_CONTROL_RUNTIME_ACL_INVALID" in sql
     assert "WEB_RUNTIME_CORE_ACL_INVALID" in sql
+    assert "preflight/knowledge-audit-completion.sh" in SCRIPT.read_text()
     assert "AS required(table_name, privilege_name)" in sql
     assert "AS forbidden(table_name, privilege_name)" in sql
     assert "TENANT_FORCE_RLS_CUTOVER_INCOMPLETE" in sql
+    for forced_table in (
+        "knowledge_nodes",
+        "knowledge_edges",
+        "knowledge_metrics",
+        "scoring_audit_log",
+        "tool_audit_log",
+        "error_logs",
+        "permission_audit_log",
+        "wecom_callback_inbox",
+    ):
+        assert f"'public.{forced_table}'::regclass" in sql
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert f"'public.tasks', '{privilege}'" in sql
     assert sql.count("has_any_column_privilege(") == 3

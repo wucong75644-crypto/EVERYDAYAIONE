@@ -35,6 +35,9 @@ DECLARE
     target_tables CONSTANT TEXT[] := ARRAY[
         'users', 'organizations', 'org_members', 'org_configs',
         'org_invitations',
+        'org_departments', 'org_positions', 'org_roles', 'permissions',
+        'role_permissions', 'org_member_assignments',
+        'position_default_roles',
         'wecom_user_mappings', 'wecom_chat_targets', 'conversations',
         'messages', 'tasks', 'credits_history', 'credit_transactions',
         'image_generations', 'detail_projects', 'detail_project_images',
@@ -45,6 +48,7 @@ DECLARE
         '_prepare_generation_messages(text,uuid,uuid,uuid,jsonb,jsonb)',
         '_prepare_generation_tasks(jsonb,uuid,uuid,uuid,uuid,uuid,uuid,bigint,uuid)',
         'claim_message_generation_request(uuid,uuid,uuid,character varying,character,character varying,uuid)',
+        'cleanup_expired_message_generation_requests()',
         'prepare_generation(uuid,text,uuid,uuid,uuid,uuid,jsonb,jsonb,jsonb)',
         'attach_generation_external_task(uuid,text,uuid,uuid,text,jsonb)',
         'fail_prepared_generation_task(uuid,text,text,uuid)',

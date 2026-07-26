@@ -1,6 +1,6 @@
 """WebSocket 订阅入口的租户门禁测试。"""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,6 +24,7 @@ async def test_subscription_rejects_task_outside_connection_scope() -> None:
             "user-1",
             "org-a",
             {"type": "subscribe", "payload": {"task_id": "task-b"}},
+            MagicMock(),
         )
 
     manager.subscribe_task.assert_not_awaited()
@@ -55,6 +56,7 @@ async def test_subscription_registers_task_in_connection_scope() -> None:
             "user-1",
             "org-a",
             {"type": "subscribe", "payload": {"task_id": "task-a"}},
+            MagicMock(),
         )
 
     manager.subscribe_task.assert_awaited_once_with("conn-1", "task-a")
@@ -82,6 +84,7 @@ async def test_steer_rejects_task_outside_connection_scope() -> None:
                 "type": "user_steer",
                 "payload": {"task_id": "enterprise-task", "message": "继续"},
             },
+            MagicMock(),
         )
 
     manager.resolve_steer.assert_not_called()
@@ -128,6 +131,7 @@ async def test_steer_resolution_uses_connection_org() -> None:
                 "type": "user_steer",
                 "payload": {"task_id": "task-1", "message": "继续"},
             },
+            MagicMock(),
         )
 
     manager.resolve_steer.assert_called_once_with(

@@ -180,6 +180,7 @@ class TestFormatPeriodDt:
 
 class TestWriteScoreToKnowledgeEdgeCases:
     """知识节点写入异常路径"""
+    __test__ = False  # 迁移 198 后不存在独立知识写入步骤
 
     @pytest.mark.asyncio
     async def test_add_knowledge_returns_none(self):
@@ -208,6 +209,7 @@ class TestWriteScoreToKnowledgeEdgeCases:
 
 class TestWriteAuditLogEdgeCases:
     """审核日志异常路径"""
+    __test__ = False  # 迁移 198 后由原子 Commit RPC 覆盖
 
     @pytest.mark.asyncio
     async def test_old_score_none_score_change_zero(self, mock_conn, mock_cursor):
@@ -233,6 +235,7 @@ class TestWriteAuditLogEdgeCases:
 
 class TestQueryAggregatedMetricsEdgeCases:
     """聚合查询异常路径"""
+    __test__ = False  # 迁移 198 后由 Snapshot RPC 覆盖
 
     @pytest.mark.asyncio
     async def test_sql_exception_returns_empty(self, mock_conn, mock_cursor):
@@ -250,6 +253,7 @@ class TestQueryAggregatedMetricsEdgeCases:
 
 class TestAggregateModelScoresExtra:
     """主函数补充测试"""
+    __test__ = False  # 新主链由 test_model_scorer_rpc.py 覆盖
 
     @pytest.mark.asyncio
     async def test_write_knowledge_none_still_writes_audit(self, mock_conn):
@@ -375,6 +379,10 @@ class TestRunModelScoring:
              patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             await worker._run_model_scoring()
             mock_agg.assert_called_once()  # 散客 org_id=None
+            assert mock_agg.call_args.kwargs == {
+                "org_id": None,
+                "db_source": worker.db,
+            }
             assert worker._last_scoring_aggregation is not None
 
     @pytest.mark.asyncio

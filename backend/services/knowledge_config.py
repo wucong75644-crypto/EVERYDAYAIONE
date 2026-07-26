@@ -42,6 +42,25 @@ _kb_lock = asyncio.Lock()
 _worker_kb_lock = asyncio.Lock()
 
 
+def resolve_knowledge_identity(
+    db_source: Any,
+    requested_org_id: str | None,
+) -> tuple[str | None, str | None]:
+    """从可信数据库 Scope 推导 Knowledge 的企业或个人所有者。"""
+    scope = database_scope_from_client(db_source)
+    if scope is None:
+        return requested_org_id, None
+    if requested_org_id is not None and scope.org_id != requested_org_id:
+        raise ValueError("KNOWLEDGE_ORG_SCOPE_MISMATCH")
+    if scope.access_kind == DatabaseAccessKind.RUNTIME:
+        if scope.actor_user_id is None:
+            raise ValueError("KNOWLEDGE_ACTOR_SCOPE_REQUIRED")
+        return scope.org_id, None if scope.org_id else scope.actor_user_id
+    if scope.access_kind == DatabaseAccessKind.WORKER:
+        return scope.org_id, None
+    raise ValueError("KNOWLEDGE_ACCESS_KIND_FORBIDDEN")
+
+
 async def _get_pg_pool():
     """获取 psycopg AsyncConnectionPool（单例 + 延迟初始化）"""
     global _pg_pool, _kb_available

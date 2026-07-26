@@ -10,14 +10,13 @@
 设计文档: docs/document/UI_定时任务面板设计.md
 """
 from __future__ import annotations
-from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUserId, OrgCtx, ScopedDB, Database
+from api.deps import CurrentUserId, OrgCtx, Database
 
 
 router = APIRouter(prefix="/wecom-chat-targets", tags=["企微聊天目标管理"])
@@ -42,20 +41,15 @@ def _require_org(org_ctx: Any) -> str:
     return org_ctx.org_id
 
 
-def _require_admin(db: Any, user_id: str, org_id: str) -> str:
-    """要求当前用户是 owner 或 admin（org_members.role）"""
-    result = db.table("org_members") \
-        .select("role") \
-        .eq("org_id", org_id) \
-        .eq("user_id", user_id) \
-        .limit(1) \
-        .execute()
-    if not result.data:
-        raise HTTPException(403, "您不是该组织成员")
-    role = result.data[0]["role"]
-    if role not in ("owner", "admin"):
-        raise HTTPException(403, "仅老板/管理员可管理群聊")
-    return role
+def _governed_rpc(db: Any, name: str, params: Dict[str, Any]) -> Any:
+    try:
+        return db.rpc(name, params).execute().data
+    except Exception as exc:
+        if "GOVERNANCE_AUTHORITY_DENIED" in str(exc):
+            raise HTTPException(403, "仅老板/管理员可管理群聊") from exc
+        if "WECOM_TARGET_ARGUMENT_INVALID" in str(exc):
+            raise HTTPException(400, "企微聊天目标参数无效") from exc
+        raise
 
 
 # ════════════════════════════════════════════════════════
@@ -66,7 +60,6 @@ def _require_admin(db: Any, user_id: str, org_id: str) -> str:
 async def list_groups(
     user_id: CurrentUserId,
     org_ctx: OrgCtx,
-    scoped_db: ScopedDB,
     db: Database,
 ) -> Dict[str, Any]:
     """
@@ -78,19 +71,14 @@ async def list_groups(
     权限：仅老板/admin
     """
     org_id = _require_org(org_ctx)
-    _require_admin(db, user_id, org_id)
-
-    result = scoped_db.table("wecom_chat_targets") \
-        .select("id, chatid, chat_type, chat_name, last_active, "
-                "first_seen, message_count, is_active") \
-        .eq("chat_type", "group") \
-        .order("last_active", desc=True) \
-        .execute()
+    rows = _governed_rpc(db, "list_governed_wecom_chat_targets", {
+        "p_org_id": org_id,
+    })
 
     return {
         "success": True,
-        "data": list(result.data or []),
-        "total": len(result.data or []),
+        "data": list(rows or []),
+        "total": len(rows or []),
     }
 
 
@@ -100,7 +88,6 @@ async def update_chat_name(
     payload: UpdateChatNameRequest,
     user_id: CurrentUserId,
     org_ctx: OrgCtx,
-    scoped_db: ScopedDB,
     db: Database,
 ) -> Dict[str, Any]:
     """
@@ -111,24 +98,18 @@ async def update_chat_name(
     - chat_name 必须非空
     """
     org_id = _require_org(org_ctx)
-    _require_admin(db, user_id, org_id)
-
-    # 校验目标存在且属于当前企业
-    existing = scoped_db.table("wecom_chat_targets") \
-        .select("id, chat_type") \
-        .eq("id", target_id) \
-        .limit(1) \
-        .execute()
-    if not existing.data:
-        raise HTTPException(404, "群聊目标不存在")
-
     new_name = payload.chat_name.strip()
     if not new_name:
         raise HTTPException(400, "群名不能为空")
-
-    scoped_db.table("wecom_chat_targets").update({
-        "chat_name": new_name,
-    }).eq("id", target_id).execute()
+    outcome = _governed_rpc(
+        db, "update_governed_wecom_chat_target_name", {
+            "p_org_id": org_id,
+            "p_target_id": target_id,
+            "p_chat_name": new_name,
+        },
+    )
+    if not isinstance(outcome, dict) or outcome.get("updated") != 1:
+        raise HTTPException(404, "群聊目标不存在")
 
     logger.info(
         f"Chat target name updated | actor={user_id} | "

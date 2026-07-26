@@ -1,6 +1,6 @@
 # 当前问题 (CURRENT_ISSUES)
 
-## 2026-07-26 Web Runtime 核心 ACL 在角色切换后丢失 — 修复实施中
+## 2026-07-26 数据库角色切换能力闭环 — 分域实施中
 
 - 生产 Backend 已使用 `everydayai_runtime`，但 `users`、`conversations`、
   `messages`、`tasks` 等核心表的 Runtime ACL 被后续 owner 转移脚本统一撤销，
@@ -12,6 +12,17 @@
   不获得 Web 权限，Worker 既有会话/消息只读能力保持不变。
 - owner 转移和 finalize 同步增加 Web ACL 合同。完成定向、真实角色矩阵、部署及
   Web/管理员/企微回归前不得标记为已修复。
+- 深度审计进一步确认 WebSocket、企业治理、后台 Worker、知识/审计数据域仍有未接入
+  Scope 或安全能力门面的路径，旧登录角色也尚未撤销 owner 继承，因此不能把迁移 189
+  视为整体切换完成。
+- 第一实施批次已新增迁移 190：消息幂等领取只允许精确 Runtime Actor/Org Scope，
+  TTL 清理只允许无 Actor/Org 的 Worker 能力；WebSocket 握手、订阅、Steer、表单和
+  终态消息读取已统一使用连接级 Scoped DB。企业治理和后台知识/审计域仍待后续批次
+  完成，生产尚未应用本批次。
+- 企业治理主路由已接入迁移 156/157 的读取与写入能力；迁移 191 提供当前 Actor
+  的企业角色查询，组织、成员、邀请服务不再直读对应控制表。新企业的职位、角色、
+  默认部门和 owner 任职仍由旧 Python 多步初始化，尚未纳入创建企业的原子治理事务，
+  因此本阶段仍未完成。
 
 ## 2026-07-26 Conversation Actor Handler 数据库角色错配 — 已修复，待部署验证
 
@@ -1070,6 +1081,11 @@
 
 ## 更新记录
 
+- **2026-07-26**：数据库角色隔离最终审计确认 197 已显式预留的
+  Knowledge/Audit FORCE RLS 收口条件现已由 196/198 满足；新增迁移 202，为
+  knowledge nodes/edges/metrics、scoring audit 和 tool audit 补齐 owner policy、
+  FORCE RLS、表级/列级最小 ACL，并将 199–201 新表状态纳入最终角色撤销门禁。
+  尚未部署。
 - **2026-07-19**：前端 Chunk 治理任务 6 完成部署产物卫生治理：仓库继续全局忽略 `.DS_Store`，生产部署在前端构建前显式清理旧 `dist`，前端 rsync 增加 `.DS_Store` 排除规则；本地现存 Finder 元数据同步清理，避免旧产物或部署期间重新生成的系统文件进入服务器目录。
 - **2026-07-19**：前端 Chunk 治理任务 5 完成主入口压缩：WebSocketProvider 下移为受保护 Chat 路由动态 Runtime，AuthModal 仅在打开后加载；认证 Store 通过同步 reset 注册表清理已加载的消息、记忆和订阅 Store，不再反向静态导入聊天状态链。生产构建主入口从 564.01 kB 降至 368.35 kB（gzip 180.19 → 123.92 kB），达到 350–400 kB 验收目标；AuthModal 为 19.49 kB、WebSocketContext 为 124.17 kB 动态入口，未使用 `manualChunks`。501.94 kB 同名 `index` 经 sourcemap 确认为 Mammoth/JSZip 文档预览动态包，不属于主入口。
 - **2026-07-19**：前端 Chunk 治理任务 4 完成 ECharts/Mermaid 按需加载收口：ECharts 新增具名注册 Runtime，图表出现后才由 `EChartsRenderer` 动态加载，原 core/charts/components/Axis/graphic 等多入口收敛为单个 793.30 kB（gzip 263.34 kB）Runtime；失败 Promise 仍可清空重试。Mermaid 保持库级动态加载、SVG 安全清理与 50 条缓存，并补充相同源码不重复解析测试。生产 manifest 确认 Chat 静态依赖不含 ECharts/Mermaid，Chat 为 299.46 kB；无图表或 Mermaid 内容时不下载对应引擎。
@@ -1187,6 +1203,40 @@
   写入类型相关错误增量均为 0，Sync 形状错误为 0，待处理媒体任务为 0。三个历史批次
   已通过正式 Worker 函数恢复：两条消息 completed、一条 failed，未重跑供应商任务或
   重复退款。四服务 active，内部和公网健康检查通过。
+
+# 2026-07-26 企业治理角色切换收尾 — 原子初始化已实现，待后续链路与生产切换
+
+- 企业创建原先先提交 `organizations/org_members`，再由路由用 Python 分批初始化权限
+  模型并吞掉异常，可能留下无法正常治理的半成品企业。
+- 迁移 192 已把 5 个职位、8 个系统角色、23 个必需权限点校验、6 个默认部门、
+  20 个职位角色映射和 Owner Boss 任职并入 `create_governed_organization` 同一事务；
+  任一环节失败会连同企业和审计整体回滚。
+- Runtime/Message owner 转移脚本同步纳入 7 张企业权限模型表及其列序列；服务角色
+  不获得这些表的直写权限，公开创建门面仍只授予 `everydayai_runtime`。
+- Web 创建路由已删除失败后继续的 Python 初始化分支。当前只完成该子阶段，任职管理、
+  Worker/Knowledge/Audit/WeCom 其余能力和最终旧 owner membership revoke 仍待完成；
+  迁移 192 尚未应用生产。
+- 迁移 193 已完成 Runtime 任职读取基础：权限检查、成员上下文、部门数据范围和定时
+  任务创建者展示均改走 active 企业 Scope RPC；管理页面的任职聚合与更新仍在下一
+  子阶段处理，因此 192–193 均未进入生产。
+- 迁移 194 已将管理页面成员/企微任职聚合及任职更新收口为治理 RPC，并关闭 admin
+  修改 owner/admin、授予 boss/vp 或把非 owner 设置为 boss 的越权路径。原路由由
+  525 行降至 292 行。
+- 迁移 195 已把管理员修改名称改为企业内 `org_members.display_name`，成员聚合优先
+  显示企业名称但不覆盖个人 `users.nickname`。定时任务模型、计划解析和创建者展示
+  已拆至 `scheduled_task_support.py`，主路由由 682 行降至 495 行。迁移 192–195
+  尚未进入生产。
+- Knowledge/Audit 所有权基础已实现：六张基表、Tool Audit 现有动态分区、关联序列
+  和维护函数可原子转移/回滚。迁移 196 将 Runtime 工具审计改为 task 绑定 RPC，
+  conversation/user/org 由数据库反查，并确保未来分区由 owner 创建。Knowledge
+  Runtime 在迁移 197 中增加显式个人 owner，系统、企业、散客知识的读取、写入、
+  去重、淘汰和图关系均按 Scope 隔离；旧 `scope=user:{id}` 可兼容回填。Worker
+  模型评分已在迁移 198 收口为 Snapshot/Commit 两个窄能力，散客指标按 user_id
+  分组，知识节点与审核日志同事务提交，服务不再 raw 读写三张表。迁移 199 已将
+  Error Monitor 收口为五个超管窄能力，并对 `error_logs` 和尚无业务调用的
+  `permission_audit_log` 启用 owner-only + FORCE RLS。迁移 200–201 又完成 Web
+  WeCom 控制能力与企业级持久化 Callback Inbox，消除直表访问、跨进程内存依赖和
+  Backend/WeCom 数据库角色混用。迁移 192–202 均尚未进入生产。
 
 # 2026-07-25 定时任务角色隔离收尾
 

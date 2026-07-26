@@ -1,7 +1,7 @@
 """error_monitor API 路由测试
 
 使用 TestClient 真 HTTP 调用，验证：
-- 权限校验（非 super_admin 返回 403）
+- 数据库能力权限拒绝（非 super_admin 返回 403）
 - list: 分页、筛选、搜索
 - stats: 统计数据
 - resolve: 标记已处理
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -28,72 +28,25 @@ from api.routes.error_monitor import _serialize_row
 # ── Fake DB ──────────────────────────────────────────────
 
 
-class FakeQueryBuilder:
-    """模拟 LocalDBClient 的链式查询"""
-
-    def __init__(self, data=None, count=None):
-        self._data = data if isinstance(data, list) else ([data] if data else [])
-        self._count = count
-        self._is_single = False
-        self._filters = {}
-
-    def select(self, *a, count=None, **kw):
-        if count == "exact":
-            self._count = len(self._data)
-        return self
-
-    def eq(self, field, value):
-        self._filters[field] = value
-        return self
-
-    def gte(self, *a): return self
-    def lt(self, *a): return self
-    def ilike(self, *a): return self
-    def in_(self, *a): return self
-    def order(self, *a, **kw): return self
-    def range(self, start, end): return self
-    def limit(self, n): return self
-
-    def maybe_single(self):
-        self._is_single = True
-        return self
-
-    def single(self):
-        self._is_single = True
-        return self
-
-    def update(self, data):
-        # 模拟 update：把更新内容合并到数据中
-        for item in self._data:
-            item.update(data)
-        return self
-
-    def delete(self):
-        return self
-
-    def execute(self):
-        r = MagicMock()
-        if self._is_single:
-            r.data = self._data[0] if self._data else None
-        else:
-            r.data = self._data
-        r.count = self._count if self._count is not None else len(self._data)
-        return r
-
-
 class FakeDB:
-    """可预设多次查询结果的 Fake DB"""
+    """可预设数据库能力返回值的 Fake DB。"""
 
     def __init__(self):
-        self._queue: list[FakeQueryBuilder] = []
+        self._queue: list[object] = []
+        self.calls: list[tuple[str, dict]] = []
 
-    def enqueue(self, data=None, count=None):
-        self._queue.append(FakeQueryBuilder(data, count))
+    def enqueue(self, data=None):
+        self._queue.append(data)
 
-    def table(self, name):
-        if self._queue:
-            return self._queue.pop(0)
-        return FakeQueryBuilder([])
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        value = self._queue.pop(0) if self._queue else None
+        caller = MagicMock()
+        if isinstance(value, Exception):
+            caller.execute.side_effect = value
+        else:
+            caller.execute.return_value.data = value
+        return caller
 
 
 # ── Test App Builder ─────────────────────────────────────
@@ -168,18 +121,8 @@ class TestSerializeRow:
 class TestPermission:
     def test_non_admin_gets_403(self):
         db = FakeDB()
-        # _require_super_admin 查 users 表
-        db.enqueue(data={"role": "user"})
+        db.enqueue(PermissionError("PLATFORM_ADMIN_REQUIRED"))
         app = _build_app(db, user_id=NORMAL_USER_ID)
-        client = TestClient(app)
-
-        resp = client.get("/api/error-monitor/list", params={"days": 7})
-        assert resp.status_code == 403
-
-    def test_no_user_gets_403(self):
-        db = FakeDB()
-        db.enqueue(data=None)  # maybe_single 返回 None
-        app = _build_app(db)
         client = TestClient(app)
 
         resp = client.get("/api/error-monitor/list", params={"days": 7})
@@ -192,10 +135,7 @@ class TestPermission:
 class TestListErrors:
     def test_list_returns_items(self):
         db = FakeDB()
-        # 1) _require_super_admin
-        db.enqueue(data={"role": "super_admin"})
-        # 2) list query
-        db.enqueue(data=[FAKE_ERROR_ROW])
+        db.enqueue({"items": [FAKE_ERROR_ROW], "total": 1})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -207,11 +147,15 @@ class TestListErrors:
         assert body["page"] == 1
         assert len(body["items"]) == 1
         assert body["items"][0]["fingerprint"] == "abc123def456"
+        assert db.calls == [("list_platform_error_logs", {
+            "p_page": 1, "p_page_size": 20, "p_level": None,
+            "p_is_critical": None, "p_is_resolved": None,
+            "p_search": None, "p_days": 7,
+        })]
 
     def test_list_empty(self):
         db = FakeDB()
-        db.enqueue(data={"role": "super_admin"})
-        db.enqueue(data=[])
+        db.enqueue({"items": [], "total": 0})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -224,8 +168,7 @@ class TestListErrors:
 
     def test_list_pagination(self):
         db = FakeDB()
-        db.enqueue(data={"role": "super_admin"})
-        db.enqueue(data=[FAKE_ERROR_ROW])
+        db.enqueue({"items": [FAKE_ERROR_ROW], "total": 11})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -241,18 +184,13 @@ class TestListErrors:
 class TestGetStats:
     def test_stats_returns_counts(self):
         db = FakeDB()
-        # 1) _require_super_admin
-        db.enqueue(data={"role": "super_admin"})
-        # 2) today_total
-        db.enqueue(data=[{"id": 1}])
-        # 3) today_critical
-        db.enqueue(data=[])
-        # 4) week_total
-        db.enqueue(data=[{"id": 1}, {"id": 2}])
-        # 5) unresolved
-        db.enqueue(data=[{"id": 1}])
-        # 6) top_modules
-        db.enqueue(data=[{"module": "services.kuaimai", "occurrence_count": 5}])
+        db.enqueue({
+            "today_total": 1,
+            "today_critical": 0,
+            "week_total": 2,
+            "unresolved": 1,
+            "top_modules": [{"module": "services.kuaimai", "count": 5}],
+        })
 
         app = _build_app(db)
         client = TestClient(app)
@@ -267,14 +205,31 @@ class TestGetStats:
         assert body["top_modules"][0]["module"] == "services.kuaimai"
 
 
+class TestSummarizeErrors:
+    @patch("api.routes.error_monitor._call_ai_summary", new_callable=AsyncMock)
+    def test_summary_uses_sanitized_capability_rows(self, summarize):
+        summarize.return_value = "趋势稳定"
+        db = FakeDB()
+        db.enqueue([FAKE_ERROR_ROW])
+
+        app = _build_app(db)
+        client = TestClient(app)
+        resp = client.post("/api/error-monitor/summarize", params={"days": 7})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"summary": "趋势稳定"}
+        assert db.calls == [
+            ("list_platform_error_summary", {"p_days": 7}),
+        ]
+
+
 # ── resolve 端点 ─────────────────────────────────────────
 
 
 class TestResolveError:
     def test_resolve_success(self):
         db = FakeDB()
-        db.enqueue(data={"role": "super_admin"})
-        db.enqueue(data=[{**FAKE_ERROR_ROW, "is_resolved": True}])
+        db.enqueue({"updated": 1})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -285,8 +240,7 @@ class TestResolveError:
 
     def test_resolve_not_found(self):
         db = FakeDB()
-        db.enqueue(data={"role": "super_admin"})
-        db.enqueue(data=[])  # update returns empty
+        db.enqueue({"updated": 0})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -301,8 +255,7 @@ class TestResolveError:
 class TestClearErrors:
     def test_clear_resolved(self):
         db = FakeDB()
-        db.enqueue(data={"role": "super_admin"})
-        db.enqueue(data=[FAKE_ERROR_ROW, FAKE_ERROR_ROW])  # 2 deleted
+        db.enqueue({"deleted": 2})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -313,8 +266,7 @@ class TestClearErrors:
 
     def test_clear_with_date(self):
         db = FakeDB()
-        db.enqueue(data={"role": "super_admin"})
-        db.enqueue(data=[])
+        db.enqueue({"deleted": 0})
 
         app = _build_app(db)
         client = TestClient(app)
@@ -325,3 +277,7 @@ class TestClearErrors:
 
         assert resp.status_code == 200
         assert resp.json()["deleted"] == 0
+        assert db.calls == [("clear_platform_errors", {
+            "p_before_date": "2026-04-01",
+            "p_resolved_only": False,
+        })]

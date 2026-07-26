@@ -11,7 +11,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,28 +32,23 @@ def crypt():
 def client():
     """创建 FastAPI 测试客户端，只挂载 wecom 路由"""
     from fastapi import FastAPI
+    from api.deps import get_request_db
     from api.routes.wecom import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value.data = {
+        "outcome": "enqueued",
+    }
+    app.dependency_overrides[get_request_db] = lambda: db
     return TestClient(app)
-
-
-@pytest.fixture
-def mock_settings():
-    """Mock 配置"""
-    settings = MagicMock()
-    settings.wecom_token = TOKEN
-    settings.wecom_encoding_aes_key = ENCODING_AES_KEY
-    settings.wecom_corp_id = CORP_ID
-    settings.wecom_agent_id = 1000006
-    return settings
 
 
 class TestVerifyUrl:
     """GET /api/wecom/callback URL 验证"""
 
-    def test_verify_url_success(self, client, crypt, mock_settings):
+    def test_verify_url_success(self, client, crypt):
         """正确签名 → 返回解密后的 echostr"""
         # 加密 echostr
         ret, encrypted_echo = crypt._encrypt("echo_test_12345")
@@ -64,11 +59,9 @@ class TestVerifyUrl:
         ret, signature = crypt._compute_signature(timestamp, nonce, encrypted_echo)
         assert ret == 0
 
-        with patch(
-            "api.routes.wecom.get_settings", return_value=mock_settings,
-        ):
+        with patch("api.routes.wecom._get_crypt", return_value=(crypt, CORP_ID)):
             resp = client.get(
-                "/api/wecom/callback",
+                "/api/wecom/callback/org-1",
                 params={
                     "msg_signature": signature,
                     "timestamp": timestamp,
@@ -80,16 +73,14 @@ class TestVerifyUrl:
         assert resp.status_code == 200
         assert resp.text == "echo_test_12345"
 
-    def test_verify_url_bad_signature(self, client, crypt, mock_settings):
+    def test_verify_url_bad_signature(self, client, crypt):
         """签名错误 → 403"""
         ret, encrypted_echo = crypt._encrypt("echo")
         assert ret == 0
 
-        with patch(
-            "api.routes.wecom.get_settings", return_value=mock_settings,
-        ):
+        with patch("api.routes.wecom._get_crypt", return_value=(crypt, CORP_ID)):
             resp = client.get(
-                "/api/wecom/callback",
+                "/api/wecom/callback/org-1",
                 params={
                     "msg_signature": "wrong_signature",
                     "timestamp": "123",
@@ -102,14 +93,14 @@ class TestVerifyUrl:
 
     def test_verify_url_missing_params(self, client):
         """缺少参数 → 422"""
-        resp = client.get("/api/wecom/callback")
+        resp = client.get("/api/wecom/callback/org-1")
         assert resp.status_code == 422
 
 
 class TestReceiveMessage:
     """POST /api/wecom/callback 消息接收"""
 
-    def test_receive_text_message(self, client, crypt, mock_settings):
+    def test_receive_text_message(self, client, crypt):
         """接收文本消息 → 解密成功 → 返回 success"""
         # 构建明文 XML
         plaintext_xml = (
@@ -134,15 +125,9 @@ class TestReceiveMessage:
             f"<ToUserName><![CDATA[corp]]></ToUserName></xml>"
         )
 
-        with patch(
-            "api.routes.wecom.get_settings", return_value=mock_settings,
-        ), patch(
-            "api.routes.wecom._process_callback_xml",
-            new_callable=AsyncMock,
-        ) as mock_process:
-
+        with patch("api.routes.wecom._get_crypt", return_value=(crypt, CORP_ID)):
             resp = client.post(
-                "/api/wecom/callback",
+                "/api/wecom/callback/org-1",
                 params={
                     "msg_signature": signature,
                     "timestamp": timestamp,
@@ -153,18 +138,15 @@ class TestReceiveMessage:
 
         assert resp.status_code == 200
         assert resp.text == "success"
-        mock_process.assert_awaited_once()
 
-    def test_receive_bad_signature(self, client, crypt, mock_settings):
+    def test_receive_bad_signature(self, client, crypt):
         """签名错误 → 403"""
         ret, encrypted = crypt._encrypt("<xml>test</xml>")
         post_xml = f"<xml><Encrypt><![CDATA[{encrypted}]]></Encrypt></xml>"
 
-        with patch(
-            "api.routes.wecom.get_settings", return_value=mock_settings,
-        ):
+        with patch("api.routes.wecom._get_crypt", return_value=(crypt, CORP_ID)):
             resp = client.post(
-                "/api/wecom/callback",
+                "/api/wecom/callback/org-1",
                 params={
                     "msg_signature": "bad_sig",
                     "timestamp": "123",
@@ -175,13 +157,11 @@ class TestReceiveMessage:
 
         assert resp.status_code == 403
 
-    def test_receive_invalid_xml(self, client, mock_settings):
+    def test_receive_invalid_xml(self, client, crypt):
         """无效 XML → 403"""
-        with patch(
-            "api.routes.wecom.get_settings", return_value=mock_settings,
-        ):
+        with patch("api.routes.wecom._get_crypt", return_value=(crypt, CORP_ID)):
             resp = client.post(
-                "/api/wecom/callback",
+                "/api/wecom/callback/org-1",
                 params={
                     "msg_signature": "sig",
                     "timestamp": "123",
@@ -193,13 +173,10 @@ class TestReceiveMessage:
         assert resp.status_code == 403
 
 
-class TestProcessCallbackXml:
-    """_process_callback_xml 内部逻辑"""
-
-    @pytest.mark.asyncio
-    async def test_event_type_skipped(self):
+class TestParseCallbackXml:
+    def test_event_type_skipped(self):
         """event 类型消息被跳过"""
-        from api.routes.wecom import _process_callback_xml
+        from services.wecom.callback_inbox_worker import _parse_callback_message
 
         xml = (
             "<xml>"
@@ -208,17 +185,12 @@ class TestProcessCallbackXml:
             "</xml>"
         )
 
-        # 不应抛出异常
-        with patch(
-            "api.routes.wecom.get_settings",
-            return_value=MagicMock(wecom_corp_id="corp", wecom_agent_id=100),
-        ):
-            await _process_callback_xml(xml, MagicMock())
+        assert _parse_callback_message(
+            xml, org_id="org-1", corp_id="corp",
+        ) is None
 
-    @pytest.mark.asyncio
-    async def test_text_message_dispatched(self):
-        """文本消息 → 构建 WecomIncomingMessage → 调用 handle_message"""
-        from api.routes.wecom import _process_callback_xml
+    def test_text_message_parsed(self):
+        from services.wecom.callback_inbox_worker import _parse_callback_message
 
         xml = (
             "<xml>"
@@ -229,29 +201,19 @@ class TestProcessCallbackXml:
             "</xml>"
         )
 
-        mock_svc = MagicMock()
-        mock_svc.handle_message = AsyncMock()
-
-        with patch(
-            "api.routes.wecom.get_settings",
-            return_value=MagicMock(wecom_corp_id="corp", wecom_agent_id=100),
-        ), patch(
-            "api.routes.wecom.WecomMessageService",
-            return_value=mock_svc,
-        ):
-            await _process_callback_xml(xml, MagicMock())
-
-        mock_svc.handle_message.assert_called_once()
-        msg = mock_svc.handle_message.call_args[0][0]
+        msg = _parse_callback_message(
+            xml, org_id="org-1", corp_id="corp",
+        )
+        assert msg is not None
         assert msg.msgid == "67890"
         assert msg.wecom_userid == "user_abc"
         assert msg.text_content == "测试内容"
         assert msg.channel == "app"
         assert msg.chattype == "single"
 
-    @pytest.mark.asyncio
-    async def test_invalid_xml_handled(self):
-        """无效 XML → 记录日志但不抛出"""
-        from api.routes.wecom import _process_callback_xml
-        # 不应抛出异常
-        await _process_callback_xml("not xml", MagicMock())
+    def test_invalid_xml_rejected(self):
+        from services.wecom.callback_inbox_worker import _parse_callback_message
+        with pytest.raises(Exception):
+            _parse_callback_message(
+                "not xml", org_id="org-1", corp_id="corp",
+            )

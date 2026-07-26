@@ -32,7 +32,7 @@ async def test_form_submit_success(mock_get_db, mock_ws):
     ):
         await _handle_form_submit(
             "conn-1", "user-1", "org-123", "scheduled_task_create",
-            {"name": "日报", "prompt": "推日报"}, "conv-1",
+            {"name": "日报", "prompt": "推日报"}, "conv-1", db,
         )
 
     # 验证回传了成功结果
@@ -94,7 +94,7 @@ async def test_form_submit_exception(mock_get_db, mock_ws):
     ):
         await _handle_form_submit(
             "conn-1", "user-1", "org-1",
-            "scheduled_task_create", {}, "conv-1",
+            "scheduled_task_create", {}, "conv-1", db,
         )
 
     msg = mock_ws.send_to_connection.call_args[0][1]

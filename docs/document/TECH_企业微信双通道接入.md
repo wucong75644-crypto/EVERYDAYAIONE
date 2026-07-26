@@ -144,11 +144,12 @@
 ### 消息处理流程（自建应用回调模式）
 
 ```
-1. 企微 POST 加密消息到 /api/wecom/callback
-2. 验签 + AES 解密 → 获取明文 XML
-3. 立即返回 "success"（5 秒限制）
-4. 异步处理：步骤 3-10 与长连接相同
-5. 回复方式：通过 access_token + 消息发送 API 推送结果
+1. 企微 POST 加密消息到 `/api/wecom/callback/{org_id}`
+2. Backend 从该企业 `wecom.callback` Bundle 解密回调配置并验签、AES 解密
+3. 按企业 + MsgId 幂等写入 `wecom_callback_inbox`，立即返回 `success`
+4. 独立 WeCom 进程以租约领取；进程中断后由租约超时恢复
+5. 处理失败指数退避，最多 8 次；成功后记录 completed
+6. 回复方式：使用同一企业 Bundle 中的应用凭证调用消息发送 API
    - 文本/Markdown 消息（非流式，生成完整后一次发送）
 ```
 
@@ -191,8 +192,8 @@ backend/
 │
 ├── api/routes/
 │   └── wecom.py                       # 回调路由（~120行）
-│       - GET /api/wecom/callback   → URL 验证
-│       - POST /api/wecom/callback  → 接收消息
+│       - GET /api/wecom/callback/{org_id}  → 企业级 URL 验证
+│       - POST /api/wecom/callback/{org_id} → 验签解密并持久化入队
 │
 └── schemas/
     └── wecom.py                       # 企微消息类型定义（~60行）
@@ -232,16 +233,16 @@ backend/
 **外键**：
 - user_id → users(id) ON DELETE CASCADE
 
-### 现有表变更：无
+### 持久化变更
 
-不修改现有表结构。通过 wecom_user_mappings 建立关联，conversation/message 表无需改动。
-对话通过 `title` 或 `metadata` 字段区分来源（如 title="企微对话"）。
+迁移 201 新增 owner-only + FORCE RLS 的 `wecom_callback_inbox`。服务角色无底表
+权限；Backend 仅能幂等入队，WeCom Runtime 仅能领取、完成或失败释放租约。
 
 ---
 
 ## 7. API 设计
 
-### GET /api/wecom/callback — URL 验证
+### GET /api/wecom/callback/{org_id} — URL 验证
 
 - 描述：企微配置回调 URL 时的验证请求
 - 请求参数：
@@ -256,13 +257,13 @@ backend/
 - 成功响应（200）：返回解密后的 echostr 明文（纯文本）
 - 失败响应（403）：签名验证失败
 
-### POST /api/wecom/callback — 接收消息
+### POST /api/wecom/callback/{org_id} — 接收消息
 
 - 描述：接收企微推送的加密消息
 - 请求参数（query）：msg_signature, timestamp, nonce
 - 请求体：加密 XML
-- 成功响应（200）：空字符串（立即返回，异步处理）
-- 处理逻辑：解密 → 异步调度 `WecomMessageService.handle_message()`
+- 成功响应（200）：`success`
+- 处理逻辑：企业配置解密 → 验签解密 → Inbox 幂等入队 → WeCom 独立进程租约处理
 
 ### 内部接口（无 HTTP 暴露）
 

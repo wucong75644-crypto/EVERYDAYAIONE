@@ -67,6 +67,130 @@ class FakeDB:
             return items.pop(0)
         return FakeQueryBuilder([])
 
+    def rpc(self, name, params=None):
+        db = self
+
+        class Caller:
+            def execute(self):
+                result = MagicMock()
+                if name == "get_governed_actor_authority":
+                    rows = db.table("org_members").execute().data
+                    role = rows[0]["role"] if rows else None
+                    result.data = {"authority": role}
+                elif name == "list_runtime_org_departments":
+                    result.data = db.table("org_departments").execute().data
+                elif name == "list_runtime_org_positions":
+                    result.data = db.table("org_positions").execute().data
+                elif name == "list_governed_member_assignments":
+                    result.data = db._legacy_member_rows()
+                elif name == "list_governed_wecom_assignments":
+                    result.data = db._legacy_wecom_rows()
+                elif name == "update_governed_member_assignment":
+                    changes = (params or {}).get("p_changes", {})
+                    if "department_id" in changes:
+                        if not db.table("org_departments").execute().data:
+                            raise Exception("GOVERNANCE_ARGUMENT_INVALID")
+                    if "position_code" in changes:
+                        if not db.table("org_positions").execute().data:
+                            raise Exception("GOVERNANCE_ARGUMENT_INVALID")
+                    result.data = changes
+                elif name == "update_governed_member_display_name":
+                    rows = db.table("org_members").execute().data
+                    if not rows:
+                        raise Exception("GOVERNANCE_MEMBER_MISSING")
+                    result.data = {
+                        "user_id": (params or {}).get("p_target_user_id"),
+                        "display_name": (params or {}).get("p_display_name"),
+                    }
+                else:
+                    raise AssertionError(f"unexpected rpc: {name}")
+                return result
+
+        return Caller()
+
+    def _legacy_member_rows(self):
+        members = self.table("org_members").execute().data
+        users = {
+            row["id"]: row for row in self.table("users").execute().data
+        }
+        assignments = {
+            row["user_id"]: row
+            for row in self.table("org_member_assignments").execute().data
+        }
+        departments = {
+            row["id"]: row
+            for row in self.table("org_departments").execute().data
+        }
+        positions = {
+            row["id"]: row
+            for row in self.table("org_positions").execute().data
+        }
+        result = []
+        for member in members:
+            user = users.get(member["user_id"], {})
+            assignment = assignments.get(member["user_id"])
+            result.append({
+                "user_id": member["user_id"],
+                "nickname": user.get("nickname", "未知"),
+                "avatar_url": user.get("avatar_url"),
+                "phone": user.get("phone"),
+                "org_role": member["role"],
+                "assignment": self._assignment(
+                    assignment, departments, positions
+                ),
+            })
+        return result
+
+    def _legacy_wecom_rows(self):
+        mappings = self.table("wecom_user_mappings").execute().data
+        if not mappings:
+            return []
+        users = {
+            row["id"]: row for row in self.table("users").execute().data
+        }
+        assignments = {
+            row["user_id"]: row
+            for row in self.table("org_member_assignments").execute().data
+        }
+        departments = {
+            row["id"]: row
+            for row in self.table("org_departments").execute().data
+        }
+        positions = {
+            row["id"]: row
+            for row in self.table("org_positions").execute().data
+        }
+        result = []
+        for mapping in mappings:
+            user = users.get(mapping["user_id"], {})
+            result.append({
+                **mapping,
+                "nickname": user.get("nickname")
+                or mapping.get("wecom_nickname") or "未知",
+                "avatar_url": user.get("avatar_url"),
+                "joined_at": mapping.get("created_at"),
+                "assignment": self._assignment(
+                    assignments.get(mapping["user_id"]),
+                    departments,
+                    positions,
+                ),
+            })
+        return result
+
+    @staticmethod
+    def _assignment(assignment, departments, positions):
+        if not assignment:
+            return None
+        department = departments.get(assignment.get("department_id"), {})
+        position = positions.get(assignment.get("position_id"), {})
+        return {
+            **assignment,
+            "department_name": department.get("name"),
+            "department_type": department.get("type"),
+            "position_code": position.get("code"),
+            "position_name": position.get("name"),
+        }
+
 
 def _build_app(db, user_id="user_owner", org_id="org_1"):
     from api.routes.org_members_assignments import router

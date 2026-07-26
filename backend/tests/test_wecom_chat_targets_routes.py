@@ -61,6 +61,7 @@ class FakeQueryBuilder:
 class FakeDB:
     def __init__(self):
         self._tables: dict = {}
+        self._rpcs: dict = {}
 
     def add(self, name, data):
         self._tables.setdefault(name, []).append(FakeQueryBuilder(data))
@@ -70,6 +71,18 @@ class FakeDB:
         if items:
             return items.pop(0)
         return FakeQueryBuilder([])
+
+    def add_rpc(self, name, data=None, error=None):
+        self._rpcs.setdefault(name, []).append((data, error))
+
+    def rpc(self, name, params):
+        data, error = self._rpcs[name].pop(0)
+        caller = MagicMock()
+        if error:
+            caller.execute.side_effect = error
+        else:
+            caller.execute.return_value.data = data
+        return caller
 
 
 def _build_app(db, user_id="user_owner", org_id="org_1"):
@@ -104,10 +117,7 @@ def _build_app(db, user_id="user_owner", org_id="org_1"):
 class TestListGroups:
     def test_list_returns_groups(self):
         db = FakeDB()
-        # _require_admin
-        db.add("org_members", [{"role": "owner"}])
-        # 主查询
-        db.add("wecom_chat_targets", [
+        db.add_rpc("list_governed_wecom_chat_targets", [
             {
                 "id": "g1",
                 "chatid": "wriNwWOAAATq-Xq5_grMtJe8rP7SmR7A",
@@ -143,8 +153,7 @@ class TestListGroups:
 
     def test_empty_groups(self):
         db = FakeDB()
-        db.add("org_members", [{"role": "owner"}])
-        db.add("wecom_chat_targets", [])
+        db.add_rpc("list_governed_wecom_chat_targets", [])
 
         app = _build_app(db)
         client = TestClient(app)
@@ -155,7 +164,10 @@ class TestListGroups:
 
     def test_only_admin_can(self):
         db = FakeDB()
-        db.add("org_members", [{"role": "member"}])
+        db.add_rpc(
+            "list_governed_wecom_chat_targets",
+            error=PermissionError("GOVERNANCE_AUTHORITY_DENIED"),
+        )
 
         app = _build_app(db, user_id="not_admin")
         client = TestClient(app)
@@ -170,10 +182,9 @@ class TestListGroups:
 class TestUpdateChatName:
     def test_update_success(self):
         db = FakeDB()
-        # _require_admin
-        db.add("org_members", [{"role": "owner"}])
-        # 校验目标存在
-        db.add("wecom_chat_targets", [{"id": "g1", "chat_type": "group"}])
+        db.add_rpc(
+            "update_governed_wecom_chat_target_name", {"updated": 1},
+        )
 
         app = _build_app(db)
         client = TestClient(app)
@@ -187,8 +198,9 @@ class TestUpdateChatName:
 
     def test_target_not_found(self):
         db = FakeDB()
-        db.add("org_members", [{"role": "owner"}])
-        db.add("wecom_chat_targets", [])  # 不存在
+        db.add_rpc(
+            "update_governed_wecom_chat_target_name", {"updated": 0},
+        )
 
         app = _build_app(db)
         client = TestClient(app)
@@ -200,7 +212,10 @@ class TestUpdateChatName:
 
     def test_only_admin_can(self):
         db = FakeDB()
-        db.add("org_members", [{"role": "member"}])
+        db.add_rpc(
+            "update_governed_wecom_chat_target_name",
+            error=PermissionError("GOVERNANCE_AUTHORITY_DENIED"),
+        )
 
         app = _build_app(db, user_id="not_admin")
         client = TestClient(app)
@@ -212,8 +227,6 @@ class TestUpdateChatName:
 
     def test_empty_name_rejected(self):
         db = FakeDB()
-        db.add("org_members", [{"role": "owner"}])
-
         app = _build_app(db)
         client = TestClient(app)
         resp = client.patch(

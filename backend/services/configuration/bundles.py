@@ -93,6 +93,9 @@ class SecretBundleResolver:
     def wecom_contact(self) -> ResolvedConfigurationBundle:
         return self._resolve("wecom.contact", "get_wecom_contact_bundle")
 
+    def wecom_callback(self) -> ResolvedConfigurationBundle:
+        return self._resolve("wecom.callback", "get_wecom_callback_bundle")
+
     def kuaimai_thinktank(self) -> ResolvedConfigurationBundle:
         return self._resolve(
             "kuaimai_external.thinktank",

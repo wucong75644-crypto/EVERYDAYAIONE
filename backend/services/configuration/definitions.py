@@ -281,6 +281,7 @@ _DEFINITIONS = (
         bundles=(
             "wecom.bot",
             "wecom.contact",
+            "wecom.callback",
             "wecom.oauth.public",
             "wecom.oauth.exchange",
         ),
@@ -301,7 +302,7 @@ _DEFINITIONS = (
         fallback_policy="none",
         user_override="deny",
         validation={"max_length": 100, "min_length": 1},
-        bundles=("wecom.oauth.public",),
+        bundles=("wecom.callback", "wecom.oauth.public"),
     ),
     _secret(
         "wecom.oauth_agent_secret",
@@ -310,7 +311,16 @@ _DEFINITIONS = (
         user_override="deny",
         secret_name="wecom.oauth_agent_secret",
         payload_fields=("agent_secret",),
-        bundles=("wecom.contact", "wecom.oauth.exchange"),
+        bundles=("wecom.callback", "wecom.contact", "wecom.oauth.exchange"),
+    ),
+    _secret(
+        "wecom.callback_credentials",
+        scopes=_ORG_SCOPE,
+        fallback="none",
+        user_override="deny",
+        secret_name="wecom.callback_credentials",
+        payload_fields=("token", "encoding_aes_key"),
+        bundles=("wecom.callback",),
     ),
     _secret(
         "kuaimai_external.thinktank.cookie",
@@ -404,6 +414,17 @@ _BUNDLES = (
         required_keys=("wecom.corp_id", "wecom.oauth_agent_secret"),
         optional_keys=(),
         allowed_consumers=("wecom_runtime",),
+    ),
+    BundleDefinition(
+        name="wecom.callback",
+        required_keys=(
+            "wecom.corp_id",
+            "wecom.callback_credentials",
+            "wecom.oauth_agent_id",
+            "wecom.oauth_agent_secret",
+        ),
+        optional_keys=(),
+        allowed_consumers=("worker_org",),
     ),
     BundleDefinition(
         name="kuaimai_external.thinktank",

@@ -19,6 +19,8 @@ if ! command -v psql >/dev/null 2>&1; then
     exit 1
 fi
 
+bash "$(dirname "$0")/preflight/knowledge-audit-completion.sh"
+
 legacy_owner=${LEGACY_DATABASE_OWNER:-everydayai}
 if [[ ! "$legacy_owner" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
     echo "❌ LEGACY_DATABASE_OWNER 不是合法 PostgreSQL 角色名" >&2
@@ -84,7 +86,20 @@ BEGIN
           '183_sync_configuration_capabilities.sql',
           '184_runtime_erp_operator_control.sql',
           '185_external_sync_request_queue.sql',
-          '189_web_runtime_access_completion.sql'
+          '189_web_runtime_access_completion.sql',
+          '190_message_idempotency_role_capabilities.sql',
+          '191_governance_actor_authority.sql',
+          '192_atomic_organization_permission_initialization.sql',
+          '193_runtime_assignment_read_capabilities.sql',
+          '194_governed_assignment_management.sql',
+          '195_organization_member_display_name.sql',
+          '196_runtime_tool_audit_capability.sql',
+          '197_runtime_knowledge_tenant_boundary.sql',
+          '198_worker_model_scoring_capabilities.sql',
+          '199_platform_error_monitor_capabilities.sql',
+          '200_web_wecom_control_capabilities.sql',
+          '201_wecom_callback_inbox.sql',
+          '202_knowledge_audit_force_rls_completion.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1
@@ -275,7 +290,9 @@ BEGIN
           'refresh_tokens', 'user_subscriptions', 'user_memory_settings'
           , 'memory_pipeline_state', 'memory_session_logs',
           'memory_consolidation_runs', 'error_logs', 'knowledge_metrics',
-          'scheduled_tasks', 'scheduled_task_runs'
+          'knowledge_nodes', 'knowledge_edges', 'scoring_audit_log',
+          'tool_audit_log', 'permission_audit_log',
+          'wecom_callback_inbox', 'scheduled_tasks', 'scheduled_task_runs'
        ])
        AND owner_role.rolname <> 'everydayai_owner';
     IF unexpected_owners IS NOT NULL THEN
@@ -405,6 +422,14 @@ BEGIN
          'public.memory_session_logs'::regclass,
          'public.memory_consolidation_runs'::regclass,
          'public.memory_atoms'::regclass,
+         'public.knowledge_nodes'::regclass,
+         'public.knowledge_edges'::regclass,
+         'public.knowledge_metrics'::regclass,
+         'public.scoring_audit_log'::regclass,
+         'public.tool_audit_log'::regclass,
+         'public.error_logs'::regclass,
+         'public.permission_audit_log'::regclass,
+         'public.wecom_callback_inbox'::regclass,
          'public.scheduled_tasks'::regclass,
          'public.scheduled_task_runs'::regclass
      ])

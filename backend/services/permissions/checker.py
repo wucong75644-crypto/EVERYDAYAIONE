@@ -163,46 +163,17 @@ class PermissionChecker:
     async def get_assignment(
         self, user_id: str, org_id: str
     ) -> Optional[Dict[str, Any]]:
-        """查询用户在组织内的任职信息（V1 直查 DB，无缓存）"""
+        """通过 Runtime Scope 能力查询用户在组织内的主任职。"""
         try:
-            result = self.db.table("org_member_assignments") \
-                .select(
-                    "id, user_id, org_id, department_id, position_id, "
-                    "job_title, data_scope, data_scope_dept_ids, perm_version"
-                ) \
-                .eq("user_id", user_id) \
-                .eq("org_id", org_id) \
-                .eq("is_primary", True) \
-                .limit(1) \
-                .execute()
-
-            if not result.data:
-                return None
-
-            row = result.data[0]
-
-            # 查 position code
-            pos = self.db.table("org_positions") \
-                .select("code") \
-                .eq("id", row["position_id"]) \
-                .single() \
-                .execute()
-            row["position_code"] = pos.data["code"] if pos.data else None
-
-            # 查 department type（如有）
-            if row.get("department_id"):
-                dept = self.db.table("org_departments") \
-                    .select("type, name") \
-                    .eq("id", row["department_id"]) \
-                    .single() \
-                    .execute()
-                if dept.data:
-                    row["department_type"] = dept.data["type"]
-                    row["department_name"] = dept.data["name"]
-
-            return row
+            result = self.db.rpc("get_runtime_member_assignment", {
+                "p_org_id": org_id,
+                "p_user_id": user_id,
+            }).execute()
+            return result.data or None
         except Exception as e:
-            logger.error(f"get_assignment error | user={user_id} | error={e}")
+            logger.error(
+                f"get_assignment error | user={user_id} | org={org_id} | error={e}"
+            )
             return None
 
     # 向后兼容别名（其他模块可能调用 _get_assignment）
@@ -216,19 +187,9 @@ class PermissionChecker:
         return
 
 
-# ────────────────────────────────────────────────────────────
-# 全局便捷函数
-# ────────────────────────────────────────────────────────────
-
-_checker_instance: Optional[PermissionChecker] = None
-
-
 def get_checker(db: Any) -> PermissionChecker:
-    """获取全局 PermissionChecker 实例"""
-    global _checker_instance
-    if _checker_instance is None:
-        _checker_instance = PermissionChecker(db)
-    return _checker_instance
+    """为当前请求数据库身份创建 PermissionChecker。"""
+    return PermissionChecker(db)
 
 
 async def check_permission(

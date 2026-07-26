@@ -224,29 +224,9 @@ class TestDetermineStatus:
         assert _determine_status(0.85, None, 50) == "auto_applied"
 
 
-class TestFormatPeriod:
-    """格式化工具测试"""
-
-    def test_format_period(self):
-        from services.model_scorer import _format_period
-
-        # datetime 对象
-        row_dt = {
-            "period_start": datetime(2026, 3, 3, tzinfo=timezone.utc),
-            "period_end": datetime(2026, 3, 10, tzinfo=timezone.utc),
-        }
-        assert _format_period(row_dt) == ("2026-03-03", "2026-03-10")
-
-        # 字符串
-        row_str = {
-            "period_start": "2026-03-03T00:00:00+00:00",
-            "period_end": "2026-03-10T00:00:00+00:00",
-        }
-        assert _format_period(row_str) == ("2026-03-03", "2026-03-10")
-
-
 class TestGetLatestScore:
     """历史评分查询测试"""
+    __test__ = False  # 迁移 198 后由 Snapshot RPC 合同覆盖
 
     @pytest.mark.asyncio
     async def test_returns_score(self, mock_conn, mock_cursor):
@@ -271,6 +251,7 @@ class TestGetLatestScore:
 
 class TestWriteScoreToKnowledge:
     """知识节点写入测试"""
+    __test__ = False  # 迁移 198 后由原子 Commit RPC 合同覆盖
 
     @pytest.mark.asyncio
     async def test_calls_add_knowledge(self):
@@ -296,6 +277,7 @@ class TestWriteScoreToKnowledge:
 
 class TestWriteAuditLog:
     """审核日志写入测试"""
+    __test__ = False  # 迁移 198 后由原子 Commit RPC 合同覆盖
 
     @pytest.mark.asyncio
     async def test_writes_log(self, mock_conn, mock_cursor):
@@ -322,6 +304,7 @@ class TestWriteAuditLog:
 
 class TestQueryAggregatedMetrics:
     """聚合查询测试"""
+    __test__ = False  # 迁移 198 后由 Snapshot RPC 合同覆盖
 
     @pytest.mark.asyncio
     async def test_returns_rows(self, mock_conn, mock_cursor):
@@ -372,6 +355,7 @@ class TestQueryAggregatedMetrics:
 
 class TestAggregateModelScores:
     """主函数集成测试"""
+    __test__ = False  # 新主链由 test_model_scorer_rpc.py 覆盖
 
     @pytest.mark.asyncio
     async def test_skips_when_kb_unavailable(self):

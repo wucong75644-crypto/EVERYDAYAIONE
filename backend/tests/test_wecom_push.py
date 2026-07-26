@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 backend_dir = Path(__file__).parent.parent
@@ -201,93 +202,105 @@ class TestPushAPI:
     """push_message 端点测试"""
 
     @pytest.mark.asyncio
-    async def test_push_ws_disconnected(self):
-        """WS 未就绪 -> 返回失败"""
+    async def test_push_publish_failure(self):
+        """跨进程发布失败时返回失败。"""
         from api.routes.wecom import push_message, WecomPushRequest
 
         req = WecomPushRequest(user_id="u1", org_id="org-1", message="hello")
+        db = MagicMock()
+        db.rpc.return_value.execute.return_value.data = {
+            "chatid": "chat-1", "chattype": "single",
+        }
 
-        with patch("wecom_ws_runner.get_ws_client", return_value=None):
-            result = await push_message(req, MagicMock())
+        with patch(
+            "services.scheduler.push_dispatcher.push_dispatcher"
+            ".publish_wecom_message",
+            new=AsyncMock(return_value=False),
+        ):
+            result = await push_message(
+                req, "admin", SimpleNamespace(org_id="org-1"), db,
+            )
 
         assert result["success"] is False
-        assert "未就绪" in result["error"]
 
     @pytest.mark.asyncio
     async def test_push_with_explicit_chatid(self):
-        """指定 chatid -> 直接发送"""
+        """指定 chatid 仍由数据库验证企业归属后跨进程发布。"""
         from api.routes.wecom import push_message, WecomPushRequest
 
         req = WecomPushRequest(
             user_id="u1", org_id="org-1", message="hello", chatid="chat_abc",
         )
+        db = MagicMock()
+        db.rpc.return_value.execute.return_value.data = {
+            "chatid": "chat_abc", "chattype": "group",
+        }
+        publish = AsyncMock(return_value=True)
 
-        mock_ws = MagicMock()
-        mock_ws.is_connected = True
-        mock_ws.send_msg = AsyncMock(return_value=True)
-
-        with patch("wecom_ws_runner.get_ws_client", return_value=mock_ws):
-            result = await push_message(req, MagicMock())
+        with patch(
+            "services.scheduler.push_dispatcher.push_dispatcher"
+            ".publish_wecom_message",
+            new=publish,
+        ):
+            result = await push_message(
+                req, "admin", SimpleNamespace(org_id="org-1"), db,
+            )
 
         assert result["success"] is True
-        mock_ws.send_msg.assert_called_once_with(
+        publish.assert_awaited_once_with(
+            org_id="org-1",
             chatid="chat_abc",
             msgtype="markdown",
             content={"content": "hello"},
-            chattype="single",
         )
 
     @pytest.mark.asyncio
     async def test_push_lookup_chatid(self):
-        """未指定 chatid -> 查找映射"""
+        """未指定 chatid 时使用数据库返回的企业内映射。"""
         from api.routes.wecom import push_message, WecomPushRequest
 
         req = WecomPushRequest(user_id="u1", org_id="org-1", message="hi")
+        db = MagicMock()
+        db.rpc.return_value.execute.return_value.data = {
+            "chatid": "chat_found", "chattype": "group",
+        }
+        publish = AsyncMock(return_value=True)
 
-        mock_ws = MagicMock()
-        mock_ws.is_connected = True
-        mock_ws.send_msg = AsyncMock(return_value=True)
-
-        mock_user_svc = MagicMock()
-        mock_user_svc.get_chatid_by_user_id = AsyncMock(
-            return_value={"chatid": "chat_found", "chattype": "group", "wecom_userid": "wx"},
-        )
-
-        with (
-            patch("wecom_ws_runner.get_ws_client", return_value=mock_ws),
-            patch(
-                "services.wecom.user_mapping_service.WecomUserMappingService",
-                return_value=mock_user_svc,
-            ),
+        with patch(
+            "services.scheduler.push_dispatcher.push_dispatcher"
+            ".publish_wecom_message",
+            new=publish,
         ):
-            result = await push_message(req, MagicMock())
+            result = await push_message(
+                req, "admin", SimpleNamespace(org_id="org-1"), db,
+            )
 
         assert result["success"] is True
-        mock_ws.send_msg.assert_called_once()
-        assert mock_ws.send_msg.call_args[1]["chatid"] == "chat_found"
-        assert mock_ws.send_msg.call_args[1]["chattype"] == "group"
+        assert publish.await_args.kwargs["chatid"] == "chat_found"
 
     @pytest.mark.asyncio
     async def test_push_no_chatid_found(self):
-        """未指定 chatid + 查找失败 -> 返回错误"""
+        """数据库未找到企业内地址时不发布。"""
         from api.routes.wecom import push_message, WecomPushRequest
 
         req = WecomPushRequest(user_id="u1", org_id="org-1", message="hi")
-
-        mock_ws = MagicMock()
-        mock_ws.is_connected = True
-
-        mock_user_svc = MagicMock()
-        mock_user_svc.get_chatid_by_user_id = AsyncMock(return_value=None)
-
-        with (
-            patch("wecom_ws_runner.get_ws_client", return_value=mock_ws),
-            patch(
-                "services.wecom.user_mapping_service.WecomUserMappingService",
-                return_value=mock_user_svc,
-            ),
-        ):
-            result = await push_message(req, MagicMock())
+        db = MagicMock()
+        db.rpc.return_value.execute.return_value.data = None
+        result = await push_message(
+            req, "admin", SimpleNamespace(org_id="org-1"), db,
+        )
 
         assert result["success"] is False
-        assert "chatid" in result["error"]
+        assert "推送目标" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_push_rejects_cross_org_request(self):
+        from api.routes.wecom import push_message, WecomPushRequest
+        from fastapi import HTTPException
+
+        req = WecomPushRequest(user_id="u1", org_id="org-2", message="hi")
+        with pytest.raises(HTTPException) as exc:
+            await push_message(
+                req, "admin", SimpleNamespace(org_id="org-1"), MagicMock(),
+            )
+        assert exc.value.status_code == 403

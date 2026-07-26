@@ -52,20 +52,20 @@ class WecomMessageService(
         self,
         msg: WecomIncomingMessage,
         reply_ctx: WecomReplyContext,
-    ) -> None:
+    ) -> bool:
         """处理企微消息的完整流程。"""
         request_service = self._for_request(
             actor_user_id=None,
             org_id=msg.org_id,
             request_id=msg.msgid or "",
         )
-        await request_service._handle_message(msg, reply_ctx)
+        return await request_service._handle_message(msg, reply_ctx)
 
     async def _handle_message(
         self,
         msg: WecomIncomingMessage,
         reply_ctx: WecomReplyContext,
-    ) -> None:
+    ) -> bool:
         """在单条消息独占的服务实例中处理企微消息。"""
         start_time = time.monotonic()
 
@@ -133,7 +133,7 @@ class WecomMessageService(
                     org_id=org_id,
                     chat_type=msg.chattype,
                 ):
-                    return
+                    return True
 
             # 3. 多模态资源下载（图片 URL → OSS 永久 URL，需在保存前完成）
             oss_image_urls = await self._download_media(msg, user_id)
@@ -147,6 +147,7 @@ class WecomMessageService(
                 f"Wecom message handled | msgid={msg.msgid} | "
                 f"user_id={user_id} | elapsed={elapsed}ms"
             )
+            return True
 
         except Exception as e:
             logger.error(
@@ -154,6 +155,7 @@ class WecomMessageService(
                 f"error={e}"
             )
             await self._reply_text(reply_ctx, "抱歉，处理消息时出了点问题，请稍后再试。")
+            return False
 
     def _for_request(
         self,

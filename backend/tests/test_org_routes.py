@@ -63,6 +63,8 @@ class FakeDB:
         return FakeQueryBuilder()
 
     def rpc(self, name: str, _params=None):
+        if name == "list_actor_organizations":
+            return self.table("organizations")
         assert name == "get_public_organization_name"
         return self.table("organizations").maybe_single()
 
@@ -96,9 +98,14 @@ class TestCreateOrg:
     def test_non_super_admin_rejected(self):
         """非超管创建企业返回 403"""
         db = FakeDB()
-        db.add("users", {"role": "member"})  # 非超管
-
+        mock_svc = MagicMock()
+        from core.exceptions import PermissionDeniedError
+        mock_svc.search_user_by_phone.side_effect = PermissionDeniedError(
+            "仅超级管理员可创建企业"
+        )
         app = _build_app(db)
+        from api.routes.org import _get_org_service
+        app.dependency_overrides[_get_org_service] = lambda: mock_svc
         client = TestClient(app)
 
         resp = client.post("/api/org", json={
@@ -111,10 +118,13 @@ class TestCreateOrg:
     def test_owner_phone_not_found(self):
         """owner 手机号未注册返回 404"""
         db = FakeDB()
-        db.add("users", {"role": "super_admin"})  # 超管
-        db.add("users", data=[])  # 手机号查询无结果
-
+        mock_svc = MagicMock()
+        mock_svc.search_user_by_phone.return_value = {
+            "found": False, "user": None,
+        }
         app = _build_app(db)
+        from api.routes.org import _get_org_service
+        app.dependency_overrides[_get_org_service] = lambda: mock_svc
         client = TestClient(app)
 
         resp = client.post("/api/org", json={
@@ -127,10 +137,14 @@ class TestCreateOrg:
     def test_owner_disabled_rejected(self):
         """owner 已禁用返回 400"""
         db = FakeDB()
-        db.add("users", {"role": "super_admin"})
-        db.add("users", [{"id": "owner-1", "status": "disabled"}])
-
+        mock_svc = MagicMock()
+        mock_svc.search_user_by_phone.return_value = {
+            "found": True,
+            "user": {"id": "owner-1", "status": "disabled"},
+        }
         app = _build_app(db)
+        from api.routes.org import _get_org_service
+        app.dependency_overrides[_get_org_service] = lambda: mock_svc
         client = TestClient(app)
 
         resp = client.post("/api/org", json={
@@ -150,6 +164,10 @@ class TestCreateOrg:
             mock_svc = MagicMock()
             mock_svc.create_organization.return_value = {
                 "id": "org-1", "name": "测试企业"
+            }
+            mock_svc.search_user_by_phone.return_value = {
+                "found": True,
+                "user": {"id": "owner-1", "status": "active"},
             }
             MockSvc.return_value = mock_svc
 
@@ -280,7 +298,6 @@ class TestListMyOrgs:
         app = _build_app(db)
         from api.routes.org import _get_org_service
         app.dependency_overrides[_get_org_service] = lambda: mock_svc
-
         client = TestClient(app)
         resp = client.get("/api/org")
         assert resp.status_code == 200

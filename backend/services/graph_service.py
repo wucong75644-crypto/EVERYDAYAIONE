@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from psycopg.types.json import Json
 
-from services.knowledge_config import get_pg_connection
+from services.knowledge_config import (
+    get_pg_connection,
+    resolve_knowledge_identity,
+)
 
 
 class GraphService:
@@ -35,14 +38,18 @@ class GraphService:
         Returns:
             相关节点列表，每项包含 node 信息 + 路径深度 + 关系类型
         """
+        org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
         conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return []
 
         type_filter = ""
-        edge_org_filter = (
-            "AND (e.org_id = %(org_id)s OR e.org_id IS NULL)"
-            if org_id else "AND e.org_id IS NULL"
+        edge_owner_filter = (
+            "AND (e.org_id = %(org_id)s OR "
+            "(e.org_id IS NULL AND e.owner_user_id IS NULL))"
+            if org_id else
+            "AND (e.owner_user_id = %(owner_user_id)s OR "
+            "(e.org_id IS NULL AND e.owner_user_id IS NULL))"
         )
         params: Dict[str, Any] = {"node_id": node_id, "depth": depth}
         if relation_types:
@@ -59,7 +66,7 @@ class GraphService:
                 1 AS depth
             FROM knowledge_edges e
             WHERE e.source_id = %(node_id)s
-                {type_filter} {edge_org_filter}
+                {type_filter} {edge_owner_filter}
 
             UNION
 
@@ -71,7 +78,7 @@ class GraphService:
                 1 AS depth
             FROM knowledge_edges e
             WHERE e.target_id = %(node_id)s
-                {type_filter} {edge_org_filter}
+                {type_filter} {edge_owner_filter}
 
             UNION ALL
 
@@ -83,7 +90,7 @@ class GraphService:
                 t.depth + 1
             FROM traversal t
             JOIN knowledge_edges e ON (e.source_id = t.node_id OR e.target_id = t.node_id)
-                {edge_org_filter}
+                {edge_owner_filter}
             WHERE t.depth < %(depth)s
                 AND CASE WHEN e.source_id = t.node_id THEN e.target_id ELSE e.source_id END != %(node_id)s
                 {type_filter}
@@ -95,11 +102,16 @@ class GraphService:
         FROM traversal t
         JOIN knowledge_nodes n ON n.id = t.node_id
         WHERE n.is_deleted = FALSE
-            AND (n.org_id = %(org_id)s OR n.org_id IS NULL)
+            AND (
+                n.org_id = %(org_id)s
+                OR n.owner_user_id = %(owner_user_id)s
+                OR (n.org_id IS NULL AND n.owner_user_id IS NULL)
+            )
         ORDER BY n.id, t.depth ASC
         LIMIT 20;
         """
         params["org_id"] = org_id
+        params["owner_user_id"] = owner_user_id
 
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
@@ -122,13 +134,17 @@ class GraphService:
         Returns:
             路径上的节点列表（含关系），空列表表示无路径
         """
+        org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
         conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return []
 
-        org_filter = (
-            "AND (e.org_id = %(org_id)s OR e.org_id IS NULL)"
-            if org_id else "AND e.org_id IS NULL"
+        owner_filter = (
+            "AND (e.org_id = %(org_id)s OR "
+            "(e.org_id IS NULL AND e.owner_user_id IS NULL))"
+            if org_id else
+            "AND (e.owner_user_id = %(owner_user_id)s OR "
+            "(e.org_id IS NULL AND e.owner_user_id IS NULL))"
         )
 
         query = f"""
@@ -139,7 +155,7 @@ class GraphService:
                 ARRAY[e.relation_type] AS relations,
                 1 AS depth
             FROM knowledge_edges e
-            WHERE e.source_id = %(from_id)s {org_filter}
+            WHERE e.source_id = %(from_id)s {owner_filter}
 
             UNION ALL
 
@@ -150,7 +166,7 @@ class GraphService:
                 p.depth + 1
             FROM path_search p
             JOIN knowledge_edges e ON (e.source_id = p.node_id OR e.target_id = p.node_id)
-                {org_filter}
+                {owner_filter}
             WHERE p.depth < %(max_depth)s
                 AND NOT (CASE WHEN e.source_id = p.node_id THEN e.target_id ELSE e.source_id END = ANY(p.path))
         )
@@ -168,6 +184,7 @@ class GraphService:
                     "to_id": to_id,
                     "max_depth": max_depth,
                     "org_id": org_id,
+                    "owner_user_id": owner_user_id,
                 })
                 row = await cur.fetchone()
                 if not row:
@@ -190,15 +207,25 @@ class GraphService:
         Returns:
             边的 ID，失败返回 None
         """
+        org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
         conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return None
 
         query = """
-        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, metadata, org_id)
-        VALUES (%(source_id)s, %(target_id)s, %(relation_type)s, %(weight)s, %(metadata)s, %(org_id)s)
+        INSERT INTO knowledge_edges (
+            source_id, target_id, relation_type, weight, metadata,
+            org_id, owner_user_id
+        )
+        VALUES (
+            %(source_id)s, %(target_id)s, %(relation_type)s, %(weight)s,
+            %(metadata)s, %(org_id)s, %(owner_user_id)s
+        )
         ON CONFLICT (source_id, target_id, relation_type)
-        DO UPDATE SET weight = EXCLUDED.weight, metadata = EXCLUDED.metadata, org_id = EXCLUDED.org_id
+        DO UPDATE SET weight = EXCLUDED.weight,
+                      metadata = EXCLUDED.metadata,
+                      org_id = EXCLUDED.org_id,
+                      owner_user_id = EXCLUDED.owner_user_id
         RETURNING id;
         """
 
@@ -212,6 +239,7 @@ class GraphService:
                         "weight": weight,
                         "metadata": Json(metadata or {}),
                         "org_id": org_id,
+                        "owner_user_id": owner_user_id,
                     })
                     result = await cur.fetchone()
                     return str(result[0]) if result else None
@@ -234,6 +262,7 @@ class GraphService:
         Returns:
             {"nodes": [...], "edges": [...]}
         """
+        org_id, owner_user_id = resolve_knowledge_identity(db_source, org_id)
         conn_ctx = await get_pg_connection(db_source)
         if conn_ctx is None:
             return {"nodes": [], "edges": []}
@@ -248,9 +277,16 @@ class GraphService:
                                confidence, metadata
                         FROM knowledge_nodes
                         WHERE id = ANY(%(ids)s) AND is_deleted = FALSE
-                            AND (org_id = %(org_id)s OR org_id IS NULL);
+                            AND (
+                                org_id = %(org_id)s
+                                OR owner_user_id = %(owner_user_id)s
+                                OR (org_id IS NULL AND owner_user_id IS NULL)
+                            );
                         """,
-                        {"ids": node_ids, "org_id": org_id},
+                        {
+                            "ids": node_ids, "org_id": org_id,
+                            "owner_user_id": owner_user_id,
+                        },
                     )
                     node_rows = await cur.fetchall()
                     node_cols = [desc.name for desc in cur.description]
@@ -263,9 +299,16 @@ class GraphService:
                             SELECT id, source_id, target_id, relation_type, weight, metadata
                             FROM knowledge_edges
                             WHERE source_id = ANY(%(ids)s) AND target_id = ANY(%(ids)s)
-                              AND (org_id = %(org_id)s OR org_id IS NULL);
+                              AND (
+                                  org_id = %(org_id)s
+                                  OR owner_user_id = %(owner_user_id)s
+                                  OR (org_id IS NULL AND owner_user_id IS NULL)
+                              );
                             """,
-                            {"ids": node_ids, "org_id": org_id},
+                            {
+                                "ids": node_ids, "org_id": org_id,
+                                "owner_user_id": owner_user_id,
+                            },
                         )
                         edge_rows = await cur.fetchall()
                         edge_cols = [desc.name for desc in cur.description]

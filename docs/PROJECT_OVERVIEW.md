@@ -225,6 +225,50 @@
 - `backend/migrations/189_web_runtime_access_completion.sql`：在第二批 owner 转移后重建
   Web Runtime 核心 ACL，并以数据库验证的 active super_admin 只读 policy 支持平台
   管理页面；不扩大 WeCom、Worker 或 Sync 权限。
+- `backend/migrations/190_message_idempotency_role_capabilities.sql`：把消息生成幂等领取
+  绑定到精确 Runtime Actor/Org Scope，并将 TTL 清理收口为无 Actor 的 Worker
+  SECURITY DEFINER 能力；所有权转移和回滚脚本同步覆盖两个函数。
+- `backend/migrations/191_governance_actor_authority.sql`：向 Runtime 提供当前 Actor
+  在指定企业内的窄角色能力，企业配置路由不再为鉴权直读组织和成员控制表。
+- `backend/migrations/192_atomic_organization_permission_initialization.sql`：把企业、
+  Owner 成员、系统职位、角色权限、默认部门、默认角色映射与 Owner Boss 任职合并为
+  单个治理事务；权限蓝图不完整时整体回滚。
+- `backend/migrations/193_runtime_assignment_read_capabilities.sql`：以 active 企业
+  Scope 提供单人/批量任职、部门/职位目录和部门成员集合读取；权限计算与定时任务展示
+  不再依赖服务角色直读企业权限模型表。
+- `backend/migrations/194_governed_assignment_management.sql`：为 owner/admin 提供成员
+  任职聚合、企微成员任职聚合和原子任职更新；admin 不可修改 owner/admin 或授予
+  boss/vp，boss 只能绑定企业 owner，所有成功更新同事务审计。
+- `backend/migrations/195_organization_member_display_name.sql`：只更新
+  `org_members.display_name` 企业内显示名，禁止企业管理员覆盖用户个人
+  `users.nickname`，并沿用治理角色层级与审计。
+- `backend/migrations/196_runtime_tool_audit_capability.sql`：Runtime 工具审计改为
+  由 task 反查 conversation/user/org 的窄 RPC；分区维护函数固定以 owner 身份执行，
+  防止未来分区重新归属旧角色。
+- `backend/migrations/197_runtime_knowledge_tenant_boundary.sql`：为知识节点和关系边增加
+  明确的个人所有者，系统、企业、散客事实分别使用双空、org、owner 三类身份；Runtime
+  RLS 与唯一索引同步隔离，Worker 收口前暂不 FORCE。
+- `backend/migrations/198_worker_model_scoring_capabilities.sql`：Worker 通过 Snapshot
+  RPC 读取七日指标和最近评分，并以单事务 Commit RPC 写评分知识和审核日志；无企业
+  指标按 `user_id` 分组，禁止把不同散客聚合为系统知识。
+- `backend/migrations/199_platform_error_monitor_capabilities.sql`：错误监控后台改用
+  五个超管窄能力并撤销 Runtime 直表权限；`error_logs` 与尚未启用业务调用的
+  `permission_audit_log` 均切为 owner-only + FORCE RLS。
+- `backend/migrations/200_web_wecom_control_capabilities.sql`：Web 群管理、定时任务
+  推送目标和主动推送地址改用企业治理窄能力；主动推送通过 Redis 跨进程交给独立
+  WeCom WS Runner，不再读取另一个进程的内存连接。
+- `backend/migrations/201_wecom_callback_inbox.sql`：增加企业级 Callback Bundle 和
+  FORCE RLS 持久化 Inbox；Backend 验签解密后幂等入队，WeCom Runtime 以租约领取、
+  完成或指数退避重试，Worker 清理到期终态。
+- `backend/migrations/202_knowledge_audit_force_rls_completion.sql`：在 Runtime
+  知识边界、Worker 模型评分和工具审计能力均收口后，为 Knowledge/Audit 五表补齐
+  owner policy、启用 FORCE RLS，并固定四类服务角色的最小表级权限。
+- `deploy/preflight/knowledge-audit-completion.sh`：最终撤销旧 owner 能力前独立核验
+  Knowledge/Audit 的 owner policy、FORCE RLS 与 Runtime/WeCom/Worker/Sync ACL。
+- `backend/tests/test_model_scorer_rpc.py`、`test_model_scorer_formatting.py`：分别覆盖
+  Worker Snapshot/Commit 主链与评分时间格式；原评分测试文件保持结构门限以内。
+- `backend/api/routes/scheduled_task_support.py`：承载定时任务请求模型、频率解析和
+  创建者任职展示聚合；主路由保持 500 行以内，API 行为不变。
 - `backend/api/routes/org_public.py`：公开企业登录页的名称查询入口，只调用迁移 189
   的窄能力，不直接穿越企业 RLS。
 - `docs/document/TECH_Web运行时角色切换闭环修复.md`：记录 Web ACL 覆盖根因、请求级
@@ -263,6 +307,8 @@
   成员增删/角色变更和邀请创建/接受，并在同一事务写入不含秘密值的治理审计。
 - `backend/tests/test_governance_write_capabilities_migration.py`：覆盖最小授权、角色不变量、
   企业/邀请并发锁、成员上限、审计原子性和历史审计兼容回滚。
+- `backend/tests/test_atomic_organization_permission_initialization_migration.py`：验证迁移
+  192 的权限蓝图、单事务调用链、私有 helper 权限和对称回滚合同。
 - `backend/services/configuration/definitions.py`：平台、企业和个人配置的代码 Registry
   唯一来源；提供 canonical JSON 与契约 SHA-256，首版覆盖 AI、ERP、企微和快麦 Web。
 - `backend/migrations/158_configuration_control_plane_foundation.sql`：固化 Registry v1
@@ -689,6 +735,7 @@ EVERYDAYAIONE/
 │   │   ├── websocket_auth.py         # Token 解析与握手拒绝业务关闭码
 │   │   ├── websocket_interactions.py # Tool Confirm/Steer 用户与企业复合等待键
 │   │   ├── websocket_task_scope.py   # WebSocket 任务订阅的用户/企业精确边界查询
+│   │   ├── websocket_task_completion.py # 连接建立较晚时按租户 Scope 补发任务终态
 │   │   ├── intent_router.py         # 智能意图路由器（千问 Function Calling）
 │   │   ├── memory/                  # 通用提取、巩固、Curated Search/Get 与手动记忆
 │   │   ├── memory_settings.py       # 通用记忆开关与保留设置

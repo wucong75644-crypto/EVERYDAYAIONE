@@ -236,6 +236,12 @@ async def main() -> None:
     # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.4
     from services.scheduler.push_dispatcher import start_proactive_subscriber
     proactive_task = asyncio.create_task(start_proactive_subscriber())
+    from services.wecom.callback_inbox_worker import WecomCallbackInboxWorker
+    callback_worker = WecomCallbackInboxWorker(runtime_db, control_db)
+    callback_task = asyncio.create_task(
+        callback_worker.run(),
+        name="wecom_callback_inbox_worker",
+    )
 
     if not _manager.clients:
         logger.warning("No bots to run, ws_runner will wait for signal")
@@ -257,10 +263,12 @@ async def main() -> None:
     await stop_event.wait()
 
     proactive_task.cancel()
+    callback_task.cancel()
     try:
         await proactive_task
     except asyncio.CancelledError:
         pass
+    await asyncio.gather(callback_task, return_exceptions=True)
 
     await delivery_worker.stop()
     try:

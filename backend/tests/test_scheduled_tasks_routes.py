@@ -388,54 +388,54 @@ class TestIsPushToSelf:
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         target = {"type": "web", "user_id": "user_zhangsan"}
-        assert _is_push_to_self(db, "user_zhangsan", target) is True
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is True
 
     def test_web_target_other(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         target = {"type": "web", "user_id": "user_lisi"}
-        assert _is_push_to_self(db, "user_zhangsan", target) is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is False
 
     def test_wecom_user_self(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         # 当前用户的 wecom_user_mappings 中存在该 wecom_userid
-        db.add("wecom_user_mappings", [{"wecom_userid": "ww_zhangsan"}])
+        db.add_rpc("is_runtime_wecom_self_target", True)
         target = {"type": "wecom_user", "wecom_userid": "ww_zhangsan"}
-        assert _is_push_to_self(db, "user_zhangsan", target) is True
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is True
 
     def test_wecom_user_other(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         # 当前用户的 wecom_user_mappings 中没有该 wecom_userid
-        db.add("wecom_user_mappings", [])
+        db.add_rpc("is_runtime_wecom_self_target", False)
         target = {"type": "wecom_user", "wecom_userid": "ww_other"}
-        assert _is_push_to_self(db, "user_zhangsan", target) is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is False
 
     def test_wecom_user_missing_userid(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         target = {"type": "wecom_user"}  # 缺 wecom_userid
-        assert _is_push_to_self(db, "user_zhangsan", target) is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is False
 
     def test_wecom_group_never_self(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         target = {"type": "wecom_group", "chatid": "group_xxx"}
-        assert _is_push_to_self(db, "user_zhangsan", target) is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is False
 
     def test_multi_target_never_self(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         target = {"type": "multi", "targets": []}
-        assert _is_push_to_self(db, "user_zhangsan", target) is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", target) is False
 
     def test_invalid_target_type(self):
         from api.routes.scheduled_tasks import _is_push_to_self
         db = FakeDB()
         # 不是 dict
-        assert _is_push_to_self(db, "user_zhangsan", None) is False
-        assert _is_push_to_self(db, "user_zhangsan", "invalid") is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", None) is False
+        assert _is_push_to_self(db, "user_zhangsan", "org_1", "invalid") is False
 
 
 # ════════════════════════════════════════════════════════
@@ -674,7 +674,7 @@ class TestRunsAndChatTargets:
                 "chat_name": "张三", "last_active": "2026-04-10T15:30:00Z",
             },
         ]
-        db.add("wecom_chat_targets", targets)
+        db.add_rpc("list_runtime_wecom_chat_targets", targets)
         app = _build_app(db)
 
         client = TestClient(app)
@@ -687,7 +687,7 @@ class TestRunsAndChatTargets:
 
     def test_list_chat_targets_empty(self):
         db = FakeDB()
-        db.add("wecom_chat_targets", [])
+        db.add_rpc("list_runtime_wecom_chat_targets", [])
         app = _build_app(db)
 
         client = TestClient(app)

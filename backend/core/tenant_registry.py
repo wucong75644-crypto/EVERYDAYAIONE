@@ -125,6 +125,7 @@ TENANT_TABLE_REGISTRY: dict[str, TenantTableSpec] = {
     "permission_audit_log": _spec(_CONTROL),
     "wecom_user_mappings": _spec(_WORKER),
     "wecom_chat_targets": _spec(_WORKER),
+    "wecom_callback_inbox": _spec(_WORKER, active=False),
     "wecom_departments": _spec(_WORKER),
     "wecom_employees": _spec(_WORKER),
     **{

@@ -62,7 +62,7 @@ async def apply_data_scope(
         managed_dept_ids = assignment.get("data_scope_dept_ids") or []
         if not managed_dept_ids:
             return query.eq(user_id_field, user_id)
-        dept_user_ids = await get_users_in_depts(db, managed_dept_ids)
+        dept_user_ids = await get_users_in_depts(db, managed_dept_ids, org_id)
         if not dept_user_ids:
             return query.eq(user_id_field, user_id)
         return query.in_(user_id_field, list(dept_user_ids))
@@ -72,7 +72,7 @@ async def apply_data_scope(
         dept_id = assignment.get("department_id")
         if not dept_id:
             return query.eq(user_id_field, user_id)
-        dept_user_ids = await get_users_in_depts(db, [dept_id])
+        dept_user_ids = await get_users_in_depts(db, [dept_id], org_id)
         if not dept_user_ids:
             return query.eq(user_id_field, user_id)
         return query.in_(user_id_field, list(dept_user_ids))
@@ -82,7 +82,10 @@ async def apply_data_scope(
 
 
 async def get_users_in_depts(
-    db: Any, dept_ids: list, include_subtree: bool = True
+    db: Any,
+    dept_ids: list,
+    org_id: str,
+    include_subtree: bool = True,
 ) -> Set[str]:
     """查询部门下所有成员（含子部门）
 
@@ -100,13 +103,11 @@ async def get_users_in_depts(
     try:
         # V1 简化：直接查 dept_id IN (...)，不递归查子树
         # V2 优化：用 ltree 查子树
-        result = db.table("org_member_assignments") \
-            .select("user_id") \
-            .in_("department_id", list(dept_ids)) \
-            .eq("is_primary", True) \
-            .execute()
-
-        return {row["user_id"] for row in (result.data or [])}
+        result = db.rpc("list_runtime_department_user_ids", {
+            "p_org_id": org_id,
+            "p_department_ids": list(dept_ids),
+        }).execute()
+        return set(result.data or [])
     except Exception as e:
         logger.error(f"get_users_in_depts error | dept_ids={dept_ids} | error={e}")
         return set()

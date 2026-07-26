@@ -20,7 +20,7 @@ from services.permissions.permission_points import (
     ROLE_HR_PERMS,
     is_system_permission,
 )
-from services.permissions.checker import PermissionChecker
+from services.permissions.checker import PermissionChecker, get_checker
 from services.permissions.effective_perms import (
     compute_user_permissions,
     get_member_context,
@@ -93,6 +93,41 @@ class TestPermissionPoints:
 
 class TestPermissionChecker:
     """测试 PermissionChecker 的核心判断逻辑"""
+
+    def test_get_checker_never_reuses_request_database(self):
+        first_db = MagicMock()
+        second_db = MagicMock()
+
+        first = get_checker(first_db)
+        second = get_checker(second_db)
+
+        assert first is not second
+        assert first.db is first_db
+        assert second.db is second_db
+
+    @pytest.mark.asyncio
+    async def test_get_assignment_uses_scoped_runtime_capability(self):
+        response = MagicMock(data={
+            "user_id": "user_member",
+            "org_id": "org_1",
+            "position_code": "member",
+            "data_scope": "self",
+        })
+        caller = MagicMock()
+        caller.execute.return_value = response
+        db = MagicMock()
+        db.rpc.return_value = caller
+
+        assignment = await PermissionChecker(db).get_assignment(
+            "user_member", "org_1"
+        )
+
+        assert assignment == response.data
+        db.rpc.assert_called_once_with("get_runtime_member_assignment", {
+            "p_org_id": "org_1",
+            "p_user_id": "user_member",
+        })
+        db.table.assert_not_called()
 
     @pytest.fixture
     def boss_assignment(self):
