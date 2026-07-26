@@ -33,6 +33,7 @@
 | 函数 | 文件 | 说明 |
 |---|---|---|
 | `get_request_db` | `backend/api/deps.py` | 将 Web HTTP 请求统一绑定到 actor、可选企业和 request ID 的 Runtime DatabaseScope |
+| `get_webhook_worker_db` | `backend/api/deps.py` | 将无用户会话的 Provider Webhook 绑定到 actorless Worker DatabaseScope |
 | `tenant_platform_admin` | `backend/migrations/189_web_runtime_access_completion.sql` | 由数据库验证 runtime Scope、active 用户与 super_admin 身份，仅供平台管理读取 policy 使用 |
 | `get_public_organization_name` | `backend/migrations/189_web_runtime_access_completion.sql` | 仅向 Web Runtime 返回指定企业的名称与状态，避免公开登录页直接穿越企业 RLS |
 | `claim_message_generation_request` | `backend/migrations/190_message_idempotency_role_capabilities.sql` | 校验 Runtime 角色、Actor 与企业 Scope 后原子领取或重放消息生成请求 |
@@ -1767,7 +1768,9 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `apply_legacy_import` | `backend/services/configuration/legacy_import_executor.py` | 精确确认 import_id 且 session_user 为 everydayai_migrator 后，在同一连接事务和游标中执行 SET LOCAL 门禁与 161 原子 RPC，并严格校验返回计数 |
 | `migrate_legacy_configuration.main` | `backend/scripts/migrate_legacy_configuration.py` | 默认仅输出无秘密值 dry-run 摘要；apply 要求固定 import_id、精确确认字符串和独立 MIGRATION_DATABASE_URL |
 | `prepare_generation` / `_prepare_generation_owner`（迁移 206 版本） | `backend/migrations/206_runtime_generation_capability_facade.sql` | 公开 DEFINER 门面校验 Runtime session、Actor 与企业 Scope 后调用 owner 私有原子准备实现；helper 和任务序列不再向 Runtime 暴露 |
-| `verify_capabilities` / `main` | `backend/scripts/verify_runtime_generation_capabilities.py` | 部署重启前核验 Runtime 仅能执行 owner DEFINER 公开门面，且不能直接执行私有实现/helper 或使用任务序列 |
+| `attach_generation_external_task` / `_attach_generation_external_task_owner`（迁移 207 版本） | `backend/migrations/207_runtime_media_submission_capabilities.sql` | 校验 Runtime session、Actor、企业及 task 归属后原子绑定 Provider 外部任务与积分事务 |
+| `fail_prepared_generation_task` / `_fail_prepared_generation_task_owner`（迁移 207 版本） | `backend/migrations/207_runtime_media_submission_capabilities.sql` | 同一安全边界内终止尚未提交到 Provider 的媒体任务并完成既有失败处理 |
+| `verify_capabilities` / `verify_worker_capabilities` / `main` | `backend/scripts/verify_runtime_generation_capabilities.py` | 部署重启前核验 Runtime 准备/提交门面与私有对象边界，并用 Worker 连接核验完整媒体结算能力链 |
 | `start_web_database_runtime` | `backend/services/web_database_runtime.py` | 初始化 Web 数据库 Runtime，先验证 Registry 契约，再启动恢复和知识库后台任务 |
 | `get_scoped_db` | `backend/api/deps.py` | 复用已验证 OrgContext，组合事务级 DatabaseScope 与应用层 OrgScopedDB |
 | `WecomMessageService._for_request` | `backend/services/wecom/wecom_message_service.py` | 为每条企微消息复制独立服务与子服务，避免并发请求共享可变数据库身份 |

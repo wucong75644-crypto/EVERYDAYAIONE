@@ -125,6 +125,17 @@ class TestGetAuthService:
 
 
 class TestRequestDatabase:
+    def test_webhook_uses_actorless_worker_scope(self):
+        from api.deps import get_webhook_worker_db
+
+        db = MagicMock()
+        result = get_webhook_worker_db(db)
+
+        assert result.scope.settings == (
+            "", "", "worker", "provider-webhook",
+        )
+        assert result.pool is db.pool
+
     @pytest.mark.asyncio
     async def test_current_user_identity_ignores_untrusted_org_header(self):
         from api.deps import get_current_user

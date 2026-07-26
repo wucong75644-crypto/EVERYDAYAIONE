@@ -1275,6 +1275,13 @@
   角色执行语义。迁移 206 将原子实现封闭为 owner 私有函数，公开同签名 DEFINER
   门面先校验 session role、access kind、Actor 与企业 Scope，再执行原事务；Runtime
   的 helper 与序列直权同步撤销。
+- 迁移 206 后真实文字生成恢复；图片请求已成功创建 KIE 外部任务，但 Runtime 无权
+  执行 `attach_generation_external_task`，任务停在 `preparing`。同时 Provider
+  Webhook 仍使用 Runtime 数据库连接，无法执行 Worker-only 的媒体查询与结算能力。
+  迁移 207 将 attach/fail 两个提交转换收口为校验用户、企业和任务归属的 Runtime
+  DEFINER 门面；Webhook 改用专用 Worker 连接。部署门禁同时核验完整 Runtime
+  准备/提交链和 Worker 媒体轮询、结算、重试及指标链，生产遗留任务只通过新能力
+  恢复，不直接修改底表。
 
 # 2026-07-25 定时任务角色隔离收尾
 

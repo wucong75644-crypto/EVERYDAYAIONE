@@ -217,11 +217,15 @@
 - `backend/scripts/verify_worker_control_preconditions.py`：部署发现 171–180 pending 时，
   在 apply 前验证四张依赖表及其列序列均已属于 `everydayai_owner`，否则失败关闭。
 - `backend/scripts/verify_runtime_generation_capabilities.py`：迁移完成、服务重启前验证
-  Backend 实际使用 `everydayai_runtime`，公开统一生成入口由 owner 持有且采用
-  DEFINER，私有实现/helper 与任务队列序列不向 Runtime 暴露，否则部署失败关闭。
+  Backend 实际使用 `everydayai_runtime`，公开统一生成准备/提交入口由 owner 持有
+  且采用 DEFINER，私有实现/helper 与任务队列序列不向 Runtime 暴露；同时通过
+  Worker 连接核验媒体查询、结算、重试和指标能力，否则部署失败关闭。
 - `backend/migrations/206_runtime_generation_capability_facade.sql`：把 148 原子准备实现
   收口为 owner 私有函数，并以校验 Runtime、Actor 和企业 Scope 的同签名安全门面
   作为唯一公开入口。
+- `backend/migrations/207_runtime_media_submission_capabilities.sql`：把媒体外部任务
+  attach/fail 提交转换收口为校验 Runtime Actor、企业和任务归属的安全门面；Provider
+  Webhook 使用专用 actorless Worker 数据库连接完成媒体回调结算。
 - `docs/document/RUNBOOK_171_180_Worker_Control生产恢复.md`：固定 179 failed 协调、
   owner 转移、迁移重放、服务重启与真实链路验收顺序。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批

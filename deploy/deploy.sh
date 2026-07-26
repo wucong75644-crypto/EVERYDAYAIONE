@@ -298,6 +298,7 @@ deploy_backend() {
         bash ../deploy/run-migrations.sh
         set -a
         source .env.runtime
+        source .env.worker-client
         set +a
         ./venv/bin/python scripts/verify_runtime_generation_capabilities.py
         pkill -f kernel_worker 2>/dev/null || true

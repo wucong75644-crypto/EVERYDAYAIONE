@@ -154,14 +154,20 @@ async def test_webhook_returns_before_processing_finishes() -> None:
     service.get_task.return_value = {"status": "pending", "type": "image"}
     service.process_result = AsyncMock(side_effect=slow_process)
 
+    worker_db = MagicMock()
     with (
         patch("api.routes.webhook.get_settings", return_value=settings),
-        patch("api.routes.webhook.TaskCompletionService", return_value=service),
+        patch(
+            "api.routes.webhook.TaskCompletionService", return_value=service,
+        ) as service_factory,
     ):
-        response = await handle_webhook("kie", _request(_success_payload()), MagicMock())
+        response = await handle_webhook(
+            "kie", _request(_success_payload()), worker_db,
+        )
         await asyncio.wait_for(processing_started.wait(), timeout=0.2)
 
     assert response.status_code == 200
+    service_factory.assert_called_once_with(worker_db)
     assert not allow_finish.is_set()
     service.process_result.assert_awaited_once()
 

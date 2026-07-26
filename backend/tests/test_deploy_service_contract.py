@@ -207,6 +207,7 @@ def test_migrations_run_before_service_restart_and_fail_closed() -> None:
 
     assert migration_gate < generation_gate < restart
     assert "source .env.runtime" in SCRIPT
+    assert "source .env.worker-client" in SCRIPT
     assert "scripts/migration_runner.py plan" in MIGRATION_SCRIPT
     assert "scripts/migration_runner.py apply" in MIGRATION_SCRIPT
     assert "scripts/verify_worker_control_preconditions.py" in MIGRATION_SCRIPT

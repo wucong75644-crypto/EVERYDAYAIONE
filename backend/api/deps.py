@@ -11,7 +11,7 @@ from uuid import UUID
 from fastapi import Depends, Header, HTTPException, Request
 from loguru import logger
 
-from core.database import get_db
+from core.database import get_db, get_worker_db
 from core.db_scope import (
     AsyncScopedDatabaseClient,
     DatabaseAccessKind,
@@ -142,6 +142,21 @@ async def get_request_db(
 ) -> ScopedDatabaseClient:
     """Return the request-scoped Web runtime database facade."""
     return _runtime_scoped_db(request, db, user_id)
+
+
+def get_webhook_worker_db(
+    db: Annotated[Any, Depends(get_worker_db)],
+) -> ScopedDatabaseClient:
+    """Bind provider callbacks to the dedicated actorless Worker connection."""
+    return ScopedDatabaseClient(
+        db,
+        DatabaseScope(
+            actor_user_id=None,
+            org_id=None,
+            access_kind=DatabaseAccessKind.WORKER,
+            request_id="provider-webhook",
+        ),
+    )
 
 
 async def get_task_limit_service() -> Optional[TaskLimitService]:
@@ -294,6 +309,7 @@ CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
 Database = Annotated[Any, Depends(get_request_db)]
+WorkerDatabase = Annotated[Any, Depends(get_webhook_worker_db)]
 OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
 ScopedDB = Annotated[OrgScopedDB, Depends(get_scoped_db)]
 AsyncScopedDB = Annotated[Any, Depends(get_async_scoped_db)]

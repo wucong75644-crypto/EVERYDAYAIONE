@@ -12,7 +12,7 @@ from typing import Dict, Any, Set, Type
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
-from api.deps import Database
+from api.deps import WorkerDatabase
 from core.config import get_settings
 from services.adapters.base import (
     ModelProvider,
@@ -104,7 +104,7 @@ CALLBACK_PARSERS: Dict[ModelProvider, Dict[str, Type]] = {
 async def handle_webhook(
     provider: str,
     request: Request,
-    db: Database,
+    db: WorkerDatabase,
 ) -> JSONResponse:
     """验证 Provider 回调，解析统一结果并立即启动后台处理。"""
     if not _is_authorized_callback(request):

@@ -134,10 +134,17 @@ CDN URL 不会因此自动改写。
 - CDN 证书未修复前，后端上传可成功，但图片展示仍标记为外部基础设施未恢复。
 - 206 门面校验失败统一返回 `GENERATION_PREPARE_ROLE_SCOPE_MISMATCH`，不得降级为
   底表写入；跨用户、跨企业、失效成员和非 Runtime session 全部失败关闭。
+- 207 的 `attach_generation_external_task` 与 `fail_prepared_generation_task`
+  继续使用 Runtime Actor/Org Scope，并额外反查 task 的用户、企业与 active 成员
+  事实；私有 owner 实现不向任何服务角色暴露。
+- Provider Webhook 没有用户 Actor，必须使用 actorless Worker Scope；查询、claim、
+  图片/视频结算、重试和指标能力必须在部署门禁中完整存在，不能回退为 Runtime
+  连接或底表访问。
 
 ## 5. 计划修改位置
 
 - `backend/migrations/203_post_owner_cutover_core_capabilities.sql`
+- `backend/migrations/207_runtime_media_submission_capabilities.sql`
 - `backend/migrations/rollback/203_post_owner_cutover_core_capabilities_rollback.sql`
 - `backend/core/db_scope.py`
 - `backend/core/org_scoped_db.py`
@@ -158,6 +165,8 @@ CDN URL 不会因此自动改写。
    Worker scoped Memory 与 Knowledge 指标。
 6. 前端定向测试及构建，确认无 UI 契约回归。
 7. 生产部署后以真实 Web 文本、图片、企业微信和管理页面联合验收。
+8. 以 Runtime Scope 恢复已创建外部任务但未 attach 的遗留记录，再由 Worker
+   轮询/回调完成统一结算；核对任务终态、消息和积分事务一致。
 
 ## 7. 回滚
 
