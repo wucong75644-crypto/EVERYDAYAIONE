@@ -93,16 +93,19 @@ Receipt 不保存敏感正文，只保存 refs、hash、token、revision 和原�
 
 | 路径 | 职责 |
 |---|---|
-| `backend/services/agent_runtime/context/types.py` | Plan、Block、Receipt 类型 |
-| `backend/services/agent_runtime/context/planner.py` | 预算与 provider 计划 |
-| `backend/services/agent_runtime/context/assembler.py` | 稳定组装与 Provider 映射 |
-| `backend/services/agent_runtime/context/providers/` | History、Memory、Knowledge、Artifact、Skill |
-| `backend/services/agent_runtime/context/compactor.py` | 统一压缩与抑制 |
-| `backend/services/agent_runtime/context/retrieval.py` | Search/Get 门面 |
+| `backend/services/agent/runtime/context/types.py` | Plan、Block、Receipt 类型 |
+| `backend/services/agent/runtime/context/planner.py` | 预算与 provider 计划 |
+| `backend/services/agent/runtime/context/assembler.py` | 稳定组装与 Provider 映射 |
+| `backend/services/agent/runtime/context/providers/` | History、Memory、Knowledge、Artifact、Skill |
+| `backend/services/agent/runtime/context/compactor.py` | 统一压缩与抑制 |
+| `backend/services/agent/runtime/context/retrieval.py` | Search/Get 门面 |
 | `context_snapshot.py` | 适配为 Snapshot Provider |
 | `context_compressor/` | 算法迁移，旧入口兼容 |
 | `PromptBuilder` | 指令 Provider，逐步取消总装所有权 |
 | 数据库迁移 | summary、plan/receipt、suppression 元数据 |
+
+以上均为统一目录内的计划路径；已存在实现继续原地复用，尚不存在的文件由后续实施任务
+按实际职责创建，不得据本文创建 `backend/services/agent_runtime/` 平行目录。
 
 接口：
 

@@ -357,10 +357,10 @@ effective = user/org policy
 
 | 模块 | 计划职责 |
 |---|---|
-| `backend/services/agent_runtime/policy/` | evaluator、rules、receipts、intent grants |
-| `backend/services/agent_runtime/catalog/` | ToolPolicyMetadata 与动态 MCP 覆盖规则 |
-| `backend/services/agent_runtime/cost/` | CreditService 适配、reservation/reconcile |
-| `backend/services/agent_runtime/interactions/` | 持久 Interaction 与 Grant |
+| `backend/services/agent/runtime/policy/` | evaluator、rules、receipts、intent grants |
+| `backend/services/agent/runtime/catalog/` | ToolPolicyMetadata 与动态 MCP 覆盖规则 |
+| `backend/services/agent/runtime/cost/` | CreditService 适配、reservation/reconcile |
+| `backend/services/agent/runtime/interactions/` | 持久 Interaction 与 Grant |
 | `backend/services/permissions/` | EntitlementProvider、ResourceScopeProvider |
 | `backend/config/chat_tools.py` | 兼容读取，逐步退出 SafetyLevel 主判定 |
 | `backend/services/handlers/chat_tool_mixin.py` | 删除进程内确认所有权，迁移到 Runtime |

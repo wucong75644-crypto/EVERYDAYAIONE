@@ -5,6 +5,11 @@
 > 前置：目标架构、核心状态机、Interaction/Goal 附录
 > 本文范围：表、字段、约束、索引、租户边界、兼容映射
 > 配套：`TECH_AGENT_RUNTIME数据库RPC与原子边界.md`、`TECH_AGENT_RUNTIME事件存储与保留附录.md`
+> 实施事实基线：`TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`
+
+本文全部 `agent_*` 表均为目标 Schema。截至 AR-00，持久 Session、Run、ModelStep、
+Action、RuntimeEvent、Goal、Skill、MCP 和 Subagent 表尚未实施；现有迁移 150/151
+保护的是 Conversation Context、Attachment、Memory、Asset 等既有基础设施表。
 
 ## 1. 设计结论
 
@@ -25,12 +30,12 @@ agent_runtime_sessions
   → agent_runtime_events
 ```
 
-迁移期：
+目标迁移期：
 
 - 旧 `tasks/messages` 仍是生产展示与执行主链。
 - `agent_*` 先 shadow write。
-- 每个旧 task 映射到一个 Run；每个 Tool Call 映射到 Action。
-- 媒体 task 映射到 ActionAttempt。
+- Chat generation task 映射一个 Run；每个 Tool Call 映射 Action。
+- 媒体/外部 task 映射 Action/ActionAttempt，不能把所有 task 机械映射为 Run。
 - 验证稳定后按能力切换 single terminal owner。
 
 ## 2. 方案对比
@@ -59,18 +64,20 @@ agent_runtime_sessions
 
 ### 3.2 多租户
 
-所有根事实包含：
+所有根事实继承 AR-00 冻结的三级隔离模型，并包含：
 
 ```text
 org_id UUID NULL
+user_id UUID NULL
 scope_kind TEXT NOT NULL CHECK IN ('user','channel','system')
 scope_id TEXT NOT NULL
 created_by_user_id UUID NULL
 ```
 
-个人会话：`scope_kind=user`、`scope_id=user_id::text`。企微群：`scope_kind=channel`、
-`scope_id` 使用数据库派生 channel owner。所有子表冗余 `org_id`，RPC 同时校验父子一致，
-避免只靠外键跨租户串联。
+散客为 `user_id + org_id=NULL`；企业员工为 `user_id + org_id` 且必须是 active member；
+企业共享事实以 `org_id` 为边界。个人会话使用 `scope_kind=user`，企微群使用
+`scope_kind=channel` 和数据库派生 channel owner。所有子表冗余 `org_id/user_id`，
+但 RPC 必须从父事实反查并校验一致，不能只信任调用参数或只靠外键。
 
 ### 3.3 版本与删除
 
@@ -88,6 +95,7 @@ Conversation 的 Runtime 扩展，一对一，不复制消息正文。
 | id | UUID PK | Runtime session ID |
 | conversation_id | UUID NOT NULL UNIQUE FK conversations RESTRICT | 现有会话 |
 | org_id | UUID NULL FK organizations | 租户 |
+| user_id | UUID NULL FK users | 用户/员工身份；system scope 可空 |
 | scope_kind | TEXT CHECK | user/channel/system |
 | scope_id | TEXT NOT NULL | 稳定作用域 |
 | created_by_user_id | UUID NULL FK users | 创建人 |

@@ -142,8 +142,11 @@
   但在企业 Session 中必须与企业策略求交。
 - Skill 必须支持系统发布、企业共享、个人私有，以及推荐、自动、强制和禁止四种绑定；
   MCP、Goal 和 Subagent 同期进入 Runtime 总体合同。
-- 冲突消解完成：继续复用既有 `agent_*` 数据模型和 `backend/services/agent_runtime/`
-  目标目录，禁止新增平行 `runtime_sessions/runtime_goals` 或第二套 Event Store。
+- AR-00 交叉审计纠偏：当前可复用的是 Conversation Actor、Context、Memory、Artifact
+  基础设施，不存在已实施的持久 Session、Run、ModelStep、Action、RuntimeEvent、
+  Goal、Skill、MCP 或 Subagent 主模型。唯一实现目录冻结为
+  `backend/services/agent/runtime/`，禁止新增 `backend/services/agent_runtime/`
+  或第二套 Event Store。
 - WebSocket 前置门禁已完成前两个子阶段：连接固定绑定 `(user_id, org_id)`，非法企业
   请求直接拒绝；订阅/steer 按用户与精确企业（个人为 null）校验；前端切换企业会
   关闭旧连接、清空旧订阅并重连；本地与 Redis 投递已使用精确 org 和
@@ -165,12 +168,15 @@
 - 剩余实施前置门禁为租户数据库纵深防御。
 - 租户数据库纵深防御生产审计已完成：80 张含 org_id 表全部由应用角色持有，
   FORCE RLS 与 policy 均为 0；现有 7 张 ENABLE RLS 表仍被 owner 绕过。代码 Registry
-  仅覆盖 55 张，Agent Runtime 等 13 张关键事实表未进入旧清单。
+  仅覆盖 55 张，Conversation Context、Attachment、Memory、Asset 等 13 张 Runtime
+  基础设施事实表未进入旧清单；这些表不是未来 Agent Session/Run/Action/RuntimeEvent
+  目标表。
 - 已确认采用独立 owner/migrator/runtime/worker 角色、事务级 DatabaseScope 和分领域
-  FORCE RLS；第一实施组固定为 Registry、Scope 基础设施及 Agent Runtime 13 表，
+  FORCE RLS；第一实施组固定为 Registry、Scope 基础设施及上述 Runtime 基础设施 13 表，
   不一次性切换 ERP/企业控制平面，也不做流量灰度。
 - 第一实施组任务 1 已完成：新增唯一租户 Registry，并由 OrgScopedDB 导入兼容激活集合；
-  13 张 Agent Runtime 表已登记但未激活，因此查询行为不变。生产 pg_catalog 双向合同
+  上述 13 张 Runtime 基础设施表已登记但未激活，因此查询行为不变。生产 pg_catalog
+  双向合同
   扫描 95 个表/分区/物化视图，缺表、缺 org/user 身份列、未知对象和分区父表错误均为 0。
 - 第一实施组任务 2 已完成：新增不可变 DatabaseScope 和同步/异步 Query、RPC、client
   显式包装器；Scope 与业务 SQL 固定处于同一事务，异常退出自动回滚，连接池继续复用。
@@ -208,7 +214,7 @@
   真实 `.env.*` 已由 gitignore 统一保护；验证器要求三个文件均存在、权限为 0600、各自
   使用正确数据库角色、无模板占位符且连接串相互独立。Systemd 仍读取原 `.env`，任务 5
   grant/policy 和测试库隔离矩阵通过前不得切换角色文件。
-- 第一实施组任务 5.1 已完成代码准备：新增管理员执行的 Agent Runtime 13 表首次 owner
+- 第一实施组任务 5.1 已完成代码准备：新增管理员执行的 Runtime 基础设施 13 表首次 owner
   转移与显式保护回滚脚本。转移前验证固定角色、完整表清单和允许的旧/新 owner；转移后
   migrator 获得 schema/迁移账本必要权限，runtime/worker 在 policy 就绪前保持无表权限，
   旧应用角色暂时保留 CRUD，避免当前服务因 owner 变化中断。回滚要求显式危险操作开关，

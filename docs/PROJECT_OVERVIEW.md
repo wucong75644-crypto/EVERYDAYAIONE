@@ -445,7 +445,7 @@
   ERP Token CAS、Kuaimai Cookie 迁移和 Skill SecretRef。
 - `docs/document/TECH_统一配置与Secret控制平面_迁移附录.md`：保存 158–165 实施顺序、
   生产只读审计结论与 161 分阶段验证证据，主设计文档保持在 500 行以内。
-- `backend/migrations/150_agent_runtime_tenant_defense.sql`：为 Agent Runtime 首组 13 表
+- `backend/migrations/150_agent_runtime_tenant_defense.sql`：为 Runtime 基础设施首组 13 表
   创建失败关闭的租户身份辅助函数和 `USING + WITH CHECK` policy；仅 ENABLE，不 FORCE。
 - `backend/migrations/rollback/150_agent_runtime_tenant_defense_rollback.sql`：移除首组 policy
   与辅助函数，并仅对迁移前未启用 RLS 的 6 张表恢复 DISABLE 状态。
@@ -482,6 +482,10 @@
 - `frontend/src/components/chat/message/echartsRuntime.ts`：集中具名注册项目支持的 ECharts 图表、组件、Canvas 渲染器和主题，作为图表触发后的独立加载边界。
 
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
+- `docs/document/TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`：冻结现有与目标能力
+  边界、唯一 `backend/services/agent/runtime/` 目录、企业/企业员工/散客三级隔离、
+  全局/企业/个人/Session 配置继承、Conversation/Task/Message 新旧映射，以及后续
+  AR-01～AR-04 共用的 RPC、角色责任和迁移门禁。
 - `docs/document/TECH_Grok式通用记忆运行时重构.md`：将现有业务硬编码的 L1/L2/L3 记忆管道收口为 Grok 式通用 Session Flush、Session Memory、Consolidation、Curated Memory 与 Search/Get 生命周期；领域差异仅允许通过受限 Skill Profile 提供。
 - `backend/services/memory/contracts.py`、`candidate_validator.py`：Grok 式通用记忆候选协议与 fail-closed 原文证据门禁；首期只建立契约和误提取基线，尚未切换生产写入。
 - `backend/tests/test_l1_generic_memory.py`：通用 `NO_MEMORY/CANDIDATES` 解析、精确用户证据、整批拒绝、去重失败关闭及真实消息 ID 传递回归测试。
@@ -677,7 +681,7 @@ EVERYDAYAIONE/
 │   │   ├── 134_web_user_wecom_delivery.sql # Web 用户输入按真实企微绑定写入事务 Outbox
 │   │   ├── 136_conversation_evidence_model_view.sql # Evidence 分级模型视图、hash、大小与过期字段
 │   │   ├── 137_context_summary_revision_rpc.sql # 连续闭合 Turn 摘要的 revision CAS 原子提交
-│   │   ├── 150_agent_runtime_tenant_defense.sql # Agent Runtime 首组 13 表租户 RLS policy
+│   │   ├── 150_agent_runtime_tenant_defense.sql # Runtime 基础设施首组 13 表租户 RLS policy
 │   │   ├── 151_agent_runtime_role_grants.sql # Agent Runtime 首组最小角色授权
 │   │   ├── 163_conversation_actor_worker_discovery.sql # Actor 无租户发现与任务级 Worker Facade
 │   │   ├── 164_actor_task_execution_capabilities.sql # Actor 任务级执行权限与终态 Facade

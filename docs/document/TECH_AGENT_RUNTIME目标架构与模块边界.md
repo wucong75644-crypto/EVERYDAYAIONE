@@ -5,6 +5,10 @@
 > 输入：Grok Build 17 层源码对标、全项目差距矩阵、EVERYDAYAIONE 当前代码
 > 本文范围：模块、职责、依赖方向、进程边界和现有模块归属
 > 后续文档：状态机、数据库、协议、Policy、Context、Skill/Goal/Subagent/MCP、UI、迁移
+> 实施事实基线：`TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`
+
+本文描述目标架构。当前已实施与尚未实施能力以 AR-00 基线为准；目标对象、目录和 RPC
+不得因本文的设计表达被解释为已经存在。
 
 ## 1. 设计结论
 
@@ -354,7 +358,7 @@ queue。Redis 继续只做 wakeup，所有 claim 从 PostgreSQL 获取。
 ## 8. 建议目录边界
 
 ```text
-backend/services/agent_runtime/
+backend/services/agent/runtime/
   domain/          # 无框架依赖的类型、状态转移和策略输入输出
   application/     # Session、Run、Model、Action、Goal 用例
   ports/           # Repository、Model、Executor、Event、Projection SPI
@@ -363,9 +367,10 @@ backend/services/agent_runtime/
   compatibility/   # 现有 Chat/Task/ContentPart 双写和映射
 ```
 
-放入新的子目录是因为现有 `backend/services/agent` 已有 100 个 Python 文件，混合 ERP、
-文件、图片和旧 Agent 概念；继续塞入会制造命名和依赖冲突。新目录只承载统一 Runtime，
-现有专业能力留在原位置并通过 ports 接入。
+统一 Runtime 已在 `backend/services/agent/runtime/` 建立 Context、Artifact、Validation
+等基础模块。后续核心对象继续在该目录内按 domain/application/ports 等子目录演进；
+禁止创建 `backend/services/agent_runtime/` 平行根目录。现有专业能力留在
+`backend/services/agent/` 并通过 ports 接入。
 
 前端后续建议：
 
@@ -445,6 +450,12 @@ compatibility adapter、分波次 canary”限定；数据库状态机设计阶�
 7. Skill 请求能力但不授权。
 8. MCP 经统一 Tool/Policy。
 9. 新旧兼容层只单向依赖并最终删除。
+10. 唯一实现目录为 `backend/services/agent/runtime/`。
+11. 三级隔离、四层配置、新旧模型映射和迁移 Owner 规则以 AR-00 基线为准。
+
+上述 Session、Run、ModelStep、Action、RuntimeEvent、Goal、Skill、MCP 和 Subagent
+均为目标对象，当前尚未形成持久主实现；Conversation Actor、Context、Memory 和
+Artifact 是迁移底座，不得混写为目标模型已完成。
 
 待后续专项确定：
 
