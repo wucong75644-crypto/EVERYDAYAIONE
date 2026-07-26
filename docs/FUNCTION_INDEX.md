@@ -1639,11 +1639,12 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `validate_schema_inventory` | `backend/core/tenant_registry.py` | 双向拒绝未登记含 org_id 对象、缺表、缺 org/user 身份列及分区父表漂移 |
 | `DatabaseScope` / `DatabaseAccessKind` | `backend/core/db_scope.py` | 校验并规范化事务身份；固定携带 actor、org、runtime/worker 和 request ID |
 | `ScopedQueryBuilder` / `AsyncScopedQueryBuilder` | `backend/core/db_scope.py` | 复用既有 SQL builder，在同一同步/异步事务中先注入 Scope 再执行查询 |
-| `ScopedRpcCaller` / `AsyncScopedRpcCaller` | `backend/core/db_scope.py` | 在同一同步/异步事务中注入 Scope 并调用既有 RPC |
+| `ScopedRpcCaller` / `AsyncScopedRpcCaller` | `backend/core/db_scope.py` | 在同一同步/异步事务中注入 Scope，将 dict/list 参数适配为 JSONB 后调用既有 RPC |
 | `ScopedDatabaseClient` / `AsyncScopedDatabaseClient` | `backend/core/db_scope.py` | 共享基础 client 连接池的显式作用域门面，不修改旧 client 或隐式保存请求身份 |
 | `ScopedAsyncConnection` | `backend/core/db_scope.py` | 代理异步 psycopg 连接，并禁止显式 commit、rollback 或修改 autocommit 逃逸 Scope 事务 |
 | `AsyncScopedConnectionPool` | `backend/core/db_scope.py` | 从 raw async pool 获取连接后开启事务、注入 DatabaseScope，并按退出状态自动提交或回滚 |
 | `database_scope_from_client` | `backend/core/db_scope.py` | 从显式 DatabaseScope、scoped client 或 OrgScopedDB 门面解析可信身份 |
+| `OrgConfigResolver._load_ai_bundle` | `backend/services/org/config_resolver.py` | 通过固定 Provider Bundle 和请求级 Scope 解析企业/平台 AI Secret，不直读配置表 |
 | `get_worker_db` / `get_async_worker_db` | `backend/core/database.py` | 仅从 WORKER_DATABASE_URL 创建同步/异步 Worker 单例连接池，禁止回退 runtime URL |
 | `close_worker_db` / `close_async_worker_db` | `backend/core/database.py` | 独立关闭并清除 Worker 同步/异步连接池单例 |
 | `close_db` | `backend/core/database.py` | 关闭并清除 runtime 同步数据库连接池单例 |

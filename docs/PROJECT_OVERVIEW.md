@@ -96,6 +96,9 @@
   面向 Web 的直表查询服务。
 - `docs/document/TECH_企微数据库角色切换闭环修复.md`：记录角色切换 ACL 覆盖根因、
   Worker fencing 能力边界、异常回复协议及部署回滚验证。
+- `docs/document/TECH_角色撤权后核心链路修复.md`：记录旧 owner 继承撤销后 Web 对话
+  RLS、生成 RPC、Scoped RPC、Actor 配置/指标与 CDN 证书故障的生产证据、窄能力修复
+  和撤权后联合验收门禁。
 - `git-push.sh`：仅暂存当前任务显式文件，应用发布禁止路径与敏感内容门禁，并校验远端提交 SHA。
 - `deploy/release.sh`：统一“提交部署”入口；提交推送后从确定 SHA 创建隔离工作树，避免工作区其他文件进入生产。
 - `deploy/release-policy.conf`：集中定义 `.env`、`.cursor`、密钥、依赖和生成物等禁止提交路径。

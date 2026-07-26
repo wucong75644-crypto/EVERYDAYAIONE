@@ -8,6 +8,8 @@
 共享逻辑在 _ConfigResolverCore 中，DB 访问各自实现。
 """
 
+from collections.abc import Mapping
+
 from loguru import logger
 
 from core.config import get_settings
@@ -122,6 +124,17 @@ class _ConfigResolverCore:
 class OrgConfigResolver(_ConfigResolverCore):
     """同步企业配置解析器（传入同步 LocalDBClient）"""
 
+    _AI_BUNDLES = {
+        "ai_dashscope_api_key": (
+            "ai_dashscope", "ai.dashscope.api_key",
+        ),
+        "ai_openrouter_api_key": (
+            "ai_openrouter", "ai.openrouter.api_key",
+        ),
+        "ai_kie_api_key": ("ai_kie", "ai.kie.api_key"),
+        "ai_google_api_key": ("ai_google", "ai.google.api_key"),
+    }
+
     def _load_org_encrypt_key(self, org_id: str) -> str | None:
         """从 organizations 表读取企业专属加密密钥（同步，带内存缓存）"""
         if org_id in self._org_key_cache:
@@ -144,13 +157,44 @@ class OrgConfigResolver(_ConfigResolverCore):
     def get(self, org_id: str | None, key: str) -> str | None:
         """获取配置值。企业专属 key 不降级，AI/平台级 key 降级到 .env。"""
         if org_id:
-            val = self._load_encrypted(org_id, key)
+            val = (
+                self._load_ai_bundle(key)
+                if key in self._AI_BUNDLES
+                else self._load_encrypted(org_id, key)
+            )
             if val is not None:
                 return val
         # 企业专属 key：未配置时不降级到 .env
         if key in self.ENTERPRISE_ONLY_KEYS:
             return None
         return self._get_default(key)
+
+    def _load_ai_bundle(self, key: str) -> str | None:
+        """通过固定配置 Bundle 读取当前可信 Scope 的企业/平台 AI Key。"""
+        from services.configuration.bundles import SecretBundleResolver
+        from services.configuration.envelope import LocalKEKProvider
+        from services.configuration.material_service import SecretMaterialService
+        from services.configuration.resolver import ConfigurationResolutionError
+
+        method_name, config_key = self._AI_BUNDLES[key]
+        try:
+            resolver = SecretBundleResolver(
+                self.db,
+                SecretMaterialService(LocalKEKProvider.from_environment()),
+            )
+            bundle = getattr(resolver, method_name)()
+            secret = bundle.values.get(config_key)
+            if not isinstance(secret, Mapping):
+                return None
+            api_key = secret.get("api_key")
+            return api_key if isinstance(api_key, str) and api_key else None
+        except (ConfigurationResolutionError, ValueError) as error:
+            logger.warning(
+                "AI configuration bundle unavailable | key={} | error={}",
+                key,
+                error,
+            )
+            return None
 
     def set(
         self, org_id: str, key: str, value: str, updated_by: str,

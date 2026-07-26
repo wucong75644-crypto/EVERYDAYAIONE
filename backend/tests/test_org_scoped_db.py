@@ -187,6 +187,19 @@ class TestOrgScopedDBWithOrgId:
             "atomic_refund_credits", {"p_transaction_id": "tx-123"},
         )
 
+    def test_actor_scoped_zero_argument_rpcs_have_no_org_param(self):
+        for function_name in (
+            "get_ai_dashscope_bundle",
+            "get_ai_google_bundle",
+            "get_ai_kie_bundle",
+            "get_ai_openrouter_bundle",
+            "list_actor_organizations",
+            "list_actor_pending_invitations",
+        ):
+            self.raw_db.reset_mock()
+            self.db.rpc(function_name)
+            self.raw_db.rpc.assert_called_once_with(function_name, {})
+
     def test_rpc_preserves_explicit_org_id(self):
         """已有 p_org_id 不覆盖"""
         params = {"p_outer_id": "A01", "p_org_id": ORG_ID}

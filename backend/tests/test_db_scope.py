@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from core.db_scope import (
     AsyncScopedDatabaseClient,
@@ -131,6 +132,25 @@ def test_sync_rpc_sets_scope_and_returns_json() -> None:
     assert '"run_task"' in cursor.execute.call_args_list[1].args[0]
 
 
+def test_sync_rpc_adapts_mapping_and_list_params_as_jsonb() -> None:
+    pool, _, cursor, _ = _sync_db()
+    cursor.description = None
+
+    ScopedRpcCaller(
+        RpcCaller(
+            pool,
+            "register_asset",
+            {"p_metadata": {"source": "web"}, "p_items": ["one"]},
+        ),
+        _scope(),
+    ).execute()
+
+    params = cursor.execute.call_args_list[1].args[1]
+    assert all(isinstance(value, Jsonb) for value in params)
+    assert params[0].obj == {"source": "web"}
+    assert params[1].obj == ["one"]
+
+
 def test_not_filter_keeps_scope_wrapper_until_execute() -> None:
     pool, _, cursor, _ = _sync_db()
     scope = _scope()
@@ -209,6 +229,21 @@ async def test_async_rpc_sets_scope_in_transaction() -> None:
 
     assert result.data == {"ok": True}
     assert cursor.execute.await_args_list[0].args[1] == scope.settings
+
+
+@pytest.mark.asyncio
+async def test_async_rpc_adapts_mapping_param_as_jsonb() -> None:
+    pool, _, cursor, _ = _async_db()
+    cursor.description = None
+
+    await AsyncScopedRpcCaller(
+        AsyncRpcCaller(pool, "register_asset", {"p_metadata": {"ok": True}}),
+        _scope(),
+    ).execute()
+
+    value = cursor.execute.await_args_list[1].args[1][0]
+    assert isinstance(value, Jsonb)
+    assert value.obj == {"ok": True}
 
 
 @pytest.mark.asyncio

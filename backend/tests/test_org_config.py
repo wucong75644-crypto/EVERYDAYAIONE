@@ -14,6 +14,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from core.crypto import aes_encrypt, aes_decrypt, generate_encrypt_key
@@ -133,6 +134,7 @@ class TestOrgConfigResolver:
             settings.kuaimai_refresh_token = None
             # 非企业专属 key，用于测试降级
             settings.some_ai_key = "system_ai_default"
+            settings.ai_kie_api_key = "system_kie_default"
             mock_settings.return_value = settings
             return OrgConfigResolver(db)
 
@@ -152,6 +154,42 @@ class TestOrgConfigResolver:
 
         result = resolver.get("org-1", "some_ai_key")
         assert result == "system_ai_default"
+
+    def test_get_ai_key_uses_fixed_bundle(self, resolver):
+        bundle_resolver = MagicMock()
+        bundle_resolver.ai_kie.return_value = SimpleNamespace(
+            values={"ai.kie.api_key": {"api_key": "org-kie-key"}},
+        )
+        with (
+            patch(
+                "services.configuration.bundles.SecretBundleResolver",
+                return_value=bundle_resolver,
+            ),
+            patch(
+                "services.configuration.envelope.LocalKEKProvider.from_environment",
+                return_value=MagicMock(),
+            ),
+        ):
+            assert resolver.get("org-1", "ai_kie_api_key") == "org-kie-key"
+
+    def test_get_ai_key_falls_back_when_bundle_unavailable(self, resolver):
+        from services.configuration.resolver import ConfigurationResolutionError
+
+        bundle_resolver = MagicMock()
+        bundle_resolver.ai_kie.side_effect = ConfigurationResolutionError(
+            "CONFIG_BUNDLE_UNAVAILABLE",
+        )
+        with (
+            patch(
+                "services.configuration.bundles.SecretBundleResolver",
+                return_value=bundle_resolver,
+            ),
+            patch(
+                "services.configuration.envelope.LocalKEKProvider.from_environment",
+                return_value=MagicMock(),
+            ),
+        ):
+            assert resolver.get("org-1", "ai_kie_api_key") == "system_kie_default"
 
     def test_get_enterprise_key_no_fallback(self, resolver, db):
         """企业专属 key 未配置时返回 None，不降级到系统默认"""

@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator
 from uuid import UUID
 
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 
 class DatabaseAccessKind(StrEnum):
@@ -73,7 +74,11 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
         return f'SELECT "{name}"()', []
     named_args = ", ".join(f"{key} := %s" for key in params)
-    return f'SELECT "{name}"({named_args})', list(params.values())
+    values = [
+        Jsonb(value) if isinstance(value, (dict, list)) else value
+        for value in params.values()
+    ]
+    return f'SELECT "{name}"({named_args})', values
 
 
 def _rpc_response(rows: list[dict[str, Any]]) -> Any:
