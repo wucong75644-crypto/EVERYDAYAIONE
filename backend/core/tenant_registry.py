@@ -59,9 +59,6 @@ TENANT_TABLE_REGISTRY: dict[str, TenantTableSpec] = {
         _FACT, personal=True, user_column="user_id", active=False,
     ),
     "deleted_files": _spec(_FACT, personal=True, user_column="user_id", active=False),
-    "pending_interaction": _spec(
-        _FACT, personal=True, user_column="user_id", active=False,
-    ),
     "user_activity_events": _spec(
         _FACT, personal=True, user_column="user_id", active=False,
     ),

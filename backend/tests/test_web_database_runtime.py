@@ -82,10 +82,6 @@ async def test_web_runtime_separates_runtime_and_worker_clients() -> None:
         ) as recovery,
         patch.object(
             web_database_runtime,
-            "_expire_pending_interactions",
-        ) as expire,
-        patch.object(
-            web_database_runtime,
             "BackgroundTaskWorker",
             return_value=worker,
         ) as worker_factory,
@@ -106,30 +102,36 @@ async def test_web_runtime_separates_runtime_and_worker_clients() -> None:
             web_database_runtime,
             "close_async_db",
             new=AsyncMock(),
-        ),
+        ) as close_async_db,
         patch.object(
             web_database_runtime,
             "close_async_worker_db",
             new=AsyncMock(),
-        ),
+        ) as close_async_worker_db,
         patch(
             "services.knowledge_config.close_pg_pools",
             new=AsyncMock(),
-        ),
-        patch.object(web_database_runtime, "close_db"),
-        patch.object(web_database_runtime, "close_worker_db"),
+        ) as close_pg_pools,
+        patch.object(web_database_runtime, "close_db") as close_db,
+        patch.object(web_database_runtime, "close_worker_db") as close_worker_db,
     ):
         runtime = await web_database_runtime.start_web_database_runtime()
+        assert len(runtime.monitor_tasks) == 3
         await runtime.stop()
 
     load_schema.assert_called_once_with(runtime_db)
     verify_registry.assert_called_once_with(runtime_db)
     recovery.assert_awaited_once_with(worker_db)
-    expire.assert_called_once_with(worker_db)
     worker_factory.assert_called_once_with(
         worker_db,
         runtime_db=runtime_db,
     )
+    worker.stop.assert_awaited_once_with()
+    close_pg_pools.assert_awaited_once_with()
+    close_async_db.assert_awaited_once_with()
+    close_async_worker_db.assert_awaited_once_with()
+    close_db.assert_called_once_with()
+    close_worker_db.assert_called_once_with()
 
 
 @pytest.mark.asyncio
