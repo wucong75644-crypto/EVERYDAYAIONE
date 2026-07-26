@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from tests.agent_runtime.trace_replay import replay_trace
+from tests.agent_runtime.trace_schema import validate_trace_bundle
 
 
 def assert_deterministic(bundle: dict[str, Any]) -> None:
@@ -32,7 +33,8 @@ def assert_fencing(result: dict[str, Any]) -> None:
 
 
 def assert_scope(bundle: dict[str, Any]) -> None:
-    """Validate the frozen enterprise/personal scope relationship."""
+    """Validate that a presented Scope does not drift from the frozen Scope."""
+    validate_trace_bundle(bundle)
     scope = bundle["session_scope"]
     expected = bundle["expected"]
     if expected["outcome"] == "rejected":
@@ -42,14 +44,11 @@ def assert_scope(bundle: dict[str, Any]) -> None:
             if step.get("op") == "reject"
         ]
         assert rejection["code"] == "scope_conflict"
-        assert rejection["presented_org_id"] != scope["org_id"]
-        return
-    if scope["org_id"] is None:
-        assert scope["scope_kind"] == "user"
-        assert scope["scope_id"] == scope["user_id"]
-    else:
-        assert scope["scope_kind"] in {"user", "channel"}
-        assert scope["scope_id"]
+        frozen = {
+            field: scope[field]
+            for field in ("user_id", "org_id", "scope_kind", "scope_id")
+        }
+        assert rejection["presented_scope"] != frozen
 
 
 def assert_expected_outcome(

@@ -15,7 +15,9 @@ def replay_trace(bundle: dict[str, Any]) -> dict[str, Any]:
     ledger = {
         "terminals": {},
         "side_effects": {},
-        "commands": set(),
+        "commands": {},
+        "frozen_command": deepcopy(bundle["command"]),
+        "frozen_scope": _scope_identity(bundle["session_scope"]),
         "rejections": [],
     }
     fencing_revision = 0
@@ -42,6 +44,7 @@ def replay_trace(bundle: dict[str, Any]) -> dict[str, Any]:
         "outcome": outcome,
         "rejections": ledger["rejections"],
         "side_effects": sorted(ledger["side_effects"]),
+        "command_records": deepcopy(ledger["commands"]),
         "event_result": event_result,
         "projection": projection,
     }
@@ -54,16 +57,28 @@ def replay_events(
 ) -> dict[str, Any]:
     """Apply contiguous events, ignore duplicates, and expose gaps/reorder."""
     last_sequence = after_sequence
-    seen: set[str] = set()
+    seen: dict[str, dict[str, Any]] = {}
+    sequence_owners: dict[int, str] = {}
     applied: list[str] = []
     missing: set[int] = set()
     future_seen = False
+    conflicts: list[str] = []
+    duplicate_count = 0
     for event in events:
         event_id = event["event_id"]
         if event_id in seen:
+            if event != seen[event_id]:
+                conflicts.append("event_id_conflict")
+            else:
+                duplicate_count += 1
             continue
-        seen.add(event_id)
         sequence = event["sequence"]
+        sequence_owner = sequence_owners.get(sequence)
+        if sequence_owner is not None and sequence_owner != event_id:
+            conflicts.append("sequence_conflict")
+            continue
+        seen[event_id] = deepcopy(event)
+        sequence_owners[sequence] = event_id
         expected = last_sequence + 1
         if sequence == expected:
             last_sequence = sequence
@@ -75,7 +90,9 @@ def replay_events(
         elif sequence <= last_sequence:
             future_seen = True
     outcome = "completed"
-    if missing:
+    if conflicts:
+        outcome = conflicts[0]
+    elif missing:
         outcome = "gap" if not _gap_arrived_later(events, missing) else "replay_required"
     elif future_seen:
         outcome = "replay_required"
@@ -84,19 +101,32 @@ def replay_events(
         "last_sequence": last_sequence,
         "missing_sequences": sorted(missing),
         "applied_event_ids": applied,
-        "duplicate_count": len(events) - len(seen),
+        "duplicate_count": duplicate_count,
+        "conflicts": conflicts,
     }
 
 
 def replay_projection(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Reduce projection records with stable last-write-by-sequence semantics."""
+    """Reduce projection records after failing closed on identity conflicts."""
     projection: dict[str, Any] = {}
-    seen: set[str] = set()
-    ordered = sorted(records, key=lambda item: (item["sequence"], item["record_id"]))
+    seen: dict[str, dict[str, Any]] = {}
+    values_by_position: dict[tuple[str, int], Any] = {}
+    for record in records:
+        record_id = record["record_id"]
+        existing = seen.get(record_id)
+        if existing is not None and record != existing:
+            raise ValueError("PROJECTION_RECORD_CONFLICT")
+        seen[record_id] = deepcopy(record)
+        position = (str(record["key"]), record["sequence"])
+        if (
+            position in values_by_position
+            and record["value"] != values_by_position[position]
+        ):
+            raise ValueError("PROJECTION_SEQUENCE_CONFLICT")
+        values_by_position[position] = deepcopy(record["value"])
+
+    ordered = sorted(seen.values(), key=lambda item: item["sequence"])
     for record in ordered:
-        if record["record_id"] in seen:
-            continue
-        seen.add(record["record_id"])
         key = str(record["key"])
         projection[key] = deepcopy(record["value"])
     return projection
@@ -235,12 +265,46 @@ def _claim_once(
 
 
 def _apply_command(step: dict[str, Any], ledger: dict[str, Any]) -> str:
-    command_id = str(step["command_id"])
-    if command_id in ledger["commands"]:
-        ledger["rejections"].append("duplicate_command")
+    command = _resolve_command(step, ledger)
+    key = command["idempotency_key"]
+    fingerprint = {
+        "command_type": command["command_type"],
+        "request_hash": command["request_hash"],
+        "scope": command["scope"],
+    }
+    existing = ledger["commands"].get(key)
+    if existing is not None:
+        if fingerprint == existing:
+            return "existing"
+        ledger["rejections"].append("idempotency_conflict")
         return "rejected"
-    ledger["commands"].add(command_id)
+    ledger["commands"][key] = fingerprint
     return "accepted"
+
+
+def _resolve_command(
+    step: dict[str, Any],
+    ledger: dict[str, Any],
+) -> dict[str, Any]:
+    if step.get("command_ref") == "top_level":
+        return {
+            **ledger["frozen_command"],
+            "scope": ledger["frozen_scope"],
+        }
+    return {
+        field: deepcopy(step[field])
+        for field in (
+            "command_id", "idempotency_key", "command_type",
+            "request_hash", "scope",
+        )
+    }
+
+
+def _scope_identity(scope: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: deepcopy(scope[field])
+        for field in ("user_id", "org_id", "scope_kind", "scope_id")
+    }
 
 
 def _fencing_rejection(

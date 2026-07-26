@@ -36,11 +36,14 @@ TERMINAL_STATES = {"completed", "failed", "cancelled", None}
 OUTCOMES = {
     "accepted",
     "completed",
+    "event_id_conflict",
+    "existing",
     "failed",
     "gap",
     "lease_lost",
     "rejected",
     "replay_required",
+    "sequence_conflict",
     "unknown",
 }
 TRACE_STEP_FIELDS = {
@@ -50,8 +53,7 @@ TRACE_STEP_FIELDS = {
     },
     "terminal": {"op", "identity", "state", "fencing_revision"},
     "side_effect": {"op", "identity", "effect", "fencing_revision"},
-    "command": {"op", "command_id"},
-    "reject": {"op", "code", "presented_org_id"},
+    "reject": {"op", "code", "presented_scope"},
     "disconnect": {"op", "outcome"},
     "restart": {"op", "outcome"},
     "lease_lost": {"op", "outcome"},
@@ -122,16 +124,37 @@ def _validate_scope(scope: Any) -> None:
     required = {"session_id", "user_id", "org_id", "scope_kind", "scope_id"}
     if not isinstance(scope, dict) or set(scope) != required:
         raise ValueError("TRACE_SCOPE_FIELDS_INVALID")
-    for field in ("session_id", "user_id", "scope_kind", "scope_id"):
-        _require_text(scope, field)
-    if scope["org_id"] is not None and not isinstance(scope["org_id"], str):
-        raise ValueError("TRACE_SCOPE_ORG_INVALID")
-    if scope["scope_kind"] not in {"user", "channel", "system"}:
+    _require_text(scope, "session_id")
+    _validate_scope_identity({
+        field: scope[field]
+        for field in ("user_id", "org_id", "scope_kind", "scope_id")
+    })
+
+
+def _validate_scope_identity(scope: Any) -> None:
+    required = {"user_id", "org_id", "scope_kind", "scope_id"}
+    if not isinstance(scope, dict) or set(scope) != required:
+        raise ValueError("TRACE_SCOPE_IDENTITY_FIELDS_INVALID")
+    kind = scope["scope_kind"]
+    if kind not in {"user", "channel", "system"}:
         raise ValueError("TRACE_SCOPE_KIND_INVALID")
+    for field in ("user_id", "org_id"):
+        value = scope[field]
+        if value is not None and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            raise ValueError(f"TRACE_SCOPE_IDENTITY_INVALID:{field}")
+    _require_nonblank_text(scope, "scope_id")
+    if kind == "user" and scope["user_id"] is None:
+        raise ValueError("TRACE_USER_SCOPE_USER_REQUIRED")
+    if kind == "channel" and scope["org_id"] is None:
+        raise ValueError("TRACE_CHANNEL_SCOPE_ORG_REQUIRED")
 
 
 def _validate_command(command: Any) -> None:
-    required = {"command_id", "idempotency_key", "command_type"}
+    required = {
+        "command_id", "idempotency_key", "command_type", "request_hash"
+    }
     if not isinstance(command, dict) or set(command) != required:
         raise ValueError("TRACE_COMMAND_FIELDS_INVALID")
     for field in required:
@@ -165,11 +188,34 @@ def _validate_trace_steps(steps: Any) -> None:
     _validate_records(steps, "TRACE_STEP")
     for step in steps:
         operation = step.get("op")
+        if operation == "command":
+            _validate_command_step(step)
+            continue
         fields = TRACE_STEP_FIELDS.get(operation)
         if fields is None:
             raise ValueError(f"TRACE_OPERATION_UNSUPPORTED:{operation}")
         if set(step) != fields:
             raise ValueError(f"TRACE_STEP_FIELDS_INVALID:{operation}")
+        if operation == "reject":
+            _validate_scope_identity(step["presented_scope"])
+
+
+def _validate_command_step(step: dict[str, Any]) -> None:
+    if set(step) == {"op", "command_ref"}:
+        if step["command_ref"] != "top_level":
+            raise ValueError("TRACE_COMMAND_REFERENCE_INVALID")
+        return
+    required = {
+        "op", "command_id", "idempotency_key", "command_type",
+        "request_hash", "scope",
+    }
+    if set(step) != required:
+        raise ValueError("TRACE_COMMAND_STEP_FIELDS_INVALID")
+    for field in (
+        "command_id", "idempotency_key", "command_type", "request_hash"
+    ):
+        _require_text(step, field)
+    _validate_scope_identity(step["scope"])
 
 
 def _validate_projection_records(records: Any) -> None:
@@ -250,3 +296,9 @@ def _reject_sensitive_keys(value: Any) -> None:
 def _require_text(value: dict[str, Any], field: str) -> None:
     if not isinstance(value.get(field), str) or not value[field]:
         raise ValueError(f"TRACE_TEXT_REQUIRED:{field}")
+
+
+def _require_nonblank_text(value: dict[str, Any], field: str) -> None:
+    text = value.get(field)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(f"TRACE_NONBLANK_TEXT_REQUIRED:{field}")

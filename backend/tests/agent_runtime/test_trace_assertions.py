@@ -58,4 +58,63 @@ def test_scope_assertions_cover_enterprise_personal_and_conflict() -> None:
 
     assert_scope(bundles["enterprise employee scope"])
     assert_scope(bundles["personal null organization scope"])
+    assert (
+        bundles["personal null organization scope"]["session_scope"]["scope_id"]
+        != bundles["personal null organization scope"]["session_scope"]["user_id"]
+    )
+    assert_scope(bundles["actorless system scope"])
     assert_scope(bundles["scope conflict rejected"])
+
+
+def test_duplicate_command_returns_existing_without_rejection() -> None:
+    result = replay_trace(_by_scenario()["duplicate command"])
+
+    assert result["outcome"] == "existing"
+    assert result["rejections"] == []
+    assert list(result["command_records"]) == ["idem-duplicate"]
+    assert result["side_effects"] == []
+
+
+def test_idempotency_key_collision_rejects_changed_request() -> None:
+    bundle = deepcopy(_by_scenario()["duplicate command"])
+    bundle["trace"][1] = {
+        "op": "command",
+        "command_id": "command-collision",
+        "idempotency_key": "idem-duplicate",
+        "command_type": "message.submit",
+        "request_hash": "sha256:changed-request",
+        "scope": {
+            "user_id": "user-test",
+            "org_id": None,
+            "scope_kind": "user",
+            "scope_id": "user-test",
+        },
+    }
+
+    result = replay_trace(bundle)
+
+    assert result["outcome"] == "rejected"
+    assert result["rejections"] == ["idempotency_conflict"]
+    assert len(result["command_records"]) == 1
+
+
+def test_idempotency_key_collision_rejects_changed_scope() -> None:
+    bundle = deepcopy(_by_scenario()["duplicate command"])
+    bundle["trace"][1] = {
+        "op": "command",
+        "command_id": "command-scope-collision",
+        "idempotency_key": "idem-duplicate",
+        "command_type": "message.submit",
+        "request_hash": "sha256:duplicate-request",
+        "scope": {
+            "user_id": "user-test",
+            "org_id": "org-other",
+            "scope_kind": "user",
+            "scope_id": "user-test",
+        },
+    }
+
+    result = replay_trace(bundle)
+
+    assert result["outcome"] == "rejected"
+    assert result["rejections"] == ["idempotency_conflict"]

@@ -3,7 +3,7 @@
   "scenario": "multiple model steps",
   "clock": {"started_at": "2026-07-18T00:01:00Z", "ticks_ms": [0, 20, 40]},
   "session_scope": {"session_id": "session-multi", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
-  "command": {"command_id": "command-multi", "idempotency_key": "idem-multi", "command_type": "message.submit"},
+  "command": {"command_id": "command-multi", "idempotency_key": "idem-multi", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
   "identities": {"runs": ["run-multi"], "model_steps": ["step-multi-1", "step-multi-2"], "actions": ["action-multi"]},
   "initial_state": {"run-multi": "running", "step-multi-1": "pending", "step-multi-2": "pending", "action-multi": "queued"},
   "trace": [

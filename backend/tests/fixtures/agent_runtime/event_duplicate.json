@@ -3,7 +3,7 @@
   "scenario": "duplicate runtime event",
   "clock": {"started_at": "2026-07-18T00:06:00Z", "ticks_ms": [0]},
   "session_scope": {"session_id": "session-event-duplicate", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
-  "command": {"command_id": "command-event-duplicate", "idempotency_key": "idem-event-duplicate", "command_type": "runtime.subscribe"},
+  "command": {"command_id": "command-event-duplicate", "idempotency_key": "idem-event-duplicate", "command_type": "runtime.subscribe", "request_hash": "sha256:synthetic-request"},
   "identities": {"runs": ["run-event-duplicate"], "model_steps": [], "actions": []},
   "initial_state": {"run-event-duplicate": "completed"},
   "trace": [{"op": "terminal", "identity": "run-event-duplicate", "state": "completed", "fencing_revision": 0}],

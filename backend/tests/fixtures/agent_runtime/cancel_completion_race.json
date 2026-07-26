@@ -3,7 +3,7 @@
   "scenario": "user cancellation races completion",
   "clock": {"started_at": "2026-07-18T00:11:00Z", "ticks_ms": [0, 1]},
   "session_scope": {"session_id": "session-race", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
-  "command": {"command_id": "command-race", "idempotency_key": "idem-race", "command_type": "run.cancel"},
+  "command": {"command_id": "command-race", "idempotency_key": "idem-race", "command_type": "run.cancel", "request_hash": "sha256:synthetic-request"},
   "identities": {"runs": ["run-race"], "model_steps": ["step-race"], "actions": []},
   "initial_state": {"run-race": "running"},
   "trace": [

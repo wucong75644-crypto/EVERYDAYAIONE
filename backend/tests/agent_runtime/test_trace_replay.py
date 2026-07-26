@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
+import pytest
+
 from tests.agent_runtime.trace_assertions import (
     assert_deterministic,
     assert_expected_outcome,
@@ -34,6 +38,31 @@ def test_duplicate_event_is_ignored_by_event_identity() -> None:
     assert result["duplicate_count"] == 1
 
 
+def test_same_event_identity_with_changed_content_is_conflict() -> None:
+    event = deepcopy(_by_scenario()["duplicate runtime event"]["runtime_events"][0])
+    changed = deepcopy(event)
+    changed["state"] = "failed"
+
+    for events in ([event, changed], [changed, event]):
+        result = replay_events(events)
+
+        assert result["outcome"] == "event_id_conflict"
+        assert result["conflicts"] == ["event_id_conflict"]
+        assert result["duplicate_count"] == 0
+
+
+def test_same_sequence_with_different_event_identity_is_conflict() -> None:
+    event = deepcopy(_by_scenario()["duplicate runtime event"]["runtime_events"][0])
+    changed = deepcopy(event)
+    changed["event_id"] = "event-sequence-conflict"
+
+    for events in ([event, changed], [changed, event]):
+        result = replay_events(events)
+
+        assert result["outcome"] == "sequence_conflict"
+        assert result["conflicts"] == ["sequence_conflict"]
+
+
 def test_reordered_event_requires_replay() -> None:
     bundle = _by_scenario()["runtime event reorder"]
 
@@ -63,4 +92,45 @@ def test_projection_replay_is_order_and_duplicate_stable() -> None:
     assert forward == reversed_result == {
         "action_status": "completed",
         "run_status": "completed",
+    }
+
+
+@pytest.mark.parametrize(
+    ("changes", "error"),
+    [
+        ({"value": "failed"}, "PROJECTION_RECORD_CONFLICT"),
+        (
+            {"record_id": "projection-conflicting-id", "value": "failed"},
+            "PROJECTION_SEQUENCE_CONFLICT",
+        ),
+    ],
+)
+def test_projection_conflicts_fail_closed_in_both_orders(
+    changes,
+    error,
+) -> None:
+    record = {
+        "record_id": "projection-conflict",
+        "sequence": 1,
+        "key": "run_status",
+        "value": "completed",
+    }
+    changed = deepcopy(record)
+    changed.update(changes)
+
+    for records in ([record, changed], [changed, record]):
+        with pytest.raises(ValueError, match=error):
+            replay_projection(records)
+
+
+def test_identical_projection_record_is_idempotent() -> None:
+    record = {
+        "record_id": "projection-identical",
+        "sequence": 1,
+        "key": "run_status",
+        "value": "completed",
+    }
+
+    assert replay_projection([record, deepcopy(record)]) == {
+        "run_status": "completed"
     }

@@ -2,6 +2,7 @@
   "schema_version": 1,
   "fixtures": [
     "text_response.json",
+    "actorless_system_scope.json",
     "multi_model_steps.json",
     "sync_readonly_tool.json",
     "tool_failure.json",

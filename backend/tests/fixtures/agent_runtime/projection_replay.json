@@ -3,7 +3,7 @@
   "scenario": "projection replay",
   "clock": {"started_at": "2026-07-18T00:09:00Z", "ticks_ms": [0, 1, 2]},
   "session_scope": {"session_id": "session-projection", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
-  "command": {"command_id": "command-projection", "idempotency_key": "idem-projection", "command_type": "runtime.subscribe"},
+  "command": {"command_id": "command-projection", "idempotency_key": "idem-projection", "command_type": "runtime.subscribe", "request_hash": "sha256:synthetic-request"},
   "identities": {"runs": ["run-projection"], "model_steps": [], "actions": ["action-projection"]},
   "initial_state": {"run-projection": "completed", "action-projection": "completed"},
   "trace": [{"op": "terminal", "identity": "run-projection", "state": "completed", "fencing_revision": 0}],

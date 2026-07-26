@@ -17,8 +17,8 @@ from tests.agent_runtime.trace_schema import (
 def test_manifest_matches_disk_and_every_fixture_validates() -> None:
     bundles = load_trace_manifest()
 
-    assert len(bundles) == 17
-    assert len({bundle["scenario"] for bundle in bundles}) == 17
+    assert len(bundles) == 18
+    assert len({bundle["scenario"] for bundle in bundles}) == 18
 
 
 def test_schema_rejects_missing_required_field() -> None:
@@ -57,6 +57,42 @@ def test_schema_rejects_incomplete_trace_step() -> None:
     bundle["trace"][1].pop("fencing_revision")
 
     with pytest.raises(ValueError, match="TRACE_STEP_FIELDS_INVALID:transition"):
+        validate_trace_bundle(bundle)
+
+
+def test_actorless_system_scope_is_valid() -> None:
+    bundle = next(
+        item for item in load_trace_manifest()
+        if item["scenario"] == "actorless system scope"
+    )
+
+    validate_trace_bundle(bundle)
+    assert bundle["session_scope"]["user_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("scope_kind", "field", "value", "error"),
+    [
+        ("user", "user_id", None, "TRACE_USER_SCOPE_USER_REQUIRED"),
+        ("user", "user_id", " ", "TRACE_SCOPE_IDENTITY_INVALID:user_id"),
+        ("channel", "org_id", None, "TRACE_CHANNEL_SCOPE_ORG_REQUIRED"),
+        ("channel", "org_id", " ", "TRACE_SCOPE_IDENTITY_INVALID:org_id"),
+        ("system", "user_id", " ", "TRACE_SCOPE_IDENTITY_INVALID:user_id"),
+        ("system", "org_id", " ", "TRACE_SCOPE_IDENTITY_INVALID:org_id"),
+        ("system", "scope_id", " ", "TRACE_NONBLANK_TEXT_REQUIRED:scope_id"),
+    ],
+)
+def test_schema_rejects_missing_or_blank_scope_identity(
+    scope_kind,
+    field,
+    value,
+    error,
+) -> None:
+    bundle = deepcopy(load_trace_manifest()[0])
+    bundle["session_scope"]["scope_kind"] = scope_kind
+    bundle["session_scope"][field] = value
+
+    with pytest.raises(ValueError, match=error):
         validate_trace_bundle(bundle)
 
 

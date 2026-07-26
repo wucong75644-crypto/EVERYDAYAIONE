@@ -3,7 +3,7 @@
   "scenario": "accepted and unknown action placeholder",
   "clock": {"started_at": "2026-07-18T00:10:00Z", "ticks_ms": [0, 30000]},
   "session_scope": {"session_id": "session-unknown", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
-  "command": {"command_id": "command-unknown", "idempotency_key": "idem-unknown", "command_type": "message.submit"},
+  "command": {"command_id": "command-unknown", "idempotency_key": "idem-unknown", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
   "identities": {"runs": ["run-unknown"], "model_steps": ["step-unknown"], "actions": ["action-unknown"]},
   "initial_state": {"run-unknown": "waiting_actions", "action-unknown": "accepted"},
   "trace": [

@@ -3,7 +3,7 @@
   "scenario": "disconnect recovery",
   "clock": {"started_at": "2026-07-18T00:15:00Z", "ticks_ms": [0, 1000]},
   "session_scope": {"session_id": "session-disconnect", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
-  "command": {"command_id": "command-disconnect", "idempotency_key": "idem-disconnect", "command_type": "runtime.subscribe"},
+  "command": {"command_id": "command-disconnect", "idempotency_key": "idem-disconnect", "command_type": "runtime.subscribe", "request_hash": "sha256:synthetic-request"},
   "identities": {"runs": ["run-disconnect"], "model_steps": ["step-disconnect"], "actions": []},
   "initial_state": {"run-disconnect": "completed"},
   "trace": [{"op": "disconnect", "outcome": "accepted"}, {"op": "terminal", "identity": "run-disconnect", "state": "completed", "fencing_revision": 0}],

@@ -4,6 +4,7 @@ from tests.agent_runtime.trace_schema import load_trace_manifest
 
 
 REQUIRED_SCENARIOS = {
+    "actorless system scope",
     "ordinary text response",
     "multiple model steps",
     "synchronous readonly tool",
