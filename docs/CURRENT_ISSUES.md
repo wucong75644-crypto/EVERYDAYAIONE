@@ -1,5 +1,32 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 前端依赖安全治理 — 兼容升级完成，剩余上游风险待跟踪
+
+- 基于 `integration/agent-runtime-ar-00-04` 的 `d56ff170` 重新核验：
+  `package.json`、`package-lock.json` 与原审计基线一致；治理前 `npm audit`
+  为 22 项（1 moderate、21 high），`npm audit --omit=dev` 为 12 项
+  （1 moderate、11 high）。
+- `typescript-eslint` 已升级至 8.65.0，`vitest` 与
+  `@vitest/coverage-v8` 已升级至 4.1.10，移除其旧
+  `test-exclude/glob/minimatch/brace-expansion` 开发依赖链；ESLint 保持 9.x，
+  避免 `eslint-plugin-react-hooks` 对 ESLint 10 的 peer 不兼容。
+- 升级后 `npm audit` 降至 15 项（1 moderate、14 high）；生产口径仍为
+  12 项（1 moderate、11 high），说明本次兼容升级消除了 7 项开发依赖漏洞，
+  未改变剩余生产依赖风险。
+- 剩余生产审计主要来自 ExcelJS 4.4.0 的 Node 流式归档依赖及 uuid 8.3.2。
+  当前代码仅通过浏览器端 `Workbook.xlsx.writeBuffer()` 导出，未调用 Node
+  文件系统或目录遍历 API；但构建分包仍包含 `zip-stream` 标识，不能据此排除
+  上游归档实现，因此继续按未解决生产风险跟踪。uuid 漏洞只影响 v3/v5/v6
+  外部 buffer 路径，当前调用链未直接使用这些 API。在 ExcelJS 发布兼容修复前，
+  不跨 major 强制 override，也不降级 ExcelJS。
+- React Router 7.18.1 的剩余公告只影响 unstable RSC API；当前项目使用
+  BrowserRouter/Routes/Link/useNavigate 的 SPA 路径，不具备触发条件。
+  公告修复版 8.3.0 尚未发布，且回退 7.11.0 会重新引入多项历史漏洞，因此保持
+  7.18.1，待上游可安装补丁发布后再升级。
+- 升级后 126 个测试文件、1250 个测试与生产构建通过。全量 lint 在升级前后均为
+  80 errors、18 warnings；覆盖率门禁在原 Vitest 3 基线和升级后均低于 80%，属于
+  既有前端质量债务，本次不越界修改业务源码或降低门槛。
+
 ## 2026-07-26 Agent Runtime AR-01～AR-04 角色能力收口 — 已集成，待部署验证
 
 - AR-01 通过迁移 209 的 `worker_list_active_organization_ids` 窄能力替换 Worker
