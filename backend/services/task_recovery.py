@@ -1,109 +1,120 @@
-"""
-孤儿任务恢复
+"""通过受限 Worker RPC 原子恢复部署重启时中断的非 Actor 任务。"""
 
-部署重启后，将中断的流式任务的 accumulated_content 回写到 messages 表，
-避免用户刷新后看到空消息。
+from typing import Any
 
-仅在启动时执行一次，通过 Redis 锁保证多 Worker 不重复执行。
-"""
-
-from datetime import datetime, timezone
 from loguru import logger
-from services.task_utils import save_accumulated_to_message, refund_task_credits
-from services.conversation_task import is_actor_task
+
+from core.db_scope import (
+    DatabaseAccessKind,
+    DatabaseScope,
+    ScopedDatabaseClient,
+)
+from services.task_utils import merge_blocks_with_text
 
 
-async def recover_orphan_tasks(db) -> int:
-    """
-    扫描所有 status=running/pending 的任务，将有 accumulated_content 的内容
-    回写到 messages 表，并标记任务为 completed。
+_CLAIM_LIMIT = 100
+_LEASE_SECONDS = 60
+_INTERRUPTED_ERROR = "服务重启，任务中断（无已生成内容）"
 
-    注意：此函数使用 raw db（无 org_id 过滤），因为启动恢复需要一次性
-    处理所有租户的中断任务。每个 task 按自身 ID 独立处理，不存在跨租户泄露。
 
-    Returns:
-        恢复的任务数量
-    """
-    try:
-        response = db.table("tasks").select(
-            "id, type, external_task_id, placeholder_message_id, conversation_id, "
-            "model_id, client_task_id, accumulated_content, accumulated_blocks, "
-            "credit_transaction_id, delivery_context"
-        ).in_(
-            "status", ["pending", "running"]
-        ).execute()
-    except Exception as e:
-        logger.error(f"Failed to query orphan tasks | error={e}")
-        return 0
+def _recovery_db(db: Any) -> ScopedDatabaseClient:
+    return ScopedDatabaseClient(
+        db,
+        DatabaseScope(
+            actor_user_id=None,
+            org_id=None,
+            access_kind=DatabaseAccessKind.WORKER,
+            request_id="orphan-task-recovery",
+        ),
+    )
 
-    if not response or not response.data:
-        return 0
 
-    recovered = 0
+def _message_content(task: dict[str, Any]) -> list[dict[str, Any]] | None:
+    accumulated = task.get("accumulated_content") or ""
+    if not accumulated.strip() or not task.get("placeholder_message_id"):
+        return None
+    blocks = task.get("accumulated_blocks")
+    if blocks:
+        return merge_blocks_with_text(blocks, accumulated)
+    return [{"type": "text", "text": accumulated}]
 
-    for task in response.data:
-        if is_actor_task(task):
-            continue
-        accumulated = (task.get("accumulated_content") or "").strip()
-        message_id = task.get("placeholder_message_id")
 
-        # 跳过：无内容 或 无 message_id
-        if not accumulated or not message_id:
-            _mark_task_failed(
-                db, task,
-                error_msg="服务重启，任务中断（无已生成内容）",
-            )
-            continue
+def _rpc_data(
+    db: ScopedDatabaseClient,
+    name: str,
+    params: dict[str, Any],
+) -> Any:
+    response = db.rpc(name, params).execute()
+    return response.data if response else None
 
-        # 将 accumulated_content 写入 messages 表（upsert 幂等）
-        model_id = task.get("model_id", "unknown")
-        client_task_id = task.get("client_task_id") or task.get("external_task_id", "")
 
-        saved = save_accumulated_to_message(
-            db,
-            message_id=message_id,
-            conversation_id=task["conversation_id"],
-            accumulated_content=accumulated,
-            model_id=model_id,
-            client_task_id=client_task_id,
-            task_type=task.get("type", "chat"),
-            accumulated_blocks=task.get("accumulated_blocks"),
-            # 应用重启导致的中断：语义对齐 cancel 路径，保留部分内容可见
-            status="interrupted",
+def _settle_claimed_task(
+    db: ScopedDatabaseClient,
+    task: dict[str, Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    params = {
+        "p_task_id": task.get("id"),
+        "p_execution_token": task.get("execution_token"),
+    }
+    content = _message_content(task)
+    if content is None:
+        return (
+            False,
+            _rpc_data(
+                db,
+                "worker_fail_orphan_task",
+                {**params, "p_error_message": _INTERRUPTED_ERROR},
+            ),
         )
+    return (
+        True,
+        _rpc_data(
+            db,
+            "worker_complete_orphan_task",
+            {**params, "p_content": content},
+        ),
+    )
 
-        if saved:
-            # 标记任务完成
-            try:
-                db.table("tasks").update({
-                    "status": "completed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "error_message": "服务重启，已恢复部分内容",
-                }).eq("id", task["id"]).execute()
-            except Exception as e:
-                logger.error(f"Failed to update task status | id={task['id']} | error={e}")
 
-            recovered += 1
-            logger.info(
-                f"Orphan task recovered | task_id={task.get('external_task_id')} | "
-                f"message_id={message_id} | content_len={len(accumulated)}"
+async def recover_orphan_tasks(db: Any) -> int:
+    """Claim and settle recoverable tasks through fenced owner RPCs."""
+    recovery_db = _recovery_db(db)
+    recovered = 0
+    while True:
+        try:
+            tasks = _rpc_data(
+                recovery_db,
+                "worker_claim_orphan_tasks",
+                {
+                    "p_limit": _CLAIM_LIMIT,
+                    "p_lease_seconds": _LEASE_SECONDS,
+                },
             )
+        except Exception as exc:
+            logger.error(
+                "Failed to claim orphan tasks | "
+                f"error_type={type(exc).__name__}"
+            )
+            return recovered
+        if not tasks:
+            return recovered
 
-    return recovered
-
-
-def _mark_task_failed(db, task: dict, error_msg: str) -> None:
-    """将无内容的孤儿任务标记为 failed + 退积分"""
-    # 退还预扣积分
-    transaction_id = task.get("credit_transaction_id")
-    if transaction_id:
-        refund_task_credits(db, transaction_id)
-
-    try:
-        db.table("tasks").update({
-            "status": "failed",
-            "error_message": error_msg,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", task["id"]).execute()
-    except Exception as e:
-        logger.error(f"Failed to mark orphan task as failed | id={task['id']} | error={e}")
+        for task in tasks:
+            task_id = task.get("id")
+            try:
+                has_content, outcome = _settle_claimed_task(recovery_db, task)
+                if has_content and outcome and outcome.get(
+                    "outcome"
+                ) in ("completed", "already_completed"):
+                    recovered += 1
+                logger.info(
+                    "Orphan task recovery settled | "
+                    f"task_id={task_id} | "
+                    f"outcome={outcome.get('outcome') if outcome else 'empty'}"
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to settle orphan task | "
+                    f"task_id={task_id} | "
+                    f"error_type={type(exc).__name__}"
+                )
