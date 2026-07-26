@@ -30,6 +30,7 @@ from services.adapters.base import (
 )
 from services.task_completion_service import TaskCompletionService
 from services.worker_media_tasks import WorkerMediaTasks
+from services.background_periodic_tasks import BackgroundPeriodicTasksMixin
 
 # 默认轮询间隔（秒）
 _DEFAULT_POLL_INTERVAL_WITH_WEBHOOK = 120  # 有回调时：兜底模式
@@ -45,7 +46,7 @@ def _resolve_poll_interval(settings: Settings) -> int:
     return _DEFAULT_POLL_INTERVAL_NO_WEBHOOK
 
 
-class BackgroundTaskWorker:
+class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
     """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
     def __init__(self, db, runtime_db=None):
@@ -436,47 +437,3 @@ class BackgroundTaskWorker:
 
         except Exception as e:
             logger.error(f"Data consistency check failed | error={e}", exc_info=True)
-
-    async def check_wecom_duplicates(self):
-        """每天检查企微重复账号（孤儿用户 + 同名重复）
-
-        commit cd12ed7 之后，DB 唯一约束 + 原子 RPC + 应用层走 RPC 三层防御
-        理论上不会再出现新增重复。本检查作为兜底监控，发现异常立即上报 Sentry。
-        """
-        from datetime import datetime, timezone
-        from services.wecom_dup_monitor import WecomDuplicateMonitor
-
-        now = datetime.now(timezone.utc)
-
-        # 每 24 小时一次
-        if self._last_wecom_dup_check is not None:
-            elapsed = (now - self._last_wecom_dup_check).total_seconds()
-            if elapsed < 86400:
-                return
-
-        try:
-            monitor = WecomDuplicateMonitor(self.db)
-            await monitor.check_and_alert()
-            self._last_wecom_dup_check = now
-        except Exception as e:
-            logger.error(f"Wecom dup check failed | error={e}", exc_info=True)
-
-    async def _run_model_scoring(self):
-        """每小时执行模型评分聚合"""
-        now = datetime.now(timezone.utc)
-        if self._last_scoring_aggregation is not None:
-            elapsed = (now - self._last_scoring_aggregation).total_seconds()
-            if elapsed < 3600:
-                return
-
-        try:
-            from services.model_scorer import aggregate_model_scores
-
-            # 按企业迭代 + 散客（多租户隔离）
-            for oid in await self._get_active_org_ids():
-                await aggregate_model_scores(org_id=oid, db_source=self.db)
-            await aggregate_model_scores(org_id=None, db_source=self.db)
-        except Exception as e:
-            logger.error(f"Model scoring aggregation failed | error={e}")
-        finally:
-            self._last_scoring_aggregation = now

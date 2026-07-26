@@ -69,6 +69,29 @@ async def test_personal_owner_is_forwarded_to_atomic_commit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_duplicate_commit_outcome_is_accepted() -> None:
+    from services.model_scorer import _commit_model_score
+
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value = SimpleNamespace(data={
+        "outcome": "already_recorded",
+        "knowledge_node_id": "node-existing",
+    })
+
+    node_id = await _commit_model_score(
+        db,
+        _row(),
+        0.9,
+        0.91,
+        "pending_review",
+        None,
+        org_id=None,
+    )
+
+    assert node_id == "node-existing"
+
+
+@pytest.mark.asyncio
 async def test_auto_applied_builds_knowledge_then_commits_once() -> None:
     from services.model_scorer import aggregate_model_scores
 
@@ -91,8 +114,9 @@ async def test_auto_applied_builds_knowledge_then_commits_once() -> None:
             new_callable=AsyncMock,
         ) as commit,
     ):
-        await aggregate_model_scores(db_source=db)
+        succeeded = await aggregate_model_scores(db_source=db)
 
+    assert succeeded is True
     build.assert_awaited_once()
     commit.assert_awaited_once()
     assert commit.call_args.args[4] == "auto_applied"
@@ -123,6 +147,24 @@ async def test_single_commit_failure_does_not_abort_next_model() -> None:
             side_effect=[RuntimeError("db"), None],
         ) as commit,
     ):
-        await aggregate_model_scores(db_source=db)
+        succeeded = await aggregate_model_scores(db_source=db)
 
     assert commit.await_count == 2
+    assert succeeded is False
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_is_reported_to_periodic_owner() -> None:
+    from services.model_scorer import aggregate_model_scores
+
+    with (
+        patch("services.model_scorer.is_kb_available", return_value=True),
+        patch(
+            "services.model_scorer._query_aggregated_metrics",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("db unavailable"),
+        ),
+    ):
+        succeeded = await aggregate_model_scores(db_source=MagicMock())
+
+    assert succeeded is False

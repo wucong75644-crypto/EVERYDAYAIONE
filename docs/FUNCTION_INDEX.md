@@ -1071,7 +1071,7 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `aggregate_model_scores` | `backend/services/model_scorer.py` | 主入口：聚合 → 评分 → EMA → 审核 → 写入知识库/日志 | - | None |
+| `aggregate_model_scores` | `backend/services/model_scorer.py` | 主入口：聚合 → 评分 → EMA → 审核 → 写入知识库/日志；返回本次是否无失败 | org_id, db_source | bool |
 | `_query_aggregated_metrics` | `backend/services/model_scorer.py` | 聚合 7 天 knowledge_metrics 数据 | - | List[Dict] |
 | `_compute_raw_score` | `backend/services/model_scorer.py` | 加权综合评分（成功率40%+延迟25%+重试15%+错误10%+基准10%） | row | float |
 | `_apply_ema` | `backend/services/model_scorer.py` | EMA 平滑（α=0.2） | raw_score, old_score | float |
@@ -1080,7 +1080,9 @@
 | `_get_latest_score` | `backend/services/model_scorer.py` | 查询最近一次已生效评分 | model_id, task_type | Optional[float] |
 | `_write_score_to_knowledge` | `backend/services/model_scorer.py` | 写入评分知识节点（source=aggregated） | row, score, confidence | Optional[str] |
 | `_write_audit_log` | `backend/services/model_scorer.py` | 写入 scoring_audit_log 审核记录 | row, old_score, new_score, status, node_id | None |
-| `BackgroundTaskWorker._run_model_scoring` | `backend/services/background_task_worker.py` | 每小时触发模型评分聚合（节流） | - | None |
+| `BackgroundPeriodicTasksMixin._run_model_scoring` / `check_wecom_duplicates` | `backend/services/background_periodic_tasks.py` | 通过数据库周期租约保证多 Uvicorn 进程下模型评分与企微巡检每周期单执行 | - | None |
+| `claim_periodic_job` / `renew_periodic_job` / `finish_periodic_job` | `backend/services/periodic_job_gate.py` | 使用显式全局 Worker Scope 领取、续期并提交数据库周期租约 | db_source, job_name, token, succeeded | PeriodicJobClaim / None |
+| `WecomDuplicateMonitor.check_and_alert` | `backend/services/wecom_dup_monitor.py` | 通过 Worker 企微身份健康快照告警孤儿账号和重复身份，查询失败时失败关闭 | - | dict |
 
 #### 配置常量
 
@@ -1726,6 +1728,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `tenant_knowledge_visible` / `tenant_knowledge_writable` | `backend/migrations/197_runtime_knowledge_tenant_boundary.sql` | 区分双空系统知识、org 企业知识与 owner_user_id 散客知识，并校验 Runtime Actor/Org Scope 和 active membership |
 | `worker_model_scoring_snapshot` | `backend/migrations/198_worker_model_scoring_capabilities.sql` | Worker 按当前 org Scope 聚合七日指标和最近评分；散客按 user_id 独立分组 |
 | `worker_commit_model_score` | `backend/migrations/198_worker_model_scoring_capabilities.sql` | Worker 原子写入可选评分知识节点与必需审核日志，校验企业/散客 owner 和数值边界 |
+| `worker_claim_periodic_job` / `worker_renew_periodic_job` / `worker_finish_periodic_job` | `backend/migrations/208_worker_periodic_monitor_completion.sql` | 以数据库周期桶、续租 token 和失败退避保证跨进程周期任务单执行及崩溃恢复 |
+| `worker_wecom_identity_health_snapshot` | `backend/migrations/208_worker_periodic_monitor_completion.sql` | 无 Actor/Org 的 Worker 窄能力，返回企微孤儿用户与重复外部身份组计数 |
 | `list_platform_error_logs` / `get_platform_error_stats` / `list_platform_error_summary` | `backend/migrations/199_platform_error_monitor_capabilities.sql` | 校验 Runtime 超管身份后提供错误列表、统计与 AI 摘要输入 |
 | `resolve_platform_error` / `clear_platform_errors` | `backend/migrations/199_platform_error_monitor_capabilities.sql` | 校验 Runtime 超管身份后处理或按截止时间清理错误日志 |
 | `list_runtime_wecom_chat_targets` / `list_governed_wecom_chat_targets` | `backend/migrations/200_web_wecom_control_capabilities.sql` | 按企业成员或 owner/admin 权限返回企微推送目标，不开放底表 |

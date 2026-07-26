@@ -226,6 +226,9 @@
 - `backend/migrations/207_runtime_media_submission_capabilities.sql`：把媒体外部任务
   attach/fail 提交转换收口为校验 Runtime Actor、企业和任务归属的安全门面；Provider
   Webhook 使用专用 actorless Worker 数据库连接完成媒体回调结算。
+- `backend/migrations/208_worker_periodic_monitor_completion.sql`：为双 Uvicorn
+  进程内的模型评分与企微巡检增加数据库周期租约；企微巡检改用无 PII 的 Worker
+  健康快照，模型评分过滤非性能信号并修复 32 位 Knowledge 哈希与重复审核提交。
 - `docs/document/RUNBOOK_171_180_Worker_Control生产恢复.md`：固定 179 failed 协调、
   owner 转移、迁移重放、服务重启与真实链路验收顺序。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批
@@ -741,6 +744,8 @@ EVERYDAYAIONE/
 │   │   ├── user_activity_service.py  # 用户活跃事件记录（失败不阻断主流程）
 │   │   ├── task_limit_service.py     # 任务限制服务
 │   │   ├── background_task_worker.py # 后台任务轮询器（兜底模式，120s 间隔）
+│   │   ├── background_periodic_tasks.py # 模型评分与企微巡检跨进程周期执行
+│   │   ├── periodic_job_gate.py # Worker 数据库周期租约领取、续期与提交
 │   │   ├── task_completion_service.py # 统一任务完成处理服务（Webhook/轮询共用）
 │   │   ├── batch_completion_service.py # 图片批次任务终态、积分与 partial update 协调
 │   │   ├── batch_message_finalizer.py # 图片批次/单图重生的最终消息落库与通知

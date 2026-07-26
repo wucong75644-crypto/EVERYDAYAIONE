@@ -1288,6 +1288,18 @@
   `IDEMPOTENCY_CONVERSATION_ACCESS_DENIED` 转为不泄露归属的 404，其他数据库
   权限错误继续失败关闭。
 
+# 2026-07-26 Worker 周期巡检与模型评分配置断层 — 本地完成，待部署
+
+- 生产只读核查确认企微孤儿用户、重复身份和重复昵称均为 0；故障来自 Worker 撤销
+  `users/wecom_user_mappings` 直读权限后，旧巡检仍直读并把权限异常转换为“0 条通过”。
+- 生产 606 个 Knowledge 节点的 `content_hash` 均为 32 位；迁移 198 Commit RPC
+  错误要求 64 位，导致达到自动应用门槛的评分全部报
+  `MODEL_SCORING_KNOWLEDGE_INVALID`。
+- Backend 的两个 Uvicorn worker 各自启动 `BackgroundTaskWorker`，同一评分周期会
+  重复执行并写入重复审核记录。迁移 208 与应用侧周期门禁已统一实现跨进程领取、
+  心跳续租、崩溃恢复、Worker 健康快照、评分信号过滤、哈希契约和提交幂等；生产
+  同版本 PostgreSQL 事务演练已通过并回滚，尚未正式应用生产。
+
 # 2026-07-25 定时任务角色隔离收尾
 
 - 已完成代码与迁移：Worker 控制面和 Runtime 工具面分离，定时 run 的读取、

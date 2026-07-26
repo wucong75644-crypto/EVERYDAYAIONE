@@ -5,6 +5,7 @@
 _format_period_dt、多模型混合状态、write 失败降级。
 """
 
+import asyncio
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -376,7 +377,11 @@ class TestRunModelScoring:
         assert worker._last_scoring_aggregation is None
 
         with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg, \
-             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]), \
+             patch("services.background_periodic_tasks.claim_periodic_job", new=AsyncMock(
+                 return_value=MagicMock(outcome="claimed", lease_token="token")
+             )), \
+             patch("services.background_periodic_tasks.finish_periodic_job", new=AsyncMock()):
             await worker._run_model_scoring()
             mock_agg.assert_called_once()  # 散客 org_id=None
             assert mock_agg.call_args.kwargs == {
@@ -396,26 +401,106 @@ class TestRunModelScoring:
             mock_agg.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_busy_cross_process_lease_skips_without_timestamp(self):
+        """另一进程持有租约时跳过，本进程保持可再次检查"""
+        worker = self._make_worker()
+
+        with patch(
+            "services.background_periodic_tasks.claim_periodic_job",
+            new=AsyncMock(return_value=MagicMock(
+                outcome="busy",
+                lease_token=None,
+            )),
+        ), patch(
+            "services.model_scorer.aggregate_model_scores",
+            new_callable=AsyncMock,
+        ) as aggregate:
+            await worker._run_model_scoring()
+
+        aggregate.assert_not_called()
+        assert worker._last_scoring_aggregation is None
+
+    @pytest.mark.asyncio
+    async def test_completed_cross_process_bucket_updates_timestamp(self):
+        """其他进程已完成当前周期时同步本地节流时间"""
+        worker = self._make_worker()
+
+        with patch(
+            "services.background_periodic_tasks.claim_periodic_job",
+            new=AsyncMock(return_value=MagicMock(
+                outcome="completed",
+                lease_token=None,
+            )),
+        ):
+            await worker._run_model_scoring()
+
+        assert worker._last_scoring_aggregation is not None
+
+    @pytest.mark.asyncio
     async def test_runs_after_one_hour(self):
         """超过 1 小时后重新执行"""
         worker = self._make_worker()
         worker._last_scoring_aggregation = datetime.now(timezone.utc) - timedelta(hours=2)
 
         with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg, \
-             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]), \
+             patch("services.background_periodic_tasks.claim_periodic_job", new=AsyncMock(
+                 return_value=MagicMock(outcome="claimed", lease_token="token")
+             )), \
+             patch("services.background_periodic_tasks.finish_periodic_job", new=AsyncMock()):
             await worker._run_model_scoring()
             mock_agg.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_exception_caught_and_timestamp_updated(self):
-        """异常被捕获，且 _last_scoring_aggregation 仍被更新（finally）"""
+    async def test_exception_marks_lease_failed_without_success_timestamp(self):
+        """聚合异常提交失败租约，且不伪造成功时间"""
         worker = self._make_worker()
 
         with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg, \
-             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]), \
+             patch("services.background_periodic_tasks.claim_periodic_job", new=AsyncMock(
+                 return_value=MagicMock(outcome="claimed", lease_token="token")
+             )), \
+             patch("services.background_periodic_tasks.finish_periodic_job", new=AsyncMock()) as finish:
             mock_agg.side_effect = RuntimeError("DB down")
             await worker._run_model_scoring()
-            assert worker._last_scoring_aggregation is not None
+            assert worker._last_scoring_aggregation is None
+            assert finish.await_args.kwargs["succeeded"] is False
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_failure_prevents_successful_finish(self):
+        """续租失败时不得把周期标记为完成"""
+        worker = self._make_worker()
+
+        async def _aggregate(**_kwargs):
+            await asyncio.sleep(0)
+            return True
+
+        with patch(
+            "services.model_scorer.aggregate_model_scores",
+            new=AsyncMock(side_effect=_aggregate),
+        ), patch.object(
+            worker,
+            "_get_active_org_ids",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "services.background_periodic_tasks.claim_periodic_job",
+            new=AsyncMock(return_value=MagicMock(
+                outcome="claimed",
+                lease_token="token",
+            )),
+        ), patch.object(
+            worker,
+            "_renew_periodic_lease",
+            new=AsyncMock(side_effect=RuntimeError("lease lost")),
+        ), patch(
+            "services.background_periodic_tasks.finish_periodic_job",
+            new=AsyncMock(),
+        ) as finish:
+            await worker._run_model_scoring()
+
+        assert worker._last_scoring_aggregation is None
+        assert finish.await_args.kwargs["succeeded"] is False
 
 
 # 注：意图提炼调度（_run_intent_distillation）已于 2026-04-11 删除，

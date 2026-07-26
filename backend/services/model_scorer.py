@@ -59,7 +59,7 @@ REVIEW_MIN_SAMPLE_COUNT = 20
 async def aggregate_model_scores(
     org_id: str | None = None,
     db_source: Any = None,
-) -> None:
+) -> bool:
     """
     每小时聚合模型评分（由 BackgroundTaskWorker 按 org 迭代调用）
 
@@ -69,7 +69,7 @@ async def aggregate_model_scores(
     流程：聚合 SQL → 计算 raw_score → EMA → 审核判断 → 写入知识库/日志
     """
     if not is_kb_available():
-        return
+        return True
 
     database_scope = DatabaseScope(
         actor_user_id=None,
@@ -86,10 +86,11 @@ async def aggregate_model_scores(
         rows = await _query_aggregated_metrics(db, org_id=org_id)
         if not rows:
             logger.debug("Model scoring skipped | no metrics data")
-            return
+            return True
 
         applied_count = 0
         review_count = 0
+        failed_count = 0
 
         for row in rows:
             try:
@@ -118,6 +119,7 @@ async def aggregate_model_scores(
                 else:
                     review_count += 1
             except Exception as e:
+                failed_count += 1
                 logger.warning(
                     f"Scoring failed for model | model={row['model_id']} | "
                     f"task={row['task_type']} | error={e}"
@@ -125,10 +127,13 @@ async def aggregate_model_scores(
 
         logger.info(
             f"Model scoring completed | models={len(rows)} | "
-            f"applied={applied_count} | pending_review={review_count}"
+            f"applied={applied_count} | pending_review={review_count} | "
+            f"failed={failed_count}"
         )
+        return failed_count == 0
     except Exception as e:
         logger.error(f"Model scoring connection failed | error={e}")
+        return False
 
 
 # ===== 聚合查询 =====
@@ -138,16 +143,12 @@ async def _query_aggregated_metrics(
     db: Any, org_id: str | None = None,
 ) -> List[Dict[str, Any]]:
     """通过 Worker 窄能力读取企业或逐散客模型指标快照。"""
-    try:
-        payload = await _execute_rpc(
-            db, "worker_model_scoring_snapshot", {"p_org_id": org_id},
-        )
-        if not isinstance(payload, list):
-            raise RuntimeError("MODEL_SCORING_SNAPSHOT_INVALID")
-        return [row for row in payload if isinstance(row, dict)]
-    except Exception as e:
-        logger.error(f"Metrics aggregation query failed | error={e}")
-        return []
+    payload = await _execute_rpc(
+        db, "worker_model_scoring_snapshot", {"p_org_id": org_id},
+    )
+    if not isinstance(payload, list):
+        raise RuntimeError("MODEL_SCORING_SNAPSHOT_INVALID")
+    return [row for row in payload if isinstance(row, dict)]
 
 
 # ===== 评分计算 =====
@@ -313,7 +314,10 @@ async def _commit_model_score(
         "p_content_hash": knowledge.get("content_hash"),
         "p_embedding": knowledge.get("embedding"),
     })
-    if not isinstance(payload, dict) or payload.get("outcome") != "recorded":
+    if (
+        not isinstance(payload, dict)
+        or payload.get("outcome") not in {"recorded", "already_recorded"}
+    ):
         raise RuntimeError("MODEL_SCORING_COMMIT_INVALID")
     node_id = payload.get("knowledge_node_id")
     return str(node_id) if node_id else None
