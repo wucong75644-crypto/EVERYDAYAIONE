@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from services.knowledge_config import (
+    compute_embedding,
     get_pg_connection,
     invalidate_search_cache,
     is_kb_available,
@@ -124,6 +125,14 @@ def _build_seed_payload(seeds: Any) -> Dict[str, Any]:
     return {"version": 1, "nodes": nodes, "edges": edges}
 
 
+async def _attach_seed_embeddings(payload: Dict[str, Any]) -> None:
+    """Compute embeddings before opening the database replacement transaction."""
+    for node in payload["nodes"]:
+        node["embedding"] = await compute_embedding(
+            f"{node['title']} {node['content']}"
+        )
+
+
 async def load_seed_knowledge(
     seed_file: Optional[str] = None,
     *,
@@ -149,6 +158,7 @@ async def load_seed_knowledge(
         )
         return 0
 
+    await _attach_seed_embeddings(payload)
     conn_ctx = await get_pg_connection(db_source)
     if conn_ctx is None:
         return 0

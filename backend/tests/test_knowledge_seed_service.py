@@ -131,14 +131,26 @@ async def test_imports_nodes_and_edges_through_one_rpc_then_invalidates_cache(
         "imported_count": 2,
         "edge_count": 1,
     })
+    embedding = [0.25] * 1024
+    events = []
+
+    async def compute(text: str):
+        events.append(("embedding", text))
+        return embedding if len(events) == 1 else None
+
+    async def get_connection(_db_source):
+        events.append(("database", _db_source))
+        return connection_context
 
     with (
         patch.object(
             knowledge_seed_service, "is_kb_available", return_value=True,
         ),
         patch.object(
-            knowledge_seed_service, "get_pg_connection",
-            new=AsyncMock(return_value=connection_context),
+            knowledge_seed_service, "compute_embedding", new=compute,
+        ),
+        patch.object(
+            knowledge_seed_service, "get_pg_connection", new=get_connection,
         ),
         patch.object(
             knowledge_seed_service, "invalidate_search_cache",
@@ -155,13 +167,51 @@ async def test_imports_nodes_and_edges_through_one_rpc_then_invalidates_cache(
     payload = json.loads(params[0])
     assert payload["version"] == 1
     assert payload["nodes"][0]["seed_key"] == "node:0"
+    assert payload["nodes"][0]["embedding"] == embedding
+    assert payload["nodes"][1]["embedding"] is None
     assert payload["edges"] == [{
         "source_key": "node:0",
         "target_key": "node:1",
         "relation_type": "related_to",
     }]
     assert all("source" not in node for node in payload["nodes"])
+    assert [event[0] for event in events] == [
+        "embedding", "embedding", "database",
+    ]
     invalidate.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_embedding_none_is_sent_as_null_before_rpc(tmp_path) -> None:
+    seed_path = tmp_path / "seed.json"
+    seed_path.write_text(json.dumps([_seed()]), encoding="utf-8")
+    connection_context, cursor = _connection_context({
+        "imported_count": 1,
+        "edge_count": 0,
+    })
+    with (
+        patch.object(
+            knowledge_seed_service, "is_kb_available", return_value=True,
+        ),
+        patch.object(
+            knowledge_seed_service, "compute_embedding",
+            new=AsyncMock(return_value=None),
+        ) as compute,
+        patch.object(
+            knowledge_seed_service, "get_pg_connection",
+            new=AsyncMock(return_value=connection_context),
+        ),
+        patch.object(
+            knowledge_seed_service, "invalidate_search_cache",
+        ),
+    ):
+        assert await knowledge_seed_service.load_seed_knowledge(
+            str(seed_path), db_source="worker-scope",
+        ) == 1
+
+    compute.assert_awaited_once_with("Title model-a Content model-a")
+    payload = json.loads(cursor.execute.await_args.args[1][0])
+    assert payload["nodes"][0]["embedding"] is None
 
 
 @pytest.mark.asyncio

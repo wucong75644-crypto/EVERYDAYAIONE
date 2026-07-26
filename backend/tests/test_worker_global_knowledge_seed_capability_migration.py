@@ -44,6 +44,9 @@ def test_migration_fixes_scope_and_validates_edge_endpoints() -> None:
     assert "GLOBAL_KNOWLEDGE_SEED_REFERENCED" in sql
     assert "DELETE FROM knowledge_edges" in sql
     assert "DELETE FROM knowledge_nodes" in sql
+    assert "jsonb_array_length(v_node->'embedding') <> 1024" in sql
+    assert "jsonb_typeof(element) <> 'number'" in sql
+    assert "(v_node->>'embedding')::vector" in sql
 
 
 def test_rollback_only_removes_the_capability() -> None:

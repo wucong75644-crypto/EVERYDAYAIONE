@@ -25,13 +25,11 @@ ROLLBACK = (
     "211_worker_global_knowledge_seed_capability_rollback.sql"
 ).read_text(encoding="utf-8")
 
-
 def _database_url() -> str:
     url = os.getenv("KNOWLEDGE_SEED_TEST_DATABASE_URL")
     if not url:
         pytest.skip("KNOWLEDGE_SEED_TEST_DATABASE_URL_REQUIRED")
     return url
-
 
 def _payload(*, duplicate_edge: bool = False) -> dict:
     edges = [{
@@ -53,6 +51,7 @@ def _payload(*, duplicate_edge: bool = False) -> dict:
                 "content": "Seed content A",
                 "metadata": {"model_id": "a"},
                 "confidence": 1.0,
+                "embedding": [0.25] * 1024,
             },
             {
                 "seed_key": "node:1",
@@ -63,15 +62,21 @@ def _payload(*, duplicate_edge: bool = False) -> dict:
                 "content": "Seed content B",
                 "metadata": {"model_id": "b"},
                 "confidence": 1.0,
+                "embedding": [0.5] * 1024,
             },
         ],
         "edges": edges,
     }
 
+def _payload_with_embedding(value) -> dict:
+    payload = _payload()
+    payload["nodes"][0]["embedding"] = value
+    return payload
 
 @pytest.fixture()
 def migrated_database() -> str:
     setup = """
+        CREATE EXTENSION IF NOT EXISTS vector;
         DROP FUNCTION IF EXISTS
             worker_replace_global_knowledge_seed(JSONB);
         DROP FUNCTION IF EXISTS
@@ -118,6 +123,7 @@ def migrated_database() -> str:
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             metadata JSONB DEFAULT '{}',
+            embedding vector(1024),
             source TEXT NOT NULL,
             confidence DOUBLE PRECISION NOT NULL,
             scope TEXT NOT NULL,
@@ -181,7 +187,6 @@ def migrated_database() -> str:
         connection.commit()
     return url
 
-
 def _worker_call(url: str, payload: dict) -> dict:
     with psycopg.connect(url) as connection:
         connection.execute("SET SESSION AUTHORIZATION everydayai_worker")
@@ -196,7 +201,6 @@ def _worker_call(url: str, payload: dict) -> dict:
         ).fetchone()
         connection.commit()
         return row[0]
-
 
 def test_worker_replaces_atomically_and_repeated_import_is_idempotent(
     migrated_database: str,
@@ -220,7 +224,14 @@ def test_worker_replaces_atomically_and_repeated_import_is_idempotent(
         assert connection.execute(
             "SELECT count(*) FROM knowledge_edges"
         ).fetchone() == (1,)
-
+        assert connection.execute(
+            "SELECT count(*), min(vector_dims(embedding)) "
+            "FROM knowledge_nodes WHERE embedding IS NOT NULL"
+        ).fetchone() == (2, 1024)
+        assert connection.execute(
+            "SELECT embedding::TEXT FROM knowledge_nodes "
+            "WHERE metadata->>'model_id' = 'a'"
+        ).fetchone()[0].startswith("[0.25,")
 
 @pytest.mark.parametrize(
     "payload",
@@ -236,6 +247,9 @@ def test_worker_replaces_atomically_and_repeated_import_is_idempotent(
             }],
         },
         _payload(duplicate_edge=True),
+        _payload_with_embedding([0.1] * 1023),
+        _payload_with_embedding([0.1] * 1023 + ["invalid"]),
+        _payload_with_embedding("not-a-vector"),
     ],
 )
 def test_invalid_schema_missing_endpoint_and_duplicate_edge_are_rejected(
@@ -244,10 +258,10 @@ def test_invalid_schema_missing_endpoint_and_duplicate_edge_are_rejected(
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         _worker_call(migrated_database, payload)
 
-
 def test_interrupted_import_rolls_back_and_preserves_non_seed_data(
     migrated_database: str,
 ) -> None:
+    _worker_call(migrated_database, _payload())
     non_seed_id = str(uuid4())
     with psycopg.connect(migrated_database) as connection:
         connection.execute("SET ROLE everydayai_owner")
@@ -283,7 +297,37 @@ def test_interrupted_import_rolls_back_and_preserves_non_seed_data(
         ).fetchone() == (1,)
         assert connection.execute(
             "SELECT count(*) FROM knowledge_nodes WHERE source = 'seed'"
-        ).fetchone() == (0,)
+        ).fetchone() == (2,)
+        assert connection.execute(
+            "SELECT count(*), min(vector_dims(embedding)) "
+            "FROM knowledge_nodes "
+            "WHERE source = 'seed' AND embedding IS NOT NULL"
+        ).fetchone() == (2, 1024)
+        assert connection.execute(
+            "SELECT embedding::TEXT FROM knowledge_nodes "
+            "WHERE metadata->>'model_id' = 'a'"
+        ).fetchone()[0].startswith("[0.25,")
+
+
+def test_null_embedding_is_imported_as_null(
+    migrated_database: str,
+) -> None:
+    payload = _payload()
+    payload["nodes"][0]["embedding"] = None
+
+    assert _worker_call(
+        migrated_database, payload,
+    )["imported_count"] == 2
+    with psycopg.connect(migrated_database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        assert connection.execute(
+            "SELECT embedding IS NULL FROM knowledge_nodes "
+            "WHERE metadata->>'model_id' = 'a'"
+        ).fetchone() == (True,)
+        assert connection.execute(
+            "SELECT vector_dims(embedding) FROM knowledge_nodes "
+            "WHERE metadata->>'model_id' = 'b'"
+        ).fetchone() == (1024,)
 
 
 def test_empty_snapshot_preserves_tenant_facts_and_worker_has_no_table_access(

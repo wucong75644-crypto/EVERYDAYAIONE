@@ -27,10 +27,10 @@ BEGIN
     FOR v_node IN SELECT value FROM jsonb_array_elements(p_payload->'nodes')
     LOOP
         IF jsonb_typeof(v_node) <> 'object'
-           OR (SELECT COUNT(*) FROM jsonb_object_keys(v_node)) <> 8
+           OR (SELECT COUNT(*) FROM jsonb_object_keys(v_node)) <> 9
            OR NOT (v_node ?& ARRAY[
                'seed_key', 'category', 'subcategory', 'node_type',
-               'title', 'content', 'metadata', 'confidence'
+               'title', 'content', 'metadata', 'confidence', 'embedding'
            ])
            OR v_node->>'seed_key' !~ '^node:[0-9]+$'
            OR v_node->>'category' NOT IN ('model', 'tool', 'experience')
@@ -47,6 +47,23 @@ BEGIN
                jsonb_typeof(v_node->'subcategory') NOT IN ('string', 'null')
            ) THEN
             RAISE EXCEPTION 'GLOBAL_KNOWLEDGE_SEED_NODE_INVALID'
+                USING ERRCODE = '22023';
+        END IF;
+        IF jsonb_typeof(v_node->'embedding') NOT IN ('array', 'null')
+           OR (
+               jsonb_typeof(v_node->'embedding') = 'array'
+               AND (
+                   jsonb_array_length(v_node->'embedding') <> 1024
+                   OR EXISTS (
+                       SELECT 1
+                         FROM jsonb_array_elements(
+                             v_node->'embedding'
+                         ) element
+                        WHERE jsonb_typeof(element) <> 'number'
+                   )
+               )
+           ) THEN
+            RAISE EXCEPTION 'GLOBAL_KNOWLEDGE_SEED_EMBEDDING_INVALID'
                 USING ERRCODE = '22023';
         END IF;
     END LOOP;
@@ -124,7 +141,6 @@ BEGIN
        AND org_id IS NULL
        AND owner_user_id IS NULL
      FOR UPDATE;
-
     IF EXISTS (
         SELECT 1
           FROM knowledge_edges edge
@@ -177,11 +193,12 @@ BEGIN
     LOOP
         INSERT INTO knowledge_nodes (
             category, subcategory, node_type, title, content, metadata,
-            source, confidence, scope, content_hash, org_id, owner_user_id
+            embedding, source, confidence, scope, content_hash, org_id,
+            owner_user_id
         ) VALUES (
             v_node->>'category', v_node->>'subcategory',
             v_node->>'node_type', v_node->>'title', v_node->>'content',
-            v_node->'metadata', 'seed',
+            v_node->'metadata', (v_node->>'embedding')::vector, 'seed',
             (v_node->>'confidence')::DOUBLE PRECISION, 'global',
             md5(
                 (v_node->>'category') || '|' || (v_node->>'title')
