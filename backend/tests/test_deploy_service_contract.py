@@ -200,9 +200,13 @@ def test_backend_deploy_installs_canonical_service_units() -> None:
 
 def test_migrations_run_before_service_restart_and_fail_closed() -> None:
     migration_gate = SCRIPT.index("bash ../deploy/run-migrations.sh")
+    generation_gate = SCRIPT.index(
+        "scripts/verify_runtime_generation_capabilities.py"
+    )
     restart = SCRIPT.index('sudo systemctl restart "$service"')
 
-    assert migration_gate < restart
+    assert migration_gate < generation_gate < restart
+    assert "source .env.runtime" in SCRIPT
     assert "scripts/migration_runner.py plan" in MIGRATION_SCRIPT
     assert "scripts/migration_runner.py apply" in MIGRATION_SCRIPT
     assert "scripts/verify_worker_control_preconditions.py" in MIGRATION_SCRIPT

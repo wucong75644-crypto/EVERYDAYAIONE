@@ -201,6 +201,10 @@ BEGIN
             'GRANT USAGE, SELECT, UPDATE ON SEQUENCE public.%I TO %I',
             sequence_record.relname, '${legacy_owner}'
         );
+        IF sequence_record.relname = 'task_queue_sequence_seq' THEN
+            GRANT USAGE ON SEQUENCE public.task_queue_sequence_seq
+            TO everydayai_runtime;
+        END IF;
     END LOOP;
     FOREACH function_name IN ARRAY target_functions LOOP
         IF (

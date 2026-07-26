@@ -296,6 +296,10 @@ deploy_backend() {
         fi
         bash ../deploy/install-service-units.sh /var/www/everydayai/backend
         bash ../deploy/run-migrations.sh
+        set -a
+        source .env.runtime
+        set +a
+        ./venv/bin/python scripts/verify_runtime_generation_capabilities.py
         pkill -f kernel_worker 2>/dev/null || true
         services=(
             everydayai-backend

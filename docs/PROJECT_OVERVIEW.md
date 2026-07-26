@@ -216,6 +216,9 @@
   150–164 核心域及 165–180 Worker Control 域的 checksum、owner、ACL、RLS 和能力边界。
 - `backend/scripts/verify_worker_control_preconditions.py`：部署发现 171–180 pending 时，
   在 apply 前验证四张依赖表及其列序列均已属于 `everydayai_owner`，否则失败关闭。
+- `backend/scripts/verify_runtime_generation_capabilities.py`：迁移完成、服务重启前验证
+  Backend 实际使用 `everydayai_runtime`，且统一生成入口、私有 helper 与任务队列序列
+  均具备最小必要权限，否则部署失败关闭。
 - `docs/document/RUNBOOK_171_180_Worker_Control生产恢复.md`：固定 179 failed 协调、
   owner 转移、迁移重放、服务重启与真实链路验收顺序。
 - `docs/document/RUNBOOK_150_161_生产租户架构切换.md`：串联生产只读审计、两批

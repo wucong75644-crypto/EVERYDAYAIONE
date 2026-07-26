@@ -1264,6 +1264,11 @@
   `SECURITY INVOKER` helper 未向 runtime 授权，导致
   `permission denied for function _prepare_generation_messages`。迁移 204 按完整
   调用链只补 runtime 的两个 helper EXECUTE，并配套 rollback 与 ACL 契约测试。
+- 迁移 204 后真实文字消息已进入 `_prepare_generation_tasks(...)`，随后因 Runtime
+  缺少 `task_queue_sequence_seq` USAGE 回滚。根因是 Runtime/Message 所有权切换
+  脚本转移序列后撤销新服务角色，却只恢复旧角色权限。迁移 205 补当前生产最小
+  USAGE；切换脚本同步保留 Runtime 能力，并在每次迁移后、服务重启前执行完整生成
+  函数与序列能力门禁。
 
 # 2026-07-25 定时任务角色隔离收尾
 

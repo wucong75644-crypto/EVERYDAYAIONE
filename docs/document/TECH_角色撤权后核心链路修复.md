@@ -113,6 +113,10 @@ CDN URL 不会因此自动改写。
   `SECURITY INVOKER` helper 时暴露第二层 ACL 缺口。迁移 204 仅向
   `everydayai_runtime` 授予 `_prepare_generation_messages(...)` 和
   `_prepare_generation_tasks(...)` EXECUTE，不改变函数安全模式或表权限。
+- 迁移 204 后真实消息继续暴露 `tasks.queue_sequence` 默认值依赖的
+  `task_queue_sequence_seq` 未授权。迁移 205 仅授予 Runtime `USAGE`；所有权切换
+  脚本保留该终态能力，部署在迁移后、服务重启前以 Runtime 连接校验外层函数、两个
+  helper 和精确序列，任一缺失即失败关闭。
 
 ## 4. 边界与失败行为
 
