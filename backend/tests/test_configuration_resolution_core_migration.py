@@ -19,6 +19,9 @@ ROLLBACK = (
     / "migrations/rollback/160_configuration_resolution_core_rollback.sql"
 )
 SQL = MIGRATION.read_text(encoding="utf-8")
+INCREMENTAL_SQL = (
+    ROOT / "migrations/201_wecom_callback_inbox.sql"
+).read_text(encoding="utf-8")
 ROLLBACK_SQL = ROLLBACK.read_text(encoding="utf-8")
 
 
@@ -39,10 +42,24 @@ def _snapshot_rows() -> dict[str, tuple[dict[str, object], str]]:
         SQL,
         re.DOTALL,
     )
-    return {
+    snapshot = {
         name: (json.loads(contract_json), contract_hash)
         for name, contract_json, contract_hash in rows
     }
+    insert_sql = INCREMENTAL_SQL.split(
+        "INSERT INTO configuration_bundle_definitions(", 1,
+    )[1].split("CREATE OR REPLACE FUNCTION", 1)[0]
+    inserts = re.findall(
+        r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
+        r"'([0-9a-f]{64})',\s*TRUE\s*\)",
+        insert_sql,
+        re.DOTALL,
+    )
+    snapshot.update({
+        name: (json.loads(contract_json), contract_hash)
+        for name, contract_json, contract_hash in inserts
+    })
+    return snapshot
 
 
 def test_bundle_snapshot_exactly_matches_code_registry() -> None:

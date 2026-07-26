@@ -19,6 +19,9 @@ ROLLBACK = (
     / "migrations/rollback/158_configuration_control_plane_foundation_rollback.sql"
 )
 SQL = MIGRATION.read_text(encoding="utf-8")
+INCREMENTAL_SQL = (
+    ROOT / "migrations/201_wecom_callback_inbox.sql"
+).read_text(encoding="utf-8")
 ROLLBACK_SQL = ROLLBACK.read_text(encoding="utf-8")
 PROTECTED_TABLES = (
     "secret_records",
@@ -34,10 +37,33 @@ def _snapshot_rows() -> dict[str, tuple[dict[str, object], str]]:
         SQL,
         re.DOTALL,
     )
-    return {
+    snapshot = {
         key: (json.loads(contract_json), contract_hash)
         for key, contract_json, contract_hash in rows
     }
+    updates = re.findall(
+        r"UPDATE configuration_definitions\s+SET contract_json\s*=\s*"
+        r"'(\{.*?\})'::JSONB,\s*contract_hash\s*=\s*"
+        r"'([0-9a-f]{64})'\s+WHERE .*?config_key\s*=\s*'([^']+)';",
+        INCREMENTAL_SQL,
+        re.DOTALL,
+    )
+    for contract_json, contract_hash, key in updates:
+        snapshot[key] = (json.loads(contract_json), contract_hash)
+    insert_sql = INCREMENTAL_SQL.split(
+        "INSERT INTO configuration_definitions(", 1,
+    )[1].split("INSERT INTO configuration_bundle_definitions(", 1)[0]
+    inserts = re.findall(
+        r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
+        r"'([0-9a-f]{64})',\s*TRUE\s*\)",
+        insert_sql,
+        re.DOTALL,
+    )
+    snapshot.update({
+        key: (json.loads(contract_json), contract_hash)
+        for key, contract_json, contract_hash in inserts
+    })
+    return snapshot
 
 
 def test_database_snapshot_exactly_matches_code_registry() -> None:
