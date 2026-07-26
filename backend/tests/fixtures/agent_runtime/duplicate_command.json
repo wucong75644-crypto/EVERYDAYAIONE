@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scenario": "duplicate command",
+  "clock": {"started_at": "2026-07-18T00:05:00Z", "ticks_ms": [0, 1]},
+  "session_scope": {"session_id": "session-command", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-duplicate", "idempotency_key": "idem-duplicate", "command_type": "message.submit"},
+  "identities": {"runs": ["run-command"], "model_steps": [], "actions": []},
+  "initial_state": {"run-command": "queued"},
+  "trace": [{"op": "command", "command_id": "command-duplicate"}, {"op": "command", "command_id": "command-duplicate"}],
+  "runtime_events": [{"event_id": "event-command-1", "sequence": 1, "event_type": "command.accepted", "aggregate": {"type": "session", "id": "session-command"}, "state": "accepted", "fencing_revision": 0}],
+  "projection_records": [],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": null, "outcome": "rejected", "rejection_code": "duplicate_command", "missing_sequences": [], "projection": {}, "side_effects": []}
+}

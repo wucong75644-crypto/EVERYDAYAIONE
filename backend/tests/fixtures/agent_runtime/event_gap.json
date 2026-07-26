@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "scenario": "runtime event gap",
+  "clock": {"started_at": "2026-07-18T00:08:00Z", "ticks_ms": [0, 2]},
+  "session_scope": {"session_id": "session-gap", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-gap", "idempotency_key": "idem-gap", "command_type": "runtime.subscribe"},
+  "identities": {"runs": ["run-gap"], "model_steps": [], "actions": []},
+  "initial_state": {"run-gap": "running"},
+  "trace": [],
+  "runtime_events": [
+    {"event_id": "event-gap-1", "sequence": 1, "event_type": "run.started", "aggregate": {"type": "run", "id": "run-gap"}, "state": "running", "fencing_revision": 1},
+    {"event_id": "event-gap-3", "sequence": 3, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-gap"}, "state": "completed", "fencing_revision": 1}
+  ],
+  "projection_records": [],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": null, "outcome": "gap", "rejection_code": null, "missing_sequences": [2], "projection": {}, "side_effects": []}
+}

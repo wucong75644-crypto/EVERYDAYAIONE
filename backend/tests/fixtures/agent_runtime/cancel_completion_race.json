@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scenario": "user cancellation races completion",
+  "clock": {"started_at": "2026-07-18T00:11:00Z", "ticks_ms": [0, 1]},
+  "session_scope": {"session_id": "session-race", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-race", "idempotency_key": "idem-race", "command_type": "run.cancel"},
+  "identities": {"runs": ["run-race"], "model_steps": ["step-race"], "actions": []},
+  "initial_state": {"run-race": "running"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "terminal", "identity": "run-race", "state": "completed", "fencing_revision": 1},
+    {"op": "terminal", "identity": "run-race", "state": "cancelled", "fencing_revision": 1}
+  ],
+  "runtime_events": [{"event_id": "event-race-1", "sequence": 1, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-race"}, "state": "completed", "fencing_revision": 1}],
+  "projection_records": [{"record_id": "projection-race", "sequence": 1, "key": "run_status", "value": "completed"}],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "rejected", "rejection_code": "duplicate_terminal", "missing_sequences": [], "projection": {"run_status": "completed"}, "side_effects": []}
+}

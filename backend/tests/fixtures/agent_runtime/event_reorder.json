@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scenario": "runtime event reorder",
+  "clock": {"started_at": "2026-07-18T00:07:00Z", "ticks_ms": [0, 2, 1]},
+  "session_scope": {"session_id": "session-reorder", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-reorder", "idempotency_key": "idem-reorder", "command_type": "runtime.subscribe"},
+  "identities": {"runs": ["run-reorder"], "model_steps": [], "actions": []},
+  "initial_state": {"run-reorder": "running"},
+  "trace": [],
+  "runtime_events": [
+    {"event_id": "event-reorder-1", "sequence": 1, "event_type": "run.started", "aggregate": {"type": "run", "id": "run-reorder"}, "state": "running", "fencing_revision": 1},
+    {"event_id": "event-reorder-3", "sequence": 3, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-reorder"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-reorder-2", "sequence": 2, "event_type": "message.committed", "aggregate": {"type": "run", "id": "run-reorder"}, "state": "running", "fencing_revision": 1}
+  ],
+  "projection_records": [],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": null, "outcome": "replay_required", "rejection_code": null, "missing_sequences": [], "projection": {}, "side_effects": []}
+}

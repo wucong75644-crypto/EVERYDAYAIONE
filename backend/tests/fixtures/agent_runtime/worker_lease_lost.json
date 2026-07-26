@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scenario": "worker loses lease",
+  "clock": {"started_at": "2026-07-18T00:04:00Z", "ticks_ms": [0, 90000]},
+  "session_scope": {"session_id": "session-lease", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-lease", "idempotency_key": "idem-lease", "command_type": "message.submit"},
+  "identities": {"runs": ["run-lease"], "model_steps": ["step-lease"], "actions": []},
+  "initial_state": {"run-lease": "running"},
+  "trace": [{"op": "fence", "revision": 1}, {"op": "lease_lost", "outcome": "lease_lost"}],
+  "runtime_events": [{"event_id": "event-lease-1", "sequence": 1, "event_type": "run.claimed", "aggregate": {"type": "run", "id": "run-lease"}, "state": "running", "fencing_revision": 1}],
+  "projection_records": [{"record_id": "projection-lease", "sequence": 1, "key": "run_status", "value": "running"}],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": null, "outcome": "lease_lost", "rejection_code": null, "missing_sequences": [], "projection": {"run_status": "running"}, "side_effects": []}
+}

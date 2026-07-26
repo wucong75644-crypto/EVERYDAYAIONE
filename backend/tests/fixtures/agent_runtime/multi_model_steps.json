@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "scenario": "multiple model steps",
+  "clock": {"started_at": "2026-07-18T00:01:00Z", "ticks_ms": [0, 20, 40]},
+  "session_scope": {"session_id": "session-multi", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-multi", "idempotency_key": "idem-multi", "command_type": "message.submit"},
+  "identities": {"runs": ["run-multi"], "model_steps": ["step-multi-1", "step-multi-2"], "actions": ["action-multi"]},
+  "initial_state": {"run-multi": "running", "step-multi-1": "pending", "step-multi-2": "pending", "action-multi": "queued"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "transition", "aggregate_id": "step-multi-1", "from": "pending", "to": "completed", "fencing_revision": 1},
+    {"op": "transition", "aggregate_id": "action-multi", "from": "queued", "to": "completed", "fencing_revision": 1},
+    {"op": "transition", "aggregate_id": "step-multi-2", "from": "pending", "to": "completed", "fencing_revision": 1},
+    {"op": "terminal", "identity": "run-multi", "state": "completed", "fencing_revision": 1}
+  ],
+  "runtime_events": [
+    {"event_id": "event-multi-1", "sequence": 1, "event_type": "model_step.completed", "aggregate": {"type": "model_step", "id": "step-multi-1"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-multi-2", "sequence": 2, "event_type": "action.completed", "aggregate": {"type": "action", "id": "action-multi"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-multi-3", "sequence": 3, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-multi"}, "state": "completed", "fencing_revision": 1}
+  ],
+  "projection_records": [{"record_id": "projection-multi", "sequence": 3, "key": "run_status", "value": "completed"}],
+  "references": {"artifacts": [], "usage": [{"usage_id": "usage-multi-1", "model_step_id": "step-multi-1"}, {"usage_id": "usage-multi-2", "model_step_id": "step-multi-2"}]},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"run_status": "completed"}, "side_effects": []}
+}

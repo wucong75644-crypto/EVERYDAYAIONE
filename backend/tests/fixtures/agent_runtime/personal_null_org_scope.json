@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scenario": "personal null organization scope",
+  "clock": {"started_at": "2026-07-18T00:13:00Z", "ticks_ms": [0]},
+  "session_scope": {"session_id": "session-personal", "user_id": "personal-test", "org_id": null, "scope_kind": "user", "scope_id": "personal-test"},
+  "command": {"command_id": "command-personal", "idempotency_key": "idem-personal", "command_type": "message.submit"},
+  "identities": {"runs": ["run-personal"], "model_steps": ["step-personal"], "actions": []},
+  "initial_state": {"run-personal": "running"},
+  "trace": [{"op": "terminal", "identity": "run-personal", "state": "completed", "fencing_revision": 0}],
+  "runtime_events": [{"event_id": "event-personal-1", "sequence": 1, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-personal"}, "state": "completed", "fencing_revision": 1}],
+  "projection_records": [{"record_id": "projection-personal", "sequence": 1, "key": "scope", "value": "personal-test"}],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"scope": "personal-test"}, "side_effects": []}
+}

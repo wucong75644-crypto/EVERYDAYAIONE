@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scenario": "projection replay",
+  "clock": {"started_at": "2026-07-18T00:09:00Z", "ticks_ms": [0, 1, 2]},
+  "session_scope": {"session_id": "session-projection", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-projection", "idempotency_key": "idem-projection", "command_type": "runtime.subscribe"},
+  "identities": {"runs": ["run-projection"], "model_steps": [], "actions": ["action-projection"]},
+  "initial_state": {"run-projection": "completed", "action-projection": "completed"},
+  "trace": [{"op": "terminal", "identity": "run-projection", "state": "completed", "fencing_revision": 0}],
+  "runtime_events": [
+    {"event_id": "event-projection-1", "sequence": 1, "event_type": "action.completed", "aggregate": {"type": "action", "id": "action-projection"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-projection-2", "sequence": 2, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-projection"}, "state": "completed", "fencing_revision": 1}
+  ],
+  "projection_records": [
+    {"record_id": "projection-action-running", "sequence": 1, "key": "action_status", "value": "running"},
+    {"record_id": "projection-action-completed", "sequence": 2, "key": "action_status", "value": "completed"},
+    {"record_id": "projection-action-completed", "sequence": 2, "key": "action_status", "value": "completed"},
+    {"record_id": "projection-run-completed", "sequence": 2, "key": "run_status", "value": "completed"}
+  ],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"action_status": "completed", "run_status": "completed"}, "side_effects": []}
+}
