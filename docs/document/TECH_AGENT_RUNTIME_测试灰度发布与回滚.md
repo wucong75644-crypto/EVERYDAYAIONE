@@ -386,7 +386,8 @@ Shadow 阶段：
 5. 加 ReleaseManifest、readiness、Actor drain。
 6. shadow 对账 → 关闭旧 owner → 完整切换。
 7. 演练 kill switch 和 Accepted/Unknown reconciliation。
-8. 达到门禁后逐工具切流。
+8. 每个已确认实施阶段通过门禁后，对该阶段全部调用方完整切换；不得按工具或
+   Action type 分流。
 
 验收：
 

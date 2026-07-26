@@ -186,9 +186,9 @@ Session/Run/ModelStep/Action/RuntimeEvent RPC。四项任务只能消除现有�
 |---|---|
 | 当前入口和调用方 | `BackgroundTaskWorker._get_active_org_ids` 直接读取 `organizations`；`BackgroundPeriodicTasksMixin._run_model_scoring` 和 `BackgroundTaskWorker.check_data_consistency` 按结果遍历企业 |
 | 正确角色与 Owner | 调用者固定为 `everydayai_worker`；`everydayai_owner` 持有窄 `SECURITY DEFINER` 枚举 RPC |
-| 允许修改文件 | `backend/services/background_task_worker.py`；一个 additive migration 及对应 rollback；定向 migration/worker 测试；必要索引文档 |
+| 允许修改文件 | `backend/services/background_task_worker.py`；迁移 209 及对应 rollback；定向 migration/worker 测试 |
 | RPC/无 RPC 边界 | 必须新增无参数 Worker RPC，只返回 active 企业 ID；校验 `session_user/access_kind`，固定 `search_path`，闭合返回结构 |
-| 迁移所有权 | migrator 执行并 `SET LOCAL ROLE everydayai_owner`；函数 owner 为 `everydayai_owner`；仅向 `everydayai_worker` 授予 EXECUTE |
+| 迁移所有权 | 固定编号 `209`；migrator 执行并 `SET LOCAL ROLE everydayai_owner`；函数 owner 为 `everydayai_owner`；仅向 `everydayai_worker` 授予 EXECUTE |
 | 禁止扩大权限 | 不向 Worker 增加或恢复 `organizations`、`org_members`、`org_configs` 的 SELECT/UPDATE 等直接表权限 |
 | 验收与交接 | 两个调用方均消费 RPC；失权 Worker 真实数据库测试可枚举 active、不可读取表；空集合和 RPC 失败语义明确；旧直接查询全局搜索为零 |
 
@@ -198,9 +198,9 @@ Session/Run/ModelStep/Action/RuntimeEvent RPC。四项任务只能消除现有�
 |---|---|
 | 当前入口和调用方 | `main → start_web_database_runtime → _run_startup_recovery → recover_orphan_tasks`；后者跨租户直接读取/更新 `tasks`，并经 `save_accumulated_to_message`、`refund_task_credits` 写 Message/积分 |
 | 正确角色与 Owner | 启动协调者固定为 `everydayai_worker`；`everydayai_owner` RPC 是恢复任务的 claim、读取和原子终态 Owner |
-| 允许修改文件 | `backend/services/task_recovery.py`，确有签名需要时限于 `backend/services/task_utils.py`；一个 additive migration 及 rollback；`test_task_recovery.py`、真实 migration 契约测试；必要索引文档 |
+| 允许修改文件 | `backend/services/task_recovery.py`，确有签名需要时限于 `backend/services/task_utils.py`；迁移 210 及 rollback；`test_task_recovery.py`、真实 migration 契约测试 |
 | RPC/无 RPC 边界 | 必须以窄 Worker RPC 替换 tasks/messages 跨租户直访；扫描/claim 与单任务 complete/fail 必须有幂等、锁和 fencing，Actor task 继续排除 |
-| 迁移所有权 | `everydayai_owner` 持有 RPC；仅 Worker EXECUTE；现有 Conversation/Message/Task owner 与资金 RPC 权限不变 |
+| 迁移所有权 | 固定编号 `210`；`everydayai_owner` 持有 RPC；仅 Worker EXECUTE；现有 Conversation/Message/Task owner 与资金 RPC 权限不变 |
 | 禁止扩大权限 | 不向 Worker 扩大 `tasks`、`messages`、`conversations`、`credit_transactions`、`users` 直接权限；不绕过既有退款原子能力 |
 | 验收与交接 | 启动锁仍只防重复调度，数据库 RPC 证明并发恰一恢复；有/无累积内容、Actor task、重复调用、退款与 Message/Task 原子收敛通过；直接表调用搜索为零 |
 
@@ -210,9 +210,9 @@ Session/Run/ModelStep/Action/RuntimeEvent RPC。四项任务只能消除现有�
 |---|---|
 | 当前入口和调用方 | `main → warm_knowledge_base → load_seed_knowledge → _build_seed_edges`；当前 Worker Scope 直接删除/写入 `knowledge_nodes/knowledge_edges` |
 | 正确角色与 Owner | Web 启动只负责 Redis single-flight；数据库调用使用 `everydayai_worker`；全局种子写入由 `everydayai_owner` 窄 RPC 独占 |
-| 允许修改文件 | `backend/services/knowledge_seed_service.py`，确有调用适配时限于 `backend/services/web_database_runtime.py`；一个 additive migration 及 rollback；`test_knowledge_seed_service.py`、`test_web_database_runtime.py` 和 migration 契约测试；必要索引文档 |
+| 允许修改文件 | `backend/services/knowledge_seed_service.py`，确有调用适配时限于 `backend/services/web_database_runtime.py`；迁移 211 及 rollback；`test_knowledge_seed_service.py`、`test_web_database_runtime.py` 和 migration 契约测试 |
 | RPC/无 RPC 边界 | 必须新增全局 seed snapshot/replace 或逐项幂等 commit RPC；只接受受限 seed schema，以 `source='seed'、org_id=NULL、owner_user_id=NULL` 为固定作用域；边构建必须在 RPC 内校验端点 |
-| 迁移所有权 | `everydayai_owner` 持有 RPC；仅 Worker EXECUTE；Knowledge 表与序列继续由 owner 管理 |
+| 迁移所有权 | 固定编号 `211`；`everydayai_owner` 持有 RPC；仅 Worker EXECUTE；Knowledge 表与序列继续由 owner 管理 |
 | 禁止扩大权限 | 不向 Worker 授予 `knowledge_nodes`、`knowledge_edges`、`knowledge_metrics` 直接读写；不扩大 Runtime 的现有个人/企业知识权限 |
 | 验收与交接 | 重复导入幂等、旧 seed 清理与新节点/边原子、非 seed 数据不变、非法 owner scope 拒绝；失权 Worker 可调用 RPC 但不能直接访问三表 |
 
@@ -222,14 +222,20 @@ Session/Run/ModelStep/Action/RuntimeEvent RPC。四项任务只能消除现有�
 |---|---|
 | 当前入口和调用方 | `start_web_database_runtime` 调用 `_expire_pending_interactions`；迁移 `112_drop_pending_interaction.sql` 已删除该表，函数仅吞掉异常 |
 | 正确角色与 Owner | 无数据库 Owner；启动流程不再承担该已删除模型的清理责任 |
-| 允许修改文件 | `backend/services/web_database_runtime.py`、`backend/tests/test_web_database_runtime.py`；必要索引文档 |
+| 允许修改文件 | `backend/services/web_database_runtime.py`、`backend/tests/test_web_database_runtime.py` |
 | RPC/无 RPC 边界 | 不新增 RPC、不新增迁移、不恢复表；删除调用、函数、无效 import 和过期测试 |
-| 迁移所有权 | 迁移 112 保持最终事实，不新增 rollback，不重建 `pending_interaction` |
+| 迁移所有权 | 无新迁移；迁移 112 保持最终事实，不新增 rollback，不重建 `pending_interaction` |
 | 禁止扩大权限 | 不向 Runtime/Worker 增加任何 `pending_interaction` 权限，不以兼容名创建替代表 |
 | 验收与交接 | 启动路径和全局调用搜索均无 `_expire_pending_interactions/pending_interaction` 清理引用；现有持久 Interaction 未来只归 Agent Runtime 正式任务 |
 
-四项任务各自提交、测试和审查，不得交叉修改对方文件。发现必须跨边界时停止并返回总控。
-新增 RPC 时同步更新 `PROJECT_OVERVIEW.md`、`FUNCTION_INDEX.md`、迁移 rollback 和角色授权。
+并行迁移编号冻结为 `AR-01=209`、`AR-02=210`、`AR-03=211`、`AR-04=无迁移`。各任务
+启动实施前必须检查主分支迁移目录；若主分支已经出现新的迁移，必须停止并返回总控重新
+分配编号，开发对话不得自行占号、顺延或改号。
+
+四项任务各自提交、测试和审查，不得交叉修改对方文件。AR-01～AR-04 不直接修改
+`docs/CURRENT_ISSUES.md`、`docs/PROJECT_OVERVIEW.md`、`docs/FUNCTION_INDEX.md`；各任务
+交付时提供建议更新内容，由总控在验收合并阶段统一修改，避免并行分支冲突。新增 RPC
+仍必须提交自身 migration、rollback、角色授权和定向测试。发现必须跨边界时停止并返回总控。
 
 ## 9. 发布与切换边界
 
