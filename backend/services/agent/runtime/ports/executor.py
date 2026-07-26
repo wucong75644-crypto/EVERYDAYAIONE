@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Mapping, Protocol
 
 from services.agent.runtime.domain import ActionAttempt, ActionResult
+from services.agent.runtime.domain.identity import require_stable_value
 
 
 class ExecutionOutcome(StrEnum):
@@ -24,6 +25,18 @@ class ExecutionReceipt:
     external_receipt: Mapping[str, object] = field(default_factory=dict)
     ambiguity_evidence: Mapping[str, object] = field(default_factory=dict)
     result: ActionResult | None = None
+
+    def __post_init__(self) -> None:
+        require_stable_value(self.request_hash, "request_hash")
+        if (self.outcome is ExecutionOutcome.COMPLETED) != (self.result is not None):
+            raise ValueError("completed outcome requires ActionResult exclusively")
+        if self.outcome is ExecutionOutcome.ACCEPTED and not self.external_receipt:
+            raise ValueError("accepted outcome requires external_receipt")
+        if (
+            self.outcome is ExecutionOutcome.UNKNOWN
+            and not self.ambiguity_evidence
+        ):
+            raise ValueError("unknown outcome requires ambiguity_evidence")
 
 
 class ExecutorPort(Protocol):

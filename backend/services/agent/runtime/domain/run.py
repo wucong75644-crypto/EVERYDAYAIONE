@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from services.agent.runtime.domain.execution import Lease
+from services.agent.runtime.domain.execution import Lease, require_aware_datetime
 from services.agent.runtime.domain.identity import RunId, require_stable_value
 from services.agent.runtime.domain.scope import RuntimeScope
 
@@ -49,5 +49,7 @@ class RunAttempt:
         require_stable_value(self.worker_id, "worker_id")
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be positive")
+        require_aware_datetime(self.claimed_at, "claimed_at")
+        require_aware_datetime(self.ended_at, "ended_at")
         if (self.ended_at is None) != (self.outcome is None):
             raise ValueError("ended_at and outcome must be set together")

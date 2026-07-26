@@ -26,6 +26,10 @@ class RuntimeScope:
 
     def __post_init__(self) -> None:
         require_stable_value(self.scope_id, "scope_id")
+        if self.user_id is not None:
+            require_stable_value(self.user_id, "user_id")
+        if self.org_id is not None:
+            require_stable_value(self.org_id, "org_id")
         if self.kind is ScopeKind.USER and self.user_id is None:
             raise ValueError("user scope requires user_id")
         if self.kind is ScopeKind.CHANNEL and self.org_id is None:

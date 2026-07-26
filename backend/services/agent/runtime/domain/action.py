@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Mapping
 
 from services.agent.runtime.domain.errors import InvalidRecoveryError
-from services.agent.runtime.domain.execution import Lease
+from services.agent.runtime.domain.execution import Lease, require_aware_datetime
 from services.agent.runtime.domain.identity import (
     ActionAttemptId,
     ActionId,
@@ -86,6 +86,9 @@ class ActionAttempt:
             require_stable_value(value, name)
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be positive")
+        require_aware_datetime(self.started_at, "started_at")
+        require_aware_datetime(self.accepted_at, "accepted_at")
+        require_aware_datetime(self.ended_at, "ended_at")
         if self.status is ActionAttemptStatus.ACCEPTED:
             if self.accepted_at is None or not self.external_receipt:
                 raise ValueError(

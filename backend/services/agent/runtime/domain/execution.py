@@ -19,6 +19,12 @@ from services.agent.runtime.domain.identity import (
 from services.agent.runtime.domain.scope import RuntimeScope
 
 
+def require_aware_datetime(value: datetime | None, field_name: str) -> None:
+    """非空领域时间必须包含可计算 UTC offset 的时区。"""
+    if value is not None and value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
+
+
 @dataclass(frozen=True)
 class Lease:
     """数据库签发的有期限执行权。"""
@@ -28,14 +34,12 @@ class Lease:
 
     def __post_init__(self) -> None:
         require_stable_value(self.fencing_token, "fencing_token")
-        if self.expires_at.tzinfo is None:
-            raise ValueError("expires_at must be timezone-aware")
+        require_aware_datetime(self.expires_at, "expires_at")
 
     def validate(self, token: FencingToken, now: datetime) -> None:
         if token != self.fencing_token:
             raise FencingTokenMismatchError("fencing token does not match")
-        if now.tzinfo is None:
-            raise ValueError("now must be timezone-aware")
+        require_aware_datetime(now, "now")
         if now >= self.expires_at:
             raise LeaseExpiredError("lease has expired")
 

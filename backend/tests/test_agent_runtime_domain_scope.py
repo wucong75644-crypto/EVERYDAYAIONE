@@ -42,3 +42,15 @@ def test_user_scope_requires_user() -> None:
 def test_channel_scope_requires_org() -> None:
     with pytest.raises(ValueError, match="requires org_id"):
         RuntimeScope(ScopeKind.CHANNEL, "channel:c-1", "u-1", None)
+
+
+@pytest.mark.parametrize("user_id", ("", " "))
+def test_non_null_user_id_must_be_stable(user_id: str) -> None:
+    with pytest.raises(ValueError, match="user_id is required"):
+        RuntimeScope(ScopeKind.SYSTEM, "system:runtime", user_id, None)
+
+
+@pytest.mark.parametrize("org_id", ("", " "))
+def test_non_null_org_id_must_be_stable(org_id: str) -> None:
+    with pytest.raises(ValueError, match="org_id is required"):
+        RuntimeScope(ScopeKind.SYSTEM, "system:runtime", None, org_id)
