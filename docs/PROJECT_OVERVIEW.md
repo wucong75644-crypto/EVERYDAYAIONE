@@ -158,7 +158,7 @@
   `WORKER_DATABASE_URL` 无凭证模板；必须与 `.env.worker` 指向同一 Worker 连接。
 - `deploy/env-templates/wecom-runtime.env.template`：WeCom 入站消息面使用的独立
   `everydayai_wecom_runtime` 无凭证连接合同；与 Web runtime 和 Worker 连接完全分离。
-- `backend/services/web_database_runtime.py`：集中管理 Web 内知识 Seed、恢复/清理、
+- `backend/services/web_database_runtime.py`：集中管理 Web 内知识 Seed、启动恢复、
   BackgroundTaskWorker、错误监控及 runtime/worker 数据库池关闭生命周期。
 - `backend/tests/test_worker_database_client.py`、`backend/tests/test_web_database_runtime.py`：
   覆盖缺失 Worker URL 失败关闭、独立池创建/关闭、runtime schema 与 worker 后台身份分离。
@@ -484,8 +484,19 @@
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
 - `docs/document/TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`：冻结现有与目标能力
   边界、唯一 `backend/services/agent/runtime/` 目录、企业/企业员工/散客三级隔离、
-  全局/企业/个人/Session 配置继承、Conversation/Task/Message 新旧映射，以及后续
-  后续 Runtime RPC 合同，以及 AR-01～AR-04 各自的入口、Owner、文件、权限和迁移门禁。
+  全局/企业/个人/Session 配置继承、Conversation/Task/Message 新旧映射、后续 Runtime
+  RPC 合同，以及 AR-01～AR-04 各自的入口、Owner、文件、权限和迁移门禁。
+- `backend/migrations/209_worker_active_organization_capability.sql`：仅允许 actorless
+  Worker Scope 枚举 active 企业 ID；后台模型评分和一致性检查不再直读组织表。
+- `backend/migrations/210_worker_orphan_task_recovery_capability.sql`：以
+  claim/complete/fail、lease 和 fencing 原子恢复非 Actor 孤儿任务，消息回写、任务终态
+  与退款均由 Owner 能力提交，Redis 只保留启动调度锁。
+- `backend/migrations/211_worker_global_knowledge_seed_capability.sql`：校验受限 Seed
+  Snapshot，通过 Owner RPC 原子替换全局节点、1024 维 Embedding 和关系边，不开放
+  Worker 对知识表的直接权限。
+- `backend/services/web_database_runtime.py`、`backend/core/tenant_registry.py`：移除迁移
+  112 已删除的 `pending_interaction` 启动清理和 Registry 残留；未来持久 Interaction
+  仍由正式 Agent Runtime 任务实现。
 - `docs/document/TECH_Grok式通用记忆运行时重构.md`：将现有业务硬编码的 L1/L2/L3 记忆管道收口为 Grok 式通用 Session Flush、Session Memory、Consolidation、Curated Memory 与 Search/Get 生命周期；领域差异仅允许通过受限 Skill Profile 提供。
 - `backend/services/memory/contracts.py`、`candidate_validator.py`：Grok 式通用记忆候选协议与 fail-closed 原文证据门禁；首期只建立契约和误提取基线，尚未切换生产写入。
 - `backend/tests/test_l1_generic_memory.py`：通用 `NO_MEMORY/CANDIDATES` 解析、精确用户证据、整批拒绝、去重失败关闭及真实消息 ID 传递回归测试。

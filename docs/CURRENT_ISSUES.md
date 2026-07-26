@@ -1,5 +1,18 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-26 Agent Runtime AR-01～AR-04 角色能力收口 — 已集成，待部署验证
+
+- AR-01 通过迁移 209 的 `worker_list_active_organization_ids` 窄能力替换 Worker
+  对 `organizations` 的直接读取；权限或响应异常失败关闭，不再伪装为空企业集合。
+- AR-02 通过迁移 210 的 claim/complete/fail RPC，以数据库锁、lease 和 fencing
+  原子完成非 Actor 孤儿任务恢复、部分消息回写和幂等退款；Worker 不获得业务表直权。
+- AR-03 通过迁移 211 原子替换全局 Seed 节点、Embedding 和关系边；企业、个人及
+  非 Seed 知识保持不变，跨作用域引用失败关闭，缓存仅在事务成功后失效。
+- AR-04 删除迁移 112 已废弃的 `pending_interaction` 启动清理和 Registry 残留，
+  不恢复旧表，也不提前实现未来 Agent Runtime Interaction。
+- 代码与隔离 PostgreSQL 契约已完成验证，但迁移 209～211 尚未部署生产；生产部署后
+  仍需核对 Backend 启动、周期任务、孤儿恢复、Seed 导入和相关权限日志停止增长。
+
 ## 2026-07-26 Agent Runtime AR-00 总控验收纠偏 — 已完成文档修正
 
 - 唯一正向实现目录统一为 `backend/services/agent/runtime/`；旧

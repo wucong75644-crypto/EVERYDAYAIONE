@@ -46,6 +46,18 @@
 | `get_wecom_manual_memories` / `clear_wecom_manual_memories` | `backend/services/wecom/memory_commands.py` | 企微指令对安全记忆 RPC 的应用层适配 |
 | `WecomUserMappingService.refresh_display_name` | `backend/services/wecom/user_mapping_service.py` | Actor Scope 绑定后按需解析真实姓名；仅在明确取得姓名时调用安全更新门面 |
 
+### Agent Runtime AR-01～AR-04 Worker 能力收口
+
+| 函数 | 文件 | 说明 |
+|---|---|---|
+| `BackgroundTaskWorker._get_active_org_ids` | `backend/services/background_task_worker.py` | 建立 actorless Worker DatabaseScope，并通过窄 RPC 获取 active 企业 ID；权限或响应异常失败关闭 |
+| `worker_list_active_organization_ids` | `backend/migrations/209_worker_active_organization_capability.sql` | 仅允许无 Actor/Org 的 Worker Scope 枚举 active 企业，不开放 `organizations` 表权限 |
+| `recover_orphan_tasks` | `backend/services/task_recovery.py` | 循环领取非 Actor 孤儿任务，并按累积内容调用 fenced complete/fail 能力收敛终态 |
+| `worker_claim_orphan_tasks` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 通过 `FOR UPDATE SKIP LOCKED`、lease 和 execution token 原子领取可恢复任务 |
+| `worker_complete_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务写入 interrupted Message 与 Task 终态 |
+| `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务幂等退款并提交失败终态 |
+| `worker_replace_global_knowledge_seed` | `backend/migrations/211_worker_global_knowledge_seed_capability.sql` | 校验受限节点、1024 维 Embedding 和边端点，原子替换全局 Seed 且拒绝跨作用域引用 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
@@ -379,7 +391,7 @@
 | `ErpToolMixin._erp_dispatch` | `backend/services/agent/erp_tool_executor.py` | 按工具类型委托两步查询或带 Redis 幂等锁的写入辅助函数 | tool_name、args | AgentResult/工具结果 |
 | `ErpDispatcher.execute` | `backend/services/kuaimai/dispatcher.py` | 校验注册表与参数后，委托 API 调用和响应装饰辅助函数 | tool_name、action、params | ToolOutput |
 | `IntentRouterRuntimeMixin` | `backend/services/intent_router_runtime_mixin.py` | 提供路由知识增强、DashScope 客户端复用和脱敏路由指标记录 | router runtime context | runtime helpers |
-| `load_seed_knowledge` | `backend/services/knowledge_seed_service.py` | 清理并重新导入全局种子知识、重建关系边；由 knowledge_service 兼容导出 | seed_file、db_source | 导入数量 |
+| `load_seed_knowledge` | `backend/services/knowledge_seed_service.py` | 规范化全局 Seed、在事务前生成 Embedding，并通过受限 Worker RPC 原子替换节点与关系边；由 knowledge_service 兼容导出 | seed_file、db_source | 导入数量 |
 | `OrgInvitationMixin` | `backend/services/org/org_invitation_mixin.py` | 创建企业邀请并校验手机号、状态、容量后接受邀请 | org/user/invite context | 邀请或成员结果 |
 | `_update_message_image_part` | `backend/api/routes/image_ecom.py` | 在指定 conversation/message 内把失败图片按图片序号原位替换为公开 ImagePart，拒绝越界并返回真实 content 数组下标 | db, message/conversation ID, image ordinal, emit payload | int |
 | `list_user_assets` | `backend/api/routes/admin_user_assets.py` | 超管校验目标用户后调用资产查询 RPC，按来源/媒体类型和不透明复合游标读取 ready canonical 资产 | uid, source_type, media_type?, limit, cursor? | items/next_cursor/has_more/total |
@@ -1658,7 +1670,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `create_dedicated_connection` | `backend/services/knowledge_config.py` | 为后台批量任务创建独立连接，在业务 SQL 前注入显式 Worker Scope |
 | `close_pg_pools` | `backend/services/knowledge_config.py` | 在 Web 退出时关闭并清除 runtime/worker 两类 knowledge raw pool |
 | `warm_knowledge_base` | `backend/services/web_database_runtime.py` | 预热 runtime 知识池，并通过 Worker Scope/URL 执行加锁的全局 Seed 导入 |
-| `start_web_database_runtime` / `WebDatabaseRuntime.stop` | `backend/services/web_database_runtime.py` | 使用独立 Worker client 启停 Web 内恢复、清理、轮询和错误监控任务并关闭两类连接池 |
+| `start_web_database_runtime` / `WebDatabaseRuntime.stop` | `backend/services/web_database_runtime.py` | 使用独立 Worker client 启停 Web 内恢复、轮询和错误监控任务并关闭两类连接池；不再清理已删除的 pending_interaction |
 | `setup-tenant-db-roles.sh` | `deploy/setup-tenant-db-roles.sh` | 幂等创建 owner、一次性 config-import-reader、migrator 和运行角色，校验全部独立密码并显式收紧角色能力 |
 | `build_psql_environment` / `main` | `deploy/run-psql-admin.py` | 将管理员 PostgreSQL URL 严格解析为 libpq 环境并启动 psql，避免凭证出现在进程参数 |
 | `validate-tenant-db-env.sh` | `deploy/validate-tenant-db-env.sh` | 在服务切换前验证三类角色环境文件、0600 权限、登录角色与连接串独立性 |
