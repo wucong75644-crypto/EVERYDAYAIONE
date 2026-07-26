@@ -438,7 +438,7 @@ Memory、Artifact 和专业 Executor。
 | 5 | Skill/Goal/Subagent/MCP | 全部接同一 Session 合同 |
 | 6 | 旧 Prompt/Compressor/Loop 退出 | 观察窗口后删除 |
 
-## 14. 测试、灰度与回滚
+## 14. 测试、完整切换与回滚
 
 核心不变量：
 
@@ -451,7 +451,7 @@ Memory、Artifact 和专业 Executor。
 7. Memory Snapshot 在 Epoch 内不漂移。
 8. 当前用户纠正优先于旧 Memory。
 
-灰度指标：
+切换门禁指标：
 
 - ContextPlan shadow mismatch。
 - stable prefix divergence。
@@ -462,9 +462,10 @@ Memory、Artifact 和专业 Executor。
 - duplicate external action，必须为 0。
 - terminal delivery mismatch。
 
-每个 Wave 使用独立 feature flag。Shadow 不改变 Provider payload；Context 阶段可按组织回
-旧 builder；Action 只切 dispatcher，不重放已 Accepted 动作；新增数据库结构只停止写入，
-不删除事实。迁移 138–144 未验证前不得进入依赖它们的生产 Wave。
+Shadow 不改变 Provider payload。测试和对账通过后完整切换，不按组织、用户或流量
+Canary；回滚先停止新入口并排空 in-flight，再整体恢复旧 builder。Action 切换前后保持
+single owner，不重放已 Accepted 动作；新增数据库结构回滚只停止写入，不删除事实。
+迁移 138–144 未验证前不得进入依赖它们的生产 Wave。
 
 ## 15. 待确认
 

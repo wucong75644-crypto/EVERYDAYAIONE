@@ -1,5 +1,15 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-26 Agent Runtime AR-00 总控验收纠偏 — 已完成文档修正
+
+- 唯一正向实现目录统一为 `backend/services/agent/runtime/`；旧
+  `backend/services/agent_runtime/` 只允许出现在禁止性说明中。
+- AR-01～AR-04 已按真实代码冻结为 Worker 活跃企业枚举、孤儿任务恢复、全局知识种子
+  导入、删除失效 pending_interaction 启动清理；各任务的入口、Owner、文件范围、RPC、
+  迁移、权限禁区和验收交接均写入 AR-00 基线。
+- 发布决策改为 additive expand、可选无副作用 shadow 对账、门禁通过后维护窗口完整
+  切换；不采用租户、用户、Channel 或流量 Canary，并保持 single-owner 与可回滚。
+
 ## 2026-07-26 数据库角色切换能力闭环 — 分域实施中
 
 - 生产 Backend 已使用 `everydayai_runtime`，但 `users`、`conversations`、

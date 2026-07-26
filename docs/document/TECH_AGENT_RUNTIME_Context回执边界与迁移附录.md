@@ -83,9 +83,10 @@ Receipt 不保存敏感正文，只保存 refs、hash、token、revision 和原�
 | 耦合 | Prompt/Memory/Artifact/Tools 均接入 | 中 | ContextBlock 作为唯一契约 |
 | 一致性 | 与 Snapshot/Actor 一致 | 低 | 固定 revision/hash |
 | 可观测性 | 新增 block/token/trim 指标 | 低 | receipt 与 usage 对账 |
-| 可回滚 | 旧 assembler 可并存 | 低 | feature flag 按 channel/model |
+| 可回滚 | 旧 assembler 可并存 | 低 | 完整切换前保留旧入口 |
 
-不存在需要暂停设计的未决高风险；风险主要在迁移一致性，应通过 shadow diff 和逐通道灰度控制。
+不存在需要暂停设计的未决高风险；风险主要在迁移一致性，应通过无副作用 shadow diff、
+切换前对账和 single-owner 完整切换控制，不按通道或流量灰度。
 
 ## 5. 计划文件与接口
 
@@ -125,7 +126,7 @@ Receipt 不保存敏感正文，只保存 refs、hash、token、revision 和原�
 5. 统一 compressor 并增加 suppression/in-flight/fingerprint。
 6. 接入 Memory/Knowledge/Artifact Search/Get。
 7. Skill/MCP/Subagent 只通过独立 ContextPlan 接入。
-8. 按 Web 小流量、企微、长 Goal、子 Agent 顺序灰度。
+8. Web、企微、长 Goal、子 Agent 全部通过门禁后，在维护窗口完整切换。
 
 验收门禁：
 

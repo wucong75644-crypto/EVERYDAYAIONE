@@ -89,7 +89,7 @@ ERP、文件、沙盒、图表等专业能力已经可用。
 - Web、企微、定时任务和未来 API/MCP 入口共享同一个 Runtime。
 - 付费、敏感数据和外部副作用必须经过 Policy，不由 Prompt/Skill/MCP 隐式授权。
 - `execute_chat`、媒体、ERP、文件和企微只能渐进接入，不能一次重写。
-- 新旧链路必须可按组织灰度、shadow compare 和独立回滚。
+- 新旧链路允许无副作用 shadow compare；测试和对账通过后完整切换，并可独立回滚。
 - 同一业务事实只允许一个 owner 提交终态和费用。
 - 所有公共协议必须版本化，新增字段优先 additive。
 
@@ -113,7 +113,7 @@ ERP、文件、沙盒、图表等专业能力已经可用。
 | 持久恢复 | 依赖现有 task 特例 | 统一状态，复用 Actor | 可做但分布式事务复杂 |
 | 性能 | 进程内快 | 进程内快，长任务异步 | 网络与序列化开销大 |
 | 测试 | 难隔离 | 可按模块/协议测试 | 需要完整集成环境 |
-| 灰度迁移 | 难区分新旧职责 | adapter + shadow 最清晰 | 双系统迁移成本最高 |
+| 切换迁移 | 难区分新旧职责 | adapter + shadow 对账后完整切换 | 双系统迁移成本最高 |
 | 10x 扩展 | 单体内部耦合成为瓶颈 | Worker/Executor 可独立横扩 | 可横扩但过早复杂化 |
 | 风险 | 巨型类、重复状态机 | 协议设计和双写一致性 | 运维、网络、数据一致性 |
 
@@ -394,12 +394,13 @@ frontend/src/runtime/
 | 耦合度 | 初期存在新旧双映射 | 高 | compatibility 只允许单向依赖并设删除门禁 |
 | 一致性 | 需协调 task、action、积分和消息 | 高 | 原子 RPC、single terminal owner |
 | 可观测性 | 统一 run/action correlation | 中 | typed event + usage ledger |
-| 可回滚性 | additive schema 可关闭新入口 | 中 | org flag、shadow/canary、旧链保留 |
+| 可回滚性 | additive schema 可关闭新入口 | 中 | claim gate、shadow 对账、旧链保留 |
 | 性能 | 事件写入增加数据库负载 | 中 | append 索引、chunk 合并、异步 projection |
 | 安全 | MCP/Skill/Subagent 扩大能力面 | 高 | capability subset、Policy fail closed |
 
 这些高风险来自项目规模，不是未决的路线冲突。已通过“additive schema、single owner、
-compatibility adapter、分波次 canary”限定；数据库状态机设计阶段仍需再次审查原子边界。
+compatibility adapter、对账后完整切换”限定；不按租户、用户或流量 Canary。数据库
+状态机设计阶段仍需再次审查原子边界。
 
 ## 10. 边界场景
 

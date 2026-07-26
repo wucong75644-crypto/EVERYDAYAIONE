@@ -485,7 +485,7 @@
 - `docs/document/TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`：冻结现有与目标能力
   边界、唯一 `backend/services/agent/runtime/` 目录、企业/企业员工/散客三级隔离、
   全局/企业/个人/Session 配置继承、Conversation/Task/Message 新旧映射，以及后续
-  AR-01～AR-04 共用的 RPC、角色责任和迁移门禁。
+  后续 Runtime RPC 合同，以及 AR-01～AR-04 各自的入口、Owner、文件、权限和迁移门禁。
 - `docs/document/TECH_Grok式通用记忆运行时重构.md`：将现有业务硬编码的 L1/L2/L3 记忆管道收口为 Grok 式通用 Session Flush、Session Memory、Consolidation、Curated Memory 与 Search/Get 生命周期；领域差异仅允许通过受限 Skill Profile 提供。
 - `backend/services/memory/contracts.py`、`candidate_validator.py`：Grok 式通用记忆候选协议与 fail-closed 原文证据门禁；首期只建立契约和误提取基线，尚未切换生产写入。
 - `backend/tests/test_l1_generic_memory.py`：通用 `NO_MEMORY/CANDIDATES` 解析、精确用户证据、整批拒绝、去重失败关闭及真实消息 ID 传递回归测试。
@@ -536,7 +536,7 @@
 - `docs/document/TECH_SESSION_RUNTIME多租户通用Agent架构.md`：在现有 Conversation Actor 和既有
   `agent_*` Runtime 设计上冻结方案 A；补充全局管理员、企业、个人、Session 四层配置与策略继承，
   企业 Skill 共享、系统推荐/自动/强制安装，以及 MCP/Goal 第一阶段边界，禁止另建平行 Runtime 表。
-- `docs/document/TECH_AGENT_RUNTIME统一Session运行时与上下文加载合同.md`：以 Grok Build 最新源码为基线，定义统一 Session 状态推进、Context Epoch、ModelStep、首轮/多轮/工具循环/Compaction/冷恢复加载合同，以及 A+ 分波次迁移、灰度和回滚边界。
+- `docs/document/TECH_AGENT_RUNTIME统一Session运行时与上下文加载合同.md`：以 Grok Build 最新源码为基线，定义统一 Session 状态推进、Context Epoch、ModelStep、首轮/多轮/工具循环/Compaction/冷恢复加载合同，以及 A+ 分波次迁移、完整切换和回滚边界。
 - `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
 - `docs/document/TECH_统一Validation与Recovery运行时.md`及实施附录：参考 Grok Build 的 typed result、结构化错误回填、有界恢复和 Completion Requirement，规划全项目唯一的通用校验与恢复内核；不包含 Skill 或业务专属校验。
 - `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
@@ -575,7 +575,7 @@
 - `docs/document/TECH_AGENT_RUNTIME_扩展运行时迁移附录.md`：记录扩展层架构影响、计划目录、渐进迁移顺序和安全验收门禁。
 - `docs/document/TECH_AGENT_RUNTIME_Subagent与后台任务.md`：定义受限 Child Run、委派合同、隔离 Context/Capability、预算、Workspace isolation、父级唤醒及 Background Action 分界。
 - `docs/document/TECH_AGENT_RUNTIME_多通道Projection与交互协议.md`：定义 RuntimeEvent 有序信封、Snapshot/Replay、Projection reducer、持久 Interaction、ChannelCapability 及 Web/企微确定性降级。
-- `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、Canary、自动门禁、双写对账与回滚。
+- `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：保留历史文件名，正文定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、无副作用 shadow 对账、完整切换门禁与回滚；不采用租户、用户或流量 Canary。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则

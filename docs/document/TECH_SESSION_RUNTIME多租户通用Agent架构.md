@@ -374,11 +374,11 @@ Goal、Interaction、Run 和 SubRun 状态继续采用
 
 ## 13. 计划代码边界
 
-沿用既有 `backend/services/agent_runtime/` 目标目录，不新增同义
+沿用既有 `backend/services/agent/runtime/` 唯一目标目录，不新增同义
 `backend/services/runtime/`：
 
 ```text
-backend/services/agent_runtime/
+backend/services/agent/runtime/
 ├── session/
 ├── definition/
 ├── policy/
@@ -435,9 +435,9 @@ backend/services/agent_runtime/
 8. 企业微信接入统一 Session Runtime。
 9. ToolBridge、Memory 和 Extension 生命周期收口。
 10. 管理端/个人端 UI。
-11. Projection、恢复、灰度和旧旁路退出。
+11. Projection、恢复、完整切换和旧旁路退出。
 
-每一波独立完成设计确认、实现、测试覆盖、审查、灰度和回滚验证。
+每一波独立完成设计确认、实现、测试覆盖、审查、对账和回滚验证。
 
 当前实施状态（2026-07-23）：第 1 波的 WebSocket 连接身份、任务订阅边界、企业
 切换清理、本地/Redis 消息投递复合租户键，以及生产者 `org_id` 贯通已完成。
@@ -451,11 +451,12 @@ Tool Confirm 与 Steer 交互等待键的用户/企业绑定也已完成；WebSo
 
 - 新表和新字段先 expand，旧链保持可运行。
 - Runtime 先 shadow write/compare，不产生重复外部副作用。
-- 按企业和用户灰度。
+- 不按企业、用户或流量 Canary；测试和 shadow 对账通过后，在维护窗口完整切换。
 - MCP、Skill、Goal 能力可分别关闭。
 - 已产生事实的新表回滚时停写保留，禁止直接 DROP。
 - 数据库迁移 rollback 只允许删除空表或无事实的新增对象。
 - 切换前必须完成 Actor drain、schema/checksum 校验和回放一致性门禁。
+- 切换前关闭旧 Owner；切换后只有新链可提交终态、费用和外部副作用。
 
 ## 17. 验收门禁
 

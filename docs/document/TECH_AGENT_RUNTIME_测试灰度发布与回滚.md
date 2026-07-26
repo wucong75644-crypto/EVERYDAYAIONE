@@ -1,8 +1,9 @@
-# Agent Runtime 测试、灰度发布与回滚设计
+# Agent Runtime 测试、完整切换与回滚设计
 
 > 状态：总体设计 / 第一轮冻结
 > 日期：2026-07-18
-> 范围：正确性、模型质量、真实依赖、Trace、发布证据、Canary 和回滚
+> 范围：正确性、模型质量、真实依赖、Trace、发布证据、直接切换和回滚
+> AR-00 纠偏：保留文件名兼容既有索引；不采用租户、用户或流量 Canary。
 
 ## 1. 结论
 
@@ -16,7 +17,7 @@ Pure/Schema
  -> Channel E2E
  -> Eval/Chaos/Load
  -> Release Evidence
- -> Canary/Reconciliation/Rollback
+ -> Reconciliation/Direct Cutover/Rollback
 ```
 
 冻结原则：
@@ -26,7 +27,7 @@ Pure/Schema
 3. PostgreSQL、Redis、对象存储、Callback 至少有真实依赖契约测试。
 4. 测试失败必须阻断发布，不能 warning 后继续。
 5. 迁移采用 expand → compatible code → backfill → shadow → switch → contract。
-6. Canary 按 org/user/channel/action/release 控制。
+6. 不按 org/user/channel/百分比或流量 Canary；门禁通过后完整切换。
 7. 回滚应用版本不重放 Accepted/Unknown 外部动作，只进入 reconciliation。
 8. 没有 Release Evidence 不切全量。
 
@@ -46,7 +47,7 @@ Pure/Schema
 - 多数迁移测试只断言 SQL 文本，不能证明真实 PostgreSQL 并发。
 - 大量 patch/mock 分段证明，缺少全链 Trace。
 - `deploy/deploy.sh` 测试失败后继续部署。
-- 缺不可变 release artifact、schema compatibility、Actor drain 和 org canary。
+- 缺不可变 release artifact、schema compatibility、Actor drain 和直接切换 Runbook。
 - `/health` 不足以表示 Runtime/Worker/Outbox/Provider readiness。
 - 缺重复扣费、Unknown、Artifact 缺失和 UI terminal convergence 自动门禁。
 
@@ -251,8 +252,8 @@ build immutable artifact
 -> expand migration
 -> deploy N/N-1 compatible code
 -> shadow write/read
--> canary
--> progressive rollout
+-> stop old owner and drain
+-> direct cutover
 -> observe rollback window
 -> contract migration
 ```
@@ -285,31 +286,20 @@ Readiness 必查：
 
 Liveness 只证明进程活着；readiness 不健康必须非 2xx，不接新流量。
 
-## 14. Canary
+## 14. 直接切换
 
-Flag 维度：
+不设置 org ID、user cohort、channel、Action type 或流量百分比 Canary。切换单位是本次
+已确认范围内的完整调用链：
 
-- org ID；
-- user cohort；
-- channel；
-- Action type；
-- model/provider；
-- release revision。
+1. additive migration、兼容代码、真实依赖测试和 shadow 对账全部通过；
+2. 关闭旧 owner 的新 claim，等待 in-flight 排空或进入可恢复租约状态；
+3. 在维护窗口一次切换全部调用方；
+4. 新入口开放前确认旧入口不可再提交同一终态、费用或外部副作用；
+5. 观察回滚窗口，保留 additive Schema 和旧兼容代码；
+6. 对账与回滚窗口结束后再独立 contract。
 
-Run 创建时冻结 routing revision，同 Run 不跨新旧 Runtime。
-
-首期流量：
-
-```text
-internal org
--> 1% eligible org
--> 5%
--> 25%
--> 50%
--> 100%
-```
-
-每阶段至少覆盖 100 个 Run 或 30 分钟，取更晚者；低流量 Action 用固定最小样本，不只依赖百分比。
+Run 创建时冻结 release/routing revision；切换前已存在的 Run 由原 Owner 收口，不跨版本
+移交为另一个 Owner。
 
 ## 15. 自动门禁与回滚
 
@@ -364,7 +354,7 @@ Shadow 阶段：
 
 | 场景 | 处理 |
 |---|---|
-| Canary 会话跨版本 | Run 固定 release/routing |
+| 切换时存在旧 Run | 原 Owner drain；Run 固定 release/routing，不跨 Owner |
 | rollback 后新字段存在 | 旧代码忽略 additive 字段 |
 | migration 回填与在线写 | 幂等双写 + checkpoint |
 | callback 跨版本 | 按 Action schema revision |
@@ -384,7 +374,7 @@ Shadow 阶段：
 - `backend/tests/runtime/traces/`
 - `backend/tests/runtime/fakes/`
 - `frontend/src/runtime/__tests__/`
-- CI workflow、ReleaseManifest builder、canary controller、readiness endpoints
+- CI workflow、ReleaseManifest builder、cutover gate、readiness endpoints
 - migration integration harness、channel simulators
 
 迁移：
@@ -394,7 +384,7 @@ Shadow 阶段：
 3. 加真 PostgreSQL/Redis 门禁。
 4. 加 Projection reducer 与 Web/企微模拟器。
 5. 加 ReleaseManifest、readiness、Actor drain。
-6. shadow → internal → canary。
+6. shadow 对账 → 关闭旧 owner → 完整切换。
 7. 演练 kill switch 和 Accepted/Unknown reconciliation。
 8. 达到门禁后逐工具切流。
 
@@ -407,5 +397,5 @@ Shadow 阶段：
 - 任意 crash point 不重复扣费/副作用。
 - 断线和回滚后 UI/Artifact/Settlement 收敛。
 - ReleaseManifest 可定位每个 Run。
-- canary 自动暂停并可回切。
+- 切换门禁失败自动停止，完整回滚路径已演练。
 - 旧链退出前完成完整对账和回滚演练。

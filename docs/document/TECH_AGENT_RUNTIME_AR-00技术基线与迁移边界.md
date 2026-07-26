@@ -147,9 +147,10 @@ Session、Run、ModelStep、Action、Artifact、RuntimeEvent、Goal、SkillRun �
 Projection 只能从 Runtime/兼容事实生成 Message、ContentPart、WebSocket 和企微输出，
 不得由展示状态反推 Runtime 终态。
 
-## 7. 共用 RPC 与角色责任
+## 7. 后续 Agent Runtime RPC 与角色责任
 
-以下名称是 AR-01～AR-04 共用的目标合同；在相应迁移和实现落地前不得写成现有 RPC。
+以下名称保留为持久 Session/Run/Action 等后续 Agent Runtime 的目标合同，不属于
+AR-01～AR-04 的交付范围；在独立任务实施前不得写成现有 RPC。
 
 | 聚合 | 目标 RPC 族 | 唯一责任 |
 |---|---|---|
@@ -173,22 +174,78 @@ Projection 只能从 Runtime/兼容事实生成 Message、ContentPart、WebSocke
 RuntimeEvent/Outbox 同事务追加，并返回闭合 outcome。外部 IO、OSS、模型、MCP、
 WebSocket 和企微发送不得在数据库事务内执行。
 
-## 8. AR-01～AR-04 迁移边界
+## 8. AR-01～AR-04 实施边界
 
-仓库当前没有 AR-01～AR-04 的既有任务定义，因此本文不臆造任务名称或文件归属，只冻结
-所有后续任务必须共同遵守的实施顺序和交接门禁：
+AR-01～AR-04 是当前角色撤权后的四个窄能力收口任务，不负责实现第 7 节的未来
+Session/Run/ModelStep/Action/RuntimeEvent RPC。四项任务只能消除现有直接表访问，不能借机
+建立新的 Runtime 聚合、扩展业务行为或恢复运行时角色的表权限。
 
-1. **Expand**：先新增目标 Schema/RPC/RLS/Grant；不改旧 owner。
-2. **Shadow**：旧 Conversation Actor 是唯一生产 owner；新模型只记录可对账事实。
-3. **Canary**：按明确能力切换单一 owner；同一 Run/Action 不允许新旧链同时执行。
-4. **Projection cutover**：RuntimeEvent 可重放验证通过后，再切 Message/Web/WeCom 读取。
-5. **Contract**：全部调用方迁移、回滚窗口结束、无 active/unknown Action 后才删除旧合同。
+### 8.1 AR-01：Worker 活跃企业枚举
 
-每个后续任务必须明确自己拥有的表、RPC、应用入口和 Projection，不得跨任务重复创建。
-涉及新表或 RPC 时同步更新 `PROJECT_OVERVIEW.md`、`FUNCTION_INDEX.md`、迁移回滚和角色
-授权；不得创建第二套 Event Store、Session、Goal、Skill、MCP 或 Subagent 根对象。
+| 边界 | 冻结内容 |
+|---|---|
+| 当前入口和调用方 | `BackgroundTaskWorker._get_active_org_ids` 直接读取 `organizations`；`BackgroundPeriodicTasksMixin._run_model_scoring` 和 `BackgroundTaskWorker.check_data_consistency` 按结果遍历企业 |
+| 正确角色与 Owner | 调用者固定为 `everydayai_worker`；`everydayai_owner` 持有窄 `SECURITY DEFINER` 枚举 RPC |
+| 允许修改文件 | `backend/services/background_task_worker.py`；一个 additive migration 及对应 rollback；定向 migration/worker 测试；必要索引文档 |
+| RPC/无 RPC 边界 | 必须新增无参数 Worker RPC，只返回 active 企业 ID；校验 `session_user/access_kind`，固定 `search_path`，闭合返回结构 |
+| 迁移所有权 | migrator 执行并 `SET LOCAL ROLE everydayai_owner`；函数 owner 为 `everydayai_owner`；仅向 `everydayai_worker` 授予 EXECUTE |
+| 禁止扩大权限 | 不向 Worker 增加或恢复 `organizations`、`org_members`、`org_configs` 的 SELECT/UPDATE 等直接表权限 |
+| 验收与交接 | 两个调用方均消费 RPC；失权 Worker 真实数据库测试可枚举 active、不可读取表；空集合和 RPC 失败语义明确；旧直接查询全局搜索为零 |
 
-## 9. 边界与恢复
+### 8.2 AR-02：孤儿任务恢复
+
+| 边界 | 冻结内容 |
+|---|---|
+| 当前入口和调用方 | `main → start_web_database_runtime → _run_startup_recovery → recover_orphan_tasks`；后者跨租户直接读取/更新 `tasks`，并经 `save_accumulated_to_message`、`refund_task_credits` 写 Message/积分 |
+| 正确角色与 Owner | 启动协调者固定为 `everydayai_worker`；`everydayai_owner` RPC 是恢复任务的 claim、读取和原子终态 Owner |
+| 允许修改文件 | `backend/services/task_recovery.py`，确有签名需要时限于 `backend/services/task_utils.py`；一个 additive migration 及 rollback；`test_task_recovery.py`、真实 migration 契约测试；必要索引文档 |
+| RPC/无 RPC 边界 | 必须以窄 Worker RPC 替换 tasks/messages 跨租户直访；扫描/claim 与单任务 complete/fail 必须有幂等、锁和 fencing，Actor task 继续排除 |
+| 迁移所有权 | `everydayai_owner` 持有 RPC；仅 Worker EXECUTE；现有 Conversation/Message/Task owner 与资金 RPC 权限不变 |
+| 禁止扩大权限 | 不向 Worker 扩大 `tasks`、`messages`、`conversations`、`credit_transactions`、`users` 直接权限；不绕过既有退款原子能力 |
+| 验收与交接 | 启动锁仍只防重复调度，数据库 RPC 证明并发恰一恢复；有/无累积内容、Actor task、重复调用、退款与 Message/Task 原子收敛通过；直接表调用搜索为零 |
+
+### 8.3 AR-03：全局知识种子导入
+
+| 边界 | 冻结内容 |
+|---|---|
+| 当前入口和调用方 | `main → warm_knowledge_base → load_seed_knowledge → _build_seed_edges`；当前 Worker Scope 直接删除/写入 `knowledge_nodes/knowledge_edges` |
+| 正确角色与 Owner | Web 启动只负责 Redis single-flight；数据库调用使用 `everydayai_worker`；全局种子写入由 `everydayai_owner` 窄 RPC 独占 |
+| 允许修改文件 | `backend/services/knowledge_seed_service.py`，确有调用适配时限于 `backend/services/web_database_runtime.py`；一个 additive migration 及 rollback；`test_knowledge_seed_service.py`、`test_web_database_runtime.py` 和 migration 契约测试；必要索引文档 |
+| RPC/无 RPC 边界 | 必须新增全局 seed snapshot/replace 或逐项幂等 commit RPC；只接受受限 seed schema，以 `source='seed'、org_id=NULL、owner_user_id=NULL` 为固定作用域；边构建必须在 RPC 内校验端点 |
+| 迁移所有权 | `everydayai_owner` 持有 RPC；仅 Worker EXECUTE；Knowledge 表与序列继续由 owner 管理 |
+| 禁止扩大权限 | 不向 Worker 授予 `knowledge_nodes`、`knowledge_edges`、`knowledge_metrics` 直接读写；不扩大 Runtime 的现有个人/企业知识权限 |
+| 验收与交接 | 重复导入幂等、旧 seed 清理与新节点/边原子、非 seed 数据不变、非法 owner scope 拒绝；失权 Worker 可调用 RPC 但不能直接访问三表 |
+
+### 8.4 AR-04：删除失效 pending_interaction 清理
+
+| 边界 | 冻结内容 |
+|---|---|
+| 当前入口和调用方 | `start_web_database_runtime` 调用 `_expire_pending_interactions`；迁移 `112_drop_pending_interaction.sql` 已删除该表，函数仅吞掉异常 |
+| 正确角色与 Owner | 无数据库 Owner；启动流程不再承担该已删除模型的清理责任 |
+| 允许修改文件 | `backend/services/web_database_runtime.py`、`backend/tests/test_web_database_runtime.py`；必要索引文档 |
+| RPC/无 RPC 边界 | 不新增 RPC、不新增迁移、不恢复表；删除调用、函数、无效 import 和过期测试 |
+| 迁移所有权 | 迁移 112 保持最终事实，不新增 rollback，不重建 `pending_interaction` |
+| 禁止扩大权限 | 不向 Runtime/Worker 增加任何 `pending_interaction` 权限，不以兼容名创建替代表 |
+| 验收与交接 | 启动路径和全局调用搜索均无 `_expire_pending_interactions/pending_interaction` 清理引用；现有持久 Interaction 未来只归 Agent Runtime 正式任务 |
+
+四项任务各自提交、测试和审查，不得交叉修改对方文件。发现必须跨边界时停止并返回总控。
+新增 RPC 时同步更新 `PROJECT_OVERVIEW.md`、`FUNCTION_INDEX.md`、迁移 rollback 和角色授权。
+
+## 9. 发布与切换边界
+
+1. **Additive expand**：先新增窄 RPC、授权和兼容代码，不删除旧事实。
+2. **Shadow reconcile（可选）**：只允许无副作用的结果对账；不得写业务终态、费用或外部系统。
+3. **Direct cutover**：不按租户、用户、Channel、百分比或流量 Canary。定向测试、真实角色
+   测试和对账通过后，在一次受控维护窗口完整切换该任务的所有调用方。
+4. **Single owner**：切换前旧实现是唯一 Owner；切换事务完成后新 RPC 是唯一 Owner，
+   禁止新旧路径并行写同一业务事实。
+5. **Rollback**：保留 additive Schema/RPC；应用回滚前关闭新入口并排空 in-flight。
+   已接受或终态不确定的外部动作由原 Owner 收口，旧链不得重复提交。
+6. **Contract**：回滚窗口结束、调用搜索为零且生产对账通过后，才在独立任务删除旧合同。
+
+未来 Agent Runtime 聚合迁移同样遵守上述发布原则，但不属于 AR-01～AR-04。
+
+## 10. 边界与恢复
 
 | 场景 | 冻结处理 |
 |---|---|
@@ -202,11 +259,11 @@ WebSocket 和企微发送不得在数据库事务内执行。
 | Session 配置越权 | 解析失败关闭，不静默扩大权限 |
 | Scope 状态变化 | 新工作失败关闭；外部已接受工作仅允许对账收口 |
 
-## 10. 验收门禁
+## 11. 验收门禁
 
 - `backend/services/agent_runtime/` 不得作为现有或计划实现路径；仅允许出现在禁止性说明。
 - 目标对象必须明确标记“尚未实施”或附真实迁移/代码证据。
 - 三级 Scope、四层配置和新旧映射在数据库、RPC、应用与 Projection 文档中一致。
-- Shadow/Canary 任一时刻只有一个副作用、费用和终态 Owner。
+- Shadow/直接切换任一时刻只有一个副作用、费用和终态 Owner。
 - 所有新增迁移有 rollback、RLS/Grant/真实 PostgreSQL 契约测试和生产前 plan 门禁。
 - 未经独立任务授权，不修改运行时代码，不部署生产。

@@ -378,11 +378,12 @@ callback Inbox 和 reconciliation 恢复。
 - 每次旧 task 终态后比较 status/result hash/usage/cost。
 - Shadow 写失败不得重试外部副作用、扣费或退款，也不得阻断旧 Actor 的生产终态。
 
-### 阶段 B：Read-only Action canary
+### 阶段 B：Read-only Action 完整切换
 
 - 新 Runtime 成为只读 Tool Action owner。
 - legacy tool_step 仅由 Projection 写。
-- 失败可按 org flag 回旧 Tool loop。
+- 测试和 shadow 对账通过后一次切换全部调用方，不按组织、用户或流量 Canary。
+- 回滚先关闭新 claim 并排空 in-flight，再整体恢复旧 Tool loop；同一 Action 不跨 Owner。
 
 ### 阶段 C：Media
 
