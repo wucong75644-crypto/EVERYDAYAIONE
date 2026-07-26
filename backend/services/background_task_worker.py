@@ -70,17 +70,23 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
 
     async def _get_active_org_ids(self) -> list[str]:
         """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
-        try:
-            result = (
-                self.db.table("organizations")
-                .select("id")
-                .eq("status", "active")
-                .execute()
+        result = self.db.rpc(
+            "worker_list_active_organization_ids",
+        ).execute()
+        payload = result.data
+        if (
+            not isinstance(payload, dict)
+            or payload.get("outcome") != "listed"
+            or not isinstance(payload.get("organization_ids"), list)
+            or not all(
+                isinstance(org_id, str)
+                for org_id in payload["organization_ids"]
             )
-            return [str(row["id"]) for row in (result.data or [])]
-        except Exception as e:
-            logger.warning(f"Failed to load active orgs | error={e}")
-            return []
+        ):
+            raise RuntimeError(
+                "WORKER_ACTIVE_ORGANIZATION_RESPONSE_INVALID"
+            )
+        return payload["organization_ids"]
 
     async def start(self):
         """启动后台工作器"""
