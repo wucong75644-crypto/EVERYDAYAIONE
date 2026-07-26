@@ -203,18 +203,27 @@ BEGIN
         );
     END LOOP;
     FOREACH function_name IN ARRAY target_functions LOOP
-        EXECUTE format(
-            'ALTER FUNCTION public.%s OWNER TO everydayai_owner',
-            function_name
-        );
-        EXECUTE format(
-            'REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime, everydayai_worker',
-            function_name
-        );
-        EXECUTE format(
-            'GRANT EXECUTE ON FUNCTION public.%s TO %I',
-            function_name, '${legacy_owner}'
-        );
+        IF (
+            SELECT owner_role.rolname
+              FROM pg_catalog.pg_proc procedure
+              JOIN pg_catalog.pg_roles owner_role
+                ON owner_role.oid = procedure.proowner
+             WHERE procedure.oid =
+                   to_regprocedure('public.' || function_name)
+        ) = '${legacy_owner}' THEN
+            EXECUTE format(
+                'ALTER FUNCTION public.%s OWNER TO everydayai_owner',
+                function_name
+            );
+            EXECUTE format(
+                'REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime, everydayai_worker',
+                function_name
+            );
+            EXECUTE format(
+                'GRANT EXECUTE ON FUNCTION public.%s TO %I',
+                function_name, '${legacy_owner}'
+            );
+        END IF;
     END LOOP;
 END
 \$transfer\$;

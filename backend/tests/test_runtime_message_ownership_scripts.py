@@ -183,6 +183,10 @@ def test_transfer_revokes_new_roles_and_preserves_legacy_service(
         "REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, "
         "everydayai_runtime, everydayai_wecom_runtime, everydayai_worker"
     ) in sql
+    assert (
+        "to_regprocedure('public.' || function_name)"
+    ) in sql
+    assert ") = 'everydayai' THEN" in sql
     assert "GRANT EXECUTE ON FUNCTION public.%s TO %I" in sql
     assert (
         "public.resolve_wecom_conversation(uuid,text,text,text,uuid)"
