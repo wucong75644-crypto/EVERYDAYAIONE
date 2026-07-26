@@ -27,6 +27,22 @@
   80 errors、18 warnings；覆盖率门禁在原 Vitest 3 基线和升级后均低于 80%，属于
   既有前端质量债务，本次不越界修改业务源码或降低门槛。
 
+## 2026-07-27 Agent Runtime AR-05～AR-07 基础合同 — 已集成并通过联合验证，待部署
+
+- AR-05 在唯一正向目录 `backend/services/agent/runtime/` 建立无框架依赖的
+  Session、Run、ModelStep、Action、Event、Scope、lease、fencing、幂等领域合同，
+  以及 Repository、Model、Executor、Event、Projection ports；尚未切换现有业务 Owner。
+- AR-06 通过迁移 212～215 建立 Session、Command、Run、RunAttempt、ModelStep、
+  RuntimeEvent 和 Projection Outbox 七张持久表及窄 RPC。七表均启用
+  `RLS + FORCE RLS`，runtime、WeCom、Worker 和 PUBLIC 均无直接表权限；迁移必须按
+  212→213→214→215 应用，回滚严格逆序且存在业务事实时拒绝删除基础表。
+- AR-07 提供可复用 Trace schema、Replay、Projection 和 single-owner、fencing、
+  Scope、幂等断言，18 个 fixture 覆盖重复/乱序/缺口事件、断线与 Actor 重启恢复、
+  Accepted/Unknown、取消竞态、企业员工、散客和 actorless system。
+- 当前阶段是 additive foundation：未接入生产调用方、未执行 Owner 切换、未部署迁移。
+  AR-05～07 联合合同与相邻 Runtime 回归已通过；生产发布仍须应用 212～215、验证角色
+  权限矩阵和迁移账本，不能把基础表上线等同于业务 Owner 已切换。
+
 ## 2026-07-26 Agent Runtime AR-01～AR-04 角色能力收口 — 已集成，待部署验证
 
 - AR-01 通过迁移 209 的 `worker_list_active_organization_ids` 窄能力替换 Worker

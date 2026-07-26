@@ -58,6 +58,22 @@
 | `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务幂等退款并提交失败终态 |
 | `worker_replace_global_knowledge_seed` | `backend/migrations/211_worker_global_knowledge_seed_capability.sql` | 校验受限节点、1024 维 Embedding 和边端点，原子替换全局 Seed 且拒绝跨作用域引用 |
 
+### Agent Runtime AR-05～AR-07 基础合同
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `RuntimeScope`、`SessionCommand`、`RunAttempt`、`ActionAttempt`、`ExecutionReceipt`、`RuntimeEvent` | `backend/services/agent/runtime/domain/` | 定义 Scope、状态、lease/fencing、幂等、执行回执和事件信封的领域单一类型来源 |
+| `validate_transition` | `backend/services/agent/runtime/domain/transitions.py` | 对 Session、Run、ModelStep、Action 和 ActionAttempt 执行终态不可逆的状态转移校验 |
+| Repository / Model / Executor / Event / Projection ports | `backend/services/agent/runtime/ports/` | 定义 Runtime 领域与数据库、模型、执行器、事件存储和投影基础设施之间的反转边界 |
+| `ensure_agent_runtime_session` / `submit_session_command` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql` | runtime/WeCom 在精确 Actor/Org Scope 内幂等建立 Session、提交完整 request hash 的 Command |
+| `create_agent_run` / `claim_agent_run` / `renew_agent_run` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql` | Worker 为单个 Command 唯一创建 Run，并以 lease、execution token 和 attempt 执行 claim/续租 |
+| `set_agent_run_waiting` / `wake_agent_run` / `complete_agent_run` / `fail_agent_run` / `cancel_agent_run` | `backend/migrations/214_agent_runtime_run_lifecycle_rpcs.sql` | 以 Session→Run 锁序、CAS、fencing 和终态内容冲突检查推进 Run 生命周期 |
+| `create_model_step` / `complete_model_step` / `fail_model_step` | `backend/migrations/215_agent_runtime_model_event_projection_rpcs.sql` | Worker 在有效 Run lease 内记录模型请求、Token 和确定性终态 |
+| `claim_agent_projection_outbox` / `complete_agent_projection_outbox` / `fail_agent_projection_outbox` | `backend/migrations/215_agent_runtime_model_event_projection_rpcs.sql` | 通过 `SKIP LOCKED`、lease token、checkpoint 幂等和有界退避消费投影 Outbox |
+| `load_trace_bundle` / `load_trace_manifest` / `validate_trace_bundle` | `backend/tests/agent_runtime/trace_schema.py` | 加载并验证可复用 Runtime Trace 与 fixture manifest |
+| `replay_trace` / `replay_events` / `replay_projection` | `backend/tests/agent_runtime/trace_replay.py` | 确定性重放 Command、Event 和 Projection 记录并返回闭合结果 |
+| `assert_deterministic` / `assert_single_owner` / `assert_fencing` / `assert_scope` / `assert_expected_outcome` | `backend/tests/agent_runtime/trace_assertions.py` | 为后续 Runtime 阶段提供确定性、单 Owner、fencing、Scope 和预期结果断言 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
