@@ -1241,7 +1241,7 @@
   Conversation Actor 均使用独立角色且保持 active，登录二维码、内部与公网健康检查
   通过，迁移计划及非 applied 账本记录均为 0，旧 owner 兼容继承已撤销。
 
-# 2026-07-26 最终撤权后核心链路回归 — 修复待部署
+# 2026-07-26 最终撤权后核心链路回归 — 已部署，待真实 UI 联合验收
 
 - 生产最终撤销旧 owner 继承后，Web 新建对话在 `INSERT ... RETURNING` 阶段被
   conversations 自回查 RLS 拒绝，既有对话生成又因 `prepare_generation` 未授予
@@ -1249,9 +1249,17 @@
 - 图片原图、缩略图、NAS 与 OSS 写入均成功；资产登记暴露 Scoped RPC 未把 dict/list
   适配为 JSONB。浏览器缩略图破图的独立根因是 `cdn.everydayai.com.cn` 证书已于
   2026-07-25 23:59:59 GMT 到期，忽略 TLS 校验时两个真实对象均为 HTTP 200。
-- 迁移 203、Scoped RPC、治理 RPC 和 Actor 固定 AI Bundle 修复已实现，真实生产
-  Schema 事务预演后完整回滚，定向测试通过。Memory 的真实 Worker Scope 回滚重放
-  已通过，因此不盲目扩大策略。当前仍需完成代码审查、部署及 CDN 证书续期。
+- 提交 `40538066536114ac0e7d8b8406cc24c66c57f187` 已部署，迁移 203 账本状态为
+  `applied:migration`；发布全量测试 `8438 passed, 5 skipped, 4 xfailed`，四服务与
+  公网健康检查通过。生产 runtime 回滚事务已验证新建对话 `INSERT ... RETURNING`
+  和 `prepare_generation` 权限恢复。
+- 生产已备份 `.env` 并临时清空 `OSS_CDN_DOMAIN`，新对象 URL 改用阿里云 OSS 官方
+  HTTPS 域名；这是对过期 CDN 证书的安全缓解，不是证书根治，旧 CDN URL 仍需续期
+  后恢复。Worker 固定 AI Bundle 已可调用，但配置控制面返回
+  `CONFIG_REGISTRY_DRIFT`，当前代码按设计降级平台默认 AI Key，企业 BYOK 仍待修复。
+- Memory 的真实 Worker Scope 回滚重放已通过，因此不盲目扩大策略。当前还需用户
+  在已登录 Web 页面重新发送文字和上传图片，并验证企微消息；未完成这些真实链路
+  前不得宣布最终切换完成。
 
 # 2026-07-25 定时任务角色隔离收尾
 

@@ -1,6 +1,6 @@
 # 角色撤权后核心链路修复
 
-> 状态：方案已确认，实施中  
+> 状态：已部署，待真实 UI 联合验收
 > 日期：2026-07-26
 
 ## 1. 目标
@@ -60,7 +60,9 @@ runtime，未覆盖携带可信用户/企业 Scope 的 Worker。
 
 原图与缩略图已成功写入 NAS 和 OSS，忽略 TLS 校验时两个对象均返回 HTTP 200。
 `cdn.everydayai.com.cn` 证书在 2026-07-25 23:59:59 GMT 到期，浏览器拒绝加载。
-必须续期或替换 CDN 证书，禁止前端降级 HTTP 或关闭证书校验。
+必须续期或替换 CDN 证书，禁止前端降级 HTTP 或关闭证书校验。证书续期前，生产
+已临时清空 `OSS_CDN_DOMAIN`，使新上传对象使用阿里云 OSS 官方 HTTPS 域名；旧
+CDN URL 不会因此自动改写。
 
 ## 3. 技术方案
 
@@ -94,7 +96,19 @@ runtime，未覆盖携带可信用户/企业 Scope 的 Worker。
 ### 3.3 CDN
 
 在 CDN/证书控制面为 `cdn.everydayai.com.cn` 部署有效证书，随后验证证书链、真实
-原图和缩略图 HTTPS 200，以及浏览器上传后缩略图显示。该步骤不通过代码绕过。
+原图和缩略图 HTTPS 200，以及浏览器上传后缩略图显示。当前直连 OSS 只是可回滚的
+生产缓解；CDN 证书恢复前不重新启用 `OSS_CDN_DOMAIN`。
+
+## 3.4 部署后事实
+
+- 提交 `40538066536114ac0e7d8b8406cc24c66c57f187` 已完成全量部署。
+- 迁移账本中 203 为 `applied:migration`，四服务和公网健康检查通过。
+- runtime 生产回滚事务已验证对话 `INSERT ... RETURNING` 和
+  `prepare_generation` EXECUTE。
+- OSS URL 生成已验证 `cdn_enabled=false`，主机为
+  `everydayai-images.oss-cn-hangzhou.aliyuncs.com`。
+- Worker AI Bundle 权限已恢复，但生产配置注册表返回 `CONFIG_REGISTRY_DRIFT`；
+  Adapter 当前降级平台默认 Key，企业 BYOK 不视为已验收。
 
 ## 4. 边界与失败行为
 
