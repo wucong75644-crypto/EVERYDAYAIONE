@@ -6,8 +6,13 @@ from pathlib import Path
 import subprocess
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations/212_agent_runtime_core_foundation.sql"
-ROLLBACK = ROOT / "migrations/rollback/212_agent_runtime_core_foundation_rollback.sql"
+MIGRATIONS = tuple(sorted(
+    path for path in (ROOT / "migrations").glob("21[2-5]_*.sql")
+))
+ROLLBACKS = tuple(
+    ROOT / "migrations/rollback" / f"{path.stem}_rollback.sql"
+    for path in reversed(MIGRATIONS)
+)
 DATABASE_URL = os.getenv("AR06_TEST_DATABASE_URL", ""); USER_ID, ORG_ID = (
                    "11111111-1111-1111-1111-111111111111",
                    "22222222-2222-2222-2222-222222222222")
@@ -69,81 +74,7 @@ def _worker(sql: str, *, check: bool = True) -> subprocess.CompletedProcess[str]
         SELECT set_config('app.request_id', 'ar06-worker', false);
     """
     return _psql(prefix + sql, check=check)
-BOOTSTRAP = """
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-DO $roles$
-BEGIN
-    IF to_regrole('everydayai_owner') IS NULL
-        THEN CREATE ROLE everydayai_owner NOLOGIN; END IF;
-    IF to_regrole('everydayai_runtime') IS NULL
-        THEN CREATE ROLE everydayai_runtime NOLOGIN; END IF;
-    IF to_regrole('everydayai_wecom_runtime') IS NULL
-        THEN CREATE ROLE everydayai_wecom_runtime NOLOGIN; END IF;
-    IF to_regrole('everydayai_worker') IS NULL
-        THEN CREATE ROLE everydayai_worker NOLOGIN; END IF;
-    IF to_regrole('everydayai_sync') IS NULL
-        THEN CREATE ROLE everydayai_sync NOLOGIN; END IF;
-    IF to_regrole('everydayai') IS NULL
-        THEN CREATE ROLE everydayai NOLOGIN; END IF;
-END
-$roles$;
-GRANT everydayai_owner, everydayai_runtime, everydayai_wecom_runtime,
-      everydayai_worker, everydayai_sync, everydayai TO CURRENT_USER;
-GRANT USAGE, CREATE ON SCHEMA public TO everydayai_owner;
-GRANT USAGE ON SCHEMA public TO everydayai_runtime,
-    everydayai_wecom_runtime, everydayai_worker;
-SET ROLE everydayai_owner;
-CREATE TABLE users(id UUID PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active');
-CREATE TABLE organizations(
-    id UUID PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active'
-);
-CREATE TABLE org_members(
-    org_id UUID NOT NULL REFERENCES organizations(id),
-    user_id UUID NOT NULL REFERENCES users(id),
-    status TEXT NOT NULL DEFAULT 'active', PRIMARY KEY(org_id, user_id)
-);
-CREATE TABLE conversations(
-    id UUID PRIMARY KEY, user_id UUID REFERENCES users(id),
-    org_id UUID REFERENCES organizations(id), scope_type TEXT NOT NULL,
-    scope_id TEXT
-);
-CREATE FUNCTION tenant_actor_user_id() RETURNS UUID
-LANGUAGE sql STABLE AS $$
-    SELECT CASE
-        WHEN pg_input_is_valid(current_setting(
-            'app.actor_user_id', TRUE), 'uuid')
-        THEN current_setting('app.actor_user_id', TRUE)::UUID
-    END
-$$;
-CREATE FUNCTION tenant_org_id() RETURNS UUID
-LANGUAGE sql STABLE AS $$
-    SELECT CASE
-        WHEN pg_input_is_valid(current_setting('app.org_id', TRUE), 'uuid')
-        THEN current_setting('app.org_id', TRUE)::UUID
-    END
-$$;
-INSERT INTO users(id) VALUES ('11111111-1111-1111-1111-111111111111'),
-    ('44444444-4444-4444-4444-444444444444'),
-    ('77777777-7777-7777-7777-777777777777');
-INSERT INTO organizations(id)
-VALUES ('22222222-2222-2222-2222-222222222222');
-INSERT INTO org_members(org_id, user_id) VALUES
-    ('22222222-2222-2222-2222-222222222222',
-     '44444444-4444-4444-4444-444444444444'), ('22222222-2222-2222-2222-222222222222',
-     '77777777-7777-7777-7777-777777777777');
-INSERT INTO conversations(id, user_id, org_id, scope_type, scope_id) VALUES
-    ('33333333-3333-3333-3333-333333333333',
-     '11111111-1111-1111-1111-111111111111',
-     NULL, 'user', '11111111-1111-1111-1111-111111111111'),
-    ('55555555-5555-5555-5555-555555555555',
-     '44444444-4444-4444-4444-444444444444',
-     '22222222-2222-2222-2222-222222222222',
-     'user', '44444444-4444-4444-4444-444444444444'),
-    ('66666666-6666-6666-6666-666666666666', NULL,
-     '22222222-2222-2222-2222-222222222222', 'channel', 'wecom:group:test');
-RESET ROLE;
-"""
+BOOTSTRAP = (ROOT / "tests/fixtures/agent_runtime_core_postgres_bootstrap.sql").read_text(encoding="utf-8")
 @unittest.skipUnless(
     os.getenv("RUN_AR06_DB_TEST") == "1" and DATABASE_URL,
     "RUN_AR06_DB_TEST=1 and AR06_TEST_DATABASE_URL are required",
@@ -154,8 +85,9 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
         if "ar06" not in DATABASE_URL.lower():
             raise unittest.SkipTest("dedicated AR06 database name required")
         _psql(BOOTSTRAP)
-        _file(MIGRATION)
-    def test_complete_real_postgres_contract(self) -> None:
+        for migration in MIGRATIONS:
+            _file(migration)
+    def _assert_scope_and_command_contract(self) -> tuple[str, str]:
         personal = json.loads(_runtime(
             f"""
             SELECT ensure_agent_runtime_session(
@@ -204,7 +136,7 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
         shared_channel_command = json.loads(_runtime(
             f"""
             SELECT submit_session_command(
-                '{channel_session["entity_id"]}', 'user_turn',
+                '{channel_session["entity_id"]}', 'submit_input',
                 'second-member', '{{}}'
             );
             """,
@@ -231,7 +163,7 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
         command = json.loads(_runtime(
             f"""
             SELECT submit_session_command(
-                '{session_id}', 'user_turn', 'command-1', '{{"text":"hi"}}'
+                '{session_id}', 'submit_input', 'command-1', '{{"text":"hi"}}'
             );
             """,
             user_id=USER_ID,
@@ -239,17 +171,22 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
         repeated_command = json.loads(_runtime(
             f"""
             SELECT submit_session_command(
-                '{session_id}', 'user_turn', 'command-1', '{{"text":"hi"}}'
+                '{session_id}', 'submit_input', 'command-1', '{{"text":"hi"}}'
             );
             """,
             user_id=USER_ID,
         ))
         self.assertEqual(repeated_command["entity_id"], command["entity_id"])
         self.assertEqual(repeated_command["outcome"], "already_exists")
+        return session_id, command["entity_id"]
+
+    def _assert_claim_and_fencing(
+        self, session_id: str, command_id: str,
+    ) -> tuple[str, str]:
         run = json.loads(_worker(
             f"""
             SELECT create_agent_run(
-                '{session_id}', '{command["entity_id"]}', 'run-1', 'user',
+                '{session_id}', '{command_id}', 'run-1', 'user',
                 '{{}}', '{{}}', '{{}}'
             );
             """
@@ -302,6 +239,11 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             f"SELECT renew_agent_run('{run_id}', '{first_token}', 90);"
         ).stdout.strip().splitlines()[-1])
         self.assertEqual(fenced["outcome"], "ownership_lost")
+        return run_id, second_token
+
+    def _assert_terminal_event_and_outbox(
+        self, session_id: str, run_id: str, second_token: str,
+    ) -> None:
         step = json.loads(_worker(
             f"""
             SELECT create_model_step(
@@ -380,6 +322,8 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             """
         ).stdout.strip().splitlines()[-1])
         self.assertEqual(stale_outbox["outcome"], "ownership_lost")
+
+    def _assert_permission_contract(self) -> None:
         direct_table = _psql(
             "SET SESSION AUTHORIZATION everydayai_runtime;"
             "SELECT * FROM agent_runs LIMIT 1;",
@@ -425,6 +369,8 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
                AND relrowsecurity AND relforcerowsecurity;
         """)
         self.assertEqual(force_rls, "t")
+
+    def _assert_atomicity_and_rollback(self, session_id: str) -> None:
         _psql("""
             SET ROLE everydayai_owner;
             CREATE FUNCTION reject_agent_outbox() RETURNS trigger
@@ -448,7 +394,7 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             SELECT set_config('app.access_kind', 'runtime', false);
             SELECT set_config('app.request_id', 'forced-failure', false);
             SELECT submit_session_command(
-                '{session_id}', 'user_turn', 'forced-failure', '{{}}'
+                '{session_id}', 'submit_input', 'forced-failure', '{{}}'
             );
             """,
             check=False,
@@ -468,7 +414,9 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             "DROP TRIGGER reject_agent_outbox ON agent_projection_outbox;"
             "DROP FUNCTION reject_agent_outbox();"
         )
-        rollback_with_facts = _file(ROLLBACK, check=False)
+        for rollback in ROLLBACKS[:-1]:
+            _file(rollback)
+        rollback_with_facts = _file(ROLLBACKS[-1], check=False)
         self.assertNotEqual(rollback_with_facts.returncode, 0)
         self.assertIn(
             "AGENT_RUNTIME_ROLLBACK_FACTS_PRESENT",
@@ -478,7 +426,7 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             "SET ROLE everydayai_owner;"
             "TRUNCATE agent_runtime_sessions CASCADE;"
         )
-        _file(ROLLBACK)
+        _file(ROLLBACKS[-1])
         self.assertEqual(
             _value(
                 "SELECT count(*) FROM pg_class"
@@ -486,7 +434,8 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             ),
             "0",
         )
-        _file(MIGRATION)
+        for migration in MIGRATIONS:
+            _file(migration)
         self.assertEqual(
             _value(
                 "SELECT count(*) FROM pg_class"
@@ -497,3 +446,14 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
             ),
             "7",
         )
+
+    def test_complete_real_postgres_contract(self) -> None:
+        session_id, command_id = self._assert_scope_and_command_contract()
+        run_id, second_token = self._assert_claim_and_fencing(
+            session_id, command_id,
+        )
+        self._assert_terminal_event_and_outbox(
+            session_id, run_id, second_token,
+        )
+        self._assert_permission_contract()
+        self._assert_atomicity_and_rollback(session_id)
