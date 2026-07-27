@@ -1508,6 +1508,20 @@
   明确引导选择报表查询请求；解析通过后继续复用原子配置 RPC 并回读 Bundle。
 - 状态：本地实现与定向回归验证完成，待按正常发布流程上线后做生产保存验证。
 
+## 2026-07-27 快麦运营人员匹配权限断层 — 根因修复待部署
+
+- 生产证据：快麦凭证保存、连接测试和数据同步均成功，但
+  `shop_operator_sync` 报 `permission denied for table wecom_employees`。
+- 根因：匹配代码正确调用 `sync_list_wecom_employees(UUID)` 窄能力 RPC；
+  该 `SECURITY DEFINER` 函数归 `everydayai_owner`，而企微员工表仍归旧角色
+  `everydayai`，且迁移 182 未补函数执行者所需的底层读取权限。
+- 修复：管理员前置脚本只授予 `everydayai_owner` 读取 `org_id`、
+  `wecom_userid`、`name`、`status` 四个必要字段；迁移 219 失败关闭地验证
+  字段权限、RPC owner 和 `SECURITY DEFINER` 契约。不向 Sync 角色开放整表，
+  不改变表 owner；管理员回滚脚本精确撤销相同字段权限。
+- 影响：同时恢复自动匹配、既有绑定校验，以及共用相同字段依赖的管理员手动绑定。
+  本地迁移契约验证完成后仍需部署，并以 Sync 角色真实调用 RPC 验证。
+
 # 2026-07-27 用户附件刷新后消失 — 本地根因修复，待部署验证
 
 - 生产只读证据确认用户消息完整保存文本与图片 URL；丢失发生在刷新后的前端协议边界。
