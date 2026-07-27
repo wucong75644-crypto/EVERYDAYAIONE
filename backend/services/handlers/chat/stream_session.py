@@ -14,6 +14,7 @@ class StreamTotals:
         default_factory=lambda: {
             "prompt_tokens": 0,
             "completion_tokens": 0,
+            "reasoning_tokens": 0,
         }
     )
     chunk_count: int = 0
@@ -41,6 +42,9 @@ def accumulate_usage(
     """同时累计 Run 总用量与当前 ModelStep Receipt 用量。"""
     totals.usage["prompt_tokens"] += chunk.prompt_tokens or 0
     totals.usage["completion_tokens"] += chunk.completion_tokens or 0
+    totals.usage["reasoning_tokens"] += (
+        getattr(chunk, "reasoning_tokens", 0) or 0
+    )
     accumulate_cache_usage(totals, chunk)
     if chunk.credits_consumed is not None:
         totals.usage["api_credits"] = chunk.credits_consumed

@@ -4,19 +4,11 @@ from __future__ import annotations
 
 from typing import AsyncIterator, Protocol
 
-from services.agent.runtime.domain import (
-    EventSequence,
-    RuntimeEvent,
-    RuntimeEventDraft,
-    SessionId,
-)
+from services.agent.runtime.domain import EventSequence, RuntimeEvent, SessionId
 
 
 class RuntimeEventPort(Protocol):
-    """事件必须由业务原子边界分配 sequence 并追加。"""
-
-    async def append(self, event: RuntimeEventDraft) -> RuntimeEvent:
-        """分配事件 ID/sequence 后追加，调用方不能自行提供 sequence。"""
+    """业务 RPC 写事件；此 SPI 只提供权限受控的严格重放。"""
 
     def replay(
         self,

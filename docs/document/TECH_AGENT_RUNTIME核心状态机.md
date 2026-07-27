@@ -242,10 +242,16 @@ protocol_error
 
 一次 ModelStep 对应一个逻辑请求，可有多个 provider attempt：
 
-- 网络错误、429、可恢复 5xx：同 Step 重试。
-- fallback model：仍属于同 Step，但记录 model revision 改变和 fallback reason。
+- 只有 Provider 明确证明未受理时才允许同 Step 重试；当前已落地的自动重试仅包含
+  未收到任何响应的 429。
+- 502/503/504、timeout、收到部分响应后断流都表示请求可能已受理，进入
+  `unknown`，不得普通重试或重新计费。
+- fallback model 不属于 Provider adapter 自治行为；如未来需要，必须由 Coordinator
+  以新的冻结请求、revision 和明确成本合同调度。
 - 已收到不完整 Tool Call 后断线：该 attempt 失败；不能执行半截参数。
 - 已形成完整响应并持久化：重复回包按 provider request id 去重。
+- Provider adapter cleanup 使用有限超时；cleanup 失败只记录脱敏日志，不能覆盖
+  ModelStepResult、typed error 或用户取消。
 
 建议初始参数：
 

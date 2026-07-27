@@ -21,6 +21,7 @@ from ..base import (
     CostEstimate as BaseCostEstimate,
     ModelProvider,
     StreamChunk,
+    ToolCallDelta,
 )
 
 # 默认超时（秒）— 当工厂未传入 stream_timeout 时的兜底值
@@ -101,6 +102,15 @@ class OpenRouterChatAdapter(BaseChatAdapter):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        tools = kwargs.get("tools")
+        if tools:
+            request_body["tools"] = tools
+        temperature = kwargs.get("temperature")
+        if temperature is not None:
+            request_body["temperature"] = temperature
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            request_body["response_format"] = response_format
 
         client = await self._get_client()
 
@@ -131,50 +141,7 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                     except json.JSONDecodeError:
                         continue
 
-                    # 检查错误
-                    if chunk.get("error"):
-                        raise OpenRouterAPIError(
-                            f"Stream error: {chunk['error'].get('message', str(chunk['error']))}",
-                            status_code=chunk["error"].get("code", 500),
-                        )
-
-                    # 提取内容
-                    content = None
-                    thinking_content = None
-                    finish_reason = None
-                    choices = chunk.get("choices", [])
-                    if choices:
-                        delta = choices[0].get("delta", {})
-                        content = delta.get("content")
-                        thinking_content = delta.get("reasoning_content")
-                        finish_reason = choices[0].get("finish_reason")
-
-                    # 提取 usage（通常在最后一个 chunk）
-                    usage = chunk.get("usage") or {}
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    prompt_details = usage.get("prompt_tokens_details") or {}
-                    cached_tokens = prompt_details.get("cached_tokens", 0)
-                    cache_creation = usage.get(
-                        "cache_creation_input_tokens", 0
-                    )
-
-                    # OpenRouter 独有：直接返回 USD 成本
-                    cost_usd = usage.get("cost")
-                    credits_consumed = None
-                    if cost_usd is not None:
-                        credits_consumed = math.ceil(float(cost_usd) * CREDITS_PER_USD) + CREDITS_MARKUP
-
-                    yield StreamChunk(
-                        content=content,
-                        thinking_content=thinking_content,
-                        finish_reason=finish_reason,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        cached_tokens=cached_tokens,
-                        cache_creation_tokens=cache_creation,
-                        credits_consumed=credits_consumed,
-                    )
+                    yield _parse_stream_chunk(chunk)
 
         except OpenRouterAPIError:
             raise
@@ -299,3 +266,58 @@ class OpenRouterAPIError(Exception):
     def __init__(self, message: str, status_code: int = 0):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _parse_stream_chunk(chunk: Dict[str, Any]) -> StreamChunk:
+    error = chunk.get("error")
+    if error:
+        raise OpenRouterAPIError(
+            f"Stream error: {error.get('message', str(error))}",
+            status_code=error.get("code", 500),
+        )
+    choices = chunk.get("choices", [])
+    delta = choices[0].get("delta", {}) if choices else {}
+    usage = chunk.get("usage") or {}
+    cost_usd = usage.get("cost")
+    credits_consumed = (
+        math.ceil(float(cost_usd) * CREDITS_PER_USD) + CREDITS_MARKUP
+        if cost_usd is not None else None
+    )
+    return StreamChunk(
+        content=delta.get("content"),
+        thinking_content=delta.get("reasoning_content"),
+        finish_reason=(
+            choices[0].get("finish_reason") if choices else None
+        ),
+        refusal=bool(delta.get("refusal")),
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        reasoning_tokens=(
+            usage.get("completion_tokens_details") or {}
+        ).get("reasoning_tokens", 0),
+        cached_tokens=(
+            usage.get("prompt_tokens_details") or {}
+        ).get("cached_tokens", 0),
+        cache_creation_tokens=usage.get(
+            "cache_creation_input_tokens", 0
+        ),
+        credits_consumed=credits_consumed,
+        tool_calls=_parse_tool_call_deltas(delta),
+    )
+
+
+def _parse_tool_call_deltas(
+    delta: Dict[str, Any],
+) -> Optional[List[ToolCallDelta]]:
+    raw_calls = delta.get("tool_calls")
+    if not raw_calls:
+        return None
+    return [
+        ToolCallDelta(
+            index=call.get("index", 0),
+            id=call.get("id"),
+            name=call.get("function", {}).get("name"),
+            arguments_delta=call.get("function", {}).get("arguments"),
+        )
+        for call in raw_calls
+    ]

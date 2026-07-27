@@ -222,6 +222,7 @@ def _record_context_receipt(
             "provider_usage": {
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
+                "reasoning_tokens": 0,
                 "cached_tokens": 0,
                 "cache_creation_tokens": 0,
             },

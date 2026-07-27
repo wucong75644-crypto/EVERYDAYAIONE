@@ -73,9 +73,11 @@ class StreamChunk:
     content: Optional[str] = None           # 增量文本内容
     thinking_content: Optional[str] = None  # 增量思考内容（reasoning_content）
     finish_reason: Optional[str] = None     # 结束原因
+    refusal: bool = False                   # Provider 明确拒绝回答
     # Token 使用量（通常在最后一帧返回）
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    reasoning_tokens: int = 0
     cached_tokens: int = 0
     cache_creation_tokens: int = 0
     # API 报告的实际积分消耗（优先使用，无则走本地估算）
@@ -96,6 +98,7 @@ class StreamChunk:
         return any((
             self.prompt_tokens,
             self.completion_tokens,
+            self.reasoning_tokens,
             self.cached_tokens,
             self.cache_creation_tokens,
         ))

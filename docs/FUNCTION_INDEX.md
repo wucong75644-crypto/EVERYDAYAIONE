@@ -58,7 +58,7 @@
 | `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务幂等退款并提交失败终态 |
 | `worker_replace_global_knowledge_seed` | `backend/migrations/211_worker_global_knowledge_seed_capability.sql` | 校验受限节点、1024 维 Embedding 和边端点，原子替换全局 Seed 且拒绝跨作用域引用 |
 
-### Agent Runtime AR-05～AR-07 基础合同
+### Agent Runtime AR-05～AR-09 基础合同
 
 | 函数/类型 | 文件 | 说明 |
 |---|---|---|
@@ -73,6 +73,13 @@
 | `load_trace_bundle` / `load_trace_manifest` / `validate_trace_bundle` | `backend/tests/agent_runtime/trace_schema.py` | 加载并验证可复用 Runtime Trace 与 fixture manifest |
 | `replay_trace` / `replay_events` / `replay_projection` | `backend/tests/agent_runtime/trace_replay.py` | 确定性重放 Command、Event 和 Projection 记录并返回闭合结果 |
 | `assert_deterministic` / `assert_single_owner` / `assert_fencing` / `assert_scope` / `assert_expected_outcome` | `backend/tests/agent_runtime/trace_assertions.py` | 为后续 Runtime 阶段提供确定性、单 Owner、fencing、Scope 和预期结果断言 |
+| `PostgresRuntimeRepository` | `backend/services/agent/runtime/infrastructure/postgres/repository.py` | 将 Session、Command、Run 和 ModelStep ports 映射到 scoped RPC，并闭合解析 mutation、claim、fencing、lease 和冲突 outcome |
+| `PostgresRuntimeEventStore.replay` / `event_from_row` | `backend/services/agent/runtime/infrastructure/postgres/event_store.py` | 分页重放严格连续的完整 RuntimeEvent envelope，拒绝跨 Session、超前 checkpoint 和 sequence gap |
+| `PostgresProjectionOutbox.claim/complete/fail` | `backend/services/agent/runtime/infrastructure/postgres/projection_outbox.py` | 通过 Worker Scope、lease token 和完整 Event envelope 消费 Projection Outbox |
+| `get_agent_runtime_session` / `replay_agent_runtime_events` / `get_agent_runtime_run_claim` / `get_claimed_agent_projection_event` | `backend/migrations/216_agent_runtime_read_projection_capabilities.sql` | 提供无核心表直权的 scoped read/readback 能力；system Scope 仅 actorless Worker 可读 |
+| `ExistingProviderModelAdapter.complete` | `backend/services/agent/runtime/infrastructure/model/adapter.py` | 校验冻结 ModelStep 请求后复用现有 Provider adapter；记录 attempt receipt，并把 timeout、部分响应和网关 5xx 失败关闭为 unknown |
+| `compute_request_hash` / `resolve_model_revision` / `validate_request_projection` | `backend/services/agent/runtime/infrastructure/model/projection.py` | 生成不含正文和 Secret 的稳定请求摘要，并在 Provider IO 前校验模型 revision、ContextPlan 和请求 hash |
+| `ResponseAccumulator.add/complete` / `map_stop_reason` | `backend/services/agent/runtime/infrastructure/model/response.py` | 聚合文本、Tool Call 和累计 usage，生成稳定 Tool Call ID、脱敏 response receipt 及闭合 StopReason |
 
 ### Git 与发布脚本
 

@@ -14,6 +14,26 @@
   再按 Runtime/Worker/WeCom Runtime/Sync/遗留角色矩阵及真实 ERP/企微连接验收；
   部署前生产问题仍未闭环。
 
+## 2026-07-27 Agent Runtime AR-08～AR-09 基础设施适配 — 已集成并通过联合验证，待后续 Owner 接入
+
+- AR-08 在 `backend/services/agent/runtime/infrastructure/postgres/` 落地 scoped
+  Repository、严格 Event Replay 和 Projection Outbox adapter；迁移 216 提供 Session、
+  Event、Run claim readback 与 Projection Event envelope 的窄读取能力，不授予核心表
+  直权。Runtime/WeCom 仅可读取匹配的 user/channel Scope，system Scope 仅允许
+  actorless Worker。
+- replay 以 `next_event_sequence - 1` 为 durable tail，合法尾号返回空页，超前
+  checkpoint、中间或尾部缺失均失败关闭；Runtime/WeCom/Worker 的取消路径继续由
+  migration 214 的 Actor/Org/Channel 权限校验保护。
+- AR-09 在 `backend/services/agent/runtime/infrastructure/model/` 落地强类型
+  ModelPort adapter，复用现有模型注册表、BYOK、Provider factory 和
+  ProviderContextPlan。请求/响应 receipt 不保存 prompt、Tool 参数或 Secret。
+- 当前仅 429 且未收到响应时允许同一 ModelStep 内重试；502/503/504、timeout 和部分
+  响应后断流均进入 typed unknown，不 fallback、不创建第二 ModelStep。Provider
+  adapter cleanup 使用有限超时，失败不会覆盖成功结果、typed error 或用户取消。
+- 当前仍是 additive foundation：没有生产调用方、没有切换 Web/企微/Conversation
+  Actor Owner，也没有部署 migration 216。后续必须由 Coordinator/Owner 接入任务完成
+  原子 ModelStep 持久化、调用与终态推进后，才能进入生产切换。
+
 ## 2026-07-27 前端依赖安全治理 — 兼容升级完成，剩余上游风险待跟踪
 
 - 基于 `integration/agent-runtime-ar-00-04` 的 `d56ff170` 重新核验：
