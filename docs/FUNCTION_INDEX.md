@@ -125,8 +125,10 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
+| `serialize_content_part` / `serialize_content_parts` | `backend/schemas/message.py` | 按后端权威 ContentPart 线协议统一输出 JSON-compatible 字典 | part / parts | `dict` / `list[dict]` |
+| `build_content_part_contract` | `backend/schemas/content_part_contract.py` | 生成版本化 JSON Schema、合法样例与拒绝样例，供跨语言契约门禁使用 | - | `dict` |
 | `parseProtocolString` | `frontend/src/schemas/messageProtocol.ts` | 校验 WebSocket/恢复链路中的字符串字段，拒绝对象隐式转换 | input, field, context? | `string \| null` |
-| `parseContentPart` | `frontend/src/schemas/messageProtocol.ts` | 在 Store 写入前校验单个 ContentPart；兼容恢复结构化 text | input, context? | `ContentPart \| null` |
+| `parseContentPart` | `frontend/src/schemas/messageProtocol.ts` | 在 Store 写入前校验单个 ContentPart；按权威契约归一化可空元数据并兼容恢复结构化 text | input, context? | `ContentPart \| null` |
 | `parseContentParts` | `frontend/src/schemas/messageProtocol.ts` | 校验内容块数组并隔离非法块 | input, context? | `ContentPart[]` |
 | `DiagramPart.validate_source` | `backend/schemas/diagram.py` | 校验 Mermaid 结构化消息源码非空且不超过协议上限 | value | `str` |
 | `ChartPart.normalize_spec_format` | `backend/schemas/chart.py` | 保留三种已知图表格式并将未知历史格式归一化为可读降级类型 | value | `str` |
@@ -1723,6 +1725,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `transfer-knowledge-audit-ownership.sh` / `rollback-knowledge-audit-ownership.sh` | `deploy/` | 转移 Knowledge/Audit 六张基表、Tool Audit 动态分区、关联序列和分区维护函数；回滚要求未启用 FORCE RLS |
 | `SyncConfigurationResolver` | `backend/services/configuration/sync_resolver.py` | 以 Sync 角色发现企业、解析 ERP/快麦 Bundle，并原子轮换 ERP Token |
 | `ExternalConfigurationControl` | `backend/services/configuration/external_control.py` | 企业管理员通过配置控制面原子管理快麦外部凭证 Bundle |
+| `parse_curl` / `is_kuaimai_host` | `backend/services/kuaimai_external/curl_parser.py` | 兼容 Chrome/Safari 常见 cURL 参数格式，提取快麦 companyid/Cookie 并校验精确主机 |
+| `create_credential` | `backend/api/routes/kuaimai_external_credentials.py` | 对快麦 cURL 执行结构化校验、数据源一致性检查，并经配置控制面原子保存后回读 |
 | `external_manual_sync_loop` | `backend/services/kuaimai_external/manual_worker.py` | 以租约与 fencing token 消费持久化的快麦手动同步请求 |
 | `_graceful_shutdown` | `backend/sync_worker_main.py` | 有序停止 ERP 编排器与常驻任务，并关闭 Sync 数据库池和 Redis 连接 |
 | `refresh_kit_stock` | `backend/services/kuaimai/erp_sync_kit_stock.py` | 通过 Sync 专属数据库能力刷新套件库存物化视图 |
