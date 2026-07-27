@@ -359,9 +359,14 @@
   完全一致，并为三种 Scope 提供分离的配置 set/delete/status 调用。
 - `backend/services/configuration/resolver.py`：严格校验固定 Bundle RPC 返回的键顺序、
   来源、版本、普通值与 SecretRef，拒绝 Registry、Scope 或 envelope 漂移。
-- `backend/services/configuration/bundles.py`：仅暴露 11 个固定命名 Bundle 方法，在
+- `backend/services/configuration/bundles.py`：仅暴露 13 个固定命名 Bundle 方法，在
   请求/任务内按数据库选定 Scope 解密 Secret，并由 WeCom Target Resolver 执行
-  无 Secret Discovery → 逐企业精确 Scope → `wecom.bot` Bundle。
+  无 Secret Discovery → 逐企业精确 Scope → `wecom.bot` Bundle；企业管理测试使用
+  独立 Runtime owner/admin 门面，不复用 Worker 门面。
+- `backend/migrations/216_configuration_admin_test_bundle.sql` 与对称 rollback：
+  新增 Runtime 企业 owner/admin 专用企微测试 Bundle，保持 Worker 原门面及 ACL 不变。
+- `backend/tests/test_configuration_admin_test_bundle_migration.py`：覆盖迁移 216 的固定
+  Bundle、Runtime owner/admin 权限依赖、精确角色 ACL、Worker 隔离与无数据回滚。
 - `backend/services/web_database_runtime.py`：Web 数据库启动在创建后台任务前执行
   Registry 漂移门禁，不一致时失败关闭。
 - `backend/tests/test_configuration_management_migrations.py`、

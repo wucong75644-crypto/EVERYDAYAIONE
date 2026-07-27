@@ -272,6 +272,15 @@ request_id=<workload/task identity>
 `.env.kek` 注入。旧 `OrgConfigResolver.list_orgs_with_wecom_bot()` 已删除，不再通过
 Worker 或旧共享角色直读 `org_configs`。
 
+### 8.4 企业管理员连接测试
+企业管理 API 不得复用 Worker 专用 `get_wecom_bot_bundle()`。迁移 216 的零参数
+`get_wecom_bot_admin_test_bundle()` 只接受 Runtime、正确 access kind、actor/org Scope
+及该企业 active owner/admin，并固定解析 `wecom.bot`；其他服务角色均无 EXECUTE，
+Worker Discovery 与正式消费契约不变。
+
+经 `OrgScopedDB` 调用且 SQL 不接受企业参数的零参数 Bundle RPC 必须列入 `_RPC_NO_ORG`，
+避免自动附加 `p_org_id`；该集合不放宽数据库 Scope 校验。
+
 ## 9. Secret 管理与消费流程
 
 ### 9.1 管理写入

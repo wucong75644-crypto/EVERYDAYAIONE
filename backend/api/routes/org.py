@@ -450,7 +450,7 @@ async def test_wecom_connection(
     """使用正式 wecom.bot Bundle 测试 WSS 连接。"""
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
-        bundle = bundle_resolver.wecom_bot()
+        bundle = bundle_resolver.wecom_bot_admin_test()
         credentials = bundle.values.get("wecom.bot_credentials")
         if not isinstance(credentials, Mapping):
             raise ConfigurationResolutionError("CONFIG_BUNDLE_INCOMPLETE")

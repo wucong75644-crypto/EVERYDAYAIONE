@@ -1,5 +1,19 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 企业 ERP/企微测试连接不可用 — 根因已修复，待生产部署验证
+
+- 生产配置状态与 Envelope 非空结构均正常；目标 super_admin 同时具有该企业 active
+  owner 任职。核验过程未读取或输出密钥、密文、DEK、Token 或 Secret。
+- ERP 测试经 `OrgScopedDB` 调用零参数 `get_erp_runtime_bundle()` 时被错误注入
+  `p_org_id`，数据库签名错误最终被路由映射为“配置不完整或不可用”。零参数例外集合现
+  同时覆盖 ERP 和新增企微管理员测试门面。
+- 企微测试原先错误复用 Worker 专用 `get_wecom_bot_bundle()`；迁移 216 新增只允许
+  Runtime active owner/admin 的 `get_wecom_bot_admin_test_bundle()`。Worker 原门面、
+  ACL、Discovery 和正式消费链路保持不变。
+- 保存、Envelope、CAS 和前端 API 契约未修改。代码与迁移测试完成后仍需部署 216，
+  再按 Runtime/Worker/WeCom Runtime/Sync/遗留角色矩阵及真实 ERP/企微连接验收；
+  部署前生产问题仍未闭环。
+
 ## 2026-07-27 前端依赖安全治理 — 兼容升级完成，剩余上游风险待跟踪
 
 - 基于 `integration/agent-runtime-ar-00-04` 的 `d56ff170` 重新核验：

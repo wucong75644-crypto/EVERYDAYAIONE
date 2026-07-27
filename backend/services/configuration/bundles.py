@@ -78,6 +78,12 @@ class SecretBundleResolver:
     def wecom_bot(self) -> ResolvedConfigurationBundle:
         return self._resolve("wecom.bot", "get_wecom_bot_bundle")
 
+    def wecom_bot_admin_test(self) -> ResolvedConfigurationBundle:
+        return self._resolve(
+            "wecom.bot",
+            "get_wecom_bot_admin_test_bundle",
+        )
+
     def wecom_oauth_public(self) -> ResolvedConfigurationBundle:
         return self._resolve(
             "wecom.oauth.public",

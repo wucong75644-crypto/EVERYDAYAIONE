@@ -1790,12 +1790,13 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `verify_configuration_registry` | `backend/services/configuration/control_service.py` | 启动时精确比较代码 Registry 与数据库迁移投影；缺失、多余、版本或哈希漂移均失败关闭 |
 | `ConfigurationControlService` | `backend/services/configuration/control_service.py` | 为平台、企业、个人提供显式 set/delete/status 方法；应用层先校验值和 Scope，再生成 envelope 并调用窄 RPC |
 | `EffectiveConfigResolver.parse` | `backend/services/configuration/resolver.py` | 严格解析数据库选定的固定 Bundle；校验 Registry 版本、键顺序、Scope、版本、普通值和 SecretRef 契约 |
-| `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 11 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段 |
+| `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 13 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段；`wecom_bot_admin_test` 使用独立 Runtime owner/admin 门面 |
 | `WecomBotTargetResolver.list_targets` | `backend/services/configuration/bundles.py` | 先以 actorless Worker Scope 发现企业，再为每个企业建立独立精确 Scope 并解析 `wecom.bot` Bundle；单企业材料失败不影响其他企业 |
 | `_assert_wecom_worker_discovery_scope` / `discover_wecom_bot_targets` | `backend/migrations/166_wecom_worker_discovery.sql` | 仅允许 actorless Worker 发现具备有效 WeCom Bundle 的 active 企业，返回 org_id 与凭证版本且不返回 Secret |
 | `install-service-units.sh` | `deploy/install-service-units.sh` | 校验数据库角色及 KEK 文件，安装并核对四个生产 Systemd 单元后重新加载 daemon |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
+| `get_wecom_bot_admin_test_bundle` | `backend/migrations/216_configuration_admin_test_bundle.sql` | 仅允许 Runtime active 企业 owner/admin 解析固定 `wecom.bot` 测试 Bundle；不扩大 Worker 专用门面权限 |
 | `build_legacy_preflight` | `backend/services/configuration/legacy_migration.py` | 根据旧键存在性、Corp ID 来源一致性和外部 Cookie 加密/状态事实生成不含配置值的迁移就绪报告；组合缺项、未知键、来源冲突或明文 Cookie 均阻断 |
 | `LegacyConfigurationFactCollector.collect` | `backend/services/configuration/legacy_migration.py` | 以三次批量只读查询采集旧组织、配置和快麦凭证；仅在局部内存验证企业/全局旧密钥、密文与 Corp ID 相等性，输出每企业无秘密值预检报告 |
 | `import_legacy_configuration_batch` | `backend/migrations/161_configuration_legacy_import.sql` | 仅允许 everydayai_migrator 在显式 apply 会话中一次性导入 1–10000 个目标；全批使用 expected_version=0 CAS，任一失败整事务回滚并仅记录无秘密值审计 |
@@ -1803,6 +1804,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `LegacyImportPlanner.build` | `backend/services/configuration/legacy_import.py` | 仅接收全部预检通过且组织集合精确一致的数据，将旧普通值和原子 Secret 组合转换为 Registry v1 导入项；Secret 立即生成 payload_version=1 envelope，expired/invalid 外部凭证保持未配置 |
 | `list_org_configs` / `set_org_config` / `delete_org_config` | `backend/api/routes/org.py` | 企业 owner/admin 通过正式 ConfigurationControlService 获取无秘密状态并使用 expected_version CAS 写入或删除正式配置 |
 | `test_erp_connection` | `backend/api/routes/org.py` | 仅通过正式 erp.runtime Bundle 测试 ERP，并以 token_pair Bundle 版本 CAS 持久化刷新 Token |
+| `test_wecom_connection` | `backend/api/routes/org.py` | 通过独立 Runtime owner/admin Bundle 解析企微机器人凭证并执行限时 WSS 验证，不复用 Worker 门面 |
 | `LegacyImportSourceReader.read` / `read_export` | `backend/services/configuration/legacy_import_source.py` | 将兼容三查询或正式 export 三数组生成解密值与无秘密值预检，精确形状、重复、孤儿和畸形行均失败关闭 |
 | `read_legacy_import_snapshot` | `backend/services/configuration/legacy_import_source_executor.py` | 在专用 Reader 单连接只读事务中依次校验 session_user、设置 read GUC、执行一次 export RPC 并严格解析一致性快照 |
 | `apply_legacy_import` | `backend/services/configuration/legacy_import_executor.py` | 精确确认 import_id 且 session_user 为 everydayai_migrator 后，在同一连接事务和游标中执行 SET LOCAL 门禁与 161 原子 RPC，并严格校验返回计数 |
