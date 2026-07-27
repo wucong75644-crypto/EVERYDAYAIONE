@@ -80,9 +80,15 @@ function completeConversation(
 ): void {
   if (!conversationId || !isNewlyCompleted) return;
   const store = deps.getStore();
-  store.completeStreaming(conversationId);
+  const ownsStreamingSlot = !!messageId
+    && store.getStreamingMessageId(conversationId) === messageId;
+  if (ownsStreamingSlot) {
+    store.completeStreaming(conversationId);
+  }
   store.markConversationCompleted(conversationId);
-  store.setIsSending(false);
+  if (ownsStreamingSlot) {
+    store.setIsSending(false);
+  }
   tabSync.broadcast('message_completed', { conversationId, messageId });
 }
 
@@ -120,11 +126,13 @@ function finishMessageWithoutTask(
 export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
   const { task_id, message_id, conversation_id } = msg;
   const messageData = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
+  const effectiveMessageId = message_id
+    || (typeof messageData?.id === 'string' ? messageData.id : undefined);
   flushPendingChunks(deps);
 
   logger.info('ws:message', 'done received', {
     taskId: task_id,
-    messageId: message_id || messageData?.id,
+    messageId: effectiveMessageId,
     conversationId: conversation_id,
   });
 
@@ -150,7 +158,7 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
     finishMessageWithoutTask(deps, message_id, messageData);
   }
 
-  completeConversation(deps, effectiveConversationId, message_id, isNewlyCompleted);
+  completeConversation(deps, effectiveConversationId, effectiveMessageId, isNewlyCompleted);
   notifyMessageDone(messageData, isNewlyCompleted);
   notifyWorkspaceChanged(messageData);
 }
@@ -207,8 +215,13 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   if (message_id) failMessage(deps, message_id, error);
 
   if (task_id) handleTaskFailure(deps, task_id, error);
-  if (conversation_id) store.completeStreaming(conversation_id);
-  store.setIsSending(false);
+  const ownsStreamingSlot = !!conversation_id
+    && !!message_id
+    && store.getStreamingMessageId(conversation_id) === message_id;
+  if (ownsStreamingSlot) {
+    store.completeStreaming(conversation_id);
+    store.setIsSending(false);
+  }
   toast.error(error?.message || '生成失败');
 }
 

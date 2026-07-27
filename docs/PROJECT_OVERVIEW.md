@@ -168,6 +168,8 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `frontend/src/components/integrations/KuaimaiSourcesTab.tsx`：快麦数据源凭证卡片、
   cURL 配置引导与保存反馈。
 - `docs/document/TECH_快麦凭证保存修复.md`：快麦 cURL 校验、原子保存、失败语义与回滚设计。
+- `docs/document/TECH_异步任务占位消息原位更新.md`：定义媒体任务按消息 ID 原位更新、
+  文字流条件式清理和乱序完成下的稳定展示顺序。
 - `deploy/transfer-sync-domain-ownership.sh` /
   `deploy/rollback-sync-domain-ownership.sh`：Sync 数据域 owner 原子切换与回滚。
 - `deploy/grant-sync-wecom-employee-access.sh` /
@@ -1117,6 +1119,7 @@ EVERYDAYAIONE/
         │   ├── __tests__/useWorkspace.test.ts # 工作区切换、取消和竞态回归测试
         │   ├── useVirtuaScroll.ts        # Virtua 滚动管理（统一入口）
         │   ├── useUnifiedMessages.ts     # 统一消息读取（合并持久化+临时消息）
+        │   ├── __tests__/useUnifiedMessages.test.ts # 异步任务乱序完成的稳定顺序回归
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
         │   └── handlers/                 # 消息处理器子模块
         │       ├── useTextMessageHandler.ts   # 文本消息处理
