@@ -121,9 +121,14 @@ state version 提交结果。
   路径按 Session → Run → ModelStep 加锁。
 - `216`：Session/Event/RunClaim/ProjectionClaim readback；未增加写模型。
 
-不得修改这些迁移。后续新增 RPC 保持固定锁序：
-`Session → Run → ModelStep → Action → ActionAttempt`；Projection Outbox 独立按
-outbox row `SKIP LOCKED`，不得反向锁回业务聚合。
+不得修改这些迁移。后续 RPC 按分链固定锁序，不用一条遗漏实体的“总锁序”代替：
+
+| 分链 | 锁序 |
+|---|---|
+| Model/credits | Session → Run → ModelStep → ModelAttempt → settlement row |
+| Tool/Action | Session → Run → ModelStep → ModelAttempt → Action → ActionAttempt → settlement row |
+| Command/Run | Session → Command → CommandClaim → Run |
+| Projection | Outbox row `SKIP LOCKED`；不得反向锁业务聚合 |
 
 ## 4. 目标 Owner 图
 
@@ -157,49 +162,44 @@ outbox row `SKIP LOCKED`，不得反向锁回业务聚合。
 
 新增：
 
-- `agent_model_attempts`：`id, model_step_id, run_id, attempt_number,
-  idempotency_key, request_hash, provider, provider_request_id,
-  status(prepared|dispatching|completed|failed|unknown|cancelled),
-  response_started, request_receipt, response_receipt, ambiguity_evidence,
-  usage, worker_id, execution_token, lease_expires_at, timestamps`。
+- `agent_model_attempts`：身份/request/provider、`status(prepared|dispatching|completed|
+  failed|unknown|cancelled)`、`dispatch_phase(prepared|request_started|response_started)`、
+  `retry_disposition(forbidden|reconcile_only|retry_safe)`、`late_outcome(NULL|completed|
+  failed)`、`late_receipt_recorded_at`、receipt/usage/ambiguity、worker/fencing/lease/timestamps。
+  这六个 status 是完整且唯一的生命周期集合。
 - ModelStep 增加可由 RPC 维护的 `unresolved_attempt_count`（或等价约束字段），只允许
   0/1；不新增 `unknown` ModelStep 状态。
-- RPC：`prepare_model_attempt`、`record_model_attempt_unknown`、
-  `complete_model_attempt_without_actions`、
-  `fail_model_attempt_and_step`、`record_late_model_receipt`、
-  `claim_model_attempt_reconciliation`、`resolve_model_attempt`。
+- RPC：`prepare_model_attempt`、`record_model_attempt_unknown`、`complete_model_attempt_without_actions`、
+  `fail_model_attempt_and_step`、`record_late_model_receipt`、claim/resolve reconciliation。
 
 ### 5.2 恢复规则
 
-1. Provider I/O 前，Coordinator 在事务中创建 `dispatching` attempt，写 request hash、
-   provider idempotency key 和当前 Run fencing token。
-2. timeout、502/503/504、响应开始后断流或 Worker 崩溃遗留的 `dispatching` attempt，
-   转为/被扫描为 `unknown`；崩溃检测基于 attempt lease 与 Run lease，不依赖日志。
-3. 有 provider status/readback 能力时 Reconciler 先按 provider request id 查询；
-   完成则落 receipt/usage，明确未接收且 provider 合同保证安全时才标记 retry-safe。
-4. 没有可证明 readback/idempotency 的 provider：禁止再次调用；Run 进入 paused/
-   waiting_interaction，要求人工决策或以已收到的可验证部分作为 degraded 结果。
-5. 只有 `failed-before-dispatch` 或 provider 明确保证相同 idempotency key exactly-once/
-   replay-safe 时允许新 attempt。新 attempt 仍复用 logical request hash，attempt number
-   递增。
-6. credits ledger 继续是财务权威。217 同时冻结窄财务 RPC：调用前按稳定
-   `settlement_key=model_step_id:model_attempt_id` 预留额度（若现有计费规则要求）；
-   completed attempt 以该 key 唯一结算；unknown 不结算；late receipt 只走 adjustment。
-   Event/Projection 不得充当账本或自行拼装扣费。
+Provider I/O 前创建 Attempt 并写 request hash/idempotency/fencing；开始请求时进入
+`dispatching` 并更新 `dispatch_phase`。timeout、502/503/504、断流或 crash 转/恢复为
+`unknown`。failed-before-dispatch 不是 status，而是 `status=failed +
+dispatch_phase=prepared` 的证据组合；仅此组合或 Provider 明确保证同 key replay-safe
+时可为 `retry_safe`。其余 unknown 默认 `reconcile_only`，不能 readback 则 `forbidden`。
+
+| status | 允许出边 |
+|---|---|
+| prepared | dispatching、failed、cancelled |
+| dispatching | completed、failed、unknown、cancelled |
+| unknown | completed、failed、cancelled；或 reconcile 后保持 unknown |
+| completed | 无 |
+| failed | 无；只有 retry_disposition=retry_safe 才创建新 Attempt |
+| cancelled | 无；late receipt 只写旁路字段，不改变 status |
+credits ledger 继续是财务权威。217 按 `settlement_key=model_step_id:model_attempt_id`
+预留/唯一结算；unknown 不结算，late receipt 只 adjustment；Projection 不得记账。
 
 ### 5.3 原子边界与竞态
 
-- prepare attempt：Session → Run → ModelStep 锁，验证 Run token/lease/version 后插入。
-- 非 tool-calls terminal：`complete_model_attempt_without_actions` 按同锁序再锁 Attempt；
-  仅允许 `final` / `structured_final`，一次性写 Attempt、ModelStep、usage、
-  settlement intent、event/outbox。provider 明确失败由
-  `fail_model_attempt_and_step` 原子写 Attempt/ModelStep/event；unknown 只写 Attempt
-  ambiguity，不终结 ModelStep。
+- prepare/非工具 terminal 遵守 Model/credits 锁序；terminal 仅允许 final/
+  structured_final，一次性写 Attempt、Step、usage、settlement intent、event/outbox。
+  明确失败由 `fail_model_attempt_and_step` 原子写 Attempt/Step/event；unknown 不终结 Step。
 - tool-calls terminal：AR-11 的任何 RPC 都不得终结 ModelStep；唯一 Owner 是 AR-12
   的 `complete_model_attempt_step_and_create_actions`。
-- cancel 与 provider completion 竞争：两者按 Session → Run 加锁；先提交者决定。
-  completion 若见 Run cancelled 不调用普通 terminal RPC，改调
-  `record_late_model_receipt`。
+- cancel 与 completion 均遵守 Model/credits 锁序；先提交者决定；若见 Run cancelled，
+  completion 改调 `record_late_model_receipt`。
 - Run lease 丢失不自动重调 provider；旧 attempt 先进入 reconcile。
 
 | Provider/竞态结果 | 唯一 RPC | ModelStep |
@@ -213,21 +213,21 @@ outbox row `SKIP LOCKED`，不得反向锁回业务聚合。
 
 ### 5.4 取消后的迟到 receipt 与结算
 
-`record_late_model_receipt` 是 217 独占的 audit/reconcile RPC，锁序固定为
-Session → Run → ModelStep → ModelAttempt → settlement row。它只在 Run 已
-`cancelled` 且 Attempt 是该 ModelStep 的合法 dispatching/unknown attempt 时接受：
+`record_late_model_receipt` 只接受 Run cancelled 且属于该 Step 的 cancelled/unknown
+Attempt，遵守 Model/credits 锁序：
 
-- 保存 `provider_request_id`、response receipt/hash、usage、ambiguity evidence、
-  provider terminal/readback outcome，并把 Attempt 标为 `completed_late` 或
-  `failed_late`；
-- 不修改 ModelStep/Run 状态，不递增 blocker，不发布第二个用户终态，不触发 Provider
-  retry；只追加 `model_attempt.late_receipt_recorded` audit event；
-- 幂等键为 `model_attempt_id:provider_request_id:response_hash`。同 key/hash replay
-  返回 `already_recorded`；同 attempt/provider request id 不同 response hash 返回
-  `receipt_conflict` 并进入人工对账；
-- completed late usage 通过窄财务 adjustment RPC，以
-  `adjustment:model_attempt_id:response_hash` 唯一入账。已有相同 settlement/adjustment
-  只读返回，绝不重复扣费；每个 ModelStep 只允许一个 effective settlement lineage。
+| 字段 | late RPC 行为 |
+|---|---|
+| status / ModelStep / Run | 全部只读；不得改生命周期或复活聚合 |
+| provider_request_id、response_receipt/hash、usage、ambiguity_evidence | 首次填充；已存在须相同 |
+| late_outcome | 写 completed 或 failed |
+| late_receipt_recorded_at | 首次写服务器时间，重放保持不变 |
+| retry_disposition | 强制/保持 forbidden，不触发 Provider retry |
+| audit/credits | 追加单一 late audit；completed 才以 `adjustment:model_attempt_id:response_hash` 调窄财务 RPC |
+
+幂等键为 `model_attempt_id:provider_request_id:response_hash`：同 key/hash 返回
+`already_recorded`，同 attempt/provider request id 不同 hash 返回 `receipt_conflict`；
+均不改 status。重复 adjustment 只读返回，每个 Step 只有一个 settlement lineage。
 
 若 completion 先锁定并提交 ModelStep/Run，后到 cancel 返回 `terminal_conflict`；
 若 cancel 先提交，普通 completion 返回 `run_cancelled_use_late_receipt`，调用方随后使用
@@ -255,8 +255,8 @@ provider_call_id-or-derived_call_id, normalized_name, normalized_arguments_hash)
 ### 6.2 必须同事务
 
 AR-12 在 218 提供唯一 RPC `complete_model_attempt_step_and_create_actions`。它依赖
-217 的 ModelAttempt/settlement 表与辅助函数，按 Session → Run → ModelStep →
-ModelAttempt 加锁，验证 Run fencing/lease/version、Attempt request/response hash，
+217 的 ModelAttempt/settlement 表与辅助函数，遵守 Tool/Action 锁序并验证 Run
+fencing/lease/version、Attempt request/response hash，
 一次性完成 Attempt 和 ModelStep、批量插入全部 Actions、写 usage/settlement intent、
 计算 `blocking_action_count`，再追加 `model_step.completed` 与 `action.requested`
 events/outbox。任何一项失败全部回滚。
@@ -286,8 +286,8 @@ Worker 核心表直权。AR-13 必须以 migration 219 独占新增窄 RPC：
 
 - `claim_pending_agent_command_and_ensure_run(worker_id, lease_seconds,
   max_attempts)`：以 PostgreSQL 为事实源，按 cancel 优先、created_at/id 排序，使用
-  `FOR UPDATE SKIP LOCKED`（或等价 advisory claim）；锁 Session → Command，复核
-  RuntimeScope/role/request hash，在同一事务创建或返回 `UNIQUE(command_id)` 的唯一 Run
+  `FOR UPDATE SKIP LOCKED`（或等价 advisory claim）；遵守 Command/Run 锁序，复核
+  RuntimeScope/role/request hash，同事务创建或返回 `UNIQUE(command_id)` 的唯一 Run
   及 CommandClaim lease/fencing receipt；
 - `get_agent_command_run_claim(command_id, worker_id)`：claim RPC 已提交但响应丢失后的
   readback；只返回该 worker 当前有效 claim 和唯一 Run；
