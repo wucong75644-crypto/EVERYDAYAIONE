@@ -170,6 +170,10 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `docs/document/TECH_快麦凭证保存修复.md`：快麦 cURL 校验、原子保存、失败语义与回滚设计。
 - `deploy/transfer-sync-domain-ownership.sh` /
   `deploy/rollback-sync-domain-ownership.sh`：Sync 数据域 owner 原子切换与回滚。
+- `deploy/grant-sync-wecom-employee-access.sh` /
+  `deploy/rollback-sync-wecom-employee-access.sh`：由数据库管理员精确授予或撤销
+  `everydayai_owner` 对企微员工匹配所需四个字段的只读权限；迁移 219 负责验证
+  RPC owner、`SECURITY DEFINER` 和禁止 Sync 直读的权限契约。
 - `backend/tests/test_service_database_role_files.py`：固定 Backend/WeCom、Actor、Sync 的
   Systemd 数据库角色覆盖文件映射，防止服务再次全部回退到共享 `.env`。
 - `deploy/env-templates/worker-client.env.template`：Web 内后台任务与 Actor raw SQL 使用的

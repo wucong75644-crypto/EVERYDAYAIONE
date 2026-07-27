@@ -17,6 +17,20 @@ OPERATOR_CONTROL = (
 EXTERNAL_QUEUE = (
     MIGRATIONS / "185_external_sync_request_queue.sql"
 ).read_text()
+WECOM_EMPLOYEE_ACCESS = (
+    MIGRATIONS / "219_sync_wecom_employee_capability_access.sql"
+).read_text()
+WECOM_EMPLOYEE_ACCESS_ROLLBACK = (
+    MIGRATIONS
+    / "rollback/219_sync_wecom_employee_capability_access_rollback.sql"
+).read_text()
+DEPLOY = MIGRATIONS.parent.parent / "deploy"
+WECOM_EMPLOYEE_ADMIN_GRANT = (
+    DEPLOY / "grant-sync-wecom-employee-access.sh"
+).read_text()
+WECOM_EMPLOYEE_ADMIN_ROLLBACK = (
+    DEPLOY / "rollback-sync-wecom-employee-access.sh"
+).read_text()
 
 
 def test_sync_domain_tables_force_row_security() -> None:
@@ -95,3 +109,23 @@ def test_external_manual_sync_uses_durable_fenced_queue() -> None:
     assert "sync_renew_external_sync" in EXTERNAL_QUEUE
     assert "RETURNING * INTO v_request" in EXTERNAL_QUEUE
     assert "FORCE ROW LEVEL SECURITY" in EXTERNAL_QUEUE
+
+
+def test_wecom_employee_facades_have_only_required_column_access() -> None:
+    required_columns = "org_id, wecom_userid, name, status"
+    assert f"GRANT SELECT ({required_columns})" in (
+        WECOM_EMPLOYEE_ADMIN_GRANT
+    )
+    assert "ON TABLE public.wecom_employees" in WECOM_EMPLOYEE_ADMIN_GRANT
+    assert "TO everydayai_owner" in WECOM_EMPLOYEE_ADMIN_GRANT
+    assert "GRANT SELECT ON TABLE" not in WECOM_EMPLOYEE_ADMIN_GRANT
+    assert f"REVOKE SELECT ({required_columns})" in (
+        WECOM_EMPLOYEE_ADMIN_ROLLBACK
+    )
+    assert "FROM everydayai_owner" in WECOM_EMPLOYEE_ADMIN_ROLLBACK
+    assert "has_column_privilege(" in WECOM_EMPLOYEE_ACCESS
+    assert "has_any_column_privilege(" in WECOM_EMPLOYEE_ACCESS
+    assert "SYNC_WECOM_EMPLOYEE_DIRECT_ACCESS_INVALID" in (
+        WECOM_EMPLOYEE_ACCESS
+    )
+    assert "REVOKE SELECT" not in WECOM_EMPLOYEE_ACCESS_ROLLBACK
