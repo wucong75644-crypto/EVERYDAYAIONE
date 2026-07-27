@@ -15,6 +15,7 @@ import {
   type WecomFieldStatus,
 } from '../../services/org';
 import AiConfigSection from './AiConfigSection';
+import CredentialGroupSection from './configuration/CredentialGroupSection';
 import ErpConfigSection from './configuration/ErpConfigSection';
 import { MemberAssignmentsSection } from './MemberAssignmentsSection';
 import OrgInfoSection from './OrgInfoSection';
@@ -355,82 +356,99 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       {/* 智能机器人 */}
       <div>
         <h4 className="text-sm font-medium text-text-primary mb-2">智能机器人（群聊/私聊消息）</h4>
-        {botConfigured && values['wecom.bot_credentials'] === undefined ? (
-          <div className="flex items-center space-x-2">
-            <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-surface text-text-tertiary">
-              Bot ID 与 Secret 已作为完整凭证组保存 · v{botStatus.version}
-            </div>
-            <button
-              onClick={() => setValues((prev) => ({
-                ...prev,
-                'wecom.bot_credentials': '',
-                'wecom.bot_credentials.secret': '',
-              }))}
-              className="px-3 py-1.5 text-sm text-accent border rounded-lg"
-            >
-              修改整组
-            </button>
-          </div>
-        ) : (
+        <CredentialGroupSection
+          configured={botConfigured ?? false}
+          editing={values['wecom.bot_credentials'] !== undefined}
+          label="机器人凭证"
+          onEdit={() => setValues((prev) => ({
+            ...prev,
+            'wecom.bot_credentials': '',
+            'wecom.bot_credentials.secret': '',
+          }))}
+        >
           <div className="space-y-2">
-            <input
-              type="text"
-              value={values['wecom.bot_credentials'] || ''}
-              onChange={(event) => setValues((prev) => ({
-                ...prev,
-                'wecom.bot_credentials': event.target.value,
-              }))}
-              className="w-full px-3 py-1.5 border rounded-lg text-sm"
-              placeholder="Bot ID"
-            />
-            <input
-              type="password"
-              value={values['wecom.bot_credentials.secret'] || ''}
-              onChange={(event) => setValues((prev) => ({
-                ...prev,
-                'wecom.bot_credentials.secret': event.target.value,
-              }))}
-              className="w-full px-3 py-1.5 border rounded-lg text-sm"
-              placeholder="Bot Secret"
-            />
-            <button
-              onClick={async () => {
-                const botId = values['wecom.bot_credentials']?.trim();
-                const botSecret = values['wecom.bot_credentials.secret']?.trim();
-                if (!botId || !botSecret) {
-                  setError('Bot ID 与 Secret 必须完整填写');
-                  return;
-                }
-                setSaving('wecom.bot_credentials');
-                setError('');
-                try {
-                  await setOrgConfig(
-                    orgId,
-                    'wecom.bot_credentials',
-                    { bot_id: botId, bot_secret: botSecret },
-                    botStatus?.version ?? 0,
-                  );
-                  setValues((prev) => {
+            <div className="flex items-center space-x-2">
+              <label className="w-36 text-sm text-text-secondary" htmlFor="wecom-bot-id">Bot ID</label>
+              <input
+                id="wecom-bot-id"
+                type="text"
+                value={values['wecom.bot_credentials'] || ''}
+                onChange={(event) => setValues((prev) => ({
+                  ...prev,
+                  'wecom.bot_credentials': event.target.value,
+                }))}
+                className="flex-1 px-3 py-1.5 border rounded-lg text-sm"
+              />
+            </div>
+            <div className="flex items-center space-x-2">
+              <label className="w-36 text-sm text-text-secondary" htmlFor="wecom-bot-secret">Bot Secret</label>
+              <input
+                id="wecom-bot-secret"
+                type="password"
+                value={values['wecom.bot_credentials.secret'] || ''}
+                onChange={(event) => setValues((prev) => ({
+                  ...prev,
+                  'wecom.bot_credentials.secret': event.target.value,
+                }))}
+                className="flex-1 px-3 py-1.5 border rounded-lg text-sm"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              {botConfigured && (
+                <button
+                  type="button"
+                  onClick={() => setValues((prev) => {
                     const next = { ...prev };
                     delete next['wecom.bot_credentials'];
                     delete next['wecom.bot_credentials.secret'];
                     return next;
-                  });
-                  await loadStatus();
-                  setSuccess('机器人凭证已保存');
-                } catch {
-                  setError('保存失败，请刷新状态后重试');
-                } finally {
-                  setSaving(null);
-                }
-              }}
-              disabled={saving === 'wecom.bot_credentials'}
-              className="w-full py-1.5 text-sm bg-accent text-text-on-accent rounded-lg disabled:opacity-50"
-            >
-              保存完整凭证组
-            </button>
+                  })}
+                  className="px-3 py-1.5 text-sm text-text-tertiary"
+                >
+                  取消
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  const botId = values['wecom.bot_credentials']?.trim();
+                  const botSecret = values['wecom.bot_credentials.secret']?.trim();
+                  if (!botId || !botSecret) {
+                    setError('Bot ID 与 Secret 必须完整填写');
+                    return;
+                  }
+                  setSaving('wecom.bot_credentials');
+                  setError('');
+                  setSuccess('');
+                  try {
+                    await setOrgConfig(
+                      orgId,
+                      'wecom.bot_credentials',
+                      { bot_id: botId, bot_secret: botSecret },
+                      botStatus?.version ?? 0,
+                    );
+                    setValues((prev) => {
+                      const next = { ...prev };
+                      delete next['wecom.bot_credentials'];
+                      delete next['wecom.bot_credentials.secret'];
+                      return next;
+                    });
+                    await loadStatus();
+                    setSuccess('机器人凭证已保存');
+                  } catch {
+                    setError('保存失败，请刷新状态后重试');
+                  } finally {
+                    setSaving(null);
+                  }
+                }}
+                disabled={saving === 'wecom.bot_credentials'}
+                className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg disabled:opacity-50"
+              >
+                {saving === 'wecom.bot_credentials' ? '保存中...' : '保存凭证'}
+              </button>
+            </div>
           </div>
-        )}
+        </CredentialGroupSection>
       </div>
 
       {/* 自建应用 */}
@@ -467,7 +485,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
             }
           }}
           disabled={testing}
-          className="w-full py-2 text-sm bg-success text-text-on-accent rounded-lg hover:bg-success/90 disabled:opacity-50 transition-base"
+          className="w-full py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent-light disabled:opacity-50 transition-base"
         >
           {testing ? '测试中...' : '测试企微连接'}
         </button>
