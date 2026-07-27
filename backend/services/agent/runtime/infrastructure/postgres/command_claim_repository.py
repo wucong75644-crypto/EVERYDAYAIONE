@@ -33,6 +33,8 @@ _CLAIM_OUTCOMES = {
     CommandClaimOutcome.SCOPE_REJECTED,
     CommandClaimOutcome.IDEMPOTENCY_CONFLICT,
     CommandClaimOutcome.TERMINAL_CONFLICT,
+    CommandClaimOutcome.ALREADY_PROCESSED,
+    CommandClaimOutcome.ASSOCIATION_REJECTED,
 }
 
 
@@ -144,6 +146,8 @@ class PostgresCommandClaimRepository:
             CommandClaimOutcome.SCOPE_REJECTED,
             CommandClaimOutcome.IDEMPOTENCY_CONFLICT,
             CommandClaimOutcome.TERMINAL_CONFLICT,
+            CommandClaimOutcome.ALREADY_PROCESSED,
+            CommandClaimOutcome.ASSOCIATION_REJECTED,
             CommandClaimOutcome.RENEWED,
             CommandClaimOutcome.COMPLETED,
             CommandClaimOutcome.FAILED,

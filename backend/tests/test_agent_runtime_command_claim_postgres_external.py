@@ -24,6 +24,8 @@ MIGRATIONS = [
     ROOT / "migrations/216_agent_runtime_read_projection_capabilities.sql",
     ROOT / "migrations/219_01_agent_runtime_command_claim_foundation.sql",
     ROOT / "migrations/219_02_agent_runtime_command_claim_lifecycle.sql",
+    ROOT
+    / "migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql",
 ]
 ROLLBACK_01 = (
     ROOT / "migrations/rollback"
@@ -32,6 +34,10 @@ ROLLBACK_01 = (
 ROLLBACK_02 = (
     ROOT / "migrations/rollback"
     / "219_02_agent_runtime_command_claim_lifecycle_rollback.sql"
+)
+ROLLBACK_02A = (
+    ROOT / "migrations/rollback"
+    / "219_02a_agent_runtime_command_claim_terminal_compatibility_rollback.sql"
 )
 USER_ID = "11111111-1111-1111-1111-111111111111"
 CONVERSATION_ID = "33333333-3333-3333-3333-333333333333"
@@ -145,8 +151,7 @@ def expire(command_id: str) -> None:
     )
 
 
-def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
-    session_id = create_session()
+def assert_claim_recovery(session_id: str) -> None:
     initial_payload = envelope(session_id, "rpc-idempotency")
     payload_json = json.dumps(initial_payload)
     submitted = runtime(
@@ -213,6 +218,10 @@ def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
     )
     assert finished["outcome"] == "completed"
 
+
+def assert_concurrency_and_exhaustion(
+    session_id: str,
+) -> list[dict[str, object]]:
     command_ids = [insert_command(session_id) for _ in range(2)]
     with ThreadPoolExecutor(max_workers=2) as executor:
         claims = list(executor.map(
@@ -247,7 +256,12 @@ def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
         f"WHERE correlation_id='{exhausted_id}' "
         "AND event_type='command.attempts_exhausted';"
     ) == "1"
+    return claims
 
+
+def assert_scope_and_cancel(
+    session_id: str, claims: list[dict[str, object]],
+) -> None:
     wrong_scope_id = insert_command(
         session_id, user_id="44444444-4444-4444-4444-444444444444",
     )
@@ -302,6 +316,8 @@ def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
         f"SELECT status FROM agent_runs WHERE id='{missing_target}';"
     ) == "cancelled"
 
+
+def assert_permissions_and_rollback() -> None:
     permission_matrix = value("""
         SELECT
             has_function_privilege(
@@ -326,6 +342,7 @@ def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
     """)
     assert permission_matrix == "t"
 
+    psql(path=ROLLBACK_02A)
     rollback_with_facts = psql(path=ROLLBACK_02, check=False)
     assert rollback_with_facts.returncode != 0
     assert "AGENT_COMMAND_CLAIM_ROLLBACK_FACTS_PRESENT" in (
@@ -334,8 +351,17 @@ def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
     psql("SET ROLE everydayai_owner;TRUNCATE agent_command_claims;")
     psql(path=ROLLBACK_02)
     psql(path=ROLLBACK_01)
+    psql(path=MIGRATIONS[-3])
     psql(path=MIGRATIONS[-2])
     psql(path=MIGRATIONS[-1])
     assert value(
         "SELECT to_regclass('agent_command_claims') IS NOT NULL;"
     ) == "t"
+
+
+def test_real_claim_recovery_fencing_permissions_and_rollback() -> None:
+    session_id = create_session()
+    assert_claim_recovery(session_id)
+    claims = assert_concurrency_and_exhaustion(session_id)
+    assert_scope_and_cancel(session_id, claims)
+    assert_permissions_and_rollback()

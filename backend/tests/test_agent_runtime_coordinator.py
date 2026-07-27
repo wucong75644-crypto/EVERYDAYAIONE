@@ -78,6 +78,25 @@ async def test_empty_postgres_scan_is_not_work() -> None:
 
 
 @pytest.mark.asyncio
+async def test_already_processed_command_does_not_call_handler() -> None:
+    repository = _Repository([
+        CommandClaimReceipt(CommandClaimOutcome.ALREADY_PROCESSED),
+    ])
+    called = False
+
+    async def handler(_claim: CommandClaim) -> CommandClaimOutcome:
+        nonlocal called
+        called = True
+        return CommandClaimOutcome.COMPLETED
+
+    coordinator = RuntimeCoordinator(repository, "worker-1", handler)
+
+    assert await coordinator.run_once() is True
+    assert called is False
+    assert repository.finished == []
+
+
+@pytest.mark.asyncio
 async def test_redis_wakeup_failure_does_not_block_postgres_polling() -> None:
     repository = _Repository([
         CommandClaimReceipt(CommandClaimOutcome.NOT_FOUND),

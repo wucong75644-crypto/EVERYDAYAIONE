@@ -92,6 +92,28 @@ async def test_claim_parses_strict_typed_receipt() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["already_processed", "association_rejected"],
+)
+async def test_non_active_eligibility_receipts_have_no_claim(
+    outcome: str,
+) -> None:
+    repository = PostgresCommandClaimRepository(_Database(
+        DatabaseAccessKind.WORKER,
+        {"claim_pending_agent_command_and_ensure_run": {
+            "outcome": outcome,
+            "command_id": COMMAND_ID,
+            "run_id": RUN_ID,
+        }},
+    ))
+
+    receipt = await repository.claim_next("worker-1")
+
+    assert receipt.outcome.value == outcome
+    assert receipt.claim is None
+
+
+@pytest.mark.asyncio
 async def test_unknown_or_incomplete_receipt_fails_closed() -> None:
     for response in ({"outcome": "future"}, {"outcome": "claimed"}):
         repository = PostgresCommandClaimRepository(_Database(

@@ -9,10 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = [
     "219_01_agent_runtime_command_claim_foundation.sql",
     "219_02_agent_runtime_command_claim_lifecycle.sql",
+    "219_02a_agent_runtime_command_claim_terminal_compatibility.sql",
     "219_sync_wecom_employee_capability_access.sql",
 ]
 FOUNDATION = (ROOT / "migrations" / EXPECTED[0]).read_text()
 LIFECYCLE = (ROOT / "migrations" / EXPECTED[1]).read_text()
+ELIGIBILITY = (ROOT / "migrations" / EXPECTED[2]).read_text()
 
 
 def test_migration_identity_order_and_reverse_rollback_mapping() -> None:
@@ -84,3 +86,18 @@ def test_only_worker_receives_command_claim_rpc_execute() -> None:
     assert "get_agent_command_run_claim(UUID, TEXT)" in LIFECYCLE
     assert "renew_agent_command_claim(UUID, UUID, INTEGER)" in LIFECYCLE
     assert "finish_agent_command_claim(UUID, UUID, TEXT, TEXT)" in LIFECYCLE
+
+
+def test_historical_run_eligibility_is_locked_and_fail_closed() -> None:
+    assert "LEFT JOIN agent_runs run" in ELIGIBILITY
+    assert "_agent_command_run_eligibility(v_command)" in ELIGIBILITY
+    assert "WHERE id = p_command.result_entity_id FOR UPDATE" in ELIGIBILITY
+    assert "'association_rejected'" in ELIGIBILITY
+    assert "'already_processed'" in ELIGIBILITY
+    assert "run.status = 'running'" in ELIGIBILITY
+    assert "run.lease_expires_at > clock_timestamp()" in ELIGIBILITY
+    assert "run.user_id IS NOT DISTINCT FROM command.user_id" in ELIGIBILITY
+    assert "_agent_command_run_eligibility(agent_session_commands)" in ELIGIBILITY
+    assert "FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime," in (
+        ELIGIBILITY
+    )

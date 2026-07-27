@@ -19,6 +19,8 @@ class CommandClaimOutcome(StrEnum):
     SCOPE_REJECTED = "scope_rejected"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     TERMINAL_CONFLICT = "terminal_conflict"
+    ALREADY_PROCESSED = "already_processed"
+    ASSOCIATION_REJECTED = "association_rejected"
     RENEWED = "renewed"
     COMPLETED = "completed"
     FAILED = "failed"

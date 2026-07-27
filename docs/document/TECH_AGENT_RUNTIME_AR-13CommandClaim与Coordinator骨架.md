@@ -68,6 +68,19 @@ periodic scan
 避免两个 Worker 等待同一 Session 后重复选择已经领取的 Command。稳定锁序为
 Session → Command → CommandClaim → Run。
 
+已有 `result_entity_id` 时必须在 Run 锁下复核关联和状态：
+
+- queued 与 lease 已过期的 running 可领取；running 的执行接管仍只能调用既有
+  `claim_agent_run` 签发新 token 和 RunAttempt；
+- 有效 lease 的 running 不进入候选，避免第二执行 Owner；
+- waiting_actions、waiting_interaction、paused 已完成本条 Command 的推进，不重新
+  执行 handler，分别等待 Action、Interaction 或显式 resume；
+- completed、failed、cancelled 不再签发 active CommandClaim；
+- waiting/paused/terminal 建立非 active 回执并返回 `already_processed`，后续扫描
+  不再重复选择，也不修改 Run 或追加事件；
+- Run 缺失，或 Command、Session、org/user 关联不一致时返回
+  `association_rejected` 并持久失败关闭，禁止创建替代 Run。
+
 cancel 在排序中优先于普通 pending Command。Run 插入依靠现有
 `UNIQUE(command_id)`；冲突后读取并核对 envelope hash，冲突失败关闭。
 
@@ -96,7 +109,8 @@ Worker-only SECURITY DEFINER RPC：
 
 结果使用明确 outcome，包括 claimed/found/not_found/already_claimed、
 ownership_lost、lease_expired、attempts_exhausted、scope_rejected、
-idempotency_conflict、terminal_conflict、renewed、completed 与 failed。
+idempotency_conflict、terminal_conflict、already_processed、
+association_rejected、renewed、completed 与 failed。
 
 连接在提交后断开时，adapter 先以本次唯一 worker identity 找回最近 claim，再使用
 `command_id + worker_id` 精确 readback；不会解析异常文本，也不会把不确定提交当作
@@ -121,7 +135,8 @@ idempotency_conflict、terminal_conflict、renewed、completed 与 failed。
 
 1. `219_01_agent_runtime_command_claim_foundation.sql`
 2. `219_02_agent_runtime_command_claim_lifecycle.sql`
-3. `219_sync_wecom_employee_capability_access.sql`
+3. `219_02a_agent_runtime_command_claim_terminal_compatibility.sql`
+4. `219_sync_wecom_employee_capability_access.sql`
 
 回滚按精确身份反序。lifecycle 先删除 RPC；foundation 在存在 claim 事实时抛出
 `AGENT_COMMAND_CLAIM_ROLLBACK_FACTS_PRESENT`，禁止破坏性删除。
@@ -130,7 +145,8 @@ idempotency_conflict、terminal_conflict、renewed、completed 与 failed。
 
 真实 PostgreSQL 测试覆盖 Run 唯一性、多 Worker 并发、续租、过期重领、旧 token
 fencing、attempt exhaustion durable event、Scope fail-closed、cancel 优先及目标
-不存在的取消事实、RLS/FORCE RLS、权限矩阵，以及 apply/rollback/reapply。
+不存在的取消事实、历史 queued/running/waiting/paused/terminal Run eligibility、
+错误关联、RLS/FORCE RLS、权限矩阵，以及 apply/rollback/reapply。
 
 adapter/Coordinator 单元测试覆盖严格 typed receipt、提交响应丢失 readback、
 Redis 不可用回退和 lease-lost 停止写入。生产接线与完整 Model/Action 循环留给后续
