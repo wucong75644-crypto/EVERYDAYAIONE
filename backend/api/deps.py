@@ -266,6 +266,20 @@ async def get_scoped_db(
     return OrgScopedDB(ScopedDatabaseClient(db, scope), org_ctx.org_id)
 
 
+async def get_platform_db(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    db: Any = Depends(get_db),
+) -> ScopedDatabaseClient:
+    """构造不绑定企业、保留可信 Actor 的平台 Runtime 数据库客户端。"""
+    return _runtime_scoped_db(
+        request,
+        db,
+        user_id,
+        include_org=False,
+    )
+
+
 async def get_async_scoped_db(
     request: Request,
     org_ctx: OrgContext = Depends(get_org_context),
@@ -312,6 +326,7 @@ Database = Annotated[Any, Depends(get_request_db)]
 WorkerDatabase = Annotated[Any, Depends(get_webhook_worker_db)]
 OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
 ScopedDB = Annotated[OrgScopedDB, Depends(get_scoped_db)]
+PlatformDB = Annotated[ScopedDatabaseClient, Depends(get_platform_db)]
 AsyncScopedDB = Annotated[Any, Depends(get_async_scoped_db)]
 TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]
 # 时间事实层依赖 — 用法：def endpoint(req_ctx: RequestCtx, ...)

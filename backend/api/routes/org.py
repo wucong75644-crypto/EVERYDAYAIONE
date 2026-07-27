@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUserId, ScopedDB
+from api.deps import CurrentUserId, PlatformDB, ScopedDB
 from core.exceptions import AppException
 from services.configuration.bundles import SecretBundleResolver
 from services.configuration.control_service import ConfigurationControlService
@@ -25,6 +25,10 @@ router.include_router(public_router)
 
 
 def _get_org_service(db: ScopedDB) -> OrgService:
+    return OrgService(db)
+
+
+def _get_platform_org_service(db: PlatformDB) -> OrgService:
     return OrgService(db)
 
 
@@ -109,7 +113,7 @@ async def list_my_orgs(
 async def create_org(
     body: CreateOrgRequest,
     user_id: CurrentUserId,
-    svc: OrgService = Depends(_get_org_service),
+    svc: OrgService = Depends(_get_platform_org_service),
 ):
     """仅超管可调用。创建企业并指定 owner（通过手机号查找）。"""
     try:
@@ -130,7 +134,7 @@ async def create_org(
 @router.get("/admin/all", summary="所有企业列表（超管）")
 async def list_all_orgs(
     user_id: CurrentUserId,
-    svc: OrgService = Depends(_get_org_service),
+    svc: OrgService = Depends(_get_platform_org_service),
 ):
     """仅超管可调用。列出平台所有企业。"""
     try:
@@ -143,7 +147,7 @@ async def list_all_orgs(
 async def search_user(
     phone: str = Query(..., pattern=r"^1[3-9]\d{9}$", description="手机号"),
     user_id: CurrentUserId = None,
-    svc: OrgService = Depends(_get_org_service),
+    svc: OrgService = Depends(_get_platform_org_service),
 ):
     """超管通过手机号搜索用户（用于指定 owner / 添加成员）"""
     try:

@@ -97,6 +97,52 @@ class TestGetScopedDb:
             )
 
 
+class TestGetPlatformDb:
+    """平台依赖保留 Actor，但明确忽略企业 Header。"""
+
+    @pytest.mark.asyncio
+    async def test_ignores_org_header(self):
+        from api.deps import get_platform_db
+
+        request = MagicMock()
+        request.headers.get.side_effect = lambda name, default="": {
+            "X-Org-Id": ORG_ID,
+            "X-Request-Id": "platform-request-1",
+        }.get(name, default)
+        db = MagicMock()
+
+        result = await get_platform_db(request, USER_ID, db)
+
+        assert result.scope.settings == (
+            USER_ID, "", "runtime", "platform-request-1",
+        )
+        assert result.pool is db.pool
+        assert "X-Org-Id" not in {
+            call.args[0] for call in request.headers.get.call_args_list
+        }
+
+    @pytest.mark.asyncio
+    async def test_invalid_actor_fails_closed(self):
+        from api.deps import get_platform_db
+
+        request = MagicMock()
+        request.headers.get.return_value = ""
+
+        with pytest.raises(ValueError):
+            await get_platform_db(request, "invalid", MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_missing_or_invalid_identity_fails_closed(self):
+        from api.deps import get_current_user_id
+        from core.exceptions import AuthenticationError, InvalidTokenError
+
+        with pytest.raises(AuthenticationError):
+            await get_current_user_id(None)
+        with patch("api.deps.decode_access_token", return_value={}):
+            with pytest.raises(InvalidTokenError):
+                await get_current_user_id("Bearer invalid")
+
+
 class TestGetAuthService:
     """公开认证入口固定使用无 actor/org 的 runtime Scope。"""
 

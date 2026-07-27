@@ -1375,6 +1375,17 @@
   `IDEMPOTENCY_CONVERSATION_ACCESS_DENIED` 转为不泄露归属的 404，其他数据库
   权限错误继续失败关闭。
 
+# 2026-07-27 平台企业治理误绑定企业 Scope — 本地修复，待生产验证
+
+- 生产 `GET /api/org/admin/all` 在浏览器携带 `X-Org-Id` 时返回 500，数据库证据为
+  `GOVERNANCE_ROLE_SCOPE_MISMATCH`。根因是三个平台治理入口与企业内入口共用
+  `ScopedDB`，使平台 RPC 的事务 `app.org_id` 被绑定为当前企业。
+- 已新增保留可信 Actor、固定 `runtime` 且强制 `org_id=NULL` 的平台数据库依赖，
+  并仅切换创建企业、全部企业列表和手机号搜索用户；企业详情、成员、配置及组织架构
+  等入口继续使用企业 Scope。数据库治理 RPC、RLS 和角色校验均未放宽。
+- 本地定向与治理回归已通过；尚未提交、部署，也未执行生产 super_admin/普通用户的
+  HTTP 冒烟，因此生产状态仍为待验证。
+
 # 2026-07-26 Worker 周期巡检与模型评分配置断层 — 本地完成，待部署
 
 - 生产只读核查确认企微孤儿用户、重复身份和重复昵称均为 0；故障来自 Worker 撤销

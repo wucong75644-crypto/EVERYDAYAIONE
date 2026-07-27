@@ -464,3 +464,28 @@ class TestGovernanceCapabilityRouting:
         getattr(service, method_name)(*args)
 
         assert database.rpc.call_args.args[0] == rpc_name
+
+    def test_list_all_organizations_has_no_org_parameter(self):
+        database = MagicMock()
+        database.rpc.return_value.execute.return_value.data = []
+
+        OrgService(database).list_all_organizations()
+
+        database.rpc.assert_called_once_with(
+            "list_all_governed_organizations", None,
+        )
+
+    @pytest.mark.parametrize(
+        "marker",
+        (
+            "GOVERNANCE_AUTHORITY_DENIED",
+            "GOVERNANCE_PRINCIPAL_INACTIVE",
+            "GOVERNANCE_ROLE_SCOPE_MISMATCH",
+        ),
+    )
+    def test_platform_governance_denials_map_to_403(self, marker):
+        database = MagicMock()
+        database.rpc.return_value.execute.side_effect = Exception(marker)
+
+        with pytest.raises(PermissionDeniedError):
+            OrgService(database).list_all_organizations()

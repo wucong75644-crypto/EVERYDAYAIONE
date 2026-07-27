@@ -1813,6 +1813,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `verify_capabilities` / `verify_worker_capabilities` / `main` | `backend/scripts/verify_runtime_generation_capabilities.py` | 部署重启前核验 Runtime 准备/提交门面与私有对象边界，并用 Worker 连接核验完整媒体结算能力链 |
 | `start_web_database_runtime` | `backend/services/web_database_runtime.py` | 初始化 Web 数据库 Runtime，先验证 Registry 契约，再启动恢复和知识库后台任务 |
 | `get_scoped_db` | `backend/api/deps.py` | 复用已验证 OrgContext，组合事务级 DatabaseScope 与应用层 OrgScopedDB |
+| `get_platform_db` | `backend/api/deps.py` | 为平台治理入口构造保留可信 Actor、固定无企业绑定的 Runtime 事务数据库客户端 |
 | `WecomMessageService._for_request` | `backend/services/wecom/wecom_message_service.py` | 为每条企微消息复制独立服务与子服务，避免并发请求共享可变数据库身份 |
 | `WecomMessageService._bind_request_db` | `backend/services/wecom/wecom_message_service.py` | 在用户映射前绑定企业 Scope，映射后将当前消息提升为真实用户/企业 Scope |
 | `ActorTaskDatabases` | `backend/services/conversation_db_scope.py` | 绑定同一任务身份的异步控制面、异步应用层和同步 Handler 数据库门面 |

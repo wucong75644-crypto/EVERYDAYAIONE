@@ -104,8 +104,8 @@ class TestCreateOrg:
             "仅超级管理员可创建企业"
         )
         app = _build_app(db)
-        from api.routes.org import _get_org_service
-        app.dependency_overrides[_get_org_service] = lambda: mock_svc
+        from api.routes.org import _get_platform_org_service
+        app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
         client = TestClient(app)
 
         resp = client.post("/api/org", json={
@@ -123,8 +123,8 @@ class TestCreateOrg:
             "found": False, "user": None,
         }
         app = _build_app(db)
-        from api.routes.org import _get_org_service
-        app.dependency_overrides[_get_org_service] = lambda: mock_svc
+        from api.routes.org import _get_platform_org_service
+        app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
         client = TestClient(app)
 
         resp = client.post("/api/org", json={
@@ -143,8 +143,8 @@ class TestCreateOrg:
             "user": {"id": "owner-1", "status": "disabled"},
         }
         app = _build_app(db)
-        from api.routes.org import _get_org_service
-        app.dependency_overrides[_get_org_service] = lambda: mock_svc
+        from api.routes.org import _get_platform_org_service
+        app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
         client = TestClient(app)
 
         resp = client.post("/api/org", json={
@@ -172,9 +172,8 @@ class TestCreateOrg:
             MockSvc.return_value = mock_svc
 
             app = _build_app(db)
-            # 手动覆盖 _get_org_service
-            from api.routes.org import _get_org_service
-            app.dependency_overrides[_get_org_service] = lambda: mock_svc
+            from api.routes.org import _get_platform_org_service
+            app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
 
             client = TestClient(app)
             resp = client.post("/api/org", json={
@@ -237,6 +236,50 @@ class TestGetOrg:
         client = TestClient(app)
         resp = client.get("/api/org/org-1")
         assert resp.status_code == 403
+
+
+class TestOrgServiceScopeRouting:
+    """平台入口和企业内入口使用不同数据库依赖。"""
+
+    def test_platform_endpoints_use_platform_service(self):
+        from api.routes.org import _get_platform_org_service, router
+
+        platform_paths = {
+            ("POST", "/org"),
+            ("GET", "/org/admin/all"),
+            ("GET", "/org/admin/search-user"),
+        }
+        for route in router.routes:
+            route_methods = getattr(route, "methods", set())
+            key = next(
+                (
+                    (method, route.path)
+                    for method in route_methods
+                    if (method, route.path) in platform_paths
+                ),
+                None,
+            )
+            if key is not None:
+                dependencies = {
+                    dependency.call for dependency in route.dependant.dependencies
+                }
+                assert _get_platform_org_service in dependencies
+                platform_paths.remove(key)
+
+        assert not platform_paths
+
+    def test_enterprise_endpoint_keeps_scoped_service(self):
+        from api.routes.org import _get_org_service, router
+
+        route = next(
+            item for item in router.routes
+            if item.path == "/org/{org_id}" and "GET" in item.methods
+        )
+        dependencies = {
+            dependency.call for dependency in route.dependant.dependencies
+        }
+
+        assert _get_org_service in dependencies
 
 
 # ── accept_invitation 测试 ──────────────────────────────────

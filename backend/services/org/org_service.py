@@ -66,6 +66,8 @@ class OrgService(OrgInvitationMixin):
                 raise NotFoundError("企业治理对象", "unknown") from error
             if any(code in marker for code in (
                 "GOVERNANCE_AUTHORITY_DENIED",
+                "GOVERNANCE_PRINCIPAL_INACTIVE",
+                "GOVERNANCE_ROLE_SCOPE_MISMATCH",
                 "GOVERNANCE_SCOPE_MISMATCH",
                 "GOVERNANCE_SELF_SCOPE_MISMATCH",
             )):
