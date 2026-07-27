@@ -1,5 +1,13 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-28 Agent Runtime Projection Outbox dead stream — 候选已修复，尚未接入生产
+
+- migration 220_26增加当前tenant active super_admin专属inspect/requeue、不可变恢复
+  审计、严格request绑定和保留attempt/error事实的一次人工恢复机会；恢复仍走既有
+  compat claim/apply和幂等checkpoint，不允许跳过或直接修改业务投影。
+- 通用215 claim已additive收紧为audit-only，web_runtime/wecom仅由有序compat claim
+  领取；隔离PostgreSQL与独立Review门禁均已通过，尚未接入API、UI、startup或ingress。
+
 ## 2026-07-27 Agent Runtime AR-13 Command Claim 与 Coordinator 骨架 — 已集成，尚未接入生产 Owner
 
 - migration `219_01`、`219_02`、`219_02a`新增CommandClaim事实和Worker窄RPC；

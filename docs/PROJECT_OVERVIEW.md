@@ -39,6 +39,29 @@
 
 ## 目录结构
 
+Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
+- `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql`、
+  `220_25_agent_runtime_authorization_recovery.sql`及同名 rollback：增加持久
+  DispatchIntent、授权恢复、原子 GrantUse、取消/拒绝收敛和 reconcile-only 恢复。
+- `backend/services/agent/runtime/ports/authorization.py`、
+  `application/authorization_recovery.py`及
+  `infrastructure/postgres/authorization.py`：提供唯一授权恢复与 gate Port/Worker 适配。
+- `backend/services/agent/runtime/executors/resolver.py`与
+  `application/action_loop.py`：Registry 保持唯一 Executor 映射 SSOT，按
+  Resolver→gate→dispatch/reconcile 编排；未接 startup/ingress。
+- `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
+  原子边界、锁序、故障恢复、权限与 rollback 合同。
+
+Agent Runtime Projection dead stream恢复：
+- `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
+  增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用
+  Projection claim收紧为audit-only。
+- `backend/services/agent/runtime/ports/projection_recovery.py`及
+  `infrastructure/postgres/projection_recovery.py`：定义active super_admin Runtime
+  调用的只读检查和人工恢复适配；未接API、UI、startup或ingress。
+- `docs/document/TECH_AGENT_RUNTIME_ProjectionDeadStream恢复.md`：记录顺序阻塞、
+  Session→Outbox锁序、恢复审计、权限和回滚合同。
+
 Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `docs/document/TECH_AGENT_RUNTIME_AR-11ModelAttempt与唯一计费结算.md`：冻结
   Provider单dispatch、unknown/reconcile、late receipt和财务幂等边界。

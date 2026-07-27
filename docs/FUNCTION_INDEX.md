@@ -116,6 +116,26 @@
 | `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql` | 按Session→Command→CommandClaim→Run锁序领取pending Command、原子确保唯一Run并关闭历史非执行状态 |
 | `renew_agent_command_claim` / `finish_agent_command_claim` | `backend/migrations/219_02_agent_runtime_command_claim_lifecycle.sql` | 以CommandClaim fencing token续租或提交completed/failed终态，旧token和过期lease失败关闭 |
 
+### Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `ActionAuthorizationPort` / `PostgresActionAuthorizationRepository` | `backend/services/agent/runtime/ports/authorization.py`、`infrastructure/postgres/authorization.py` | Worker Scoped 授权恢复、receipt、activation 与 fenced dispatch gate 边界 |
+| `ActionExecutorResolver` / `PostgresActionExecutorResolver` | `backend/services/agent/runtime/executors/resolver.py` | 将持久 Action snapshot 解析为唯一 Registry descriptor、Executor、Attempt 与 request |
+| `AuthorizationRecoveryDriver.run_once` | `backend/services/agent/runtime/application/authorization_recovery.py` | 领取已批准 Interaction，重新求值 Policy，持久化 allow receipt 后激活 Action |
+| `ActionLoopDriver.dispatch_once` / `reconcile_once` | `backend/services/agent/runtime/application/action_loop.py` | 仅按 Resolver→gate→Executor 调度；存在 intent 的过期 dispatch 只进入 reconcile |
+| `gate_agent_action_dispatch` / `get_agent_action_dispatch_intent` | `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql` | 同事务校验 receipt/grant/scope、消费 GrantUse、绑定 Attempt fencing 并持久化 DispatchIntent/readback |
+| `claim_next_agent_authorization_recovery` / `renew_agent_authorization_recovery` / `activate_agent_authorized_action` / `expire_agent_authorization_interaction` | `backend/migrations/220_25_agent_runtime_authorization_recovery.sql` | 按统一锁序恢复、续租、激活或关闭授权等待 Action，并精确重算 Run blocker/wait state |
+
+### Agent Runtime Projection dead stream恢复
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `ProjectionDeadRecoveryPort` / `PostgresProjectionDeadRecovery` | `backend/services/agent/runtime/ports/projection_recovery.py`、`infrastructure/postgres/projection_recovery.py` | Runtime actor的dead item检查和严格绑定人工requeue合同，数据库再次验证active super_admin与tenant |
+| `list_agent_projection_dead_items` / `get_agent_projection_dead_item` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 仅返回当前tenant的Outbox/Event顺序元数据，不返回payload或业务内容 |
+| `requeue_agent_projection_dead` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 按Session→Outbox→Event→Checkpoint→Result锁序记录不可变审计并恢复一个dead首项，不重置失败历史 |
+| `claim_agent_projection_outbox` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | additive替换215通用claim，仅领取audit；web_runtime/wecom继续由有序compat claim唯一领取 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |

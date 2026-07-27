@@ -42,6 +42,10 @@ from services.agent.runtime.ports.projection import (
     ProjectionPort,
     ProjectionReceipt,
 )
+from services.agent.runtime.ports.projection_recovery import (
+    ProjectionDeadRecoveryPort,
+    ProjectionDeadRecoveryReceipt,
+)
 from services.agent.runtime.ports.repository import (
     ClaimOutcome,
     MutationOutcome,
@@ -83,6 +87,8 @@ __all__ = [
     "ProjectionOutboxPort",
     "ProjectionPort",
     "ProjectionReceipt",
+    "ProjectionDeadRecoveryPort",
+    "ProjectionDeadRecoveryReceipt",
     "RuntimeEventPort",
     "RuntimeRepositoryPort",
     "ClaimOutcome",

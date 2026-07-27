@@ -1,0 +1,14 @@
+SET LOCAL ROLE everydayai_owner;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM agent_model_results LIMIT 1) THEN
+        RAISE EXCEPTION 'AGENT_MODEL_RESULT_ROLLBACK_FACTS_PRESENT'
+            USING ERRCODE = '55000';
+    END IF;
+END;
+$$;
+
+DROP TABLE agent_model_results;
+
+RESET ROLE;
