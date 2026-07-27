@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "scenario": "duplicate runtime event",
+  "clock": {"started_at": "2026-07-18T00:06:00Z", "ticks_ms": [0]},
+  "session_scope": {"session_id": "session-event-duplicate", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-event-duplicate", "idempotency_key": "idem-event-duplicate", "command_type": "runtime.subscribe", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-event-duplicate"], "model_steps": [], "actions": []},
+  "initial_state": {"run-event-duplicate": "completed"},
+  "trace": [{"op": "terminal", "identity": "run-event-duplicate", "state": "completed", "fencing_revision": 0}],
+  "runtime_events": [
+    {"event_id": "event-duplicate-1", "sequence": 1, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-event-duplicate"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-duplicate-1", "sequence": 1, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-event-duplicate"}, "state": "completed", "fencing_revision": 1}
+  ],
+  "projection_records": [{"record_id": "projection-event-duplicate", "sequence": 1, "key": "run_status", "value": "completed"}],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"run_status": "completed"}, "side_effects": []}
+}

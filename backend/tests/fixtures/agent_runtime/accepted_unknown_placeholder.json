@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "scenario": "accepted and unknown action placeholder",
+  "clock": {"started_at": "2026-07-18T00:10:00Z", "ticks_ms": [0, 30000]},
+  "session_scope": {"session_id": "session-unknown", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-unknown", "idempotency_key": "idem-unknown", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-unknown"], "model_steps": ["step-unknown"], "actions": ["action-unknown"]},
+  "initial_state": {"run-unknown": "waiting_actions", "action-unknown": "accepted"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "transition", "aggregate_id": "action-unknown", "from": "accepted", "to": "unknown", "fencing_revision": 1},
+    {"op": "placeholder", "outcome": "unknown"}
+  ],
+  "runtime_events": [
+    {"event_id": "event-unknown-1", "sequence": 1, "event_type": "action.accepted", "aggregate": {"type": "action", "id": "action-unknown"}, "state": "accepted", "fencing_revision": 1},
+    {"event_id": "event-unknown-2", "sequence": 2, "event_type": "action.unknown", "aggregate": {"type": "action", "id": "action-unknown"}, "state": "unknown", "fencing_revision": 1}
+  ],
+  "projection_records": [{"record_id": "projection-unknown", "sequence": 2, "key": "action_status", "value": "unknown"}],
+  "references": {"artifacts": [], "usage": [{"usage_id": "usage-reserved", "action_id": "action-unknown", "status": "reserved"}]},
+  "expected": {"terminal_state": null, "outcome": "unknown", "rejection_code": null, "missing_sequences": [], "projection": {"action_status": "unknown"}, "side_effects": []}
+}

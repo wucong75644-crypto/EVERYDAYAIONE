@@ -160,7 +160,7 @@ flowchart TD
 | 13 | Persistence | Session、Plan、Goal、事件、Checkpoint | 第一轮完成 |
 | 14 | Protocol / UI | ACP、WebSocket、过程状态和产物展示 | 第一轮完成 |
 | 15 | Observability / Config | 日志、Trace、指标、配置和反馈 | 第一轮完成 |
-| 16 | Testing / Operations | 测试体系、部署、灰度、迁移和回滚 | 第一轮完成 |
+| 16 | Testing / Operations | 测试体系、部署、完整切换、迁移和回滚 | 第一轮完成 |
 | 17 | 端到端链路 | Web、企微、媒体、ERP、Skills、MCP、Goal | 第一轮完成 |
 
 ## 6. 文档产物
@@ -181,7 +181,7 @@ flowchart TD
 - API、工具、事件和持久化协议。
 - 上下文预算与信息路由。
 - MCP、插件和 Skill 扩展规范。
-- 兼容、迁移、灰度与回滚方案。
+- 兼容、迁移、完整切换与回滚方案。
 
 总体设计属于 A 级方案，完成后必须等待用户确认，未经确认不进入业务代码重构。
 
@@ -224,7 +224,7 @@ EVERYDAYAIONE 当前为 FastAPI + React 的多用户 SaaS，PostgreSQL 是业务
 - 数据库继续作为持久执行事实源，Redis 不承载唯一执行状态。
 - 所有付费和外部副作用必须经过确定性策略校验。
 - 超过一秒的操作优先异步化并支持超时、取消和恢复。
-- 新旧链路必须可灰度、可观测、可回滚。
+- 新旧链路允许无副作用 shadow 对账；门禁通过后完整切换，并保持可观测、可回滚。
 
 ### 7.4 潜在冲突
 

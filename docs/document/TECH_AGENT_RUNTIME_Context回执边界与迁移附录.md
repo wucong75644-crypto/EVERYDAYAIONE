@@ -83,9 +83,10 @@ Receipt 不保存敏感正文，只保存 refs、hash、token、revision 和原�
 | 耦合 | Prompt/Memory/Artifact/Tools 均接入 | 中 | ContextBlock 作为唯一契约 |
 | 一致性 | 与 Snapshot/Actor 一致 | 低 | 固定 revision/hash |
 | 可观测性 | 新增 block/token/trim 指标 | 低 | receipt 与 usage 对账 |
-| 可回滚 | 旧 assembler 可并存 | 低 | feature flag 按 channel/model |
+| 可回滚 | 旧 assembler 可并存 | 低 | 完整切换前保留旧入口 |
 
-不存在需要暂停设计的未决高风险；风险主要在迁移一致性，应通过 shadow diff 和逐通道灰度控制。
+不存在需要暂停设计的未决高风险；风险主要在迁移一致性，应通过无副作用 shadow diff、
+切换前对账和 single-owner 完整切换控制，不按通道或流量灰度。
 
 ## 5. 计划文件与接口
 
@@ -93,16 +94,19 @@ Receipt 不保存敏感正文，只保存 refs、hash、token、revision 和原�
 
 | 路径 | 职责 |
 |---|---|
-| `backend/services/agent_runtime/context/types.py` | Plan、Block、Receipt 类型 |
-| `backend/services/agent_runtime/context/planner.py` | 预算与 provider 计划 |
-| `backend/services/agent_runtime/context/assembler.py` | 稳定组装与 Provider 映射 |
-| `backend/services/agent_runtime/context/providers/` | History、Memory、Knowledge、Artifact、Skill |
-| `backend/services/agent_runtime/context/compactor.py` | 统一压缩与抑制 |
-| `backend/services/agent_runtime/context/retrieval.py` | Search/Get 门面 |
+| `backend/services/agent/runtime/context/types.py` | Plan、Block、Receipt 类型 |
+| `backend/services/agent/runtime/context/planner.py` | 预算与 provider 计划 |
+| `backend/services/agent/runtime/context/assembler.py` | 稳定组装与 Provider 映射 |
+| `backend/services/agent/runtime/context/providers/` | History、Memory、Knowledge、Artifact、Skill |
+| `backend/services/agent/runtime/context/compactor.py` | 统一压缩与抑制 |
+| `backend/services/agent/runtime/context/retrieval.py` | Search/Get 门面 |
 | `context_snapshot.py` | 适配为 Snapshot Provider |
 | `context_compressor/` | 算法迁移，旧入口兼容 |
 | `PromptBuilder` | 指令 Provider，逐步取消总装所有权 |
 | 数据库迁移 | summary、plan/receipt、suppression 元数据 |
+
+以上均为统一目录内的计划路径；已存在实现继续原地复用，尚不存在的文件由后续实施任务
+按实际职责创建，不得据本文创建 `backend/services/agent_runtime/` 平行目录。
 
 接口：
 
@@ -122,7 +126,7 @@ Receipt 不保存敏感正文，只保存 refs、hash、token、revision 和原�
 5. 统一 compressor 并增加 suppression/in-flight/fingerprint。
 6. 接入 Memory/Knowledge/Artifact Search/Get。
 7. Skill/MCP/Subagent 只通过独立 ContextPlan 接入。
-8. 按 Web 小流量、企微、长 Goal、子 Agent 顺序灰度。
+8. Web、企微、长 Goal、子 Agent 全部通过门禁后，在维护窗口完整切换。
 
 验收门禁：
 

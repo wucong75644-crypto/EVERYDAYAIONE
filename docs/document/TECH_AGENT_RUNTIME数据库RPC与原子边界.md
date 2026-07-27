@@ -4,6 +4,11 @@
 > 日期：2026-07-18
 > 主文档：`TECH_AGENT_RUNTIME数据库模型.md`
 > 本文范围：RPC、锁顺序、状态 CAS、Event/Outbox、回调 Inbox、迁移兼容
+> 实施事实基线：`TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`
+
+本文 RPC 均为目标合同，不是现行数据库函数清单。截至 AR-00，这些 Session、Run、
+ModelStep、Action、RuntimeEvent 和 Goal RPC 尚未实施；现有 Conversation Actor RPC
+继续是迁移期生产 owner。
 
 ## 1. 原则
 
@@ -371,12 +376,14 @@ callback Inbox 和 reconciliation 恢复。
 - 旧 Actor 执行仍是 owner。
 - compatibility adapter 写 Run/Step/Action shadow，不写新终态副作用。
 - 每次旧 task 终态后比较 status/result hash/usage/cost。
+- Shadow 写失败不得重试外部副作用、扣费或退款，也不得阻断旧 Actor 的生产终态。
 
-### 阶段 B：Read-only Action canary
+### 阶段 B：Read-only Action 完整切换
 
 - 新 Runtime 成为只读 Tool Action owner。
 - legacy tool_step 仅由 Projection 写。
-- 失败可按 org flag 回旧 Tool loop。
+- 测试和 shadow 对账通过后一次切换全部调用方，不按组织、用户或流量 Canary。
+- 回滚先关闭新 claim 并排空 in-flight，再整体恢复旧 Tool loop；同一 Action 不跨 Owner。
 
 ### 阶段 C：Media
 
@@ -401,6 +408,8 @@ callback Inbox 和 reconciliation 恢复。
 - event/projection 可停止消费，不删除事实。
 - down migration 只允许在从未启用生产流量且表为空时执行；有生产事实后使用正向兼容，
   不 DROP 数据表。
+- AR-01～AR-04 的具体任务定义不在当前仓库；各任务必须遵守 AR-00 的目录、Scope、
+  配置、模型映射、RPC 责任和 single-owner 门禁，不得重复创建同名聚合或 Event Store。
 
 ## 14. 风险
 

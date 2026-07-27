@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scenario": "enterprise employee scope",
+  "clock": {"started_at": "2026-07-18T00:12:00Z", "ticks_ms": [0]},
+  "session_scope": {"session_id": "session-enterprise", "user_id": "employee-test", "org_id": "org-test", "scope_kind": "user", "scope_id": "employee-test"},
+  "command": {"command_id": "command-enterprise", "idempotency_key": "idem-enterprise", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-enterprise"], "model_steps": ["step-enterprise"], "actions": []},
+  "initial_state": {"run-enterprise": "running"},
+  "trace": [{"op": "terminal", "identity": "run-enterprise", "state": "completed", "fencing_revision": 0}],
+  "runtime_events": [{"event_id": "event-enterprise-1", "sequence": 1, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-enterprise"}, "state": "completed", "fencing_revision": 1}],
+  "projection_records": [{"record_id": "projection-enterprise", "sequence": 1, "key": "scope", "value": "org-test:employee-test"}],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"scope": "org-test:employee-test"}, "side_effects": []}
+}

@@ -54,6 +54,10 @@ def test_registry_preserves_all_existing_application_filters() -> None:
     assert TENANT_TABLES == LEGACY_ACTIVE_TABLES
 
 
+def test_registry_excludes_dropped_pending_interaction_table() -> None:
+    assert "pending_interaction" not in TENANT_TABLE_REGISTRY
+
+
 def test_first_runtime_group_is_registered_without_behavior_activation() -> None:
     assert FIRST_RUNTIME_GROUP <= TENANT_TABLE_REGISTRY.keys()
     for table in FIRST_RUNTIME_GROUP:

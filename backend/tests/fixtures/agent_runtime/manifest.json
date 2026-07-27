@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    "text_response.json",
+    "actorless_system_scope.json",
+    "multi_model_steps.json",
+    "sync_readonly_tool.json",
+    "tool_failure.json",
+    "worker_lease_lost.json",
+    "duplicate_command.json",
+    "event_duplicate.json",
+    "event_reorder.json",
+    "event_gap.json",
+    "projection_replay.json",
+    "accepted_unknown_placeholder.json",
+    "cancel_completion_race.json",
+    "enterprise_employee_scope.json",
+    "personal_null_org_scope.json",
+    "scope_conflict_rejected.json",
+    "disconnect_recovery.json",
+    "actor_restart_recovery.json"
+  ]
+}

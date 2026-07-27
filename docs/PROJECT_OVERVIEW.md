@@ -158,7 +158,7 @@
   `WORKER_DATABASE_URL` 无凭证模板；必须与 `.env.worker` 指向同一 Worker 连接。
 - `deploy/env-templates/wecom-runtime.env.template`：WeCom 入站消息面使用的独立
   `everydayai_wecom_runtime` 无凭证连接合同；与 Web runtime 和 Worker 连接完全分离。
-- `backend/services/web_database_runtime.py`：集中管理 Web 内知识 Seed、恢复/清理、
+- `backend/services/web_database_runtime.py`：集中管理 Web 内知识 Seed、启动恢复、
   BackgroundTaskWorker、错误监控及 runtime/worker 数据库池关闭生命周期。
 - `backend/tests/test_worker_database_client.py`、`backend/tests/test_web_database_runtime.py`：
   覆盖缺失 Worker URL 失败关闭、独立池创建/关闭、runtime schema 与 worker 后台身份分离。
@@ -456,7 +456,7 @@
   ERP Token CAS、Kuaimai Cookie 迁移和 Skill SecretRef。
 - `docs/document/TECH_统一配置与Secret控制平面_迁移附录.md`：保存 158–165 实施顺序、
   生产只读审计结论与 161 分阶段验证证据，主设计文档保持在 500 行以内。
-- `backend/migrations/150_agent_runtime_tenant_defense.sql`：为 Agent Runtime 首组 13 表
+- `backend/migrations/150_agent_runtime_tenant_defense.sql`：为 Runtime 基础设施首组 13 表
   创建失败关闭的租户身份辅助函数和 `USING + WITH CHECK` policy；仅 ENABLE，不 FORCE。
 - `backend/migrations/rollback/150_agent_runtime_tenant_defense_rollback.sql`：移除首组 policy
   与辅助函数，并仅对迁移前未启用 RLS 的 6 张表恢复 DISABLE 状态。
@@ -493,6 +493,21 @@
 - `frontend/src/components/chat/message/echartsRuntime.ts`：集中具名注册项目支持的 ECharts 图表、组件、Canvas 渲染器和主题，作为图表触发后的独立加载边界。
 
 本轮 Agent Runtime 全项目对标新增的架构研究文档：
+- `docs/document/TECH_AGENT_RUNTIME_AR-00技术基线与迁移边界.md`：冻结现有与目标能力
+  边界、唯一 `backend/services/agent/runtime/` 目录、企业/企业员工/散客三级隔离、
+  全局/企业/个人/Session 配置继承、Conversation/Task/Message 新旧映射、后续 Runtime
+  RPC 合同，以及 AR-01～AR-04 各自的入口、Owner、文件、权限和迁移门禁。
+- `backend/migrations/209_worker_active_organization_capability.sql`：仅允许 actorless
+  Worker Scope 枚举 active 企业 ID；后台模型评分和一致性检查不再直读组织表。
+- `backend/migrations/210_worker_orphan_task_recovery_capability.sql`：以
+  claim/complete/fail、lease 和 fencing 原子恢复非 Actor 孤儿任务，消息回写、任务终态
+  与退款均由 Owner 能力提交，Redis 只保留启动调度锁。
+- `backend/migrations/211_worker_global_knowledge_seed_capability.sql`：校验受限 Seed
+  Snapshot，通过 Owner RPC 原子替换全局节点、1024 维 Embedding 和关系边，不开放
+  Worker 对知识表的直接权限。
+- `backend/services/web_database_runtime.py`、`backend/core/tenant_registry.py`：移除迁移
+  112 已删除的 `pending_interaction` 启动清理和 Registry 残留；未来持久 Interaction
+  仍由正式 Agent Runtime 任务实现。
 - `docs/document/TECH_Grok式通用记忆运行时重构.md`：将现有业务硬编码的 L1/L2/L3 记忆管道收口为 Grok 式通用 Session Flush、Session Memory、Consolidation、Curated Memory 与 Search/Get 生命周期；领域差异仅允许通过受限 Skill Profile 提供。
 - `backend/services/memory/contracts.py`、`candidate_validator.py`：Grok 式通用记忆候选协议与 fail-closed 原文证据门禁；首期只建立契约和误提取基线，尚未切换生产写入。
 - `backend/tests/test_l1_generic_memory.py`：通用 `NO_MEMORY/CANDIDATES` 解析、精确用户证据、整批拒绝、去重失败关闭及真实消息 ID 传递回归测试。
@@ -538,12 +553,26 @@
 - `backend/migrations/147_context_receipt_cache_identity.sql`：持久 Context Epoch、CacheIdentity 和单个 ModelStep Provider 用量，通过 v2 包装 RPC 与原生成提交保持同一事务。
 - `backend/services/handlers/chat_context/unified_history_loader.py`：将持久 ConversationItem/Compaction 重建为唯一模型历史；既有 revision 缺少投影时失败关闭。
 - `backend/services/agent/runtime/context/items.py`、`provider_receipt.py`：构建本 Turn 的原子 ConversationItem 组，并在每次真实 Provider 请求前登记无正文 ContextReceipt。
+
+Agent Runtime AR-05～AR-07 基础实现：
+
+- `backend/services/agent/runtime/domain/`：Session、Run、ModelStep、Action、Event、
+  Scope、lease、fencing 和幂等的框架无关领域单一类型来源。
+- `backend/services/agent/runtime/ports/`：Repository、Model、Executor、Event 和
+  Projection 的基础设施反转边界；本阶段不包含具体 Provider、Tool 或数据库适配器。
+- `backend/migrations/212_agent_runtime_core_foundation.sql`～`215_agent_runtime_model_event_projection_rpcs.sql`：
+  建立七张 FORCE RLS 核心表及 Session/Command/Run/ModelStep/Projection 窄 RPC；
+  应用顺序固定为 212→215，rollback 固定逆序执行。
+- `backend/tests/agent_runtime/` 与 `backend/tests/fixtures/agent_runtime/`：可复用 Trace
+  schema、确定性 Replay、Projection 重放和 single-owner/fencing/Scope/幂等断言。
+- 当前实现为 additive foundation，尚未接管 Web、企微或 Conversation Actor 的生产
+  Owner；生产调用方切换属于后续任务。
 - `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
 - `docs/document/TECH_SESSION_RUNTIME多租户通用Agent架构.md`：在现有 Conversation Actor 和既有
   `agent_*` Runtime 设计上冻结方案 A；补充全局管理员、企业、个人、Session 四层配置与策略继承，
   企业 Skill 共享、系统推荐/自动/强制安装，以及 MCP/Goal 第一阶段边界，禁止另建平行 Runtime 表。
-- `docs/document/TECH_AGENT_RUNTIME统一Session运行时与上下文加载合同.md`：以 Grok Build 最新源码为基线，定义统一 Session 状态推进、Context Epoch、ModelStep、首轮/多轮/工具循环/Compaction/冷恢复加载合同，以及 A+ 分波次迁移、灰度和回滚边界。
+- `docs/document/TECH_AGENT_RUNTIME统一Session运行时与上下文加载合同.md`：以 Grok Build 最新源码为基线，定义统一 Session 状态推进、Context Epoch、ModelStep、首轮/多轮/工具循环/Compaction/冷恢复加载合同，以及 A+ 分波次迁移、完整切换和回滚边界。
 - `docs/document/TECH_通用任务交付运行时与跨Turn数据证据.md`：统一单 Run 交付治理与跨 Turn 业务数据证据；Runtime 保留原模型/工具消费方式，只在工具和结构化产物边界执行确定性校验。
 - `docs/document/TECH_统一Validation与Recovery运行时.md`及实施附录：参考 Grok Build 的 typed result、结构化错误回填、有界恢复和 Completion Requirement，规划全项目唯一的通用校验与恢复内核；不包含 Skill 或业务专属校验。
 - `docs/document/research/AGENT_01_项目全景与组件装配.md`：对照 Grok Build 与 EVERYDAYAIONE 的启动入口、运行模式、进程/线程边界、装配参数和关闭恢复语义。
@@ -582,7 +611,7 @@
 - `docs/document/TECH_AGENT_RUNTIME_扩展运行时迁移附录.md`：记录扩展层架构影响、计划目录、渐进迁移顺序和安全验收门禁。
 - `docs/document/TECH_AGENT_RUNTIME_Subagent与后台任务.md`：定义受限 Child Run、委派合同、隔离 Context/Capability、预算、Workspace isolation、父级唤醒及 Background Action 分界。
 - `docs/document/TECH_AGENT_RUNTIME_多通道Projection与交互协议.md`：定义 RuntimeEvent 有序信封、Snapshot/Replay、Projection reducer、持久 Interaction、ChannelCapability 及 Web/企微确定性降级。
-- `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、Canary、自动门禁、双写对账与回滚。
+- `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：保留历史文件名，正文定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、无副作用 shadow 对账、完整切换门禁与回滚；不采用租户、用户或流量 Canary。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
@@ -689,7 +718,7 @@ EVERYDAYAIONE/
 │   │   ├── 134_web_user_wecom_delivery.sql # Web 用户输入按真实企微绑定写入事务 Outbox
 │   │   ├── 136_conversation_evidence_model_view.sql # Evidence 分级模型视图、hash、大小与过期字段
 │   │   ├── 137_context_summary_revision_rpc.sql # 连续闭合 Turn 摘要的 revision CAS 原子提交
-│   │   ├── 150_agent_runtime_tenant_defense.sql # Agent Runtime 首组 13 表租户 RLS policy
+│   │   ├── 150_agent_runtime_tenant_defense.sql # Runtime 基础设施首组 13 表租户 RLS policy
 │   │   ├── 151_agent_runtime_role_grants.sql # Agent Runtime 首组最小角色授权
 │   │   ├── 163_conversation_actor_worker_discovery.sql # Actor 无租户发现与任务级 Worker Facade
 │   │   ├── 164_actor_task_execution_capabilities.sql # Actor 任务级执行权限与终态 Facade

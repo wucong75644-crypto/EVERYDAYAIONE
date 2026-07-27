@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
@@ -95,7 +94,6 @@ async def start_web_database_runtime() -> WebDatabaseRuntime:
     logger.info("Configuration Registry contract verified")
     _load_org_schema(runtime_db)
     await _run_startup_recovery(worker_db)
-    _expire_pending_interactions(worker_db)
     async_worker_db = await get_async_worker_db()
 
     worker = BackgroundTaskWorker(worker_db, runtime_db=runtime_db)
@@ -177,27 +175,6 @@ async def _run_startup_recovery(worker_db: Any) -> None:
                 "interrupt_anchor_reconcile",
                 reconcile_lock,
             )
-
-
-def _expire_pending_interactions(worker_db: Any) -> None:
-    try:
-        expired = (
-            worker_db.table("pending_interaction")
-            .update({"status": "expired"})
-            .eq("status", "pending")
-            .lt("expired_at", datetime.now(timezone.utc).isoformat())
-            .execute()
-        )
-        expired_count = len(expired.data) if expired.data else 0
-        if expired_count:
-            logger.info(
-                f"Pending interaction cleanup | expired={expired_count}"
-            )
-    except Exception as exc:
-        logger.debug(
-            "Pending interaction cleanup skipped | "
-            f"error_type={type(exc).__name__}"
-        )
 
 
 async def _await_cancelled(task: asyncio.Task[Any]) -> None:

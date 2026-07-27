@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "scenario": "tool failure",
+  "clock": {"started_at": "2026-07-18T00:03:00Z", "ticks_ms": [0, 30]},
+  "session_scope": {"session_id": "session-tool-fail", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-tool-fail", "idempotency_key": "idem-tool-fail", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-tool-fail"], "model_steps": ["step-tool-fail"], "actions": ["action-tool-fail"]},
+  "initial_state": {"run-tool-fail": "running", "action-tool-fail": "running"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "transition", "aggregate_id": "action-tool-fail", "from": "running", "to": "failed", "fencing_revision": 1},
+    {"op": "terminal", "identity": "run-tool-fail", "state": "failed", "fencing_revision": 1}
+  ],
+  "runtime_events": [
+    {"event_id": "event-tool-fail-1", "sequence": 1, "event_type": "action.failed", "aggregate": {"type": "action", "id": "action-tool-fail"}, "state": "failed", "fencing_revision": 1},
+    {"event_id": "event-tool-fail-2", "sequence": 2, "event_type": "run.failed", "aggregate": {"type": "run", "id": "run-tool-fail"}, "state": "failed", "fencing_revision": 1}
+  ],
+  "projection_records": [{"record_id": "projection-tool-fail", "sequence": 2, "key": "run_status", "value": "failed"}],
+  "references": {"artifacts": [], "usage": []},
+  "expected": {"terminal_state": "failed", "outcome": "failed", "rejection_code": null, "missing_sequences": [], "projection": {"run_status": "failed"}, "side_effects": []}
+}

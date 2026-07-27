@@ -1,5 +1,71 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 前端依赖安全治理 — 兼容升级完成，剩余上游风险待跟踪
+
+- 基于 `integration/agent-runtime-ar-00-04` 的 `d56ff170` 重新核验：
+  `package.json`、`package-lock.json` 与原审计基线一致；治理前 `npm audit`
+  为 22 项（1 moderate、21 high），`npm audit --omit=dev` 为 12 项
+  （1 moderate、11 high）。
+- `typescript-eslint` 已升级至 8.65.0，`vitest` 与
+  `@vitest/coverage-v8` 已升级至 4.1.10，移除其旧
+  `test-exclude/glob/minimatch/brace-expansion` 开发依赖链；ESLint 保持 9.x，
+  避免 `eslint-plugin-react-hooks` 对 ESLint 10 的 peer 不兼容。
+- 升级后 `npm audit` 降至 15 项（1 moderate、14 high）；生产口径仍为
+  12 项（1 moderate、11 high），说明本次兼容升级消除了 7 项开发依赖漏洞，
+  未改变剩余生产依赖风险。
+- 剩余生产审计主要来自 ExcelJS 4.4.0 的 Node 流式归档依赖及 uuid 8.3.2。
+  当前代码仅通过浏览器端 `Workbook.xlsx.writeBuffer()` 导出，未调用 Node
+  文件系统或目录遍历 API；但构建分包仍包含 `zip-stream` 标识，不能据此排除
+  上游归档实现，因此继续按未解决生产风险跟踪。uuid 漏洞只影响 v3/v5/v6
+  外部 buffer 路径，当前调用链未直接使用这些 API。在 ExcelJS 发布兼容修复前，
+  不跨 major 强制 override，也不降级 ExcelJS。
+- React Router 7.18.1 的剩余公告只影响 unstable RSC API；当前项目使用
+  BrowserRouter/Routes/Link/useNavigate 的 SPA 路径，不具备触发条件。
+  公告修复版 8.3.0 尚未发布，且回退 7.11.0 会重新引入多项历史漏洞，因此保持
+  7.18.1，待上游可安装补丁发布后再升级。
+- 升级后 126 个测试文件、1250 个测试与生产构建通过。全量 lint 在升级前后均为
+  80 errors、18 warnings；覆盖率门禁在原 Vitest 3 基线和升级后均低于 80%，属于
+  既有前端质量债务，本次不越界修改业务源码或降低门槛。
+
+## 2026-07-27 Agent Runtime AR-05～AR-07 基础合同 — 已集成并通过联合验证，待部署
+
+- AR-05 在唯一正向目录 `backend/services/agent/runtime/` 建立无框架依赖的
+  Session、Run、ModelStep、Action、Event、Scope、lease、fencing、幂等领域合同，
+  以及 Repository、Model、Executor、Event、Projection ports；尚未切换现有业务 Owner。
+- AR-06 通过迁移 212～215 建立 Session、Command、Run、RunAttempt、ModelStep、
+  RuntimeEvent 和 Projection Outbox 七张持久表及窄 RPC。七表均启用
+  `RLS + FORCE RLS`，runtime、WeCom、Worker 和 PUBLIC 均无直接表权限；迁移必须按
+  212→213→214→215 应用，回滚严格逆序且存在业务事实时拒绝删除基础表。
+- AR-07 提供可复用 Trace schema、Replay、Projection 和 single-owner、fencing、
+  Scope、幂等断言，18 个 fixture 覆盖重复/乱序/缺口事件、断线与 Actor 重启恢复、
+  Accepted/Unknown、取消竞态、企业员工、散客和 actorless system。
+- 当前阶段是 additive foundation：未接入生产调用方、未执行 Owner 切换、未部署迁移。
+  AR-05～07 联合合同与相邻 Runtime 回归已通过；生产发布仍须应用 212～215、验证角色
+  权限矩阵和迁移账本，不能把基础表上线等同于业务 Owner 已切换。
+
+## 2026-07-26 Agent Runtime AR-01～AR-04 角色能力收口 — 已集成，待部署验证
+
+- AR-01 通过迁移 209 的 `worker_list_active_organization_ids` 窄能力替换 Worker
+  对 `organizations` 的直接读取；权限或响应异常失败关闭，不再伪装为空企业集合。
+- AR-02 通过迁移 210 的 claim/complete/fail RPC，以数据库锁、lease 和 fencing
+  原子完成非 Actor 孤儿任务恢复、部分消息回写和幂等退款；Worker 不获得业务表直权。
+- AR-03 通过迁移 211 原子替换全局 Seed 节点、Embedding 和关系边；企业、个人及
+  非 Seed 知识保持不变，跨作用域引用失败关闭，缓存仅在事务成功后失效。
+- AR-04 删除迁移 112 已废弃的 `pending_interaction` 启动清理和 Registry 残留，
+  不恢复旧表，也不提前实现未来 Agent Runtime Interaction。
+- 代码与隔离 PostgreSQL 契约已完成验证，但迁移 209～211 尚未部署生产；生产部署后
+  仍需核对 Backend 启动、周期任务、孤儿恢复、Seed 导入和相关权限日志停止增长。
+
+## 2026-07-26 Agent Runtime AR-00 总控验收纠偏 — 已完成文档修正
+
+- 唯一正向实现目录统一为 `backend/services/agent/runtime/`；旧
+  `backend/services/agent_runtime/` 只允许出现在禁止性说明中。
+- AR-01～AR-04 已按真实代码冻结为 Worker 活跃企业枚举、孤儿任务恢复、全局知识种子
+  导入、删除失效 pending_interaction 启动清理；各任务的入口、Owner、文件范围、RPC、
+  迁移、权限禁区和验收交接均写入 AR-00 基线。
+- 发布决策改为 additive expand、可选无副作用 shadow 对账、门禁通过后维护窗口完整
+  切换；不采用租户、用户、Channel 或流量 Canary，并保持 single-owner 与可回滚。
+
 ## 2026-07-26 数据库角色切换能力闭环 — 分域实施中
 
 - 生产 Backend 已使用 `everydayai_runtime`，但 `users`、`conversations`、
@@ -142,8 +208,11 @@
   但在企业 Session 中必须与企业策略求交。
 - Skill 必须支持系统发布、企业共享、个人私有，以及推荐、自动、强制和禁止四种绑定；
   MCP、Goal 和 Subagent 同期进入 Runtime 总体合同。
-- 冲突消解完成：继续复用既有 `agent_*` 数据模型和 `backend/services/agent_runtime/`
-  目标目录，禁止新增平行 `runtime_sessions/runtime_goals` 或第二套 Event Store。
+- AR-00 交叉审计纠偏：当前可复用的是 Conversation Actor、Context、Memory、Artifact
+  基础设施，不存在已实施的持久 Session、Run、ModelStep、Action、RuntimeEvent、
+  Goal、Skill、MCP 或 Subagent 主模型。唯一实现目录冻结为
+  `backend/services/agent/runtime/`，禁止新增 `backend/services/agent_runtime/`
+  或第二套 Event Store。
 - WebSocket 前置门禁已完成前两个子阶段：连接固定绑定 `(user_id, org_id)`，非法企业
   请求直接拒绝；订阅/steer 按用户与精确企业（个人为 null）校验；前端切换企业会
   关闭旧连接、清空旧订阅并重连；本地与 Redis 投递已使用精确 org 和
@@ -165,12 +234,15 @@
 - 剩余实施前置门禁为租户数据库纵深防御。
 - 租户数据库纵深防御生产审计已完成：80 张含 org_id 表全部由应用角色持有，
   FORCE RLS 与 policy 均为 0；现有 7 张 ENABLE RLS 表仍被 owner 绕过。代码 Registry
-  仅覆盖 55 张，Agent Runtime 等 13 张关键事实表未进入旧清单。
+  仅覆盖 55 张，Conversation Context、Attachment、Memory、Asset 等 13 张 Runtime
+  基础设施事实表未进入旧清单；这些表不是未来 Agent Session/Run/Action/RuntimeEvent
+  目标表。
 - 已确认采用独立 owner/migrator/runtime/worker 角色、事务级 DatabaseScope 和分领域
-  FORCE RLS；第一实施组固定为 Registry、Scope 基础设施及 Agent Runtime 13 表，
+  FORCE RLS；第一实施组固定为 Registry、Scope 基础设施及上述 Runtime 基础设施 13 表，
   不一次性切换 ERP/企业控制平面，也不做流量灰度。
 - 第一实施组任务 1 已完成：新增唯一租户 Registry，并由 OrgScopedDB 导入兼容激活集合；
-  13 张 Agent Runtime 表已登记但未激活，因此查询行为不变。生产 pg_catalog 双向合同
+  上述 13 张 Runtime 基础设施表已登记但未激活，因此查询行为不变。生产 pg_catalog
+  双向合同
   扫描 95 个表/分区/物化视图，缺表、缺 org/user 身份列、未知对象和分区父表错误均为 0。
 - 第一实施组任务 2 已完成：新增不可变 DatabaseScope 和同步/异步 Query、RPC、client
   显式包装器；Scope 与业务 SQL 固定处于同一事务，异常退出自动回滚，连接池继续复用。
@@ -208,7 +280,7 @@
   真实 `.env.*` 已由 gitignore 统一保护；验证器要求三个文件均存在、权限为 0600、各自
   使用正确数据库角色、无模板占位符且连接串相互独立。Systemd 仍读取原 `.env`，任务 5
   grant/policy 和测试库隔离矩阵通过前不得切换角色文件。
-- 第一实施组任务 5.1 已完成代码准备：新增管理员执行的 Agent Runtime 13 表首次 owner
+- 第一实施组任务 5.1 已完成代码准备：新增管理员执行的 Runtime 基础设施 13 表首次 owner
   转移与显式保护回滚脚本。转移前验证固定角色、完整表清单和允许的旧/新 owner；转移后
   migrator 获得 schema/迁移账本必要权限，runtime/worker 在 policy 就绪前保持无表权限，
   旧应用角色暂时保留 CRUD，避免当前服务因 owner 变化中断。回滚要求显式危险操作开关，

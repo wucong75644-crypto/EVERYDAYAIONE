@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scenario": "ordinary text response",
+  "clock": {"started_at": "2026-07-18T00:00:00Z", "ticks_ms": [0, 10]},
+  "session_scope": {"session_id": "session-text", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-text", "idempotency_key": "idem-text", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-text"], "model_steps": ["step-text"], "actions": []},
+  "initial_state": {"run-text": "queued", "step-text": "pending"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "transition", "aggregate_id": "run-text", "from": "queued", "to": "running", "fencing_revision": 1},
+    {"op": "transition", "aggregate_id": "step-text", "from": "pending", "to": "completed", "fencing_revision": 1},
+    {"op": "terminal", "identity": "run-text", "state": "completed", "fencing_revision": 1}
+  ],
+  "runtime_events": [
+    {"event_id": "event-text-1", "sequence": 1, "event_type": "run.created", "aggregate": {"type": "run", "id": "run-text"}, "state": "queued", "fencing_revision": 0},
+    {"event_id": "event-text-2", "sequence": 2, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-text"}, "state": "completed", "fencing_revision": 1}
+  ],
+  "projection_records": [{"record_id": "projection-text", "sequence": 2, "key": "run_status", "value": "completed"}],
+  "references": {"artifacts": [], "usage": [{"usage_id": "usage-text", "model_step_id": "step-text", "input_tokens": 8, "output_tokens": 4}]},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"run_status": "completed"}, "side_effects": []}
+}

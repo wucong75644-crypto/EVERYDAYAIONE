@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scenario": "synchronous readonly tool",
+  "clock": {"started_at": "2026-07-18T00:02:00Z", "ticks_ms": [0, 15]},
+  "session_scope": {"session_id": "session-read", "user_id": "employee-test", "org_id": "org-test", "scope_kind": "user", "scope_id": "employee-test"},
+  "command": {"command_id": "command-read", "idempotency_key": "idem-read", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-read"], "model_steps": ["step-read-1", "step-read-2"], "actions": ["action-read"]},
+  "initial_state": {"run-read": "running", "action-read": "queued"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "transition", "aggregate_id": "action-read", "from": "queued", "to": "completed", "fencing_revision": 1},
+    {"op": "side_effect", "identity": "effect-read", "effect": "readonly_result", "fencing_revision": 1},
+    {"op": "terminal", "identity": "run-read", "state": "completed", "fencing_revision": 1}
+  ],
+  "runtime_events": [
+    {"event_id": "event-read-1", "sequence": 1, "event_type": "action.completed", "aggregate": {"type": "action", "id": "action-read"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-read-2", "sequence": 2, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-read"}, "state": "completed", "fencing_revision": 1}
+  ],
+  "projection_records": [{"record_id": "projection-read", "sequence": 2, "key": "action_status", "value": "completed"}],
+  "references": {"artifacts": [{"artifact_id": "artifact-read", "content_hash": "sha256:synthetic-read"}], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"action_status": "completed"}, "side_effects": ["effect-read"]}
+}

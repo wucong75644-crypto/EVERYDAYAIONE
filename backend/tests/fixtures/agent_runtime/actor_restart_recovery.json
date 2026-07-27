@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "scenario": "actor restart recovery",
+  "clock": {"started_at": "2026-07-18T00:16:00Z", "ticks_ms": [0, 90001]},
+  "session_scope": {"session_id": "session-restart", "user_id": "user-test", "org_id": null, "scope_kind": "user", "scope_id": "user-test"},
+  "command": {"command_id": "command-restart", "idempotency_key": "idem-restart", "command_type": "message.submit", "request_hash": "sha256:synthetic-request"},
+  "identities": {"runs": ["run-restart"], "model_steps": ["step-restart"], "actions": ["action-restart"]},
+  "initial_state": {"run-restart": "running", "action-restart": "completed"},
+  "trace": [
+    {"op": "fence", "revision": 1},
+    {"op": "restart", "outcome": "accepted"},
+    {"op": "fence", "revision": 2},
+    {"op": "terminal", "identity": "run-restart", "state": "completed", "fencing_revision": 2}
+  ],
+  "runtime_events": [
+    {"event_id": "event-restart-1", "sequence": 1, "event_type": "action.completed", "aggregate": {"type": "action", "id": "action-restart"}, "state": "completed", "fencing_revision": 1},
+    {"event_id": "event-restart-2", "sequence": 2, "event_type": "run.claimed", "aggregate": {"type": "run", "id": "run-restart"}, "state": "running", "fencing_revision": 2},
+    {"event_id": "event-restart-3", "sequence": 3, "event_type": "run.completed", "aggregate": {"type": "run", "id": "run-restart"}, "state": "completed", "fencing_revision": 2}
+  ],
+  "projection_records": [{"record_id": "projection-restart", "sequence": 3, "key": "run_status", "value": "completed"}],
+  "references": {"artifacts": [{"artifact_id": "artifact-restart", "content_hash": "sha256:synthetic-restart"}], "usage": []},
+  "expected": {"terminal_state": "completed", "outcome": "completed", "rejection_code": null, "missing_sequences": [], "projection": {"run_status": "completed"}, "side_effects": []}
+}
