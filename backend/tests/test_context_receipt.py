@@ -253,6 +253,7 @@ def test_provider_usage_updates_only_latest_model_step() -> None:
             "provider_usage": {
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
+                "reasoning_tokens": 0,
                 "cached_tokens": 0,
                 "cache_creation_tokens": 0,
             },
@@ -261,6 +262,7 @@ def test_provider_usage_updates_only_latest_model_step() -> None:
     chunk = SimpleNamespace(
         prompt_tokens=12,
         completion_tokens=4,
+        reasoning_tokens=3,
         cached_tokens=8,
         cache_creation_tokens=2,
     )
@@ -272,6 +274,7 @@ def test_provider_usage_updates_only_latest_model_step() -> None:
     assert state.context_receipts[1]["provider_usage"] == {
         "prompt_tokens": 12,
         "completion_tokens": 4,
+        "reasoning_tokens": 3,
         "cached_tokens": 8,
         "cache_creation_tokens": 2,
     }
@@ -281,6 +284,7 @@ def test_provider_usage_ignores_missing_receipt_and_negative_tokens() -> None:
     chunk = SimpleNamespace(
         prompt_tokens=-1,
         completion_tokens=-2,
+        reasoning_tokens=-5,
         cached_tokens=-3,
         cache_creation_tokens=-4,
     )
@@ -290,6 +294,7 @@ def test_provider_usage_ignores_missing_receipt_and_negative_tokens() -> None:
         "provider_usage": {
             "prompt_tokens": 0,
             "completion_tokens": 0,
+            "reasoning_tokens": 0,
             "cached_tokens": 0,
             "cache_creation_tokens": 0,
         },

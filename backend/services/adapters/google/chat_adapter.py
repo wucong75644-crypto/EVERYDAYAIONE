@@ -11,6 +11,7 @@ Google Gemini 聊天适配器
 """
 
 import base64
+import json
 from typing import List, Optional, Dict, Any, AsyncIterator
 from decimal import Decimal
 
@@ -21,6 +22,7 @@ from ..base import (
     BaseChatAdapter,
     ModelProvider,
     StreamChunk,
+    ToolCallDelta,
     ChatResponse,
     CostEstimate,
 )
@@ -121,17 +123,17 @@ class GoogleChatAdapter(BaseChatAdapter):
         Returns:
             MIME 类型字符串
         """
-        url_lower = url.lower().split('?')[0]  # 去掉查询参数
-        if url_lower.endswith('.jpg') or url_lower.endswith('.jpeg'):
-            return "image/jpeg"
-        elif url_lower.endswith('.png'):
-            return "image/png"
-        elif url_lower.endswith('.webp'):
-            return "image/webp"
-        elif url_lower.endswith('.gif'):
-            return "image/gif"
-        elif url_lower.endswith('.pdf'):
-            return "application/pdf"
+        path = url.lower().split("?")[0]
+        suffix_types = (
+            ((".jpg", ".jpeg"), "image/jpeg"),
+            ((".png",), "image/png"),
+            ((".webp",), "image/webp"),
+            ((".gif",), "image/gif"),
+            ((".pdf",), "application/pdf"),
+        )
+        for suffixes, mime_type in suffix_types:
+            if path.endswith(suffixes):
+                return mime_type
         return default
 
     async def _convert_to_google_format(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -162,65 +164,72 @@ class GoogleChatAdapter(BaseChatAdapter):
         Returns:
             Google 格式的消息列表
         """
-        google_messages = []
-
+        google_messages: List[Dict[str, Any]] = []
         for msg in messages:
-            # 转换角色：assistant → model
             role = msg.get("role", "user")
             google_role = "model" if role == "assistant" else "user"
-
-            # 处理系统消息：合并到第一条用户消息
             if role == "system":
-                # Google API 不支持 system 角色，将其转为 user 消息
                 google_role = "user"
-
-            parts = []
-            content = msg.get("content", "")
-
-            # 处理纯文本内容
-            if isinstance(content, str):
-                if content.strip():  # 忽略空内容
-                    parts.append({"text": content})
-
-            # 处理多模态内容
-            elif isinstance(content, list):
-                for item in content:
-                    item_type = item.get("type", "text")
-
-                    if item_type == "text":
-                        text = item.get("text", "")
-                        if text.strip():
-                            parts.append({"text": text})
-
-                    elif item_type == "image_url":
-                        media_url = item.get("image_url", {}).get("url", "")
-                        if media_url:
-                            mime_type = self._detect_mime_type(media_url)
-                            # PDF 允许 50MB，图片允许 20MB
-                            max_mb = 50 if mime_type == "application/pdf" else 20
-                            media_data = await self._download_media(media_url, max_size_mb=max_mb)
-                            if media_data:
-                                parts.append({
-                                    "inline_data": {
-                                        "mime_type": mime_type,
-                                        "data": media_data
-                                    }
-                                })
-                            else:
-                                logger.warning(f"Skipped media (download failed) | url={media_url}")
-
-            # 只添加非空消息
+            parts = await self._convert_google_parts(
+                msg.get("content", "")
+            )
             if parts:
-                google_messages.append({
-                    "role": google_role,
-                    "parts": parts
-                })
+                google_messages.append(
+                    {"role": google_role, "parts": parts}
+                )
 
         logger.debug(
             f"Message format converted | "
             f"input={len(messages)} | output={len(google_messages)}"
         )
         return google_messages
+
+    async def _convert_google_parts(
+        self,
+        content: Any,
+    ) -> List[Dict[str, Any]]:
+        if isinstance(content, str):
+            return [{"text": content}] if content.strip() else []
+        if not isinstance(content, list):
+            return []
+        parts: List[Dict[str, Any]] = []
+        for item in content:
+            if item.get("type", "text") == "text":
+                text = item.get("text", "")
+                if text.strip():
+                    parts.append({"text": text})
+                continue
+            media = await self._convert_google_media(item)
+            if media is not None:
+                parts.append(media)
+        return parts
+
+    async def _convert_google_media(
+        self,
+        item: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        if item.get("type") != "image_url":
+            return None
+        media_url = item.get("image_url", {}).get("url", "")
+        if not media_url:
+            return None
+        mime_type = self._detect_mime_type(media_url)
+        max_mb = 50 if mime_type == "application/pdf" else 20
+        media_data = await self._download_media(
+            media_url,
+            max_size_mb=max_mb,
+        )
+        if media_data is None:
+            logger.warning(
+                f"Skipped media (download failed) | url={media_url}"
+            )
+            return None
+        return {
+            "inline_data": {
+                "mime_type": mime_type,
+                "data": media_data,
+            }
+        }
 
     async def stream_chat(
         self,
@@ -258,6 +267,15 @@ class GoogleChatAdapter(BaseChatAdapter):
             "top_k": kwargs.get("top_k", 40),
             "max_output_tokens": kwargs.get("max_output_tokens", 8192),
         }
+        if kwargs.get("response_format") is not None:
+            config["response_mime_type"] = "application/json"
+        tools = kwargs.get("tools")
+        if tools:
+            config["tools"] = [{
+                "function_declarations": [
+                    tool["function"] for tool in tools
+                ]
+            }]
 
         logger.info(
             f"Stream chat started | "
@@ -278,49 +296,7 @@ class GoogleChatAdapter(BaseChatAdapter):
             chunk_count = 0
             async for chunk in response_stream:
                 chunk_count += 1
-
-                # 提取文本内容
-                text = None
-                if hasattr(chunk, 'text') and chunk.text:
-                    text = chunk.text
-
-                # 提取 token 使用量（通常在最后一个 chunk）
-                prompt_tokens = 0
-                completion_tokens = 0
-                cached_tokens = 0
-                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
-                    prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0)
-                    completion_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0)
-
-                    # V2: 读 Gemini cache 命中指标 (cachedContentTokenCount)
-                    # Gemini 2.5 implicit cache 默认开启 (Flash >=1024, Pro >=2048 tokens)
-                    cached_tokens = getattr(
-                        chunk.usage_metadata, 'cached_content_token_count', 0
-                    ) or 0
-                    if cached_tokens > 0 and prompt_tokens > 0:
-                        hit_rate = cached_tokens / prompt_tokens
-                        logger.info(
-                            f"LLM cache | model=gemini | "
-                            f"prompt={prompt_tokens} cached={cached_tokens} "
-                            f"hit_rate={hit_rate:.1%}"
-                        )
-
-                # 检查是否被内容过滤
-                if hasattr(chunk, 'candidates') and chunk.candidates:
-                    for candidate in chunk.candidates:
-                        if hasattr(candidate, 'finish_reason'):
-                            finish_reason = str(candidate.finish_reason)
-                            if 'SAFETY' in finish_reason or 'BLOCK' in finish_reason:
-                                logger.warning(f"Content filtered | reason={finish_reason}")
-                                raise GoogleContentFilterError()
-
-                yield StreamChunk(
-                    content=text,
-                    finish_reason=None,  # Google 在最后一个 chunk 返回
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    cached_tokens=cached_tokens,
-                )
+                yield _parse_google_stream_chunk(chunk)
 
             logger.info(f"Stream chat completed | chunks={chunk_count}")
 
@@ -406,3 +382,72 @@ class GoogleChatAdapter(BaseChatAdapter):
         """关闭连接，释放资源"""
         await self.client.aclose()
         logger.debug(f"GoogleChatAdapter closed | model={self._model_id}")
+
+
+def _parse_google_stream_chunk(chunk: Any) -> StreamChunk:
+    usage = getattr(chunk, "usage_metadata", None)
+    prompt_tokens = (
+        getattr(usage, "prompt_token_count", 0) if usage else 0
+    )
+    cached_tokens = (
+        getattr(usage, "cached_content_token_count", 0) or 0
+        if usage else 0
+    )
+    if cached_tokens > 0 and prompt_tokens > 0:
+        logger.info(
+            f"LLM cache | model=gemini | prompt={prompt_tokens} "
+            f"cached={cached_tokens} "
+            f"hit_rate={cached_tokens / prompt_tokens:.1%}"
+        )
+    finish_reason = _google_finish_reason(chunk)
+    return StreamChunk(
+        content=getattr(chunk, "text", None) or None,
+        finish_reason=finish_reason,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=(
+            getattr(usage, "candidates_token_count", 0) if usage else 0
+        ),
+        reasoning_tokens=(
+            getattr(usage, "thoughts_token_count", 0) or 0
+            if usage else 0
+        ),
+        cached_tokens=cached_tokens,
+        tool_calls=_google_tool_call_deltas(chunk),
+    )
+
+
+def _google_finish_reason(chunk: Any) -> str | None:
+    for candidate in getattr(chunk, "candidates", None) or ():
+        reason = getattr(candidate, "finish_reason", None)
+        if reason is None:
+            continue
+        value = str(reason)
+        if "SAFETY" in value or "BLOCK" in value:
+            logger.warning(f"Content filtered | reason={value}")
+            raise GoogleContentFilterError()
+        return value
+    return None
+
+
+def _google_tool_call_deltas(
+    chunk: Any,
+) -> List[ToolCallDelta] | None:
+    calls: List[ToolCallDelta] = []
+    for candidate in getattr(chunk, "candidates", None) or ():
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or ():
+            function = getattr(part, "function_call", None)
+            if function is None:
+                continue
+            calls.append(ToolCallDelta(
+                index=len(calls),
+                id=getattr(function, "id", None),
+                name=getattr(function, "name", None),
+                arguments_delta=json.dumps(
+                    getattr(function, "args", {}) or {},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ))
+    return calls or None
