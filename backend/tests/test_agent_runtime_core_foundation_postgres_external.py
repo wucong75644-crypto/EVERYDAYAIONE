@@ -7,7 +7,7 @@ import subprocess
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = tuple(sorted(
-    path for path in (ROOT / "migrations").glob("21[2-5]_*.sql")
+    path for path in (ROOT / "migrations").glob("21[2-6]_*.sql")
 ))
 ROLLBACKS = tuple(
     ROOT / "migrations/rollback" / f"{path.stem}_rollback.sql"
@@ -99,6 +99,16 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
         ))
         self.assertEqual(personal["outcome"], "created")
         session_id = personal["entity_id"]
+        session_read = json.loads(_runtime(
+            f"SELECT get_agent_runtime_session('{session_id}');",
+            user_id=USER_ID,
+        ))
+        self.assertEqual(session_read["session"]["id"], session_id)
+        replay = json.loads(_runtime(
+            f"SELECT replay_agent_runtime_events('{session_id}', 0, 100);",
+            user_id=USER_ID,
+        ))
+        self.assertEqual(replay["events"][0]["sequence"], 1)
         repeated = json.loads(_runtime(
             f"""
             SELECT ensure_agent_runtime_session(
@@ -295,6 +305,18 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
         ).stdout.strip().splitlines()[-1])
         self.assertGreaterEqual(len(outbox_claims), 2)
         first_outbox, second_outbox = outbox_claims[:2]
+        envelope = json.loads(_worker(
+            f"""
+            SELECT get_claimed_agent_projection_event(
+                '{first_outbox["id"]}', '{first_outbox["lease_token"]}'
+            );
+            """
+        ).stdout.strip().splitlines()[-1])
+        self.assertEqual(envelope["outcome"], "found")
+        self.assertEqual(
+            envelope["event"]["id"], first_outbox["event_id"],
+        )
+        self.assertIn("payload", envelope["event"])
         outbox_completed = json.loads(_worker(
             f"""
             SELECT complete_agent_projection_outbox(
@@ -341,6 +363,15 @@ class AgentRuntimeCorePostgresContract(unittest.TestCase):
                     'claim_agent_run(uuid,text,integer,integer)', 'EXECUTE')
                 AND has_function_privilege('everydayai_wecom_runtime',
                     'submit_session_command(uuid,text,text,jsonb)', 'EXECUTE')
+                AND has_function_privilege('everydayai_wecom_runtime',
+                    'get_agent_runtime_session(uuid)', 'EXECUTE')
+                AND has_function_privilege('everydayai_worker',
+                    'replay_agent_runtime_events(uuid,bigint,integer)',
+                    'EXECUTE')
+                AND NOT has_function_privilege('everydayai_runtime',
+                    'get_agent_runtime_run_claim(uuid,text)', 'EXECUTE')
+                AND NOT has_function_privilege('public',
+                    'get_agent_runtime_session(uuid)', 'EXECUTE')
                 AND NOT has_table_privilege('everydayai_wecom_runtime',
                     'agent_runs', 'SELECT')
                 AND NOT has_function_privilege(
