@@ -1,9 +1,11 @@
 """管理员统一资产路由与旧端点删除测试。"""
 from unittest.mock import AsyncMock, MagicMock, call, patch
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
+from core.db_scope import PostgresArray
 from tests.test_admin_users_route import (
     TARGET_USER_ID,
     FakeDB,
@@ -250,10 +252,10 @@ class TestDownloadZip:
             "resolve_platform_admin_user_assets_download",
             {
                 "p_actor_user_id": TARGET_USER_ID,
-                "p_asset_ids": [
-                    "00000000-0000-0000-0000-000000000011",
-                    "00000000-0000-0000-0000-000000000012",
-                ],
+                "p_asset_ids": PostgresArray([
+                    UUID("00000000-0000-0000-0000-000000000011"),
+                    UUID("00000000-0000-0000-0000-000000000012"),
+                ]),
             },
         )]
         assert "user_asset_refs" not in db.table_calls
