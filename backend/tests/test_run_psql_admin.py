@@ -35,6 +35,16 @@ def test_build_environment_decodes_credentials_without_url_argument(
     assert "PGPASSFILE" not in environment
 
 
+def test_build_environment_decodes_unix_socket_host() -> None:
+    environment = MODULE.build_psql_environment(
+        "postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/everydayai"
+    )
+
+    assert environment["PGHOST"] == "/var/run/postgresql"
+    assert environment["PGUSER"] == "postgres"
+    assert "PGPASSWORD" not in environment
+
+
 @pytest.mark.parametrize(
     "database_url",
     (

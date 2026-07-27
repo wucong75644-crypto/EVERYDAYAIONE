@@ -43,7 +43,7 @@ if printf '%s\n' "$migration_plan" | grep -Fxq \
     migration_python_dir=$(dirname "$migration_python")
     sudo -n -u postgres env \
         "PATH=${migration_python_dir}:/usr/local/bin:/usr/bin:/bin" \
-        "TENANT_DB_ADMIN_URL=postgresql:///${database_name}?host=/var/run/postgresql" \
+        "TENANT_DB_ADMIN_URL=postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/${database_name}" \
         bash ../deploy/transfer-admin-credit-adjustment-ownership.sh
 fi
 if printf '%s\n' "$migration_plan" | grep -Eq \
