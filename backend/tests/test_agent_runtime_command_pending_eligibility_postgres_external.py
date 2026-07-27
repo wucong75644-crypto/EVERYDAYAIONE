@@ -161,6 +161,106 @@ def test_live_running_is_not_claimed_and_expired_running_uses_run_fencing() -> N
     )["outcome"] == "ownership_lost"
 
 
+def test_live_run_lease_precedes_exhausted_command_claim() -> None:
+    session_id = create_test_session()
+    command_id = insert_command(session_id)
+    command_claim = worker(
+        "SELECT claim_pending_agent_command_and_ensure_run("
+        "'command-owner',90,1);"
+    )
+    run_id = str(command_claim["run_id"])
+    run_claim = worker(
+        f"SELECT claim_agent_run('{run_id}','run-owner',90,3);"
+    )
+    before = value(
+        "SET ROLE everydayai_owner;"
+        "SELECT concat_ws(':',claim.attempt_number,claim.fencing_token,"
+        "run.status,run.state_version,run.execution_token,"
+        "(run.lease_expires_at>clock_timestamp()),attempt.ended_at IS NULL) "
+        "FROM agent_command_claims claim "
+        "JOIN agent_runs run ON run.id=claim.run_id "
+        "JOIN agent_run_attempts attempt ON attempt.run_id=run.id "
+        f"WHERE claim.command_id='{command_id}';"
+    )
+    psql(
+        "SET ROLE everydayai_owner;"
+        "UPDATE agent_command_claims SET lease_expires_at="
+        "clock_timestamp()-interval '1 second' "
+        f"WHERE command_id='{command_id}';"
+    )
+
+    blocked = worker(
+        "SELECT claim_pending_agent_command_and_ensure_run("
+        "'command-contender',90,1);"
+    )
+
+    assert blocked["outcome"] == "not_found"
+    assert value(
+        "SET ROLE everydayai_owner;"
+        "SELECT concat_ws(':',claim.attempt_number,claim.fencing_token,"
+        "run.status,run.state_version,run.execution_token,"
+        "(run.lease_expires_at>clock_timestamp()),attempt.ended_at IS NULL) "
+        "FROM agent_command_claims claim "
+        "JOIN agent_runs run ON run.id=claim.run_id "
+        "JOIN agent_run_attempts attempt ON attempt.run_id=run.id "
+        f"WHERE claim.command_id='{command_id}';"
+    ) == before
+    assert value(
+        "SET ROLE everydayai_owner;"
+        "SELECT count(*) FROM agent_runtime_events "
+        f"WHERE run_id='{run_id}' AND event_type IN "
+        "('run.failed','command.attempts_exhausted');"
+    ) == "0"
+    assert value(
+        "SET ROLE everydayai_owner;"
+        "SELECT count(*) FROM agent_projection_outbox outbox "
+        "JOIN agent_runtime_events event ON event.id=outbox.event_id "
+        f"WHERE event.run_id='{run_id}' AND event.event_type IN "
+        "('run.failed','command.attempts_exhausted');"
+    ) == "0"
+    assert worker(
+        f"SELECT renew_agent_run('{run_id}','{run_claim['execution_token']}',90);"
+    )["outcome"] == "renewed"
+
+    psql(
+        "SET ROLE everydayai_owner;"
+        "UPDATE agent_runs SET lease_expires_at="
+        "clock_timestamp()-interval '1 second' "
+        f"WHERE id='{run_id}';"
+    )
+    exhausted = worker(
+        "SELECT claim_pending_agent_command_and_ensure_run("
+        "'command-contender',90,1);"
+    )
+    assert exhausted["outcome"] == "attempts_exhausted"
+    assert value(
+        "SET ROLE everydayai_owner;"
+        "SELECT concat_ws(':',run.status,run.state_version,"
+        "run.execution_token IS NULL,attempt.ended_at IS NOT NULL,"
+        "attempt.outcome) FROM agent_runs run "
+        "JOIN agent_run_attempts attempt ON attempt.run_id=run.id "
+        f"WHERE run.id='{run_id}';"
+    ) == (
+        f"failed:{int(run_claim['state_version']) + 1}:t:t:failed"
+    )
+    assert worker(
+        f"SELECT renew_agent_run('{run_id}','{run_claim['execution_token']}',90);"
+    )["outcome"] == "ownership_lost"
+    assert event_count(run_id, "run.failed") == 1
+    assert event_count(run_id, "command.attempts_exhausted") == 1
+    assert value(
+        "SET ROLE everydayai_owner;"
+        "SELECT count(*) FROM agent_projection_outbox outbox "
+        "JOIN agent_runtime_events event ON event.id=outbox.event_id "
+        f"WHERE event.run_id='{run_id}' AND event.event_type IN "
+        "('run.failed','command.attempts_exhausted');"
+    ) == "4"
+    assert worker(
+        "SELECT claim_pending_agent_command_and_ensure_run("
+        "'command-contender-repeat',90,1);"
+    )["outcome"] == "not_found"
+
+
 @pytest.mark.parametrize(
     "status", ["waiting_actions", "waiting_interaction", "paused"],
 )

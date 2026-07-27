@@ -118,6 +118,9 @@ def test_attempt_exhaustion_fails_run_once_and_blocks_run_claim(
         "UPDATE agent_command_claims SET lease_expires_at="
         "clock_timestamp()-interval '1 second' "
         f"WHERE command_id='{command_id}';"
+        "UPDATE agent_runs SET lease_expires_at="
+        "clock_timestamp()-interval '1 second' "
+        f"WHERE id='{run_id}';"
     )
 
     exhausted = worker(

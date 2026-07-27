@@ -164,10 +164,6 @@ BEGIN
                AND run.user_id IS NOT DISTINCT FROM command.user_id
                AND run.status = 'running'
                AND run.lease_expires_at > clock_timestamp()
-               AND (
-                   claim.command_id IS NULL
-                   OR claim.attempt_number < p_max_attempts
-               )
            )
          ORDER BY (command.command_type = 'cancel') DESC,
                   command.created_at, command.id
@@ -188,11 +184,7 @@ BEGIN
             CONTINUE;
         END IF;
         v_eligibility := _agent_command_run_eligibility(v_command);
-        IF v_eligibility->>'outcome' = 'busy'
-           AND (
-               v_claim.command_id IS NULL
-               OR v_claim.attempt_number < p_max_attempts
-           ) THEN
+        IF v_eligibility->>'outcome' = 'busy' THEN
             v_command.id := NULL;
             CONTINUE;
         END IF;

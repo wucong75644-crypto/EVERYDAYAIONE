@@ -97,6 +97,8 @@ def test_historical_run_eligibility_is_locked_and_fail_closed() -> None:
     assert "run.status = 'running'" in ELIGIBILITY
     assert "run.lease_expires_at > clock_timestamp()" in ELIGIBILITY
     assert "run.user_id IS NOT DISTINCT FROM command.user_id" in ELIGIBILITY
+    assert "OR claim.attempt_number < p_max_attempts" not in ELIGIBILITY
+    assert "IF v_eligibility->>'outcome' = 'busy' THEN" in ELIGIBILITY
     assert "_agent_command_run_eligibility(agent_session_commands)" in ELIGIBILITY
     assert "FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime," in (
         ELIGIBILITY

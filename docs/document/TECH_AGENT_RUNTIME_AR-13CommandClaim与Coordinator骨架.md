@@ -72,7 +72,8 @@ Session → Command → CommandClaim → Run。
 
 - queued 与 lease 已过期的 running 可领取；running 的执行接管仍只能调用既有
   `claim_agent_run` 签发新 token 和 RunAttempt；
-- 有效 lease 的 running 不进入候选，避免第二执行 Owner；
+- 有效 lease 的 running 无条件不进入候选；即使 CommandClaim 已过期或 attempts
+  已耗尽，也不得覆盖 Run execution Owner；
 - waiting_actions、waiting_interaction、paused 已完成本条 Command 的推进，不重新
   执行 handler，分别等待 Action、Interaction 或显式 resume；
 - completed、failed、cancelled 不再签发 active CommandClaim；
