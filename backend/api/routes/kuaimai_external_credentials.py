@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import AsyncScopedDB, OrgCtx
 from api.routes.kuaimai_external_common import require_kuaimai_admin
+from core.exceptions import AppException
 from services.configuration.external_control import (
     ExternalConfigurationControl,
 )
@@ -81,24 +82,65 @@ async def create_credential(
     try:
         parsed = curl_parser.parse_curl(body.curl_text)
     except curl_parser.CurlParseError as error:
-        raise HTTPException(
+        raise AppException(
+            code="KUAIMAI_CURL_INVALID",
+            message=f"cURL 解析失败: {error}",
             status_code=400,
-            detail=f"cURL 解析失败: {error}",
         ) from error
+    if not curl_parser.is_kuaimai_host(parsed):
+        raise AppException(
+            code="KUAIMAI_HOST_INVALID",
+            message="请复制 erp.superboss.cc 的报表查询请求",
+            status_code=400,
+        )
     if not parsed.companyid:
-        raise HTTPException(status_code=400, detail="cURL 中缺少 companyid header")
+        raise AppException(
+            code="KUAIMAI_COMPANY_ID_MISSING",
+            message="该请求中没有 companyid，请重新复制报表查询请求",
+            status_code=400,
+        )
     if not parsed.censeid:
-        raise HTTPException(status_code=400, detail="cURL 中缺少 _censeid cookie")
-    source = body.source or curl_parser.detect_source(parsed)
+        raise AppException(
+            code="KUAIMAI_CENSEID_MISSING",
+            message="该请求中没有登录 Cookie（_censeid），请确认已登录快麦",
+            status_code=400,
+        )
+    detected_source = curl_parser.detect_source(parsed)
+    if body.source and detected_source and body.source != detected_source:
+        raise AppException(
+            code="KUAIMAI_SOURCE_MISMATCH",
+            message="复制的请求与当前配置的数据源不匹配",
+            status_code=400,
+            details={
+                "expected_source": body.source,
+                "detected_source": detected_source,
+            },
+        )
+    source = body.source or detected_source
     if source not in ("thinktank", "viperp"):
-        raise HTTPException(status_code=400, detail="无法识别数据源")
-    credential = await ExternalConfigurationControl(db).set(
-        org_id=org_id,
-        source=source,
-        company_id=parsed.companyid,
-        censeid_cookie=parsed.censeid,
-        cookie_full=parsed.cookie_full or "",
-    )
+        raise AppException(
+            code="KUAIMAI_SOURCE_UNKNOWN",
+            message="无法识别数据源，请复制智库或销售主题报表的查询请求",
+            status_code=400,
+        )
+    try:
+        credential = await ExternalConfigurationControl(db).set(
+            org_id=org_id,
+            source=source,
+            company_id=parsed.companyid,
+            censeid_cookie=parsed.censeid,
+            cookie_full=parsed.cookie_full or "",
+        )
+    except Exception as error:
+        logger.exception(
+            "Kuaimai external credential save failed | "
+            f"org={org_id} source={source} user={org_ctx.user_id}"
+        )
+        raise AppException(
+            code="KUAIMAI_CONFIG_SAVE_FAILED",
+            message="快麦凭证保存失败，请稍后重试",
+            status_code=503,
+        ) from error
     logger.info(
         "Kuaimai external credential updated | "
         f"org={org_id} source={source} user={org_ctx.user_id}"

@@ -164,8 +164,10 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   管理员配置控制面适配器。
 - `backend/services/kuaimai_external/manual_worker.py`：Sync 服务持久手动同步队列
   消费器。
-- `backend/api/routes/kuaimai_external_credentials.py`：拆分后的快麦凭证管理与探活
-  路由。
+- `backend/api/routes/kuaimai_external_credentials.py`：拆分后的快麦凭证管理与探活路由。
+- `frontend/src/components/integrations/KuaimaiSourcesTab.tsx`：快麦数据源凭证卡片、
+  cURL 配置引导与保存反馈。
+- `docs/document/TECH_快麦凭证保存修复.md`：快麦 cURL 校验、原子保存、失败语义与回滚设计。
 - `deploy/transfer-sync-domain-ownership.sh` /
   `deploy/rollback-sync-domain-ownership.sh`：Sync 数据域 owner 原子切换与回滚。
 - `backend/tests/test_service_database_role_files.py`：固定 Backend/WeCom、Actor、Sync 的
@@ -729,12 +731,15 @@ EVERYDAYAIONE/
 │   │       └── ws.py                     # WebSocket 路由
 │   ├── schemas/                  # 请求/响应模型
 │   │   ├── chart.py                  # ECharts正式协议与历史图表格式兼容
+│   │   ├── content_part_contract.py  # ContentPart 跨语言协议 artifact 生成
+│   │   ├── contracts/content_part.v1.json # 后端权威 Schema 与前端契约样例
 │   │   ├── diagram.py                # Mermaid 逻辑关系图 ContentPart 协议
 │   │   └── ecom_requirement.py       # 电商图 AI 帮写请求、标准输入与响应协议
 │   │   ├── auth.py                   # 认证相关 Schema
 │   │   ├── conversation.py           # 对话相关 Schema
 │   │   ├── message.py                # 消息相关 Schema
 │   │   ├── media_parts.py            # 文本/图片/视频/音频/文件 ContentPart
+│   │   ├── structured_parts.py       # 表格/中断锚点等非媒体 ContentPart
 │   │   ├── image.py                  # 图像上传 Schema
 │   │   ├── detail_project.py         # 主图详情页请求与统一响应 Schema
 │   │   └── websocket.py              # WebSocket 消息 Schema
@@ -1067,7 +1072,7 @@ EVERYDAYAIONE/
         │   ├── task.ts                   # 任务相关类型（兼容旧格式）
         │   └── websocket.ts              # WebSocket 消息类型
         ├── schemas/                  # 外部数据运行时协议
-        │   └── messageProtocol.ts        # ContentPart Zod 校验、兼容恢复与隔离日志
+        │   └── messageProtocol.ts        # ContentPart Zod 校验、null 归一化与隔离日志
         ├── contexts/                  # React 上下文与 WebSocket 事件处理
         │   ├── WebSocketContext.tsx      # WebSocket 连接、订阅和 handler 依赖注入
         │   ├── wsMessageHandlers.ts      # WebSocket 事件工厂与流式/通知事件

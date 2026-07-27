@@ -1473,3 +1473,24 @@
   171–179 均未应用。生产 `scheduled_task_runs` 尚无 `execution_token`、
   `lease_expires_at`、`result_message_id`，Actor unit 仍加载 `.env.worker`。
   Backend、Actor、WeCom 三个服务核对时均为 `active`。
+
+## 2026-07-27 快麦 Web 凭证 cURL 保存契约修复 — 本地完成，待部署验证
+
+- 生产证据：`POST /api/admin/kuaimai/credentials` 两次返回 400，失败发生在配置写入前。
+- 根因：界面提示可复制“任意 XHR”，但保存契约要求请求同时包含 `companyid` 与
+  `_censeid`；同时前端仍按 Axios 原始响应读取错误，无法展示统一
+  `ApiRequestError` 中的具体失败原因。
+- 修复：限定快麦主机和数据源，兼容常见 cURL 参数格式，使用结构化业务错误，
+  明确引导选择报表查询请求；解析通过后继续复用原子配置 RPC 并回读 Bundle。
+- 状态：本地实现与定向回归验证完成，待按正常发布流程上线后做生产保存验证。
+
+# 2026-07-27 用户附件刷新后消失 — 本地根因修复，待部署验证
+
+- 生产只读证据确认用户消息完整保存文本与图片 URL；丢失发生在刷新后的前端协议边界。
+- 根因是 2026-07-17 新增 Zod 校验时，把后端 Pydantic 权威 Schema 允许的可空
+  媒体元数据误写为仅可缺失，导致含 `alt/name/width/... = null` 的合法图片块被整块过滤。
+- 后端 Pydantic `ContentPart` 已收口为唯一事实源，补齐 `table` 与
+  `interrupt_marker`，统一相关序列化入口，并生成版本化契约 artifact。
+- 前端按契约保留 `ImagePart.url: string | null`，将其他等价空元数据归一化为字段
+  缺失；后端合法/非法样例由前后端共同验证，阻止再次发生跨语言协议漂移。
+- 不修改数据库、不回填历史消息；部署后历史合法附件可直接恢复显示，仍待生产页面刷新验证。
