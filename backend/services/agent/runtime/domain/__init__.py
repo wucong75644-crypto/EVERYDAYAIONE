@@ -33,6 +33,14 @@ from services.agent.runtime.domain.identity import (
     SessionId,
 )
 from services.agent.runtime.domain.model_step import ModelStepStatus, StopReason
+from services.agent.runtime.domain.model_attempt import (
+    ModelAttemptStatus,
+    ModelDispatchPhase,
+    ModelLateOutcome,
+    ModelRetryDisposition,
+    allowed_model_attempt_transitions,
+    validate_model_attempt_transition,
+)
 from services.agent.runtime.domain.run import (
     RunAttempt,
     RunAttemptOutcome,
@@ -66,6 +74,10 @@ __all__ = [
     "Lease",
     "ModelStepId",
     "ModelStepStatus",
+    "ModelAttemptStatus",
+    "ModelDispatchPhase",
+    "ModelLateOutcome",
+    "ModelRetryDisposition",
     "RetryDisposition",
     "RunAttempt",
     "RunAttemptOutcome",
@@ -83,7 +95,9 @@ __all__ = [
     "SessionStatus",
     "StopReason",
     "allowed_transitions",
+    "allowed_model_attempt_transitions",
     "require_retry_safe",
     "require_action_result",
     "validate_transition",
+    "validate_model_attempt_transition",
 ]

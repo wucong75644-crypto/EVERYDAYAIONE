@@ -15,6 +15,7 @@ from services.agent.runtime.ports.model import (
     ModelPort,
     ModelProviderError,
     ModelRequestOptions,
+    ModelResponseStartObserver,
     ModelResponseReceipt,
     ModelStepRequest,
     ModelStepResult,
@@ -22,6 +23,12 @@ from services.agent.runtime.ports.model import (
     ModelUsage,
     ProviderAttemptOutcome,
     ProviderAttemptReceipt,
+)
+from services.agent.runtime.ports.model_attempt import (
+    ModelAttemptOutcome,
+    ModelAttemptReceipt,
+    ModelAttemptRepositoryPort,
+    ModelAttemptSnapshot,
 )
 from services.agent.runtime.ports.projection import (
     ProjectionClaim,
@@ -51,6 +58,7 @@ __all__ = [
     "ModelPort",
     "ModelProviderError",
     "ModelRequestOptions",
+    "ModelResponseStartObserver",
     "ModelResponseReceipt",
     "ModelStepRequest",
     "ModelStepResult",
@@ -58,6 +66,10 @@ __all__ = [
     "ModelUsage",
     "ProviderAttemptOutcome",
     "ProviderAttemptReceipt",
+    "ModelAttemptOutcome",
+    "ModelAttemptReceipt",
+    "ModelAttemptRepositoryPort",
+    "ModelAttemptSnapshot",
     "ProjectionOutcome",
     "ProjectionClaim",
     "ProjectionOutboxPort",

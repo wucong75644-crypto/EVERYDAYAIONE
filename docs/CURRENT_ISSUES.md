@@ -1,5 +1,21 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 Agent Runtime AR-11 ModelAttempt 与唯一计费 — 已集成，尚未接入生产 Owner
+
+- 迁移 `217_01`～`217_04` 新增持久 ModelAttempt、唯一积分预留/结算、unknown
+  reconciliation、取消后 late receipt 与幂等 adjustment；apply 固定为
+  `01→02→03→04`，rollback 固定逆序且存在业务事实时拒绝破坏性删除。
+- ModelAttempt 使用 `prepared/dispatching/completed/failed/unknown/cancelled` 六态；
+  unknown 不终结 ModelStep、不自动重试或结算。Tool Calls 仅返回 handoff，由 AR-12
+  在统一事务中完成 Attempt、ModelStep 与 Actions。
+- Provider adapter 每次调用最多一次网络 dispatch；429、502/503/504、timeout、断流
+  和 response-start observer 持久化歧义均失败关闭为 typed unknown，不再内部重试。
+- credits reservation、settlement/refund 和 late adjustment 与 `users.credits`、
+  `credit_transactions`、`credits_history` 保持事务内守恒；完整重放身份不一致时返回
+  conflict且零 mutation。Worker 只有窄 RPC，无 Attempt、settlement或账本表直权。
+- 当前仍未实现 Runtime Coordinator、Action持久化或生产Owner接线；不得部署配置使
+  Runtime成为Chat Owner。下一阶段必须串行完成AR-12。
+
 ## 2026-07-27 企业 ERP/企微测试连接不可用 — 根因已修复，待生产部署验证
 
 - 生产配置状态与 Envelope 非空结构均正常；目标 super_admin 同时具有该企业 active
@@ -27,9 +43,9 @@
 - AR-09 在 `backend/services/agent/runtime/infrastructure/model/` 落地强类型
   ModelPort adapter，复用现有模型注册表、BYOK、Provider factory 和
   ProviderContextPlan。请求/响应 receipt 不保存 prompt、Tool 参数或 Secret。
-- 当前仅 429 且未收到响应时允许同一 ModelStep 内重试；502/503/504、timeout 和部分
-  响应后断流均进入 typed unknown，不 fallback、不创建第二 ModelStep。Provider
-  adapter cleanup 使用有限超时，失败不会覆盖成功结果、typed error 或用户取消。
+- AR-11 已收回 Model adapter 内部重试；429、502/503/504、timeout 和部分响应后断流
+  均进入 typed unknown，不 fallback、不创建第二 ModelStep。Provider adapter cleanup
+  使用有限超时，失败不会覆盖成功结果、typed error 或用户取消。
 - 当前仍是 additive foundation：没有生产调用方、没有切换 Web/企微/Conversation
   Actor Owner，也没有部署 migration 216。后续必须由 Coordinator/Owner 接入任务完成
   原子 ModelStep 持久化、调用与终态推进后，才能进入生产切换。

@@ -39,6 +39,19 @@
 
 ## 目录结构
 
+Agent Runtime AR-11 ModelAttempt与唯一计费：
+- `docs/document/TECH_AGENT_RUNTIME_AR-11ModelAttempt与唯一计费结算.md`：冻结
+  Provider单dispatch、unknown/reconcile、late receipt和财务幂等边界。
+- `backend/services/agent/runtime/domain/model_attempt.py`、`ports/model_attempt.py`：
+  ModelAttempt状态与持久化Port的单一类型来源。
+- `backend/services/agent/runtime/infrastructure/postgres/model_attempt_repository.py`：
+  Worker Scoped RPC adapter和response-start observer。
+- `backend/migrations/217_01_agent_runtime_model_attempt_foundation.sql`至
+  `217_04_agent_runtime_model_attempt_reconciliation.sql`：按完整文件名顺序建立
+  Attempt、唯一结算、生命周期和恢复能力；不修改迁移212～216。
+- 当前仍是additive foundation，生产Chat Owner继续为Conversation Actor；AR-12完成
+  Action统一终态前禁止切换Runtime Owner。
+
 定时任务委托执行边界：
 - `docs/document/TECH_定时任务委托执行边界.md`：定义 Worker 控制面、Runtime 工具面、
   任务级数据库身份和无人值守工具白名单。

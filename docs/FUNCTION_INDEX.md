@@ -81,6 +81,19 @@
 | `compute_request_hash` / `resolve_model_revision` / `validate_request_projection` | `backend/services/agent/runtime/infrastructure/model/projection.py` | 生成不含正文和 Secret 的稳定请求摘要，并在 Provider IO 前校验模型 revision、ContextPlan 和请求 hash |
 | `ResponseAccumulator.add/complete` / `map_stop_reason` | `backend/services/agent/runtime/infrastructure/model/response.py` | 聚合文本、Tool Call 和累计 usage，生成稳定 Tool Call ID、脱敏 response receipt 及闭合 StopReason |
 
+### Agent Runtime AR-11 ModelAttempt 与唯一计费
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `ModelAttemptStatus` / `validate_model_attempt_transition` | `backend/services/agent/runtime/domain/model_attempt.py` | 定义 ModelAttempt 六态、dispatch phase、retry disposition、late outcome 与终态不可逆转移 |
+| `ModelAttemptRepositoryPort` / `ModelAttemptReceipt` / `ModelAttemptSnapshot` | `backend/services/agent/runtime/ports/model_attempt.py` | 定义 Attempt lifecycle、reconcile、late receipt 与 typed outcome 的应用层边界 |
+| `PostgresModelAttemptRepository` / `ModelAttemptResponseStartObserver` | `backend/services/agent/runtime/infrastructure/postgres/model_attempt_repository.py` | 通过 Worker Scoped RPC 持久化 Attempt，并在首个 Provider response chunk 前提交 response-start事实 |
+| `prepare_model_attempt` / `start_model_attempt_dispatch` / `mark_model_attempt_response_started` | `backend/migrations/217_03_agent_runtime_model_attempt_lifecycle.sql` | 原子预留积分并建立 Attempt，在Provider I/O前持久化dispatch与首响应阶段 |
+| `complete_model_attempt_without_actions` / `fail_model_attempt_and_step` | `backend/migrations/217_03_agent_runtime_model_attempt_lifecycle.sql` | 对非Tool Calls结果原子提交Attempt、ModelStep、结算、Event/Outbox；Tool Calls只返回handoff |
+| `claim_model_attempt_reconciliation` / `renew_model_attempt_reconciliation` / `resolve_model_attempt` | `backend/migrations/217_04_agent_runtime_model_attempt_reconciliation.sql` | 以独立token、lease和fencing恢复unknown Attempt，非终态冲突保持零mutation |
+| `get_model_attempt` / `record_late_model_receipt` | `backend/migrations/217_04_agent_runtime_model_attempt_reconciliation.sql` | 提供响应丢失readback，并在Run取消后幂等保存late receipt和唯一财务adjustment |
+| `cancel_agent_run` | `backend/migrations/217_03_agent_runtime_model_attempt_lifecycle.sql` | 保持原签名和Scope授权，增加活动ModelAttempt/ModelStep取消及预留释放 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
