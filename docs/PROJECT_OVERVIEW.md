@@ -732,6 +732,7 @@ EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
 ├── .claude/skills/everydayai-test-coverage/SKILL.md # Claude 按需加载测试规则的轻量入口
 ├── scripts/run_tests.sh      # 后端 target/fast/pr/full/large/external 分层测试入口
+├── scripts/run_redis_contract_tests.sh # 临时 localhost Redis Standalone 外部合同测试入口
 ├── CLAUDE.md                 # Claude Code 开发规则
 ├── .env                      # 环境变量（本地）
 ├── docs/                     # 项目文档
