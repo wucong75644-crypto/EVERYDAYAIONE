@@ -9,12 +9,16 @@ from services.agent.runtime.infrastructure.postgres.authorization import (
 from services.agent.runtime.infrastructure.postgres.projection_outbox import (
     PostgresProjectionOutbox,
 )
+from services.agent.runtime.infrastructure.postgres.projection_recovery import (
+    PostgresProjectionDeadRecovery,
+)
 from services.agent.runtime.infrastructure.postgres.repository import (
     PostgresRuntimeRepository,
 )
 
 __all__ = [
     "PostgresProjectionOutbox",
+    "PostgresProjectionDeadRecovery",
     "PostgresActionAuthorizationRepository",
     "PostgresRuntimeEventStore",
     "PostgresRuntimeRepository",

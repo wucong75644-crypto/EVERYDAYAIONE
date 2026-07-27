@@ -20,6 +20,7 @@ def test_ar16_migration_identity_and_lexical_order() -> None:
         "220_23_agent_runtime_accepted_cancel_override.sql",
         "220_24_agent_runtime_authorization_dispatch_gate.sql",
         "220_25_agent_runtime_authorization_recovery.sql",
+        "220_26_agent_runtime_projection_dead_recovery.sql",
     ]
 
     rollback_names = sorted(
@@ -28,6 +29,7 @@ def test_ar16_migration_identity_and_lexical_order() -> None:
         reverse=True,
     )
     assert [path.name for path in rollback_names] == [
+        "220_26_agent_runtime_projection_dead_recovery_rollback.sql",
         "220_25_agent_runtime_authorization_recovery_rollback.sql",
         "220_24_agent_runtime_authorization_dispatch_gate_rollback.sql",
         "220_23_agent_runtime_accepted_cancel_override_rollback.sql",
