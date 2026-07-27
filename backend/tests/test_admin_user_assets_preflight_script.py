@@ -16,7 +16,11 @@ def test_preflight_checks_signature_owner_security_and_exact_acl() -> None:
     assert "NOT procedure.prosecdef" in SCRIPT
     assert "ARRAY['search_path=pg_catalog, public']" in SCRIPT
     assert "acl.grantee NOT IN" in SCRIPT
-    assert "'service_role', procedure.oid, 'EXECUTE'" in SCRIPT
+    assert "to_regrole('service_role') IS NOT NULL" in SCRIPT
+    assert (
+        "to_regrole('service_role'), procedure.oid, 'EXECUTE'"
+        in SCRIPT
+    )
     assert "'everydayai', procedure.oid, 'EXECUTE'" in SCRIPT
     assert "acl.is_grantable" in SCRIPT
     assert "ADMIN_ASSET_CAPABILITY_INVALID" in SCRIPT

@@ -12,7 +12,17 @@ ALTER FUNCTION _list_admin_user_assets_owner(
 REVOKE ALL ON FUNCTION _list_admin_user_assets_owner(
     UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
 ) FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
-    everydayai_worker, everydayai_sync, everydayai, service_role;
+    everydayai_worker, everydayai_sync, everydayai;
+
+DO $$
+BEGIN
+    IF to_regrole('service_role') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION _list_admin_user_assets_owner(
+            UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
+        ) FROM service_role;
+    END IF;
+END;
+$$;
 
 CREATE FUNCTION list_platform_admin_user_assets(
     p_actor_user_id UUID,
@@ -49,7 +59,16 @@ $$;
 REVOKE ALL ON FUNCTION list_platform_admin_user_assets(
     UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
 ) FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
-    everydayai_worker, everydayai_sync, everydayai, service_role;
+    everydayai_worker, everydayai_sync, everydayai;
+DO $$
+BEGIN
+    IF to_regrole('service_role') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION list_platform_admin_user_assets(
+            UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
+        ) FROM service_role;
+    END IF;
+END;
+$$;
 GRANT EXECUTE ON FUNCTION list_platform_admin_user_assets(
     UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID
 ) TO everydayai_runtime;
@@ -162,7 +181,16 @@ $$;
 REVOKE ALL ON FUNCTION resolve_platform_admin_user_assets_download(
     UUID, JSONB
 ) FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
-    everydayai_worker, everydayai_sync, everydayai, service_role;
+    everydayai_worker, everydayai_sync, everydayai;
+DO $$
+BEGIN
+    IF to_regrole('service_role') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION resolve_platform_admin_user_assets_download(
+            UUID, JSONB
+        ) FROM service_role;
+    END IF;
+END;
+$$;
 GRANT EXECUTE ON FUNCTION resolve_platform_admin_user_assets_download(
     UUID, JSONB
 ) TO everydayai_runtime;

@@ -144,7 +144,8 @@ def test_admin_capability_has_narrow_runtime_acl() -> None:
     sql = ADMIN_CAPABILITY_MIGRATION.read_text(encoding="utf-8")
 
     assert "REVOKE ALL ON FUNCTION _list_admin_user_assets_owner(" in sql
-    assert "everydayai_sync, everydayai, service_role;" in sql
+    assert "everydayai_sync, everydayai;" in sql
+    assert "IF to_regrole('service_role') IS NOT NULL THEN" in sql
     assert (
         "GRANT EXECUTE ON FUNCTION list_platform_admin_user_assets(\n"
         "    UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID\n"
@@ -194,7 +195,7 @@ def test_admin_download_capability_has_runtime_only_execute() -> None:
         "REVOKE ALL ON FUNCTION resolve_platform_admin_user_assets_download(\n"
         "    UUID, JSONB\n"
         ") FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,\n"
-        "    everydayai_worker, everydayai_sync, everydayai, service_role;"
+        "    everydayai_worker, everydayai_sync, everydayai;"
     ) in sql
     assert (
         "GRANT EXECUTE ON FUNCTION resolve_platform_admin_user_assets_download(\n"

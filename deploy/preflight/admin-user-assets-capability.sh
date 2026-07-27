@@ -42,8 +42,11 @@ BEGIN
             OR has_function_privilege(
                 'everydayai_sync', procedure.oid, 'EXECUTE'
             )
-            OR has_function_privilege(
-                'service_role', procedure.oid, 'EXECUTE'
+            OR (
+                to_regrole('service_role') IS NOT NULL
+                AND has_function_privilege(
+                    to_regrole('service_role'), procedure.oid, 'EXECUTE'
+                )
             )
             OR has_function_privilege(
                 'everydayai', procedure.oid, 'EXECUTE'
@@ -93,8 +96,11 @@ BEGIN
             OR has_function_privilege(
                 'everydayai_sync', procedure.oid, 'EXECUTE'
             )
-            OR has_function_privilege(
-                'service_role', procedure.oid, 'EXECUTE'
+            OR (
+                to_regrole('service_role') IS NOT NULL
+                AND has_function_privilege(
+                    to_regrole('service_role'), procedure.oid, 'EXECUTE'
+                )
             )
             OR has_function_privilege(
                 'everydayai', procedure.oid, 'EXECUTE'
