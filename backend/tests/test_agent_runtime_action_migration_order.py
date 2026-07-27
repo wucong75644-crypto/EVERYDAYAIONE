@@ -8,7 +8,9 @@ from scripts.migration_runner import discover_migrations
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = [
     "218_01_agent_runtime_action_foundation.sql",
+    "218_01a_agent_runtime_action_terminal_helpers.sql",
     "218_02_agent_runtime_action_tool_terminal.sql",
+    "218_02a_agent_runtime_action_result_helpers.sql",
     "218_03_agent_runtime_action_lifecycle.sql",
     "218_04_agent_runtime_action_reconciliation.sql",
 ]

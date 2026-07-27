@@ -50,14 +50,27 @@ class PostgresActionRepository:
         )
 
     async def claim_ready(
-        self, *, worker_id: str, batch_size: int = 10,
+        self, *, worker_id: str, claim_request_id: str,
+        batch_size: int = 10,
         lease_seconds: int = 120,
     ) -> ActionMutationReceipt:
         return await self._rpc("claim_ready_agent_actions", {
             "p_worker_id": worker_id,
+            "p_claim_request_id": claim_request_id,
             "p_batch_size": batch_size,
             "p_lease_seconds": lease_seconds,
         })
+
+    async def get_claim_batch(
+        self, *, worker_id: str, claim_request_id: str,
+    ) -> ActionMutationReceipt:
+        return await self._rpc("get_agent_action_claim_batch", {
+            "p_worker_id": worker_id,
+            "p_claim_request_id": claim_request_id,
+        })
+
+    async def get_action(self, *, action_id: str) -> ActionMutationReceipt:
+        return await self._rpc("get_agent_action", {"p_action_id": action_id})
 
     async def renew(
         self, *, attempt_id: str, execution_token: str,

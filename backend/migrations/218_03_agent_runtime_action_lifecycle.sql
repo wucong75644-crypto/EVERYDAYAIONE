@@ -3,17 +3,43 @@
 SET LOCAL ROLE everydayai_owner;
 
 CREATE FUNCTION claim_ready_agent_actions(
-    p_worker_id TEXT, p_batch_size INTEGER DEFAULT 10,
+    p_worker_id TEXT, p_claim_request_id TEXT,
+    p_batch_size INTEGER DEFAULT 10,
     p_lease_seconds INTEGER DEFAULT 120
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
-DECLARE v_rows JSONB;
+DECLARE
+    v_rows JSONB;
+    v_batch agent_action_claim_batches%ROWTYPE;
+    v_created BOOLEAN := FALSE;
 BEGIN
     PERFORM _assert_agent_runtime_actor(TRUE);
     IF NULLIF(btrim(p_worker_id), '') IS NULL
+       OR NULLIF(btrim(p_claim_request_id), '') IS NULL
+       OR length(btrim(p_claim_request_id)) > 200
        OR p_batch_size NOT BETWEEN 1 AND 100
        OR p_lease_seconds NOT BETWEEN 15 AND 600 THEN
         RAISE EXCEPTION 'AGENT_ACTION_CLAIM_INVALID' USING ERRCODE = '22023';
+    END IF;
+    INSERT INTO agent_action_claim_batches(
+        claim_request_id, worker_id, batch_size, lease_seconds
+    ) VALUES (
+        btrim(p_claim_request_id), btrim(p_worker_id),
+        p_batch_size, p_lease_seconds
+    ) ON CONFLICT DO NOTHING RETURNING * INTO v_batch;
+    v_created := FOUND;
+    IF NOT v_created THEN
+        SELECT * INTO v_batch FROM agent_action_claim_batches
+         WHERE claim_request_id = btrim(p_claim_request_id) FOR UPDATE;
+        IF v_batch.worker_id IS DISTINCT FROM btrim(p_worker_id)
+           OR v_batch.batch_size IS DISTINCT FROM p_batch_size
+           OR v_batch.lease_seconds IS DISTINCT FROM p_lease_seconds THEN
+            RETURN jsonb_build_object('outcome', 'claim_request_conflict');
+        END IF;
+        SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY claimed_at, id), '[]')
+          INTO v_rows FROM agent_action_attempts attempt
+         WHERE attempt.claim_request_id = v_batch.claim_request_id;
+        RETURN jsonb_build_object('outcome', 'claimed', 'attempts', v_rows);
     END IF;
     WITH candidates AS (
         SELECT action.id
@@ -41,7 +67,7 @@ BEGIN
     ), attempts AS (
         INSERT INTO agent_action_attempts(
             action_id, session_id, run_id, org_id, user_id, attempt_number,
-            status, dispatch_phase, worker_id, execution_token,
+            status, dispatch_phase, worker_id, claim_request_id, execution_token,
             lease_expires_at, idempotency_key, request_hash, retry_disposition
         )
         SELECT action.id, action.session_id, action.run_id, action.org_id,
@@ -49,7 +75,8 @@ BEGIN
                COALESCE((SELECT max(old.attempt_number)
                            FROM agent_action_attempts old
                           WHERE old.action_id = action.id), 0) + 1,
-               'claimed', 'claimed', btrim(p_worker_id), gen_random_uuid(),
+               'claimed', 'claimed', btrim(p_worker_id),
+               v_batch.claim_request_id, gen_random_uuid(),
                clock_timestamp() + make_interval(secs => p_lease_seconds),
                'action:' || action.id::TEXT || ':attempt:' ||
                (COALESCE((SELECT max(old.attempt_number)
@@ -65,17 +92,24 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION get_agent_action_claim(p_action_id UUID, p_worker_id TEXT)
+CREATE FUNCTION get_agent_action_claim_batch(
+    p_worker_id TEXT, p_claim_request_id TEXT
+)
 RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
-DECLARE v_attempt agent_action_attempts%ROWTYPE;
+DECLARE v_batch agent_action_claim_batches%ROWTYPE; v_rows JSONB;
 BEGIN
     PERFORM _assert_agent_runtime_actor(TRUE);
-    SELECT * INTO v_attempt FROM agent_action_attempts
-     WHERE action_id = p_action_id AND worker_id = p_worker_id
-     ORDER BY attempt_number DESC LIMIT 1;
+    SELECT * INTO v_batch FROM agent_action_claim_batches
+     WHERE claim_request_id = btrim(p_claim_request_id);
     IF NOT FOUND THEN RETURN jsonb_build_object('outcome', 'not_found'); END IF;
-    RETURN jsonb_build_object('outcome', 'found', 'attempt', to_jsonb(v_attempt));
+    IF v_batch.worker_id IS DISTINCT FROM btrim(p_worker_id) THEN
+        RETURN jsonb_build_object('outcome', 'claim_request_conflict');
+    END IF;
+    SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY claimed_at, id), '[]')
+      INTO v_rows FROM agent_action_attempts attempt
+     WHERE attempt.claim_request_id = v_batch.claim_request_id;
+    RETURN jsonb_build_object('outcome', 'found', 'attempts', v_rows);
 END;
 $$;
 
@@ -236,56 +270,32 @@ CREATE FUNCTION _finish_agent_action(
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
 DECLARE
-    v_attempt agent_action_attempts%ROWTYPE;
-    v_action agent_actions%ROWTYPE;
-    v_run agent_runs%ROWTYPE;
-    v_session agent_runtime_sessions%ROWTYPE;
-    v_existing agent_action_results%ROWTYPE;
-    v_event JSONB;
-    v_wake JSONB;
-    v_result_hash TEXT;
+    v_attempt agent_action_attempts%ROWTYPE; v_action agent_actions%ROWTYPE;
+    v_run agent_runs%ROWTYPE; v_session agent_runtime_sessions%ROWTYPE;
+    v_existing agent_action_results%ROWTYPE; v_event JSONB; v_wake JSONB; v_result_hash TEXT;
 BEGIN
     PERFORM _assert_agent_runtime_actor(TRUE);
     SELECT * INTO v_attempt FROM agent_action_attempts WHERE id = p_attempt_id;
     IF NOT FOUND THEN RETURN jsonb_build_object('outcome', 'not_found'); END IF;
     SELECT * INTO v_session FROM agent_runtime_sessions
-     WHERE id = v_attempt.session_id FOR UPDATE;
+     WHERE id=v_attempt.session_id FOR UPDATE;
     SELECT * INTO v_run FROM agent_runs WHERE id = v_attempt.run_id FOR UPDATE;
-    SELECT * INTO v_action FROM agent_actions
-     WHERE id = v_attempt.action_id FOR UPDATE;
-    SELECT * INTO v_attempt FROM agent_action_attempts
-     WHERE id = p_attempt_id FOR UPDATE;
+    SELECT * INTO v_action FROM agent_actions WHERE id=v_attempt.action_id FOR UPDATE;
+    SELECT * INTO v_attempt FROM agent_action_attempts WHERE id=p_attempt_id FOR UPDATE;
     SELECT * INTO v_existing FROM agent_action_results
-     WHERE action_id = v_action.id FOR UPDATE;
-    IF jsonb_typeof(p_result) IS DISTINCT FROM 'object'
-       OR p_action_status NOT IN ('completed', 'failed')
-       OR p_result->>'status' NOT IN ('success', 'empty', 'degraded', 'error')
-       OR NOT _agent_action_json_is_safe(
-           COALESCE(p_result->'external_receipt', '{}'::JSONB))
-       OR NOT _agent_action_json_is_safe(
-           COALESCE(p_result->'data', '{}'::JSONB))
-       OR (p_action_status = 'failed') IS DISTINCT FROM
-          (p_result->>'status' = 'error') THEN
-        RAISE EXCEPTION 'AGENT_ACTION_RESULT_INVALID' USING ERRCODE = '22023';
-    END IF;
-    v_result_hash := md5(jsonb_build_object(
-        'status', p_result->>'status', 'summary', COALESCE(p_result->>'summary', ''),
-        'data', p_result->'data',
-        'artifact_ids', COALESCE(p_result->'artifact_ids', '[]'::JSONB),
-        'usage', COALESCE(p_result->'usage', '{}'::JSONB),
-        'cost', COALESCE(p_result->'cost', '{}'::JSONB),
-        'external_receipt', COALESCE(p_result->'external_receipt', '{}'::JSONB),
-        'error_code', p_result->>'error_code')::TEXT);
+     WHERE action_id=v_action.id FOR UPDATE;
+    v_result_hash := _agent_action_result_hash(p_result,p_action_status,
+        v_session.conversation_id,v_action.org_id);
     IF FOUND OR v_action.status IN ('completed', 'failed') THEN
         IF NOT FOUND OR v_action.status IS DISTINCT FROM p_action_status
            OR v_existing.result_hash IS DISTINCT FROM v_result_hash THEN
             RETURN jsonb_build_object('outcome', 'terminal_conflict');
         END IF;
-        RETURN jsonb_build_object('outcome', 'already_' || p_action_status,
-                                  'action_id', v_action.id);
+        RETURN jsonb_build_object('outcome','already_'||p_action_status,
+                                  'action_id',v_action.id);
     END IF;
     IF v_run.status = 'cancelled' THEN
-        RETURN jsonb_build_object('outcome', 'run_cancelled');
+        RETURN jsonb_build_object('outcome','run_cancelled');
     END IF;
     IF (
         v_attempt.status IN ('accepted', 'unknown')
@@ -313,21 +323,6 @@ BEGIN
     END IF;
     IF v_attempt.status = 'claimed' AND p_action_status <> 'failed' THEN
         RETURN jsonb_build_object('outcome', 'stale_version');
-    END IF;
-    IF EXISTS (
-        SELECT 1
-          FROM jsonb_array_elements_text(
-              COALESCE(p_result->'artifact_ids', '[]'::JSONB)
-          ) artifact_id
-         WHERE NOT EXISTS (
-             SELECT 1 FROM conversation_artifacts artifact
-              WHERE artifact.id = artifact_id::UUID
-                AND artifact.conversation_id = v_session.conversation_id
-                AND artifact.org_id IS NOT DISTINCT FROM v_action.org_id
-         )
-    ) THEN
-        RAISE EXCEPTION 'AGENT_ACTION_ARTIFACT_SCOPE_MISMATCH'
-            USING ERRCODE = '42501';
     END IF;
     INSERT INTO agent_action_results(
         action_id, session_id, run_id, org_id, user_id, status, result_hash,
@@ -357,7 +352,8 @@ BEGIN
      WHERE id = v_action.id RETURNING * INTO v_action;
     IF v_action.blocking THEN
         IF v_run.blocking_action_count <= 0 THEN
-            RAISE EXCEPTION 'AGENT_ACTION_BLOCKER_UNDERFLOW' USING ERRCODE = '55000';
+            RAISE EXCEPTION 'AGENT_ACTION_BLOCKER_UNDERFLOW'
+                USING ERRCODE = '55000';
         END IF;
         UPDATE agent_runs SET
                blocking_action_count = blocking_action_count - 1,
@@ -381,13 +377,10 @@ BEGIN
             v_action.id, 'system', session_user, '{}'::JSONB,
             ARRAY['web_runtime', 'audit']::TEXT[]);
     END IF;
-    RETURN jsonb_build_object(
-        'outcome', p_action_status, 'action_id', v_action.id,
-        'result_hash', v_result_hash,
-        'blocking_action_count', v_run.blocking_action_count,
-        'run_status', v_run.status,
-        'event_sequence', v_event->'event_sequence',
-        'wake_event_sequence', v_wake->'event_sequence');
+    RETURN jsonb_build_object('outcome',p_action_status,'action_id',v_action.id,
+        'result_hash',v_result_hash,'blocking_action_count',
+        v_run.blocking_action_count,'run_status',v_run.status,'event_sequence',
+        v_event->'event_sequence','wake_event_sequence',v_wake->'event_sequence');
 END;
 $$;
 
@@ -463,8 +456,8 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION
-    claim_ready_agent_actions(TEXT, INTEGER, INTEGER),
-    get_agent_action_claim(UUID, TEXT),
+    claim_ready_agent_actions(TEXT, TEXT, INTEGER, INTEGER),
+    get_agent_action_claim_batch(TEXT, TEXT),
     renew_agent_action_attempt(UUID, UUID, BIGINT, INTEGER),
     mark_agent_action_dispatching(UUID, UUID, BIGINT, TEXT),
     recover_expired_agent_action_attempt(UUID, BIGINT, TEXT, INTEGER),
@@ -475,8 +468,8 @@ REVOKE ALL ON FUNCTION
 FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
      everydayai_worker, everydayai_sync, everydayai;
 GRANT EXECUTE ON FUNCTION
-    claim_ready_agent_actions(TEXT, INTEGER, INTEGER),
-    get_agent_action_claim(UUID, TEXT),
+    claim_ready_agent_actions(TEXT, TEXT, INTEGER, INTEGER),
+    get_agent_action_claim_batch(TEXT, TEXT),
     renew_agent_action_attempt(UUID, UUID, BIGINT, INTEGER),
     mark_agent_action_dispatching(UUID, UUID, BIGINT, TEXT),
     recover_expired_agent_action_attempt(UUID, BIGINT, TEXT, INTEGER),

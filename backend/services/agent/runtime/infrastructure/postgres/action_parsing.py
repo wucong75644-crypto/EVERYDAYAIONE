@@ -28,6 +28,7 @@ _ERRORS = {
     "batch_hash_conflict": IdempotencyConflictError,
     "receipt_conflict": IdempotencyConflictError,
     "terminal_conflict": TerminalConflictError,
+    "claim_request_conflict": IdempotencyConflictError,
 }
 
 
@@ -61,6 +62,9 @@ def parse_action_receipt(value: object) -> ActionMutationReceipt:
         lease_expires_at=_time(value.get("lease_expires_at")),
         action_ids=_uuid_tuple(value.get("action_ids")),
         attempts=_mapping_tuple(value.get("attempts")),
+        action=_mapping(value.get("action")),
+        attempt=_mapping(value.get("attempt")),
+        result=_mapping(value.get("result")),
     )
 
 
@@ -93,7 +97,7 @@ def _integer(value: object) -> int | None:
 def _hash(value: object) -> str | None:
     text = _text(value)
     if text is not None and (
-        len(text) not in (32, 64)
+        len(text) != 64
         or any(character not in "0123456789abcdef" for character in text)
     ):
         raise PersistenceContractError("canonical hash required")
@@ -131,4 +135,28 @@ def _mapping_tuple(value: object) -> tuple[Mapping[str, object], ...]:
         isinstance(item, Mapping) for item in value
     ):
         raise PersistenceContractError("Attempt objects array required")
+    for attempt in value:
+        for field in (
+            "id", "action_id", "worker_id", "execution_token",
+            "lease_expires_at", "status", "claim_request_id",
+        ):
+            if field not in attempt:
+                raise PersistenceContractError(
+                    f"Attempt {field} required"
+                )
+        _uuid(attempt["id"])
+        _uuid(attempt["action_id"])
+        _uuid(attempt["execution_token"])
+        _text(attempt["worker_id"])
+        _text(attempt["status"])
+        _text(attempt["claim_request_id"])
+        _time(attempt["lease_expires_at"])
     return tuple(value)
+
+
+def _mapping(value: object) -> Mapping[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise PersistenceContractError("RPC object field required")
+    return value

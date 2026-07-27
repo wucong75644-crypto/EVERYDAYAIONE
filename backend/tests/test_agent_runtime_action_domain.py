@@ -29,7 +29,7 @@ SCOPE = RuntimeScope(
 def _result(status: ActionResultStatus) -> ActionResult:
     return ActionResult(
         action_id="action-1", scope=SCOPE, status=status,
-        result_hash="a" * 32,
+        result_hash="a" * 64,
     )
 
 
@@ -64,7 +64,7 @@ def test_claimed_attempt_can_be_terminal_before_dispatch() -> None:
         attempt_id="attempt-1", action_id="action-1", scope=SCOPE,
         attempt_number=1, status=ActionAttemptStatus.FAILED,
         worker_id="worker", idempotency_key="attempt-key",
-        request_hash="b" * 32,
+        request_hash="b" * 64,
         lease=Lease("22222222-2222-2222-2222-222222222222",
                     now + timedelta(minutes=1)),
         started_at=now, ended_at=now,

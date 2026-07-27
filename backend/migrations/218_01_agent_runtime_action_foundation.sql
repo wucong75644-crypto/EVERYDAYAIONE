@@ -21,9 +21,9 @@ CREATE TABLE agent_actions (
     arguments JSONB NOT NULL CHECK (
         jsonb_typeof(arguments) = 'object' AND pg_column_size(arguments) <= 262144
     ),
-    arguments_hash TEXT NOT NULL CHECK (arguments_hash ~ '^[0-9a-f]{32}$'),
-    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{32}$'),
-    batch_hash TEXT NOT NULL CHECK (batch_hash ~ '^[0-9a-f]{32}$'),
+    arguments_hash TEXT NOT NULL CHECK (arguments_hash ~ '^[0-9a-f]{64}$'),
+    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
+    batch_hash TEXT NOT NULL CHECK (batch_hash ~ '^[0-9a-f]{64}$'),
     wave INTEGER NOT NULL DEFAULT 0 CHECK (wave >= 0),
     dependency_ids UUID[] NOT NULL DEFAULT '{}',
     blocking BOOLEAN NOT NULL DEFAULT TRUE,
@@ -68,6 +68,19 @@ CREATE INDEX idx_agent_actions_reconcile
     ON agent_actions(updated_at, id) WHERE status IN ('accepted', 'unknown');
 CREATE INDEX idx_agent_actions_run ON agent_actions(run_id, action_index);
 
+CREATE TABLE agent_action_claim_batches (
+    claim_request_id TEXT PRIMARY KEY CHECK (
+        claim_request_id = btrim(claim_request_id)
+        AND length(claim_request_id) BETWEEN 1 AND 200
+    ),
+    worker_id TEXT NOT NULL CHECK (
+        worker_id = btrim(worker_id) AND length(worker_id) BETWEEN 1 AND 200
+    ),
+    batch_size INTEGER NOT NULL CHECK (batch_size BETWEEN 1 AND 100),
+    lease_seconds INTEGER NOT NULL CHECK (lease_seconds BETWEEN 15 AND 600),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE agent_action_attempts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action_id UUID NOT NULL REFERENCES agent_actions(id) ON DELETE RESTRICT,
@@ -84,10 +97,17 @@ CREATE TABLE agent_action_attempts (
         dispatch_phase IN ('claimed', 'request_started', 'accepted')
     ),
     worker_id TEXT NOT NULL CHECK (length(worker_id) BETWEEN 1 AND 200),
+    claim_request_id TEXT REFERENCES agent_action_claim_batches(claim_request_id)
+        ON DELETE RESTRICT CHECK (
+            claim_request_id IS NULL OR (
+                claim_request_id = btrim(claim_request_id)
+                AND length(claim_request_id) BETWEEN 1 AND 200
+            )
+        ),
     execution_token UUID NOT NULL UNIQUE,
     lease_expires_at TIMESTAMPTZ NOT NULL,
     idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 300),
-    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{32}$'),
+    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
     external_receipt JSONB NOT NULL DEFAULT '{}' CHECK (
         jsonb_typeof(external_receipt) = 'object'
         AND pg_column_size(external_receipt) <= 65536
@@ -131,6 +151,9 @@ CREATE TABLE agent_action_attempts (
 
 CREATE INDEX idx_agent_action_attempts_action
     ON agent_action_attempts(action_id, attempt_number DESC);
+CREATE INDEX idx_agent_action_attempts_claim
+    ON agent_action_attempts(claim_request_id, claimed_at, id)
+    WHERE claim_request_id IS NOT NULL;
 CREATE INDEX idx_agent_action_attempts_reconcile
     ON agent_action_attempts(reconciliation_lease_expires_at, id)
     WHERE status IN ('accepted', 'unknown');
@@ -142,7 +165,7 @@ CREATE TABLE agent_action_results (
     org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT,
     user_id UUID REFERENCES users(id) ON DELETE RESTRICT,
     status TEXT NOT NULL CHECK (status IN ('success', 'empty', 'degraded', 'error')),
-    result_hash TEXT NOT NULL CHECK (result_hash ~ '^[0-9a-f]{32}$'),
+    result_hash TEXT NOT NULL CHECK (result_hash ~ '^[0-9a-f]{64}$'),
     summary TEXT NOT NULL CHECK (length(summary) <= 10000),
     data JSONB CHECK (
         data IS NULL OR
@@ -169,15 +192,19 @@ CREATE TABLE agent_action_results (
 );
 
 ALTER TABLE agent_actions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_action_claim_batches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_action_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_action_results ENABLE ROW LEVEL SECURITY;
 CREATE POLICY agent_actions_owner_all ON agent_actions
+    FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY agent_action_claim_batches_owner_all ON agent_action_claim_batches
     FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
 CREATE POLICY agent_action_attempts_owner_all ON agent_action_attempts
     FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
 CREATE POLICY agent_action_results_owner_all ON agent_action_results
     FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
 ALTER TABLE agent_actions FORCE ROW LEVEL SECURITY;
+ALTER TABLE agent_action_claim_batches FORCE ROW LEVEL SECURITY;
 ALTER TABLE agent_action_attempts FORCE ROW LEVEL SECURITY;
 ALTER TABLE agent_action_results FORCE ROW LEVEL SECURITY;
 
@@ -187,7 +214,8 @@ SET search_path = pg_catalog, public
 RETURN p_value IS NOT NULL
    AND p_value::TEXT !~* '"(password|passwd|secret|token|api[_-]?key|authorization|cookie)"[[:space:]]*:';
 
-REVOKE ALL ON TABLE agent_actions, agent_action_attempts, agent_action_results
+REVOKE ALL ON TABLE agent_actions, agent_action_claim_batches,
+    agent_action_attempts, agent_action_results
 FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
      everydayai_worker, everydayai_sync, everydayai;
 REVOKE ALL ON FUNCTION _agent_action_json_is_safe(JSONB)

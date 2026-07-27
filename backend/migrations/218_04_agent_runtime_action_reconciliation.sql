@@ -200,6 +200,11 @@ BEGIN
     SELECT * INTO v_attempt FROM agent_action_attempts WHERE id = p_attempt_id;
     IF NOT FOUND THEN RETURN jsonb_build_object('outcome', 'not_found'); END IF;
     IF p_resolution = 'still_unknown' THEN
+        PERFORM 1 FROM agent_runtime_sessions
+         WHERE id = v_attempt.session_id FOR UPDATE;
+        PERFORM 1 FROM agent_runs WHERE id = v_attempt.run_id FOR UPDATE;
+        PERFORM 1 FROM agent_actions
+         WHERE id = v_attempt.action_id FOR UPDATE;
         SELECT * INTO v_attempt FROM agent_action_attempts
          WHERE id = p_attempt_id FOR UPDATE;
         IF v_attempt.reconciliation_token IS DISTINCT FROM p_reconciliation_token
@@ -220,6 +225,8 @@ BEGIN
         UPDATE agent_actions SET status = 'unknown',
                state_version = state_version + 1,
                updated_at = clock_timestamp() WHERE id = v_attempt.action_id;
+        UPDATE agent_runs SET state_version = state_version + 1,
+               updated_at = clock_timestamp() WHERE id = v_attempt.run_id;
         RETURN jsonb_build_object('outcome', 'still_unknown',
                                   'state_version', v_attempt.state_version);
     END IF;
@@ -229,6 +236,46 @@ BEGIN
     RETURN _finish_agent_action(
         p_attempt_id, p_reconciliation_token, p_expected_state_version,
         p_request_hash, p_resolution, p_result);
+END;
+$$;
+
+CREATE FUNCTION _cancel_agent_run_action_work(p_run_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE
+    v_step agent_model_steps%ROWTYPE;
+    v_attempt agent_model_attempts%ROWTYPE;
+BEGIN
+    SELECT * INTO v_step FROM agent_model_steps
+     WHERE run_id = p_run_id AND status IN ('pending', 'running')
+     ORDER BY step_number DESC LIMIT 1 FOR UPDATE;
+    IF FOUND THEN
+        SELECT * INTO v_attempt FROM agent_model_attempts
+         WHERE model_step_id = v_step.id
+           AND status IN ('prepared', 'dispatching', 'unknown')
+         ORDER BY id FOR UPDATE;
+    END IF;
+    PERFORM 1 FROM agent_actions WHERE run_id = p_run_id
+     ORDER BY id FOR UPDATE;
+    PERFORM 1 FROM agent_action_attempts attempt
+     JOIN agent_actions action ON action.id = attempt.action_id
+     WHERE action.run_id = p_run_id AND attempt.ended_at IS NULL
+     ORDER BY attempt.id FOR UPDATE OF attempt;
+    IF v_step.id IS NOT NULL THEN
+        PERFORM _release_agent_model_credits(v_step.id);
+        IF v_attempt.id IS NOT NULL THEN
+            UPDATE agent_model_attempts SET status = 'cancelled',
+                   retry_disposition = 'forbidden',
+                   state_version = state_version + 1,
+                   completed_at = clock_timestamp(), updated_at = clock_timestamp()
+             WHERE id = v_attempt.id;
+        END IF;
+        UPDATE agent_model_steps SET status = 'cancelled',
+               stop_reason = 'cancelled', terminal_reason = 'run_cancelled',
+               state_version = state_version + 1,
+               completed_at = clock_timestamp(), updated_at = clock_timestamp()
+         WHERE id = v_step.id;
+    END IF;
 END;
 $$;
 
@@ -292,13 +339,7 @@ BEGIN
                        AND member.status = 'active'))))
     ) THEN RAISE EXCEPTION 'AGENT_RUNTIME_CANCEL_SCOPE_MISMATCH'
         USING ERRCODE = '42501'; END IF;
-    PERFORM 1 FROM agent_actions WHERE run_id = p_run_id
-     ORDER BY id FOR UPDATE;
-    PERFORM 1 FROM agent_action_attempts attempt
-     JOIN agent_actions action ON action.id = attempt.action_id
-     WHERE action.run_id = p_run_id AND attempt.ended_at IS NULL
-     ORDER BY attempt.id FOR UPDATE OF attempt;
-    PERFORM _cancel_agent_model_work(p_run_id);
+    PERFORM _cancel_agent_run_action_work(p_run_id);
     UPDATE agent_action_attempts SET status = 'cancelled',
            reconciliation_token = NULL, reconciliation_lease_expires_at = NULL,
            state_version = state_version + 1, ended_at = clock_timestamp(),
@@ -347,6 +388,9 @@ REVOKE ALL ON FUNCTION
     resolve_agent_action_reconciliation(
         UUID, UUID, BIGINT, TEXT, TEXT, JSONB, JSONB),
     get_agent_action(UUID)
+FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
+     everydayai_worker, everydayai_sync, everydayai;
+REVOKE ALL ON FUNCTION _cancel_agent_run_action_work(UUID)
 FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
      everydayai_worker, everydayai_sync, everydayai;
 GRANT EXECUTE ON FUNCTION

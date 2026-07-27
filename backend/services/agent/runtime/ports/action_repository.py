@@ -47,6 +47,9 @@ class ActionMutationReceipt:
     lease_expires_at: datetime | None = None
     action_ids: tuple[str, ...] = ()
     attempts: tuple[Mapping[str, object], ...] = ()
+    action: Mapping[str, object] | None = None
+    attempt: Mapping[str, object] | None = None
+    result: Mapping[str, object] | None = None
 
 
 class ActionRepositoryPort(Protocol):
@@ -60,8 +63,17 @@ class ActionRepositoryPort(Protocol):
     ) -> ActionMutationReceipt: ...
 
     async def claim_ready(
-        self, *, worker_id: str, batch_size: int = 10,
+        self, *, worker_id: str, claim_request_id: str,
+        batch_size: int = 10,
         lease_seconds: int = 120,
+    ) -> ActionMutationReceipt: ...
+
+    async def get_claim_batch(
+        self, *, worker_id: str, claim_request_id: str,
+    ) -> ActionMutationReceipt: ...
+
+    async def get_action(
+        self, *, action_id: str,
     ) -> ActionMutationReceipt: ...
 
     async def renew(

@@ -16,6 +16,7 @@ DROP FUNCTION renew_agent_action_reconciliation(UUID, UUID, BIGINT, INTEGER);
 DROP FUNCTION claim_agent_action_reconciliation(UUID, BIGINT, TEXT, INTEGER);
 DROP FUNCTION record_agent_action_unknown(UUID, UUID, BIGINT, TEXT, JSONB);
 DROP FUNCTION mark_agent_action_accepted(UUID, UUID, BIGINT, TEXT, JSONB);
+DROP FUNCTION _cancel_agent_run_action_work(UUID);
 
 -- Restore the exact migration 217 cancellation owner.
 CREATE OR REPLACE FUNCTION cancel_agent_run(

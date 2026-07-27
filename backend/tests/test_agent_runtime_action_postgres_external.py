@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
 from uuid import uuid4
 
 import psycopg
@@ -16,28 +15,21 @@ pytestmark = pytest.mark.external
 DATABASE_URL = os.getenv("AR12_TEST_DATABASE_URL", "")
 
 
-def execute(
-    sql: str, params: tuple[object, ...] = (),
-    *, worker: bool = False,
-) -> list[tuple[object, ...]]:
+def execute(sql: str, params: tuple[object, ...] = (),
+            *, worker: bool = False) -> list[tuple[object, ...]]:
     with psycopg.connect(
-        DATABASE_URL, cursor_factory=psycopg.ClientCursor,
-    ) as connection:
+        DATABASE_URL, cursor_factory=psycopg.ClientCursor) as connection:
         with connection.cursor() as cursor:
             if worker:
                 cursor.execute("SET SESSION AUTHORIZATION everydayai_worker")
-                cursor.execute(
-                    "SELECT set_config('app.access_kind','worker',false)"
-                )
-                cursor.execute(
-                    "SELECT set_config('app.request_id','ar12-test',false)"
-                )
+                cursor.execute("SELECT set_config('app.access_kind','worker',false)")
+                cursor.execute("SELECT set_config('app.request_id','ar12-test',false)")
             cursor.execute(sql, params, prepare=False)
             return cursor.fetchall() if cursor.description else []
 
 
-def decoded(value: object) -> dict[str, object]:
-    return value if isinstance(value, dict) else json.loads(str(value))
+def decoded(value: object) -> object:
+    return value if isinstance(value, (dict, list)) else json.loads(str(value))
 
 
 def seed_running_tool_step() -> dict[str, object]:
@@ -122,10 +114,8 @@ def action_batch(ids: dict[str, object], *, blocking: bool) -> list[dict]:
         "provider_call_id": "provider-call-0",
         "tool_name": "search_knowledge",
         "arguments": {"query": "inventory"},
-        "arguments_hash": hashlib.md5(
-            json.dumps({"query": "inventory"}).encode()
-        ).hexdigest(),
-        "request_hash": "c" * 32,
+        "arguments_hash": "0" * 64,
+        "request_hash": "0" * 64,
         "wave": 0,
         "dependencies": [],
         "blocking": blocking,
@@ -139,14 +129,25 @@ def action_batch(ids: dict[str, object], *, blocking: bool) -> list[dict]:
 def database_batch_hash(
     step_id: object, actions: list[dict],
 ) -> str:
-    return str(execute(
+    canonical, batch_hash = execute(
         """
-        SELECT _agent_action_batch_hash(
-            _canonical_agent_action_batch(step,%s::jsonb)
-        ) FROM agent_model_steps step WHERE id=%s
+        SELECT canonical, _agent_action_batch_hash(canonical)
+        FROM agent_model_steps step
+        CROSS JOIN LATERAL _canonical_agent_action_batch(
+            step,%s::jsonb
+        ) canonical WHERE id=%s
         """,
         (json.dumps(actions), step_id),
-    )[0][0])
+    )[0]
+    canonical_by_id = {
+        item["action_id"]: item
+        for item in decoded(canonical) if isinstance(item, dict)
+    }
+    for action in actions:
+        computed = canonical_by_id[action["action_id"]]
+        action["arguments_hash"] = computed["arguments_hash"]
+        action["request_hash"] = computed["request_hash"]
+    return str(batch_hash)
 
 
 def terminal(
@@ -190,7 +191,7 @@ def test_blocking_terminal_waits_and_last_result_wakes_once() -> None:
     )[0] == ("completed", True)
 
     claim = decoded(execute(
-        "SELECT claim_ready_agent_actions('action-worker',10,120)",
+        "SELECT claim_ready_agent_actions('action-worker','claim-wake',10,120)",
         worker=True,
     )[0][0])
     attempt = next(
@@ -199,7 +200,7 @@ def test_blocking_terminal_waits_and_last_result_wakes_once() -> None:
     )
     dispatch = decoded(execute(
         "SELECT mark_agent_action_dispatching(%s,%s,0,%s)",
-        (attempt["id"], attempt["execution_token"], "c" * 32),
+        (attempt["id"], attempt["execution_token"], actions[0]["request_hash"]),
         worker=True,
     )[0][0])
     result = {
@@ -211,7 +212,7 @@ def test_blocking_terminal_waits_and_last_result_wakes_once() -> None:
         "SELECT complete_agent_action(%s,%s,%s,%s,%s::jsonb)",
         (
             attempt["id"], attempt["execution_token"],
-            dispatch["state_version"], "c" * 32, json.dumps(result),
+            dispatch["state_version"], actions[0]["request_hash"], json.dumps(result),
         ),
         worker=True,
     )[0][0])
@@ -221,7 +222,7 @@ def test_blocking_terminal_waits_and_last_result_wakes_once() -> None:
         "SELECT complete_agent_action(%s,%s,%s,%s,%s::jsonb)",
         (
             attempt["id"], attempt["execution_token"],
-            dispatch["state_version"], "c" * 32, json.dumps(result),
+            dispatch["state_version"], actions[0]["request_hash"], json.dumps(result),
         ),
         worker=True,
     )[0][0])
@@ -255,12 +256,14 @@ def test_zero_blocking_keeps_run_claim() -> None:
         ("stable_tool_call_id", "call-tampered"),
         ("provider_call_id", "provider-tampered"),
         ("tool_name", "artifact_get"),
-        ("arguments_hash", "e" * 32),
+        ("arguments_hash", "e" * 64),
+        ("request_hash", "f" * 64),
         ("wave", 2),
         ("dependencies", ["88888888-8888-8888-8888-888888888888"]),
         ("blocking", False),
         ("policy_revision", "v2"),
         ("retry_disposition", "non_retryable"),
+        ("org_id", "77777777-7777-7777-7777-777777777777"),
     ],
 )
 def test_tampered_batch_with_reused_hash_has_zero_mutation(
@@ -271,7 +274,9 @@ def test_tampered_batch_with_reused_hash_has_zero_mutation(
     original_hash = database_batch_hash(ids["step"], actions)
     actions[0][field] = value
     response = terminal(ids, actions, original_hash)
-    assert response["outcome"] == "batch_hash_conflict"
+    assert response["outcome"] in {
+        "batch_hash_conflict", "request_hash_conflict",
+    }
     assert execute(
         "SELECT status FROM agent_model_attempts WHERE id=%s",
         (ids["attempt"],),
@@ -308,7 +313,7 @@ def test_accepted_to_unknown_and_claimed_cancelled_by_run() -> None:
     actions = action_batch(ids, blocking=True)
     terminal(ids, actions, database_batch_hash(ids["step"], actions))
     claim = decoded(execute(
-        "SELECT claim_ready_agent_actions('action-worker',10,120)",
+        "SELECT claim_ready_agent_actions('action-worker','claim-unknown',10,120)",
         worker=True,
     )[0][0])
     attempt = next(
@@ -317,13 +322,13 @@ def test_accepted_to_unknown_and_claimed_cancelled_by_run() -> None:
     )
     dispatch = decoded(execute(
         "SELECT mark_agent_action_dispatching(%s,%s,0,%s)",
-        (attempt["id"], attempt["execution_token"], "c" * 32), worker=True,
+        (attempt["id"], attempt["execution_token"], actions[0]["request_hash"]), worker=True,
     )[0][0])
     accepted = decoded(execute(
         "SELECT mark_agent_action_accepted(%s,%s,%s,%s,%s::jsonb)",
         (
             attempt["id"], attempt["execution_token"],
-            dispatch["state_version"], "c" * 32,
+            dispatch["state_version"], actions[0]["request_hash"],
             json.dumps({"external_id": "provider-1"}),
         ), worker=True,
     )[0][0])
@@ -331,7 +336,7 @@ def test_accepted_to_unknown_and_claimed_cancelled_by_run() -> None:
         "SELECT record_agent_action_unknown(%s,%s,%s,%s,%s::jsonb)",
         (
             attempt["id"], attempt["execution_token"],
-            accepted["state_version"], "c" * 32,
+            accepted["state_version"], actions[0]["request_hash"],
             json.dumps({"kind": "outcome_unproven"}),
         ), worker=True,
     )[0][0])
@@ -359,7 +364,7 @@ def test_claimed_before_dispatch_can_fail_with_error_result() -> None:
     actions = action_batch(ids, blocking=True)
     terminal(ids, actions, database_batch_hash(ids["step"], actions))
     claim = decoded(execute(
-        "SELECT claim_ready_agent_actions('action-worker',10,120)",
+        "SELECT claim_ready_agent_actions('action-worker','claim-fail',10,120)",
         worker=True,
     )[0][0])
     attempt = next(
@@ -369,7 +374,7 @@ def test_claimed_before_dispatch_can_fail_with_error_result() -> None:
     failed = decoded(execute(
         "SELECT fail_claimed_agent_action(%s,%s,0,%s,%s)",
         (
-            attempt["id"], attempt["execution_token"], "c" * 32,
+            attempt["id"], attempt["execution_token"], actions[0]["request_hash"],
             "PREPARE_FAILED",
         ), worker=True,
     )[0][0])
@@ -380,7 +385,7 @@ def test_claimed_before_dispatch_can_fail_with_error_result() -> None:
         (ids["run"],),
     )[0] == ("waiting_actions", 1)
     retried = decoded(execute(
-        "SELECT claim_ready_agent_actions('action-worker-2',10,120)",
+        "SELECT claim_ready_agent_actions('action-worker-2','claim-retry',10,120)",
         worker=True,
     )[0][0])
     retry_attempt = next(
@@ -395,7 +400,7 @@ def test_claimed_before_dispatch_is_cancelled_only_by_run() -> None:
     actions = action_batch(ids, blocking=True)
     terminal(ids, actions, database_batch_hash(ids["step"], actions))
     claim = decoded(execute(
-        "SELECT claim_ready_agent_actions('action-worker',10,120)",
+        "SELECT claim_ready_agent_actions('action-worker','claim-cancel',10,120)",
         worker=True,
     )[0][0])
     attempt = next(
@@ -428,7 +433,7 @@ def test_permission_matrix_denies_table_and_runtime_rpc_access() -> None:
             cursor.execute("SET SESSION AUTHORIZATION everydayai_runtime")
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(
-                    "SELECT claim_ready_agent_actions('runtime',1,120)"
+                    "SELECT claim_ready_agent_actions('runtime','denied',1,120)"
                 )
 
 
@@ -436,9 +441,6 @@ def test_sensitive_argument_key_rejects_entire_batch() -> None:
     ids = seed_running_tool_step()
     actions = action_batch(ids, blocking=True)
     actions[0]["arguments"] = {"Authorization": "Bearer secret"}
-    actions[0]["arguments_hash"] = hashlib.md5(
-        json.dumps(actions[0]["arguments"]).encode()
-    ).hexdigest()
     batch_hash = database_batch_hash(ids["step"], actions)
     with pytest.raises(psycopg.errors.InvalidParameterValue):
         terminal(ids, actions, batch_hash)
@@ -457,7 +459,7 @@ def test_expired_claim_retries_but_expired_dispatch_becomes_unknown() -> None:
     actions = action_batch(ids, blocking=True)
     terminal(ids, actions, database_batch_hash(ids["step"], actions))
     claim = decoded(execute(
-        "SELECT claim_ready_agent_actions('worker-1',10,120)", worker=True,
+        "SELECT claim_ready_agent_actions('worker-1','claim-expire',10,120)", worker=True,
     )[0][0])
     first = next(
         item for item in claim["attempts"]
@@ -475,7 +477,10 @@ def test_expired_claim_retries_but_expired_dispatch_becomes_unknown() -> None:
     assert recovered["outcome"] == "claimed"
     dispatch = decoded(execute(
         "SELECT mark_agent_action_dispatching(%s,%s,0,%s)",
-        (recovered["attempt_id"], recovered["execution_token"], "c" * 32),
+        (
+            recovered["attempt_id"], recovered["execution_token"],
+            actions[0]["request_hash"],
+        ),
         worker=True,
     )[0][0])
     execute(

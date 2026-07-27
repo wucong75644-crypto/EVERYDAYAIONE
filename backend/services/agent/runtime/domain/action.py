@@ -18,6 +18,12 @@ from services.agent.runtime.domain.identity import (
 from services.agent.runtime.domain.scope import RuntimeScope
 
 
+def _require_sha256(value: str, name: str) -> None:
+    require_stable_value(value, name)
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hash")
+
+
 class ActionStatus(StrEnum):
     REQUESTED = "requested"
     AWAITING_AUTHORIZATION = "awaiting_authorization"
@@ -81,9 +87,9 @@ class ActionAttempt:
             (self.action_id, "action_id"),
             (self.worker_id, "worker_id"),
             (self.idempotency_key, "idempotency_key"),
-            (self.request_hash, "request_hash"),
         ):
             require_stable_value(value, name)
+        _require_sha256(self.request_hash, "request_hash")
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be positive")
         require_aware_datetime(self.started_at, "started_at")
@@ -122,7 +128,7 @@ class ActionResult:
 
     def __post_init__(self) -> None:
         require_stable_value(self.action_id, "action_id")
-        require_stable_value(self.result_hash, "result_hash")
+        _require_sha256(self.result_hash, "result_hash")
 
 
 def require_retry_safe(

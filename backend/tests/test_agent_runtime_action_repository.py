@@ -60,7 +60,7 @@ async def test_complete_tool_calls_forwards_complete_batch() -> None:
             "run_id": "33333333-3333-3333-3333-333333333333",
             "run_status": "waiting_actions",
             "blocking_action_count": 1,
-            "batch_hash": "a" * 32,
+            "batch_hash": "a" * 64,
             "action_ids": ["44444444-4444-4444-4444-444444444444"],
         },
     })
@@ -71,12 +71,84 @@ async def test_complete_tool_calls_forwards_complete_batch() -> None:
         expected_attempt_version=1, expected_step_version=0,
         request_hash="b" * 64, response_receipt={},
         response_hash="c" * 64, provider_stop_reason="tool_calls",
-        usage={}, actual_credits=0, batch_hash="a" * 32,
+        usage={}, actual_credits=0, batch_hash="a" * 64,
         actions=[{"action_id": "44444444-4444-4444-4444-444444444444"}],
     )
     assert receipt.outcome is ActionMutationOutcome.COMPLETED
     assert receipt.run_status == "waiting_actions"
     assert database.calls[0][1]["p_actions"][0]["action_id"].startswith("4444")
+
+
+@pytest.mark.asyncio
+async def test_claim_and_readback_forward_stable_request_identity() -> None:
+    attempt = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "action_id": "22222222-2222-2222-2222-222222222222",
+        "worker_id": "worker-1",
+        "claim_request_id": "claim-1",
+        "execution_token": "33333333-3333-3333-3333-333333333333",
+        "lease_expires_at": "2026-07-27T12:00:00+00:00",
+        "status": "claimed",
+    }
+    database = Database({
+        "claim_ready_agent_actions": {
+            "outcome": "claimed", "attempts": [attempt],
+        },
+        "get_agent_action_claim_batch": {
+            "outcome": "found", "attempts": [attempt],
+        },
+    })
+    repository = PostgresActionRepository(database)
+    claimed = await repository.claim_ready(
+        worker_id="worker-1", claim_request_id="claim-1",
+    )
+    recovered = await repository.get_claim_batch(
+        worker_id="worker-1", claim_request_id="claim-1",
+    )
+    assert claimed.attempts == recovered.attempts
+    assert database.calls == [
+        ("claim_ready_agent_actions", {
+            "p_worker_id": "worker-1", "p_claim_request_id": "claim-1",
+            "p_batch_size": 10, "p_lease_seconds": 120,
+        }),
+        ("get_agent_action_claim_batch", {
+            "p_worker_id": "worker-1", "p_claim_request_id": "claim-1",
+        }),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_action_exposes_narrow_read_rpc() -> None:
+    action = {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "status": "queued", "request_hash": "a" * 64,
+    }
+    database = Database({
+        "get_agent_action": {
+            "outcome": "found", "action": action,
+            "attempt": None, "result": None,
+        },
+    })
+    receipt = await PostgresActionRepository(database).get_action(
+        action_id=action["id"],
+    )
+    assert receipt.action == action
+    assert database.calls[0][0] == "get_agent_action"
+
+
+def test_claim_attempt_missing_identity_fails_closed() -> None:
+    with pytest.raises(PersistenceContractError, match="claim_request_id"):
+        parse_action_receipt({
+            "outcome": "claimed",
+            "attempts": [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "action_id": "22222222-2222-2222-2222-222222222222",
+                "worker_id": "worker-1",
+                "execution_token": "33333333-3333-3333-3333-333333333333",
+                "lease_expires_at": "2026-07-27T12:00:00+00:00",
+                "status": "claimed",
+            }],
+        })
 
 
 def test_runtime_scope_cannot_construct_repository() -> None:
