@@ -10,6 +10,7 @@ from typing import Any
 from schemas.message import (
     GenerateRequest, GenerateResponse, GenerationParams, GenerationType,
     Message, MessageOperation, MessageRole, MessageStatus,
+    serialize_content_parts,
 )
 from services.generation_lifecycle import GenerationLifecycle
 from services.handlers.base import TaskMetadata
@@ -131,7 +132,7 @@ def _input_payload(
         return {}
     return {
         "id": message_id,
-        "content": [part.model_dump(mode="json") for part in body.content],
+        "content": serialize_content_parts(body.content),
         "client_request_id": body.client_request_id,
         "created_at": created_at.isoformat(),
     }

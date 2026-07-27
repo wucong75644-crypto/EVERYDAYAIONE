@@ -1,0 +1,986 @@
+{
+  "contract": "everydayai.content-part",
+  "version": 1,
+  "schema": {
+    "$defs": {
+      "AudioPart": {
+        "description": "音频内容。",
+        "properties": {
+          "type": {
+            "const": "audio",
+            "default": "audio",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Transcript"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "AudioPart",
+        "type": "object"
+      },
+      "ChartPart": {
+        "description": "ECharts正式协议及 Plotly/Vega-Lite历史只读内容块。",
+        "properties": {
+          "type": {
+            "const": "chart",
+            "default": "chart",
+            "title": "Type",
+            "type": "string"
+          },
+          "option": {
+            "title": "Option",
+            "type": "object"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "chart_type": {
+            "default": "",
+            "title": "Chart Type",
+            "type": "string"
+          },
+          "spec_format": {
+            "default": "echarts",
+            "title": "Spec Format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "option"
+        ],
+        "title": "ChartPart",
+        "type": "object"
+      },
+      "DiagramPart": {
+        "description": "结构化 Mermaid 内容块，原始源码是唯一可信数据。",
+        "properties": {
+          "type": {
+            "const": "diagram",
+            "default": "diagram",
+            "title": "Type",
+            "type": "string"
+          },
+          "format": {
+            "const": "mermaid",
+            "default": "mermaid",
+            "title": "Format",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "DiagramPart",
+        "type": "object"
+      },
+      "EcomPlanPart": {
+        "description": "电商图方案卡片内容块\n\n千问VL策划的设计方案，前端渲染为可编辑方案卡片+确认生成按钮。",
+        "properties": {
+          "type": {
+            "const": "ecom_plan",
+            "default": "ecom_plan",
+            "title": "Type",
+            "type": "string"
+          },
+          "product_insight": {
+            "default": "",
+            "title": "Product Insight",
+            "type": "string"
+          },
+          "visual_strategy": {
+            "default": "",
+            "title": "Visual Strategy",
+            "type": "string"
+          },
+          "images": {
+            "default": [],
+            "items": {
+              "type": "object"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "cost_estimate": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cost Estimate"
+          }
+        },
+        "title": "EcomPlanPart",
+        "type": "object"
+      },
+      "FilePart": {
+        "description": "文件内容及任务级资产身份。",
+        "properties": {
+          "type": {
+            "const": "file",
+            "default": "file",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Path"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Asset Id"
+          }
+        },
+        "required": [
+          "url",
+          "name",
+          "mime_type"
+        ],
+        "title": "FilePart",
+        "type": "object"
+      },
+      "FormPart": {
+        "description": "表单内容块（聊天内嵌表单，如定时任务创建/修改）\n\n前端 FormBlock 组件渲染，用户确认后通过 WS form_submit 提交。",
+        "properties": {
+          "type": {
+            "const": "form",
+            "default": "form",
+            "title": "Type",
+            "type": "string"
+          },
+          "form_type": {
+            "title": "Form Type",
+            "type": "string"
+          },
+          "form_id": {
+            "title": "Form Id",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "submit_text": {
+            "default": "确认",
+            "title": "Submit Text",
+            "type": "string"
+          },
+          "cancel_text": {
+            "default": "取消",
+            "title": "Cancel Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "form_type",
+          "form_id"
+        ],
+        "title": "FormPart",
+        "type": "object"
+      },
+      "ImagePart": {
+        "description": "图片内容及可选的 Workspace 资产信息。",
+        "properties": {
+          "type": {
+            "const": "image",
+            "default": "image",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "original_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Original Url"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thumbnail Url"
+          },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview Url"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Download Url"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Asset Id"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Height"
+          },
+          "alt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alt"
+          },
+          "failed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Failed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "retry_context": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retry Context"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Path"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mime Type"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ImagePart",
+        "type": "object"
+      },
+      "InterruptMarkerPart": {
+        "description": "消息中断锚点；用于刷新恢复和上下文连续性，不直接渲染。",
+        "properties": {
+          "type": {
+            "const": "interrupt_marker",
+            "default": "interrupt_marker",
+            "title": "Type",
+            "type": "string"
+          },
+          "interrupted_at": {
+            "title": "Interrupted At",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "user_cancel",
+              "system_timeout",
+              "network_error"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interrupted_at",
+          "reason"
+        ],
+        "title": "InterruptMarkerPart",
+        "type": "object"
+      },
+      "TablePart": {
+        "description": "沙盒 emit_table 产生的结构化表格内容块。",
+        "properties": {
+          "type": {
+            "const": "table",
+            "default": "table",
+            "title": "Type",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Truncated"
+          }
+        },
+        "required": [
+          "columns",
+          "rows"
+        ],
+        "title": "TablePart",
+        "type": "object"
+      },
+      "TextPart": {
+        "description": "文本内容。",
+        "properties": {
+          "type": {
+            "const": "text",
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextPart",
+        "type": "object"
+      },
+      "ThinkingPart": {
+        "description": "思考过程内容块（持久化到 content，不再依赖 generation_params）\n\n对标 Vercel AI SDK 的 reasoning part。\n流式阶段通过 thinking_chunk WS 实时推送，\n完成时作为 content 首元素持久化到 DB。",
+        "properties": {
+          "type": {
+            "const": "thinking",
+            "default": "thinking",
+            "title": "Type",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Ms"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ThinkingPart",
+        "type": "object"
+      },
+      "ToolResultPart": {
+        "description": "工具结果内容块（独立渲染，不被主 Agent 文本覆盖）\n\n用于子 Agent（如 erp_agent）返回的结论，作为独立 content block\n直接展示给用户，主 Agent 后续文本追加在此块下方。",
+        "properties": {
+          "type": {
+            "const": "tool_result",
+            "default": "tool_result",
+            "title": "Type",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tool_name",
+          "text"
+        ],
+        "title": "ToolResultPart",
+        "type": "object"
+      },
+      "ToolStepPart": {
+        "description": "工具调用步骤块（折叠式卡片，持久化到 content）\n\n对标 Vercel AI SDK 的 tool-{toolName} part。\n状态机：running → completed / error。\n通过 content_block_add WS 推送，前端渲染为可折叠步骤卡片。",
+        "properties": {
+          "type": {
+            "const": "tool_step",
+            "default": "tool_step",
+            "title": "Type",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "title": "Tool Call Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "running",
+            "enum": [
+              "running",
+              "completed",
+              "error",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Output"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Elapsed Ms"
+          }
+        },
+        "required": [
+          "tool_name",
+          "tool_call_id"
+        ],
+        "title": "ToolStepPart",
+        "type": "object"
+      },
+      "VideoPart": {
+        "description": "视频内容。",
+        "properties": {
+          "type": {
+            "const": "video",
+            "default": "video",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "thumbnail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thumbnail"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "VideoPart",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "audio": "#/$defs/AudioPart",
+        "chart": "#/$defs/ChartPart",
+        "diagram": "#/$defs/DiagramPart",
+        "ecom_plan": "#/$defs/EcomPlanPart",
+        "file": "#/$defs/FilePart",
+        "form": "#/$defs/FormPart",
+        "image": "#/$defs/ImagePart",
+        "interrupt_marker": "#/$defs/InterruptMarkerPart",
+        "table": "#/$defs/TablePart",
+        "text": "#/$defs/TextPart",
+        "thinking": "#/$defs/ThinkingPart",
+        "tool_result": "#/$defs/ToolResultPart",
+        "tool_step": "#/$defs/ToolStepPart",
+        "video": "#/$defs/VideoPart"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/TextPart"
+      },
+      {
+        "$ref": "#/$defs/ImagePart"
+      },
+      {
+        "$ref": "#/$defs/VideoPart"
+      },
+      {
+        "$ref": "#/$defs/AudioPart"
+      },
+      {
+        "$ref": "#/$defs/FilePart"
+      },
+      {
+        "$ref": "#/$defs/ThinkingPart"
+      },
+      {
+        "$ref": "#/$defs/ToolStepPart"
+      },
+      {
+        "$ref": "#/$defs/ToolResultPart"
+      },
+      {
+        "$ref": "#/$defs/FormPart"
+      },
+      {
+        "$ref": "#/$defs/ChartPart"
+      },
+      {
+        "$ref": "#/$defs/DiagramPart"
+      },
+      {
+        "$ref": "#/$defs/EcomPlanPart"
+      },
+      {
+        "$ref": "#/$defs/TablePart"
+      },
+      {
+        "$ref": "#/$defs/InterruptMarkerPart"
+      }
+    ]
+  },
+  "valid_examples": [
+    {
+      "type": "text",
+      "text": "hello"
+    },
+    {
+      "type": "image",
+      "failed": true,
+      "url": null
+    },
+    {
+      "type": "image",
+      "url": "https://example.com/input.png"
+    },
+    {
+      "type": "video",
+      "url": "https://example.com/video.mp4"
+    },
+    {
+      "type": "audio",
+      "url": "https://example.com/audio.mp3"
+    },
+    {
+      "type": "file",
+      "url": "https://example.com/report.pdf",
+      "name": "report.pdf",
+      "mime_type": "application/pdf"
+    },
+    {
+      "type": "thinking",
+      "text": "reasoning"
+    },
+    {
+      "type": "tool_step",
+      "tool_name": "code_execute",
+      "tool_call_id": "call-1",
+      "status": "running"
+    },
+    {
+      "type": "tool_result",
+      "tool_name": "erp_agent",
+      "text": "done",
+      "files": []
+    },
+    {
+      "type": "form",
+      "form_type": "confirm",
+      "form_id": "form-1",
+      "title": "",
+      "description": "",
+      "fields": [
+        {
+          "type": "text",
+          "name": "answer",
+          "label": "回答"
+        }
+      ],
+      "submit_text": "确认",
+      "cancel_text": "取消"
+    },
+    {
+      "type": "chart",
+      "option": {
+        "series": []
+      },
+      "title": "",
+      "chart_type": "",
+      "spec_format": "echarts"
+    },
+    {
+      "type": "diagram",
+      "format": "mermaid",
+      "source": "flowchart TD\nA-->B",
+      "title": ""
+    },
+    {
+      "type": "table",
+      "columns": [
+        "name"
+      ],
+      "rows": [
+        {
+          "name": "A"
+        }
+      ]
+    },
+    {
+      "type": "ecom_plan",
+      "product_insight": "",
+      "visual_strategy": "",
+      "images": []
+    },
+    {
+      "type": "interrupt_marker",
+      "interrupted_at": "2026-07-27T00:00:00Z",
+      "reason": "user_cancel"
+    },
+    {
+      "type": "image",
+      "url": "https://example.com/historical-input.png",
+      "original_url": null,
+      "thumbnail_url": null,
+      "width": null,
+      "height": null,
+      "alt": null,
+      "failed": null,
+      "name": null,
+      "workspace_path": null
+    },
+    {
+      "type": "file",
+      "url": "https://example.com/historical.pdf",
+      "name": "historical.pdf",
+      "mime_type": "application/pdf",
+      "size": null,
+      "workspace_path": null,
+      "asset_id": null
+    }
+  ],
+  "invalid_examples": [
+    {
+      "type": "image"
+    },
+    {
+      "type": "file",
+      "url": "/a",
+      "name": "a.txt"
+    },
+    {
+      "type": "interrupt_marker",
+      "interrupted_at": "2026-07-27T00:00:00Z",
+      "reason": "unknown"
+    },
+    {
+      "type": "unknown",
+      "value": 1
+    }
+  ]
+}

@@ -16,7 +16,8 @@ class ImagePart(BaseModel):
     """图片内容及可选的 Workspace 资产信息。"""
 
     type: Literal["image"] = "image"
-    url: Optional[str] = None
+    # 线协议要求字段存在；null 专用于生成中/失败占位，缺失属于非法块。
+    url: Optional[str]
     original_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
     preview_url: Optional[str] = None

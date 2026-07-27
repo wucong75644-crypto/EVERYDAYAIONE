@@ -18,6 +18,7 @@ from schemas.message import (
     MessageRole,
     MessageStatus,
     TextPart,
+    serialize_content_part,
 )
 
 
@@ -56,7 +57,7 @@ async def create_user_message(
         if isinstance(part, TextPart):
             content_dicts.append({"type": "text", "text": part.text})
         elif hasattr(part, "model_dump"):
-            content_dicts.append(part.model_dump())
+            content_dicts.append(serialize_content_part(part))
         elif isinstance(part, dict):
             content_dicts.append(part)
 
