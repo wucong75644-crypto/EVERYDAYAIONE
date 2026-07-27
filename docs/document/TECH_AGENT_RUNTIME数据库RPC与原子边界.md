@@ -368,6 +368,19 @@ claim transaction
 外部 IO 返回和 terminal transaction 之间崩溃，由 Attempt receipt、idempotency key、
 callback Inbox 和 reconciliation 恢复。
 
+### 11.1 已落地基础设施映射（AR-08/AR-09）
+
+- migration 216 只增加 Session/Event、Run claim readback 和 Projection Event
+  envelope 的窄读取 RPC；核心七表继续 `RLS + FORCE RLS` 且服务角色无直权。
+- `infrastructure/postgres/` 只接受 ScopedDatabaseClient，并把未知 outcome、非法
+  UUID/枚举/时间戳/JSON 解析为持久化合同错误；Event Replay 拒绝超前 checkpoint
+  和任何 durable sequence gap。
+- `infrastructure/model/` 在数据库事务外调用现有 Provider adapter。429 明确拒绝可在
+  同一 ModelStep 内重试；网关 5xx、timeout 和部分响应失败进入 unknown。cleanup
+  有界且不改变主要结果。
+- 这些 adapter 尚未成为生产 Owner；Coordinator 接入时仍必须遵守
+  `claim → external IO → terminal RPC + Event/Outbox`，不得把 Provider IO 放入事务。
+
 ## 12. 兼容迁移
 
 ### 阶段 A：Shadow

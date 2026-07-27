@@ -557,7 +557,7 @@
 - `backend/services/handlers/chat_context/unified_history_loader.py`：将持久 ConversationItem/Compaction 重建为唯一模型历史；既有 revision 缺少投影时失败关闭。
 - `backend/services/agent/runtime/context/items.py`、`provider_receipt.py`：构建本 Turn 的原子 ConversationItem 组，并在每次真实 Provider 请求前登记无正文 ContextReceipt。
 
-Agent Runtime AR-05～AR-07 基础实现：
+Agent Runtime AR-05～AR-09 基础实现：
 
 - `backend/services/agent/runtime/domain/`：Session、Run、ModelStep、Action、Event、
   Scope、lease、fencing 和幂等的框架无关领域单一类型来源。
@@ -565,11 +565,21 @@ Agent Runtime AR-05～AR-07 基础实现：
   Projection 的基础设施反转边界；本阶段不包含具体 Provider、Tool 或数据库适配器。
 - `backend/migrations/212_agent_runtime_core_foundation.sql`～`215_agent_runtime_model_event_projection_rpcs.sql`：
   建立七张 FORCE RLS 核心表及 Session/Command/Run/ModelStep/Projection 窄 RPC；
-  应用顺序固定为 212→215，rollback 固定逆序执行。
+  AR-08 再追加只读能力迁移 216；应用顺序固定为 212→216，rollback 固定逆序执行。
 - `backend/tests/agent_runtime/` 与 `backend/tests/fixtures/agent_runtime/`：可复用 Trace
   schema、确定性 Replay、Projection 重放和 single-owner/fencing/Scope/幂等断言。
+- `backend/services/agent/runtime/infrastructure/postgres/`：将 Session、Command、Run、
+  ModelStep、严格 Event Replay 和 Projection Outbox ports 映射到 212～216 的窄 RPC；
+  RPC 响应按闭合 outcome、UUID、枚举、时间戳和 JSON 合同失败关闭。
+- `backend/migrations/216_agent_runtime_read_projection_capabilities.sql`：增加受 Scope
+  约束的 Session/Event 读取、Run claim readback 和 Projection Event envelope；
+  Runtime/WeCom 不能读取 system Scope，Worker 不获得核心表直权。
+- `backend/services/agent/runtime/infrastructure/model/`：将冻结的 ModelStepRequest、
+  ProviderContextPlan、模型 revision 和脱敏 receipt 投影到现有 Provider adapter；
+  当前只有明确拒绝的 429 可在同一 ModelStep 内重试，502/503/504 和 timeout 进入
+  unknown，adapter cleanup 有界且不能覆盖主要结果或取消。
 - 当前实现为 additive foundation，尚未接管 Web、企微或 Conversation Actor 的生产
-  Owner；生产调用方切换属于后续任务。
+  Owner；AR-08/09 只提供基础设施 adapter，生产调用方切换属于后续任务。
 - `backend/services/handlers/chat/execution_result.py`：Chat 纯执行结果协议，携带 Artifact drafts 与 ContextReceipt，不产生数据库副作用。
 - `docs/document/TECH_AGENT_RUNTIME全项目对标总纲.md`：固定 Grok Build 全项目对标范围、逐板块研究模板、证据要求、文档索引和阶段门禁。
 - `docs/document/TECH_SESSION_RUNTIME多租户通用Agent架构.md`：在现有 Conversation Actor 和既有
