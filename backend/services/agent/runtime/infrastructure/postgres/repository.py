@@ -252,11 +252,19 @@ class PostgresRuntimeRepository:
     async def cancel_run(
         self, run_id: RunId, state_version: int, reason: str,
     ) -> MutationReceipt:
-        return await self._run_mutation("cancel_agent_run", {
-            "p_run_id": run_id,
-            "p_expected_state_version": state_version,
-            "p_reason": reason,
-        }, _CANCEL)
+        if self._access_kind not in {
+            DatabaseAccessKind.RUNTIME,
+            DatabaseAccessKind.WORKER,
+        }:
+            raise ValueError("RUNTIME_OR_WORKER_DATABASE_SCOPE_REQUIRED")
+        return mutation_receipt(
+            await self._rpc("cancel_agent_run", {
+                "p_run_id": run_id,
+                "p_expected_state_version": state_version,
+                "p_reason": reason,
+            }),
+            _CANCEL,
+        )
 
     async def create_model_step(
         self, run_id: RunId, token: FencingToken, *,

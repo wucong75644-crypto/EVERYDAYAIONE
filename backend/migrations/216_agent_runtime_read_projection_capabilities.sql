@@ -18,7 +18,8 @@ BEGIN
         RETURN;
     END IF;
     IF session_user <> 'everydayai_worker' AND (
-        tenant_org_id() IS DISTINCT FROM v_session.org_id
+        v_session.scope_kind NOT IN ('user', 'channel')
+        OR tenant_org_id() IS DISTINCT FROM v_session.org_id
         OR (
             v_session.scope_kind = 'user'
             AND tenant_actor_user_id() IS DISTINCT FROM v_session.user_id
@@ -62,7 +63,9 @@ CREATE FUNCTION replay_agent_runtime_events(
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
 DECLARE
-    v_exists BOOLEAN;
+    v_next_sequence BIGINT;
+    v_current_tail BIGINT;
+    v_expected_count BIGINT;
     v_events JSONB;
     v_count BIGINT;
     v_min BIGINT;
@@ -73,12 +76,19 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
     PERFORM _assert_agent_runtime_session_read(p_session_id);
-    SELECT EXISTS(
-        SELECT 1 FROM agent_runtime_sessions WHERE id = p_session_id
-    ) INTO v_exists;
-    IF NOT v_exists THEN
+    SELECT next_event_sequence INTO v_next_sequence
+      FROM agent_runtime_sessions WHERE id = p_session_id;
+    IF NOT FOUND THEN
         RETURN jsonb_build_object('outcome', 'not_found');
     END IF;
+    v_current_tail := v_next_sequence - 1;
+    IF p_after_sequence > v_current_tail THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_REPLAY_CHECKPOINT_AHEAD'
+            USING ERRCODE = '55000';
+    END IF;
+    v_expected_count := LEAST(
+        p_limit::BIGINT, v_current_tail - p_after_sequence
+    );
     WITH page AS (
         SELECT event.*
           FROM agent_runtime_events event
@@ -91,15 +101,17 @@ BEGIN
            count(*), min(sequence), max(sequence)
       INTO v_events, v_count, v_min, v_max
       FROM page;
-    IF v_count > 0 AND (
-        v_min <> p_after_sequence + 1
+    IF v_count <> v_expected_count
+       OR (v_expected_count > 0 AND (
+        v_min IS DISTINCT FROM p_after_sequence + 1
         OR v_max <> p_after_sequence + v_count
-    ) THEN
+    )) THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_EVENT_SEQUENCE_GAP'
             USING ERRCODE = '55000';
     END IF;
     RETURN jsonb_build_object(
-        'outcome', 'found', 'events', v_events
+        'outcome', 'found', 'events', v_events,
+        'current_tail', v_current_tail
     );
 END;
 $$;

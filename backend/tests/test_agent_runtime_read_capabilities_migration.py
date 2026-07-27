@@ -53,6 +53,10 @@ def test_scope_sequence_lease_and_rollback_contracts() -> None:
     assert "tenant_actor_user_id()" in MIGRATION
     assert "tenant_org_id()" in MIGRATION
     assert "member.status = 'active'" in MIGRATION
+    assert "v_session.scope_kind NOT IN ('user', 'channel')" in MIGRATION
+    assert "AGENT_RUNTIME_REPLAY_CHECKPOINT_AHEAD" in MIGRATION
+    assert "v_count <> v_expected_count" in MIGRATION
+    assert "v_current_tail := v_next_sequence - 1" in MIGRATION
     assert "AGENT_RUNTIME_EVENT_SEQUENCE_GAP" in MIGRATION
     assert "lease_token IS DISTINCT FROM p_lease_token" in MIGRATION
     assert "lease_expires_at <= clock_timestamp()" in MIGRATION

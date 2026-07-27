@@ -20,6 +20,8 @@ from services.agent.runtime.domain import (
 from services.agent.runtime.domain.errors import (
     FencingTokenMismatchError,
     PersistenceContractError,
+    StaleVersionError,
+    TerminalConflictError,
 )
 from services.agent.runtime.infrastructure.postgres.event_store import (
     PostgresRuntimeEventStore,
@@ -251,6 +253,62 @@ async def test_runtime_scope_cannot_call_worker_repository_operation() -> None:
     )
     with pytest.raises(ValueError, match="WORKER_DATABASE_SCOPE_REQUIRED"):
         await repository.claim_run(RunId(RUN_ID), "worker")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "access_kind",
+    [DatabaseAccessKind.RUNTIME, DatabaseAccessKind.WORKER],
+)
+async def test_runtime_and_worker_scopes_can_call_cancel(
+    access_kind: DatabaseAccessKind,
+) -> None:
+    database = _Database(access_kind, {
+        "cancel_agent_run": {
+            "outcome": "cancelled",
+            "entity_id": RUN_ID,
+            "state_version": 2,
+            "event_sequence": 4,
+        },
+    })
+
+    receipt = await PostgresRuntimeRepository(database).cancel_run(
+        RunId(RUN_ID), 1, "user_cancelled",
+    )
+
+    assert receipt.outcome is MutationOutcome.CANCELLED
+    assert database.calls[0][0] == "cancel_agent_run"
+
+
+@pytest.mark.asyncio
+async def test_runtime_cancel_preserves_closed_conflict_outcomes() -> None:
+    for response, error in (
+        ({"outcome": "stale_version"}, StaleVersionError),
+        ({"outcome": "terminal_conflict"}, TerminalConflictError),
+    ):
+        database = _Database(DatabaseAccessKind.RUNTIME, {
+            "cancel_agent_run": response,
+        })
+        with pytest.raises(error):
+            await PostgresRuntimeRepository(database).cancel_run(
+                RunId(RUN_ID), 1, "user_cancelled",
+            )
+
+
+@pytest.mark.asyncio
+async def test_runtime_scope_remains_blocked_from_worker_mutations() -> None:
+    repository = PostgresRuntimeRepository(
+        _Database(DatabaseAccessKind.RUNTIME, {}),
+    )
+
+    with pytest.raises(ValueError, match="WORKER_DATABASE_SCOPE_REQUIRED"):
+        await repository.complete_run(
+            RunId(RUN_ID), FencingToken(TOKEN), 1, "result",
+        )
+    with pytest.raises(ValueError, match="WORKER_DATABASE_SCOPE_REQUIRED"):
+        await repository.set_run_waiting(
+            RunId(RUN_ID), FencingToken(TOKEN), 1, "paused",
+        )
 
 
 @pytest.mark.asyncio
