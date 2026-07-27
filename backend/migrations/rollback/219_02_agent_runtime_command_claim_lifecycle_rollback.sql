@@ -19,6 +19,7 @@ DROP FUNCTION _finish_exhausted_agent_command(
     agent_session_commands, agent_command_claims);
 DROP FUNCTION _reject_agent_command(
     agent_session_commands, agent_runtime_sessions, TEXT, TEXT);
+DROP FUNCTION _agent_run_request_hash(UUID, TEXT, JSONB, JSONB, JSONB);
 DROP FUNCTION _agent_command_run_envelope(agent_session_commands);
 
 RESET ROLE;

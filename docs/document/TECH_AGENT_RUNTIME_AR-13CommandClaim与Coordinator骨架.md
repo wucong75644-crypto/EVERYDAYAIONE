@@ -71,6 +71,20 @@ Session → Command → CommandClaim → Run。
 cancel 在排序中优先于普通 pending Command。Run 插入依靠现有
 `UNIQUE(command_id)`；冲突后读取并核对 envelope hash，冲突失败关闭。
 
+Run `request_hash` 与 migration 213 的 `create_agent_run` 使用同一规范对象：
+`command_id`、`run_kind`、`context_receipt`、`config_snapshot` 和
+`capability_snapshot`。`request_identity` 只校验 Command envelope，不进入 Run hash，
+因此旧、新两条合法创建路径可交叉 readback。
+
+219 仅在实际插入新 Run 时追加一次 `run.created`。cancel-before-start 先创建 queued
+Run 并追加 `run.created`，再原子推进 cancelled 并追加 `run.cancelled`；两个事件均通过
+`append_agent_runtime_event` 产生连续 sequence 和 web_runtime/audit outbox。
+
+Command claim 达到最大 attempts 时，在同一 Session → Command → CommandClaim → Run
+锁序事务中把非终态 Run 推进为 failed，清除 lease/token、关闭未结束 RunAttempt，
+依次追加 `run.failed` 与 `command.attempts_exhausted`。已终态 Run 返回
+`terminal_conflict`，不会被反向覆盖。
+
 ## 5. RPC 与结果
 
 Worker-only SECURITY DEFINER RPC：

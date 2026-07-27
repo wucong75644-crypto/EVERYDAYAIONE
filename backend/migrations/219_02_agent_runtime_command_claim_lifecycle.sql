@@ -28,23 +28,65 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION _agent_run_request_hash(
+    p_command_id UUID, p_run_kind TEXT, p_context_receipt JSONB,
+    p_config_snapshot JSONB, p_capability_snapshot JSONB
+) RETURNS TEXT LANGUAGE SQL IMMUTABLE SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+    SELECT md5(jsonb_build_object(
+        'command_id', p_command_id,
+        'run_kind', p_run_kind,
+        'context_receipt', p_context_receipt,
+        'config_snapshot', p_config_snapshot,
+        'capability_snapshot', p_capability_snapshot
+    )::TEXT)
+$$;
+
 CREATE FUNCTION _finish_exhausted_agent_command(
     p_command agent_session_commands, p_claim agent_command_claims
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
+DECLARE v_run agent_runs%ROWTYPE; v_run_event JSONB; v_command_event JSONB;
 BEGIN
+    SELECT * INTO v_run FROM agent_runs
+     WHERE id = p_claim.run_id AND command_id = p_command.id FOR UPDATE;
+    IF NOT FOUND OR v_run.status IN ('completed', 'failed', 'cancelled') THEN
+        UPDATE agent_command_claims SET status = 'failed', outcome = 'failed',
+               error_class = 'terminal_conflict',
+               finished_at = clock_timestamp(), updated_at = clock_timestamp()
+         WHERE command_id = p_command.id;
+        RETURN jsonb_build_object(
+            'outcome', 'terminal_conflict', 'command_id', p_command.id,
+            'run_id', p_claim.run_id);
+    END IF;
+    UPDATE agent_runs SET status = 'failed', execution_token = NULL,
+           lease_expires_at = NULL, completed_at = clock_timestamp(),
+           terminal_reason = 'command_attempts_exhausted',
+           state_version = state_version + 1, updated_at = clock_timestamp()
+     WHERE id = v_run.id RETURNING * INTO v_run;
+    UPDATE agent_run_attempts SET ended_at = clock_timestamp(),
+           outcome = 'failed'
+     WHERE run_id = v_run.id AND ended_at IS NULL;
+    v_run_event := append_agent_runtime_event(
+        p_command.session_id, 'run.failed', v_run.id, NULL, p_command.id,
+        'system', session_user,
+        jsonb_build_object('reason', 'command_attempts_exhausted'),
+        ARRAY['web_runtime', 'audit']::TEXT[]);
     UPDATE agent_command_claims SET status = 'attempts_exhausted',
            outcome = 'attempts_exhausted', error_class = 'attempts_exhausted',
            finished_at = clock_timestamp(), updated_at = clock_timestamp()
      WHERE command_id = p_command.id;
-    PERFORM append_agent_runtime_event(
+    v_command_event := append_agent_runtime_event(
         p_command.session_id, 'command.attempts_exhausted', p_claim.run_id,
         NULL, p_command.id, 'system', session_user,
         jsonb_build_object('command_id', p_command.id,
                            'attempt_number', p_claim.attempt_number),
         ARRAY['web_runtime', 'audit']::TEXT[]);
     RETURN jsonb_build_object(
-        'outcome', 'attempts_exhausted', 'command_id', p_command.id);
+        'outcome', 'attempts_exhausted', 'command_id', p_command.id,
+        'run_id', v_run.id,
+        'run_event_sequence', v_run_event->'event_sequence',
+        'command_event_sequence', v_command_event->'event_sequence');
 END;
 $$;
 
@@ -80,8 +122,16 @@ CREATE FUNCTION _ensure_agent_command_run(
     p_claim agent_command_claims, p_envelope JSONB, p_target_id UUID
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
-DECLARE v_run agent_runs%ROWTYPE; v_cancel JSONB;
+DECLARE
+    v_run agent_runs%ROWTYPE;
+    v_cancel JSONB;
+    v_hash TEXT;
+    v_created BOOLEAN := FALSE;
 BEGIN
+    v_hash := _agent_run_request_hash(
+        p_command.id, p_envelope->>'run_kind',
+        p_envelope->'context_receipt', p_envelope->'config_snapshot',
+        p_envelope->'capability_snapshot');
     IF p_command.command_type = 'cancel' THEN
         SELECT * INTO v_run FROM agent_runs
          WHERE id = p_target_id AND session_id = p_session.id FOR UPDATE;
@@ -101,18 +151,31 @@ BEGIN
             END IF;
         ELSE
             INSERT INTO agent_runs(
-                id, session_id, command_id, org_id, user_id, run_kind, status,
+                id, session_id, command_id, org_id, user_id, run_kind,
                 idempotency_key, request_hash, context_receipt,
-                config_snapshot, capability_snapshot, terminal_reason,
-                completed_at
+                config_snapshot, capability_snapshot
             ) VALUES (
                 p_target_id, p_session.id, p_command.id, p_session.org_id,
-                p_session.user_id, p_envelope->>'run_kind', 'cancelled',
-                p_command.id::TEXT, md5(p_envelope::TEXT),
+                p_session.user_id, p_envelope->>'run_kind',
+                p_command.id::TEXT, v_hash,
                 p_envelope->'context_receipt', p_envelope->'config_snapshot',
-                p_envelope->'capability_snapshot', 'cancelled_before_start',
-                clock_timestamp()
+                p_envelope->'capability_snapshot'
             ) RETURNING * INTO v_run;
+            PERFORM append_agent_runtime_event(
+                p_session.id, 'run.created', v_run.id, NULL, p_command.id,
+                'system', session_user, jsonb_build_object('run_id', v_run.id),
+                ARRAY['web_runtime', 'audit']::TEXT[]);
+            UPDATE agent_runs SET status = 'cancelled',
+                   completed_at = clock_timestamp(),
+                   terminal_reason = 'cancelled_before_start',
+                   state_version = state_version + 1,
+                   updated_at = clock_timestamp()
+             WHERE id = v_run.id RETURNING * INTO v_run;
+            PERFORM append_agent_runtime_event(
+                p_session.id, 'run.cancelled', v_run.id, NULL, p_command.id,
+                'system', session_user,
+                jsonb_build_object('reason', 'cancelled_before_start'),
+                ARRAY['web_runtime', 'audit']::TEXT[]);
         END IF;
     ELSE
         INSERT INTO agent_runs(
@@ -122,12 +185,13 @@ BEGIN
         ) VALUES (
             p_session.id, p_command.id, p_session.org_id, p_session.user_id,
             p_envelope->>'run_kind', p_command.id::TEXT,
-            md5(p_envelope::TEXT), p_envelope->'context_receipt',
+            v_hash, p_envelope->'context_receipt',
             p_envelope->'config_snapshot', p_envelope->'capability_snapshot'
-        ) ON CONFLICT (command_id) DO NOTHING;
+        ) ON CONFLICT (command_id) DO NOTHING RETURNING * INTO v_run;
+        v_created := FOUND;
         SELECT * INTO v_run FROM agent_runs
          WHERE command_id = p_command.id FOR UPDATE;
-        IF v_run.request_hash IS DISTINCT FROM md5(p_envelope::TEXT) THEN
+        IF v_run.request_hash IS DISTINCT FROM v_hash THEN
             UPDATE agent_command_claims SET status = 'failed',
                    outcome = 'failed', error_class = 'idempotency_conflict',
                    finished_at = clock_timestamp(),
@@ -136,6 +200,12 @@ BEGIN
             RETURN jsonb_build_object(
                 'outcome', 'idempotency_conflict',
                 'command_id', p_command.id, 'run_id', v_run.id);
+        END IF;
+        IF v_created THEN
+            PERFORM append_agent_runtime_event(
+                p_session.id, 'run.created', v_run.id, NULL, p_command.id,
+                'system', session_user, jsonb_build_object('run_id', v_run.id),
+                ARRAY['web_runtime', 'audit']::TEXT[]);
         END IF;
     END IF;
     UPDATE agent_session_commands SET result_entity_id = v_run.id
@@ -177,10 +247,7 @@ BEGIN
         SELECT command.id, command.session_id
           FROM agent_session_commands command
           LEFT JOIN agent_command_claims claim ON claim.command_id = command.id
-         WHERE (
-                command.result_entity_id IS NULL
-                AND claim.command_id IS NULL
-               )
+         WHERE claim.command_id IS NULL
             OR (
                 claim.status = 'claimed'
                 AND claim.lease_expires_at <= clock_timestamp()
@@ -201,8 +268,6 @@ BEGIN
                 v_claim.status <> 'claimed'
                 OR v_claim.lease_expires_at > clock_timestamp()
             )
-        ) OR (
-            NOT FOUND AND v_command.result_entity_id IS NOT NULL
         ) THEN
             v_command.id := NULL;
             CONTINUE;
@@ -362,6 +427,7 @@ $$;
 
 REVOKE ALL ON FUNCTION
     _agent_command_run_envelope(agent_session_commands),
+    _agent_run_request_hash(UUID, TEXT, JSONB, JSONB, JSONB),
     _finish_exhausted_agent_command(agent_session_commands, agent_command_claims),
     _reject_agent_command(
         agent_session_commands, agent_runtime_sessions, TEXT, TEXT),

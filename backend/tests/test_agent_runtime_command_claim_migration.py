@@ -66,6 +66,19 @@ def test_envelope_and_typed_outcomes_fail_closed() -> None:
         assert f"'{name}'" in LIFECYCLE
 
 
+def test_run_hash_events_and_exhaustion_follow_existing_contracts() -> None:
+    assert "CREATE FUNCTION _agent_run_request_hash(" in LIFECYCLE
+    assert "'command_id', p_command_id" in LIFECYCLE
+    assert "'context_receipt', p_context_receipt" in LIFECYCLE
+    assert "'run.created'" in LIFECYCLE
+    assert "'run.cancelled'" in LIFECYCLE
+    assert "'run.failed'" in LIFECYCLE
+    assert "terminal_reason = 'command_attempts_exhausted'" in LIFECYCLE
+    assert "_agent_run_request_hash(UUID, TEXT, JSONB, JSONB, JSONB)" in (
+        LIFECYCLE
+    )
+
+
 def test_only_worker_receives_command_claim_rpc_execute() -> None:
     assert "TO everydayai_worker;" in LIFECYCLE
     assert "get_agent_command_run_claim(UUID, TEXT)" in LIFECYCLE
