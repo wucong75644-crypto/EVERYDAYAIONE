@@ -17,6 +17,21 @@
   Executor/Policy或生产startup。AR-14、AR-15、AR-16必须在本任务集成后再启动，
   AR-17门禁完成前不得切换Owner。
 
+## 2026-07-27 记忆、定时任务与历史消息生产故障
+
+- 记忆修改/删除失败来自角色隔离后服务已使用 `everydayai_runtime`，迁移 144 的四个
+  遗留写 RPC 仍只面向已移除的 `service_role`。迁移 220 新增 Runtime 专用能力，
+  并在函数内验证可信 Actor、组织 Scope 和 active 成员关系。
+- 定时任务列表失败来自 Scoped RPC 默认把 Python `list` 编码为 JSONB，而任职、
+  部门和资产能力要求 PostgreSQL UUID 数组。`PostgresArray` 显式区分数组与 JSONB，
+  三个真实调用点已统一接入。
+- 生产只读对账发现截图个人会话元数据为 `message_count=2`，实际消息表为 0；该用户
+  81 个个人会话中 48 个元数据标记非空，实际仅 2 个会话仍有消息。服务器无全库备份、
+  WAL 归档关闭，现有专项 dump 不包含通用消息表；必须取得云盘快照、宿主机快照或
+  外部备份后，恢复到临时库并只增量合并。
+- 企业会话消息大部分仍在，Workspace 两种 Scope 请求均返回 200；个人与企业目录随
+  当前组织上下文切换。代码修复与生产恢复验证完成前，本事件保持开启。
+
 ## 2026-07-27 Agent Runtime AR-12 Action 持久化与 Tool 终态 — 已集成，尚未接入生产 Owner
 
 - migration 218新增Action、ActionAttempt、ActionResult与claim batch事实，全部启用

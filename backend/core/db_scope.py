@@ -13,12 +13,29 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 
+
 class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
     RUNTIME = "runtime"
     SYNC = "sync"
     WORKER = "worker"
+
+
+@dataclass(frozen=True)
+class PostgresArray:
+    """显式标记 Scoped RPC 参数应按 PostgreSQL UUID 数组传递。"""
+
+    values: list[UUID]
+
+    def __init__(self, values: list[str | UUID]) -> None:
+        object.__setattr__(self, "values", [UUID(str(value)) for value in values])
+
+
+def _adapt_rpc_param(value: Any) -> Any:
+    if isinstance(value, PostgresArray):
+        return value.values
+    return Jsonb(value) if isinstance(value, (dict, list)) else value
 
 
 @dataclass(frozen=True)
@@ -74,10 +91,7 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
         return f'SELECT "{name}"()', []
     named_args = ", ".join(f"{key} := %s" for key in params)
-    values = [
-        Jsonb(value) if isinstance(value, (dict, list)) else value
-        for value in params.values()
-    ]
+    values = [_adapt_rpc_param(value) for value in params.values()]
     return f'SELECT "{name}"({named_args})', values
 
 

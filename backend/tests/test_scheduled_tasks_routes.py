@@ -448,7 +448,9 @@ class TestListTasks:
         db = FakeDB()
         tasks = [
             {
-                "id": "t1", "user_id": "user_1", "org_id": "org_1",
+                "id": "t1",
+                "user_id": "11111111-1111-1111-1111-111111111111",
+                "org_id": "org_1",
                 "name": "任务1", "cron_expr": "0 9 * * *",
                 "status": "active", "push_target": {},
                 "next_run_at": None, "run_count": 0,
