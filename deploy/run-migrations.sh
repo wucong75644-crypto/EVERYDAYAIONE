@@ -40,7 +40,9 @@ if printf '%s\n' "$migration_plan" | grep -Fxq \
         echo "❌ 迁移数据库名不合法，停止管理员积分 owner 转移"
         exit 1
     fi
+    migration_python_dir=$(dirname "$migration_python")
     sudo -n -u postgres env \
+        "PATH=${migration_python_dir}:/usr/local/bin:/usr/bin:/bin" \
         "TENANT_DB_ADMIN_URL=postgresql:///${database_name}?host=/var/run/postgresql" \
         bash ../deploy/transfer-admin-credit-adjustment-ownership.sh
 fi

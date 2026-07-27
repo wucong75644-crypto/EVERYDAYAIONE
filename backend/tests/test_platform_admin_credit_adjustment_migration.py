@@ -80,6 +80,9 @@ def test_admin_ownership_transfer_is_exact_idempotent_and_reversible() -> None:
 def test_migration_runner_closes_owner_gap_before_applying_220() -> None:
     assert "'220_platform_admin_credit_adjustment.sql'" in RUN_MIGRATIONS_SQL
     assert "sudo -n -u postgres env" in RUN_MIGRATIONS_SQL
+    assert '"PATH=${migration_python_dir}:/usr/local/bin:/usr/bin:/bin"' in (
+        RUN_MIGRATIONS_SQL
+    )
     assert "transfer-admin-credit-adjustment-ownership.sh" in RUN_MIGRATIONS_SQL
     assert RUN_MIGRATIONS_SQL.index(
         "transfer-admin-credit-adjustment-ownership.sh"
