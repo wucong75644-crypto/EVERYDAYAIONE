@@ -1710,6 +1710,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `verify_preconditions` | `backend/scripts/verify_worker_control_preconditions.py` | 部署应用 171–180 前只读验证 Worker Control 表及列序列均归 everydayai_owner |
 | `preflight-tenant-cutover.sh` | `deploy/preflight-tenant-cutover.sh` | 按角色能力、核心域、管理员资产、Worker Control 顺序编排只读生产门禁并失败传播 |
 | `tenant-role-capabilities.sh` | `deploy/preflight/tenant-role-capabilities.sh` | 核验隔离角色集合、角色属性、owner membership 与 Runtime 旧 Chat enqueue 撤权 |
+| `transfer-admin-user-assets-ownership.sh` | `deploy/transfer-admin-user-assets-ownership.sh` | 迁移 209 前以管理员连接校验旧资产查询函数 owner，并仅将该函数转移给 everydayai_owner |
 | `worker-control.sh` | `deploy/preflight/worker-control.sh` | 核验 165–180 账本、owner、Worker Facade、Runtime ACL 与 FORCE RLS |
 | `tenant_actor_user_id` / `tenant_org_id` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 从事务级 GUC 安全解析用户与企业 UUID；缺失或非法值返回 NULL |
 | `tenant_database_role_matches_scope` | `backend/migrations/150_agent_runtime_tenant_defense.sql`、`152_wecom_runtime_capability.sql` | 使用真实连接 `session_user` 校验 Web/WeCom runtime 或 worker 角色与 access_kind 一致 |

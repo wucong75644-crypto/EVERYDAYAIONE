@@ -216,6 +216,9 @@
   `admin-user-assets-capability.sh` 与 `worker-control.sh`；先核验隔离角色集合及
   Runtime 旧 Chat enqueue 撤权，再核验核心域、管理员资产和 Worker Control 的
   checksum、owner、ACL、RLS 与能力边界。
+- `deploy/transfer-admin-user-assets-ownership.sh`：在迁移 209 前仅校验并将旧
+  `list_admin_user_assets` 查询函数从遗留角色转移给 `everydayai_owner`，不修改
+  其他对象或 ACL。
 - `backend/scripts/verify_worker_control_preconditions.py`：部署发现 171–180 pending 时，
   在 apply 前验证四张依赖表及其列序列均已属于 `everydayai_owner`，否则失败关闭。
 - `backend/scripts/verify_runtime_generation_capabilities.py`：迁移完成、服务重启前验证
