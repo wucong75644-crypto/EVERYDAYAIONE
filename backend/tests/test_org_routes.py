@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from core.exceptions import ConflictError, NotFoundError
 
 
 # ── Fixtures ────────────────────────────────────────────────
@@ -248,6 +249,8 @@ class TestOrgServiceScopeRouting:
             ("POST", "/org"),
             ("GET", "/org/admin/all"),
             ("GET", "/org/admin/search-user"),
+            ("POST", "/org/admin/{org_id}/suspend"),
+            ("POST", "/org/admin/{org_id}/restore"),
         }
         for route in router.routes:
             route_methods = getattr(route, "methods", set())
@@ -267,6 +270,77 @@ class TestOrgServiceScopeRouting:
                 platform_paths.remove(key)
 
         assert not platform_paths
+
+    @pytest.mark.parametrize(
+        ("action", "method_name", "status"),
+        (
+            ("suspend", "suspend_organization", "suspended"),
+            ("restore", "restore_organization", "active"),
+        ),
+    )
+    def test_lifecycle_endpoint_returns_authoritative_status(
+        self, action, method_name, status,
+    ):
+        db = FakeDB()
+        mock_svc = MagicMock()
+        getattr(mock_svc, method_name).return_value = {
+            "id": "org-1", "name": "测试企业", "status": status,
+        }
+        app = _build_app(db)
+        from api.routes.org import _get_platform_org_service
+        app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
+
+        response = TestClient(app).post(
+            f"/api/org/admin/org-1/{action}",
+            headers={"X-Org-Id": "ignored-platform-org"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == status
+        getattr(mock_svc, method_name).assert_called_once_with("org-1")
+
+    def test_lifecycle_database_failure_is_safely_mapped(self):
+        db = FakeDB()
+        mock_svc = MagicMock()
+        mock_svc.suspend_organization.side_effect = Exception(
+            'relation "organizations" failed'
+        )
+        app = _build_app(db)
+        from api.routes.org import _get_platform_org_service
+        app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
+
+        response = TestClient(app).post("/api/org/admin/org-1/suspend")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "服务暂时不可用，请稍后重试"
+        assert "organizations" not in response.text
+
+    @pytest.mark.parametrize(
+        ("action", "method_name", "error", "status_code"),
+        (
+            (
+                "suspend", "suspend_organization",
+                NotFoundError("企业"), 404,
+            ),
+            (
+                "restore", "restore_organization",
+                ConflictError("企业状态已变化，请刷新后重试"), 409,
+            ),
+        ),
+    )
+    def test_lifecycle_business_errors_keep_stable_http_semantics(
+        self, action, method_name, error, status_code,
+    ):
+        db = FakeDB()
+        mock_svc = MagicMock()
+        getattr(mock_svc, method_name).side_effect = error
+        app = _build_app(db)
+        from api.routes.org import _get_platform_org_service
+        app.dependency_overrides[_get_platform_org_service] = lambda: mock_svc
+
+        response = TestClient(app).post(f"/api/org/admin/org-1/{action}")
+
+        assert response.status_code == status_code
 
     def test_enterprise_endpoint_keeps_scoped_service(self):
         from api.routes.org import _get_org_service, router

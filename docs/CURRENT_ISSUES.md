@@ -1451,6 +1451,30 @@
 - 本地定向与治理回归已通过；尚未提交、部署，也未执行生产 super_admin/普通用户的
   HTTP 冒烟，因此生产状态仍为待验证。
 
+# 2026-07-27 平台企业停用与恢复 — 本地实现，待生产验证
+
+- 已增加 Runtime-only 的原子停用/恢复治理能力，状态更新与无秘密值审计同事务提交；
+  平台 API 固定使用 `org_id=NULL` 的 PlatformDB。
+- 已补 active 邀请、Actor Chat、媒体和定时任务发现，并在数据库阻断 suspended 企业的
+  Runtime、Worker、WeCom、Sync 任务与 Agent 后续写入。
+- 前端按权威状态提供停用/恢复确认，停用要求完整企业名，成功后重新读取列表。
+- 本机 PostgreSQL 16 隔离库已验证 active/suspended 双向转换、重复转换与不存在冲突、
+  两连接并发仅一次成功且仅一条审计、事务 rollback 同时撤销状态与审计、四类服务
+  suspended 写入 Fence，以及 217/218 逆序 rollback 可重新应用；未连接生产。
+- External 测试现已固化并发、事务、Runtime/Worker/WeCom/Sync Fence、完整 Actor/
+  Scope/数据库角色 ACL、grant option/继承旁路、217/218 对象消失与 synthetic 事实保留，
+  并要求迁移前 pending 精确为 217、218。
+- `deploy/init-database.sql` 与 017–149 历史迁移链存在既有漂移，全新库重放会在旧
+  ERP/Agent 前置结构失败；该问题不属于生命周期功能，本任务不修改历史迁移。
+- 仓库未保存可复用生产 schema-only 快照。取得“当前生产结构”兼容证据需要另行授权
+  只读 schema-only 导出；在此之前不得把本地基础结构验证表述为生产结构预演完成。
+- 生产主机本地 schema-only 安全扫描未传输文件：严格 SQL 结构分类未发现私钥、
+  连接 URL、JWT、Key 前缀、密码哈希或 DEFAULT 敏感固定值，但上一版分类器标出的
+  6 个疑似固定 Secret/Token 无法被后续对象头定位器稳定复现；353 个高熵待分类项中
+  仍有 113 个只能归入“其他”。所有远端临时文件与目录均已删除。该结果作为独立安全
+  阻塞，禁止继续传输生产 schema，也不能作为生命周期迁移的生产结构预演证据。
+- 尚未应用生产迁移，也未执行生产 HTTP 冒烟或真实 suspended 企业 E2E。
+
 # 2026-07-26 Worker 周期巡检与模型评分配置断层 — 本地完成，待部署
 
 - 生产只读核查确认企微孤儿用户、重复身份和重复昵称均为 0；故障来自 Worker 撤销

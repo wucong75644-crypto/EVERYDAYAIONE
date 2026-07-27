@@ -1907,3 +1907,19 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `generateRequirementSuggestions` | `frontend/src/services/ecomRequirement.ts` | 调用可取消的三方案接口并使用 105 秒独立超时 |
 | `useDetailRequirementAssist` | `frontend/src/hooks/useDetailRequirementAssist.ts` | 管理 AI 帮写弹窗、请求取消、过期响应隔离和三套独立编辑状态 |
 | `RequirementAssistModal` | `frontend/src/components/detail-page/RequirementAssistModal.tsx` | 展示产品事实、参考图分析、冲突和三套可编辑 AI 帮写方案 |
+
+### 平台企业停用与恢复
+
+| 函数/能力 | 文件 | 说明 |
+|---|---|---|
+| `suspend_governed_organization` / `restore_governed_organization` | `backend/migrations/217_organization_lifecycle_governance.sql` | 仅 active super_admin 在平台 Runtime Scope 内以行锁原子转换企业状态并同步写治理审计 |
+| `reject_suspended_organization_service_write` | `backend/migrations/218_suspended_organization_execution_fence.sql` | 阻断服务角色继续写入 suspended 企业的任务、Agent Runtime 和 WeCom Inbox |
+| `OrgService.suspend_organization` / `restore_organization` | `backend/services/org/org_service.py` | 调用精确治理 RPC 并提供稳定 404/409/403 错误语义 |
+| `suspend_org` / `restore_org` | `backend/api/routes/org_lifecycle.py` | 通过 PlatformDB 暴露超管生命周期 API，未知数据库异常安全映射为 503 |
+| `suspendOrg` / `restoreOrg` | `frontend/src/services/org.ts` | 透传 AbortSignal 调用企业生命周期 API |
+| `SuperAdminPanel` 生命周期交互 | `frontend/src/components/admin/SuperAdminPanel.tsx` | 名称确认、重复提交保护、请求取消及成功后权威列表刷新 |
+| `useOrganizationLifecycle` | `frontend/src/components/admin/useOrganizationLifecycle.ts` | 管理停用/恢复请求、AbortController、重复提交保护和成功后的权威刷新 |
+| `CreateOrganizationSection` / `OrganizationList` / `LifecycleDialog` | `frontend/src/components/admin/SuperAdminPanelSections.tsx` | 分离企业创建、权威状态列表和生命周期确认界面 |
+| 生命周期 External fixture 与 helper | `backend/tests/test_organization_lifecycle_external.py` | 通过 Migration Runner 应用 217/218，执行 preflight，并验证并发、事务、对象元数据、逆序 rollback 与重新应用 |
+| 生命周期权限/Fence External 矩阵 | `backend/tests/test_organization_lifecycle_permissions_external.py` | 验证 Actor/Scope/数据库角色精确 ACL、无 grant option/继承旁路、四类服务 suspended Fence 及 active 恢复 |
+| `organization-lifecycle.sh` | `deploy/preflight/organization-lifecycle.sh` | 只读核验迁移账本、函数 owner/SECURITY DEFINER/search_path/ACL、12 个 Fence trigger 与 Runtime 无企业直写权限 |
