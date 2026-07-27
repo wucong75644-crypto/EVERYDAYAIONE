@@ -38,11 +38,10 @@ def test_required_ports_are_protocols() -> None:
 def test_io_port_operations_are_async() -> None:
     operations = (
         RuntimeRepositoryPort.submit_command,
-        RuntimeRepositoryPort.transition_run,
+        RuntimeRepositoryPort.complete_run,
         ModelPort.complete,
         ExecutorPort.dispatch,
         ExecutorPort.reconcile,
-        RuntimeEventPort.append,
         ProjectionPort.project,
     )
     assert all(iscoroutinefunction(operation) for operation in operations)

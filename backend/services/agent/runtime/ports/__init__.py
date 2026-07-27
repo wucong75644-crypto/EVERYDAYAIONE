@@ -12,11 +12,20 @@ from services.agent.runtime.ports.model import (
     ModelStepResult,
 )
 from services.agent.runtime.ports.projection import (
+    ProjectionClaim,
     ProjectionOutcome,
+    ProjectionOutboxPort,
     ProjectionPort,
     ProjectionReceipt,
 )
-from services.agent.runtime.ports.repository import RuntimeRepositoryPort
+from services.agent.runtime.ports.repository import (
+    ClaimOutcome,
+    MutationOutcome,
+    MutationReceipt,
+    RunClaim,
+    RuntimeRepositoryPort,
+    SessionSnapshot,
+)
 
 __all__ = [
     "ExecutionOutcome",
@@ -26,8 +35,15 @@ __all__ = [
     "ModelStepRequest",
     "ModelStepResult",
     "ProjectionOutcome",
+    "ProjectionClaim",
+    "ProjectionOutboxPort",
     "ProjectionPort",
     "ProjectionReceipt",
     "RuntimeEventPort",
     "RuntimeRepositoryPort",
+    "ClaimOutcome",
+    "MutationOutcome",
+    "MutationReceipt",
+    "RunClaim",
+    "SessionSnapshot",
 ]

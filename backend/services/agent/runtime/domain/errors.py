@@ -29,3 +29,15 @@ class IdempotencyConflictError(DomainContractError):
 
 class InvalidRecoveryError(DomainContractError):
     """Action 恢复方式会造成不安全的重复执行。"""
+
+
+class StaleVersionError(DomainContractError):
+    """提交者持有的状态版本已经过期。"""
+
+
+class TerminalConflictError(DomainContractError):
+    """同一实体已经以不同终态或回执收口。"""
+
+
+class PersistenceContractError(DomainContractError):
+    """数据库返回不属于闭合持久化协议。"""
