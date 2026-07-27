@@ -1124,6 +1124,8 @@
 | `useMemoryStore` | `frontend/src/stores/useMemoryStore.ts` | Zustand 记忆状态管理（CRUD + 设置） | - | MemoryStore |
 | `getMemories` | `frontend/src/services/memory.ts` | 获取记忆列表 | - | Promise |
 | `addMemory` | `frontend/src/services/memory.ts` | 添加记忆 | content | Promise |
+| `PanelHeader` | `frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx` | 渲染定时任务面板标题、新建与关闭操作 | onNew, onClose | JSX.Element |
+| `TaskLoadError` | `frontend/src/components/scheduled-tasks/ScheduledTaskPanel.tsx` | 显示定时任务加载失败状态并提供重试入口 | message, onRetry | JSX.Element |
 
 #### 配置常量
 

@@ -5,7 +5,6 @@ import Sidebar from '../Sidebar';
 
 vi.mock('../ConversationList', () => ({ default: () => <div>对话列表</div> }));
 vi.mock('../../modals/SettingsModal', () => ({ default: () => null }));
-vi.mock('../../modals/MemoryModal', () => ({ default: () => null }));
 vi.mock('../../../../hooks/useClickOutside', () => ({ useClickOutside: vi.fn() }));
 vi.mock('../../../../hooks/useLogout', () => ({ useLogout: () => vi.fn() }));
 vi.mock('../../../../stores/useAuthStore', () => ({

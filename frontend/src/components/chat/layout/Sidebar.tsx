@@ -16,7 +16,6 @@ import { useLogout } from '../../../hooks/useLogout';
 import { Brain, Images, Settings2, Search, ChevronsLeft, Plus, X, Settings, LogOut } from 'lucide-react';
 import ConversationList from './ConversationList';
 import SettingsModal from '../modals/SettingsModal';
-import MemoryModal from '../modals/MemoryModal';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
 
 /** 乐观更新参数 */
@@ -276,8 +275,6 @@ export default function Sidebar({
         onClose={() => setShowSettingsModal(false)}
       />
 
-      {/* 记忆管理弹框 */}
-      <MemoryModal />
     </aside>
   );
 }

@@ -11,7 +11,7 @@
  */
 import { useEffect, useState, useCallback } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
-import { Clock, X, Plus } from 'lucide-react';
+import { AlertCircle, Clock, X, Plus, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ViewSwitcher } from './ViewSwitcher';
 import { TaskList } from './TaskList';
@@ -26,9 +26,68 @@ export interface ScheduledTaskPanelProps {
   onClose: () => void;
 }
 
+function PanelHeader({ onNew, onClose }: { onNew: () => void; onClose: () => void }) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--s-border-default)]">
+      <div className="flex items-center gap-2">
+        <Clock className="w-4 h-4 text-[var(--s-text-secondary)]" />
+        <h2 className="text-sm font-medium text-[var(--s-text-primary)]">定时任务</h2>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="accent"
+          size="sm"
+          icon={<Plus className="w-3.5 h-3.5" />}
+          onClick={onNew}
+        >
+          新建
+        </Button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="关闭"
+          className={cn(
+            'p-1 rounded',
+            'text-[var(--s-text-tertiary)]',
+            'hover:bg-[var(--s-hover)] hover:text-[var(--s-text-primary)]',
+            'transition-colors',
+          )}
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TaskLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      className="flex-1 flex flex-col items-center justify-center px-8 text-center"
+      role="alert"
+    >
+      <AlertCircle className="w-10 h-10 text-[var(--s-error)] mb-3" />
+      <p className="text-sm font-medium text-[var(--s-text-primary)]">{message}</p>
+      <p className="mt-1 text-xs text-[var(--s-text-tertiary)]">
+        请检查网络或稍后重试
+      </p>
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={<RefreshCw className="w-3.5 h-3.5" />}
+        onClick={onRetry}
+        className="mt-4"
+      >
+        重新加载
+      </Button>
+    </div>
+  );
+}
+
 export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPanelProps) {
   const tasks = useScheduledTaskStore((s) => s.tasks);
   const loading = useScheduledTaskStore((s) => s.loading);
+  const error = useScheduledTaskStore((s) => s.error);
   const fetchTasks = useScheduledTaskStore((s) => s.fetchTasks);
 
   const [showForm, setShowForm] = useState(false);
@@ -117,41 +176,17 @@ export default function ScheduledTaskPanel({ isOpen, onClose }: ScheduledTaskPan
             ) : (
               <>
                 {/* 头部 */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--s-border-default)]">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-[var(--s-text-secondary)]" />
-                    <h2 className="text-sm font-medium text-[var(--s-text-primary)]">定时任务</h2>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="accent"
-                      size="sm"
-                      icon={<Plus className="w-3.5 h-3.5" />}
-                      onClick={handleNew}
-                    >
-                      新建
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      aria-label="关闭"
-                      className={cn(
-                        'p-1 rounded',
-                        'text-[var(--s-text-tertiary)]',
-                        'hover:bg-[var(--s-hover)] hover:text-[var(--s-text-primary)]',
-                        'transition-colors',
-                      )}
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                <PanelHeader onNew={handleNew} onClose={onClose} />
 
                 {/* 视图切换器 */}
                 <ViewSwitcher />
 
                 {/* 任务列表 */}
-                <TaskList tasks={tasks} loading={loading} onEdit={handleEdit} />
+                {error && tasks.length === 0 ? (
+                  <TaskLoadError message={error} onRetry={fetchTasks} />
+                ) : (
+                  <TaskList tasks={tasks} loading={loading} onEdit={handleEdit} />
+                )}
               </>
             )}
           </m.aside>

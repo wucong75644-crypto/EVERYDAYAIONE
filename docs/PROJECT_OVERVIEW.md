@@ -344,6 +344,9 @@ Agent Runtime AR-12 Action持久化与Tool终态：
   Worker Snapshot/Commit 主链与评分时间格式；原评分测试文件保持结构门限以内。
 - `backend/api/routes/scheduled_task_support.py`：承载定时任务请求模型、频率解析和
   创建者任职展示聚合；主路由保持 500 行以内，API 行为不变。
+- `frontend/src/pages/__tests__/ChatOverlayOwnership.test.ts`、
+  `frontend/src/components/scheduled-tasks/__tests__/ScheduledTaskPanel.test.tsx`：
+  固定 AI 记忆弹窗由 Chat 页面常驻挂载，并覆盖定时任务加载失败与重试展示。
 - `backend/api/routes/org_public.py`：公开企业登录页的名称查询入口，只调用迁移 189
   的窄能力，不直接穿越企业 RLS。
 - `docs/document/TECH_Web运行时角色切换闭环修复.md`：记录 Web ACL 覆盖根因、请求级

@@ -16,6 +16,7 @@ import InvitationNotice from '../components/admin/InvitationNotice';
 import MessageArea from '../components/chat/message/MessageArea';
 import InputArea from '../components/chat/input/InputArea';
 import { ChatHeader } from '../components/chat/layout/ChatHeader';
+import MemoryModal from '../components/chat/modals/MemoryModal';
 import SearchPanel from '../components/chat/search/SearchPanel';
 import ScheduledTaskPanel from '../components/scheduled-tasks/ScheduledTaskPanel';
 import WorkspaceView from '../components/workspace/WorkspaceView';
@@ -478,6 +479,9 @@ export default function Chat() {
           onJumpToMessage={handleJumpToMessage}
         />
       )}
+
+      {/* 记忆弹窗常驻页面根部，不能依赖可收起的 Sidebar 挂载 */}
+      <MemoryModal />
 
       {/* 定时任务面板 */}
       <ScheduledTaskPanel
