@@ -28,6 +28,7 @@ class ResponseAccumulator:
         self.tool_calls: dict[int, dict[str, Any]] = {}
         self.response_started = False
         self.explicit_refusal = False
+        self.provider_request_id: str | None = None
 
     def add(self, chunk: Any) -> None:
         self.response_started = True
@@ -98,6 +99,7 @@ class ResponseAccumulator:
                 invalid_tool_call_count=len(self.tool_calls),
                 usage=self.usage,
                 provider=provider,
+                provider_request_id=self.provider_request_id,
             )
             return stop_reason, output, calls, receipt, response_hash
         stop_reason = map_stop_reason(
@@ -120,6 +122,7 @@ class ResponseAccumulator:
             invalid_tool_call_count=0,
             usage=self.usage,
             provider=provider,
+            provider_request_id=self.provider_request_id,
         )
         return stop_reason, output, calls, receipt, response_hash
 

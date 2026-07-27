@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from services.agent.runtime.context import ProviderContextPlan
 from services.agent.runtime.domain import ModelStepId, StopReason
@@ -145,6 +145,8 @@ class ProviderAttemptReceipt:
     status_code: int | None = None
     response_started: bool = False
     retry_reason: str | None = None
+    provider_request_id: str | None = None
+    ambiguity_evidence: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.attempt_number < 1:
@@ -162,6 +164,7 @@ class ModelResponseReceipt:
     invalid_tool_call_count: int
     usage: ModelUsage
     provider: str
+    provider_request_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -259,5 +262,21 @@ class ModelCallUnknownError(ModelCallError):
 class ModelPort(Protocol):
     """Provider adapter 必须实现的确定 ModelStep 边界。"""
 
-    async def complete(self, request: ModelStepRequest) -> ModelStepResult:
+    async def complete(
+        self,
+        request: ModelStepRequest,
+        *,
+        observer: ModelResponseStartObserver | None = None,
+    ) -> ModelStepResult:
         """执行一次逻辑 ModelStep；重试细节由 adapter receipt 描述。"""
+
+
+class ModelResponseStartObserver(Protocol):
+    """首个 Provider 响应在被消费前必须持久化 response_started。"""
+
+    async def response_started(
+        self,
+        *,
+        provider: str,
+        provider_request_id: str | None,
+    ) -> None: ...

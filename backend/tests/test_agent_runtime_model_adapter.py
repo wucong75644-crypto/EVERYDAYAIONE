@@ -286,22 +286,19 @@ async def test_incomplete_tool_call_is_protocol_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_safe_provider_retry_reuses_logical_request() -> None:
+async def test_429_does_not_redispatch_without_typed_evidence() -> None:
     first = FakeAdapter([ProviderFailure(429)])
     second = FakeAdapter([
         StreamChunk(content="ok", finish_reason="stop"),
     ])
     options = ModelRequestOptions(max_provider_attempts=2)
 
-    result = await _port([first, second]).complete(
-        _request(options=options)
-    )
+    with pytest.raises(ModelCallUnknownError) as caught:
+        await _port([first, second]).complete(_request(options=options))
 
-    assert [attempt.outcome for attempt in result.attempts] == [
-        "retrying",
-        "completed",
-    ]
-    assert first.closed and second.closed
+    assert caught.value.attempts[0].outcome == "unknown"
+    assert first.closed is True
+    assert second.closed is False
 
 
 @pytest.mark.asyncio

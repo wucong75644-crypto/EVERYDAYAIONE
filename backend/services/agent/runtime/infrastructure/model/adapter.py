@@ -18,6 +18,7 @@ from services.agent.runtime.infrastructure.model.response import (
 from services.agent.runtime.ports.model import (
     ModelCallUnknownError,
     ModelProviderError,
+    ModelResponseStartObserver,
     ModelStepRequest,
     ModelStepResult,
     ProviderAttemptOutcome,
@@ -27,7 +28,6 @@ from services.agent.runtime.ports.model import (
 
 AdapterFactory = Callable[..., Any]
 
-_SAFE_RETRY_STATUS_CODES = frozenset({429})
 _UNKNOWN_HTTP_STATUS_CODES = frozenset({502, 503, 504})
 _DEFAULT_CLOSE_TIMEOUT_SECONDS = 5.0
 
@@ -50,119 +50,88 @@ class ExistingProviderModelAdapter:
         self._adapter_factory = adapter_factory
         self._close_timeout_seconds = close_timeout_seconds
 
-    async def complete(self, request: ModelStepRequest) -> ModelStepResult:
+    async def complete(
+        self,
+        request: ModelStepRequest,
+        *,
+        observer: ModelResponseStartObserver | None = None,
+    ) -> ModelStepResult:
         validate_request_projection(request)
         provider = _provider_name(request.model_id)
         attempts: list[ProviderAttemptReceipt] = []
-        attempt_numbers = range(1, request.options.max_provider_attempts + 1)
-        for attempt_number in attempt_numbers:
-            accumulator = ResponseAccumulator(str(request.model_step_id))
-            adapter = None
-            try:
-                adapter = self._create_adapter(request)
-                async with asyncio.timeout(request.options.timeout_seconds):
-                    messages, tools = request.context_plan.project()
-                    async for chunk in adapter.stream_chat(
-                        messages=messages,
-                        tools=tools,
-                        **provider_kwargs(request.options),
-                    ):
-                        accumulator.add(chunk)
-                attempt = ProviderAttemptReceipt(
-                    attempt_number=attempt_number,
-                    provider=provider,
-                    outcome=ProviderAttemptOutcome.COMPLETED,
-                    response_started=accumulator.response_started,
-                )
-                attempts.append(attempt)
-                return _complete_result(
-                    accumulator,
-                    request,
-                    provider,
-                    attempts,
-                )
-            except asyncio.CancelledError:
-                _log_cancelled(request, provider)
-                raise
-            except TimeoutError as error:
-                attempt = ProviderAttemptReceipt(
-                    attempt_number=attempt_number,
-                    provider=provider,
-                    outcome=ProviderAttemptOutcome.UNKNOWN,
-                    response_started=accumulator.response_started,
-                )
-                attempts.append(attempt)
-                self._log_error(request, provider, "timeout_unknown", error)
-                raise ModelCallUnknownError(
-                    "provider timeout after dispatch",
-                    model_step_id=request.model_step_id,
-                    provider=provider,
-                    request_hash=request.request_hash,
-                    attempts=tuple(attempts),
-                ) from error
-            except Exception as error:
-                terminal = _semantic_terminal_result(
-                    error=error,
-                    accumulator=accumulator,
-                    request=request,
-                    provider=provider,
-                    attempts=attempts,
-                    attempt_number=attempt_number,
-                )
-                if terminal is not None:
-                    return terminal
-                if _is_timeout_error(error):
-                    attempts.append(ProviderAttemptReceipt(
-                        attempt_number=attempt_number,
-                        provider=provider,
-                        outcome=ProviderAttemptOutcome.UNKNOWN,
-                        response_started=accumulator.response_started,
-                    ))
-                    self._log_error(
-                        request, provider, "timeout_unknown", error
+        accumulator = ResponseAccumulator(str(request.model_step_id))
+        adapter = None
+        provider_request_id: str | None = None
+        try:
+            adapter = self._create_adapter(request)
+            async with asyncio.timeout(request.options.timeout_seconds):
+                messages, tools = request.context_plan.project()
+                async for chunk in adapter.stream_chat(
+                    messages=messages,
+                    tools=tools,
+                    **provider_kwargs(request.options),
+                ):
+                    provider_request_id = await _consume_chunk(
+                        chunk=chunk, accumulator=accumulator,
+                        provider_request_id=provider_request_id,
+                        observer=observer, request=request, provider=provider,
+                        attempts=attempts,
                     )
-                    raise ModelCallUnknownError(
-                        "provider timeout after dispatch",
-                        model_step_id=request.model_step_id,
-                        provider=provider,
-                        request_hash=request.request_hash,
-                        attempts=tuple(attempts),
-                    ) from error
-                status_code = _status_code(error)
-                attempt, can_retry = _provider_error_attempt(
-                    attempt_number=attempt_number,
-                    provider=provider,
-                    status_code=status_code,
-                    response_started=accumulator.response_started,
-                    max_attempts=request.options.max_provider_attempts,
+            attempts.append(ProviderAttemptReceipt(
+                attempt_number=1,
+                provider=provider,
+                outcome=ProviderAttemptOutcome.COMPLETED,
+                response_started=accumulator.response_started,
+                provider_request_id=provider_request_id,
+            ))
+            return _complete_result(accumulator, request, provider, attempts)
+        except asyncio.CancelledError:
+            _log_cancelled(request, provider)
+            raise
+        except ModelCallUnknownError:
+            raise
+        except Exception as error:
+            terminal = _semantic_terminal_result(
+                error=error, accumulator=accumulator, request=request,
+                provider=provider, attempts=attempts,
+            )
+            if terminal is not None:
+                return terminal
+            status_code = _status_code(error)
+            unknown = (
+                _is_timeout_error(error)
+                or accumulator.response_started
+                or status_code in _UNKNOWN_HTTP_STATUS_CODES
+                or status_code == 429
+            )
+            attempts.append(ProviderAttemptReceipt(
+                attempt_number=1,
+                provider=provider,
+                outcome=(
+                    ProviderAttemptOutcome.UNKNOWN
+                    if unknown else ProviderAttemptOutcome.FAILED
+                ),
+                status_code=status_code,
+                response_started=accumulator.response_started,
+                provider_request_id=provider_request_id,
+                ambiguity_evidence=(
+                    {"kind": "provider_outcome_unproven"} if unknown else None
+                ),
+            ))
+            self._log_error(request, provider, "provider_error", error)
+            error_type = ModelCallUnknownError if unknown else ModelProviderError
+            raise error_type(
+                "provider stream did not form a complete result",
+                model_step_id=request.model_step_id,
+                provider=provider,
+                request_hash=request.request_hash,
+                attempts=tuple(attempts),
+            ) from error
+        finally:
+            if adapter is not None:
+                await self._close_adapter(
+                    adapter, request=request, provider=provider,
                 )
-                attempts.append(attempt)
-                if can_retry:
-                    continue
-                self._log_error(request, provider, "provider_error", error)
-                error_type = (
-                    ModelCallUnknownError
-                    if (
-                        accumulator.response_started
-                        or status_code in _UNKNOWN_HTTP_STATUS_CODES
-                    )
-                    else ModelProviderError
-                )
-                raise error_type(
-                    "provider stream did not form a complete result",
-                    model_step_id=request.model_step_id,
-                    provider=provider,
-                    request_hash=request.request_hash,
-                    attempts=tuple(attempts),
-                ) from error
-            finally:
-                if adapter is not None:
-                    await self._close_adapter(
-                        adapter,
-                        request=request,
-                        provider=provider,
-                    )
-        raise AssertionError("provider attempt loop did not terminate")
 
     async def _close_adapter(
         self,
@@ -268,47 +237,6 @@ def _status_code(error: Exception) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _attempt_error_outcome(
-    *,
-    can_retry: bool,
-    response_started: bool,
-    status_code: int | None = None,
-) -> ProviderAttemptOutcome:
-    if can_retry:
-        return ProviderAttemptOutcome.RETRYING
-    if response_started or status_code in _UNKNOWN_HTTP_STATUS_CODES:
-        return ProviderAttemptOutcome.UNKNOWN
-    return ProviderAttemptOutcome.FAILED
-
-
-def _provider_error_attempt(
-    *,
-    attempt_number: int,
-    provider: str,
-    status_code: int | None,
-    response_started: bool,
-    max_attempts: int,
-) -> tuple[ProviderAttemptReceipt, bool]:
-    can_retry = (
-        not response_started
-        and status_code in _SAFE_RETRY_STATUS_CODES
-        and attempt_number < max_attempts
-    )
-    receipt = ProviderAttemptReceipt(
-        attempt_number=attempt_number,
-        provider=provider,
-        outcome=_attempt_error_outcome(
-            can_retry=can_retry,
-            response_started=response_started,
-            status_code=status_code,
-        ),
-        status_code=status_code,
-        response_started=response_started,
-        retry_reason=f"http_{status_code}" if can_retry else None,
-    )
-    return receipt, can_retry
-
-
 def _is_timeout_error(error: BaseException) -> bool:
     current: BaseException | None = error
     while current is not None:
@@ -356,15 +284,71 @@ def _semantic_terminal_result(
     request: ModelStepRequest,
     provider: str,
     attempts: list[ProviderAttemptReceipt],
-    attempt_number: int,
 ) -> ModelStepResult | None:
     if type(error).__name__ != "GoogleContentFilterError":
         return None
     accumulator.finish_reason = "content_filter"
     attempts.append(ProviderAttemptReceipt(
-        attempt_number=attempt_number,
+        attempt_number=1,
         provider=provider,
         outcome=ProviderAttemptOutcome.COMPLETED,
         response_started=accumulator.response_started,
     ))
     return _complete_result(accumulator, request, provider, attempts)
+
+
+async def _observe_response_start(
+    observer: ModelResponseStartObserver,
+    request: ModelStepRequest,
+    provider: str,
+    provider_request_id: str | None,
+    attempts: list[ProviderAttemptReceipt],
+) -> None:
+    try:
+        await observer.response_started(
+            provider=provider,
+            provider_request_id=provider_request_id,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        attempts.append(ProviderAttemptReceipt(
+            attempt_number=1,
+            provider=provider,
+            outcome=ProviderAttemptOutcome.UNKNOWN,
+            response_started=True,
+            provider_request_id=provider_request_id,
+            ambiguity_evidence={
+                "kind": "response_start_observer_failed",
+            },
+        ))
+        raise ModelCallUnknownError(
+            "response start persistence is ambiguous",
+            model_step_id=request.model_step_id,
+            provider=provider,
+            request_hash=request.request_hash,
+            attempts=tuple(attempts),
+        ) from error
+
+
+async def _consume_chunk(
+    *, chunk: Any, accumulator: ResponseAccumulator,
+    provider_request_id: str | None,
+    observer: ModelResponseStartObserver | None,
+    request: ModelStepRequest, provider: str,
+    attempts: list[ProviderAttemptReceipt],
+) -> str | None:
+    if not accumulator.response_started:
+        provider_request_id = _provider_request_id(chunk)
+        accumulator.provider_request_id = provider_request_id
+        if observer is not None:
+            await _observe_response_start(
+                observer, request, provider, provider_request_id, attempts,
+            )
+    accumulator.add(chunk)
+    return provider_request_id
+
+
+def _provider_request_id(chunk: Any) -> str | None:
+    value = getattr(chunk, "provider_request_id", None)
+    return value.strip() if isinstance(value, str) and value.strip() else None

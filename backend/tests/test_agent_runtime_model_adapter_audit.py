@@ -122,22 +122,18 @@ async def _spurious_close_cancel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_429_without_response_is_safely_retried() -> None:
+async def test_429_without_typed_safety_evidence_is_unknown_once() -> None:
     first = AuditAdapter([ProviderFailure(429)])
     second = AuditAdapter([
         StreamChunk(content="ok", finish_reason="stop"),
     ])
 
-    result = await _port([first, second]).complete(
-        _request(max_attempts=2)
-    )
+    with pytest.raises(ModelCallUnknownError) as caught:
+        await _port([first, second]).complete(_request(max_attempts=2))
 
-    assert [attempt.outcome for attempt in result.attempts] == [
-        "retrying",
-        "completed",
-    ]
-    assert result.attempts[0].retry_reason == "http_429"
-    assert first.close_attempts == second.close_attempts == 1
+    assert caught.value.attempts[0].outcome == "unknown"
+    assert first.close_attempts == 1
+    assert second.close_attempts == 0
 
 
 @pytest.mark.asyncio
@@ -277,7 +273,7 @@ async def test_close_timeout_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_continues_after_first_close_failure() -> None:
+async def test_close_failure_does_not_enable_a_second_dispatch() -> None:
     first = AuditAdapter(
         [ProviderFailure(429)],
         close_behavior=_close_error,
@@ -286,12 +282,39 @@ async def test_retry_continues_after_first_close_failure() -> None:
         StreamChunk(content="ok", finish_reason="stop"),
     ])
 
-    result = await _port([first, second]).complete(
-        _request(max_attempts=2)
-    )
+    with pytest.raises(ModelCallUnknownError):
+        await _port([first, second]).complete(_request(max_attempts=2))
 
-    assert [attempt.outcome for attempt in result.attempts] == [
-        "retrying",
-        "completed",
-    ]
-    assert first.close_attempts == second.close_attempts == 1
+    assert first.close_attempts == 1
+    assert second.close_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_response_start_observer_failure_stops_consumption() -> None:
+    consumed = 0
+
+    class Observer:
+        async def response_started(self, **_kwargs: Any) -> None:
+            raise RuntimeError("database response lost")
+
+    def second_chunk() -> None:
+        nonlocal consumed
+        consumed += 1
+
+    adapter = AuditAdapter([
+        StreamChunk(content="first"),
+        second_chunk,
+        StreamChunk(content="must not be consumed", finish_reason="stop"),
+    ])
+
+    with pytest.raises(ModelCallUnknownError) as caught:
+        await _port([adapter]).complete(_request(), observer=Observer())
+
+    receipt = caught.value.attempts[0]
+    assert receipt.outcome == "unknown"
+    assert receipt.response_started is True
+    assert receipt.ambiguity_evidence == {
+        "kind": "response_start_observer_failed",
+    }
+    assert consumed == 0
+    assert adapter.close_attempts == 1
