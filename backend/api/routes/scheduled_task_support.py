@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from core.db_scope import PostgresArray
 from services.scheduler.cron_utils import (
     calc_next_run,
     compose_cron,
@@ -122,7 +123,7 @@ async def enrich_with_creator(
     users_map = {row["id"]: row for row in (users.data or [])}
     assignments = db.rpc("list_runtime_member_assignments", {
         "p_org_id": org_id,
-        "p_user_ids": user_ids,
+        "p_user_ids": PostgresArray(user_ids),
     }).execute()
     assignment_map = {
         row["user_id"]: row for row in (assignments.data or [])

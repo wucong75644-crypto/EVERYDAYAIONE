@@ -598,6 +598,9 @@ Agent Runtime AR-12 Action持久化与Tool终态：
 - `backend/services/memory/config.py`：仅保留通用提取、Consolidation、调度、召回、压缩与 Embedding 配置；停用的旧 Dedup、L2 Scene/L3 Persona 配置已物理删除。
 - `backend/tests/test_memory_legacy_exit.py`：固定 Scheduler 不再暴露 L2/L3 运行入口、无 revision 不触碰数据库、旧 Redis Session cache 中的 Persona 不能再次进入 Prompt。
 - `backend/migrations/144_manual_curated_memory.sql`：为通用 Curated Memory 增加个人 `org_id=NULL` scope、来源标记和仅限 `service_role` 的手动创建、更新、软删除、清空 RPC；rollback 停止写入但保留个人 scope 与来源事实。
+- `backend/migrations/220_runtime_manual_memory_capabilities.sql`：角色隔离后提供仅授权
+  `everydayai_runtime` 的 owner-definer 手动记忆写能力；每次写入验证可信 Actor、
+  组织 Scope、active 用户与成员关系，不向 Runtime 开放 `memory_atoms` 表权限。
 - `backend/tests/test_manual_curated_memory_migration.py`：固定个人/组织 scope、并发锁、容量与内容边界、去重、手动来源限制、软删除、RPC 权限和保留数据回滚协议。
 - `backend/services/memory/manual_memory_service.py`：手动 Curated Memory 的唯一服务边界；原文经过通用 embedding 后调用原子 RPC，统一处理个人/组织 scope、容量、重复、跨 scope 隐藏与失败关闭。
 - `backend/services/memory/retrieval_pipeline.py`、`memory_service_v2.py`、`backend/services/agent/memory_tool_mixin.py`：Search/Get、Prompt 自动注入和 Agent 只读工具使用同一 NULL-safe scope，个人用户无需虚拟组织 ID 即可召回。

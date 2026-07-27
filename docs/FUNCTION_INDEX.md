@@ -124,6 +124,9 @@
 | `update_manual_memory` | `backend/migrations/144_manual_curated_memory.sql` | 仅更新当前 scope 内的手动记忆，并同步重建向量、全文索引和内容哈希 | org_id, user_id, memory_id, content, content_hash, embedding | JSONB outcome |
 | `delete_memory_atom` | `backend/migrations/144_manual_curated_memory.sql` | 软删除当前 scope 内指定的 active Curated Memory | org_id, user_id, memory_id | JSONB outcome |
 | `clear_memory_atoms` | `backend/migrations/144_manual_curated_memory.sql` | 软删除当前 scope 内全部 active Curated Memory | org_id, user_id | JSONB outcome |
+| `_assert_runtime_manual_memory_scope` | `backend/migrations/220_runtime_manual_memory_capabilities.sql` | 校验 Web Runtime 会话身份、用户、组织与 active 成员关系 | org_id, user_id | void |
+| `runtime_create_manual_memory` / `runtime_update_manual_memory` | `backend/migrations/220_runtime_manual_memory_capabilities.sql` | 在可信 Runtime Scope 内创建或更新手动记忆，不开放底层表 | scope 与记忆字段 | JSONB outcome |
+| `runtime_delete_memory_atom` / `runtime_clear_memory_atoms` | `backend/migrations/220_runtime_manual_memory_capabilities.sql` | 在可信 Runtime Scope 内软删除指定或全部手动记忆 | org_id, user_id, memory_id? | JSONB outcome |
 | `ManualMemoryService.get_all_memories` | `backend/services/memory/manual_memory_service.py` | NULL-safe 列出当前用户 scope 内最多 100 条 active Curated Memory | user_id, org_id? | list[dict] |
 | `ManualMemoryService.get_memory_count` | `backend/services/memory/manual_memory_service.py` | 统计当前用户 scope 内可管理的 active Curated Memory | user_id, org_id? | int |
 | `ManualMemoryService.add_memory` | `backend/services/memory/manual_memory_service.py` | 原文归一化、生成 embedding 并通过原子 RPC 创建或复用手动记忆 | user_id, content, source, org_id? | list[dict] |
@@ -1817,6 +1820,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `_build_score_knowledge` / `_commit_model_score` | `backend/services/model_scorer.py` | 保留 Python EMA 算法和 embedding 构造，通过 Worker Commit RPC 原子持久化，不再直读写 Knowledge 表 |
 | `resolve_schedule_fields` | `backend/api/routes/scheduled_task_support.py` | 将 once/cron/daily/weekly/monthly 请求字段解析为持久化计划与下一执行时间 | payload, tz | Dict |
 | `enrich_with_creator` | `backend/api/routes/scheduled_task_support.py` | 批量读取用户基础展示和 Runtime 任职能力，为定时任务补充创建者部门职位信息 | db, tasks, org_id | List[Dict] |
+| `PostgresArray` | `backend/core/db_scope.py` | 显式标记 Scoped RPC 的 PostgreSQL 数组参数，避免 Python list 被编码为 JSONB | values | PostgreSQL array adapter |
 | `PermissionChecker.get_assignment` | `backend/services/permissions/checker.py` | 调用 Runtime 任职窄能力读取用户在企业内的主任职；能力失败时记录用户与企业上下文并失败关闭 |
 | `get_users_in_depts` | `backend/services/permissions/scope_filter.py` | 通过显式 org_id 和部门集合能力计算数据范围内成员，不再直读任职表 | db, dept_ids, org_id, include_subtree | Set[str] |
 | `add_governed_member` / `remove_governed_member` / `change_governed_member_role` | `backend/migrations/157_governance_write_capabilities.sql` | 企业行锁下执行成员上限、owner、自操作和 admin 层级不变量，并同事务记录角色变化 |

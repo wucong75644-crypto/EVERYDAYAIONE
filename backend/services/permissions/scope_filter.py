@@ -103,9 +103,11 @@ async def get_users_in_depts(
     try:
         # V1 简化：直接查 dept_id IN (...)，不递归查子树
         # V2 优化：用 ltree 查子树
+        from core.db_scope import PostgresArray
+
         result = db.rpc("list_runtime_department_user_ids", {
             "p_org_id": org_id,
-            "p_department_ids": list(dept_ids),
+            "p_department_ids": PostgresArray(list(dept_ids)),
         }).execute()
         return set(result.data or [])
     except Exception as e:

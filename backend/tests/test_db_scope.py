@@ -1,7 +1,7 @@
 """DatabaseScope 的事务注入与连接池隔离测试。"""
 
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg.types.json import Jsonb
@@ -13,6 +13,7 @@ from core.db_scope import (
     SET_DATABASE_SCOPE_SQL,
     DatabaseAccessKind,
     DatabaseScope,
+    PostgresArray,
     ScopedDatabaseClient,
     ScopedQueryBuilder,
     ScopedRpcCaller,
@@ -94,6 +95,26 @@ def test_scope_rejects_invalid_uuid(field: str) -> None:
 def test_scope_rejects_unbounded_request_id() -> None:
     with pytest.raises(ValueError, match="request_id"):
         DatabaseScope(None, None, DatabaseAccessKind.WORKER, "x" * 129)
+
+
+def test_rpc_keeps_json_lists_but_supports_explicit_postgres_arrays() -> None:
+    from core.db_scope import _rpc_sql
+
+    _, params = _rpc_sql(
+        "example",
+        {
+            "p_json": ["a"],
+            "p_ids": PostgresArray(["00000000-0000-0000-0000-000000000001"]),
+        },
+    )
+
+    assert isinstance(params[0], Jsonb)
+    assert params[1] == [UUID("00000000-0000-0000-0000-000000000001")]
+
+
+def test_postgres_array_rejects_non_uuid_values() -> None:
+    with pytest.raises(ValueError):
+        PostgresArray(["not-a-uuid"])
 
 
 def test_sync_query_sets_scope_before_business_sql_in_transaction() -> None:
