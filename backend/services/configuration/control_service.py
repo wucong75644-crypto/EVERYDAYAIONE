@@ -377,3 +377,7 @@ class ConfigurationControlService:
         for code, status in mappings:
             if code in message:
                 raise ConfigurationControlError(code, status) from error
+        raise ConfigurationControlError(
+            "CONFIG_DATABASE_UNAVAILABLE",
+            503,
+        ) from error

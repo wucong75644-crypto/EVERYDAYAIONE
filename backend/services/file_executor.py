@@ -130,27 +130,41 @@ class FileExecutor(FileQueryExtensionsMixin, FileWriteExtensionsMixin):
         return str(resolved.relative_to(user_root))
 
     def get_cdn_url(self, relative_path: str) -> Optional[str]:
-        """获取文件的 CDN 下载 URL
+        """获取文件的 HTTPS 访问 URL
 
         Args:
             relative_path: 相对于用户目录的路径
 
         Returns:
-            CDN URL 或 None（未配置 CDN）
+            CDN URL；未配置 CDN 时返回 OSS 官方外网 URL；配置不完整时返回 None
         """
         from core.config import get_settings
         from urllib.parse import quote
 
         settings = get_settings()
-        if not settings.oss_cdn_domain:
-            return None
-
         target = self.resolve_safe_path(relative_path)
         # 计算相对于 NAS workspace 根的路径 = OSS object_key
         try:
             object_key = str(target.relative_to(self._workspace_base)).replace("\\", "/")
             encoded_key = quote(object_key, safe="/")
-            return f"https://{settings.oss_cdn_domain}/workspace/{encoded_key}"
+            if settings.oss_cdn_domain:
+                host = (
+                    settings.oss_cdn_domain.strip()
+                    .removeprefix("https://")
+                    .removeprefix("http://")
+                    .rstrip("/")
+                )
+            elif settings.oss_bucket_name and settings.oss_endpoint:
+                endpoint = (
+                    settings.oss_endpoint.strip()
+                    .removeprefix("https://")
+                    .removeprefix("http://")
+                    .rstrip("/")
+                )
+                host = f"{settings.oss_bucket_name}.{endpoint}"
+            else:
+                return None
+            return f"https://{host}/workspace/{encoded_key}"
         except ValueError:
             return None
 

@@ -76,7 +76,7 @@ class FakeDB:
                 if name == "get_governed_actor_authority":
                     rows = db.table("org_members").execute().data
                     role = rows[0]["role"] if rows else None
-                    result.data = {"authority": role}
+                    result.data = role
                 elif name == "list_runtime_org_departments":
                     result.data = db.table("org_departments").execute().data
                 elif name == "list_runtime_org_positions":

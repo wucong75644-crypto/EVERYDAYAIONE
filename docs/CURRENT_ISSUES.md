@@ -542,6 +542,21 @@
   已分离资产本体和来源 ref，企微 staging 外部合同保持不变。
 - 管理列表已切换 `list_admin_user_assets` RPC，通过 ref 过滤并按 canonical 资产游标
   分页；ZIP 已改为先按 `user_asset_refs` 复验完整归属，再读取 ready 资产。
+- 2026-07-27 生产故障确认旧 `list_admin_user_assets` 仅授权 `service_role`，隔离后的
+  `everydayai_runtime` 稳定返回 500。迁移 209 已将旧查询收为 owner 私有核心，并新增
+  `list_platform_admin_user_assets` 治理门面：数据库同时验证 Runtime session、
+  `app.access_kind=runtime` 与 active `super_admin` actor；Runtime 仍无
+  `user_assets` / `user_asset_refs` 直访或旧 helper EXECUTE。部署 preflight/finalize
+  已加入函数签名、owner、SECURITY DEFINER、精确 ACL 与资产表直访门禁。
+- 主审查发现 ZIP 路由仍直访已撤权的两张资产表；迁移 209 已补充
+  `resolve_platform_admin_user_assets_download` 治理门面，按请求顺序仅返回
+  `id/download_url/name`，任一不存在、非 ready、跨用户、重复、空或超限 ID 都整体
+  拒绝。ZIP 路由已删除资产表查询并对 RPC 缺项、重复、额外项和字段异常失败关闭。
+- 主审查进一步确认 ScopedDatabaseClient 会把 Python `list[str]` 绑定为 PostgreSQL
+  JSONB；下载门面签名已由不匹配的 `UUID[]` 修正为 `JSONB`，在数据库内逐元素检查
+  JSON 类型、捕获 UUID 转换错误并按规范化 UUID 拒绝重复，路由无需绕过统一适配层。
+- 迁移 209 尚未应用生产；在迁移应用并通过生产门禁前，本故障仍属于“代码已修复、
+  生产未恢复”，不得宣称线上已解决。
 - 历史回填/对账脚本已完成：五类来源独立 keyset checkpoint、默认 dry-run、显式
   apply、RPC savepoint、失败批次不推进游标，并输出创建/复用/冲突/失败/orphan 统计。
 - 历史临时 Provider URL 作为可解释 skipped，不登记 ready 资产；受信公开 object key 与

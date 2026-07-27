@@ -11,6 +11,14 @@ ADMIN_QUERY_ROLLBACK = (
     ROOT / "migrations" / "rollback"
     / "146_admin_user_assets_query_rollback.sql"
 )
+ADMIN_CAPABILITY_MIGRATION = (
+    ROOT / "migrations"
+    / "209_platform_admin_user_assets_capability.sql"
+)
+ADMIN_CAPABILITY_ROLLBACK = (
+    ROOT / "migrations" / "rollback"
+    / "209_platform_admin_user_assets_capability_rollback.sql"
+)
 
 
 def _migration_sql() -> str:
@@ -115,3 +123,99 @@ def test_admin_query_rollback_drops_only_query_rpc() -> None:
     sql = ADMIN_QUERY_ROLLBACK.read_text(encoding="utf-8")
     assert "DROP FUNCTION IF EXISTS list_admin_user_assets(" in sql
     assert "DROP TABLE" not in sql
+
+
+def test_admin_capability_wraps_private_owner_query() -> None:
+    sql = ADMIN_CAPABILITY_MIGRATION.read_text(encoding="utf-8")
+
+    assert ") RENAME TO _list_admin_user_assets_owner;" in sql
+    assert ") SET search_path = pg_catalog, public;" in sql
+    assert "CREATE FUNCTION list_platform_admin_user_assets(" in sql
+    assert "SECURITY DEFINER" in sql
+    assert "SET search_path = pg_catalog, public" in sql
+    assert "session_user <> 'everydayai_runtime'" in sql
+    assert "current_setting('app.access_kind', TRUE) <> 'runtime'" in sql
+    assert "NOT public.tenant_platform_admin()" in sql
+    assert "USING ERRCODE = '42501'" in sql
+    assert "RETURN public._list_admin_user_assets_owner(" in sql
+
+
+def test_admin_capability_has_narrow_runtime_acl() -> None:
+    sql = ADMIN_CAPABILITY_MIGRATION.read_text(encoding="utf-8")
+
+    assert "REVOKE ALL ON FUNCTION _list_admin_user_assets_owner(" in sql
+    assert "everydayai_sync, everydayai, service_role;" in sql
+    assert (
+        "GRANT EXECUTE ON FUNCTION list_platform_admin_user_assets(\n"
+        "    UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID\n"
+        ") TO everydayai_runtime;"
+    ) in sql
+    assert (
+        "REVOKE ALL ON TABLE user_assets, user_asset_refs\n"
+        "FROM everydayai_runtime;"
+    ) in sql
+    assert "GRANT SELECT ON TABLE user_assets" not in sql
+
+
+def test_admin_download_capability_is_bounded_and_all_or_nothing() -> None:
+    sql = ADMIN_CAPABILITY_MIGRATION.read_text(encoding="utf-8")
+
+    assert "CREATE FUNCTION resolve_platform_admin_user_assets_download(" in sql
+    assert "p_actor_user_id UUID" in sql
+    assert "p_asset_ids JSONB" in sql
+    assert "jsonb_typeof(p_asset_ids) IS DISTINCT FROM 'array'" in sql
+    assert "jsonb_array_length(p_asset_ids) NOT BETWEEN 1 AND 500" in sql
+    assert "FROM jsonb_array_elements(p_asset_ids)" in sql
+    assert "jsonb_typeof(v_element) IS DISTINCT FROM 'string'" in sql
+    assert "IF btrim(v_text) = ''" in sql
+    assert "v_asset_id := v_text::UUID" in sql
+    assert "WHEN invalid_text_representation" in sql
+    assert "IF v_asset_id = ANY(v_asset_ids)" in sql
+    assert "FROM unnest(v_asset_ids) WITH ORDINALITY" in sql
+    assert "JOIN public.user_assets asset" in sql
+    assert "FROM public.user_asset_refs asset_ref" in sql
+    assert "asset.status = 'ready'" in sql
+    assert "asset_ref.actor_user_id = p_actor_user_id" in sql
+    assert "v_resolved_count <> cardinality(v_asset_ids)" in sql
+    assert "ADMIN_ASSET_DOWNLOAD_SCOPE_INVALID" in sql
+    projected = sql.split(
+        "CREATE FUNCTION resolve_platform_admin_user_assets_download(", 1,
+    )[1]
+    for field in ("'id'", "'download_url'", "'name'"):
+        assert field in projected
+    for forbidden in ("metadata", "storage_key", "storage_owner_key"):
+        assert forbidden not in projected
+
+
+def test_admin_download_capability_has_runtime_only_execute() -> None:
+    sql = ADMIN_CAPABILITY_MIGRATION.read_text(encoding="utf-8")
+
+    assert (
+        "REVOKE ALL ON FUNCTION resolve_platform_admin_user_assets_download(\n"
+        "    UUID, JSONB\n"
+        ") FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,\n"
+        "    everydayai_worker, everydayai_sync, everydayai, service_role;"
+    ) in sql
+    assert (
+        "GRANT EXECUTE ON FUNCTION resolve_platform_admin_user_assets_download(\n"
+        "    UUID, JSONB\n"
+        ") TO everydayai_runtime;"
+    ) in sql
+
+
+def test_admin_capability_rollback_restores_146_contract() -> None:
+    sql = ADMIN_CAPABILITY_ROLLBACK.read_text(encoding="utf-8")
+
+    assert "DROP FUNCTION list_platform_admin_user_assets(" in sql
+    assert (
+        "DROP FUNCTION resolve_platform_admin_user_assets_download("
+        "UUID, JSONB);"
+    ) in sql
+    assert ") RENAME TO list_admin_user_assets;" in sql
+    assert ") SET search_path = public;" in sql
+    assert (
+        "GRANT EXECUTE ON FUNCTION list_admin_user_assets(\n"
+        "    UUID, TEXT, TEXT, INTEGER, TIMESTAMPTZ, UUID\n"
+        ") TO service_role;"
+    ) in sql
+    assert "GRANT EXECUTE" not in sql.split("TO service_role;", 1)[1]

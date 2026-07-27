@@ -4,30 +4,20 @@
  * owner/admin 可见。按子 Tab 切换功能。
  */
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  getOrgDetail,
   listMembers,
-  listOrgConfigs,
   setOrgConfig,
-  testErpConnection,
   testWecomConnection,
   getWecomStatus,
   createInvitation,
-  type OrgDetail,
   type OrgMember,
   type WecomFieldStatus,
 } from '../../services/org';
 import AiConfigSection from './AiConfigSection';
+import ErpConfigSection from './configuration/ErpConfigSection';
 import { MemberAssignmentsSection } from './MemberAssignmentsSection';
-
-// ERP 凭证的 key 列表和中文标签
-const ERP_CONFIG_KEYS = [
-  { key: 'kuaimai_app_key', label: 'App Key' },
-  { key: 'kuaimai_app_secret', label: 'App Secret' },
-  { key: 'kuaimai_access_token', label: 'Access Token' },
-  { key: 'kuaimai_refresh_token', label: 'Refresh Token' },
-];
+import OrgInfoSection from './OrgInfoSection';
 
 interface OrgManagePanelProps {
   orgId?: string;
@@ -81,156 +71,6 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
   );
 }
 
-// ── ERP 凭证配置 ──
-
-function ErpConfigSection({ orgId }: { orgId: string }) {
-  const [configuredKeys, setConfiguredKeys] = useState<string[]>([]);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadConfigs();
-  }, [orgId]);
-
-  const loadConfigs = async () => {
-    setLoading(true);
-    try {
-      const result = await listOrgConfigs(orgId);
-      setConfiguredKeys(result.data || []);
-    } catch {
-      setError('加载配置失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSave = async (key: string) => {
-    const value = values[key]?.trim();
-    if (!value) {
-      setError(`请输入 ${key} 的值`);
-      return;
-    }
-
-    setSaving(key);
-    setError('');
-    setSuccess('');
-    try {
-      await setOrgConfig(orgId, key, value);
-      setSuccess(`${key} 已保存`);
-      setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
-      if (!configuredKeys.includes(key)) {
-        setConfiguredKeys((prev) => [...prev, key]);
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || '保存失败');
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  if (loading) {
-    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
-  }
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-text-tertiary">
-        配置快麦 ERP 凭证后，企业成员可使用 ERP 查询功能。凭证以 AES-256 加密存储。
-      </p>
-
-      {error && <div className="bg-error-light text-error p-2 rounded text-sm">{error}</div>}
-      {success && <div className="bg-success-light text-success p-2 rounded text-sm">{success}</div>}
-
-      {ERP_CONFIG_KEYS.map(({ key, label }) => {
-        const isConfigured = configuredKeys.includes(key);
-        const isEditing = values[key] !== undefined;
-        return (
-          <div key={key} className="flex items-center space-x-2">
-            <div className="w-36 text-sm text-text-secondary flex items-center">
-              {label}
-              {isConfigured && (
-                <span className="ml-1.5 w-2 h-2 bg-success rounded-full inline-block" title="已配置" />
-              )}
-            </div>
-            {isConfigured && !isEditing ? (
-              /* 已配置：显示脱敏值 + 修改按钮 */
-              <>
-                <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-surface text-text-tertiary tracking-widest">
-                  ••••••••••••
-                </div>
-                <button
-                  onClick={() => setValues((prev) => ({ ...prev, [key]: '' }))}
-                  className="px-3 py-1.5 text-sm text-accent border border-accent/20 rounded-lg hover:bg-accent-light transition-base whitespace-nowrap"
-                >
-                  修改
-                </button>
-              </>
-            ) : (
-              /* 未配置 或 正在编辑 */
-              <>
-                <input
-                  type="text"
-                  value={values[key] || ''}
-                  onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                  className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
-                  placeholder={isConfigured ? '输入新值覆盖' : '未配置'}
-                  autoFocus={isConfigured}
-                />
-                <button
-                  onClick={() => handleSave(key)}
-                  disabled={saving === key || !values[key]?.trim()}
-                  className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base whitespace-nowrap"
-                >
-                  {saving === key ? '...' : '保存'}
-                </button>
-                {isConfigured && (
-                  <button
-                    onClick={() => setValues((prev) => { const n = { ...prev }; delete n[key]; return n; })}
-                    className="px-2 py-1.5 text-sm text-text-disabled hover:text-text-tertiary transition-base"
-                  >
-                    取消
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        );
-      })}
-
-      {/* 测试连接按钮 */}
-      {configuredKeys.length >= 4 && (
-        <button
-          onClick={async () => {
-            setTesting(true);
-            setError('');
-            setSuccess('');
-            try {
-              const result = await testErpConnection(orgId);
-              if (result.success) {
-                setSuccess(result.message);
-              } else {
-                setError(result.message);
-              }
-            } catch {
-              setError('测试请求失败');
-            } finally {
-              setTesting(false);
-            }
-          }}
-          disabled={testing}
-          className="w-full py-2 text-sm bg-success text-text-on-accent rounded-lg hover:bg-success/90 disabled:opacity-50 transition-base"
-        >
-          {testing ? '测试中...' : '测试 ERP 连接'}
-        </button>
-      )}
-    </div>
-  );
-}
-
 // ── 成员列表 ──
 
 function MembersSection({ orgId }: { orgId: string }) {
@@ -274,8 +114,8 @@ function MembersSection({ orgId }: { orgId: string }) {
       setInviteMsg(`已向 ${invitePhone} 发送邀请`);
       setInvitePhone('');
       setShowInvite(false);
-    } catch (err: any) {
-      setInviteError(err.response?.data?.detail || '邀请失败');
+    } catch {
+      setInviteError('邀请失败');
     } finally {
       setInviting(false);
     }
@@ -370,100 +210,12 @@ function MembersSection({ orgId }: { orgId: string }) {
   );
 }
 
-// ── 企业信息 ──
-
-function OrgInfoSection({ orgId }: { orgId: string }) {
-  const [org, setOrg] = useState<OrgDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadOrg();
-  }, [orgId]);
-
-  const loadOrg = async () => {
-    setLoading(true);
-    try {
-      const data = await getOrgDetail(orgId);
-      setOrg(data);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading || !org) {
-    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="bg-surface rounded-lg p-4 space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-text-tertiary">企业名称</span>
-          <span className="text-text-primary font-medium">{org.name}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-text-tertiary">状态</span>
-          <span className={org.status === 'active' ? 'text-success' : 'text-error'}>
-            {org.status === 'active' ? '正常运行' : '已停用'}
-          </span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-text-tertiary">企业 ID</span>
-          <span className="text-text-disabled text-xs font-mono">{org.id}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-text-tertiary">创建时间</span>
-          <span className="text-text-secondary">
-            {new Date(org.created_at).toLocaleString()}
-          </span>
-        </div>
-      </div>
-
-      {/* 企业专属登录链接 */}
-      <div className="bg-accent-light p-3 rounded-lg">
-        <p className="text-xs text-accent font-medium mb-1">企业专属登录链接</p>
-        <div className="flex items-center space-x-2">
-          <input
-            type="text"
-            value={`${window.location.origin}/login?org=${orgId}`}
-            readOnly
-            className="flex-1 px-2 py-1 text-xs bg-surface-card border rounded text-text-tertiary"
-          />
-          <button
-            onClick={(e) => {
-              navigator.clipboard.writeText(`${window.location.origin}/login?org=${orgId}`);
-              const btn = e.currentTarget;
-              btn.textContent = '已复制 ✓';
-              btn.classList.replace('bg-accent', 'bg-success');
-              setTimeout(() => { btn.textContent = '复制'; btn.classList.replace('bg-success', 'bg-accent'); }, 1500);
-            }}
-            className="px-3 py-1 text-xs bg-accent text-text-on-accent rounded hover:bg-accent-hover transition-base whitespace-nowrap"
-          >
-            复制
-          </button>
-        </div>
-        <p className="text-xs text-accent mt-1">将此链接发给员工，员工打开后可扫码登录并自动绑定企业</p>
-      </div>
-    </div>
-  );
-}
-
 // ── 企微配置 ──
 
-// wecom_corp_id 存到 organizations 表（非敏感），其余存 org_configs（加密）
-const WECOM_BOT_KEYS = [
-  { key: 'wecom_bot_id', label: '智能机器人 Bot ID', isOrgField: false },
-  { key: 'wecom_bot_secret', label: '智能机器人 Secret', isOrgField: false },
-];
-
 const WECOM_APP_KEYS = [
-  { key: 'wecom_agent_id', label: '自建应用 Agent ID', isOrgField: false },
-  { key: 'wecom_agent_secret', label: '自建应用 Secret', isOrgField: false },
+  { key: 'wecom.oauth_agent_id', label: '自建应用 Agent ID', secret: false },
+  { key: 'wecom.oauth_agent_secret', label: '自建应用 Secret', secret: true },
 ];
-
-// WECOM_CONFIG_KEYS 用于 wecom-status 接口查询（所有企微相关 key）
 
 function WecomConfigSection({ orgId }: { orgId: string }) {
   const [fieldStatus, setFieldStatus] = useState<Record<string, WecomFieldStatus>>({});
@@ -473,41 +225,52 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
+  const statusRequest = useRef(0);
 
-  useEffect(() => {
-    loadStatus();
-  }, [orgId]);
-
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
+    const requestId = ++statusRequest.current;
     setLoading(true);
     try {
       const result = await getWecomStatus(orgId);
-      setFieldStatus(result.data || {});
+      if (requestId === statusRequest.current) {
+        setFieldStatus(result.data || {});
+      }
     } catch {
-      setError('加载配置失败');
+      if (requestId === statusRequest.current) {
+        setError('加载配置失败');
+      }
     } finally {
-      setLoading(false);
+      if (requestId === statusRequest.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [orgId]);
 
-  const handleSave = async (key: string, isOrgField: boolean) => {
+  useEffect(() => {
+    void loadStatus();
+    return () => {
+      statusRequest.current += 1;
+    };
+  }, [loadStatus]);
+
+  const handleSave = async (key: string, secret: boolean) => {
     const value = values[key]?.trim();
     if (!value) return;
     setSaving(key);
     setError('');
     setSuccess('');
     try {
-      if (isOrgField) {
-        const { updateOrg } = await import('../../services/org');
-        await updateOrg(orgId, { [key]: value });
-      } else {
-        await setOrgConfig(orgId, key, value);
-      }
+      await setOrgConfig(
+        orgId,
+        key,
+        secret ? { agent_secret: value } : value,
+        fieldStatus[key]?.version ?? 0,
+      );
       setSuccess(`${key} 已保存`);
       setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
-      setFieldStatus((prev) => ({ ...prev, [key]: { configured: true, source: 'org' } }));
-    } catch (err: any) {
-      setError(err.response?.data?.detail || '保存失败');
+      await loadStatus();
+    } catch {
+      setError('保存失败，请刷新状态后重试');
     } finally {
       setSaving(null);
     }
@@ -517,13 +280,13 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     return <div className="text-center text-text-tertiary py-8">加载中...</div>;
   }
 
-  const botConfigured = fieldStatus.wecom_bot_id?.configured && fieldStatus.wecom_bot_secret?.configured;
+  const botStatus = fieldStatus['wecom.bot_credentials'];
+  const botConfigured = botStatus?.configured;
 
   // 渲染单个配置字段
-  const renderField = ({ key, label, isOrgField }: { key: string; label: string; isOrgField: boolean }) => {
+  const renderField = ({ key, label, secret }: { key: string; label: string; secret: boolean }) => {
     const field = fieldStatus[key];
     const isConfigured = field?.configured ?? false;
-    const source = field?.source;
     const isEditing = values[key] !== undefined;
     return (
       <div key={key} className="flex items-center space-x-2">
@@ -531,8 +294,8 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
           {label}
           {isConfigured && (
             <span
-              className={`ml-1.5 w-2 h-2 rounded-full inline-block ${source === 'system' ? 'bg-accent/60' : 'bg-success'}`}
-              title={source === 'system' ? '使用系统默认' : '已配置'}
+              className="ml-1.5 w-2 h-2 rounded-full inline-block bg-success"
+              title="企业已配置"
             />
           )}
         </div>
@@ -551,14 +314,14 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
         ) : (
           <>
             <input
-              type="text"
+              type={secret ? 'password' : 'text'}
               value={values[key] || ''}
               onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
               className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
               placeholder={isConfigured ? '输入新值覆盖' : '未配置'}
             />
             <button
-              onClick={() => handleSave(key, isOrgField)}
+              onClick={() => void handleSave(key, secret)}
               disabled={saving === key || !values[key]?.trim()}
               className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base whitespace-nowrap"
             >
@@ -586,15 +349,88 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       {/* 企业 ID */}
       <div>
         <h4 className="text-sm font-medium text-text-primary mb-2">企业标识</h4>
-        {renderField({ key: 'wecom_corp_id', label: '企业 ID (Corp ID)', isOrgField: true })}
+        {renderField({ key: 'wecom.corp_id', label: '企业 ID (Corp ID)', secret: false })}
       </div>
 
       {/* 智能机器人 */}
       <div>
         <h4 className="text-sm font-medium text-text-primary mb-2">智能机器人（群聊/私聊消息）</h4>
-        <div className="space-y-2">
-          {WECOM_BOT_KEYS.map(renderField)}
-        </div>
+        {botConfigured && values['wecom.bot_credentials'] === undefined ? (
+          <div className="flex items-center space-x-2">
+            <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-surface text-text-tertiary">
+              Bot ID 与 Secret 已作为完整凭证组保存 · v{botStatus.version}
+            </div>
+            <button
+              onClick={() => setValues((prev) => ({
+                ...prev,
+                'wecom.bot_credentials': '',
+                'wecom.bot_credentials.secret': '',
+              }))}
+              className="px-3 py-1.5 text-sm text-accent border rounded-lg"
+            >
+              修改整组
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={values['wecom.bot_credentials'] || ''}
+              onChange={(event) => setValues((prev) => ({
+                ...prev,
+                'wecom.bot_credentials': event.target.value,
+              }))}
+              className="w-full px-3 py-1.5 border rounded-lg text-sm"
+              placeholder="Bot ID"
+            />
+            <input
+              type="password"
+              value={values['wecom.bot_credentials.secret'] || ''}
+              onChange={(event) => setValues((prev) => ({
+                ...prev,
+                'wecom.bot_credentials.secret': event.target.value,
+              }))}
+              className="w-full px-3 py-1.5 border rounded-lg text-sm"
+              placeholder="Bot Secret"
+            />
+            <button
+              onClick={async () => {
+                const botId = values['wecom.bot_credentials']?.trim();
+                const botSecret = values['wecom.bot_credentials.secret']?.trim();
+                if (!botId || !botSecret) {
+                  setError('Bot ID 与 Secret 必须完整填写');
+                  return;
+                }
+                setSaving('wecom.bot_credentials');
+                setError('');
+                try {
+                  await setOrgConfig(
+                    orgId,
+                    'wecom.bot_credentials',
+                    { bot_id: botId, bot_secret: botSecret },
+                    botStatus?.version ?? 0,
+                  );
+                  setValues((prev) => {
+                    const next = { ...prev };
+                    delete next['wecom.bot_credentials'];
+                    delete next['wecom.bot_credentials.secret'];
+                    return next;
+                  });
+                  await loadStatus();
+                  setSuccess('机器人凭证已保存');
+                } catch {
+                  setError('保存失败，请刷新状态后重试');
+                } finally {
+                  setSaving(null);
+                }
+              }}
+              disabled={saving === 'wecom.bot_credentials'}
+              className="w-full py-1.5 text-sm bg-accent text-text-on-accent rounded-lg disabled:opacity-50"
+            >
+              保存完整凭证组
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 自建应用 */}
@@ -639,4 +475,3 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     </div>
   );
 }
-

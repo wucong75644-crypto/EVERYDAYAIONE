@@ -115,7 +115,7 @@ async def test_list_assets_returns_stable_cursor_without_message_scan() -> None:
     )
     assert db.tables == ["users", "users"]
     assert db.rpc_calls == [(
-        "list_admin_user_assets",
+        "list_platform_admin_user_assets",
         {
             "p_actor_user_id": USER_ID,
             "p_source_type": "generated",

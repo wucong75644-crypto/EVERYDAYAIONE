@@ -10,6 +10,7 @@ import { Folder, Check } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
 import { IMAGE_EXTS } from '../../utils/fileCategory';
+import { useThumbnailFallback } from '../../hooks/useThumbnailFallback';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
 
 /** 中间省略：头部 + … + 尾部（含后缀前几个字符），对齐 macOS Finder */
@@ -90,6 +91,7 @@ export default function WorkspaceFileItem({
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(item.name);
   const [isDragOver, setIsDragOver] = useState(false);
+  const thumbnail = useThumbnailFallback(item.thumbnail_url, item.cdn_url);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameSubmittingRef = useRef(false);
 
@@ -309,17 +311,17 @@ export default function WorkspaceFileItem({
         const isImage = !item.is_dir && !!item.cdn_url && IMAGE_EXTS.has((item.name.split('.').pop() || '').toLowerCase());
         return (
           <>
-              {isImage && (
+              {isImage && !thumbnail.failed && (
                 <img
-                src={item.thumbnail_url || item.cdn_url || ''}
+                src={thumbnail.src}
                 alt={item.name}
                 className="w-[72px] h-[72px] rounded-lg object-cover"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                onError={thumbnail.onError}
               />
             )}
             <span className={cn(
               item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name),
-              isImage && 'hidden',
+              isImage && !thumbnail.failed && 'hidden',
             )}>
               {item.is_dir ? <Folder className="w-[72px] h-[72px] fill-current" /> : <span className="text-[56px] leading-none">{getFileIcon(item.name)}</span>}
             </span>

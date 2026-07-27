@@ -33,6 +33,14 @@ export interface SearchUserResult {
   } | null;
 }
 
+export interface OrgConfigStatus {
+  config_key: string;
+  configured: boolean;
+  version: number;
+  source: 'organization' | null;
+  updated_at: string | null;
+}
+
 // ── 超管 API ──
 
 export async function listAllOrgs(): Promise<OrgDetail[]> {
@@ -57,7 +65,9 @@ export async function listMembers(orgId: string): Promise<OrgMember[]> {
   return request({ method: 'GET', url: `/org/${orgId}/members` });
 }
 
-export async function listOrgConfigs(orgId: string): Promise<{ success: boolean; data: string[] }> {
+export async function listOrgConfigs(
+  orgId: string,
+): Promise<{ success: boolean; data: OrgConfigStatus[] }> {
   return request({ method: 'GET', url: `/org/${orgId}/configs` });
 }
 
@@ -75,7 +85,8 @@ export async function testWecomConnection(
 
 export interface WecomFieldStatus {
   configured: boolean;
-  source: 'org' | 'system' | null;
+  source: 'organization' | null;
+  version: number;
 }
 
 export async function getWecomStatus(
@@ -91,9 +102,28 @@ export async function updateOrg(
 }
 
 export async function setOrgConfig(
-  orgId: string, key: string, value: string,
-): Promise<{ success: boolean; message: string }> {
-  return request({ method: 'PUT', url: `/org/${orgId}/configs`, data: { key, value } });
+  orgId: string,
+  configKey: string,
+  value: unknown,
+  expectedVersion: number,
+): Promise<{ success: boolean; data: OrgConfigStatus }> {
+  return request({
+    method: 'PUT',
+    url: `/org/${orgId}/configs`,
+    data: { config_key: configKey, value, expected_version: expectedVersion },
+  });
+}
+
+export async function deleteOrgConfig(
+  orgId: string,
+  configKey: string,
+  expectedVersion: number,
+): Promise<{ success: boolean; data: OrgConfigStatus }> {
+  return request({
+    method: 'DELETE',
+    url: `/org/${orgId}/configs/${encodeURIComponent(configKey)}`,
+    params: { expected_version: expectedVersion },
+  });
 }
 
 export async function addMember(

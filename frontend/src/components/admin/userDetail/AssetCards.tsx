@@ -17,6 +17,7 @@ import type { UserAsset } from '../../../services/adminUser';
 import { formatRelativeCN } from '../../../utils/formatRelativeCN';
 import { downloadFile } from '../../../utils/downloadFile';
 import { pickOriginalImageUrl, toThumbnailImageUrl } from '../../../utils/imageUrlRules';
+import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 
 
 export function UploadCard({
@@ -33,6 +34,7 @@ export function UploadCard({
   const originalUrl = pickOriginalImageUrl(asset.original_url, asset.download_url);
   const downloadUrl = pickOriginalImageUrl(asset.download_url, asset.original_url);
   const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.original_url, 360);
+  const thumbnail = useThumbnailFallback(thumbnailUrl, originalUrl);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -50,13 +52,14 @@ export function UploadCard({
         selected ? 'border-[var(--s-accent)] ring-2 ring-[var(--s-accent)]/30' : 'border-[var(--s-border-default)]'
       }`}
     >
-      {asset.media_type === 'image' ? (
+      {asset.media_type === 'image' && !thumbnail.failed ? (
         <img
-          src={thumbnailUrl}
+          src={thumbnail.src}
           alt={asset.name}
           loading="lazy"
           decoding="async"
           className="w-full aspect-square object-cover cursor-zoom-in"
+          onError={thumbnail.onError}
           onClick={handlePreview}
           title="点击放大查看"
         />
@@ -130,6 +133,7 @@ export function GenerationCard({
   const originalUrl = pickOriginalImageUrl(asset.original_url, asset.download_url);
   const downloadUrl = pickOriginalImageUrl(asset.download_url, asset.original_url);
   const thumbnailUrl = asset.thumbnail_url || toThumbnailImageUrl(asset.original_url, 360);
+  const thumbnail = useThumbnailFallback(thumbnailUrl, originalUrl);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -155,15 +159,22 @@ export function GenerationCard({
       }`}
     >
       {asset.media_type === 'image' ? (
-        <img
-          src={thumbnailUrl}
-          alt={asset.prompt || ''}
-          loading="lazy"
-          decoding="async"
-          className="w-full aspect-square object-cover cursor-zoom-in"
-          onClick={handlePreview}
-          title="点击放大查看"
-        />
+        thumbnail.failed ? (
+          <div className="w-full aspect-square bg-[var(--s-bg-secondary)] flex items-center justify-center text-sm text-[var(--s-text-tertiary)]">
+            图片加载失败
+          </div>
+        ) : (
+          <img
+            src={thumbnail.src}
+            alt={asset.prompt || ''}
+            loading="lazy"
+            decoding="async"
+            className="w-full aspect-square object-cover cursor-zoom-in"
+            onError={thumbnail.onError}
+            onClick={handlePreview}
+            title="点击放大查看"
+          />
+        )
       ) : (
         <div
           className="relative w-full aspect-square bg-black flex items-center justify-center cursor-pointer"

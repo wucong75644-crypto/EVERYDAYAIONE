@@ -212,8 +212,10 @@
 - `deploy/rollback-runtime-message-ownership.sh`：要求服务先切回旧连接且目标表均未
   FORCE RLS，随后恢复第二批表、sequence 和函数 owner。
 - `deploy/preflight-tenant-cutover.sh`：兼容总入口，编排
-  `deploy/preflight/tenant-core.sh` 与 `deploy/preflight/worker-control.sh`，分别核验
-  150–164 核心域及 165–180 Worker Control 域的 checksum、owner、ACL、RLS 和能力边界。
+  `deploy/preflight/tenant-role-capabilities.sh`、`tenant-core.sh`、
+  `admin-user-assets-capability.sh` 与 `worker-control.sh`；先核验隔离角色集合及
+  Runtime 旧 Chat enqueue 撤权，再核验核心域、管理员资产和 Worker Control 的
+  checksum、owner、ACL、RLS 与能力边界。
 - `backend/scripts/verify_worker_control_preconditions.py`：部署发现 171–180 pending 时，
   在 apply 前验证四张依赖表及其列序列均已属于 `everydayai_owner`，否则失败关闭。
 - `backend/scripts/verify_runtime_generation_capabilities.py`：迁移完成、服务重启前验证
@@ -406,6 +408,15 @@
   161 批量 RPC，并严格校验脱敏响应。
 - `backend/scripts/migrate_legacy_configuration.py`：默认 dry-run 的一次性迁移入口；
   source/migrator DSN 分离，apply 要求固定 import_id 与精确确认字符串。
+- `frontend/src/components/admin/configuration/ErpConfigSection.tsx`：以
+  `erp.app_credentials` 与 `erp.token_pair` 两个原子组管理企业 ERP 凭证，写入携带
+  状态版本 CAS。
+- `frontend/src/components/admin/__tests__/AiConfigSection.test.tsx`：覆盖企业 AI Key
+  切换平台服务时的逐键 CAS 停用、部分失败后的权威重载、防重复请求及组织生命周期隔离。
+- `frontend/src/components/admin/useAiConfigLoader.ts`：隔离企业 AI 配置权威状态加载、
+  active Key 判定和 orgId/卸载后的异步结果失效。
+- `frontend/src/components/admin/OrgInfoSection.tsx`：从企业管理主面板拆出的企业信息
+  与登录链接展示，使主面板保持在结构阈值内。
 - `deploy/env-templates/legacy-config-import.env.template`：161 一次性迁移的旧库只读 DSN、
   migrator DSN、旧密钥兜底和新 KEK 示例，不包含真实材料。
 - `backend/migrations/161_configuration_legacy_import.sql` 同时提供
@@ -621,6 +632,7 @@ EVERYDAYAIONE/
 │   ├── main.py                   # FastAPI 应用入口
 │   ├── conversation_worker_main.py # Conversation Actor 独立 Worker 入口
 │   ├── migrations/146_admin_user_assets_query.sql # 管理资产 ref 过滤、代表来源与稳定游标 RPC
+│   ├── migrations/209_platform_admin_user_assets_capability.sql # Runtime 数据库验权的超管资产列表与 ZIP 解析门面
 │   ├── scripts/backfill_user_assets.py # 五类历史资产 dry-run/apply、checkpoint 与对账
 │   ├── scripts/backfill_user_assets_sql.py # 历史资产回填固定 keyset/RPC SQL
 │   ├── core/                     # 核心模块
@@ -997,7 +1009,8 @@ EVERYDAYAIONE/
         │   └── wsTaskMessageHandlers.ts  # 任务完成/失败与图片 partial update
         │   └── wsRoutingCompleteHandler.ts # 路由完成后的媒体占位符与聊天参数更新
         ├── hooks/                    # 自定义 Hooks
-        │   └── useDetailRequirementAssist.ts # AI 帮写弹窗请求、竞态和三方案编辑状态
+        │   ├── useDetailRequirementAssist.ts # AI 帮写弹窗请求、竞态和三方案编辑状态
+        │   ├── useThumbnailFallback.ts # 小图 thumbnail→original→failed 加载状态机
         │   ├── useImageUpload.ts         # 图片上传逻辑
         │   ├── workspace/                # 工作区浏览、上传、变更和视图状态子 Hooks
         │   │   ├── useWorkspaceBrowser.ts
@@ -1057,7 +1070,9 @@ EVERYDAYAIONE/
     ├── test_message_service.py   # 消息服务测试（12个用例）
     ├── test_image_ecom_retry.py  # 电商图片失败占位原位替换、会话隔离与资产登记测试
     ├── test_admin_user_assets.py # 超管统一资产列表、复合游标与权限边界测试
-    ├── test_admin_asset_routes.py # 统一资产 ZIP 与旧资产端点删除测试
+    ├── test_admin_user_assets_role_matrix_external.py # 超管资产治理门面的真实 PostgreSQL 登录角色矩阵
+    ├── test_admin_user_assets_rpc_contract.py # ZIP RPC 命名参数、Jsonb 绑定与迁移 JSONB 签名合同
+    ├── test_admin_asset_routes.py # 统一资产 ZIP 治理 RPC、失败关闭、顺序与旧端点删除测试
     ├── test_admin_users_helpers.py # 管理员会话解析和通用 helper 测试
     ├── test_backfill_user_assets.py # 五类历史资产投影、checkpoint 与失败续跑测试
     ├── test_recent_tool_history.py # 最近 3 个用户回合的安全工具历史投影测试

@@ -380,11 +380,31 @@ class TestGetCdnUrl:
         assert "org/org1/u1/uploads/file.csv" in url
 
     def test_cdn_url_without_domain(self, workspace):
-        ex = FileExecutor(workspace_root=workspace)
+        ex = FileExecutor(workspace_root=workspace, user_id="u1", org_id="org1")
+        target = Path(ex.workspace_root) / "图片" / "产品 图.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"png")
+
         with patch("core.config.get_settings") as mock_settings:
             mock_settings.return_value.oss_cdn_domain = None
-            url = ex.get_cdn_url("any.txt")
-        assert url is None
+            mock_settings.return_value.oss_bucket_name = "everydayai-images"
+            mock_settings.return_value.oss_endpoint = "oss-cn-hangzhou.aliyuncs.com"
+            url = ex.get_cdn_url("图片/产品 图.png")
+
+        assert url == (
+            "https://everydayai-images.oss-cn-hangzhou.aliyuncs.com/"
+            "workspace/org/org1/u1/%E5%9B%BE%E7%89%87/%E4%BA%A7%E5%93%81%20%E5%9B%BE.png"
+        )
+
+    def test_missing_cdn_and_oss_config_returns_none(self, workspace):
+        ex = FileExecutor(workspace_root=workspace)
+        target = Path(ex.workspace_root) / "any.txt"
+        target.write_text("data")
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value.oss_cdn_domain = None
+            mock_settings.return_value.oss_bucket_name = None
+            mock_settings.return_value.oss_endpoint = None
+            assert ex.get_cdn_url("any.txt") is None
 
 
 # ============================================================

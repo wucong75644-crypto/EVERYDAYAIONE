@@ -362,7 +362,9 @@
 | `_resolve_user_asset` | `backend/migrations/145_user_assets.sql` | 按 org/scope/owner key/provider/storage key 原子解析或创建 canonical 资产，并只补充空字段 | canonical asset fields | JSONB |
 | `_bind_user_asset_ref` | `backend/migrations/145_user_assets.sql` | 按稳定 ref key 原子绑定业务来源，拒绝跨资产、actor、org 或来源事实冲突 | asset id + source fields | JSONB |
 | `register_user_asset` | `backend/migrations/145_user_assets.sql` | 校验输入并在单个数据库事务中组合 canonical 资产解析与来源绑定 | asset draft + ref draft | JSONB |
-| `list_admin_user_assets` | `backend/migrations/146_admin_user_assets_query.sql` | 通过用户来源关联过滤 ready canonical 资产，选择确定性代表 ref，并按 `(created_at,id)` 游标返回去重页和总数 | actor user/source/media/limit/cursor | JSONB |
+| `_list_admin_user_assets_owner` | `backend/migrations/146_admin_user_assets_query.sql`、`209_platform_admin_user_assets_capability.sql` | 保留 146 的 owner 私有资产查询核心，通过用户来源关联过滤 ready canonical 资产并按 `(created_at,id)` 返回去重页和总数；Runtime 与其他服务角色均无 EXECUTE | actor user/source/media/limit/cursor | JSONB |
+| `list_platform_admin_user_assets` | `backend/migrations/209_platform_admin_user_assets_capability.sql` | SECURITY DEFINER 治理门面；仅接受 `everydayai_runtime` + `app.access_kind=runtime` + 数据库确认的 active `super_admin` actor，校验通过后委托 owner 私有核心 | actor user/source/media/limit/cursor | JSONB |
+| `resolve_platform_admin_user_assets_download` | `backend/migrations/209_platform_admin_user_assets_capability.sql` | 接收 ScopedDatabaseClient 的 JSONB 数组，逐项验证并规范化 1–500 个无重复 UUID；数据库验权后仅在全量属于目标用户且为 ready 时按请求顺序返回 id/download_url/name | actor user, JSONB asset ids | JSONB |
 | `AssetRegistryService.register_ready_asset` | `backend/services/assets/asset_registry.py` | 解析 canonical storage identity，并调用数据库 RPC 原子创建/复用资产本体与来源 ref | ReadyAssetDraft, AssetRefDraft | dict |
 | `ReadyAssetDraft` | `backend/services/assets/asset_registry.py` | 已持久化资产本体的类型化登记协议，不携带业务来源字段 | storage scope/owner, media, URL/path/hash/metadata | dataclass |
 | `AssetRefDraft` | `backend/services/assets/asset_registry.py` | 上传、任务、消息、生成记录或企微附件的稳定来源关联协议 | ref key, actor, source/ref kind, source IDs/metadata | dataclass |
@@ -382,9 +384,9 @@
 | `load_seed_knowledge` | `backend/services/knowledge_seed_service.py` | 清理并重新导入全局种子知识、重建关系边；由 knowledge_service 兼容导出 | seed_file、db_source | 导入数量 |
 | `OrgInvitationMixin` | `backend/services/org/org_invitation_mixin.py` | 创建企业邀请并校验手机号、状态、容量后接受邀请 | org/user/invite context | 邀请或成员结果 |
 | `_update_message_image_part` | `backend/api/routes/image_ecom.py` | 在指定 conversation/message 内把失败图片按图片序号原位替换为公开 ImagePart，拒绝越界并返回真实 content 数组下标 | db, message/conversation ID, image ordinal, emit payload | int |
-| `list_user_assets` | `backend/api/routes/admin_user_assets.py` | 超管校验目标用户后调用资产查询 RPC，按来源/媒体类型和不透明复合游标读取 ready canonical 资产 | uid, source_type, media_type?, limit, cursor? | items/next_cursor/has_more/total |
+| `list_user_assets` | `backend/api/routes/admin_user_assets.py` | 保留应用层超管与目标用户检查，并调用数据库治理的 `list_platform_admin_user_assets` 门面，按来源/媒体类型和不透明复合游标读取 ready canonical 资产 | uid, source_type, media_type?, limit, cursor? | items/next_cursor/has_more/total |
 | `_encode_cursor` / `_decode_cursor` | `backend/api/routes/admin_user_assets.py` | 编解码并严格校验用户资产复合游标中的 ISO 时间和 UUID | created_at/id 或 opaque cursor | str / tuple |
-| `download_user_assets_zip` | `backend/api/routes/admin_users_zip.py` | 超管提交 asset_ids 后先由 user_asset_refs 完整复验目标用户归属，再校验 canonical 资产 ready 状态和安全下载主机并流式打包 | uid, asset_ids | StreamingResponse |
+| `_resolve_download_assets` / `_build_asset_zip` / `download_user_assets_zip` | `backend/api/routes/admin_users_zip.py` | 保留应用层超管和目标用户检查，仅经数据库治理门面解析完整最小资产集合；严格验证 RPC 形状后按请求顺序校验下载主机，并按既有大小、命名和错误清单规则流式打包 | uid, asset_ids | list[asset] / ZIP stream / StreamingResponse |
 | `WecomMediaDownloader.download_and_decrypt` | `backend/services/wecom/media_downloader.py` | 限流下载并可选解密企微媒体，保留 Content-Type 与 Content-Disposition 响应元数据 | url, aeskey? | DownloadedMedia \| None |
 | `normalize_wecom_message` / `parse_message_content` | `backend/services/wecom/message_normalizer.py` | 规范化智能机器人回调；私聊缺少 chatid 时使用发送者，群聊强制 chatid，并统一解析媒体字段 | body, org_id, corp_id | WecomIncomingMessage |
 | `resolve_channel_conversation` / `resolve_wecom_conversation` | `backend/services/wecom/channel_conversation.py`、`backend/migrations/128_wecom_channel_conversations.sql` | 按 org/corp/chatid 原子解析私聊或群共享 conversation；首次私聊可认领未绑定的历史企微对话 | user/corp/chat/type/org | conversation UUID |
@@ -1414,6 +1416,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `pickOriginalImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 按候选字段顺序选择第一个合法原图 URL，避免旧数据中缩略图字段短路原图字段 |
 | `toDisplayThumbnailUrl` | `frontend/src/utils/imageUrlRules.ts` | 缩略图展示入口；小图、缩略条、列表网格可使用独立缩略图，缺省时回退原图 |
 | `toThumbnailImageUrl` | `frontend/src/utils/imageUrlRules.ts` | 旧缩略图兜底入口；委托给 `toDisplayThumbnailUrl`，不再生成 OSS 处理参数 |
+| `useThumbnailFallback` | `frontend/src/hooks/useThumbnailFallback.ts` | 小图加载状态机；缩略图失败后切原图，原图失败后进入失败占位 |
 | `resolveImageOriginalUrl` | `frontend/src/utils/messageUtils.ts` | 从图片 content part 解析原图 URL，逐个跳过缩略图候选，防止进入预览/下载链路 |
 | `getImageAssets` | `frontend/src/utils/messageUtils.ts` | 从消息 content 提取图片资产对象，保留 `originalUrl` / `thumbnailUrl` 语义 |
 | `fromImageAsset` | `frontend/src/preview/toPreviewItem.ts` | 将图片资产转换为 PreviewItem，主体预览/下载用原图，缩略条用缩略图 |
@@ -1677,7 +1680,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `transfer-sync-domain-ownership.sh` | `deploy/transfer-sync-domain-ownership.sh` | 原子转移 ERP/快麦 Sync 数据域对象 owner，并建立最小角色 ACL |
 | `rollback-worker-control-ownership.sh` | `deploy/rollback-worker-control-ownership.sh` | 在显式危险开关且四表未 FORCE RLS 时恢复 Worker Control 对象 owner |
 | `verify_preconditions` | `backend/scripts/verify_worker_control_preconditions.py` | 部署应用 171–180 前只读验证 Worker Control 表及列序列均归 everydayai_owner |
-| `preflight-tenant-cutover.sh` | `deploy/preflight-tenant-cutover.sh` | 编排核心域与 Worker Control 域两组只读生产门禁 |
+| `preflight-tenant-cutover.sh` | `deploy/preflight-tenant-cutover.sh` | 按角色能力、核心域、管理员资产、Worker Control 顺序编排只读生产门禁并失败传播 |
+| `tenant-role-capabilities.sh` | `deploy/preflight/tenant-role-capabilities.sh` | 核验隔离角色集合、角色属性、owner membership 与 Runtime 旧 Chat enqueue 撤权 |
 | `worker-control.sh` | `deploy/preflight/worker-control.sh` | 核验 165–180 账本、owner、Worker Facade、Runtime ACL 与 FORCE RLS |
 | `tenant_actor_user_id` / `tenant_org_id` | `backend/migrations/150_agent_runtime_tenant_defense.sql` | 从事务级 GUC 安全解析用户与企业 UUID；缺失或非法值返回 NULL |
 | `tenant_database_role_matches_scope` | `backend/migrations/150_agent_runtime_tenant_defense.sql`、`152_wecom_runtime_capability.sql` | 使用真实连接 `session_user` 校验 Web/WeCom runtime 或 worker 角色与 access_kind 一致 |
@@ -1768,6 +1772,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `import_legacy_configuration_batch` | `backend/migrations/161_configuration_legacy_import.sql` | 仅允许 everydayai_migrator 在显式 apply 会话中一次性导入 1–10000 个目标；全批使用 expected_version=0 CAS，任一失败整事务回滚并仅记录无秘密值审计 |
 | `export_legacy_configuration_snapshot` | `backend/migrations/161_configuration_legacy_import.sql` | 仅允许 everydayai_config_import_reader 在显式 read GUC 下，以 owner 权限一次固定导出 organizations/org_configs/外部凭证精确字段；Reader 无旧表直读权 |
 | `LegacyImportPlanner.build` | `backend/services/configuration/legacy_import.py` | 仅接收全部预检通过且组织集合精确一致的数据，将旧普通值和原子 Secret 组合转换为 Registry v1 导入项；Secret 立即生成 payload_version=1 envelope，expired/invalid 外部凭证保持未配置 |
+| `list_org_configs` / `set_org_config` / `delete_org_config` | `backend/api/routes/org.py` | 企业 owner/admin 通过正式 ConfigurationControlService 获取无秘密状态并使用 expected_version CAS 写入或删除正式配置 |
+| `test_erp_connection` | `backend/api/routes/org.py` | 仅通过正式 erp.runtime Bundle 测试 ERP，并以 token_pair Bundle 版本 CAS 持久化刷新 Token |
 | `LegacyImportSourceReader.read` / `read_export` | `backend/services/configuration/legacy_import_source.py` | 将兼容三查询或正式 export 三数组生成解密值与无秘密值预检，精确形状、重复、孤儿和畸形行均失败关闭 |
 | `read_legacy_import_snapshot` | `backend/services/configuration/legacy_import_source_executor.py` | 在专用 Reader 单连接只读事务中依次校验 session_user、设置 read GUC、执行一次 export RPC 并严格解析一致性快照 |
 | `apply_legacy_import` | `backend/services/configuration/legacy_import_executor.py` | 精确确认 import_id 且 session_user 为 everydayai_migrator 后，在同一连接事务和游标中执行 SET LOCAL 门禁与 161 原子 RPC，并严格校验返回计数 |

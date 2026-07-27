@@ -195,10 +195,19 @@ class TestOrgScopedDBWithOrgId:
             "get_ai_openrouter_bundle",
             "list_actor_organizations",
             "list_actor_pending_invitations",
+            "list_all_governed_organizations",
         ):
             self.raw_db.reset_mock()
             self.db.rpc(function_name)
             self.raw_db.rpc.assert_called_once_with(function_name, {})
+
+    def test_governed_phone_search_has_no_org_param(self):
+        self.db.rpc(
+            "search_governed_user_by_phone", {"p_phone": "13800138000"},
+        )
+        self.raw_db.rpc.assert_called_once_with(
+            "search_governed_user_by_phone", {"p_phone": "13800138000"},
+        )
 
     def test_rpc_preserves_explicit_org_id(self):
         """已有 p_org_id 不覆盖"""

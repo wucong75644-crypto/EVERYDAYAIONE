@@ -106,7 +106,13 @@ async def test_send_prepares_stable_messages_and_reuses_task_anchor(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_retry_uses_database_resolved_anchor_without_new_input(monkeypatch):
+@pytest.mark.parametrize(
+    "operation",
+    (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE),
+)
+async def test_existing_output_operation_uses_database_anchor_without_new_input(
+    monkeypatch, operation,
+):
     task_id = stable_actor_task_id(
         user_id="user-1", conversation_id="conversation-1",
         external_task_id="client-task",
@@ -127,7 +133,7 @@ async def test_retry_uses_database_resolved_anchor_without_new_input(monkeypatch
     response = await prepare_and_start_chat_generation(
         db=object(), handler=handler, conversation_id="conversation-1",
         user_id="user-1", org_id=None, request_id="request-row",
-        body=_body(MessageOperation.RETRY),
+        body=_body(operation),
     )
 
     prepared = lifecycle.calls[0]
@@ -135,3 +141,40 @@ async def test_retry_uses_database_resolved_anchor_without_new_input(monkeypatch
     assert prepared["input_message"] == {}
     assert response.user_message is None
     assert response.assistant_message.turn_id == "existing-turn"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkeypatch):
+    task_id = stable_actor_task_id(
+        user_id="user-1", conversation_id="conversation-1",
+        external_task_id="client-task",
+    )
+    result = GenerationPreparation(
+        request_id="request-row", conversation_id="conversation-1",
+        turn_id="existing-turn", input_message_id="existing-input",
+        output_message_id="00000000-0000-0000-0000-000000000002",
+        base_context_revision=5, context_through_message_id="through-1",
+        task_ids=(task_id,), already_prepared=True,
+    )
+    lifecycle = _Lifecycle(result)
+    monkeypatch.setattr(
+        "api.routes.message_chat_preparation.GenerationLifecycle", lambda db: lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_chat_preparation.record_user_activity", lambda *a, **k: None,
+    )
+    handler = _Handler()
+
+    response = await prepare_and_start_chat_generation(
+        db=object(), handler=handler, conversation_id="conversation-1",
+        user_id="user-1", org_id="org-1", request_id="request-row",
+        body=_body(),
+    )
+
+    metadata = handler.start.await_args.kwargs["metadata"]
+    assert metadata.context_anchor.task_id == task_id
+    assert metadata.turn_id == "existing-turn"
+    assert metadata.input_message_id == "existing-input"
+    assert response.task_id == "client-task"
+    assert response.user_message.id == "existing-input"
+    assert response.assistant_message.id == result.output_message_id

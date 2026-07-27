@@ -122,6 +122,32 @@ describe('AiImageGrid', () => {
     );
   });
 
+  it('falls back to original_url before showing a failed placeholder', () => {
+    const content: ContentPart[] = [{
+      type: 'image',
+      original_url: 'https://oss.example.com/workspace/original.png',
+      thumbnail_url: 'https://oss.example.com/workspace-thumbnails/original.w360.webp',
+    }];
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={1}
+        messageId="msg-fallback"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+
+    fireEvent.error(screen.getByRole('img'));
+    expect(screen.getByRole('img')).toHaveAttribute(
+      'src',
+      'https://oss.example.com/workspace/original.png',
+    );
+    fireEvent.error(screen.getByRole('img'));
+    expect(screen.getByTestId('failed-placeholder')).toBeInTheDocument();
+  });
+
   it('失败的图片渲染 FailedMediaPlaceholder', () => {
     const content = makeContent([null], [true]);
     render(

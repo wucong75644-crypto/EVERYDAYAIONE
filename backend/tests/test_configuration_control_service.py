@@ -259,6 +259,21 @@ def test_database_errors_map_to_stable_configuration_errors() -> None:
     assert captured.value.status_code == 409
 
 
+def test_unknown_database_error_is_sanitized() -> None:
+    service, _, _ = _service(FakeDB({
+        "delete_platform_configuration": RuntimeError(
+            "password=secret database internal detail"
+        ),
+    }))
+
+    with pytest.raises(ConfigurationControlError) as captured:
+        service.delete_platform(key="ai.google.api_key", expected_version=2)
+
+    assert captured.value.code == "CONFIG_DATABASE_UNAVAILABLE"
+    assert captured.value.status_code == 503
+    assert "secret" not in captured.value.message
+
+
 def test_status_requires_list_shape() -> None:
     service, _, _ = _service(FakeDB({
         "list_user_configuration_status": {"invalid": True},

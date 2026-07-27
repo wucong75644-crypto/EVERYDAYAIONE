@@ -58,10 +58,10 @@ def _require_admin(db: Any, user_id: str, org_id: str) -> str:
     result = db.rpc("get_governed_actor_authority", {
         "p_org_id": org_id,
     }).execute()
-    role = (result.data or {}).get("authority")
+    role = result.data if result else None
     if role not in ("owner", "admin"):
         raise HTTPException(403, "仅老板/管理员可管理成员任职")
-    return role
+    return str(role)
 
 
 def _rpc_data(db: Any, name: str, params: Dict[str, Any]) -> Any:

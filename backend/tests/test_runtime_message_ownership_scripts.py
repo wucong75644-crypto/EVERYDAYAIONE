@@ -29,6 +29,7 @@ FUNCTIONS = {
     "close_generation_turn", "cancel_generation_turn",
     "deduct_credits_atomic", "atomic_refund_credits",
     "partial_refund_credits", "increment_message_count",
+    "list_admin_user_assets",
     "record_user_activity", "resolve_wecom_conversation",
     "stage_wecom_attachment_v2", "enqueue_wecom_generation_turn_v2",
     "update_wecom_conversation_setting", "get_wecom_generation_context",

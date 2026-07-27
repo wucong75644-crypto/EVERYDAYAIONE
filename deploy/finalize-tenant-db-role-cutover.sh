@@ -20,6 +20,7 @@ if ! command -v psql >/dev/null 2>&1; then
 fi
 
 bash "$(dirname "$0")/preflight/knowledge-audit-completion.sh"
+bash "$(dirname "$0")/preflight/admin-user-assets-capability.sh"
 
 legacy_owner=${LEGACY_DATABASE_OWNER:-everydayai}
 if [[ ! "$legacy_owner" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
@@ -99,7 +100,8 @@ BEGIN
           '199_platform_error_monitor_capabilities.sql',
           '200_web_wecom_control_capabilities.sql',
           '201_wecom_callback_inbox.sql',
-          '202_knowledge_audit_force_rls_completion.sql'
+          '202_knowledge_audit_force_rls_completion.sql',
+          '209_platform_admin_user_assets_capability.sql'
       ]) AS required_identity
      WHERE NOT EXISTS (
          SELECT 1

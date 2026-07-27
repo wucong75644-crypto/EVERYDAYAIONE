@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { downloadImage } from '../../../utils/downloadImage';
 import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
+import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 
 interface PreviewImageAsset {
   originalUrl: string;
@@ -42,6 +43,24 @@ interface ImagePreviewModalProps {
   currentIndex?: number;
   /** 选择图片回调（用于底部缩略图预览） */
   onSelectImage?: (index: number) => void;
+}
+
+function PreviewStripThumbnail({ image, index }: { image: PreviewImageAsset; index: number }) {
+  const thumbnail = useThumbnailFallback(
+    image.thumbnailUrl || toThumbnailImageUrl(image.originalUrl, 160),
+    image.originalUrl,
+  );
+  if (thumbnail.failed) {
+    return <span className="text-[10px] text-white/70">{index + 1}</span>;
+  }
+  return (
+    <img
+      src={thumbnail.src}
+      onError={thumbnail.onError}
+      alt={`缩略图 ${index + 1}`}
+      className="w-full h-full object-cover"
+    />
+  );
 }
 
 export default memo(function ImagePreviewModal({
@@ -461,11 +480,7 @@ export default memo(function ImagePreviewModal({
               }`}
               title={`切换到图片 ${index + 1}`}
             >
-              <img
-                src={img.thumbnailUrl || toThumbnailImageUrl(img.originalUrl, 160)}
-                alt={`缩略图 ${index + 1}`}
-                className="w-full h-full object-cover"
-              />
+              <PreviewStripThumbnail image={img} index={index} />
             </button>
           ))}
         </div>

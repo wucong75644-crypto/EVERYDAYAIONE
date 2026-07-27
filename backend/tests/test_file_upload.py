@@ -460,3 +460,14 @@ class TestBuildWorkspaceThumbnailUrl:
         url = "https://kie-cdn.example.com/generated/a.png"
 
         assert build_workspace_thumbnail_url(url) is None
+
+    def test_official_oss_url_builds_independent_thumbnail_path(self):
+        result = build_workspace_thumbnail_url(
+            "https://everydayai-images.oss-cn-hangzhou.aliyuncs.com/"
+            "workspace/org/o1/u1/%E5%9B%BE%E7%89%87/a.png?version=1",
+        )
+
+        assert result == (
+            "https://everydayai-images.oss-cn-hangzhou.aliyuncs.com/"
+            "workspace-thumbnails/org/o1/u1/%E5%9B%BE%E7%89%87/a.w360.webp"
+        )

@@ -3,6 +3,7 @@ import PreviewHost from '../../../preview/PreviewHost';
 import type { PreviewItem } from '../../../preview/types';
 import { usePreview } from '../../../preview/usePreview';
 import { getFileIcon } from '../../../utils/fileUtils';
+import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 import type { ChatAttachment, ChatImageAttachment } from './ChatAttachment.types';
 
 interface ChatAttachmentPreviewProps {
@@ -10,10 +11,39 @@ interface ChatAttachmentPreviewProps {
   onRemove: (id: string) => void;
 }
 
+function AttachmentThumbnail({
+  attachment,
+  onClick,
+}: {
+  attachment: ChatImageAttachment;
+  onClick: () => void;
+}) {
+  const thumbnail = useThumbnailFallback(
+    attachment.thumbnailUrl || attachment.previewUrl,
+    attachment.originalUrl,
+  );
+  if (thumbnail.failed) {
+    return <div className="h-12 w-12 rounded-lg bg-active flex items-center justify-center text-error">!</div>;
+  }
+  return (
+    <img
+      src={thumbnail.src}
+      alt={attachment.name}
+      onError={thumbnail.onError}
+      onClick={onClick}
+      className={`h-12 w-12 rounded-lg object-cover transition-transform ${
+        attachment.status === 'uploading' ? 'opacity-50' : ''
+      } ${attachment.status === 'error' ? 'border-2 border-error' : ''} ${
+        attachment.source === 'quote' ? 'ring-2 ring-blue-400' : ''
+      } ${attachment.status === 'ready' ? 'cursor-pointer hover:scale-105 hover:shadow-md' : ''}`}
+    />
+  );
+}
+
 function toPreviewItem(image: ChatImageAttachment): PreviewItem {
   return {
     url: image.originalUrl || image.previewUrl || undefined,
-    thumbnailUrl: image.previewUrl || undefined,
+    thumbnailUrl: image.thumbnailUrl || image.previewUrl || undefined,
     workspacePath: image.workspacePath,
     filename: image.name,
     mimeType: image.mimeType || 'image/*',
@@ -54,17 +84,8 @@ export default function ChatAttachmentPreview({ attachments, onRemove }: ChatAtt
       <div className="flex items-end gap-2">
         {attachments.map((attachment) => attachment.kind === 'image' ? (
           <div key={attachment.id} className="relative inline-block shrink-0">
-            {attachment.previewUrl ? (
-              <img
-                src={attachment.previewUrl}
-                alt={attachment.name}
-                onClick={() => openImage(attachment)}
-                className={`h-12 w-12 rounded-lg object-cover transition-transform ${
-                  attachment.status === 'uploading' ? 'opacity-50' : ''
-                } ${attachment.status === 'error' ? 'border-2 border-error' : ''} ${
-                  attachment.source === 'quote' ? 'ring-2 ring-blue-400' : ''
-                } ${attachment.status === 'ready' ? 'cursor-pointer hover:scale-105 hover:shadow-md' : ''}`}
-              />
+            {attachment.previewUrl || attachment.originalUrl ? (
+              <AttachmentThumbnail attachment={attachment} onClick={() => openImage(attachment)} />
             ) : (
               <div className="h-12 w-12 rounded-lg bg-active flex items-center justify-center text-error">!</div>
             )}

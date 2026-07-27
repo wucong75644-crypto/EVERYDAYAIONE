@@ -173,6 +173,22 @@ dry-run 只允许输出：
 任何 `LEGACY_IMPORT_*` 错误都停止推进。修复旧数据前必须另开任务并重新审计，
 不得在迁移脚本里放宽校验。
 
+### 7.1 本次生产故障导入专项门禁
+
+本次已知旧 `org_configs` 基线为 13 条、企业级 `configuration_entries` 基线为 0。
+执行窗口必须由两人分别复核以下只读计数，任何不一致都停止，不允许手写、复制或
+打印明文、密文、envelope：
+
+- dry-run 前旧 `org_configs` 总数仍为 13。
+- `configuration_entries` 中 `scope_kind='organization'` 的记录数为 0。
+- dry-run 的企业数、目标条目数和 `config_keys` 与 preflight 汇总一致。
+- `erp.app_credentials` 只在 app_key/app_secret 同时 ready 时出现。
+- `erp.token_pair` 只在 access_token/refresh_token 同时 ready 时出现。
+- dry-run 和 apply 使用同一个已登记 `IMPORT_ID`。
+
+若生产事实已不再满足“13/0”基线，必须冻结本次导入并重新调查数据变化，不能把
+文档基线改成现场数字后继续执行。
+
 ## 8. 双人确认
 
 执行人与复核人共同确认：
@@ -265,6 +281,11 @@ SELECT COUNT(DISTINCT import_id) AS import_batch_count
 - D：`import_batch_count=1`。
 - 旧表行数和内容未变化。
 - 所有业务服务仍健康，且没有切换到新 Bundle。
+- 对每个已导入企业调用正式状态能力时，只核对 `config_key`、`configured`、
+  `version`、`source`：ERP 两个原子键均应为 `configured=true`、
+  `version=1`、`source=organization`。
+- ERP 运行验证只能通过正式 `erp.runtime` Bundle 的成功/失败结果判断，不得查询或
+  输出解密后的凭证。
 
 验证结果只记录计数、键名、版本和状态，不记录普通配置值、密文或 envelope。
 

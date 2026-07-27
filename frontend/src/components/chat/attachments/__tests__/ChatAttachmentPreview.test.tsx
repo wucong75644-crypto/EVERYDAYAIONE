@@ -71,4 +71,16 @@ describe('ChatAttachmentPreview', () => {
       expect.objectContaining({ url: 'https://cdn.example.com/product.png' }),
     ], 0);
   });
+
+  it('缩略图失败后回退原图，原图失败后才显示占位', () => {
+    render(<ChatAttachmentPreview attachments={[workspaceImage()]} onRemove={vi.fn()} />);
+
+    fireEvent.error(screen.getByRole('img', { name: 'product.png' }));
+    expect(screen.getByRole('img', { name: 'product.png' })).toHaveAttribute(
+      'src', 'https://cdn.example.com/product.png',
+    );
+    fireEvent.error(screen.getByRole('img', { name: 'product.png' }));
+    expect(screen.queryByRole('img', { name: 'product.png' })).not.toBeInTheDocument();
+    expect(screen.getByText('!')).toBeInTheDocument();
+  });
 });

@@ -32,8 +32,6 @@ MIGRATION_IDENTITIES = (
     "163_conversation_actor_worker_discovery.sql",
     "164_actor_task_execution_capabilities.sql",
 )
-
-
 def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -77,6 +75,7 @@ def test_preflight_requires_admin_url_before_psql(tmp_path: Path) -> None:
 
 
 def test_public_preflight_entry_orchestrates_both_domains() -> None:
+    assert 'preflight/tenant-role-capabilities.sh"' in WRAPPER
     assert 'preflight/tenant-core.sh"' in WRAPPER
     assert 'preflight/worker-control.sh"' in WRAPPER
 
@@ -128,6 +127,7 @@ def test_preflight_pins_complete_migration_ledger_contract(
     assert "TENANT_CUTOVER_MIGRATION_INVALID" in sql
     assert "TENANT_CUTOVER_MIGRATION_PARTIAL" in sql
     assert "applied_migrations NOT IN (0, cardinality(expected_migrations))" in sql
+    assert "TENANT_CUTOVER_RUNTIME_LEGACY_ENQUEUE_UNEXPECTED" not in sql
 
 
 def test_preflight_pins_current_162_checksum(tmp_path: Path) -> None:
@@ -207,6 +207,17 @@ def test_preflight_checks_actor_worker_capability_boundary(
     assert "close_generation_turn(uuid,uuid,uuid)" in sql
 
 
+def test_preflight_checks_admin_asset_capability_boundary(
+    tmp_path: Path,
+) -> None:
+    env, sql_path = _environment(tmp_path)
+
+    assert _run(env).returncode == 0
+
+    sql = sql_path.read_text(encoding="utf-8")
+    assert "preflight/admin-user-assets-capability.sh" in WRAPPER
+
+
 def test_preflight_checks_roles_owners_and_object_boundaries(
     tmp_path: Path,
 ) -> None:
@@ -226,9 +237,6 @@ def test_preflight_checks_roles_owners_and_object_boundaries(
         assert role in sql
     for contract in (
         "TENANT_CUTOVER_PREFLIGHT_REQUIRES_ADMIN",
-        "TENANT_CUTOVER_ROLE_SET_PARTIAL",
-        "TENANT_CUTOVER_ROLE_CONTRACT_INVALID",
-        "TENANT_CUTOVER_OWNER_MEMBERSHIP_INVALID",
         "TENANT_CUTOVER_TABLE_MISSING",
         "TENANT_CUTOVER_FUNCTION_MISSING",
         "TENANT_CUTOVER_OWNERSHIP_PARTIAL",

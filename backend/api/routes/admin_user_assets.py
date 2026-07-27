@@ -42,7 +42,7 @@ async def list_user_assets(
     cursor_value = _decode_cursor(cursor) if cursor else None
     created_at, asset_id = cursor_value or (None, None)
     result = db.rpc(
-        "list_admin_user_assets",
+        "list_platform_admin_user_assets",
         {
             "p_actor_user_id": uid,
             "p_source_type": source_type,

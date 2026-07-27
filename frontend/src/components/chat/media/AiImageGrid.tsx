@@ -9,7 +9,7 @@
  * 每个 cell 独立渲染：成功图片 / 加载中占位符 / 失败占位符
  */
 
-import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { memo, useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
 import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
@@ -17,17 +17,11 @@ import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
-import { toThumbnailImageUrl } from '../../../utils/imageUrlRules';
+import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
 import styles from '../menus/shared.module.css';
 import type { ContentPart } from '../../../stores/useMessageStore';
 import type { ImageAsset, ImagePart } from '../../../types/message';
-
-/** 图片加载重试配置 */
-const IMAGE_RETRY_CONFIG = {
-  maxRetries: 3,
-  baseDelay: 1000,
-};
 
 interface AiImageGridProps {
   /** 内容数组（包含已完成和未完成的图片） */
@@ -95,56 +89,20 @@ const GridCell = memo(function GridCell({
 }: GridCellProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const [loadError, setLoadError] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { ref: lazyRef, inView } = useInView({
     triggerOnce: true,
     threshold: 0.1,
     rootMargin: '100px',
   });
-  const displayImageUrl = useMemo(
-    () => imageAsset?.thumbnailUrl || toThumbnailImageUrl(imageAsset?.originalUrl, Math.ceil(placeholderSize.width)),
-    [imageAsset, placeholderSize.width],
-  );
-
-  const imageUrlWithRetry = useMemo(() => {
-    if (!displayImageUrl) return null;
-    if (retryCount === 0) return displayImageUrl;
-    const separator = displayImageUrl.includes('?') ? '&' : '?';
-    return `${displayImageUrl}${separator}_retry=${retryCount}`;
-  }, [displayImageUrl, retryCount]);
+  const thumbnail = useThumbnailFallback(imageAsset?.thumbnailUrl, imageAsset?.originalUrl);
 
   useEffect(() => {
     if (imageAsset?.originalUrl) {
       setImageLoaded(false);
-      setRetryCount(0);
-      setLoadError(false);
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
     }
   }, [imageAsset?.originalUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    };
-  }, []);
-
-  const handleImageError = useCallback(() => {
-    if (retryCount < IMAGE_RETRY_CONFIG.maxRetries) {
-      const delay = IMAGE_RETRY_CONFIG.baseDelay * Math.pow(2, retryCount);
-      retryTimerRef.current = setTimeout(() => {
-        setRetryCount((prev) => prev + 1);
-      }, delay);
-    } else {
-      setLoadError(true);
-    }
-  }, [retryCount]);
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -189,12 +147,12 @@ const GridCell = memo(function GridCell({
   }
 
   // 加载失败
-  if (loadError) {
+  if (thumbnail.failed) {
     return (
       <FailedMediaPlaceholder
         type="image"
         aspectRatio={aspectRatio}
-        onRetry={() => { setLoadError(false); setRetryCount(0); }}
+        onRetry={thumbnail.reset}
         retryLabel="重试加载"
       />
     );
@@ -217,11 +175,11 @@ const GridCell = memo(function GridCell({
     >
       {shouldRender && (
         <img
-          src={imageUrlWithRetry || displayImageUrl}
+          src={thumbnail.src}
           alt={`生成的图片 ${index + 1}`}
           className={`w-full h-full object-cover block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
           onLoad={() => { setImageLoaded(true); onMediaLoaded?.(); }}
-          onError={handleImageError}
+          onError={thumbnail.onError}
         />
       )}
 

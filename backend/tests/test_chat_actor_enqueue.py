@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -14,71 +13,38 @@ from services.handlers.chat.actor_enqueue import enqueue_web_chat
 from services.handlers.chat_handler import ChatHandler
 
 
-class _RPC:
-    def __init__(self, value):
-        self.value = value
-
-    def execute(self):
-        return SimpleNamespace(data=self.value)
-
-
-class _DB:
-    def __init__(self):
-        self.calls = []
-
-    def rpc(self, name, params):
-        self.calls.append((name, params))
-        return _RPC({
-            "task_id": params["p_task_data"].obj["id"],
-            "already_enqueued": False,
-        })
-
-
 class _Handler:
     def __init__(self):
-        self.db = _DB()
+        self.db = MagicMock()
         self.org_id = "org-1"
 
-    def _extract_text_content(self, content):
-        return content[0].text
 
-    def _serialize_params(self, params):
-        return dict(params)
-
-    def _build_task_data(self, **kwargs):
-        return {
-            "id": "random",
-            "external_task_id": kwargs["task_id"],
-            "client_task_id": kwargs["metadata"].client_task_id,
-            "conversation_id": kwargs["conversation_id"],
-            "user_id": kwargs["user_id"],
-            "org_id": self.org_id,
-            "type": kwargs["task_type"],
-            "status": kwargs["status"],
-            "model_id": kwargs["model_id"],
-            "assistant_message_id": kwargs["message_id"],
-            "placeholder_message_id": kwargs["message_id"],
-            "request_params": kwargs["request_params"],
-        }
-
-
-def _metadata():
-    return TaskMetadata(
+def _metadata(*, prepared: bool = False):
+    metadata = TaskMetadata(
         client_task_id="client-1",
         input_message_id="input-1",
         turn_id="turn-1",
         execution_mode="serial",
     )
+    if prepared:
+        metadata.context_anchor = ContextAnchor(
+            task_id="prepared-task", conversation_id="conv-1", turn_id="turn-1",
+            input_message_id="input-1", base_revision=2,
+            through_message_id=None, org_id="org-1",
+        )
+    return metadata
 
 
 @pytest.mark.asyncio
-async def test_chat_handler_start_always_enqueues_actor(monkeypatch):
-    enqueue = AsyncMock(return_value="client-1")
+async def test_chat_handler_start_only_wakes_prepared_task(monkeypatch):
+    publish = AsyncMock()
     monkeypatch.setattr(
-        "services.handlers.chat.actor_enqueue.enqueue_web_chat",
-        enqueue,
+        "services.handlers.chat.actor_enqueue._publish_wakeup",
+        publish,
     )
-    handler = ChatHandler(SimpleNamespace())
+    db = MagicMock()
+    handler = ChatHandler(db)
+    handler.org_id = "org-1"
 
     result = await handler.start(
         message_id="message-1",
@@ -86,72 +52,46 @@ async def test_chat_handler_start_always_enqueues_actor(monkeypatch):
         user_id="user-1",
         content=[TextPart(text="你好")],
         params={"model": "model-1"},
-        metadata=_metadata(),
+        metadata=_metadata(prepared=True),
     )
 
     assert result == "client-1"
-    enqueue.assert_awaited_once()
-    assert enqueue.await_args.kwargs["external_task_id"] == "client-1"
+    db.rpc.assert_not_called()
+    publish.assert_awaited_once_with("conv-1", "org-1")
 
 
 @pytest.mark.asyncio
-async def test_enqueue_uses_stable_internal_id_and_jsonb(monkeypatch):
+async def test_prepared_task_only_wakes_actor_without_rpc(monkeypatch):
     publish = AsyncMock()
     monkeypatch.setattr(
-        "services.handlers.chat.actor_enqueue._publish_wakeup",
-        publish,
+        "services.handlers.chat.actor_enqueue._publish_wakeup", publish,
     )
-    first = _Handler()
-    second = _Handler()
+    handler = _Handler()
+    metadata = _metadata(prepared=True)
 
-    result_one = await enqueue_web_chat(
-        handler=first,
-        external_task_id="client-1",
-        message_id="message-1",
-        conversation_id="conv-1",
-        user_id="user-1",
-        model_id="model-1",
-        content=[TextPart(text="你好")],
-        params={"permission_mode": "auto"},
-        metadata=_metadata(),
-    )
     await enqueue_web_chat(
-        handler=second,
-        external_task_id="client-1",
-        message_id="message-1",
-        conversation_id="conv-1",
-        user_id="user-1",
-        model_id="model-1",
-        content=[TextPart(text="你好")],
-        params={},
-        metadata=_metadata(),
+        handler=handler, external_task_id="client-1", message_id="message-1",
+        conversation_id="conv-1", user_id="user-1", model_id="model-1",
+        content=[TextPart(text="你好")], params={}, metadata=metadata,
     )
 
-    first_params = first.db.calls[0][1]
-    second_params = second.db.calls[0][1]
-    assert result_one == "client-1"
-    assert first_params["p_task_data"].obj["id"] == (
-        second_params["p_task_data"].obj["id"]
-    )
-    assert first_params["p_delivery_context"].obj == {
-        "actor": True,
-        "channel": "web",
-    }
-    assert publish.await_count == 2
-    publish.assert_awaited_with("conv-1", "org-1")
+    handler.db.rpc.assert_not_called()
+    publish.assert_awaited_once_with("conv-1", "org-1")
 
 
 @pytest.mark.asyncio
-async def test_enqueue_reuses_prepared_context_anchor_task_id(monkeypatch):
+async def test_prepared_personal_task_uses_personal_wakeup_scope(monkeypatch):
+    publish = AsyncMock()
     monkeypatch.setattr(
-        "services.handlers.chat.actor_enqueue._publish_wakeup", AsyncMock(),
+        "services.handlers.chat.actor_enqueue._publish_wakeup", publish,
     )
     handler = _Handler()
-    metadata = _metadata()
+    handler.org_id = None
+    metadata = _metadata(prepared=True)
     metadata.context_anchor = ContextAnchor(
         task_id="prepared-task", conversation_id="conv-1", turn_id="turn-1",
         input_message_id="input-1", base_revision=2,
-        through_message_id=None, org_id="org-1",
+        through_message_id=None, org_id=None,
     )
 
     await enqueue_web_chat(
@@ -160,12 +100,13 @@ async def test_enqueue_reuses_prepared_context_anchor_task_id(monkeypatch):
         content=[TextPart(text="你好")], params={}, metadata=metadata,
     )
 
-    assert handler.db.calls[0][1]["p_task_data"].obj["id"] == "prepared-task"
+    handler.db.rpc.assert_not_called()
+    publish.assert_awaited_once_with("conv-1", None)
 
 
 @pytest.mark.asyncio
 async def test_enqueue_requires_turn_anchor():
-    metadata = _metadata()
+    metadata = _metadata(prepared=True)
     metadata.input_message_id = None
 
     with pytest.raises(RuntimeError, match="ACTOR_ENQUEUE_TURN_ANCHOR_MISSING"):
@@ -179,4 +120,22 @@ async def test_enqueue_requires_turn_anchor():
             content=[TextPart(text="test")],
             params={},
             metadata=metadata,
+        )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_requires_prepared_context_anchor():
+    with pytest.raises(
+        RuntimeError, match="ACTOR_PREPARED_CONTEXT_ANCHOR_MISSING",
+    ):
+        await enqueue_web_chat(
+            handler=_Handler(),
+            external_task_id="task",
+            message_id="message",
+            conversation_id="conv",
+            user_id="user",
+            model_id="model",
+            content=[TextPart(text="test")],
+            params={},
+            metadata=_metadata(),
         )

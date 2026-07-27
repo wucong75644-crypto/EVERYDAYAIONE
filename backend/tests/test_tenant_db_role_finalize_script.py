@@ -85,6 +85,7 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "'197_runtime_knowledge_tenant_boundary.sql'" in sql
     assert "'198_worker_model_scoring_capabilities.sql'" in sql
     assert "'202_knowledge_audit_force_rls_completion.sql'" in sql
+    assert "'209_platform_admin_user_assets_capability.sql'" in sql
     for migration_number in range(165, 186):
         assert f"'{migration_number}_" in sql
     assert "'159_org_erp_token_capabilities.sql'" not in sql
@@ -103,6 +104,7 @@ def test_finalize_checks_migrations_owners_and_sessions(
     assert "WORKER_CONTROL_DIRECT_TABLE_ACCESS_PRESENT" in sql
     assert "WORKER_CONTROL_RUNTIME_ACL_INVALID" in sql
     assert "WEB_RUNTIME_CORE_ACL_INVALID" in sql
+    assert "preflight/admin-user-assets-capability.sh" in SCRIPT.read_text()
     assert "preflight/knowledge-audit-completion.sh" in SCRIPT.read_text()
     assert "AS required(table_name, privilege_name)" in sql
     assert "AS forbidden(table_name, privilege_name)" in sql

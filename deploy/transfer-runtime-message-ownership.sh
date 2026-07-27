@@ -52,6 +52,7 @@ DECLARE
         'atomic_refund_credits(uuid,text)',
         'partial_refund_credits(uuid,integer,text,uuid)',
         'increment_message_count(uuid,uuid)',
+        'list_admin_user_assets(uuid,text,text,integer,timestamp with time zone,uuid)',
         'record_user_activity(uuid,text,uuid,text,text,text,timestamp with time zone,jsonb)',
         'resolve_wecom_conversation(uuid,text,text,text,uuid)',
         'stage_wecom_attachment_v2(uuid,uuid,text,uuid,text,jsonb,text,text,text,text,text,bigint,jsonb,uuid)',

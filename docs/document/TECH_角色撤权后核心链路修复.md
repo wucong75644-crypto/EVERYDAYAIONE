@@ -64,6 +64,23 @@ runtime，未覆盖携带可信用户/企业 Scope 的 Worker。
 已临时清空 `OSS_CDN_DOMAIN`，使新上传对象使用阿里云 OSS 官方 HTTPS 域名；旧
 CDN URL 不会因此自动改写。
 
+### 2.7 Web Chat 重复入队与治理契约
+
+Web Chat 已通过 `prepare_generation(...)` 原子创建 Turn、输入/输出消息和 pending
+task，随后 `ChatHandler.start()` 仍调用旧 `enqueue_generation_turn(...)`。Runtime
+撤销该旧能力后，HTTP 因重复入队失败，但 Actor 仍可能消费 prepare 已提交的 task，
+形成前端显示发送失败、稍后又出现回复的不一致。
+
+prepare 返回权威 `context_anchor` 时，Web 链路只发布 Redis best-effort wakeup，不再
+创建或入队 task；Redis 失败不改变已持久化任务的 HTTP 成功语义。旧 enqueue 函数
+继续保留给 `enqueue_wecom_generation_turn(...)` 等合法数据库链路，Runtime 不得
+恢复其 EXECUTE 权限。
+
+`list_all_governed_organizations()` 与
+`search_governed_user_by_phone(TEXT)` 不接收 `p_org_id`，必须由
+`OrgScopedDB` 明确按无 org 参数 RPC 透传。`get_governed_actor_authority(UUID)`
+返回 `TEXT`，成员任职路由必须直接按字符串解析 owner/admin 权限。
+
 ## 3. 技术方案
 
 ### 3.1 数据库迁移
@@ -86,7 +103,10 @@ CDN URL 不会因此自动改写。
 - `core/db_scope.py`：RPC 参数中的 dict/list 使用 `Jsonb`，同步和异步共享同一
   构造函数。
 - `core/org_scoped_db.py`：将两个 actor 自解析零参数治理能力加入明确的 no-org
-  集合，其他 RPC 保持原有注参行为。
+  集合，并覆盖两个全局治理查询的真实无 org 参数签名；其他 RPC 保持原有注参行为。
+- `services/handlers/chat/actor_enqueue.py`：权威 prepared anchor 只触发 Actor
+  best-effort wakeup；缺少 prepared anchor 时明确失败，不回退旧原子 enqueue。
+- `api/routes/org_members_assignments.py`：按治理 RPC 的 `TEXT` 返回契约解析权限。
 - `services/org/config_resolver.py`：企业 AI Key 改走 `SecretBundleResolver` 固定
   Provider Bundle；调用它的 Adapter Factory 无需增加新职责，散客继续读取平台
   `.env` 默认值。
@@ -140,6 +160,13 @@ CDN URL 不会因此自动改写。
 - Provider Webhook 没有用户 Actor，必须使用 actorless Worker Scope；查询、claim、
   图片/视频结算、重试和指标能力必须在部署门禁中完整存在，不能回退为 Runtime
   连接或底表访问。
+- Web prepare 重放只允许重复唤醒同一 conversation，不得改变 request_id、
+  client_task_id、内部 task_id、Turn 或消息锚点。
+- 个人空间 wakeup 使用 `personal` scope，企业空间使用对应 `org_id`；二者都不得
+  调用旧 Runtime enqueue。
+- `tenant-role-capabilities.sh` 是隔离角色集合与 Runtime 旧 enqueue 撤权的权威
+  preflight；总入口在 `tenant-core.sh` 前执行它。完整角色集才查询 Runtime 权限，
+  角色集为零时跳过，角色只存在一部分时失败关闭。
 
 ## 5. 计划修改位置
 

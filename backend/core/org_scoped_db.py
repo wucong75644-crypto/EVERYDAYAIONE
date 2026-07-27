@@ -71,6 +71,8 @@ class OrgScopedDB:
         "get_ai_openrouter_bundle",
         "list_actor_organizations",
         "list_actor_pending_invitations",
+        "list_all_governed_organizations",
+        "search_governed_user_by_phone",
     })
 
     def rpc(self, fn_name: str, params: dict | None = None) -> Any:
