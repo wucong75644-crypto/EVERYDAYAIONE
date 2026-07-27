@@ -106,6 +106,16 @@
 | `claim_agent_action_reconciliation` / `resolve_agent_action_reconciliation` | `backend/migrations/218_04_agent_runtime_action_reconciliation.sql` | 对accepted/unknown Action签发独立reconcile lease并禁止普通重复dispatch |
 | `cancel_agent_run` | `backend/migrations/218_04_agent_runtime_action_reconciliation.sql` | 按统一锁序原子取消活动Model/Action工作、清零blocker并保持原Scope授权 |
 
+### Agent Runtime AR-13 Command Claim 与 Coordinator 骨架
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `CommandClaim` / `CommandClaimReceipt` / `CommandClaimRepositoryPort` | `backend/services/agent/runtime/ports/command_claim.py` | 定义pending Command领取、readback、续租和终态的typed应用边界 |
+| `PostgresCommandClaimRepository` | `backend/services/agent/runtime/infrastructure/postgres/command_claim_repository.py` | 通过Worker Scoped窄RPC执行Command claim，并在提交响应不确定时按worker与command精确readback |
+| `RuntimeCoordinator` | `backend/services/agent/runtime/application/coordinator.py` | 以PostgreSQL周期扫描和可选wakeup驱动单Command处理、续租、lease-lost取消与终态提交 |
+| `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql` | 按Session→Command→CommandClaim→Run锁序领取pending Command、原子确保唯一Run并关闭历史非执行状态 |
+| `renew_agent_command_claim` / `finish_agent_command_claim` | `backend/migrations/219_02_agent_runtime_command_claim_lifecycle.sql` | 以CommandClaim fencing token续租或提交completed/failed终态，旧token和过期lease失败关闭 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |

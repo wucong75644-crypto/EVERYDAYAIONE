@@ -1,5 +1,22 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 Agent Runtime AR-13 Command Claim 与 Coordinator 骨架 — 已集成，尚未接入生产 Owner
+
+- migration `219_01`、`219_02`、`219_02a`新增CommandClaim事实和Worker窄RPC；
+  PostgreSQL是pending Command、lease、fencing、唯一Run与恢复的正确性事实源，Redis
+  仅可作为wakeup提示。
+- scanner按Session→Command→CommandClaim→Run锁序使用`SKIP LOCKED`，原子创建或返回
+  `UNIQUE(command_id)` Run；提交响应丢失可readback，进程重启从过期lease恢复。
+- Run创建、cancel-before-start和attempts exhausted均与Runtime Event/Projection
+  Outbox同事务；canonical request hash兼容既有`create_agent_run`，有效Run lease不会
+  被过期或耗尽的CommandClaim覆盖。
+- 历史queued Run可安全接管；running有效lease、waiting/paused和终态Run不会重新执行；
+  错误Run关联失败关闭。Coordinator当前仅为扫描、续租和恢复骨架，不执行完整
+  Model/Action循环。
+- 生产Chat Owner仍为Conversation Actor；未接Web/WeCom ingress、Projection、
+  Executor/Policy或生产startup。AR-14、AR-15、AR-16必须在本任务集成后再启动，
+  AR-17门禁完成前不得切换Owner。
+
 ## 2026-07-27 Agent Runtime AR-12 Action 持久化与 Tool 终态 — 已集成，尚未接入生产 Owner
 
 - migration 218新增Action、ActionAttempt、ActionResult与claim batch事实，全部启用

@@ -64,6 +64,19 @@ Agent Runtime AR-12 Action持久化与Tool终态：
 - 当前仍为additive基础设施，生产Chat Owner继续为Conversation Actor；Coordinator、
   Executor/Policy正式接线及生产切换属于后续AR任务。
 
+Agent Runtime AR-13 Command Claim与Coordinator骨架：
+- `docs/document/TECH_AGENT_RUNTIME_AR-13CommandClaim与Coordinator骨架.md`：冻结
+  pending Command扫描、CommandClaim lease/fencing、唯一Run、恢复与终态兼容合同。
+- `backend/services/agent/runtime/ports/command_claim.py`、
+  `infrastructure/postgres/command_claim_repository.py`及
+  `application/coordinator.py`：提供typed CommandClaim Port、Worker Scoped RPC adapter
+  和PostgreSQL优先的Coordinator扫描/续租骨架。
+- `backend/migrations/219_01_agent_runtime_command_claim_foundation.sql`至
+  `219_02a_agent_runtime_command_claim_terminal_compatibility.sql`：建立CommandClaim
+  事实、窄RPC、Run原子创建、Event/Outbox、历史Run状态兼容与有效lease保护。
+- 当前仍未接入生产startup/ingress或完整Model/Action循环；Conversation Actor继续是
+  生产Chat Owner，AR-14～AR-16完成前不得切换。
+
 定时任务委托执行边界：
 - `docs/document/TECH_定时任务委托执行边界.md`：定义 Worker 控制面、Runtime 工具面、
   任务级数据库身份和无人值守工具白名单。
