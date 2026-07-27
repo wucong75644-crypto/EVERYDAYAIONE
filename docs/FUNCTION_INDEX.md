@@ -372,6 +372,7 @@
 | `GenerationLifecycle.prepare` | `backend/services/generation_lifecycle.py` | 序列化白名单 payload 并调用统一准备 RPC；声明的关系冲突脱敏映射为 HTTP 409，未知故障保留 5xx | request/operation/scope/turn/messages/tasks | GenerationPreparation |
 | `GenerationLifecycle.attach_external_task` | `backend/services/generation_lifecycle.py` | 校验并附加供应商 task，返回类型化幂等结果 | task/external/transaction/scope/provider | ExternalTaskAttachment |
 | `GenerationLifecycle.fail_prepared_task` | `backend/services/generation_lifecycle.py` | 将 preparing task 置为失败并记录业务上下文 | task/reason/error/scope/user | PreparedTaskFailure |
+| `GenerationLifecycle.refund_prepared_credits` | `backend/services/generation_lifecycle.py` | 通过 Runtime 租户能力退回供应商明确拒绝前锁定的积分并严格校验 RPC 结果 | task/transaction/scope/user | PreparedCreditRefund |
 | `prepare_and_start_ecom_generation` | `backend/api/routes/message_ecom_preparation.py` | 识别电商策划/生图阶段，并在 Handler 前原子准备消息与本地任务 | db/handler/conversation/scope/request/body | GenerateResponse |
 | `EcomImageHandler.prepare_phase2_params` | `backend/services/handlers/ecom_image_handler.py` | 按营销图/白底图规则构造电商批次 prompt 和参考图 | content, params | list |
 | `classify_candidate` | `backend/scripts/backfill_generation_turns.py` | 按 task/reply/同 Turn/唯一前序输入的权威顺序分类历史 assistant 关系 | candidate row | RepairPlan |
@@ -1832,6 +1833,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `prepare_generation` / `_prepare_generation_owner`（迁移 206 版本） | `backend/migrations/206_runtime_generation_capability_facade.sql` | 公开 DEFINER 门面校验 Runtime session、Actor 与企业 Scope 后调用 owner 私有原子准备实现；helper 和任务序列不再向 Runtime 暴露 |
 | `attach_generation_external_task` / `_attach_generation_external_task_owner`（迁移 207 版本） | `backend/migrations/207_runtime_media_submission_capabilities.sql` | 校验 Runtime session、Actor、企业及 task 归属后原子绑定 Provider 外部任务与积分事务 |
 | `fail_prepared_generation_task` / `_fail_prepared_generation_task_owner`（迁移 207 版本） | `backend/migrations/207_runtime_media_submission_capabilities.sql` | 同一安全边界内终止尚未提交到 Provider 的媒体任务并完成既有失败处理 |
+| `refund_prepared_generation_credits`（迁移 218） | `backend/migrations/218_runtime_prepared_credit_refund.sql` | 校验 Runtime session、Actor、企业、preparing 媒体 task 及交易绑定后调用 owner 原子退款；不开放底层通用退款能力 |
 | `verify_capabilities` / `verify_worker_capabilities` / `main` | `backend/scripts/verify_runtime_generation_capabilities.py` | 部署重启前核验 Runtime 准备/提交门面与私有对象边界，并用 Worker 连接核验完整媒体结算能力链 |
 | `start_web_database_runtime` | `backend/services/web_database_runtime.py` | 初始化 Web 数据库 Runtime，先验证 Registry 契约，再启动恢复和知识库后台任务 |
 | `get_scoped_db` | `backend/api/deps.py` | 复用已验证 OrgContext，组合事务级 DatabaseScope 与应用层 OrgScopedDB |

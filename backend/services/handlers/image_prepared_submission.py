@@ -42,7 +42,7 @@ async def submit_prepared_image_task(
                 f"error={error}"
             )
             raise
-        _refund_safely(handler, transaction_id, local_task_id)
+        _refund_safely(handler, transaction_id, local_task_id, user_id)
         retry_result = await _retry_prepared_image_task(
             handler=handler, local_task_id=local_task_id, prompt=prompt,
             model_id=model_id, error=str(error), params=params,
@@ -117,7 +117,7 @@ async def _retry_prepared_image_task(
                     f"error={retry_error}"
                 )
                 raise
-            _refund_safely(handler, retry_tx, local_task_id)
+            _refund_safely(handler, retry_tx, local_task_id, user_id)
             context.add_failure(retry_model, str(retry_error))
             continue
         finally:
@@ -159,15 +159,26 @@ def _attach_success(
     )
 
 
-def _refund_safely(handler: Any, transaction_id: str, task_id: str) -> None:
+def _refund_safely(
+    handler: Any,
+    transaction_id: str,
+    task_id: str,
+    user_id: str,
+) -> None:
     try:
-        handler._refund_credits(transaction_id)
+        GenerationLifecycle(handler.db).refund_prepared_credits(
+            task_id=task_id,
+            transaction_id=transaction_id,
+            org_id=handler.org_id,
+            user_id=user_id,
+        )
     except Exception as refund_error:
         logger.critical(
             "Image refund failed | "
             f"task_id={task_id} | transaction_id={transaction_id} | "
             f"error={refund_error}"
         )
+        raise
 
 
 def _is_submission_unknown(error: Exception) -> bool:

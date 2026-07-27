@@ -74,7 +74,7 @@ async def submit_prepared_video_task(
         if _is_submission_unknown(error):
             _mark_submission_unknown(handler, local_task_id, error)
             raise
-        _refund_safely(handler, transaction_id, local_task_id)
+        _refund_safely(handler, transaction_id, local_task_id, user_id)
         retry_result = await _retry_prepared_video_task(
             handler=handler, local_task_id=local_task_id, user_id=user_id,
             params=params, settings=settings, generate_kwargs=kwargs,
@@ -130,7 +130,7 @@ async def _retry_prepared_video_task(
             if _is_submission_unknown(error):
                 _mark_submission_unknown(handler, local_task_id, error)
                 raise
-            _refund_safely(handler, transaction_id, local_task_id)
+            _refund_safely(handler, transaction_id, local_task_id, user_id)
             context.add_failure(retry_model, str(error))
             continue
         finally:
@@ -178,14 +178,25 @@ def _attach_success(
     )
 
 
-def _refund_safely(handler: Any, transaction_id: str, task_id: str) -> None:
+def _refund_safely(
+    handler: Any,
+    transaction_id: str,
+    task_id: str,
+    user_id: str,
+) -> None:
     try:
-        handler._refund_credits(transaction_id)
+        GenerationLifecycle(handler.db).refund_prepared_credits(
+            task_id=task_id,
+            transaction_id=transaction_id,
+            org_id=handler.org_id,
+            user_id=user_id,
+        )
     except Exception as error:
         logger.critical(
             f"Video refund failed | task_id={task_id} | "
             f"transaction_id={transaction_id} | error={error}"
         )
+        raise
 
 
 def _is_submission_unknown(error: Exception) -> bool:

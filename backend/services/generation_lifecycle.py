@@ -103,6 +103,14 @@ class PreparedTaskFailure:
     already_failed: bool
 
 
+@dataclass(frozen=True)
+class PreparedCreditRefund:
+    """供应商拒绝前已锁定积分的退款结果。"""
+
+    refunded: bool
+    reason: str | None
+
+
 class GenerationLifecycle:
     """调用统一生成生命周期 RPC，并校验所有返回值。"""
 
@@ -231,6 +239,45 @@ class GenerationLifecycle:
             f"terminal_reason={terminal_reason} | already_failed={result[1]}"
         )
         return PreparedTaskFailure(result[0], result[1])
+
+    def refund_prepared_credits(
+        self,
+        *,
+        task_id: str,
+        transaction_id: str,
+        org_id: str | None,
+        user_id: str,
+    ) -> PreparedCreditRefund:
+        """通过 Runtime 租户能力退回未提交供应商的积分交易。"""
+        response = self._db.rpc(
+            "refund_prepared_generation_credits",
+            {
+                "p_task_id": task_id,
+                "p_transaction_id": transaction_id,
+                "p_org_id": org_id,
+            },
+        ).execute()
+        data = response.data if response else None
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("refunded"), bool)
+            or (
+                not data["refunded"]
+                and not isinstance(data.get("reason"), str)
+            )
+        ):
+            raise RuntimeError("GENERATION_REFUND_RESULT_INVALID")
+        result = PreparedCreditRefund(
+            refunded=data["refunded"],
+            reason=data.get("reason"),
+        )
+        logger.info(
+            "prepared_generation_credits_refund | "
+            f"task_id={task_id} | transaction_id={transaction_id} | "
+            f"org_id={org_id} | user_id={user_id} | "
+            f"refunded={result.refunded} | reason={result.reason}"
+        )
+        return result
 
 
 def _parse_transition_result(

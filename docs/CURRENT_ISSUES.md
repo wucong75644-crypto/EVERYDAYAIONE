@@ -1,5 +1,20 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 Runtime 媒体提交拒绝退款权限错误 — 本地修复，待生产补偿与部署
+
+- 生产图片供应商明确拒绝路径出现两笔 `atomic_refund_credits` EXECUTE 权限错误；
+  同一失败分别由 CreditMixin 和图片提交层告警，不代表重复扣款。
+- 根因是角色隔离已正确封闭底层原子退款，但图片和视频 prepared submission 仍从
+  Runtime 直接调用该函数；迁移 186 只覆盖 Worker 媒体终态结算，未覆盖提交前拒绝
+  和智能重试退款。
+- 迁移 218 新增 Runtime 专用 DEFINER 门面，校验 Actor、企业、preparing 媒体 task
+  及 transaction 的 task/user/org 绑定后才执行原子退款；图片与视频调用已统一切换，
+  timeout/submission unknown 仍保持锁定，不会误退款；退款自身失败时立即失败关闭，
+  不再继续锁第二笔积分或把 task 提前置为失败。
+- 本地定向测试已通过。交易 `7e5e1cdb-119c-40be-aec4-e3a23156fac1` 与
+  `eda942d1-84e7-4fd4-bf9e-fb4614644277` 尚需在生产核验 pending 状态、退款历史及
+  task 绑定后，由迁移角色幂等补偿；完成前状态为“代码已修复，生产尚未恢复”。
+
 ## 2026-07-27 Agent Runtime AR-11 ModelAttempt 与唯一计费 — 已集成，尚未接入生产 Owner
 
 - 迁移 `217_01`～`217_04` 新增持久 ModelAttempt、唯一积分预留/结算、unknown

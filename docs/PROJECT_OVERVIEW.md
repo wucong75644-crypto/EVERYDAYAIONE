@@ -81,13 +81,16 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `backend/api/routes/message_chat_preparation.py`：Web Chat 原子准备 payload、权威上下文锚点与 Actor 启动编排。
 - `backend/api/routes/message_image_preparation.py`：Web 普通图片批次的原子准备、占位消息响应和 Handler 启动编排。
 - `backend/api/routes/message_ecom_preparation.py`：Web 电商图 Phase 1 策划任务与 Phase 2 生图批次的原子准备编排。
-- `backend/services/handlers/image_prepared_submission.py`：已准备图片 task 的积分锁定、供应商提交、跨模型重试和最终 attach。
+- `backend/services/handlers/image_prepared_submission.py`：已准备图片 task 的积分锁定、供应商提交、
+  租户范围拒绝退款、跨模型重试和最终 attach。
 - `backend/api/routes/message_video_preparation.py`：Web 视频消息、Turn 和本地 preparing task 的原子准备编排。
-- `backend/services/handlers/video_prepared_submission.py`：视频参数计费解析、稳定 task 积分绑定、跨模型重试和最终 attach。
+- `backend/services/handlers/video_prepared_submission.py`：视频参数计费解析、稳定 task 积分绑定、
+  租户范围拒绝退款、跨模型重试和最终 attach。
 - `backend/tests/test_unified_generation_prepare_migration.py`：固定迁移 scope、锁顺序、显式 Retry 锚点、
   task 状态转换、权限和回滚门禁。
-- `backend/services/generation_lifecycle.py`：统一生成准备、供应商 task 附加和 preparing 失败的类型化
-  Python 边界，严格解析数据库权威锚点并输出完整业务上下文日志。
+- `backend/services/generation_lifecycle.py`：统一生成准备、供应商 task 附加、preparing 失败和
+  提交拒绝退款的类型化 Python 边界，严格解析数据库权威结果并输出完整业务上下文日志；
+  退款失败向上失败关闭，避免继续重试扣费或提前终结 task。
 - `backend/tests/test_generation_lifecycle.py`：覆盖 payload 序列化、RPC 非法返回、task ID 完整性、
   ContextAnchor 与 attach/fail 幂等结果。
 - `backend/tests/test_message_image_preparation.py`：覆盖图片批次先落库、稳定 task 积分绑定、明确失败、提交结果未知和跨模型重试。
@@ -244,6 +247,9 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `backend/migrations/207_runtime_media_submission_capabilities.sql`：把媒体外部任务
   attach/fail 提交转换收口为校验 Runtime Actor、企业和任务归属的安全门面；Provider
   Webhook 使用专用 actorless Worker 数据库连接完成媒体回调结算。
+- `backend/migrations/218_runtime_prepared_credit_refund.sql`：为图片/视频供应商明确拒绝及
+  智能重试提供 Runtime 专用退款门面；绑定 Actor、企业、preparing task 与积分交易后
+  才调用 owner 底层原子退款，不向 Runtime 开放通用退款能力。
 - `backend/migrations/208_worker_periodic_monitor_completion.sql`：为双 Uvicorn
   进程内的模型评分与企微巡检增加数据库周期租约；企微巡检改用无 PII 的 Worker
   健康快照，模型评分过滤非性能信号并修复 32 位 Knowledge 哈希与重复审核提交。

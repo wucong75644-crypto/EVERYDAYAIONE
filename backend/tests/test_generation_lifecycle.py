@@ -215,6 +215,45 @@ def test_fail_prepared_task_returns_typed_result() -> None:
     assert db.calls[0][0] == "fail_prepared_generation_task"
 
 
+def test_refund_prepared_credits_returns_typed_result() -> None:
+    db = _DB([{"refunded": True, "amount": 5}])
+    lifecycle = GenerationLifecycle(db)
+
+    result = lifecycle.refund_prepared_credits(
+        task_id="task-1",
+        transaction_id="transaction-1",
+        org_id="org-1",
+        user_id="user-1",
+    )
+
+    assert result.refunded is True
+    assert result.reason is None
+    assert db.calls == [(
+        "refund_prepared_generation_credits",
+        {
+            "p_task_id": "task-1",
+            "p_transaction_id": "transaction-1",
+            "p_org_id": "org-1",
+        },
+    )]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [None, {}, {"refunded": "true"}, {"refunded": False}],
+)
+def test_refund_prepared_credits_rejects_invalid_rpc_result(data) -> None:
+    lifecycle = GenerationLifecycle(_DB([data]))
+
+    with pytest.raises(RuntimeError, match="GENERATION_REFUND_RESULT_INVALID"):
+        lifecycle.refund_prepared_credits(
+            task_id="task-1",
+            transaction_id="transaction-1",
+            org_id="org-1",
+            user_id="user-1",
+        )
+
+
 @pytest.mark.parametrize("method", ["attach", "fail"])
 def test_transition_rejects_invalid_rpc_result(method) -> None:
     lifecycle = GenerationLifecycle(_DB([{"task_id": "task-1"}]))

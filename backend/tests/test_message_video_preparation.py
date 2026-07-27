@@ -23,6 +23,7 @@ class _Lifecycle:
         self.calls = []
         self.attach_calls = []
         self.fail_calls = []
+        self.refund_calls = []
         self.__class__.instances.append(self)
 
     def prepare(self, **kwargs):
@@ -40,6 +41,9 @@ class _Lifecycle:
 
     def fail_prepared_task(self, **kwargs):
         self.fail_calls.append(kwargs)
+
+    def refund_prepared_credits(self, **kwargs):
+        self.refund_calls.append(kwargs)
 
 
 class _Handler:
@@ -230,8 +234,40 @@ async def test_video_rejection_refunds_and_fails_prepared_task(monkeypatch):
             params={}, settings=_settings(), client_task_id="client-task",
         )
 
-    handler._refund_credits.assert_called_once_with("tx-1")
+    refund = _Lifecycle.instances[-2].refund_calls[0]
+    assert refund["task_id"] == "local-1"
+    assert refund["transaction_id"] == "tx-1"
     assert _Lifecycle.instances[-1].fail_calls[0]["task_id"] == "local-1"
+
+
+@pytest.mark.asyncio
+async def test_video_refund_failure_stops_before_retry_or_task_failure(monkeypatch):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "services.handlers.video_prepared_submission.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        _Lifecycle,
+        "refund_prepared_credits",
+        lambda self, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("refund denied")
+        ),
+    )
+    monkeypatch.setattr(
+        "services.adapters.factory.create_video_adapter",
+        lambda model: _Adapter(error=ValueError("rejected")),
+    )
+    handler = _Handler()
+
+    with pytest.raises(RuntimeError, match="refund denied"):
+        await submit_prepared_video_task(
+            handler=handler, local_task_id="local-1", user_id="user-1",
+            params={"_is_smart_mode": True}, settings=_settings(),
+            client_task_id="client-task",
+        )
+
+    assert handler._lock_credits.call_count == 1
+    assert all(not instance.fail_calls for instance in _Lifecycle.instances)
 
 
 @pytest.mark.asyncio
@@ -252,7 +288,7 @@ async def test_video_timeout_keeps_preparing_and_locked(monkeypatch):
             params={}, settings=_settings(), client_task_id="client-task",
         )
 
-    handler._refund_credits.assert_not_called()
+    assert all(not instance.refund_calls for instance in _Lifecycle.instances)
     assert all(not instance.fail_calls for instance in _Lifecycle.instances)
     update = handler.db.table.return_value.update.call_args.args[0]
     assert update["terminal_reason"] == "submission_unknown"
@@ -298,7 +334,12 @@ async def test_video_smart_retry_reuses_task_and_attaches_actual_model(monkeypat
     assert [call.kwargs["task_id"] for call in handler._lock_credits.call_args_list] == [
         "local-1", "local-1",
     ]
-    handler._refund_credits.assert_called_once_with("tx-1")
+    refund = next(
+        call
+        for instance in _Lifecycle.instances
+        for call in instance.refund_calls
+    )
+    assert refund["transaction_id"] == "tx-1"
     attach = _Lifecycle.instances[-1].attach_calls[0]
     assert attach["actual_model_id"] == "retry-model"
     assert attach["credit_transaction_id"] == "tx-2"
