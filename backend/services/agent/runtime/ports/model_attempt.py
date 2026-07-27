@@ -75,6 +75,9 @@ class ModelAttemptSnapshot:
     retry_disposition: ModelRetryDisposition
     response_hash: str | None
     late_outcome: ModelLateOutcome | None
+    late_actual_credits: int | None
+    late_ambiguity_evidence: Mapping[str, object] | None
+    terminal_error_code: str | None
     state_version: int
 
 

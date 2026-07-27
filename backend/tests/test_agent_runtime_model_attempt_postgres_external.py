@@ -285,6 +285,31 @@ def model_state_snapshot(
     )[0]
 
 
+def system_state_snapshot(
+    facts: dict[str, object], attempt_id: object,
+) -> tuple[object, ...]:
+    ledger = execute(
+        """
+        SELECT users.credits,
+               COUNT(history.id),
+               COALESCE(SUM(history.change_amount),0),
+               COALESCE(
+                 jsonb_agg(to_jsonb(transaction) ORDER BY transaction.id)
+                   FILTER (WHERE transaction.id IS NOT NULL),
+                 '[]'::jsonb
+               )
+          FROM users
+          LEFT JOIN credits_history history ON history.user_id=users.id
+          LEFT JOIN credit_transactions transaction
+            ON transaction.user_id=users.id
+         WHERE users.id=%s
+         GROUP BY users.credits
+        """,
+        (facts["user_id"],),
+    )[0]
+    return (*model_state_snapshot(facts, attempt_id), *ledger)
+
+
 def test_unknown_is_non_terminal_and_fencing_fails_closed() -> None:
     ensure_database()
     facts = create_running_step()

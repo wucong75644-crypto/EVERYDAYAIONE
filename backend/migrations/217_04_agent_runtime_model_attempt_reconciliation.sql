@@ -201,6 +201,12 @@ BEGIN
         RETURN jsonb_build_object('outcome', 'terminal_conflict');
     END IF;
     v_key := 'adjustment:' || p_attempt_id::TEXT || ':' || p_response_hash;
+    IF v_settlement.status = 'adjustment_pending'
+       AND (v_settlement.adjustment_key IS DISTINCT FROM v_key
+            OR v_settlement.adjusted_credits IS DISTINCT FROM p_actual_credits
+            OR v_settlement.response_hash IS DISTINCT FROM p_response_hash) THEN
+        RETURN jsonb_build_object('outcome', 'receipt_conflict');
+    END IF;
     IF v_settlement.status = 'adjusted' THEN
         IF v_settlement.adjustment_key IS DISTINCT FROM v_key
            OR v_settlement.adjusted_credits <> p_actual_credits THEN
@@ -270,8 +276,14 @@ BEGIN
         RETURN jsonb_build_object('outcome', 'terminal_conflict');
     END IF;
     IF v_attempt.late_outcome IS NOT NULL THEN
-        IF v_attempt.provider_request_id IS DISTINCT FROM p_provider_request_id
-           OR v_attempt.response_hash IS DISTINCT FROM p_response_hash THEN
+        IF v_attempt.late_outcome IS DISTINCT FROM p_late_outcome
+           OR v_attempt.provider_request_id IS DISTINCT FROM p_provider_request_id
+           OR v_attempt.response_hash IS DISTINCT FROM p_response_hash
+           OR v_attempt.response_receipt IS DISTINCT FROM p_response_receipt
+           OR v_attempt.usage IS DISTINCT FROM p_usage
+           OR v_attempt.late_ambiguity_evidence IS DISTINCT FROM
+              p_ambiguity_evidence
+           OR v_attempt.late_actual_credits IS DISTINCT FROM p_actual_credits THEN
             RETURN jsonb_build_object('outcome', 'receipt_conflict');
         END IF;
         IF p_late_outcome = 'completed' THEN
@@ -301,6 +313,8 @@ BEGIN
            response_receipt = p_response_receipt, response_hash = p_response_hash,
            usage = p_usage, ambiguity_evidence = ambiguity_evidence || p_ambiguity_evidence,
            late_outcome = p_late_outcome, late_receipt_recorded_at = clock_timestamp(),
+           late_actual_credits = p_actual_credits,
+           late_ambiguity_evidence = p_ambiguity_evidence,
            retry_disposition = 'forbidden', state_version = state_version + 1,
            updated_at = clock_timestamp() WHERE id = p_attempt_id;
     IF p_late_outcome = 'completed' THEN

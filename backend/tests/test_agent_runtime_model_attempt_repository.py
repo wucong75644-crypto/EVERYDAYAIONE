@@ -8,6 +8,7 @@ from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.agent.runtime.domain.errors import PersistenceContractError
 from services.agent.runtime.infrastructure.postgres.model_attempt_parsing import (
     parse_attempt_receipt,
+    parse_attempt_snapshot,
 )
 from services.agent.runtime.infrastructure.postgres.model_attempt_repository import (
     PostgresModelAttemptRepository,
@@ -51,6 +52,36 @@ def test_unknown_rpc_outcome_fails_closed() -> None:
             {"outcome": "future_success"},
             {ModelAttemptOutcome.PREPARED},
         )
+
+
+def test_snapshot_parses_persisted_replay_identity() -> None:
+    snapshot = parse_attempt_snapshot({
+        "outcome": "found",
+        "attempt": {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "model_step_id": "22222222-2222-2222-2222-222222222222",
+            "run_id": "33333333-3333-3333-3333-333333333333",
+            "attempt_number": 1,
+            "request_hash": "a" * 64,
+            "idempotency_key": "attempt-key",
+            "provider": "provider",
+            "provider_request_id": "provider-request",
+            "status": "cancelled",
+            "dispatch_phase": "response_started",
+            "retry_disposition": "forbidden",
+            "response_hash": "b" * 64,
+            "late_outcome": "completed",
+            "late_actual_credits": 100,
+            "late_ambiguity_evidence": {"readback": "completed"},
+            "terminal_error_code": None,
+            "state_version": 3,
+        },
+    })
+
+    assert snapshot is not None
+    assert snapshot.late_actual_credits == 100
+    assert snapshot.late_ambiguity_evidence == {"readback": "completed"}
+    assert snapshot.terminal_error_code is None
 
 
 @pytest.mark.asyncio

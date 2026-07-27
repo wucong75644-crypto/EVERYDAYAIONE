@@ -79,5 +79,34 @@ def test_adjustment_helper_is_never_granted() -> None:
     )
 
 
+def test_terminal_and_late_replay_identities_are_persisted_and_compared() -> None:
+    for column in (
+        "late_actual_credits",
+        "late_ambiguity_evidence",
+        "terminal_error_code",
+    ):
+        assert column in PATHS[0].read_text()
+    for fact in (
+        "v_attempt.response_receipt IS DISTINCT FROM p_response_receipt",
+        "v_attempt.usage IS DISTINCT FROM p_usage",
+        "v_step.stop_reason IS DISTINCT FROM p_stop_reason",
+        "v_settlement.settled_credits IS DISTINCT FROM p_actual_credits",
+        "v_attempt.terminal_error_code IS DISTINCT FROM p_error_code",
+        "v_attempt.retry_disposition IS DISTINCT FROM p_retry_disposition",
+    ):
+        assert fact in PATHS[1].read_text()
+    reconciliation = PATHS[3].read_text()
+    for fact in (
+        "v_settlement.adjustment_key IS DISTINCT FROM v_key",
+        "v_settlement.adjusted_credits IS DISTINCT FROM p_actual_credits",
+        "v_attempt.late_outcome IS DISTINCT FROM p_late_outcome",
+        "v_attempt.response_receipt IS DISTINCT FROM p_response_receipt",
+        "v_attempt.late_ambiguity_evidence IS DISTINCT FROM",
+        "p_ambiguity_evidence",
+        "v_attempt.late_actual_credits IS DISTINCT FROM p_actual_credits",
+    ):
+        assert fact in reconciliation
+
+
 def test_migration_files_stay_under_structure_limit() -> None:
     assert all(len(path.read_text().splitlines()) <= 500 for path in PATHS)

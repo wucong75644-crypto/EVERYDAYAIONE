@@ -60,14 +60,22 @@ late outcome，不复活任何生命周期实体、不发布用户终态、不�
 - settle：确认 lock，按实际用量返还差额并写入既有 ledger。
 - cancel/failure：通过既有原子退款 RPC 释放预留。
 - late adjustment：只能由 `record_late_model_receipt` 调用 owner-only 内部
-  adjustment helper；取消后收到完成证据时按 adjustment key 扣费，相同 receipt
-  重放返回 `already_adjusted`，pending adjustment 可安全重试，不同 receipt
-  返回冲突。
+  adjustment helper；迟到 receipt 的 outcome、provider request id、response
+  receipt/hash、usage、ambiguity evidence 与 actual credits 共同构成完整重放身份。
+  adjustment pending 还要求稳定 adjustment key、金额与 response hash 全部一致，
+  才能在余额恢复后继续；任一事实不同均返回冲突且零 mutation。
 - unknown 本身不结算。
 
 每次余额变化与对应 `credits_history` 位于同一数据库事务；reservation 记录负向
 `conversation_cost`，settlement/cancel 记录合法退款类型，late adjustment 记录
 负向 `conversation_cost`。幂等重放不新增 history。
+
+普通 terminal 重放同样按持久事实判等：completed 比较 response
+receipt/hash、stop/provider reason、usage、actual credits、effective attempt 与
+settlement key/amount；failed 比较 error code、retry disposition 和 ModelStep
+终态事实。只有完全一致才返回 `already_completed` / `already_failed`，否则
+`terminal_conflict` 且 Attempt、ModelStep、settlement、event/outbox 和余额流水
+均不变化。
 
 ## 迁移与回滚
 

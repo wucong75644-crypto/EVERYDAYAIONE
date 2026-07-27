@@ -167,6 +167,15 @@ def parse_attempt_snapshot(value: object) -> ModelAttemptSnapshot | None:
         ),
         response_hash=_text(row, "response_hash", optional=True),
         late_outcome=late,
+        late_actual_credits=_integer(
+            row, "late_actual_credits", optional=True,
+        ),
+        late_ambiguity_evidence=_json_object(
+            row, "late_ambiguity_evidence",
+        ),
+        terminal_error_code=_text(
+            row, "terminal_error_code", optional=True,
+        ),
         state_version=_integer(row, "state_version"),
     )
 
@@ -184,3 +193,14 @@ def _enum(
         raise PersistenceContractError(
             f"{field}: unknown {enum_type.__name__}"
         ) from error
+
+
+def _json_object(
+    row: Mapping[str, Any], field: str,
+) -> Mapping[str, object] | None:
+    value = row.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise PersistenceContractError(f"{field}: object required")
+    return value

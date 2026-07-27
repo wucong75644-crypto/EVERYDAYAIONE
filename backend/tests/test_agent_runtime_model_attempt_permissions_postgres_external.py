@@ -17,6 +17,7 @@ from tests.test_agent_runtime_model_attempt_postgres_external import (
     model_state_snapshot,
     prepare_attempt,
     runtime,
+    system_state_snapshot,
     worker,
 )
 
@@ -162,6 +163,72 @@ def test_reconcile_failed_is_atomic() -> None:
     )[0]
     assert resolved["outcome"] == "failed"
     assert statuses == ("failed", "failed")
+
+
+def test_failed_identical_replay_is_idempotent() -> None:
+    ensure_database()
+    facts = create_running_step()
+    attempt = prepare_attempt(facts)
+    values = (
+        attempt["attempt_id"], facts["run_token"],
+        attempt["state_version"], facts["step_version"],
+        "a" * 64, "provider_rejected", "forbidden",
+    )
+    first = decoded(
+        worker(
+            "SELECT fail_model_attempt_and_step(%s,%s,%s,%s,%s,%s,%s);",
+            values,
+        )[-1][0]
+    )
+    before = system_state_snapshot(facts, attempt["attempt_id"])
+    replay = decoded(
+        worker(
+            "SELECT fail_model_attempt_and_step(%s,%s,%s,%s,%s,%s,%s);",
+            (
+                attempt["attempt_id"], facts["run_token"],
+                attempt["state_version"] + 1, facts["step_version"] + 1,
+                "a" * 64, "provider_rejected", "forbidden",
+            ),
+        )[-1][0]
+    )
+    assert first["outcome"] == "failed"
+    assert replay["outcome"] == "already_failed"
+    assert system_state_snapshot(facts, attempt["attempt_id"]) == before
+
+
+@pytest.mark.parametrize(
+    ("error_code", "retry_disposition"),
+    (("different_error", "forbidden"), ("provider_rejected", "retry_safe")),
+)
+def test_failed_conflicting_replay_has_zero_mutation(
+    error_code: str, retry_disposition: str,
+) -> None:
+    ensure_database()
+    facts = create_running_step()
+    attempt = prepare_attempt(facts)
+    decoded(
+        worker(
+            "SELECT fail_model_attempt_and_step(%s,%s,%s,%s,%s,%s,%s);",
+            (
+                attempt["attempt_id"], facts["run_token"],
+                attempt["state_version"], facts["step_version"],
+                "a" * 64, "provider_rejected", "forbidden",
+            ),
+        )[-1][0]
+    )
+    before = system_state_snapshot(facts, attempt["attempt_id"])
+    conflict = decoded(
+        worker(
+            "SELECT fail_model_attempt_and_step(%s,%s,%s,%s,%s,%s,%s);",
+            (
+                attempt["attempt_id"], facts["run_token"],
+                attempt["state_version"] + 1, facts["step_version"] + 1,
+                "a" * 64, error_code, retry_disposition,
+            ),
+        )[-1][0]
+    )
+    assert conflict["outcome"] == "terminal_conflict"
+    assert system_state_snapshot(facts, attempt["attempt_id"]) == before
 
 
 @pytest.mark.parametrize(

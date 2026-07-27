@@ -13,6 +13,7 @@ from tests.test_agent_runtime_model_attempt_postgres_external import (
     ensure_database,
     execute,
     prepare_attempt,
+    system_state_snapshot,
     worker,
 )
 
@@ -174,7 +175,8 @@ def test_settle_zero_and_replay_preserve_ledger_conservation() -> None:
         worker(
             """
             SELECT complete_model_attempt_without_actions(
-             %s,%s,%s,%s,%s,'{}',%s,'final',NULL,'{}',0
+             %s,%s,%s,%s,%s,'{}',%s,'final',NULL,
+             '{"input_tokens":2,"output_tokens":3}',0
             );
             """,
             (
@@ -191,6 +193,43 @@ def test_settle_zero_and_replay_preserve_ledger_conservation() -> None:
     assert replay["outcome"] == "already_completed"
     assert ledger(facts) == before_replay
     assert before_replay == (100, 0, 100, 2, "refunded", "settled", 20, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("usage", "actual", "stop_reason", "provider_reason"),
+    (
+        ('{"input_tokens":9,"output_tokens":3}', 12, "final", None),
+        ('{"input_tokens":2,"output_tokens":3}', 11, "final", None),
+        ('{"input_tokens":2,"output_tokens":3}', 12, "structured_final", None),
+        ('{"input_tokens":2,"output_tokens":3}', 12, "final", "different"),
+    ),
+)
+def test_completed_conflicting_replay_has_zero_mutation(
+    usage: str, actual: int, stop_reason: str,
+    provider_reason: str | None,
+) -> None:
+    ensure_database()
+    facts = create_running_step()
+    attempt = prepare_attempt(facts, reserve=20)
+    complete_attempt(facts, attempt, 12)
+    before = system_state_snapshot(facts, attempt["attempt_id"])
+    conflict = decoded(
+        worker(
+            """
+            SELECT complete_model_attempt_without_actions(
+             %s,%s,%s,%s,%s,'{}',%s,%s,%s,%s,%s
+            );
+            """,
+            (
+                attempt["attempt_id"], facts["run_token"],
+                attempt["state_version"] + 2, facts["step_version"] + 1,
+                "a" * 64, "b" * 64, stop_reason, provider_reason,
+                usage, actual,
+            ),
+        )[-1][0]
+    )
+    assert conflict["outcome"] == "terminal_conflict"
+    assert system_state_snapshot(facts, attempt["attempt_id"]) == before
 
 
 def test_cancel_and_replay_preserve_ledger_conservation() -> None:
@@ -252,7 +291,7 @@ def test_unknown_does_not_settle_and_late_replay_does_not_double_charge() -> Non
 
 def test_pending_late_adjustment_can_be_replayed_safely() -> None:
     ensure_database()
-    facts = create_running_step()
+    facts = create_running_step(credits=99)
     attempt = prepare_attempt(facts, reserve=20)
     decoded(
         worker(
@@ -268,25 +307,43 @@ def test_pending_late_adjustment_can_be_replayed_safely() -> None:
         json.dumps({"input_tokens": 30}),
         "completed",
         json.dumps({"readback": "completed"}),
-        101,
+        100,
     )
     pending = decoded(
         worker("SELECT record_late_model_receipt(%s,%s,%s,%s,%s,%s,%s,%s);", values)[-1][0]
     )
     assert pending["outcome"] == "adjustment_pending"
     assert ledger(facts) == (
-        100, 0, 100, 2, "refunded", "adjustment_pending", 20, 0, 101,
+        99, 0, 99, 2, "refunded", "adjustment_pending", 20, 0, 100,
     )
+    before_conflicts = system_state_snapshot(facts, attempt["attempt_id"])
+    different_amount = values[:-1] + (7,)
+    amount_conflict = decoded(
+        worker(
+            "SELECT record_late_model_receipt(%s,%s,%s,%s,%s,%s,%s,%s);",
+            different_amount,
+        )[-1][0]
+    )
+    different_hash = values[:3] + ("f" * 64,) + values[4:]
+    hash_conflict = decoded(
+        worker(
+            "SELECT record_late_model_receipt(%s,%s,%s,%s,%s,%s,%s,%s);",
+            different_hash,
+        )[-1][0]
+    )
+    assert amount_conflict["outcome"] == "receipt_conflict"
+    assert hash_conflict["outcome"] == "receipt_conflict"
+    assert system_state_snapshot(facts, attempt["attempt_id"]) == before_conflicts
     execute(
         """
         WITH changed AS (
-            UPDATE users SET credits=credits+10,updated_at=now()
+            UPDATE users SET credits=credits+1,updated_at=now()
              WHERE id=%s RETURNING credits
         )
         INSERT INTO credits_history(
             user_id,change_type,change_amount,balance_after,description,org_id
         )
-        SELECT %s,'admin_adjust',10,credits,'AR-11 test top-up',NULL FROM changed
+        SELECT %s,'admin_adjust',1,credits,'AR-11 test top-up',NULL FROM changed
         """,
         (facts["user_id"], facts["user_id"]),
     )
@@ -301,5 +358,66 @@ def test_pending_late_adjustment_can_be_replayed_safely() -> None:
     assert repeated["settlement_outcome"] == "already_adjusted"
     assert ledger(facts) == after_adjustment
     assert after_adjustment == (
-        9, -91, 9, 4, "refunded", "adjusted", 20, 0, 101,
+        0, -99, 0, 4, "refunded", "adjusted", 20, 0, 100,
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "provider_id", "response_hash", "receipt", "usage",
+        "outcome", "evidence", "actual",
+    ),
+    (
+        ("provider-changed", "c" * 64, '{"receipt":"late"}',
+         '{"input_tokens":3}', "completed", '{"readback":"completed"}', 7),
+        ("provider-replay", "d" * 64, '{"receipt":"late"}',
+         '{"input_tokens":3}', "completed", '{"readback":"completed"}', 7),
+        ("provider-replay", "c" * 64, '{"receipt":"changed"}', '{"input_tokens":3}',
+         "completed", '{"readback":"completed"}', 7),
+        ("provider-replay", "c" * 64, '{"receipt":"late"}', '{"input_tokens":4}',
+         "completed", '{"readback":"completed"}', 7),
+        ("provider-replay", "c" * 64, '{"receipt":"late"}', '{"input_tokens":3}',
+         "failed", '{"readback":"completed"}', 7),
+        ("provider-replay", "c" * 64, '{"receipt":"late"}', '{"input_tokens":3}',
+         "completed", '{"readback":"different"}', 7),
+        ("provider-replay", "c" * 64, '{"receipt":"late"}', '{"input_tokens":3}',
+         "completed", '{"readback":"completed"}', 8),
+    ),
+)
+def test_late_receipt_conflicting_replay_has_zero_mutation(
+    provider_id: str, response_hash: str, receipt: str, usage: str,
+    outcome: str, evidence: str, actual: int,
+) -> None:
+    ensure_database()
+    facts = create_running_step()
+    attempt = prepare_attempt(facts, reserve=20)
+    decoded(
+        worker(
+            "SELECT cancel_agent_run(%s,%s,'late-identity');",
+            (facts["run_id"], facts["run_version"]),
+        )[-1][0]
+    )
+    original = (
+        attempt["attempt_id"], "provider-replay", '{"receipt":"late"}',
+        "c" * 64, '{"input_tokens":3}', "completed",
+        '{"readback":"completed"}', 7,
+    )
+    decoded(
+        worker(
+            "SELECT record_late_model_receipt(%s,%s,%s,%s,%s,%s,%s,%s);",
+            original,
+        )[-1][0]
+    )
+    before = system_state_snapshot(facts, attempt["attempt_id"])
+    replay = (
+        attempt["attempt_id"], provider_id, receipt, response_hash, usage,
+        outcome, evidence, actual,
+    )
+    conflict = decoded(
+        worker(
+            "SELECT record_late_model_receipt(%s,%s,%s,%s,%s,%s,%s,%s);",
+            replay,
+        )[-1][0]
+    )
+    assert conflict["outcome"] == "receipt_conflict"
+    assert system_state_snapshot(facts, attempt["attempt_id"]) == before

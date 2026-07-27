@@ -195,7 +195,8 @@ CREATE FUNCTION _complete_model_attempt_without_actions(
 SET search_path = pg_catalog, public AS $$
 DECLARE
     v_attempt agent_model_attempts%ROWTYPE; v_step agent_model_steps%ROWTYPE;
-    v_run agent_runs%ROWTYPE; v_event JSONB; v_settlement JSONB;
+    v_run agent_runs%ROWTYPE; v_event JSONB; v_settlement_result JSONB;
+    v_settlement agent_model_credit_settlements%ROWTYPE;
 BEGIN
     PERFORM _assert_agent_runtime_actor(TRUE);
     SELECT * INTO v_attempt FROM agent_model_attempts WHERE id = p_attempt_id;
@@ -215,7 +216,28 @@ BEGIN
         RETURN jsonb_build_object('outcome', 'run_cancelled_use_late_receipt');
     END IF;
     IF v_attempt.status = 'completed' THEN
-        IF v_attempt.response_hash IS DISTINCT FROM p_response_hash THEN
+        SELECT * INTO v_settlement FROM agent_model_credit_settlements
+         WHERE model_step_id = v_step.id FOR UPDATE;
+        IF v_attempt.request_hash IS DISTINCT FROM p_request_hash
+           OR v_attempt.response_hash IS DISTINCT FROM p_response_hash
+           OR v_attempt.response_receipt IS DISTINCT FROM p_response_receipt
+           OR v_attempt.usage IS DISTINCT FROM p_usage
+           OR v_step.status IS DISTINCT FROM 'completed'
+           OR v_step.response_receipt IS DISTINCT FROM p_response_receipt
+           OR v_step.stop_reason IS DISTINCT FROM p_stop_reason
+           OR v_step.provider_stop_reason IS DISTINCT FROM p_provider_stop_reason
+           OR v_step.input_tokens IS DISTINCT FROM
+              COALESCE((p_usage->>'input_tokens')::BIGINT, 0)
+           OR v_step.output_tokens IS DISTINCT FROM
+              COALESCE((p_usage->>'output_tokens')::BIGINT, 0)
+           OR v_step.reasoning_tokens IS DISTINCT FROM
+              COALESCE((p_usage->>'reasoning_tokens')::BIGINT, 0)
+           OR v_settlement.status IS DISTINCT FROM 'settled'
+           OR v_settlement.effective_attempt_id IS DISTINCT FROM v_attempt.id
+           OR v_settlement.settlement_key IS DISTINCT FROM
+              v_step.id::TEXT || ':' || v_attempt.id::TEXT
+           OR v_settlement.settled_credits IS DISTINCT FROM p_actual_credits
+           OR v_settlement.response_hash IS DISTINCT FROM p_response_hash THEN
             RETURN jsonb_build_object('outcome', 'terminal_conflict');
         END IF;
         RETURN jsonb_build_object('outcome', 'already_completed');
@@ -241,11 +263,11 @@ BEGIN
        OR jsonb_typeof(p_usage) IS DISTINCT FROM 'object' THEN
         RETURN jsonb_build_object('outcome', 'stale_version');
     END IF;
-    v_settlement := _settle_agent_model_credits(
+    v_settlement_result := _settle_agent_model_credits(
         v_step, v_attempt.id, p_response_hash, p_actual_credits
     );
-    IF v_settlement->>'outcome' = 'terminal_conflict' THEN
-        RETURN v_settlement;
+    IF v_settlement_result->>'outcome' = 'terminal_conflict' THEN
+        RETURN v_settlement_result;
     END IF;
     UPDATE agent_model_attempts SET status = 'completed',
            response_receipt = p_response_receipt, response_hash = p_response_hash,
@@ -272,7 +294,7 @@ BEGIN
         'outcome', 'completed', 'attempt_id', v_attempt.id,
         'model_step_id', v_step.id, 'state_version', v_attempt.state_version,
         'event_sequence', v_event->'event_sequence',
-        'settlement_outcome', v_settlement->'outcome'
+        'settlement_outcome', v_settlement_result->'outcome'
     );
 END;
 $$;
@@ -300,6 +322,22 @@ BEGIN
         RETURN jsonb_build_object('outcome', 'run_cancelled_use_late_receipt');
     END IF;
     IF v_attempt.status = 'failed' THEN
+        IF v_attempt.request_hash IS DISTINCT FROM p_request_hash
+           OR v_attempt.terminal_error_code IS DISTINCT FROM p_error_code
+           OR v_attempt.retry_disposition IS DISTINCT FROM p_retry_disposition
+           OR (
+               p_retry_disposition = 'forbidden'
+               AND (v_step.status IS DISTINCT FROM 'failed'
+                    OR v_step.stop_reason IS DISTINCT FROM 'provider_error'
+                    OR v_step.terminal_reason IS DISTINCT FROM LEFT(p_error_code, 200))
+           )
+           OR (
+               p_retry_disposition = 'retry_safe'
+               AND (v_step.status IS DISTINCT FROM 'running'
+                    OR v_step.state_version IS DISTINCT FROM p_expected_step_version)
+           ) THEN
+            RETURN jsonb_build_object('outcome', 'terminal_conflict');
+        END IF;
         RETURN jsonb_build_object('outcome', 'already_failed');
     END IF;
     IF v_run.status <> 'running'
@@ -329,6 +367,7 @@ BEGIN
     END IF;
     UPDATE agent_model_attempts SET status = 'failed',
            retry_disposition = p_retry_disposition,
+           terminal_error_code = p_error_code,
            state_version = state_version + 1, completed_at = clock_timestamp(),
            updated_at = clock_timestamp() WHERE id = v_attempt.id
     RETURNING * INTO v_attempt;

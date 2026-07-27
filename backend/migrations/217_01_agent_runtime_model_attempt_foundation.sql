@@ -44,7 +44,15 @@ CREATE TABLE agent_model_attempts (
         jsonb_typeof(usage) = 'object' AND pg_column_size(usage) <= 262144
     ),
     late_outcome TEXT CHECK (late_outcome IN ('completed', 'failed')),
+    late_actual_credits INTEGER CHECK (late_actual_credits >= 0),
+    late_ambiguity_evidence JSONB CHECK (
+        late_ambiguity_evidence IS NULL OR (
+            jsonb_typeof(late_ambiguity_evidence) = 'object'
+            AND pg_column_size(late_ambiguity_evidence) <= 262144
+        )
+    ),
     late_receipt_recorded_at TIMESTAMPTZ,
+    terminal_error_code TEXT,
     worker_id TEXT NOT NULL CHECK (length(worker_id) BETWEEN 1 AND 200),
     execution_token UUID NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
@@ -60,8 +68,15 @@ CREATE TABLE agent_model_attempts (
         OR (status IN ('prepared', 'dispatching', 'unknown') AND completed_at IS NULL)
     ),
     CHECK (
-        (late_outcome IS NULL AND late_receipt_recorded_at IS NULL)
-        OR (late_outcome IS NOT NULL AND late_receipt_recorded_at IS NOT NULL)
+        (late_outcome IS NULL AND late_receipt_recorded_at IS NULL
+         AND late_actual_credits IS NULL AND late_ambiguity_evidence IS NULL)
+        OR (late_outcome IS NOT NULL AND late_receipt_recorded_at IS NOT NULL
+            AND late_actual_credits IS NOT NULL
+            AND late_ambiguity_evidence IS NOT NULL)
+    ),
+    CHECK (
+        (status = 'failed' AND NULLIF(BTRIM(terminal_error_code), '') IS NOT NULL)
+        OR (status <> 'failed' AND terminal_error_code IS NULL)
     )
 );
 
