@@ -27,7 +27,9 @@ from services.agent.runtime.ports.model import (
 
 AdapterFactory = Callable[..., Any]
 
-_SAFE_RETRY_STATUS_CODES = frozenset({429, 502, 503, 504})
+_SAFE_RETRY_STATUS_CODES = frozenset({429})
+_UNKNOWN_HTTP_STATUS_CODES = frozenset({502, 503, 504})
+_DEFAULT_CLOSE_TIMEOUT_SECONDS = 5.0
 
 
 class ExistingProviderModelAdapter:
@@ -39,10 +41,14 @@ class ExistingProviderModelAdapter:
         org_id: str | None = None,
         db: Any = None,
         adapter_factory: AdapterFactory | None = None,
+        close_timeout_seconds: float = _DEFAULT_CLOSE_TIMEOUT_SECONDS,
     ) -> None:
+        if close_timeout_seconds <= 0:
+            raise ValueError("close_timeout_seconds must be positive")
         self._org_id = org_id
         self._db = db
         self._adapter_factory = adapter_factory
+        self._close_timeout_seconds = close_timeout_seconds
 
     async def complete(self, request: ModelStepRequest) -> ModelStepResult:
         validate_request_projection(request)
@@ -123,24 +129,12 @@ class ExistingProviderModelAdapter:
                         attempts=tuple(attempts),
                     ) from error
                 status_code = _status_code(error)
-                can_retry = (
-                    not accumulator.response_started
-                    and status_code in _SAFE_RETRY_STATUS_CODES
-                    and attempt_number
-                    < request.options.max_provider_attempts
-                )
-                attempt = ProviderAttemptReceipt(
+                attempt, can_retry = _provider_error_attempt(
                     attempt_number=attempt_number,
                     provider=provider,
-                    outcome=_attempt_error_outcome(
-                        can_retry=can_retry,
-                        response_started=accumulator.response_started,
-                    ),
                     status_code=status_code,
                     response_started=accumulator.response_started,
-                    retry_reason=(
-                        f"http_{status_code}" if can_retry else None
-                    ),
+                    max_attempts=request.options.max_provider_attempts,
                 )
                 attempts.append(attempt)
                 if can_retry:
@@ -148,7 +142,10 @@ class ExistingProviderModelAdapter:
                 self._log_error(request, provider, "provider_error", error)
                 error_type = (
                     ModelCallUnknownError
-                    if accumulator.response_started
+                    if (
+                        accumulator.response_started
+                        or status_code in _UNKNOWN_HTTP_STATUS_CODES
+                    )
                     else ModelProviderError
                 )
                 raise error_type(
@@ -160,8 +157,47 @@ class ExistingProviderModelAdapter:
                 ) from error
             finally:
                 if adapter is not None:
-                    await adapter.close()
+                    await self._close_adapter(
+                        adapter,
+                        request=request,
+                        provider=provider,
+                    )
         raise AssertionError("provider attempt loop did not terminate")
+
+    async def _close_adapter(
+        self,
+        adapter: Any,
+        *,
+        request: ModelStepRequest,
+        provider: str,
+    ) -> None:
+        try:
+            async with asyncio.timeout(self._close_timeout_seconds):
+                await adapter.close()
+        except asyncio.CancelledError as error:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            self._log_close_error(
+                request,
+                provider,
+                "error",
+                error,
+            )
+        except TimeoutError as error:
+            self._log_close_error(
+                request,
+                provider,
+                "timeout",
+                error,
+            )
+        except Exception as error:
+            self._log_close_error(
+                request,
+                provider,
+                "error",
+                error,
+            )
 
     def _create_adapter(self, request: ModelStepRequest) -> Any:
         if self._adapter_factory is not None:
@@ -187,6 +223,21 @@ class ExistingProviderModelAdapter:
     ) -> None:
         logger.error(
             "model_call_failed | "
+            f"model_step_id={request.model_step_id} | "
+            f"model_id={request.model_id} | provider={provider} | "
+            f"request_hash={request.request_hash} | outcome={outcome} | "
+            f"error={type(error).__name__}"
+        )
+
+    @staticmethod
+    def _log_close_error(
+        request: ModelStepRequest,
+        provider: str,
+        outcome: str,
+        error: BaseException,
+    ) -> None:
+        logger.warning(
+            "model_adapter_close_failed | "
             f"model_step_id={request.model_step_id} | "
             f"model_id={request.model_id} | provider={provider} | "
             f"request_hash={request.request_hash} | outcome={outcome} | "
@@ -221,12 +272,41 @@ def _attempt_error_outcome(
     *,
     can_retry: bool,
     response_started: bool,
+    status_code: int | None = None,
 ) -> ProviderAttemptOutcome:
     if can_retry:
         return ProviderAttemptOutcome.RETRYING
-    if response_started:
+    if response_started or status_code in _UNKNOWN_HTTP_STATUS_CODES:
         return ProviderAttemptOutcome.UNKNOWN
     return ProviderAttemptOutcome.FAILED
+
+
+def _provider_error_attempt(
+    *,
+    attempt_number: int,
+    provider: str,
+    status_code: int | None,
+    response_started: bool,
+    max_attempts: int,
+) -> tuple[ProviderAttemptReceipt, bool]:
+    can_retry = (
+        not response_started
+        and status_code in _SAFE_RETRY_STATUS_CODES
+        and attempt_number < max_attempts
+    )
+    receipt = ProviderAttemptReceipt(
+        attempt_number=attempt_number,
+        provider=provider,
+        outcome=_attempt_error_outcome(
+            can_retry=can_retry,
+            response_started=response_started,
+            status_code=status_code,
+        ),
+        status_code=status_code,
+        response_started=response_started,
+        retry_reason=f"http_{status_code}" if can_retry else None,
+    )
+    return receipt, can_retry
 
 
 def _is_timeout_error(error: BaseException) -> bool:
