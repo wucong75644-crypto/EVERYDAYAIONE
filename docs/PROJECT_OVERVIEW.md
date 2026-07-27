@@ -472,7 +472,11 @@ Agent Runtime AR-12 Action持久化与Tool终态：
   source/migrator DSN 分离，apply 要求固定 import_id 与精确确认字符串。
 - `frontend/src/components/admin/configuration/ErpConfigSection.tsx`：以
   `erp.app_credentials` 与 `erp.token_pair` 两个原子组管理企业 ERP 凭证，写入携带
-  状态版本 CAS。
+  状态版本 CAS，并以统一状态卡展示配置与重新配置入口。
+- `frontend/src/components/admin/configuration/CredentialGroupSection.tsx`：统一 ERP 与
+  企业微信机器人凭证组的已配置/未配置状态、折叠展示和重新配置入口。
+- `frontend/src/components/admin/__tests__/OrgCredentialSections.test.tsx`：覆盖 ERP 与
+  企业微信凭证组隐藏内部版本、展示配置状态及展开重新配置。
 - `frontend/src/components/admin/__tests__/AiConfigSection.test.tsx`：覆盖企业 AI Key
   切换平台服务时的逐键 CAS 停用、部分失败后的权威重载、防重复请求及组织生命周期隔离。
 - `frontend/src/components/admin/useAiConfigLoader.ts`：隔离企业 AI 配置权威状态加载、

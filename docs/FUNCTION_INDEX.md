@@ -275,6 +275,7 @@
 | `CreditsTab` | `frontend/src/components/admin/userDetail/CreditsTab.tsx` | 余额 + 充值表单（二次确认）+ 流水 | userId, balance, status?, onChanged | JSX |
 | `ConversationViewTab` | `frontend/src/components/admin/userDetail/ConversationViewTab.tsx` | 左对话列表 + 右消息流，保留单素材下载，不再向服务端提交 URL 批量打包 | userId | JSX |
 | `AssetSpaceTab` | `frontend/src/components/admin/userDetail/AssetSpaceTab.tsx` | 统一资产 [上传/生成] 切换 + 复合游标分页 + 资产 ID 多选下载 | userId | JSX |
+| `CredentialGroupSection` | `frontend/src/components/admin/configuration/CredentialGroupSection.tsx` | 统一凭证组配置状态、折叠展示和重新配置入口 | configured, editing, label, onEdit, children | JSX |
 
 ### 对话管理模块 (Conversation Management)
 

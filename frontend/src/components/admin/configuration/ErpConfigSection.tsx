@@ -5,6 +5,7 @@ import {
   testErpConnection,
   type OrgConfigStatus,
 } from '../../../services/org';
+import CredentialGroupSection from './CredentialGroupSection';
 
 type ErpConfigKey = 'erp.app_credentials' | 'erp.token_pair';
 
@@ -137,70 +138,58 @@ export default function ErpConfigSection({ orgId }: { orgId: string }) {
         const status = statuses[group.configKey];
         const editing = values[group.configKey] !== undefined;
         return (
-          <section key={group.configKey} className="space-y-2 border rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-medium text-text-primary">
-                {group.label}
-                {status?.configured && (
-                  <span className="ml-2 text-xs text-success">已配置 · v{status.version}</span>
-                )}
-              </div>
-              {status?.configured && !editing && (
-                <button
-                  onClick={() => setValues((previous) => ({
-                    ...previous,
-                    [group.configKey]: {},
-                  }))}
-                  className="text-sm text-accent"
-                >
-                  修改整组
-                </button>
-              )}
-            </div>
-            {(!status?.configured || editing) && (
-              <>
-                {group.fields.map((field) => (
-                  <div key={field.key} className="flex items-center space-x-2">
-                    <label className="w-36 text-sm text-text-secondary">{field.label}</label>
-                    <input
-                      type="password"
-                      value={values[group.configKey]?.[field.key] || ''}
-                      onChange={(event) => setValues((previous) => ({
-                        ...previous,
-                        [group.configKey]: {
-                          ...previous[group.configKey],
-                          [field.key]: event.target.value,
-                        },
-                      }))}
-                      className="flex-1 px-3 py-1.5 border rounded-lg text-sm"
-                      autoComplete="new-password"
-                    />
-                  </div>
-                ))}
-                <div className="flex justify-end space-x-2">
-                  {status?.configured && (
-                    <button
-                      onClick={() => setValues((previous) => {
-                        const next = { ...previous };
-                        delete next[group.configKey];
-                        return next;
-                      })}
-                      className="px-3 py-1.5 text-sm text-text-tertiary"
-                    >
-                      取消
-                    </button>
-                  )}
-                  <button
-                    onClick={() => void saveGroup(group)}
-                    disabled={saving === group.configKey}
-                    className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg disabled:opacity-50"
-                  >
-                    {saving === group.configKey ? '保存中...' : '保存整组'}
-                  </button>
+          <CredentialGroupSection
+            key={group.configKey}
+            configured={status?.configured ?? false}
+            editing={editing}
+            label={group.label}
+            onEdit={() => setValues((previous) => ({
+              ...previous,
+              [group.configKey]: {},
+            }))}
+          >
+            <div className="space-y-2">
+              {group.fields.map((field) => (
+                <div key={field.key} className="flex items-center space-x-2">
+                  <label className="w-36 text-sm text-text-secondary">{field.label}</label>
+                  <input
+                    type="password"
+                    value={values[group.configKey]?.[field.key] || ''}
+                    onChange={(event) => setValues((previous) => ({
+                      ...previous,
+                      [group.configKey]: {
+                        ...previous[group.configKey],
+                        [field.key]: event.target.value,
+                      },
+                    }))}
+                    className="flex-1 px-3 py-1.5 border rounded-lg text-sm"
+                    autoComplete="new-password"
+                  />
                 </div>
-              </>
-            )}
-          </section>
+              ))}
+              <div className="flex justify-end space-x-2">
+                {status?.configured && (
+                  <button
+                    onClick={() => setValues((previous) => {
+                      const next = { ...previous };
+                      delete next[group.configKey];
+                      return next;
+                    })}
+                    className="px-3 py-1.5 text-sm text-text-tertiary"
+                  >
+                    取消
+                  </button>
+                )}
+                <button
+                  onClick={() => void saveGroup(group)}
+                  disabled={saving === group.configKey}
+                  className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg disabled:opacity-50"
+                >
+                  {saving === group.configKey ? '保存中...' : '保存凭证'}
+                </button>
+              </div>
+            </div>
+          </CredentialGroupSection>
         );
       })}
 
@@ -225,7 +214,7 @@ export default function ErpConfigSection({ orgId }: { orgId: string }) {
             }
           }}
           disabled={testing}
-          className="w-full py-2 text-sm bg-success text-text-on-accent rounded-lg disabled:opacity-50"
+          className="w-full py-2 text-sm text-accent border border-accent/30 rounded-lg hover:bg-accent-light disabled:opacity-50 transition-base"
         >
           {testing ? '测试中...' : '测试 ERP 连接'}
         </button>
