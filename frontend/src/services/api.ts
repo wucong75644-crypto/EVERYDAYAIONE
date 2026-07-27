@@ -4,7 +4,7 @@
  * 401 处理流程（双 Token 无感刷新）：
  * 1. 收到 401 → 调 silentRefresh() 尝试用 refresh_token 换新 token
  * 2. 刷新成功 → 用新 token 重发原请求（用户无感知）
- * 3. 刷新失败 → logoutOnce() 统一登出
+ * 3. 凭证被明确拒绝 → logoutOnce()；临时网络/服务故障保留登录态
  * 4. 并发 401 → 第一个触发刷新，其余排队等新 token 后重发
  *
  * 429 处理流程（任务限流统一弹 toast）：
@@ -112,7 +112,7 @@ api.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
         return api(originalRequest);
       } catch {
-        // silentRefresh 内部已调 logoutOnce()，这里只需 reject
+        // silentRefresh 仅在凭证被明确拒绝时登出，这里只需 reject
         return Promise.reject(error);
       }
     }

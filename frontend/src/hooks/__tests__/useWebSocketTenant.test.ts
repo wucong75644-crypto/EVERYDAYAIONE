@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '../../stores/useAuthStore';
-import { logoutOnce } from '../../utils/tokenManager';
+import { logoutOnce, silentRefresh } from '../../utils/tokenManager';
 import { useWebSocket } from '../useWebSocket';
 
 vi.mock('../../utils/logger', () => ({
@@ -16,6 +16,7 @@ vi.mock('../../utils/logger', () => ({
 
 vi.mock('../../utils/tokenManager', () => ({
   logoutOnce: vi.fn(),
+  silentRefresh: vi.fn(),
 }));
 
 class MockWebSocket {
@@ -54,6 +55,8 @@ describe('useWebSocket tenant connection', () => {
     vi.clearAllMocks();
     localStorage.clear();
     localStorage.setItem('access_token', 'token-1');
+    localStorage.setItem('refresh_token', 'refresh-1');
+    vi.mocked(silentRefresh).mockResolvedValue('token-2');
     MockWebSocket.instances = [];
     vi.stubGlobal('WebSocket', MockWebSocket);
     useAuthStore.setState({
@@ -70,7 +73,7 @@ describe('useWebSocket tenant connection', () => {
     });
   });
 
-  it.each([4001, 4002, 4003])(
+  it.each([4001, 4003])(
     'logs out without reconnecting after close code %s',
     async (code) => {
       renderHook(() => useWebSocket());
@@ -86,6 +89,45 @@ describe('useWebSocket tenant connection', () => {
       expect(MockWebSocket.instances).toHaveLength(1);
     },
   );
+
+  it('refreshes an expired access token and reconnects without logging out', async () => {
+    vi.useFakeTimers();
+    renderHook(() => useWebSocket());
+    expect(MockWebSocket.instances).toHaveLength(1);
+    localStorage.setItem('access_token', 'token-2');
+
+    await act(async () => {
+      MockWebSocket.instances[0].onclose?.({ code: 4002, reason: 'Token expired' });
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(silentRefresh).toHaveBeenCalledOnce();
+    expect(logoutOnce).not.toHaveBeenCalled();
+    expect(MockWebSocket.instances[1].url).toContain('token=token-2');
+    vi.useRealTimers();
+  });
+
+  it('preserves the session and retries after a temporary refresh failure', async () => {
+    vi.useFakeTimers();
+    vi.mocked(silentRefresh).mockRejectedValueOnce(new Error('Network error'));
+    renderHook(() => useWebSocket());
+
+    await act(async () => {
+      MockWebSocket.instances[0].onclose?.({ code: 4002, reason: 'Token expired' });
+    });
+
+    expect(logoutOnce).not.toHaveBeenCalled();
+    expect(localStorage.getItem('refresh_token')).toBe('refresh-1');
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+    vi.useRealTimers();
+  });
 
   it('closes the old connection and reconnects for the new organization', async () => {
     const { result } = renderHook(() => useWebSocket());
