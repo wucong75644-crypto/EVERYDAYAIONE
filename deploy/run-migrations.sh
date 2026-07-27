@@ -30,6 +30,20 @@ migration_plan=$(
     "$migration_python" scripts/migration_runner.py plan \
         --applied-by deploy-script
 )
+if printf '%s\n' "$migration_plan" | grep -Fxq \
+    '220_platform_admin_credit_adjustment.sql'; then
+    database_name=$(
+        "$migration_python" -c \
+            'import os; from psycopg.conninfo import conninfo_to_dict; print(conninfo_to_dict(os.environ["MIGRATION_DATABASE_URL"])["dbname"])'
+    )
+    if [[ ! "$database_name" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,62}$ ]]; then
+        echo "❌ 迁移数据库名不合法，停止管理员积分 owner 转移"
+        exit 1
+    fi
+    sudo -n -u postgres env \
+        "TENANT_DB_ADMIN_URL=postgresql:///${database_name}?host=/var/run/postgresql" \
+        bash ../deploy/transfer-admin-credit-adjustment-ownership.sh
+fi
 if printf '%s\n' "$migration_plan" | grep -Eq \
     '^(171_|172_|173_|174_|175_|176_|177_|178_|179_|180_|181_|182_|183_|184_|185_)'; then
     "$migration_python" scripts/verify_worker_control_preconditions.py
