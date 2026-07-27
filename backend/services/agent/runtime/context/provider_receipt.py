@@ -9,6 +9,7 @@ from services.agent.runtime.context.provider_plan import ProviderContextPlan
 _PROVIDER_TOKEN_FIELDS = (
     "prompt_tokens",
     "completion_tokens",
+    "reasoning_tokens",
     "cached_tokens",
     "cache_creation_tokens",
 )

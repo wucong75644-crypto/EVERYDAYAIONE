@@ -131,6 +131,9 @@ class DashScopeChatAdapter(BaseChatAdapter):
         temperature = kwargs.get("temperature")
         if temperature is not None:
             request_body["temperature"] = temperature
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            request_body["response_format"] = response_format
 
         # 思考模式：用户开了深度思考才启用，否则显式关闭（qwen3.5 默认开，必须显式关）
         if thinking_mode in ("enabled", "deep_think"):
@@ -167,75 +170,10 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     except json.JSONDecodeError:
                         continue
 
-                    # 检查错误
-                    if chunk.get("error"):
-                        raise DashScopeAPIError(
-                            f"Stream error: {chunk['error'].get('message', str(chunk['error']))}",
-                            status_code=chunk["error"].get("code", 500),
-                        )
-
-                    # 提取内容
-                    content = None
-                    thinking_content = None
-                    finish_reason = None
-                    tc_deltas = None
-                    choices = chunk.get("choices", [])
-                    if choices:
-                        delta = choices[0].get("delta", {})
-                        content = delta.get("content")
-                        thinking_content = delta.get("reasoning_content")
-                        finish_reason = choices[0].get("finish_reason")
-
-                        # 提取 tool_calls 增量
-                        raw_tcs = delta.get("tool_calls")
-                        if raw_tcs:
-                            tc_deltas = [
-                                ToolCallDelta(
-                                    index=tc.get("index", 0),
-                                    id=tc.get("id"),
-                                    name=tc.get("function", {}).get("name"),
-                                    arguments_delta=tc.get("function", {}).get("arguments"),
-                                )
-                                for tc in raw_tcs
-                            ]
-
-                    # Provider boundary: Qwen sometimes emits internal tool-call XML
-                    # in delta.content while tools are enabled. That is protocol data,
-                    # not assistant-visible text, so never expose it as StreamChunk.content.
-                    if tools and _is_qwen_tool_xml_content(content):
-                        logger.debug("Suppressed Qwen tool XML from stream content")
-                        content = None
-
-                    # 提取 usage（通常在最后一个 chunk，中间 chunk 为 null）
-                    usage = chunk.get("usage") or {}
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    details = usage.get("prompt_tokens_details") or {}
-                    cached_tokens = details.get("cached_tokens", 0)
-                    cache_creation = usage.get(
-                        "cache_creation_input_tokens", 0
-                    )
-
-                    # V2: 读 prompt cache 命中指标 (千问 OpenAI 兼容字段)
-                    # 用于监控 cache 命中率, 验证 cache_control 配置是否生效
-                    if prompt_tokens > 0:
-                        if cached_tokens > 0 or cache_creation > 0:
-                            hit_rate = cached_tokens / prompt_tokens if prompt_tokens else 0
-                            logger.info(
-                                f"LLM cache | model={self._model_id} | "
-                                f"prompt={prompt_tokens} cached={cached_tokens} "
-                                f"created={cache_creation} hit_rate={hit_rate:.1%}"
-                            )
-
-                    yield StreamChunk(
-                        content=content,
-                        thinking_content=thinking_content,
-                        finish_reason=finish_reason,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        cached_tokens=cached_tokens,
-                        cache_creation_tokens=cache_creation,
-                        tool_calls=tc_deltas,
+                    yield _parse_stream_chunk(
+                        chunk,
+                        tools_enabled=bool(tools),
+                        model_id=self._model_id,
                     )
 
         except DashScopeAPIError:
@@ -360,3 +298,69 @@ class DashScopeAPIError(Exception):
     def __init__(self, message: str, status_code: int = 0):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _parse_stream_chunk(
+    chunk: Dict[str, Any],
+    *,
+    tools_enabled: bool,
+    model_id: str,
+) -> StreamChunk:
+    error = chunk.get("error")
+    if error:
+        raise DashScopeAPIError(
+            f"Stream error: {error.get('message', str(error))}",
+            status_code=error.get("code", 500),
+        )
+    choices = chunk.get("choices", [])
+    delta = choices[0].get("delta", {}) if choices else {}
+    content = delta.get("content")
+    if tools_enabled and _is_qwen_tool_xml_content(content):
+        logger.debug("Suppressed Qwen tool XML from stream content")
+        content = None
+    usage = chunk.get("usage") or {}
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    cached_tokens = (
+        usage.get("prompt_tokens_details") or {}
+    ).get("cached_tokens", 0)
+    cache_creation = usage.get("cache_creation_input_tokens", 0)
+    if prompt_tokens > 0 and (cached_tokens > 0 or cache_creation > 0):
+        hit_rate = cached_tokens / prompt_tokens
+        logger.info(
+            f"LLM cache | model={model_id} | "
+            f"prompt={prompt_tokens} cached={cached_tokens} "
+            f"created={cache_creation} hit_rate={hit_rate:.1%}"
+        )
+    return StreamChunk(
+        content=content,
+        thinking_content=delta.get("reasoning_content"),
+        finish_reason=(
+            choices[0].get("finish_reason") if choices else None
+        ),
+        refusal=bool(delta.get("refusal")),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=usage.get("completion_tokens", 0),
+        reasoning_tokens=(
+            usage.get("completion_tokens_details") or {}
+        ).get("reasoning_tokens", 0),
+        cached_tokens=cached_tokens,
+        cache_creation_tokens=cache_creation,
+        tool_calls=_parse_tool_call_deltas(delta),
+    )
+
+
+def _parse_tool_call_deltas(
+    delta: Dict[str, Any],
+) -> Optional[List[ToolCallDelta]]:
+    raw_calls = delta.get("tool_calls")
+    if not raw_calls:
+        return None
+    return [
+        ToolCallDelta(
+            index=call.get("index", 0),
+            id=call.get("id"),
+            name=call.get("function", {}).get("name"),
+            arguments_delta=call.get("function", {}).get("arguments"),
+        )
+        for call in raw_calls
+    ]

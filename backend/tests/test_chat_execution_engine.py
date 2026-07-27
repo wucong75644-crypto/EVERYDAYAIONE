@@ -53,6 +53,7 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
             tool_calls=None,
             prompt_tokens=3,
             completion_tokens=2,
+            reasoning_tokens=1,
             cached_tokens=2,
             cache_creation_tokens=1,
             credits_consumed=None,
@@ -111,6 +112,7 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     assert result.usage == {
         "prompt_tokens": 3,
         "completion_tokens": 2,
+        "reasoning_tokens": 1,
         "cached_tokens": 2,
         "cache_creation_tokens": 1,
     }
@@ -125,6 +127,7 @@ async def test_execute_chat_collects_usage_and_closes_adapter(monkeypatch):
     assert result.context_receipts[0]["provider_usage"] == {
         "prompt_tokens": 3,
         "completion_tokens": 2,
+        "reasoning_tokens": 1,
         "cached_tokens": 2,
         "cache_creation_tokens": 1,
     }

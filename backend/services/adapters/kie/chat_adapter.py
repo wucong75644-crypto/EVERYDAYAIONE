@@ -29,18 +29,12 @@ from .models import (
     UsageRecord,
     KieModelType,
 )
-from ..base import (
-    BaseChatAdapter,
-    ModelProvider,
-    ToolCallDelta,
-    StreamChunk,
-    ChatResponse,
-    CostEstimate as BaseCostEstimate,
-)
+from ..base import BaseChatAdapter
 from .configs import CHAT_MODEL_CONFIGS
+from .unified_chat import KieUnifiedChatMixin
 
 
-class KieChatAdapter(BaseChatAdapter):
+class KieChatAdapter(KieUnifiedChatMixin, BaseChatAdapter):
     """
     KIE Chat 模型适配器
 
@@ -406,114 +400,3 @@ class KieChatAdapter(BaseChatAdapter):
             cost_usd=estimate.estimated_cost_usd,
             credits_consumed=estimate.estimated_credits,
         )
-
-    # ============================================================
-    # 基类抽象方法实现（统一接口）
-    # ============================================================
-
-    @property
-    def provider(self) -> ModelProvider:
-        """返回提供商标识"""
-        return ModelProvider.KIE
-
-    async def stream_chat(
-        self,
-        messages: List[Dict[str, Any]],
-        reasoning_effort: Optional[str] = None,
-        thinking_mode: Optional[str] = None,
-        **kwargs,
-    ) -> AsyncIterator[StreamChunk]:
-        """
-        统一格式的流式聊天
-
-        将现有 chat() 方法的输出转换为统一的 StreamChunk 格式
-        """
-        # 转换消息格式
-        formatted_messages = self.format_messages_from_history(messages)
-
-        # 解析参数
-        effort = ReasoningEffort(reasoning_effort) if reasoning_effort else ReasoningEffort.HIGH
-        mode = ThinkingMode(thinking_mode) if thinking_mode else None
-
-        # 调用现有方法
-        stream = await self.chat(
-            messages=formatted_messages,
-            stream=True,
-            include_thoughts=False,
-            reasoning_effort=effort,
-            thinking_mode=mode,
-            **kwargs,
-        )
-
-        # 转换输出格式
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-
-            # 提取 tool_calls 增量
-            tc_deltas = None
-            if delta and delta.tool_calls:
-                tc_deltas = [
-                    ToolCallDelta(
-                        index=tc.index,
-                        id=tc.id,
-                        name=tc.function.name if tc.function else None,
-                        arguments_delta=tc.function.arguments if tc.function else None,
-                    )
-                    for tc in delta.tool_calls
-                ]
-
-            yield StreamChunk(
-                content=delta.content if delta else None,
-                thinking_content=delta.reasoning_content if delta else None,
-                finish_reason=chunk.choices[0].finish_reason if chunk.choices else None,
-                prompt_tokens=chunk.usage.prompt_tokens if chunk.usage else 0,
-                completion_tokens=chunk.usage.completion_tokens if chunk.usage else 0,
-                credits_consumed=chunk.credits_consumed,
-                tool_calls=tc_deltas,
-            )
-
-    async def chat_sync(
-        self,
-        messages: List[Dict[str, Any]],
-        reasoning_effort: Optional[str] = None,
-        thinking_mode: Optional[str] = None,
-        **kwargs,
-    ) -> ChatResponse:
-        """非流式聊天（统一接口，避免与现有 chat 方法冲突）"""
-        formatted_messages = self.format_messages_from_history(messages)
-        effort = ReasoningEffort(reasoning_effort) if reasoning_effort else ReasoningEffort.HIGH
-        mode = ThinkingMode(thinking_mode) if thinking_mode else None
-
-        response = await self.chat(
-            messages=formatted_messages,
-            stream=False,
-            include_thoughts=False,
-            reasoning_effort=effort,
-            thinking_mode=mode,
-            **kwargs,
-        )
-
-        content = ""
-        if response.choices:
-            content = response.choices[0].delta.content or ""
-
-        return ChatResponse(
-            content=content,
-            finish_reason=response.choices[0].finish_reason if response.choices else None,
-            prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
-            completion_tokens=response.usage.completion_tokens if response.usage else 0,
-        )
-
-    def estimate_cost_unified(self, input_tokens: int, output_tokens: int) -> BaseCostEstimate:
-        """转换现有 estimate_cost 的输出为统一格式"""
-        result = self.estimate_cost(input_tokens, output_tokens)
-        return BaseCostEstimate(
-            model=result.model,
-            estimated_cost_usd=result.estimated_cost_usd,
-            estimated_credits=result.estimated_credits,
-            breakdown=result.breakdown,
-        )
-
-    async def close(self) -> None:
-        """关闭客户端连接"""
-        await self.client.close()
