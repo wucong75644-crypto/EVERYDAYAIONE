@@ -157,32 +157,30 @@ BEGIN
             'state_version', v_attempt.state_version
         );
     ELSIF p_resolution = 'completed' THEN
-        UPDATE agent_model_attempts SET execution_token = p_run_execution_token
-         WHERE id = p_attempt_id;
-        RETURN complete_model_attempt_without_actions(
-            p_attempt_id, p_run_execution_token, p_expected_attempt_version,
-            p_expected_step_version, p_request_hash, p_response_receipt,
-            p_response_hash, p_stop_reason, p_provider_stop_reason,
-            p_usage, p_actual_credits
+        RETURN _complete_model_attempt_without_actions(
+            p_attempt_id, p_run_execution_token, p_reconciliation_token,
+            p_expected_attempt_version, p_expected_step_version,
+            p_request_hash, p_response_receipt, p_response_hash,
+            p_stop_reason, p_provider_stop_reason, p_usage, p_actual_credits
         );
     ELSIF p_resolution = 'failed' THEN
-        UPDATE agent_model_attempts SET execution_token = p_run_execution_token
-         WHERE id = p_attempt_id;
-        RETURN fail_model_attempt_and_step(
-            p_attempt_id, p_run_execution_token, p_expected_attempt_version,
-            p_expected_step_version, p_request_hash, p_error_code, 'forbidden'
+        RETURN _fail_model_attempt_and_step(
+            p_attempt_id, p_run_execution_token, p_reconciliation_token,
+            p_expected_attempt_version, p_expected_step_version,
+            p_request_hash, p_error_code, 'forbidden'
         );
     END IF;
     RAISE EXCEPTION 'AGENT_MODEL_RESOLUTION_INVALID' USING ERRCODE = '22023';
 END;
 $$;
 
-CREATE FUNCTION adjust_model_attempt_credits(
+CREATE FUNCTION _adjust_model_attempt_credits(
     p_attempt_id UUID, p_response_hash TEXT, p_actual_credits INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
 DECLARE
     v_attempt agent_model_attempts%ROWTYPE;
+    v_run agent_runs%ROWTYPE;
     v_settlement agent_model_credit_settlements%ROWTYPE;
     v_balance INTEGER;
     v_key TEXT;
@@ -191,11 +189,17 @@ BEGIN
     SELECT * INTO v_attempt FROM agent_model_attempts WHERE id = p_attempt_id;
     IF NOT FOUND THEN RETURN jsonb_build_object('outcome', 'not_found'); END IF;
     PERFORM 1 FROM agent_runtime_sessions WHERE id = v_attempt.session_id FOR UPDATE;
-    PERFORM 1 FROM agent_runs WHERE id = v_attempt.run_id FOR UPDATE;
+    SELECT * INTO v_run FROM agent_runs WHERE id = v_attempt.run_id FOR UPDATE;
     PERFORM 1 FROM agent_model_steps WHERE id = v_attempt.model_step_id FOR UPDATE;
     SELECT * INTO v_attempt FROM agent_model_attempts WHERE id = p_attempt_id FOR UPDATE;
     SELECT * INTO v_settlement FROM agent_model_credit_settlements
      WHERE model_step_id = v_attempt.model_step_id FOR UPDATE;
+    IF v_run.status <> 'cancelled'
+       OR v_attempt.status NOT IN ('cancelled', 'unknown')
+       OR v_attempt.late_outcome IS DISTINCT FROM 'completed'
+       OR v_attempt.response_hash IS DISTINCT FROM p_response_hash THEN
+        RETURN jsonb_build_object('outcome', 'terminal_conflict');
+    END IF;
     v_key := 'adjustment:' || p_attempt_id::TEXT || ':' || p_response_hash;
     IF v_settlement.status = 'adjusted' THEN
         IF v_settlement.adjustment_key IS DISTINCT FROM v_key
@@ -271,9 +275,12 @@ BEGIN
             RETURN jsonb_build_object('outcome', 'receipt_conflict');
         END IF;
         IF p_late_outcome = 'completed' THEN
-            v_adjustment := adjust_model_attempt_credits(
+            v_adjustment := _adjust_model_attempt_credits(
                 p_attempt_id, p_response_hash, p_actual_credits
             );
+            IF v_adjustment->>'outcome' IN (
+                'receipt_conflict', 'terminal_conflict'
+            ) THEN RETURN v_adjustment; END IF;
         END IF;
         RETURN jsonb_build_object(
             'outcome', 'already_recorded',
@@ -297,9 +304,15 @@ BEGIN
            retry_disposition = 'forbidden', state_version = state_version + 1,
            updated_at = clock_timestamp() WHERE id = p_attempt_id;
     IF p_late_outcome = 'completed' THEN
-        v_adjustment := adjust_model_attempt_credits(
+        v_adjustment := _adjust_model_attempt_credits(
             p_attempt_id, p_response_hash, p_actual_credits
         );
+        IF v_adjustment->>'outcome' IN (
+            'receipt_conflict', 'terminal_conflict'
+        ) THEN
+            RAISE EXCEPTION 'AGENT_MODEL_ADJUSTMENT_CONFLICT'
+                USING ERRCODE = '55000';
+        END IF;
     END IF;
     RETURN jsonb_build_object(
         'outcome', CASE WHEN v_adjustment->>'outcome' = 'insufficient_credits'
@@ -318,7 +331,7 @@ REVOKE ALL ON FUNCTION
         UUID, UUID, UUID, BIGINT, BIGINT, TEXT, TEXT, JSONB, TEXT,
         TEXT, TEXT, JSONB, INTEGER, TEXT, JSONB
     ),
-    adjust_model_attempt_credits(UUID, TEXT, INTEGER),
+    _adjust_model_attempt_credits(UUID, TEXT, INTEGER),
     record_late_model_receipt(UUID, TEXT, JSONB, TEXT, JSONB, TEXT, JSONB, INTEGER)
 FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
      everydayai_worker, everydayai_sync, everydayai;
@@ -330,7 +343,6 @@ GRANT EXECUTE ON FUNCTION
         UUID, UUID, UUID, BIGINT, BIGINT, TEXT, TEXT, JSONB, TEXT,
         TEXT, TEXT, JSONB, INTEGER, TEXT, JSONB
     ),
-    adjust_model_attempt_credits(UUID, TEXT, INTEGER),
     record_late_model_receipt(UUID, TEXT, JSONB, TEXT, JSONB, TEXT, JSONB, INTEGER)
 TO everydayai_worker;
 

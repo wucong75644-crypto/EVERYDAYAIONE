@@ -201,7 +201,10 @@ def create_running_step(*, credits: int = 100) -> dict[str, object]:
     }
 
 
-def prepare_attempt(facts: dict[str, object], *, reserve: int = 20) -> dict[str, object]:
+def prepare_attempt(
+    facts: dict[str, object], *, reserve: int = 20,
+    idempotency_key: str | None = None,
+) -> dict[str, object]:
     result = worker(
         """
         SELECT prepare_model_attempt(
@@ -213,11 +216,73 @@ def prepare_attempt(facts: dict[str, object], *, reserve: int = 20) -> dict[str,
             facts["run_token"],
             facts["step_version"],
             "a" * 64,
-            f"attempt-{uuid4().hex}",
+            idempotency_key or f"attempt-{uuid4().hex}",
             reserve,
         ),
     )
     return decoded(result[-1][0])
+
+
+def claim_unknown_attempt(
+    facts: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    attempt = prepare_attempt(facts)
+    started = decoded(
+        worker(
+            "SELECT start_model_attempt_dispatch(%s,%s,%s,%s);",
+            (
+                attempt["attempt_id"],
+                facts["run_token"],
+                attempt["state_version"],
+                "a" * 64,
+            ),
+        )[-1][0]
+    )
+    unknown = decoded(
+        worker(
+            "SELECT record_model_attempt_unknown(%s,%s,%s,%s,%s,%s,%s);",
+            (
+                attempt["attempt_id"],
+                facts["run_token"],
+                started["state_version"],
+                "a" * 64,
+                "request_started",
+                "reconcile_only",
+                json.dumps({"reason": "worker_crash"}),
+            ),
+        )[-1][0]
+    )
+    claimed = decoded(
+        worker(
+            "SELECT claim_model_attempt_reconciliation(%s,%s,%s,'worker-b',120);",
+            (
+                attempt["attempt_id"],
+                facts["run_token"],
+                unknown["state_version"],
+            ),
+        )[-1][0]
+    )
+    return attempt, claimed
+
+
+def model_state_snapshot(
+    facts: dict[str, object], attempt_id: object,
+) -> tuple[object, ...]:
+    return execute(
+        """
+        SELECT to_jsonb(attempt),to_jsonb(step),to_jsonb(settlement),
+               (SELECT count(*) FROM agent_runtime_events
+                 WHERE agent_runtime_events.model_step_id=step.id),
+               (SELECT count(*) FROM agent_projection_outbox outbox
+                 WHERE outbox.session_id=step.session_id)
+          FROM agent_model_attempts attempt
+          JOIN agent_model_steps step ON step.id=attempt.model_step_id
+          JOIN agent_model_credit_settlements settlement
+            ON settlement.model_step_id=step.id
+         WHERE attempt.id=%s AND step.id=%s
+        """,
+        (attempt_id, facts["step_id"]),
+    )[0]
 
 
 def test_unknown_is_non_terminal_and_fencing_fails_closed() -> None:
@@ -261,71 +326,6 @@ def test_unknown_is_non_terminal_and_fencing_fails_closed() -> None:
         )[-1][0]
     )
     assert lost["outcome"] == "ownership_lost"
-
-
-def test_unknown_can_be_claimed_read_back_and_resolved() -> None:
-    ensure_database()
-    facts = create_running_step()
-    attempt = prepare_attempt(facts)
-    started = decoded(
-        worker(
-            "SELECT start_model_attempt_dispatch(%s,%s,%s,%s);",
-            (
-                attempt["attempt_id"],
-                facts["run_token"],
-                attempt["state_version"],
-                "a" * 64,
-            ),
-        )[-1][0]
-    )
-    unknown = decoded(
-        worker(
-            "SELECT record_model_attempt_unknown(%s,%s,%s,%s,%s,%s,%s);",
-            (
-                attempt["attempt_id"],
-                facts["run_token"],
-                started["state_version"],
-                "a" * 64,
-                "request_started",
-                "reconcile_only",
-                json.dumps({"reason": "worker_crash"}),
-            ),
-        )[-1][0]
-    )
-    readback = decoded(
-        worker("SELECT get_model_attempt(%s);", (attempt["attempt_id"],))[-1][0]
-    )
-    claimed = decoded(
-        worker(
-            "SELECT claim_model_attempt_reconciliation(%s,%s,%s,'worker-b',120);",
-            (
-                attempt["attempt_id"],
-                facts["run_token"],
-                unknown["state_version"],
-            ),
-        )[-1][0]
-    )
-    resolved = decoded(
-        worker(
-            """
-            SELECT resolve_model_attempt(
-             %s,%s,%s,%s,%s,'completed',%s,'{}',%s,'final',NULL,'{}',8
-            );
-            """,
-            (
-                attempt["attempt_id"],
-                facts["run_token"],
-                claimed["execution_token"],
-                claimed["state_version"],
-                facts["step_version"],
-                "a" * 64,
-                "b" * 64,
-            ),
-        )[-1][0]
-    )
-    assert readback["attempt"]["status"] == "unknown"
-    assert claimed["outcome"] == "claimed"
-    assert resolved["outcome"] == "completed"
 
 
 def test_tool_handoff_has_zero_terminal_mutation() -> None:

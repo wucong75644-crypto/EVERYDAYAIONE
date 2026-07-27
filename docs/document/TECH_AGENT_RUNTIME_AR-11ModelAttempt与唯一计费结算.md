@@ -43,7 +43,9 @@ Run/Attempt fencing token、state version、request hash 和 worker scope。
 429、502/503/504、timeout、断流在没有类型化安全证据时不重试。
 默认 unknown 为 `reconcile_only`；Provider 无 readback 能力时为 `forbidden`。
 reconcile claim 产生独立 token，resolve 必须同时持有有效 Run token 与
-reconciliation token。
+reconciliation token。公开 terminal RPC 与 reconcile 共用 owner-only terminal
+helper；helper 分别校验 Run token 与 Attempt ownership token，任何非终态结果
+都不会预写或替换 reconciliation token。
 
 Run 取消会释放预留并将活动 Attempt/ModelStep 取消。迟到 receipt 只能追加
 provider request id、response receipt/hash、usage、ambiguity evidence 和
@@ -53,12 +55,19 @@ late outcome，不复活任何生命周期实体、不发布用户终态、不�
 
 `agent_model_credit_settlements.model_step_id` 唯一：
 
-- reserve：扣减余额并写入既有 `credit_transactions` pending lock。
+- reserve：扣减余额、写入负向 `credits_history`，并写入既有
+  `credit_transactions` pending lock。
 - settle：确认 lock，按实际用量返还差额并写入既有 ledger。
 - cancel/failure：通过既有原子退款 RPC 释放预留。
-- late adjustment：取消后收到完成证据时按 adjustment key 扣费；相同 receipt
-  重放返回 `already_adjusted`，不同 receipt 返回冲突。
+- late adjustment：只能由 `record_late_model_receipt` 调用 owner-only 内部
+  adjustment helper；取消后收到完成证据时按 adjustment key 扣费，相同 receipt
+  重放返回 `already_adjusted`，pending adjustment 可安全重试，不同 receipt
+  返回冲突。
 - unknown 本身不结算。
+
+每次余额变化与对应 `credits_history` 位于同一数据库事务；reservation 记录负向
+`conversation_cost`，settlement/cancel 记录合法退款类型，late adjustment 记录
+负向 `conversation_cost`。幂等重放不新增 history。
 
 ## 迁移与回滚
 

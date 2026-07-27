@@ -51,12 +51,32 @@ def test_worker_only_attempt_rpcs_and_cancel_signature_are_frozen() -> None:
 
 def test_tool_handoff_precedes_all_terminal_mutations() -> None:
     body = SQL.split(
-        "CREATE FUNCTION complete_model_attempt_without_actions", 1,
-    )[1].split("CREATE FUNCTION fail_model_attempt_and_step", 1)[0]
+        "CREATE FUNCTION _complete_model_attempt_without_actions", 1,
+    )[1].split("CREATE FUNCTION _fail_model_attempt_and_step", 1)[0]
     handoff = body.index("p_stop_reason = 'tool_calls'")
     assert handoff < body.index("UPDATE agent_model_attempts")
     assert handoff < body.index("_settle_agent_model_credits")
     assert "complete_model_step(" not in SQL
+
+
+def test_reconcile_has_no_attempt_token_prewrite() -> None:
+    body = SQL.split("CREATE FUNCTION resolve_model_attempt", 1)[1].split(
+        "CREATE FUNCTION _adjust_model_attempt_credits", 1,
+    )[0]
+    assert "SET execution_token" not in body
+    assert "_complete_model_attempt_without_actions(" in body
+    assert "p_reconciliation_token" in body
+
+
+def test_adjustment_helper_is_never_granted() -> None:
+    assert "CREATE FUNCTION _adjust_model_attempt_credits(" in SQL
+    assert "REVOKE ALL ON FUNCTION" in SQL
+    assert not re.search(
+        r"GRANT\s+EXECUTE\s+ON\s+FUNCTION(?:(?!;).)*"
+        r"_adjust_model_attempt_credits",
+        SQL,
+        re.IGNORECASE | re.DOTALL,
+    )
 
 
 def test_migration_files_stay_under_structure_limit() -> None:
