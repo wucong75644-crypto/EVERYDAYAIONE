@@ -1,5 +1,20 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-27 Agent Runtime AR-12 Action 持久化与 Tool 终态 — 已集成，尚未接入生产 Owner
+
+- migration 218新增Action、ActionAttempt、ActionResult与claim batch事实，全部启用
+  RLS和FORCE RLS；Worker仅通过窄RPC执行Tool terminal、claim、terminal、
+  reconciliation和readback，无核心表直权。
+- Tool Calls终态在单一事务内完成ModelAttempt、ModelStep、AR-11积分结算、完整
+  SHA-256 Action批次、Run waiting、RunAttempt闭合以及Event/Outbox；取消链与结果链
+  使用统一锁序。
+- 稳定`claim_request_id`支持数据库提交成功但客户端丢失响应后的原批次恢复；
+  accepted/unknown禁止普通重试，只能reconcile。可执行Action依赖rejected Action时
+  整批失败关闭，需要授权的Action不会被暗中批准。
+- 当前仍为additive基础设施：Conversation Actor继续是生产Chat Owner，Action
+  Coordinator、Executor/Policy正式接线及生产切换属于后续AR任务；不得因迁移218落地
+  就停用旧执行链。
+
 ## 2026-07-27 Runtime 媒体提交拒绝退款权限错误 — 本地修复，待生产补偿与部署
 
 - 生产图片供应商明确拒绝路径出现两笔 `atomic_refund_credits` EXECUTE 权限错误；

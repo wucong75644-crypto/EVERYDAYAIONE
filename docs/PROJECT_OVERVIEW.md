@@ -52,6 +52,18 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - 当前仍是additive foundation，生产Chat Owner继续为Conversation Actor；AR-12完成
   Action统一终态前禁止切换Runtime Owner。
 
+Agent Runtime AR-12 Action持久化与Tool终态：
+- `docs/document/TECH_AGENT_RUNTIME_AR-12Action持久化与Tool终态.md`：冻结Tool Calls
+  唯一原子终态、Action恢复、claim批次回读、依赖、取消、权限与回滚合同。
+- `backend/services/agent/runtime/ports/action_repository.py`及
+  `infrastructure/postgres/action_repository.py`：定义Action lifecycle typed Port，
+  并通过Worker Scoped RPC映射terminal、claim、reconcile与readback。
+- `backend/migrations/218_01_agent_runtime_action_foundation.sql`至
+  `218_04_agent_runtime_action_reconciliation.sql`及同编号helper迁移：建立Action、
+  ActionAttempt、ActionResult、claim batch、数据库SHA-256身份、FORCE RLS和窄RPC。
+- 当前仍为additive基础设施，生产Chat Owner继续为Conversation Actor；Coordinator、
+  Executor/Policy正式接线及生产切换属于后续AR任务。
+
 定时任务委托执行边界：
 - `docs/document/TECH_定时任务委托执行边界.md`：定义 Worker 控制面、Runtime 工具面、
   任务级数据库身份和无人值守工具白名单。

@@ -94,6 +94,18 @@
 | `get_model_attempt` / `record_late_model_receipt` | `backend/migrations/217_04_agent_runtime_model_attempt_reconciliation.sql` | 提供响应丢失readback，并在Run取消后幂等保存late receipt和唯一财务adjustment |
 | `cancel_agent_run` | `backend/migrations/217_03_agent_runtime_model_attempt_lifecycle.sql` | 保持原签名和Scope授权，增加活动ModelAttempt/ModelStep取消及预留释放 |
 
+### Agent Runtime AR-12 Action 持久化与 Tool 终态
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `ActionRepositoryPort` / `ActionMutationReceipt` | `backend/services/agent/runtime/ports/action_repository.py` | 定义Tool terminal、Action claim、执行、reconcile与响应丢失readback的typed持久化边界 |
+| `PostgresActionRepository` | `backend/services/agent/runtime/infrastructure/postgres/action_repository.py` | 将Action Port映射到Worker Scoped migration 218 RPC并失败关闭解析未知outcome |
+| `complete_model_attempt_step_and_create_actions` | `backend/migrations/218_02_agent_runtime_action_tool_terminal.sql` | 原子完成ModelAttempt、ModelStep、积分结算、SHA-256 Action批次、Run waiting、Event与Outbox |
+| `claim_ready_agent_actions` / `get_agent_action_claim_batch` | `backend/migrations/218_03_agent_runtime_action_lifecycle.sql` | 以稳定claim request幂等领取ready Action，并在响应丢失后恢复原Attempt、token与lease |
+| `complete_agent_action` / `fail_agent_action` | `backend/migrations/218_03_agent_runtime_action_lifecycle.sql` | 以fencing token原子写规范Result、递减blocker并在最后一个结果后唯一唤醒Run |
+| `claim_agent_action_reconciliation` / `resolve_agent_action_reconciliation` | `backend/migrations/218_04_agent_runtime_action_reconciliation.sql` | 对accepted/unknown Action签发独立reconcile lease并禁止普通重复dispatch |
+| `cancel_agent_run` | `backend/migrations/218_04_agent_runtime_action_reconciliation.sql` | 按统一锁序原子取消活动Model/Action工作、清零blocker并保持原Scope授权 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |

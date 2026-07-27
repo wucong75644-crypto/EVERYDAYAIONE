@@ -1,5 +1,10 @@
 """Agent Runtime 应用层稳定 SPI。"""
 
+from services.agent.runtime.ports.action_repository import (
+    ActionMutationOutcome,
+    ActionMutationReceipt,
+    ActionRepositoryPort,
+)
 from services.agent.runtime.ports.event import RuntimeEventPort
 from services.agent.runtime.ports.executor import (
     ExecutionOutcome,
@@ -47,6 +52,9 @@ from services.agent.runtime.ports.repository import (
 )
 
 __all__ = [
+    "ActionMutationOutcome",
+    "ActionMutationReceipt",
+    "ActionRepositoryPort",
     "ExecutionOutcome",
     "ExecutionReceipt",
     "ExecutorPort",
