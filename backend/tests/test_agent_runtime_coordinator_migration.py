@@ -12,13 +12,30 @@ EXPECTED = [
     "220_03_agent_runtime_model_result_terminal.sql",
     "220_04_agent_runtime_action_recovery.sql",
 ]
+AR15_LANE = [
+    "220_11_agent_runtime_compat_projection_foundation.sql",
+    "220_12_agent_runtime_compat_projection_rpcs.sql",
+]
 
 
 def test_migration_identity_and_rollback_order() -> None:
     discovered = discover_migrations(ROOT / "migrations")
-    names = [item.identity for item in discovered if item.identity.startswith("220_")]
-    assert names == EXPECTED
-    assert all(item.rollback_identity for item in discovered if item.identity in names)
+    wave = [
+        item for item in discovered if item.identity.startswith("220_")
+    ]
+    names = [item.identity for item in wave]
+    lanes = ["_".join(name.split("_", 2)[:2]) for name in names]
+
+    assert names == sorted(names)
+    assert len(lanes) == len(set(lanes))
+    assert [name for name in names if name in EXPECTED] == EXPECTED
+    assert [name for name in names if name in AR15_LANE] == AR15_LANE
+    assert names.index(EXPECTED[-1]) < names.index(AR15_LANE[0])
+    assert all(
+        item.rollback_identity
+        == f"{Path(item.identity).stem}_rollback.sql"
+        for item in wave
+    )
 
 
 def test_model_result_is_separate_authoritative_rls_table() -> None:
