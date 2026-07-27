@@ -144,8 +144,21 @@ def require_action_result(
     target: ActionStatus,
     result: ActionResult | None,
 ) -> None:
-    """Action completed 必须有结果，其他状态不得提前绑定终态结果。"""
-    if target is ActionStatus.COMPLETED and result is None:
-        raise ValueError("completed action requires ActionResult")
-    if target is not ActionStatus.COMPLETED and result is not None:
-        raise ValueError("ActionResult is only valid for completed action")
+    """Action completed/failed 必须有规范结果，其他状态不得提前绑定。"""
+    result_targets = {ActionStatus.COMPLETED, ActionStatus.FAILED}
+    if target in result_targets and result is None:
+        raise ValueError(f"{target.value} action requires ActionResult")
+    if target not in result_targets and result is not None:
+        raise ValueError("ActionResult is only valid for completed/failed action")
+    if (
+        result is not None
+        and target is ActionStatus.FAILED
+        and result.status is not ActionResultStatus.ERROR
+    ):
+        raise ValueError("failed action requires an error ActionResult")
+    if (
+        result is not None
+        and target is ActionStatus.COMPLETED
+        and result.status is ActionResultStatus.ERROR
+    ):
+        raise ValueError("completed action cannot use an error ActionResult")
