@@ -16,6 +16,7 @@ from schemas.message import (
     MessageRole,
     MessageStatus,
     VideoPart,
+    serialize_content_part,
 )
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.worker_media_tasks import WorkerMediaTasks
@@ -77,12 +78,7 @@ class VideoHandler(BaseHandler):
         content_dicts = []
         for part in result:
             if isinstance(part, VideoPart):
-                content_dicts.append({
-                    "type": "video",
-                    "url": part.url,
-                    "duration": part.duration,
-                    "thumbnail": part.thumbnail,
-                })
+                content_dicts.append(serialize_content_part(part))
             elif isinstance(part, dict):
                 content_dicts.append(part)
         return content_dicts

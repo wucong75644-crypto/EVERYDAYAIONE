@@ -14,6 +14,8 @@
 4. 原始文本是唯一可信源；高亮、复制、表格展示均为派生结果。
 5. 单个非法内容块隔离，不得导致整条消息或页面崩溃。
 6. 新增扩展字段通过 `.passthrough()` 保留，避免前后端灰度发布互相阻塞。
+7. 后端 Pydantic `ContentPart` 是唯一协议事实源；版本化 JSON Schema artifact
+   与跨语言样例测试阻止前后端手写协议发生漂移。
 
 ## 3. 数据链路
 
@@ -34,6 +36,8 @@ WebSocket block ─ parseContentPart ─┼─> ContentPart[] ─> Zustand Store
 - 内容数组逐块校验；合法块保留，非法块丢弃并记录 `messageId`、`conversationId`、`source`。
 - 历史异常 `{ type: "text", text: object }` 兼容恢复为格式化 JSON 文本，避免再次产生隐式对象字符串。
 - 未知 `type` 不进入 Store，防止消费者收到不完整协议。
+- `ImagePart.url` 必须存在但允许 `null`；其他可选媒体元数据的缺失与 `null`
+  在只读消息投影中等价，进入 Store 前统一归一化为字段缺失。
 
 ### 3.2 状态规则
 
@@ -58,7 +62,9 @@ WebSocket block ─ parseContentPart ─┼─> ContentPart[] ─> Zustand Store
 | 结构化 text | 序列化为可读 JSON 文本 |
 | 高亮器失败或未知语言 | 直接渲染原始源码 |
 | 表格值循环引用 | 显示“无法显示的结构化数据”，组件不崩溃 |
-| 空值 | 渲染为空字符串 |
+| 可选媒体元数据为 `null` | 按权威契约接收并归一化为字段缺失，不丢弃整个内容块 |
+| `ImagePart.url` 为 `null` | 保留为生成中或失败占位 |
+| 必填字段缺失或类型错误 | 隔离非法块并记录协议上下文 |
 
 ## 5. 安全与性能
 
@@ -74,9 +80,13 @@ WebSocket block ─ parseContentPart ─┼─> ContentPart[] ─> Zustand Store
 - 非法块不得写入 Store；合法扩展字段必须保留。
 - Form、Table、Spreadsheet 不得使用对象隐式字符串化。
 - TypeScript 构建、相关测试和完整前端回归必须通过。
+- 后端生成的全部合法契约样例必须通过前端 Zod；拒绝样例必须在两端一致失败。
 
 ## 7. 已知后续项
 
+- 2026-07-27 修复后端合法 `null` 元数据被前端误判并整块过滤的问题；补齐
+  `table`、`interrupt_marker` 后端权威模型，建立版本化 ContentPart 契约 artifact、
+  统一序列化函数和跨语言门禁。无需数据库迁移或历史数据回填。
 - 2026-07-17 已完成 Markdown、Form、Table、Spreadsheet、Chart 与工具确认弹窗覆盖补强，两组覆盖率均越过全局 80% 门槛。
 - 已完成 streaming slice action factories、WS handler、Form 与 Spreadsheet 内部职责拆分；公开协议、Store shape 与组件入口保持兼容。
 - 生产构建仍报告项目级大 chunk 警告，属于独立性能治理范围，不影响本次结构化消息正确性。

@@ -10,7 +10,7 @@ from typing import Any, Callable, Mapping
 from loguru import logger
 from pydantic import TypeAdapter
 
-from schemas.message import ContentPart
+from schemas.message import ContentPart, serialize_content_parts
 from services.conversation_execution import GenerationClaim, GenerationOutcome
 from services.handlers.chat.execution_engine import (
     ChatExecutionRequest,
@@ -92,18 +92,13 @@ class ChatGenerationExecutor:
             input_content=content,
             output_blocks=(
                 result.content_blocks
-                or [
-                    part.model_dump(exclude_none=True)
-                    for part in result.parts
-                ]
+                or serialize_content_parts(result.parts)
             ),
             artifacts=result.artifact_drafts,
             input_message_id=claim.input_message_id,
             output_message_id=str(task["assistant_message_id"]),
         )
-        result_content = [
-            part.model_dump(exclude_none=True) for part in result.parts
-        ]
+        result_content = serialize_content_parts(result.parts)
         from services.assets import register_message_media_best_effort
 
         register_message_media_best_effort(

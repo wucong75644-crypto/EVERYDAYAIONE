@@ -15,6 +15,7 @@ from schemas.message import (
     MessageOperation,
     MessageRole,
     MessageStatus,
+    serialize_content_parts,
 )
 from services.generation_lifecycle import GenerationLifecycle
 from services.adapters.factory import DEFAULT_MODEL_ID
@@ -165,7 +166,7 @@ def _input_payload(
         return {}
     return {
         "id": message_id,
-        "content": [part.model_dump(mode="json") for part in body.content],
+        "content": serialize_content_parts(body.content),
         "client_request_id": body.client_request_id,
         "created_at": created_at.isoformat(),
     }

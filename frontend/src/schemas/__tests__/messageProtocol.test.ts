@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { parseContentPart, parseContentParts } from '../messageProtocol';
 
@@ -6,6 +8,50 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 describe('messageProtocol', () => {
+  it('conforms to every backend ContentPart contract example', () => {
+    const contractPath = resolve(
+      process.cwd().endsWith('/frontend') ? '..' : '.',
+      'backend/schemas/contracts/content_part.v1.json',
+    );
+    const contract = JSON.parse(readFileSync(contractPath, 'utf8')) as {
+      valid_examples: unknown[];
+      invalid_examples: unknown[];
+    };
+
+    expect(parseContentParts(contract.valid_examples)).toHaveLength(
+      contract.valid_examples.length,
+    );
+    contract.invalid_examples.forEach((example) => {
+      expect(parseContentPart(example)).toBeNull();
+    });
+  });
+
+  it('normalizes production nullable image metadata without dropping the block', () => {
+    const parsed = parseContentPart({
+      type: 'image',
+      url: 'https://oss.example/input.png',
+      original_url: null,
+      thumbnail_url: null,
+      preview_url: null,
+      download_url: null,
+      asset_id: null,
+      width: null,
+      height: null,
+      alt: null,
+      failed: null,
+      error: null,
+      name: null,
+      workspace_path: null,
+      size: null,
+      mime_type: null,
+    });
+
+    expect(parsed).toEqual({
+      type: 'image',
+      url: 'https://oss.example/input.png',
+    });
+  });
+
   it('accepts every core content block family', () => {
     const blocks = [
       { type: 'text', text: 'hello' },

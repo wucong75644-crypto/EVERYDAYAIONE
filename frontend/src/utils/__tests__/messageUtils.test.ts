@@ -280,6 +280,36 @@ describe('getVideoUrls', () => {
 // ============================================================
 
 describe('normalizeMessage', () => {
+  it('restores user images serialized by Pydantic with nullable metadata', () => {
+    const result = normalizeMessage({
+      id: 'user-message',
+      conversation_id: 'conv-1',
+      role: 'user',
+      content: [
+        { type: 'text', text: '参考图片' },
+        {
+          type: 'image',
+          url: 'https://oss.example/input.png',
+          original_url: null,
+          thumbnail_url: null,
+          width: null,
+          height: null,
+          alt: null,
+          failed: null,
+          name: null,
+          workspace_path: null,
+        },
+      ] as unknown as ContentPart[],
+      status: 'completed',
+      created_at: '2026-07-27T00:00:00Z',
+    });
+
+    expect(result.content).toHaveLength(2);
+    expect(getImageAssets(result).map((asset) => asset.originalUrl)).toEqual([
+      'https://oss.example/input.png',
+    ]);
+  });
+
   it('should pass through array content', () => {
     const msg = {
       id: 'msg-1',

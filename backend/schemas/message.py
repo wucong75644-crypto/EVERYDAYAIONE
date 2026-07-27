@@ -7,7 +7,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, Iterable, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 import json
 
@@ -20,7 +20,7 @@ from schemas.media_parts import (
     TextPart,
     VideoPart,
 )
-
+from schemas.structured_parts import InterruptMarkerPart, TablePart
 
 # ============================================================
 # 枚举类型
@@ -86,7 +86,7 @@ class ToolStepPart(BaseModel):
     type: Literal["tool_step"] = "tool_step"
     tool_name: str
     tool_call_id: str
-    status: str = "running"  # "running" | "completed" | "error"
+    status: Literal["running", "completed", "error", "cancelled"] = "running"
     input: Optional[str] = None      # 所有工具：调用参数（JSON）
     code: Optional[str] = None       # code_execute 专用：语法高亮用的代码
     output: Optional[str] = None     # 所有工具：完整返回结果
@@ -135,9 +135,22 @@ class EcomPlanPart(BaseModel):
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
           ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart,
-          DiagramPart, EcomPlanPart],
+          DiagramPart, EcomPlanPart, TablePart, InterruptMarkerPart],
     Field(discriminator="type"),
 ]
+
+
+def serialize_content_part(part: ContentPart) -> Dict[str, Any]:
+    """按权威 ContentPart 线协议输出 JSON-compatible 字典。"""
+    serialized = part.model_dump(mode="json", exclude_none=True)
+    if isinstance(part, ImagePart) and part.url is None:
+        serialized["url"] = None
+    return serialized
+
+
+def serialize_content_parts(parts: Iterable[ContentPart]) -> List[Dict[str, Any]]:
+    """统一序列化一组 ContentPart，避免调用方形成不同空值策略。"""
+    return [serialize_content_part(part) for part in parts]
 
 
 # ============================================================
@@ -400,7 +413,7 @@ class MessageResponse(BaseModel):
         if len(msg.content) == 1 and isinstance(msg.content[0], TextPart):
             content_value: Union[str, List[Dict[str, Any]]] = text_content
         else:
-            content_value = [p.model_dump() for p in msg.content]
+            content_value = serialize_content_parts(msg.content)
 
         return cls(
             id=msg.id,

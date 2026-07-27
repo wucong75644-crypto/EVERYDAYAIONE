@@ -16,6 +16,7 @@ from schemas.message import (
     GenerationType,
     ImagePart,
     Message,
+    serialize_content_part,
 )
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.handlers.image_request_settings import (
@@ -205,12 +206,7 @@ class ImageHandler(BaseHandler):
         content_dicts = []
         for part in result:
             if isinstance(part, ImagePart):
-                content_dicts.append({
-                    "type": "image",
-                    "url": part.url,
-                    "width": part.width,
-                    "height": part.height,
-                })
+                content_dicts.append(serialize_content_part(part))
             elif isinstance(part, dict):
                 content_dicts.append(part)
         return content_dicts

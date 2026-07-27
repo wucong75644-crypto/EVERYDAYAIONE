@@ -8,7 +8,12 @@ from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
 
-from schemas.message import FilePart, ImagePart, TextPart
+from schemas.message import (
+    FilePart,
+    ImagePart,
+    TextPart,
+    serialize_content_parts,
+)
 from schemas.wecom import WecomIncomingMessage
 from services.handlers.base import TaskMetadata
 
@@ -133,7 +138,7 @@ def _build_content(
         parts.append(FilePart(**file_payload))
     if not parts:
         parts.append(TextPart(text="（用户发送了一张图片）"))
-    return [part.model_dump(exclude_none=True) for part in parts]
+    return serialize_content_parts(parts)
 
 
 def _delivery_context(

@@ -14,7 +14,12 @@ from loguru import logger
 from psycopg import Error as PsycopgError
 
 from core.exceptions import AppException
-from schemas.message import GenerateRequest, GenerateResponse, MessageOperation
+from schemas.message import (
+    GenerateRequest,
+    GenerateResponse,
+    MessageOperation,
+    serialize_content_parts,
+)
 
 
 _RUNTIME_PARAM_KEYS = {
@@ -169,7 +174,7 @@ class MessageIdempotencyService:
         payload = {
             "conversation_id": conversation_id,
             "operation": body.operation.value,
-            "content": [part.model_dump(mode="json") for part in body.content],
+            "content": serialize_content_parts(body.content),
             "generation_type": body.generation_type.value if body.generation_type else None,
             "model": body.model,
             "params": params,

@@ -11,6 +11,7 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
+    serialize_content_part,
 )
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
@@ -75,7 +76,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         dicts = []
         for p in result:
             if isinstance(p, BaseModel):
-                dicts.append(p.model_dump(exclude_none=True))
+                dicts.append(serialize_content_part(p))
             elif isinstance(p, dict):
                 dicts.append(p)
         return dicts
