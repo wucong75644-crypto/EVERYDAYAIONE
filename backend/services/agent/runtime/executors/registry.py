@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Iterable
 
 from services.agent.runtime.executors.types import ExecutorDescriptor
+from services.agent.runtime.executors.types import (
+    ExecutionMode,
+    IdempotencySupport,
+)
 from services.agent.runtime.ports.executor import ExecutorPort
 
 
@@ -23,6 +27,18 @@ class ExecutorRegistry:
     def register(
         self, descriptor: ExecutorDescriptor, executor: ExecutorPort,
     ) -> None:
+        side_effecting = descriptor.mode not in {
+            ExecutionMode.IMMEDIATE_READ,
+            ExecutionMode.LOCAL_RENDER,
+        }
+        if (
+            side_effecting
+            and descriptor.idempotency is IdempotencySupport.NONE
+            and not descriptor.query_status
+        ):
+            raise ValueError(
+                "side-effecting executor requires recovery capability",
+            )
         if descriptor.executor_type in self._by_type:
             raise ValueError(
                 f"duplicate executor type: {descriptor.executor_type}",

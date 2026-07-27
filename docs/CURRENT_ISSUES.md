@@ -1,5 +1,13 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-28 Agent Runtime Projection Outbox dead stream — 生产 composition 前 P1
+
+- `fail_agent_projection_outbox`达到最大失败次数后会将记录置为`dead`，当前没有受控
+  inspect/requeue/replay入口。该问题不参与 Action authorization→dispatch 的事务和锁链，
+  本次不混入220_24/25。
+- 接入生产 composition 前必须提供 owner/worker 窄恢复入口、审计、幂等 checkpoint
+  校验与权限测试；否则单条 dead 事件会永久阻断同 Session 后续投影。
+
 ## 2026-07-27 Agent Runtime AR-13 Command Claim 与 Coordinator 骨架 — 已集成，尚未接入生产 Owner
 
 - migration `219_01`、`219_02`、`219_02a`新增CommandClaim事实和Worker窄RPC；

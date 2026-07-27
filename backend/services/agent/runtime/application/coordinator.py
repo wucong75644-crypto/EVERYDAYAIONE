@@ -12,6 +12,9 @@ from services.agent.runtime.ports.command_claim import (
     CommandClaimRepositoryPort,
 )
 from services.agent.runtime.application.action_loop import ActionLoopDriver
+from services.agent.runtime.application.authorization_recovery import (
+    AuthorizationRecoveryDriver,
+)
 from services.agent.runtime.application.model_loop import ModelLoopDriver
 from services.agent.runtime.domain.errors import FencingTokenMismatchError
 from services.agent.runtime.ports.coordinator_recovery import (
@@ -144,6 +147,7 @@ class RuntimeLoopCoordinator:
         self, *, recovery_repository: CoordinatorRecoveryPort,
         runtime_repository: RuntimeRepositoryPort,
         model_loop: ModelLoopDriver, action_loop: ActionLoopDriver,
+        authorization_loop: AuthorizationRecoveryDriver | None = None,
         worker_id: str, poll_interval: float = 1.0,
         run_lease_seconds: int = 90, run_renew_interval: float = 30.0,
     ) -> None:
@@ -153,6 +157,7 @@ class RuntimeLoopCoordinator:
         self._runtime = runtime_repository
         self._model_loop = model_loop
         self._action_loop = action_loop
+        self._authorization_loop = authorization_loop
         self._worker_id = worker_id
         self._poll_interval = poll_interval
         self._run_lease_seconds = run_lease_seconds
@@ -166,6 +171,8 @@ class RuntimeLoopCoordinator:
             asyncio.create_task(self._action_scanner()),
             asyncio.create_task(self._reconciliation_scanner()),
         }
+        if self._authorization_loop is not None:
+            tasks.add(asyncio.create_task(self._authorization_scanner()))
         try:
             done, _ = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_EXCEPTION,
@@ -219,6 +226,11 @@ class RuntimeLoopCoordinator:
 
     async def reconciliation_once(self) -> bool:
         return await self._action_loop.reconcile_once()
+
+    async def authorization_once(self) -> bool:
+        if self._authorization_loop is None:
+            return False
+        return await self._authorization_loop.run_once()
 
     async def _with_run_lease(
         self, *, run_id: str, token: str, initial_state_version: int,
@@ -326,6 +338,11 @@ class RuntimeLoopCoordinator:
     async def _reconciliation_scanner(self) -> None:
         while not self._stopping.is_set():
             if not await self.reconciliation_once():
+                await self._wait()
+
+    async def _authorization_scanner(self) -> None:
+        while not self._stopping.is_set():
+            if not await self.authorization_once():
                 await self._wait()
 
     async def _wait(self) -> None:

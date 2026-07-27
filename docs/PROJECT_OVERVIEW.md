@@ -39,6 +39,19 @@
 
 ## 目录结构
 
+Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
+- `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql`、
+  `220_25_agent_runtime_authorization_recovery.sql`及同名 rollback：增加持久
+  DispatchIntent、授权恢复、原子 GrantUse、取消/拒绝收敛和 reconcile-only 恢复。
+- `backend/services/agent/runtime/ports/authorization.py`、
+  `application/authorization_recovery.py`及
+  `infrastructure/postgres/authorization.py`：提供唯一授权恢复与 gate Port/Worker 适配。
+- `backend/services/agent/runtime/executors/resolver.py`与
+  `application/action_loop.py`：Registry 保持唯一 Executor 映射 SSOT，按
+  Resolver→gate→dispatch/reconcile 编排；未接 startup/ingress。
+- `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
+  原子边界、锁序、故障恢复、权限与 rollback 合同。
+
 Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `docs/document/TECH_AGENT_RUNTIME_AR-11ModelAttempt与唯一计费结算.md`：冻结
   Provider单dispatch、unknown/reconcile、late receipt和财务幂等边界。

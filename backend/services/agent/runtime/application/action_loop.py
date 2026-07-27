@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from typing import Mapping, Protocol
+from dataclasses import replace
+from typing import Mapping
 from uuid import uuid4
 
 from services.agent.runtime.domain.errors import (
@@ -12,6 +13,12 @@ from services.agent.runtime.domain.errors import (
     FencingTokenMismatchError,
     LeaseExpiredError,
     StaleVersionError,
+)
+from services.agent.runtime.domain import ActionAttempt, ActionAttemptStatus
+from services.agent.runtime.executors.resolver import ActionExecutorResolver
+from services.agent.runtime.ports.authorization import (
+    ActionAuthorizationPort,
+    DispatchGateDenied,
 )
 from services.agent.runtime.ports.action_repository import ActionRepositoryPort
 from services.agent.runtime.ports.coordinator_recovery import (
@@ -22,33 +29,19 @@ from services.agent.runtime.ports.coordinator_recovery import (
 from services.agent.runtime.ports.executor import ExecutionOutcome, ExecutionReceipt
 
 
-class ResolvedActionExecutor(Protocol):
-    async def dispatch(
-        self, snapshot: ActionDispatchSnapshot,
-    ) -> ExecutionReceipt: ...
-
-    async def reconcile(
-        self, snapshot: ActionDispatchSnapshot,
-    ) -> ExecutionReceipt: ...
-
-
-class ActionResolver(Protocol):
-    def __call__(
-        self, action: Mapping[str, object],
-    ) -> ResolvedActionExecutor: ...
-
-
 class ActionLoopDriver:
     def __init__(
         self, *, recovery_repository: CoordinatorRecoveryPort,
         action_repository: ActionRepositoryPort,
-        resolver: ActionResolver, worker_id: str,
+        authorization_repository: ActionAuthorizationPort,
+        resolver: ActionExecutorResolver, worker_id: str,
         lease_seconds: int = 120, renew_interval: float = 40.0,
     ) -> None:
         if renew_interval <= 0:
             raise ValueError("ACTION_RENEW_INTERVAL_MUST_BE_POSITIVE")
         self._recovery = recovery_repository
         self._actions = action_repository
+        self._authorization = authorization_repository
         self._resolver = resolver
         self._worker_id = worker_id
         self._lease_seconds = lease_seconds
@@ -92,10 +85,9 @@ class ActionLoopDriver:
             reconciliation=True,
         )
         try:
+            resolved = self._resolver.resolve(claim.snapshot)
             receipt = await lease.run(
-                self._resolver(claim.snapshot.action).reconcile(
-                    claim.snapshot,
-                ),
+                resolved.executor.reconcile(resolved.attempt),
             )
             await self._apply(
                 claim.snapshot, receipt,
@@ -116,26 +108,38 @@ class ActionLoopDriver:
     async def _dispatch(self, snapshot: ActionDispatchSnapshot) -> None:
         attempt = snapshot.attempt
         token = str(attempt["execution_token"])
-        version = _int(attempt, "state_version")
         request_hash = str(attempt["request_hash"])
-        dispatching = await self._actions.mark_dispatching(
-            attempt_id=str(attempt["id"]), execution_token=token,
-            expected_state_version=version, request_hash=request_hash,
-        )
-        if dispatching.state_version is None:
-            raise RuntimeError("ACTION_DISPATCH_VERSION_REQUIRED")
+        resolved = self._resolver.resolve(snapshot)
+        try:
+            gate = await self._authorization.gate(
+                snapshot=snapshot, descriptor=resolved.descriptor,
+            )
+        except DispatchGateDenied:
+            return
         lease: _ActionLease | None = None
         try:
             lease = _ActionLease(
                 repository=self._actions,
                 attempt_id=str(attempt["id"]), token=token,
-                state_version=dispatching.state_version,
+                state_version=gate.state_version,
                 lease_seconds=self._lease_seconds,
                 renew_interval=self._renew_interval,
                 reconciliation=False,
             )
+            request = dict(resolved.request)
+            request["external_idempotency_key"] = (
+                gate.external_idempotency_key
+            )
+            dispatching_attempt = (
+                replace(
+                    resolved.attempt,
+                    status=ActionAttemptStatus.DISPATCHING,
+                )
+                if isinstance(resolved.attempt, ActionAttempt)
+                else resolved.attempt
+            )
             receipt = await lease.run(
-                self._resolver(snapshot.action).dispatch(snapshot),
+                resolved.executor.dispatch(dispatching_attempt, request),
             )
         except DomainContractError:
             raise
@@ -144,7 +148,7 @@ class ActionLoopDriver:
                 attempt_id=str(attempt["id"]), execution_token=token,
                 expected_state_version=(
                     lease.state_version
-                    if lease is not None else dispatching.state_version
+                    if lease is not None else gate.state_version
                 ),
                 request_hash=request_hash,
                 ambiguity_evidence={"kind": "executor_dispatch_exception"},
@@ -154,7 +158,7 @@ class ActionLoopDriver:
             snapshot, receipt, token=token,
             state_version=(
                 lease.state_version
-                if lease is not None else dispatching.state_version
+                if lease is not None else gate.state_version
             ),
             reconciliation=False,
         )
