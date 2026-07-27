@@ -11,7 +11,7 @@
  * 权限：未登录 → ProtectedRoute 拦截；其他角色 → AdminPanel 内部展示"无权限"
  */
 
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
 import LoadingScreen from '../components/common/LoadingScreen';
@@ -20,14 +20,9 @@ import AdminPanel from '../components/admin/AdminPanel';
 
 export default function Admin() {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
   const isAuthLoading = useAuthStore((s) => s.isLoading);
 
   if (isAuthLoading) return <LoadingScreen message="加载中..." />;
-
-  // 支持 ?tab=kuaimai 这种深度链接（兼容旧 /settings/integrations/kuaimai 跳转）
-  // AdminPanel 内部读 search params 自行处理（后续按需扩展）
-  void params; // 防止 unused warning
 
   return (
     <div className="min-h-screen bg-[var(--s-bg-primary)] p-6">

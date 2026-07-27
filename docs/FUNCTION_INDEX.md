@@ -262,6 +262,11 @@
 | `CreditsTab` | `frontend/src/components/admin/userDetail/CreditsTab.tsx` | 余额 + 充值表单（二次确认）+ 流水 | userId, balance, status?, onChanged | JSX |
 | `ConversationViewTab` | `frontend/src/components/admin/userDetail/ConversationViewTab.tsx` | 左对话列表 + 右消息流，保留单素材下载，不再向服务端提交 URL 批量打包 | userId | JSX |
 | `AssetSpaceTab` | `frontend/src/components/admin/userDetail/AssetSpaceTab.tsx` | 统一资产 [上传/生成] 切换 + 复合游标分页 + 资产 ID 多选下载 | userId | JSX |
+| `changeMemberRole` | `frontend/src/services/org.ts` | 通过既有企业治理接口修改成员角色 | orgId, userId, role | Promise |
+| `OrganizationManageSection` | `frontend/src/components/admin/OrganizationManageSection.tsx` | 企业管理内组织管理板块，组合成员任职与群聊管理 | orgId | JSX |
+| `MemberAssignmentsSection` | `frontend/src/components/admin/MemberAssignmentsSection.tsx` | 以正式成员为权威列表，合并任职和企微关联状态并管理角色/显示名 | orgId | JSX |
+| `MemberManagementToolbar` | `frontend/src/components/admin/MemberManagementToolbar.tsx` | 成员总数、企微状态筛选和邀请入口 | orgId, memberCount, filter | JSX |
+| `MemberAssignmentEditor` | `frontend/src/components/admin/MemberAssignmentEditor.tsx` | 在同一编辑态保存显示名、企业角色和成员任职 | member, departments, positions, orgId | JSX |
 
 ### 对话管理模块 (Conversation Management)
 

@@ -10,7 +10,8 @@
  * 历史：原先是 Modal，2026-06-09 改造成整页路由 + 合并快麦接入模块
  */
 
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import SuperAdminPanel from './SuperAdminPanel';
 import OrgManagePanel from './OrgManagePanel';
@@ -24,6 +25,7 @@ type Tab = 'platform' | 'org' | 'monitoring' | 'kuaimai' | 'users';
 
 export default function AdminPanel() {
   const { user, currentOrg } = useAuthStore();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const isSuperAdmin = user?.role === 'super_admin';
   const isOrgAdmin = !!(currentOrg && ['owner', 'admin'].includes(currentOrg.role));
@@ -37,11 +39,6 @@ export default function AdminPanel() {
   ];
   const visibleTabs = tabs.filter((t) => t.visible);
 
-  // 默认 tab：超管→平台管理；普通管理员→企业管理
-  const [activeTab, setActiveTab] = useState<Tab>(
-    isSuperAdmin ? 'platform' : 'org',
-  );
-
   if (visibleTabs.length === 0) {
     return (
       <div className="text-center text-text-tertiary py-12">
@@ -49,6 +46,18 @@ export default function AdminPanel() {
       </div>
     );
   }
+
+  const requestedTab = searchParams.get('tab') as Tab | null;
+  const activeTab = visibleTabs.some((tab) => tab.key === requestedTab)
+    ? requestedTab as Tab
+    : visibleTabs[0].key;
+
+  const selectTab = (tab: Tab) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab);
+    if (tab !== 'org') next.delete('section');
+    setSearchParams(next, { replace: true });
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -59,7 +68,7 @@ export default function AdminPanel() {
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => selectTab(tab.key)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? 'border-[var(--s-accent)] text-[var(--s-accent)]'

@@ -138,6 +138,18 @@ export async function removeMember(
   return request({ method: 'DELETE', url: `/org/${orgId}/members/${userId}` });
 }
 
+export async function changeMemberRole(
+  orgId: string,
+  userId: string,
+  role: 'admin' | 'member',
+): Promise<{ success: boolean }> {
+  return request({
+    method: 'PATCH',
+    url: `/org/${orgId}/members/${userId}/role`,
+    data: { role },
+  });
+}
+
 export async function createInvitation(
   orgId: string, phone: string, role: string = 'member',
 ): Promise<{ success: boolean; data: { invite_token: string } }> {

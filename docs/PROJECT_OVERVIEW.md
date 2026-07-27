@@ -450,6 +450,12 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   active Key 判定和 orgId/卸载后的异步结果失效。
 - `frontend/src/components/admin/OrgInfoSection.tsx`：从企业管理主面板拆出的企业信息
   与登录链接展示，使主面板保持在结构阈值内。
+- `frontend/src/components/admin/OrganizationManageSection.tsx`、
+  `MemberManagementToolbar.tsx` 与 `MemberAssignmentEditor.tsx`：把成员、任职、
+  企微关联状态、邀请和群聊统一纳入企业管理的组织管理板块，并保留企微状态独立降级。
+- `docs/document/REQ_企业管理整合组织管理.md`、
+  `UI_企业管理整合组织管理.md` 与 `TECH_企业管理整合组织管理.md`：记录已确认范围、
+  信息架构、前端合并数据流、兼容入口和验证要求。
 - `deploy/env-templates/legacy-config-import.env.template`：161 一次性迁移的旧库只读 DSN、
   migrator DSN、旧密钥兜底和新 KEK 示例，不包含真实材料。
 - `backend/migrations/161_configuration_legacy_import.sql` 同时提供

@@ -1,6 +1,7 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import OrgManagePanel from '../OrgManagePanel';
 import {
   getWecomStatus,
@@ -17,9 +18,15 @@ vi.mock('../../../services/org', () => ({
   testErpConnection: vi.fn(),
   testWecomConnection: vi.fn(),
 }));
+vi.mock('../OrganizationManageSection', () => ({
+  default: () => <div>组织管理</div>,
+}));
 
 const mockGetWecomStatus = vi.mocked(getWecomStatus);
 const mockListOrgConfigs = vi.mocked(listOrgConfigs);
+
+const render: typeof rtlRender = (ui, options) =>
+  rtlRender(<MemoryRouter>{ui}</MemoryRouter>, options);
 
 function configStatus(configKey: string, version: number): OrgConfigStatus {
   return {
@@ -55,6 +62,7 @@ beforeEach(() => {
 describe('企业凭证组状态交互', () => {
   it('ERP 隐藏内部版本，并从明确状态展开整组编辑', async () => {
     render(<OrgManagePanel orgId="org-a" />);
+    await userEvent.click(screen.getByRole('button', { name: 'ERP 凭证' }));
 
     const appCredentials = await screen.findByRole('heading', { name: '应用凭证' });
     const appSection = appCredentials.closest('section');
@@ -77,8 +85,6 @@ describe('企业凭证组状态交互', () => {
 
   it('企业微信机器人使用相同状态与重新配置入口', async () => {
     render(<OrgManagePanel orgId="org-a" />);
-    await screen.findByRole('heading', { name: '应用凭证' });
-
     await userEvent.click(screen.getByRole('button', { name: '企业微信' }));
 
     const heading = await screen.findByRole('heading', { name: '机器人凭证' });
@@ -100,6 +106,7 @@ describe('企业凭证组状态交互', () => {
   it('未配置时直接展示字段，并对不完整凭证给出反馈', async () => {
     mockListOrgConfigs.mockResolvedValueOnce({ success: true, data: [] });
     render(<OrgManagePanel orgId="org-a" />);
+    await userEvent.click(screen.getByRole('button', { name: 'ERP 凭证' }));
 
     const appCredentials = await screen.findByRole('heading', { name: '应用凭证' });
     const appSection = appCredentials.closest('section');

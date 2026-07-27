@@ -5,7 +5,7 @@
  * 点击编辑 → 弹出 EditGroupNameModal 改群名
  *
  * 数据来源：GET /api/wecom-chat-targets/groups
- * 权限：仅 boss/vp 可见此 tab（OrganizationModal 已做判断）
+ * 权限：仅企业 owner/admin 可见（后端治理接口为最终安全边界）
  */
 import { useEffect, useState, useCallback } from 'react';
 import { Loader2, Pencil, RefreshCw, MessageSquare } from 'lucide-react';

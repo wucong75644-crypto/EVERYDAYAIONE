@@ -5,18 +5,21 @@
  *
  * 设计文档: docs/document/TECH_组织架构与权限模型.md §九
  */
-import { useEffect, useState, useCallback } from 'react';
-import { Loader2, Edit2, Check, X, AlertCircle } from 'lucide-react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { Loader2, Edit2, AlertCircle } from 'lucide-react';
 import {
   orgMemberAssignmentService,
   type MemberWithAssignment,
   type OrgDepartment,
   type OrgPosition,
-  type UpdateAssignmentDto,
 } from '../../services/orgMemberAssignment';
-import type { PositionCode, DataScope, DepartmentType } from '../../types/auth';
+import { orgMembersService } from '../../services/orgMembers';
+import { useAuthStore } from '../../stores/useAuthStore';
+import type { PositionCode, DataScope } from '../../types/auth';
 import { logger } from '../../utils/logger';
 import { cn } from '../../utils/cn';
+import MemberManagementToolbar from './MemberManagementToolbar';
+import MemberAssignmentEditor from './MemberAssignmentEditor';
 
 interface Props {
   orgId: string;
@@ -28,16 +31,6 @@ const POSITION_LABELS: Record<PositionCode, string> = {
   manager: '主管',
   deputy: '副主管',
   member: '员工',
-};
-
-const DEPT_TYPE_LABELS: Record<DepartmentType, string> = {
-  ops: '运营',
-  finance: '财务',
-  warehouse: '仓库',
-  service: '客服',
-  design: '设计',
-  hr: '人事',
-  other: '其他',
 };
 
 const DATA_SCOPE_LABELS: Record<DataScope, string> = {
@@ -52,27 +45,50 @@ export function MemberAssignmentsSection({ orgId: _orgId }: Props) {
   const [positions, setPositions] = useState<OrgPosition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [wecomUserIds, setWecomUserIds] = useState<Set<string> | null>(null);
+  const [wecomError, setWecomError] = useState(false);
+  const [wecomFilter, setWecomFilter] = useState<'all' | 'linked' | 'unlinked'>('all');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const loadRequest = useRef(0);
+  const currentOrgRole = useAuthStore((state) => state.currentOrg?.role);
 
   const loadAll = useCallback(async () => {
+    void _orgId;
+    const requestId = ++loadRequest.current;
     setLoading(true);
     setError(null);
+    const wecomRequest = orgMembersService.listWecomCollected()
+      .then((items) => ({ items, failed: false }))
+      .catch(() => ({ items: [], failed: true }));
     try {
       const [m, d, p] = await Promise.all([
         orgMemberAssignmentService.listMembers(),
         orgMemberAssignmentService.listDepartments(),
         orgMemberAssignmentService.listPositions(),
       ]);
+      if (requestId !== loadRequest.current) return;
       setMembers(m);
       setDepartments(d);
       setPositions(p);
-    } catch (err: any) {
-      logger.error('member-assignments', '加载失败', err);
-      setError(err?.response?.data?.detail || '加载失败');
-    } finally {
       setLoading(false);
+
+      const collected = await wecomRequest;
+      if (requestId !== loadRequest.current) return;
+      if (collected.failed) {
+        setWecomUserIds(null);
+        setWecomError(true);
+      } else {
+        setWecomUserIds(new Set(collected.items.map((member) => member.user_id)));
+        setWecomError(false);
+      }
+    } catch (err: unknown) {
+      if (requestId !== loadRequest.current) return;
+      logger.error('member-assignments', '加载失败', err);
+      setError('加载失败');
+    } finally {
+      if (requestId === loadRequest.current) setLoading(false);
     }
-  }, []);
+  }, [_orgId]);
 
   useEffect(() => {
     loadAll();
@@ -82,6 +98,11 @@ export function MemberAssignmentsSection({ orgId: _orgId }: Props) {
   const unassignedCount = members.filter(
     (m) => m.org_role !== 'owner' && !m.assignment?.department_id,
   ).length;
+  const visibleMembers = members.filter((member) => {
+    if (wecomFilter === 'all' || !wecomUserIds) return true;
+    const linked = wecomUserIds.has(member.user_id);
+    return wecomFilter === 'linked' ? linked : !linked;
+  });
 
   if (loading) {
     return (
@@ -102,7 +123,48 @@ export function MemberAssignmentsSection({ orgId: _orgId }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* 未分配横幅 */}
+      <MemberManagementToolbar
+        orgId={_orgId}
+        memberCount={members.length}
+        filter={wecomFilter}
+        filterDisabled={!wecomUserIds}
+        onFilterChange={setWecomFilter}
+      />
+      <AssignmentWarnings wecomError={wecomError} unassignedCount={unassignedCount} />
+      <MemberRows
+        members={visibleMembers}
+        departments={departments}
+        positions={positions}
+        orgId={_orgId}
+        canChangeRole={currentOrgRole === 'owner'}
+        wecomUserIds={wecomUserIds}
+        editingUserId={editingUserId}
+        onEdit={setEditingUserId}
+        onReload={loadAll}
+      />
+      {visibleMembers.length === 0 && (
+        <div className="text-center text-text-tertiary py-8">
+          {members.length === 0 ? '企业暂无有效成员' : '当前筛选没有匹配的成员'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssignmentWarnings({
+  wecomError,
+  unassignedCount,
+}: {
+  wecomError: boolean;
+  unassignedCount: number;
+}) {
+  return (
+    <>
+      {wecomError && (
+        <div className="bg-warning-light text-warning p-3 rounded-lg text-sm">
+          企微关联状态暂不可用，成员与任职信息仍可正常管理
+        </div>
+      )}
       {unassignedCount > 0 && (
         <div className="bg-warning-light text-warning p-3 rounded-lg text-sm flex items-start gap-2">
           <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -114,29 +176,54 @@ export function MemberAssignmentsSection({ orgId: _orgId }: Props) {
           </div>
         </div>
       )}
-
-      {/* 成员卡片列表 */}
-      <div className="space-y-2">
-        {members.map((m) => (
-          <MemberRow
-            key={m.user_id}
-            member={m}
-            departments={departments}
-            positions={positions}
-            isEditing={editingUserId === m.user_id}
-            onStartEdit={() => setEditingUserId(m.user_id)}
-            onCancelEdit={() => setEditingUserId(null)}
-            onSaved={() => {
-              setEditingUserId(null);
-              loadAll();
-            }}
-          />
-        ))}
-      </div>
-    </div>
+    </>
   );
 }
 
+function MemberRows({
+  members,
+  departments,
+  positions,
+  orgId,
+  canChangeRole,
+  wecomUserIds,
+  editingUserId,
+  onEdit,
+  onReload,
+}: {
+  members: MemberWithAssignment[];
+  departments: OrgDepartment[];
+  positions: OrgPosition[];
+  orgId: string;
+  canChangeRole: boolean;
+  wecomUserIds: Set<string> | null;
+  editingUserId: string | null;
+  onEdit: (userId: string | null) => void;
+  onReload: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      {members.map((member) => (
+        <MemberRow
+          key={member.user_id}
+          member={member}
+          departments={departments}
+          positions={positions}
+          orgId={orgId}
+          canChangeRole={canChangeRole}
+          wecomLinked={wecomUserIds?.has(member.user_id)}
+          isEditing={editingUserId === member.user_id}
+          onStartEdit={() => onEdit(member.user_id)}
+          onCancelEdit={() => onEdit(null)}
+          onSaved={() => {
+            onEdit(null);
+            onReload();
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
 // ════════════════════════════════════════════════════════
 // MemberRow — 单个成员行
@@ -146,6 +233,9 @@ interface MemberRowProps {
   member: MemberWithAssignment;
   departments: OrgDepartment[];
   positions: OrgPosition[];
+  orgId: string;
+  canChangeRole: boolean;
+  wecomLinked: boolean | undefined;
   isEditing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -156,61 +246,14 @@ function MemberRow({
   member,
   departments,
   positions,
+  orgId,
+  canChangeRole,
+  wecomLinked,
   isEditing,
   onStartEdit,
   onCancelEdit,
   onSaved,
 }: MemberRowProps) {
-  const [deptId, setDeptId] = useState<string>(member.assignment?.department_id || '');
-  const [posCode, setPosCode] = useState<PositionCode>(
-    member.assignment?.position_code || 'member',
-  );
-  const [jobTitle, setJobTitle] = useState<string>(member.assignment?.job_title || '');
-  const [dataScope, setDataScope] = useState<DataScope>(
-    member.assignment?.data_scope || 'self',
-  );
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  // 进入编辑模式时重置表单
-  useEffect(() => {
-    if (isEditing) {
-      setDeptId(member.assignment?.department_id || '');
-      setPosCode(member.assignment?.position_code || 'member');
-      setJobTitle(member.assignment?.job_title || '');
-      setDataScope(member.assignment?.data_scope || 'self');
-      setSaveError(null);
-    }
-  }, [isEditing, member.assignment]);
-
-  const handleSave = async () => {
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const dto: UpdateAssignmentDto = {
-        position_code: posCode,
-        data_scope: dataScope,
-        job_title: jobTitle.trim() || null,
-      };
-      // 只在职位非 boss/vp 时设置部门
-      if (posCode !== 'boss' && posCode !== 'vp') {
-        if (!deptId) {
-          setSaveError('请选择部门');
-          setSaving(false);
-          return;
-        }
-        dto.department_id = deptId;
-      }
-
-      await orgMemberAssignmentService.updateAssignment(member.user_id, dto);
-      onSaved();
-    } catch (err: any) {
-      setSaveError(err?.response?.data?.detail || '保存失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   // 显示态
   if (!isEditing) {
     const a = member.assignment;
@@ -228,6 +271,24 @@ function MemberRow({
                   老板
                 </span>
               )}
+              {!isOwner && (
+                <span className="text-[10px] px-1.5 py-0.5 bg-surface-sunken text-text-secondary rounded">
+                  {member.org_role === 'admin' ? '管理员' : '成员'}
+                </span>
+              )}
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  wecomLinked === true
+                    ? 'bg-success-light text-success'
+                    : 'bg-surface-sunken text-text-tertiary'
+                }`}
+              >
+                {wecomLinked === undefined
+                  ? '企微状态未知'
+                  : wecomLinked
+                    ? '已关联企微'
+                    : '未关联企微'}
+              </span>
             </div>
             <div className="text-xs text-text-tertiary mt-0.5 flex flex-wrap items-center gap-1.5">
               {a?.department_name && (
@@ -264,106 +325,16 @@ function MemberRow({
     );
   }
 
-  // 编辑态
   return (
-    <div className="bg-surface rounded-lg p-4 border border-accent">
-      <div className="flex items-center gap-3 mb-3">
-        <Avatar name={member.nickname} src={member.avatar_url} />
-        <span className="text-sm font-medium text-text-primary">{member.nickname}</span>
-      </div>
-
-      <div className="space-y-3">
-        {/* 职位 */}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">职位</label>
-          <select
-            value={posCode}
-            onChange={(e) => setPosCode(e.target.value as PositionCode)}
-            className="w-full px-3 py-1.5 text-sm rounded border border-default bg-surface-card focus:outline-none focus:border-accent"
-          >
-            {positions.map((p) => (
-              <option key={p.code} value={p.code}>
-                {POSITION_LABELS[p.code]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* 部门（boss/vp 隐藏） */}
-        {posCode !== 'boss' && posCode !== 'vp' && (
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">部门 *</label>
-            <select
-              value={deptId}
-              onChange={(e) => setDeptId(e.target.value)}
-              className="w-full px-3 py-1.5 text-sm rounded border border-default bg-surface-card focus:outline-none focus:border-accent"
-            >
-              <option value="">请选择部门</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} ({DEPT_TYPE_LABELS[d.type]})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* 自定义头衔 */}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">
-            自定义头衔（可选）
-          </label>
-          <input
-            type="text"
-            value={jobTitle}
-            onChange={(e) => setJobTitle(e.target.value)}
-            placeholder="如：高级运营专员"
-            maxLength={50}
-            className="w-full px-3 py-1.5 text-sm rounded border border-default bg-surface-card focus:outline-none focus:border-accent"
-          />
-        </div>
-
-        {/* 数据范围 */}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">数据范围</label>
-          <select
-            value={dataScope}
-            onChange={(e) => setDataScope(e.target.value as DataScope)}
-            className="w-full px-3 py-1.5 text-sm rounded border border-default bg-surface-card focus:outline-none focus:border-accent"
-          >
-            <option value="self">仅自己</option>
-            <option value="dept_subtree">本部门</option>
-            <option value="all">全公司</option>
-          </select>
-          <p className="text-xs text-text-tertiary mt-1">
-            决定该成员能查看多少数据范围
-          </p>
-        </div>
-
-        {saveError && (
-          <div className="text-xs text-error bg-error-light p-2 rounded">{saveError}</div>
-        )}
-
-        {/* 按钮 */}
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            onClick={onCancelEdit}
-            className="px-3 py-1.5 text-xs rounded border border-default text-text-secondary hover:bg-hover transition-colors flex items-center gap-1"
-          >
-            <X className="w-3 h-3" />
-            取消
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-3 py-1.5 text-xs rounded bg-accent text-text-on-accent hover:bg-accent-hover disabled:opacity-50 transition-colors flex items-center gap-1"
-          >
-            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-            {saving ? '保存中...' : '保存'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <MemberAssignmentEditor
+      member={member}
+      departments={departments}
+      positions={positions}
+      orgId={orgId}
+      canChangeRole={canChangeRole}
+      onCancel={onCancelEdit}
+      onSaved={onSaved}
+    />
   );
 }
 

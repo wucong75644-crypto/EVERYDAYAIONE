@@ -1,32 +1,48 @@
 /**
- * 企业管理面板 — ERP凭证配置 + 成员列表 + 企业信息
+ * 企业管理面板 — 组织管理 + 企业配置 + 企业信息
  *
  * owner/admin 可见。按子 Tab 切换功能。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  listMembers,
   setOrgConfig,
   testWecomConnection,
   getWecomStatus,
-  createInvitation,
-  type OrgMember,
   type WecomFieldStatus,
 } from '../../services/org';
 import AiConfigSection from './AiConfigSection';
 import CredentialGroupSection from './configuration/CredentialGroupSection';
 import ErpConfigSection from './configuration/ErpConfigSection';
-import { MemberAssignmentsSection } from './MemberAssignmentsSection';
 import OrgInfoSection from './OrgInfoSection';
+import OrganizationManageSection from './OrganizationManageSection';
 
 interface OrgManagePanelProps {
   orgId?: string;
 }
 
 export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
-  type SubTab = 'erp' | 'wecom' | 'ai' | 'members' | 'assignments' | 'info';
-  const [subTab, setSubTab] = useState<SubTab>('erp');
+  type Section = 'organization' | 'info' | 'wecom' | 'erp' | 'ai';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSection = searchParams.get('section') as Section | null;
+  const sections: { key: Section; label: string }[] = [
+    { key: 'organization', label: '组织管理' },
+    { key: 'info', label: '企业信息' },
+    { key: 'wecom', label: '企业微信' },
+    { key: 'erp', label: 'ERP 凭证' },
+    { key: 'ai', label: 'AI 配置' },
+  ];
+  const section = sections.some((item) => item.key === requestedSection)
+    ? requestedSection as Section
+    : 'organization';
+
+  const selectSection = (nextSection: Section) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'org');
+    next.set('section', nextSection);
+    setSearchParams(next, { replace: true });
+  };
 
   if (!orgId) {
     return (
@@ -40,173 +56,26 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
     <div className="space-y-4">
       {/* 子 Tab */}
       <div className="flex space-x-1 bg-hover rounded-lg p-1">
-        {([
-          { key: 'erp' as SubTab, label: 'ERP 凭证' },
-          { key: 'wecom' as SubTab, label: '企业微信' },
-          { key: 'ai' as SubTab, label: 'AI 配置' },
-          { key: 'members' as SubTab, label: '成员管理' },
-          { key: 'assignments' as SubTab, label: '部门职位' },
-          { key: 'info' as SubTab, label: '企业信息' },
-        ]).map((tab) => (
+        {sections.map((tab) => (
           <button
             key={tab.key}
             className={`flex-1 py-1.5 text-sm rounded-md transition-base ${
-              subTab === tab.key
+              section === tab.key
                 ? 'bg-surface-card text-text-primary shadow-sm'
                 : 'text-text-tertiary hover:text-text-secondary'
             }`}
-            onClick={() => setSubTab(tab.key)}
+            onClick={() => selectSection(tab.key)}
           >
             {tab.label}
           </button>
         ))}
       </div>
 
-      {subTab === 'erp' && <ErpConfigSection orgId={orgId} />}
-      {subTab === 'wecom' && <WecomConfigSection orgId={orgId} />}
-      {subTab === 'ai' && <AiConfigSection orgId={orgId} />}
-      {subTab === 'members' && <MembersSection orgId={orgId} />}
-      {subTab === 'assignments' && <MemberAssignmentsSection orgId={orgId} />}
-      {subTab === 'info' && <OrgInfoSection orgId={orgId} />}
-    </div>
-  );
-}
-
-// ── 成员列表 ──
-
-function MembersSection({ orgId }: { orgId: string }) {
-  const [members, setMembers] = useState<OrgMember[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // 邀请表单
-  const [showInvite, setShowInvite] = useState(false);
-  const [invitePhone, setInvitePhone] = useState('');
-  const [inviteRole, setInviteRole] = useState('member');
-  const [inviting, setInviting] = useState(false);
-  const [inviteMsg, setInviteMsg] = useState('');
-  const [inviteError, setInviteError] = useState('');
-
-  useEffect(() => {
-    loadMembers();
-  }, [orgId]);
-
-  const loadMembers = async () => {
-    setLoading(true);
-    try {
-      const data = await listMembers(orgId);
-      setMembers(Array.isArray(data) ? data : []);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleInvite = async () => {
-    if (!/^1[3-9]\d{9}$/.test(invitePhone)) {
-      setInviteError('请输入正确的手机号');
-      return;
-    }
-    setInviting(true);
-    setInviteError('');
-    setInviteMsg('');
-    try {
-      await createInvitation(orgId, invitePhone, inviteRole);
-      setInviteMsg(`已向 ${invitePhone} 发送邀请`);
-      setInvitePhone('');
-      setShowInvite(false);
-    } catch {
-      setInviteError('邀请失败');
-    } finally {
-      setInviting(false);
-    }
-  };
-
-  const roleLabels: Record<string, string> = {
-    owner: '创建者',
-    admin: '管理员',
-    member: '成员',
-  };
-
-  if (loading) {
-    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {/* 操作栏 */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-text-tertiary">共 {members.length} 名成员</p>
-        <button
-          onClick={() => { setShowInvite(!showInvite); setInviteError(''); setInviteMsg(''); }}
-          className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover transition-base"
-        >
-          {showInvite ? '取消' : '+ 邀请成员'}
-        </button>
-      </div>
-
-      {inviteMsg && <div className="bg-success-light text-success p-2 rounded text-sm">{inviteMsg}</div>}
-      {inviteError && <div className="bg-error-light text-error p-2 rounded text-sm">{inviteError}</div>}
-
-      {/* 邀请表单 */}
-      {showInvite && (
-        <div className="bg-surface rounded-lg p-3 space-y-2 border">
-          <div className="flex space-x-2">
-            <input
-              type="tel"
-              value={invitePhone}
-              onChange={(e) => setInvitePhone(e.target.value)}
-              className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
-              placeholder="输入手机号"
-              maxLength={11}
-            />
-            <select
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-surface-card"
-            >
-              <option value="member">成员</option>
-              <option value="admin">管理员</option>
-            </select>
-          </div>
-          <button
-            onClick={handleInvite}
-            disabled={inviting || !invitePhone}
-            className="w-full py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base"
-          >
-            {inviting ? '发送中...' : '发送邀请'}
-          </button>
-        </div>
-      )}
-      {members.map((m) => (
-        <div
-          key={m.user_id}
-          className="flex items-center justify-between p-3 bg-surface rounded-lg"
-        >
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-accent-light text-accent rounded-full flex items-center justify-center text-sm font-medium">
-              {(m.nickname || '?')[0]}
-            </div>
-            <div>
-              <div className="text-sm font-medium text-text-primary">{m.nickname || '未知'}</div>
-              <div className="text-xs text-text-tertiary">
-                {new Date(m.joined_at).toLocaleDateString()} 加入
-              </div>
-            </div>
-          </div>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full ${
-              m.role === 'owner'
-                ? 'bg-warning-light text-warning'
-                : m.role === 'admin'
-                ? 'bg-accent-light text-accent'
-                : 'bg-hover text-text-tertiary'
-            }`}
-          >
-            {roleLabels[m.role] || m.role}
-          </span>
-        </div>
-      ))}
+      {section === 'organization' && <OrganizationManageSection orgId={orgId} />}
+      {section === 'info' && <OrgInfoSection orgId={orgId} />}
+      {section === 'wecom' && <WecomConfigSection orgId={orgId} />}
+      {section === 'erp' && <ErpConfigSection orgId={orgId} />}
+      {section === 'ai' && <AiConfigSection orgId={orgId} />}
     </div>
   );
 }

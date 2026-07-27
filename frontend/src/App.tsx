@@ -21,7 +21,6 @@ const Home = lazy(() => import('./pages/Home'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const WecomCallback = lazy(() => import('./pages/WecomCallback'));
-const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
 const Admin = lazy(() => import('./pages/Admin'));
 const DetailPage = lazy(() => import('./pages/DetailPage'));
 const AuthModal = lazy(() => import('./components/auth/AuthModal'));
@@ -101,11 +100,7 @@ function AnimatedRoutes() {
           />
           <Route
             path="/settings/organization"
-            element={
-              <ProtectedRoute>
-                <OrganizationSettings />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/admin?tab=org&section=organization" replace />}
           />
           <Route
             path="/admin"
@@ -118,7 +113,7 @@ function AnimatedRoutes() {
           {/* 旧路由兼容：快麦接入合并到管理后台，重定向到 /admin */}
           <Route
             path="/settings/integrations/kuaimai"
-            element={<Navigate to="/admin" replace />}
+            element={<Navigate to="/admin?tab=kuaimai" replace />}
           />
           {/* 未匹配路由重定向到首页 */}
           <Route path="*" element={<Navigate to="/" replace />} />
