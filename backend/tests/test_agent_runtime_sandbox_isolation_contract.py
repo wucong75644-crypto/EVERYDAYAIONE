@@ -34,6 +34,7 @@ def test_nsjail_command_has_readonly_input_writable_output_and_limits(
     assert command[command.index("--group") + 1] == "65534:65534:1"
     assert "--seccomp_policy" in command
     assert "--cgroup_mem_max" in command
+    assert command[command.index("--cgroup_mem_swap_max") + 1] == "0"
     assert "--cgroup_pids_max" in command
     assert "--cgroup_cpu_ms_per_sec" in command
 

@@ -160,6 +160,7 @@ def _command(
         "--rlimit_nofile", str(limits.file_count + 32),
         "--rlimit_fsize", str(limits.disk_bytes),
         "--cgroup_mem_max", str(limits.memory_bytes),
+        "--cgroup_mem_swap_max", "0",
         "--cgroup_pids_max", str(limits.pids),
         "--cgroup_cpu_ms_per_sec", str(limits.cpu_millis),
         "-R", f"{request.input_dir}:/job/input",
