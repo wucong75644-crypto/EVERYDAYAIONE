@@ -102,7 +102,7 @@ def test_lock_order_and_unsafe_requeue_are_closed() -> None:
 
 def test_rollbacks_and_migration_order_are_exact() -> None:
     assert "AGENT_SANDBOX_JOB_ROLLBACK_HAS_FACTS" in ROLLBACK_01.read_text()
-    assert ROLLBACK_02.exists()
+    assert "AGENT_SANDBOX_RPC_ROLLBACK_HAS_FACTS" in ROLLBACK_02.read_text()
     discovered = discover_migrations(ROOT / "migrations")
     selected = [
         migration for migration in discovered

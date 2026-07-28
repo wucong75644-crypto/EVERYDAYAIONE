@@ -1,5 +1,14 @@
 SET LOCAL ROLE everydayai_owner;
 
+DO $guard$
+BEGIN
+    IF EXISTS (SELECT 1 FROM agent_sandbox_jobs) THEN
+        RAISE EXCEPTION 'AGENT_SANDBOX_RPC_ROLLBACK_HAS_FACTS'
+            USING ERRCODE = '55000';
+    END IF;
+END
+$guard$;
+
 DROP FUNCTION record_sandbox_job_cleanup(UUID,UUID,BIGINT,TEXT,JSONB);
 DROP FUNCTION resolve_sandbox_job_reconciliation(
     UUID,UUID,BIGINT,TEXT,TEXT,TEXT,JSONB);

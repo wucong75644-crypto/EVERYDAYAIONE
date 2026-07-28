@@ -367,7 +367,7 @@ def test_terminal_jobs_and_unprivileged_roles_cannot_claim() -> None:
     }
 
 
-def test_rollback_guards_active_jobs_and_terminal_history_remains_readable() -> None:
+def test_rollback_guards_all_facts_and_clean_rollback_reapplies() -> None:
     rollback = (
         MIGRATION_ROOT / "rollback"
         / "222_03_agent_runtime_sandbox_job_recovery_rpcs_rollback.sql"
@@ -379,7 +379,7 @@ def test_rollback_guards_active_jobs_and_terminal_history_remains_readable() -> 
     job = base._create(ids)["job"]
     with pytest.raises(
         psycopg.Error,
-        match="AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_ACTIVE_JOBS",
+        match="AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_FACTS",
     ):
         _execute_script(rollback)
     cancelled = base._decoded(base._execute(
@@ -389,13 +389,21 @@ def test_rollback_guards_active_jobs_and_terminal_history_remains_readable() -> 
     )[0]["value"])
     assert cancelled["outcome"] == "cancelled"
 
-    _execute_script(rollback)
+    with pytest.raises(
+        psycopg.Error,
+        match="AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_FACTS",
+    ):
+        _execute_script(rollback)
     terminal = base._decoded(base._execute(
         "SELECT get_sandbox_job(%s) AS value",
         (job["id"],), role="everydayai_runtime",
         user_id=str(ids["user"]),
     )[0]["value"])
     assert terminal["job"]["status"] == "cancelled"
+    base._execute(
+        "SET ROLE everydayai_owner; TRUNCATE agent_sandbox_jobs; RESET ROLE",
+    )
+    _execute_script(rollback)
     assert base._execute(
         """
         SELECT to_regprocedure(
@@ -404,4 +412,4 @@ def test_rollback_guards_active_jobs_and_terminal_history_remains_readable() -> 
         """
     )[0]["removed"] is True
     _execute_script(migration)
-    assert _readback(ids)["job"]["id"] == job["id"]
+    assert _readback(ids)["outcome"] == "not_found"

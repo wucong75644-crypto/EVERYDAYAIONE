@@ -57,3 +57,12 @@ def test_rollbacks_are_reverse_ordered_and_fail_closed() -> None:
     assert "AGENT_AUTHORIZATION_GATE_ROLLBACK_HAS_FACTS" in rollback_24
     assert "DROP FUNCTION gate_agent_action_dispatch" in rollback_24
     assert "DROP TABLE agent_action_dispatch_intents" in rollback_24
+    assert (
+        "REVOKE EXECUTE ON FUNCTION\n"
+        "    mark_agent_action_dispatching(UUID, UUID, BIGINT, TEXT)\n"
+        "FROM everydayai_worker"
+    ) in rollback_24
+    assert (
+        "GRANT EXECUTE ON FUNCTION\n"
+        "    mark_agent_action_dispatching"
+    ) not in rollback_24

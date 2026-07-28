@@ -23,9 +23,9 @@ ALTER TABLE agent_action_attempts
     ALTER COLUMN execution_token SET NOT NULL,
     ALTER COLUMN lease_expires_at SET NOT NULL;
 
-GRANT EXECUTE ON FUNCTION
+REVOKE EXECUTE ON FUNCTION
     mark_agent_action_dispatching(UUID, UUID, BIGINT, TEXT)
-TO everydayai_worker;
+FROM everydayai_worker;
 
 DROP FUNCTION record_agent_policy_receipt(
     UUID, TEXT, TEXT, INTEGER, TEXT, TEXT, UUID, JSONB,

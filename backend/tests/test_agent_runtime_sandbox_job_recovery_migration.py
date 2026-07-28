@@ -43,10 +43,10 @@ def test_runtime_and_worker_permissions_are_disjoint() -> None:
     assert "everydayai_worker" not in worker_grant
 
 
-def test_rollback_guards_only_nonterminal_jobs_and_drops_exact_rpcs() -> None:
+def test_rollback_guards_all_job_facts_and_drops_exact_rpcs() -> None:
     sql = ROLLBACK.read_text()
-    assert "AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_ACTIVE_JOBS" in sql
-    assert "status NOT IN (" in sql
+    assert "AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_FACTS" in sql
+    assert "IF EXISTS (SELECT 1 FROM agent_sandbox_jobs)" in sql
     for name in (
         "get_sandbox_job_by_binding",
         "claim_next_recoverable_sandbox_job",

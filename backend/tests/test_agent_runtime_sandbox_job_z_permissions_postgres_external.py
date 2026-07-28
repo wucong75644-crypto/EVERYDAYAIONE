@@ -82,7 +82,7 @@ def test_manifest_evidence_and_summary_validators_fail_closed() -> None:
     assert values == {"manifest": False, "evidence": False, "summary": False}
 
 
-def test_z_rollback_guard_clean_rollback_and_reapply() -> None:
+def test_z_clean_reverse_rollback_and_reapply() -> None:
     rollback_01 = ROOT / (
         "migrations/rollback/"
         "222_01_agent_runtime_sandbox_job_foundation_rollback.sql"
@@ -90,12 +90,12 @@ def test_z_rollback_guard_clean_rollback_and_reapply() -> None:
     rollback_02 = ROOT / (
         "migrations/rollback/222_02_agent_runtime_sandbox_job_rpcs_rollback.sql"
     )
+    rollback_03 = ROOT / (
+        "migrations/rollback/"
+        "222_03_agent_runtime_sandbox_job_recovery_rpcs_rollback.sql"
+    )
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
-        with pytest.raises(psycopg.Error, match="ROLLBACK_HAS_FACTS"):
-            connection.execute(rollback_01.read_text(encoding="utf-8"))
-        connection.execute("SET ROLE everydayai_owner")
-        connection.execute("TRUNCATE agent_sandbox_jobs")
-        connection.execute("RESET ROLE")
+        connection.execute(rollback_03.read_text(encoding="utf-8"))
         connection.execute(rollback_02.read_text(encoding="utf-8"))
         connection.execute(rollback_01.read_text(encoding="utf-8"))
         connection.execute(
@@ -105,4 +105,10 @@ def test_z_rollback_guard_clean_rollback_and_reapply() -> None:
         connection.execute(
             (ROOT / "migrations/222_02_agent_runtime_sandbox_job_rpcs.sql")
             .read_text(encoding="utf-8")
+        )
+        connection.execute(
+            (
+                ROOT
+                / "migrations/222_03_agent_runtime_sandbox_job_recovery_rpcs.sql"
+            ).read_text(encoding="utf-8")
         )

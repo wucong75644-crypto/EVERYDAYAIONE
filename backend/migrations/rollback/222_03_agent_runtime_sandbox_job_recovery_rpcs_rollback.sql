@@ -2,14 +2,8 @@ SET LOCAL ROLE everydayai_owner;
 
 DO $$
 BEGIN
-    IF EXISTS (
-        SELECT 1
-          FROM agent_sandbox_jobs
-         WHERE status NOT IN (
-             'succeeded', 'failed', 'timed_out', 'cancelled'
-         )
-    ) THEN
-        RAISE EXCEPTION 'AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_ACTIVE_JOBS'
+    IF EXISTS (SELECT 1 FROM agent_sandbox_jobs) THEN
+        RAISE EXCEPTION 'AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_FACTS'
             USING ERRCODE = '55000';
     END IF;
 END;
