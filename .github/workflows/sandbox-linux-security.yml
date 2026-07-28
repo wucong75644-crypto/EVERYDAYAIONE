@@ -91,14 +91,15 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          residue=0
           if pgrep -fa '[n]sjail'; then
             echo "Residual nsjail process detected" >&2
-            exit 1
+            residue=1
           fi
           if find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print -quit \
             | grep -q .; then
             echo "Residual nsjail cgroup detected" >&2
-            exit 1
+            residue=1
           fi
           sudo rm -rf \
             "$SANDBOX_ROOTFS" \
@@ -106,3 +107,4 @@ jobs:
             /tmp/nsjail \
             "$SANDBOX_SECCOMP_POLICY"
           test ! -e "$SANDBOX_ROOTFS"
+          exit "$residue"

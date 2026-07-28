@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 from types import ModuleType
 
 import pytest
@@ -38,7 +40,7 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture
-def linux_contract(tmp_path: Path):
+def linux_contract():
     if os.getenv("RUN_SANDBOX_LINUX_EXTERNAL_TESTS") != "1":
         pytest.skip("explicit Linux external contract opt-in is required")
     if os.geteuid() != 0:
@@ -48,11 +50,14 @@ def linux_contract(tmp_path: Path):
     if not rootfs.is_dir() or not policy.is_file():
         pytest.fail("SANDBOX_LINUX_EXTERNAL_FIXTURE_REQUIRED")
     marker = Path("/sandbox-host-secret-everydayai-contract")
+    contract_root = Path(tempfile.mkdtemp(prefix="everydayai-sandbox-contract-"))
+    contract_root.chmod(0o755)
     marker.write_text("must-not-be-visible", encoding="utf-8")
     try:
-        yield rootfs, policy, marker, tmp_path
+        yield rootfs, policy, marker, contract_root
     finally:
         marker.unlink(missing_ok=True)
+        shutil.rmtree(contract_root, ignore_errors=True)
 
 
 def _launcher(rootfs: Path, policy: Path) -> NsJailSubprocessLauncher:
