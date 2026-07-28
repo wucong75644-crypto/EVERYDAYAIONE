@@ -62,7 +62,7 @@ jobs:
             "$SANDBOX_ROOTFS/job/input" \
             "$SANDBOX_ROOTFS/job/output"
           cat > "$SANDBOX_SECCOMP_POLICY" <<'EOF'
-          ERRNO(EPERM) { getppid }
+          ERRNO(1) { getppid }
           DEFAULT ALLOW
           EOF
 
