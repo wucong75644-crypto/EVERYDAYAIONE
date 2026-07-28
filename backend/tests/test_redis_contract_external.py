@@ -9,6 +9,10 @@ from redis.asyncio import Redis
 from redis.exceptions import ConnectionError, ResponseError, TimeoutError
 
 from tests.redis_external import RedisExternalHarness, redis_external  # noqa: F401
+from services.tool_confirmation.redis_store import (
+    ToolConfirmationRedisStore, hash_waiter_token,
+)
+from services.tool_confirmation.types import ConfirmationBinding
 
 
 pytestmark = pytest.mark.external
@@ -222,3 +226,150 @@ async def test_wrong_url_fails_closed() -> None:
             await client.ping()
     finally:
         await client.aclose()
+
+
+@pytest.fixture
+def v3_store(redis_external: RedisExternalHarness, monkeypatch):
+    from core.redis import RedisClient
+    import services.tool_confirmation.redis_store as store_module
+
+    monkeypatch.setattr(RedisClient, "_instance", redis_external.client)
+    monkeypatch.setattr(
+        store_module, "KEY_PREFIX",
+        f"{redis_external.namespace}{{tool-confirm}}",
+    )
+    return ToolConfirmationRedisStore()
+
+
+def _binding(arguments_hash: str = "args-hash") -> ConfirmationBinding:
+    return ConfirmationBinding(
+        "task-1", "call-1", "restore_file", arguments_hash, "user-1", "org-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_v3_same_identity_fifty_creates_has_one_challenge(
+    redis_external: RedisExternalHarness,
+    v3_store: ToolConfirmationRedisStore,
+) -> None:
+    results = await asyncio.gather(*[
+        v3_store.create(f"confirmation-{index}", _binding(), hash_waiter_token(f"waiter-{index}"))
+        for index in range(50)
+    ])
+    assert results.count("CREATED:PENDING") == 1
+    assert results.count("CREATE_CONFLICT") == 49
+    challenge_keys = [
+        key async for key in redis_external.client.scan_iter(
+            match=f"{redis_external.namespace}*challenge:*",
+        )
+    ]
+    assert len(challenge_keys) == 1
+
+
+@pytest.mark.asyncio
+async def test_v3_create_retry_is_strictly_idempotent(
+    v3_store: ToolConfirmationRedisStore,
+) -> None:
+    waiter_hash = hash_waiter_token("waiter")
+    first = await v3_store.create("confirmation", _binding(), waiter_hash)
+    retry = await v3_store.create("confirmation", _binding(), waiter_hash)
+    changed = await v3_store.create("confirmation", _binding("changed"), waiter_hash)
+    assert first == "CREATED:PENDING"
+    assert retry == "IDEMPOTENT:PENDING"
+    assert changed == "MALFORMED_STATE"
+
+
+@pytest.mark.asyncio
+async def test_v3_decision_and_claim_are_single_winner(
+    v3_store: ToolConfirmationRedisStore,
+) -> None:
+    binding = _binding()
+    waiter_hash = hash_waiter_token("waiter")
+    assert await v3_store.create("confirmation", binding, waiter_hash) == "CREATED:PENDING"
+    decisions = await asyncio.gather(
+        v3_store.consume("confirmation", binding, "user-1", "org-1", True),
+        v3_store.consume("confirmation", binding, "user-1", "org-1", False),
+    )
+    assert sum(value.startswith("WON:") for value in decisions) == 1
+    record = await v3_store.read("confirmation", binding)
+    if record["state"] == "APPROVED":
+        claims = await asyncio.gather(
+            v3_store.claim("confirmation", binding, waiter_hash),
+            v3_store.claim("confirmation", binding, waiter_hash),
+            v3_store.claim("confirmation", binding, hash_waiter_token("wrong")),
+        )
+        assert claims.count("WON:EXECUTION_CLAIMED") == 1
+        assert (await v3_store.read("confirmation", binding))["state"] == "EXECUTION_CLAIMED"
+    else:
+        assert record["state"] == "DENIED"
+
+
+@pytest.mark.asyncio
+async def test_v3_claim_window_expiry_cannot_be_reclaimed(
+    v3_store: ToolConfirmationRedisStore,
+    monkeypatch,
+) -> None:
+    import services.tool_confirmation.redis_store as store_module
+
+    monkeypatch.setattr(store_module, "CLAIM_SECONDS", 1)
+    binding = _binding()
+    waiter_hash = hash_waiter_token("waiter")
+    assert await v3_store.create("confirmation", binding, waiter_hash) == "CREATED:PENDING"
+    assert await v3_store.consume(
+        "confirmation", binding, "user-1", "org-1", True,
+    ) == "WON:APPROVED"
+    await asyncio.sleep(1.05)
+    assert await v3_store.claim(
+        "confirmation", binding, waiter_hash,
+    ) == "WON:EXPIRED"
+    assert await v3_store.claim(
+        "confirmation", binding, waiter_hash,
+    ) == "NOT_APPROVED:EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_v3_cross_worker_notification_requires_delivery_ack(
+    redis_external: RedisExternalHarness,
+    v3_store: ToolConfirmationRedisStore,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import services.websocket_redis as redis_module
+    from services.websocket_manager import WebSocketManager
+
+    channel = redis_external.key("ws-channel")
+    monkeypatch.setattr(redis_module, "WS_CHANNEL", channel)
+    sender = WebSocketManager()
+    receiver = WebSocketManager()
+    receiver._connections = {
+        "user-1": {
+            "conn-1": SimpleNamespace(org_id="org-1"),
+        },
+    }
+    receiver.send_to_connection = AsyncMock(return_value=True)
+    receiver_client = redis_external.new_client()
+    receiver._pubsub_redis = receiver_client
+    receiver._pubsub = receiver_client.pubsub()
+    await receiver._pubsub.subscribe(channel)
+    receiver._listener_task = asyncio.create_task(
+        receiver._redis_listen_loop(),
+    )
+    try:
+        delivered = await sender._publish_with_delivery_ack(
+            "user-1",
+            {
+                "type": "tool_confirm_request",
+                "payload": {"confirmation_id": "opaque"},
+            },
+            org_id="org-1",
+        )
+        assert delivered is True
+        receiver.send_to_connection.assert_awaited_once()
+    finally:
+        receiver._listener_task.cancel()
+        await receiver._listener_task
+        await receiver._pubsub.unsubscribe(channel)
+        await receiver._pubsub.aclose()
+        await receiver_client.aclose()

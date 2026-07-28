@@ -10,27 +10,22 @@ describe('ToolConfirmModal', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('renders structured and circular arguments safely', () => {
-    const circular: { self?: unknown } = {};
-    circular.self = circular;
-
+  it('renders only the server-provided redacted summary', () => {
     render(
       <ToolConfirmModal
         request={{
-          toolCallId: 'call-1',
+          confirmationId: 'confirmation-1',
           toolName: 'erp_execute',
-          description: '确认更新',
           timeout: 60,
-          arguments: { payload: { answer: 42 }, circular },
+          confirmationSummary: { description: '执行ERP业务操作', operation: 'update' },
         }}
         onConfirm={vi.fn()}
         onReject={vi.fn()}
       />,
     );
 
-    expect(screen.getByText('{"answer":42}')).toBeInTheDocument();
-    expect(screen.getByText('[无法显示的结构化数据]')).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain('[object Object]');
+    expect(screen.getByText('执行ERP业务操作')).toBeInTheDocument();
+    expect(screen.getByText('update')).toBeInTheDocument();
   });
 
   it('invokes confirm, reject and automatic timeout actions', () => {
@@ -38,19 +33,19 @@ describe('ToolConfirmModal', () => {
     const onConfirm = vi.fn();
     const onReject = vi.fn();
     const request = {
-      toolCallId: 'call-2', toolName: 'custom_tool', arguments: {},
-      description: '', timeout: 2,
+      confirmationId: 'confirmation-2', toolName: 'custom_tool',
+      confirmationSummary: {}, timeout: 2,
     };
     const { rerender } = render(
       <ToolConfirmModal request={request} onConfirm={onConfirm} onReject={onReject} />,
     );
     fireEvent.click(screen.getByRole('button', { name: '确认执行' }));
-    expect(onConfirm).toHaveBeenCalledWith('call-2');
+    expect(onConfirm).toHaveBeenCalledWith('confirmation-2');
     fireEvent.click(screen.getByRole('button', { name: '拒绝' }));
-    expect(onReject).toHaveBeenCalledWith('call-2');
+    expect(onReject).not.toHaveBeenCalled();
 
     act(() => vi.advanceTimersByTime(2000));
-    expect(onReject).toHaveBeenCalledWith('call-2');
+    expect(onReject).not.toHaveBeenCalled();
     rerender(<ToolConfirmModal request={null} onConfirm={onConfirm} onReject={onReject} />);
     expect(screen.queryByText('写操作确认')).toBeNull();
     vi.useRealTimers();

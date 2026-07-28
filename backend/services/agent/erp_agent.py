@@ -14,12 +14,11 @@ if TYPE_CHECKING:
 
 from services.agent.agent_result import AgentResult
 from services.agent.erp_child_factory_mixin import ERPChildFactoryMixin
+from services.agent.safe_tool_logging import log_agent_event
 
 _VALID_DOMAINS = frozenset({"warehouse", "purchase", "trade", "aftersale"})
 _DOMAIN_LABEL = {"warehouse": "库存", "purchase": "采购", "trade": "订单", "aftersale": "售后"}
 _STEP_LABELS = ("①", "②", "③", "④")
-
-
 def _error_result(summary: str, status: str = "error") -> AgentResult:
     return AgentResult(status=status, summary=summary, source="erp_agent", error_message=summary)
 
@@ -71,7 +70,12 @@ class ERPAgent(ERPChildFactoryMixin):
         create_span(
             create_trace(name="erp_agent", user_id=self.user_id),
             name="erp_agent.execute",
-            metadata={"task": task[:200], "has_context": bool(conversation_context)},
+            metadata={
+                "user_id": self.user_id,
+                "org_id": self.org_id,
+                "task_id": self.task_id,
+                "tool_name": "erp_agent",
+            },
         )
 
         if not self.org_id:
@@ -87,14 +91,17 @@ class ERPAgent(ERPChildFactoryMixin):
         except asyncio.TimeoutError:
             return _error_result(f"查询超时（{_timeout:.0f}秒），请缩小查询范围后重试", status="timeout")
         except Exception as e:
-            logger.opt(exception=True).error(f"ERPAgent exception | query={query[:100]}")
+            log_agent_event(
+                "error", "ERPAgent exception", self, "erp_agent",
+                "ERP_AGENT_FAILED", type(e).__name__,
+            )
             is_known = isinstance(e, (ValueError, PermissionError, ConnectionError))
             msg = str(e) if is_known else f"内部错误，请联系管理员（{type(e).__name__}）"
             return _error_result(f"执行异常: {msg}")
 
     async def _execute(self, query: str, deadline: float) -> AgentResult:
         """计划提取 → 并行部门执行 → 结果构建。"""
-        logger.info(f"ERPAgent _execute | query={query[:500]}")
+        log_agent_event("info", "ERPAgent execute", self, "erp_agent")
         await self._push_thinking("分析查询意图...")
         plan = await self._extract_plan(query)
         if plan is None:
@@ -140,7 +147,10 @@ class ERPAgent(ERPChildFactoryMixin):
                 allowed = _DOMAIN_DOC_TYPES.get(domain)
                 if doc_type and allowed and doc_type not in allowed:
                     default = _DOMAIN_DEFAULT_DOC_TYPE.get(domain, next(iter(allowed)))
-                    logger.warning(f"L2 域路由冲突: domain={domain} doc_type={doc_type} → {default}")
+                    log_agent_event(
+                        "warning", "ERPAgent domain route corrected", self, "erp_agent",
+                        "ERP_DOMAIN_ROUTE_CORRECTED",
+                    )
                     params["doc_type"] = default
                 fill_platform(params, query)
                 steps.append(PlanStep(domain=domain, params=params))
@@ -149,7 +159,10 @@ class ERPAgent(ERPChildFactoryMixin):
                 degraded=False, dependency=dependency,
             )
         except Exception as e:
-            logger.warning(f"LLM extract failed, falling back: {e}")
+            log_agent_event(
+                "warning", "ERPAgent plan fallback", self, "erp_agent",
+                "ERP_PLAN_FALLBACK", type(e).__name__,
+            )
 
         # L2: 关键词
         domain = quick_classify(query)
@@ -195,7 +208,7 @@ class ERPAgent(ERPChildFactoryMixin):
             remaining = deadline - _time.monotonic()
             if remaining < 3.0:
                 return (step.domain, asyncio.TimeoutError())
-            logger.info(f"ERPAgent execute | domain={step.domain} | params={step.params} | remaining={remaining:.1f}s")
+            log_agent_event("info", "ERPAgent domain execute", self, "erp_agent")
             try:
                 # export 模式给子进程足够时间（120s 导出 + 10s profile）
                 step_timeout = 30.0
@@ -207,10 +220,16 @@ class ERPAgent(ERPChildFactoryMixin):
                 )
                 return (step.domain, result)
             except asyncio.TimeoutError:
-                logger.warning(f"ERPAgent {step.domain} timeout")
+                log_agent_event(
+                    "warning", "ERPAgent domain timeout", self, "erp_agent",
+                    "ERP_DOMAIN_TIMEOUT",
+                )
                 return (step.domain, asyncio.TimeoutError())
             except Exception as e:
-                logger.opt(exception=True).error(f"ERPAgent {step.domain} exception")
+                log_agent_event(
+                    "error", "ERPAgent domain exception", self, "erp_agent",
+                    "ERP_DOMAIN_FAILED", type(e).__name__,
+                )
                 return (step.domain, e)
 
         return list(await asyncio.gather(*[run_step(s) for s in plan.steps]))

@@ -7,6 +7,7 @@ Redis 不可用时自动降级为本地投递（单进程模式）。
 
 import asyncio
 import json
+import secrets
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -14,6 +15,8 @@ from loguru import logger
 
 # Redis Pub/Sub Channel
 WS_CHANNEL = "ws:broadcast"
+CONFIRM_DELIVERY_PREFIX = "ws:tool-confirm:{tool-confirm}:delivery:"
+CONFIRM_DELIVERY_ACK_SECONDS = 3
 
 
 class RedisPubSubMixin:
@@ -201,11 +204,13 @@ class RedisPubSubMixin:
         if not message:
             return
 
+        delivered = 0
         if target_type == "task":
             task_scope = (target_id, data.get("org_id"))
             subscribers = self._task_subscribers.get(task_scope, set())
             for conn_id in list(subscribers):
-                await self.send_to_connection(conn_id, message)
+                if await self.send_to_connection(conn_id, message):
+                    delivered += 1
 
         elif target_type == "user":
             connections = self._connections.get(target_id, {})
@@ -213,14 +218,61 @@ class RedisPubSubMixin:
             for conn_id, connection in list(connections.items()):
                 if connection.org_id != target_org_id:
                     continue
-                await self.send_to_connection(conn_id, message)
+                if await self.send_to_connection(conn_id, message):
+                    delivered += 1
 
         elif target_type == "broadcast":
             broadcast_org_id = data.get("org_id")
             for conn_id, conn in list(self._conn_index.items()):
                 if broadcast_org_id is not None and conn.org_id != broadcast_org_id:
                     continue
-                await self.send_to_connection(conn_id, message)
+                if await self.send_to_connection(conn_id, message):
+                    delivered += 1
+
+        ack_key = data.get("delivery_ack_key")
+        if (
+            delivered > 0
+            and isinstance(ack_key, str)
+            and ack_key.startswith(CONFIRM_DELIVERY_PREFIX)
+            and len(ack_key) <= len(CONFIRM_DELIVERY_PREFIX) + 96
+        ):
+            from core.redis import RedisClient
+            client = await RedisClient.get_client()
+            await client.rpush(ack_key, "delivered")
+            await client.expire(ack_key, CONFIRM_DELIVERY_ACK_SECONDS)
+
+    async def _publish_with_delivery_ack(
+        self,
+        target_id: str,
+        message: Dict[str, Any],
+        org_id: str | None = None,
+    ) -> bool:
+        """Require another Worker to confirm an actual WebSocket send."""
+        from core.redis import RedisClient
+
+        client = await RedisClient.get_client()
+        ack_key = f"{CONFIRM_DELIVERY_PREFIX}{secrets.token_urlsafe(24)}"
+        data = {
+            "source": self._worker_id,
+            "target_type": "user",
+            "target_id": target_id,
+            "message": message,
+            "org_id": org_id,
+            "delivery_ack_key": ack_key,
+        }
+        try:
+            subscribers = await client.publish(
+                WS_CHANNEL,
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+            )
+            if not subscribers:
+                return False
+            result = await client.blpop(
+                ack_key, timeout=CONFIRM_DELIVERY_ACK_SECONDS,
+            )
+            return result is not None
+        finally:
+            await client.delete(ack_key)
 
     async def _publish(
         self,

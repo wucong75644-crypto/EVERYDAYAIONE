@@ -116,56 +116,64 @@ class ToolLoopExecutionMixin:
         args: Dict[str, Any],
         tool_call_id: str,
         hook_ctx: HookContext,
-    ) -> str | None:
-        """向前端发起写操作确认；无任务或观察异常不阻塞工具执行。"""
+    ) -> bool:
+        """Return true only after V3 atomically claims this execution."""
         if not hook_ctx.task_id:
-            return None
+            return False
 
         try:
             from schemas.websocket_builders import build_tool_confirm_request
             from services.websocket_manager import ws_manager
+            from services.tool_confirmation import tool_confirmation_service
+            from config.chat_tools import get_safety_level
 
-            await ws_manager.send_to_task_or_user(
-                hook_ctx.task_id,
-                hook_ctx.user_id,
-                build_tool_confirm_request(
-                    task_id=hook_ctx.task_id,
-                    conversation_id=hook_ctx.conversation_id,
-                    message_id="",
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    arguments=args,
-                    description=f"AI 要执行写操作: {tool_name}",
-                    safety_level="dangerous",
-                    timeout=60,
-                ),
-                org_id=hook_ctx.org_id,
+            request = await tool_confirmation_service.create(
+                task_id=hook_ctx.task_id, tool_call_id=tool_call_id,
+                tool_name=tool_name, arguments=args,
+                user_id=hook_ctx.user_id, org_id=hook_ctx.org_id,
+                safety_level=get_safety_level(tool_name).value,
             )
-            approved = await ws_manager.wait_for_confirm(
-                tool_call_id,
-                hook_ctx.user_id,
-                hook_ctx.org_id,
-                timeout=60.0,
-            )
-            if approved:
-                logger.info(
-                    f"Tool confirm approved | tool={tool_name} | "
-                    f"tool_call_id={tool_call_id}"
+
+            try:
+                delivered = await ws_manager.send_tool_confirmation(
+                    hook_ctx.task_id,
+                    hook_ctx.user_id,
+                    build_tool_confirm_request(
+                        task_id=hook_ctx.task_id,
+                        conversation_id=hook_ctx.conversation_id,
+                        message_id="",
+                        confirmation_id=request.confirmation_id,
+                        tool_name=tool_name,
+                        confirmation_summary=dict(request.summary),
+                        safety_level=request.safety_level,
+                        timeout=60,
+                    ),
+                    org_id=hook_ctx.org_id,
                 )
-                return None
-            logger.info(
-                f"Tool confirm rejected/timeout | tool={tool_name} | "
-                f"tool_call_id={tool_call_id}"
+                if not delivered:
+                    await tool_confirmation_service.reject_unavailable(request)
+                    return False
+            except Exception:
+                await tool_confirmation_service.reject_unavailable(request)
+                raise
+            decision = await tool_confirmation_service.await_and_claim(
+                request,
+                is_cancelled=lambda: (
+                    ws_manager.is_cancelled(hook_ctx.task_id)
+                    or ws_manager.is_in_cancelled_gate(
+                        hook_ctx.task_id, hook_ctx.org_id,
+                    )
+                ),
             )
-            return (
-                f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
-                f"请告知用户操作未执行，询问是否需要重新确认。"
-            )
+            return decision.can_execute
         except Exception as exc:
             logger.warning(
-                f"Tool confirm error | tool={tool_name} | error={exc}"
+                "tool_confirm_gate_failed | "
+                f"tool={tool_name} | task_id={hook_ctx.task_id} | "
+                f"tool_call_id={tool_call_id} | error_code=CONFIRMATION_UNAVAILABLE | "
+                f"exception_type={type(exc).__name__}"
             )
-            return None
+            return False
 
     async def _execute_tools(
         self,
@@ -236,7 +244,9 @@ class ToolLoopExecutionMixin:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
             except json.JSONDecodeError as exc:
                 logger.warning(
-                    f"ToolLoop bad JSON | tool={tool_name} | error={exc}"
+                    "tool_arguments_rejected | "
+                    f"tool={tool_name} | error_code=INVALID_JSON | "
+                    f"exception_type={type(exc).__name__}"
                 )
                 result = f"工具参数JSON格式错误: {exc}，请检查参数格式"
                 hook_ctx.messages.append({
@@ -246,18 +256,13 @@ class ToolLoopExecutionMixin:
                 })
                 accumulated = result
                 continue
-            if get_safety_level(tool_name) == SafetyLevel.DANGEROUS:
-                confirm_result = await self._request_user_confirm(
-                    tool_name, args, tc["id"], hook_ctx,
-                )
-                if confirm_result is not None:
-                    hook_ctx.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": confirm_result,
-                    })
-                    accumulated = confirm_result
-                    continue
+            try:
+                safety = get_safety_level(tool_name)
+            except ValueError:
+                result = "工具未登记，已拒绝执行。"
+                hook_ctx.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                accumulated = result
+                continue
             args, validation_error = validate_tool_args(
                 tool_name, args, selected_tools,
             )
@@ -269,6 +274,22 @@ class ToolLoopExecutionMixin:
                 })
                 accumulated = validation_error
                 continue
+            if safety != SafetyLevel.SAFE:
+                approved = await self._request_user_confirm(
+                    tool_name, args, tc["id"], hook_ctx,
+                )
+                if not approved:
+                    confirm_result = (
+                        f"⚠ 用户拒绝、确认超时或授权服务不可用，"
+                        f"工具 {tool_name} 未执行。"
+                    )
+                    hook_ctx.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": confirm_result,
+                    })
+                    accumulated = confirm_result
+                    continue
             ready.append((tc, tool_name, args))
         return ready, accumulated, False
 
@@ -298,8 +319,10 @@ class ToolLoopExecutionMixin:
                     status, cached, elapsed_ms,
                 )
             except Exception as exc:
-                logger.opt(exception=True).error(
-                    f"ToolLoop parallel error | tool={tool_name} | error={exc}"
+                logger.error(
+                    "tool_execution_failed | "
+                    f"tool={tool_name} | error_code=HANDLER_FAILED | "
+                    f"exception_type={type(exc).__name__}"
                 )
                 return (
                     tc, tool_name, args, f"工具执行失败: {exc}",

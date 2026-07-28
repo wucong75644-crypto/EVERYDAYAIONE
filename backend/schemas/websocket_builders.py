@@ -297,14 +297,15 @@ def build_content_block_add(
 
 def build_tool_confirm_request(
     task_id: str, conversation_id: str, message_id: str,
-    tool_call_id: str, tool_name: str, arguments: Dict[str, Any],
-    description: str, safety_level: str, timeout: int = 60,
+    confirmation_id: str, tool_name: str,
+    confirmation_summary: Dict[str, Any], safety_level: str,
+    timeout: int = 60,
 ) -> Dict[str, Any]:
-    """构建工具确认请求（dangerous 级别）"""
+    """Build V3 request without raw arguments or execution identities."""
     return _build_ws_message(
         WSMessageType.TOOL_CONFIRM_REQUEST,
-        {"tool_call_id": tool_call_id, "tool_name": tool_name,
-         "arguments": arguments, "description": description,
+        {"protocol_version": 3, "confirmation_id": confirmation_id,
+         "tool_name": tool_name, "confirmation_summary": confirmation_summary,
          "safety_level": safety_level, "timeout": timeout},
         task_id=task_id, conversation_id=conversation_id, message_id=message_id,
     )

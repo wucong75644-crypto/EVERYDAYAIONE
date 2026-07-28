@@ -1,5 +1,14 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-28 旧 ToolLoop Tool Confirmation V3 — 本地实现，待生产切换
+
+- 旧协议存在 CONFIRM 仅通知即执行、授权异常放行和未知工具默认 SAFE；V3 已改为显式
+  Safety Registry、脱敏 preview Registry、Handler allowlist 一致性和 Redis 唯一 claim。
+- 本地 Redis Standalone 已验证三键 Lua 原子竞争；生产发布前仍必须执行 Redis capability
+  probe，并 drain 旧非 SAFE Owner。旧客户端安全失败，禁止兼容放行或混合 Backend。
+- 本阶段未接 startup/composition、未新增 migration，也未实现 Sandbox/ERP/媒体专业
+  Executor；这些仍由 AR-16 Phase 2 后续批次处理。
+
 ## 2026-07-28 Agent Runtime Projection Outbox dead stream — 候选已修复，尚未接入生产
 
 - migration 220_26增加当前tenant active super_admin专属inspect/requeue、不可变恢复

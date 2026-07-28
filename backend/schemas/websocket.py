@@ -14,6 +14,7 @@ from schemas.websocket_types import (  # noqa: F401
     WSBaseMessage,
     SubscribePayload,
     UnsubscribePayload,
+    ToolConfirmResponsePayload,
     ClientMessage,
     MessagePendingPayload,
     MessageStartPayload,

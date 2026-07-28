@@ -148,6 +148,21 @@ class TestPromptBuilderV2:
         assert "不要生成促销图" in um
         assert "风格参考图" not in um
 
+    def test_build_user_message_log_does_not_include_product_text(self):
+        from loguru import logger
+
+        sentinel = "SECRET_PRODUCT_PATH_/workspace/private"
+        messages: list[str] = []
+        sink = logger.add(
+            lambda message: messages.append(str(message)),
+            format="{message}",
+        )
+        try:
+            self.builder.build_user_message(product_name=sentinel)
+        finally:
+            logger.remove(sink)
+        assert sentinel not in "".join(messages)
+
     def test_build_final_prompt_with_style(self):
         fp = self.builder.build_final_prompt("test prompt", "warm tones")
         assert "Visual style context:" in fp

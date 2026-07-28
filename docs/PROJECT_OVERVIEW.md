@@ -39,6 +39,16 @@
 
 ## 目录结构
 
+Tool Confirmation V3：
+- `backend/config/tool_safety.py`：冻结的显式 SAFE/CONFIRM/DANGEROUS 注册表；未知工具
+  不再继承默认 SAFE。
+- `backend/services/tool_confirmation/`：确定性 JSON hash、脱敏 preview、Redis 三键 Lua、
+  一次 challenge 与唯一 execution claim 服务。
+- `backend/services/agent/safe_tool_logging.py`：确认门禁可达 Agent 的结构化脱敏日志助手。
+- `docs/document/TECH_TOOL_CONFIRMATION_V3.md`：协议、状态机、失败关闭与发布门禁。
+- 旧 ToolLoop 与 ChatTool 生产 composition 保持不变，仅关闭非 SAFE 授权绕过；未接
+  Agent Runtime startup、Sandbox 专业 Executor 或数据库 migration。
+
 Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
 - `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql`、
   `220_25_agent_runtime_authorization_recovery.sql`及同名 rollback：增加持久

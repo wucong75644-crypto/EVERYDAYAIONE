@@ -215,6 +215,16 @@
 | `BackgroundTaskWorker.cleanup_stale_tasks` | `backend/services/background_task_worker.py` | 清理超时任务（image/video 走 TaskCompletionService，chat 直接更新） | - | None |
 | `ScheduledTaskExecutor._build_application_db` | `backend/services/scheduler/task_executor.py` | 为单次定时任务构造绑定创建者、企业和 task request id 的 Runtime 数据库门面 | task | OrgScopedDB |
 | `ToolExecutor.__init__(..., allowed_tools=...)` | `backend/services/agent/tool_executor.py` | 可选执行层工具白名单；定时任务用它阻断无人值守禁用工具 | allowed_tools | None |
+| `canonical_arguments_hash` | `backend/services/tool_confirmation/canonical.py` | 对严格 JSON-only 参数生成排序键 SHA-256 绑定 | arguments | str |
+| `get_safety_level` | `backend/config/tool_safety.py` | 查询显式安全分类；未知工具抛出受控错误 | tool_name | SafetyLevel |
+| `build_confirmation_summary` | `backend/services/tool_confirmation/preview.py` | 按工具 allowlist 生成不含原始参数的有界确认摘要 | tool_name、arguments | dict |
+| `ToolConfirmationRedisStore` | `backend/services/tool_confirmation/redis_store.py` | 执行三键 create/consume/expire/read/claim Lua 合同 | immutable binding | Redis result |
+| `ToolConfirmationService.create` | `backend/services/tool_confirmation/service.py` | 创建随机 challenge 与 waiter token，并绑定 execution identity | scoped tool call | ConfirmationRequest |
+| `ToolConfirmationService.await_and_claim` | `backend/services/tool_confirmation/service.py` | 轮询权威 Hash、复核完整 binding 并唯一领取执行权 | ConfirmationRequest | ConfirmationDecision |
+| `ToolConfirmationService.consume_response` | `backend/services/tool_confirmation/service.py` | 以可信 WS actor scope 原子批准或拒绝 challenge | confirmation_id、actor | str |
+| `WebSocketManager.send_tool_confirmation` | `backend/services/websocket_manager.py` | V3 专用投递；要求本地实际发送或跨 Worker delivery ACK | task、user、message、org | bool |
+| `RedisPubSubMixin._publish_with_delivery_ack` | `backend/services/websocket_redis.py` | 以随机短 TTL key 等待远端 Worker 实际 WebSocket 发送确认 | user、message、org | bool |
+| `log_agent_event` | `backend/services/agent/safe_tool_logging.py` | 仅记录作用域、工具、稳定错误码和异常类型的脱敏 Agent 日志 | event、agent、tool、code | None |
 | `execute_with_scheduled_lease` | `backend/services/scheduler/run_lease.py` | 在持续续租下执行定时任务完整业务与终态，租约丢失时取消执行 | store, task_id, run, execution | Any |
 | `ScheduledWorkerStore.append_result_message` | `backend/services/scheduler/worker_store.py` | 通过 fencing token 能力原子写入定时任务结果消息 | task_id, run, text | dict \| None |
 

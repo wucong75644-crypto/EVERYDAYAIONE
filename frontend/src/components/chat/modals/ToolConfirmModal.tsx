@@ -7,31 +7,31 @@
  * Phase 3 B5 — 写操作确认流
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import Modal from '../../common/Modal';
 import { Button } from '../../ui/Button';
-import { formatDisplayValue } from '../../../utils/displayValue';
 
 /** 工具名称映射 */
 const TOOL_LABELS: Record<string, string> = {
   erp_execute: 'ERP 写操作',
   trigger_erp_sync: 'ERP 数据同步',
   file_delete: '文件删除',
+  restore_file: '文件恢复',
+  manage_scheduled_task: '计划任务管理',
 };
 
 export interface ToolConfirmRequest {
-  toolCallId: string;
+  confirmationId: string;
   toolName: string;
-  arguments: Record<string, unknown>;
-  description: string;
+  confirmationSummary: Record<string, string | number | boolean>;
   timeout: number;
 }
 
 interface ToolConfirmModalProps {
   request: ToolConfirmRequest | null;
-  onConfirm: (toolCallId: string) => void;
-  onReject: (toolCallId: string) => void;
+  onConfirm: (confirmationId: string) => void;
+  onReject: (confirmationId: string) => void;
 }
 
 export default function ToolConfirmModal({
@@ -40,17 +40,26 @@ export default function ToolConfirmModal({
   onReject,
 }: ToolConfirmModalProps) {
   const [countdown, setCountdown] = useState(60);
+  const respondedRef = useRef(false);
+
+  const respond = useCallback((approved: boolean) => {
+    if (!request || respondedRef.current) return;
+    respondedRef.current = true;
+    if (approved) onConfirm(request.confirmationId);
+    else onReject(request.confirmationId);
+  }, [onConfirm, onReject, request]);
 
   // 倒计时
   useEffect(() => {
     if (!request) return;
+    respondedRef.current = false;
     const resetTimer = setTimeout(() => setCountdown(request.timeout || 60), 0);
 
     const timer = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          onReject(request.toolCallId);
+          respond(false);
           return 0;
         }
         return prev - 1;
@@ -61,17 +70,17 @@ export default function ToolConfirmModal({
       clearTimeout(resetTimer);
       clearInterval(timer);
     };
-  }, [request, onReject]);
+  }, [request, respond]);
 
   if (!request) return null;
 
   const label = TOOL_LABELS[request.toolName] || request.toolName;
 
   // 格式化参数摘要
-  const argEntries = Object.entries(request.arguments).slice(0, 5);
+  const summaryEntries = Object.entries(request.confirmationSummary).slice(0, 8);
 
   return (
-    <Modal isOpen onClose={() => onReject(request.toolCallId)} showCloseButton={false} maxWidth="max-w-md">
+    <Modal isOpen onClose={() => respond(false)} showCloseButton={false} maxWidth="max-w-md">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 bg-warning-light rounded-full flex items-center justify-center flex-shrink-0">
           <AlertTriangle className="w-5 h-5 text-warning" />
@@ -81,19 +90,19 @@ export default function ToolConfirmModal({
             写操作确认
           </h3>
           <p className="mt-1 text-sm text-text-secondary">
-            {request.description || `AI 要执行: ${label}`}
+            AI 要执行：{label}
           </p>
         </div>
       </div>
 
       {/* 参数摘要 */}
-      {argEntries.length > 0 && (
-        <div className="mt-3 p-3 rounded-lg bg-hover text-sm font-mono">
-          {argEntries.map(([key, value]) => (
+      {summaryEntries.length > 0 && (
+        <div className="mt-3 p-3 rounded-lg bg-hover text-sm">
+          {summaryEntries.map(([key, value]) => (
             <div key={key} className="flex gap-2 text-text-secondary">
               <span className="text-text-tertiary shrink-0">{key}:</span>
               <span className="truncate">
-                {formatDisplayValue(value)}
+                {String(value)}
               </span>
             </div>
           ))}
@@ -108,14 +117,14 @@ export default function ToolConfirmModal({
           <Button
             variant="secondary"
             size="md"
-            onClick={() => onReject(request.toolCallId)}
+            onClick={() => respond(false)}
           >
             拒绝
           </Button>
           <Button
             variant="accent"
             size="md"
-            onClick={() => onConfirm(request.toolCallId)}
+            onClick={() => respond(true)}
           >
             确认执行
           </Button>

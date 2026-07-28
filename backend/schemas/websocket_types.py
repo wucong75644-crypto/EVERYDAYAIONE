@@ -8,7 +8,7 @@ import time
 from enum import Enum
 from typing import Any, Dict, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class WSMessageType(str, Enum):
@@ -97,6 +97,17 @@ class SubscribePayload(BaseModel):
 class UnsubscribePayload(BaseModel):
     """取消订阅消息的 payload"""
     task_id: str
+
+
+class ToolConfirmResponsePayload(BaseModel):
+    """V3 client response; legacy tool_call_id is intentionally unsupported."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_id: str = Field(
+        min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    approved: StrictBool
 
 
 class ClientMessage(BaseModel):

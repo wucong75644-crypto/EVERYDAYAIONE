@@ -42,10 +42,9 @@ export interface MessageStoreActions {
   markForceRefresh: (conversationId: string) => void;
   setSuggestions: (conversationId: string, suggestions: string[]) => void;
   setToolConfirmRequest: (request: {
-    toolCallId: string;
+    confirmationId: string;
     toolName: string;
-    arguments: Record<string, unknown>;
-    description: string;
+    confirmationSummary: Record<string, string | number | boolean>;
     timeout: number;
   } | null) => void;
 }

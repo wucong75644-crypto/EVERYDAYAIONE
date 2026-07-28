@@ -166,9 +166,7 @@ class ChatToolMixin(ChatToolResultMixin):
         )
         if isinstance(prepared, tuple):
             return prepared
-        args = _resolve_file_ids(
-            prepared, conversation_id, tc["name"],
-        )
+        args = prepared
         started_at = time.monotonic()
         try:
             result = await executor.execute(tc["name"], args)
@@ -220,45 +218,69 @@ class ChatToolMixin(ChatToolResultMixin):
     ) -> Dict[str, Any] | tuple:
         from config.chat_tools import SafetyLevel, get_safety_level
 
-        safety = get_safety_level(tc["name"])
         try:
+            safety = get_safety_level(tc["name"])
             args = (
                 json.loads(tc["arguments"])
                 if tc["arguments"] else {}
             )
-        except json.JSONDecodeError:
-            error = f"参数解析失败: {tc['arguments'][:100]}"
+        except (json.JSONDecodeError, ValueError):
+            error = "工具未登记或参数解析失败，已拒绝执行"
             return tc, error, True, error
-        if safety != SafetyLevel.DANGEROUS:
-            if safety == SafetyLevel.CONFIRM:
-                logger.info(
-                    f"Tool confirm notify | tool={tc['name']} "
-                    f"| task={task_id}"
-                )
+        args = _resolve_file_ids(args, conversation_id, tc["name"])
+        if safety == SafetyLevel.SAFE:
             return args
-        await ws_manager.send_to_task_or_user(
-            task_id,
-            user_id,
-            build_tool_confirm_request(
+        if not task_id:
+            rejected = "⚠ 缺少任务身份，工具未执行。"
+            return tc, rejected, True, rejected
+        try:
+            from services.tool_confirmation import tool_confirmation_service
+            request = await tool_confirmation_service.create(
                 task_id=task_id,
-                conversation_id=conversation_id,
-                message_id=message_id,
                 tool_call_id=tc["id"],
                 tool_name=tc["name"],
-                arguments=args,
-                description=f"AI 要执行写操作: {tc['name']}",
+                arguments=args, user_id=user_id, org_id=self.org_id,
                 safety_level=safety.value,
-            ),
-            org_id=self.org_id,
-        )
-        approved = await ws_manager.wait_for_confirm(
-            tc["id"], user_id, self.org_id, timeout=60.0,
-        )
-        if approved:
-            return args
+            )
+            try:
+                delivered = await ws_manager.send_tool_confirmation(
+                    task_id, user_id,
+                    build_tool_confirm_request(
+                        task_id=task_id, conversation_id=conversation_id,
+                        message_id=message_id,
+                        confirmation_id=request.confirmation_id,
+                        tool_name=tc["name"],
+                        confirmation_summary=dict(request.summary),
+                        safety_level=safety.value,
+                    ),
+                    org_id=self.org_id,
+                )
+                if not delivered:
+                    await tool_confirmation_service.reject_unavailable(request)
+                    rejected = "⚠ 确认消息无法送达，工具未执行。"
+                    return tc, rejected, True, rejected
+            except Exception:
+                await tool_confirmation_service.reject_unavailable(request)
+                raise
+            decision = await tool_confirmation_service.await_and_claim(
+                request,
+                is_cancelled=lambda: (
+                    ws_manager.is_cancelled(task_id)
+                    or ws_manager.is_in_cancelled_gate(task_id, self.org_id)
+                ),
+            )
+            if decision.can_execute:
+                return args
+        except Exception as exc:
+            logger.warning(
+                "tool_confirm_gate_failed | "
+                f"user_id={user_id} | org_id={self.org_id or ''} | "
+                f"task_id={task_id} | tool_call_id={tc['id']} | "
+                f"tool={tc['name']} | error_code=CONFIRMATION_UNAVAILABLE | "
+                f"exception_type={type(exc).__name__}"
+            )
         rejected = (
-            f"⚠ 用户拒绝或超时未确认写操作 {tc['name']}。"
-            "请告知用户操作未执行，询问是否需要重新确认。"
+            f"⚠ 用户拒绝、确认超时或授权服务不可用，工具 {tc['name']} 未执行。"
         )
         return tc, rejected, True, rejected
 

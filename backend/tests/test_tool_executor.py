@@ -41,7 +41,7 @@ class TestExecuteDispatch:
     async def test_unknown_tool_raises(self):
         """未知工具→ValueError"""
         exe = _make_executor()
-        with pytest.raises(ValueError, match="Unknown sync tool"):
+        with pytest.raises(ValueError, match="UNKNOWN_TOOL_HANDLER"):
             await exe.execute("not_exist", {})
 
     @pytest.mark.asyncio
@@ -63,7 +63,7 @@ class TestExecuteDispatch:
         )
         assert exe.has_handler("web_search")
         assert not exe.has_handler("manage_scheduled_task")
-        with pytest.raises(ValueError, match="Unknown sync tool"):
+        with pytest.raises(ValueError, match="UNKNOWN_TOOL_HANDLER"):
             await exe.execute("manage_scheduled_task", {})
 
 

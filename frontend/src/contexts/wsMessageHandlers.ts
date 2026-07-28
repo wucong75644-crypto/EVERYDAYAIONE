@@ -303,22 +303,24 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   tool_confirm_request: (deps, msg) => {
       const { conversation_id, task_id } = msg;
-      const toolCallId = msg.payload?.tool_call_id as string | undefined;
+      const protocolVersion = msg.payload?.protocol_version as number | undefined;
+      const confirmationId = msg.payload?.confirmation_id as string | undefined;
       const toolName = msg.payload?.tool_name as string | undefined;
-      const description = msg.payload?.description as string | undefined;
-      const args = (msg.payload?.arguments ?? {}) as Record<string, unknown>;
+      const summary = msg.payload?.confirmation_summary as Record<string, string | number | boolean> | undefined;
       const timeout = (msg.payload?.timeout as number) || 60;
-      if (!conversation_id || !toolCallId || !toolName) return;
+      if (protocolVersion !== 3 || !conversation_id || !confirmationId || !toolName || !summary) {
+        deps.getStore().setToolConfirmRequest(null);
+        return;
+      }
 
       // 显示步骤提示
-      deps.getStore().setAgentStepHint(conversation_id, `⚠ ${description || toolName} — 等待确认`);
+      deps.getStore().setAgentStepHint(conversation_id, `⚠ ${toolName} — 等待确认`);
 
       // 触发确认弹窗
       deps.getStore().setToolConfirmRequest({
-        toolCallId,
+        confirmationId,
         toolName,
-        arguments: args,
-        description: description || `AI 要执行: ${toolName}`,
+        confirmationSummary: summary,
         timeout,
       });
 

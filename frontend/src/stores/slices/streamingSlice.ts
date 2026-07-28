@@ -72,10 +72,9 @@ export interface StreamingSlice {
 
   // 工具写操作确认请求（Phase 3 B5）
   toolConfirmRequest: {
-    toolCallId: string;
+    confirmationId: string;
     toolName: string;
-    arguments: Record<string, unknown>;
-    description: string;
+    confirmationSummary: Record<string, string | number | boolean>;
     timeout: number;
   } | null;
   setToolConfirmRequest: (request: StreamingSlice['toolConfirmRequest']) => void;

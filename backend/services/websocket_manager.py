@@ -59,6 +59,7 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
         self._connections: Dict[str, Dict[str, Connection]] = {}
         self._task_subscribers: Dict[Tuple[str, Optional[str]], Set[str]] = {}
         self._conn_index: Dict[str, Connection] = {}
+        self._delivered_confirmations: Dict[str, Set[str]] = {}
         self._lock = asyncio.Lock()
 
         self._init_interaction_state()
@@ -140,6 +141,7 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
         """强制断开连接（不获取锁，由调用方确保线程安全）"""
         connection = self._remove_connection(conn_id)
         if connection:
+            await self._close_delivered_confirmations(conn_id, connection)
             try:
                 await connection.websocket.close(
                     code=1000, reason="Connection replaced"
@@ -153,6 +155,7 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
             connection = self._remove_connection(conn_id)
 
         if connection:
+            await self._close_delivered_confirmations(conn_id, connection)
             logger.info(
                 f"WebSocket disconnected | user={connection.user_id} | "
                 f"conn={conn_id}"
@@ -197,11 +200,60 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
 
         try:
             await connection.websocket.send_json(message)
+            self._track_confirmation_delivery(conn_id, message)
             return True
-        except Exception as e:
-            logger.warning(f"Send failed | conn={conn_id} | error={e}")
+        except Exception as exc:
+            logger.warning(
+                "WebSocket send failed | "
+                f"conn_id={conn_id} | error_code=WEBSOCKET_SEND_FAILED | "
+                f"exception_type={type(exc).__name__}"
+            )
             await self.disconnect(conn_id)
             return False
+
+    def _track_confirmation_delivery(
+        self, conn_id: str, message: Dict[str, Any],
+    ) -> None:
+        if message.get("type") != "tool_confirm_request":
+            return
+        confirmation_id = message.get("payload", {}).get("confirmation_id")
+        if isinstance(confirmation_id, str):
+            self._delivered_confirmations.setdefault(conn_id, set()).add(
+                confirmation_id,
+            )
+
+    def forget_confirmation_delivery(self, confirmation_id: str) -> None:
+        """Drop terminal challenge tracking without exposing its value."""
+        for conn_id in tuple(self._delivered_confirmations):
+            confirmation_ids = self._delivered_confirmations[conn_id]
+            confirmation_ids.discard(confirmation_id)
+            if not confirmation_ids:
+                self._delivered_confirmations.pop(conn_id, None)
+
+    async def _close_delivered_confirmations(
+        self, conn_id: str, connection: Connection,
+    ) -> None:
+        confirmation_ids = self._delivered_confirmations.pop(conn_id, set())
+        if not confirmation_ids:
+            return
+        from services.tool_confirmation import tool_confirmation_service
+
+        for confirmation_id in confirmation_ids:
+            try:
+                await tool_confirmation_service.consume_response(
+                    confirmation_id=confirmation_id,
+                    user_id=connection.user_id,
+                    org_id=connection.org_id,
+                    approved=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "tool_confirmation_disconnect_close_failed | "
+                    f"user_id={connection.user_id} | "
+                    f"org_id={connection.org_id or ''} | "
+                    "error_code=CONFIRMATION_UNAVAILABLE | "
+                    f"exception_type={type(exc).__name__}"
+                )
 
     async def send_to_user(
         self, user_id: str, message: Dict[str, Any],
@@ -300,6 +352,44 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
                     await self.send_to_connection(conn_id, message)
 
         await self._publish("user", user_id, message, org_id=org_id)
+
+    async def send_tool_confirmation(
+        self,
+        task_id: str,
+        user_id: str,
+        message: Dict[str, Any],
+        org_id: str | None = None,
+    ) -> bool:
+        """Deliver V3 confirmation locally or require a remote delivery ACK."""
+        if self.is_in_cancelled_gate(task_id, org_id):
+            return False
+
+        conn_ids = set(self._task_subscribers.get((task_id, org_id), set()))
+        conn_ids.update(
+            conn_id for conn_id, connection
+            in self._connections.get(user_id, {}).items()
+            if connection.org_id == org_id
+        )
+        delivered = 0
+        for conn_id in conn_ids:
+            if await self.send_to_connection(conn_id, message):
+                delivered += 1
+
+        if delivered:
+            await self._publish("user", user_id, message, org_id=org_id)
+            return True
+        try:
+            return await self._publish_with_delivery_ack(
+                user_id, message, org_id=org_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "tool_confirmation_delivery_failed | "
+                f"user_id={user_id} | org_id={org_id or ''} | "
+                f"task_id={task_id} | error_code=CONFIRMATION_UNAVAILABLE | "
+                f"exception_type={type(exc).__name__}"
+            )
+            return False
 
     async def broadcast_all(self, message: Dict[str, Any], org_id: str | None = None):
         """广播消息到所有连接（本地 + 跨进程）
