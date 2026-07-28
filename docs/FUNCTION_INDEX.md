@@ -136,6 +136,17 @@
 | `requeue_agent_projection_dead` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 按Session→Outbox→Event→Checkpoint→Result锁序记录不可变审计并恢复一个dead首项，不重置失败历史 |
 | `claim_agent_projection_outbox` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | additive替换215通用claim，仅领取audit；web_runtime/wecom继续由有序compat claim唯一领取 |
 
+### Agent Runtime Sandbox Job Controller Batch A
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `SandboxJobSnapshot` / `SandboxJobRepositoryPort` | `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py` | 定义持久 Job、fencing、terminal、unknown/reconcile 与 cleanup typed 合同 |
+| `PostgresSandboxJobRepository` | `backend/services/agent/runtime/infrastructure/postgres/sandbox_job_repository.py` | 仅接受 Runtime 或专属 Sandbox Worker scoped client，并按方法阻断角色越权 |
+| `create_or_get_sandbox_job` / `get_sandbox_job` / `request_sandbox_job_cancel` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | Runtime 的幂等创建、scope readback 和 cancel request 窄入口 |
+| `claim_next_sandbox_job` / `renew_sandbox_job_lease` / `mark_sandbox_job_started` / `recover_expired_sandbox_job` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | 专属 Worker claim、fencing、start 与崩溃恢复合同；starting/running 不重派 |
+| `finish_sandbox_job` / `record_sandbox_job_unknown` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | 原子 terminal 或 unknown 写入，强制 receipt、partial、cleanup 与 cancel proof |
+| `claim_sandbox_job_reconciliation` / `renew_sandbox_job_reconciliation` / `resolve_sandbox_job_reconciliation` / `record_sandbox_job_cleanup` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | unknown-only reconciliation lease、终态解析和清理证据入口 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |

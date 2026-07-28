@@ -62,6 +62,18 @@ Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
 - `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
   原子边界、锁序、故障恢复、权限与 rollback 合同。
 
+Agent Runtime Sandbox Job Controller Batch A：
+- `backend/migrations/222_01_agent_runtime_sandbox_job_foundation.sql`、
+  `222_02_agent_runtime_sandbox_job_rpcs.sql`及精确 rollback：建立幂等 Job 事实、
+  execution/reconciliation fencing、partial/cleanup 合同、FORCE RLS 和窄 RPC。
+- `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py`及
+  `infrastructure/postgres/sandbox_job_repository.py`：提供 fail-closed typed Port。
+- `everydayai_sandbox_worker`由数据库 bootstrap 创建，NOINHERIT、无表直权且仅能执行
+  222 Worker RPC；Batch A 未启动 Worker、代码执行、Executor 注册或 production
+  composition。
+- `docs/document/TECH_AGENT_RUNTIME_SandboxJobController_BatchA.md`：记录身份、
+  状态机、锁序、权限、回滚和 Batch B Linux 隔离门禁。
+
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
   增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用

@@ -1,5 +1,20 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-28 Sandbox Job Controller Batch A — 本地完成，Worker与隔离待后续
+
+- migration 222_01/222_02建立 PostgreSQL Job SSOT、全局外部幂等键、execution 与
+  reconciliation fencing、unknown-only恢复、partial 24小时清理上限及窄RPC。
+- 新角色 `everydayai_sandbox_worker` 由bootstrap创建，NOINHERIT、无表直权、只获
+  222 Worker RPC；Batch A不创建或启动Worker，不运行代码且不注册`code_execute`。
+- stdout/stderr只保存各8KiB脱敏摘要、长度、SHA-256与截断标记；代码仍引用不可变
+  Action参数。输出以未来不可变内容寻址Workspace对象为首要事实，路径/OSS为派生。
+- Batch B Worker必须实现stdout/stderr主动脱敏；Batch A数据库已使用manifest/evidence
+  字段allowlist并拒绝常见凭证、JWT、长编码串和宿主路径，但不把模式扫描冒充完整脱敏。
+- terminal/reconcile在数据库边界重算规范JSONB receipt SHA-256；unknown partial
+  manifest不可被reconcile覆盖，cleanup proof持久化并完成前保持unknown。
+- Batch B前仍缺专用临时Linux VM上的真实nsjail+cgroup v2隔离证据；禁止用mock宣称
+  隔离通过，也禁止无nsjail/cgroup时降级为裸Python。
+
 ## 2026-07-28 旧 ToolLoop Tool Confirmation V3 — 本地实现，待生产切换
 
 - 旧协议存在 CONFIRM 仅通知即执行、授权异常放行和未知工具默认 SAFE；V3 已改为显式

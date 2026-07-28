@@ -30,6 +30,9 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
         ),
         "EVERYDAYAI_MIGRATOR_PASSWORD": "migrator-password-000001",
         "EVERYDAYAI_RUNTIME_PASSWORD": "runtime-password-00000001",
+        "EVERYDAYAI_SANDBOX_WORKER_PASSWORD": (
+            "sandbox-worker-password-0001"
+        ),
         "EVERYDAYAI_SYNC_PASSWORD": "sync-password-000000000001",
         "EVERYDAYAI_WECOM_RUNTIME_PASSWORD": "wecom-runtime-password-0001",
         "EVERYDAYAI_WORKER_PASSWORD": "worker-password-0000000001",
@@ -56,6 +59,16 @@ def test_role_script_fails_when_required_secret_is_missing(
 
     assert result.returncode == 1
     assert "EVERYDAYAI_WORKER_PASSWORD" in result.stderr
+
+
+def test_role_script_requires_sandbox_worker_secret(tmp_path: Path) -> None:
+    env, _ = _environment(tmp_path)
+    del env["EVERYDAYAI_SANDBOX_WORKER_PASSWORD"]
+
+    result = _run(env)
+
+    assert result.returncode == 1
+    assert "EVERYDAYAI_SANDBOX_WORKER_PASSWORD" in result.stderr
 
 
 def test_role_script_requires_config_import_reader_secret(
@@ -142,12 +155,19 @@ def test_role_script_enforces_role_boundaries(tmp_path: Path) -> None:
         "everydayai_config_import_reader",
         "everydayai_migrator",
         "everydayai_runtime",
+        "everydayai_sandbox_worker",
         "everydayai_sync",
         "everydayai_wecom_runtime",
         "everydayai_worker",
     ):
         assert f"{role} LOGIN" in sql
     assert "NOBYPASSRLS" in sql
+    assert "everydayai_sandbox_worker LOGIN" in sql
+    assert "everydayai_sandbox_worker LOGIN PASSWORD" in sql
+    assert "NOINHERIT" in sql
+    assert "REVOKE everydayai_worker FROM everydayai_sandbox_worker" in sql
+    assert "GRANT USAGE ON SCHEMA public TO everydayai_sandbox_worker" in sql
+    assert "REVOKE CREATE ON SCHEMA public FROM everydayai_sandbox_worker" in sql
     assert "GRANT everydayai_owner TO everydayai_migrator" in sql
     assert "REVOKE everydayai_owner FROM everydayai_config_import_reader" in sql
     assert "REVOKE everydayai_owner FROM everydayai_runtime" in sql

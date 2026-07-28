@@ -18,6 +18,7 @@ class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
     RUNTIME = "runtime"
+    SANDBOX_WORKER = "sandbox_worker"
     SYNC = "sync"
     WORKER = "worker"
 

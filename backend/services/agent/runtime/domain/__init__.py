@@ -52,6 +52,12 @@ from services.agent.runtime.domain.session import (
     SessionCommandType,
     SessionStatus,
 )
+from services.agent.runtime.domain.sandbox_job import (
+    SandboxCleanupStatus,
+    SandboxJobSnapshot,
+    SandboxJobStatus,
+    SandboxMaterializationStatus,
+)
 from services.agent.runtime.domain.transitions import (
     allowed_transitions,
     validate_transition,
@@ -83,6 +89,10 @@ __all__ = [
     "RunAttemptOutcome",
     "RunId",
     "RunStatus",
+    "SandboxCleanupStatus",
+    "SandboxJobSnapshot",
+    "SandboxJobStatus",
+    "SandboxMaterializationStatus",
     "RuntimeActorType",
     "RuntimeEvent",
     "RuntimeEventDraft",

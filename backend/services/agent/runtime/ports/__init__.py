@@ -54,6 +54,11 @@ from services.agent.runtime.ports.repository import (
     RuntimeRepositoryPort,
     SessionSnapshot,
 )
+from services.agent.runtime.ports.sandbox_job import (
+    SandboxJobOutcome,
+    SandboxJobReceipt,
+    SandboxJobRepositoryPort,
+)
 
 __all__ = [
     "ActionMutationOutcome",
@@ -95,5 +100,8 @@ __all__ = [
     "MutationOutcome",
     "MutationReceipt",
     "RunClaim",
+    "SandboxJobOutcome",
+    "SandboxJobReceipt",
+    "SandboxJobRepositoryPort",
     "SessionSnapshot",
 ]
