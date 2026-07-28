@@ -47,12 +47,43 @@ class PostgresSandboxJobRepository:
         ).execute()
         return parse_sandbox_job_receipt(response.data)
 
+    async def readback_by_binding(self, **values: object) -> SandboxJobReceipt:
+        names = (
+            "external_idempotency_key", "action_id", "attempt_id",
+            "dispatch_intent_id", "request_hash", "org_id", "user_id",
+            "session_id", "run_id", "executor_type", "executor_revision",
+            "runtime_revision",
+        )
+        return await self._runtime(
+            "get_sandbox_job_by_binding", values, names,
+        )
+
     async def claim(
         self, *, worker_id: str, lease_seconds: int = 60,
     ) -> SandboxJobReceipt:
         return await self._worker("claim_next_sandbox_job", {
             "p_worker_id": worker_id, "p_lease_seconds": lease_seconds,
         })
+
+    async def claim_recoverable(
+        self, *, worker_id: str, lease_seconds: int = 60,
+    ) -> SandboxJobReceipt:
+        return await self._worker(
+            "claim_next_recoverable_sandbox_job", {
+                "p_worker_id": worker_id,
+                "p_lease_seconds": lease_seconds,
+            },
+        )
+
+    async def claim_next_reconciliation(
+        self, *, worker_id: str, lease_seconds: int = 60,
+    ) -> SandboxJobReceipt:
+        return await self._worker(
+            "claim_next_sandbox_job_reconciliation", {
+                "p_worker_id": worker_id,
+                "p_lease_seconds": lease_seconds,
+            },
+        )
 
     async def renew(self, **values: object) -> SandboxJobReceipt:
         return await self._worker_values(

@@ -78,6 +78,8 @@ def _snapshot(row: Mapping[str, object]) -> SandboxJobSnapshot:
         ),
         request_hash=require_text(row, "request_hash"),
         code_sha256=require_text(row, "code_sha256"),
+        resource_limits=require_json_object(row, "resource_limits"),
+        input_manifest=require_json_object(row, "input_manifest"),
         status=require_enum(row, "status", SandboxJobStatus),
         state_version=require_int(row, "state_version"),
         fencing_token=require_int(row, "fencing_token"),
@@ -99,6 +101,19 @@ def _snapshot(row: Mapping[str, object]) -> SandboxJobSnapshot:
         terminal_at=_optional_time(row, "terminal_at"),
         artifact_manifest=require_json_object(row, "artifact_manifest"),
         partial_effects=require_json_object(row, "partial_effects"),
+        terminal_reason=(
+            require_text(row, "terminal_reason")
+            if row.get("terminal_reason") is not None else None
+        ),
+        stdout_summary=(
+            str(row["stdout_summary"])
+            if row.get("stdout_summary") is not None else None
+        ),
+        stderr_summary=(
+            str(row["stderr_summary"])
+            if row.get("stderr_summary") is not None else None
+        ),
+        cleanup_deadline_at=_optional_time(row, "cleanup_deadline_at"),
     )
 
 

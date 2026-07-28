@@ -58,7 +58,23 @@ class SandboxJobRepositoryPort(Protocol):
 
     async def get(self, *, job_id: str) -> SandboxJobReceipt: ...
 
+    async def readback_by_binding(
+        self, *, external_idempotency_key: str, action_id: str,
+        attempt_id: str, dispatch_intent_id: str, request_hash: str,
+        org_id: str | None, user_id: str | None,
+        session_id: str, run_id: str, executor_type: str,
+        executor_revision: int, runtime_revision: str,
+    ) -> SandboxJobReceipt: ...
+
     async def claim(
+        self, *, worker_id: str, lease_seconds: int = 60,
+    ) -> SandboxJobReceipt: ...
+
+    async def claim_recoverable(
+        self, *, worker_id: str, lease_seconds: int = 60,
+    ) -> SandboxJobReceipt: ...
+
+    async def claim_next_reconciliation(
         self, *, worker_id: str, lease_seconds: int = 60,
     ) -> SandboxJobReceipt: ...
 

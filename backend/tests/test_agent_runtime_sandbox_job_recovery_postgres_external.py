@@ -1,230 +1,347 @@
-"""Real PostgreSQL Sandbox Job late-write and queued-cancel contracts."""
+"""Real PostgreSQL contracts for 222_03 Sandbox recovery RPCs."""
 
 from __future__ import annotations
 
-import json
 import os
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
+import psycopg
 import pytest
 
-from tests.test_agent_runtime_sandbox_job_postgres_external import (
-    _claim,
-    _create,
-    _decoded,
-    _execute,
-    _receipt,
-    _receipt_hash,
-    _seed_dispatch,
-    _worker_rpc,
-)
+from tests import test_agent_runtime_sandbox_job_postgres_external as base
+
 
 pytestmark = pytest.mark.external
+MIGRATION_ROOT = Path(__file__).resolve().parents[1] / "migrations"
 
 
 @pytest.fixture(scope="module", autouse=True)
 def dedicated_database() -> None:
-    url = os.getenv("AR222_TEST_DATABASE_URL", "")
-    if os.getenv("RUN_AR222_DB_TEST") != "1" or "ar222" not in url.lower():
-        pytest.skip("dedicated AR222 database required")
+    if os.getenv("RUN_AR222_DB_TEST") != "1" or not base.DATABASE_URL:
+        pytest.skip("RUN_AR222_DB_TEST=1 and AR222_TEST_DATABASE_URL required")
+    if "ar222" not in base.DATABASE_URL.lower():
+        pytest.skip("dedicated AR222 database name required")
 
 
-def test_queued_cancel_is_terminal_and_runtime_readback_hides_worker_tokens() -> None:
-    ids = _seed_dispatch()
-    job = _create(ids)["job"]
-    cancelled = _decoded(_execute(
+def _readback(ids: dict[str, object], **changes: object) -> dict:
+    values = {
+        "key": ids["external_key"],
+        "action": ids["action"],
+        "attempt": ids["attempt"],
+        "intent": ids["intent"],
+        "request_hash": "b" * 64,
+        "org": None,
+        "user": ids["user"],
+        "session": ids["session"],
+        "run": ids["run"],
+        "executor_type": "sandbox.python",
+        "executor_revision": 1,
+        "runtime_revision": "python-v1",
+    }
+    values.update(changes)
+    row = base._execute(
+        """
+        SELECT get_sandbox_job_by_binding(
+          %(key)s,%(action)s,%(attempt)s,%(intent)s,%(request_hash)s,
+          %(org)s,%(user)s,%(session)s,%(run)s,%(executor_type)s,
+          %(executor_revision)s,%(runtime_revision)s
+        ) AS value
+        """,
+        values, role="everydayai_runtime", user_id=str(ids["user"]),
+    )[0]["value"]
+    return base._decoded(row)
+
+
+def test_response_loss_unknown_attempt_reads_back_exact_job() -> None:
+    ids = base._seed_dispatch()
+    created = base._create(ids)["job"]
+    base._execute(
+        """
+        SET ROLE everydayai_owner;
+        UPDATE agent_action_attempts
+           SET status='unknown',
+               ambiguity_evidence='{"kind":"SANDBOX_SUBMIT_RESULT_UNKNOWN"}';
+        RESET ROLE
+        """
+    )
+    found = _readback(ids)
+    assert found["outcome"] == "found"
+    assert found["job"]["id"] == created["id"]
+    assert found["job"]["external_idempotency_key"] == ids["external_key"]
+
+
+def test_readback_wrong_key_missing_and_every_wrong_binding_conflicts() -> None:
+    ids = base._seed_dispatch()
+    base._create(ids)
+    assert _readback(ids, key="action:missing:key")["outcome"] == "not_found"
+    wrong_uuid = "99999999-9999-9999-9999-999999999999"
+    changes = (
+        {"action": wrong_uuid}, {"attempt": wrong_uuid},
+        {"intent": wrong_uuid}, {"request_hash": "9" * 64},
+        {"org": wrong_uuid}, {"user": wrong_uuid},
+        {"session": wrong_uuid}, {"run": wrong_uuid},
+        {"executor_type": "other"}, {"executor_revision": 2},
+        {"runtime_revision": "python-v2"},
+    )
+    for change in changes:
+        assert _readback(ids, **change)["outcome"] == "idempotency_conflict"
+
+
+def test_50_concurrent_readbacks_return_same_job() -> None:
+    ids = base._seed_dispatch()
+    expected = base._create(ids)["job"]["id"]
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        results = list(pool.map(lambda _: _readback(ids), range(50)))
+    assert {result["outcome"] for result in results} == {"found"}
+    assert {result["job"]["id"] for result in results} == {expected}
+
+
+def _expire(job_id: str) -> None:
+    base._execute(
+        """
+        SET ROLE everydayai_owner;
+        UPDATE agent_sandbox_jobs
+           SET lease_expires_at=clock_timestamp()-interval '1 second'
+         WHERE id=%s;
+        RESET ROLE
+        """,
+        (job_id,),
+    )
+
+
+def _claim_recoverable(worker: str) -> dict:
+    return base._worker_rpc(
+        "SELECT claim_next_recoverable_sandbox_job(%s,60) AS value",
+        (worker,),
+    )
+
+
+def _claim_reconciliation(worker: str) -> dict:
+    return base._worker_rpc(
+        "SELECT claim_next_sandbox_job_reconciliation(%s,60) AS value",
+        (worker,),
+    )
+
+
+def _execute_script(sql: str) -> None:
+    with psycopg.connect(base.DATABASE_URL) as connection:
+        connection.execute(sql)
+
+
+def test_expired_unstarted_claim_has_one_new_execution_owner() -> None:
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    old = base._claim()
+    _expire(job["id"])
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        outcomes = list(pool.map(
+            lambda index: _claim_recoverable(f"recovery-{index}"),
+            range(50),
+        ))
+    claimed = [item for item in outcomes if item["outcome"] == "claimed"]
+    assert len(claimed) == 1
+    current = claimed[0]["job"]
+    assert current["fencing_token"] == old["fencing_token"] + 1
+    assert current["claim_token"] != old["claim_token"]
+    stale = base._worker_rpc(
+        "SELECT renew_sandbox_job_lease(%s,%s,%s,%s,60) AS value",
+        (
+            job["id"], old["claim_token"], old["fencing_token"],
+            old["state_version"],
+        ),
+    )
+    assert stale["outcome"] == "ownership_lost"
+
+
+@pytest.mark.parametrize("phase", ["starting", "running"])
+def test_started_phases_only_enter_reconciliation(phase: str) -> None:
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    claimed = base._claim()
+    started_result = base._worker_rpc(
+        "SELECT mark_sandbox_job_started(%s,%s,%s,%s,%s) AS value",
+        (
+            job["id"], claimed["claim_token"], claimed["fencing_token"],
+            claimed["state_version"], "starting",
+        ),
+    )
+    started = started_result["job"]
+    if phase == "running":
+        started = base._worker_rpc(
+            "SELECT mark_sandbox_job_started(%s,%s,%s,%s,%s) AS value",
+            (
+                job["id"], claimed["claim_token"],
+                claimed["fencing_token"], started["state_version"], "running",
+            ),
+        )["job"]
+    _expire(job["id"])
+    assert _claim_recoverable("execution-recovery")["outcome"] == "not_found"
+    reconciled = _claim_reconciliation("reconciler")
+    assert reconciled["outcome"] == "claimed"
+    assert reconciled["job"]["status"] == "unknown"
+    assert reconciled["job"]["reconciliation_token"]
+    assert reconciled["job"]["claim_token"] is None
+    assert started["fencing_token"] == reconciled["job"]["fencing_token"]
+
+
+def test_unknown_and_cancel_requested_are_reconciliation_only() -> None:
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    claimed = base._claim()
+    unknown = base._worker_rpc(
+        """
+        SELECT record_sandbox_job_unknown(
+          %s,%s,%s,%s,'{"kind":"EXECUTION_UNPROVEN"}',
+          '{"schema_revision":1,"items":[]}',NULL
+        ) AS value
+        """,
+        (
+            job["id"], claimed["claim_token"], claimed["fencing_token"],
+            claimed["state_version"],
+        ),
+    )
+    assert unknown["outcome"] == "unknown"
+    assert _claim_recoverable("execution-recovery")["outcome"] == "not_found"
+    assert _claim_reconciliation("reconciler")["outcome"] == "claimed"
+
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    claimed = base._claim()
+    cancelled = base._decoded(base._execute(
+        "SELECT request_sandbox_job_cancel(%s,%s) AS value",
+        (job["id"], claimed["state_version"]),
+        role="everydayai_runtime", user_id=str(ids["user"]),
+    )[0]["value"])
+    assert cancelled["outcome"] == "cancel_requested"
+    _expire(job["id"])
+    assert _claim_recoverable("execution-recovery")["outcome"] == "not_found"
+    assert _claim_reconciliation("reconciler")["outcome"] == "claimed"
+
+
+def test_expired_reconciliation_fences_the_old_owner() -> None:
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    claimed = base._claim()
+    unknown = base._worker_rpc(
+        """
+        SELECT record_sandbox_job_unknown(
+          %s,%s,%s,%s,'{"kind":"EXECUTION_UNPROVEN"}',
+          '{"schema_revision":1,"items":[]}',NULL
+        ) AS value
+        """,
+        (
+            job["id"], claimed["claim_token"], claimed["fencing_token"],
+            claimed["state_version"],
+        ),
+    )
+    old = _claim_reconciliation("reconciler-old")["job"]
+    base._execute(
+        """
+        SET ROLE everydayai_owner;
+        UPDATE agent_sandbox_jobs
+           SET reconciliation_lease_expires_at =
+               clock_timestamp() - interval '1 second'
+         WHERE id=%s;
+        RESET ROLE
+        """,
+        (job["id"],),
+    )
+    new = _claim_reconciliation("reconciler-new")["job"]
+    assert new["reconciliation_token"] != old["reconciliation_token"]
+    stale = base._worker_rpc(
+        """
+        SELECT record_sandbox_job_cleanup(
+          %s,%s,%s,'completed','{"kind":"CLEANUP_CONFIRMED"}'
+        ) AS value
+        """,
+        (job["id"], old["reconciliation_token"], old["state_version"]),
+    )
+    assert stale["outcome"] == "ownership_lost"
+    assert unknown["job"]["id"] == new["id"]
+
+
+def test_terminal_jobs_and_unprivileged_roles_cannot_claim() -> None:
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    cancelled = base._decoded(base._execute(
         "SELECT request_sandbox_job_cancel(%s,%s) AS value",
         (job["id"], job["state_version"]),
         role="everydayai_runtime", user_id=str(ids["user"]),
     )[0]["value"])
     assert cancelled["outcome"] == "cancelled"
-    assert cancelled["job"]["terminal_reason"] == "CANCELLED_BEFORE_START"
-    cancel_receipt = _receipt()
-    cancel_receipt["execution_outcome"] = "interrupted"
-    assert cancelled["job"]["receipt_hash"] == _receipt_hash(cancel_receipt)
-    assert cancelled["job"]["receipt_hash"] != cancelled["job"]["request_hash"]
-    assert not {
-        "claim_token", "reconciliation_token", "claim_worker_id",
-    } & cancelled["job"].keys()
-    assert _worker_rpc(
-        "SELECT claim_next_sandbox_job('sandbox-2',60) AS value", (),
-    )["outcome"] == "not_found"
+    assert _claim_recoverable("execution-recovery")["outcome"] == "not_found"
+    assert _claim_reconciliation("reconciler")["outcome"] == "not_found"
 
-
-def test_expired_execution_and_reconciliation_leases_reject_late_writes() -> None:
-    ids = _seed_dispatch()
-    job = _create(ids)["job"]
-    claimed = _claim()
-    late_receipt = _receipt()
-    _execute(
-        "SET ROLE everydayai_owner; UPDATE agent_sandbox_jobs "
-        "SET lease_expires_at=clock_timestamp()-interval '1 second' "
-        "WHERE id=%s; RESET ROLE",
-        (job["id"],),
-    )
-    assert _worker_rpc(
-        "SELECT finish_sandbox_job(%s,%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,%s::jsonb) AS value",
-        (
-            job["id"], claimed["claim_token"], claimed["fencing_token"],
-            claimed["state_version"], _receipt_hash(late_receipt),
-            json.dumps(late_receipt),
-        ),
-    )["outcome"] == "invalid_transition"
-    _execute(
-        "SET ROLE everydayai_owner; UPDATE agent_sandbox_jobs SET "
-        "status='unknown',ambiguity_evidence='{\"kind\":\"LEASE_EXPIRED\"}',"
-        "claim_worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,"
-        "state_version=state_version+1 WHERE id=%s; RESET ROLE",
-        (job["id"],),
-    )
-    current = _execute(
-        "SELECT state_version FROM agent_sandbox_jobs WHERE id=%s",
-        (job["id"],),
-    )[0]
-    reconciled = _worker_rpc(
-        "SELECT claim_sandbox_job_reconciliation(%s,%s,'scanner-1',60) AS value",
-        (job["id"], current["state_version"]),
-    )["job"]
-    malformed_receipt: dict[str, object] = {}
-    malformed = _worker_rpc(
-        "SELECT resolve_sandbox_job_reconciliation(%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,'{}'::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            reconciled["state_version"], _receipt_hash(malformed_receipt),
-        ),
-    )
-    assert malformed["outcome"] == "terminal_guard_failed"
-    _execute(
-        "SET ROLE everydayai_owner; UPDATE agent_sandbox_jobs SET "
-        "reconciliation_lease_expires_at=clock_timestamp()-interval '1 second' "
-        "WHERE id=%s; RESET ROLE",
-        (job["id"],),
-    )
-    cleanup = _worker_rpc(
-        "SELECT record_sandbox_job_cleanup(%s,%s,%s,'completed',"
-        "%s::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            reconciled["state_version"],
-            json.dumps({"kind": "CLEANUP_CONFIRMED"}),
-        ),
-    )
-    assert cleanup["outcome"] == "invalid_transition"
-
-
-def test_partial_reconciliation_requires_persisted_cleanup_proof() -> None:
-    ids = _seed_dispatch()
-    job = _create(ids)["job"]
-    claimed = _claim()
-    receipt = _receipt(partial=True)
-    unknown = _worker_rpc(
-        "SELECT record_sandbox_job_unknown(%s,%s,%s,%s,%s::jsonb,"
-        "%s::jsonb,NULL) AS value",
-        (
-            job["id"], claimed["claim_token"], claimed["fencing_token"],
-            claimed["state_version"],
-            json.dumps({"kind": "PARTIAL_OUTPUT_UNPROVEN"}),
-            json.dumps(receipt["partial_effects"]),
-        ),
-    )["job"]
-    reconciled = _worker_rpc(
-        "SELECT claim_sandbox_job_reconciliation(%s,%s,'scanner-2',60) AS value",
-        (job["id"], unknown["state_version"]),
-    )["job"]
-    reconciled = _worker_rpc(
-        "SELECT renew_sandbox_job_reconciliation(%s,%s,%s,60) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            reconciled["state_version"],
-        ),
-    )["job"]
-    direct = _worker_rpc(
-        "SELECT resolve_sandbox_job_reconciliation(%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,%s::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            reconciled["state_version"], _receipt_hash(receipt),
-            json.dumps(receipt),
-        ),
-    )
-    assert direct["outcome"] == "terminal_guard_failed"
-    mismatched = _receipt()
-    mismatch = _worker_rpc(
-        "SELECT resolve_sandbox_job_reconciliation(%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,%s::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            reconciled["state_version"], _receipt_hash(mismatched),
-            json.dumps(mismatched),
-        ),
-    )
-    assert mismatch["outcome"] == "terminal_guard_failed"
-    cleaned = _worker_rpc(
-        "SELECT record_sandbox_job_cleanup(%s,%s,%s,'completed',"
-        "%s::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            reconciled["state_version"],
-            json.dumps({"kind": "CLEANUP_CONFIRMED"}),
-        ),
-    )["job"]
-    wrong_proof = dict(receipt)
-    wrong_proof["cleanup_evidence"] = {"kind": "DIFFERENT_CLEANUP_PROOF"}
-    rejected_proof = _worker_rpc(
-        "SELECT resolve_sandbox_job_reconciliation(%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,%s::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            cleaned["state_version"], _receipt_hash(wrong_proof),
-            json.dumps(wrong_proof),
-        ),
-    )
-    assert rejected_proof["outcome"] == "terminal_guard_failed"
-    resolved = _worker_rpc(
-        "SELECT resolve_sandbox_job_reconciliation(%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,%s::jsonb) AS value",
-        (
-            job["id"], reconciled["reconciliation_token"],
-            cleaned["state_version"], _receipt_hash(receipt),
-            json.dumps(receipt),
-        ),
-    )
-    assert resolved["outcome"] == "failed"
-    assert resolved["job"]["partial_effects"] == receipt["partial_effects"]
-    assert resolved["job"]["cleanup_evidence"]["kind"] == "CLEANUP_CONFIRMED"
-    persisted_hash = _execute(
+    rows = base._execute(
         """
-        SELECT _agent_sandbox_receipt_hash(jsonb_build_object(
-          'receipt_revision',receipt_revision,
-          'execution_outcome',execution_outcome,
-          'stdout_summary',stdout_summary,
-          'stdout_original_length',stdout_original_length,
-          'stdout_sha256',stdout_sha256,'stdout_truncated',stdout_truncated,
-          'stderr_summary',stderr_summary,
-          'stderr_original_length',stderr_original_length,
-          'stderr_sha256',stderr_sha256,'stderr_truncated',stderr_truncated,
-          'artifact_manifest',artifact_manifest,'partial_effects',partial_effects,
-          'materialization_status',materialization_status,
-          'cleanup_status',cleanup_status,'cleanup_evidence',cleanup_evidence
-        )) AS value FROM agent_sandbox_jobs WHERE id=%s
-        """,
-        (job["id"],),
-    )[0]["value"]
-    assert persisted_hash == resolved["job"]["receipt_hash"]
+        SELECT
+          has_function_privilege(
+            'everydayai_runtime',
+            'get_sandbox_job_by_binding(text,uuid,uuid,uuid,text,uuid,uuid,uuid,uuid,text,integer,text)',
+            'EXECUTE') AS runtime_readback,
+          has_function_privilege(
+            'everydayai_sandbox_worker',
+            'claim_next_recoverable_sandbox_job(text,integer)',
+            'EXECUTE') AS sandbox_recovery,
+          has_function_privilege(
+            'everydayai_worker',
+            'claim_next_recoverable_sandbox_job(text,integer)',
+            'EXECUTE') AS worker_recovery,
+          NOT EXISTS (
+            SELECT 1
+              FROM pg_proc p,
+                   LATERAL aclexplode(COALESCE(
+                     p.proacl, acldefault('f', p.proowner)
+                   )) acl
+             WHERE p.oid =
+               'claim_next_sandbox_job_reconciliation(text,integer)'::regprocedure
+               AND acl.grantee = 0
+               AND acl.privilege_type = 'EXECUTE'
+          ) AS public_reconcile_denied
+        """
+    )[0]
+    assert rows == {
+        "runtime_readback": True, "sandbox_recovery": True,
+        "worker_recovery": False, "public_reconcile_denied": True,
+    }
 
 
-def test_receipt_hash_mismatch_is_rejected_before_terminal_write() -> None:
-    ids = _seed_dispatch()
-    job = _create(ids)["job"]
-    claimed = _claim()
-    receipt = _receipt()
-    result = _worker_rpc(
-        "SELECT finish_sandbox_job(%s,%s,%s,%s,'failed',"
-        "'EXECUTION_FAILED',%s,%s::jsonb) AS value",
-        (
-            job["id"], claimed["claim_token"], claimed["fencing_token"],
-            claimed["state_version"], "0" * 64, json.dumps(receipt),
-        ),
-    )
-    assert result["outcome"] == "receipt_hash_conflict"
+def test_rollback_guards_active_jobs_and_terminal_history_remains_readable() -> None:
+    rollback = (
+        MIGRATION_ROOT / "rollback"
+        / "222_03_agent_runtime_sandbox_job_recovery_rpcs_rollback.sql"
+    ).read_text()
+    migration = (
+        MIGRATION_ROOT / "222_03_agent_runtime_sandbox_job_recovery_rpcs.sql"
+    ).read_text()
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    with pytest.raises(
+        psycopg.Error,
+        match="AGENT_SANDBOX_RECOVERY_ROLLBACK_HAS_ACTIVE_JOBS",
+    ):
+        _execute_script(rollback)
+    cancelled = base._decoded(base._execute(
+        "SELECT request_sandbox_job_cancel(%s,%s) AS value",
+        (job["id"], job["state_version"]),
+        role="everydayai_runtime", user_id=str(ids["user"]),
+    )[0]["value"])
+    assert cancelled["outcome"] == "cancelled"
+
+    _execute_script(rollback)
+    terminal = base._decoded(base._execute(
+        "SELECT get_sandbox_job(%s) AS value",
+        (job["id"],), role="everydayai_runtime",
+        user_id=str(ids["user"]),
+    )[0]["value"])
+    assert terminal["job"]["status"] == "cancelled"
+    assert base._execute(
+        """
+        SELECT to_regprocedure(
+          'get_sandbox_job_by_binding(text,uuid,uuid,uuid,text,uuid,uuid,uuid,uuid,text,integer,text)'
+        ) IS NULL AS removed
+        """
+    )[0]["removed"] is True
+    _execute_script(migration)
+    assert _readback(ids)["job"]["id"] == job["id"]

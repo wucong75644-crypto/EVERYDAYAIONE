@@ -51,6 +51,8 @@ class SandboxJobSnapshot:
     external_idempotency_key: str
     request_hash: str
     code_sha256: str
+    resource_limits: Mapping[str, object]
+    input_manifest: Mapping[str, object]
     status: SandboxJobStatus
     state_version: int
     fencing_token: int
@@ -64,6 +66,10 @@ class SandboxJobSnapshot:
     terminal_at: datetime | None = None
     artifact_manifest: Mapping[str, object] | None = None
     partial_effects: Mapping[str, object] | None = None
+    terminal_reason: str | None = None
+    stdout_summary: str | None = None
+    stderr_summary: str | None = None
+    cleanup_deadline_at: datetime | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -91,6 +97,7 @@ class SandboxJobSnapshot:
             "reconciliation_lease_expires_at",
         )
         require_aware_datetime(self.terminal_at, "terminal_at")
+        require_aware_datetime(self.cleanup_deadline_at, "cleanup_deadline_at")
         terminal = {
             SandboxJobStatus.SUCCEEDED,
             SandboxJobStatus.FAILED,
