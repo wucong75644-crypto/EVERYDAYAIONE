@@ -153,6 +153,7 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
     )
     result = await (await _launcher(rootfs, policy).launch(request)).wait()
     assert result.outcome != "succeeded"
+    assert "unrecognized option" not in result.stderr.decode(errors="replace")
     assert result.process_tree_terminated
 
 
@@ -171,8 +172,9 @@ async def test_nsjail_cancel_terminates_process_tree(linux_contract) -> None:
         limits={"timeout_seconds": 45},
     )
     process = await _launcher(rootfs, policy).launch(request)
+    await asyncio.sleep(0.2)
+    assert await process.prove_terminated() is False
     wait_task = asyncio.create_task(process.wait())
-    await asyncio.sleep(1)
     assert await process.request_cancel()
     result = await asyncio.wait_for(wait_task, timeout=10)
     assert result.outcome != "succeeded"

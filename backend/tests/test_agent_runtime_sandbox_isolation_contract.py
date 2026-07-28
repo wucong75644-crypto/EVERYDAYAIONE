@@ -28,7 +28,8 @@ def test_nsjail_command_has_readonly_input_writable_output_and_limits(
     assert ["-B", f"{output_dir}:/job/output"] == command[
         command.index("-B"):command.index("-B") + 2
     ]
-    assert "--clone_newnet" in command
+    assert "--disable_clone_newnet" not in command
+    assert "--use_cgroupv2" in command
     assert "--seccomp_policy" in command
     assert "--cgroup_mem_max" in command
     assert "--cgroup_pids_max" in command
