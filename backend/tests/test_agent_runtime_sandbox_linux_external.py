@@ -6,8 +6,25 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import sys
+from types import ModuleType
 
 import pytest
+
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+for _package, _path in (
+    ("services", _BACKEND_ROOT / "services"),
+    ("services.agent", _BACKEND_ROOT / "services" / "agent"),
+    ("services.agent.runtime", _BACKEND_ROOT / "services" / "agent" / "runtime"),
+    (
+        "services.agent.runtime.sandbox",
+        _BACKEND_ROOT / "services" / "agent" / "runtime" / "sandbox",
+    ),
+):
+    _module = ModuleType(_package)
+    _module.__path__ = [str(_path)]
+    sys.modules[_package] = _module
 
 from services.agent.runtime.sandbox.contracts import SandboxResourceLimits
 from services.agent.runtime.sandbox.launcher import (

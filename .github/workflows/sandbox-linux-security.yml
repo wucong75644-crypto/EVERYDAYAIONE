@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           python3 -m venv /tmp/everydayai-sandbox-test-venv
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
-            loguru==0.7.3 pytest==8.3.4 pytest-asyncio==0.25.2
+            pytest==8.3.4 pytest-asyncio==0.25.2
           sudo --preserve-env=SANDBOX_ROOTFS,SANDBOX_SECCOMP_POLICY,RUN_SANDBOX_LINUX_EXTERNAL_TESTS \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
