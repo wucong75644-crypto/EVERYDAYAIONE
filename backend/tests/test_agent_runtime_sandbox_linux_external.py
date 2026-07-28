@@ -165,12 +165,29 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
             "payload = bytearray(256 * 1024 * 1024)\n"
             "for offset in range(0, len(payload), 4096):\n"
             "    payload[offset] = 1\n"
+            "open('/job/output/memory-ready', 'w').write('ready')\n"
             "print(len(payload), flush=True)\n"
-            "time.sleep(5)\n"
+            "time.sleep(30)\n"
         ),
         limits={"memory_bytes": 64 * 1024 * 1024},
     )
-    result = await (await _launcher(rootfs, policy).launch(request)).wait()
+    process = await _launcher(rootfs, policy).launch(request)
+    wait_task = asyncio.create_task(process.wait())
+    for _ in range(50):
+        if wait_task.done() or (request.output_dir / "memory-ready").exists():
+            break
+        await asyncio.sleep(0.1)
+    if (request.output_dir / "memory-ready").exists():
+        evidence = []
+        for cgroup in Path("/sys/fs/cgroup").glob("NSJAIL.*"):
+            evidence.append({
+                field: (cgroup / field).read_text().strip()
+                for field in ("cgroup.procs", "memory.current", "memory.max")
+            })
+        await process.request_cancel()
+        await wait_task
+        pytest.fail(f"SANDBOX_MEMORY_LIMIT_NOT_ENFORCED:{evidence}")
+    result = await wait_task
     assert result.outcome != "succeeded", result.stderr.decode(errors="replace")
     assert "unrecognized option" not in result.stderr.decode(errors="replace")
     assert result.process_tree_terminated
