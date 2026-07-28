@@ -223,12 +223,103 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION get_owned_sandbox_job(
+    p_job_id UUID,
+    p_worker_id TEXT,
+    p_claim_token UUID,
+    p_fencing_token BIGINT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE
+    v_job agent_sandbox_jobs%ROWTYPE;
+BEGIN
+    PERFORM _assert_agent_sandbox_actor('sandbox_worker');
+    IF NULLIF(btrim(p_worker_id), '') IS NULL
+       OR p_claim_token IS NULL
+       OR p_fencing_token < 1 THEN
+        RAISE EXCEPTION 'AGENT_SANDBOX_OWNED_READ_INVALID'
+            USING ERRCODE = '22023';
+    END IF;
+    v_job := _lock_agent_sandbox_job(p_job_id);
+    IF v_job.id IS NULL THEN
+        RETURN jsonb_build_object('outcome', 'not_found');
+    END IF;
+    IF v_job.claim_worker_id IS DISTINCT FROM btrim(p_worker_id)
+       OR v_job.claim_token IS DISTINCT FROM p_claim_token
+       OR v_job.fencing_token IS DISTINCT FROM p_fencing_token
+       OR v_job.status NOT IN (
+           'claimed', 'starting', 'running', 'cancel_requested'
+       ) THEN
+        RETURN jsonb_build_object('outcome', 'ownership_lost');
+    END IF;
+    RETURN jsonb_build_object('outcome', 'found', 'job', to_jsonb(v_job));
+END;
+$$;
+
+CREATE FUNCTION record_reconciled_sandbox_partials(
+    p_job_id UUID,
+    p_reconciliation_token UUID,
+    p_expected_version BIGINT,
+    p_partial_effects JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE
+    v_job agent_sandbox_jobs%ROWTYPE;
+    v_now TIMESTAMPTZ;
+    v_empty CONSTANT JSONB :=
+        '{"schema_revision":1,"items":[]}'::JSONB;
+BEGIN
+    PERFORM _assert_agent_sandbox_actor('sandbox_worker');
+    v_job := _lock_agent_sandbox_job(p_job_id);
+    IF v_job.id IS NULL THEN
+        RETURN jsonb_build_object('outcome', 'not_found');
+    END IF;
+    IF v_job.reconciliation_token IS DISTINCT FROM p_reconciliation_token THEN
+        RETURN jsonb_build_object('outcome', 'ownership_lost');
+    END IF;
+    IF v_job.status <> 'unknown'
+       OR v_job.reconciliation_lease_expires_at <= clock_timestamp()
+       OR NOT _agent_sandbox_manifest_is_valid(p_partial_effects, 'partial')
+       OR jsonb_array_length(p_partial_effects->'items') = 0 THEN
+        RETURN jsonb_build_object('outcome', 'invalid_transition');
+    END IF;
+    IF v_job.partial_effects = p_partial_effects THEN
+        RETURN jsonb_build_object(
+            'outcome', 'already_partials_recorded', 'job', to_jsonb(v_job)
+        );
+    END IF;
+    IF v_job.state_version <> p_expected_version THEN
+        RETURN jsonb_build_object('outcome', 'stale_version');
+    END IF;
+    IF v_job.partial_effects <> v_empty THEN
+        RETURN jsonb_build_object('outcome', 'partial_effects_conflict');
+    END IF;
+    v_now := clock_timestamp();
+    UPDATE agent_sandbox_jobs
+       SET partial_effects = p_partial_effects,
+           partial_effects_recorded_at = v_now,
+           cleanup_status = 'pending',
+           cleanup_deadline_at = v_now + interval '24 hours',
+           state_version = state_version + 1,
+           updated_at = clock_timestamp()
+     WHERE id = v_job.id
+     RETURNING * INTO v_job;
+    RETURN jsonb_build_object(
+        'outcome', 'partials_recorded', 'job', to_jsonb(v_job)
+    );
+END;
+$$;
+
 REVOKE ALL ON FUNCTION
     get_sandbox_job_by_binding(
         TEXT,UUID,UUID,UUID,TEXT,UUID,UUID,UUID,UUID,TEXT,INTEGER,TEXT
     ),
     claim_next_recoverable_sandbox_job(TEXT,INTEGER),
-    claim_next_sandbox_job_reconciliation(TEXT,INTEGER)
+    claim_next_sandbox_job_reconciliation(TEXT,INTEGER),
+    get_owned_sandbox_job(UUID,TEXT,UUID,BIGINT),
+    record_reconciled_sandbox_partials(UUID,UUID,BIGINT,JSONB)
 FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
      everydayai_worker, everydayai_sandbox_worker, everydayai_sync, everydayai;
 
@@ -238,7 +329,12 @@ GRANT EXECUTE ON FUNCTION get_sandbox_job_by_binding(
 
 GRANT EXECUTE ON FUNCTION
     claim_next_recoverable_sandbox_job(TEXT,INTEGER),
-    claim_next_sandbox_job_reconciliation(TEXT,INTEGER)
+    claim_next_sandbox_job_reconciliation(TEXT,INTEGER),
+    get_owned_sandbox_job(UUID,TEXT,UUID,BIGINT),
+    record_reconciled_sandbox_partials(UUID,UUID,BIGINT,JSONB)
 TO everydayai_sandbox_worker;
+
+REVOKE EXECUTE ON FUNCTION get_sandbox_job(UUID)
+FROM everydayai_sandbox_worker;
 
 RESET ROLE;

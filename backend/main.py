@@ -213,15 +213,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     #   - oss_purge_loop（每天 03:00 清理 OSS）
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py），由 everydayai-wecom.service 管理
 
-    # 有状态代码执行 Kernel 管理器
-    from services.sandbox.kernel_manager import KernelManager, set_kernel_manager
-    _nsjail_cfg = os.path.join(os.path.dirname(__file__), "..", "deploy", "sandbox.cfg")
-    _nsjail_cfg = _nsjail_cfg if os.path.exists(_nsjail_cfg) else None
-    _kernel_manager = KernelManager(nsjail_cfg=_nsjail_cfg)
-    await _kernel_manager.start()
-    set_kernel_manager(_kernel_manager)
-    logger.info(f"KernelManager started | nsjail={'enabled' if _nsjail_cfg else 'disabled'}")
-
     yield
 
     # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
@@ -233,12 +224,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await ws_manager.stop_redis_listener()
 
     await web_database_runtime.stop()
-
-    # 关闭 KernelManager（销毁所有 Kernel 进程）
-    if _kernel_manager is not None:
-        await _kernel_manager.shutdown()
-        set_kernel_manager(None)
-        logger.info("KernelManager shutdown")
 
     # 关闭 Redis 连接
     await RedisClient.close()

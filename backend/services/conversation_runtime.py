@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any, Callable, Mapping
 
 from services.conversation_db_scope import (
@@ -19,7 +18,7 @@ from services.handlers.chat.executor import ChatGenerationExecutor, _normalize_m
 
 
 class ConversationActorRuntime:
-    """装配 Actor 执行链，并保证 Worker 与 Kernel 有序关闭。"""
+    """装配 Actor 执行链；Actor 永不持有 Sandbox 执行权。"""
 
     def __init__(
         self,
@@ -32,7 +31,7 @@ class ConversationActorRuntime:
     ) -> None:
         self._db = db
         self._websocket = websocket
-        self._kernel_manager = kernel_manager
+        del kernel_manager
         self._handler_db_factory = handler_db_factory or _get_handler_db
         worker_db = build_actor_worker_db(db)
         execution = ConversationExecutionService(
@@ -53,26 +52,18 @@ class ConversationActorRuntime:
     async def start(self) -> None:
         if self._worker_task is not None:
             return
-        from services.sandbox.kernel_manager import set_kernel_manager
-
-        await self._kernel_manager.start()
-        set_kernel_manager(self._kernel_manager)
         self._worker_task = asyncio.create_task(
             self._worker.start(),
             name="conversation_actor_worker",
         )
 
     async def stop(self) -> None:
-        from services.sandbox.kernel_manager import set_kernel_manager
-
         await self._worker.stop()
         if self._worker_task is not None:
             worker_task, self._worker_task = self._worker_task, None
             if not worker_task.done():
                 worker_task.cancel()
             await asyncio.gather(worker_task, return_exceptions=True)
-        await self._kernel_manager.shutdown()
-        set_kernel_manager(None)
 
     def _create_sink(
         self,
@@ -157,12 +148,8 @@ def _build_delivery(
         model_id=_normalize_model_id(task.get("model_id")),
     )
 def create_kernel_manager() -> Any:
-    from services.sandbox.kernel_manager import KernelManager
-
-    config = os.path.join(
-        os.path.dirname(__file__), "..", "..", "deploy", "sandbox.cfg",
-    )
-    return KernelManager(nsjail_cfg=config if os.path.exists(config) else None)
+    """Legacy constructor retained for wiring compatibility; execution is disabled."""
+    return None
 
 
 def _create_post_handler(db: Any) -> Any:

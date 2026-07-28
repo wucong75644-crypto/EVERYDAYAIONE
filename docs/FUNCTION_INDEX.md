@@ -9,6 +9,20 @@
 
 ## 函数列表
 
+### Agent Runtime Sandbox Job专业Executor
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `SandboxJobCapability` | `backend/services/agent/runtime/sandbox/capability.py` | 绑定Action/Attempt，只允许暂存已核验代码与Artifact并通过Runtime窄RPC创建、查询或请求取消Job |
+| `SandboxWorkspaceStore` | `backend/services/agent/runtime/sandbox/workspace.py` | 管理不可变输入、job临时目录、内容寻址输出、partial quarantine及精确清理，不向Executor暴露根路径 |
+| `IsolationProbe.inspect` / `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/launcher.py`、`nsjail.py` | 缺Linux/nsjail/cgroup v2时失败关闭；远程Linux合同使用每Job nsjail进程组 |
+| `SandboxJobWorker.run_once` / `reconcile_next` | `backend/services/agent/runtime/sandbox/worker.py` | 执行唯一领取、绑定Owner的续租/query/cancel、durable unknown reconciliation、内容materialize与partial清理 |
+| `SandboxJobWorkerService.run` / `stop` | `backend/services/agent/runtime/sandbox/service.py` | 独立进程可使用的durable execution/reconcile/cleanup轮询与drain生命周期；未接production startup |
+| `SandboxJobExecutor.dispatch` / `reconcile` / `cancel` | `backend/services/agent/runtime/executors/sandbox_job.py` | 将fenced DispatchIntent映射到唯一Sandbox Job；accepted/unknown禁止普通重派 |
+| `SandboxCapabilityIssuer.issue` | `backend/services/agent/runtime/sandbox/issuer.py` | 仅在Policy/Grant gate后签发attempt-scoped、operation-scoped SandboxJobCapability；Executor只能消费而不能自行扩权 |
+| `build_sandbox_worker_components` / `build_sandbox_executor_components` | `backend/services/agent/runtime/sandbox/composition.py` | Worker与Runtime分离composition；Runtime构造路径无法取得launcher/Worker，均未连接production startup或ingress |
+| `get_sandbox_job_by_binding` / `get_owned_sandbox_job` / `record_reconciled_sandbox_partials` / recovery scanners | `backend/migrations/222_03_agent_runtime_sandbox_job_recovery_rpcs.sql` | 响应丢失精确readback、绑定原Worker token的执行期读取、清理前冻结checkpoint partial事实、权威未启动恢复和不重派的durable reconciliation扫描 |
+
 ### 媒体 Worker 原子终态
 
 | 函数名 | 文件路径 | 功能描述 |

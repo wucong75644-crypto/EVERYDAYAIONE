@@ -78,8 +78,11 @@ class ActionAttempt:
     started_at: datetime
     accepted_at: datetime | None = None
     ended_at: datetime | None = None
+    session_id: str | None = None
+    run_id: str | None = None
     external_receipt: Mapping[str, object] = field(default_factory=dict)
     ambiguity_evidence: Mapping[str, object] = field(default_factory=dict)
+    capabilities: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -95,6 +98,10 @@ class ActionAttempt:
         require_aware_datetime(self.started_at, "started_at")
         require_aware_datetime(self.accepted_at, "accepted_at")
         require_aware_datetime(self.ended_at, "ended_at")
+        if self.session_id is not None:
+            require_stable_value(self.session_id, "session_id")
+        if self.run_id is not None:
+            require_stable_value(self.run_id, "run_id")
         if self.status is ActionAttemptStatus.ACCEPTED:
             if self.accepted_at is None or not self.external_receipt:
                 raise ValueError(

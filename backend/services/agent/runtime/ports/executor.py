@@ -18,6 +18,14 @@ class ExecutionOutcome(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ExecutorDispatchUnknown(RuntimeError):
+    """A submit may have committed; callers must persist reconcile facts."""
+
+    def __init__(self, evidence: Mapping[str, object]) -> None:
+        super().__init__("EXECUTOR_DISPATCH_UNKNOWN")
+        self.evidence = dict(evidence)
+
+
 @dataclass(frozen=True)
 class ExecutionReceipt:
     outcome: ExecutionOutcome
@@ -54,3 +62,12 @@ class ExecutorPort(Protocol):
 
     async def cancel(self, attempt: ActionAttempt) -> ExecutionReceipt:
         """请求取消并返回可证明的结果。"""
+
+
+class DispatchCapabilityIssuerPort(Protocol):
+    """Trusted application issuer; Executors cannot mint capabilities."""
+
+    def issue(
+        self, *, attempt: ActionAttempt, descriptor: object,
+        phase: str, dispatch_gate: object | None = None,
+    ) -> Mapping[str, object]: ...

@@ -1,8 +1,7 @@
 """
 services/agent/sandbox_tool_mixin.py 单元测试
 
-覆盖：_register_files_from_output / _register_staging_files
-沙盒执行 (_code_execute) 的集成测试在 test_sandbox_executor.py 中。
+覆盖：共享 staging 路径辅助；旧 code_execute 拒绝由专属测试覆盖。
 """
 
 import sys
@@ -34,45 +33,12 @@ class FakeSandboxMixin(SandboxToolMixin):
 
 
 # ============================================================
-# _register_files_from_output
-# ============================================================
-
-
-class TestRegisterFilesFromOutput:
-    """_register_files_from_output 已简化为空操作（workspace_file_handles 模块已删除），
-    仅验证调用不抛异常。"""
-
-    def test_call_does_not_raise(self):
-        """任意 stdout 输入 → 不抛异常"""
-        mixin = FakeSandboxMixin()
-        mixin._register_files_from_output("Found file: 'sales.xlsx' in directory")
-
-    def test_empty_string_does_not_raise(self):
-        """空字符串 → 不抛异常"""
-        mixin = FakeSandboxMixin()
-        mixin._register_files_from_output("")
-
-
-# ============================================================
 # _get_workspace_dir / _get_staging_dir
 # ============================================================
 
 
 class TestPathHelpers:
     """路径辅助方法"""
-
-    def test_get_workspace_dir_returns_string(self):
-        mixin = FakeSandboxMixin()
-        with patch("core.config.get_settings") as mock_settings:
-            mock_settings.return_value.file_workspace_root = "/tmp/test_ws"
-            result = mixin._get_workspace_dir()
-            assert isinstance(result, str)
-            assert len(result) > 0
-
-    def test_get_workspace_dir_exception_returns_empty(self):
-        mixin = FakeSandboxMixin()
-        with patch("core.config.get_settings", side_effect=Exception("err")):
-            assert mixin._get_workspace_dir() == ""
 
     def test_get_staging_dir_returns_string(self):
         mixin = FakeSandboxMixin()

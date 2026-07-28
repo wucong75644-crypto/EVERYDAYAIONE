@@ -148,6 +148,7 @@ async def test_runtime_adapter_cannot_claim() -> None:
 async def test_worker_adapter_maps_narrow_rpc_arguments() -> None:
     rpc_names = (
         "get_sandbox_job",
+        "get_owned_sandbox_job",
         "claim_next_sandbox_job",
         "renew_sandbox_job_lease",
         "mark_sandbox_job_started",
@@ -166,6 +167,10 @@ async def test_worker_adapter_maps_narrow_rpc_arguments() -> None:
     database = _Database(DatabaseAccessKind.SANDBOX_WORKER, responses)
     repository = PostgresSandboxJobRepository(database)
     await repository.get(job_id=JOB_ID)
+    await repository.get_owned(
+        job_id=JOB_ID, worker_id="sandbox-1",
+        claim_token=TOKEN, fencing_token=1,
+    )
     await repository.claim(worker_id="sandbox-1")
     ownership = {
         "job_id": JOB_ID, "claim_token": TOKEN, "fencing_token": 1,
@@ -204,7 +209,10 @@ async def test_worker_adapter_maps_narrow_rpc_arguments() -> None:
         cleanup_evidence={"kind": "CLEANUP_CONFIRMED"},
     )
     assert [name for name, _ in database.calls] == list(rpc_names)
-    assert database.calls[7][1]["p_partial_effects"]["items"] == []
+    unknown_params = dict(database.calls)[
+        "record_sandbox_job_unknown"
+    ]
+    assert unknown_params["p_partial_effects"]["items"] == []
 
 
 @pytest.mark.asyncio

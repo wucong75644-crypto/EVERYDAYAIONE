@@ -12,6 +12,8 @@ import psycopg
 from psycopg.rows import dict_row
 import pytest
 
+from services.agent.runtime.sandbox.receipt import build_receipt
+
 
 pytestmark = pytest.mark.external
 DATABASE_URL = os.getenv("AR222_TEST_DATABASE_URL", "")
@@ -232,6 +234,22 @@ def _receipt_hash(receipt: dict[str, object]) -> str:
         "SELECT _agent_sandbox_receipt_hash(%s::jsonb) AS value",
         (json.dumps(receipt),),
     )[0]["value"])
+
+
+def test_worker_receipt_hash_matches_postgres_jsonb_contract() -> None:
+    digest, receipt = build_receipt(
+        execution_outcome="error",
+        stdout="安全输出".encode(),
+        stderr=b"",
+        partials=({
+            "temporary_object_ref": f"sandbox-temp:{uuid4()}",
+            "content_sha256": "f" * 64,
+            "size_bytes": 12,
+            "media_type": "text/plain",
+        },),
+        cleaned=True,
+    )
+    assert digest == _receipt_hash(receipt)
 
 
 def test_50_concurrent_create_has_one_job_and_strict_readback() -> None:

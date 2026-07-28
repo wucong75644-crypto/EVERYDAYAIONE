@@ -110,9 +110,11 @@ def test_rollbacks_and_migration_order_are_exact() -> None:
     ]
     assert [migration.identity for migration in selected] == [
         FOUNDATION.name, RPCS.name,
+        "222_03_agent_runtime_sandbox_job_recovery_rpcs.sql",
     ]
     assert [migration.rollback_identity for migration in selected] == [
         ROLLBACK_01.name, ROLLBACK_02.name,
+        "222_03_agent_runtime_sandbox_job_recovery_rpcs_rollback.sql",
     ]
 
 

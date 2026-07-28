@@ -12,12 +12,15 @@ ROLLBACK = (
 )
 
 
-def test_recovery_migration_has_three_narrow_rpcs_and_lock_helper() -> None:
+def test_recovery_migration_has_scanners_readbacks_and_lock_helper() -> None:
     sql = MIGRATION.read_text()
     assert "CREATE FUNCTION get_sandbox_job_by_binding(" in sql
     assert "CREATE FUNCTION claim_next_recoverable_sandbox_job(" in sql
     assert "CREATE FUNCTION claim_next_sandbox_job_reconciliation(" in sql
+    assert "CREATE FUNCTION get_owned_sandbox_job(" in sql
     assert sql.count("_lock_agent_sandbox_job(v_candidate)") == 3
+    assert "v_job := _lock_agent_sandbox_job(p_job_id)" in sql
+    assert "REVOKE EXECUTE ON FUNCTION get_sandbox_job(UUID)" in sql
     assert "starting_at IS NULL" in sql
     assert "started_at IS NULL" in sql
     assert "fencing_token = fencing_token + 1" in sql
@@ -48,5 +51,6 @@ def test_rollback_guards_only_nonterminal_jobs_and_drops_exact_rpcs() -> None:
         "get_sandbox_job_by_binding",
         "claim_next_recoverable_sandbox_job",
         "claim_next_sandbox_job_reconciliation",
+        "get_owned_sandbox_job",
     ):
         assert f"DROP FUNCTION {name}" in sql

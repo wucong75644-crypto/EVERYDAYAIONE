@@ -197,7 +197,7 @@ class SandboxExecutor:
                 "沙盒服务未就绪,请稍后重试", retryable=True,
             ), []
 
-        for attempt in range(2):
+        for attempt in range(1):
             try:
                 kernel_ok = await self._kernel_manager.get_or_create(
                     self._conversation_id,
@@ -228,7 +228,10 @@ class SandboxExecutor:
                 ), []
 
             except (KeyError, RuntimeError, OSError) as e:
-                logger.warning("Kernel 执行失败 | error=%s", e)
+                logger.warning(
+                    "Kernel 执行失败 | error_type=%s",
+                    type(e).__name__,
+                )
                 return self._format_error(
                     f"沙盒执行失败: {e}", retryable=True,
                 ), []

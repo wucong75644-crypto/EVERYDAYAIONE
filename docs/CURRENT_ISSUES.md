@@ -1,19 +1,24 @@
 # 当前问题 (CURRENT_ISSUES)
 
-## 2026-07-28 Sandbox Job Controller Batch A — 本地完成，Worker与隔离待后续
+## 2026-07-28 Sandbox专业Executor — 本地合同实施中，Linux隔离待远程验证
 
-- migration 222_01/222_02建立 PostgreSQL Job SSOT、全局外部幂等键、execution 与
+- migration 222_01/222_02/222_03建立 PostgreSQL Job SSOT、全局外部幂等键、execution 与
   reconciliation fencing、unknown-only恢复、partial 24小时清理上限及窄RPC。
 - 新角色 `everydayai_sandbox_worker` 由bootstrap创建，NOINHERIT、无表直权、只获
   222 Worker RPC；Batch A不创建或启动Worker，不运行代码且不注册`code_execute`。
-- stdout/stderr只保存各8KiB脱敏摘要、长度、SHA-256与截断标记；代码仍引用不可变
+- stdout/stderr不保存用户可控正文，只保存长度、SHA-256与截断标记；代码仍引用不可变
   Action参数。输出以未来不可变内容寻址Workspace对象为首要事实，路径/OSS为派生。
-- Batch B Worker必须实现stdout/stderr主动脱敏；Batch A数据库已使用manifest/evidence
-  字段allowlist并拒绝常见凭证、JWT、长编码串和宿主路径，但不把模式扫描冒充完整脱敏。
+- 独立Worker、attempt-scoped Capability、内容寻址Workspace对象、partial quarantine/
+  cleanup和专业Executor已建立；API/Actor旧Kernel Owner关闭，旧ToolLoop code_execute
+  明确拒绝，production startup/ingress仍未连接。
+- Worker默认清空stdout/stderr摘要；数据库继续使用manifest/evidence字段allowlist
+  和敏感模式拒绝，但不把模式扫描冒充完整脱敏。222_03补充完整binding readback、
+  可证明未启动Job的重新领取，以及只发reconciliation token的durable scanner。
 - terminal/reconcile在数据库边界重算规范JSONB receipt SHA-256；unknown partial
   manifest不可被reconcile覆盖，cleanup proof持久化并完成前保持unknown。
-- Batch B前仍缺专用临时Linux VM上的真实nsjail+cgroup v2隔离证据；禁止用mock宣称
-  隔离通过，也禁止无nsjail/cgroup时降级为裸Python。
+- 本地macOS只证明缺Linux/nsjail/cgroup时不领取。真实namespace、cgroup v2、mount、
+  默认无网络、进程树终止和零残留仍需无生产Secret的托管临时Linux runner；通过前
+  禁止启用code_execute或宣称Sandbox生产安全。
 
 ## 2026-07-28 旧 ToolLoop Tool Confirmation V3 — 本地实现，待生产切换
 

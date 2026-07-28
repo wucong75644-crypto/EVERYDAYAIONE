@@ -47,6 +47,12 @@ class PostgresSandboxJobRepository:
         ).execute()
         return parse_sandbox_job_receipt(response.data)
 
+    async def get_owned(self, **values: object) -> SandboxJobReceipt:
+        return await self._worker_named(
+            "get_owned_sandbox_job", values,
+            ("job_id", "worker_id", "claim_token", "fencing_token"),
+        )
+
     async def readback_by_binding(self, **values: object) -> SandboxJobReceipt:
         names = (
             "external_idempotency_key", "action_id", "attempt_id",
@@ -165,6 +171,17 @@ class PostgresSandboxJobRepository:
         )
         return await self._worker_named(
             "record_sandbox_job_cleanup", values, names,
+        )
+
+    async def record_reconciled_partials(
+        self, **values: object,
+    ) -> SandboxJobReceipt:
+        names = (
+            "job_id", "reconciliation_token", "expected_version",
+            "partial_effects",
+        )
+        return await self._worker_named(
+            "record_reconciled_sandbox_partials", values, names,
         )
 
     async def _runtime(

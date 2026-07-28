@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -152,6 +154,14 @@ def test_expired_unstarted_claim_has_one_new_execution_owner() -> None:
         ),
     )
     assert stale["outcome"] == "ownership_lost"
+    leaked = base._worker_rpc(
+        "SELECT get_owned_sandbox_job(%s,%s,%s,%s) AS value",
+        (
+            job["id"], "sandbox-1", old["claim_token"],
+            old["fencing_token"],
+        ),
+    )
+    assert leaked["outcome"] == "ownership_lost"
 
 
 @pytest.mark.parametrize("phase", ["starting", "running"])
@@ -217,6 +227,47 @@ def test_unknown_and_cancel_requested_are_reconciliation_only() -> None:
     _expire(job["id"])
     assert _claim_recoverable("execution-recovery")["outcome"] == "not_found"
     assert _claim_reconciliation("reconciler")["outcome"] == "claimed"
+
+
+def test_reconciler_freezes_checkpoint_partials_before_cleanup() -> None:
+    ids = base._seed_dispatch()
+    job = base._create(ids)["job"]
+    claimed = base._claim()
+    started = base._worker_rpc(
+        "SELECT mark_sandbox_job_started(%s,%s,%s,%s,'starting') AS value",
+        (
+            job["id"], claimed["claim_token"], claimed["fencing_token"],
+            claimed["state_version"],
+        ),
+    )["job"]
+    _expire(job["id"])
+    reconciled = _claim_reconciliation("reconciler")["job"]
+    assert reconciled["status"] == "unknown"
+    assert reconciled["partial_effects"]["items"] == []
+    partials = base._receipt(partial=True)["partial_effects"]
+    recorded = base._worker_rpc(
+        "SELECT record_reconciled_sandbox_partials(%s,%s,%s,%s) AS value",
+        (
+            job["id"], reconciled["reconciliation_token"],
+            reconciled["state_version"], json.dumps(partials),
+        ),
+    )
+    assert recorded["outcome"] == "partials_recorded"
+    assert recorded["job"]["partial_effects"] == partials
+    recorded_at = datetime.fromisoformat(
+        recorded["job"]["partial_effects_recorded_at"],
+    )
+    deadline = datetime.fromisoformat(recorded["job"]["cleanup_deadline_at"])
+    assert deadline == recorded_at + timedelta(hours=24)
+    duplicate = base._worker_rpc(
+        "SELECT record_reconciled_sandbox_partials(%s,%s,%s,%s) AS value",
+        (
+            job["id"], reconciled["reconciliation_token"],
+            recorded["job"]["state_version"], json.dumps(partials),
+        ),
+    )
+    assert duplicate["outcome"] == "already_partials_recorded"
+    assert started["fencing_token"] == recorded["job"]["fencing_token"]
 
 
 def test_expired_reconciliation_fences_the_old_owner() -> None:
@@ -288,6 +339,14 @@ def test_terminal_jobs_and_unprivileged_roles_cannot_claim() -> None:
             'everydayai_worker',
             'claim_next_recoverable_sandbox_job(text,integer)',
             'EXECUTE') AS worker_recovery,
+          has_function_privilege(
+            'everydayai_sandbox_worker',
+            'get_owned_sandbox_job(uuid,text,uuid,bigint)',
+            'EXECUTE') AS sandbox_owned_read,
+          has_function_privilege(
+            'everydayai_sandbox_worker',
+            'get_sandbox_job(uuid)',
+            'EXECUTE') AS sandbox_unbound_read,
           NOT EXISTS (
             SELECT 1
               FROM pg_proc p,
@@ -303,7 +362,8 @@ def test_terminal_jobs_and_unprivileged_roles_cannot_claim() -> None:
     )[0]
     assert rows == {
         "runtime_readback": True, "sandbox_recovery": True,
-        "worker_recovery": False, "public_reconcile_denied": True,
+        "worker_recovery": False, "sandbox_owned_read": True,
+        "sandbox_unbound_read": False, "public_reconcile_denied": True,
     }
 
 

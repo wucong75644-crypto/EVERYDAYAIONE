@@ -82,6 +82,8 @@ class PostgresActionExecutorResolver:
                 started_at=_datetime(attempt, "claimed_at"),
                 accepted_at=_optional_datetime(attempt.get("accepted_at")),
                 ended_at=_optional_datetime(attempt.get("ended_at")),
+                session_id=_text(action, "session_id"),
+                run_id=_text(action, "run_id"),
                 external_receipt=_mapping(
                     attempt.get("external_receipt", {}),
                     "external_receipt",

@@ -62,17 +62,22 @@ Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
 - `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
   原子边界、锁序、故障恢复、权限与 rollback 合同。
 
-Agent Runtime Sandbox Job Controller Batch A：
+Agent Runtime Sandbox Job Controller 与专业 Executor：
 - `backend/migrations/222_01_agent_runtime_sandbox_job_foundation.sql`、
-  `222_02_agent_runtime_sandbox_job_rpcs.sql`及精确 rollback：建立幂等 Job 事实、
-  execution/reconciliation fencing、partial/cleanup 合同、FORCE RLS 和窄 RPC。
+  `222_02_agent_runtime_sandbox_job_rpcs.sql`、
+  `222_03_agent_runtime_sandbox_job_recovery_rpcs.sql`及精确 rollback：建立幂等
+  Job事实、execution/reconciliation fencing、精确响应丢失readback、durable
+  recovery scanner、partial/cleanup合同、FORCE RLS和窄RPC。
 - `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py`及
   `infrastructure/postgres/sandbox_job_repository.py`：提供 fail-closed typed Port。
+- `backend/services/agent/runtime/sandbox/`：独立Worker编排、Linux隔离探针、nsjail
+  launcher边界、受限Capability、不可变输入、内容寻址输出和partial清理。
+- `backend/services/agent/runtime/executors/sandbox_job.py`：Registry中唯一
+  `code_execute`专业Executor映射；dispatch只创建Job，accepted/unknown只query/reconcile。
 - `everydayai_sandbox_worker`由数据库 bootstrap 创建，NOINHERIT、无表直权且仅能执行
-  222 Worker RPC；Batch A 未启动 Worker、代码执行、Executor 注册或 production
-  composition。
+  222 Worker RPC；production composition/startup仍未连接。
 - `docs/document/TECH_AGENT_RUNTIME_SandboxJobController_BatchA.md`：记录身份、
-  状态机、锁序、权限、回滚和 Batch B Linux 隔离门禁。
+  状态机、锁序、权限、Worker/Executor和三层隔离验证门禁。
 
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：

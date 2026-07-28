@@ -37,6 +37,19 @@ class SandboxJobOutcome(StrEnum):
     CLEANUP_COMPLETED = "cleanup_completed"
     CLEANUP_FAILED = "cleanup_failed"
     CLEANUP_UNKNOWN = "cleanup_unknown"
+    PARTIALS_RECORDED = "partials_recorded"
+    ALREADY_PARTIALS_RECORDED = "already_partials_recorded"
+    PARTIAL_EFFECTS_CONFLICT = "partial_effects_conflict"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+    DISPATCH_INTENT_INVALID = "dispatch_intent_invalid"
+    SCOPE_BINDING_INVALID = "scope_binding_invalid"
+    OWNERSHIP_LOST = "ownership_lost"
+    STALE_VERSION = "stale_version"
+    INVALID_TRANSITION = "invalid_transition"
+    MALFORMED_RECEIPT = "malformed_receipt"
+    RECEIPT_HASH_CONFLICT = "receipt_hash_conflict"
+    TERMINAL_CONFLICT = "terminal_conflict"
+    TERMINAL_GUARD_FAILED = "terminal_guard_failed"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -57,6 +70,11 @@ class SandboxJobRepositoryPort(Protocol):
     ) -> SandboxJobReceipt: ...
 
     async def get(self, *, job_id: str) -> SandboxJobReceipt: ...
+
+    async def get_owned(
+        self, *, job_id: str, worker_id: str,
+        claim_token: str, fencing_token: int,
+    ) -> SandboxJobReceipt: ...
 
     async def readback_by_binding(
         self, *, external_idempotency_key: str, action_id: str,
@@ -135,4 +153,9 @@ class SandboxJobRepositoryPort(Protocol):
         self, *, job_id: str, reconciliation_token: str,
         expected_version: int, cleanup_status: str,
         cleanup_evidence: Mapping[str, object],
+    ) -> SandboxJobReceipt: ...
+
+    async def record_reconciled_partials(
+        self, *, job_id: str, reconciliation_token: str,
+        expected_version: int, partial_effects: Mapping[str, object],
     ) -> SandboxJobReceipt: ...
