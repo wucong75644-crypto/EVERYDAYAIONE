@@ -21,7 +21,7 @@ class NsJailSubprocessLauncher:
 
     def __init__(
         self, *, rootfs: str | Path, python_path: str,
-        seccomp_policy: str | Path,
+        seccomp_policy: str | Path, quiet: bool = True,
     ) -> None:
         root = Path(rootfs)
         policy = Path(seccomp_policy)
@@ -34,6 +34,7 @@ class NsJailSubprocessLauncher:
         self._rootfs = root.resolve()
         self._seccomp_policy = policy.resolve()
         self._python_path = python_path
+        self._quiet = quiet
         self._processes: dict[str, _NsJailProcess] = {}
 
     def probe(self) -> IsolationProbe:
@@ -64,6 +65,7 @@ class NsJailSubprocessLauncher:
             nsjail=probe.nsjail_path, rootfs=self._rootfs,
             python_path=self._python_path,
             seccomp_policy=self._seccomp_policy, request=request,
+            quiet=self._quiet,
         )
         process = await asyncio.create_subprocess_exec(
             *command, stdout=asyncio.subprocess.PIPE,
@@ -138,11 +140,11 @@ class _NsJailProcess:
 
 def _command(
     *, nsjail: str, rootfs: Path, python_path: str,
-    seccomp_policy: Path, request: SandboxLaunchRequest,
+    seccomp_policy: Path, request: SandboxLaunchRequest, quiet: bool = True,
 ) -> list[str]:
     limits = request.limits
-    return [
-        nsjail, "--mode", "o", "--quiet",
+    command = [
+        nsjail, "--mode", "o",
         "--chroot", str(rootfs),
         "--hostname", "sandbox-job",
         "--cwd", "/job/output",
@@ -164,6 +166,9 @@ def _command(
         "-B", f"{request.output_dir}:/job/output",
         "--", python_path, "-I", "/job/input/code.py",
     ]
+    if quiet:
+        command.insert(3, "--quiet")
+    return command
 
 
 def _exclusive_write(path: Path, content: bytes) -> None:

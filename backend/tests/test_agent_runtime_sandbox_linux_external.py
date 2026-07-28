@@ -65,6 +65,7 @@ def _launcher(rootfs: Path, policy: Path) -> NsJailSubprocessLauncher:
         rootfs=rootfs,
         python_path="/usr/bin/python3",
         seccomp_policy=policy,
+        quiet=False,
     )
 
 
@@ -159,7 +160,12 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
     request = _request(
         tmp_path,
         job_id="22222222-2222-2222-2222-222222222222",
-        code='payload = bytearray(256 * 1024 * 1024); print(len(payload))',
+        code=(
+            "import time\n"
+            "payload = bytearray(256 * 1024 * 1024)\n"
+            "print(len(payload), flush=True)\n"
+            "time.sleep(5)\n"
+        ),
         limits={"memory_bytes": 64 * 1024 * 1024},
     )
     result = await (await _launcher(rootfs, policy).launch(request)).wait()

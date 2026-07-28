@@ -56,7 +56,7 @@ jobs:
       - name: Build disposable rootfs
         run: |
           set -euo pipefail
-          sudo debootstrap --variant=minbase --include=python3-minimal \
+          sudo debootstrap --variant=minbase --include=python3 \
             noble "$SANDBOX_ROOTFS" http://archive.ubuntu.com/ubuntu/
           sudo mkdir -p \
             "$SANDBOX_ROOTFS/job/input" \
@@ -99,6 +99,7 @@ jobs:
           if find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print -quit \
             | grep -q .; then
             echo "Residual nsjail cgroup detected" >&2
+            find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print >&2
             residue=1
           fi
           sudo rm -rf \
