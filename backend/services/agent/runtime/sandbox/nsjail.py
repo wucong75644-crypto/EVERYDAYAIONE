@@ -146,6 +146,8 @@ def _command(
         "--chroot", str(rootfs),
         "--hostname", "sandbox-job",
         "--cwd", "/job/output",
+        "--user", "65534",
+        "--group", "65534",
         "--disable_proc",
         "--use_cgroupv2",
         "--seccomp_policy", str(seccomp_policy),
@@ -166,7 +168,7 @@ def _command(
 
 def _exclusive_write(path: Path, content: bytes) -> None:
     descriptor = os.open(
-        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400,
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444,
     )
     with os.fdopen(descriptor, "wb") as stream:
         stream.write(content)

@@ -74,6 +74,8 @@ def _request(
     output_dir = tmp_path / job_id / "output"
     input_dir.mkdir(parents=True)
     output_dir.mkdir()
+    os.chown(output_dir, 65534, 65534)
+    output_dir.chmod(0o700)
     return SandboxLaunchRequest(
         job_id=job_id,
         code=code.encode("utf-8"),
@@ -102,6 +104,8 @@ import pathlib
 import socket
 
 observed = {{}}
+observed["effective_gid"] = os.getegid()
+observed["effective_uid"] = os.geteuid()
 observed["host_marker_visible"] = pathlib.Path({str(marker)!r}).exists()
 try:
     pathlib.Path("/job/input/code.py").write_text("changed")
@@ -134,6 +138,8 @@ print(json.dumps(observed, sort_keys=True))
     assert result.outcome == "succeeded", result.stderr.decode(errors="replace")
     observed = json.loads((request.output_dir / "result.json").read_text())
     assert observed == {
+        "effective_gid": 65534,
+        "effective_uid": 65534,
         "host_marker_visible": False,
         "input_writable": False,
         "network_reachable": False,

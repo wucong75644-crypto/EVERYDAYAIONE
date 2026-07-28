@@ -62,8 +62,8 @@ jobs:
             "$SANDBOX_ROOTFS/job/input" \
             "$SANDBOX_ROOTFS/job/output"
           cat > "$SANDBOX_SECCOMP_POLICY" <<'EOF'
-          POLICY default ALLOW
-          getppid: ERRNO(EPERM)
+          ERRNO(EPERM) { getppid }
+          DEFAULT ALLOW
           EOF
 
       - name: Record Linux isolation capabilities
