@@ -354,7 +354,7 @@ cd deploy
    - 优化系统参数
 5. ✓ 清理旧 dist 并构建前端（npm run build）
 6. ✓ 检查后端（pytest）
-7. ✓ 同步文件到服务器（rsync，排除 .DS_Store）
+7. ✓ 同步文件到服务器（先传前端 assets，再更新入口；旧 assets 保留 14 天）
 8. ✓ 在服务器上部署应用
 9. ✓ 重启服务
 

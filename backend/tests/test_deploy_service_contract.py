@@ -59,6 +59,21 @@ def test_rsync_preserves_runtime_and_sensitive_files() -> None:
     assert "--exclude 'config.env*'" in SCRIPT
 
 
+def test_frontend_release_keeps_old_hashed_assets_during_transition() -> None:
+    assert "frontend/dist/assets/" in SCRIPT
+    assert "--exclude 'assets/'" in SCRIPT
+    assert "-mtime +14 -delete" in SCRIPT
+    assert SCRIPT.index("frontend/dist/assets/") < SCRIPT.index("--exclude 'assets/'")
+
+
+def test_nginx_does_not_fallback_missing_assets_to_spa_html() -> None:
+    nginx = (Path(__file__).resolve().parents[2] / "deploy/nginx.conf").read_text()
+    assert "location ^~ /assets/" in nginx
+    assert "try_files $uri =404;" in nginx
+    assert "location = /index.html" in nginx
+    assert 'Cache-Control "no-cache"' in nginx
+
+
 def test_missing_required_service_fails_deployment() -> None:
     assert "缺少必需服务" in SCRIPT
     assert 'systemctl list-unit-files "${service}.service"' in SCRIPT

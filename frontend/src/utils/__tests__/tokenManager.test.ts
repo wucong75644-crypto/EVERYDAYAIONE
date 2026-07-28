@@ -46,6 +46,7 @@ vi.mock('axios', () => ({
       },
     }),
     post: (...args: unknown[]) => mockAxiosPost(...args),
+    isAxiosError: (error: { isAxiosError?: boolean }) => error?.isAxiosError === true,
   },
   AxiosError: class AxiosError extends Error {},
 }));
@@ -150,12 +151,38 @@ describe('silentRefresh', () => {
     expect(mockClearAuth).toHaveBeenCalled();
   });
 
-  it('刷新失败 → 调 logoutOnce + 抛错', async () => {
+  it('刷新凭证被拒绝 → 调 logoutOnce + 抛错', async () => {
+    localStorage.setItem('refresh_token', 'some-rt');
+    const error = Object.assign(new Error('Unauthorized'), {
+      isAxiosError: true,
+      response: { status: 401 },
+    });
+    mockAxiosPost.mockRejectedValueOnce(error);
+
+    await expect(silentRefresh()).rejects.toThrow('Unauthorized');
+    expect(mockClearAuth).toHaveBeenCalled();
+  });
+
+  it('网络故障 → 保留登录态并抛错', async () => {
     localStorage.setItem('refresh_token', 'some-rt');
     mockAxiosPost.mockRejectedValueOnce(new Error('Network error'));
 
     await expect(silentRefresh()).rejects.toThrow('Network error');
-    expect(mockClearAuth).toHaveBeenCalled();
+    expect(mockClearAuth).not.toHaveBeenCalled();
+    expect(localStorage.getItem('refresh_token')).toBe('some-rt');
+  });
+
+  it('服务端故障 → 保留登录态并抛错', async () => {
+    localStorage.setItem('refresh_token', 'some-rt');
+    const error = Object.assign(new Error('Bad gateway'), {
+      isAxiosError: true,
+      response: { status: 502 },
+    });
+    mockAxiosPost.mockRejectedValueOnce(error);
+
+    await expect(silentRefresh()).rejects.toThrow('Bad gateway');
+    expect(mockClearAuth).not.toHaveBeenCalled();
+    expect(localStorage.getItem('refresh_token')).toBe('some-rt');
   });
 });
 

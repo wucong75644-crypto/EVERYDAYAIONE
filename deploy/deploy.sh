@@ -226,14 +226,22 @@ build_backend() {
 sync_frontend() {
     log_info "同步前端文件到服务器..."
 
+    # 先上传所有带哈希资源，确保新版入口发布时依赖已经就绪。
+    rsync -avz \
+        -e "ssh -p ${SERVER_PORT}" \
+        frontend/dist/assets/ \
+        ${SERVER_USER}@${SERVER_HOST}:${REMOTE_FRONTEND_DIR}/assets/
+
+    # 最后发布入口文件；assets 排除在删除范围外，在线旧页面仍可加载旧 chunk。
     rsync -avz --delete \
         -e "ssh -p ${SERVER_PORT}" \
-        --exclude 'node_modules' \
-        --exclude '.env' \
-        --exclude '.env.local' \
+        --exclude 'assets/' \
         --exclude '.DS_Store' \
         frontend/dist/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_FRONTEND_DIR}/
+
+    # 仅清理超过保留窗口的旧资源，避免目录无限增长。
+    remote_exec find "${REMOTE_FRONTEND_DIR}/assets" -type f -mtime +14 -delete
 
     log_success "前端文件同步完成"
 }
