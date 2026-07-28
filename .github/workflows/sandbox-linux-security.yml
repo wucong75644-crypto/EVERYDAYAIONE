@@ -50,7 +50,8 @@ jobs:
           git -C /tmp/nsjail submodule update --init --recursive --depth=1
           make -C /tmp/nsjail -j2
           sudo install -m 0755 /tmp/nsjail/nsjail /usr/local/bin/nsjail
-          nsjail --version
+          nsjail --help > /tmp/nsjail-help.txt 2>&1
+          head -n 3 /tmp/nsjail-help.txt
 
       - name: Build disposable rootfs
         run: |
