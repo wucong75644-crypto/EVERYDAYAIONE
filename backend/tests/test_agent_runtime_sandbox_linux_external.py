@@ -163,6 +163,8 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
         code=(
             "import time\n"
             "payload = bytearray(256 * 1024 * 1024)\n"
+            "for offset in range(0, len(payload), 4096):\n"
+            "    payload[offset] = 1\n"
             "print(len(payload), flush=True)\n"
             "time.sleep(5)\n"
         ),
