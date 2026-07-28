@@ -62,7 +62,7 @@ jobs:
             "$SANDBOX_ROOTFS/job/input" \
             "$SANDBOX_ROOTFS/job/output"
           cat > "$SANDBOX_SECCOMP_POLICY" <<'EOF'
-          ERRNO(1) { getppid }
+          ERRNO(1) { mkdir, mkdirat }
           DEFAULT ALLOW
           EOF
 
@@ -99,7 +99,7 @@ jobs:
           if find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print -quit \
             | grep -q .; then
             echo "Residual nsjail cgroup detected" >&2
-            find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print >&2
+            sudo find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print >&2
             residue=1
           fi
           sudo rm -rf \

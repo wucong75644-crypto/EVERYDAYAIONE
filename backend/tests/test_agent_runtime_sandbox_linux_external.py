@@ -119,10 +119,10 @@ try:
 except OSError:
     observed["input_writable"] = False
 try:
-    os.getppid()
-    observed["seccomp_getppid_allowed"] = True
+    pathlib.Path("/job/output/seccomp-mkdir").mkdir()
+    observed["seccomp_mkdir_allowed"] = True
 except OSError:
-    observed["seccomp_getppid_allowed"] = False
+    observed["seccomp_mkdir_allowed"] = False
 try:
     client = socket.create_connection(("1.1.1.1", 53), timeout=0.5)
     client.close()
@@ -149,7 +149,7 @@ print(json.dumps(observed, sort_keys=True))
         "host_marker_visible": False,
         "input_writable": False,
         "network_reachable": False,
-        "seccomp_getppid_allowed": False,
+        "seccomp_mkdir_allowed": False,
     }
     assert result.process_tree_terminated
 
@@ -169,7 +169,7 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
         limits={"memory_bytes": 64 * 1024 * 1024},
     )
     result = await (await _launcher(rootfs, policy).launch(request)).wait()
-    assert result.outcome != "succeeded"
+    assert result.outcome != "succeeded", result.stderr.decode(errors="replace")
     assert "unrecognized option" not in result.stderr.decode(errors="replace")
     assert result.process_tree_terminated
 

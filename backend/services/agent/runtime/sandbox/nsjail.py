@@ -119,7 +119,7 @@ class _NsJailProcess:
 
     async def request_cancel(self) -> bool:
         try:
-            os.killpg(self._pgid, signal.SIGKILL)
+            os.killpg(self._pgid, signal.SIGTERM)
             return True
         except ProcessLookupError:
             return True
