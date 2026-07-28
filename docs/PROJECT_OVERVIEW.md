@@ -39,6 +39,12 @@
 
 ## 目录结构
 
+Sandbox Linux隔离安全合同：
+- `.github/workflows/sandbox-linux-security.yml`：仅在AR-16 Phase 2验证分支或手动触发的
+  无生产Secret托管Ubuntu合同，固定nsjail源码提交并使用一次性rootfs。
+- `backend/tests/test_agent_runtime_sandbox_linux_external.py`：真实验证nsjail、cgroup v2、
+  host/network/input mount隔离、内存上限及完整进程树终止；不属于默认测试集合。
+
 Tool Confirmation V3：
 - `backend/config/tool_safety.py`：冻结的显式 SAFE/CONFIRM/DANGEROUS 注册表；未知工具
   不再继承默认 SAFE。
