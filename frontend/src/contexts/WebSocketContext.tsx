@@ -286,7 +286,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const handleToolConfirm = useCallback((confirmationId: string) => {
     ws.send({
       type: 'tool_confirm_response' as const,
-      payload: { confirmation_id: confirmationId, approved: true },
+      payload: {
+        protocol_version: 3, confirmation_id: confirmationId, approved: true,
+      },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);
@@ -294,7 +296,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const handleToolReject = useCallback((confirmationId: string) => {
     ws.send({
       type: 'tool_confirm_response' as const,
-      payload: { confirmation_id: confirmationId, approved: false },
+      payload: {
+        protocol_version: 3, confirmation_id: confirmationId, approved: false,
+      },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);

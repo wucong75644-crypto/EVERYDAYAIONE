@@ -6,7 +6,7 @@ WebSocket 消息类型定义
 
 import time
 from enum import Enum
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
@@ -104,6 +104,7 @@ class ToolConfirmResponsePayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    protocol_version: Literal[3]
     confirmation_id: str = Field(
         min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$",
     )

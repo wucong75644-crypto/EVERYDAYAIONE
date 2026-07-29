@@ -6,7 +6,7 @@ local existing = redis.call('HGETALL', KEYS[2])
 if existing_identity then
   if existing_identity ~= ARGV[1] then return 'CREATE_CONFLICT' end
   if #existing == 0 then return 'MALFORMED_STATE' end
-  local expected = {confirmation_id=ARGV[1], task_id=ARGV[2], tool_call_id=ARGV[3], tool_name=ARGV[4], arguments_hash=ARGV[5], user_id=ARGV[6], org_id=ARGV[7], waiter_hash=ARGV[8]}
+  local expected = {confirmation_id=ARGV[1], action_id=ARGV[2], interaction_id=ARGV[3], interaction_version=ARGV[4], task_id=ARGV[5], tool_call_id=ARGV[6], tool_name=ARGV[7], arguments_hash=ARGV[8], user_id=ARGV[9], org_id=ARGV[10], authorization_expires_at=ARGV[11], waiter_hash=ARGV[12]}
   for field,value in pairs(expected) do
     if redis.call('HGET', KEYS[2], field) ~= value then return 'MALFORMED_STATE' end
   end
@@ -17,10 +17,10 @@ end
 if #existing ~= 0 then return 'CREATE_CONFLICT' end
 local now = redis.call('TIME')
 local created_ms = now[1] * 1000 + math.floor(now[2] / 1000)
-local expires_ms = created_ms + tonumber(ARGV[9]) * 1000
-redis.call('HSET', KEYS[2], 'confirmation_id',ARGV[1], 'task_id',ARGV[2], 'tool_call_id',ARGV[3], 'tool_name',ARGV[4], 'arguments_hash',ARGV[5], 'user_id',ARGV[6], 'org_id',ARGV[7], 'waiter_hash',ARGV[8], 'created_at',created_ms, 'expires_at',expires_ms, 'state','PENDING')
-redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[9]) + tonumber(ARGV[10]), 'NX')
-redis.call('EXPIRE', KEYS[2], tonumber(ARGV[9]) + tonumber(ARGV[10]))
+local expires_ms = created_ms + tonumber(ARGV[13]) * 1000
+redis.call('HSET', KEYS[2], 'confirmation_id',ARGV[1], 'action_id',ARGV[2], 'interaction_id',ARGV[3], 'interaction_version',ARGV[4], 'task_id',ARGV[5], 'tool_call_id',ARGV[6], 'tool_name',ARGV[7], 'arguments_hash',ARGV[8], 'user_id',ARGV[9], 'org_id',ARGV[10], 'authorization_expires_at',ARGV[11], 'waiter_hash',ARGV[12], 'created_at',created_ms, 'expires_at',expires_ms, 'state','PENDING')
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[13]) + tonumber(ARGV[14]), 'NX')
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[13]) + tonumber(ARGV[14]))
 return 'CREATED:PENDING'
 '''
 

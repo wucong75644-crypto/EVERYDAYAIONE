@@ -237,14 +237,27 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
         if not confirmation_ids:
             return
         from services.tool_confirmation import tool_confirmation_service
+        from core.database import get_db
+        from core.db_scope import (
+            DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient,
+        )
 
         for confirmation_id in confirmation_ids:
             try:
+                database = ScopedDatabaseClient(
+                    get_db(), DatabaseScope(
+                        actor_user_id=connection.user_id,
+                        org_id=connection.org_id,
+                        access_kind=DatabaseAccessKind.RUNTIME,
+                        request_id=f"ws-close:{confirmation_id}"[:128],
+                    ),
+                )
                 await tool_confirmation_service.consume_response(
                     confirmation_id=confirmation_id,
                     user_id=connection.user_id,
                     org_id=connection.org_id,
                     approved=False,
+                    database=database,
                 )
             except Exception as exc:
                 logger.warning(

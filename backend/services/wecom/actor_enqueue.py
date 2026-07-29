@@ -72,24 +72,37 @@ async def enqueue_wecom_message(
     )
     task_data["id"] = ids["task"]
     delivery_context = _delivery_context(msg, ids["task"], stream_context)
-    response = handler.db.rpc(
-        "enqueue_wecom_generation_turn_v2",
-        {
+    from core.config import get_settings
+
+    settings = get_settings()
+    rpc_name = (
+        "enqueue_wecom_runtime_turn_v3"
+        if settings.agent_runtime_ingress_enabled
+        else "enqueue_wecom_generation_turn_v2"
+    )
+    params = {
             "p_task_data": Jsonb(task_data),
             "p_input_message_id": ids["input"],
             "p_output_message_id": ids["output"],
             "p_turn_id": ids["turn"],
             "p_input_content": Jsonb(input_content),
             "p_delivery_context": Jsonb(delivery_context),
-        },
-    ).execute()
+    }
+    if rpc_name == "enqueue_wecom_runtime_turn_v3":
+        params.update({
+            "p_agent_definition_id": settings.agent_runtime_agent_definition_id,
+            "p_agent_definition_revision":
+                settings.agent_runtime_agent_definition_revision,
+            "p_idempotency_key": f"wecom:{msg.msgid}",
+        })
+    response = handler.db.rpc(rpc_name, params).execute()
     result = response.data if response else None
     if not isinstance(result, dict) or not result.get("task_id"):
         raise RuntimeError("WECOM_ACTOR_ENQUEUE_RESULT_INVALID")
 
-    from services.conversation_worker import RedisConversationWakeup
-
-    await RedisConversationWakeup().publish(conversation_id, msg.org_id)
+    if not bool(result.get("runtime_owned")):
+        from services.conversation_worker import RedisConversationWakeup
+        await RedisConversationWakeup().publish(conversation_id, msg.org_id)
     return WecomActorEnqueueResult(
         task_id=str(result["task_id"]),
         input_message_id=str(result.get("input_message_id") or ids["input"]),

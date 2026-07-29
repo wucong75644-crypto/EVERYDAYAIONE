@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import secrets
 import time
+import inspect
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from loguru import logger
@@ -26,10 +28,15 @@ def _matches(
     confirmation_id: str,
 ) -> bool:
     expected = {
-        "confirmation_id": confirmation_id, "task_id": binding.task_id,
+        "confirmation_id": confirmation_id,
+        "action_id": binding.action_id,
+        "interaction_id": binding.interaction_id,
+        "interaction_version": str(binding.interaction_version),
+        "task_id": binding.task_id,
         "tool_call_id": binding.tool_call_id, "tool_name": binding.tool_name,
         "arguments_hash": binding.arguments_hash, "user_id": binding.user_id,
         "org_id": binding.org_id,
+        "authorization_expires_at": binding.expires_at.isoformat(),
     }
     return all(record.get(key) == value for key, value in expected.items())
 
@@ -37,17 +44,35 @@ def _matches(
 class ToolConfirmationService:
     def __init__(self, store: ToolConfirmationRedisStore | None = None) -> None:
         self.store = store or ToolConfirmationRedisStore()
+        self._available = False
+
+    def set_available(self, available: bool) -> None:
+        self._available = available
 
     async def create(
-        self, *, task_id: str, tool_call_id: str, tool_name: str,
+        self, *, action_id: str, interaction_id: str,
+        interaction_version: int, authorization_expires_at: datetime,
+        task_id: str, tool_call_id: str, tool_name: str,
         arguments: Mapping[str, Any], user_id: str,
         org_id: str | None, safety_level: str,
     ) -> ConfirmationRequest:
-        if not all((task_id, tool_call_id, tool_name, user_id)):
+        if not self._available:
+            raise RuntimeError("TOOL_CONFIRMATION_V3_DISABLED")
+        if not all((
+            action_id, interaction_id, task_id, tool_call_id, tool_name, user_id,
+        )):
             raise ValueError("missing confirmation scope")
+        if (
+            interaction_version < 0
+            or authorization_expires_at.utcoffset() is None
+            or authorization_expires_at <= datetime.now(timezone.utc)
+        ):
+            raise ValueError("invalid authorization binding")
         binding = ConfirmationBinding(
+            action_id, interaction_id, interaction_version,
             task_id, tool_call_id, tool_name,
             canonical_arguments_hash(arguments), user_id, org_id or "",
+            authorization_expires_at,
         )
         request = ConfirmationRequest(
             secrets.token_urlsafe(32), secrets.token_urlsafe(32), binding,
@@ -61,6 +86,19 @@ class ToolConfirmationService:
         except Exception:
             result = await self.store.create(
                 request.confirmation_id, binding, waiter_hash,
+            )
+        if result == "CREATE_CONFLICT":
+            existing = await self.store.find(binding)
+            if existing is None or not _matches(
+                existing[1], binding, existing[0],
+            ):
+                raise RuntimeError("confirmation identity conflict")
+            if existing[1].get("state") != "PENDING":
+                raise RuntimeError("confirmation is no longer pending")
+            return ConfirmationRequest(
+                existing[0], "", binding,
+                build_confirmation_summary(tool_name, arguments),
+                safety_level,
             )
         if result not in {"CREATED:PENDING", "IDEMPOTENT:PENDING"}:
             raise RuntimeError("confirmation create rejected")
@@ -159,7 +197,8 @@ class ToolConfirmationService:
                     ConfirmationOutcome.REJECTED, "CLAIM_READBACK_FAILED",
                 )
             return ConfirmationDecision(
-                ConfirmationOutcome.APPROVED, "EXECUTION_CLAIMED",
+                ConfirmationOutcome.REJECTED,
+                "POSTGRES_AUTHORIZATION_REQUIRED",
             )
         except Exception as exc:
             logger.warning(
@@ -173,27 +212,62 @@ class ToolConfirmationService:
 
     async def consume_response(
         self, *, confirmation_id: str, user_id: str,
-        org_id: str | None, approved: bool,
+        org_id: str | None, approved: bool, database: Any,
     ) -> str:
         # Resolve the immutable binding from the challenge hash, then enforce actor scope in Lua.
+        if not self._available:
+            return "TOOL_CONFIRMATION_V3_DISABLED"
         if not confirmation_id:
             return "MALFORMED_RESPONSE"
         client = await RedisClient.get_client()
         key = f"ws:tool-confirm:{{tool-confirm}}:challenge:{confirmation_id}"
         record = await client.hgetall(key)
         required = {
-            "task_id", "tool_call_id", "tool_name", "arguments_hash",
-            "user_id", "org_id", "confirmation_id",
+            "action_id", "interaction_id", "interaction_version", "task_id",
+            "tool_call_id", "tool_name", "arguments_hash", "user_id",
+            "org_id", "confirmation_id", "authorization_expires_at",
         }
         if not isinstance(record, dict) or not required.issubset(record):
             return "NOT_FOUND"
         binding = ConfirmationBinding(
-            record["task_id"], record["tool_call_id"], record["tool_name"],
+            record["action_id"], record["interaction_id"],
+            int(record["interaction_version"]), record["task_id"],
+            record["tool_call_id"], record["tool_name"],
             record["arguments_hash"], record["user_id"], record["org_id"],
+            datetime.fromisoformat(record["authorization_expires_at"]),
         )
-        return await self.store.consume(
+        redis_result = await self.store.consume(
             confirmation_id, binding, user_id, org_id or "", approved,
         )
+        if not (
+            redis_result.startswith("WON:")
+            or redis_result in {
+                "ALREADY_TERMINAL:APPROVED", "ALREADY_TERMINAL:DENIED",
+            }
+        ):
+            return redis_result
+        persisted = database.rpc(
+            "resolve_agent_tool_confirmation_v3", {
+                "p_confirmation_id": confirmation_id,
+                "p_interaction_id": binding.interaction_id,
+                "p_action_id": binding.action_id,
+                "p_expected_interaction_version": binding.interaction_version,
+                "p_user_id": binding.user_id,
+                "p_org_id": binding.org_id or None,
+                "p_arguments_hash": binding.arguments_hash,
+                "p_expires_at": binding.expires_at,
+                "p_approved": approved,
+            },
+        ).execute()
+        if inspect.isawaitable(persisted):
+            persisted = await persisted
+        outcome = getattr(persisted, "data", None)
+        if not isinstance(outcome, dict) or outcome.get("outcome") not in {
+            "resolved", "already_resolved",
+        }:
+            code = str((outcome or {}).get("outcome", "unavailable")).upper()
+            return f"AUTHORIZATION_{code}"
+        return "WON:PERSISTED"
 
 
 tool_confirmation_service = ToolConfirmationService()

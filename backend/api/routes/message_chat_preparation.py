@@ -57,6 +57,8 @@ async def prepare_and_start_chat_generation(
         external_task_id=client_task_id,
     )
     business_params = _business_params(body)
+    from core.config import get_settings
+    runtime_owned = get_settings().agent_runtime_ingress_enabled
     task_payload = _build_task_payload(
         handler=handler,
         body=body,
@@ -67,6 +69,7 @@ async def prepare_and_start_chat_generation(
         conversation_id=conversation_id,
         user_id=user_id,
         placeholder_at=placeholder_at,
+        runtime_owned=runtime_owned,
     )
     preparation = GenerationLifecycle(db).prepare(
         request_id=request_id,
@@ -87,14 +90,28 @@ async def prepare_and_start_chat_generation(
         execution_mode="serial",
         context_anchor=preparation.context_anchor(internal_task_id, org_id),
     )
-    external_task_id = await handler.start(
-        message_id=preparation.output_message_id,
-        conversation_id=conversation_id,
-        user_id=user_id,
-        content=body.content,
-        params=business_params,
-        metadata=metadata,
-    )
+    external_task_id = client_task_id
+    if runtime_owned:
+        ingress = await _submit_runtime_ingress(
+            db=db, handler=handler, conversation_id=conversation_id,
+            user_id=user_id, org_id=org_id, request_id=request_id, body=body,
+            preparation=preparation, business_params=business_params,
+            internal_task_id=internal_task_id,
+        )
+        if ingress.outcome in {"ingress_disabled", "org_not_enabled"}:
+            external_task_id = await handler.start(
+                message_id=preparation.output_message_id,
+                conversation_id=conversation_id, user_id=user_id,
+                content=body.content, params=business_params, metadata=metadata,
+            )
+        elif not ingress.accepted:
+            raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
+    else:
+        external_task_id = await handler.start(
+            message_id=preparation.output_message_id,
+            conversation_id=conversation_id, user_id=user_id,
+            content=body.content, params=business_params, metadata=metadata,
+        )
     user_message = _build_user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,
@@ -122,6 +139,7 @@ def _build_task_payload(
     *, handler: Any, body: GenerateRequest, business_params: dict[str, Any],
     internal_task_id: str, client_task_id: str, assistant_message_id: str,
     conversation_id: str, user_id: str, placeholder_at: datetime,
+    runtime_owned: bool,
 ) -> dict[str, Any]:
     model_id = body.model or DEFAULT_MODEL_ID
     request_params = {
@@ -141,9 +159,53 @@ def _build_task_payload(
     payload.update({
         "id": internal_task_id,
         "execution_mode": "serial",
-        "delivery_context": {"actor": True, "channel": "web"},
+        "delivery_context": (
+            {"actor": False, "runtime": True, "channel": "web"}
+            if runtime_owned else {"actor": True, "channel": "web"}
+        ),
     })
     return payload
+
+
+async def _submit_runtime_ingress(
+    *, db: Any, handler: Any, conversation_id: str, user_id: str,
+    org_id: str | None, request_id: str, body: GenerateRequest,
+    preparation: Any, business_params: dict[str, Any],
+    internal_task_id: str,
+):
+    from core.config import get_settings
+    from services.agent.runtime.ingress import RuntimeIngress
+
+    row = db.table("conversations").select(
+        "scope_type,scope_id",
+    ).eq("id", conversation_id).single().execute()
+    conversation = row.data if row else None
+    if not isinstance(conversation, dict):
+        raise RuntimeError("RUNTIME_INGRESS_CONVERSATION_MISSING")
+    settings = get_settings()
+    return await RuntimeIngress(db).submit(
+        conversation_id=conversation_id, org_id=org_id, user_id=user_id,
+        scope_kind=str(conversation["scope_type"]),
+        scope_id=str(conversation["scope_id"]),
+        agent_definition_id=settings.agent_runtime_agent_definition_id,
+        agent_definition_revision=settings.agent_runtime_agent_definition_revision,
+        command_type="submit_input", idempotency_key=request_id,
+        payload={
+            "schema_revision": 1, "channel": "web",
+            "text": handler._extract_text_content(body.content),
+            "task_id": internal_task_id,
+            "client_task_id": body.client_task_id,
+            "input_message_id": preparation.input_message_id,
+            "output_message_id": preparation.output_message_id,
+            "turn_id": preparation.turn_id,
+            "content": serialize_content_parts(body.content),
+            "model_id": body.model or DEFAULT_MODEL_ID,
+            "params": business_params,
+            "delivery_context": {
+                "actor": False, "runtime": True, "channel": "web",
+            },
+        },
+    )
 
 
 def _business_params(body: GenerateRequest) -> dict[str, Any]:
