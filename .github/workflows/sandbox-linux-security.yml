@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            autoconf bison debootstrap flex g++ gcc git libcap-dev \
+            acl autoconf bison debootstrap flex g++ gcc git libcap-dev \
             libnl-route-3-dev libprotobuf-dev make pkg-config \
             protobuf-compiler python3-venv
 
@@ -114,6 +114,7 @@ jobs:
           sudo mkdir /tmp/everydayai-sandbox-worker
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /tmp/everydayai-sandbox-worker
+          sudo setfacl -R -m u:everydayai-sandbox:rX "$GITHUB_WORKSPACE"
           echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \
             >> "$GITHUB_ENV"
 
