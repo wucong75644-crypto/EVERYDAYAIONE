@@ -108,7 +108,7 @@ jobs:
               tail -n 80 /tmp/everydayai-sandbox-contract.log
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            diagnostic=$(tail -n 20 /tmp/everydayai-sandbox-contract.log |
+            diagnostic=$(tail -n 80 /tmp/everydayai-sandbox-contract.log |
               tr '\n' ' ' | sed 's/%/%25/g;s/\\r/%0D/g')
             echo "::error title=Sandbox Linux contract failed::$diagnostic"
           fi
