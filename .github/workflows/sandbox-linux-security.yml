@@ -13,6 +13,7 @@ on:
       - "backend/migrations/rollback/223_agent_runtime_production_composition_rollback.sql"
       - "backend/services/agent/runtime/sandbox/**"
       - "backend/tests/test_agent_runtime_sandbox_linux_external.py"
+      - "deploy/sandbox-job.policy"
 
 permissions:
   contents: read

@@ -1,4 +1,4 @@
-# Kafel policy. Network is also denied by a fresh network namespace.
+// Kafel policy. Network is also denied by a fresh network namespace.
 ERRNO(1) {
   socket,
   socketpair,
