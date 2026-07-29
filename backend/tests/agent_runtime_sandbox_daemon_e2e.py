@@ -66,6 +66,7 @@ def _seed_case(name: str) -> dict[str, str]:
         )
     }
     request_hash = hashlib.sha256(f"request:{name}".encode()).hexdigest()
+    core_request_hash = request_hash[:32]
     arguments_hash = hashlib.sha256(f"arguments:{name}".encode()).hexdigest()
     external_key = f"daemon-e2e:{name}:{ids['action']}"
     _admin(
@@ -85,14 +86,14 @@ def _seed_case(name: str) -> dict[str, str]:
           id,session_id,user_id,command_type,idempotency_key,payload,request_hash
         ) VALUES (
           %(command)s,%(session)s,%(user)s,'submit_input',%(command_key)s,
-          '{}'::jsonb,%(request_hash)s
+          '{}'::jsonb,%(core_request_hash)s
         );
         INSERT INTO agent_runs(
           id,session_id,command_id,user_id,run_kind,status,idempotency_key,
           request_hash,blocking_action_count
         ) VALUES (
           %(run)s,%(session)s,%(command)s,%(user)s,'user','waiting_actions',
-          %(run_key)s,%(request_hash)s,1
+          %(run_key)s,%(core_request_hash)s,1
         );
         INSERT INTO agent_model_steps(
           id,run_id,session_id,user_id,step_number,status,model_id,provider,
@@ -151,6 +152,7 @@ def _seed_case(name: str) -> dict[str, str]:
             "tool_call": f"call:{ids['action']}",
             "attempt_key": f"attempt:{ids['attempt']}",
             "request_hash": request_hash,
+            "core_request_hash": core_request_hash,
             "arguments_hash": arguments_hash,
             "batch_hash": hashlib.sha256(f"batch:{name}".encode()).hexdigest(),
             "receipt_hash": hashlib.sha256(f"receipt:{name}".encode()).hexdigest(),
