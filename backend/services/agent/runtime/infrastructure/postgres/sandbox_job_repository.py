@@ -15,7 +15,7 @@ class PostgresSandboxJobRepository:
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
         if scope is None or scope.access_kind not in {
-            DatabaseAccessKind.RUNTIME,
+            DatabaseAccessKind.AGENT_RUNTIME,
             DatabaseAccessKind.SANDBOX_WORKER,
         }:
             raise ValueError("SANDBOX_JOB_SCOPED_DATABASE_CLIENT_REQUIRED")
@@ -113,7 +113,7 @@ class PostgresSandboxJobRepository:
     ) -> SandboxJobReceipt:
         return await self._rpc("request_sandbox_job_cancel", {
             "p_job_id": job_id, "p_expected_version": expected_version,
-        }, DatabaseAccessKind.RUNTIME)
+        }, DatabaseAccessKind.AGENT_RUNTIME)
 
     async def record_cancel_signal(self, **values: object) -> SandboxJobReceipt:
         return await self._worker_values(
@@ -188,7 +188,7 @@ class PostgresSandboxJobRepository:
         self, name: str, values: Mapping[str, object], names: tuple[str, ...],
     ) -> SandboxJobReceipt:
         return await self._named(
-            name, values, names, DatabaseAccessKind.RUNTIME,
+            name, values, names, DatabaseAccessKind.AGENT_RUNTIME,
         )
 
     async def _worker(

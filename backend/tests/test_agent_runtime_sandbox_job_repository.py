@@ -106,7 +106,7 @@ def test_snapshot_rejects_unknown_status() -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_adapter_forwards_immutable_create_binding() -> None:
-    database = _Database(DatabaseAccessKind.RUNTIME, {
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
         "create_or_get_sandbox_job": {
             "outcome": "created", "job": _job(),
         },
@@ -138,7 +138,7 @@ async def test_worker_adapter_cannot_call_runtime_mutation() -> None:
 
 @pytest.mark.asyncio
 async def test_runtime_adapter_cannot_claim() -> None:
-    database = _Database(DatabaseAccessKind.RUNTIME, {})
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {})
     repository = PostgresSandboxJobRepository(database)
     with pytest.raises(PermissionError, match="SCOPE_MISMATCH"):
         await repository.claim(worker_id="sandbox-1")

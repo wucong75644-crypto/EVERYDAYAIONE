@@ -461,7 +461,7 @@ def test_runtime_composition_registers_executor_without_worker_authority(
     database = type("_Database", (), {
         "scope": DatabaseScope(
             actor_user_id=None, org_id=None,
-            access_kind=DatabaseAccessKind.RUNTIME,
+            access_kind=DatabaseAccessKind.AGENT_RUNTIME,
             request_id="sandbox-composition-test",
         ),
     })()

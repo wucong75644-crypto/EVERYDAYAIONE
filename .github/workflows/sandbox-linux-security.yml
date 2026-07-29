@@ -151,17 +151,19 @@ jobs:
           "$pg_bin/createdb" -h 127.0.0.1 -p 55432 -U "$USER" \
             ar223_sandbox_daemon
           admin_url="postgresql://$USER@127.0.0.1:55432/ar223_sandbox_daemon"
-          runtime_url="postgresql://everydayai_runtime@/ar223_sandbox_daemon?host=/tmp&port=55432"
+          runtime_url="postgresql://everydayai_agent_runtime_worker@/ar223_sandbox_daemon?host=/tmp&port=55432"
+          web_url="postgresql://everydayai_runtime@/ar223_sandbox_daemon?host=/tmp&port=55432"
           worker_url="postgresql://everydayai_sandbox_worker@/ar223_sandbox_daemon?host=/tmp&port=55432"
           echo "::add-mask::$admin_url"
           echo "::add-mask::$runtime_url"
+          echo "::add-mask::$web_url"
           echo "::add-mask::$worker_url"
           {
             echo "AR223_TEST_DATABASE_URL=$admin_url"
             echo "TENANT_DB_ADMIN_URL=$admin_url"
             echo "RUNTIME_DATABASE_URL=$runtime_url"
             echo "WORKER_DATABASE_URL=$worker_url"
-            echo "DATABASE_URL=$runtime_url"
+            echo "DATABASE_URL=$web_url"
             echo "JWT_SECRET_KEY=$jwt_secret"
             echo "EVERYDAYAI_RUNTIME_PASSWORD=$runtime_password"
             echo "EVERYDAYAI_SANDBOX_WORKER_PASSWORD=$sandbox_password"

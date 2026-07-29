@@ -218,7 +218,7 @@ async def _runtime_components():
     await raw.pool.wait(timeout=10)
     scoped = AsyncScopedDatabaseClient(raw, DatabaseScope(
         actor_user_id=None, org_id=None,
-        access_kind=DatabaseAccessKind.RUNTIME, request_id="daemon-e2e",
+        access_kind=DatabaseAccessKind.AGENT_RUNTIME, request_id="daemon-e2e",
     ))
     return build_sandbox_executor_components(
         runtime_database=scoped, workspace_root=ROOT,
