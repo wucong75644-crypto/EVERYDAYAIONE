@@ -24,6 +24,10 @@ DROP FUNCTION gate_agent_action_dispatch(
 ALTER FUNCTION _gate_agent_action_dispatch_220_24(
  UUID,UUID,BIGINT,TEXT,UUID,TEXT,INTEGER,TEXT,TEXT)
  RENAME TO gate_agent_action_dispatch;
+REVOKE ALL ON FUNCTION gate_agent_action_dispatch(
+ UUID,UUID,BIGINT,TEXT,UUID,TEXT,INTEGER,TEXT,TEXT)
+ FROM PUBLIC,everydayai_worker,everydayai_runtime,
+ everydayai_wecom_runtime,everydayai_sync,everydayai;
 DROP FUNCTION _agent_compat_project_command(agent_runtime_events);
 DROP FUNCTION _agent_compat_project_completed_run(
  agent_runs,agent_runtime_sessions,agent_session_commands,tasks);
@@ -65,7 +69,8 @@ BEGIN
  LOOP
   EXECUTE format(
    'REVOKE EXECUTE ON FUNCTION %s FROM %s',x.signature,
-   'everydayai_agent_runtime_worker,everydayai_projection_worker,'||
+   'everydayai_worker,everydayai_agent_runtime_worker,'||
+   'everydayai_projection_worker,'||
    'everydayai_authorization_worker,everydayai_runtime_admin');
  END LOOP;
 END $$;

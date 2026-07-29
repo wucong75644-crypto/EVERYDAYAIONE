@@ -9,6 +9,8 @@ on:
       - codex/agent-runtime-final-integration
     paths:
       - ".github/workflows/sandbox-linux-security.yml"
+      - "backend/migrations/223_agent_runtime_production_composition.sql"
+      - "backend/migrations/rollback/223_agent_runtime_production_composition_rollback.sql"
       - "backend/services/agent/runtime/sandbox/**"
       - "backend/tests/test_agent_runtime_sandbox_linux_external.py"
 
