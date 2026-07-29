@@ -95,7 +95,21 @@ SELECT
 def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
         return f'SELECT "{name}"()', []
-    named_args = ", ".join(f"{key} := %s" for key in params)
+    # PostgreSQL resolves an untyped parameter from its runtime value.  Small
+    # Python integers (notably version 0/1) are therefore inferred as
+    # ``smallint`` and fail against BIGINT RPC contracts.  Keep the RPC
+    # surface named, while pinning the known numeric contract arguments.
+    numeric_types = {
+        "p_expected_action_version": "bigint",
+        "p_expected_attempt_version": "bigint",
+        "p_expected_version": "bigint",
+        "p_lease_seconds": "integer",
+    }
+    named_args = ", ".join(
+        f"{key} := %s::{numeric_types[key]}"
+        if key in numeric_types else f"{key} := %s"
+        for key in params
+    )
     values = [_adapt_rpc_param(value) for value in params.values()]
     return f'SELECT "{name}"({named_args})', values
 
