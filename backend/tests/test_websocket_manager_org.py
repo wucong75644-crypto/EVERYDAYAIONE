@@ -162,11 +162,12 @@ class TestSendToUserOrgFilter:
     async def test_disconnect_denies_delivered_confirmation(self):
         from services.websocket_manager import Connection
 
+        user_id = "bbbb2222-0000-0000-0000-000000000002"
         connection = Connection(
-            websocket=MagicMock(), user_id="user1",
+            websocket=MagicMock(), user_id=user_id,
             conn_id="conn_a", org_id=ORG_A,
         )
-        self.manager._connections = {"user1": {"conn_a": connection}}
+        self.manager._connections = {user_id: {"conn_a": connection}}
         self.manager._conn_index = {"conn_a": connection}
         self.manager._delivered_confirmations = {"conn_a": {"opaque"}}
         with patch(
@@ -176,10 +177,13 @@ class TestSendToUserOrgFilter:
         ) as consume:
             await self.manager.disconnect("conn_a")
 
-        consume.assert_awaited_once_with(
-            confirmation_id="opaque", user_id="user1",
-            org_id=ORG_A, approved=False,
-        )
+        consume.assert_awaited_once()
+        kwargs = consume.await_args.kwargs
+        assert kwargs["confirmation_id"] == "opaque"
+        assert kwargs["user_id"] == user_id
+        assert kwargs["org_id"] == ORG_A
+        assert kwargs["approved"] is False
+        assert kwargs["database"] is not None
 
     @pytest.mark.asyncio
     async def test_subscribe_and_unsubscribe_use_composite_task_scope(self):

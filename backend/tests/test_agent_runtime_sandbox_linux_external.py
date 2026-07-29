@@ -92,6 +92,12 @@ def _launcher(api, rootfs: Path, policy: Path):
         rootfs=rootfs,
         python_path="/usr/bin/python3",
         seccomp_policy=policy,
+        nsjail_path=os.environ["SANDBOX_NSJAIL_PATH"],
+        nsjail_sha256=os.environ["SANDBOX_NSJAIL_SHA256"],
+        rootfs_manifest=os.environ["SANDBOX_ROOTFS_MANIFEST"],
+        rootfs_sha256=os.environ["SANDBOX_ROOTFS_SHA256"],
+        seccomp_sha256=os.environ["SANDBOX_SECCOMP_SHA256"],
+        cgroup_v2_mount=os.environ["SANDBOX_CGROUP_V2_MOUNT"],
         quiet=False,
     )
 
@@ -152,6 +158,11 @@ try:
 except OSError:
     observed["seccomp_mkdir_allowed"] = False
 try:
+    pathlib.Path("/tmp/rootfs-write").write_text("changed")
+    observed["rootfs_writable"] = True
+except OSError:
+    observed["rootfs_writable"] = False
+try:
     client = socket.create_connection(("1.1.1.1", 53), timeout=0.5)
     client.close()
     observed["network_reachable"] = True
@@ -177,6 +188,7 @@ print(json.dumps(observed, sort_keys=True))
         "host_marker_visible": False,
         "input_writable": False,
         "network_reachable": False,
+        "rootfs_writable": False,
         "seccomp_mkdir_allowed": False,
     }
     assert result.process_tree_terminated
@@ -218,6 +230,40 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
     result = await wait_task
     assert result.outcome != "succeeded", result.stderr.decode(errors="replace")
     assert "unrecognized option" not in result.stderr.decode(errors="replace")
+    assert result.process_tree_terminated
+
+
+@pytest.mark.asyncio
+async def test_nsjail_output_file_limit_is_enforced(linux_contract) -> None:
+    api, rootfs, policy, _, tmp_path = linux_contract
+    request = _request(
+        api, tmp_path,
+        job_id="33333333-3333-3333-3333-333333333333",
+        code=(
+            "from pathlib import Path\n"
+            "for index in range(101):\n"
+            "    Path(f'/job/output/{index:03d}').write_text('x')\n"
+        ),
+        limits={"file_count": 100},
+    )
+    process = await _launcher(api, rootfs, policy).launch(request)
+    result = await process.wait()
+    assert result.outcome == "resource_limit"
+    assert result.process_tree_terminated
+
+
+@pytest.mark.asyncio
+async def test_nsjail_stdout_is_bounded(linux_contract) -> None:
+    api, rootfs, policy, _, tmp_path = linux_contract
+    request = _request(
+        api, tmp_path,
+        job_id="44444444-4444-4444-4444-444444444444",
+        code="import sys\nsys.stdout.write('x' * (2 * 1024 * 1024))\n",
+    )
+    process = await _launcher(api, rootfs, policy).launch(request)
+    result = await process.wait()
+    assert result.outcome == "resource_limit"
+    assert len(result.stdout) == 1024 * 1024
     assert result.process_tree_terminated
 
 

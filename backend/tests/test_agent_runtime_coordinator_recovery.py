@@ -62,7 +62,7 @@ class _Call:
 class _Database:
     def __init__(self, responses: dict[str, object]) -> None:
         self.scope = DatabaseScope(
-            None, None, DatabaseAccessKind.WORKER, "ar14-test",
+            None, None, DatabaseAccessKind.AGENT_RUNTIME, "ar14-test",
         )
         self.responses = responses
         self.calls: list[tuple[str, dict[str, object]]] = []

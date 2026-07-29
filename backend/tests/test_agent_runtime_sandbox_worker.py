@@ -380,6 +380,29 @@ async def test_launch_ambiguity_becomes_unknown_without_relaunch(
     assert launcher.launched == 1
 
 
+@pytest.mark.asyncio
+async def test_resource_limit_discards_oversized_outputs_and_finishes(
+    tmp_path,
+) -> None:
+    jobs = _Jobs()
+    workspace = SandboxWorkspaceStore(tmp_path.resolve())
+    await workspace.stage_code(
+        action_id=jobs.job.action_id, attempt_id=jobs.job.attempt_id,
+        content=b"print(1)", expected_sha256=jobs.job.code_sha256,
+    )
+    _, output = workspace.prepare_job(jobs.job.job_id)
+    for index in range(101):
+        (output / f"{index:03d}").write_bytes(b"x")
+    result = await SandboxJobWorker(
+        jobs=jobs,
+        launcher=_Launcher(process=_Process(outcome="resource_limit")),
+        workspace=workspace, worker_id="worker-1",
+    ).run_once()
+    assert result.outcome == "failed"
+    assert jobs.finished == "failed"
+    assert not (tmp_path / "jobs" / jobs.job.job_id).exists()
+
+
 @pytest.mark.parametrize("outcome", ["succeeded", "failed", "timed_out"])
 @pytest.mark.asyncio
 async def test_unproven_process_tree_never_materializes_or_finishes(

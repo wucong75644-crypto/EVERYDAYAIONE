@@ -134,7 +134,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "拒绝" in text or "超时" in text
+        assert "Agent Runtime" in text
         # 不应该调用 executor
         executor.execute.assert_not_called()
 
@@ -300,7 +300,7 @@ class TestExecuteSingleToolAgentResult:
             source="erp_agent", tokens_used=500,
         ))
 
-        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查订单"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -325,7 +325,7 @@ class TestExecuteSingleToolAgentResult:
             source="erp_agent", error_message="查询超时",
         ))
 
-        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查订单"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -349,13 +349,12 @@ class TestExecuteSingleToolAgentResult:
             source="erp_agent",
         ))
 
-        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查"}'}
         await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        # Confirmation uses its acknowledged channel; result and step use normal WS.
-        mock_ws.send_tool_confirmation.assert_awaited_once()
+        mock_ws.send_tool_confirmation.assert_not_awaited()
         assert mock_ws.send_to_task_or_user.call_count == 2
 
     @pytest.mark.asyncio
@@ -370,7 +369,7 @@ class TestExecuteSingleToolAgentResult:
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="搜索结果：3条")
 
-        tc = {"name": "web_search", "id": "tc1", "arguments": '{"query":"天气"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"天气"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -469,18 +468,11 @@ class TestFormBlockResultChannel:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        # 返回 llm_hint 字符串
-        assert is_error is False
+        assert is_error is True
         assert isinstance(result, str)
-        assert "等待用户确认" in result
-        # form 暂存到 _pending_form_block（chat_handler 统一处理）
-        assert mixin._pending_form_block is not None
-        assert mixin._pending_form_block["form_type"] == "scheduled_task_create"
-        # Confirmation uses its acknowledged channel.
-        mock_ws.send_tool_confirmation.assert_awaited_once()
-        ws_calls = mock_ws.send_to_task_or_user.call_args_list
-        assert len(ws_calls) == 2
-        assert ws_calls[0][0][2]["type"] == "tool_result"
+        assert "Agent Runtime" in result
+        mock_ws.send_tool_confirmation.assert_not_awaited()
+        executor.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -504,10 +496,8 @@ class TestFormBlockResultChannel:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 2,
         )
 
-        mixin._emit_tool_audit.assert_called_once()
-        audit_args = mixin._emit_tool_audit.call_args[0]
-        assert audit_args[3] == "manage_scheduled_task"  # tool_name
-        assert audit_args[9] == "success"  # status (index 9)
+        mixin._emit_tool_audit.assert_not_called()
+        executor.execute.assert_not_awaited()
 
 
 class TestPushToolStepUpdate:

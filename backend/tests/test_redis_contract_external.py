@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 from redis.asyncio import Redis
@@ -48,6 +49,7 @@ redis.call("HSET", KEYS[1], "state", target)
 redis.call("EXPIRE", KEYS[1], ARGV[2])
 return "WON:" .. target
 """
+_CONFIRMATION_EXPIRY = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
 
 async def _redis_time_ms(client: Redis) -> int:
@@ -244,7 +246,9 @@ def v3_store(redis_external: RedisExternalHarness, monkeypatch):
 
 def _binding(arguments_hash: str = "args-hash") -> ConfirmationBinding:
     return ConfirmationBinding(
-        "task-1", "call-1", "restore_file", arguments_hash, "user-1", "org-1",
+        "action-1", "interaction-1", 0, "task-1", "call-1",
+        "restore_file", arguments_hash, "user-1", "org-1",
+        _CONFIRMATION_EXPIRY,
     )
 
 

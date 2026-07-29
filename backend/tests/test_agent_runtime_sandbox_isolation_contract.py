@@ -4,7 +4,12 @@ import pytest
 
 from services.agent.runtime.sandbox.contracts import SandboxResourceLimits
 from services.agent.runtime.sandbox.launcher import SandboxLaunchRequest
-from services.agent.runtime.sandbox.nsjail import _command
+from services.agent.runtime.sandbox.nsjail import (
+    _command, _output_limits_exceeded,
+)
+from services.agent.runtime.sandbox.rootfs_manifest import (
+    verify_manifest, write_manifest,
+)
 from services.agent.runtime.sandbox.service import SandboxJobWorkerService
 
 
@@ -16,6 +21,7 @@ def test_nsjail_command_has_readonly_input_writable_output_and_limits(
         nsjail="/usr/bin/nsjail", rootfs=tmp_path / "rootfs",
         python_path="/usr/bin/python3",
         seccomp_policy=tmp_path / "sandbox.policy",
+        cgroup_v2_mount=tmp_path / "cgroup",
         request=SandboxLaunchRequest(
             job_id="11111111-1111-1111-1111-111111111111",
             code=b"print(1)", input_dir=input_dir, output_dir=output_dir,
@@ -30,13 +36,47 @@ def test_nsjail_command_has_readonly_input_writable_output_and_limits(
     ]
     assert "--disable_clone_newnet" not in command
     assert "--use_cgroupv2" in command
-    assert command[command.index("--user") + 1] == "65534:65534:1"
-    assert command[command.index("--group") + 1] == "65534:65534:1"
+    assert command[command.index("--cgroupv2_mount") + 1] == str(
+        tmp_path / "cgroup",
+    )
+    assert command[command.index("--user") + 1] == "65534"
+    assert command[command.index("--group") + 1] == "65534"
     assert "--seccomp_policy" in command
     assert "--cgroup_mem_max" in command
     assert command[command.index("--cgroup_mem_swap_max") + 1] == "0"
     assert "--cgroup_pids_max" in command
     assert "--cgroup_cpu_ms_per_sec" in command
+
+
+def test_rootfs_manifest_detects_content_mode_and_extra_file(tmp_path) -> None:
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    payload = root / "python"
+    payload.write_bytes(b"runtime")
+    payload.chmod(0o555)
+    manifest = tmp_path / "rootfs.manifest"
+    write_manifest(root, manifest)
+    assert verify_manifest(root, manifest)
+    payload.chmod(0o755)
+    assert not verify_manifest(root, manifest)
+    payload.chmod(0o555)
+    (root / "unexpected").write_text("x")
+    assert not verify_manifest(root, manifest)
+
+
+def test_live_output_guard_enforces_aggregate_bytes_files_and_types(
+    tmp_path,
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "one").write_bytes(b"1234")
+    assert not _output_limits_exceeded(output, 4, 1)
+    assert _output_limits_exceeded(output, 3, 1)
+    (output / "two").write_bytes(b"")
+    assert _output_limits_exceeded(output, 4, 1)
+    (output / "two").unlink()
+    (output / "link").symlink_to(output / "one")
+    assert _output_limits_exceeded(output, 100, 100)
 
 
 @pytest.mark.asyncio

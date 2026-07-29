@@ -35,7 +35,7 @@ class Database:
     def __init__(self, responses: dict[str, object]) -> None:
         self.scope = DatabaseScope(
             actor_user_id=None, org_id=None,
-            access_kind=DatabaseAccessKind.WORKER,
+            access_kind=DatabaseAccessKind.AGENT_RUNTIME,
             request_id="ar12-test",
         )
         self.responses = responses
@@ -53,7 +53,7 @@ def test_unknown_outcome_fails_closed() -> None:
 @pytest.mark.asyncio
 async def test_complete_tool_calls_forwards_complete_batch() -> None:
     database = Database({
-        "complete_model_attempt_step_and_create_actions": {
+        "complete_model_attempt_with_raw_actions": {
             "outcome": "completed",
             "attempt_id": "11111111-1111-1111-1111-111111111111",
             "model_step_id": "22222222-2222-2222-2222-222222222222",

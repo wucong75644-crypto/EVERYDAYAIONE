@@ -110,12 +110,16 @@ def test_invalid_utf8_summary_remains_within_database_byte_limit() -> None:
     assert truncated
 
 
-def test_workspace_root_rejects_symlink_and_group_access(
+def test_workspace_root_allows_private_setgid_group_but_rejects_symlink(
     tmp_path: Path,
 ) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o2770)
+    shared.chmod(0o2770)
+    SandboxWorkspaceStore(shared)
     unsafe = tmp_path / "unsafe"
-    unsafe.mkdir(mode=0o770)
-    unsafe.chmod(0o770)
+    unsafe.mkdir(mode=0o777)
+    unsafe.chmod(0o777)
     with pytest.raises(ValueError, match="ROOT_UNSAFE"):
         SandboxWorkspaceStore(unsafe)
     link = tmp_path / "link"

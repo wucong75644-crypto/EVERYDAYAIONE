@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -11,6 +12,26 @@ from services.tool_confirmation.preview import build_confirmation_summary
 from services.tool_confirmation.types import (
     ConfirmationBinding, ConfirmationRequest,
 )
+
+
+def _binding() -> ConfirmationBinding:
+    return ConfirmationBinding(
+        "action", "interaction", 0, "task", "call", "web_search",
+        "hash", "user", "org",
+        datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+
+
+def _record(binding: ConfirmationBinding) -> dict[str, str]:
+    return {
+        "confirmation_id": "cid", "action_id": binding.action_id,
+        "interaction_id": binding.interaction_id,
+        "interaction_version": str(binding.interaction_version),
+        "task_id": "task", "tool_call_id": "call",
+        "tool_name": "web_search", "arguments_hash": "hash",
+        "user_id": "user", "org_id": "org",
+        "authorization_expires_at": binding.expires_at.isoformat(),
+    }
 
 
 def test_handler_safety_and_preview_registries_are_consistent() -> None:
@@ -79,7 +100,14 @@ async def test_create_response_loss_retries_same_challenge_and_waiter() -> None:
 
     store = AsyncMock()
     store.create = AsyncMock(side_effect=[ConnectionError(), "IDEMPOTENT:PENDING"])
-    request = await ToolConfirmationService(store).create(
+    service = ToolConfirmationService(store)
+    service.set_available(True)
+    request = await service.create(
+        action_id="action", interaction_id="interaction",
+        interaction_version=0,
+        authorization_expires_at=(
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        ),
         task_id="task", tool_call_id="call", tool_name="web_search",
         arguments={"query": "public"}, user_id="user", org_id="org",
         safety_level="confirm",
@@ -90,16 +118,45 @@ async def test_create_response_loss_retries_same_challenge_and_waiter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_restart_reuses_pending_identity_without_new_execution_claim() -> None:
+    from services.tool_confirmation.service import ToolConfirmationService
+
+    store = AsyncMock()
+    store.create = AsyncMock(return_value="CREATE_CONFLICT")
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    existing = _record(ConfirmationBinding(
+        "action", "interaction", 0, "task", "call", "web_search",
+        canonical_arguments_hash({"query": "public"}), "user", "org",
+        expires_at,
+    ))
+    existing.update({
+        "confirmation_id": "existing-confirmation", "state": "PENDING",
+        "arguments_hash": canonical_arguments_hash({"query": "public"}),
+    })
+    store.find = AsyncMock(return_value=("existing-confirmation", existing))
+    service = ToolConfirmationService(store)
+    service.set_available(True)
+
+    request = await service.create(
+        action_id="action", interaction_id="interaction",
+        interaction_version=0, authorization_expires_at=expires_at,
+        task_id="task", tool_call_id="call", tool_name="web_search",
+        arguments={"query": "public"}, user_id="user", org_id="org",
+        safety_level="confirm",
+    )
+
+    assert request.confirmation_id == "existing-confirmation"
+    assert request.waiter_token == ""
+    store.find.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_approved_readback_alone_never_executes_without_claim() -> None:
     from services.tool_confirmation.service import ToolConfirmationService
     store = AsyncMock()
-    binding = ConfirmationBinding("task", "call", "web_search", "hash", "user", "org")
+    binding = _binding()
     request = ConfirmationRequest("cid", "waiter", binding, {}, "confirm")
-    approved = {
-        "confirmation_id": "cid", "task_id": "task", "tool_call_id": "call",
-        "tool_name": "web_search", "arguments_hash": "hash",
-        "user_id": "user", "org_id": "org", "state": "APPROVED",
-    }
+    approved = {**_record(binding), "state": "APPROVED"}
     store.read = AsyncMock(return_value=approved)
     store.claim = AsyncMock(return_value="NOT_APPROVED:EXPIRED")
     decision = await ToolConfirmationService(store).await_and_claim(request)
@@ -110,13 +167,14 @@ async def test_approved_readback_alone_never_executes_without_claim() -> None:
 async def test_only_execution_claim_allows_execution() -> None:
     from services.tool_confirmation.service import ToolConfirmationService
     store = AsyncMock()
-    binding = ConfirmationBinding("task", "call", "web_search", "hash", "user", "org")
+    binding = _binding()
     request = ConfirmationRequest("cid", "waiter", binding, {}, "confirm")
-    base = {"confirmation_id":"cid","task_id":"task","tool_call_id":"call","tool_name":"web_search","arguments_hash":"hash","user_id":"user","org_id":"org"}
+    base = _record(binding)
     store.read = AsyncMock(side_effect=[{**base,"state":"APPROVED"},{**base,"state":"EXECUTION_CLAIMED"}])
     store.claim = AsyncMock(return_value="WON:EXECUTION_CLAIMED")
     decision = await ToolConfirmationService(store).await_and_claim(request)
-    assert decision.can_execute is True
+    assert decision.can_execute is False
+    assert decision.code == "POSTGRES_AUTHORIZATION_REQUIRED"
 
 
 @pytest.mark.asyncio
@@ -124,9 +182,7 @@ async def test_task_cancel_denies_before_claim() -> None:
     from services.tool_confirmation.service import ToolConfirmationService
 
     store = AsyncMock()
-    binding = ConfirmationBinding(
-        "task", "call", "web_search", "hash", "user", "org",
-    )
+    binding = _binding()
     request = ConfirmationRequest("cid", "waiter", binding, {}, "confirm")
     store.consume = AsyncMock(return_value="WON:DENIED")
     decision = await ToolConfirmationService(store).await_and_claim(
@@ -143,15 +199,10 @@ async def test_task_cancel_after_approved_readback_still_prevents_claim() -> Non
     from services.tool_confirmation.service import ToolConfirmationService
 
     store = AsyncMock()
-    binding = ConfirmationBinding(
-        "task", "call", "web_search", "hash", "user", "org",
-    )
+    binding = _binding()
     request = ConfirmationRequest("cid", "waiter", binding, {}, "confirm")
     store.read = AsyncMock(return_value={
-        "confirmation_id": "cid", "task_id": "task",
-        "tool_call_id": "call", "tool_name": "web_search",
-        "arguments_hash": "hash", "user_id": "user", "org_id": "org",
-        "state": "APPROVED",
+        **_record(binding), "state": "APPROVED",
     })
     store.consume = AsyncMock(return_value="ALREADY_TERMINAL:APPROVED")
     cancelled = iter((False, True))
@@ -170,15 +221,9 @@ async def test_task_cancel_after_claim_never_returns_execution_permission() -> N
     from services.tool_confirmation.service import ToolConfirmationService
 
     store = AsyncMock()
-    binding = ConfirmationBinding(
-        "task", "call", "web_search", "hash", "user", "org",
-    )
+    binding = _binding()
     request = ConfirmationRequest("cid", "waiter", binding, {}, "confirm")
-    base = {
-        "confirmation_id": "cid", "task_id": "task",
-        "tool_call_id": "call", "tool_name": "web_search",
-        "arguments_hash": "hash", "user_id": "user", "org_id": "org",
-    }
+    base = _record(binding)
     store.read = AsyncMock(side_effect=[
         {**base, "state": "APPROVED"},
         {**base, "state": "EXECUTION_CLAIMED"},
