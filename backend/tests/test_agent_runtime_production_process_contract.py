@@ -63,6 +63,7 @@ def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
     assert "User=everydayai-sandbox" in text
     assert "Group=everydayai-sandbox" in text
     assert "SupplementaryGroups=everydayai-sandbox-io" in text
+    assert "StateDirectory=" not in text
     assert (DEPLOY / "sandbox-job.policy").is_file()
     installer = (DEPLOY / "install-sandbox-rootfs.sh").read_text()
     assert "sha256sum -c SHA256SUMS" in installer

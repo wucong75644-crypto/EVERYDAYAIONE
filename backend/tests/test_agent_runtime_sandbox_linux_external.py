@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import time
 from types import ModuleType
 from types import SimpleNamespace
 from typing import Iterator
@@ -34,7 +35,7 @@ def _isolated_sandbox_modules() -> Iterator[ModuleType]:
     loaded = [package_name]
     sys.modules[package_name] = package
     try:
-        for module_name in ("contracts", "launcher", "nsjail"):
+        for module_name in ("contracts", "launcher", "nsjail", "workspace"):
             qualified_name = f"{package_name}.{module_name}"
             spec = importlib.util.spec_from_file_location(
                 qualified_name,
@@ -49,12 +50,14 @@ def _isolated_sandbox_modules() -> Iterator[ModuleType]:
         contracts = sys.modules[f"{package_name}.contracts"]
         launcher = sys.modules[f"{package_name}.launcher"]
         nsjail = sys.modules[f"{package_name}.nsjail"]
+        workspace = sys.modules[f"{package_name}.workspace"]
         yield SimpleNamespace(
             IsolationProbe=launcher.IsolationProbe,
             NsJailSubprocessLauncher=nsjail.NsJailSubprocessLauncher,
             SandboxWorkerIdentity=nsjail.SandboxWorkerIdentity,
             SandboxLaunchRequest=launcher.SandboxLaunchRequest,
             SandboxResourceLimits=contracts.SandboxResourceLimits,
+            SandboxWorkspaceStore=workspace.SandboxWorkspaceStore,
         )
     finally:
         for module_name in reversed(loaded):
@@ -291,3 +294,93 @@ async def test_nsjail_cancel_terminates_process_tree(linux_contract) -> None:
     result = await asyncio.wait_for(wait_task, timeout=10)
     assert result.outcome != "succeeded"
     assert result.process_tree_terminated
+
+
+def _active_cgroup(root: Path) -> Path:
+    groups = tuple(root.glob("NSJAIL.*"))
+    assert len(groups) == 1, groups
+    return groups[0]
+
+
+@pytest.mark.asyncio
+async def test_nsjail_cpu_pids_and_swap_limits_are_enforced(
+    linux_contract,
+) -> None:
+    api, rootfs, policy, _, tmp_path = linux_contract
+    request = _request(
+        api, tmp_path,
+        job_id="55555555-5555-5555-5555-555555555555",
+        code=(
+            "import json, pathlib, subprocess, time\n"
+            "children=[]\n"
+            "for _ in range(32):\n"
+            "    try:\n"
+            "        children.append(subprocess.Popen("
+            "['/usr/bin/python3','-c','import time;time.sleep(30)']))\n"
+            "    except OSError:\n"
+            "        break\n"
+            "pathlib.Path('/job/output/pids.json').write_text("
+            "json.dumps({'spawned':len(children)}))\n"
+            "deadline=time.monotonic()+30\n"
+            "while time.monotonic()<deadline:\n"
+            "    pass\n"
+        ),
+        limits={
+            "cpu_millis": 50, "memory_bytes": 128 * 1024 * 1024,
+            "pids": 8, "timeout_seconds": 45,
+        },
+    )
+    process = await _launcher(api, rootfs, policy).launch(request)
+    for _ in range(100):
+        if (request.output_dir / "pids.json").exists():
+            break
+        await asyncio.sleep(0.05)
+    observed = json.loads((request.output_dir / "pids.json").read_text())
+    assert observed["spawned"] < 32
+    cgroup = _active_cgroup(Path(os.environ["SANDBOX_CGROUP_V2_MOUNT"]))
+    assert (cgroup / "memory.max").read_text().strip() == str(
+        128 * 1024 * 1024,
+    )
+    assert (cgroup / "memory.swap.max").read_text().strip() == "0"
+    assert (cgroup / "pids.max").read_text().strip() == "8"
+    quota, period = map(int, (cgroup / "cpu.max").read_text().split())
+    assert quota / period <= 0.05
+    await asyncio.sleep(0.5)
+    cpu_stat = dict(
+        line.split() for line in (cgroup / "cpu.stat").read_text().splitlines()
+    )
+    assert int(cpu_stat["nr_throttled"]) > 0
+    assert int((cgroup / "pids.events").read_text().split()[-1]) > 0
+    assert await process.request_cancel()
+    result = await process.wait()
+    assert result.process_tree_terminated
+
+
+@pytest.mark.asyncio
+async def test_nsjail_timeout_and_worker_workspace_leave_zero_residue(
+    linux_contract,
+) -> None:
+    api, rootfs, policy, _, _ = linux_contract
+    workspace_root = Path(os.environ["SANDBOX_JOB_ROOT"]).resolve()
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    identity = api.SandboxWorkerIdentity.capture_current_process()
+    store = api.SandboxWorkspaceStore(
+        workspace_root, worker_identity=identity,
+    )
+    job_id = "66666666-6666-6666-6666-666666666666"
+    input_dir, output_dir = store.prepare_job(job_id)
+    request = api.SandboxLaunchRequest(
+        job_id=job_id, code=b"import time; time.sleep(30)",
+        input_dir=input_dir, output_dir=output_dir,
+        limits=api.SandboxResourceLimits.from_request({
+            "timeout_seconds": 1,
+        }),
+    )
+    started = time.monotonic()
+    result = await (await _launcher(api, rootfs, policy).launch(request)).wait()
+    assert time.monotonic() - started < 8
+    assert result.outcome != "succeeded"
+    assert result.process_tree_terminated
+    assert store.cleanup_job(job_id)
+    assert not (workspace_root / "jobs" / job_id).exists()
+    assert not (workspace_root / "quarantine" / job_id).exists()

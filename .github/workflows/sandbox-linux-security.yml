@@ -37,6 +37,7 @@ jobs:
       SANDBOX_ROOTFS_MANIFEST: /tmp/everydayai-sandbox-rootfs.manifest
       SANDBOX_NSJAIL_PATH: /usr/local/bin/nsjail
       SANDBOX_CGROUP_V2_MOUNT: /sys/fs/cgroup
+      SANDBOX_JOB_ROOT: /tmp/everydayai-sandbox-worker/jobs
       SANDBOX_HOST_MARKER: /sandbox-host-secret-everydayai-contract
       RUN_SANDBOX_LINUX_EXTERNAL_TESTS: "1"
 
@@ -163,6 +164,11 @@ jobs:
             | grep -q .; then
             echo "Residual nsjail cgroup detected" >&2
             sudo find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print >&2
+            residue=1
+          fi
+          if find "$SANDBOX_JOB_ROOT/jobs" "$SANDBOX_JOB_ROOT/quarantine" \
+            -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+            echo "Residual Sandbox job directory detected" >&2
             residue=1
           fi
           mountpoint -q "$SANDBOX_ROOTFS" && sudo umount "$SANDBOX_ROOTFS"
