@@ -107,9 +107,21 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_executor_revision": "integer",
         "p_lease_seconds": "integer",
     }
+    uuid_keys = {
+        "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
+        "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
+    }
+    text_keys = {
+        "p_external_idempotency_key", "p_request_hash", "p_executor_type",
+        "p_runtime_revision", "p_workspace_scope_ref", "p_code_sha256",
+        "p_terminal_status", "p_terminal_reason", "p_phase", "p_worker_id",
+    }
     named_args = ", ".join(
         f"{key} := %s::{numeric_types[key]}"
-        if key in numeric_types else f"{key} := %s"
+        if key in numeric_types else (
+            f"{key} := %s::uuid" if key in uuid_keys else
+            f"{key} := %s::text" if key in text_keys else f"{key} := %s"
+        )
         for key in params
     )
     values = [_adapt_rpc_param(value) for value in params.values()]
