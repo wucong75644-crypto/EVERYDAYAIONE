@@ -54,7 +54,17 @@ SQL
   "$repo_root/deploy/runtime-redis-probe.py"
 
 if "$with_sandbox"; then
-  "$repo_root/deploy/runtime-capability-probe.sh" sandbox
+  test "$(systemctl show everydayai-sandbox-worker -p User --value)" = \
+    everydayai-sandbox
+  test "$(systemctl show everydayai-sandbox-worker -p Group --value)" = \
+    everydayai-sandbox
+  supplementary=$(
+    systemctl show everydayai-sandbox-worker \
+      -p SupplementaryGroups --value | tr ' ' '\n' | sort -u
+  )
+  test "$supplementary" = everydayai-sandbox-io
+  runuser --preserve-environment -u everydayai-sandbox -- \
+    "$repo_root/deploy/runtime-capability-probe.sh" sandbox
 fi
 
 echo "agent-runtime-release-preflight=ok"

@@ -4,6 +4,8 @@ test "$(id -u)" -eq 0
 getent group everydayai-app >/dev/null || groupadd --system everydayai-app
 getent group everydayai-sandbox-io >/dev/null ||
   groupadd --system everydayai-sandbox-io
+getent group everydayai-sandbox >/dev/null ||
+  groupadd --system everydayai-sandbox
 for name in api actor wecom sync agent-runtime projection authorization; do
   id "everydayai-$name" >/dev/null 2>&1 || useradd --system \
     --no-create-home --shell /usr/sbin/nologin --gid everydayai-app \
@@ -11,10 +13,11 @@ for name in api actor wecom sync agent-runtime projection authorization; do
 done
 for name in sandbox; do
   id "everydayai-$name" >/dev/null 2>&1 || useradd --system \
-    --no-create-home --shell /usr/sbin/nologin --gid everydayai-sandbox-io \
+    --no-create-home --shell /usr/sbin/nologin --gid everydayai-sandbox \
     "everydayai-$name"
 done
 usermod -a -G everydayai-sandbox-io everydayai-agent-runtime
+usermod -a -G everydayai-sandbox-io everydayai-sandbox
 install -d -o root -g everydayai-sandbox-io -m 2770 \
   /var/lib/everydayai/sandbox-jobs
 install -d -o root -g everydayai-sandbox-io -m 0750 \

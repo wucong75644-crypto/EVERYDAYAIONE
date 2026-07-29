@@ -13,6 +13,10 @@ on:
       - "backend/migrations/rollback/223_agent_runtime_production_composition_rollback.sql"
       - "backend/services/agent/runtime/sandbox/**"
       - "backend/tests/test_agent_runtime_sandbox_linux_external.py"
+      - "deploy/everydayai-sandbox-worker.service"
+      - "deploy/preflight-agent-runtime-release.sh"
+      - "deploy/provision-runtime-users.sh"
+      - "deploy/runtime-capability-probe.sh"
       - "deploy/sandbox-job.policy"
 
 permissions:
@@ -33,11 +37,15 @@ jobs:
       SANDBOX_ROOTFS_MANIFEST: /tmp/everydayai-sandbox-rootfs.manifest
       SANDBOX_NSJAIL_PATH: /usr/local/bin/nsjail
       SANDBOX_CGROUP_V2_MOUNT: /sys/fs/cgroup
+      SANDBOX_HOST_MARKER: /sandbox-host-secret-everydayai-contract
       RUN_SANDBOX_LINUX_EXTERNAL_TESTS: "1"
 
     steps:
       - name: Check out candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Verify checked out candidate
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Install fixed build dependencies
         run: |
@@ -87,6 +95,28 @@ jobs:
           nsjail --help 2>&1 | grep -E -- \
             '--use_cgroupv2|--cgroup_mem_max|--cgroup_pids_max|--cgroup_cpu_ms_per_sec'
 
+      - name: Prepare non-root Sandbox worker contract
+        run: |
+          set -euo pipefail
+          sudo groupadd --system everydayai-sandbox
+          sudo useradd --system --no-create-home \
+            --shell /usr/sbin/nologin --gid everydayai-sandbox \
+            everydayai-sandbox
+          sandbox_uid=$(id -u everydayai-sandbox)
+          sandbox_gid=$(id -g everydayai-sandbox)
+          test "$sandbox_uid" -ne 0
+          test "$sandbox_gid" -ne 0
+          sudo touch "$SANDBOX_HOST_MARKER"
+          sudo chmod 0600 "$SANDBOX_HOST_MARKER"
+          sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /sys/fs/cgroup/everydayai-sandbox-contract
+          sudo mkdir /tmp/everydayai-sandbox-worker
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /tmp/everydayai-sandbox-worker
+          echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \
+            >> "$GITHUB_ENV"
+
       - name: Run real nsjail contract
         working-directory: backend
         run: |
@@ -95,7 +125,7 @@ jobs:
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
             pytest==8.3.4 pytest-asyncio==0.25.2
           set +e
-          sudo --preserve-env=SANDBOX_ROOTFS,SANDBOX_SECCOMP_POLICY,SANDBOX_ROOTFS_MANIFEST,SANDBOX_NSJAIL_PATH,SANDBOX_NSJAIL_SHA256,SANDBOX_ROOTFS_SHA256,SANDBOX_SECCOMP_SHA256,SANDBOX_CGROUP_V2_MOUNT,RUN_SANDBOX_LINUX_EXTERNAL_TESTS \
+          runuser --preserve-environment -u everydayai-sandbox -- \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
             -m external tests/test_agent_runtime_sandbox_linux_external.py \
@@ -135,6 +165,9 @@ jobs:
             "$SANDBOX_ROOTFS" \
             /tmp/everydayai-sandbox-test-venv \
             /tmp/nsjail \
+            /tmp/everydayai-sandbox-worker \
             "$SANDBOX_ROOTFS_MANIFEST"
+          sudo rm -f "$SANDBOX_HOST_MARKER"
+          sudo rmdir /sys/fs/cgroup/everydayai-sandbox-contract
           test ! -e "$SANDBOX_ROOTFS"
           exit "$residue"

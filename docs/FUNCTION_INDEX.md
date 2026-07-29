@@ -15,7 +15,7 @@
 |---|---|---|
 | `SandboxJobCapability` | `backend/services/agent/runtime/sandbox/capability.py` | 绑定Action/Attempt，只允许暂存已核验代码与Artifact并通过Runtime窄RPC创建、查询或请求取消Job |
 | `SandboxWorkspaceStore` | `backend/services/agent/runtime/sandbox/workspace.py` | 管理不可变输入、job临时目录、内容寻址输出、partial quarantine及精确清理，不向Executor暴露根路径 |
-| `IsolationProbe.inspect` / `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/launcher.py`、`nsjail.py` | 缺Linux/nsjail/cgroup v2时失败关闭；远程Linux合同使用每Job nsjail进程组 |
+| `SandboxWorkerIdentity.capture_current_process` / `IsolationProbe.inspect` / `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/launcher.py`、`nsjail.py` | 仅Sandbox composition捕获当前非root进程UID/GID并映射到jail内65534；缺Linux/nsjail/cgroup v2时失败关闭 |
 | `SandboxJobWorker.run_once` / `reconcile_next` | `backend/services/agent/runtime/sandbox/worker.py` | 执行唯一领取、绑定Owner的续租/query/cancel、durable unknown reconciliation、内容materialize与partial清理 |
 | `SandboxJobWorkerService.run` / `stop` | `backend/services/agent/runtime/sandbox/service.py` | 独立进程可使用的durable execution/reconcile/cleanup轮询与drain生命周期；未接production startup |
 | `SandboxJobExecutor.dispatch` / `reconcile` / `cancel` | `backend/services/agent/runtime/executors/sandbox_job.py` | 将fenced DispatchIntent映射到唯一Sandbox Job；accepted/unknown禁止普通重派 |

@@ -16,6 +16,7 @@ from services.agent.runtime.infrastructure.postgres.sandbox_job_repository impor
 
 from .issuer import SandboxCapabilityIssuer
 from .launcher import SandboxLauncherPort
+from .nsjail import SandboxWorkerIdentity
 from .service import SandboxJobWorkerService
 from .worker import SandboxJobWorker
 from .workspace import SandboxWorkspaceStore
@@ -36,9 +37,12 @@ class SandboxExecutorComponents:
 def build_sandbox_worker_components(
     *, worker_database, launcher: SandboxLauncherPort,
     workspace_root: str | Path, worker_id: str,
+    worker_identity: SandboxWorkerIdentity,
 ) -> SandboxWorkerComponents:
     """Build the only process allowed to own Sandbox execution."""
-    workspace = SandboxWorkspaceStore(Path(workspace_root))
+    workspace = SandboxWorkspaceStore(
+        Path(workspace_root), worker_identity=worker_identity,
+    )
     jobs = PostgresSandboxJobRepository(worker_database)
     worker = SandboxJobWorker(
         jobs=jobs, launcher=launcher, workspace=workspace,

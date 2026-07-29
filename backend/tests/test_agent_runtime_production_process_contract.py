@@ -41,6 +41,12 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         "cgroup_mem_swap_max", "iface_no_lo", "pgrep",
         "SANDBOX_CGROUP_V2_MOUNT", "rootfs_manifest verify",
         'findmnt -T "$SANDBOX_ROOTFS"',
+        'test "$(id -un)" = everydayai-sandbox',
+        'test "$(id -gn)" = everydayai-sandbox',
+        'test "$(id -u)" -ne 0',
+        'test "$(id -g)" -ne 0',
+        '65534:$(id -u):1',
+        '65534:$(id -g):1',
     ):
         assert contract in text
 
@@ -54,8 +60,13 @@ def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
     assert "LimitFSIZE=268435456" in text
     assert "BindReadOnlyPaths=/var/lib/everydayai/sandbox-rootfs" in text
     assert "PrivateNetwork=true" not in text
+    assert "User=everydayai-sandbox" in text
+    assert "Group=everydayai-sandbox" in text
+    assert "SupplementaryGroups=everydayai-sandbox-io" in text
     assert (DEPLOY / "sandbox-job.policy").is_file()
     installer = (DEPLOY / "install-sandbox-rootfs.sh").read_text()
     assert "sha256sum -c SHA256SUMS" in installer
     assert "rootfs_manifest.py" in installer
     assert "test ! -e \"$target\"" in installer
+    preflight = (DEPLOY / "preflight-agent-runtime-release.sh").read_text()
+    assert "runuser --preserve-environment -u everydayai-sandbox" in preflight

@@ -6,7 +6,8 @@ ConditionPathIsMountPoint=/sys/fs/cgroup
 [Service]
 Type=simple
 User=everydayai-sandbox
-Group=everydayai-sandbox-io
+Group=everydayai-sandbox
+SupplementaryGroups=everydayai-sandbox-io
 WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
 Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/sandbox"

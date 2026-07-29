@@ -6,6 +6,7 @@ import asyncio
 import errno
 import os
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 
 from .launcher import (
@@ -18,6 +19,32 @@ from .launcher import (
 from .rootfs_manifest import verify_manifest
 
 
+_IDENTITY_TOKEN = object()
+
+
+@dataclass(frozen=True, init=False)
+class SandboxWorkerIdentity:
+    """Non-root identity captured only by the Sandbox composition root."""
+
+    uid: int
+    gid: int
+
+    def __init__(self, token: object, uid: int, gid: int) -> None:
+        if token is not _IDENTITY_TOKEN:
+            raise TypeError("SANDBOX_WORKER_IDENTITY_CAPTURE_REQUIRED")
+        object.__setattr__(self, "uid", uid)
+        object.__setattr__(self, "gid", gid)
+
+    @classmethod
+    def capture_current_process(cls) -> "SandboxWorkerIdentity":
+        if os.environ.get("AGENT_RUNTIME_PROCESS_ROLE") != "sandbox":
+            raise RuntimeError("SANDBOX_PROCESS_ROLE_REQUIRED")
+        uid, gid = os.getuid(), os.getgid()
+        if uid == 0 or gid == 0:
+            raise RuntimeError("SANDBOX_ROOT_PROCESS_FORBIDDEN")
+        return cls(_IDENTITY_TOKEN, uid, gid)
+
+
 class NsJailSubprocessLauncher:
     """One process group and one nsjail invocation per Sandbox Job."""
 
@@ -26,7 +53,9 @@ class NsJailSubprocessLauncher:
         seccomp_policy: str | Path, nsjail_path: str | Path,
         nsjail_sha256: str, rootfs_manifest: str | Path,
         rootfs_sha256: str, seccomp_sha256: str,
-        cgroup_v2_mount: str | Path, quiet: bool = True,
+        cgroup_v2_mount: str | Path,
+        worker_identity: SandboxWorkerIdentity,
+        quiet: bool = True,
     ) -> None:
         root = Path(rootfs)
         policy = Path(seccomp_policy)
@@ -45,6 +74,7 @@ class NsJailSubprocessLauncher:
         self._seccomp_sha256 = seccomp_sha256
         self._cgroup_v2_mount = Path(cgroup_v2_mount).resolve()
         self._python_path = python_path
+        self._worker_identity = worker_identity
         self._quiet = quiet
         self._processes: dict[str, _NsJailProcess] = {}
 
@@ -100,6 +130,7 @@ class NsJailSubprocessLauncher:
             python_path=self._python_path,
             seccomp_policy=self._seccomp_policy, request=request,
             cgroup_v2_mount=self._cgroup_v2_mount,
+            worker_identity=self._worker_identity,
             quiet=self._quiet,
         )
         cgroup_before = _nsjail_cgroups(self._cgroup_v2_mount)
@@ -248,6 +279,7 @@ class _NsJailProcess:
 def _command(
     *, nsjail: str, rootfs: Path, python_path: str,
     seccomp_policy: Path, cgroup_v2_mount: Path,
+    worker_identity: SandboxWorkerIdentity,
     request: SandboxLaunchRequest, quiet: bool = True,
 ) -> list[str]:
     limits = request.limits
@@ -256,8 +288,8 @@ def _command(
         "--chroot", str(rootfs),
         "--hostname", "sandbox-job",
         "--cwd", "/job/output",
-        "--user", "65534:65534:1",
-        "--group", "65534:65534:1",
+        "--user", f"65534:{worker_identity.uid}:1",
+        "--group", f"65534:{worker_identity.gid}:1",
         "--disable_proc",
         "--iface_no_lo",
         "--use_cgroupv2",

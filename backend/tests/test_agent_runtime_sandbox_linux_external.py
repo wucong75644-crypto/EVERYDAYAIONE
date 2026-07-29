@@ -52,6 +52,7 @@ def _isolated_sandbox_modules() -> Iterator[ModuleType]:
         yield SimpleNamespace(
             IsolationProbe=launcher.IsolationProbe,
             NsJailSubprocessLauncher=nsjail.NsJailSubprocessLauncher,
+            SandboxWorkerIdentity=nsjail.SandboxWorkerIdentity,
             SandboxLaunchRequest=launcher.SandboxLaunchRequest,
             SandboxResourceLimits=contracts.SandboxResourceLimits,
         )
@@ -70,24 +71,23 @@ def linux_api():
 
 @pytest.fixture
 def linux_contract(linux_api):
-    if os.geteuid() != 0:
-        pytest.fail("SANDBOX_LINUX_EXTERNAL_ROOT_REQUIRED")
+    if os.geteuid() == 0 or os.getegid() == 0:
+        pytest.fail("SANDBOX_LINUX_EXTERNAL_NONROOT_REQUIRED")
     rootfs = Path(os.environ["SANDBOX_ROOTFS"]).resolve()
     policy = Path(os.environ["SANDBOX_SECCOMP_POLICY"]).resolve()
     if not rootfs.is_dir() or not policy.is_file():
         pytest.fail("SANDBOX_LINUX_EXTERNAL_FIXTURE_REQUIRED")
-    marker = Path("/sandbox-host-secret-everydayai-contract")
+    marker = Path(os.environ["SANDBOX_HOST_MARKER"])
     contract_root = Path(tempfile.mkdtemp(prefix="everydayai-sandbox-contract-"))
     contract_root.chmod(0o755)
-    marker.write_text("must-not-be-visible", encoding="utf-8")
     try:
         yield linux_api, rootfs, policy, marker, contract_root
     finally:
-        marker.unlink(missing_ok=True)
         shutil.rmtree(contract_root, ignore_errors=True)
 
 
 def _launcher(api, rootfs: Path, policy: Path):
+    identity = api.SandboxWorkerIdentity.capture_current_process()
     return api.NsJailSubprocessLauncher(
         rootfs=rootfs,
         python_path="/usr/bin/python3",
@@ -98,6 +98,7 @@ def _launcher(api, rootfs: Path, policy: Path):
         rootfs_sha256=os.environ["SANDBOX_ROOTFS_SHA256"],
         seccomp_sha256=os.environ["SANDBOX_SECCOMP_SHA256"],
         cgroup_v2_mount=os.environ["SANDBOX_CGROUP_V2_MOUNT"],
+        worker_identity=identity,
         quiet=False,
     )
 
@@ -114,7 +115,6 @@ def _request(
     output_dir = tmp_path / job_id / "output"
     input_dir.mkdir(parents=True)
     output_dir.mkdir()
-    os.chown(output_dir, 65534, 65534)
     output_dir.chmod(0o700)
     return api.SandboxLaunchRequest(
         job_id=job_id,
@@ -191,6 +191,8 @@ print(json.dumps(observed, sort_keys=True))
         "rootfs_writable": False,
         "seccomp_mkdir_allowed": False,
     }
+    assert request.output_dir.stat().st_uid == os.getuid()
+    assert request.output_dir.stat().st_gid == os.getgid()
     assert result.process_tree_terminated
 
 

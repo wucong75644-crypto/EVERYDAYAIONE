@@ -56,7 +56,9 @@ from services.agent.runtime.policy.evaluator import PolicyEvaluator
 from services.agent.runtime.sandbox.composition import (
     build_sandbox_executor_components, build_sandbox_worker_components,
 )
-from services.agent.runtime.sandbox.nsjail import NsJailSubprocessLauncher
+from services.agent.runtime.sandbox.nsjail import (
+    NsJailSubprocessLauncher, SandboxWorkerIdentity,
+)
 from services.agent.runtime.production_model import (
     PostgresModelCallFactory, retain_unknown_model_attempt,
 )
@@ -171,6 +173,7 @@ def build_authorization(database: Any, worker_id: str):
 
 
 def build_sandbox(database: Any, settings):
+    identity = SandboxWorkerIdentity.capture_current_process()
     db = scoped(
         database, DatabaseAccessKind.SANDBOX_WORKER,
         settings.agent_runtime_worker_id,
@@ -185,9 +188,11 @@ def build_sandbox(database: Any, settings):
         rootfs_manifest=settings.sandbox_rootfs_manifest,
         rootfs_sha256=settings.sandbox_rootfs_sha256,
         seccomp_sha256=settings.sandbox_seccomp_sha256,
+        worker_identity=identity,
     )
     return build_sandbox_worker_components(
         worker_database=db, launcher=launcher,
         workspace_root=settings.sandbox_job_root,
         worker_id=settings.agent_runtime_worker_id,
+        worker_identity=identity,
     )

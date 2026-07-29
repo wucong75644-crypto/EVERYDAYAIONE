@@ -6,6 +6,15 @@ repo_root=$(cd "$(dirname "$0")/.." && pwd)
 "$repo_root/backend/venv/bin/python" \
   "$repo_root/deploy/runtime-worker-db-probe.py" "$role"
 if [ "$role" != sandbox ]; then exit 0; fi
+test "$(id -un)" = everydayai-sandbox
+test "$(id -gn)" = everydayai-sandbox
+test "$(id -u)" -ne 0
+test "$(id -g)" -ne 0
+groups=$(id -Gn | tr ' ' '\n' | sort -u)
+test "$groups" = "$(printf '%s\n' everydayai-sandbox everydayai-sandbox-io | sort)"
+workspace_owner=$(stat -c '%U:%G:%a' "$SANDBOX_JOB_ROOT")
+test "$workspace_owner" = root:everydayai-sandbox-io:2770
+test -w "$SANDBOX_JOB_ROOT"
 if env | cut -d= -f1 | grep -Eq \
   '^(REDIS|OSS_|MODEL_|JWT|WECOM|DASHSCOPE|OPENROUTER|KIE_|GOOGLE_)'; then
   echo "forbidden credential namespace in Sandbox environment" >&2
@@ -35,7 +44,8 @@ test -r "$SANDBOX_ROOTFS/usr/bin/python3.12"
 before=$(find /sys/fs/cgroup -maxdepth 4 -iname '*nsjail*' -print | sort)
 set +e
 "$SANDBOX_NSJAIL_PATH" --mode o --chroot "$SANDBOX_ROOTFS" \
-  --user 65534 --group 65534 --disable_proc --iface_no_lo \
+  --user "65534:$(id -u):1" --group "65534:$(id -g):1" \
+  --disable_proc --iface_no_lo \
   --use_cgroupv2 --cgroupv2_mount "$SANDBOX_CGROUP_V2_MOUNT" \
   --cgroup_mem_swap_max 0 \
   --time_limit 5 --seccomp_policy "$SANDBOX_SECCOMP_POLICY" \

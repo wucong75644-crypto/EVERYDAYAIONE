@@ -106,6 +106,10 @@ seccomp hashes, cgroup v2 `cpu`, `memory` and `pids` controllers, memory swap
 support, concurrency 1, network denial and absence of process/cgroup residue.
 The fixed ceilings are 120 seconds, 800m CPU, 512 MiB memory, swap 0, 64 pids,
 256 MiB output and 100 files. Startup has no raw-Python fallback.
+The jail identity remains `65534:65534` inside the namespace and is mapped only
+to the actual non-root Sandbox Worker UID/GID captured by production
+composition. Root startup, a different process role, or an unsafe workspace
+owner fails closed.
 
 `/var/lib/everydayai/sandbox-jobs` is root-owned, setgid to
 `everydayai-sandbox-io`; only Runtime and Sandbox users share that group. Inputs
@@ -168,7 +172,9 @@ admin audit rows supply actor, tenant, request id, reason and result.
 
 - **Migration rollback:** run the exact 223 rollback only before any Runtime,
   Authorization, Projection, Sandbox, heartbeat, capability or admin facts
-  exist. Its guard rejects rollback otherwise.
+  exist. Its guard rejects rollback before any ACL change otherwise. A clean
+  rollback grants no compatibility projection mutation helper to `PUBLIC`,
+  ordinary Runtime or the legacy Worker.
 - **Application version:** close ingress/claim/dispatch first, drain, then roll
   back binaries compatible with schema 223. Never restore legacy non-SAFE
   execution.

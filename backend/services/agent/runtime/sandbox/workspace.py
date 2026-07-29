@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
+from .nsjail import SandboxWorkerIdentity
+
 
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceObject:
@@ -24,7 +26,10 @@ class WorkspaceObject:
 class SandboxWorkspaceStore:
     """Path authority retained by Worker composition, never by an Executor."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self, root: str | Path, *,
+        worker_identity: SandboxWorkerIdentity | None = None,
+    ) -> None:
         path = Path(root)
         if not path.is_absolute():
             raise ValueError("SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE")
@@ -45,6 +50,7 @@ class SandboxWorkspaceStore:
         ):
             raise ValueError("SANDBOX_WORKSPACE_ROOT_UNSAFE")
         self._root = path.resolve(strict=True)
+        self._worker_identity = worker_identity
 
     async def stage_code(
         self, *, action_id: str, attempt_id: str,
@@ -83,6 +89,9 @@ class SandboxWorkspaceStore:
         input_dir, output_dir = job_root / "input", job_root / "output"
         input_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
         output_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
+        self._secure_worker_directory(job_root)
+        self._secure_worker_directory(input_dir)
+        self._secure_worker_directory(output_dir)
         return input_dir, output_dir
 
     def materialize_inputs(
@@ -112,6 +121,7 @@ class SandboxWorkspaceStore:
             content = _safe_read(source)
             digest = hashlib.sha256(content).hexdigest()
             target = self._root / "objects" / "sha256" / digest
+            self._secure_worker_directory(target.parent)
             await _atomic_content_write(target, content)
             objects.append(WorkspaceObject(
                 reference=f"workspace-object:sha256:{digest}",
@@ -137,8 +147,10 @@ class SandboxWorkspaceStore:
             })
         quarantine = self._root / "quarantine" / _uuid(job_id)
         quarantine.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+        self._secure_worker_directory(quarantine.parent)
         if output_dir.exists() and not quarantine.exists():
             os.replace(output_dir, quarantine)
+        self._secure_worker_directory(quarantine)
         return tuple(manifests)
 
     def cleanup_job(self, job_id: str) -> bool:
@@ -158,6 +170,7 @@ class SandboxWorkspaceStore:
             checkpoint, ensure_ascii=False, sort_keys=True,
             separators=(",", ":"),
         ).encode()
+        self._secure_worker_directory(self._checkpoint_path(job_id).parent)
         await _atomic_content_write(self._checkpoint_path(job_id), encoded)
 
     def read_terminal_checkpoint(
@@ -192,6 +205,25 @@ class SandboxWorkspaceStore:
 
     def _checkpoint_path(self, job_id: str) -> Path:
         return self._root / "checkpoints" / f"{_uuid(job_id)}.json"
+
+    def _secure_worker_directory(self, path: Path) -> None:
+        identity = self._worker_identity
+        if identity is None:
+            return
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path, 0o700)
+        try:
+            os.chown(path, identity.uid, identity.gid)
+        except PermissionError as error:
+            raise ValueError("SANDBOX_WORKSPACE_OWNER_MISMATCH") from error
+        metadata = path.lstat()
+        if (
+            metadata.st_uid != identity.uid
+            or metadata.st_gid != identity.gid
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or stat.S_ISLNK(metadata.st_mode)
+        ):
+            raise ValueError("SANDBOX_WORKSPACE_OWNER_MISMATCH")
 
     def quarantined_job_ids(self) -> tuple[str, ...]:
         root = self._root / "quarantine"

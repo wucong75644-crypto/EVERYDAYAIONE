@@ -1603,5 +1603,9 @@ cache = client.caches.create(
   - Tool Confirmation V3 仅解决 PostgreSQL Authorization Interaction；
     PolicyReceipt 与 Dispatch Gate 是唯一执行门禁
   - Sandbox 固定 nsjail/rootfs/seccomp 哈希及 cgroup v2 上限，无裸 Python 降级
+  - Sandbox Linux合同以真实非root `everydayai-sandbox` 身份运行；jail内
+    65534:65534只映射到启动Worker的非root UID/GID，root启动失败关闭
+  - migration 223 clean rollback通过有效权限矩阵验证PUBLIC、普通Runtime和旧Worker
+    均不能取得compatibility projection mutation权限
   - 生产发布、灰度、告警和回滚合同见
     [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)

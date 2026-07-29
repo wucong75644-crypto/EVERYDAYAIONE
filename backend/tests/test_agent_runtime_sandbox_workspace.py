@@ -8,6 +8,7 @@ import pytest
 
 from services.agent.runtime.sandbox.workspace import SandboxWorkspaceStore
 from services.agent.runtime.sandbox.contracts import bounded_summary
+from services.agent.runtime.sandbox.nsjail import SandboxWorkerIdentity
 
 
 ACTION_ID = "11111111-1111-1111-1111-111111111111"
@@ -126,3 +127,22 @@ def test_workspace_root_allows_private_setgid_group_but_rejects_symlink(
     link.symlink_to(tmp_path, target_is_directory=True)
     with pytest.raises(ValueError, match="ROOT_UNSAFE"):
         SandboxWorkspaceStore(link)
+
+
+def test_worker_workspace_directories_match_captured_identity(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    if os.getuid() == 0 or os.getgid() == 0:
+        pytest.skip("non-root identity required")
+    monkeypatch.setenv("AGENT_RUNTIME_PROCESS_ROLE", "sandbox")
+    identity = SandboxWorkerIdentity.capture_current_process()
+    store = SandboxWorkspaceStore(
+        tmp_path.resolve(), worker_identity=identity,
+    )
+    input_dir, output_dir = store.prepare_job(JOB_ID)
+    for path in (input_dir.parent, input_dir, output_dir):
+        metadata = path.stat()
+        assert (metadata.st_uid, metadata.st_gid) == (
+            identity.uid, identity.gid,
+        )
+        assert metadata.st_mode & 0o777 == 0o700

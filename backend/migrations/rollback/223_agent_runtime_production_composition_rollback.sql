@@ -39,12 +39,13 @@ ALTER FUNCTION _agent_compat_project_completed_run_220_12(
  RENAME TO _agent_compat_project_completed_run;
 ALTER FUNCTION _agent_compat_project_run_220_12(agent_runtime_events,TEXT)
  RENAME TO _agent_compat_project_run;
-GRANT EXECUTE ON FUNCTION
+REVOKE EXECUTE ON FUNCTION
  _agent_compat_project_command(agent_runtime_events),
  _agent_compat_project_completed_run(
   agent_runs,agent_runtime_sessions,agent_session_commands,tasks),
  _agent_compat_project_run(agent_runtime_events,TEXT)
- TO PUBLIC;
+ FROM PUBLIC,everydayai_worker,everydayai_runtime,
+ everydayai_wecom_runtime,everydayai_sync,everydayai;
 DO $$
 DECLARE x RECORD;
 BEGIN
