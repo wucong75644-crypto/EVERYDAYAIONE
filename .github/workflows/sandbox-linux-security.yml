@@ -144,8 +144,10 @@ jobs:
             --log=/tmp/everydayai-sandbox-postgres.log start
           runtime_password=$(openssl rand -hex 24)
           sandbox_password=$(openssl rand -hex 24)
+          jwt_secret=$(openssl rand -hex 32)
           echo "::add-mask::$runtime_password"
           echo "::add-mask::$sandbox_password"
+          echo "::add-mask::$jwt_secret"
           "$pg_bin/createdb" -h 127.0.0.1 -p 55432 -U "$USER" \
             ar223_sandbox_daemon
           admin_url="postgresql://$USER@127.0.0.1:55432/ar223_sandbox_daemon"
@@ -159,6 +161,8 @@ jobs:
             echo "TENANT_DB_ADMIN_URL=$admin_url"
             echo "RUNTIME_DATABASE_URL=$runtime_url"
             echo "WORKER_DATABASE_URL=$worker_url"
+            echo "DATABASE_URL=$runtime_url"
+            echo "JWT_SECRET_KEY=$jwt_secret"
             echo "EVERYDAYAI_RUNTIME_PASSWORD=$runtime_password"
             echo "EVERYDAYAI_SANDBOX_WORKER_PASSWORD=$sandbox_password"
             echo "SANDBOX_E2E_PG_BIN=$pg_bin"
