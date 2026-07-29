@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            acl autoconf bison debootstrap flex g++ gcc git libcap-dev \
+            autoconf bison debootstrap flex g++ gcc git libcap-dev \
             libnl-route-3-dev libprotobuf-dev make pkg-config \
             protobuf-compiler python3-venv
 
@@ -114,14 +114,18 @@ jobs:
           sudo mkdir /tmp/everydayai-sandbox-worker
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /tmp/everydayai-sandbox-worker
-          sudo setfacl -R -m u:everydayai-sandbox:rX "$GITHUB_WORKSPACE"
+          sudo cp -a "$GITHUB_WORKSPACE" \
+            /tmp/everydayai-sandbox-worker/source
+          sudo chmod -R a+rX /tmp/everydayai-sandbox-worker/source
+          echo "SANDBOX_SECCOMP_POLICY=/tmp/everydayai-sandbox-worker/source/deploy/sandbox-job.policy" \
+            >> "$GITHUB_ENV"
           echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \
             >> "$GITHUB_ENV"
 
       - name: Run real nsjail contract
-        working-directory: backend
         run: |
           set -euo pipefail
+          cd /tmp/everydayai-sandbox-worker/source/backend
           python3 -m venv /tmp/everydayai-sandbox-test-venv
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
             pytest==8.3.4 pytest-asyncio==0.25.2
