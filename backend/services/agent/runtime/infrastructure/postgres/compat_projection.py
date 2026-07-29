@@ -21,7 +21,7 @@ class PostgresCompatibilityProjection:
 
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
-        if scope is None or scope.access_kind is not DatabaseAccessKind.WORKER:
+        if scope is None or scope.access_kind is not DatabaseAccessKind.PROJECTION:
             raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
         self._database = database
         self._resolver = PostgresProjectionOutbox(database)

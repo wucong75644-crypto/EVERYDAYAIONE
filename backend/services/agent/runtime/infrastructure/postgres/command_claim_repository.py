@@ -43,7 +43,7 @@ class PostgresCommandClaimRepository:
 
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
-        if scope is None or scope.access_kind is not DatabaseAccessKind.WORKER:
+        if scope is None or scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
             raise ValueError("WORKER_DATABASE_SCOPE_REQUIRED")
         self._database = database
 

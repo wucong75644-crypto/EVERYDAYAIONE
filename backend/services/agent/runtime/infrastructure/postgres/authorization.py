@@ -34,20 +34,27 @@ _PERMANENT = {
     "scope_mismatch",
     "executor_revision_conflict",
     "action_not_dispatchable",
+    "dispatch_gate_disabled",
 }
 
 
 class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
-        if scope is None or scope.access_kind is not DatabaseAccessKind.WORKER:
-            raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
+        if scope is None or scope.access_kind not in {
+            DatabaseAccessKind.AGENT_RUNTIME,
+            DatabaseAccessKind.AUTHORIZATION,
+        }:
+            raise ValueError("AUTHORIZATION_SCOPED_DATABASE_CLIENT_REQUIRED")
+        self._access_kind = scope.access_kind
         self._database = database
 
     async def gate(
         self, *, snapshot: ActionDispatchSnapshot,
         descriptor: ExecutorDescriptor,
     ) -> DispatchGateReceipt:
+        if self._access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
+            raise PermissionError("AGENT_RUNTIME_DISPATCH_GATE_REQUIRED")
         action = snapshot.action
         attempt = snapshot.attempt
         receipt_id = _receipt_id(action)
@@ -91,6 +98,7 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
     async def claim_recovery(
         self, *, worker_id: str, lease_seconds: int = 120,
     ) -> AuthorizationRecoveryClaim | None:
+        self._require_recovery_owner()
         response = await self._database.rpc(
             "claim_next_agent_authorization_recovery", {
                 "p_worker_id": worker_id,
@@ -121,6 +129,7 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
     ) -> PolicyReceiptRecord:
         action = claim.action
         grant = claim.grant
+        self._require_recovery_owner()
         response = await self._database.rpc(
             "record_agent_policy_receipt", {
                 "p_action_id": _text(action, "id"),
@@ -151,6 +160,7 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
         self, *, claim: AuthorizationRecoveryClaim,
         receipt: PolicyReceiptRecord,
     ) -> None:
+        self._require_recovery_owner()
         action = claim.action
         response = await self._database.rpc(
             "activate_agent_authorized_action", {
@@ -169,6 +179,10 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
             raise RuntimeError(
                 f"AUTHORIZATION_ACTIVATE_{row.get('outcome')}",
             )
+
+    def _require_recovery_owner(self) -> None:
+        if self._access_kind is not DatabaseAccessKind.AUTHORIZATION:
+            raise PermissionError("AUTHORIZATION_RECOVERY_OWNER_REQUIRED")
 
 
 def _receipt_id(action: Mapping[str, object]) -> str:

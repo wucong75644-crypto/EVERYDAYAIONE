@@ -214,13 +214,28 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             "get_kuaimai_viperp_bundle",
         )
 
+    async def agent_runtime_ai(
+        self, bundle_name: str, params: Mapping[str, object],
+    ) -> ResolvedConfigurationBundle:
+        if bundle_name not in {
+            "ai.provider.dashscope", "ai.provider.openrouter",
+            "ai.provider.kie", "ai.provider.google",
+        }:
+            raise ConfigurationResolutionError("CONFIG_BUNDLE_UNKNOWN")
+        return await self._resolve_async(
+            bundle_name, "get_agent_runtime_ai_bundle", params,
+        )
+
     async def _resolve_async(
         self,
         bundle_name: str,
         rpc_name: str,
+        params: Mapping[str, object] | None = None,
     ) -> ResolvedConfigurationBundle:
         try:
-            response = await self._db.rpc(rpc_name).execute()
+            response = await self._db.rpc(
+                rpc_name, dict(params) if params is not None else None,
+            ).execute()
         except Exception as error:
             raise ConfigurationResolutionError(
                 self._database_error_code(error)
