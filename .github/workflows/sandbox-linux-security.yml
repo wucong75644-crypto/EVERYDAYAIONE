@@ -1,4 +1,5 @@
 name: Sandbox Linux security contract
+run-name: Sandbox Linux security contract @ ${{ github.sha }}
 
 on:
   workflow_dispatch:
