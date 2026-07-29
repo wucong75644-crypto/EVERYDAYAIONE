@@ -12,6 +12,12 @@ on:
       - "backend/migrations/223_agent_runtime_production_composition.sql"
       - "backend/migrations/rollback/223_agent_runtime_production_composition_rollback.sql"
       - "backend/services/agent/runtime/sandbox/**"
+      - "backend/agent_runtime_worker_main.py"
+      - "backend/tests/agent_runtime_sandbox_daemon_e2e.py"
+      - "backend/tests/test_agent_runtime_sandbox_daemon_contract.py"
+      - "backend/tests/test_agent_runtime_production_composition_postgres_external.py"
+      - "deploy/bootstrap-agent-runtime-roles.sh"
+      - "deploy/setup-tenant-db-roles.sh"
       - "backend/tests/test_agent_runtime_sandbox_linux_external.py"
       - "deploy/everydayai-sandbox-worker.service"
       - "deploy/preflight-agent-runtime-release.sh"
@@ -29,7 +35,7 @@ concurrency:
 jobs:
   linux-isolation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
       NSJAIL_COMMIT: 079d70dda4aa1edd9512cfd25ff1e47e316dc355
       SANDBOX_ROOTFS: /tmp/everydayai-sandbox-rootfs
@@ -55,7 +61,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             autoconf bison debootstrap flex g++ gcc git libcap-dev \
             libnl-route-3-dev libprotobuf-dev make pkg-config \
-            protobuf-compiler python3-venv
+            postgresql postgresql-client protobuf-compiler python3-venv
 
       - name: Build pinned nsjail
         run: |
@@ -123,6 +129,104 @@ jobs:
           echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \
             >> "$GITHUB_ENV"
 
+      - name: Build daemon test environment
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/everydayai-sandbox-daemon-venv
+          /tmp/everydayai-sandbox-daemon-venv/bin/pip install \
+            -r backend/requirements.txt
+          pg_bin=$(pg_config --bindir)
+          pg_data=/tmp/everydayai-sandbox-postgres
+          "$pg_bin/initdb" --auth-local=trust --auth-host=trust \
+            --username="$USER" --pgdata="$pg_data"
+          "$pg_bin/pg_ctl" --pgdata="$pg_data" \
+            --options="-h 127.0.0.1 -p 55432" \
+            --log=/tmp/everydayai-sandbox-postgres.log start
+          runtime_password=$(openssl rand -hex 24)
+          sandbox_password=$(openssl rand -hex 24)
+          echo "::add-mask::$runtime_password"
+          echo "::add-mask::$sandbox_password"
+          "$pg_bin/createdb" -h 127.0.0.1 -p 55432 -U "$USER" \
+            ar223_sandbox_daemon
+          admin_url="postgresql://$USER@127.0.0.1:55432/ar223_sandbox_daemon"
+          runtime_url="postgresql://everydayai_runtime:$runtime_password@127.0.0.1:55432/ar223_sandbox_daemon"
+          worker_url="postgresql://everydayai_sandbox_worker:$sandbox_password@127.0.0.1:55432/ar223_sandbox_daemon"
+          echo "::add-mask::$admin_url"
+          echo "::add-mask::$runtime_url"
+          echo "::add-mask::$worker_url"
+          {
+            echo "AR223_TEST_DATABASE_URL=$admin_url"
+            echo "TENANT_DB_ADMIN_URL=$admin_url"
+            echo "RUNTIME_DATABASE_URL=$runtime_url"
+            echo "WORKER_DATABASE_URL=$worker_url"
+            echo "EVERYDAYAI_RUNTIME_PASSWORD=$runtime_password"
+            echo "EVERYDAYAI_SANDBOX_WORKER_PASSWORD=$sandbox_password"
+            echo "SANDBOX_E2E_PG_BIN=$pg_bin"
+            echo "SANDBOX_E2E_PG_DATA=$pg_data"
+          } >> "$GITHUB_ENV"
+          for name in CONFIG_IMPORT_READER MIGRATOR SYNC WECOM_RUNTIME WORKER \
+            AGENT_RUNTIME_WORKER PROJECTION_WORKER AUTHORIZATION_WORKER \
+            RUNTIME_ADMIN; do
+            value=$(openssl rand -hex 24)
+            echo "::add-mask::$value"
+            echo "EVERYDAYAI_${name}_PASSWORD=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Apply real migrations through 223 and bootstrap roles
+        run: |
+          set -euo pipefail
+          deploy/setup-tenant-db-roles.sh
+          deploy/bootstrap-agent-runtime-roles.sh
+          cd backend
+          RUN_AR223_DB_TEST=1 \
+            /tmp/everydayai-sandbox-daemon-venv/bin/python -m pytest \
+            -q --tb=short -p no:warnings -p testing.pytest_policy \
+            -m external \
+            tests/test_agent_runtime_production_composition_postgres_external.py
+
+      - name: Prepare daemon lifecycle facts
+        run: |
+          set -euo pipefail
+          cd backend
+          export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
+          sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
+            tests/agent_runtime_sandbox_daemon_e2e.py prepare
+          sandbox_uid=$(id -u everydayai-sandbox)
+          sandbox_gid=$(id -g everydayai-sandbox)
+          sudo chown -R "$sandbox_uid:$sandbox_gid" "$SANDBOX_JOB_ROOT"
+
+      - name: Run real Sandbox Worker daemon lifecycle
+        run: |
+          set -euo pipefail
+          export AGENT_RUNTIME_PROCESS_ROLE=sandbox
+          export AGENT_RUNTIME_WORKER_ID=sandbox-daemon-e2e
+          export AGENT_RUNTIME_RELEASE_REVISION="$GITHUB_SHA"
+          export AGENT_RUNTIME_HEALTH_SOCKET=/tmp/everydayai-sandbox-worker/daemon.sock
+          export AGENT_RUNTIME_POLL_INTERVAL_SECONDS=0.1
+          export AGENT_RUNTIME_HEARTBEAT_SECONDS=1
+          export SANDBOX_ROOTFS_MANIFEST SANDBOX_ROOTFS_SHA256
+          export SANDBOX_NSJAIL_PATH SANDBOX_NSJAIL_SHA256
+          export SANDBOX_SECCOMP_POLICY SANDBOX_SECCOMP_SHA256
+          export SANDBOX_CGROUP_V2_MOUNT SANDBOX_JOB_ROOT SANDBOX_ROOTFS
+          export SANDBOX_PYTHON_PATH=/usr/bin/python3
+          export SANDBOX_WORKER_CONCURRENCY=1
+          export SANDBOX_PARTIAL_RETENTION_SECONDS=86400
+          export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
+          export SANDBOX_DAEMON_PYTHON=/tmp/everydayai-sandbox-daemon-venv/bin/python
+          export ENVIRONMENT=test
+          cd /tmp/everydayai-sandbox-worker/source/backend
+          sudo runuser --preserve-environment -u everydayai-sandbox -- \
+            /tmp/everydayai-sandbox-daemon-venv/bin/python \
+            tests/agent_runtime_sandbox_daemon_e2e.py exercise
+
+      - name: Verify role matrix and remove database facts
+        run: |
+          set -euo pipefail
+          cd backend
+          export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
+          sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
+            tests/agent_runtime_sandbox_daemon_e2e.py verify
+
       - name: Run real nsjail contract
         run: |
           set -euo pipefail
@@ -175,10 +279,18 @@ jobs:
           sudo rm -rf \
             "$SANDBOX_ROOTFS" \
             /tmp/everydayai-sandbox-test-venv \
+            /tmp/everydayai-sandbox-daemon-venv \
             /tmp/nsjail \
             /tmp/everydayai-sandbox-worker \
             "$SANDBOX_ROOTFS_MANIFEST"
           sudo rm -f "$SANDBOX_HOST_MARKER"
           sudo rmdir /sys/fs/cgroup/everydayai-sandbox-contract
+          if test -n "${SANDBOX_E2E_PG_BIN:-}" \
+            && test -d "${SANDBOX_E2E_PG_DATA:-/nonexistent}"; then
+            "$SANDBOX_E2E_PG_BIN/pg_ctl" \
+              --pgdata="$SANDBOX_E2E_PG_DATA" --mode=immediate stop
+            rm -rf "$SANDBOX_E2E_PG_DATA"
+          fi
+          rm -f /tmp/everydayai-sandbox-postgres.log
           test ! -e "$SANDBOX_ROOTFS"
           exit "$residue"
