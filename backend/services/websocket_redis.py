@@ -229,7 +229,10 @@ class RedisPubSubMixin:
                 if await self.send_to_connection(conn_id, message):
                     delivered += 1
 
-        ack_key = data.get("delivery_ack_key")
+        await self._ack_delivery(data.get("delivery_ack_key"), delivered)
+
+    async def _ack_delivery(self, ack_key: object, delivered: int) -> None:
+        """Acknowledge only bounded confirmation-delivery keys."""
         if (
             delivered > 0
             and isinstance(ack_key, str)

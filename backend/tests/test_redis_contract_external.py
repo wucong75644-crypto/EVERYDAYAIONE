@@ -8,7 +8,7 @@ import pytest
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError, ResponseError, TimeoutError
 
-from tests.redis_external import RedisExternalHarness, redis_external  # noqa: F401
+from tests.redis_external import RedisExternalHarness
 from services.tool_confirmation.redis_store import (
     ToolConfirmationRedisStore, hash_waiter_token,
 )
@@ -16,6 +16,7 @@ from services.tool_confirmation.types import ConfirmationBinding
 
 
 pytestmark = pytest.mark.external
+pytest_plugins = ("tests.redis_external",)
 
 _CAS_SCRIPT = """
 local state = redis.call("HGET", KEYS[1], "state")

@@ -18,7 +18,6 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from loguru import logger
 
 from config.kie_models import calculate_image_cost
 from core.exceptions import InsufficientCreditsError

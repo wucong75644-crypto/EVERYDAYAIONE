@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,39 +12,64 @@ import shutil
 import sys
 import tempfile
 from types import ModuleType
+from types import SimpleNamespace
+from typing import Iterator
 
 import pytest
-
-
-_BACKEND_ROOT = Path(__file__).resolve().parents[1]
-for _package, _path in (
-    ("services", _BACKEND_ROOT / "services"),
-    ("services.agent", _BACKEND_ROOT / "services" / "agent"),
-    ("services.agent.runtime", _BACKEND_ROOT / "services" / "agent" / "runtime"),
-    (
-        "services.agent.runtime.sandbox",
-        _BACKEND_ROOT / "services" / "agent" / "runtime" / "sandbox",
-    ),
-):
-    _module = ModuleType(_package)
-    _module.__path__ = [str(_path)]
-    sys.modules[_package] = _module
-
-from services.agent.runtime.sandbox.contracts import SandboxResourceLimits
-from services.agent.runtime.sandbox.launcher import (
-    IsolationProbe,
-    SandboxLaunchRequest,
-)
-from services.agent.runtime.sandbox.nsjail import NsJailSubprocessLauncher
 
 
 pytestmark = pytest.mark.external
 
 
-@pytest.fixture
-def linux_contract():
+@contextmanager
+def _isolated_sandbox_modules() -> Iterator[ModuleType]:
+    """Load the Linux launcher without importing or replacing production packages."""
+    sandbox_root = (
+        Path(__file__).resolve().parents[1]
+        / "services" / "agent" / "runtime" / "sandbox"
+    )
+    package_name = "_agent_runtime_linux_contract"
+    package = ModuleType(package_name)
+    package.__path__ = [str(sandbox_root)]
+    loaded = [package_name]
+    sys.modules[package_name] = package
+    try:
+        for module_name in ("contracts", "launcher", "nsjail"):
+            qualified_name = f"{package_name}.{module_name}"
+            spec = importlib.util.spec_from_file_location(
+                qualified_name,
+                sandbox_root / f"{module_name}.py",
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError("SANDBOX_LINUX_CONTRACT_LOAD_FAILED")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[qualified_name] = module
+            loaded.append(qualified_name)
+            spec.loader.exec_module(module)
+        contracts = sys.modules[f"{package_name}.contracts"]
+        launcher = sys.modules[f"{package_name}.launcher"]
+        nsjail = sys.modules[f"{package_name}.nsjail"]
+        yield SimpleNamespace(
+            IsolationProbe=launcher.IsolationProbe,
+            NsJailSubprocessLauncher=nsjail.NsJailSubprocessLauncher,
+            SandboxLaunchRequest=launcher.SandboxLaunchRequest,
+            SandboxResourceLimits=contracts.SandboxResourceLimits,
+        )
+    finally:
+        for module_name in reversed(loaded):
+            sys.modules.pop(module_name, None)
+
+
+@pytest.fixture(scope="module")
+def linux_api():
     if os.getenv("RUN_SANDBOX_LINUX_EXTERNAL_TESTS") != "1":
         pytest.skip("explicit Linux external contract opt-in is required")
+    with _isolated_sandbox_modules() as api:
+        yield api
+
+
+@pytest.fixture
+def linux_contract(linux_api):
     if os.geteuid() != 0:
         pytest.fail("SANDBOX_LINUX_EXTERNAL_ROOT_REQUIRED")
     rootfs = Path(os.environ["SANDBOX_ROOTFS"]).resolve()
@@ -54,14 +81,14 @@ def linux_contract():
     contract_root.chmod(0o755)
     marker.write_text("must-not-be-visible", encoding="utf-8")
     try:
-        yield rootfs, policy, marker, contract_root
+        yield linux_api, rootfs, policy, marker, contract_root
     finally:
         marker.unlink(missing_ok=True)
         shutil.rmtree(contract_root, ignore_errors=True)
 
 
-def _launcher(rootfs: Path, policy: Path) -> NsJailSubprocessLauncher:
-    return NsJailSubprocessLauncher(
+def _launcher(api, rootfs: Path, policy: Path):
+    return api.NsJailSubprocessLauncher(
         rootfs=rootfs,
         python_path="/usr/bin/python3",
         seccomp_policy=policy,
@@ -70,29 +97,30 @@ def _launcher(rootfs: Path, policy: Path) -> NsJailSubprocessLauncher:
 
 
 def _request(
+    api,
     tmp_path: Path,
     *,
     job_id: str,
     code: str,
     limits: dict[str, int] | None = None,
-) -> SandboxLaunchRequest:
+):
     input_dir = tmp_path / job_id / "input"
     output_dir = tmp_path / job_id / "output"
     input_dir.mkdir(parents=True)
     output_dir.mkdir()
     os.chown(output_dir, 65534, 65534)
     output_dir.chmod(0o700)
-    return SandboxLaunchRequest(
+    return api.SandboxLaunchRequest(
         job_id=job_id,
         code=code.encode("utf-8"),
         input_dir=input_dir,
         output_dir=output_dir,
-        limits=SandboxResourceLimits.from_request(limits),
+        limits=api.SandboxResourceLimits.from_request(limits),
     )
 
 
-def test_linux_probe_requires_real_nsjail_and_cgroup_v2() -> None:
-    probe = IsolationProbe.inspect()
+def test_linux_probe_requires_real_nsjail_and_cgroup_v2(linux_api) -> None:
+    probe = linux_api.IsolationProbe.inspect()
     assert probe.ready, probe.code
     assert probe.nsjail_path
     assert probe.cgroup_root == "/sys/fs/cgroup"
@@ -102,7 +130,7 @@ def test_linux_probe_requires_real_nsjail_and_cgroup_v2() -> None:
 async def test_nsjail_blocks_host_network_and_readonly_input(
     linux_contract,
 ) -> None:
-    rootfs, policy, marker, tmp_path = linux_contract
+    api, rootfs, policy, marker, tmp_path = linux_contract
     code = f"""
 import json
 import os
@@ -135,11 +163,11 @@ pathlib.Path("/job/output/result.json").write_text(
 print(json.dumps(observed, sort_keys=True))
 """
     request = _request(
-        tmp_path,
+        api, tmp_path,
         job_id="11111111-1111-1111-1111-111111111111",
         code=code,
     )
-    process = await _launcher(rootfs, policy).launch(request)
+    process = await _launcher(api, rootfs, policy).launch(request)
     result = await process.wait()
     assert result.outcome == "succeeded", result.stderr.decode(errors="replace")
     observed = json.loads((request.output_dir / "result.json").read_text())
@@ -156,9 +184,9 @@ print(json.dumps(observed, sort_keys=True))
 
 @pytest.mark.asyncio
 async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
-    rootfs, policy, _, tmp_path = linux_contract
+    api, rootfs, policy, _, tmp_path = linux_contract
     request = _request(
-        tmp_path,
+        api, tmp_path,
         job_id="22222222-2222-2222-2222-222222222222",
         code=(
             "import time\n"
@@ -171,7 +199,7 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
         ),
         limits={"memory_bytes": 64 * 1024 * 1024},
     )
-    process = await _launcher(rootfs, policy).launch(request)
+    process = await _launcher(api, rootfs, policy).launch(request)
     wait_task = asyncio.create_task(process.wait())
     for _ in range(50):
         if wait_task.done() or (request.output_dir / "memory-ready").exists():
@@ -195,9 +223,9 @@ async def test_nsjail_memory_limit_is_enforced(linux_contract) -> None:
 
 @pytest.mark.asyncio
 async def test_nsjail_cancel_terminates_process_tree(linux_contract) -> None:
-    rootfs, policy, _, tmp_path = linux_contract
+    api, rootfs, policy, _, tmp_path = linux_contract
     request = _request(
-        tmp_path,
+        api, tmp_path,
         job_id="33333333-3333-3333-3333-333333333333",
         code=(
             "import subprocess, time\n"
@@ -207,7 +235,7 @@ async def test_nsjail_cancel_terminates_process_tree(linux_contract) -> None:
         ),
         limits={"timeout_seconds": 45},
     )
-    process = await _launcher(rootfs, policy).launch(request)
+    process = await _launcher(api, rootfs, policy).launch(request)
     await asyncio.sleep(0.2)
     assert await process.prove_terminated() is False
     wait_task = asyncio.create_task(process.wait())

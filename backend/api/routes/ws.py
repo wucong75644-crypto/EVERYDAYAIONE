@@ -149,6 +149,49 @@ async def _heartbeat_loop(conn_id: str, websocket: WebSocket):
         pass
 
 
+async def _handle_tool_confirm_response(
+    *, conn_id: str, payload: dict, user_id: str, org_id: str | None,
+) -> None:
+    confirmation_id = payload.get("confirmation_id")
+    if not confirmation_id or "approved" not in payload:
+        code = (
+            "TOOL_CONFIRM_PROTOCOL_OBSOLETE"
+            if payload.get("tool_call_id") else "MALFORMED_TOOL_CONFIRM_RESPONSE"
+        )
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "Tool confirmation response was rejected", code=code,
+        ))
+        return
+    from pydantic import ValidationError
+    from schemas.websocket import ToolConfirmResponsePayload
+    try:
+        response = ToolConfirmResponsePayload.model_validate(payload)
+    except ValidationError:
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "Tool confirmation response was rejected",
+            code="MALFORMED_TOOL_CONFIRM_RESPONSE",
+        ))
+        return
+    try:
+        from services.tool_confirmation import tool_confirmation_service
+        result = await tool_confirmation_service.consume_response(
+            confirmation_id=response.confirmation_id, user_id=user_id,
+            org_id=org_id, approved=response.approved,
+        )
+        if result.startswith("WON:"):
+            ws_manager.forget_confirmation_delivery(response.confirmation_id)
+    except Exception as exc:
+        result = "CONFIRMATION_UNAVAILABLE"
+        logger.warning(
+            "tool_confirm_response_failed | error_code=CONFIRMATION_UNAVAILABLE | "
+            f"exception_type={type(exc).__name__}"
+        )
+    if not result.startswith("WON:"):
+        await ws_manager.send_to_connection(conn_id, build_error(
+            "Tool confirmation response was rejected", code=result,
+        ))
+
+
 async def _handle_message(
     conn_id: str,
     user_id: str,
@@ -184,46 +227,9 @@ async def _handle_message(
             logger.info(f"Task unsubscribed | conn={conn_id} | task={task_id}")
 
     elif msg_type == WSMessageType.TOOL_CONFIRM_RESPONSE.value:
-        confirmation_id = payload.get("confirmation_id")
-        if not confirmation_id or "approved" not in payload:
-            code = (
-                "TOOL_CONFIRM_PROTOCOL_OBSOLETE"
-                if payload.get("tool_call_id") else "MALFORMED_TOOL_CONFIRM_RESPONSE"
-            )
-            await ws_manager.send_to_connection(conn_id, build_error(
-                "Tool confirmation response was rejected", code=code,
-            ))
-            return
-        from pydantic import ValidationError
-        from schemas.websocket import ToolConfirmResponsePayload
-        try:
-            response = ToolConfirmResponsePayload.model_validate(payload)
-        except ValidationError:
-            await ws_manager.send_to_connection(conn_id, build_error(
-                "Tool confirmation response was rejected",
-                code="MALFORMED_TOOL_CONFIRM_RESPONSE",
-            ))
-            return
-        try:
-            from services.tool_confirmation import tool_confirmation_service
-            result = await tool_confirmation_service.consume_response(
-                confirmation_id=response.confirmation_id, user_id=user_id,
-                org_id=org_id, approved=response.approved,
-            )
-            if result.startswith("WON:"):
-                ws_manager.forget_confirmation_delivery(
-                    response.confirmation_id,
-                )
-        except Exception as exc:
-            result = "CONFIRMATION_UNAVAILABLE"
-            logger.warning(
-                "tool_confirm_response_failed | error_code=CONFIRMATION_UNAVAILABLE | "
-                f"exception_type={type(exc).__name__}"
-            )
-        if not result.startswith("WON:"):
-            await ws_manager.send_to_connection(conn_id, build_error(
-                "Tool confirmation response was rejected", code=result,
-            ))
+        await _handle_tool_confirm_response(
+            conn_id=conn_id, payload=payload, user_id=user_id, org_id=org_id,
+        )
 
     elif msg_type == WSMessageType.USER_STEER.value:
         await _handle_user_steer(

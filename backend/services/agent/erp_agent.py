@@ -6,7 +6,6 @@ import time as _time
 from dataclasses import dataclass
 from typing import Any, Optional, TYPE_CHECKING
 
-from loguru import logger
 
 if TYPE_CHECKING:
     from services.agent.execution_budget import ExecutionBudget

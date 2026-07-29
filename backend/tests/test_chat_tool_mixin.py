@@ -15,7 +15,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
-from tests.tool_confirmation_fixtures import mock_v3_confirmation  # noqa: F401
+pytest_plugins = ("tests.tool_confirmation_fixtures",)
 
 
 # ============================================================
@@ -208,7 +208,6 @@ class TestAccumulateToolCallDelta:
 
     def test_single_complete_delta(self):
         """单个完整的 tool_call delta"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -222,7 +221,6 @@ class TestAccumulateToolCallDelta:
 
     def test_incremental_arguments(self):
         """arguments 增量拼接"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -241,7 +239,6 @@ class TestAccumulateToolCallDelta:
 
     def test_multiple_tools(self):
         """多个工具同时累积"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -256,15 +253,12 @@ class TestAccumulateToolCallDelta:
 
     def test_empty_deltas(self):
         """空 deltas 列表→acc 不变"""
-        from services.handlers.chat_handler import ChatHandler
-
         acc = {}
         accumulate_tool_call_delta(acc, [])
         assert len(acc) == 0
 
     def test_none_fields_ignored(self):
         """None 字段不覆盖已有值"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}

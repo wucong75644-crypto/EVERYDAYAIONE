@@ -80,31 +80,49 @@ class ToolConfirmationService:
                 type(exc).__name__,
             )
 
+    async def _cancel(
+        self, request: ConfirmationRequest,
+    ) -> ConfirmationDecision:
+        await self.store.consume(
+            request.confirmation_id, request.binding,
+            request.binding.user_id, request.binding.org_id, False,
+        )
+        return ConfirmationDecision(
+            ConfirmationOutcome.CANCELLED, "TASK_CANCELLED",
+        )
+
+    async def _wait_for_terminal(
+        self, request: ConfirmationRequest,
+        is_cancelled: Callable[[], bool] | None,
+    ) -> Mapping[str, str] | ConfirmationDecision:
+        deadline = time.monotonic() + 60
+        record: Mapping[str, str] = {}
+        while time.monotonic() < deadline:
+            if is_cancelled and is_cancelled():
+                return await self._cancel(request)
+            record = await self.store.read(
+                request.confirmation_id, request.binding,
+            )
+            if record.get("state") != "PENDING":
+                break
+            await self.store.wait_signal(
+                request.confirmation_id, request.binding, timeout=1,
+            )
+        if not record or record.get("state") == "PENDING":
+            await self.store.expire(request.confirmation_id, request.binding)
+            record = await self.store.read(
+                request.confirmation_id, request.binding,
+            )
+        return record
+
     async def await_and_claim(
         self, request: ConfirmationRequest,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> ConfirmationDecision:
         try:
-            deadline = time.monotonic() + 60
-            record: Mapping[str, str] = {}
-            while time.monotonic() < deadline:
-                if is_cancelled and is_cancelled():
-                    await self.store.consume(
-                        request.confirmation_id, request.binding,
-                        request.binding.user_id, request.binding.org_id, False,
-                    )
-                    return ConfirmationDecision(
-                        ConfirmationOutcome.CANCELLED, "TASK_CANCELLED",
-                    )
-                record = await self.store.read(request.confirmation_id, request.binding)
-                if record.get("state") != "PENDING":
-                    break
-                await self.store.wait_signal(
-                    request.confirmation_id, request.binding, timeout=1,
-                )
-            if not record or record.get("state") == "PENDING":
-                await self.store.expire(request.confirmation_id, request.binding)
-                record = await self.store.read(request.confirmation_id, request.binding)
+            record = await self._wait_for_terminal(request, is_cancelled)
+            if isinstance(record, ConfirmationDecision):
+                return record
             if not _matches(record, request.binding, request.confirmation_id):
                 return ConfirmationDecision(
                     ConfirmationOutcome.REJECTED, "BINDING_MISMATCH",
@@ -119,13 +137,7 @@ class ToolConfirmationService:
                     outcome, f"TERMINAL_{record.get('state', 'UNKNOWN')}",
                 )
             if is_cancelled and is_cancelled():
-                await self.store.consume(
-                    request.confirmation_id, request.binding,
-                    request.binding.user_id, request.binding.org_id, False,
-                )
-                return ConfirmationDecision(
-                    ConfirmationOutcome.CANCELLED, "TASK_CANCELLED",
-                )
+                return await self._cancel(request)
             claim = await self.store.claim(
                 request.confirmation_id, request.binding,
                 hash_waiter_token(request.waiter_token),

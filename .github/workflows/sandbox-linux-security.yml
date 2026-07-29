@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feature/agent-runtime-ar-16-phase2-executors
+      - codex/agent-runtime-final-integration
     paths:
       - ".github/workflows/sandbox-linux-security.yml"
       - "backend/services/agent/runtime/sandbox/**"

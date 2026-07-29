@@ -16,6 +16,13 @@ from loguru import logger
 class FileDeleteMixin:
     """文件删除 + 恢复工具 Mixin"""
 
+    def _log_file_operation(self, tool: str, error_code: str) -> None:
+        logger.info(
+            "file_operation_completed | "
+            f"tool={tool} | user_id={self.user_id} | "
+            f"org_id={self.org_id or ''} | error_code={error_code}"
+        )
+
     # ================================================================
     # file_delete：从共享缓存取精确路径 + 物理删除 + 记录 deleted_files
     # ================================================================
@@ -93,11 +100,7 @@ class FileDeleteMixin:
 
             os.remove(abs_path)
             deleted.append((name, abs_path))
-            logger.info(
-                "file_operation_completed | tool=file_delete | "
-                f"user_id={self.user_id} | org_id={self.org_id or ''} | "
-                "error_code=NONE"
-            )
+            self._log_file_operation("file_delete", "NONE")
 
         # 记录到 deleted_files 表（fire-and-forget）
         if deleted:
@@ -187,11 +190,7 @@ class FileDeleteMixin:
         # 标记 deleted_files 记录为已恢复
         await self._mark_restored(record["id"])
 
-        logger.info(
-            "file_operation_completed | tool=restore_file | "
-            f"user_id={self.user_id} | org_id={self.org_id or ''} | "
-            "error_code=NONE"
-        )
+        self._log_file_operation("restore_file", "NONE")
 
         return AgentResult(
             summary=f"已恢复「{filename}」到 {rel_path}",

@@ -19,13 +19,12 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from dataclasses import dataclass
 from typing import List, Optional
 
 from services.agent.scheduled_task_agent import (
     ScheduledTaskAgent,
-    ScheduledTaskResult,
     MAX_SCHEDULED_TURNS,
 )
 
@@ -207,18 +206,21 @@ class TestExecuteHappyPath:
 
     @pytest.mark.asyncio
     async def test_multi_turn_tool_calling(self):
-        """多轮工具调用：先调 erp_agent，再合成最终回复"""
+        """多轮工具调用：先调安全知识查询，再合成最终回复"""
         adapter = FakeAdapter([
-            # 第 1 轮：调 erp_agent
+            # 第 1 轮：调无需交互确认的安全工具
             {
                 "text": "",
-                "tool_calls": [{"id": "c1", "name": "erp_agent", "args": '{"query":"销售"}'}],
+                "tool_calls": [{
+                    "id": "c1", "name": "search_knowledge",
+                    "args": '{"query":"销售"}',
+                }],
             },
             # 第 2 轮：基于工具结果合成最终回复
             {"text": "昨日销售: A店 5万, B店 7万", "tool_calls": []},
         ])
         executor = FakeToolExecutor(results={
-            "erp_agent": "A店 5万, B店 7万",
+            "search_knowledge": "A店 5万, B店 7万",
         })
 
         with patch("config.phase_tools.build_domain_tools", return_value=[]), \
@@ -230,9 +232,9 @@ class TestExecuteHappyPath:
 
         assert result.status == "success"
         assert "A店" in result.text
-        assert result.tools_called == ["erp_agent"]
+        assert result.tools_called == ["search_knowledge"]
         assert result.turns_used == 2
-        assert executor.calls[0][0] == "erp_agent"
+        assert executor.calls[0][0] == "search_knowledge"
 
     @pytest.mark.asyncio
     async def test_extract_emit_payloads_from_sandbox_output(self):
