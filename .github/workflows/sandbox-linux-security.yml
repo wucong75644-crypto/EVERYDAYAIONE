@@ -140,7 +140,7 @@ jobs:
           "$pg_bin/initdb" --auth-local=trust --auth-host=trust \
             --username="$USER" --pgdata="$pg_data"
           "$pg_bin/pg_ctl" --pgdata="$pg_data" \
-            --options="-h 127.0.0.1 -p 55432" \
+            --options="-h 127.0.0.1 -p 55432 -k /tmp" \
             --log=/tmp/everydayai-sandbox-postgres.log start
           runtime_password=$(openssl rand -hex 24)
           sandbox_password=$(openssl rand -hex 24)
