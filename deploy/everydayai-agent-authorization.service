@@ -1,0 +1,28 @@
+[Unit]
+Description=EVERYDAYAIONE Agent Authorization Recovery Worker
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=everydayai-agent-authorization
+Group=everydayai-app
+WorkingDirectory=/var/www/everydayai/backend
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
+Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/authorization"
+EnvironmentFile=/etc/everydayai/agent-authorization-worker.env
+ExecStartPre=/var/www/everydayai/deploy/runtime-capability-probe.sh authorization
+ExecStart=/var/www/everydayai/backend/venv/bin/python agent_runtime_worker_main.py
+RuntimeDirectory=everydayai-agent-authorization
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=300
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/everydayai-agent-authorization /var/log/everydayai
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

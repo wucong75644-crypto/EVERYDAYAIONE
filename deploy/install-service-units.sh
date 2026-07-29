@@ -14,6 +14,10 @@ services=(
     everydayai-sync
     everydayai-wecom
     everydayai-conversation-actor
+    everydayai-agent-runtime
+    everydayai-agent-projection
+    everydayai-agent-authorization
+    everydayai-sandbox-worker
 )
 for service in "${services[@]}"; do
     source_unit="${deploy_dir}/${service}.service"

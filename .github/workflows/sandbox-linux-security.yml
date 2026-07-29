@@ -25,7 +25,10 @@ jobs:
     env:
       NSJAIL_COMMIT: 079d70dda4aa1edd9512cfd25ff1e47e316dc355
       SANDBOX_ROOTFS: /tmp/everydayai-sandbox-rootfs
-      SANDBOX_SECCOMP_POLICY: /tmp/everydayai-sandbox.policy
+      SANDBOX_SECCOMP_POLICY: ${{ github.workspace }}/deploy/sandbox-job.policy
+      SANDBOX_ROOTFS_MANIFEST: /tmp/everydayai-sandbox-rootfs.manifest
+      SANDBOX_NSJAIL_PATH: /usr/local/bin/nsjail
+      SANDBOX_CGROUP_V2_MOUNT: /sys/fs/cgroup
       RUN_SANDBOX_LINUX_EXTERNAL_TESTS: "1"
 
     steps:
@@ -51,6 +54,7 @@ jobs:
           git -C /tmp/nsjail submodule update --init --recursive --depth=1
           make -C /tmp/nsjail -j2
           sudo install -m 0755 /tmp/nsjail/nsjail /usr/local/bin/nsjail
+          echo "SANDBOX_NSJAIL_SHA256=$(sha256sum /usr/local/bin/nsjail | cut -d' ' -f1)" >> "$GITHUB_ENV"
           nsjail --help > /tmp/nsjail-help.txt 2>&1
           head -n 3 /tmp/nsjail-help.txt
 
@@ -62,10 +66,13 @@ jobs:
           sudo mkdir -p \
             "$SANDBOX_ROOTFS/job/input" \
             "$SANDBOX_ROOTFS/job/output"
-          cat > "$SANDBOX_SECCOMP_POLICY" <<'EOF'
-          ERRNO(1) { mkdir, mkdirat }
-          DEFAULT ALLOW
-          EOF
+          sudo python3 backend/services/agent/runtime/sandbox/rootfs_manifest.py \
+            create "$SANDBOX_ROOTFS" "$SANDBOX_ROOTFS_MANIFEST"
+          sudo chown "$USER:$USER" "$SANDBOX_ROOTFS_MANIFEST"
+          sudo mount --bind "$SANDBOX_ROOTFS" "$SANDBOX_ROOTFS"
+          sudo mount -o remount,bind,ro "$SANDBOX_ROOTFS"
+          echo "SANDBOX_ROOTFS_SHA256=$(sha256sum "$SANDBOX_ROOTFS_MANIFEST" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SANDBOX_SECCOMP_SHA256=$(sha256sum "$SANDBOX_SECCOMP_POLICY" | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
       - name: Record Linux isolation capabilities
         run: |
@@ -103,10 +110,11 @@ jobs:
             sudo find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print >&2
             residue=1
           fi
+          mountpoint -q "$SANDBOX_ROOTFS" && sudo umount "$SANDBOX_ROOTFS"
           sudo rm -rf \
             "$SANDBOX_ROOTFS" \
             /tmp/everydayai-sandbox-test-venv \
             /tmp/nsjail \
-            "$SANDBOX_SECCOMP_POLICY"
+            "$SANDBOX_ROOTFS_MANIFEST"
           test ! -e "$SANDBOX_ROOTFS"
           exit "$residue"

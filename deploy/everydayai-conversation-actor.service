@@ -4,8 +4,8 @@ After=network.target postgresql.service redis.service everydayai-backend.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=everydayai-actor
+Group=everydayai-app
 WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="TZ=Asia/Shanghai"
@@ -24,6 +24,9 @@ StartLimitBurst=5
 
 LimitNOFILE=65535
 LimitNPROC=4096
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=everydayai-conversation-actor

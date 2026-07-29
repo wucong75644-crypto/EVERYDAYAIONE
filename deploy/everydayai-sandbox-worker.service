@@ -1,0 +1,40 @@
+[Unit]
+Description=EVERYDAYAIONE Sandbox Job Worker
+After=network-online.target postgresql.service
+ConditionPathIsMountPoint=/sys/fs/cgroup
+
+[Service]
+Type=simple
+User=everydayai-sandbox
+Group=everydayai-sandbox-io
+WorkingDirectory=/var/www/everydayai/backend
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
+Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/sandbox"
+EnvironmentFile=/etc/everydayai/sandbox-worker.env
+ExecStartPre=/var/www/everydayai/deploy/runtime-capability-probe.sh sandbox
+ExecStart=/var/www/everydayai/backend/venv/bin/python agent_runtime_worker_main.py
+RuntimeDirectory=everydayai-sandbox-worker
+StateDirectory=everydayai/sandbox-jobs
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=180
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=false
+BindReadOnlyPaths=/var/lib/everydayai/sandbox-rootfs
+Delegate=cpu memory pids
+MemoryMax=768M
+MemorySwapMax=0
+TasksMax=128
+LimitFSIZE=268435456
+RestrictSUIDSGID=true
+ReadWritePaths=/run/everydayai-sandbox-worker /var/lib/everydayai/sandbox-jobs /var/log/everydayai
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
