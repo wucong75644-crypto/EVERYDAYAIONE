@@ -93,7 +93,7 @@ jobs:
           python3 -m venv /tmp/everydayai-sandbox-test-venv
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
             pytest==8.3.4 pytest-asyncio==0.25.2
-          sudo --preserve-env=SANDBOX_ROOTFS,SANDBOX_SECCOMP_POLICY,RUN_SANDBOX_LINUX_EXTERNAL_TESTS \
+          sudo --preserve-env=SANDBOX_ROOTFS,SANDBOX_SECCOMP_POLICY,SANDBOX_ROOTFS_MANIFEST,SANDBOX_NSJAIL_PATH,SANDBOX_NSJAIL_SHA256,SANDBOX_ROOTFS_SHA256,SANDBOX_SECCOMP_SHA256,SANDBOX_CGROUP_V2_MOUNT,RUN_SANDBOX_LINUX_EXTERNAL_TESTS \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
             -m external tests/test_agent_runtime_sandbox_linux_external.py
