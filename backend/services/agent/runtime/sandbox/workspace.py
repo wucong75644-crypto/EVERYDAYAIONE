@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import stat
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -29,11 +30,18 @@ class SandboxWorkspaceStore:
             raise ValueError("SANDBOX_WORKSPACE_ROOT_MUST_BE_ABSOLUTE")
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         metadata = path.lstat()
+        groups = set(os.getgroups()) | {os.getgid()}
         if (
             not stat.S_ISDIR(metadata.st_mode)
             or stat.S_ISLNK(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_mode & 0o077
+            or (
+                metadata.st_uid != os.getuid()
+                and not (
+                    metadata.st_gid in groups
+                    and metadata.st_mode & stat.S_IWGRP
+                )
+            )
+            or metadata.st_mode & 0o007
         ):
             raise ValueError("SANDBOX_WORKSPACE_ROOT_UNSAFE")
         self._root = path.resolve(strict=True)
@@ -73,8 +81,8 @@ class SandboxWorkspaceStore:
     def prepare_job(self, job_id: str) -> tuple[Path, Path]:
         job_root = self._root / "jobs" / _uuid(job_id)
         input_dir, output_dir = job_root / "input", job_root / "output"
-        input_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        input_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
+        output_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
         return input_dir, output_dir
 
     def materialize_inputs(
@@ -128,7 +136,7 @@ class SandboxWorkspaceStore:
                 "media_type": "application/octet-stream",
             })
         quarantine = self._root / "quarantine" / _uuid(job_id)
-        quarantine.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        quarantine.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
         if output_dir.exists() and not quarantine.exists():
             os.replace(output_dir, quarantine)
         return tuple(manifests)
@@ -199,6 +207,26 @@ class SandboxWorkspaceStore:
                 continue
         return tuple(sorted(identities))
 
+    def cleanup_expired_quarantine(self, retention_seconds: int) -> tuple[str, ...]:
+        if retention_seconds != 86400:
+            raise ValueError("SANDBOX_QUARANTINE_RETENTION_MUST_BE_24H")
+        root = self._root / "quarantine"
+        if not root.exists():
+            return ()
+        cutoff = time.time() - retention_seconds
+        removed: list[str] = []
+        for entry in root.iterdir():
+            if entry.is_symlink() or not entry.is_dir():
+                continue
+            identity = _uuid(entry.name)
+            if entry.stat().st_mtime > cutoff:
+                continue
+            shutil.rmtree(entry)
+            if entry.exists():
+                raise RuntimeError("SANDBOX_PARTIAL_CLEANUP_UNPROVEN")
+            removed.append(identity)
+        return tuple(sorted(removed))
+
 
 async def _atomic_content_write(target: Path, content: bytes) -> None:
     import asyncio
@@ -207,14 +235,14 @@ async def _atomic_content_write(target: Path, content: bytes) -> None:
 
 
 def _write(target: Path, content: bytes) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
     if target.exists():
         if _safe_read(target) != content:
             raise ValueError("SANDBOX_IMMUTABLE_OBJECT_CONFLICT")
         return
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     descriptor = os.open(
-        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640,
     )
     try:
         with os.fdopen(descriptor, "wb") as stream:

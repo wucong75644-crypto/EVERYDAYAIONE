@@ -22,6 +22,7 @@ class SandboxJobWorkerService:
         self._idle_seconds = idle_seconds
         self._sleep = sleep
         self._stopping = asyncio.Event()
+        self._cycles_since_cleanup = 0
 
     def stop(self) -> None:
         self._worker.drain()
@@ -33,6 +34,10 @@ class SandboxJobWorkerService:
             if self._stopping.is_set():
                 break
             reconciliation = await self._worker.reconcile_next()
+            self._cycles_since_cleanup += 1
+            if self._cycles_since_cleanup >= 3600:
+                self._worker.cleanup_expired_partials()
+                self._cycles_since_cleanup = 0
             if not (
                 execution.worked
                 or reconciliation.worked

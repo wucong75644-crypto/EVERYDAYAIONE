@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -23,10 +24,10 @@ class IsolationProbe:
     cgroup_root: str | None = None
 
     @classmethod
-    def inspect(cls) -> "IsolationProbe":
+    def inspect(cls, nsjail_path: str | None = None) -> "IsolationProbe":
         if platform.system() != "Linux":
             return cls(ready=False, code="SANDBOX_LINUX_REQUIRED")
-        nsjail = shutil.which("nsjail")
+        nsjail = nsjail_path or shutil.which("nsjail")
         if nsjail is None:
             return cls(ready=False, code="SANDBOX_NSJAIL_REQUIRED")
         cgroup = Path("/sys/fs/cgroup")
@@ -43,6 +44,19 @@ class IsolationProbe:
             ready=True, code="SANDBOX_ISOLATION_READY",
             nsjail_path=nsjail, cgroup_root=str(cgroup),
         )
+
+
+def verify_sha256(path: str | Path, expected: str) -> bool:
+    if len(expected) != 64:
+        return False
+    digest = hashlib.sha256()
+    try:
+        with Path(path).open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return False
+    return digest.hexdigest() == expected.lower()
 
 
 @dataclass(frozen=True, kw_only=True)

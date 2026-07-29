@@ -32,18 +32,18 @@ class SandboxResourceLimits:
         if raw.keys() - allowed:
             raise ValueError("SANDBOX_RESOURCE_LIMIT_UNKNOWN")
         limits = cls(
-            timeout_seconds=_bounded(raw, "timeout_seconds", 120, 1, 300),
-            cpu_millis=_bounded(raw, "cpu_millis", 800, 50, 1000),
+            timeout_seconds=_bounded(raw, "timeout_seconds", 120, 1, 120),
+            cpu_millis=_bounded(raw, "cpu_millis", 800, 50, 800),
             memory_bytes=_bounded(
                 raw, "memory_bytes", 512 * 1024 * 1024,
-                64 * 1024 * 1024, 4 * 1024 * 1024 * 1024,
+                64 * 1024 * 1024, 512 * 1024 * 1024,
             ),
-            pids=_bounded(raw, "pids", 64, 1, 128),
+            pids=_bounded(raw, "pids", 64, 1, 64),
             disk_bytes=_bounded(
                 raw, "disk_bytes", 256 * 1024 * 1024,
-                1024 * 1024, 2 * 1024 * 1024 * 1024,
+                1024 * 1024, 256 * 1024 * 1024,
             ),
-            file_count=_bounded(raw, "file_count", 100, 1, 1000),
+            file_count=_bounded(raw, "file_count", 100, 1, 100),
         )
         return limits
 

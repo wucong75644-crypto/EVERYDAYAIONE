@@ -45,6 +45,11 @@ class SandboxJobWorker:
     def drain(self) -> None:
         self._draining = True
 
+    def cleanup_expired_partials(self, retention_seconds: int = 86400) -> int:
+        return len(self._workspace.cleanup_expired_quarantine(
+            retention_seconds,
+        ))
+
     async def run_once(self) -> WorkerCycleResult:
         if self._draining:
             return WorkerCycleResult(worked=False, outcome="draining")
@@ -125,6 +130,12 @@ class SandboxJobWorker:
                 partials=partial_items, materialized=True, cleaned=True,
             )
             resolution, reason = "succeeded", "RECONCILED_SUCCEEDED"
+        elif result.outcome == "resource_limit":
+            digest, receipt = build_receipt(
+                execution_outcome="error", stdout=result.stdout,
+                stderr=result.stderr, partials=(), cleaned=True,
+            )
+            resolution, reason = "failed", "RECONCILED_RESOURCE_LIMIT"
         else:
             if not partial_items:
                 return WorkerCycleResult(
@@ -316,6 +327,13 @@ class SandboxJobWorker:
                 stderr=result.stderr, artifacts=artifacts, materialized=True,
             )
             status, reason = "succeeded", "EXECUTION_SUCCEEDED"
+        elif result.outcome == "resource_limit":
+            partials = ()
+            digest, receipt = build_receipt(
+                execution_outcome="error", stdout=result.stdout,
+                stderr=result.stderr, partials=partials, cleaned=True,
+            )
+            status, reason = "failed", "EXECUTION_RESOURCE_LIMIT"
         else:
             partials = self._workspace.quarantine(
                 job.job_id, output_dir,

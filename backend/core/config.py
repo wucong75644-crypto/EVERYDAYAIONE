@@ -82,6 +82,31 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     conversation_actor_worker_enabled: bool = False
+    agent_runtime_ingress_enabled: bool = False
+    agent_runtime_agent_definition_id: str = "everydayai-default"
+    agent_runtime_agent_definition_revision: str = "v1"
+    agent_runtime_release_revision: str = "development"
+    agent_runtime_worker_id: str = "agent-runtime-local"
+    agent_runtime_process_role: str = ""
+    agent_runtime_poll_interval_seconds: float = 1.0
+    agent_runtime_drain_timeout_seconds: float = 3600.0
+    agent_runtime_heartbeat_seconds: float = 10.0
+    agent_runtime_health_socket: str = "/run/everydayai/runtime-worker.sock"
+    runtime_admin_database_url: str = ""
+    tool_confirmation_v3_enabled: bool = False
+    sandbox_job_root: str = "/var/lib/everydayai/sandbox-jobs"
+    sandbox_rootfs: str = ""
+    sandbox_rootfs_manifest: str = ""
+    sandbox_rootfs_sha256: str = ""
+    sandbox_nsjail_path: str = ""
+    sandbox_nsjail_sha256: str = ""
+    sandbox_python_path: str = "/usr/bin/python3.12"
+    sandbox_seccomp_policy: str = ""
+    sandbox_seccomp_sha256: str = ""
+    sandbox_cgroup_v2_mount: str = ""
+    sandbox_worker_concurrency: int = 1
+    sandbox_partial_retention_seconds: int = 86400
+    sandbox_runtime_revision: str = ""
 
     # CORS 允许的域名（逗号分隔，生产环境必须配置）
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173"
