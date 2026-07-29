@@ -125,7 +125,7 @@ jobs:
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
             pytest==8.3.4 pytest-asyncio==0.25.2
           set +e
-          runuser --preserve-environment -u everydayai-sandbox -- \
+          sudo runuser --preserve-environment -u everydayai-sandbox -- \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
             -m external tests/test_agent_runtime_sandbox_linux_external.py \
