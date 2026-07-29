@@ -215,6 +215,7 @@ def _attempt(case: dict, status: ActionAttemptStatus) -> ActionAttempt:
 
 async def _runtime_components():
     raw = await get_async_worker_db(os.environ["RUNTIME_DATABASE_URL"])
+    await raw.pool.wait(timeout=10)
     scoped = AsyncScopedDatabaseClient(raw, DatabaseScope(
         actor_user_id=None, org_id=None,
         access_kind=DatabaseAccessKind.RUNTIME, request_id="daemon-e2e",
