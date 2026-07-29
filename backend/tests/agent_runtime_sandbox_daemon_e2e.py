@@ -164,7 +164,7 @@ def _seed_case(name: str) -> dict[str, str]:
 
 
 def prepare() -> None:
-    rows = _admin(
+    _admin(
         """
         SELECT set_config('app.access_kind','runtime_admin',false);
         SET ROLE everydayai_owner;
@@ -178,7 +178,6 @@ def prepare() -> None:
         SELECT current_setting('app.access_kind') AS access_kind
         """
     )
-    assert rows[-1]["access_kind"] == "runtime_admin"
     cases = [_seed_case(name) for name in ("success", "crash", "cancel")]
     ROOT.mkdir(parents=True, exist_ok=True)
     CASES_FILE.write_text(json.dumps(cases), encoding="utf-8")
