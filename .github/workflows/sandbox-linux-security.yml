@@ -93,10 +93,26 @@ jobs:
           python3 -m venv /tmp/everydayai-sandbox-test-venv
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
             pytest==8.3.4 pytest-asyncio==0.25.2
+          set +e
           sudo --preserve-env=SANDBOX_ROOTFS,SANDBOX_SECCOMP_POLICY,SANDBOX_ROOTFS_MANIFEST,SANDBOX_NSJAIL_PATH,SANDBOX_NSJAIL_SHA256,SANDBOX_ROOTFS_SHA256,SANDBOX_SECCOMP_SHA256,SANDBOX_CGROUP_V2_MOUNT,RUN_SANDBOX_LINUX_EXTERNAL_TESTS \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
-            -m external tests/test_agent_runtime_sandbox_linux_external.py
+            -m external tests/test_agent_runtime_sandbox_linux_external.py \
+            2>&1 | tee /tmp/everydayai-sandbox-contract.log
+          contract_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$contract_rc" -ne 0 ]; then
+            {
+              echo "### Sandbox Linux contract failure"
+              echo '```text'
+              tail -n 80 /tmp/everydayai-sandbox-contract.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            diagnostic=$(tail -n 20 /tmp/everydayai-sandbox-contract.log |
+              tr '\n' ' ' | sed 's/%/%25/g;s/\\r/%0D/g')
+            echo "::error title=Sandbox Linux contract failed::$diagnostic"
+          fi
+          exit "$contract_rc"
 
       - name: Verify zero runtime residue
         if: always()
