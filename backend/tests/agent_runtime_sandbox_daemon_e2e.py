@@ -47,6 +47,8 @@ from services.agent.runtime.sandbox.composition import (
 ROOT = Path(os.environ["SANDBOX_JOB_ROOT"])
 RUNTIME_REVISION = os.environ["SANDBOX_RUNTIME_REVISION"]
 CASES_FILE = ROOT / "daemon-e2e-cases.json"
+DAEMON_LOG = ROOT / "daemon-e2e-worker.log"
+DAEMONS: list[subprocess.Popen] = []
 
 
 def _admin(sql: str, params: tuple[object, ...] = ()) -> list[dict]:
@@ -253,11 +255,26 @@ async def _submit(components, case: dict, code: str) -> None:
 
 
 def _daemon() -> subprocess.Popen:
-    return subprocess.Popen(
-        [os.environ["SANDBOX_DAEMON_PYTHON"], "-m", "agent_runtime_worker_main"],
-        cwd=Path(__file__).resolve().parents[1],
-        env=os.environ.copy(), start_new_session=True,
-    )
+    with DAEMON_LOG.open("ab") as log:
+        process = subprocess.Popen(
+            [
+                os.environ["SANDBOX_DAEMON_PYTHON"],
+                "-m", "agent_runtime_worker_main",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=os.environ.copy(), start_new_session=True,
+            stdout=log, stderr=subprocess.STDOUT,
+        )
+    DAEMONS.append(process)
+    return process
+
+
+def _stop_daemons() -> None:
+    for process in DAEMONS:
+        if process.poll() is not None:
+            continue
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=10)
 
 
 async def _job(runtime_db, job_id: str) -> dict:
@@ -452,6 +469,7 @@ def verify() -> None:
         if target.exists():
             shutil.rmtree(target)
     CASES_FILE.unlink(missing_ok=True)
+    DAEMON_LOG.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -461,7 +479,14 @@ def main() -> None:
     if phase == "prepare":
         prepare()
     elif phase == "exercise":
-        asyncio.run(exercise())
+        try:
+            asyncio.run(exercise())
+        finally:
+            _stop_daemons()
+            if DAEMON_LOG.exists():
+                print(DAEMON_LOG.read_text(
+                    encoding="utf-8", errors="replace",
+                )[-12000:])
     else:
         verify()
 
