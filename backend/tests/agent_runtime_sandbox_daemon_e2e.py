@@ -480,7 +480,7 @@ def main() -> None:
         prepare()
     elif phase == "exercise":
         try:
-            asyncio.run(exercise())
+            asyncio.run(asyncio.wait_for(exercise(), timeout=240))
         finally:
             _stop_daemons()
             if DAEMON_LOG.exists():
