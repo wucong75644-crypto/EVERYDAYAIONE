@@ -14,7 +14,7 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
     for contract in (
         "initdb", "223", "setup-tenant-db-roles.sh",
         "bootstrap-agent-runtime-roles.sh", "agent_runtime_worker_main",
-        "runuser --preserve-environment -u everydayai-sandbox",
+        "--preserve-environment -u everydayai-sandbox",
         "SANDBOX_NSJAIL_PATH", "SANDBOX_CGROUP_V2_MOUNT",
         'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
     ):
@@ -45,7 +45,7 @@ def test_daemon_contract_covers_recovery_cancel_acl_and_zero_residue() -> None:
         'rm -rf "$SANDBOX_E2E_PG_DATA"',
     ):
         assert residue in workflow
-    assert "sudo runuser --preserve-environment -u everydayai-sandbox -- \\" in workflow
+    assert "sudo --preserve-env runuser" in workflow
     daemon_segment = workflow.split(
         "- name: Run real Sandbox Worker daemon lifecycle", 1,
     )[1].split("- name:", 1)[0]

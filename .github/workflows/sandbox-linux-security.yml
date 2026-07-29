@@ -219,7 +219,8 @@ jobs:
           export SANDBOX_DAEMON_PYTHON=/tmp/everydayai-sandbox-daemon-venv/bin/python
           export ENVIRONMENT=test
           cd /tmp/everydayai-sandbox-worker/source/backend
-          sudo runuser --preserve-environment -u everydayai-sandbox -- \
+          sudo --preserve-env runuser \
+            --preserve-environment -u everydayai-sandbox -- \
             /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e exercise
 
