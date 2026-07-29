@@ -21,7 +21,7 @@ ERRNO(1) {
 }
 KILL {
   mount,
-  umount2,
+  umount,
   pivot_root,
   ptrace,
   process_vm_readv,
