@@ -198,6 +198,7 @@ jobs:
           sandbox_uid=$(id -u everydayai-sandbox)
           sandbox_gid=$(id -g everydayai-sandbox)
           sudo chown -R "$sandbox_uid:$sandbox_gid" "$SANDBOX_JOB_ROOT"
+          sudo chmod 0700 "$SANDBOX_JOB_ROOT"
 
       - name: Run real Sandbox Worker daemon lifecycle
         run: |
