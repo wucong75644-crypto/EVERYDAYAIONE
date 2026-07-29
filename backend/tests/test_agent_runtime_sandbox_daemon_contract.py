@@ -16,6 +16,7 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
         "bootstrap-agent-runtime-roles.sh", "agent_runtime_worker_main",
         "--preserve-environment -u everydayai-sandbox",
         "SANDBOX_NSJAIL_PATH", "SANDBOX_CGROUP_V2_MOUNT",
+        "timeout --signal=KILL 300s",
         'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
     ):
         assert contract in workflow

@@ -219,10 +219,16 @@ jobs:
           export SANDBOX_DAEMON_PYTHON=/tmp/everydayai-sandbox-daemon-venv/bin/python
           export ENVIRONMENT=test
           cd /tmp/everydayai-sandbox-worker/source/backend
-          sudo --preserve-env runuser \
+          set +e
+          timeout --signal=KILL 300s sudo --preserve-env runuser \
             --preserve-environment -u everydayai-sandbox -- \
             /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e exercise
+          daemon_rc=$?
+          set -e
+          sudo tail -n 160 "$SANDBOX_JOB_ROOT/daemon-e2e-worker.log" \
+            2>/dev/null || true
+          exit "$daemon_rc"
 
       - name: Verify role matrix and remove database facts
         run: |
