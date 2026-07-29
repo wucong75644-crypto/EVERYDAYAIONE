@@ -2010,3 +2010,16 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | 生命周期 External fixture 与 helper | `backend/tests/test_organization_lifecycle_external.py` | 通过 Migration Runner 应用 217/218，执行 preflight，并验证并发、事务、对象元数据、逆序 rollback 与重新应用 |
 | 生命周期权限/Fence External 矩阵 | `backend/tests/test_organization_lifecycle_permissions_external.py` | 验证 Actor/Scope/数据库角色精确 ACL、无 grant option/继承旁路、四类服务 suspended Fence 及 active 恢复 |
 | `organization-lifecycle.sh` | `deploy/preflight/organization-lifecycle.sh` | 只读核验迁移账本、函数 owner/SECURITY DEFINER/search_path/ACL、12 个 Fence trigger 与 Runtime 无企业直写权限 |
+
+### Agent Runtime 生产 composition
+
+| 函数/类 | 文件 | 说明 |
+|---|---|---|
+| `RuntimeIngress.submit` | `backend/services/agent/runtime/ingress.py` | 以幂等键持久化 Session/Command，并支持响应丢失后的同键回读 |
+| `build_runtime` / `build_projection` / `build_authorization` / `build_sandbox` | `backend/services/agent/runtime/composition.py` | 四个互斥进程的生产 composition roots |
+| `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文构造模型请求、租户凭证和确定性 Action |
+| `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
+| `runtime_status` / `update_runtime_control` / `update_runtime_rollout` / `requeue_projection_dead` | `backend/api/routes/runtime_admin.py` | super_admin、租户作用域、幂等审计的 Runtime 运维入口 |
+| `probe_tool_confirmation_redis` | `backend/services/tool_confirmation/capability_probe.py` | Tool Confirmation V3 Redis 原子能力探针 |
+| `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/nsjail.py` | 固定哈希、cgroup v2、网络隔离与进程树清理的 Sandbox 启动器 |
+| `create_manifest` / `verify_manifest` | `backend/services/agent/runtime/sandbox/rootfs_manifest.py` | 创建并验证包含类型、权限、owner、大小和文件哈希的完整 rootfs manifest |

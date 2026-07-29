@@ -1596,3 +1596,12 @@ cache = client.caches.create(
 - **2026-01-31**：完成登录/注册弹窗化重构（Modal、AuthModal、LoginForm、RegisterForm）
 - **2026-01-24**：完成视频生成功能集成（Sora 2 系列 3 个模型）
 - **2026-01-21**：完成基础架构搭建（FastAPI + React + Supabase）
+- **2026-07-29**：Agent Runtime 生产 composition 已实现但默认关闭
+  - API、Actor、WeCom 仅负责持久 ingress，不构造 Runtime 或 Sandbox Owner
+  - Runtime、Projection、Authorization Recovery、Sandbox 使用独立进程、
+    Linux 用户和最小权限数据库角色
+  - Tool Confirmation V3 仅解决 PostgreSQL Authorization Interaction；
+    PolicyReceipt 与 Dispatch Gate 是唯一执行门禁
+  - Sandbox 固定 nsjail/rootfs/seccomp 哈希及 cgroup v2 上限，无裸 Python 降级
+  - 生产发布、灰度、告警和回滚合同见
+    [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)
