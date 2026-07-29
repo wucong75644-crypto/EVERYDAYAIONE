@@ -190,7 +190,7 @@ jobs:
           cd backend
           export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
           sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
-            tests/agent_runtime_sandbox_daemon_e2e.py prepare
+            -m tests.agent_runtime_sandbox_daemon_e2e prepare
           sandbox_uid=$(id -u everydayai-sandbox)
           sandbox_gid=$(id -g everydayai-sandbox)
           sudo chown -R "$sandbox_uid:$sandbox_gid" "$SANDBOX_JOB_ROOT"
@@ -217,7 +217,7 @@ jobs:
           cd /tmp/everydayai-sandbox-worker/source/backend
           sudo runuser --preserve-environment -u everydayai-sandbox -- \
             /tmp/everydayai-sandbox-daemon-venv/bin/python \
-            tests/agent_runtime_sandbox_daemon_e2e.py exercise
+            -m tests.agent_runtime_sandbox_daemon_e2e exercise
 
       - name: Verify role matrix and remove database facts
         run: |
@@ -225,7 +225,7 @@ jobs:
           cd backend
           export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
           sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
-            tests/agent_runtime_sandbox_daemon_e2e.py verify
+            -m tests.agent_runtime_sandbox_daemon_e2e verify
 
       - name: Run real nsjail contract
         run: |
