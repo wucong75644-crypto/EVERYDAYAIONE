@@ -103,6 +103,7 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_expected_action_version": "bigint",
         "p_expected_attempt_version": "bigint",
         "p_expected_version": "bigint",
+        "p_fencing_token": "bigint",
         "p_lease_seconds": "integer",
     }
     named_args = ", ".join(

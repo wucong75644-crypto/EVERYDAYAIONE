@@ -13,6 +13,8 @@ on:
       - "backend/migrations/rollback/223_agent_runtime_production_composition_rollback.sql"
       - "backend/services/agent/runtime/sandbox/**"
       - "backend/core/db_scope.py"
+      - "backend/services/agent/runtime/composition.py"
+      - "backend/services/agent/runtime/infrastructure/postgres/sandbox_job_repository.py"
       - "backend/agent_runtime_worker_main.py"
       - "backend/tests/agent_runtime_sandbox_daemon_e2e.py"
       - "backend/tests/test_agent_runtime_sandbox_daemon_contract.py"
