@@ -124,9 +124,18 @@ jobs:
           sudo mkdir /tmp/everydayai-sandbox-worker
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /tmp/everydayai-sandbox-worker
+          sudo mkdir /tmp/everydayai-sandbox-worker/logs
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /tmp/everydayai-sandbox-worker/logs
+          sudo chmod 0750 /tmp/everydayai-sandbox-worker/logs
           sudo cp -a "$GITHUB_WORKSPACE" \
             /tmp/everydayai-sandbox-worker/source
           sudo chmod -R a+rX /tmp/everydayai-sandbox-worker/source
+          sudo -u everydayai-sandbox test -w /tmp/everydayai-sandbox-worker/logs
+          sudo -u everydayai-sandbox sh -c \
+            '! test -w /tmp/everydayai-sandbox-worker/source/backend'
+          echo "EVERYDAYAI_LOG_DIR=/tmp/everydayai-sandbox-worker/logs" \
+            >> "$GITHUB_ENV"
           echo "SANDBOX_SECCOMP_POLICY=/tmp/everydayai-sandbox-worker/source/deploy/sandbox-job.policy" \
             >> "$GITHUB_ENV"
           echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \

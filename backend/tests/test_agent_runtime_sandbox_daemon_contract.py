@@ -18,6 +18,11 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
         "SANDBOX_NSJAIL_PATH", "SANDBOX_CGROUP_V2_MOUNT",
         "timeout --signal=KILL 300s",
         'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+        "EVERYDAYAI_LOG_DIR=/tmp/everydayai-sandbox-worker/logs",
+        "/tmp/everydayai-sandbox-worker/logs",
+        "chmod 0750",
+        "test -w /tmp/everydayai-sandbox-worker/logs",
+        "! test -w /tmp/everydayai-sandbox-worker/source/backend",
     ):
         assert contract in workflow
     assert "FakeRepository" not in harness
@@ -44,9 +49,14 @@ def test_daemon_contract_covers_recovery_cancel_acl_and_zero_residue() -> None:
         "Residual nsjail cgroup detected",
         "SANDBOX_E2E_PG_BIN/pg_ctl",
         'rm -rf "$SANDBOX_E2E_PG_DATA"',
+        "/tmp/everydayai-sandbox-worker",
     ):
         assert residue in workflow
     assert "sudo --preserve-env runuser" in workflow
+    service = (ROOT / "deploy/everydayai-sandbox-worker.service").read_text(
+        encoding="utf-8",
+    )
+    assert 'Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/sandbox"' in service
     daemon_segment = workflow.split(
         "- name: Run real Sandbox Worker daemon lifecycle", 1,
     )[1].split("- name:", 1)[0]
