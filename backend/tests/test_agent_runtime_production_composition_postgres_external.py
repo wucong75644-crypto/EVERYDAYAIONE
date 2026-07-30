@@ -181,6 +181,7 @@ def test_production_role_schema_and_create_matrix() -> None:
         "everydayai_worker": False,
         "everydayai_runtime": False,
     }
+    phase = "apply"
     for role, expected in expected_usage.items():
         [[usage]] = _execute(
             "SELECT has_schema_privilege(%s, 'public', 'USAGE')", (role,),
@@ -188,8 +189,16 @@ def test_production_role_schema_and_create_matrix() -> None:
         [[create]] = _execute(
             "SELECT has_schema_privilege(%s, 'public', 'CREATE')", (role,),
         )
-        assert bool(usage) is expected
-        assert not create
+        actual_usage = bool(usage)
+        actual_create = bool(create)
+        assert actual_usage is expected, (
+            f"role={role} privilege=USAGE phase={phase} "
+            f"expected={expected} actual={actual_usage}"
+        )
+        assert not actual_create, (
+            f"role={role} privilege=CREATE phase={phase} "
+            f"expected=False actual={actual_create}"
+        )
 def test_clean_rollback_effective_privileges_and_reapply() -> None:
     _execute("""
         SET ROLE everydayai_owner;
