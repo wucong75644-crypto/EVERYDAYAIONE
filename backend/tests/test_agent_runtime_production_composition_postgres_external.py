@@ -182,7 +182,20 @@ def test_production_role_schema_and_create_matrix() -> None:
         "everydayai_runtime": False,
     }
     phase = "apply"
+    identity = _execute(
+        """SELECT session_user,current_user,
+                  n.nspowner::regrole::text AS schema_owner,
+                  n.nspacl::text AS schema_acl
+             FROM pg_namespace n WHERE nspname='public'""",
+    )
     for role, expected in expected_usage.items():
+        role_meta = _execute(
+            """SELECT r.oid,r.rolinherit,
+                      ARRAY(SELECT member::regrole::text
+                              FROM pg_auth_members m WHERE m.roleid=r.oid)
+                 FROM pg_roles r WHERE r.rolname=%s""",
+            (role,),
+        )
         [[usage]] = _execute(
             "SELECT has_schema_privilege(%s, 'public', 'USAGE')", (role,),
         )
@@ -193,7 +206,8 @@ def test_production_role_schema_and_create_matrix() -> None:
         actual_create = bool(create)
         assert actual_usage is expected, (
             f"role={role} privilege=USAGE phase={phase} "
-            f"expected={expected} actual={actual_usage}"
+            f"expected={expected} actual={actual_usage} "
+            f"identity={identity} role_meta={role_meta}"
         )
         assert not actual_create, (
             f"role={role} privilege=CREATE phase={phase} "
