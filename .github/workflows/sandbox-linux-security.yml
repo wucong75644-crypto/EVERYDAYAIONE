@@ -209,6 +209,22 @@ jobs:
           export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
           sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e prepare
+
+      - name: Probe Sandbox Worker database identity
+        run: |
+          set -euo pipefail
+          sudo --preserve-env runuser --preserve-environment \
+            -u everydayai-sandbox -- \
+            /tmp/everydayai-sandbox-daemon-venv/bin/python - <<'PY'
+          import os, psycopg
+          try:
+              with psycopg.connect(os.environ["WORKER_DATABASE_URL"]) as c:
+                  with c.cursor() as cur:
+                      cur.execute("SELECT session_user,current_user,current_setting('app.access_kind',true),has_schema_privilege(current_user,'public','USAGE'),has_function_privilege(current_user,'public.get_agent_runtime_worker_control(text)','EXECUTE')")
+                      print("sandbox_db_probe=", cur.fetchone())
+          except Exception as exc:
+              print("sandbox_db_probe_error=", type(exc).__name__, getattr(exc, "sqlstate", None), str(exc).split("@",1)[0])
+              raise
           sandbox_uid=$(id -u everydayai-sandbox)
           sandbox_gid=$(id -g everydayai-sandbox)
           sudo chown -R "$sandbox_uid:$sandbox_gid" "$SANDBOX_JOB_ROOT"
