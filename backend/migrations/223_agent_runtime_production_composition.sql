@@ -54,6 +54,31 @@ BEGIN
   END IF;
 END $$;
 
+-- Rebind the 222 read RPC to the 223 Runtime Owner without widening Worker access.
+CREATE OR REPLACE FUNCTION get_sandbox_job(p_job_id UUID) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE v_job agent_sandbox_jobs%ROWTYPE; v_session agent_runtime_sessions%ROWTYPE;
+v_action agent_actions%ROWTYPE; BEGIN
+IF session_user='everydayai_agent_runtime_worker'
+   AND current_setting('app.access_kind',true)='agent_runtime' THEN
+  PERFORM _assert_agent_sandbox_actor('runtime');
+ELSIF session_user='everydayai_sandbox_worker'
+   AND current_setting('app.access_kind',true)='sandbox_worker' THEN
+  PERFORM _assert_agent_sandbox_actor('sandbox_worker');
+ELSE RAISE EXCEPTION 'AGENT_SANDBOX_ACTOR_SCOPE_REQUIRED' USING ERRCODE='42501'; END IF;
+v_job := _lock_agent_sandbox_job(p_job_id);
+IF v_job.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
+IF session_user='everydayai_agent_runtime_worker' THEN
+  SELECT * INTO v_session FROM agent_runtime_sessions WHERE id=v_job.session_id;
+  SELECT * INTO v_action FROM agent_actions WHERE id=v_job.action_id;
+  IF NOT _agent_sandbox_runtime_scope_ok(v_session,v_action) THEN
+    RAISE EXCEPTION 'AGENT_SANDBOX_SCOPE_MISMATCH' USING ERRCODE='42501';
+  END IF;
+  RETURN jsonb_build_object('outcome','found','job',_agent_sandbox_runtime_job(v_job));
+END IF;
+RETURN jsonb_build_object('outcome','found','job',to_jsonb(v_job));
+END; $$;
+
 CREATE OR REPLACE FUNCTION _assert_agent_sandbox_actor(p_kind TEXT)
 RETURNS VOID LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
