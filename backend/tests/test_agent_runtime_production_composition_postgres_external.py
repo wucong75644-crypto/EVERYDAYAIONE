@@ -71,9 +71,11 @@ PROJECTION_RPCS = (
 )
 
 
-def _execute(sql: str) -> list[tuple[object, ...]]:
+def _execute(
+    sql: str, params: tuple[object, ...] | None = None,
+) -> list[tuple[object, ...]]:
     with psycopg.connect(DATABASE_URL) as connection:
-        cursor = connection.execute(sql)
+        cursor = connection.execute(sql, params)
         return cursor.fetchall() if cursor.description else []
 
 
@@ -147,13 +149,26 @@ def _privilege_matrix(
 
 def test_rollback_guard_precedes_acl_changes() -> None:
     before = _privilege_matrix((*HELPERS, *PROJECTION_RPCS))
-    _execute("""
-        SET ROLE everydayai_owner;
-        INSERT INTO agent_runtime_worker_heartbeats(
-          process_role,worker_id,release_revision,ready,draining,status_code
-        ) VALUES ('sandbox','guard-worker','test',false,true,'guard');
-        RESET ROLE;
-    """)
+    try:
+        _execute("""
+            SET ROLE everydayai_owner;
+            INSERT INTO agent_runtime_worker_heartbeats(
+              process_role,worker_id,release_revision,ready,draining,status_code
+            ) VALUES ('sandbox','guard-worker','test',false,true,'guard');
+            RESET ROLE;
+        """)
+        with pytest.raises(
+            psycopg.Error, match="AGENT_RUNTIME_223_ROLLBACK_GUARD_FACTS_EXIST",
+        ):
+            _file(ROLLBACK_223)
+        assert _privilege_matrix((*HELPERS, *PROJECTION_RPCS)) == before
+    finally:
+        _execute("""
+            SET ROLE everydayai_owner;
+            DELETE FROM agent_runtime_worker_heartbeats
+             WHERE worker_id = 'guard-worker';
+            RESET ROLE;
+        """)
 
 
 def test_production_role_schema_and_create_matrix() -> None:
@@ -175,19 +190,13 @@ def test_production_role_schema_and_create_matrix() -> None:
         )
         assert bool(usage) is expected
         assert not create
-    with pytest.raises(
-        psycopg.Error, match="AGENT_RUNTIME_223_ROLLBACK_GUARD_FACTS_EXIST",
-    ):
-        _file(ROLLBACK_223)
-    assert _privilege_matrix((*HELPERS, *PROJECTION_RPCS)) == before
+def test_clean_rollback_effective_privileges_and_reapply() -> None:
     _execute("""
         SET ROLE everydayai_owner;
-        DELETE FROM agent_runtime_worker_heartbeats;
+        DELETE FROM agent_runtime_worker_heartbeats
+         WHERE worker_id = 'guard-worker';
         RESET ROLE;
     """)
-
-
-def test_clean_rollback_effective_privileges_and_reapply() -> None:
     _file(ROLLBACK_223)
     helper_matrix = _privilege_matrix(HELPERS)
     assert not any(helper_matrix.values())
