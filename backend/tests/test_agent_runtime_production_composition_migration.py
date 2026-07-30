@@ -83,6 +83,8 @@ def test_rollback_fails_closed_on_facts_and_restores_wrapped_functions() -> None
         ROLLBACK
     )
     assert "everydayai_authorization_worker,everydayai_runtime_admin" in ROLLBACK
+    assert "everydayai_sandbox_worker" in SQL[SQL.index("GRANT USAGE ON SCHEMA public"):]
+    assert "everydayai_sandbox_worker" in ROLLBACK[ROLLBACK.index("REVOKE USAGE ON SCHEMA public"):]
     restored = ROLLBACK[
         ROLLBACK.index("ALTER FUNCTION _agent_compat_project_command_220_12"):
         ROLLBACK.index("DO $$", ROLLBACK.index(

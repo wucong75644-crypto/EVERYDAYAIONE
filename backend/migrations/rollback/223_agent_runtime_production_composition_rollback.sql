@@ -77,6 +77,7 @@ BEGIN
 END $$;
 REVOKE USAGE ON SCHEMA public FROM everydayai_agent_runtime_worker,
  everydayai_projection_worker,everydayai_authorization_worker,
+ everydayai_sandbox_worker,
  everydayai_runtime_admin;
 DROP FUNCTION get_agent_runtime_admin_status();
 DROP FUNCTION set_agent_runtime_control(UUID,BIGINT,JSONB,TEXT);

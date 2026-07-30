@@ -1102,8 +1102,8 @@ END $$;
 
 GRANT USAGE ON SCHEMA public TO everydayai_agent_runtime_worker,
  everydayai_projection_worker,everydayai_authorization_worker,
- everydayai_runtime_admin;
+ everydayai_sandbox_worker,everydayai_runtime_admin;
 REVOKE CREATE ON SCHEMA public FROM everydayai_agent_runtime_worker,
  everydayai_projection_worker,everydayai_authorization_worker,
- everydayai_runtime_admin;
+ everydayai_sandbox_worker,everydayai_runtime_admin;
 RESET ROLE;

@@ -154,6 +154,27 @@ def test_rollback_guard_precedes_acl_changes() -> None:
         ) VALUES ('sandbox','guard-worker','test',false,true,'guard');
         RESET ROLE;
     """)
+
+
+def test_production_role_schema_and_create_matrix() -> None:
+    expected_usage = {
+        "everydayai_agent_runtime_worker": True,
+        "everydayai_projection_worker": True,
+        "everydayai_authorization_worker": True,
+        "everydayai_sandbox_worker": True,
+        "everydayai_runtime_admin": True,
+        "everydayai_worker": False,
+        "everydayai_runtime": False,
+    }
+    for role, expected in expected_usage.items():
+        [[usage]] = _execute(
+            "SELECT has_schema_privilege(%s, 'public', 'USAGE')", (role,),
+        )
+        [[create]] = _execute(
+            "SELECT has_schema_privilege(%s, 'public', 'CREATE')", (role,),
+        )
+        assert bool(usage) is expected
+        assert not create
     with pytest.raises(
         psycopg.Error, match="AGENT_RUNTIME_223_ROLLBACK_GUARD_FACTS_EXIST",
     ):
