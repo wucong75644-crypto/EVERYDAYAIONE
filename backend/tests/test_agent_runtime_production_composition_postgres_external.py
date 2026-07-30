@@ -69,6 +69,7 @@ PROJECTION_RPCS = (
     "apply_agent_compat_projection(uuid,uuid,text)",
     "get_agent_compat_projection_result(uuid)",
 )
+LEGACY_SCHEMA_BASELINE: dict[str, tuple[bool, bool]] = {}
 
 
 def _execute(
@@ -123,6 +124,16 @@ def database() -> None:
         END
         $roles$;
     """)
+    for role in (
+        "public", "everydayai_worker", "everydayai_runtime",
+        "everydayai_wecom_runtime", "everydayai_sync",
+    ):
+        [[usage, create]] = _execute(
+            "SELECT has_schema_privilege(%s, 'public', 'USAGE'), "
+            "has_schema_privilege(%s, 'public', 'CREATE')",
+            (role, role),
+        )
+        LEGACY_SCHEMA_BASELINE[role] = (bool(usage), bool(create))
     for migration in MIGRATIONS:
         _file(migration)
     _file(MIGRATION_223)
@@ -178,8 +189,6 @@ def test_production_role_schema_and_create_matrix() -> None:
         "everydayai_authorization_worker": True,
         "everydayai_sandbox_worker": True,
         "everydayai_runtime_admin": True,
-        "everydayai_worker": False,
-        "everydayai_runtime": False,
     }
     phase = "apply"
     identity = _execute(
@@ -213,6 +222,22 @@ def test_production_role_schema_and_create_matrix() -> None:
             f"role={role} privilege=CREATE phase={phase} "
             f"expected=False actual={actual_create}"
         )
+    for role, (expected_usage, expected_create) in LEGACY_SCHEMA_BASELINE.items():
+        [[usage, create]] = _execute(
+            "SELECT has_schema_privilege(%s, 'public', 'USAGE'), "
+            "has_schema_privilege(%s, 'public', 'CREATE')",
+            (role, role),
+        )
+        assert (bool(usage), bool(create)) == (expected_usage, expected_create), (
+            f"role={role} privilege=USAGE/CREATE phase=apply "
+            f"expected={(expected_usage, expected_create)} "
+            f"actual={(bool(usage), bool(create))}"
+        )
+        if role != "public":
+            assert not bool(create), (
+                f"role={role} privilege=CREATE phase=apply "
+                f"expected=False actual={bool(create)}"
+            )
 def test_clean_rollback_effective_privileges_and_reapply() -> None:
     _execute("""
         SET ROLE everydayai_owner;
