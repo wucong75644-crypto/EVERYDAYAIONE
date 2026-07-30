@@ -7,7 +7,8 @@ DECLARE role_name TEXT;
 BEGIN
   FOREACH role_name IN ARRAY ARRAY[
     'everydayai_agent_runtime_worker','everydayai_projection_worker',
-    'everydayai_authorization_worker','everydayai_runtime_admin'
+    'everydayai_authorization_worker','everydayai_sandbox_worker',
+    'everydayai_runtime_admin'
   ] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN
       RAISE EXCEPTION 'AGENT_RUNTIME_PRODUCTION_ROLE_MISSING: %',role_name;
