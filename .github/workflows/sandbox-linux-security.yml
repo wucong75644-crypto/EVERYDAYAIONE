@@ -300,7 +300,8 @@ jobs:
           set +e
           sudo --preserve-env runuser --preserve-environment \
             -u everydayai-sandbox -- /bin/sh -c \
-            'export RUN_SANDBOX_LINUX_EXTERNAL_TESTS=1; exec \
+            'export AGENT_RUNTIME_PROCESS_ROLE=sandbox \
+            RUN_SANDBOX_LINUX_EXTERNAL_TESTS=1; exec \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
             -m external tests/test_agent_runtime_sandbox_linux_external.py' \

@@ -57,10 +57,27 @@ def _cleanup_database_facts(cases: list[dict]) -> None:
         SET ROLE everydayai_owner;
         DELETE FROM agent_runtime_worker_heartbeats
          WHERE worker_id LIKE 'sandbox-daemon-e2e%%';
+        DELETE FROM agent_sandbox_jobs WHERE id = ANY(%s);
+        DELETE FROM agent_action_dispatch_intents WHERE id = ANY(%s);
+        DELETE FROM agent_policy_receipts WHERE id = ANY(%s);
+        DELETE FROM agent_action_attempts WHERE id = ANY(%s);
+        DELETE FROM agent_actions WHERE id = ANY(%s);
+        DELETE FROM agent_model_steps WHERE id = ANY(%s);
+        DELETE FROM agent_runs WHERE id = ANY(%s);
+        DELETE FROM agent_session_commands WHERE id = ANY(%s);
+        DELETE FROM agent_runtime_sessions WHERE id = ANY(%s);
+        DELETE FROM conversations WHERE id = ANY(%s);
         DELETE FROM users WHERE id = ANY(%s);
         RESET ROLE
         """,
-        ([case["user"] for case in cases],),
+        tuple(
+            [case.get(key) for case in cases]
+            for key in (
+                "job_id", "intent", "receipt", "attempt", "action",
+                "step", "run", "command", "session", "conversation",
+                "user",
+            )
+        ),
     )
 
 def _admin(sql: str, params: tuple[object, ...] = ()) -> list[dict]:
@@ -434,6 +451,7 @@ def verify() -> None:
          JOIN pg_namespace n ON n.oid=p.pronamespace
          JOIN pg_roles r ON r.oid=p.proowner
          WHERE n.nspname='public' AND r.rolname='everydayai_owner'
+           AND p.proname NOT LIKE '\\_%%'
            AND (p.proname LIKE '%%sandbox%%'
                 OR p.proname LIKE '%%agent_runtime%%')
          ORDER BY 1
