@@ -124,6 +124,11 @@ jobs:
           test "$sandbox_gid" -ne 0
           sudo touch "$SANDBOX_HOST_MARKER"
           sudo chmod 0600 "$SANDBOX_HOST_MARKER"
+          for controller in cpu memory pids; do
+            if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control; then
+              echo "+$controller" | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+            fi
+          done
           sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /sys/fs/cgroup/everydayai-sandbox-contract

@@ -57,17 +57,17 @@ def _cleanup_database_facts(cases: list[dict]) -> None:
         SET ROLE everydayai_owner;
         DELETE FROM agent_runtime_worker_heartbeats
          WHERE worker_id LIKE 'sandbox-daemon-e2e%%';
-        DELETE FROM agent_sandbox_jobs WHERE id = ANY(%s);
-        DELETE FROM agent_action_dispatch_intents WHERE id = ANY(%s);
-        DELETE FROM agent_policy_receipts WHERE id = ANY(%s);
-        DELETE FROM agent_action_attempts WHERE id = ANY(%s);
-        DELETE FROM agent_actions WHERE id = ANY(%s);
-        DELETE FROM agent_model_steps WHERE id = ANY(%s);
-        DELETE FROM agent_runs WHERE id = ANY(%s);
-        DELETE FROM agent_session_commands WHERE id = ANY(%s);
-        DELETE FROM agent_runtime_sessions WHERE id = ANY(%s);
-        DELETE FROM conversations WHERE id = ANY(%s);
-        DELETE FROM users WHERE id = ANY(%s);
+        DELETE FROM agent_sandbox_jobs WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_action_dispatch_intents WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_policy_receipts WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_action_attempts WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_actions WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_model_steps WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_runs WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_session_commands WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_runtime_sessions WHERE id = ANY(%s::uuid[]);
+        DELETE FROM conversations WHERE id = ANY(%s::uuid[]);
+        DELETE FROM users WHERE id = ANY(%s::uuid[]);
         RESET ROLE
         """,
         tuple(
