@@ -5,7 +5,8 @@ import pytest
 from services.agent.runtime.sandbox.contracts import SandboxResourceLimits
 from services.agent.runtime.sandbox.launcher import SandboxLaunchRequest
 from services.agent.runtime.sandbox.nsjail import (
-    SandboxWorkerIdentity, _command, _output_limits_exceeded,
+    SandboxWorkerIdentity, _cleanup_and_verify_cgroups, _command,
+    _output_limits_exceeded,
 )
 from services.agent.runtime.sandbox.rootfs_manifest import (
     verify_manifest, write_manifest,
@@ -96,6 +97,19 @@ def test_live_output_guard_enforces_aggregate_bytes_files_and_types(
     (output / "two").unlink()
     (output / "link").symlink_to(output / "one")
     assert _output_limits_exceeded(output, 100, 100)
+
+
+def test_terminated_process_removes_only_empty_new_cgroups(tmp_path) -> None:
+    root = tmp_path / "cgroup"
+    group = root / "NSJAIL.123"
+    group.mkdir(parents=True)
+    assert _cleanup_and_verify_cgroups(root, frozenset())
+    assert not group.exists()
+
+    group.mkdir()
+    (group / "cgroup.procs").write_text("987\n")
+    assert not _cleanup_and_verify_cgroups(root, frozenset())
+    assert group.exists()
 
 
 @pytest.mark.asyncio

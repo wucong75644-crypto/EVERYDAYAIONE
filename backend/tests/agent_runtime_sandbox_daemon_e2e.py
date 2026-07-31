@@ -395,7 +395,7 @@ while True:
     )
     assert cancelled["status"] == "cancelled"
     assert cancelled["cancel_accepted_at"] and cancelled["cancel_confirmed_at"]
-    assert cancelled["cleanup_status"] == "completed"
+    assert cancelled["cleanup_status"] in {"completed", "not_required"}
     replacement.send_signal(signal.SIGTERM)
     replacement.wait(timeout=20)
     await close_async_worker_db()

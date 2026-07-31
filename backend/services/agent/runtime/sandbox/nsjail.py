@@ -216,7 +216,7 @@ class _NsJailProcess:
             try:
                 os.killpg(self._pgid, signal.SIGTERM)
             except ProcessLookupError:
-                return True
+                return await self.prove_terminated()
             except OSError:
                 return False
             try:
@@ -267,11 +267,15 @@ class _NsJailProcess:
         try:
             os.killpg(self._pgid, 0)
         except ProcessLookupError:
-            return _nsjail_cgroups(self._cgroup_root) <= self._cgroup_before
+            return _cleanup_and_verify_cgroups(
+                self._cgroup_root, self._cgroup_before,
+            )
         except OSError as error:
             return (
                 error.errno == errno.ESRCH
-                and _nsjail_cgroups(self._cgroup_root) <= self._cgroup_before
+                and _cleanup_and_verify_cgroups(
+                    self._cgroup_root, self._cgroup_before,
+                )
             )
         return False
 
@@ -337,6 +341,31 @@ def _nsjail_cgroups(root: Path) -> frozenset[str]:
         )
     except OSError:
         return frozenset({"CGROUP_SCAN_FAILED"})
+
+
+def _cleanup_and_verify_cgroups(
+    root: Path, before: frozenset[str],
+) -> bool:
+    groups = _nsjail_cgroups(root)
+    if "CGROUP_SCAN_FAILED" in groups:
+        return False
+    for name in groups - before:
+        group = root / name
+        try:
+            populated = (group / "cgroup.procs").read_text().strip()
+        except FileNotFoundError:
+            populated = ""
+        except OSError:
+            return False
+        if populated:
+            return False
+        try:
+            group.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+    return _nsjail_cgroups(root) <= before
 
 
 def _output_limits_exceeded(
