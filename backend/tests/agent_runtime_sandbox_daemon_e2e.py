@@ -297,6 +297,12 @@ async def _wait_status(runtime_db, job_id: str, wanted: set[str], timeout=90):
         job = value.get("job") or {}
         if job.get("status") in wanted:
             return job
+        if job.get("status") in {"failed", "unknown", "cancelled"}:
+            raise AssertionError(
+                f"job {job_id} reached unexpected terminal status "
+                f"{job.get('status')} reason={job.get('terminal_reason')} "
+                f"ambiguity={job.get('ambiguity_evidence')}"
+            )
         await asyncio.sleep(0.2)
     raise AssertionError(f"job {job_id} did not reach {sorted(wanted)}")
 

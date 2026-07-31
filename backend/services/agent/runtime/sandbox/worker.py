@@ -75,7 +75,11 @@ class SandboxJobWorker:
         job = claimed.job
         try:
             return await self._execute(job)
-        except Exception:
+        except Exception as error:
+            logger.exception(
+                "SANDBOX_WORKER_EXECUTION_FAILED | sandbox_job_id={}"
+                " | error_type={}", job.job_id, type(error).__name__,
+            )
             try:
                 await self._record_unproven_process(
                     job, "SANDBOX_WORKER_EXCEPTION",
