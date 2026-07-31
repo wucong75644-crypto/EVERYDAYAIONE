@@ -26,6 +26,7 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
         "! test -w /tmp/everydayai-sandbox-worker/source/backend",
         'echo "$$" > "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"',
         "SANDBOX_CGROUP_V2_RUNNER",
+        "SANDBOX_CGROUP_V2_EXTERNAL",
         "apparmor_restrict_unprivileged_userns",
         "apparmor_restrict_unprivileged_unconfined",
         "SANDBOX_APPARMOR_USERNS_ORIGINAL",

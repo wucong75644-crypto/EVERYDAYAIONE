@@ -373,9 +373,7 @@ time.sleep(60)
         assert time.monotonic() < deadline
         await asyncio.sleep(0.1)
         unknown = (await _job(runtime_db, crash["job_id"]))["job"]
-    assert unknown["ambiguity_evidence"]["kind"] in {
-        "SANDBOX_EXECUTION_LEASE_EXPIRED", "EXECUTION_STATE_UNPROVEN",
-    }
+    assert unknown["status"] == "unknown"
     await _submit(components, cancel, """
 import time
 while True:
@@ -420,6 +418,7 @@ def verify() -> None:
         ]
         assert rows[0]["state_version"] >= 6
         assert rows[1]["state_version"] >= 5
+        assert rows[1]["ambiguity_evidence"]["kind"] in {"SANDBOX_EXECUTION_LEASE_EXPIRED", "EXECUTION_STATE_UNPROVEN"}
         assert rows[2]["cancel_accepted_at"] and rows[2]["cancel_confirmed_at"]
     functions = _admin(
         """
