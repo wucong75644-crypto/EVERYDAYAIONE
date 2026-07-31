@@ -37,6 +37,15 @@ class _UnavailableLauncher:
         raise AssertionError("query must remain unreachable")
 
 
+def test_worker_probe_delegates_to_launcher(tmp_path) -> None:
+    launcher = _UnavailableLauncher()
+    worker = SandboxJobWorker(
+        jobs=type("_Jobs", (), {})(), launcher=launcher,
+        workspace=SandboxWorkspaceStore(tmp_path.resolve()), worker_id="worker-1",
+    )
+    assert worker.probe() == launcher.probe()
+
+
 @pytest.mark.asyncio
 async def test_worker_does_not_claim_when_isolation_probe_fails(
     tmp_path,

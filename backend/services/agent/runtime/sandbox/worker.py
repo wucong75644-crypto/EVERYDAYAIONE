@@ -15,7 +15,7 @@ from services.agent.runtime.ports.sandbox_job import (
 
 from .contracts import SandboxResourceLimits
 from .checkpoint import resolve_terminal_checkpoint
-from .launcher import SandboxLauncherPort, SandboxLaunchRequest
+from .launcher import IsolationProbe, SandboxLauncherPort, SandboxLaunchRequest
 from .receipt import build_receipt
 from .workspace import SandboxWorkspaceStore
 
@@ -45,6 +45,10 @@ class SandboxJobWorker:
     def drain(self) -> None:
         self._draining = True
 
+    def probe(self) -> IsolationProbe:
+        """Expose the launcher's single authoritative readiness probe."""
+        return self._launcher.probe()
+
     def cleanup_expired_partials(self, retention_seconds: int = 86400) -> int:
         return len(self._workspace.cleanup_expired_quarantine(
             retention_seconds,
@@ -53,7 +57,7 @@ class SandboxJobWorker:
     async def run_once(self) -> WorkerCycleResult:
         if self._draining:
             return WorkerCycleResult(worked=False, outcome="draining")
-        probe = self._launcher.probe()
+        probe = self.probe()
         if not probe.ready:
             return WorkerCycleResult(worked=False, outcome=probe.code)
         claimed = await self._jobs.claim_recoverable(
