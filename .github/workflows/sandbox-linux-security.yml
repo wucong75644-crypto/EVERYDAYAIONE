@@ -130,8 +130,17 @@ jobs:
             fi
           done
           sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract
+          for controller in cpu memory pids; do
+            echo "+$controller" | sudo tee \
+              /sys/fs/cgroup/everydayai-sandbox-contract/cgroup.subtree_control \
+              >/dev/null
+          done
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /sys/fs/cgroup/everydayai-sandbox-contract
+          for file in cgroup.procs cgroup.threads cgroup.subtree_control; do
+            sudo chown "$sandbox_uid:$sandbox_gid" \
+              "/sys/fs/cgroup/everydayai-sandbox-contract/$file"
+          done
           sudo mkdir /tmp/everydayai-sandbox-worker
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /tmp/everydayai-sandbox-worker

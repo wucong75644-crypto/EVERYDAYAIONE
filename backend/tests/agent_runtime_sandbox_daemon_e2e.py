@@ -57,10 +57,10 @@ def _cleanup_database_facts(cases: list[dict]) -> None:
         SET ROLE everydayai_owner;
         DELETE FROM agent_runtime_worker_heartbeats
          WHERE worker_id LIKE 'sandbox-daemon-e2e%%';
-        DELETE FROM agent_sandbox_jobs WHERE id = ANY(%s::uuid[]);
-        DELETE FROM agent_action_dispatch_intents WHERE id = ANY(%s::uuid[]);
-        DELETE FROM agent_policy_receipts WHERE id = ANY(%s::uuid[]);
-        DELETE FROM agent_action_attempts WHERE id = ANY(%s::uuid[]);
+        DELETE FROM agent_sandbox_jobs WHERE user_id = ANY(%s::uuid[]);
+        DELETE FROM agent_action_dispatch_intents WHERE action_id = ANY(%s::uuid[]);
+        DELETE FROM agent_policy_receipts WHERE action_id = ANY(%s::uuid[]);
+        DELETE FROM agent_action_attempts WHERE action_id = ANY(%s::uuid[]);
         DELETE FROM agent_actions WHERE id = ANY(%s::uuid[]);
         DELETE FROM agent_model_steps WHERE id = ANY(%s::uuid[]);
         DELETE FROM agent_runs WHERE id = ANY(%s::uuid[]);
@@ -73,7 +73,7 @@ def _cleanup_database_facts(cases: list[dict]) -> None:
         tuple(
             [case.get(key) for case in cases]
             for key in (
-                "job_id", "intent", "receipt", "attempt", "action",
+                "user", "action", "action", "action", "action",
                 "step", "run", "command", "session", "conversation",
                 "user",
             )
