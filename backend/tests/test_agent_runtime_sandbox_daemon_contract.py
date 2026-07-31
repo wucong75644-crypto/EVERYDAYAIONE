@@ -42,6 +42,9 @@ def test_daemon_contract_covers_recovery_cancel_acl_and_zero_residue() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     harness = HARNESS.read_text(encoding="utf-8")
     health = HEALTH.read_text(encoding="utf-8")
+    nsjail = (ROOT / "backend/services/agent/runtime/sandbox/nsjail.py").read_text(
+        encoding="utf-8",
+    )
     for contract in (
         "SIGKILL", "ambiguity_evidence", "retry_after_reconcile",
         "components.executor.cancel", '"cancelled"', "cancel_confirmed_at",
@@ -55,9 +58,13 @@ def test_daemon_contract_covers_recovery_cancel_acl_and_zero_residue() -> None:
         "SANDBOX_E2E_PG_BIN/pg_ctl",
         'rm -rf "$SANDBOX_E2E_PG_DATA"',
         "/tmp/everydayai-sandbox-worker",
+        "set -uo pipefail",
+        "while IFS= read -r child",
+        'echo "residue_rc=$residue" >> "$GITHUB_OUTPUT"',
     ):
         assert residue in workflow
     assert "sudo --preserve-env runuser" in workflow
+    assert '"--disable_clone_newcgroup"' in nsjail
     assert "wait_ready(" in harness
     assert "SANDBOX_DAEMON_HEALTH_TIMEOUT" in health
     assert "SANDBOX_DAEMON_START_FAILED" in health

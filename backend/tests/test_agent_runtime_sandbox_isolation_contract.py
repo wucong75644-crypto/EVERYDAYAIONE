@@ -40,6 +40,7 @@ def test_nsjail_command_has_readonly_input_writable_output_and_limits(
         command.index("-B"):command.index("-B") + 2
     ]
     assert "--disable_clone_newnet" not in command
+    assert "--disable_clone_newcgroup" in command
     assert "--use_cgroupv2" in command
     assert command[command.index("--cgroupv2_mount") + 1] == str(
         tmp_path / "cgroup",

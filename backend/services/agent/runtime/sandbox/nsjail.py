@@ -291,6 +291,11 @@ def _command(
         "--user", f"65534:{worker_identity.uid}:1",
         "--group", f"65534:{worker_identity.gid}:1",
         "--disable_proc",
+        # The worker owns a delegated cgroup-v2 subtree.  Keeping nsjail in
+        # the host cgroup namespace lets it create child groups there; a
+        # separate cgroup namespace would make its namespace-root control
+        # files inaccessible to the non-root worker on hosted runners.
+        "--disable_clone_newcgroup",
         "--iface_no_lo",
         "--use_cgroupv2",
         "--cgroupv2_mount", str(cgroup_v2_mount),

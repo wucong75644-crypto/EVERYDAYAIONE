@@ -340,7 +340,7 @@ jobs:
         id: residue
         if: always()
         run: |
-          set -euo pipefail
+          set -uo pipefail
           residue=0
           if pgrep -fa '[n]sjail'; then
             echo "Residual nsjail process detected" >&2
@@ -357,24 +357,34 @@ jobs:
             echo "Residual Sandbox job directory detected" >&2
             residue=1
           fi
-          mountpoint -q "$SANDBOX_ROOTFS" && sudo umount "$SANDBOX_ROOTFS"
+          if mountpoint -q "$SANDBOX_ROOTFS"; then
+            sudo umount "$SANDBOX_ROOTFS" || residue=1
+          fi
           sudo rm -rf \
             "$SANDBOX_ROOTFS" \
             /tmp/everydayai-sandbox-test-venv \
             /tmp/everydayai-sandbox-daemon-venv \
             /tmp/nsjail \
             /tmp/everydayai-sandbox-worker \
-            "$SANDBOX_ROOTFS_MANIFEST"
-          sudo rm -f "$SANDBOX_HOST_MARKER"
-          sudo rmdir /sys/fs/cgroup/everydayai-sandbox-contract
+            "$SANDBOX_ROOTFS_MANIFEST" || residue=1
+          sudo rm -f "$SANDBOX_HOST_MARKER" || residue=1
+          cgroup_root=/sys/fs/cgroup/everydayai-sandbox-contract
+          if test -d "$cgroup_root"; then
+            while IFS= read -r child; do
+              sudo rmdir "$child" || residue=1
+            done < <(sudo find "$cgroup_root" -mindepth 1 -maxdepth 1 \
+              -type d -name 'NSJAIL.*' -print)
+            sudo rmdir "$cgroup_root" || residue=1
+          fi
           if test -n "${SANDBOX_E2E_PG_BIN:-}" \
             && test -d "${SANDBOX_E2E_PG_DATA:-/nonexistent}"; then
             "$SANDBOX_E2E_PG_BIN/pg_ctl" \
-              --pgdata="$SANDBOX_E2E_PG_DATA" --mode=immediate stop
-            rm -rf "$SANDBOX_E2E_PG_DATA"
+              --pgdata="$SANDBOX_E2E_PG_DATA" --mode=immediate stop \
+              || residue=1
+            rm -rf "$SANDBOX_E2E_PG_DATA" || residue=1
           fi
-          rm -f /tmp/everydayai-sandbox-postgres.log
-          test ! -e "$SANDBOX_ROOTFS"
+          rm -f /tmp/everydayai-sandbox-postgres.log || residue=1
+          test ! -e "$SANDBOX_ROOTFS" || residue=1
           echo "residue_rc=$residue" >> "$GITHUB_OUTPUT"
           exit 0
 

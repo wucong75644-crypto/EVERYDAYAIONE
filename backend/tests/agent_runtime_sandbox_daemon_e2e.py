@@ -1,7 +1,5 @@
 """Hosted-Linux real PostgreSQL + Sandbox daemon composition contract."""
-
 from __future__ import annotations
-
 import argparse
 import atexit
 import asyncio
@@ -16,10 +14,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 from uuid import uuid4
-
 import psycopg
 from psycopg.rows import dict_row
-
 from core.database import close_async_worker_db, get_async_worker_db
 from core.db_scope import (
     AsyncScopedDatabaseClient,
@@ -44,13 +40,11 @@ from services.agent.runtime.sandbox.composition import (
     build_sandbox_executor_components,
 )
 from tests.sandbox_daemon_health import wait_ready
-
 ROOT = Path(os.environ["SANDBOX_JOB_ROOT"])
 RUNTIME_REVISION = os.environ["SANDBOX_RUNTIME_REVISION"]
 CASES_FILE = ROOT / "daemon-e2e-cases.json"
 DAEMON_LOG = ROOT / "daemon-e2e-worker.log"
 DAEMONS: list[subprocess.Popen] = []
-
 def _cleanup_database_facts(cases: list[dict]) -> None:
     _admin(
         """
@@ -79,7 +73,6 @@ def _cleanup_database_facts(cases: list[dict]) -> None:
             )
         ),
     )
-
 def _admin(sql: str, params: tuple[object, ...] = ()) -> list[dict]:
     with psycopg.connect(
         os.environ["AR223_TEST_DATABASE_URL"], row_factory=dict_row,
@@ -87,7 +80,6 @@ def _admin(sql: str, params: tuple[object, ...] = ()) -> list[dict]:
     ) as connection:
         cursor = connection.execute(sql, params)
     return list(cursor.fetchall()) if cursor.description else []
-
 def _seed_case(name: str) -> dict[str, str]:
     ids = {
         key: str(uuid4()) for key in (
@@ -193,8 +185,6 @@ def _seed_case(name: str) -> dict[str, str]:
         **ids, "name": name, "request_hash": request_hash,
         "external_key": external_key,
     }
-
-
 def prepare() -> None:
     _admin(
         """
@@ -214,7 +204,6 @@ def prepare() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     CASES_FILE.write_text(json.dumps(cases), encoding="utf-8")
     os.chmod(CASES_FILE, 0o600)
-
 def _attempt(case: dict, status: ActionAttemptStatus) -> ActionAttempt:
     accepted = status in {ActionAttemptStatus.ACCEPTED, ActionAttemptStatus.UNKNOWN}
     return ActionAttempt(
@@ -238,7 +227,6 @@ def _attempt(case: dict, status: ActionAttemptStatus) -> ActionAttempt:
             {"sandbox_job_id": case["job_id"]} if accepted else {}
         ),
     )
-
 async def _runtime_components():
     raw = await get_async_worker_db(os.environ["RUNTIME_DATABASE_URL"])
     await raw.pool.wait(timeout=10)
@@ -250,7 +238,6 @@ async def _runtime_components():
         runtime_database=scoped, workspace_root=ROOT,
         runtime_revision=RUNTIME_REVISION, registry=ExecutorRegistry(),
     )
-
 async def _submit(components, case: dict, code: str) -> None:
     attempt = _attempt(case, ActionAttemptStatus.DISPATCHING)
     gate = type("_Gate", (), {
@@ -278,7 +265,6 @@ async def _submit(components, case: dict, code: str) -> None:
     })
     assert receipt.outcome is ExecutionOutcome.ACCEPTED
     case["job_id"] = receipt.external_receipt["sandbox_job_id"]
-
 def _daemon() -> subprocess.Popen:
     with DAEMON_LOG.open("ab") as log:
         process = subprocess.Popen(
@@ -292,21 +278,18 @@ def _daemon() -> subprocess.Popen:
         )
     DAEMONS.append(process)
     return process
-
 def _stop_daemons() -> None:
     for process in DAEMONS:
         if process.poll() is not None:
             continue
         os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=10)
-
 async def _job(runtime_db, job_id: str) -> dict:
     response = await runtime_db.rpc(
         "get_sandbox_job", {"p_job_id": job_id},
     ).execute()
     value = response.data
     return value if isinstance(value, dict) else json.loads(value)
-
 async def _wait_status(runtime_db, job_id: str, wanted: set[str], timeout=90):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -324,8 +307,6 @@ async def _wait_status(runtime_db, job_id: str, wanted: set[str], timeout=90):
             )
         await asyncio.sleep(0.2)
     raise AssertionError(f"job {job_id} did not reach {sorted(wanted)}")
-
-
 async def exercise() -> None:
     assert os.geteuid() != 0 and os.getegid() != 0
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
@@ -372,7 +353,6 @@ print('daemon-e2e-success')
     repeated = await components.executor.reconcile(readback_attempt)
     assert repeated.outcome is ExecutionOutcome.COMPLETED
     assert (await _job(runtime_db, success["job_id"]))["job"]["terminal_at"] == before
-
     await _submit(components, crash, """
 import time
 time.sleep(60)
@@ -396,7 +376,6 @@ time.sleep(60)
     assert unknown["ambiguity_evidence"]["kind"] in {
         "SANDBOX_EXECUTION_LEASE_EXPIRED", "EXECUTION_STATE_UNPROVEN",
     }
-
     await _submit(components, cancel, """
 import time
 while True:
@@ -422,8 +401,6 @@ while True:
     replacement.send_signal(signal.SIGTERM)
     replacement.wait(timeout=20)
     await close_async_worker_db()
-
-
 def verify() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     ids = tuple(case["job_id"] for case in cases if "job_id" in case)
@@ -502,8 +479,6 @@ def verify() -> None:
             shutil.rmtree(target)
     CASES_FILE.unlink(missing_ok=True)
     DAEMON_LOG.unlink(missing_ok=True)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=("prepare", "exercise", "verify"))
@@ -521,7 +496,5 @@ def main() -> None:
                 )[-12000:])
     else:
         verify()
-
-
 if __name__ == "__main__":
     main()
