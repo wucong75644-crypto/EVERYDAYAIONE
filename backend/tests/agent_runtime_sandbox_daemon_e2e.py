@@ -301,7 +301,9 @@ async def _wait_status(runtime_db, job_id: str, wanted: set[str], timeout=90):
             raise AssertionError(
                 f"job {job_id} reached unexpected terminal status "
                 f"{job.get('status')} reason={job.get('terminal_reason')} "
-                f"ambiguity={job.get('ambiguity_evidence')}"
+                f"ambiguity={job.get('ambiguity_evidence')} "
+                f"stderr_length={job.get('stderr_original_length')} "
+                f"stderr_sha256={job.get('stderr_sha256')}"
             )
         await asyncio.sleep(0.2)
     raise AssertionError(f"job {job_id} did not reach {sorted(wanted)}")
@@ -432,7 +434,7 @@ def verify() -> None:
          JOIN pg_namespace n ON n.oid=p.pronamespace
          JOIN pg_roles r ON r.oid=p.proowner
          WHERE n.nspname='public' AND r.rolname='everydayai_owner'
-           AND p.proname NOT LIKE '\\_%'
+           AND p.proname NOT LIKE '\\_%%'
          ORDER BY 1
         """
     )

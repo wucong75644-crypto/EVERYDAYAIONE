@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 
 from loguru import logger
@@ -215,6 +216,15 @@ class SandboxJobWorker:
             raise
         if cancelled:
             return await self._finish_cancel(job, process, result)
+        if result.outcome != "succeeded":
+            logger.error(
+                "SANDBOX_EXECUTION_RESULT | sandbox_job_id={} | outcome={}"
+                " | exit_code={} | stdout_length={} | stderr_length={}"
+                " | stderr_sha256={}",
+                job.job_id, result.outcome, result.exit_code,
+                len(result.stdout), len(result.stderr),
+                hashlib.sha256(result.stderr).hexdigest(),
+            )
         if (
             not result.process_tree_terminated
             or not await process.prove_terminated()
