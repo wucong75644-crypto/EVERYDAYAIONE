@@ -130,11 +130,16 @@ jobs:
             fi
           done
           sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract
+          sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract/runner
           sudo chown "$sandbox_uid:$sandbox_gid" \
             /sys/fs/cgroup/everydayai-sandbox-contract
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /sys/fs/cgroup/everydayai-sandbox-contract/runner
           for file in cgroup.procs cgroup.threads cgroup.subtree_control; do
             sudo chown "$sandbox_uid:$sandbox_gid" \
               "/sys/fs/cgroup/everydayai-sandbox-contract/$file"
+            sudo chown "$sandbox_uid:$sandbox_gid" \
+              "/sys/fs/cgroup/everydayai-sandbox-contract/runner/$file"
           done
           sudo mkdir /tmp/everydayai-sandbox-worker
           sudo chown "$sandbox_uid:$sandbox_gid" \
@@ -154,6 +159,8 @@ jobs:
           echo "SANDBOX_SECCOMP_POLICY=/tmp/everydayai-sandbox-worker/source/deploy/sandbox-job.policy" \
             >> "$GITHUB_ENV"
           echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \
+            >> "$GITHUB_ENV"
+          echo "SANDBOX_CGROUP_V2_RUNNER=/sys/fs/cgroup/everydayai-sandbox-contract/runner" \
             >> "$GITHUB_ENV"
 
       - name: Build daemon test environment
@@ -261,7 +268,8 @@ jobs:
           export SANDBOX_ROOTFS_MANIFEST SANDBOX_ROOTFS_SHA256
           export SANDBOX_NSJAIL_PATH SANDBOX_NSJAIL_SHA256
           export SANDBOX_SECCOMP_POLICY SANDBOX_SECCOMP_SHA256
-          export SANDBOX_CGROUP_V2_MOUNT SANDBOX_JOB_ROOT SANDBOX_ROOTFS
+          export SANDBOX_CGROUP_V2_MOUNT SANDBOX_CGROUP_V2_RUNNER \
+            SANDBOX_JOB_ROOT SANDBOX_ROOTFS
           export SANDBOX_PYTHON_PATH=/usr/bin/python3
           export SANDBOX_WORKER_CONCURRENCY=1
           export SANDBOX_PARTIAL_RETENTION_SECONDS=86400
@@ -271,7 +279,7 @@ jobs:
           cd /tmp/everydayai-sandbox-worker/source/backend
           set +e
           timeout --signal=KILL 300s sudo --preserve-env /bin/sh -c \
-            'echo "$$" > "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs"; \
+            'echo "$$" > "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"; \
             exec runuser --preserve-environment -u everydayai-sandbox -- "$@"' \
             _ /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e exercise
@@ -309,7 +317,7 @@ jobs:
             pytest==8.3.4 pytest-asyncio==0.25.2
           set +e
           sudo --preserve-env /bin/sh -c \
-            'echo "$$" > "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs"; \
+            'echo "$$" > "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"; \
             exec runuser --preserve-environment -u everydayai-sandbox -- "$@"' \
             _ env AGENT_RUNTIME_PROCESS_ROLE=sandbox \
             RUN_SANDBOX_LINUX_EXTERNAL_TESTS=1 \
@@ -371,6 +379,7 @@ jobs:
               sudo rmdir "$child" || residue=1
             done < <(sudo find "$cgroup_root" -mindepth 1 -maxdepth 1 \
               -type d -name 'NSJAIL.*' -print)
+            sudo rmdir "$cgroup_root/runner" || residue=1
             sudo rmdir "$cgroup_root" || residue=1
           fi
           if test -n "${SANDBOX_E2E_PG_BIN:-}" \
