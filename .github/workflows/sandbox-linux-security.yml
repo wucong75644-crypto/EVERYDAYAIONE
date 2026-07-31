@@ -124,6 +124,19 @@ jobs:
           test "$sandbox_gid" -ne 0
           sudo touch "$SANDBOX_HOST_MARKER"
           sudo chmod 0600 "$SANDBOX_HOST_MARKER"
+          apparmor_userns=$(sudo sysctl -n \
+            kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo missing)
+          apparmor_unconfined=$(sudo sysctl -n \
+            kernel.apparmor_restrict_unprivileged_unconfined 2>/dev/null || echo missing)
+          echo "SANDBOX_APPARMOR_USERNS_ORIGINAL=$apparmor_userns" >> "$GITHUB_ENV"
+          echo "SANDBOX_APPARMOR_UNCONFINED_ORIGINAL=$apparmor_unconfined" \
+            >> "$GITHUB_ENV"
+          if test "$apparmor_userns" != missing; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          if test "$apparmor_unconfined" != missing; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          fi
           for controller in cpu memory pids; do
             if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control; then
               echo "+$controller" | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
@@ -389,6 +402,16 @@ jobs:
               || residue=1
             rm -rf "$SANDBOX_E2E_PG_DATA" || residue=1
           fi
+          case "${SANDBOX_APPARMOR_USERNS_ORIGINAL:-missing}" in
+            0|1) sudo sysctl -w \
+              kernel.apparmor_restrict_unprivileged_userns="$SANDBOX_APPARMOR_USERNS_ORIGINAL" \
+              >/dev/null || residue=1 ;;
+          esac
+          case "${SANDBOX_APPARMOR_UNCONFINED_ORIGINAL:-missing}" in
+            0|1) sudo sysctl -w \
+              kernel.apparmor_restrict_unprivileged_unconfined="$SANDBOX_APPARMOR_UNCONFINED_ORIGINAL" \
+              >/dev/null || residue=1 ;;
+          esac
           rm -f /tmp/everydayai-sandbox-postgres.log || residue=1
           test ! -e "$SANDBOX_ROOTFS" || residue=1
           echo "residue_rc=$residue" >> "$GITHUB_OUTPUT"
