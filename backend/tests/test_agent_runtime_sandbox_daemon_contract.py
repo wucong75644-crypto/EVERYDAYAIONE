@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/sandbox-linux-security.yml"
 HARNESS = Path(__file__).with_name("agent_runtime_sandbox_daemon_e2e.py")
+HEALTH = Path(__file__).with_name("sandbox_daemon_health.py")
 
 
 def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
@@ -23,6 +24,8 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
         "chmod 0750",
         "test -w /tmp/everydayai-sandbox-worker/logs",
         "! test -w /tmp/everydayai-sandbox-worker/source/backend",
+        "type f ! -perm -004 -delete",
+        "type d ! -perm -001",
     ):
         assert contract in workflow
     assert "FakeRepository" not in harness
@@ -37,6 +40,7 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
 def test_daemon_contract_covers_recovery_cancel_acl_and_zero_residue() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     harness = HARNESS.read_text(encoding="utf-8")
+    health = HEALTH.read_text(encoding="utf-8")
     for contract in (
         "SIGKILL", "ambiguity_evidence", "retry_after_reconcile",
         "components.executor.cancel", '"cancelled"', "cancel_confirmed_at",
@@ -53,6 +57,9 @@ def test_daemon_contract_covers_recovery_cancel_acl_and_zero_residue() -> None:
     ):
         assert residue in workflow
     assert "sudo --preserve-env runuser" in workflow
+    assert "wait_ready(" in harness
+    assert "SANDBOX_DAEMON_HEALTH_TIMEOUT" in health
+    assert "SANDBOX_DAEMON_START_FAILED" in health
     service = (ROOT / "deploy/everydayai-sandbox-worker.service").read_text(
         encoding="utf-8",
     )

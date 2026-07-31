@@ -26,6 +26,9 @@ jobs:
             --include=ca-certificates,python3.12,python3.12-minimal \
             noble rootfs http://archive.ubuntu.com/ubuntu/
           sudo rm -rf rootfs/var/lib/apt/lists/* rootfs/var/cache/apt/*
+          sudo find rootfs -xdev -type f ! -perm -004 -delete
+          sudo find rootfs -xdev -type d ! -perm -001 \
+            -exec chmod a+rx {} +
           sudo python3 backend/services/agent/runtime/sandbox/rootfs_manifest.py \
             create rootfs rootfs.manifest
           sudo chown "$USER:$USER" rootfs.manifest

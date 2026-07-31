@@ -88,6 +88,12 @@ jobs:
           sudo mkdir -p \
             "$SANDBOX_ROOTFS/job/input" \
             "$SANDBOX_ROOTFS/job/output"
+          # The non-root daemon verifies the complete manifest. Disposable
+          # rootfs metadata must therefore be traversable/readable without
+          # granting the worker access to host files or credentials.
+          sudo find "$SANDBOX_ROOTFS" -xdev -type f ! -perm -004 -delete
+          sudo find "$SANDBOX_ROOTFS" -xdev -type d ! -perm -001 \
+            -exec chmod a+rx {} +
           sudo python3 backend/services/agent/runtime/sandbox/rootfs_manifest.py \
             create "$SANDBOX_ROOTFS" "$SANDBOX_ROOTFS_MANIFEST"
           sudo chown "$USER:$USER" "$SANDBOX_ROOTFS_MANIFEST"
@@ -191,6 +197,7 @@ jobs:
           done
 
       - name: Apply real migrations through 223 and bootstrap roles
+        id: migration
         run: |
           set -euo pipefail
           deploy/setup-tenant-db-roles.sh
@@ -211,6 +218,7 @@ jobs:
             -m tests.agent_runtime_sandbox_daemon_e2e prepare
 
       - name: Probe Sandbox Worker database identity
+        id: probe
         run: |
           set -euo pipefail
           sudo --preserve-env runuser --preserve-environment \
@@ -232,8 +240,9 @@ jobs:
           sudo chmod 0700 "$SANDBOX_JOB_ROOT"
 
       - name: Run real Sandbox Worker daemon lifecycle
+        id: daemon
         run: |
-          set -euo pipefail
+          set -uo pipefail
           export AGENT_RUNTIME_PROCESS_ROLE=sandbox
           export AGENT_RUNTIME_WORKER_ID=sandbox-daemon-e2e
           export AGENT_RUNTIME_RELEASE_REVISION="$GITHUB_SHA"
@@ -257,22 +266,31 @@ jobs:
             /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e exercise
           daemon_rc=$?
-          set -e
+          echo "daemon_rc=$daemon_rc" >> "$GITHUB_OUTPUT"
           sudo tail -n 160 "$SANDBOX_JOB_ROOT/daemon-e2e-worker.log" \
             2>/dev/null || true
-          exit "$daemon_rc"
+          # Keep independent security/ACL gates running; aggregate-gate below
+          # converts this recorded result into the final job status.
+          exit 0
 
       - name: Verify role matrix and remove database facts
+        id: permissions
+        if: ${{ always() && steps.migration.outcome == 'success' && steps.probe.outcome == 'success' }}
         run: |
-          set -euo pipefail
+          set +e
           cd backend
           export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
           sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e verify
+          permissions_rc=$?
+          echo "permissions_rc=$permissions_rc" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Run real nsjail contract
+        id: nsjail
+        if: ${{ always() && steps.migration.outcome == 'success' && steps.probe.outcome == 'success' }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd /tmp/everydayai-sandbox-worker/source/backend
           python3 -m venv /tmp/everydayai-sandbox-test-venv
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
@@ -296,9 +314,11 @@ jobs:
               tr '\n' ' ' | sed 's/%/%25/g;s/\\r/%0D/g')
             echo "::error title=Sandbox Linux contract failed::$diagnostic"
           fi
-          exit "$contract_rc"
+          echo "nsjail_rc=$contract_rc" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Verify zero runtime residue
+        id: residue
         if: always()
         run: |
           set -euo pipefail
@@ -336,4 +356,36 @@ jobs:
           fi
           rm -f /tmp/everydayai-sandbox-postgres.log
           test ! -e "$SANDBOX_ROOTFS"
-          exit "$residue"
+          echo "residue_rc=$residue" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Aggregate Sandbox security gates
+        if: always()
+        run: |
+          set -u
+          failed=0
+          if [ "${{ steps.migration.outcome }}" != success ]; then
+            echo "migration_gate=${{ steps.migration.outcome }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.probe.outcome }}" != success ]; then
+            echo "database_probe_gate=${{ steps.probe.outcome }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.daemon.outputs.daemon_rc || 'not-run' }}" != 0 ]; then
+            echo "daemon_gate=${{ steps.daemon.outputs.daemon_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.permissions.outputs.permissions_rc || 'not-run' }}" != 0 ]; then
+            echo "permissions_gate=${{ steps.permissions.outputs.permissions_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.nsjail.outputs.nsjail_rc || 'not-run' }}" != 0 ]; then
+            echo "nsjail_gate=${{ steps.nsjail.outputs.nsjail_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.residue.outputs.residue_rc || 'not-run' }}" != 0 ]; then
+            echo "residue_gate=${{ steps.residue.outputs.residue_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          exit "$failed"

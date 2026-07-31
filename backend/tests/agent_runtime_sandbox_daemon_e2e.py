@@ -42,6 +42,7 @@ from services.agent.runtime.ports.executor import ExecutionOutcome
 from services.agent.runtime.sandbox.composition import (
     build_sandbox_executor_components,
 )
+from tests.sandbox_daemon_health import wait_ready
 
 
 ROOT = Path(os.environ["SANDBOX_JOB_ROOT"])
@@ -269,7 +270,6 @@ def _daemon() -> subprocess.Popen:
     DAEMONS.append(process)
     return process
 
-
 def _stop_daemons() -> None:
     for process in DAEMONS:
         if process.poll() is not None:
@@ -277,14 +277,12 @@ def _stop_daemons() -> None:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=10)
 
-
 async def _job(runtime_db, job_id: str) -> dict:
     response = await runtime_db.rpc(
         "get_sandbox_job", {"p_job_id": job_id},
     ).execute()
     value = response.data
     return value if isinstance(value, dict) else json.loads(value)
-
 
 async def _wait_status(runtime_db, job_id: str, wanted: set[str], timeout=90):
     deadline = time.monotonic() + timeout
@@ -322,6 +320,9 @@ time.sleep(22)
 print('daemon-e2e-success')
 """)
     daemon = _daemon()
+    await wait_ready(
+        daemon, os.environ["AGENT_RUNTIME_HEALTH_SOCKET"], DAEMON_LOG,
+    )
     terminal = await _wait_status(
         runtime_db, success["job_id"], {"succeeded"}, timeout=120,
     )
@@ -394,7 +395,7 @@ while True:
 
 def verify() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
-    ids = tuple(case["job_id"] for case in cases)
+    ids = tuple(case["job_id"] for case in cases if "job_id" in case)
     rows = _admin(
         """
         SELECT status, state_version, ambiguity_evidence,
@@ -404,12 +405,13 @@ def verify() -> None:
         """,
         (list(ids),),
     )
-    assert [row["status"] for row in rows] == [
-        "succeeded", "unknown", "cancelled",
-    ]
-    assert rows[0]["state_version"] >= 6
-    assert rows[1]["state_version"] >= 5
-    assert rows[2]["cancel_accepted_at"] and rows[2]["cancel_confirmed_at"]
+    if ids:
+        assert [row["status"] for row in rows] == [
+            "succeeded", "unknown", "cancelled",
+        ]
+        assert rows[0]["state_version"] >= 6
+        assert rows[1]["state_version"] >= 5
+        assert rows[2]["cancel_accepted_at"] and rows[2]["cancel_confirmed_at"]
     functions = _admin(
         """
         SELECT p.oid::regprocedure::text AS function_name
@@ -462,9 +464,11 @@ def verify() -> None:
         """,
         ([case["user"] for case in cases],),
     )
-    assert not _admin(
-        "SELECT id FROM agent_sandbox_jobs WHERE id = ANY(%s)", (list(ids),),
-    )
+    if ids:
+        assert not _admin(
+            "SELECT id FROM agent_sandbox_jobs WHERE id = ANY(%s)",
+            (list(ids),),
+        )
     for child in ("inputs", "jobs", "checkpoints", "objects", "quarantine"):
         target = ROOT / child
         if target.exists():
