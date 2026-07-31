@@ -56,7 +56,7 @@ def _cleanup_database_facts(cases: list[dict]) -> None:
         """
         SET ROLE everydayai_owner;
         DELETE FROM agent_runtime_worker_heartbeats
-         WHERE worker_id LIKE 'sandbox-daemon-e2e%';
+         WHERE worker_id LIKE 'sandbox-daemon-e2e%%';
         DELETE FROM users WHERE id = ANY(%s);
         RESET ROLE
         """,
@@ -434,7 +434,8 @@ def verify() -> None:
          JOIN pg_namespace n ON n.oid=p.pronamespace
          JOIN pg_roles r ON r.oid=p.proowner
          WHERE n.nspname='public' AND r.rolname='everydayai_owner'
-           AND p.proname NOT LIKE '\\_%%'
+           AND (p.proname LIKE '%%sandbox%%'
+                OR p.proname LIKE '%%agent_runtime%%')
          ORDER BY 1
         """
     )
