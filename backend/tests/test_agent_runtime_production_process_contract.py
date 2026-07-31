@@ -82,5 +82,7 @@ def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
     preflight = (DEPLOY / "preflight-agent-runtime-release.sh").read_text()
     assert "runuser --preserve-environment -u everydayai-sandbox" in preflight
     assert "sandbox-worker-cgroup-wrapper.sh" in preflight
+    assert "systemctl is-active everydayai-sandbox-worker" in preflight
+    assert "sandbox cgroup probe deferred to unit ExecStartPre" in preflight
     env = (DEPLOY / "env-templates/sandbox-worker.env.template").read_text()
     assert "SANDBOX_CGROUP_V2_RUNNER=" in env

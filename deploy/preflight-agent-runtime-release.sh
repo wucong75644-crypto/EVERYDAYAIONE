@@ -63,9 +63,17 @@ if "$with_sandbox"; then
       -p SupplementaryGroups --value | tr ' ' '\n' | sort -u
   )
   test "$supplementary" = everydayai-sandbox-io
-  runuser --preserve-environment -u everydayai-sandbox -- \
-    "$repo_root/deploy/sandbox-worker-cgroup-wrapper.sh" \
-    "$repo_root/deploy/runtime-capability-probe.sh" sandbox
+  sandbox_state=$(systemctl is-active everydayai-sandbox-worker || true)
+  if [ "$sandbox_state" = active ]; then
+    runuser --preserve-environment -u everydayai-sandbox -- \
+      "$repo_root/deploy/sandbox-worker-cgroup-wrapper.sh" \
+      "$repo_root/deploy/runtime-capability-probe.sh" sandbox
+  elif [ "$sandbox_state" = inactive ]; then
+    echo "sandbox cgroup probe deferred to unit ExecStartPre"
+  else
+    echo "unexpected Sandbox Worker state: $sandbox_state" >&2
+    exit 1
+  fi
 fi
 
 echo "agent-runtime-release-preflight=ok"
