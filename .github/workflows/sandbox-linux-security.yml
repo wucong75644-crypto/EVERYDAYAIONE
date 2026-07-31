@@ -225,6 +225,7 @@ jobs:
           except Exception as exc:
               print("sandbox_db_probe_error=", type(exc).__name__, getattr(exc, "sqlstate", None), str(exc).split("@",1)[0])
               raise
+          PY
           sandbox_uid=$(id -u everydayai-sandbox)
           sandbox_gid=$(id -g everydayai-sandbox)
           sudo chown -R "$sandbox_uid:$sandbox_gid" "$SANDBOX_JOB_ROOT"
