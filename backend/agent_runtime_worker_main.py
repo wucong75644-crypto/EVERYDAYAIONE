@@ -150,8 +150,9 @@ async def _build_owner_and_cycle(role, raw, settings):
         cycle = owner.run_once
     elif role == "sandbox":
         owner = build_sandbox(raw, settings)
-        if not owner.worker.probe().ready:
-            raise RuntimeError("SANDBOX_CAPABILITY_PROBE_FAILED")
+        probe = owner.worker.probe()
+        if not probe.ready:
+            raise RuntimeError(f"SANDBOX_CAPABILITY_PROBE_FAILED:{probe.code}")
 
         async def cycle():
             execution = await owner.worker.run_once()
