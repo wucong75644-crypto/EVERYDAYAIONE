@@ -24,6 +24,8 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
         "chmod 0750",
         "test -w /tmp/everydayai-sandbox-worker/logs",
         "! test -w /tmp/everydayai-sandbox-worker/source/backend",
+        'echo "$$" > "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs"',
+        'exec runuser --preserve-environment',
         "type f ! -perm -004 -delete",
         "type d ! -perm -001",
         'find "$EVERYDAYAI_LOG_DIR" -maxdepth 1 -type f',

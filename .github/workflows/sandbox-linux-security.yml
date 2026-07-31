@@ -275,9 +275,10 @@ jobs:
           export ENVIRONMENT=test
           cd /tmp/everydayai-sandbox-worker/source/backend
           set +e
-          timeout --signal=KILL 300s sudo --preserve-env runuser \
-            --preserve-environment -u everydayai-sandbox -- \
-            /tmp/everydayai-sandbox-daemon-venv/bin/python \
+          timeout --signal=KILL 300s sudo --preserve-env /bin/sh -c \
+            'echo "$$" > "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs"; \
+            exec runuser --preserve-environment -u everydayai-sandbox -- "$@"' \
+            _ /tmp/everydayai-sandbox-daemon-venv/bin/python \
             -m tests.agent_runtime_sandbox_daemon_e2e exercise
           daemon_rc=$?
           echo "daemon_rc=$daemon_rc" >> "$GITHUB_OUTPUT"
@@ -312,13 +313,14 @@ jobs:
           /tmp/everydayai-sandbox-test-venv/bin/pip install \
             pytest==8.3.4 pytest-asyncio==0.25.2
           set +e
-          sudo --preserve-env runuser --preserve-environment \
-            -u everydayai-sandbox -- /bin/sh -c \
-            'export AGENT_RUNTIME_PROCESS_ROLE=sandbox \
-            RUN_SANDBOX_LINUX_EXTERNAL_TESTS=1; exec \
+          sudo --preserve-env /bin/sh -c \
+            'echo "$$" > "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs"; \
+            exec runuser --preserve-environment -u everydayai-sandbox -- "$@"' \
+            _ env AGENT_RUNTIME_PROCESS_ROLE=sandbox \
+            RUN_SANDBOX_LINUX_EXTERNAL_TESTS=1 \
             /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
             -q --tb=short -p no:warnings -p testing.pytest_policy \
-            -m external tests/test_agent_runtime_sandbox_linux_external.py' \
+            -m external tests/test_agent_runtime_sandbox_linux_external.py \
             2>&1 | tee /tmp/everydayai-sandbox-contract.log
           contract_rc=${PIPESTATUS[0]}
           set -e
