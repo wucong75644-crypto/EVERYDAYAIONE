@@ -101,6 +101,12 @@ class NsJailSubprocessLauncher:
             return IsolationProbe(
                 ready=False, code="SANDBOX_CGROUP_DELEGATION_REQUIRED",
             )
+        if not _cleanup_and_verify_cgroups(
+            self._cgroup_v2_mount, frozenset(),
+        ):
+            return IsolationProbe(
+                ready=False, code="SANDBOX_CGROUP_RESIDUE_UNPROVEN",
+            )
         if not verify_sha256(self._nsjail_path, self._nsjail_sha256):
             return IsolationProbe(
                 ready=False, code="SANDBOX_NSJAIL_HASH_MISMATCH",
