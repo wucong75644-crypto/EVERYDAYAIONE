@@ -29,6 +29,10 @@ test "$SANDBOX_WORKER_CONCURRENCY" = 1
 test "$SANDBOX_PARTIAL_RETENTION_SECONDS" = 86400
 test -d "$SANDBOX_CGROUP_V2_MOUNT"
 test -w "$SANDBOX_CGROUP_V2_MOUNT"
+test -d "${SANDBOX_CGROUP_V2_RUNNER:?SANDBOX_CGROUP_V2_RUNNER required}"
+test -w "$SANDBOX_CGROUP_V2_RUNNER"
+test -z "$(cat "$SANDBOX_CGROUP_V2_MOUNT/cgroup.procs")"
+grep -qx "$$" "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"
 findmnt -T "$SANDBOX_ROOTFS" -n -o OPTIONS |
   tr ',' '\n' | grep -qx ro
 echo "$SANDBOX_NSJAIL_SHA256  $SANDBOX_NSJAIL_PATH" | sha256sum -c -

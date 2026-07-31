@@ -64,6 +64,7 @@ if "$with_sandbox"; then
   )
   test "$supplementary" = everydayai-sandbox-io
   runuser --preserve-environment -u everydayai-sandbox -- \
+    "$repo_root/deploy/sandbox-worker-cgroup-wrapper.sh" \
     "$repo_root/deploy/runtime-capability-probe.sh" sandbox
 fi
 
