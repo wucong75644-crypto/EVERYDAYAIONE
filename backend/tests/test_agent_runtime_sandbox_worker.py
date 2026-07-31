@@ -50,7 +50,7 @@ def test_worker_probe_delegates_to_launcher(tmp_path) -> None:
 async def test_worker_does_not_claim_when_isolation_probe_fails(
     tmp_path,
 ) -> None:
-    jobs = type("_Jobs", (), {"claim_recoverable": AsyncMock()})()
+    jobs = type("_Jobs", (), {"claim": AsyncMock(), "claim_recoverable": AsyncMock()})()
     worker = SandboxJobWorker(
         jobs=jobs, launcher=_UnavailableLauncher(),
         workspace=SandboxWorkspaceStore(tmp_path.resolve()),
@@ -59,12 +59,12 @@ async def test_worker_does_not_claim_when_isolation_probe_fails(
     result = await worker.run_once()
     assert not result.worked
     assert result.outcome == "SANDBOX_NSJAIL_REQUIRED"
-    jobs.claim_recoverable.assert_not_awaited()
-
+    for method in ("claim", "claim_recoverable"):
+        getattr(jobs, method).assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_draining_worker_never_claims(tmp_path) -> None:
-    jobs = type("_Jobs", (), {"claim_recoverable": AsyncMock()})()
+    jobs = type("_Jobs", (), {"claim": AsyncMock(), "claim_recoverable": AsyncMock()})()
     worker = SandboxJobWorker(
         jobs=jobs, launcher=_UnavailableLauncher(),
         workspace=SandboxWorkspaceStore(tmp_path.resolve()),
@@ -73,8 +73,8 @@ async def test_draining_worker_never_claims(tmp_path) -> None:
     worker.drain()
     result = await worker.run_once()
     assert result.outcome == "draining"
-    jobs.claim_recoverable.assert_not_awaited()
-
+    for method in ("claim", "claim_recoverable"):
+        getattr(jobs, method).assert_not_awaited()
 
 def _job(status=SandboxJobStatus.QUEUED):
     return SandboxJobSnapshot(
@@ -103,7 +103,7 @@ class _Jobs:
         self.finish_outcome = None
         self.resolve_outcome = None
 
-    async def claim_recoverable(self, **_kwargs):
+    async def claim(self, **_kwargs):
         self.job = replace(
             self.job, status=SandboxJobStatus.CLAIMED,
             state_version=2, fencing_token=1,

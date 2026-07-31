@@ -26,6 +26,7 @@ def test_hosted_contract_uses_real_daemon_postgres_and_nsjail() -> None:
         "! test -w /tmp/everydayai-sandbox-worker/source/backend",
         "type f ! -perm -004 -delete",
         "type d ! -perm -001",
+        'find "$EVERYDAYAI_LOG_DIR" -maxdepth 1 -type f',
     ):
         assert contract in workflow
     assert "FakeRepository" not in harness

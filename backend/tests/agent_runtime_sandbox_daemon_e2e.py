@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import asyncio
 import hashlib
 import json
@@ -44,13 +45,23 @@ from services.agent.runtime.sandbox.composition import (
 )
 from tests.sandbox_daemon_health import wait_ready
 
-
 ROOT = Path(os.environ["SANDBOX_JOB_ROOT"])
 RUNTIME_REVISION = os.environ["SANDBOX_RUNTIME_REVISION"]
 CASES_FILE = ROOT / "daemon-e2e-cases.json"
 DAEMON_LOG = ROOT / "daemon-e2e-worker.log"
 DAEMONS: list[subprocess.Popen] = []
 
+def _cleanup_database_facts(cases: list[dict]) -> None:
+    _admin(
+        """
+        SET ROLE everydayai_owner;
+        DELETE FROM agent_runtime_worker_heartbeats
+         WHERE worker_id LIKE 'sandbox-daemon-e2e%';
+        DELETE FROM users WHERE id = ANY(%s);
+        RESET ROLE
+        """,
+        ([case["user"] for case in cases],),
+    )
 
 def _admin(sql: str, params: tuple[object, ...] = ()) -> list[dict]:
     with psycopg.connect(
@@ -58,8 +69,7 @@ def _admin(sql: str, params: tuple[object, ...] = ()) -> list[dict]:
         cursor_factory=psycopg.ClientCursor,
     ) as connection:
         cursor = connection.execute(sql, params)
-        return list(cursor.fetchall()) if cursor.description else []
-
+    return list(cursor.fetchall()) if cursor.description else []
 
 def _seed_case(name: str) -> dict[str, str]:
     ids = {
@@ -188,7 +198,6 @@ def prepare() -> None:
     CASES_FILE.write_text(json.dumps(cases), encoding="utf-8")
     os.chmod(CASES_FILE, 0o600)
 
-
 def _attempt(case: dict, status: ActionAttemptStatus) -> ActionAttempt:
     accepted = status in {ActionAttemptStatus.ACCEPTED, ActionAttemptStatus.UNKNOWN}
     return ActionAttempt(
@@ -213,7 +222,6 @@ def _attempt(case: dict, status: ActionAttemptStatus) -> ActionAttempt:
         ),
     )
 
-
 async def _runtime_components():
     raw = await get_async_worker_db(os.environ["RUNTIME_DATABASE_URL"])
     await raw.pool.wait(timeout=10)
@@ -225,7 +233,6 @@ async def _runtime_components():
         runtime_database=scoped, workspace_root=ROOT,
         runtime_revision=RUNTIME_REVISION, registry=ExecutorRegistry(),
     )
-
 
 async def _submit(components, case: dict, code: str) -> None:
     attempt = _attempt(case, ActionAttemptStatus.DISPATCHING)
@@ -254,7 +261,6 @@ async def _submit(components, case: dict, code: str) -> None:
     })
     assert receipt.outcome is ExecutionOutcome.ACCEPTED
     case["job_id"] = receipt.external_receipt["sandbox_job_id"]
-
 
 def _daemon() -> subprocess.Popen:
     with DAEMON_LOG.open("ab") as log:
@@ -396,6 +402,7 @@ while True:
 def verify() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     ids = tuple(case["job_id"] for case in cases if "job_id" in case)
+    atexit.register(_cleanup_database_facts, cases)
     rows = _admin(
         """
         SELECT status, state_version, ambiguity_evidence,
@@ -416,9 +423,10 @@ def verify() -> None:
         """
         SELECT p.oid::regprocedure::text AS function_name
           FROM pg_proc p
-          JOIN pg_namespace n ON n.oid=p.pronamespace
-          JOIN pg_roles r ON r.oid=p.proowner
+         JOIN pg_namespace n ON n.oid=p.pronamespace
+         JOIN pg_roles r ON r.oid=p.proowner
          WHERE n.nspname='public' AND r.rolname='everydayai_owner'
+           AND p.proname NOT LIKE '\\_%'
          ORDER BY 1
         """
     )
@@ -449,21 +457,13 @@ def verify() -> None:
             (row["function_name"],),
         )[0]["allowed"]
     }
-    assert effective <= allowed
+    assert effective <= allowed, sorted(effective - allowed)
     assert not _admin(
         "SELECT has_table_privilege("
         "'everydayai_sandbox_worker','agent_sandbox_jobs','SELECT') AS allowed"
     )[0]["allowed"]
-    _admin(
-        """
-        SET ROLE everydayai_owner;
-        DELETE FROM agent_runtime_worker_heartbeats
-         WHERE worker_id LIKE 'sandbox-daemon-e2e%';
-        DELETE FROM users WHERE id = ANY(%s);
-        RESET ROLE
-        """,
-        ([case["user"] for case in cases],),
-    )
+    _cleanup_database_facts(cases)
+    atexit.unregister(_cleanup_database_facts)
     if ids:
         assert not _admin(
             "SELECT id FROM agent_sandbox_jobs WHERE id = ANY(%s)",

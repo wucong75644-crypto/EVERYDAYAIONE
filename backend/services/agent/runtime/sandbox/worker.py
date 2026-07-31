@@ -60,9 +60,14 @@ class SandboxJobWorker:
         probe = self.probe()
         if not probe.ready:
             return WorkerCycleResult(worked=False, outcome=probe.code)
-        claimed = await self._jobs.claim_recoverable(
+        claimed = await self._jobs.claim(
             worker_id=self._worker_id, lease_seconds=self._lease_seconds,
         )
+        if claimed.outcome is SandboxJobOutcome.NOT_FOUND:
+            claimed = await self._jobs.claim_recoverable(
+                worker_id=self._worker_id,
+                lease_seconds=self._lease_seconds,
+            )
         if claimed.outcome is SandboxJobOutcome.NOT_FOUND:
             return WorkerCycleResult(worked=False, outcome="idle")
         if claimed.outcome is not SandboxJobOutcome.CLAIMED or claimed.job is None:

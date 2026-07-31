@@ -44,7 +44,9 @@ class _IdleDatabase:
         )
 
     def rpc(self, name, _params):
-        if name == "claim_next_recoverable_sandbox_job":
+        if name in {
+            "claim_next_sandbox_job", "claim_next_recoverable_sandbox_job",
+        }:
             self.claim_calls += 1
         elif name == "claim_next_sandbox_job_reconciliation":
             self.reconcile_calls += 1
@@ -85,7 +87,7 @@ async def test_sandbox_entrypoint_uses_real_components_and_cycle_surface(
     assert owner is components
     assert await cycle() is False
     assert launcher.probe_calls == 2
-    assert jobs.claim_calls == 1
+    assert jobs.claim_calls == 2
     assert jobs.reconcile_calls == 1
 
 
