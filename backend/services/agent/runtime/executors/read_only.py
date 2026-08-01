@@ -22,6 +22,8 @@ class ReadCapability(Protocol):
         self, snapshot: ActionSnapshot, request: Mapping[str, object],
     ) -> Mapping[str, object]: ...
 
+    def bind(self, snapshot: ActionSnapshot) -> "ReadCapability": ...
+
 
 ReadOperation = Callable[
     [ActionSnapshot, Mapping[str, object]],
@@ -97,7 +99,9 @@ class ReadOnlyExecutor:
         if snapshot.scope.kind.value == "channel" and not snapshot.scope.org_id:
             return _failed(attempt, "READ_ORG_SCOPE_REQUIRED")
         try:
-            raw = await self._capability.read(snapshot, snapshot.request)
+            binder = getattr(self._capability, "bind", None)
+            capability = binder(snapshot) if callable(binder) else self._capability
+            raw = await capability.read(snapshot, snapshot.request)
             data = safe_result(raw, self._policy)
             canonical = canonical_json(data)
             summary = bounded_summary(data, self._policy)

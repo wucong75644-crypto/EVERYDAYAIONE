@@ -24,6 +24,8 @@ from services.agent.runtime.executors.read_registry import (
     read_descriptor,
 )
 from services.agent.runtime.executors.capabilities import RestrictedArtifactCapability
+from services.agent.runtime.executors.real_base import RuntimeReadResources
+from services.agent.runtime.executors.real_composition import build_nonproduction_read_registry
 
 __all__ = [
     "AuthorizationRequirement",
@@ -41,4 +43,5 @@ __all__ = [
     "READ_SCOPE_KINDS", "READ_TOOL_SPECS", "build_read_executor_registry",
     "read_descriptor",
     "RestrictedArtifactCapability",
+    "RuntimeReadResources", "build_nonproduction_read_registry",
 ]

@@ -25,6 +25,7 @@ _SENSITIVE_KEY = re.compile(
     r"private[_-]?key|storage[_-]?ref|internal[_-]?path)", re.I,
 )
 _ABSOLUTE_PATH = re.compile(r"(?:^|[\\/])(?:Users|home|var|tmp|mnt|private)[\\/]")
+_ARTIFACT_REF = re.compile(r"^artifact:[A-Za-z0-9_-]{1,128}$")
 
 
 def canonical_json(value: object) -> str:
@@ -90,10 +91,14 @@ def safe_result(value: object, policy: ResultPolicy) -> dict[str, object]:
     redacted = _redact(value)
     encoded = canonical_json(redacted).encode("utf-8")
     if len(encoded) > policy.max_inline_bytes:
-        if not isinstance(redacted, Mapping) or not redacted.get("artifact_ref"):
+        artifact_ref = (
+            redacted.get("artifact_ref")
+            if isinstance(redacted, Mapping) else None
+        )
+        if not isinstance(artifact_ref, str) or not _ARTIFACT_REF.fullmatch(artifact_ref):
             raise ValueError("EXECUTOR_RESULT_TOO_LARGE")
         redacted = {
-            "artifact_ref": redacted["artifact_ref"],
+            "artifact_ref": artifact_ref,
             "byte_size": len(encoded),
             "content_hash": hashlib.sha256(encoded).hexdigest(),
         }
