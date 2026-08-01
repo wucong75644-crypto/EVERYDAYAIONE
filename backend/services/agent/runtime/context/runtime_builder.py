@@ -110,7 +110,8 @@ def _bounded_text(value: object, limit: int = 2000) -> str | None:
 def _bounded_json(value: object, limit: int = 20000) -> object:
     import json
     try:
-        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError):
         return None
     if len(encoded) > limit:
@@ -120,7 +121,8 @@ def _bounded_json(value: object, limit: int = 20000) -> object:
 
 def _canonical_json(value: object) -> str:
     import json
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False)
 
 
 def _sha256(value: str) -> str:

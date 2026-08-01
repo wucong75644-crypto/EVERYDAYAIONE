@@ -77,7 +77,7 @@ def test_context_is_anchor_bound_and_repeats_tool_call_and_result_once() -> None
         "tool_name": "code_execute", "status": "completed", "arguments": {
             "code": "print(1)", "description": "test",
         }, "result": {"status": "success", "summary": "done",
-                       "data": {"value": 1}, "external_receipt": "hidden"},
+                       "data": {"value": float("nan")}, "external_receipt": "hidden"},
     }
     first = build_runtime_context(
         run={"id": "run-1", "context_receipt": {
@@ -99,6 +99,7 @@ def test_context_is_anchor_bound_and_repeats_tool_call_and_result_once() -> None
         "user", "assistant", "tool",
     ]
     assert '"status":"success"' in messages[-1]["content"]
+    assert '"data":null' in messages[-1]["content"]
     assert "external_receipt" not in messages[-1]["content"]
 
 
