@@ -4,11 +4,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from services.agent.runtime.domain import ActionAttempt, ActionAttemptStatus, Lease, RuntimeScope, ScopeKind
+from services.agent.runtime.domain import ActionAttempt, ActionAttemptStatus, ActionStatus, Lease, RuntimeScope, ScopeKind
 from services.agent.runtime.executors.contracts import canonical_request_hash
 from services.agent.runtime.executors.materializer import ArtifactMaterializer, MaterializeCheckpoint
-from services.agent.runtime.executors.specialist_contracts import CostReservation, ProviderReceipt, ProviderState, validate_public_request
+from services.agent.runtime.executors.specialist_contracts import (
+    CostReservation, NetworkRule, ProviderReceipt, ProviderState,
+    validate_public_request,
+)
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+from services.agent.runtime.executors.reconciler import assert_reconcile_only
 from services.agent.runtime.executors.specialist_registry import (
     SPECIALIST_TOOLS, build_specialist_registry, specialist_descriptor,
 )
@@ -42,6 +46,16 @@ class _Provider:
 
     async def cancel(self, attempt, receipt):
         return ProviderReceipt(state=ProviderState.CANCELLED, provider="fake", request_hash=attempt.request_hash, evidence={"cancelled": True})
+
+
+class _UnknownProvider(_Provider):
+    async def submit(self, attempt, request, *, idempotency_key):
+        raise TimeoutError("response lost")
+
+
+class _AcceptedProvider(_Provider):
+    async def submit(self, attempt, request, *, idempotency_key):
+        return ProviderReceipt(state=ProviderState.ACCEPTED, provider="fake", request_hash=attempt.request_hash, provider_task_ref="task-1", evidence={"accepted": True})
 
 
 async def _value(value):
@@ -104,6 +118,35 @@ def test_secret_boundary_requires_opaque_handles() -> None:
     with pytest.raises(PermissionError, match="SECRET_HANDLE_REQUIRED"):
         validate_public_request({"api_token": "plaintext"})
     validate_public_request({"credential_handle": "secret:kie-prod"})
+
+
+@pytest.mark.asyncio
+async def test_submit_timeout_is_unknown_and_accepted_reconciles_without_resubmit() -> None:
+    request = {"prompt": "safe"}
+    unknown = SpecialistExecutor(executor_type="runtime_media_generation:generate_image", revision=1, provider=_UnknownProvider())
+    lost = await unknown.dispatch(_attempt(request), request)
+    assert lost.outcome.value == "unknown"
+
+    accepted_executor = SpecialistExecutor(executor_type="runtime_media_generation:generate_image", revision=1, provider=_AcceptedProvider())
+    accepted = await accepted_executor.dispatch(_attempt(request), request)
+    assert accepted.outcome.value == "accepted"
+    accepted_attempt = _attempt(request)
+    accepted_attempt = ActionAttempt(**{
+        **accepted_attempt.__dict__, "status": ActionAttemptStatus.ACCEPTED,
+        "accepted_at": datetime.now(timezone.utc),
+        "external_receipt": accepted.external_receipt,
+    })
+    reconciled = await accepted_executor.reconcile(accepted_attempt)
+    assert reconciled.outcome.value == "completed"
+
+
+def test_network_and_reconcile_guards_fail_closed() -> None:
+    rule = NetworkRule(provider="dashscope", method="POST", paths=frozenset({"/search"}))
+    assert rule.allows("dashscope", "POST", "/search")
+    with pytest.raises(PermissionError, match="NETWORK_NOT_ALLOWED"):
+        rule.assert_allowed("dashscope", "GET", "/search")
+    with pytest.raises(ValueError, match="RECONCILE_STATUS_REQUIRED"):
+        assert_reconcile_only(ActionStatus.RUNNING, ActionAttemptStatus.DISPATCHING)
 
 
 def test_226_lanes_are_additive_and_rollbacks_fail_closed() -> None:
