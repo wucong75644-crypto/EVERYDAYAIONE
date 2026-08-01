@@ -94,7 +94,7 @@ class ScopedReadDatabase:
         self.tables = tables
         self.operations: list[tuple[str, str]] = []
         self.scope = DatabaseScope(
-            actor_user_id=USER, org_id=ORG, access_kind=DatabaseAccessKind.RUNTIME,
+            actor_user_id=USER, org_id=ORG, access_kind=DatabaseAccessKind.AGENT_RUNTIME,
         )
 
     def table(self, table: str) -> _Query:
@@ -110,7 +110,17 @@ class _Rpc:
 
     async def execute(self) -> QueryResponse:
         self.db.operations.append(("rpc", self.name))
-        return QueryResponse(data={"doc_count": 2, "total_qty": 3, "total_amount": 4})
+        if "conversation" in self.name:
+            return QueryResponse(data={"summary": "ok", "messages": [{"message_id": "m1", "text": "hello"}]})
+        if "knowledge" in self.name:
+            return QueryResponse(data={"summary": "ok", "items": [{"id": "k1", "content": "fact"}]})
+        if "evidence" in self.name:
+            return QueryResponse(data={"summary": "ok", "evidence": [{"artifact_id": "e1"}]})
+        if "memory" in self.name:
+            return QueryResponse(data={"summary": "ok", "memories": [{"memory_ref": "memory:m1"}]})
+        if "artifact" in self.name:
+            return QueryResponse(data={"summary": "ok", "artifacts": [{"artifact_ref": "artifact:a1"}]})
+        return QueryResponse(data={"summary": "ok", "items": [{"outer_id": "P-1"}]})
 
 
 def _compare(actual: object, expected: object, operation: str) -> bool:
@@ -141,7 +151,7 @@ def _attempt(tool: str, request: dict[str, object], number: int = 1) -> ActionAt
     now = datetime.now(timezone.utc)
     return ActionAttempt(
         attempt_id=f"attempt-{number}", action_id=f"action-{number}", scope=RuntimeScope(
-            kind=ScopeKind.CHANNEL, scope_id=ORG, user_id=None, org_id=ORG,
+            kind=ScopeKind.CHANNEL, scope_id=USER, user_id=None, org_id=ORG,
         ), attempt_number=1, status=ActionAttemptStatus.DISPATCHING,
         worker_id="worker-1", idempotency_key=f"idem-{number}",
         request_hash=canonical_request_hash(request),
@@ -156,10 +166,7 @@ async def test_all_eighteen_tools_use_real_adapters_and_read_only_sources(tmp_pa
     root.mkdir(parents=True)
     (root / "report.txt").write_text("report", encoding="utf-8")
     database = ScopedReadDatabase(_tables())
-    resources = RuntimeReadResources(
-        database=database, user_id=USER, org_id=ORG, conversation_id=CONVERSATION,
-        base_revision=1, workspace_root=tmp_path / "workspace",
-    )
+    resources = RuntimeReadResources(database=database, workspace_root=tmp_path / "workspace")
     registry = build_nonproduction_read_registry(resources)
     catalog = RuntimeToolCatalog.from_executor_registry(registry)
     assert {item.canonical_name for item in catalog.definitions()} == set(READ_TOOL_SPECS)
@@ -188,7 +195,7 @@ async def test_all_eighteen_tools_use_real_adapters_and_read_only_sources(tmp_pa
 @pytest.mark.asyncio
 async def test_real_binding_scope_expiry_and_bad_reference_fail_closed(tmp_path: Path) -> None:
     database = ScopedReadDatabase(_tables())
-    resources = RuntimeReadResources(database=database, user_id=USER, org_id=ORG, workspace_root=tmp_path)
+    resources = RuntimeReadResources(database=database, workspace_root=tmp_path)
     capability = ArtifactReadCapability(resources)
     request = {"artifact_id": "artifact-1", "cursor": 0, "max_tokens": 256}
     attempt = _attempt("artifact_read", request)
@@ -209,16 +216,12 @@ async def test_real_binding_scope_expiry_and_bad_reference_fail_closed(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_real_adapter_rejects_wrong_org_as_terminal_failure(tmp_path: Path) -> None:
+async def test_real_adapter_rejects_wrong_database_access_as_terminal_failure(tmp_path: Path) -> None:
     database = ScopedReadDatabase(_tables())
-    resources = RuntimeReadResources(database=database, user_id=USER, org_id=ORG, workspace_root=tmp_path)
+    database.scope = DatabaseScope(actor_user_id=USER, org_id=ORG, access_kind=DatabaseAccessKind.RUNTIME)
+    resources = RuntimeReadResources(database=database, workspace_root=tmp_path)
     request = {"product_code": "P-1"}
     attempt = _attempt("local_stock_query", request, 40)
-    wrong_scope = RuntimeScope(
-        kind=ScopeKind.CHANNEL, scope_id="55555555-5555-5555-5555-555555555555",
-        user_id=None, org_id="55555555-5555-5555-5555-555555555555",
-    )
-    attempt = ActionAttempt(**{**attempt.__dict__, "scope": wrong_scope})
     executor = ReadOnlyExecutor(
         executor_type="runtime_read:local_stock_query", executor_revision=1,
         capability=ErpLocalReadCapability(resources, "local_stock_query"),
@@ -228,3 +231,22 @@ async def test_real_adapter_rejects_wrong_org_as_terminal_failure(tmp_path: Path
     assert receipt.outcome is ExecutionOutcome.FAILED
     assert receipt.external_receipt["error_code"] == "READ_PERMISSION_DENIED"
     assert database.operations == []
+
+
+@pytest.mark.asyncio
+async def test_workspace_read_rejects_escape_symlink_hardlink_and_hidden_paths(tmp_path: Path) -> None:
+    database = ScopedReadDatabase(_tables())
+    root = tmp_path / "org" / ORG / USER
+    root.mkdir(parents=True)
+    (root / "safe.txt").write_text("safe", encoding="utf-8")
+    (root / "outside.txt").write_text("outside", encoding="utf-8")
+    (root / "link.txt").symlink_to(root / "outside.txt")
+    (root / "hard.txt").hardlink_to(root / "outside.txt")
+    resources = RuntimeReadResources(database=database, workspace_root=tmp_path)
+    executor = ReadOnlyExecutor(
+        executor_type="runtime_read:file_search", executor_revision=1,
+        capability=WorkspaceReadCapability(resources), allowed_scope_kinds=frozenset({"channel"}),
+    )
+    for value in ("../outside.txt", "link.txt", "hard.txt", ".env"):
+        receipt = await executor.dispatch(_attempt("file_search", {"path": value}, 50), {"path": value})
+        assert receipt.outcome is ExecutionOutcome.FAILED

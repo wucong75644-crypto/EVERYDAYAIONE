@@ -55,6 +55,7 @@ class ActionSnapshot:
     scope: RuntimeScope
     request: Mapping[str, object]
     request_hash: str
+    fencing_token: str
     executor_type: str
     executor_revision: int
 
@@ -71,6 +72,7 @@ class ActionSnapshot:
             scope=attempt.scope, request=dict(request),
             request_hash=request_hash, executor_type=executor_type,
             executor_revision=executor_revision,
+            fencing_token=str(attempt.lease.fencing_token),
         )
 
 

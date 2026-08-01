@@ -17,19 +17,11 @@ from services.agent.runtime.executors.capabilities import CapabilityBinding
 @dataclass(frozen=True, kw_only=True)
 class RuntimeReadResources:
     database: Any
-    user_id: str
-    org_id: str | None
-    conversation_id: str | None = None
-    base_revision: int | None = None
     workspace_root: Path | None = None
     artifact_store: Any | None = None
     capability_ttl_seconds: int = 60
 
     def __post_init__(self) -> None:
-        if not self.user_id.strip():
-            raise ValueError("RUNTIME_READ_USER_REQUIRED")
-        if self.base_revision is not None and self.base_revision < 0:
-            raise ValueError("RUNTIME_READ_REVISION_INVALID")
         if self.capability_ttl_seconds < 1:
             raise ValueError("RUNTIME_READ_CAPABILITY_TTL_INVALID")
         if self.workspace_root is not None:
@@ -63,23 +55,11 @@ class RealReadCapability:
 
     def _validate_snapshot(self, snapshot: ActionSnapshot) -> None:
         scope = snapshot.scope
-        if scope.kind is ScopeKind.USER:
-            if scope.user_id != self.resources.user_id:
-                raise PermissionError("READ_USER_SCOPE_MISMATCH")
-            if self.resources.org_id is not None:
-                raise PermissionError("READ_PERSONAL_ORG_SCOPE_MISMATCH")
-        elif scope.kind is ScopeKind.CHANNEL:
-            if scope.org_id != self.resources.org_id or not scope.org_id:
-                raise PermissionError("READ_ORG_SCOPE_MISMATCH")
-        else:
+        if scope.kind not in {ScopeKind.USER, ScopeKind.CHANNEL}:
             raise PermissionError("READ_SCOPE_KIND_NOT_ALLOWED")
         db_scope = database_scope_from_client(self.resources.database)
-        if db_scope is None or db_scope.access_kind is not DatabaseAccessKind.RUNTIME:
-            raise PermissionError("RUNTIME_DATABASE_SCOPE_REQUIRED")
-        if db_scope.actor_user_id != self.resources.user_id:
-            raise PermissionError("READ_DATABASE_ACTOR_MISMATCH")
-        if db_scope.org_id != self.resources.org_id:
-            raise PermissionError("READ_DATABASE_ORG_MISMATCH")
+        if db_scope is None or db_scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
+            raise PermissionError("AGENT_RUNTIME_DATABASE_SCOPE_REQUIRED")
 
 
 class BoundRealReadCapability:
@@ -103,12 +83,27 @@ async def execute_query(builder: Any) -> Any:
     return await result if inspect.isawaitable(result) else result
 
 
-async def table_rows(
-    database: Any, table: str, columns: str, *, limit: int = 100,
-) -> list[dict[str, Any]]:
-    result = await execute_query(database.table(table).select(columns).limit(limit))
-    data = getattr(result, "data", None)
-    return data if isinstance(data, list) else []
+async def read_rpc(
+    database: Any, name: str, snapshot: ActionSnapshot,
+    request: Mapping[str, object], **params: object,
+) -> Any:
+    context_revision = request.get("context_revision")
+    if context_revision is not None and (
+        isinstance(context_revision, bool) or not isinstance(context_revision, int)
+        or context_revision < 0
+    ):
+        raise ValueError("READ_CONTEXT_REVISION_INVALID")
+    common = {
+        "p_action_id": snapshot.action_id,
+        "p_attempt_id": snapshot.attempt_id,
+        "p_execution_token": snapshot.fencing_token,
+        "p_request_hash": snapshot.request_hash,
+        "p_executor_type": snapshot.executor_type,
+        "p_executor_revision": snapshot.executor_revision,
+        "p_context_revision": context_revision,
+    }
+    result = await execute_query(database.rpc(name, {**common, **params}))
+    return getattr(result, "data", None)
 
 
 def bounded_limit(value: object, *, default: int = 20, maximum: int = 100) -> int:
@@ -135,7 +130,3 @@ def optional_text(request: Mapping[str, object], name: str, *, max_len: int = 20
     if not isinstance(value, str) or len(value) > max_len:
         raise ValueError(f"READ_{name.upper()}_INVALID")
     return value.strip() or None
-
-
-def public_rows(rows: list[Mapping[str, object]], allowed: tuple[str, ...]) -> list[dict[str, object]]:
-    return [{key: row.get(key) for key in allowed if key in row} for row in rows]
