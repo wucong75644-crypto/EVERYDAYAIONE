@@ -87,12 +87,6 @@ async def read_rpc(
     database: Any, name: str, snapshot: ActionSnapshot,
     request: Mapping[str, object], **params: object,
 ) -> Any:
-    context_revision = request.get("context_revision")
-    if context_revision is not None and (
-        isinstance(context_revision, bool) or not isinstance(context_revision, int)
-        or context_revision < 0
-    ):
-        raise ValueError("READ_CONTEXT_REVISION_INVALID")
     common = {
         "p_action_id": snapshot.action_id,
         "p_attempt_id": snapshot.attempt_id,
@@ -100,7 +94,6 @@ async def read_rpc(
         "p_request_hash": snapshot.request_hash,
         "p_executor_type": snapshot.executor_type,
         "p_executor_revision": snapshot.executor_revision,
-        "p_context_revision": context_revision,
     }
     result = await execute_query(database.rpc(name, {**common, **params}))
     return getattr(result, "data", None)

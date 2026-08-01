@@ -43,6 +43,8 @@ REQUESTS = {
     "local_platform_map_query": {"product_code": "P-1"}, "local_compare_stats": {"doc_type": "sale", "compare_kind": "wow", "current_period": "today"},
     "local_shop_list": {}, "local_warehouse_list": {}, "local_supplier_list": {},
 }
+ANCHOR = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaae"
+CHANNEL_ANCHOR = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaf"
 
 
 BUSINESS_BOOTSTRAP = """
@@ -79,11 +81,14 @@ DO $$ DECLARE t TEXT; BEGIN FOREACH t IN ARRAY ARRAY['messages','conversation_ar
 INSERT INTO knowledge_nodes VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', NULL, FALSE, 'general', 'fact', 'knowledge', 'knowledge fact', 1, 'fixture', '{}');
 INSERT INTO organizations(id) VALUES ('77777777-7777-7777-7777-777777777777');
 INSERT INTO conversation_data_evidence VALUES ('evidence-1','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','fixture','["amount"]','[{"amount":4}]','{}','{}','{}',30,1,'ready');
+INSERT INTO conversation_data_evidence VALUES ('evidence-2','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','future','["amount"]','[{"amount":99}]','{}','{}','{}',30,2,'ready');
     INSERT INTO memory_atoms VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab','44444444-4444-4444-4444-444444444444','22222222-2222-2222-2222-222222222222','memory fact','{}',now(),NULL,ARRAY[]::UUID[],FALSE,'active');
-    INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaae','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','hello','completed',1);
+    INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaae','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','hello','completed',1), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaf','66666666-6666-6666-6666-666666666666','22222222-2222-2222-2222-222222222222','user','channel hello','completed',1), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaad','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','future message','completed',2);
+    INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','future channel message','completed',2);
 INSERT INTO conversation_artifacts(id,conversation_id,org_id) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaac','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222');
 ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS tool_call_id TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS tool_name TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS artifact_type TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS status TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS storage_kind TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS inline_content JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS storage_ref JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS model_view JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS history_view JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS content_hash TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS byte_size INTEGER; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS metadata JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS context_revision BIGINT;
 UPDATE conversation_artifacts SET tool_name='fixture',artifact_type='table',status='ready',storage_kind='inline',inline_content='{"rows":[{"id":"r1"}]}'::jsonb,model_view='{}',history_view='{}',content_hash='hash',byte_size=20,metadata='{}',context_revision=1 WHERE id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaac';
+INSERT INTO conversation_artifacts(id,conversation_id,org_id,tool_name,artifact_type,status,storage_kind,inline_content,model_view,history_view,content_hash,byte_size,metadata,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaad','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','future','table','ready','inline','{"rows":[{"id":"future"}]}','{}','{}','future-hash',30,'{}',2);
 INSERT INTO erp_products VALUES ('22222222-2222-2222-2222-222222222222','P-1','Product','local',1,'B-1');
 INSERT INTO erp_product_skus VALUES ('22222222-2222-2222-2222-222222222222','P-1','S-1','Blue','B-1');
 INSERT INTO erp_stock_status VALUES ('22222222-2222-2222-2222-222222222222','P-1','S-1','W-1',2,3,0,0,'ok');
@@ -114,10 +119,20 @@ def _insert_actions(url: str) -> dict[str, tuple[str, str, str]]:
             command_id, run_id, step_id = [uuid4() for _ in range(3)]
             action_id, attempt_id, token, policy_id = [uuid4() for _ in range(4)]
             user = None if channel else USER
-            conn.execute("INSERT INTO agent_session_commands(id,session_id,org_id,user_id,command_type,idempotency_key,payload,request_hash) VALUES(%s,%s,%s,%s,'submit_input',%s,'{}','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')", (command_id,session_id,ORG,user,str(command_id)))
-            conn.execute("INSERT INTO agent_runs(id,session_id,command_id,org_id,user_id,run_kind,idempotency_key,request_hash,status,execution_token,lease_expires_at) VALUES(%s,%s,%s,%s,%s,'user',%s,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','running',%s,clock_timestamp()+interval '10 minutes')", (run_id,session_id,command_id,ORG,user,str(run_id),uuid4()))
+            conversation = CHANNEL_CONVERSATION if channel else CONVERSATION
+            anchor = CHANNEL_ANCHOR if channel else ANCHOR
+            receipt = {"base_context_revision": f"message:{anchor}", "through_message_id": anchor,
+                       "session_id": str(session_id), "conversation_id": str(conversation)}
+            config = {"base_context_revision": f"message:{anchor}", "through_message_id": anchor,
+                      "release_revision": "ar172-fixture"}
+            capabilities = {"fixture": True}
+            envelope = {"schema_revision": 2, "context_receipt": receipt,
+                        "config_snapshot": config, "capability_snapshot": capabilities}
+            payload = json.dumps({"run_envelope": envelope, "release_revision": "ar172-fixture"})
+            conn.execute("INSERT INTO agent_session_commands(id,session_id,org_id,user_id,command_type,idempotency_key,payload,request_hash) VALUES(%s,%s,%s,%s,'submit_input',%s,%s::jsonb,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')", (command_id,session_id,ORG,user,str(command_id),payload))
+            conn.execute("INSERT INTO agent_runs(id,session_id,command_id,org_id,user_id,run_kind,idempotency_key,request_hash,status,execution_token,lease_expires_at,context_receipt,config_snapshot,capability_snapshot) VALUES(%s,%s,%s,%s,%s,'user',%s,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','running',%s,clock_timestamp()+interval '10 minutes',%s::jsonb,%s::jsonb,%s::jsonb)", (run_id,session_id,command_id,ORG,user,str(run_id),uuid4(),json.dumps(receipt),json.dumps(config),json.dumps(capabilities)))
             conn.execute("INSERT INTO agent_model_steps(id,run_id,session_id,org_id,user_id,step_number,model_id,provider,model_revision,prompt_revision,tool_catalog_revision) VALUES(%s,%s,%s,%s,%s,%s,'fixture','fixture','v1','v1','v1')", (step_id,run_id,session_id,ORG,user,index))
-            args = json.dumps({"context_revision": 1})
+            args = json.dumps({})
             request_hash = canonical_request_hash(REQUESTS[tool])
             conn.execute("INSERT INTO agent_actions(id,session_id,run_id,model_step_id,org_id,user_id,action_index,stable_tool_call_id,tool_name,arguments,arguments_hash,request_hash,batch_hash,policy_decision,policy_snapshot,policy_revision,retry_disposition,status) VALUES(%s,%s,%s,%s,%s,%s,0,%s,%s,%s,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',%s,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','preauthorized','{}','v1','retry_safe','running')", (action_id,session_id,run_id,step_id,ORG,user,str(action_id),tool,args,request_hash))
             conn.execute("INSERT INTO agent_action_attempts(id,action_id,session_id,run_id,org_id,user_id,attempt_number,status,dispatch_phase,worker_id,execution_token,lease_expires_at,idempotency_key,request_hash,retry_disposition) VALUES(%s,%s,%s,%s,%s,%s,1,'dispatching','request_started','ar172-worker',%s,clock_timestamp()+interval '10 minutes',%s,%s,'retry_safe')", (attempt_id,action_id,session_id,run_id,ORG,user,token,str(attempt_id),request_hash))
@@ -159,6 +174,7 @@ async def test_real_agent_runtime_worker_executes_all_database_adapters(database
         (workspace / "read-only.txt").write_text("fixture", encoding="utf-8")
         resources = RuntimeReadResources(database=scoped, workspace_root=tmp_path)
         registry = build_nonproduction_read_registry(resources)
+        results: dict[str, dict[str, object]] = {}
         for index, tool in enumerate(READ_TOOL_SPECS, 1):
             request = REQUESTS[tool]
             _, executor = registry.resolve(tool)
@@ -166,6 +182,10 @@ async def test_real_agent_runtime_worker_executes_all_database_adapters(database
             receipt = await executor.dispatch(attempt, request)
             assert receipt.outcome is ExecutionOutcome.COMPLETED, (tool, receipt.external_receipt)
             assert receipt.result and receipt.result.data and receipt.result.data.get("count", 1) > 0, tool
+            results[tool] = receipt.result.data
+        assert all(item["message_id"] != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaad" for item in results["get_conversation_context"]["messages"])
+        assert all(item["artifact_id"] != "evidence-2" for item in results["evidence_search"]["evidence"])
+        assert all(item["artifact_ref"] != "artifact:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaad" for item in results["artifact_search"]["artifacts"])
         with psycopg.connect(url) as conn:
             before = conn.execute("SELECT count(*),max(updated_at) FROM agent_actions").fetchone()
             business_tables = ('messages','knowledge_nodes','conversation_data_evidence','memory_atoms','conversation_artifacts','erp_products','erp_product_skus','erp_stock_status','erp_product_daily_stats','erp_product_platform_map','erp_shops','erp_warehouses','erp_suppliers','erp_document_items')
@@ -206,6 +226,27 @@ async def test_real_agent_runtime_worker_executes_all_database_adapters(database
             conn.commit()
         wrong_conversation = await registry.resolve("local_supplier_list")[1].dispatch(_attempt("local_supplier_list", ids["local_supplier_list"], REQUESTS["local_supplier_list"]), REQUESTS["local_supplier_list"])
         assert wrong_conversation.outcome is ExecutionOutcome.FAILED
+        with psycopg.connect(url) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("UPDATE agent_runs SET context_receipt=jsonb_set(context_receipt,'{through_message_id}',%s::jsonb) WHERE id=(SELECT run_id FROM agent_actions WHERE id=%s)", (json.dumps(ANCHOR.replace('ae', 'ad')), UUID(ids["evidence_search"][0])))
+            conn.commit()
+        tampered_receipt = await registry.resolve("evidence_search")[1].dispatch(_attempt("evidence_search", ids["evidence_search"], REQUESTS["evidence_search"]), REQUESTS["evidence_search"])
+        assert tampered_receipt.outcome is ExecutionOutcome.FAILED
+        with psycopg.connect(url) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            run_id = conn.execute("SELECT run_id FROM agent_actions WHERE id=%s", (UUID(ids["evidence_search"][0]),)).fetchone()[0]
+            conn.execute("UPDATE agent_runs SET context_receipt=jsonb_set(context_receipt,'{through_message_id}',%s::jsonb) WHERE id=%s", (json.dumps(ANCHOR), run_id))
+            conn.execute("UPDATE agent_runs SET config_snapshot=jsonb_set(config_snapshot,'{release_revision}','\"tampered\"') WHERE id=%s", (run_id,))
+            conn.commit()
+        tampered_config = await registry.resolve("evidence_search")[1].dispatch(_attempt("evidence_search", ids["evidence_search"], REQUESTS["evidence_search"]), REQUESTS["evidence_search"])
+        assert tampered_config.outcome is ExecutionOutcome.FAILED
+        with psycopg.connect(url) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("UPDATE agent_runs SET config_snapshot=jsonb_set(config_snapshot,'{release_revision}','\"ar172-fixture\"') WHERE id=%s", (run_id,))
+            conn.execute("UPDATE agent_session_commands SET payload=jsonb_set(payload,'{run_envelope,context_receipt,conversation_id}','\"66666666-6666-6666-6666-666666666666\"') WHERE id=(SELECT command_id FROM agent_runs WHERE id=%s)", (run_id,))
+            conn.commit()
+        tampered_command = await registry.resolve("evidence_search")[1].dispatch(_attempt("evidence_search", ids["evidence_search"], REQUESTS["evidence_search"]), REQUESTS["evidence_search"])
+        assert tampered_command.outcome is ExecutionOutcome.FAILED
     finally:
         await client.close()
 
@@ -217,6 +258,8 @@ def test_225_apply_rollback_reapply_and_permissions(database) -> None:
         migration = (ROOT / "migrations/225_01_agent_runtime_read_capability_rpcs.sql").read_text()
         rollback = (ROOT / "migrations/rollback/225_01_agent_runtime_read_capability_rpcs_rollback.sql").read_text()
         conn.execute(migration); conn.commit()
+        assert conn.execute("SELECT to_regprocedure('read_agent_runtime_conversation(uuid,uuid,uuid,text,text,integer,bigint,integer)')").fetchone()[0] is None
+        assert conn.execute("SELECT to_regprocedure('read_agent_runtime_conversation(uuid,uuid,uuid,text,text,integer,integer)')").fetchone()[0] is not None
         assert conn.execute("SELECT rolinherit FROM pg_roles WHERE rolname='everydayai_agent_runtime_worker'").fetchone()[0] is False
         conn.execute(rollback); conn.commit()
         assert conn.execute("SELECT count(*) FROM pg_proc WHERE proname='read_agent_runtime_erp'").fetchone()[0] == 0

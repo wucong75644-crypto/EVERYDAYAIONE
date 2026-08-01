@@ -5,13 +5,13 @@ SET LOCAL ROLE everydayai_owner;
 
 CREATE OR REPLACE FUNCTION _agent_runtime_read_context(
     p_action_id UUID, p_attempt_id UUID, p_execution_token UUID,
-    p_request_hash TEXT, p_executor_type TEXT, p_executor_revision INTEGER,
-    p_context_revision BIGINT
+    p_request_hash TEXT, p_executor_type TEXT, p_executor_revision INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
 DECLARE a agent_actions%ROWTYPE; t agent_action_attempts%ROWTYPE;
         r agent_runs%ROWTYPE; s agent_runtime_sessions%ROWTYPE;
-        i agent_action_dispatch_intents%ROWTYPE;
+        i agent_action_dispatch_intents%ROWTYPE; cmd agent_session_commands%ROWTYPE;
+        anchor messages%ROWTYPE; fence BIGINT;
 BEGIN
     IF session_user <> 'everydayai_agent_runtime_worker'
        OR current_setting('app.access_kind', TRUE) <> 'agent_runtime' THEN
@@ -36,6 +36,7 @@ BEGIN
     SELECT * INTO r FROM agent_runs WHERE id=a.run_id;
     SELECT * INTO s FROM agent_runtime_sessions WHERE id=a.session_id;
     SELECT * INTO i FROM agent_action_dispatch_intents WHERE attempt_id=p_attempt_id;
+    SELECT * INTO cmd FROM agent_session_commands WHERE id=r.command_id;
     IF a.status NOT IN ('queued','running') OR t.status NOT IN ('claimed','dispatching')
        OR r.status IN ('completed','failed','cancelled')
        OR t.lease_expires_at IS NULL OR t.lease_expires_at <= clock_timestamp()
@@ -48,25 +49,46 @@ BEGIN
        OR s.conversation_id IS NULL THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_READ_SCOPE_INVALID' USING ERRCODE='42501';
     END IF;
-    IF p_context_revision IS NOT NULL
-       AND (a.arguments->>'context_revision') IS DISTINCT FROM p_context_revision::TEXT THEN
-        RAISE EXCEPTION 'AGENT_RUNTIME_READ_REVISION_INVALID' USING ERRCODE='42501';
+    IF r.context_receipt->>'through_message_id' IS NULL
+       OR r.context_receipt->>'base_context_revision' IS DISTINCT FROM
+          ('message:' || (r.context_receipt->>'through_message_id'))
+       OR r.context_receipt->>'session_id' IS DISTINCT FROM s.id::TEXT
+       OR r.context_receipt->>'conversation_id' IS DISTINCT FROM s.conversation_id::TEXT
+       OR r.config_snapshot IS DISTINCT FROM cmd.payload->'run_envelope'->'config_snapshot'
+       OR r.capability_snapshot IS DISTINCT FROM cmd.payload->'run_envelope'->'capability_snapshot'
+       OR cmd.payload->'run_envelope'->>'schema_revision' IS DISTINCT FROM '2'
+       OR cmd.payload->'run_envelope'->'context_receipt' IS DISTINCT FROM r.context_receipt
+       OR r.config_snapshot->>'base_context_revision' IS DISTINCT FROM r.context_receipt->>'base_context_revision'
+       OR r.config_snapshot->>'through_message_id' IS DISTINCT FROM r.context_receipt->>'through_message_id'
+       OR cmd.payload->>'release_revision' IS DISTINCT FROM r.config_snapshot->>'release_revision' THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_READ_CONTEXT_INVALID' USING ERRCODE='42501';
     END IF;
+    SELECT m.* INTO anchor FROM messages m
+      JOIN conversations v ON v.id=m.conversation_id
+     WHERE m.id=(r.context_receipt->>'through_message_id')::UUID
+       AND m.conversation_id=s.conversation_id
+       AND m.org_id IS NOT DISTINCT FROM s.org_id
+       AND (s.scope_kind<>'USER' OR v.user_id=s.user_id);
+    IF NOT FOUND OR anchor.context_revision IS NULL THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_READ_ANCHOR_INVALID' USING ERRCODE='42501';
+    END IF;
+    fence:=anchor.context_revision;
     RETURN jsonb_build_object(
       'conversation_id', s.conversation_id, 'org_id', a.org_id,
       'user_id', a.user_id, 'scope_kind', s.scope_kind,
-      'scope_id', s.scope_id, 'context_revision', p_context_revision);
+      'scope_id', s.scope_id, 'context_revision', fence,
+      'through_message_id', anchor.id);
 END $$;
 
 CREATE OR REPLACE FUNCTION read_agent_runtime_conversation(
     p_action_id UUID,p_attempt_id UUID,p_execution_token UUID,p_request_hash TEXT,
-    p_executor_type TEXT,p_executor_revision INTEGER,p_context_revision BIGINT,
+    p_executor_type TEXT,p_executor_revision INTEGER,
     p_limit INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
 DECLARE c JSONB; rows JSONB;
 BEGIN
- c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision,p_context_revision);
+ c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision);
  IF p_limit IS NULL OR p_limit<1 OR p_limit>20 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_LIMIT_INVALID'; END IF;
  SELECT COALESCE(jsonb_agg(x), '[]'::JSONB) INTO rows FROM (
    SELECT jsonb_build_object('message_id',m.id,'role',m.role::TEXT,
@@ -74,19 +96,20 @@ BEGIN
      x FROM messages m JOIN conversations v ON v.id=m.conversation_id
     WHERE m.conversation_id=(c->>'conversation_id')::UUID
       AND m.org_id IS NOT DISTINCT FROM (c->>'org_id')::UUID
+      AND m.context_revision <= (c->>'context_revision')::BIGINT
     ORDER BY m.created_at DESC LIMIT p_limit) q;
  RETURN jsonb_build_object('summary','当前对话历史消息','count',jsonb_array_length(rows),'messages',rows);
 END $$;
 
 CREATE OR REPLACE FUNCTION read_agent_runtime_knowledge(
     p_action_id UUID,p_attempt_id UUID,p_execution_token UUID,p_request_hash TEXT,
-    p_executor_type TEXT,p_executor_revision INTEGER,p_context_revision BIGINT,
+    p_executor_type TEXT,p_executor_revision INTEGER,
     p_query TEXT,p_limit INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
 DECLARE c JSONB; rows JSONB;
 BEGIN
- c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision,p_context_revision);
+ c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision);
  IF p_query IS NULL OR length(btrim(p_query))=0 OR length(p_query)>200 OR p_limit IS NULL OR p_limit<1 OR p_limit>10 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_QUERY_INVALID'; END IF;
  SELECT COALESCE(jsonb_agg(x),'[]'::JSONB) INTO rows FROM (
    SELECT jsonb_build_object('id',n.id,'category',n.category,'node_type',n.node_type,
@@ -103,13 +126,13 @@ END $$;
 
 CREATE OR REPLACE FUNCTION read_agent_runtime_evidence(
     p_action_id UUID,p_attempt_id UUID,p_execution_token UUID,p_request_hash TEXT,
-    p_executor_type TEXT,p_executor_revision INTEGER,p_context_revision BIGINT,
+    p_executor_type TEXT,p_executor_revision INTEGER,
     p_operation TEXT,p_artifact_id TEXT,p_selector TEXT,p_query TEXT,p_limit INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
 DECLARE c JSONB; rows JSONB; one JSONB;
 BEGIN
- c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision,p_context_revision);
+ c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision);
  IF p_operation NOT IN ('search','get') THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_OPERATION_INVALID'; END IF;
  IF p_operation='search' THEN
   IF p_limit IS NULL OR p_limit<1 OR p_limit>10 OR length(COALESCE(p_query,''))>200 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_LIMIT_INVALID'; END IF;
@@ -119,7 +142,7 @@ BEGIN
     FROM conversation_data_evidence e
    WHERE e.conversation_id=(c->>'conversation_id')::UUID
      AND e.org_id IS NOT DISTINCT FROM (c->>'org_id')::UUID
-     AND e.validation_status='ready' AND e.context_revision<=COALESCE(p_context_revision,e.context_revision)
+     AND e.validation_status='ready' AND e.context_revision<=(c->>'context_revision')::BIGINT
      AND (COALESCE(p_query,'')='' OR e.source ILIKE '%'||p_query||'%')
    ORDER BY e.context_revision DESC LIMIT p_limit) q;
   RETURN jsonb_build_object('summary','Evidence 检索结果','count',jsonb_array_length(rows),'evidence',rows);
@@ -132,19 +155,19 @@ BEGIN
    INTO one FROM conversation_data_evidence e
   WHERE e.conversation_id=(c->>'conversation_id')::UUID AND e.org_id IS NOT DISTINCT FROM (c->>'org_id')::UUID
     AND e.artifact_id=p_artifact_id AND e.validation_status='ready'
-    AND e.context_revision<=COALESCE(p_context_revision,e.context_revision);
+    AND e.context_revision<=(c->>'context_revision')::BIGINT;
  RETURN jsonb_build_object('summary','Evidence 详情','count',CASE WHEN one IS NULL THEN 0 ELSE 1 END,'evidence',COALESCE(one,'{}'::JSONB));
 END $$;
 
 CREATE OR REPLACE FUNCTION read_agent_runtime_memory(
     p_action_id UUID,p_attempt_id UUID,p_execution_token UUID,p_request_hash TEXT,
-    p_executor_type TEXT,p_executor_revision INTEGER,p_context_revision BIGINT,
+    p_executor_type TEXT,p_executor_revision INTEGER,
     p_operation TEXT,p_memory_id UUID,p_query TEXT,p_limit INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
 DECLARE c JSONB; rows JSONB; one JSONB;
 BEGIN
- c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision,p_context_revision);
+ c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision);
  IF p_operation='search' THEN
   IF p_query IS NULL OR length(btrim(p_query))=0 OR p_limit IS NULL OR p_limit<1 OR p_limit>6 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_QUERY_INVALID'; END IF;
   SELECT COALESCE(jsonb_agg(x),'[]'::JSONB) INTO rows FROM (
@@ -167,13 +190,13 @@ END $$;
 
 CREATE OR REPLACE FUNCTION read_agent_runtime_artifact(
     p_action_id UUID,p_attempt_id UUID,p_execution_token UUID,p_request_hash TEXT,
-    p_executor_type TEXT,p_executor_revision INTEGER,p_context_revision BIGINT,
+    p_executor_type TEXT,p_executor_revision INTEGER,
     p_operation TEXT,p_artifact_id TEXT,p_query TEXT,p_limit INTEGER,p_cursor INTEGER,p_max_tokens INTEGER
 ) RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
 DECLARE c JSONB; rows JSONB; one JSONB; v_artifact conversation_artifacts%ROWTYPE; content TEXT;
 BEGIN
- c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision,p_context_revision);
+ c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision);
  IF p_operation='search' THEN
   IF p_limit IS NULL OR p_limit<1 OR p_limit>20 OR length(COALESCE(p_query,''))>200 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_LIMIT_INVALID'; END IF;
   SELECT COALESCE(jsonb_agg(x),'[]'::JSONB) INTO rows FROM (
@@ -181,25 +204,27 @@ BEGIN
     'byte_size',art.byte_size,'content_hash',art.content_hash,'model_view',COALESCE(art.history_view,art.model_view,'{}'::JSONB),'metadata',art.metadata,'context_revision',art.context_revision) x
     FROM conversation_artifacts art WHERE art.conversation_id=(c->>'conversation_id')::UUID
      AND art.org_id IS NOT DISTINCT FROM (c->>'org_id')::UUID AND art.status='ready'
+     AND art.context_revision<=(c->>'context_revision')::BIGINT
      AND (COALESCE(p_query,'')='' OR art.tool_name ILIKE '%'||p_query||'%')
     ORDER BY art.context_revision DESC LIMIT p_limit) q;
   RETURN jsonb_build_object('summary','Artifact 检索结果','count',jsonb_array_length(rows),'artifacts',rows);
  END IF;
  IF p_artifact_id IS NULL OR length(p_artifact_id)>160 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_REFERENCE_INVALID'; END IF;
  SELECT * INTO v_artifact FROM conversation_artifacts x WHERE x.id=p_artifact_id::UUID
-  AND x.conversation_id=(c->>'conversation_id')::UUID AND x.org_id IS NOT DISTINCT FROM (c->>'org_id')::UUID AND x.status='ready';
+  AND x.conversation_id=(c->>'conversation_id')::UUID AND x.org_id IS NOT DISTINCT FROM (c->>'org_id')::UUID
+  AND x.status='ready' AND x.context_revision<=(c->>'context_revision')::BIGINT;
  IF NOT FOUND THEN RETURN jsonb_build_object('summary','Artifact 不存在','count',0); END IF;
  IF p_operation='get' THEN RETURN jsonb_build_object('summary','Artifact 详情','artifact_ref','artifact:'||v_artifact.id,'artifact_type',v_artifact.artifact_type,'status',v_artifact.status,'byte_size',v_artifact.byte_size,'content_hash',v_artifact.content_hash,'model_view',COALESCE(v_artifact.history_view,v_artifact.model_view,'{}'::JSONB),'metadata',v_artifact.metadata,'context_revision',v_artifact.context_revision); END IF;
  IF p_operation<>'read' OR v_artifact.storage_kind='oss' OR p_cursor IS NULL OR p_cursor<0 OR p_cursor>16000 OR p_max_tokens IS NULL OR p_max_tokens<256 OR p_max_tokens>16000 THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_ARTIFACT_READ_INVALID'; END IF;
  IF v_artifact.storage_kind='inline' THEN content:=left(v_artifact.inline_content::TEXT,40000);
- ELSIF v_artifact.storage_kind='message_slice' THEN SELECT left(m.content,40000) INTO content FROM messages m WHERE m.id=(v_artifact.storage_ref->>'message_id')::UUID AND m.conversation_id=v_artifact.conversation_id;
+ ELSIF v_artifact.storage_kind='message_slice' THEN SELECT left(m.content,40000) INTO content FROM messages m WHERE m.id=(v_artifact.storage_ref->>'message_id')::UUID AND m.conversation_id=v_artifact.conversation_id AND m.context_revision<=(c->>'context_revision')::BIGINT;
  ELSE RAISE EXCEPTION 'AGENT_RUNTIME_READ_STORAGE_FORBIDDEN'; END IF;
  RETURN jsonb_build_object('summary','Artifact 分页内容','artifact_id',v_artifact.id,'content',COALESCE(substring(content FROM p_cursor+1 FOR p_max_tokens*3),'') ,'cursor',p_cursor,'next_cursor',NULL,'byte_size',octet_length(COALESCE(content,'')),'returned_bytes',octet_length(COALESCE(substring(content FROM p_cursor+1 FOR p_max_tokens*3),'')),'complete',TRUE);
 END $$;
 
 CREATE OR REPLACE FUNCTION read_agent_runtime_erp(
     p_action_id UUID,p_attempt_id UUID,p_execution_token UUID,p_request_hash TEXT,
-    p_executor_type TEXT,p_executor_revision INTEGER,p_context_revision BIGINT,
+    p_executor_type TEXT,p_executor_revision INTEGER,
     p_operation TEXT,p_code TEXT DEFAULT NULL,p_name TEXT DEFAULT NULL,p_spec TEXT DEFAULT NULL,
     p_product_code TEXT DEFAULT NULL,p_start_date TEXT DEFAULT NULL,p_end_date TEXT DEFAULT NULL,
     p_num_iid TEXT DEFAULT NULL,p_doc_type TEXT DEFAULT NULL,p_compare_kind TEXT DEFAULT NULL,
@@ -213,7 +238,7 @@ DECLARE c JSONB; rows JSONB; current_value JSONB; baseline_value JSONB;
         v_baseline_start TIMESTAMPTZ; v_baseline_end TIMESTAMPTZ;
         v_delta INTERVAL;
 BEGIN
- c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision,p_context_revision);
+ c:=_agent_runtime_read_context(p_action_id,p_attempt_id,p_execution_token,p_request_hash,p_executor_type,p_executor_revision);
  IF p_operation='product' THEN
   IF COALESCE(p_code,p_name,p_spec) IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_READ_IDENTIFIER_REQUIRED'; END IF;
   SELECT COALESCE(jsonb_agg(x),'[]'::JSONB) INTO rows FROM (
@@ -256,23 +281,23 @@ BEGIN
  RAISE EXCEPTION 'AGENT_RUNTIME_READ_OPERATION_INVALID';
 END $$;
 
-REVOKE ALL ON FUNCTION _agent_runtime_read_context(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT),
- read_agent_runtime_conversation(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,INTEGER),
- read_agent_runtime_knowledge(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,INTEGER),
- read_agent_runtime_evidence(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,TEXT,TEXT,TEXT,INTEGER),
- read_agent_runtime_memory(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,UUID,TEXT,INTEGER),
- read_agent_runtime_artifact(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,TEXT,TEXT,INTEGER,INTEGER,INTEGER),
- read_agent_runtime_erp(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,BOOLEAN,TEXT,INTEGER)
+REVOKE ALL ON FUNCTION _agent_runtime_read_context(UUID,UUID,UUID,TEXT,TEXT,INTEGER),
+ read_agent_runtime_conversation(UUID,UUID,UUID,TEXT,TEXT,INTEGER,INTEGER),
+ read_agent_runtime_knowledge(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,INTEGER),
+ read_agent_runtime_evidence(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,TEXT,TEXT,TEXT,INTEGER),
+ read_agent_runtime_memory(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,UUID,TEXT,INTEGER),
+ read_agent_runtime_artifact(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,TEXT,TEXT,INTEGER,INTEGER,INTEGER),
+read_agent_runtime_erp(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,BOOLEAN,TEXT,INTEGER)
  FROM PUBLIC,everydayai,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,
  everydayai_runtime_admin;
 GRANT EXECUTE ON FUNCTION
- read_agent_runtime_conversation(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,INTEGER),
- read_agent_runtime_knowledge(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,INTEGER),
- read_agent_runtime_evidence(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,TEXT,TEXT,TEXT,INTEGER),
- read_agent_runtime_memory(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,UUID,TEXT,INTEGER),
- read_agent_runtime_artifact(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,TEXT,TEXT,INTEGER,INTEGER,INTEGER),
- read_agent_runtime_erp(UUID,UUID,UUID,TEXT,TEXT,INTEGER,BIGINT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,BOOLEAN,TEXT,INTEGER)
+ read_agent_runtime_conversation(UUID,UUID,UUID,TEXT,TEXT,INTEGER,INTEGER),
+ read_agent_runtime_knowledge(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,INTEGER),
+ read_agent_runtime_evidence(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,TEXT,TEXT,TEXT,INTEGER),
+ read_agent_runtime_memory(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,UUID,TEXT,INTEGER),
+ read_agent_runtime_artifact(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,TEXT,TEXT,INTEGER,INTEGER,INTEGER),
+ read_agent_runtime_erp(UUID,UUID,UUID,TEXT,TEXT,INTEGER,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,BOOLEAN,TEXT,INTEGER)
  TO everydayai_agent_runtime_worker;
 REVOKE ALL ON TABLE messages,knowledge_nodes,conversation_data_evidence,memory_atoms,conversation_artifacts,
  erp_products,erp_product_skus,erp_stock_status,erp_product_daily_stats,erp_product_platform_map,
