@@ -1628,3 +1628,10 @@
   占位按消息 ID 原位替换并保留发送时间，终态只清理同 ID 文字流，展示始终稳定排序。
 - 已补同对话乱序完成、无关文字流隔离和持久化乱序回归；相关前端测试、定向覆盖率、
   ESLint 与生产构建已通过，仍待提交部署和生产并发任务验收。
+
+# 2026-08-01 Agent Runtime AR-17.1 — 共享基础已实现，生产仍关闭
+
+- 224 additive migration 提供 Web/WeCom 共用的 v2 ingress envelope、Run anchor
+  context readback、AgentDefinition 与 EffectiveToolset 冻结事实。
+- 当前只允许已注册的 `code_execute` 进入生产模型目录；41 个专业工具不在本次范围。
+- AR-17.2～17.4、生产启动接线、真实环境迁移验收和组织 rollout 仍未完成。

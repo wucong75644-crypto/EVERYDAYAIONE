@@ -29,14 +29,44 @@ class RuntimeIngress:
         agent_definition_revision: str, command_type: str,
         idempotency_key: str, payload: Mapping[str, object],
     ) -> RuntimeIngressReceipt:
-        response = self._database.rpc("runtime_submit_ingress", {
+        from services.agent.runtime.catalog import (
+            EffectiveToolset, build_default_runtime_catalog,
+        )
+        from services.agent.runtime.agents import AgentDefinition
+        from core.config import get_settings
+        settings = get_settings()
+        through = str(payload.get("input_message_id") or payload.get("output_message_id") or "")
+        if not through:
+            raise RuntimeError("RUNTIME_INGRESS_THROUGH_MESSAGE_MISSING")
+        catalog = build_default_runtime_catalog()
+        agent = AgentDefinition(
+            canonical_key=agent_definition_id, revision=agent_definition_revision,
+            prompt_revision="agent-runtime-production-v1",
+            requested_tool_groups=frozenset({"code"}),
+        )
+        toolset = EffectiveToolset.build(
+            agent=agent, catalog=catalog, scope=scope_kind,
+            channel=str(payload.get("channel") or "web"),
+            entitled_groups=frozenset({"code"}),
+            authorized_names=frozenset({"code_execute"}),
+        )
+        response = self._database.rpc("runtime_submit_ingress_v2", {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
             "p_user_id": user_id, "p_scope_kind": scope_kind,
             "p_scope_id": scope_id, "p_created_by_user_id": user_id,
             "p_agent_definition_id": agent_definition_id,
             "p_agent_definition_revision": agent_definition_revision,
+            "p_agent_definition_hash": agent.definition_hash,
             "p_command_type": command_type,
             "p_idempotency_key": idempotency_key,
+            "p_channel": str(payload.get("channel") or "web"),
+            "p_through_message_id": through,
+            "p_base_context_revision": f"message:{through}",
+            "p_effective_toolset_revision": catalog.revision,
+            "p_effective_toolset_hash": toolset.toolset_hash,
+            "p_config_snapshot": {"model_id": payload.get("model_id") or ""},
+            "p_capability_snapshot": {"requested_groups": ["code"]},
+            "p_release_revision": settings.agent_runtime_release_revision,
             "p_payload": dict(payload),
         }).execute()
         if inspect.isawaitable(response):

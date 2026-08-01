@@ -193,6 +193,14 @@ admin audit rows supply actor, tenant, request id, reason and result.
 If safety cannot be proven, close ingress and dispatch and continue
 reconciliation. That is the only permitted fallback.
 
+## AR-17.1 shared foundation
+
+Migration 224 adds the Web/WeCom v2 ingress contract and Run-bound context
+readback. It remains disabled by default; AR-17.2--17.4, the 41 professional
+Executors, production startup wiring, and production acceptance are not part
+of this milestone. Apply and rollback use the exact full migration filenames;
+rollback fails before ACL or object removal when any Runtime fact exists.
+
 ## Validation matrix
 
 - Local: unit/integration tests, compile, shell syntax, migration static

@@ -1609,3 +1609,8 @@ cache = client.caches.create(
     均不能取得compatibility projection mutation权限
   - 生产发布、灰度、告警和回滚合同见
     [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)
+- **2026-08-01**：AR-17.1 共享基础已在独立分支实现，默认仍关闭
+  - 224 additive v2 ingress 在同一 PostgreSQL 事务中冻结 Session、Command、Run envelope、上下文锚点和 EffectiveToolset
+  - AgentDefinition、Runtime Tool Catalog、Executor revision 与 Authorization 使用同一 code_execute-only 目录事实
+  - v2 Context 严格绑定 Run/session/base revision/through message，并在后续 ModelStep 复现 tool_call 与 terminal result
+  - AR-17.2～17.4、41 个专业工具、生产启动接线和生产验收未完成

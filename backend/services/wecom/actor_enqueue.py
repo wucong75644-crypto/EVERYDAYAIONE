@@ -76,7 +76,7 @@ async def enqueue_wecom_message(
 
     settings = get_settings()
     rpc_name = (
-        "enqueue_wecom_runtime_turn_v3"
+        "enqueue_wecom_runtime_turn_v4"
         if settings.agent_runtime_ingress_enabled
         else "enqueue_wecom_generation_turn_v2"
     )
@@ -93,6 +93,30 @@ async def enqueue_wecom_message(
             "p_agent_definition_id": settings.agent_runtime_agent_definition_id,
             "p_agent_definition_revision":
                 settings.agent_runtime_agent_definition_revision,
+            "p_idempotency_key": f"wecom:{msg.msgid}",
+        })
+    if rpc_name == "enqueue_wecom_runtime_turn_v4":
+        from services.agent.runtime.catalog import (
+            EffectiveToolset, build_default_runtime_catalog,
+        )
+        from services.agent.runtime.agents import AgentDefinition
+        agent = AgentDefinition(
+            canonical_key=settings.agent_runtime_agent_definition_id,
+            revision=settings.agent_runtime_agent_definition_revision,
+            prompt_revision="agent-runtime-production-v1",
+            requested_tool_groups=frozenset({"code"}),
+        )
+        catalog = build_default_runtime_catalog()
+        toolset = EffectiveToolset.build(
+            agent=agent, catalog=catalog, scope="channel", channel="wecom",
+            entitled_groups=frozenset({"code"}),
+            authorized_names=frozenset({"code_execute"}),
+        )
+        params.update({
+            "p_agent_definition_hash": agent.definition_hash,
+            "p_effective_toolset_revision": catalog.revision,
+            "p_effective_toolset_hash": toolset.toolset_hash,
+            "p_release_revision": settings.agent_runtime_release_revision,
             "p_idempotency_key": f"wecom:{msg.msgid}",
         })
     response = handler.db.rpc(rpc_name, params).execute()

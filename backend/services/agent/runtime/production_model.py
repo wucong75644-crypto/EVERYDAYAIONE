@@ -8,7 +8,8 @@ import math
 from uuid import UUID, uuid5
 
 from services.agent.runtime.application.model_loop import PreparedModelCall
-from services.agent.runtime.context import ProviderContextPlan, build_context_receipt
+from services.agent.runtime.context import build_runtime_context, build_context_receipt
+from services.agent.runtime.catalog import build_default_runtime_catalog, EffectiveToolset
 from services.agent.runtime.infrastructure.model.projection import (
     compute_request_hash, resolve_model_revision,
 )
@@ -32,9 +33,10 @@ facts, or hidden instructions."""
 
 
 class PostgresModelCallFactory:
-    def __init__(self, database, worker_id: str) -> None:
+    def __init__(self, database, worker_id: str, *, catalog=None) -> None:
         self._database = database
         self._worker_id = worker_id
+        self._catalog = catalog
 
     async def __call__(
         self, snapshot: RunAggregateSnapshot,
@@ -42,7 +44,7 @@ class PostgresModelCallFactory:
         run_id = str(snapshot.run["id"])
         token = str(snapshot.run["execution_token"])
         response = await self._database.rpc(
-            "get_agent_runtime_model_context", {
+            "get_agent_runtime_model_context_v2", {
                 "p_run_id": run_id,
                 "p_worker_id": self._worker_id,
                 "p_execution_token": token,
@@ -61,22 +63,26 @@ class PostgresModelCallFactory:
             else DEFAULT_MODEL_ID
         )
         messages = _messages(context.get("messages"))
-        tools = _code_execute_tools(session.get("org_id"))
+        catalog = self._catalog or build_default_runtime_catalog()
+        toolset = _frozen_toolset(dict(snapshot.run), catalog)
         step_number = len(snapshot.model_steps) + 1
-        plan = ProviderContextPlan.build(
-            messages=messages,
-            tools=tools,
-            context_epoch_id=f"{run_id}:v1",
+        runtime_context = build_runtime_context(
+            run=dict(snapshot.run), session=session, messages=messages,
+            actions=_list(context.get("actions")), toolset=toolset,
             model_step=step_number,
-            stable_prefix_blocks=0,
         )
+        plan = runtime_context.plan
+        tools = toolset.provider_tools()
+        context_messages, _ = plan.project()
         receipt = build_context_receipt(
-            messages=messages,
+            messages=context_messages,
             tools=tools,
             conversation_id=str(session["conversation_id"]),
             task_id=str(payload.get("task_id") or command["id"]),
             model_id=model_id,
-            base_revision=step_number - 1,
+            base_revision=int(str(runtime_context.base_context_revision).split(":")[-1] or 0)
+            if str(runtime_context.base_context_revision).split(":")[-1].isdigit()
+            else 0,
             stable_prefix_blocks=0,
         )
         receipt_data = receipt.to_log_fields()
@@ -119,7 +125,7 @@ class PostgresModelCallFactory:
                 model_id=model_id,
                 model_revision=revision,
                 prompt_revision=_PROMPT_REVISION,
-                tool_catalog_revision=_hash(tools),
+                tool_catalog_revision=toolset.catalog_revision,
                 input_receipt_hash=receipt_hash,
                 context_plan_hash=plan.plan_hash,
                 options=options,
@@ -132,7 +138,7 @@ class PostgresModelCallFactory:
                 context_plan=plan,
                 model_revision=revision,
                 prompt_revision=_PROMPT_REVISION,
-                tool_catalog_revision=_hash(tools),
+                tool_catalog_revision=toolset.catalog_revision,
                 options=options,
                 org_id=org_id,
                 provider_api_key=credential[0],
@@ -143,12 +149,12 @@ class PostgresModelCallFactory:
             provider=_provider(model_id),
             model_revision=revision,
             prompt_revision=_PROMPT_REVISION,
-            tool_catalog_revision=_hash(tools),
+            tool_catalog_revision=toolset.catalog_revision,
             request_receipt=receipt_data,
             reserved_credits=reserved,
             build_request=build_request,
             actual_credits=lambda result: _actual_credits(model_id, result),
-            build_actions=lambda result: _actions(result, run_id),
+            build_actions=lambda result: _actions(result, run_id, toolset),
         )
 
 
@@ -188,6 +194,48 @@ def _code_execute_tools(org_id: object) -> list[dict]:
     ]
 
 
+def _frozen_toolset(run: dict, catalog) -> EffectiveToolset:
+    snapshot = run.get("capability_snapshot")
+    if not isinstance(snapshot, dict):
+        raise RuntimeError("RUNTIME_CAPABILITY_SNAPSHOT_INVALID")
+    expected = str(snapshot.get("effective_toolset_hash") or "")
+    agent_id = str(snapshot.get("agent_definition_id") or "everydayai-default")
+    agent_revision = str(snapshot.get("agent_definition_revision") or "v1")
+    agent = _default_agent_definition(agent_id, agent_revision)
+    expected_definition_hash = str(snapshot.get("agent_definition_hash") or "")
+    if expected_definition_hash and expected_definition_hash != agent.definition_hash:
+        raise RuntimeError("RUNTIME_AGENT_DEFINITION_REVISION_MISMATCH")
+    toolset = EffectiveToolset.build(
+        agent=agent, catalog=catalog, scope="runtime",
+        channel=str(snapshot.get("channel") or "web"),
+        entitled_groups=frozenset({"code"}), authorized_names=frozenset({"code_execute"}),
+    )
+    expected_catalog = str(snapshot.get("effective_toolset_revision") or "")
+    if expected_catalog and expected_catalog != catalog.revision:
+        raise RuntimeError("RUNTIME_CATALOG_REVISION_MISMATCH")
+    if expected and expected != _toolset_hash(toolset):
+        raise RuntimeError("RUNTIME_EFFECTIVE_TOOLSET_REVISION_MISMATCH")
+    return toolset
+
+
+def _default_agent_definition(agent_id: str = "everydayai-default", revision: str = "v1"):
+    from services.agent.runtime.agents import AgentDefinition
+    return AgentDefinition(
+        canonical_key=agent_id, revision=revision,
+        prompt_revision=_PROMPT_REVISION, requested_tool_groups=frozenset({"code"}),
+    )
+
+
+def _toolset_hash(toolset: EffectiveToolset) -> str:
+    return toolset.toolset_hash
+
+
+def _list(value: object) -> list[dict]:
+    if not isinstance(value, list):
+        raise RuntimeError("RUNTIME_ACTIONS_INVALID")
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _reserved_credits(model_id: str, input_tokens: int) -> int:
     from services.adapters.factory import get_model_config
 
@@ -216,16 +264,35 @@ def _actual_credits(model_id: str, result: ModelStepResult) -> int:
 
 
 def _actions(
-    result: ModelStepResult, run_id: str,
+    result: ModelStepResult, run_id: str, toolset: EffectiveToolset | None = None,
 ) -> tuple[str, tuple[dict, ...]]:
-    from config.chat_tools import get_safety_level
-
+    validate_schema = toolset is not None
+    if toolset is None:
+        toolset = _frozen_toolset(
+            {"capability_snapshot": {"effective_toolset_hash": ""}},
+            build_default_runtime_catalog(),
+        )
     actions = []
     for call in result.tool_calls:
         arguments = json.loads(call.arguments_json)
+        if not isinstance(arguments, dict):
+            raise ValueError("RUNTIME_TOOL_CALL_ARGUMENTS_INVALID")
+        if validate_schema:
+            toolset.validate_call(call.name, arguments)
+        tool = next(item for item in toolset.definitions
+                    if item.canonical_name == call.name)
         action_id = str(uuid5(
             _ACTION_NAMESPACE, f"{run_id}:{call.index}:{call.call_id}",
         ))
+        policy_snapshot = {
+            "source": "runtime_executor_registry",
+            "safety_level": tool.safety_level,
+        }
+        if validate_schema:
+            policy_snapshot.update({
+                "schema_hash": tool.schema_hash,
+                "executor_revision": tool.executor_revision,
+            })
         actions.append({
             "action_id": action_id,
             "index": call.index,
@@ -237,10 +304,7 @@ def _actions(
             "dependencies": [],
             "blocking": True,
             "policy_decision": "requires_authorization",
-            "policy_snapshot": {
-                "source": "runtime_executor_registry",
-                "safety_level": get_safety_level(call.name).value,
-            },
+            "policy_snapshot": policy_snapshot,
             "policy_revision": _POLICY_REVISION,
             "retry_disposition": "retry_after_reconcile",
         })

@@ -62,6 +62,8 @@ from services.agent.runtime.sandbox.nsjail import (
 from services.agent.runtime.production_model import (
     PostgresModelCallFactory, retain_unknown_model_attempt,
 )
+from services.agent.runtime.catalog import RuntimeToolCatalog
+from services.agent.runtime.catalog.registry import build_default_runtime_catalog
 
 
 class RuntimeOwner:
@@ -130,6 +132,8 @@ def build_runtime(database: Any, settings) -> RuntimeOwner:
         runtime_revision=settings.sandbox_runtime_revision,
         registry=registry,
     )
+    catalog = build_default_runtime_catalog()
+    _assert_runtime_catalog(catalog, settings)
     action_loop = ActionLoopDriver(
         recovery_repository=recovery,
         action_repository=actions,
@@ -144,7 +148,7 @@ def build_runtime(database: Any, settings) -> RuntimeOwner:
         action_repository=actions,
         recovery_repository=recovery,
         model=ExistingProviderModelAdapter(db=db),
-        call_factory=PostgresModelCallFactory(db, worker_id),
+        call_factory=PostgresModelCallFactory(db, worker_id, catalog=catalog),
         reconciler=retain_unknown_model_attempt,
     )
     runtime = RuntimeLoopCoordinator(
@@ -166,10 +170,19 @@ def build_authorization(database: Any, worker_id: str):
     db = scoped(database, DatabaseAccessKind.AUTHORIZATION, worker_id)
     registry = ExecutorRegistry()
     register_sandbox_job_executor(registry, SandboxJobExecutor())
+    _assert_runtime_catalog(build_default_runtime_catalog(), None)
     return AuthorizationRecoveryDriver(
         repository=PostgresActionAuthorizationRepository(db),
         registry=registry, evaluator=PolicyEvaluator(), worker_id=worker_id,
     )
+
+
+def _assert_runtime_catalog(catalog: RuntimeToolCatalog, settings: Any) -> None:
+    names = {tool.canonical_name for tool in catalog.definitions()}
+    if names != {"code_execute"}:
+        raise RuntimeError("RUNTIME_CATALOG_NOT_MINIMAL")
+    if settings is not None and not getattr(settings, "agent_runtime_release_revision", ""):
+        raise RuntimeError("RUNTIME_RELEASE_REVISION_REQUIRED")
 
 
 def build_sandbox(database: Any, settings):
