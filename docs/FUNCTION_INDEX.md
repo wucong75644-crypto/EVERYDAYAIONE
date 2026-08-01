@@ -2027,3 +2027,15 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `RuntimeToolCatalog` / `RuntimeToolCatalogRegistry` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 版本目录与 scope/channel/entitlement/authorization 交集；未注册 Executor 不进入模型工具集 |
 | `build_runtime_context` | `backend/services/agent/runtime/context/runtime_builder.py` | 从 Run 冻结事实构建确定性 Provider ContextPlan，并重复 tool_call/result |
 | `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress、gate 漂移幂等 readback 与严格 Run anchor context RPC；版本 seed 在 `224_02_agent_runtime_ar17_version_seed.sql` |
+
+### Agent Runtime AR-17.3 专业 Executor（仅非生产）
+
+| 函数/类 | 文件 | 说明 |
+|---|---|---|
+| `specialist_descriptor` / `build_specialist_registry` | `backend/services/agent/runtime/executors/specialist_registry.py` | 23 项工具的唯一 Descriptor、族级 Capability 与 fail-closed Registry |
+| `SpecialistExecutor` | `backend/services/agent/runtime/executors/specialist_executor.py` | Provider submit/reconcile/cancel 外壳；响应丢失转 unknown，禁止普通重派 |
+| `CallbackInbox` | `backend/services/agent/runtime/providers/callback_inbox.py` | 签名校验、敏感字段脱敏和 callback 幂等去重 |
+| `InMemoryActionCostLedger` | `backend/services/agent/runtime/costs.py` | 非模型 Action Cost Ledger 的单元测试实现；生产通过窄 RPC |
+| `ArtifactMaterializer` | `backend/services/agent/runtime/executors/materializer.py` | 内容寻址、partial 隔离和 materialize-only 重试 |
+| `build_nonproduction_full_catalog` / `assert_nonproduction_catalog_consistency` | `backend/services/agent/runtime/catalog/consistency.py` | 18 只读 + code_execute + 23 专业工具的 42 项非生产集合门禁 |
+| `226_01`～`226_06` RPC | `backend/migrations/226_*.sql` | Provider reconcile、Callback、Cost、Artifact、Child Run、Workspace/Scheduled Task CAS 窄 RPC |

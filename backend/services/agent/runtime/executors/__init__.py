@@ -26,6 +26,10 @@ from services.agent.runtime.executors.read_registry import (
 from services.agent.runtime.executors.capabilities import RestrictedArtifactCapability
 from services.agent.runtime.executors.real_base import RuntimeReadResources
 from services.agent.runtime.executors.real_composition import build_nonproduction_read_registry
+from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+from services.agent.runtime.executors.specialist_registry import (
+    SPECIALIST_TOOLS, SPECIALIST_SAFETY, build_specialist_registry, specialist_descriptor,
+)
 
 __all__ = [
     "AuthorizationRequirement",
@@ -44,4 +48,6 @@ __all__ = [
     "read_descriptor",
     "RestrictedArtifactCapability",
     "RuntimeReadResources", "build_nonproduction_read_registry",
+    "SpecialistExecutor", "SPECIALIST_TOOLS", "build_specialist_registry",
+    "SPECIALIST_SAFETY", "specialist_descriptor",
 ]

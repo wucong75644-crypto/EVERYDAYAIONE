@@ -1615,4 +1615,9 @@ cache = client.caches.create(
   - v2 Context 严格绑定 Run/session/base revision/through message，并在后续 ModelStep 复现 tool_call 与 terminal result
   - 224 持久化不可变 AgentDefinition/Catalog/EffectiveToolset 文档，分离新 ingress enablement 与历史 Run recoverability；v1→v2 后旧 Run 仍按原 facts 恢复。`org_id=NULL` 个人 ingress 仍受组织 rollout 白名单限制，属于 AR-17 完成前阻塞项
   - Definition facts 冻结 prompt/model/context policy；Catalog 与 EffectiveToolset hash 覆盖完整执行安全语义，已提交 Command 在 gate 漂移后按原 envelope readback
-  - AR-17.2～17.4、41 个专业工具、生产启动接线和生产验收未完成
+  - AR-17.2～17.4、42 项专业工具、生产启动接线和生产验收未完成
+- **2026-08-02**：AR-17.3 专业 Executor 与 226 additive lane 在独立 worktree 实施
+  - 新增 23 项唯一 Descriptor、Remote Read/Artifact Job/Media/ERP Mutation/Sync/Workspace/Child Run/Scheduled Task 专业族
+  - 新增 Provider reconcile、Callback Inbox、独立 Action Cost Ledger、Artifact lineage、Child Run 与资源 CAS 的 226_01～226_06 迁移及失败关闭 rollback
+  - 非生产 Catalog 显式合并 18 个 AR-17.2 只读工具、code_execute 与 23 项新工具，生产 Catalog、EffectiveToolset、rollout 和 Owner 仍关闭
+  - 真实 PostgreSQL 并发/RLS/权限和隔离 Provider 网络验收仍未执行；AR-17、AR-17.4 和生产启用仍未完成
