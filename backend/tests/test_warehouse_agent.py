@@ -376,6 +376,24 @@ class TestDepartmentAgentBase:
         assert "写操作" in result.summary
 
     @pytest.mark.asyncio
+    async def test_dag_write_block_log_does_not_include_task_text(self):
+        from loguru import logger
+
+        sentinel = "SECRET_TASK_/workspace/private"
+        messages: list[str] = []
+        sink = logger.add(
+            lambda message: messages.append(str(message)),
+            format="{message}",
+        )
+        agent = _make_warehouse()
+        agent._classify_action = lambda task: "update"
+        try:
+            await agent.execute(sentinel, dag_mode=True)
+        finally:
+            logger.remove(sink)
+        assert sentinel not in "".join(messages)
+
+    @pytest.mark.asyncio
     async def test_dag_mode_keyword_audit_only(self):
         """dag_mode=True 时写关键词不阻断（降级为审计日志），action 分类为读则放行"""
         from services.agent.department_types import ValidationResult

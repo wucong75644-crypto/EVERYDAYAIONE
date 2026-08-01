@@ -1,0 +1,46 @@
+name: Sandbox rootfs release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing private release tag
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build Ubuntu 24.04 Python 3.12 rootfs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap
+          sudo debootstrap --variant=minbase \
+            --include=ca-certificates,python3.12,python3.12-minimal \
+            noble rootfs http://archive.ubuntu.com/ubuntu/
+          sudo rm -rf rootfs/var/lib/apt/lists/* rootfs/var/cache/apt/*
+          sudo find rootfs -xdev -type f ! -perm -004 -delete
+          sudo find rootfs -xdev -type d ! -perm -001 \
+            -exec chmod a+rx {} +
+          sudo python3 backend/services/agent/runtime/sandbox/rootfs_manifest.py \
+            create rootfs rootfs.manifest
+          sudo chown "$USER:$USER" rootfs.manifest
+          sudo tar --sort=name --mtime='UTC 2024-04-25' \
+            --owner=0 --group=0 --numeric-owner -C rootfs -czf rootfs.tar.gz .
+          sha256sum rootfs.tar.gz rootfs.manifest > SHA256SUMS
+      - name: Upload immutable private release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" >/dev/null
+          gh release upload "$RELEASE_TAG" \
+            rootfs.tar.gz rootfs.manifest SHA256SUMS

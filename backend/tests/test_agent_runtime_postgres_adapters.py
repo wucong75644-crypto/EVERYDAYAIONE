@@ -164,7 +164,7 @@ def test_event_envelope_rejects_invalid_enum_time_and_json(
 
 @pytest.mark.asyncio
 async def test_repository_claim_reads_complete_attempt_through_rpc() -> None:
-    database = _Database(DatabaseAccessKind.WORKER, {
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
         "claim_agent_run": {
             "outcome": "claimed",
             "entity_id": RUN_ID,
@@ -220,7 +220,7 @@ async def test_claim_recovers_after_committed_response_disconnect() -> None:
             "lease_expires_at": "2026-07-27T10:01:30+00:00",
         },
     }
-    database = _Database(DatabaseAccessKind.WORKER, {
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
         "claim_agent_run": OperationalError("response lost"),
         "get_agent_runtime_run_claim": attempt,
     })
@@ -236,7 +236,7 @@ async def test_claim_recovers_after_committed_response_disconnect() -> None:
 
 @pytest.mark.asyncio
 async def test_adapter_cancellation_is_not_converted_to_business_outcome() -> None:
-    database = _Database(DatabaseAccessKind.WORKER, {
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
         "claim_agent_run": asyncio.CancelledError(),
     })
 
@@ -247,20 +247,20 @@ async def test_adapter_cancellation_is_not_converted_to_business_outcome() -> No
 
 
 @pytest.mark.asyncio
-async def test_runtime_scope_cannot_call_worker_repository_operation() -> None:
+async def test_runtime_scope_cannot_call_agent_runtime_operation() -> None:
     repository = PostgresRuntimeRepository(
         _Database(DatabaseAccessKind.RUNTIME, {}),
     )
-    with pytest.raises(ValueError, match="WORKER_DATABASE_SCOPE_REQUIRED"):
+    with pytest.raises(ValueError, match="AGENT_RUNTIME_DATABASE_SCOPE_REQUIRED"):
         await repository.claim_run(RunId(RUN_ID), "worker")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "access_kind",
-    [DatabaseAccessKind.RUNTIME, DatabaseAccessKind.WORKER],
+    [DatabaseAccessKind.RUNTIME, DatabaseAccessKind.AGENT_RUNTIME],
 )
-async def test_runtime_and_worker_scopes_can_call_cancel(
+async def test_runtime_and_agent_runtime_scopes_can_call_cancel(
     access_kind: DatabaseAccessKind,
 ) -> None:
     database = _Database(access_kind, {
@@ -296,16 +296,16 @@ async def test_runtime_cancel_preserves_closed_conflict_outcomes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_scope_remains_blocked_from_worker_mutations() -> None:
+async def test_runtime_scope_remains_blocked_from_agent_runtime_mutations() -> None:
     repository = PostgresRuntimeRepository(
         _Database(DatabaseAccessKind.RUNTIME, {}),
     )
 
-    with pytest.raises(ValueError, match="WORKER_DATABASE_SCOPE_REQUIRED"):
+    with pytest.raises(ValueError, match="AGENT_RUNTIME_DATABASE_SCOPE_REQUIRED"):
         await repository.complete_run(
             RunId(RUN_ID), FencingToken(TOKEN), 1, "result",
         )
-    with pytest.raises(ValueError, match="WORKER_DATABASE_SCOPE_REQUIRED"):
+    with pytest.raises(ValueError, match="AGENT_RUNTIME_DATABASE_SCOPE_REQUIRED"):
         await repository.set_run_waiting(
             RunId(RUN_ID), FencingToken(TOKEN), 1, "paused",
         )
@@ -388,7 +388,7 @@ async def test_projection_claim_contains_complete_event_envelope() -> None:
         "attempt_count": 1,
         "checkpoint": {},
     }
-    database = _Database(DatabaseAccessKind.WORKER, {
+    database = _Database(DatabaseAccessKind.PROJECTION, {
         "claim_agent_projection_outbox": ([outbox],),
         "get_claimed_agent_projection_event": {
             "outcome": "found",

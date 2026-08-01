@@ -18,12 +18,15 @@ import re
 from enum import Enum
 from typing import Any, Dict, List, Set
 
+from config.tool_safety import (
+    SafetyLevel, get_safety_level, registered_safety_tools,
+)
 
-class SafetyLevel(str, Enum):
-    """工具安全级别（参考 Claude Code Permission Check）"""
-    SAFE = "safe"            # 只读查询，直接执行
-    CONFIRM = "confirm"      # 消耗资源，通知用户后执行
-    DANGEROUS = "dangerous"  # 写操作/不可逆，必须用户确认
+__all__ = [
+    "SafetyLevel",
+    "get_safety_level",
+    "registered_safety_tools",
+]
 
 
 class ToolGroup(str, Enum):
@@ -49,8 +52,6 @@ from config.image_agent_prompt import IMAGE_AGENT_PROMPT
 
 # 只读工具 — 可并行
 _CONCURRENT_SAFE_TOOLS: Set[str] = {
-    # Agent（只读查询/分析，内部自行管理并发）
-    "erp_agent", "erp_analyze",
     # ERP 查询（远程 + 本地）
     "erp_info_query", "erp_product_query", "erp_trade_query",
     "erp_aftersales_query", "erp_warehouse_query", "erp_purchase_query",
@@ -60,17 +61,14 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "local_compare_stats", "local_shop_list", "local_warehouse_list",
     "local_supplier_list",
     # 搜索类
-    "erp_api_search", "search_knowledge", "web_search",
+    "erp_api_search", "search_knowledge",
     "social_crawler",
-    # 代码执行（沙箱隔离，可并行）
-    "code_execute",
     # 文件操作（只读；file_search 命中图片自动多模态返回）
-    "file_search", "file_analyze",
+    "file_search",
     "evidence_search", "evidence_get",
     "artifact_search", "artifact_get", "artifact_read",
     "memory_search", "memory_get",
-    # 定时任务（表单返回 + 列表查询）
-    "manage_scheduled_task",
+    "get_conversation_context",
 }
 
 # 写操作工具 — 必须串行
@@ -81,30 +79,6 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
 def is_concurrency_safe(tool_name: str) -> bool:
     """判断工具是否可以并行执行"""
     return tool_name in _CONCURRENT_SAFE_TOOLS
-
-
-# ============================================================
-# 工具安全级别
-# ============================================================
-
-# 非 safe 的工具（数量少，显式列出）
-# 未列出的工具默认为 safe（查询类占绝大多数）
-_SAFETY_LEVELS: Dict[str, SafetyLevel] = {
-    # confirm — 消耗资源，通知用户
-    "generate_image": SafetyLevel.CONFIRM,
-    "generate_video": SafetyLevel.CONFIRM,
-    "image_agent": SafetyLevel.CONFIRM,
-    "code_execute": SafetyLevel.CONFIRM,
-    # dangerous — 写操作，必须用户确认
-    "erp_execute": SafetyLevel.DANGEROUS,
-    "trigger_erp_sync": SafetyLevel.DANGEROUS,
-    "file_delete": SafetyLevel.DANGEROUS,
-}
-
-
-def get_safety_level(tool_name: str) -> SafetyLevel:
-    """获取工具的安全级别，未标记的默认为 safe"""
-    return _SAFETY_LEVELS.get(tool_name, SafetyLevel.SAFE)
 
 
 # ============================================================

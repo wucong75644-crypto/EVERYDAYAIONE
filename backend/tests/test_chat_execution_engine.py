@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -173,7 +173,7 @@ async def test_execute_chat_stops_before_provider_when_cancelled(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_chat_stops_on_channel_cancel_and_interrupts_kernel(
+async def test_execute_chat_stops_without_legacy_kernel_owner(
     monkeypatch,
 ):
     adapter = SimpleNamespace(close=AsyncMock())
@@ -202,14 +202,9 @@ async def test_execute_chat_stops_on_channel_cancel_and_interrupts_kernel(
         def is_cancelled(self):
             return True
 
-    kernel = SimpleNamespace(interrupt=MagicMock())
     monkeypatch.setattr(
         "services.handlers.chat.execution_engine.prepare_chat_stream",
         fake_prepare,
-    )
-    monkeypatch.setattr(
-        "services.sandbox.kernel_manager.get_kernel_manager",
-        lambda: kernel,
     )
     handler = SimpleNamespace(org_id=None, _adapter=None)
 
@@ -220,7 +215,6 @@ async def test_execute_chat_stops_on_channel_cancel_and_interrupts_kernel(
             sink=_CancelledSink(),
         )
 
-    kernel.interrupt.assert_called_once_with("conv-1")
     adapter.close.assert_awaited_once()
 
 

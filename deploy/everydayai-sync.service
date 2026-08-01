@@ -6,8 +6,8 @@ After=network.target postgresql.service redis.service everydayai-backend.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=everydayai-sync
+Group=everydayai-app
 WorkingDirectory=/var/www/everydayai/backend
 
 # 环境变量（与 backend 共用同一 .env）
@@ -37,6 +37,9 @@ StartLimitBurst=5
 # 资源限制
 LimitNOFILE=65535
 LimitNPROC=4096
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
 
 # 日志配置
 StandardOutput=journal

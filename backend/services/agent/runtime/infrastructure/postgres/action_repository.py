@@ -14,7 +14,7 @@ from services.agent.runtime.ports.action_repository import ActionMutationReceipt
 class PostgresActionRepository:
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
-        if scope is None or scope.access_kind is not DatabaseAccessKind.WORKER:
+        if scope is None or scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
             raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
         self._database = database
 
@@ -33,7 +33,7 @@ class PostgresActionRepository:
         batch_hash: str, actions: Sequence[Mapping[str, object]],
     ) -> ActionMutationReceipt:
         return await self._rpc(
-            "complete_model_attempt_step_and_create_actions", {
+            "complete_model_attempt_with_raw_actions", {
                 "p_attempt_id": attempt_id,
                 "p_run_execution_token": run_execution_token,
                 "p_expected_attempt_version": expected_attempt_version,
@@ -44,7 +44,6 @@ class PostgresActionRepository:
                 "p_provider_stop_reason": provider_stop_reason,
                 "p_usage": dict(usage),
                 "p_actual_credits": actual_credits,
-                "p_batch_hash": batch_hash,
                 "p_actions": [dict(action) for action in actions],
             },
         )

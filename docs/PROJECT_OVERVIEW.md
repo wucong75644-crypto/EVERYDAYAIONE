@@ -39,6 +39,64 @@
 
 ## 目录结构
 
+Sandbox Linux隔离安全合同：
+- `.github/workflows/sandbox-linux-security.yml`：仅在AR-16 Phase 2验证分支或手动触发的
+  无生产Secret托管Ubuntu合同，固定nsjail源码提交并使用一次性rootfs。
+- `backend/tests/test_agent_runtime_sandbox_linux_external.py`：真实验证nsjail、cgroup v2、
+  host/network/input mount隔离、内存上限及完整进程树终止；不属于默认测试集合。
+- `backend/tests/test_agent_runtime_sandbox_job_reconciliation_postgres_external.py`：
+  独立承载Sandbox Job未知结果协调、敏感回执拒绝与Runtime作用域隔离合同。
+
+Tool Confirmation V3：
+- `backend/config/tool_safety.py`：冻结的显式 SAFE/CONFIRM/DANGEROUS 注册表；未知工具
+  不再继承默认 SAFE。
+- `backend/services/tool_confirmation/`：确定性 JSON hash、脱敏 preview、Redis 三键 Lua、
+  一次 challenge 与唯一 execution claim 服务。
+- `backend/services/agent/safe_tool_logging.py`：确认门禁可达 Agent 的结构化脱敏日志助手。
+- `docs/document/TECH_TOOL_CONFIRMATION_V3.md`：协议、状态机、失败关闭与发布门禁。
+- 旧 ToolLoop 与 ChatTool 生产 composition 保持不变，仅关闭非 SAFE 授权绕过；未接
+  Agent Runtime startup、Sandbox 专业 Executor 或数据库 migration。
+
+Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
+- `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql`、
+  `220_25_agent_runtime_authorization_recovery.sql`及同名 rollback：增加持久
+  DispatchIntent、授权恢复、原子 GrantUse、取消/拒绝收敛和 reconcile-only 恢复。
+- `backend/services/agent/runtime/ports/authorization.py`、
+  `application/authorization_recovery.py`及
+  `infrastructure/postgres/authorization.py`：提供唯一授权恢复与 gate Port/Worker 适配。
+- `backend/services/agent/runtime/executors/resolver.py`与
+  `application/action_loop.py`：Registry 保持唯一 Executor 映射 SSOT，按
+  Resolver→gate→dispatch/reconcile 编排；未接 startup/ingress。
+- `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
+  原子边界、锁序、故障恢复、权限与 rollback 合同。
+
+Agent Runtime Sandbox Job Controller 与专业 Executor：
+- `backend/migrations/222_01_agent_runtime_sandbox_job_foundation.sql`、
+  `222_02_agent_runtime_sandbox_job_rpcs.sql`、
+  `222_03_agent_runtime_sandbox_job_recovery_rpcs.sql`及精确 rollback：建立幂等
+  Job事实、execution/reconciliation fencing、精确响应丢失readback、durable
+  recovery scanner、partial/cleanup合同、FORCE RLS和窄RPC。
+- `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py`及
+  `infrastructure/postgres/sandbox_job_repository.py`：提供 fail-closed typed Port。
+- `backend/services/agent/runtime/sandbox/`：独立Worker编排、Linux隔离探针、nsjail
+  launcher边界、受限Capability、不可变输入、内容寻址输出和partial清理。
+- `backend/services/agent/runtime/executors/sandbox_job.py`：Registry中唯一
+  `code_execute`专业Executor映射；dispatch只创建Job，accepted/unknown只query/reconcile。
+- `everydayai_sandbox_worker`由数据库 bootstrap 创建，NOINHERIT、无表直权且仅能执行
+  222 Worker RPC；production composition/startup仍未连接。
+- `docs/document/TECH_AGENT_RUNTIME_SandboxJobController_BatchA.md`：记录身份、
+  状态机、锁序、权限、Worker/Executor和三层隔离验证门禁。
+
+Agent Runtime Projection dead stream恢复：
+- `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
+  增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用
+  Projection claim收紧为audit-only。
+- `backend/services/agent/runtime/ports/projection_recovery.py`及
+  `infrastructure/postgres/projection_recovery.py`：定义active super_admin Runtime
+  调用的只读检查和人工恢复适配；未接API、UI、startup或ingress。
+- `docs/document/TECH_AGENT_RUNTIME_ProjectionDeadStream恢复.md`：记录顺序阻塞、
+  Session→Outbox锁序、恢复审计、权限和回滚合同。
+
 Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `docs/document/TECH_AGENT_RUNTIME_AR-11ModelAttempt与唯一计费结算.md`：冻结
   Provider单dispatch、unknown/reconcile、late receipt和财务幂等边界。
@@ -709,6 +767,7 @@ EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
 ├── .claude/skills/everydayai-test-coverage/SKILL.md # Claude 按需加载测试规则的轻量入口
 ├── scripts/run_tests.sh      # 后端 target/fast/pr/full/large/external 分层测试入口
+├── scripts/run_redis_contract_tests.sh # 临时 localhost Redis Standalone 外部合同测试入口
 ├── CLAUDE.md                 # Claude Code 开发规则
 ├── .env                      # 环境变量（本地）
 ├── docs/                     # 项目文档
@@ -1537,3 +1596,16 @@ cache = client.caches.create(
 - **2026-01-31**：完成登录/注册弹窗化重构（Modal、AuthModal、LoginForm、RegisterForm）
 - **2026-01-24**：完成视频生成功能集成（Sora 2 系列 3 个模型）
 - **2026-01-21**：完成基础架构搭建（FastAPI + React + Supabase）
+- **2026-07-29**：Agent Runtime 生产 composition 已实现但默认关闭
+  - API、Actor、WeCom 仅负责持久 ingress，不构造 Runtime 或 Sandbox Owner
+  - Runtime、Projection、Authorization Recovery、Sandbox 使用独立进程、
+    Linux 用户和最小权限数据库角色
+  - Tool Confirmation V3 仅解决 PostgreSQL Authorization Interaction；
+    PolicyReceipt 与 Dispatch Gate 是唯一执行门禁
+  - Sandbox 固定 nsjail/rootfs/seccomp 哈希及 cgroup v2 上限，无裸 Python 降级
+  - Sandbox Linux合同以真实非root `everydayai-sandbox` 身份运行；jail内
+    65534:65534只映射到启动Worker的非root UID/GID，root启动失败关闭
+  - migration 223 clean rollback通过有效权限矩阵验证PUBLIC、普通Runtime和旧Worker
+    均不能取得compatibility projection mutation权限
+  - 生产发布、灰度、告警和回滚合同见
+    [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)

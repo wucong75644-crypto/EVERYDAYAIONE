@@ -17,7 +17,12 @@ from psycopg.types.json import Jsonb
 class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
+    AGENT_RUNTIME = "agent_runtime"
+    AUTHORIZATION = "authorization"
+    PROJECTION = "projection"
     RUNTIME = "runtime"
+    RUNTIME_ADMIN = "runtime_admin"
+    SANDBOX_WORKER = "sandbox_worker"
     SYNC = "sync"
     WORKER = "worker"
 
@@ -89,10 +94,38 @@ SELECT
 
 def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
-        return f'SELECT "{name}"()', []
-    named_args = ", ".join(f"{key} := %s" for key in params)
+        return f'SELECT public."{name}"()', []
+    # PostgreSQL resolves an untyped parameter from its runtime value.  Small
+    # Python integers (notably version 0/1) are therefore inferred as
+    # ``smallint`` and fail against BIGINT RPC contracts.  Keep the RPC
+    # surface named, while pinning the known numeric contract arguments.
+    numeric_types = {
+        "p_expected_action_version": "bigint",
+        "p_expected_attempt_version": "bigint",
+        "p_expected_version": "bigint",
+        "p_fencing_token": "bigint",
+        "p_executor_revision": "integer",
+        "p_lease_seconds": "integer",
+    }
+    uuid_keys = {
+        "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
+        "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
+    }
+    text_keys = {
+        "p_external_idempotency_key", "p_request_hash", "p_executor_type",
+        "p_runtime_revision", "p_workspace_scope_ref", "p_code_sha256",
+        "p_terminal_status", "p_terminal_reason", "p_phase", "p_worker_id",
+    }
+    named_args = ", ".join(
+        f"{key} := %s::{numeric_types[key]}"
+        if key in numeric_types else (
+            f"{key} := %s::uuid" if key in uuid_keys else
+            f"{key} := %s::text" if key in text_keys else f"{key} := %s"
+        )
+        for key in params
+    )
     values = [_adapt_rpc_param(value) for value in params.values()]
-    return f'SELECT "{name}"({named_args})', values
+    return f'SELECT public."{name}"({named_args})', values
 
 
 def _rpc_response(rows: list[dict[str, Any]]) -> Any:

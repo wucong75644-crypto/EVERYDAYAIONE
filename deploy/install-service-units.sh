@@ -14,6 +14,10 @@ services=(
     everydayai-sync
     everydayai-wecom
     everydayai-conversation-actor
+    everydayai-agent-runtime
+    everydayai-agent-projection
+    everydayai-agent-authorization
+    everydayai-sandbox-worker
 )
 for service in "${services[@]}"; do
     source_unit="${deploy_dir}/${service}.service"
@@ -28,6 +32,16 @@ for service in "${services[@]}"; do
         exit 1
     }
 done
+
+wrapper="${deploy_dir}/sandbox-worker-cgroup-wrapper.sh"
+wrapper_target=/usr/local/libexec/everydayai-sandbox-worker-cgroup-wrapper
+test -x "$wrapper"
+sudo install -d -m 0755 "$(dirname "$wrapper_target")"
+sudo install -m 0755 "$wrapper" "$wrapper_target"
+cmp --silent "$wrapper" "$wrapper_target" || {
+    echo "❌ Sandbox cgroup wrapper installation mismatch" >&2
+    exit 1
+}
 
 sudo systemctl daemon-reload
 echo "✅ Systemd 服务单元已安装并验证"

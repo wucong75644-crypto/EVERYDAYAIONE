@@ -14,8 +14,23 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.websocket import build_image_partial_update, build_message_done, build_thinking_chunk
+from schemas.websocket import (
+    build_image_partial_update, build_message_done, build_thinking_chunk,
+    build_tool_confirm_request,
+)
 from schemas.websocket_builders import build_suggestions_ready
+
+
+def test_tool_confirm_v3_payload_never_contains_arguments() -> None:
+    message = build_tool_confirm_request(
+        task_id="task", conversation_id="conversation", message_id="message",
+        confirmation_id="c" * 43, tool_name="restore_file",
+        confirmation_summary={"description": "恢复一个文件"},
+        safety_level="dangerous",
+    )
+    assert message["payload"]["protocol_version"] == 3
+    assert "arguments" not in message["payload"]
+    assert "tool_call_id" not in message["payload"]
 
 
 class TestBuildImagePartialUpdate:

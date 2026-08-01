@@ -26,7 +26,6 @@ from services.agent.runtime.infrastructure.postgres.parsing import (
     require_datetime,
     require_enum,
     require_int,
-    require_json_object,
     require_mapping,
     require_text,
     require_uuid,
@@ -143,7 +142,7 @@ class PostgresRuntimeRepository:
         config_snapshot: Mapping[str, object],
         capability_snapshot: Mapping[str, object],
     ) -> MutationReceipt:
-        self._require_access(DatabaseAccessKind.WORKER)
+        self._require_access(DatabaseAccessKind.AGENT_RUNTIME)
         return mutation_receipt(
             await self._rpc("create_agent_run", {
                 "p_session_id": session_id,
@@ -160,7 +159,7 @@ class PostgresRuntimeRepository:
     async def claim_run(
         self, run_id: RunId, worker_id: str,
     ) -> RunClaim:
-        self._require_access(DatabaseAccessKind.WORKER)
+        self._require_access(DatabaseAccessKind.AGENT_RUNTIME)
         require_stable_value(worker_id, "worker_id")
         try:
             raw = await self._rpc("claim_agent_run", {
@@ -254,7 +253,7 @@ class PostgresRuntimeRepository:
     ) -> MutationReceipt:
         if self._access_kind not in {
             DatabaseAccessKind.RUNTIME,
-            DatabaseAccessKind.WORKER,
+            DatabaseAccessKind.AGENT_RUNTIME,
         }:
             raise ValueError("RUNTIME_OR_WORKER_DATABASE_SCOPE_REQUIRED")
         return mutation_receipt(
@@ -314,7 +313,7 @@ class PostgresRuntimeRepository:
         self, name: str, params: dict[str, object],
         allowed: set[MutationOutcome],
     ) -> MutationReceipt:
-        self._require_access(DatabaseAccessKind.WORKER)
+        self._require_access(DatabaseAccessKind.AGENT_RUNTIME)
         return mutation_receipt(await self._rpc(name, params), allowed)
 
     async def _read_claim(

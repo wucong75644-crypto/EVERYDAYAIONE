@@ -79,7 +79,7 @@ def test_only_worker_scoped_client_is_accepted() -> None:
 @pytest.mark.asyncio
 async def test_claim_parses_strict_typed_receipt() -> None:
     repository = PostgresCommandClaimRepository(_Database(
-        DatabaseAccessKind.WORKER,
+        DatabaseAccessKind.AGENT_RUNTIME,
         {"claim_pending_agent_command_and_ensure_run": _claim()},
     ))
 
@@ -99,7 +99,7 @@ async def test_non_active_eligibility_receipts_have_no_claim(
     outcome: str,
 ) -> None:
     repository = PostgresCommandClaimRepository(_Database(
-        DatabaseAccessKind.WORKER,
+        DatabaseAccessKind.AGENT_RUNTIME,
         {"claim_pending_agent_command_and_ensure_run": {
             "outcome": outcome,
             "command_id": COMMAND_ID,
@@ -117,7 +117,7 @@ async def test_non_active_eligibility_receipts_have_no_claim(
 async def test_unknown_or_incomplete_receipt_fails_closed() -> None:
     for response in ({"outcome": "future"}, {"outcome": "claimed"}):
         repository = PostgresCommandClaimRepository(_Database(
-            DatabaseAccessKind.WORKER,
+            DatabaseAccessKind.AGENT_RUNTIME,
             {"claim_pending_agent_command_and_ensure_run": response},
         ))
         with pytest.raises(PersistenceContractError):
@@ -126,13 +126,13 @@ async def test_unknown_or_incomplete_receipt_fails_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_uncertain_renewal_reads_back_by_command_and_worker() -> None:
-    database = _Database(DatabaseAccessKind.WORKER, {
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
         "renew_agent_command_claim": OperationalError("response lost"),
         "get_agent_command_run_claim": _claim("found"),
     })
     repository = PostgresCommandClaimRepository(database)
     claimed = (await PostgresCommandClaimRepository(_Database(
-        DatabaseAccessKind.WORKER,
+        DatabaseAccessKind.AGENT_RUNTIME,
         {"claim_pending_agent_command_and_ensure_run": _claim()},
     )).claim_next("worker-1")).claim
 
@@ -148,7 +148,7 @@ async def test_uncertain_renewal_reads_back_by_command_and_worker() -> None:
 
 @pytest.mark.asyncio
 async def test_uncertain_claim_discovers_then_reads_exact_command() -> None:
-    database = _Database(DatabaseAccessKind.WORKER, {
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, {
         "claim_pending_agent_command_and_ensure_run": OperationalError(
             "response lost",
         ),

@@ -42,7 +42,7 @@ class _Worker:
 
 
 @pytest.mark.asyncio
-async def test_runtime_starts_and_stops_worker_and_kernel():
+async def test_runtime_starts_worker_without_becoming_sandbox_owner():
     kernel = _Kernel()
     runtime = ConversationActorRuntime(
         object(), object(), kernel, worker_factory=_Worker,
@@ -52,8 +52,8 @@ async def test_runtime_starts_and_stops_worker_and_kernel():
     await asyncio.sleep(0)
     await runtime.stop()
 
-    assert kernel.started is True
-    assert kernel.stopped is True
+    assert kernel.started is False
+    assert kernel.stopped is False
     assert get_kernel_manager() is None
 
 

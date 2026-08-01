@@ -16,9 +16,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
-
 from services.agent.department_types import ValidationResult
+from services.agent.safe_tool_logging import log_agent_event
 from services.agent.tool_output import (
     ColumnMeta,
     FileRef,
@@ -244,7 +243,7 @@ class DepartmentAgent(ABC):
             df.to_parquet(file_path, index=False)
             size_bytes = file_path.stat().st_size
         except Exception as e:
-            logger.error(f"Write staging parquet failed: {e}")
+            log_agent_event("error", "Write staging parquet failed", self, "erp_agent", "ERP_STAGING_WRITE_FAILED", type(e).__name__)
             # 降级为 JSON
             filename = f"{self.domain}_{ts}.json"
             file_path = staging_path / filename
@@ -328,9 +327,7 @@ class DepartmentAgent(ABC):
                         )
                         values.extend(df[field_name].dropna().tolist())
                     except Exception as e:
-                        logger.warning(
-                            f"Extract {field_name} from FILE_REF failed: {e}",
-                        )
+                        log_agent_event("warning", "ERP file field extraction failed", self, "erp_agent", "ERP_FILE_FIELD_EXTRACT_FAILED", type(e).__name__)
                     continue
                 if cached is not None:
                     values.extend(cached)
@@ -347,9 +344,7 @@ class DepartmentAgent(ABC):
                     values.extend(vals)
                 except Exception as e:
                     output.metadata.pop(cache_key, None)
-                    logger.warning(
-                        f"Extract {field_name} from FILE_REF failed: {e}",
-                    )
+                    log_agent_event("warning", "ERP file field extraction failed", self, "erp_agent", "ERP_FILE_FIELD_EXTRACT_FAILED", type(e).__name__)
         return values
 
     # ── 语义参数 → filters DSL 转换（委托 param_converter）──
@@ -429,13 +424,13 @@ class DepartmentAgent(ABC):
             diagnosis = self._diagnose_empty(filters)
             if diagnosis:
                 result.summary += f"\n\n诊断建议：\n{diagnosis}"
-                logger.info(f"L3 空结果诊断: doc_type={doc_type}, {diagnosis}")
+                log_agent_event("info", "ERP empty result diagnosed", self, "erp_agent", "ERP_EMPTY_RESULT_DIAGNOSED")
         # L3：失败诊断——error/timeout 均走诊断
         if result.is_failure:
             hint = self._diagnose_error(result.error_message)
             if hint:
                 result.summary += f"\n\n诊断：{hint}"
-                logger.info(f"L3 失败诊断: doc_type={doc_type}, {hint}")
+                log_agent_event("info", "ERP failure diagnosed", self, "erp_agent", "ERP_FAILURE_DIAGNOSED")
 
         return result
 
@@ -570,10 +565,7 @@ class DepartmentAgent(ABC):
         # 2. 所有 department agent 的 _dispatch 只有读方法，代码层面不可能写
         # 3. keyword 子串匹配在 LLM 生成的 task 文本上误判率高（如"取消订单数"）
         if dag_mode and self._is_write_action(action):
-            logger.warning(
-                f"{self.domain} write blocked | action={action} | "
-                f"task_preview={task[:200]}"
-            )
+            log_agent_event("warning", "ERP write blocked", self, "erp_agent", "ERP_DAG_WRITE_BLOCKED")
             return ToolOutput(
                 summary=(
                     "DAG 模式下暂不支持写操作，请单独执行该操作"
@@ -587,11 +579,7 @@ class DepartmentAgent(ABC):
         if dag_mode:
             write_keyword = self._find_write_keyword(task)
             if write_keyword:
-                logger.info(
-                    f"{self.domain} write keyword detected (audit only) | "
-                    f"keyword={write_keyword!r} | action={action} | "
-                    f"task_preview={task[:200]}"
-                )
+                log_agent_event("info", "ERP write keyword detected", self, "erp_agent", "ERP_WRITE_KEYWORD_DETECTED")
 
         # 合并参数：静态（PlanBuilder）+ 动态（context）
         merged = dict(params or {})
@@ -661,9 +649,7 @@ class DepartmentAgent(ABC):
         except asyncio.CancelledError:
             # v6: 超时 cancel 时返回已获取的部分数据
             if self._partial_rows:
-                logger.warning(
-                    f"{self.domain} Agent cancelled with {len(self._partial_rows)} partial rows",
-                )
+                log_agent_event("warning", "ERP department cancelled", self, "erp_agent", "ERP_DEPARTMENT_CANCELLED")
                 return ToolOutput(
                     summary=f"{self.domain} 查询超时，返回已获取的 {len(self._partial_rows)} 条部分数据",
                     format=OutputFormat.TABLE,
@@ -673,11 +659,7 @@ class DepartmentAgent(ABC):
                 )
             raise  # 无 partial 数据则继续传播
         except Exception as e:
-            logger.error(
-                f"{self.domain} Agent execute failed | "
-                f"action={action} | error={e}",
-                exc_info=True,
-            )
+            log_agent_event("error", "ERP department execution failed", self, "erp_agent", "ERP_DEPARTMENT_FAILED", type(e).__name__)
             return ToolOutput(
                 summary=f"{self.domain} 查询失败: {e}",
                 source=self.domain,

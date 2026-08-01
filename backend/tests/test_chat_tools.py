@@ -43,7 +43,7 @@ class TestGetSafetyLevel:
     def test_search_is_safe(self):
         from config.chat_tools import get_safety_level, SafetyLevel
         assert get_safety_level("erp_api_search") == SafetyLevel.SAFE
-        assert get_safety_level("web_search") == SafetyLevel.SAFE
+        assert get_safety_level("web_search") == SafetyLevel.CONFIRM
 
     def test_generate_image_is_confirm(self):
         from config.chat_tools import get_safety_level, SafetyLevel
@@ -61,9 +61,10 @@ class TestGetSafetyLevel:
         from config.chat_tools import get_safety_level, SafetyLevel
         assert get_safety_level("trigger_erp_sync") == SafetyLevel.DANGEROUS
 
-    def test_unknown_tool_defaults_safe(self):
-        from config.chat_tools import get_safety_level, SafetyLevel
-        assert get_safety_level("nonexistent_tool") == SafetyLevel.SAFE
+    def test_unknown_tool_is_rejected(self):
+        from config.chat_tools import get_safety_level
+        with pytest.raises(ValueError, match="UNKNOWN_TOOL_SAFETY"):
+            get_safety_level("nonexistent_tool")
 
 
 class TestIsConcurrencySafe:
@@ -74,8 +75,7 @@ class TestIsConcurrencySafe:
         safe_tools = [
             "erp_product_query", "erp_trade_query",
             "local_stock_query", "local_data",
-            "erp_api_search", "search_knowledge", "web_search",
-            "social_crawler", "code_execute",
+            "erp_api_search", "search_knowledge", "social_crawler",
         ]
         for tool in safe_tools:
             assert is_concurrency_safe(tool), f"{tool} should be concurrent safe"

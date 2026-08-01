@@ -36,7 +36,7 @@ class Database:
     def __init__(self, responses: dict[str, object]) -> None:
         self.scope = DatabaseScope(
             actor_user_id=None, org_id=None,
-            access_kind=DatabaseAccessKind.WORKER,
+            access_kind=DatabaseAccessKind.AGENT_RUNTIME,
             request_id="ar11-test",
         )
         self.responses = responses

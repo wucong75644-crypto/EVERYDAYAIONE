@@ -9,6 +9,20 @@
 
 ## 函数列表
 
+### Agent Runtime Sandbox Job专业Executor
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `SandboxJobCapability` | `backend/services/agent/runtime/sandbox/capability.py` | 绑定Action/Attempt，只允许暂存已核验代码与Artifact并通过Runtime窄RPC创建、查询或请求取消Job |
+| `SandboxWorkspaceStore` | `backend/services/agent/runtime/sandbox/workspace.py` | 管理不可变输入、job临时目录、内容寻址输出、partial quarantine及精确清理，不向Executor暴露根路径 |
+| `SandboxWorkerIdentity.capture_current_process` / `IsolationProbe.inspect` / `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/launcher.py`、`nsjail.py` | 仅Sandbox composition捕获当前非root进程UID/GID并映射到jail内65534；缺Linux/nsjail/cgroup v2时失败关闭 |
+| `SandboxJobWorker.run_once` / `reconcile_next` | `backend/services/agent/runtime/sandbox/worker.py` | 执行唯一领取、绑定Owner的续租/query/cancel、durable unknown reconciliation、内容materialize与partial清理 |
+| `SandboxJobWorkerService.run` / `stop` | `backend/services/agent/runtime/sandbox/service.py` | 独立进程可使用的durable execution/reconcile/cleanup轮询与drain生命周期；未接production startup |
+| `SandboxJobExecutor.dispatch` / `reconcile` / `cancel` | `backend/services/agent/runtime/executors/sandbox_job.py` | 将fenced DispatchIntent映射到唯一Sandbox Job；accepted/unknown禁止普通重派 |
+| `SandboxCapabilityIssuer.issue` | `backend/services/agent/runtime/sandbox/issuer.py` | 仅在Policy/Grant gate后签发attempt-scoped、operation-scoped SandboxJobCapability；Executor只能消费而不能自行扩权 |
+| `build_sandbox_worker_components` / `build_sandbox_executor_components` | `backend/services/agent/runtime/sandbox/composition.py` | Worker与Runtime分离composition；Runtime构造路径无法取得launcher/Worker，均未连接production startup或ingress |
+| `get_sandbox_job_by_binding` / `get_owned_sandbox_job` / `record_reconciled_sandbox_partials` / recovery scanners | `backend/migrations/222_03_agent_runtime_sandbox_job_recovery_rpcs.sql` | 响应丢失精确readback、绑定原Worker token的执行期读取、清理前冻结checkpoint partial事实、权威未启动恢复和不重派的durable reconciliation扫描 |
+
 ### 媒体 Worker 原子终态
 
 | 函数名 | 文件路径 | 功能描述 |
@@ -116,6 +130,37 @@
 | `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql` | 按Session→Command→CommandClaim→Run锁序领取pending Command、原子确保唯一Run并关闭历史非执行状态 |
 | `renew_agent_command_claim` / `finish_agent_command_claim` | `backend/migrations/219_02_agent_runtime_command_claim_lifecycle.sql` | 以CommandClaim fencing token续租或提交completed/failed终态，旧token和过期lease失败关闭 |
 
+### Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `ActionAuthorizationPort` / `PostgresActionAuthorizationRepository` | `backend/services/agent/runtime/ports/authorization.py`、`infrastructure/postgres/authorization.py` | Worker Scoped 授权恢复、receipt、activation 与 fenced dispatch gate 边界 |
+| `ActionExecutorResolver` / `PostgresActionExecutorResolver` | `backend/services/agent/runtime/executors/resolver.py` | 将持久 Action snapshot 解析为唯一 Registry descriptor、Executor、Attempt 与 request |
+| `AuthorizationRecoveryDriver.run_once` | `backend/services/agent/runtime/application/authorization_recovery.py` | 领取已批准 Interaction，重新求值 Policy，持久化 allow receipt 后激活 Action |
+| `ActionLoopDriver.dispatch_once` / `reconcile_once` | `backend/services/agent/runtime/application/action_loop.py` | 仅按 Resolver→gate→Executor 调度；存在 intent 的过期 dispatch 只进入 reconcile |
+| `gate_agent_action_dispatch` / `get_agent_action_dispatch_intent` | `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql` | 同事务校验 receipt/grant/scope、消费 GrantUse、绑定 Attempt fencing 并持久化 DispatchIntent/readback |
+| `claim_next_agent_authorization_recovery` / `renew_agent_authorization_recovery` / `activate_agent_authorized_action` / `expire_agent_authorization_interaction` | `backend/migrations/220_25_agent_runtime_authorization_recovery.sql` | 按统一锁序恢复、续租、激活或关闭授权等待 Action，并精确重算 Run blocker/wait state |
+
+### Agent Runtime Projection dead stream恢复
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `ProjectionDeadRecoveryPort` / `PostgresProjectionDeadRecovery` | `backend/services/agent/runtime/ports/projection_recovery.py`、`infrastructure/postgres/projection_recovery.py` | Runtime actor的dead item检查和严格绑定人工requeue合同，数据库再次验证active super_admin与tenant |
+| `list_agent_projection_dead_items` / `get_agent_projection_dead_item` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 仅返回当前tenant的Outbox/Event顺序元数据，不返回payload或业务内容 |
+| `requeue_agent_projection_dead` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | 按Session→Outbox→Event→Checkpoint→Result锁序记录不可变审计并恢复一个dead首项，不重置失败历史 |
+| `claim_agent_projection_outbox` | `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql` | additive替换215通用claim，仅领取audit；web_runtime/wecom继续由有序compat claim唯一领取 |
+
+### Agent Runtime Sandbox Job Controller Batch A
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `SandboxJobSnapshot` / `SandboxJobRepositoryPort` | `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py` | 定义持久 Job、fencing、terminal、unknown/reconcile 与 cleanup typed 合同 |
+| `PostgresSandboxJobRepository` | `backend/services/agent/runtime/infrastructure/postgres/sandbox_job_repository.py` | 仅接受 Runtime 或专属 Sandbox Worker scoped client，并按方法阻断角色越权 |
+| `create_or_get_sandbox_job` / `get_sandbox_job` / `request_sandbox_job_cancel` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | Runtime 的幂等创建、scope readback 和 cancel request 窄入口 |
+| `claim_next_sandbox_job` / `renew_sandbox_job_lease` / `mark_sandbox_job_started` / `recover_expired_sandbox_job` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | 专属 Worker claim、fencing、start 与崩溃恢复合同；starting/running 不重派 |
+| `finish_sandbox_job` / `record_sandbox_job_unknown` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | 原子 terminal 或 unknown 写入，强制 receipt、partial、cleanup 与 cancel proof |
+| `claim_sandbox_job_reconciliation` / `renew_sandbox_job_reconciliation` / `resolve_sandbox_job_reconciliation` / `record_sandbox_job_cleanup` | `backend/migrations/222_02_agent_runtime_sandbox_job_rpcs.sql` | unknown-only reconciliation lease、终态解析和清理证据入口 |
+
 ### Git 与发布脚本
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
@@ -195,6 +240,16 @@
 | `BackgroundTaskWorker.cleanup_stale_tasks` | `backend/services/background_task_worker.py` | 清理超时任务（image/video 走 TaskCompletionService，chat 直接更新） | - | None |
 | `ScheduledTaskExecutor._build_application_db` | `backend/services/scheduler/task_executor.py` | 为单次定时任务构造绑定创建者、企业和 task request id 的 Runtime 数据库门面 | task | OrgScopedDB |
 | `ToolExecutor.__init__(..., allowed_tools=...)` | `backend/services/agent/tool_executor.py` | 可选执行层工具白名单；定时任务用它阻断无人值守禁用工具 | allowed_tools | None |
+| `canonical_arguments_hash` | `backend/services/tool_confirmation/canonical.py` | 对严格 JSON-only 参数生成排序键 SHA-256 绑定 | arguments | str |
+| `get_safety_level` | `backend/config/tool_safety.py` | 查询显式安全分类；未知工具抛出受控错误 | tool_name | SafetyLevel |
+| `build_confirmation_summary` | `backend/services/tool_confirmation/preview.py` | 按工具 allowlist 生成不含原始参数的有界确认摘要 | tool_name、arguments | dict |
+| `ToolConfirmationRedisStore` | `backend/services/tool_confirmation/redis_store.py` | 执行三键 create/consume/expire/read/claim Lua 合同 | immutable binding | Redis result |
+| `ToolConfirmationService.create` | `backend/services/tool_confirmation/service.py` | 创建随机 challenge 与 waiter token，并绑定 execution identity | scoped tool call | ConfirmationRequest |
+| `ToolConfirmationService.await_and_claim` | `backend/services/tool_confirmation/service.py` | 轮询权威 Hash、复核完整 binding 并唯一领取执行权 | ConfirmationRequest | ConfirmationDecision |
+| `ToolConfirmationService.consume_response` | `backend/services/tool_confirmation/service.py` | 以可信 WS actor scope 原子批准或拒绝 challenge | confirmation_id、actor | str |
+| `WebSocketManager.send_tool_confirmation` | `backend/services/websocket_manager.py` | V3 专用投递；要求本地实际发送或跨 Worker delivery ACK | task、user、message、org | bool |
+| `RedisPubSubMixin._publish_with_delivery_ack` | `backend/services/websocket_redis.py` | 以随机短 TTL key 等待远端 Worker 实际 WebSocket 发送确认 | user、message、org | bool |
+| `log_agent_event` | `backend/services/agent/safe_tool_logging.py` | 仅记录作用域、工具、稳定错误码和异常类型的脱敏 Agent 日志 | event、agent、tool、code | None |
 | `execute_with_scheduled_lease` | `backend/services/scheduler/run_lease.py` | 在持续续租下执行定时任务完整业务与终态，租约丢失时取消执行 | store, task_id, run, execution | Any |
 | `ScheduledWorkerStore.append_result_message` | `backend/services/scheduler/worker_store.py` | 通过 fencing token 能力原子写入定时任务结果消息 | task_id, run, text | dict \| None |
 
@@ -1955,3 +2010,16 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | 生命周期 External fixture 与 helper | `backend/tests/test_organization_lifecycle_external.py` | 通过 Migration Runner 应用 217/218，执行 preflight，并验证并发、事务、对象元数据、逆序 rollback 与重新应用 |
 | 生命周期权限/Fence External 矩阵 | `backend/tests/test_organization_lifecycle_permissions_external.py` | 验证 Actor/Scope/数据库角色精确 ACL、无 grant option/继承旁路、四类服务 suspended Fence 及 active 恢复 |
 | `organization-lifecycle.sh` | `deploy/preflight/organization-lifecycle.sh` | 只读核验迁移账本、函数 owner/SECURITY DEFINER/search_path/ACL、12 个 Fence trigger 与 Runtime 无企业直写权限 |
+
+### Agent Runtime 生产 composition
+
+| 函数/类 | 文件 | 说明 |
+|---|---|---|
+| `RuntimeIngress.submit` | `backend/services/agent/runtime/ingress.py` | 以幂等键持久化 Session/Command，并支持响应丢失后的同键回读 |
+| `build_runtime` / `build_projection` / `build_authorization` / `build_sandbox` | `backend/services/agent/runtime/composition.py` | 四个互斥进程的生产 composition roots |
+| `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文构造模型请求、租户凭证和确定性 Action |
+| `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
+| `runtime_status` / `update_runtime_control` / `update_runtime_rollout` / `requeue_projection_dead` | `backend/api/routes/runtime_admin.py` | super_admin、租户作用域、幂等审计的 Runtime 运维入口 |
+| `probe_tool_confirmation_redis` | `backend/services/tool_confirmation/capability_probe.py` | Tool Confirmation V3 Redis 原子能力探针 |
+| `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/nsjail.py` | 固定哈希、cgroup v2、网络隔离与进程树清理的 Sandbox 启动器 |
+| `create_manifest` / `verify_manifest` | `backend/services/agent/runtime/sandbox/rootfs_manifest.py` | 创建并验证包含类型、权限、owner、大小和文件哈希的完整 rootfs manifest |

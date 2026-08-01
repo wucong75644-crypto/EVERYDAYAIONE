@@ -19,6 +19,7 @@ _local_db_client = None
 _async_db_client = None
 _worker_db_client = None
 _async_worker_db_client = None
+_runtime_admin_db_client = None
 
 
 def get_redis_client() -> redis.Redis:
@@ -114,19 +115,26 @@ def get_worker_db() -> Any:
     return _worker_db_client
 
 
-async def get_async_worker_db() -> Any:
+async def get_async_worker_db(
+    database_url: str | None = None, *, min_size: int | None = None,
+    max_size: int | None = None,
+) -> Any:
     """获取独立 Worker 异步数据库客户端；禁止回退 runtime URL。"""
     global _async_worker_db_client
     if _async_worker_db_client is None:
         from core.local_db import AsyncLocalDBClient
 
-        settings = get_settings()
-        if not settings.worker_database_url:
+        settings = None if database_url is not None else get_settings()
+        resolved_url = (
+            database_url if database_url is not None
+            else settings.worker_database_url
+        )
+        if not resolved_url:
             raise RuntimeError("WORKER_DATABASE_URL_REQUIRED")
         _async_worker_db_client = AsyncLocalDBClient(
-            settings.worker_database_url,
-            min_size=settings.db_pool_min,
-            max_size=settings.db_pool_max,
+            resolved_url,
+            min_size=min_size or (settings.db_pool_min if settings else 1),
+            max_size=max_size or (settings.db_pool_max if settings else 2),
         )
         await _async_worker_db_client.open()
         logger.info("Worker 异步数据库连接池已创建 | AsyncLocalDB")
@@ -147,3 +155,27 @@ async def close_async_worker_db() -> None:
     if _async_worker_db_client is not None:
         await _async_worker_db_client.close()
         _async_worker_db_client = None
+
+
+def get_runtime_admin_db() -> Any:
+    """Get the narrow runtime-admin connection; never reuse the web role."""
+    global _runtime_admin_db_client
+    if _runtime_admin_db_client is None:
+        from core.local_db import LocalDBClient
+
+        settings = get_settings()
+        if not settings.runtime_admin_database_url:
+            raise RuntimeError("RUNTIME_ADMIN_DATABASE_URL_REQUIRED")
+        _runtime_admin_db_client = LocalDBClient(
+            settings.runtime_admin_database_url,
+            min_size=1,
+            max_size=min(2, settings.db_pool_max),
+        )
+    return _runtime_admin_db_client
+
+
+def close_runtime_admin_db() -> None:
+    global _runtime_admin_db_client
+    if _runtime_admin_db_client is not None:
+        _runtime_admin_db_client.close()
+        _runtime_admin_db_client = None

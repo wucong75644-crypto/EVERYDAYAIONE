@@ -18,21 +18,17 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from loguru import logger
 
 from config.kie_models import calculate_image_cost
 from core.exceptions import InsufficientCreditsError
 from services.adapters.factory import create_image_adapter
 from services.agent.agent_result import AgentResult
+from services.agent.safe_tool_logging import log_agent_event
 from services.handlers.mixins.credit_mixin import CreditMixin
-
 from .image_processor import detect_aspect_ratio, detect_dimensions
 from .prompt_builder import PromptBuilder
-
 # CDN 域名白名单（防 SSRF）
 _ALLOWED_IMAGE_HOSTS = frozenset({"cdn.everydayai.com.cn", "img.everydayai.com.cn"})
-
-
 class ImageAgent(CreditMixin):
     """电商图片生成 Agent — 单张图片生成器。
 
@@ -119,10 +115,7 @@ class ImageAgent(CreditMixin):
         if new_style:
             self._save_style_directive(new_style)
 
-        logger.info(
-            f"ecom_plan success | user={self.user_id} | platform={platform} "
-            f"| product={product_name[:20]} | images={len(images)} | model={model}"
-        )
+        log_agent_event("info", "ecom_plan success", self, "image_agent")
 
         # 返回方案（status="plan" 表示等待用户确认）
         return AgentResult(
@@ -234,8 +227,11 @@ class ImageAgent(CreditMixin):
                 )
             except Exception as error:
                 last_error = error
-                log = logger.warning if index == 0 else logger.error
-                log(f"ecom_plan model failed | model={candidate} | {error}")
+                log_agent_event(
+                    "warning" if index == 0 else "error", "ecom_plan model failed",
+                    self, "image_agent",
+                    "IMAGE_PLAN_MODEL_FAILED", type(error).__name__,
+                )
             finally:
                 await adapter.close()
         error_result = AgentResult(
@@ -321,11 +317,14 @@ class ImageAgent(CreditMixin):
                 try:
                     self._refund_credits(tx_id)
                 except Exception as refund_err:
-                    logger.critical(
-                        f"CREDIT_LOSS_RISK: ImageAgent refund failed | "
-                        f"tx={tx_id} | error={refund_err}"
+                    log_agent_event(
+                        "critical", "ImageAgent refund failed", self, "image_agent",
+                        "IMAGE_REFUND_FAILED", type(refund_err).__name__,
                     )
-            logger.opt(exception=True).error(f"ImageAgent error | task={task[:50]}")
+            log_agent_event(
+                "error", "ImageAgent error", self, "image_agent",
+                "IMAGE_GENERATION_FAILED", type(e).__name__,
+            )
             return self._error_result(
                 f"图片生成异常：{e}", task, image_urls, platform, style_directive,
             )
@@ -365,11 +364,7 @@ class ImageAgent(CreditMixin):
             )
         self._confirm_deduct(tx_id)
         width, height = detect_dimensions(task, platform)
-        logger.info(
-            f"ImageAgent success | user={self.user_id} | model={model_id} "
-            f"| size={width}x{height} | task={task[:50]} | "
-            f"count={len(result.image_urls)}"
-        )
+        log_agent_event("info", "ImageAgent success", self, "image_agent")
         from services.file_upload import persist_media_urls_to_workspace
 
         emit_payloads = await persist_media_urls_to_workspace(
@@ -422,7 +417,10 @@ class ImageAgent(CreditMixin):
                 return json.loads(match.group())
             except json.JSONDecodeError:
                 pass
-        logger.warning(f"Failed to parse ecom plan JSON | len={len(content)}")
+        log_agent_event(
+            "warning", "ImageAgent plan parse failed", self, "image_agent",
+            "IMAGE_PLAN_PARSE_FAILED",
+        )
         return {"product_insight": "", "visual_strategy": "", "images": []}
 
     def _read_style_directive(self) -> str:
@@ -434,7 +432,10 @@ class ImageAgent(CreditMixin):
             if row and row.data:
                 return row.data.get("image_style_directive") or ""
         except Exception as e:
-            logger.warning(f"读取 style_directive 失败: {e}")
+            log_agent_event(
+                "warning", "ImageAgent style read failed", self, "image_agent",
+                "IMAGE_STYLE_READ_FAILED", type(e).__name__,
+            )
         return ""
 
     def _save_style_directive(self, style: str) -> None:
@@ -444,7 +445,10 @@ class ImageAgent(CreditMixin):
                 {"image_style_directive": style}
             ).eq("id", self.conversation_id).execute()
         except Exception as e:
-            logger.warning(f"持久化 style_directive 失败: {e}")
+            log_agent_event(
+                "warning", "ImageAgent style write failed", self, "image_agent",
+                "IMAGE_STYLE_WRITE_FAILED", type(e).__name__,
+            )
 
     def _select_model(self, image_urls: list[str]) -> str:
         """根据是否有参考图选择 KIE 模型。"""

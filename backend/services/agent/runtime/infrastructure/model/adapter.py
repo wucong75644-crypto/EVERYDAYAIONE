@@ -172,16 +172,18 @@ class ExistingProviderModelAdapter:
         if self._adapter_factory is not None:
             return self._adapter_factory(
                 request.model_id,
-                org_id=self._org_id,
+                org_id=request.org_id or self._org_id,
                 db=self._db,
             )
         from services.adapters.factory import create_chat_adapter
 
-        return create_chat_adapter(
-            request.model_id,
-            org_id=self._org_id,
-            db=self._db,
-        )
+        kwargs = {
+            "org_id": request.org_id or self._org_id,
+            "db": self._db,
+        }
+        if request.provider_api_key is not None:
+            kwargs["api_key_override"] = request.provider_api_key
+        return create_chat_adapter(request.model_id, **kwargs)
 
     @staticmethod
     def _log_error(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Mapping, Protocol
 
@@ -187,6 +187,8 @@ class ModelStepRequest:
     prompt_revision: str
     tool_catalog_revision: str
     options: ModelRequestOptions
+    org_id: str | None = None
+    provider_api_key: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -200,6 +202,8 @@ class ModelStepRequest:
             require_stable_value(value, name)
         if self.input_receipt.context_plan_hash != self.context_plan.plan_hash:
             raise ValueError("input receipt does not match ContextPlan")
+        if self.org_id is not None:
+            require_stable_value(self.org_id, "org_id")
 
 
 @dataclass(frozen=True, kw_only=True)
