@@ -45,6 +45,8 @@ REQUESTS = {
 
 
 BUSINESS_BOOTSTRAP = """
+RESET ROLE;
+ALTER ROLE everydayai_agent_runtime_worker NOINHERIT;
 SET ROLE everydayai_owner;
 CREATE TABLE knowledge_nodes(id UUID PRIMARY KEY, org_id UUID, owner_user_id UUID, is_deleted BOOLEAN NOT NULL DEFAULT FALSE, category TEXT, node_type TEXT, title TEXT, content TEXT, confidence NUMERIC, source TEXT, metadata JSONB NOT NULL DEFAULT '{}');
 CREATE TABLE conversation_data_evidence(artifact_id TEXT NOT NULL, conversation_id UUID NOT NULL, org_id UUID, source TEXT, columns JSONB, rows JSONB, query_scope JSONB, metric_definitions JSONB, model_view JSONB, byte_size INTEGER, context_revision BIGINT, validation_status TEXT);
@@ -201,6 +203,7 @@ def test_225_apply_rollback_reapply_and_permissions(database) -> None:
         migration = (ROOT / "migrations/225_01_agent_runtime_read_capability_rpcs.sql").read_text()
         rollback = (ROOT / "migrations/rollback/225_01_agent_runtime_read_capability_rpcs_rollback.sql").read_text()
         conn.execute(migration); conn.commit()
+        assert conn.execute("SELECT rolinherit FROM pg_roles WHERE rolname='everydayai_agent_runtime_worker'").fetchone()[0] is False
         conn.execute(rollback); conn.commit()
         assert conn.execute("SELECT count(*) FROM pg_proc WHERE proname='read_agent_runtime_erp'").fetchone()[0] == 0
         conn.execute(migration); conn.commit()
