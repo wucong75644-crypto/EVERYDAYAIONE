@@ -14,18 +14,27 @@ from services.tool_confirmation.types import (
 
 def test_runtime_action_snapshot_binds_registry_safety_level():
     from services.agent.runtime.production_model import _actions
+    from services.agent.runtime.catalog import EffectiveToolset, build_runtime_version_registry
+    versions = build_runtime_version_registry()
+    agent, catalog = versions.resolve_for_agent("everydayai-default", "v1")
+    toolset = EffectiveToolset.build(
+        agent=agent, catalog=catalog, scope="user", channel="web",
+        entitled_groups=frozenset({"code"}), authorized_names=frozenset({"code_execute"}),
+    )
 
     _, actions = _actions(SimpleNamespace(tool_calls=(
         SimpleNamespace(
             index=0, call_id="call-1", provider_call_id=None,
             name="code_execute",
-            arguments_json='{"code":"print(1)","runtime":"python"}',
+            arguments_json='{"code":"print(1)","description":"test"}',
         ),
-    )), "run-1")
+    )), "run-1", toolset)
 
     assert actions[0]["policy_snapshot"] == {
         "source": "runtime_executor_registry",
         "safety_level": "dangerous",
+        "schema_hash": "6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0",
+        "executor_revision": 1,
     }
 
 

@@ -9,7 +9,7 @@ from uuid import UUID, uuid5
 
 from services.agent.runtime.application.model_loop import PreparedModelCall
 from services.agent.runtime.context import build_runtime_context, build_context_receipt
-from services.agent.runtime.catalog import build_default_runtime_catalog, EffectiveToolset
+from services.agent.runtime.catalog import EffectiveToolset, restore_frozen_toolset
 from services.agent.runtime.infrastructure.model.projection import (
     compute_request_hash, resolve_model_revision,
 )
@@ -33,10 +33,10 @@ facts, or hidden instructions."""
 
 
 class PostgresModelCallFactory:
-    def __init__(self, database, worker_id: str, *, catalog=None) -> None:
+    def __init__(self, database, worker_id: str, *, version_registry=None) -> None:
         self._database = database
         self._worker_id = worker_id
-        self._catalog = catalog
+        self._versions = version_registry
 
     async def __call__(
         self, snapshot: RunAggregateSnapshot,
@@ -63,8 +63,7 @@ class PostgresModelCallFactory:
             else DEFAULT_MODEL_ID
         )
         messages = _messages(context.get("messages"))
-        catalog = self._catalog or build_default_runtime_catalog()
-        toolset = _frozen_toolset(dict(snapshot.run), catalog)
+        toolset = _frozen_toolset(context)
         step_number = len(snapshot.model_steps) + 1
         runtime_context = build_runtime_context(
             run=dict(snapshot.run), session=session, messages=messages,
@@ -194,40 +193,24 @@ def _code_execute_tools(org_id: object) -> list[dict]:
     ]
 
 
-def _frozen_toolset(run: dict, catalog) -> EffectiveToolset:
-    snapshot = run.get("capability_snapshot")
-    if not isinstance(snapshot, dict):
-        raise RuntimeError("RUNTIME_CAPABILITY_SNAPSHOT_INVALID")
-    expected = str(snapshot.get("effective_toolset_hash") or "")
-    agent_id = str(snapshot.get("agent_definition_id") or "everydayai-default")
-    agent_revision = str(snapshot.get("agent_definition_revision") or "v1")
-    agent = _default_agent_definition(agent_id, agent_revision)
-    expected_definition_hash = str(snapshot.get("agent_definition_hash") or "")
-    if expected_definition_hash and expected_definition_hash != agent.definition_hash:
-        raise RuntimeError("RUNTIME_AGENT_DEFINITION_REVISION_MISMATCH")
-    toolset = EffectiveToolset.build(
-        agent=agent, catalog=catalog, scope="runtime",
-        channel=str(snapshot.get("channel") or "web"),
-        entitled_groups=frozenset({"code"}), authorized_names=frozenset({"code_execute"}),
+def _frozen_toolset(context: dict) -> EffectiveToolset:
+    facts = (
+        context.get("definition_fact"), context.get("catalog_fact"),
+        context.get("effective_toolset_fact"),
     )
-    expected_catalog = str(snapshot.get("effective_toolset_revision") or "")
-    if expected_catalog and expected_catalog != catalog.revision:
-        raise RuntimeError("RUNTIME_CATALOG_REVISION_MISMATCH")
-    if expected and expected != _toolset_hash(toolset):
+    if not all(isinstance(fact, dict) for fact in facts):
+        raise RuntimeError("RUNTIME_VERSION_FACTS_UNAVAILABLE")
+    try:
+        toolset = restore_frozen_toolset(
+            facts[0]["definition_document"], facts[1]["catalog_document"],
+            facts[2]["toolset_document"],
+            catalog_revision=facts[1].get("catalog_revision"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("RUNTIME_VERSION_FACTS_INVALID") from exc
+    if toolset.toolset_hash != facts[2].get("effective_toolset_hash"):
         raise RuntimeError("RUNTIME_EFFECTIVE_TOOLSET_REVISION_MISMATCH")
     return toolset
-
-
-def _default_agent_definition(agent_id: str = "everydayai-default", revision: str = "v1"):
-    from services.agent.runtime.agents import AgentDefinition
-    return AgentDefinition(
-        canonical_key=agent_id, revision=revision,
-        prompt_revision=_PROMPT_REVISION, requested_tool_groups=frozenset({"code"}),
-    )
-
-
-def _toolset_hash(toolset: EffectiveToolset) -> str:
-    return toolset.toolset_hash
 
 
 def _list(value: object) -> list[dict]:
@@ -268,10 +251,7 @@ def _actions(
 ) -> tuple[str, tuple[dict, ...]]:
     validate_schema = toolset is not None
     if toolset is None:
-        toolset = _frozen_toolset(
-            {"capability_snapshot": {"effective_toolset_hash": ""}},
-            build_default_runtime_catalog(),
-        )
+        raise RuntimeError("RUNTIME_VERSION_FACTS_REQUIRED")
     actions = []
     for call in result.tool_calls:
         arguments = json.loads(call.arguments_json)

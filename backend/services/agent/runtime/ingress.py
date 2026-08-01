@@ -20,8 +20,12 @@ class RuntimeIngressReceipt:
 
 
 class RuntimeIngress:
-    def __init__(self, database: Any) -> None:
+    def __init__(self, database: Any, version_registry: Any | None = None) -> None:
         self._database = database
+        if version_registry is None:
+            from services.agent.runtime.catalog import build_runtime_version_registry
+            version_registry = build_runtime_version_registry()
+        self._versions = version_registry
 
     async def submit(
         self, *, conversation_id: str, org_id: str | None, user_id: str,
@@ -29,20 +33,14 @@ class RuntimeIngress:
         agent_definition_revision: str, command_type: str,
         idempotency_key: str, payload: Mapping[str, object],
     ) -> RuntimeIngressReceipt:
-        from services.agent.runtime.catalog import (
-            EffectiveToolset, build_default_runtime_catalog,
-        )
-        from services.agent.runtime.agents import AgentDefinition
+        from services.agent.runtime.catalog import EffectiveToolset
         from core.config import get_settings
         settings = get_settings()
         through = str(payload.get("input_message_id") or payload.get("output_message_id") or "")
         if not through:
             raise RuntimeError("RUNTIME_INGRESS_THROUGH_MESSAGE_MISSING")
-        catalog = build_default_runtime_catalog()
-        agent = AgentDefinition(
-            canonical_key=agent_definition_id, revision=agent_definition_revision,
-            prompt_revision="agent-runtime-production-v1",
-            requested_tool_groups=frozenset({"code"}),
+        agent, catalog = self._versions.resolve_for_agent(
+            agent_definition_id, agent_definition_revision,
         )
         toolset = EffectiveToolset.build(
             agent=agent, catalog=catalog, scope=scope_kind,

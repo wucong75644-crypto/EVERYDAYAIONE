@@ -21,9 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 ORG = UUID("22222222-2222-2222-2222-222222222222")
 USER = UUID("44444444-4444-4444-4444-444444444444")
 CONVERSATION = UUID("55555555-5555-5555-5555-555555555555")
-DEFINITION_HASH = "b5818e976876aa8c0ead0b50ebea8439fe0e230e9d55dfac9e7d5580d18895ff"
-CATALOG_REVISION = "7e449bf4ca2a4827d5fa96df4721c4978d9a1d96e0215012500669e5ac2eb131"
-TOOLSET_HASH = "897d940de4aa6ebca9a5df0197824ac906f6cea2469461c5ec0ae88e595d90fc"
+DEFINITION_HASH = "61391ddcbeea377093b03e9441356e84e3f108d09a6728db0efc24a5ca94a768"
+CATALOG_REVISION = "182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8"
+TOOLSET_HASH = "1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291"
+V2_DEFINITION_HASH = "4b14452bf2a7053c381a36a0c29edaf06b707d1db01f8cb998fd7e9d14be203c"
+V2_CATALOG_REVISION = "baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b"
 BASE = (
     "212_agent_runtime_core_foundation.sql",
     "213_agent_runtime_session_run_rpcs.sql",
@@ -92,7 +94,7 @@ def _bootstrap_sql() -> str:
     """
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def database():
     if os.getenv("RUN_AR17_1_DB_TEST") != "1":
         pytest.skip("RUN_AR17_1_DB_TEST=1 required")
@@ -171,30 +173,88 @@ def _settings(conn: psycopg.Connection, role: str, *, org: UUID | None = ORG,
 
 
 def _ingress(url: str, key: str, *, role: str = "everydayai_runtime", channel: str = "web",
-             through: UUID | None = None, definition_hash: str = DEFINITION_HASH):
+             through: UUID | None = None, definition_hash: str = DEFINITION_HASH,
+             definition_revision: str = "v1", catalog_revision: str = CATALOG_REVISION,
+             conversation: UUID = CONVERSATION):
     through = through or uuid4()
     with _connect(url, role) as conn:
         _settings(conn, role)
         row = conn.execute("""
           SELECT runtime_submit_ingress_v2(
             %s::uuid,%s::uuid,%s::uuid,'user',%s::text,%s::uuid,
-            'everydayai-default','v1',%s::text,'submit_input',%s::text,%s::text,
+            'everydayai-default',%s::text,%s::text,'submit_input',%s::text,%s::text,
             %s::uuid,%s::text,%s::text,%s::text,'{}'::jsonb,
             '{"requested_groups":["code"]}'::jsonb,%s::text,%s::jsonb)
-        """, (CONVERSATION, ORG, USER, str(USER), USER, definition_hash, key, channel,
-               through, f"message:{through}", CATALOG_REVISION, TOOLSET_HASH,
+        """, (conversation, ORG, USER, str(USER), USER, definition_revision, definition_hash, key, channel,
+               through, f"message:{through}", catalog_revision, TOOLSET_HASH,
                "ar17-test", '{"task_id":null}')).fetchone()
         return row[0]
+
+
+def _assert_permissions_and_rollback(database: str) -> None:
+    with _connect(database, "postgres") as conn:
+        security = conn.execute("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid='agent_runtime_definition_facts'::regclass").fetchone()
+        privileges = conn.execute("SELECT has_function_privilege('everydayai_runtime','runtime_submit_ingress_v2(uuid,uuid,uuid,text,text,uuid,text,text,text,text,text,text,uuid,text,text,text,jsonb,jsonb,text,jsonb)','execute'), has_table_privilege('everydayai_runtime','agent_runtime_definition_facts','select')").fetchone()
+        matrix = conn.execute("""
+          SELECT rolname,
+            has_function_privilege(rolname,'runtime_submit_ingress_v2(uuid,uuid,uuid,text,text,uuid,text,text,text,text,text,text,uuid,text,text,text,jsonb,jsonb,text,jsonb)','execute'),
+            has_function_privilege(rolname,'get_agent_runtime_model_context_v2(uuid,text,uuid)','execute'),
+            has_table_privilege(rolname,'agent_runtime_definition_facts','select')
+          FROM (VALUES ('public'),('everydayai_runtime'),('everydayai_wecom_runtime'),
+                       ('everydayai_agent_runtime_worker'),('everydayai_worker'),('everydayai_sync')) roles(rolname)
+        """).fetchall()
+    assert security == (True, True)
+    assert privileges == (True, False)
+    expected = {
+        "public": (False, False, False),
+        "everydayai_runtime": (True, False, False),
+        "everydayai_wecom_runtime": (True, False, False),
+        "everydayai_agent_runtime_worker": (False, True, False),
+        "everydayai_worker": (False, False, False),
+        "everydayai_sync": (False, False, False),
+    }
+    assert {row[0]: tuple(row[1:]) for row in matrix} == expected
+    with pytest.raises(psycopg.Error, match="AGENT_RUNTIME_224_ROLLBACK_GUARD_FACTS_EXIST"):
+        with psycopg.connect(database) as conn:
+            with conn.transaction():
+                conn.execute((ROOT / "migrations/rollback/224_01_agent_runtime_ar17_core_rollback.sql").read_text())
 
 
 def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> None:
     with _connect(database, "everydayai_runtime_admin") as conn:
         _settings(conn, "everydayai_runtime_admin")
         conn.execute("SELECT set_config('app.access_kind', 'runtime_admin', false)")
+    with _connect(database, "everydayai_runtime") as conn:
+        _settings(conn, "everydayai_runtime")
+        conn.execute("SELECT report_agent_runtime_capability('tool_confirmation_v3_redis',true,'{}'::jsonb)")
+    with _connect(database, "everydayai_sandbox_worker") as conn:
+        _settings(conn, "everydayai_sandbox_worker")
+        conn.execute("SELECT set_config('app.access_kind','sandbox_worker',false)")
+        conn.execute("SELECT report_agent_runtime_worker_heartbeat('sandbox','sandbox-test','ar17-test',true,false,'ready','{}'::jsonb)")
+    with _connect(database, "everydayai_runtime_admin") as conn:
+        _settings(conn, "everydayai_runtime_admin")
+        conn.execute("SELECT set_config('app.access_kind', 'runtime_admin', false)")
         conn.execute("SELECT set_agent_runtime_control(%s,0,%s,%s)", (
-            uuid4(), '{"ingress_enabled":true,"release_revision":"ar17-test","config_revision":"ar17-test"}', "test",
+            uuid4(), '{"ingress_enabled":true,"non_safe_actions_enabled":true,"code_execute_enabled":true,"tool_confirmation_enabled":true,"release_revision":"ar17-test","config_revision":"ar17-test"}', "test",
         ))
         conn.execute("SELECT set_agent_runtime_org_rollout(%s,%s,true,%s)", (uuid4(), ORG, "test"))
+    personal_conversation = uuid4()
+    personal_anchor = uuid4()
+    with _connect(database, "postgres") as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("INSERT INTO conversations(id,user_id,org_id,scope_type,scope_id) VALUES(%s,%s,NULL,'user',%s)",
+                     (personal_conversation, UUID("11111111-1111-1111-1111-111111111111"), "11111111-1111-1111-1111-111111111111"))
+        conn.execute("INSERT INTO messages(id,conversation_id,org_id,role,content) VALUES(%s,%s,NULL,'user','personal')",
+                     (personal_anchor, personal_conversation))
+        conn.commit()
+    with _connect(database, "everydayai_runtime") as conn:
+        _settings(conn, "everydayai_runtime", user=UUID("11111111-1111-1111-1111-111111111111"), org=None)
+        personal = conn.execute("SELECT runtime_submit_ingress_v2(%s::uuid,NULL,%s::uuid,'user',%s::text,%s::uuid,'everydayai-default','v1',%s::text,'submit_input','personal-key','web',%s::uuid,%s::text,%s::text,%s::text,'{}'::jsonb,'{}'::jsonb,'ar17-test','{}'::jsonb)",
+                                (personal_conversation, UUID("11111111-1111-1111-1111-111111111111"),
+                                 "11111111-1111-1111-1111-111111111111",
+                                 UUID("11111111-1111-1111-1111-111111111111"), DEFINITION_HASH,
+                                 personal_anchor, f"message:{personal_anchor}", CATALOG_REVISION, TOOLSET_HASH)).fetchone()[0]
+    assert personal["outcome"] == "org_not_enabled"
     anchor = uuid4()
     with _connect(database, "postgres") as conn:
         conn.execute("SET ROLE everydayai_owner")
@@ -207,7 +267,7 @@ def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> N
     assert first["outcome"] == "created"
     assert _ingress(database, "ar17-real-key", through=anchor)["entity_id"] == first["entity_id"]
     assert _ingress(database, "ar17-real-key", through=anchor, channel="wecom")["outcome"] == "idempotency_conflict"
-    with pytest.raises(psycopg.Error, match="RUNTIME_INGRESS_V2_BINDING_INVALID"):
+    with pytest.raises(psycopg.Error, match="RUNTIME_VERSION_FACT_NOT_ENABLED"):
         _ingress(database, "ar17-real-key", through=anchor, definition_hash="0" * 64)
     with _connect(database, "everydayai_wecom_runtime") as conn:
         _settings(conn, "everydayai_wecom_runtime")
@@ -263,29 +323,83 @@ def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> N
         conn.execute("UPDATE agent_runs SET context_receipt=context_receipt||jsonb_build_object('base_context_revision',%s::text) WHERE id=%s",
                      (f"message:{anchor}", run_id))
         conn.commit()
+    _assert_permissions_and_rollback(database)
+
+
+def test_v1_run_recovers_after_v2_enable_and_uses_frozen_facts(database: str) -> None:
+    with _connect(database, "everydayai_runtime") as conn:
+        _settings(conn, "everydayai_runtime")
+        conn.execute("SELECT report_agent_runtime_capability('tool_confirmation_v3_redis',true,'{}'::jsonb)")
+    with _connect(database, "everydayai_sandbox_worker") as conn:
+        _settings(conn, "everydayai_sandbox_worker")
+        conn.execute("SELECT set_config('app.access_kind','sandbox_worker',false)")
+        conn.execute("SELECT report_agent_runtime_worker_heartbeat('sandbox','sandbox-upgrade','ar17-test',true,false,'ready','{}'::jsonb)")
+    with _connect(database, "everydayai_runtime_admin") as conn:
+        _settings(conn, "everydayai_runtime_admin")
+        conn.execute("SELECT set_config('app.access_kind','runtime_admin',false)")
+        conn.execute("SELECT set_agent_runtime_control(%s,0,%s,%s)", (
+            uuid4(), '{"ingress_enabled":true,"non_safe_actions_enabled":true,"code_execute_enabled":true,"tool_confirmation_enabled":true,"release_revision":"ar17-test","config_revision":"ar17-test"}', "upgrade",
+        ))
+        conn.execute("SELECT set_agent_runtime_org_rollout(%s,%s,true,%s)", (uuid4(), ORG, "upgrade"))
+    anchor = uuid4()
     with _connect(database, "postgres") as conn:
-        security = conn.execute("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid='agent_runtime_definition_facts'::regclass").fetchone()
-        privileges = conn.execute("SELECT has_function_privilege('everydayai_runtime','runtime_submit_ingress_v2(uuid,uuid,uuid,text,text,uuid,text,text,text,text,text,text,uuid,text,text,text,jsonb,jsonb,text,jsonb)','execute'), has_table_privilege('everydayai_runtime','agent_runtime_definition_facts','select')").fetchone()
-        matrix = conn.execute("""
-          SELECT rolname,
-            has_function_privilege(rolname,'runtime_submit_ingress_v2(uuid,uuid,uuid,text,text,uuid,text,text,text,text,text,text,uuid,text,text,text,jsonb,jsonb,text,jsonb)','execute'),
-            has_function_privilege(rolname,'get_agent_runtime_model_context_v2(uuid,text,uuid)','execute'),
-            has_table_privilege(rolname,'agent_runtime_definition_facts','select')
-          FROM (VALUES ('public'),('everydayai_runtime'),('everydayai_wecom_runtime'),
-                       ('everydayai_agent_runtime_worker'),('everydayai_worker'),('everydayai_sync')) roles(rolname)
-        """).fetchall()
-    assert security == (True, True)
-    assert privileges == (True, False)
-    expected = {
-        "public": (False, False, False),
-        "everydayai_runtime": (True, False, False),
-        "everydayai_wecom_runtime": (True, False, False),
-        "everydayai_agent_runtime_worker": (False, True, False),
-        "everydayai_worker": (False, False, False),
-        "everydayai_sync": (False, False, False),
-    }
-    assert {row[0]: tuple(row[1:]) for row in matrix} == expected
-    with pytest.raises(psycopg.Error, match="AGENT_RUNTIME_224_ROLLBACK_GUARD_FACTS_EXIST"):
-        with psycopg.connect(database) as conn:
-            with conn.transaction():
-                conn.execute((ROOT / "migrations/rollback/224_01_agent_runtime_ar17_core_rollback.sql").read_text())
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("INSERT INTO messages(id,conversation_id,org_id,role,content) VALUES(%s,%s,%s,'user','v1')",
+                     (anchor, CONVERSATION, ORG))
+        conn.execute("INSERT INTO tasks(id,user_id,org_id,conversation_id,type,status,input_message_id,model_id,delivery_context) VALUES(%s,%s,%s,%s,'chat','pending',%s,'qwen','{}')",
+                     (uuid4(), USER, ORG, CONVERSATION, anchor))
+        conversation_v2 = uuid4()
+        anchor_v2 = uuid4()
+        conn.execute("INSERT INTO conversations(id,user_id,org_id,scope_type,scope_id) VALUES(%s,%s,%s,'user',%s)",
+                     (conversation_v2, USER, ORG, str(USER)))
+        conn.execute("INSERT INTO messages(id,conversation_id,org_id,role,content) VALUES(%s,%s,%s,'user','v2')",
+                     (anchor_v2, conversation_v2, ORG))
+        conn.execute("INSERT INTO tasks(id,user_id,org_id,conversation_id,type,status,input_message_id,model_id,delivery_context) VALUES(%s,%s,%s,%s,'chat','pending',%s,'qwen','{}')",
+                     (uuid4(), USER, ORG, conversation_v2, anchor_v2))
+        conn.commit()
+    v1 = _ingress(database, "upgrade-v1", through=anchor)
+    with _connect(database, "everydayai_agent_runtime_worker") as conn:
+        _settings(conn, "everydayai_agent_runtime_worker")
+        claim = conn.execute("SELECT claim_pending_agent_command_and_ensure_run('upgrade-v1-worker',90,3)").fetchone()[0]
+        assert claim.get("run_id"), claim
+        claimed_run = conn.execute("SELECT claim_next_agent_run('upgrade-v1-worker',90,3)").fetchone()[0]
+        v1_context = conn.execute("SELECT get_agent_runtime_model_context_v2(%s,'upgrade-v1-worker',%s)",
+                                  (UUID(claim["run_id"]), claimed_run["execution_token"])).fetchone()[0]
+    assert v1_context["definition_fact"]["definition_revision"] == "v1"
+    v1_hash = v1_context["effective_toolset_fact"]["effective_toolset_hash"]
+    with _connect(database, "everydayai_runtime_admin") as conn:
+        _settings(conn, "everydayai_runtime_admin")
+        conn.execute("SELECT set_config('app.access_kind','runtime_admin',false)")
+        conn.execute("SELECT set_agent_runtime_definition_ingress_enabled('everydayai-default','v1',false)")
+        conn.execute("SELECT set_agent_runtime_definition_ingress_enabled('everydayai-default','v2',true)")
+    with _connect(database, "everydayai_agent_runtime_worker") as conn:
+        _settings(conn, "everydayai_agent_runtime_worker")
+        recovered = conn.execute("SELECT get_agent_runtime_model_context_v2(%s,'upgrade-v1-worker',%s)",
+                                 (UUID(claim["run_id"]), claimed_run["execution_token"])).fetchone()[0]
+    assert recovered["outcome"] == "found"
+    assert recovered["definition_fact"]["definition_revision"] == "v1"
+    assert recovered["effective_toolset_fact"]["effective_toolset_hash"] == v1_hash
+    with pytest.raises(psycopg.Error, match="RUNTIME_VERSION_FACT_NOT_ENABLED"):
+        _ingress(database, "upgrade-v1-after-disable", through=anchor)
+    v2 = _ingress(database, "upgrade-v2", through=anchor_v2,
+                   definition_hash=V2_DEFINITION_HASH, definition_revision="v2",
+                   catalog_revision=V2_CATALOG_REVISION, conversation=conversation_v2)
+    assert v2["outcome"] == "created"
+    with _connect(database, "everydayai_agent_runtime_worker") as conn:
+        _settings(conn, "everydayai_agent_runtime_worker")
+        v2_claim = conn.execute("SELECT claim_pending_agent_command_and_ensure_run('upgrade-v2-worker',90,3)").fetchone()[0]
+        v2_run = conn.execute("SELECT claim_next_agent_run('upgrade-v2-worker',90,3)").fetchone()[0]
+        v2_context = conn.execute("SELECT get_agent_runtime_model_context_v2(%s,'upgrade-v2-worker',%s)",
+                                  (UUID(v2_claim["run_id"]), v2_run["execution_token"])).fetchone()[0]
+    assert v2_context["definition_fact"]["definition_revision"] == "v2"
+    assert v2_context["catalog_fact"]["catalog_revision"] == V2_CATALOG_REVISION
+    assert "catalog_probe" in [tool["canonical_name"] for tool in v2_context["catalog_fact"]["catalog_document"]["tools"]]
+    assert v2_context["effective_toolset_fact"]["toolset_document"]["tool_names"] == ["code_execute"]
+    from services.agent.runtime.catalog import restore_frozen_toolset
+    restored = restore_frozen_toolset(
+        v2_context["definition_fact"]["definition_document"],
+        v2_context["catalog_fact"]["catalog_document"],
+        v2_context["effective_toolset_fact"]["toolset_document"],
+        catalog_revision=v2_context["catalog_fact"]["catalog_revision"],
+    )
+    assert [tool.canonical_name for tool in restored.definitions] == ["code_execute"]

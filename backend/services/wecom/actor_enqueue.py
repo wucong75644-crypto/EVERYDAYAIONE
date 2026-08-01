@@ -97,16 +97,13 @@ async def enqueue_wecom_message(
         })
     if rpc_name == "enqueue_wecom_runtime_turn_v4":
         from services.agent.runtime.catalog import (
-            EffectiveToolset, build_default_runtime_catalog,
+            EffectiveToolset, build_runtime_version_registry,
         )
-        from services.agent.runtime.agents import AgentDefinition
-        agent = AgentDefinition(
-            canonical_key=settings.agent_runtime_agent_definition_id,
-            revision=settings.agent_runtime_agent_definition_revision,
-            prompt_revision="agent-runtime-production-v1",
-            requested_tool_groups=frozenset({"code"}),
+        versions = build_runtime_version_registry()
+        agent, catalog = versions.resolve_for_agent(
+            settings.agent_runtime_agent_definition_id,
+            settings.agent_runtime_agent_definition_revision,
         )
-        catalog = build_default_runtime_catalog()
         toolset = EffectiveToolset.build(
             agent=agent, catalog=catalog, scope="channel", channel="wecom",
             entitled_groups=frozenset({"code"}),

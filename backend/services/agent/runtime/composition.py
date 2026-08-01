@@ -63,7 +63,7 @@ from services.agent.runtime.production_model import (
     PostgresModelCallFactory, retain_unknown_model_attempt,
 )
 from services.agent.runtime.catalog import RuntimeToolCatalog
-from services.agent.runtime.catalog.registry import build_default_runtime_catalog
+from services.agent.runtime.catalog.registry import build_runtime_version_registry
 
 
 class RuntimeOwner:
@@ -132,7 +132,11 @@ def build_runtime(database: Any, settings) -> RuntimeOwner:
         runtime_revision=settings.sandbox_runtime_revision,
         registry=registry,
     )
-    catalog = build_default_runtime_catalog()
+    versions = build_runtime_version_registry()
+    _, catalog = versions.resolve_for_agent(
+        settings.agent_runtime_agent_definition_id,
+        settings.agent_runtime_agent_definition_revision,
+    )
     _assert_runtime_catalog(catalog, settings)
     action_loop = ActionLoopDriver(
         recovery_repository=recovery,
@@ -148,7 +152,7 @@ def build_runtime(database: Any, settings) -> RuntimeOwner:
         action_repository=actions,
         recovery_repository=recovery,
         model=ExistingProviderModelAdapter(db=db),
-        call_factory=PostgresModelCallFactory(db, worker_id, catalog=catalog),
+        call_factory=PostgresModelCallFactory(db, worker_id, version_registry=versions),
         reconciler=retain_unknown_model_attempt,
     )
     runtime = RuntimeLoopCoordinator(
@@ -170,7 +174,8 @@ def build_authorization(database: Any, worker_id: str):
     db = scoped(database, DatabaseAccessKind.AUTHORIZATION, worker_id)
     registry = ExecutorRegistry()
     register_sandbox_job_executor(registry, SandboxJobExecutor())
-    _assert_runtime_catalog(build_default_runtime_catalog(), None)
+    versions = build_runtime_version_registry()
+    _assert_runtime_catalog(versions.catalogs.resolve(versions.catalogs.revisions()[0]), None)
     return AuthorizationRecoveryDriver(
         repository=PostgresActionAuthorizationRepository(db),
         registry=registry, evaluator=PolicyEvaluator(), worker_id=worker_id,
@@ -179,7 +184,7 @@ def build_authorization(database: Any, worker_id: str):
 
 def _assert_runtime_catalog(catalog: RuntimeToolCatalog, settings: Any) -> None:
     names = {tool.canonical_name for tool in catalog.definitions()}
-    if names != {"code_execute"}:
+    if "code_execute" not in names:
         raise RuntimeError("RUNTIME_CATALOG_NOT_MINIMAL")
     if settings is not None and not getattr(settings, "agent_runtime_release_revision", ""):
         raise RuntimeError("RUNTIME_RELEASE_REVISION_REQUIRED")

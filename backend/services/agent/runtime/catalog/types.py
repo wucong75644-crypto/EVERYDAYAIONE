@@ -23,6 +23,8 @@ class RuntimeToolDefinition:
     reconcile_semantics: str
     cancel_semantics: str
     result_schema_revision: int
+    allowed_scope_kinds: frozenset[str] = frozenset({"user", "channel"})
+    allowed_channels: frozenset[str] = frozenset({"web", "wecom"})
     schema_hash: str = ""
 
     def __post_init__(self) -> None:

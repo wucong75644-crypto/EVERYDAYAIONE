@@ -2,9 +2,13 @@
 
 from services.agent.runtime.catalog.effective_toolset import EffectiveToolset
 from services.agent.runtime.catalog.registry import (
-    RuntimeToolCatalog, build_default_runtime_catalog,
+    RuntimeToolCatalog, RuntimeToolCatalogRegistry, RuntimeVersionRegistry,
+    build_default_runtime_catalog, build_runtime_version_registry,
+    restore_frozen_toolset,
 )
 from services.agent.runtime.catalog.types import RuntimeToolDefinition
 
-__all__ = ["EffectiveToolset", "RuntimeToolCatalog", "RuntimeToolDefinition",
-           "build_default_runtime_catalog"]
+__all__ = ["EffectiveToolset", "RuntimeToolCatalog", "RuntimeToolCatalogRegistry",
+           "RuntimeToolDefinition", "RuntimeVersionRegistry",
+           "build_default_runtime_catalog", "build_runtime_version_registry",
+           "restore_frozen_toolset"]

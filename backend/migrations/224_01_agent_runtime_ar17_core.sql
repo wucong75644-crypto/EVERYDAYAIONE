@@ -10,7 +10,11 @@ CREATE TABLE agent_runtime_definition_facts (
     prompt_revision TEXT NOT NULL,
     catalog_revision TEXT NOT NULL CHECK (catalog_revision ~ '^[0-9a-f]{64}$'),
     effective_toolset_hash TEXT NOT NULL CHECK (effective_toolset_hash ~ '^[0-9a-f]{64}$'),
-    active BOOLEAN NOT NULL DEFAULT TRUE,
+    definition_document JSONB NOT NULL DEFAULT '{}'::JSONB
+      CHECK (jsonb_typeof(definition_document)='object'),
+    enabled_for_new_ingress BOOLEAN NOT NULL DEFAULT TRUE,
+    recoverable BOOLEAN NOT NULL DEFAULT TRUE,
+    used_by_ingress BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (agent_key, definition_revision),
     CHECK (length(btrim(agent_key)) BETWEEN 1 AND 200),
@@ -27,47 +31,149 @@ REVOKE ALL ON TABLE agent_runtime_definition_facts
  FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai;
 
-CREATE FUNCTION _agent_runtime_224_expected_facts()
-RETURNS JSONB LANGUAGE SQL IMMUTABLE SECURITY DEFINER
+CREATE TABLE agent_runtime_catalog_facts (
+    catalog_revision TEXT PRIMARY KEY CHECK (catalog_revision ~ '^[0-9a-f]{64}$'),
+    catalog_hash TEXT NOT NULL CHECK (catalog_hash ~ '^[0-9a-f]{64}$'),
+    catalog_document JSONB NOT NULL CHECK (jsonb_typeof(catalog_document)='object'),
+    enabled_for_new_ingress BOOLEAN NOT NULL DEFAULT TRUE,
+    recoverable BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE agent_runtime_effective_toolset_facts (
+    agent_key TEXT NOT NULL,
+    definition_revision TEXT NOT NULL,
+    catalog_revision TEXT NOT NULL REFERENCES agent_runtime_catalog_facts(catalog_revision),
+    scope_kind TEXT NOT NULL CHECK (scope_kind IN ('user','channel')),
+    channel TEXT NOT NULL CHECK (channel IN ('web','wecom')),
+    gate_state TEXT NOT NULL CHECK (gate_state IN ('enabled','disabled')),
+    effective_toolset_hash TEXT NOT NULL CHECK (effective_toolset_hash ~ '^[0-9a-f]{64}$'),
+    toolset_document JSONB NOT NULL CHECK (jsonb_typeof(toolset_document)='object'),
+    enabled_for_new_ingress BOOLEAN NOT NULL DEFAULT TRUE,
+    recoverable BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (agent_key,definition_revision,catalog_revision,scope_kind,channel,gate_state)
+);
+ALTER TABLE agent_runtime_catalog_facts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_runtime_catalog_facts FORCE ROW LEVEL SECURITY;
+ALTER TABLE agent_runtime_effective_toolset_facts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_runtime_effective_toolset_facts FORCE ROW LEVEL SECURITY;
+CREATE POLICY agent_runtime_catalog_facts_owner_all ON agent_runtime_catalog_facts
+ FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY agent_runtime_toolset_facts_owner_all ON agent_runtime_effective_toolset_facts
+ FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
+REVOKE ALL ON TABLE agent_runtime_catalog_facts,agent_runtime_effective_toolset_facts
+ FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
+ everydayai_sync,everydayai;
+
+CREATE FUNCTION get_agent_runtime_version_facts(
+ p_agent_key TEXT,p_definition_revision TEXT,p_catalog_revision TEXT,
+ p_scope_kind TEXT,p_channel TEXT,p_effective_toolset_hash TEXT
+) RETURNS JSONB LANGUAGE SQL STABLE SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
  SELECT jsonb_build_object(
-   'agent_key','everydayai-default','definition_revision','v1',
-   'definition_hash','b5818e976876aa8c0ead0b50ebea8439fe0e230e9d55dfac9e7d5580d18895ff',
-   'prompt_revision','agent-runtime-production-v1',
-   'catalog_revision','7e449bf4ca2a4827d5fa96df4721c4978d9a1d96e0215012500669e5ac2eb131',
-   'effective_toolset_hash','897d940de4aa6ebca9a5df0197824ac906f6cea2469461c5ec0ae88e595d90fc'
+   'definition_fact',(SELECT to_jsonb(d) FROM agent_runtime_definition_facts d
+     WHERE d.agent_key=p_agent_key AND d.definition_revision=p_definition_revision
+       AND d.recoverable),
+   'catalog_fact',(SELECT to_jsonb(c) FROM agent_runtime_catalog_facts c
+     WHERE c.catalog_revision=p_catalog_revision AND c.recoverable),
+   'effective_toolset_fact',(SELECT to_jsonb(e) FROM agent_runtime_effective_toolset_facts e
+     WHERE e.agent_key=p_agent_key AND e.definition_revision=p_definition_revision
+       AND e.catalog_revision=p_catalog_revision AND e.scope_kind=p_scope_kind
+       AND e.channel=p_channel AND e.effective_toolset_hash=p_effective_toolset_hash
+       AND e.recoverable)
  )
 $$;
+
+CREATE FUNCTION set_agent_runtime_definition_ingress_enabled(
+ p_agent_key TEXT,p_definition_revision TEXT,p_enabled BOOLEAN
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+BEGIN
+ IF session_user<>'everydayai_runtime_admin'
+    OR current_setting('app.access_kind',true)<>'runtime_admin'
+    OR NOT tenant_platform_admin() THEN
+   RAISE EXCEPTION 'RUNTIME_ADMIN_REQUIRED' USING ERRCODE='42501';
+ END IF;
+ UPDATE agent_runtime_definition_facts
+  SET enabled_for_new_ingress=p_enabled
+  WHERE agent_key=p_agent_key AND definition_revision=p_definition_revision;
+ IF NOT FOUND THEN RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_MISSING'; END IF;
+ UPDATE agent_runtime_catalog_facts c
+  SET enabled_for_new_ingress=p_enabled
+  FROM agent_runtime_definition_facts d
+  WHERE d.agent_key=p_agent_key AND d.definition_revision=p_definition_revision
+    AND c.catalog_revision=d.catalog_revision;
+ UPDATE agent_runtime_effective_toolset_facts e
+  SET enabled_for_new_ingress=p_enabled
+  WHERE e.agent_key=p_agent_key AND e.definition_revision=p_definition_revision;
+ RETURN jsonb_build_object('outcome','applied','enabled_for_new_ingress',p_enabled);
+END $$;
+
+INSERT INTO agent_runtime_definition_facts(
+ agent_key,definition_revision,definition_hash,prompt_revision,
+ catalog_revision,effective_toolset_hash,definition_document,
+ enabled_for_new_ingress,recoverable)
+VALUES
+ ('everydayai-default','v1','61391ddcbeea377093b03e9441356e84e3f108d09a6728db0efc24a5ca94a768',
+  'agent-runtime-production-v1','182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8',
+  '1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291',
+  '{"canonical_key":"everydayai-default","revision":"v1","prompt_revision":"agent-runtime-production-v1","requested_tool_groups":["code"],"model_policy":{},"context_policy":{},"channel_restrictions":["web","wecom"],"definition_hash":"61391ddcbeea377093b03e9441356e84e3f108d09a6728db0efc24a5ca94a768"}',true,true),
+ ('everydayai-default','v2','4b14452bf2a7053c381a36a0c29edaf06b707d1db01f8cb998fd7e9d14be203c',
+  'agent-runtime-production-v2','baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',
+  '1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291',
+  '{"canonical_key":"everydayai-default","revision":"v2","prompt_revision":"agent-runtime-production-v2","requested_tool_groups":["code","diagnostic"],"model_policy":{},"context_policy":{},"channel_restrictions":["web","wecom"],"definition_hash":"4b14452bf2a7053c381a36a0c29edaf06b707d1db01f8cb998fd7e9d14be203c"}',false,true);
+
+INSERT INTO agent_runtime_catalog_facts(catalog_revision,catalog_hash,catalog_document,enabled_for_new_ingress,recoverable)
+VALUES
+ ('182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8',
+  '182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8',
+  '{"tools":[{"canonical_name":"code_execute","tool_group":"code","schema":{"type":"object","additionalProperties":false,"required":["code","description"],"properties":{"code":{"type":"string"},"description":{"type":"string"}}},"safety_level":"dangerous","executor_type":"sandbox_job","executor_revision":1,"capability_requirements":["sandbox_job"],"side_effect":"sandbox","authorization_requirement":"persisted_interaction","retry_semantics":"reconcile_only","reconcile_semantics":"executor_defined","cancel_semantics":"best_effort","result_schema_revision":1,"allowed_scope_kinds":["channel","user"],"allowed_channels":["web","wecom"],"schema_hash":"6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0"}]}',true,true),
+ ('baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',
+  'baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',
+  '{"tools":[{"canonical_name":"catalog_probe","tool_group":"diagnostic","schema":{"type":"object","additionalProperties":false},"safety_level":"safe","executor_type":"unavailable","executor_revision":1,"capability_requirements":["catalog_probe"],"side_effect":"none","authorization_requirement":"none","retry_semantics":"non_retryable","reconcile_semantics":"none","cancel_semantics":"none","result_schema_revision":1,"allowed_scope_kinds":["channel","user"],"allowed_channels":["web","wecom"],"schema_hash":"cd1a463c46d6264134447db17a8c3c7abe5b9a2488c6d759fea66da1f96b133e"},{"canonical_name":"code_execute","tool_group":"code","schema":{"type":"object","additionalProperties":false,"required":["code","description"],"properties":{"code":{"type":"string"},"description":{"type":"string"}}},"safety_level":"dangerous","executor_type":"sandbox_job","executor_revision":1,"capability_requirements":["sandbox_job"],"side_effect":"sandbox","authorization_requirement":"persisted_interaction","retry_semantics":"reconcile_only","reconcile_semantics":"executor_defined","cancel_semantics":"best_effort","result_schema_revision":1,"allowed_scope_kinds":["channel","user"],"allowed_channels":["web","wecom"],"schema_hash":"6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0"}]}',false,true);
+
+INSERT INTO agent_runtime_effective_toolset_facts(
+ agent_key,definition_revision,catalog_revision,scope_kind,channel,gate_state,
+ effective_toolset_hash,toolset_document,enabled_for_new_ingress,recoverable)
+SELECT 'everydayai-default',d.definition_revision,d.catalog_revision,s.scope_kind,ch.channel,g.gate_state,
+ CASE WHEN g.gate_state='enabled' THEN d.effective_toolset_hash ELSE '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945' END,
+ CASE WHEN g.gate_state='enabled' THEN jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array('code'),'tool_names',jsonb_build_array('code_execute'))
+      ELSE jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array(),'tool_names',jsonb_build_array()) END,
+ TRUE,TRUE
+FROM agent_runtime_definition_facts d
+CROSS JOIN (VALUES ('user'),('channel')) s(scope_kind)
+CROSS JOIN (VALUES ('web'),('wecom')) ch(channel)
+CROSS JOIN (VALUES ('enabled'),('disabled')) g(gate_state)
+WHERE d.definition_revision='v1'
+UNION ALL
+SELECT 'everydayai-default','v2','baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',s.scope_kind,ch.channel,g.gate_state,
+ CASE WHEN g.gate_state='enabled' THEN '1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291' ELSE '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945' END,
+ CASE WHEN g.gate_state='enabled' THEN jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array('code'),'tool_names',jsonb_build_array('code_execute'))
+      ELSE jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array(),'tool_names',jsonb_build_array()) END,
+ TRUE,TRUE
+FROM (VALUES ('user'),('channel')) s(scope_kind)
+CROSS JOIN (VALUES ('web'),('wecom')) ch(channel)
+CROSS JOIN (VALUES ('enabled'),('disabled')) g(gate_state)
+;
 
 CREATE FUNCTION ensure_agent_runtime_definition_fact(
  p_agent_key TEXT,p_definition_revision TEXT,p_definition_hash TEXT,
  p_prompt_revision TEXT,p_catalog_revision TEXT,p_effective_toolset_hash TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
-DECLARE expected JSONB; current_fact agent_runtime_definition_facts%ROWTYPE;
+DECLARE current_fact agent_runtime_definition_facts%ROWTYPE;
 BEGIN
- expected:=_agent_runtime_224_expected_facts();
- IF jsonb_build_object(
-      'agent_key',p_agent_key,'definition_revision',p_definition_revision,
-      'definition_hash',p_definition_hash,'prompt_revision',p_prompt_revision,
-      'catalog_revision',p_catalog_revision,
-      'effective_toolset_hash',p_effective_toolset_hash) IS DISTINCT FROM expected THEN
-   RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_MISMATCH' USING ERRCODE='22023';
- END IF;
- INSERT INTO agent_runtime_definition_facts(
-   agent_key,definition_revision,definition_hash,prompt_revision,
-   catalog_revision,effective_toolset_hash)
- VALUES(p_agent_key,p_definition_revision,p_definition_hash,p_prompt_revision,
-        p_catalog_revision,p_effective_toolset_hash)
- ON CONFLICT (agent_key,definition_revision) DO NOTHING;
  SELECT * INTO current_fact FROM agent_runtime_definition_facts
   WHERE agent_key=p_agent_key AND definition_revision=p_definition_revision;
- IF current_fact.definition_hash IS DISTINCT FROM p_definition_hash
+IF current_fact.agent_key IS NULL OR NOT current_fact.enabled_for_new_ingress
+    OR current_fact.definition_hash IS DISTINCT FROM p_definition_hash
+    OR current_fact.prompt_revision IS DISTINCT FROM p_prompt_revision
     OR current_fact.catalog_revision IS DISTINCT FROM p_catalog_revision
-    OR current_fact.effective_toolset_hash IS DISTINCT FROM p_effective_toolset_hash
-    OR NOT current_fact.active THEN
-   RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_CONFLICT' USING ERRCODE='23505';
+    THEN
+   RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_MISMATCH' USING ERRCODE='22023';
  END IF;
+ UPDATE agent_runtime_definition_facts SET used_by_ingress=TRUE
+  WHERE agent_key=current_fact.agent_key AND definition_revision=current_fact.definition_revision;
  RETURN to_jsonb(current_fact);
 END $$;
 
@@ -91,8 +197,11 @@ CREATE FUNCTION runtime_submit_ingress_v2(
  p_payload JSONB
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
  SET search_path = pg_catalog, public AS $$
-DECLARE ctl agent_runtime_control%ROWTYPE; s JSONB; c JSONB; sid UUID;
-    envelope JSONB; config JSONB; capabilities JSONB;
+DECLARE ctl agent_runtime_control%ROWTYPE; d_fact agent_runtime_definition_facts%ROWTYPE;
+    cat_fact agent_runtime_catalog_facts%ROWTYPE;
+    tool_fact agent_runtime_effective_toolset_facts%ROWTYPE;
+    s JSONB; c JSONB; sid UUID; v_gate_state TEXT; envelope JSONB;
+    config JSONB; capabilities JSONB;
 BEGIN
  PERFORM _assert_agent_runtime_actor(FALSE);
  SELECT * INTO ctl FROM agent_runtime_control WHERE singleton FOR SHARE;
@@ -104,15 +213,11 @@ BEGIN
  ) THEN
    RETURN jsonb_build_object('outcome','org_not_enabled');
  END IF;
- IF p_agent_definition_id IS DISTINCT FROM 'everydayai-default'
-    OR p_agent_definition_revision IS DISTINCT FROM 'v1'
-    OR p_agent_definition_hash IS DISTINCT FROM
-      (_agent_runtime_224_expected_facts()->>'definition_hash')
+ IF NULLIF(btrim(p_agent_definition_id),'') IS NULL
+    OR NULLIF(btrim(p_agent_definition_revision),'') IS NULL
     OR NULLIF(btrim(p_effective_toolset_revision),'') IS NULL
-    OR p_effective_toolset_revision IS DISTINCT FROM
-      (_agent_runtime_224_expected_facts()->>'catalog_revision')
-    OR p_effective_toolset_hash IS DISTINCT FROM
-      (_agent_runtime_224_expected_facts()->>'effective_toolset_hash')
+    OR NULLIF(btrim(p_effective_toolset_hash),'') IS NULL
+    OR p_effective_toolset_hash !~ '^[0-9a-f]{64}$'
     OR NULLIF(btrim(p_release_revision),'') IS NULL
     OR NULLIF(btrim(p_scope_kind),'') IS NULL
     OR p_scope_kind NOT IN ('user','channel')
@@ -132,10 +237,39 @@ BEGIN
  IF p_through_message_id IS NULL OR p_channel NOT IN ('web','wecom') THEN
    RAISE EXCEPTION 'RUNTIME_INGRESS_V2_BINDING_INVALID' USING ERRCODE='22023';
  END IF;
+ SELECT * INTO d_fact FROM agent_runtime_definition_facts
+  WHERE agent_key=p_agent_definition_id AND definition_revision=p_agent_definition_revision;
+ SELECT * INTO cat_fact FROM agent_runtime_catalog_facts
+  WHERE catalog_revision=COALESCE(d_fact.catalog_revision,p_effective_toolset_revision);
+ IF d_fact.agent_key IS NULL OR NOT d_fact.enabled_for_new_ingress
+    OR NOT d_fact.recoverable OR d_fact.definition_hash IS DISTINCT FROM p_agent_definition_hash
+    OR p_effective_toolset_revision IS DISTINCT FROM d_fact.catalog_revision
+    OR cat_fact.catalog_revision IS NULL OR NOT cat_fact.enabled_for_new_ingress
+    OR NOT cat_fact.recoverable THEN
+   RAISE EXCEPTION 'RUNTIME_VERSION_FACT_NOT_ENABLED' USING ERRCODE='55000';
+ END IF;
+ v_gate_state:='disabled';
+ IF ctl.non_safe_actions_enabled AND ctl.code_execute_enabled
+    AND ctl.tool_confirmation_enabled
+    AND EXISTS (SELECT 1 FROM agent_runtime_capabilities cap
+      WHERE cap.capability_name='tool_confirmation_v3_redis' AND cap.ready
+        AND cap.observed_at>clock_timestamp()-interval '60 seconds')
+    AND EXISTS (SELECT 1 FROM agent_runtime_worker_heartbeats h
+      WHERE h.process_role='sandbox' AND h.ready AND NOT h.draining
+        AND h.observed_at>clock_timestamp()-interval '30 seconds') THEN
+   v_gate_state:='enabled';
+ END IF;
+ SELECT * INTO tool_fact FROM agent_runtime_effective_toolset_facts
+  WHERE agent_key=d_fact.agent_key AND definition_revision=d_fact.definition_revision
+    AND catalog_revision=d_fact.catalog_revision AND scope_kind=p_scope_kind
+    AND channel=p_channel AND agent_runtime_effective_toolset_facts.gate_state=v_gate_state;
+ IF tool_fact.effective_toolset_hash IS NULL
+    OR NOT tool_fact.enabled_for_new_ingress OR NOT tool_fact.recoverable THEN
+   RAISE EXCEPTION 'RUNTIME_EFFECTIVE_TOOLSET_FACT_MISSING' USING ERRCODE='55000';
+ END IF;
  PERFORM ensure_agent_runtime_definition_fact(
    p_agent_definition_id,p_agent_definition_revision,p_agent_definition_hash,
-   'agent-runtime-production-v1',p_effective_toolset_revision,
-   p_effective_toolset_hash);
+   d_fact.prompt_revision,d_fact.catalog_revision,tool_fact.effective_toolset_hash);
  s:=ensure_agent_runtime_session(p_conversation_id,p_org_id,p_user_id,
    p_scope_kind,p_scope_id,p_created_by_user_id,p_agent_definition_id,
    p_agent_definition_revision);
@@ -144,18 +278,24 @@ BEGIN
  config:=p_config_snapshot||jsonb_build_object(
    'base_context_revision',p_base_context_revision,
    'through_message_id',p_through_message_id,
+   'agent_definition_revision',p_agent_definition_revision,
    'agent_definition_hash',p_agent_definition_hash,
-   'effective_toolset_revision',p_effective_toolset_revision,
-   'effective_toolset_hash',p_effective_toolset_hash,
+   'tool_catalog_revision',d_fact.catalog_revision,
+   'tool_catalog_hash',cat_fact.catalog_hash,
+   'effective_toolset_revision',d_fact.catalog_revision,
+   'effective_toolset_hash',tool_fact.effective_toolset_hash,
    'release_revision',p_release_revision,
    'config_snapshot_hash',md5(p_config_snapshot::TEXT));
- capabilities:=p_capability_snapshot||jsonb_build_object(
+ capabilities:=jsonb_build_object(
    'channel',p_channel,'agent_definition_id',p_agent_definition_id,
    'agent_definition_revision',p_agent_definition_revision,
    'agent_definition_hash',p_agent_definition_hash,
-   'effective_toolset_revision',p_effective_toolset_revision,
-   'effective_toolset_hash',p_effective_toolset_hash,
-   'capability_snapshot_hash',md5(p_capability_snapshot::TEXT));
+   'tool_catalog_revision',d_fact.catalog_revision,
+   'tool_catalog_hash',cat_fact.catalog_hash,
+   'effective_toolset_revision',d_fact.catalog_revision,
+   'effective_toolset_hash',tool_fact.effective_toolset_hash,
+   'gate_state',v_gate_state,
+   'capability_snapshot_hash',md5(COALESCE(p_capability_snapshot,'{}'::jsonb)::TEXT));
  envelope:=jsonb_build_object(
    'schema_revision',2,'run_kind','user',
    'context_receipt',jsonb_build_object(
@@ -191,6 +331,9 @@ CREATE FUNCTION get_agent_runtime_model_context_v2(
  SET search_path = pg_catalog, public AS $$
 DECLARE r agent_runs%ROWTYPE; s agent_runtime_sessions%ROWTYPE;
  c agent_session_commands%ROWTYPE; anchor messages%ROWTYPE;
+ d_fact agent_runtime_definition_facts%ROWTYPE;
+ cat_fact agent_runtime_catalog_facts%ROWTYPE;
+ tool_fact agent_runtime_effective_toolset_facts%ROWTYPE;
  v_messages JSONB; v_context_hash TEXT;
 BEGIN
  PERFORM _assert_agent_runtime_actor(TRUE);
@@ -218,21 +361,37 @@ BEGIN
       r.context_receipt->>'base_context_revision'
     OR r.config_snapshot->>'through_message_id' IS DISTINCT FROM
       r.context_receipt->>'through_message_id'
-    OR r.capability_snapshot->>'effective_toolset_revision' IS DISTINCT FROM
-      (_agent_runtime_224_expected_facts()->>'catalog_revision')
-   OR r.capability_snapshot->>'effective_toolset_hash' IS DISTINCT FROM
-      (_agent_runtime_224_expected_facts()->>'effective_toolset_hash')
-    OR r.config_snapshot->>'agent_definition_hash' IS DISTINCT FROM
-       (_agent_runtime_224_expected_facts()->>'definition_hash')
-    OR r.capability_snapshot->>'agent_definition_hash' IS DISTINCT FROM
-       (_agent_runtime_224_expected_facts()->>'definition_hash')
     OR c.payload->'run_envelope'->>'schema_revision' IS DISTINCT FROM '2'
     OR c.payload->'run_envelope'->'context_receipt'->>'through_message_id'
        IS DISTINCT FROM r.context_receipt->>'through_message_id'
     OR NOT EXISTS (SELECT 1 FROM agent_runtime_definition_facts f
        WHERE f.agent_key=s.agent_definition_id
          AND f.definition_revision=s.agent_definition_revision
-         AND f.active) THEN
+         AND f.recoverable) THEN
+  RETURN jsonb_build_object('outcome','context_revision_mismatch');
+ END IF;
+ SELECT * INTO d_fact FROM agent_runtime_definition_facts
+  WHERE agent_key=s.agent_definition_id
+    AND definition_revision=s.agent_definition_revision
+    AND definition_hash=r.capability_snapshot->>'agent_definition_hash'
+    AND recoverable;
+ SELECT * INTO cat_fact FROM agent_runtime_catalog_facts
+  WHERE catalog_revision=r.capability_snapshot->>'tool_catalog_revision'
+    AND catalog_hash=r.capability_snapshot->>'tool_catalog_hash'
+    AND recoverable;
+ SELECT * INTO tool_fact FROM agent_runtime_effective_toolset_facts
+  WHERE agent_key=s.agent_definition_id
+    AND definition_revision=s.agent_definition_revision
+    AND catalog_revision=r.capability_snapshot->>'tool_catalog_revision'
+    AND scope_kind=s.scope_kind AND channel=r.capability_snapshot->>'channel'
+    AND gate_state=r.capability_snapshot->>'gate_state'
+    AND effective_toolset_hash=r.capability_snapshot->>'effective_toolset_hash'
+    AND recoverable;
+ IF d_fact.agent_key IS NULL OR cat_fact.catalog_revision IS NULL
+    OR tool_fact.effective_toolset_hash IS NULL
+    OR d_fact.catalog_revision IS DISTINCT FROM cat_fact.catalog_revision
+    OR d_fact.definition_hash IS DISTINCT FROM r.capability_snapshot->>'agent_definition_hash'
+    OR d_fact.catalog_revision IS DISTINCT FROM r.capability_snapshot->>'effective_toolset_revision' THEN
   RETURN jsonb_build_object('outcome','context_revision_mismatch');
  END IF;
  SELECT * INTO anchor FROM messages WHERE id=NULLIF(
@@ -255,6 +414,9 @@ BEGIN
   'task',(SELECT to_jsonb(t) FROM tasks t WHERE t.id=NULLIF(c.payload->>'task_id','')::uuid
       AND t.conversation_id=s.conversation_id),
   'messages',v_messages,'context_hash',v_context_hash,
+  'definition_fact',to_jsonb(d_fact),
+  'catalog_fact',to_jsonb(cat_fact),
+  'effective_toolset_fact',to_jsonb(tool_fact),
   'actions',(SELECT coalesce(jsonb_agg(to_jsonb(a)||jsonb_build_object('result',
       (SELECT to_jsonb(ar) FROM agent_action_results ar WHERE ar.action_id=a.id))
       ORDER BY a.model_step_id,a.action_index,a.id),'[]'::jsonb)
@@ -309,7 +471,9 @@ REVOKE ALL ON FUNCTION runtime_submit_ingress_v2(
  TEXT,TEXT,JSONB,JSONB,TEXT,JSONB),
   get_agent_runtime_model_context_v2(UUID,TEXT,UUID),
   ensure_agent_runtime_definition_fact(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT),
-  get_agent_runtime_definition_fact(TEXT,TEXT) FROM PUBLIC;
+  get_agent_runtime_definition_fact(TEXT,TEXT),
+  get_agent_runtime_version_facts(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT),
+  set_agent_runtime_definition_ingress_enabled(TEXT,TEXT,BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION enqueue_wecom_runtime_turn_v4(
  JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT)
  FROM PUBLIC,everydayai_runtime,everydayai_worker,everydayai_wecom_runtime,
@@ -321,6 +485,10 @@ GRANT EXECUTE ON FUNCTION get_agent_runtime_model_context_v2(UUID,TEXT,UUID)
  TO everydayai_agent_runtime_worker;
 GRANT EXECUTE ON FUNCTION get_agent_runtime_definition_fact(TEXT,TEXT)
  TO everydayai_agent_runtime_worker,everydayai_runtime,everydayai_wecom_runtime;
+GRANT EXECUTE ON FUNCTION get_agent_runtime_version_facts(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT)
+ TO everydayai_agent_runtime_worker,everydayai_runtime,everydayai_wecom_runtime;
+GRANT EXECUTE ON FUNCTION set_agent_runtime_definition_ingress_enabled(TEXT,TEXT,BOOLEAN)
+ TO everydayai_runtime_admin;
 GRANT EXECUTE ON FUNCTION enqueue_wecom_runtime_turn_v4(
  JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT)
  TO everydayai_wecom_runtime;

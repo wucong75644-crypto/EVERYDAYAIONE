@@ -1635,3 +1635,15 @@
   context readback、AgentDefinition 与 EffectiveToolset 冻结事实。
 - 当前只允许已注册的 `code_execute` 进入生产模型目录；41 个专业工具不在本次范围。
 - AR-17.2～17.4、生产启动接线、真实环境迁移验收和组织 rollout 仍未完成。
+
+# 2026-08-01 Agent Runtime AR-17.1 version recovery contract
+
+- 224 now persists immutable AgentDefinition, Catalog, and EffectiveToolset
+  documents. New ingress enablement is separate from historical recovery;
+  stopping v1 and enabling v2 does not invalidate a claimed v1 Run.
+- Model context reads the Run-bound persisted facts and restores its frozen
+  toolset after process restart. Catalog entries without a registered Executor
+  remain catalog facts only and are not offered to the model.
+- `org_id=NULL` personal ingress is intentionally rejected because 224 still
+  requires an enabled organization rollout row. This remains a pre-AR-17
+  completion blocker and is not treated as covered by the organization path.

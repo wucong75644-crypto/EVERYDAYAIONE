@@ -31,7 +31,8 @@ class EffectiveToolset:
                 if tool.tool_group in agent.requested_tool_groups
                 and tool.tool_group in entitled_groups
                 and tool.canonical_name in authorized_names
-                and scope)
+                and scope in tool.allowed_scope_kinds
+                and channel in tool.allowed_channels)
         facts = [{"name": tool.canonical_name, "schema_hash": tool.schema_hash,
                   "revision": tool.revision} for tool in tools]
         digest = hashlib.sha256(json.dumps(

@@ -196,10 +196,16 @@ reconciliation. That is the only permitted fallback.
 ## AR-17.1 shared foundation
 
 Migration 224 adds the Web/WeCom v2 ingress contract and Run-bound context
-readback. It remains disabled by default; AR-17.2--17.4, the 41 professional
-Executors, production startup wiring, and production acceptance are not part
-of this milestone. Apply and rollback use the exact full migration filenames;
-rollback fails before ACL or object removal when any Runtime fact exists.
+readback. Definition, Catalog, and EffectiveToolset documents are immutable
+persisted facts; `enabled_for_new_ingress` is separate from `recoverable`, so
+disabling a version does not block an existing Run. Model recovery resolves
+those facts from PostgreSQL rather than rebuilding the current process catalog.
+It remains disabled by default; AR-17.2--17.4, the 41 professional Executors,
+production startup wiring, and production acceptance are not part of this
+milestone. Personal `org_id=NULL` ingress remains closed by the organization
+rollout whitelist and is an explicit AR-17 completion blocker. Apply and
+rollback use the exact full migration filenames; rollback fails before ACL or
+object removal when an ingress-used Runtime fact exists.
 
 ## Validation matrix
 

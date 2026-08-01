@@ -1613,4 +1613,5 @@ cache = client.caches.create(
   - 224 additive v2 ingress 在同一 PostgreSQL 事务中冻结 Session、Command、Run envelope、上下文锚点和 EffectiveToolset
   - AgentDefinition、Runtime Tool Catalog、Executor revision 与 Authorization 使用同一 code_execute-only 目录事实
   - v2 Context 严格绑定 Run/session/base revision/through message，并在后续 ModelStep 复现 tool_call 与 terminal result
+  - 224 持久化不可变 AgentDefinition/Catalog/EffectiveToolset 文档，分离新 ingress enablement 与历史 Run recoverability；v1→v2 后旧 Run 仍按原 facts 恢复。`org_id=NULL` 个人 ingress 仍受组织 rollout 白名单限制，属于 AR-17 完成前阻塞项
   - AR-17.2～17.4、41 个专业工具、生产启动接线和生产验收未完成

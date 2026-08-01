@@ -4,7 +4,8 @@ import pytest
 
 from services.agent.runtime.agents import AgentDefinition
 from services.agent.runtime.catalog import (
-    EffectiveToolset, build_default_runtime_catalog,
+    EffectiveToolset, build_default_runtime_catalog, build_runtime_version_registry,
+    restore_frozen_toolset,
 )
 from services.agent.runtime.catalog.types import RuntimeToolDefinition
 from services.agent.runtime.context import build_runtime_context
@@ -33,6 +34,44 @@ def test_definition_and_catalog_hashes_are_deterministic() -> None:
     right = build_default_runtime_catalog()
     assert left.revision == right.revision
     assert _toolset().toolset_hash == _toolset().toolset_hash
+
+
+def test_frozen_toolset_restores_sql_fact_documents() -> None:
+    versions = build_runtime_version_registry()
+    definition, catalog = versions.resolve_for_agent("everydayai-default", "v1")
+    toolset = EffectiveToolset.build(
+        agent=definition, catalog=catalog, scope="user", channel="web",
+        entitled_groups=frozenset({"code"}),
+        authorized_names=frozenset({"code_execute"}),
+    )
+    restored = restore_frozen_toolset(
+        {"canonical_key": definition.canonical_key, "revision": definition.revision,
+         "prompt_revision": definition.prompt_revision,
+         "requested_tool_groups": sorted(definition.requested_tool_groups),
+         "model_policy": {}, "context_policy": {},
+         "channel_restrictions": sorted(definition.channel_restrictions),
+         "definition_hash": definition.definition_hash},
+        {"tools": [{
+            "canonical_name": item.canonical_name, "tool_group": item.tool_group,
+            "schema": item.schema, "safety_level": item.safety_level,
+            "executor_type": item.executor_type,
+            "executor_revision": item.executor_revision,
+            "capability_requirements": sorted(item.capability_requirements),
+            "side_effect": item.side_effect,
+            "authorization_requirement": item.authorization_requirement,
+            "retry_semantics": item.retry_semantics,
+            "reconcile_semantics": item.reconcile_semantics,
+            "cancel_semantics": item.cancel_semantics,
+            "result_schema_revision": item.result_schema_revision,
+            "allowed_scope_kinds": sorted(item.allowed_scope_kinds),
+            "allowed_channels": sorted(item.allowed_channels),
+            "schema_hash": item.schema_hash,
+        } for item in catalog.definitions()]},
+        {"scope_kind": "user", "channel": "web",
+         "entitled_groups": ["code"], "tool_names": ["code_execute"]},
+        catalog_revision=catalog.revision,
+    )
+    assert restored.toolset_hash == toolset.toolset_hash
 
 
 def test_effective_toolset_is_fail_closed_and_executor_backed() -> None:

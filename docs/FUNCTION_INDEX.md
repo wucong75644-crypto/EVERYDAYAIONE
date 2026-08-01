@@ -2023,7 +2023,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `probe_tool_confirmation_redis` | `backend/services/tool_confirmation/capability_probe.py` | Tool Confirmation V3 Redis 原子能力探针 |
 | `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/nsjail.py` | 固定哈希、cgroup v2、网络隔离与进程树清理的 Sandbox 启动器 |
 | `create_manifest` / `verify_manifest` | `backend/services/agent/runtime/sandbox/rootfs_manifest.py` | 创建并验证包含类型、权限、owner、大小和文件哈希的完整 rootfs manifest |
-| `AgentDefinition` / `AgentDefinitionRegistry` | `backend/services/agent/runtime/agents/` | 不可变、版本化 AgentDefinition 与确定性 hash |
-| `RuntimeToolCatalog` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 单一工具目录与 Agent/Scope/Entitlement/Authorization 交集 |
+| `AgentDefinition` / `AgentDefinitionRegistry` / `RuntimeVersionRegistry` | `backend/services/agent/runtime/agents/`、`catalog/registry.py` | 不可变版本事实解析；入口使用同一 Agent/Catalog registry，历史 Run 由 PostgreSQL facts 恢复 |
+| `RuntimeToolCatalog` / `RuntimeToolCatalogRegistry` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 版本目录与 scope/channel/entitlement/authorization 交集；未注册 Executor 不进入模型工具集 |
 | `build_runtime_context` | `backend/services/agent/runtime/context/runtime_builder.py` | 从 Run 冻结事实构建确定性 Provider ContextPlan，并重复 tool_call/result |
 | `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress 与严格 Run anchor context RPC |
