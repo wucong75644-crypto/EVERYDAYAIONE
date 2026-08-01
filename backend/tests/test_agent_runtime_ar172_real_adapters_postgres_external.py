@@ -29,8 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ORG = UUID("22222222-2222-2222-2222-222222222222")
 OTHER_ORG = UUID("77777777-7777-7777-7777-777777777777")
 USER = UUID("44444444-4444-4444-4444-444444444444")
+OTHER_USER = UUID("11111111-1111-1111-1111-111111111111")
 CONVERSATION = UUID("55555555-5555-5555-5555-555555555555")
 CHANNEL_CONVERSATION = UUID("66666666-6666-6666-6666-666666666666")
+OTHER_CONVERSATION = UUID("77777777-7777-7777-7777-777777777778")
 
 REQUESTS = {
     "get_conversation_context": {"limit": 5}, "search_knowledge": {"query": "knowledge"},
@@ -85,6 +87,8 @@ INSERT INTO conversation_data_evidence VALUES ('evidence-2','55555555-5555-5555-
     INSERT INTO memory_atoms VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab','44444444-4444-4444-4444-444444444444','22222222-2222-2222-2222-222222222222','memory fact','{}',now(),NULL,ARRAY[]::UUID[],FALSE,'active');
     INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaae','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','hello','completed',1), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaf','66666666-6666-6666-6666-666666666666','22222222-2222-2222-2222-222222222222','user','channel hello','completed',1), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaad','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','future message','completed',2);
     INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','future channel message','completed',2);
+    INSERT INTO conversations(id,user_id,org_id,scope_type,scope_id) VALUES ('77777777-7777-7777-7777-777777777778','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','user','11111111-1111-1111-1111-111111111111');
+    INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaba','77777777-7777-7777-7777-777777777778','22222222-2222-2222-2222-222222222222','user','other user anchor','completed',1);
 INSERT INTO conversation_artifacts(id,conversation_id,org_id) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaac','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222');
 ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS tool_call_id TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS tool_name TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS artifact_type TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS status TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS storage_kind TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS inline_content JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS storage_ref JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS model_view JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS history_view JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS content_hash TEXT; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS byte_size INTEGER; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS metadata JSONB; ALTER TABLE conversation_artifacts ADD COLUMN IF NOT EXISTS context_revision BIGINT;
 UPDATE conversation_artifacts SET tool_name='fixture',artifact_type='table',status='ready',storage_kind='inline',inline_content='{"rows":[{"id":"r1"}]}'::jsonb,model_view='{}',history_view='{}',content_hash='hash',byte_size=20,metadata='{}',context_revision=1 WHERE id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaac';
@@ -226,6 +230,19 @@ async def test_real_agent_runtime_worker_executes_all_database_adapters(database
             conn.commit()
         wrong_conversation = await registry.resolve("local_supplier_list")[1].dispatch(_attempt("local_supplier_list", ids["local_supplier_list"], REQUESTS["local_supplier_list"]), REQUESTS["local_supplier_list"])
         assert wrong_conversation.outcome is ExecutionOutcome.FAILED
+        with psycopg.connect(url) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            action_id, attempt_id, _ = ids["evidence_search"]
+            session_id, run_id, command_id = conn.execute("SELECT session_id,run_id,(SELECT command_id FROM agent_runs WHERE id=agent_actions.run_id) FROM agent_actions WHERE id=%s", (UUID(action_id),)).fetchone()
+            other_receipt = {"base_context_revision": "message:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaba", "through_message_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaba", "session_id": str(session_id), "conversation_id": str(OTHER_CONVERSATION)}
+            other_config = {"base_context_revision": other_receipt["base_context_revision"], "through_message_id": other_receipt["through_message_id"], "release_revision": "ar172-fixture"}
+            envelope = {"schema_revision": 2, "context_receipt": other_receipt, "config_snapshot": other_config, "capability_snapshot": {"fixture": True}}
+            conn.execute("UPDATE agent_runtime_sessions SET conversation_id=%s WHERE id=%s", (OTHER_CONVERSATION, session_id))
+            conn.execute("UPDATE agent_runs SET context_receipt=%s::jsonb,config_snapshot=%s::jsonb WHERE id=%s", (json.dumps(other_receipt), json.dumps(other_config), run_id))
+            conn.execute("UPDATE agent_session_commands SET payload=jsonb_set(payload,'{run_envelope}',%s::jsonb) WHERE id=%s", (json.dumps(envelope), command_id))
+            conn.commit()
+        cross_user = await registry.resolve("evidence_search")[1].dispatch(_attempt("evidence_search", ids["evidence_search"], REQUESTS["evidence_search"]), REQUESTS["evidence_search"])
+        assert cross_user.outcome is ExecutionOutcome.FAILED
         with psycopg.connect(url) as conn:
             conn.execute("SET ROLE everydayai_owner")
             conn.execute("UPDATE agent_runs SET context_receipt=jsonb_set(context_receipt,'{through_message_id}',%s::jsonb) WHERE id=(SELECT run_id FROM agent_actions WHERE id=%s)", (json.dumps(ANCHOR.replace('ae', 'ad')), UUID(ids["evidence_search"][0])))

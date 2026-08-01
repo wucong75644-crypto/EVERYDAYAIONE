@@ -68,7 +68,9 @@ BEGIN
      WHERE m.id=(r.context_receipt->>'through_message_id')::UUID
        AND m.conversation_id=s.conversation_id
        AND m.org_id IS NOT DISTINCT FROM s.org_id
-       AND (s.scope_kind<>'USER' OR v.user_id=s.user_id);
+       AND ((s.scope_kind='user' AND v.user_id=s.user_id)
+         OR (s.scope_kind='channel' AND v.scope_type='channel'
+             AND v.scope_id=s.scope_id));
     IF NOT FOUND OR anchor.context_revision IS NULL THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_READ_ANCHOR_INVALID' USING ERRCODE='42501';
     END IF;
