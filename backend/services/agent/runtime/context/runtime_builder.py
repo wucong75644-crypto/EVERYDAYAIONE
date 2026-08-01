@@ -22,7 +22,7 @@ class RuntimeContextV2:
 def build_runtime_context(
     *, run: Mapping[str, object], session: Mapping[str, object],
     messages: list[dict[str, object]], actions: list[Mapping[str, object]],
-    toolset: EffectiveToolset, model_step: int,
+    toolset: EffectiveToolset, model_step: int, stable_prefix_blocks: int = 0,
 ) -> RuntimeContextV2:
     run_id = _required(run, "id")
     session_id = _required(session, "id")
@@ -36,7 +36,7 @@ def build_runtime_context(
     plan = ProviderContextPlan.build(
         messages=projected, tools=toolset.provider_tools(),
         context_epoch_id=f"{run_id}:{base_revision}:{through}",
-        model_step=model_step, stable_prefix_blocks=0,
+        model_step=model_step, stable_prefix_blocks=stable_prefix_blocks,
     )
     return RuntimeContextV2(
         run_id=run_id, session_id=session_id,

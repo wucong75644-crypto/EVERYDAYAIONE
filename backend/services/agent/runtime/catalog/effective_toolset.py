@@ -33,8 +33,12 @@ class EffectiveToolset:
                 and tool.canonical_name in authorized_names
                 and scope in tool.allowed_scope_kinds
                 and channel in tool.allowed_channels)
-        facts = [{"name": tool.canonical_name, "schema_hash": tool.schema_hash,
-                  "revision": tool.revision} for tool in tools]
+        facts = {
+            "catalog_revision": catalog.revision,
+            "scope_kind": scope,
+            "channel": channel,
+            "tools": [tool.security_facts() for tool in tools],
+        }
         digest = hashlib.sha256(json.dumps(
             facts, sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()

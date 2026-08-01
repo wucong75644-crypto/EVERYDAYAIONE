@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from services.agent.runtime.agents import AgentDefinition
 from services.agent.runtime.catalog import (
     EffectiveToolset, build_default_runtime_catalog, build_runtime_version_registry,
-    restore_frozen_toolset,
+    RuntimeToolCatalog, restore_frozen_toolset,
 )
 from services.agent.runtime.catalog.types import RuntimeToolDefinition
 from services.agent.runtime.context import build_runtime_context
@@ -36,6 +38,28 @@ def test_definition_and_catalog_hashes_are_deterministic() -> None:
     assert _toolset().toolset_hash == _toolset().toolset_hash
 
 
+def test_catalog_hash_covers_all_execution_security_facts() -> None:
+    base = next(iter(build_default_runtime_catalog().definitions()))
+    changes = (
+        {"canonical_name": "renamed"}, {"tool_group": "other"},
+        {"schema": {"type": "object", "additionalProperties": False}},
+        {"safety_level": "safe"}, {"executor_type": "other"},
+        {"executor_revision": 2}, {"capability_requirements": frozenset()},
+        {"allowed_scope_kinds": frozenset({"channel"})},
+        {"allowed_channels": frozenset({"web"})}, {"side_effect": "none"},
+        {"authorization_requirement": "none"},
+        {"retry_semantics": "never"}, {"reconcile_semantics": "none"},
+        {"cancel_semantics": "never"}, {"result_schema_revision": 2},
+    )
+    catalogs = {RuntimeToolCatalog([base]).revision}
+    for change in changes:
+        if "schema" in change:
+            change = {**change, "schema_hash": ""}
+        changed = replace(base, **change)
+        catalogs.add(RuntimeToolCatalog([changed]).revision)
+    assert len(catalogs) == len(changes) + 1
+
+
 def test_frozen_toolset_restores_sql_fact_documents() -> None:
     versions = build_runtime_version_registry()
     definition, catalog = versions.resolve_for_agent("everydayai-default", "v1")
@@ -48,8 +72,10 @@ def test_frozen_toolset_restores_sql_fact_documents() -> None:
         {"canonical_key": definition.canonical_key, "revision": definition.revision,
          "prompt_revision": definition.prompt_revision,
          "requested_tool_groups": sorted(definition.requested_tool_groups),
-         "model_policy": {}, "context_policy": {},
+         "model_policy": dict(definition.model_policy),
+         "context_policy": dict(definition.context_policy),
          "channel_restrictions": sorted(definition.channel_restrictions),
+         "system_prompt": definition.system_prompt,
          "definition_hash": definition.definition_hash},
         {"tools": [{
             "canonical_name": item.canonical_name, "tool_group": item.tool_group,
@@ -72,6 +98,20 @@ def test_frozen_toolset_restores_sql_fact_documents() -> None:
         catalog_revision=catalog.revision,
     )
     assert restored.toolset_hash == toolset.toolset_hash
+
+
+def test_definition_fact_drives_prompt_revision_and_system_message() -> None:
+    from services.agent.runtime.production_model import _messages
+
+    versions = build_runtime_version_registry()
+    v1, _ = versions.resolve_for_agent("everydayai-default", "v1")
+    v2, _ = versions.resolve_for_agent("everydayai-default", "v2")
+    first = _messages([{"role": "user", "content": "hello"}], v1.system_prompt)
+    second = _messages([{"role": "user", "content": "hello"}], v2.system_prompt)
+    assert first[0] == {"role": "system", "content": v1.system_prompt}
+    assert second[0] == {"role": "system", "content": v2.system_prompt}
+    assert v1.prompt_revision != v2.prompt_revision
+    assert first[0]["content"] != second[0]["content"]
 
 
 def test_effective_toolset_is_fail_closed_and_executor_backed() -> None:

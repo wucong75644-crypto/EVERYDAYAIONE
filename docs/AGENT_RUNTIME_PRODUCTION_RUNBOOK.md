@@ -200,11 +200,17 @@ readback. Definition, Catalog, and EffectiveToolset documents are immutable
 persisted facts; `enabled_for_new_ingress` is separate from `recoverable`, so
 disabling a version does not block an existing Run. Model recovery resolves
 those facts from PostgreSQL rather than rebuilding the current process catalog.
+The full prompt content, model/context policy, and every catalog safety field
+are included in deterministic definition/catalog hashes. Gate changes after
+command commit use the stored command envelope for idempotent readback and do
+not rewrite the frozen toolset.
 It remains disabled by default; AR-17.2--17.4, the 41 professional Executors,
 production startup wiring, and production acceptance are not part of this
 milestone. Personal `org_id=NULL` ingress remains closed by the organization
-rollout whitelist and is an explicit AR-17 completion blocker. Apply and
-rollback use the exact full migration filenames; rollback fails before ACL or
+rollout whitelist and is an explicit AR-17 completion blocker. Apply runs
+`224_01_agent_runtime_ar17_core.sql` followed by
+`224_02_agent_runtime_ar17_version_seed.sql`; rollback uses the reverse full
+filename order and fails before ACL or
 object removal when an ingress-used Runtime fact exists.
 
 ## Validation matrix

@@ -1614,4 +1614,5 @@ cache = client.caches.create(
   - AgentDefinition、Runtime Tool Catalog、Executor revision 与 Authorization 使用同一 code_execute-only 目录事实
   - v2 Context 严格绑定 Run/session/base revision/through message，并在后续 ModelStep 复现 tool_call 与 terminal result
   - 224 持久化不可变 AgentDefinition/Catalog/EffectiveToolset 文档，分离新 ingress enablement 与历史 Run recoverability；v1→v2 后旧 Run 仍按原 facts 恢复。`org_id=NULL` 个人 ingress 仍受组织 rollout 白名单限制，属于 AR-17 完成前阻塞项
+  - Definition facts 冻结 prompt/model/context policy；Catalog 与 EffectiveToolset hash 覆盖完整执行安全语义，已提交 Command 在 gate 漂移后按原 envelope readback
   - AR-17.2～17.4、41 个专业工具、生产启动接线和生产验收未完成

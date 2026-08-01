@@ -2026,4 +2026,4 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `AgentDefinition` / `AgentDefinitionRegistry` / `RuntimeVersionRegistry` | `backend/services/agent/runtime/agents/`、`catalog/registry.py` | 不可变版本事实解析；入口使用同一 Agent/Catalog registry，历史 Run 由 PostgreSQL facts 恢复 |
 | `RuntimeToolCatalog` / `RuntimeToolCatalogRegistry` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 版本目录与 scope/channel/entitlement/authorization 交集；未注册 Executor 不进入模型工具集 |
 | `build_runtime_context` | `backend/services/agent/runtime/context/runtime_builder.py` | 从 Run 冻结事实构建确定性 Provider ContextPlan，并重复 tool_call/result |
-| `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress 与严格 Run anchor context RPC |
+| `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress、gate 漂移幂等 readback 与严格 Run anchor context RPC；版本 seed 在 `224_02_agent_runtime_ar17_version_seed.sql` |

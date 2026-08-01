@@ -1644,6 +1644,12 @@
 - Model context reads the Run-bound persisted facts and restores its frozen
   toolset after process restart. Catalog entries without a registered Executor
   remain catalog facts only and are not offered to the model.
+- Definition facts also freeze the complete system prompt, prompt revision,
+  model policy, and context policy. Catalog and EffectiveToolset hashes cover
+  all execution safety semantics; committed commands are read back before
+  current gate evaluation, so capability drift cannot change their envelope.
+- Migration filenames are `224_01_agent_runtime_ar17_core.sql` followed by
+  `224_02_agent_runtime_ar17_version_seed.sql`, with rollback in reverse order.
 - `org_id=NULL` personal ingress is intentionally rejected because 224 still
   requires an enabled organization rollout row. This remains a pre-AR-17
   completion blocker and is not treated as covered by the organization path.

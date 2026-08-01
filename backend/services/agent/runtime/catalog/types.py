@@ -41,3 +41,23 @@ class RuntimeToolDefinition:
     @property
     def revision(self) -> str:
         return f"{self.executor_type}:{self.executor_revision}:{self.schema_hash}:{self.result_schema_revision}"
+
+    def security_facts(self) -> dict[str, object]:
+        return {
+            "canonical_name": self.canonical_name,
+            "tool_group": self.tool_group,
+            "schema": self.schema,
+            "schema_hash": self.schema_hash,
+            "safety_level": self.safety_level,
+            "executor_type": self.executor_type,
+            "executor_revision": self.executor_revision,
+            "capability_requirements": sorted(self.capability_requirements),
+            "allowed_scope_kinds": sorted(self.allowed_scope_kinds),
+            "allowed_channels": sorted(self.allowed_channels),
+            "side_effect": self.side_effect,
+            "authorization_requirement": self.authorization_requirement,
+            "retry_semantics": self.retry_semantics,
+            "reconcile_semantics": self.reconcile_semantics,
+            "cancel_semantics": self.cancel_semantics,
+            "result_schema_revision": self.result_schema_revision,
+        }

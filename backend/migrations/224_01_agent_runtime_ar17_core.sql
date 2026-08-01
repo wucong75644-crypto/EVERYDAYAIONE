@@ -1,8 +1,6 @@
 -- 224_01: additive AR-17.1 frozen ingress and Run-bound context facts.
 -- 212-223 remain immutable; Run creation still belongs to 219 claim.
-
 SET LOCAL ROLE everydayai_owner;
-
 CREATE TABLE agent_runtime_definition_facts (
     agent_key TEXT NOT NULL,
     definition_revision TEXT NOT NULL,
@@ -21,7 +19,6 @@ CREATE TABLE agent_runtime_definition_facts (
     CHECK (length(btrim(definition_revision)) BETWEEN 1 AND 200),
     CHECK (length(btrim(prompt_revision)) BETWEEN 1 AND 200)
 );
-
 ALTER TABLE agent_runtime_definition_facts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_runtime_definition_facts FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_runtime_definition_facts_owner_all
@@ -30,7 +27,6 @@ CREATE POLICY agent_runtime_definition_facts_owner_all
 REVOKE ALL ON TABLE agent_runtime_definition_facts
  FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai;
-
 CREATE TABLE agent_runtime_catalog_facts (
     catalog_revision TEXT PRIMARY KEY CHECK (catalog_revision ~ '^[0-9a-f]{64}$'),
     catalog_hash TEXT NOT NULL CHECK (catalog_hash ~ '^[0-9a-f]{64}$'),
@@ -98,63 +94,29 @@ BEGIN
   SET enabled_for_new_ingress=p_enabled
   WHERE agent_key=p_agent_key AND definition_revision=p_definition_revision;
  IF NOT FOUND THEN RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_MISSING'; END IF;
- UPDATE agent_runtime_catalog_facts c
-  SET enabled_for_new_ingress=p_enabled
-  FROM agent_runtime_definition_facts d
-  WHERE d.agent_key=p_agent_key AND d.definition_revision=p_definition_revision
-    AND c.catalog_revision=d.catalog_revision;
+ IF p_enabled THEN
+   UPDATE agent_runtime_catalog_facts c
+    SET enabled_for_new_ingress=TRUE
+    FROM agent_runtime_definition_facts d
+    WHERE d.agent_key=p_agent_key AND d.definition_revision=p_definition_revision
+      AND c.catalog_revision=d.catalog_revision;
+ ELSE
+   UPDATE agent_runtime_catalog_facts c
+    SET enabled_for_new_ingress=FALSE
+    FROM agent_runtime_definition_facts d
+    WHERE d.agent_key=p_agent_key AND d.definition_revision=p_definition_revision
+      AND c.catalog_revision=d.catalog_revision
+      AND NOT EXISTS (SELECT 1 FROM agent_runtime_definition_facts other
+       WHERE other.catalog_revision=c.catalog_revision
+         AND other.enabled_for_new_ingress
+         AND (other.agent_key,other.definition_revision)
+             IS DISTINCT FROM (p_agent_key,p_definition_revision));
+ END IF;
  UPDATE agent_runtime_effective_toolset_facts e
   SET enabled_for_new_ingress=p_enabled
   WHERE e.agent_key=p_agent_key AND e.definition_revision=p_definition_revision;
  RETURN jsonb_build_object('outcome','applied','enabled_for_new_ingress',p_enabled);
 END $$;
-
-INSERT INTO agent_runtime_definition_facts(
- agent_key,definition_revision,definition_hash,prompt_revision,
- catalog_revision,effective_toolset_hash,definition_document,
- enabled_for_new_ingress,recoverable)
-VALUES
- ('everydayai-default','v1','61391ddcbeea377093b03e9441356e84e3f108d09a6728db0efc24a5ca94a768',
-  'agent-runtime-production-v1','182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8',
-  '1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291',
-  '{"canonical_key":"everydayai-default","revision":"v1","prompt_revision":"agent-runtime-production-v1","requested_tool_groups":["code"],"model_policy":{},"context_policy":{},"channel_restrictions":["web","wecom"],"definition_hash":"61391ddcbeea377093b03e9441356e84e3f108d09a6728db0efc24a5ca94a768"}',true,true),
- ('everydayai-default','v2','4b14452bf2a7053c381a36a0c29edaf06b707d1db01f8cb998fd7e9d14be203c',
-  'agent-runtime-production-v2','baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',
-  '1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291',
-  '{"canonical_key":"everydayai-default","revision":"v2","prompt_revision":"agent-runtime-production-v2","requested_tool_groups":["code","diagnostic"],"model_policy":{},"context_policy":{},"channel_restrictions":["web","wecom"],"definition_hash":"4b14452bf2a7053c381a36a0c29edaf06b707d1db01f8cb998fd7e9d14be203c"}',false,true);
-
-INSERT INTO agent_runtime_catalog_facts(catalog_revision,catalog_hash,catalog_document,enabled_for_new_ingress,recoverable)
-VALUES
- ('182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8',
-  '182b9a164e683669427b1396b3d8b5f4045bbfee67aa7edc085a4960342e6fa8',
-  '{"tools":[{"canonical_name":"code_execute","tool_group":"code","schema":{"type":"object","additionalProperties":false,"required":["code","description"],"properties":{"code":{"type":"string"},"description":{"type":"string"}}},"safety_level":"dangerous","executor_type":"sandbox_job","executor_revision":1,"capability_requirements":["sandbox_job"],"side_effect":"sandbox","authorization_requirement":"persisted_interaction","retry_semantics":"reconcile_only","reconcile_semantics":"executor_defined","cancel_semantics":"best_effort","result_schema_revision":1,"allowed_scope_kinds":["channel","user"],"allowed_channels":["web","wecom"],"schema_hash":"6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0"}]}',true,true),
- ('baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',
-  'baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',
-  '{"tools":[{"canonical_name":"catalog_probe","tool_group":"diagnostic","schema":{"type":"object","additionalProperties":false},"safety_level":"safe","executor_type":"unavailable","executor_revision":1,"capability_requirements":["catalog_probe"],"side_effect":"none","authorization_requirement":"none","retry_semantics":"non_retryable","reconcile_semantics":"none","cancel_semantics":"none","result_schema_revision":1,"allowed_scope_kinds":["channel","user"],"allowed_channels":["web","wecom"],"schema_hash":"cd1a463c46d6264134447db17a8c3c7abe5b9a2488c6d759fea66da1f96b133e"},{"canonical_name":"code_execute","tool_group":"code","schema":{"type":"object","additionalProperties":false,"required":["code","description"],"properties":{"code":{"type":"string"},"description":{"type":"string"}}},"safety_level":"dangerous","executor_type":"sandbox_job","executor_revision":1,"capability_requirements":["sandbox_job"],"side_effect":"sandbox","authorization_requirement":"persisted_interaction","retry_semantics":"reconcile_only","reconcile_semantics":"executor_defined","cancel_semantics":"best_effort","result_schema_revision":1,"allowed_scope_kinds":["channel","user"],"allowed_channels":["web","wecom"],"schema_hash":"6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0"}]}',false,true);
-
-INSERT INTO agent_runtime_effective_toolset_facts(
- agent_key,definition_revision,catalog_revision,scope_kind,channel,gate_state,
- effective_toolset_hash,toolset_document,enabled_for_new_ingress,recoverable)
-SELECT 'everydayai-default',d.definition_revision,d.catalog_revision,s.scope_kind,ch.channel,g.gate_state,
- CASE WHEN g.gate_state='enabled' THEN d.effective_toolset_hash ELSE '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945' END,
- CASE WHEN g.gate_state='enabled' THEN jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array('code'),'tool_names',jsonb_build_array('code_execute'))
-      ELSE jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array(),'tool_names',jsonb_build_array()) END,
- TRUE,TRUE
-FROM agent_runtime_definition_facts d
-CROSS JOIN (VALUES ('user'),('channel')) s(scope_kind)
-CROSS JOIN (VALUES ('web'),('wecom')) ch(channel)
-CROSS JOIN (VALUES ('enabled'),('disabled')) g(gate_state)
-WHERE d.definition_revision='v1'
-UNION ALL
-SELECT 'everydayai-default','v2','baa779f32a76a3b0393ca1ca246c95bd6200b9759d5d0c4e386f045a7f2d874b',s.scope_kind,ch.channel,g.gate_state,
- CASE WHEN g.gate_state='enabled' THEN '1dc401f845edd9e2e8bcf9266e3d00b41676c219787e18be4c8d50336a2af291' ELSE '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945' END,
- CASE WHEN g.gate_state='enabled' THEN jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array('code'),'tool_names',jsonb_build_array('code_execute'))
-      ELSE jsonb_build_object('scope_kind',s.scope_kind,'channel',ch.channel,'entitled_groups',jsonb_build_array(),'tool_names',jsonb_build_array()) END,
- TRUE,TRUE
-FROM (VALUES ('user'),('channel')) s(scope_kind)
-CROSS JOIN (VALUES ('web'),('wecom')) ch(channel)
-CROSS JOIN (VALUES ('enabled'),('disabled')) g(gate_state)
-;
 
 CREATE FUNCTION ensure_agent_runtime_definition_fact(
  p_agent_key TEXT,p_definition_revision TEXT,p_definition_hash TEXT,
@@ -201,6 +163,7 @@ DECLARE ctl agent_runtime_control%ROWTYPE; d_fact agent_runtime_definition_facts
     cat_fact agent_runtime_catalog_facts%ROWTYPE;
     tool_fact agent_runtime_effective_toolset_facts%ROWTYPE;
     s JSONB; c JSONB; sid UUID; v_gate_state TEXT; envelope JSONB;
+    prior agent_session_commands%ROWTYPE; prior_identity JSONB;
     config JSONB; capabilities JSONB;
 BEGIN
  PERFORM _assert_agent_runtime_actor(FALSE);
@@ -237,6 +200,46 @@ BEGIN
  IF p_through_message_id IS NULL OR p_channel NOT IN ('web','wecom') THEN
    RAISE EXCEPTION 'RUNTIME_INGRESS_V2_BINDING_INVALID' USING ERRCODE='22023';
  END IF;
+ s:=ensure_agent_runtime_session(p_conversation_id,p_org_id,p_user_id,
+   p_scope_kind,p_scope_id,p_created_by_user_id,p_agent_definition_id,
+   p_agent_definition_revision);
+ IF s->>'outcome' NOT IN ('created','already_exists') THEN RETURN s; END IF;
+ sid:=(s->>'entity_id')::uuid;
+ SELECT * INTO prior FROM agent_session_commands
+  WHERE session_id=sid AND command_type=p_command_type
+    AND idempotency_key=btrim(p_idempotency_key) FOR UPDATE;
+ IF prior.id IS NOT NULL THEN
+   prior_identity:=prior.payload->'run_envelope'->'request_identity';
+   IF prior_identity->>'session_id' IS DISTINCT FROM sid::TEXT
+      OR prior_identity->>'idempotency_key' IS DISTINCT FROM btrim(p_idempotency_key)
+      OR prior_identity->>'conversation_id' IS DISTINCT FROM p_conversation_id::TEXT
+      OR prior_identity->>'user_id' IS DISTINCT FROM p_user_id::TEXT
+      OR prior_identity->>'org_id' IS DISTINCT FROM p_org_id::TEXT
+      OR prior_identity->>'scope_kind' IS DISTINCT FROM p_scope_kind
+      OR prior_identity->>'scope_id' IS DISTINCT FROM p_scope_id
+      OR prior_identity->>'through_message_id' IS DISTINCT FROM p_through_message_id::TEXT
+      OR prior_identity->>'base_context_revision' IS DISTINCT FROM p_base_context_revision
+      OR prior_identity->>'agent_definition_id' IS DISTINCT FROM p_agent_definition_id
+      OR prior_identity->>'agent_definition_revision' IS DISTINCT FROM p_agent_definition_revision
+      OR prior_identity->>'agent_definition_hash' IS DISTINCT FROM p_agent_definition_hash
+      OR prior_identity->>'catalog_revision' IS DISTINCT FROM p_effective_toolset_revision
+      OR prior_identity->>'effective_toolset_hash' IS DISTINCT FROM p_effective_toolset_hash
+      OR prior_identity->>'payload_hash' IS DISTINCT FROM md5(COALESCE(p_payload,'{}'::jsonb)::TEXT)
+      OR prior_identity->>'channel' IS DISTINCT FROM p_channel THEN
+     RETURN jsonb_build_object('outcome','idempotency_conflict',
+       'entity_id',prior.id,'session_id',sid,'ingress_version',2);
+   END IF;
+   RETURN jsonb_build_object('outcome','already_exists','entity_id',prior.id,
+     'result_entity_id',prior.result_entity_id,'session_id',sid,
+     'ingress_version',2);
+ END IF;
+ SELECT * INTO prior FROM agent_session_commands
+  WHERE command_type=p_command_type
+    AND idempotency_key=btrim(p_idempotency_key) ORDER BY created_at,id LIMIT 1 FOR UPDATE;
+ IF prior.id IS NOT NULL THEN
+   RETURN jsonb_build_object('outcome','idempotency_conflict',
+     'entity_id',prior.id,'session_id',sid,'ingress_version',2);
+ END IF;
  SELECT * INTO d_fact FROM agent_runtime_definition_facts
   WHERE agent_key=p_agent_definition_id AND definition_revision=p_agent_definition_revision;
  SELECT * INTO cat_fact FROM agent_runtime_catalog_facts
@@ -267,14 +270,12 @@ BEGIN
     OR NOT tool_fact.enabled_for_new_ingress OR NOT tool_fact.recoverable THEN
    RAISE EXCEPTION 'RUNTIME_EFFECTIVE_TOOLSET_FACT_MISSING' USING ERRCODE='55000';
  END IF;
+ IF p_effective_toolset_hash IS DISTINCT FROM tool_fact.effective_toolset_hash THEN
+   RAISE EXCEPTION 'RUNTIME_EFFECTIVE_TOOLSET_HASH_MISMATCH' USING ERRCODE='22023';
+ END IF;
  PERFORM ensure_agent_runtime_definition_fact(
    p_agent_definition_id,p_agent_definition_revision,p_agent_definition_hash,
    d_fact.prompt_revision,d_fact.catalog_revision,tool_fact.effective_toolset_hash);
- s:=ensure_agent_runtime_session(p_conversation_id,p_org_id,p_user_id,
-   p_scope_kind,p_scope_id,p_created_by_user_id,p_agent_definition_id,
-   p_agent_definition_revision);
- IF s->>'outcome' NOT IN ('created','already_exists') THEN RETURN s; END IF;
- sid:=(s->>'entity_id')::uuid;
  config:=p_config_snapshot||jsonb_build_object(
    'base_context_revision',p_base_context_revision,
    'through_message_id',p_through_message_id,
@@ -304,14 +305,24 @@ BEGIN
      'session_id',sid,'conversation_id',p_conversation_id),
    'config_snapshot',config,'capability_snapshot',capabilities,
    'request_identity',jsonb_build_object(
-     'session_id',sid,'idempotency_key',p_idempotency_key,
-     'channel',p_channel,'binding_hash',md5(jsonb_build_object(
+   'session_id',sid,'idempotency_key',p_idempotency_key,
+     'channel',p_channel,'conversation_id',p_conversation_id,
+     'user_id',p_user_id,'org_id',p_org_id,'scope_kind',p_scope_kind,
+     'scope_id',p_scope_id,'through_message_id',p_through_message_id,
+     'base_context_revision',p_base_context_revision,
+     'agent_definition_id',p_agent_definition_id,
+     'agent_definition_revision',p_agent_definition_revision,
+     'agent_definition_hash',p_agent_definition_hash,
+     'catalog_revision',d_fact.catalog_revision,
+     'effective_toolset_hash',tool_fact.effective_toolset_hash,
+     'payload_hash',md5(COALESCE(p_payload,'{}'::jsonb)::TEXT),
+     'binding_hash',md5(jsonb_build_object(
        'conversation_id',p_conversation_id,'user_id',p_user_id,
        'org_id',p_org_id,'scope_kind',p_scope_kind,'scope_id',p_scope_id,
        'through_message_id',p_through_message_id,
        'base_context_revision',p_base_context_revision,
        'agent_definition_hash',p_agent_definition_hash,
-       'effective_toolset_hash',p_effective_toolset_hash)::TEXT)));
+       'effective_toolset_hash',tool_fact.effective_toolset_hash)::TEXT)));
  c:=submit_session_command(sid,p_command_type,p_idempotency_key,
    COALESCE(p_payload,'{}'::jsonb)||jsonb_build_object(
      'run_envelope',envelope,'release_revision',p_release_revision));

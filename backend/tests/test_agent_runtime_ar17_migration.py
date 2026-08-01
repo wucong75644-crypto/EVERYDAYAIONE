@@ -3,7 +3,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL = (ROOT / "migrations/224_01_agent_runtime_ar17_core.sql").read_text()
+SEED = (ROOT / "migrations/224_02_agent_runtime_ar17_version_seed.sql").read_text()
 ROLLBACK = (ROOT / "migrations/rollback/224_01_agent_runtime_ar17_core_rollback.sql").read_text()
+SEED_ROLLBACK = (ROOT / "migrations/rollback/224_02_agent_runtime_ar17_version_seed_rollback.sql").read_text()
 
 
 def test_ar17_migration_is_additive_and_fail_closed() -> None:
@@ -17,6 +19,8 @@ def test_ar17_migration_is_additive_and_fail_closed() -> None:
     assert "REVOKE ALL ON TABLE agent_runtime_definition_facts" in SQL
     assert "AGENT_RUNTIME_224_ROLLBACK_GUARD_FACTS_EXIST" in ROLLBACK
     assert "DROP FUNCTION" in ROLLBACK
+    assert "definition_document" in SEED and "system_prompt" in SEED
+    assert "AGENT_RUNTIME_224_ROLLBACK_GUARD_FACTS_EXIST" in SEED_ROLLBACK
 
 
 def test_v2_envelope_contains_all_frozen_binding_facts() -> None:

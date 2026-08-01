@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 
+DEFAULT_SYSTEM_PROMPT = "Answer only from the supplied conversation facts."
+
+
 @dataclass(frozen=True, kw_only=True)
 class AgentDefinition:
     canonical_key: str
@@ -17,10 +20,12 @@ class AgentDefinition:
     model_policy: Mapping[str, object] = field(default_factory=dict)
     context_policy: Mapping[str, object] = field(default_factory=dict)
     channel_restrictions: frozenset[str] = field(default_factory=frozenset)
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT
     definition_hash: str = ""
 
     def __post_init__(self) -> None:
-        for value in (self.canonical_key, self.revision, self.prompt_revision):
+        for value in (self.canonical_key, self.revision, self.prompt_revision,
+                      self.system_prompt):
             if not value or value.strip() != value:
                 raise ValueError("agent definition identity is invalid")
         canonical = self._canonical_hash()
@@ -37,6 +42,7 @@ class AgentDefinition:
             "model_policy": self.model_policy,
             "context_policy": self.context_policy,
             "channel_restrictions": sorted(self.channel_restrictions),
+            "system_prompt": self.system_prompt,
         }
         return hashlib.sha256(json.dumps(
             facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
