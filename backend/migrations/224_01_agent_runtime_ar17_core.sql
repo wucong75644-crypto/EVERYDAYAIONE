@@ -1,5 +1,3 @@
--- 224_01: additive AR-17.1 frozen ingress and Run-bound context facts.
--- 212-223 remain immutable; Run creation still belongs to 219 claim.
 SET LOCAL ROLE everydayai_owner;
 CREATE TABLE agent_runtime_definition_facts (
     agent_key TEXT NOT NULL,
@@ -60,7 +58,6 @@ CREATE POLICY agent_runtime_toolset_facts_owner_all ON agent_runtime_effective_t
 REVOKE ALL ON TABLE agent_runtime_catalog_facts,agent_runtime_effective_toolset_facts
  FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai;
-
 CREATE FUNCTION get_agent_runtime_version_facts(
  p_agent_key TEXT,p_definition_revision TEXT,p_catalog_revision TEXT,
  p_scope_kind TEXT,p_channel TEXT,p_effective_toolset_hash TEXT
@@ -79,7 +76,6 @@ SET search_path = pg_catalog, public AS $$
        AND e.recoverable)
  )
 $$;
-
 CREATE FUNCTION set_agent_runtime_definition_ingress_enabled(
  p_agent_key TEXT,p_definition_revision TEXT,p_enabled BOOLEAN
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
@@ -117,7 +113,6 @@ BEGIN
   WHERE e.agent_key=p_agent_key AND e.definition_revision=p_definition_revision;
  RETURN jsonb_build_object('outcome','applied','enabled_for_new_ingress',p_enabled);
 END $$;
-
 CREATE FUNCTION ensure_agent_runtime_definition_fact(
  p_agent_key TEXT,p_definition_revision TEXT,p_definition_hash TEXT,
  p_prompt_revision TEXT,p_catalog_revision TEXT,p_effective_toolset_hash TEXT
@@ -138,7 +133,6 @@ IF current_fact.agent_key IS NULL OR NOT current_fact.enabled_for_new_ingress
   WHERE agent_key=current_fact.agent_key AND definition_revision=current_fact.definition_revision;
  RETURN to_jsonb(current_fact);
 END $$;
-
 CREATE FUNCTION get_agent_runtime_definition_fact(
  p_agent_key TEXT,p_definition_revision TEXT
 ) RETURNS JSONB LANGUAGE SQL STABLE SECURITY DEFINER
@@ -147,40 +141,16 @@ SET search_path = pg_catalog, public AS $$
    WHERE f.agent_key=p_agent_key AND f.definition_revision=p_definition_revision),
    jsonb_build_object('outcome','not_found'))
 $$;
-
-CREATE FUNCTION runtime_submit_ingress_v2(
- p_conversation_id UUID,p_org_id UUID,p_user_id UUID,p_scope_kind TEXT,
- p_scope_id TEXT,p_created_by_user_id UUID,p_agent_definition_id TEXT,
- p_agent_definition_revision TEXT,p_agent_definition_hash TEXT,
- p_command_type TEXT,p_idempotency_key TEXT,p_channel TEXT,
- p_through_message_id UUID,p_base_context_revision TEXT,
- p_effective_toolset_revision TEXT,p_effective_toolset_hash TEXT,
- p_config_snapshot JSONB,p_capability_snapshot JSONB,p_release_revision TEXT,
- p_payload JSONB
+CREATE FUNCTION runtime_submit_ingress_v2( p_conversation_id UUID,p_org_id UUID,p_user_id UUID,p_scope_kind TEXT,p_scope_id TEXT,p_created_by_user_id UUID,p_agent_definition_id TEXT,p_agent_definition_revision TEXT,p_agent_definition_hash TEXT,p_command_type TEXT,p_idempotency_key TEXT,p_channel TEXT,p_through_message_id UUID,p_base_context_revision TEXT,p_effective_toolset_revision TEXT,p_effective_toolset_hash TEXT,p_config_snapshot JSONB,p_capability_snapshot JSONB,p_release_revision TEXT,p_payload JSONB
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
  SET search_path = pg_catalog, public AS $$
-DECLARE ctl agent_runtime_control%ROWTYPE; d_fact agent_runtime_definition_facts%ROWTYPE;
-    cat_fact agent_runtime_catalog_facts%ROWTYPE;
-    tool_fact agent_runtime_effective_toolset_facts%ROWTYPE;
-    s JSONB; c JSONB; sid UUID; v_gate_state TEXT; envelope JSONB;
-    prior agent_session_commands%ROWTYPE; prior_identity JSONB;
-    config JSONB; capabilities JSONB;
+DECLARE ctl agent_runtime_control%ROWTYPE; d_fact agent_runtime_definition_facts%ROWTYPE; cat_fact agent_runtime_catalog_facts%ROWTYPE; tool_fact agent_runtime_effective_toolset_facts%ROWTYPE; session_fact agent_runtime_sessions%ROWTYPE; s JSONB; c JSONB; sid UUID; v_gate_state TEXT; envelope JSONB; prior agent_session_commands%ROWTYPE; prior_identity JSONB; config JSONB; capabilities JSONB;
 BEGIN
  PERFORM _assert_agent_runtime_actor(FALSE);
- SELECT * INTO ctl FROM agent_runtime_control WHERE singleton FOR SHARE;
- IF NOT ctl.ingress_enabled THEN
-   RETURN jsonb_build_object('outcome','ingress_disabled');
- END IF;
- IF p_org_id IS NULL OR NOT EXISTS(
-   SELECT 1 FROM agent_runtime_org_rollout WHERE org_id=p_org_id AND enabled
- ) THEN
-   RETURN jsonb_build_object('outcome','org_not_enabled');
- END IF;
+ p_idempotency_key:=btrim(p_idempotency_key);
  IF NULLIF(btrim(p_agent_definition_id),'') IS NULL
     OR NULLIF(btrim(p_agent_definition_revision),'') IS NULL
     OR NULLIF(btrim(p_effective_toolset_revision),'') IS NULL
-    OR NULLIF(btrim(p_effective_toolset_hash),'') IS NULL
-    OR p_effective_toolset_hash !~ '^[0-9a-f]{64}$'
     OR NULLIF(btrim(p_release_revision),'') IS NULL
     OR NULLIF(btrim(p_scope_kind),'') IS NULL
     OR p_scope_kind NOT IN ('user','channel')
@@ -190,9 +160,6 @@ BEGIN
     OR jsonb_typeof(COALESCE(p_payload,'{}'::JSONB)) IS DISTINCT FROM 'object'
     OR NULLIF(btrim(p_base_context_revision),'') IS NULL
     OR p_base_context_revision IS DISTINCT FROM 'message:'||p_through_message_id::TEXT
-    OR NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=p_through_message_id
-       AND m.conversation_id=p_conversation_id
-       AND m.org_id IS NOT DISTINCT FROM p_org_id)
     OR jsonb_typeof(p_config_snapshot) IS DISTINCT FROM 'object'
     OR jsonb_typeof(p_capability_snapshot) IS DISTINCT FROM 'object' THEN
    RAISE EXCEPTION 'RUNTIME_INGRESS_V2_BINDING_INVALID' USING ERRCODE='22023';
@@ -200,46 +167,67 @@ BEGIN
  IF p_through_message_id IS NULL OR p_channel NOT IN ('web','wecom') THEN
    RAISE EXCEPTION 'RUNTIME_INGRESS_V2_BINDING_INVALID' USING ERRCODE='22023';
  END IF;
+ SELECT * INTO session_fact FROM agent_runtime_sessions
+  WHERE conversation_id=p_conversation_id FOR UPDATE;
+ IF FOUND THEN
+   sid:=session_fact.id;
+   IF session_fact.org_id IS DISTINCT FROM p_org_id
+      OR session_fact.user_id IS DISTINCT FROM p_user_id
+      OR session_fact.scope_kind IS DISTINCT FROM p_scope_kind
+      OR session_fact.scope_id IS DISTINCT FROM p_scope_id THEN
+     RAISE EXCEPTION 'AGENT_RUNTIME_SESSION_CONFLICT' USING ERRCODE='23505';
+   END IF;
+   SELECT * INTO prior FROM agent_session_commands
+    WHERE session_id=sid AND command_type=p_command_type
+      AND idempotency_key=p_idempotency_key FOR UPDATE;
+   IF prior.id IS NOT NULL THEN
+    prior_identity:=prior.payload->'run_envelope'->'request_identity';
+    IF prior_identity->>'session_id' IS DISTINCT FROM sid::TEXT
+       OR prior_identity->>'idempotency_key' IS DISTINCT FROM p_idempotency_key
+       OR prior_identity->>'conversation_id' IS DISTINCT FROM p_conversation_id::TEXT
+       OR prior_identity->>'user_id' IS DISTINCT FROM p_user_id::TEXT
+       OR prior_identity->>'org_id' IS DISTINCT FROM p_org_id::TEXT
+       OR prior_identity->>'scope_kind' IS DISTINCT FROM p_scope_kind
+       OR prior_identity->>'scope_id' IS DISTINCT FROM p_scope_id
+       OR prior_identity->>'through_message_id' IS DISTINCT FROM p_through_message_id::TEXT
+       OR prior_identity->>'base_context_revision' IS DISTINCT FROM p_base_context_revision
+       OR prior_identity->>'agent_definition_id' IS DISTINCT FROM p_agent_definition_id
+       OR prior_identity->>'agent_definition_revision' IS DISTINCT FROM p_agent_definition_revision
+       OR prior_identity->>'agent_definition_hash' IS DISTINCT FROM p_agent_definition_hash
+       OR prior_identity->>'catalog_revision' IS DISTINCT FROM p_effective_toolset_revision
+       OR prior_identity->>'payload_hash' IS DISTINCT FROM md5(COALESCE(p_payload,'{}'::jsonb)::TEXT)
+       OR prior_identity->>'config_snapshot_hash' IS DISTINCT FROM md5(p_config_snapshot::TEXT)
+       OR prior_identity->>'channel' IS DISTINCT FROM p_channel THEN
+      RETURN jsonb_build_object('outcome','idempotency_conflict',
+        'entity_id',prior.id,'session_id',sid,'ingress_version',2);
+    END IF;
+    RETURN jsonb_build_object('outcome','already_exists','entity_id',prior.id,
+      'result_entity_id',prior.result_entity_id,'session_id',sid,
+      'effective_toolset_revision',prior.payload->'run_envelope'->'capability_snapshot'->>'effective_toolset_revision',
+      'effective_toolset_hash',prior.payload->'run_envelope'->'capability_snapshot'->>'effective_toolset_hash',
+      'gate_state',prior.payload->'run_envelope'->'capability_snapshot'->>'gate_state',
+      'ingress_version',2);
+   END IF;
+ END IF;
+ SELECT * INTO ctl FROM agent_runtime_control WHERE singleton FOR UPDATE;
+ IF NOT ctl.ingress_enabled THEN
+   RETURN jsonb_build_object('outcome','ingress_disabled');
+ END IF;
+ IF p_org_id IS NULL OR NOT EXISTS(
+   SELECT 1 FROM agent_runtime_org_rollout WHERE org_id=p_org_id AND enabled
+ ) THEN
+   RETURN jsonb_build_object('outcome','org_not_enabled');
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=p_through_message_id
+       AND m.conversation_id=p_conversation_id
+       AND m.org_id IS NOT DISTINCT FROM p_org_id) THEN
+   RAISE EXCEPTION 'RUNTIME_CONTEXT_ANCHOR_MISSING' USING ERRCODE='22023';
+ END IF;
  s:=ensure_agent_runtime_session(p_conversation_id,p_org_id,p_user_id,
    p_scope_kind,p_scope_id,p_created_by_user_id,p_agent_definition_id,
    p_agent_definition_revision);
  IF s->>'outcome' NOT IN ('created','already_exists') THEN RETURN s; END IF;
  sid:=(s->>'entity_id')::uuid;
- SELECT * INTO prior FROM agent_session_commands
-  WHERE session_id=sid AND command_type=p_command_type
-    AND idempotency_key=btrim(p_idempotency_key) FOR UPDATE;
- IF prior.id IS NOT NULL THEN
-   prior_identity:=prior.payload->'run_envelope'->'request_identity';
-   IF prior_identity->>'session_id' IS DISTINCT FROM sid::TEXT
-      OR prior_identity->>'idempotency_key' IS DISTINCT FROM btrim(p_idempotency_key)
-      OR prior_identity->>'conversation_id' IS DISTINCT FROM p_conversation_id::TEXT
-      OR prior_identity->>'user_id' IS DISTINCT FROM p_user_id::TEXT
-      OR prior_identity->>'org_id' IS DISTINCT FROM p_org_id::TEXT
-      OR prior_identity->>'scope_kind' IS DISTINCT FROM p_scope_kind
-      OR prior_identity->>'scope_id' IS DISTINCT FROM p_scope_id
-      OR prior_identity->>'through_message_id' IS DISTINCT FROM p_through_message_id::TEXT
-      OR prior_identity->>'base_context_revision' IS DISTINCT FROM p_base_context_revision
-      OR prior_identity->>'agent_definition_id' IS DISTINCT FROM p_agent_definition_id
-      OR prior_identity->>'agent_definition_revision' IS DISTINCT FROM p_agent_definition_revision
-      OR prior_identity->>'agent_definition_hash' IS DISTINCT FROM p_agent_definition_hash
-      OR prior_identity->>'catalog_revision' IS DISTINCT FROM p_effective_toolset_revision
-      OR prior_identity->>'effective_toolset_hash' IS DISTINCT FROM p_effective_toolset_hash
-      OR prior_identity->>'payload_hash' IS DISTINCT FROM md5(COALESCE(p_payload,'{}'::jsonb)::TEXT)
-      OR prior_identity->>'channel' IS DISTINCT FROM p_channel THEN
-     RETURN jsonb_build_object('outcome','idempotency_conflict',
-       'entity_id',prior.id,'session_id',sid,'ingress_version',2);
-   END IF;
-   RETURN jsonb_build_object('outcome','already_exists','entity_id',prior.id,
-     'result_entity_id',prior.result_entity_id,'session_id',sid,
-     'ingress_version',2);
- END IF;
- SELECT * INTO prior FROM agent_session_commands
-  WHERE command_type=p_command_type
-    AND idempotency_key=btrim(p_idempotency_key) ORDER BY created_at,id LIMIT 1 FOR UPDATE;
- IF prior.id IS NOT NULL THEN
-   RETURN jsonb_build_object('outcome','idempotency_conflict',
-     'entity_id',prior.id,'session_id',sid,'ingress_version',2);
- END IF;
  SELECT * INTO d_fact FROM agent_runtime_definition_facts
   WHERE agent_key=p_agent_definition_id AND definition_revision=p_agent_definition_revision;
  SELECT * INTO cat_fact FROM agent_runtime_catalog_facts
@@ -269,9 +257,6 @@ BEGIN
  IF tool_fact.effective_toolset_hash IS NULL
     OR NOT tool_fact.enabled_for_new_ingress OR NOT tool_fact.recoverable THEN
    RAISE EXCEPTION 'RUNTIME_EFFECTIVE_TOOLSET_FACT_MISSING' USING ERRCODE='55000';
- END IF;
- IF p_effective_toolset_hash IS DISTINCT FROM tool_fact.effective_toolset_hash THEN
-   RAISE EXCEPTION 'RUNTIME_EFFECTIVE_TOOLSET_HASH_MISMATCH' USING ERRCODE='22023';
  END IF;
  PERFORM ensure_agent_runtime_definition_fact(
    p_agent_definition_id,p_agent_definition_revision,p_agent_definition_hash,
@@ -315,14 +300,15 @@ BEGIN
      'agent_definition_hash',p_agent_definition_hash,
      'catalog_revision',d_fact.catalog_revision,
      'effective_toolset_hash',tool_fact.effective_toolset_hash,
+     'config_snapshot_hash',md5(p_config_snapshot::TEXT),
      'payload_hash',md5(COALESCE(p_payload,'{}'::jsonb)::TEXT),
      'binding_hash',md5(jsonb_build_object(
        'conversation_id',p_conversation_id,'user_id',p_user_id,
        'org_id',p_org_id,'scope_kind',p_scope_kind,'scope_id',p_scope_id,
        'through_message_id',p_through_message_id,
        'base_context_revision',p_base_context_revision,
-       'agent_definition_hash',p_agent_definition_hash,
-       'effective_toolset_hash',tool_fact.effective_toolset_hash)::TEXT)));
+     'agent_definition_hash',p_agent_definition_hash,
+     'effective_toolset_hash',tool_fact.effective_toolset_hash)::TEXT)));
  c:=submit_session_command(sid,p_command_type,p_idempotency_key,
    COALESCE(p_payload,'{}'::jsonb)||jsonb_build_object(
      'run_envelope',envelope,'release_revision',p_release_revision));
@@ -333,9 +319,11 @@ BEGIN
       AND conversation_id=p_conversation_id AND user_id=p_user_id
       AND org_id IS NOT DISTINCT FROM p_org_id;
  END IF;
- RETURN c||jsonb_build_object('session_id',sid,'ingress_version',2);
+ RETURN c||jsonb_build_object('session_id',sid,'ingress_version',2,
+   'effective_toolset_revision',d_fact.catalog_revision,
+   'effective_toolset_hash',tool_fact.effective_toolset_hash,
+   'gate_state',v_gate_state);
 END $$;
-
 CREATE FUNCTION get_agent_runtime_model_context_v2(
  p_run_id UUID,p_worker_id TEXT,p_execution_token UUID
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
@@ -433,7 +421,6 @@ BEGIN
       ORDER BY a.model_step_id,a.action_index,a.id),'[]'::jsonb)
       FROM agent_actions a WHERE a.run_id=r.id));
 END $$;
-
 CREATE FUNCTION enqueue_wecom_runtime_turn_v4(
  p_task_data JSONB,p_input_message_id UUID,p_output_message_id UUID,
  p_turn_id UUID,p_input_content JSONB,p_delivery_context JSONB,
@@ -474,9 +461,11 @@ BEGIN
  d:=p_delivery_context||'{"actor":false,"runtime":true}'::jsonb;
  UPDATE tasks SET delivery_context=d WHERE id=(e->>'task_id')::uuid;
  RETURN e||jsonb_build_object('runtime_owned',true,
-   'runtime_session_id',r->>'session_id','runtime_command_id',r->>'entity_id');
+   'runtime_session_id',r->>'session_id','runtime_command_id',r->>'entity_id',
+   'effective_toolset_revision',r->>'effective_toolset_revision',
+   'effective_toolset_hash',r->>'effective_toolset_hash',
+   'gate_state',r->>'gate_state');
 END $$;
-
 REVOKE ALL ON FUNCTION runtime_submit_ingress_v2(
  UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,UUID,TEXT,
  TEXT,TEXT,JSONB,JSONB,TEXT,JSONB),
@@ -503,5 +492,4 @@ GRANT EXECUTE ON FUNCTION set_agent_runtime_definition_ingress_enabled(TEXT,TEXT
 GRANT EXECUTE ON FUNCTION enqueue_wecom_runtime_turn_v4(
  JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT)
  TO everydayai_wecom_runtime;
-
 RESET ROLE;

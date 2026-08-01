@@ -13,6 +13,9 @@ class RuntimeIngressReceipt:
     session_id: str | None = None
     command_id: str | None = None
     run_id: str | None = None
+    effective_toolset_revision: str | None = None
+    effective_toolset_hash: str | None = None
+    gate_state: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -33,7 +36,6 @@ class RuntimeIngress:
         agent_definition_revision: str, command_type: str,
         idempotency_key: str, payload: Mapping[str, object],
     ) -> RuntimeIngressReceipt:
-        from services.agent.runtime.catalog import EffectiveToolset
         from core.config import get_settings
         settings = get_settings()
         through = str(payload.get("input_message_id") or payload.get("output_message_id") or "")
@@ -41,12 +43,6 @@ class RuntimeIngress:
             raise RuntimeError("RUNTIME_INGRESS_THROUGH_MESSAGE_MISSING")
         agent, catalog = self._versions.resolve_for_agent(
             agent_definition_id, agent_definition_revision,
-        )
-        toolset = EffectiveToolset.build(
-            agent=agent, catalog=catalog, scope=scope_kind,
-            channel=str(payload.get("channel") or "web"),
-            entitled_groups=frozenset({"code"}),
-            authorized_names=frozenset({"code_execute"}),
         )
         response = self._database.rpc("runtime_submit_ingress_v2", {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
@@ -61,7 +57,7 @@ class RuntimeIngress:
             "p_through_message_id": through,
             "p_base_context_revision": f"message:{through}",
             "p_effective_toolset_revision": catalog.revision,
-            "p_effective_toolset_hash": toolset.toolset_hash,
+            "p_effective_toolset_hash": None,
             "p_config_snapshot": {"model_id": payload.get("model_id") or ""},
             "p_capability_snapshot": {"requested_groups": ["code"]},
             "p_release_revision": settings.agent_runtime_release_revision,
@@ -76,4 +72,7 @@ class RuntimeIngress:
             outcome=data["outcome"], session_id=data.get("session_id"),
             command_id=data.get("entity_id"),
             run_id=data.get("result_entity_id"),
+            effective_toolset_revision=data.get("effective_toolset_revision"),
+            effective_toolset_hash=data.get("effective_toolset_hash"),
+            gate_state=data.get("gate_state"),
         )

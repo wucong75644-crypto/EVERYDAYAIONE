@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -14,6 +15,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from types import SimpleNamespace
 
 from tests.test_agent_runtime_model_attempt_postgres_external import CREDITS_BOOTSTRAP
 
@@ -186,6 +188,40 @@ def _settings(conn: psycopg.Connection, role: str, *, org: UUID | None = ORG,
     conn.execute("SELECT set_config('app.access_kind', %s, false)", (kind,))
 
 
+class _PostgresRuntimeRpc:
+    def __init__(self, url: str, role: str, params: dict[str, object]) -> None:
+        self.url, self.role, self.params = url, role, params
+
+    async def execute(self) -> SimpleNamespace:
+        p = self.params
+        with _connect(self.url, self.role) as conn:
+            _settings(conn, self.role)
+            values = (
+                p["p_conversation_id"], p["p_org_id"], p["p_user_id"],
+                p["p_scope_kind"], p["p_scope_id"], p["p_created_by_user_id"],
+                p["p_agent_definition_id"], p["p_agent_definition_revision"],
+                p["p_agent_definition_hash"], p["p_command_type"],
+                p["p_idempotency_key"], p["p_channel"], p["p_through_message_id"],
+                p["p_base_context_revision"], p["p_effective_toolset_revision"],
+                p["p_effective_toolset_hash"], json.dumps(p["p_config_snapshot"]),
+                json.dumps(p["p_capability_snapshot"]), p["p_release_revision"],
+                json.dumps(p["p_payload"]),
+            )
+            row = conn.execute("""SELECT runtime_submit_ingress_v2(
+              %s::uuid,%s::uuid,%s::uuid,%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s,
+              %s::uuid,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb)""", values).fetchone()
+            return SimpleNamespace(data=row[0])
+
+
+class _PostgresRuntimeDatabase:
+    def __init__(self, url: str, role: str = "everydayai_runtime") -> None:
+        self.url, self.role = url, role
+
+    def rpc(self, name: str, params: dict[str, object]) -> _PostgresRuntimeRpc:
+        assert name == "runtime_submit_ingress_v2"
+        return _PostgresRuntimeRpc(self.url, self.role, params)
+
+
 def _set_control(database: str, *, enabled: bool) -> None:
     patch = {
         "ingress_enabled": True, "non_safe_actions_enabled": enabled,
@@ -205,7 +241,7 @@ def _set_control(database: str, *, enabled: bool) -> None:
 def _ingress(url: str, key: str, *, role: str = "everydayai_runtime", channel: str = "web",
              through: UUID | None = None, definition_hash: str = DEFINITION_HASH,
              definition_revision: str = "v1", catalog_revision: str = CATALOG_REVISION,
-             conversation: UUID = CONVERSATION, toolset_hash: str = TOOLSET_HASH):
+             conversation: UUID = CONVERSATION, toolset_hash: str | None = None):
     through = through or uuid4()
     with _connect(url, role) as conn:
         _settings(conn, role)
@@ -250,6 +286,31 @@ def _assert_permissions_and_rollback(database: str) -> None:
                 conn.execute((ROOT / "migrations/rollback/224_02_agent_runtime_ar17_version_seed_rollback.sql").read_text())
 
 
+def test_real_runtime_ingress_class_uses_db_selected_empty_toolset(database: str) -> None:
+    from services.agent.runtime.ingress import RuntimeIngress
+
+    anchor = uuid4()
+    with _connect(database, "postgres") as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("INSERT INTO messages(id,conversation_id,org_id,role,content) VALUES(%s,%s,%s,'user','class')",
+                     (anchor, CONVERSATION, ORG))
+        conn.commit()
+    with _connect(database, "everydayai_runtime_admin") as conn:
+        _settings(conn, "everydayai_runtime_admin")
+        conn.execute("SELECT set_config('app.access_kind','runtime_admin',false)")
+        conn.execute("SELECT set_agent_runtime_control(%s,0,%s,%s)", (
+            uuid4(), '{"ingress_enabled":true,"non_safe_actions_enabled":false,"code_execute_enabled":false,"tool_confirmation_enabled":false,"release_revision":"ar17-test","config_revision":"ar17-test"}', "class-test"))
+        conn.execute("SELECT set_agent_runtime_org_rollout(%s,%s,true,%s)", (uuid4(), ORG, "class-test"))
+    receipt = asyncio.run(RuntimeIngress(_PostgresRuntimeDatabase(database)).submit(
+        conversation_id=str(CONVERSATION), org_id=str(ORG), user_id=str(USER),
+        scope_kind="user", scope_id=str(USER), agent_definition_id="everydayai-default",
+        agent_definition_revision="v1", command_type="submit_input",
+        idempotency_key=" class-key ", payload={"input_message_id": str(anchor), "channel": "web"}))
+    assert receipt.accepted
+    assert receipt.gate_state == "disabled"
+    assert receipt.effective_toolset_hash == DISABLED_TOOLSET_HASH
+
+
 def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> None:
     with _connect(database, "everydayai_runtime_admin") as conn:
         _settings(conn, "everydayai_runtime_admin")
@@ -283,7 +344,7 @@ def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> N
                                 (personal_conversation, UUID("11111111-1111-1111-1111-111111111111"),
                                  "11111111-1111-1111-1111-111111111111",
                                  UUID("11111111-1111-1111-1111-111111111111"), DEFINITION_HASH,
-                                 personal_anchor, f"message:{personal_anchor}", CATALOG_REVISION, TOOLSET_HASH)).fetchone()[0]
+                                 personal_anchor, f"message:{personal_anchor}", CATALOG_REVISION, None)).fetchone()[0]
     assert personal["outcome"] == "org_not_enabled"
     anchor = uuid4()
     with _connect(database, "postgres") as conn:
@@ -308,7 +369,7 @@ def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> N
                            (f'{{"id":"{task_id}","user_id":"{USER}","org_id":"{ORG}","conversation_id":"{CONVERSATION}"}}',
                             anchor, uuid4(), uuid4(), '["hello"]',
                             '{"actor":true,"channel":"wecom","chatid":"group-1","transport":"app"}',
-                            DEFINITION_HASH, CATALOG_REVISION, TOOLSET_HASH)).fetchone()
+                            DEFINITION_HASH, CATALOG_REVISION, None)).fetchone()
         assert row[0]["runtime_owned"] is True
     with ThreadPoolExecutor(max_workers=20) as pool:
         rows = list(pool.map(lambda _: _ingress(database, "ar17-real-key", through=anchor), range(50)))
@@ -460,16 +521,17 @@ def test_gate_drift_returns_original_command_and_toolset(database: str) -> None:
         conn.execute("INSERT INTO messages(id,conversation_id,org_id,role,content) VALUES(%s,%s,%s,'user','gate-2')", (second_anchor, CONVERSATION, ORG))
         conn.commit()
     _set_control(database, enabled=False)
-    closed = _ingress(database, "gate-closed", through=first_anchor, toolset_hash=DISABLED_TOOLSET_HASH)
+    closed = _ingress(database, "gate-closed", through=first_anchor)
     assert closed["outcome"] == "created"
+    assert closed["effective_toolset_hash"] == DISABLED_TOOLSET_HASH
     _set_control(database, enabled=True)
     reopened = list(ThreadPoolExecutor(max_workers=20).map(
-        lambda _: _ingress(database, "gate-closed", through=first_anchor,
-                           toolset_hash=DISABLED_TOOLSET_HASH), range(50)))
+        lambda _: _ingress(database, "gate-closed", through=first_anchor), range(50)))
     assert {row["entity_id"] for row in reopened} == {closed["entity_id"]}
     assert {row["outcome"] for row in reopened} == {"already_exists"}
     open_command = _ingress(database, "gate-open", through=second_anchor)
     assert open_command["outcome"] == "created"
+    assert open_command["effective_toolset_hash"] == TOOLSET_HASH
     _set_control(database, enabled=False)
     closed_retry = list(ThreadPoolExecutor(max_workers=20).map(
         lambda _: _ingress(database, "gate-open", through=second_anchor), range(50)))
@@ -481,16 +543,57 @@ def test_gate_drift_returns_original_command_and_toolset(database: str) -> None:
 
 
 def test_shared_catalog_disable_only_affects_definition(database: str) -> None:
+    shared_revision = "v1-shared-test"
+    shared_hash = "a" * 64
+    with _connect(database, "postgres") as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("""INSERT INTO agent_runtime_definition_facts(
+          agent_key,definition_revision,definition_hash,prompt_revision,
+          catalog_revision,effective_toolset_hash,definition_document,
+          enabled_for_new_ingress,recoverable)
+          VALUES('everydayai-default',%s,%s,'agent-runtime-production-v1',%s,%s,%s::jsonb,true,true)""",
+          (shared_revision, shared_hash, CATALOG_REVISION, TOOLSET_HASH,
+           json.dumps({"canonical_key": "everydayai-default", "revision": shared_revision})))
+        conn.execute("""INSERT INTO agent_runtime_effective_toolset_facts(
+          agent_key,definition_revision,catalog_revision,scope_kind,channel,gate_state,
+          effective_toolset_hash,toolset_document,enabled_for_new_ingress,recoverable)
+          VALUES('everydayai-default',%s,%s,'user','web','enabled',%s,'{}'::jsonb,true,true)""",
+          (shared_revision, CATALOG_REVISION, TOOLSET_HASH))
+        conn.commit()
     with _connect(database, "everydayai_runtime_admin") as conn:
         _settings(conn, "everydayai_runtime_admin")
         conn.execute("SELECT set_config('app.access_kind','runtime_admin',false)")
-        conn.execute("SELECT set_agent_runtime_definition_ingress_enabled('everydayai-default','v1-shared',true)")
+        conn.execute("SELECT set_agent_runtime_definition_ingress_enabled('everydayai-default','v1',true)")
         conn.execute("SELECT set_agent_runtime_definition_ingress_enabled('everydayai-default','v1',false)")
     with _connect(database, "everydayai_runtime") as conn:
         _settings(conn, "everydayai_runtime")
         facts = conn.execute("SELECT get_agent_runtime_version_facts(%s,%s,%s,%s,%s,%s)", (
-            "everydayai-default", "v1-shared", CATALOG_REVISION, "user", "web", TOOLSET_HASH,
+            "everydayai-default", shared_revision, CATALOG_REVISION, "user", "web", TOOLSET_HASH,
         )).fetchone()[0]
     assert facts["definition_fact"]["enabled_for_new_ingress"] is True
     assert facts["catalog_fact"]["enabled_for_new_ingress"] is True
     assert facts["effective_toolset_fact"]["enabled_for_new_ingress"] is True
+
+
+def test_seed_rollback_preserves_later_version_facts(database: str) -> None:
+    later_revision = "v3-test-later"
+    later_hash = "b" * 64
+    with _connect(database, "postgres") as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("""INSERT INTO agent_runtime_definition_facts(
+          agent_key,definition_revision,definition_hash,prompt_revision,
+          catalog_revision,effective_toolset_hash,definition_document,
+          enabled_for_new_ingress,recoverable)
+          VALUES('later-agent',%s,%s,'prompt-v3',%s,%s,'{}'::jsonb,true,true)""",
+          (later_revision, later_hash, CATALOG_REVISION, TOOLSET_HASH))
+        conn.commit()
+    with _connect(database, "postgres") as conn:
+        with conn.transaction():
+            conn.execute((ROOT / "migrations/rollback/224_02_agent_runtime_ar17_version_seed_rollback.sql").read_text())
+    with _connect(database, "postgres") as conn:
+        seed_count = conn.execute("SELECT count(*) FROM agent_runtime_definition_facts WHERE agent_key='everydayai-default' AND definition_revision IN ('v1','v2')").fetchone()[0]
+        later_count = conn.execute("SELECT count(*) FROM agent_runtime_definition_facts WHERE agent_key='later-agent' AND definition_revision=%s", (later_revision,)).fetchone()[0]
+        catalog_count = conn.execute("SELECT count(*) FROM agent_runtime_catalog_facts WHERE catalog_revision=%s", (CATALOG_REVISION,)).fetchone()[0]
+    assert seed_count == 0
+    assert later_count == 1
+    assert catalog_count == 1
