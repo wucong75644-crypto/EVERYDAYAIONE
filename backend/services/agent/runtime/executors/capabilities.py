@@ -11,6 +11,7 @@ from services.agent.runtime.domain.identity import require_stable_value
 
 ReadOperation = Callable[[str, Mapping[str, object]], Awaitable[Mapping[str, object]]]
 WorkspaceOperation = Callable[[str], Awaitable[bytes]]
+ArtifactOperation = Callable[[str, str], Awaitable[Mapping[str, object]]]
 SecretOperation = Callable[[str], Awaitable[str]]
 NetworkOperation = Callable[
     [str, str, bytes | None], Awaitable[tuple[int, bytes]]
@@ -66,6 +67,24 @@ class RestrictedWorkspaceCapability:
         if resource_ref not in self.allowed_refs:
             raise PermissionError("WORKSPACE_REF_NOT_ALLOWED")
         return await self._read(resource_ref)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RestrictedArtifactCapability:
+    """Artifact read port; references are pre-issued and tenant-bound."""
+
+    binding: CapabilityBinding
+    allowed_refs: frozenset[str]
+    _read: ArtifactOperation = field(repr=False)
+
+    async def read(
+        self, action_id: str, attempt_id: str, operation: str,
+        artifact_ref: str,
+    ) -> Mapping[str, object]:
+        self.binding.assert_live(action_id, attempt_id)
+        if artifact_ref not in self.allowed_refs:
+            raise PermissionError("ARTIFACT_REF_NOT_ALLOWED")
+        return await self._read(operation, artifact_ref)
 
 
 @dataclass(frozen=True, kw_only=True)

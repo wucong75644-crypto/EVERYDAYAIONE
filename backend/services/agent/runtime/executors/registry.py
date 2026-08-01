@@ -21,11 +21,13 @@ class ExecutorRegistry:
     ) -> None:
         self._by_type: dict[str, tuple[ExecutorDescriptor, ExecutorPort]] = {}
         self._action_to_type: dict[str, str] = {}
+        self._safety_by_action: dict[str, str] = {}
         for descriptor, executor in entries:
             self.register(descriptor, executor)
 
     def register(
         self, descriptor: ExecutorDescriptor, executor: ExecutorPort,
+        *, safety_level: str | None = None,
     ) -> None:
         side_effecting = descriptor.mode not in {
             ExecutionMode.IMMEDIATE_READ,
@@ -51,6 +53,19 @@ class ExecutorRegistry:
         self._by_type[descriptor.executor_type] = (descriptor, executor)
         for action_kind in sorted(descriptor.action_kinds):
             self._action_to_type[action_kind] = descriptor.executor_type
+            if safety_level is not None:
+                self._safety_by_action[action_kind] = safety_level
+
+    def register_read(
+        self, descriptor: ExecutorDescriptor, executor: ExecutorPort,
+        *, safety_level: str,
+    ) -> None:
+        """Register a read Executor only with an explicit safe declaration."""
+        if descriptor.mode is not ExecutionMode.IMMEDIATE_READ:
+            raise ValueError("read executor must use immediate_read mode")
+        if safety_level != "safe":
+            raise ValueError("read executor safety must be safe")
+        self.register(descriptor, executor, safety_level=safety_level)
 
     def resolve(
         self, action_kind: str,
@@ -64,3 +79,6 @@ class ExecutorRegistry:
         return tuple(
             self._by_type[key][0] for key in sorted(self._by_type)
         )
+
+    def safety_level(self, action_kind: str) -> str | None:
+        return self._safety_by_action.get(action_kind)

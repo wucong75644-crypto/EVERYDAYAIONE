@@ -57,6 +57,7 @@ class RuntimeToolCatalog:
     @classmethod
     def from_executor_registry(cls, registry: "ExecutorRegistry") -> "RuntimeToolCatalog":
         from config.code_tools import CODE_TOOL_SCHEMAS
+        from config.runtime_read_tools import RUNTIME_READ_TOOL_SCHEMAS
         from config.tool_safety import get_safety_level
         from services.agent.runtime.executors.sandbox_job import (
             SANDBOX_EXECUTOR_TYPE,
@@ -64,26 +65,65 @@ class RuntimeToolCatalog:
         result = cls()
         for descriptor in registry.descriptors():
             for name in sorted(descriptor.action_kinds):
-                schema = CODE_TOOL_SCHEMAS.get(name)
+                schema = CODE_TOOL_SCHEMAS.get(name) or RUNTIME_READ_TOOL_SCHEMAS.get(name)
                 if schema is None:
-                    continue
+                    raise ValueError(f"RUNTIME_TOOL_SCHEMA_MISSING:{name}")
+                safety = get_safety_level(name).value
+                if descriptor.mode.value == "immediate_read":
+                    if safety != "safe" or registry.safety_level(name) != "safe":
+                        raise ValueError(f"RUNTIME_TOOL_SAFETY_MISSING:{name}")
                 result.register(RuntimeToolDefinition(
-                    canonical_name=name, tool_group="code", schema={
+                    canonical_name=name, tool_group=(
+                        "code" if name == "code_execute" else
+                        _read_tool_group(name)
+                    ), schema={
                         "type": "object", "additionalProperties": False, **schema,
-                    }, safety_level=get_safety_level(name).value,
+                    }, safety_level=safety,
                     executor_type=descriptor.executor_type,
                     executor_revision=descriptor.revision,
                     capability_requirements=descriptor.required_capabilities,
-                    allowed_scope_kinds=frozenset({"user", "channel"}),
+                    allowed_scope_kinds=(
+                        _read_scope_kinds(name)
+                        if descriptor.mode.value == "immediate_read"
+                        else frozenset({"user", "channel"})
+                    ),
                     allowed_channels=frozenset({"web", "wecom"}),
-                    side_effect="sandbox" if descriptor.executor_type == SANDBOX_EXECUTOR_TYPE else "unknown",
+                    side_effect="sandbox" if descriptor.executor_type == SANDBOX_EXECUTOR_TYPE else "none",
                     authorization_requirement=descriptor.authorization.value,
-                    retry_semantics="reconcile_only",
-                    reconcile_semantics="executor_defined",
-                    cancel_semantics=descriptor.cancellation.value,
+                    retry_semantics=(
+                        "retry_safe"
+                        if descriptor.mode.value == "immediate_read"
+                        else "reconcile_only"
+                    ),
+                    reconcile_semantics=(
+                        "unsupported"
+                        if descriptor.mode.value == "immediate_read"
+                        else "executor_defined"
+                    ),
+                    cancel_semantics=(
+                        "unsupported"
+                        if descriptor.mode.value == "immediate_read"
+                        else descriptor.cancellation.value
+                    ),
                     result_schema_revision=descriptor.result_schema_revision,
                 ))
         return result
+
+
+def _read_tool_group(tool_name: str) -> str:
+    from services.agent.runtime.executors.read_registry import READ_TOOL_SPECS
+    try:
+        return READ_TOOL_SPECS[tool_name][1]
+    except KeyError as exc:
+        raise ValueError(f"RUNTIME_TOOL_GROUP_MISSING:{tool_name}") from exc
+
+
+def _read_scope_kinds(tool_name: str) -> frozenset[str]:
+    from services.agent.runtime.executors.read_registry import READ_SCOPE_KINDS
+    try:
+        return READ_SCOPE_KINDS[tool_name]
+    except KeyError as exc:
+        raise ValueError(f"RUNTIME_TOOL_SCOPE_MISSING:{tool_name}") from exc
 
 
 def build_default_runtime_catalog() -> RuntimeToolCatalog:
