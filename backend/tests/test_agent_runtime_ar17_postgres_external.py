@@ -206,6 +206,7 @@ def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> N
     first = _ingress(database, "ar17-real-key", through=anchor)
     assert first["outcome"] == "created"
     assert _ingress(database, "ar17-real-key", through=anchor)["entity_id"] == first["entity_id"]
+    assert _ingress(database, "ar17-real-key", through=anchor, channel="wecom")["outcome"] == "idempotency_conflict"
     with pytest.raises(psycopg.Error, match="RUNTIME_INGRESS_V2_BINDING_INVALID"):
         _ingress(database, "ar17-real-key", through=anchor, definition_hash="0" * 64)
     with _connect(database, "everydayai_wecom_runtime") as conn:
@@ -250,10 +251,40 @@ def test_real_ingress_claim_context_permissions_and_rollback(database: str) -> N
     assert retry["context_hash"] == context["context_hash"]
     assert [message["id"] for message in retry["messages"]] == [str(anchor)]
     with _connect(database, "postgres") as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE agent_runs SET context_receipt=context_receipt||'{\"base_context_revision\":\"message:drift\"}'::jsonb WHERE id=%s", (run_id,))
+        conn.commit()
+    with _connect(database, "everydayai_agent_runtime_worker") as conn:
+        _settings(conn, "everydayai_agent_runtime_worker")
+        assert conn.execute("SELECT get_agent_runtime_model_context_v2(%s,'ar17-worker',%s)",
+                            (run_id, claimed_run["execution_token"])).fetchone()[0]["outcome"] == "context_revision_mismatch"
+    with _connect(database, "postgres") as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE agent_runs SET context_receipt=context_receipt||jsonb_build_object('base_context_revision',%s::text) WHERE id=%s",
+                     (f"message:{anchor}", run_id))
+        conn.commit()
+    with _connect(database, "postgres") as conn:
         security = conn.execute("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid='agent_runtime_definition_facts'::regclass").fetchone()
         privileges = conn.execute("SELECT has_function_privilege('everydayai_runtime','runtime_submit_ingress_v2(uuid,uuid,uuid,text,text,uuid,text,text,text,text,text,text,uuid,text,text,text,jsonb,jsonb,text,jsonb)','execute'), has_table_privilege('everydayai_runtime','agent_runtime_definition_facts','select')").fetchone()
+        matrix = conn.execute("""
+          SELECT rolname,
+            has_function_privilege(rolname,'runtime_submit_ingress_v2(uuid,uuid,uuid,text,text,uuid,text,text,text,text,text,text,uuid,text,text,text,jsonb,jsonb,text,jsonb)','execute'),
+            has_function_privilege(rolname,'get_agent_runtime_model_context_v2(uuid,text,uuid)','execute'),
+            has_table_privilege(rolname,'agent_runtime_definition_facts','select')
+          FROM (VALUES ('public'),('everydayai_runtime'),('everydayai_wecom_runtime'),
+                       ('everydayai_agent_runtime_worker'),('everydayai_worker'),('everydayai_sync')) roles(rolname)
+        """).fetchall()
     assert security == (True, True)
     assert privileges == (True, False)
+    expected = {
+        "public": (False, False, False),
+        "everydayai_runtime": (True, False, False),
+        "everydayai_wecom_runtime": (True, False, False),
+        "everydayai_agent_runtime_worker": (False, True, False),
+        "everydayai_worker": (False, False, False),
+        "everydayai_sync": (False, False, False),
+    }
+    assert {row[0]: tuple(row[1:]) for row in matrix} == expected
     with pytest.raises(psycopg.Error, match="AGENT_RUNTIME_224_ROLLBACK_GUARD_FACTS_EXIST"):
         with psycopg.connect(database) as conn:
             with conn.transaction():
