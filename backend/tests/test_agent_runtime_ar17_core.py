@@ -6,6 +6,7 @@ from services.agent.runtime.agents import AgentDefinition
 from services.agent.runtime.catalog import (
     EffectiveToolset, build_default_runtime_catalog,
 )
+from services.agent.runtime.catalog.types import RuntimeToolDefinition
 from services.agent.runtime.context import build_runtime_context
 
 
@@ -44,13 +45,39 @@ def test_effective_toolset_is_fail_closed_and_executor_backed() -> None:
     toolset.validate_call("code_execute", {"code": "print(1)", "description": "test"})
 
 
+def test_effective_toolset_validates_nested_schema_and_json_values() -> None:
+    tool = RuntimeToolDefinition(
+        canonical_name="nested", tool_group="code",
+        schema={"type": "object", "required": ["mode", "items"],
+                "additionalProperties": False,
+                "properties": {"mode": {"type": "string", "enum": ["safe"]},
+                                "items": {"type": "array", "items": {"type": "integer"}}}},
+        safety_level="safe", executor_type="test", executor_revision=1,
+        capability_requirements=frozenset(), side_effect="none",
+        authorization_requirement="none", retry_semantics="safe",
+        reconcile_semantics="none", cancel_semantics="none", result_schema_revision=1,
+    )
+    toolset = EffectiveToolset(definitions=(tool,), catalog_revision="catalog",
+                               toolset_hash="toolset")
+    toolset.validate_call("nested", {"mode": "safe", "items": [1, 2]})
+    for invalid in (
+        {"mode": "safe", "items": [1], "extra": True},
+        {"mode": "unsafe", "items": [1]},
+        {"mode": "safe", "items": [1.5]},
+        {"mode": "safe", "items": [float("nan")]},
+    ):
+        with pytest.raises(ValueError, match="SCHEMA_INVALID"):
+            toolset.validate_call("nested", invalid)
+
+
 def test_context_is_anchor_bound_and_repeats_tool_call_and_result_once() -> None:
     toolset = _toolset()
     action = {
         "model_step_id": "step-1", "stable_tool_call_id": "call-1",
-        "tool_name": "code_execute", "arguments": {
+        "tool_name": "code_execute", "status": "completed", "arguments": {
             "code": "print(1)", "description": "test",
-        }, "result": {"status": "success"},
+        }, "result": {"status": "success", "summary": "done",
+                       "data": {"value": 1}, "external_receipt": "hidden"},
     }
     first = build_runtime_context(
         run={"id": "run-1", "context_receipt": {
@@ -71,6 +98,8 @@ def test_context_is_anchor_bound_and_repeats_tool_call_and_result_once() -> None
     assert [message["role"] for message in messages] == [
         "user", "assistant", "tool",
     ]
+    assert '"status":"success"' in messages[-1]["content"]
+    assert "external_receipt" not in messages[-1]["content"]
 
 
 def test_context_rejects_missing_anchor_and_unknown_action() -> None:

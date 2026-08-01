@@ -27,6 +27,59 @@ REVOKE ALL ON TABLE agent_runtime_definition_facts
  FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai;
 
+CREATE FUNCTION _agent_runtime_224_expected_facts()
+RETURNS JSONB LANGUAGE SQL IMMUTABLE SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+ SELECT jsonb_build_object(
+   'agent_key','everydayai-default','definition_revision','v1',
+   'definition_hash','b5818e976876aa8c0ead0b50ebea8439fe0e230e9d55dfac9e7d5580d18895ff',
+   'prompt_revision','agent-runtime-production-v1',
+   'catalog_revision','7e449bf4ca2a4827d5fa96df4721c4978d9a1d96e0215012500669e5ac2eb131',
+   'effective_toolset_hash','897d940de4aa6ebca9a5df0197824ac906f6cea2469461c5ec0ae88e595d90fc'
+ )
+$$;
+
+CREATE FUNCTION ensure_agent_runtime_definition_fact(
+ p_agent_key TEXT,p_definition_revision TEXT,p_definition_hash TEXT,
+ p_prompt_revision TEXT,p_catalog_revision TEXT,p_effective_toolset_hash TEXT
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE expected JSONB; current_fact agent_runtime_definition_facts%ROWTYPE;
+BEGIN
+ expected:=_agent_runtime_224_expected_facts();
+ IF jsonb_build_object(
+      'agent_key',p_agent_key,'definition_revision',p_definition_revision,
+      'definition_hash',p_definition_hash,'prompt_revision',p_prompt_revision,
+      'catalog_revision',p_catalog_revision,
+      'effective_toolset_hash',p_effective_toolset_hash) IS DISTINCT FROM expected THEN
+   RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_MISMATCH' USING ERRCODE='22023';
+ END IF;
+ INSERT INTO agent_runtime_definition_facts(
+   agent_key,definition_revision,definition_hash,prompt_revision,
+   catalog_revision,effective_toolset_hash)
+ VALUES(p_agent_key,p_definition_revision,p_definition_hash,p_prompt_revision,
+        p_catalog_revision,p_effective_toolset_hash)
+ ON CONFLICT (agent_key,definition_revision) DO NOTHING;
+ SELECT * INTO current_fact FROM agent_runtime_definition_facts
+  WHERE agent_key=p_agent_key AND definition_revision=p_definition_revision;
+ IF current_fact.definition_hash IS DISTINCT FROM p_definition_hash
+    OR current_fact.catalog_revision IS DISTINCT FROM p_catalog_revision
+    OR current_fact.effective_toolset_hash IS DISTINCT FROM p_effective_toolset_hash
+    OR NOT current_fact.active THEN
+   RAISE EXCEPTION 'AGENT_RUNTIME_DEFINITION_FACT_CONFLICT' USING ERRCODE='23505';
+ END IF;
+ RETURN to_jsonb(current_fact);
+END $$;
+
+CREATE FUNCTION get_agent_runtime_definition_fact(
+ p_agent_key TEXT,p_definition_revision TEXT
+) RETURNS JSONB LANGUAGE SQL STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+ SELECT COALESCE((SELECT to_jsonb(f) FROM agent_runtime_definition_facts f
+   WHERE f.agent_key=p_agent_key AND f.definition_revision=p_definition_revision),
+   jsonb_build_object('outcome','not_found'))
+$$;
+
 CREATE FUNCTION runtime_submit_ingress_v2(
  p_conversation_id UUID,p_org_id UUID,p_user_id UUID,p_scope_kind TEXT,
  p_scope_id TEXT,p_created_by_user_id UUID,p_agent_definition_id TEXT,
@@ -51,16 +104,38 @@ BEGIN
  ) THEN
    RETURN jsonb_build_object('outcome','org_not_enabled');
  END IF;
- IF NULLIF(btrim(p_agent_definition_hash),'') IS NULL
+ IF p_agent_definition_id IS DISTINCT FROM 'everydayai-default'
+    OR p_agent_definition_revision IS DISTINCT FROM 'v1'
+    OR p_agent_definition_hash IS DISTINCT FROM
+      (_agent_runtime_224_expected_facts()->>'definition_hash')
     OR NULLIF(btrim(p_effective_toolset_revision),'') IS NULL
-    OR p_effective_toolset_hash !~ '^[0-9a-f]{64}$'
+    OR p_effective_toolset_revision IS DISTINCT FROM
+      (_agent_runtime_224_expected_facts()->>'catalog_revision')
+    OR p_effective_toolset_hash IS DISTINCT FROM
+      (_agent_runtime_224_expected_facts()->>'effective_toolset_hash')
+    OR NULLIF(btrim(p_release_revision),'') IS NULL
+    OR NULLIF(btrim(p_scope_kind),'') IS NULL
+    OR p_scope_kind NOT IN ('user','channel')
+    OR NULLIF(btrim(p_scope_id),'') IS NULL
+    OR NULLIF(btrim(p_idempotency_key),'') IS NULL
+    OR p_command_type IS DISTINCT FROM 'submit_input'
+    OR jsonb_typeof(COALESCE(p_payload,'{}'::JSONB)) IS DISTINCT FROM 'object'
     OR NULLIF(btrim(p_base_context_revision),'') IS NULL
-    OR p_through_message_id IS NULL
-    OR p_channel NOT IN ('web','wecom')
+    OR p_base_context_revision IS DISTINCT FROM 'message:'||p_through_message_id::TEXT
+    OR NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=p_through_message_id
+       AND m.conversation_id=p_conversation_id
+       AND m.org_id IS NOT DISTINCT FROM p_org_id)
     OR jsonb_typeof(p_config_snapshot) IS DISTINCT FROM 'object'
     OR jsonb_typeof(p_capability_snapshot) IS DISTINCT FROM 'object' THEN
    RAISE EXCEPTION 'RUNTIME_INGRESS_V2_BINDING_INVALID' USING ERRCODE='22023';
  END IF;
+ IF p_through_message_id IS NULL OR p_channel NOT IN ('web','wecom') THEN
+   RAISE EXCEPTION 'RUNTIME_INGRESS_V2_BINDING_INVALID' USING ERRCODE='22023';
+ END IF;
+ PERFORM ensure_agent_runtime_definition_fact(
+   p_agent_definition_id,p_agent_definition_revision,p_agent_definition_hash,
+   'agent-runtime-production-v1',p_effective_toolset_revision,
+   p_effective_toolset_hash);
  s:=ensure_agent_runtime_session(p_conversation_id,p_org_id,p_user_id,
    p_scope_kind,p_scope_id,p_created_by_user_id,p_agent_definition_id,
    p_agent_definition_revision);
@@ -116,6 +191,7 @@ CREATE FUNCTION get_agent_runtime_model_context_v2(
  SET search_path = pg_catalog, public AS $$
 DECLARE r agent_runs%ROWTYPE; s agent_runtime_sessions%ROWTYPE;
  c agent_session_commands%ROWTYPE; anchor messages%ROWTYPE;
+ v_messages JSONB; v_context_hash TEXT;
 BEGIN
  PERFORM _assert_agent_runtime_actor(TRUE);
  SELECT * INTO r FROM agent_runs WHERE id=p_run_id;
@@ -129,6 +205,36 @@ BEGIN
       AND ra.ended_at IS NULL) THEN
   RETURN jsonb_build_object('outcome','ownership_lost');
  END IF;
+ IF (r.context_receipt->>'base_context_revision') IS DISTINCT FROM
+      ('message:' || (r.context_receipt->>'through_message_id'))
+    OR r.context_receipt->>'through_message_id' IS NULL
+    OR r.context_receipt->>'session_id' IS DISTINCT FROM s.id::TEXT
+    OR r.context_receipt->>'conversation_id' IS DISTINCT FROM s.conversation_id::TEXT
+    OR r.config_snapshot IS DISTINCT FROM c.payload->'run_envelope'->'config_snapshot'
+    OR r.capability_snapshot IS DISTINCT FROM c.payload->'run_envelope'->'capability_snapshot'
+    OR c.payload->>'release_revision' IS DISTINCT FROM
+       r.config_snapshot->>'release_revision'
+    OR r.config_snapshot->>'base_context_revision' IS DISTINCT FROM
+      r.context_receipt->>'base_context_revision'
+    OR r.config_snapshot->>'through_message_id' IS DISTINCT FROM
+      r.context_receipt->>'through_message_id'
+    OR r.capability_snapshot->>'effective_toolset_revision' IS DISTINCT FROM
+      (_agent_runtime_224_expected_facts()->>'catalog_revision')
+   OR r.capability_snapshot->>'effective_toolset_hash' IS DISTINCT FROM
+      (_agent_runtime_224_expected_facts()->>'effective_toolset_hash')
+    OR r.config_snapshot->>'agent_definition_hash' IS DISTINCT FROM
+       (_agent_runtime_224_expected_facts()->>'definition_hash')
+    OR r.capability_snapshot->>'agent_definition_hash' IS DISTINCT FROM
+       (_agent_runtime_224_expected_facts()->>'definition_hash')
+    OR c.payload->'run_envelope'->>'schema_revision' IS DISTINCT FROM '2'
+    OR c.payload->'run_envelope'->'context_receipt'->>'through_message_id'
+       IS DISTINCT FROM r.context_receipt->>'through_message_id'
+    OR NOT EXISTS (SELECT 1 FROM agent_runtime_definition_facts f
+       WHERE f.agent_key=s.agent_definition_id
+         AND f.definition_revision=s.agent_definition_revision
+         AND f.active) THEN
+  RETURN jsonb_build_object('outcome','context_revision_mismatch');
+ END IF;
  SELECT * INTO anchor FROM messages WHERE id=NULLIF(
    r.context_receipt->>'through_message_id','')::uuid
    AND conversation_id=s.conversation_id
@@ -136,15 +242,19 @@ BEGIN
  IF anchor.id IS NULL THEN
   RETURN jsonb_build_object('outcome','context_anchor_missing');
  END IF;
+ SELECT coalesce(jsonb_agg(jsonb_build_object(
+      'id',m.id,'role',m.role,'content',m.content,'turn_id',m.turn_id)
+      ORDER BY m.created_at,m.id),'[]'::jsonb) INTO v_messages
+   FROM messages m
+   WHERE m.conversation_id=s.conversation_id
+     AND m.org_id IS NOT DISTINCT FROM s.org_id
+     AND m.status='completed' AND (m.created_at,m.id)<=(anchor.created_at,anchor.id);
+ v_context_hash:=encode(sha256(convert_to(v_messages::TEXT,'UTF8')),'hex');
  RETURN jsonb_build_object('outcome','found','session',to_jsonb(s),
   'run',to_jsonb(r),'command',to_jsonb(c),
   'task',(SELECT to_jsonb(t) FROM tasks t WHERE t.id=NULLIF(c.payload->>'task_id','')::uuid
       AND t.conversation_id=s.conversation_id),
-  'messages',(SELECT coalesce(jsonb_agg(jsonb_build_object(
-      'id',m.id,'role',m.role,'content',m.content,'turn_id',m.turn_id)
-      ORDER BY m.created_at,m.id),'[]'::jsonb) FROM messages m
-      WHERE m.conversation_id=s.conversation_id AND m.org_id IS NOT DISTINCT FROM s.org_id
-      AND m.status='completed' AND (m.created_at,m.id)<=(anchor.created_at,anchor.id)),
+  'messages',v_messages,'context_hash',v_context_hash,
   'actions',(SELECT coalesce(jsonb_agg(to_jsonb(a)||jsonb_build_object('result',
       (SELECT to_jsonb(ar) FROM agent_action_results ar WHERE ar.action_id=a.id))
       ORDER BY a.model_step_id,a.action_index,a.id),'[]'::jsonb)
@@ -197,7 +307,9 @@ END $$;
 REVOKE ALL ON FUNCTION runtime_submit_ingress_v2(
  UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,UUID,TEXT,
  TEXT,TEXT,JSONB,JSONB,TEXT,JSONB),
- get_agent_runtime_model_context_v2(UUID,TEXT,UUID) FROM PUBLIC;
+  get_agent_runtime_model_context_v2(UUID,TEXT,UUID),
+  ensure_agent_runtime_definition_fact(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT),
+  get_agent_runtime_definition_fact(TEXT,TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION enqueue_wecom_runtime_turn_v4(
  JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT)
  FROM PUBLIC,everydayai_runtime,everydayai_worker,everydayai_wecom_runtime,
@@ -207,6 +319,8 @@ GRANT EXECUTE ON FUNCTION runtime_submit_ingress_v2(
  TEXT,TEXT,JSONB,JSONB,TEXT,JSONB) TO everydayai_runtime,everydayai_wecom_runtime;
 GRANT EXECUTE ON FUNCTION get_agent_runtime_model_context_v2(UUID,TEXT,UUID)
  TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION get_agent_runtime_definition_fact(TEXT,TEXT)
+ TO everydayai_agent_runtime_worker,everydayai_runtime,everydayai_wecom_runtime;
 GRANT EXECUTE ON FUNCTION enqueue_wecom_runtime_turn_v4(
  JSONB,UUID,UUID,UUID,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT)
  TO everydayai_wecom_runtime;

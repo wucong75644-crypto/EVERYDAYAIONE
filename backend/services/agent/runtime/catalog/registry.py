@@ -55,7 +55,7 @@ class RuntimeToolCatalog:
                     continue
                 result.register(RuntimeToolDefinition(
                     canonical_name=name, tool_group="code", schema={
-                        "type": "object", **schema,
+                        "type": "object", "additionalProperties": False, **schema,
                     }, safety_level=get_safety_level(name).value,
                     executor_type=descriptor.executor_type,
                     executor_revision=descriptor.revision,

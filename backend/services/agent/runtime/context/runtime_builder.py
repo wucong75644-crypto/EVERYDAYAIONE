@@ -74,15 +74,58 @@ def _action_messages(
         for item in step_actions:
             action_result = item.get("result")
             result.append({"role": "tool", "tool_call_id": str(item["stable_tool_call_id"]),
-                           "content": _result_content(action_result)})
+                           "content": _result_content(
+                               action_result, str(item.get("status") or "unknown"),
+                           )})
     return result
 
 
-def _result_content(value: object) -> str:
-    if not isinstance(value, dict):
-        return "Action result unavailable; the action is still unresolved."
-    status = str(value.get("status") or "unknown")
-    return f"Action terminal result status: {status}."
+def _result_content(value: object, action_status: str) -> str:
+    import json
+
+    if action_status not in {"completed", "failed"} or not isinstance(value, dict):
+        return _canonical_json({
+            "status": "unknown" if action_status == "unknown" else "unresolved",
+            "action_status": action_status,
+        })
+    result_status = str(value.get("status") or "error")
+    if result_status not in {"success", "empty", "degraded", "error"}:
+        result_status = "error"
+    view = {
+        "status": result_status,
+        "summary": _bounded_text(value.get("summary")),
+        "data": _bounded_json(value.get("data")),
+        "artifact_ids": _bounded_json(value.get("artifact_ids", [])),
+        "error_code": _bounded_text(value.get("error_code")),
+    }
+    return json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _bounded_text(value: object, limit: int = 2000) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value[:limit]
+
+
+def _bounded_json(value: object, limit: int = 20000) -> object:
+    import json
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+    if len(encoded) > limit:
+        return {"truncated": True, "sha256": _sha256(encoded), "bytes": len(encoded)}
+    return value
+
+
+def _canonical_json(value: object) -> str:
+    import json
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sha256(value: str) -> str:
+    import hashlib
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def _json_arguments(value: object) -> str:
