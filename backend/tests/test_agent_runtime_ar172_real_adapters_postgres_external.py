@@ -27,6 +27,7 @@ from tests.test_agent_runtime_ar17_postgres_external import database
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 ORG = UUID("22222222-2222-2222-2222-222222222222")
+OTHER_ORG = UUID("77777777-7777-7777-7777-777777777777")
 USER = UUID("44444444-4444-4444-4444-444444444444")
 CONVERSATION = UUID("55555555-5555-5555-5555-555555555555")
 CHANNEL_CONVERSATION = UUID("66666666-6666-6666-6666-666666666666")
@@ -76,6 +77,7 @@ ALTER TABLE erp_suppliers ENABLE ROW LEVEL SECURITY; ALTER TABLE erp_suppliers F
 ALTER TABLE erp_document_items ENABLE ROW LEVEL SECURITY; ALTER TABLE erp_document_items FORCE ROW LEVEL SECURITY;
 DO $$ DECLARE t TEXT; BEGIN FOREACH t IN ARRAY ARRAY['messages','conversation_artifacts','knowledge_nodes','conversation_data_evidence','memory_atoms','erp_products','erp_product_skus','erp_stock_status','erp_product_daily_stats','erp_product_platform_map','erp_shops','erp_warehouses','erp_suppliers','erp_document_items'] LOOP EXECUTE format('CREATE POLICY ar172_owner_%I ON %I FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE)',t,t); END LOOP; END $$;
 INSERT INTO knowledge_nodes VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', NULL, FALSE, 'general', 'fact', 'knowledge', 'knowledge fact', 1, 'fixture', '{}');
+INSERT INTO organizations(id) VALUES ('77777777-7777-7777-7777-777777777777');
 INSERT INTO conversation_data_evidence VALUES ('evidence-1','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','fixture','["amount"]','[{"amount":4}]','{}','{}','{}',30,1,'ready');
     INSERT INTO memory_atoms VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab','44444444-4444-4444-4444-444444444444','22222222-2222-2222-2222-222222222222','memory fact','{}',now(),NULL,ARRAY[]::UUID[],FALSE,'active');
     INSERT INTO messages(id,conversation_id,org_id,role,content,status,context_revision) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaae','55555555-5555-5555-5555-555555555555','22222222-2222-2222-2222-222222222222','user','hello','completed',1);
@@ -192,6 +194,18 @@ async def test_real_agent_runtime_worker_executes_all_database_adapters(database
             conn.commit()
         terminal = await registry.resolve("local_shop_list")[1].dispatch(_attempt("local_shop_list", ids["local_shop_list"], REQUESTS["local_shop_list"]), REQUESTS["local_shop_list"])
         assert terminal.outcome is ExecutionOutcome.FAILED
+        with psycopg.connect(url) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("UPDATE agent_actions SET org_id=%s WHERE id=%s", (OTHER_ORG, UUID(ids["local_warehouse_list"][0])))
+            conn.commit()
+        cross_tenant = await registry.resolve("local_warehouse_list")[1].dispatch(_attempt("local_warehouse_list", ids["local_warehouse_list"], REQUESTS["local_warehouse_list"]), REQUESTS["local_warehouse_list"])
+        assert cross_tenant.outcome is ExecutionOutcome.FAILED
+        with psycopg.connect(url) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("UPDATE agent_actions SET session_id=(SELECT id FROM agent_runtime_sessions WHERE conversation_id=%s) WHERE id=%s", (CONVERSATION, UUID(ids["local_supplier_list"][0])))
+            conn.commit()
+        wrong_conversation = await registry.resolve("local_supplier_list")[1].dispatch(_attempt("local_supplier_list", ids["local_supplier_list"], REQUESTS["local_supplier_list"]), REQUESTS["local_supplier_list"])
+        assert wrong_conversation.outcome is ExecutionOutcome.FAILED
     finally:
         await client.close()
 
