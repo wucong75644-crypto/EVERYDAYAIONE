@@ -11,6 +11,8 @@ from services.agent.runtime.executors.provider_adapters import (
     LocalArtifactProvider, MediaTaskPort, PortBackedProvider, ProviderTransport,
     ResourceMutationPort,
 )
+from services.agent.runtime.infrastructure.postgres.specialist_repository import PostgresSpecialistRepository
+from services.agent.runtime.providers.callback_inbox import CallbackInbox, CallbackSignatureVerifier
 from services.agent.runtime.executors.registry import ExecutorRegistry
 from services.agent.runtime.executors.specialist_contracts import SpecialistProvider
 from services.agent.runtime.executors.specialist_registry import (
@@ -29,6 +31,10 @@ class NonProductionSpecialistPorts:
     media_task: MediaTaskPort
     resource_mutation: ResourceMutationPort
     child_run: ChildRunPort
+    facts: object | None = None
+    local_data: ArtifactPort | None = None
+    file_analyze: ArtifactPort | None = None
+    fetch_all_pages: ArtifactPort | None = None
 
 
 def build_nonproduction_specialist_registry(ports: NonProductionSpecialistPorts) -> ExecutorRegistry:
@@ -42,7 +48,8 @@ def build_nonproduction_specialist_registry(ports: NonProductionSpecialistPorts)
             descriptor,
             executor_cls(action_kind=tool, executor_type=descriptor.executor_type,
                          revision=descriptor.revision, provider=providers[tool],
-                         async_submit=descriptor.mode.value != "immediate_read"),
+                         async_submit=descriptor.mode.value != "immediate_read",
+                         facts=ports.facts),
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return registry
@@ -52,16 +59,44 @@ def build_nonproduction_specialist_registry_from_services(
     *, transport: ProviderTransport, erp_dispatcher: ErpDispatcherPort,
     erp_search: object, artifact: ArtifactPort, media_task: MediaTaskPort,
     child_run: ChildRunPort, workspace: object, scheduler: object,
-    sync: object | None = None,
+    sync: object | None = None, repository: PostgresSpecialistRepository | None = None,
+    local_data: ArtifactPort | None = None, file_analyze: ArtifactPort | None = None,
+    fetch_all_pages: ArtifactPort | None = None,
 ) -> ExecutorRegistry:
     """Composition root for concrete service instances, not test-only ports."""
-    from services.agent.runtime.executors.resource_contracts import RuntimeResourceMutationService
-    resources = RuntimeResourceMutationService(workspace=workspace, scheduler=scheduler, sync=sync)
+    from dataclasses import replace
+    from services.agent.runtime.executors.resource_contracts import (
+        RuntimeResourceMutationService, ScheduledTaskService, WorkspaceResourceService,
+    )
+    if repository is not None and isinstance(workspace, WorkspaceResourceService) and workspace.facts is None:
+        workspace = replace(workspace, facts=repository)
+    if repository is not None and isinstance(scheduler, ScheduledTaskService) and scheduler.facts is None:
+        scheduler = replace(scheduler, facts=repository)
+    resources = RuntimeResourceMutationService(workspace=workspace, scheduler=scheduler, sync=sync, facts=repository)
     return build_nonproduction_specialist_registry(NonProductionSpecialistPorts(
         transport=transport, erp_dispatcher=erp_dispatcher, erp_search=erp_search,
         artifact=artifact, media_task=media_task, resource_mutation=resources,
-        child_run=child_run,
+        child_run=child_run, facts=repository, local_data=local_data,
+        file_analyze=file_analyze, fetch_all_pages=fetch_all_pages,
     ))
+
+
+def build_nonproduction_specialist_runtime(
+    *, callback_verifier: CallbackSignatureVerifier, repository: PostgresSpecialistRepository,
+    transport: ProviderTransport, erp_dispatcher: ErpDispatcherPort, erp_search: object,
+    artifact: ArtifactPort, media_task: MediaTaskPort, child_run: ChildRunPort,
+    workspace: object, scheduler: object, sync: object | None = None,
+    local_data: ArtifactPort | None = None, file_analyze: ArtifactPort | None = None,
+    fetch_all_pages: ArtifactPort | None = None,
+) -> tuple[ExecutorRegistry, CallbackInbox]:
+    """Composition root that exposes both Executors and durable callback ingress."""
+    registry = build_nonproduction_specialist_registry_from_services(
+        transport=transport, erp_dispatcher=erp_dispatcher, erp_search=erp_search,
+        artifact=artifact, media_task=media_task, child_run=child_run,
+        workspace=workspace, scheduler=scheduler, sync=sync, repository=repository,
+        local_data=local_data, file_analyze=file_analyze, fetch_all_pages=fetch_all_pages,
+    )
+    return registry, CallbackInbox(callback_verifier, repository)
 
 
 def _providers(ports: NonProductionSpecialistPorts) -> dict[str, SpecialistProvider]:
@@ -76,7 +111,8 @@ def _providers(ports: NonProductionSpecialistPorts) -> dict[str, SpecialistProvi
     for tool in ERP_CATALOG_TOOLS:
         providers[tool] = ErpApiSearchProvider(search=ports.erp_search)
     for tool in ARTIFACT_JOB_TOOLS:
-        providers[tool] = LocalArtifactProvider(port=ports.artifact, operation=tool)
+        specialized = {"local_data": ports.local_data, "file_analyze": ports.file_analyze, "fetch_all_pages": ports.fetch_all_pages}.get(tool)
+        providers[tool] = LocalArtifactProvider(port=specialized or ports.artifact, operation=tool)
     providers["generate_image"] = KieMediaProvider(ports.transport, kind="image", task_port=ports.media_task)
     providers["generate_video"] = KieMediaProvider(ports.transport, kind="video", task_port=ports.media_task)
     for tool in CHILD_RUN_TOOLS:
@@ -90,4 +126,4 @@ def _providers(ports: NonProductionSpecialistPorts) -> dict[str, SpecialistProvi
     return providers
 
 
-__all__ = ["NonProductionSpecialistPorts", "build_nonproduction_specialist_registry", "build_nonproduction_specialist_registry_from_services"]
+__all__ = ["NonProductionSpecialistPorts", "build_nonproduction_specialist_registry", "build_nonproduction_specialist_registry_from_services", "build_nonproduction_specialist_runtime"]

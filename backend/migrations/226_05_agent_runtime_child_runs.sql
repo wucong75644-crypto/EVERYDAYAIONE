@@ -25,19 +25,22 @@ BEGIN
  END IF;
  INSERT INTO agent_session_commands(session_id,org_id,user_id,command_type,idempotency_key,payload,request_hash)
  VALUES(p.session_id,p.org_id,p.user_id,'submit_input','child:'||a.id::TEXT||':'||$4,
-        jsonb_build_object('parent_run_id',p.id,'parent_action_id',a.id,'request_hash',$3,'capability',$5),encode(digest(convert_to($3,'UTF8'),'sha256'),'hex'))
+        jsonb_build_object('parent_run_id',p.id,'parent_action_id',a.id,'request_hash',$3,'capability',$5),left(encode(digest(convert_to($3,'UTF8'),'sha256'),'hex'),32))
  RETURNING id INTO child_command;
  INSERT INTO agent_runs(session_id,command_id,org_id,user_id,run_kind,status,idempotency_key,request_hash,context_receipt,config_snapshot,capability_snapshot,parent_run_id,parent_action_id,child_ordinal,parent_request_hash)
- VALUES(p.session_id,child_command,p.org_id,p.user_id,'continuation','queued','child:'||a.id::TEXT||':'||$4,encode(digest(convert_to($3,'UTF8'),'sha256'),'hex'),COALESCE($6,'{}'),p.config_snapshot,p.capability_snapshot,p.id,a.id,$4,$3) RETURNING * INTO c;
+ VALUES(p.session_id,child_command,p.org_id,p.user_id,'continuation','queued','child:'||a.id::TEXT||':'||$4,left(encode(digest(convert_to($3,'UTF8'),'sha256'),'hex'),32),COALESCE($6,'{}'),p.config_snapshot,p.capability_snapshot,p.id,a.id,$4,$3) RETURNING * INTO c;
  PERFORM _agent_runtime_226_append_action_event(a.id,'action.child_run.created',jsonb_build_object('child_run_id',c.id,'child_ordinal',$4));
  RETURN jsonb_build_object('outcome','created','child_run_id',c.id,'parent_run_id',p.id,'parent_action_id',a.id);
 END; $$;
 CREATE FUNCTION complete_agent_child_run(p_child_run_id UUID,p_parent_run_id UUID,p_aggregation_revision INTEGER,p_result JSONB) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE c agent_runs%ROWTYPE;
 BEGIN PERFORM _assert_agent_runtime_actor(TRUE); UPDATE agent_runs SET status='completed',result_hash=encode(digest(convert_to(COALESCE($4,'{}')::TEXT,'UTF8'),'sha256'),'hex'),aggregation_revision=$3,completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND parent_run_id=$2 AND status NOT IN ('completed','failed','cancelled') RETURNING * INTO c; IF NOT FOUND THEN RETURN jsonb_build_object('outcome','fenced'); END IF; RETURN jsonb_build_object('outcome','completed','child_run_id',c.id); END; $$;
+CREATE FUNCTION read_agent_child_run(p_child_run_id UUID,p_parent_run_id UUID) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE c agent_runs%ROWTYPE;
+BEGIN PERFORM _assert_agent_runtime_actor(TRUE); SELECT * INTO c FROM agent_runs WHERE id=$1 AND parent_run_id=$2; IF NOT FOUND THEN RETURN jsonb_build_object('outcome','not_found'); END IF; RETURN jsonb_build_object('outcome','readback','child_run_id',c.id,'parent_run_id',c.parent_run_id,'status',c.status,'aggregation_revision',c.aggregation_revision,'result_hash',c.result_hash); END; $$;
 CREATE FUNCTION cancel_agent_child_run(p_child_run_id UUID,p_parent_run_id UUID,p_reason TEXT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 BEGIN PERFORM _assert_agent_runtime_actor(TRUE); UPDATE agent_runs SET status='cancelled',terminal_reason=$3,completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND parent_run_id=$2 AND status NOT IN ('completed','failed','cancelled'); RETURN jsonb_build_object('outcome','cancelled'); END; $$;
 ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY; ALTER TABLE agent_runs FORCE ROW LEVEL SECURITY;
-REVOKE ALL ON FUNCTION create_agent_child_run(UUID,UUID,TEXT,INTEGER,TEXT,JSONB),complete_agent_child_run(UUID,UUID,INTEGER,JSONB),cancel_agent_child_run(UUID,UUID,TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION create_agent_child_run(UUID,UUID,TEXT,INTEGER,TEXT,JSONB),complete_agent_child_run(UUID,UUID,INTEGER,JSONB),cancel_agent_child_run(UUID,UUID,TEXT) TO everydayai_agent_runtime_worker;
+REVOKE ALL ON FUNCTION create_agent_child_run(UUID,UUID,TEXT,INTEGER,TEXT,JSONB),read_agent_child_run(UUID,UUID),complete_agent_child_run(UUID,UUID,INTEGER,JSONB),cancel_agent_child_run(UUID,UUID,TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION create_agent_child_run(UUID,UUID,TEXT,INTEGER,TEXT,JSONB),read_agent_child_run(UUID,UUID),complete_agent_child_run(UUID,UUID,INTEGER,JSONB),cancel_agent_child_run(UUID,UUID,TEXT) TO everydayai_agent_runtime_worker;
 RESET ROLE;

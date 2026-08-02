@@ -15,7 +15,7 @@ from services.agent.runtime.executors.specialist_contracts import (
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
 from services.agent.runtime.executors.reconciler import assert_reconcile_only
 from services.agent.runtime.executors.specialist_registry import (
-    SPECIALIST_TOOLS, build_specialist_registry, specialist_descriptor,
+    REMOTE_READ_TOOLS, SPECIALIST_TOOLS, build_specialist_registry, specialist_descriptor,
 )
 from services.agent.runtime.executors.read_registry import READ_TOOL_SPECS, build_read_executor_registry
 from services.agent.runtime.executors.read_only import CallableReadCapability
@@ -30,6 +30,9 @@ from services.agent.runtime.executors.real_specialist_composition import (
 )
 from services.agent.runtime.executors.resource_contracts import WorkspaceResourceService
 from services.agent.runtime.executors.provider_adapters import AllowlistedTransport, HttpProviderTransport, KieMediaProvider
+from services.agent.runtime.executors.resource_contracts import (
+    FetchAllPagesService, FileAnalyzeService, LocalDataService,
+)
 
 
 def _attempt(request: dict[str, object], status: ActionAttemptStatus = ActionAttemptStatus.DISPATCHING) -> ActionAttempt:
@@ -79,6 +82,27 @@ class _CallbackRepository:
     async def callback(self, **kwargs):
         self.events.append(kwargs)
         return {"outcome": "accepted"}
+
+
+class _Facts:
+    def __init__(self):
+        self.calls = []
+
+    async def cost(self, operation, item, **extra):
+        self.calls.append(("cost", operation))
+        return {"outcome": "applied"}
+
+    async def provider_terminal(self, **params):
+        self.calls.append(("provider", params["state"]))
+        return {"outcome": params["state"]}
+
+    async def provider_reconcile(self, **params):
+        self.calls.append(("reconcile", params["resolution"]))
+        return {"outcome": params["resolution"]}
+
+    async def provider_unknown(self, **params):
+        self.calls.append(("provider", "unknown"))
+        return {"outcome": "unknown"}
 
 
 class _ObjectStore:
@@ -135,6 +159,135 @@ def test_real_nonproduction_composition_binds_every_tool_to_provider_and_family(
     assert type(registry.resolve("erp_trade_query")[1].provider).__name__ == "ERPQueryProvider"
     assert registry.resolve("erp_execute")[1].provider.write is True
     assert len({id(registry.resolve(tool)[1].provider) for tool in SPECIALIST_TOOLS}) == 23
+
+
+@pytest.mark.asyncio
+async def test_executor_persists_cost_provider_fact_before_completed() -> None:
+    from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+    facts = _Facts()
+    executor = SpecialistExecutor(
+        executor_type="runtime_remote_read", revision=1, provider=_Provider(), facts=facts,
+    )
+    receipt = await executor.dispatch(_attempt({"query": "orders", "reserved_credits": 2}), {"query": "orders", "reserved_credits": 2})
+    assert receipt.outcome.value == "completed"
+    assert facts.calls == [("cost", "reserve"), ("provider", "completed"), ("cost", "settle")]
+
+
+@pytest.mark.asyncio
+async def test_local_file_and_erp_page_services_have_distinct_semantics(tmp_path) -> None:
+    (tmp_path / "orders.csv").write_text("id,total\n1,10\n2,20\n", encoding="utf-8")
+    staging = tmp_path / "staging"
+    materializer = ArtifactMaterializer()
+    attempt = _attempt({"path": "orders.csv"})
+    local = LocalDataService(root=tmp_path, staging=staging, materializer=materializer)
+    summary = await local.prepare(attempt, {"path": "orders.csv", "mode": "summary"})
+    detail = await local.prepare(attempt, {"path": "orders.csv", "mode": "detail", "limit": 1})
+    exported = await local.prepare(attempt, {"path": "orders.csv", "mode": "export"})
+    analyzed = await FileAnalyzeService(root=tmp_path, staging=staging, materializer=materializer).prepare(attempt, {"path": "orders.csv"})
+    assert summary["rows"] == 2 and len(detail["data"]) == 1
+    assert exported["lineage"]["output_format"] == "parquet"
+    assert analyzed["lineage"]["role"] == "file_analyze"
+
+    class _Pages:
+        async def execute(self, tool, action, params):
+            return {"page": params["page"], "items": [params["page"]]}
+
+    pages = await FetchAllPagesService(
+        dispatcher=_Pages(), staging=staging, materializer=materializer,
+    ).prepare(attempt, {"tool_name": "erp_product_query", "action": "product_list", "total_pages": 2})
+    assert pages["state"] == "completed" and pages["pages"] == 2
+
+
+@pytest.mark.asyncio
+async def test_isolated_harness_invokes_all_23_distinct_provider_adapters(tmp_path) -> None:
+    import json
+    calls = []
+
+    async def handler(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        lines = head.decode().splitlines()
+        method, path, _ = lines[0].split()
+        length = next(int(line.split(":", 1)[1]) for line in lines if line.lower().startswith("content-length:"))
+        await reader.readexactly(length)
+        calls.append((method, path))
+        if path.endswith("/tasks/status"):
+            response = {"state": "completed", "provider_task_ref": "mock-task", "result": {"count": 1}}
+        elif path.endswith("/tasks/cancel"):
+            response = {"state": "cancelled", "provider_task_ref": "mock-task", "evidence": {"cancel_confirmed": True}}
+        else:
+            response = {"state": "accepted", "provider_task_ref": "mock-task", "status_locator": "/api/v1/tasks/status", "evidence": {"mock": True}}
+        payload = json.dumps(response).encode()
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(payload)).encode() + b"\r\nConnection: close\r\n\r\n" + payload)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    class _Media:
+        async def prepare(self, attempt, request, *, kind):
+            return {"task_id": f"task-{kind}", "state": "prepared"}
+
+    class _Resource:
+        async def mutate(self, attempt, request, *, operation):
+            return {"state": "completed", "operation": operation}
+
+    class _Child:
+        async def create(self, attempt, request):
+            return {"state": "accepted", "child_run_id": "child-1", "provider_task_ref": "child-1", "evidence": {"created": True}}
+
+    (tmp_path / "data.csv").write_text("id,value\n1,2\n", encoding="utf-8")
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        transport = AllowlistedTransport(HttpProviderTransport({"kie": ("127.0.0.1", port), "crawler": ("127.0.0.1", port), "dashscope": ("127.0.0.1", port)}), (
+            NetworkRule(provider="kie", method="POST", paths=frozenset({"/api/v1/image/generations", "/api/v1/video/generations", "/api/v1/tasks/cancel"})),
+            NetworkRule(provider="kie", method="GET", paths=frozenset({"/api/v1/tasks/status"})),
+            NetworkRule(provider="crawler", method="POST", paths=frozenset({"/v1/crawl"})),
+            NetworkRule(provider="crawler", method="GET", paths=frozenset({"/v1/crawl/status"})),
+            NetworkRule(provider="dashscope", method="POST", paths=frozenset({"/api/v1/search"})),
+        ))
+        local = LocalDataService(root=tmp_path, staging=tmp_path / "staging", materializer=ArtifactMaterializer())
+        registry = build_nonproduction_specialist_registry(NonProductionSpecialistPorts(
+            transport=transport, erp_dispatcher=_Dispatcher(), erp_search=lambda query: query,
+            artifact=local, local_data=local, file_analyze=FileAnalyzeService(root=tmp_path, staging=tmp_path / "staging", materializer=ArtifactMaterializer()),
+            fetch_all_pages=FetchAllPagesService(dispatcher=_Dispatcher(), staging=tmp_path / "staging", materializer=ArtifactMaterializer()),
+            media_task=_Media(), resource_mutation=_Resource(), child_run=_Child(),
+        ))
+        for tool in sorted(SPECIALIST_TOOLS):
+            provider = registry.resolve(tool)[1].provider
+            if tool in REMOTE_READ_TOOLS:
+                if tool.startswith("erp_"):
+                    from services.kuaimai.registry import TOOL_REGISTRIES
+                    action = next(iter(TOOL_REGISTRIES[tool]))
+                    request = {"action": action, "params": {}}
+                else:
+                    request = {"query": "isolated"}
+            elif tool == "erp_api_search":
+                request = {"query": "catalog"}
+            elif tool in {"local_data", "file_analyze"}:
+                request = {"path": "data.csv", "mode": "summary"}
+            elif tool == "fetch_all_pages":
+                request = {"tool_name": "erp_product_query", "action": "product_list", "total_pages": 1}
+            elif tool in {"generate_image", "generate_video"}:
+                request = {"prompt": "isolated"}
+            elif tool in {"image_agent", "erp_agent", "erp_analyze"}:
+                request = {"child_ordinal": 0, "capability": "runtime.child"}
+            elif tool == "erp_execute":
+                request = {"operation": "isolated", "action": "isolated", "params": {}}
+            elif tool == "trigger_erp_sync":
+                request = {"scope": "isolated"}
+            elif tool == "manage_scheduled_task":
+                request = {"task_id": "task-1", "state_version": 0, "operation": "list"}
+            else:
+                request = {"resource_id": "1", "relative_path": "data.csv", "oss_key": "mock/data.csv"}
+            result = await provider.submit(_attempt(request), request, idempotency_key=f"mock-{tool}")
+            assert result.provider in {"erp", "erp_catalog", "crawler", "dashscope", "kie", "artifact", "child_run", "workspace", "scheduler", "erp_sync"}
+        assert len(registry.descriptors()) == 23
+        assert len({type(registry.resolve(tool)[1].provider).__name__ for tool in SPECIALIST_TOOLS}) >= 7
+        assert len({id(registry.resolve(tool)[1].provider) for tool in SPECIALIST_TOOLS}) == 23
+        assert {path for _, path in calls} >= {"/api/v1/image/generations", "/api/v1/video/generations", "/v1/crawl", "/api/v1/search"}
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 @pytest.mark.asyncio

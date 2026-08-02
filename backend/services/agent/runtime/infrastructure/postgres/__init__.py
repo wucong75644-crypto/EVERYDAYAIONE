@@ -18,6 +18,9 @@ from services.agent.runtime.infrastructure.postgres.repository import (
 from services.agent.runtime.infrastructure.postgres.sandbox_job_repository import (
     PostgresSandboxJobRepository,
 )
+from services.agent.runtime.infrastructure.postgres.specialist_repository import (
+    PostgresSpecialistRepository,
+)
 
 __all__ = [
     "PostgresProjectionOutbox",
@@ -26,4 +29,5 @@ __all__ = [
     "PostgresRuntimeEventStore",
     "PostgresRuntimeRepository",
     "PostgresSandboxJobRepository",
+    "PostgresSpecialistRepository",
 ]

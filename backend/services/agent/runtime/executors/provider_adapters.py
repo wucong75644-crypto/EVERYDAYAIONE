@@ -243,9 +243,17 @@ class PortBackedProvider(SpecialistProvider):
         return ProviderReceipt(state=ProviderState(str(result.get("state", "completed"))), provider=self.provider, request_hash=attempt.request_hash, provider_task_ref=_text(result.get("provider_task_ref")), result=result, evidence=_object(result.get("evidence")))
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        if self.provider == "child_run" and hasattr(self.port, "readback"):
+            result = await self.port.readback(attempt, receipt)  # type: ignore[attr-defined]
+            if isinstance(result, Mapping):
+                return ProviderReceipt(state=ProviderState(str(result.get("state", "unknown"))), provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence=_object(result.get("evidence")))
         return _unknown(self.provider, attempt.request_hash, "PORT_RECONCILE_UNAVAILABLE")
 
     async def cancel(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        if self.provider == "child_run" and hasattr(self.port, "cancel"):
+            result = await self.port.cancel(attempt, receipt)  # type: ignore[attr-defined]
+            if isinstance(result, Mapping) and result.get("state") == "cancelled" and result.get("fencing_confirmed") is True:
+                return ProviderReceipt(state=ProviderState.CANCELLED, provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence={"cancel_confirmed": True, "fencing_confirmed": True})
         return _unknown(self.provider, attempt.request_hash, "PORT_CANCEL_UNPROVEN")
 
 

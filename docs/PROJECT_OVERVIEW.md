@@ -1629,3 +1629,4 @@ cache = client.caches.create(
   - Workspace 删除前验证 OSS retention，恢复按稳定资源 ID 使用隔离暂存和原子 rename
   - ERP action 只接受 `services.kuaimai.registry.TOOL_REGISTRIES` 正式条目；`erp_api_search` 保持本地文档搜索
   - Provider status/cancel 无证明时保持 unknown；Callback 唯一入口拒绝旧 boolean 验签绕过
+AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.

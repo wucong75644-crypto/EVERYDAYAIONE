@@ -41,7 +41,7 @@ BEGIN
     IF NOT FOUND THEN RAISE EXCEPTION 'AGENT_ACTION_EVENT_BINDING_INVALID'; END IF;
     PERFORM append_agent_runtime_event(
         a.session_id, p_event_type, a.run_id, a.model_step_id, a.id,
-        'worker', current_user, COALESCE(p_payload,'{}'), ARRAY['web_runtime','wecom']
+        'executor', current_user, COALESCE(p_payload,'{}'), ARRAY['web_runtime','wecom']
     );
 END; $$;
 
