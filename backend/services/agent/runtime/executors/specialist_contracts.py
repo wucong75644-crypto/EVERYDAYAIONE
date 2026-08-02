@@ -33,6 +33,21 @@ class ProviderState(StrEnum):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ReconciliationContext:
+    """Application-owned fencing context for an external reconciliation lease."""
+
+    token: str
+    lease_expires_at: datetime
+    state_version: int
+
+    def __post_init__(self) -> None:
+        if not self.token or self.state_version < 1:
+            raise ValueError("SPECIALIST_RECONCILIATION_CONTEXT_INVALID")
+        if self.lease_expires_at.utcoffset() is None:
+            raise ValueError("SPECIALIST_RECONCILIATION_LEASE_MUST_BE_AWARE")
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProviderReceipt:
     """A provider fact; ``UNKNOWN`` is intentionally first-class."""
 

@@ -155,7 +155,6 @@ class WorkspaceResourceService:
         tombstone.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source, tombstone)
         result = {"resource_id": resource_id, "content_hash": digest, "oss_key": oss_key, "state": "completed", "oss_retention_verified": True}
-        await _terminal_fact(self.facts, attempt, result)
         return result
 
     async def restore(self, resource_id: str, relative_path: str, oss_key: str, *, attempt: object | None = None) -> Mapping[str, object]:
@@ -171,7 +170,6 @@ class WorkspaceResourceService:
         if tombstone.exists():
             tombstone.unlink()
         result = {"resource_id": resource_id, "content_hash": digest, "state": "completed"}
-        await _terminal_fact(self.facts, attempt, result)
         return result
 
     async def _bind(self, resource_id: str, operation: str, attempt: object | None) -> None:
@@ -205,8 +203,6 @@ class ScheduledTaskService:
             bound = await self.facts.mutate_resource("manage_scheduled_task", **_resource_params(attempt, operation, task_id, payload, expected_version))
             _require_bound(bound)
         result = await self.store.cas(task_id, expected_version, operation, payload)
-        if self.facts is not None and attempt is not None:
-            await _terminal_fact(self.facts, attempt, result)
         return result
 
 
@@ -220,8 +216,8 @@ class ErpSyncService:
     facts: object | None = None
 
     async def run(self, request: Mapping[str, object], attempt: object) -> Mapping[str, object]:
-        submission = request.get("resume_submission")
-        if not isinstance(submission, Mapping):
+        submission = await self._read_submission(attempt)
+        if submission is None:
             submission = await self.submit(request)
             await self._phase(attempt, "submitted", submission)
         progress = await self.progress(submission)
@@ -253,6 +249,24 @@ class ErpSyncService:
                 p_provider_receipt=dict(value.get("provider_receipt", value)),
             )
 
+    async def _read_submission(self, attempt: object) -> Mapping[str, object] | None:
+        if self.facts is None or not hasattr(self.facts, "read_sync_facts"):
+            return None
+        facts = await self.facts.read_sync_facts(
+            p_action_id=str(attempt.action_id), p_attempt_id=str(attempt.attempt_id),
+            p_request_hash=str(attempt.request_hash),
+        )
+        if not isinstance(facts, Mapping):
+            raise RuntimeError("ERP_SYNC_FACT_READBACK_INVALID")
+        for phase in ("unknown", "submitted", "progressing", "applying", "checkpointed"):
+            value = facts.get(phase)
+            if isinstance(value, Mapping):
+                candidate = value.get("submission") or value.get("checkpoint")
+                if isinstance(candidate, Mapping):
+                    if candidate.get("provider_task_ref") or candidate.get("submission"):
+                        return candidate.get("submission", candidate)
+        return None
+
     async def submit(self, request: Mapping[str, object]) -> Mapping[str, object]:
         result = self.provider.submit(request)  # type: ignore[attr-defined]
         if hasattr(result, "__await__"):
@@ -278,6 +292,16 @@ class ErpSyncService:
         if hasattr(result, "__await__"):
             result = await result
         return _phase_object(result, "ERP_SYNC_CHECKPOINT_INVALID")
+
+    async def reconcile(self, attempt: object, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]:
+        """Read provider status from durable submission identity; never resubmit."""
+        submission = receipt.get("submission") or receipt.get("provider_task_ref")
+        if isinstance(submission, str):
+            submission = {"provider_task_ref": submission}
+        if not isinstance(submission, Mapping):
+            return {"state": "unknown", "evidence": {"error_code": "ERP_SYNC_SUBMISSION_IDENTITY_MISSING"}}
+        progress = await self.progress(submission)
+        return {"state": "completed" if progress.get("state") in {"completed", "ready"} else "accepted", "submission": dict(submission), "progress": dict(progress)}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -364,7 +388,6 @@ class RuntimeResourceMutationService:
             applied = await self.sync.apply(progress)  # type: ignore[attr-defined]
             checkpoint = await self.sync.checkpoint(applied)  # type: ignore[attr-defined]
             result = {"state": "completed", "submission": submitted, "progress": progress, "apply": applied, "checkpoint": checkpoint}
-            await _terminal_fact(self.facts, attempt, result)
             return result
         raise ValueError("RUNTIME_RESOURCE_OPERATION_INVALID")
 
@@ -450,11 +473,6 @@ async def _checkpoint_fact(facts: object | None, attempt: object, result: Mappin
     if artifact_id is None:
         return
     await facts.checkpoint_materialization(action_id=str(attempt.action_id), attempt_id=str(attempt.attempt_id), artifact_id=str(artifact_id), materialize_revision=1, materialize_status=str(result.get("state", result.get("materialize_status", "materialized"))))
-
-
-async def _terminal_fact(facts: object | None, attempt: object, result: Mapping[str, object]) -> None:
-    if facts is not None and attempt is not None and hasattr(facts, "provider_terminal"):
-        await facts.provider_terminal(attempt_id=str(attempt.attempt_id), execution_token=str(attempt.lease.fencing_token), request_hash=str(attempt.request_hash), state=str(result.get("state", "completed")), result=result)
 
 
 def _resource_params(attempt: object, operation: str, resource_id: str, payload: Mapping[str, object] | None = None, expected_version: int = 0) -> dict[str, object]:

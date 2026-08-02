@@ -1631,4 +1631,4 @@ cache = client.caches.create(
   - Provider status/cancel 无证明时保持 unknown；Callback 唯一入口拒绝旧 boolean 验签绕过
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
-The final AR-17.3 closure adds additive 226_08–226_11 lanes for strict idempotent fact readback, atomic provider/cost/ActionResult finalization, verified Child Run lifecycle, and monotone ERP sync checkpoints. Existing production activation remains unchanged.
+The current AR-17.3 remediation adds additive 226_08–226_12 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, Child Run terminal aggregation/fencing, and database-fact-based ERP sync recovery. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

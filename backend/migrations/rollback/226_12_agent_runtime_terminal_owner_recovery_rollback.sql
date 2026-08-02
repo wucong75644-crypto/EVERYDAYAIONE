@@ -1,0 +1,13 @@
+SET LOCAL ROLE everydayai_owner;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM agent_action_sync_phase_facts) THEN
+        RAISE EXCEPTION 'ROLLBACK_GUARD_FACTS_EXIST';
+    END IF;
+END $$;
+REVOKE ALL ON FUNCTION finalize_agent_action_provider_v2(UUID,UUID,UUID,INTEGER,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT), read_agent_sync_phase_facts(UUID,UUID,TEXT), record_agent_sync_phase_v2(UUID,UUID,UUID,TEXT,TEXT,JSONB,JSONB), aggregate_agent_child_run_strict(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB), cancel_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,TEXT) FROM everydayai_agent_runtime_worker;
+DROP FUNCTION finalize_agent_action_provider_v2(UUID,UUID,UUID,INTEGER,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT);
+DROP FUNCTION read_agent_sync_phase_facts(UUID,UUID,TEXT);
+DROP FUNCTION record_agent_sync_phase_v2(UUID,UUID,UUID,TEXT,TEXT,JSONB,JSONB);
+DROP FUNCTION aggregate_agent_child_run_strict(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB);
+DROP FUNCTION cancel_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,TEXT);
+RESET ROLE;

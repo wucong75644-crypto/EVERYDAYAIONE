@@ -149,15 +149,17 @@ class PostgresSpecialistRepository:
 
     async def finalize(
         self, *, attempt_id: str, execution_token: str | None,
-        reconciliation_token: str | None, request_hash: str, terminal_state: str,
+        reconciliation_token: str | None, expected_state_version: int,
+        request_hash: str, terminal_state: str,
         provider_receipt: Mapping[str, object], result: Mapping[str, object],
         cost_kind: str | None, reserved_amount: int = 0, actual_amount: int = 0,
         currency: str = "credits", reason_code: str = "runtime",
         provider_receipt_hash: str | None = None,
     ) -> Mapping[str, object]:
-        return await self._rpc("finalize_agent_action_provider", {
+        return await self._rpc("finalize_agent_action_provider_v2", {
             "p_attempt_id": attempt_id, "p_execution_token": execution_token,
             "p_reconciliation_token": reconciliation_token,
+            "p_expected_state_version": expected_state_version,
             "p_request_hash": request_hash, "p_terminal_state": terminal_state,
             "p_provider_receipt": dict(provider_receipt), "p_result": dict(result),
             "p_cost_kind": cost_kind, "p_reserved_amount": reserved_amount,
@@ -166,7 +168,14 @@ class PostgresSpecialistRepository:
         }, allowed={terminal_state})
 
     async def sync_phase(self, **params: object) -> Mapping[str, object]:
-        return await self._rpc("record_agent_sync_phase", params, allowed={"recorded"})
+        return await self._rpc("record_agent_sync_phase_v2", params, allowed={"recorded"})
+
+    async def read_sync_facts(self, **params: object) -> Mapping[str, object]:
+        result = await self._rpc("read_agent_sync_phase_facts", params, allowed={"readback"})
+        facts = result.get("facts", {})
+        if not isinstance(facts, Mapping):
+            raise SpecialistRpcError("read_agent_sync_phase_facts", "facts_invalid", result)
+        return dict(facts)
 
 
 __all__ = ["PostgresSpecialistRepository", "SpecialistRpcConflict", "SpecialistRpcError"]

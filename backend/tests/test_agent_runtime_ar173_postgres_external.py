@@ -30,7 +30,7 @@ def _rollback(url: str, name: str) -> None:
 
 
 def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
-    migrations = [f"226_{index:02d}_" for index in range(1, 12)]
+    migrations = [f"226_{index:02d}_" for index in range(1, 13)]
     names = [next((ROOT / "migrations").glob(f"{prefix}*.sql")).name for prefix in migrations]
     rollbacks = [next((ROOT / "migrations/rollback").glob(f"{prefix}*_rollback.sql")).name for prefix in reversed(migrations)]
     with psycopg.connect(database) as conn:
@@ -95,7 +95,7 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 12):
+    for index in range(1, 13):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     reserve_params = (ids["action"], ids["attempt"], "reserve", 3, 0, "credits", "runtime", None)
@@ -128,22 +128,22 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
     assert child["outcome"] == "created"
     readback = _worker_rpc(database, "read_agent_child_run_strict", (child["child_run_id"], ids["run"], ids["action"], ids["request_hash"]))
     assert readback["outcome"] == "readback" and readback["status"] == "queued"
-    completed_child = _worker_rpc(database, "complete_agent_child_run_strict", (child["child_run_id"], ids["run"], ids["action"], ids["request_hash"], 1, {"items": []}))
-    assert completed_child["outcome"] == "completed"
-    for phase in ("submitted", "progressing", "applying", "checkpointed"):
-        phase_result = _worker_rpc(database, "record_agent_sync_phase", (ids["action"], ids["attempt"], ids["token"], ids["request_hash"], phase, {"phase": phase}, {"provider": "erp"}))
-        assert phase_result["outcome"] == "recorded"
+    queued_completion = _worker_rpc(database, "complete_agent_child_run_strict", (child["child_run_id"], ids["run"], ids["action"], ids["request_hash"], 1, {"items": []}))
+    assert queued_completion["outcome"] == "child_not_terminal"
     reconciliation_token = str(uuid4())
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
         conn.execute("UPDATE agent_action_attempts SET reconciliation_token=%s,reconciliation_lease_expires_at=clock_timestamp()+interval '10 minutes' WHERE id=%s", (reconciliation_token, ids["attempt"]))
         conn.commit()
+    for phase in ("submitted", "progressing", "applying", "checkpointed"):
+        phase_result = _worker_rpc(database, "record_agent_sync_phase_v2", (ids["action"], ids["attempt"], reconciliation_token, ids["request_hash"], phase, {"phase": phase}, {"provider": "erp"}))
+        assert phase_result["outcome"] == "recorded"
     _worker_rpc(database, "record_agent_action_cost_strict", (ids["action"], ids["attempt"], "settle", 3, 9, "credits", "runtime", "f" * 64))
     with pytest.raises(Exception):
-        _worker_rpc(database, "finalize_agent_action_provider", (ids["attempt"], None, reconciliation_token, ids["request_hash"], "completed", {"state": "completed", "provider_task_ref": "task-1"}, {"status": "success", "summary": "ok", "data": {}, "external_receipt": {"provider": "kie"}}, "settle", 3, 1, "credits", "runtime", "f" * 64))
+        _worker_rpc(database, "finalize_agent_action_provider_v2", (ids["attempt"], None, reconciliation_token, 1, ids["request_hash"], "completed", {"state": "completed", "provider_task_ref": "task-1"}, {"status": "success", "summary": "ok", "data": {}, "external_receipt": {"provider": "kie"}}, "settle", 3, 1, "credits", "runtime", "f" * 64))
     with psycopg.connect(database) as conn:
         assert conn.execute("SELECT status FROM agent_actions WHERE id=%s", (ids["action"],)).fetchone()[0] == "accepted"
-    finalized = _worker_rpc(database, "finalize_agent_action_provider", (ids["attempt"], None, reconciliation_token, ids["request_hash"], "completed", {"state": "completed", "provider_task_ref": "task-1"}, {"status": "success", "summary": "ok", "data": {}, "external_receipt": {"provider": "kie"}}, "settle", 3, 9, "credits", "runtime", "f" * 64))
+    finalized = _worker_rpc(database, "finalize_agent_action_provider_v2", (ids["attempt"], None, reconciliation_token, 1, ids["request_hash"], "completed", {"state": "completed", "provider_task_ref": "task-1"}, {"status": "success", "summary": "ok", "data": {}, "external_receipt": {"provider": "kie"}}, "settle", 3, 9, "credits", "runtime", "f" * 64))
     assert finalized["outcome"] == "completed"
     duplicate_settle = _worker_rpc(database, "record_agent_action_cost_strict", (ids["action"], ids["attempt"], "settle", 3, 9, "credits", "runtime", "f" * 64))
     assert duplicate_settle["outcome"] == "idempotent_readback"

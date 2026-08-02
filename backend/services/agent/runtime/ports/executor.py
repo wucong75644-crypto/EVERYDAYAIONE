@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Mapping, Protocol
+from typing import TYPE_CHECKING, Mapping, Protocol
 
 from services.agent.runtime.domain import ActionAttempt, ActionResult
 from services.agent.runtime.domain.identity import require_stable_value
+if TYPE_CHECKING:
+    from services.agent.runtime.executors.specialist_contracts import ReconciliationContext
 
 
 class ExecutionOutcome(StrEnum):
@@ -57,10 +59,14 @@ class ExecutorPort(Protocol):
     ) -> ExecutionReceipt:
         """执行或提交 Action。"""
 
-    async def reconcile(self, attempt: ActionAttempt) -> ExecutionReceipt:
+    async def reconcile(
+        self, attempt: ActionAttempt, context: ReconciliationContext | None = None,
+    ) -> ExecutionReceipt:
         """查询 accepted/unknown 外部动作，禁止重复 dispatch。"""
 
-    async def cancel(self, attempt: ActionAttempt) -> ExecutionReceipt:
+    async def cancel(
+        self, attempt: ActionAttempt, context: ReconciliationContext | None = None,
+    ) -> ExecutionReceipt:
         """请求取消并返回可证明的结果。"""
 
 

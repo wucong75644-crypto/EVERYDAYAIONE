@@ -49,7 +49,7 @@ def build_nonproduction_specialist_registry(ports: NonProductionSpecialistPorts)
             executor_cls(action_kind=tool, executor_type=descriptor.executor_type,
                          revision=descriptor.revision, provider=providers[tool],
                          async_submit=descriptor.mode.value != "immediate_read",
-                         facts=ports.facts),
+                         facts=None),
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return registry

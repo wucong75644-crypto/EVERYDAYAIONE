@@ -96,6 +96,8 @@ class MediaTaskPort(Protocol):
 class ResourceMutationPort(Protocol):
     async def mutate(self, attempt: ActionAttempt, request: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
 
+    async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
+
 
 class ChildRunPort(Protocol):
     async def create(self, attempt: ActionAttempt, request: Mapping[str, object]) -> Mapping[str, object]: ...
@@ -243,6 +245,10 @@ class PortBackedProvider(SpecialistProvider):
         return ProviderReceipt(state=ProviderState(str(result.get("state", "completed"))), provider=self.provider, request_hash=attempt.request_hash, provider_task_ref=_text(result.get("provider_task_ref")), result=result, evidence=_object(result.get("evidence")))
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        if self.provider == "erp_sync" and hasattr(self.port, "reconcile"):
+            result = await self.port.reconcile(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
+            if isinstance(result, Mapping):
+                return ProviderReceipt(state=ProviderState(str(result.get("state", "unknown"))), provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence=_object(result.get("evidence")))
         if self.provider == "child_run" and hasattr(self.port, "readback"):
             result = await self.port.readback(attempt, receipt)  # type: ignore[attr-defined]
             if isinstance(result, Mapping):

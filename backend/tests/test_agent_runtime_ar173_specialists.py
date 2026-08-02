@@ -10,7 +10,7 @@ from services.agent.runtime.executors.contracts import canonical_request_hash
 from services.agent.runtime.executors.materializer import ArtifactMaterializer, MaterializeCheckpoint
 from services.agent.runtime.executors.specialist_contracts import (
     CostReservation, NetworkRule, ProviderReceipt, ProviderState,
-    validate_public_request,
+    ReconciliationContext, validate_public_request,
 )
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
 from services.agent.runtime.executors.reconciler import assert_reconcile_only
@@ -47,6 +47,13 @@ def _attempt(request: dict[str, object], status: ActionAttemptStatus = ActionAtt
         idempotency_key="attempt-1", request_hash=canonical_request_hash(request),
         lease=Lease(fencing_token="fence-1", expires_at=now + timedelta(minutes=1)),
         started_at=now,
+    )
+
+
+def _reconciliation_context() -> ReconciliationContext:
+    return ReconciliationContext(
+        token="reconcile-1", lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        state_version=2,
     )
 
 
@@ -195,7 +202,7 @@ async def test_postgres_repository_rejects_ambiguous_rpc_outcomes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_persists_cost_provider_fact_before_completed() -> None:
+async def test_executor_returns_receipt_without_persisting_terminal_facts() -> None:
     from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
     facts = _Facts()
     executor = SpecialistExecutor(
@@ -203,7 +210,7 @@ async def test_executor_persists_cost_provider_fact_before_completed() -> None:
     )
     receipt = await executor.dispatch(_attempt({"query": "orders", "reserved_credits": 2}), {"query": "orders", "reserved_credits": 2})
     assert receipt.outcome.value == "completed"
-    assert facts.calls == [("cost", "reserve"), ("provider", "completed"), ("cost", "settle")]
+    assert facts.calls == []
 
 
 @pytest.mark.asyncio
@@ -248,6 +255,11 @@ async def test_erp_sync_persists_monotone_phases_and_resumes_without_resubmit() 
         async def sync_phase(self, **params):
             self.phases.append(params["p_phase"])
             return {"outcome": "recorded"}
+
+        async def read_sync_facts(self, **params):
+            if not self.phases:
+                return {}
+            return {"submitted": {"submission": {"state": "accepted", "provider_task_ref": "sync-1"}}}
 
     provider = _Provider()
     facts = _SyncFacts()
@@ -360,7 +372,7 @@ async def test_specialist_executor_converts_completed_receipt_and_unknown_is_rec
     assert receipt.outcome.value == "completed"
     assert receipt.result and receipt.result.data == {"summary": "ok", "count": 1}
     with pytest.raises(RuntimeError, match="RECONCILE_STATUS_REQUIRED"):
-        await executor.reconcile(_attempt(request))
+        await executor.reconcile(_attempt(request), _reconciliation_context())
 
 
 def test_callback_cost_and_materialize_contracts_are_idempotent_and_redacted() -> None:
@@ -496,7 +508,7 @@ async def test_submit_timeout_is_unknown_and_accepted_reconciles_without_resubmi
         "accepted_at": datetime.now(timezone.utc),
         "external_receipt": accepted.external_receipt,
     })
-    reconciled = await accepted_executor.reconcile(accepted_attempt)
+    reconciled = await accepted_executor.reconcile(accepted_attempt, _reconciliation_context())
     assert reconciled.outcome.value == "completed"
 
 
