@@ -234,7 +234,9 @@ class ErpSyncService:
         checkpointed = facts.get("checkpointed")
         if isinstance(checkpointed, Mapping):
             checkpoint = dict(checkpointed.get("checkpoint", {}))
-            return {"state": "completed", "checkpoint": checkpoint}
+            completed = {"state": "completed", "checkpoint": checkpoint}
+            await self._phase(attempt, "completed", completed)
+            return completed
         submission = await self._read_submission(attempt)
         if submission is None:
             submission = await self._durable_submit_or_recover(request, attempt)
