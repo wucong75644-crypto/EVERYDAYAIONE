@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import Mapping
 from uuid import uuid4
 
 import psycopg
@@ -26,6 +28,7 @@ from services.agent.runtime.infrastructure.postgres.authorization import Postgre
 from services.agent.runtime.infrastructure.postgres.coordinator_recovery import PostgresCoordinatorRecoveryRepository
 from services.agent.runtime.infrastructure.postgres.specialist_repository import PostgresSpecialistRepository
 from services.agent.runtime.executors.contracts import canonical_request_hash
+from services.agent.runtime.executors.resource_contracts import ErpSyncService
 from services.agent.runtime.ports.coordinator_recovery import ActionDispatchSnapshot
 
 
@@ -393,3 +396,117 @@ def test_ar173_resource_and_scheduler_cas_50_concurrency(database: str) -> None:
     assert sum(kind == "ok" and value["outcome"] == "cas_conflict" for kind, value in tasks) == 49
     stale_kind, stale_value = _worker_rpc_outcome(database, "runtime_mutate_scheduled_task", (*task_params[:3], 0, "bad" * 16, *task_params[5:]))
     assert stale_kind == "error" or stale_value.get("outcome") == "cas_conflict"
+
+
+def test_ar173_sync_response_loss_and_checkpoint_crash_recovery(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+
+    class _SyncProvider:
+        def __init__(self) -> None:
+            self.submit_calls = 0
+            self.recover_calls = 0
+            self.progress_calls = 0
+            self.raise_submit_response = True
+
+        async def submit_or_get(self, request, *, idempotency_key):
+            self.submit_calls += 1
+            if self.raise_submit_response:
+                self.raise_submit_response = False
+                raise TimeoutError("response lost after provider accepted submission")
+            return {"state": "accepted", "provider_task_ref": "sync-task-stable"}
+
+        async def recover_submission(self, *, idempotency_key):
+            self.recover_calls += 1
+            if self.recover_calls == 1:
+                return {"outcome": "PROVEN_NOT_SUBMITTED"}
+            return {"outcome": "FOUND", "provider_task_ref": "sync-task-stable"}
+
+        async def progress(self, submission):
+            self.progress_calls += 1
+            return {"state": "ready", "provider_task_ref": submission["provider_task_ref"], "cursor": 7}
+
+    class _Checkpoint:
+        def __init__(self) -> None:
+            self.apply_calls = 0
+            self.checkpoint_calls = 0
+            self.fail_checkpoint_once = True
+
+        async def apply(self, value):
+            self.apply_calls += 1
+            return {"rows": 3, "cursor": value["cursor"]}
+
+        async def checkpoint(self, value):
+            self.checkpoint_calls += 1
+            if self.fail_checkpoint_once:
+                self.fail_checkpoint_once = False
+                raise ConnectionError("checkpoint crash")
+            return {"cursor": value["cursor"], "materialized": True}
+
+    async def run() -> tuple[_SyncProvider, _Checkpoint, Mapping[str, object], Mapping[str, object]]:
+        client = AsyncLocalDBClient(database.replace("postgres@", "everydayai_agent_runtime_worker@"), min_size=1, max_size=4)
+        await client.open()
+        scoped = AsyncScopedDatabaseClient(client, DatabaseScope(actor_user_id="44444444-4444-4444-4444-444444444444", org_id="22222222-2222-2222-2222-222222222222", access_kind=DatabaseAccessKind.AGENT_RUNTIME, request_id="ar173-sync-crash"))
+        provider = _SyncProvider()
+        effects = _Checkpoint()
+        attempt = SimpleNamespace(
+            action_id=ids["action"], attempt_id=ids["attempt"], request_hash=ids["request_hash"], state_version=0,
+            lease=SimpleNamespace(fencing_token=ids["token"], expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)),
+        )
+        try:
+            facts = PostgresSpecialistRepository(scoped)
+            service = ErpSyncService(provider=provider, local_apply=effects.apply, checkpoint_store=effects.checkpoint, facts=facts)
+            first = await service.run({"domain": "orders", "scope_id": "org-scope", "payload": {"page": 1}}, attempt)
+            second = await service.run({"domain": "orders", "scope_id": "org-scope", "payload": {"page": 1}}, attempt)
+            return provider, effects, first, second
+        finally:
+            await client.close()
+
+    import asyncio
+    provider, effects, first, second = asyncio.run(run())
+    assert provider.submit_calls == 1
+    assert provider.recover_calls >= 1
+    assert first["state"] == "unknown"
+    assert second["state"] == "completed"
+    assert effects.apply_calls == 1
+    assert effects.checkpoint_calls == 2
+    with psycopg.connect(database) as conn:
+        phases = {row[0] for row in conn.execute("SELECT phase FROM agent_action_sync_phase_facts WHERE action_id=%s AND attempt_id=%s", (ids["action"], ids["attempt"]))}
+        assert {"submitted", "progressing", "applying", "checkpointed", "completed"} <= phases
+
+
+def test_ar173_completion_cancel_fifty_concurrent_single_terminal_winner(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+    reconciliation = str(uuid4())
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE agent_actions SET status='accepted' WHERE id=%s", (ids["action"],))
+        conn.execute("UPDATE agent_action_attempts SET status='accepted',dispatch_phase='accepted',last_provider_status='accepted',accepted_at=clock_timestamp(),state_version=1,reconciliation_token=%s,reconciliation_lease_expires_at=clock_timestamp()+interval '10 minutes',external_receipt=%s WHERE id=%s", (reconciliation, Jsonb({"provider": "local", "provider_task_ref": "task-race"}), ids["attempt"]))
+        conn.execute("UPDATE agent_runs SET blocking_action_count=1,status='running' WHERE id=%s", (ids["run"],))
+        conn.commit()
+    complete = (ids["attempt"], None, reconciliation, 1, ids["request_hash"], "completed", {"state": "completed", "provider_task_ref": "task-race"}, {"status": "success", "summary": "ok", "data": {}, "external_receipt": {"provider": "local"}}, "settle", 1, 1, "credits", "runtime", "c" * 64)
+    cancel = (ids["attempt"], None, reconciliation, 1, ids["request_hash"], "cancelled", {"state": "cancelled", "provider_task_ref": "task-race", "cancel_confirmed": True}, {"status": "empty", "summary": "cancelled", "data": {}, "external_receipt": {"provider": "local"}}, "refund", 1, 0, "credits", "runtime", "d" * 64)
+    requests = [complete] * 25 + [cancel] * 25
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        outcomes = list(pool.map(lambda params: _worker_rpc_outcome(database, "finalize_agent_action_provider_v2", params), requests))
+    winners = [value for kind, value in outcomes if kind == "ok" and value.get("outcome") in {"completed", "cancelled"}]
+    assert len(winners) == 1
+    with psycopg.connect(database) as conn:
+        terminal = conn.execute("SELECT status FROM agent_actions WHERE id=%s", (ids["action"],)).fetchone()[0]
+        assert terminal in {"completed", "cancelled"}
+        assert conn.execute("SELECT count(*) FROM agent_action_results WHERE action_id=%s", (ids["action"],)).fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s AND kind IN ('settle','refund')", (ids["action"],)).fetchone()[0] == 1
+        assert conn.execute("SELECT blocking_action_count FROM agent_runs WHERE id=%s", (ids["run"],)).fetchone()[0] == 0

@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping, Protocol
 
 
@@ -20,7 +20,7 @@ class CallbackEvent:
     callback_correlation: str
     payload_hash: str
     payload_redacted: Mapping[str, object]
-    signature_valid: bool = True
+    signature_valid: bool = field(init=False, default=True)
 
 
 class CallbackSignatureVerifier(Protocol):
@@ -90,7 +90,7 @@ def _event(
     event = CallbackEvent(
         provider=provider, provider_event_id=event_id,
         callback_correlation=correlation, payload_hash=payload_hash,
-        payload_redacted=redacted, signature_valid=True,
+        payload_redacted=redacted,
     )
     return event
 

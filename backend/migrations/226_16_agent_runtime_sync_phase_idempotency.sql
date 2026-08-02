@@ -32,7 +32,7 @@ BEGIN
   IF (latest IS NULL AND p_phase <> 'submitted')
      OR (latest='submitted' AND p_phase NOT IN ('submitted','progressing','unknown'))
      OR (latest='progressing' AND p_phase NOT IN ('progressing','applying','unknown'))
-     OR (latest='unknown' AND p_phase NOT IN ('unknown','progressing'))
+     OR (latest='unknown' AND p_phase NOT IN ('unknown','progressing','applying','checkpointed'))
      OR (latest='applying' AND p_phase NOT IN ('applying','checkpointed','unknown'))
      OR (latest='checkpointed' AND p_phase NOT IN ('checkpointed','completed'))
      OR (latest='completed' AND p_phase <> 'completed') THEN

@@ -225,9 +225,12 @@ class ErpSyncService:
         if submission is None:
             submission = await self._durable_submit_or_recover(request, attempt)
             if submission.get("state") == "unknown":
+                if not isinstance(facts.get("submitted"), Mapping):
+                    await self._phase(attempt, "submitted", submission)
                 await self._phase(attempt, "unknown", submission)
                 return submission
-            await self._phase(attempt, "submitted", submission)
+            if not isinstance(facts.get("submitted"), Mapping):
+                await self._phase(attempt, "submitted", submission)
         progress = await self.progress(submission)
         await self._phase(attempt, "progressing", progress)
         if progress.get("state") not in {"completed", "ready"}:
@@ -241,12 +244,10 @@ class ErpSyncService:
                 if isinstance(applying, Mapping) and isinstance(applying.get("checkpoint"), Mapping)
                 else await self.apply(progress)
             )
-            if not isinstance(applying, Mapping) or not applying.get("checkpoint"):
-                await self._phase(attempt, "applying", {"checkpoint": applied, "progress": dict(progress)})
+            await self._phase(attempt, "applying", {"checkpoint": applied, "progress": dict(progress)})
             checkpoint = await self.checkpoint(applied)
         except Exception as exc:
             unknown = {"state": "unknown", "submission": dict(submission), "progress": dict(progress), "checkpoint": {"error": type(exc).__name__}}
-            await self._phase(attempt, "unknown", unknown)
             return unknown
         await self._phase(attempt, "checkpointed", checkpoint)
         completed = {"state": "completed", "submission": dict(submission), "progress": dict(progress), "apply": dict(applied), "checkpoint": dict(checkpoint)}
@@ -303,6 +304,11 @@ class ErpSyncService:
             return recovered
         if recovered.get("state") == "unknown":
             return recovered
+        await self.facts.record_sync_submission_result(
+            p_submission_id=str(identity["submission_id"]), p_external_idempotency_key=key,
+            p_request_hash=str(attempt.request_hash), p_provider_task_ref="",
+            p_submission_state="unknown", p_enqueue_checkpoint={"state": "dispatching"},
+        )
         try:
             result = await self.submit_or_get(request, key)
         except Exception as exc:
