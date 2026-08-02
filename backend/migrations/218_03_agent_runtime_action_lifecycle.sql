@@ -286,7 +286,7 @@ BEGIN
      WHERE action_id=v_action.id FOR UPDATE;
     v_result_hash := _agent_action_result_hash(p_result,p_action_status,
         v_session.conversation_id,v_action.org_id);
-    IF FOUND OR v_action.status IN ('completed', 'failed', 'cancelled') THEN
+    IF FOUND OR v_action.status IN ('completed', 'failed') THEN
         IF NOT FOUND OR v_action.status IS DISTINCT FROM p_action_status
            OR v_existing.result_hash IS DISTINCT FROM v_result_hash THEN
             RETURN jsonb_build_object('outcome', 'terminal_conflict');

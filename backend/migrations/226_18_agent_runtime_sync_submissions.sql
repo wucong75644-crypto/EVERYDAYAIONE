@@ -82,5 +82,4 @@ BEGIN
 END; $$;
 REVOKE ALL ON FUNCTION create_or_get_agent_sync_submission(UUID,UUID,TEXT,TEXT,TEXT,TEXT,TEXT),record_agent_sync_submission_result(UUID,TEXT,TEXT,TEXT,TEXT,JSONB),recover_agent_sync_submission(TEXT,TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION create_or_get_agent_sync_submission(UUID,UUID,TEXT,TEXT,TEXT,TEXT,TEXT),record_agent_sync_submission_result(UUID,TEXT,TEXT,TEXT,TEXT,JSONB),recover_agent_sync_submission(TEXT,TEXT) TO everydayai_agent_runtime_worker;
-REVOKE EXECUTE ON FUNCTION finalize_agent_action_provider(UUID,UUID,UUID,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT), complete_agent_child_run_strict(UUID,UUID,UUID,TEXT,INTEGER,JSONB), cancel_agent_child_run_strict(UUID,UUID,UUID,TEXT,TEXT), complete_agent_child_run(UUID,UUID,INTEGER,JSONB), cancel_agent_child_run(UUID,UUID,TEXT) FROM everydayai_agent_runtime_worker;
 RESET ROLE;
