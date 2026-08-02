@@ -70,6 +70,7 @@ def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
         assert conn.execute("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='agent_action_cost_settlements'::regclass").fetchone() == (True, True)
         assert conn.execute("SELECT has_table_privilege('everydayai_agent_runtime_worker','agent_action_cost_settlements','SELECT')").fetchone()[0] is False
         assert conn.execute("SELECT has_function_privilege('everydayai_agent_runtime_worker','reserve_agent_action_cost(UUID,UUID,BIGINT,TEXT)','EXECUTE')").fetchone()[0] is True
+        assert conn.execute("SELECT has_function_privilege('everydayai_agent_runtime_worker','finalize_agent_action_provider(UUID,UUID,UUID,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT)','EXECUTE')").fetchone()[0] is False
     for name in rollbacks:
         _rollback(database, name)
     for name in names:
