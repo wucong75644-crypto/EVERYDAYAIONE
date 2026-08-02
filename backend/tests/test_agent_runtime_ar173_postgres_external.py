@@ -44,7 +44,7 @@ def _rollback(url: str, name: str) -> None:
 
 
 def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
-    migrations = [f"226_{index:02d}_" for index in range(1, 16)]
+    migrations = [f"226_{index:02d}_" for index in range(1, 18)]
     names = [next((ROOT / "migrations").glob(f"{prefix}*.sql")).name for prefix in migrations]
     rollbacks = [next((ROOT / "migrations/rollback").glob(f"{prefix}*_rollback.sql")).name for prefix in reversed(migrations)]
     with psycopg.connect(database) as conn:
@@ -103,13 +103,22 @@ def _worker_rpc(database: str, function: str, params: tuple[object, ...]) -> obj
         return value
 
 
+def _worker_rpc_outcome(database: str, function: str, params: tuple[object, ...]) -> tuple[str, object]:
+    try:
+        return ("ok", _worker_rpc(database, function, params))
+    except Exception as error:
+        detail = getattr(getattr(error, "diag", None), "message_primary", None) or str(error).splitlines()[0]
+        context = getattr(getattr(error, "diag", None), "context", None) or ""
+        return ("error", f"{type(error).__name__}:{detail}:{context}")
+
+
 def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database: str) -> None:
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 16):
+    for index in range(1, 18):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     reserve_params = (ids["action"], ids["attempt"], "reserve", 3, 0, "credits", "runtime", None)
@@ -173,7 +182,7 @@ def test_ar173_real_action_loop_postgres_specialist_e2e(database: str) -> None:
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 16):
+    for index in range(1, 18):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
@@ -227,3 +236,52 @@ def test_ar173_real_action_loop_postgres_specialist_e2e(database: str) -> None:
         assert state == ("completed", "completed", "success", 0)
         assert conn.execute("SELECT count(*) FROM agent_action_results WHERE action_id=%s", (ids["action"],)).fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s AND kind='settle'", (ids["action"],)).fetchone()[0] == 1
+
+
+def test_ar173_fifty_concurrent_finalize_has_one_terminal_winner(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 18):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+    params = (ids["attempt"], ids["token"], None, 0, ids["request_hash"], "completed",
+              {"state": "completed", "provider_task_ref": "task-50"},
+              {"status": "success", "summary": "ok", "data": {}, "external_receipt": {"provider": "local-mock"}},
+              "settle", 0, 2, "credits", "runtime", "a" * 64)
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        outcomes = list(pool.map(lambda _: _worker_rpc_outcome(database, "finalize_agent_action_provider_v2", params), range(50)))
+    successful = [value for kind, value in outcomes if kind == "ok"]
+    assert len(successful) == 1
+    assert sum(kind == "error" for kind, _ in outcomes) == 49
+    with psycopg.connect(database) as conn:
+        assert conn.execute("SELECT status FROM agent_actions WHERE id=%s", (ids["action"],)).fetchone()[0] == "completed"
+        assert conn.execute("SELECT count(*) FROM agent_action_results WHERE action_id=%s", (ids["action"],)).fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s AND kind='settle'", (ids["action"],)).fetchone()[0] == 1
+
+
+def test_ar173_fifty_concurrent_child_create_and_sync_phase_idempotency(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 18):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+    context = {"policy_receipt_id": ids["policy"], "capability": "runtime.child", "budget_remaining": 1, "scope": {"org_id": "22222222-2222-2222-2222-222222222222", "user_id": "44444444-4444-4444-4444-444444444444"}}
+    child_params = (ids["run"], ids["action"], ids["request_hash"], ids["token"], 0, "runtime.child", context)
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        children = list(pool.map(lambda _: _worker_rpc_outcome(database, "create_agent_child_run_strict", child_params), range(50)))
+    created = [value for kind, value in children if kind == "ok" and value.get("outcome") == "created"]
+    readbacks = [value for kind, value in children if kind == "ok" and value.get("outcome") == "already_exists"]
+    assert len(created) == 1 and len(readbacks) == 49
+    checkpoint = {"provider_task_ref": "sync-1", "cursor": 1}
+    phase_params = (ids["action"], ids["attempt"], ids["token"], 0, datetime.now(timezone.utc) + timedelta(minutes=10), ids["request_hash"], "submitted", checkpoint, {"provider": "erp", "receipt": "r1"})
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        phases = list(pool.map(lambda _: _worker_rpc_outcome(database, "record_agent_sync_phase_v3", phase_params), range(50)))
+    assert sum(kind == "ok" for kind, _ in phases) == 50
+    conflict_params = (*phase_params[:6], "submitted", {"provider_task_ref": "sync-2"}, {"provider": "erp", "receipt": "r2"})
+    assert _worker_rpc_outcome(database, "record_agent_sync_phase_v3", conflict_params)[0] == "error"

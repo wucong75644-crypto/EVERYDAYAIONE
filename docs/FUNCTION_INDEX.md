@@ -137,7 +137,7 @@
 | `ActionAuthorizationPort` / `PostgresActionAuthorizationRepository` | `backend/services/agent/runtime/ports/authorization.py`、`infrastructure/postgres/authorization.py` | Worker Scoped 授权恢复、receipt、activation 与 fenced dispatch gate 边界 |
 | `ActionExecutorResolver` / `PostgresActionExecutorResolver` | `backend/services/agent/runtime/executors/resolver.py` | 将持久 Action snapshot 解析为唯一 Registry descriptor、Executor、Attempt 与 request |
 | `AuthorizationRecoveryDriver.run_once` | `backend/services/agent/runtime/application/authorization_recovery.py` | 领取已批准 Interaction，重新求值 Policy，持久化 allow receipt 后激活 Action |
-| `ActionLoopDriver.dispatch_once` / `reconcile_once` | `backend/services/agent/runtime/application/action_loop.py` | 仅按 Resolver→gate→Executor 调度；存在 intent 的过期 dispatch 只进入 reconcile |
+| `ActionLoopDriver.dispatch_once` / `reconcile_once` / `cancel_action` | `backend/services/agent/runtime/application/action_loop.py` | 按 Resolver→gate→Executor 调度、租约对账及应用层唯一取消终态编排 |
 | `gate_agent_action_dispatch` / `get_agent_action_dispatch_intent` | `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql` | 同事务校验 receipt/grant/scope、消费 GrantUse、绑定 Attempt fencing 并持久化 DispatchIntent/readback |
 | `claim_next_agent_authorization_recovery` / `renew_agent_authorization_recovery` / `activate_agent_authorized_action` / `expire_agent_authorization_interaction` | `backend/migrations/220_25_agent_runtime_authorization_recovery.sql` | 按统一锁序恢复、续租、激活或关闭授权等待 Action，并精确重算 Run blocker/wait state |
 
@@ -2038,7 +2038,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `InMemoryActionCostLedger` | `backend/services/agent/runtime/costs.py` | 非模型 Action Cost Ledger 的单元测试实现；生产通过窄 RPC |
 | `ArtifactMaterializer` | `backend/services/agent/runtime/executors/materializer.py` | 内容寻址、partial 隔离和 materialize-only 重试 |
 | `build_nonproduction_full_catalog` / `assert_nonproduction_catalog_consistency` | `backend/services/agent/runtime/catalog/consistency.py` | 18 只读 + code_execute + 23 专业工具的 42 项非生产集合门禁 |
-| `226_01`～`226_15` RPC | `backend/migrations/226_*.sql` | Provider reconcile、Callback、Cost、Artifact、Child Run、Workspace/Scheduled Task CAS、终态 finalize、Sync fencing 与 Worker RPC overload 窄 RPC |
+| `226_01`～`226_17` RPC | `backend/migrations/226_*.sql` | Provider reconcile、Callback、Cost、Artifact、Child Run、Workspace/Scheduled Task CAS、终态 finalize、Sync fencing/幂等与 Worker RPC overload 窄 RPC |
 | `build_nonproduction_specialist_registry` | `backend/services/agent/runtime/executors/real_specialist_composition.py` | 为 23 项工具构造真实 Provider adapter 与八类业务 Executor |
 | `AllowlistedTransport` / Provider adapters | `backend/services/agent/runtime/executors/provider_adapters.py` | 绑定 ERP、DashScope、Crawler、KIE 的隔离网络路由并限制响应大小 |
 | `WorkspaceResourceService` / `ScheduledTaskService` | `backend/services/agent/runtime/executors/resource_contracts.py` | OSS retention、稳定资源恢复、原子 rename 与计划任务 CAS |
