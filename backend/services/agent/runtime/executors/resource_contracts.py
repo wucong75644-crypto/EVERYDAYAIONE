@@ -216,6 +216,11 @@ class ErpSyncService:
     facts: object | None = None
 
     async def run(self, request: Mapping[str, object], attempt: object) -> Mapping[str, object]:
+        facts = await self._read_facts(attempt)
+        checkpointed = facts.get("checkpointed")
+        if isinstance(checkpointed, Mapping):
+            checkpoint = dict(checkpointed.get("checkpoint", {}))
+            return {"state": "completed", "checkpoint": checkpoint}
         submission = await self._read_submission(attempt)
         if submission is None:
             submission = await self._durable_submit_or_recover(request, attempt)
@@ -229,9 +234,15 @@ class ErpSyncService:
             unknown = {"state": "unknown", "submission": dict(submission), "progress": dict(progress), "checkpoint": {}}
             await self._phase(attempt, "unknown", unknown)
             return unknown
-        await self._phase(attempt, "applying", progress)
         try:
-            applied = await self.apply(progress)
+            applying = facts.get("applying")
+            applied = (
+                dict(applying.get("checkpoint", {}))
+                if isinstance(applying, Mapping) and isinstance(applying.get("checkpoint"), Mapping)
+                else await self.apply(progress)
+            )
+            if not isinstance(applying, Mapping) or not applying.get("checkpoint"):
+                await self._phase(attempt, "applying", {"checkpoint": applied, "progress": dict(progress)})
             checkpoint = await self.checkpoint(applied)
         except Exception as exc:
             unknown = {"state": "unknown", "submission": dict(submission), "progress": dict(progress), "checkpoint": {"error": type(exc).__name__}}

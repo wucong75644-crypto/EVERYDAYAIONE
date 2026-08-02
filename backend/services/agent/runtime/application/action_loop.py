@@ -410,7 +410,7 @@ class ActionLoopDriver:
             request_hash=request_hash,
             terminal_state=receipt.outcome.value,
             provider_receipt=external,
-            result=result or {"status": "cancelled", "external_receipt": external},
+            result=result or {"status": "empty", "summary": "cancelled", "data": {}, "artifact_ids": [], "usage": {}, "cost": {}, "external_receipt": external},
             cost_kind=("settle" if receipt.outcome is ExecutionOutcome.COMPLETED
                        else "release" if receipt.outcome is ExecutionOutcome.FAILED
                        else "refund"),

@@ -19,12 +19,14 @@ from services.agent.runtime.executors.registry import ExecutorRegistry
 from services.agent.runtime.executors.resolver import PostgresActionExecutorResolver
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
 from services.agent.runtime.executors.specialist_contracts import ProviderReceipt, ProviderState
+from services.agent.runtime.ports.executor import ExecutionOutcome
 from services.agent.runtime.executors.specialist_registry import specialist_descriptor
 from services.agent.runtime.infrastructure.postgres.action_repository import PostgresActionRepository
 from services.agent.runtime.infrastructure.postgres.authorization import PostgresActionAuthorizationRepository
 from services.agent.runtime.infrastructure.postgres.coordinator_recovery import PostgresCoordinatorRecoveryRepository
 from services.agent.runtime.infrastructure.postgres.specialist_repository import PostgresSpecialistRepository
 from services.agent.runtime.executors.contracts import canonical_request_hash
+from services.agent.runtime.ports.coordinator_recovery import ActionDispatchSnapshot
 
 
 pytestmark = pytest.mark.external
@@ -311,3 +313,83 @@ def test_ar173_fifty_concurrent_sync_submission_mapping_is_stable(database: str)
     assert recovered["outcome"] == "found" and recovered["provider_task_ref"] == "sync-task-1"
     with pytest.raises(Exception):
         _worker_rpc(database, "create_or_get_agent_sync_submission", (ids["action"], ids["attempt"], ids["request_hash"], "different-scope", "orders", key, "erp"))
+
+
+def test_ar173_formal_action_loop_accepted_cancel_postgres_e2e(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+    reconciliation = str(uuid4())
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE agent_actions SET status='accepted' WHERE id=%s", (ids["action"],))
+        conn.execute("UPDATE agent_action_attempts SET status='accepted',dispatch_phase='accepted',last_provider_status='accepted',accepted_at=clock_timestamp(),state_version=1,reconciliation_token=%s,reconciliation_lease_expires_at=clock_timestamp()+interval '10 minutes',external_receipt=%s WHERE id=%s", (reconciliation, Jsonb({"provider": "local", "provider_task_ref": "task-cancel"}), ids["attempt"]))
+        conn.execute("UPDATE agent_runs SET blocking_action_count=1,status='running' WHERE id=%s", (ids["run"],))
+        conn.commit()
+
+    class _CancelProvider:
+        async def submit(self, attempt, request, *, idempotency_key):
+            raise AssertionError("cancel E2E must not submit")
+        async def reconcile(self, attempt, receipt):
+            raise AssertionError("cancel E2E must not reconcile")
+        async def cancel(self, attempt, receipt):
+            return ProviderReceipt(state=ProviderState.CANCELLED, provider="local", request_hash=attempt.request_hash, provider_task_ref="task-cancel", evidence={"cancel_confirmed": True})
+
+    async def run() -> None:
+        client = AsyncLocalDBClient(database.replace("postgres@", "everydayai_agent_runtime_worker@"), min_size=1, max_size=4)
+        await client.open()
+        scoped = AsyncScopedDatabaseClient(client, DatabaseScope(actor_user_id="44444444-4444-4444-4444-444444444444", org_id="22222222-2222-2222-2222-222222222222", access_kind=DatabaseAccessKind.AGENT_RUNTIME, request_id="ar173-cancel"))
+        try:
+            facts = PostgresSpecialistRepository(scoped)
+            descriptor = specialist_descriptor("generate_image")
+            registry = ExecutorRegistry()
+            registry.register(descriptor, SpecialistExecutor(executor_type=descriptor.executor_type, revision=1, provider=_CancelProvider()), safety_level="dangerous")
+            registry.specialist_facts = facts
+            driver = ActionLoopDriver(recovery_repository=PostgresCoordinatorRecoveryRepository(scoped), action_repository=PostgresActionRepository(scoped), authorization_repository=PostgresActionAuthorizationRepository(scoped), resolver=PostgresActionExecutorResolver(registry), worker_id="cancel-e2e", renew_interval=60)
+            snapshot = ActionDispatchSnapshot(
+                attempt={"id": ids["attempt"], "action_id": ids["action"], "status": "accepted", "execution_token": ids["token"], "reconciliation_token": reconciliation, "reconciliation_lease_expires_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(minutes=5), "lease_expires_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(minutes=5), "accepted_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc), "state_version": 1, "request_hash": ids["request_hash"], "attempt_number": 1, "worker_id": "cancel-e2e", "idempotency_key": ids["attempt"], "claimed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc), "external_receipt": {"provider": "local", "provider_task_ref": "task-cancel"}},
+                action={"id": ids["action"], "action_id": ids["action"], "run_id": ids["run"], "session_id": ids["session"], "tool_name": "generate_image", "arguments": {}, "request_hash": ids["request_hash"], "policy_decision": "preauthorized", "policy_revision": "v1", "retry_disposition": "retry_after_reconcile", "state_version": 0, "policy_snapshot": {}, "scope_kind": "user", "scope_id": "44444444-4444-4444-4444-444444444444", "user_id": "44444444-4444-4444-4444-444444444444", "org_id": "22222222-2222-2222-2222-222222222222"},
+            )
+            assert await driver.cancel_action(snapshot) is ExecutionOutcome.CANCELLED
+        finally:
+            await client.close()
+    import asyncio
+    asyncio.run(run())
+    with psycopg.connect(database) as conn:
+        state = conn.execute("SELECT a.status,t.status,r.status,run.blocking_action_count FROM agent_actions a JOIN agent_action_attempts t ON t.id=%s LEFT JOIN agent_action_results r ON r.action_id=a.id JOIN agent_runs run ON run.id=a.run_id WHERE a.id=%s", (ids["attempt"], ids["action"])).fetchone()
+        assert state == ("cancelled", "cancelled", "empty", 0)
+        assert conn.execute("SELECT count(*) FROM agent_action_results WHERE action_id=%s", (ids["action"],)).fetchone()[0] == 1
+
+
+def test_ar173_resource_and_scheduler_cas_50_concurrency(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        deleted_id = conn.execute("INSERT INTO deleted_files(org_id,user_id,relative_path,oss_object_key) VALUES(%s,%s,'report.csv','workspace/report.csv') RETURNING id", ("22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444")).fetchone()[0]
+        task_id = str(uuid4())
+        conn.execute("INSERT INTO scheduled_tasks(id,org_id,user_id) VALUES(%s,%s,%s)", (task_id, "22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444"))
+        conn.commit()
+    delete_params = (deleted_id, ids["action"], ids["attempt"], ids["request_hash"], ids["attempt"], ids["token"])
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        deletes = list(pool.map(lambda _: _worker_rpc_outcome(database, "runtime_delete_workspace_resource", delete_params), range(50)))
+    assert sum(kind == "ok" and value["outcome"] == "bound" for kind, value in deletes) == 1
+    assert sum(kind == "ok" and value["outcome"] == "idempotent_readback" for kind, value in deletes) == 49
+    task_params = (task_id, ids["action"], ids["attempt"], 0, ids["request_hash"], ids["attempt"], {"operation": "pause"}, ids["token"])
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        tasks = list(pool.map(lambda _: _worker_rpc_outcome(database, "runtime_mutate_scheduled_task", task_params), range(50)))
+    assert sum(kind == "ok" and value["outcome"] == "updated" for kind, value in tasks) == 1
+    assert sum(kind == "ok" and value["outcome"] == "cas_conflict" for kind, value in tasks) == 49
+    stale_kind, stale_value = _worker_rpc_outcome(database, "runtime_mutate_scheduled_task", (*task_params[:3], 0, "bad" * 16, *task_params[5:]))
+    assert stale_kind == "error" or stale_value.get("outcome") == "cas_conflict"

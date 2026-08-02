@@ -9,7 +9,7 @@ SET search_path = pg_catalog, public AS $$
 DECLARE v_hash TEXT;
 BEGIN
     IF jsonb_typeof(p_result) IS DISTINCT FROM 'object'
-       OR p_action_status NOT IN ('completed', 'failed')
+       OR p_action_status NOT IN ('completed', 'failed', 'cancelled')
        OR p_result->>'status' NOT IN ('success', 'empty', 'degraded', 'error')
        OR NOT _agent_action_json_is_safe(
            COALESCE(p_result->'external_receipt', '{}'::JSONB))
