@@ -86,6 +86,22 @@ class SpecialistProvider(Protocol):
     ) -> ProviderReceipt: ...
 
 
+class SyncProvider(Protocol):
+    """Provider contract for durable ERP Sync submission recovery."""
+
+    async def submit_or_get(
+        self, request: Mapping[str, object], *, idempotency_key: str,
+    ) -> Mapping[str, object]: ...
+
+    async def recover_submission(
+        self, *, idempotency_key: str,
+    ) -> Mapping[str, object]: ...
+
+    async def query_progress(
+        self, *, provider_task_ref: str,
+    ) -> Mapping[str, object]: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class CapabilityGrant:
     action_id: str

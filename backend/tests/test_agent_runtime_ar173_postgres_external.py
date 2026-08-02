@@ -44,7 +44,7 @@ def _rollback(url: str, name: str) -> None:
 
 
 def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
-    migrations = [f"226_{index:02d}_" for index in range(1, 18)]
+    migrations = [f"226_{index:02d}_" for index in range(1, 19)]
     names = [next((ROOT / "migrations").glob(f"{prefix}*.sql")).name for prefix in migrations]
     rollbacks = [next((ROOT / "migrations/rollback").glob(f"{prefix}*_rollback.sql")).name for prefix in reversed(migrations)]
     with psycopg.connect(database) as conn:
@@ -118,7 +118,7 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 18):
+    for index in range(1, 19):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     reserve_params = (ids["action"], ids["attempt"], "reserve", 3, 0, "credits", "runtime", None)
@@ -182,7 +182,7 @@ def test_ar173_real_action_loop_postgres_specialist_e2e(database: str) -> None:
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 18):
+    for index in range(1, 19):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
@@ -244,7 +244,7 @@ def test_ar173_fifty_concurrent_finalize_has_one_terminal_winner(database: str) 
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 18):
+    for index in range(1, 19):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     params = (ids["attempt"], ids["token"], None, 0, ids["request_hash"], "completed",
@@ -268,7 +268,7 @@ def test_ar173_fifty_concurrent_child_create_and_sync_phase_idempotency(database
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 18):
+    for index in range(1, 19):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     context = {"policy_receipt_id": ids["policy"], "capability": "runtime.child", "budget_remaining": 1, "scope": {"org_id": "22222222-2222-2222-2222-222222222222", "user_id": "44444444-4444-4444-4444-444444444444"}}
@@ -285,3 +285,29 @@ def test_ar173_fifty_concurrent_child_create_and_sync_phase_idempotency(database
     assert sum(kind == "ok" for kind, _ in phases) == 50
     conflict_params = (*phase_params[:6], "submitted", {"provider_task_ref": "sync-2"}, {"provider": "erp", "receipt": "r2"})
     assert _worker_rpc_outcome(database, "record_agent_sync_phase_v3", conflict_params)[0] == "error"
+
+
+def test_ar173_fifty_concurrent_sync_submission_mapping_is_stable(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+    key = "sync-key-50"
+    params = (ids["action"], ids["attempt"], ids["request_hash"], "org-scope", "orders", key, "erp")
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        mappings = list(pool.map(lambda _: _worker_rpc_outcome(database, "create_or_get_agent_sync_submission", params), range(50)))
+    values = [value for kind, value in mappings if kind == "ok"]
+    assert len(values) == 50
+    assert sum(value["outcome"] == "created" for value in values) == 1
+    assert sum(value["outcome"] == "readback" for value in values) == 49
+    submission_id = next(value["submission_id"] for value in values)
+    recorded = _worker_rpc(database, "record_agent_sync_submission_result", (submission_id, key, ids["request_hash"], "sync-task-1", "found", {"enqueued": True}))
+    assert recorded["provider_task_ref"] == "sync-task-1"
+    recovered = _worker_rpc(database, "recover_agent_sync_submission", (key, ids["request_hash"]))
+    assert recovered["outcome"] == "found" and recovered["provider_task_ref"] == "sync-task-1"
+    with pytest.raises(Exception):
+        _worker_rpc(database, "create_or_get_agent_sync_submission", (ids["action"], ids["attempt"], ids["request_hash"], "different-scope", "orders", key, "erp"))

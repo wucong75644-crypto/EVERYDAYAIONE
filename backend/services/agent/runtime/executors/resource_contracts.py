@@ -218,7 +218,10 @@ class ErpSyncService:
     async def run(self, request: Mapping[str, object], attempt: object) -> Mapping[str, object]:
         submission = await self._read_submission(attempt)
         if submission is None:
-            submission = await self.submit(request)
+            submission = await self._durable_submit_or_recover(request, attempt)
+            if submission.get("state") == "unknown":
+                await self._phase(attempt, "unknown", submission)
+                return submission
             await self._phase(attempt, "submitted", submission)
         progress = await self.progress(submission)
         await self._phase(attempt, "progressing", progress)
@@ -270,11 +273,81 @@ class ErpSyncService:
                         return candidate.get("submission", candidate)
         return None
 
+    async def _durable_submit_or_recover(self, request: Mapping[str, object], attempt: object) -> Mapping[str, object]:
+        if self.facts is None or not hasattr(self.facts, "create_or_get_sync_submission"):
+            return await self.submit(request)
+        key = _sync_idempotency_key(attempt, request)
+        domain = str(request.get("domain", "default"))
+        scope_id = str(request.get("scope_id", getattr(getattr(attempt, "scope", None), "scope_id", "")))
+        identity = await self.facts.create_or_get_sync_submission(
+            p_action_id=str(attempt.action_id), p_attempt_id=str(attempt.attempt_id),
+            p_request_hash=str(attempt.request_hash), p_scope_id=scope_id,
+            p_sync_domain=domain, p_external_idempotency_key=key, p_provider="erp_sync",
+        )
+        task_ref = identity.get("provider_task_ref")
+        if isinstance(task_ref, str) and task_ref:
+            return {"state": "accepted", "provider_task_ref": task_ref, "external_idempotency_key": key}
+        recovered = await self._recover_submission(key, attempt, identity)
+        if recovered.get("state") == "accepted":
+            return recovered
+        if recovered.get("state") == "unknown":
+            return recovered
+        try:
+            result = await self.submit_or_get(request, key)
+        except Exception as exc:
+            recovered = await self._recover_submission(key, attempt, identity)
+            if recovered.get("state") != "accepted":
+                return {"state": "unknown", "external_idempotency_key": key, "evidence": {"error_code": "ERP_SYNC_SUBMIT_RESPONSE_UNKNOWN", "type": type(exc).__name__}}
+            return recovered
+        result["external_idempotency_key"] = key
+        await self.facts.record_sync_submission_result(
+            p_submission_id=str(identity["submission_id"]), p_external_idempotency_key=key,
+            p_request_hash=str(attempt.request_hash), p_provider_task_ref=str(result.get("provider_task_ref", "")),
+            p_submission_state="found", p_enqueue_checkpoint={"state": "submission_recorded"},
+        )
+        return result
+
+    async def _recover_submission(self, key: str, attempt: object, identity: Mapping[str, object]) -> Mapping[str, object]:
+        recovered = await self.facts.recover_sync_submission(
+            p_external_idempotency_key=key, p_request_hash=str(attempt.request_hash),
+        )
+        if recovered.get("outcome") == "found" and recovered.get("provider_task_ref"):
+            return {"state": "accepted", "provider_task_ref": recovered["provider_task_ref"], "external_idempotency_key": key}
+        if recovered.get("outcome") == "unknown" and hasattr(self.provider, "recover_submission"):
+            result = self.provider.recover_submission(idempotency_key=key)  # type: ignore[attr-defined]
+            if hasattr(result, "__await__"):
+                result = await result
+            if isinstance(result, Mapping) and result.get("outcome") == "FOUND" and result.get("provider_task_ref"):
+                await self.facts.record_sync_submission_result(
+                    p_submission_id=str(identity["submission_id"]), p_external_idempotency_key=key,
+                    p_request_hash=str(attempt.request_hash), p_provider_task_ref=str(result["provider_task_ref"]),
+                    p_submission_state="found", p_enqueue_checkpoint={"state": "recovered"},
+                )
+                return {"state": "accepted", "provider_task_ref": result["provider_task_ref"], "external_idempotency_key": key}
+            if isinstance(result, Mapping) and result.get("outcome") == "PROVEN_NOT_SUBMITTED":
+                await self.facts.record_sync_submission_result(
+                    p_submission_id=str(identity["submission_id"]), p_external_idempotency_key=key,
+                    p_request_hash=str(attempt.request_hash), p_provider_task_ref="",
+                    p_submission_state="proven_not_submitted", p_enqueue_checkpoint={"state": "proven_not_submitted"},
+                )
+                return {"state": "proven_not_submitted", "external_idempotency_key": key}
+        if recovered.get("outcome") == "proven_not_submitted":
+            return {"state": "proven_not_submitted", "external_idempotency_key": key}
+        return {"state": "unknown", "external_idempotency_key": key, "evidence": {"error_code": "ERP_SYNC_SUBMISSION_RECOVERY_UNKNOWN"}}
+
     async def submit(self, request: Mapping[str, object]) -> Mapping[str, object]:
         result = self.provider.submit(request)  # type: ignore[attr-defined]
         if hasattr(result, "__await__"):
             result = await result
         return _phase_object(result, "ERP_SYNC_SUBMISSION_INVALID")
+
+    async def submit_or_get(self, request: Mapping[str, object], idempotency_key: str) -> Mapping[str, object]:
+        if not hasattr(self.provider, "submit_or_get"):
+            raise RuntimeError("ERP_SYNC_SUBMIT_OR_GET_CONTRACT_REQUIRED")
+        result = self.provider.submit_or_get(request, idempotency_key=idempotency_key)  # type: ignore[attr-defined]
+        if hasattr(result, "__await__"):
+            result = await result
+        return _phase_object(result, "ERP_SYNC_SUBMIT_OR_GET_INVALID")
 
     async def progress(self, submission: Mapping[str, object]) -> Mapping[str, object]:
         if not hasattr(self.provider, "progress"):
@@ -535,6 +608,11 @@ def _resource_params(attempt: object, operation: str, resource_id: str, payload:
     else:
         params["p_deleted_file_id"] = int(resource_id)
     return params
+
+
+def _sync_idempotency_key(attempt: object, request: Mapping[str, object]) -> str:
+    raw = f"sync:{attempt.action_id}:{attempt.attempt_id}:{request.get('domain', 'default')}:{attempt.request_hash}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _require_bound(value: object) -> None:

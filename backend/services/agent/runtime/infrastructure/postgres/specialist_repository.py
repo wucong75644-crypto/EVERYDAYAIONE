@@ -190,5 +190,14 @@ class PostgresSpecialistRepository:
             raise SpecialistRpcError("read_agent_sync_phase_facts", "facts_invalid", result)
         return dict(facts)
 
+    async def create_or_get_sync_submission(self, **params: object) -> Mapping[str, object]:
+        return await self._rpc("create_or_get_agent_sync_submission", params, allowed={"created", "readback"})
+
+    async def record_sync_submission_result(self, **params: object) -> Mapping[str, object]:
+        return await self._rpc("record_agent_sync_submission_result", params, allowed={"recorded"})
+
+    async def recover_sync_submission(self, **params: object) -> Mapping[str, object]:
+        return await self._rpc("recover_agent_sync_submission", params, allowed={"found", "proven_not_submitted", "unknown"})
+
 
 __all__ = ["PostgresSpecialistRepository", "SpecialistRpcConflict", "SpecialistRpcError"]
