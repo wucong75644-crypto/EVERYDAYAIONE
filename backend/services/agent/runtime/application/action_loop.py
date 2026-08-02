@@ -36,6 +36,18 @@ from services.agent.runtime.ports.executor import (
 from services.agent.runtime.executors.specialist_contracts import ReconciliationContext, CostReservation
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
 from services.agent.runtime.executors.contracts import canonical_json
+from services.agent.runtime.application.action_loop_support import (
+    ActionLease as _ActionLease,
+    CostReserveFailure as _CostReserveFailure,
+    failure_result as _failure_result,
+    int_value as _int,
+    required as _required,
+    required_int as _required_int,
+    required_result as _required_result,
+    required_time as _required_time,
+    reserved_amount as _reserved_amount,
+    result as _result,
+)
 
 
 class ActionLoopDriver:
@@ -79,7 +91,6 @@ class ActionLoopDriver:
             ):
                 continue
         return True
-
     async def reconcile_once(self) -> bool:
         claim = await self._recovery.claim_action_reconciliation(
             worker_id=self._worker_id,
@@ -476,145 +487,3 @@ class ActionLoopDriver:
             external_receipt=external,
         )
         return True
-
-
-class _CostReserveFailure(RuntimeError):
-    pass
-
-
-def _required_result(receipt: ExecutionReceipt) -> Mapping[str, object]:
-    if receipt.result is None:
-        raise RuntimeError("ACTION_RESULT_REQUIRED")
-    result = receipt.result
-    return {
-        "status": result.status.value,
-        "summary": result.summary,
-        "data": result.data,
-        "artifact_ids": list(result.artifact_ids),
-        "usage": dict(result.usage),
-        "cost": dict(result.cost),
-        "external_receipt": dict(result.receipt),
-        "error_code": (
-            str(result.data.get("error_code"))
-            if result.data and result.data.get("error_code") else None
-        ),
-    }
-
-
-def _result(receipt: ExecutionReceipt) -> Mapping[str, object] | None:
-    if receipt.outcome is ExecutionOutcome.COMPLETED:
-        return _required_result(receipt)
-    if receipt.outcome is ExecutionOutcome.FAILED:
-        return _failure_result(receipt)
-    return None
-
-
-def _failure_result(receipt: ExecutionReceipt) -> Mapping[str, object]:
-    error_code = receipt.external_receipt.get("error_code", "executor_failed")
-    return {
-        "status": "error",
-        "summary": str(receipt.external_receipt.get("summary", "")),
-        "data": dict(receipt.external_receipt),
-        "artifact_ids": [],
-        "usage": {},
-        "cost": {},
-        "external_receipt": dict(receipt.external_receipt),
-        "error_code": str(error_code),
-    }
-
-
-def _int(value: Mapping[str, object], field: str) -> int:
-    item = value.get(field)
-    if isinstance(item, bool) or not isinstance(item, int):
-        raise RuntimeError(f"ACTION_{field.upper()}_REQUIRED")
-    return item
-
-
-def _required(value: str | None, name: str) -> str:
-    if value is None:
-        raise RuntimeError(f"{name.upper()}_REQUIRED")
-    return value
-
-
-def _required_int(value: int | None, name: str) -> int:
-    if value is None:
-        raise RuntimeError(f"{name.upper()}_REQUIRED")
-    return value
-
-
-def _required_time(value):
-    if value is None:
-        raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_REQUIRED")
-    return value
-
-
-def _reserved_amount(snapshot: ActionDispatchSnapshot) -> int:
-    arguments = snapshot.action.get("arguments", {})
-    if not isinstance(arguments, Mapping):
-        return 0
-    value = arguments.get("reserved_credits", 0)
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
-
-
-class _ActionLease:
-    def __init__(
-        self, *, repository: ActionRepositoryPort, attempt_id: str,
-        token: str, state_version: int, lease_seconds: int,
-        renew_interval: float, reconciliation: bool,
-    ) -> None:
-        self._repository = repository
-        self._attempt_id = attempt_id
-        self._token = token
-        self.state_version = state_version
-        self._lease_seconds = lease_seconds
-        self._renew_interval = renew_interval
-        self._reconciliation = reconciliation
-        self._lock = asyncio.Lock()
-
-    async def run(self, awaitable: object) -> ExecutionReceipt:
-        if not hasattr(awaitable, "__await__"):
-            raise TypeError("ACTION_EXECUTOR_AWAITABLE_REQUIRED")
-        work = asyncio.ensure_future(awaitable)
-        renewal = asyncio.create_task(self._renew())
-        try:
-            done, _ = await asyncio.wait(
-                {work, renewal}, return_when=asyncio.FIRST_COMPLETED,
-            )
-            if renewal in done:
-                work.cancel()
-                with suppress(asyncio.CancelledError):
-                    await work
-                error = renewal.exception()
-                if error is not None:
-                    raise error
-                raise RuntimeError("ACTION_LEASE_LOST")
-            result = await work
-            async with self._lock:
-                pass
-            return result
-        finally:
-            renewal.cancel()
-            with suppress(asyncio.CancelledError):
-                await renewal
-
-    async def _renew(self) -> None:
-        while True:
-            await asyncio.sleep(self._renew_interval)
-            async with self._lock:
-                if self._reconciliation:
-                    receipt = await self._repository.renew_reconciliation(
-                        attempt_id=self._attempt_id,
-                        reconciliation_token=self._token,
-                        expected_state_version=self.state_version,
-                        lease_seconds=self._lease_seconds,
-                    )
-                else:
-                    receipt = await self._repository.renew(
-                        attempt_id=self._attempt_id,
-                        execution_token=self._token,
-                        expected_state_version=self.state_version,
-                        lease_seconds=self._lease_seconds,
-                    )
-                self.state_version = _required_int(
-                    receipt.state_version, "Action renewal state_version",
-                )
