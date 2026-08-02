@@ -133,6 +133,62 @@ class ActionLoopDriver:
             pass
         return True
 
+    async def cancel_action(self, snapshot: ActionDispatchSnapshot) -> ExecutionOutcome:
+        """Cancel one claimed specialist attempt through the application owner."""
+        resolved = self._resolver.resolve(snapshot)
+        if not isinstance(resolved.executor, SpecialistExecutor):
+            raise TypeError("SPECIALIST_CANCEL_APPLICATION_PATH_REQUIRED")
+        attempt = resolved.attempt
+        raw_attempt = snapshot.attempt
+        status = str(raw_attempt.get("status", ""))
+        reconciliation = status in {"accepted", "unknown"}
+        token_key = "reconciliation_token" if reconciliation else "execution_token"
+        token = _required(raw_attempt.get(token_key), token_key)
+        state_version = _required_int(
+            raw_attempt.get("state_version"), "cancel state version",
+        )
+        if reconciliation:
+            context = ReconciliationContext(
+                token=token,
+                lease_expires_at=_required_time(
+                    raw_attempt.get("reconciliation_lease_expires_at"),
+                ),
+                state_version=state_version,
+            )
+            attempt = replace(attempt, status=ActionAttemptStatus(status))
+            receipt = await resolved.executor.cancel(attempt, context)
+        else:
+            receipt = await resolved.executor.cancel(attempt)
+        request_hash = str(raw_attempt["request_hash"])
+        if receipt.outcome is ExecutionOutcome.CANCELLED:
+            if not await self._try_specialist_finalize(
+                receipt, attempt_id=str(raw_attempt["id"]), token=token,
+                state_version=state_version, request_hash=request_hash,
+                reconciliation=reconciliation,
+                reserved_amount=_reserved_amount(snapshot), specialist=True,
+            ):
+                raise RuntimeError("SPECIALIST_CANCEL_FINALIZE_REQUIRED")
+        elif receipt.outcome is ExecutionOutcome.UNKNOWN:
+            if reconciliation:
+                await self._specialist_facts.still_unknown(
+                    attempt_id=str(raw_attempt["id"]),
+                    reconciliation_token=token,
+                    expected_state_version=state_version,
+                    request_hash=request_hash,
+                    provider_receipt=dict(receipt.external_receipt),
+                    ambiguity_evidence=receipt.ambiguity_evidence,
+                )
+            else:
+                await self._actions.record_unknown(
+                    attempt_id=str(raw_attempt["id"]), execution_token=token,
+                    expected_state_version=state_version,
+                    request_hash=request_hash,
+                    ambiguity_evidence=receipt.ambiguity_evidence,
+                )
+        else:
+            raise RuntimeError("SPECIALIST_CANCEL_UNEXPECTED_OUTCOME")
+        return receipt.outcome
+
     async def _dispatch(self, snapshot: ActionDispatchSnapshot) -> None:
         attempt = snapshot.attempt
         token = str(attempt["execution_token"])
