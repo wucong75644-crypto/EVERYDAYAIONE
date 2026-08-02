@@ -55,7 +55,9 @@ class ActionLoopDriver:
         self._lease_seconds = lease_seconds
         self._renew_interval = renew_interval
         self._capability_issuer = capability_issuer
-        self._specialist_facts = specialist_facts
+        self._specialist_facts = specialist_facts or getattr(
+            resolver, "specialist_facts", None,
+        )
 
     async def dispatch_once(self) -> bool:
         request_id = f"{self._worker_id}:{uuid4()}"

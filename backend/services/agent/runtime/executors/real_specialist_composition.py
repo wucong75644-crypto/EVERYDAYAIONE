@@ -41,6 +41,7 @@ def build_nonproduction_specialist_registry(ports: NonProductionSpecialistPorts)
     """Build every tool with a distinct provider adapter and family Executor."""
     providers = _providers(ports)
     registry = ExecutorRegistry()
+    registry.specialist_facts = ports.facts
     for tool in sorted(SPECIALIST_FAMILIES):
         descriptor = specialist_descriptor(tool)
         executor_cls = EXECUTOR_BY_FAMILY[SPECIALIST_FAMILIES[tool]]

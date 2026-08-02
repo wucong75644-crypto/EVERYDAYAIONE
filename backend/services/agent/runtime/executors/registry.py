@@ -22,6 +22,7 @@ class ExecutorRegistry:
         self._by_type: dict[str, tuple[ExecutorDescriptor, ExecutorPort]] = {}
         self._action_to_type: dict[str, str] = {}
         self._safety_by_action: dict[str, str] = {}
+        self.specialist_facts: object | None = None
         for descriptor, executor in entries:
             self.register(descriptor, executor)
 

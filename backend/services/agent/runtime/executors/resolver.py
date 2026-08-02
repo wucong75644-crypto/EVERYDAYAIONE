@@ -44,6 +44,7 @@ class PostgresActionExecutorResolver:
 
     def __init__(self, registry: ExecutorRegistry) -> None:
         self._registry = registry
+        self.specialist_facts = registry.specialist_facts
 
     def resolve(
         self, snapshot: ActionDispatchSnapshot,
