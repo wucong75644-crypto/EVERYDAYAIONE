@@ -23,8 +23,12 @@ class RuntimeIngressReceipt:
 
 
 class RuntimeIngress:
-    def __init__(self, database: Any, version_registry: Any | None = None) -> None:
+    def __init__(self, database: Any, version_registry: Any | None = None,
+                 *, contract_revision: int = 2) -> None:
         self._database = database
+        if contract_revision not in {2, 3}:
+            raise ValueError("RUNTIME_INGRESS_CONTRACT_REVISION_INVALID")
+        self._contract_revision = contract_revision
         if version_registry is None:
             from services.agent.runtime.catalog import build_runtime_version_registry
             version_registry = build_runtime_version_registry()
@@ -41,22 +45,42 @@ class RuntimeIngress:
         through = str(payload.get("input_message_id") or payload.get("output_message_id") or "")
         if not through:
             raise RuntimeError("RUNTIME_INGRESS_THROUGH_MESSAGE_MISSING")
-        agent, catalog = self._versions.resolve_for_agent(
-            agent_definition_id, agent_definition_revision,
-        )
-        response = self._database.rpc("runtime_submit_ingress_v2", {
+        definition_hash = ""
+        catalog_revision = ""
+        if self._contract_revision == 2:
+            agent, catalog = self._versions.resolve_for_agent(
+                agent_definition_id, agent_definition_revision,
+            )
+            definition_hash = agent.definition_hash
+            catalog_revision = catalog.revision
+        else:
+            fact_response = self._database.rpc("get_agent_runtime_definition_fact", {
+                "p_agent_key": agent_definition_id,
+                "p_definition_revision": agent_definition_revision,
+            }).execute()
+            if inspect.isawaitable(fact_response):
+                fact_response = await fact_response
+            fact = getattr(fact_response, "data", None)
+            if not isinstance(fact, dict) or fact.get("outcome") == "not_found":
+                raise RuntimeError("RUNTIME_DEFINITION_FACT_UNAVAILABLE")
+            definition_hash = str(fact.get("definition_hash") or "")
+            catalog_revision = str(fact.get("catalog_revision") or "")
+            if not definition_hash or not catalog_revision:
+                raise RuntimeError("RUNTIME_DEFINITION_FACT_INVALID")
+        rpc_name = "runtime_submit_ingress_v3" if self._contract_revision == 3 else "runtime_submit_ingress_v2"
+        response = self._database.rpc(rpc_name, {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
             "p_user_id": user_id, "p_scope_kind": scope_kind,
             "p_scope_id": scope_id, "p_created_by_user_id": user_id,
             "p_agent_definition_id": agent_definition_id,
             "p_agent_definition_revision": agent_definition_revision,
-            "p_agent_definition_hash": agent.definition_hash,
+            "p_agent_definition_hash": definition_hash,
             "p_command_type": command_type,
             "p_idempotency_key": idempotency_key,
             "p_channel": str(payload.get("channel") or "web"),
             "p_through_message_id": through,
             "p_base_context_revision": f"message:{through}",
-            "p_effective_toolset_revision": catalog.revision,
+            "p_effective_toolset_revision": catalog_revision,
             "p_effective_toolset_hash": None,
             "p_config_snapshot": {"model_id": payload.get("model_id") or ""},
             "p_capability_snapshot": {"requested_groups": ["code"]},

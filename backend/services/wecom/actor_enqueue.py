@@ -76,7 +76,7 @@ async def enqueue_wecom_message(
 
     settings = get_settings()
     rpc_name = (
-        "enqueue_wecom_runtime_turn_v4"
+        "enqueue_wecom_runtime_turn_v5"
         if settings.agent_runtime_ingress_enabled
         else "enqueue_wecom_generation_turn_v2"
     )
@@ -95,16 +95,21 @@ async def enqueue_wecom_message(
                 settings.agent_runtime_agent_definition_revision,
             "p_idempotency_key": f"wecom:{msg.msgid}",
         })
-    if rpc_name == "enqueue_wecom_runtime_turn_v4":
-        from services.agent.runtime.catalog import build_runtime_version_registry
-        versions = build_runtime_version_registry()
-        agent, catalog = versions.resolve_for_agent(
-            settings.agent_runtime_agent_definition_id,
-            settings.agent_runtime_agent_definition_revision,
-        )
+    if rpc_name == "enqueue_wecom_runtime_turn_v5":
+        fact_response = handler.db.rpc("get_agent_runtime_definition_fact", {
+            "p_agent_key": settings.agent_runtime_agent_definition_id,
+            "p_definition_revision": settings.agent_runtime_agent_definition_revision,
+        }).execute()
+        fact = fact_response.data if fact_response else None
+        if not isinstance(fact, dict) or fact.get("outcome") == "not_found":
+            raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_UNAVAILABLE")
+        definition_hash = str(fact.get("definition_hash") or "")
+        catalog_revision = str(fact.get("catalog_revision") or "")
+        if not definition_hash or not catalog_revision:
+            raise RuntimeError("WECOM_RUNTIME_DEFINITION_FACT_INVALID")
         params.update({
-            "p_agent_definition_hash": agent.definition_hash,
-            "p_effective_toolset_revision": catalog.revision,
+            "p_agent_definition_hash": definition_hash,
+            "p_effective_toolset_revision": catalog_revision,
             "p_effective_toolset_hash": None,
             "p_release_revision": settings.agent_runtime_release_revision,
             "p_idempotency_key": f"wecom:{msg.msgid}",
