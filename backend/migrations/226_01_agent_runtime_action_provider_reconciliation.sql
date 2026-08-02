@@ -63,6 +63,19 @@ BEGIN
        OR a.status NOT IN ('dispatching','accepted','unknown') THEN
         RETURN jsonb_build_object('outcome','fenced');
     END IF;
+    IF NOT EXISTS (
+        SELECT 1
+          FROM agent_action_dispatch_intents intent
+          JOIN agent_policy_receipts receipt ON receipt.id = intent.policy_receipt_id
+         WHERE intent.attempt_id = a.id
+           AND intent.action_id = a.action_id
+           AND intent.execution_token = p_execution_token
+           AND intent.request_hash = p_request_hash
+           AND receipt.action_id = a.action_id
+           AND receipt.expires_at > clock_timestamp()
+    ) THEN
+        RETURN jsonb_build_object('outcome','dispatch_contract_missing');
+    END IF;
     IF NULLIF(btrim(p_provider),'') IS NULL OR NULLIF(btrim(p_provider_task_ref),'') IS NULL
        OR p_provider_request_hash IS DISTINCT FROM p_request_hash THEN
         RAISE EXCEPTION 'AGENT_PROVIDER_RECEIPT_INVALID' USING ERRCODE='22023';
@@ -97,6 +110,9 @@ BEGIN
     IF a.execution_token IS DISTINCT FROM p_execution_token OR a.request_hash IS DISTINCT FROM p_request_hash
        OR jsonb_typeof(p_ambiguity_evidence) IS DISTINCT FROM 'object'
        OR p_ambiguity_evidence='{}'::JSONB THEN RETURN jsonb_build_object('outcome','fenced'); END IF;
+    IF NOT EXISTS (SELECT 1 FROM agent_action_dispatch_intents intent WHERE intent.attempt_id=a.id AND intent.action_id=a.action_id AND intent.execution_token=p_execution_token AND intent.request_hash=p_request_hash) THEN
+        RETURN jsonb_build_object('outcome','dispatch_contract_missing');
+    END IF;
     UPDATE agent_action_attempts SET status='unknown', ambiguity_evidence=p_ambiguity_evidence,
         last_provider_status='unknown', next_reconcile_at=clock_timestamp(),
         state_version=state_version+1, updated_at=clock_timestamp() WHERE id=p_attempt_id;

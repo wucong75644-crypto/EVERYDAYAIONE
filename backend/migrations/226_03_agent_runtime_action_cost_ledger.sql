@@ -31,11 +31,11 @@ BEGIN
  PERFORM _agent_runtime_226_append_action_event(a.id,'action.cost.'||p_kind,jsonb_build_object('settlement_id',s.id,'amount',p_actual));
  RETURN jsonb_build_object('outcome','applied','settlement_id',s.id);
 END; $$;
-CREATE FUNCTION reserve_agent_action_cost(UUID,UUID,BIGINT,TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'reserve',$3,0,$4,NULL) $$;
-CREATE FUNCTION settle_agent_action_cost(UUID,UUID,BIGINT,TEXT,TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'settle',0,$3,$4,$5) $$;
-CREATE FUNCTION release_agent_action_cost(UUID,UUID,TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'release',0,0,$3,NULL) $$;
-CREATE FUNCTION refund_agent_action_cost(UUID,UUID,TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'refund',0,0,$3,NULL) $$;
-CREATE FUNCTION adjust_agent_action_cost(UUID,UUID,BIGINT,TEXT,TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'adjustment',0,$3,$4,$5) $$;
+CREATE FUNCTION reserve_agent_action_cost(p_action_id UUID,p_attempt_id UUID,p_reserved_amount BIGINT,p_currency TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'reserve',$3,0,$4,NULL) $$;
+CREATE FUNCTION settle_agent_action_cost(p_action_id UUID,p_attempt_id UUID,p_actual_amount BIGINT,p_currency TEXT,p_provider_receipt_hash TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'settle',0,$3,$4,$5) $$;
+CREATE FUNCTION release_agent_action_cost(p_action_id UUID,p_attempt_id UUID,p_reason_code TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'release',0,0,$3,NULL) $$;
+CREATE FUNCTION refund_agent_action_cost(p_action_id UUID,p_attempt_id UUID,p_reason_code TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'refund',0,0,$3,NULL) $$;
+CREATE FUNCTION adjust_agent_action_cost(p_action_id UUID,p_attempt_id UUID,p_actual_amount BIGINT,p_reason_code TEXT,p_provider_receipt_hash TEXT) RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ SELECT _record_agent_action_cost($1,$2,'adjustment',0,$3,$4,$5) $$;
 REVOKE ALL ON FUNCTION reserve_agent_action_cost(UUID,UUID,BIGINT,TEXT),settle_agent_action_cost(UUID,UUID,BIGINT,TEXT,TEXT),release_agent_action_cost(UUID,UUID,TEXT),refund_agent_action_cost(UUID,UUID,TEXT),adjust_agent_action_cost(UUID,UUID,BIGINT,TEXT,TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION reserve_agent_action_cost(UUID,UUID,BIGINT,TEXT),settle_agent_action_cost(UUID,UUID,BIGINT,TEXT,TEXT),release_agent_action_cost(UUID,UUID,TEXT),refund_agent_action_cost(UUID,UUID,TEXT),adjust_agent_action_cost(UUID,UUID,BIGINT,TEXT,TEXT) TO everydayai_agent_runtime_worker;
 RESET ROLE;

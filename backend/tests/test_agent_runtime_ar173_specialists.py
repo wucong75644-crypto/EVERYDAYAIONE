@@ -23,6 +23,12 @@ from services.agent.runtime.executors.registry import ExecutorRegistry
 from services.agent.runtime.catalog.consistency import build_nonproduction_full_catalog
 from services.agent.runtime.costs import InMemoryActionCostLedger
 from services.agent.runtime.providers.callback_inbox import CallbackInbox
+from services.agent.runtime.providers.callback_inbox import HMACCallbackVerifier
+from services.agent.runtime.executors.real_specialist_composition import (
+    NonProductionSpecialistPorts, build_nonproduction_specialist_registry,
+)
+from services.agent.runtime.executors.resource_contracts import WorkspaceResourceService
+from services.agent.runtime.executors.provider_adapters import AllowlistedTransport
 
 
 def _attempt(request: dict[str, object], status: ActionAttemptStatus = ActionAttemptStatus.DISPATCHING) -> ActionAttempt:
@@ -58,6 +64,57 @@ class _AcceptedProvider(_Provider):
         return ProviderReceipt(state=ProviderState.ACCEPTED, provider="fake", request_hash=attempt.request_hash, provider_task_ref="task-1", evidence={"accepted": True})
 
 
+class _Transport:
+    async def request(self, *, provider, method, path, body, idempotency_key):
+        return {"state": "completed", "result": {"summary": f"{provider}:{path}", "count": 1}}
+
+
+class _ArtifactPort:
+    async def prepare(self, attempt, request):
+        return {"summary": request["operation"], "content_hash": attempt.request_hash}
+
+
+class _MediaTaskPort:
+    async def prepare(self, attempt, request, *, kind):
+        return {"state": "completed", "summary": kind}
+
+
+class _ResourcePort:
+    async def mutate(self, attempt, request, *, operation):
+        return {"state": "completed", "summary": operation}
+
+
+class _ChildPort:
+    async def create(self, attempt, request):
+        return {"state": "completed", "summary": "child"}
+
+
+class _ObjectStore:
+    def __init__(self):
+        self.items = {}
+
+    async def put_verified(self, key, content, *, content_hash):
+        import hashlib
+        actual = hashlib.sha256(content).hexdigest()
+        self.items[key] = content
+        return {"verified": actual == content_hash, "content_hash": actual}
+
+    async def get(self, key):
+        return self.items[key]
+
+
+@pytest.mark.asyncio
+async def test_isolated_provider_transport_enforces_network_contract() -> None:
+    transport = AllowlistedTransport(
+        _Transport(),
+        (NetworkRule(provider="kie", method="POST", paths=frozenset({"/api/v1/image/generations"})),),
+    )
+    response = await transport.request(provider="kie", method="POST", path="/api/v1/image/generations", body={}, idempotency_key="isolated")
+    assert response["state"] == "completed"
+    with pytest.raises(PermissionError, match="NETWORK_NOT_ALLOWED"):
+        await transport.request(provider="kie", method="GET", path="/api/v1/image/generations", body={}, idempotency_key="isolated")
+
+
 async def _value(value):
     return value
 
@@ -81,6 +138,19 @@ def test_nonproduction_catalog_gate_merges_18_reads_code_and_23_specialists() ->
     catalog = build_nonproduction_full_catalog(read_registry, specialist_registry, sandbox_registry)
     assert len(catalog.definitions()) == 42
     assert SPECIALIST_TOOLS.issubset({item.canonical_name for item in catalog.definitions()})
+
+
+def test_real_nonproduction_composition_binds_every_tool_to_provider_and_family() -> None:
+    registry = build_nonproduction_specialist_registry(NonProductionSpecialistPorts(
+        transport=_Transport(), artifact=_ArtifactPort(), media_task=_MediaTaskPort(),
+        resource_mutation=_ResourcePort(), child_run=_ChildPort(),
+    ))
+    assert len(registry.descriptors()) == 23
+    assert {type(registry.resolve(tool)[1]).__name__ for tool in SPECIALIST_TOOLS} == {
+        "RemoteReadExecutor", "ArtifactJobExecutor", "MediaGenerationExecutor",
+        "ChildRunExecutor", "ErpMutationExecutor", "SyncExecutor",
+        "WorkspaceMutationExecutor", "ScheduledTaskExecutor",
+    }
 
 
 @pytest.mark.asyncio
@@ -112,6 +182,33 @@ def test_callback_cost_and_materialize_contracts_are_idempotent_and_redacted() -
     assert checkpoint.status == "materialized" and len(checkpoint.content_hash) == 64
     with pytest.raises(ValueError, match="RETRY_MATERIALIZE_ONLY"):
         materializer.retry_materialize(checkpoint)
+
+
+def test_callback_application_verifier_rejects_tampering() -> None:
+    import time
+    import hmac
+    import hashlib
+    body = b'{"status":"done"}'
+    timestamp = str(int(time.time()))
+    signature = hmac.new(b"isolated-secret", timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+    inbox = CallbackInbox(HMACCallbackVerifier(secrets_by_provider={"kie": b"isolated-secret"}))
+    event = inbox.record_verified("kie", "event-2", "corr-2", {"status": "done"}, body=body, signature=signature, timestamp=timestamp)
+    assert event.signature_valid is True
+    with pytest.raises(PermissionError, match="SIGNATURE_INVALID"):
+        inbox.record_verified("kie", "event-3", "corr-3", {"status": "done"}, body=body + b"x", signature=signature, timestamp=timestamp)
+
+
+@pytest.mark.asyncio
+async def test_workspace_delete_requires_verified_oss_and_restores_by_stable_id(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    staging = tmp_path / "staging"
+    root.mkdir()
+    (root / "report.txt").write_bytes(b"report")
+    service = WorkspaceResourceService(root=root, staging=staging, objects=_ObjectStore())
+    deleted = await service.delete("deleted-1", "report.txt", "workspace/deleted-1")
+    assert deleted["state"] == "completed" and not (root / "report.txt").exists()
+    restored = await service.restore("deleted-1", "restored/report.txt", "workspace/deleted-1")
+    assert restored["state"] == "completed" and (root / "restored/report.txt").read_bytes() == b"report"
 
 
 def test_secret_boundary_requires_opaque_handles() -> None:

@@ -2039,3 +2039,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ArtifactMaterializer` | `backend/services/agent/runtime/executors/materializer.py` | 内容寻址、partial 隔离和 materialize-only 重试 |
 | `build_nonproduction_full_catalog` / `assert_nonproduction_catalog_consistency` | `backend/services/agent/runtime/catalog/consistency.py` | 18 只读 + code_execute + 23 专业工具的 42 项非生产集合门禁 |
 | `226_01`～`226_06` RPC | `backend/migrations/226_*.sql` | Provider reconcile、Callback、Cost、Artifact、Child Run、Workspace/Scheduled Task CAS 窄 RPC |
+| `build_nonproduction_specialist_registry` | `backend/services/agent/runtime/executors/real_specialist_composition.py` | 为 23 项工具构造真实 Provider adapter 与八类业务 Executor |
+| `AllowlistedTransport` / Provider adapters | `backend/services/agent/runtime/executors/provider_adapters.py` | 绑定 ERP、DashScope、Crawler、KIE 的隔离网络路由并限制响应大小 |
+| `WorkspaceResourceService` / `ScheduledTaskService` | `backend/services/agent/runtime/executors/resource_contracts.py` | OSS retention、稳定资源恢复、原子 rename 与计划任务 CAS |
+| `PostgresSpecialistRepository` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Cost、Callback、Artifact、Child Run 与资源 RPC 的 worker-scoped adapter |

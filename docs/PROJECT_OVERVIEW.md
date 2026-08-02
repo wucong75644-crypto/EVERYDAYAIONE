@@ -1621,3 +1621,9 @@ cache = client.caches.create(
   - 新增 Provider reconcile、Callback Inbox、独立 Action Cost Ledger、Artifact lineage、Child Run 与资源 CAS 的 226_01～226_06 迁移及失败关闭 rollback
   - 非生产 Catalog 显式合并 18 个 AR-17.2 只读工具、code_execute 与 23 项新工具，生产 Catalog、EffectiveToolset、rollout 和 Owner 仍关闭
   - 真实 PostgreSQL 并发/RLS/权限和隔离 Provider 网络验收仍未执行；AR-17、AR-17.4 和生产启用仍未完成
+
+- **2026-08-02**：AR-17.3 真实适配器修复批次继续实施（非生产）
+  - 23 项工具逐项绑定 ERP、DashScope、Crawler、KIE、Artifact、Workspace/OSS、Scheduler 与 Child Run 端口
+  - 八类 Executor 具备各自请求边界；严格传输层只允许登记的 provider/method/path
+  - Callback 应用层 HMAC 验签后才写持久 inbox；Child Run 使用 SHA-256 并做幂等 readback
+  - Workspace 删除前验证 OSS retention，恢复按稳定资源 ID 使用隔离暂存和原子 rename
