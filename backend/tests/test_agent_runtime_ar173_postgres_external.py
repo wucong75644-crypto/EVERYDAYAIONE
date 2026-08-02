@@ -29,6 +29,7 @@ from services.agent.runtime.infrastructure.postgres.coordinator_recovery import 
 from services.agent.runtime.infrastructure.postgres.specialist_repository import PostgresSpecialistRepository
 from services.agent.runtime.executors.contracts import canonical_request_hash
 from services.agent.runtime.executors.resource_contracts import ErpSyncService
+from services.agent.runtime.executors.resource_support import sync_idempotency_key
 from services.agent.runtime.ports.coordinator_recovery import ActionDispatchSnapshot
 
 
@@ -510,3 +511,51 @@ def test_ar173_completion_cancel_fifty_concurrent_single_terminal_winner(databas
         assert conn.execute("SELECT count(*) FROM agent_action_results WHERE action_id=%s", (ids["action"],)).fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s AND kind IN ('settle','refund')", (ids["action"],)).fetchone()[0] == 1
         assert conn.execute("SELECT blocking_action_count FROM agent_runs WHERE id=%s", (ids["run"],)).fetchone()[0] == 0
+
+
+def test_ar173_sync_unknown_never_resubmits_after_mapping_readback(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    ids = _seed_specialist_action(database)
+
+    class _UnknownProvider:
+        def __init__(self) -> None:
+            self.submit_calls = 0
+            self.recover_calls = 0
+
+        async def submit_or_get(self, request, *, idempotency_key):
+            self.submit_calls += 1
+            raise AssertionError("UNKNOWN submission must never resubmit")
+
+        async def recover_submission(self, *, idempotency_key):
+            self.recover_calls += 1
+            return {"outcome": "UNKNOWN"}
+
+        async def progress(self, submission):
+            raise AssertionError("unknown submission must not query progress")
+
+    async def run() -> tuple[_UnknownProvider, Mapping[str, object]]:
+        client = AsyncLocalDBClient(database.replace("postgres@", "everydayai_agent_runtime_worker@"), min_size=1, max_size=2)
+        await client.open()
+        scoped = AsyncScopedDatabaseClient(client, DatabaseScope(actor_user_id="44444444-4444-4444-4444-444444444444", org_id="22222222-2222-2222-2222-222222222222", access_kind=DatabaseAccessKind.AGENT_RUNTIME, request_id="ar173-sync-unknown"))
+        provider = _UnknownProvider()
+        attempt = SimpleNamespace(action_id=ids["action"], attempt_id=ids["attempt"], request_hash=ids["request_hash"], state_version=0, lease=SimpleNamespace(fencing_token=ids["token"], expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)))
+        try:
+            facts = PostgresSpecialistRepository(scoped)
+            request = {"domain": "orders", "scope_id": "org-scope"}
+            key = sync_idempotency_key(attempt, request)
+            identity = await facts.create_or_get_sync_submission(p_action_id=ids["action"], p_attempt_id=ids["attempt"], p_request_hash=ids["request_hash"], p_scope_id="org-scope", p_sync_domain="orders", p_external_idempotency_key=key, p_provider="erp_sync")
+            await facts.record_sync_submission_result(p_submission_id=str(identity["submission_id"]), p_external_idempotency_key=key, p_request_hash=ids["request_hash"], p_provider_task_ref="", p_submission_state="unknown", p_enqueue_checkpoint={"state": "worker_reconcile"})
+            result = await ErpSyncService(provider=provider, local_apply=lambda _: {}, checkpoint_store=lambda _: {}, facts=facts).run(request, attempt)
+            return provider, result
+        finally:
+            await client.close()
+
+    import asyncio
+    provider, result = asyncio.run(run())
+    assert result["state"] == "unknown" and provider.submit_calls == 0 and provider.recover_calls == 1
