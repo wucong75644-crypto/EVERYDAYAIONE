@@ -64,12 +64,15 @@ class ActionSnapshot:
         cls, attempt: ActionAttempt, request: Mapping[str, object], *,
         executor_type: str, executor_revision: int,
     ) -> "ActionSnapshot":
-        request_hash = canonical_request_hash(request)
+        public_request = dict(request)
+        public_request.pop("external_idempotency_key", None)
+        public_request.pop("_dispatch_context", None)
+        request_hash = canonical_request_hash(public_request)
         if request_hash != attempt.request_hash:
             raise ValueError("EXECUTOR_REQUEST_HASH_CONFLICT")
         return cls(
             action_id=str(attempt.action_id), attempt_id=str(attempt.attempt_id),
-            scope=attempt.scope, request=dict(request),
+            scope=attempt.scope, request=public_request,
             request_hash=request_hash, executor_type=executor_type,
             executor_revision=executor_revision,
             fencing_token=str(attempt.lease.fencing_token),

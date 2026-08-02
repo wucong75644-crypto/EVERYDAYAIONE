@@ -12,6 +12,19 @@ from psycopg.types.json import Jsonb
 import pytest
 
 from tests.test_agent_runtime_ar17_postgres_external import database
+from core.db_scope import AsyncScopedDatabaseClient, DatabaseAccessKind, DatabaseScope
+from core.local_db import AsyncLocalDBClient
+from services.agent.runtime.application.action_loop import ActionLoopDriver
+from services.agent.runtime.executors.registry import ExecutorRegistry
+from services.agent.runtime.executors.resolver import PostgresActionExecutorResolver
+from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+from services.agent.runtime.executors.specialist_contracts import ProviderReceipt, ProviderState
+from services.agent.runtime.executors.specialist_registry import specialist_descriptor
+from services.agent.runtime.infrastructure.postgres.action_repository import PostgresActionRepository
+from services.agent.runtime.infrastructure.postgres.authorization import PostgresActionAuthorizationRepository
+from services.agent.runtime.infrastructure.postgres.coordinator_recovery import PostgresCoordinatorRecoveryRepository
+from services.agent.runtime.infrastructure.postgres.specialist_repository import PostgresSpecialistRepository
+from services.agent.runtime.executors.contracts import canonical_request_hash
 
 
 pytestmark = pytest.mark.external
@@ -31,7 +44,7 @@ def _rollback(url: str, name: str) -> None:
 
 
 def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
-    migrations = [f"226_{index:02d}_" for index in range(1, 15)]
+    migrations = [f"226_{index:02d}_" for index in range(1, 16)]
     names = [next((ROOT / "migrations").glob(f"{prefix}*.sql")).name for prefix in migrations]
     rollbacks = [next((ROOT / "migrations/rollback").glob(f"{prefix}*_rollback.sql")).name for prefix in reversed(migrations)]
     with psycopg.connect(database) as conn:
@@ -96,7 +109,7 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 15):
+    for index in range(1, 16):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     reserve_params = (ids["action"], ids["attempt"], "reserve", 3, 0, "credits", "runtime", None)
@@ -151,3 +164,66 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
     assert duplicate_settle["outcome"] == "idempotent_readback"
     fenced = _worker_rpc(database, "record_agent_action_provider_terminal", (ids["attempt"], str(uuid4()), ids["request_hash"], "completed", {}, {}))
     assert fenced["outcome"] == "fenced"
+
+
+def test_ar173_real_action_loop_postgres_specialist_e2e(database: str) -> None:
+    """The acceptance path uses both formal Postgres repositories end to end."""
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 16):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        ids = {name: str(uuid4()) for name in ("session", "command", "run", "step", "action", "attempt", "token", "policy")}
+        request_hash = canonical_request_hash({})
+        arguments_hash = canonical_request_hash({})
+        org = "22222222-2222-2222-2222-222222222222"
+        user = "44444444-4444-4444-4444-444444444444"
+        conversation = "55555555-5555-5555-5555-555555555555"
+        conn.execute("INSERT INTO agent_runtime_sessions(id,conversation_id,org_id,user_id,scope_kind,scope_id,created_by_user_id,agent_definition_id,agent_definition_revision) VALUES(%s,%s,%s,%s,'user',%s,%s,'fixture','v1')", (ids["session"], conversation, org, user, user, user))
+        conn.execute("INSERT INTO agent_session_commands(id,session_id,org_id,user_id,command_type,idempotency_key,payload,request_hash) VALUES(%s,%s,%s,%s,'submit_input',%s,'{}',%s)", (ids["command"], ids["session"], org, user, ids["command"], "b" * 32))
+        conn.execute("INSERT INTO agent_runs(id,session_id,command_id,org_id,user_id,run_kind,idempotency_key,request_hash,status,execution_token,lease_expires_at,context_receipt,config_snapshot,capability_snapshot,blocking_action_count) VALUES(%s,%s,%s,%s,%s,'user',%s,%s,'running',%s,clock_timestamp()+interval '10 minutes','{}','{}','{}',1)", (ids["run"], ids["session"], ids["command"], org, user, ids["run"], "b" * 32, ids["token"]))
+        conn.execute("INSERT INTO agent_model_steps(id,run_id,session_id,org_id,user_id,step_number,model_id,provider,model_revision,prompt_revision,tool_catalog_revision) VALUES(%s,%s,%s,%s,%s,1,'fixture','fixture','v1','v1','v1')", (ids["step"], ids["run"], ids["session"], org, user))
+        conn.execute("INSERT INTO agent_actions(id,session_id,run_id,model_step_id,org_id,user_id,action_index,stable_tool_call_id,tool_name,arguments,arguments_hash,request_hash,batch_hash,policy_decision,policy_snapshot,policy_revision,retry_disposition,status) VALUES(%s,%s,%s,%s,%s,%s,0,%s,'generate_image','{}',%s,%s,%s,'preauthorized',%s,'v1','retry_after_reconcile','queued')", (ids["action"], ids["session"], ids["run"], ids["step"], org, user, ids["action"], arguments_hash, request_hash, "c" * 64, Jsonb({"dispatch_policy_receipt_id": ids["policy"], "safety_level": "safe"})))
+        conn.execute("INSERT INTO agent_action_attempts(id,action_id,session_id,run_id,org_id,user_id,attempt_number,status,dispatch_phase,worker_id,execution_token,lease_expires_at,idempotency_key,request_hash,retry_disposition) VALUES(%s,%s,%s,%s,%s,%s,1,'claimed','claimed','fixture',%s,clock_timestamp()+interval '10 minutes',%s,%s,'retry_after_reconcile')", (ids["attempt"], ids["action"], ids["session"], ids["run"], org, user, ids["token"], ids["attempt"], request_hash))
+        conn.execute("INSERT INTO agent_policy_receipts(id,action_id,session_id,run_id,org_id,user_id,decision,arguments_hash,executor_type,executor_revision,policy_revision,effective_scope,reason_codes,receipt_hash,expires_at) VALUES(%s,%s,%s,%s,%s,%s,'allow',%s,'runtime_media_generation:generate_image',1,'v1','{}',ARRAY['fixture'],%s,clock_timestamp()+interval '10 minutes')", (ids["policy"], ids["action"], ids["session"], ids["run"], org, user, arguments_hash, "d" * 64))
+        conn.execute("INSERT INTO agent_runtime_org_rollout(org_id,enabled,updated_by,update_reason) VALUES(%s,TRUE,%s,'isolated ar173 e2e')", (org, user))
+        conn.execute("UPDATE agent_runtime_control SET action_dispatch_enabled=TRUE, safe_actions_enabled=TRUE, release_revision='isolated-ar173', config_revision='isolated-ar173'")
+        conn.commit()
+
+    class _Provider:
+        calls = 0
+        async def submit(self, attempt, request, *, idempotency_key):
+            self.calls += 1
+            return ProviderReceipt(state=ProviderState.COMPLETED, provider="local-mock", request_hash=attempt.request_hash, result={"summary": "ok", "count": 1}, cost={"credits": 2})
+        async def reconcile(self, attempt, receipt):
+            return ProviderReceipt(state=ProviderState.COMPLETED, provider="local-mock", request_hash=attempt.request_hash, result={"summary": "ok"}, cost={"credits": 2})
+        async def cancel(self, attempt, receipt):
+            return ProviderReceipt(state=ProviderState.UNKNOWN, provider="local-mock", request_hash=attempt.request_hash, evidence={"error_code": "cancel_unproven"})
+
+    async def run() -> None:
+        client = AsyncLocalDBClient(database.replace("postgres@", "everydayai_agent_runtime_worker@"), min_size=1, max_size=4)
+        await client.open()
+        scoped = AsyncScopedDatabaseClient(client, DatabaseScope(actor_user_id="44444444-4444-4444-4444-444444444444", org_id="22222222-2222-2222-2222-222222222222", access_kind=DatabaseAccessKind.AGENT_RUNTIME, request_id="ar173-e2e"))
+        try:
+            facts = PostgresSpecialistRepository(scoped)
+            registry = ExecutorRegistry()
+            provider = _Provider()
+            descriptor = specialist_descriptor("generate_image")
+            registry.register(descriptor, SpecialistExecutor(executor_type=descriptor.executor_type, revision=descriptor.revision, provider=provider), safety_level="dangerous")
+            registry.specialist_facts = facts
+            driver = ActionLoopDriver(recovery_repository=PostgresCoordinatorRecoveryRepository(scoped), action_repository=PostgresActionRepository(scoped), authorization_repository=PostgresActionAuthorizationRepository(scoped), resolver=PostgresActionExecutorResolver(registry), worker_id="e2e-worker", renew_interval=60)
+            assert await driver.dispatch_once() is True
+            assert provider.calls == 1
+        finally:
+            await client.close()
+    import asyncio
+    asyncio.run(run())
+    with psycopg.connect(database) as conn:
+        state = conn.execute("SELECT a.status,t.status,r.status,run.blocking_action_count FROM agent_actions a JOIN agent_action_attempts t ON t.action_id=a.id LEFT JOIN agent_action_results r ON r.action_id=a.id JOIN agent_runs run ON run.id=a.run_id WHERE a.id=%s", (ids["action"],)).fetchone()
+        assert state == ("completed", "completed", "success", 0)
+        assert conn.execute("SELECT count(*) FROM agent_action_results WHERE action_id=%s", (ids["action"],)).fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s AND kind='settle'", (ids["action"],)).fetchone()[0] == 1
