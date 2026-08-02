@@ -78,13 +78,13 @@ def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
         assert conn.execute("SELECT to_regclass('agent_action_cost_settlements')").fetchone()[0] == "agent_action_cost_settlements"
 
 
-def _seed_specialist_action(database: str) -> dict[str, str]:
+def _seed_specialist_action(database: str, conversation_id: str = "55555555-5555-5555-5555-555555555555") -> dict[str, str]:
     ids = {name: str(uuid4()) for name in ("session", "command", "run", "step", "action", "attempt", "token", "policy")}
     request_hash = "a" * 64
     run_hash = "b" * 32
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
-        conn.execute("INSERT INTO agent_runtime_sessions(id,conversation_id,org_id,user_id,scope_kind,scope_id,created_by_user_id,agent_definition_id,agent_definition_revision) VALUES(%s,%s,%s,%s,'user',%s,%s,'fixture','v1')", (ids["session"], "55555555-5555-5555-5555-555555555555", "22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444", "44444444-4444-4444-4444-444444444444", "44444444-4444-4444-4444-444444444444"))
+        conn.execute("INSERT INTO agent_runtime_sessions(id,conversation_id,org_id,user_id,scope_kind,scope_id,created_by_user_id,agent_definition_id,agent_definition_revision) VALUES(%s,%s,%s,%s,'user',%s,%s,'fixture','v1')", (ids["session"], conversation_id, "22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444", "44444444-4444-4444-4444-444444444444", "44444444-4444-4444-4444-444444444444"))
         conn.execute("INSERT INTO agent_session_commands(id,session_id,org_id,user_id,command_type,idempotency_key,payload,request_hash) VALUES(%s,%s,%s,%s,'submit_input',%s,'{}',%s)", (ids["command"], ids["session"], "22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444", ids["command"], run_hash))
         conn.execute("INSERT INTO agent_runs(id,session_id,command_id,org_id,user_id,run_kind,idempotency_key,request_hash,status,execution_token,lease_expires_at,context_receipt,config_snapshot,capability_snapshot) VALUES(%s,%s,%s,%s,%s,'user',%s,%s,'running',%s,clock_timestamp()+interval '10 minutes','{}','{}','{}')", (ids["run"], ids["session"], ids["command"], "22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444", ids["run"], run_hash, ids["token"]))
         conn.execute("INSERT INTO agent_model_steps(id,run_id,session_id,org_id,user_id,step_number,model_id,provider,model_revision,prompt_revision,tool_catalog_revision) VALUES(%s,%s,%s,%s,%s,1,'fixture','fixture','v1','v1','v1')", (ids["step"], ids["run"], ids["session"], "22222222-2222-2222-2222-222222222222", "44444444-4444-4444-4444-444444444444"))
@@ -94,7 +94,7 @@ def _seed_specialist_action(database: str) -> dict[str, str]:
         conn.execute("INSERT INTO agent_action_dispatch_intents(attempt_id,action_id,policy_receipt_id,execution_token,request_hash,executor_type,executor_revision,policy_revision,external_idempotency_key,recovery_mode) VALUES(%s,%s,%s,%s,%s,'runtime_media_generation:generate_image',1,'v1',%s,'idempotent_replay')", (ids["attempt"], ids["action"], ids["policy"], ids["token"], request_hash, ids["attempt"]))
         conn.execute("UPDATE agent_runs SET blocking_action_count=1 WHERE id=%s", (ids["run"],))
         ids["artifact"] = str(uuid4())
-        conn.execute("INSERT INTO conversation_artifacts(id,conversation_id,org_id) VALUES(%s,%s,%s)", (ids["artifact"], "55555555-5555-5555-5555-555555555555", "22222222-2222-2222-2222-222222222222"))
+        conn.execute("INSERT INTO conversation_artifacts(id,conversation_id,org_id) VALUES(%s,%s,%s)", (ids["artifact"], conversation_id, "22222222-2222-2222-2222-222222222222"))
         conn.commit()
     ids["request_hash"] = request_hash
     return ids
@@ -559,3 +559,93 @@ def test_ar173_sync_unknown_never_resubmits_after_mapping_readback(database: str
     import asyncio
     provider, result = asyncio.run(run())
     assert result["state"] == "unknown" and provider.submit_calls == 0 and provider.recover_calls == 1
+
+
+def test_ar173_sync_progress_and_terminal_crash_recovery(database: str) -> None:
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
+        conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
+        conn.commit()
+    for index in range(1, 19):
+        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
+    progress_ids = _seed_specialist_action(database)
+
+    class _Provider:
+        def __init__(self, crash_progress: bool = False) -> None:
+            self.submit_calls = 0
+            self.recover_calls = 0
+            self.progress_calls = 0
+            self.crash_progress = crash_progress
+
+        async def submit_or_get(self, request, *, idempotency_key):
+            self.submit_calls += 1
+            return {"state": "accepted", "provider_task_ref": f"task-{idempotency_key[:8]}"}
+
+        async def recover_submission(self, *, idempotency_key):
+            self.recover_calls += 1
+            return {"outcome": "PROVEN_NOT_SUBMITTED"}
+
+        async def progress(self, submission):
+            self.progress_calls += 1
+            if self.crash_progress and self.progress_calls == 1:
+                raise ConnectionError("worker crashed before progress fact")
+            return {"state": "ready", "cursor": 1, "provider_task_ref": submission["provider_task_ref"]}
+
+    class _Effects:
+        def __init__(self) -> None:
+            self.apply_calls = 0
+            self.checkpoint_calls = 0
+
+        async def apply(self, progress):
+            self.apply_calls += 1
+            return {"cursor": progress["cursor"], "rows": 1}
+
+        async def checkpoint(self, applied):
+            self.checkpoint_calls += 1
+            return {"cursor": applied["cursor"], "durable": True}
+
+    async def run() -> tuple[_Provider, _Effects, Mapping[str, object], Mapping[str, object]]:
+        client = AsyncLocalDBClient(database.replace("postgres@", "everydayai_agent_runtime_worker@"), min_size=1, max_size=4)
+        await client.open()
+        scoped = AsyncScopedDatabaseClient(client, DatabaseScope(actor_user_id="44444444-4444-4444-4444-444444444444", org_id="22222222-2222-2222-2222-222222222222", access_kind=DatabaseAccessKind.AGENT_RUNTIME, request_id="ar173-sync-crash-matrix"))
+        try:
+            facts = PostgresSpecialistRepository(scoped)
+
+            def attempt(ids):
+                return SimpleNamespace(action_id=ids["action"], attempt_id=ids["attempt"], request_hash=ids["request_hash"], state_version=0, lease=SimpleNamespace(fencing_token=ids["token"], expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)))
+
+            class _TerminalFailFacts:
+                def __init__(self, delegate):
+                    self.delegate = delegate
+                    self.fail_once = True
+
+                def __getattr__(self, name):
+                    return getattr(self.delegate, name)
+
+                async def sync_phase(self, **params):
+                    if params.get("p_phase") == "completed" and self.fail_once:
+                        self.fail_once = False
+                        raise ConnectionError("terminal finalize crash")
+                    return await self.delegate.sync_phase(**params)
+
+            progress_provider = _Provider(crash_progress=True)
+            progress_effects = _Effects()
+            wrapped_facts = _TerminalFailFacts(facts)
+            progress_service = ErpSyncService(provider=progress_provider, local_apply=progress_effects.apply, checkpoint_store=progress_effects.checkpoint, facts=wrapped_facts)
+            progress_attempt = attempt(progress_ids)
+            with pytest.raises(ConnectionError, match="progress fact"):
+                await progress_service.run({"domain": "orders", "scope_id": "org-scope"}, progress_attempt)
+            with pytest.raises(ConnectionError, match="terminal finalize"):
+                await progress_service.run({"domain": "orders", "scope_id": "org-scope"}, progress_attempt)
+
+            terminal_service = ErpSyncService(provider=progress_provider, local_apply=progress_effects.apply, checkpoint_store=progress_effects.checkpoint, facts=wrapped_facts)
+            terminal_result = await terminal_service.run({"domain": "orders", "scope_id": "org-scope"}, progress_attempt)
+            return progress_provider, progress_effects, terminal_result, terminal_result
+        finally:
+            await client.close()
+
+    import asyncio
+    progress_provider, progress_effects, progress_result, terminal_result = asyncio.run(run())
+    assert progress_result["state"] == "completed" and terminal_result["state"] == "completed"
+    assert progress_provider.submit_calls == 1 and progress_effects.apply_calls == 1 and progress_effects.checkpoint_calls == 1
