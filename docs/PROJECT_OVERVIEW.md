@@ -67,6 +67,9 @@ Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
 - `backend/services/agent/runtime/executors/resolver.py`与
   `application/action_loop.py`：Registry 保持唯一 Executor 映射 SSOT，按
   Resolver→gate→dispatch/reconcile 编排；未接 startup/ingress。
+- `backend/services/agent/runtime/application/action_loop_support.py`与
+  `executors/resource_support.py`：承载租约/结果辅助合同、Child Run、内容寻址
+  materialize 与资源恢复辅助逻辑，保持核心编排模块在结构阈值内。
 - `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
   原子边界、锁序、故障恢复、权限与 rollback 合同。
 

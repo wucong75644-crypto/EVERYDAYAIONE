@@ -2052,5 +2052,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `ActionLoopDriver._try_specialist_finalize` | `backend/services/agent/runtime/application/action_loop.py` | 唯一 specialist terminal owner；reserve、provider fact、cost 与 Action terminal 在原子 finalize 合同内闭合。 |
 | `SpecialistExecutor.dispatch/reconcile/cancel` | `backend/services/agent/runtime/executors/specialist_executor.py` | 仅执行 Provider 调用并返回 typed receipt；reconciliation ownership 由 ActionLoop context 传入。 |
 | `LocalDataService` / `FileAnalyzeService` / `FetchAllPagesService` | `backend/services/agent/runtime/executors/resource_contracts.py` | Summary/detail/export, CSV/Excel-to-Parquet lineage, and Registry-bound paginated ERP materialization. |
-| `ChildRunService` / `ErpSyncService` | `backend/services/agent/runtime/executors/resource_contracts.py` | Repository-backed child lifecycle and DB-fact-based sync submission/progress/apply/checkpoint recovery without resubmit. |
+| `ErpSyncService` | `backend/services/agent/runtime/executors/resource_contracts.py` | DB-fact-based sync submission/progress/apply/checkpoint recovery without resubmit. |
+| `ChildRunService` / resource support helpers | `backend/services/agent/runtime/executors/resource_support.py` | Repository-backed child lifecycle, content-addressed materialization and resource contract helpers. |
+| ActionLoop support helpers | `backend/services/agent/runtime/application/action_loop_support.py` | Lease renewal, result normalization and fencing utility contracts used by the ActionLoop application owner. |
 | `226_13` / `226_14` | `backend/migrations/226_13_*.sql`, `backend/migrations/226_14_*.sql` | still accepted/unknown lease release, Child Run v2 readback/terminal result, cancel parity, and Sync ownership/version/phase fencing. |
