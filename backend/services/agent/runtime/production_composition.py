@@ -55,6 +55,7 @@ class ProductionSpecialistPorts:
     media_task: MediaTaskPort
     resource_mutation: ResourceMutationPort
     child_run: ChildRunPort
+    facts: object | None = None
     local_data: ArtifactPort | None = None
     file_analyze: ArtifactPort | None = None
     fetch_all_pages: ArtifactPort | None = None
@@ -79,6 +80,7 @@ def build_production_action_loop(*, database, worker_id: str,
         resolver=PostgresActionExecutorResolver(components.registry),
         worker_id=worker_id,
         capability_issuer=capability_issuer,
+        specialist_facts=components.specialist_repository,
     )
 
 
@@ -187,6 +189,44 @@ def build_production_components(
     )
 
 
+def build_production_components_from_services(
+    *, database, read_resources: RuntimeReadResources, transport: ProviderTransport,
+    erp_dispatcher: ErpDispatcherPort, erp_search: object, artifact: ArtifactPort,
+    media_task: MediaTaskPort, child_run: ChildRunPort, workspace: object,
+    scheduler: object, sync: object | None, callback_verifier: CallbackSignatureVerifier,
+    sandbox_registry: ExecutorRegistry, bindings: Mapping[str, ProductionToolBinding],
+    local_data: ArtifactPort | None = None,
+    file_analyze: ArtifactPort | None = None, fetch_all_pages: ArtifactPort | None = None,
+) -> ProductionRuntimeComponents:
+    """Production service join: Artifact, Workspace, Scheduler and Sync share one facts port."""
+    from dataclasses import replace
+    from services.agent.runtime.executors.resource_contracts import (
+        RuntimeResourceMutationService, ErpSyncService, ScheduledTaskService,
+        WorkspaceResourceService,
+    )
+    facts = PostgresSpecialistRepository(database)
+    if isinstance(workspace, WorkspaceResourceService) and workspace.facts is None:
+        workspace = replace(workspace, facts=facts)
+    if isinstance(scheduler, ScheduledTaskService) and scheduler.facts is None:
+        scheduler = replace(scheduler, facts=facts)
+    if isinstance(sync, ErpSyncService) and sync.facts is None:
+        sync = replace(sync, facts=facts)
+    resources = RuntimeResourceMutationService(
+        workspace=workspace, scheduler=scheduler, sync=sync, facts=facts,
+    )
+    return build_production_components(
+        database=database, read_resources=read_resources,
+        specialist_ports=ProductionSpecialistPorts(
+            transport=transport, erp_dispatcher=erp_dispatcher,
+            erp_search=erp_search, artifact=artifact, media_task=media_task,
+            resource_mutation=resources, child_run=child_run, facts=facts,
+            local_data=local_data, file_analyze=file_analyze,
+            fetch_all_pages=fetch_all_pages,
+        ), sandbox_registry=sandbox_registry, bindings=bindings,
+        callback_verifier=callback_verifier,
+    )
+
+
 def _merge_registries(*registries: ExecutorRegistry) -> ExecutorRegistry:
     result = ExecutorRegistry()
     for registry in registries:
@@ -203,5 +243,6 @@ __all__ = [
     "ProductionRuntimeComponents", "ProductionSpecialistPorts",
     "build_production_components", "build_production_read_registry",
     "build_production_specialist_registry",
+    "build_production_components_from_services",
     "build_production_action_loop",
 ]

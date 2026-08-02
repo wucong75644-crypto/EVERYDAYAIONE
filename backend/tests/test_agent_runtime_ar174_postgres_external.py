@@ -101,3 +101,29 @@ def test_ar174_personal_subject_rollout_is_not_global(database: str) -> None:
         conn.execute("DELETE FROM agent_runtime_production_bindings")
         conn.commit()
     _rollback(database, "227_01_agent_runtime_production_closure_rollback.sql")
+
+
+def test_ar174_22702_seeds_exact_production_catalog_and_rolls_back(database: str) -> None:
+    _apply(database, "227_01_agent_runtime_production_closure.sql")
+    _apply(database, "227_02_agent_runtime_production_catalog_seed.sql")
+    with psycopg.connect(database) as conn:
+        catalog_revision, tool_count, binding_count, enabled = conn.execute(
+            "SELECT c.catalog_revision, jsonb_array_length(c.catalog_document->'tools'), "
+            "(SELECT count(*) FROM agent_runtime_production_bindings b "
+            " WHERE b.catalog_revision=c.catalog_revision), d.enabled_for_new_ingress "
+            "FROM agent_runtime_catalog_facts c "
+            "JOIN agent_runtime_definition_facts d ON d.catalog_revision=c.catalog_revision "
+            "WHERE d.definition_revision='v3'"
+        ).fetchone()
+        assert tool_count == 42
+        assert binding_count == 42
+        assert enabled is False
+        assert conn.execute(
+            "SELECT count(*) FROM agent_runtime_production_bindings "
+            "WHERE catalog_revision=%s AND ready"
+            , (catalog_revision,)
+        ).fetchone()[0] == 42
+    _rollback(database, "227_02_agent_runtime_production_catalog_seed_rollback.sql")
+    _apply(database, "227_02_agent_runtime_production_catalog_seed.sql")
+    _rollback(database, "227_02_agent_runtime_production_catalog_seed_rollback.sql")
+    _rollback(database, "227_01_agent_runtime_production_closure_rollback.sql")

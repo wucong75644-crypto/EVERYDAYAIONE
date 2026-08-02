@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     app_port: int = 8000
     conversation_actor_worker_enabled: bool = False
     agent_runtime_ingress_enabled: bool = False
+    # AR-17.4 remains closed until an explicit, injected production
+    # composition has passed its provider/readiness checks.
+    agent_runtime_production_composition_enabled: bool = False
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     agent_runtime_release_revision: str = "development"

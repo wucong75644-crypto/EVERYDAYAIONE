@@ -64,6 +64,7 @@ from services.agent.runtime.production_model import (
 )
 from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.catalog.registry import build_runtime_version_registry
+from services.agent.runtime.production_composition import build_production_action_loop
 
 
 class RuntimeOwner:
@@ -116,7 +117,7 @@ def build_projection(database: Any, worker_id: str):
     )
 
 
-def build_runtime(database: Any, settings) -> RuntimeOwner:
+def build_runtime(database: Any, settings, *, production_components=None) -> RuntimeOwner:
     if not settings.sandbox_runtime_revision:
         raise RuntimeError("SANDBOX_RUNTIME_REVISION_REQUIRED")
     worker_id = settings.agent_runtime_worker_id
@@ -133,18 +134,37 @@ def build_runtime(database: Any, settings) -> RuntimeOwner:
         registry=registry,
     )
     versions = build_runtime_version_registry()
-    _, catalog = versions.resolve_for_agent(
-        settings.agent_runtime_agent_definition_id,
-        settings.agent_runtime_agent_definition_revision,
-    )
+    production_enabled = bool(getattr(
+        settings, "agent_runtime_production_composition_enabled", False,
+    ))
+    if production_enabled:
+        components = production_components or getattr(
+            settings, "agent_runtime_production_components", None,
+        )
+        if components is None:
+            raise RuntimeError("RUNTIME_PRODUCTION_COMPOSITION_REQUIRED")
+        registry = components.registry
+        catalog = components.catalog.catalog
+    else:
+        components = None
+        _, catalog = versions.resolve_for_agent(
+            settings.agent_runtime_agent_definition_id,
+            settings.agent_runtime_agent_definition_revision,
+        )
     _assert_runtime_catalog(catalog, settings)
-    action_loop = ActionLoopDriver(
-        recovery_repository=recovery,
-        action_repository=actions,
-        authorization_repository=PostgresActionAuthorizationRepository(db),
-        resolver=PostgresActionExecutorResolver(registry),
-        worker_id=worker_id,
-        capability_issuer=sandbox.capability_issuer,
+    action_loop = (
+        build_production_action_loop(
+            database=db, worker_id=worker_id, components=components,
+            capability_issuer=sandbox.capability_issuer,
+        )
+        if components is not None else ActionLoopDriver(
+            recovery_repository=recovery,
+            action_repository=actions,
+            authorization_repository=PostgresActionAuthorizationRepository(db),
+            resolver=PostgresActionExecutorResolver(registry),
+            worker_id=worker_id,
+            capability_issuer=sandbox.capability_issuer,
+        )
     )
     model_loop = ModelLoopDriver(
         runtime_repository=runtime_repository,
