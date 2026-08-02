@@ -8,10 +8,36 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Protocol
 
+from services.agent.runtime.executors.materializer import ArtifactMaterializer
+
 
 class ObjectStore(Protocol):
     async def put_verified(self, key: str, content: bytes, *, content_hash: str) -> Mapping[str, object]: ...
     async def get(self, key: str) -> bytes: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContentAddressedArtifactService:
+    root: Path
+    staging: Path
+    materializer: ArtifactMaterializer
+
+    async def prepare(self, attempt, request: Mapping[str, object]) -> Mapping[str, object]:
+        source = request.get("path") or request.get("source_path")
+        if not isinstance(source, str) or not source:
+            raise ValueError("ARTIFACT_SOURCE_PATH_REQUIRED")
+        raw = Path(source)
+        if raw.is_absolute() or ".." in raw.parts:
+            raise PermissionError("ARTIFACT_SOURCE_PATH_INVALID")
+        path = (self.root / raw).resolve()
+        path.relative_to(self.root.resolve())
+        content = path.read_bytes()
+        checkpoint = self.materializer.checkpoint(content)
+        target = self.staging / checkpoint.content_hash
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_bytes(content)
+        return {"summary": "artifact prepared", "artifact_ref": f"artifact:{checkpoint.content_hash}", "content_hash": checkpoint.content_hash, "byte_size": checkpoint.byte_size, "materialize_status": checkpoint.status}
 
 
 class SchedulerStore(Protocol):
@@ -72,4 +98,34 @@ class ScheduledTaskService:
         return await self.store.cas(task_id, expected_version, operation, payload)
 
 
-__all__ = ["ObjectStore", "ScheduledTaskService", "SchedulerStore", "WorkspaceResourceService"]
+@dataclass(frozen=True, kw_only=True)
+class RuntimeResourceMutationService:
+    """Concrete adapter joining Workspace/OSS and Scheduler services."""
+
+    workspace: WorkspaceResourceService
+    scheduler: ScheduledTaskService
+    sync: object | None = None
+
+    async def mutate(self, attempt, request: Mapping[str, object], *, operation: str) -> Mapping[str, object]:
+        if operation == "file_delete":
+            return await self.workspace.delete(
+                str(request["resource_id"]), str(request["relative_path"]), str(request["oss_key"]),
+            )
+        if operation == "restore_file":
+            return await self.workspace.restore(
+                str(request["resource_id"]), str(request["relative_path"]), str(request["oss_key"]),
+            )
+        if operation == "manage_scheduled_task":
+            return await self.scheduler.mutate(
+                str(request["task_id"]), int(request["state_version"]),
+                str(request["operation"]), request,
+            )
+        if operation == "trigger_erp_sync" and self.sync is not None:
+            result = self.sync(request.get("sync_type", ""), request.get("org_id"))  # type: ignore[operator]
+            if hasattr(result, "__await__"):
+                result = await result
+            return {"state": "completed", "summary": str(result)}
+        raise ValueError("RUNTIME_RESOURCE_OPERATION_INVALID")
+
+
+__all__ = ["ContentAddressedArtifactService", "ObjectStore", "RuntimeResourceMutationService", "ScheduledTaskService", "SchedulerStore", "WorkspaceResourceService"]

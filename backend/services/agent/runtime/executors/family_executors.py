@@ -105,6 +105,7 @@ class ChildRunExecutor(FamilyExecutor):
 
 EXECUTOR_BY_FAMILY = {
     "remote_read": RemoteReadExecutor,
+    "erp_catalog": RemoteReadExecutor,
     "artifact_job": ArtifactJobExecutor,
     "media_generation": MediaGenerationExecutor,
     "erp_mutation": ErpMutationExecutor,

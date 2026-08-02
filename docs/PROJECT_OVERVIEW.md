@@ -1627,3 +1627,5 @@ cache = client.caches.create(
   - 八类 Executor 具备各自请求边界；严格传输层只允许登记的 provider/method/path
   - Callback 应用层 HMAC 验签后才写持久 inbox；Child Run 使用 SHA-256 并做幂等 readback
   - Workspace 删除前验证 OSS retention，恢复按稳定资源 ID 使用隔离暂存和原子 rename
+  - ERP action 只接受 `services.kuaimai.registry.TOOL_REGISTRIES` 正式条目；`erp_api_search` 保持本地文档搜索
+  - Provider status/cancel 无证明时保持 unknown；Callback 唯一入口拒绝旧 boolean 验签绕过

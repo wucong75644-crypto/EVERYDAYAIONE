@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import asyncio
 
 import pytest
 
@@ -28,7 +29,7 @@ from services.agent.runtime.executors.real_specialist_composition import (
     NonProductionSpecialistPorts, build_nonproduction_specialist_registry,
 )
 from services.agent.runtime.executors.resource_contracts import WorkspaceResourceService
-from services.agent.runtime.executors.provider_adapters import AllowlistedTransport
+from services.agent.runtime.executors.provider_adapters import AllowlistedTransport, HttpProviderTransport, KieMediaProvider
 
 
 def _attempt(request: dict[str, object], status: ActionAttemptStatus = ActionAttemptStatus.DISPATCHING) -> ActionAttempt:
@@ -64,29 +65,20 @@ class _AcceptedProvider(_Provider):
         return ProviderReceipt(state=ProviderState.ACCEPTED, provider="fake", request_hash=attempt.request_hash, provider_task_ref="task-1", evidence={"accepted": True})
 
 
-class _Transport:
-    async def request(self, *, provider, method, path, body, idempotency_key):
-        return {"state": "completed", "result": {"summary": f"{provider}:{path}", "count": 1}}
+class _Dispatcher:
+    async def execute(self, tool_name, action, params):
+        from services.kuaimai.registry import TOOL_REGISTRIES
+        assert action in TOOL_REGISTRIES[tool_name]
+        return type("Result", (), {"status": "success", "summary": f"{tool_name}:{action}", "data": []})()
 
 
-class _ArtifactPort:
-    async def prepare(self, attempt, request):
-        return {"summary": request["operation"], "content_hash": attempt.request_hash}
+class _CallbackRepository:
+    def __init__(self):
+        self.events = []
 
-
-class _MediaTaskPort:
-    async def prepare(self, attempt, request, *, kind):
-        return {"state": "completed", "summary": kind}
-
-
-class _ResourcePort:
-    async def mutate(self, attempt, request, *, operation):
-        return {"state": "completed", "summary": operation}
-
-
-class _ChildPort:
-    async def create(self, attempt, request):
-        return {"state": "completed", "summary": "child"}
+    async def callback(self, **kwargs):
+        self.events.append(kwargs)
+        return {"outcome": "accepted"}
 
 
 class _ObjectStore:
@@ -101,18 +93,6 @@ class _ObjectStore:
 
     async def get(self, key):
         return self.items[key]
-
-
-@pytest.mark.asyncio
-async def test_isolated_provider_transport_enforces_network_contract() -> None:
-    transport = AllowlistedTransport(
-        _Transport(),
-        (NetworkRule(provider="kie", method="POST", paths=frozenset({"/api/v1/image/generations"})),),
-    )
-    response = await transport.request(provider="kie", method="POST", path="/api/v1/image/generations", body={}, idempotency_key="isolated")
-    assert response["state"] == "completed"
-    with pytest.raises(PermissionError, match="NETWORK_NOT_ALLOWED"):
-        await transport.request(provider="kie", method="GET", path="/api/v1/image/generations", body={}, idempotency_key="isolated")
 
 
 async def _value(value):
@@ -142,8 +122,8 @@ def test_nonproduction_catalog_gate_merges_18_reads_code_and_23_specialists() ->
 
 def test_real_nonproduction_composition_binds_every_tool_to_provider_and_family() -> None:
     registry = build_nonproduction_specialist_registry(NonProductionSpecialistPorts(
-        transport=_Transport(), artifact=_ArtifactPort(), media_task=_MediaTaskPort(),
-        resource_mutation=_ResourcePort(), child_run=_ChildPort(),
+        transport=object(), erp_dispatcher=_Dispatcher(), erp_search=lambda query: query,
+        artifact=object(), media_task=object(), resource_mutation=object(), child_run=object(),
     ))
     assert len(registry.descriptors()) == 23
     assert {type(registry.resolve(tool)[1]).__name__ for tool in SPECIALIST_TOOLS} == {
@@ -151,6 +131,10 @@ def test_real_nonproduction_composition_binds_every_tool_to_provider_and_family(
         "ChildRunExecutor", "ErpMutationExecutor", "SyncExecutor",
         "WorkspaceMutationExecutor", "ScheduledTaskExecutor",
     }
+    assert type(registry.resolve("erp_api_search")[1].provider).__name__ == "ErpApiSearchProvider"
+    assert type(registry.resolve("erp_trade_query")[1].provider).__name__ == "ERPQueryProvider"
+    assert registry.resolve("erp_execute")[1].provider.write is True
+    assert len({id(registry.resolve(tool)[1].provider) for tool in SPECIALIST_TOOLS}) == 23
 
 
 @pytest.mark.asyncio
@@ -165,10 +149,19 @@ async def test_specialist_executor_converts_completed_receipt_and_unknown_is_rec
 
 
 def test_callback_cost_and_materialize_contracts_are_idempotent_and_redacted() -> None:
-    inbox = CallbackInbox()
-    event = inbox.record("kie", "event-1", "corr-1", {"token": "secret", "status": "done"}, signature_valid=True)
-    assert event.payload_redacted["token"] == "[redacted]"
-    assert inbox.record("kie", "event-1", "corr-1", {"token": "secret", "status": "done"}, signature_valid=True) == event
+    import asyncio
+    import hashlib
+    import hmac
+    import time
+    body = b'{"status":"done","token":"secret"}'
+    timestamp = str(int(time.time()))
+    signature = hmac.new(b"isolated-secret", timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+    repository = _CallbackRepository()
+    inbox = CallbackInbox(HMACCallbackVerifier(secrets_by_provider={"kie": b"isolated-secret"}), repository)
+    event = asyncio.run(inbox.ingest("kie", "event-1", "corr-1", {"token": "secret", "status": "done"}, body=body, signature=signature, timestamp=timestamp, action_id="action-1", attempt_id="attempt-1"))
+    assert event.payload_redacted["token"] == "[redacted]" and repository.events[0]["action_id"] == "action-1"
+    with pytest.raises(RuntimeError, match="USE_INGEST"):
+        inbox.record("kie", "event-1", "corr-1", {}, signature_valid=True)
 
     ledger = InMemoryActionCostLedger()
     item = CostReservation(action_id="a", attempt_id="t", kind="reserve", reserved_amount=2)
@@ -184,18 +177,20 @@ def test_callback_cost_and_materialize_contracts_are_idempotent_and_redacted() -
         materializer.retry_materialize(checkpoint)
 
 
-def test_callback_application_verifier_rejects_tampering() -> None:
+@pytest.mark.asyncio
+async def test_callback_application_verifier_rejects_tampering() -> None:
     import time
     import hmac
     import hashlib
     body = b'{"status":"done"}'
     timestamp = str(int(time.time()))
     signature = hmac.new(b"isolated-secret", timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
-    inbox = CallbackInbox(HMACCallbackVerifier(secrets_by_provider={"kie": b"isolated-secret"}))
-    event = inbox.record_verified("kie", "event-2", "corr-2", {"status": "done"}, body=body, signature=signature, timestamp=timestamp)
+    repository = _CallbackRepository()
+    inbox = CallbackInbox(HMACCallbackVerifier(secrets_by_provider={"kie": b"isolated-secret"}), repository)
+    event = await inbox.ingest("kie", "event-2", "corr-2", {"status": "done"}, body=body, signature=signature, timestamp=timestamp, action_id="action-2", attempt_id="attempt-2")
     assert event.signature_valid is True
     with pytest.raises(PermissionError, match="SIGNATURE_INVALID"):
-        inbox.record_verified("kie", "event-3", "corr-3", {"status": "done"}, body=body + b"x", signature=signature, timestamp=timestamp)
+        await inbox.ingest("kie", "event-3", "corr-3", {"status": "done"}, body=body + b"x", signature=signature, timestamp=timestamp, action_id="action-3", attempt_id="attempt-3")
 
 
 @pytest.mark.asyncio
@@ -209,6 +204,59 @@ async def test_workspace_delete_requires_verified_oss_and_restores_by_stable_id(
     assert deleted["state"] == "completed" and not (root / "report.txt").exists()
     restored = await service.restore("deleted-1", "restored/report.txt", "workspace/deleted-1")
     assert restored["state"] == "completed" and (root / "restored/report.txt").read_bytes() == b"report"
+
+
+@pytest.mark.asyncio
+async def test_http_mock_server_proves_media_query_and_cancel_semantics() -> None:
+    requests = []
+
+    async def handler(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        lines = head.decode().splitlines()
+        method, path, _ = lines[0].split()
+        length = next(int(line.split(":", 1)[1]) for line in lines if line.lower().startswith("content-length:"))
+        body = await reader.readexactly(length)
+        requests.append((method, path, body))
+        if method == "POST" and path.endswith("/generations"):
+            response = {"state": "accepted", "provider_task_ref": "kie-task-1", "status_locator": "/api/v1/tasks/status", "evidence": {"accepted": True}}
+        elif method == "GET":
+            response = {"state": "completed", "provider_task_ref": "kie-task-1", "result": {"summary": "done", "count": 1}}
+        else:
+            response = {"state": "cancelled", "provider_task_ref": "kie-task-1", "evidence": {"cancel_confirmed": True}}
+        payload = json.dumps(response).encode()
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + str(len(payload)).encode() + b"\r\nConnection: close\r\n\r\n" + payload)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    import json
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        transport = AllowlistedTransport(HttpProviderTransport({"kie": ("127.0.0.1", port)}), (
+            NetworkRule(provider="kie", method="POST", paths=frozenset({"/api/v1/image/generations", "/api/v1/tasks/cancel"})),
+            NetworkRule(provider="kie", method="GET", paths=frozenset({"/api/v1/tasks/status"})),
+        ))
+        with pytest.raises(PermissionError, match="NETWORK_NOT_ALLOWED"):
+            await transport.request(provider="kie", method="GET", path="/not-allowlisted", body={}, idempotency_key="bad")
+        provider = KieMediaProvider(transport, kind="image")
+        attempt = _attempt({"prompt": "a safe image"}, ActionAttemptStatus.DISPATCHING)
+        submitted = await provider.submit(attempt, {"prompt": "a safe image"}, idempotency_key="k1")
+        assert submitted.state is ProviderState.ACCEPTED
+        base = _attempt({"prompt": "a safe image"})
+        accepted = ActionAttempt(**{
+            **base.__dict__, "status": ActionAttemptStatus.ACCEPTED,
+            "accepted_at": datetime.now(timezone.utc),
+            "external_receipt": {"provider_task_ref": "kie-task-1"},
+        })
+        reconciled = await provider.reconcile(accepted, {"provider_task_ref": "kie-task-1", "status_locator": "/api/v1/tasks/status"})
+        assert reconciled.state is ProviderState.COMPLETED
+        cancelled = await provider.cancel(accepted, {"provider_task_ref": "kie-task-1"})
+        assert cancelled.state is ProviderState.CANCELLED
+        assert [item[:2] for item in requests] == [("POST", "/api/v1/image/generations"), ("GET", "/api/v1/tasks/status"), ("POST", "/api/v1/tasks/cancel")]
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def test_secret_boundary_requires_opaque_handles() -> None:
@@ -257,4 +305,11 @@ def test_226_lanes_are_additive_and_rollbacks_fail_closed() -> None:
         assert "SECURITY DEFINER" in sql and "SET search_path" in sql
         assert "GRANT EXECUTE" in sql and "REVOKE ALL" in sql
         assert "ROLLBACK_GUARD_FACTS_EXIST" in down
+    callback_sql = (root / "migrations/226_02_agent_runtime_action_callback_inbox.sql").read_text()
+    assert "p_signature_valid" not in callback_sql
+    assert "action_id UUID NOT NULL" in callback_sql and "attempt_id UUID NOT NULL" in callback_sql
+    child_sql = (root / "migrations/226_05_agent_runtime_child_runs.sql").read_text()
+    assert "md5(" not in child_sql and "digest(convert_to" in child_sql
+    resource_sql = (root / "migrations/226_06_agent_runtime_resource_mutation_contracts.sql").read_text()
+    assert "p_execution_token UUID" in resource_sql and "i.execution_token" in resource_sql
     assert not any("226_" in path.read_text() for path in (root / "migrations").glob("21[2-9]_*.sql"))

@@ -50,12 +50,12 @@ def build_nonproduction_specialist_catalog(registry: "ExecutorRegistry") -> Runt
 
 def _group(name: str) -> str:
     from services.agent.runtime.executors.specialist_registry import (
-        ARTIFACT_JOB_TOOLS, CHILD_RUN_TOOLS, ERP_MUTATION_TOOLS, MEDIA_TOOLS,
+        ARTIFACT_JOB_TOOLS, CHILD_RUN_TOOLS, ERP_CATALOG_TOOLS, ERP_MUTATION_TOOLS, MEDIA_TOOLS,
         REMOTE_READ_TOOLS, SCHEDULED_TASK_TOOLS, SYNC_TOOLS,
         WORKSPACE_MUTATION_TOOLS,
     )
     for names, group in (
-        (REMOTE_READ_TOOLS, "remote"), (ARTIFACT_JOB_TOOLS, "artifact"),
+        (REMOTE_READ_TOOLS, "remote"), (ERP_CATALOG_TOOLS, "erp_catalog"), (ARTIFACT_JOB_TOOLS, "artifact"),
         (MEDIA_TOOLS, "media"), (CHILD_RUN_TOOLS, "composite"),
         (ERP_MUTATION_TOOLS, "erp_write"), (SYNC_TOOLS, "erp_sync"),
         (WORKSPACE_MUTATION_TOOLS, "workspace"), (SCHEDULED_TASK_TOOLS, "scheduler"),

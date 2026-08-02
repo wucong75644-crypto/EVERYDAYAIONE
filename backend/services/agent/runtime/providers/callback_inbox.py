@@ -27,6 +27,11 @@ class CallbackSignatureVerifier(Protocol):
     def verify(self, provider: str, body: bytes, signature: str, timestamp: str) -> bool: ...
 
 
+class CallbackInboxRepository(Protocol):
+    async def callback(self, *, provider: str, event_id: str, correlation: str, payload_hash: str,
+                       payload_redacted: Mapping[str, object], action_id: str, attempt_id: str) -> object: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class HMACCallbackVerifier:
     """Application-layer verifier; raw credentials never cross the DB port."""
@@ -49,45 +54,45 @@ class HMACCallbackVerifier:
 
 
 class CallbackInbox:
-    def __init__(self, verifier: CallbackSignatureVerifier | None = None) -> None:
-        self._events: dict[tuple[str, str, str], CallbackEvent] = {}
-        self._verifier = verifier
+    """唯一 Callback ingress: verify raw bytes, then persist through a port."""
 
-    def record_verified(
+    def __init__(self, verifier: CallbackSignatureVerifier, repository: CallbackInboxRepository) -> None:
+        self._verifier = verifier
+        self._repository = repository
+
+    async def ingest(
         self, provider: str, event_id: str, correlation: str, payload: Mapping[str, object],
         *, body: bytes, signature: str, timestamp: str,
+        action_id: str, attempt_id: str,
     ) -> CallbackEvent:
-        if self._verifier is None or not self._verifier.verify(provider, body, signature, timestamp):
+        if not self._verifier.verify(provider, body, signature, timestamp):
             raise PermissionError("CALLBACK_SIGNATURE_INVALID")
-        return self._record(provider, event_id, correlation, payload)
-
-    def record(
-        self, provider: str, event_id: str, correlation: str,
-        payload: Mapping[str, object], *, signature_valid: bool,
-    ) -> CallbackEvent:
-        if self._verifier is not None and not signature_valid:
-            raise PermissionError("CALLBACK_SIGNATURE_INVALID")
-        return self._record(provider, event_id, correlation, payload)
-
-    def _record(
-        self, provider: str, event_id: str, correlation: str,
-        payload: Mapping[str, object],
-    ) -> CallbackEvent:
-        redacted = _redact(payload)
-        payload_hash = hashlib.sha256(
-            json.dumps(redacted, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        event = CallbackEvent(
-            provider=provider, provider_event_id=event_id,
-            callback_correlation=correlation, payload_hash=payload_hash,
-            payload_redacted=redacted, signature_valid=True,
+        event = _event(provider, event_id, correlation, payload)
+        await self._repository.callback(
+            provider=provider, event_id=event_id, correlation=correlation,
+            payload_hash=event.payload_hash, payload_redacted=event.payload_redacted,
+            action_id=action_id, attempt_id=attempt_id,
         )
-        key = (provider, event_id, payload_hash)
-        existing = self._events.get(key)
-        if existing is not None:
-            return existing
-        self._events[key] = event
         return event
+
+    def record(self, *args: object, **kwargs: object) -> CallbackEvent:
+        raise RuntimeError("CALLBACK_USE_INGEST_WITH_RAW_SIGNATURE")
+
+
+def _event(
+    provider: str, event_id: str, correlation: str,
+    payload: Mapping[str, object],
+) -> CallbackEvent:
+    redacted = _redact(payload)
+    payload_hash = hashlib.sha256(
+        json.dumps(redacted, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    event = CallbackEvent(
+        provider=provider, provider_event_id=event_id,
+        callback_correlation=correlation, payload_hash=payload_hash,
+        payload_redacted=redacted, signature_valid=True,
+    )
+    return event
 
 
 def _redact(value: object, key: str = "") -> object:
@@ -100,4 +105,4 @@ def _redact(value: object, key: str = "") -> object:
     return value
 
 
-__all__ = ["CallbackEvent", "CallbackInbox", "CallbackSignatureVerifier", "HMACCallbackVerifier"]
+__all__ = ["CallbackEvent", "CallbackInbox", "CallbackInboxRepository", "CallbackSignatureVerifier", "HMACCallbackVerifier"]
