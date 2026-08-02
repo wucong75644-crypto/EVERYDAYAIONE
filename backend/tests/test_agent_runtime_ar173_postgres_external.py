@@ -158,8 +158,8 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
     assert child["outcome"] == "created"
     readback = _worker_rpc(database, "read_agent_child_run_strict", (child["child_run_id"], ids["run"], ids["action"], ids["request_hash"]))
     assert readback["outcome"] == "readback" and readback["status"] == "queued"
-    queued_completion = _worker_rpc(database, "complete_agent_child_run_strict", (child["child_run_id"], ids["run"], ids["action"], ids["request_hash"], 1, {"items": []}))
-    assert queued_completion["outcome"] == "child_not_terminal"
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        _worker_rpc(database, "complete_agent_child_run_strict", (child["child_run_id"], ids["run"], ids["action"], ids["request_hash"], 1, {"items": []}))
     reconciliation_token = str(uuid4())
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
