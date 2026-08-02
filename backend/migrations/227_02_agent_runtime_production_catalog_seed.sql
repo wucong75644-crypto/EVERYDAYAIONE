@@ -62,7 +62,8 @@ BEGIN
       'authorization_requirement',auth,'retry_semantics',retry,'reconcile_semantics',reconcile,
       'cancel_semantics',cancel,'result_schema_revision',1,'allowed_scope_kinds',scope_kinds,
       'allowed_channels',jsonb_build_array('web','wecom'),
-      'schema_hash',encode(digest((name||':schema:v1')::bytea,'sha256'),'hex')
+      'schema_hash',encode(digest((name||':schema:v1')::bytea,'sha256'),'hex'),
+      'provider_revision','provider-v1'
     ) AS tool
     FROM tool_rows
   )
