@@ -2048,6 +2048,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `CallbackInbox.ingest` | `backend/services/agent/runtime/providers/callback_inbox.py` | 原始 body 验签、时间窗校验、脱敏后唯一写入持久化 repository；旧 `record` 入口明确拒绝 |
 | `ContentAddressedArtifactService` / `RuntimeResourceMutationService` | `backend/services/agent/runtime/executors/resource_contracts.py` | 内容寻址 materialize、Workspace/OSS retention、Scheduler CAS 的非生产具体 composition |
 | `PostgresSpecialistRepository.provider_submission/provider_terminal` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Durable provider facts, cost, callback, artifact, resource and child-run RPC adapter. |
+| `PostgresSpecialistRepository.finalize/sync_phase` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Strict outcome parsing over atomic finalize and ERP sync checkpoint RPCs. |
 | `SpecialistExecutor.dispatch/reconcile` | `backend/services/agent/runtime/executors/specialist_executor.py` | Policy/capability-gated durable reserve, provider fact, reconcile and settlement sequence. |
 | `LocalDataService` / `FileAnalyzeService` / `FetchAllPagesService` | `backend/services/agent/runtime/executors/resource_contracts.py` | Summary/detail/export, CSV/Excel-to-Parquet lineage, and Registry-bound paginated ERP materialization. |
 | `ChildRunService` / `ErpSyncService` | `backend/services/agent/runtime/executors/resource_contracts.py` | Repository-backed child lifecycle and explicit sync submission/progress/apply/checkpoint phases. |

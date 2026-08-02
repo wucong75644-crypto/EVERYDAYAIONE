@@ -22,6 +22,7 @@ class SpecialistFactRepository(Protocol):
     async def provider_unknown(self, **params: object) -> object: ...
     async def provider_terminal(self, **params: object) -> object: ...
     async def provider_reconcile(self, **params: object) -> object: ...
+    async def finalize(self, **params: object) -> object: ...
 
 
 class SpecialistExecutor:
@@ -57,9 +58,13 @@ class SpecialistExecutor:
             )
             if receipt.request_hash != snapshot.request_hash:
                 return _failed(attempt, "SPECIALIST_PROVIDER_REQUEST_HASH_CONFLICT")
-            await self._persist_provider_fact(attempt, receipt)
-            await self._settle(attempt, receipt)
-            return self._to_execution_receipt(attempt, receipt)
+            execution = self._to_execution_receipt(attempt, receipt)
+            if self.facts is not None and hasattr(self.facts, "finalize") and receipt.state in {ProviderState.COMPLETED, ProviderState.FAILED, ProviderState.CANCELLED}:
+                await self._finalize(attempt, receipt, execution, reconciliation=False)
+            else:
+                await self._persist_provider_fact(attempt, receipt)
+                await self._settle(attempt, receipt)
+            return execution
         except _DurableFactError as exc:
             return ExecutionReceipt(
                 outcome=ExecutionOutcome.UNKNOWN,
@@ -80,6 +85,10 @@ class SpecialistExecutor:
             raise RuntimeError("SPECIALIST_RECONCILE_STATUS_REQUIRED")
         try:
             receipt = await self.provider.reconcile(attempt, attempt.external_receipt)
+            execution = self._to_execution_receipt(attempt, receipt)
+            if self.facts is not None and hasattr(self.facts, "finalize") and receipt.state in {ProviderState.COMPLETED, ProviderState.FAILED, ProviderState.CANCELLED}:
+                await self._finalize(attempt, receipt, execution, reconciliation=True)
+                return execution
             if self.facts is not None:
                 if receipt.state is ProviderState.ACCEPTED and receipt.provider_task_ref:
                     await self.facts.provider_submission(
@@ -104,7 +113,7 @@ class SpecialistExecutor:
                         result=dict(receipt.result),
                         ambiguity_evidence=dict(receipt.evidence),
                     )
-            return self._to_execution_receipt(attempt, receipt)
+            return execution
         except Exception as exc:
             return ExecutionReceipt(
                 outcome=ExecutionOutcome.UNKNOWN,
@@ -117,7 +126,10 @@ class SpecialistExecutor:
             raise RuntimeError("SPECIALIST_CANCEL_STATUS_INVALID")
         try:
             receipt = await self.provider.cancel(attempt, attempt.external_receipt)
-            return self._to_execution_receipt(attempt, receipt)
+            execution = self._to_execution_receipt(attempt, receipt)
+            if self.facts is not None and hasattr(self.facts, "finalize") and receipt.state in {ProviderState.COMPLETED, ProviderState.FAILED, ProviderState.CANCELLED}:
+                await self._finalize(attempt, receipt, execution, reconciliation=attempt.status.value in {"accepted", "unknown"})
+            return execution
         except Exception as exc:
             return ExecutionReceipt(
                 outcome=ExecutionOutcome.UNKNOWN,
@@ -205,6 +217,22 @@ class SpecialistExecutor:
                 ), reason_code="provider_failed",
             )
 
+    async def _finalize(self, attempt: ActionAttempt, receipt: ProviderReceipt, execution: ExecutionReceipt, *, reconciliation: bool) -> None:
+        result = _result_payload(execution, receipt)
+        await self.facts.finalize(
+            attempt_id=str(attempt.attempt_id),
+            execution_token=None if reconciliation else _execution_token(attempt),
+            reconciliation_token=str(attempt.external_receipt.get("reconciliation_token")) if reconciliation else None,
+            request_hash=attempt.request_hash,
+            terminal_state=receipt.state.value,
+            provider_receipt=receipt_facts(receipt), result=result,
+            cost_kind="settle" if receipt.state is ProviderState.COMPLETED else "release" if receipt.state is ProviderState.FAILED else "refund",
+            reserved_amount=_reserved_amount(attempt),
+            actual_amount=_actual_credits(receipt.cost),
+            currency="credits", reason_code="runtime",
+            provider_receipt_hash=hashlib.sha256(canonical_json(receipt_facts(receipt)).encode()).hexdigest(),
+        )
+
 
 class _DurableFactError(RuntimeError):
     pass
@@ -219,6 +247,30 @@ def _actual_credits(cost: Mapping[str, object]) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise _DurableFactError("SPECIALIST_COST_SETTLEMENT_INVALID")
     return value
+
+
+def _reserved_amount(attempt: ActionAttempt) -> int:
+    value = attempt.capabilities.get("reserved_credits", 0)
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
+def _result_payload(execution: ExecutionReceipt, receipt: ProviderReceipt) -> dict[str, object]:
+    if execution.result is None:
+        failed = receipt.state is ProviderState.FAILED
+        return {
+            "status": "error" if failed else "empty",
+            "summary": str(receipt.evidence.get("error_code", receipt.state.value)),
+            "data": {}, "cost": dict(receipt.cost),
+            "external_receipt": receipt_facts(receipt),
+            "error_code": "SPECIALIST_PROVIDER_FAILED" if failed else None,
+        }
+    result = execution.result
+    return {
+        "status": "empty" if result.status is ActionResultStatus.EMPTY else "success",
+        "summary": result.summary, "data": dict(result.data or {}),
+        "artifact_ids": list(result.artifact_ids), "usage": dict(result.usage),
+        "cost": dict(result.cost), "external_receipt": dict(result.receipt),
+    }
 
 
 def _failed(attempt: ActionAttempt, error_code: str) -> ExecutionReceipt:

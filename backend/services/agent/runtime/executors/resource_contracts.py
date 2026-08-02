@@ -217,6 +217,41 @@ class ErpSyncService:
     provider: object
     local_apply: Callable[[Mapping[str, object]], object]
     checkpoint_store: Callable[[Mapping[str, object]], object]
+    facts: object | None = None
+
+    async def run(self, request: Mapping[str, object], attempt: object) -> Mapping[str, object]:
+        submission = request.get("resume_submission")
+        if not isinstance(submission, Mapping):
+            submission = await self.submit(request)
+            await self._phase(attempt, "submitted", submission)
+        progress = await self.progress(submission)
+        await self._phase(attempt, "progressing", progress)
+        if progress.get("state") not in {"completed", "ready"}:
+            unknown = {"state": "unknown", "submission": dict(submission), "progress": dict(progress), "checkpoint": {}}
+            await self._phase(attempt, "unknown", unknown)
+            return unknown
+        await self._phase(attempt, "applying", progress)
+        try:
+            applied = await self.apply(progress)
+            checkpoint = await self.checkpoint(applied)
+        except Exception as exc:
+            unknown = {"state": "unknown", "submission": dict(submission), "progress": dict(progress), "checkpoint": {"error": type(exc).__name__}}
+            await self._phase(attempt, "unknown", unknown)
+            return unknown
+        await self._phase(attempt, "checkpointed", checkpoint)
+        completed = {"state": "completed", "submission": dict(submission), "progress": dict(progress), "apply": dict(applied), "checkpoint": dict(checkpoint)}
+        await self._phase(attempt, "completed", completed)
+        return completed
+
+    async def _phase(self, attempt: object, phase: str, value: Mapping[str, object]) -> None:
+        if self.facts is not None and hasattr(self.facts, "sync_phase"):
+            await self.facts.sync_phase(
+                p_action_id=str(attempt.action_id), p_attempt_id=str(attempt.attempt_id),
+                p_execution_token=str(attempt.lease.fencing_token),
+                p_request_hash=str(attempt.request_hash), p_phase=phase,
+                p_checkpoint=dict(value.get("checkpoint", value)),
+                p_provider_receipt=dict(value.get("provider_receipt", value)),
+            )
 
     async def submit(self, request: Mapping[str, object]) -> Mapping[str, object]:
         result = self.provider.submit(request)  # type: ignore[attr-defined]
@@ -257,9 +292,10 @@ class ChildRunService:
         result = await self.repository.create_child_run(
             p_parent_run_id=attempt.run_id, p_parent_action_id=str(attempt.action_id),
             p_parent_request_hash=attempt.request_hash,
+            p_parent_execution_token=str(attempt.lease.fencing_token),
             p_child_ordinal=int(request["child_ordinal"]),
             p_capability=str(request["capability"]),
-            p_context=dict(request.get("context", {})) if isinstance(request.get("context"), Mapping) else {},
+            p_context=_child_context(attempt, request),
         )
         created = _phase_object(result, "CHILD_RUN_CREATE_INVALID")
         if created.get("outcome") in {"created", "already_exists"}:
@@ -270,7 +306,7 @@ class ChildRunService:
         child_id = receipt.get("child_run_id")
         if not child_id or not attempt.run_id:
             return {"state": "unknown", "evidence": {"error_code": "CHILD_RUN_READBACK_BINDING_MISSING"}}
-        result = await self.repository.read_child_run(child_run_id=str(child_id), parent_run_id=attempt.run_id)
+        result = await self.repository.read_child_run(child_run_id=str(child_id), parent_run_id=attempt.run_id, parent_action_id=str(attempt.action_id), parent_request_hash=attempt.request_hash)
         readback = _phase_object(result, "CHILD_RUN_READBACK_INVALID")
         return {**readback, "state": str(readback.get("status", "unknown"))}
 
@@ -280,6 +316,7 @@ class ChildRunService:
             raise ValueError("CHILD_RUN_COMPLETE_BINDING_MISSING")
         return await self.repository.complete_child_run(
             p_child_run_id=str(child_id), p_parent_run_id=attempt.run_id,
+            p_parent_action_id=str(attempt.action_id), p_parent_request_hash=attempt.request_hash,
             p_aggregation_revision=int(result.get("aggregation_revision", 1)),
             p_result=dict(result),
         )
@@ -290,6 +327,7 @@ class ChildRunService:
             return {"state": "unknown", "evidence": {"error_code": "CHILD_RUN_CANCEL_BINDING_MISSING"}}
         result = await self.repository.cancel_child_run(
             p_child_run_id=str(child_id), p_parent_run_id=attempt.run_id,
+            p_parent_action_id=str(attempt.action_id), p_parent_request_hash=attempt.request_hash,
             p_reason=str(receipt.get("cancel_reason", "parent_cancel")),
         )
         if isinstance(result, Mapping):
@@ -317,6 +355,8 @@ class RuntimeResourceMutationService:
                 str(request["operation"]), {**request, "_attempt": attempt},
             )
         if operation == "trigger_erp_sync" and self.sync is not None:
+            if hasattr(self.sync, "run"):
+                return await self.sync.run(request, attempt)  # type: ignore[attr-defined]
             if not all(hasattr(self.sync, name) for name in ("submit", "progress", "apply", "checkpoint")):
                 raise RuntimeError("ERP_SYNC_PHASE_CONTRACT_REQUIRED")
             submitted = await self.sync.submit(request)  # type: ignore[attr-defined]
@@ -342,6 +382,20 @@ def _phase_object(value: object, error: str) -> Mapping[str, object]:
     if value.get("state") in {"unknown", "failed"}:
         raise RuntimeError("ERP_SYNC_PHASE_NOT_TERMINAL")
     return dict(value)
+
+
+def _child_context(attempt: object, request: Mapping[str, object]) -> dict[str, object]:
+    supplied = request.get("context")
+    if not isinstance(supplied, Mapping):
+        supplied = {}
+    context = dict(supplied)
+    context.setdefault("policy_receipt_id", request.get("policy_receipt_id"))
+    context.setdefault("capability", request.get("capability"))
+    context.setdefault("budget_remaining", request.get("budget_remaining", 0))
+    context.setdefault("scope", {"org_id": attempt.scope.org_id, "user_id": attempt.scope.user_id})
+    if not context.get("policy_receipt_id") or not context.get("capability"):
+        raise ValueError("CHILD_VERIFIED_CONTEXT_REQUIRED")
+    return context
 
 
 def _read_frame(root: Path, request: Mapping[str, object]):

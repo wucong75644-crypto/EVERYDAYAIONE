@@ -31,7 +31,10 @@ from services.agent.runtime.executors.real_specialist_composition import (
 from services.agent.runtime.executors.resource_contracts import WorkspaceResourceService
 from services.agent.runtime.executors.provider_adapters import AllowlistedTransport, HttpProviderTransport, KieMediaProvider
 from services.agent.runtime.executors.resource_contracts import (
-    FetchAllPagesService, FileAnalyzeService, LocalDataService,
+    ErpSyncService, FetchAllPagesService, FileAnalyzeService, LocalDataService,
+)
+from services.agent.runtime.infrastructure.postgres.specialist_repository import (
+    PostgresSpecialistRepository, SpecialistRpcConflict,
 )
 
 
@@ -100,6 +103,22 @@ class _Facts:
         self.calls.append(("reconcile", params["resolution"]))
         return {"outcome": params["resolution"]}
 
+
+class _RpcResponse:
+    def __init__(self, data):
+        self.data = data
+
+    async def execute(self):
+        return self
+
+
+class _RpcDatabase:
+    def __init__(self, data):
+        self.data = data
+
+    def rpc(self, name, params):
+        return _RpcResponse(self.data)
+
     async def provider_unknown(self, **params):
         self.calls.append(("provider", "unknown"))
         return {"outcome": "unknown"}
@@ -162,6 +181,20 @@ def test_real_nonproduction_composition_binds_every_tool_to_provider_and_family(
 
 
 @pytest.mark.asyncio
+async def test_postgres_repository_rejects_ambiguous_rpc_outcomes() -> None:
+    repository = object.__new__(PostgresSpecialistRepository)
+    repository._database = _RpcDatabase({"outcome": "fenced"})
+    with pytest.raises(SpecialistRpcConflict):
+        await repository.provider_terminal(attempt_id="a", execution_token="t", request_hash="a" * 64, state="completed")
+    repository._database = _RpcDatabase({"outcome": "duplicate"})
+    with pytest.raises(SpecialistRpcConflict):
+        await repository.callback(provider="kie", event_id="e", correlation="c", payload_hash="a" * 64, payload_redacted={}, action_id="a", attempt_id="t")
+    repository._database = _RpcDatabase({"outcome": "idempotent_readback", "settlement_id": "s"})
+    result = await repository.cost("reserve", CostReservation(action_id="a", attempt_id="t", kind="reserve", reserved_amount=1))
+    assert result["outcome"] == "idempotent_readback"
+
+
+@pytest.mark.asyncio
 async def test_executor_persists_cost_provider_fact_before_completed() -> None:
     from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
     facts = _Facts()
@@ -196,6 +229,35 @@ async def test_local_file_and_erp_page_services_have_distinct_semantics(tmp_path
         dispatcher=_Pages(), staging=staging, materializer=materializer,
     ).prepare(attempt, {"tool_name": "erp_product_query", "action": "product_list", "total_pages": 2})
     assert pages["state"] == "completed" and pages["pages"] == 2
+
+
+@pytest.mark.asyncio
+async def test_erp_sync_persists_monotone_phases_and_resumes_without_resubmit() -> None:
+    class _Provider:
+        def __init__(self):
+            self.submits = 0
+        async def submit(self, request):
+            self.submits += 1
+            return {"state": "accepted", "provider_task_ref": "sync-1"}
+        async def progress(self, submission):
+            return {"state": "completed", "provider_task_ref": submission["provider_task_ref"]}
+
+    class _SyncFacts:
+        def __init__(self):
+            self.phases = []
+        async def sync_phase(self, **params):
+            self.phases.append(params["p_phase"])
+            return {"outcome": "recorded"}
+
+    provider = _Provider()
+    facts = _SyncFacts()
+    service = ErpSyncService(provider=provider, local_apply=lambda value: {"rows": 1}, checkpoint_store=lambda value: {"cursor": 1}, facts=facts)
+    attempt = _attempt({"scope": "org"})
+    completed = await service.run({"scope": "org"}, attempt)
+    resumed = await service.run({"scope": "org", "resume_submission": {"state": "accepted", "provider_task_ref": "sync-1"}}, attempt)
+    assert completed["state"] == "completed" and resumed["state"] == "completed"
+    assert provider.submits == 1
+    assert facts.phases == ["submitted", "progressing", "applying", "checkpointed", "completed", "progressing", "applying", "checkpointed", "completed"]
 
 
 @pytest.mark.asyncio

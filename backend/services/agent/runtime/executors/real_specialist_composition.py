@@ -66,12 +66,14 @@ def build_nonproduction_specialist_registry_from_services(
     """Composition root for concrete service instances, not test-only ports."""
     from dataclasses import replace
     from services.agent.runtime.executors.resource_contracts import (
-        RuntimeResourceMutationService, ScheduledTaskService, WorkspaceResourceService,
+        ErpSyncService, RuntimeResourceMutationService, ScheduledTaskService, WorkspaceResourceService,
     )
     if repository is not None and isinstance(workspace, WorkspaceResourceService) and workspace.facts is None:
         workspace = replace(workspace, facts=repository)
     if repository is not None and isinstance(scheduler, ScheduledTaskService) and scheduler.facts is None:
         scheduler = replace(scheduler, facts=repository)
+    if repository is not None and isinstance(sync, ErpSyncService) and sync.facts is None:
+        sync = replace(sync, facts=repository)
     resources = RuntimeResourceMutationService(workspace=workspace, scheduler=scheduler, sync=sync, facts=repository)
     return build_nonproduction_specialist_registry(NonProductionSpecialistPorts(
         transport=transport, erp_dispatcher=erp_dispatcher, erp_search=erp_search,
