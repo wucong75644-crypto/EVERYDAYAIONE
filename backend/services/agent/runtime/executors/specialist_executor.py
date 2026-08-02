@@ -100,6 +100,12 @@ class SpecialistExecutor:
             if context is not None:
                 provider_receipt.update({"reconciliation_token": context.token, "reconciliation_state_version": context.state_version})
             receipt = await self.provider.cancel(attempt, provider_receipt)
+            if receipt.state is ProviderState.CANCELLED and receipt.evidence.get("cancel_confirmed") is not True:
+                return ExecutionReceipt(
+                    outcome=ExecutionOutcome.UNKNOWN,
+                    request_hash=attempt.request_hash,
+                    ambiguity_evidence={"error_code": "SPECIALIST_CANCEL_UNPROVEN", **dict(receipt.evidence)},
+                )
             return self._to_execution_receipt(attempt, receipt)
         except Exception as exc:
             return ExecutionReceipt(

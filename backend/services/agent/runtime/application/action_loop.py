@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from contextlib import suppress
 from dataclasses import replace
 from typing import Mapping
@@ -33,6 +34,8 @@ from services.agent.runtime.ports.executor import (
     ExecutorDispatchUnknown,
 )
 from services.agent.runtime.executors.specialist_contracts import ReconciliationContext, CostReservation
+from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+from services.agent.runtime.executors.contracts import canonical_json
 
 
 class ActionLoopDriver:
@@ -108,7 +111,7 @@ class ActionLoopDriver:
             )
             reconcile_call = (
                 resolved.executor.reconcile(reconciled_attempt, context)
-                if hasattr(resolved.executor, "executor_type")
+                if isinstance(resolved.executor, SpecialistExecutor)
                 else resolved.executor.reconcile(reconciled_attempt)
             )
             receipt = await lease.run(reconcile_call)
@@ -120,6 +123,7 @@ class ActionLoopDriver:
                 state_version=lease.state_version,
                 reconciliation=True,
                 reserved_amount=_reserved_amount(claim.snapshot),
+                specialist=isinstance(resolved.executor, SpecialistExecutor),
             )
         except (
             FencingTokenMismatchError,
@@ -177,6 +181,13 @@ class ActionLoopDriver:
             receipt = await lease.run(
                 resolved.executor.dispatch(dispatching_attempt, request),
             )
+        except _CostReserveFailure:
+            await self._actions.fail_before_dispatch(
+                attempt_id=str(attempt["id"]), execution_token=token,
+                expected_attempt_version=(lease.state_version if lease is not None else gate.state_version),
+                request_hash=request_hash, error_code="SPECIALIST_COST_RESERVE_FAILED",
+            )
+            return
         except ExecutorDispatchUnknown as error:
             await self._actions.record_unknown(
                 attempt_id=str(attempt["id"]), execution_token=token,
@@ -209,6 +220,7 @@ class ActionLoopDriver:
             ),
             reconciliation=False,
             reserved_amount=_reserved_amount(snapshot),
+            specialist=isinstance(resolved.executor, SpecialistExecutor),
         )
 
     def _with_capabilities(
@@ -227,7 +239,7 @@ class ActionLoopDriver:
     async def _apply(
         self, snapshot: ActionDispatchSnapshot, receipt: ExecutionReceipt,
         *, token: str, state_version: int, reconciliation: bool,
-        reserved_amount: int,
+        reserved_amount: int, specialist: bool,
     ) -> None:
         attempt_id = str(snapshot.attempt["id"])
         request_hash = str(snapshot.attempt["request_hash"])
@@ -239,11 +251,13 @@ class ActionLoopDriver:
                 state_version=state_version, request_hash=request_hash,
                 reconciliation=True,
                 reserved_amount=reserved_amount,
+                specialist=specialist,
             ):
                 return
             if await self._persist_specialist_nonterminal(
                 receipt, attempt_id=attempt_id, token=token,
-                request_hash=request_hash, reconciliation=True,
+                state_version=state_version, request_hash=request_hash, reconciliation=True,
+                specialist=specialist,
             ):
                 return
             resolution = (
@@ -269,11 +283,13 @@ class ActionLoopDriver:
             state_version=state_version, request_hash=request_hash,
             reconciliation=False,
             reserved_amount=reserved_amount,
+            specialist=specialist,
         ):
             return
         if await self._persist_specialist_nonterminal(
             receipt, attempt_id=attempt_id, token=token,
-            request_hash=request_hash, reconciliation=False,
+            state_version=state_version, request_hash=request_hash, reconciliation=False,
+            specialist=specialist,
         ):
             return
         if receipt.outcome is ExecutionOutcome.COMPLETED:
@@ -311,10 +327,10 @@ class ActionLoopDriver:
     async def _try_specialist_finalize(
         self, receipt: ExecutionReceipt, *, attempt_id: str, token: str,
         state_version: int, request_hash: str, reconciliation: bool,
-        reserved_amount: int,
+        reserved_amount: int, specialist: bool,
     ) -> bool:
         """The application is the sole specialist terminal owner."""
-        if self._specialist_facts is None or receipt.outcome not in {
+        if not specialist or self._specialist_facts is None or receipt.outcome not in {
             ExecutionOutcome.COMPLETED, ExecutionOutcome.FAILED,
             ExecutionOutcome.CANCELLED,
         }:
@@ -327,6 +343,9 @@ class ActionLoopDriver:
         if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
             amount = 0
         result = _result(receipt)
+        provider_receipt_hash = hashlib.sha256(
+            canonical_json(external).encode("utf-8")
+        ).hexdigest()
         await self._specialist_facts.finalize(
             attempt_id=attempt_id,
             execution_token=None if reconciliation else token,
@@ -340,37 +359,43 @@ class ActionLoopDriver:
                        else "release" if receipt.outcome is ExecutionOutcome.FAILED
                        else "refund"),
             reserved_amount=reserved_amount, actual_amount=amount, currency="credits",
-            reason_code="runtime",
+            reason_code="runtime", provider_receipt_hash=provider_receipt_hash,
         )
         return True
 
     async def _reserve_specialist(self, attempt, request, executor) -> None:
-        if self._specialist_facts is None or not hasattr(executor, "executor_type"):
+        if self._specialist_facts is None or not isinstance(executor, SpecialistExecutor):
             return
         amount = request.get("reserved_credits", 0)
         if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
             raise RuntimeError("SPECIALIST_COST_RESERVE_INVALID")
-        await self._specialist_facts.cost(
-            "reserve", CostReservation(
-                action_id=str(attempt.action_id), attempt_id=str(attempt.attempt_id),
-                kind="reserve", reserved_amount=amount,
-                currency=str(request.get("currency", "credits")),
-            ),
-        )
+        try:
+            await self._specialist_facts.cost(
+                "reserve", CostReservation(
+                    action_id=str(attempt.action_id), attempt_id=str(attempt.attempt_id),
+                    kind="reserve", reserved_amount=amount,
+                    currency=str(request.get("currency", "credits")),
+                ),
+            )
+        except Exception as exc:
+            raise _CostReserveFailure from exc
 
     async def _persist_specialist_nonterminal(
         self, receipt: ExecutionReceipt, *, attempt_id: str, token: str,
-        request_hash: str, reconciliation: bool,
+        state_version: int, request_hash: str, reconciliation: bool, specialist: bool,
     ) -> bool:
-        if self._specialist_facts is None or not hasattr(self._specialist_facts, "provider_submission"):
+        if not specialist or self._specialist_facts is None or not hasattr(self._specialist_facts, "still_accepted"):
             return False
         if receipt.outcome not in {ExecutionOutcome.ACCEPTED, ExecutionOutcome.UNKNOWN}:
             return False
         if reconciliation:
-            await self._specialist_facts.provider_reconcile(
+            method = ("still_accepted" if receipt.outcome is ExecutionOutcome.ACCEPTED
+                      else "still_unknown")
+            await getattr(self._specialist_facts, method)(
                 attempt_id=attempt_id, reconciliation_token=token,
-                request_hash=request_hash, resolution=receipt.outcome.value,
-                result=_result(receipt), ambiguity_evidence=receipt.ambiguity_evidence,
+                expected_state_version=state_version, request_hash=request_hash,
+                provider_receipt=dict(receipt.external_receipt),
+                ambiguity_evidence=receipt.ambiguity_evidence,
             )
             return True
         external = dict(receipt.external_receipt)
@@ -395,6 +420,10 @@ class ActionLoopDriver:
             external_receipt=external,
         )
         return True
+
+
+class _CostReserveFailure(RuntimeError):
+    pass
 
 
 def _required_result(receipt: ExecutionReceipt) -> Mapping[str, object]:

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 from typing import Any, Mapping
 
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
 from services.agent.runtime.executors.specialist_contracts import CostReservation
+from services.agent.runtime.executors.contracts import canonical_json
 
 
 class SpecialistRpcError(RuntimeError):
@@ -118,6 +120,12 @@ class PostgresSpecialistRepository:
             "p_ambiguity_evidence": dict(ambiguity_evidence or {}),
         }, allowed={resolution})
 
+    async def still_accepted(self, **params: object) -> object:
+        return await self._rpc("record_agent_action_provider_still_accepted", params, allowed={"still_accepted"})
+
+    async def still_unknown(self, **params: object) -> object:
+        return await self._rpc("record_agent_action_provider_still_unknown", params, allowed={"still_unknown"})
+
     async def link_artifact(self, **params: object) -> object:
         return await self._rpc("link_agent_action_artifact", params, allowed={"linked"})
 
@@ -127,17 +135,22 @@ class PostgresSpecialistRepository:
     async def create_child_run(self, **params: object) -> object:
         return await self._rpc("create_agent_child_run_strict", params, allowed={"created", "already_exists"})
 
-    async def read_child_run(self, *, child_run_id: str, parent_run_id: str, parent_action_id: str, parent_request_hash: str) -> object:
-        return await self._rpc("read_agent_child_run_strict", {
+    async def read_child_run(self, *, child_run_id: str, parent_run_id: str, parent_action_id: str,
+                             parent_attempt_id: str, parent_request_hash: str,
+                             ownership_token: str, expected_state_version: int,
+                             child_ordinal: int) -> object:
+        return await self._rpc("read_agent_child_run_strict_v2", {
             "p_child_run_id": child_run_id, "p_parent_run_id": parent_run_id,
-            "p_parent_action_id": parent_action_id, "p_parent_request_hash": parent_request_hash,
+            "p_parent_action_id": parent_action_id, "p_parent_attempt_id": parent_attempt_id,
+            "p_parent_request_hash": parent_request_hash, "p_ownership_token": ownership_token,
+            "p_expected_state_version": expected_state_version, "p_child_ordinal": child_ordinal,
         }, allowed={"readback"})
 
     async def complete_child_run(self, **params: object) -> object:
-        return await self._rpc("complete_agent_child_run_strict", params, allowed={"completed"})
+        return await self._rpc("aggregate_agent_child_run_strict", params, allowed={"completed"})
 
     async def cancel_child_run(self, **params: object) -> object:
-        return await self._rpc("cancel_agent_child_run_strict", params, allowed={"cancelled"})
+        return await self._rpc("cancel_agent_child_run_strict_v2", params, allowed={"cancelled"})
 
     async def mutate_resource(self, operation: str, **params: object) -> object:
         names = {"file_delete": "runtime_delete_workspace_resource", "restore_file": "runtime_restore_workspace_resource", "manage_scheduled_task": "runtime_mutate_scheduled_task"}
@@ -164,11 +177,11 @@ class PostgresSpecialistRepository:
             "p_provider_receipt": dict(provider_receipt), "p_result": dict(result),
             "p_cost_kind": cost_kind, "p_reserved_amount": reserved_amount,
             "p_actual_amount": actual_amount, "p_currency": currency,
-            "p_reason_code": reason_code, "p_provider_receipt_hash": provider_receipt_hash,
+            "p_reason_code": reason_code, "p_provider_receipt_hash": provider_receipt_hash or hashlib.sha256(canonical_json(provider_receipt).encode("utf-8")).hexdigest(),
         }, allowed={terminal_state})
 
     async def sync_phase(self, **params: object) -> Mapping[str, object]:
-        return await self._rpc("record_agent_sync_phase_v2", params, allowed={"recorded"})
+        return await self._rpc("record_agent_sync_phase_v3", params, allowed={"recorded"})
 
     async def read_sync_facts(self, **params: object) -> Mapping[str, object]:
         result = await self._rpc("read_agent_sync_phase_facts", params, allowed={"readback"})

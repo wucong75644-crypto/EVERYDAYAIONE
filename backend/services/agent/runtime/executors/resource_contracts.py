@@ -239,14 +239,17 @@ class ErpSyncService:
         await self._phase(attempt, "completed", completed)
         return completed
 
-    async def _phase(self, attempt: object, phase: str, value: Mapping[str, object]) -> None:
+    async def _phase(self, attempt: object, phase: str, value: Mapping[str, object], *, ownership_token: str | None = None) -> None:
         if self.facts is not None and hasattr(self.facts, "sync_phase"):
+            ownership_token = ownership_token or str(attempt.lease.fencing_token)
             await self.facts.sync_phase(
                 p_action_id=str(attempt.action_id), p_attempt_id=str(attempt.attempt_id),
-                p_execution_token=str(attempt.lease.fencing_token),
+                p_ownership_token=ownership_token,
+                p_expected_state_version=int(getattr(attempt, "state_version", 1)),
+                p_lease_expires_at=attempt.lease.expires_at,
                 p_request_hash=str(attempt.request_hash), p_phase=phase,
                 p_checkpoint=dict(value.get("checkpoint", value)),
-                p_provider_receipt=dict(value.get("provider_receipt", value)),
+                p_provider_receipt={**dict(value.get("provider_receipt", value)), **({"reconciliation_token": ownership_token} if ownership_token else {})},
             )
 
     async def _read_submission(self, attempt: object) -> Mapping[str, object] | None:
@@ -295,13 +298,37 @@ class ErpSyncService:
 
     async def reconcile(self, attempt: object, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]:
         """Read provider status from durable submission identity; never resubmit."""
+        facts = await self._read_facts(attempt)
         submission = receipt.get("submission") or receipt.get("provider_task_ref")
+        if not isinstance(submission, (Mapping, str)):
+            submission = _sync_submission_from_facts(facts)
         if isinstance(submission, str):
             submission = {"provider_task_ref": submission}
         if not isinstance(submission, Mapping):
             return {"state": "unknown", "evidence": {"error_code": "ERP_SYNC_SUBMISSION_IDENTITY_MISSING"}}
         progress = await self.progress(submission)
-        return {"state": "completed" if progress.get("state") in {"completed", "ready"} else "accepted", "submission": dict(submission), "progress": dict(progress)}
+        if progress.get("state") not in {"completed", "ready"}:
+            return {"state": "accepted", "submission": dict(submission), "progress": dict(progress)}
+        ownership_token = receipt.get("reconciliation_token")
+        if not isinstance(ownership_token, str):
+            ownership_token = None
+        if "checkpointed" not in facts:
+            await self._phase(attempt, "applying", progress, ownership_token=ownership_token)
+            applied = await self.apply(progress)
+            checkpoint = await self.checkpoint(applied)
+            await self._phase(attempt, "checkpointed", checkpoint, ownership_token=ownership_token)
+        completed = {"state": "completed", "submission": dict(submission), "progress": dict(progress)}
+        await self._phase(attempt, "completed", completed, ownership_token=ownership_token)
+        return completed
+
+    async def _read_facts(self, attempt: object) -> Mapping[str, object]:
+        if self.facts is None or not hasattr(self.facts, "read_sync_facts"):
+            return {}
+        result = await self.facts.read_sync_facts(
+            p_action_id=str(attempt.action_id), p_attempt_id=str(attempt.attempt_id),
+            p_request_hash=str(attempt.request_hash),
+        )
+        return result if isinstance(result, Mapping) else {}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -330,7 +357,14 @@ class ChildRunService:
         child_id = receipt.get("child_run_id")
         if not child_id or not attempt.run_id:
             return {"state": "unknown", "evidence": {"error_code": "CHILD_RUN_READBACK_BINDING_MISSING"}}
-        result = await self.repository.read_child_run(child_run_id=str(child_id), parent_run_id=attempt.run_id, parent_action_id=str(attempt.action_id), parent_request_hash=attempt.request_hash)
+        token = str(receipt.get("reconciliation_token") or attempt.lease.fencing_token)
+        version = receipt.get("reconciliation_state_version", receipt.get("state_version", 1))
+        result = await self.repository.read_child_run(
+            child_run_id=str(child_id), parent_run_id=attempt.run_id,
+            parent_action_id=str(attempt.action_id), parent_attempt_id=str(attempt.attempt_id),
+            parent_request_hash=attempt.request_hash, ownership_token=token,
+            expected_state_version=int(version), child_ordinal=int(receipt.get("child_ordinal", 0)),
+        )
         readback = _phase_object(result, "CHILD_RUN_READBACK_INVALID")
         return {**readback, "state": str(readback.get("status", "unknown"))}
 
@@ -341,6 +375,9 @@ class ChildRunService:
         return await self.repository.complete_child_run(
             p_child_run_id=str(child_id), p_parent_run_id=attempt.run_id,
             p_parent_action_id=str(attempt.action_id), p_parent_request_hash=attempt.request_hash,
+            p_parent_attempt_id=str(attempt.attempt_id),
+            p_reconciliation_token=str(receipt.get("reconciliation_token", attempt.lease.fencing_token)),
+            p_expected_state_version=int(receipt.get("reconciliation_state_version", receipt.get("state_version", 1))),
             p_aggregation_revision=int(result.get("aggregation_revision", 1)),
             p_result=dict(result),
         )
@@ -352,6 +389,9 @@ class ChildRunService:
         result = await self.repository.cancel_child_run(
             p_child_run_id=str(child_id), p_parent_run_id=attempt.run_id,
             p_parent_action_id=str(attempt.action_id), p_parent_request_hash=attempt.request_hash,
+            p_parent_attempt_id=str(attempt.attempt_id),
+            p_reconciliation_token=str(receipt.get("reconciliation_token", attempt.lease.fencing_token)),
+            p_expected_state_version=int(receipt.get("reconciliation_state_version", receipt.get("state_version", 1))),
             p_reason=str(receipt.get("cancel_reason", "parent_cancel")),
         )
         if isinstance(result, Mapping):
@@ -405,6 +445,19 @@ def _phase_object(value: object, error: str) -> Mapping[str, object]:
     if value.get("state") in {"unknown", "failed"}:
         raise RuntimeError("ERP_SYNC_PHASE_NOT_TERMINAL")
     return dict(value)
+
+
+def _sync_submission_from_facts(facts: Mapping[str, object]) -> Mapping[str, object] | None:
+    for phase in ("unknown", "submitted", "progressing", "applying", "checkpointed"):
+        value = facts.get(phase)
+        if not isinstance(value, Mapping):
+            continue
+        checkpoint = value.get("checkpoint")
+        if isinstance(checkpoint, Mapping):
+            candidate = checkpoint.get("submission", checkpoint)
+            if isinstance(candidate, Mapping) and candidate.get("provider_task_ref"):
+                return candidate
+    return None
 
 
 def _child_context(attempt: object, request: Mapping[str, object]) -> dict[str, object]:

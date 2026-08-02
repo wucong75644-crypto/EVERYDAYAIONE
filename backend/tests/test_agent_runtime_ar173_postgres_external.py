@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import psycopg
@@ -30,7 +31,7 @@ def _rollback(url: str, name: str) -> None:
 
 
 def test_ar173_226_apply_rollback_reapply_and_worker_acl(database: str) -> None:
-    migrations = [f"226_{index:02d}_" for index in range(1, 13)]
+    migrations = [f"226_{index:02d}_" for index in range(1, 15)]
     names = [next((ROOT / "migrations").glob(f"{prefix}*.sql")).name for prefix in migrations]
     rollbacks = [next((ROOT / "migrations/rollback").glob(f"{prefix}*_rollback.sql")).name for prefix in reversed(migrations)]
     with psycopg.connect(database) as conn:
@@ -95,7 +96,7 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
         conn.execute("CREATE TABLE deleted_files(id BIGSERIAL PRIMARY KEY, org_id UUID, user_id UUID, relative_path TEXT NOT NULL, oss_object_key TEXT NOT NULL, purged BOOLEAN NOT NULL DEFAULT FALSE)")
         conn.execute("CREATE TABLE scheduled_tasks(id UUID PRIMARY KEY, org_id UUID, user_id UUID, status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())")
         conn.commit()
-    for index in range(1, 13):
+    for index in range(1, 15):
         _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")).name)
     ids = _seed_specialist_action(database)
     reserve_params = (ids["action"], ids["attempt"], "reserve", 3, 0, "credits", "runtime", None)
@@ -134,9 +135,10 @@ def test_ar173_worker_rpc_behavior_matrix_and_50_concurrent_idempotency(database
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
         conn.execute("UPDATE agent_action_attempts SET reconciliation_token=%s,reconciliation_lease_expires_at=clock_timestamp()+interval '10 minutes' WHERE id=%s", (reconciliation_token, ids["attempt"]))
+        parent_version = conn.execute("SELECT state_version FROM agent_action_attempts WHERE id=%s", (ids["attempt"],)).fetchone()[0]
         conn.commit()
     for phase in ("submitted", "progressing", "applying", "checkpointed"):
-        phase_result = _worker_rpc(database, "record_agent_sync_phase_v2", (ids["action"], ids["attempt"], reconciliation_token, ids["request_hash"], phase, {"phase": phase}, {"provider": "erp"}))
+        phase_result = _worker_rpc(database, "record_agent_sync_phase_v3", (ids["action"], ids["attempt"], reconciliation_token, parent_version, datetime.now(timezone.utc) + timedelta(minutes=10), ids["request_hash"], phase, {"phase": phase}, {"provider": "erp"}))
         assert phase_result["outcome"] == "recorded"
     _worker_rpc(database, "record_agent_action_cost_strict", (ids["action"], ids["attempt"], "settle", 3, 9, "credits", "runtime", "f" * 64))
     with pytest.raises(Exception):
