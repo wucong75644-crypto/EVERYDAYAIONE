@@ -110,6 +110,16 @@ jobs:
             backend/tests/test_agent_runtime_a8_scheduler_cas_postgres_external.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
+      - name: Collect disposable PostgreSQL server logs
+        if: ${{ failure() }}
+        run: |
+          set +e
+          for logfile in /private/tmp/ar17-1-pg-*/postgres.log; do
+            test -f "$logfile" || continue
+            echo "===== $logfile ====="
+            sed -n '1,240p' "$logfile"
+          done
+
       - name: Run local HTTP mock harness
         run: |
           set -euo pipefail
