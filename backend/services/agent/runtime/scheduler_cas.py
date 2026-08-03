@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
+from core.db_scope import DatabaseAccessKind, database_scope_from_client
 from services.agent.runtime.domain import ActionAttempt
 from services.agent.runtime.executors.specialist_contracts import validate_public_request
 
@@ -125,8 +126,65 @@ class MockTenantScopedSchedulerCasStore:
             return {"outcome": "updated", **updated}
 
 
+class PostgresTenantScopedSchedulerCasStore:
+    """Worker-scoped adapter for the additive 227.05 CAS RPC lane."""
+
+    tenant_scoped = True
+    production_ready = False
+    non_production_ready = True
+
+    def __init__(self, database: Any) -> None:
+        scope = database_scope_from_client(database)
+        if scope is None or scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
+            raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
+        self._database = database
+
+    async def cas(self, *, attempt: ActionAttempt, task_id: str, expected_version: int,
+                  operation: str, payload: Mapping[str, object]) -> Mapping[str, object]:
+        params = {
+            "p_attempt_id": str(attempt.attempt_id), "p_action_id": str(attempt.action_id),
+            "p_run_id": str(attempt.run_id), "p_org_id": _uuid_or_none(attempt.scope.org_id),
+            "p_user_id": _uuid_or_none(attempt.scope.user_id),
+            "p_scope_kind": attempt.scope.kind.value, "p_scope_id": str(attempt.scope.scope_id),
+            "p_task_id": task_id, "p_expected_version": expected_version,
+            "p_operation": operation, "p_payload": dict(payload),
+            "p_request_hash": str(attempt.request_hash),
+            "p_execution_token": str(attempt.lease.fencing_token),
+            "p_idempotency_key": _idempotency_key(attempt),
+        }
+        response = (await self._database.rpc(
+            "mutate_agent_runtime_scheduler_cas", params,
+        ).execute()).data
+        if not isinstance(response, Mapping):
+            raise SchedulerCasError("SCHEDULER_CAS_RPC_INVALID")
+        outcome = response.get("outcome")
+        if outcome in {"cas_conflict", "fenced"}:
+            raise SchedulerCasError(
+                "SCHEDULER_VERSION_CONFLICT" if outcome == "cas_conflict" else "SCHEDULER_FENCED",
+            )
+        if outcome not in {"created", "updated", "already_applied"}:
+            raise SchedulerCasError("SCHEDULER_CAS_RPC_REJECTED")
+        return dict(response)
+
+    async def recover(self, *, task_id: str, scope_kind: str, scope_id: str,
+                      expected_version: int, execution_token: str) -> Mapping[str, object]:
+        response = (await self._database.rpc("recover_agent_runtime_scheduler_cas", {
+            "p_task_id": task_id, "p_scope_kind": scope_kind, "p_scope_id": scope_id,
+            "p_expected_version": expected_version, "p_execution_token": execution_token,
+        }).execute()).data
+        if not isinstance(response, Mapping):
+            raise SchedulerCasError("SCHEDULER_RECOVERY_RPC_INVALID")
+        if response.get("outcome") != "recovered":
+            raise SchedulerCasError("SCHEDULER_RECOVERY_NOT_CONFIRMED")
+        return dict(response)
+
+
 def _scope_key(attempt: ActionAttempt) -> tuple[str, str]:
     return (attempt.scope.kind.value, str(attempt.scope.scope_id))
+
+
+def _uuid_or_none(value: object) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _idempotency_key(attempt: ActionAttempt) -> str:
@@ -148,5 +206,6 @@ def _facts_params(attempt: ActionAttempt, task_id: str, expected_version: int,
     }
 
 
-__all__ = ["MockTenantScopedSchedulerCasStore", "RuntimeSchedulerCasBridge",
-           "SchedulerCasError", "SchedulerCasReadiness", "TenantScopedSchedulerCasStore"]
+__all__ = ["MockTenantScopedSchedulerCasStore", "PostgresTenantScopedSchedulerCasStore",
+           "RuntimeSchedulerCasBridge", "SchedulerCasError", "SchedulerCasReadiness",
+           "TenantScopedSchedulerCasStore"]
