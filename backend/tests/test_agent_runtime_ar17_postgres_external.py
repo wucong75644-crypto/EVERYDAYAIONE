@@ -74,6 +74,11 @@ AR17_ROLLBACKS = (
     "224_02_agent_runtime_ar17_version_seed_rollback.sql",
     "224_01_agent_runtime_ar17_core_rollback.sql",
 )
+PG_BIN_DIR = Path(os.getenv("AGENT_RUNTIME_PG_BIN_DIR", "/opt/homebrew/bin"))
+
+
+def _pg_tool(name: str) -> str:
+    return str(PG_BIN_DIR / name)
 
 
 def _free_port() -> int:
@@ -115,8 +120,8 @@ def database():
     data_dir = Path(tempfile.mkdtemp(prefix="ar17-1-pg-", dir="/private/tmp"))
     url = f"postgresql://postgres@127.0.0.1:{port}/postgres"
     try:
-        _run(["/opt/homebrew/bin/initdb", "-D", str(data_dir), "-U", "postgres", "--auth-host=trust", "--auth-local=trust"])
-        _run(["/opt/homebrew/bin/pg_ctl", "-D", str(data_dir), "-o", f"-p {port}", "-l", str(data_dir / "postgres.log"), "-w", "start"], capture=False)
+        _run([_pg_tool("initdb"), "-D", str(data_dir), "-U", "postgres", "--auth-host=trust", "--auth-local=trust"])
+        _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-o", f"-p {port}", "-l", str(data_dir / "postgres.log"), "-w", "start"], capture=False)
         with psycopg.connect(url) as conn:
             conn.execute(_bootstrap_sql())
             conn.execute((ROOT / "tests/fixtures/agent_runtime_core_postgres_bootstrap.sql").read_text())
@@ -168,7 +173,7 @@ def database():
             conn.commit()
         yield url
     finally:
-        _run(["/opt/homebrew/bin/pg_ctl", "-D", str(data_dir), "-m", "fast", "-w", "stop"], capture=False)
+        _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-m", "fast", "-w", "stop"], capture=False)
         with socket.socket() as sock:
             sock.settimeout(0.5)
             assert sock.connect_ex(("127.0.0.1", port)) != 0

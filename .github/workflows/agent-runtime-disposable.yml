@@ -57,6 +57,7 @@ jobs:
           sudo mkdir -p /private/tmp /opt/homebrew/bin
           sudo chmod 1777 /private/tmp
           bindir="$(pg_config --bindir)"
+          echo "AGENT_RUNTIME_PG_BIN_DIR=$bindir" >> "$GITHUB_ENV"
           sudo ln -sf "$bindir/initdb" /opt/homebrew/bin/initdb
           sudo ln -sf "$bindir/pg_ctl" /opt/homebrew/bin/pg_ctl
           sudo ln -sf "$bindir/postgres" /opt/homebrew/bin/postgres
