@@ -1,6 +1,4 @@
-name: Agent Runtime Disposable Verified
-
-run-name: T5-CI Disposable Verified @ ${{ github.sha }}
+name: Agent Runtime Disposable Verification
 
 on:
   workflow_dispatch:
@@ -20,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-runtime-disposable-${{ github.ref }}
+  group: 'agent-runtime-disposable-${{ github.ref }}'
   cancel-in-progress: true
 
 jobs:
