@@ -166,11 +166,16 @@ class PostgresTenantScopedSchedulerCasStore:
             raise SchedulerCasError("SCHEDULER_CAS_RPC_REJECTED")
         return dict(response)
 
-    async def recover(self, *, task_id: str, scope_kind: str, scope_id: str,
-                      expected_version: int, execution_token: str) -> Mapping[str, object]:
+    async def recover(self, *, attempt: ActionAttempt, task_id: str,
+                      expected_version: int) -> Mapping[str, object]:
         response = (await self._database.rpc("recover_agent_runtime_scheduler_cas", {
-            "p_task_id": task_id, "p_scope_kind": scope_kind, "p_scope_id": scope_id,
-            "p_expected_version": expected_version, "p_execution_token": execution_token,
+            "p_attempt_id": str(attempt.attempt_id), "p_action_id": str(attempt.action_id),
+            "p_run_id": str(attempt.run_id), "p_org_id": _uuid_or_none(attempt.scope.org_id),
+            "p_user_id": _uuid_or_none(attempt.scope.user_id),
+            "p_scope_kind": attempt.scope.kind.value, "p_scope_id": str(attempt.scope.scope_id),
+            "p_task_id": task_id, "p_expected_version": expected_version,
+            "p_execution_token": str(attempt.lease.fencing_token),
+            "p_request_hash": str(attempt.request_hash),
         }).execute()).data
         if not isinstance(response, Mapping):
             raise SchedulerCasError("SCHEDULER_RECOVERY_RPC_INVALID")

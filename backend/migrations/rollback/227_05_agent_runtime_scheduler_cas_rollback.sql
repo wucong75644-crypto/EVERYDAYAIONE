@@ -8,9 +8,9 @@ BEGIN
 END $$;
 
 REVOKE EXECUTE ON FUNCTION mutate_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,JSONB,TEXT,UUID,TEXT),
-    recover_agent_runtime_scheduler_cas(TEXT,TEXT,TEXT,BIGINT,UUID)
+    recover_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,UUID,TEXT)
     FROM everydayai_agent_runtime_worker;
-DROP FUNCTION IF EXISTS recover_agent_runtime_scheduler_cas(TEXT,TEXT,TEXT,BIGINT,UUID);
+DROP FUNCTION IF EXISTS recover_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,UUID,TEXT);
 DROP FUNCTION IF EXISTS mutate_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,JSONB,TEXT,UUID,TEXT);
 DROP FUNCTION IF EXISTS _agent_runtime_scheduler_cas_payload_safe(JSONB);
 DROP FUNCTION IF EXISTS _agent_runtime_scheduler_cas_context(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT);

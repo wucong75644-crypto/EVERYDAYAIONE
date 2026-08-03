@@ -180,18 +180,28 @@ END;
 $$;
 
 CREATE FUNCTION recover_agent_runtime_scheduler_cas(
-    p_task_id TEXT, p_scope_kind TEXT, p_scope_id TEXT,
-    p_expected_version BIGINT, p_execution_token UUID
+    p_attempt_id UUID, p_action_id UUID, p_run_id UUID,
+    p_org_id UUID, p_user_id UUID, p_scope_kind TEXT, p_scope_id TEXT,
+    p_task_id TEXT, p_expected_version BIGINT, p_execution_token UUID,
+    p_request_hash TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
 DECLARE v_current agent_runtime_scheduler_cas_facts%ROWTYPE;
 BEGIN
-    PERFORM _assert_agent_runtime_actor(TRUE);
+    PERFORM _agent_runtime_scheduler_cas_context(
+        p_attempt_id, p_action_id, p_run_id, p_org_id, p_user_id,
+        p_scope_kind, p_scope_id, p_execution_token, p_request_hash);
     SELECT * INTO v_current FROM agent_runtime_scheduler_cas_facts
      WHERE task_id=btrim(p_task_id) AND scope_kind=p_scope_kind
        AND scope_id=btrim(p_scope_id) FOR UPDATE;
     IF NOT FOUND THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
-    IF v_current.state_version <> p_expected_version
+    IF v_current.run_id IS DISTINCT FROM p_run_id
+       OR v_current.action_id IS DISTINCT FROM p_action_id
+       OR v_current.attempt_id IS DISTINCT FROM p_attempt_id
+       OR v_current.org_id IS DISTINCT FROM p_org_id
+       OR v_current.user_id IS DISTINCT FROM p_user_id
+       OR v_current.request_hash IS DISTINCT FROM p_request_hash
+       OR v_current.state_version <> p_expected_version
        OR v_current.lease_expires_at > clock_timestamp()
        OR p_execution_token IS NULL THEN
         RETURN jsonb_build_object('outcome','cas_conflict');
@@ -210,11 +220,11 @@ $$;
 REVOKE ALL ON FUNCTION _agent_runtime_scheduler_cas_context(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,UUID,TEXT),
     _agent_runtime_scheduler_cas_payload_safe(JSONB),
     mutate_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,JSONB,TEXT,UUID,TEXT),
-    recover_agent_runtime_scheduler_cas(TEXT,TEXT,TEXT,BIGINT,UUID)
+    recover_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,UUID,TEXT)
     FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime, everydayai_worker,
          everydayai_sync, everydayai;
 GRANT EXECUTE ON FUNCTION mutate_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,TEXT,JSONB,TEXT,UUID,TEXT),
-    recover_agent_runtime_scheduler_cas(TEXT,TEXT,TEXT,BIGINT,UUID)
+    recover_agent_runtime_scheduler_cas(UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,BIGINT,UUID,TEXT)
     TO everydayai_agent_runtime_worker;
 
 RESET ROLE;
