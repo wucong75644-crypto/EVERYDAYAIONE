@@ -121,7 +121,13 @@ def database():
     url = f"postgresql://postgres@127.0.0.1:{port}/postgres"
     try:
         _run([_pg_tool("initdb"), "-D", str(data_dir), "-U", "postgres", "--auth-host=trust", "--auth-local=trust"])
-        _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-o", f"-p {port}", "-l", str(data_dir / "postgres.log"), "-w", "start"], capture=False)
+        try:
+            _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-o", f"-p {port}", "-l", str(data_dir / "postgres.log"), "-w", "start"], capture=False)
+        except subprocess.CalledProcessError:
+            logfile = data_dir / "postgres.log"
+            if logfile.exists():
+                print(logfile.read_text(errors="replace"))
+            raise
         with psycopg.connect(url) as conn:
             conn.execute(_bootstrap_sql())
             conn.execute((ROOT / "tests/fixtures/agent_runtime_core_postgres_bootstrap.sql").read_text())
@@ -173,7 +179,8 @@ def database():
             conn.commit()
         yield url
     finally:
-        _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-m", "fast", "-w", "stop"], capture=False)
+        if (data_dir / "postmaster.pid").exists():
+            _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-m", "fast", "-w", "stop"], capture=False)
         with socket.socket() as sock:
             sock.settimeout(0.5)
             assert sock.connect_ex(("127.0.0.1", port)) != 0
