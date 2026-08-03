@@ -78,6 +78,7 @@ jobs:
           set -euo pipefail
           pytest -q \
             backend/tests/test_agent_runtime_credential_broker.py \
+            backend/tests/test_agent_runtime_observability.py \
             backend/tests/test_agent_runtime_status_snapshot.py \
             backend/tests/test_agent_runtime_provider_facts.py \
             backend/tests/test_agent_runtime_erp_adapter.py \
