@@ -267,13 +267,32 @@ def restore_frozen_toolset(
     from services.agent.runtime.catalog.effective_toolset import EffectiveToolset
     agent = restore_agent_definition(definition_document)
     catalog = restore_catalog(catalog_document)
-    if catalog_revision is not None and catalog.revision != catalog_revision:
+    stored_catalog_revision = str(
+        catalog_document.get("catalog_revision") or catalog.revision
+    )
+    if catalog_revision is not None and stored_catalog_revision != catalog_revision:
         raise ValueError("RUNTIME_CATALOG_FACT_HASH_MISMATCH")
+    scope = str(toolset_document.get("scope_kind", ""))
+    channel = str(toolset_document.get("channel", ""))
     names = frozenset(str(name) for name in toolset_document.get("tool_names", []))
-    return EffectiveToolset.build(
-        agent=agent, catalog=catalog,
-        scope=str(toolset_document.get("scope_kind", "")),
-        channel=str(toolset_document.get("channel", "")),
+    restored = EffectiveToolset.build(
+        agent=agent, catalog=catalog, scope=scope, channel=channel,
         entitled_groups=frozenset(toolset_document.get("entitled_groups", [])),
         authorized_names=names,
     )
+    stored_tools = toolset_document.get("tools")
+    if isinstance(stored_tools, list):
+        facts = {
+            "agent_definition_hash": agent.definition_hash,
+            "catalog_revision": catalog_revision or catalog.revision,
+            "scope_kind": scope, "channel": channel, "tools": stored_tools,
+        }
+        toolset_hash = hashlib.sha256(json.dumps(
+            facts, sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        return EffectiveToolset(
+            definitions=restored.definitions,
+            catalog_revision=catalog_revision or catalog.revision,
+            toolset_hash=toolset_hash,
+        )
+    return restored

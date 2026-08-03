@@ -38,6 +38,7 @@ class ContentAddressedArtifactService:
     staging: Path
     materializer: ArtifactMaterializer
     facts: object | None = None
+    objects: ObjectStore | None = None
 
     async def prepare(self, attempt, request: Mapping[str, object]) -> Mapping[str, object]:
         source = request.get("path") or request.get("source_path")
@@ -54,6 +55,16 @@ class ContentAddressedArtifactService:
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             target.write_bytes(content)
+        if self.objects is not None:
+            stored = await self.objects.put_verified(
+                f"artifacts/{checkpoint.content_hash}", content,
+                content_hash=checkpoint.content_hash,
+            )
+            if (
+                stored.get("content_hash") != checkpoint.content_hash
+                or stored.get("verified") is not True
+            ):
+                raise RuntimeError("ARTIFACT_OBJECT_STORE_READBACK_FAILED")
         result = {"summary": "artifact prepared", "artifact_ref": f"artifact:{checkpoint.content_hash}", "content_hash": checkpoint.content_hash, "byte_size": checkpoint.byte_size, "materialize_status": checkpoint.status}
         await _checkpoint_fact(self.facts, attempt, result, request=request)
         return result

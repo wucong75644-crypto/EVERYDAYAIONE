@@ -142,7 +142,12 @@ def build_runtime(database: Any, settings, *, production_components=None) -> Run
             settings, "agent_runtime_production_components", None,
         )
         if components is None:
-            raise RuntimeError("RUNTIME_PRODUCTION_COMPOSITION_REQUIRED")
+            from services.agent.runtime.production_composition import (
+                build_production_components_for_worker,
+            )
+            components = build_production_components_for_worker(
+                database=db, settings=settings, sandbox_registry=registry,
+            )
         registry = components.registry
         catalog = components.catalog.catalog
     else:

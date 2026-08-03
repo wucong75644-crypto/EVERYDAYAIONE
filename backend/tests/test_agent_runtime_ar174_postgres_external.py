@@ -118,11 +118,31 @@ def test_ar174_22702_seeds_exact_production_catalog_and_rolls_back(database: str
         assert tool_count == 42
         assert binding_count == 42
         assert enabled is False
+        # Seed bindings are identities only; credentials and provider probes
+        # must promote them to ready in a later non-production control step.
         assert conn.execute(
             "SELECT count(*) FROM agent_runtime_production_bindings "
             "WHERE catalog_revision=%s AND ready"
             , (catalog_revision,)
-        ).fetchone()[0] == 42
+        ).fetchone()[0] == 0
+        definition, catalog, toolset = conn.execute(
+            "SELECT d.definition_document, c.catalog_document, e.toolset_document "
+            "FROM agent_runtime_definition_facts d "
+            "JOIN agent_runtime_catalog_facts c ON c.catalog_revision=d.catalog_revision "
+            "JOIN agent_runtime_effective_toolset_facts e ON e.catalog_revision=c.catalog_revision "
+            "WHERE d.definition_revision='v3' AND e.scope_kind='user' AND e.channel='web' "
+            "AND e.gate_state='disabled'"
+        ).fetchone()
+        from services.agent.runtime.catalog.registry import restore_frozen_toolset
+        restored = restore_frozen_toolset(
+            definition, catalog, toolset, catalog_revision=catalog_revision,
+        )
+        stored_hash = conn.execute(
+            "SELECT effective_toolset_hash FROM agent_runtime_effective_toolset_facts "
+            "WHERE catalog_revision=%s AND scope_kind='user' AND channel='web' "
+            "AND gate_state='disabled'", (catalog_revision,),
+        ).fetchone()[0]
+        assert restored.toolset_hash == stored_hash
     _rollback(database, "227_02_agent_runtime_production_catalog_seed_rollback.sql")
     _apply(database, "227_02_agent_runtime_production_catalog_seed.sql")
     _rollback(database, "227_02_agent_runtime_production_catalog_seed_rollback.sql")

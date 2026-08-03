@@ -54,6 +54,7 @@ class ProductionCatalogReceipt:
 
     def document(self) -> dict[str, object]:
         return {
+            "schema_revision": 3,
             "catalog_revision": self.production_revision,
             "catalog_hash": self.production_revision,
             "tools": [
@@ -64,6 +65,41 @@ class ProductionCatalogReceipt:
                 for tool in self.catalog.definitions()
             ],
             "binding_hash": self.binding_hash,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProductionFactSnapshot:
+    """One deterministic snapshot shared by seed generation and runtime."""
+
+    receipt: ProductionCatalogReceipt
+    toolset: object
+    gate_state: str
+    scope_kind: str
+    channel: str
+
+    def document(self) -> dict[str, object]:
+        toolset = self.toolset
+        return {
+            "catalog": self.receipt.document(),
+            "toolset": {
+                "scope_kind": self.scope_kind,
+                "channel": self.channel,
+                "gate_state": self.gate_state,
+                "tool_names": [
+                    item.canonical_name for item in toolset.definitions
+                ],
+                "tools": [
+                    {
+                        **item.security_facts(),
+                        "provider_revision": self.receipt.provider_revisions[
+                            item.canonical_name
+                        ],
+                    }
+                    for item in toolset.definitions
+                ],
+                "toolset_hash": toolset.toolset_hash,
+            },
         }
 
 
@@ -87,6 +123,15 @@ def build_production_catalog(
     definitions = merged.definitions()
     if len(definitions) != EXPECTED_PRODUCTION_TOOL_COUNT:
         raise ValueError("RUNTIME_PRODUCTION_CATALOG_COUNT_MISMATCH")
+    definition_names = {tool.canonical_name for tool in definitions}
+    binding_names = set(bindings)
+    if binding_names != definition_names:
+        missing = sorted(definition_names - binding_names)
+        extra = sorted(binding_names - definition_names)
+        raise ValueError(
+            "RUNTIME_PROVIDER_BINDING_SET_MISMATCH:"
+            f"missing={missing}:extra={extra}"
+        )
     provider_revisions: dict[str, str] = {}
     binding_facts: list[dict[str, object]] = []
     for tool in definitions:
@@ -120,10 +165,18 @@ def build_production_catalog(
 def build_production_toolset(
     *, agent: AgentDefinition, receipt: ProductionCatalogReceipt,
     scope: str, channel: str, entitled_groups: frozenset[str],
-    authorized_names: frozenset[str],
+    authorized_names: frozenset[str], gate_state: str = "enabled",
 ):
     from services.agent.runtime.catalog.effective_toolset import EffectiveToolset
 
+    if gate_state not in {"enabled", "disabled"}:
+        raise ValueError("RUNTIME_TOOLSET_GATE_STATE_INVALID")
+    if gate_state == "disabled":
+        authorized_names = frozenset(
+            name for name in authorized_names
+            if receipt.catalog.resolve(name).safety_level == "safe"
+            and receipt.catalog.resolve(name).side_effect == "none"
+        )
     base = EffectiveToolset.build(
         agent=agent, catalog=receipt.catalog, scope=scope, channel=channel,
         entitled_groups=entitled_groups, authorized_names=authorized_names,
@@ -149,9 +202,33 @@ def build_production_toolset(
     )
 
 
+def build_production_fact_snapshot(
+    *, agent: AgentDefinition, read_registry: ExecutorRegistry,
+    sandbox_registry: ExecutorRegistry, specialist_registry: ExecutorRegistry,
+    bindings: Mapping[str, ProductionToolBinding], scope: str, channel: str,
+    entitled_groups: frozenset[str], authorized_names: frozenset[str],
+    gate_state: str,
+) -> ProductionFactSnapshot:
+    """Build catalog and model-visible facts from the same runtime inputs."""
+    receipt = build_production_catalog(
+        read_registry=read_registry, sandbox_registry=sandbox_registry,
+        specialist_registry=specialist_registry, bindings=bindings,
+    )
+    toolset = build_production_toolset(
+        agent=agent, receipt=receipt, scope=scope, channel=channel,
+        entitled_groups=entitled_groups, authorized_names=authorized_names,
+        gate_state=gate_state,
+    )
+    return ProductionFactSnapshot(
+        receipt=receipt, toolset=toolset, gate_state=gate_state,
+        scope_kind=scope, channel=channel,
+    )
+
+
 __all__ = [
     "EXPECTED_PRODUCTION_TOOL_COUNT", "ProductionCatalogReceipt",
-    "ProductionToolBinding", "build_production_catalog",
+    "ProductionFactSnapshot", "ProductionToolBinding",
+    "build_production_catalog", "build_production_fact_snapshot",
     "build_production_toolset",
 ]
 

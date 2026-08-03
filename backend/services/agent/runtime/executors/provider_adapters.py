@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 from typing import Mapping, Protocol
 
-from services.agent.runtime.domain import ActionAttempt
+from services.agent.runtime.domain import ActionAttempt, RuntimeScope
 from services.agent.runtime.executors.contracts import canonical_json
 from services.agent.runtime.executors.specialist_contracts import (
     NetworkRule, ProviderReceipt, ProviderState, SpecialistProvider,
@@ -101,6 +101,73 @@ class ResourceMutationPort(Protocol):
 
 class ChildRunPort(Protocol):
     async def create(self, attempt: ActionAttempt, request: Mapping[str, object]) -> Mapping[str, object]: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class TenantProviderBinding:
+    """Secret-free provider identity resolved for one immutable runtime scope."""
+
+    provider: SpecialistProvider
+    provider_revision: str
+    readiness_hash: str
+    credential_handle: str | None = None
+    ready: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.provider_revision.strip():
+            raise ValueError("TENANT_PROVIDER_REVISION_REQUIRED")
+        if len(self.readiness_hash) != 64 or any(
+            char not in "0123456789abcdef" for char in self.readiness_hash.lower()
+        ):
+            raise ValueError("TENANT_PROVIDER_READINESS_HASH_INVALID")
+        if not self.ready:
+            raise RuntimeError("TENANT_PROVIDER_NOT_READY")
+        if self.credential_handle is not None and not self.credential_handle.strip():
+            raise ValueError("TENANT_PROVIDER_CREDENTIAL_HANDLE_INVALID")
+
+
+class TenantProviderResolver(Protocol):
+    async def resolve(
+        self, scope: RuntimeScope, tool_name: str,
+    ) -> TenantProviderBinding: ...
+
+
+class TenantScopedProvider:
+    """Resolve a provider from the immutable scope on every dispatch."""
+
+    def __init__(
+        self, resolver: TenantProviderResolver, tool_name: str,
+        *, expected_provider_revision: str | None = None,
+    ) -> None:
+        self._resolver = resolver
+        self._tool_name = tool_name
+        self._expected_provider_revision = expected_provider_revision
+
+    async def _provider(self, attempt: ActionAttempt) -> SpecialistProvider:
+        binding = await self._resolver.resolve(attempt.scope, self._tool_name)
+        if not isinstance(binding, TenantProviderBinding):
+            raise RuntimeError("TENANT_PROVIDER_BINDING_REQUIRED")
+        if (
+            self._expected_provider_revision is not None
+            and binding.provider_revision != self._expected_provider_revision
+        ):
+            raise RuntimeError("TENANT_PROVIDER_REVISION_MISMATCH")
+        provider = binding.provider
+        if provider is self:
+            raise RuntimeError("TENANT_PROVIDER_RESOLVER_RECURSIVE")
+        return provider
+
+    async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
+        provider = await self._provider(attempt)
+        return await provider.submit(attempt, request, idempotency_key=idempotency_key)
+
+    async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        provider = await self._provider(attempt)
+        return await provider.reconcile(attempt, receipt)
+
+    async def cancel(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        provider = await self._provider(attempt)
+        return await provider.cancel(attempt, receipt)
 
 
 class _HTTPProvider(SpecialistProvider):
@@ -313,5 +380,7 @@ class _NoTransport:
 __all__ = [
     "AllowlistedTransport", "ArtifactPort", "ChildRunPort", "CrawlerProvider", "DashScopeSearchProvider",
     "ERPQueryProvider", "ErpApiSearchProvider", "ErpDispatcherPort", "HttpProviderTransport", "KieMediaProvider", "LocalArtifactProvider", "MediaTaskPort",
-    "PortBackedProvider", "ProviderTransport", "ResourceMutationPort", "request_hash",
+    "PortBackedProvider", "ProviderTransport", "ResourceMutationPort",
+    "TenantProviderBinding", "TenantProviderResolver", "TenantScopedProvider",
+    "request_hash",
 ]

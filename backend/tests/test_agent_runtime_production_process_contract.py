@@ -1,5 +1,11 @@
 from pathlib import Path
 
+import pytest
+
+from services.agent.runtime.production_composition import (
+    build_production_components_for_worker,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
@@ -31,6 +37,22 @@ def test_sandbox_environment_has_no_forbidden_credentials() -> None:
     assert "class SandboxProcessSettings" in entrypoint
     assert "env_file=None" in entrypoint
     assert '"ready": ready and not draining and not stopping.is_set()' in entrypoint
+
+
+def test_runtime_worker_requires_explicit_production_composition() -> None:
+    entrypoint = (ROOT / "backend" / "agent_runtime_worker_main.py").read_text()
+    assert "agent_runtime_production_composition_enabled" in entrypoint
+    assert "build_production_components_for_worker" in entrypoint
+    assert "production_components=production_components" in entrypoint
+
+
+def test_production_factory_fails_closed_until_scoped_services_exist() -> None:
+    with pytest.raises(
+        RuntimeError, match="RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY",
+    ):
+        build_production_components_for_worker(
+            database=object(), settings=object(), sandbox_registry=object(),
+        )
 
 
 def test_sandbox_probe_checks_fixed_capabilities() -> None:
