@@ -29,7 +29,6 @@ jobs:
     env:
       PYTHONPATH: backend
       PYTHONDONTWRITEBYTECODE: "1"
-      PYTHONPYCACHEPREFIX: ${{ runner.temp }}/ar17-pyc
       PYTEST_ADDOPTS: -p no:cacheprovider
       RUN_AR17_1_DB_TEST: "1"
       AGENT_RUNTIME_INGRESS_ENABLED: "false"
@@ -45,6 +44,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
           test "$AGENT_RUNTIME_PRODUCTION_ENABLED" = false
+
+      - name: Configure disposable Python environment
+        run: echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/ar17-pyc" >> "$GITHUB_ENV"
 
       - name: Install system dependencies
         run: |
