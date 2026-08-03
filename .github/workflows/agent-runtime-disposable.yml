@@ -59,6 +59,7 @@ jobs:
           bindir="$(pg_config --bindir)"
           sudo ln -sf "$bindir/initdb" /opt/homebrew/bin/initdb
           sudo ln -sf "$bindir/pg_ctl" /opt/homebrew/bin/pg_ctl
+          sudo ln -sf "$bindir/postgres" /opt/homebrew/bin/postgres
 
       - name: Install Python dependencies
         run: |
