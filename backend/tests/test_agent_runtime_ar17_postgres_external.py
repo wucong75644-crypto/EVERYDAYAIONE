@@ -122,7 +122,7 @@ def database():
     try:
         _run([_pg_tool("initdb"), "-D", str(data_dir), "-U", "postgres", "--auth-host=trust", "--auth-local=trust"])
         try:
-            _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-o", f"-p {port}", "-l", str(data_dir / "postgres.log"), "-w", "start"], capture=False)
+            _run([_pg_tool("pg_ctl"), "-D", str(data_dir), "-o", f"-p {port} -k {data_dir}", "-l", str(data_dir / "postgres.log"), "-w", "start"], capture=False)
         except subprocess.CalledProcessError:
             logfile = data_dir / "postgres.log"
             if logfile.exists():
