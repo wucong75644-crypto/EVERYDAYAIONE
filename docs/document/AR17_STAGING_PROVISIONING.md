@@ -2,6 +2,18 @@
 
 状态：资源 provisioning 包；不代表 staging ready，不包含真实地址、凭证或 Secret。生产 flags 必须保持关闭。
 
+## 0. 自动化门禁命名
+
+仓库内的 GitHub Actions disposable workflow 只允许产生以下结论：
+
+```text
+T5-CI Disposable Verified
+```
+
+该 workflow 使用 disposable PostgreSQL、LocalNonProductionCredentialBackend、LocalNonProductionObjectStore 和 isolated mock Provider。它不能产生 `T5-Staging Ready` 或 production readiness 结论。
+
+`T5-Staging Ready` 仍要求独立外部 staging 资源、真实 readback、Worker heartbeat、rollback 权限和完整观察证据。对应 workflow 失败时，不得通过跳过测试、删除断言或修改 production contract 绕过。
+
 ## 1. 资源清单与责任
 
 | 资源 | 责任角色 | 必须提供 | 验收结果 |

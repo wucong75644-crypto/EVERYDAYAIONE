@@ -1,0 +1,153 @@
+name: Agent Runtime Disposable Verified
+
+run-name: T5-CI Disposable Verified @ ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/agent-runtime-disposable.yml"
+      - "backend/agent_runtime_worker_main.py"
+      - "backend/migrations/227_0*.sql"
+      - "backend/migrations/rollback/227_0*.sql"
+      - "backend/services/agent/runtime/**"
+      - "backend/tests/test_agent_runtime_*.py"
+      - "backend/tests/test_artifact_runtime.py"
+      - "docs/document/AR17_STAGING_PROVISIONING.md"
+      - "scripts/check_task_change.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-runtime-disposable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-runtime:
+    name: T5-CI Disposable Verified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: backend
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPYCACHEPREFIX: ${{ runner.temp }}/ar17-pyc
+      PYTEST_ADDOPTS: -p no:cacheprovider
+      RUN_AR17_1_DB_TEST: "1"
+      AGENT_RUNTIME_INGRESS_ENABLED: "false"
+      AGENT_RUNTIME_PRODUCTION_ENABLED: "false"
+
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Verify candidate and production gates
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
+          test "$AGENT_RUNTIME_PRODUCTION_ENABLED" = false
+
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            postgresql postgresql-client python3-venv
+          sudo mkdir -p /private/tmp /opt/homebrew/bin
+          sudo chmod 1777 /private/tmp
+          bindir="$(pg_config --bindir)"
+          sudo ln -sf "$bindir/initdb" /opt/homebrew/bin/initdb
+          sudo ln -sf "$bindir/pg_ctl" /opt/homebrew/bin/pg_ctl
+
+      - name: Install Python dependencies
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ar17-venv"
+          "$RUNNER_TEMP/ar17-venv/bin/pip" install --disable-pip-version-check \
+            -r backend/requirements.txt
+          echo "$RUNNER_TEMP/ar17-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare evidence directory
+        run: mkdir -p "$RUNNER_TEMP/ar17-evidence"
+
+      - name: Run Runtime unit and disposable profile contracts
+        run: |
+          set -euo pipefail
+          pytest -q \
+            backend/tests/test_agent_runtime_credential_broker.py \
+            backend/tests/test_agent_runtime_provider_facts.py \
+            backend/tests/test_agent_runtime_erp_adapter.py \
+            backend/tests/test_agent_runtime_media_completion.py \
+            backend/tests/test_agent_runtime_scheduler_cas.py \
+            backend/tests/test_agent_runtime_a9_nonproduction_backends.py \
+            backend/tests/test_agent_runtime_a10_nonproduction_composition.py \
+            backend/tests/test_agent_runtime_action_loop_gate.py \
+            backend/tests/test_agent_runtime_coordinator_recovery.py \
+            backend/tests/test_agent_runtime_ar18_owner_dry_run.py \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/unit.log"
+
+      - name: Run Artifact, Workspace, Child Run and specialist contracts
+        run: |
+          set -euo pipefail
+          pytest -q \
+            backend/tests/test_agent_runtime_ar173_specialists.py \
+            backend/tests/test_agent_runtime_ar174_production_closure.py \
+            backend/tests/test_artifact_runtime.py \
+            backend/tests/test_agent_runtime_sandbox_workspace.py \
+            -k 'not isolated_harness_invokes_all_23_distinct_provider_adapters and not http_mock_server_proves_media_query_and_cancel_semantics' \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/services.log"
+
+      - name: Run disposable PostgreSQL migration and security contracts
+        run: |
+          set -euo pipefail
+          pytest -q -m external \
+            backend/tests/test_agent_runtime_ar174_postgres_external.py \
+            backend/tests/test_agent_runtime_ar174_a7_provider_binding_postgres_external.py \
+            backend/tests/test_agent_runtime_ar174_a2_postgres_external.py \
+            backend/tests/test_agent_runtime_a8_scheduler_cas_postgres_external.py \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
+
+      - name: Run local HTTP mock harness
+        run: |
+          set -euo pipefail
+          pytest -q \
+            backend/tests/test_agent_runtime_ar173_specialists.py::test_isolated_harness_invokes_all_23_distinct_provider_adapters \
+            backend/tests/test_agent_runtime_ar173_specialists.py::test_http_mock_server_proves_media_query_and_cancel_semantics \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/http-mock.log"
+
+      - name: Run migration and quality checks
+        run: |
+          set -euo pipefail
+          python -m compileall -q backend/agent_runtime_worker_main.py backend/services/agent/runtime
+          pytest -q \
+            backend/tests/test_agent_runtime_ar17_migration.py \
+            backend/tests/test_agent_runtime_provider_submission_migration.py \
+            backend/tests/test_agent_runtime_production_composition_migration.py \
+            backend/tests/test_agent_runtime_action_migration_order.py \
+            backend/tests/test_agent_runtime_role_grants_migration.py \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/migration-static.log"
+          git diff --check
+          python scripts/check_task_change.py --files \
+            .github/workflows/agent-runtime-disposable.yml \
+            docs/document/AR17_STAGING_PROVISIONING.md
+
+      - name: Record verification summary
+        if: always()
+        run: |
+          {
+            echo "result=T5-CI Disposable Verified"
+            echo "staging_result=T5-Staging blocked until external staging exists"
+            echo "production_ready=false"
+            echo "commit=$(git rev-parse HEAD)"
+            git status --short --branch
+          } > "$RUNNER_TEMP/ar17-evidence/summary.txt"
+
+      - name: Upload disposable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-runtime-disposable-${{ github.sha }}
+          path: ${{ runner.temp }}/ar17-evidence
+          if-no-files-found: error
+          retention-days: 14
