@@ -154,7 +154,9 @@ def _load_chat_settings(db: Any, conversation_id: str) -> tuple[str, dict[str, A
     settings = row.get("chat_settings")
     if not isinstance(settings, dict):
         settings = {}
-    return str(row.get("model_id") or "auto"), settings
+    from services.agent.runtime.model_resolution import resolve_runtime_model
+
+    return resolve_runtime_model(row.get("model_id")).model_id, settings
 
 
 def _build_content(

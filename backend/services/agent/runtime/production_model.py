@@ -15,6 +15,7 @@ from services.agent.runtime.catalog import (
 from services.agent.runtime.infrastructure.model.projection import (
     compute_request_hash, resolve_model_revision,
 )
+from services.agent.runtime.model_resolution import resolve_runtime_model
 from services.agent.runtime.ports.coordinator_recovery import RunAggregateSnapshot
 from services.agent.runtime.ports.model import (
     ModelInputReceipt, ModelRequestOptions, ModelStepId, ModelStepRequest,
@@ -56,13 +57,11 @@ class PostgresModelCallFactory:
         command = _mapping(context.get("command"), "command")
         session = _mapping(context.get("session"), "session")
         payload = _mapping(command.get("payload"), "payload")
-        from services.adapters.factory import get_model_config
         definition, toolset = _frozen_runtime_facts(context)
-        model_policy = definition.model_policy
-        requested_model = model_policy.get("model_id")
-        if not isinstance(requested_model, str) or not get_model_config(requested_model):
-            raise RuntimeError("RUNTIME_DEFINITION_MODEL_POLICY_INVALID")
-        model_id = requested_model
+        model_resolution = _resolve_model_selection(
+            snapshot=snapshot, context=context, definition=definition,
+        )
+        model_id = model_resolution.model_id
         messages = _messages(context.get("messages"), definition.system_prompt)
         step_number = len(snapshot.model_steps) + 1
         stable_prefix_blocks = _stable_prefix_blocks(definition.context_policy)
@@ -311,6 +310,30 @@ def _provider(model_id: str) -> str:
     if config is None:
         raise RuntimeError("AGENT_RUNTIME_MODEL_UNKNOWN")
     return str(config.provider.value)
+
+
+def _resolve_model_selection(snapshot, *, context: dict, definition):
+    config_snapshot = snapshot.run.get("config_snapshot")
+    if isinstance(config_snapshot, dict):
+        frozen = config_snapshot.get("resolved_model")
+        if isinstance(frozen, dict):
+            model_id = frozen.get("model_id")
+            provider = frozen.get("provider")
+            revision = frozen.get("revision")
+            resolution = resolve_runtime_model(model_id)
+            if (
+                resolution.model_id != model_id
+                or resolution.provider != provider
+                or resolution.revision != revision
+            ):
+                raise RuntimeError("RUNTIME_MODEL_SNAPSHOT_MISMATCH")
+            return resolution
+    task = context.get("task")
+    task_model = task.get("model_id") if isinstance(task, dict) else None
+    if not task_model and isinstance(task, dict):
+        params = task.get("request_params")
+        task_model = params.get("model") if isinstance(params, dict) else None
+    return resolve_runtime_model(task_model)
 
 
 async def _model_credential(

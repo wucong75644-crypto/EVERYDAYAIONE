@@ -2016,6 +2016,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | 函数/类 | 文件 | 说明 |
 |---|---|---|
 | `RuntimeIngress.submit` | `backend/services/agent/runtime/ingress.py` | 以幂等键持久化 Session/Command，并支持响应丢失后的同键回读 |
+| `resolve_runtime_model` / `snapshot_from_resolution` | `backend/services/agent/runtime/model_resolution.py` | 沿用聊天模型选择链解析有效显式模型或 `DEFAULT_MODEL_ID`，冻结 model/provider/revision；不读取订阅选择 |
+| `_resolve_model_selection` | `backend/services/agent/runtime/production_model.py` | 优先使用 Run config snapshot 的 resolved model，并兼容旧 WeCom task 模型回退，不受 definition 固定模型覆盖 |
 | `build_runtime` / `build_projection` / `build_authorization` / `build_sandbox` | `backend/services/agent/runtime/composition.py` | 四个互斥进程的生产 composition roots |
 | `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文构造模型请求、租户凭证和确定性 Action |
 | `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |

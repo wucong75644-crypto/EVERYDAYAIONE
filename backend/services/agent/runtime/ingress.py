@@ -45,6 +45,11 @@ class RuntimeIngress:
         through = str(payload.get("input_message_id") or payload.get("output_message_id") or "")
         if not through:
             raise RuntimeError("RUNTIME_INGRESS_THROUGH_MESSAGE_MISSING")
+        from services.agent.runtime.model_resolution import (
+            resolve_runtime_model, snapshot_from_resolution,
+        )
+
+        model_resolution = resolve_runtime_model(payload.get("model_id"))
         definition_hash = ""
         catalog_revision = ""
         if self._contract_revision == 2:
@@ -82,7 +87,7 @@ class RuntimeIngress:
             "p_base_context_revision": f"message:{through}",
             "p_effective_toolset_revision": catalog_revision,
             "p_effective_toolset_hash": None,
-            "p_config_snapshot": {"model_id": payload.get("model_id") or ""},
+            "p_config_snapshot": snapshot_from_resolution(model_resolution),
             "p_capability_snapshot": {"requested_groups": ["code"]},
             "p_release_revision": settings.agent_runtime_release_revision,
             "p_payload": dict(payload),
