@@ -28,6 +28,7 @@ from services.agent.runtime.executors.real_domain import (
 )
 from services.agent.runtime.executors.real_erp import ErpLocalReadCapability
 from services.agent.runtime.executors.registry import ExecutorRegistry
+from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.executors.specialist_registry import (
     ARTIFACT_JOB_TOOLS, CHILD_RUN_TOOLS, ERP_CATALOG_TOOLS, MEDIA_TOOLS,
     REMOTE_READ_TOOLS, SCHEDULED_TASK_TOOLS, SPECIALIST_FAMILIES,
@@ -45,6 +46,9 @@ from services.agent.runtime.executors.resolver import PostgresActionExecutorReso
 from services.agent.runtime.infrastructure.postgres.action_repository import PostgresActionRepository
 from services.agent.runtime.infrastructure.postgres.authorization import PostgresActionAuthorizationRepository
 from services.agent.runtime.infrastructure.postgres.coordinator_recovery import PostgresCoordinatorRecoveryRepository
+from services.agent.runtime.runtime_assembly import (
+    CapabilityReadiness, CapabilityReadinessState, RuntimeAssemblyReadiness,
+)
 
 
 def build_production_components_for_worker(*, database, settings, sandbox_registry):
@@ -104,6 +108,108 @@ class ProductionRuntimeComponents:
     specialist_repository: PostgresSpecialistRepository
     readiness: object | None = None
     service_bundle: object | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class SafeRuntimeComposition:
+    """Read-only Runtime composition; provider-dependent tools are absent."""
+
+    registry: ExecutorRegistry
+    catalog: RuntimeToolCatalog
+    readiness: RuntimeAssemblyReadiness
+    model_call_factory: object | None = None
+    model_loop: object | None = None
+    action_loop: object | None = None
+
+    def require_capability(self, name: str) -> None:
+        capability = self.readiness.capabilities.get(name)
+        if capability is None:
+            raise RuntimeError("RUNTIME_CAPABILITY_NOT_REGISTERED")
+        if not capability.ready:
+            raise RuntimeError(capability.error_code or "RUNTIME_CAPABILITY_NOT_READY")
+
+
+def build_safe_runtime_composition(
+    *, resources: RuntimeReadResources, model_call_factory: object | None = None,
+    model_loop: object | None = None, action_loop: object | None = None,
+    credential_broker: object | None = None,
+) -> SafeRuntimeComposition:
+    """Compose only safe reads and explicitly supplied Runtime loop seams.
+
+    This function intentionally does not accept provider ports, a sandbox
+    registry, or service bundles.  Consequently ERP writes, Media, external
+    specialists, and unstarted worker-owned capabilities cannot enter this
+    composition accidentally.
+    """
+    if resources is None or resources.database is None:
+        raise RuntimeError("RUNTIME_SAFE_READ_SERVICE_WIRING_NOT_READY")
+    registry = build_production_read_registry(resources)
+    catalog = RuntimeToolCatalog.from_executor_registry(registry)
+    model_ready = (
+        callable(model_call_factory) and credential_broker is not None
+        and _credential_ready(credential_broker)
+    )
+    action_ready = action_loop is not None
+    capabilities = {
+        "runtime.read": CapabilityReadiness(
+            state=CapabilityReadinessState.READY,
+        ),
+        "runtime.erp.read": CapabilityReadiness(
+            state=CapabilityReadinessState.READY,
+        ),
+        "runtime.model": CapabilityReadiness(
+            state=(CapabilityReadinessState.READY if model_ready
+                   else CapabilityReadinessState.UNAVAILABLE),
+            error_code=None if model_ready else "MODEL_SNAPSHOT_WIRING_NOT_READY",
+        ),
+        "runtime.action": CapabilityReadiness(
+            state=(CapabilityReadinessState.READY if action_ready
+                   else CapabilityReadinessState.UNAVAILABLE),
+            error_code=None if action_ready else "ACTION_LOOP_WIRING_NOT_READY",
+        ),
+        "runtime.erp.write": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+        "runtime.media": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+        "runtime.external_specialist": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+        "runtime.worker": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+        "runtime.projection": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+        "runtime.authorization": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+        "runtime.sandbox": CapabilityReadiness(
+            state=CapabilityReadinessState.DISABLED,
+        ),
+    }
+    readiness = RuntimeAssemblyReadiness(
+        service_wiring_ready=True,
+        tenant_binding_ready=True,
+        credential_available=model_ready,
+        capability_enabled=True,
+        probe_passed=True,
+        production_ready=False,
+        error_code="PRODUCTION_READINESS_DISABLED",
+        capabilities=capabilities,
+    )
+    return SafeRuntimeComposition(
+        registry=registry, catalog=catalog, readiness=readiness,
+        model_call_factory=model_call_factory, model_loop=model_loop,
+        action_loop=action_loop,
+    )
+
+
+def _credential_ready(broker: object) -> bool:
+    status = getattr(broker, "readiness", None)
+    status = status() if callable(status) else status
+    return bool(getattr(status, "ready", False))
 
 
 def build_production_action_loop(*, database, worker_id: str,
@@ -336,6 +442,7 @@ def _merge_registries(*registries: ExecutorRegistry) -> ExecutorRegistry:
 
 __all__ = [
     "ProductionRuntimeComponents", "ProductionSpecialistPorts",
+    "SafeRuntimeComposition", "build_safe_runtime_composition",
     "build_production_components", "build_production_read_registry",
     "build_production_specialist_registry",
     "build_production_components_from_services",

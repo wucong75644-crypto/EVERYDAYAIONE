@@ -88,6 +88,7 @@ class RuntimeStatusSnapshot:
     sandbox: DomainStatus
     failure_closed_reasons: tuple[str, ...]
     schema_version: int = 1
+    capabilities: Mapping[str, DomainStatus] = field(default_factory=dict)
 
     @classmethod
     def from_admin_payload(
@@ -125,6 +126,7 @@ class RuntimeStatusSnapshot:
         claim_gate = _claim_gate(control)
         reasons = _failure_reasons(
             payload, control, production, claim_gate, workers, domains,
+            _capabilities(payload, supplied),
         )
         return cls(
             tenant_id=tenant,
@@ -137,6 +139,7 @@ class RuntimeStatusSnapshot:
             projection=projection, cost=domains["cost"],
             sandbox=domains["sandbox"],
             failure_closed_reasons=tuple(dict.fromkeys(reasons)),
+            capabilities=_capabilities(payload, supplied),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -158,6 +161,10 @@ class RuntimeStatusSnapshot:
             "projection": self.projection.to_dict(),
             "cost": self.cost.to_dict(),
             "sandbox": self.sandbox.to_dict(),
+            "capabilities": {
+                name: status.to_dict()
+                for name, status in sorted(self.capabilities.items())
+            },
             "failure_closed_reasons": list(self.failure_closed_reasons),
         }
 
@@ -234,6 +241,21 @@ def _supplied_domain(value: Mapping[str, object] | None, unavailable_code: str) 
     return _status_from_mapping(value)
 
 
+def _capabilities(
+    payload: Mapping[str, object],
+    supplied: Mapping[str, Mapping[str, object]],
+) -> dict[str, DomainStatus]:
+    raw = supplied.get("capabilities") or payload.get("capabilities")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, DomainStatus] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not isinstance(value, Mapping):
+            continue
+        result[name] = _status_from_mapping(value)
+    return result
+
+
 def _status_from_mapping(value: Mapping[str, object]) -> DomainStatus:
     raw_state = str(value.get("state", "degraded"))
     try:
@@ -258,6 +280,7 @@ def _failure_reasons(
     payload: Mapping[str, object], control: Mapping[str, object],
     production: DomainStatus, claim_gate: DomainStatus, workers: DomainStatus,
     domains: Mapping[str, DomainStatus],
+    capabilities: Mapping[str, DomainStatus],
 ) -> list[str]:
     reasons: list[str] = []
     if production.state is not RuntimeStatusState.READY:
@@ -269,6 +292,9 @@ def _failure_reasons(
     for domain in domains.values():
         if domain.state is RuntimeStatusState.UNAVAILABLE and domain.error_code:
             reasons.append(domain.error_code)
+    for capability in capabilities.values():
+        if capability.state is RuntimeStatusState.UNAVAILABLE and capability.error_code:
+            reasons.append(capability.error_code)
     if not payload.get("composition"):
         reasons.append("COMPOSITION_STATUS_UNAVAILABLE")
     if not control:

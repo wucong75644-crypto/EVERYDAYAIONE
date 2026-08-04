@@ -1617,6 +1617,7 @@ cache = client.caches.create(
     均不能取得compatibility projection mutation权限
   - 生产发布、灰度、告警和回滚合同见
     [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)
+- **2026-08-04**：C5.2 增加 capability-scoped safe composition；仅接入 Runtime read（含 C2.1 org-scoped ERP read），模型/ActionLoop 通过显式注入接线，ERP write、Media、external specialist 及未启动 Worker/Projection/Authorization/Sandbox 保持 unavailable/disabled，整体 production readiness 仍为 false。
 - **2026-08-01**：AR-17.1 共享基础已在独立分支实现，默认仍关闭
   - 224 additive v2 ingress 在同一 PostgreSQL 事务中冻结 Session、Command、Run envelope、上下文锚点和 EffectiveToolset
   - AgentDefinition、Runtime Tool Catalog、Executor revision 与 Authorization 使用同一 code_execute-only 目录事实

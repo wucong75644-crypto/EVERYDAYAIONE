@@ -65,6 +65,10 @@ from services.agent.runtime.production_model import (
 from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.catalog.registry import build_runtime_version_registry
 from services.agent.runtime.production_composition import build_production_action_loop
+from services.agent.runtime.production_composition import (
+    SafeRuntimeComposition, build_safe_runtime_composition,
+)
+from services.agent.runtime.executors.real_base import RuntimeReadResources
 
 
 class RuntimeOwner:
@@ -199,6 +203,47 @@ def build_runtime(database: Any, settings, *, production_components=None) -> Run
         handler=runtime.handle_command,
     )
     return RuntimeOwner(commands, runtime)
+
+
+def build_safe_runtime_components(
+    database: Any, settings, *, credential_broker: object,
+) -> SafeRuntimeComposition:
+    """Assemble safe Runtime loops without starting any Runtime-owned worker."""
+    if credential_broker is None:
+        raise RuntimeError("CREDENTIAL_BROKER_REQUIRED")
+    worker_id = settings.agent_runtime_worker_id
+    db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
+    registry = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=db),
+    ).registry
+    action_loop = ActionLoopDriver(
+        recovery_repository=PostgresCoordinatorRecoveryRepository(db),
+        action_repository=PostgresActionRepository(db),
+        authorization_repository=PostgresActionAuthorizationRepository(db),
+        resolver=PostgresActionExecutorResolver(registry),
+        worker_id=worker_id,
+        capability_issuer=None,
+    )
+    versions = build_runtime_version_registry()
+    model_factory = PostgresModelCallFactory(
+        db, worker_id, version_registry=versions,
+        credential_broker=credential_broker,
+    )
+    model_loop = ModelLoopDriver(
+        runtime_repository=PostgresRuntimeRepository(db),
+        attempt_repository=PostgresModelAttemptRepository(db),
+        action_repository=PostgresActionRepository(db),
+        recovery_repository=PostgresCoordinatorRecoveryRepository(db),
+        model=ExistingProviderModelAdapter(db=db),
+        call_factory=model_factory,
+        reconciler=retain_unknown_model_attempt,
+    )
+    return build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=db),
+        model_call_factory=model_factory, model_loop=model_loop,
+        action_loop=action_loop,
+        credential_broker=credential_broker,
+    )
 
 
 def build_authorization(database: Any, worker_id: str):
