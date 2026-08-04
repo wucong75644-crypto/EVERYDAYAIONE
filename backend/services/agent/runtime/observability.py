@@ -116,6 +116,15 @@ METRICS: tuple[MetricDefinition, ...] = (
     _definition("agent_runtime_cost_refund_total", MetricType.COUNTER, "events", "Cost refunds.", "tenant_scope", "environment"),
     _definition("agent_runtime_cost_settlement_mismatch_total", MetricType.COUNTER, "events", "Cost settlement mismatches.", "tenant_scope", "environment"),
     _definition("agent_runtime_cost_late_settlement_total", MetricType.COUNTER, "events", "Late cost settlements.", "tenant_scope", "environment"),
+    _definition("agent_runtime_cost_ledger_backlog", MetricType.GAUGE, "items", "Cost facts awaiting terminal settlement.", "tenant_scope", "environment"),
+    _definition("agent_runtime_cost_terminal_without_settlement_total", MetricType.GAUGE, "items", "Terminal actions without a cost fact.", "tenant_scope", "environment"),
+    _definition("agent_runtime_cost_refund_overflow_total", MetricType.GAUGE, "items", "Refunds exceeding settled amount.", "tenant_scope", "environment"),
+    _definition("agent_runtime_provider_receipt_missing_total", MetricType.GAUGE, "items", "Provider submissions without a receipt.", "tenant_scope", "environment"),
+    _definition("agent_runtime_provider_receipt_hash_mismatch_total", MetricType.GAUGE, "items", "Provider receipt hash mismatches.", "tenant_scope", "environment"),
+    _definition("agent_runtime_external_duplicate_side_effect_rejection_total", MetricType.COUNTER, "events", "Rejected duplicate external side effects.", "tenant_scope", "environment"),
+    _definition("agent_runtime_external_orphan_side_effect_total", MetricType.GAUGE, "items", "External side effects without a linked attempt.", "tenant_scope", "environment"),
+    _definition("agent_runtime_external_late_settlement_total", MetricType.GAUGE, "items", "Late settlement observations.", "tenant_scope", "environment"),
+    _definition("agent_runtime_external_reconcile_retry_age", MetricType.GAUGE, "seconds", "Age of the oldest reconcile-only side effect.", "tenant_scope", "environment"),
     _definition("agent_runtime_tenant_kill_switch_active", MetricType.GAUGE, "boolean", "Tenant kill switch state.", "tenant_scope", "environment"),
 )
 METRIC_CATALOG = {item.name: item for item in METRICS}
@@ -253,6 +262,24 @@ def emit_runtime_status_metrics(
                         "dead", labels)
     _emit_domain_metric(sink, snapshot.sandbox, "agent_runtime_sandbox_residue_count",
                         "residue_count", {"environment": environment})
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_cost_ledger_backlog",
+                        "settlement_pending_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_cost_terminal_without_settlement_total",
+                        "terminal_without_cost_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_cost_refund_overflow_total",
+                        "refund_overflow_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_provider_receipt_missing_total",
+                        "provider_without_readback_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_provider_receipt_hash_mismatch_total",
+                        "receipt_hash_mismatch_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_external_duplicate_side_effect_rejection_total",
+                        "duplicate_side_effect_rejection_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_external_orphan_side_effect_total",
+                        "orphan_side_effect_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_external_late_settlement_total",
+                        "late_settlement_count", labels)
+    _emit_domain_metric(sink, snapshot.cost, "agent_runtime_external_reconcile_retry_age",
+                        "reconcile_retry_age_seconds", labels)
 
 
 def _emit_snapshot_metric(
@@ -366,6 +393,9 @@ ALERT_RULES: tuple[AlertRule, ...] = (
     AlertRule(alert_id="runtime.artifact.cleanup_failure", severity=AlertSeverity.PAGE, condition="cleanup_failure_total > 0", evaluation_window_seconds=300, deduplication_key=("tenant_scope",), runbook_reference="AGENT_RUNTIME_PRODUCTION_RUNBOOK.md#sandbox-production-contract", recommended_action="Quarantine and inspect the failed cleanup; do not delete facts."),
     AlertRule(alert_id="runtime.sandbox.residue_deadline", severity=AlertSeverity.PAGE, condition="residue_count > 0 past cleanup deadline", evaluation_window_seconds=300, deduplication_key=("environment",), runbook_reference="AGENT_RUNTIME_PRODUCTION_RUNBOOK.md#sandbox-production-contract", recommended_action="Close code execution and inspect quarantine cleanup."),
     AlertRule(alert_id="runtime.cost.settlement_mismatch", severity=AlertSeverity.PAGE, condition="settlement_mismatch_total > 0", evaluation_window_seconds=300, deduplication_key=("tenant_scope",), runbook_reference="AR17_RUNTIME_STATUS_CONTRACT.md", recommended_action="Reconcile the cost fact and provider receipt before settlement changes."),
+    AlertRule(alert_id="runtime.cost.receipt_or_refund_anomaly", severity=AlertSeverity.PAGE, condition="receipt_hash_mismatch_total or refund_overflow_total > 0", evaluation_window_seconds=300, deduplication_key=("tenant_scope",), runbook_reference="AR17_RUNTIME_STATUS_CONTRACT.md", recommended_action="Review the cost and provider receipt facts; do not force settle or refund."),
+    AlertRule(alert_id="runtime.external.duplicate_or_orphan", severity=AlertSeverity.WARNING, condition="duplicate_side_effect_rejection_total or orphan_side_effect_total increases", evaluation_window_seconds=300, deduplication_key=("tenant_scope",), runbook_reference="AGENT_RUNTIME_PRODUCTION_RUNBOOK.md#acceptedunknown-external-effects", recommended_action="Inspect idempotency and attempt linkage; do not dispatch again."),
+    AlertRule(alert_id="runtime.external.late_settlement", severity=AlertSeverity.WARNING, condition="late_settlement_total > 0", evaluation_window_seconds=300, deduplication_key=("tenant_scope", "provider"), runbook_reference="AGENT_RUNTIME_PRODUCTION_RUNBOOK.md#acceptedunknown-external-effects", recommended_action="Read back the provider fact and perform manual cost review."),
     AlertRule(alert_id="runtime.credential_or_provider_revision_failure", severity=AlertSeverity.PAGE, condition="credential or provider revision readiness is false", evaluation_window_seconds=300, deduplication_key=("tenant_scope", "provider"), runbook_reference="AR17_RUNTIME_STATUS_CONTRACT.md", recommended_action="Keep the provider capability closed and inspect the binding revision."),
     AlertRule(alert_id="runtime.tenant.kill_switch_active", severity=AlertSeverity.WARNING, condition="tenant kill switch is active", evaluation_window_seconds=300, deduplication_key=("tenant_scope",), runbook_reference="AR17_RUNTIME_STATUS_CONTRACT.md", recommended_action="Confirm ingress and dispatch remain closed; preserve reconciliation."),
 )
