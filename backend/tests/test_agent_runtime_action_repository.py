@@ -91,7 +91,7 @@ async def test_claim_and_readback_forward_stable_request_identity() -> None:
         "status": "claimed",
     }
     database = Database({
-        "claim_ready_agent_actions": {
+        "claim_ready_agent_actions_v2": {
             "outcome": "claimed", "attempts": [attempt],
         },
         "get_agent_action_claim_batch": {
@@ -107,7 +107,7 @@ async def test_claim_and_readback_forward_stable_request_identity() -> None:
     )
     assert claimed.attempts == recovered.attempts
     assert database.calls == [
-        ("claim_ready_agent_actions", {
+        ("claim_ready_agent_actions_v2", {
             "p_worker_id": "worker-1", "p_claim_request_id": "claim-1",
             "p_batch_size": 10, "p_lease_seconds": 120,
         }),
