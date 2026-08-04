@@ -71,6 +71,13 @@ class RecoveryRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class CostSideEffectQuery(BaseModel):
+    provider: str | None = Field(default=None, max_length=200)
+    domain: Literal["ERP", "Media", "Artifact", "Workspace", "Scheduler", "Sandbox", "Provider"] | None = None
+    state: str | None = Field(default=None, max_length=80)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
 def _admin_db(user_id: str, org_id: str | None, request_id: str):
     return ScopedDatabaseClient(
         get_runtime_admin_db(),
@@ -175,6 +182,24 @@ async def request_recovery(
             "p_operation": body.operation,
             "p_expected_state_version": body.expected_state_version,
             "p_reason": body.reason, "p_idempotency_key": str(idempotency_key),
+        },
+    ).execute()
+    return {"success": True, "data": response.data}
+
+
+@router.get("/cost-side-effects")
+async def cost_side_effect_snapshot(
+    user_id: CurrentUserId,
+    db: Database,
+    org_id: UUID,
+    query: CostSideEffectQuery = Depends(),
+) -> dict:
+    _require_super_admin(user_id, db)
+    response = _admin_db(user_id, str(org_id), "cost-side-effect-read").rpc(
+        "get_agent_runtime_cost_side_effect_snapshot", {
+            "p_org_id": str(org_id), "p_provider": query.provider,
+            "p_domain": query.domain, "p_state": query.state,
+            "p_limit": query.limit,
         },
     ).execute()
     return {"success": True, "data": response.data}

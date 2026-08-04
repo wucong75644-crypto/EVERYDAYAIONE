@@ -90,6 +90,7 @@ jobs:
             backend/tests/test_agent_runtime_coordinator_recovery.py \
             backend/tests/test_agent_runtime_ar18_owner_dry_run.py \
             backend/tests/test_agent_runtime_recovery_center_migration.py \
+            backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/unit.log"
 
       - name: Run Artifact, Workspace, Child Run and specialist contracts
@@ -112,6 +113,7 @@ jobs:
             backend/tests/test_agent_runtime_ar174_a2_postgres_external.py \
             backend/tests/test_agent_runtime_a8_scheduler_cas_postgres_external.py \
             backend/tests/test_agent_runtime_recovery_center_postgres_external.py \
+            backend/tests/test_agent_runtime_cost_side_effect_observability_postgres_external.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
       - name: Collect disposable PostgreSQL server logs
@@ -143,6 +145,7 @@ jobs:
             backend/tests/test_agent_runtime_action_migration_order.py \
             backend/tests/test_agent_runtime_role_grants_migration.py \
             backend/tests/test_agent_runtime_recovery_center_migration.py \
+            backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/migration-static.log"
           git diff --check
           python scripts/check_task_change.py --files \
