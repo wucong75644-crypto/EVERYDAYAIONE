@@ -59,6 +59,18 @@ class ProviderOperationRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class RecoveryQuery(BaseModel):
+    domain: Literal["artifact", "workspace", "scheduler", "child_run", "sandbox"] | None = None
+    state: str | None = Field(default=None, max_length=80)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class RecoveryRequest(BaseModel):
+    operation: Literal["readback", "reconcile", "cleanup", "recover", "cancel"]
+    expected_state_version: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 def _admin_db(user_id: str, org_id: str | None, request_id: str):
     return ScopedDatabaseClient(
         get_runtime_admin_db(),
@@ -121,6 +133,46 @@ async def request_provider_operation(
         "request_agent_runtime_provider_operation", {
             "p_request_id": str(idempotency_key), "p_org_id": str(org_id),
             "p_submission_id": str(submission_id), "p_operation": body.operation,
+            "p_expected_state_version": body.expected_state_version,
+            "p_reason": body.reason, "p_idempotency_key": str(idempotency_key),
+        },
+    ).execute()
+    return {"success": True, "data": response.data}
+
+
+@router.get("/recovery")
+async def recovery_snapshot(
+    user_id: CurrentUserId,
+    db: Database,
+    org_id: UUID,
+    query: RecoveryQuery = Depends(),
+) -> dict:
+    _require_super_admin(user_id, db)
+    response = _admin_db(user_id, str(org_id), "recovery-read").rpc(
+        "list_agent_runtime_recovery_snapshot", {
+            "p_org_id": str(org_id), "p_domain": query.domain,
+            "p_state": query.state, "p_limit": query.limit,
+        },
+    ).execute()
+    return {"success": True, "data": response.data}
+
+
+@router.post("/recovery/{recovery_domain}/{target_id}")
+async def request_recovery(
+    recovery_domain: Literal["artifact", "workspace", "scheduler", "child_run", "sandbox"],
+    target_id: str,
+    body: RecoveryRequest,
+    user_id: CurrentUserId,
+    db: Database,
+    org_id: UUID,
+    idempotency_key: UUID = Header(..., alias="Idempotency-Key"),
+) -> dict:
+    _require_super_admin(user_id, db)
+    response = _admin_db(user_id, str(org_id), str(idempotency_key)).rpc(
+        "request_agent_runtime_recovery", {
+            "p_request_id": str(idempotency_key), "p_org_id": str(org_id),
+            "p_recovery_domain": recovery_domain, "p_target_id": target_id,
+            "p_operation": body.operation,
             "p_expected_state_version": body.expected_state_version,
             "p_reason": body.reason, "p_idempotency_key": str(idempotency_key),
         },
