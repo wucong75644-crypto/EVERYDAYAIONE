@@ -34,6 +34,7 @@ _SAFE_KEYS = frozenset({
     "kill_epoch", "state_version", "owner_fence_count",
     "provider_kill_epoch", "capability_kill_epoch", "reconcile_age_seconds",
     "cleanup_count", "recovery_count", "settlement_mismatch",
+    "runtime_owned", "legacy_fallback", "gate_blocked", "transition_count",
 })
 _SENSITIVE_PARTS = (
     "secret", "token", "password", "credential", "api_key", "authorization",
@@ -75,6 +76,7 @@ class RuntimeStatusSnapshot:
     composition: DomainStatus
     workers: DomainStatus
     tenant_control: DomainStatus
+    owner_transition: DomainStatus
     claim_gate: DomainStatus
     production: DomainStatus
     provider: DomainStatus
@@ -123,15 +125,17 @@ class RuntimeStatusSnapshot:
         }
         production = _production_status(control, payload)
         tenant_control = _tenant_control(control)
+        owner_transition = _owner_transition(payload, supplied)
         claim_gate = _claim_gate(control)
         reasons = _failure_reasons(
             payload, control, production, claim_gate, workers, domains,
-            _capabilities(payload, supplied),
+            _capabilities(payload, supplied), owner_transition,
         )
         return cls(
             tenant_id=tenant,
             composition=_composition(payload), workers=workers,
             tenant_control=tenant_control,
+            owner_transition=owner_transition,
             claim_gate=claim_gate, production=production,
             provider=domains["provider"], submissions=unknown,
             scheduler=domains["scheduler"], artifact=domains["artifact"],
@@ -150,6 +154,7 @@ class RuntimeStatusSnapshot:
             "composition": self.composition.to_dict(),
             "workers": self.workers.to_dict(),
             "tenant_control": self.tenant_control.to_dict(),
+            "owner_transition": self.owner_transition.to_dict(),
             "claim_gate": self.claim_gate.to_dict(),
             "production": self.production.to_dict(),
             "provider": self.provider.to_dict(),
@@ -212,6 +217,16 @@ def _tenant_control(control: Mapping[str, object]) -> DomainStatus:
         summary=summary,
         error_code="RUNTIME_TENANT_KILL_SWITCH_ACTIVE" if blocked else None,
     )
+
+
+def _owner_transition(
+    payload: Mapping[str, object],
+    supplied: Mapping[str, Mapping[str, object]],
+) -> DomainStatus:
+    value = supplied.get("owner_transition") or payload.get("owner_transition")
+    if not isinstance(value, Mapping):
+        return _unavailable("OWNER_TRANSITION_STATUS_UNAVAILABLE")
+    return _status_from_mapping(value)
 
 
 def _production_status(control: Mapping[str, object], payload: Mapping[str, object]) -> DomainStatus:
@@ -281,6 +296,7 @@ def _failure_reasons(
     production: DomainStatus, claim_gate: DomainStatus, workers: DomainStatus,
     domains: Mapping[str, DomainStatus],
     capabilities: Mapping[str, DomainStatus],
+    owner_transition: DomainStatus,
 ) -> list[str]:
     reasons: list[str] = []
     if production.state is not RuntimeStatusState.READY:
@@ -289,6 +305,8 @@ def _failure_reasons(
         reasons.append("RUNTIME_CLAIM_GATE_CLOSED")
     if workers.state is RuntimeStatusState.UNAVAILABLE:
         reasons.append("WORKER_STATUS_UNAVAILABLE")
+    if owner_transition.state is RuntimeStatusState.UNAVAILABLE:
+        reasons.append("OWNER_TRANSITION_STATUS_UNAVAILABLE")
     for domain in domains.values():
         if domain.state is RuntimeStatusState.UNAVAILABLE and domain.error_code:
             reasons.append(domain.error_code)

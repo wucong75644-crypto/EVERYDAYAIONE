@@ -27,6 +27,7 @@ class WecomActorEnqueueResult:
     input_message_id: str
     output_message_id: str
     already_enqueued: bool
+    owner_state: str
 
 
 async def enqueue_wecom_message(
@@ -127,6 +128,10 @@ async def enqueue_wecom_message(
         input_message_id=str(result.get("input_message_id") or ids["input"]),
         output_message_id=str(result.get("output_message_id") or ids["output"]),
         already_enqueued=bool(result.get("already_enqueued")),
+        owner_state=(
+            "runtime_owned" if bool(result.get("runtime_owned"))
+            else "legacy_fallback"
+        ),
     )
 
 

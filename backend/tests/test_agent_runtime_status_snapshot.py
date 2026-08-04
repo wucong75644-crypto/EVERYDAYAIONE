@@ -82,3 +82,30 @@ def test_domain_payload_is_redacted_and_unknown_is_read_only() -> None:
 def test_invalid_tenant_scope_is_rejected() -> None:
     with pytest.raises(RuntimeStatusError, match="TENANT_SCOPE_REQUIRED"):
         RuntimeStatusSnapshot.from_admin_payload(_payload(), tenant_id=" ")
+
+
+def test_owner_transition_is_read_only_redacted_evidence() -> None:
+    snapshot = RuntimeStatusSnapshot.from_admin_payload(
+        _payload() | {
+            "owner_transition": {
+                "state": "degraded",
+                "summary": {
+                    "runtime_owned": 3, "legacy_fallback": 1,
+                    "gate_blocked": 1, "token": "must-not-appear",
+                    "payload": "must-not-appear",
+                },
+            },
+        },
+        tenant_id="org-a",
+    )
+    output = snapshot.to_dict()
+
+    assert output["owner_transition"]["summary"] == {
+        "runtime_owned": 3, "legacy_fallback": 1, "gate_blocked": 1,
+    }
+    assert "must-not-appear" not in repr(output)
+
+
+def test_missing_owner_transition_source_is_unavailable() -> None:
+    snapshot = RuntimeStatusSnapshot.from_admin_payload(_payload(), tenant_id="org-a")
+    assert snapshot.owner_transition.state is RuntimeStatusState.UNAVAILABLE

@@ -71,7 +71,51 @@ async def test_prepared_task_uses_atomic_v5_owner_transition_wrapper() -> None:
         },
     )
     assert result.accepted
+    assert result.owner_state == "runtime_owned"
+    assert result.runtime_owned is True
     assert database.calls[-1][0] == "runtime_submit_ingress_v5_owner_transition"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_outcome", "outcome", "owner_state", "runtime_owned"),
+    (
+        ("marked", "created", "runtime_owned", True),
+        ("already_runtime_owned", "already_exists", "runtime_owned", True),
+        ("restored", "fallback_to_legacy", "legacy_fallback", False),
+        ("already_actor_owned", "fallback_to_legacy", "legacy_fallback", False),
+    ),
+)
+async def test_owner_transition_preserves_atomic_database_evidence(
+    raw_outcome, outcome, owner_state, runtime_owned,
+) -> None:
+    database = _Database({
+        "get_agent_runtime_ingress_capability": {
+            "outcome": "available", "ingress_version": 5,
+        },
+        "runtime_submit_ingress_v5_owner_transition": {
+            "outcome": raw_outcome, "entity_id": "command",
+        },
+        "get_agent_runtime_definition_fact": {
+            "definition_hash": "definition", "catalog_revision": "catalog",
+        },
+    })
+    result = await RuntimeIngress(database, contract_revision=3).submit(
+        conversation_id="conversation", org_id="org", user_id="user",
+        scope_kind="user", scope_id="user", agent_definition_id="agent",
+        agent_definition_revision="v1", command_type="submit_input",
+        idempotency_key="request", payload={
+            "channel": "web", "input_message_id": "message",
+            "output_message_id": "output", "turn_id": "turn",
+            "task_id": "task", "client_task_id": "client",
+            "request_id": "request",
+        },
+    )
+
+    assert result.outcome == outcome
+    assert result.raw_outcome == raw_outcome
+    assert result.owner_state == owner_state
+    assert result.runtime_owned is runtime_owned
 
 
 @pytest.mark.asyncio

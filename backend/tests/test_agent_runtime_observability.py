@@ -116,6 +116,12 @@ def test_status_projection_emits_only_read_metrics_and_disabled_health() -> None
         {"control": {"kill_switch_active": True, "production_enabled": False},
          "workers": [{"ready": False, "draining": False}],
          "production_ready": False,
+         "owner_transition": {
+             "state": "degraded",
+             "summary": {
+                 "runtime_owned": 2, "legacy_fallback": 1, "gate_blocked": 1,
+             },
+         },
          "projection": {"backlog": 2, "dead": 1},
          "unknown": {"unknown": 3, "accepted": 1, "reconcile_age_seconds": 42}},
         tenant_id="org-a",
@@ -126,6 +132,9 @@ def test_status_projection_emits_only_read_metrics_and_disabled_health() -> None
     assert "agent_runtime_tenant_kill_switch_active" in names
     assert "agent_runtime_provider_unknown_total" in names
     assert "agent_runtime_projection_dead" in names
+    assert "agent_runtime_owner_runtime_owned" in names
+    assert "agent_runtime_owner_legacy_fallback" in names
+    assert "agent_runtime_owner_gate_blocked" in names
     health = build_runtime_health_snapshot(snapshot, environment="ci")
     assert health.status in {RuntimeStatusState.UNAVAILABLE, RuntimeStatusState.DEGRADED}
     assert health.production_ready is False

@@ -112,6 +112,45 @@ async def test_enqueue_requires_provider_message_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime_owned", "owner_state", "wakeup_count"),
+    ((True, "runtime_owned", 0), (False, "legacy_fallback", 1)),
+)
+async def test_runtime_owner_transition_controls_legacy_wakeup(
+    runtime_owned, owner_state, wakeup_count,
+):
+    handler = _handler()
+    handler.db.rpc.side_effect = (
+        lambda name, params: MagicMock(
+            execute=MagicMock(return_value=SimpleNamespace(data=(
+                {"definition_hash": "definition", "catalog_revision": "catalog"}
+                if name == "get_agent_runtime_definition_fact" else
+                {"task_id": "internal", "runtime_owned": runtime_owned}
+            )))
+        )
+    )
+    settings = SimpleNamespace(
+        agent_runtime_ingress_enabled=True,
+        agent_runtime_agent_definition_id="agent",
+        agent_runtime_agent_definition_revision="v1",
+        agent_runtime_release_revision="release",
+    )
+    wakeup = AsyncMock(return_value=True)
+
+    with patch("core.config.get_settings", return_value=settings), patch(
+        "services.conversation_worker.RedisConversationWakeup.publish",
+        new=wakeup,
+    ):
+        result = await enqueue_wecom_message(
+            handler=handler, msg=_message(), user_id="user",
+            conversation_id="conversation", image_urls=[],
+        )
+
+    assert result.owner_state == owner_state
+    assert wakeup.await_count == wakeup_count
+
+
+@pytest.mark.asyncio
 async def test_enqueue_file_uses_structured_filepart_without_scanned_text():
     handler = _handler()
     msg = _message()

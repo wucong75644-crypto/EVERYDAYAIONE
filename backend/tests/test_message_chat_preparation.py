@@ -182,7 +182,9 @@ async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ("ingress_disabled", "org_not_enabled"))
+@pytest.mark.parametrize(
+    "outcome", ("ingress_disabled", "org_not_enabled", "fallback_to_legacy"),
+)
 async def test_runtime_gate_closed_preserves_actor_owner(monkeypatch, outcome):
     task_id = stable_actor_task_id(
         user_id="user-1", conversation_id="conversation-1",
@@ -220,7 +222,7 @@ async def test_runtime_gate_closed_preserves_actor_owner(monkeypatch, outcome):
     )
 
     assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": False, "runtime": True, "channel": "web",
+        "actor": True, "runtime": False, "channel": "web",
     }
     handler.start.assert_awaited_once()
 
@@ -265,4 +267,7 @@ async def test_runtime_receipt_transfers_owner_without_actor_start(monkeypatch):
         body=_body(),
     )
 
+    assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
+        "actor": True, "runtime": False, "channel": "web",
+    }
     handler.start.assert_not_awaited()

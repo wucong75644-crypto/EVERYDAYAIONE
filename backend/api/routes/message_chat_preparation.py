@@ -100,7 +100,7 @@ async def prepare_and_start_chat_generation(
         )
         if ingress.outcome in {
             "ingress_disabled", "org_not_enabled", "subject_not_enabled",
-            "runtime_unavailable", "fenced",
+            "runtime_unavailable", "fenced", "fallback_to_legacy",
         }:
             external_task_id = await handler.start(
                 message_id=preparation.output_message_id,
@@ -162,10 +162,11 @@ def _build_task_payload(
     payload.update({
         "id": internal_task_id,
         "execution_mode": "serial",
-        "delivery_context": (
-            {"actor": False, "runtime": True, "channel": "web"}
-            if runtime_owned else {"actor": True, "channel": "web"}
-        ),
+        # The prepared task remains actor-owned until 227.14 atomically binds
+        # the Runtime session/command and flips this owner marker.
+        "delivery_context": {
+            "actor": True, "runtime": False, "channel": "web",
+        } if runtime_owned else {"actor": True, "channel": "web"},
     })
     return payload
 

@@ -126,6 +126,9 @@ METRICS: tuple[MetricDefinition, ...] = (
     _definition("agent_runtime_external_late_settlement_total", MetricType.GAUGE, "items", "Late settlement observations.", "tenant_scope", "environment"),
     _definition("agent_runtime_external_reconcile_retry_age", MetricType.GAUGE, "seconds", "Age of the oldest reconcile-only side effect.", "tenant_scope", "environment"),
     _definition("agent_runtime_tenant_kill_switch_active", MetricType.GAUGE, "boolean", "Tenant kill switch state.", "tenant_scope", "environment"),
+    _definition("agent_runtime_owner_runtime_owned", MetricType.GAUGE, "items", "Prepared tasks owned by Runtime.", "tenant_scope", "environment"),
+    _definition("agent_runtime_owner_legacy_fallback", MetricType.GAUGE, "items", "Prepared tasks restored to the legacy actor.", "tenant_scope", "environment"),
+    _definition("agent_runtime_owner_gate_blocked", MetricType.GAUGE, "items", "Owner transitions blocked by an ingress gate.", "tenant_scope", "environment"),
 )
 METRIC_CATALOG = {item.name: item for item in METRICS}
 
@@ -222,7 +225,10 @@ def build_runtime_health_snapshot(
     observed_at: datetime | None = None,
 ) -> HealthSnapshot:
     """Project a read-only status snapshot into the health contract."""
-    states = [snapshot.composition, snapshot.workers, snapshot.tenant_control]
+    states = [
+        snapshot.composition, snapshot.workers, snapshot.tenant_control,
+        snapshot.owner_transition,
+    ]
     states.extend((snapshot.provider, snapshot.scheduler, snapshot.projection))
     status = RuntimeStatusState.READY
     error_code: str | None = None
@@ -248,6 +254,12 @@ def emit_runtime_status_metrics(
     provider_labels = {"provider": "aggregate", "environment": environment}
     _emit_snapshot_metric(sink, "agent_runtime_tenant_kill_switch_active",
                           bool(snapshot.tenant_control.error_code), labels)
+    for key, metric in (
+        ("runtime_owned", "agent_runtime_owner_runtime_owned"),
+        ("legacy_fallback", "agent_runtime_owner_legacy_fallback"),
+        ("gate_blocked", "agent_runtime_owner_gate_blocked"),
+    ):
+        _emit_domain_metric(sink, snapshot.owner_transition, metric, key, labels)
     _emit_domain_metric(sink, snapshot.submissions, "agent_runtime_provider_unknown_total",
                         "unknown", provider_labels)
     _emit_domain_metric(sink, snapshot.submissions, "agent_runtime_provider_accepted_total",

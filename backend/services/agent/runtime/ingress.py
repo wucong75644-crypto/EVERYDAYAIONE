@@ -16,6 +16,9 @@ class RuntimeIngressReceipt:
     effective_toolset_revision: str | None = None
     effective_toolset_hash: str | None = None
     gate_state: str | None = None
+    owner_state: str | None = None
+    runtime_owned: bool | None = None
+    raw_outcome: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -117,13 +120,19 @@ class RuntimeIngress:
         data = getattr(response, "data", None)
         if not isinstance(data, dict) or not isinstance(data.get("outcome"), str):
             raise RuntimeError("RUNTIME_INGRESS_RECEIPT_INVALID")
+        raw_outcome = data["outcome"]
+        outcome, owner_state, runtime_owned = _owner_transition_evidence(
+            raw_outcome, owner_transition=owner_transition,
+            runtime_owned=data.get("runtime_owned"),
+        )
         return RuntimeIngressReceipt(
-            outcome=data["outcome"], session_id=data.get("session_id"),
+            outcome=outcome, session_id=data.get("session_id"),
             command_id=data.get("entity_id"),
             run_id=data.get("result_entity_id"),
             effective_toolset_revision=data.get("effective_toolset_revision"),
             effective_toolset_hash=data.get("effective_toolset_hash"),
-            gate_state=data.get("gate_state"),
+            gate_state=data.get("gate_state"), owner_state=owner_state,
+            runtime_owned=runtime_owned, raw_outcome=raw_outcome,
         )
 
     async def _resolve_rpc_name(self) -> str:
@@ -163,3 +172,24 @@ class RuntimeIngress:
                 "function does not exist", "does not exist",
             )
         )
+
+
+def _owner_transition_evidence(
+    raw_outcome: str, *, owner_transition: bool, runtime_owned: object,
+) -> tuple[str, str | None, bool | None]:
+    """Normalize 227.14 owner markers without hiding the database outcome."""
+    if raw_outcome in {"marked", "already_runtime_owned"}:
+        outcome = "created" if raw_outcome == "marked" else "already_exists"
+        return outcome, "runtime_owned", True
+    if raw_outcome in {"restored", "already_actor_owned"}:
+        return "fallback_to_legacy", "legacy_fallback", False
+    if raw_outcome in {
+        "ingress_disabled", "org_not_enabled", "subject_not_enabled", "fenced",
+    }:
+        return raw_outcome, "gate_blocked", False
+    if owner_transition and raw_outcome in {"created", "already_exists"}:
+        return raw_outcome, "runtime_owned", True
+    if isinstance(runtime_owned, bool):
+        state = "runtime_owned" if runtime_owned else "legacy_fallback"
+        return raw_outcome, state, runtime_owned
+    return raw_outcome, None, None

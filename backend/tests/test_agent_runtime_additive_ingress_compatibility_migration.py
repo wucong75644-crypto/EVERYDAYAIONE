@@ -42,3 +42,14 @@ def test_permissions_and_failure_closed_rollback_contract() -> None:
     assert "DROP FUNCTION runtime_submit_ingress_v3" not in rollback
     assert "DROP TABLE" not in rollback
     assert "227_01" not in rollback and "227_07" not in rollback
+
+
+def test_owner_transition_is_mutually_exclusive_with_legacy_discovery() -> None:
+    sql = MIGRATION.read_text()
+    discovery = (
+        ROOT / "migrations/218_suspended_organization_execution_fence.sql"
+    ).read_text()
+
+    assert "'{\"actor\":false,\"runtime\":true}'::JSONB" in sql
+    assert "'{\"actor\":true,\"runtime\":false}'::JSONB" in sql
+    assert "task.delivery_context @> '{\"actor\": true}'::JSONB" in discovery
