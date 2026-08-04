@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Mapping, Protocol
 
-from services.agent.runtime.status import RuntimeStatusState
+from services.agent.runtime.status import RuntimeStatusSnapshot, RuntimeStatusState
 
 
 class ObservabilityContractError(RuntimeError):
@@ -208,6 +208,69 @@ def build_health_snapshot(
     )
 
 
+def build_runtime_health_snapshot(
+    snapshot: RuntimeStatusSnapshot, *, environment: str,
+    observed_at: datetime | None = None,
+) -> HealthSnapshot:
+    """Project a read-only status snapshot into the health contract."""
+    states = [snapshot.composition, snapshot.workers, snapshot.tenant_control]
+    states.extend((snapshot.provider, snapshot.scheduler, snapshot.projection))
+    status = RuntimeStatusState.READY
+    error_code: str | None = None
+    if any(item.state is RuntimeStatusState.UNAVAILABLE for item in states):
+        status, error_code = RuntimeStatusState.UNAVAILABLE, "RUNTIME_STATUS_DOMAIN_UNAVAILABLE"
+    elif any(item.state is RuntimeStatusState.DEGRADED for item in states):
+        status, error_code = RuntimeStatusState.DEGRADED, "RUNTIME_STATUS_DEGRADED"
+    elif snapshot.production.state is RuntimeStatusState.DISABLED:
+        status, error_code = RuntimeStatusState.DISABLED, "PRODUCTION_READINESS_DISABLED"
+    return build_health_snapshot(
+        component="agent-runtime", status=status, error_code=error_code,
+        dependency_summary={"state": status.value, "production_ready": False},
+        production_ready=False, environment=environment, observed_at=observed_at,
+    )
+
+
+def emit_runtime_status_metrics(
+    snapshot: RuntimeStatusSnapshot, sink: MetricsSink, *,
+    tenant_scope: str, environment: str,
+) -> None:
+    """Emit bounded metrics from an already-authorized snapshot only."""
+    labels = {"tenant_scope": tenant_scope, "environment": environment}
+    provider_labels = {"provider": "aggregate", "environment": environment}
+    _emit_snapshot_metric(sink, "agent_runtime_tenant_kill_switch_active",
+                          bool(snapshot.tenant_control.error_code), labels)
+    _emit_domain_metric(sink, snapshot.submissions, "agent_runtime_provider_unknown_total",
+                        "unknown", provider_labels)
+    _emit_domain_metric(sink, snapshot.submissions, "agent_runtime_provider_accepted_total",
+                        "accepted", provider_labels)
+    _emit_domain_metric(sink, snapshot.submissions, "agent_runtime_provider_reconcile_age",
+                        "reconcile_age_seconds", provider_labels)
+    _emit_domain_metric(sink, snapshot.scheduler, "agent_runtime_scheduler_cas_conflict_total",
+                        "cas_conflicts", labels)
+    _emit_domain_metric(sink, snapshot.projection, "agent_runtime_projection_backlog",
+                        "backlog", labels)
+    _emit_domain_metric(sink, snapshot.projection, "agent_runtime_projection_dead",
+                        "dead", labels)
+    _emit_domain_metric(sink, snapshot.sandbox, "agent_runtime_sandbox_residue_count",
+                        "residue_count", {"environment": environment})
+
+
+def _emit_snapshot_metric(
+    sink: MetricsSink, name: str, value: object, labels: Mapping[str, str],
+) -> None:
+    if isinstance(value, bool | int | float):
+        sink.emit(MetricSample(name=name, value=float(value), labels=labels))
+
+
+def _emit_domain_metric(
+    sink: MetricsSink, domain: object, name: str, key: str,
+    labels: Mapping[str, str],
+) -> None:
+    summary = getattr(domain, "summary", {})
+    value = summary.get(key) if isinstance(summary, Mapping) else None
+    _emit_snapshot_metric(sink, name, value, labels)
+
+
 class AlertSeverity(StrEnum):
     WARNING = "warning"
     PAGE = "page"
@@ -360,4 +423,5 @@ __all__ = [
     "InMemoryMetricsSink", "METRIC_CATALOG", "METRICS", "MetricDefinition",
     "MetricSample", "MetricType", "MetricsSink", "ObservabilityContractError",
     "build_health_snapshot", "emit_alert",
+    "build_runtime_health_snapshot", "emit_runtime_status_metrics",
 ]

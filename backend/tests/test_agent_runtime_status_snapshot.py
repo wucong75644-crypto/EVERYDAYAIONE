@@ -31,6 +31,7 @@ def test_snapshot_is_tenant_scoped_and_production_closed() -> None:
     output = snapshot.to_dict()
 
     assert output["tenant_id"] == "org-a"
+    assert output["tenant_control"]["state"] == RuntimeStatusState.READY
     assert output["production"]["state"] == RuntimeStatusState.DISABLED
     assert output["production"]["summary"]["production_enabled"] is False
     assert output["claim_gate"]["error_code"] == "RUNTIME_CLAIM_GATE_CLOSED"

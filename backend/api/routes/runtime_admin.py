@@ -14,6 +14,7 @@ from core.database import get_runtime_admin_db
 from core.db_scope import (
     DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient,
 )
+from services.agent.runtime.status import RuntimeStatusSnapshot
 
 
 router = APIRouter(prefix="/admin/agent-runtime", tags=["agent-runtime-admin"])
@@ -65,7 +66,10 @@ async def runtime_status(
     response = _admin_db(
         user_id, str(org_id), idempotency_key,
     ).rpc("get_agent_runtime_admin_status", {}).execute()
-    return {"success": True, "data": response.data}
+    snapshot = RuntimeStatusSnapshot.from_admin_payload(
+        response.data, tenant_id=str(org_id),
+    ).to_dict()
+    return {"success": True, "data": response.data, "snapshot": snapshot}
 
 
 @router.post("/control")

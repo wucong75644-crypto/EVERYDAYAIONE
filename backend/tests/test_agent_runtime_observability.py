@@ -14,9 +14,12 @@ from services.agent.runtime.observability import (
     MetricType,
     ObservabilityContractError,
     build_health_snapshot,
+    build_runtime_health_snapshot,
+    emit_runtime_status_metrics,
     emit_alert,
 )
 from services.agent.runtime.status import RuntimeStatusState
+from services.agent.runtime.status import RuntimeStatusSnapshot
 
 
 def test_metric_catalog_is_stable_and_covers_all_domains() -> None:
@@ -106,3 +109,23 @@ def test_alert_payload_and_labels_cannot_contain_sensitive_values() -> None:
         emit_alert(sink, rule, labels={"tenant_scope": "tenant"}, summary="token=secret")
     with pytest.raises(ObservabilityContractError, match="LABEL_NOT_ALLOWED"):
         emit_alert(sink, rule, labels={"tenant_scope": "tenant", "user_id": "u"}, summary="switch active")
+
+
+def test_status_projection_emits_only_read_metrics_and_disabled_health() -> None:
+    snapshot = RuntimeStatusSnapshot.from_admin_payload(
+        {"control": {"kill_switch_active": True, "production_enabled": False},
+         "workers": [{"ready": False, "draining": False}],
+         "production_ready": False,
+         "projection": {"backlog": 2, "dead": 1},
+         "unknown": {"unknown": 3, "accepted": 1, "reconcile_age_seconds": 42}},
+        tenant_id="org-a",
+    )
+    sink = InMemoryMetricsSink()
+    emit_runtime_status_metrics(snapshot, sink, tenant_scope="tenant-hash", environment="ci")
+    names = {sample.name for sample in sink.samples()}
+    assert "agent_runtime_tenant_kill_switch_active" in names
+    assert "agent_runtime_provider_unknown_total" in names
+    assert "agent_runtime_projection_dead" in names
+    health = build_runtime_health_snapshot(snapshot, environment="ci")
+    assert health.status in {RuntimeStatusState.UNAVAILABLE, RuntimeStatusState.DEGRADED}
+    assert health.production_ready is False

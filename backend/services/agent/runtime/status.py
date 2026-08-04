@@ -31,6 +31,9 @@ _SAFE_KEYS = frozenset({
     "action_dispatch_enabled", "safe_actions_enabled", "non_safe_actions_enabled",
     "code_execute_enabled", "projection_enabled",
     "authorization_recovery_enabled",
+    "kill_epoch", "state_version", "owner_fence_count",
+    "provider_kill_epoch", "capability_kill_epoch", "reconcile_age_seconds",
+    "cleanup_count", "recovery_count", "settlement_mismatch",
 })
 _SENSITIVE_PARTS = (
     "secret", "token", "password", "credential", "api_key", "authorization",
@@ -71,6 +74,7 @@ class RuntimeStatusSnapshot:
     tenant_id: str
     composition: DomainStatus
     workers: DomainStatus
+    tenant_control: DomainStatus
     claim_gate: DomainStatus
     production: DomainStatus
     provider: DomainStatus
@@ -117,6 +121,7 @@ class RuntimeStatusSnapshot:
             )
         }
         production = _production_status(control, payload)
+        tenant_control = _tenant_control(control)
         claim_gate = _claim_gate(control)
         reasons = _failure_reasons(
             payload, control, production, claim_gate, workers, domains,
@@ -124,6 +129,7 @@ class RuntimeStatusSnapshot:
         return cls(
             tenant_id=tenant,
             composition=_composition(payload), workers=workers,
+            tenant_control=tenant_control,
             claim_gate=claim_gate, production=production,
             provider=domains["provider"], submissions=unknown,
             scheduler=domains["scheduler"], artifact=domains["artifact"],
@@ -140,6 +146,7 @@ class RuntimeStatusSnapshot:
             "tenant_id": self.tenant_id,
             "composition": self.composition.to_dict(),
             "workers": self.workers.to_dict(),
+            "tenant_control": self.tenant_control.to_dict(),
             "claim_gate": self.claim_gate.to_dict(),
             "production": self.production.to_dict(),
             "provider": self.provider.to_dict(),
@@ -185,6 +192,18 @@ def _claim_gate(control: Mapping[str, object]) -> DomainStatus:
         state=RuntimeStatusState.READY if enabled else RuntimeStatusState.DISABLED,
         summary={"gate_enabled": enabled, "production_flags": flags},
         error_code=None if enabled else "RUNTIME_CLAIM_GATE_CLOSED",
+    )
+
+
+def _tenant_control(control: Mapping[str, object]) -> DomainStatus:
+    if not control:
+        return _unavailable("RUNTIME_CONTROL_STATUS_UNAVAILABLE")
+    summary = _safe_summary(control)
+    blocked = bool(control.get("kill_switch_active"))
+    return DomainStatus(
+        state=RuntimeStatusState.DEGRADED if blocked else RuntimeStatusState.READY,
+        summary=summary,
+        error_code="RUNTIME_TENANT_KILL_SWITCH_ACTIVE" if blocked else None,
     )
 
 
