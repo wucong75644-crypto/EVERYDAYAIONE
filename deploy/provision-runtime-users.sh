@@ -53,6 +53,8 @@ if [ -f /var/www/everydayai/backend/.env ]; then
 fi
 install -d -o root -g everydayai-app -m 2770 \
   /var/www/everydayai/backend/logs
+find /var/www/everydayai/backend/logs -maxdepth 1 -type f \
+  -exec chown root:everydayai-app {} + -exec chmod 0660 {} +
 for name in api actor wecom sync agent-runtime projection authorization; do
   runuser -u "everydayai-$name" -- test -r /var/www/everydayai/backend
   runuser -u "everydayai-$name" -- test -x /var/www/everydayai/backend
