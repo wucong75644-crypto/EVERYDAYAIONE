@@ -42,6 +42,17 @@ if [ -f /etc/everydayai/sandbox-job.policy ]; then
 fi
 find /var/www/everydayai/backend -maxdepth 1 -type f -name '.env*' \
   -exec chown root:everydayai-app {} + -exec chmod 0640 {} +
+for name in .env.runtime .env.wecom-runtime .env.worker .env.worker-client \
+  .env.migrator .env.sync .env.kek; do
+  if [ -f "/var/www/everydayai/backend/$name" ]; then
+    chmod 0600 "/var/www/everydayai/backend/$name"
+  fi
+done
+if [ -f /var/www/everydayai/backend/.env ]; then
+  chmod 0640 /var/www/everydayai/backend/.env
+fi
+install -d -o root -g everydayai-app -m 2770 \
+  /var/www/everydayai/backend/logs
 for name in api actor wecom sync agent-runtime projection authorization; do
   runuser -u "everydayai-$name" -- test -r /var/www/everydayai/backend
   runuser -u "everydayai-$name" -- test -x /var/www/everydayai/backend

@@ -294,6 +294,7 @@ deploy_backend() {
             echo "❌ .env 文件不存在"
             exit 1
         fi
+        sudo bash ../deploy/provision-runtime-users.sh
         bash ../deploy/install-service-units.sh /var/www/everydayai/backend
         bash ../deploy/run-migrations.sh
         set -a

@@ -77,6 +77,7 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert "source .env.migrator" in MIGRATION_SCRIPT
     assert "RECONCILE_FAILED_MIGRATION" in MIGRATION_SCRIPT
     assert "ACKNOWLEDGE_MIGRATION_ROLLBACK" in MIGRATION_SCRIPT
+    assert "provision-runtime-users.sh" in SCRIPT
     assert "venv/bin/python -m pytest" in SCRIPT
     assert 'command -v python3.12 || command -v python3' in SCRIPT
     assert '"$PYTHON_BIN" -m venv venv' in SCRIPT
