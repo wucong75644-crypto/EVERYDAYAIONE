@@ -128,7 +128,7 @@ BEGIN
     IF NEW.parent_action_id IS NULL THEN RETURN NEW; END IF;
     SELECT * INTO v_attempt FROM agent_action_attempts
      WHERE action_id=NEW.parent_action_id AND org_id=NEW.org_id
-     ORDER BY CASE WHEN status IN ('dispatching','accepted','unknown') THEN 0 ELSE 1 END, created_at DESC
+     ORDER BY CASE WHEN status IN ('dispatching','accepted','unknown') THEN 0 ELSE 1 END, updated_at DESC
      LIMIT 1;
     PERFORM _agent_runtime_assert_facts_epoch(
         v_attempt.id,v_attempt.execution_token,NEW.org_id,NULL,NULL,
