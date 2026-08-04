@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
 from api.deps import CurrentUserId, Database
@@ -43,6 +44,21 @@ class RuntimeRolloutRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class ProviderOperationsQuery(BaseModel):
+    provider: str | None = Field(default=None, max_length=200)
+    capability: str | None = Field(default=None, max_length=200)
+    state: Literal["accepted", "unknown", "reconcile_required"] | None = None
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class ProviderOperationRequest(BaseModel):
+    operation: Literal["readback", "reconcile", "cancel"]
+    expected_state_version: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 def _admin_db(user_id: str, org_id: str | None, request_id: str):
     return ScopedDatabaseClient(
         get_runtime_admin_db(),
@@ -70,6 +86,46 @@ async def runtime_status(
         response.data, tenant_id=str(org_id),
     ).to_dict()
     return {"success": True, "data": response.data, "snapshot": snapshot}
+
+
+@router.get("/provider-operations")
+async def provider_operations(
+    user_id: CurrentUserId,
+    db: Database,
+    org_id: UUID,
+    query: ProviderOperationsQuery = Depends(),
+) -> dict:
+    _require_super_admin(user_id, db)
+    response = _admin_db(user_id, str(org_id), "provider-operations-read").rpc(
+        "list_agent_runtime_provider_operations", {
+            "p_org_id": str(org_id), "p_provider": query.provider,
+            "p_capability": query.capability, "p_state": query.state,
+            "p_created_after": query.created_after,
+            "p_created_before": query.created_before, "p_limit": query.limit,
+        },
+    ).execute()
+    return {"success": True, "data": response.data}
+
+
+@router.post("/provider-operations/{submission_id}")
+async def request_provider_operation(
+    submission_id: UUID,
+    body: ProviderOperationRequest,
+    user_id: CurrentUserId,
+    db: Database,
+    org_id: UUID,
+    idempotency_key: UUID = Header(..., alias="Idempotency-Key"),
+) -> dict:
+    _require_super_admin(user_id, db)
+    response = _admin_db(user_id, str(org_id), str(idempotency_key)).rpc(
+        "request_agent_runtime_provider_operation", {
+            "p_request_id": str(idempotency_key), "p_org_id": str(org_id),
+            "p_submission_id": str(submission_id), "p_operation": body.operation,
+            "p_expected_state_version": body.expected_state_version,
+            "p_reason": body.reason, "p_idempotency_key": str(idempotency_key),
+        },
+    ).execute()
+    return {"success": True, "data": response.data}
 
 
 @router.post("/control")
