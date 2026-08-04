@@ -14,8 +14,19 @@ pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations/227_06_agent_runtime_tenant_kill_control.sql"
 ROLLBACK = ROOT / "migrations/rollback/227_06_agent_runtime_tenant_kill_control_rollback.sql"
+PREREQUISITE_MIGRATIONS = (
+    ROOT / "migrations/227_04_agent_runtime_provider_submission_facts.sql",
+    ROOT / "migrations/227_05_agent_runtime_scheduler_cas.sql",
+)
+PREREQUISITE_ROLLBACKS = (
+    ROOT / "migrations/rollback/227_05_agent_runtime_scheduler_cas_rollback.sql",
+    ROOT / "migrations/rollback/227_04_agent_runtime_provider_submission_facts_rollback.sql",
+)
 ORG = "22222222-2222-2222-2222-222222222222"
 ACTOR = "44444444-4444-4444-4444-444444444444"
+FENCE_ID = "66666666-6666-6666-6666-666666666666"
+FENCE_OWNER = "77777777-7777-7777-7777-777777777777"
+FENCE_TOKEN = "88888888-8888-8888-8888-888888888888"
 
 
 def _apply(url: str, path: Path) -> None:
@@ -48,7 +59,22 @@ def _set_gate(url: str, request_id: str, scope: str, key: str, blocked: bool, ex
         ).fetchone()[0]
 
 
+def _read_fence(url: str, token: str) -> object:
+    worker_url = url.replace("postgres@", "everydayai_agent_runtime_worker@")
+    with psycopg.connect(worker_url) as conn:
+        conn.execute("SELECT set_config('app.access_kind','agent_runtime',false)")
+        conn.execute("SELECT set_config('app.actor_user_id',%s,false)", (ACTOR,))
+        conn.execute("SELECT set_config('app.org_id',%s,false)", (ORG,))
+        conn.execute("SELECT set_config('app.request_id',%s,false)", (str(uuid4()),))
+        return conn.execute(
+            "SELECT get_agent_runtime_owner_fence(%s,%s,%s)",
+            ("attempt", FENCE_OWNER, token),
+        ).fetchone()[0]
+
+
 def test_a_apply_acl_cas_audit_status_and_rollback_guard(database: str) -> None:
+    for path in PREREQUISITE_MIGRATIONS:
+        _apply(database, path)
     _apply(database, MIGRATION)
     try:
         with psycopg.connect(database) as conn:
@@ -88,6 +114,18 @@ def test_a_apply_acl_cas_audit_status_and_rollback_guard(database: str) -> None:
         assert unblocked["outcome"] == "applied"
         assert unblocked["kill_epoch"] == 1
 
+        with psycopg.connect(database) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute(
+                "INSERT INTO agent_runtime_owner_fences "
+                "(id,owner_kind,owner_id,org_id,execution_token,tenant_kill_epoch,status) "
+                "VALUES(%s,'attempt',%s,%s,%s,1,'active')",
+                (FENCE_ID, FENCE_OWNER, ORG, FENCE_TOKEN),
+            )
+            conn.commit()
+        assert _read_fence(database, FENCE_TOKEN)["outcome"] == "found"
+        assert _read_fence(database, str(uuid4()))["outcome"] == "not_found"
+
         def concurrent_provider_gate() -> object:
             return _set_gate(database, str(uuid4()), "provider", "mock-provider", True, 0)
 
@@ -102,13 +140,21 @@ def test_a_apply_acl_cas_audit_status_and_rollback_guard(database: str) -> None:
 
         with pytest.raises(psycopg.Error, match="AR173_A_ROLLBACK_GUARD_FACTS_EXIST"):
             _apply(database, ROLLBACK)
+
+        with psycopg.connect(database) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            with pytest.raises(psycopg.Error, match="AGENT_RUNTIME_KILL_AUDIT_IMMUTABLE"):
+                conn.execute("UPDATE agent_runtime_kill_audit SET reason='tampered'")
     finally:
         with psycopg.connect(database) as conn:
             conn.execute("SET ROLE everydayai_owner")
-            conn.execute("DELETE FROM agent_runtime_kill_audit")
-            conn.execute("DELETE FROM agent_runtime_owner_fences")
-            conn.execute("DELETE FROM agent_runtime_tenant_gate_controls")
+            conn.execute(
+                "TRUNCATE agent_runtime_kill_audit, agent_runtime_owner_fences, "
+                "agent_runtime_tenant_gate_controls"
+            )
             conn.commit()
         _apply(database, ROLLBACK)
         _apply(database, MIGRATION)
         _apply(database, ROLLBACK)
+        for path in PREREQUISITE_ROLLBACKS:
+            _apply(database, path)

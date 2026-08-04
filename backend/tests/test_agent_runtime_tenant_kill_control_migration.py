@@ -29,6 +29,7 @@ def test_a_admin_contract_is_cas_audited_and_failure_closed() -> None:
     assert "already_applied" in sql
     assert "kill_epoch" in sql
     assert "sha256(convert_to" in sql
+    assert "pg_advisory_xact_lock" in sql
     assert "agent_runtime_kill_audit_immutable" in sql
     assert "RUNTIME_ADMIN_REQUIRED" in sql
     assert "everydayai_runtime_admin" in sql

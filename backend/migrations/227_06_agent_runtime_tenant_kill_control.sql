@@ -128,6 +128,11 @@ BEGIN
         'scope_key', btrim(p_scope_key), 'blocked', p_blocked,
         'expected_state_version', p_expected_state_version);
     v_hash := encode(sha256(convert_to(v_request::TEXT, 'UTF8')), 'hex');
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'agent-runtime-kill-request:' || p_request_id::TEXT, 0));
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'agent-runtime-kill-gate:' || p_org_id::TEXT || ':' ||
+        p_gate_scope || ':' || btrim(p_scope_key), 0));
     SELECT * INTO v_prior FROM agent_runtime_kill_audit
      WHERE request_id = p_request_id;
     IF FOUND THEN
