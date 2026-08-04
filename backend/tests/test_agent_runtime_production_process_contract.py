@@ -52,6 +52,28 @@ def test_runtime_worker_requires_explicit_production_composition() -> None:
     assert "production_components=production_components" in entrypoint
 
 
+def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
+    unit = (DEPLOY / "everydayai-agent-runtime.service").read_text()
+    environment_files = tuple(
+        line.removeprefix("EnvironmentFile=").strip()
+        for line in unit.splitlines()
+        if line.startswith("EnvironmentFile=")
+    )
+
+    assert environment_files == ("/etc/everydayai/agent-runtime-worker.env",)
+    assert not (DEPLOY / "env-templates/agent-runtime-model.env.template").exists()
+
+    worker_template = (
+        DEPLOY / "env-templates/agent-runtime-worker.env.template"
+    ).read_text()
+    forbidden = (
+        "KIE_API_KEY", "GOOGLE_API_KEY", "DASHSCOPE_API_KEY",
+        "APP_OPENROUTER_API_KEY", "CONFIG_KEK", "credential",
+    )
+    runtime_environment = f"{unit}\n{worker_template}".lower()
+    assert not any(item.lower() in runtime_environment for item in forbidden)
+
+
 def test_production_factory_fails_closed_until_scoped_services_exist() -> None:
     with pytest.raises(
         RuntimeError, match="RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY",

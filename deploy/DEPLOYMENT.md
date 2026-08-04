@@ -208,6 +208,13 @@ bash deploy/validate-kek-env.sh /var/www/everydayai/backend/.env.kek
 Backend 配置管理接口与 Sync Bundle 解析均需要加解密，因此两个服务单元必须加载
 `.env.kek`；Actor、WeCom 和普通 Worker 不得加载该文件。
 
+独立 Agent Runtime Worker 只能加载
+`/etc/everydayai/agent-runtime-worker.env`。该文件仅包含窄数据库角色、进程身份、
+release、health socket 与 Sandbox 路径等运行配置，不得包含 Provider API Key、KEK
+或原始凭证。Runtime Provider 凭证只能通过
+`CredentialBroker` 的 opaque handle 和短期 `CredentialLease` 提供；缺少安全 backend
+时必须失败关闭。
+
 在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
 `EnvironmentFile` 指向这些角色文件。
 
