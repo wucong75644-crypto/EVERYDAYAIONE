@@ -46,6 +46,10 @@ class SandboxJobWorker:
     def drain(self) -> None:
         self._draining = True
 
+    @property
+    def draining(self) -> bool:
+        return self._draining
+
     def probe(self) -> IsolationProbe:
         """Expose the launcher's single authoritative readiness probe."""
         return self._launcher.probe()

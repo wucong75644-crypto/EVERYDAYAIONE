@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import time
+from contextlib import suppress
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -84,51 +85,130 @@ async def _run() -> None:
     }[role]
     control_db = scoped(raw, kind, settings.agent_runtime_worker_id)
     stopping = asyncio.Event()
-    draining = False
-    ready = False
+    state = {
+        "liveness": True,
+        "ready": False,
+        "draining": False,
+        "status": "unavailable",
+        "reason": "STARTING",
+    }
     last_heartbeat = 0.0
     loop = asyncio.get_running_loop()
+    owner = None
+    cycle = None
+
+    def request_drain() -> None:
+        state.update(draining=True, ready=False, status="draining", reason="SIGTERM")
+        _drain_owner(owner)
+        stopping.set()
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stopping.set)
-    owner, cycle = await _build_owner_and_cycle(role, raw, settings)
+        loop.add_signal_handler(sig, request_drain)
+
     async def health(reader, writer):
-        await reader.read(1024)
-        writer.write((json.dumps({
-            "ready": ready and not draining and not stopping.is_set(),
-            "draining": draining or stopping.is_set(),
-            "role": role,
-        }) + "\n").encode())
-        await writer.drain()
-        writer.close()
-        await writer.wait_closed()
+        try:
+            await reader.read(1024)
+            payload = _health_payload(state, role, stopping.is_set())
+            writer.write((json.dumps(payload) + "\n").encode())
+            await writer.drain()
+        finally:
+            writer.close()
+            with suppress(Exception):
+                await writer.wait_closed()
 
     socket_path = settings.agent_runtime_health_socket
     if os.path.exists(socket_path):
         os.unlink(socket_path)
     server = await asyncio.start_unix_server(health, path=socket_path)
     os.chmod(socket_path, 0o660)
-    ready = True
     try:
+        try:
+            owner, cycle = await _build_owner_and_cycle(role, raw, settings)
+            state.update(status="disabled", reason="GATE_CLOSED")
+        except Exception as error:
+            state.update(status="unavailable", reason=_redacted_error(error))
+            owner = None
+            cycle = None
         while not stopping.is_set():
-            response = await control_db.rpc(
-                "get_agent_runtime_worker_control",
-                {"p_process_role": role},
-            ).execute()
-            enabled = isinstance(response.data, dict) and response.data.get("enabled")
+            enabled, control_reason = await _read_control(control_db, role)
+            _apply_gate_state(state, owner is not None, enabled, control_reason)
             now = time.monotonic()
             if now - last_heartbeat >= settings.agent_runtime_heartbeat_seconds:
-                await _report_heartbeat(
-                    control_db, settings, role, bool(enabled),
+                heartbeat_ok = await _report_heartbeat(
+                    control_db, settings, role,
+                    ready=bool(owner is not None and enabled),
+                    draining=bool(state["draining"]),
+                    status_code=(
+                        "accepting" if owner is not None and enabled
+                        else control_reason.lower()
+                    ),
                 )
                 last_heartbeat = now
-            if enabled:
+                _update_readiness(
+                    state, heartbeat_ok, owner is not None, enabled,
+                    control_reason,
+                )
+            if _can_run_cycle(owner, cycle, enabled, bool(state["ready"])):
                 await cycle()
             else:
                 await asyncio.sleep(settings.agent_runtime_poll_interval_seconds)
     finally:
+        state.update(ready=False, draining=True, status="draining", reason="SHUTDOWN")
+        _drain_owner(owner)
+        await _report_heartbeat(
+            control_db, settings, role, ready=False, draining=True,
+            status_code="draining",
+        )
         await _shutdown(
             role, owner, control_db, settings, server, socket_path,
         )
+
+
+async def _read_control(control_db, role: str) -> tuple[bool, str]:
+    try:
+        response = await control_db.rpc(
+            "get_agent_runtime_worker_control",
+            {"p_process_role": role},
+        ).execute()
+        enabled = bool(
+            isinstance(response.data, dict) and response.data.get("enabled")
+        )
+        return enabled, "GATE_OPEN" if enabled else "GATE_CLOSED"
+    except Exception as error:
+        return False, _redacted_error(error)
+
+
+def _update_readiness(
+    state: dict[str, object], heartbeat_ok: bool, composition_ready: bool,
+    gate_enabled: bool, control_reason: str,
+) -> None:
+    if not heartbeat_ok:
+        state.update(ready=False, status="unavailable", reason="HEARTBEAT_FAILED")
+    elif state["draining"]:
+        state.update(ready=False, status="draining", reason="SIGTERM")
+    elif not composition_ready:
+        state.update(ready=False, status="unavailable")
+    elif gate_enabled:
+        state.update(ready=True, status="ready", reason="ACCEPTING")
+    else:
+        state.update(
+            ready=False,
+            status="disabled" if control_reason == "GATE_CLOSED" else "unavailable",
+            reason=control_reason,
+        )
+
+
+def _apply_gate_state(
+    state: dict[str, object], composition_ready: bool, gate_enabled: bool,
+    control_reason: str,
+) -> None:
+    if state["draining"] or not composition_ready or gate_enabled:
+        return
+    state.update(
+        ready=False,
+        status="disabled" if control_reason == "GATE_CLOSED" else "unavailable",
+        reason=control_reason,
+    )
 
 
 async def _build_owner_and_cycle(role, raw, settings):
@@ -156,6 +236,8 @@ async def _build_owner_and_cycle(role, raw, settings):
 
         async def cycle():
             execution = await owner.worker.run_once()
+            if owner.worker.draining:
+                return execution.worked
             recovery = await owner.worker.reconcile_next()
             owner.worker.cleanup_expired_partials(
                 settings.sandbox_partial_retention_seconds,
@@ -173,42 +255,73 @@ async def _build_owner_and_cycle(role, raw, settings):
     return owner, cycle
 
 
-async def _report_heartbeat(control_db, settings, role, enabled) -> None:
-    await control_db.rpc(
-        "report_agent_runtime_worker_heartbeat", {
-            "p_process_role": role,
-            "p_worker_id": settings.agent_runtime_worker_id,
-            "p_release_revision": settings.agent_runtime_release_revision,
-            "p_ready": True,
-            "p_draining": False,
-            "p_status_code": "accepting" if enabled else "gate_closed",
-            "p_details": {"gate_enabled": enabled},
-        },
-    ).execute()
-
-
-async def _shutdown(role, owner, control_db, settings, server, socket_path):
+async def _report_heartbeat(
+    control_db, settings, role, *, ready: bool, draining: bool,
+    status_code: str,
+) -> bool:
     try:
         await control_db.rpc(
             "report_agent_runtime_worker_heartbeat", {
-                "p_process_role": role,
-                "p_worker_id": settings.agent_runtime_worker_id,
-                "p_release_revision": settings.agent_runtime_release_revision,
-                "p_ready": False,
-                "p_draining": True,
-                "p_status_code": "draining",
-                "p_details": {},
+            "p_process_role": role,
+            "p_worker_id": settings.agent_runtime_worker_id,
+            "p_release_revision": settings.agent_runtime_release_revision,
+            "p_ready": ready,
+            "p_draining": draining,
+            "p_status_code": status_code,
+            "p_details": {"ready": ready, "draining": draining},
             },
         ).execute()
     except Exception:
-        pass
+        return False
+    return True
+
+
+def _redacted_error(error: Exception) -> str:
+    """Expose only stable class/code information to health consumers."""
+    code = str(error).split(":", 1)[0].strip().upper()
+    if not code or len(code) > 80 or not code.replace("_", "").isalnum():
+        return type(error).__name__.upper()
+    return code
+
+
+def _health_payload(state: dict[str, object], role: str, stopping: bool) -> dict[str, object]:
+    payload = dict(state)
+    payload["ready"] = bool(
+        state["ready"] and not state["draining"] and not stopping
+    )
+    payload["role"] = role
+    return payload
+
+
+def _can_run_cycle(owner, cycle, gate_enabled: bool, ready: bool) -> bool:
+    return owner is not None and cycle is not None and gate_enabled and ready
+
+
+def _drain_owner(owner) -> None:
+    if owner is None:
+        return
+    drain = getattr(owner, "drain", None)
+    if callable(drain):
+        drain()
+        return
+    stop = getattr(owner, "stop", None)
+    if callable(stop):
+        stop()
+        return
+    service = getattr(owner, "service", None)
+    stop = getattr(service, "stop", None)
+    if callable(stop):
+        stop()
+
+
+async def _shutdown(role, owner, control_db, settings, server, socket_path):
     server.close()
     await server.wait_closed()
     if os.path.exists(socket_path):
         os.unlink(socket_path)
-    if role == "sandbox":
+    if role == "sandbox" and owner is not None:
         owner.service.stop()
-    elif role == "agent_runtime":
+    elif role == "agent_runtime" and owner is not None:
         owner.stop()
     await close_async_worker_db()
 

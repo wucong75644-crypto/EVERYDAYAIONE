@@ -36,7 +36,9 @@ def test_sandbox_environment_has_no_forbidden_credentials() -> None:
     entrypoint = (ROOT / "backend" / "agent_runtime_worker_main.py").read_text()
     assert "class SandboxProcessSettings" in entrypoint
     assert "env_file=None" in entrypoint
-    assert '"ready": ready and not draining and not stopping.is_set()' in entrypoint
+    assert '"liveness": True' in entrypoint
+    assert '"status": "unavailable"' in entrypoint
+    assert 'HEARTBEAT_FAILED' in entrypoint
 
 
 def test_runtime_worker_requires_explicit_production_composition() -> None:

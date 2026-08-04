@@ -75,18 +75,32 @@ class RuntimeOwner:
     def __init__(self, commands, runtime) -> None:
         self.commands = commands
         self.runtime = runtime
+        self._draining = False
 
     async def run_once(self) -> bool:
-        return any((
-            await self.commands.run_once(),
-            await self.runtime.run_once(),
-            await self.runtime.action_once(),
-            await self.runtime.reconciliation_once(),
-        ))
+        if self._draining:
+            return False
+        worked = await self.commands.run_once()
+        if self._draining:
+            return worked
+        worked = (await self.runtime.run_once()) or worked
+        if self._draining:
+            return worked
+        worked = (await self.runtime.action_once()) or worked
+        if self._draining:
+            return worked
+        return (await self.runtime.reconciliation_once()) or worked
 
-    def stop(self) -> None:
+    def drain(self) -> None:
+        """Stop future claims while allowing the current fenced call to finish."""
+        if self._draining:
+            return
+        self._draining = True
         self.commands.stop()
         self.runtime.stop()
+
+    def stop(self) -> None:
+        self.drain()
 
 
 class ProjectionOwner:
