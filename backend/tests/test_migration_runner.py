@@ -15,6 +15,7 @@ from scripts.migration_runner import (
     baseline_through,
     discover_migrations,
     main,
+    reconcile_failed,
     run,
     validate_ledger,
 )
@@ -98,6 +99,50 @@ def test_validation_returns_only_pending_in_order() -> None:
     }
 
     assert validate_ledger([first, second], rows) == [second]
+
+
+def test_reconcile_failed_requires_acknowledgement() -> None:
+    connection = MagicMock()
+    migration = _migration("222_01_failed.sql")
+
+    with pytest.raises(MigrationError, match="rollback acknowledgement"):
+        reconcile_failed(
+            connection,
+            [migration],
+            migration.identity,
+            "operator",
+            False,
+        )
+
+
+def test_reconcile_failed_deletes_only_matching_failed_marker() -> None:
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchone.return_value = {"identity": "222_01_failed.sql"}
+    migration = _migration("222_01_failed.sql")
+    with patch.object(
+        migration_runner,
+        "_ledger_rows",
+        return_value={
+            migration.identity: {
+                "status": "failed",
+                "checksum_sha256": migration.checksum,
+            }
+        },
+    ):
+        reconcile_failed(
+            connection,
+            [migration],
+            migration.identity,
+            "operator",
+            True,
+        )
+
+    assert "DELETE FROM schema_migration_ledger" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == (
+        migration.identity,
+        migration.checksum,
+    )
 
 
 def test_baseline_requires_known_boundary_and_empty_ledger() -> None:
