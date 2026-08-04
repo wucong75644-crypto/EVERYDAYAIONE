@@ -75,6 +75,8 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert "RUN_MIGRATIONS 只能是 true 或 false" in MIGRATION_SCRIPT
     assert "缺少 MIGRATION_DATABASE_URL" in MIGRATION_SCRIPT
     assert "source .env.migrator" in MIGRATION_SCRIPT
+    assert "RECONCILE_FAILED_MIGRATION" in MIGRATION_SCRIPT
+    assert "ACKNOWLEDGE_MIGRATION_ROLLBACK" in MIGRATION_SCRIPT
     assert "venv/bin/python -m pytest" in SCRIPT
     assert 'command -v python3.12 || command -v python3' in SCRIPT
     assert '"$PYTHON_BIN" -m venv venv' in SCRIPT

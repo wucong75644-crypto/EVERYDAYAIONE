@@ -282,7 +282,7 @@ remote_exec() {
 deploy_backend() {
     log_info "在服务器上部署后端..."
 
-    remote_exec "RUN_MIGRATIONS=${RUN_MIGRATIONS:-false} bash -s" << 'ENDSSH'
+    remote_exec "RUN_MIGRATIONS=${RUN_MIGRATIONS:-false} RECONCILE_FAILED_MIGRATION=${RECONCILE_FAILED_MIGRATION:-} ACKNOWLEDGE_MIGRATION_ROLLBACK=${ACKNOWLEDGE_MIGRATION_ROLLBACK:-false} bash -s" << 'ENDSSH'
         set -e
         cd /var/www/everydayai/backend
         if [ ! -d "venv" ]; then

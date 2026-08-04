@@ -26,6 +26,17 @@ if [ ! -x "$migration_python" ]; then
     exit 1
 fi
 
+if [ -n "${RECONCILE_FAILED_MIGRATION:-}" ]; then
+    if [ "${ACKNOWLEDGE_MIGRATION_ROLLBACK:-false}" != "true" ]; then
+        echo "❌ 失败迁移恢复必须明确确认事务已回滚"
+        exit 1
+    fi
+    "$migration_python" scripts/migration_runner.py reconcile-failed \
+        --identity "$RECONCILE_FAILED_MIGRATION" \
+        --acknowledge-transaction-rollback \
+        --applied-by deploy-reconciliation
+fi
+
 migration_plan=$(
     "$migration_python" scripts/migration_runner.py plan \
         --applied-by deploy-script
