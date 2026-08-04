@@ -90,6 +90,11 @@ Agent Runtime Sandbox Job Controller 与专业 Executor：
 - `docs/document/TECH_AGENT_RUNTIME_SandboxJobController_BatchA.md`：记录身份、
   状态机、锁序、权限、Worker/Executor和三层隔离验证门禁。
 
+Agent Runtime C2.1 ERP 只读接线：
+- `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
+  scope 的 `org_id` 逐次解析企业 ERP 凭证并构造一次性 dispatcher；不启用生产
+  composition，不接 ERP 写入或其他专业能力收口。
+
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
   增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用

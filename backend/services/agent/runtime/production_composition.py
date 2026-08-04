@@ -15,7 +15,8 @@ from services.agent.runtime.catalog.production import (
 from services.agent.runtime.executors.family_executors import EXECUTOR_BY_FAMILY
 from services.agent.runtime.executors.provider_adapters import (
     ArtifactPort, ChildRunPort, CrawlerProvider, DashScopeSearchProvider,
-    ErpApiSearchProvider, ErpDispatcherPort, ERPQueryProvider, KieMediaProvider,
+    ErpApiSearchProvider, ErpDispatcherFactoryPort, ErpDispatcherPort,
+    ERPQueryProvider, KieMediaProvider,
     LocalArtifactProvider, MediaTaskPort, PortBackedProvider, ProviderTransport,
     ResourceMutationPort, TenantProviderResolver, TenantScopedProvider,
 )
@@ -81,6 +82,7 @@ def build_production_components_for_worker(*, database, settings, sandbox_regist
 class ProductionSpecialistPorts:
     transport: ProviderTransport
     erp_dispatcher: ErpDispatcherPort
+    erp_dispatcher_factory: ErpDispatcherFactoryPort | None = None
     erp_search: object
     artifact: ArtifactPort
     media_task: MediaTaskPort
@@ -148,7 +150,10 @@ def build_production_specialist_registry(
         providers[tool] = (
             DashScopeSearchProvider(ports.transport) if tool == "web_search"
             else CrawlerProvider(ports.transport) if tool == "social_crawler"
-            else ERPQueryProvider(ports.erp_dispatcher, tool_name=tool)
+            else ERPQueryProvider(
+                ports.erp_dispatcher, tool_name=tool,
+                dispatcher_factory=ports.erp_dispatcher_factory,
+            )
         )
     for tool in ERP_CATALOG_TOOLS:
         providers[tool] = ErpApiSearchProvider(search=ports.erp_search)
@@ -246,6 +251,7 @@ def build_production_components_from_services(
     file_analyze: ArtifactPort | None = None, fetch_all_pages: ArtifactPort | None = None,
     provider_resolver: TenantProviderResolver | None = None,
     credential_broker: object | None = None,
+    erp_dispatcher_factory: ErpDispatcherFactoryPort | None = None,
 ) -> ProductionRuntimeComponents:
     """Production service join: Artifact, Workspace, Scheduler and Sync share one facts port."""
     from dataclasses import replace
@@ -302,6 +308,7 @@ def build_production_components_from_services(
         database=database, read_resources=read_resources,
         specialist_ports=ProductionSpecialistPorts(
             transport=transport, erp_dispatcher=erp_dispatcher,
+            erp_dispatcher_factory=erp_dispatcher_factory,
             erp_search=erp_search, artifact=artifact, media_task=media_task,
             resource_mutation=resources, child_run=child_run, facts=facts,
             local_data=local_data, file_analyze=file_analyze,

@@ -2048,6 +2048,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `WorkspaceResourceService` / `ScheduledTaskService` | `backend/services/agent/runtime/executors/resource_contracts.py` | OSS retention、稳定资源恢复、原子 rename 与计划任务 CAS |
 | `PostgresSpecialistRepository` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Cost、Callback、Artifact、Child Run 与资源 RPC 的 worker-scoped adapter |
 | `ERPQueryProvider` / `ErpApiSearchProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 分别通过正式 ERP Registry/Dispatcher 和本地 `search_erp_api`；不把 `erp_api_search` 发到远程 ERP |
+| `OrgScopedErpDispatcherFactory` | `backend/services/agent/runtime/executors/erp_factory.py` | 每次从 `ActionAttempt.scope.org_id` 解析企业 ERP 凭证并构造一次性 dispatcher；仅接读路径，不暴露 Secret |
 | `HttpProviderTransport` / `KieMediaProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 隔离 HTTP submit/status/cancel，限制 timeout/响应大小/redirect；无终止证明返回 unknown |
 | `CallbackInbox.ingest` | `backend/services/agent/runtime/providers/callback_inbox.py` | 原始 body 验签、时间窗校验、脱敏后唯一写入持久化 repository；旧 `record` 入口明确拒绝 |
 | `ContentAddressedArtifactService` / `RuntimeResourceMutationService` | `backend/services/agent/runtime/executors/resource_contracts.py` | 内容寻址 materialize、Workspace/OSS retention、Scheduler CAS 的非生产具体 composition |

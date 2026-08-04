@@ -32,6 +32,12 @@ class ProviderTransport(Protocol):
 class ErpDispatcherPort(Protocol):
     async def execute(self, tool_name: str, action: str, params: dict[str, object]) -> object: ...
 
+    async def close(self) -> None: ...
+
+
+class ErpDispatcherFactoryPort(Protocol):
+    async def create(self, scope: RuntimeScope) -> ErpDispatcherPort: ...
+
 
 class HttpProviderTransport:
     """HTTP client for isolated provider servers; no redirects and bounded body."""
@@ -214,8 +220,14 @@ class _HTTPProvider(SpecialistProvider):
 
 
 class ERPQueryProvider(_HTTPProvider):
-    def __init__(self, dispatcher: ErpDispatcherPort, *, tool_name: str, write: bool = False) -> None:
+    def __init__(
+        self, dispatcher: ErpDispatcherPort | None = None, *, tool_name: str,
+        write: bool = False, dispatcher_factory: ErpDispatcherFactoryPort | None = None,
+    ) -> None:
+        if dispatcher is None and dispatcher_factory is None:
+            raise ValueError("ERP_DISPATCHER_SOURCE_REQUIRED")
         self.dispatcher = dispatcher
+        self.dispatcher_factory = dispatcher_factory
         self.tool_name = tool_name
         self.write = write
         super().__init__(_NoTransport(), provider="erp", submit_path="")
@@ -224,8 +236,23 @@ class ERPQueryProvider(_HTTPProvider):
         action = request.get("action")
         if not isinstance(action, str) or not _valid_erp_action(self.tool_name, action, write=self.write):
             return _unknown("erp", attempt.request_hash, "ERP_ACTION_NOT_REGISTERED")
-        result = await self.dispatcher.execute(self.tool_name, action, _params(request))
-        return _dispatcher_receipt(attempt, result, provider="erp")
+        dispatcher = self.dispatcher
+        owned = False
+        if self.dispatcher_factory is not None and not self.write:
+            if not attempt.scope.org_id:
+                raise ValueError("ERP_ORG_SCOPE_REQUIRED")
+            dispatcher = await self.dispatcher_factory.create(attempt.scope)
+            owned = True
+        if dispatcher is None:
+            raise RuntimeError("ERP_DISPATCHER_NOT_READY")
+        try:
+            result = await dispatcher.execute(
+                self.tool_name, action, _params(request),
+            )
+            return _dispatcher_receipt(attempt, result, provider="erp")
+        finally:
+            if owned:
+                await dispatcher.close()
 
 
 class CrawlerProvider(_HTTPProvider):
@@ -379,7 +406,7 @@ class _NoTransport:
 
 __all__ = [
     "AllowlistedTransport", "ArtifactPort", "ChildRunPort", "CrawlerProvider", "DashScopeSearchProvider",
-    "ERPQueryProvider", "ErpApiSearchProvider", "ErpDispatcherPort", "HttpProviderTransport", "KieMediaProvider", "LocalArtifactProvider", "MediaTaskPort",
+    "ERPQueryProvider", "ErpApiSearchProvider", "ErpDispatcherFactoryPort", "ErpDispatcherPort", "HttpProviderTransport", "KieMediaProvider", "LocalArtifactProvider", "MediaTaskPort",
     "PortBackedProvider", "ProviderTransport", "ResourceMutationPort",
     "TenantProviderBinding", "TenantProviderResolver", "TenantScopedProvider",
     "request_hash",
