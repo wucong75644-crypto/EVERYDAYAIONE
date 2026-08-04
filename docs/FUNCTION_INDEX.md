@@ -2035,7 +2035,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `set_agent_runtime_tenant_gate` / `get_agent_runtime_tenant_gate_status` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | Tenant/provider/capability kill gate 的租户作用域 CAS、单调 epoch、脱敏不可变审计与只读状态；不接入 Runtime dispatch |
 | `get_agent_runtime_owner_fence` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | 仅按 owner、execution token 返回脱敏 owner fence；Worker 无新事实表直权 |
 | `runtime_submit_ingress_v5` / `get_agent_runtime_ingress_capability` | `backend/migrations/227_13_agent_runtime_additive_ingress_compatibility.sql` | 保留 rollout、anchor、版本事实、effective toolset 与 tenant kill-epoch ingress fence；移除 42 binding ready 总门禁，provider/capability readiness 延后至 action dispatch；v4/v3 保留为回滚入口 |
-| `restore_prepared_task_to_legacy_actor` / `mark_prepared_task_runtime_owned` / `runtime_submit_ingress_v5_owner_transition` / `enqueue_wecom_runtime_turn_v6` | `backend/migrations/227_14_agent_runtime_owner_transition.sql` | C5.1-R 受控 Web/WeCom owner transition；严格校验 tenant、task/message/turn/through anchor 与 idempotency，Runtime 未接管恢复 Actor，accepted/created/already_exists 原子标记 Runtime；不改变旧 migration 或生产 flags |
+| `restore_prepared_task_to_legacy_actor` / `mark_prepared_task_runtime_owned` / `runtime_submit_ingress_v5_owner_transition` / `enqueue_wecom_runtime_turn_v6` | `backend/migrations/227_14_agent_runtime_owner_transition.sql`（ACL 由 `227_15_agent_runtime_owner_rpc_acl_closure.sql` 收口） | C5.1-R 受控 Web/WeCom owner transition；严格校验 tenant、task/message/turn/through anchor 与 idempotency。Web 仅可调用原子 owner-transition ingress，WeCom 仅可调用 v6 enqueue；raw v5 与 restore/mark helper 不向应用角色开放 |
 
 ### Agent Runtime AR-17.3 专业 Executor（仅非生产）
 
