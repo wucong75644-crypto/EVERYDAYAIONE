@@ -76,7 +76,7 @@ async def enqueue_wecom_message(
 
     settings = get_settings()
     rpc_name = (
-        "enqueue_wecom_runtime_turn_v5"
+        "enqueue_wecom_runtime_turn_v6"
         if settings.agent_runtime_ingress_enabled
         else "enqueue_wecom_generation_turn_v2"
     )
@@ -95,7 +95,7 @@ async def enqueue_wecom_message(
                 settings.agent_runtime_agent_definition_revision,
             "p_idempotency_key": f"wecom:{msg.msgid}",
         })
-    if rpc_name == "enqueue_wecom_runtime_turn_v5":
+    if rpc_name == "enqueue_wecom_runtime_turn_v6":
         fact_response = handler.db.rpc("get_agent_runtime_definition_fact", {
             "p_agent_key": settings.agent_runtime_agent_definition_id,
             "p_definition_revision": settings.agent_runtime_agent_definition_revision,

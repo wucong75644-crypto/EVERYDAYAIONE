@@ -73,6 +73,13 @@ class RuntimeIngress:
             if not definition_hash or not catalog_revision:
                 raise RuntimeError("RUNTIME_DEFINITION_FACT_INVALID")
         rpc_name = await self._resolve_rpc_name()
+        owner_transition = (
+            self._contract_revision == 3
+            and bool(payload.get("task_id"))
+            and rpc_name == "runtime_submit_ingress_v5"
+        )
+        if owner_transition:
+            rpc_name = "runtime_submit_ingress_v5_owner_transition"
         rpc_params = {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
             "p_user_id": user_id, "p_scope_kind": scope_kind,
@@ -92,6 +99,15 @@ class RuntimeIngress:
             "p_release_revision": settings.agent_runtime_release_revision,
             "p_payload": dict(payload),
         }
+        if owner_transition:
+            rpc_params.update({
+                "p_task_id": str(payload["task_id"]),
+                "p_client_task_id": str(payload.get("client_task_id") or ""),
+                "p_input_message_id": str(payload.get("input_message_id") or ""),
+                "p_output_message_id": str(payload.get("output_message_id") or ""),
+                "p_turn_id": str(payload.get("turn_id") or ""),
+                "p_request_id": str(payload.get("request_id") or idempotency_key),
+            })
         try:
             response = await self._execute_rpc(rpc_name, rpc_params)
         except Exception as error:

@@ -1643,3 +1643,4 @@ The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict f
 
 - **2026-08-04**：T17.3-A 新增 227_06 tenant/provider/capability kill control、owner fence 与不可变 kill audit facts；提供 tenant-scoped admin CAS/audit status RPC，以及仅按 execution token 读取 owner fence 的 Worker 窄 RPC。该批不接入 ingress、claim、dispatch 或 lease 行为，production flags 继续关闭；rollback 在任何新事实存在时失败关闭。
 - **2026-08-04**：C4.1 新增 227_13 additive ingress compatibility lane；RuntimeIngress 在确认 v5 capability 后使用 v5，保留 v4/v3 fallback。v5 保留 tenant kill-epoch ingress fence、rollout、anchor、版本与 effective toolset facts，移除 42 binding ready 总门禁且不修改 binding facts；v5 rollback 仅撤销自身函数/权限，存在 ingress facts 时失败关闭。
+- **2026-08-04**：C5.1-R 新增 227_14 owner transition additive lane；Web/WeCom Runtime ingress 在未 accepted 时通过受控 RPC 恢复 Actor owner，在 created/already_exists 时通过同事务 transition 保持 Runtime owner；不启用 Worker、provider binding、生产 flags，也不修改 227_01～227_13。

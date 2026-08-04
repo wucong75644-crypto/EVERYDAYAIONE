@@ -98,7 +98,10 @@ async def prepare_and_start_chat_generation(
             preparation=preparation, business_params=business_params,
             internal_task_id=internal_task_id,
         )
-        if ingress.outcome in {"ingress_disabled", "org_not_enabled"}:
+        if ingress.outcome in {
+            "ingress_disabled", "org_not_enabled", "subject_not_enabled",
+            "runtime_unavailable", "fenced",
+        }:
             external_task_id = await handler.start(
                 message_id=preparation.output_message_id,
                 conversation_id=conversation_id, user_id=user_id,
@@ -204,6 +207,7 @@ async def _submit_runtime_ingress(
             "delivery_context": {
                 "actor": False, "runtime": True, "channel": "web",
             },
+            "request_id": request_id,
         },
     )
 
