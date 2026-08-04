@@ -107,7 +107,8 @@ BEGIN
                 WHEN f.state IN ('accepted','unknown','reconcile_required','cancel_requested')
                     THEN f.state ELSE f.state END,
             'first_seen_at', f.created_at, 'last_readback_at', f.last_readback_at,
-            'reconcile_count', 0, 'duplicate_attempt_count', 0,
+            'reconcile_count', rec.reconcile_count,
+            'duplicate_attempt_count', GREATEST(dup.attempt_count-1,0),
             'kill_epoch', COALESCE(ofn.tenant_kill_epoch,0),
             'provider_revision', f.provider_revision,
             'cost_linked', EXISTS (
@@ -123,6 +124,17 @@ BEGIN
             WHERE owner_kind='attempt' AND owner_id=f.attempt_id
             ORDER BY updated_at DESC LIMIT 1
         ) ofn ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::INTEGER AS reconcile_count
+            FROM agent_runtime_events e
+            WHERE e.action_id=f.action_id AND e.event_type='action.provider.reconciled'
+        ) rec ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::INTEGER AS attempt_count
+            FROM agent_runtime_provider_submission_facts d
+            WHERE d.org_id=f.org_id AND d.provider=f.provider
+              AND d.external_idempotency_key=f.external_idempotency_key
+        ) dup ON TRUE
         WHERE f.org_id=p_org_id
           AND (p_provider IS NULL OR f.provider=p_provider)
           AND (p_domain IS NULL OR p_domain=CASE
