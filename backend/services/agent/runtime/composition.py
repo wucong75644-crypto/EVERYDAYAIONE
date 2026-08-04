@@ -171,13 +171,19 @@ def build_runtime(database: Any, settings, *, production_components=None) -> Run
             capability_issuer=sandbox.capability_issuer,
         )
     )
+    credential_broker = getattr(
+        getattr(components, "service_bundle", None), "credential_broker", None,
+    )
     model_loop = ModelLoopDriver(
         runtime_repository=runtime_repository,
         attempt_repository=attempts,
         action_repository=actions,
         recovery_repository=recovery,
         model=ExistingProviderModelAdapter(db=db),
-        call_factory=PostgresModelCallFactory(db, worker_id, version_registry=versions),
+        call_factory=PostgresModelCallFactory(
+            db, worker_id, version_registry=versions,
+            credential_broker=credential_broker,
+        ),
         reconciler=retain_unknown_model_attempt,
     )
     runtime = RuntimeLoopCoordinator(

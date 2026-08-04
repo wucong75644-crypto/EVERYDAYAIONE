@@ -20,6 +20,8 @@ from services.agent.runtime.ports.model import (
     ModelInputReceipt, ModelRequestOptions, ModelStepId, ModelStepRequest,
     ModelStepResult,
 )
+from services.agent.runtime.credential_broker import CredentialBroker, CredentialLease
+from services.agent.runtime.domain import RuntimeScope, ScopeKind
 
 
 _ACTION_NAMESPACE = UUID("76bc769a-a201-43aa-8ee9-cd13f009f12d")
@@ -27,10 +29,14 @@ _POLICY_REVISION = "agent-runtime-policy-v1"
 
 
 class PostgresModelCallFactory:
-    def __init__(self, database, worker_id: str, *, version_registry=None) -> None:
+    def __init__(
+        self, database, worker_id: str, *, version_registry=None,
+        credential_broker: CredentialBroker | None = None,
+    ) -> None:
         self._database = database
         self._worker_id = worker_id
         self._versions = version_registry
+        self._credential_broker = credential_broker
 
     async def __call__(
         self, snapshot: RunAggregateSnapshot,
@@ -84,18 +90,12 @@ class PostgresModelCallFactory:
         receipt_data["org_id"] = org_id
         receipt_hash = _hash(receipt_data)
         revision = resolve_model_revision(model_id)
-        credential = await _model_credential(
-            self._database,
-            run_id=run_id,
-            worker_id=self._worker_id,
-            execution_token=token,
-            user_id=str(session["user_id"]),
-            org_id=org_id,
-            provider=_provider(model_id),
+        provider = _provider(model_id)
+        credential, receipt_hash = await _bind_model_credential(
+            self._credential_broker, context=context, receipt_data=receipt_data,
+            user_id=str(session["user_id"]), org_id=org_id,
+            provider=provider, revision=revision,
         )
-        receipt_data["credential_source"] = credential[1]
-        receipt_data["credential_version"] = credential[2]
-        receipt_hash = _hash(receipt_data)
         options = ModelRequestOptions(
             thinking_mode=_optional_text(
                 _mapping(payload.get("params") or {}, "params").get(
@@ -135,7 +135,13 @@ class PostgresModelCallFactory:
                 tool_catalog_revision=toolset.catalog_revision,
                 options=options,
                 org_id=org_id,
-                provider_api_key=credential[0],
+                credential_lease=credential,
+                credential_scope=RuntimeScope(
+                    kind=ScopeKind.USER,
+                    scope_id=f"user:{session['user_id']}",
+                    user_id=str(session["user_id"]), org_id=org_id,
+                ),
+                credential_purpose=credential.purpose,
             )
 
         return PreparedModelCall(
@@ -308,59 +314,40 @@ def _provider(model_id: str) -> str:
 
 
 async def _model_credential(
-    database, *, run_id: str, worker_id: str, execution_token: str,
-    user_id: str, org_id: str, provider: str,
-) -> tuple[str | None, str, int]:
-    from core.config import get_settings
-    from core.db_scope import (
-        AsyncScopedDatabaseClient, DatabaseAccessKind, DatabaseScope,
+    broker: CredentialBroker | None, *, context: dict, user_id: str,
+    org_id: str, provider: str, revision: str,
+) -> CredentialLease:
+    if broker is None:
+        raise RuntimeError("RUNTIME_CREDENTIAL_BROKER_REQUIRED")
+    handle = context.get("model_credential_handle")
+    if not isinstance(handle, str) or not handle.strip():
+        raise RuntimeError("CREDENTIAL_HANDLE_REQUIRED")
+    scope = RuntimeScope(
+        kind=ScopeKind.USER, scope_id=f"user:{user_id}", user_id=user_id,
+        org_id=org_id,
     )
-    from services.configuration.bundles import AsyncSecretBundleResolver
-    from services.configuration.envelope import LocalKEKProvider
-    from services.configuration.material_service import SecretMaterialService
+    return await broker.resolve(
+        scope=scope, credential_handle=handle, provider=provider,
+        revision=revision, purpose="model.invoke",
+    )
 
-    bundle_names = {
-        "dashscope": ("ai.provider.dashscope", "ai.dashscope.api_key"),
-        "openrouter": ("ai.provider.openrouter", "ai.openrouter.api_key"),
-        "kie": ("ai.provider.kie", "ai.kie.api_key"),
-        "google": ("ai.provider.google", "ai.google.api_key"),
-    }
-    bundle_spec = bundle_names.get(provider)
-    if bundle_spec is not None:
-        scoped = AsyncScopedDatabaseClient(database, DatabaseScope(
-            actor_user_id=user_id, org_id=org_id,
-            access_kind=DatabaseAccessKind.AGENT_RUNTIME,
-            request_id=f"model-credential:{run_id}",
-        ))
-        resolver = AsyncSecretBundleResolver(
-            scoped,
-            SecretMaterialService(LocalKEKProvider.from_environment()),
-        )
-        bundle = await resolver.agent_runtime_ai(bundle_spec[0], {
-            "p_run_id": run_id,
-            "p_worker_id": worker_id,
-            "p_execution_token": execution_token,
-            "p_bundle_name": bundle_spec[0],
-        })
-        secret = bundle.values.get(bundle_spec[1])
-        if isinstance(secret, dict):
-            api_key = secret.get("api_key")
-            if isinstance(api_key, str) and api_key:
-                return (
-                    api_key,
-                    str(bundle.sources.get(bundle_spec[1]) or "unknown"),
-                    int(bundle.versions.get(bundle_spec[1]) or 0),
-                )
-    settings = get_settings()
-    fallback = {
-        "dashscope": settings.dashscope_api_key,
-        "openrouter": settings.openrouter_api_key,
-        "kie": settings.kie_api_key,
-        "google": settings.google_api_key,
-    }.get(provider)
-    if not isinstance(fallback, str) or not fallback:
-        raise RuntimeError("AGENT_RUNTIME_MODEL_CREDENTIAL_UNAVAILABLE")
-    return fallback, "environment", 0
+
+async def _bind_model_credential(
+    broker: CredentialBroker | None, *, context: dict,
+    receipt_data: dict, user_id: str, org_id: str, provider: str,
+    revision: str,
+) -> tuple[CredentialLease, str]:
+    credential = await _model_credential(
+        broker, context=context, user_id=user_id, org_id=org_id,
+        provider=provider, revision=revision,
+    )
+    receipt_data.update({
+        "credential_handle": credential.handle,
+        "credential_provider": credential.provider,
+        "credential_revision": credential.revision,
+        "credential_purpose": credential.purpose,
+    })
+    return credential, _hash(receipt_data)
 
 
 def _hash(value: object) -> str:

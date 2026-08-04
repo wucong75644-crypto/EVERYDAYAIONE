@@ -188,7 +188,17 @@ class ModelStepRequest:
     tool_catalog_revision: str
     options: ModelRequestOptions
     org_id: str | None = None
-    provider_api_key: str | None = field(default=None, repr=False)
+    # These fields are process-local builder inputs.  They are deliberately
+    # excluded from repr/equality and are never part of the request hash.
+    credential_lease: object | None = field(
+        default=None, repr=False, compare=False,
+    )
+    credential_scope: object | None = field(
+        default=None, repr=False, compare=False,
+    )
+    credential_purpose: str | None = field(
+        default=None, repr=False, compare=False,
+    )
 
     def __post_init__(self) -> None:
         for value, name in (

@@ -70,6 +70,7 @@ class ProductionServiceBundle:
     provider_resolver: TenantProviderResolver
     readiness: ReadinessResult
     service_readiness: Mapping[str, ReadinessResult] | None = None
+    credential_broker: object | None = None
 
     def require_ready(self) -> None:
         if not self.readiness.ready:
@@ -80,16 +81,18 @@ class ProductionServiceBundle:
 
 def build_production_service_bundle(
     *, ports: ProductionServicePorts, provider_resolver: TenantProviderResolver,
-    readiness: ReadinessResult,
+    readiness: ReadinessResult, credential_broker: object | None = None,
 ) -> ProductionServiceBundle:
     """Validate the one explicit service assembly boundary."""
     if provider_resolver is None:
         raise RuntimeError("SERVICE_WIRING_NOT_READY:provider_resolver")
     if not readiness.service_wiring_ready:
         raise RuntimeError(readiness.error_code or "SERVICE_WIRING_NOT_READY")
+    if readiness.credential_available and credential_broker is None:
+        raise RuntimeError("CREDENTIAL_BROKER_REQUIRED")
     return ProductionServiceBundle(
         ports=ports, provider_resolver=provider_resolver,
-        readiness=readiness,
+        readiness=readiness, credential_broker=credential_broker,
     )
 
 

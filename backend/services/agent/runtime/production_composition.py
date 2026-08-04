@@ -245,6 +245,7 @@ def build_production_components_from_services(
     local_data: ArtifactPort | None = None,
     file_analyze: ArtifactPort | None = None, fetch_all_pages: ArtifactPort | None = None,
     provider_resolver: TenantProviderResolver | None = None,
+    credential_broker: object | None = None,
 ) -> ProductionRuntimeComponents:
     """Production service join: Artifact, Workspace, Scheduler and Sync share one facts port."""
     from dataclasses import replace
@@ -295,6 +296,7 @@ def build_production_components_from_services(
                 credential_available=False, capability_enabled=False,
                 probe_passed=False, error_code="PROVIDER_NOT_READY",
             ),
+            credential_broker=credential_broker,
         )
     return build_production_components(
         database=database, read_resources=read_resources,

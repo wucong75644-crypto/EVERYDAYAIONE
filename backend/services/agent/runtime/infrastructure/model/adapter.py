@@ -63,7 +63,7 @@ class ExistingProviderModelAdapter:
         adapter = None
         provider_request_id: str | None = None
         try:
-            adapter = self._create_adapter(request)
+            adapter = await self._create_adapter(request)
             async with asyncio.timeout(request.options.timeout_seconds):
                 messages, tools = request.context_plan.project()
                 async for chunk in adapter.stream_chat(
@@ -168,22 +168,35 @@ class ExistingProviderModelAdapter:
                 error,
             )
 
-    def _create_adapter(self, request: ModelStepRequest) -> Any:
+    async def _create_adapter(self, request: ModelStepRequest) -> Any:
         if self._adapter_factory is not None:
             return self._adapter_factory(
                 request.model_id,
                 org_id=request.org_id or self._org_id,
                 db=self._db,
             )
+        from services.agent.runtime.credential_broker import CredentialLease
+
+        lease = request.credential_lease
+        scope = request.credential_scope
+        purpose = request.credential_purpose
+        if not isinstance(lease, CredentialLease) or scope is None:
+            raise ValueError("RUNTIME_CREDENTIAL_LEASE_REQUIRED")
+        if not isinstance(purpose, str) or not purpose.strip():
+            raise ValueError("CREDENTIAL_PURPOSE_REQUIRED")
         from services.adapters.factory import create_chat_adapter
 
-        kwargs = {
-            "org_id": request.org_id or self._org_id,
-            "db": self._db,
-        }
-        if request.provider_api_key is not None:
-            kwargs["api_key_override"] = request.provider_api_key
-        return create_chat_adapter(request.model_id, **kwargs)
+        provider = _provider_name(request.model_id)
+        return await lease.use(
+            scope=scope, provider=provider, revision=request.model_revision,
+            purpose=purpose,
+            consumer=lambda material: create_chat_adapter(
+                request.model_id,
+                org_id=request.org_id or self._org_id,
+                db=self._db,
+                api_key_override=material,
+            ),
+        )
 
     @staticmethod
     def _log_error(
