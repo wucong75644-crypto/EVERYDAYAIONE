@@ -2031,6 +2031,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress、gate 漂移幂等 readback 与严格 Run anchor context RPC；版本 seed 在 `224_02_agent_runtime_ar17_version_seed.sql` |
 | `set_agent_runtime_tenant_gate` / `get_agent_runtime_tenant_gate_status` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | Tenant/provider/capability kill gate 的租户作用域 CAS、单调 epoch、脱敏不可变审计与只读状态；不接入 Runtime dispatch |
 | `get_agent_runtime_owner_fence` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | 仅按 owner、execution token 返回脱敏 owner fence；Worker 无新事实表直权 |
+| `runtime_submit_ingress_v5` / `get_agent_runtime_ingress_capability` | `backend/migrations/227_13_agent_runtime_additive_ingress_compatibility.sql` | 保留 rollout、anchor、版本事实、effective toolset 与 tenant kill-epoch ingress fence；移除 42 binding ready 总门禁，provider/capability readiness 延后至 action dispatch；v4/v3 保留为回滚入口 |
 
 ### Agent Runtime AR-17.3 专业 Executor（仅非生产）
 

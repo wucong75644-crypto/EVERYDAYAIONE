@@ -72,8 +72,8 @@ class RuntimeIngress:
             catalog_revision = str(fact.get("catalog_revision") or "")
             if not definition_hash or not catalog_revision:
                 raise RuntimeError("RUNTIME_DEFINITION_FACT_INVALID")
-        rpc_name = "runtime_submit_ingress_v4" if self._contract_revision == 3 else "runtime_submit_ingress_v2"
-        response = self._database.rpc(rpc_name, {
+        rpc_name = await self._resolve_rpc_name()
+        rpc_params = {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
             "p_user_id": user_id, "p_scope_kind": scope_kind,
             "p_scope_id": scope_id, "p_created_by_user_id": user_id,
@@ -91,9 +91,13 @@ class RuntimeIngress:
             "p_capability_snapshot": {"requested_groups": ["code"]},
             "p_release_revision": settings.agent_runtime_release_revision,
             "p_payload": dict(payload),
-        }).execute()
-        if inspect.isawaitable(response):
-            response = await response
+        }
+        try:
+            response = await self._execute_rpc(rpc_name, rpc_params)
+        except Exception as error:
+            if rpc_name != "runtime_submit_ingress_v4" or not self._is_missing_rpc(error):
+                raise
+            response = await self._execute_rpc("runtime_submit_ingress_v3", rpc_params)
         data = getattr(response, "data", None)
         if not isinstance(data, dict) or not isinstance(data.get("outcome"), str):
             raise RuntimeError("RUNTIME_INGRESS_RECEIPT_INVALID")
@@ -104,4 +108,42 @@ class RuntimeIngress:
             effective_toolset_revision=data.get("effective_toolset_revision"),
             effective_toolset_hash=data.get("effective_toolset_hash"),
             gate_state=data.get("gate_state"),
+        )
+
+    async def _resolve_rpc_name(self) -> str:
+        if self._contract_revision == 2:
+            return "runtime_submit_ingress_v2"
+        try:
+            capability = await self._execute_rpc(
+                "get_agent_runtime_ingress_capability", {},
+            )
+        except Exception as error:
+            if not self._is_missing_rpc(error):
+                raise
+            return await self._resolve_legacy_rpc_name()
+        data = getattr(capability, "data", None)
+        if not isinstance(data, dict) or data.get("ingress_version") != 5:
+            raise RuntimeError("RUNTIME_INGRESS_V5_CAPABILITY_INVALID")
+        return "runtime_submit_ingress_v5"
+
+    async def _resolve_legacy_rpc_name(self) -> str:
+        return "runtime_submit_ingress_v4"
+
+    async def _execute_rpc(
+        self, name: str, params: Mapping[str, object],
+    ) -> Any:
+        response = self._database.rpc(name, dict(params)).execute()
+        if inspect.isawaitable(response):
+            response = await response
+        return response
+
+    @staticmethod
+    def _is_missing_rpc(error: Exception) -> bool:
+        code = str(getattr(error, "code", ""))
+        text = str(error).lower()
+        return code in {"PGRST202", "42883"} or any(
+            marker in text for marker in (
+                "could not find the function", "undefined function",
+                "function does not exist", "does not exist",
+            )
         )
