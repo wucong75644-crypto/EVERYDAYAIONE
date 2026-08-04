@@ -59,7 +59,7 @@ async def test_raw_worker_db_sets_scope_before_enumeration_rpc() -> None:
         ("", "", "worker", "worker-active-organizations"),
     )
     assert cursor.execute.call_args_list[1].args == (
-        'SELECT "worker_list_active_organization_ids"()',
+        'SELECT public."worker_list_active_organization_ids"()',
         [],
     )
 
