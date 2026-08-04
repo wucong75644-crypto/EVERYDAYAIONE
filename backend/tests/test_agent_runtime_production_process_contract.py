@@ -72,6 +72,10 @@ def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
     )
     runtime_environment = f"{unit}\n{worker_template}".lower()
     assert not any(item.lower() in runtime_environment for item in forbidden)
+    assert "class AgentRuntimeProcessSettings" in (
+        ROOT / "backend" / "agent_runtime_worker_main.py"
+    ).read_text()
+    assert "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED=false" in worker_template
 
 
 def test_production_factory_fails_closed_until_scoped_services_exist() -> None:

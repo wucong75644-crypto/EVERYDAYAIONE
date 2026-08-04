@@ -2024,6 +2024,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `build_safe_runtime_composition` | `backend/services/agent/runtime/production_composition.py` | 只从真实 Runtime read registry 构造 safe composition，ERP write/Media/external specialist 不注册 |
 | `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文构造模型请求、租户凭证和确定性 Action |
 | `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
+| `AgentRuntimeProcessSettings` / `_load_process_settings` | `backend/agent_runtime_worker_main.py` | Runtime Owner 的最小 typed settings；`env_file=None`，不读取 Backend `.env`，Projection/Authorization 保持既有配置边界 |
+| `create_runtime_chat_adapter` | `backend/services/agent/runtime/infrastructure/model/runtime_adapter_factory.py` | 仅消费 CredentialLease 提供的凭证和非敏感固定 Provider 元数据，不调用通用 Settings 或读取 `.env` |
 | `runtime_status` / `update_runtime_control` / `update_runtime_rollout` / `requeue_projection_dead` | `backend/api/routes/runtime_admin.py` | super_admin、租户作用域、幂等审计的 Runtime 运维入口 |
 | `probe_tool_confirmation_redis` | `backend/services/tool_confirmation/capability_probe.py` | Tool Confirmation V3 Redis 原子能力探针 |
 | `NsJailSubprocessLauncher` | `backend/services/agent/runtime/sandbox/nsjail.py` | 固定哈希、cgroup v2、网络隔离与进程树清理的 Sandbox 启动器 |

@@ -184,17 +184,17 @@ class ExistingProviderModelAdapter:
             raise ValueError("RUNTIME_CREDENTIAL_LEASE_REQUIRED")
         if not isinstance(purpose, str) or not purpose.strip():
             raise ValueError("CREDENTIAL_PURPOSE_REQUIRED")
-        from services.adapters.factory import create_chat_adapter
+        from services.agent.runtime.infrastructure.model.runtime_adapter_factory import (
+            create_runtime_chat_adapter,
+        )
 
         provider = _provider_name(request.model_id)
         return await lease.use(
             scope=scope, provider=provider, revision=request.model_revision,
             purpose=purpose,
-            consumer=lambda material: create_chat_adapter(
-                request.model_id,
-                org_id=request.org_id or self._org_id,
-                db=self._db,
-                api_key_override=material,
+            consumer=lambda material: create_runtime_chat_adapter(
+                request.model_id, api_key=material,
+                stream_timeout=request.options.timeout_seconds,
             ),
         )
 

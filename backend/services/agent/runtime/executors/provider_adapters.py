@@ -19,7 +19,6 @@ from services.agent.runtime.executors.contracts import canonical_json
 from services.agent.runtime.executors.specialist_contracts import (
     NetworkRule, ProviderReceipt, ProviderState, SpecialistProvider,
 )
-from services.kuaimai.registry import TOOL_REGISTRIES
 
 
 class ProviderTransport(Protocol):
@@ -382,6 +381,7 @@ def _has_provider_identity(receipt: Mapping[str, object]) -> bool:
 
 
 def _valid_erp_action(tool_name: str, action: str, *, write: bool) -> bool:
+    from services.kuaimai.registry import TOOL_REGISTRIES
     entry = TOOL_REGISTRIES.get(tool_name, {}).get(action)
     return entry is not None and entry.is_write is write
 

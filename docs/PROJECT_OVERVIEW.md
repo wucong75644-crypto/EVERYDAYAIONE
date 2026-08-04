@@ -248,7 +248,8 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   分别约束 `DATABASE_URL` 或 `MIGRATION_DATABASE_URL` 的数据库登录角色。
 - `deploy/everydayai-agent-runtime.service` 与
   `deploy/env-templates/agent-runtime-worker.env.template`：独立 Runtime Worker 只加载窄角色
-  与进程运行配置；Provider Secret/KEK 不进入进程环境，凭证必须经 CredentialBroker。
+  与进程运行配置；独立 typed settings 禁止读取 `backend/.env`，Systemd 也屏蔽该文件及
+  历史模型环境文件；Provider Secret/KEK 不进入进程环境，凭证必须经 CredentialBroker。
 - `deploy/validate-tenant-db-env.sh`：切换服务前验证四个真实角色文件的存在性、0600 权限、
   固定配置键、角色用户名、占位符清理和连接串独立性，不输出连接内容。
 - `backend/tests/test_tenant_db_env_contract.py`：覆盖模板安全性及角色环境合同的成功/失败边界。

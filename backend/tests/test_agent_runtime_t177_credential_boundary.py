@@ -77,12 +77,16 @@ async def test_default_model_builder_consumes_only_a_bound_lease(monkeypatch) ->
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr("services.adapters.factory.create_chat_adapter", builder)
+    monkeypatch.setattr(
+        "services.agent.runtime.infrastructure.model.runtime_adapter_factory."
+        "create_runtime_chat_adapter",
+        builder,
+    )
     adapter = ExistingProviderModelAdapter(db=object())
     created = await adapter._create_adapter(_request(lease=lease))
 
     assert created is not None
-    assert captured["api_key_override"] == material
+    assert captured["api_key"] == material
     assert material not in repr(_request(lease=lease))
 
 

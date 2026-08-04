@@ -24,12 +24,6 @@ from services.agent.runtime.infrastructure.model.adapter import (
 from services.agent.runtime.infrastructure.postgres.action_repository import (
     PostgresActionRepository,
 )
-from services.agent.runtime.application.projection_worker import (
-    CompatibilityProjectionWorker,
-)
-from services.agent.runtime.application.confirmation_notification import (
-    ToolConfirmationNotificationWorker,
-)
 from services.agent.runtime.executors.registry import ExecutorRegistry
 from services.agent.runtime.executors.sandbox_job import (
     SandboxJobExecutor, register_sandbox_job_executor,
@@ -49,9 +43,6 @@ from services.agent.runtime.infrastructure.postgres.model_attempt_repository imp
 from services.agent.runtime.infrastructure.postgres.repository import (
     PostgresRuntimeRepository,
 )
-from services.agent.runtime.infrastructure.postgres.compat_projection import (
-    PostgresCompatibilityProjection,
-)
 from services.agent.runtime.policy.evaluator import PolicyEvaluator
 from services.agent.runtime.sandbox.composition import (
     build_sandbox_executor_components, build_sandbox_worker_components,
@@ -64,11 +55,6 @@ from services.agent.runtime.production_model import (
 )
 from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.catalog.registry import build_runtime_version_registry
-from services.agent.runtime.production_composition import build_production_action_loop
-from services.agent.runtime.production_composition import (
-    ProductionRuntimeComponents, SafeRuntimeComposition,
-    build_safe_runtime_composition,
-)
 from services.agent.runtime.executors.real_base import RuntimeReadResources
 
 
@@ -134,6 +120,15 @@ def build_projection(
     database: Any, worker_id: str, *, process_role: str = "projection",
 ):
     _require_process_role("projection", process_role)
+    from services.agent.runtime.application.confirmation_notification import (
+        ToolConfirmationNotificationWorker,
+    )
+    from services.agent.runtime.application.projection_worker import (
+        CompatibilityProjectionWorker,
+    )
+    from services.agent.runtime.infrastructure.postgres.compat_projection import (
+        PostgresCompatibilityProjection,
+    )
     from services.tool_confirmation import tool_confirmation_service
     from services.websocket_manager import ws_manager
 
@@ -163,6 +158,9 @@ def build_runtime(
     ))
     if not production_enabled:
         raise RuntimeError("RUNTIME_PRODUCTION_COMPOSITION_DISABLED")
+    from services.agent.runtime.production_composition import (
+        ProductionRuntimeComponents, build_production_action_loop,
+    )
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
     runtime_repository = PostgresRuntimeRepository(db)
@@ -252,10 +250,13 @@ def build_runtime(
 
 def build_safe_runtime_components(
     database: Any, settings, *, credential_broker: object,
-) -> SafeRuntimeComposition:
+):
     """Assemble safe Runtime loops without starting any Runtime-owned worker."""
     if credential_broker is None:
         raise RuntimeError("CREDENTIAL_BROKER_REQUIRED")
+    from services.agent.runtime.production_composition import (
+        build_safe_runtime_composition,
+    )
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
     registry = build_safe_runtime_composition(

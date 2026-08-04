@@ -378,5 +378,15 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# 全局配置实例
-settings = get_settings()
+class _LazySettings:
+    """Preserve legacy attribute access without loading `.env` on import."""
+
+    def __getattr__(self, name: str):
+        return getattr(get_settings(), name)
+
+    def __setattr__(self, name: str, value) -> None:
+        setattr(get_settings(), name, value)
+
+
+# Existing callers keep `settings.attribute`; loading occurs on first use.
+settings = _LazySettings()

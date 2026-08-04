@@ -213,7 +213,10 @@ Backend 配置管理接口与 Sync Bundle 解析均需要加解密，因此两�
 release、health socket 与 Sandbox 路径等运行配置，不得包含 Provider API Key、KEK
 或原始凭证。Runtime Provider 凭证只能通过
 `CredentialBroker` 的 opaque handle 和短期 `CredentialLease` 提供；缺少安全 backend
-时必须失败关闭。
+时必须失败关闭。该进程使用 `env_file=None` 的独立 typed settings，Systemd 同时将
+`backend/.env` 与历史 `agent-runtime-model.env` 标记为不可访问；即使服务器残留这些
+文件，也不能作为 Runtime 配置来源。Projection/Authorization 仍沿用通用 Settings，
+需在后续独立安全批次审计。
 
 在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
 `EnvironmentFile` 指向这些角色文件。

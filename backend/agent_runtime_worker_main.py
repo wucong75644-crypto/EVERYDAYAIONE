@@ -11,8 +11,6 @@ from contextlib import suppress
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from core.config import get_settings
-from core.database import close_async_worker_db, get_async_worker_db
 from core.db_scope import DatabaseAccessKind
 from core.logging_config import setup_logging
 from services.agent.runtime.composition import (
@@ -49,13 +47,47 @@ class SandboxProcessSettings(BaseSettings):
     sentry_dsn: str | None = None
     environment: str = "production"
 
+
+class AgentRuntimeProcessSettings(BaseSettings):
+    """Minimal Runtime-owner config that never reads the backend `.env`."""
+
+    model_config = SettingsConfigDict(
+        env_file=None, case_sensitive=False, extra="ignore",
+    )
+    worker_database_url: str
+    agent_runtime_process_role: str
+    agent_runtime_worker_id: str
+    agent_runtime_release_revision: str
+    agent_runtime_health_socket: str
+    agent_runtime_poll_interval_seconds: float = 1.0
+    agent_runtime_heartbeat_seconds: float = 10.0
+    agent_runtime_drain_timeout_seconds: float = 3600.0
+    agent_runtime_production_composition_enabled: bool = False
+    agent_runtime_agent_definition_id: str = "everydayai-default"
+    agent_runtime_agent_definition_revision: str = "v1"
+    sandbox_job_root: str
+    sandbox_runtime_revision: str
+
+
+def _load_process_settings(role: str):
+    if role == "agent_runtime":
+        return AgentRuntimeProcessSettings()
+    if role == "sandbox":
+        return SandboxProcessSettings()
+    # Projection and Authorization retain their existing configuration contract.
+    from core.application_process_settings import (
+        load_application_process_settings,
+    )
+    return load_application_process_settings()
+
 def _initialize_sentry(settings) -> None:
-    if not settings.sentry_dsn:
+    sentry_dsn = getattr(settings, "sentry_dsn", None)
+    if not sentry_dsn:
         return
     import sentry_sdk
     sentry_sdk.init(
-        dsn=settings.sentry_dsn,
-        environment=settings.environment,
+        dsn=sentry_dsn,
+        environment=getattr(settings, "environment", "production"),
         release=settings.agent_runtime_release_revision,
         traces_sample_rate=0.1,
         profiles_sample_rate=0.0,
@@ -64,14 +96,13 @@ def _initialize_sentry(settings) -> None:
 
 async def _run() -> None:
     role = os.environ.get("AGENT_RUNTIME_PROCESS_ROLE", "")
-    settings = (
-        SandboxProcessSettings()
-        if role == "sandbox" else get_settings()
-    )
+    settings = _load_process_settings(role)
     if role not in {"agent_runtime", "projection", "authorization", "sandbox"}:
         raise RuntimeError("AGENT_RUNTIME_PROCESS_ROLE_INVALID")
     if role == "sandbox" and settings.sandbox_worker_concurrency != 1:
         raise RuntimeError("SANDBOX_WORKER_CONCURRENCY_MUST_BE_ONE")
+    from core.database import close_async_worker_db, get_async_worker_db
+
     raw = await get_async_worker_db(
         settings.worker_database_url,
         min_size=1 if role == "sandbox" else None,
@@ -340,10 +371,7 @@ async def _shutdown(role, owner, control_db, settings, server, socket_path):
 def main() -> None:
     setup_logging()
     role = os.environ.get("AGENT_RUNTIME_PROCESS_ROLE", "")
-    settings = (
-        SandboxProcessSettings()
-        if role == "sandbox" else get_settings()
-    )
+    settings = _load_process_settings(role)
     _initialize_sentry(settings)
     try:
         asyncio.run(_run())
@@ -354,7 +382,7 @@ def main() -> None:
             settings.agent_runtime_process_role,
             type(error).__name__,
         )
-        if settings.sentry_dsn:
+        if getattr(settings, "sentry_dsn", None):
             import sentry_sdk
             sentry_sdk.capture_exception(error)
             sentry_sdk.flush(timeout=5)
