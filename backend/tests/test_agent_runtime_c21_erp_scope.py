@@ -149,3 +149,18 @@ async def test_missing_enterprise_config_fails_closed_without_constructing_clien
     factory = OrgScopedErpDispatcherFactory(object())
     with pytest.raises(ValueError, match="enterprise ERP config missing"):
         await factory.create(RuntimeScope(ScopeKind.USER, "user-1", "user-1", "org-a"))
+
+
+@pytest.mark.asyncio
+async def test_erp_receipt_does_not_contain_runtime_secret_material() -> None:
+    secret = "erp-app-secret-value"
+    factory = _Factory()
+    provider = ERPQueryProvider(
+        tool_name="erp_trade_query", dispatcher_factory=factory,
+    )
+    request = {"action": "order_list", "params": {}}
+    receipt = await provider.submit(
+        _attempt("org-a", request), request, idempotency_key="i",
+    )
+    assert secret not in repr(receipt)
+    assert secret not in repr(_attempt("org-a", request))
