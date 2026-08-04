@@ -9,6 +9,7 @@ import signal
 import time
 from contextlib import suppress
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.db_scope import DatabaseAccessKind
@@ -69,16 +70,61 @@ class AgentRuntimeProcessSettings(BaseSettings):
     sandbox_runtime_revision: str
 
 
+class AuthorizationProcessSettings(BaseSettings):
+    """Minimal Authorization worker config isolated from application secrets."""
+
+    model_config = SettingsConfigDict(
+        env_file=None, case_sensitive=False, extra="ignore",
+    )
+    worker_database_url: str
+    agent_runtime_process_role: str
+    agent_runtime_worker_id: str
+    agent_runtime_release_revision: str
+    agent_runtime_health_socket: str
+    agent_runtime_poll_interval_seconds: float = 1.0
+    agent_runtime_heartbeat_seconds: float = 10.0
+    sentry_dsn: str | None = None
+    environment: str = "production"
+
+
+class ProjectionProcessSettings(AuthorizationProcessSettings):
+    """Projection config plus its explicit Tool Confirmation Redis scope."""
+
+    redis_host: str = "127.0.0.1"
+    redis_port: int = 6379
+    redis_password: SecretStr | None = None
+    redis_db: int = 0
+    redis_ssl: bool = False
+
+
 def _load_process_settings(role: str):
     if role == "agent_runtime":
         return AgentRuntimeProcessSettings()
     if role == "sandbox":
         return SandboxProcessSettings()
-    # Projection and Authorization retain their existing configuration contract.
-    from core.application_process_settings import (
-        load_application_process_settings,
+    if role == "projection":
+        return ProjectionProcessSettings()
+    if role == "authorization":
+        return AuthorizationProcessSettings()
+    raise RuntimeError("AGENT_RUNTIME_PROCESS_ROLE_INVALID")
+
+
+def _configure_projection_redis(settings: ProjectionProcessSettings) -> None:
+    """Bind every Projection Redis path before importing its composition."""
+    from core.redis import RedisClient
+
+    password = (
+        settings.redis_password.get_secret_value()
+        if settings.redis_password is not None else None
     )
-    return load_application_process_settings()
+    RedisClient.configure_explicit(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        password=password,
+        db=settings.redis_db,
+        ssl=settings.redis_ssl,
+    )
+
 
 def _initialize_sentry(settings) -> None:
     sentry_dsn = getattr(settings, "sentry_dsn", None)
@@ -246,6 +292,7 @@ def _apply_gate_state(
 
 async def _build_owner_and_cycle(role, raw, settings):
     if role == "projection":
+        _configure_projection_redis(settings)
         from services.tool_confirmation import tool_confirmation_service
         from services.tool_confirmation.capability_probe import (
             probe_tool_confirmation_redis,

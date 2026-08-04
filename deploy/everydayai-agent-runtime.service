@@ -12,7 +12,7 @@ WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
 Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/agent-runtime"
 EnvironmentFile=/etc/everydayai/agent-runtime-worker.env
-InaccessiblePaths=-/var/www/everydayai/backend/.env -/etc/everydayai/agent-runtime-model.env
+InaccessiblePaths=-/var/www/everydayai/backend/.env -/var/www/everydayai/backend/.env.kek -/etc/everydayai/agent-runtime-model.env
 RuntimeDirectory=everydayai-agent-runtime
 ExecStartPre=/var/www/everydayai/deploy/runtime-capability-probe.sh agent_runtime
 ExecStart=/var/www/everydayai/backend/venv/bin/python agent_runtime_worker_main.py
