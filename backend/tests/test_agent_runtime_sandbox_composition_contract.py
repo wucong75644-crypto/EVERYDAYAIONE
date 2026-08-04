@@ -78,7 +78,7 @@ async def test_sandbox_entrypoint_uses_real_components_and_cycle_surface(
     components, jobs, launcher = _components(
         tmp_path, IsolationProbe(ready=True, code="SANDBOX_ISOLATION_READY"),
     )
-    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args: components)
+    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args, **_kwargs: components)
     settings = SimpleNamespace(sandbox_partial_retention_seconds=86400)
 
     owner, cycle = await entrypoint._build_owner_and_cycle(
@@ -100,7 +100,7 @@ async def test_sandbox_probe_failure_is_startup_fatal_and_cannot_claim(
             ready=False, code="SANDBOX_ROOTFS_CONTENT_MISMATCH",
         ),
     )
-    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args: components)
+    monkeypatch.setattr(entrypoint, "build_sandbox", lambda *_args, **_kwargs: components)
     with pytest.raises(
         RuntimeError,
         match="SANDBOX_CAPABILITY_PROBE_FAILED:SANDBOX_ROOTFS_CONTENT_MISMATCH",

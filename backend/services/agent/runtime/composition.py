@@ -66,16 +66,25 @@ from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.catalog.registry import build_runtime_version_registry
 from services.agent.runtime.production_composition import build_production_action_loop
 from services.agent.runtime.production_composition import (
-    SafeRuntimeComposition, build_safe_runtime_composition,
+    ProductionRuntimeComponents, SafeRuntimeComposition,
+    build_safe_runtime_composition,
 )
 from services.agent.runtime.executors.real_base import RuntimeReadResources
 
 
 class RuntimeOwner:
-    def __init__(self, commands, runtime) -> None:
+    def __init__(self, commands, runtime, *, readiness=None) -> None:
         self.commands = commands
         self.runtime = runtime
+        self.readiness = readiness
         self._draining = False
+
+    @property
+    def ready(self) -> bool:
+        """Object graph construction does not imply production readiness."""
+        return self.readiness is None or bool(
+            getattr(self.readiness, "ready", False),
+        )
 
     async def run_once(self) -> bool:
         if self._draining:
@@ -121,7 +130,10 @@ def scoped(database: Any, kind: DatabaseAccessKind, worker_id: str):
     ))
 
 
-def build_projection(database: Any, worker_id: str):
+def build_projection(
+    database: Any, worker_id: str, *, process_role: str = "projection",
+):
+    _require_process_role("projection", process_role)
     from services.tool_confirmation import tool_confirmation_service
     from services.websocket_manager import ws_manager
 
@@ -135,9 +147,22 @@ def build_projection(database: Any, worker_id: str):
     )
 
 
-def build_runtime(database: Any, settings, *, production_components=None) -> RuntimeOwner:
+def build_runtime(
+    database: Any, settings, *, production_components=None,
+    process_role: str | None = None,
+) -> RuntimeOwner:
+    _require_process_role(
+        "agent_runtime", process_role or getattr(
+            settings, "agent_runtime_process_role", None,
+        ) or "agent_runtime",
+    )
     if not settings.sandbox_runtime_revision:
         raise RuntimeError("SANDBOX_RUNTIME_REVISION_REQUIRED")
+    production_enabled = bool(getattr(
+        settings, "agent_runtime_production_composition_enabled", False,
+    ))
+    if not production_enabled:
+        raise RuntimeError("RUNTIME_PRODUCTION_COMPOSITION_DISABLED")
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
     runtime_repository = PostgresRuntimeRepository(db)
@@ -152,9 +177,6 @@ def build_runtime(database: Any, settings, *, production_components=None) -> Run
         registry=registry,
     )
     versions = build_runtime_version_registry()
-    production_enabled = bool(getattr(
-        settings, "agent_runtime_production_composition_enabled", False,
-    ))
     if production_enabled:
         components = production_components or getattr(
             settings, "agent_runtime_production_components", None,
@@ -166,6 +188,10 @@ def build_runtime(database: Any, settings, *, production_components=None) -> Run
             components = build_production_components_for_worker(
                 database=db, settings=settings, sandbox_registry=registry,
             )
+        if not isinstance(components, ProductionRuntimeComponents):
+            raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_FACTORY_INVALID")
+        if components.service_bundle is None:
+            raise RuntimeError("RUNTIME_PRODUCTION_SERVICE_BUNDLE_REQUIRED")
         registry = components.registry
         catalog = components.catalog.catalog
     else:
@@ -216,7 +242,12 @@ def build_runtime(database: Any, settings, *, production_components=None) -> Run
         worker_id=worker_id,
         handler=runtime.handle_command,
     )
-    return RuntimeOwner(commands, runtime)
+    readiness = getattr(components, "readiness", None)
+    if readiness is None:
+        readiness = getattr(components.service_bundle, "readiness", None)
+    if readiness is None:
+        raise RuntimeError("RUNTIME_PRODUCTION_READINESS_NOT_AVAILABLE")
+    return RuntimeOwner(commands, runtime, readiness=readiness)
 
 
 def build_safe_runtime_components(
@@ -260,7 +291,10 @@ def build_safe_runtime_components(
     )
 
 
-def build_authorization(database: Any, worker_id: str):
+def build_authorization(
+    database: Any, worker_id: str, *, process_role: str = "authorization",
+):
+    _require_process_role("authorization", process_role)
     db = scoped(database, DatabaseAccessKind.AUTHORIZATION, worker_id)
     registry = ExecutorRegistry()
     register_sandbox_job_executor(registry, SandboxJobExecutor())
@@ -280,7 +314,10 @@ def _assert_runtime_catalog(catalog: RuntimeToolCatalog, settings: Any) -> None:
         raise RuntimeError("RUNTIME_RELEASE_REVISION_REQUIRED")
 
 
-def build_sandbox(database: Any, settings):
+def build_sandbox(
+    database: Any, settings, *, process_role: str = "sandbox",
+):
+    _require_process_role("sandbox", process_role)
     identity = SandboxWorkerIdentity.capture_current_process()
     db = scoped(
         database, DatabaseAccessKind.SANDBOX_WORKER,
@@ -304,3 +341,10 @@ def build_sandbox(database: Any, settings):
         worker_id=settings.agent_runtime_worker_id,
         worker_identity=identity,
     )
+
+
+def _require_process_role(expected: str, actual: str) -> None:
+    if actual != expected:
+        raise RuntimeError(
+            f"RUNTIME_COMPOSITION_ROLE_MISMATCH:{expected}:{actual}",
+        )

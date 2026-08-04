@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from services.agent.runtime.production_composition import (
+    ProductionRuntimeComponents,
     build_production_components_for_worker,
+)
+from services.agent.runtime.composition import (
+    build_authorization, build_projection, build_runtime, build_sandbox,
 )
 
 
@@ -55,6 +59,41 @@ def test_production_factory_fails_closed_until_scoped_services_exist() -> None:
         build_production_components_for_worker(
             database=object(), settings=object(), sandbox_registry=object(),
         )
+
+
+def test_production_factory_rejects_missing_service_bundle() -> None:
+    settings = type("Settings", (), {
+        "agent_runtime_production_service_factory": staticmethod(
+            lambda **_kwargs: ProductionRuntimeComponents(
+                registry=object(), catalog=object(), callback_inbox=object(),
+                specialist_repository=object(), service_bundle=None,
+            ),
+        ),
+    })()
+    with pytest.raises(
+        RuntimeError,
+        match="RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:SERVICE_BUNDLE_REQUIRED",
+    ):
+        build_production_components_for_worker(
+            database=object(), settings=settings, sandbox_registry=object(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("builder", "args", "expected"),
+    (
+        (build_runtime, (object(), object()), "agent_runtime"),
+        (build_projection, (object(), "worker"), "projection"),
+        (build_authorization, (object(), "worker"), "authorization"),
+        (build_sandbox, (object(), object()), "sandbox"),
+    ),
+)
+def test_composition_roots_reject_wrong_process_role(builder, args, expected) -> None:
+    with pytest.raises(
+        RuntimeError,
+        match=f"RUNTIME_COMPOSITION_ROLE_MISMATCH:{expected}:wrong-role",
+    ):
+        builder(*args, process_role="wrong-role")
 
 
 def test_sandbox_probe_checks_fixed_capabilities() -> None:

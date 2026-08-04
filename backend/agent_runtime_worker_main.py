@@ -131,21 +131,23 @@ async def _run() -> None:
             cycle = None
         while not stopping.is_set():
             enabled, control_reason = await _read_control(control_db, role)
-            _apply_gate_state(state, owner is not None, enabled, control_reason)
+            _apply_gate_state(
+                state, _composition_ready(owner), enabled, control_reason,
+            )
             now = time.monotonic()
             if now - last_heartbeat >= settings.agent_runtime_heartbeat_seconds:
                 heartbeat_ok = await _report_heartbeat(
                     control_db, settings, role,
-                    ready=bool(owner is not None and enabled),
+                    ready=bool(_composition_ready(owner) and enabled),
                     draining=bool(state["draining"]),
                     status_code=(
-                        "accepting" if owner is not None and enabled
+                        "accepting" if _composition_ready(owner) and enabled
                         else control_reason.lower()
                     ),
                 )
                 last_heartbeat = now
                 _update_readiness(
-                    state, heartbeat_ok, owner is not None, enabled,
+                    state, heartbeat_ok, _composition_ready(owner), enabled,
                     control_reason,
                 )
             if _can_run_cycle(owner, cycle, enabled, bool(state["ready"])):
@@ -223,13 +225,17 @@ async def _build_owner_and_cycle(role, raw, settings):
             raise RuntimeError(
                 f"TOOL_CONFIRMATION_REDIS_PROBE_FAILED:{redis_probe.code}",
             )
-        owner = build_projection(raw, settings.agent_runtime_worker_id)
+        owner = build_projection(
+            raw, settings.agent_runtime_worker_id, process_role=role,
+        )
         cycle = owner.run_once
     elif role == "authorization":
-        owner = build_authorization(raw, settings.agent_runtime_worker_id)
+        owner = build_authorization(
+            raw, settings.agent_runtime_worker_id, process_role=role,
+        )
         cycle = owner.run_once
     elif role == "sandbox":
-        owner = build_sandbox(raw, settings)
+        owner = build_sandbox(raw, settings, process_role=role)
         probe = owner.worker.probe()
         if not probe.ready:
             raise RuntimeError(f"SANDBOX_CAPABILITY_PROBE_FAILED:{probe.code}")
@@ -248,9 +254,7 @@ async def _build_owner_and_cycle(role, raw, settings):
         # gate and build_production_components_for_worker call; the resulting
         # production_components=production_components handoff is now internal.
         # This keeps sandbox and production registries in one composition root.
-        owner = build_runtime(
-            raw, settings,
-        )
+        owner = build_runtime(raw, settings, process_role=role)
         cycle = owner.run_once
     return owner, cycle
 
@@ -294,7 +298,14 @@ def _health_payload(state: dict[str, object], role: str, stopping: bool) -> dict
 
 
 def _can_run_cycle(owner, cycle, gate_enabled: bool, ready: bool) -> bool:
-    return owner is not None and cycle is not None and gate_enabled and ready
+    return (
+        owner is not None and _composition_ready(owner)
+        and cycle is not None and gate_enabled and ready
+    )
+
+
+def _composition_ready(owner) -> bool:
+    return owner is not None and bool(getattr(owner, "ready", True))
 
 
 def _drain_owner(owner) -> None:

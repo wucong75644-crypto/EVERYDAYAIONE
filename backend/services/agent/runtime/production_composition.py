@@ -79,6 +79,11 @@ def build_production_components_for_worker(*, database, settings, sandbox_regist
             "RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:"
             "SERVICE_BUNDLE_REQUIRED"
         )
+    if getattr(components.service_bundle, "readiness", None) is None:
+        raise RuntimeError(
+            "RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:"
+            "SERVICE_READINESS_REQUIRED"
+        )
     return components
 
 

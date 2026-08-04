@@ -36,6 +36,11 @@ def test_gate_closed_does_not_enter_claim_cycle() -> None:
     assert _can_run_cycle(owner, cycle, gate_enabled=False, ready=False) is False
 
 
+def test_unready_composition_does_not_enter_claim_cycle() -> None:
+    owner = SimpleNamespace(ready=False)
+    assert _can_run_cycle(owner, lambda: None, gate_enabled=True, ready=True) is False
+
+
 def test_gate_close_immediately_clears_readiness() -> None:
     state = {
         "liveness": True,
