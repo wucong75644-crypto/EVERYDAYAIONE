@@ -187,7 +187,7 @@ BEGIN
                 'workspace', d.id::TEXT, p_org_id,
                 CASE WHEN d.purged THEN 'purged' ELSE 'cleanup_pending' END,
                 d.runtime_state_version, d.runtime_action_id, d.runtime_action_id,
-                d.runtime_attempt_id, d.created_at, d.updated_at, NULL,
+                d.runtime_attempt_id, da.created_at, da.updated_at, NULL,
                 CASE WHEN NOT d.purged THEN 'WORKSPACE_CLEANUP_PENDING' END,
                 'workspace_owner', FALSE, NOT d.purged, FALSE, NOT d.purged,
                 COALESCE(fence.fence, '{}'::JSONB)) AS x
@@ -208,7 +208,7 @@ BEGIN
             ) fence ON TRUE
             WHERE da.org_id=p_org_id
               AND (p_state IS NULL OR (CASE WHEN d.purged THEN 'purged' ELSE 'cleanup_pending' END)=p_state)
-            ORDER BY d.created_at DESC LIMIT v_limit
+            ORDER BY da.created_at DESC LIMIT v_limit
           ) q;
         v_rows := v_rows || v_part;
     END IF;

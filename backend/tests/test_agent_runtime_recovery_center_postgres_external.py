@@ -69,6 +69,18 @@ def test_recovery_snapshot_intent_claim_and_rollback(database: str) -> None:
     assert "execution_token" not in rendered
     assert "relative_path" not in rendered
     assert "oss_object_key" not in rendered
+    full_status = _admin_call(database, "list_agent_runtime_recovery_snapshot", (
+        ORG, None, None, 100,
+    ))
+    assert full_status["outcome"] == "readback"
+    assert full_status["items"]
+    for domain in ("workspace", "scheduler", "child_run", "sandbox"):
+        domain_status = _admin_call(database, "list_agent_runtime_recovery_snapshot", (
+            ORG, domain, None, 100,
+        ))
+        assert domain_status == {
+            "outcome": "readback", "org_id": ORG, "items": [], "count": 0,
+        }
 
     request_id = str(uuid4())
     intent = _admin_call(database, "request_agent_runtime_recovery", (
