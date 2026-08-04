@@ -157,7 +157,7 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
         batch_size: int = 10, lease_seconds: int = 120,
     ) -> tuple[ActionDispatchSnapshot, ...]:
         try:
-            raw = await self._rpc("claim_ready_agent_action_snapshots", {
+            raw = await self._rpc("claim_ready_agent_action_snapshots_v2", {
                 "p_worker_id": worker_id,
                 "p_claim_request_id": claim_request_id,
                 "p_batch_size": batch_size,

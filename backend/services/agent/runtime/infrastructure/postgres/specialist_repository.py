@@ -87,7 +87,7 @@ class PostgresSpecialistRepository:
         self, *, attempt_id: str, execution_token: str, request_hash: str,
         ambiguity_evidence: Mapping[str, object],
     ) -> object:
-        return await self._rpc("record_agent_action_unknown", {
+        return await self._rpc("record_agent_action_unknown_v2", {
             "p_attempt_id": attempt_id, "p_execution_token": execution_token,
             "p_request_hash": request_hash,
             "p_ambiguity_evidence": dict(ambiguity_evidence),

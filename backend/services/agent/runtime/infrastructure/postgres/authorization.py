@@ -59,7 +59,7 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
         attempt = snapshot.attempt
         receipt_id = _receipt_id(action)
         response = await self._database.rpc(
-            "gate_agent_action_dispatch", {
+            "gate_agent_action_dispatch_v2", {
                 "p_attempt_id": _text(attempt, "id"),
                 "p_execution_token": _text(attempt, "execution_token"),
                 "p_expected_attempt_version": _integer(

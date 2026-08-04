@@ -53,7 +53,7 @@ class PostgresActionRepository:
         batch_size: int = 10,
         lease_seconds: int = 120,
     ) -> ActionMutationReceipt:
-        return await self._rpc("claim_ready_agent_actions", {
+        return await self._rpc("claim_ready_agent_actions_v2", {
             "p_worker_id": worker_id,
             "p_claim_request_id": claim_request_id,
             "p_batch_size": batch_size,
@@ -75,7 +75,7 @@ class PostgresActionRepository:
         self, *, attempt_id: str, execution_token: str,
         expected_state_version: int, lease_seconds: int = 120,
     ) -> ActionMutationReceipt:
-        return await self._rpc("renew_agent_action_attempt", {
+        return await self._rpc("renew_agent_action_attempt_v2", {
             "p_attempt_id": attempt_id,
             "p_execution_token": execution_token,
             "p_expected_state_version": expected_state_version,
@@ -86,7 +86,7 @@ class PostgresActionRepository:
         self, *, attempt_id: str, execution_token: str,
         expected_state_version: int, request_hash: str,
     ) -> ActionMutationReceipt:
-        return await self._rpc("mark_agent_action_dispatching", {
+        return await self._rpc("mark_agent_action_dispatching_v2", {
             "p_attempt_id": attempt_id,
             "p_execution_token": execution_token,
             "p_expected_state_version": expected_state_version,
@@ -97,7 +97,7 @@ class PostgresActionRepository:
         self, *, attempt_id: str, expected_state_version: int,
         worker_id: str, lease_seconds: int = 120,
     ) -> ActionMutationReceipt:
-        return await self._rpc("recover_expired_agent_action_attempt", {
+        return await self._rpc("recover_expired_agent_action_attempt_v2", {
             "p_attempt_id": attempt_id,
             "p_expected_state_version": expected_state_version,
             "p_worker_id": worker_id,
@@ -109,7 +109,7 @@ class PostgresActionRepository:
         expected_state_version: int, request_hash: str,
         external_receipt: Mapping[str, object],
     ) -> ActionMutationReceipt:
-        return await self._rpc("mark_agent_action_accepted", {
+        return await self._rpc("mark_agent_action_accepted_v2", {
             "p_attempt_id": attempt_id,
             "p_execution_token": execution_token,
             "p_expected_state_version": expected_state_version,
@@ -122,7 +122,7 @@ class PostgresActionRepository:
         expected_state_version: int, request_hash: str,
         ambiguity_evidence: Mapping[str, object],
     ) -> ActionMutationReceipt:
-        return await self._rpc("record_agent_action_unknown", {
+        return await self._rpc("record_agent_action_unknown_v2", {
             "p_attempt_id": attempt_id,
             "p_execution_token": execution_token,
             "p_expected_state_version": expected_state_version,
@@ -134,7 +134,7 @@ class PostgresActionRepository:
         self, *, attempt_id: str, execution_token: str,
         expected_attempt_version: int, request_hash: str, error_code: str,
     ) -> ActionMutationReceipt:
-        return await self._rpc("fail_claimed_agent_action", {
+        return await self._rpc("fail_claimed_agent_action_v2", {
             "p_attempt_id": attempt_id,
             "p_execution_token": execution_token,
             "p_expected_attempt_version": expected_attempt_version,
@@ -148,7 +148,7 @@ class PostgresActionRepository:
         result: Mapping[str, object],
     ) -> ActionMutationReceipt:
         return await self._terminal(
-            "complete_agent_action", attempt_id, execution_token,
+            "complete_agent_action_v2", attempt_id, execution_token,
             expected_attempt_version, request_hash, result,
         )
 
@@ -158,7 +158,7 @@ class PostgresActionRepository:
         result: Mapping[str, object],
     ) -> ActionMutationReceipt:
         return await self._terminal(
-            "fail_agent_action", attempt_id, execution_token,
+            "fail_agent_action_v2", attempt_id, execution_token,
             expected_attempt_version, request_hash, result,
         )
 
@@ -179,7 +179,7 @@ class PostgresActionRepository:
         self, *, attempt_id: str, expected_state_version: int,
         worker_id: str, lease_seconds: int = 120,
     ) -> ActionMutationReceipt:
-        return await self._rpc("claim_agent_action_reconciliation", {
+        return await self._rpc("claim_agent_action_reconciliation_v2", {
             "p_attempt_id": attempt_id,
             "p_expected_state_version": expected_state_version,
             "p_worker_id": worker_id,
@@ -190,7 +190,7 @@ class PostgresActionRepository:
         self, *, attempt_id: str, reconciliation_token: str,
         expected_state_version: int, lease_seconds: int = 120,
     ) -> ActionMutationReceipt:
-        return await self._rpc("renew_agent_action_reconciliation", {
+        return await self._rpc("renew_agent_action_reconciliation_v2", {
             "p_attempt_id": attempt_id,
             "p_reconciliation_token": reconciliation_token,
             "p_expected_state_version": expected_state_version,
@@ -203,7 +203,7 @@ class PostgresActionRepository:
         result: Mapping[str, object] | None = None,
         ambiguity_evidence: Mapping[str, object] | None = None,
     ) -> ActionMutationReceipt:
-        return await self._rpc("resolve_agent_action_reconciliation", {
+        return await self._rpc("resolve_agent_action_reconciliation_v2", {
             "p_attempt_id": attempt_id,
             "p_reconciliation_token": reconciliation_token,
             "p_expected_state_version": expected_state_version,

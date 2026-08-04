@@ -67,7 +67,7 @@ class RuntimeIngress:
             catalog_revision = str(fact.get("catalog_revision") or "")
             if not definition_hash or not catalog_revision:
                 raise RuntimeError("RUNTIME_DEFINITION_FACT_INVALID")
-        rpc_name = "runtime_submit_ingress_v3" if self._contract_revision == 3 else "runtime_submit_ingress_v2"
+        rpc_name = "runtime_submit_ingress_v4" if self._contract_revision == 3 else "runtime_submit_ingress_v2"
         response = self._database.rpc(rpc_name, {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
             "p_user_id": user_id, "p_scope_kind": scope_kind,
