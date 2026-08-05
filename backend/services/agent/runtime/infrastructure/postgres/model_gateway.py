@@ -62,6 +62,15 @@ class PostgresModelGatewayRepository:
             "mark_agent_runtime_model_gateway_dispatched", fence,
         )
 
+    async def fail_before_dispatch(
+        self, *, error_code: str, **fence: object,
+    ) -> Mapping[str, object]:
+        params = _predispatch_failure_params(fence)
+        params["p_error_code"] = error_code
+        return await self._gateway_rpc(
+            "fail_agent_runtime_model_gateway_claim", params,
+        )
+
     async def renew(
         self, *, lease_seconds: int = 120, **fence: object,
     ) -> Mapping[str, object]:
@@ -148,6 +157,20 @@ def _mutation_params(values: Mapping[str, object]) -> dict[str, object]:
         "operation_id", "claim_token",
         "execution_token", "request_hash", "provider_revision",
         "tenant_kill_epoch", "provider_kill_epoch", "capability_kill_epoch",
+    ))
+    if "expected_state_version" not in values:
+        raise ValueError("MODEL_GATEWAY_BINDING_REQUIRED:expected_state_version")
+    params["p_expected_operation_version"] = values["expected_state_version"]
+    return params
+
+
+def _predispatch_failure_params(
+    values: Mapping[str, object],
+) -> dict[str, object]:
+    params = _prefixed(values, (
+        "operation_id", "claim_token", "org_id", "execution_token",
+        "request_hash", "provider_revision", "tenant_kill_epoch",
+        "provider_kill_epoch", "capability_kill_epoch",
     ))
     if "expected_state_version" not in values:
         raise ValueError("MODEL_GATEWAY_BINDING_REQUIRED:expected_state_version")

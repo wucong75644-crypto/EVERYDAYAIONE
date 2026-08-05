@@ -84,6 +84,7 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
     fence = {
         "operation_id": BINDING["request_id"],
         "claim_token": BINDING["execution_token"],
+        "org_id": BINDING["org_id"],
         "expected_state_version": 1,
         "execution_token": BINDING["execution_token"],
         "request_hash": BINDING["request_hash"],
@@ -92,6 +93,9 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
         "provider_kill_epoch": 0,
         "capability_kill_epoch": 0,
     }
+    asyncio.run(repository.fail_before_dispatch(
+        **fence, error_code="GATEWAY_KEK_UNAVAILABLE",
+    ))
     asyncio.run(repository.mark_dispatched(**fence))
     asyncio.run(repository.renew(**fence))
     asyncio.run(repository.finalize(
@@ -102,6 +106,7 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
     asyncio.run(repository.recover(gateway_worker_id="gateway"))
     assert [call[0] for call in database.calls] == [
         "claim_agent_runtime_model_gateway_operation",
+        "fail_agent_runtime_model_gateway_claim",
         "mark_agent_runtime_model_gateway_dispatched",
         "renew_agent_runtime_model_gateway_operation",
         "finalize_agent_runtime_model_gateway_operation",
@@ -109,6 +114,26 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
     ]
     with pytest.raises(PermissionError):
         asyncio.run(repository.submit(**BINDING))
+
+
+def test_runtime_repository_cannot_fail_gateway_claim() -> None:
+    repository = PostgresModelGatewayRepository(
+        _Database(DatabaseAccessKind.AGENT_RUNTIME),
+    )
+    with pytest.raises(PermissionError):
+        asyncio.run(repository.fail_before_dispatch(
+            operation_id=BINDING["request_id"],
+            claim_token=BINDING["execution_token"],
+            expected_state_version=1,
+            org_id=BINDING["org_id"],
+            execution_token=BINDING["execution_token"],
+            request_hash=BINDING["request_hash"],
+            provider_revision=BINDING["provider_revision"],
+            tenant_kill_epoch=0,
+            provider_kill_epoch=0,
+            capability_kill_epoch=0,
+            error_code="GATEWAY_CONFIGURATION_UNAVAILABLE",
+        ))
 
 
 def test_repository_rejects_untrusted_scope_and_incomplete_binding() -> None:

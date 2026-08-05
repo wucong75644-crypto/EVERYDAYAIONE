@@ -123,6 +123,13 @@ Agent Runtime C7-B3.2-BG2 Model Gateway database owner：
   Gateway finalize 不修改 ModelAttempt/ModelStep。BG3 process/Provider、systemd 与生产配置仍未实现，
   `production_ready=false`。
 
+Agent Runtime C7-BG2.1 Model Gateway pre-dispatch failure closure：
+- `backend/migrations/227_19_agent_runtime_model_gateway_predispatch_failure.sql`
+  新增 Gateway-only claimed→failed 窄 RPC；仅接受固定脱敏错误码，并以 claim token、
+  operation version、tenant binding、request/revision/kill epochs 和有效租约失败关闭。
+- rollback 只删除该 RPC、保留 operation facts 与 227_18 readback；repository 增加
+  Gateway scope `fail_before_dispatch`，Runtime scope 不可调用，平台仍为 `production_ready=false`。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、
