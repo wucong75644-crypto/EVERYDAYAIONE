@@ -48,12 +48,14 @@ show_help() {
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
     --expected-sha SHA     只部署指定且已推送的 Git 提交
+    --runtime-flags-off-install  仅安装 flags-off Runtime 单元，不迁移或启停服务
 
 示例:
     $0 -s                   首次部署（包含服务器初始化）
     $0                      正常部署（前后端都部署）
     $0 -f                   仅部署前端
     $0 -b                   仅部署后端
+    $0 --runtime-flags-off-install  安装四个关闭状态的 Runtime 单元
 EOF
 }
 
@@ -492,5 +494,7 @@ EOF
     echo ""
 }
 
-# 执行主函数
+if [[ " $* " == *" --runtime-flags-off-install "* ]]; then
+    exec bash deploy/runtime-flags-off-install.sh "$@"
+fi
 main "$@"

@@ -12,9 +12,11 @@ show_help() {
     cat <<'EOF'
 用法:
   ./deploy/release.sh --message "feat: 描述" --file 路径 [--file 路径...]
-                      [--frontend-only|--backend-only] [--skip-test]
+                      [--frontend-only|--backend-only|
+                       --runtime-flags-off-install] [--skip-test]
 
 默认部署前端和后端。正常路径不进行交互确认；任何门禁失败都会停止。
+flags-off 安装路径不能与其他部署范围或 --skip-test 组合。
 EOF
 }
 
@@ -23,6 +25,8 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
 COMMIT_ARGS=()
 DEPLOY_ARGS=()
 scope_count=0
+runtime_flags_off_install=false
+skip_test=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -31,13 +35,17 @@ while [[ $# -gt 0 ]]; do
             COMMIT_ARGS+=("$1" "$2")
             shift 2
             ;;
-        -f|--frontend-only|-b|--backend-only)
+        -f|--frontend-only|-b|--backend-only|--runtime-flags-off-install)
             DEPLOY_ARGS+=("$1")
             scope_count=$((scope_count + 1))
+            if [ "$1" = --runtime-flags-off-install ]; then
+                runtime_flags_off_install=true
+            fi
             shift
             ;;
         --skip-test)
             DEPLOY_ARGS+=("$1")
+            skip_test=true
             shift
             ;;
         -h|--help)
@@ -50,7 +58,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-(( scope_count <= 1 )) || fail "不能同时选择仅前端和仅后端"
+(( scope_count <= 1 )) || fail "不能同时选择多个部署范围"
+if [ "$runtime_flags_off_install" = true ] && [ "$skip_test" = true ]; then
+    fail "--runtime-flags-off-install 不能与 --skip-test 组合"
+fi
 
 "$REPO_ROOT/git-push.sh" "${COMMIT_ARGS[@]}"
 release_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"

@@ -258,8 +258,10 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   `deploy/env-templates/agent-runtime-worker.env.template`：独立 Runtime Worker 只加载窄角色
   与进程运行配置；独立 typed settings 禁止读取 `backend/.env`，Systemd 也屏蔽该文件及
   历史模型环境文件；Provider Secret/KEK 不进入进程环境，凭证必须经 CredentialBroker。
-- `deploy/validate-tenant-db-env.sh`：切换服务前验证四个真实角色文件的存在性、0600 权限、
-  固定配置键、角色用户名、占位符清理和连接串独立性，不输出连接内容。
+- `deploy/validate-tenant-db-env.sh`：切换服务前验证真实角色文件的存在性、0600 权限、
+  角色用户名、占位符清理和连接串独立性；Runtime/WeCom 文件使用显式多键白名单，其他
+  角色保持单键。`--runtime-flags-off-v3` 严格入口额外锁定 v3 且拒绝任一启用开关，
+  全程不输出连接内容。
 - `backend/tests/test_tenant_db_env_contract.py`：覆盖模板安全性及角色环境合同的成功/失败边界。
 - `deploy/env-templates/sync.env.template`：Sync/ERP 使用独立
   `everydayai_sync` 数据库角色的环境模板
@@ -330,8 +332,15 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
 - `backend/migrations/166_wecom_worker_discovery.sql`：提供无 Secret 的 WeCom 企业目标
   Discovery，只向 actorless Worker 返回 active 企业 ID 与凭证版本；rollback 仅撤销
   新能力。
-- `deploy/install-service-units.sh`：验证角色与 KEK 环境文件，安装并核对仓库内四个
-  Systemd 单元后执行 daemon-reload，防止生产继续运行旧单元。
+- `deploy/install-service-units.sh`：普通模式验证角色与 KEK 环境文件并安装既有服务单元；
+  `agent-runtime-only` 模式严格验证 flags-off v3 和四个 Worker 环境文件，只安装四个
+  Agent Runtime 单元与 wrapper 后执行 daemon-reload。已有目标不一致时在任何写入前
+  失败关闭，不启停、enable 服务或切换 Owner。
+- `deploy/deploy.sh` / `deploy/release.sh` / `deploy/runtime-flags-off-install.sh`：提供互斥的
+  `--runtime-flags-off-install` 路径；远端写入前要求四个新服务均为 inactive + disabled，
+  且该路径不运行 migration、不重启旧服务、不启停新服务。
+- `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker 配置、四单元安装、
+  差异目标零写入失败关闭、远端状态门禁顺序及模板/unit 合同。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
   实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue
   重载及四个 Outbox 租约函数）；撤销
@@ -1659,3 +1668,6 @@ The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict f
 - **2026-08-04**：C4.1 新增 227_13 additive ingress compatibility lane；RuntimeIngress 在确认 v5 capability 后使用 v5，保留 v4/v3 fallback。v5 保留 tenant kill-epoch ingress fence、rollout、anchor、版本与 effective toolset facts，移除 42 binding ready 总门禁且不修改 binding facts；v5 rollback 仅撤销自身函数/权限，存在 ingress facts 时失败关闭。
 - **2026-08-04**：C5.1-R 新增 227_14 owner transition additive lane；Web/WeCom Runtime ingress 在未 accepted 时通过受控 RPC 恢复 Actor owner，在 created/already_exists 时通过同事务 transition 保持 Runtime owner；不启用 Worker、provider binding、生产 flags，也不修改 227_01～227_13。
 - **2026-08-05**：C6.2-A 新增 227_15 Owner RPC ACL 收口；Web 仅可调用原子 owner-transition ingress，WeCom 仅可调用 v6 enqueue，两者保留 capability readback，但不能直接调用 raw v5 或 restore/mark helper。Rollback 只恢复 227_14 后的 ACL，不修改 Runtime facts 或任务 Owner 状态。
+- **2026-08-05**：C7-B1 完成 production flags-off 安装配置闭环：Runtime/WeCom v3
+  模板与严格白名单校验、四 Worker release revision 一致性、仅四个新 unit + wrapper 的
+  失败关闭安装，以及不迁移、不启停、不切 Owner 的互斥发布路径；production flags 仍关闭。

@@ -1,6 +1,6 @@
 [Unit]
 Description=EVERYDAYAIONE Agent Projection Worker
-After=network-online.target postgresql.service redis-server.service
+After=network-online.target postgresql.service redis.service
 
 [Service]
 Type=simple

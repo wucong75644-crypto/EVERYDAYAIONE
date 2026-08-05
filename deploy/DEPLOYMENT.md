@@ -185,9 +185,12 @@ MIGRATION_DATABASE_URL=postgresql://everydayai_migrator:<独立密码>@127.0.0.1
 
 数据库角色环境文件模板位于 `deploy/env-templates/`。真实文件必须安装为：
 
-- `backend/.env.runtime`：仅包含 runtime `DATABASE_URL`
-- `backend/.env.wecom-runtime`：仅包含 WeCom runtime `DATABASE_URL`
+- `backend/.env.runtime`：包含 runtime `DATABASE_URL` 及模板白名单内的 Runtime
+  ingress、confirmation、definition 配置；禁止未知键和重复键
+- `backend/.env.wecom-runtime`：包含 WeCom runtime `DATABASE_URL` 及模板白名单内的
+  ingress、definition 配置；禁止未知键和重复键
 - `backend/.env.worker`：仅包含 worker `DATABASE_URL`
+- `backend/.env.worker-client`：仅包含 worker `WORKER_DATABASE_URL`
 - `backend/.env.sync`：仅包含 Sync `everydayai_sync` 的 `DATABASE_URL`
 - `backend/.env.migrator`：仅包含 `MIGRATION_DATABASE_URL`
 
@@ -195,6 +198,15 @@ MIGRATION_DATABASE_URL=postgresql://everydayai_migrator:<独立密码>@127.0.0.1
 
 ```bash
 bash deploy/validate-tenant-db-env.sh /var/www/everydayai/backend
+```
+
+安装 production flags-off v3 单元前必须执行严格入口；该入口额外要求两个 Runtime
+文件使用 `everydayai-default/v3`，且 `AGENT_RUNTIME_INGRESS_ENABLED`、
+`TOOL_CONFIRMATION_V3_ENABLED` 全部为 `false`：
+
+```bash
+bash deploy/validate-tenant-db-env.sh \
+  /var/www/everydayai/backend --runtime-flags-off-v3
 ```
 
 Secret-capable 服务另使用 `backend/.env.kek`，格式参考
@@ -220,6 +232,34 @@ release、health socket 与 Sandbox 路径等运行配置，不得包含 Provide
 
 在 Agent Runtime grant、policy 和测试库 RLS 验证完成前，不得修改 Systemd
 `EnvironmentFile` 指向这些角色文件。
+
+### Production flags-off 单元安装
+
+`--runtime-flags-off-install` 是与前端、后端、setup 和 skip 选项互斥的安装路径。
+它只同步 B1 安装文件，并安装以下四个单元及 Sandbox cgroup wrapper：
+
+- `everydayai-agent-runtime.service`
+- `everydayai-agent-projection.service`
+- `everydayai-agent-authorization.service`
+- `everydayai-sandbox-worker.service`
+
+执行前必须由运维人员准备 `/etc/everydayai/` 下四个对应 Worker 环境文件，权限为
+`0640`；每个文件必须与仓库模板键集合完全一致、无重复键或占位符，四个文件的
+`AGENT_RUNTIME_RELEASE_REVISION` 必须等于本次 40 位 release SHA。Runtime Worker 的
+`AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED` 必须保持 `false`。Sandbox 配置也必须
+包含 release revision。
+
+发布脚本会在任何远端写入前确认四个服务均为 `inactive + disabled`，随后调用：
+
+```bash
+bash deploy/install-service-units.sh \
+  /var/www/everydayai/backend agent-runtime-only <40位-release-sha>
+```
+
+该模式只执行 `systemctl daemon-reload`，不运行 migration，不重启旧服务，不启停或
+enable 新服务，也不切换数据库 Owner。若任一已有 unit 或 wrapper 与发布内容不同，
+安装会在写入任何目标前失败，原文件保持不变；需先人工审查差异并制定恢复方案，禁止
+通过该入口直接覆盖。
 
 首次所有权转移必须由 PostgreSQL 管理员执行，且必须先完成数据库备份：
 
