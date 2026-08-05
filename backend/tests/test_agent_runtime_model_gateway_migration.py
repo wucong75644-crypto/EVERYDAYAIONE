@@ -61,3 +61,15 @@ def test_recovery_and_rollback_are_failure_closed() -> None:
     assert guard < UNDO.index("REVOKE ALL ON FUNCTION")
     assert guard < UNDO.index("DROP TABLE")
     assert "get_agent_runtime_ai_bundle" not in UNDO
+
+
+def test_gateway_owner_mutations_all_reject_expired_leases() -> None:
+    for function_name in (
+        "mark_agent_runtime_model_gateway_dispatched",
+        "renew_agent_runtime_model_gateway_operation",
+        "finalize_agent_runtime_model_gateway_operation",
+    ):
+        start = SQL.index(f"CREATE FUNCTION {function_name}")
+        end = SQL.index("END $$;", start)
+        body = SQL[start:end]
+        assert "o.lease_expires_at<=clock_timestamp()" in body

@@ -279,6 +279,49 @@ def _exercise_submit_claim(
     return org_claim
 
 
+def _exercise_terminal_finalize(
+    database: str, personal: dict[str, object], gateway: str,
+) -> None:
+    personal_claim = _call(
+        database, gateway, "claim_agent_runtime_model_gateway_operation",
+        _claim_params(personal),
+    )
+    personal_dispatched = _call(
+        database, gateway, "mark_agent_runtime_model_gateway_dispatched",
+        tuple(_mutation_params(personal, personal_claim, version=1)),
+    )
+    assert personal_dispatched["outcome"] == "dispatching"
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _call(
+            database, gateway, "finalize_agent_runtime_model_gateway_operation",
+            (*_mutation_params(personal, personal_claim, version=2), "completed",
+             "provider-request-1", True, "9" * 64,
+             json.dumps({"input_tokens": -1}), None, None),
+        )
+    complete_params = (
+        *_mutation_params(personal, personal_claim, version=2), "completed",
+        "provider-request-1", True, "9" * 64,
+        json.dumps({"input_tokens": 3, "output_tokens": 2, "unit": "tokens"}),
+        None, None,
+    )
+    finalized = _call(
+        database, gateway, "finalize_agent_runtime_model_gateway_operation",
+        complete_params,
+    )
+    assert finalized["outcome"] == "completed"
+    terminal_readback = _call(
+        database, gateway, "finalize_agent_runtime_model_gateway_operation",
+        complete_params,
+    )
+    assert terminal_readback["outcome"] == "readback"
+    assert terminal_readback["operation"]["status"] == "completed"
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT status,state_version FROM agent_model_attempts WHERE id=%s",
+            (personal["attempt"],),
+        ).fetchone() == ("prepared", 0)
+
+
 def _exercise_dispatch_finalize_recovery(
     database: str, org: dict[str, object], personal: dict[str, object],
     stale: dict[str, object], org_claim: dict[str, object],
@@ -326,35 +369,7 @@ def _exercise_dispatch_finalize_recovery(
         )
         connection.commit()
 
-    personal_claim = _call(
-        database, gateway, "claim_agent_runtime_model_gateway_operation",
-        _claim_params(personal),
-    )
-    personal_dispatched = _call(
-        database, gateway, "mark_agent_runtime_model_gateway_dispatched",
-        tuple(_mutation_params(personal, personal_claim, version=1)),
-    )
-    assert personal_dispatched["outcome"] == "dispatching"
-    with pytest.raises(psycopg.errors.InvalidParameterValue):
-        _call(
-            database, gateway, "finalize_agent_runtime_model_gateway_operation",
-            (*_mutation_params(personal, personal_claim, version=2), "completed",
-             "provider-request-1", True, "9" * 64,
-             json.dumps({"input_tokens": -1}), None, None),
-        )
-    finalized = _call(
-        database, gateway, "finalize_agent_runtime_model_gateway_operation",
-        (*_mutation_params(personal, personal_claim, version=2), "completed",
-         "provider-request-1", True, "9" * 64,
-         json.dumps({"input_tokens": 3, "output_tokens": 2, "unit": "tokens"}),
-         None, None),
-    )
-    assert finalized["outcome"] == "completed"
-    with psycopg.connect(database) as connection:
-        assert connection.execute(
-            "SELECT status,state_version FROM agent_model_attempts WHERE id=%s",
-            (personal["attempt"],),
-        ).fetchone() == ("prepared", 0)
+    _exercise_terminal_finalize(database, personal, gateway)
 
     stale_claim = _call(
         database, gateway, "claim_agent_runtime_model_gateway_operation",
@@ -368,6 +383,19 @@ def _exercise_dispatch_finalize_recovery(
             (org["request"], stale["request"]),
         )
         connection.commit()
+    expired_finalize = _call(
+        database, gateway, "finalize_agent_runtime_model_gateway_operation",
+        (*_mutation_params(org, org_claim, version=3), "completed",
+         "late-provider-request", True, "8" * 64,
+         json.dumps({"input_tokens": 1, "unit": "tokens"}), None, None),
+    )
+    assert expired_finalize["outcome"] == "fenced"
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT status,finalized_at,response_hash FROM "
+            "agent_runtime_model_gateway_operations WHERE request_id=%s",
+            (org["request"],),
+        ).fetchone() == ("dispatching", None, None)
     recovered = _call(
         database, gateway, "recover_agent_runtime_model_gateway_operations",
         ("recovery-worker", 120, 50),

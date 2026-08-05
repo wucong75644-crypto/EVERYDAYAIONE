@@ -298,7 +298,8 @@ BEGIN
  IF o.status<>'dispatching' OR o.lease_token IS DISTINCT FROM p_claim_token OR o.execution_token IS DISTINCT FROM p_execution_token
  OR o.request_hash IS DISTINCT FROM p_request_hash OR o.provider_revision IS DISTINCT FROM btrim(p_provider_revision)
  OR o.tenant_kill_epoch<>p_tenant_kill_epoch OR o.provider_kill_epoch<>p_provider_kill_epoch OR o.capability_kill_epoch<>p_capability_kill_epoch
- OR o.state_version<>p_expected_operation_version THEN RETURN jsonb_build_object('outcome','fenced'); END IF;
+ OR o.state_version<>p_expected_operation_version OR o.lease_expires_at<=clock_timestamp()
+ THEN RETURN jsonb_build_object('outcome','fenced'); END IF;
  bad:=jsonb_typeof(COALESCE(p_usage_summary,'{}'))<>'object' OR pg_column_size(COALESCE(p_usage_summary,'{}'))>4096
   OR COALESCE(p_usage_summary::text,'')~*'(secret|password|credential|api[_-]?key|authorization|cookie|prompt|payload|response)'
   OR EXISTS(SELECT 1 FROM jsonb_object_keys(COALESCE(p_usage_summary,'{}')) k WHERE k NOT IN('input_tokens','output_tokens','reasoning_tokens','total_tokens','credits','unit'))
