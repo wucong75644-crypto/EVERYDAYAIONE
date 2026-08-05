@@ -120,7 +120,7 @@ Agent Runtime C7-B3.2-BG2 Model Gateway database owner：
   claim/dispatch/renew/finalize/recover 窄 RPC；Runtime 旧 AI bundle 直权被撤销。
 - `backend/services/agent/runtime/infrastructure/postgres/model_gateway.py` 以 scoped repository
   分离 Runtime 与 Gateway 可调用面；claimed 过期可恢复，dispatching 过期只收敛 UNKNOWN，
-  Gateway finalize 不修改 ModelAttempt/ModelStep。BG3 process/Provider、systemd 与生产配置仍未实现，
+  Gateway finalize 不修改 ModelAttempt/ModelStep。systemd 与生产配置仍未实现，
   `production_ready=false`。
 
 Agent Runtime C7-BG2.1 Model Gateway pre-dispatch failure closure：
@@ -130,12 +130,24 @@ Agent Runtime C7-BG2.1 Model Gateway pre-dispatch failure closure：
 - rollback 只删除该 RPC、保留 operation facts 与 227_18 readback；repository 增加
   Gateway scope `fail_before_dispatch`，Runtime scope 不可调用，平台仍为 `production_ready=false`。
 
+Agent Runtime C7-BG3 Model Gateway isolated process：
+- `backend/agent_model_gateway_main.py` 与 `model_gateway/service.py` 提供默认关闭、
+  `production_ready=false` 的本地隔离进程、健康契约、drain，以及 claim→predispatch
+  failure/dispatch→Provider→finalize 的唯一时序；不接 systemd 或 Runtime composition。
+- `model_gateway/configuration.py` 是 Runtime 子树内唯一 KEK/SecretMaterial 构造边界，
+  只在一次性 async consumer 生命周期内解密 BG2 bundle；`provider.py` 是唯一
+  `create_runtime_chat_adapter` consumer，并保证 DB dispatch fact 先于网络调用。
+- `infrastructure/model/stream_execution.py` 复用既有 `ResponseAccumulator`，统一 text、
+  tool call、usage、错误与 UNKNOWN 分类；Provider adapter 在 UDS 终态后关闭，Secret、
+  encrypted bundle 与原始异常均不进入协议、事实或日志。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、
   ModelAttempt/Provider operation 唯一 Owner、UNKNOWN 保守恢复、D0-A flags-off
-  部署扩展及 BG1～BG5 实施门禁；当前 BG1 protocol 与 BG2 database owner 已实现并验证，
-  尚未实现或启用 Gateway process、Provider 或生产能力。
+  部署扩展及 BG1～BG5 实施门禁；当前 BG1 protocol、BG2 database owner 与 BG3
+  isolated Gateway 已实现，尚未实施 BG4 Runtime client/composition 或 BG5 部署，
+  生产能力保持关闭。
 
 Agent Runtime C2.1 ERP 只读接线：
 - `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime

@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from services.agent.runtime.credential_broker import (
-    BackendCredential, CredentialBroker, InMemoryCredentialAuditSink,
-    InMemoryCredentialBackend,
-)
 from services.agent.runtime.domain import ModelStepId, RuntimeScope, ScopeKind
 from services.agent.runtime.infrastructure.model import (
     ExistingProviderModelAdapter, compute_request_hash, resolve_model_revision,
@@ -57,43 +52,9 @@ def _request(*, lease: object | None = None) -> ModelStepRequest:
 
 
 @pytest.mark.asyncio
-async def test_default_model_builder_consumes_only_a_bound_lease(monkeypatch) -> None:
-    material = "fixture-secret-must-not-escape"
-    backend = InMemoryCredentialBackend()
-    backend.put(BackendCredential(
-        tenant_id="org-a", handle="test:model", provider="dashscope",
-        revision=resolve_model_revision("qwen3.5-plus"), purpose="model.invoke",
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
-        _material=material,
-    ))
-    broker = CredentialBroker(backend, InMemoryCredentialAuditSink())
-    lease = await broker.resolve(
-        scope=_scope(), credential_handle="test:model", provider="dashscope",
-        revision=resolve_model_revision("qwen3.5-plus"), purpose="model.invoke",
-    )
-    captured: dict[str, object] = {}
-
-    def builder(*_args, **kwargs):
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(
-        "services.agent.runtime.infrastructure.model.runtime_adapter_factory."
-        "create_runtime_chat_adapter",
-        builder,
-    )
+async def test_runtime_provider_builder_requires_gateway_composition() -> None:
     adapter = ExistingProviderModelAdapter(db=object())
-    created = await adapter._create_adapter(_request(lease=lease))
-
-    assert created is not None
-    assert captured["api_key"] == material
-    assert material not in repr(_request(lease=lease))
-
-
-@pytest.mark.asyncio
-async def test_default_model_builder_fails_closed_without_lease() -> None:
-    adapter = ExistingProviderModelAdapter(db=object())
-    with pytest.raises(ValueError, match="RUNTIME_CREDENTIAL_LEASE_REQUIRED"):
+    with pytest.raises(ValueError, match="RUNTIME_MODEL_GATEWAY_REQUIRED"):
         await adapter._create_adapter(_request())
 
 
@@ -117,6 +78,8 @@ def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> N
     for source in sources:
         text = source.read_text()
         assert not any(item in text for item in forbidden), source
+    adapter_source = (root / "infrastructure/model/adapter.py").read_text()
+    assert "create_runtime_chat_adapter" not in adapter_source
 
 
 def test_credential_available_requires_a_broker() -> None:
