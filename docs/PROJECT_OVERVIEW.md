@@ -108,6 +108,12 @@ Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
 - 既有 scope SSOT 保持不变：channel Toolset 为 17 项，user Toolset 为 9 项；
   production flags 与 `production_ready` 均未开启。
 
+Agent Runtime C7-B3.2-BG1 Model Gateway protocol：
+- `backend/services/agent/runtime/model_gateway/` 定义严格的 UDS v1 framing、请求/响应
+  校验、可注入 peer credential 验证以及仅供隔离测试使用的 client/fake server。
+- BG1 不访问数据库、配置 Secret 或 Provider，也不进入 production composition；local harness
+  与 fake server 均固定 `production_ready=false`。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、
