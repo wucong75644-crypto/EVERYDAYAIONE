@@ -18,6 +18,7 @@ class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
     AGENT_RUNTIME = "agent_runtime"
+    AGENT_MODEL_GATEWAY = "agent_model_gateway"
     AUTHORIZATION = "authorization"
     PROJECTION = "projection"
     RUNTIME = "runtime"
@@ -106,6 +107,12 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_fencing_token": "bigint",
         "p_executor_revision": "integer",
         "p_lease_seconds": "integer",
+        "p_attempt_state_version": "bigint",
+        "p_capability_kill_epoch": "bigint",
+        "p_expected_operation_version": "bigint",
+        "p_limit": "integer",
+        "p_provider_kill_epoch": "bigint",
+        "p_tenant_kill_epoch": "bigint",
     }
     uuid_keys = {
         "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",

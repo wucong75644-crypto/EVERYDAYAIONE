@@ -114,11 +114,21 @@ Agent Runtime C7-B3.2-BG1 Model Gateway protocol：
 - BG1 不访问数据库、配置 Secret 或 Provider，也不进入 production composition；local harness
   与 fake server 均固定 `production_ready=false`。
 
+Agent Runtime C7-B3.2-BG2 Model Gateway database owner：
+- `backend/migrations/227_18_agent_runtime_model_gateway.sql` 与精确 rollback 新增
+  secret-free Gateway operation facts、专用数据库角色门禁、Runtime submit/read 与 Gateway
+  claim/dispatch/renew/finalize/recover 窄 RPC；Runtime 旧 AI bundle 直权被撤销。
+- `backend/services/agent/runtime/infrastructure/postgres/model_gateway.py` 以 scoped repository
+  分离 Runtime 与 Gateway 可调用面；claimed 过期可恢复，dispatching 过期只收敛 UNKNOWN，
+  Gateway finalize 不修改 ModelAttempt/ModelStep。BG3 process/Provider、systemd 与生产配置仍未实现，
+  `production_ready=false`。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、
   ModelAttempt/Provider operation 唯一 Owner、UNKNOWN 保守恢复、D0-A flags-off
-  部署扩展及 BG1～BG5 实施门禁；当前仅完成设计，未实现或启用生产能力。
+  部署扩展及 BG1～BG5 实施门禁；当前 BG1 protocol 与 BG2 database owner 已实现并验证，
+  尚未实现或启用 Gateway process、Provider 或生产能力。
 
 Agent Runtime C2.1 ERP 只读接线：
 - `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
