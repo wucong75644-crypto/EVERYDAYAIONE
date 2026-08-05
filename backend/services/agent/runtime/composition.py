@@ -158,6 +158,8 @@ def build_runtime(
     ))
     if not production_enabled:
         raise RuntimeError("RUNTIME_PRODUCTION_COMPOSITION_DISABLED")
+    if production_components is not None:
+        raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_INJECTION_FORBIDDEN")
     from services.agent.runtime.production_composition import (
         ProductionRuntimeComponents, build_production_action_loop,
     )
@@ -176,16 +178,12 @@ def build_runtime(
     )
     versions = build_runtime_version_registry()
     if production_enabled:
-        components = production_components or getattr(
-            settings, "agent_runtime_production_components", None,
+        from services.agent.runtime.production_composition import (
+            build_production_components_for_worker,
         )
-        if components is None:
-            from services.agent.runtime.production_composition import (
-                build_production_components_for_worker,
-            )
-            components = build_production_components_for_worker(
-                database=db, settings=settings, sandbox_registry=registry,
-            )
+        components = build_production_components_for_worker(
+            database=db, settings=settings, sandbox_registry=registry,
+        )
         if not isinstance(components, ProductionRuntimeComponents):
             raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_FACTORY_INVALID")
         if components.service_bundle is None:
@@ -240,12 +238,7 @@ def build_runtime(
         worker_id=worker_id,
         handler=runtime.handle_command,
     )
-    readiness = getattr(components, "readiness", None)
-    if readiness is None:
-        readiness = getattr(components.service_bundle, "readiness", None)
-    if readiness is None:
-        raise RuntimeError("RUNTIME_PRODUCTION_READINESS_NOT_AVAILABLE")
-    return RuntimeOwner(commands, runtime, readiness=readiness)
+    return RuntimeOwner(commands, runtime, readiness=components.readiness)
 
 
 def build_safe_runtime_components(

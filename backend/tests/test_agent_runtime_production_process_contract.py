@@ -1,10 +1,28 @@
+from inspect import Parameter, signature
 from pathlib import Path
+from types import SimpleNamespace
+from typing import get_type_hints
 
 import pytest
 
+import agent_runtime_worker_main as entrypoint
+from agent_runtime_worker_main import AgentRuntimeProcessSettings
+from services.agent.runtime.executors.registry import ExecutorRegistry
+from services.agent.runtime.executors.sandbox_job import (
+    SandboxJobExecutor,
+    register_sandbox_job_executor,
+)
+from services.agent.runtime.production_factory import (
+    ProductionCompositionNotReady,
+    build_agent_runtime_production_components,
+)
 from services.agent.runtime.production_composition import (
     ProductionRuntimeComponents,
     build_production_components_for_worker,
+)
+from services.agent.runtime.runtime_assembly import (
+    CapabilityReadinessState,
+    RuntimeAssemblyReadiness,
 )
 from services.agent.runtime.composition import (
     build_authorization, build_projection, build_runtime, build_sandbox,
@@ -13,6 +31,12 @@ from services.agent.runtime.composition import (
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
+
+
+def _sandbox_registry() -> ExecutorRegistry:
+    registry = ExecutorRegistry()
+    register_sandbox_job_executor(registry, SandboxJobExecutor())
+    return registry
 
 
 def test_all_production_services_are_non_root() -> None:
@@ -45,11 +69,9 @@ def test_sandbox_environment_has_no_forbidden_credentials() -> None:
     assert 'HEARTBEAT_FAILED' in entrypoint
 
 
-def test_runtime_worker_requires_explicit_production_composition() -> None:
-    entrypoint = (ROOT / "backend" / "agent_runtime_worker_main.py").read_text()
-    assert "agent_runtime_production_composition_enabled" in entrypoint
-    assert "build_production_components_for_worker" in entrypoint
-    assert "production_components=production_components" in entrypoint
+def test_runtime_worker_has_no_dynamic_composition_setting() -> None:
+    fields = set(AgentRuntimeProcessSettings.model_fields)
+    assert not any("factory" in name or "components" in name for name in fields)
 
 
 def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
@@ -79,29 +101,107 @@ def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
 
 
 def test_production_factory_fails_closed_until_scoped_services_exist() -> None:
-    with pytest.raises(
-        RuntimeError, match="RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY",
-    ):
+    with pytest.raises(ProductionCompositionNotReady) as caught:
         build_production_components_for_worker(
-            database=object(), settings=object(), sandbox_registry=object(),
+            database=object(), settings=object(),
+            sandbox_registry=_sandbox_registry(),
+        )
+    assert caught.value.readiness.production_ready is False
+    assert caught.value.readiness.error_code == "SAFETY_SERVICE_WIRING_NOT_READY"
+    assert caught.value.readiness.capabilities["runtime.model"].state is (
+        CapabilityReadinessState.UNAVAILABLE
+    )
+    assert caught.value.readiness.capabilities["runtime.media"].state is (
+        CapabilityReadinessState.DISABLED
+    )
+
+
+def test_production_factory_ignores_injected_callable() -> None:
+    calls = []
+
+    def injected(**_kwargs):
+        calls.append(True)
+        raise AssertionError("dynamic factory must be unreachable")
+
+    hook_name = "_".join(("agent", "runtime", "production", "service", "factory"))
+    settings = SimpleNamespace(**{hook_name: injected})
+    with pytest.raises(ProductionCompositionNotReady):
+        build_production_components_for_worker(
+            database=object(), settings=settings,
+            sandbox_registry=_sandbox_registry(),
+        )
+    assert calls == []
+
+
+def test_production_factory_requires_sandbox_registry() -> None:
+    with pytest.raises(
+        ProductionCompositionNotReady,
+        match="RUNTIME_PRODUCTION_COMPOSITION_NOT_READY:SANDBOX_REGISTRY_REQUIRED",
+    ) as caught:
+        build_agent_runtime_production_components(object(), object(), None)
+    assert caught.value.readiness.production_ready is False
+    assert caught.value.readiness.capabilities["runtime.sandbox"].state is (
+        CapabilityReadinessState.UNAVAILABLE
+    )
+
+
+def test_production_factory_requires_sandbox_executor() -> None:
+    with pytest.raises(
+        ProductionCompositionNotReady,
+        match="RUNTIME_PRODUCTION_COMPOSITION_NOT_READY:SANDBOX_EXECUTOR_REQUIRED",
+    ) as caught:
+        build_agent_runtime_production_components(
+            object(), object(), ExecutorRegistry(),
+        )
+    assert caught.value.readiness.capabilities["runtime.sandbox"].error_code == (
+        "SANDBOX_EXECUTOR_REQUIRED"
+    )
+
+
+def test_production_components_require_typed_readiness_and_explicit_bundle() -> None:
+    parameters = signature(ProductionRuntimeComponents).parameters
+    assert get_type_hints(ProductionRuntimeComponents)["readiness"] is (
+        RuntimeAssemblyReadiness
+    )
+    assert parameters["readiness"].default is Parameter.empty
+    assert parameters["service_bundle"].default is Parameter.empty
+
+
+@pytest.mark.asyncio
+async def test_runtime_worker_entry_cannot_promote_unwired_composition(tmp_path) -> None:
+    class DatabaseWithoutGateRead:
+        def __getattr__(self, _name):
+            raise AssertionError("database gates must not manufacture readiness")
+
+    settings = SimpleNamespace(
+        agent_runtime_process_role="agent_runtime",
+        agent_runtime_worker_id="c7-b31-worker",
+        agent_runtime_release_revision="c7-b31",
+        agent_runtime_production_composition_enabled=True,
+        sandbox_job_root=str(tmp_path / "jobs"),
+        sandbox_runtime_revision="sandbox-c7-b31",
+    )
+
+    with pytest.raises(ProductionCompositionNotReady) as caught:
+        await entrypoint._build_owner_and_cycle(
+            "agent_runtime", DatabaseWithoutGateRead(), settings,
         )
 
+    assert caught.value.readiness.production_ready is False
+    assert caught.value.readiness.ready is False
 
-def test_production_factory_rejects_missing_service_bundle() -> None:
-    settings = type("Settings", (), {
-        "agent_runtime_production_service_factory": staticmethod(
-            lambda **_kwargs: ProductionRuntimeComponents(
-                registry=object(), catalog=object(), callback_inbox=object(),
-                specialist_repository=object(), service_bundle=None,
-            ),
-        ),
-    })()
+
+def test_runtime_rejects_explicit_component_injection() -> None:
+    settings = SimpleNamespace(
+        agent_runtime_production_composition_enabled=True,
+        sandbox_runtime_revision="sandbox-c7-b31",
+    )
     with pytest.raises(
-        RuntimeError,
-        match="RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:SERVICE_BUNDLE_REQUIRED",
+        RuntimeError, match="RUNTIME_PRODUCTION_COMPONENT_INJECTION_FORBIDDEN",
     ):
-        build_production_components_for_worker(
-            database=object(), settings=settings, sandbox_registry=object(),
+        build_runtime(
+            object(), settings, production_components=object(),
+            process_role="agent_runtime",
         )
 
 

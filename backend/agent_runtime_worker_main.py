@@ -336,10 +336,8 @@ async def _build_owner_and_cycle(role, raw, settings):
             )
             return execution.worked or recovery.worked
     else:
-        # build_runtime owns the agent_runtime_production_composition_enabled
-        # gate and build_production_components_for_worker call; the resulting
-        # production_components=production_components handoff is now internal.
-        # This keeps sandbox and production registries in one composition root.
+        # build_runtime owns the production gate and the single code-owned
+        # production factory call. No Worker setting can inject composition.
         owner = build_runtime(raw, settings, process_role=role)
         cycle = owner.run_once
     return owner, cycle

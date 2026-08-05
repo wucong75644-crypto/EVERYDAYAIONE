@@ -90,6 +90,14 @@ Agent Runtime Sandbox Job Controller 与专业 Executor：
 - `docs/document/TECH_AGENT_RUNTIME_SandboxJobController_BatchA.md`：记录身份、
   状态机、锁序、权限、Worker/Executor和三层隔离验证门禁。
 
+Agent Runtime C7-B3.1 production composition spine：
+- `backend/services/agent/runtime/production_factory.py`：Runtime Worker 唯一 code-owned
+  production composition 入口，不接受 Settings callable 或组件对象注入，不读取 Secret、
+  不调用 Provider。
+- 当前批次不接 Credential、ERP/Media、Object Store 或 Scheduler；缺少真实安全服务时以
+  `RuntimeAssemblyReadiness` 携带 required/unavailable/disabled 能力状态并结构化失败关闭，
+  production gate 不能将 composition readiness 提升为 ready。
+
 Agent Runtime C2.1 ERP 只读接线：
 - `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
   scope 的 `org_id` 逐次解析企业 ERP 凭证并构造一次性 dispatcher；不启用生产
@@ -1622,6 +1630,7 @@ cache = client.caches.create(
   - 生产发布、灰度、告警和回滚合同见
     [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)
 - **2026-08-04**：C5.2 增加 capability-scoped safe composition；仅接入 Runtime read（含 C2.1 org-scoped ERP read），模型/ActionLoop 通过显式注入接线，ERP write、Media、external specialist 及未启动 Worker/Projection/Authorization/Sandbox 保持 unavailable/disabled，整体 production readiness 仍为 false。
+- **2026-08-05**：C7-B3.1 增加 code-owned production composition spine；Worker 不再接受动态 factory 或组件注入，真实安全服务未接线时返回强类型、结构化 NOT_READY，未启用任何 Provider 或生产能力。
 - **2026-08-01**：AR-17.1 共享基础已在独立分支实现，默认仍关闭
   - 224 additive v2 ingress 在同一 PostgreSQL 事务中冻结 Session、Command、Run envelope、上下文锚点和 EffectiveToolset
   - AgentDefinition、Runtime Tool Catalog、Executor revision 与 Authorization 使用同一 code_execute-only 目录事实

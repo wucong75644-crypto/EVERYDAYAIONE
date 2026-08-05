@@ -41,6 +41,7 @@ from services.agent.runtime.infrastructure.postgres.specialist_repository import
 from services.agent.runtime.providers.callback_inbox import (
     CallbackInbox, CallbackSignatureVerifier,
 )
+from services.agent.runtime.production_services import ProductionServiceBundle
 from services.agent.runtime.application.action_loop import ActionLoopDriver
 from services.agent.runtime.executors.resolver import PostgresActionExecutorResolver
 from services.agent.runtime.infrastructure.postgres.action_repository import PostgresActionRepository
@@ -51,38 +52,23 @@ from services.agent.runtime.runtime_assembly import (
 )
 
 
-def build_production_components_for_worker(*, database, settings, sandbox_registry):
-    """Build only through an explicitly injected tenant-scoped service factory.
+def build_production_components_for_worker(
+    *, database: object, settings: object,
+    sandbox_registry: ExecutorRegistry,
+) -> "ProductionRuntimeComponents":
+    """Delegate Worker construction to the sole code-owned production root."""
+    from services.agent.runtime.production_factory import (
+        build_agent_runtime_production_components,
+    )
 
-    Legacy services are never discovered implicitly at this composition
-    boundary. Until deployment supplies this hook, production stays closed.
-    """
-    if sandbox_registry is None:
-        raise RuntimeError(
-            "RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:"
-            "SANDBOX_REGISTRY_REQUIRED"
-        )
-    factory = getattr(settings, "agent_runtime_production_service_factory", None)
-    if not callable(factory):
-        raise RuntimeError(
-            "RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:"
-            "SERVICE_WIRING_NOT_READY"
-        )
-    components = factory(
-        database=database, settings=settings,
-        sandbox_registry=sandbox_registry,
+    components = build_agent_runtime_production_components(
+        database, settings, sandbox_registry,
     )
     if not isinstance(components, ProductionRuntimeComponents):
         raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_FACTORY_INVALID")
-    if components.service_bundle is None:
+    if not isinstance(components.readiness, RuntimeAssemblyReadiness):
         raise RuntimeError(
-            "RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:"
-            "SERVICE_BUNDLE_REQUIRED"
-        )
-    if getattr(components.service_bundle, "readiness", None) is None:
-        raise RuntimeError(
-            "RUNTIME_PRODUCTION_COMPONENT_FACTORY_NOT_READY:"
-            "SERVICE_READINESS_REQUIRED"
+            "RUNTIME_PRODUCTION_COMPONENT_READINESS_INVALID"
         )
     return components
 
@@ -111,8 +97,8 @@ class ProductionRuntimeComponents:
     catalog: ProductionCatalogReceipt
     callback_inbox: CallbackInbox
     specialist_repository: PostgresSpecialistRepository
-    readiness: object | None = None
-    service_bundle: object | None = None
+    readiness: RuntimeAssemblyReadiness
+    service_bundle: ProductionServiceBundle | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -348,6 +334,15 @@ def build_production_components(
         catalog=catalog,
         callback_inbox=CallbackInbox(callback_verifier, facts),
         specialist_repository=facts,
+        readiness=RuntimeAssemblyReadiness(
+            service_wiring_ready=service_bundle is not None,
+            tenant_binding_ready=False,
+            credential_available=False,
+            capability_enabled=False,
+            probe_passed=False,
+            production_ready=False,
+            error_code="TENANT_PROVIDER_BINDING_NOT_READY",
+        ),
         service_bundle=service_bundle,
     )
 

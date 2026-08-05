@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from services.agent.runtime.runtime_assembly import (
+    CapabilityReadiness,
+    CapabilityReadinessState,
     RuntimeAssemblyReadiness,
     build_runtime_production_assembly,
     first_readiness_error,
@@ -52,6 +54,27 @@ def test_a6_readiness_error_order_is_stable():
         probe_passed=False, production_ready=False,
     )
     assert first_readiness_error(readiness) == "CAPABILITY_NOT_ENABLED"
+
+
+def test_a6_required_capability_cannot_be_promoted_to_ready():
+    with pytest.raises(
+        ValueError, match="RUNTIME_REQUIRED_CAPABILITY_NOT_READY",
+    ):
+        RuntimeAssemblyReadiness(
+            service_wiring_ready=True,
+            tenant_binding_ready=True,
+            credential_available=True,
+            capability_enabled=True,
+            probe_passed=True,
+            production_ready=True,
+            capabilities={
+                "runtime.model": CapabilityReadiness(
+                    state=CapabilityReadinessState.UNAVAILABLE,
+                    error_code="MODEL_SERVICE_WIRING_NOT_READY",
+                ),
+            },
+            required_capabilities=frozenset(("runtime.model",)),
+        )
 
 
 def test_a6_composition_module_has_no_legacy_or_secret_entrypoint():

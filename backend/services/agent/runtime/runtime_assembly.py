@@ -16,6 +16,29 @@ class RuntimeAssemblyReadiness:
     production_ready: bool
     error_code: str | None = None
     capabilities: Mapping[str, "CapabilityReadiness"] = field(default_factory=dict)
+    required_capabilities: frozenset[str] = field(default_factory=frozenset)
+
+    def __post_init__(self) -> None:
+        missing = self.required_capabilities - self.capabilities.keys()
+        if missing:
+            raise ValueError("RUNTIME_REQUIRED_CAPABILITY_NOT_REGISTERED")
+        if any(
+            self.capabilities[name].state is CapabilityReadinessState.DISABLED
+            for name in self.required_capabilities
+        ):
+            raise ValueError("RUNTIME_REQUIRED_CAPABILITY_DISABLED")
+        dependencies_ready = all((
+            self.service_wiring_ready, self.tenant_binding_ready,
+            self.credential_available, self.capability_enabled,
+            self.probe_passed,
+        ))
+        if self.production_ready and not dependencies_ready:
+            raise ValueError("RUNTIME_PRODUCTION_READINESS_INCONSISTENT")
+        if self.production_ready and any(
+            not self.capabilities[name].ready
+            for name in self.required_capabilities
+        ):
+            raise ValueError("RUNTIME_REQUIRED_CAPABILITY_NOT_READY")
 
     @property
     def ready(self) -> bool:

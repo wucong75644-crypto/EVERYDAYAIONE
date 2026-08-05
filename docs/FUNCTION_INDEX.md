@@ -2019,6 +2019,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `resolve_runtime_model` / `snapshot_from_resolution` | `backend/services/agent/runtime/model_resolution.py` | 沿用聊天模型选择链解析有效显式模型或 `DEFAULT_MODEL_ID`，冻结 model/provider/revision；不读取订阅选择 |
 | `_resolve_model_selection` | `backend/services/agent/runtime/production_model.py` | 优先使用 Run config snapshot 的 resolved model，并兼容旧 WeCom task 模型回退，不受 definition 固定模型覆盖 |
 | `build_runtime` / `build_projection` / `build_authorization` / `build_sandbox` | `backend/services/agent/runtime/composition.py` | 四个互斥进程的生产 composition roots |
+| `build_agent_runtime_production_components` / `ProductionCompositionNotReady` | `backend/services/agent/runtime/production_factory.py` | Runtime Worker 唯一 code-owned 生产组装入口；真实安全服务未接线时返回携带强类型 readiness 的结构化失败 |
 | `build_safe_runtime_components` | `backend/services/agent/runtime/composition.py` | 不启动 Worker 的 safe Runtime read/model/action 基础接线；不接 provider-dependent 能力 |
 | `CapabilityReadiness` / `RuntimeAssemblyReadiness` | `backend/services/agent/runtime/runtime_assembly.py` | 区分 capability ready、unavailable、disabled 与整体 production readiness |
 | `build_safe_runtime_composition` | `backend/services/agent/runtime/production_composition.py` | 只从真实 Runtime read registry 构造 safe composition，ERP write/Media/external specialist 不注册 |
