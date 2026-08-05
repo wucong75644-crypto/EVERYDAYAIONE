@@ -80,25 +80,14 @@ remote_exec() {
     ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" "$@"
 }
 
-log_info "确认 Agent Runtime 服务保持 inactive + disabled..."
-remote_exec bash << 'ENDSSH'
-    set -euo pipefail
-    services=(
-        everydayai-agent-runtime
-        everydayai-agent-projection
-        everydayai-agent-authorization
-        everydayai-sandbox-worker
-    )
-    for service in "${services[@]}"; do
-        active_state=$(systemctl is-active "$service" 2>/dev/null || true)
-        enabled_state=$(systemctl is-enabled "$service" 2>/dev/null || true)
-        if [ "$active_state" != inactive ] || [ "$enabled_state" != disabled ]; then
-            echo "❌ ${service} 必须为 inactive + disabled，实际为 ${active_state:-unknown} + ${enabled_state:-unknown}" >&2
-            exit 1
-        fi
-    done
-    echo "✅ 四个 Agent Runtime 服务均为 inactive + disabled"
-ENDSSH
+check_remote_unit_states() {
+    local phase=$1
+    remote_exec bash -s -- "$phase" \
+        < deploy/check-agent-runtime-unit-states.sh
+}
+
+log_info "确认 Agent Runtime unit 安装前状态安全..."
+check_remote_unit_states pre-install
 
 install_files=(
     deploy/validate-tenant-db-env.sh
@@ -123,4 +112,6 @@ rsync -avz --relative -e "ssh -p ${SERVER_PORT}" \
 log_info "安装 Agent Runtime flags-off Systemd 单元..."
 remote_exec \
     "EXPECTED_RELEASE_SHA=${EXPECTED_SHA} bash ${REMOTE_APP_DIR}/deploy/install-service-units.sh ${REMOTE_BACKEND_DIR} agent-runtime-only"
+log_info "确认 Agent Runtime unit 安装后仍为 inactive + disabled..."
+check_remote_unit_states post-install
 log_success "Agent Runtime flags-off 安装完成；未迁移、启停、enable 或切换 Owner"

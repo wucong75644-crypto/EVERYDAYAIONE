@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -104,6 +105,122 @@ def _fake_commands(directory: Path) -> tuple[Path, Path]:
     )
     systemctl.chmod(0o755)
     return fake_bin, calls
+
+
+def _write_unit_states(
+    state_dir: Path,
+    phase: str,
+    overrides: dict[str, tuple[str, str]] | None = None,
+) -> None:
+    overrides = overrides or {}
+    default = ("inactive", "not-found") if phase == "pre" else (
+        "inactive",
+        "disabled",
+    )
+    for service in RUNTIME_SERVICES:
+        active_state, enabled_state = overrides.get(service, default)
+        (state_dir / f"{phase}.{service}.is-active").write_text(
+            active_state,
+            encoding="utf-8",
+        )
+        (state_dir / f"{phase}.{service}.is-enabled").write_text(
+            enabled_state,
+            encoding="utf-8",
+        )
+
+
+def _make_release_harness(
+    tmp_path: Path,
+    *,
+    pre_overrides: dict[str, tuple[str, str]] | None = None,
+    post_overrides: dict[str, tuple[str, str]] | None = None,
+) -> tuple[Path, dict[str, str], Path, Path]:
+    release_root = tmp_path / "release"
+    deploy_dir = release_root / "deploy"
+    fake_bin = tmp_path / "release-bin"
+    state_dir = tmp_path / "unit-states"
+    deploy_dir.mkdir(parents=True)
+    fake_bin.mkdir()
+    state_dir.mkdir()
+    for name in (
+        "runtime-flags-off-install.sh",
+        "check-agent-runtime-unit-states.sh",
+        "deploy-helpers.sh",
+    ):
+        shutil.copy2(DEPLOY / name, deploy_dir / name)
+    (deploy_dir / "config.env").write_text(
+        "SERVER_HOST=runtime.example\n"
+        "SERVER_USER=deploy\n"
+        "SERVER_PORT=22\n"
+        "REMOTE_APP_DIR=/remote/app\n"
+        "REMOTE_BACKEND_DIR=/remote/app/backend\n",
+        encoding="utf-8",
+    )
+    _write_unit_states(state_dir, "pre", pre_overrides)
+    _write_unit_states(state_dir, "post", post_overrides)
+
+    rsync_marker = tmp_path / "rsync-called"
+    install_marker = tmp_path / "install-called"
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        f"  rev-parse) echo '{RELEASE_SHA}' ;;\n"
+        f"  ls-remote) echo '{RELEASE_SHA} refs/heads/main' ;;\n"
+        "  status) exit 0 ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_ssh = fake_bin / "ssh"
+    fake_ssh.write_text(
+        "#!/bin/bash\n"
+        "if [ \"${1:-}\" = -p ]; then shift 2; fi\n"
+        "shift\n"
+        "if [ \"$#\" -eq 1 ]; then\n"
+        "  touch \"$INSTALL_MARKER\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_rsync = fake_bin / "rsync"
+    fake_rsync.write_text(
+        "#!/bin/sh\ntouch \"$RSYNC_MARKER\"\n",
+        encoding="utf-8",
+    )
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text(
+        "#!/bin/sh\n"
+        "phase=pre\n"
+        "test ! -f \"$INSTALL_MARKER\" || phase=post\n"
+        "cat \"$STATE_DIR/${phase}.$2.$1\"\n",
+        encoding="utf-8",
+    )
+    for command in (fake_git, fake_ssh, fake_rsync, fake_systemctl):
+        command.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STATE_DIR": str(state_dir),
+        "RSYNC_MARKER": str(rsync_marker),
+        "INSTALL_MARKER": str(install_marker),
+    }
+    return release_root, env, rsync_marker, install_marker
+
+
+def _run_release_harness(
+    release_root: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "deploy/runtime-flags-off-install.sh", "--runtime-flags-off-install"],
+        cwd=release_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _run_installer(
@@ -243,19 +360,107 @@ def test_agent_runtime_only_strictly_rejects_worker_env_keys(
 
 
 def test_flags_off_deploy_path_is_mutually_exclusive_and_write_gated() -> None:
-    verify = FLAGS_OFF_SCRIPT.index("remote_exec bash")
-    sync = FLAGS_OFF_SCRIPT.index("rsync -avz --relative", verify)
+    precheck = FLAGS_OFF_SCRIPT.index("check_remote_unit_states pre-install")
+    sync = FLAGS_OFF_SCRIPT.index("rsync -avz --relative", precheck)
     install = FLAGS_OFF_SCRIPT.index("agent-runtime-only", sync)
+    postcheck = FLAGS_OFF_SCRIPT.index("check_remote_unit_states post-install", install)
 
-    assert verify < sync < install
+    assert precheck < sync < install < postcheck
     assert 'exec bash deploy/runtime-flags-off-install.sh "$@"' in DEPLOY_SCRIPT
-    assert "必须为 inactive + disabled" in FLAGS_OFF_SCRIPT
+    assert "< deploy/check-agent-runtime-unit-states.sh" in FLAGS_OFF_SCRIPT
     assert "--runtime-flags-off-install 不能与其他部署模式组合" in FLAGS_OFF_SCRIPT
     assert "run-migrations" not in FLAGS_OFF_SCRIPT
     assert "systemctl restart" not in FLAGS_OFF_SCRIPT
     assert "transfer-agent-runtime-ownership" not in FLAGS_OFF_SCRIPT
     assert "--runtime-flags-off-install" in RELEASE_SCRIPT
     assert "不能同时选择多个部署范围" in RELEASE_SCRIPT
+
+
+def test_preinstall_state_contract_accepts_all_units_not_found(
+    tmp_path: Path,
+) -> None:
+    release_root, env, rsync_marker, install_marker = _make_release_harness(
+        tmp_path
+    )
+
+    result = subprocess.run(
+        ["bash", "deploy/check-agent-runtime-unit-states.sh", "pre-install"],
+        cwd=release_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "pre-install 状态合同通过" in result.stdout
+    assert not rsync_marker.exists()
+    assert not install_marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("bad_state", "expected_pair"),
+    (
+        (("active", "not-found"), "active:not-found"),
+        (("failed", "not-found"), "failed:not-found"),
+        (("inactive", "enabled"), "inactive:enabled"),
+        (("inactive", "static"), "inactive:static"),
+    ),
+)
+def test_preinstall_unsafe_state_stops_before_rsync(
+    tmp_path: Path,
+    bad_state: tuple[str, str],
+    expected_pair: str,
+) -> None:
+    release_root, env, rsync_marker, install_marker = _make_release_harness(
+        tmp_path,
+        pre_overrides={RUNTIME_SERVICES[0]: bad_state},
+    )
+
+    result = _run_release_harness(release_root, env)
+
+    assert result.returncode == 1
+    assert expected_pair in result.stderr
+    assert not rsync_marker.exists()
+    assert not install_marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("bad_state", "expected_pair"),
+    (
+        (("failed", "disabled"), "failed:disabled"),
+        (("inactive", "enabled"), "inactive:enabled"),
+    ),
+)
+def test_postinstall_requires_strict_inactive_disabled(
+    tmp_path: Path,
+    bad_state: tuple[str, str],
+    expected_pair: str,
+) -> None:
+    release_root, env, rsync_marker, install_marker = _make_release_harness(
+        tmp_path,
+        post_overrides={RUNTIME_SERVICES[-1]: bad_state},
+    )
+
+    result = _run_release_harness(release_root, env)
+
+    assert result.returncode == 1
+    assert expected_pair in result.stderr
+    assert rsync_marker.exists()
+    assert install_marker.exists()
+
+
+def test_first_install_passes_pre_and_post_state_contracts(tmp_path: Path) -> None:
+    release_root, env, rsync_marker, install_marker = _make_release_harness(
+        tmp_path
+    )
+
+    result = _run_release_harness(release_root, env)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("状态合同通过") == 2
+    assert rsync_marker.exists()
+    assert install_marker.exists()
 
 
 def test_flags_off_deploy_route_rejects_other_modes_before_release_checks() -> None:

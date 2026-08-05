@@ -249,7 +249,9 @@ release、health socket 与 Sandbox 路径等运行配置，不得包含 Provide
 `AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED` 必须保持 `false`。Sandbox 配置也必须
 包含 release revision。
 
-发布脚本会在任何远端写入前确认四个服务均为 `inactive + disabled`，随后调用：
+发布脚本会在任何远端写入前执行明确的 unit 状态合同：已存在 unit 只接受
+`inactive + disabled`，尚不存在 unit 只接受 `inactive + not-found`。安装完成后再次
+检查，四个 unit 必须全部严格为 `inactive + disabled`。随后安装入口调用：
 
 ```bash
 bash deploy/install-service-units.sh \

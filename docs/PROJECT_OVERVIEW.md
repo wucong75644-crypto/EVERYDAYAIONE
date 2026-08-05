@@ -337,8 +337,10 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   Agent Runtime 单元与 wrapper 后执行 daemon-reload。已有目标不一致时在任何写入前
   失败关闭，不启停、enable 服务或切换 Owner。
 - `deploy/deploy.sh` / `deploy/release.sh` / `deploy/runtime-flags-off-install.sh`：提供互斥的
-  `--runtime-flags-off-install` 路径；远端写入前要求四个新服务均为 inactive + disabled，
-  且该路径不运行 migration、不重启旧服务、不启停新服务。
+  `--runtime-flags-off-install` 路径；`check-agent-runtime-unit-states.sh` 在远端写入前只
+  接受已存在 unit 的 inactive + disabled 或未安装 unit 的 inactive + not-found，并在
+  安装后要求四个 unit 严格 inactive + disabled。该路径不运行 migration、不重启旧服务、
+  不启停新服务。
 - `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker 配置、四单元安装、
   差异目标零写入失败关闭、远端状态门禁顺序及模板/unit 合同。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
