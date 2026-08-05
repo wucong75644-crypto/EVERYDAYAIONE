@@ -209,6 +209,14 @@ def _assert_security(url: str) -> None:
             "SELECT has_function_privilege(%s,%s,'EXECUTE')",
             ("everydayai_agent_model_gateway", signatures["gateway"]),
         ).fetchone()[0] is True
+        assert connection.execute(
+            "SELECT has_function_privilege(%s,%s,'EXECUTE')",
+            ("everydayai_agent_runtime_worker", signatures["gateway"]),
+        ).fetchone()[0] is False
+        assert connection.execute(
+            "SELECT has_function_privilege(%s,%s,'EXECUTE')",
+            ("everydayai_agent_model_gateway", signatures["runtime"]),
+        ).fetchone()[0] is False
         for role_name in ("everydayai_worker", "everydayai", "public"):
             assert connection.execute(
                 "SELECT has_function_privilege(%s,%s,'EXECUTE')",
@@ -216,6 +224,10 @@ def _assert_security(url: str) -> None:
             ).fetchone()[0] is False
         assert connection.execute(
             "SELECT has_function_privilege('everydayai_agent_runtime_worker',"
+            "'get_agent_runtime_ai_bundle(uuid,text,uuid,text)','EXECUTE')",
+        ).fetchone()[0] is False
+        assert connection.execute(
+            "SELECT has_function_privilege('everydayai_agent_model_gateway',"
             "'get_agent_runtime_ai_bundle(uuid,text,uuid,text)','EXECUTE')",
         ).fetchone()[0] is False
 
