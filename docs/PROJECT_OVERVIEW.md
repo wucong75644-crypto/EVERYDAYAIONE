@@ -98,6 +98,16 @@ Agent Runtime C7-B3.1 production composition spine：
   `RuntimeAssemblyReadiness` 携带 required/unavailable/disabled 能力状态并结构化失败关闭，
   production gate 不能将 composition readiness 提升为 ready。
 
+Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
+- `backend/services/agent/runtime/catalog/safe_read_release.py` 与生成脚本从
+  `READ_TOOL_SPECS` 冻结 17 项已证明安全的只读 Catalog；Workspace `file_search`、
+  远程 ERP、ERP Write、Media、Scheduler、Sandbox 均不进入该 release。
+- `227_16` 新增默认关闭的 v4 Catalog/EffectiveToolset facts；`227_17` 仅为
+  SAFE/NONE Action 建立 attempt、token、request hash、revision 与 kill epoch 绑定的
+  durable PolicyReceipt activation，随后仍必须经过既有 Dispatch Gate。
+- 既有 scope SSOT 保持不变：channel Toolset 为 17 项，user Toolset 为 9 项；
+  production flags 与 `production_ready` 均未开启。
+
 Agent Runtime C2.1 ERP 只读接线：
 - `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
   scope 的 `org_id` 逐次解析企业 ERP 凭证并构造一次性 dispatcher；不启用生产

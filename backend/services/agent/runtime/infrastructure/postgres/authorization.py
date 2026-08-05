@@ -57,7 +57,9 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
             raise PermissionError("AGENT_RUNTIME_DISPATCH_GATE_REQUIRED")
         action = snapshot.action
         attempt = snapshot.attempt
-        receipt_id = _receipt_id(action)
+        receipt_id = await self._receipt_id(
+            snapshot=snapshot, descriptor=descriptor,
+        )
         response = await self._database.rpc(
             "gate_agent_action_dispatch_v2", {
                 "p_attempt_id": _text(attempt, "id"),
@@ -94,6 +96,35 @@ class PostgresActionAuthorizationRepository(ActionAuthorizationPort):
             ),
             recovery_mode=_text(row, "recovery_mode"),
         )
+
+    async def _receipt_id(
+        self, *, snapshot: ActionDispatchSnapshot,
+        descriptor: ExecutorDescriptor,
+    ) -> str:
+        try:
+            return _receipt_id(snapshot.action)
+        except ValueError:
+            if descriptor.authorization.value != "none":
+                raise
+        attempt = snapshot.attempt
+        action = snapshot.action
+        response = await self._database.rpc(
+            "activate_agent_safe_action", {
+                "p_attempt_id": _text(attempt, "id"),
+                "p_execution_token": _text(attempt, "execution_token"),
+                "p_expected_attempt_version": _integer(
+                    attempt, "state_version",
+                ),
+                "p_request_hash": _text(attempt, "request_hash"),
+                "p_executor_type": descriptor.executor_type,
+                "p_executor_revision": descriptor.revision,
+                "p_policy_revision": _text(action, "policy_revision"),
+            },
+        ).execute()
+        row = _mapping(response.data)
+        if row.get("outcome") not in {"activated", "already_activated"}:
+            raise DispatchGateDenied(str(row.get("outcome")))
+        return _uuid(row.get("policy_receipt_id"))
 
     async def claim_recovery(
         self, *, worker_id: str, lease_seconds: int = 120,

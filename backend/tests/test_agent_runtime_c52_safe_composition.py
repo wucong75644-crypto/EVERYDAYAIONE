@@ -27,6 +27,8 @@ def test_safe_composition_registers_only_internal_and_erp_read_tools() -> None:
 
     assert "local_stock_query" in names
     assert "local_product_identify" in names
+    assert len(names) == 17
+    assert "file_search" not in names
     assert "erp_execute" not in names
     assert "trigger_erp_sync" not in names
     assert "generate_image" not in names

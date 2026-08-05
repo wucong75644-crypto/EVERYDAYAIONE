@@ -20,7 +20,9 @@ from services.agent.runtime.executors.provider_adapters import (
     LocalArtifactProvider, MediaTaskPort, PortBackedProvider, ProviderTransport,
     ResourceMutationPort, TenantProviderResolver, TenantScopedProvider,
 )
-from services.agent.runtime.executors.read_registry import READ_TOOL_SPECS, build_read_executor_registry
+from services.agent.runtime.executors.read_registry import (
+    READ_TOOL_SPECS, SAFE_READ_TOOL_NAMES, build_read_executor_registry,
+)
 from services.agent.runtime.executors.real_base import RuntimeReadResources
 from services.agent.runtime.executors.real_domain import (
     ArtifactReadCapability, ConversationReadCapability, EvidenceReadCapability,
@@ -134,7 +136,9 @@ def build_safe_runtime_composition(
     """
     if resources is None or resources.database is None:
         raise RuntimeError("RUNTIME_SAFE_READ_SERVICE_WIRING_NOT_READY")
-    registry = build_production_read_registry(resources)
+    registry = build_production_read_registry(
+        resources, tool_names=SAFE_READ_TOOL_NAMES,
+    )
     catalog = RuntimeToolCatalog.from_executor_registry(registry)
     model_ready = (
         callable(model_call_factory) and credential_broker is not None
@@ -218,7 +222,10 @@ def build_production_action_loop(*, database, worker_id: str,
     )
 
 
-def build_production_read_registry(resources: RuntimeReadResources) -> ExecutorRegistry:
+def build_production_read_registry(
+    resources: RuntimeReadResources, *,
+    tool_names: frozenset[str] | None = None,
+) -> ExecutorRegistry:
     capabilities = {
         "get_conversation_context": ConversationReadCapability(resources),
         "search_knowledge": KnowledgeReadCapability(resources),
@@ -236,7 +243,7 @@ def build_production_read_registry(resources: RuntimeReadResources) -> ExecutorR
         for name, (_, group) in READ_TOOL_SPECS.items()
         if group == "erp_local"
     })
-    return build_read_executor_registry(capabilities)
+    return build_read_executor_registry(capabilities, tool_names=tool_names)
 
 
 def build_production_specialist_registry(

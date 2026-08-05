@@ -2036,6 +2036,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `create_manifest` / `verify_manifest` | `backend/services/agent/runtime/sandbox/rootfs_manifest.py` | 创建并验证包含类型、权限、owner、大小和文件哈希的完整 rootfs manifest |
 | `AgentDefinition` / `AgentDefinitionRegistry` / `RuntimeVersionRegistry` | `backend/services/agent/runtime/agents/`、`catalog/registry.py` | 不可变版本事实解析；入口使用同一 Agent/Catalog registry，历史 Run 由 PostgreSQL facts 恢复 |
 | `RuntimeToolCatalog` / `RuntimeToolCatalogRegistry` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 版本目录与 scope/channel/entitlement/authorization 交集；未注册 Executor 不进入模型工具集 |
+| `build_safe_read_registry` / `build_safe_read_catalog` / `build_safe_read_snapshot` | `backend/services/agent/runtime/catalog/safe_read_release.py` | C7-B3.2-A 从 Read Descriptor SSOT 确定性冻结 17 项安全只读 release；保留既有 user/channel scope 过滤 |
+| `activate_agent_safe_action` | `backend/migrations/227_17_agent_runtime_safe_policy_activation.sql` | 为 SAFE/NONE Action 创建 attempt-bound durable PolicyReceipt；严格校验 Toolset、token、request hash、revision 与 kill epoch，且不替代 `gate_agent_action_dispatch_v2` |
 | `build_runtime_context` | `backend/services/agent/runtime/context/runtime_builder.py` | 从 Run 冻结事实构建确定性 Provider ContextPlan，并重复 tool_call/result |
 | `runtime_submit_ingress_v2` / `get_agent_runtime_model_context_v2` | `backend/migrations/224_01_agent_runtime_ar17_core.sql` | 原子 v2 ingress、gate 漂移幂等 readback 与严格 Run anchor context RPC；版本 seed 在 `224_02_agent_runtime_ar17_version_seed.sql` |
 | `set_agent_runtime_tenant_gate` / `get_agent_runtime_tenant_gate_status` | `backend/migrations/227_06_agent_runtime_tenant_kill_control.sql` | Tenant/provider/capability kill gate 的租户作用域 CAS、单调 epoch、脱敏不可变审计与只读状态；不接入 Runtime dispatch |

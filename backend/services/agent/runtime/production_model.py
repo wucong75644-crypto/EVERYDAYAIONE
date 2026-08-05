@@ -279,6 +279,12 @@ def _actions(
         policy_snapshot = {
             "source": "runtime_executor_registry",
             "safety_level": tool.safety_level,
+            "side_effect": tool.side_effect,
+            "authorization_requirement": tool.authorization_requirement,
+            "capability_requirements": sorted(tool.capability_requirements),
+            "capability_revision": tool.schema_hash,
+            "catalog_revision": toolset.catalog_revision,
+            "effective_toolset_hash": toolset.toolset_hash,
         }
         if validate_schema:
             policy_snapshot.update({
@@ -295,12 +301,26 @@ def _actions(
             "wave": 0,
             "dependencies": [],
             "blocking": True,
-            "policy_decision": "requires_authorization",
+            "policy_decision": (
+                "preauthorized" if _is_safe_automatic(tool)
+                else "requires_authorization"
+            ),
             "policy_snapshot": policy_snapshot,
             "policy_revision": _POLICY_REVISION,
-            "retry_disposition": "retry_after_reconcile",
+            "retry_disposition": (
+                "retry_safe" if _is_safe_automatic(tool)
+                else "retry_after_reconcile"
+            ),
         })
     return "0" * 64, tuple(actions)
+
+
+def _is_safe_automatic(tool: object) -> bool:
+    return (
+        getattr(tool, "safety_level", None) == "safe"
+        and getattr(tool, "side_effect", None) == "none"
+        and getattr(tool, "authorization_requirement", None) == "none"
+    )
 
 
 def _provider(model_id: str) -> str:
