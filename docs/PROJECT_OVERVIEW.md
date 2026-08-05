@@ -108,6 +108,12 @@ Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
 - 既有 scope SSOT 保持不变：channel Toolset 为 17 项，user Toolset 为 9 项；
   production flags 与 `production_ready` 均未开启。
 
+Agent Runtime C7-B3.2-B Model Gateway：
+- `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
+  进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、
+  ModelAttempt/Provider operation 唯一 Owner、UNKNOWN 保守恢复、D0-A flags-off
+  部署扩展及 BG1～BG5 实施门禁；当前仅完成设计，未实现或启用生产能力。
+
 Agent Runtime C2.1 ERP 只读接线：
 - `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
   scope 的 `org_id` 逐次解析企业 ERP 凭证并构造一次性 dispatcher；不启用生产
