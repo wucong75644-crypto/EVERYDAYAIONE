@@ -20,6 +20,9 @@ case "${RUN_MIGRATIONS:-false}" in
         ;;
 esac
 
+echo "ℹ️ 生产 Schema 仅允许 forward migration；禁止执行 rollback SQL"
+echo "ℹ️ 故障时关闭 Runtime flags/停止新事实，回退 N-1 兼容二进制，健康验证后以新 migration 修复"
+
 migration_python=${MIGRATION_PYTHON:-./venv/bin/python}
 if [ ! -x "$migration_python" ]; then
     echo "❌ 迁移 Python 不可执行: ${migration_python}"
