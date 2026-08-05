@@ -6,11 +6,20 @@ on:
     paths:
       - ".github/workflows/agent-runtime-disposable.yml"
       - "backend/agent_runtime_worker_main.py"
+      - "backend/api/routes/message_chat_preparation.py"
+      - "backend/core/application_process_settings.py"
+      - "backend/core/config.py"
+      - "backend/core/redis.py"
       - "backend/migrations/227_*.sql"
       - "backend/migrations/rollback/227_*.sql"
       - "backend/services/agent/runtime/**"
+      - "backend/services/wecom/actor_enqueue.py"
       - "backend/tests/test_agent_runtime_*.py"
       - "backend/tests/test_artifact_runtime.py"
+      - "backend/tests/test_message_chat_preparation.py"
+      - "backend/tests/test_wecom_actor_enqueue.py"
+      - "deploy/everydayai-agent-*.service"
+      - "deploy/env-templates/agent-*.env.template"
       - "docs/document/AR17_STAGING_PROVISIONING.md"
       - "scripts/check_task_change.py"
 
@@ -23,7 +32,7 @@ concurrency:
 
 jobs:
   disposable-runtime:
-    name: T5-CI Disposable Verified
+    name: C6 Disposable Freeze Candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -73,10 +82,22 @@ jobs:
       - name: Prepare evidence directory
         run: mkdir -p "$RUNNER_TEMP/ar17-evidence"
 
-      - name: Run Runtime unit and disposable profile contracts
+      - name: Run Runtime correction and unit contracts
         run: |
           set -euo pipefail
           pytest -q \
+            backend/tests/test_agent_runtime_model_resolution.py \
+            backend/tests/test_agent_runtime_c21_erp_scope.py \
+            backend/tests/test_agent_runtime_ingress_adapter_compatibility.py \
+            backend/tests/test_message_chat_preparation.py \
+            backend/tests/test_wecom_actor_enqueue.py \
+            backend/tests/test_agent_runtime_c52_safe_composition.py \
+            backend/tests/test_agent_runtime_worker_readiness.py \
+            backend/tests/test_agent_runtime_process_settings.py \
+            backend/tests/test_agent_runtime_projection_redis_settings.py \
+            backend/tests/test_agent_runtime_sandbox_composition_contract.py \
+            backend/tests/test_agent_runtime_production_process_contract.py \
+            backend/tests/test_agent_runtime_t177_credential_boundary.py \
             backend/tests/test_agent_runtime_credential_broker.py \
             backend/tests/test_agent_runtime_observability.py \
             backend/tests/test_agent_runtime_status_snapshot.py \
@@ -94,6 +115,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/unit.log"
 
       - name: Run Artifact, Workspace, Child Run and specialist contracts
+        if: always()
         run: |
           set -euo pipefail
           pytest -q \
@@ -105,6 +127,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/services.log"
 
       - name: Run disposable PostgreSQL migration and security contracts
+        if: always()
         run: |
           set -euo pipefail
           pytest -q -m external \
@@ -114,6 +137,9 @@ jobs:
             backend/tests/test_agent_runtime_a8_scheduler_cas_postgres_external.py \
             backend/tests/test_agent_runtime_recovery_center_postgres_external.py \
             backend/tests/test_agent_runtime_cost_side_effect_observability_postgres_external.py \
+            backend/tests/test_agent_runtime_additive_ingress_compatibility_postgres_external.py \
+            backend/tests/test_agent_runtime_owner_transition_postgres_external.py \
+            backend/tests/test_agent_runtime_owner_rpc_acl_closure_postgres_external.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
       - name: Collect disposable PostgreSQL server logs
@@ -127,6 +153,7 @@ jobs:
           done
 
       - name: Run local HTTP mock harness
+        if: always()
         run: |
           set -euo pipefail
           pytest -q \
@@ -135,29 +162,44 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/http-mock.log"
 
       - name: Run migration and quality checks
+        if: always()
         run: |
           set -euo pipefail
-          python -m compileall -q backend/agent_runtime_worker_main.py backend/services/agent/runtime
-          pytest -q \
-            backend/tests/test_agent_runtime_ar17_migration.py \
-            backend/tests/test_agent_runtime_provider_submission_migration.py \
-            backend/tests/test_agent_runtime_production_composition_migration.py \
-            backend/tests/test_agent_runtime_action_migration_order.py \
-            backend/tests/test_agent_runtime_role_grants_migration.py \
-            backend/tests/test_agent_runtime_recovery_center_migration.py \
-            backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
-            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/migration-static.log"
-          git diff --check
-          python scripts/check_task_change.py --files \
-            .github/workflows/agent-runtime-disposable.yml \
-            docs/document/AR17_STAGING_PROVISIONING.md
+          {
+            python -m compileall -q \
+              backend/agent_runtime_worker_main.py \
+              backend/services/agent/runtime
+            pytest -q \
+              backend/tests/test_agent_runtime_ar17_migration.py \
+              backend/tests/test_agent_runtime_provider_submission_migration.py \
+              backend/tests/test_agent_runtime_production_composition_migration.py \
+              backend/tests/test_agent_runtime_action_migration_order.py \
+              backend/tests/test_agent_runtime_role_grants_migration.py \
+              backend/tests/test_agent_runtime_recovery_center_migration.py \
+              backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
+              backend/tests/test_agent_runtime_additive_ingress_compatibility_migration.py \
+              backend/tests/test_agent_runtime_owner_rpc_acl_closure_migration.py
+            git diff --check
+            python scripts/check_task_change.py --files \
+              .github/workflows/agent-runtime-disposable.yml \
+              docs/document/AR17_STAGING_PROVISIONING.md \
+              backend/agent_runtime_worker_main.py \
+              backend/core/application_process_settings.py \
+              backend/services/agent/runtime/composition.py \
+              backend/services/agent/runtime/ingress.py \
+              backend/services/agent/runtime/model_resolution.py \
+              backend/services/agent/runtime/production_composition.py \
+              backend/services/wecom/actor_enqueue.py
+          } 2>&1 | tee "$RUNNER_TEMP/ar17-evidence/security-quality.log"
 
       - name: Record verification summary
         if: always()
         run: |
           {
-            echo "result=T5-CI Disposable Verified"
-            echo "staging_result=T5-Staging blocked until external staging exists"
+            echo "result=${{ job.status == 'success' && 'C6 Disposable Freeze Candidate Verified' || 'C6 Disposable Freeze Candidate Not Verified' }}"
+            echo "verification_scope=local disposable CI contract only"
+            echo "staging_verified=false"
+            echo "production_verified=false"
             echo "production_ready=false"
             echo "commit=$(git rev-parse HEAD)"
             git status --short --branch
