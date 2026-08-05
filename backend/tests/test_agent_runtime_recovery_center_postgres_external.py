@@ -4,6 +4,10 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from tests.agent_runtime_migration_test_support import (
+    migration_paths_through,
+    unique_migration_path,
+)
 from tests.test_agent_runtime_ar173_postgres_external import (
     _seed_specialist_action,
     _worker_rpc,
@@ -25,8 +29,10 @@ def _apply(url: str, path: Path) -> None:
 
 
 def _apply_all(url: str) -> None:
-    for index in range(1, 11):
-        _apply(url, next((ROOT / "migrations").glob(f"227_{index:02d}_*.sql")))
+    for path in migration_paths_through(
+        ROOT, "227_10_agent_runtime_operations_center.sql"
+    ):
+        _apply(url, path)
     _apply(url, ROOT / "migrations/227_11_agent_runtime_recovery_center.sql")
 
 
@@ -43,7 +49,7 @@ def test_recovery_snapshot_intent_claim_and_rollback(database: str) -> None:
         )
         conn.commit()
     for index in range(1, 20):
-        _apply(database, next((ROOT / "migrations").glob(f"226_{index:02d}_*.sql")))
+        _apply(database, unique_migration_path(ROOT, f"226_{index:02d}_"))
     ids = _seed_specialist_action(database)
     _apply_all(database)
     with psycopg.connect(database) as conn:

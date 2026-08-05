@@ -4,6 +4,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from tests.agent_runtime_migration_test_support import migration_paths_through
 from tests.test_agent_runtime_ar173_postgres_external import (
     _seed_specialist_action,
     _worker_rpc,
@@ -13,9 +14,7 @@ from tests.test_agent_runtime_ar173_postgres_external import (
 
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATIONS = tuple(
-    f"227_{index:02d}_" for index in range(1, 10)
-)
+TARGET_MIGRATION = "227_09_agent_runtime_claim_fence_ambiguity_fix.sql"
 
 
 def _apply(url: str, name: str) -> None:
@@ -28,10 +27,6 @@ def _apply_file(url: str, path: Path) -> None:
     with psycopg.connect(url) as conn:
         with conn.transaction():
             conn.execute(path.read_text())
-
-
-def _migration_name(prefix: str) -> str:
-    return next((ROOT / "migrations").glob(f"{prefix}*.sql")).name
 
 
 def _queue_action(database: str) -> dict[str, str]:
@@ -62,8 +57,8 @@ def _queue_action(database: str) -> dict[str, str]:
 
 
 def test_claim_fix_apply_security_and_rollback(database: str) -> None:
-    for prefix in MIGRATIONS:
-        _apply(database, _migration_name(prefix))
+    for path in migration_paths_through(ROOT, TARGET_MIGRATION):
+        _apply(database, path.name)
     with psycopg.connect(database) as conn:
         for signature in (
             "claim_ready_agent_action_snapshots_v2(text,text,integer,integer)",
@@ -98,13 +93,13 @@ def test_claim_fix_apply_security_and_rollback(database: str) -> None:
         )
     )
     _apply_file(database, rollback)
-    _apply(database, _migration_name("227_09_"))
+    _apply(database, TARGET_MIGRATION)
     _apply_file(database, rollback)
 
 
 def test_claim_snapshot_fix_claims_with_fence(database: str) -> None:
-    for prefix in MIGRATIONS:
-        _apply(database, _migration_name(prefix))
+    for path in migration_paths_through(ROOT, TARGET_MIGRATION):
+        _apply(database, path.name)
     _queue_action(database)
     claimed = _worker_rpc(database, "claim_ready_agent_action_snapshots_v2", (
         "fix-snapshot-worker", "fix-snapshot-claim", 10, 120,

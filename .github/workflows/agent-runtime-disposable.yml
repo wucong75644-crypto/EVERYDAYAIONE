@@ -7,9 +7,9 @@ on:
       - ".github/workflows/agent-runtime-disposable.yml"
       - "backend/agent_runtime_worker_main.py"
       - "backend/api/routes/message_chat_preparation.py"
-      - "backend/core/application_process_settings.py"
       - "backend/core/config.py"
       - "backend/core/redis.py"
+      - "backend/services/adapters/kie/client.py"
       - "backend/migrations/227_*.sql"
       - "backend/migrations/rollback/227_*.sql"
       - "backend/services/agent/runtime/**"
@@ -19,7 +19,9 @@ on:
       - "backend/tests/test_message_chat_preparation.py"
       - "backend/tests/test_wecom_actor_enqueue.py"
       - "deploy/everydayai-agent-*.service"
+      - "deploy/everydayai-sandbox-worker.service"
       - "deploy/env-templates/agent-*.env.template"
+      - "deploy/env-templates/sandbox-worker.env.template"
       - "docs/document/AR17_STAGING_PROVISIONING.md"
       - "scripts/check_task_change.py"
 
@@ -184,11 +186,16 @@ jobs:
               .github/workflows/agent-runtime-disposable.yml \
               docs/document/AR17_STAGING_PROVISIONING.md \
               backend/agent_runtime_worker_main.py \
-              backend/core/application_process_settings.py \
+              backend/core/config.py \
+              backend/core/redis.py \
               backend/services/agent/runtime/composition.py \
+              backend/services/agent/runtime/executors/provider_adapters.py \
               backend/services/agent/runtime/ingress.py \
+              backend/services/agent/runtime/infrastructure/model/adapter.py \
+              backend/services/agent/runtime/infrastructure/model/runtime_adapter_factory.py \
               backend/services/agent/runtime/model_resolution.py \
               backend/services/agent/runtime/production_composition.py \
+              backend/services/adapters/kie/client.py \
               backend/services/wecom/actor_enqueue.py
           } 2>&1 | tee "$RUNNER_TEMP/ar17-evidence/security-quality.log"
 
