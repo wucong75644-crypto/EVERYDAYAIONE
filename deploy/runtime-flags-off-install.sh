@@ -203,9 +203,9 @@ if [ "$runtime_mode" = control-plane ]; then
         "EXPECTED_RELEASE_SHA=${EXPECTED_SHA} bash ${REMOTE_APP_DIR}/deploy/install-service-units.sh ${REMOTE_BACKEND_DIR} control-plane-only ${EXPECTED_SHA} -"
     log_info "确认三个 control-plane unit 更新后仍严格 inactive + disabled..."
     if ! check_remote_unit_states post-install control-plane; then
-        log_error "control-plane 外层 postcheck 失败，恢复 release 绑定 unit 备份"
+        log_error "control-plane 外层 postcheck 失败，恢复 release 绑定 env/unit transaction"
         remote_exec \
-            "bash ${REMOTE_APP_DIR}/deploy/update-control-plane-units.sh rollback ${EXPECTED_SHA}" \
+            "sudo bash ${REMOTE_APP_DIR}/deploy/update-control-plane-units.sh rollback ${EXPECTED_SHA}" \
             || log_error "control-plane 外层 postcheck 后自动恢复失败"
         exit 1
     fi

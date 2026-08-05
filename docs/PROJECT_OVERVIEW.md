@@ -339,11 +339,14 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   reviewed target SHA-256 manifest，不依赖或触碰 Sandbox env/assets/wrapper。
 - `deploy/provision-control-plane-worker-envs.py`：服务器端从安全的 `backend/.env` 与
   `.env.migrator` 读取三控制面密码和既有 Redis/Sentry/Environment，保持 migrator DSN
-  非凭证部分不变并 URL encode 新凭证，以 root:everydayai-app、0640 原子生成三份 env；
-  Runtime composition 固定关闭且不生成 Sandbox env。
+  非凭证部分不变并 URL encode 新凭证；三份 env 先在 release-bound、root-only transaction
+  目录完整 staging，并记录旧内容 hash、mode、uid/gid 与不存在状态，再以
+  root:everydayai-app、0640 原子发布。Runtime composition 固定关闭且不生成 Sandbox env。
 - `deploy/update-control-plane-units.sh`：在三个 unit 严格 inactive + disabled 且当前 SHA-256
-  全量匹配 reviewed manifest 后，将旧 unit 全部备份到 release SHA 目录，再用 install
-  staging + rename 原子更新；中途或 postcheck 失败自动恢复并 daemon-reload。
+  全量匹配 reviewed manifest 后，将旧 unit 全部备份到同一 release transaction，再发布
+  三 env 与三 unit。状态为 `prepared → published → restored`；env/unit apply、daemon-reload、
+  内外层 postcheck 任一失败均统一恢复，重复 rollback 幂等，错误 release 或外来内容由 hash
+  fence 失败关闭。
 - `deploy/check-control-plane-unit-manifest.sh`：由发布入口通过 stdin 发送到远端的只读预检，
   在 rsync 发生前核对三个当前 target unit 的 reviewed SHA-256，避免 mismatch 时产生同步写入。
 - `deploy/deploy.sh` / `deploy/release.sh` / `deploy/runtime-flags-off-install.sh`：提供互斥的
@@ -355,8 +358,10 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
 - `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker 配置、四单元安装、
   差异目标零写入失败关闭、远端状态门禁顺序及模板/unit 合同。
 - `backend/tests/test_agent_runtime_control_plane_update.py`：动态覆盖 Secret 隔离与 URL encode、
-  env mode/owner、reviewed hash/state 零写入、三 unit 先备份后覆盖、中途/postcheck 恢复、
-  Sandbox 零触碰及 release/deploy 互斥路由。
+  env mode/owner、reviewed hash/state 零写入、六目标备份/发布顺序、unit/daemon/postcheck
+  统一恢复、幂等/hash fence、Sandbox 零触碰及 release/deploy 互斥路由。
+- `backend/tests/test_agent_runtime_control_plane_env_transaction.py`：动态覆盖三份 env 各阶段
+  staging/publish 故障、后验故障、原内容与 mode/uid/gid/不存在状态恢复及 release/hash fence。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
   实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue
   重载及四个 Outbox 租约函数）；撤销

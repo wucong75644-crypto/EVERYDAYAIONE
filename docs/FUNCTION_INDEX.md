@@ -1902,8 +1902,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `WecomBotTargetResolver.list_targets` | `backend/services/configuration/bundles.py` | 先以 actorless Worker Scope 发现企业，再为每个企业建立独立精确 Scope 并解析 `wecom.bot` Bundle；单企业材料失败不影响其他企业 |
 | `_assert_wecom_worker_discovery_scope` / `discover_wecom_bot_targets` | `backend/migrations/166_wecom_worker_discovery.sql` | 仅允许 actorless Worker 发现具备有效 WeCom Bundle 的 active 企业，返回 org_id 与凭证版本且不返回 Secret |
 | `install-service-units.sh` | `deploy/install-service-units.sh` | 保留 all/agent-runtime-only，并以 control-plane-only 编排三控制面安全 env provisioning 与 reviewed unit update |
-| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | 服务端读取既有安全 Secret/DSN，URL encode 三窄角色凭证并原子生成 root:everydayai-app、0640 flags-off env |
-| `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 验证三 unit inactive+disabled 与 reviewed SHA-256，全部备份后原子更新，失败恢复并 daemon-reload |
+| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | 安全读取 Secret/DSN，release-bound staging 三 env，并以旧内容/权限 journal 和 hash fence 提供 publish/verify/幂等 rollback |
+| `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 协调三 env/三 unit 的 prepared→published→restored 事务；inactive+disabled、reviewed SHA、daemon/postcheck 失败统一恢复 |
 | `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对三个当前 target unit 的 reviewed SHA-256 |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |

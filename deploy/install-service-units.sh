@@ -9,6 +9,7 @@ expected_release_revision=${3:-${EXPECTED_RELEASE_SHA:-}}
 expected_unit_manifest=${4:-${EXPECTED_UNIT_MANIFEST:-}}
 systemd_dir=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 runtime_env_dir=${AGENT_RUNTIME_ENV_DIR:-/etc/everydayai}
+transaction_root=${CONTROL_PLANE_TRANSACTION_ROOT:-/var/backups/everydayai/control-plane-updates}
 libexec_dir=${LIBEXEC_DIR:-/usr/local/libexec}
 
 runtime_services=(
@@ -318,23 +319,22 @@ install_control_plane_units_only() {
     test -f "$provisioner"
     test -f "$updater"
 
-    sudo python3 "$provisioner" \
+    sudo python3 "$provisioner" prepare \
         --backend-dir "$backend_dir" \
         --env-dir "$runtime_env_dir" \
         --release-sha "$expected_release_revision" \
-        --check-only
-    SYSTEMD_UNIT_DIR="$systemd_dir" \
+        --transaction-root "$transaction_root"
+    sudo env SYSTEMD_UNIT_DIR="$systemd_dir" \
         CONTROL_PLANE_DEPLOY_DIR="$deploy_dir" \
+        CONTROL_PLANE_ENV_DIR="$runtime_env_dir" \
+        CONTROL_PLANE_ENV_TOOL="$provisioner" \
+        CONTROL_PLANE_TRANSACTION_ROOT="$transaction_root" \
         bash "$updater" preflight "$expected_release_revision" "$manifest_path"
-
-    sudo python3 "$provisioner" \
-        --backend-dir "$backend_dir" \
-        --env-dir "$runtime_env_dir" \
-        --release-sha "$expected_release_revision"
-    validate_control_plane_worker_envs
-
-    SYSTEMD_UNIT_DIR="$systemd_dir" \
+    sudo env SYSTEMD_UNIT_DIR="$systemd_dir" \
         CONTROL_PLANE_DEPLOY_DIR="$deploy_dir" \
+        CONTROL_PLANE_ENV_DIR="$runtime_env_dir" \
+        CONTROL_PLANE_ENV_TOOL="$provisioner" \
+        CONTROL_PLANE_TRANSACTION_ROOT="$transaction_root" \
         bash "$updater" apply "$expected_release_revision" "$manifest_path"
     cleanup_manifest_temp
     manifest_temp_to_remove=

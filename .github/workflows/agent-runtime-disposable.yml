@@ -103,6 +103,7 @@ jobs:
             backend/tests/test_agent_runtime_process_settings.py \
             backend/tests/test_agent_runtime_flags_off_install.py \
             backend/tests/test_agent_runtime_control_plane_update.py \
+            backend/tests/test_agent_runtime_control_plane_env_transaction.py \
             backend/tests/test_tenant_db_env_contract.py \
             backend/tests/test_deploy_service_contract.py \
             backend/tests/test_agent_runtime_a6_composition.py \
@@ -222,6 +223,7 @@ jobs:
               deploy/deploy.sh \
               deploy/release.sh \
               backend/tests/test_agent_runtime_control_plane_update.py \
+              backend/tests/test_agent_runtime_control_plane_env_transaction.py \
               deploy/run-migrations.sh
           } 2>&1 | tee "$RUNNER_TEMP/ar17-evidence/security-quality.log"
 

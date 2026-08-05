@@ -1,16 +1,11 @@
 """C7-D0-A control-plane flags-off provisioning/update contracts."""
-
 from __future__ import annotations
-
 import hashlib
 import importlib.util
 import os
 from pathlib import Path
 import subprocess
-
 import pytest
-
-
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
 PROVISIONER = DEPLOY / "provision-control-plane-worker-envs.py"
@@ -32,16 +27,12 @@ SECRETS = {
     "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD": "Authorization!@:/?#[]%+ space-0123456789",
 }
 MIGRATOR_SECRET = "migrator-source-secret-0123456789"
-
-
 def _load_provisioner():
     spec = importlib.util.spec_from_file_location("control_plane_provisioner", PROVISIONER)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
 def _write_source_envs(backend_dir: Path) -> str:
     backend_dir.mkdir()
     backend_lines = [f'{key}="{value}"' for key, value in SECRETS.items()]
@@ -69,31 +60,33 @@ def _write_source_envs(backend_dir: Path) -> str:
     )
     migrator.chmod(0o600)
     return query
-
-
 def _read_env(path: Path) -> dict[str, str]:
     return dict(line.split("=", 1) for line in path.read_text().splitlines())
-
-
 def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     provisioner = _load_provisioner()
     backend_dir = tmp_path / "backend"
     env_dir = tmp_path / "etc-everydayai"
+    transaction_root = tmp_path / "transactions"
     env_dir.mkdir()
     query = _write_source_envs(backend_dir)
     uid, gid = os.getuid(), os.getgid()
     monkeypatch.setattr(provisioner, "_resolve_owner", lambda: (uid, gid))
+    monkeypatch.setattr(provisioner, "_resolve_transaction_owner", lambda: (uid, gid))
     monkeypatch.setattr(provisioner.os, "geteuid", lambda: 0)
     monkeypatch.setattr(provisioner.os, "chown", lambda path, owner, group: None)
     argv = [
+        "prepare",
         "--backend-dir", str(backend_dir), "--env-dir", str(env_dir),
-        "--release-sha", RELEASE_SHA,
+        "--release-sha", RELEASE_SHA, "--transaction-root", str(transaction_root),
     ]
-
     assert provisioner.main(argv) == 0
-
+    publish_argv = [
+        "publish", "--env-dir", str(env_dir), "--release-sha", RELEASE_SHA,
+        "--transaction-root", str(transaction_root),
+    ]
+    assert provisioner.main(publish_argv) == 0
     captured = capsys.readouterr()
     output = captured.out + captured.err
     for secret in (*SECRETS.values(), MIGRATOR_SECRET, "redis!secret#value"):
@@ -123,22 +116,20 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     assert projection["SENTRY_DSN"] == "https://public@example.invalid/42"
     assert projection["ENVIRONMENT"] == "production-c7"
     assert not (env_dir / "sandbox-worker.env").exists()
-
-
 def _write_fake_commands(fake_bin: Path, calls: Path) -> None:
     fake_bin.mkdir()
-    sudo = fake_bin / "sudo"
-    sudo.write_text(
+    install = fake_bin / "install"
+    install.write_text(
         "#!/bin/bash\n"
-        "printf 'sudo %s\\n' \"$*\" >> \"$CALLS\"\n"
-        "if [ \"${FAIL_MIDDLE:-false}\" = true ] && [[ \"$*\" == install*agent-projection.service.c7-* ]] && [ ! -e \"$FAIL_MARKER\" ]; then\n"
+        "printf 'install %s\\n' \"$*\" >> \"$CALLS\"\n"
+        "if [ \"${FAIL_MIDDLE:-false}\" = true ] && [[ \"$*\" == *agent-projection.service.c7-* ]] && [ ! -e \"$FAIL_MARKER\" ]; then\n"
         "  touch \"$FAIL_MARKER\"\n"
         "  exit 42\n"
         "fi\n"
-        "exec \"$@\"\n",
+        "exec /usr/bin/install \"$@\"\n",
         encoding="utf-8",
     )
-    sudo.chmod(0o755)
+    install.chmod(0o755)
     systemctl = fake_bin / "systemctl"
     systemctl.write_text(
         "#!/bin/bash\n"
@@ -146,6 +137,7 @@ def _write_fake_commands(fake_bin: Path, calls: Path) -> None:
         "if [ \"$1\" = daemon-reload ]; then\n"
         "  count=0; test ! -f \"$RELOAD_COUNT\" || count=$(cat \"$RELOAD_COUNT\")\n"
         "  echo $((count + 1)) > \"$RELOAD_COUNT\"\n"
+        "  if [ \"${FAIL_RELOAD:-false}\" = true ] && [ \"$count\" -eq 0 ]; then exit 43; fi\n"
         "  exit 0\n"
         "fi\n"
         "if [ \"${PRE_ACTIVE:-false}\" = true ] && [ \"$1\" = is-active ]; then echo active; exit 0; fi\n"
@@ -154,8 +146,29 @@ def _write_fake_commands(fake_bin: Path, calls: Path) -> None:
         encoding="utf-8",
     )
     systemctl.chmod(0o755)
-
-
+def _write_fake_env_tool(path: Path) -> None:
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import argparse, os, pathlib, sys\n"
+        "p=argparse.ArgumentParser(); p.add_argument('op'); p.add_argument('--env-dir'); "
+        "p.add_argument('--release-sha'); p.add_argument('--transaction-root'); a=p.parse_args()\n"
+        "names=('agent-runtime-worker.env','agent-projection-worker.env','agent-authorization-worker.env')\n"
+        "root=pathlib.Path(a.transaction_root)/a.release_sha; env=pathlib.Path(a.env_dir); state=root/'fake-env-state'\n"
+        "with open(os.environ['CALLS'],'a') as calls: calls.write('env '+a.op+'\\n')\n"
+        "def same(x,y): return x.exists() and y.exists() and x.read_bytes()==y.read_bytes()\n"
+        "if a.op=='preflight': sys.exit(0 if state.read_text()=='prepared' and all(same(env/n,root/'env-old'/n) for n in names) else 1)\n"
+        "if a.op=='publish':\n"
+        " for n in names: (env/n).write_bytes((root/'env-new'/n).read_bytes())\n"
+        " state.write_text('published'); sys.exit(0)\n"
+        "if a.op=='verify':\n"
+        " if os.environ.get('FAIL_ENV_VERIFY')=='true': sys.exit(44)\n"
+        " sys.exit(0 if state.read_text()=='published' and all(same(env/n,root/'env-new'/n) for n in names) else 1)\n"
+        "if a.op=='rollback-preflight': sys.exit(0 if all(same(env/n,root/'env-old'/n) or same(env/n,root/'env-new'/n) for n in names) else 1)\n"
+        "if a.op=='rollback':\n"
+        " for n in names: (env/n).write_bytes((root/'env-old'/n).read_bytes())\n"
+        " state.write_text('restored'); sys.exit(0)\n",
+        encoding="utf-8",
+    )
 def _unit_harness(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Path]:
     source_dir = tmp_path / "candidate"
     target_dir = tmp_path / "systemd"
@@ -166,6 +179,22 @@ def _unit_harness(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Pat
     fail_marker = tmp_path / "fail-marker"
     source_dir.mkdir()
     target_dir.mkdir()
+    env_dir = tmp_path / "env"
+    env_dir.mkdir()
+    release_dir = backup_root / RELEASE_SHA
+    old_env_dir = release_dir / "env-old"
+    new_env_dir = release_dir / "env-new"
+    old_env_dir.mkdir(parents=True, mode=0o700)
+    new_env_dir.mkdir(mode=0o700)
+    release_dir.chmod(0o700)
+    for name in (
+        "agent-runtime-worker.env", "agent-projection-worker.env",
+        "agent-authorization-worker.env",
+    ):
+        (env_dir / name).write_text(f"old:{name}\n", encoding="utf-8")
+        (old_env_dir / name).write_text(f"old:{name}\n", encoding="utf-8")
+        (new_env_dir / name).write_text(f"new:{name}\n", encoding="utf-8")
+    (release_dir / "fake-env-state").write_text("prepared", encoding="utf-8")
     manifest_lines = []
     for service in SERVICES:
         source = source_dir / f"{service}.service"
@@ -177,6 +206,8 @@ def _unit_harness(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Pat
     manifest = tmp_path / "reviewed.sha256"
     manifest.write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
     _write_fake_commands(fake_bin, calls)
+    env_tool = tmp_path / "fake-env-tool.py"
+    _write_fake_env_tool(env_tool)
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -185,11 +216,11 @@ def _unit_harness(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Pat
         "FAIL_MARKER": str(fail_marker),
         "SYSTEMD_UNIT_DIR": str(target_dir),
         "CONTROL_PLANE_DEPLOY_DIR": str(source_dir),
-        "CONTROL_PLANE_UNIT_BACKUP_ROOT": str(backup_root),
+        "CONTROL_PLANE_ENV_DIR": str(env_dir),
+        "CONTROL_PLANE_ENV_TOOL": str(env_tool),
+        "CONTROL_PLANE_TRANSACTION_ROOT": str(backup_root),
     }
     return env, source_dir, target_dir, backup_root, manifest
-
-
 def _run_updater(
     env: dict[str, str], manifest: Path, operation: str = "apply"
 ) -> subprocess.CompletedProcess[str]:
@@ -200,8 +231,6 @@ def _run_updater(
         text=True,
         check=False,
     )
-
-
 @pytest.mark.parametrize("unsafe", ("hash", "state"))
 def test_preflight_failure_has_zero_target_or_backup_writes(
     tmp_path: Path, unsafe: str
@@ -217,35 +246,26 @@ def test_preflight_failure_has_zero_target_or_backup_writes(
         env["PRE_ACTIVE"] = "true"
         staged = target_dir / f"{SERVICES[0]}.service.c7-{RELEASE_SHA}.tmp"
         staged.write_text("preexisting-staging\n", encoding="utf-8")
-
     result = _run_updater(env, manifest)
-
     assert result.returncode != 0
     assert {
         name: (target_dir / name).read_bytes() for name in before
     } == before
     if unsafe == "state":
         assert staged.read_text(encoding="utf-8") == "preexisting-staging\n"
-    assert not backup_root.exists()
-
-
+    assert not (backup_root / RELEASE_SHA / "units").exists()
 def test_review_manifest_content_is_never_logged(tmp_path: Path) -> None:
     env, _, _, backup_root, manifest = _unit_harness(tmp_path)
     marker = "manifest-must-not-leak-secret"
     manifest.write_text(marker + "\n", encoding="utf-8")
-
     result = _run_updater(env, manifest, operation="preflight")
-
     assert result.returncode != 0
     assert marker not in result.stdout + result.stderr
-    assert not backup_root.exists()
-
-
+    assert not (backup_root / RELEASE_SHA / "units").exists()
 def test_streamed_manifest_checker_rejects_mismatch_without_writes(tmp_path: Path) -> None:
     env, _, _, backup_root, manifest = _unit_harness(tmp_path)
     args = [part for line in manifest.read_text().splitlines() for part in line.split()]
     args[0] = "0" * 64
-
     result = subprocess.run(
         ["bash", str(MANIFEST_CHECKER), *args],
         env=env,
@@ -253,49 +273,86 @@ def test_streamed_manifest_checker_rejects_mismatch_without_writes(tmp_path: Pat
         text=True,
         check=False,
     )
-
     assert result.returncode == 1
     assert "SHA-256" in result.stderr
-    assert not backup_root.exists()
-
-
+    assert not (backup_root / RELEASE_SHA / "units").exists()
 def test_all_units_are_backed_up_before_any_atomic_replacement(tmp_path: Path) -> None:
     env, source_dir, target_dir, backup_root, manifest = _unit_harness(tmp_path)
-
     result = _run_updater(env, manifest)
-
     assert result.returncode == 0, result.stderr
     calls = Path(env["CALLS"]).read_text().splitlines()
-    backup_calls = [index for index, call in enumerate(calls) if str(backup_root) in call]
+    backup_calls = [
+        index for index, call in enumerate(calls) if "/.units.prepare." in call
+    ]
     replace_calls = [index for index, call in enumerate(calls) if ".c7-" in call]
-    assert len(backup_calls) >= 4
-    assert max(backup_calls[:4]) < min(replace_calls)
+    publish_call = calls.index("env publish")
+    assert len(backup_calls) >= 3
+    assert max(backup_calls[:3]) < publish_call < min(replace_calls)
     for service in SERVICES:
         assert (target_dir / f"{service}.service").read_bytes() == (
             source_dir / f"{service}.service"
         ).read_bytes()
-        assert (backup_root / RELEASE_SHA / f"{service}.service").read_text().startswith(
+        assert (backup_root / RELEASE_SHA / "units" / f"{service}.service").read_text().startswith(
             "reviewed-old:"
         )
-
-
-@pytest.mark.parametrize("failure", ("middle", "postcheck"))
+    assert all(path.read_text().startswith("new:") for path in Path(
+        env["CONTROL_PLANE_ENV_DIR"]
+    ).iterdir())
+def test_unified_rollback_is_idempotent_and_unit_hash_fenced(tmp_path: Path) -> None:
+    idempotent_root = tmp_path / "idempotent"
+    idempotent_root.mkdir()
+    env, _, target_dir, _, manifest = _unit_harness(idempotent_root)
+    old_units = {path.name: path.read_bytes() for path in target_dir.iterdir()}
+    assert _run_updater(env, manifest).returncode == 0
+    assert _run_updater(env, manifest, "rollback").returncode == 0
+    assert _run_updater(env, manifest, "rollback").returncode == 0
+    assert {path.name: path.read_bytes() for path in target_dir.iterdir()} == old_units
+    wrong_release = subprocess.run(
+        ["bash", str(UPDATER), "rollback", "e" * 40], env=env,
+        capture_output=True, text=True, check=False,
+    )
+    assert wrong_release.returncode != 0
+    assert {path.name: path.read_bytes() for path in target_dir.iterdir()} == old_units
+    fenced_root = tmp_path / "fenced"
+    fenced_root.mkdir()
+    env2, _, target2, _, manifest2 = _unit_harness(fenced_root)
+    assert _run_updater(env2, manifest2).returncode == 0
+    (target2 / f"{SERVICES[0]}.service").write_text("foreign unit\n", encoding="utf-8")
+    env_dir = Path(env2["CONTROL_PLANE_ENV_DIR"])
+    before = {
+        **{f"unit:{p.name}": p.read_bytes() for p in target2.iterdir()},
+        **{f"env:{p.name}": p.read_bytes() for p in env_dir.iterdir()},
+    }
+    result = _run_updater(env2, manifest2, "rollback")
+    after = {
+        **{f"unit:{p.name}": p.read_bytes() for p in target2.iterdir()},
+        **{f"env:{p.name}": p.read_bytes() for p in env_dir.iterdir()},
+    }
+    assert result.returncode != 0
+    assert before == after
+@pytest.mark.parametrize("failure", ("middle", "reload", "postcheck", "env-postcheck"))
 def test_update_failure_restores_all_reviewed_units(
     tmp_path: Path, failure: str
 ) -> None:
     env, _, target_dir, backup_root, manifest = _unit_harness(tmp_path)
     before = {path.name: path.read_bytes() for path in target_dir.iterdir()}
-    env["FAIL_MIDDLE" if failure == "middle" else "POST_ACTIVE"] = "true"
-
+    failure_vars = {
+        "middle": "FAIL_MIDDLE", "reload": "FAIL_RELOAD",
+        "postcheck": "POST_ACTIVE", "env-postcheck": "FAIL_ENV_VERIFY",
+    }
+    env[failure_vars[failure]] = "true"
     result = _run_updater(env, manifest)
-
     assert result.returncode != 0
     assert {path.name: path.read_bytes() for path in target_dir.iterdir()} == before
-    assert all((backup_root / RELEASE_SHA / name).exists() for name in before)
-    assert int(Path(env["RELOAD_COUNT"]).read_text()) >= 1
-    assert "已恢复" in result.stderr
-
-
+    assert all((backup_root / RELEASE_SHA / "units" / name).exists() for name in before)
+    env_dir = Path(env["CONTROL_PLANE_ENV_DIR"])
+    assert all((env_dir / name).read_text().startswith("old:") for name in (
+        "agent-runtime-worker.env", "agent-projection-worker.env",
+        "agent-authorization-worker.env",
+    ))
+    if failure != "env-postcheck":
+        assert int(Path(env["RELOAD_COUNT"]).read_text()) >= 1
+    assert "已统一恢复" in result.stderr
 def test_control_plane_state_scope_and_release_routes_never_touch_sandbox(
     tmp_path: Path
 ) -> None:
@@ -324,8 +381,6 @@ def test_control_plane_state_scope_and_release_routes_never_touch_sandbox(
     assert release_check < state_check < hash_check < sync
     for forbidden in ("run-migrations", "systemctl restart", "systemctl enable", "transfer-agent-runtime-ownership"):
         assert forbidden not in control_branch
-
-
 def test_control_plane_deploy_mode_rejects_mixed_scope_before_release_checks(
     tmp_path: Path
 ) -> None:
@@ -345,8 +400,6 @@ def test_control_plane_deploy_mode_rejects_mixed_scope_before_release_checks(
     )
     assert result.returncode == 2
     assert "不能与其他部署模式组合" in result.stderr
-
-
 def _control_plane_release_harness(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     release_root = tmp_path / "release"
     deploy_dir = release_root / "deploy"
@@ -413,8 +466,6 @@ def _control_plane_release_harness(tmp_path: Path) -> tuple[Path, dict[str, str]
         "ROLLBACK_MARKER": str(rollback_marker),
     }
     return release_root, env, manifest
-
-
 def test_outer_postcheck_failure_invokes_release_bound_rollback(tmp_path: Path) -> None:
     release_root, env, manifest = _control_plane_release_harness(tmp_path)
     result = subprocess.run(
@@ -433,4 +484,5 @@ def test_outer_postcheck_failure_invokes_release_bound_rollback(tmp_path: Path) 
     assert Path(env["ROLLBACK_MARKER"]).exists()
     calls = Path(env["RELEASE_CALLS"]).read_text()
     assert f"rollback {RELEASE_SHA}" in calls
+    assert f"sudo bash /remote/app/deploy/update-control-plane-units.sh rollback {RELEASE_SHA}" in calls
     assert "everydayai-sandbox-worker" not in calls
