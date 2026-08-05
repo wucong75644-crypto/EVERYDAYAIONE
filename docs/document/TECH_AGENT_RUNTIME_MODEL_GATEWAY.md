@@ -123,7 +123,8 @@ UTF-8 JSON object
 
 约束：
 
-- 单帧最大 `1 MiB`；请求总 payload 最大 `4 MiB`；单次响应累计最大 `16 MiB`。
+- 单个 request frame 最大 `4 MiB`；单个 response frame 最大 `1 MiB`；每连接仍只允许
+  一个 request，单次响应累计最大 `16 MiB`。请求不采用未定义的分片协议。
 - JSON 深度最大 32，字符串最大 512 KiB，tools 最大 128 项，messages 最大 512 项；超限在 DB claim 前拒绝。
 - 每连接只承载一个 request；响应结束后 server 主动关闭，禁止 multiplex，降低串线和背压复杂度。
 - connect timeout 2 秒，claim/首帧 timeout 10 秒；Provider deadline 来自冻结的 `ModelRequestOptions.timeout_seconds`，Gateway 上限 120 秒；close/drain 单 operation 最长 130 秒。

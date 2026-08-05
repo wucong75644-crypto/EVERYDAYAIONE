@@ -9,11 +9,13 @@ from uuid import UUID
 import pytest
 
 from services.agent.runtime.model_gateway.protocol import (
-    MAX_FRAME_BYTES,
     MAX_JSON_DEPTH,
     MAX_MESSAGES,
+    MAX_REQUEST_BYTES,
     MAX_STRING_BYTES,
     MAX_TOOLS,
+    REQUEST_FRAME_LIMIT,
+    RESPONSE_FRAME_LIMIT,
     VERSION,
     GatewayProtocolError,
     decode_payload,
@@ -145,7 +147,9 @@ def test_invalid_utf8_json_duplicate_and_oversize_frame_are_rejected() -> None:
     assert error_code(lambda: decode_payload(b"{")) == "GATEWAY_INVALID_JSON"
     duplicate = b'{"safe":1,"safe":2}'
     assert error_code(lambda: decode_payload(duplicate)) == "GATEWAY_DUPLICATE_JSON_FIELD"
-    assert error_code(lambda: encode_frame({"safe": "x" * MAX_FRAME_BYTES})) == "GATEWAY_FRAME_TOO_LARGE"
+    assert error_code(
+        lambda: encode_frame({"safe": "x" * RESPONSE_FRAME_LIMIT})
+    ) == "GATEWAY_FRAME_TOO_LARGE"
 
 
 @pytest.mark.asyncio
@@ -158,7 +162,7 @@ async def test_partial_frame_and_eof() -> None:
         await read_frame(reader)
 
     reader = asyncio.StreamReader()
-    reader.feed_data(struct.pack(">I", MAX_FRAME_BYTES + 1))
+    reader.feed_data(struct.pack(">I", RESPONSE_FRAME_LIMIT + 1))
     with pytest.raises(GatewayProtocolError, match="GATEWAY_FRAME_TOO_LARGE"):
         await read_frame(reader)
 
@@ -184,6 +188,16 @@ def test_response_sequence_id_and_delta_whitelist() -> None:
     delta.update(delta_kind="text", delta={"text": "ok", "raw_chunk": "forbidden"})
     assert error_code(lambda: validate_response(delta, request_id=request_id, expected_sequence=1)) == "GATEWAY_INVALID_TEXT_DELTA"
 
+    wrong_type = deepcopy(accepted)
+    wrong_type["type"] = []
+    assert error_code(
+        lambda: validate_response(wrong_type, request_id=request_id, expected_sequence=0)
+    ) == "GATEWAY_INVALID_RESPONSE_FIELDS"
+    delta.update(delta_kind=[], delta={})
+    assert error_code(
+        lambda: validate_response(delta, request_id=request_id, expected_sequence=1)
+    ) == "GATEWAY_INVALID_DELTA"
+
 
 def test_failed_response_is_stable_and_secret_free() -> None:
     request_id = request_payload()["request_id"]
@@ -195,3 +209,105 @@ def test_failed_response_is_stable_and_secret_free() -> None:
     assert validate_response(response, request_id=request_id, expected_sequence=0) == response
     encoded = json.dumps(response)
     assert "api_key" not in encoded and "execution_token" not in encoded
+
+
+def test_nullable_org_preserves_required_user_identity() -> None:
+    personal = request_payload()
+    personal["org_id"] = None
+    assert validate_request(personal)["org_id"] is None
+    personal["user_id"] = None
+    assert error_code(lambda: validate_request(personal)) == "GATEWAY_INVALID_USER_ID"
+
+
+def test_request_and_response_frame_limits_are_distinct() -> None:
+    assert REQUEST_FRAME_LIMIT == MAX_REQUEST_BYTES == 4 * RESPONSE_FRAME_LIMIT
+
+
+@pytest.mark.parametrize(
+    ("kind", "delta", "expected"),
+    [
+        ("text", {"text": 3}, "GATEWAY_INVALID_TEXT_DELTA"),
+        ("tool_call", {}, "GATEWAY_INVALID_TOOL_CALL_DELTA"),
+        ("tool_call", {"index": True, "name": "x"}, "GATEWAY_INVALID_TOOL_CALL_DELTA"),
+        ("tool_call", {"index": -1, "arguments": "{}"}, "GATEWAY_INVALID_TOOL_CALL_DELTA"),
+        ("tool_call", {"index": 0, "name": 5}, "GATEWAY_INVALID_TOOL_CALL_DELTA"),
+        ("usage", {}, "GATEWAY_INVALID_USAGE_DELTA"),
+        ("usage", {"input_tokens": True}, "GATEWAY_INVALID_USAGE_DELTA"),
+        ("usage", {"input_tokens": -1}, "GATEWAY_INVALID_USAGE_DELTA"),
+        ("usage", {"raw_tokens": 1}, "GATEWAY_INVALID_USAGE_DELTA"),
+        ("provider_metadata", {}, "GATEWAY_INVALID_PROVIDER_METADATA"),
+        ("provider_metadata", {"finish_reason": 1}, "GATEWAY_INVALID_PROVIDER_METADATA"),
+    ],
+)
+def test_delta_payloads_are_strict(kind: str, delta: object, expected: str) -> None:
+    request_id = request_payload()["request_id"]
+    response = {
+        "version": VERSION, "request_id": request_id, "sequence": 1, "type": "delta",
+        "delta_kind": kind, "delta": delta,
+    }
+    assert error_code(
+        lambda: validate_response(response, request_id=request_id, expected_sequence=1)
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("tool_calls", [{"id": "missing-fields"}], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS"),
+        ("tool_calls", [{"index": True, "id": "1", "name": "x", "arguments": "{}"}],
+         "GATEWAY_INVALID_COMPLETED_TOOL_CALLS"),
+        ("tool_calls", [
+            {"index": 0, "id": "same", "name": "x", "arguments": "{}"},
+            {"index": 1, "id": "same", "name": "y", "arguments": "{}"},
+        ], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS"),
+        ("usage", {"input_tokens": True}, "GATEWAY_INVALID_COMPLETED_USAGE"),
+        ("usage", {"raw": 1}, "GATEWAY_INVALID_COMPLETED_USAGE"),
+        ("finish_reason", 4, "GATEWAY_INVALID_FINISH_REASON"),
+        ("provider_request_id", 4, "GATEWAY_INVALID_PROVIDER_REQUEST_ID"),
+        ("operation_state_version", True, "GATEWAY_INVALID_STATE_VERSION"),
+    ],
+)
+def test_completed_payload_is_strict(field: str, value: object, expected: str) -> None:
+    request_id = request_payload()["request_id"]
+    response = {
+        "version": VERSION, "request_id": request_id, "sequence": 1, "type": "completed",
+        "text": "ok", "tool_calls": [], "usage": {}, "finish_reason": "stop",
+        "provider_request_id": None, "response_hash": "c" * 64,
+        "operation_state_version": 1,
+    }
+    response[field] = value
+    assert error_code(
+        lambda: validate_response(response, request_id=request_id, expected_sequence=1)
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("response_type", "field", "value", "expected"),
+    [
+        ("failed", "error_code", "bad-code", "GATEWAY_INVALID_ERROR_CODE"),
+        ("failed", "summary", "/private/secret", "GATEWAY_INVALID_ERROR_SUMMARY"),
+        ("unknown", "ambiguity_kind", "disconnect", "GATEWAY_INVALID_AMBIGUITY_KIND"),
+        ("unknown", "response_started", 1, "GATEWAY_INVALID_UNKNOWN_RESULT"),
+    ],
+)
+def test_terminal_codes_and_types_are_strict(
+    response_type: str, field: str, value: object, expected: str,
+) -> None:
+    request_id = request_payload()["request_id"]
+    if response_type == "failed":
+        response = {
+            "version": VERSION, "request_id": request_id, "sequence": 0, "type": "failed",
+            "error_code": "GATEWAY_FAILED", "retry_class": "terminal", "summary": "request failed",
+        }
+        sequence = 0
+    else:
+        response = {
+            "version": VERSION, "request_id": request_id, "sequence": 1, "type": "unknown",
+            "ambiguity_kind": "GATEWAY_DISCONNECT", "response_started": False,
+            "provider_request_id": None, "reconcile_only": True,
+        }
+        sequence = 1
+    response[field] = value
+    assert error_code(
+        lambda: validate_response(response, request_id=request_id, expected_sequence=sequence)
+    ) == expected

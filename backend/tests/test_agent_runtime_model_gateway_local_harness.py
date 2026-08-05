@@ -10,7 +10,9 @@ from uuid import UUID
 import pytest
 
 from services.agent.runtime.model_gateway.client import IsolatedModelGatewayClient
-from services.agent.runtime.model_gateway.protocol import VERSION, GatewayProtocolError, encode_frame, read_frame
+from services.agent.runtime.model_gateway.protocol import (
+    REQUEST_FRAME_LIMIT, VERSION, GatewayProtocolError, encode_frame, read_frame,
+)
 from services.agent.runtime.model_gateway.server import FakeModelGatewayServer, LinuxPeerCredentialVerifier
 
 
@@ -54,7 +56,8 @@ async def complete_handler(request):
     }
     yield {"type": "delta", "delta_kind": "usage", "delta": {"input_tokens": 2, "output_tokens": 3}}
     yield {
-        "type": "completed", "text": "hello", "tool_calls": [{"id": "call-1"}],
+        "type": "completed", "text": "hello",
+        "tool_calls": [{"index": 0, "id": "call-1", "name": "safe_read", "arguments": "{}"}],
         "usage": {"input_tokens": 2, "output_tokens": 3}, "finish_reason": "tool_calls",
         "provider_request_id": "provider-1", "response_hash": "c" * 64,
         "operation_state_version": 2,
@@ -73,6 +76,29 @@ async def test_text_tool_usage_roundtrip_and_socket_cleanup(socket_dir: Path) ->
     assert [item["sequence"] for item in responses] == list(range(5))
     assert not path.exists()
     assert client.production_ready is False and server.isolated_only is True
+
+
+@pytest.mark.asyncio
+async def test_personal_and_large_request_frames_roundtrip(socket_dir: Path) -> None:
+    path = socket_dir / "large.sock"
+    personal = request_payload()
+    personal["org_id"] = None
+    personal["deadline_ms"] = 5000
+    personal["input"]["messages"] = [
+        {"role": "user", "content": "x" * 400_000} for _ in range(3)
+    ]
+    encoded = encode_frame(personal, limit=REQUEST_FRAME_LIMIT)
+    assert len(encoded) - 4 > 1024 * 1024
+    async with FakeModelGatewayServer(str(path), complete_handler, FakePeerVerifier()):
+        responses = [item async for item in IsolatedModelGatewayClient(str(path)).complete(personal)]
+    assert responses[-1]["type"] == "completed"
+
+    oversized = request_payload()
+    oversized["input"]["messages"] = [
+        {"role": "user", "content": "x" * 400_000} for _ in range(11)
+    ]
+    with pytest.raises(GatewayProtocolError, match="GATEWAY_REQUEST_TOO_LARGE"):
+        _ = [item async for item in IsolatedModelGatewayClient(str(path)).complete(oversized)]
 
 
 @pytest.mark.asyncio
@@ -158,6 +184,24 @@ async def test_connect_first_frame_and_provider_deadlines(socket_dir: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_continuous_deltas_cannot_extend_absolute_deadline(socket_dir: Path) -> None:
+    async def endless_delta_handler(request):
+        yield {"type": "accepted", "operation_id": str(UUID(int=805)), "status": "claimed"}
+        for _ in range(100):
+            await asyncio.sleep(0.005)
+            yield {"type": "delta", "delta_kind": "text", "delta": {"text": "x"}}
+
+    path = socket_dir / "deadline.sock"
+    request = request_payload()
+    request["deadline_ms"] = 30
+    started = asyncio.get_running_loop().time()
+    async with FakeModelGatewayServer(str(path), endless_delta_handler, FakePeerVerifier()):
+        with pytest.raises(GatewayProtocolError, match="GATEWAY_RESPONSE_TIMEOUT"):
+            _ = [item async for item in IsolatedModelGatewayClient(str(path)).complete(request)]
+    assert asyncio.get_running_loop().time() - started < 0.2
+
+
+@pytest.mark.asyncio
 async def test_response_limit_and_backpressure_are_failure_closed(socket_dir: Path) -> None:
     async def large_handler(request):
         yield {"type": "accepted", "operation_id": str(UUID(int=802)), "status": "claimed"}
@@ -174,6 +218,16 @@ async def test_response_limit_and_backpressure_are_failure_closed(socket_dir: Pa
         client = IsolatedModelGatewayClient(str(path), response_limit=5000)
         with pytest.raises(GatewayProtocolError, match="GATEWAY_RESPONSE_TOO_LARGE"):
             _ = [item async for item in client.complete(request_payload())]
+
+    server_path = socket_dir / "server-limit.sock"
+    async with FakeModelGatewayServer(
+        str(server_path), large_handler, FakePeerVerifier(), response_limit=10_000,
+    ):
+        responses = [
+            item async for item in IsolatedModelGatewayClient(str(server_path)).complete(request_payload())
+        ]
+    assert responses[-1]["type"] == "failed"
+    assert responses[-1]["error_code"] == "GATEWAY_RESPONSE_TOO_LARGE"
 
 
 @pytest.mark.asyncio
@@ -195,7 +249,7 @@ async def test_server_disconnect_and_client_disconnect_are_contained(socket_dir:
     path = socket_dir / "client-disconnect.sock"
     async with FakeModelGatewayServer(str(path), complete_handler, FakePeerVerifier()):
         reader, writer = await asyncio.open_unix_connection(str(path))
-        writer.write(encode_frame(request_payload()))
+        writer.write(encode_frame(request_payload(), limit=REQUEST_FRAME_LIMIT))
         await writer.drain()
         writer.close()
         await writer.wait_closed()
@@ -238,6 +292,32 @@ async def test_socket_symlink_and_regular_file_are_never_replaced(socket_dir: Pa
 
 
 @pytest.mark.asyncio
+async def test_socket_postcheck_failure_and_unsafe_parent_leave_no_socket(
+    socket_dir: Path, monkeypatch,
+) -> None:
+    failed_socket = socket_dir / "chmod-failed.sock"
+    monkeypatch.setattr(
+        "services.agent.runtime.model_gateway.server.os.chmod",
+        lambda *_: (_ for _ in ()).throw(PermissionError()),
+    )
+    server = FakeModelGatewayServer(str(failed_socket), complete_handler, FakePeerVerifier())
+    with pytest.raises(GatewayProtocolError, match="GATEWAY_SOCKET_SECURITY_INVALID"):
+        await server.start()
+    assert not failed_socket.exists()
+
+    real_parent = socket_dir / "real-parent"
+    real_parent.mkdir()
+    linked_parent = socket_dir / "linked-parent"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    server = FakeModelGatewayServer(
+        str(linked_parent / "gateway.sock"), complete_handler, FakePeerVerifier(),
+    )
+    with pytest.raises(GatewayProtocolError, match="GATEWAY_SOCKET_PARENT_UNSAFE"):
+        await server.start()
+    assert not (real_parent / "gateway.sock").exists()
+
+
+@pytest.mark.asyncio
 async def test_terminal_frame_followed_by_extra_frame_is_rejected(socket_dir: Path) -> None:
     request = request_payload()
 
@@ -249,7 +329,7 @@ async def test_terminal_frame_followed_by_extra_frame_is_rejected(socket_dir: Pa
         }
         terminal = {
             "version": VERSION, "request_id": request["request_id"], "sequence": 1,
-            "type": "unknown", "ambiguity_kind": "disconnect", "response_started": True,
+            "type": "unknown", "ambiguity_kind": "GATEWAY_DISCONNECT", "response_started": True,
             "provider_request_id": None, "reconcile_only": True,
         }
         writer.write(

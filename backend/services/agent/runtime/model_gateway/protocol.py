@@ -13,9 +13,10 @@ from uuid import UUID
 
 VERSION = "agent-model-gateway.v1"
 PRODUCTION_READY = False
-MAX_FRAME_BYTES = 1024 * 1024
-MAX_REQUEST_BYTES = 4 * MAX_FRAME_BYTES
-MAX_RESPONSE_BYTES = 16 * MAX_FRAME_BYTES
+RESPONSE_FRAME_LIMIT = 1024 * 1024
+REQUEST_FRAME_LIMIT = 4 * RESPONSE_FRAME_LIMIT
+MAX_REQUEST_BYTES = REQUEST_FRAME_LIMIT
+MAX_RESPONSE_BYTES = 16 * RESPONSE_FRAME_LIMIT
 MAX_JSON_DEPTH = 32
 MAX_STRING_BYTES = 512 * 1024
 MAX_MESSAGES = 512
@@ -55,6 +56,8 @@ _TOOL_CALL_DELTA_FIELDS = frozenset({"index", "id", "name", "arguments"})
 _USAGE_DELTA_FIELDS = frozenset({
     "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "credits_minor",
 })
+_COMPLETED_TOOL_CALL_FIELDS = frozenset({"index", "id", "name", "arguments"})
+_STABLE_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,127}$")
 
 
 class GatewayProtocolError(Exception):
@@ -78,10 +81,11 @@ def _strict_object(value: Any, fields: frozenset[str], code: str) -> dict[str, A
     return value
 
 
-def _text(value: Any, code: str, *, allow_empty: bool = False) -> str:
+def _text(value: Any, code: str, *, allow_empty: bool = False,
+          maximum_bytes: int = MAX_STRING_BYTES) -> str:
     if not isinstance(value, str) or (not value and not allow_empty):
         _fail(code)
-    if len(value.encode("utf-8")) > MAX_STRING_BYTES:
+    if len(value.encode("utf-8")) > maximum_bytes:
         _fail("GATEWAY_STRING_TOO_LARGE")
     return value
 
@@ -103,6 +107,18 @@ def _integer(value: Any, code: str, *, minimum: int = 0, maximum: int | None = N
     if maximum is not None and value > maximum:
         _fail(code)
     return value
+
+
+def _stable_code(value: Any, code: str) -> str:
+    text = _text(value, code, maximum_bytes=128)
+    if not _STABLE_CODE_RE.fullmatch(text):
+        _fail(code)
+    return text
+
+
+def _optional_text(value: Any, code: str, *, maximum_bytes: int) -> None:
+    if value is not None:
+        _text(value, code, maximum_bytes=maximum_bytes)
 
 
 def _scan_json(value: Any, *, depth: int = 0) -> None:
@@ -137,9 +153,11 @@ def validate_request(value: Any) -> dict[str, Any]:
         _fail("GATEWAY_UNSUPPORTED_PROTOCOL")
     if request["operation"] != "model.complete":
         _fail("GATEWAY_UNSUPPORTED_OPERATION")
-    for field in ("request_id", "org_id", "user_id", "run_id", "model_step_id",
+    for field in ("request_id", "user_id", "run_id", "model_step_id",
                   "model_attempt_id", "execution_token"):
         _uuid(request[field], f"GATEWAY_INVALID_{field.upper()}")
+    if request["org_id"] is not None:
+        _uuid(request["org_id"], "GATEWAY_INVALID_ORG_ID")
     for field in ("worker_id", "model_id", "provider", "model_revision"):
         _text(request[field], f"GATEWAY_INVALID_{field.upper()}")
     if request["purpose"] != "model.invoke":
@@ -175,6 +193,8 @@ def validate_response(value: Any, *, request_id: str, expected_sequence: int) ->
     if not isinstance(value, dict):
         _fail("GATEWAY_INVALID_RESPONSE")
     response_type = value.get("type")
+    if not isinstance(response_type, str):
+        _fail("GATEWAY_INVALID_RESPONSE_FIELDS")
     fields = _RESPONSE_FIELDS.get(response_type)
     if fields is None or set(value) != fields:
         _fail("GATEWAY_INVALID_RESPONSE_FIELDS")
@@ -193,28 +213,24 @@ def validate_response(value: Any, *, request_id: str, expected_sequence: int) ->
         if value["status"] not in {"claimed", "readback"}:
             _fail("GATEWAY_INVALID_ACCEPTED_STATUS")
     elif response_type == "delta":
-        if value["delta_kind"] not in _DELTA_KINDS or not isinstance(value["delta"], dict):
+        if (not isinstance(value["delta_kind"], str)
+                or value["delta_kind"] not in _DELTA_KINDS
+                or not isinstance(value["delta"], dict)):
             _fail("GATEWAY_INVALID_DELTA")
-        if value["delta_kind"] == "provider_metadata" and not set(value["delta"]) <= _PROVIDER_METADATA_FIELDS:
-            _fail("GATEWAY_INVALID_PROVIDER_METADATA")
-        if value["delta_kind"] == "text" and set(value["delta"]) != {"text"}:
-            _fail("GATEWAY_INVALID_TEXT_DELTA")
-        if value["delta_kind"] == "tool_call" and not set(value["delta"]) <= _TOOL_CALL_DELTA_FIELDS:
-            _fail("GATEWAY_INVALID_TOOL_CALL_DELTA")
-        if value["delta_kind"] == "usage" and not set(value["delta"]) <= _USAGE_DELTA_FIELDS:
-            _fail("GATEWAY_INVALID_USAGE_DELTA")
+        _validate_delta(value["delta_kind"], value["delta"])
     elif response_type == "completed":
         _integer(value["operation_state_version"], "GATEWAY_INVALID_STATE_VERSION", minimum=1)
         if not _HASH_RE.fullmatch(_text(value["response_hash"], "GATEWAY_INVALID_RESPONSE_HASH")):
             _fail("GATEWAY_INVALID_RESPONSE_HASH")
-        if not isinstance(value["tool_calls"], list) or not isinstance(value["usage"], dict):
-            _fail("GATEWAY_INVALID_COMPLETED_RESULT")
+        _validate_completed_tool_calls(value["tool_calls"])
+        _validate_usage(value["usage"], "GATEWAY_INVALID_COMPLETED_USAGE", allow_empty=True)
         _text(value["text"], "GATEWAY_INVALID_COMPLETED_RESULT", allow_empty=True)
-        _text(value["finish_reason"], "GATEWAY_INVALID_FINISH_REASON")
-        if value["provider_request_id"] is not None:
-            _text(value["provider_request_id"], "GATEWAY_INVALID_PROVIDER_REQUEST_ID")
+        _text(value["finish_reason"], "GATEWAY_INVALID_FINISH_REASON", maximum_bytes=256)
+        _optional_text(
+            value["provider_request_id"], "GATEWAY_INVALID_PROVIDER_REQUEST_ID", maximum_bytes=512,
+        )
     elif response_type == "failed":
-        _text(value["error_code"], "GATEWAY_INVALID_ERROR_CODE")
+        _stable_code(value["error_code"], "GATEWAY_INVALID_ERROR_CODE")
         if value["retry_class"] != "terminal":
             _fail("GATEWAY_INVALID_RETRY_CLASS")
         summary = _text(value["summary"], "GATEWAY_INVALID_ERROR_SUMMARY", allow_empty=True)
@@ -222,16 +238,73 @@ def validate_response(value: Any, *, request_id: str, expected_sequence: int) ->
                 or any(part in summary for part in ("secret", "token", "password", "api key", "dsn"))):
             _fail("GATEWAY_INVALID_ERROR_SUMMARY")
     else:
-        _text(value["ambiguity_kind"], "GATEWAY_INVALID_AMBIGUITY_KIND")
-        if value["provider_request_id"] is not None:
-            _text(value["provider_request_id"], "GATEWAY_INVALID_PROVIDER_REQUEST_ID")
+        _stable_code(value["ambiguity_kind"], "GATEWAY_INVALID_AMBIGUITY_KIND")
+        _optional_text(
+            value["provider_request_id"], "GATEWAY_INVALID_PROVIDER_REQUEST_ID", maximum_bytes=512,
+        )
         if not isinstance(value["response_started"], bool) or value["reconcile_only"] is not True:
             _fail("GATEWAY_INVALID_UNKNOWN_RESULT")
     _scan_json(value)
     return value
 
 
-def encode_frame(value: Mapping[str, Any], *, limit: int = MAX_FRAME_BYTES) -> bytes:
+def _validate_delta(kind: str, delta: dict[str, Any]) -> None:
+    if kind == "text":
+        if set(delta) != {"text"}:
+            _fail("GATEWAY_INVALID_TEXT_DELTA")
+        _text(delta["text"], "GATEWAY_INVALID_TEXT_DELTA", allow_empty=True)
+        return
+    if kind == "tool_call":
+        fields = set(delta)
+        if "index" not in fields or len(fields) < 2 or not fields <= _TOOL_CALL_DELTA_FIELDS:
+            _fail("GATEWAY_INVALID_TOOL_CALL_DELTA")
+        _integer(delta["index"], "GATEWAY_INVALID_TOOL_CALL_DELTA")
+        for field in fields - {"index"}:
+            maximum = 256 if field == "name" else 512 if field == "id" else MAX_STRING_BYTES
+            _text(
+                delta[field], "GATEWAY_INVALID_TOOL_CALL_DELTA",
+                allow_empty=True, maximum_bytes=maximum,
+            )
+        return
+    if kind == "usage":
+        _validate_usage(delta, "GATEWAY_INVALID_USAGE_DELTA", allow_empty=False)
+        return
+    if not delta or not set(delta) <= _PROVIDER_METADATA_FIELDS:
+        _fail("GATEWAY_INVALID_PROVIDER_METADATA")
+    for field in delta:
+        _text(delta[field], "GATEWAY_INVALID_PROVIDER_METADATA", maximum_bytes=512)
+
+
+def _validate_usage(value: Any, code: str, *, allow_empty: bool) -> None:
+    if not isinstance(value, dict) or (not value and not allow_empty) or not set(value) <= _USAGE_DELTA_FIELDS:
+        _fail(code)
+    for amount in value.values():
+        _integer(amount, code)
+
+
+def _validate_completed_tool_calls(value: Any) -> None:
+    if not isinstance(value, list) or len(value) > MAX_TOOLS:
+        _fail("GATEWAY_INVALID_COMPLETED_TOOL_CALLS")
+    indices: set[int] = set()
+    identifiers: set[str] = set()
+    for call in value:
+        call = _strict_object(
+            call, _COMPLETED_TOOL_CALL_FIELDS, "GATEWAY_INVALID_COMPLETED_TOOL_CALLS",
+        )
+        _integer(call["index"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS")
+        _text(call["id"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS", maximum_bytes=512)
+        _text(call["name"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS", maximum_bytes=256)
+        _text(
+            call["arguments"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS",
+            allow_empty=True, maximum_bytes=MAX_STRING_BYTES,
+        )
+        if call["index"] in indices or call["id"] in identifiers:
+            _fail("GATEWAY_INVALID_COMPLETED_TOOL_CALLS")
+        indices.add(call["index"])
+        identifiers.add(call["id"])
+
+
+def encode_frame(value: Mapping[str, Any], *, limit: int = RESPONSE_FRAME_LIMIT) -> bytes:
     try:
         payload = json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError, UnicodeError):
@@ -265,7 +338,7 @@ def decode_payload(payload: bytes) -> dict[str, Any]:
     return value
 
 
-async def read_frame(reader: asyncio.StreamReader, *, limit: int = MAX_FRAME_BYTES) -> dict[str, Any]:
+async def read_frame(reader: asyncio.StreamReader, *, limit: int = RESPONSE_FRAME_LIMIT) -> dict[str, Any]:
     try:
         header = await reader.readexactly(4)
         length = struct.unpack(">I", header)[0]
@@ -278,8 +351,9 @@ async def read_frame(reader: asyncio.StreamReader, *, limit: int = MAX_FRAME_BYT
         _fail("GATEWAY_READ_FAILED")
 
 
-async def write_frame(writer: asyncio.StreamWriter, value: Mapping[str, Any]) -> int:
-    frame = encode_frame(value)
+async def write_frame(writer: asyncio.StreamWriter, value: Mapping[str, Any], *,
+                      limit: int = RESPONSE_FRAME_LIMIT) -> int:
+    frame = encode_frame(value, limit=limit)
     writer.write(frame)
     try:
         await writer.drain()
