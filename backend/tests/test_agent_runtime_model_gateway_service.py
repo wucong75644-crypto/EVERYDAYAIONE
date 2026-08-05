@@ -33,6 +33,7 @@ ATTEMPT_ID = "77777777-7777-7777-7777-777777777777"
 TOKEN = "88888888-8888-8888-8888-888888888888"
 CLAIM_TOKEN = "99999999-9999-9999-9999-999999999999"
 MODEL_ID = "qwen3.5-plus"
+PROVIDER_REVISION = "credential-revision-2026-08-06"
 
 
 def _material(seed: int = 4) -> SecretMaterialService:
@@ -105,9 +106,12 @@ class FakeRepository:
         self.fail_db = False
         self.mark_outcome = "dispatching"
         self.claim_outcome = "claimed"
+        self.read_outcome = "found"
+        self.claim_provider_revision: str | None = None
         self.readback_status = "dispatching"
         self.request = request
         self.bundle = bundle
+        self.calls: list[tuple[str, dict[str, object]]] = []
         self.finalize_calls: list[dict[str, object]] = []
 
     def _operation(self, status: str, version: int) -> dict[str, object]:
@@ -116,19 +120,64 @@ class FakeRepository:
             "state_version": version, "terminal_error_code": None,
             "ambiguity_code": None, "response_started": False,
             "provider_request_id": None,
+            "request_id": self.request["request_id"],
+            "org_id": self.request["org_id"],
+            "user_id": self.request["user_id"],
+            "run_id": self.request["run_id"],
+            "model_step_id": self.request["model_step_id"],
+            "model_attempt_id": self.request["model_attempt_id"],
+            "execution_token": self.request["execution_token"],
+            "request_hash": self.request["request_hash"],
+            "attempt_state_version": self.request["state_version"],
+            "model_id": self.request["model_id"],
+            "provider": self.request["provider"],
+            "provider_revision": PROVIDER_REVISION,
+            "model_revision": self.request["model_revision"],
+            "purpose": self.request["purpose"],
+            "tenant_kill_epoch": self.request["tenant_kill_epoch"],
+            "provider_kill_epoch": self.request["provider_kill_epoch"],
+            "capability_kill_epoch": self.request["capability_kill_epoch"],
         }
 
-    async def claim(self, **_kwargs: object) -> dict[str, object]:
-        self.timeline.append("claim")
+    def _record(self, name: str, kwargs: dict[str, object]) -> None:
+        self.timeline.append(name)
+        self.calls.append((name, dict(kwargs)))
+        if name not in {"read"}:
+            assert kwargs["provider_revision"] == PROVIDER_REVISION
+
+    async def read(self, **kwargs: object) -> dict[str, object]:
+        self.timeline.append("read")
+        self.calls.append(("read", dict(kwargs)))
+        assert kwargs == {
+            key: self.request[key] for key in (
+                "request_id", "org_id", "user_id", "run_id",
+                "model_attempt_id", "execution_token", "request_hash",
+            )
+        }
+        return {
+            "outcome": self.read_outcome,
+            "operation": self._operation("submitted", 0),
+        }
+
+    async def claim(self, **kwargs: object) -> dict[str, object]:
+        self._record("claim", kwargs)
+        assert kwargs["model_revision"] == self.request["model_revision"]
+        assert kwargs["model_revision"] != kwargs["provider_revision"]
         if self.claim_outcome == "readback":
+            operation = self._operation(self.readback_status, 2)
+            if self.claim_provider_revision is not None:
+                operation["provider_revision"] = self.claim_provider_revision
             return {
                 "outcome": "readback",
-                "operation": self._operation(self.readback_status, 2),
+                "operation": operation,
             }
+        operation = self._operation("claimed", 1)
+        if self.claim_provider_revision is not None:
+            operation["provider_revision"] = self.claim_provider_revision
         return {
             "outcome": self.claim_outcome,
             "claim_token": CLAIM_TOKEN,
-            "operation": self._operation("claimed", 1),
+            "operation": operation,
             "input_receipt": {
                 "request_hash": self.request["request_hash"],
                 "prefix_hash": self.request["input"]["context_receipt_hash"],
@@ -139,15 +188,15 @@ class FakeRepository:
         }
 
     async def fail_before_dispatch(self, **kwargs: object) -> dict[str, object]:
-        self.timeline.append("fail_before_dispatch")
+        self._record("fail_before_dispatch", kwargs)
         if self.fail_db:
             raise RuntimeError("database detail must not escape")
         operation = self._operation("failed", 2)
         operation["terminal_error_code"] = kwargs["error_code"]
         return {"outcome": "failed", "operation": operation}
 
-    async def mark_dispatched(self, **_kwargs: object) -> dict[str, object]:
-        self.timeline.append("mark_dispatched")
+    async def mark_dispatched(self, **kwargs: object) -> dict[str, object]:
+        self._record("mark_dispatched", kwargs)
         if self.fail_db:
             raise RuntimeError("database detail must not escape")
         return {
@@ -156,7 +205,7 @@ class FakeRepository:
         }
 
     async def finalize(self, **kwargs: object) -> dict[str, object]:
-        self.timeline.append("finalize")
+        self._record("finalize", kwargs)
         self.finalize_calls.append(dict(kwargs))
         if self.fail_db:
             raise RuntimeError("database detail must not escape")
@@ -168,8 +217,8 @@ class FakeRepository:
         operation["provider_request_id"] = kwargs["provider_request_id"]
         return {"outcome": status, "operation": operation}
 
-    async def renew(self, **_kwargs: object) -> dict[str, object]:
-        self.timeline.append("renew")
+    async def renew(self, **kwargs: object) -> dict[str, object]:
+        self._record("renew", kwargs)
         return {
             "outcome": "renewed",
             "operation": self._operation("dispatching", 3),
@@ -179,11 +228,13 @@ class FakeRepository:
 class FakeAdapter:
     def __init__(
         self, timeline: list[str], events: list[object], secret: str,
+        close_waiter: asyncio.Event | None = None,
     ) -> None:
         self.timeline = timeline
         self.events = events
         self.secret: str | None = secret
         self.closed = False
+        self.close_waiter = close_waiter
 
     async def stream_chat(self, **_kwargs: object):
         self.timeline.append("provider_call")
@@ -197,8 +248,12 @@ class FakeAdapter:
 
     async def close(self) -> None:
         self.timeline.append("adapter_close")
-        self.secret = None
-        self.closed = True
+        try:
+            if self.close_waiter is not None:
+                await self.close_waiter.wait()
+        finally:
+            self.secret = None
+            self.closed = True
 
 
 class ProviderFailure(RuntimeError):
@@ -214,6 +269,8 @@ def _service(
     decryptor: SecretMaterialService | None = None,
     build_fails: bool = False,
     renew_interval: float | None = None,
+    close_waiter: asyncio.Event | None = None,
+    close_timeout: float = 5.0,
 ) -> tuple[ModelGatewayService, list[FakeAdapter]]:
     adapters: list[FakeAdapter] = []
 
@@ -221,14 +278,14 @@ def _service(
         repository.timeline.append("provider_build")
         if build_fails:
             raise RuntimeError("builder secret detail")
-        adapter = FakeAdapter(repository.timeline, events, api_key)
+        adapter = FakeAdapter(repository.timeline, events, api_key, close_waiter)
         adapters.append(adapter)
         return adapter
 
     return ModelGatewayService(
         repository,
         GatewaySecretBundleConsumer(decryptor or _material()),
-        GatewayProviderExecutor(build),
+        GatewayProviderExecutor(build, close_timeout_seconds=close_timeout),
         worker_id="gateway-worker",
         release="a" * 40,
         renew_interval_seconds=renew_interval,
@@ -245,6 +302,7 @@ async def test_claim_dispatch_stream_finalize_and_close_exact_order() -> None:
         tool_calls=[ToolCallDelta(0, "call-1", "lookup", '{"id":1}')],
     )
     chunk.provider_request_id = "provider-request-1"
+    chunk.reasoning_tokens = 2
     service, adapters = _service(repository, [chunk])
 
     frames = [frame async for frame in service.complete(request)]
@@ -253,7 +311,7 @@ async def test_claim_dispatch_stream_finalize_and_close_exact_order() -> None:
         "accepted", "delta", "delta", "delta", "delta", "completed",
     ]
     assert repository.timeline == [
-        "claim", "provider_build", "mark_dispatched", "provider_call",
+        "read", "claim", "provider_build", "mark_dispatched", "provider_call",
         "finalize", "adapter_close",
     ]
     assert frames[-1]["tool_calls"][0]["arguments"] == '{"id":1}'
@@ -261,6 +319,20 @@ async def test_claim_dispatch_stream_finalize_and_close_exact_order() -> None:
         "input_tokens": 8, "output_tokens": 3,
         "cache_read_tokens": 0, "cache_write_tokens": 0,
     }
+    db_usage = repository.finalize_calls[-1]["usage_summary"]
+    assert db_usage == {
+        "input_tokens": 8, "output_tokens": 3,
+        "reasoning_tokens": 2, "total_tokens": 11,
+    }
+    assert set(db_usage) <= {
+        "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
+        "credits", "unit",
+    }
+    assert [name for name, _ in repository.calls[:2]] == ["read", "claim"]
+    assert all(
+        kwargs["provider_revision"] == PROVIDER_REVISION
+        for name, kwargs in repository.calls if name != "read"
+    )
     assert adapters[0].closed and adapters[0].secret is None
     public = json.dumps(frames) + repr(frames) + pickle.dumps(frames).hex()
     public += json.dumps(repository.finalize_calls, default=str)
@@ -349,6 +421,41 @@ async def test_dispatch_readback_does_not_submit_provider_again() -> None:
     assert frames[-1]["reconcile_only"] is True
     assert adapters == []
     assert "provider_call" not in repository.timeline
+
+
+@pytest.mark.asyncio
+async def test_busy_is_readback_only_and_never_terminal_or_dispatched() -> None:
+    request = _request()
+    repository = FakeRepository(request, _bundle())
+    repository.claim_outcome = "busy"
+    service, adapters = _service(repository, [StreamChunk(content="never")])
+
+    frames = await _collect(service, request)
+
+    assert frames == [
+        {"type": "accepted", "operation_id": OPERATION_ID, "status": "readback"},
+        {
+            "type": "unknown", "ambiguity_kind": "GATEWAY_OPERATION_IN_FLIGHT",
+            "response_started": False, "provider_request_id": None,
+            "reconcile_only": True,
+        },
+    ]
+    assert repository.timeline == ["read", "claim"]
+    assert adapters == [] and repository.finalize_calls == []
+
+
+@pytest.mark.asyncio
+async def test_claim_revision_change_aborts_before_secret_or_provider() -> None:
+    request = _request()
+    repository = FakeRepository(request, _bundle())
+    repository.claim_provider_revision = "different-credential-revision"
+    service, adapters = _service(repository, [StreamChunk(content="never")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await _collect(service, request)
+
+    assert repository.timeline == ["read", "claim"]
+    assert adapters == [] and repository.finalize_calls == []
 
 
 async def _collect(

@@ -48,8 +48,8 @@ BINDING = {
     "attempt_state_version": 0,
     "model_id": "qwen-plus",
     "provider": "dashscope",
-    "provider_revision": "model-revision",
-    "model_revision": "model-revision",
+    "provider_revision": "credential-revision",
+    "model_revision": "model-registry-revision",
     "purpose": "model.invoke",
     "tenant_kill_epoch": 0,
     "provider_kill_epoch": 0,
@@ -100,7 +100,11 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
     asyncio.run(repository.renew(**fence))
     asyncio.run(repository.finalize(
         **fence, terminal_status="unknown", provider_request_id=None,
-        response_started=False, response_hash=None, usage_summary={},
+        response_started=False, response_hash=None,
+        usage_summary={
+            "input_tokens": 5, "output_tokens": 3,
+            "reasoning_tokens": 2, "total_tokens": 8,
+        },
         terminal_error_code=None, ambiguity_code="DISCONNECT",
     ))
     asyncio.run(repository.recover(gateway_worker_id="gateway"))
@@ -112,6 +116,11 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
         "finalize_agent_runtime_model_gateway_operation",
         "recover_agent_runtime_model_gateway_operations",
     ]
+    finalize_params = database.calls[4][1]
+    assert set(finalize_params["p_usage_summary"]) <= {
+        "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
+        "credits", "unit",
+    }
     with pytest.raises(PermissionError):
         asyncio.run(repository.submit(**BINDING))
 

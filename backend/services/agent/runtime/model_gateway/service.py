@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
-import json
 import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
@@ -19,11 +16,17 @@ from services.agent.runtime.infrastructure.model.stream_execution import (
 from services.agent.runtime.model_gateway.configuration import (
     GatewayConfigurationError,
     GatewaySecretBundleConsumer,
+    validate_claim_projection,
 )
 from services.agent.runtime.model_gateway.provider import (
+    claim_error_code,
+    completed_frame,
+    db_usage_projection,
     FailedProviderStream,
     GatewayProviderError,
     GatewayProviderExecutor,
+    read_error_code,
+    validate_durable_operation,
 )
 
 
@@ -107,26 +110,52 @@ class ModelGatewayService:
         self._in_flight += 1
         self._heartbeat = self._clock()
         dispatched = False
+        evidence: dict[str, object] = {
+            "response_started": False, "provider_request_id": None,
+        }
         fence: dict[str, object] | None = None
         try:
-            claim = await self._claim(request)
+            read = await self._read(request)
+            if read.get("outcome") != "found":
+                yield _failed(read_error_code(read.get("outcome")))
+                return
+            durable_operation = _mapping(read.get("operation"))
+            provider_revision = validate_durable_operation(
+                request, durable_operation,
+            )
+            claim = await self._claim(request, provider_revision)
             outcome = claim.get("outcome")
+            if outcome == "busy":
+                operation = _mapping(claim.get("operation"))
+                if validate_durable_operation(request, operation) != provider_revision:
+                    raise GatewayConnectionAbort
+                yield _accepted(operation, "readback")
+                yield _unknown(
+                    "GATEWAY_OPERATION_IN_FLIGHT",
+                    bool(operation.get("response_started")),
+                    _provider_request_id(operation),
+                )
+                return
             if outcome == "readback":
                 operation = _mapping(claim.get("operation"))
+                if validate_durable_operation(request, operation) != provider_revision:
+                    raise GatewayConnectionAbort
                 yield _accepted(operation, "readback")
                 yield _readback_terminal(operation)
                 return
             if outcome != "claimed":
-                yield _failed(_claim_error_code(outcome))
+                yield _failed(claim_error_code(outcome))
                 return
             operation = _mapping(claim.get("operation"))
+            if validate_durable_operation(request, operation) != provider_revision:
+                raise GatewayConnectionAbort
             claim_token = claim.get("claim_token")
             if not isinstance(claim_token, str):
                 raise GatewayConnectionAbort
-            fence = _fence(request, operation, claim_token)
+            fence = _fence(operation, claim_token)
             yield _accepted(operation, "claimed")
             try:
-                _validate_claim_projection(request, claim)
+                validate_claim_projection(request, claim)
                 options = self._provider.validate_request(request)
 
                 async def mark_dispatched() -> None:
@@ -163,33 +192,10 @@ class ModelGatewayService:
                     consumer=consume,
                 )
                 try:
-                    while True:
-                        try:
-                            update = await self._next_with_renewal(stream, fence)
-                        except StopAsyncIteration:
-                            raise GatewayConnectionAbort from None
-                        if isinstance(update, NormalizedStreamDelta):
-                            yield {
-                                "type": "delta",
-                                "delta_kind": update.kind,
-                                "delta": dict(update.value),
-                            }
-                            continue
-                        if isinstance(update, FailedProviderStream):
-                            if fence is None or not dispatched:
-                                raise GatewayConnectionAbort
-                            yield await self._finalize_stream_failure(
-                                fence, update.error,
-                            )
-                            return
-                        if isinstance(update, CompletedProviderStream):
-                            if fence is None or not dispatched:
-                                raise GatewayConnectionAbort
-                            finalized = await self._finalize_completed(
-                                fence, update.result,
-                            )
-                            yield _completed(update.result, finalized)
-                            return
+                    async for frame in self._stream_frames(
+                        stream, fence, evidence,
+                    ):
+                        yield frame
                 finally:
                     await stream.aclose()
             except (GatewayConfigurationError, GatewayProviderError) as error:
@@ -201,13 +207,58 @@ class ModelGatewayService:
                 yield _unknown("GATEWAY_DISPATCH_READBACK", False, None)
             except asyncio.CancelledError:
                 if dispatched and fence is not None:
-                    await self._finalize_cancelled(fence)
+                    await self._finalize_cancelled(
+                        fence,
+                        response_started=bool(evidence["response_started"]) or dispatched,
+                        provider_request_id=_evidence_provider_id(evidence),
+                    )
                 raise
+        except GatewayProviderError:
+            raise GatewayConnectionAbort from None
         finally:
             self._in_flight -= 1
             self._heartbeat = self._clock()
 
-    async def _claim(self, request: Mapping[str, Any]) -> Mapping[str, object]:
+    async def _stream_frames(
+        self, stream: AsyncIterator[Any], fence: dict[str, object],
+        evidence: dict[str, object],
+    ) -> AsyncIterator[Mapping[str, Any]]:
+        while True:
+            try:
+                update = await self._next_with_renewal(stream, fence)
+            except StopAsyncIteration:
+                raise GatewayConnectionAbort from None
+            if isinstance(update, NormalizedStreamDelta):
+                evidence["response_started"] = True
+                candidate_id = update.value.get("provider_request_id")
+                if isinstance(candidate_id, str) and candidate_id:
+                    evidence["provider_request_id"] = candidate_id
+                yield {
+                    "type": "delta", "delta_kind": update.kind,
+                    "delta": dict(update.value),
+                }
+            elif isinstance(update, FailedProviderStream):
+                yield await self._finalize_stream_failure(fence, update.error)
+                return
+            elif isinstance(update, CompletedProviderStream):
+                operation = await self._finalize_completed(fence, update.result)
+                yield completed_frame(
+                    update.result,
+                    _positive_version(operation.get("state_version")),
+                )
+                return
+
+    async def _read(self, request: Mapping[str, Any]) -> Mapping[str, object]:
+        return await self._db_call(self._repository.read(**{
+            key: request[key] for key in (
+                "request_id", "org_id", "user_id", "run_id",
+                "model_attempt_id", "execution_token", "request_hash",
+            )
+        }))
+
+    async def _claim(
+        self, request: Mapping[str, Any], provider_revision: str,
+    ) -> Mapping[str, object]:
         return await self._db_call(self._repository.claim(
             gateway_worker_id=self._worker_id,
             lease_seconds=self._lease_seconds,
@@ -222,7 +273,7 @@ class ModelGatewayService:
             attempt_state_version=request["state_version"],
             model_id=request["model_id"],
             provider=request["provider"],
-            provider_revision=request["model_revision"],
+            provider_revision=provider_revision,
             model_revision=request["model_revision"],
             purpose=request["purpose"],
             tenant_kill_epoch=request["tenant_kill_epoch"],
@@ -280,7 +331,7 @@ class ModelGatewayService:
             provider_request_id=result.response_receipt.provider_request_id,
             response_started=result.attempts[0].response_started,
             response_hash=result.response_hash,
-            usage_summary=_usage(result.usage, include_reasoning=True),
+            usage_summary=db_usage_projection(result.usage),
             terminal_error_code=None,
             ambiguity_code=None,
         ))
@@ -320,13 +371,16 @@ class ModelGatewayService:
             )
         return _failed(code)
 
-    async def _finalize_cancelled(self, fence: Mapping[str, object]) -> None:
+    async def _finalize_cancelled(
+        self, fence: Mapping[str, object], *, response_started: bool,
+        provider_request_id: str | None,
+    ) -> None:
         try:
             await asyncio.shield(self._db_call(self._repository.finalize(
                 **fence,
                 terminal_status="unknown",
-                provider_request_id=None,
-                response_started=False,
+                provider_request_id=provider_request_id,
+                response_started=response_started,
                 response_hash=None,
                 usage_summary={},
                 terminal_error_code=None,
@@ -361,42 +415,20 @@ def _positive_version(value: object) -> int:
 
 
 def _fence(
-    request: Mapping[str, Any], operation: Mapping[str, object], claim_token: str,
+    operation: Mapping[str, object], claim_token: str,
 ) -> dict[str, object]:
     return {
         "operation_id": operation.get("operation_id"),
         "claim_token": claim_token,
         "expected_state_version": _positive_version(operation.get("state_version")),
-        "org_id": request["org_id"],
-        "execution_token": request["execution_token"],
-        "request_hash": request["request_hash"],
-        "provider_revision": request["model_revision"],
-        "tenant_kill_epoch": request["tenant_kill_epoch"],
-        "provider_kill_epoch": request["provider_kill_epoch"],
-        "capability_kill_epoch": request["capability_kill_epoch"],
+        "org_id": operation["org_id"],
+        "execution_token": operation["execution_token"],
+        "request_hash": operation["request_hash"],
+        "provider_revision": operation["provider_revision"],
+        "tenant_kill_epoch": operation["tenant_kill_epoch"],
+        "provider_kill_epoch": operation["provider_kill_epoch"],
+        "capability_kill_epoch": operation["capability_kill_epoch"],
     }
-
-
-def _validate_claim_projection(
-    request: Mapping[str, Any], claim: Mapping[str, object],
-) -> None:
-    receipt = _mapping(claim.get("input_receipt"))
-    input_value = request["input"]
-    digest = hashlib.sha256(json.dumps(
-        {"messages": input_value["messages"], "tools": input_value["tools"]},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")).hexdigest()
-    valid = (
-        hmac.compare_digest(str(receipt.get("request_hash") or ""), request["request_hash"])
-        and hmac.compare_digest(str(receipt.get("prefix_hash") or ""), digest)
-        and hmac.compare_digest(input_value["context_receipt_hash"], digest)
-        and receipt.get("message_count") == len(input_value["messages"])
-        and receipt.get("tool_count") == len(input_value["tools"])
-    )
-    if not valid:
-        raise GatewayConfigurationError("GATEWAY_CONFIGURATION_INVALID")
 
 
 def _accepted(operation: Mapping[str, object], status: str) -> dict[str, object]:
@@ -427,24 +459,6 @@ def _unknown(
     }
 
 
-def _completed(result: Any, operation: Mapping[str, object]) -> dict[str, object]:
-    return {
-        "type": "completed",
-        "text": result.output.content if result.output is not None else "",
-        "tool_calls": [{
-            "index": call.index,
-            "id": call.call_id,
-            "name": call.name,
-            "arguments": call.arguments_json,
-        } for call in result.tool_calls],
-        "usage": _usage(result.usage),
-        "finish_reason": result.provider_stop_reason or "unknown",
-        "provider_request_id": result.response_receipt.provider_request_id,
-        "response_hash": result.response_hash,
-        "operation_state_version": _positive_version(operation.get("state_version")),
-    }
-
-
 def _readback_terminal(operation: Mapping[str, object]) -> dict[str, object]:
     status = operation.get("status")
     if status == "failed":
@@ -453,8 +467,7 @@ def _readback_terminal(operation: Mapping[str, object]) -> dict[str, object]:
         return _unknown(
             str(operation.get("ambiguity_code") or "GATEWAY_OUTCOME_UNKNOWN"),
             bool(operation.get("response_started")),
-            operation.get("provider_request_id")
-            if isinstance(operation.get("provider_request_id"), str) else None,
+            _provider_request_id(operation),
         )
     code = (
         "GATEWAY_COMPLETED_READBACK_ONLY"
@@ -463,29 +476,18 @@ def _readback_terminal(operation: Mapping[str, object]) -> dict[str, object]:
     return _unknown(
         code,
         bool(operation.get("response_started")),
-        operation.get("provider_request_id")
-        if isinstance(operation.get("provider_request_id"), str) else None,
+        _provider_request_id(operation),
     )
 
 
-def _claim_error_code(outcome: object) -> str:
-    return {
-        "busy": "GATEWAY_OPERATION_BUSY",
-        "fenced": "GATEWAY_OPERATION_FENCED",
-        "not_found": "GATEWAY_OPERATION_NOT_FOUND",
-    }.get(str(outcome), "GATEWAY_CLAIM_FAILED")
+def _provider_request_id(operation: Mapping[str, object]) -> str | None:
+    value = operation.get("provider_request_id")
+    return value if isinstance(value, str) else None
 
 
-def _usage(value: Any, *, include_reasoning: bool = False) -> dict[str, int]:
-    result = {
-        "input_tokens": value.input_tokens,
-        "output_tokens": value.output_tokens,
-        "cache_read_tokens": value.cache_read_tokens,
-        "cache_write_tokens": value.cache_write_tokens,
-    }
-    if include_reasoning:
-        result["reasoning_tokens"] = value.reasoning_tokens
-    return result
+def _evidence_provider_id(evidence: Mapping[str, object]) -> str | None:
+    value = evidence.get("provider_request_id")
+    return value if isinstance(value, str) else None
 
 
 __all__ = ["GatewayConnectionAbort", "ModelGatewayService"]

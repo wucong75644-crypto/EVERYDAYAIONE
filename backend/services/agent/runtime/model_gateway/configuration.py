@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from collections.abc import AsyncIterator, Callable, Mapping
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from services.configuration.definitions import CONFIG_REGISTRY
 from services.configuration.envelope import (
@@ -100,6 +103,28 @@ class GatewaySecretBundleConsumer:
             raise GatewayConfigurationError("GATEWAY_CONFIGURATION_INVALID") from None
 
 
+def validate_claim_projection(
+    request: Mapping[str, Any], claim: Mapping[str, object],
+) -> None:
+    receipt = claim.get("input_receipt")
+    if not isinstance(receipt, Mapping):
+        raise GatewayConfigurationError("GATEWAY_CONFIGURATION_INVALID")
+    input_value = request["input"]
+    digest = hashlib.sha256(json.dumps(
+        {"messages": input_value["messages"], "tools": input_value["tools"]},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    valid = (
+        hmac.compare_digest(str(receipt.get("request_hash") or ""), request["request_hash"])
+        and hmac.compare_digest(str(receipt.get("prefix_hash") or ""), digest)
+        and hmac.compare_digest(input_value["context_receipt_hash"], digest)
+        and receipt.get("message_count") == len(input_value["messages"])
+        and receipt.get("tool_count") == len(input_value["tools"])
+    )
+    if not valid:
+        raise GatewayConfigurationError("GATEWAY_CONFIGURATION_INVALID")
+
+
 def build_gateway_secret_consumer(
     environ: Mapping[str, str] | None = None,
 ) -> GatewaySecretBundleConsumer:
@@ -115,4 +140,5 @@ __all__ = [
     "GatewayConfigurationError",
     "GatewaySecretBundleConsumer",
     "build_gateway_secret_consumer",
+    "validate_claim_projection",
 ]

@@ -31,7 +31,7 @@ async def test_claimed_disconnect_before_consumer_leaves_recoverable_claim() -> 
     assert (await anext(stream))["type"] == "accepted"
     await stream.aclose()
 
-    assert repository.timeline == ["claim"]
+    assert repository.timeline == ["read", "claim"]
     assert adapters == []
 
 
@@ -85,7 +85,9 @@ async def test_timeout_and_cancel_after_dispatch_are_unknown_and_closed() -> Non
 
     request = _request(timeout=10)
     repository = FakeRepository(request, _bundle())
-    service, adapters = _service(repository, [block])
+    first = StreamChunk(content="partial")
+    first.provider_request_id = "provider-request-before-cancel"
+    service, adapters = _service(repository, [first, block])
     task = asyncio.create_task(_collect(service, request))
     await started.wait()
     task.cancel()
@@ -93,6 +95,10 @@ async def test_timeout_and_cancel_after_dispatch_are_unknown_and_closed() -> Non
         await task
 
     assert repository.finalize_calls[-1]["terminal_status"] == "unknown"
+    assert repository.finalize_calls[-1]["response_started"] is True
+    assert repository.finalize_calls[-1]["provider_request_id"] == (
+        "provider-request-before-cancel"
+    )
     assert adapters[0].closed
 
     timeout_request = _request(timeout=0.01)
@@ -101,6 +107,34 @@ async def test_timeout_and_cancel_after_dispatch_are_unknown_and_closed() -> Non
     frames = await _collect(timeout_service, timeout_request)
     assert frames[-1]["type"] == "unknown"
     assert timeout_adapters[0].closed
+
+
+@pytest.mark.asyncio
+async def test_cancelled_hanging_adapter_close_is_bounded_and_reaped() -> None:
+    provider_started = asyncio.Event()
+    never_close = asyncio.Event()
+
+    async def block() -> None:
+        provider_started.set()
+        await asyncio.sleep(10)
+
+    request = _request(timeout=10)
+    repository = FakeRepository(request, _bundle())
+    service, adapters = _service(
+        repository, [block], close_waiter=never_close, close_timeout=0.01,
+    )
+    task = asyncio.create_task(_collect(service, request))
+    await provider_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=0.2)
+
+    assert adapters[0].closed
+    assert not [
+        item for item in asyncio.all_tasks()
+        if item.get_name() == "gateway-provider-adapter-close" and not item.done()
+    ]
 
 
 @pytest.mark.asyncio
