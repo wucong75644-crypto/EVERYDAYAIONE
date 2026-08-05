@@ -22,6 +22,9 @@ on:
       - "deploy/everydayai-sandbox-worker.service"
       - "deploy/env-templates/agent-*.env.template"
       - "deploy/env-templates/sandbox-worker.env.template"
+      - "deploy/*.sh"
+      - "docs/database/MIGRATION_GUIDE.md"
+      - "docs/PROJECT_OVERVIEW.md"
       - "docs/document/AR17_STAGING_PROVISIONING.md"
       - "scripts/check_task_change.py"
 
@@ -96,6 +99,10 @@ jobs:
             backend/tests/test_agent_runtime_c52_safe_composition.py \
             backend/tests/test_agent_runtime_worker_readiness.py \
             backend/tests/test_agent_runtime_process_settings.py \
+            backend/tests/test_agent_runtime_flags_off_install.py \
+            backend/tests/test_tenant_db_env_contract.py \
+            backend/tests/test_deploy_service_contract.py \
+            backend/tests/test_agent_runtime_a6_composition.py \
             backend/tests/test_agent_runtime_projection_redis_settings.py \
             backend/tests/test_agent_runtime_sandbox_composition_contract.py \
             backend/tests/test_agent_runtime_production_process_contract.py \
@@ -142,6 +149,7 @@ jobs:
             backend/tests/test_agent_runtime_additive_ingress_compatibility_postgres_external.py \
             backend/tests/test_agent_runtime_owner_transition_postgres_external.py \
             backend/tests/test_agent_runtime_owner_rpc_acl_closure_postgres_external.py \
+            backend/tests/test_agent_runtime_pgcrypto_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
       - name: Collect disposable PostgreSQL server logs
@@ -181,6 +189,9 @@ jobs:
               backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
               backend/tests/test_agent_runtime_additive_ingress_compatibility_migration.py \
               backend/tests/test_agent_runtime_owner_rpc_acl_closure_migration.py
+            pytest -q -m 'not external' \
+              backend/tests/test_agent_runtime_pgcrypto_migration.py \
+              backend/tests/test_migration_runner.py
             git diff --check
             python scripts/check_task_change.py --files \
               .github/workflows/agent-runtime-disposable.yml \
@@ -195,8 +206,14 @@ jobs:
               backend/services/agent/runtime/infrastructure/model/runtime_adapter_factory.py \
               backend/services/agent/runtime/model_resolution.py \
               backend/services/agent/runtime/production_composition.py \
+              backend/services/agent/runtime/production_factory.py \
               backend/services/adapters/kie/client.py \
-              backend/services/wecom/actor_enqueue.py
+              backend/services/wecom/actor_enqueue.py \
+              deploy/validate-tenant-db-env.sh \
+              deploy/install-service-units.sh \
+              deploy/runtime-flags-off-install.sh \
+              deploy/check-agent-runtime-unit-states.sh \
+              deploy/run-migrations.sh
           } 2>&1 | tee "$RUNNER_TEMP/ar17-evidence/security-quality.log"
 
       - name: Record verification summary
