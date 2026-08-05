@@ -38,28 +38,30 @@ def _prepare_schema(url: str) -> None:
           GRANT everydayai_agent_model_gateway TO CURRENT_USER;
         """)
         connection.commit()
-    _apply(url, ROOT / "migrations/227_06_agent_runtime_tenant_kill_control.sql")
-    _apply(url, MIGRATION)
+    for name in (
+        "158_configuration_control_plane_foundation.sql",
+        "160_configuration_resolution_core.sql",
+        "227_06_agent_runtime_tenant_kill_control.sql",
+    ):
+        _apply(url, ROOT / "migrations" / name)
     with psycopg.connect(url) as connection:
         connection.execute("SET ROLE everydayai_owner")
         connection.execute("""
-          CREATE OR REPLACE FUNCTION _resolve_configuration_bundle(
-            p_definition_version TEXT,p_bundle_name TEXT,
-            p_actor_user_id UUID,p_org_id UUID
-          ) RETURNS JSONB LANGUAGE sql SECURITY INVOKER
-          SET search_path=pg_catalog,public AS $fn$
-            SELECT jsonb_build_object(
-              'bundle',p_bundle_name,'definition_version',p_definition_version,
-              'items',jsonb_build_array(jsonb_build_object(
-                'key','ai.dashscope.api_key','value_kind','secret',
-                'secret_ref',jsonb_build_object(
-                  'secret_name','ai.dashscope_api_key',
-                  'payload_ciphertext','fixture-ciphertext',
-                  'wrapped_dek','fixture-wrapped-dek','kek_version','v1',
-                  'payload_version',1))))
-          $fn$;
-        """)
+          WITH secret AS (
+            INSERT INTO secret_records(
+              scope_kind,secret_name,payload_ciphertext,wrapped_dek,kek_version,
+              payload_version,created_by,updated_by
+            ) VALUES(
+              'platform','ai.dashscope_api_key','fixture-ciphertext',
+              'fixture-wrapped-dek','v1',1,%s,%s
+            ) RETURNING id
+          )
+          INSERT INTO configuration_entries(
+            scope_kind,definition_version,config_key,secret_id,updated_by
+          ) SELECT 'platform','v1','ai.dashscope.api_key',id,%s FROM secret;
+        """, (ORG_USER, ORG_USER, ORG_USER))
         connection.commit()
+    _apply(url, MIGRATION)
 
 
 def _settings(connection: psycopg.Connection[object], role: str) -> None:
