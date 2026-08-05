@@ -173,11 +173,19 @@ async def _run() -> None:
     loop = asyncio.get_running_loop()
     owner = None
     cycle = None
+    owner_drained = False
+
+    def drain_owner_once() -> None:
+        nonlocal owner_drained
+        if owner_drained:
+            return
+        owner_drained = True
+        _drain_owner(owner)
 
     def request_drain() -> None:
         state.update(draining=True, ready=False, status="draining", reason="SIGTERM")
-        _drain_owner(owner)
         stopping.set()
+        drain_owner_once()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, request_drain)
@@ -233,13 +241,13 @@ async def _run() -> None:
                 await asyncio.sleep(settings.agent_runtime_poll_interval_seconds)
     finally:
         state.update(ready=False, draining=True, status="draining", reason="SHUTDOWN")
-        _drain_owner(owner)
         await _report_heartbeat(
             control_db, settings, role, ready=False, draining=True,
             status_code="draining",
         )
         await _shutdown(
-            role, owner, control_db, settings, server, socket_path,
+            owner, server, socket_path, close_async_worker_db,
+            owner_already_drained=owner_drained,
         )
 
 
@@ -403,16 +411,22 @@ def _drain_owner(owner) -> None:
         stop()
 
 
-async def _shutdown(role, owner, control_db, settings, server, socket_path):
-    server.close()
-    await server.wait_closed()
-    if os.path.exists(socket_path):
-        os.unlink(socket_path)
-    if role == "sandbox" and owner is not None:
-        owner.service.stop()
-    elif role == "agent_runtime" and owner is not None:
-        owner.stop()
-    await close_async_worker_db()
+async def _shutdown(
+    owner, server, socket_path, close_worker_db, *, owner_already_drained=False,
+):
+    try:
+        server.close()
+        await server.wait_closed()
+    finally:
+        try:
+            if os.path.exists(socket_path):
+                os.unlink(socket_path)
+        finally:
+            try:
+                if not owner_already_drained:
+                    _drain_owner(owner)
+            finally:
+                await close_worker_db()
 
 
 def main() -> None:

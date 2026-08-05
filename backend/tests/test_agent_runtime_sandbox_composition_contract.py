@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -113,29 +113,58 @@ async def test_sandbox_probe_failure_is_startup_fatal_and_cannot_claim(
 
 
 @pytest.mark.asyncio
-async def test_shutdown_stops_service_removes_health_socket_and_closes_db(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize(
+    ("role", "owner_factory", "stop_path"),
+    (
+        ("agent_runtime", lambda: SimpleNamespace(drain=Mock()), "drain"),
+        ("projection", lambda: SimpleNamespace(), None),
+        ("authorization", lambda: SimpleNamespace(stop=Mock()), "stop"),
+        (
+            "sandbox",
+            lambda: SimpleNamespace(service=SimpleNamespace(stop=Mock())),
+            "service.stop",
+        ),
+    ),
+)
+async def test_shutdown_stops_owner_removes_health_socket_and_closes_db_once(
+    tmp_path, role, owner_factory, stop_path,
 ):
-    components, _, _ = _components(
-        tmp_path, IsolationProbe(ready=False, code="not-used"),
-    )
+    owner = owner_factory()
     socket_path = tmp_path / "health.sock"
     socket_path.write_text("socket", encoding="utf-8")
     server = SimpleNamespace(
-        close=lambda: None, wait_closed=AsyncMock(),
-    )
-    control_db = SimpleNamespace(
-        rpc=lambda *_args, **_kwargs: SimpleNamespace(
-            execute=AsyncMock(side_effect=RuntimeError("closed")),
-        ),
+        close=Mock(), wait_closed=AsyncMock(),
     )
     close_db = AsyncMock()
-    monkeypatch.setattr(entrypoint, "close_async_worker_db", close_db)
 
     await entrypoint._shutdown(
-        "sandbox", components, control_db, SimpleNamespace(),
-        server, str(socket_path),
+        owner, server, str(socket_path), close_db,
     )
-    assert components.worker._draining is True
+    server.close.assert_called_once_with()
+    server.wait_closed.assert_awaited_once_with()
     assert not socket_path.exists()
-    close_db.assert_awaited_once()
+    close_db.assert_awaited_once_with()
+    if stop_path == "drain":
+        owner.drain.assert_called_once_with()
+    elif stop_path == "stop":
+        owner.stop.assert_called_once_with()
+    elif stop_path == "service.stop":
+        owner.service.stop.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_does_not_stop_owner_twice_after_signal_drain(tmp_path):
+    owner = SimpleNamespace(drain=Mock())
+    socket_path = tmp_path / "health.sock"
+    socket_path.write_text("socket", encoding="utf-8")
+    server = SimpleNamespace(close=Mock(), wait_closed=AsyncMock())
+    close_db = AsyncMock()
+
+    owner.drain()
+    await entrypoint._shutdown(
+        owner, server, str(socket_path), close_db,
+        owner_already_drained=True,
+    )
+
+    owner.drain.assert_called_once_with()
+    close_db.assert_awaited_once_with()
