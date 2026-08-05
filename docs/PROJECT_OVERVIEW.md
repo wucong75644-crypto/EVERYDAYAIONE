@@ -335,14 +335,28 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
 - `deploy/install-service-units.sh`：普通模式验证角色与 KEK 环境文件并安装既有服务单元；
   `agent-runtime-only` 模式严格验证 flags-off v3 和四个 Worker 环境文件，只安装四个
   Agent Runtime 单元与 wrapper 后执行 daemon-reload。已有目标不一致时在任何写入前
-  失败关闭，不启停、enable 服务或切换 Owner。
+  失败关闭；新增 `control-plane-only` 只处理 Runtime、Projection、Authorization，要求
+  reviewed target SHA-256 manifest，不依赖或触碰 Sandbox env/assets/wrapper。
+- `deploy/provision-control-plane-worker-envs.py`：服务器端从安全的 `backend/.env` 与
+  `.env.migrator` 读取三控制面密码和既有 Redis/Sentry/Environment，保持 migrator DSN
+  非凭证部分不变并 URL encode 新凭证，以 root:everydayai-app、0640 原子生成三份 env；
+  Runtime composition 固定关闭且不生成 Sandbox env。
+- `deploy/update-control-plane-units.sh`：在三个 unit 严格 inactive + disabled 且当前 SHA-256
+  全量匹配 reviewed manifest 后，将旧 unit 全部备份到 release SHA 目录，再用 install
+  staging + rename 原子更新；中途或 postcheck 失败自动恢复并 daemon-reload。
+- `deploy/check-control-plane-unit-manifest.sh`：由发布入口通过 stdin 发送到远端的只读预检，
+  在 rsync 发生前核对三个当前 target unit 的 reviewed SHA-256，避免 mismatch 时产生同步写入。
 - `deploy/deploy.sh` / `deploy/release.sh` / `deploy/runtime-flags-off-install.sh`：提供互斥的
-  `--runtime-flags-off-install` 路径；`check-agent-runtime-unit-states.sh` 在远端写入前只
-  接受已存在 unit 的 inactive + disabled 或未安装 unit 的 inactive + not-found，并在
-  安装后要求四个 unit 严格 inactive + disabled。该路径不运行 migration、不重启旧服务、
-  不启停新服务。
+  `--runtime-flags-off-install` 与 `--runtime-control-plane-flags-off-update` 路径；后者
+  要求 reviewed manifest 且不执行 code/backend 同步、migration、Owner 或服务生命周期
+  操作。`check-agent-runtime-unit-states.sh` 支持 all/control-plane scope；旧安装路径预检
+  还允许未安装 unit 的 inactive + not-found，完成后要求四个 unit inactive + disabled；
+  新更新路径前后均要求三个控制面 unit 严格 inactive + disabled。
 - `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker 配置、四单元安装、
   差异目标零写入失败关闭、远端状态门禁顺序及模板/unit 合同。
+- `backend/tests/test_agent_runtime_control_plane_update.py`：动态覆盖 Secret 隔离与 URL encode、
+  env mode/owner、reviewed hash/state 零写入、三 unit 先备份后覆盖、中途/postcheck 恢复、
+  Sandbox 零触碰及 release/deploy 互斥路由。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
   实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue
   重载及四个 Outbox 租约函数）；撤销

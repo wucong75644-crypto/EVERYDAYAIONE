@@ -263,6 +263,32 @@ enable 新服务，也不切换数据库 Owner。若任一已有 unit 或 wrappe
 安装会在写入任何目标前失败，原文件保持不变；需先人工审查差异并制定恢复方案，禁止
 通过该入口直接覆盖。
 
+生产已有三个控制面 unit 与候选不同时，使用独立的
+`--runtime-control-plane-flags-off-update`，并提供审查时记录的当前 target SHA-256
+manifest（精确三行 `SHA256  unit-name.service`）：
+
+```bash
+bash deploy/deploy.sh \
+  --runtime-control-plane-flags-off-update \
+  --expected-unit-manifest /secure/reviewed-control-plane-units.sha256 \
+  --expected-sha <40位候选提交SHA>
+```
+
+该模式先验证三个 unit 严格 `inactive + disabled`，并通过 stdin 发送只读 checker，
+在 rsync 前核对 reviewed target SHA-256；随后由服务器上的
+`provision-control-plane-worker-envs.py` 直接读取 `backend/.env` 和
+`backend/.env.migrator`。Secret 不通过命令行、日志或同步文件传递；三份 env 以
+`root:everydayai-app`、`0640` 原子替换，数据库 DSN 仅替换 URL-encoded 角色与密码，
+其余 migrator host/port/database/query 参数保持不变。Runtime composition 固定为
+`false`，Sandbox revision 标记为 `unprovisioned`。
+
+随后 `control-plane-only` 再次校验 reviewed manifest，将三个旧 unit 全部备份到
+`/var/backups/everydayai/control-plane-units/<release-sha>/` 后才逐项原子替换。
+中途失败或内部 postcheck 失败会自动恢复全部旧 unit 并 `daemon-reload`；部署入口的
+外层 postcheck 失败也会触发相同恢复。该路径不读取、生成、同步或检查 Sandbox env、
+unit、wrapper、nsjail、policy 或 rootfs，不同步生产 code/backend，不运行 migration，
+不启停、enable、restart 服务，也不切换 Owner。
+
 首次所有权转移必须由 PostgreSQL 管理员执行，且必须先完成数据库备份：
 
 ```bash

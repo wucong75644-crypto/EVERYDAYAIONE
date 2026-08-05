@@ -49,7 +49,7 @@ show_help() {
     --skip-test            跳过测试
     --expected-sha SHA     只部署指定且已推送的 Git 提交
     --runtime-flags-off-install  仅安装 flags-off Runtime 单元，不迁移或启停服务
-
+    --runtime-control-plane-flags-off-update --expected-unit-manifest PATH  reviewed 更新三控制面 unit
 示例:
     $0 -s                   首次部署（包含服务器初始化）
     $0                      正常部署（前后端都部署）
@@ -493,8 +493,8 @@ EOF
     log_info "查看实时日志: ssh ${SERVER_USER}@${SERVER_HOST} -p ${SERVER_PORT} 'sudo journalctl -u everydayai-backend -f'"
     echo ""
 }
-
-if [[ " $* " == *" --runtime-flags-off-install "* ]]; then
+if [[ " $* " == *" --runtime-flags-off-install "* ]] \
+    || [[ " $* " == *" --runtime-control-plane-flags-off-update "* ]]; then
     exec bash deploy/runtime-flags-off-install.sh "$@"
 fi
 main "$@"

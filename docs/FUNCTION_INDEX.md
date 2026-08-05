@@ -1901,7 +1901,10 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 13 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段；`wecom_bot_admin_test` 使用独立 Runtime owner/admin 门面 |
 | `WecomBotTargetResolver.list_targets` | `backend/services/configuration/bundles.py` | 先以 actorless Worker Scope 发现企业，再为每个企业建立独立精确 Scope 并解析 `wecom.bot` Bundle；单企业材料失败不影响其他企业 |
 | `_assert_wecom_worker_discovery_scope` / `discover_wecom_bot_targets` | `backend/migrations/166_wecom_worker_discovery.sql` | 仅允许 actorless Worker 发现具备有效 WeCom Bundle 的 active 企业，返回 org_id 与凭证版本且不返回 Secret |
-| `install-service-units.sh` | `deploy/install-service-units.sh` | 校验数据库角色及 KEK 文件，安装并核对四个生产 Systemd 单元后重新加载 daemon |
+| `install-service-units.sh` | `deploy/install-service-units.sh` | 保留 all/agent-runtime-only，并以 control-plane-only 编排三控制面安全 env provisioning 与 reviewed unit update |
+| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | 服务端读取既有安全 Secret/DSN，URL encode 三窄角色凭证并原子生成 root:everydayai-app、0640 flags-off env |
+| `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 验证三 unit inactive+disabled 与 reviewed SHA-256，全部备份后原子更新，失败恢复并 daemon-reload |
+| `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对三个当前 target unit 的 reviewed SHA-256 |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
 | `get_wecom_bot_admin_test_bundle` | `backend/migrations/216_configuration_admin_test_bundle.sql` | 仅允许 Runtime active 企业 owner/admin 解析固定 `wecom.bot` 测试 Bundle；不扩大 Worker 专用门面权限 |

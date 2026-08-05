@@ -6,6 +6,7 @@ deploy_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 backend_dir=${1:-/var/www/everydayai/backend}
 install_mode=${2:-all}
 expected_release_revision=${3:-${EXPECTED_RELEASE_SHA:-}}
+expected_unit_manifest=${4:-${EXPECTED_UNIT_MANIFEST:-}}
 systemd_dir=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 runtime_env_dir=${AGENT_RUNTIME_ENV_DIR:-/etc/everydayai}
 libexec_dir=${LIBEXEC_DIR:-/usr/local/libexec}
@@ -16,6 +17,13 @@ runtime_services=(
     everydayai-agent-authorization
     everydayai-sandbox-worker
 )
+
+manifest_temp_to_remove=
+cleanup_manifest_temp() {
+    if [ -n "$manifest_temp_to_remove" ]; then
+        rm -f "$manifest_temp_to_remove"
+    fi
+}
 
 file_mode() {
     local path=$1
@@ -201,6 +209,50 @@ validate_runtime_worker_envs() {
     done
 }
 
+validate_control_plane_worker_envs() {
+    if [[ ! "$expected_release_revision" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "❌ control-plane-only 需要 40 位 EXPECTED_RELEASE_SHA" >&2
+        return 1
+    fi
+
+    local runtime_path="${runtime_env_dir}/agent-runtime-worker.env"
+    local projection_path="${runtime_env_dir}/agent-projection-worker.env"
+    local authorization_path="${runtime_env_dir}/agent-authorization-worker.env"
+
+    validate_exact_env_file "$runtime_path" \
+        WORKER_DATABASE_URL AGENT_RUNTIME_PROCESS_ROLE \
+        AGENT_RUNTIME_WORKER_ID AGENT_RUNTIME_RELEASE_REVISION \
+        AGENT_RUNTIME_HEALTH_SOCKET \
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED SANDBOX_JOB_ROOT \
+        SANDBOX_RUNTIME_REVISION
+    validate_exact_env_file "$projection_path" \
+        WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
+        REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \
+        AGENT_RUNTIME_RELEASE_REVISION AGENT_RUNTIME_HEALTH_SOCKET \
+        AGENT_RUNTIME_POLL_INTERVAL_SECONDS AGENT_RUNTIME_HEARTBEAT_SECONDS \
+        SENTRY_DSN ENVIRONMENT
+    validate_exact_env_file "$authorization_path" \
+        WORKER_DATABASE_URL AGENT_RUNTIME_PROCESS_ROLE \
+        AGENT_RUNTIME_WORKER_ID AGENT_RUNTIME_RELEASE_REVISION \
+        AGENT_RUNTIME_HEALTH_SOCKET AGENT_RUNTIME_POLL_INTERVAL_SECONDS \
+        AGENT_RUNTIME_HEARTBEAT_SECONDS SENTRY_DSN ENVIRONMENT
+
+    require_database_role "$runtime_path" everydayai_agent_runtime_worker
+    require_database_role "$projection_path" everydayai_projection_worker
+    require_database_role "$authorization_path" everydayai_authorization_worker
+    require_env_value "$runtime_path" AGENT_RUNTIME_PROCESS_ROLE agent_runtime
+    require_env_value "$runtime_path" \
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED false
+    require_env_value "$projection_path" AGENT_RUNTIME_PROCESS_ROLE projection
+    require_env_value "$authorization_path" AGENT_RUNTIME_PROCESS_ROLE authorization
+
+    local path
+    for path in "$runtime_path" "$projection_path" "$authorization_path"; do
+        require_env_value "$path" AGENT_RUNTIME_RELEASE_REVISION \
+            "$expected_release_revision"
+    done
+}
+
 fail_on_different_target() {
     local source=$1
     local target=$2
@@ -242,6 +294,51 @@ install_runtime_units_only() {
     cmp --silent "$wrapper" "$wrapper_target"
     sudo systemctl daemon-reload
     echo "✅ Agent Runtime flags-off 单元已安装并验证；未启停或启用服务"
+}
+
+install_control_plane_units_only() {
+    bash "${deploy_dir}/validate-tenant-db-env.sh" \
+        "${backend_dir}" --runtime-flags-off-v3
+    if [ -z "$expected_unit_manifest" ]; then
+        echo "❌ control-plane-only 需要 reviewed unit SHA-256 manifest" >&2
+        return 1
+    fi
+
+    local manifest_path=$expected_unit_manifest
+    if [ "$manifest_path" = - ]; then
+        manifest_temp_to_remove=$(mktemp)
+        chmod 0600 "$manifest_temp_to_remove"
+        cat > "$manifest_temp_to_remove"
+        manifest_path=$manifest_temp_to_remove
+        trap cleanup_manifest_temp EXIT
+    fi
+
+    local provisioner="${deploy_dir}/provision-control-plane-worker-envs.py"
+    local updater="${deploy_dir}/update-control-plane-units.sh"
+    test -f "$provisioner"
+    test -f "$updater"
+
+    sudo python3 "$provisioner" \
+        --backend-dir "$backend_dir" \
+        --env-dir "$runtime_env_dir" \
+        --release-sha "$expected_release_revision" \
+        --check-only
+    SYSTEMD_UNIT_DIR="$systemd_dir" \
+        CONTROL_PLANE_DEPLOY_DIR="$deploy_dir" \
+        bash "$updater" preflight "$expected_release_revision" "$manifest_path"
+
+    sudo python3 "$provisioner" \
+        --backend-dir "$backend_dir" \
+        --env-dir "$runtime_env_dir" \
+        --release-sha "$expected_release_revision"
+    validate_control_plane_worker_envs
+
+    SYSTEMD_UNIT_DIR="$systemd_dir" \
+        CONTROL_PLANE_DEPLOY_DIR="$deploy_dir" \
+        bash "$updater" apply "$expected_release_revision" "$manifest_path"
+    cleanup_manifest_temp
+    manifest_temp_to_remove=
+    echo "✅ control-plane flags-off env/unit 已 provisioning/update；未启停或启用服务"
 }
 
 install_all_units() {
@@ -290,8 +387,11 @@ case "$install_mode" in
     agent-runtime-only)
         install_runtime_units_only
         ;;
+    control-plane-only)
+        install_control_plane_units_only
+        ;;
     *)
-        echo "usage: $0 [backend-dir] [all|agent-runtime-only] [release-sha]" >&2
+        echo "usage: $0 [backend-dir] [all|agent-runtime-only|control-plane-only] [release-sha] [reviewed-manifest]" >&2
         exit 2
         ;;
 esac
