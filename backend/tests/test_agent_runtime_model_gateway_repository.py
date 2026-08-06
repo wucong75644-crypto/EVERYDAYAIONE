@@ -56,18 +56,51 @@ BINDING = {
     "capability_kill_epoch": 0,
 }
 
+DISPATCH_RESPONSE = {
+    "outcome": "dispatching",
+    "attempt_id": BINDING["model_attempt_id"],
+    "status": "dispatching",
+    "dispatch_phase": "request_started",
+    "state_version": 1,
+    "worker_id": BINDING["runtime_worker_id"],
+    "operation": {
+        "operation_id": "88888888-8888-8888-8888-888888888888",
+        **{key: value for key, value in BINDING.items() if key not in {
+            "runtime_worker_id", "attempt_state_version",
+        }},
+        "attempt_state_version": 1,
+    },
+}
 
-def test_runtime_repository_can_only_submit_and_secret_free_read() -> None:
-    database = _Database(DatabaseAccessKind.AGENT_RUNTIME)
+
+def test_runtime_repository_can_only_start_atomic_dispatch_and_read() -> None:
+    database = _Database(DatabaseAccessKind.AGENT_RUNTIME, DISPATCH_RESPONSE)
     repository = PostgresModelGatewayRepository(database)
-    asyncio.run(repository.submit(**BINDING))
+    receipt = asyncio.run(repository.start_dispatch(**{
+        "request_id": BINDING["request_id"],
+        "session_id": BINDING["session_id"],
+        "run_id": BINDING["run_id"],
+        "model_step_id": BINDING["model_step_id"],
+        "model_attempt_id": BINDING["model_attempt_id"],
+        "run_execution_token": BINDING["execution_token"],
+        "request_hash": BINDING["request_hash"],
+        "expected_attempt_version": 0,
+        "model_id": BINDING["model_id"],
+        "provider": BINDING["provider"],
+        "provider_revision": BINDING["provider_revision"],
+        "model_revision": BINDING["model_revision"],
+        "purpose": BINDING["purpose"],
+    }))
+    assert receipt.binding is not None
+    assert receipt.binding.attempt_state_version == 1
+    database.response = {"outcome": "found"}
     read = {key: BINDING[key] for key in (
         "request_id", "org_id", "user_id", "run_id", "model_attempt_id",
         "execution_token", "request_hash",
     )}
     asyncio.run(repository.read(**read))
     assert [call[0] for call in database.calls] == [
-        "submit_agent_runtime_model_gateway_operation",
+        "start_agent_runtime_model_gateway_dispatch",
         "read_agent_runtime_model_gateway_operation",
     ]
     with pytest.raises(PermissionError):
@@ -109,7 +142,7 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
     ))
     asyncio.run(repository.recover(gateway_worker_id="gateway"))
     assert [call[0] for call in database.calls] == [
-        "claim_agent_runtime_model_gateway_operation",
+        "claim_agent_runtime_model_gateway_operation_v2",
         "fail_agent_runtime_model_gateway_claim",
         "mark_agent_runtime_model_gateway_dispatched",
         "renew_agent_runtime_model_gateway_operation",
@@ -122,7 +155,7 @@ def test_gateway_repository_routes_claim_and_mutations() -> None:
         "credits", "unit",
     }
     with pytest.raises(PermissionError):
-        asyncio.run(repository.submit(**BINDING))
+        asyncio.run(repository.start_dispatch(**BINDING))
 
 
 def test_runtime_repository_cannot_fail_gateway_claim() -> None:
@@ -150,6 +183,6 @@ def test_repository_rejects_untrusted_scope_and_incomplete_binding() -> None:
         PostgresModelGatewayRepository(_Database(DatabaseAccessKind.WORKER))
     repository = PostgresModelGatewayRepository(_Database(DatabaseAccessKind.AGENT_RUNTIME))
     with pytest.raises(ValueError, match="model_revision"):
-        asyncio.run(repository.submit(**{
+        asyncio.run(repository.start_dispatch(**{
             key: value for key, value in BINDING.items() if key != "model_revision"
         }))

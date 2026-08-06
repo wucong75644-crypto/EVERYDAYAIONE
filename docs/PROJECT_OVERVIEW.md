@@ -141,6 +141,16 @@ Agent Runtime C7-BG3 Model Gateway isolated process：
   tool call、usage、错误与 UNKNOWN 分类；Provider adapter 在 UDS 终态后关闭，Secret、
   encrypted bundle 与原始异常均不进入协议、事实或日志。
 
+Agent Runtime C7-BG3.5 ModelAttempt/Gateway atomic dispatch binding：
+- `backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql` 在同一事务按
+  Session→Run→ModelStep→ModelAttempt→operation 锁序验证 Runtime owner、credential receipt
+  与 tenant/provider/capability gate，从数据库读取 kill epoch，并原子提交
+  ModelAttempt `prepared→dispatching/request_started` 和唯一 Gateway operation。
+- Gateway claim v2 只接受与当前 dispatching Attempt version 一致的 durable operation；
+  227_18 submit/claim 对 Runtime/Gateway 撤权，其他 UNKNOWN/recovery/finalize 合同保持不变。
+  Python scoped repository 暴露 secret-free typed dispatch binding，尚未接 ModelLoop、UDS
+  Runtime client 或 production composition，`production_ready=false`。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、

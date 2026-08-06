@@ -6,6 +6,10 @@ from typing import Any, Mapping
 from uuid import UUID
 
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
+from services.agent.runtime.infrastructure.postgres.model_gateway_parsing import (
+    parse_gateway_dispatch_receipt,
+)
+from services.agent.runtime.ports.model_gateway import ModelGatewayDispatchReceipt
 
 
 class PostgresModelGatewayRepository:
@@ -32,11 +36,14 @@ class PostgresModelGatewayRepository:
         if self._access_kind is not expected:
             raise PermissionError("MODEL_GATEWAY_REPOSITORY_SCOPE_MISMATCH")
 
-    async def submit(self, **binding: object) -> Mapping[str, object]:
+    async def start_dispatch(
+        self, **binding: object,
+    ) -> ModelGatewayDispatchReceipt:
         self._require(DatabaseAccessKind.AGENT_RUNTIME)
-        return await self._rpc(
-            "submit_agent_runtime_model_gateway_operation", _submit_params(binding),
-        )
+        return parse_gateway_dispatch_receipt(await self._rpc(
+            "start_agent_runtime_model_gateway_dispatch",
+            _start_dispatch_params(binding),
+        ))
 
     async def read(self, **binding: object) -> Mapping[str, object]:
         return await self._rpc(
@@ -54,7 +61,7 @@ class PostgresModelGatewayRepository:
             "p_lease_seconds": lease_seconds,
         })
         return await self._rpc(
-            "claim_agent_runtime_model_gateway_operation", params,
+            "claim_agent_runtime_model_gateway_operation_v2", params,
         )
 
     async def mark_dispatched(self, **fence: object) -> Mapping[str, object]:
@@ -124,13 +131,12 @@ class PostgresModelGatewayRepository:
         return await self._rpc(name, params)
 
 
-def _submit_params(values: Mapping[str, object]) -> dict[str, object]:
+def _start_dispatch_params(values: Mapping[str, object]) -> dict[str, object]:
     names = (
-        "request_id", "org_id", "user_id", "session_id", "run_id",
-        "model_step_id", "model_attempt_id", "execution_token", "request_hash",
-        "attempt_state_version", "model_id", "provider", "provider_revision",
-        "model_revision", "purpose", "tenant_kill_epoch",
-        "provider_kill_epoch", "capability_kill_epoch",
+        "request_id", "session_id", "run_id", "model_step_id",
+        "model_attempt_id", "run_execution_token", "request_hash",
+        "expected_attempt_version", "model_id", "provider",
+        "provider_revision", "model_revision", "purpose",
     )
     return _prefixed(values, names)
 
@@ -187,6 +193,7 @@ def _prefixed(
     uuid_names = {
         "claim_token", "execution_token", "model_attempt_id", "model_step_id",
         "operation_id", "org_id", "request_id", "run_id", "session_id", "user_id",
+        "run_execution_token",
     }
     return {
         f"p_{name}": (
