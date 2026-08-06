@@ -28,6 +28,12 @@ from services.agent.runtime.ports.model_attempt import (
     ModelAttemptOutcome,
     ModelAttemptRepositoryPort,
 )
+from services.agent.runtime.ports.model_gateway import (
+    ModelGatewayDispatchRepositoryPort,
+)
+from services.agent.runtime.application.model_gateway_dispatch import (
+    start_gateway_dispatch,
+)
 from services.agent.runtime.ports.repository import RuntimeRepositoryPort
 
 
@@ -78,16 +84,21 @@ class ModelLoopDriver:
         recovery_repository: CoordinatorRecoveryPort,
         model: ModelPort, call_factory: ModelCallFactory,
         reconciler: ModelAttemptReconciler,
+        gateway_dispatch_repository: ModelGatewayDispatchRepositoryPort | None = None,
         attempt_lease_seconds: int = 120,
         attempt_renew_interval: float = 40.0,
     ) -> None:
         if attempt_renew_interval <= 0:
             raise ValueError("MODEL_ATTEMPT_RENEW_INTERVAL_MUST_BE_POSITIVE")
+        gateway_model = bool(getattr(model, "requires_gateway_dispatch", False))
+        if gateway_model != (gateway_dispatch_repository is not None):
+            raise ValueError("MODEL_GATEWAY_DISPATCH_CONFIGURATION_INVALID")
         self._runtime = runtime_repository
         self._attempts = attempt_repository
         self._actions = action_repository
         self._recovery = recovery_repository
         self._model = model
+        self._gateway_dispatch = gateway_dispatch_repository
         self._call_factory = call_factory
         self._reconciler = reconciler
         self._attempt_lease_seconds = attempt_lease_seconds
@@ -169,32 +180,51 @@ class ModelLoopDriver:
             attempt_version = _required_int(
                 prepared.state_version, "attempt state_version",
             )
-            attempt_token = _required(
-                prepared.execution_token, "attempt execution_token",
-            )
+            attempt_token = prepared.execution_token or run_execution_token
         else:
             attempt_id = str(attempt["id"])
             attempt_version = _version(attempt)
             attempt_token = str(attempt["execution_token"])
 
-        dispatch = await self._attempts.start_dispatch(
-            attempt_id=attempt_id,
-            run_execution_token=run_execution_token,
-            expected_attempt_version=attempt_version,
-            request_hash=request.request_hash,
+        dispatched = await self._start_dispatch(
+            snapshot=snapshot, plan=plan, request=request,
+            attempt_id=attempt_id, attempt_version=attempt_version,
+            run_id=run_id, run_execution_token=run_execution_token,
         )
-        if dispatch.outcome not in {
-            ModelAttemptOutcome.DISPATCHING,
-            ModelAttemptOutcome.ALREADY_DISPATCHING,
-        }:
-            return
-        dispatch_version = _required_int(
-            dispatch.state_version, "dispatch state_version",
-        )
+        if dispatched is None:
+            return None
+        request, dispatch_version = dispatched
         return _ActiveModelCall(
             plan=plan, request=request, step_version=step_version,
             attempt_id=attempt_id, attempt_version=dispatch_version,
             attempt_token=attempt_token,
+        )
+
+    async def _start_dispatch(
+        self, *, snapshot: RunAggregateSnapshot, plan: PreparedModelCall,
+        request: ModelStepRequest, attempt_id: str, attempt_version: int,
+        run_id: str, run_execution_token: str,
+    ) -> tuple[ModelStepRequest, int] | None:
+        if self._gateway_dispatch is None:
+            dispatch = await self._attempts.start_dispatch(
+                attempt_id=attempt_id,
+                run_execution_token=run_execution_token,
+                expected_attempt_version=attempt_version,
+                request_hash=request.request_hash,
+            )
+            if dispatch.outcome not in {
+                ModelAttemptOutcome.DISPATCHING,
+                ModelAttemptOutcome.ALREADY_DISPATCHING,
+            }:
+                return None
+            return request, _required_int(
+                dispatch.state_version, "dispatch state_version",
+            )
+        return await start_gateway_dispatch(
+            self._gateway_dispatch, run=snapshot.run, plan=plan,
+            request=request, attempt_id=attempt_id,
+            attempt_version=attempt_version, run_id=run_id,
+            run_execution_token=run_execution_token,
         )
 
     async def _dispatch(

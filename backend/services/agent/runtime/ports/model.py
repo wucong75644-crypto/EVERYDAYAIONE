@@ -10,6 +10,7 @@ from typing import Mapping, Protocol
 from services.agent.runtime.context import ProviderContextPlan
 from services.agent.runtime.domain import ModelStepId, StopReason
 from services.agent.runtime.domain.identity import require_stable_value
+from services.agent.runtime.ports.model_gateway import ModelGatewayDispatchBinding
 
 
 class ModelOutputKind(StrEnum):
@@ -188,15 +189,9 @@ class ModelStepRequest:
     tool_catalog_revision: str
     options: ModelRequestOptions
     org_id: str | None = None
-    # These fields are process-local builder inputs.  They are deliberately
-    # excluded from repr/equality and are never part of the request hash.
-    credential_lease: object | None = field(
-        default=None, repr=False, compare=False,
-    )
-    credential_scope: object | None = field(
-        default=None, repr=False, compare=False,
-    )
-    credential_purpose: str | None = field(
+    # Durable, Secret-free Gateway identity is attached only after atomic
+    # dispatch and is never part of the frozen provider request hash.
+    gateway_binding: ModelGatewayDispatchBinding | None = field(
         default=None, repr=False, compare=False,
     )
 

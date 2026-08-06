@@ -98,6 +98,17 @@ Agent Runtime C7-B3.1 production composition spine：
   `RuntimeAssemblyReadiness` 携带 required/unavailable/disabled 能力状态并结构化失败关闭，
   production gate 不能将 composition readiness 提升为 ready。
 
+Agent Runtime C7-BG4 Model Gateway Runtime 接线：
+- `ModelLoopDriver` 的显式 Gateway 分支通过 227_20 `start_dispatch` 在一个事务中推进
+  ModelAttempt 并建立 operation；UDS request id、租户、provider、revision identity 与三层
+  kill epoch 全部来自返回的 durable binding，direct/mock ModelPort 继续使用原路径。
+- `ModelGatewayClient` 每个 operation 只连接一次本地 UDS，并用 Runtime scoped read RPC
+  证明 terminal；终帧丢失或无法证明完整 completed 时收敛为 UNKNOWN/reconcile-only，绝不
+  普通重派。Runtime 生产路径不解析 credential、不构造 Provider adapter，也不持有 Secret。
+- production composition 仅在 flags、独立 call/health sockets、scoped repository 与健康
+  projection 齐全时构造 safe read/model/action lane；ERP Write、Media、Scheduler、Sandbox
+  保持关闭，BG5 前 flags 默认关闭且整体 `production_ready=false`。
+
 Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
 - `backend/services/agent/runtime/catalog/safe_read_release.py` 与生成脚本从
   `READ_TOOL_SPECS` 冻结 17 项已证明安全的只读 Catalog；Workspace `file_search`、

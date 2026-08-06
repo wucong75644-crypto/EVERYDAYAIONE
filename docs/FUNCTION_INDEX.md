@@ -2026,7 +2026,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `build_safe_runtime_components` | `backend/services/agent/runtime/composition.py` | 不启动 Worker 的 safe Runtime read/model/action 基础接线；不接 provider-dependent 能力 |
 | `CapabilityReadiness` / `RuntimeAssemblyReadiness` | `backend/services/agent/runtime/runtime_assembly.py` | 区分 capability ready、unavailable、disabled 与整体 production readiness |
 | `build_safe_runtime_composition` | `backend/services/agent/runtime/production_composition.py` | 只从真实 Runtime read registry 构造 safe composition，ERP write/Media/external specialist 不注册 |
-| `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文构造模型请求、租户凭证和确定性 Action |
+| `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文冻结模型选择、ContextPlan、request hash、非 Secret provider revision/purpose 与确定性 Action；不获取 credential material |
 | `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
 | `AgentRuntimeProcessSettings` / `_load_process_settings` | `backend/agent_runtime_worker_main.py` | Runtime Owner 的最小 typed settings；`env_file=None`，不读取 Backend `.env`，Projection/Authorization 保持既有配置边界 |
 | `create_runtime_chat_adapter` | `backend/services/agent/runtime/infrastructure/model/runtime_adapter_factory.py` | 仅由 Model Gateway 的受控 Secret consumer 调用，以请求局部凭证和固定 Provider 元数据构造一次性 adapter；不读取通用 Settings 或 `.env` |
@@ -2039,6 +2039,9 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `build_safe_read_registry` / `build_safe_read_catalog` / `build_safe_read_snapshot` | `backend/services/agent/runtime/catalog/safe_read_release.py` | C7-B3.2-A 从 Read Descriptor SSOT 确定性冻结 17 项安全只读 release；保留既有 user/channel scope 过滤 |
 | `encode_frame` / `decode_payload` / `read_frame` / `validate_request` / `validate_response` | `backend/services/agent/runtime/model_gateway/protocol.py` | Model Gateway UDS v1 的 4-byte big-endian framing、严格字段/大小/序列/Secret 边界与稳定错误码 |
 | `IsolatedModelGatewayClient.complete` | `backend/services/agent/runtime/model_gateway/client.py` | BG1 每连接一次请求的本地 UDS 流消费、超时、累计响应和 terminal 后额外 frame 门禁；永不 production-ready |
+| `ModelGatewayClient.complete` | `backend/services/agent/runtime/model_gateway/runtime_client.py` | BG4 production ModelPort：从 227_20 durable binding 构造 Secret-free UDS 请求，严格消费 terminal，并以 scoped DB readback 将 completed/failed/UNKNOWN 映射回 Runtime Owner |
+| `start_gateway_dispatch` | `backend/services/agent/runtime/application/model_gateway_dispatch.py` | BG4 ModelLoop 显式 Gateway 分支：为同一 Attempt 确定性生成 request id，调用 227_20 atomic dispatch，并仅从返回 receipt 附加 durable binding |
+| `build_production_model_gateway_components` | `backend/services/agent/runtime/production_factory.py` | BG4 显式 flags/socket/scoped repository/Gateway health 的失败关闭组装；不提供 legacy Provider fallback，整体 production_ready 保持 false |
 | `FakeModelGatewayServer` / `LinuxPeerCredentialVerifier.verify` | `backend/services/agent/runtime/model_gateway/server.py` | BG1 隔离 fake server、安全 socket 生命周期与可注入 peer credential 验证；Linux production verifier 使用 SO_PEERCRED |
 | `PostgresModelGatewayRepository` | `backend/services/agent/runtime/infrastructure/postgres/model_gateway.py` | BG3.5 scoped DB adapter；Runtime 仅 atomic start/read，Gateway 仅 claim v2、dispatch、renew、finalize 与 recover |
 | `ModelGatewayDispatchRepositoryPort` / `ModelGatewayDispatchReceipt` / `ModelGatewayDispatchBinding` | `backend/services/agent/runtime/ports/model_gateway.py` | BG3.5 Runtime-side stable secret-free receipt；携带数据库绑定的 Attempt dispatch version、operation identity、credential revision/purpose 与 kill epochs，留待 BG4 UDS client 使用 |

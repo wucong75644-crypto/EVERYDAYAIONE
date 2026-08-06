@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from services.agent.runtime.domain import ModelStepId, RuntimeScope, ScopeKind
+from services.agent.runtime.domain import ModelStepId
 from services.agent.runtime.infrastructure.model import (
     ExistingProviderModelAdapter, compute_request_hash, resolve_model_revision,
 )
@@ -17,13 +17,7 @@ from services.agent.runtime.ports import (
 from services.agent.runtime.context import ProviderContextPlan
 
 
-def _scope() -> RuntimeScope:
-    return RuntimeScope(
-        kind=ScopeKind.USER, scope_id="user:u-1", user_id="u-1", org_id="org-a",
-    )
-
-
-def _request(*, lease: object | None = None) -> ModelStepRequest:
+def _request() -> ModelStepRequest:
     model_id = "qwen3.5-plus"
     plan = ProviderContextPlan.build(
         messages=[{"role": "user", "content": "fixture"}], tools=[],
@@ -46,8 +40,7 @@ def _request(*, lease: object | None = None) -> ModelStepRequest:
         ),
         context_plan=plan, model_revision=revision,
         prompt_revision="prompt-1", tool_catalog_revision="tools-1",
-        options=options, org_id="org-a", credential_lease=lease,
-        credential_scope=_scope(), credential_purpose="model.invoke",
+        options=options, org_id="org-a",
     )
 
 
@@ -59,7 +52,11 @@ async def test_runtime_provider_builder_requires_gateway_composition() -> None:
 
 
 def test_model_request_has_no_raw_api_key_field() -> None:
-    assert "provider_api_key" not in {item.name for item in fields(ModelStepRequest)}
+    names = {item.name for item in fields(ModelStepRequest)}
+    assert not names & {
+        "provider_api_key", "credential_lease", "credential_scope",
+        "credential_purpose", "credential_handle", "credential_material",
+    }
 
 
 def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> None:
@@ -68,7 +65,6 @@ def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> N
         root / "production_model.py",
         root / "infrastructure/model/adapter.py",
         root / "production_composition.py",
-        root / "production_services.py",
         root / "composition.py",
     )
     forbidden = (
@@ -80,6 +76,17 @@ def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> N
         assert not any(item in text for item in forbidden), source
     adapter_source = (root / "infrastructure/model/adapter.py").read_text()
     assert "create_runtime_chat_adapter" not in adapter_source
+    strict_sources = (
+        root / "production_model.py", root / "production_factory.py",
+        root / "model_gateway/runtime_client.py",
+    )
+    strict_forbidden = (
+        "CredentialBroker", "CredentialLease", "LocalKEKProvider",
+        "SecretMaterialService", "create_runtime_chat_adapter",
+    )
+    for source in strict_sources:
+        text = source.read_text()
+        assert not any(item in text for item in strict_forbidden), source
 
 
 def test_credential_available_requires_a_broker() -> None:

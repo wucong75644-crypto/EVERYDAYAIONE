@@ -18,9 +18,6 @@ from services.agent.runtime.application.model_loop import ModelLoopDriver
 from services.agent.runtime.executors.resolver import (
     PostgresActionExecutorResolver,
 )
-from services.agent.runtime.infrastructure.model.adapter import (
-    ExistingProviderModelAdapter,
-)
 from services.agent.runtime.infrastructure.postgres.action_repository import (
     PostgresActionRepository,
 )
@@ -44,9 +41,7 @@ from services.agent.runtime.infrastructure.postgres.repository import (
     PostgresRuntimeRepository,
 )
 from services.agent.runtime.policy.evaluator import PolicyEvaluator
-from services.agent.runtime.sandbox.composition import (
-    build_sandbox_executor_components, build_sandbox_worker_components,
-)
+from services.agent.runtime.sandbox.composition import build_sandbox_worker_components
 from services.agent.runtime.sandbox.nsjail import (
     NsJailSubprocessLauncher, SandboxWorkerIdentity,
 )
@@ -151,8 +146,6 @@ def build_runtime(
             settings, "agent_runtime_process_role", None,
         ) or "agent_runtime",
     )
-    if not settings.sandbox_runtime_revision:
-        raise RuntimeError("SANDBOX_RUNTIME_REVISION_REQUIRED")
     production_enabled = bool(getattr(
         settings, "agent_runtime_production_composition_enabled", False,
     ))
@@ -161,7 +154,10 @@ def build_runtime(
     if production_components is not None:
         raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_INJECTION_FORBIDDEN")
     from services.agent.runtime.production_composition import (
-        ProductionRuntimeComponents, build_production_action_loop,
+        build_safe_runtime_composition,
+    )
+    from services.agent.runtime.production_factory import (
+        build_production_model_gateway_components,
     )
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
@@ -169,62 +165,31 @@ def build_runtime(
     recovery = PostgresCoordinatorRecoveryRepository(db)
     actions = PostgresActionRepository(db)
     attempts = PostgresModelAttemptRepository(db)
-    registry = ExecutorRegistry()
-    sandbox = build_sandbox_executor_components(
-        runtime_database=db,
-        workspace_root=settings.sandbox_job_root,
-        runtime_revision=settings.sandbox_runtime_revision,
-        registry=registry,
-    )
     versions = build_runtime_version_registry()
-    if production_enabled:
-        from services.agent.runtime.production_composition import (
-            build_production_components_for_worker,
-        )
-        components = build_production_components_for_worker(
-            database=db, settings=settings, sandbox_registry=registry,
-        )
-        if not isinstance(components, ProductionRuntimeComponents):
-            raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_FACTORY_INVALID")
-        if components.service_bundle is None:
-            raise RuntimeError("RUNTIME_PRODUCTION_SERVICE_BUNDLE_REQUIRED")
-        registry = components.registry
-        catalog = components.catalog.catalog
-    else:
-        components = None
-        _, catalog = versions.resolve_for_agent(
-            settings.agent_runtime_agent_definition_id,
-            settings.agent_runtime_agent_definition_revision,
-        )
-    _assert_runtime_catalog(catalog, settings)
-    action_loop = (
-        build_production_action_loop(
-            database=db, worker_id=worker_id, components=components,
-            capability_issuer=sandbox.capability_issuer,
-        )
-        if components is not None else ActionLoopDriver(
-            recovery_repository=recovery,
-            action_repository=actions,
-            authorization_repository=PostgresActionAuthorizationRepository(db),
-            resolver=PostgresActionExecutorResolver(registry),
-            worker_id=worker_id,
-            capability_issuer=sandbox.capability_issuer,
-        )
+    gateway = build_production_model_gateway_components(db, settings)
+    safe = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=db), model_port=gateway.model,
     )
-    credential_broker = getattr(
-        getattr(components, "service_bundle", None), "credential_broker", None,
+    registry = safe.registry
+    action_loop = ActionLoopDriver(
+        recovery_repository=recovery,
+        action_repository=actions,
+        authorization_repository=PostgresActionAuthorizationRepository(db),
+        resolver=PostgresActionExecutorResolver(registry),
+        worker_id=worker_id,
+        capability_issuer=None,
+    )
+    model_factory = PostgresModelCallFactory(
+        db, worker_id, version_registry=versions,
     )
     model_loop = ModelLoopDriver(
         runtime_repository=runtime_repository,
         attempt_repository=attempts,
         action_repository=actions,
         recovery_repository=recovery,
-        model=ExistingProviderModelAdapter(db=db),
-        call_factory=PostgresModelCallFactory(
-            db, worker_id, version_registry=versions,
-            credential_broker=credential_broker,
-        ),
+        model=gateway.model, call_factory=model_factory,
         reconciler=retain_unknown_model_attempt,
+        gateway_dispatch_repository=gateway.repository,
     )
     runtime = RuntimeLoopCoordinator(
         recovery_repository=recovery,
@@ -238,7 +203,12 @@ def build_runtime(
         worker_id=worker_id,
         handler=runtime.handle_command,
     )
-    return RuntimeOwner(commands, runtime, readiness=components.readiness)
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=db),
+        model_call_factory=model_factory, model_loop=model_loop,
+        action_loop=action_loop, model_port=gateway.model,
+    )
+    return RuntimeOwner(commands, runtime, readiness=composition.readiness)
 
 
 def build_safe_runtime_components(
@@ -247,6 +217,9 @@ def build_safe_runtime_components(
     """Assemble safe Runtime loops without starting any Runtime-owned worker."""
     if credential_broker is None:
         raise RuntimeError("CREDENTIAL_BROKER_REQUIRED")
+    from services.agent.runtime.infrastructure.model.adapter import (
+        ExistingProviderModelAdapter,
+    )
     from services.agent.runtime.production_composition import (
         build_safe_runtime_composition,
     )
@@ -266,7 +239,6 @@ def build_safe_runtime_components(
     versions = build_runtime_version_registry()
     model_factory = PostgresModelCallFactory(
         db, worker_id, version_registry=versions,
-        credential_broker=credential_broker,
     )
     model_loop = ModelLoopDriver(
         runtime_repository=PostgresRuntimeRepository(db),

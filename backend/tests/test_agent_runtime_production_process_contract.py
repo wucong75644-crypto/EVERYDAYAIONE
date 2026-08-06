@@ -182,13 +182,10 @@ async def test_runtime_worker_entry_cannot_promote_unwired_composition(tmp_path)
         sandbox_runtime_revision="sandbox-c7-b31",
     )
 
-    with pytest.raises(ProductionCompositionNotReady) as caught:
+    with pytest.raises(RuntimeError, match="RUNTIME_MODEL_GATEWAY_DISABLED"):
         await entrypoint._build_owner_and_cycle(
             "agent_runtime", DatabaseWithoutGateRead(), settings,
         )
-
-    assert caught.value.readiness.production_ready is False
-    assert caught.value.readiness.ready is False
 
 
 def test_runtime_rejects_explicit_component_injection() -> None:

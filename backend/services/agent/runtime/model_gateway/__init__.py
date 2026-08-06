@@ -1,6 +1,7 @@
 """Local-only protocol boundary for the Agent Runtime model gateway."""
 
 from .client import IsolatedModelGatewayClient
+from .runtime_client import ModelGatewayClient
 from .protocol import (
     PRODUCTION_READY,
     GatewayProtocolError,
@@ -14,6 +15,7 @@ __all__ = [
     "GatewayProtocolError",
     "IsolatedModelGatewayClient",
     "LinuxPeerCredentialVerifier",
+    "ModelGatewayClient",
     "PRODUCTION_READY",
     "decode_payload",
     "encode_frame",

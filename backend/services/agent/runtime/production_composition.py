@@ -113,6 +113,7 @@ class SafeRuntimeComposition:
     model_call_factory: object | None = None
     model_loop: object | None = None
     action_loop: object | None = None
+    model_port: object | None = None
 
     def require_capability(self, name: str) -> None:
         capability = self.readiness.capabilities.get(name)
@@ -125,7 +126,7 @@ class SafeRuntimeComposition:
 def build_safe_runtime_composition(
     *, resources: RuntimeReadResources, model_call_factory: object | None = None,
     model_loop: object | None = None, action_loop: object | None = None,
-    credential_broker: object | None = None,
+    credential_broker: object | None = None, model_port: object | None = None,
 ) -> SafeRuntimeComposition:
     """Compose only safe reads and explicitly supplied Runtime loop seams.
 
@@ -141,8 +142,11 @@ def build_safe_runtime_composition(
     )
     catalog = RuntimeToolCatalog.from_executor_registry(registry)
     model_ready = (
-        callable(model_call_factory) and credential_broker is not None
-        and _credential_ready(credential_broker)
+        callable(model_call_factory) and (
+            model_port is not None or (
+                credential_broker is not None and _credential_ready(credential_broker)
+            )
+        )
     )
     action_ready = action_loop is not None
     capabilities = {
@@ -197,7 +201,7 @@ def build_safe_runtime_composition(
     return SafeRuntimeComposition(
         registry=registry, catalog=catalog, readiness=readiness,
         model_call_factory=model_call_factory, model_loop=model_loop,
-        action_loop=action_loop,
+        action_loop=action_loop, model_port=model_port,
     )
 
 

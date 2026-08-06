@@ -21,8 +21,6 @@ from services.agent.runtime.ports.model import (
     ModelInputReceipt, ModelRequestOptions, ModelStepId, ModelStepRequest,
     ModelStepResult,
 )
-from services.agent.runtime.credential_broker import CredentialBroker, CredentialLease
-from services.agent.runtime.domain import RuntimeScope, ScopeKind
 
 
 _ACTION_NAMESPACE = UUID("76bc769a-a201-43aa-8ee9-cd13f009f12d")
@@ -32,12 +30,10 @@ _POLICY_REVISION = "agent-runtime-policy-v1"
 class PostgresModelCallFactory:
     def __init__(
         self, database, worker_id: str, *, version_registry=None,
-        credential_broker: CredentialBroker | None = None,
     ) -> None:
         self._database = database
         self._worker_id = worker_id
         self._versions = version_registry
-        self._credential_broker = credential_broker
 
     async def __call__(
         self, snapshot: RunAggregateSnapshot,
@@ -87,14 +83,14 @@ class PostgresModelCallFactory:
         receipt_data = receipt.to_log_fields()
         org_id = str(session["org_id"])
         receipt_data["org_id"] = org_id
-        receipt_hash = _hash(receipt_data)
         revision = resolve_model_revision(model_id)
         provider = _provider(model_id)
-        credential, receipt_hash = await _bind_model_credential(
-            self._credential_broker, context=context, receipt_data=receipt_data,
-            user_id=str(session["user_id"]), org_id=org_id,
-            provider=provider, revision=revision,
-        )
+        receipt_data.update({
+            "credential_provider": provider,
+            "credential_revision": revision,
+            "credential_purpose": "model.invoke",
+        })
+        receipt_hash = _hash(receipt_data)
         options = ModelRequestOptions(
             thinking_mode=_optional_text(
                 _mapping(payload.get("params") or {}, "params").get(
@@ -134,13 +130,6 @@ class PostgresModelCallFactory:
                 tool_catalog_revision=toolset.catalog_revision,
                 options=options,
                 org_id=org_id,
-                credential_lease=credential,
-                credential_scope=RuntimeScope(
-                    kind=ScopeKind.USER,
-                    scope_id=f"user:{session['user_id']}",
-                    user_id=str(session["user_id"]), org_id=org_id,
-                ),
-                credential_purpose=credential.purpose,
             )
 
         return PreparedModelCall(
@@ -354,43 +343,6 @@ def _resolve_model_selection(snapshot, *, context: dict, definition):
         params = task.get("request_params")
         task_model = params.get("model") if isinstance(params, dict) else None
     return resolve_runtime_model(task_model)
-
-
-async def _model_credential(
-    broker: CredentialBroker | None, *, context: dict, user_id: str,
-    org_id: str, provider: str, revision: str,
-) -> CredentialLease:
-    if broker is None:
-        raise RuntimeError("RUNTIME_CREDENTIAL_BROKER_REQUIRED")
-    handle = context.get("model_credential_handle")
-    if not isinstance(handle, str) or not handle.strip():
-        raise RuntimeError("CREDENTIAL_HANDLE_REQUIRED")
-    scope = RuntimeScope(
-        kind=ScopeKind.USER, scope_id=f"user:{user_id}", user_id=user_id,
-        org_id=org_id,
-    )
-    return await broker.resolve(
-        scope=scope, credential_handle=handle, provider=provider,
-        revision=revision, purpose="model.invoke",
-    )
-
-
-async def _bind_model_credential(
-    broker: CredentialBroker | None, *, context: dict,
-    receipt_data: dict, user_id: str, org_id: str, provider: str,
-    revision: str,
-) -> tuple[CredentialLease, str]:
-    credential = await _model_credential(
-        broker, context=context, user_id=user_id, org_id=org_id,
-        provider=provider, revision=revision,
-    )
-    receipt_data.update({
-        "credential_handle": credential.handle,
-        "credential_provider": credential.provider,
-        "credential_revision": credential.revision,
-        "credential_purpose": credential.purpose,
-    })
-    return credential, _hash(receipt_data)
 
 
 def _hash(value: object) -> str:
