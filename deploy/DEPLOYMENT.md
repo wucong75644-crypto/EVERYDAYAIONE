@@ -236,22 +236,24 @@ release、health socket 与 Sandbox 路径等运行配置，不得包含 Provide
 ### Production flags-off 单元安装
 
 `--runtime-flags-off-install` 是与前端、后端、setup 和 skip 选项互斥的安装路径。
-它只同步 B1 安装文件，并安装以下四个单元及 Sandbox cgroup wrapper：
+它只同步 flags-off 安装文件，并安装以下五个单元及 Sandbox cgroup wrapper：
 
 - `everydayai-agent-runtime.service`
+- `everydayai-agent-model-gateway.service`
 - `everydayai-agent-projection.service`
 - `everydayai-agent-authorization.service`
 - `everydayai-sandbox-worker.service`
 
-执行前必须由运维人员准备 `/etc/everydayai/` 下四个对应 Worker 环境文件，权限为
-`0640`；每个文件必须与仓库模板键集合完全一致、无重复键或占位符，四个文件的
-`AGENT_RUNTIME_RELEASE_REVISION` 必须等于本次 40 位 release SHA。Runtime Worker 的
-`AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED` 必须保持 `false`。Sandbox 配置也必须
-包含 release revision。
+执行前必须由运维人员准备 `/etc/everydayai/` 下 Runtime、Gateway（含最小 KEK）、
+Projection、Authorization 与 Sandbox 环境文件，权限为 `0640`；每个文件必须与仓库模板
+键集合完全一致、无重复键或占位符。Runtime/其他 Worker 使用
+`AGENT_RUNTIME_RELEASE_REVISION`，Gateway 使用 `AGENT_MODEL_GATEWAY_RELEASE_REVISION`，
+都必须等于本次 40 位 release SHA。Runtime composition、Runtime Gateway 与 Gateway
+production flags 必须保持 `false`；Sandbox 配置也必须包含 release revision。
 
 发布脚本会在任何远端写入前执行明确的 unit 状态合同：已存在 unit 只接受
 `inactive + disabled`，尚不存在 unit 只接受 `inactive + not-found`。安装完成后再次
-检查，四个 unit 必须全部严格为 `inactive + disabled`。随后安装入口调用：
+检查，五个 unit 必须全部严格为 `inactive + disabled`。随后安装入口调用：
 
 ```bash
 bash deploy/install-service-units.sh \
@@ -263,9 +265,13 @@ enable 新服务，也不切换数据库 Owner。若任一已有 unit 或 wrappe
 安装会在写入任何目标前失败，原文件保持不变；需先人工审查差异并制定恢复方案，禁止
 通过该入口直接覆盖。
 
-生产已有三个控制面 unit 与候选不同时，使用独立的
+生产已有四个控制面 unit 与候选不同时，使用独立的
 `--runtime-control-plane-flags-off-update`，并提供审查时记录的当前 target SHA-256
-manifest（精确三行 `SHA256  unit-name.service`）：
+manifest（精确四行 `SHA256  unit-name.service`）：
+
+在应用 227_18 前，管理员必须单独运行
+`deploy/bootstrap-agent-model-gateway-role.sh`，通过环境提供专用 Gateway 密码；不得复用
+Runtime 或 migrator 密码。该角色只创建一次并由 migration 收紧 RPC 权限。
 
 ```bash
 bash deploy/deploy.sh \
@@ -274,20 +280,26 @@ bash deploy/deploy.sh \
   --expected-sha <40位候选提交SHA>
 ```
 
-该模式先验证三个 unit 严格 `inactive + disabled`，并通过 stdin 发送只读 checker，
+该模式先验证四个 unit 严格 `inactive + disabled`，并通过 stdin 发送只读 checker，
 在 rsync 前核对 reviewed target SHA-256；随后由服务器上的
-`provision-control-plane-worker-envs.py` 直接读取 `backend/.env` 和
-`backend/.env.migrator`。Secret 不通过命令行、日志或同步文件传递；三份 env 以
-`root:everydayai-app`、`0640` 原子替换，数据库 DSN 仅替换 URL-encoded 角色与密码，
-其余 migrator host/port/database/query 参数保持不变。Runtime composition 固定为
+`provision-control-plane-worker-envs.py` 直接读取 `backend/.env`、
+`backend/.env.migrator` 和 `backend/.env.kek`。Secret 不通过命令行、日志或同步文件传递；
+Runtime/Projection/Authorization env 以 `root:everydayai-app`，Gateway DB/process env 与
+仅两个批准键的 KEK env 以 `root:everydayai-model-gateway`，全部 `0640` 原子替换。
+数据库 DSN 仅替换 URL-encoded 角色与密码，其余 migrator host/port/database/query 参数
+保持不变。Runtime composition、Runtime Gateway 和 Gateway production flags 固定为
 `false`，Sandbox revision 标记为 `unprovisioned`。
 
-随后 `control-plane-only` 再次校验 reviewed manifest，将三个旧 unit 全部备份到
-`/var/backups/everydayai/control-plane-units/<release-sha>/` 后才逐项原子替换。
-中途失败或内部 postcheck 失败会自动恢复全部旧 unit 并 `daemon-reload`；部署入口的
+随后 `control-plane-only` 再次校验 reviewed manifest，将四个旧 unit 与五份 env 全部
+备份到 `/var/backups/everydayai/control-plane-updates/<release-sha>/` 后才逐项原子替换。
+中途失败或内部 postcheck 失败会自动恢复全部旧 env/unit 并按需 `daemon-reload`；部署入口的
 外层 postcheck 失败也会触发相同恢复。该路径不读取、生成、同步或检查 Sandbox env、
 unit、wrapper、nsjail、policy 或 rootfs，不同步生产 code/backend，不运行 migration，
 不启停、enable、restart 服务，也不切换 Owner。
+
+代码验收入口为 `scripts/run_agent_model_gateway_disposable.sh all`：只使用临时本地 UDS、
+disposable PostgreSQL 与 mock Provider，覆盖 227_18～227_20、crash/response loss/UNKNOWN/
+drain 和部署事务。它不执行本节安装命令，也不表示 `production_ready=true`。
 
 首次所有权转移必须由 PostgreSQL 管理员执行，且必须先完成数据库备份：
 

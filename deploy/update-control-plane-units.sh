@@ -18,6 +18,7 @@ update_started=false
 
 services=(
     everydayai-agent-runtime
+    everydayai-agent-model-gateway
     everydayai-agent-projection
     everydayai-agent-authorization
 )
@@ -70,14 +71,14 @@ read_manifest() {
             return 1
         fi
         case "$name" in
-            everydayai-agent-runtime.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
+            everydayai-agent-runtime.service|everydayai-agent-model-gateway.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
             *) echo "❌ reviewed unit manifest 包含非控制面条目" >&2; return 1 ;;
         esac
         manifest_hashes+=("$hash")
         manifest_names+=("$name")
     done < "$manifest_path"
-    [ "${#manifest_names[@]}" -eq 3 ] || {
-        echo "❌ reviewed unit manifest 必须精确包含三个 unit" >&2
+    [ "${#manifest_names[@]}" -eq 4 ] || {
+        echo "❌ reviewed unit manifest 必须精确包含四个 unit" >&2
         return 1
     }
 }
@@ -202,7 +203,7 @@ read_unit_journal() {
         [[ "$old_hash" =~ ^[0-9a-f]{64}$ && "$new_hash" =~ ^[0-9a-f]{64}$ ]] \
             && [ -z "${extra:-}" ] || { echo "❌ unit journal 条目无效" >&2; return 1; }
         case "$name" in
-            everydayai-agent-runtime.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
+            everydayai-agent-runtime.service|everydayai-agent-model-gateway.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
             *) echo "❌ unit journal 文件集合无效" >&2; return 1 ;;
         esac
         contains "$name" "${journal_names[@]-}" && {
@@ -212,8 +213,8 @@ read_unit_journal() {
         journal_new_hashes+=("$new_hash")
         journal_names+=("$name")
     done < <(tail -n +2 "$unit_journal")
-    [ "${#journal_names[@]}" -eq 3 ] || {
-        echo "❌ unit journal 必须精确包含三个 unit" >&2; return 1
+    [ "${#journal_names[@]}" -eq 4 ] || {
+        echo "❌ unit journal 必须精确包含四个 unit" >&2; return 1
     }
 }
 
@@ -335,7 +336,7 @@ rollback_on_exit() {
 apply_update() {
     preflight_update
     prepare_unit_backups
-    # All six target preflights are repeated after every backup is durable.
+    # All nine target preflights are repeated after every backup is durable.
     run_env_transaction preflight
     preflight_units
     update_started=true
@@ -354,7 +355,7 @@ apply_update() {
     cleanup_staged
     set_unit_status published
     update_started=false
-    echo "✅ 三份 control-plane env 与三个 unit 已完成 release 事务更新"
+    echo "✅ 五份 control-plane env 与四个 unit 已完成 release 事务更新"
 }
 
 case "$operation" in

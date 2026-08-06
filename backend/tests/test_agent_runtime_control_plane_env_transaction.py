@@ -1,4 +1,4 @@
-"""Failure matrix for the C7-D0-A three-env transaction."""
+"""Failure matrix for the C7-BG5 five-env transaction."""
 
 from __future__ import annotations
 
@@ -15,11 +15,14 @@ PROVISIONER = ROOT / "deploy/provision-control-plane-worker-envs.py"
 RELEASE_SHA = "d" * 40
 ENV_NAMES = (
     "agent-runtime-worker.env",
+    "agent-model-gateway.env",
+    "agent-model-gateway-kek.env",
     "agent-projection-worker.env",
     "agent-authorization-worker.env",
 )
 SECRETS = (
     "runtime!@:/?#[]%+ secret-0123456789",
+    "gateway!@:/?#[]%+ secret-0123456789",
     "projection!@:/?#[]%+ secret-0123456789",
     "authorization!@:/?#[]%+ secret-0123456789",
 )
@@ -37,6 +40,7 @@ def _sources(path: Path) -> None:
     path.mkdir()
     keys = (
         "EVERYDAYAI_AGENT_RUNTIME_WORKER_PASSWORD",
+        "EVERYDAYAI_AGENT_MODEL_GATEWAY_PASSWORD",
         "EVERYDAYAI_PROJECTION_WORKER_PASSWORD",
         "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD",
     )
@@ -54,6 +58,14 @@ def _sources(path: Path) -> None:
         encoding="utf-8",
     )
     (path / ".env.migrator").chmod(0o600)
+    (path / ".env.kek").write_text(
+        "CONFIG_KEK_CURRENT_VERSION=v1\n"
+        "CONFIG_KEK_KEYRING_JSON='"
+        '{"v1":"BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="}'
+        "'\n",
+        encoding="utf-8",
+    )
+    (path / ".env.kek").chmod(0o600)
 
 
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -65,10 +77,11 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     env_dir.mkdir()
     (env_dir / ENV_NAMES[0]).write_bytes(b"old-runtime\x00bytes\n")
     (env_dir / ENV_NAMES[0]).chmod(0o600)
-    (env_dir / ENV_NAMES[1]).write_bytes(b"old-projection\n")
-    (env_dir / ENV_NAMES[1]).chmod(0o640)
+    (env_dir / ENV_NAMES[3]).write_bytes(b"old-projection\n")
+    (env_dir / ENV_NAMES[3]).chmod(0o640)
     uid, gid = os.getuid(), os.getgid()
-    monkeypatch.setattr(module, "_resolve_owner", lambda: (uid, gid))
+    monkeypatch.setattr(module, "_resolve_owner", lambda _name=None: (uid, gid))
+    monkeypatch.setattr(module, "_runtime_uid", lambda: uid)
     monkeypatch.setattr(module, "_resolve_transaction_owner", lambda: (uid, gid))
     monkeypatch.setattr(module.os, "geteuid", lambda: 0)
     prepare = [
@@ -96,7 +109,7 @@ def _snapshot(env_dir: Path) -> dict[str, tuple[bytes, int, int, int] | None]:
     return result
 
 
-@pytest.mark.parametrize("failure_index", (1, 2, 3))
+@pytest.mark.parametrize("failure_index", (1, 2, 3, 4, 5))
 def test_each_stage_failure_has_zero_target_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_index: int
 ) -> None:
@@ -121,7 +134,7 @@ def test_each_stage_failure_has_zero_target_writes(
     assert not (env_dir / "sandbox-worker.env").exists()
 
 
-@pytest.mark.parametrize("failure_index", (1, 2, 3))
+@pytest.mark.parametrize("failure_index", (1, 2, 3, 4, 5))
 def test_each_publish_failure_restores_all_bytes_and_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_index: int
 ) -> None:
@@ -197,3 +210,39 @@ def test_success_rollback_is_idempotent_and_hash_release_fenced(
         module.main(wrong)
     assert _snapshot(env_dir) == changed
     assert not (env_dir / "sandbox-worker.env").exists()
+
+
+def test_kek_source_rejects_unapproved_key_before_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, env_dir, root, prepare, _ = _setup(tmp_path, monkeypatch)
+    kek = tmp_path / "backend/.env.kek"
+    kek.write_text(
+        kek.read_text(encoding="utf-8") + "PROVIDER_API_KEY=forbidden\n",
+        encoding="utf-8",
+    )
+    before = _snapshot(env_dir)
+    with pytest.raises(module.ProvisioningError, match="未批准键"):
+        module.main(prepare)
+    assert _snapshot(env_dir) == before
+    assert not (root / RELEASE_SHA).exists()
+
+
+def test_kek_source_preserves_approved_rotation_keyring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, env_dir, _, prepare, command = _setup(tmp_path, monkeypatch)
+    key = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
+    kek = tmp_path / "backend/.env.kek"
+    kek.write_text(
+        "CONFIG_KEK_CURRENT_VERSION=v2\n"
+        f"CONFIG_KEK_KEYRING_JSON='{{\"v1\":\"{key}\",\"v2\":\"{key}\"}}'\n",
+        encoding="utf-8",
+    )
+    module.main(prepare)
+    module.main(command("publish"))
+    published = (env_dir / "agent-model-gateway-kek.env").read_text(encoding="utf-8")
+    assert set(line.split("=", 1)[0] for line in published.splitlines()) == {
+        "CONFIG_KEK_CURRENT_VERSION", "CONFIG_KEK_KEYRING_JSON",
+    }
+    assert '"v1"' in published and '"v2"' in published

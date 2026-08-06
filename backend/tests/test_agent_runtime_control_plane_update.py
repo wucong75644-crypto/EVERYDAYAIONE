@@ -18,11 +18,13 @@ RELEASE_SCRIPT = (DEPLOY / "release.sh").read_text(encoding="utf-8")
 RELEASE_SHA = "c" * 40
 SERVICES = (
     "everydayai-agent-runtime",
+    "everydayai-agent-model-gateway",
     "everydayai-agent-projection",
     "everydayai-agent-authorization",
 )
 SECRETS = {
     "EVERYDAYAI_AGENT_RUNTIME_WORKER_PASSWORD": "Agent!@:/?#[]%+ space-0123456789",
+    "EVERYDAYAI_AGENT_MODEL_GATEWAY_PASSWORD": "Gateway!@:/?#[]%+ space-0123456789",
     "EVERYDAYAI_PROJECTION_WORKER_PASSWORD": "Projection!@:/?#[]%+ space-0123456789",
     "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD": "Authorization!@:/?#[]%+ space-0123456789",
 }
@@ -59,6 +61,15 @@ def _write_source_envs(backend_dir: Path) -> str:
         encoding="utf-8",
     )
     migrator.chmod(0o600)
+    kek = backend_dir / ".env.kek"
+    kek.write_text(
+        "CONFIG_KEK_CURRENT_VERSION=v1\n"
+        "CONFIG_KEK_KEYRING_JSON='"
+        '{"v1":"BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="}'
+        "'\n",
+        encoding="utf-8",
+    )
+    kek.chmod(0o600)
     return query
 def _read_env(path: Path) -> dict[str, str]:
     return dict(line.split("=", 1) for line in path.read_text().splitlines())
@@ -72,7 +83,8 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     env_dir.mkdir()
     query = _write_source_envs(backend_dir)
     uid, gid = os.getuid(), os.getgid()
-    monkeypatch.setattr(provisioner, "_resolve_owner", lambda: (uid, gid))
+    monkeypatch.setattr(provisioner, "_resolve_owner", lambda _name=None: (uid, gid))
+    monkeypatch.setattr(provisioner, "_runtime_uid", lambda: uid)
     monkeypatch.setattr(provisioner, "_resolve_transaction_owner", lambda: (uid, gid))
     monkeypatch.setattr(provisioner.os, "geteuid", lambda: 0)
     monkeypatch.setattr(provisioner.os, "chown", lambda path, owner, group: None)
@@ -92,24 +104,35 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     for secret in (*SECRETS.values(), MIGRATOR_SECRET, "redis!secret#value"):
         assert secret not in argv
         assert secret not in output
-    assert sorted(path.name for path in env_dir.iterdir()) == sorted(
-        f"{service.removeprefix('everydayai-')}-worker.env"
-        if service != "everydayai-agent-runtime"
-        else "agent-runtime-worker.env"
-        for service in SERVICES
-    )
+    assert sorted(path.name for path in env_dir.iterdir()) == sorted((
+        "agent-runtime-worker.env", "agent-model-gateway.env",
+        "agent-model-gateway-kek.env", "agent-projection-worker.env",
+        "agent-authorization-worker.env",
+    ))
     for path in env_dir.iterdir():
         assert path.stat().st_mode & 0o777 == 0o640
         assert (path.stat().st_uid, path.stat().st_gid) == (uid, gid)
         values = _read_env(path)
-        assert values["AGENT_RUNTIME_RELEASE_REVISION"] == RELEASE_SHA
-        dsn = values["WORKER_DATABASE_URL"]
+        if path.name == "agent-model-gateway-kek.env":
+            assert set(values) == {"CONFIG_KEK_CURRENT_VERSION", "CONFIG_KEK_KEYRING_JSON"}
+            continue
+        release_key = ("AGENT_MODEL_GATEWAY_RELEASE_REVISION"
+                       if path.name == "agent-model-gateway.env"
+                       else "AGENT_RUNTIME_RELEASE_REVISION")
+        assert values[release_key] == RELEASE_SHA
+        dsn_key = ("AGENT_MODEL_GATEWAY_DATABASE_URL"
+                   if path.name == "agent-model-gateway.env" else "WORKER_DATABASE_URL")
+        dsn = values[dsn_key]
         assert "@[::1]:5544/everydayai?" in dsn
         assert dsn.endswith(query)
         assert "%40%3A%2F%3F%23%5B%5D%25%2B%20space-" in dsn
     runtime = _read_env(env_dir / "agent-runtime-worker.env")
     projection = _read_env(env_dir / "agent-projection-worker.env")
     assert runtime["AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED"] == "false"
+    assert runtime["AGENT_RUNTIME_MODEL_GATEWAY_ENABLED"] == "false"
+    gateway = _read_env(env_dir / "agent-model-gateway.env")
+    assert gateway["AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED"] == "false"
+    assert gateway["AGENT_MODEL_GATEWAY_RUNTIME_UID"] == str(uid)
     assert runtime["SANDBOX_RUNTIME_REVISION"] == "unprovisioned"
     assert projection["REDIS_HOST"] == "redis.internal"
     assert projection["REDIS_PASSWORD"] == "redis!secret#value"
@@ -122,7 +145,7 @@ def _write_fake_commands(fake_bin: Path, calls: Path) -> None:
     install.write_text(
         "#!/bin/bash\n"
         "printf 'install %s\\n' \"$*\" >> \"$CALLS\"\n"
-        "if [ \"${FAIL_MIDDLE:-false}\" = true ] && [[ \"$*\" == *agent-projection.service.c7-* ]] && [ ! -e \"$FAIL_MARKER\" ]; then\n"
+        "if [ -n \"${FAIL_SERVICE:-}\" ] && [[ \"$*\" == *\"${FAIL_SERVICE}.service.c7-\"* ]] && [ ! -e \"$FAIL_MARKER\" ]; then\n"
         "  touch \"$FAIL_MARKER\"\n"
         "  exit 42\n"
         "fi\n"
@@ -152,7 +175,7 @@ def _write_fake_env_tool(path: Path) -> None:
         "import argparse, os, pathlib, sys\n"
         "p=argparse.ArgumentParser(); p.add_argument('op'); p.add_argument('--env-dir'); "
         "p.add_argument('--release-sha'); p.add_argument('--transaction-root'); a=p.parse_args()\n"
-        "names=('agent-runtime-worker.env','agent-projection-worker.env','agent-authorization-worker.env')\n"
+        "names=('agent-runtime-worker.env','agent-model-gateway.env','agent-model-gateway-kek.env','agent-projection-worker.env','agent-authorization-worker.env')\n"
         "root=pathlib.Path(a.transaction_root)/a.release_sha; env=pathlib.Path(a.env_dir); state=root/'fake-env-state'\n"
         "with open(os.environ['CALLS'],'a') as calls: calls.write('env '+a.op+'\\n')\n"
         "def same(x,y): return x.exists() and y.exists() and x.read_bytes()==y.read_bytes()\n"
@@ -188,7 +211,8 @@ def _unit_harness(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Pat
     new_env_dir.mkdir(mode=0o700)
     release_dir.chmod(0o700)
     for name in (
-        "agent-runtime-worker.env", "agent-projection-worker.env",
+        "agent-runtime-worker.env", "agent-model-gateway.env",
+        "agent-model-gateway-kek.env", "agent-projection-worker.env",
         "agent-authorization-worker.env",
     ):
         (env_dir / name).write_text(f"old:{name}\n", encoding="utf-8")
@@ -262,6 +286,22 @@ def test_review_manifest_content_is_never_logged(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert marker not in result.stdout + result.stderr
     assert not (backup_root / RELEASE_SHA / "units").exists()
+@pytest.mark.parametrize("mutation", ("missing", "extra", "duplicate"))
+def test_manifest_missing_extra_or_duplicate_is_rejected_before_writes(
+    tmp_path: Path, mutation: str,
+) -> None:
+    env, _, _, backup_root, manifest = _unit_harness(tmp_path)
+    lines = manifest.read_text(encoding="utf-8").splitlines()
+    if mutation == "missing":
+        lines.pop()
+    elif mutation == "extra":
+        lines.append(f"{'1' * 64}  everydayai-sandbox-worker.service")
+    else:
+        lines.append(lines[0])
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = _run_updater(env, manifest)
+    assert result.returncode != 0
+    assert not (backup_root / RELEASE_SHA / "units").exists()
 def test_streamed_manifest_checker_rejects_mismatch_without_writes(tmp_path: Path) -> None:
     env, _, _, backup_root, manifest = _unit_harness(tmp_path)
     args = [part for line in manifest.read_text().splitlines() for part in line.split()]
@@ -286,8 +326,8 @@ def test_all_units_are_backed_up_before_any_atomic_replacement(tmp_path: Path) -
     ]
     replace_calls = [index for index, call in enumerate(calls) if ".c7-" in call]
     publish_call = calls.index("env publish")
-    assert len(backup_calls) >= 3
-    assert max(backup_calls[:3]) < publish_call < min(replace_calls)
+    assert len(backup_calls) >= 4
+    assert max(backup_calls[:4]) < publish_call < min(replace_calls)
     for service in SERVICES:
         assert (target_dir / f"{service}.service").read_bytes() == (
             source_dir / f"{service}.service"
@@ -330,27 +370,28 @@ def test_unified_rollback_is_idempotent_and_unit_hash_fenced(tmp_path: Path) -> 
     }
     assert result.returncode != 0
     assert before == after
-@pytest.mark.parametrize("failure", ("middle", "reload", "postcheck", "env-postcheck"))
+@pytest.mark.parametrize("failure", (*SERVICES, "reload", "postcheck", "env-postcheck"))
 def test_update_failure_restores_all_reviewed_units(
     tmp_path: Path, failure: str
 ) -> None:
     env, _, target_dir, backup_root, manifest = _unit_harness(tmp_path)
     before = {path.name: path.read_bytes() for path in target_dir.iterdir()}
-    failure_vars = {
-        "middle": "FAIL_MIDDLE", "reload": "FAIL_RELOAD",
-        "postcheck": "POST_ACTIVE", "env-postcheck": "FAIL_ENV_VERIFY",
-    }
-    env[failure_vars[failure]] = "true"
+    if failure in SERVICES:
+        env["FAIL_SERVICE"] = failure
+    else:
+        env[{"reload": "FAIL_RELOAD", "postcheck": "POST_ACTIVE",
+             "env-postcheck": "FAIL_ENV_VERIFY"}[failure]] = "true"
     result = _run_updater(env, manifest)
     assert result.returncode != 0
     assert {path.name: path.read_bytes() for path in target_dir.iterdir()} == before
     assert all((backup_root / RELEASE_SHA / "units" / name).exists() for name in before)
     env_dir = Path(env["CONTROL_PLANE_ENV_DIR"])
     assert all((env_dir / name).read_text().startswith("old:") for name in (
-        "agent-runtime-worker.env", "agent-projection-worker.env",
+        "agent-runtime-worker.env", "agent-model-gateway.env",
+        "agent-model-gateway-kek.env", "agent-projection-worker.env",
         "agent-authorization-worker.env",
     ))
-    if failure != "env-postcheck":
+    if failure not in {"env-postcheck", SERVICES[0]}:
         assert int(Path(env["RELOAD_COUNT"]).read_text()) >= 1
     assert "已统一恢复" in result.stderr
 def test_control_plane_state_scope_and_release_routes_never_touch_sandbox(
@@ -400,89 +441,3 @@ def test_control_plane_deploy_mode_rejects_mixed_scope_before_release_checks(
     )
     assert result.returncode == 2
     assert "不能与其他部署模式组合" in result.stderr
-def _control_plane_release_harness(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
-    release_root = tmp_path / "release"
-    deploy_dir = release_root / "deploy"
-    fake_bin = tmp_path / "release-bin"
-    deploy_dir.mkdir(parents=True)
-    fake_bin.mkdir()
-    for name in (
-        "runtime-flags-off-install.sh",
-        "check-agent-runtime-unit-states.sh",
-        "check-control-plane-unit-manifest.sh",
-        "deploy-helpers.sh",
-    ):
-        (deploy_dir / name).write_bytes((DEPLOY / name).read_bytes())
-    (deploy_dir / "config.env").write_text(
-        "SERVER_HOST=runtime.example\nSERVER_USER=deploy\nSERVER_PORT=22\n"
-        "REMOTE_APP_DIR=/remote/app\nREMOTE_BACKEND_DIR=/remote/app/backend\n",
-        encoding="utf-8",
-    )
-    manifest = tmp_path / "reviewed.sha256"
-    manifest.write_text(
-        "\n".join(f"{'1' * 64}  {service}.service" for service in SERVICES) + "\n",
-        encoding="utf-8",
-    )
-    calls = tmp_path / "release-calls"
-    install_marker = tmp_path / "remote-install"
-    rollback_marker = tmp_path / "remote-rollback"
-    git = fake_bin / "git"
-    git.write_text(
-        "#!/bin/sh\n"
-        f"case \"$1\" in rev-parse) echo '{RELEASE_SHA}';; ls-remote) echo '{RELEASE_SHA} refs/heads/main';; status) exit 0;; *) exit 1;; esac\n",
-        encoding="utf-8",
-    )
-    rsync = fake_bin / "rsync"
-    rsync.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    ssh = fake_bin / "ssh"
-    ssh.write_text(
-        "#!/bin/bash\n"
-        "test \"${1:-}\" != -p || shift 2\n"
-        "shift\n"
-        "if [[ \"${4:-}\" =~ ^[0-9a-f]{64}$ ]]; then exit 0; fi\n"
-        "if [ \"$#\" -eq 1 ]; then\n"
-        "  printf '%s\\n' \"$1\" >> \"$RELEASE_CALLS\"\n"
-        "  if [[ \"$1\" == *' control-plane-only '* ]]; then touch \"$INSTALL_MARKER\"; exit 0; fi\n"
-        "  if [[ \"$1\" == *' rollback '* ]]; then touch \"$ROLLBACK_MARKER\"; exit 0; fi\n"
-        "fi\n"
-        "exec \"$@\"\n",
-        encoding="utf-8",
-    )
-    systemctl = fake_bin / "systemctl"
-    systemctl.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' \"$*\" >> \"$RELEASE_CALLS\"\n"
-        "if [ -f \"$INSTALL_MARKER\" ] && [ \"$1\" = is-active ]; then echo active; exit 0; fi\n"
-        "if [ \"$1\" = is-active ]; then echo inactive; else echo disabled; fi\n",
-        encoding="utf-8",
-    )
-    for command in (git, rsync, ssh, systemctl):
-        command.chmod(0o755)
-    env = {
-        **os.environ,
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
-        "RELEASE_CALLS": str(calls),
-        "INSTALL_MARKER": str(install_marker),
-        "ROLLBACK_MARKER": str(rollback_marker),
-    }
-    return release_root, env, manifest
-def test_outer_postcheck_failure_invokes_release_bound_rollback(tmp_path: Path) -> None:
-    release_root, env, manifest = _control_plane_release_harness(tmp_path)
-    result = subprocess.run(
-        [
-            "bash", "deploy/runtime-flags-off-install.sh",
-            "--runtime-control-plane-flags-off-update",
-            "--expected-unit-manifest", str(manifest),
-        ],
-        cwd=release_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 1
-    assert Path(env["ROLLBACK_MARKER"]).exists()
-    calls = Path(env["RELEASE_CALLS"]).read_text()
-    assert f"rollback {RELEASE_SHA}" in calls
-    assert f"sudo bash /remote/app/deploy/update-control-plane-units.sh rollback {RELEASE_SHA}" in calls
-    assert "everydayai-sandbox-worker" not in calls

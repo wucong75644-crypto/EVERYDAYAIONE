@@ -16,6 +16,7 @@ case "$scope" in
     all)
         services=(
             everydayai-agent-runtime
+            everydayai-agent-model-gateway
             everydayai-agent-projection
             everydayai-agent-authorization
             everydayai-sandbox-worker
@@ -24,6 +25,7 @@ case "$scope" in
     control-plane)
         services=(
             everydayai-agent-runtime
+            everydayai-agent-model-gateway
             everydayai-agent-projection
             everydayai-agent-authorization
         )

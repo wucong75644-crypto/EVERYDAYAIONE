@@ -7,7 +7,6 @@ import subprocess
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
 INSTALL_SCRIPT = DEPLOY / "install-service-units.sh"
@@ -19,6 +18,7 @@ RELEASE_SCRIPT = (DEPLOY / "release.sh").read_text(encoding="utf-8")
 RELEASE_SHA = "a" * 40
 RUNTIME_SERVICES = (
     "everydayai-agent-runtime",
+    "everydayai-agent-model-gateway",
     "everydayai-agent-projection",
     "everydayai-agent-authorization",
     "everydayai-sandbox-worker",
@@ -63,6 +63,8 @@ def _write_backend_envs(directory: Path) -> None:
 def _render_worker_envs(directory: Path) -> None:
     replacements = {
         "<password>": "worker-secret",
+        "<everydayai-agent-runtime-uid>": "1201",
+        "<base64-encoded-32-byte-kek>": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=",
         "<sandbox-worker-password>": "sandbox-secret",
         "<git-sha>": RELEASE_SHA,
         "<sandbox-runtime-revision>": "sandbox-v1",
@@ -75,6 +77,8 @@ def _render_worker_envs(directory: Path) -> None:
     }
     names = (
         "agent-runtime-worker",
+        "agent-model-gateway",
+        "agent-model-gateway-kek",
         "agent-projection-worker",
         "agent-authorization-worker",
         "sandbox-worker",
@@ -98,6 +102,12 @@ def _fake_commands(directory: Path) -> tuple[Path, Path]:
     sudo = fake_bin / "sudo"
     sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
     sudo.chmod(0o755)
+    identity = fake_bin / "id"
+    identity.write_text(
+        "#!/bin/sh\nif [ \"$1\" = -u ] && [ \"$2\" = everydayai-agent-runtime ]; "
+        "then echo 1201; exit 0; fi\nexec /usr/bin/id \"$@\"\n", encoding="utf-8",
+    )
+    identity.chmod(0o755)
     systemctl = fake_bin / "systemctl"
     systemctl.write_text(
         f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{calls}'\n",
@@ -257,7 +267,7 @@ def _run_installer(
     return result, systemd_dir, calls
 
 
-def test_agent_runtime_only_installs_four_units_and_wrapper(tmp_path: Path) -> None:
+def test_agent_runtime_only_installs_five_units_and_wrapper(tmp_path: Path) -> None:
     result, systemd_dir, calls = _run_installer(tmp_path)
 
     assert result.returncode == 0, result.stderr

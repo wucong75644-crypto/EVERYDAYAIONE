@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Provision the three flags-off control-plane worker environment files."""
+"""Provision the five flags-off control-plane environment files."""
 from __future__ import annotations
 import argparse
-import ast
 import grp
 import hashlib
 import json
@@ -13,29 +12,27 @@ import re
 import shutil
 import stat
 import tempfile
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+try:
+    from deploy.control_plane_env_source import (
+        PASSWORD_KEYS, ProvisioningError, read_required_values,
+        render_envs, validate_kek,
+    )
+except ModuleNotFoundError:
+    from control_plane_env_source import (  # type: ignore[no-redef]
+        PASSWORD_KEYS, ProvisioningError, read_required_values,
+        render_envs, validate_kek,
+    )
 RELEASE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 OWNER = "root"
 GROUP = "everydayai-app"
 DEFAULT_TRANSACTION_ROOT = Path("/var/backups/everydayai/control-plane-updates")
 ENV_NAMES = (
     "agent-runtime-worker.env",
+    "agent-model-gateway.env",
+    "agent-model-gateway-kek.env",
     "agent-projection-worker.env",
     "agent-authorization-worker.env",
 )
-PASSWORD_KEYS = {
-    "agent-runtime-worker.env": "EVERYDAYAI_AGENT_RUNTIME_WORKER_PASSWORD",
-    "agent-projection-worker.env": "EVERYDAYAI_PROJECTION_WORKER_PASSWORD",
-    "agent-authorization-worker.env": "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD",
-}
-ROLES = {
-    "agent-runtime-worker.env": "everydayai_agent_runtime_worker",
-    "agent-projection-worker.env": "everydayai_projection_worker",
-    "agent-authorization-worker.env": "everydayai_authorization_worker",
-}
-class ProvisioningError(RuntimeError):
-    """A redacted provisioning contract failure."""
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("prepare", "preflight", "publish", "verify",
@@ -45,161 +42,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--release-sha", required=True)
     parser.add_argument("--transaction-root", type=Path, default=DEFAULT_TRANSACTION_ROOT)
     return parser.parse_args(argv)
-def _parse_quoted_value(raw: str, quote_char: str) -> str:
-    escaped = False
-    for index in range(1, len(raw)):
-        character = raw[index]
-        if quote_char == '"' and character == "\\" and not escaped:
-            escaped = True
-            continue
-        if character == quote_char and not escaped:
-            suffix = raw[index + 1 :].strip()
-            if suffix and not suffix.startswith("#"):
-                raise ProvisioningError("环境文件包含无效的引号后内容")
-            token = raw[: index + 1]
-            if quote_char == "'":
-                return token[1:-1]
-            value = ast.literal_eval(token)
-            if not isinstance(value, str):
-                raise ProvisioningError("环境文件包含非字符串配置值")
-            return value
-        escaped = False
-    raise ProvisioningError("环境文件包含未闭合引号")
-def _parse_env_value(raw: str) -> str:
-    raw = raw.strip()
-    if not raw:
-        return ""
-    if raw[0] in {"'", '"'}:
-        return _parse_quoted_value(raw, raw[0])
-    comment = re.search(r"[ \t]+#", raw)
-    if comment:
-        raw = raw[: comment.start()]
-    return raw.rstrip()
-def _read_required_values(
-    path: Path, required: set[str], allowed_modes: set[int]
-) -> dict[str, str]:
+def _resolve_owner(name: str | None = None) -> tuple[int, int]:
+    group = "everydayai-model-gateway" if name and name.startswith("agent-model-gateway") else GROUP
     try:
-        file_stat = path.stat()
-    except OSError as exc:
-        raise ProvisioningError(f"缺少安全配置文件: {path}") from exc
-    if not stat.S_ISREG(file_stat.st_mode) or path.is_symlink():
-        raise ProvisioningError(f"安全配置路径必须是普通文件: {path}")
-    if stat.S_IMODE(file_stat.st_mode) not in allowed_modes:
-        allowed = "/".join(f"{mode:04o}" for mode in sorted(allowed_modes))
-        raise ProvisioningError(f"安全配置文件权限必须为 {allowed}: {path}")
-    values: dict[str, str] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as exc:
-        raise ProvisioningError(f"无法读取安全配置文件: {path}") from exc
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[7:].lstrip()
-        if "=" not in stripped:
-            raise ProvisioningError(f"安全配置文件包含无效配置行: {path}")
-        key, raw_value = stripped.split("=", 1)
-        key = key.strip()
-        if not ENV_KEY_RE.fullmatch(key):
-            raise ProvisioningError(f"安全配置文件包含无效配置键: {path}")
-        if key not in required:
-            continue
-        if key in values:
-            raise ProvisioningError(f"安全配置文件包含重复必需键: {key}")
-        value = _parse_env_value(raw_value)
-        if "\n" in value or "\r" in value:
-            raise ProvisioningError(f"安全配置值不能包含换行符: {key}")
-        values[key] = value
-    missing = sorted(required - values.keys())
-    if missing:
-        raise ProvisioningError(f"安全配置文件缺少必需键: {', '.join(missing)}")
-    return values
-def _worker_dsn(migrator_dsn: str, role: str, password: str) -> str:
-    try:
-        parts = urlsplit(migrator_dsn)
-        port = parts.port
-    except ValueError as exc:
-        raise ProvisioningError("MIGRATION_DATABASE_URL 无效") from exc
-    if parts.scheme not in {"postgres", "postgresql"}:
-        raise ProvisioningError("MIGRATION_DATABASE_URL 必须使用 PostgreSQL")
-    if unquote(parts.username or "") != "everydayai_migrator":
-        raise ProvisioningError("MIGRATION_DATABASE_URL 必须使用 migrator 角色")
-    if not parts.password or not parts.hostname or not parts.path.strip("/"):
-        raise ProvisioningError("MIGRATION_DATABASE_URL 缺少凭证、主机或数据库名")
-    if parts.fragment:
-        raise ProvisioningError("MIGRATION_DATABASE_URL 不得包含 fragment")
-    if port is not None and not 1 <= port <= 65535:
-        raise ProvisioningError("MIGRATION_DATABASE_URL 端口无效")
-    _, separator, host_port = parts.netloc.rpartition("@")
-    if not separator or not host_port:
-        raise ProvisioningError("MIGRATION_DATABASE_URL 缺少 userinfo")
-    userinfo = f"{quote(role, safe='')}:{quote(password, safe='')}"
-    return urlunsplit((parts.scheme, f"{userinfo}@{host_port}", parts.path, parts.query, ""))
-def _render_envs(
-    backend_values: dict[str, str], migrator_dsn: str, release_sha: str
-) -> dict[str, str]:
-    passwords = {name: backend_values[key] for name, key in PASSWORD_KEYS.items()}
-    for key, value in passwords.items():
-        if len(value) < 24 or "\n" in value or "\r" in value:
-            raise ProvisioningError(f"{PASSWORD_KEYS[key]} 不符合密码合同")
-    urls = {
-        name: _worker_dsn(migrator_dsn, ROLES[name], password)
-        for name, password in passwords.items()
-    }
-    shared = {key: backend_values[key] for key in ("SENTRY_DSN", "ENVIRONMENT")}
-    projection = {
-        key: backend_values[key]
-        for key in ("REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_DB", "REDIS_SSL")
-    }
-    required_nonempty = {
-        "REDIS_HOST", "REDIS_PORT", "REDIS_DB", "REDIS_SSL", "ENVIRONMENT"
-    }
-    if any(not backend_values[key] for key in required_nonempty):
-        raise ProvisioningError("现有 Redis/Environment 配置不能为空")
-    rendered = {
-        "agent-runtime-worker.env": {
-            "WORKER_DATABASE_URL": urls["agent-runtime-worker.env"],
-            "AGENT_RUNTIME_PROCESS_ROLE": "agent_runtime",
-            "AGENT_RUNTIME_WORKER_ID": "agent-runtime-01",
-            "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
-            "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-runtime/health.sock",
-            "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED": "false",
-            "SANDBOX_JOB_ROOT": "/var/lib/everydayai/sandbox-jobs",
-            "SANDBOX_RUNTIME_REVISION": "unprovisioned",
-        },
-        "agent-projection-worker.env": {
-            "WORKER_DATABASE_URL": urls["agent-projection-worker.env"],
-            **projection,
-            "AGENT_RUNTIME_PROCESS_ROLE": "projection",
-            "AGENT_RUNTIME_WORKER_ID": "agent-projection-01",
-            "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
-            "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-projection/health.sock",
-            "AGENT_RUNTIME_POLL_INTERVAL_SECONDS": "1",
-            "AGENT_RUNTIME_HEARTBEAT_SECONDS": "10",
-            **shared,
-        },
-        "agent-authorization-worker.env": {
-            "WORKER_DATABASE_URL": urls["agent-authorization-worker.env"],
-            "AGENT_RUNTIME_PROCESS_ROLE": "authorization",
-            "AGENT_RUNTIME_WORKER_ID": "agent-authorization-01",
-            "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
-            "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-authorization/health.sock",
-            "AGENT_RUNTIME_POLL_INTERVAL_SECONDS": "1",
-            "AGENT_RUNTIME_HEARTBEAT_SECONDS": "10",
-            **shared,
-        },
-    }
-    return {
-        name: "".join(f"{key}={value}\n" for key, value in values.items())
-        for name, values in rendered.items()
-    }
-def _resolve_owner() -> tuple[int, int]:
-    try:
-        return pwd.getpwnam(OWNER).pw_uid, grp.getgrnam(GROUP).gr_gid
+        return pwd.getpwnam(OWNER).pw_uid, grp.getgrnam(group).gr_gid
     except KeyError as exc:
-        raise ProvisioningError(f"缺少目标 owner/group: {OWNER}:{GROUP}") from exc
+        raise ProvisioningError(f"缺少目标 owner/group: {OWNER}:{group}") from exc
+def _runtime_uid() -> int:
+    try:
+        return pwd.getpwnam("everydayai-agent-runtime").pw_uid
+    except KeyError as exc:
+        raise ProvisioningError("缺少 Runtime peer user") from exc
+def _target_identities() -> dict[str, tuple[int, int]]:
+    return {name: _resolve_owner(name) for name in ENV_NAMES}
 def _resolve_transaction_owner() -> tuple[int, int]:
     return 0, 0
 def _sha256(content: bytes) -> str:
@@ -318,6 +173,13 @@ def _load_transaction(
         _secure_dir(release_dir / directory_name, uid, gid)
     for entry in entries:
         name = entry["name"]
+        published = entry.get("published")
+        if not isinstance(published, dict) or set(published) != {
+            "present", "sha256", "mode", "uid", "gid",
+        } or published.get("present") is not True \
+            or published.get("sha256") != entry.get("staged_sha256") \
+            or published.get("mode") != 0o640:
+            raise ProvisioningError("env transaction published state 无效")
         staged = _secure_artifact(release_dir / "env-staged" / name, uid, gid)
         if _sha256(staged) != entry.get("staged_sha256"):
             raise ProvisioningError("env staged hash fence 不匹配")
@@ -336,13 +198,11 @@ def _prior_preflight(env_dir: Path, journal: dict[str, object]) -> None:
     for entry in journal["files"]:
         if not _matches(env_dir / entry["name"], entry["prior"]):
             raise ProvisioningError("env 旧状态 preflight 不匹配")
-def _published_state(entry: dict[str, object], uid: int, gid: int) -> dict[str, object]:
-    return {"present": True, "sha256": entry["staged_sha256"], "mode": 0o640, "uid": uid, "gid": gid}
-def _verify_published(
-    env_dir: Path, journal: dict[str, object], uid: int, gid: int
-) -> None:
+def _published_state(entry: dict[str, object]) -> dict[str, object]:
+    return entry["published"]
+def _verify_published(env_dir: Path, journal: dict[str, object]) -> None:
     for entry in journal["files"]:
-        if not _matches(env_dir / entry["name"], _published_state(entry, uid, gid)):
+        if not _matches(env_dir / entry["name"], _published_state(entry)):
             raise ProvisioningError("env publish 后验失败")
 def _atomic_replace_from(source: Path, target: Path, uid: int, gid: int, mode: int) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -358,7 +218,7 @@ def _atomic_replace_from(source: Path, target: Path, uid: int, gid: int, mode: i
     finally:
         temporary.unlink(missing_ok=True)
 def _rollback_plan(
-    env_dir: Path, journal: dict[str, object], uid: int, gid: int
+    env_dir: Path, journal: dict[str, object]
 ) -> list[tuple[dict[str, object], str]]:
     plan = []
     for entry in journal["files"]:
@@ -367,16 +227,16 @@ def _rollback_plan(
             plan.append((entry, "noop"))
         elif journal.get("status") == "restored":
             raise ProvisioningError("env rollback hash fence 不匹配")
-        elif _matches(target, _published_state(entry, uid, gid)):
+        elif _matches(target, _published_state(entry)):
             plan.append((entry, "restore" if entry["prior"]["present"] else "delete"))
         else:
             raise ProvisioningError("env rollback hash fence 不匹配")
     return plan
 def _rollback_envs(
-    env_dir: Path, release_dir: Path, journal: dict[str, object], uid: int, gid: int,
+    env_dir: Path, release_dir: Path, journal: dict[str, object],
     transaction_uid: int, transaction_gid: int,
 ) -> None:
-    plan = _rollback_plan(env_dir, journal, uid, gid)
+    plan = _rollback_plan(env_dir, journal)
     for entry, action in plan:
         target = env_dir / entry["name"]
         if action == "restore":
@@ -390,19 +250,28 @@ def _rollback_envs(
     _prior_preflight(env_dir, journal)
     journal["status"] = "restored"
     _store_journal(release_dir, journal, transaction_uid, transaction_gid)
-def _prepare(args: argparse.Namespace, uid: int, gid: int, tx_uid: int, tx_gid: int) -> None:
+def _prepare(
+    args: argparse.Namespace, identities: dict[str, tuple[int, int]],
+    tx_uid: int, tx_gid: int,
+) -> None:
     if args.backend_dir is None:
         raise ProvisioningError("prepare 缺少 backend-dir")
     required = set(PASSWORD_KEYS.values()) | {
         "REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_DB", "REDIS_SSL", "SENTRY_DSN", "ENVIRONMENT",
     }
-    backend = _read_required_values(args.backend_dir / ".env", required, {0o600, 0o640})
-    migrator = _read_required_values(
+    backend = read_required_values(args.backend_dir / ".env", required, {0o600, 0o640})
+    migrator = read_required_values(
         args.backend_dir / ".env.migrator", {"MIGRATION_DATABASE_URL"}, {0o600}
     )
+    kek = validate_kek(read_required_values(
+        args.backend_dir / ".env.kek",
+        {"CONFIG_KEK_CURRENT_VERSION", "CONFIG_KEK_KEYRING_JSON"},
+        {0o600}, exact=True,
+    ))
     rendered = {
-        name: content.encode() for name, content in _render_envs(
-            backend, migrator["MIGRATION_DATABASE_URL"], args.release_sha
+        name: content.encode() for name, content in render_envs(
+            backend, migrator["MIGRATION_DATABASE_URL"], args.release_sha,
+            _runtime_uid(), kek,
         ).items()
     }
     _ensure_transaction_root(args.transaction_root, tx_uid, tx_gid)
@@ -434,7 +303,12 @@ def _prepare(args: argparse.Namespace, uid: int, gid: int, tx_uid: int, tx_gid: 
             if content is not None:
                 _write_secure_file(backup_dir / name, content, tx_uid, tx_gid)
             _write_secure_file(staged_dir / name, rendered[name], tx_uid, tx_gid)
-            entries.append({"name": name, "prior": prior, "staged_sha256": _sha256(rendered[name])})
+            uid, gid = identities[name]
+            entries.append({
+                "name": name, "prior": prior, "staged_sha256": _sha256(rendered[name]),
+                "published": {"present": True, "sha256": _sha256(rendered[name]),
+                              "mode": 0o640, "uid": uid, "gid": gid},
+            })
         journal = {"version": 1, "release_sha": args.release_sha, "status": "prepared", "files": entries}
         _store_journal(temporary, journal, tx_uid, tx_gid)
         os.replace(temporary, release_dir)
@@ -448,10 +322,10 @@ def _dispatch(args: argparse.Namespace) -> None:
         raise ProvisioningError(f"目标环境目录必须已存在: {args.env_dir}")
     if os.geteuid() != 0:
         raise ProvisioningError("control-plane env transaction 必须以 root 执行")
-    uid, gid = _resolve_owner()
+    identities = _target_identities()
     tx_uid, tx_gid = _resolve_transaction_owner()
     if args.operation == "prepare":
-        _prepare(args, uid, gid, tx_uid, tx_gid)
+        _prepare(args, identities, tx_uid, tx_gid)
         return
     release_dir, journal = _load_transaction(
         args.transaction_root, args.release_sha, tx_uid, tx_gid
@@ -466,27 +340,29 @@ def _dispatch(args: argparse.Namespace) -> None:
         try:
             _prior_preflight(args.env_dir, journal)
             for entry in journal["files"]:
+                published = _published_state(entry)
                 _atomic_replace_from(
                     release_dir / "env-staged" / entry["name"],
-                    args.env_dir / entry["name"], uid, gid, 0o640,
+                    args.env_dir / entry["name"],
+                    int(published["uid"]), int(published["gid"]), 0o640,
                 )
-            _verify_published(args.env_dir, journal, uid, gid)
+            _verify_published(args.env_dir, journal)
             journal["status"] = "published"
             _store_journal(release_dir, journal, tx_uid, tx_gid)
         except Exception as exc:
             try:
-                _rollback_envs(args.env_dir, release_dir, journal, uid, gid, tx_uid, tx_gid)
+                _rollback_envs(args.env_dir, release_dir, journal, tx_uid, tx_gid)
             except Exception as rollback_exc:
                 raise ProvisioningError("env publish 失败且自动恢复失败") from rollback_exc
             raise ProvisioningError("env publish 失败，已恢复全部 env") from exc
     elif args.operation == "verify":
         if journal.get("status") != "published":
             raise ProvisioningError("env transaction 未处于 published")
-        _verify_published(args.env_dir, journal, uid, gid)
+        _verify_published(args.env_dir, journal)
     elif args.operation == "rollback-preflight":
-        _rollback_plan(args.env_dir, journal, uid, gid)
+        _rollback_plan(args.env_dir, journal)
     else:
-        _rollback_envs(args.env_dir, release_dir, journal, uid, gid, tx_uid, tx_gid)
+        _rollback_envs(args.env_dir, release_dir, journal, tx_uid, tx_gid)
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     _dispatch(args)

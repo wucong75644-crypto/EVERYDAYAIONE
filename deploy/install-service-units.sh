@@ -14,6 +14,7 @@ libexec_dir=${LIBEXEC_DIR:-/usr/local/libexec}
 
 runtime_services=(
     everydayai-agent-runtime
+    everydayai-agent-model-gateway
     everydayai-agent-projection
     everydayai-agent-authorization
     everydayai-sandbox-worker
@@ -139,9 +140,10 @@ require_env_value() {
 require_database_role() {
     local path=$1
     local role=$2
+    local key=${3:-WORKER_DATABASE_URL}
     local value
-    value=$(read_env_value "$path" WORKER_DATABASE_URL) || {
-        echo "❌ ${path} 缺少 WORKER_DATABASE_URL" >&2
+    value=$(read_env_value "$path" "$key") || {
+        echo "❌ ${path} 缺少 ${key}" >&2
         return 1
     }
     case "$value" in
@@ -160,6 +162,8 @@ validate_runtime_worker_envs() {
     fi
 
     local runtime_path="${runtime_env_dir}/agent-runtime-worker.env"
+    local gateway_path="${runtime_env_dir}/agent-model-gateway.env"
+    local gateway_kek_path="${runtime_env_dir}/agent-model-gateway-kek.env"
     local projection_path="${runtime_env_dir}/agent-projection-worker.env"
     local authorization_path="${runtime_env_dir}/agent-authorization-worker.env"
     local sandbox_path="${runtime_env_dir}/sandbox-worker.env"
@@ -168,8 +172,19 @@ validate_runtime_worker_envs() {
         WORKER_DATABASE_URL AGENT_RUNTIME_PROCESS_ROLE \
         AGENT_RUNTIME_WORKER_ID AGENT_RUNTIME_RELEASE_REVISION \
         AGENT_RUNTIME_HEALTH_SOCKET \
-        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED SANDBOX_JOB_ROOT \
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED \
+        AGENT_RUNTIME_MODEL_GATEWAY_ENABLED AGENT_RUNTIME_MODEL_GATEWAY_SOCKET \
+        AGENT_RUNTIME_MODEL_GATEWAY_HEALTH_SOCKET SANDBOX_JOB_ROOT \
         SANDBOX_RUNTIME_REVISION
+    validate_exact_env_file "$gateway_path" \
+        AGENT_MODEL_GATEWAY_DATABASE_URL AGENT_MODEL_GATEWAY_WORKER_ID \
+        AGENT_MODEL_GATEWAY_RELEASE_REVISION AGENT_MODEL_GATEWAY_SOCKET \
+        AGENT_MODEL_GATEWAY_HEALTH_SOCKET AGENT_MODEL_GATEWAY_RUNTIME_UID \
+        AGENT_MODEL_GATEWAY_DRAIN_TIMEOUT_SECONDS \
+        AGENT_MODEL_GATEWAY_ISOLATED_HARNESS_ENABLED \
+        AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED
+    validate_exact_env_file "$gateway_kek_path" \
+        CONFIG_KEK_CURRENT_VERSION CONFIG_KEK_KEYRING_JSON
     validate_exact_env_file "$projection_path" \
         WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
         REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \
@@ -192,21 +207,44 @@ validate_runtime_worker_envs() {
         SANDBOX_WORKER_CONCURRENCY SANDBOX_PARTIAL_RETENTION_SECONDS SENTRY_DSN
 
     require_database_role "$runtime_path" everydayai_agent_runtime_worker
+    require_database_role "$gateway_path" everydayai_agent_model_gateway \
+        AGENT_MODEL_GATEWAY_DATABASE_URL
     require_database_role "$projection_path" everydayai_projection_worker
     require_database_role "$authorization_path" everydayai_authorization_worker
     require_database_role "$sandbox_path" everydayai_sandbox_worker
     require_env_value "$runtime_path" AGENT_RUNTIME_PROCESS_ROLE agent_runtime
     require_env_value "$runtime_path" \
         AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED false
+    require_env_value "$runtime_path" AGENT_RUNTIME_MODEL_GATEWAY_ENABLED false
+    require_env_value "$runtime_path" AGENT_RUNTIME_MODEL_GATEWAY_SOCKET \
+        /run/everydayai-agent-model-gateway/gateway.sock
+    require_env_value "$runtime_path" AGENT_RUNTIME_MODEL_GATEWAY_HEALTH_SOCKET \
+        /run/everydayai-agent-model-gateway/health.sock
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_WORKER_ID \
+        agent-model-gateway-01
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_SOCKET \
+        /run/everydayai-agent-model-gateway/gateway.sock
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_HEALTH_SOCKET \
+        /run/everydayai-agent-model-gateway/health.sock
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_DRAIN_TIMEOUT_SECONDS 130
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED false
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_ISOLATED_HARNESS_ENABLED true
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_RUNTIME_UID \
+        "$(id -u everydayai-agent-runtime)"
     require_env_value "$projection_path" AGENT_RUNTIME_PROCESS_ROLE projection
     require_env_value "$authorization_path" AGENT_RUNTIME_PROCESS_ROLE authorization
     require_env_value "$sandbox_path" AGENT_RUNTIME_PROCESS_ROLE sandbox
 
     local path
-    for path in "$runtime_path" "$projection_path" "$authorization_path" \
+    for path in "$runtime_path" "$gateway_path" "$projection_path" "$authorization_path" \
         "$sandbox_path"; do
-        require_env_value "$path" AGENT_RUNTIME_RELEASE_REVISION \
-            "$expected_release_revision"
+        if [ "$path" = "$gateway_path" ]; then
+            require_env_value "$path" AGENT_MODEL_GATEWAY_RELEASE_REVISION \
+                "$expected_release_revision"
+        else
+            require_env_value "$path" AGENT_RUNTIME_RELEASE_REVISION \
+                "$expected_release_revision"
+        fi
     done
 }
 
@@ -217,6 +255,8 @@ validate_control_plane_worker_envs() {
     fi
 
     local runtime_path="${runtime_env_dir}/agent-runtime-worker.env"
+    local gateway_path="${runtime_env_dir}/agent-model-gateway.env"
+    local gateway_kek_path="${runtime_env_dir}/agent-model-gateway-kek.env"
     local projection_path="${runtime_env_dir}/agent-projection-worker.env"
     local authorization_path="${runtime_env_dir}/agent-authorization-worker.env"
 
@@ -224,8 +264,19 @@ validate_control_plane_worker_envs() {
         WORKER_DATABASE_URL AGENT_RUNTIME_PROCESS_ROLE \
         AGENT_RUNTIME_WORKER_ID AGENT_RUNTIME_RELEASE_REVISION \
         AGENT_RUNTIME_HEALTH_SOCKET \
-        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED SANDBOX_JOB_ROOT \
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED \
+        AGENT_RUNTIME_MODEL_GATEWAY_ENABLED AGENT_RUNTIME_MODEL_GATEWAY_SOCKET \
+        AGENT_RUNTIME_MODEL_GATEWAY_HEALTH_SOCKET SANDBOX_JOB_ROOT \
         SANDBOX_RUNTIME_REVISION
+    validate_exact_env_file "$gateway_path" \
+        AGENT_MODEL_GATEWAY_DATABASE_URL AGENT_MODEL_GATEWAY_WORKER_ID \
+        AGENT_MODEL_GATEWAY_RELEASE_REVISION AGENT_MODEL_GATEWAY_SOCKET \
+        AGENT_MODEL_GATEWAY_HEALTH_SOCKET AGENT_MODEL_GATEWAY_RUNTIME_UID \
+        AGENT_MODEL_GATEWAY_DRAIN_TIMEOUT_SECONDS \
+        AGENT_MODEL_GATEWAY_ISOLATED_HARNESS_ENABLED \
+        AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED
+    validate_exact_env_file "$gateway_kek_path" \
+        CONFIG_KEK_CURRENT_VERSION CONFIG_KEK_KEYRING_JSON
     validate_exact_env_file "$projection_path" \
         WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
         REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \
@@ -239,18 +290,41 @@ validate_control_plane_worker_envs() {
         AGENT_RUNTIME_HEARTBEAT_SECONDS SENTRY_DSN ENVIRONMENT
 
     require_database_role "$runtime_path" everydayai_agent_runtime_worker
+    require_database_role "$gateway_path" everydayai_agent_model_gateway \
+        AGENT_MODEL_GATEWAY_DATABASE_URL
     require_database_role "$projection_path" everydayai_projection_worker
     require_database_role "$authorization_path" everydayai_authorization_worker
     require_env_value "$runtime_path" AGENT_RUNTIME_PROCESS_ROLE agent_runtime
     require_env_value "$runtime_path" \
         AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED false
+    require_env_value "$runtime_path" AGENT_RUNTIME_MODEL_GATEWAY_ENABLED false
+    require_env_value "$runtime_path" AGENT_RUNTIME_MODEL_GATEWAY_SOCKET \
+        /run/everydayai-agent-model-gateway/gateway.sock
+    require_env_value "$runtime_path" AGENT_RUNTIME_MODEL_GATEWAY_HEALTH_SOCKET \
+        /run/everydayai-agent-model-gateway/health.sock
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_WORKER_ID \
+        agent-model-gateway-01
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_SOCKET \
+        /run/everydayai-agent-model-gateway/gateway.sock
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_HEALTH_SOCKET \
+        /run/everydayai-agent-model-gateway/health.sock
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_DRAIN_TIMEOUT_SECONDS 130
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED false
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_ISOLATED_HARNESS_ENABLED true
+    require_env_value "$gateway_path" AGENT_MODEL_GATEWAY_RUNTIME_UID \
+        "$(id -u everydayai-agent-runtime)"
     require_env_value "$projection_path" AGENT_RUNTIME_PROCESS_ROLE projection
     require_env_value "$authorization_path" AGENT_RUNTIME_PROCESS_ROLE authorization
 
     local path
-    for path in "$runtime_path" "$projection_path" "$authorization_path"; do
-        require_env_value "$path" AGENT_RUNTIME_RELEASE_REVISION \
-            "$expected_release_revision"
+    for path in "$runtime_path" "$gateway_path" "$projection_path" "$authorization_path"; do
+        if [ "$path" = "$gateway_path" ]; then
+            require_env_value "$path" AGENT_MODEL_GATEWAY_RELEASE_REVISION \
+                "$expected_release_revision"
+        else
+            require_env_value "$path" AGENT_RUNTIME_RELEASE_REVISION \
+                "$expected_release_revision"
+        fi
     done
 }
 

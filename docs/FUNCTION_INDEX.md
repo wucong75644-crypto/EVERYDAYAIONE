@@ -1901,10 +1901,13 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `SecretBundleResolver` | `backend/services/configuration/bundles.py` | 通过 13 个显式方法调用对应固定 RPC，只解密数据库授权返回的 SecretRef，并验证 payload 精确字段；`wecom_bot_admin_test` 使用独立 Runtime owner/admin 门面 |
 | `WecomBotTargetResolver.list_targets` | `backend/services/configuration/bundles.py` | 先以 actorless Worker Scope 发现企业，再为每个企业建立独立精确 Scope 并解析 `wecom.bot` Bundle；单企业材料失败不影响其他企业 |
 | `_assert_wecom_worker_discovery_scope` / `discover_wecom_bot_targets` | `backend/migrations/166_wecom_worker_discovery.sql` | 仅允许 actorless Worker 发现具备有效 WeCom Bundle 的 active 企业，返回 org_id 与凭证版本且不返回 Secret |
-| `install-service-units.sh` | `deploy/install-service-units.sh` | 保留 all/agent-runtime-only，并以 control-plane-only 编排三控制面安全 env provisioning 与 reviewed unit update |
-| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | 安全读取 Secret/DSN，release-bound staging 三 env，并以旧内容/权限 journal 和 hash fence 提供 publish/verify/幂等 rollback |
-| `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 协调三 env/三 unit 的 prepared→published→restored 事务；inactive+disabled、reviewed SHA、daemon/postcheck 失败统一恢复 |
-| `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对三个当前 target unit 的 reviewed SHA-256 |
+| `install-service-units.sh` | `deploy/install-service-units.sh` | 保留 all/agent-runtime-only，并以 control-plane-only 编排五份安全 env 与四个 reviewed control-plane unit update |
+| `bootstrap-agent-model-gateway-role.sh` | `deploy/bootstrap-agent-model-gateway-role.sh` | 使用独立密码创建/收紧既有 migration 要求的 `everydayai_agent_model_gateway` LOGIN role，不在 migration 中携带凭证 |
+| `read_required_values` / `validate_kek` / `render_envs` | `deploy/control_plane_env_source.py` | 严格读取批准生产来源，验证单版本 32-byte KEK，并生成 release-bound Runtime/Gateway/Projection/Authorization flags-off env |
+| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | release-bound staging 五 env，按普通/Gateway group 记录目标身份，并以旧内容/权限 journal 和 hash fence 提供 publish/verify/幂等 rollback |
+| `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 协调五 env/四 unit 的 prepared→published→restored 事务；inactive+disabled、reviewed SHA、daemon/postcheck 失败统一恢复 |
+| `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对四个当前 target unit 的 reviewed SHA-256 |
+| `run_agent_model_gateway_disposable.sh` | `scripts/run_agent_model_gateway_disposable.sh` | 统一运行部署静态合同、本地 UDS/mock Provider、227_18～227_20 disposable PostgreSQL 与恢复回归 |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
 | `get_wecom_bot_admin_test_bundle` | `backend/migrations/216_configuration_admin_test_bundle.sql` | 仅允许 Runtime active 企业 owner/admin 解析固定 `wecom.bot` 测试 Bundle；不扩大 Worker 专用门面权限 |

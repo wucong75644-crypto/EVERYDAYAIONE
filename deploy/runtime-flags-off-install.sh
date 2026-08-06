@@ -130,7 +130,7 @@ load_reviewed_manifest() {
             return 1
         fi
         case "$name" in
-            everydayai-agent-runtime.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
+            everydayai-agent-runtime.service|everydayai-agent-model-gateway.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
             *)
                 log_error "reviewed unit manifest 包含非控制面条目"
                 return 1
@@ -141,15 +141,16 @@ load_reviewed_manifest() {
         reviewed_count=$((reviewed_count + 1))
         seen="${seen}${name}|"
     done < "$EXPECTED_UNIT_MANIFEST"
-    [ "$reviewed_count" -eq 3 ] || {
-        log_error "reviewed unit manifest 必须精确包含三个 unit"
+    [ "$reviewed_count" -eq 4 ] || {
+        log_error "reviewed unit manifest 必须精确包含四个 unit"
         return 1
     }
 }
 
 reviewed_manifest_args() {
     local service index found
-    for service in everydayai-agent-runtime everydayai-agent-projection \
+    for service in everydayai-agent-runtime everydayai-agent-model-gateway \
+        everydayai-agent-projection \
         everydayai-agent-authorization; do
         found=false
         for index in "${!reviewed_names[@]}"; do
@@ -177,7 +178,7 @@ if [ "$runtime_mode" = control-plane ]; then
     while IFS= read -r manifest_arg; do
         manifest_args+=("$manifest_arg")
     done < <(reviewed_manifest_args)
-    log_info "确认三个 control-plane unit 更新前严格 inactive + disabled..."
+    log_info "确认四个 control-plane unit 更新前严格 inactive + disabled..."
     check_remote_unit_states pre-install control-plane
     log_info "在任何远端文件同步前核对 reviewed target unit SHA-256..."
     remote_exec bash -s -- "${manifest_args[@]}" \
@@ -188,8 +189,10 @@ if [ "$runtime_mode" = control-plane ]; then
         deploy/install-service-units.sh
         deploy/check-control-plane-unit-manifest.sh
         deploy/provision-control-plane-worker-envs.py
+        deploy/control_plane_env_source.py
         deploy/update-control-plane-units.sh
         deploy/everydayai-agent-runtime.service
+        deploy/everydayai-agent-model-gateway.service
         deploy/everydayai-agent-projection.service
         deploy/everydayai-agent-authorization.service
     )
@@ -198,10 +201,10 @@ if [ "$runtime_mode" = control-plane ]; then
         "${install_files[@]}" \
         "${SERVER_USER}@${SERVER_HOST}:${REMOTE_APP_DIR}/"
 
-    log_info "provision 三份安全 env 并 reviewed update 三个 control-plane unit..."
+    log_info "provision 五份安全 env 并 reviewed update 四个 control-plane unit..."
     write_reviewed_manifest | remote_exec \
         "EXPECTED_RELEASE_SHA=${EXPECTED_SHA} bash ${REMOTE_APP_DIR}/deploy/install-service-units.sh ${REMOTE_BACKEND_DIR} control-plane-only ${EXPECTED_SHA} -"
-    log_info "确认三个 control-plane unit 更新后仍严格 inactive + disabled..."
+    log_info "确认四个 control-plane unit 更新后仍严格 inactive + disabled..."
     if ! check_remote_unit_states post-install control-plane; then
         log_error "control-plane 外层 postcheck 失败，恢复 release 绑定 env/unit transaction"
         remote_exec \
@@ -220,6 +223,7 @@ install_files=(
     deploy/validate-tenant-db-env.sh
     deploy/install-service-units.sh
     deploy/everydayai-agent-runtime.service
+    deploy/everydayai-agent-model-gateway.service
     deploy/everydayai-agent-projection.service
     deploy/everydayai-agent-authorization.service
     deploy/everydayai-sandbox-worker.service
@@ -227,6 +231,8 @@ install_files=(
     deploy/env-templates/runtime.env.template
     deploy/env-templates/wecom-runtime.env.template
     deploy/env-templates/agent-runtime-worker.env.template
+    deploy/env-templates/agent-model-gateway.env.template
+    deploy/env-templates/agent-model-gateway-kek.env.template
     deploy/env-templates/agent-projection-worker.env.template
     deploy/env-templates/agent-authorization-worker.env.template
     deploy/env-templates/sandbox-worker.env.template

@@ -109,6 +109,16 @@ Agent Runtime C7-BG4 Model Gateway Runtime 接线：
   projection 齐全时构造 safe read/model/action lane；ERP Write、Media、Scheduler、Sandbox
   保持关闭，BG5 前 flags 默认关闭且整体 `production_ready=false`。
 
+Agent Runtime C7-BG5 Model Gateway Deploy 与统一验收：
+- 新增专用 Gateway systemd user/group/unit，以及最小 DB/process env 与仅含两个批准键的
+  KEK env；`bootstrap-agent-model-gateway-role.sh` 以独立密码创建 migration 已冻结的窄 DB role；
+  Runtime 只获得 UDS group 连接能力，显式禁止读取 Gateway env、KEK 和 Provider key。
+- D0-A release transaction 扩为五 env/四 control-plane unit；reviewed SHA、全量预检、
+  daemon-reload、内外层 inactive:disabled 后验任一点失败均按同一 release journal 恢复。
+- `scripts/run_agent_model_gateway_disposable.sh` 统一执行部署静态合同、本地 UDS、mock Provider、
+  227_18～227_20 disposable PostgreSQL 和 crash/response-loss/UNKNOWN/drain 回归；CI 保持
+  所有 production flags false，`production_ready=false`，不改 Sandbox。
+
 Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
 - `backend/services/agent/runtime/catalog/safe_read_release.py` 与生成脚本从
   `READ_TOOL_SPECS` 冻结 17 项已证明安全的只读 Catalog；Workspace `file_search`、
@@ -405,34 +415,37 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   Discovery，只向 actorless Worker 返回 active 企业 ID 与凭证版本；rollback 仅撤销
   新能力。
 - `deploy/install-service-units.sh`：普通模式验证角色与 KEK 环境文件并安装既有服务单元；
-  `agent-runtime-only` 模式严格验证 flags-off v3 和四个 Worker 环境文件，只安装四个
+  `agent-runtime-only` 模式严格验证 flags-off v3、五个 Worker/Gateway 环境文件，只安装五个
   Agent Runtime 单元与 wrapper 后执行 daemon-reload。已有目标不一致时在任何写入前
-  失败关闭；新增 `control-plane-only` 只处理 Runtime、Projection、Authorization，要求
+  失败关闭；`control-plane-only` 只处理 Runtime、Model Gateway、Projection、Authorization，要求
   reviewed target SHA-256 manifest，不依赖或触碰 Sandbox env/assets/wrapper。
-- `deploy/provision-control-plane-worker-envs.py`：服务器端从安全的 `backend/.env` 与
-  `.env.migrator` 读取三控制面密码和既有 Redis/Sentry/Environment，保持 migrator DSN
-  非凭证部分不变并 URL encode 新凭证；三份 env 先在 release-bound、root-only transaction
+- `deploy/provision-control-plane-worker-envs.py` 与 `deploy/control_plane_env_source.py`：服务器端从
+  安全的 `backend/.env`、`.env.migrator`、`.env.kek` 读取四个窄角色密码、既有运行配置和
+  最小 KEK，保持 migrator DSN 非凭证部分不变并 URL encode 新凭证；五份 env 先在
+  release-bound、root-only transaction
   目录完整 staging，并记录旧内容 hash、mode、uid/gid 与不存在状态，再以
-  root:everydayai-app、0640 原子发布。Runtime composition 固定关闭且不生成 Sandbox env。
-- `deploy/update-control-plane-units.sh`：在三个 unit 严格 inactive + disabled 且当前 SHA-256
+  目录完整 staging；普通 env 为 root:everydayai-app，Gateway 两份 env 为
+  root:everydayai-model-gateway，均以 0640 原子发布。Runtime/Gateway production flags 固定关闭，
+  且不生成 Sandbox env。
+- `deploy/update-control-plane-units.sh`：在四个 unit 严格 inactive + disabled 且当前 SHA-256
   全量匹配 reviewed manifest 后，将旧 unit 全部备份到同一 release transaction，再发布
-  三 env 与三 unit。状态为 `prepared → published → restored`；env/unit apply、daemon-reload、
+  五 env 与四 unit。状态为 `prepared → published → restored`；env/unit apply、daemon-reload、
   内外层 postcheck 任一失败均统一恢复，重复 rollback 幂等，错误 release 或外来内容由 hash
   fence 失败关闭。
 - `deploy/check-control-plane-unit-manifest.sh`：由发布入口通过 stdin 发送到远端的只读预检，
-  在 rsync 发生前核对三个当前 target unit 的 reviewed SHA-256，避免 mismatch 时产生同步写入。
+  在 rsync 发生前核对四个当前 target unit 的 reviewed SHA-256，避免 mismatch 时产生同步写入。
 - `deploy/deploy.sh` / `deploy/release.sh` / `deploy/runtime-flags-off-install.sh`：提供互斥的
   `--runtime-flags-off-install` 与 `--runtime-control-plane-flags-off-update` 路径；后者
   要求 reviewed manifest 且不执行 code/backend 同步、migration、Owner 或服务生命周期
   操作。`check-agent-runtime-unit-states.sh` 支持 all/control-plane scope；旧安装路径预检
-  还允许未安装 unit 的 inactive + not-found，完成后要求四个 unit inactive + disabled；
-  新更新路径前后均要求三个控制面 unit 严格 inactive + disabled。
-- `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker 配置、四单元安装、
+  还允许未安装 unit 的 inactive + not-found，完成后要求五个 unit inactive + disabled；
+  新更新路径前后均要求四个控制面 unit 严格 inactive + disabled。
+- `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker/Gateway 配置、五单元安装、
   差异目标零写入失败关闭、远端状态门禁顺序及模板/unit 合同。
 - `backend/tests/test_agent_runtime_control_plane_update.py`：动态覆盖 Secret 隔离与 URL encode、
-  env mode/owner、reviewed hash/state 零写入、六目标备份/发布顺序、unit/daemon/postcheck
+  env mode/owner、reviewed hash/state 零写入、九目标备份/发布顺序、unit/daemon/postcheck
   统一恢复、幂等/hash fence、Sandbox 零触碰及 release/deploy 互斥路由。
-- `backend/tests/test_agent_runtime_control_plane_env_transaction.py`：动态覆盖三份 env 各阶段
+- `backend/tests/test_agent_runtime_control_plane_env_transaction.py`：动态覆盖五份 env 各阶段
   staging/publish 故障、后验故障、原内容与 mode/uid/gid/不存在状态恢复及 release/hash fence。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
   实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue

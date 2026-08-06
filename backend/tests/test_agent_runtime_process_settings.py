@@ -120,11 +120,14 @@ print(json.dumps({
 
 def test_runtime_systemd_blocks_current_and_legacy_dotenv_paths() -> None:
     unit = UNIT.read_text()
-    assert (
-        "InaccessiblePaths=-/var/www/everydayai/backend/.env "
-        "-/var/www/everydayai/backend/.env.kek "
-        "-/etc/everydayai/agent-runtime-model.env"
-    ) in unit
+    for path in (
+        "/var/www/everydayai/backend/.env",
+        "/var/www/everydayai/backend/.env.kek",
+        "/etc/everydayai/agent-model-gateway.env",
+        "/etc/everydayai/agent-model-gateway-kek.env",
+        "/etc/everydayai/agent-runtime-model.env",
+    ):
+        assert f"-{path}" in unit
 
 
 COMMON_FIELDS = {
@@ -227,18 +230,20 @@ print(json.dumps({
 
 
 def test_all_worker_units_block_application_secret_files() -> None:
-    inaccessible = (
-        "InaccessiblePaths=-/var/www/everydayai/backend/.env "
-        "-/var/www/everydayai/backend/.env.kek "
-        "-/etc/everydayai/agent-runtime-model.env"
-    )
     for name in (
         "everydayai-agent-runtime.service",
         "everydayai-agent-projection.service",
         "everydayai-agent-authorization.service",
         "everydayai-sandbox-worker.service",
     ):
-        assert inaccessible in (ROOT / "deploy" / name).read_text()
+        unit = (ROOT / "deploy" / name).read_text()
+        assert "InaccessiblePaths=" in unit
+        for path in (
+            "/var/www/everydayai/backend/.env",
+            "/var/www/everydayai/backend/.env.kek",
+            "/etc/everydayai/agent-runtime-model.env",
+        ):
+            assert f"-{path}" in unit
 
 
 def test_projection_and_authorization_templates_are_narrow() -> None:

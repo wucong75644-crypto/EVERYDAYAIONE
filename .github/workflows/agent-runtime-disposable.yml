@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/agent-runtime-disposable.yml"
       - "backend/agent_runtime_worker_main.py"
+      - "backend/agent_model_gateway_main.py"
       - "backend/api/routes/message_chat_preparation.py"
       - "backend/core/config.py"
       - "backend/core/redis.py"
@@ -24,11 +25,16 @@ on:
       - "deploy/env-templates/sandbox-worker.env.template"
       - "deploy/*.sh"
       - "deploy/provision-control-plane-worker-envs.py"
+      - "deploy/control_plane_env_source.py"
+      - "deploy/bootstrap-agent-model-gateway-role.sh"
       - "deploy/DEPLOYMENT.md"
       - "docs/database/MIGRATION_GUIDE.md"
       - "docs/PROJECT_OVERVIEW.md"
+      - "docs/FUNCTION_INDEX.md"
+      - "docs/AGENT_RUNTIME_PRODUCTION_RUNBOOK.md"
       - "docs/document/AR17_STAGING_PROVISIONING.md"
       - "scripts/check_task_change.py"
+      - "scripts/run_agent_model_gateway_disposable.sh"
 
 permissions:
   contents: read
@@ -39,7 +45,7 @@ concurrency:
 
 jobs:
   disposable-runtime:
-    name: C6 Disposable Freeze Candidate
+    name: C7 BG5 Disposable Flags-off Candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -49,6 +55,7 @@ jobs:
       RUN_AR17_1_DB_TEST: "1"
       AGENT_RUNTIME_INGRESS_ENABLED: "false"
       AGENT_RUNTIME_PRODUCTION_ENABLED: "false"
+      AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED: "false"
 
     steps:
       - name: Check out candidate
@@ -60,6 +67,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
           test "$AGENT_RUNTIME_PRODUCTION_ENABLED" = false
+          test "$AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED" = false
 
       - name: Configure disposable Python environment
         run: echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/ar17-pyc" >> "$GITHUB_ENV"
@@ -88,6 +96,12 @@ jobs:
 
       - name: Prepare evidence directory
         run: mkdir -p "$RUNNER_TEMP/ar17-evidence"
+
+      - name: Run unified Model Gateway disposable acceptance
+        run: |
+          set -euo pipefail
+          scripts/run_agent_model_gateway_disposable.sh all \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/model-gateway-bg5.log"
 
       - name: Run Runtime correction and unit contracts
         run: |
@@ -184,6 +198,7 @@ jobs:
           set -euo pipefail
           {
             python -m compileall -q \
+              backend/agent_model_gateway_main.py \
               backend/agent_runtime_worker_main.py \
               backend/services/agent/runtime
             pytest -q \
@@ -203,6 +218,7 @@ jobs:
             git diff --check
             python scripts/check_task_change.py --files \
               .github/workflows/agent-runtime-disposable.yml \
+              backend/agent_model_gateway_main.py \
               docs/document/AR17_STAGING_PROVISIONING.md \
               backend/agent_runtime_worker_main.py \
               backend/core/config.py \
@@ -233,11 +249,20 @@ jobs:
               deploy/check-agent-runtime-unit-states.sh \
               deploy/check-control-plane-unit-manifest.sh \
               deploy/provision-control-plane-worker-envs.py \
+              deploy/bootstrap-agent-model-gateway-role.sh \
+              deploy/control_plane_env_source.py \
+              deploy/everydayai-agent-model-gateway.service \
+              deploy/env-templates/agent-model-gateway.env.template \
+              deploy/env-templates/agent-model-gateway-kek.env.template \
               deploy/update-control-plane-units.sh \
               deploy/deploy.sh \
               deploy/release.sh \
               backend/tests/test_agent_runtime_control_plane_update.py \
+              backend/tests/test_agent_runtime_control_plane_release.py \
               backend/tests/test_agent_runtime_control_plane_env_transaction.py \
+              backend/tests/test_agent_runtime_model_gateway_deploy.py \
+              backend/tests/test_agent_runtime_model_gateway_e2e_postgres_external.py \
+              scripts/run_agent_model_gateway_disposable.sh \
               deploy/run-migrations.sh
           } 2>&1 | tee "$RUNNER_TEMP/ar17-evidence/security-quality.log"
 
@@ -245,7 +270,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "result=${{ job.status == 'success' && 'C6 Disposable Freeze Candidate Verified' || 'C6 Disposable Freeze Candidate Not Verified' }}"
+            echo "result=${{ job.status == 'success' && 'C7 BG5 Disposable Flags-off Candidate Verified' || 'C7 BG5 Disposable Flags-off Candidate Not Verified' }}"
             echo "verification_scope=local disposable CI contract only"
             echo "staging_verified=false"
             echo "production_verified=false"
