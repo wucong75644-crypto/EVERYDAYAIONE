@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Mapping
 
+from services.adapters.google.models import GoogleContentFilterError
 from services.agent.runtime.infrastructure.model.projection import provider_kwargs
 from services.agent.runtime.infrastructure.model.response import ResponseAccumulator
 from services.agent.runtime.ports.model import (
@@ -15,9 +16,6 @@ from services.agent.runtime.ports.model import (
     ProviderAttemptOutcome,
     ProviderAttemptReceipt,
 )
-
-
-_UNKNOWN_HTTP_STATUS_CODES = frozenset({429, 502, 503, 504})
 
 
 @dataclass(frozen=True)
@@ -90,16 +88,15 @@ async def iterate_provider_stream(
     except ProviderStreamError:
         raise
     except Exception as error:
-        if type(error).__name__ == "GoogleContentFilterError":
+        if isinstance(error, GoogleContentFilterError):
             accumulator.finish_reason = "content_filter"
         else:
             status_code = _status_code(error)
             raise ProviderStreamError(
-                unknown=(
-                    _is_timeout_error(error)
-                    or response_seen
-                    or status_code in _UNKNOWN_HTTP_STATUS_CODES
-                ),
+                # The Provider call has crossed the dispatch boundary. No
+                # current adapter supplies typed proof that an HTTP rejection
+                # happened before the Provider could execute the request.
+                unknown=True,
                 status_code=status_code,
                 response_started=response_seen,
                 provider_request_id=provider_request_id,
@@ -207,17 +204,6 @@ def _provider_request_id(chunk: Any) -> str | None:
 def _status_code(error: Exception) -> int | None:
     value = getattr(error, "status_code", None)
     return value if isinstance(value, int) else None
-
-
-def _is_timeout_error(error: BaseException) -> bool:
-    current: BaseException | None = error
-    while current is not None:
-        if isinstance(current, (TimeoutError, asyncio.TimeoutError)):
-            return True
-        if "timeout" in type(current).__name__.lower():
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def _token_value(chunk: Any, field_name: str) -> int:

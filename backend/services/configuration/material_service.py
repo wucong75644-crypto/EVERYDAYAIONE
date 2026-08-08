@@ -30,6 +30,24 @@ class SecretMaterialService:
     def __init__(self, provider: KeyEncryptionProvider) -> None:
         self._provider = provider
 
+    def __repr__(self) -> str:
+        return "SecretMaterialService(<redacted>)"
+
+    def __getstate__(self) -> Mapping[str, object]:
+        raise TypeError("SECRET_MATERIAL_SERVICE_NOT_SERIALIZABLE")
+
+    def __reduce__(self) -> object:
+        raise TypeError("SECRET_MATERIAL_SERVICE_NOT_SERIALIZABLE")
+
+    def __reduce_ex__(self, _protocol: int) -> object:
+        raise TypeError("SECRET_MATERIAL_SERVICE_NOT_SERIALIZABLE")
+
+    def __copy__(self) -> "SecretMaterialService":
+        raise TypeError("SECRET_MATERIAL_SERVICE_NOT_COPYABLE")
+
+    def __deepcopy__(self, _memo: object) -> "SecretMaterialService":
+        raise TypeError("SECRET_MATERIAL_SERVICE_NOT_COPYABLE")
+
     def encrypt_payload(
         self,
         *,

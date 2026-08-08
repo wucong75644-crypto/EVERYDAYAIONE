@@ -19,7 +19,6 @@ from services.agent.runtime.infrastructure.model import (
 from services.agent.runtime.ports import (
     ModelCallUnknownError,
     ModelInputReceipt,
-    ModelProviderError,
     ModelRequestOptions,
     ModelStepRequest,
 )
@@ -302,13 +301,13 @@ async def test_429_does_not_redispatch_without_typed_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_failure_is_not_unknown() -> None:
+async def test_http_rejection_without_nonexecution_proof_is_unknown() -> None:
     adapter = FakeAdapter([ProviderFailure(400)])
 
-    with pytest.raises(ModelProviderError) as caught:
+    with pytest.raises(ModelCallUnknownError) as caught:
         await _port([adapter]).complete(_request())
 
-    assert caught.value.attempts[0].outcome == "failed"
+    assert caught.value.attempts[0].outcome == "unknown"
     assert caught.value.attempts[0].status_code == 400
 
 

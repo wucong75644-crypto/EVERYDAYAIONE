@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import pickle
 
@@ -95,6 +96,31 @@ async def test_existing_scope_fallback_projection_decrypts_only_in_consumer(
     assert result == [{"status": "used"}]
     public = json.dumps(result) + repr(consumer) + repr(result) + pickle.dumps(result).hex()
     assert SECRET not in public
+
+
+def test_kek_holders_reject_pickle_copy_and_json_without_exposing_raw_kek() -> None:
+    raw_kek = bytes(range(32))
+    provider = LocalKEKProvider(
+        current_version="v1", keyring={"v1": raw_kek},
+    )
+    material_service = SecretMaterialService(provider)
+    consumer = GatewaySecretBundleConsumer(material_service)
+
+    with pytest.raises(TypeError, match="GATEWAY_SECRET_CONSUMER_NOT_SERIALIZABLE") as caught:
+        pickle.dumps(consumer)
+    assert raw_kek not in pickle.dumps(caught.value)
+
+    for holder in (provider, material_service, consumer):
+        assert raw_kek not in repr(holder).encode()
+        with pytest.raises(TypeError, match="NOT_COPYABLE"):
+            copy.copy(holder)
+        with pytest.raises(TypeError, match="NOT_COPYABLE"):
+            copy.deepcopy(holder)
+        with pytest.raises(TypeError):
+            json.dumps(holder)
+        with pytest.raises(TypeError, match="NOT_SERIALIZABLE") as error:
+            pickle.dumps(holder)
+        assert raw_kek not in pickle.dumps(error.value)
 
 
 @pytest.mark.asyncio

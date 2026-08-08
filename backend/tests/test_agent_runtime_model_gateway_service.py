@@ -341,12 +341,18 @@ async def test_claim_dispatch_stream_finalize_and_close_exact_order() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("events", "status"),
-    (([ProviderFailure(400)], "failed"),
-     ([StreamChunk(content="partial"), ProviderFailure(503)], "unknown")),
+    ("events", "response_started"),
+    (
+        ([ConnectionResetError("reset before first response")], False),
+        ([asyncio.IncompleteReadError(partial=b"", expected=1)], False),
+        ([TimeoutError("timeout before first response")], False),
+        ([ProviderFailure(400)], False),
+        ([StreamChunk(content="partial"), ProviderFailure(503)], True),
+        ([StreamChunk(content="partial"), ValueError("invalid frame")], True),
+    ),
 )
-async def test_provider_failure_is_persisted_before_stable_terminal(
-    events: list[object], status: str,
+async def test_postdispatch_failures_are_unknown_and_reconcile_only(
+    events: list[object], response_started: bool,
 ) -> None:
     request = _request()
     repository = FakeRepository(request, _bundle())
@@ -354,8 +360,11 @@ async def test_provider_failure_is_persisted_before_stable_terminal(
 
     frames = [frame async for frame in service.complete(request)]
 
-    assert frames[-1]["type"] == status
-    assert repository.finalize_calls[-1]["terminal_status"] == status
+    assert frames[-1]["type"] == "unknown"
+    assert frames[-1]["reconcile_only"] is True
+    assert frames[-1]["response_started"] is response_started
+    assert repository.finalize_calls[-1]["terminal_status"] == "unknown"
+    assert repository.finalize_calls[-1]["terminal_error_code"] is None
     assert repository.timeline.index("mark_dispatched") < repository.timeline.index("provider_call")
     assert repository.timeline.index("finalize") < repository.timeline.index("adapter_close")
     assert adapters[0].closed
@@ -363,9 +372,11 @@ async def test_provider_failure_is_persisted_before_stable_terminal(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ("decrypt", "builder"))
+@pytest.mark.parametrize("failure", ("validation", "decrypt", "builder"))
 async def test_predispatch_failure_fact_precedes_failed_frame(failure: str) -> None:
     request = _request()
+    if failure == "validation":
+        request["input"]["options"]["max_provider_attempts"] = 2
     bundle = _bundle(_material(9)) if failure == "decrypt" else _bundle()
     repository = FakeRepository(request, bundle)
     service, _ = _service(

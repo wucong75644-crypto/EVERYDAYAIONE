@@ -345,31 +345,25 @@ class ModelGatewayService:
     async def _finalize_stream_failure(
         self, fence: Mapping[str, object], error: ProviderStreamError,
     ) -> Mapping[str, object]:
-        status = "unknown" if error.unknown else "failed"
-        code = (
-            "GATEWAY_PROVIDER_OUTCOME_UNKNOWN"
-            if error.unknown else "GATEWAY_PROVIDER_FAILED"
-        )
+        code = "GATEWAY_PROVIDER_OUTCOME_UNKNOWN"
         response = await self._db_call(self._repository.finalize(
             **fence,
-            terminal_status=status,
+            terminal_status="unknown",
             provider_request_id=error.provider_request_id,
             response_started=error.response_started,
             response_hash=None,
             usage_summary={},
-            terminal_error_code=code if status == "failed" else None,
-            ambiguity_code=code if status == "unknown" else None,
+            terminal_error_code=None,
+            ambiguity_code=code,
         ))
         operation = _mapping(response.get("operation"))
-        if response.get("outcome") not in {status, "readback"}:
+        if response.get("outcome") not in {"unknown", "readback"}:
             raise GatewayConnectionAbort
-        if operation.get("status") != status:
+        if operation.get("status") != "unknown":
             raise GatewayConnectionAbort
-        if status == "unknown":
-            return _unknown(
-                code, error.response_started, error.provider_request_id,
-            )
-        return _failed(code)
+        return _unknown(
+            code, error.response_started, error.provider_request_id,
+        )
 
     async def _finalize_cancelled(
         self, fence: Mapping[str, object], *, response_started: bool,

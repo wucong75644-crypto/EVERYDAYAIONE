@@ -49,6 +49,24 @@ class GatewaySecretBundleConsumer:
         self._material_service = material_service
         self._resolver = EffectiveConfigResolver()
 
+    def __repr__(self) -> str:
+        return "GatewaySecretBundleConsumer(<redacted>)"
+
+    def __getstate__(self) -> Mapping[str, object]:
+        raise TypeError("GATEWAY_SECRET_CONSUMER_NOT_SERIALIZABLE")
+
+    def __reduce__(self) -> object:
+        raise TypeError("GATEWAY_SECRET_CONSUMER_NOT_SERIALIZABLE")
+
+    def __reduce_ex__(self, _protocol: int) -> object:
+        raise TypeError("GATEWAY_SECRET_CONSUMER_NOT_SERIALIZABLE")
+
+    def __copy__(self) -> "GatewaySecretBundleConsumer":
+        raise TypeError("GATEWAY_SECRET_CONSUMER_NOT_COPYABLE")
+
+    def __deepcopy__(self, _memo: object) -> "GatewaySecretBundleConsumer":
+        raise TypeError("GATEWAY_SECRET_CONSUMER_NOT_COPYABLE")
+
     async def consume(
         self,
         encrypted_bundle: object,

@@ -19,7 +19,6 @@ from services.agent.runtime.infrastructure.model import (
 from services.agent.runtime.ports import (
     ModelCallUnknownError,
     ModelInputReceipt,
-    ModelProviderError,
     ModelRequestOptions,
     ModelStepRequest,
 )
@@ -205,16 +204,16 @@ async def test_success_is_preserved_when_close_self_cancels() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_error_is_preserved_when_close_fails() -> None:
+async def test_provider_ambiguity_is_preserved_when_close_fails() -> None:
     adapter = AuditAdapter(
         [ProviderFailure(400)],
         close_behavior=_close_error,
     )
 
-    with pytest.raises(ModelProviderError) as caught:
+    with pytest.raises(ModelCallUnknownError) as caught:
         await _port([adapter]).complete(_request())
 
-    assert caught.value.attempts[0].outcome == "failed"
+    assert caught.value.attempts[0].outcome == "unknown"
     assert adapter.close_attempts == 1
 
 
