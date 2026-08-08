@@ -190,7 +190,7 @@ def _normalize_chunk(
     if provider_request_id:
         metadata["provider_request_id"] = provider_request_id
     if chunk.finish_reason:
-        metadata["finish_reason"] = str(chunk.finish_reason)
+        metadata["provider_stop_reason"] = str(chunk.finish_reason)
     if metadata:
         deltas.append(NormalizedStreamDelta("provider_metadata", metadata))
     return tuple(deltas)

@@ -116,11 +116,11 @@ Gateway unit只加载：
 仍为 socket group。Gateway 不加载 Backend `.env`、Runtime worker env 或 Provider API key env。
 Gateway KEK env 由现有 `.env.kek` 的已验证值事务性派生，不创建第二份密钥语义；部署脚本不得打印值。Gateway 仅允许读取代码、这两份 env、自己的 `/run` 与必要证书；`ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`、`NoNewPrivileges=true`、`PrivateDevices=true`、`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`、`RestrictSUIDSGID=true`、`LockPersonality=true`。其网络只用于专用 PostgreSQL 与已配置模型 Provider HTTPS；生产主机防火墙/egress allowlist 是部署门禁，不在应用中复制网络控制面。
 
-## 4. UDS 协议 v1
+## 4. UDS 协议 v2
 
 ### 4.1 帧与限制
 
-协议名固定为 `agent-model-gateway.v1`。每帧为：
+协议名固定为 `agent-model-gateway.v2`。v2 是未部署内部严格协议的唯一合法版本；Runtime、Gateway、health 与测试必须同步升级，v1 frame 严格拒绝，不提供双协议兼容。每帧为：
 
 ```text
 4-byte unsigned big-endian payload length
@@ -142,7 +142,7 @@ UTF-8 JSON object
 
 ```json
 {
-  "version": "agent-model-gateway.v1",
+  "version": "agent-model-gateway.v2",
   "type": "request",
   "operation": "model.complete",
   "request_id": "uuid",
@@ -179,8 +179,8 @@ Socket 字段不是授权事实。Gateway 必须把全部身份交给 claim RPC�
 响应帧公共字段为 `version/request_id/sequence/type`。合法类型：
 
 - `accepted`：DB operation id、`claimed` 或 `readback`，证明 Gateway 已接管；不包含 SecretReference。
-- `delta`：规范化 `text_delta/tool_call_delta/usage_delta/provider_metadata`，provider metadata 只允许白名单 request id 和 finish reason。
-- `completed`：规范化 ModelStep result、usage、finish reason、provider request id、response hash 和 operation state version。
+- `delta`：规范化 `text_delta/tool_call_delta/usage_delta/provider_metadata`，provider metadata 只允许白名单 request id 和 nullable provider stop reason。
+- `completed`：承载 canonical `stop_reason`、nullable `provider_stop_reason`、规范化 output、完整公开 usage、provider request id、response hash 和 operation state version。每个 tool call 分别承载 Runtime `call_id` 与 nullable `provider_call_id`，不得把派生 Runtime id 冒充 Provider id。
 - `failed`：仅稳定 error code、retry class=`terminal` 与脱敏摘要。
 - `unknown`：ambiguity kind、response_started、provider request id（如有）与 `reconcile_only=true`。
 
@@ -191,6 +191,8 @@ Runtime 断连处理：
 - 未收到 `accepted` 且 DB readback 证明 operation 尚未 claim/dispatch：可由同一 ModelAttempt、同一 request id 再次连接。
 - 已 `accepted` 或 DB 状态为 `dispatching` 后断连：Runtime 写 `UNKNOWN`，只允许 readback/reconcile。
 - `completed/failed/unknown` frame 丢失：Runtime 用 request id 调用只读 RPC；不得创建新 request id。
+
+Runtime 以 v2 `stop_reason` 直接构造 `ModelStepResult`，不再从 Provider reason 重新推断，并按 domain 合同核对 stop reason 与 output/tool 结构。唯一 canonical response hash helper 同时由 Gateway 与 Runtime 使用，绑定 canonical stop reason、nullable Provider stop reason、output、tool call 的两类 id/name/arguments 及全部 `ModelUsage` 字段。Runtime 使用 DB reasoning usage 与 UDS 公开 usage 重建结果后重新计算 hash，并要求 wire hash、DB operation hash、重算 hash 三方一致；任一协议字段或 DB 事实不一致均收敛为 `UNKNOWN`，不普通重派。
 
 ## 5. 数据库事实、角色与 RPC
 

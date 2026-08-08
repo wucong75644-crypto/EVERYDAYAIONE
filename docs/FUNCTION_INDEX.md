@@ -93,7 +93,7 @@
 | `get_agent_runtime_session` / `replay_agent_runtime_events` / `get_agent_runtime_run_claim` / `get_claimed_agent_projection_event` | `backend/migrations/216_agent_runtime_read_projection_capabilities.sql` | 提供无核心表直权的 scoped read/readback 能力；system Scope 仅 actorless Worker 可读 |
 | `ExistingProviderModelAdapter.complete` | `backend/services/agent/runtime/infrastructure/model/adapter.py` | 校验冻结 ModelStep 请求后调用共享 Secret-free stream consumer；本地 adapter 必须显式注入，Runtime 默认构造路径失败关闭并等待 BG4 Gateway client composition |
 | `compute_request_hash` / `resolve_model_revision` / `validate_request_projection` | `backend/services/agent/runtime/infrastructure/model/projection.py` | 生成不含正文和 Secret 的稳定请求摘要，并在 Provider IO 前校验模型 revision、ContextPlan 和请求 hash |
-| `ResponseAccumulator.add/complete` / `map_stop_reason` | `backend/services/agent/runtime/infrastructure/model/response.py` | 聚合文本、Tool Call 和累计 usage，生成稳定 Tool Call ID、脱敏 response receipt 及闭合 StopReason |
+| `ResponseAccumulator.add/complete` / `map_stop_reason` / `canonical_response_hash` | `backend/services/agent/runtime/infrastructure/model/response.py` | 聚合文本、Tool Call 和累计 usage，生成稳定 Tool Call ID、脱敏 response receipt 及闭合 StopReason；唯一 canonical hash 绑定 stop/provider stop、output、两类 Tool Call ID 与全部 usage |
 
 ### Agent Runtime AR-11 ModelAttempt 与唯一计费
 
@@ -2040,9 +2040,9 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `AgentDefinition` / `AgentDefinitionRegistry` / `RuntimeVersionRegistry` | `backend/services/agent/runtime/agents/`、`catalog/registry.py` | 不可变版本事实解析；入口使用同一 Agent/Catalog registry，历史 Run 由 PostgreSQL facts 恢复 |
 | `RuntimeToolCatalog` / `RuntimeToolCatalogRegistry` / `EffectiveToolset` | `backend/services/agent/runtime/catalog/` | Executor-backed 版本目录与 scope/channel/entitlement/authorization 交集；未注册 Executor 不进入模型工具集 |
 | `build_safe_read_registry` / `build_safe_read_catalog` / `build_safe_read_snapshot` | `backend/services/agent/runtime/catalog/safe_read_release.py` | C7-B3.2-A 从 Read Descriptor SSOT 确定性冻结 17 项安全只读 release；保留既有 user/channel scope 过滤 |
-| `encode_frame` / `decode_payload` / `read_frame` / `validate_request` / `validate_response` | `backend/services/agent/runtime/model_gateway/protocol.py` | Model Gateway UDS v1 的 4-byte big-endian framing、严格字段/大小/序列/Secret 边界与稳定错误码 |
+| `encode_frame` / `decode_payload` / `read_frame` / `validate_request` / `validate_response` | `backend/services/agent/runtime/model_gateway/protocol.py` | Model Gateway UDS v2 的 4-byte big-endian framing、canonical result、严格字段/大小/序列/Secret 边界与稳定错误码；v1 严格拒绝 |
 | `IsolatedModelGatewayClient.complete` | `backend/services/agent/runtime/model_gateway/client.py` | BG1 每连接一次请求的本地 UDS 流消费、超时、累计响应和 terminal 后额外 frame 门禁；永不 production-ready |
-| `ModelGatewayClient.complete` | `backend/services/agent/runtime/model_gateway/runtime_client.py` | BG4 production ModelPort：从 227_20 durable binding 构造 Secret-free UDS 请求，严格消费 terminal，并以 scoped DB readback 将 completed/failed/UNKNOWN 映射回 Runtime Owner |
+| `ModelGatewayClient.complete` | `backend/services/agent/runtime/model_gateway/runtime_client.py` | BG4 production ModelPort：从 227_20 durable binding 构造 Secret-free UDS 请求，以 canonical stop reason 重建结果并核对 DB/wire/Runtime 三方 hash，将不一致收敛为 UNKNOWN |
 | `start_gateway_dispatch` | `backend/services/agent/runtime/application/model_gateway_dispatch.py` | BG4 ModelLoop 显式 Gateway 分支：为同一 Attempt 确定性生成 request id，调用 227_20 atomic dispatch，并仅从返回 receipt 附加 durable binding |
 | `build_production_model_gateway_components` | `backend/services/agent/runtime/production_factory.py` | BG4 显式 flags/socket/scoped repository/Gateway health 的失败关闭组装；不提供 legacy Provider fallback，整体 production_ready 保持 false |
 | `FakeModelGatewayServer` / `LinuxPeerCredentialVerifier.verify` | `backend/services/agent/runtime/model_gateway/server.py` | BG1 隔离 fake server、安全 socket 生命周期与可注入 peer credential 验证；Linux production verifier 使用 SO_PEERCRED |

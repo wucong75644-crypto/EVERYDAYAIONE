@@ -52,13 +52,16 @@ async def complete_handler(request):
     yield {"type": "delta", "delta_kind": "text", "delta": {"text": "hello"}}
     yield {
         "type": "delta", "delta_kind": "tool_call",
-        "delta": {"index": 0, "id": "call-1", "name": "safe_read", "arguments": "{}"},
+        "delta": {"index": 0, "id": "provider-call-1", "name": "safe_read", "arguments": "{}"},
     }
     yield {"type": "delta", "delta_kind": "usage", "delta": {"input_tokens": 2, "output_tokens": 3}}
     yield {
         "type": "completed", "text": "hello",
-        "tool_calls": [{"index": 0, "id": "call-1", "name": "safe_read", "arguments": "{}"}],
-        "usage": {"input_tokens": 2, "output_tokens": 3}, "finish_reason": "tool_calls",
+        "tool_calls": [{"index": 0, "call_id": "call-1",
+                        "provider_call_id": "provider-call-1",
+                        "name": "safe_read", "arguments": "{}"}],
+        "usage": {"input_tokens": 2, "output_tokens": 3},
+        "stop_reason": "tool_calls", "provider_stop_reason": "tool_calls",
         "provider_request_id": "provider-1", "response_hash": "c" * 64,
         "operation_state_version": 2,
     }
@@ -110,7 +113,8 @@ async def test_concurrent_clients_do_not_cross_streams(socket_dir: Path) -> None
         await asyncio.sleep(0)
         yield {
             "type": "completed", "text": request["worker_id"], "tool_calls": [], "usage": {},
-            "finish_reason": "stop", "provider_request_id": None, "response_hash": "d" * 64,
+            "stop_reason": "final", "provider_stop_reason": "stop",
+            "provider_request_id": None, "response_hash": "d" * 64,
             "operation_state_version": 1,
         }
 
@@ -171,7 +175,8 @@ async def test_connect_first_frame_and_provider_deadlines(socket_dir: Path) -> N
         await asyncio.sleep(0.05)
         yield {
             "type": "completed", "text": "", "tool_calls": [], "usage": {},
-            "finish_reason": "stop", "provider_request_id": None, "response_hash": "f" * 64,
+            "stop_reason": "protocol_error", "provider_stop_reason": "stop",
+            "provider_request_id": None, "response_hash": "f" * 64,
             "operation_state_version": 1,
         }
 
@@ -209,7 +214,8 @@ async def test_response_limit_and_backpressure_are_failure_closed(socket_dir: Pa
             yield {"type": "delta", "delta_kind": "text", "delta": {"text": "x" * 4096}}
         yield {
             "type": "completed", "text": "", "tool_calls": [], "usage": {},
-            "finish_reason": "stop", "provider_request_id": None, "response_hash": "e" * 64,
+            "stop_reason": "protocol_error", "provider_stop_reason": "stop",
+            "provider_request_id": None, "response_hash": "e" * 64,
             "operation_state_version": 1,
         }
 

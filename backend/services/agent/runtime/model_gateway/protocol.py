@@ -1,4 +1,4 @@
-"""Strict, secret-free framing and validation for model gateway UDS v1."""
+"""Strict, secret-free framing and validation for model gateway UDS v2."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
-VERSION = "agent-model-gateway.v1"
+from services.agent.runtime.domain import StopReason
+
+VERSION = "agent-model-gateway.v2"
 PRODUCTION_READY = False
 RESPONSE_FRAME_LIMIT = 1024 * 1024
 REQUEST_FRAME_LIMIT = 4 * RESPONSE_FRAME_LIMIT
@@ -41,8 +43,8 @@ _RESPONSE_FIELDS = {
     "accepted": _COMMON_RESPONSE | {"operation_id", "status"},
     "delta": _COMMON_RESPONSE | {"delta_kind", "delta"},
     "completed": _COMMON_RESPONSE | {
-        "text", "tool_calls", "usage", "finish_reason", "provider_request_id",
-        "response_hash", "operation_state_version",
+        "text", "tool_calls", "usage", "stop_reason", "provider_stop_reason",
+        "provider_request_id", "response_hash", "operation_state_version",
     },
     "failed": _COMMON_RESPONSE | {"error_code", "retry_class", "summary"},
     "unknown": _COMMON_RESPONSE | {
@@ -51,12 +53,15 @@ _RESPONSE_FIELDS = {
     },
 }
 _DELTA_KINDS = frozenset({"text", "tool_call", "usage", "provider_metadata"})
-_PROVIDER_METADATA_FIELDS = frozenset({"provider_request_id", "finish_reason"})
+_PROVIDER_METADATA_FIELDS = frozenset({"provider_request_id", "provider_stop_reason"})
 _TOOL_CALL_DELTA_FIELDS = frozenset({"index", "id", "name", "arguments"})
 _USAGE_DELTA_FIELDS = frozenset({
     "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "credits_minor",
 })
-_COMPLETED_TOOL_CALL_FIELDS = frozenset({"index", "id", "name", "arguments"})
+_COMPLETED_TOOL_CALL_FIELDS = frozenset({
+    "index", "call_id", "provider_call_id", "name", "arguments",
+})
+_STOP_REASONS = frozenset(reason.value for reason in StopReason)
 _STABLE_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,127}$")
 
 
@@ -225,7 +230,12 @@ def validate_response(value: Any, *, request_id: str, expected_sequence: int) ->
         _validate_completed_tool_calls(value["tool_calls"])
         _validate_usage(value["usage"], "GATEWAY_INVALID_COMPLETED_USAGE", allow_empty=True)
         _text(value["text"], "GATEWAY_INVALID_COMPLETED_RESULT", allow_empty=True)
-        _text(value["finish_reason"], "GATEWAY_INVALID_FINISH_REASON", maximum_bytes=256)
+        if value["stop_reason"] not in _STOP_REASONS:
+            _fail("GATEWAY_INVALID_STOP_REASON")
+        _optional_text(
+            value["provider_stop_reason"], "GATEWAY_INVALID_PROVIDER_STOP_REASON",
+            maximum_bytes=256,
+        )
         _optional_text(
             value["provider_request_id"], "GATEWAY_INVALID_PROVIDER_REQUEST_ID", maximum_bytes=512,
         )
@@ -292,16 +302,20 @@ def _validate_completed_tool_calls(value: Any) -> None:
             call, _COMPLETED_TOOL_CALL_FIELDS, "GATEWAY_INVALID_COMPLETED_TOOL_CALLS",
         )
         _integer(call["index"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS")
-        _text(call["id"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS", maximum_bytes=512)
+        _text(call["call_id"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS", maximum_bytes=512)
+        _optional_text(
+            call["provider_call_id"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS",
+            maximum_bytes=512,
+        )
         _text(call["name"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS", maximum_bytes=256)
         _text(
             call["arguments"], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS",
             allow_empty=True, maximum_bytes=MAX_STRING_BYTES,
         )
-        if call["index"] in indices or call["id"] in identifiers:
+        if call["index"] in indices or call["call_id"] in identifiers:
             _fail("GATEWAY_INVALID_COMPLETED_TOOL_CALLS")
         indices.add(call["index"])
-        identifiers.add(call["id"])
+        identifiers.add(call["call_id"])
 
 
 def encode_frame(value: Mapping[str, Any], *, limit: int = RESPONSE_FRAME_LIMIT) -> bytes:

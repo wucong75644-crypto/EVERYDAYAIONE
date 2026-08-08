@@ -17,6 +17,7 @@ from services.agent.runtime.infrastructure.postgres.model_gateway import Postgre
 from services.agent.runtime.model_gateway.client import IsolatedModelGatewayClient
 from services.agent.runtime.model_gateway.configuration import GatewaySecretBundleConsumer
 from services.agent.runtime.model_gateway.provider import GatewayProviderExecutor
+from services.agent.runtime.model_gateway.protocol import VERSION
 from services.agent.runtime.model_gateway.server import FakeModelGatewayServer
 from services.agent.runtime.model_gateway.service import ModelGatewayService
 from services.configuration.envelope import LocalKEKProvider
@@ -109,7 +110,7 @@ def _prepare_attempt(url: str) -> tuple[dict[str, object], dict[str, object]]:
     ))
     assert started["outcome"] == "dispatching"
     request = {
-        "version": "agent-model-gateway.v1", "type": "request",
+        "version": VERSION, "type": "request",
         "operation": "model.complete", "request_id": str(ids["request"]),
         "org_id": str(ORG), "user_id": str(ORG_USER), "run_id": str(ids["run"]),
         "model_step_id": str(ids["step"]), "model_attempt_id": str(ids["attempt"]),

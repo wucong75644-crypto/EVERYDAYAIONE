@@ -20,6 +20,7 @@ from services.agent.runtime.model_gateway.provider import GatewayProviderExecuto
 from services.agent.runtime.model_gateway.service import (
     ModelGatewayService,
 )
+from services.agent.runtime.model_gateway.protocol import VERSION
 
 
 SECRET = "gateway-provider-secret-77a1"
@@ -81,7 +82,7 @@ def _request(*, timeout: float = 1.0) -> dict[str, object]:
         ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     ).encode()).hexdigest()
     return {
-        "version": "agent-model-gateway.v1", "type": "request",
+        "version": VERSION, "type": "request",
         "operation": "model.complete", "request_id": REQUEST_ID,
         "org_id": ORG_ID, "user_id": USER_ID, "run_id": RUN_ID,
         "model_step_id": STEP_ID, "model_attempt_id": ATTEMPT_ID,
@@ -315,6 +316,12 @@ async def test_claim_dispatch_stream_finalize_and_close_exact_order() -> None:
         "finalize", "adapter_close",
     ]
     assert frames[-1]["tool_calls"][0]["arguments"] == '{"id":1}'
+    assert frames[-1]["tool_calls"][0] == {
+        "index": 0, "call_id": "call-1", "provider_call_id": "call-1",
+        "name": "lookup", "arguments": '{"id":1}',
+    }
+    assert frames[-1]["stop_reason"] == "tool_calls"
+    assert frames[-1]["provider_stop_reason"] == "tool_calls"
     assert frames[-1]["usage"] == {
         "input_tokens": 8, "output_tokens": 3,
         "cache_read_tokens": 0, "cache_write_tokens": 0,

@@ -94,3 +94,10 @@ def test_gateway_health_projection_is_strict_and_supports_fragmented_frames(
     )
     with pytest.raises(RuntimeError, match="HEALTH_NOT_READY"):
         _require_gateway_health("/tmp/health.sock", "wrong-release")
+    old_payload = payload.replace(VERSION.encode(), b"agent-model-gateway.v1")
+    monkeypatch.setattr(
+        "services.agent.runtime.production_factory.socket.socket",
+        lambda *_args: FakeHealthSocket((old_payload,)),
+    )
+    with pytest.raises(RuntimeError, match="HEALTH_NOT_READY"):
+        _require_gateway_health("/tmp/health.sock", "release-1")

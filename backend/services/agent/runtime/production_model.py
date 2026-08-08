@@ -9,6 +9,7 @@ from uuid import UUID, uuid5
 
 from services.agent.runtime.application.model_loop import PreparedModelCall
 from services.agent.runtime.context import build_runtime_context, build_context_receipt
+from services.agent.runtime.domain import StopReason
 from services.agent.runtime.catalog import (
     EffectiveToolset, restore_agent_definition, restore_frozen_toolset,
 )
@@ -253,6 +254,8 @@ def _actions(
     validate_schema = toolset is not None
     if toolset is None:
         raise RuntimeError("RUNTIME_VERSION_FACTS_REQUIRED")
+    if getattr(result, "stop_reason", StopReason.TOOL_CALLS) is not StopReason.TOOL_CALLS:
+        return "0" * 64, ()
     actions = []
     for call in result.tool_calls:
         arguments = json.loads(call.arguments_json)

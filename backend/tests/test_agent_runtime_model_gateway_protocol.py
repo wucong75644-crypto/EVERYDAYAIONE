@@ -79,6 +79,7 @@ def test_request_frame_roundtrip_and_fixed_header() -> None:
     [
         (lambda value: value.update(extra=True), "GATEWAY_INVALID_REQUEST_FIELDS"),
         (lambda value: value.update(version="v0"), "GATEWAY_UNSUPPORTED_PROTOCOL"),
+        (lambda value: value.update(version="agent-model-gateway.v1"), "GATEWAY_UNSUPPORTED_PROTOCOL"),
         (lambda value: value.update(type="response"), "GATEWAY_UNSUPPORTED_PROTOCOL"),
         (lambda value: value.update(operation="model.stream"), "GATEWAY_UNSUPPORTED_OPERATION"),
         (lambda value: value.update(request_id="bad"), "GATEWAY_INVALID_REQUEST_ID"),
@@ -174,6 +175,11 @@ def test_response_sequence_id_and_delta_whitelist() -> None:
         "type": "accepted", "operation_id": str(UUID(int=900)), "status": "claimed",
     }
     assert validate_response(accepted, request_id=request_id, expected_sequence=0) == accepted
+    old = deepcopy(accepted)
+    old["version"] = "agent-model-gateway.v1"
+    assert error_code(
+        lambda: validate_response(old, request_id=request_id, expected_sequence=0)
+    ) == "GATEWAY_UNSUPPORTED_PROTOCOL"
     wrong = deepcopy(accepted)
     wrong["sequence"] = 2
     assert error_code(lambda: validate_response(wrong, request_id=request_id, expected_sequence=1)) == "GATEWAY_SEQUENCE_MISMATCH"
@@ -236,7 +242,7 @@ def test_request_and_response_frame_limits_are_distinct() -> None:
         ("usage", {"input_tokens": -1}, "GATEWAY_INVALID_USAGE_DELTA"),
         ("usage", {"raw_tokens": 1}, "GATEWAY_INVALID_USAGE_DELTA"),
         ("provider_metadata", {}, "GATEWAY_INVALID_PROVIDER_METADATA"),
-        ("provider_metadata", {"finish_reason": 1}, "GATEWAY_INVALID_PROVIDER_METADATA"),
+        ("provider_metadata", {"provider_stop_reason": 1}, "GATEWAY_INVALID_PROVIDER_METADATA"),
     ],
 )
 def test_delta_payloads_are_strict(kind: str, delta: object, expected: str) -> None:
@@ -254,15 +260,19 @@ def test_delta_payloads_are_strict(kind: str, delta: object, expected: str) -> N
     ("field", "value", "expected"),
     [
         ("tool_calls", [{"id": "missing-fields"}], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS"),
-        ("tool_calls", [{"index": True, "id": "1", "name": "x", "arguments": "{}"}],
+        ("tool_calls", [{"index": True, "call_id": "1", "provider_call_id": None,
+                          "name": "x", "arguments": "{}"}],
          "GATEWAY_INVALID_COMPLETED_TOOL_CALLS"),
         ("tool_calls", [
-            {"index": 0, "id": "same", "name": "x", "arguments": "{}"},
-            {"index": 1, "id": "same", "name": "y", "arguments": "{}"},
+            {"index": 0, "call_id": "same", "provider_call_id": None,
+             "name": "x", "arguments": "{}"},
+            {"index": 1, "call_id": "same", "provider_call_id": "provider-2",
+             "name": "y", "arguments": "{}"},
         ], "GATEWAY_INVALID_COMPLETED_TOOL_CALLS"),
         ("usage", {"input_tokens": True}, "GATEWAY_INVALID_COMPLETED_USAGE"),
         ("usage", {"raw": 1}, "GATEWAY_INVALID_COMPLETED_USAGE"),
-        ("finish_reason", 4, "GATEWAY_INVALID_FINISH_REASON"),
+        ("stop_reason", "not-stable", "GATEWAY_INVALID_STOP_REASON"),
+        ("provider_stop_reason", 4, "GATEWAY_INVALID_PROVIDER_STOP_REASON"),
         ("provider_request_id", 4, "GATEWAY_INVALID_PROVIDER_REQUEST_ID"),
         ("operation_state_version", True, "GATEWAY_INVALID_STATE_VERSION"),
     ],
@@ -271,7 +281,8 @@ def test_completed_payload_is_strict(field: str, value: object, expected: str) -
     request_id = request_payload()["request_id"]
     response = {
         "version": VERSION, "request_id": request_id, "sequence": 1, "type": "completed",
-        "text": "ok", "tool_calls": [], "usage": {}, "finish_reason": "stop",
+        "text": "ok", "tool_calls": [], "usage": {}, "stop_reason": "final",
+        "provider_stop_reason": "stop",
         "provider_request_id": None, "response_hash": "c" * 64,
         "operation_state_version": 1,
     }

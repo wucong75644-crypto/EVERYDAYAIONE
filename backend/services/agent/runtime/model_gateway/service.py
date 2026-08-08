@@ -28,6 +28,7 @@ from services.agent.runtime.model_gateway.provider import (
     read_error_code,
     validate_durable_operation,
 )
+from services.agent.runtime.model_gateway.protocol import VERSION
 
 
 class GatewayConnectionAbort(asyncio.CancelledError):
@@ -92,7 +93,7 @@ class ModelGatewayService:
             and all(value == "available" for value in summary.values())
         )
         return {
-            "version": "agent-model-gateway.v1",
+            "version": VERSION,
             "release": self._release,
             "ready": ready,
             "draining": self._draining,

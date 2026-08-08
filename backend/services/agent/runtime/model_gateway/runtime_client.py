@@ -9,7 +9,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
 
-from services.agent.runtime.infrastructure.model.response import map_stop_reason
+from services.agent.runtime.domain import StopReason
+from services.agent.runtime.infrastructure.model.response import canonical_response_hash
 from services.agent.runtime.ports.model import (
     ModelCallUnknownError,
     ModelOutput,
@@ -243,34 +244,41 @@ def _completed_result(
     request: ModelStepRequest, binding: ModelGatewayDispatchBinding,
     frame: Mapping[str, Any], operation: Mapping[str, object],
 ) -> ModelStepResult:
-    if (frame["response_hash"] != operation.get("response_hash")
-            or frame["operation_state_version"] != operation.get("state_version")):
+    if frame["operation_state_version"] != operation.get("state_version"):
         raise GatewayProtocolError("GATEWAY_COMPLETED_FACT_MISMATCH")
     db_usage = operation.get("usage_summary")
     if not isinstance(db_usage, Mapping):
         raise GatewayProtocolError("GATEWAY_COMPLETED_USAGE_MISMATCH")
     wire_usage = frame["usage"]
-    if any(wire_usage.get(key, 0) != db_usage.get(key, 0)
-           for key in ("input_tokens", "output_tokens")):
+    db_input = _usage_amount(db_usage, "input_tokens")
+    db_output = _usage_amount(db_usage, "output_tokens")
+    db_reasoning = _usage_amount(db_usage, "reasoning_tokens")
+    if (wire_usage.get("input_tokens", 0) != db_input
+            or wire_usage.get("output_tokens", 0) != db_output
+            or _usage_amount(db_usage, "total_tokens") != db_input + db_output):
         raise GatewayProtocolError("GATEWAY_COMPLETED_USAGE_MISMATCH")
     if frame["provider_request_id"] != operation.get("provider_request_id"):
         raise GatewayProtocolError("GATEWAY_COMPLETED_PROVIDER_ID_MISMATCH")
     usage = ModelUsage(
         input_tokens=wire_usage.get("input_tokens", 0),
         output_tokens=wire_usage.get("output_tokens", 0),
-        reasoning_tokens=int(db_usage.get("reasoning_tokens", 0)),
+        reasoning_tokens=db_reasoning,
         cache_read_tokens=wire_usage.get("cache_read_tokens", 0),
         cache_write_tokens=wire_usage.get("cache_write_tokens", 0),
     )
     calls = tuple(ModelToolCall(
-        index=call["index"], call_id=call["id"], name=call["name"],
-        arguments_json=call["arguments"], provider_call_id=call["id"],
+        index=call["index"], call_id=call["call_id"], name=call["name"],
+        arguments_json=call["arguments"], provider_call_id=call["provider_call_id"],
     ) for call in frame["tool_calls"])
     output = _output(request, frame["text"])
-    stop = map_stop_reason(
-        frame["finish_reason"], has_output=output is not None,
-        has_tool_calls=bool(calls), structured_output=request.options.structured_output,
+    stop = StopReason(frame["stop_reason"])
+    response_hash = canonical_response_hash(
+        stop_reason=stop, provider_stop_reason=frame["provider_stop_reason"],
+        output=output, tool_calls=calls, usage=usage,
     )
+    if (response_hash != frame["response_hash"]
+            or response_hash != operation.get("response_hash")):
+        raise GatewayProtocolError("GATEWAY_COMPLETED_HASH_MISMATCH")
     receipt = ModelResponseReceipt(
         output_kind=output.kind if output else None,
         output_characters=len(output.content) if output else 0,
@@ -279,8 +287,8 @@ def _completed_result(
         provider_request_id=frame["provider_request_id"],
     )
     return ModelStepResult(
-        stop_reason=stop, provider_stop_reason=frame["finish_reason"],
-        response_hash=frame["response_hash"], response_receipt=receipt,
+        stop_reason=stop, provider_stop_reason=frame["provider_stop_reason"],
+        response_hash=response_hash, response_receipt=receipt,
         output=output, tool_calls=calls, usage=usage,
         attempts=(ProviderAttemptReceipt(
             attempt_number=1, provider=binding.provider,
@@ -357,6 +365,13 @@ async def _notify_started(
 
 def _optional_text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _usage_amount(usage: Mapping[str, object], field: str) -> int:
+    value = usage.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise GatewayProtocolError("GATEWAY_COMPLETED_USAGE_MISMATCH")
+    return value
 
 
 def _frame_provider_id(frame: Mapping[str, object]) -> str | None:

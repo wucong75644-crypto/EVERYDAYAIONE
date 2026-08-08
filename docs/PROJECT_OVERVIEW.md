@@ -132,8 +132,10 @@ Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
   production flags 与 `production_ready` 均未开启。
 
 Agent Runtime C7-B3.2-BG1 Model Gateway protocol：
-- `backend/services/agent/runtime/model_gateway/` 定义严格的 UDS v1 framing、请求/响应
+- `backend/services/agent/runtime/model_gateway/` 定义严格的 UDS v2 framing、请求/响应
   校验、可注入 peer credential 验证以及仅供隔离测试使用的 client/fake server。
+- `backend/tests/test_agent_runtime_c7_r2_result_integrity.py` 固定 canonical stop reason、两类
+  tool call id、五项 usage 与 DB/wire/Runtime 三方 response hash 完整性及篡改收敛 UNKNOWN。
 - BG1 不访问数据库、配置 Secret 或 Provider，也不进入 production composition；local harness
   与 fake server 均固定 `production_ready=false`。
 

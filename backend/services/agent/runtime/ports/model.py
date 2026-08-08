@@ -232,6 +232,15 @@ class ModelStepResult:
             raise ValueError("response receipt tool count does not match result")
         if self.stop_reason is StopReason.TOOL_CALLS and not self.tool_calls:
             raise ValueError("tool_calls stop requires tool descriptors")
+        if self.tool_calls and self.stop_reason not in {
+            StopReason.TOOL_CALLS,
+            StopReason.MODEL_REFUSAL,
+        }:
+            raise ValueError("tool descriptors require tool_calls or model_refusal stop")
+        if self.stop_reason is StopReason.FINAL and (
+            self.output is None or self.output.kind is not ModelOutputKind.TEXT
+        ):
+            raise ValueError("final requires text output")
         if self.stop_reason is StopReason.STRUCTURED_FINAL and (
             self.output is None
             or self.output.kind is not ModelOutputKind.STRUCTURED

@@ -120,7 +120,7 @@ def _require_gateway_health(path: str, release: str) -> None:
             "version", "release", "ready", "draining", "dependencies",
             "in_flight", "heartbeat",
         }
-        and health["version"] == "agent-model-gateway.v1"
+        and health["version"] == "agent-model-gateway.v2"
         and health["release"] == release and health["ready"] is True
         and health["draining"] is False and isinstance(dependencies, dict)
         and set(dependencies) == {"db", "kek", "provider_registry", "socket"}

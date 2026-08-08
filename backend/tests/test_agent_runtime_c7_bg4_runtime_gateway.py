@@ -16,12 +16,14 @@ from services.agent.runtime.application.model_loop import (
 )
 from services.agent.runtime.context import ProviderContextPlan
 from services.agent.runtime.domain import ModelStepId, StopReason
+from services.agent.runtime.infrastructure.model.response import canonical_response_hash
 from services.agent.runtime.model_gateway.protocol import GatewayProtocolError, VERSION
 from services.agent.runtime.model_gateway.runtime_client import ModelGatewayClient
 from services.agent.runtime.model_gateway.server import FakeModelGatewayServer
 from services.agent.runtime.ports.model import (
     ModelCallUnknownError, ModelInputReceipt, ModelProviderError,
-    ModelRequestOptions, ModelStepRequest,
+    ModelOutput, ModelOutputKind, ModelRequestOptions, ModelStepRequest,
+    ModelToolCall, ModelUsage,
 )
 from services.agent.runtime.ports.model_gateway import (
     ModelGatewayDispatchBinding, ModelGatewayDispatchOutcome,
@@ -45,7 +47,6 @@ IDS = {
     "execution_token": "99999999-9999-4999-8999-999999999999",
 }
 HASH = "a" * 64
-RESPONSE_HASH = "b" * 64
 
 
 def _binding() -> ModelGatewayDispatchBinding:
@@ -96,7 +97,7 @@ def _operation(*, status: str = "completed") -> dict[str, object]:
         "status": status, "state_version": 6,
         "response_started": status == "completed",
         "provider_request_id": "provider-request-1" if status == "completed" else None,
-        "response_hash": RESPONSE_HASH if status == "completed" else None,
+        "response_hash": _completed()["response_hash"] if status == "completed" else None,
         "usage_summary": (
             {"input_tokens": 11, "output_tokens": 5,
              "reasoning_tokens": 2, "total_tokens": 16}
@@ -118,21 +119,57 @@ def _accepted() -> dict[str, object]:
 
 
 def _completed() -> dict[str, object]:
-    return {
+    frame: dict[str, object] = {
         "version": VERSION, "request_id": IDS["request_id"], "sequence": 1,
         "type": "completed", "text": "done",
         "tool_calls": [{
-            "index": 0, "id": "call-1", "name": "search",
+            "index": 0, "call_id": "runtime-call-1",
+            "provider_call_id": "provider-call-1", "name": "search",
             "arguments": '{"query":"safe"}',
         }],
         "usage": {
             "input_tokens": 11, "output_tokens": 5,
             "cache_read_tokens": 3, "cache_write_tokens": 0,
         },
-        "finish_reason": "tool_calls",
+        "stop_reason": "tool_calls", "provider_stop_reason": "tool_calls",
         "provider_request_id": "provider-request-1",
-        "response_hash": RESPONSE_HASH, "operation_state_version": 6,
+        "response_hash": "", "operation_state_version": 6,
     }
+    frame["response_hash"] = _frame_hash(frame)
+    return frame
+
+
+def _frame_hash(frame: dict[str, object]) -> str:
+    wire_usage = frame["usage"]
+    assert isinstance(wire_usage, dict)
+    usage = ModelUsage(
+        input_tokens=wire_usage.get("input_tokens", 0),
+        output_tokens=wire_usage.get("output_tokens", 0),
+        reasoning_tokens=2,
+        cache_read_tokens=wire_usage.get("cache_read_tokens", 0),
+        cache_write_tokens=wire_usage.get("cache_write_tokens", 0),
+    )
+    wire_calls = frame["tool_calls"]
+    assert isinstance(wire_calls, list)
+    calls = tuple(ModelToolCall(
+        index=call["index"], call_id=call["call_id"], name=call["name"],
+        arguments_json=call["arguments"], provider_call_id=call["provider_call_id"],
+    ) for call in wire_calls)
+    text = frame["text"]
+    assert isinstance(text, str)
+    output = ModelOutput(kind=ModelOutputKind.TEXT, content=text) if text else None
+    return canonical_response_hash(
+        stop_reason=StopReason(str(frame["stop_reason"])),
+        provider_stop_reason=frame["provider_stop_reason"],
+        output=output, tool_calls=calls, usage=usage,
+    )
+
+
+def _sync_completed_fact(
+    frame: dict[str, object], operation: dict[str, object],
+) -> None:
+    frame["response_hash"] = _frame_hash(frame)
+    operation["response_hash"] = frame["response_hash"]
 
 
 class _Repository:
@@ -222,8 +259,12 @@ async def test_completed_roundtrip_uses_only_durable_binding_and_db_terminal() -
     assert result.stop_reason is StopReason.TOOL_CALLS
     assert result.output and result.output.content == "done"
     assert result.tool_calls[0].arguments_json == '{"query":"safe"}'
+    assert result.tool_calls[0].call_id == "runtime-call-1"
+    assert result.tool_calls[0].provider_call_id == "provider-call-1"
     assert result.usage.as_tuple() == (11, 5, 2, 3, 0)
     assert result.response_receipt.provider_request_id == "provider-request-1"
+    assert result.response_hash == transport.frames[-1]["response_hash"]
+    assert result.response_hash == repository.operation["response_hash"]
     payload = transport.requests[0]
     assert payload["state_version"] == 4
     assert payload["tenant_kill_epoch"] == 7

@@ -27,6 +27,7 @@ export PYTHONDONTWRITEBYTECODE=1
   backend/tests/test_agent_runtime_model_gateway_service.py \
   backend/tests/test_agent_runtime_model_gateway_recovery.py \
   backend/tests/test_agent_runtime_c7_bg4_runtime_gateway.py \
+  backend/tests/test_agent_runtime_c7_r2_result_integrity.py \
   backend/tests/test_agent_runtime_c7_bg4_production_composition.py \
   backend/tests/test_agent_runtime_model_adapter.py \
   backend/tests/test_agent_runtime_model_adapter_audit.py \
