@@ -86,8 +86,11 @@ timeout. Backlog does not affect readiness.
 Install `/etc/everydayai/*.env` from `deploy/env-templates`, owned by root and
 mode 0640. Runtime loads only `agent-runtime-worker.env` and cannot read either
 Gateway env. Model Gateway alone loads its narrow DB/process env and the two-key
-KEK env, both `root:everydayai-model-gateway`; neither file contains Provider
-API keys. The Sandbox template is deliberately limited to its database URL,
+KEK env, both `root:everydayai-model-gateway-secret`; only the Gateway user joins
+that secret group. Runtime joins only the separate `everydayai-model-gateway`
+socket group, and provisioning verifies with both OS identities that Gateway can
+read and Runtime cannot read either env. Neither file contains Provider API keys.
+The Sandbox template is deliberately limited to its database URL,
 immutable hashes, local paths, limits and Sentry; it must not contain Redis,
 OSS, model, JWT or WeCom values. `RUNTIME_ADMIN_DATABASE_URL` is available only
 to the API process. Local ingress flags and every database control switch stay

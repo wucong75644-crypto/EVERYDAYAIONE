@@ -1,7 +1,5 @@
 #!/bin/bash
-
 set -euo pipefail
-
 deploy_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 backend_dir=${1:-/var/www/everydayai/backend}
 install_mode=${2:-all}
@@ -11,22 +9,16 @@ systemd_dir=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 runtime_env_dir=${AGENT_RUNTIME_ENV_DIR:-/etc/everydayai}
 transaction_root=${CONTROL_PLANE_TRANSACTION_ROOT:-/var/backups/everydayai/control-plane-updates}
 libexec_dir=${LIBEXEC_DIR:-/usr/local/libexec}
-
 runtime_services=(
-    everydayai-agent-runtime
-    everydayai-agent-model-gateway
-    everydayai-agent-projection
-    everydayai-agent-authorization
-    everydayai-sandbox-worker
+    everydayai-agent-runtime everydayai-agent-model-gateway
+    everydayai-agent-projection everydayai-agent-authorization everydayai-sandbox-worker
 )
-
 manifest_temp_to_remove=
 cleanup_manifest_temp() {
     if [ -n "$manifest_temp_to_remove" ]; then
         rm -f "$manifest_temp_to_remove"
     fi
 }
-
 file_mode() {
     local path=$1
     local mode
@@ -43,7 +35,42 @@ file_mode() {
     echo "❌ 无法读取 ${path} 的文件权限" >&2
     return 1
 }
-
+file_stat_number() {
+    local path=$1 format=$2 label=$3 value
+    value=$(stat -c "$format" "$path" 2>/dev/null || true)
+    [[ "$value" =~ ^[0-9]+$ ]] || value=$(stat -f "$format" "$path" 2>/dev/null || true)
+    [[ "$value" =~ ^[0-9]+$ ]] || {
+        echo "❌ 无法读取 ${path} 的 ${label}" >&2; return 1;
+    }
+    printf '%s' "$value"
+}
+file_uid() { file_stat_number "$1" %u "owner UID"; }
+file_gid() { file_stat_number "$1" %g "owner GID"; }
+user_has_group() { [[ " $(id -nG "$1") " == *" $2 "* ]]; }
+validate_gateway_env_dac() {
+    local group_entry expected_gid path
+    user_has_group everydayai-agent-model-gateway everydayai-model-gateway-secret || {
+        echo "❌ Gateway user 缺少 secret group" >&2; return 1;
+    }
+    if user_has_group everydayai-agent-runtime everydayai-model-gateway-secret; then
+        echo "❌ Runtime user 禁止加入 Gateway secret group" >&2; return 1
+    fi
+    group_entry=$(getent group everydayai-model-gateway-secret) || {
+        echo "❌ 缺少 everydayai-model-gateway-secret group" >&2
+        return 1
+    }
+    IFS=: read -r _ _ expected_gid _ <<< "$group_entry"
+    [[ "$expected_gid" =~ ^[0-9]+$ ]] || {
+        echo "❌ Gateway secret group GID 无效" >&2
+        return 1
+    }
+    for path in "$@"; do
+        if [ "$(file_uid "$path")" != 0 ] || [ "$(file_gid "$path")" != "$expected_gid" ]; then
+            echo "❌ ${path} 必须为 root:everydayai-model-gateway-secret" >&2
+            return 1
+        fi
+    done
+}
 contains_key() {
     local candidate=$1
     shift
@@ -55,7 +82,6 @@ contains_key() {
     done
     return 1
 }
-
 read_env_value() {
     local path=$1
     local expected_key=$2
@@ -185,6 +211,7 @@ validate_runtime_worker_envs() {
         AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED
     validate_exact_env_file "$gateway_kek_path" \
         CONFIG_KEK_CURRENT_VERSION CONFIG_KEK_KEYRING_JSON
+    validate_gateway_env_dac "$gateway_path" "$gateway_kek_path"
     validate_exact_env_file "$projection_path" \
         WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
         REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \
@@ -277,6 +304,7 @@ validate_control_plane_worker_envs() {
         AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED
     validate_exact_env_file "$gateway_kek_path" \
         CONFIG_KEK_CURRENT_VERSION CONFIG_KEK_KEYRING_JSON
+    validate_gateway_env_dac "$gateway_path" "$gateway_kek_path"
     validate_exact_env_file "$projection_path" \
         WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
         REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \

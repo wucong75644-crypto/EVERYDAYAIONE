@@ -7,6 +7,8 @@ import subprocess
 
 import pytest
 
+from backend.tests.agent_runtime_deploy_test_support import fake_installer_commands
+
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
 INSTALL_SCRIPT = DEPLOY / "install-service-units.sh"
@@ -93,28 +95,6 @@ def _render_worker_envs(directory: Path) -> None:
         path = directory / f"{name}.env"
         path.write_text(content, encoding="utf-8")
         path.chmod(0o640)
-
-
-def _fake_commands(directory: Path) -> tuple[Path, Path]:
-    fake_bin = directory / "bin"
-    fake_bin.mkdir()
-    calls = directory / "systemctl-calls"
-    sudo = fake_bin / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
-    sudo.chmod(0o755)
-    identity = fake_bin / "id"
-    identity.write_text(
-        "#!/bin/sh\nif [ \"$1\" = -u ] && [ \"$2\" = everydayai-agent-runtime ]; "
-        "then echo 1201; exit 0; fi\nexec /usr/bin/id \"$@\"\n", encoding="utf-8",
-    )
-    identity.chmod(0o755)
-    systemctl = fake_bin / "systemctl"
-    systemctl.write_text(
-        f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{calls}'\n",
-        encoding="utf-8",
-    )
-    systemctl.chmod(0o755)
-    return fake_bin, calls
 
 
 def _write_unit_states(
@@ -235,6 +215,7 @@ def _run_release_harness(
 
 def _run_installer(
     tmp_path: Path,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     backend_dir = tmp_path / "backend-env"
     runtime_env_dir = tmp_path / "runtime-env"
@@ -243,13 +224,14 @@ def _run_installer(
     _write_backend_envs(backend_dir)
     _render_worker_envs(runtime_env_dir)
     systemd_dir.mkdir()
-    fake_bin, calls = _fake_commands(tmp_path)
+    fake_bin, calls = fake_installer_commands(tmp_path)
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "SYSTEMD_UNIT_DIR": str(systemd_dir),
         "AGENT_RUNTIME_ENV_DIR": str(runtime_env_dir),
         "LIBEXEC_DIR": str(libexec_dir),
+        **(extra_env or {}),
     }
     result = subprocess.run(
         [
@@ -294,7 +276,7 @@ def test_agent_runtime_only_rejects_different_target_before_writes(
     systemd_dir.mkdir()
     target = systemd_dir / "everydayai-agent-projection.service"
     target.write_text("existing-content\n", encoding="utf-8")
-    fake_bin, calls = _fake_commands(tmp_path)
+    fake_bin, calls = fake_installer_commands(tmp_path)
 
     result = subprocess.run(
         [

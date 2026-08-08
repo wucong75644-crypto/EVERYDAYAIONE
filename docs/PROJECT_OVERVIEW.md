@@ -112,7 +112,9 @@ Agent Runtime C7-BG4 Model Gateway Runtime 接线：
 Agent Runtime C7-BG5 Model Gateway Deploy 与统一验收：
 - 新增专用 Gateway systemd user/group/unit，以及最小 DB/process env 与仅含两个批准键的
   KEK env；`bootstrap-agent-model-gateway-role.sh` 以独立密码创建 migration 已冻结的窄 DB role；
-  Runtime 只获得 UDS group 连接能力，显式禁止读取 Gateway env、KEK 和 Provider key。
+  Runtime 只加入 `everydayai-model-gateway` UDS group；两份 env 属于独立
+  `everydayai-model-gateway-secret` group，Gateway 是唯一服务成员，Runtime 由 DAC 与运行时
+  身份探针共同禁止读取 Gateway env、KEK 和 Provider key。
 - D0-A release transaction 扩为五 env/四 control-plane unit；reviewed SHA、全量预检、
   daemon-reload、内外层 inactive:disabled 后验任一点失败均按同一 release journal 恢复。
 - `scripts/run_agent_model_gateway_disposable.sh` 统一执行部署静态合同、本地 UDS、mock Provider、
@@ -425,7 +427,8 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   release-bound、root-only transaction
   目录完整 staging，并记录旧内容 hash、mode、uid/gid 与不存在状态，再以
   目录完整 staging；普通 env 为 root:everydayai-app，Gateway 两份 env 为
-  root:everydayai-model-gateway，均以 0640 原子发布。Runtime/Gateway production flags 固定关闭，
+  root:everydayai-model-gateway-secret，均以 0640 原子发布，journal 精确记录并恢复 uid/gid。
+  Runtime/Gateway production flags 固定关闭，
   且不生成 Sandbox env。
 - `deploy/update-control-plane-units.sh`：在四个 unit 严格 inactive + disabled 且当前 SHA-256
   全量匹配 reviewed manifest 后，将旧 unit 全部备份到同一 release transaction，再发布

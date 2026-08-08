@@ -285,7 +285,9 @@ bash deploy/deploy.sh \
 `provision-control-plane-worker-envs.py` 直接读取 `backend/.env`、
 `backend/.env.migrator` 和 `backend/.env.kek`。Secret 不通过命令行、日志或同步文件传递；
 Runtime/Projection/Authorization env 以 `root:everydayai-app`，Gateway DB/process env 与
-仅两个批准键的 KEK env 以 `root:everydayai-model-gateway`，全部 `0640` 原子替换。
+仅两个批准键的 KEK env 以 `root:everydayai-model-gateway-secret`，全部 `0640` 原子替换。
+`everydayai-model-gateway` 只共享 UDS；Runtime 不属于 secret group。安装预检校验精确 UID/GID，
+用户 provision 还会以 Gateway/Runtime 身份分别验证可读/不可读，任一偏差失败关闭。
 数据库 DSN 仅替换 URL-encoded 角色与密码，其余 migrator host/port/database/query 参数
 保持不变。Runtime composition、Runtime Gateway 和 Gateway production flags 固定为
 `false`，Sandbox revision 标记为 `unprovisioned`。

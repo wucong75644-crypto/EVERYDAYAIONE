@@ -77,6 +77,10 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     env_dir.mkdir()
     (env_dir / ENV_NAMES[0]).write_bytes(b"old-runtime\x00bytes\n")
     (env_dir / ENV_NAMES[0]).chmod(0o600)
+    (env_dir / ENV_NAMES[1]).write_bytes(b"old-gateway-db\n")
+    (env_dir / ENV_NAMES[1]).chmod(0o640)
+    (env_dir / ENV_NAMES[2]).write_bytes(b"old-gateway-kek\n")
+    (env_dir / ENV_NAMES[2]).chmod(0o640)
     (env_dir / ENV_NAMES[3]).write_bytes(b"old-projection\n")
     (env_dir / ENV_NAMES[3]).chmod(0o640)
     uid, gid = os.getuid(), os.getgid()
@@ -107,6 +111,28 @@ def _snapshot(env_dir: Path) -> dict[str, tuple[bytes, int, int, int] | None]:
                 path.read_bytes(), info.st_mode & 0o777, info.st_uid, info.st_gid,
             )
     return result
+
+
+def test_gateway_targets_use_secret_gid_in_release_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, _, root, prepare, _ = _setup(tmp_path, monkeypatch)
+    uid, app_gid = os.getuid(), os.getgid()
+    secret_gid = app_gid + 10000
+    monkeypatch.setattr(
+        module,
+        "_resolve_owner",
+        lambda name=None: (
+            uid,
+            secret_gid if name and name.startswith("agent-model-gateway") else app_gid,
+        ),
+    )
+    assert module.main(prepare) == 0
+    journal = json.loads((root / RELEASE_SHA / "env-journal.json").read_text())
+    published = {entry["name"]: entry["published"] for entry in journal["files"]}
+    assert published["agent-model-gateway.env"]["gid"] == secret_gid
+    assert published["agent-model-gateway-kek.env"]["gid"] == secret_gid
+    assert published["agent-runtime-worker.env"]["gid"] == app_gid
 
 
 @pytest.mark.parametrize("failure_index", (1, 2, 3, 4, 5))

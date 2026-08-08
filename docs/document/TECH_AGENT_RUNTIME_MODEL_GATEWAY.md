@@ -90,10 +90,13 @@ Runtime 进程职责：
 
 ```text
 user:  everydayai-agent-model-gateway
-group: everydayai-model-gateway
+socket group: everydayai-model-gateway
+secret group: everydayai-model-gateway-secret
 ```
 
-`everydayai-agent-runtime` 仅作为 supplementary member 加入 `everydayai-model-gateway`，不加入 Gateway 用户组以外的高权限组。Runtime socket client 不获得 Gateway 文件读取权。
+`everydayai-agent-runtime` 仅作为 supplementary member 加入 socket group
+`everydayai-model-gateway`，绝不加入 `everydayai-model-gateway-secret`。Gateway user 是 secret
+group 的唯一服务成员；因此 Runtime socket client 不获得 Gateway 文件读取权。
 
 Socket 目录由 systemd `RuntimeDirectory=everydayai-agent-model-gateway` 创建，mode `0750`；`gateway.sock` owner 为 Gateway user，group 为 `everydayai-model-gateway`，mode `0660`。Server 在 `accept` 后必须使用 Linux `SO_PEERCRED` 取得 pid/uid/gid，并要求 uid 精确等于 `everydayai-agent-runtime`；文件 mode/group 只是第一层门禁。非 Linux 或无法取得 peer credential 时生产启动失败关闭。
 
@@ -106,9 +109,12 @@ Runtime unit继续：
 Gateway unit只加载：
 
 - `/etc/everydayai/agent-model-gateway.env`：专用 Gateway DB URL、socket、release、超时、flags。
-- `/etc/everydayai/agent-model-gateway-kek.env`：仅现有 KEK keyring 两个变量，root owner、Gateway group、mode `0640`。
+- `/etc/everydayai/agent-model-gateway-kek.env`：仅现有 KEK keyring 两个变量，
+  `root:everydayai-model-gateway-secret`、mode `0640`。
 
-Gateway 不加载 Backend `.env`、Runtime worker env 或 Provider API key env。Gateway KEK env 由现有 `.env.kek` 的已验证值事务性派生，不创建第二份密钥语义；部署脚本不得打印值。Gateway 仅允许读取代码、这两份 env、自己的 `/run` 与必要证书；`ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`、`NoNewPrivileges=true`、`PrivateDevices=true`、`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`、`RestrictSUIDSGID=true`、`LockPersonality=true`。其网络只用于专用 PostgreSQL 与已配置模型 Provider HTTPS；生产主机防火墙/egress allowlist 是部署门禁，不在应用中复制网络控制面。
+两份 Gateway env 均使用 secret group；Gateway unit 通过 `SupplementaryGroups` 读取，主 Group
+仍为 socket group。Gateway 不加载 Backend `.env`、Runtime worker env 或 Provider API key env。
+Gateway KEK env 由现有 `.env.kek` 的已验证值事务性派生，不创建第二份密钥语义；部署脚本不得打印值。Gateway 仅允许读取代码、这两份 env、自己的 `/run` 与必要证书；`ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`、`NoNewPrivileges=true`、`PrivateDevices=true`、`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`、`RestrictSUIDSGID=true`、`LockPersonality=true`。其网络只用于专用 PostgreSQL 与已配置模型 Provider HTTPS；生产主机防火墙/egress allowlist 是部署门禁，不在应用中复制网络控制面。
 
 ## 4. UDS 协议 v1
 
@@ -410,7 +416,8 @@ flags-off 安装只放置 env/unit并 `daemon-reload`，Gateway 与 Runtime 均�
 - disposable CI workflow与部署静态测试
 - Runbook、Project Overview、Function Index
 
-门禁：专用 user/group/DB role、socket mode和peer UID、Runtime无 KEK/Provider key、Gateway只读最小 KEK env、四 unit flags-off事务/自动恢复、Sandbox零 diff、unit hash manifest、local UDS+disposable PostgreSQL+mock Provider E2E、crash/response loss/unknown/drain、敏感扫描。生产只允许 flags-off 安装；统一验收前不启动、不迁移、不部署 Provider调用。
+门禁：专用 user、socket/secret group、DB role、socket mode和peer UID、Runtime通过 UNIX DAC
+不可读 Gateway DB/KEK env、Gateway只读最小 KEK env、四 unit flags-off事务/自动恢复、Sandbox零 diff、unit hash manifest、local UDS+disposable PostgreSQL+mock Provider E2E、crash/response loss/unknown/drain、敏感扫描。生产只允许 flags-off 安装；统一验收前不启动、不迁移、不部署 Provider调用。
 
 每批都必须运行定向测试、受影响 Runtime/model/configuration 回归、Python compile、`git diff --check` 和 `scripts/check_task_change.py`；工作区干净后交付，不推送、不部署。
 

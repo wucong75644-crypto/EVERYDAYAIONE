@@ -8,6 +8,8 @@ getent group everydayai-sandbox >/dev/null ||
   groupadd --system everydayai-sandbox
 getent group everydayai-model-gateway >/dev/null ||
   groupadd --system everydayai-model-gateway
+getent group everydayai-model-gateway-secret >/dev/null ||
+  groupadd --system everydayai-model-gateway-secret
 for name in api actor wecom sync agent-runtime projection authorization; do
   id "everydayai-$name" >/dev/null 2>&1 || useradd --system \
     --no-create-home --shell /usr/sbin/nologin --gid everydayai-app \
@@ -23,7 +25,26 @@ id everydayai-agent-model-gateway >/dev/null 2>&1 || useradd --system \
   everydayai-agent-model-gateway
 usermod -a -G everydayai-sandbox-io everydayai-agent-runtime
 usermod -a -G everydayai-model-gateway everydayai-agent-runtime
+usermod -a -G everydayai-model-gateway-secret everydayai-agent-model-gateway
 usermod -a -G everydayai-sandbox-io everydayai-sandbox
+user_has_group() {
+  id -nG "$1" | tr ' ' '\n' | grep -Fxq "$2"
+}
+user_has_group everydayai-agent-model-gateway everydayai-model-gateway-secret || {
+  echo "Gateway user 缺少 secret group" >&2
+  exit 1
+}
+if user_has_group everydayai-agent-runtime everydayai-model-gateway-secret; then
+  echo "Runtime user 禁止加入 Gateway secret group" >&2
+  exit 1
+fi
+while IFS=: read -r candidate _; do
+  if [ "$candidate" != everydayai-agent-model-gateway ] && \
+      user_has_group "$candidate" everydayai-model-gateway-secret; then
+    echo "Gateway secret group 包含未批准成员: $candidate" >&2
+    exit 1
+  fi
+done < <(getent passwd)
 install -d -o root -g everydayai-sandbox-io -m 2770 \
   /var/lib/everydayai/sandbox-jobs
 install -d -o root -g everydayai-sandbox-io -m 0750 \
@@ -39,6 +60,8 @@ install -d -o everydayai-sandbox -g everydayai-sandbox-io -m 0750 \
   /var/log/everydayai/sandbox
 install -d -o root -g root -m 0751 /etc/everydayai
 find /etc/everydayai -maxdepth 1 -type f -name '*.env' \
+  ! -name 'agent-model-gateway.env' \
+  ! -name 'agent-model-gateway-kek.env' \
   -exec chown root:everydayai-app {} + -exec chmod 0640 {} +
 if [ -f /etc/everydayai/sandbox-worker.env ]; then
   chown root:everydayai-sandbox-io /etc/everydayai/sandbox-worker.env
@@ -46,7 +69,7 @@ if [ -f /etc/everydayai/sandbox-worker.env ]; then
 fi
 for name in agent-model-gateway.env agent-model-gateway-kek.env; do
   if [ -f "/etc/everydayai/$name" ]; then
-    chown root:everydayai-model-gateway "/etc/everydayai/$name"
+    chown root:everydayai-model-gateway-secret "/etc/everydayai/$name"
     chmod 0640 "/etc/everydayai/$name"
   fi
 done
@@ -78,10 +101,14 @@ runuser -u everydayai-agent-model-gateway -- \
 if [ -f /etc/everydayai/agent-model-gateway.env ]; then
   runuser -u everydayai-agent-model-gateway -- \
     test -r /etc/everydayai/agent-model-gateway.env
+  runuser -u everydayai-agent-runtime -- \
+    test ! -r /etc/everydayai/agent-model-gateway.env
 fi
 if [ -f /etc/everydayai/agent-model-gateway-kek.env ]; then
   runuser -u everydayai-agent-model-gateway -- \
     test -r /etc/everydayai/agent-model-gateway-kek.env
+  runuser -u everydayai-agent-runtime -- \
+    test ! -r /etc/everydayai/agent-model-gateway-kek.env
 fi
 if [ -f /etc/everydayai/sandbox-worker.env ]; then
   runuser -u everydayai-sandbox -- \

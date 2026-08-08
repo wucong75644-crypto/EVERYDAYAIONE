@@ -25,6 +25,7 @@ except ModuleNotFoundError:
 RELEASE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 OWNER = "root"
 GROUP = "everydayai-app"
+GATEWAY_SECRET_GROUP = "everydayai-model-gateway-secret"
 DEFAULT_TRANSACTION_ROOT = Path("/var/backups/everydayai/control-plane-updates")
 ENV_NAMES = (
     "agent-runtime-worker.env",
@@ -43,7 +44,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--transaction-root", type=Path, default=DEFAULT_TRANSACTION_ROOT)
     return parser.parse_args(argv)
 def _resolve_owner(name: str | None = None) -> tuple[int, int]:
-    group = "everydayai-model-gateway" if name and name.startswith("agent-model-gateway") else GROUP
+    group = GATEWAY_SECRET_GROUP if name and name.startswith("agent-model-gateway") else GROUP
     try:
         return pwd.getpwnam(OWNER).pw_uid, grp.getgrnam(group).gr_gid
     except KeyError as exc:

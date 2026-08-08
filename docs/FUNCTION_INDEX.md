@@ -1904,7 +1904,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `install-service-units.sh` | `deploy/install-service-units.sh` | 保留 all/agent-runtime-only，并以 control-plane-only 编排五份安全 env 与四个 reviewed control-plane unit update |
 | `bootstrap-agent-model-gateway-role.sh` | `deploy/bootstrap-agent-model-gateway-role.sh` | 使用独立密码创建/收紧既有 migration 要求的 `everydayai_agent_model_gateway` LOGIN role，不在 migration 中携带凭证 |
 | `read_required_values` / `validate_kek` / `render_envs` | `deploy/control_plane_env_source.py` | 严格读取批准生产来源，验证单版本 32-byte KEK，并生成 release-bound Runtime/Gateway/Projection/Authorization flags-off env |
-| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | release-bound staging 五 env，按普通/Gateway group 记录目标身份，并以旧内容/权限 journal 和 hash fence 提供 publish/verify/幂等 rollback |
+| `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | release-bound staging 五 env，普通 env 使用 app group、Gateway 两份 env 使用独立 secret group，并以旧内容/权限/uid/gid journal 和 hash fence 提供 publish/verify/幂等 rollback |
 | `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 协调五 env/四 unit 的 prepared→published→restored 事务；inactive+disabled、reviewed SHA、daemon/postcheck 失败统一恢复 |
 | `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对四个当前 target unit 的 reviewed SHA-256 |
 | `run_agent_model_gateway_disposable.sh` | `scripts/run_agent_model_gateway_disposable.sh` | 统一运行部署静态合同、本地 UDS/mock Provider、227_18～227_20 disposable PostgreSQL 与恢复回归 |

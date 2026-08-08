@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=everydayai-agent-model-gateway
 Group=everydayai-model-gateway
+SupplementaryGroups=everydayai-model-gateway-secret
 WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
 Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/model-gateway"

@@ -29,6 +29,7 @@ def test_gateway_unit_has_dedicated_identity_envs_and_hardening() -> None:
     unit = UNIT.read_text(encoding="utf-8")
     assert "User=everydayai-agent-model-gateway" in unit
     assert "Group=everydayai-model-gateway" in unit
+    assert "SupplementaryGroups=everydayai-model-gateway-secret" in unit
     assert "RuntimeDirectory=everydayai-agent-model-gateway" in unit
     assert "RuntimeDirectoryMode=0750" in unit
     assert "ExecStart=/var/www/everydayai/backend/venv/bin/python agent_model_gateway_main.py" in unit
@@ -67,6 +68,7 @@ def test_runtime_cannot_receive_gateway_secret_material() -> None:
     text = runtime_env.read_text(encoding="utf-8")
     assert "AGENT_RUNTIME_MODEL_GATEWAY_ENABLED=false" in text
     assert "everydayai-model-gateway" in runtime_unit
+    assert "everydayai-model-gateway-secret" not in runtime_unit
     assert "/etc/everydayai/agent-model-gateway-kek.env" in runtime_unit
     for forbidden in ("CONFIG_KEK", "PROVIDER_API_KEY", "OPENAI_API_KEY", "DASHSCOPE_API_KEY"):
         assert forbidden not in text
@@ -74,16 +76,46 @@ def test_runtime_cannot_receive_gateway_secret_material() -> None:
 
 def test_identity_and_database_role_provisioning_match_migration_contract() -> None:
     users = (DEPLOY / "provision-runtime-users.sh").read_text(encoding="utf-8")
+    env_provisioner = (DEPLOY / "provision-control-plane-worker-envs.py").read_text(
+        encoding="utf-8"
+    )
     roles = (DEPLOY / "bootstrap-agent-model-gateway-role.sh").read_text(encoding="utf-8")
     migration = (ROOT / "backend/migrations/227_18_agent_runtime_model_gateway.sql").read_text(
         encoding="utf-8"
     )
     assert "groupadd --system everydayai-model-gateway" in users
+    assert "groupadd --system everydayai-model-gateway-secret" in users
     assert "--gid everydayai-model-gateway" in users
     assert "usermod -a -G everydayai-model-gateway everydayai-agent-runtime" in users
+    assert "usermod -a -G everydayai-model-gateway-secret everydayai-agent-model-gateway" in users
+    assert "chown root:everydayai-model-gateway-secret" in users
+    assert "! -name 'agent-model-gateway.env'" in users
+    assert "! -name 'agent-model-gateway-kek.env'" in users
+    assert "Runtime user 禁止加入 Gateway secret group" in users
+    assert "Gateway secret group 包含未批准成员" in users
+    assert 'GATEWAY_SECRET_GROUP = "everydayai-model-gateway-secret"' in env_provisioner
+    for name in ("agent-model-gateway.env", "agent-model-gateway-kek.env"):
+        assert f"test -r /etc/everydayai/{name}" in users
+        assert f"test ! -r /etc/everydayai/{name}" in users
     assert "EVERYDAYAI_AGENT_MODEL_GATEWAY_PASSWORD" in roles
     assert "CREATE ROLE everydayai_agent_model_gateway" in roles
     assert "rolname='everydayai_agent_model_gateway'" in migration
+
+
+def test_gateway_env_unix_dac_excludes_runtime_identity() -> None:
+    def can_read(
+        mode: int, file_uid: int, file_gid: int, process_uid: int, process_gids: set[int]
+    ) -> bool:
+        if process_uid == file_uid:
+            return bool(mode & 0o400)
+        if file_gid in process_gids:
+            return bool(mode & 0o040)
+        return bool(mode & 0o004)
+
+    root_uid, gateway_uid, runtime_uid = 0, 2101, 2102
+    socket_gid, secret_gid = 3101, 3102
+    assert can_read(0o640, root_uid, secret_gid, gateway_uid, {socket_gid, secret_gid})
+    assert not can_read(0o640, root_uid, secret_gid, runtime_uid, {socket_gid})
 
 
 def test_four_unit_transaction_and_ci_entry_are_release_bound() -> None:

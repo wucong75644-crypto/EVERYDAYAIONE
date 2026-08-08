@@ -11,6 +11,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 "$python_bin" -m pytest -q -p no:cacheprovider \
   backend/tests/test_agent_runtime_model_gateway_deploy.py \
+  backend/tests/test_agent_runtime_model_gateway_dac.py \
   backend/tests/test_agent_runtime_control_plane_update.py \
   backend/tests/test_agent_runtime_control_plane_release.py \
   backend/tests/test_agent_runtime_control_plane_env_transaction.py \
