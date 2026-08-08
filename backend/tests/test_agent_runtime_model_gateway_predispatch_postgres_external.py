@@ -259,7 +259,11 @@ def _assert_failure_fact_and_rollback(
             "SELECT status FROM agent_model_steps WHERE id=%s", (primary["step"],),
         ).fetchone() == ("running",)
 
-    _apply(database, ROLLBACK)
+    with pytest.raises(
+        psycopg.errors.RaiseException,
+        match="AGENT_MODEL_GATEWAY_OPERATION_FACTS_EXIST",
+    ):
+        _apply(database, ROLLBACK)
     readback = _call(
         database, "everydayai_agent_runtime_worker",
         "read_agent_runtime_model_gateway_operation",
@@ -268,7 +272,22 @@ def _assert_failure_fact_and_rollback(
     )
     assert readback["operation"]["status"] == "failed"
     with psycopg.connect(database) as connection:
-        assert connection.execute("SELECT to_regprocedure(%s)", (SIGNATURE,)).fetchone()[0] is None
+        assert connection.execute(
+            "SELECT to_regprocedure(%s)", (SIGNATURE,),
+        ).fetchone()[0] is not None
+        assert connection.execute(
+            "SELECT has_function_privilege('everydayai_agent_model_gateway',"
+            "%s,'EXECUTE')", (SIGNATURE,),
+        ).fetchone()[0] is True
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute("DELETE FROM agent_runtime_model_gateway_operations")
+        connection.commit()
+
+    _apply(database, ROLLBACK)
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT to_regprocedure(%s)", (SIGNATURE,),
+        ).fetchone()[0] is None
         assert connection.execute(
             "SELECT has_function_privilege('everydayai_agent_runtime_worker',"
             "'get_agent_runtime_ai_bundle(uuid,text,uuid,text)','EXECUTE')",

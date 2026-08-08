@@ -56,20 +56,26 @@ jobs:
       PYTEST_ADDOPTS: -p no:cacheprovider
       RUN_AR17_1_DB_TEST: "1"
       AGENT_RUNTIME_INGRESS_ENABLED: "false"
-      AGENT_RUNTIME_PRODUCTION_ENABLED: "false"
+      AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"
+      AGENT_RUNTIME_MODEL_GATEWAY_ENABLED: "false"
       AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED: "false"
+      C7_QUALITY_BASELINE: "25513882a76efdfc77cc9ea6031ed1d52282f18b"
 
     steps:
       - name: Check out candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
 
       - name: Verify candidate and production gates
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
-          test "$AGENT_RUNTIME_PRODUCTION_ENABLED" = false
+          test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false
+          test "$AGENT_RUNTIME_MODEL_GATEWAY_ENABLED" = false
           test "$AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED" = false
+          git cat-file -e "$C7_QUALITY_BASELINE^{commit}"
 
       - name: Configure disposable Python environment
         run: echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/ar17-pyc" >> "$GITHUB_ENV"
@@ -219,56 +225,12 @@ jobs:
               backend/tests/test_agent_runtime_pgcrypto_migration.py \
               backend/tests/test_migration_runner.py
             git diff --check
-            python scripts/check_task_change.py --files \
-              .github/workflows/agent-runtime-disposable.yml \
-              backend/agent_model_gateway_main.py \
-              docs/document/AR17_STAGING_PROVISIONING.md \
-              backend/agent_runtime_worker_main.py \
-              backend/core/config.py \
-              backend/core/redis.py \
-              backend/services/agent/runtime/composition.py \
-              backend/services/agent/runtime/executors/provider_adapters.py \
-              backend/services/agent/runtime/ingress.py \
-              backend/services/agent/runtime/infrastructure/model/adapter.py \
-              backend/services/agent/runtime/infrastructure/model/runtime_adapter_factory.py \
-              backend/services/agent/runtime/model_resolution.py \
-              backend/services/agent/runtime/production_composition.py \
-              backend/services/agent/runtime/production_factory.py \
-              backend/services/agent/runtime/production_model.py \
-              backend/services/agent/runtime/production_composition.py \
-              backend/services/agent/runtime/catalog/safe_read_release.py \
-              backend/services/agent/runtime/executors/read_registry.py \
-              backend/services/agent/runtime/infrastructure/postgres/authorization.py \
-              backend/scripts/generate_agent_runtime_safe_read_seed.py \
-              backend/tests/test_agent_runtime_c7_b32a_safe_release.py \
-              backend/tests/test_agent_runtime_c7_b32a_migration.py \
-              backend/tests/test_agent_runtime_c7_b32a_postgres_external.py \
-              backend/tests/test_agent_runtime_c52_safe_composition.py \
-              backend/services/adapters/kie/client.py \
-              backend/services/wecom/actor_enqueue.py \
-              deploy/validate-tenant-db-env.sh \
-              deploy/install-service-units.sh \
-              deploy/runtime-flags-off-install.sh \
-              deploy/check-agent-runtime-unit-states.sh \
-              deploy/check-control-plane-unit-manifest.sh \
-              deploy/provision-control-plane-worker-envs.py \
-              deploy/bootstrap-agent-model-gateway-role.sh \
-              deploy/control_plane_env_source.py \
-              deploy/everydayai-agent-model-gateway.service \
-              deploy/env-templates/agent-model-gateway.env.template \
-              deploy/env-templates/agent-model-gateway-kek.env.template \
-              deploy/update-control-plane-units.sh \
-              deploy/deploy.sh \
-              deploy/release.sh \
-              backend/tests/test_agent_runtime_control_plane_update.py \
-              backend/tests/test_agent_runtime_control_plane_release.py \
-              backend/tests/test_agent_runtime_control_plane_env_transaction.py \
-              backend/tests/test_agent_runtime_model_gateway_deploy.py \
-              backend/tests/test_agent_runtime_model_gateway_dac.py \
-              backend/tests/agent_runtime_deploy_test_support.py \
-              backend/tests/test_agent_runtime_model_gateway_e2e_postgres_external.py \
-              scripts/run_agent_model_gateway_disposable.sh \
-              deploy/run-migrations.sh
+            mapfile -t c7_candidate_files < <(
+              git diff --name-only --diff-filter=ACMR \
+                "$C7_QUALITY_BASELINE"...HEAD --
+            )
+            test "${#c7_candidate_files[@]}" -gt 0
+            python scripts/check_task_change.py --files "${c7_candidate_files[@]}"
           } 2>&1 | tee "$RUNNER_TEMP/ar17-evidence/security-quality.log"
 
       - name: Record verification summary

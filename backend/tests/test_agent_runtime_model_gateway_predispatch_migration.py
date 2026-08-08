@@ -44,6 +44,9 @@ def test_predispatch_error_codes_are_closed_and_rollback_is_exact() -> None:
     ):
         assert code in SQL
     assert "AGENT_MODEL_GATEWAY_PREDISPATCH_FAILURE_INVALID" in SQL
+    guard = UNDO.index("AGENT_MODEL_GATEWAY_OPERATION_FACTS_EXIST")
+    assert guard < UNDO.index("REVOKE ALL ON FUNCTION")
+    assert guard < UNDO.index(f"DROP FUNCTION {RPC}")
     assert f"DROP FUNCTION {RPC}" in UNDO
     for forbidden in ("DELETE ", "TRUNCATE ", "DROP TABLE", "get_agent_runtime_ai_bundle"):
         assert forbidden not in UNDO

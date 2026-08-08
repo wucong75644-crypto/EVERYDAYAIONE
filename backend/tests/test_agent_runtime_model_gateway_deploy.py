@@ -7,6 +7,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
 UNIT = DEPLOY / "everydayai-agent-model-gateway.service"
+C7_QUALITY_BASELINE = "25513882a76efdfc77cc9ea6031ed1d52282f18b"
 GATEWAY_KEYS = {
     "AGENT_MODEL_GATEWAY_DATABASE_URL", "AGENT_MODEL_GATEWAY_WORKER_ID",
     "AGENT_MODEL_GATEWAY_RELEASE_REVISION", "AGENT_MODEL_GATEWAY_SOCKET",
@@ -131,7 +132,49 @@ def test_four_unit_transaction_and_ci_entry_are_release_bound() -> None:
     flags_off = (DEPLOY / "runtime-flags-off-install.sh").read_text(encoding="utf-8")
     assert "deploy/control_plane_env_source.py" in flags_off
     assert "scripts/run_agent_model_gateway_disposable.sh" in workflow
+    assert "AGENT_RUNTIME_PRODUCTION_ENABLED" not in workflow
+    for gate in (
+        "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED",
+        "AGENT_RUNTIME_MODEL_GATEWAY_ENABLED",
+        "AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED",
+    ):
+        assert f'{gate}: "false"' in workflow
+        assert f'test "${gate}" = false' in workflow
+    unified = (ROOT / "scripts/run_agent_model_gateway_disposable.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "test_agent_runtime_c7_bg4_production_composition.py" in unified
     assert "production_ready=false" in workflow
+
+
+def test_ci_quality_scope_is_the_frozen_c7_candidate_diff() -> None:
+    workflow = (ROOT / ".github/workflows/agent-runtime-disposable.yml").read_text(
+        encoding="utf-8"
+    )
+    assert f'C7_QUALITY_BASELINE: "{C7_QUALITY_BASELINE}"' in workflow
+    assert "fetch-depth: 0" in workflow
+    assert "git diff --name-only --diff-filter=ACMR" in workflow
+    assert '"$C7_QUALITY_BASELINE"...HEAD --' in workflow
+    assert '"${c7_candidate_files[@]}"' in workflow
+    candidate_files = subprocess.run(
+        [
+            "git", "diff", "--name-only", "--diff-filter=ACMR",
+            f"{C7_QUALITY_BASELINE}...HEAD", "--",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.splitlines()
+    for required in (
+        "backend/migrations/227_18_agent_runtime_model_gateway.sql",
+        "backend/migrations/227_19_agent_runtime_model_gateway_predispatch_failure.sql",
+        "backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql",
+        "backend/services/agent/runtime/model_gateway/protocol.py",
+        "backend/services/agent/runtime/model_gateway/service.py",
+        "backend/services/agent/runtime/model_gateway/runtime_client.py",
+    ):
+        assert required in candidate_files
 
 
 def test_sandbox_release_assets_have_zero_diff() -> None:
