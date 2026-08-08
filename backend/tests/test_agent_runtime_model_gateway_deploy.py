@@ -132,6 +132,8 @@ def test_four_unit_transaction_and_ci_entry_are_release_bound() -> None:
     flags_off = (DEPLOY / "runtime-flags-off-install.sh").read_text(encoding="utf-8")
     assert "deploy/control_plane_env_source.py" in flags_off
     assert "scripts/run_agent_model_gateway_disposable.sh" in workflow
+    assert '- "backend/core/db_scope.py"' in workflow
+    assert '- "backend/services/configuration/**"' in workflow
     assert "AGENT_RUNTIME_PRODUCTION_ENABLED" not in workflow
     for gate in (
         "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED",
