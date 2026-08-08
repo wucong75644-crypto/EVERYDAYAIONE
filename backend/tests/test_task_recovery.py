@@ -186,6 +186,22 @@ async def test_non_committing_outcome_is_not_counted(
     assert await task_recovery.recover_orphan_tasks(object()) == 0
 
 
+@pytest.mark.asyncio
+async def test_runtime_owned_claim_is_never_settled(
+    recovery_db: _RecoveryDb,
+) -> None:
+    recovery_db.results.extend([
+        [_task(delivery_context={"runtime": True})],
+        [],
+    ])
+
+    assert await task_recovery.recover_orphan_tasks(object()) == 0
+    assert [call[0] for call in recovery_db.calls] == [
+        "worker_claim_orphan_tasks",
+        "worker_claim_orphan_tasks",
+    ]
+
+
 def test_recovery_scope_is_actorless_worker() -> None:
     client = task_recovery._recovery_db(object())
 

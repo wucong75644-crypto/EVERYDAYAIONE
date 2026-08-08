@@ -101,6 +101,12 @@ async def recover_orphan_tasks(db: Any) -> int:
 
         for task in tasks:
             task_id = task.get("id")
+            if (task.get("delivery_context") or {}).get("runtime") is True:
+                logger.error(
+                    "Runtime-owned task returned by orphan claim; skipping | "
+                    f"task_id={task_id} | task_type={task.get('type')}"
+                )
+                continue
             try:
                 has_content, outcome = _settle_claimed_task(recovery_db, task)
                 if has_content and outcome and outcome.get(

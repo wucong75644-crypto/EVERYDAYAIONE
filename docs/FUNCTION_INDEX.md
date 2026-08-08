@@ -67,9 +67,10 @@
 | `BackgroundTaskWorker._get_active_org_ids` | `backend/services/background_task_worker.py` | 建立 actorless Worker DatabaseScope，并通过窄 RPC 获取 active 企业 ID；权限或响应异常失败关闭 |
 | `worker_list_active_organization_ids` | `backend/migrations/209_worker_active_organization_capability.sql` | 仅允许无 Actor/Org 的 Worker Scope 枚举 active 企业，不开放 `organizations` 表权限 |
 | `recover_orphan_tasks` | `backend/services/task_recovery.py` | 循环领取非 Actor 孤儿任务，并按累积内容调用 fenced complete/fail 能力收敛终态 |
-| `worker_claim_orphan_tasks` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 通过 `FOR UPDATE SKIP LOCKED`、lease 和 execution token 原子领取可恢复任务 |
-| `worker_complete_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务写入 interrupted Message 与 Task 终态 |
-| `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql` | 校验 Scope、状态、租约和 fencing，在同一事务幂等退款并提交失败终态 |
+| `worker_claim_orphan_tasks` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | 通过 `FOR UPDATE SKIP LOCKED`、lease 和 execution token 原子领取非 Actor、非 Runtime-owned 可恢复任务 |
+| `worker_discover_legacy_active_tasks` / `worker_fail_legacy_stale_task` | `backend/migrations/171_worker_media_task_control.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | legacy stale timeout discovery/settlement；排除并拒绝 Runtime-owned task，仍仅授予 `everydayai_worker` |
+| `worker_complete_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | 校验 Scope、状态、租约和 fencing，拒绝 Actor/Runtime-owned task，并在同一事务写入 interrupted Message 与 Task 终态 |
+| `worker_fail_orphan_task` | `backend/migrations/210_worker_orphan_task_recovery_capability.sql`，由 `227_21_agent_runtime_legacy_lifecycle_fence.sql` 收紧 | 校验 Scope、状态、租约和 fencing，拒绝 Actor/Runtime-owned task，并在同一事务幂等退款与提交失败终态 |
 | `worker_replace_global_knowledge_seed` | `backend/migrations/211_worker_global_knowledge_seed_capability.sql` | 校验受限节点、1024 维 Embedding 和边端点，原子替换全局 Seed 且拒绝跨作用域引用 |
 
 ### Agent Runtime AR-05～AR-09 基础合同

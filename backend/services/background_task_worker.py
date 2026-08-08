@@ -270,6 +270,13 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
             from services.conversation_task import is_actor_task
             if is_actor_task(task):
                 continue
+            if (task.get("delivery_context") or {}).get("runtime") is True:
+                logger.error(
+                    "Runtime-owned task returned by legacy stale discovery; "
+                    f"skipping | task_id={task.get('id')} | "
+                    f"task_type={task.get('type')}"
+                )
+                continue
             # 跳过没有 started_at 的任务（可能是旧数据或创建时未设置）
             if not task.get("started_at"):
                 continue
