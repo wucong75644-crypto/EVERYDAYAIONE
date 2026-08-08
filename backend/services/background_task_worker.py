@@ -51,6 +51,16 @@ def _resolve_poll_interval(settings: Settings) -> int:
     return _DEFAULT_POLL_INTERVAL_NO_WEBHOOK
 
 
+def _is_legacy_safe_delivery_context(task: dict) -> bool:
+    if "delivery_context" not in task:
+        return True
+    delivery_context = task["delivery_context"]
+    return isinstance(delivery_context, dict) and (
+        "runtime" not in delivery_context
+        or delivery_context["runtime"] is False
+    )
+
+
 class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
     """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
@@ -270,7 +280,7 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
             from services.conversation_task import is_actor_task
             if is_actor_task(task):
                 continue
-            if (task.get("delivery_context") or {}).get("runtime") is True:
+            if not _is_legacy_safe_delivery_context(task):
                 logger.error(
                     "Runtime-owned task returned by legacy stale discovery; "
                     f"skipping | task_id={task.get('id')} | "

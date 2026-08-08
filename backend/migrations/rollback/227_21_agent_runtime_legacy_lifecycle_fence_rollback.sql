@@ -7,7 +7,9 @@ BEGIN
     IF EXISTS (
         SELECT 1
           FROM public.tasks task
-         WHERE task.delivery_context @> '{"runtime": true}'::JSONB
+         WHERE task.delivery_context ? 'runtime'
+           AND (task.delivery_context -> 'runtime')
+               IS DISTINCT FROM 'false'::JSONB
            AND task.status NOT IN ('completed', 'failed', 'cancelled')
     ) THEN
         RAISE EXCEPTION

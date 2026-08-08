@@ -25,7 +25,10 @@ BEGIN
           FROM public.tasks task
          WHERE task.status IN ('pending', 'running')
            AND NOT (task.delivery_context @> '{"actor": true}'::JSONB)
-           AND NOT (task.delivery_context @> '{"runtime": true}'::JSONB)
+           AND (
+               NOT (task.delivery_context ? 'runtime')
+               OR task.delivery_context -> 'runtime' = 'false'::JSONB
+           )
            AND (
                task.execution_token IS NULL
                OR task.lease_expires_at IS NULL
@@ -106,7 +109,9 @@ BEGIN
         RAISE EXCEPTION 'ORPHAN_RECOVERY_ACTOR_TASK_FORBIDDEN'
             USING ERRCODE = '42501';
     END IF;
-    IF v_task.delivery_context @> '{"runtime": true}'::JSONB THEN
+    IF v_task.delivery_context ? 'runtime'
+       AND (v_task.delivery_context -> 'runtime')
+           IS DISTINCT FROM 'false'::JSONB THEN
         RAISE EXCEPTION 'ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN'
             USING ERRCODE = '42501';
     END IF;
@@ -228,7 +233,9 @@ BEGIN
         RAISE EXCEPTION 'ORPHAN_RECOVERY_ACTOR_TASK_FORBIDDEN'
             USING ERRCODE = '42501';
     END IF;
-    IF v_task.delivery_context @> '{"runtime": true}'::JSONB THEN
+    IF v_task.delivery_context ? 'runtime'
+       AND (v_task.delivery_context -> 'runtime')
+           IS DISTINCT FROM 'false'::JSONB THEN
         RAISE EXCEPTION 'ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN'
             USING ERRCODE = '42501';
     END IF;
@@ -298,7 +305,10 @@ BEGIN
                  (task.delivery_context ->> 'actor')::BOOLEAN,
                  FALSE
              ) IS FALSE
-             AND NOT (task.delivery_context @> '{"runtime": true}'::JSONB)
+             AND (
+                 NOT (task.delivery_context ? 'runtime')
+                 OR task.delivery_context -> 'runtime' = 'false'::JSONB
+             )
            ORDER BY task.started_at, task.id
       ) task_row;
     RETURN v_tasks;
@@ -338,7 +348,9 @@ BEGIN
         RAISE EXCEPTION 'MEDIA_WORKER_ACTOR_TASK_FORBIDDEN'
             USING ERRCODE = '42501';
     END IF;
-    IF v_task.delivery_context @> '{"runtime": true}'::JSONB THEN
+    IF v_task.delivery_context ? 'runtime'
+       AND (v_task.delivery_context -> 'runtime')
+           IS DISTINCT FROM 'false'::JSONB THEN
         RAISE EXCEPTION 'MEDIA_WORKER_RUNTIME_TASK_FORBIDDEN'
             USING ERRCODE = '42501';
     END IF;

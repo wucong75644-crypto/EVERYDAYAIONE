@@ -389,13 +389,16 @@ class TestCleanupStaleTasks:
             mock_timeout.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_runtime_task_is_not_cleaned_by_legacy_worker(self, worker, db):
+    @pytest.mark.parametrize("runtime_marker", [True, "true", None, 1, {}, []])
+    async def test_non_legacy_safe_runtime_marker_is_not_cleaned(
+        self, worker, db, runtime_marker,
+    ):
         old_time = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
         db._table_mock.execute.return_value = MagicMock(data=[{
             "id": "runtime-task",
             "type": "chat",
             "started_at": old_time,
-            "delivery_context": {"runtime": True},
+            "delivery_context": {"runtime": runtime_marker},
         }])
 
         with patch.object(
@@ -403,6 +406,22 @@ class TestCleanupStaleTasks:
         ) as mock_timeout:
             await worker.cleanup_stale_tasks()
             mock_timeout.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_canonical_runtime_false_remains_legacy_compatible(self, worker, db):
+        old_time = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+        db._table_mock.execute.return_value = MagicMock(data=[{
+            "id": "legacy-task",
+            "type": "chat",
+            "started_at": old_time,
+            "delivery_context": {"runtime": False},
+        }])
+
+        with patch.object(
+            worker, "_handle_timeout", new_callable=AsyncMock,
+        ) as mock_timeout:
+            await worker.cleanup_stale_tasks()
+            mock_timeout.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_db_error_handled(self, worker, db):

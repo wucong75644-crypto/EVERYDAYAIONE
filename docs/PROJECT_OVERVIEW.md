@@ -177,10 +177,11 @@ Agent Runtime C7-BG3.5 ModelAttempt/Gateway atomic dispatch binding：
   Runtime client 或 production composition，`production_ready=false`。
 
 Agent Runtime AR-18-A1.1 legacy lifecycle fence：
-- `backend/migrations/227_21_agent_runtime_legacy_lifecycle_fence.sql` 将
-  `delivery_context.runtime=true` task 从旧 startup orphan recovery 与 legacy stale timeout
-  的 discovery/claim 排除，并在旧 complete/fail/stale RPC 内再次失败关闭；rollback 仅在
-  不存在非终态 Runtime-owned task 时恢复旧合同。Actor 排除与普通 legacy task 行为不变。
+- `backend/migrations/227_21_agent_runtime_legacy_lifecycle_fence.sql` 仅将 Runtime key 缺失或
+  严格为 JSON boolean false 的 task 视为 legacy-safe；其他值均从旧 startup orphan recovery
+  与 legacy stale timeout 的 discovery/claim 排除，并在旧 complete/fail/stale RPC 内再次
+  失败关闭。Rollback 遇到非终态非 legacy-safe marker 时拒绝；Actor 排除与普通 legacy
+  task 行为不变。
 
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway

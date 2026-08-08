@@ -21,6 +21,7 @@ M210 = ROOT / "migrations/210_worker_orphan_task_recovery_capability.sql"
 MIGRATION = ROOT / "migrations/227_21_agent_runtime_legacy_lifecycle_fence.sql"
 ROLLBACK = ROOT / "migrations/rollback/227_21_agent_runtime_legacy_lifecycle_fence_rollback.sql"
 PG_BIN = Path(os.getenv("AGENT_RUNTIME_PG_BIN_DIR", "/opt/homebrew/bin"))
+AMBIGUOUS_RUNTIME_MARKERS = (True, "true", None, 1, {}, [])
 
 
 def _tool(name: str) -> str:
@@ -157,7 +158,7 @@ def _expect_forbidden(conn: psycopg.Connection, query: str, params: tuple, marke
     conn.rollback()
 
 
-def _verify_acl_and_rollback_cycle(url: str) -> None:
+def _verify_acl_and_rollback_cycle(url: str, ambiguous_ids: list) -> None:
     with psycopg.connect(url) as admin:
         row_security = admin.execute(
             "SELECT relrowsecurity,relforcerowsecurity FROM pg_class "
@@ -185,18 +186,28 @@ def _verify_acl_and_rollback_cycle(url: str) -> None:
                 (name,),
             ).fetchone()[0]
 
-        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState,
-                           match="ROLLBACK_ACTIVE_RUNTIME_TASKS"):
-            admin.execute(ROLLBACK.read_text(encoding="utf-8"))
-        admin.rollback()
+        admin.execute("SET LOCAL ROLE everydayai_owner")
+        admin.execute(
+            "UPDATE tasks SET status='failed' WHERE id=ANY(%s)",
+            (ambiguous_ids,),
+        )
+        admin.commit()
+        for task_id in ambiguous_ids:
+            with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState,
+                               match="ROLLBACK_ACTIVE_RUNTIME_TASKS"):
+                with admin.transaction():
+                    admin.execute("SET LOCAL ROLE everydayai_owner")
+                    admin.execute(
+                        "UPDATE tasks SET status='running' WHERE id=%s",
+                        (task_id,),
+                    )
+                    admin.execute(ROLLBACK.read_text(encoding="utf-8"))
         definition = admin.execute(
             "SELECT pg_get_functiondef('worker_claim_orphan_tasks(integer,integer)'::regprocedure)"
         ).fetchone()[0]
         assert "runtime" in definition
-        admin.execute("SET LOCAL ROLE everydayai_owner")
-        admin.execute(
-            "UPDATE tasks SET status='failed' WHERE delivery_context @> %s",
-            (Jsonb({"runtime": True}),),
+        false_guard_id, _ = _insert_task(
+            admin, delivery={"runtime": False}, status="pending",
         )
         admin.execute(ROLLBACK.read_text(encoding="utf-8"))
         definition = admin.execute(
@@ -208,6 +219,9 @@ def _verify_acl_and_rollback_cycle(url: str) -> None:
             "SELECT pg_get_functiondef('worker_claim_orphan_tasks(integer,integer)'::regprocedure)"
         ).fetchone()[0]
         assert "runtime" in definition
+        assert admin.execute(
+            "SELECT status FROM tasks WHERE id=%s", (false_guard_id,),
+        ).fetchone()[0] == "pending"
         admin.commit()
 
     with psycopg.connect(url) as admin:
@@ -229,15 +243,22 @@ def _verify_acl_and_rollback_cycle(url: str) -> None:
 def test_runtime_fence_acl_rls_and_rollback_cycle(database: tuple[str, Path]) -> None:
     url, _ = database
     with psycopg.connect(url) as admin:
-        runtime_id, runtime_token = _insert_task(admin, delivery={"runtime": True})
+        ambiguous = [
+            _insert_task(admin, delivery={"runtime": marker})
+            for marker in AMBIGUOUS_RUNTIME_MARKERS
+        ]
         actor_id, actor_token = _insert_task(admin, delivery={"actor": True})
         legacy_fail_id, _ = _insert_task(admin, delivery={})
         legacy_complete_id, _ = _insert_task(admin, delivery={})
         legacy_stale_id, _ = _insert_task(admin, delivery={})
+        canonical_false_id, _ = _insert_task(
+            admin, delivery={"runtime": False},
+        )
         admin.execute(
             "UPDATE tasks SET execution_token=NULL,lease_expires_at=NULL "
             "WHERE id=ANY(%s)",
-            ([legacy_fail_id, legacy_complete_id],),
+            ([task_id for task_id, _ in ambiguous]
+             + [legacy_fail_id, legacy_complete_id, canonical_false_id],),
         )
         admin.commit()
 
@@ -250,32 +271,39 @@ def test_runtime_fence_acl_rls_and_rollback_cycle(database: tuple[str, Path]) ->
             discovered = worker.execute(
                 "SELECT worker_discover_legacy_active_tasks()"
             ).fetchone()[0]
-        assert str(runtime_id) not in {row["id"] for row in claimed}
+        claimed_ids = {row["id"] for row in claimed}
+        for task_id, _ in ambiguous:
+            assert str(task_id) not in claimed_ids
         assert str(actor_id) not in {row["id"] for row in claimed}
         claim_by_id = {row["id"]: row for row in claimed}
         assert str(legacy_fail_id) in claim_by_id
         assert str(legacy_complete_id) in claim_by_id
-        assert str(runtime_id) not in {row["id"] for row in discovered}
-        assert str(actor_id) not in {row["id"] for row in discovered}
+        assert str(canonical_false_id) in claim_by_id
         discovered_ids = {row["id"] for row in discovered}
+        for task_id, _ in ambiguous:
+            assert str(task_id) not in discovered_ids
+        assert str(actor_id) not in {row["id"] for row in discovered}
         assert str(legacy_fail_id) in discovered_ids
         assert str(legacy_complete_id) in discovered_ids
         assert str(legacy_stale_id) in discovered_ids
+        assert str(canonical_false_id) in discovered_ids
 
-        _expect_forbidden(
-            worker, "SELECT worker_complete_orphan_task(%s,%s,%s)",
-            (runtime_id, runtime_token, Jsonb([{"type": "text", "text": "x"}])),
-            "ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN",
-        )
-        _expect_forbidden(
-            worker, "SELECT worker_fail_orphan_task(%s,%s,%s)",
-            (runtime_id, runtime_token, "x"),
-            "ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN",
-        )
-        _expect_forbidden(
-            worker, "SELECT worker_fail_legacy_stale_task(%s,%s,NULL)",
-            (runtime_id, "x"), "MEDIA_WORKER_RUNTIME_TASK_FORBIDDEN",
-        )
+        for runtime_id, runtime_token in ambiguous:
+            _expect_forbidden(
+                worker, "SELECT worker_complete_orphan_task(%s,%s,%s)",
+                (runtime_id, runtime_token,
+                 Jsonb([{"type": "text", "text": "x"}])),
+                "ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN",
+            )
+            _expect_forbidden(
+                worker, "SELECT worker_fail_orphan_task(%s,%s,%s)",
+                (runtime_id, runtime_token, "x"),
+                "ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN",
+            )
+            _expect_forbidden(
+                worker, "SELECT worker_fail_legacy_stale_task(%s,%s,NULL)",
+                (runtime_id, "x"), "MEDIA_WORKER_RUNTIME_TASK_FORBIDDEN",
+            )
         _expect_forbidden(
             worker, "SELECT worker_fail_orphan_task(%s,%s,%s)",
             (actor_id, actor_token, "x"), "ORPHAN_RECOVERY_ACTOR_TASK_FORBIDDEN",
@@ -298,8 +326,17 @@ def test_runtime_fence_acl_rls_and_rollback_cycle(database: tuple[str, Path]) ->
                 "SELECT worker_fail_legacy_stale_task(%s,%s,NULL)",
                 (legacy_stale_id, "timeout"),
             ).fetchone()[0]
+            canonical_false = worker.execute(
+                "SELECT worker_fail_orphan_task(%s,%s,%s)",
+                (canonical_false_id,
+                 claim_by_id[str(canonical_false_id)]["execution_token"],
+                 "restart"),
+            ).fetchone()[0]
             assert completed["outcome"] == "completed"
             assert failed["outcome"] == "failed"
             assert result["outcome"] == "failed"
+            assert canonical_false["outcome"] == "failed"
 
-    _verify_acl_and_rollback_cycle(url)
+    _verify_acl_and_rollback_cycle(
+        url, [task_id for task_id, _ in ambiguous],
+    )

@@ -39,15 +39,18 @@ def test_runtime_tasks_are_excluded_and_direct_settlement_fails_closed() -> None
     sql = _sql(MIGRATION)
     claim = _body(sql, "worker_claim_orphan_tasks")
     discovery = _body(sql, "worker_discover_legacy_active_tasks")
-    assert "'{\"runtime\": true}'::JSONB" in claim
-    assert "'{\"runtime\": true}'::JSONB" in discovery
+    for body in (claim, discovery):
+        assert "delivery_context ? 'runtime'" in body
+        assert "delivery_context -> 'runtime' = 'false'::JSONB" in body
     assert "'delivery_context', claimed.delivery_context" in claim
     for name in ("worker_complete_orphan_task", "worker_fail_orphan_task"):
         body = _body(sql, name)
         assert "ORPHAN_RECOVERY_RUNTIME_TASK_FORBIDDEN" in body
+        assert "IS DISTINCT FROM 'false'::JSONB" in body
         assert "ERRCODE = '42501'" in body
     stale = _body(sql, "worker_fail_legacy_stale_task")
     assert "MEDIA_WORKER_RUNTIME_TASK_FORBIDDEN" in stale
+    assert "IS DISTINCT FROM 'false'::JSONB" in stale
     assert "ERRCODE = '42501'" in stale
 
 
@@ -79,6 +82,8 @@ def test_rollback_guard_precedes_exact_legacy_contract_restore() -> None:
     first_replace = sql.index("CREATE OR REPLACE FUNCTION")
     assert sql.index("ROLLBACK_ACTIVE_RUNTIME_TASKS") < first_replace
     assert "status NOT IN ('completed', 'failed', 'cancelled')" in sql[:first_replace]
+    assert "delivery_context ? 'runtime'" in sql[:first_replace]
+    assert "IS DISTINCT FROM 'false'::JSONB" in sql[:first_replace]
     restored = sql[first_replace:]
     assert "RUNTIME_TASK_FORBIDDEN" not in restored
     assert "'delivery_context', claimed.delivery_context" not in restored
