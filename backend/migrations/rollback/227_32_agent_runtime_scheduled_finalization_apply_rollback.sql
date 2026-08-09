@@ -8,6 +8,7 @@ END $$;
 REVOKE ALL ON FUNCTION apply_agent_runtime_scheduled_finalization_v1(
  UUID,UUID,BIGINT,BIGINT,TEXT,UUID,TEXT,TIMESTAMPTZ) FROM everydayai_agent_runtime_worker;
 DROP FUNCTION apply_agent_runtime_scheduled_finalization_v1(UUID,UUID,BIGINT,BIGINT,TEXT,UUID,TEXT,TIMESTAMPTZ);
+DROP FUNCTION _agent_runtime_scheduled_safe_summary(TEXT);
 DROP FUNCTION _agent_runtime_scheduled_application_hash(UUID,UUID,BIGINT,BIGINT,TEXT,TEXT,TIMESTAMPTZ);
 DROP TRIGGER runtime_scheduled_finalization_application_guard ON agent_runtime_scheduled_finalization_intents;
 DROP FUNCTION _agent_runtime_scheduled_application_guard();

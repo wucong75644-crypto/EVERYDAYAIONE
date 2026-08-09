@@ -53,6 +53,20 @@ RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,public AS $$
    ELSE extract(epoch FROM p_next_run_at) END)::TEXT,'UTF8'),'sha256'),'hex')
 $$;
 
+CREATE FUNCTION _agent_runtime_scheduled_safe_summary(p_summary TEXT) RETURNS TEXT
+LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,public AS $$
+DECLARE normalized TEXT;fallback CONSTANT TEXT:='Runtime scheduled task completed';
+BEGIN
+ normalized:=NULLIF(btrim(regexp_replace(COALESCE(p_summary,''),'[[:space:]]+',' ','g')),'');
+ IF normalized IS NULL OR normalized~*'(authorization[[:space:]]*:[[:space:]]*bearer|cookie[[:space:]]*:|secret|password|credential|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|private[ _-]?key)'
+  OR normalized~*'https?://[^/[:space:]@]+:[^/[:space:]@]+@'
+  OR normalized~'(^|[[:space:]\(\[])/([A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+'
+  OR normalized~*'(^|[[:space:]\(\[])[A-Z]:[\\/]' THEN
+  RETURN fallback;
+ END IF;
+ RETURN left(normalized,500);
+END $$;
+
 CREATE FUNCTION apply_agent_runtime_scheduled_finalization_v1(
  p_scheduled_run_id UUID,p_claim_token UUID,p_expected_intent_version BIGINT,
  p_expected_task_version BIGINT,p_schedule_hash TEXT,p_request_id UUID,
@@ -157,7 +171,7 @@ BEGIN
    WHERE a.run_id=r.id AND(l.attempt_id<>ALL(SELECT aa.id FROM agent_action_attempts aa
     WHERE aa.action_id=a.id) OR a.org_id IS DISTINCT FROM i.org_id
     OR ca.org_id IS DISTINCT FROM i.org_id OR ca.conversation_id<>ars.conversation_id
-    OR l.content_hash!~'^[0-9a-f]{64}$')) THEN
+    OR ca.content_hash IS DISTINCT FROM l.content_hash OR l.content_hash!~'^[0-9a-f]{64}$')) THEN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_ARTIFACT_FENCED' USING ERRCODE='55000';
   END IF;
   SELECT COALESCE(jsonb_agg(jsonb_build_object('artifact_id',l.artifact_id,
@@ -167,17 +181,18 @@ BEGIN
   JOIN conversation_artifacts ca ON ca.id=l.artifact_id
   JOIN agent_runtime_sessions ars ON ars.id=r.session_id
   WHERE a.run_id=r.id AND a.org_id IS NOT DISTINCT FROM i.org_id
-   AND ca.org_id IS NOT DISTINCT FROM i.org_id AND ca.conversation_id=ars.conversation_id;
+   AND ca.org_id IS NOT DISTINCT FROM i.org_id AND ca.conversation_id=ars.conversation_id
+   AND ca.content_hash IS NOT DISTINCT FROM l.content_hash;
   next_status:=CASE WHEN t.schedule_type='once' THEN 'paused' ELSE 'active' END;
   IF (t.schedule_type='once' AND p_next_run_at IS NOT NULL)
    OR(t.schedule_type<>'once' AND p_next_run_at IS NULL) THEN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_SCHEDULE_INVALID' USING ERRCODE='22023';
   END IF;
   run_status:='success';
-  summary:=CASE WHEN m.output_kind='text' THEN NULLIF(btrim(regexp_replace(m.text_content,'\s+',' ','g')),'')
+  summary:=CASE WHEN m.output_kind='text' THEN m.text_content
    WHEN jsonb_typeof(m.structured_content->'summary')='string'
-    THEN NULLIF(btrim(regexp_replace(m.structured_content->>'summary','\s+',' ','g')),'') END;
-  summary:=left(COALESCE(summary,'Runtime scheduled task completed'),500);
+    THEN m.structured_content->>'summary' END;
+  summary:=_agent_runtime_scheduled_safe_summary(summary);
   result:=jsonb_build_object('runtime_run_id',r.id,'model_result_id',m.id,
    'output_kind',m.output_kind,'content_hash',m.content_hash,'artifacts',artifacts);
  ELSIF i.terminal_status='failed' THEN
@@ -230,6 +245,7 @@ END $$;
 
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_application_guard(),
  _agent_runtime_scheduled_application_hash(UUID,UUID,BIGINT,BIGINT,TEXT,TEXT,TIMESTAMPTZ),
+ _agent_runtime_scheduled_safe_summary(TEXT),
  apply_agent_runtime_scheduled_finalization_v1(UUID,UUID,BIGINT,BIGINT,TEXT,UUID,TEXT,TIMESTAMPTZ)
  FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai,everydayai_agent_runtime_worker;
