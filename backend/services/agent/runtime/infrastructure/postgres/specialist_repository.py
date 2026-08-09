@@ -133,24 +133,34 @@ class PostgresSpecialistRepository:
         return await self._rpc("checkpoint_agent_artifact_materialization", params, allowed={"checkpointed"})
 
     async def create_child_run(self, **params: object) -> object:
-        return await self._rpc("create_agent_child_run_strict", params, allowed={"created", "already_exists"})
+        return await self._rpc(
+            "create_agent_child_run_strict_v2", params,
+            allowed={"created", "already_exists", "cancel_fenced"},
+        )
 
-    async def read_child_run(self, *, child_run_id: str, parent_run_id: str, parent_action_id: str,
+    async def read_child_run(self, *, child_run_id: str | None, parent_run_id: str, parent_action_id: str,
                              parent_attempt_id: str, parent_request_hash: str,
                              ownership_token: str, expected_state_version: int,
-                             child_ordinal: int) -> object:
-        return await self._rpc("read_agent_child_run_strict_v2", {
+                             child_ordinal: int | None = None) -> object:
+        del child_ordinal
+        return await self._rpc("read_agent_child_run_binding_v3", {
             "p_child_run_id": child_run_id, "p_parent_run_id": parent_run_id,
             "p_parent_action_id": parent_action_id, "p_parent_attempt_id": parent_attempt_id,
             "p_parent_request_hash": parent_request_hash, "p_ownership_token": ownership_token,
-            "p_expected_state_version": expected_state_version, "p_child_ordinal": child_ordinal,
-        }, allowed={"readback"})
+            "p_expected_state_version": expected_state_version,
+        }, allowed={"readback", "not_found"})
 
     async def complete_child_run(self, **params: object) -> object:
-        return await self._rpc("aggregate_agent_child_run_strict", params, allowed={"completed"})
+        return await self._rpc(
+            "aggregate_agent_child_run_strict_v2", params,
+            allowed={"completed", "cancel_pending"},
+        )
 
     async def cancel_child_run(self, **params: object) -> object:
-        return await self._rpc("cancel_agent_child_run_strict_v2", params, allowed={"cancelled"})
+        return await self._rpc(
+            "read_agent_child_run_cancel_intent_v1", params,
+            allowed={"confirmed", "pending", "not_found"},
+        )
 
     async def mutate_resource(self, operation: str, **params: object) -> object:
         names = {"file_delete": "runtime_delete_workspace_resource", "restore_file": "runtime_restore_workspace_resource", "manage_scheduled_task": "runtime_mutate_scheduled_task"}

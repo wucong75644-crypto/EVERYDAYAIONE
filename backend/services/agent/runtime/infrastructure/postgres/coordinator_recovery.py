@@ -17,6 +17,7 @@ from services.agent.runtime.ports.coordinator_recovery import (
     ActionDispatchSnapshot,
     ActionRecoveryClaim,
     ActionRecoveryOperation,
+    ChildCancelRecoveryClaim,
     CoordinatorRecoveryPort,
     ModelResultDraft,
     RecoveryOutcome,
@@ -198,6 +199,57 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
                 },
             )
         return _action_recovery_claim(raw)
+
+    async def claim_child_cancel(
+        self, *, worker_id: str, lease_seconds: int = 120,
+    ) -> ChildCancelRecoveryClaim:
+        try:
+            raw = await self._rpc(
+                "claim_next_agent_child_run_cancel_intent_v1", {
+                    "p_worker_id": worker_id,
+                    "p_lease_seconds": lease_seconds,
+                },
+            )
+        except (OperationalError, InterfaceError):
+            raw = await self._rpc(
+                "get_claimed_agent_child_run_cancel_intent_v1", {
+                    "p_worker_id": worker_id,
+                },
+            )
+        row = _mapping(raw, "Child cancel claim")
+        name = _outcome(row, {"claimed", "found", "not_found"})
+        if name == "not_found":
+            return ChildCancelRecoveryClaim(
+                outcome=RecoveryOutcome.NOT_FOUND,
+            )
+        intent = _mapping(row.get("intent"), "Child cancel intent")
+        intent_id = _uuid(intent.get("id"))
+        token = _uuid(intent.get("claim_token"))
+        version = _integer(intent.get("state_version"))
+        if None in (intent_id, token, version):
+            raise PersistenceContractError(
+                "Child cancel claim binding required",
+            )
+        return ChildCancelRecoveryClaim(
+            outcome=RecoveryOutcome.CLAIMED, intent_id=intent_id,
+            claim_token=token, state_version=version,
+        )
+
+    async def apply_child_cancel(
+        self, *, intent_id: str, claim_token: str,
+        expected_state_version: int, reason: str,
+    ) -> RecoveryOutcome:
+        row = _mapping(await self._rpc(
+            "apply_agent_child_run_cancel_intent_v1", {
+                "p_intent_id": intent_id,
+                "p_claim_token": claim_token,
+                "p_expected_state_version": expected_state_version,
+                "p_reason": reason,
+            },
+        ), "Child cancel apply")
+        return RecoveryOutcome(_outcome(
+            row, {"applied", "confirmed"},
+        ))
 
 
 def _action_recovery_claim(value: object) -> ActionRecoveryClaim:

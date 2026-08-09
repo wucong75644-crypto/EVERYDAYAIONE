@@ -352,7 +352,8 @@ class PortBackedProvider(SpecialistProvider):
         if self.provider == "child_run" and hasattr(self.port, "cancel"):
             result = await self.port.cancel(attempt, receipt)  # type: ignore[attr-defined]
             if isinstance(result, Mapping) and result.get("state") == "cancelled" and result.get("fencing_confirmed") is True:
-                return ProviderReceipt(state=ProviderState.CANCELLED, provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence={"cancel_confirmed": True, "fencing_confirmed": True})
+                evidence = _object(result.get("evidence"))
+                return ProviderReceipt(state=ProviderState.CANCELLED, provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence={**evidence, "cancel_confirmed": True, "fencing_confirmed": True})
         return _unknown(self.provider, attempt.request_hash, "PORT_CANCEL_UNPROVEN")
 
 

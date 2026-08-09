@@ -62,6 +62,9 @@ async def cancel_action(
     if isinstance(resolved.executor, SpecialistExecutor):
         await _settle_specialist(
             driver, snapshot, receipt, token, active_lease.state_version,
+            child_run=resolved.descriptor.executor_type.startswith(
+                "runtime_child_run:",
+            ),
         )
     else:
         await _settle_sandbox(
@@ -70,9 +73,16 @@ async def cancel_action(
     return receipt.outcome
 
 
-async def _settle_specialist(driver, snapshot, receipt, token, state_version) -> None:
+async def _settle_specialist(
+    driver, snapshot, receipt, token, state_version, *, child_run: bool,
+) -> None:
     raw_attempt = snapshot.attempt
     if receipt.outcome is ExecutionOutcome.CANCELLED:
+        if child_run:
+            await _settle_child_cancel(
+                driver, raw_attempt, receipt, token, state_version,
+            )
+            return
         finalized = await driver._try_specialist_finalize(
             receipt, attempt_id=str(raw_attempt["id"]), token=token,
             state_version=state_version,
@@ -92,6 +102,24 @@ async def _settle_specialist(driver, snapshot, receipt, token, state_version) ->
         provider_receipt=dict(receipt.external_receipt),
         ambiguity_evidence=receipt.ambiguity_evidence,
         next_reconcile_at=next_reconcile_at(driver._lease_seconds),
+    )
+
+
+async def _settle_child_cancel(
+    driver, raw_attempt, receipt, token, state_version,
+) -> None:
+    evidence = receipt.external_receipt.get("evidence")
+    if not isinstance(evidence, dict):
+        raise RuntimeError("CHILD_CANCEL_PROOF_REQUIRED")
+    await driver._actions.finalize_child_cancel(
+        attempt_id=str(raw_attempt["id"]), reconciliation_token=token,
+        expected_state_version=state_version,
+        request_hash=str(raw_attempt["request_hash"]),
+        intent_id=required(
+            evidence.get("child_cancel_intent_id"),
+            "child_cancel_intent_id",
+        ),
+        proof_hash=required(evidence.get("proof_hash"), "proof_hash"),
     )
 
 

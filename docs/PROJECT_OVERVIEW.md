@@ -235,6 +235,18 @@ Agent Runtime AR-18-A1.2-B5 Sandbox cancellation handoff：
 - 旧 `request_sandbox_job_cancel` 对Runtime撤权；rollback遇到cancel facts、活动reconciliation或
   cleanup residue失败关闭，零facts时恢复旧ACL。
 
+Agent Runtime AR-18-A1.2-B6 Child Run recursive cancellation：
+- `backend/migrations/227_27_agent_runtime_child_run_recursive_cancel.sql` 为每个直接 Child
+  Action 建立owner-only、FORCE RLS durable cancel intent；Run cancel立即保留父Run cancelled，
+  后台scanner按层递归创建孙层intent并等待Child、Provider或Sandbox各自proof收敛。
+- Child create与cancel以parent action/ordinal唯一绑定：cancel-first确认not-created并禁止后建，
+  create-first持久绑定权威child ID；响应丢失可按parent binding readback。Child专用finalizer仅在
+  intent confirmed及reconciliation token/lease、state/request hash、kill epoch全部有效时终结父
+  Attempt/Action，不改父Run、不递减blocker，也不复用Provider submission proof。
+- requested/applied crash可由新scanner owner接管；任何UNKNOWN或未完成descendant proof永久保持
+  reconcile-only，不按超时强制关闭。Rollback遇到任意intent事实或未收敛child依赖失败关闭，
+  零事实时恢复227_25函数与既有ACL；budget递归治理不属于本批。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、

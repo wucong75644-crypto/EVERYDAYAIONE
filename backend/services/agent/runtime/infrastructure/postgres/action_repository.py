@@ -228,3 +228,17 @@ class PostgresActionRepository:
             "p_expected_job_state_version": expected_job_state_version,
             "p_receipt_hash": receipt_hash,
         })
+
+    async def finalize_child_cancel(
+        self, *, attempt_id: str, reconciliation_token: str,
+        expected_state_version: int, request_hash: str,
+        intent_id: str, proof_hash: str,
+    ) -> ActionMutationReceipt:
+        return await self._rpc("finalize_agent_action_child_cancel_v1", {
+            "p_attempt_id": attempt_id,
+            "p_reconciliation_token": reconciliation_token,
+            "p_expected_state_version": expected_state_version,
+            "p_request_hash": request_hash,
+            "p_intent_id": intent_id,
+            "p_proof_hash": proof_hash,
+        })

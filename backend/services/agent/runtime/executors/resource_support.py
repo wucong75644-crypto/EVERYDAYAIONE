@@ -131,23 +131,39 @@ class ChildRunService:
         )
         created = phase_object(result, "CHILD_RUN_CREATE_INVALID")
         if created.get("outcome") in {"created", "already_exists"}:
-            return {**created, "state": "accepted", "provider_task_ref": str(created.get("child_run_id"))}
+            return {
+                **created, "state": "accepted",
+                "provider_task_ref": str(created.get("child_run_id")),
+                "evidence": {
+                    "child_run_id": str(created.get("child_run_id")),
+                    "child_ordinal": int(request["child_ordinal"]),
+                },
+            }
+        if created.get("outcome") == "cancel_fenced":
+            return {
+                **created, "state": "unknown",
+                "evidence": {"error_code": "CHILD_RUN_CREATE_CANCEL_FENCED"},
+            }
         return created
 
     async def readback(self, attempt, receipt: Mapping[str, object]) -> Mapping[str, object]:
-        child_id = receipt.get("child_run_id")
-        if not child_id or not attempt.run_id:
+        child_id = _child_id(receipt)
+        if not attempt.run_id:
             return {"state": "unknown", "evidence": {"error_code": "CHILD_RUN_READBACK_BINDING_MISSING"}}
         token = str(receipt.get("reconciliation_token") or attempt.lease.fencing_token)
         version = receipt.get("reconciliation_state_version", receipt.get("state_version", 1))
         result = await self.repository.read_child_run(
-            child_run_id=str(child_id), parent_run_id=attempt.run_id,
+            child_run_id=str(child_id) if child_id else None,
+            parent_run_id=attempt.run_id,
             parent_action_id=str(attempt.action_id), parent_attempt_id=str(attempt.attempt_id),
             parent_request_hash=attempt.request_hash, ownership_token=token,
-            expected_state_version=int(version), child_ordinal=int(receipt.get("child_ordinal", 0)),
+            expected_state_version=int(version),
         )
         readback = phase_object(result, "CHILD_RUN_READBACK_INVALID")
-        return {**readback, "state": str(readback.get("status", "unknown"))}
+        return {
+            **readback,
+            "state": _child_provider_state(readback.get("status")),
+        }
 
     async def complete(self, attempt, receipt: Mapping[str, object], result: Mapping[str, object]) -> Mapping[str, object]:
         child_id = receipt.get("child_run_id")
@@ -163,17 +179,56 @@ class ChildRunService:
         )
 
     async def cancel(self, attempt, receipt: Mapping[str, object]) -> Mapping[str, object]:
-        child_id = receipt.get("child_run_id")
-        if not child_id or not attempt.run_id:
+        if not attempt.run_id:
             return {"state": "unknown", "evidence": {"error_code": "CHILD_RUN_CANCEL_BINDING_MISSING"}}
         result = await self.repository.cancel_child_run(
-            p_child_run_id=str(child_id), p_parent_run_id=attempt.run_id,
-            p_parent_action_id=str(attempt.action_id), p_parent_request_hash=attempt.request_hash,
+            p_parent_action_id=str(attempt.action_id),
             p_parent_attempt_id=str(attempt.attempt_id),
-            p_reconciliation_token=str(receipt.get("reconciliation_token", attempt.lease.fencing_token)),
+            p_reconciliation_token=str(receipt.get(
+                "reconciliation_token", attempt.lease.fencing_token,
+            )),
             p_expected_state_version=int(receipt.get("reconciliation_state_version", receipt.get("state_version", 1))),
-            p_reason=str(receipt.get("cancel_reason", "parent_cancel")),
+            p_request_hash=attempt.request_hash,
         )
+        if isinstance(result, Mapping) and result.get("outcome") == "confirmed":
+            return {
+                **result, "state": "cancelled", "fencing_confirmed": True,
+                "evidence": {
+                    "child_cancel_intent_id": result.get("intent_id"),
+                    "proof_hash": result.get("proof_hash"),
+                    "terminal_kind": result.get("terminal_kind"),
+                },
+            }
         if isinstance(result, Mapping):
-            return {**result, "fencing_confirmed": result.get("outcome") == "cancelled"}
+            return {
+                **result, "state": "unknown",
+                "evidence": {"error_code": "CHILD_RUN_CANCEL_PENDING"},
+            }
         return {"state": "unknown", "evidence": {"error_code": "CHILD_RUN_CANCEL_INVALID"}}
+
+
+def _child_id(receipt: Mapping[str, object]) -> object:
+    evidence = receipt.get("evidence")
+    nested = evidence if isinstance(evidence, Mapping) else {}
+    return (
+        receipt.get("child_run_id")
+        or receipt.get("provider_task_ref")
+        or nested.get("child_run_id")
+    )
+
+
+def _child_provider_state(status: object) -> str:
+    value = str(status or "unknown")
+    if value == "completed":
+        return "completed"
+    if value == "failed":
+        return "failed"
+    if value == "cancelled":
+        return "cancelled"
+    if value == "unknown":
+        return "unknown"
+    if value in {
+        "queued", "running", "waiting_actions", "waiting_interaction",
+    }:
+        return "accepted"
+    return "unknown"

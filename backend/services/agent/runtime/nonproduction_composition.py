@@ -73,7 +73,13 @@ class LocalNonProductionChildRunRepository:
         return dict(row) | ({"outcome": "already_exists"} if existing else {})
 
     async def read_child_run(self, **params: object) -> Mapping[str, object]:
-        row = next((row for key, row in self._rows.items() if row["child_run_id"] == params["child_run_id"]), None)
+        child_id = params.get("child_run_id")
+        row = next((row for key, row in self._rows.items() if (
+            (child_id is not None and row["child_run_id"] == child_id)
+            or (child_id is None and key[:2] == (
+                str(params["parent_run_id"]), str(params["parent_action_id"]),
+            ))
+        )), None)
         if row is None:
             return {"outcome": "not_found"}
         return {"outcome": "readback", **row}
@@ -84,9 +90,17 @@ class LocalNonProductionChildRunRepository:
         return {"outcome": "completed", **row}
 
     async def cancel_child_run(self, **params: object) -> Mapping[str, object]:
-        row = next(row for row in self._rows.values() if row["child_run_id"] == params["p_child_run_id"])
+        row = next((row for key, row in self._rows.items() if key[1] == str(
+            params["p_parent_action_id"],
+        )), None)
+        if row is None:
+            return {"outcome": "not_found"}
         row.update(status="cancelled", state_version=int(row["state_version"]) + 1)
-        return {"outcome": "cancelled", **row}
+        proof = hashlib.sha256(str(params["p_parent_action_id"]).encode()).hexdigest()
+        return {
+            "outcome": "confirmed", "intent_id": str(params["p_parent_action_id"]),
+            "terminal_kind": "cancelled", "proof_hash": proof, **row,
+        }
 
 
 class LocalNonProductionProviderResolver:

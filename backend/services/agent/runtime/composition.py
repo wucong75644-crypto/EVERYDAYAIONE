@@ -79,6 +79,9 @@ class RuntimeOwner:
         worked = (await self.runtime.action_once()) or worked
         if self._draining:
             return worked
+        worked = (await self.runtime.child_cancel_once()) or worked
+        if self._draining:
+            return worked
         return (await self.runtime.reconciliation_once()) or worked
 
     def drain(self) -> None:

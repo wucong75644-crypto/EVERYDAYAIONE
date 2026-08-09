@@ -170,6 +170,7 @@ class RuntimeLoopCoordinator:
             asyncio.create_task(self._run_scanner()),
             asyncio.create_task(self._action_scanner()),
             asyncio.create_task(self._reconciliation_scanner()),
+            asyncio.create_task(self._child_cancel_scanner()),
         }
         if self._authorization_loop is not None:
             tasks.add(asyncio.create_task(self._authorization_scanner()))
@@ -231,6 +232,22 @@ class RuntimeLoopCoordinator:
         if self._authorization_loop is None:
             return False
         return await self._authorization_loop.run_once()
+
+    async def child_cancel_once(self) -> bool:
+        claim = await self._recovery.claim_child_cancel(
+            worker_id=self._worker_id, lease_seconds=self._run_lease_seconds,
+        )
+        if claim.outcome is RecoveryOutcome.NOT_FOUND:
+            return False
+        if None in (claim.intent_id, claim.claim_token, claim.state_version):
+            raise RuntimeError("CHILD_CANCEL_CLAIM_INCOMPLETE")
+        await self._recovery.apply_child_cancel(
+            intent_id=claim.intent_id,
+            claim_token=claim.claim_token,
+            expected_state_version=claim.state_version,
+            reason="parent_run_cancelled",
+        )
+        return True
 
     async def _with_run_lease(
         self, *, run_id: str, token: str, initial_state_version: int,
@@ -343,6 +360,11 @@ class RuntimeLoopCoordinator:
     async def _authorization_scanner(self) -> None:
         while not self._stopping.is_set():
             if not await self.authorization_once():
+                await self._wait()
+
+    async def _child_cancel_scanner(self) -> None:
+        while not self._stopping.is_set():
+            if not await self.child_cancel_once():
                 await self._wait()
 
     async def _wait(self) -> None:
