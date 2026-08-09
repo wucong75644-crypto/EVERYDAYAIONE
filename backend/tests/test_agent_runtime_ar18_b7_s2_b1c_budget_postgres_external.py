@@ -106,6 +106,10 @@ def _cancel_unknown(url: str, facts: dict, step: dict, attempt: dict) -> None:
 def test_ordinary_run_delegates_without_budget_fact(database: str) -> None:
     _setup(database)
     scheduled = _bound_run(database)
+    with psycopg.connect(database) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM agent_runtime_scheduled_run_credit_budgets",
+        ).fetchone()[0] == 0
     _, run_id = _scheduled_command_run(
         database, scheduled["task_id"], scheduled["scheduled_run_id"], run_kind="user",
     )
@@ -182,6 +186,26 @@ def test_multi_step_settle_release_and_replay_preserve_cap(database: str) -> Non
     ))
     assert failed["outcome"] == "failed"
     assert _budget(database, facts["run_id"]) == (10, 0, 4, 0, 0)
+
+
+def test_frozen_budget_ignores_later_task_max_credits(database: str) -> None:
+    _setup(database)
+    facts = _bound_run(database)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE scheduled_tasks SET max_credits=99 WHERE id=%s", (facts["task_id"],))
+        conn.commit()
+    step = _step(database, facts["run_id"], 1)
+    assert _prepare_step(database, facts, step, 10, "frozen-old")["outcome"] == "prepared"
+    assert _budget(database, facts["run_id"]) == (10, 10, 0, 0, 0)
+    assert _prepare_step(
+        database, facts, _step(database, facts["run_id"], 2), 1, "frozen-exhausted",
+    )["outcome"] == "budget_exhausted"
+
+    new_facts = _bound_run(database)
+    new_step = _step(database, new_facts["run_id"], 1)
+    assert _prepare_step(database, new_facts, new_step, 10, "frozen-new")["outcome"] == "prepared"
+    assert _budget(database, new_facts["run_id"]) == (10, 10, 0, 0, 0)
 
 
 def test_concurrent_steps_and_same_step_replay_are_atomic(database: str) -> None:
@@ -304,6 +328,26 @@ def test_late_overage_survives_insufficient_balance_as_pending(database: str) ->
             "FROM agent_runtime_scheduled_credit_overages WHERE attempt_id=%s",
             (attempt["attempt_id"],),
         ).fetchone() == (15, 10, 5)
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE users SET credits=100 WHERE id=%s", (USER,))
+        conn.commit()
+    replay = _rpc(database, "record_late_model_receipt", (
+        attempt["attempt_id"], "pending-provider", {}, "e" * 64,
+        {"input_tokens": 15}, "completed", {"readback": True}, 15,
+    ))
+    assert replay["outcome"] == "already_recorded"
+    conflict = _rpc(database, "record_late_model_receipt", (
+        attempt["attempt_id"], "changed-provider", {}, "d" * 64,
+        {"input_tokens": 16}, "completed", {"readback": True}, 16,
+    ))
+    assert conflict["outcome"] == "receipt_conflict"
+    with psycopg.connect(database) as conn:
+        assert conn.execute("SELECT credits FROM users WHERE id=%s", (USER,)).fetchone()[0] == 100
+        assert conn.execute(
+            "SELECT status,adjusted_credits FROM agent_model_credit_settlements WHERE model_step_id=%s",
+            (step["id"],),
+        ).fetchone() == ("adjustment_pending", 10)
+        assert conn.execute("SELECT count(*) FROM agent_runtime_scheduled_credit_overages").fetchone()[0] == 1
     assert _budget(database, facts["run_id"]) == (10, 0, 0, 10, 0)
 
 
@@ -326,20 +370,30 @@ def test_late_actual_within_remaining_has_no_overage(database: str) -> None:
     assert _budget(database, facts["run_id"]) == (10, 0, 0, 0, 4)
 
 
-def test_same_user_different_run_budget_locks_do_not_deadlock(database: str) -> None:
+def test_late_adjustment_and_prepare_do_not_deadlock(database: str) -> None:
     _setup(database)
-    runs = [_bound_run(database) for _ in range(8)]
-    inputs = [
-        (facts, _step(database, facts["run_id"], 1), f"run-{index}")
-        for index, facts in enumerate(runs)
-    ]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        outcomes = list(pool.map(
-            lambda item: _prepare_step(database, item[0], item[1], 10, item[2])["outcome"],
-            inputs,
+    late_facts = _bound_run(database)
+    late_step = _step(database, late_facts["run_id"], 1)
+    late_attempt = _prepare_step(database, late_facts, late_step, 10, "race-late")
+    _cancel_unknown(database, late_facts, late_step, late_attempt)
+    prepare_facts = _bound_run(database)
+    prepare_step = _step(database, prepare_facts["run_id"], 1)
+    with psycopg.connect(database) as conn:
+        before = conn.execute("SELECT credits FROM users WHERE id=%s", (USER,)).fetchone()[0]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        late_future = pool.submit(_rpc, database, "record_late_model_receipt", (
+            late_attempt["attempt_id"], "race-provider", {}, "1" * 64,
+            {"input_tokens": 15}, "completed", {"readback": True}, 15,
         ))
-    assert outcomes == ["prepared"] * 8
-    assert all(_budget(database, facts["run_id"]) == (10, 10, 0, 0, 0) for facts in runs)
+        prepare_future = pool.submit(
+            _prepare_step, database, prepare_facts, prepare_step, 10, "race-prepare",
+        )
+        assert late_future.result(timeout=15)["outcome"] == "recorded"
+        assert prepare_future.result(timeout=15)["outcome"] == "prepared"
+    with psycopg.connect(database) as conn:
+        assert conn.execute("SELECT credits FROM users WHERE id=%s", (USER,)).fetchone()[0] == before - 20
+    assert _budget(database, late_facts["run_id"]) == (10, 0, 0, 0, 10)
+    assert _budget(database, prepare_facts["run_id"]) == (10, 10, 0, 0, 0)
 
 
 def test_apply_fails_closed_for_historical_scheduled_settlement(database: str) -> None:
@@ -361,21 +415,6 @@ def test_apply_fails_closed_for_historical_scheduled_settlement(database: str) -
     ))["outcome"] == "prepared"
     with pytest.raises(Exception, match="HISTORICAL_FACTS_EXIST"):
         _apply(database, MIGRATION)
-
-
-def test_migration_is_lazy_and_empty_database_can_rollback(database: str) -> None:
-    _setup(database)
-    _bound_run(database)
-    with psycopg.connect(database) as conn:
-        assert conn.execute(
-            "SELECT count(*) FROM agent_runtime_scheduled_run_credit_budgets",
-        ).fetchone()[0] == 0
-    _apply(database, ROLLBACK)
-    with psycopg.connect(database) as conn:
-        conn.execute("SET ROLE everydayai_owner")
-        conn.execute("TRUNCATE agent_model_credit_settlements")
-        conn.commit()
-    _apply(database, MIGRATION)
 
 
 def test_acl_source_conflict_and_rollback_guard(database: str) -> None:

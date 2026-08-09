@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,3 +53,11 @@ def test_overage_fact_is_secret_free_immutable_and_conservative() -> None:
     assert "LEAST(p_actual_credits,GREATEST" in SQL
     for forbidden in ("provider_payload", "credential", "api_key", "storage_ref"):
         assert forbidden not in SQL
+
+
+def test_pending_replay_and_frozen_budget_cannot_regress() -> None:
+    pending_guard = SQL.index("IF c.status='adjustment_pending' THEN")
+    legacy_adjust = SQL.index("result:=_adjust_model_attempt_credits_without_scheduled_budget_v1")
+    assert pending_guard < legacy_adjust
+    assert "max_value:=(e.budget_snapshot->>'max_credits')::INTEGER" in SQL
+    assert re.search(r"\bt\.max_credits\b", SQL) is None

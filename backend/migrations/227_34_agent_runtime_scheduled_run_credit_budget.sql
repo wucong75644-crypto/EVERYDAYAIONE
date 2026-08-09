@@ -217,16 +217,19 @@ BEGIN
  IF b.scheduled_run_id IS NULL OR e.scheduled_task_id IS NULL OR t.id IS NULL OR q.id IS NULL
  OR b.owner_kind<>'runtime' OR b.scheduled_task_id IS DISTINCT FROM t.id
  OR (b.org_id,b.user_id) IS DISTINCT FROM(r.org_id,r.user_id)
+ OR (t.org_id,t.user_id) IS DISTINCT FROM(r.org_id,r.user_id)
  OR (q.task_id,q.org_id) IS DISTINCT FROM(t.id,r.org_id)
  OR b.profile_state_version IS DISTINCT FROM e.state_version
  OR r.config_snapshot->'scheduled_budget' IS DISTINCT FROM e.budget_snapshot
  OR jsonb_typeof(r.config_snapshot->'scheduled_budget'->'max_credits') IS DISTINCT FROM 'number'
  OR (r.config_snapshot->'scheduled_budget'->>'max_credits')!~'^[0-9]+$'
- OR (r.config_snapshot->'scheduled_budget'->>'max_credits')::INTEGER IS DISTINCT FROM t.max_credits
- OR (e.budget_snapshot->>'max_credits')::INTEGER IS DISTINCT FROM t.max_credits THEN
+ OR jsonb_typeof(e.budget_snapshot->'max_credits') IS DISTINCT FROM 'number'
+ OR (e.budget_snapshot->>'max_credits')!~'^[0-9]+$'
+ OR (r.config_snapshot->'scheduled_budget'->>'max_credits')::INTEGER IS DISTINCT FROM
+    (e.budget_snapshot->>'max_credits')::INTEGER THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_BUDGET_SOURCE_INVALID' USING ERRCODE='42501';
  END IF;
- max_value:=t.max_credits;
+ max_value:=(e.budget_snapshot->>'max_credits')::INTEGER;
  INSERT INTO agent_runtime_scheduled_run_credit_budgets(runtime_run_id,scheduled_run_id,scheduled_task_id,
   org_id,user_id,profile_state_version,max_credits) VALUES(r.id,b.scheduled_run_id,b.scheduled_task_id,
   r.org_id,r.user_id,e.state_version,max_value) ON CONFLICT(runtime_run_id) DO NOTHING;
@@ -363,6 +366,17 @@ BEGIN
    (attempt.org_id,attempt.user_id,attempt.run_id,attempt.model_step_id,attempt.id,
     attempt.request_hash,p_actual_credits,user_charge,overage) THEN
   RETURN jsonb_build_object('outcome','receipt_conflict');
+ END IF;
+ IF c.status='adjustment_pending' THEN
+  IF c.response_hash IS DISTINCT FROM p_response_hash
+  OR c.adjusted_credits IS DISTINCT FROM user_charge
+  OR (overage>0 AND prior.id IS NULL)
+  OR (overage=0 AND prior.id IS NOT NULL) THEN
+   RETURN jsonb_build_object('outcome','receipt_conflict');
+  END IF;
+  RETURN jsonb_build_object('outcome','insufficient_credits',
+   'provider_actual_credits',p_actual_credits,'user_charge_credits',user_charge,
+   'overage_credits',overage);
  END IF;
  result:=_adjust_model_attempt_credits_without_scheduled_budget_v1(
   p_attempt_id,p_response_hash,user_charge);
