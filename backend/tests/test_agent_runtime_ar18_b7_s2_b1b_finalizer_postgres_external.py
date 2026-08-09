@@ -38,16 +38,34 @@ def test_completed_projects_atomically_without_wallet_mutation(database: str) ->
     _prepare(database)
     _apply(database, MIGRATION)
     facts = _bound_run(database)
-    result_hash = _install_final_result(database, facts)
+    _install_final_result(database, facts)
+    expected_summary = ("  real\n\tRuntime   summary " + "x" * 600)
     with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        result_hash = conn.execute("SELECT encode(digest(convert_to(%s,'UTF8'),'sha256'),'hex')",
+                                   (expected_summary,)).fetchone()[0]
+        conn.execute("UPDATE agent_model_results SET text_content=%s,content_hash=%s WHERE run_id=%s",
+                     (expected_summary, result_hash, facts["run_id"]))
         balance = conn.execute("SELECT credits FROM users WHERE id=(SELECT user_id FROM scheduled_tasks WHERE id=%s)",
                                (facts["task_id"],)).fetchone()[0]
+        conn.commit()
     assert _rpc(database, "complete_agent_run", (
         facts["run_id"], facts["token"], facts["version"], result_hash,
     ))["outcome"] == "completed"
     claim = _claim(database)
     request_id = str(uuid4())
-    next_run = datetime.now(timezone.utc) + timedelta(hours=1)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        old_terminal = datetime.now(timezone.utc) - timedelta(minutes=10)
+        conn.execute("UPDATE agent_runs SET completed_at=%s WHERE id=%s", (old_terminal, facts["run_id"]))
+        conn.execute("ALTER TABLE agent_runtime_scheduled_finalization_intents DISABLE TRIGGER "
+                     "runtime_scheduled_finalization_immutable")
+        conn.execute("UPDATE agent_runtime_scheduled_finalization_intents SET created_at=%s WHERE scheduled_run_id=%s",
+                     (old_terminal, facts["scheduled_run_id"]))
+        conn.execute("ALTER TABLE agent_runtime_scheduled_finalization_intents ENABLE TRIGGER "
+                     "runtime_scheduled_finalization_immutable")
+        conn.commit()
+    next_run = datetime.now(timezone.utc) - timedelta(minutes=5)
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = list(pool.map(
             lambda _: _apply_final(database, claim, next_run, request_id), range(2),
@@ -63,9 +81,14 @@ def test_completed_projects_atomically_without_wallet_mutation(database: str) ->
         assert conn.execute("SELECT credits FROM users WHERE id=(SELECT user_id FROM scheduled_tasks WHERE id=%s)",
                             (facts["task_id"],)).fetchone()[0] == balance
     assert run[:3] == ("success", 0, 10)
-    assert run[3].startswith("runtime_result:")
+    assert run[3] == ("real Runtime summary " + "x" * 600)[:500]
     assert task[0:3] == ("active", 1, 0)
     assert task[3]["content_hash"] == result_hash
+    assert task[3]["artifacts"] == []
+    with pytest.raises(Exception, match="IDEMPOTENCY_CONFLICT"):
+        _apply_final(database, claim, next_run + timedelta(minutes=1), request_id)
+    with pytest.raises(Exception, match="APPLICATION_FACTS_EXIST"):
+        _apply(database, ROLLBACK)
 
 
 @pytest.mark.parametrize("terminal,run_status", (("failed", "failed"), ("cancelled", "skipped")))
@@ -85,6 +108,63 @@ def test_failed_and_cancelled_projection_and_acl(database: str, terminal: str, r
     terminal_result = _rpc(database, rpc, args) if terminal == "failed" else _request_rpc(database, rpc, args)
     assert terminal_result["outcome"] in ("failed", "cancelled")
     claim = _claim(database)
+    with pytest.raises(Exception, match="CLAIM_FENCED"):
+        _rpc(database, "apply_agent_runtime_scheduled_finalization_v1", (
+            claim["intent"]["scheduled_run_id"], str(uuid4()), claim["intent"]["state_version"],
+            claim["task_schedule"]["state_version"], claim["task_schedule"]["schedule_hash"],
+            str(uuid4()), "runtime_finalizer", datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+    with pytest.raises(Exception, match="STALE_VERSION"):
+        _rpc(database, "apply_agent_runtime_scheduled_finalization_v1", (
+            claim["intent"]["scheduled_run_id"], claim["intent"]["claim_token"],
+            claim["intent"]["state_version"] + 1, claim["task_schedule"]["state_version"],
+            claim["task_schedule"]["schedule_hash"], str(uuid4()), "runtime_finalizer",
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+    with pytest.raises(Exception, match="SCOPE_FENCED"):
+        _rpc(database, "apply_agent_runtime_scheduled_finalization_v1", (
+            claim["intent"]["scheduled_run_id"], claim["intent"]["claim_token"],
+            claim["intent"]["state_version"], claim["task_schedule"]["state_version"],
+            "f" * 64, str(uuid4()), "runtime_finalizer",
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+    with pytest.raises(Exception, match="SCOPE_FENCED"):
+        _rpc(database, "apply_agent_runtime_scheduled_finalization_v1", (
+            claim["intent"]["scheduled_run_id"], claim["intent"]["claim_token"],
+            claim["intent"]["state_version"], claim["task_schedule"]["state_version"] + 1,
+            claim["task_schedule"]["schedule_hash"], str(uuid4()), "runtime_finalizer",
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+        ))
+    if terminal == "failed":
+        with psycopg.connect(database) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("ALTER TABLE agent_runtime_scheduled_finalization_intents DISABLE TRIGGER "
+                         "runtime_scheduled_finalization_immutable")
+            conn.execute("UPDATE agent_runtime_scheduled_finalization_intents SET "
+                         "claim_lease_expires_at=clock_timestamp()-interval '1 second' WHERE scheduled_run_id=%s",
+                         (facts["scheduled_run_id"],))
+            conn.execute("ALTER TABLE agent_runtime_scheduled_finalization_intents ENABLE TRIGGER "
+                         "runtime_scheduled_finalization_immutable")
+            conn.commit()
+        with pytest.raises(Exception, match="CLAIM_FENCED"):
+            _apply_final(database, claim, datetime.now(timezone.utc) + timedelta(minutes=5))
+        with psycopg.connect(database) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("ALTER TABLE agent_runtime_scheduled_finalization_intents DISABLE TRIGGER "
+                         "runtime_scheduled_finalization_immutable")
+            conn.execute("UPDATE agent_runtime_scheduled_finalization_intents SET "
+                         "claim_lease_expires_at=clock_timestamp()+interval '90 seconds' WHERE scheduled_run_id=%s",
+                         (facts["scheduled_run_id"],))
+            conn.execute("ALTER TABLE agent_runtime_scheduled_finalization_intents ENABLE TRIGGER "
+                         "runtime_scheduled_finalization_immutable")
+            conn.commit()
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        with pytest.raises(Exception, match="APPLY_RPC_REQUIRED"):
+            conn.execute("UPDATE agent_runtime_scheduled_finalization_intents SET "
+                         "application_request_id=%s,state_version=state_version+1 WHERE scheduled_run_id=%s",
+                         (str(uuid4()), facts["scheduled_run_id"]))
+        conn.rollback()
     outcome = _apply_final(database, claim, datetime.now(timezone.utc) + timedelta(minutes=5))
     assert outcome["scheduled_run_status"] == run_status
     with psycopg.connect(database) as conn:

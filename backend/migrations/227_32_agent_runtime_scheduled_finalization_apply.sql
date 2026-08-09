@@ -23,9 +23,17 @@ BEGIN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_ALREADY_APPLIED_IMMUTABLE'
    USING ERRCODE='55000';
  END IF;
- IF NEW.status='applied' AND current_setting(
-  'app.agent_runtime_scheduled_application_request',TRUE) IS DISTINCT FROM NEW.application_request_id::TEXT THEN
-  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_APPLY_RPC_REQUIRED' USING ERRCODE='42501';
+ IF (OLD.application_request_id,OLD.application_hash,OLD.application_receipt,OLD.applied_at)
+ IS DISTINCT FROM
+ (NEW.application_request_id,NEW.application_hash,NEW.application_receipt,NEW.applied_at) THEN
+  IF NEW.status<>'applied' OR NEW.application_request_id IS NULL OR NEW.application_hash IS NULL
+   OR NEW.application_receipt IS NULL OR NEW.applied_at IS NULL
+   OR current_setting('app.agent_runtime_scheduled_application_request',TRUE)
+    IS DISTINCT FROM NEW.application_request_id::TEXT THEN
+   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_APPLY_RPC_REQUIRED' USING ERRCODE='42501';
+  END IF;
+ ELSIF NEW.status='applied' AND OLD.status<>'applied' THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_APPLICATION_REQUIRED' USING ERRCODE='42501';
  END IF;
  RETURN NEW;
 END $$;
@@ -55,7 +63,8 @@ DECLARE i agent_runtime_scheduled_finalization_intents%ROWTYPE;
  q scheduled_task_runs%ROWTYPE;t scheduled_tasks%ROWTYPE;e agent_runtime_scheduled_execution_profiles%ROWTYPE;
  m agent_model_results%ROWTYPE;credits INTEGER:=0;tokens INTEGER:=0;duration INTEGER:=0;
  failures INTEGER;threshold INTEGER;attempts_used INTEGER;next_status TEXT;run_status TEXT;
- summary TEXT;result JSONB;receipt JSONB;app_hash TEXT;te BIGINT:=0;pe BIGINT:=0;ce BIGINT:=0;
+ summary TEXT;result JSONB;artifacts JSONB:='[]'::JSONB;receipt JSONB;app_hash TEXT;
+ terminal_baseline TIMESTAMPTZ;te BIGINT:=0;pe BIGINT:=0;ce BIGINT:=0;
 BEGIN
  PERFORM _assert_agent_runtime_actor(TRUE);
  IF session_user<>'everydayai_agent_runtime_worker'
@@ -122,6 +131,7 @@ BEGIN
  IS DISTINCT FROM(te,pe,ce,e.provider_revision,e.capability_revision) THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_EPOCH_FENCED' USING ERRCODE='40001';
  END IF;
+ terminal_baseline:=GREATEST(i.created_at,r.completed_at);
 
  SELECT COALESCE(sum(CASE WHEN c.status='adjusted' THEN c.adjusted_credits
   WHEN c.status='settled' THEN c.settled_credits ELSE 0 END),0)::INTEGER,
@@ -140,14 +150,36 @@ BEGIN
   IF m.id IS NULL OR m.content_hash IS DISTINCT FROM i.result_hash THEN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_RESULT_FENCED' USING ERRCODE='55000';
   END IF;
+  IF EXISTS(SELECT 1 FROM agent_action_artifact_links l
+   JOIN agent_actions a ON a.id=l.action_id
+   JOIN conversation_artifacts ca ON ca.id=l.artifact_id
+   JOIN agent_runtime_sessions ars ON ars.id=r.session_id
+   WHERE a.run_id=r.id AND(l.attempt_id<>ALL(SELECT aa.id FROM agent_action_attempts aa
+    WHERE aa.action_id=a.id) OR a.org_id IS DISTINCT FROM i.org_id
+    OR ca.org_id IS DISTINCT FROM i.org_id OR ca.conversation_id<>ars.conversation_id
+    OR l.content_hash!~'^[0-9a-f]{64}$')) THEN
+   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_ARTIFACT_FENCED' USING ERRCODE='55000';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object('artifact_id',l.artifact_id,
+   'content_hash',l.content_hash,'role',l.role,'materialize_status',l.materialize_status)
+   ORDER BY l.created_at,l.artifact_id,l.role),'[]'::JSONB) INTO artifacts
+  FROM agent_action_artifact_links l JOIN agent_actions a ON a.id=l.action_id
+  JOIN conversation_artifacts ca ON ca.id=l.artifact_id
+  JOIN agent_runtime_sessions ars ON ars.id=r.session_id
+  WHERE a.run_id=r.id AND a.org_id IS NOT DISTINCT FROM i.org_id
+   AND ca.org_id IS NOT DISTINCT FROM i.org_id AND ca.conversation_id=ars.conversation_id;
   next_status:=CASE WHEN t.schedule_type='once' THEN 'paused' ELSE 'active' END;
   IF (t.schedule_type='once' AND p_next_run_at IS NOT NULL)
    OR(t.schedule_type<>'once' AND p_next_run_at IS NULL) THEN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_SCHEDULE_INVALID' USING ERRCODE='22023';
   END IF;
-  run_status:='success';summary:='runtime_result:'||left(m.content_hash,16);
+  run_status:='success';
+  summary:=CASE WHEN m.output_kind='text' THEN NULLIF(btrim(regexp_replace(m.text_content,'\s+',' ','g')),'')
+   WHEN jsonb_typeof(m.structured_content->'summary')='string'
+    THEN NULLIF(btrim(regexp_replace(m.structured_content->>'summary','\s+',' ','g')),'') END;
+  summary:=left(COALESCE(summary,'Runtime scheduled task completed'),500);
   result:=jsonb_build_object('runtime_run_id',r.id,'model_result_id',m.id,
-   'output_kind',m.output_kind,'content_hash',m.content_hash);
+   'output_kind',m.output_kind,'content_hash',m.content_hash,'artifacts',artifacts);
  ELSIF i.terminal_status='failed' THEN
   run_status:='failed';summary:=NULL;result:=NULL;
   IF failures>=threshold THEN next_status:='error';
@@ -166,7 +198,7 @@ BEGIN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_SCHEDULE_INVALID' USING ERRCODE='22023';
   END IF;
  END IF;
- IF p_next_run_at IS NOT NULL AND p_next_run_at<=clock_timestamp() THEN
+ IF p_next_run_at IS NOT NULL AND p_next_run_at<=terminal_baseline THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_FINALIZATION_NEXT_RUN_INVALID' USING ERRCODE='22023';
  END IF;
 
