@@ -1869,12 +1869,14 @@ cache = client.caches.create(
     Command/Run，也不改变旧 Scanner、计费、终结或投递行为。
   - 仅没有 Runtime profile 的历史 run 可默认 legacy；Runtime profile 已存在但 run 尚未
     binding 时失败关闭。Profile 的 definition/model/toolset/scope/channel/budget 全部从来源
-    Session/Command/Run/Action 与 227_28 receipt 派生，并精确限定 C7-B3.2-A 9/17 项 safe-read
-    release，不接受 Worker 自报快照。Owner 按 run → trigger → tenant/provider/capability gate
+    Session/Command/Run/Action 与 227_28 receipt 派生；来源 Run 必须持有真实可调用
+    `manage_scheduled_task` 的冻结 production toolset，目标 profile 再派生为 C7-B3.2-A
+    9/17 项 safe-read 子集，不接受 Worker 自报快照。Owner 按 run → trigger → tenant/provider/capability gate
     固定锁序选择且不可切换。
   - Runtime Worker 仅获得 profile/readback/owner-select/runtime-binding/assert 窄 RPC；两张
     事实表 FORCE RLS 且无 Worker 直权；旧入口可在后续通过不可外调的 owner gate 包装。
-    Runtime Command/Run 缺少专用 scheduler system context/envelope 时拒绝绑定。存在事实时 rollback 失败关闭；
+    Runtime Command/Run 缺少专用 scheduler system context/envelope、原生 scheduled run kind，
+    或绑定后 task/profile/gate epoch 已变化时拒绝绑定。存在事实时 rollback 失败关闭；
     production Scheduler capability 与 readiness 继续关闭。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 

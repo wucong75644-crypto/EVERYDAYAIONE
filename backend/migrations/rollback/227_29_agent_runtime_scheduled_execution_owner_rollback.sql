@@ -3,7 +3,10 @@ SET LOCAL ROLE everydayai_owner;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM agent_runtime_scheduled_execution_profiles)
-       OR EXISTS (SELECT 1 FROM agent_runtime_scheduled_run_bindings) THEN
+       OR EXISTS (SELECT 1 FROM agent_runtime_scheduled_run_bindings)
+       OR EXISTS (SELECT 1 FROM agent_runs WHERE run_kind='scheduled')
+       OR EXISTS (SELECT 1 FROM agent_session_commands
+          WHERE payload->'run_envelope'->'request_identity'->>'source'='scheduler') THEN
         RAISE EXCEPTION 'AR_18_B7_S2_A1_ROLLBACK_OWNER_FACTS_EXIST'
             USING ERRCODE = '55000';
     END IF;
@@ -33,5 +36,9 @@ DROP FUNCTION IF EXISTS _agent_runtime_scheduled_snapshot_safe(JSONB);
 DROP FUNCTION IF EXISTS _agent_runtime_scheduled_owner_actor();
 DROP TABLE IF EXISTS agent_runtime_scheduled_run_bindings;
 DROP TABLE IF EXISTS agent_runtime_scheduled_execution_profiles;
+
+ALTER TABLE agent_runs DROP CONSTRAINT agent_runs_run_kind_check;
+ALTER TABLE agent_runs ADD CONSTRAINT agent_runs_run_kind_check
+ CHECK(run_kind IN('user','continuation'));
 
 RESET ROLE;

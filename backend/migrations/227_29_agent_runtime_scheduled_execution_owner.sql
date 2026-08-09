@@ -1,4 +1,7 @@
 SET LOCAL ROLE everydayai_owner;
+ALTER TABLE agent_runs DROP CONSTRAINT agent_runs_run_kind_check;
+ALTER TABLE agent_runs ADD CONSTRAINT agent_runs_run_kind_check
+ CHECK(run_kind IN('user','continuation','scheduled'));
 CREATE TABLE agent_runtime_scheduled_execution_profiles(
  scheduled_task_id UUID PRIMARY KEY REFERENCES scheduled_tasks(id) ON DELETE RESTRICT,
  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
@@ -9,6 +12,7 @@ CREATE TABLE agent_runtime_scheduled_execution_profiles(
  agent_definition_id TEXT NOT NULL,agent_definition_revision TEXT NOT NULL,
  agent_definition_hash TEXT NOT NULL CHECK(agent_definition_hash~'^[0-9a-f]{64}$'),
  catalog_revision TEXT NOT NULL CHECK(catalog_revision~'^[0-9a-f]{64}$'),
+ source_effective_toolset_hash TEXT NOT NULL CHECK(source_effective_toolset_hash~'^[0-9a-f]{64}$'),
  effective_toolset_hash TEXT NOT NULL CHECK(effective_toolset_hash~'^[0-9a-f]{64}$'),
  model_snapshot JSONB NOT NULL CHECK(jsonb_typeof(model_snapshot)='object'),
  toolset_snapshot JSONB NOT NULL CHECK(jsonb_typeof(toolset_snapshot)='object'),
@@ -33,6 +37,8 @@ CREATE TABLE agent_runtime_scheduled_run_bindings(
  trigger_key TEXT NOT NULL CHECK(length(btrim(trigger_key)) BETWEEN 1 AND 300),
  scheduled_for TIMESTAMPTZ,manual_request_id TEXT,
  task_revision BIGINT NOT NULL CHECK(task_revision>=0),
+ task_status TEXT NOT NULL CHECK(task_status IN('active','running')),
+ profile_state_version BIGINT NOT NULL CHECK(profile_state_version>=0),
  context_hash TEXT NOT NULL CHECK(context_hash~'^[0-9a-f]{64}$'),
  request_hash TEXT NOT NULL CHECK(request_hash~'^[0-9a-f]{64}$'),
  tenant_kill_epoch BIGINT NOT NULL CHECK(tenant_kill_epoch>=0),
@@ -92,12 +98,12 @@ BEGIN
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_OWNER_FACT_IMMUTABLE' USING ERRCODE='55000'; END IF;
  IF (OLD.scheduled_run_id,OLD.scheduled_task_id,OLD.org_id,OLD.user_id,OLD.owner_kind,
   OLD.trigger_kind,OLD.trigger_key,OLD.scheduled_for,OLD.manual_request_id,
-  OLD.task_revision,OLD.context_hash,OLD.request_hash,OLD.tenant_kill_epoch,
+  OLD.task_revision,OLD.task_status,OLD.profile_state_version,OLD.context_hash,OLD.request_hash,OLD.tenant_kill_epoch,
   OLD.provider_kill_epoch,OLD.capability_kill_epoch,OLD.provider_revision,
   OLD.capability_revision,OLD.created_at) IS DISTINCT FROM
  (NEW.scheduled_run_id,NEW.scheduled_task_id,NEW.org_id,NEW.user_id,NEW.owner_kind,
   NEW.trigger_kind,NEW.trigger_key,NEW.scheduled_for,NEW.manual_request_id,
-  NEW.task_revision,NEW.context_hash,NEW.request_hash,NEW.tenant_kill_epoch,
+  NEW.task_revision,NEW.task_status,NEW.profile_state_version,NEW.context_hash,NEW.request_hash,NEW.tenant_kill_epoch,
   NEW.provider_kill_epoch,NEW.capability_kill_epoch,NEW.provider_revision,
   NEW.capability_revision,NEW.created_at) THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_OWNER_IDENTITY_IMMUTABLE' USING ERRCODE='55000';
@@ -122,7 +128,8 @@ DECLARE t scheduled_tasks%ROWTYPE;x agent_actions%ROWTYPE;a agent_action_attempt
  d agent_runtime_definition_facts%ROWTYPE;cat agent_runtime_catalog_facts%ROWTYPE;
  ts agent_runtime_effective_toolset_facts%ROWTYPE;f agent_runtime_owner_fences%ROWTYPE;
  g agent_runtime_tenant_gate_controls%ROWTYPE;e agent_runtime_scheduled_execution_profiles%ROWTYPE;
- model JSONB;scope JSONB;budget JSONB;env JSONB;names TEXT[];approved TEXT[];
+ model JSONB;scope JSONB;budget JSONB;env JSONB;target JSONB;manage JSONB;
+ source_names TEXT[];target_names TEXT[];approved TEXT[];
  provider TEXT;capability TEXT;provider_epoch BIGINT:=0;capability_epoch BIGINT:=0;tenant_epoch BIGINT:=0;
 BEGIN
  PERFORM _agent_runtime_scheduled_owner_actor();
@@ -180,22 +187,41 @@ BEGIN
   AND effective_toolset_hash=r.capability_snapshot->>'effective_toolset_hash' AND recoverable;
  approved:=CASE WHEN s.scope_kind='user' THEN ARRAY['artifact_get','artifact_read','artifact_search','evidence_get','evidence_search','get_conversation_context','memory_get','memory_search','search_knowledge']
  ELSE ARRAY['artifact_get','artifact_read','artifact_search','evidence_get','evidence_search','get_conversation_context','local_compare_stats','local_platform_map_query','local_product_identify','local_product_stats','local_shop_list','local_stock_query','local_supplier_list','local_warehouse_list','memory_get','memory_search','search_knowledge'] END;
- SELECT array_agg(v ORDER BY v) INTO names FROM jsonb_array_elements_text(ts.toolset_document->'tool_names') v;
+ SELECT array_agg(v ORDER BY v) INTO source_names FROM jsonb_array_elements_text(ts.toolset_document->'tool_names') v;
+ SELECT value INTO manage FROM jsonb_array_elements(ts.toolset_document->'tools')
+  WHERE value->>'canonical_name'='manage_scheduled_task';
  IF d.agent_key IS NULL OR cat.catalog_revision IS NULL OR ts.agent_key IS NULL
- OR d.agent_key<>'everydayai-default' OR d.definition_revision<>'v4'
- OR d.prompt_revision<>'agent-runtime-safe-read-v1' OR cat.catalog_revision IS DISTINCT FROM d.catalog_revision
+ OR cat.catalog_revision IS DISTINCT FROM d.catalog_revision
  OR r.capability_snapshot->>'effective_toolset_revision' IS DISTINCT FROM d.catalog_revision
- OR names IS DISTINCT FROM approved OR jsonb_array_length(ts.toolset_document->'tools')<>cardinality(approved)
- OR EXISTS(SELECT 1 FROM jsonb_array_elements(ts.toolset_document->'tools') z
-  WHERE z->>'canonical_name'<>ALL(approved) OR z->>'executor_type' IS DISTINCT FROM 'runtime_read:'||(z->>'canonical_name')
-   OR z->>'safety_level' IS DISTINCT FROM 'safe' OR z->>'side_effect' IS DISTINCT FROM 'none'
-   OR z->>'authorization_requirement' IS DISTINCT FROM 'none') THEN
+ OR NOT(approved<@source_names) OR NOT('manage_scheduled_task'=ANY(source_names))
+ OR manage->>'executor_type' IS DISTINCT FROM 'runtime_scheduled_task:manage_scheduled_task'
+ OR manage->>'safety_level' IS DISTINCT FROM 'dangerous'
+ OR manage->>'side_effect' IS DISTINCT FROM 'external'
+ OR manage->>'authorization_requirement' IS DISTINCT FROM 'explicit_intent'
+ OR x.policy_snapshot->>'source' IS DISTINCT FROM 'runtime_executor_registry'
+ OR x.policy_snapshot->>'catalog_revision' IS DISTINCT FROM cat.catalog_revision
+ OR x.policy_snapshot->>'effective_toolset_hash' IS DISTINCT FROM ts.effective_toolset_hash
+ OR x.policy_snapshot->>'schema_hash' IS DISTINCT FROM manage->>'schema_hash'
+ OR x.policy_snapshot->>'capability_revision' IS DISTINCT FROM manage->>'schema_hash'
+ OR x.policy_snapshot->>'executor_revision' IS DISTINCT FROM manage->>'executor_revision' THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_TOOLSET_NOT_APPROVED' USING ERRCODE='42501';
  END IF;
- provider:=NULLIF(btrim(COALESCE(x.policy_snapshot->>'provider',x.policy_snapshot->>'provider_name')),'');
- capability:=NULLIF(btrim(COALESCE(x.policy_snapshot->>'capability',x.policy_snapshot->>'capability_name')),'');
- IF provider IS NULL OR capability IS NULL OR NULLIF(x.policy_snapshot->>'provider_revision','') IS NULL
- OR NULLIF(x.policy_snapshot->>'capability_revision','') IS NULL THEN
+ SELECT jsonb_agg(value ORDER BY value->>'canonical_name') INTO target
+  FROM jsonb_array_elements(ts.toolset_document->'tools') WHERE value->>'canonical_name'=ANY(approved);
+ target:=jsonb_build_object('scope_kind',s.scope_kind,'channel',r.capability_snapshot->>'channel',
+  'gate_state','enabled','source_effective_toolset_hash',ts.effective_toolset_hash,
+  'tool_names',to_jsonb(approved),'tools',target);
+ SELECT array_agg(v ORDER BY v) INTO target_names FROM jsonb_array_elements_text(target->'tool_names') v;
+ IF target_names IS DISTINCT FROM approved OR jsonb_array_length(target->'tools')<>cardinality(approved)
+ OR EXISTS(SELECT 1 FROM jsonb_array_elements(target->'tools') z
+  WHERE z->>'canonical_name'<>ALL(approved) OR z->>'canonical_name'='manage_scheduled_task'
+   OR z->>'executor_type' IS DISTINCT FROM 'runtime_read:'||(z->>'canonical_name')
+   OR z->>'safety_level' IS DISTINCT FROM 'safe' OR z->>'side_effect' IS DISTINCT FROM 'none'
+   OR z->>'authorization_requirement' IS DISTINCT FROM 'none') THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_TARGET_TOOLSET_INVALID' USING ERRCODE='42501'; END IF;
+ provider:='scheduler';capability:='scheduler.task.cas';
+ IF NULLIF(manage->>'provider_revision','') IS NULL OR NULLIF(manage->>'schema_hash','') IS NULL
+ OR model->>'model_id' IS DISTINCT FROM d.definition_document->'model_policy'->>'model_id' THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_REVISION_INVALID' USING ERRCODE='42501'; END IF;
  SELECT * INTO g FROM agent_runtime_tenant_gate_controls WHERE org_id=t.org_id AND gate_scope='tenant' AND scope_key='tenant';
  tenant_epoch:=COALESCE(g.kill_epoch,0);
@@ -206,15 +232,17 @@ BEGIN
  capability_epoch:=COALESCE(g.kill_epoch,0); IF FOUND AND g.dispatch_blocked THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_CAPABILITY_BLOCKED' USING ERRCODE='42501'; END IF;
  SELECT * INTO f FROM agent_runtime_owner_fences WHERE owner_kind='attempt' AND owner_id=a.id AND execution_token=a.execution_token;
  IF NOT FOUND OR f.tenant_kill_epoch<>tenant_epoch OR f.provider_kill_epoch<>provider_epoch
- OR f.capability_kill_epoch<>capability_epoch OR f.provider_revision IS DISTINCT FROM x.policy_snapshot->>'provider_revision'
+ OR f.capability_kill_epoch<>capability_epoch
+ OR f.provider_revision IS DISTINCT FROM NULLIF(x.policy_snapshot->>'provider_revision','')
  OR f.capability_revision IS DISTINCT FROM x.policy_snapshot->>'capability_revision' THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_FENCED' USING ERRCODE='42501'; END IF;
  SELECT * INTO e FROM agent_runtime_scheduled_execution_profiles WHERE scheduled_task_id=t.id;
  IF FOUND THEN RETURN jsonb_build_object('outcome','already_exists','profile',to_jsonb(e)); END IF;
  INSERT INTO agent_runtime_scheduled_execution_profiles VALUES(t.id,t.org_id,t.user_id,x.id,a.id,r.id,
   d.agent_key,d.definition_revision,d.definition_hash,d.catalog_revision,ts.effective_toolset_hash,
-  model,ts.toolset_document,scope,r.capability_snapshot->>'channel',budget,provider,capability,
-  x.policy_snapshot->>'provider_revision',x.policy_snapshot->>'capability_revision',x.request_hash,1,clock_timestamp()) RETURNING * INTO e;
+  encode(digest(target::TEXT::BYTEA,'sha256'),'hex'),model,target,scope,
+  r.capability_snapshot->>'channel',budget,provider,capability,
+  manage->>'provider_revision',manage->>'schema_hash',x.request_hash,1,clock_timestamp()) RETURNING * INTO e;
  RETURN jsonb_build_object('outcome','created','profile',to_jsonb(e));
 END $$;
 
@@ -252,6 +280,7 @@ BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_TENANT_FENCED' USING ERRCODE='42501'; END IF;
  SELECT * INTO t FROM scheduled_tasks WHERE id=p_task_id FOR UPDATE;
  IF NOT FOUND OR(t.org_id,t.user_id,t.runtime_state_version) IS DISTINCT FROM(p_org_id,p_user_id,p_task_revision)
+ OR t.status IS DISTINCT FROM 'running'
  OR NOT EXISTS(SELECT 1 FROM scheduled_task_runs q WHERE q.id=p_scheduled_run_id AND q.task_id=p_task_id AND q.org_id=p_org_id) THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_OWNER_BINDING_INVALID' USING ERRCODE='42501'; END IF;
  SELECT * INTO e FROM agent_runtime_scheduled_execution_profiles WHERE scheduled_task_id=t.id;
@@ -271,6 +300,7 @@ BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
   OR b.user_id IS DISTINCT FROM p_user_id OR b.trigger_kind IS DISTINCT FROM p_trigger_kind
   OR b.trigger_key IS DISTINCT FROM btrim(p_trigger_key) OR b.scheduled_for IS DISTINCT FROM p_scheduled_for
   OR b.manual_request_id IS DISTINCT FROM p_manual_request_id OR b.task_revision IS DISTINCT FROM p_task_revision
+  OR b.task_status IS DISTINCT FROM t.status OR b.profile_state_version IS DISTINCT FROM COALESCE(e.state_version,0)
   OR b.context_hash IS DISTINCT FROM p_context_hash OR b.request_hash IS DISTINCT FROM p_request_hash
   OR b.tenant_kill_epoch<>tenant_epoch OR b.provider_kill_epoch<>provider_epoch
   OR b.capability_kill_epoch<>capability_epoch THEN
@@ -279,10 +309,12 @@ BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
  END IF;
  owner:=CASE WHEN e.scheduled_task_id IS NULL THEN 'legacy' ELSE 'runtime' END;
  INSERT INTO agent_runtime_scheduled_run_bindings(scheduled_run_id,scheduled_task_id,org_id,user_id,
-  owner_kind,trigger_kind,trigger_key,scheduled_for,manual_request_id,task_revision,context_hash,
+  owner_kind,trigger_kind,trigger_key,scheduled_for,manual_request_id,task_revision,task_status,
+  profile_state_version,context_hash,
   request_hash,tenant_kill_epoch,provider_kill_epoch,capability_kill_epoch,provider_revision,capability_revision)
  VALUES(p_scheduled_run_id,p_task_id,p_org_id,p_user_id,owner,p_trigger_kind,btrim(p_trigger_key),
-  p_scheduled_for,p_manual_request_id,p_task_revision,p_context_hash,p_request_hash,tenant_epoch,
+  p_scheduled_for,p_manual_request_id,p_task_revision,t.status,COALESCE(e.state_version,0),
+  p_context_hash,p_request_hash,tenant_epoch,
   provider_epoch,capability_epoch,e.provider_revision,e.capability_revision) RETURNING * INTO b;
  RETURN jsonb_build_object('outcome','selected','binding',to_jsonb(b));
 END $$;
@@ -308,12 +340,42 @@ CREATE FUNCTION bind_agent_runtime_scheduled_run_runtime_v1(
  p_expected_state_version BIGINT) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE b agent_runtime_scheduled_run_bindings%ROWTYPE;e agent_runtime_scheduled_execution_profiles%ROWTYPE;
+ t scheduled_tasks%ROWTYPE;g agent_runtime_tenant_gate_controls%ROWTYPE;
  c agent_session_commands%ROWTYPE;r agent_runs%ROWTYPE;s agent_runtime_sessions%ROWTYPE;env JSONB;identity JSONB;
+ tenant_epoch BIGINT:=0;provider_epoch BIGINT:=0;capability_epoch BIGINT:=0;command_key TEXT;
 BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
- SELECT * INTO b FROM agent_runtime_scheduled_run_bindings WHERE scheduled_run_id=p_scheduled_run_id FOR UPDATE;
+ SELECT * INTO b FROM agent_runtime_scheduled_run_bindings WHERE scheduled_run_id=p_scheduled_run_id;
+ IF b.scheduled_run_id IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_RUN_NOT_RUNTIME_OWNED' USING ERRCODE='42501'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scheduled-run-owner:'||p_scheduled_run_id,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('scheduled-trigger-owner:'||b.scheduled_task_id||':'||b.trigger_kind||':'||b.trigger_key,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('agent-runtime-kill-gate:'||b.org_id||':tenant:tenant',0));
+ SELECT * INTO g FROM agent_runtime_tenant_gate_controls WHERE org_id=b.org_id AND gate_scope='tenant' AND scope_key='tenant';
+ tenant_epoch:=COALESCE(g.kill_epoch,0);
+ SELECT * INTO t FROM scheduled_tasks WHERE id=b.scheduled_task_id FOR UPDATE;
  SELECT * INTO e FROM agent_runtime_scheduled_execution_profiles WHERE scheduled_task_id=b.scheduled_task_id;
+ PERFORM pg_advisory_xact_lock(hashtextextended('agent-runtime-kill-gate:'||b.org_id||':provider:'||e.provider_key,0));
+ SELECT * INTO g FROM agent_runtime_tenant_gate_controls WHERE org_id=b.org_id AND gate_scope='provider' AND scope_key=e.provider_key;
+ provider_epoch:=COALESCE(g.kill_epoch,0);
+ IF FOUND AND g.dispatch_blocked THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROVIDER_FENCED' USING ERRCODE='42501'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('agent-runtime-kill-gate:'||b.org_id||':capability:'||e.capability_key,0));
+ SELECT * INTO g FROM agent_runtime_tenant_gate_controls WHERE org_id=b.org_id AND gate_scope='capability' AND scope_key=e.capability_key;
+ capability_epoch:=COALESCE(g.kill_epoch,0);
+ IF FOUND AND g.dispatch_blocked THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_CAPABILITY_FENCED' USING ERRCODE='42501'; END IF;
+ SELECT * INTO b FROM agent_runtime_scheduled_run_bindings WHERE scheduled_run_id=p_scheduled_run_id FOR UPDATE;
  IF b.owner_kind IS DISTINCT FROM 'runtime' OR e.scheduled_task_id IS NULL THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_RUN_NOT_RUNTIME_OWNED' USING ERRCODE='42501'; END IF;
+ IF t.id IS NULL OR(t.org_id,t.user_id,t.runtime_state_version,t.status)
+   IS DISTINCT FROM(b.org_id,b.user_id,b.task_revision,b.task_status)
+ OR t.status IS DISTINCT FROM 'running' OR e.state_version IS DISTINCT FROM b.profile_state_version
+ OR(tenant_epoch,provider_epoch,capability_epoch) IS DISTINCT FROM
+   (b.tenant_kill_epoch,b.provider_kill_epoch,b.capability_kill_epoch)
+ OR e.provider_revision IS DISTINCT FROM b.provider_revision
+ OR e.capability_revision IS DISTINCT FROM b.capability_revision
+ OR EXISTS(SELECT 1 FROM agent_runtime_tenant_gate_controls q WHERE q.org_id=b.org_id
+   AND q.gate_scope='tenant' AND q.scope_key='tenant' AND(q.claim_blocked OR q.dispatch_blocked))
+ OR NOT EXISTS(SELECT 1 FROM scheduled_task_runs q WHERE q.id=b.scheduled_run_id
+   AND q.task_id=b.scheduled_task_id AND q.org_id=b.org_id AND q.status='running') THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_BINDING_FENCED' USING ERRCODE='42501'; END IF;
  IF b.runtime_command_id IS NOT NULL THEN
   IF(b.runtime_command_id,b.runtime_run_id) IS DISTINCT FROM(p_runtime_command_id,p_runtime_run_id) THEN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_RUNTIME_BINDING_CONFLICT' USING ERRCODE='40001'; END IF;
@@ -322,7 +384,10 @@ BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
  SELECT * INTO c FROM agent_session_commands WHERE id=p_runtime_command_id;
  SELECT * INTO s FROM agent_runtime_sessions WHERE id=c.session_id;
  env:=c.payload->'run_envelope';identity:=env->'request_identity';
+ command_key:='scheduled-run:'||b.scheduled_run_id;
  IF c.id IS NULL OR(c.org_id,c.user_id) IS DISTINCT FROM(b.org_id,b.user_id)
+ OR c.command_type IS DISTINCT FROM 'submit_input' OR c.idempotency_key IS DISTINCT FROM command_key
+ OR c.request_hash IS DISTINCT FROM md5(jsonb_build_object('command_type',c.command_type,'payload',c.payload)::TEXT)
  OR(s.org_id,s.user_id,s.scope_kind,s.scope_id) IS DISTINCT FROM(b.org_id,b.user_id,'system','scheduler:'||b.scheduled_task_id)
  OR identity->>'source' IS DISTINCT FROM 'scheduler'
  OR identity->>'scheduled_task_id' IS DISTINCT FROM b.scheduled_task_id::TEXT
@@ -335,6 +400,7 @@ BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
  OR identity->>'agent_definition_hash' IS DISTINCT FROM e.agent_definition_hash
  OR identity->>'catalog_revision' IS DISTINCT FROM e.catalog_revision
  OR identity->>'effective_toolset_hash' IS DISTINCT FROM e.effective_toolset_hash
+ OR env->>'run_kind' IS DISTINCT FROM 'scheduled'
  OR env->'context_receipt'->>'source' IS DISTINCT FROM 'scheduler'
  OR env->'context_receipt'->>'scheduled_run_id' IS DISTINCT FROM b.scheduled_run_id::TEXT
  OR env->'context_receipt'->>'context_hash' IS DISTINCT FROM b.context_hash
@@ -346,6 +412,10 @@ BEGIN PERFORM _agent_runtime_scheduled_owner_actor();
  IF p_runtime_run_id IS NOT NULL THEN
   SELECT * INTO r FROM agent_runs WHERE id=p_runtime_run_id;
   IF r.id IS NULL OR(r.command_id,r.session_id,r.org_id,r.user_id) IS DISTINCT FROM(c.id,s.id,b.org_id,b.user_id)
+  OR c.result_entity_id IS DISTINCT FROM r.id OR r.run_kind IS DISTINCT FROM 'scheduled'
+  OR r.idempotency_key IS DISTINCT FROM command_key
+  OR r.request_hash IS DISTINCT FROM _agent_run_request_hash(c.id,'scheduled',
+    env->'context_receipt',env->'config_snapshot',env->'capability_snapshot')
   OR r.context_receipt IS DISTINCT FROM env->'context_receipt'
   OR r.config_snapshot IS DISTINCT FROM env->'config_snapshot'
   OR r.capability_snapshot IS DISTINCT FROM env->'capability_snapshot' THEN

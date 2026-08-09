@@ -17,13 +17,19 @@ def test_owner_facts_are_additive_private_and_failure_closed() -> None:
     assert "app.access_kind" in sql
     assert "TO everydayai_agent_runtime_worker" in sql
     assert "TO everydayai_worker" not in sql
-    assert "agent-runtime-safe-read-v1" in sql
+    assert "source_effective_toolset_hash" in sql
+    assert "manage_scheduled_task'=ANY(source_names)" in sql
+    assert "approved<@source_names" in sql
     assert "z->>'safety_level' IS DISTINCT FROM 'safe'" in sql
     assert "z->>'side_effect' IS DISTINCT FROM 'none'" in sql
     assert "z->>'authorization_requirement' IS DISTINCT FROM 'none'" in sql
     assert "SCHEDULED_RUN_RUNTIME_PROFILE_UNBOUND" in sql
     assert "_agent_runtime_scheduled_owner_gate" in sql
     assert "AGENT_RUNTIME_SCHEDULED_CONTEXT_ENVELOPE_REQUIRED" in sql
+    assert "r.run_kind IS DISTINCT FROM 'scheduled'" in sql
+    assert "c.command_type IS DISTINCT FROM 'submit_input'" in sql
+    assert "_agent_run_request_hash(c.id,'scheduled'" in sql
+    assert "profile_state_version" in sql and "task_status" in sql
     assert "scheduled-run-owner:" in sql and "scheduled-trigger-owner:" in sql
     assert sql.index("scheduled-run-owner:") < sql.index("scheduled-trigger-owner:")
     assert "agent_runtime_tenant_gate_controls" in sql
