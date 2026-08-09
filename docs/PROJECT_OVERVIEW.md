@@ -1862,6 +1862,17 @@ cache = client.caches.create(
     once 任务失败关闭，模型参数不能指定恢复时间。
   - Scheduler payload normalization 与 service orchestration 分别位于
     `scheduler_control_payload.py`、`scheduler_service_support.py`，沿用既有 cron/once 定义语义。
+
+- **2026-08-09**：AR-18 B7-S2-A1 Scheduled Run Owner Facts（仅非生产）
+  - 新增 `227_29_agent_runtime_scheduled_execution_owner.sql` 及精确 rollback，仅建立
+    Runtime scheduled execution profile 与 per-run 单一 Owner binding，不提交 Runtime
+    Command/Run，也不改变旧 Scanner、计费、终结或投递行为。
+  - 无 profile 或历史无 binding 的 run 明确归属 legacy；只有 227_28 已提交创建事实、
+    当前 Runtime Action/Run、已启用可恢复且全 SAFE/no-side-effect 的 toolset 才能冻结
+    Runtime profile。Owner 选择按 task + trigger 串行化且不可切换。
+  - Runtime Worker 仅获得 profile/readback/owner-select/runtime-binding/assert 窄 RPC；两张
+    事实表 FORCE RLS 且无 Worker 直权。存在 profile/binding 时 rollback 失败关闭；
+    production Scheduler capability 与 readiness 继续关闭。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
