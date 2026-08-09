@@ -1914,9 +1914,11 @@ cache = client.caches.create(
   - 新增 `227_33_agent_runtime_scheduled_finalization_context.sql` 及精确 rollback：Runtime Worker
     只有持有未过期 finalization claim token 时，才能只读取得终态基准、冻结 schedule hash、
     task/intent 版本、retry count 与 consecutive failures；applied、not-found 和 fenced 明确区分。
-  - RPC 在返回前重新校验 scheduled task/run、Runtime binding/Run、execution profile、租户及
-    tenant/provider/capability epoch/revision，且不续租、不更新事实、不返回 prompt、push target、
-    claim token、Secret、路径或 Provider payload。Worker 循环与 next-run 规划仍留待 B1-B2。
+  - Context RPC 在返回前重新校验 scheduled task/run、Runtime binding/Run、execution profile、
+    冻结 epoch/revision，且不续租、不更新事实、不返回 prompt、push target、claim token、Secret、
+    路径或 Provider payload。新增 apply v2 仅在 Runtime Run 已 terminal 后完成本地 scheduled facts
+    收敛；后续 tenant/provider/capability kill 仍阻止新副作用，但不会把 terminal intent 永久卡在
+    running/reconcile_required。v1 身份保持不变，Worker 循环与 next-run 规划仍留待 B1-B2。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
