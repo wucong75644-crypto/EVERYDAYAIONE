@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 from uuid import uuid4
 
 import psycopg
@@ -110,6 +112,12 @@ def _request(database: str, ids, facts):
                     facts["id"], ids["attempt"], claim["execution_token"],
                     claim["state_version"], ids["request_hash"],
                 ))
+
+
+def _racing_cancel_claim(database: str, barrier: threading.Barrier, worker: str):
+    barrier.wait()
+    return _rpc(database, "everydayai_sandbox_worker",
+                "claim_next_sandbox_cancel_v1", (worker, 60))
 
 
 def test_b5_queued_proof_finalizer_acl_and_rollback(database: str) -> None:
@@ -227,3 +235,128 @@ def test_b5_running_cancel_old_token_unknown_and_no_duplicate_execution(database
         with pytest.raises(psycopg.errors.InsufficientPrivilege, match="CANCEL_TERMINAL_FENCED"):
             conn.execute("UPDATE agent_sandbox_jobs SET status='succeeded' WHERE id=%s", (unknown["id"],))
         conn.rollback()
+
+
+def test_b5_expired_unstarted_claim_has_fenced_cancel_takeover(database: str) -> None:
+    _prepare(database)
+    ids, facts = _seed(database, "claimed")
+    requested = _request(database, ids, facts)
+    assert requested["outcome"] == "cancel_requested"
+
+    not_expired = _rpc(database, "everydayai_sandbox_worker",
+                       "claim_next_sandbox_cancel_v1", ("early-cancel", 60))
+    assert not_expired["outcome"] == "not_found"
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "UPDATE agent_sandbox_jobs SET lease_expires_at="
+            "clock_timestamp()-interval '1 second' WHERE id=%s",
+            (facts["id"],),
+        )
+        conn.commit()
+
+    barrier = threading.Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda worker: _racing_cancel_claim(database, barrier, worker),
+            ("cancel-owner-a", "cancel-owner-b"),
+        ))
+    assert sorted(result["outcome"] for result in results) == [
+        "claimed", "not_found",
+    ]
+    claimed = next(result for result in results if result["outcome"] == "claimed")
+    job = claimed["job"]
+    assert job["fencing_token"] == 2
+    assert job["cancel_confirmed_at"] is not None
+    assert job["ambiguity_evidence"]["kind"] == "SANDBOX_CANCEL_OWNER_TAKEOVER"
+    assert job["ambiguity_evidence"]["prior_execution_lease_expired"] is True
+
+    stale = _rpc(database, "everydayai_sandbox_worker", "record_sandbox_cancel_signal", (
+        facts["id"], facts["claim_token"], 1,
+        requested["job"]["state_version"], "accepted",
+    ))
+    assert stale["outcome"] == "ownership_lost"
+    assert _rpc(database, "everydayai_sandbox_worker", "claim_next_sandbox_job", (
+        "ordinary-executor", 60,
+    ))["outcome"] == "not_found"
+    assert _rpc(database, "everydayai_sandbox_worker",
+                "claim_next_recoverable_sandbox_job", (
+                    "ordinary-recovery", 60,
+                ))["outcome"] == "not_found"
+
+    digest, receipt = build_receipt(
+        execution_outcome="interrupted", stdout=b"", stderr=b"", cleaned=True,
+    )
+    terminal = _rpc(database, "everydayai_sandbox_worker", "finish_sandbox_job", (
+        facts["id"], job["claim_token"], job["fencing_token"],
+        job["state_version"], "cancelled", "CANCELLED_BEFORE_START",
+        digest, receipt,
+    ))
+    assert terminal["outcome"] == "cancelled"
+    action_claim = facts["action_claim"]
+    finalized = _rpc(database, "everydayai_agent_runtime_worker",
+                     "finalize_agent_action_sandbox_cancel_v1", (
+                         ids["attempt"], action_claim["execution_token"],
+                         action_claim["state_version"], ids["request_hash"],
+                         facts["id"], terminal["job"]["state_version"], digest,
+                     ))
+    assert finalized["outcome"] == "cancelled"
+
+
+def test_b5_unknown_cancel_intent_uses_only_cancel_takeover(database: str) -> None:
+    _prepare(database)
+    ids, facts = _seed(database, "claimed")
+    requested = _request(database, ids, facts)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "UPDATE agent_sandbox_jobs SET lease_expires_at="
+            "clock_timestamp()-interval '1 second' WHERE id=%s",
+            (facts["id"],),
+        )
+        conn.commit()
+    recovered = _rpc(database, "everydayai_sandbox_worker",
+                     "claim_next_sandbox_job_reconciliation", (
+                         "ordinary-reconciler", 60,
+                     ))
+    assert requested["job"]["state_version"] < recovered["job"]["state_version"]
+    assert recovered["outcome"] == "claimed"
+    assert recovered["job"]["status"] == "unknown"
+    assert recovered["job"]["cancel_requested_at"] is not None
+    assert _rpc(database, "everydayai_sandbox_worker", "claim_next_sandbox_job", (
+        "ordinary-executor", 60,
+    ))["outcome"] == "not_found"
+    assert _rpc(database, "everydayai_sandbox_worker",
+                "claim_next_recoverable_sandbox_job", (
+                    "ordinary-recovery", 60,
+                ))["outcome"] == "not_found"
+    takeover = _rpc(database, "everydayai_sandbox_worker",
+                    "claim_next_sandbox_cancel_v1", ("cancel-recovery", 60))
+    assert takeover["outcome"] == "claimed"
+    assert takeover["job"]["status"] == "cancel_requested"
+    assert takeover["job"]["fencing_token"] == 2
+    assert takeover["job"]["ambiguity_evidence"][
+        "prior_ambiguity_evidence"
+    ]["kind"] == "SANDBOX_CANCEL_TERMINATION_UNPROVEN"
+    stale_reconciliation = _rpc(
+        database, "everydayai_sandbox_worker",
+        "renew_sandbox_job_reconciliation", (
+            facts["id"], recovered["job"]["reconciliation_token"],
+            recovered["job"]["state_version"], 60,
+        ),
+    )
+    assert stale_reconciliation["outcome"] == "ownership_lost"
+
+    no_intent_ids, no_intent = _seed(database, "claimed")
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "UPDATE agent_sandbox_jobs SET lease_expires_at="
+            "clock_timestamp()-interval '1 second' WHERE id=%s",
+            (no_intent["id"],),
+        )
+        conn.commit()
+    assert _rpc(database, "everydayai_sandbox_worker",
+                "claim_next_sandbox_cancel_v1", (
+                    "no-intent-cancel", 60,
+                ))["outcome"] == "not_found"

@@ -11,6 +11,11 @@ def test_b5_migration_has_narrow_fenced_cancel_and_proof_finalizer() -> None:
     assert "request_agent_runtime_sandbox_cancel_v1" in sql
     assert "finalize_agent_action_sandbox_cancel_v1" in sql
     assert "claim_next_sandbox_cancel_v1" in sql
+    assert "job.lease_expires_at<=clock_timestamp()" in sql
+    assert "OR (job.status='unknown' AND job.claim_token IS NULL)" in sql
+    assert "SANDBOX_CANCEL_OWNER_TAKEOVER" in sql
+    assert "reconciliation_worker_id=NULL,reconciliation_token=NULL" in sql
+    assert "attempt.reconciliation_operation IS DISTINCT FROM 'cancel'" in sql
     assert "_agent_runtime_kill_epoch_context" in sql
     assert "reconciliation_operation IS DISTINCT FROM 'cancel'" in sql
     assert "reconciliation_parent_run_state_version" in sql

@@ -108,6 +108,9 @@ CREATE FUNCTION claim_next_sandbox_cancel_v1(
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
 DECLARE candidate UUID; job agent_sandbox_jobs%ROWTYPE; token UUID;
+    run agent_runs%ROWTYPE; act agent_actions%ROWTYPE;
+    attempt agent_action_attempts%ROWTYPE;
+    intent agent_action_dispatch_intents%ROWTYPE;
 BEGIN
     PERFORM _assert_agent_sandbox_actor('sandbox_worker');
     IF NULLIF(btrim(p_worker_id),'') IS NULL
@@ -116,26 +119,63 @@ BEGIN
             USING ERRCODE='22023';
     END IF;
     FOR candidate IN SELECT id FROM agent_sandbox_jobs
-      WHERE status='cancel_requested' AND claim_token IS NULL
+      WHERE cancel_requested_at IS NOT NULL AND cancel_accepted_at IS NULL
         AND starting_at IS NULL AND started_at IS NULL
-        AND cancel_requested_at IS NOT NULL AND cancel_accepted_at IS NULL
         AND artifact_manifest='{"schema_revision":1,"items":[]}'::jsonb
         AND partial_effects='{"schema_revision":1,"items":[]}'::jsonb
+        AND (
+            (status='cancel_requested' AND (
+                claim_token IS NULL OR lease_expires_at<=clock_timestamp()))
+            OR (status='unknown' AND claim_token IS NULL)
+        )
       ORDER BY updated_at,id LIMIT 100 LOOP
         job:=_lock_agent_sandbox_job(candidate);
-        IF job.status<>'cancel_requested' OR job.claim_token IS NOT NULL
+        SELECT * INTO run FROM agent_runs WHERE id=job.run_id;
+        SELECT * INTO act FROM agent_actions WHERE id=job.action_id;
+        SELECT * INTO attempt FROM agent_action_attempts WHERE id=job.attempt_id;
+        SELECT * INTO intent FROM agent_action_dispatch_intents
+         WHERE id=job.dispatch_intent_id;
+        IF NOT (
+               (job.status='cancel_requested' AND (
+                   job.claim_token IS NULL
+                   OR job.lease_expires_at<=clock_timestamp()))
+               OR (job.status='unknown' AND job.claim_token IS NULL)
+           )
            OR job.starting_at IS NOT NULL OR job.started_at IS NOT NULL
            OR job.cancel_requested_at IS NULL OR job.cancel_accepted_at IS NOT NULL
            OR job.artifact_manifest<>'{"schema_revision":1,"items":[]}'::jsonb
-           OR job.partial_effects<>'{"schema_revision":1,"items":[]}'::jsonb THEN
+           OR job.partial_effects<>'{"schema_revision":1,"items":[]}'::jsonb
+           OR run.status IS DISTINCT FROM 'cancelled'
+           OR act.tool_name IS DISTINCT FROM 'code_execute'
+           OR act.status NOT IN ('accepted','unknown')
+           OR attempt.status NOT IN ('accepted','unknown')
+           OR attempt.reconciliation_operation IS DISTINCT FROM 'cancel'
+           OR attempt.reconciliation_parent_run_state_version
+              IS DISTINCT FROM run.state_version
+           OR attempt.request_hash IS DISTINCT FROM job.request_hash
+           OR intent.executor_type IS DISTINCT FROM 'sandbox_job'
+           OR intent.execution_token IS DISTINCT FROM attempt.execution_token
+           OR intent.recovery_mode IS DISTINCT FROM 'reconcile_only'
+           OR intent.request_hash IS DISTINCT FROM job.request_hash THEN
             CONTINUE;
         END IF;
         token:=gen_random_uuid();
-        UPDATE agent_sandbox_jobs SET claim_worker_id=btrim(p_worker_id),
+        UPDATE agent_sandbox_jobs SET status='cancel_requested',
+            claim_worker_id=btrim(p_worker_id),
             claim_token=token,fencing_token=fencing_token+1,
             lease_expires_at=clock_timestamp()+make_interval(secs=>p_lease_seconds),
             claimed_at=clock_timestamp(),cancel_accepted_at=clock_timestamp(),
             cancel_confirmed_at=clock_timestamp(),state_version=state_version+1,
+            reconciliation_worker_id=NULL,reconciliation_token=NULL,
+            reconciliation_lease_expires_at=NULL,
+            ambiguity_evidence=jsonb_build_object(
+                'kind','SANDBOX_CANCEL_OWNER_TAKEOVER',
+                'prior_status',job.status,
+                'prior_fencing_token',job.fencing_token,
+                'prior_execution_lease_expired',
+                    COALESCE(job.lease_expires_at<=clock_timestamp(),false),
+                'prior_reconciliation_claim',job.reconciliation_token IS NOT NULL,
+                'prior_ambiguity_evidence',job.ambiguity_evidence),
             updated_at=clock_timestamp() WHERE id=job.id RETURNING * INTO job;
         RETURN jsonb_build_object('outcome','claimed','job',to_jsonb(job));
     END LOOP;
