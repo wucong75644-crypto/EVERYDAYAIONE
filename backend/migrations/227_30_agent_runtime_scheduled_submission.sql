@@ -133,6 +133,20 @@ END $$;
 CREATE CONSTRAINT TRIGGER create_runtime_scheduled_profile_after_insert
  AFTER INSERT ON scheduled_tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
  EXECUTE FUNCTION _create_agent_runtime_scheduled_profile_after_insert();
+CREATE FUNCTION _fence_agent_runtime_scheduled_profile_after_update() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+ IF (NEW.runtime_action_id IS NOT NULL OR NEW.runtime_attempt_id IS NOT NULL
+  OR NEW.runtime_request_hash IS NOT NULL OR NEW.runtime_idempotency_key IS NOT NULL)
+ AND NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles profile
+  WHERE profile.scheduled_task_id=NEW.id) THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_REQUIRED_BEFORE_MUTATION' USING ERRCODE='42501';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER fence_runtime_scheduled_profile_after_update
+ AFTER UPDATE ON scheduled_tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+ EXECUTE FUNCTION _fence_agent_runtime_scheduled_profile_after_update();
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scheduled_tasks task
   WHERE (task.runtime_action_id IS NOT NULL OR task.runtime_attempt_id IS NOT NULL
@@ -439,6 +453,7 @@ END $$;
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_submission_worker(),
  _agent_runtime_scheduled_submission_enabled(),_agent_runtime_scheduled_profile_seed(UUID),
  _ensure_agent_runtime_scheduled_profile(UUID),_create_agent_runtime_scheduled_profile_after_insert(),
+ _fence_agent_runtime_scheduled_profile_after_update(),
  _agent_runtime_scheduled_gate_snapshot(UUID,TEXT,TEXT),
  _submit_agent_runtime_scheduled_execution_v1(UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,UUID,TIMESTAMPTZ),
  _bind_agent_runtime_scheduled_run_after_claim(),worker_claim_due_scheduled_executions_v1(TIMESTAMPTZ,INTEGER),

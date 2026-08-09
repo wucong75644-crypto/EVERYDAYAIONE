@@ -19,6 +19,8 @@ def test_submission_contract_is_narrow_hidden_and_disabled() -> None:
     assert "runtime_scheduled_manual_request_identity" in SQL
     assert "requester_user_id" in SQL
     assert "AGENT_RUNTIME_SCHEDULED_PROFILE_BACKFILL_REQUIRED" in SQL
+    assert "AGENT_RUNTIME_SCHEDULED_PROFILE_REQUIRED_BEFORE_MUTATION" in SQL
+    assert "fence_runtime_scheduled_profile_after_update" in SQL
     assert "read_agent_runtime_scheduled_submission_v1" in SQL
     assert "source,'scheduler'" in SQL or "'scheduler','user'" in SQL
     assert "NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles" in SQL

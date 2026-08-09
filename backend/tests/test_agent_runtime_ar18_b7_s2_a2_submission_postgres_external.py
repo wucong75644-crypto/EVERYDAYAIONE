@@ -10,6 +10,7 @@ from tests.test_agent_runtime_ar173_postgres_external import _apply
 from tests.test_agent_runtime_ar18_b7_s2_a1_owner_postgres_external import (
     ORG, USER, _create_runtime_task, _legacy_task, _setup,
 )
+from tests.test_agent_runtime_ar18_b7_scheduler_control_postgres_external import _mutate
 
 
 pytestmark = pytest.mark.external
@@ -162,6 +163,22 @@ def test_runtime_submission_is_single_owner_and_claim_binds_run(database: str) -
         _worker_rpc(database, "worker_assert_scheduled_task_legacy_owner_v1", (task_id,))
     with pytest.raises(Exception, match="ROLLBACK_FACTS_EXIST"):
         _apply(database, ROLLBACK)
+
+
+def test_runtime_cannot_adopt_profileless_legacy_task(database: str) -> None:
+    _prepare_a2(database)
+    _, ids = _create_runtime_task(database)
+    legacy_id = _legacy_task(database)
+
+    with pytest.raises(Exception, match="PROFILE_REQUIRED_BEFORE_MUTATION"):
+        _mutate(database, ids, legacy_id, "pause", 0, "adopt-legacy", {})
+
+    with psycopg.connect(database) as conn:
+        task = conn.execute(
+            "SELECT status,runtime_action_id FROM scheduled_tasks WHERE id=%s",
+            (legacy_id,),
+        ).fetchone()
+        assert task == ("active", None)
 
 
 def test_disabled_mode_legacy_acl_and_empty_rollback(database: str) -> None:
