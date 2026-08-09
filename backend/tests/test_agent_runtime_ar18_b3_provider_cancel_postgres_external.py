@@ -1,4 +1,6 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import uuid4
 
 import psycopg
@@ -52,6 +54,29 @@ def _cancelled_provider_fact(database: str) -> tuple[dict[str, str], str]:
                      (submission_id,ids["attempt"],ids["action"],ids["run"],"22222222-2222-2222-2222-222222222222","44444444-4444-4444-4444-444444444444","44444444-4444-4444-4444-444444444444",ids["attempt"],ids["request_hash"],ids["token"]))
         conn.commit()
     return ids, submission_id
+
+
+def _expired_dispatching(
+    database: str, *, cancelled: bool = False, without_intent: bool = False,
+) -> dict[str, str]:
+    conversation_id = str(uuid4())
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("INSERT INTO conversations(id,user_id,org_id,scope_type,scope_id) VALUES(%s,%s,%s,'user',%s)",
+                     (conversation_id,"44444444-4444-4444-4444-444444444444","22222222-2222-2222-2222-222222222222","44444444-4444-4444-4444-444444444444"))
+        conn.commit()
+    ids = _seed_specialist_action(database, conversation_id)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("UPDATE agent_policy_receipts SET receipt_hash=%s WHERE id=%s",
+                     (uuid4().hex * 2, ids["policy"]))
+        conn.execute("UPDATE agent_action_attempts SET lease_expires_at=clock_timestamp()-interval '1 second',updated_at=clock_timestamp()-interval '2 minutes' WHERE id=%s", (ids["attempt"],))
+        if cancelled:
+            conn.execute("UPDATE agent_runs SET status='cancelled',blocking_action_count=0,execution_token=NULL,lease_expires_at=NULL,completed_at=clock_timestamp(),state_version=state_version+1 WHERE id=%s", (ids["run"],))
+        if without_intent:
+            conn.execute("DELETE FROM agent_action_dispatch_intents WHERE attempt_id=%s", (ids["attempt"],))
+        conn.commit()
+    return ids
 
 
 def test_b3_cancel_claim_finalizer_acl_and_rollback(database: str) -> None:
@@ -110,5 +135,57 @@ def test_b3_cancel_claim_finalizer_acl_and_rollback(database: str) -> None:
     _apply(database, ROLLBACK)
     with psycopg.connect(database) as conn:
         assert conn.execute("SELECT has_function_privilege('everydayai_worker','request_agent_runtime_provider_cancel(uuid,uuid,text,bigint,text)','EXECUTE')").fetchone()[0] is True
+        restored = conn.execute("SELECT pg_get_functiondef('claim_next_agent_action_reconciliation(text,integer,integer)'::regprocedure)").fetchone()[0]
+        assert "dispatch_intent_outcome_unproven" in restored
+        assert "reconciliation_operation" not in restored
     _apply(database, MIGRATION)
     _apply(database, ROLLBACK)
+
+
+def test_b3_preserves_22025_dispatching_recovery_and_fencing(database: str) -> None:
+    _prepare(database)
+    running = _expired_dispatching(database)
+    running_claim = _worker_rpc(
+        database, "claim_next_agent_action_reconciliation", ("b3-running",120,0),
+    )
+    assert running_claim["operation"] == "reconcile"
+    assert running_claim["snapshot"]["status"] == "unknown"
+    assert running_claim["snapshot"]["retry_disposition"] == "retry_after_reconcile"
+
+    cancelled = _expired_dispatching(database, cancelled=True)
+    cancelled_claim = _worker_rpc(
+        database, "claim_next_agent_action_reconciliation", ("b3-cancelled",120,0),
+    )
+    assert cancelled_claim["operation"] == "cancel"
+    assert cancelled_claim["snapshot"]["status"] == "unknown"
+
+    no_intent = _expired_dispatching(database, without_intent=True)
+    assert _worker_rpc(
+        database, "claim_next_agent_action_reconciliation", ("b3-no-intent",120,0),
+    )["outcome"] == "not_found"
+    with psycopg.connect(database) as conn:
+        assert conn.execute(
+            "SELECT status FROM agent_action_attempts WHERE id=%s", (no_intent["attempt"],),
+        ).fetchone()[0] == "dispatching"
+
+    raced = _expired_dispatching(database)
+    barrier = Barrier(2)
+
+    def claim(worker: str):
+        barrier.wait()
+        return _worker_rpc(
+            database, "claim_next_agent_action_reconciliation", (worker,120,0),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(claim, ("b3-race-a", "b3-race-b")))
+    assert sorted(row["outcome"] for row in outcomes) == ["claimed", "not_found"]
+    claimed = next(row for row in outcomes if row["outcome"] == "claimed")
+    with psycopg.connect(database) as conn:
+        row = conn.execute(
+            "SELECT status,reconciliation_token,state_version FROM agent_action_attempts WHERE id=%s",
+            (raced["attempt"],),
+        ).fetchone()
+        assert (row[0], str(row[1]), row[2]) == (
+            "unknown", claimed["execution_token"], claimed["state_version"],
+        )

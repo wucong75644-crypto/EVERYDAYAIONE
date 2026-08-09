@@ -4,6 +4,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from services.agent.runtime.application.action_loop import ActionLoopDriver
+from services.agent.runtime.domain.errors import (
+    FencingTokenMismatchError, StaleVersionError,
+)
 from services.agent.runtime.domain import (
     ActionAttempt, ActionAttemptId, ActionAttemptStatus, ActionId,
     FencingToken, IdempotencyKey, Lease, RuntimeScope, ScopeKind,
@@ -54,11 +57,14 @@ class _Recovery:
 
 
 class _Actions:
-    def __init__(self):
+    def __init__(self, renewal_error=None):
         self.renewals = 0
+        self.renewal_error = renewal_error
 
     async def renew_reconciliation(self, **kwargs):
         self.renewals += 1
+        if self.renewal_error is not None:
+            raise self.renewal_error
         return type("Receipt", (), {"state_version": kwargs["expected_state_version"] + 1})()
 
 
@@ -66,6 +72,7 @@ class _Provider:
     def __init__(self, state: ProviderState, delay: float = 0):
         self.state, self.delay = state, delay
         self.cancel_calls = self.reconcile_calls = self.submit_calls = 0
+        self.cancel_aborted = False
 
     async def submit(self, *_args, **_kwargs):
         self.submit_calls += 1
@@ -78,7 +85,11 @@ class _Provider:
     async def cancel(self, attempt, _receipt):
         self.cancel_calls += 1
         if self.delay:
-            await asyncio.sleep(self.delay)
+            try:
+                await asyncio.sleep(self.delay)
+            except asyncio.CancelledError:
+                self.cancel_aborted = True
+                raise
         evidence = ({"cancel_confirmed": True, "submission_id": "fact-1", "state_version": 3}
                     if self.state is ProviderState.CANCELLED else {"error_code": "still_unknown"})
         return ProviderReceipt(
@@ -149,3 +160,20 @@ async def test_cancel_unknown_stays_reconcile_only_with_safe_due_time() -> None:
     assert facts.finalized is None
     assert facts.unknown["next_reconcile_at"] > datetime.now(timezone.utc)
     assert provider.reconcile_calls == provider.submit_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("renewal_error", [
+    StaleVersionError("stale_version"),
+    FencingTokenMismatchError("ownership_lost"),
+])
+async def test_cancel_lease_loss_aborts_provider_and_never_finalizes(
+    renewal_error: Exception,
+) -> None:
+    provider = _Provider(ProviderState.CANCELLED, delay=0.05)
+    facts = _Facts()
+    actions = _Actions(renewal_error)
+    assert await _driver(provider, facts, actions, 0.001).reconcile_once()
+    assert provider.cancel_calls == 1
+    assert provider.cancel_aborted is True
+    assert facts.finalized is facts.unknown is None

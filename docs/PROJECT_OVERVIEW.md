@@ -201,7 +201,8 @@ Agent Runtime AR-18-A1.2-B1 atomic task cancel intent：
 
 Agent Runtime AR-18-A1.2-B3 Provider cancellation handoff：
 - `backend/migrations/227_24_agent_runtime_provider_cancel_handoff.sql` 为 accepted/unknown
-  Action reconciliation claim 持久绑定 `reconcile|cancel` operation、父 Run identity/version；
+  Action reconciliation claim 保留 220_25 对 durable dispatch intent + expired dispatching 的
+  unknown/retry-after-reconcile 转换，再持久绑定 `reconcile|cancel` operation、父 Run identity/version；
   cancelled 父 Run 始终进入 cancel，正常 claim 与响应丢失 readback 不重新推导不同 operation。
 - Provider cancel 只在续租 reconciliation lease 下执行；confirmed 必须同时满足 receipt 与
   durable provider fact、token/state-version/request-hash、owner/kill/revision fence，随后原子终结

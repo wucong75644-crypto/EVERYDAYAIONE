@@ -203,6 +203,31 @@ BEGIN
     IF p_min_age_seconds NOT BETWEEN 0 AND 86400 THEN
         RAISE EXCEPTION 'AGENT_ACTION_RECONCILE_SCAN_INVALID' USING ERRCODE='22023';
     END IF;
+    FOR candidate IN
+        SELECT attempt.id,attempt.state_version
+          FROM agent_action_attempts attempt
+          JOIN agent_action_dispatch_intents intent ON intent.attempt_id=attempt.id
+         WHERE attempt.status='dispatching'
+           AND attempt.lease_expires_at<=clock_timestamp()
+         ORDER BY attempt.updated_at,attempt.id LIMIT 100
+    LOOP
+        PERFORM 1 FROM agent_runtime_sessions WHERE id=(
+            SELECT session_id FROM agent_action_attempts WHERE id=candidate.id) FOR UPDATE;
+        PERFORM 1 FROM agent_runs WHERE id=(
+            SELECT run_id FROM agent_action_attempts WHERE id=candidate.id) FOR UPDATE;
+        PERFORM 1 FROM agent_actions WHERE id=(
+            SELECT action_id FROM agent_action_attempts WHERE id=candidate.id) FOR UPDATE;
+        UPDATE agent_action_attempts SET status='unknown',
+            ambiguity_evidence=jsonb_build_object('kind','dispatch_intent_outcome_unproven'),
+            retry_disposition='retry_after_reconcile',state_version=state_version+1,
+            updated_at=clock_timestamp()
+         WHERE id=candidate.id AND status='dispatching';
+        UPDATE agent_actions SET status='unknown',
+            retry_disposition='retry_after_reconcile',state_version=state_version+1,
+            updated_at=clock_timestamp()
+         WHERE id=(SELECT action_id FROM agent_action_attempts WHERE id=candidate.id)
+           AND status='running';
+    END LOOP;
     FOR candidate IN SELECT attempt.id,attempt.state_version FROM agent_action_attempts attempt
       WHERE attempt.status IN ('accepted','unknown')
         AND (attempt.reconciliation_token IS NULL OR attempt.reconciliation_lease_expires_at<=clock_timestamp())
