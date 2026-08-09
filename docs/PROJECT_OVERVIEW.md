@@ -212,6 +212,17 @@ Agent Runtime AR-18-A1.2-B3 Provider cancellation handoff：
   cancelled Run 的 accepted/unknown、活动 reconciliation lease 或未收敛 cancel facts 存在时
   失败关闭，并恢复 226_13 函数、227_04 ACL及新增 claim binding columns。
 
+Agent Runtime AR-18-A1.2-B4 Model Gateway cancel fence：
+- `backend/migrations/227_25_agent_runtime_model_gateway_cancel_fence.sql` 将 Run cancel
+  扩展到 Model Gateway operation：按 Session→Run→ModelStep→ModelAttempt→operation 锁序，
+  `submitted/claimed` 收敛为明确 pre-dispatch failed fact，`dispatching` 保守收敛为
+  durable unknown，既有 `completed/failed/unknown` 不可变。
+- Gateway mark/renew/finalize 每次重新锁定并验证父 Run/ModelAttempt；cancel 先赢时旧 claim
+  只能 readback/fenced，finalize 先赢则保留真实终态并由 Runtime 使用 late-receipt 语义。
+  Gateway 下一次 lease poll 发现 fence 后取消 provider coroutine并关闭 adapter，不依赖 Web
+  进程内 gate；rollback 对 cancel-derived facts、cancelled Run 未收敛 operation与活动 lease
+  失败关闭。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、

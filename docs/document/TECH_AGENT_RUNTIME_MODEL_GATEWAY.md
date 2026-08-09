@@ -192,6 +192,15 @@ Runtime 断连处理：
 - 已 `accepted` 或 DB 状态为 `dispatching` 后断连：Runtime 写 `UNKNOWN`，只允许 readback/reconcile。
 - `completed/failed/unknown` frame 丢失：Runtime 用 request id 调用只读 RPC；不得创建新 request id。
 
+Runtime Run cancel 通过 additive `227_25` 与 Gateway operation 串行：按
+Session→Run→ModelStep→ModelAttempt→operation 锁序，尚未 dispatch 的 `submitted/claimed`
+形成稳定 pre-dispatch failed fact并撤销 lease；已 `dispatching` 不假设 Provider 已停止，立即
+形成 durable `UNKNOWN` 并保留旧 claim 的 terminal readback identity；既有终态不改写。
+mark/renew/finalize 每次重新验证父 Run/ModelAttempt，因而 cancel 先赢时旧 token 不能开始或
+覆盖 Provider operation，finalize 先赢时真实终态保留。Gateway 在下一次 renewal poll 读到
+terminal readback/fence 后取消 provider coroutine并关闭 adapter；停止延迟上界是配置的 Gateway
+renew interval，不依赖 Web 进程内 cancellation gate。
+
 Runtime 以 v2 `stop_reason` 直接构造 `ModelStepResult`，不再从 Provider reason 重新推断，并按 domain 合同核对 stop reason 与 output/tool 结构。唯一 canonical response hash helper 同时由 Gateway 与 Runtime 使用，绑定 canonical stop reason、nullable Provider stop reason、output、tool call 的两类 id/name/arguments 及全部 `ModelUsage` 字段。Runtime 使用 DB reasoning usage 与 UDS 公开 usage 重建结果后重新计算 hash，并要求 wire hash、DB operation hash、重算 hash 三方一致；任一协议字段或 DB 事实不一致均收敛为 `UNKNOWN`，不普通重派。
 
 ## 5. 数据库事实、角色与 RPC
@@ -206,6 +215,10 @@ backend/migrations/rollback/227_18_agent_runtime_model_gateway_rollback.sql
 ```
 
 不得修改 223、227_16、227_17 或任何既有 migration 身份。
+
+AR-18-A1.2-B4 使用独立 additive lane `227_25_agent_runtime_model_gateway_cancel_fence.sql`
+及其 rollback；不改写 218、227_18～227_24 的历史身份。Rollback 对 cancel-derived facts、
+cancelled Run 的未收敛 operation和活动 claimed/dispatching lease 失败关闭。
 
 新增角色 `everydayai_agent_model_gateway`：`LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`，仅获得 Gateway 窄 RPC `EXECUTE`。连接时必须同时满足 `session_user=everydayai_agent_model_gateway` 与 `app.access_kind=agent_model_gateway`。
 
@@ -230,9 +243,9 @@ usage_summary, ambiguity_code, created_at, updated_at
 所有函数均 `SECURITY DEFINER SET search_path=pg_catalog,public`，显式校验 `session_user + app.access_kind`，使用 CAS 和固定锁序：
 
 1. `claim_agent_runtime_model_gateway_operation(...)`：Gateway-only。验证 tenant/user/run/model attempt/worker/execution token/request hash/model/provider/revision/purpose/kill epochs/state version；幂等创建或读取 request id；返回 claim token、冻结 input receipt 摘要和现有 `get_agent_runtime_ai_bundle` 等价的 encrypted bundle。它是 Gateway 唯一取得 SecretReference 的入口。
-2. `mark_agent_runtime_model_gateway_dispatched(...)`：Gateway-only，在网络调用前原子写 `dispatching`；重复调用按 claim token 和 state version readback。
-3. `renew_agent_runtime_model_gateway_operation(...)`：Gateway-only，只续租未终结且 epoch/revision 未变化的 operation。
-4. `finalize_agent_runtime_model_gateway_operation(...)`：Gateway-only，只写 `completed/failed/unknown` 的脱敏摘要，不能修改 Runtime ModelAttempt 终态。
+2. `mark_agent_runtime_model_gateway_dispatched(...)`：Gateway-only，在网络调用前原子写 `dispatching`；重复调用按 claim token 和 state version readback，并重新验证父 Run/ModelAttempt。
+3. `renew_agent_runtime_model_gateway_operation(...)`：Gateway-only，只续租父级仍 active 且 epoch/revision 未变化的 operation。
+4. `finalize_agent_runtime_model_gateway_operation(...)`：Gateway-only，只写 `completed/failed/unknown` 的脱敏摘要；父级 active 时才能新增终态，既有终态仅按 finalize identity readback，且不能修改 Runtime ModelAttempt。
 5. `read_agent_runtime_model_gateway_operation(...)`：Runtime Worker 与 Gateway 可执行；按 org/run/model attempt/request id/token 只读，绝不返回 encrypted bundle 或 Secret。
 6. `recover_agent_runtime_model_gateway_operations(...)`：Gateway-only。`claimed` 且未 dispatch 的 stale operation 可重新 claim；`dispatching` stale operation只能收敛为 `unknown`。
 

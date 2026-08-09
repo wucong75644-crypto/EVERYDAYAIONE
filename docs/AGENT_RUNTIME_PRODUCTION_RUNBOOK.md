@@ -46,7 +46,7 @@ run in separate processes and scan durable work after restart.
 | Conversation Actor (`everydayai-actor` / DB `everydayai_runtime`) | legacy actor tasks only | existing actor capabilities | no Runtime/Sandbox claim or non-SAFE dispatch | SAFE legacy tools only | existing actor queue | existing actor contract |
 | WeCom Runtime (`everydayai-wecom` / DB `everydayai_wecom_runtime`) | inbound WeCom item only | atomic WeCom V3 ingress, V3 Interaction resolution | no Runtime/Sandbox claim or non-SAFE dispatch | channel ingress/egress only | existing channel/actor wake only | existing channel contract |
 | Agent Runtime Worker (`everydayai-agent-runtime` / DB `everydayai_agent_runtime_worker`) | Commands, Runs, model/action attempts | migration 223 runtime allow-list | no projection/admin/Sandbox execution tables; no direct confirmation authority | model provider and authorized action adapter only | none | stage Sandbox inputs; no Sandbox process |
-| Model Gateway (`everydayai-agent-model-gateway` / DB `everydayai_agent_model_gateway`) | one durable Provider operation | 227_18–227_20 claim/readback/finalize/recover and encrypted configuration bundle | no Runtime attempt completion; no public API; no Runtime env | one mock/Provider call after durable dispatch only | none | none |
+| Model Gateway (`everydayai-agent-model-gateway` / DB `everydayai_agent_model_gateway`) | one durable Provider operation | 227_18–227_20 claim/readback/finalize/recover, 227_25 parent cancel fence and encrypted configuration bundle | no Runtime attempt completion; no public API; no Runtime env | one mock/Provider call after durable dispatch only | none | none |
 | Projection Worker (`everydayai-agent-projection` / DB `everydayai_projection_worker`) | projection outbox and open-Interaction notification leases | projection claim/project/fail/dead RPCs; narrow Tool Confirmation notification claim/complete RPCs | no Runtime, Authorization or Sandbox execution claims | compatibility DB projection and V3 challenge delivery only; never resolves or dispatches an Action | Tool Confirmation V3 namespace and distributed WebSocket delivery only | none |
 | Authorization Recovery (`everydayai-agent-authorization` / DB `everydayai_authorization_worker`) | resolved, approved Authorization Interactions with active grants | authorization recovery RPCs | no action dispatch, model or Sandbox claim | none | none | none |
 | Sandbox Worker (`everydayai-sandbox` / DB `everydayai_sandbox_worker`) | local Sandbox Jobs | existing Sandbox Job worker RPC allow-list | no Runtime tables, Redis, model, JWT, WeCom, OSS or application secrets | nsjail only; network denied | none | node-local job store only; no OSS credential |
@@ -161,7 +161,7 @@ daemon-reload or state postcheck failure restores all envs and units. Runtime
 and Gateway must be `inactive:disabled`, all production flags remain false,
 and Sandbox assets must have zero diff. Run
 `scripts/run_agent_model_gateway_disposable.sh all` for local UDS, disposable
-PostgreSQL 227_18–227_20 and mock Provider acceptance. This validation does not
+PostgreSQL 227_18–227_20/227_25 and mock Provider acceptance. This validation does not
 authorize the flags-off installation, migration, service start or Owner switch.
 
 1. Bootstrap and verify the five database LOGIN roles with the two dedicated
