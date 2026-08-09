@@ -81,6 +81,7 @@ async def _settle_specialist(
         if child_run:
             await _settle_child_cancel(
                 driver, raw_attempt, receipt, token, state_version,
+                reserved_amount(snapshot),
             )
             return
         finalized = await driver._try_specialist_finalize(
@@ -106,7 +107,7 @@ async def _settle_specialist(
 
 
 async def _settle_child_cancel(
-    driver, raw_attempt, receipt, token, state_version,
+    driver, raw_attempt, receipt, token, state_version, reserved,
 ) -> None:
     evidence = receipt.external_receipt.get("evidence")
     if not isinstance(evidence, dict):
@@ -120,6 +121,7 @@ async def _settle_child_cancel(
             "child_cancel_intent_id",
         ),
         proof_hash=required(evidence.get("proof_hash"), "proof_hash"),
+        reserved_amount=reserved,
     )
 
 

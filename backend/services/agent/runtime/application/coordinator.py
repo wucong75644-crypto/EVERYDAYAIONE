@@ -241,12 +241,14 @@ class RuntimeLoopCoordinator:
             return False
         if None in (claim.intent_id, claim.claim_token, claim.state_version):
             raise RuntimeError("CHILD_CANCEL_CLAIM_INCOMPLETE")
-        await self._recovery.apply_child_cancel(
+        outcome = await self._recovery.apply_child_cancel(
             intent_id=claim.intent_id,
             claim_token=claim.claim_token,
             expected_state_version=claim.state_version,
             reason="parent_run_cancelled",
         )
+        if outcome is RecoveryOutcome.OWNERSHIP_LOST:
+            return True
         return True
 
     async def _with_run_lease(

@@ -240,11 +240,13 @@ Agent Runtime AR-18-A1.2-B6 Child Run recursive cancellation：
   Action 建立owner-only、FORCE RLS durable cancel intent；Run cancel立即保留父Run cancelled，
   后台scanner按层递归创建孙层intent并等待Child、Provider或Sandbox各自proof收敛。
 - Child create与cancel以parent action/ordinal唯一绑定：cancel-first确认not-created并禁止后建，
-  create-first持久绑定权威child ID；响应丢失可按parent binding readback。Child专用finalizer仅在
+  create-first持久绑定权威child ID，且create context的org/user必须与父Run完全一致；响应丢失可按parent binding readback。Child专用finalizer仅在
   intent confirmed及reconciliation token/lease、state/request hash、kill epoch全部有效时终结父
-  Attempt/Action，不改父Run、不递减blocker，也不复用Provider submission proof。
+  Attempt/Action，不改父Run、不递减blocker，也不复用Provider submission proof；它验证既有reserve
+  fact，not-created幂等release，其余confirmed cancel幂等refund，重复finalize不重复结算或事件。
 - requested/applied crash可由新scanner owner接管；任何UNKNOWN或未完成descendant proof永久保持
-  reconcile-only，不按超时强制关闭。Rollback遇到任意intent事实或未收敛child依赖失败关闭，
+  reconcile-only，不按超时强制关闭；ownership-lost是正常takeover结果，不终止Runtime scanner。
+  Rollback遇到任意intent事实或未收敛child依赖失败关闭，
   零事实时恢复227_25函数与既有ACL；budget递归治理不属于本批。
 
 Agent Runtime C7-B3.2-B Model Gateway：

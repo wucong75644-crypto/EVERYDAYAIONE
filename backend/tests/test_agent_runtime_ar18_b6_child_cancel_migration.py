@@ -32,10 +32,13 @@ def test_b6_migration_has_recursive_facts_and_narrow_rpcs() -> None:
         "_seed_agent_child_cancel_intents_v1",
         "reconciliation_parent_run_state_version",
         "_agent_runtime_kill_epoch_context",
+        "AGENT_CHILD_SCOPE_INVALID",
+        "record_agent_action_cost_strict",
     ):
         assert value in sql
     assert "status IN('requested','applied')" in sql
     assert "pending>0 OR descendants>0 THEN kind:=NULL" in sql
+    assert "terminal_kind='not_created' THEN 'release' ELSE 'refund'" in sql
     assert "blocking_action_count=0" not in _body(
         MIGRATION, "finalize_agent_action_child_cancel_v1",
     )

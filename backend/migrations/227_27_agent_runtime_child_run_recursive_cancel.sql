@@ -36,8 +36,7 @@ CREATE POLICY agent_runtime_child_run_cancel_intents_owner_all ON agent_runtime_
 ALTER TABLE agent_runtime_child_run_cancel_intents FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE agent_runtime_child_run_cancel_intents FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_agent_model_gateway,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker;
 CREATE INDEX idx_agent_child_cancel_scan ON agent_runtime_child_run_cancel_intents(updated_at,id) WHERE status IN('requested','applied');
-CREATE FUNCTION _agent_child_cancel_intent_immutable_v1() RETURNS TRIGGER LANGUAGE plpgsql
-SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION _agent_child_cancel_intent_immutable_v1() RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 BEGIN
  IF (NEW.session_id,NEW.org_id,NEW.root_run_id,NEW.parent_run_id,
      NEW.parent_action_id,NEW.parent_attempt_id,NEW.request_hash,NEW.child_ordinal)
@@ -53,17 +52,14 @@ END $$;
 CREATE TRIGGER agent_child_cancel_intent_immutable
 BEFORE UPDATE ON agent_runtime_child_run_cancel_intents
 FOR EACH ROW EXECUTE FUNCTION _agent_child_cancel_intent_immutable_v1();
-CREATE FUNCTION _agent_child_cancel_proof_v1(p_intent agent_runtime_child_run_cancel_intents,
- p_child agent_runs,p_kind TEXT) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER
- SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION _agent_child_cancel_proof_v1(p_intent agent_runtime_child_run_cancel_intents,p_child agent_runs,p_kind TEXT) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
  SELECT encode(sha256(convert_to(jsonb_build_object(
   'intent_id',p_intent.id,'parent_action_id',p_intent.parent_action_id,
   'parent_attempt_id',p_intent.parent_attempt_id,'request_hash',p_intent.request_hash,
   'child_ordinal',p_intent.child_ordinal,'child_run_id',p_intent.child_run_id,
   'child_state_version',p_child.state_version,'terminal_kind',p_kind)::TEXT,'UTF8')),'hex')
 $$;
-CREATE FUNCTION _seed_agent_child_cancel_intents_v1(p_run_id UUID) RETURNS INTEGER
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION _seed_agent_child_cancel_intents_v1(p_run_id UUID) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE item RECORD; root_id UUID; inserted_count INTEGER:=0; affected INTEGER;
 BEGIN
  WITH RECURSIVE lineage AS (
@@ -122,10 +118,11 @@ BEGIN
  SELECT * INTO action FROM agent_actions WHERE id=p_parent_action_id FOR UPDATE;
  SELECT * INTO attempt FROM agent_action_attempts WHERE action_id=action.id
   AND execution_token=p_parent_execution_token ORDER BY attempt_number DESC LIMIT 1 FOR UPDATE;
- SELECT * INTO intent FROM agent_runtime_child_run_cancel_intents
-  WHERE parent_action_id=action.id FOR UPDATE;
+ SELECT * INTO intent FROM agent_runtime_child_run_cancel_intents WHERE parent_action_id=action.id FOR UPDATE;
  SELECT * INTO child FROM agent_runs WHERE parent_action_id=action.id
   AND child_ordinal=p_child_ordinal FOR UPDATE;
+ IF jsonb_typeof(p_context)<>'object' OR jsonb_typeof(p_context->'scope')<>'object' THEN RAISE EXCEPTION 'AGENT_CHILD_CONTEXT_REQUIRED' USING ERRCODE='22023'; END IF;
+ IF (p_context->'scope'->>'org_id') IS DISTINCT FROM parent_run.org_id::TEXT OR (p_context->'scope'->>'user_id') IS DISTINCT FROM parent_run.user_id::TEXT THEN RAISE EXCEPTION 'AGENT_CHILD_SCOPE_INVALID' USING ERRCODE='42501'; END IF;
  IF intent.id IS NOT NULL THEN
   IF child.id IS NOT NULL AND intent.child_run_id IS NULL THEN
    UPDATE agent_runtime_child_run_cancel_intents SET child_run_id=child.id,
@@ -229,9 +226,7 @@ BEGIN
   p_parent_request_hash,p_parent_attempt_id,p_reconciliation_token,
   p_expected_state_version,p_aggregation_revision,p_result);
 END $$;
-CREATE FUNCTION claim_next_agent_child_run_cancel_intent_v1(p_worker_id TEXT,
- p_lease_seconds INTEGER DEFAULT 120) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
- SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION claim_next_agent_child_run_cancel_intent_v1(p_worker_id TEXT,p_lease_seconds INTEGER DEFAULT 120) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE candidate UUID; intent agent_runtime_child_run_cancel_intents%ROWTYPE; token UUID;
 BEGIN
  PERFORM _assert_agent_runtime_actor(TRUE);
@@ -258,8 +253,7 @@ BEGIN
  END LOOP;
  RETURN jsonb_build_object('outcome','not_found');
 END $$;
-CREATE FUNCTION get_claimed_agent_child_run_cancel_intent_v1(p_worker_id TEXT) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION get_claimed_agent_child_run_cancel_intent_v1(p_worker_id TEXT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE intent agent_runtime_child_run_cancel_intents%ROWTYPE;
 BEGIN
  PERFORM _assert_agent_runtime_actor(TRUE);
@@ -269,8 +263,7 @@ BEGIN
  IF NOT FOUND THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
  RETURN jsonb_build_object('outcome','found','intent',to_jsonb(intent));
 END $$;
-CREATE FUNCTION _cancel_child_run_from_intent_v1(p_run_id UUID,p_reason TEXT) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION _cancel_child_run_from_intent_v1(p_run_id UUID,p_reason TEXT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE run agent_runs%ROWTYPE; action agent_actions%ROWTYPE; event JSONB;
  reconciliation_count INTEGER;
 BEGIN
@@ -321,9 +314,7 @@ BEGIN
   'state_version',run.state_version,'pending_reconciliation_count',reconciliation_count,
   'event_sequence',event->'event_sequence');
 END $$;
-CREATE FUNCTION apply_agent_child_run_cancel_intent_v1(p_intent_id UUID,p_claim_token UUID,
- p_expected_state_version BIGINT,p_reason TEXT) RETURNS JSONB LANGUAGE plpgsql
- SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+CREATE FUNCTION apply_agent_child_run_cancel_intent_v1(p_intent_id UUID,p_claim_token UUID,p_expected_state_version BIGINT,p_reason TEXT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE intent agent_runtime_child_run_cancel_intents%ROWTYPE; child agent_runs%ROWTYPE;
  cancel_result JSONB; pending INTEGER; descendants INTEGER; kind TEXT; proof TEXT;
 BEGIN
@@ -410,22 +401,31 @@ BEGIN
   'terminal_kind',intent.terminal_kind,'proof_hash',intent.proof_hash,
   'state_version',intent.state_version);
 END $$;
-CREATE FUNCTION finalize_agent_action_child_cancel_v1(p_attempt_id UUID,p_reconciliation_token UUID,p_expected_state_version BIGINT,p_request_hash TEXT,p_intent_id UUID,p_proof_hash TEXT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
-DECLARE attempt agent_action_attempts%ROWTYPE; action agent_actions%ROWTYPE;
- run agent_runs%ROWTYPE; intent agent_runtime_child_run_cancel_intents%ROWTYPE;
- kill_context JSONB; event JSONB;
+CREATE FUNCTION finalize_agent_action_child_cancel_v1(p_attempt_id UUID,p_reconciliation_token UUID,p_expected_state_version BIGINT,p_request_hash TEXT,p_intent_id UUID,p_proof_hash TEXT,p_reserved_amount BIGINT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE attempt agent_action_attempts%ROWTYPE; action agent_actions%ROWTYPE; run agent_runs%ROWTYPE;
+ intent agent_runtime_child_run_cancel_intents%ROWTYPE; reserve_cost agent_action_cost_settlements%ROWTYPE; kill_context JSONB; event JSONB; cost_result JSONB; cost_kind TEXT;
 BEGIN
  PERFORM _assert_agent_runtime_actor(TRUE);
+ IF p_reserved_amount<0 THEN RAISE EXCEPTION 'AGENT_CHILD_CANCEL_COST_INVALID' USING ERRCODE='22023'; END IF;
  SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id;
  IF NOT FOUND THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
  PERFORM 1 FROM agent_runtime_sessions WHERE id=attempt.session_id FOR UPDATE;
  SELECT * INTO run FROM agent_runs WHERE id=attempt.run_id FOR UPDATE;
  SELECT * INTO action FROM agent_actions WHERE id=attempt.action_id FOR UPDATE;
  SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id FOR UPDATE;
- SELECT * INTO intent FROM agent_runtime_child_run_cancel_intents
-  WHERE id=p_intent_id AND parent_action_id=action.id FOR UPDATE;
+ SELECT * INTO intent FROM agent_runtime_child_run_cancel_intents WHERE id=p_intent_id AND parent_action_id=action.id FOR UPDATE;
+ SELECT * INTO reserve_cost FROM agent_action_cost_settlements WHERE action_id=action.id AND attempt_id=attempt.id AND kind='reserve' FOR UPDATE;
+ IF reserve_cost.id IS NULL OR reserve_cost.reserved_amount<>p_reserved_amount OR reserve_cost.actual_amount<>0 OR reserve_cost.currency<>'credits' THEN RAISE EXCEPTION 'AGENT_CHILD_CANCEL_RESERVE_FACT_MISMATCH' USING ERRCODE='42501'; END IF;
  IF attempt.status='cancelled' AND action.status='cancelled' THEN
-  RETURN jsonb_build_object('outcome','already_cancelled','action_id',action.id); END IF;
+  IF intent.status<>'confirmed' OR intent.parent_attempt_id<>attempt.id
+   OR intent.request_hash<>p_request_hash OR intent.proof_hash<>p_proof_hash
+   OR attempt.external_receipt->>'child_cancel_intent_id'<>intent.id::TEXT
+   OR attempt.external_receipt->>'proof_hash'<>intent.proof_hash THEN
+   RAISE EXCEPTION 'AGENT_CHILD_CANCEL_TERMINAL_CONFLICT' USING ERRCODE='40001'; END IF;
+  cost_kind:=CASE WHEN intent.terminal_kind='not_created' THEN 'release' ELSE 'refund' END;
+  SELECT record_agent_action_cost_strict(action.id,attempt.id,cost_kind,p_reserved_amount,0,
+   'credits','parent_run_cancelled',intent.proof_hash) INTO cost_result;
+  RETURN jsonb_build_object('outcome','already_cancelled','action_id',action.id,'cost',cost_result); END IF;
  IF run.status<>'cancelled' OR action.tool_name NOT IN('image_agent','erp_agent','erp_analyze')
   OR action.status NOT IN('accepted','unknown') OR attempt.status NOT IN('accepted','unknown')
   OR attempt.reconciliation_operation<>'cancel'
@@ -451,17 +451,17 @@ BEGIN
  UPDATE agent_actions SET status='cancelled',retry_disposition='non_retryable',
   terminal_reason='child_cancel_confirmed',completed_at=clock_timestamp(),
   state_version=state_version+1,updated_at=clock_timestamp() WHERE id=action.id;
+ cost_kind:=CASE WHEN intent.terminal_kind='not_created' THEN 'release' ELSE 'refund' END;
+ SELECT record_agent_action_cost_strict(action.id,attempt.id,cost_kind,p_reserved_amount,0,
+  'credits','parent_run_cancelled',intent.proof_hash) INTO cost_result;
  event:=append_agent_runtime_event(attempt.session_id,'action.cancelled',attempt.run_id,
   action.model_step_id,action.id,'reconciler',session_user,
   jsonb_build_object('action_id',action.id,'child_cancel_confirmed',TRUE),
   ARRAY['web_runtime','audit']::TEXT[]);
- RETURN jsonb_build_object('outcome','cancelled','action_id',action.id,
-  'run_status',run.status,'blocking_action_count',run.blocking_action_count,
-  'event_sequence',event->'event_sequence');
+ RETURN jsonb_build_object('outcome','cancelled','action_id',action.id,'run_status',run.status,
+  'blocking_action_count',run.blocking_action_count,'cost',cost_result,'event_sequence',event->'event_sequence');
 END $$;
-CREATE OR REPLACE FUNCTION cancel_agent_run(
- p_run_id UUID,p_expected_state_version BIGINT,p_reason TEXT)
-RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+CREATE OR REPLACE FUNCTION cancel_agent_run(p_run_id UUID,p_expected_state_version BIGINT,p_reason TEXT) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE run agent_runs%ROWTYPE; session_id UUID; interaction agent_interactions%ROWTYPE; result JSONB;
 BEGIN
  IF session_user='everydayai_worker' THEN PERFORM _assert_agent_runtime_actor(TRUE);
@@ -494,6 +494,6 @@ BEGIN
  RETURN result;
 END $$;
 REVOKE EXECUTE ON FUNCTION create_agent_child_run_strict(UUID,UUID,TEXT,UUID,INTEGER,TEXT,JSONB),read_agent_child_run_strict_v2(UUID,UUID,UUID,UUID,TEXT,UUID,INTEGER,INTEGER),aggregate_agent_child_run_strict(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB),cancel_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,TEXT) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker;
-REVOKE ALL ON FUNCTION _agent_child_cancel_intent_immutable_v1(),_agent_child_cancel_proof_v1(agent_runtime_child_run_cancel_intents,agent_runs,TEXT),_seed_agent_child_cancel_intents_v1(UUID),create_agent_child_run_strict_v2(UUID,UUID,TEXT,UUID,INTEGER,TEXT,JSONB),read_agent_child_run_binding_v3(UUID,UUID,UUID,UUID,TEXT,UUID,BIGINT),aggregate_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB),claim_next_agent_child_run_cancel_intent_v1(TEXT,INTEGER),get_claimed_agent_child_run_cancel_intent_v1(TEXT),_cancel_child_run_from_intent_v1(UUID,TEXT),apply_agent_child_run_cancel_intent_v1(UUID,UUID,BIGINT,TEXT),read_agent_child_run_cancel_intent_v1(UUID,UUID,UUID,BIGINT,TEXT),finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_agent_model_gateway,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker;
-GRANT EXECUTE ON FUNCTION create_agent_child_run_strict_v2(UUID,UUID,TEXT,UUID,INTEGER,TEXT,JSONB),read_agent_child_run_binding_v3(UUID,UUID,UUID,UUID,TEXT,UUID,BIGINT),aggregate_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB),claim_next_agent_child_run_cancel_intent_v1(TEXT,INTEGER),get_claimed_agent_child_run_cancel_intent_v1(TEXT),apply_agent_child_run_cancel_intent_v1(UUID,UUID,BIGINT,TEXT),read_agent_child_run_cancel_intent_v1(UUID,UUID,UUID,BIGINT,TEXT),finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT) TO everydayai_agent_runtime_worker;
+REVOKE ALL ON FUNCTION _agent_child_cancel_intent_immutable_v1(),_agent_child_cancel_proof_v1(agent_runtime_child_run_cancel_intents,agent_runs,TEXT),_seed_agent_child_cancel_intents_v1(UUID),create_agent_child_run_strict_v2(UUID,UUID,TEXT,UUID,INTEGER,TEXT,JSONB),read_agent_child_run_binding_v3(UUID,UUID,UUID,UUID,TEXT,UUID,BIGINT),aggregate_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB),claim_next_agent_child_run_cancel_intent_v1(TEXT,INTEGER),get_claimed_agent_child_run_cancel_intent_v1(TEXT),_cancel_child_run_from_intent_v1(UUID,TEXT),apply_agent_child_run_cancel_intent_v1(UUID,UUID,BIGINT,TEXT),read_agent_child_run_cancel_intent_v1(UUID,UUID,UUID,BIGINT,TEXT),finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT,BIGINT) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_agent_model_gateway,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker;
+GRANT EXECUTE ON FUNCTION create_agent_child_run_strict_v2(UUID,UUID,TEXT,UUID,INTEGER,TEXT,JSONB),read_agent_child_run_binding_v3(UUID,UUID,UUID,UUID,TEXT,UUID,BIGINT),aggregate_agent_child_run_strict_v2(UUID,UUID,UUID,TEXT,UUID,UUID,INTEGER,INTEGER,JSONB),claim_next_agent_child_run_cancel_intent_v1(TEXT,INTEGER),get_claimed_agent_child_run_cancel_intent_v1(TEXT),apply_agent_child_run_cancel_intent_v1(UUID,UUID,BIGINT,TEXT),read_agent_child_run_cancel_intent_v1(UUID,UUID,UUID,BIGINT,TEXT),finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT,BIGINT) TO everydayai_agent_runtime_worker;
 RESET ROLE;

@@ -18,6 +18,7 @@ class RecoveryOutcome(StrEnum):
     RUN_CANCELLED_USE_LATE_RECEIPT = "run_cancelled_use_late_receipt"
     APPLIED = "applied"
     CONFIRMED = "confirmed"
+    OWNERSHIP_LOST = "ownership_lost"
 
 
 class ActionRecoveryOperation(StrEnum):

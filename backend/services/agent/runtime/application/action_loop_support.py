@@ -71,6 +71,13 @@ def required_int(value: int | None, name: str) -> int:
 def required_time(value):
     if value is None:
         raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_REQUIRED")
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_INVALID") from None
+    if not isinstance(value, datetime) or value.utcoffset() is None:
+        raise RuntimeError("RECONCILIATION_LEASE_EXPIRY_INVALID")
     return value
 
 

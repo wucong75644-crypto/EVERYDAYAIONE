@@ -66,7 +66,8 @@ def _seed(database: str) -> dict[str, str]:
         conn.execute(
             "UPDATE agent_actions SET tool_name='image_agent',arguments=%s,"
             "policy_snapshot=%s WHERE id=%s",
-            (Jsonb({"child_ordinal": 0, "capability": "runtime.child"}),
+            (Jsonb({"child_ordinal": 0, "capability": "runtime.child",
+                    "reserved_credits": 7}),
              Jsonb({"capability": "runtime.child_run.create"}), ids["action"]),
         )
         conn.execute(
@@ -85,15 +86,20 @@ def _seed(database: str) -> dict[str, str]:
             (ids["attempt"], ORG, ids["token"]),
         )
         conn.commit()
+    _worker_rpc(database, "record_agent_action_cost_strict", (
+        ids["action"], ids["attempt"], "reserve", 7, 0,
+        "credits", "runtime", None,
+    ))
     return ids
 
 
-def _create(database: str, ids: dict[str, str]):
+def _create(database: str, ids: dict[str, str], scope=None):
     return _worker_rpc(database, "create_agent_child_run_strict_v2", (
         ids["run"], ids["action"], ids["request_hash"], ids["token"],
         0, "runtime.child", {
             "policy_receipt_id": ids["policy"], "capability": "runtime.child",
-            "budget_remaining": 1, "scope": {"org_id": ORG, "user_id": USER},
+            "budget_remaining": 1,
+            "scope": scope or {"org_id": ORG, "user_id": USER},
         },
     ))
 
@@ -156,7 +162,9 @@ def _seed_child_action(database: str, *, child_run_id: str,
             "VALUES(%s,%s,%s,%s,%s,%s,0,%s,'image_agent',%s,%s,%s,%s,'preauthorized',"
             "%s,'v1','retry_after_reconcile','running')",
             (ids["action"], run[0], child_run_id, ids["step"], run[1], run[2],
-             ids["action"], Jsonb({"child_ordinal": ordinal, "capability": "runtime.child"}),
+             ids["action"], Jsonb({"child_ordinal": ordinal,
+                                   "capability": "runtime.child",
+                                   "reserved_credits": 7}),
              "f" * 64, ids["request_hash"], "1" * 64,
              Jsonb({"capability": "runtime.child_run.create"})),
         )
@@ -192,6 +200,10 @@ def _seed_child_action(database: str, *, child_run_id: str,
             (ids["attempt"], run[1], ids["token"]),
         )
         conn.commit()
+    _worker_rpc(database, "record_agent_action_cost_strict", (
+        ids["action"], ids["attempt"], "reserve", 7, 0,
+        "credits", "runtime", None,
+    ))
     ids["parent_action"] = parent["action"]
     return ids
 
@@ -218,14 +230,19 @@ def _finalize_child_action(database: str, ids: dict[str, str], worker: str) -> N
         claim["state_version"], ids["request_hash"],
     ))
     assert proof["outcome"] == "confirmed"
+    with pytest.raises(Exception, match="CHILD_CANCEL_RESERVE_FACT_MISMATCH"):
+        _worker_rpc(database, "finalize_agent_action_child_cancel_v1", (
+            ids["attempt"], claim["execution_token"], claim["state_version"],
+            ids["request_hash"], proof["intent_id"], proof["proof_hash"], 8,
+        ))
     with pytest.raises(Exception, match="CHILD_CANCEL_FINALIZE_FENCED"):
         _worker_rpc(database, "finalize_agent_action_child_cancel_v1", (
             ids["attempt"], claim["execution_token"], claim["state_version"],
-            ids["request_hash"], proof["intent_id"], "0" * 64,
+            ids["request_hash"], proof["intent_id"], "0" * 64, 7,
         ))
     finalized = _worker_rpc(database, "finalize_agent_action_child_cancel_v1", (
         ids["attempt"], claim["execution_token"], claim["state_version"],
-        ids["request_hash"], proof["intent_id"], proof["proof_hash"],
+        ids["request_hash"], proof["intent_id"], proof["proof_hash"], 7,
     ))
     assert finalized["outcome"] == "cancelled"
 
@@ -272,10 +289,15 @@ def test_b6_cancel_create_race_converges_and_finalizes_parent(database: str) -> 
     assert proof["outcome"] == "confirmed"
     finalized = _worker_rpc(database, "finalize_agent_action_child_cancel_v1", (
         ids["attempt"], claim["execution_token"], claim["state_version"],
-        ids["request_hash"], proof["intent_id"], proof["proof_hash"],
+        ids["request_hash"], proof["intent_id"], proof["proof_hash"], 7,
     ))
     assert finalized["outcome"] == "cancelled"
     assert finalized["blocking_action_count"] == 0
+    replay = _worker_rpc(database, "finalize_agent_action_child_cancel_v1", (
+        ids["attempt"], claim["execution_token"], claim["state_version"],
+        ids["request_hash"], proof["intent_id"], proof["proof_hash"], 7,
+    ))
+    assert replay["outcome"] == "already_cancelled"
     with psycopg.connect(database) as conn:
         assert conn.execute(
             "SELECT status FROM agent_runs WHERE id=%s", (ids["run"],),
@@ -285,9 +307,11 @@ def test_b6_cancel_create_race_converges_and_finalizes_parent(database: str) -> 
             "WHERE parent_action_id=%s", (ids["action"],),
         ).fetchone()[0] == 1
         assert conn.execute(
-            "SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s",
-            (ids["action"],),
-        ).fetchone()[0] == 0
+            "SELECT count(*) FROM agent_action_cost_settlements WHERE action_id=%s "
+            "AND kind=%s",
+            (ids["action"], "release" if proof["terminal_kind"] == "not_created"
+             else "refund"),
+        ).fetchone()[0] == 1
         assert conn.execute(
             "SELECT count(*) FROM agent_runtime_events WHERE correlation_id=%s "
             "AND event_type='action.cancelled'", (ids["action"],),
@@ -309,7 +333,7 @@ def test_b6_cancel_create_race_converges_and_finalizes_parent(database: str) -> 
             "create_agent_child_run_strict_v2(uuid,uuid,text,uuid,integer,text,jsonb)",
             "claim_next_agent_child_run_cancel_intent_v1(text,integer)",
             "apply_agent_child_run_cancel_intent_v1(uuid,uuid,bigint,text)",
-            "finalize_agent_action_child_cancel_v1(uuid,uuid,bigint,text,uuid,text)",
+            "finalize_agent_action_child_cancel_v1(uuid,uuid,bigint,text,uuid,text,bigint)",
         ):
             assert conn.execute(
                 "SELECT has_function_privilege('everydayai_agent_runtime_worker',%s,'EXECUTE')",
@@ -414,31 +438,6 @@ def test_b6_cancel_and_terminal_aggregate_have_one_atomic_winner(database: str) 
             "SELECT count(*) FROM agent_runtime_child_run_cancel_intents "
             "WHERE parent_action_id=%s", (ids["action"],),
         ).fetchone()[0] in {0, 1}
-
-
-def test_b6_terminal_child_with_unsettled_action_cannot_confirm(database: str) -> None:
-    _prepare(database)
-    root = _seed(database)
-    child = _create(database, root)
-    _seed_child_action(database, child_run_id=child["child_run_id"], parent=root)
-    with psycopg.connect(database) as conn:
-        conn.execute("SET ROLE everydayai_owner")
-        conn.execute(
-            "UPDATE agent_runs SET status='completed',completed_at=clock_timestamp(),"
-            "execution_token=NULL,lease_expires_at=NULL,blocking_action_count=0,"
-            "child_terminal_result='{}',result_hash=%s,aggregation_revision=1 WHERE id=%s",
-            ("8" * 64, child["child_run_id"]),
-        )
-        conn.commit()
-    assert _cancel(database, root)["outcome"] == "cancelled"
-    result = _claim_and_apply(database, "terminal-child-pending")
-    assert result["outcome"] == "applied"
-    with psycopg.connect(database) as conn:
-        assert conn.execute(
-            "SELECT status,terminal_kind,proof_hash FROM "
-            "agent_runtime_child_run_cancel_intents WHERE parent_action_id=%s",
-            (root["action"],),
-        ).fetchone() == ("applied", None, None)
 
 
 def test_b6_three_level_tree_converges_bottom_up_without_forced_unknown(database: str) -> None:

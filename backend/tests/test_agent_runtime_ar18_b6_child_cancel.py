@@ -5,6 +5,7 @@ import pytest
 
 from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.agent.runtime.application.action_loop import ActionLoopDriver
+from services.agent.runtime.application.action_loop_support import required_time
 from services.agent.runtime.application.coordinator import RuntimeLoopCoordinator
 from services.agent.runtime.domain import (
     ActionAttempt, ActionAttemptId, ActionAttemptStatus, ActionId,
@@ -45,12 +46,21 @@ SNAPSHOT = ActionDispatchSnapshot(
     action={
         "id": ACTION, "run_id": RUN,
         "session_id": "77777777-7777-7777-7777-777777777777",
-        "tool_name": "image_agent", "arguments": {"child_ordinal": 0},
+        "tool_name": "image_agent",
+        "arguments": {"child_ordinal": 0, "reserved_credits": 7},
         "request_hash": "a" * 64, "policy_decision": "preauthorized",
         "retry_disposition": "retry_after_reconcile", "scope_kind": "user",
         "scope_id": "user-1", "user_id": "user-1", "org_id": "org-1",
     },
 )
+
+
+def test_reconciliation_lease_time_accepts_postgres_json_timestamp() -> None:
+    assert required_time("2026-08-09T10:30:00+00:00") == datetime(
+        2026, 8, 9, 10, 30, tzinfo=timezone.utc,
+    )
+    with pytest.raises(RuntimeError, match="RECONCILIATION_LEASE_EXPIRY_INVALID"):
+        required_time("2026-08-09T10:30:00")
 
 
 def _attempt() -> SimpleNamespace:
@@ -206,6 +216,7 @@ async def test_action_cancel_uses_child_proof_finalizer_not_provider_finalizer()
     assert await driver.reconcile_once() is True
     assert actions.finalized["intent_id"] == INTENT
     assert actions.finalized["proof_hash"] == "b" * 64
+    assert actions.finalized["reserved_amount"] == 7
 
 
 async def _unexpected_finalize(*_args, **_kwargs):
@@ -267,3 +278,44 @@ async def test_child_cancel_claim_missing_binding_fails_closed() -> None:
         await PostgresCoordinatorRecoveryRepository(database).claim_child_cancel(
             worker_id="b6", lease_seconds=120,
         )
+
+
+@pytest.mark.asyncio
+async def test_child_cancel_apply_parses_ownership_lost_as_normal_outcome() -> None:
+    database = _ResponseLossDB({"outcome": "ownership_lost"})
+    outcome = await PostgresCoordinatorRecoveryRepository(database).apply_child_cancel(
+        intent_id=INTENT, claim_token=TOKEN,
+        expected_state_version=8, reason="parent_run_cancelled",
+    )
+    assert outcome is RecoveryOutcome.OWNERSHIP_LOST
+
+
+class _TakeoverRecovery:
+    def __init__(self) -> None:
+        self.index = 0
+
+    async def claim_child_cancel(self, **_kwargs):
+        self.index += 1
+        return ChildCancelRecoveryClaim(
+            outcome=RecoveryOutcome.CLAIMED,
+            intent_id=(INTENT if self.index == 1 else RUN),
+            claim_token=TOKEN, state_version=self.index,
+        )
+
+    async def apply_child_cancel(self, **_kwargs):
+        return (
+            RecoveryOutcome.OWNERSHIP_LOST
+            if self.index == 1 else RecoveryOutcome.CONFIRMED
+        )
+
+
+@pytest.mark.asyncio
+async def test_child_cancel_scanner_continues_after_ownership_lost() -> None:
+    recovery = _TakeoverRecovery()
+    coordinator = RuntimeLoopCoordinator(
+        recovery_repository=recovery, runtime_repository=object(),
+        model_loop=object(), action_loop=object(), worker_id="b6",
+    )
+    assert await coordinator.child_cancel_once() is True
+    assert await coordinator.child_cancel_once() is True
+    assert recovery.index == 2

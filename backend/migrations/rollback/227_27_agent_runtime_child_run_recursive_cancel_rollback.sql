@@ -59,13 +59,13 @@ REVOKE ALL ON FUNCTION
  get_claimed_agent_child_run_cancel_intent_v1(TEXT),
  apply_agent_child_run_cancel_intent_v1(UUID,UUID,BIGINT,TEXT),
  read_agent_child_run_cancel_intent_v1(UUID,UUID,UUID,BIGINT,TEXT),
- finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT)
+ finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT,BIGINT)
 FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai,everydayai_agent_runtime_worker,
  everydayai_agent_model_gateway,everydayai_projection_worker,
  everydayai_authorization_worker,everydayai_sandbox_worker;
 
-DROP FUNCTION finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT);
+DROP FUNCTION finalize_agent_action_child_cancel_v1(UUID,UUID,BIGINT,TEXT,UUID,TEXT,BIGINT);
 DROP FUNCTION read_agent_child_run_cancel_intent_v1(UUID,UUID,UUID,BIGINT,TEXT);
 DROP FUNCTION apply_agent_child_run_cancel_intent_v1(UUID,UUID,BIGINT,TEXT);
 DROP FUNCTION _cancel_child_run_from_intent_v1(UUID,TEXT);

@@ -147,5 +147,5 @@ class ActionRepositoryPort(Protocol):
     async def finalize_child_cancel(
         self, *, attempt_id: str, reconciliation_token: str,
         expected_state_version: int, request_hash: str,
-        intent_id: str, proof_hash: str,
+        intent_id: str, proof_hash: str, reserved_amount: int,
     ) -> ActionMutationReceipt: ...

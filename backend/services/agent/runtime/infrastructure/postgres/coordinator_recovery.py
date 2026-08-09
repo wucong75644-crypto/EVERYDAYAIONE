@@ -248,7 +248,7 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
             },
         ), "Child cancel apply")
         return RecoveryOutcome(_outcome(
-            row, {"applied", "confirmed"},
+            row, {"applied", "confirmed", "ownership_lost"},
         ))
 
 

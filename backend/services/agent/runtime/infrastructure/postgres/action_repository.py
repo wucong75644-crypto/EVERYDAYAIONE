@@ -232,7 +232,7 @@ class PostgresActionRepository:
     async def finalize_child_cancel(
         self, *, attempt_id: str, reconciliation_token: str,
         expected_state_version: int, request_hash: str,
-        intent_id: str, proof_hash: str,
+        intent_id: str, proof_hash: str, reserved_amount: int,
     ) -> ActionMutationReceipt:
         return await self._rpc("finalize_agent_action_child_cancel_v1", {
             "p_attempt_id": attempt_id,
@@ -241,4 +241,5 @@ class PostgresActionRepository:
             "p_request_hash": request_hash,
             "p_intent_id": intent_id,
             "p_proof_hash": proof_hash,
+            "p_reserved_amount": reserved_amount,
         })
