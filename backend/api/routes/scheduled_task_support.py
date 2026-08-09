@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
-from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -149,14 +148,20 @@ def request_runtime_scheduled_execution(
     task_id: str,
     org_id: str,
     user_id: str,
+    idempotency_key: Optional[str],
 ) -> Optional[Dict[str, Any]]:
-    """Submit Runtime-owned tasks; return None for authoritative legacy tasks."""
+    """Read back or submit Runtime-owned tasks; preserve the legacy route."""
     if not task.get("runtime_action_id"):
+        if task.get("status") == "running":
+            raise HTTPException(409, "任务正在执行中")
         return None
+    stable_key = (idempotency_key or "").strip()
+    if not 1 <= len(stable_key) <= 128:
+        raise HTTPException(400, "Runtime 定时任务需要有效的 Idempotency-Key")
     result = scoped_db.rpc(
         "request_agent_runtime_scheduled_execution_v1",
         {
-            "p_request_id": str(uuid4()),
+            "p_request_id": stable_key,
             "p_task_id": task_id,
             "p_org_id": org_id,
             "p_user_id": user_id,

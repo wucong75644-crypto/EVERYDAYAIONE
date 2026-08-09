@@ -8,7 +8,7 @@ import pytest
 from tests.test_agent_runtime_ar17_postgres_external import database
 from tests.test_agent_runtime_ar173_postgres_external import _apply
 from tests.test_agent_runtime_ar18_b7_s2_a1_owner_postgres_external import (
-    ORG, USER, _create_runtime_task, _legacy_task, _profile, _setup,
+    ORG, USER, _create_runtime_task, _legacy_task, _setup,
 )
 
 
@@ -51,9 +51,12 @@ def _enable(url: str) -> None:
 
 def _prepare_runtime_due(url: str) -> str:
     task_id, ids = _create_runtime_task(url)
-    _profile(url, task_id, ids)
     due = datetime.now(timezone.utc) - timedelta(minutes=1)
     with psycopg.connect(url) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM agent_runtime_scheduled_execution_profiles "
+            "WHERE scheduled_task_id=%s", (task_id,),
+        ).fetchone()[0] == 1
         conn.execute("SET ROLE everydayai_owner")
         conn.execute(
             "UPDATE scheduled_tasks SET status='active',next_run_at=%s WHERE id=%s",
@@ -218,6 +221,24 @@ def test_scheduled_and_manual_race_has_one_authoritative_command(database: str) 
             (task_id,),
         ).fetchone()[0] == 1
     assert any(result for result in results)
+
+
+def test_manual_retry_reads_back_same_authoritative_command(database: str) -> None:
+    _prepare_a2(database)
+    _enable(database)
+    task_id = _prepare_runtime_due(database)
+
+    first = _runtime_request(database, task_id, "stable-manual-request", 1)
+    second = _runtime_request(database, task_id, "stable-manual-request", 1)
+
+    assert first["command_id"] == second["command_id"]
+    assert second["outcome"] == "already_submitted"
+    with psycopg.connect(database) as conn:
+        assert conn.execute(
+            "SELECT count(*),count(DISTINCT command_id) FROM "
+            "agent_runtime_scheduled_submission_intents WHERE scheduled_task_id=%s",
+            (task_id,),
+        ).fetchone() == (1, 1)
 
 
 def test_revision_pause_and_kill_fences_leave_no_submission(database: str) -> None:

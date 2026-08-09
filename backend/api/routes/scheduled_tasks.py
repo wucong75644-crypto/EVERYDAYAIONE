@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from loguru import logger
 
 from api.deps import CurrentUserId, OrgCtx, ScopedDB, Database
@@ -390,6 +390,7 @@ async def run_task_now(
     org_ctx: OrgCtx,
     scoped_db: ScopedDB,
     db: Database,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> Dict[str, Any]:
     """立即触发任务执行（异步，不等待结果）"""
     org_id = _require_org(org_ctx)
@@ -400,10 +401,9 @@ async def run_task_now(
 
     if not await check_permission(db, user_id, org_id, "task.execute", task):
         raise HTTPException(403, "无权立即执行此任务")
-    if task.get("status") == "running":
-        raise HTTPException(409, "任务正在执行中")
-
-    runtime_response = request_runtime_scheduled_execution(scoped_db, task, task_id, org_id, user_id)
+    runtime_response = request_runtime_scheduled_execution(
+        scoped_db, task, task_id, org_id, user_id, idempotency_key,
+    )
     if runtime_response is not None:
         return runtime_response
 

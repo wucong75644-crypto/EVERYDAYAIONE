@@ -9,6 +9,9 @@ REVOKE ALL ON FUNCTION worker_claim_due_scheduled_executions_v1(TIMESTAMPTZ,INTE
  request_agent_runtime_scheduled_execution_v1(TEXT,UUID,UUID,UUID,BIGINT,TIMESTAMPTZ),
  read_agent_runtime_scheduled_submission_v1(UUID,TEXT,TEXT) FROM PUBLIC,everydayai_runtime,
  everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker;
+DROP TRIGGER create_runtime_scheduled_profile_after_insert ON scheduled_tasks;
+DROP FUNCTION _create_agent_runtime_scheduled_profile_after_insert();
+DROP FUNCTION _agent_runtime_scheduled_profile_seed(UUID);
 DROP TRIGGER bind_runtime_scheduled_run_after_claim ON agent_session_commands;
 DROP FUNCTION _bind_agent_runtime_scheduled_run_after_claim();
 DROP FUNCTION read_agent_runtime_scheduled_submission_v1(UUID,TEXT,TEXT);

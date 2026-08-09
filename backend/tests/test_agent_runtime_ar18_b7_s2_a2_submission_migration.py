@@ -12,6 +12,10 @@ def test_submission_contract_is_narrow_hidden_and_disabled() -> None:
     assert "mode TEXT NOT NULL DEFAULT 'disabled'" in SQL
     assert "worker_claim_due_scheduled_executions_v1" in SQL
     assert "request_agent_runtime_scheduled_execution_v1" in SQL
+    assert "create_runtime_scheduled_profile_after_insert" in SQL
+    assert "AGENT_RUNTIME_SCHEDULED_PROFILE_BINDING_INCOMPLETE" in SQL
+    assert "scheduled-manual-request:" in SQL
+    assert "SCHEDULED_MANUAL_IDEMPOTENCY_CONFLICT" in SQL
     assert "read_agent_runtime_scheduled_submission_v1" in SQL
     assert "source,'scheduler'" in SQL or "'scheduler','user'" in SQL
     assert "NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles" in SQL

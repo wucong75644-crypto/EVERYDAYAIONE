@@ -55,6 +55,74 @@ CREATE FUNCTION _agent_runtime_scheduled_submission_enabled() RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
  SELECT COALESCE((SELECT mode='disposable' FROM agent_runtime_scheduled_submission_control WHERE singleton),FALSE)
 $$;
+CREATE FUNCTION _agent_runtime_scheduled_profile_seed(p_task_id UUID) RETURNS JSONB
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE t scheduled_tasks%ROWTYPE;x agent_actions%ROWTYPE;r agent_runs%ROWTYPE;
+ s agent_runtime_sessions%ROWTYPE;d agent_runtime_definition_facts%ROWTYPE;
+ cat agent_runtime_catalog_facts%ROWTYPE;ts agent_runtime_effective_toolset_facts%ROWTYPE;
+ approved TEXT[];tools JSONB;target JSONB;facts JSONB;canonical TEXT;toolset_hash TEXT;
+BEGIN
+ SELECT * INTO t FROM scheduled_tasks WHERE id=p_task_id;
+ SELECT * INTO x FROM agent_actions WHERE id=t.runtime_action_id;
+ SELECT * INTO r FROM agent_runs WHERE id=x.run_id;
+ SELECT * INTO s FROM agent_runtime_sessions WHERE id=r.session_id;
+ SELECT * INTO d FROM agent_runtime_definition_facts WHERE agent_key=s.agent_definition_id
+  AND definition_revision=s.agent_definition_revision
+  AND definition_hash=r.capability_snapshot->>'agent_definition_hash' AND recoverable;
+ SELECT * INTO cat FROM agent_runtime_catalog_facts
+  WHERE catalog_revision=r.capability_snapshot->>'tool_catalog_revision'
+  AND catalog_hash=r.capability_snapshot->>'tool_catalog_hash' AND recoverable;
+ SELECT * INTO ts FROM agent_runtime_effective_toolset_facts WHERE agent_key=s.agent_definition_id
+  AND definition_revision=s.agent_definition_revision AND catalog_revision=cat.catalog_revision
+  AND scope_kind=s.scope_kind AND channel=r.capability_snapshot->>'channel'
+  AND gate_state=r.capability_snapshot->>'gate_state'
+  AND effective_toolset_hash=r.capability_snapshot->>'effective_toolset_hash' AND recoverable;
+ IF t.id IS NULL OR x.id IS NULL OR r.id IS NULL OR s.id IS NULL OR d.agent_key IS NULL
+ OR cat.catalog_revision IS NULL OR ts.agent_key IS NULL THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_SOURCE_INCOMPLETE' USING ERRCODE='42501';
+ END IF;
+ approved:=CASE WHEN s.scope_kind='user' THEN
+  ARRAY['artifact_get','artifact_read','artifact_search','evidence_get','evidence_search','get_conversation_context','memory_get','memory_search','search_knowledge']
+ ELSE ARRAY['artifact_get','artifact_read','artifact_search','evidence_get','evidence_search','get_conversation_context','local_compare_stats','local_platform_map_query','local_product_identify','local_product_stats','local_shop_list','local_stock_query','local_supplier_list','local_warehouse_list','memory_get','memory_search','search_knowledge'] END;
+ SELECT jsonb_agg(value ORDER BY value->>'canonical_name') INTO tools
+ FROM jsonb_array_elements(ts.toolset_document->'tools') WHERE value->>'canonical_name'=ANY(approved);
+ facts:=jsonb_build_object('agent_definition_hash',d.definition_hash,
+  'catalog_revision',cat.catalog_revision,'scope_kind',s.scope_kind,
+  'channel',r.capability_snapshot->>'channel','tools',tools);
+ canonical:=_agent_runtime_scheduled_canonical_json(facts);
+ toolset_hash:=encode(digest(convert_to(canonical,'UTF8'),'sha256'),'hex');
+ target:=jsonb_build_object('scope_kind',s.scope_kind,
+  'channel',r.capability_snapshot->>'channel','gate_state','enabled',
+  'entitled_groups',(SELECT jsonb_agg(group_name ORDER BY group_name) FROM(
+   SELECT DISTINCT value->>'tool_group' group_name FROM jsonb_array_elements(tools)
+  ) groups),'tool_names',to_jsonb(approved),'tools',tools,'toolset_hash',toolset_hash);
+ RETURN jsonb_build_object('source_run_id',r.id,'target',target,
+  'toolset_hash',toolset_hash,'canonical',canonical);
+END $$;
+CREATE FUNCTION _create_agent_runtime_scheduled_profile_after_insert() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE seed JSONB;result JSONB;runtime_bound BOOLEAN;
+BEGIN
+ runtime_bound:=NEW.runtime_action_id IS NOT NULL OR NEW.runtime_attempt_id IS NOT NULL
+  OR NEW.runtime_request_hash IS NOT NULL OR NEW.runtime_idempotency_key IS NOT NULL;
+ IF NOT runtime_bound THEN RETURN NEW; END IF;
+ IF NEW.runtime_action_id IS NULL OR NEW.runtime_attempt_id IS NULL
+ OR NEW.runtime_request_hash !~ '^[0-9a-f]{64}$' OR NEW.runtime_state_version<>1
+ OR NULLIF(btrim(NEW.runtime_idempotency_key),'') IS NULL THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_BINDING_INCOMPLETE' USING ERRCODE='42501';
+ END IF;
+ seed:=_agent_runtime_scheduled_profile_seed(NEW.id);
+ result:=create_agent_runtime_scheduled_execution_profile_v1(
+  NEW.id,NEW.runtime_action_id,(seed->>'source_run_id')::UUID,seed->'target',
+  seed->>'toolset_hash',seed->>'canonical',0);
+ IF result->>'outcome' NOT IN('created','already_exists') THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_CREATE_FAILED' USING ERRCODE='42501';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER create_runtime_scheduled_profile_after_insert
+ AFTER INSERT ON scheduled_tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+ EXECUTE FUNCTION _create_agent_runtime_scheduled_profile_after_insert();
 CREATE FUNCTION _agent_runtime_scheduled_gate_snapshot(
  p_org_id UUID,p_provider TEXT,p_capability TEXT) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
@@ -196,10 +264,24 @@ CREATE FUNCTION request_agent_runtime_scheduled_execution_v1(
  p_request_id TEXT,p_task_id UUID,p_org_id UUID,p_user_id UUID,p_expected_task_version BIGINT,p_now TIMESTAMPTZ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE t scheduled_tasks%ROWTYPE;request_id TEXT:=btrim(COALESCE(p_request_id,''));
+ i agent_runtime_scheduled_submission_intents%ROWTYPE;b agent_runtime_scheduled_run_bindings%ROWTYPE;
 BEGIN
  PERFORM _assert_agent_runtime_actor(FALSE);
  IF length(request_id) NOT BETWEEN 1 AND 128 OR tenant_org_id() IS DISTINCT FROM p_org_id
  OR tenant_actor_user_id() IS DISTINCT FROM p_user_id THEN RAISE EXCEPTION 'SCHEDULED_MANUAL_SCOPE_INVALID' USING ERRCODE='42501'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(
+  'scheduled-manual-request:'||p_org_id||':'||p_user_id||':'||request_id,0));
+ SELECT * INTO i FROM agent_runtime_scheduled_submission_intents
+  WHERE org_id=p_org_id AND user_id=p_user_id AND trigger_kind='manual'
+   AND manual_request_id=request_id;
+ IF FOUND THEN
+  IF i.scheduled_task_id IS DISTINCT FROM p_task_id THEN
+   RAISE EXCEPTION 'SCHEDULED_MANUAL_IDEMPOTENCY_CONFLICT' USING ERRCODE='40001';
+  END IF;
+  SELECT * INTO b FROM agent_runtime_scheduled_run_bindings WHERE scheduled_run_id=i.scheduled_run_id;
+  RETURN jsonb_build_object('outcome','already_submitted','owner_kind','runtime',
+   'binding',to_jsonb(b),'command_id',i.command_id);
+ END IF;
  SELECT * INTO t FROM scheduled_tasks WHERE id=p_task_id FOR SHARE;
  IF t.id IS NULL OR t.org_id IS DISTINCT FROM p_org_id OR t.runtime_state_version IS DISTINCT FROM p_expected_task_version
  OR NOT _runtime_scheduler_operation_allowed(p_org_id,p_user_id,'update',t.user_id) THEN RAISE EXCEPTION 'SCHEDULED_MANUAL_TASK_FENCED' USING ERRCODE='42501'; END IF;
@@ -329,7 +411,8 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_submission_worker(),
- _agent_runtime_scheduled_submission_enabled(),_agent_runtime_scheduled_gate_snapshot(UUID,TEXT,TEXT),
+ _agent_runtime_scheduled_submission_enabled(),_agent_runtime_scheduled_profile_seed(UUID),
+ _create_agent_runtime_scheduled_profile_after_insert(),_agent_runtime_scheduled_gate_snapshot(UUID,TEXT,TEXT),
  _submit_agent_runtime_scheduled_execution_v1(UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,TIMESTAMPTZ),
  _bind_agent_runtime_scheduled_run_after_claim(),worker_claim_due_scheduled_executions_v1(TIMESTAMPTZ,INTEGER),
  worker_assert_scheduled_task_legacy_owner_v1(UUID),

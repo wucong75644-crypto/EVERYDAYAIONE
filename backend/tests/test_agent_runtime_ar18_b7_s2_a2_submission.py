@@ -23,7 +23,7 @@ def test_legacy_immediate_execution_does_not_call_runtime_rpc():
 
     result = request_runtime_scheduled_execution(
         db, task={"id": "legacy"}, task_id="legacy",
-        org_id="org", user_id="user",
+        org_id="org", user_id="user", idempotency_key=None,
     )
 
     assert result is None
@@ -41,12 +41,14 @@ def test_runtime_immediate_execution_returns_command_readback():
         task={"id": "runtime", "runtime_action_id": "action-1",
               "runtime_state_version": 3},
         task_id="runtime", org_id="org", user_id="user",
+        idempotency_key="manual-request-1",
     )
 
     assert result and result["command_id"] == "command-1"
     name, params = db.rpc.call_args.args
     assert name == "request_agent_runtime_scheduled_execution_v1"
     assert params["p_expected_task_version"] == 3
+    assert params["p_request_id"] == "manual-request-1"
 
 
 def test_runtime_immediate_execution_fails_closed_on_owner_mismatch():
@@ -55,8 +57,20 @@ def test_runtime_immediate_execution_fails_closed_on_owner_mismatch():
     with pytest.raises(HTTPException, match="Owner"):
         request_runtime_scheduled_execution(
             db, task={"runtime_action_id": "action-1"}, task_id="runtime",
-            org_id="org", user_id="user",
+            org_id="org", user_id="user", idempotency_key="manual-request-2",
         )
+
+
+def test_runtime_immediate_execution_requires_stable_idempotency_key():
+    db = _rpc_db({})
+
+    with pytest.raises(HTTPException, match="Idempotency-Key"):
+        request_runtime_scheduled_execution(
+            db, task={"runtime_action_id": "action-1"}, task_id="runtime",
+            org_id="org", user_id="user", idempotency_key=None,
+        )
+
+    db.rpc.assert_not_called()
 
 
 def test_worker_store_normalizes_mixed_owner_claims():
