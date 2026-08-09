@@ -12,6 +12,7 @@ CREATE TABLE agent_runtime_scheduled_submission_intents(
  scheduled_task_id UUID NOT NULL REFERENCES scheduled_tasks(id) ON DELETE RESTRICT,
  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+ requester_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
  trigger_kind TEXT NOT NULL CHECK(trigger_kind IN('scheduled','manual')),
  trigger_key TEXT NOT NULL CHECK(length(btrim(trigger_key)) BETWEEN 1 AND 300),
  scheduled_for TIMESTAMPTZ, manual_request_id TEXT,
@@ -27,6 +28,9 @@ CREATE TABLE agent_runtime_scheduled_submission_intents(
  UNIQUE(scheduled_task_id,trigger_kind,trigger_key),
  CHECK((trigger_kind='manual')=(manual_request_id IS NOT NULL))
 );
+CREATE UNIQUE INDEX runtime_scheduled_manual_request_identity
+ ON agent_runtime_scheduled_submission_intents(org_id,requester_user_id,manual_request_id)
+ WHERE trigger_kind='manual';
 ALTER TABLE agent_runtime_scheduled_submission_control ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_runtime_scheduled_submission_control FORCE ROW LEVEL SECURITY;
 ALTER TABLE agent_runtime_scheduled_submission_intents ENABLE ROW LEVEL SECURITY;
@@ -99,30 +103,45 @@ BEGIN
  RETURN jsonb_build_object('source_run_id',r.id,'target',target,
   'toolset_hash',toolset_hash,'canonical',canonical);
 END $$;
-CREATE FUNCTION _create_agent_runtime_scheduled_profile_after_insert() RETURNS TRIGGER
+CREATE FUNCTION _ensure_agent_runtime_scheduled_profile(p_task_id UUID) RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
-DECLARE seed JSONB;result JSONB;runtime_bound BOOLEAN;
+DECLARE task scheduled_tasks%ROWTYPE;seed JSONB;result JSONB;runtime_bound BOOLEAN;
 BEGIN
- runtime_bound:=NEW.runtime_action_id IS NOT NULL OR NEW.runtime_attempt_id IS NOT NULL
-  OR NEW.runtime_request_hash IS NOT NULL OR NEW.runtime_idempotency_key IS NOT NULL;
- IF NOT runtime_bound THEN RETURN NEW; END IF;
- IF NEW.runtime_action_id IS NULL OR NEW.runtime_attempt_id IS NULL
- OR NEW.runtime_request_hash !~ '^[0-9a-f]{64}$' OR NEW.runtime_state_version<>1
- OR NULLIF(btrim(NEW.runtime_idempotency_key),'') IS NULL THEN
+ SELECT * INTO task FROM scheduled_tasks WHERE id=p_task_id FOR UPDATE;
+ runtime_bound:=task.runtime_action_id IS NOT NULL OR task.runtime_attempt_id IS NOT NULL
+  OR task.runtime_request_hash IS NOT NULL OR task.runtime_idempotency_key IS NOT NULL;
+ IF NOT runtime_bound THEN RETURN; END IF;
+ IF task.runtime_action_id IS NULL OR task.runtime_attempt_id IS NULL
+ OR task.runtime_request_hash !~ '^[0-9a-f]{64}$' OR task.runtime_state_version<>1
+ OR NULLIF(btrim(task.runtime_idempotency_key),'') IS NULL THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_BINDING_INCOMPLETE' USING ERRCODE='42501';
  END IF;
- seed:=_agent_runtime_scheduled_profile_seed(NEW.id);
+ seed:=_agent_runtime_scheduled_profile_seed(task.id);
  result:=create_agent_runtime_scheduled_execution_profile_v1(
-  NEW.id,NEW.runtime_action_id,(seed->>'source_run_id')::UUID,seed->'target',
+  task.id,task.runtime_action_id,(seed->>'source_run_id')::UUID,seed->'target',
   seed->>'toolset_hash',seed->>'canonical',0);
  IF result->>'outcome' NOT IN('created','already_exists') THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_CREATE_FAILED' USING ERRCODE='42501';
  END IF;
+END $$;
+CREATE FUNCTION _create_agent_runtime_scheduled_profile_after_insert() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+ PERFORM _ensure_agent_runtime_scheduled_profile(NEW.id);
  RETURN NEW;
 END $$;
 CREATE CONSTRAINT TRIGGER create_runtime_scheduled_profile_after_insert
  AFTER INSERT ON scheduled_tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
  EXECUTE FUNCTION _create_agent_runtime_scheduled_profile_after_insert();
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM scheduled_tasks task
+  WHERE (task.runtime_action_id IS NOT NULL OR task.runtime_attempt_id IS NOT NULL
+   OR task.runtime_request_hash IS NOT NULL OR task.runtime_idempotency_key IS NOT NULL)
+  AND NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles profile
+   WHERE profile.scheduled_task_id=task.id)) THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_PROFILE_BACKFILL_REQUIRED' USING ERRCODE='55000';
+ END IF;
+END $$;
 CREATE FUNCTION _agent_runtime_scheduled_gate_snapshot(
  p_org_id UUID,p_provider TEXT,p_capability TEXT) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
@@ -143,7 +162,7 @@ END $$;
 
 CREATE FUNCTION _submit_agent_runtime_scheduled_execution_v1(
  p_task_id UUID,p_trigger_kind TEXT,p_trigger_key TEXT,p_scheduled_for TIMESTAMPTZ,
- p_manual_request_id TEXT,p_now TIMESTAMPTZ) RETURNS JSONB
+ p_manual_request_id TEXT,p_requester_user_id UUID,p_now TIMESTAMPTZ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE t scheduled_tasks%ROWTYPE;e agent_runtime_scheduled_execution_profiles%ROWTYPE;
  b agent_runtime_scheduled_run_bindings%ROWTYPE;i agent_runtime_scheduled_submission_intents%ROWTYPE;
@@ -155,7 +174,7 @@ DECLARE t scheduled_tasks%ROWTYPE;e agent_runtime_scheduled_execution_profiles%R
 BEGIN
  IF NOT _agent_runtime_scheduled_submission_enabled() THEN RETURN jsonb_build_object('outcome','runtime_disabled','owner_kind','runtime'); END IF;
  IF p_trigger_kind NOT IN('scheduled','manual') OR(p_trigger_kind='manual') IS DISTINCT FROM(p_manual_request_id IS NOT NULL)
- OR NULLIF(btrim(p_trigger_key),'') IS NULL OR p_now IS NULL THEN RAISE EXCEPTION 'SCHEDULED_SUBMISSION_ARGUMENT_INVALID' USING ERRCODE='22023'; END IF;
+ OR NULLIF(btrim(p_trigger_key),'') IS NULL OR p_requester_user_id IS NULL OR p_now IS NULL THEN RAISE EXCEPTION 'SCHEDULED_SUBMISSION_ARGUMENT_INVALID' USING ERRCODE='22023'; END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('scheduled-trigger-owner:'||p_task_id||':'||p_trigger_kind||':'||btrim(p_trigger_key),0));
  SELECT * INTO i FROM agent_runtime_scheduled_submission_intents WHERE scheduled_task_id=p_task_id AND trigger_kind=p_trigger_kind AND trigger_key=btrim(p_trigger_key);
  IF FOUND THEN SELECT * INTO b FROM agent_runtime_scheduled_run_bindings WHERE scheduled_run_id=i.scheduled_run_id;
@@ -217,7 +236,11 @@ BEGIN
   task_revision,'running',e.state_version,context_hash,request_hash,(gate->>'tenant')::BIGINT,
   (gate->>'provider')::BIGINT,(gate->>'capability')::BIGINT,e.provider_revision,e.capability_revision,
   command_id,'submitted',1) RETURNING * INTO b;
- INSERT INTO agent_runtime_scheduled_submission_intents VALUES(q.id,t.id,t.org_id,t.user_id,p_trigger_kind,
+ INSERT INTO agent_runtime_scheduled_submission_intents(
+  scheduled_run_id,scheduled_task_id,org_id,user_id,requester_user_id,trigger_kind,
+  trigger_key,scheduled_for,manual_request_id,conversation_id,message_id,session_id,command_id,
+  request_hash,context_hash,task_revision,profile_state_version,created_at)
+ VALUES(q.id,t.id,t.org_id,t.user_id,p_requester_user_id,p_trigger_kind,
   btrim(p_trigger_key),p_scheduled_for,p_manual_request_id,conversation_id,message_id,session_id,command_id,
   request_hash,context_hash,task_revision,e.state_version,clock_timestamp());
  PERFORM append_agent_runtime_event(session_id,'command.accepted',NULL,NULL,command_id,'system','scheduler',
@@ -240,7 +263,8 @@ BEGIN
   ORDER BY candidate.next_run_at,candidate.id LIMIT p_limit*4 FOR UPDATE OF candidate SKIP LOCKED LOOP
   EXIT WHEN claimed>=p_limit;
   IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles e WHERE e.scheduled_task_id=t.id) THEN
-   item:=_submit_agent_runtime_scheduled_execution_v1(t.id,'scheduled','scheduled:'||t.next_run_at::TEXT,t.next_run_at,NULL,p_now);
+   item:=_submit_agent_runtime_scheduled_execution_v1(t.id,'scheduled',
+    'scheduled:'||t.next_run_at::TEXT,t.next_run_at,NULL,t.user_id,p_now);
    IF item->>'outcome'='runtime_disabled' THEN CONTINUE; END IF;
   ELSE
    UPDATE scheduled_tasks SET status='running',next_run_at=NULL,updated_at=p_now WHERE id=t.id RETURNING * INTO t;
@@ -272,7 +296,7 @@ BEGIN
  PERFORM pg_advisory_xact_lock(hashtextextended(
   'scheduled-manual-request:'||p_org_id||':'||p_user_id||':'||request_id,0));
  SELECT * INTO i FROM agent_runtime_scheduled_submission_intents
-  WHERE org_id=p_org_id AND user_id=p_user_id AND trigger_kind='manual'
+  WHERE org_id=p_org_id AND requester_user_id=p_user_id AND trigger_kind='manual'
    AND manual_request_id=request_id;
  IF FOUND THEN
   IF i.scheduled_task_id IS DISTINCT FROM p_task_id THEN
@@ -287,7 +311,8 @@ BEGIN
  OR NOT _runtime_scheduler_operation_allowed(p_org_id,p_user_id,'update',t.user_id) THEN RAISE EXCEPTION 'SCHEDULED_MANUAL_TASK_FENCED' USING ERRCODE='42501'; END IF;
  IF NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles WHERE scheduled_task_id=t.id) THEN
   RETURN jsonb_build_object('outcome','legacy_owner','owner_kind','legacy'); END IF;
- RETURN _submit_agent_runtime_scheduled_execution_v1(t.id,'manual','manual:'||request_id,NULL,request_id,p_now);
+ RETURN _submit_agent_runtime_scheduled_execution_v1(t.id,'manual',
+  'manual:'||p_user_id||':'||request_id,NULL,request_id,p_user_id,p_now);
 END $$;
 
 CREATE FUNCTION read_agent_runtime_scheduled_submission_v1(p_task_id UUID,p_trigger_kind TEXT,p_trigger_key TEXT) RETURNS JSONB
@@ -298,7 +323,8 @@ BEGIN
  ELSE PERFORM _assert_agent_runtime_actor(FALSE); END IF;
  SELECT * INTO i FROM agent_runtime_scheduled_submission_intents WHERE scheduled_task_id=p_task_id AND trigger_kind=p_trigger_kind AND trigger_key=btrim(p_trigger_key);
  IF NOT FOUND THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
- IF session_user<>'everydayai_worker' AND(tenant_org_id() IS DISTINCT FROM i.org_id OR tenant_actor_user_id() IS DISTINCT FROM i.user_id) THEN
+ IF session_user<>'everydayai_worker' AND(tenant_org_id() IS DISTINCT FROM i.org_id
+ OR tenant_actor_user_id()<>ALL(ARRAY[i.user_id,i.requester_user_id])) THEN
   RAISE EXCEPTION 'SCHEDULED_SUBMISSION_TENANT_MISMATCH' USING ERRCODE='42501'; END IF;
  SELECT * INTO b FROM agent_runtime_scheduled_run_bindings WHERE scheduled_run_id=i.scheduled_run_id;
  RETURN jsonb_build_object('outcome','found','owner_kind','runtime','binding',to_jsonb(b),'command_id',i.command_id);
@@ -412,8 +438,9 @@ END $$;
 
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_submission_worker(),
  _agent_runtime_scheduled_submission_enabled(),_agent_runtime_scheduled_profile_seed(UUID),
- _create_agent_runtime_scheduled_profile_after_insert(),_agent_runtime_scheduled_gate_snapshot(UUID,TEXT,TEXT),
- _submit_agent_runtime_scheduled_execution_v1(UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,TIMESTAMPTZ),
+ _ensure_agent_runtime_scheduled_profile(UUID),_create_agent_runtime_scheduled_profile_after_insert(),
+ _agent_runtime_scheduled_gate_snapshot(UUID,TEXT,TEXT),
+ _submit_agent_runtime_scheduled_execution_v1(UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,UUID,TIMESTAMPTZ),
  _bind_agent_runtime_scheduled_run_after_claim(),worker_claim_due_scheduled_executions_v1(TIMESTAMPTZ,INTEGER),
  worker_assert_scheduled_task_legacy_owner_v1(UUID),
  request_agent_runtime_scheduled_execution_v1(TEXT,UUID,UUID,UUID,BIGINT,TIMESTAMPTZ),

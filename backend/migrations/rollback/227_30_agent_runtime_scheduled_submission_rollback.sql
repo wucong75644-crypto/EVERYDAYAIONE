@@ -1,6 +1,10 @@
 SET LOCAL ROLE everydayai_owner;
 DO $$ BEGIN
- IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_submission_intents) THEN
+ IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_submission_intents)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles)
+ OR EXISTS(SELECT 1 FROM scheduled_tasks WHERE runtime_action_id IS NOT NULL
+  OR runtime_attempt_id IS NOT NULL OR runtime_request_hash IS NOT NULL
+  OR runtime_idempotency_key IS NOT NULL) THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_SUBMISSION_ROLLBACK_FACTS_EXIST' USING ERRCODE='55000';
  END IF;
 END $$;
@@ -11,6 +15,7 @@ REVOKE ALL ON FUNCTION worker_claim_due_scheduled_executions_v1(TIMESTAMPTZ,INTE
  everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker;
 DROP TRIGGER create_runtime_scheduled_profile_after_insert ON scheduled_tasks;
 DROP FUNCTION _create_agent_runtime_scheduled_profile_after_insert();
+DROP FUNCTION _ensure_agent_runtime_scheduled_profile(UUID);
 DROP FUNCTION _agent_runtime_scheduled_profile_seed(UUID);
 DROP TRIGGER bind_runtime_scheduled_run_after_claim ON agent_session_commands;
 DROP FUNCTION _bind_agent_runtime_scheduled_run_after_claim();
@@ -18,7 +23,7 @@ DROP FUNCTION read_agent_runtime_scheduled_submission_v1(UUID,TEXT,TEXT);
 DROP FUNCTION request_agent_runtime_scheduled_execution_v1(TEXT,UUID,UUID,UUID,BIGINT,TIMESTAMPTZ);
 DROP FUNCTION worker_claim_due_scheduled_executions_v1(TIMESTAMPTZ,INTEGER);
 DROP FUNCTION worker_assert_scheduled_task_legacy_owner_v1(UUID);
-DROP FUNCTION _submit_agent_runtime_scheduled_execution_v1(UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,TIMESTAMPTZ);
+DROP FUNCTION _submit_agent_runtime_scheduled_execution_v1(UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,UUID,TIMESTAMPTZ);
 DROP FUNCTION _agent_runtime_scheduled_gate_snapshot(UUID,TEXT,TEXT);
 DROP FUNCTION _agent_runtime_scheduled_submission_enabled();
 DROP FUNCTION _agent_runtime_scheduled_submission_worker();

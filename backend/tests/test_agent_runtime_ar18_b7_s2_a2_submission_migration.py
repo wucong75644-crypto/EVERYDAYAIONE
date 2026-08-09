@@ -16,6 +16,9 @@ def test_submission_contract_is_narrow_hidden_and_disabled() -> None:
     assert "AGENT_RUNTIME_SCHEDULED_PROFILE_BINDING_INCOMPLETE" in SQL
     assert "scheduled-manual-request:" in SQL
     assert "SCHEDULED_MANUAL_IDEMPOTENCY_CONFLICT" in SQL
+    assert "runtime_scheduled_manual_request_identity" in SQL
+    assert "requester_user_id" in SQL
+    assert "AGENT_RUNTIME_SCHEDULED_PROFILE_BACKFILL_REQUIRED" in SQL
     assert "read_agent_runtime_scheduled_submission_v1" in SQL
     assert "source,'scheduler'" in SQL or "'scheduler','user'" in SQL
     assert "NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles" in SQL
@@ -31,6 +34,7 @@ def test_submission_contract_is_narrow_hidden_and_disabled() -> None:
 
 def test_submission_rollback_is_guarded_and_restores_legacy_entrypoints() -> None:
     assert "SCHEDULED_SUBMISSION_ROLLBACK_FACTS_EXIST" in ROLLBACK
+    assert "EXISTS(SELECT 1 FROM agent_runtime_scheduled_execution_profiles)" in ROLLBACK
     assert ROLLBACK.index("ROLLBACK_FACTS_EXIST") < ROLLBACK.index(
         "DROP TABLE agent_runtime_scheduled_submission_intents"
     )

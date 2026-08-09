@@ -27,15 +27,17 @@ def _worker_rpc(url: str, name: str, args: tuple):
         ).fetchone()[0]
 
 
-def _runtime_request(url: str, task_id: str, request_id: str, version: int):
+def _runtime_request(
+    url: str, task_id: str, request_id: str, version: int, *, actor: str = USER,
+):
     with psycopg.connect(url) as conn:
         conn.execute("SET SESSION AUTHORIZATION everydayai_runtime")
         conn.execute("SELECT set_config('app.access_kind','runtime',false)")
-        conn.execute("SELECT set_config('app.actor_user_id',%s,false)", (USER,))
+        conn.execute("SELECT set_config('app.actor_user_id',%s,false)", (actor,))
         conn.execute("SELECT set_config('app.org_id',%s,false)", (ORG,))
         return conn.execute(
             "SELECT request_agent_runtime_scheduled_execution_v1(%s,%s,%s,%s,%s,%s)",
-            (request_id, task_id, ORG, USER, version, datetime.now(timezone.utc)),
+            (request_id, task_id, ORG, actor, version, datetime.now(timezone.utc)),
         ).fetchone()[0]
 
 
@@ -75,6 +77,25 @@ def _prepare_a2(url: str) -> None:
         )
         conn.commit()
     _apply(url, MIGRATION)
+
+
+def test_migration_fails_closed_for_existing_runtime_task_without_profile(database: str) -> None:
+    _setup(database)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS source varchar(20) DEFAULT 'web'"
+        )
+        conn.commit()
+    task_id, _ = _create_runtime_task(database)
+    with psycopg.connect(database) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM agent_runtime_scheduled_execution_profiles "
+            "WHERE scheduled_task_id=%s", (task_id,),
+        ).fetchone()[0] == 0
+
+    with pytest.raises(Exception, match="PROFILE_BACKFILL_REQUIRED"):
+        _apply(database, MIGRATION)
 
 
 def test_runtime_submission_is_single_owner_and_claim_binds_run(database: str) -> None:
@@ -179,7 +200,10 @@ def test_disabled_mode_legacy_acl_and_empty_rollback(database: str) -> None:
             "'request_agent_runtime_scheduled_execution_v1(text,uuid,uuid,uuid,bigint,timestamp with time zone)','EXECUTE')"
         ).fetchone()[0] is False
         conn.execute("SET ROLE everydayai_owner")
+        with pytest.raises(Exception, match="ROLLBACK_FACTS_EXIST"):
+            _apply(database, ROLLBACK)
         conn.execute("TRUNCATE agent_runtime_scheduled_execution_profiles")
+        conn.execute("DELETE FROM scheduled_tasks WHERE id=%s", (task_id,))
         conn.commit()
     _apply(database, ROLLBACK)
     _apply(database, MIGRATION)
@@ -239,6 +263,47 @@ def test_manual_retry_reads_back_same_authoritative_command(database: str) -> No
             "agent_runtime_scheduled_submission_intents WHERE scheduled_task_id=%s",
             (task_id,),
         ).fetchone() == (1, 1)
+
+
+def test_delegate_manual_retry_uses_requester_identity(database: str) -> None:
+    _prepare_a2(database)
+    _enable(database)
+    task_id = _prepare_runtime_due(database)
+    boss = "55555555-5555-5555-5555-555555555555"
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("INSERT INTO users(id) VALUES(%s)", (boss,))
+        conn.execute(
+            "INSERT INTO org_members(org_id,user_id,status) VALUES(%s,%s,'active')",
+            (ORG, boss),
+        )
+        position = conn.execute(
+            "INSERT INTO org_positions(org_id,code,name,level) "
+            "VALUES(%s,'boss','Runtime Boss',1) RETURNING id", (ORG,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO org_member_assignments(org_id,user_id,position_id,data_scope) "
+            "VALUES(%s,%s,%s,'all')", (ORG, boss, position),
+        )
+        conn.commit()
+
+    first = _runtime_request(
+        database, task_id, "delegate-stable-request", 1, actor=boss,
+    )
+    second = _runtime_request(
+        database, task_id, "delegate-stable-request", 1, actor=boss,
+    )
+
+    assert first["command_id"] == second["command_id"]
+    assert second["outcome"] == "already_submitted"
+    with psycopg.connect(database) as conn:
+        row = conn.execute(
+            "SELECT user_id,requester_user_id FROM "
+            "agent_runtime_scheduled_submission_intents WHERE scheduled_task_id=%s",
+            (task_id,),
+        ).fetchone()
+        assert str(row[0]) == USER
+        assert str(row[1]) == boss
 
 
 def test_revision_pause_and_kill_fences_leave_no_submission(database: str) -> None:
