@@ -11,6 +11,10 @@ from psycopg.types.json import Jsonb
 import pytest
 
 from services.agent.runtime.catalog.production_seed import build_seed_snapshot
+from tests.agent_runtime_scheduled_toolset_support import (
+    canonical_target as _canonical_target,
+    create_profile as _profile,
+)
 from services.agent.runtime.domain import StopReason
 from services.agent.runtime.model_resolution import resolve_runtime_model
 from services.agent.runtime.production_model import _actions, _frozen_runtime_facts
@@ -28,8 +32,11 @@ def _setup(url: str) -> None:
     _prepare(url)
     _apply(url, "227_02_agent_runtime_production_catalog_seed.sql")
     _apply(url, MIGRATION)
-def _freeze_source(url: str, ids: dict[str, str], payload: dict[str, object]) -> None:
-    release = build_seed_snapshot(scope="user", channel="web", gate_state="enabled")
+def _freeze_source(
+    url: str, ids: dict[str, str], payload: dict[str, object], *,
+    scope: str = "user", scope_id: str = USER,
+) -> None:
+    release = build_seed_snapshot(scope=scope, channel="web", gate_state="enabled")
     with psycopg.connect(url) as conn:
         row = conn.execute(
             "SELECT to_jsonb(d),to_jsonb(c),to_jsonb(t) FROM agent_runtime_definition_facts d "
@@ -37,7 +44,8 @@ def _freeze_source(url: str, ids: dict[str, str], payload: dict[str, object]) ->
             "JOIN agent_runtime_effective_toolset_facts t ON t.agent_key=d.agent_key "
             "AND t.definition_revision=d.definition_revision AND t.catalog_revision=d.catalog_revision "
             "WHERE d.agent_key='everydayai-default' AND d.definition_revision='v3' "
-            "AND t.scope_kind='user' AND t.channel='web' AND t.gate_state='enabled'"
+            "AND t.scope_kind=%s AND t.channel='web' AND t.gate_state='enabled'",
+            (scope,),
         ).fetchone()
     definition, source_toolset = _frozen_runtime_facts({
         "definition_fact": row[0], "catalog_fact": row[1], "effective_toolset_fact": row[2],
@@ -74,8 +82,8 @@ def _freeze_source(url: str, ids: dict[str, str], payload: dict[str, object]) ->
         "effective_toolset_hash": source_toolset.toolset_hash, "gate_state": "enabled",
     }
     identity = {
-        "org_id": ORG, "user_id": USER, "scope_kind": "user",
-        "scope_id": USER,
+        "org_id": ORG, "user_id": USER, "scope_kind": scope,
+        "scope_id": scope_id,
     }
     envelope = {
         "schema_revision": 3, "run_kind": "user",
@@ -91,8 +99,9 @@ def _freeze_source(url: str, ids: dict[str, str], payload: dict[str, object]) ->
         ids["request_hash"] = canonical["request_hash"]
         conn.execute(
             "UPDATE agent_runtime_sessions SET agent_definition_id=%s,"
-            "agent_definition_revision=%s WHERE id=%s",
-            (definition.canonical_key, definition.revision, ids["session"]),
+            "agent_definition_revision=%s,scope_kind=%s,scope_id=%s,user_id=%s WHERE id=%s",
+            (definition.canonical_key, definition.revision, scope, scope_id,
+             None if scope == "channel" else USER, ids["session"]),
         )
         conn.execute(
             "UPDATE agent_session_commands SET payload=%s,request_hash="
@@ -122,18 +131,24 @@ def _freeze_source(url: str, ids: dict[str, str], payload: dict[str, object]) ->
             (tool.schema_hash, ids["attempt"]),
         )
         conn.commit()
-def _create_runtime_task(url: str) -> tuple[str, dict[str, str]]:
+def _create_runtime_task(
+    url: str, *, scope: str = "user", scope_id: str = USER,
+) -> tuple[str, dict[str, str]]:
     task_id, ids, payload = str(uuid4()), _seed(url), _create_payload()
-    _freeze_source(url, ids, payload)
-    result = _mutate(
-        url, ids, task_id, "create", 0, f"profile-create:{task_id}", payload,
-    )
+    _freeze_source(url, ids, payload, scope=scope, scope_id=scope_id)
+    if scope == "user":
+        result = _mutate(
+            url, ids, task_id, "create", 0, f"profile-create:{task_id}", payload,
+        )
+    else:
+        result = _rpc(url, "mutate_agent_runtime_scheduled_task_control_v1", (
+            ids["attempt"], ids["action"], ids["run"], ORG, USER, scope,
+            scope_id, task_id, "create", 0, int(ids["attempt_version"]),
+            ids["request_hash"], ids["token"], f"profile-create:{task_id}",
+            ids["dispatch"], payload, None, None,
+        ))
     assert result["outcome"] == "committed"
     return task_id, ids
-def _profile(url: str, task_id: str, ids: dict[str, str]):
-    return _rpc(url, "create_agent_runtime_scheduled_execution_profile_v1", (
-        task_id, ids["action"], ids["run"], 0,
-    ))
 def _legacy_task(url: str) -> str:
     task_id = str(uuid4())
     with psycopg.connect(url) as conn:
@@ -287,8 +302,6 @@ def test_profile_unbound_never_defaults_legacy_and_old_gate_is_stable(database: 
         _rpc(database, "assert_agent_runtime_scheduled_run_owner_v1", (
             runtime_task, runtime_run, "legacy",
         ))
-
-
 def test_same_tenant_command_and_missing_scheduled_context_are_rejected(database: str) -> None:
     _setup(database)
     task_id, ids = _create_runtime_task(database)
@@ -312,8 +325,6 @@ def test_same_tenant_command_and_missing_scheduled_context_are_rejected(database
         _rpc(database, "bind_agent_runtime_scheduled_run_runtime_v1", (
             scheduled_run, ordinary_command, ordinary_run, 0,
         ))
-
-
 def test_profile_derivation_rejects_model_toolset_budget_and_scope_tampering(database: str) -> None:
     _setup(database)
     mutations = (
@@ -338,8 +349,6 @@ def test_profile_derivation_rejects_model_toolset_budget_and_scope_tampering(dat
             conn.commit()
         with pytest.raises(Exception, match="PROFILE_(SOURCE_INVALID|TOOLSET_NOT_APPROVED)"):
             _profile(database, task_id, ids)
-
-
 def test_kill_epoch_and_provider_capability_gates_fence_owner_selection(database: str) -> None:
     _setup(database)
     task_id, ids = _create_runtime_task(database)
@@ -380,8 +389,6 @@ def test_kill_epoch_and_provider_capability_gates_fence_owner_selection(database
         conn.commit()
     with pytest.raises(Exception, match="CAPABILITY_FENCED"):
         _select(database, next_task, _scheduled_run(database, next_task), epoch=1)
-
-
 def test_bind_rechecks_task_profile_and_all_gate_epochs(database: str) -> None:
     _setup(database)
     cases = []
@@ -442,8 +449,6 @@ def test_bind_rechecks_task_profile_and_all_gate_epochs(database: str) -> None:
     _set_tenant_gate(database, blocked=True, epoch=1)
     with pytest.raises(Exception, match="SCHEDULED_BINDING_FENCED"):
         _rpc(database, "bind_agent_runtime_scheduled_run_runtime_v1", cases[5][2:] + (0,))
-
-
 def test_owner_lock_order_concurrency_acl_and_rollback(database: str) -> None:
     _setup(database)
     task_id, ids = _create_runtime_task(database)

@@ -119,8 +119,23 @@ CREATE TRIGGER runtime_scheduled_binding_identity_immutable BEFORE UPDATE OR DEL
  ON agent_runtime_scheduled_run_bindings FOR EACH ROW
  EXECUTE FUNCTION _agent_runtime_scheduled_identity_immutable();
 
+CREATE FUNCTION _agent_runtime_scheduled_canonical_json(v JSONB) RETURNS TEXT
+LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog,public AS $$
+DECLARE kind TEXT:=jsonb_typeof(v);result TEXT;
+BEGIN
+ IF kind='object' THEN
+  IF EXISTS(SELECT 1 FROM jsonb_object_keys(v) k WHERE length(k)<>octet_length(k)) THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_CANONICAL_NON_ASCII'; END IF;
+  SELECT '{'||COALESCE(string_agg(to_jsonb(key)::TEXT||':'||_agent_runtime_scheduled_canonical_json(value),',' ORDER BY key COLLATE "C"),'')||'}' INTO result FROM jsonb_each(v); RETURN result;
+ ELSIF kind='array' THEN SELECT '['||COALESCE(string_agg(_agent_runtime_scheduled_canonical_json(value),',' ORDER BY ord),'')||']' INTO result FROM jsonb_array_elements(v) WITH ORDINALITY a(value,ord); RETURN result;
+ ELSIF kind='string' THEN IF length(v#>>'{}')<>octet_length(v#>>'{}') THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_CANONICAL_NON_ASCII'; END IF; RETURN v::TEXT;
+ ELSIF kind='number' AND v::TEXT !~ '^-?(0|[1-9][0-9]*)$' THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_CANONICAL_NUMBER_INVALID';
+ ELSIF kind NOT IN('number','boolean','null') THEN RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_CANONICAL_VALUE_INVALID'; END IF;
+ RETURN v::TEXT;
+END $$;
+
 CREATE FUNCTION create_agent_runtime_scheduled_execution_profile_v1(
  p_task_id UUID,p_source_action_id UUID,p_source_run_id UUID,
+ p_target_toolset_snapshot JSONB,p_effective_toolset_hash TEXT,p_canonical_hash_input TEXT,
  p_expected_state_version BIGINT DEFAULT 0) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE t scheduled_tasks%ROWTYPE;x agent_actions%ROWTYPE;a agent_action_attempts%ROWTYPE;
@@ -128,7 +143,7 @@ DECLARE t scheduled_tasks%ROWTYPE;x agent_actions%ROWTYPE;a agent_action_attempt
  d agent_runtime_definition_facts%ROWTYPE;cat agent_runtime_catalog_facts%ROWTYPE;
  ts agent_runtime_effective_toolset_facts%ROWTYPE;f agent_runtime_owner_fences%ROWTYPE;
  g agent_runtime_tenant_gate_controls%ROWTYPE;e agent_runtime_scheduled_execution_profiles%ROWTYPE;
- model JSONB;scope JSONB;budget JSONB;env JSONB;target JSONB;manage JSONB;
+ model JSONB;scope JSONB;budget JSONB;env JSONB;target JSONB;manage JSONB;hash_facts JSONB;
  source_names TEXT[];target_names TEXT[];approved TEXT[];
  provider TEXT;capability TEXT;provider_epoch BIGINT:=0;capability_epoch BIGINT:=0;tenant_epoch BIGINT:=0;
 BEGIN
@@ -209,16 +224,28 @@ BEGIN
  SELECT jsonb_agg(value ORDER BY value->>'canonical_name') INTO target
   FROM jsonb_array_elements(ts.toolset_document->'tools') WHERE value->>'canonical_name'=ANY(approved);
  target:=jsonb_build_object('scope_kind',s.scope_kind,'channel',r.capability_snapshot->>'channel',
-  'gate_state','enabled','source_effective_toolset_hash',ts.effective_toolset_hash,
-  'tool_names',to_jsonb(approved),'tools',target);
+  'gate_state','enabled','entitled_groups',(
+   SELECT jsonb_agg(group_name ORDER BY group_name) FROM(
+    SELECT DISTINCT value->>'tool_group' group_name FROM jsonb_array_elements(target)
+   ) groups
+  ),'tool_names',to_jsonb(approved),'tools',target,'toolset_hash',p_effective_toolset_hash);
  SELECT array_agg(v ORDER BY v) INTO target_names FROM jsonb_array_elements_text(target->'tool_names') v;
  IF target_names IS DISTINCT FROM approved OR jsonb_array_length(target->'tools')<>cardinality(approved)
  OR EXISTS(SELECT 1 FROM jsonb_array_elements(target->'tools') z
   WHERE z->>'canonical_name'<>ALL(approved) OR z->>'canonical_name'='manage_scheduled_task'
    OR z->>'executor_type' IS DISTINCT FROM 'runtime_read:'||(z->>'canonical_name')
    OR z->>'safety_level' IS DISTINCT FROM 'safe' OR z->>'side_effect' IS DISTINCT FROM 'none'
-   OR z->>'authorization_requirement' IS DISTINCT FROM 'none') THEN
+   OR z->>'authorization_requirement' IS DISTINCT FROM 'none')
+ OR p_target_toolset_snapshot IS DISTINCT FROM target THEN
   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_TARGET_TOOLSET_INVALID' USING ERRCODE='42501'; END IF;
+ hash_facts:=jsonb_build_object(
+  'agent_definition_hash',d.definition_hash,'catalog_revision',cat.catalog_revision,
+  'scope_kind',s.scope_kind,'channel',r.capability_snapshot->>'channel','tools',target->'tools');
+ IF p_effective_toolset_hash !~ '^[0-9a-f]{64}$'
+ OR p_canonical_hash_input::JSONB IS DISTINCT FROM hash_facts
+ OR p_canonical_hash_input IS DISTINCT FROM _agent_runtime_scheduled_canonical_json(hash_facts)
+ OR encode(digest(convert_to(p_canonical_hash_input,'UTF8'),'sha256'),'hex') IS DISTINCT FROM p_effective_toolset_hash THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_TOOLSET_HASH_INVALID' USING ERRCODE='42501'; END IF;
  provider:='scheduler';capability:='scheduler.task.cas';
  IF NULLIF(manage->>'provider_revision','') IS NULL OR NULLIF(manage->>'schema_hash','') IS NULL
  OR model->>'model_id' IS DISTINCT FROM d.definition_document->'model_policy'->>'model_id' THEN
@@ -240,7 +267,7 @@ BEGIN
  IF FOUND THEN RETURN jsonb_build_object('outcome','already_exists','profile',to_jsonb(e)); END IF;
  INSERT INTO agent_runtime_scheduled_execution_profiles VALUES(t.id,t.org_id,t.user_id,x.id,a.id,r.id,
   d.agent_key,d.definition_revision,d.definition_hash,d.catalog_revision,ts.effective_toolset_hash,
-  encode(digest(target::TEXT::BYTEA,'sha256'),'hex'),model,target,scope,
+  p_effective_toolset_hash,model,target,scope,
   r.capability_snapshot->>'channel',budget,provider,capability,
   manage->>'provider_revision',manage->>'schema_hash',x.request_hash,1,clock_timestamp()) RETURNING * INTO e;
  RETURN jsonb_build_object('outcome','created','profile',to_jsonb(e));
@@ -451,8 +478,9 @@ END $$;
 
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_owner_actor(),
  _agent_runtime_scheduled_snapshot_safe(JSONB),_agent_runtime_scheduled_identity_immutable(),
+ _agent_runtime_scheduled_canonical_json(JSONB),
  _agent_runtime_scheduled_owner_gate(UUID,UUID,TEXT),
- create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,BIGINT),
+ create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,JSONB,TEXT,TEXT,BIGINT),
  read_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID),
  select_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,BIGINT,TEXT,TEXT,BIGINT),
  read_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID),
@@ -461,7 +489,7 @@ REVOKE ALL ON FUNCTION _agent_runtime_scheduled_owner_actor(),
  FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
  everydayai_sync,everydayai,everydayai_agent_runtime_worker;
 GRANT EXECUTE ON FUNCTION
- create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,BIGINT),
+ create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,JSONB,TEXT,TEXT,BIGINT),
  read_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID),
  select_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,BIGINT,TEXT,TEXT,BIGINT),
  read_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID),

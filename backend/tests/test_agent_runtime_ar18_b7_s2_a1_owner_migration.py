@@ -18,6 +18,13 @@ def test_owner_facts_are_additive_private_and_failure_closed() -> None:
     assert "TO everydayai_agent_runtime_worker" in sql
     assert "TO everydayai_worker" not in sql
     assert "source_effective_toolset_hash" in sql
+    assert "p_target_toolset_snapshot IS DISTINCT FROM target" in sql
+    assert "p_canonical_hash_input::JSONB IS DISTINCT FROM hash_facts" in sql
+    assert "p_canonical_hash_input IS DISTINCT FROM _agent_runtime_scheduled_canonical_json(hash_facts)" in sql
+    assert "_agent_runtime_scheduled_canonical_json(JSONB)" in sql
+    assert "digest(convert_to(p_canonical_hash_input,'UTF8'),'sha256')" in sql
+    assert "digest(target::TEXT::BYTEA" not in sql
+    assert "'entitled_groups'" in sql
     assert "manage_scheduled_task'=ANY(source_names)" in sql
     assert "approved<@source_names" in sql
     assert "z->>'safety_level' IS DISTINCT FROM 'safe'" in sql

@@ -1871,7 +1871,9 @@ cache = client.caches.create(
     binding 时失败关闭。Profile 的 definition/model/toolset/scope/channel/budget 全部从来源
     Session/Command/Run/Action 与 227_28 receipt 派生；来源 Run 必须持有真实可调用
     `manage_scheduled_task` 的冻结 production toolset，目标 profile 再派生为 C7-B3.2-A
-    9/17 项 safe-read 子集，不接受 Worker 自报快照。Owner 按 run → trigger → tenant/provider/capability gate
+    9/17 项 safe-read 子集；`catalog/scheduled_toolset.py` 使用 Runtime canonical JSON 生成
+    snapshot/hash，数据库逐字段重建来源子集并复算规范字节，不接受任意 Worker 快照。
+    Owner 按 run → trigger → tenant/provider/capability gate
     固定锁序选择且不可切换。
   - Runtime Worker 仅获得 profile/readback/owner-select/runtime-binding/assert 窄 RPC；两张
     事实表 FORCE RLS 且无 Worker 直权；旧入口可在后续通过不可外调的 owner gate 包装。

@@ -14,7 +14,7 @@ END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION
-    create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,BIGINT),
+    create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,JSONB,TEXT,TEXT,BIGINT),
     read_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID),
     select_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,BIGINT,TEXT,TEXT,BIGINT),
     read_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID),
@@ -28,10 +28,11 @@ DROP FUNCTION IF EXISTS bind_agent_runtime_scheduled_run_runtime_v1(UUID,UUID,UU
 DROP FUNCTION IF EXISTS read_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID);
 DROP FUNCTION IF EXISTS select_agent_runtime_scheduled_run_owner_v1(UUID,UUID,UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,TEXT,BIGINT,TEXT,TEXT,BIGINT);
 DROP FUNCTION IF EXISTS read_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID);
-DROP FUNCTION IF EXISTS create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,BIGINT);
+DROP FUNCTION IF EXISTS create_agent_runtime_scheduled_execution_profile_v1(UUID,UUID,UUID,JSONB,TEXT,TEXT,BIGINT);
 DROP TRIGGER IF EXISTS runtime_scheduled_binding_identity_immutable ON agent_runtime_scheduled_run_bindings;
 DROP TRIGGER IF EXISTS runtime_scheduled_profile_immutable ON agent_runtime_scheduled_execution_profiles;
 DROP FUNCTION IF EXISTS _agent_runtime_scheduled_identity_immutable();
+DROP FUNCTION IF EXISTS _agent_runtime_scheduled_canonical_json(JSONB);
 DROP FUNCTION IF EXISTS _agent_runtime_scheduled_snapshot_safe(JSONB);
 DROP FUNCTION IF EXISTS _agent_runtime_scheduled_owner_actor();
 DROP TABLE IF EXISTS agent_runtime_scheduled_run_bindings;
