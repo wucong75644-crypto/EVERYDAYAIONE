@@ -34,7 +34,10 @@ from services.agent.runtime.ports.model_gateway import (
 from services.agent.runtime.application.model_gateway_dispatch import (
     start_gateway_dispatch,
 )
-from services.agent.runtime.ports.repository import RuntimeRepositoryPort
+from services.agent.runtime.ports.repository import (
+    MutationOutcome,
+    RuntimeRepositoryPort,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,6 +174,19 @@ class ModelLoopDriver:
                 request_receipt=plan.request_receipt,
                 reserved_credits=plan.reserved_credits,
             )
+            if prepared.outcome is ModelAttemptOutcome.BUDGET_EXHAUSTED:
+                failed = await self._runtime.fail_model_step(
+                    step_id, run_execution_token, step_version,
+                    "budget_exhausted",
+                )
+                if failed.outcome not in {
+                    MutationOutcome.FAILED,
+                    MutationOutcome.ALREADY_FAILED,
+                }:
+                    raise RuntimeError(
+                        "MODEL_STEP_BUDGET_FAILURE_RECEIPT_REJECTED"
+                    )
+                return None
             if prepared.outcome not in {
                 ModelAttemptOutcome.PREPARED,
                 ModelAttemptOutcome.ALREADY_PREPARED,

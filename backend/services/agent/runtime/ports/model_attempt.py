@@ -20,6 +20,7 @@ class ModelAttemptOutcome(StrEnum):
     ALREADY_PREPARED = "already_prepared"
     UNRESOLVED_ATTEMPT = "unresolved_attempt"
     INSUFFICIENT_CREDITS = "insufficient_credits"
+    BUDGET_EXHAUSTED = "budget_exhausted"
     DISPATCHING = "dispatching"
     ALREADY_DISPATCHING = "already_dispatching"
     RESPONSE_STARTED = "response_started"

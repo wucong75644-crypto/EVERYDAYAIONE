@@ -111,6 +111,32 @@ async def test_tool_calls_return_typed_handoff() -> None:
     assert database.calls[0][0] == "complete_model_attempt_without_actions"
 
 
+@pytest.mark.asyncio
+async def test_prepare_parses_budget_exhausted_and_rejects_unknown() -> None:
+    database = Database({
+        "prepare_model_attempt": {"outcome": "budget_exhausted"},
+    })
+    repository = PostgresModelAttemptRepository(database)
+    values = {
+        "model_step_id": "11111111-1111-1111-1111-111111111111",
+        "run_execution_token": "22222222-2222-2222-2222-222222222222",
+        "expected_step_version": 1,
+        "worker_id": "runtime-worker",
+        "request_hash": "a" * 64,
+        "idempotency_key": "model-step:1",
+        "provider": "provider",
+        "request_receipt": {},
+        "reserved_credits": 10,
+    }
+
+    receipt = await repository.prepare(**values)
+    assert receipt.outcome is ModelAttemptOutcome.BUDGET_EXHAUSTED
+
+    database.responses["prepare_model_attempt"] = {"outcome": "future_success"}
+    with pytest.raises(PersistenceContractError):
+        await repository.prepare(**values)
+
+
 def test_runtime_scope_cannot_construct_worker_repository() -> None:
     database = Database({})
     database.scope = DatabaseScope(

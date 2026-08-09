@@ -53,6 +53,7 @@ class PostgresModelAttemptRepository:
                 ModelAttemptOutcome.ALREADY_PREPARED,
                 ModelAttemptOutcome.UNRESOLVED_ATTEMPT,
                 ModelAttemptOutcome.INSUFFICIENT_CREDITS,
+                ModelAttemptOutcome.BUDGET_EXHAUSTED,
                 ModelAttemptOutcome.NOT_FOUND,
             },
         )
