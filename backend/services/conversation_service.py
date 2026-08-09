@@ -169,6 +169,7 @@ class ConversationService:
                 self.db.table("conversations")
                 .select("id, title, last_message_preview, model_id, chat_settings, updated_at, source", count="exact")
                 .eq("user_id", user_id)
+                .in_("source", ["web", "wecom"])
             )
             if org_id:
                 query = query.eq("org_id", org_id)

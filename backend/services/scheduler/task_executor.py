@@ -88,6 +88,12 @@ class ScheduledTaskExecutor:
 
     async def execute(self, task: Dict[str, Any]) -> None:
         """执行单个定时任务（被 Scanner.poll 调用）"""
+        if not self._store.legacy_owner_allowed(str(task["id"])):
+            logger.error(
+                "ScheduledTask aborted: legacy owner gate rejected | "
+                f"task={task['id']}"
+            )
+            return
         run = await self._create_run(task)
         if run is None:
             # 无法记录执行历史 → 放弃执行（防止 update WHERE id 全部静默失效）

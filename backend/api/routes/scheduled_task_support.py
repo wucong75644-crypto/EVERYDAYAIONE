@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -140,3 +141,36 @@ async def enrich_with_creator(
             "position_code": assignment.get("position_code"),
         }
     return tasks
+
+
+def request_runtime_scheduled_execution(
+    scoped_db: Any,
+    task: Dict[str, Any],
+    task_id: str,
+    org_id: str,
+    user_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Submit Runtime-owned tasks; return None for authoritative legacy tasks."""
+    if not task.get("runtime_action_id"):
+        return None
+    result = scoped_db.rpc(
+        "request_agent_runtime_scheduled_execution_v1",
+        {
+            "p_request_id": str(uuid4()),
+            "p_task_id": task_id,
+            "p_org_id": org_id,
+            "p_user_id": user_id,
+            "p_expected_task_version": int(task.get("runtime_state_version", 0)),
+            "p_now": datetime.now(timezone.utc).isoformat(),
+        },
+    ).execute()
+    data = result.data if isinstance(result.data, dict) else {}
+    if data.get("owner_kind") != "runtime":
+        raise HTTPException(503, "无法确认 Runtime 定时任务执行 Owner")
+    if data.get("outcome") not in {"submitted", "already_submitted"}:
+        raise HTTPException(503, "Runtime 定时执行尚未开放")
+    return {
+        "success": True,
+        "message": "任务已提交 Runtime，请稍后查看执行历史",
+        "command_id": data.get("command_id"),
+    }

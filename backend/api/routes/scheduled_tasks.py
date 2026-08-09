@@ -38,6 +38,7 @@ from .scheduled_task_support import (
     ParseNLRequest,
     UpdateScheduledTaskRequest,
     enrich_with_creator as _enrich_with_creator,
+    request_runtime_scheduled_execution,
     resolve_schedule_fields as _resolve_schedule_fields,
 )
 
@@ -392,7 +393,6 @@ async def run_task_now(
 ) -> Dict[str, Any]:
     """立即触发任务执行（异步，不等待结果）"""
     org_id = _require_org(org_ctx)
-
     result = scoped_db.table("scheduled_tasks").select("*").eq("id", task_id).execute()
     if not result.data:
         raise HTTPException(404, "任务不存在")
@@ -402,6 +402,10 @@ async def run_task_now(
         raise HTTPException(403, "无权立即执行此任务")
     if task.get("status") == "running":
         raise HTTPException(409, "任务正在执行中")
+
+    runtime_response = request_runtime_scheduled_execution(scoped_db, task, task_id, org_id, user_id)
+    if runtime_response is not None:
+        return runtime_response
 
     scoped_db.table("scheduled_tasks").update({
         "status": "running",
