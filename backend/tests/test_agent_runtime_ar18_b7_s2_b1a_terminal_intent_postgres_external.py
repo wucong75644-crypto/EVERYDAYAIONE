@@ -159,6 +159,39 @@ def test_real_run_terminal_rpcs_capture_one_intent(database: str, terminal: str)
     assert binding == "reconcile_required"
 
 
+def test_terminal_reason_allowlist_blocks_structured_and_free_text_secrets(database: str) -> None:
+    _prepare(database)
+    cases = (
+        ("Authorization: Bearer sk-live-authorization", "redacted_terminal_reason"),
+        ('{"api_key":"sk-live-json"}', "redacted_terminal_reason"),
+        ("Cookie: session=private-cookie", "redacted_terminal_reason"),
+        ("https://alice:private-password@example.com/private", "redacted_terminal_reason"),
+        ("ordinary free text failure detail", "redacted_terminal_reason"),
+        ("provider_error", "provider_error"),
+    )
+    for index, (source_reason, expected_reason) in enumerate(cases):
+        facts = _bound_run(database)
+        result = _rpc(database, "fail_agent_run", (
+            facts["run_id"], facts["token"], facts["version"], source_reason,
+        ))
+        assert result["outcome"] == "failed"
+        claimed = _rpc(
+            database, "claim_next_agent_runtime_scheduled_finalization_v1",
+            (f"reason-worker-{index}", 90),
+        )
+        assert claimed["outcome"] == "claimed"
+        assert claimed["intent"]["scheduled_run_id"] == facts["scheduled_run_id"]
+        assert claimed["intent"]["terminal_reason"] == expected_reason
+        readback = _rpc(database, "read_agent_runtime_scheduled_finalization_v1", (
+            facts["scheduled_run_id"], claimed["intent"]["claim_token"],
+        ))
+        assert readback["outcome"] == "found"
+        assert readback["intent"]["terminal_reason"] == expected_reason
+        if expected_reason == "redacted_terminal_reason":
+            assert source_reason not in str(claimed)
+            assert source_reason not in str(readback)
+
+
 def test_attempts_exhausted_and_nonterminal_action_do_not_lose_or_invent_facts(database: str) -> None:
     _prepare(database)
     facts = _bound_run(database)

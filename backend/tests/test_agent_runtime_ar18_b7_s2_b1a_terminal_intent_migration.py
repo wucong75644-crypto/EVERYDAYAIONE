@@ -23,6 +23,18 @@ def test_terminal_intent_is_additive_durable_and_worker_narrow() -> None:
     assert "credits_history" not in MIGRATION
 
 
+def test_terminal_reason_uses_exact_allowlist_not_text_scrubbing() -> None:
+    assert "redacted_terminal_reason" in MIGRATION
+    assert "=ANY(ARRAY[" in MIGRATION
+    for reason in (
+        "completed", "failed", "cancelled", "command_attempts_exhausted",
+        "runtime_cancel", "model_step_failed", "provider_error",
+    ):
+        assert f"'{reason}'" in MIGRATION
+    assert "regexp_replace" not in MIGRATION
+    assert "Bearer" not in MIGRATION
+
+
 def test_rollback_guards_history_before_exact_removal() -> None:
     guard = ROLLBACK.index("AGENT_RUNTIME_SCHEDULED_FINALIZATION_ROLLBACK_FACTS_EXIST")
     drop = ROLLBACK.index("DROP TABLE agent_runtime_scheduled_finalization_intents")

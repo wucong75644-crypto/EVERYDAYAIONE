@@ -38,9 +38,14 @@ REVOKE ALL ON TABLE agent_runtime_scheduled_finalization_intents
 
 CREATE FUNCTION _agent_runtime_scheduled_terminal_reason(p_reason TEXT,p_status TEXT)
 RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,public AS $$
- SELECT left(regexp_replace(COALESCE(NULLIF(btrim(p_reason),''),p_status),
-  '(^|[^a-zA-Z])(secret|token|password|api[_-]?key|credential|authorization|cookie)([[:space:]]*[:=][[:space:]]*)[^,;[:space:]]+',
-  '\1\2\3[REDACTED]','gi'),500)
+ SELECT CASE WHEN COALESCE(NULLIF(btrim(p_reason),''),p_status)=ANY(ARRAY[
+  'completed','failed','cancelled','command_attempts_exhausted','attempts_exhausted',
+  'cancelled_before_start','runtime_cancel','task_cancel_requested','parent_cancelled',
+  'parent_run_cancelled','user_cancelled','model_step_failed','model_step_nonfinal',
+  'length','content_filter','model_refusal','budget_exhausted','provider_error',
+  'protocol_error'
+ ]::TEXT[]) THEN COALESCE(NULLIF(btrim(p_reason),''),p_status)
+ ELSE 'redacted_terminal_reason' END
 $$;
 
 CREATE FUNCTION _agent_runtime_scheduled_finalization_immutable() RETURNS TRIGGER
