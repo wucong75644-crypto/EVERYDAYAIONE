@@ -1,9 +1,4 @@
-"""Runtime-owned tenant-scoped scheduler CAS boundary.
-
-This module deliberately does not adapt the legacy scheduler worker store.  The
-included store is an isolated test contract; a production store requires a
-separate additive facts/RPC lane and therefore remains not ready.
-"""
+"""Runtime-owned tenant-scoped Scheduler CAS and control boundaries."""
 from __future__ import annotations
 
 import asyncio
@@ -234,9 +229,13 @@ class PostgresSchedulerControlStore:
         if not dispatch_intent_id.strip():
             raise SchedulerCasError("SCHEDULER_DISPATCH_INTENT_REQUIRED")
         from services.agent.runtime.scheduler_control_payload import (
-            normalize_scheduler_control_payload,
+            normalize_scheduler_control_payload, scheduler_resume_parameters,
         )
         normalized_payload = normalize_scheduler_control_payload(operation, payload)
+        resume_hash, resume_next_run_at = await scheduler_resume_parameters(
+            self._rpc, attempt, task_id, expected_version, attempt_state_version,
+            dispatch_intent_id, enabled=operation == "resume",
+        )
         response = await self._rpc(
             "mutate_agent_runtime_scheduled_task_control_v1", {
                 **_control_identity(attempt),
@@ -249,6 +248,8 @@ class PostgresSchedulerControlStore:
                 "p_idempotency_key": _idempotency_key(attempt),
                 "p_dispatch_intent_id": dispatch_intent_id,
                 "p_payload": normalized_payload,
+                "p_resume_schedule_hash": resume_hash,
+                "p_resume_next_run_at": resume_next_run_at,
             },
         )
         if response.get("outcome") in {"committed", "readback", "cas_conflict", "reconcile_required"}:
@@ -361,9 +362,12 @@ class MockSchedulerControlStore:
                 return self._receipt(key, task_id, expected_version + 1, "committed", {"task_id": task_id, "deleted": True})
             updated = dict(current)
             if operation == "pause":
-                updated["status"] = "paused"
+                updated.update(status="paused", next_run_at=None)
             elif operation == "resume":
-                updated["status"] = "active"
+                updated.update(
+                    status="active", next_run_at=_scheduler_resume_next_run(updated),
+                    consecutive_failures=0,
+                )
             else:
                 updated.update(payload)
             updated["version"] = expected_version + 1
@@ -454,6 +458,11 @@ def _idempotency_key(attempt: ActionAttempt) -> str:
     if not isinstance(key, str) or not key.strip():
         raise SchedulerCasError("SCHEDULER_IDEMPOTENCY_KEY_REQUIRED")
     return key
+
+
+def _scheduler_resume_next_run(value: Mapping[str, object]) -> str:
+    from services.agent.runtime.scheduler_control_payload import scheduler_resume_next_run
+    return scheduler_resume_next_run(value)
 
 
 def _facts_params(attempt: ActionAttempt, task_id: str, expected_version: int,

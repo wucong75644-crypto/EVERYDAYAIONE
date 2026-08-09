@@ -1856,6 +1856,10 @@ cache = client.caches.create(
   - 新入口沿用现有组织职位/部门权限和 push target 租户边界；未配置业务权限的 `other`
     部门失败关闭。调度定义变更必须原子携带已校验时区和重新计算的 `next_run_at`，避免
     Scanner 继续读取旧执行时间。
+  - 资源操作范围与 `PermissionChecker` 保持一致：boss 全部、VP 按 data scope、manager
+    同部门、deputy/member 仅本人。pause 原子清空 `next_run_at`；resume 先经窄 RPC 读取
+    权威调度快照，再用既有 `calc_next_run` 计算并通过 schedule hash + CAS 原子提交；过期
+    once 任务失败关闭，模型参数不能指定恢复时间。
   - Scheduler payload normalization 与 service orchestration 分别位于
     `scheduler_control_payload.py`、`scheduler_service_support.py`，沿用既有 cron/once 定义语义。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.

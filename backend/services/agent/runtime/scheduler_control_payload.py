@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Mapping
+from typing import Awaitable, Callable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from services.agent.runtime.scheduler_cas import SchedulerCasError
@@ -46,6 +46,58 @@ def normalize_scheduler_control_payload(
             })
     result.pop("time_str", None)
     return result
+
+
+def scheduler_resume_next_run(
+    schedule: Mapping[str, object], *, base: datetime | None = None,
+) -> str:
+    """Calculate resume time from a server-authoritative schedule snapshot."""
+    schedule_type = str(schedule.get("schedule_type", ""))
+    timezone_name = str(schedule.get("timezone", ""))
+    _validate_fields({"timezone": timezone_name})
+    now = base or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise SchedulerCasError("SCHEDULER_RESUME_BASE_TIMEZONE_REQUIRED")
+    if schedule_type == "once":
+        run_at = _parse_datetime(schedule.get("run_at"))
+        if run_at.astimezone(timezone.utc) <= now.astimezone(timezone.utc):
+            raise SchedulerCasError("SCHEDULER_ONCE_RESUME_EXPIRED")
+        return run_at.astimezone(timezone.utc).isoformat()
+    if schedule_type not in {"daily", "weekly", "monthly", "cron"}:
+        raise SchedulerCasError("SCHEDULER_SCHEDULE_TYPE_INVALID")
+    cron_expr = schedule.get("cron_expr")
+    if not isinstance(cron_expr, str) or not validate_cron(cron_expr):
+        raise SchedulerCasError("SCHEDULER_CRON_INVALID")
+    return calc_next_run(cron_expr, timezone_name, base=now).isoformat()
+
+
+async def scheduler_resume_parameters(
+    rpc: Callable[[str, Mapping[str, object]], Awaitable[Mapping[str, object]]],
+    attempt: object, task_id: str, expected_version: int,
+    attempt_state_version: int, dispatch_intent_id: str, *, enabled: bool,
+) -> tuple[str | None, str | None]:
+    if not enabled:
+        return None, None
+    scope = attempt.scope
+    context = await rpc("get_agent_runtime_scheduled_task_resume_context_v1", {
+        "p_attempt_id": str(attempt.attempt_id),
+        "p_action_id": str(attempt.action_id), "p_run_id": str(attempt.run_id),
+        "p_org_id": str(scope.org_id), "p_user_id": str(scope.user_id),
+        "p_scope_kind": scope.kind.value, "p_scope_id": str(scope.scope_id),
+        "p_task_id": task_id, "p_expected_state_version": expected_version,
+        "p_attempt_state_version": attempt_state_version,
+        "p_request_hash": str(attempt.request_hash),
+        "p_execution_token": str(attempt.lease.fencing_token),
+        "p_dispatch_intent_id": dispatch_intent_id,
+    })
+    if context.get("calculation_revision") != (
+        "services.scheduler.cron_utils.calc_next_run:v1"
+    ):
+        raise SchedulerCasError("SCHEDULER_RESUME_CALCULATION_REVISION_INVALID")
+    schedule_hash = context.get("schedule_hash")
+    if not isinstance(schedule_hash, str) or not schedule_hash:
+        raise SchedulerCasError("SCHEDULER_RESUME_CONTEXT_INVALID")
+    return schedule_hash, scheduler_resume_next_run(context)
 
 
 def _validate_fields(payload: Mapping[str, object]) -> None:
@@ -103,6 +155,13 @@ def _resolved_cron(schedule_type: str, payload: Mapping[str, object]) -> str:
 
 
 def _parse_future_run_at(value: object) -> datetime:
+    parsed = _parse_datetime(value)
+    if parsed.astimezone(timezone.utc) < datetime.now(timezone.utc):
+        raise SchedulerCasError("SCHEDULER_RUN_AT_PAST")
+    return parsed
+
+
+def _parse_datetime(value: object) -> datetime:
     if not isinstance(value, str) or not value:
         raise SchedulerCasError("SCHEDULER_RUN_AT_REQUIRED")
     try:
@@ -111,9 +170,10 @@ def _parse_future_run_at(value: object) -> datetime:
         raise SchedulerCasError("SCHEDULER_RUN_AT_INVALID") from exc
     if parsed.tzinfo is None:
         raise SchedulerCasError("SCHEDULER_RUN_AT_TIMEZONE_REQUIRED")
-    if parsed.astimezone(timezone.utc) < datetime.now(timezone.utc):
-        raise SchedulerCasError("SCHEDULER_RUN_AT_PAST")
     return parsed
 
 
-__all__ = ["normalize_scheduler_control_payload"]
+__all__ = [
+    "normalize_scheduler_control_payload", "scheduler_resume_next_run",
+    "scheduler_resume_parameters",
+]

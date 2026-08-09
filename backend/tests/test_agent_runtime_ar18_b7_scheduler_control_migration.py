@@ -18,9 +18,13 @@ def test_b7_control_plane_is_additive_and_worker_rpc_only() -> None:
     assert "agent_policy_receipts" in sql and "agent_action_dispatch_intents" in sql
     assert "_runtime_scheduler_push_target_allowed" in sql
     assert "_runtime_scheduler_actor_allowed" in sql
+    assert "_runtime_scheduler_operation_allowed" in sql
+    assert "get_agent_runtime_scheduled_task_resume_context_v1" in sql
     assert "pg_timezone_names" in sql
     assert "department.type IN ('ops','finance','warehouse','service','design','hr')" in sql
     assert "NOT (value ? 'next_run_at')" in sql
+    assert "next_run_at=NULL" in sql
+    assert "next_run_at=p_resume_next_run_at" in sql
     for field in ("request_hash", "payload_hash", "execution_token", "tenant_kill_epoch", "provider_revision", "state_version"):
         assert field in sql
     assert "GRANT EXECUTE" in sql

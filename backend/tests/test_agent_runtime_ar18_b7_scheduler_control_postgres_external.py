@@ -138,12 +138,31 @@ def _rpc(database: str, name: str, params: tuple[object, ...], *, org: str = ORG
 
 
 def _mutate(database: str, ids: dict[str, str], task_id: str, operation: str,
-            expected: int, key: str, payload: dict[str, object]):
+            expected: int, key: str, payload: dict[str, object], *,
+            resume_schedule_hash: str | None = None,
+            resume_next_run_at: str | None = None):
     return _rpc(database, "mutate_agent_runtime_scheduled_task_control_v1", (
         ids["attempt"], ids["action"], ids["run"], ORG, USER, "user", USER,
         task_id, operation, expected, int(ids["attempt_version"]),
         ids["request_hash"], ids["token"], key, ids["dispatch"], payload,
+        resume_schedule_hash, resume_next_run_at,
     ))
+
+
+def _resume(database: str, ids: dict[str, str], task_id: str, expected: int,
+            key: str):
+    context = _rpc(database, "get_agent_runtime_scheduled_task_resume_context_v1", (
+        ids["attempt"], ids["action"], ids["run"], ORG, USER, "user", USER,
+        task_id, expected, int(ids["attempt_version"]), ids["request_hash"],
+        ids["token"], ids["dispatch"],
+    ))
+    from services.agent.runtime.scheduler_control_payload import scheduler_resume_next_run
+    next_run_at = scheduler_resume_next_run(context)
+    return _mutate(
+        database, ids, task_id, "resume", expected, key, {},
+        resume_schedule_hash=context["schedule_hash"],
+        resume_next_run_at=next_run_at,
+    ), next_run_at
 
 
 def _create_payload(name: str = "Runtime schedule") -> dict[str, object]:
@@ -202,7 +221,7 @@ def test_b7_five_operations_readback_acl_and_rollback(database: str) -> None:
         assert persisted[0] == "America/New_York"
         assert persisted[1].isoformat() == "2030-01-01T13:00:00"
     pause = _mutate(database, _seed(database), task_id, "pause", 2, "b7-pause", {})
-    resume = _mutate(database, _seed(database), task_id, "resume", 3, "b7-resume", {})
+    resume, _ = _resume(database, _seed(database), task_id, 3, "b7-resume")
     delete_ids = _seed(database)
     deleted = _mutate(database, delete_ids, task_id, "delete", 4, "b7-delete", {})
     assert [update["state_version"], pause["state_version"], resume["state_version"], deleted["state_version"]] == [2, 3, 4, 5]
@@ -221,8 +240,8 @@ def test_b7_five_operations_readback_acl_and_rollback(database: str) -> None:
         ):
             assert conn.execute("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid=%s::regclass", (table,)).fetchone() == (True, True)
             assert conn.execute("SELECT has_table_privilege('everydayai_agent_runtime_worker',%s,'SELECT')", (table,)).fetchone()[0] is False
-        assert conn.execute("SELECT has_function_privilege('everydayai_agent_runtime_worker','mutate_agent_runtime_scheduled_task_control_v1(uuid,uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,bigint,text,uuid,text,uuid,jsonb)','EXECUTE')").fetchone()[0] is True
-        assert conn.execute("SELECT has_function_privilege('everydayai_worker','mutate_agent_runtime_scheduled_task_control_v1(uuid,uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,bigint,text,uuid,text,uuid,jsonb)','EXECUTE')").fetchone()[0] is False
+        assert conn.execute("SELECT has_function_privilege('everydayai_agent_runtime_worker','mutate_agent_runtime_scheduled_task_control_v1(uuid,uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,bigint,text,uuid,text,uuid,jsonb,text,timestamptz)','EXECUTE')").fetchone()[0] is True
+        assert conn.execute("SELECT has_function_privilege('everydayai_worker','mutate_agent_runtime_scheduled_task_control_v1(uuid,uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,bigint,text,uuid,text,uuid,jsonb,text,timestamptz)','EXECUTE')").fetchone()[0] is False
         assert conn.execute("SELECT has_function_privilege('everydayai_agent_runtime_worker','runtime_mutate_scheduled_task(uuid,uuid,uuid,bigint,text,text,jsonb,uuid)','EXECUTE')").fetchone()[0] is False
     with pytest.raises(Exception, match="AR_18_B7_ROLLBACK_BLOCKED_SCHEDULER_INTENTS"):
         _apply(database, ROLLBACK)
@@ -301,7 +320,7 @@ def test_b7_concurrency_idempotency_tenant_fences_and_transaction_boundary(datab
         with pytest.raises(RuntimeError):
             with conn.transaction():
                 conn.execute(
-                    "SELECT mutate_agent_runtime_scheduled_task_control_v1(%s,%s,%s,%s,%s,'user',%s,%s,'create',0,0,%s,%s,'b7-crash',%s,%s)",
+                    "SELECT mutate_agent_runtime_scheduled_task_control_v1(%s,%s,%s,%s,%s,'user',%s,%s,'create',0,0,%s,%s,'b7-crash',%s,%s,NULL,NULL)",
                     (crash["attempt"], crash["action"], crash["run"], ORG, USER, USER,
                      crash_task, crash["request_hash"], crash["token"], crash["dispatch"],
                      Jsonb(_create_payload())),

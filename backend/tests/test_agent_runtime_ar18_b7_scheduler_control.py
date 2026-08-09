@@ -11,7 +11,7 @@ from services.agent.runtime.scheduler_cas import (
     scheduler_control_result,
 )
 from services.agent.runtime.scheduler_control_payload import (
-    normalize_scheduler_control_payload,
+    normalize_scheduler_control_payload, scheduler_resume_next_run,
 )
 from services.agent.runtime.application.action_cancel import _settle_specialist
 from services.agent.runtime.ports.executor import ExecutionOutcome
@@ -66,11 +66,13 @@ async def test_mock_control_covers_five_operations_and_readback() -> None:
         operation="pause", payload={}, **common,
     )
     assert paused["task"]["status"] == "paused"
+    assert paused["task"]["next_run_at"] is None
     resumed = await store.mutate(
         attempt=_attempt(key="resume"), task_id="task-a", expected_version=3,
         operation="resume", payload={}, **common,
     )
     assert resumed["task"]["status"] == "active"
+    assert datetime.fromisoformat(resumed["task"]["next_run_at"]) > datetime.now(timezone.utc)
     deleted = await store.mutate(
         attempt=_attempt(key="delete"), task_id="task-a", expected_version=4,
         operation="delete", payload={}, **common,
@@ -224,6 +226,18 @@ class _Database:
         return _RpcCall({"outcome": "committed", "state_version": 1})
 
 
+class _ResumeDatabase(_Database):
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        if name == "get_agent_runtime_scheduled_task_resume_context_v1":
+            return _RpcCall({
+                "schedule_type": "daily", "cron_expr": "0 9 * * *",
+                "timezone": "Asia/Shanghai", "schedule_hash": "b" * 64,
+                "calculation_revision": "services.scheduler.cron_utils.calc_next_run:v1",
+            })
+        return _RpcCall({"outcome": "committed", "state_version": 2})
+
+
 @pytest.mark.asyncio
 async def test_postgres_control_store_uses_only_narrow_worker_rpc() -> None:
     database = _Database()
@@ -236,6 +250,25 @@ async def test_postgres_control_store_uses_only_narrow_worker_rpc() -> None:
     assert database.calls[0][0] == "mutate_agent_runtime_scheduled_task_control_v1"
     assert database.calls[0][1]["p_dispatch_intent_id"] == "dispatch-a"
     assert all("scheduled_tasks" not in name for name, _ in database.calls)
+
+
+@pytest.mark.asyncio
+async def test_postgres_resume_uses_authoritative_context_before_atomic_mutation() -> None:
+    database = _ResumeDatabase()
+    store = PostgresSchedulerControlStore(database)
+    await store.mutate(
+        attempt=_attempt(), task_id="task-a", expected_version=1,
+        operation="resume", payload={"next_run_at": "model-value-forbidden"},
+        dispatch_intent_id="dispatch-a", attempt_state_version=1,
+    )
+    assert [name for name, _ in database.calls] == [
+        "get_agent_runtime_scheduled_task_resume_context_v1",
+        "mutate_agent_runtime_scheduled_task_control_v1",
+    ]
+    mutation = database.calls[1][1]
+    assert mutation["p_payload"] == {}
+    assert mutation["p_resume_schedule_hash"] == "b" * 64
+    assert datetime.fromisoformat(mutation["p_resume_next_run_at"]) > datetime.now(timezone.utc)
 
 
 @pytest.mark.asyncio
@@ -276,6 +309,20 @@ def test_scheduler_update_payload_rejects_invalid_partial_state() -> None:
             "schedule_type": "cron", "cron_expr": "0 8 * * *",
             "timezone": "Not/AZone",
         })
+
+
+def test_resume_time_uses_authoritative_schedule_and_rejects_expired_once() -> None:
+    base = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    next_run = scheduler_resume_next_run({
+        "schedule_type": "weekly", "cron_expr": "0 9 * * 1,3,5",
+        "timezone": "Asia/Shanghai",
+    }, base=base)
+    assert datetime.fromisoformat(next_run) > base
+    with pytest.raises(SchedulerCasError, match="ONCE_RESUME_EXPIRED"):
+        scheduler_resume_next_run({
+            "schedule_type": "once", "run_at": "2029-12-31T23:00:00+00:00",
+            "timezone": "Asia/Shanghai",
+        }, base=base)
 
 
 @pytest.mark.asyncio
