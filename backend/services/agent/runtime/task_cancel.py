@@ -107,6 +107,13 @@ class RuntimeTaskCancelService:
     def cancel_task(
         self, task: Mapping[str, Any], *, user_id: str, org_id: str | None,
     ) -> RuntimeTaskCancelReceipt:
+        request = self.prepare_task(task, user_id=user_id, org_id=org_id)
+        return self.cancel_prepared(request)
+
+    def prepare_task(
+        self, task: Mapping[str, Any], *, user_id: str, org_id: str | None,
+    ) -> RuntimeTaskCancelRequest:
+        """Validate all local bindings without causing a durable mutation."""
         if classify_task_owner(task) is not TaskOwner.RUNTIME:
             raise RuntimeTaskCancelConflict("RUNTIME_TASK_OWNER_INVALID")
         try:
@@ -125,7 +132,7 @@ class RuntimeTaskCancelService:
             raise RuntimeTaskCancelConflict("RUNTIME_TASK_ORG_MISMATCH")
         if self._uuid(task.get("user_id")) != requester:
             raise RuntimeTaskCancelConflict("RUNTIME_TASK_USER_MISMATCH")
-        receipt = self._repository.cancel(RuntimeTaskCancelRequest(
+        return RuntimeTaskCancelRequest(
             task_id=task_id,
             message_id=message_id,
             org_id=canonical_org,
@@ -133,7 +140,13 @@ class RuntimeTaskCancelService:
             session_id=session_id,
             submit_command_id=command_id,
             idempotency_key=f"web-task-cancel:{task_id}:{command_id}",
-        ))
+        )
+
+    def cancel_prepared(
+        self, request: RuntimeTaskCancelRequest,
+    ) -> RuntimeTaskCancelReceipt:
+        """Invoke the atomic facade for a request that passed local preflight."""
+        receipt = self._repository.cancel(request)
         if receipt.outcome not in self._SUCCESS:
             raise RuntimeTaskCancelConflict("RUNTIME_TASK_CANCEL_CONFLICT")
         return receipt

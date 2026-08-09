@@ -58,13 +58,17 @@ class _Query:
 
 
 class _Rpc:
-    def __init__(self, database: "_Database") -> None:
+    def __init__(self, database: "_Database", index: int) -> None:
         self.database = database
+        self.index = index
 
     def execute(self) -> SimpleNamespace:
-        if self.database.rpc_error is not None:
-            raise self.database.rpc_error
-        return SimpleNamespace(data=self.database.rpc_result)
+        item = self.database.rpc_sequence[
+            min(self.index, len(self.database.rpc_sequence) - 1)
+        ]
+        if isinstance(item, Exception):
+            raise item
+        return SimpleNamespace(data=item)
 
 
 class _Database:
@@ -78,6 +82,9 @@ class _Database:
             {"outcome": outcome} if isinstance(outcome, str) else outcome
         )
         self.rpc_error = rpc_error
+        self.rpc_sequence: list[object] = [
+            rpc_error if rpc_error is not None else self.rpc_result
+        ]
         self.rpc_calls: list[tuple[str, dict[str, object]]] = []
         self.updates: list[tuple[str, dict[str, object]]] = []
 
@@ -86,7 +93,7 @@ class _Database:
 
     def rpc(self, name: str, params: dict[str, object]) -> _Rpc:
         self.rpc_calls.append((name, params))
-        return _Rpc(self)
+        return _Rpc(self, len(self.rpc_calls) - 1)
 
 
 class _SqlstateError(Exception):
@@ -195,7 +202,7 @@ async def test_runtime_success_and_replay_use_v2_then_side_effects(
     release.assert_awaited_once_with(task)
     anchor.assert_called_once_with(
         database, task["assistant_message_id"],
-        conversation_id=task["conversation_id"],
+        task["conversation_id"],
     )
     websocket.cancel_task.assert_called_once_with("client-1", org_id=None)
 

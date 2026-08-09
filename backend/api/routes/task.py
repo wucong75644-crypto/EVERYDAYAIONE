@@ -19,17 +19,12 @@ from core.exceptions import (
     PermissionDeniedError,
 )
 from core.limiter import limiter
-from services.agent.runtime.infrastructure.postgres.task_cancel_repository import (
-    PostgresRuntimeTaskCancelRepository,
-)
 from services.agent.runtime.task_cancel import (
-    RuntimeTaskCancelConflict,
-    RuntimeTaskCancelService,
-    RuntimeTaskCancelUnavailable,
     TaskOwner,
     classify_task_owner,
 )
 from services.task_limit_service import release_task_slot
+from services.web_task_cancel import WebTaskCancelService
 
 
 class MarkTaskFailedRequest(BaseModel):
@@ -163,7 +158,7 @@ def _anchor_messages_immediately(
     db,
     message_id: str,
     conversation_id: str | None = None,
-) -> None:
+) -> bool:
     """cancel API 同步落锚 messages 表：
 
     场景 A：message 已存在（chat_handler 在流式过程中已 _upsert）
@@ -199,7 +194,7 @@ def _anchor_messages_immediately(
                     f"_anchor: message not exist + missing conversation_id, skipping | "
                     f"message_id={message_id}"
                 )
-                return
+                return False
 
             stub_content = [{
                 "type": "interrupt_marker",
@@ -218,7 +213,7 @@ def _anchor_messages_immediately(
                 f"_anchor: created stub interrupted message | "
                 f"message_id={message_id} | conv={conversation_id}"
             )
-            return
+            return True
 
         # 场景 A：message 已存在 → update
         raw_content = existing.data[0].get("content")
@@ -259,32 +254,12 @@ def _anchor_messages_immediately(
             "status": "interrupted",
             "content": blocks,
         }).eq("id", message_id).execute()
-    except Exception as e:
+        return True
+    except Exception:
         logger.warning(
-            f"_anchor_messages_immediately failed | "
-            f"message_id={message_id} | error={e}"
+            f"_anchor_messages_immediately failed | message_id={message_id}"
         )
-
-
-def _request_runtime_task_cancel(
-    db: ScopedDB, task: Dict[str, Any], ctx: OrgCtx,
-) -> None:
-    try:
-        RuntimeTaskCancelService(
-            PostgresRuntimeTaskCancelRepository(db),
-        ).cancel_task(task, user_id=ctx.user_id, org_id=ctx.org_id)
-    except RuntimeTaskCancelConflict:
-        raise AppException(
-            code="RUNTIME_TASK_CANCEL_CONFLICT",
-            message="任务状态已变化，无法取消",
-            status_code=409,
-        ) from None
-    except RuntimeTaskCancelUnavailable:
-        raise AppException(
-            code="RUNTIME_TASK_CANCEL_UNAVAILABLE",
-            message="取消结果暂时无法确认，请稍后重试",
-            status_code=503,
-        ) from None
+        return False
 
 
 @router.post("/cancel-by-message/{message_id}", summary="通过消息ID取消关联任务")
@@ -303,85 +278,11 @@ async def cancel_task_by_message_id(
     通过消息 ID 取消关联的后台任务
     """
     try:
-        for field in ("placeholder_message_id", "assistant_message_id"):
-            q = db.table("tasks").select(
-                "id, external_task_id, client_task_id, user_id, conversation_id, "
-                "org_id, request_params, delivery_context, assistant_message_id"
-            ).eq(
-                field, message_id
-            ).eq("user_id", ctx.user_id).in_(
-                "status", ["pending", "running"]
-            )
-            if ctx.org_id:
-                q = q.eq("org_id", ctx.org_id)
-            else:
-                q = q.is_("org_id", "null")
-            result = q.execute()
-
-            if result.data:
-                from services.websocket_manager import ws_manager
-                from services.conversation_task import cancel_actor_task
-
-                cancelled_count = 0
-                for task in result.data:
-                    owner = classify_task_owner(task)
-                    if owner is TaskOwner.AMBIGUOUS:
-                        raise AppException(
-                            code="TASK_OWNER_MARKER_INVALID",
-                            message="任务归属标记异常，无法取消",
-                            status_code=409,
-                        )
-                    if owner is TaskOwner.RUNTIME:
-                        _request_runtime_task_cancel(db, task, ctx)
-                        anchor_message_id = task["assistant_message_id"]
-                    elif owner is TaskOwner.ACTOR:
-                        if not cancel_actor_task(
-                            db, task, ctx.user_id, ctx.org_id,
-                        ):
-                            continue
-                        anchor_message_id = message_id
-                    else:
-                        db.table("tasks").update({
-                            "status": "failed",
-                            "error_message": "用户取消了任务",
-                            "completed_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", task["id"]).execute()
-                        anchor_message_id = message_id
-
-                    # 向运行中的 Agent 循环发送取消信号 + 标记 WS 闸门
-                    # 闸门防止"工具鬼显"（旧 task 跑完后向已取消 task_id 推 WS）
-                    # 详见 docs/document/TECH_用户中断与恢复机制.md §四.5
-                    ext_id = (
-                        task.get("client_task_id")
-                        or task.get("external_task_id")
-                    )
-                    if ext_id:
-                        # Phase 2: 记录取消起始时刻，供 cancel.latency metric 计算
-                        from services.cancel_metrics import (
-                            mark_cancel_start,
-                            record_cancel_event,
-                        )
-                        mark_cancel_start(ext_id)
-                        record_cancel_event(ext_id, org_id=ctx.org_id)
-                        ws_manager.cancel_task(ext_id, org_id=ctx.org_id)
-
-                    # cancel 已持久终态后由本路径主动释放 Redis 槽位；
-                    # SREM 幂等，handler 再次释放也安全。
-                    await release_task_slot(task)
-                    _anchor_messages_immediately(
-                        db, anchor_message_id,
-                        conversation_id=task.get("conversation_id"),
-                    )
-                    cancelled_count += 1
-
-                    logger.info(
-                        f"Task cancelled by user | task_id={task['id']} | "
-                        f"ext={ext_id} | message_id={message_id} | user_id={ctx.user_id}"
-                    )
-
-                return {"success": True, "cancelled_count": cancelled_count}
-
-        return {"success": True, "cancelled_count": 0}
+        return await WebTaskCancelService(
+            db, user_id=ctx.user_id, org_id=ctx.org_id,
+            release_slot=release_task_slot,
+            anchor_message=_anchor_messages_immediately,
+        ).cancel_by_message(message_id)
     except (
         ValidationError,
         NotFoundError,
