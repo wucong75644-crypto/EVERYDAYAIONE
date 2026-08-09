@@ -183,6 +183,15 @@ Agent Runtime AR-18-A1.1 legacy lifecycle fence：
   失败关闭。Rollback 遇到非终态非 legacy-safe marker 时拒绝；Actor 排除与普通 legacy
   task 行为不变。
 
+Agent Runtime AR-18-A1.2-B1 atomic task cancel intent：
+- `backend/migrations/227_22_01～227_22_03` 建立 owner-only、FORCE RLS 的 durable
+  task cancel intent 与 Runtime-only v1 facade；固定 Session→submit Command→Command Claim
+  →Cancel Intent→Run→Task→既有 cancel helper 锁序。Cancel-first 原子创建并 CAS 绑定唯一
+  cancelled 根 Run；claim scanner 与 direct `create_agent_run` 均在 Run DML 前受 intent fence。
+- Request identity 使用 SHA-256、Session idempotency 与不可变 Task/Message/Command 绑定；
+  rollback 遇到任意 intent fact 失败关闭。当前未接 Web API 或 Provider cancel handoff，
+  production flags 保持关闭。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、

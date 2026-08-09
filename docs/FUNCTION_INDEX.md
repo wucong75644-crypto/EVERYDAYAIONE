@@ -81,7 +81,7 @@
 | `validate_transition` | `backend/services/agent/runtime/domain/transitions.py` | 对 Session、Run、ModelStep、Action 和 ActionAttempt 执行终态不可逆的状态转移校验 |
 | Repository / Model / Executor / Event / Projection ports | `backend/services/agent/runtime/ports/` | 定义 Runtime 领域与数据库、模型、执行器、事件存储和投影基础设施之间的反转边界 |
 | `ensure_agent_runtime_session` / `submit_session_command` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql` | runtime/WeCom 在精确 Actor/Org Scope 内幂等建立 Session、提交完整 request hash 的 Command |
-| `create_agent_run` / `claim_agent_run` / `renew_agent_run` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql` | Worker 为单个 Command 唯一创建 Run，并以 lease、execution token 和 attempt 执行 claim/续租 |
+| `create_agent_run` / `claim_agent_run` / `renew_agent_run` | `backend/migrations/213_agent_runtime_session_run_rpcs.sql`；`create_agent_run` 由 `227_22_02_agent_runtime_task_cancel_create_run_fence.sql` 收紧 | Worker 为单个 Command 唯一创建 Run，并以 lease、execution token 和 attempt 执行 claim/续租；direct root creation 在 Run DML 前锁查 task cancel intent |
 | `set_agent_run_waiting` / `wake_agent_run` / `complete_agent_run` / `fail_agent_run` / `cancel_agent_run` | `backend/migrations/214_agent_runtime_run_lifecycle_rpcs.sql` | 以 Session→Run 锁序、CAS、fencing 和终态内容冲突检查推进 Run 生命周期 |
 | `create_model_step` / `complete_model_step` / `fail_model_step` | `backend/migrations/215_agent_runtime_model_event_projection_rpcs.sql` | Worker 在有效 Run lease 内记录模型请求、Token 和确定性终态 |
 | `claim_agent_projection_outbox` / `complete_agent_projection_outbox` / `fail_agent_projection_outbox` | `backend/migrations/215_agent_runtime_model_event_projection_rpcs.sql` | 通过 `SKIP LOCKED`、lease token、checkpoint 幂等和有界退避消费投影 Outbox |
@@ -128,8 +128,10 @@
 | `CommandClaim` / `CommandClaimReceipt` / `CommandClaimRepositoryPort` | `backend/services/agent/runtime/ports/command_claim.py` | 定义pending Command领取、readback、续租和终态的typed应用边界 |
 | `PostgresCommandClaimRepository` | `backend/services/agent/runtime/infrastructure/postgres/command_claim_repository.py` | 通过Worker Scoped窄RPC执行Command claim，并在提交响应不确定时按worker与command精确readback |
 | `RuntimeCoordinator` | `backend/services/agent/runtime/application/coordinator.py` | 以PostgreSQL周期扫描和可选wakeup驱动单Command处理、续租、lease-lost取消与终态提交 |
-| `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql` | 按Session→Command→CommandClaim→Run锁序领取pending Command、原子确保唯一Run并关闭历史非执行状态 |
+| `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql`；claim 入口由 `227_22_03_agent_runtime_task_cancel_claim_fence.sql` 收紧 | 按 Session→Command→CommandClaim→CancelIntent→Run 锁序领取 pending Command；requested/applied cancel intent 在 `_ensure_agent_command_run` 前阻断根 Run DML |
 | `renew_agent_command_claim` / `finish_agent_command_claim` | `backend/migrations/219_02_agent_runtime_command_claim_lifecycle.sql` | 以CommandClaim fencing token续租或提交completed/failed终态，旧token和过期lease失败关闭 |
+| `request_agent_runtime_task_cancel_v1` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | Runtime-only 原子 task cancel facade：严格绑定 Task/Message/Session/submit Command 与 SHA-256 request identity；cancel-before-claim 创建唯一 cancelled 根 Run，已有 Run 委托 fenced `cancel_agent_run`，响应仅返回 outcome 与事实 ID |
+| `agent_runtime_task_cancel_intents` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | owner-only、FORCE RLS 的 durable requested/applied cancel facts；Task、submit Command 和 Session idempotency 唯一，触发器保护身份不可变 |
 
 ### Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate
 
