@@ -30,6 +30,16 @@ def _body(sql: str, name: str) -> str:
     return match.group(1)
 
 
+def _definition(sql: str, name: str) -> str:
+    match = re.search(
+        rf"CREATE(?: OR REPLACE)? FUNCTION {name}\b.*?\$\$;",
+        sql,
+        re.DOTALL,
+    )
+    assert match, name
+    return match.group(0)
+
+
 def _normalized_body(path: Path, name: str) -> str:
     return re.sub(r"\s+", "", _body(path.read_text(encoding="utf-8"), name))
 
@@ -63,6 +73,7 @@ def test_fact_table_is_durable_immutable_and_owner_only() -> None:
 def test_facade_lock_order_binding_hash_and_secret_free_response() -> None:
     sql = MIGRATIONS[0].read_text(encoding="utf-8")
     body = _body(sql, "request_agent_runtime_task_cancel_v1")
+    binding_body = _body(sql, "_assert_agent_runtime_task_cancel_binding")
     locks = (
         "FROM agent_runtime_sessions", "FROM agent_session_commands",
         "FROM agent_command_claims", "_lock_agent_runtime_task_cancel_intent",
@@ -70,21 +81,34 @@ def test_facade_lock_order_binding_hash_and_secret_free_response() -> None:
     )
     positions = [body.index(fragment) for fragment in locks]
     assert positions == sorted(positions)
+    assert positions[-1] < body.index("_assert_agent_runtime_task_cancel_binding")
+    assert body.index("_assert_agent_runtime_task_cancel_binding") < body.index(
+        "_agent_runtime_task_cancel_request_hash"
+    )
     for binding in (
         "assistant_message_id", "runtime_session_id", "runtime_command_id",
         "'{\"actor\":false,\"runtime\":true}'", "output_message_id",
-        "v_command.request_hash IS DISTINCT FROM md5", "tenant_org_id()",
-        "tenant_actor_user_id()", "v_session.scope_kind = 'user'",
-        "v_session.scope_kind = 'channel'", "member.status = 'active'",
+        "p_command.request_hash IS DISTINCT FROM md5", "tenant_org_id()",
+        "tenant_actor_user_id()", "p_session.scope_kind = 'user'",
+        "p_session.scope_kind = 'channel'", "member.status = 'active'",
         "v_intent.scope_user_id", "v_intent.requested_by_user_id",
     ):
-        assert binding in body
+        assert binding in binding_body or (
+            binding.startswith("v_intent.") and binding in body
+        )
+    assert "FOR UPDATE" not in binding_body
+    assert "_lock_agent_runtime_task_cancel_intent" not in binding_body
     hash_body = _body(sql, "_agent_runtime_task_cancel_request_hash")
     assert "scope_user_id" in hash_body
     assert "requested_by_user_id" in hash_body
     assert "payload" not in "".join(
         re.findall(r"jsonb_build_object\((.*?)\)", body, re.DOTALL)[-3:]
     )
+    for name in (
+        "request_agent_runtime_task_cancel_v1",
+        "_assert_agent_runtime_task_cancel_binding",
+    ):
+        assert len(_definition(sql, name).splitlines()) <= 120
 
 
 def test_all_production_root_run_entries_are_fenced() -> None:
@@ -113,11 +137,16 @@ def test_security_definer_search_path_and_acl_are_narrow() -> None:
     declarations = re.findall(
         r"CREATE(?: OR REPLACE)? FUNCTION .*?AS \$\$", sql, re.DOTALL,
     )
-    assert len(declarations) == 9
+    assert len(declarations) == 10
     for declaration in declarations:
         assert "SECURITY DEFINER" in declaration or "SECURITY INVOKER" in declaration
         assert "search_path = pg_catalog, public" in declaration
     assert "TO everydayai_runtime, everydayai_wecom_runtime;" in sql
+    assert "_assert_agent_runtime_task_cancel_binding" in sql
+    assert not re.search(
+        r"GRANT EXECUTE ON FUNCTION\s+_assert_agent_runtime_task_cancel_binding",
+        sql,
+    )
     assert "claim_pending_agent_command_and_ensure_run" in sql
     assert "TO everydayai_agent_runtime_worker;" in sql
 
@@ -136,6 +165,10 @@ def test_rollbacks_guard_facts_and_restore_exact_function_bodies() -> None:
     )
     for rollback, name, original in comparisons:
         assert _normalized_body(rollback, name) == _normalized_body(original, name)
+    first = ROLLBACKS[0].read_text(encoding="utf-8")
+    assert first.index("DROP FUNCTION request_agent_runtime_task_cancel_v1") < first.index(
+        "DROP FUNCTION _assert_agent_runtime_task_cancel_binding"
+    ) < first.index("DROP FUNCTION _apply_agent_runtime_task_cancel_intent")
 
 
 def test_lane_does_not_enable_production_or_expand_scope() -> None:

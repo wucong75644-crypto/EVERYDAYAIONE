@@ -196,6 +196,86 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION _assert_agent_runtime_task_cancel_binding(
+    p_session agent_runtime_sessions, p_command agent_session_commands,
+    p_task tasks, p_task_id UUID, p_message_id UUID, p_org_id UUID,
+    p_requested_by_user_id UUID, p_session_id UUID, p_submit_command_id UUID
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_conversation conversations%ROWTYPE;
+BEGIN
+    SELECT * INTO v_conversation FROM conversations
+     WHERE id = p_task.conversation_id;
+    IF p_session.id IS NULL OR p_command.id IS NULL OR p_task.id IS NULL
+       OR v_conversation.id IS NULL
+       OR p_session.conversation_id IS DISTINCT FROM p_task.conversation_id
+       OR p_session.org_id IS DISTINCT FROM p_org_id
+       OR p_command.org_id IS DISTINCT FROM p_org_id
+       OR p_command.user_id IS DISTINCT FROM p_session.user_id
+       OR v_conversation.org_id IS DISTINCT FROM p_org_id
+       OR v_conversation.scope_type IS DISTINCT FROM p_session.scope_kind
+       OR v_conversation.scope_id IS DISTINCT FROM p_session.scope_id
+       OR p_session.scope_kind NOT IN ('user', 'channel')
+       OR (
+            p_session.scope_kind = 'user'
+            AND (
+                p_session.user_id IS DISTINCT FROM p_requested_by_user_id
+                OR v_conversation.user_id IS DISTINCT FROM p_requested_by_user_id
+            )
+       )
+       OR (
+            p_session.scope_kind = 'channel'
+            AND (
+                p_session.user_id IS NOT NULL
+                OR p_command.user_id IS NOT NULL
+                OR v_conversation.user_id IS NOT NULL
+                OR p_org_id IS NULL
+                OR NOT EXISTS (
+                    SELECT 1
+                      FROM org_members member
+                      JOIN organizations organization
+                        ON organization.id = member.org_id
+                     WHERE member.org_id = p_org_id
+                       AND member.user_id = p_requested_by_user_id
+                       AND member.status = 'active'
+                       AND organization.status = 'active'
+                )
+            )
+       )
+       OR p_command.command_type IS DISTINCT FROM 'submit_input'
+       OR p_command.request_hash IS DISTINCT FROM md5(jsonb_build_object(
+            'command_type', p_command.command_type,
+            'payload', p_command.payload
+       )::TEXT)
+       OR p_task.org_id IS DISTINCT FROM p_org_id
+       OR p_task.user_id IS DISTINCT FROM p_requested_by_user_id
+       OR p_task.assistant_message_id IS DISTINCT FROM p_message_id
+       OR p_task.delivery_context->>'runtime_session_id'
+            IS DISTINCT FROM p_session_id::TEXT
+       OR p_task.delivery_context->>'runtime_command_id'
+            IS DISTINCT FROM p_submit_command_id::TEXT
+       OR NOT (p_task.delivery_context @> '{"actor":false,"runtime":true}'::JSONB)
+       OR p_command.payload->>'task_id' IS DISTINCT FROM p_task_id::TEXT
+       OR p_command.payload->>'output_message_id' IS DISTINCT FROM p_message_id::TEXT
+       OR NOT EXISTS (
+            SELECT 1 FROM users requested_by
+             WHERE requested_by.id = p_requested_by_user_id
+               AND requested_by.status::TEXT = 'active'
+       )
+       OR NOT EXISTS (
+            SELECT 1 FROM messages message
+             WHERE message.id = p_message_id
+               AND message.conversation_id = p_task.conversation_id
+               AND message.org_id IS NOT DISTINCT FROM p_org_id
+       )
+       OR tenant_org_id() IS DISTINCT FROM p_org_id
+       OR tenant_actor_user_id() IS DISTINCT FROM p_requested_by_user_id THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_TASK_CANCEL_BINDING_MISMATCH'
+            USING ERRCODE = '42501';
+    END IF;
+END;
+$$;
+
 CREATE FUNCTION request_agent_runtime_task_cancel_v1(
     p_task_id UUID, p_message_id UUID, p_org_id UUID, p_user_id UUID,
     p_session_id UUID, p_submit_command_id UUID,
@@ -209,7 +289,6 @@ DECLARE
     v_intent agent_runtime_task_cancel_intents%ROWTYPE;
     v_run agent_runs%ROWTYPE;
     v_task tasks%ROWTYPE;
-    v_conversation conversations%ROWTYPE;
     v_hash TEXT;
 BEGIN
     PERFORM _assert_agent_runtime_actor(FALSE);
@@ -233,77 +312,9 @@ BEGIN
          WHERE id = v_command.result_entity_id FOR UPDATE;
     END IF;
     SELECT * INTO v_task FROM tasks WHERE id = p_task_id FOR UPDATE;
-    IF v_task.id IS NOT NULL THEN
-        SELECT * INTO v_conversation FROM conversations
-         WHERE id = v_task.conversation_id;
-    END IF;
-    IF v_session.id IS NULL OR v_command.id IS NULL OR v_task.id IS NULL
-       OR v_conversation.id IS NULL
-       OR v_session.conversation_id IS DISTINCT FROM v_task.conversation_id
-       OR v_session.org_id IS DISTINCT FROM p_org_id
-       OR v_command.org_id IS DISTINCT FROM p_org_id
-       OR v_command.user_id IS DISTINCT FROM v_session.user_id
-       OR v_conversation.org_id IS DISTINCT FROM p_org_id
-       OR v_conversation.scope_type IS DISTINCT FROM v_session.scope_kind
-       OR v_conversation.scope_id IS DISTINCT FROM v_session.scope_id
-       OR v_session.scope_kind NOT IN ('user', 'channel')
-       OR (
-            v_session.scope_kind = 'user'
-            AND (
-                v_session.user_id IS DISTINCT FROM p_user_id
-                OR v_conversation.user_id IS DISTINCT FROM p_user_id
-            )
-       )
-       OR (
-            v_session.scope_kind = 'channel'
-            AND (
-                v_session.user_id IS NOT NULL
-                OR v_command.user_id IS NOT NULL
-                OR v_conversation.user_id IS NOT NULL
-                OR p_org_id IS NULL
-                OR NOT EXISTS (
-                    SELECT 1
-                      FROM org_members member
-                      JOIN organizations organization
-                        ON organization.id = member.org_id
-                     WHERE member.org_id = p_org_id
-                       AND member.user_id = p_user_id
-                       AND member.status = 'active'
-                       AND organization.status = 'active'
-                )
-            )
-       )
-       OR v_command.command_type IS DISTINCT FROM 'submit_input'
-       OR v_command.request_hash IS DISTINCT FROM md5(jsonb_build_object(
-            'command_type', v_command.command_type,
-            'payload', v_command.payload
-       )::TEXT)
-       OR v_task.org_id IS DISTINCT FROM p_org_id
-       OR v_task.user_id IS DISTINCT FROM p_user_id
-       OR v_task.assistant_message_id IS DISTINCT FROM p_message_id
-       OR v_task.delivery_context->>'runtime_session_id'
-            IS DISTINCT FROM p_session_id::TEXT
-       OR v_task.delivery_context->>'runtime_command_id'
-            IS DISTINCT FROM p_submit_command_id::TEXT
-       OR NOT (v_task.delivery_context @> '{"actor":false,"runtime":true}'::JSONB)
-       OR v_command.payload->>'task_id' IS DISTINCT FROM p_task_id::TEXT
-       OR v_command.payload->>'output_message_id' IS DISTINCT FROM p_message_id::TEXT
-       OR NOT EXISTS (
-            SELECT 1 FROM users requested_by
-             WHERE requested_by.id = p_user_id
-               AND requested_by.status::TEXT = 'active'
-       )
-       OR NOT EXISTS (
-            SELECT 1 FROM messages message
-             WHERE message.id = p_message_id
-               AND message.conversation_id = v_task.conversation_id
-               AND message.org_id IS NOT DISTINCT FROM p_org_id
-       )
-       OR tenant_org_id() IS DISTINCT FROM p_org_id
-       OR tenant_actor_user_id() IS DISTINCT FROM p_user_id THEN
-        RAISE EXCEPTION 'AGENT_RUNTIME_TASK_CANCEL_BINDING_MISMATCH'
-            USING ERRCODE = '42501';
-    END IF;
+    PERFORM _assert_agent_runtime_task_cancel_binding(
+        v_session, v_command, v_task, p_task_id, p_message_id, p_org_id,
+        p_user_id, p_session_id, p_submit_command_id);
     v_hash := _agent_runtime_task_cancel_request_hash(
         p_task_id, p_message_id, p_org_id, v_session.user_id, p_user_id,
         p_session_id, p_submit_command_id, p_idempotency_key);
@@ -356,6 +367,9 @@ REVOKE ALL ON FUNCTION
     _apply_agent_runtime_task_cancel_intent(
         agent_runtime_task_cancel_intents, agent_runtime_sessions,
         agent_session_commands, agent_runs),
+    _assert_agent_runtime_task_cancel_binding(
+        agent_runtime_sessions,agent_session_commands,tasks,
+        UUID,UUID,UUID,UUID,UUID,UUID),
     request_agent_runtime_task_cancel_v1(
         UUID,UUID,UUID,UUID,UUID,UUID,TEXT,TEXT)
 FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,

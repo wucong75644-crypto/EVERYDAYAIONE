@@ -12,6 +12,9 @@ $$;
 
 DROP FUNCTION request_agent_runtime_task_cancel_v1(
     UUID,UUID,UUID,UUID,UUID,UUID,TEXT,TEXT);
+DROP FUNCTION _assert_agent_runtime_task_cancel_binding(
+    agent_runtime_sessions,agent_session_commands,tasks,
+    UUID,UUID,UUID,UUID,UUID,UUID);
 DROP FUNCTION _apply_agent_runtime_task_cancel_intent(
     agent_runtime_task_cancel_intents, agent_runtime_sessions,
     agent_session_commands, agent_runs);

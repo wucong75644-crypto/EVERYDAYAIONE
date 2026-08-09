@@ -131,6 +131,7 @@
 | `claim_pending_agent_command_and_ensure_run` / `get_agent_command_run_claim` | `backend/migrations/219_02a_agent_runtime_command_claim_terminal_compatibility.sql`；claim 入口由 `227_22_03_agent_runtime_task_cancel_claim_fence.sql` 收紧 | 按 Session→Command→CommandClaim→CancelIntent→Run 锁序领取 pending Command；requested/applied cancel intent 在 `_ensure_agent_command_run` 前阻断根 Run DML |
 | `renew_agent_command_claim` / `finish_agent_command_claim` | `backend/migrations/219_02_agent_runtime_command_claim_lifecycle.sql` | 以CommandClaim fencing token续租或提交completed/failed终态，旧token和过期lease失败关闭 |
 | `request_agent_runtime_task_cancel_v1` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | Runtime/WeCom Runtime 原子 task cancel facade：严格区分 nullable scope user 与非空 requester，并按 user/channel scope 绑定 Task/Message/Conversation/Session/submit Command；cancel-before-claim 创建唯一 cancelled 根 Run，已有 Run 委托 fenced `cancel_agent_run` |
+| `_assert_agent_runtime_task_cancel_binding` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | 仅消费 facade 已锁定的 Session/Command/Task row，按 user/channel scope 验证 Conversation、requester、Message 与 Runtime marker；不重新获取行锁且不授予外部角色 |
 | `agent_runtime_task_cancel_intents` | `backend/migrations/227_22_01_agent_runtime_task_cancel_intent.sql` | owner-only、FORCE RLS 的 durable requested/applied cancel facts；scope user、requester 与 SHA-256 request identity 不可变，Task、submit Command 和 Session idempotency 唯一 |
 
 ### Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate
