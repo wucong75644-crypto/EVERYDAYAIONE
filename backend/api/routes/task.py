@@ -19,6 +19,16 @@ from core.exceptions import (
     PermissionDeniedError,
 )
 from core.limiter import limiter
+from services.agent.runtime.infrastructure.postgres.task_cancel_repository import (
+    PostgresRuntimeTaskCancelRepository,
+)
+from services.agent.runtime.task_cancel import (
+    RuntimeTaskCancelConflict,
+    RuntimeTaskCancelService,
+    RuntimeTaskCancelUnavailable,
+    TaskOwner,
+    classify_task_owner,
+)
 from services.task_limit_service import release_task_slot
 
 
@@ -256,6 +266,27 @@ def _anchor_messages_immediately(
         )
 
 
+def _request_runtime_task_cancel(
+    db: ScopedDB, task: Dict[str, Any], ctx: OrgCtx,
+) -> None:
+    try:
+        RuntimeTaskCancelService(
+            PostgresRuntimeTaskCancelRepository(db),
+        ).cancel_task(task, user_id=ctx.user_id, org_id=ctx.org_id)
+    except RuntimeTaskCancelConflict:
+        raise AppException(
+            code="RUNTIME_TASK_CANCEL_CONFLICT",
+            message="任务状态已变化，无法取消",
+            status_code=409,
+        ) from None
+    except RuntimeTaskCancelUnavailable:
+        raise AppException(
+            code="RUNTIME_TASK_CANCEL_UNAVAILABLE",
+            message="取消结果暂时无法确认，请稍后重试",
+            status_code=503,
+        ) from None
+
+
 @router.post("/cancel-by-message/{message_id}", summary="通过消息ID取消关联任务")
 @limiter.limit("60/minute")
 async def cancel_task_by_message_id(
@@ -275,7 +306,7 @@ async def cancel_task_by_message_id(
         for field in ("placeholder_message_id", "assistant_message_id"):
             q = db.table("tasks").select(
                 "id, external_task_id, client_task_id, user_id, conversation_id, "
-                "org_id, request_params, delivery_context"
+                "org_id, request_params, delivery_context, assistant_message_id"
             ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
@@ -289,24 +320,33 @@ async def cancel_task_by_message_id(
 
             if result.data:
                 from services.websocket_manager import ws_manager
-                from services.conversation_task import (
-                    cancel_actor_task,
-                    is_actor_task,
-                )
+                from services.conversation_task import cancel_actor_task
 
+                cancelled_count = 0
                 for task in result.data:
-                    actor_task = is_actor_task(task)
-                    if actor_task:
+                    owner = classify_task_owner(task)
+                    if owner is TaskOwner.AMBIGUOUS:
+                        raise AppException(
+                            code="TASK_OWNER_MARKER_INVALID",
+                            message="任务归属标记异常，无法取消",
+                            status_code=409,
+                        )
+                    if owner is TaskOwner.RUNTIME:
+                        _request_runtime_task_cancel(db, task, ctx)
+                        anchor_message_id = task["assistant_message_id"]
+                    elif owner is TaskOwner.ACTOR:
                         if not cancel_actor_task(
                             db, task, ctx.user_id, ctx.org_id,
                         ):
                             continue
+                        anchor_message_id = message_id
                     else:
                         db.table("tasks").update({
                             "status": "failed",
                             "error_message": "用户取消了任务",
                             "completed_at": datetime.now(timezone.utc).isoformat(),
                         }).eq("id", task["id"]).execute()
+                        anchor_message_id = message_id
 
                     # 向运行中的 Agent 循环发送取消信号 + 标记 WS 闸门
                     # 闸门防止"工具鬼显"（旧 task 跑完后向已取消 task_id 推 WS）
@@ -325,25 +365,21 @@ async def cancel_task_by_message_id(
                         record_cancel_event(ext_id, org_id=ctx.org_id)
                         ws_manager.cancel_task(ext_id, org_id=ctx.org_id)
 
-                    # 直接 UPDATE 改 task 终态后，webhook/worker 都会因状态检查跳过 release，
-                    # 必须由 cancel 路径主动释放 Redis 槽位（SREM 幂等，handler 再次释放也安全）
+                    # cancel 已持久终态后由本路径主动释放 Redis 槽位；
+                    # SREM 幂等，handler 再次释放也安全。
                     await release_task_slot(task)
+                    _anchor_messages_immediately(
+                        db, anchor_message_id,
+                        conversation_id=task.get("conversation_id"),
+                    )
+                    cancelled_count += 1
 
                     logger.info(
                         f"Task cancelled by user | task_id={task['id']} | "
                         f"ext={ext_id} | message_id={message_id} | user_id={ctx.user_id}"
                     )
 
-                # 立即同步落锚 messages 表：marker + tool_step cancelled + status='interrupted'
-                # 防止 race condition：用户在 chat_handler 后台落锚前发"继续"，
-                # 导致 history_loader 检测不到 interrupt_marker → LLM 失忆。
-                # 传 conversation_id 让 _anchor 在 message 不存在时（chat lazy 创建）
-                # 主动创建 stub。
-                # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
-                _conv_id = result.data[0].get("conversation_id") if result.data else None
-                _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
-
-                return {"success": True, "cancelled_count": len(result.data)}
+                return {"success": True, "cancelled_count": cancelled_count}
 
         return {"success": True, "cancelled_count": 0}
     except (
@@ -386,7 +422,7 @@ async def mark_task_failed(
     try:
         # 验证任务属于当前用户 + org 隔离
         q = db.table("tasks").select(
-            "id, user_id, conversation_id, org_id, request_params"
+            "id, user_id, conversation_id, org_id, request_params, delivery_context"
         ).eq(
             "external_task_id", external_task_id
         ).eq("user_id", ctx.user_id)
@@ -398,6 +434,15 @@ async def mark_task_failed(
 
         if not task.data:
             raise NotFoundError(resource="任务", resource_id=external_task_id)
+
+        if classify_task_owner(task.data) in {
+            TaskOwner.RUNTIME, TaskOwner.AMBIGUOUS,
+        }:
+            raise AppException(
+                code="RUNTIME_TASK_MANUAL_FAIL_FORBIDDEN",
+                message="Runtime 任务不允许手动标记失败",
+                status_code=409,
+            )
 
         # 更新状态（带 user_id 过滤防越权）
         db.table("tasks").update({
