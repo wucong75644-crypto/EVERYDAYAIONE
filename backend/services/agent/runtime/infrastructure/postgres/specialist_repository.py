@@ -9,6 +9,10 @@ from typing import Any, Mapping
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
 from services.agent.runtime.executors.specialist_contracts import CostReservation
 from services.agent.runtime.executors.contracts import canonical_json
+from services.agent.runtime.scheduler_cas import (
+    PostgresSchedulerControlStore,
+    scheduler_control_result,
+)
 
 
 class SpecialistRpcError(RuntimeError):
@@ -33,6 +37,7 @@ class PostgresSpecialistRepository:
         if scope is None or scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
             raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
         self._database = database
+        self._scheduler_control = PostgresSchedulerControlStore(database)
 
     async def _rpc(self, name: str, params: Mapping[str, object], *, allowed: set[str]) -> Mapping[str, object]:
         payload = (await self._database.rpc(name, dict(params)).execute()).data
@@ -163,12 +168,69 @@ class PostgresSpecialistRepository:
         )
 
     async def mutate_resource(self, operation: str, **params: object) -> object:
-        names = {"file_delete": "runtime_delete_workspace_resource", "restore_file": "runtime_restore_workspace_resource", "manage_scheduled_task": "runtime_mutate_scheduled_task"}
+        if operation == "manage_scheduled_task":
+            attempt = params.pop("_attempt", None)
+            if attempt is None:
+                raise ValueError("SCHEDULER_ATTEMPT_REQUIRED")
+            result = await self.mutate_scheduler_task(
+                attempt=attempt,
+                task_id=str(params["p_task_id"]),
+                expected_version=int(params["p_expected_state_version"]),
+                operation=str(params["p_operation"]),
+                payload=dict(params.get("p_payload", {})),
+                dispatch_intent_id=str(params["p_dispatch_intent_id"]),
+                attempt_state_version=int(params["p_attempt_state_version"]),
+            )
+            return result
+        names = {"file_delete": "runtime_delete_workspace_resource", "restore_file": "runtime_restore_workspace_resource"}
         if operation not in names:
             raise ValueError("SPECIALIST_RESOURCE_OPERATION_INVALID")
         if "p_execution_token" not in params:
             raise ValueError("SPECIALIST_FENCING_TOKEN_REQUIRED")
         return await self._rpc(names[operation], params, allowed={"bound", "updated"})
+
+    async def mutate_scheduler_task(
+        self, *, attempt: object, task_id: str, expected_version: int,
+        operation: str, payload: Mapping[str, object], dispatch_intent_id: str,
+        attempt_state_version: int,
+    ) -> Mapping[str, object]:
+        response = await self._scheduler_control.mutate(
+            attempt=attempt, task_id=task_id, expected_version=expected_version,
+            operation=operation, payload=payload,
+            dispatch_intent_id=dispatch_intent_id,
+            attempt_state_version=attempt_state_version,
+        )
+        return scheduler_control_result(response)
+
+    async def readback_scheduler_task(
+        self, *, attempt: object, ownership_token: str,
+        expected_state_version: int,
+    ) -> Mapping[str, object]:
+        return scheduler_control_result(await self._scheduler_control.readback(
+            attempt=attempt, idempotency_key=str(attempt.idempotency_key),
+            ownership_token=ownership_token,
+            expected_state_version=expected_state_version,
+        ))
+
+    async def cancel_scheduler_task(
+        self, *, attempt: object, reason: str, ownership_token: str,
+        expected_state_version: int,
+    ) -> Mapping[str, object]:
+        return scheduler_control_result(await self._scheduler_control.cancel(
+            attempt=attempt, idempotency_key=str(attempt.idempotency_key), reason=reason,
+            ownership_token=ownership_token,
+            expected_state_version=expected_state_version,
+        ))
+
+    async def reconcile_scheduler_task(
+        self, *, attempt: object, ownership_token: str,
+        expected_state_version: int,
+    ) -> Mapping[str, object]:
+        return scheduler_control_result(await self._scheduler_control.reconcile(
+            attempt=attempt, idempotency_key=str(attempt.idempotency_key),
+            ownership_token=ownership_token,
+            expected_state_version=expected_state_version,
+        ))
 
     async def finalize(
         self, *, attempt_id: str, execution_token: str | None,

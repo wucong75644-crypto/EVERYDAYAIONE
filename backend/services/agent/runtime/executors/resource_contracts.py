@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Mapping, Protocol
+from uuid import NAMESPACE_URL, uuid5
 
 from services.agent.runtime.executors.materializer import ArtifactMaterializer
 from services.agent.runtime.executors.resource_support import (
@@ -25,6 +26,7 @@ from services.agent.runtime.executors.resource_support import (
     sync_idempotency_key as _sync_idempotency_key,
     sync_submission_from_facts as _sync_submission_from_facts,
 )
+from services.agent.runtime.executors import scheduler_service_support
 
 
 class ObjectStore(Protocol):
@@ -221,14 +223,11 @@ class ScheduledTaskService:
     facts: object | None = None
 
     async def mutate(self, task_id: str, expected_version: int, operation: str, payload: Mapping[str, object]) -> Mapping[str, object]:
-        if operation not in {"create", "update", "delete", "pause", "resume", "list"}:
-            raise ValueError("SCHEDULED_OPERATION_INVALID")
-        attempt = payload.get("_attempt")
-        if self.facts is not None and attempt is not None:
-            bound = await self.facts.mutate_resource("manage_scheduled_task", **_resource_params(attempt, operation, task_id, payload, expected_version))
-            _require_bound(bound)
-        result = await self.store.cas(task_id, expected_version, operation, payload)
-        return result
+        return await scheduler_service_support.mutate_scheduler_service(self, task_id, expected_version, operation, payload)
+    async def reconcile(self, attempt: object, receipt: Mapping[str, object]) -> Mapping[str, object]:
+        return await scheduler_service_support.reconcile_scheduler_service(self, attempt, receipt)
+    async def cancel(self, attempt: object, receipt: Mapping[str, object]) -> Mapping[str, object]:
+        return await scheduler_service_support.cancel_scheduler_service(self, attempt, receipt)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -463,8 +462,13 @@ class RuntimeResourceMutationService:
         if operation == "restore_file":
             return await self.workspace.restore(str(request["resource_id"]), str(request["relative_path"]), str(request["oss_key"]), attempt=attempt)
         if operation == "manage_scheduled_task":
+            task_id = request.get("task_id")
+            if task_id is None and request.get("operation") == "create":
+                task_id = str(uuid5(NAMESPACE_URL, f"everydayai:scheduler:{attempt.action_id}"))
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError("SCHEDULED_TASK_ID_REQUIRED")
             return await self.scheduler.mutate(
-                str(request["task_id"]), int(request["state_version"]),
+                task_id, int(request.get("state_version", 0)),
                 str(request["operation"]), {**request, "_attempt": attempt},
             )
         if operation == "trigger_erp_sync" and self.sync is not None:
@@ -479,6 +483,18 @@ class RuntimeResourceMutationService:
             result = {"state": "completed", "submission": submitted, "progress": progress, "apply": applied, "checkpoint": checkpoint}
             return result
         raise ValueError("RUNTIME_RESOURCE_OPERATION_INVALID")
+
+    async def reconcile(self, attempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]:
+        if operation == "manage_scheduled_task":
+            return await self.scheduler.reconcile(attempt, receipt)
+        if operation == "trigger_erp_sync" and self.sync is not None and hasattr(self.sync, "reconcile"):
+            return await self.sync.reconcile(attempt, receipt, operation=operation)
+        return {"state": "unknown", "evidence": {"error_code": "RUNTIME_RESOURCE_RECONCILE_NOT_READY"}}
+
+    async def cancel(self, attempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]:
+        if operation == "manage_scheduled_task":
+            return await self.scheduler.cancel(attempt, receipt)
+        return {"state": "unknown", "evidence": {"error_code": "RUNTIME_RESOURCE_CANCEL_NOT_READY"}}
 
 
 __all__ = ["ChildRunService", "ContentAddressedArtifactService", "ErpSyncService", "FetchAllPagesService", "FileAnalyzeService", "LocalDataService", "ObjectStore", "RuntimeResourceMutationService", "ScheduledTaskService", "SchedulerStore", "WorkspaceResourceService"]

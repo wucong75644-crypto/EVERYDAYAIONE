@@ -103,6 +103,8 @@ class ResourceMutationPort(Protocol):
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
 
+    async def cancel(self, attempt: ActionAttempt, receipt: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
+
 
 class ChildRunPort(Protocol):
     async def create(self, attempt: ActionAttempt, request: Mapping[str, object]) -> Mapping[str, object]: ...
@@ -328,6 +330,11 @@ class PortBackedProvider(SpecialistProvider):
     operation: str
     provider: str
 
+    @property
+    def requires_dispatch_context(self) -> bool:
+        """Only the Runtime-owned Scheduler port receives gate metadata."""
+        return self.provider == "scheduler"
+
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
         if self.provider == "media":
             result = await self.port.prepare(attempt, {**request, "idempotency_key": idempotency_key}, kind=self.operation)  # type: ignore[attr-defined]
@@ -338,6 +345,10 @@ class PortBackedProvider(SpecialistProvider):
         return ProviderReceipt(state=ProviderState(str(result.get("state", "completed"))), provider=self.provider, request_hash=attempt.request_hash, provider_task_ref=_text(result.get("provider_task_ref")), result=result, evidence=_object(result.get("evidence")))
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        if self.provider == "scheduler" and hasattr(self.port, "reconcile"):
+            result = await self.port.reconcile(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
+            if isinstance(result, Mapping):
+                return ProviderReceipt(state=ProviderState(str(result.get("state", "unknown"))), provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence=_object(result.get("evidence")))
         if self.provider == "erp_sync" and hasattr(self.port, "reconcile"):
             result = await self.port.reconcile(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
             if isinstance(result, Mapping):
@@ -349,6 +360,10 @@ class PortBackedProvider(SpecialistProvider):
         return _unknown(self.provider, attempt.request_hash, "PORT_RECONCILE_UNAVAILABLE")
 
     async def cancel(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
+        if self.provider == "scheduler" and hasattr(self.port, "cancel"):
+            result = await self.port.cancel(attempt, receipt, operation=self.operation)  # type: ignore[attr-defined]
+            if isinstance(result, Mapping):
+                return ProviderReceipt(state=ProviderState(str(result.get("state", "unknown"))), provider=self.provider, request_hash=attempt.request_hash, result=dict(result), evidence=_object(result.get("evidence")))
         if self.provider == "child_run" and hasattr(self.port, "cancel"):
             result = await self.port.cancel(attempt, receipt)  # type: ignore[attr-defined]
             if isinstance(result, Mapping) and result.get("state") == "cancelled" and result.get("fencing_confirmed") is True:

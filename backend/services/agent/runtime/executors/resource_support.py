@@ -97,7 +97,17 @@ async def checkpoint_fact(facts: object | None, attempt: object, result: Mapping
 def resource_params(attempt: object, operation: str, resource_id: str, payload: Mapping[str, object] | None = None, expected_version: int = 0) -> dict[str, object]:
     params = {"p_action_id": str(attempt.action_id), "p_attempt_id": str(attempt.attempt_id), "p_request_hash": str(attempt.request_hash), "p_idempotency_key": str(attempt.idempotency_key), "p_execution_token": str(attempt.lease.fencing_token)}
     if operation == "manage_scheduled_task":
-        params.update({"p_task_id": resource_id, "p_expected_state_version": expected_version, "p_payload": dict(payload or {})})
+        request = payload or {}
+        dispatch_context = request.get("_dispatch_context")
+        dispatch_context = dispatch_context if isinstance(dispatch_context, Mapping) else {}
+        actual_payload = request.get("payload")
+        params.update({
+            "p_task_id": resource_id,
+            "p_expected_state_version": expected_version,
+            "p_attempt_state_version": int(dispatch_context.get("expected_attempt_version", 0)),
+            "p_dispatch_intent_id": str(dispatch_context.get("dispatch_intent_id", "")),
+            "p_payload": dict(actual_payload) if isinstance(actual_payload, Mapping) else dict(request),
+        })
     else:
         params["p_deleted_file_id"] = int(resource_id)
     return params

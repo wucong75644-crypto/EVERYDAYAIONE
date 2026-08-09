@@ -1844,6 +1844,20 @@ cache = client.caches.create(
   - Workspace 删除前验证 OSS retention，恢复按稳定资源 ID 使用隔离暂存和原子 rename
   - ERP action 只接受 `services.kuaimai.registry.TOOL_REGISTRIES` 正式条目；`erp_api_search` 保持本地文档搜索
   - Provider status/cancel 无证明时保持 unknown；Callback 唯一入口拒绝旧 boolean 验签绕过
+
+- **2026-08-09**：AR-18 B7-S1 Scheduler 控制面（仅非生产）
+  - 新增 `backend/migrations/227_28_agent_runtime_scheduler_control.sql` 及精确 rollback：复用既有
+    `scheduled_tasks`，以不可变 operation intent/receipt 和单一 Runtime worker RPC 原子完成
+    create/update/pause/resume/delete，包含 tenant/session/run/action/attempt、PolicyReceipt、
+    DispatchIntent、request hash、execution token、kill epoch/revision、幂等和 CAS 栅栏。
+  - `PostgresSchedulerControlStore`、`ScheduledTaskService` 和 `PortBackedProvider` 接入
+    readback/cancel/reconcile 与 committed/unknown/cancelled 状态映射；旧 Scanner、
+    ScheduledTaskAgent、ToolLoop、投递/计费/Provider 业务链路未切换，production readiness 仍为 false。
+  - 新入口沿用现有组织职位/部门权限和 push target 租户边界；未配置业务权限的 `other`
+    部门失败关闭。调度定义变更必须原子携带已校验时区和重新计算的 `next_run_at`，避免
+    Scanner 继续读取旧执行时间。
+  - Scheduler payload normalization 与 service orchestration 分别位于
+    `scheduler_control_payload.py`、`scheduler_service_support.py`，沿用既有 cron/once 定义语义。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

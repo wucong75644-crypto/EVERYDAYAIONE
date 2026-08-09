@@ -77,6 +77,17 @@ async def _settle_specialist(
     driver, snapshot, receipt, token, state_version, *, child_run: bool,
 ) -> None:
     raw_attempt = snapshot.attempt
+    if receipt.outcome is ExecutionOutcome.COMPLETED:
+        finalized = await driver._try_specialist_finalize(
+            receipt, attempt_id=str(raw_attempt["id"]), token=token,
+            state_version=state_version,
+            request_hash=str(raw_attempt["request_hash"]),
+            reconciliation=True, reserved_amount=reserved_amount(snapshot),
+            specialist=True,
+        )
+        if not finalized:
+            raise RuntimeError("SPECIALIST_COMMITTED_BEFORE_CANCEL_FINALIZE_REQUIRED")
+        return
     if receipt.outcome is ExecutionOutcome.CANCELLED:
         if child_run:
             await _settle_child_cancel(

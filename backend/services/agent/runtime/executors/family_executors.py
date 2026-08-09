@@ -86,8 +86,10 @@ class ScheduledTaskExecutor(FamilyExecutor):
     def validate_request(self, request):
         super().validate_request(request)
         operation = request.get("operation")
-        if operation not in {"create", "update", "delete", "pause", "resume", "list"}:
+        if operation not in {"create", "update", "delete", "pause", "resume"}:
             raise ValueError("SCHEDULED_OPERATION_INVALID")
+        if operation != "create" and not isinstance(request.get("task_id"), str):
+            raise ValueError("SCHEDULED_TASK_ID_REQUIRED")
         if operation in {"update", "delete", "pause", "resume"} and "state_version" not in request:
             raise ValueError("SCHEDULED_STATE_VERSION_REQUIRED")
 
