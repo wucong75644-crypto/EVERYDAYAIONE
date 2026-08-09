@@ -114,6 +114,16 @@ def _snapshot(row: Mapping[str, object]) -> SandboxJobSnapshot:
             if row.get("stderr_summary") is not None else None
         ),
         cleanup_deadline_at=_optional_time(row, "cleanup_deadline_at"),
+        cancel_requested_at=_optional_time(row, "cancel_requested_at"),
+        cancel_accepted_at=_optional_time(row, "cancel_accepted_at"),
+        cancel_confirmed_at=_optional_time(row, "cancel_confirmed_at"),
+        receipt_hash=(
+            require_text(row, "receipt_hash")
+            if row.get("receipt_hash") is not None else None
+        ),
+        cleanup_evidence=require_json_object(row, "cleanup_evidence"),
+        starting_at=_optional_time(row, "starting_at"),
+        started_at=_optional_time(row, "started_at"),
     )
 
 

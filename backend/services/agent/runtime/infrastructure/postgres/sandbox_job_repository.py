@@ -81,6 +81,13 @@ class PostgresSandboxJobRepository:
             },
         )
 
+    async def claim_cancel(
+        self, *, worker_id: str, lease_seconds: int = 60,
+    ) -> SandboxJobReceipt:
+        return await self._worker("claim_next_sandbox_cancel_v1", {
+            "p_worker_id": worker_id, "p_lease_seconds": lease_seconds,
+        })
+
     async def claim_next_reconciliation(
         self, *, worker_id: str, lease_seconds: int = 60,
     ) -> SandboxJobReceipt:
@@ -114,6 +121,14 @@ class PostgresSandboxJobRepository:
         return await self._rpc("request_sandbox_job_cancel", {
             "p_job_id": job_id, "p_expected_version": expected_version,
         }, DatabaseAccessKind.AGENT_RUNTIME)
+
+    async def request_runtime_cancel(self, **values: object) -> SandboxJobReceipt:
+        return await self._runtime(
+            "request_agent_runtime_sandbox_cancel_v1", values, (
+                "job_id", "attempt_id", "reconciliation_token",
+                "expected_action_state_version", "request_hash",
+            ),
+        )
 
     async def record_cancel_signal(self, **values: object) -> SandboxJobReceipt:
         return await self._worker_values(

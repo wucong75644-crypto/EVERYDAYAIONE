@@ -70,6 +70,13 @@ class SandboxJobSnapshot:
     stdout_summary: str | None = None
     stderr_summary: str | None = None
     cleanup_deadline_at: datetime | None = None
+    cancel_requested_at: datetime | None = None
+    cancel_accepted_at: datetime | None = None
+    cancel_confirmed_at: datetime | None = None
+    receipt_hash: str | None = None
+    cleanup_evidence: Mapping[str, object] | None = None
+    starting_at: datetime | None = None
+    started_at: datetime | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -98,6 +105,16 @@ class SandboxJobSnapshot:
         )
         require_aware_datetime(self.terminal_at, "terminal_at")
         require_aware_datetime(self.cleanup_deadline_at, "cleanup_deadline_at")
+        require_aware_datetime(self.cancel_requested_at, "cancel_requested_at")
+        require_aware_datetime(self.cancel_accepted_at, "cancel_accepted_at")
+        require_aware_datetime(self.cancel_confirmed_at, "cancel_confirmed_at")
+        require_aware_datetime(self.starting_at, "starting_at")
+        require_aware_datetime(self.started_at, "started_at")
+        if self.receipt_hash is not None and (
+            len(self.receipt_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.receipt_hash)
+        ):
+            raise ValueError("receipt_hash must be a lowercase SHA-256")
         terminal = {
             SandboxJobStatus.SUCCEEDED,
             SandboxJobStatus.FAILED,

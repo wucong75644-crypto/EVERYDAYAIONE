@@ -212,3 +212,19 @@ class PostgresActionRepository:
             "p_result": dict(result) if result is not None else None,
             "p_ambiguity_evidence": dict(ambiguity_evidence or {}),
         })
+
+    async def finalize_sandbox_cancel(
+        self, *, attempt_id: str, reconciliation_token: str,
+        expected_state_version: int, request_hash: str,
+        sandbox_job_id: str, expected_job_state_version: int,
+        receipt_hash: str,
+    ) -> ActionMutationReceipt:
+        return await self._rpc("finalize_agent_action_sandbox_cancel_v1", {
+            "p_attempt_id": attempt_id,
+            "p_reconciliation_token": reconciliation_token,
+            "p_expected_state_version": expected_state_version,
+            "p_request_hash": request_hash,
+            "p_sandbox_job_id": sandbox_job_id,
+            "p_expected_job_state_version": expected_job_state_version,
+            "p_receipt_hash": receipt_hash,
+        })

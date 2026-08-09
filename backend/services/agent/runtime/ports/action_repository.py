@@ -136,3 +136,10 @@ class ActionRepositoryPort(Protocol):
         result: Mapping[str, object] | None = None,
         ambiguity_evidence: Mapping[str, object] | None = None,
     ) -> ActionMutationReceipt: ...
+
+    async def finalize_sandbox_cancel(
+        self, *, attempt_id: str, reconciliation_token: str,
+        expected_state_version: int, request_hash: str,
+        sandbox_job_id: str, expected_job_state_version: int,
+        receipt_hash: str,
+    ) -> ActionMutationReceipt: ...

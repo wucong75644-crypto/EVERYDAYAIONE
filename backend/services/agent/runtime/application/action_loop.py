@@ -42,7 +42,6 @@ from services.agent.runtime.application.action_loop_support import (
     CostReserveFailure as _CostReserveFailure,
     failure_result as _failure_result,
     int_value as _int,
-    next_reconcile_at as _next_reconcile_at,
     required as _required,
     required_int as _required_int,
     required_result as _required_result,
@@ -152,63 +151,10 @@ class ActionLoopDriver:
         return True
     async def cancel_action(self, snapshot: ActionDispatchSnapshot, *,
                             lease: _ActionLease | None = None) -> ExecutionOutcome:
-        """Cancel one claimed specialist attempt through the application owner."""
-        resolved = self._resolver.resolve(snapshot)
-        if not isinstance(resolved.executor, SpecialistExecutor):
-            raise TypeError("SPECIALIST_CANCEL_APPLICATION_PATH_REQUIRED")
-        attempt = resolved.attempt
-        raw_attempt = snapshot.attempt
-        status = str(raw_attempt.get("status", ""))
-        reconciliation = status in {"accepted", "unknown"}
-        token_key = "reconciliation_token" if reconciliation else "execution_token"
-        token = _required(raw_attempt.get(token_key), token_key)
-        state_version = _required_int(raw_attempt.get("state_version"), "cancel state version")
-        if reconciliation:
-            reconciliation_lease = lease or _ActionLease(
-                repository=self._actions, attempt_id=str(raw_attempt["id"]), token=token,
-                state_version=state_version, lease_seconds=self._lease_seconds,
-                renew_interval=self._renew_interval, reconciliation=True)
-            context = ReconciliationContext(
-                token=token,
-                lease_expires_at=_required_time(raw_attempt.get("reconciliation_lease_expires_at")),
-                state_version=state_version,
-            )
-            attempt = replace(attempt, status=ActionAttemptStatus(status))
-            cancel_call = resolved.executor.cancel(attempt, context)
-            receipt = await reconciliation_lease.run(cancel_call)
-            state_version = reconciliation_lease.state_version
-        else:
-            receipt = await resolved.executor.cancel(attempt)
-        request_hash = str(raw_attempt["request_hash"])
-        if receipt.outcome is ExecutionOutcome.CANCELLED:
-            if not await self._try_specialist_finalize(
-                receipt, attempt_id=str(raw_attempt["id"]), token=token,
-                state_version=state_version, request_hash=request_hash,
-                reconciliation=reconciliation,
-                reserved_amount=_reserved_amount(snapshot), specialist=True,
-            ):
-                raise RuntimeError("SPECIALIST_CANCEL_FINALIZE_REQUIRED")
-        elif receipt.outcome is ExecutionOutcome.UNKNOWN:
-            if reconciliation:
-                await self._specialist_facts.still_unknown(
-                    attempt_id=str(raw_attempt["id"]),
-                    reconciliation_token=token,
-                    expected_state_version=state_version,
-                    request_hash=request_hash,
-                    provider_receipt=dict(receipt.external_receipt),
-                    ambiguity_evidence=receipt.ambiguity_evidence,
-                    next_reconcile_at=_next_reconcile_at(self._lease_seconds),
-                )
-            else:
-                await self._actions.record_unknown(
-                    attempt_id=str(raw_attempt["id"]), execution_token=token,
-                    expected_state_version=state_version,
-                    request_hash=request_hash,
-                    ambiguity_evidence=receipt.ambiguity_evidence,
-                )
-        else:
-            raise RuntimeError("SPECIALIST_CANCEL_UNEXPECTED_OUTCOME")
-        return receipt.outcome
+        from services.agent.runtime.application.action_cancel import (
+            cancel_action,
+        )
+        return await cancel_action(self, snapshot, lease=lease)
 
     async def _dispatch(self, snapshot: ActionDispatchSnapshot) -> None:
         attempt = snapshot.attempt

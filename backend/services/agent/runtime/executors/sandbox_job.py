@@ -23,6 +23,9 @@ from services.agent.runtime.executors.types import (
     ExecutorDescriptor,
     IdempotencySupport,
 )
+from services.agent.runtime.executors.specialist_contracts import (
+    ReconciliationContext,
+)
 from services.agent.runtime.ports.executor import (
     ExecutionOutcome,
     ExecutionReceipt,
@@ -117,6 +120,7 @@ class SandboxJobExecutor:
                 "sandbox_job_id": receipt.job.job_id,
                 "external_idempotency_key": receipt.job.external_idempotency_key,
                 "status": receipt.job.status.value,
+                "state_version": receipt.job.state_version,
             },
         )
 
@@ -166,36 +170,42 @@ class SandboxJobExecutor:
             },
         )
 
-    async def cancel(self, attempt: ActionAttempt) -> ExecutionReceipt:
+    async def cancel(
+        self, attempt: ActionAttempt,
+        context: ReconciliationContext | None = None,
+    ) -> ExecutionReceipt:
+        if context is None:
+            raise ValueError("SANDBOX_CANCEL_RECONCILIATION_CONTEXT_REQUIRED")
         job_id = _job_id(attempt)
         capability = _capability(attempt)
         try:
-            current = await capability.get(
+            requested = await capability.request_runtime_cancel(
                 action_id=str(attempt.action_id),
                 attempt_id=str(attempt.attempt_id), job_id=job_id,
-            )
-        except Exception:
-            return _unknown(attempt, "SANDBOX_CANCEL_READBACK_UNAVAILABLE")
-        if current.job is None:
-            return _unknown(attempt, "SANDBOX_JOB_READBACK_MISSING")
-        try:
-            requested = await capability.request_cancel(
-                action_id=str(attempt.action_id),
-                attempt_id=str(attempt.attempt_id), job_id=job_id,
-                expected_version=current.job.state_version,
+                reconciliation_token=context.token,
+                expected_action_state_version=context.state_version,
+                request_hash=attempt.request_hash,
             )
         except Exception:
             return _unknown(attempt, "SANDBOX_CANCEL_REQUEST_UNAVAILABLE")
+        job = requested.job
+        if job is None:
+            return _unknown(attempt, "SANDBOX_CANCEL_READBACK_MISSING")
+        if _durable_cancel_proven(job):
+            return ExecutionReceipt(
+                outcome=ExecutionOutcome.CANCELLED,
+                request_hash=attempt.request_hash,
+                external_receipt=_cancel_proof(job),
+            )
         return ExecutionReceipt(
-            outcome=ExecutionOutcome.ACCEPTED,
+            outcome=ExecutionOutcome.UNKNOWN,
             request_hash=attempt.request_hash,
             external_receipt={
-                "sandbox_job_id": job_id,
-                "status": (
-                    requested.job.status.value
-                    if requested.job else "cancel_requested"
-                ),
+                "sandbox_job_id": job.job_id,
+                "status": job.status.value,
+                "state_version": job.state_version,
             },
+            ambiguity_evidence={"kind": "SANDBOX_CANCEL_UNPROVEN"},
         )
 
 def register_sandbox_job_executor(registry, executor: SandboxJobExecutor) -> None:
@@ -244,6 +254,34 @@ def _unknown(attempt: ActionAttempt, kind: str) -> ExecutionReceipt:
         request_hash=attempt.request_hash,
         ambiguity_evidence={"kind": kind},
     )
+
+
+def _durable_cancel_proven(job) -> bool:
+    partial_items = (job.partial_effects or {}).get("items")
+    return (
+        job.status is SandboxJobStatus.CANCELLED
+        and job.cancel_confirmed_at is not None
+        and job.receipt_hash is not None
+        and isinstance(partial_items, list)
+        and (
+            not partial_items
+            and job.cleanup_status.value == "not_required"
+            or bool(partial_items)
+            and job.cleanup_status.value == "completed"
+            and bool(job.cleanup_evidence)
+        )
+    )
+
+
+def _cancel_proof(job) -> dict[str, object]:
+    return {
+        "sandbox_job_id": job.job_id,
+        "status": job.status.value,
+        "state_version": job.state_version,
+        "receipt_hash": job.receipt_hash,
+        "cleanup_status": job.cleanup_status.value,
+        "cancel_confirmed": True,
+    }
 
 
 def _job_id(attempt: ActionAttempt) -> str:

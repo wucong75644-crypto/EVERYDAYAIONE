@@ -225,6 +225,16 @@ Agent Runtime AR-18-A1.2-B4 Model Gateway cancel fence：
   进程内 gate；rollback 对 cancel-derived facts、cancelled Run 未收敛 operation与活动 lease
   失败关闭。
 
+Agent Runtime AR-18-A1.2-B5 Sandbox cancellation handoff：
+- `backend/migrations/227_26_agent_runtime_sandbox_cancel_handoff.sql` 将 cancelled Run 下的
+  `code_execute` CANCEL operation绑定到唯一 Runtime facade；Action reconciliation token/lease、
+  state/request hash、dispatch intent、父 Run version与kill epoch全量一致后才写Sandbox cancel intent。
+- Sandbox worker仍是进程终止与cleanup证明的唯一owner；cancel intent 后数据库禁止写成
+  succeeded/failed/timed_out。Runtime仅在durable cancelled receipt、cancel confirmation与cleanup
+  proof一致时终结Attempt/Action，不改父Run或已清零blocker；unknown保持reconcile-only且不重派。
+- 旧 `request_sandbox_job_cancel` 对Runtime撤权；rollback遇到cancel facts、活动reconciliation或
+  cleanup residue失败关闭，零facts时恢复旧ACL。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、

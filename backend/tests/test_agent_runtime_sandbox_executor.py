@@ -26,6 +26,9 @@ from services.agent.runtime.domain.sandbox_job import (
 )
 from services.agent.runtime.domain.errors import IdempotencyConflictError
 from services.agent.runtime.executors.registry import ExecutorRegistry
+from services.agent.runtime.executors.specialist_contracts import (
+    ReconciliationContext,
+)
 from services.agent.runtime.executors.capabilities import CapabilityBinding
 from services.agent.runtime.executors.sandbox_job import (
     SANDBOX_JOB_DESCRIPTOR,
@@ -50,6 +53,7 @@ from core.db_scope import DatabaseAccessKind, DatabaseScope
 ACTION_ID = "11111111-1111-1111-1111-111111111111"
 ATTEMPT_ID = "22222222-2222-2222-2222-222222222222"
 JOB_ID = "33333333-3333-3333-3333-333333333333"
+NOW = datetime.now(timezone.utc)
 
 
 def _attempt(
@@ -86,6 +90,7 @@ def _attempt(
 
 
 def _job(status: SandboxJobStatus) -> SandboxJobSnapshot:
+    cancelled = status is SandboxJobStatus.CANCELLED
     return SandboxJobSnapshot(
         job_id=JOB_ID, action_id=ACTION_ID, attempt_id=ATTEMPT_ID,
         dispatch_intent_id="44444444-4444-4444-4444-444444444444",
@@ -115,9 +120,15 @@ def _job(status: SandboxJobStatus) -> SandboxJobSnapshot:
         artifact_manifest={"schema_revision": 1, "items": []},
         partial_effects={"schema_revision": 1, "items": []},
         terminal_reason=(
+            "PROCESS_TREE_TERMINATED" if cancelled else
             "EXECUTION_FAILED" if status is SandboxJobStatus.FAILED else None
         ),
         stdout_summary="bounded output",
+        cancel_requested_at=NOW if cancelled else None,
+        cancel_accepted_at=NOW if cancelled else None,
+        cancel_confirmed_at=NOW if cancelled else None,
+        receipt_hash="c" * 64 if cancelled else None,
+        cleanup_evidence={},
     )
 
 
@@ -139,6 +150,11 @@ class _Capability(SandboxJobCapability):
         object.__setattr__(self, "request_cancel", AsyncMock(return_value=SandboxJobReceipt(
             outcome=SandboxJobOutcome.CANCEL_REQUESTED, job=job,
         )))
+        object.__setattr__(self, "request_runtime_cancel", AsyncMock(
+            return_value=SandboxJobReceipt(
+                outcome=SandboxJobOutcome.CANCEL_REQUESTED, job=job,
+            ),
+        ))
         object.__setattr__(
             self, "cleanup_staged_attempt", lambda **_kwargs: True,
         )
@@ -193,9 +209,9 @@ async def test_unknown_job_remains_reconcile_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_is_accepted_request_not_terminal_cancelled() -> None:
+async def test_cancel_request_without_durable_proof_stays_unknown() -> None:
     capability = _Capability(_job(SandboxJobStatus.RUNNING))
-    capability.request_cancel.return_value = SandboxJobReceipt(
+    capability.request_runtime_cancel.return_value = SandboxJobReceipt(
         outcome=SandboxJobOutcome.CANCEL_REQUESTED,
         job=_job(SandboxJobStatus.CANCEL_REQUESTED),
     )
@@ -204,10 +220,13 @@ async def test_cancel_is_accepted_request_not_terminal_cancelled() -> None:
         status=ActionAttemptStatus.ACCEPTED,
         external_receipt={"sandbox_job_id": JOB_ID},
         capability=capability,
+    ), ReconciliationContext(
+        token="77777777-7777-7777-7777-777777777777",
+        lease_expires_at=NOW + timedelta(minutes=5), state_version=4,
     ))
-    assert receipt.outcome is ExecutionOutcome.ACCEPTED
+    assert receipt.outcome is ExecutionOutcome.UNKNOWN
     assert receipt.external_receipt["status"] == "cancel_requested"
-    capability.request_cancel.assert_awaited_once()
+    capability.request_runtime_cancel.assert_awaited_once()
     capability.submit.assert_not_awaited()
 
 
