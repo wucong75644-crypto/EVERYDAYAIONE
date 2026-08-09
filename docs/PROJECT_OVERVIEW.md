@@ -199,6 +199,18 @@ Agent Runtime AR-18-A1.2-B1 atomic task cancel intent：
   hash helper 对外撤权，仅 v2 授权 Runtime/WeCom Runtime。该 lane 不拥有或删除 facts，
   rollback 只删除 v2 并精确恢复 v1 ACL，因此即使已有 227_22 intent facts 也无需 guard。
 
+Agent Runtime AR-18-A1.2-B3 Provider cancellation handoff：
+- `backend/migrations/227_24_agent_runtime_provider_cancel_handoff.sql` 为 accepted/unknown
+  Action reconciliation claim 持久绑定 `reconcile|cancel` operation、父 Run identity/version；
+  cancelled 父 Run 始终进入 cancel，正常 claim 与响应丢失 readback 不重新推导不同 operation。
+- Provider cancel 只在续租 reconciliation lease 下执行；confirmed 必须同时满足 receipt 与
+  durable provider fact、token/state-version/request-hash、owner/kill/revision fence，随后原子终结
+  Attempt/Action、记录 refund/event并保持父 Run cancelled 与 blocker=0。UNKNOWN 写入明确的
+  `next_reconcile_at`，保持 unknown/reconcile-only，后续仍领取 cancel且从不普通重派。
+- `request_agent_runtime_provider_cancel` 仅授权 `everydayai_agent_runtime_worker`；rollback 在
+  cancelled Run 的 accepted/unknown、活动 reconciliation lease 或未收敛 cancel facts 存在时
+  失败关闭，并恢复 226_13 函数、227_04 ACL及新增 claim binding columns。
+
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
   进程、UDS 流协议、专用 Linux/数据库身份、现有配置 SSOT 与 KEK 信任边界、

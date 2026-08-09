@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from typing import Mapping
 
 from services.agent.runtime.ports.action_repository import ActionRepositoryPort
@@ -79,6 +80,10 @@ def reserved_amount(snapshot: ActionDispatchSnapshot) -> int:
         return 0
     value = arguments.get("reserved_credits", 0)
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def next_reconcile_at(lease_seconds: int) -> datetime:
+    return datetime.now(timezone.utc) + timedelta(seconds=max(60, lease_seconds))
 
 
 class ActionLease:

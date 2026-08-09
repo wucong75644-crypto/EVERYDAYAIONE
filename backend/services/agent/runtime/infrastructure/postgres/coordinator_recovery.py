@@ -16,6 +16,7 @@ from services.agent.runtime.domain.errors import (
 from services.agent.runtime.ports.coordinator_recovery import (
     ActionDispatchSnapshot,
     ActionRecoveryClaim,
+    ActionRecoveryOperation,
     CoordinatorRecoveryPort,
     ModelResultDraft,
     RecoveryOutcome,
@@ -196,23 +197,51 @@ class PostgresCoordinatorRecoveryRepository(CoordinatorRecoveryPort):
                     "p_worker_id": worker_id,
                 },
             )
-        row = _mapping(raw, "Action reconciliation")
-        name = _outcome(row, {"claimed", "found", "not_found"})
-        outcome = (
-            RecoveryOutcome.CLAIMED
-            if name in {"claimed", "found"} else RecoveryOutcome.NOT_FOUND
-        )
-        return ActionRecoveryClaim(
-            outcome=outcome,
-            attempt_id=_uuid(row.get("attempt_id")),
-            execution_token=_uuid(row.get("execution_token")),
-            state_version=_integer(row.get("state_version")),
-            lease_expires_at=_time(row.get("lease_expires_at")),
-            snapshot=(
-                _snapshot(row.get("snapshot"))
-                if row.get("snapshot") is not None else None
-            ),
-        )
+        return _action_recovery_claim(raw)
+
+
+def _action_recovery_claim(value: object) -> ActionRecoveryClaim:
+    row = _mapping(value, "Action reconciliation")
+    name = _outcome(row, {"claimed", "found", "not_found"})
+    if name == "not_found":
+        return ActionRecoveryClaim(outcome=RecoveryOutcome.NOT_FOUND)
+    try:
+        operation = ActionRecoveryOperation(row.get("operation"))
+    except (TypeError, ValueError):
+        raise PersistenceContractError(
+            "Action reconciliation operation required",
+        ) from None
+    snapshot = _snapshot(row.get("snapshot"))
+    attempt_id = _uuid(row.get("attempt_id"))
+    token = _uuid(row.get("execution_token"))
+    state_version = _integer(row.get("state_version"))
+    lease_expires_at = _time(row.get("lease_expires_at"))
+    run_id = _uuid(row.get("parent_run_id"))
+    run_status = row.get("parent_run_status")
+    run_version = _integer(row.get("parent_run_state_version"))
+    required = (attempt_id, token, state_version, lease_expires_at,
+                run_id, run_version)
+    if None in required or not isinstance(run_status, str):
+        raise PersistenceContractError("Action reconciliation binding required")
+    if str(snapshot.attempt.get("id")) != attempt_id:
+        raise PersistenceContractError("Action reconciliation attempt mismatch")
+    if str(snapshot.attempt.get("reconciliation_token")) != token:
+        raise PersistenceContractError("Action reconciliation token mismatch")
+    if snapshot.attempt.get("state_version") != state_version:
+        raise PersistenceContractError("Action reconciliation version mismatch")
+    if str(snapshot.action.get("run_id")) != run_id:
+        raise PersistenceContractError("Action reconciliation run mismatch")
+    expected = (ActionRecoveryOperation.CANCEL if run_status == "cancelled"
+                else ActionRecoveryOperation.RECONCILE)
+    if operation is not expected:
+        raise PersistenceContractError("Action reconciliation operation mismatch")
+    return ActionRecoveryClaim(
+        outcome=RecoveryOutcome.CLAIMED, operation=operation,
+        parent_run_id=run_id, parent_run_status=run_status,
+        parent_run_state_version=run_version, attempt_id=attempt_id,
+        execution_token=token, state_version=state_version,
+        lease_expires_at=lease_expires_at, snapshot=snapshot,
+    )
 
 
 def _snapshot_batch(

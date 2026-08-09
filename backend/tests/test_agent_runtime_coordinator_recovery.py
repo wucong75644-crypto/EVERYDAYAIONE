@@ -128,6 +128,10 @@ async def test_action_reconciliation_includes_typed_snapshot() -> None:
     database = _Database({
         "claim_next_agent_action_reconciliation": {
             "outcome": "claimed",
+            "operation": "reconcile",
+            "parent_run_id": RUN_ID,
+            "parent_run_status": "running",
+            "parent_run_state_version": 2,
             "attempt_id": "33333333-3333-3333-3333-333333333333",
             "execution_token": TOKEN,
             "state_version": 4,
@@ -138,6 +142,8 @@ async def test_action_reconciliation_includes_typed_snapshot() -> None:
                 "id": "33333333-3333-3333-3333-333333333333",
                 "action_id": "44444444-4444-4444-4444-444444444444",
                 "execution_token": TOKEN,
+                "reconciliation_token": TOKEN,
+                "state_version": 4,
                 "request_hash": "a" * 64,
                 "action": {
                     "id": "44444444-4444-4444-4444-444444444444",
@@ -190,6 +196,8 @@ async def test_uncertain_reconciliation_claim_reads_back_worker_token() -> None:
         "id": "33333333-3333-3333-3333-333333333333",
         "action_id": "44444444-4444-4444-4444-444444444444",
         "execution_token": TOKEN,
+        "reconciliation_token": TOKEN,
+        "state_version": 4,
         "request_hash": "a" * 64,
         "action": {
             "id": "44444444-4444-4444-4444-444444444444",
@@ -207,6 +215,10 @@ async def test_uncertain_reconciliation_claim_reads_back_worker_token() -> None:
         ),
         "get_claimed_agent_action_reconciliation": {
             "outcome": "found",
+            "operation": "cancel",
+            "parent_run_id": RUN_ID,
+            "parent_run_status": "cancelled",
+            "parent_run_state_version": 3,
             "attempt_id": "33333333-3333-3333-3333-333333333333",
             "execution_token": TOKEN, "state_version": 4,
             "lease_expires_at": datetime(
@@ -221,10 +233,47 @@ async def test_uncertain_reconciliation_claim_reads_back_worker_token() -> None:
     ).claim_action_reconciliation(worker_id="worker-1")
 
     assert claim.outcome is RecoveryOutcome.CLAIMED
+    assert claim.operation.value == "cancel"
     assert [name for name, _ in database.calls] == [
         "claim_next_agent_action_reconciliation",
         "get_claimed_agent_action_reconciliation",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", [None, "submit", "CANCEL"])
+async def test_action_reconciliation_invalid_operation_fails_closed(
+    operation: object,
+) -> None:
+    database = _Database({
+        "claim_next_agent_action_reconciliation": {
+            "outcome": "claimed", "operation": operation,
+            "parent_run_id": RUN_ID, "parent_run_status": "cancelled",
+            "parent_run_state_version": 3,
+            "attempt_id": "33333333-3333-3333-3333-333333333333",
+            "execution_token": TOKEN, "state_version": 4,
+            "lease_expires_at": datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "snapshot": {
+                "id": "33333333-3333-3333-3333-333333333333",
+                "action_id": "44444444-4444-4444-4444-444444444444",
+                "execution_token": TOKEN, "reconciliation_token": TOKEN,
+                "state_version": 4, "request_hash": "a" * 64,
+                "action": {
+                    "id": "44444444-4444-4444-4444-444444444444",
+                    "run_id": RUN_ID,
+                    "session_id": "55555555-5555-5555-5555-555555555555",
+                    "tool_name": "fake", "arguments": {},
+                    "request_hash": "a" * 64,
+                    "policy_decision": "preauthorized",
+                    "retry_disposition": "retry_safe",
+                },
+            },
+        },
+    })
+    with pytest.raises(Exception, match="operation required"):
+        await PostgresCoordinatorRecoveryRepository(
+            database,
+        ).claim_action_reconciliation(worker_id="worker-1")
 
 
 def test_runtime_scope_cannot_construct_recovery_repository() -> None:

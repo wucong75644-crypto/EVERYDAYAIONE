@@ -18,6 +18,11 @@ class RecoveryOutcome(StrEnum):
     RUN_CANCELLED_USE_LATE_RECEIPT = "run_cancelled_use_late_receipt"
 
 
+class ActionRecoveryOperation(StrEnum):
+    RECONCILE = "reconcile"
+    CANCEL = "cancel"
+
+
 @dataclass(frozen=True, kw_only=True)
 class RunRecoveryClaim:
     outcome: RecoveryOutcome
@@ -45,6 +50,10 @@ class ActionDispatchSnapshot:
 @dataclass(frozen=True, kw_only=True)
 class ActionRecoveryClaim:
     outcome: RecoveryOutcome
+    operation: ActionRecoveryOperation | None = None
+    parent_run_id: str | None = None
+    parent_run_status: str | None = None
+    parent_run_state_version: int | None = None
     attempt_id: str | None = None
     execution_token: str | None = None
     state_version: int | None = None
