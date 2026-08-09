@@ -21,6 +21,7 @@ export PYTHONDONTWRITEBYTECODE=1
   backend/tests/test_agent_runtime_model_gateway_migration.py \
   backend/tests/test_agent_runtime_model_gateway_predispatch_migration.py \
   backend/tests/test_agent_runtime_model_gateway_dispatch_binding_migration.py \
+  backend/tests/test_agent_runtime_ar18_b4_model_cancel_migration.py \
   backend/tests/test_agent_runtime_model_gateway_repository.py \
   backend/tests/test_agent_runtime_model_gateway_configuration.py \
   backend/tests/test_agent_runtime_model_gateway_process.py \
@@ -43,5 +44,7 @@ if [ "$mode" = all ]; then
     backend/tests/test_agent_runtime_model_gateway_postgres_external.py \
     backend/tests/test_agent_runtime_model_gateway_predispatch_postgres_external.py \
     backend/tests/test_agent_runtime_model_gateway_dispatch_binding_postgres_external.py \
-    backend/tests/test_agent_runtime_model_gateway_e2e_postgres_external.py
+    backend/tests/test_agent_runtime_model_gateway_e2e_postgres_external.py \
+    backend/tests/test_agent_runtime_ar18_b4_model_cancel_postgres_external.py \
+    backend/tests/test_agent_runtime_ar18_b4_model_cancel_uds_postgres_external.py
 fi

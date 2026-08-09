@@ -161,8 +161,13 @@ daemon-reload or state postcheck failure restores all envs and units. Runtime
 and Gateway must be `inactive:disabled`, all production flags remain false,
 and Sandbox assets must have zero diff. Run
 `scripts/run_agent_model_gateway_disposable.sh all` for local UDS, disposable
-PostgreSQL 227_18–227_20/227_25 and mock Provider acceptance. This validation does not
-authorize the flags-off installation, migration, service start or Owner switch.
+PostgreSQL 227_18–227_20/227_25 and mock Provider acceptance. `static-only`
+includes the 227_25 migration contract but intentionally omits all PostgreSQL
+and UDS+PostgreSQL tests. `all` creates its own disposable PostgreSQL instances,
+does not consume `DATABASE_URL`, and fails if the required local PostgreSQL
+tools or any B4 Barrier/UDS test cannot run; a skipped database stage is not
+acceptance evidence. This validation does not authorize the flags-off
+installation, migration, service start or Owner switch.
 
 1. Bootstrap and verify the five database LOGIN roles with the two dedicated
    bootstrap scripts; inject secrets outside migration tooling.

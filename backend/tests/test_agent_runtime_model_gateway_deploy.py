@@ -146,6 +146,16 @@ def test_four_unit_transaction_and_ci_entry_are_release_bound() -> None:
         encoding="utf-8"
     )
     assert "test_agent_runtime_c7_bg4_production_composition.py" in unified
+    static_phase, postgres_phase = unified.split('if [ "$mode" = all ]; then', 1)
+    assert "test_agent_runtime_ar18_b4_model_cancel_migration.py" in static_phase
+    for test_name in (
+        "test_agent_runtime_ar18_b4_model_cancel_postgres_external.py",
+        "test_agent_runtime_ar18_b4_model_cancel_uds_postgres_external.py",
+    ):
+        assert test_name not in static_phase
+        assert test_name in postgres_phase
+    assert "RUN_AR17_1_DB_TEST=1" in postgres_phase
+    assert "DATABASE_URL" not in unified
     assert "production_ready=false" in workflow
 
 

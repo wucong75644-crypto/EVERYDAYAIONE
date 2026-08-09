@@ -118,8 +118,10 @@ Agent Runtime C7-BG5 Model Gateway Deploy 与统一验收：
 - D0-A release transaction 扩为五 env/四 control-plane unit；reviewed SHA、全量预检、
   daemon-reload、内外层 inactive:disabled 后验任一点失败均按同一 release journal 恢复。
 - `scripts/run_agent_model_gateway_disposable.sh` 统一执行部署静态合同、本地 UDS、mock Provider、
-  227_18～227_20 disposable PostgreSQL 和 crash/response-loss/UNKNOWN/drain 回归；CI 保持
-  所有 production flags false，`production_ready=false`，不改 Sandbox。
+  227_18～227_20/227_25 disposable PostgreSQL、B4 cancel Barrier与真实 UDS blocked-provider
+  回归，以及 crash/response-loss/UNKNOWN/drain 回归；`all` 自建 disposable PostgreSQL且不读取
+  `DATABASE_URL`，数据库阶段未运行不得作为验收证据。CI 保持所有 production flags false，
+  `production_ready=false`，不改 Sandbox。
 
 Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
 - `backend/services/agent/runtime/catalog/safe_read_release.py` 与生成脚本从

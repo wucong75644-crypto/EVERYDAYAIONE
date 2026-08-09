@@ -1916,7 +1916,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `provision-control-plane-worker-envs.py` | `deploy/provision-control-plane-worker-envs.py` | release-bound staging 五 env，普通 env 使用 app group、Gateway 两份 env 使用独立 secret group，并以旧内容/权限/uid/gid journal 和 hash fence 提供 publish/verify/幂等 rollback |
 | `update-control-plane-units.sh` | `deploy/update-control-plane-units.sh` | 协调五 env/四 unit 的 prepared→published→restored 事务；inactive+disabled、reviewed SHA、daemon/postcheck 失败统一恢复 |
 | `check-control-plane-unit-manifest.sh` | `deploy/check-control-plane-unit-manifest.sh` | 在 release rsync 前远端只读核对四个当前 target unit 的 reviewed SHA-256 |
-| `run_agent_model_gateway_disposable.sh` | `scripts/run_agent_model_gateway_disposable.sh` | 统一运行部署静态合同、本地 UDS/mock Provider、227_18～227_20 disposable PostgreSQL 与恢复回归 |
+| `run_agent_model_gateway_disposable.sh` | `scripts/run_agent_model_gateway_disposable.sh` | `static-only` 运行含 227_25 的 migration/static 合同；`all` 另自建 disposable PostgreSQL，运行 227_18～227_20/227_25、B4 Barrier、真实 UDS blocked-provider 与恢复回归，不读取 `DATABASE_URL`且数据库阶段不可静默跳过 |
 | `_resolve_effective_configuration_item` / `_resolve_configuration_bundle` | `backend/migrations/160_configuration_resolution_core.sql` | 按企业策略执行 user→organization→platform 选择，必需键缺失或 Secret 状态/版本异常时失败关闭 |
 | `get_*_bundle` | `backend/migrations/160_configuration_resolution_facades.sql` | 无参数固定 Bundle 能力；分别绑定 runtime actor、actorless OAuth、精确企业 Worker、WeCom actor 或企业管理员 |
 | `get_wecom_bot_admin_test_bundle` | `backend/migrations/216_configuration_admin_test_bundle.sql` | 仅允许 Runtime active 企业 owner/admin 解析固定 `wecom.bot` 测试 Bundle；不扩大 Worker 专用门面权限 |
