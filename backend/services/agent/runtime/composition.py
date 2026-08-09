@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from core.db_scope import (
@@ -40,6 +41,9 @@ from services.agent.runtime.infrastructure.postgres.model_attempt_repository imp
 from services.agent.runtime.infrastructure.postgres.repository import (
     PostgresRuntimeRepository,
 )
+from services.agent.runtime.infrastructure.postgres.scheduled_finalization_repository import (
+    PostgresScheduledFinalizationRepository,
+)
 from services.agent.runtime.policy.evaluator import PolicyEvaluator
 from services.agent.runtime.sandbox.composition import build_sandbox_worker_components
 from services.agent.runtime.sandbox.nsjail import (
@@ -51,12 +55,21 @@ from services.agent.runtime.production_model import (
 from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.catalog.registry import build_runtime_version_registry
 from services.agent.runtime.executors.real_base import RuntimeReadResources
+from services.agent.runtime.application.scheduled_finalizer import (
+    ScheduledRuntimeFinalizer,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeOwner:
-    def __init__(self, commands, runtime, *, readiness=None) -> None:
+    def __init__(
+        self, commands, runtime, *, finalizer=None, readiness=None,
+    ) -> None:
         self.commands = commands
         self.runtime = runtime
+        self.finalizer = finalizer
         self.readiness = readiness
         self._draining = False
 
@@ -82,7 +95,17 @@ class RuntimeOwner:
         worked = (await self.runtime.child_cancel_once()) or worked
         if self._draining:
             return worked
-        return (await self.runtime.reconciliation_once()) or worked
+        worked = (await self.runtime.reconciliation_once()) or worked
+        if self._draining or self.finalizer is None:
+            return worked
+        try:
+            return (await self.finalizer.run_once()) or worked
+        except Exception as exc:
+            logger.error(
+                "Runtime scheduled finalization failed | error_type=%s",
+                type(exc).__name__,
+            )
+            return worked
 
     def drain(self) -> None:
         """Stop future claims while allowing the current fenced call to finish."""
@@ -211,7 +234,13 @@ def build_runtime(
         model_call_factory=model_factory, model_loop=model_loop,
         action_loop=action_loop, model_port=gateway.model,
     )
-    return RuntimeOwner(commands, runtime, readiness=composition.readiness)
+    finalizer = ScheduledRuntimeFinalizer(
+        PostgresScheduledFinalizationRepository(db), worker_id,
+    )
+    return RuntimeOwner(
+        commands, runtime, finalizer=finalizer,
+        readiness=composition.readiness,
+    )
 
 
 def build_safe_runtime_components(

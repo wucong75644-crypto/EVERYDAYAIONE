@@ -1919,6 +1919,14 @@ cache = client.caches.create(
     路径或 Provider payload。新增 apply v2 仅在 Runtime Run 已 terminal 后完成本地 scheduled facts
     收敛；后续 tenant/provider/capability kill 仍阻止新副作用，但不会把 terminal intent 永久卡在
     running/reconcile_required。v1 身份保持不变，Worker 循环与 next-run 规划仍留待 B1-B2。
+
+- **2026-08-10**：AR-18 B7-S2-B1-B2 Scheduled Runtime Finalizer Worker Wiring
+  - Runtime Worker 在既有 Command、Run、Action、Child Cancel 与 Reconcile 扫描后，每轮最多领取一个
+    scheduled finalization intent；使用冻结的 terminal baseline 和现有 cron 语义确定 next run，再只调用
+    `apply_agent_runtime_scheduled_finalization_v2` 原子收敛本地 scheduled facts。
+  - PostgreSQL adapter 严格解析 claim/context/apply/readback；响应丢失时先只读确认状态，再以同一确定性
+    request id 重放 v2 apply，只有数据库返回 `already_applied` 才确认完成。drain 不再领取新 intent，错误仅
+    记录脱敏类型且不阻断后续 Runtime 扫描；未接 legacy Scheduler、钱包、Provider 或消息投递。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
