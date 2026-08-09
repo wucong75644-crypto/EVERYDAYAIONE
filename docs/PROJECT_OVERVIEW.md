@@ -194,6 +194,10 @@ Agent Runtime AR-18-A1.2-B1 atomic task cancel intent：
   Task/Message/Command 绑定保持不可变；
   rollback 遇到任意 intent fact 失败关闭。当前未接 Web API 或 Provider cancel handoff，
   production flags 保持关闭。
+- `backend/migrations/227_23_agent_runtime_task_cancel_facade_callable.sql` 新增不接收
+  client hash 的 v2 facade，由 PostgreSQL 私有 helper生成 canonical hash后委托 v1；v1 与
+  hash helper 对外撤权，仅 v2 授权 Runtime/WeCom Runtime。该 lane 不拥有或删除 facts，
+  rollback 只删除 v2 并精确恢复 v1 ACL，因此即使已有 227_22 intent facts 也无需 guard。
 
 Agent Runtime C7-B3.2-B Model Gateway：
 - `docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md`：冻结独立 Model Gateway
