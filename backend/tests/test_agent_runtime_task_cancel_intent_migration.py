@@ -51,6 +51,8 @@ def test_fact_table_is_durable_immutable_and_owner_only() -> None:
         "UNIQUE (session_id, idempotency_key)",
         "request_hash ~ '^[0-9a-f]{64}$'",
         "status IN ('requested', 'applied')",
+        "scope_user_id UUID REFERENCES users(id)",
+        "requested_by_user_id UUID NOT NULL REFERENCES users(id)",
         "AGENT_RUNTIME_TASK_CANCEL_INTENT_IMMUTABLE",
         "ENABLE ROW LEVEL SECURITY", "FORCE ROW LEVEL SECURITY",
     ):
@@ -72,10 +74,14 @@ def test_facade_lock_order_binding_hash_and_secret_free_response() -> None:
         "assistant_message_id", "runtime_session_id", "runtime_command_id",
         "'{\"actor\":false,\"runtime\":true}'", "output_message_id",
         "v_command.request_hash IS DISTINCT FROM md5", "tenant_org_id()",
-        "tenant_actor_user_id()",
+        "tenant_actor_user_id()", "v_session.scope_kind = 'user'",
+        "v_session.scope_kind = 'channel'", "member.status = 'active'",
+        "v_intent.scope_user_id", "v_intent.requested_by_user_id",
     ):
         assert binding in body
-    assert "_agent_runtime_task_cancel_request_hash" in body
+    hash_body = _body(sql, "_agent_runtime_task_cancel_request_hash")
+    assert "scope_user_id" in hash_body
+    assert "requested_by_user_id" in hash_body
     assert "payload" not in "".join(
         re.findall(r"jsonb_build_object\((.*?)\)", body, re.DOTALL)[-3:]
     )

@@ -11,7 +11,8 @@ CREATE TABLE agent_runtime_task_cancel_intents (
         ON DELETE RESTRICT,
     run_id UUID REFERENCES agent_runs(id) ON DELETE RESTRICT,
     org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    scope_user_id UUID REFERENCES users(id) ON DELETE RESTRICT,
+    requested_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     idempotency_key TEXT NOT NULL
         CHECK (length(BTRIM(idempotency_key)) BETWEEN 1 AND 200),
     request_hash TEXT NOT NULL
@@ -57,7 +58,8 @@ BEGIN
        OR NEW.session_id IS DISTINCT FROM OLD.session_id
        OR NEW.submit_command_id IS DISTINCT FROM OLD.submit_command_id
        OR NEW.org_id IS DISTINCT FROM OLD.org_id
-       OR NEW.user_id IS DISTINCT FROM OLD.user_id
+       OR NEW.scope_user_id IS DISTINCT FROM OLD.scope_user_id
+       OR NEW.requested_by_user_id IS DISTINCT FROM OLD.requested_by_user_id
        OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
        OR NEW.request_hash IS DISTINCT FROM OLD.request_hash
        OR NEW.reason_code IS DISTINCT FROM OLD.reason_code
@@ -80,7 +82,8 @@ FOR EACH ROW EXECUTE FUNCTION
     _guard_agent_runtime_task_cancel_intent_identity();
 
 CREATE FUNCTION _agent_runtime_task_cancel_request_hash(
-    p_task_id UUID, p_message_id UUID, p_org_id UUID, p_user_id UUID,
+    p_task_id UUID, p_message_id UUID, p_org_id UUID, p_scope_user_id UUID,
+    p_requested_by_user_id UUID,
     p_session_id UUID, p_submit_command_id UUID, p_idempotency_key TEXT
 ) RETURNS TEXT LANGUAGE SQL IMMUTABLE SECURITY DEFINER
 SET search_path = pg_catalog, public AS $$
@@ -89,7 +92,8 @@ SET search_path = pg_catalog, public AS $$
         'task_id', p_task_id,
         'message_id', p_message_id,
         'org_id', p_org_id,
-        'user_id', p_user_id,
+        'scope_user_id', p_scope_user_id,
+        'requested_by_user_id', p_requested_by_user_id,
         'session_id', p_session_id,
         'submit_command_id', p_submit_command_id,
         'idempotency_key', BTRIM(p_idempotency_key),
@@ -205,6 +209,7 @@ DECLARE
     v_intent agent_runtime_task_cancel_intents%ROWTYPE;
     v_run agent_runs%ROWTYPE;
     v_task tasks%ROWTYPE;
+    v_conversation conversations%ROWTYPE;
     v_hash TEXT;
 BEGIN
     PERFORM _assert_agent_runtime_actor(FALSE);
@@ -228,12 +233,46 @@ BEGIN
          WHERE id = v_command.result_entity_id FOR UPDATE;
     END IF;
     SELECT * INTO v_task FROM tasks WHERE id = p_task_id FOR UPDATE;
+    IF v_task.id IS NOT NULL THEN
+        SELECT * INTO v_conversation FROM conversations
+         WHERE id = v_task.conversation_id;
+    END IF;
     IF v_session.id IS NULL OR v_command.id IS NULL OR v_task.id IS NULL
+       OR v_conversation.id IS NULL
        OR v_session.conversation_id IS DISTINCT FROM v_task.conversation_id
        OR v_session.org_id IS DISTINCT FROM p_org_id
-       OR v_session.user_id IS DISTINCT FROM p_user_id
        OR v_command.org_id IS DISTINCT FROM p_org_id
-       OR v_command.user_id IS DISTINCT FROM p_user_id
+       OR v_command.user_id IS DISTINCT FROM v_session.user_id
+       OR v_conversation.org_id IS DISTINCT FROM p_org_id
+       OR v_conversation.scope_type IS DISTINCT FROM v_session.scope_kind
+       OR v_conversation.scope_id IS DISTINCT FROM v_session.scope_id
+       OR v_session.scope_kind NOT IN ('user', 'channel')
+       OR (
+            v_session.scope_kind = 'user'
+            AND (
+                v_session.user_id IS DISTINCT FROM p_user_id
+                OR v_conversation.user_id IS DISTINCT FROM p_user_id
+            )
+       )
+       OR (
+            v_session.scope_kind = 'channel'
+            AND (
+                v_session.user_id IS NOT NULL
+                OR v_command.user_id IS NOT NULL
+                OR v_conversation.user_id IS NOT NULL
+                OR p_org_id IS NULL
+                OR NOT EXISTS (
+                    SELECT 1
+                      FROM org_members member
+                      JOIN organizations organization
+                        ON organization.id = member.org_id
+                     WHERE member.org_id = p_org_id
+                       AND member.user_id = p_user_id
+                       AND member.status = 'active'
+                       AND organization.status = 'active'
+                )
+            )
+       )
        OR v_command.command_type IS DISTINCT FROM 'submit_input'
        OR v_command.request_hash IS DISTINCT FROM md5(jsonb_build_object(
             'command_type', v_command.command_type,
@@ -250,6 +289,11 @@ BEGIN
        OR v_command.payload->>'task_id' IS DISTINCT FROM p_task_id::TEXT
        OR v_command.payload->>'output_message_id' IS DISTINCT FROM p_message_id::TEXT
        OR NOT EXISTS (
+            SELECT 1 FROM users requested_by
+             WHERE requested_by.id = p_user_id
+               AND requested_by.status::TEXT = 'active'
+       )
+       OR NOT EXISTS (
             SELECT 1 FROM messages message
              WHERE message.id = p_message_id
                AND message.conversation_id = v_task.conversation_id
@@ -261,7 +305,7 @@ BEGIN
             USING ERRCODE = '42501';
     END IF;
     v_hash := _agent_runtime_task_cancel_request_hash(
-        p_task_id, p_message_id, p_org_id, p_user_id,
+        p_task_id, p_message_id, p_org_id, v_session.user_id, p_user_id,
         p_session_id, p_submit_command_id, p_idempotency_key);
     IF p_request_hash IS DISTINCT FROM v_hash THEN
         RETURN jsonb_build_object('outcome', 'idempotency_conflict');
@@ -271,7 +315,8 @@ BEGIN
            OR v_intent.message_id IS DISTINCT FROM p_message_id
            OR v_intent.session_id IS DISTINCT FROM p_session_id
            OR v_intent.org_id IS DISTINCT FROM p_org_id
-           OR v_intent.user_id IS DISTINCT FROM p_user_id
+           OR v_intent.scope_user_id IS DISTINCT FROM v_session.user_id
+           OR v_intent.requested_by_user_id IS DISTINCT FROM p_user_id
            OR v_intent.idempotency_key IS DISTINCT FROM BTRIM(p_idempotency_key)
            OR v_intent.request_hash IS DISTINCT FROM p_request_hash THEN
             RETURN jsonb_build_object('outcome', 'idempotency_conflict');
@@ -284,10 +329,12 @@ BEGIN
     ELSE
         INSERT INTO agent_runtime_task_cancel_intents(
             task_id, message_id, session_id, submit_command_id,
-            org_id, user_id, idempotency_key, request_hash
+            org_id, scope_user_id, requested_by_user_id,
+            idempotency_key, request_hash
         ) VALUES (
             p_task_id, p_message_id, p_session_id, p_submit_command_id,
-            p_org_id, p_user_id, BTRIM(p_idempotency_key), p_request_hash
+            p_org_id, v_session.user_id, p_user_id,
+            BTRIM(p_idempotency_key), p_request_hash
         ) RETURNING * INTO v_intent;
     END IF;
     RETURN _apply_agent_runtime_task_cancel_intent(
@@ -303,7 +350,8 @@ FROM PUBLIC, everydayai_runtime, everydayai_wecom_runtime,
     everydayai_sandbox_worker;
 REVOKE ALL ON FUNCTION
     _guard_agent_runtime_task_cancel_intent_identity(),
-    _agent_runtime_task_cancel_request_hash(UUID,UUID,UUID,UUID,UUID,UUID,TEXT),
+    _agent_runtime_task_cancel_request_hash(
+        UUID,UUID,UUID,UUID,UUID,UUID,UUID,TEXT),
     _lock_agent_runtime_task_cancel_intent(UUID),
     _apply_agent_runtime_task_cancel_intent(
         agent_runtime_task_cancel_intents, agent_runtime_sessions,

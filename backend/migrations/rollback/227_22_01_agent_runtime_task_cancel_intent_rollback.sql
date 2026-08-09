@@ -17,7 +17,7 @@ DROP FUNCTION _apply_agent_runtime_task_cancel_intent(
     agent_session_commands, agent_runs);
 DROP FUNCTION _lock_agent_runtime_task_cancel_intent(UUID);
 DROP FUNCTION _agent_runtime_task_cancel_request_hash(
-    UUID,UUID,UUID,UUID,UUID,UUID,TEXT);
+    UUID,UUID,UUID,UUID,UUID,UUID,UUID,TEXT);
 DROP TRIGGER guard_agent_runtime_task_cancel_intent_identity
     ON agent_runtime_task_cancel_intents;
 DROP FUNCTION _guard_agent_runtime_task_cancel_intent_identity();
