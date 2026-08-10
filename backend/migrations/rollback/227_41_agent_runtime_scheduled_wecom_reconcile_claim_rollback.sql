@@ -1,0 +1,33 @@
+-- Roll back 227_41 only while no reconciliation ledger or active lease fact exists.
+
+SET LOCAL ROLE everydayai_owner;
+
+LOCK TABLE agent_runtime_scheduled_wecom_reconcile_claim_requests,
+ agent_runtime_scheduled_wecom_deliveries IN SHARE ROW EXCLUSIVE MODE;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_reconcile_claim_requests)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_deliveries
+  WHERE reconcile_request_id IS NOT NULL OR reconcile_token IS NOT NULL
+   OR reconcile_worker_id IS NOT NULL OR reconcile_lease_expires_at IS NOT NULL) THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_WECOM_RECONCILE_ROLLBACK_HAS_FACTS'
+   USING ERRCODE='55000';
+ END IF;
+END $$;
+REVOKE ALL ON FUNCTION claim_agent_runtime_scheduled_wecom_reconcile_v1(UUID,TEXT,INTEGER),
+ renew_agent_runtime_scheduled_wecom_reconcile_lease_v1(UUID,UUID,UUID,TEXT,BIGINT,INTEGER),
+ read_agent_runtime_scheduled_wecom_reconcile_v1(UUID)
+ FROM everydayai_wecom_runtime;
+DROP FUNCTION read_agent_runtime_scheduled_wecom_reconcile_v1(UUID);
+DROP FUNCTION renew_agent_runtime_scheduled_wecom_reconcile_lease_v1(
+ UUID,UUID,UUID,TEXT,BIGINT,INTEGER);
+DROP FUNCTION claim_agent_runtime_scheduled_wecom_reconcile_v1(UUID,TEXT,INTEGER);
+DROP FUNCTION _agent_runtime_scheduled_wecom_reconcile_json(
+ agent_runtime_scheduled_wecom_reconcile_claim_requests,
+ agent_runtime_scheduled_wecom_deliveries,agent_runtime_scheduled_wecom_delivery_items,
+ agent_runtime_scheduled_wecom_dispatch_attempts,TEXT);
+DROP TRIGGER runtime_scheduled_wecom_reconcile_claim_immutable
+ ON agent_runtime_scheduled_wecom_reconcile_claim_requests;
+DROP FUNCTION _agent_runtime_scheduled_wecom_reconcile_claim_immutable();
+DROP TABLE agent_runtime_scheduled_wecom_reconcile_claim_requests;
+
+RESET ROLE;
