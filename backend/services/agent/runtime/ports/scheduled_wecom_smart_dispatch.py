@@ -1,0 +1,41 @@
+"""Typed boundary for one Scheduled Runtime Smart Robot dispatch."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol
+
+from services.agent.runtime.ports.scheduled_wecom_delivery import (
+    DispatchOutcomeReceipt,
+)
+from services.wecom.ws_outbound import WecomOutboundAckResult
+
+
+class SmartRobotDispatchOutcome(StrEnum):
+    ALREADY_PERSISTED = "already_persisted"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, kw_only=True)
+class SmartRobotDispatchResult:
+    outcome: SmartRobotDispatchOutcome
+    intent_id: str
+    item_id: str
+    dispatch_receipt: DispatchOutcomeReceipt | None = None
+
+
+class ScheduledWecomSmartDispatchError(RuntimeError):
+    """Stable failure-closed error before any Smart Robot side effect."""
+
+
+class SmartRobotProactiveTransportPort(Protocol):
+    async def send_proactive_typed(
+        self,
+        provider_request_id: str,
+        chatid: str,
+        msgtype: str,
+        content: dict[str, str],
+    ) -> WecomOutboundAckResult: ...
