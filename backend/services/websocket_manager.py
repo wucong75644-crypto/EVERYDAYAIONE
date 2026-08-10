@@ -271,9 +271,10 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
     async def send_to_user(
         self, user_id: str, message: Dict[str, Any],
         org_id: str | None = None,
-    ):
+    ) -> bool:
         """仅发送到用户在精确企业上下文中的连接；None 表示个人空间。"""
         connections = self._connections.get(user_id, {})
+        delivered = False
 
         logger.debug(
             f"send_to_user | user={user_id} | org={org_id} | "
@@ -284,9 +285,10 @@ class WebSocketManager(RedisPubSubMixin, WebSocketInteractionMixin):
         for conn_id, conn in list(connections.items()):
             if conn.org_id != org_id:
                 continue
-            await self.send_to_connection(conn_id, message)
+            delivered = await self.send_to_connection(conn_id, message) or delivered
 
         await self._publish("user", user_id, message, org_id=org_id)
+        return delivered
 
     async def send_to_task_subscribers(
         self,

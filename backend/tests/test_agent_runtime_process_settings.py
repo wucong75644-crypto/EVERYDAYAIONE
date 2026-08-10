@@ -147,6 +147,7 @@ def test_projection_and_authorization_field_allowlists() -> None:
     assert set(AuthorizationProcessSettings.model_fields) == COMMON_FIELDS
     assert set(ProjectionProcessSettings.model_fields) == COMMON_FIELDS | {
         "redis_host", "redis_port", "redis_password", "redis_db", "redis_ssl",
+        "agent_runtime_scheduled_web_projection_enabled",
     }
     forbidden = {
         "kie_api_key", "google_api_key", "dashscope_api_key",

@@ -93,6 +93,7 @@ class AuthorizationProcessSettings(BaseSettings):
 class ProjectionProcessSettings(AuthorizationProcessSettings):
     """Projection config plus its explicit Tool Confirmation Redis scope."""
 
+    agent_runtime_scheduled_web_projection_enabled: bool = False
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_password: SecretStr | None = None
@@ -316,6 +317,9 @@ async def _build_owner_and_cycle(role, raw, settings):
             )
         owner = build_projection(
             raw, settings.agent_runtime_worker_id, process_role=role,
+            scheduled_web_projection_enabled=(
+                settings.agent_runtime_scheduled_web_projection_enabled
+            ),
         )
         cycle = owner.run_once
     elif role == "authorization":

@@ -348,16 +348,20 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   scheduled_task_completed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
-        task_name?: string;
+        run_id?: string;
+        task_status?: string;
         next_run_at?: string;
         summary?: string;
-        push_status?: string;
       };
       if (!data?.task_id) return;
+      const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
+      const taskStatus = validStatuses.includes(data.task_status as TaskStatus)
+        ? data.task_status as TaskStatus
+        : undefined;
       logger.info('ws:scheduled-task', 'completed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status: 'active',
+          ...(taskStatus ? { status: taskStatus } : {}),
           last_run_at: new Date().toISOString(),
           last_summary: data.summary || null,
           next_run_at: data.next_run_at || null,
@@ -370,22 +374,24 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   scheduled_task_failed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
-        task_name?: string;
+        run_id?: string;
+        task_status?: string;
         status?: string;
-        error?: string;
+        reason?: string;
         consecutive_failures?: number;
-        will_retry?: boolean;
+        next_run_at?: string;
       };
       if (!data?.task_id) return;
       const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
-      const status = validStatuses.includes(data.status as TaskStatus)
-        ? data.status as TaskStatus
-        : 'error';
+      const taskStatus = validStatuses.includes(data.task_status as TaskStatus)
+        ? data.task_status as TaskStatus
+        : undefined;
       logger.warn('ws:scheduled-task', 'failed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status,
+          ...(taskStatus ? { status: taskStatus } : {}),
           consecutive_failures: data.consecutive_failures || 0,
+          next_run_at: data.next_run_at || null,
         });
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);
       });

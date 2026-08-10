@@ -55,7 +55,10 @@ class TestSendToUserOrgFilter:
     @pytest.mark.asyncio
     async def test_org_a_only_sends_to_org_a(self):
         """指定 org_id=A 只发给 A 的连接"""
-        await self.manager.send_to_user("user1", {"type": "test"}, org_id=ORG_A)
+        delivered = await self.manager.send_to_user(
+            "user1", {"type": "test"}, org_id=ORG_A,
+        )
+        assert delivered is True
         self.manager.send_to_connection.assert_called_once_with("conn_a", {"type": "test"})
 
     @pytest.mark.asyncio
@@ -75,9 +78,10 @@ class TestSendToUserOrgFilter:
     @pytest.mark.asyncio
     async def test_nonexistent_org_sends_nothing(self):
         """不存在的 org_id 不发给任何人"""
-        await self.manager.send_to_user(
+        delivered = await self.manager.send_to_user(
             "user1", {"type": "test"}, org_id="nonexistent",
         )
+        assert delivered is False
         self.manager.send_to_connection.assert_not_called()
 
     @pytest.mark.asyncio

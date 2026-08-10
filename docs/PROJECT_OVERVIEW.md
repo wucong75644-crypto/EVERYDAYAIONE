@@ -1950,6 +1950,17 @@ cache = client.caches.create(
     不复制结果正文、URL、storage ref、Prompt、Secret、路径或堆栈。Projection 仅获得
     tenant/run-scoped readback 窄 RPC；本批不 claim、不发送 Web/企微、不使用 Redis 作为事实源，legacy
     Run 不生成 Runtime intent，`production_ready=false` 保持。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D1-B Scheduled Runtime Web durable projection receipt + wakeup
+  - 新增 `227_36_agent_runtime_scheduled_web_projection.sql` 与失败关闭 rollback；Projection Worker
+    只 claim Web intent，以 lease token/state version 单赢家验证 org/user、target/content hash、
+    scheduled/runtime/task/finalization 绑定、terminal run/task Web 投影及 active membership。WeCom intent
+    保持 pending，receipt/attempt 表 FORCE RLS，Worker 仅有窄 RPC EXECUTE，生产 flag 默认关闭且
+    `production_ready=false`。
+  - apply 先写唯一 durable projection receipt，再调用现有 `ws_manager.send_to_user` 发送仅含刷新字段的
+    completed/failed wakeup；无连接、Redis/WS 异常只写脱敏 attempt/result，不撤销 receipt。lease 过期可从
+    projected receipt 恢复，允许崩溃窗口内重复 wakeup，但不会重复数据库投影，也不创建 conversation/message。
+    前端按白名单采纳 DB `task_status` 后 `fetchRuns`，once task 不再被 completed handler 短暂硬编码为 active。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

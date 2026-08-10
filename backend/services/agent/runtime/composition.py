@@ -120,14 +120,24 @@ class RuntimeOwner:
 
 
 class ProjectionOwner:
-    def __init__(self, projection, confirmations) -> None:
+    def __init__(self, projection, confirmations, scheduled_delivery=None) -> None:
         self.projection = projection
         self.confirmations = confirmations
+        self.scheduled_delivery = scheduled_delivery
 
     async def run_once(self) -> bool:
         projected = await self.projection.run_once()
+        delivered = False
+        if self.scheduled_delivery is not None:
+            try:
+                delivered = await self.scheduled_delivery.run_once()
+            except Exception as exc:
+                logger.error(
+                    "Runtime scheduled Web projection failed | error_type=%s",
+                    type(exc).__name__,
+                )
         notified = await self.confirmations.run_once()
-        return bool(projected or notified)
+        return bool(projected or delivered or notified)
 
 
 def scoped(database: Any, kind: DatabaseAccessKind, worker_id: str):
@@ -139,6 +149,7 @@ def scoped(database: Any, kind: DatabaseAccessKind, worker_id: str):
 
 def build_projection(
     database: Any, worker_id: str, *, process_role: str = "projection",
+    scheduled_web_projection_enabled: bool = False,
 ):
     _require_process_role("projection", process_role)
     from services.agent.runtime.application.confirmation_notification import (
@@ -154,12 +165,24 @@ def build_projection(
     from services.websocket_manager import ws_manager
 
     db = scoped(database, DatabaseAccessKind.PROJECTION, worker_id)
+    scheduled_delivery = None
+    if scheduled_web_projection_enabled:
+        from services.agent.runtime.application.scheduled_delivery_projection import (
+            ScheduledDeliveryProjectionWorker,
+        )
+        from services.agent.runtime.infrastructure.postgres.scheduled_delivery_projection import (
+            PostgresScheduledDeliveryProjection,
+        )
+        scheduled_delivery = ScheduledDeliveryProjectionWorker(
+            PostgresScheduledDeliveryProjection(db, worker_id), ws_manager,
+        )
     return ProjectionOwner(
         CompatibilityProjectionWorker(PostgresCompatibilityProjection(db)),
         ToolConfirmationNotificationWorker(
             database=db, service=tool_confirmation_service,
             websocket_manager=ws_manager, worker_id=worker_id,
         ),
+        scheduled_delivery,
     )
 
 
