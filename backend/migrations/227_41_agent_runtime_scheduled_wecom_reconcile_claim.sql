@@ -37,6 +37,61 @@ REVOKE ALL ON agent_runtime_scheduled_wecom_reconcile_claim_requests
  everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,
  everydayai_authorization_worker,everydayai_sandbox_worker;
 
+CREATE FUNCTION _agent_runtime_scheduled_wecom_global_request_lock(p_request_id UUID) RETURNS VOID
+LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+ SELECT pg_advisory_xact_lock(hashtextextended(
+  'scheduled-wecom-global-request:'||p_request_id,0))
+$$;
+
+CREATE FUNCTION _agent_runtime_scheduled_wecom_reconcile_request_guard() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+ PERFORM _agent_runtime_scheduled_wecom_global_request_lock(NEW.request_id);
+ IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_deliveries
+   WHERE claim_request_id=NEW.request_id)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_dispatch_attempts
+   WHERE claim_request_id=NEW.request_id)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_prepared_recovery_requests
+   WHERE request_id=NEW.request_id)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_outcome_requests
+   WHERE request_id=NEW.request_id) THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_WECOM_RECONCILE_REQUEST_CONFLICT'
+   USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER runtime_scheduled_wecom_reconcile_global_request_guard BEFORE INSERT
+ ON agent_runtime_scheduled_wecom_reconcile_claim_requests FOR EACH ROW
+ EXECUTE FUNCTION _agent_runtime_scheduled_wecom_reconcile_request_guard();
+
+CREATE FUNCTION _agent_runtime_scheduled_wecom_legacy_request_guard() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE guard_request_id UUID;
+BEGIN
+ IF TG_TABLE_NAME='agent_runtime_scheduled_wecom_deliveries' THEN
+  IF NEW.claim_request_id IS NULL
+  OR NEW.claim_request_id IS NOT DISTINCT FROM OLD.claim_request_id THEN RETURN NEW; END IF;
+  guard_request_id:=NEW.claim_request_id;
+ ELSE guard_request_id:=NEW.request_id;
+ END IF;
+ PERFORM _agent_runtime_scheduled_wecom_global_request_lock(guard_request_id);
+ IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_reconcile_claim_requests
+  WHERE request_id=guard_request_id) THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_WECOM_RECONCILE_REQUEST_CONFLICT'
+   USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER runtime_scheduled_wecom_delivery_global_request_guard BEFORE UPDATE
+ ON agent_runtime_scheduled_wecom_deliveries FOR EACH ROW
+ EXECUTE FUNCTION _agent_runtime_scheduled_wecom_legacy_request_guard();
+CREATE TRIGGER runtime_scheduled_wecom_recovery_global_request_guard BEFORE INSERT
+ ON agent_runtime_scheduled_wecom_prepared_recovery_requests FOR EACH ROW
+ EXECUTE FUNCTION _agent_runtime_scheduled_wecom_legacy_request_guard();
+CREATE TRIGGER runtime_scheduled_wecom_outcome_global_request_guard BEFORE INSERT
+ ON agent_runtime_scheduled_wecom_outcome_requests FOR EACH ROW
+ EXECUTE FUNCTION _agent_runtime_scheduled_wecom_legacy_request_guard();
+
 CREATE FUNCTION _agent_runtime_scheduled_wecom_reconcile_claim_immutable() RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 BEGIN
@@ -126,6 +181,7 @@ BEGIN
    AND candidate_item.status IN('unknown','reconcile_required')
    AND candidate_attempt.status='unknown' AND candidate_attempt.dispatch_phase='ambiguous'
    AND COALESCE(candidate_delivery.next_attempt_at,'-infinity'::TIMESTAMPTZ)<=clock_timestamp()
+   AND COALESCE(candidate_item.next_attempt_at,'-infinity'::TIMESTAMPTZ)<=clock_timestamp()
    AND(candidate_delivery.reconcile_token IS NULL
     OR candidate_delivery.reconcile_lease_expires_at<=clock_timestamp())
   ORDER BY candidate_attempt.unknown_at,candidate_attempt.id
@@ -226,6 +282,9 @@ COMMENT ON FUNCTION read_agent_runtime_scheduled_wecom_reconcile_v1(UUID) IS
  'Pure durable request readback; never claims, renews, dispatches, or changes reconciliation facts.';
 
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_wecom_reconcile_claim_immutable(),
+ _agent_runtime_scheduled_wecom_global_request_lock(UUID),
+ _agent_runtime_scheduled_wecom_reconcile_request_guard(),
+ _agent_runtime_scheduled_wecom_legacy_request_guard(),
  _agent_runtime_scheduled_wecom_reconcile_json(
   agent_runtime_scheduled_wecom_reconcile_claim_requests,
   agent_runtime_scheduled_wecom_deliveries,agent_runtime_scheduled_wecom_delivery_items,
