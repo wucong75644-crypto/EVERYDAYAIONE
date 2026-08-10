@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 import uuid
 from collections import OrderedDict
@@ -22,6 +23,7 @@ OUTBOUND_WRITE_TIMEOUT = 5.0
 OUTBOUND_PENDING_CAPACITY = 128
 OUTBOUND_RESULT_CAPACITY = 1024
 OUTBOUND_RESULT_TTL = 300.0
+PROVIDER_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,200}$")
 
 
 class WecomOutboundStatus(str, Enum):
@@ -97,6 +99,13 @@ class WecomOutboundMixin:
                 )
             return await self._read_outbound_request(existing)
 
+        ws = self._ws if self.is_connected else None
+        if ws is None:
+            return _result(
+                provider_request_id,
+                WecomOutboundStatus.NOT_STARTED,
+                WecomOutboundErrorClass.UNAVAILABLE,
+            )
         if not self._reserve_outbound_capacity():
             return _result(
                 provider_request_id,
@@ -113,13 +122,6 @@ class WecomOutboundMixin:
         )
         self._outbound_requests[provider_request_id] = entry
         future = entry.future
-        ws = self._ws if self.is_connected else None
-        if ws is None:
-            return self._settle_outbound(
-                provider_request_id,
-                WecomOutboundStatus.NOT_STARTED,
-                WecomOutboundErrorClass.UNAVAILABLE,
-            )
 
         message = {
             "cmd": WecomCommand.SEND_MSG,
@@ -382,7 +384,7 @@ def _valid_request(
 ) -> bool:
     return bool(
         isinstance(provider_request_id, str)
-        and 0 < len(provider_request_id) <= 128
+        and PROVIDER_REQUEST_ID_PATTERN.fullmatch(provider_request_id)
         and not provider_request_id.startswith("ping_")
         and isinstance(chatid, str)
         and chatid

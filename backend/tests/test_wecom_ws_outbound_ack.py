@@ -78,19 +78,50 @@ async def test_nonzero_ack_is_typed_rejection_without_errmsg(client):
 
 
 @pytest.mark.asyncio
-async def test_pre_send_unavailable_is_not_started_and_read_only():
+async def test_unavailable_then_reconnect_same_id_sends_once_and_acks():
     client = WecomWSClient("bot", "secret")
     first = await client.send_proactive_typed(
+        "provider-offline", "chat", "text", {"content": "safe"},
+    )
+    assert first.status == WecomOutboundStatus.NOT_STARTED
+    assert first.error_class == WecomOutboundErrorClass.UNAVAILABLE
+    assert "provider-offline" not in client._outbound_requests
+
+    client._ws = AsyncMock()
+    client._is_connected = True
+
+    async def send(raw: str) -> None:
+        _ack(client, json.loads(raw)["headers"]["req_id"], 0)
+
+    client._ws.send.side_effect = send
+    reconnected = await client.send_proactive_typed(
         "provider-offline", "chat", "text", {"content": "safe"},
     )
     duplicate = await client.send_proactive_typed(
         "provider-offline", "chat", "text", {"content": "safe"},
     )
 
-    assert first.status == WecomOutboundStatus.NOT_STARTED
-    assert first.error_class == WecomOutboundErrorClass.UNAVAILABLE
-    assert duplicate == first
-    assert client._outbound_requests["provider-offline"].write_started is False
+    assert reconnected.status == WecomOutboundStatus.ACKNOWLEDGED
+    assert duplicate == reconnected
+    client._ws.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_unavailable_calls_are_retry_safe():
+    client = WecomWSClient("bot", "secret")
+    results = await asyncio.gather(*(
+        client.send_proactive_typed(
+            "provider-unavailable", "chat", "text", {"content": "safe"},
+        )
+        for _ in range(50)
+    ))
+
+    assert all(result.status == WecomOutboundStatus.NOT_STARTED for result in results)
+    assert all(
+        result.error_class == WecomOutboundErrorClass.UNAVAILABLE
+        for result in results
+    )
+    assert client._outbound_requests == {}
 
 
 @pytest.mark.asyncio
@@ -103,6 +134,40 @@ async def test_heartbeat_reserved_identity_fails_before_registration(client):
     assert result.error_class == WecomOutboundErrorClass.INVALID_REQUEST
     assert "ping_conflict" not in client._outbound_requests
     client._ws.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_request_id", [
+    "short7",
+    "unsafe/id",
+    "unsafe id",
+    "请求标识-12345678",
+    "x" * 201,
+])
+async def test_provider_identity_rejects_unsafe_or_out_of_range(
+    client, provider_request_id,
+):
+    result = await client.send_proactive_typed(
+        provider_request_id, "chat", "text", {"content": "safe"},
+    )
+
+    assert result.status == WecomOutboundStatus.NOT_STARTED
+    assert result.error_class == WecomOutboundErrorClass.INVALID_REQUEST
+    assert provider_request_id not in client._outbound_requests
+    client._ws.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_request_id", ["safe-001", "x" * 200])
+async def test_provider_identity_accepts_length_boundaries(provider_request_id):
+    client = WecomWSClient("bot", "secret")
+    result = await client.send_proactive_typed(
+        provider_request_id, "chat", "text", {"content": "safe"},
+    )
+
+    assert result.status == WecomOutboundStatus.NOT_STARTED
+    assert result.error_class == WecomOutboundErrorClass.UNAVAILABLE
+    assert provider_request_id not in client._outbound_requests
 
 
 @pytest.mark.asyncio
