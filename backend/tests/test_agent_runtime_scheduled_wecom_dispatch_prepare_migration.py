@@ -10,6 +10,7 @@ ROLLBACK = ROOT.joinpath(
 ).read_text()
 
 PUBLIC_FUNCTIONS = (
+    "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1",
     "prepare_agent_runtime_scheduled_wecom_dispatch_v1",
     "start_agent_runtime_scheduled_wecom_dispatch_v1",
     "read_agent_runtime_scheduled_wecom_dispatch_attempt_v1",
@@ -72,16 +73,63 @@ def test_start_is_prepared_only_cas_and_readback_is_pure() -> None:
     assert "transport may start only after" in MIGRATION
 
 
+def test_prepared_recovery_is_durable_narrow_and_evidence_free() -> None:
+    recovery = _function_body("recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1")
+    for contract in (
+        "agent_runtime_scheduled_wecom_prepared_recovery_requests",
+        "candidate_attempt.status='prepared'",
+        "candidate_item.status='dispatching'",
+        "candidate_delivery.lease_expires_at<=clock_timestamp()",
+        "candidate_attempt.dispatch_started_at IS NULL",
+        "candidate_attempt.unknown_at IS NULL",
+        "candidate_attempt.receipt_hash IS NULL",
+        "FOR UPDATE OF candidate_delivery,candidate_item,candidate_attempt SKIP LOCKED LIMIT 1",
+        "AGENT_RUNTIME_SCHEDULED_WECOM_RECOVERY_REQUEST_CONFLICT",
+    ):
+        assert contract in recovery
+    assert "ENABLE ROW LEVEL SECURITY" in MIGRATION
+    assert "FORCE ROW LEVEL SECURITY" in MIGRATION
+    assert "RECOVERY_REQUEST_IMMUTABLE" in MIGRATION
+    assert "GRANT SELECT" not in MIGRATION and "GRANT UPDATE" not in MIGRATION
+    for forbidden in (
+        "secret_encrypted", "authorization_header", "http://", "https://", "transport_request",
+    ):
+        assert forbidden not in MIGRATION.lower()
+
+
+def test_nullable_scalar_contracts_are_explicit() -> None:
+    prepare = _function_body("prepare_agent_runtime_scheduled_wecom_dispatch_v1")
+    start = _function_body("start_agent_runtime_scheduled_wecom_dispatch_v1")
+    recovery = _function_body("recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1")
+    for body in (prepare, start):
+        for scalar in (
+            "p_expected_delivery_state_version IS NULL",
+            "p_expected_item_state_version IS NULL",
+            "p_provider_revision IS NULL",
+        ):
+            assert scalar in body
+    assert "p_lease_seconds IS NULL" in recovery
+    assert "IS DISTINCT FROM p_expected_delivery_state_version" in start
+    assert "IS DISTINCT FROM p_expected_item_state_version" in start
+
+
 def test_scope_excludes_a2b2_and_rollback_fails_closed_on_attempts() -> None:
     for excluded in (
-        "receipt_type", "receipt_hash", "provider_message_id", "mark_unknown",
+        "provider_message_id", "mark_unknown",
         "reconcile_token", "retry_agent_runtime", "_aggregate",
     ):
         assert excluded not in MIGRATION
     assert "DISPATCH_ROLLBACK_HAS_FACTS" in ROLLBACK
     assert "EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_dispatch_attempts)" in ROLLBACK
+    assert "EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_prepared_recovery_requests)" in ROLLBACK
     assert "agent_runtime_scheduled_wecom_delivery_items WHERE status='dispatching'" in ROLLBACK
-    assert "DROP TABLE" not in ROLLBACK
+    assert "DROP TABLE agent_runtime_scheduled_wecom_prepared_recovery_requests" in ROLLBACK
+    for protected_table in (
+        "agent_runtime_scheduled_wecom_dispatch_attempts",
+        "agent_runtime_scheduled_wecom_delivery_items",
+        "agent_runtime_scheduled_wecom_deliveries",
+    ):
+        assert f"DROP TABLE {protected_table}" not in ROLLBACK
     for name in PUBLIC_FUNCTIONS:
         assert f"DROP FUNCTION {name}" in ROLLBACK
     assert len(MIGRATION.splitlines()) <= 500

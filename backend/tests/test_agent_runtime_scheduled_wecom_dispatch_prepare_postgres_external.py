@@ -21,6 +21,7 @@ pytestmark = pytest.mark.external
 MIGRATION = "227_39_agent_runtime_scheduled_wecom_dispatch_prepare.sql"
 ROLLBACK = "227_39_agent_runtime_scheduled_wecom_dispatch_prepare_rollback.sql"
 SIGNATURES = (
+    "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1(uuid,text,integer)",
     "prepare_agent_runtime_scheduled_wecom_dispatch_v1(uuid,uuid,uuid,uuid,text,bigint,bigint,text,text,bigint)",
     "start_agent_runtime_scheduled_wecom_dispatch_v1(uuid,uuid,uuid,uuid,uuid,text,bigint,bigint,text,text,bigint)",
     "read_agent_runtime_scheduled_wecom_dispatch_attempt_v1(uuid,uuid,uuid,uuid,uuid,text,text,text,bigint)",
@@ -38,6 +39,22 @@ def _owner_execute(url: str, sql: str, params: tuple = ()) -> None:
         conn.execute("SET ROLE everydayai_owner")
         conn.execute(sql, params)
         conn.commit()
+
+
+def _fact_state(url: str) -> tuple[object, ...]:
+    return tuple(
+        _owner(
+            url,
+            f"SELECT COALESCE(jsonb_agg(to_jsonb(fact) ORDER BY {order_by}),'[]'::jsonb) "
+            f"FROM {table} fact",
+        )
+        for table, order_by in (
+            ("agent_runtime_scheduled_wecom_deliveries", "intent_id"),
+            ("agent_runtime_scheduled_wecom_delivery_items", "id"),
+            ("agent_runtime_scheduled_wecom_dispatch_attempts", "id"),
+            ("agent_runtime_scheduled_wecom_prepared_recovery_requests", "request_id"),
+        )
+    )
 
 
 def _seed(url: str) -> tuple[dict, dict]:
@@ -125,6 +142,35 @@ def test_prepare_start_and_pure_response_loss_readback(database: str) -> None:
     )
     assert readback["outcome"] == "readback" and readback["status"] == "dispatch_started"
     assert before == after
+
+
+def test_prepare_and_start_null_parameter_matrix_is_invalid_and_fact_free(database: str) -> None:
+    _setup(database)
+    claim, item = _seed(database)
+    prepare_params = _prepare_params(claim, item, _identity())
+    before_prepare = _fact_state(database)
+    for index in range(len(prepare_params)):
+        invalid = list(prepare_params)
+        invalid[index] = None
+        with pytest.raises(Exception, match="PREPARE_INVALID"):
+            _rpc(
+                database, "prepare_agent_runtime_scheduled_wecom_dispatch_v1", tuple(invalid),
+            )
+    assert _fact_state(database) == before_prepare
+
+    prepared = _rpc(
+        database, "prepare_agent_runtime_scheduled_wecom_dispatch_v1", prepare_params,
+    )
+    start_params = _start_params(database, claim, item, prepared)
+    before_start = _fact_state(database)
+    for index in range(len(start_params)):
+        invalid = list(start_params)
+        invalid[index] = None
+        with pytest.raises(Exception, match="START_INVALID"):
+            _rpc(
+                database, "start_agent_runtime_scheduled_wecom_dispatch_v1", tuple(invalid),
+            )
+    assert _fact_state(database) == before_start
 
 
 def test_fifty_concurrent_prepare_and_start_have_one_transition(database: str) -> None:
@@ -283,6 +329,20 @@ def test_split_provider_and_idempotency_hits_return_contract_conflict(database: 
     )
     with pytest.raises(Exception, match="PREPARE_CONFLICT"):
         _rpc(database, "prepare_agent_runtime_scheduled_wecom_dispatch_v1", split_identity)
+    before = _fact_state(database)
+
+    def crossed_call(_: int) -> str:
+        try:
+            _rpc(database, "prepare_agent_runtime_scheduled_wecom_dispatch_v1", split_identity)
+        except Exception as error:  # noqa: BLE001 - the SQL contract error is the assertion target.
+            return str(error)
+        return "unexpected-success"
+
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        errors = list(pool.map(crossed_call, range(50)))
+    assert all("AGENT_RUNTIME_SCHEDULED_WECOM_PREPARE_CONFLICT" in error for error in errors)
+    assert all("cardinality" not in error.lower() and "deadlock" not in error.lower() for error in errors)
+    assert _fact_state(database) == before
 
 
 def test_ordering_cross_item_and_live_target_start_fence_preserve_prepared_fact(database: str) -> None:
@@ -359,6 +419,19 @@ def test_intent_item_attempt_crossing_is_rejected(database: str) -> None:
 def test_acl_scope_cross_intent_and_rollback_cleanup_reapply(database: str) -> None:
     _setup(database)
     claim, item = _seed(database)
+    assert _owner(
+        database,
+        "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+        "WHERE oid='agent_runtime_scheduled_wecom_prepared_recovery_requests'::regclass",
+    ) is True
+    for role in ("everydayai_wecom_runtime", "everydayai_runtime", "everydayai_worker"):
+        assert _owner(
+            database,
+            "SELECT NOT has_table_privilege(%s,"
+            "'agent_runtime_scheduled_wecom_prepared_recovery_requests',"
+            "'SELECT,INSERT,UPDATE,DELETE')",
+            (role,),
+        ) is True
     for signature in SIGNATURES:
         assert _owner(
             database,
@@ -394,7 +467,11 @@ def test_acl_scope_cross_intent_and_rollback_cleanup_reapply(database: str) -> N
     )
     with pytest.raises(Exception, match="DISPATCH_ROLLBACK_HAS_FACTS"):
         _rollback(database, ROLLBACK)
-    _owner_execute(database, "TRUNCATE agent_runtime_scheduled_wecom_dispatch_attempts")
+    _owner_execute(
+        database,
+        "TRUNCATE agent_runtime_scheduled_wecom_prepared_recovery_requests,"
+        "agent_runtime_scheduled_wecom_dispatch_attempts",
+    )
     with pytest.raises(Exception, match="DISPATCH_ROLLBACK_HAS_FACTS"):
         _rollback(database, ROLLBACK)
     _owner(
@@ -405,6 +482,10 @@ def test_acl_scope_cross_intent_and_rollback_cleanup_reapply(database: str) -> N
     _rollback(database, ROLLBACK)
     assert _owner(
         database, "SELECT to_regprocedure(%s)", (SIGNATURES[0],),
+    ) is None
+    assert _owner(
+        database,
+        "SELECT to_regclass('agent_runtime_scheduled_wecom_prepared_recovery_requests')",
     ) is None
     _apply(database, MIGRATION)
     _rollback(database, ROLLBACK)
