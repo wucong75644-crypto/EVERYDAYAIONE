@@ -2137,6 +2137,14 @@ cache = client.caches.create(
     reconcile，不可被 ordinary claim、prepare/start 或 transport 重派，也不创建第二 attempt。
   - 新 ledger 双向加入完整 Scheduled WeCom request namespace；rollback 有 recovery facts 时失败关闭，无事实时恢复
     精确 227_47 guards 并只删除 227_48 对象。本批不接 Worker/orchestration/provider/transport/production，flags 保持关闭。
+- **2026-08-10**：AR-18 D2-C0e Scheduled Runtime WeCom UTF-8 payload hash
+  - 新增 additive `227_49_agent_runtime_scheduled_wecom_unicode_payload.sql`，以同签名替换 227_46 read RPC 的成功 hash
+    实现并返回 `payload_revision=2`。safe summary 与最小 transport target 先按 UTF-8 分别计算 SHA-256，随后仅将 64hex
+    digest 和冻结 source/content/result/target、org/channel/provider、delivery/item/version identities 交给既有 ASCII-only
+    canonical helper；不放宽全局 helper，也不返回 raw model、target snapshot、Secret 或路径。
+  - rollback 恢复精确 227_46 revision 1 函数并删除 v2 helper；Python parser 为协调数据库回滚仅兼容 revision 1/2，
+    其它 revision failure-closed。RPC ACL 仍仅开放给 `everydayai_wecom_runtime`，无新增表权限、Worker、transport、
+    provider 或 production activation。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

@@ -1,4 +1,4 @@
-"""Strict 227_46/227_47 Scheduled WeCom payload receipt parsers."""
+"""Strict 227_46/227_47/227_49 Scheduled WeCom payload receipt parsers."""
 
 from __future__ import annotations
 
@@ -98,6 +98,13 @@ def _exact_integer(row: Mapping[str, Any], field: str, expected: int) -> int:
     return value
 
 
+def _payload_revision(row: Mapping[str, Any]) -> int:
+    value = _integer(row, "payload_revision", 1)
+    if value not in {1, 2}:
+        raise _fail("payload_revision")
+    return value
+
+
 def _hash(row: Mapping[str, Any], field: str) -> str:
     value = _text(row, field, maximum=64)
     if not _HASH.fullmatch(value):
@@ -141,7 +148,7 @@ def _target(row: Mapping[str, Any], channel: DispatchChannel) -> DispatchTarget:
 
 
 def parse_dispatch_payload(raw: object) -> DispatchPayloadReadback | None:
-    """Parse one exact 227_46 outcome without collapsing unsupported into text."""
+    """Parse an exact v1 rollback or v2 current payload outcome."""
     if _minimal(raw, "not_found"):
         return None
     if _minimal(raw, "fenced"):
@@ -167,7 +174,7 @@ def parse_dispatch_payload(raw: object) -> DispatchPayloadReadback | None:
     if (item_kind, source_role, message_type) != ("text", "text", "text"):
         raise _fail("dispatch_payload_kind")
     return DispatchPayload(
-        outcome=outcome, payload_revision=_exact_integer(row, "payload_revision", 1),
+        outcome=outcome, payload_revision=_payload_revision(row),
         scheduled_run_id=_uuid(row, "scheduled_run_id"), intent_id=_uuid(row, "intent_id"),
         item_id=_uuid(row, "item_id"), item_key=_hash(row, "item_key"),
         ordinal=_integer(row, "ordinal", 1), item_kind=item_kind, source_role=source_role,

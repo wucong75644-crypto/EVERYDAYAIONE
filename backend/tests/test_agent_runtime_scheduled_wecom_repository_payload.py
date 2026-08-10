@@ -93,7 +93,7 @@ def _payload(channel: str = "app") -> dict[str, object]:
         if channel == "app" else {"org_id": ORG, "chatid": "chat-1"}
     )
     return {
-        "outcome": "payload", "payload_revision": 1, "scheduled_run_id": RUN,
+        "outcome": "payload", "payload_revision": 2, "scheduled_run_id": RUN,
         "intent_id": INTENT, "item_id": ITEM, "item_key": "a" * 64,
         "ordinal": 1, "item_kind": "text", "source_role": "text",
         "source_revision": 1, "source_identity_hash": "b" * 64,
@@ -171,6 +171,25 @@ async def test_payload_accepts_db_safe_url_and_opaque_secret_identifier(channel:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("revision", [1, 2])
+async def test_payload_parser_accepts_v2_and_legacy_rollback_revision(revision: int) -> None:
+    raw = _payload("smart_robot")
+    raw["payload_revision"] = revision
+    raw["text"] = "任务已完成：中文摘要"
+    raw["target"] = {"org_id": ORG, "chatid": "群聊-甲"}
+    _, repository = _repository(
+        raw, "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
+    )
+
+    result = await repository.read_dispatch_payload(_claim())
+
+    assert isinstance(result, DispatchPayload)
+    assert result.payload_revision == revision
+    assert result.text == "任务已完成：中文摘要"
+    assert result.target == WecomSmartRobotDispatchTarget(org_id=ORG, chatid="群聊-甲")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("raw", "kind", "reason"),
     [
@@ -235,7 +254,8 @@ async def test_payload_parser_rejects_extra_missing_malformed_and_sensitive_fiel
     for field, value in (
         ("scheduled_run_id", "not-a-uuid"), ("item_key", "x" * 64),
         ("source_identity_hash", "A" * 64), ("source_revision", 2),
-        ("payload_revision", 0), ("provider_revision", True),
+        ("payload_revision", 0), ("payload_revision", 3),
+        ("provider_revision", True),
         ("delivery_state_version", 8), ("item_state_version", 4),
         ("item_kind", "artifact_identity"), ("message_type", "markdown"),
         ("text", "x" * 501), ("channel", "webhook"),
