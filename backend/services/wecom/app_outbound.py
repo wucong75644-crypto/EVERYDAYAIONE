@@ -14,6 +14,8 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol
 
 SEND_MSG_URL = "https://qyapi.weixin.qq.com/cgi-bin/message/send"
 APP_OUTBOUND_CAPACITY = 1024
+APP_CREDENTIAL_TIMEOUT = 10.0
+APP_HTTP_TIMEOUT = 10.0
 PROVIDER_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,200}$")
 PROVIDER_MESSAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 MSGTYPE_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -33,9 +35,13 @@ class WecomAppOutboundErrorClass(str, Enum):
     IDENTITY_CONFLICT = "identity_conflict"
     CAPACITY_EXCEEDED = "capacity_exceeded"
     CREDENTIAL_UNAVAILABLE = "credential_unavailable"
+    CREDENTIAL_TIMEOUT = "credential_timeout"
     TRANSPORT_UNAVAILABLE = "transport_unavailable"
     PROVIDER_REJECTED = "provider_rejected"
+    PROVIDER_PARTIAL_REJECTED = "provider_partial_rejected"
     TRANSPORT_AMBIGUOUS = "transport_ambiguous"
+    POST_TIMEOUT = "post_timeout"
+    HTTP_STATUS_AMBIGUOUS = "http_status_ambiguous"
     RESPONSE_AMBIGUOUS = "response_ambiguous"
 
 
@@ -49,6 +55,8 @@ class WecomAppOutboundReceipt:
 
 
 class AppHttpResponse(Protocol):
+    status_code: int
+
     def json(self) -> Any: ...
 
 
@@ -73,12 +81,19 @@ class _RequestEntry:
     result: Optional[WecomAppOutboundReceipt] = None
 
 
+@dataclass(frozen=True)
+class _RequestSnapshot:
+    target: str
+    payload: dict[str, Any]
+    request_hash: str
+
+
 class WecomAppOutbound:
     """Send App HTTP requests once with caller-owned local correlation identity.
 
     WeCom's App send API has no caller-owned idempotency field. The stable ID is
-    therefore sent as an HTTP correlation header and retained only in this
-    process; it is not evidence of provider-side idempotency.
+    therefore sent as an HTTP correlation header and retained for this instance
+    lifetime only; it is not provider-side idempotency or a persistent fact.
     """
 
     def __init__(
@@ -87,10 +102,14 @@ class WecomAppOutbound:
         token_provider: Optional[AppAccessTokenProvider],
         http_client: Optional[AppHttpClient],
         capacity: int = APP_OUTBOUND_CAPACITY,
+        credential_timeout: float = APP_CREDENTIAL_TIMEOUT,
+        post_timeout: float = APP_HTTP_TIMEOUT,
     ) -> None:
         self._token_provider = token_provider
         self._http_client = http_client
         self._capacity = max(1, capacity)
+        self._credential_timeout = credential_timeout
+        self._post_timeout = post_timeout
         self._requests: OrderedDict[str, _RequestEntry] = OrderedDict()
         self._lock = asyncio.Lock()
 
@@ -102,15 +121,17 @@ class WecomAppOutbound:
         payload: Mapping[str, Any],
     ) -> WecomAppOutboundReceipt:
         """Perform at most one HTTP request and return a proof-based receipt."""
-        request_hash = _request_hash(target, payload)
-        if not _valid_request(provider_request_id, target, payload, request_hash):
+        snapshot = _snapshot_request(target, payload)
+        if snapshot is None or not _valid_request(
+            provider_request_id, snapshot.target, snapshot.payload,
+        ):
             return _receipt(
                 provider_request_id,
                 WecomAppOutboundStatus.NOT_STARTED,
                 WecomAppOutboundErrorClass.INVALID_REQUEST,
             )
         entry, owner, immediate = await self._reserve(
-            provider_request_id, request_hash,
+            provider_request_id, snapshot.request_hash,
         )
         if immediate is not None:
             return immediate
@@ -123,7 +144,7 @@ class WecomAppOutbound:
         if not owner:
             return await asyncio.shield(entry.future)
         return await self._execute(
-            provider_request_id, target, payload, entry,
+            provider_request_id, snapshot.payload, entry,
         )
 
     def _transport_ready(self) -> bool:
@@ -133,7 +154,11 @@ class WecomAppOutbound:
             return False
         if not callable(getattr(self._http_client, "post", None)):
             return False
-        return getattr(self._http_client, "is_closed", False) is not True
+        return bool(
+            getattr(self._http_client, "is_closed", False) is not True
+            and _valid_timeout(self._credential_timeout)
+            and _valid_timeout(self._post_timeout)
+        )
 
     async def _reserve(
         self,
@@ -161,7 +186,7 @@ class WecomAppOutbound:
                     WecomAppOutboundStatus.NOT_STARTED,
                     WecomAppOutboundErrorClass.TRANSPORT_UNAVAILABLE,
                 )
-            if not self._make_capacity():
+            if len(self._requests) >= self._capacity:
                 return None, False, None
             entry = _RequestEntry(
                 request_hash=request_hash,
@@ -170,45 +195,64 @@ class WecomAppOutbound:
             self._requests[provider_request_id] = entry
             return entry, True, None
 
-    def _make_capacity(self) -> bool:
-        while len(self._requests) >= self._capacity:
-            completed_key = next(
-                (
-                    key for key, entry in self._requests.items()
-                    if entry.result is not None
-                ),
-                None,
-            )
-            if completed_key is None:
-                return False
-            self._requests.pop(completed_key)
-        return True
-
     async def _execute(
         self,
         provider_request_id: str,
-        target: str,
         payload: Mapping[str, Any],
         entry: _RequestEntry,
     ) -> WecomAppOutboundReceipt:
         request_started = False
         try:
-            token = await self._token_provider()  # type: ignore[misc]
-            if not isinstance(token, str) or not token.strip():
+            try:
+                token = await asyncio.wait_for(
+                    self._token_provider(),  # type: ignore[misc]
+                    timeout=self._credential_timeout,
+                )
+            except TimeoutError:
+                result = _receipt(
+                    provider_request_id,
+                    WecomAppOutboundStatus.NOT_STARTED,
+                    WecomAppOutboundErrorClass.CREDENTIAL_TIMEOUT,
+                )
+            except Exception:
                 result = _receipt(
                     provider_request_id,
                     WecomAppOutboundStatus.NOT_STARTED,
                     WecomAppOutboundErrorClass.CREDENTIAL_UNAVAILABLE,
                 )
             else:
-                request_started = True
-                response = await self._http_client.post(  # type: ignore[union-attr]
-                    SEND_MSG_URL,
-                    params={"access_token": token},
-                    json=payload,
-                    headers={REQUEST_ID_HEADER: provider_request_id},
-                )
-                result = _response_receipt(provider_request_id, response)
+                if not isinstance(token, str) or not token.strip():
+                    result = _receipt(
+                        provider_request_id,
+                        WecomAppOutboundStatus.NOT_STARTED,
+                        WecomAppOutboundErrorClass.CREDENTIAL_UNAVAILABLE,
+                    )
+                else:
+                    request_started = True
+                    try:
+                        response = await asyncio.wait_for(
+                            self._http_client.post(  # type: ignore[union-attr]
+                                SEND_MSG_URL,
+                                params={"access_token": token},
+                                json=payload,
+                                headers={REQUEST_ID_HEADER: provider_request_id},
+                            ),
+                            timeout=self._post_timeout,
+                        )
+                    except TimeoutError:
+                        result = _receipt(
+                            provider_request_id,
+                            WecomAppOutboundStatus.UNKNOWN,
+                            WecomAppOutboundErrorClass.POST_TIMEOUT,
+                        )
+                    except Exception:
+                        result = _receipt(
+                            provider_request_id,
+                            WecomAppOutboundStatus.UNKNOWN,
+                            WecomAppOutboundErrorClass.TRANSPORT_AMBIGUOUS,
+                        )
+                    else:
+                        result = _response_receipt(provider_request_id, response)
         except asyncio.CancelledError:
             result = _receipt(
                 provider_request_id,
@@ -259,10 +303,10 @@ class WecomAppOutbound:
                 entry.future.set_result(result)
 
 
-def _request_hash(
+def _snapshot_request(
     target: str,
     payload: Mapping[str, Any],
-) -> Optional[str]:
+) -> Optional[_RequestSnapshot]:
     if not isinstance(target, str) or not isinstance(payload, dict):
         return None
     try:
@@ -273,18 +317,24 @@ def _request_hash(
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
-    except (TypeError, ValueError):
+        if len(encoded) > 1_000_000:
+            return None
+        snapshot = json.loads(encoded)
+    except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    if len(encoded) > 1_000_000:
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("payload"), dict):
         return None
-    return hashlib.sha256(encoded).hexdigest()
+    return _RequestSnapshot(
+        target=snapshot.get("target"),
+        payload=snapshot["payload"],
+        request_hash=hashlib.sha256(encoded).hexdigest(),
+    )
 
 
 def _valid_request(
     provider_request_id: str,
     target: str,
     payload: Mapping[str, Any],
-    request_hash: Optional[str],
 ) -> bool:
     if not (
         isinstance(provider_request_id, str)
@@ -295,10 +345,9 @@ def _valid_request(
         and len(target.encode("utf-8")) <= 32_768
         and all(ord(char) >= 32 for char in target)
         and isinstance(payload, dict)
-        and request_hash
     ):
         return False
-    if _SENSITIVE_PAYLOAD_KEYS.intersection(payload):
+    if _contains_sensitive_key(payload):
         return False
     msgtype = payload.get("msgtype")
     agent_id = payload.get("agentid")
@@ -314,10 +363,42 @@ def _valid_request(
     )
 
 
+def _contains_sensitive_key(value: Any) -> bool:
+    if isinstance(value, dict):
+        if any(
+            isinstance(key, str) and key.lower() in _SENSITIVE_PAYLOAD_KEYS
+            for key in value
+        ):
+            return True
+        return any(_contains_sensitive_key(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_sensitive_key(item) for item in value)
+    return False
+
+
+def _valid_timeout(value: object) -> bool:
+    return bool(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0 < value <= 300
+    )
+
+
 def _response_receipt(
     provider_request_id: str,
     response: AppHttpResponse,
 ) -> WecomAppOutboundReceipt:
+    status_code = getattr(response, "status_code", None)
+    if (
+        not isinstance(status_code, int)
+        or isinstance(status_code, bool)
+        or not 200 <= status_code < 300
+    ):
+        return _receipt(
+            provider_request_id,
+            WecomAppOutboundStatus.UNKNOWN,
+            WecomAppOutboundErrorClass.HTTP_STATUS_AMBIGUOUS,
+        )
     try:
         data = response.json()
     except Exception:
@@ -345,6 +426,19 @@ def _response_receipt(
             status=WecomAppOutboundStatus.REJECTED,
             errcode=errcode,
             error_class=WecomAppOutboundErrorClass.PROVIDER_REJECTED,
+        )
+    if any(data.get(field) for field in ("invalidparty", "invalidtag")):
+        return _receipt(
+            provider_request_id,
+            WecomAppOutboundStatus.UNKNOWN,
+            WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS,
+        )
+    if any(data.get(field) for field in ("invaliduser", "unlicenseduser")):
+        return WecomAppOutboundReceipt(
+            provider_request_id=provider_request_id,
+            status=WecomAppOutboundStatus.REJECTED,
+            errcode=0,
+            error_class=WecomAppOutboundErrorClass.PROVIDER_PARTIAL_REJECTED,
         )
     provider_message_id = data.get("msgid")
     safe_message_id = (

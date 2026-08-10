@@ -1439,8 +1439,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 
 | 类/方法 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `WecomAppOutbound` | `backend/services/wecom/app_outbound.py` | 依赖显式注入 token provider 与 HTTP client，维护有界进程内调用证据；不提供企业微信服务端幂等 | token_provider, http_client, capacity | transport 实例 |
-| `WecomAppOutbound.send_typed` | `backend/services/wecom/app_outbound.py` | 以 caller-owned `provider_request_id` 单次发送 App 消息；请求前失败可重试，请求后歧义返回 `UNKNOWN` | provider_request_id, target, payload | `WecomAppOutboundReceipt` |
+| `WecomAppOutbound` | `backend/services/wecom/app_outbound.py` | 依赖显式注入 token provider 与 HTTP client，在实例生命周期内有界保留全部已开始身份且满容量拒绝新身份；不提供企业微信服务端幂等，持久正确性依赖 DB facts | token_provider, http_client, capacity, credential_timeout, post_timeout | transport 实例 |
+| `WecomAppOutbound.send_typed` | `backend/services/wecom/app_outbound.py` | 以 caller-owned `provider_request_id` 最多执行一次 App HTTP POST；仅可信 2xx 完整回执可 ACK，部分用户失败拒绝，请求后歧义返回 `UNKNOWN` | provider_request_id, target, payload | `WecomAppOutboundReceipt` |
 
 #### 后端函数 — 企微消息发送 (`backend/services/wecom/app_message_sender.py`)
 

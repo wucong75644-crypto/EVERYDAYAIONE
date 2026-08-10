@@ -180,16 +180,23 @@ async def _send(payload: dict, creds: OrgWecomCreds) -> bool:
     legacy_payload = dict(payload)
     legacy_payload.setdefault("agentid", creds.agent_id)
     target = legacy_payload.get("touser")
-    async with httpx.AsyncClient(timeout=10) as client:
-        outbound = WecomAppOutbound(
-            token_provider=legacy_token_provider,
-            http_client=client,
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            outbound = WecomAppOutbound(
+                token_provider=legacy_token_provider,
+                http_client=client,
+            )
+            result = await outbound.send_typed(
+                provider_request_id=f"legacy-{uuid4().hex}",
+                target=target if isinstance(target, str) else "",
+                payload=legacy_payload,
+            )
+    except Exception:
+        logger.warning(
+            f"Wecom send: transport lifecycle failed | org_id={creds.org_id} | "
+            f"touser={target} | msgtype={legacy_payload.get('msgtype')}"
         )
-        result = await outbound.send_typed(
-            provider_request_id=f"legacy-{uuid4().hex}",
-            target=target if isinstance(target, str) else "",
-            payload=legacy_payload,
-        )
+        return False
 
     if result.status is WecomAppOutboundStatus.ACKNOWLEDGED:
         logger.debug(

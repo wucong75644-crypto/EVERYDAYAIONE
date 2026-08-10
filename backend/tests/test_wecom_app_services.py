@@ -181,6 +181,7 @@ class TestAppMessageSender:
     async def test_send_text_success(self):
         """文本消息发送成功"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         mock_client = AsyncMock()
@@ -210,6 +211,7 @@ class TestAppMessageSender:
     async def test_send_markdown_success(self):
         """Markdown 消息发送成功"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         mock_client = AsyncMock()
@@ -249,6 +251,7 @@ class TestAppMessageSender:
     async def test_send_fails_on_api_error(self):
         """API 返回错误 → 返回 False"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 40003, "errmsg": "invalid userid"}
 
         mock_client = AsyncMock()
@@ -273,6 +276,7 @@ class TestAppMessageSender:
     async def test_custom_agent_id(self):
         """自定义 agent_id 传递（通过 creds）"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         mock_client = AsyncMock()

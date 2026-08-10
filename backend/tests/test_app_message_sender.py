@@ -5,6 +5,7 @@ app_message_sender 单元测试
       upload_temp_media 成功/失败/无token，_send 错误处理
 """
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,6 +50,7 @@ class TestSend:
     async def test_send_success(self):
         """API 返回 errcode=0 → True"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         with patch(
@@ -82,6 +84,7 @@ class TestSend:
     async def test_send_api_error(self):
         """API 返回非 0 errcode → False"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 40001, "errmsg": "invalid token"}
 
         with patch(
@@ -98,6 +101,56 @@ class TestSend:
 
             result = await _send(_text_payload(), _make_creds())
             assert result is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stage", ["construct", "enter", "exit"])
+    async def test_send_lifecycle_exception_returns_false(self, stage):
+        """HTTP client 生命周期普通异常 → False。"""
+        mock_client_cls = MagicMock()
+        if stage == "construct":
+            mock_client_cls.side_effect = RuntimeError("secret lifecycle error")
+        else:
+            mock_client = AsyncMock()
+            mock_resp = MagicMock(status_code=200)
+            mock_resp.json.return_value = {"errcode": 0}
+            mock_client.post.return_value = mock_resp
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            if stage == "enter":
+                mock_client.__aenter__.side_effect = RuntimeError("secret enter")
+            else:
+                mock_client.__aexit__.side_effect = RuntimeError("secret exit")
+            mock_client_cls.return_value = mock_client
+
+        with patch(
+            "services.wecom.app_message_sender.get_access_token",
+            new=AsyncMock(return_value="token"),
+        ), patch("httpx.AsyncClient", new=mock_client_cls):
+            from services.wecom.app_message_sender import _send
+
+            assert await _send(_text_payload(), _make_creds()) is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stage", ["enter", "exit"])
+    async def test_send_lifecycle_cancelled_error_propagates(self, stage):
+        """调用方取消不能被 legacy bool 边界吞掉。"""
+        mock_client = AsyncMock()
+        if stage == "enter":
+            mock_client.__aenter__.side_effect = asyncio.CancelledError()
+        else:
+            mock_resp = MagicMock(status_code=200)
+            mock_resp.json.return_value = {"errcode": 0}
+            mock_client.post.return_value = mock_resp
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.side_effect = asyncio.CancelledError()
+        with patch(
+            "services.wecom.app_message_sender.get_access_token",
+            new=AsyncMock(return_value="token"),
+        ), patch("httpx.AsyncClient", return_value=mock_client):
+            from services.wecom.app_message_sender import _send
+
+            with pytest.raises(asyncio.CancelledError):
+                await _send(_text_payload(), _make_creds())
 
     @pytest.mark.asyncio
     async def test_send_http_exception(self):
