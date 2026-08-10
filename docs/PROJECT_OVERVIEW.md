@@ -2126,6 +2126,16 @@ cache = client.caches.create(
   - 227_47 durable mutation 仅在 psycopg connection response-loss 后原参数重放一次，并严格验证 request/intent/item、
     cancelled item、pending/partial/failed delivery 与权威结果版本；227_46 read 不自动重放。本批仍不新增 migration、
     Worker/orchestration/transport 或 production activation。
+- **2026-08-10**：AR-18 D2-C0d Scheduled Runtime WeCom stale started recovery
+  - 新增 additive `227_48_agent_runtime_scheduled_wecom_started_recovery.sql` 与精确 rollback。worker-only
+    `recover_agent_runtime_scheduled_wecom_started_dispatch_v1` 只选择 lease 已过期、delivery/item 仍为 dispatching、
+    attempt 仍为 `dispatch_started/external_request_started` 且无 receipt/unknown/resolved 的精确候选；同时验证原
+    claim/token/worker、provider identity/revision、prepare→start 权威版本与 live org/target context。
+  - RPC 在同一事务生成与 recovery request 不同的内部 outcome UUID，调用既有 227_40 UNKNOWN/no-evidence 状态机，
+    再写 owner-only FORCE-RLS append-only ledger；响应丢失按 recovery request durable readback。成功后仅可进入 227_41
+    reconcile，不可被 ordinary claim、prepare/start 或 transport 重派，也不创建第二 attempt。
+  - 新 ledger 双向加入完整 Scheduled WeCom request namespace；rollback 有 recovery facts 时失败关闭，无事实时恢复
+    精确 227_47 guards 并只删除 227_48 对象。本批不接 Worker/orchestration/provider/transport/production，flags 保持关闭。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

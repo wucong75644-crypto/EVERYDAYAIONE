@@ -287,6 +287,10 @@ async def test_async_rpc_sets_scope_in_transaction() -> None:
                 "p_claim_request_id", "p_lease_token",
             ),
         ),
+        (
+            "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
+            ("p_request_id",),
+        ),
     ),
 )
 async def test_async_scheduled_wecom_rpc_casts_exact_uuid_params(
