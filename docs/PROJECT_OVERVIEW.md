@@ -1981,6 +1981,8 @@ cache = client.caches.create(
     纯 claim readback 不续租或写版本；dispatch-context gate 若在尚无 attempt 时发现 target 失效，会将该
     delivery 标记 unavailable 并取消 pending/retry_wait items。返回值仅含安全身份与 hash，不读取 Secret，
     不创建 attempt、不发起 transport；rollback 允许保留 pristine A1 facts，但存在 A2a 状态即失败关闭。
+  - `test_agent_runtime_scheduled_wecom_terminal_fence_postgres_external.py` 逐项验证 applied finalization
+    application identity、binding/Run/scheduled-run terminal 漂移会阻断 dispatch，且不影响独立 valid intent。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

@@ -41,12 +41,38 @@ BEGIN
   JOIN agent_runs r ON r.id=binding.runtime_run_id
   JOIN scheduled_task_runs q ON q.id=binding.scheduled_run_id
   JOIN scheduled_tasks t ON t.id=binding.scheduled_task_id
+  JOIN agent_runtime_scheduled_finalization_intents finalization
+   ON finalization.scheduled_run_id=binding.scheduled_run_id
   WHERE binding.scheduled_run_id=d.scheduled_run_id
-   AND(binding.scheduled_task_id,binding.org_id,binding.user_id,binding.owner_kind,binding.runtime_run_id)
-    IS NOT DISTINCT FROM(d.scheduled_task_id,d.org_id,d.user_id,'runtime',d.runtime_run_id)
-   AND(r.org_id,r.user_id,r.run_kind,r.status)
-    IS NOT DISTINCT FROM(d.org_id,d.user_id,'scheduled',i.terminal_status)
-   AND(q.task_id,q.org_id) IS NOT DISTINCT FROM(d.scheduled_task_id,d.org_id)
+   AND finalization.status='applied' AND finalization.application_request_id IS NOT NULL
+   AND finalization.application_hash~'^[0-9a-f]{64}$'
+   AND finalization.application_receipt IS NOT NULL
+   AND(finalization.runtime_run_id,finalization.scheduled_task_id,finalization.org_id,
+       finalization.user_id,finalization.terminal_status,finalization.result_hash,
+       finalization.application_request_id,finalization.application_hash)
+    IS NOT DISTINCT FROM(d.runtime_run_id,d.scheduled_task_id,d.org_id,d.user_id,
+     i.terminal_status,i.result_hash,i.finalization_request_id,i.finalization_application_hash)
+   AND i.reason_code IS NOT DISTINCT FROM(CASE WHEN finalization.terminal_status='completed'
+    THEN NULL ELSE finalization.terminal_reason END)
+   AND(finalization.application_receipt->>'scheduled_run_id',
+       finalization.application_receipt->>'scheduled_task_id',
+       finalization.application_receipt->>'terminal_status',
+       finalization.application_receipt->>'scheduled_run_status',
+       finalization.application_receipt->>'result_hash')
+    IS NOT DISTINCT FROM(d.scheduled_run_id::TEXT,d.scheduled_task_id::TEXT,i.terminal_status,
+     CASE i.terminal_status WHEN 'completed' THEN 'success' WHEN 'failed' THEN 'failed'
+      ELSE 'skipped' END,i.result_hash)
+   AND(binding.runtime_command_id,binding.scheduled_task_id,binding.org_id,binding.user_id,
+       binding.owner_kind,binding.owner_status,binding.runtime_run_id)
+    IS NOT DISTINCT FROM(r.command_id,d.scheduled_task_id,d.org_id,d.user_id,
+     'runtime',i.terminal_status,d.runtime_run_id)
+   AND(r.org_id,r.user_id,r.run_kind,r.status,r.state_version)
+    IS NOT DISTINCT FROM(d.org_id,d.user_id,'scheduled',i.terminal_status,
+     finalization.runtime_run_state_version)
+   AND(q.id,q.task_id,q.org_id,q.status)
+    IS NOT DISTINCT FROM(d.scheduled_run_id,d.scheduled_task_id,d.org_id,
+     CASE i.terminal_status WHEN 'completed' THEN 'success' WHEN 'failed' THEN 'failed'
+      ELSE 'skipped' END)
    AND(t.org_id,t.user_id) IS NOT DISTINCT FROM(d.org_id,d.user_id)) THEN
   RETURN jsonb_build_object('outcome','unavailable','reason_code','wecom_contract_unavailable');
  END IF;

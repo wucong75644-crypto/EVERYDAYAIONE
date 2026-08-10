@@ -90,6 +90,19 @@ def test_live_validation_uses_only_identity_and_safe_address_facts() -> None:
     assert "INSERT INTO agent_runtime_scheduled_wecom_dispatch_attempts" not in MIGRATION
 
 
+def test_live_validation_requires_applied_terminal_application_contract() -> None:
+    live = _function_body("_agent_runtime_scheduled_wecom_live_context")
+    for contract in (
+        "agent_runtime_scheduled_finalization_intents", "finalization.status='applied'",
+        "finalization.application_request_id", "finalization.application_hash",
+        "finalization.application_receipt", "i.finalization_request_id",
+        "i.finalization_application_hash", "binding.owner_status", "r.state_version",
+        "finalization.runtime_run_state_version", "WHEN 'completed' THEN 'success'",
+        "WHEN 'failed' THEN 'failed'", "ELSE 'skipped'", "q.id,q.task_id,q.org_id,q.status",
+    ):
+        assert contract in live
+
+
 def test_rollback_preserves_a1_and_fails_closed_on_a2a_state() -> None:
     assert "AGENT_RUNTIME_SCHEDULED_WECOM_CLAIM_ROLLBACK_HAS_STATE" in ROLLBACK
     assert "state_version<>0" in ROLLBACK
