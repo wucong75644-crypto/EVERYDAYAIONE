@@ -37,6 +37,14 @@ class ScheduledWecomAppBinding:
     transport: AppOutboundTransportPort = field(repr=False, compare=False)
 
 
+class AppBindingResolverPort(Protocol):
+    """Resolve one tenant-owned App binding without exposing credential material."""
+
+    async def resolve_app_binding(
+        self, *, org_id: str, corp_id: str,
+    ) -> ScheduledWecomAppBinding | None: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class AppDispatchResult:
     outcome: AppDispatchOutcome
