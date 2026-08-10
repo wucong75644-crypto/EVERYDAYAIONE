@@ -2104,8 +2104,19 @@ cache = client.caches.create(
     cancelled 与其它 non-completed content 只返回固定 payload-free `unsupported`，不生成通知文案。RPC 会继承
     227_38 已批准的 pre-attempt unavailable cancellation，但不会合并或透传完整 context。
   - 本批仅建立 inactive database contract，不接 repository orchestration、transport、循环 Worker 或 production。
-    Worker 激活继续阻塞，直到存在 durable unsupported terminalization/no-claim policy，避免 unsupported item 被持续
-    reclaim；本批不以自动 cancel/skip/finalize 绕过该缺口。
+    D2-C0b 阶段曾因缺少 durable unsupported terminalization/no-claim policy 而阻塞 Worker 激活；后续 227_47
+    已关闭该生命周期缺口，但不会追溯改变本批的 inactive 范围。
+- **2026-08-10**：AR-18 D2-C0c Scheduled Runtime WeCom unsupported durable terminalization
+  - 新增 additive `227_47_agent_runtime_scheduled_wecom_unsupported_terminalization.sql` 与精确 rollback。
+    `terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1` 仅在当前 227_42 v2 claim、item、lease、worker
+    与 delivery/item version 全部匹配且 227_46 返回四种固定 `unsupported` reason 之一时，原子地把当前未发送 item
+    标记为 `cancelled`；调用方不能提交 reason 或正文，也不会创建、重派或改写 dispatch attempt。
+  - owner-only FORCE-RLS append-only ledger 冻结 request 与原 claim identity、server-derived reason、结果状态、权威
+    version 和时间，支持响应丢失后的同参数 `readback`；同 request 异参冲突，且新 ledger 双向加入完整 Scheduled
+    WeCom global request namespace。仍有 pending/retry item 时立即释放 delivery 为 `pending` 供 fresh strict continuation
+    claim；否则按 accepted-count 既有语义聚合为 completed/partial/failed，避免 unsupported reclaim loop。
+  - rollback 在 ledger fact 或带本契约固定 reason 的 cancelled item 存在时失败关闭，不删除事实；无事实时仅撤销
+    227_47 对象并恢复 227_44 predecessor guards。本批仍不接 provider/transport、循环 Worker 或 production。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

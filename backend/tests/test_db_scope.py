@@ -274,6 +274,13 @@ async def test_async_rpc_sets_scope_in_transaction() -> None:
                 "p_item_id", "p_attempt_id", "p_reconcile_token",
             ),
         ),
+        (
+            "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
+            (
+                "p_request_id", "p_intent_id", "p_item_id",
+                "p_claim_request_id", "p_lease_token",
+            ),
+        ),
     ),
 )
 async def test_async_scheduled_wecom_rpc_casts_exact_uuid_params(
