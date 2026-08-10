@@ -9,6 +9,7 @@ from psycopg import InterfaceError, OperationalError
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
 from services.agent.runtime.domain.errors import PersistenceContractError
 from services.agent.runtime.infrastructure.postgres.scheduled_wecom_parsing import (
+    AttemptRpcOperation,
     metadata_params,
     parse_attempt,
     parse_delivery_claim,
@@ -95,7 +96,9 @@ class PostgresScheduledWecomDeliveryRepository:
         raw = await self._replayable_rpc(
             "prepare_agent_runtime_scheduled_wecom_dispatch_v2", params,
         )
-        return parse_attempt(raw, claim.fence, identity)
+        return parse_attempt(
+            raw, claim.fence, identity, operation=AttemptRpcOperation.PREPARE,
+        )
 
     async def start_dispatch(self, attempt: DispatchAttempt) -> DispatchAttempt:
         if attempt.status not in {AttemptStatus.PREPARED, AttemptStatus.DISPATCH_STARTED}:
@@ -107,7 +110,10 @@ class PostgresScheduledWecomDeliveryRepository:
         raw = await self._replayable_rpc(
             "start_agent_runtime_scheduled_wecom_dispatch_v2", params,
         )
-        started = parse_attempt(raw, attempt.fence, attempt.identity)
+        started = parse_attempt(
+            raw, attempt.fence, attempt.identity,
+            operation=AttemptRpcOperation.START,
+        )
         if started.attempt_id != attempt.attempt_id:
             raise _contract("attempt_id_changed")
         return started
@@ -126,9 +132,14 @@ class PostgresScheduledWecomDeliveryRepository:
             "p_idempotency_key": identity.idempotency_key,
             "p_provider_revision": identity.provider_revision,
         }
-        readback = parse_attempt(await self._rpc(
-            "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2", params,
-        ), fence, identity)
+        readback = parse_attempt(
+            await self._rpc(
+                "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2", params,
+            ),
+            fence,
+            identity,
+            operation=AttemptRpcOperation.READ,
+        )
         if readback.attempt_id != attempt.attempt_id:
             raise _contract("attempt_id_changed")
         return readback

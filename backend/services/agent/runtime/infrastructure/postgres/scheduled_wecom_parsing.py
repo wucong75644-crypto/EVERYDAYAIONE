@@ -182,8 +182,36 @@ _ATTEMPT_KEYS = {
 }
 
 
+class AttemptRpcOperation(StrEnum):
+    PREPARE = "prepare"
+    START = "start"
+    READ = "read"
+
+
+_READBACK_STATUSES = frozenset({
+    AttemptStatus.PREPARED,
+    AttemptStatus.DISPATCH_STARTED,
+    AttemptStatus.ACCEPTED,
+    AttemptStatus.REJECTED,
+})
+_ATTEMPT_OPERATION_MATRIX = {
+    AttemptRpcOperation.PREPARE: {
+        AttemptOperationOutcome.PREPARED: frozenset({AttemptStatus.PREPARED}),
+        AttemptOperationOutcome.READBACK: _READBACK_STATUSES,
+    },
+    AttemptRpcOperation.START: {
+        AttemptOperationOutcome.DISPATCH_STARTED: frozenset({AttemptStatus.DISPATCH_STARTED}),
+        AttemptOperationOutcome.READBACK: _READBACK_STATUSES - {AttemptStatus.PREPARED},
+    },
+    AttemptRpcOperation.READ: {
+        AttemptOperationOutcome.READBACK: _READBACK_STATUSES,
+    },
+}
+
+
 def parse_attempt(
-    raw: object, fence: DeliveryFence, identity: ProviderDispatchIdentity,
+    raw: object, fence: DeliveryFence, identity: ProviderDispatchIdentity, *,
+    operation: AttemptRpcOperation,
 ) -> DispatchAttempt:
     minimal = _outcome_only(raw, {"fenced", "not_found"}, "dispatch_attempt")
     if minimal is not None:
@@ -195,13 +223,7 @@ def parse_attempt(
         raise _fail("attempt_item_changed")
     outcome = _enum(row, "outcome", AttemptOperationOutcome)
     status = _enum(row, "status", AttemptStatus)
-    if (
-        outcome is AttemptOperationOutcome.PREPARED
-        and status is not AttemptStatus.PREPARED
-    ) or (
-        outcome is AttemptOperationOutcome.DISPATCH_STARTED
-        and status is not AttemptStatus.DISPATCH_STARTED
-    ):
+    if status not in _ATTEMPT_OPERATION_MATRIX[operation].get(outcome, ()):
         raise _fail("dispatch_attempt_outcome_status")
     return DispatchAttempt(
         outcome=outcome,

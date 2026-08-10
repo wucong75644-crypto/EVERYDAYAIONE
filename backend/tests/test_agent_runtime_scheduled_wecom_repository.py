@@ -371,6 +371,50 @@ async def test_attempt_outcome_status_mismatch_fails_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "outcome", "status"),
+    (
+        ("prepare", "dispatch_started", "dispatch_started"),
+        ("start", "prepared", "prepared"),
+        ("start", "readback", "prepared"),
+        ("read", "prepared", "prepared"),
+        ("read", "dispatch_started", "dispatch_started"),
+        ("prepare", "readback", "unknown"),
+        ("start", "readback", "unknown"),
+        ("read", "readback", "unknown"),
+    ),
+)
+async def test_attempt_operation_matrix_fails_closed(
+    operation: str, outcome: str, status: str,
+) -> None:
+    responses = {
+        "claim_agent_runtime_scheduled_wecom_delivery_v2": _claim(),
+        "prepare_agent_runtime_scheduled_wecom_dispatch_v2": _attempt(
+            "prepared", "prepared", 8, 4,
+        ),
+    }
+    rpc_name = {
+        "prepare": "prepare_agent_runtime_scheduled_wecom_dispatch_v2",
+        "start": "start_agent_runtime_scheduled_wecom_dispatch_v2",
+        "read": "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
+    }[operation]
+    responses[rpc_name] = _attempt(outcome, status, 9, 5)
+    repository = PostgresScheduledWecomDeliveryRepository(_Database(responses))
+    claim = await repository.claim_delivery(request_id=REQUEST, worker_id="wecom-worker")
+    assert claim is not None
+
+    with pytest.raises(
+        PersistenceContractError,
+        match="SCHEDULED_WECOM_RPC_CONTRACT_INVALID:dispatch_attempt_outcome_status",
+    ):
+        attempt = await repository.prepare_dispatch(claim, _identity())
+        if operation == "start":
+            await repository.start_dispatch(attempt)
+        elif operation == "read":
+            await repository.read_attempt(attempt)
+
+
+@pytest.mark.asyncio
 async def test_fenced_response_is_stable_error() -> None:
     database = _Database({
         "claim_agent_runtime_scheduled_wecom_delivery_v2": _claim(),

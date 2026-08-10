@@ -60,6 +60,13 @@ def test_adapter_and_parser_forbid_untyped_or_sensitive_passthrough() -> None:
     assert "p_delay_seconds" in DB_SCOPE
 
 
+def test_every_attempt_parser_call_is_operation_specific() -> None:
+    assert REPOSITORY.count("parse_attempt(") == 3
+    for operation in ("PREPARE", "START", "READ"):
+        assert REPOSITORY.count(f"operation=AttemptRpcOperation.{operation}") == 1
+    assert "_ATTEMPT_OPERATION_MATRIX" in PARSER
+
+
 def test_scoped_rpc_casts_scheduled_versions_without_changing_text_revisions() -> None:
     scheduled_sql, _ = _rpc_sql(
         "prepare_agent_runtime_scheduled_wecom_dispatch_v2", {
