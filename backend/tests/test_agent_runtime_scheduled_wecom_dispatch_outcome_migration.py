@@ -41,15 +41,14 @@ def test_receipt_metadata_is_typed_allowlisted_bounded_and_hash_bound() -> None:
     validator = _function_body("_agent_runtime_scheduled_wecom_receipt_metadata_valid")
     rpc = _function_body("record_agent_runtime_scheduled_wecom_dispatch_outcome_v1")
     for key in (
-        "provider_message_id", "http_status", "wecom_errcode", "wecom_errmsg",
-        "provider_code", "trace_id",
+        "provider_message_id", "http_status", "wecom_errcode", "provider_code", "trace_id",
     ):
         assert key in validator
+    assert "wecom_errmsg" not in validator
     assert "ELSE RETURN FALSE" in validator
     assert "pg_column_size(p_metadata)>4096" in validator
     assert "jsonb_typeof(entry.value)" in validator
-    for sensitive in ("token", "secret", "authorization", "payload", "raw[_-]?body"):
-        assert sensitive in validator
+    assert "lower(value_text)" not in validator
     assert "everydayai.scheduled_wecom.dispatch_receipt.v1" in MIGRATION
     for bound_field in (
         "p_dispatch_outcome", "p_receipt_type", "p_receipt_code", "p_receipt_metadata",

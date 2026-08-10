@@ -223,7 +223,8 @@ def test_hash_metadata_and_null_rejection_are_zero_fact(database: str) -> None:
         _rpc(database, "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1", tuple(mismatch))
     for metadata in (
         {"unknown_key": "x"}, {"provider_message_id": {"nested": True}},
-        {"wecom_errmsg": "provider token leaked"}, {"payload": "raw"},
+        {"wecom_errmsg": "ok"}, {"wecom_errmsg": 0},
+        {"wecom_errmsg": {"code": "ok"}}, {"wecom_errmsg": None}, {"payload": "raw"},
     ):
         invalid = list(valid)
         invalid[16] = Jsonb(metadata)

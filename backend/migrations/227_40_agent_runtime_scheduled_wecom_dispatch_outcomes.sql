@@ -72,11 +72,6 @@ BEGIN
   ELSIF entry.key='wecom_errcode' THEN
    IF jsonb_typeof(entry.value)<>'number' OR value_text!~'^-?[0-9]{1,10}$'
    OR value_text::NUMERIC NOT BETWEEN -2147483648 AND 2147483647 THEN RETURN FALSE; END IF;
-  ELSIF entry.key='wecom_errmsg' THEN
-   IF jsonb_typeof(entry.value)<>'string' OR length(value_text) NOT BETWEEN 1 AND 256
-   OR value_text~'[[:cntrl:]]'
-   OR lower(value_text)~'(token|secret|password|authorization|cookie|api[_-]?key|bearer|payload|raw[_-]?body|https?://|/private/)'
-   THEN RETURN FALSE; END IF;
   ELSE RETURN FALSE;
   END IF;
  END LOOP;
