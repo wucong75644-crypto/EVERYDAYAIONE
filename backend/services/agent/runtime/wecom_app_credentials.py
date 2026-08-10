@@ -111,7 +111,7 @@ def _ports_ready(broker: CredentialBroker, token_exchange: TokenExchange) -> boo
             and getattr(token_exchange, "production_ready", False) is True
         )
     except asyncio.CancelledError:
-        return False
+        raise
     except Exception:
         return False
 

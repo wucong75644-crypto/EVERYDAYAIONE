@@ -299,6 +299,47 @@ async def test_broker_production_readiness_is_required_before_resolve(
     assert broker.calls == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel_source",
+    ["broker", "exchange_operational", "exchange_production_ready"],
+)
+async def test_readiness_cancellation_propagates_before_resolve_or_exchange(
+    cancel_source: str,
+) -> None:
+    class Broker(_Broker):
+        def require_production_ready(self) -> None:
+            if cancel_source == "broker":
+                raise asyncio.CancelledError
+
+    class Exchange:
+        calls = 0
+
+        @property
+        def operational(self) -> bool:
+            if cancel_source == "exchange_operational":
+                raise asyncio.CancelledError
+            return True
+
+        @property
+        def production_ready(self) -> bool:
+            if cancel_source == "exchange_production_ready":
+                raise asyncio.CancelledError
+            return True
+
+        async def exchange(self, material: object) -> str:
+            self.calls += 1
+            return TOKEN
+
+    broker = Broker(_lease())
+    exchange = Exchange()
+
+    with pytest.raises(asyncio.CancelledError):
+        await _provider(broker, exchange)()
+    assert broker.calls == []
+    assert exchange.calls == 0
+
+
 def test_module_has_no_forbidden_credential_dependencies() -> None:
     source = (
         Path(__file__).parents[1]
