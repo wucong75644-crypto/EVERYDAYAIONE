@@ -2094,11 +2094,13 @@ cache = client.caches.create(
   - 新增 additive `227_46_agent_runtime_scheduled_wecom_dispatch_payload.sql` 与仅删除该函数的精确 rollback。
     `read_agent_runtime_scheduled_wecom_dispatch_payload_v1` 使用当前 claim/lease/worker 与 delivery/item BIGINT
     version fence 调用既有 227_38 live dispatch context，再绑定同一 scheduled run、task、applied finalization、delivery
-    content、intent 和当前有序 item。completed text 的唯一正文来源是已由
-    `_agent_runtime_scheduled_safe_summary` 处理的 `scheduled_task_runs.result_summary`；RPC 不读取或返回 model
-    text/structured content、target snapshot、内部 mapping/user/target ID、Secret、URL、路径或 artifact bytes。
+    content、intent、当前有序 item 与冻结 `agent_model_results` identity。completed text 的正文仍只返回
+    `scheduled_task_runs.result_summary`，但 SQL 会从 content 的精确 `model_result_id` 在内部重算
+    `_agent_runtime_scheduled_safe_summary` 并要求逐字相等；原始 model text/structured content 不进入响应或异常。
+    RPC 也不返回 target snapshot、内部 mapping/user/target ID、Secret、URL、路径或 artifact bytes。
   - 成功响应仅含稳定内容/target hash、当前版本、`message_type=text`、bounded safe text 和确定性 payload hash；
-    transport target 仅投影 App `corp_id + wecom_userid` 或 Smart Robot `chatid`。artifact identity、failed、
+    transport target 仅投影 App `org_id + corp_id + wecom_userid` 或 Smart Robot `org_id + chatid`，且经 live
+    context 验证的 `org_id` 纳入 canonical payload hash。artifact identity、failed、
     cancelled 与其它 non-completed content 只返回固定 payload-free `unsupported`，不生成通知文案。RPC 会继承
     227_38 已批准的 pre-attempt unavailable cancellation，但不会合并或透传完整 context。
   - 本批仅建立 inactive database contract，不接 repository orchestration、transport、循环 Worker 或 production。

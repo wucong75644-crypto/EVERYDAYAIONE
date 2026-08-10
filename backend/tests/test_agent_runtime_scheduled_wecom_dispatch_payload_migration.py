@@ -39,22 +39,30 @@ def test_success_uses_only_safe_summary_and_transport_minimal_target() -> None:
     body = _body()
     success = body[body.index("payload_hash:="):]
     assert "scheduled_task_runs" in body
-    assert "_agent_runtime_scheduled_safe_summary(summary)" in body
+    assert "JOIN agent_model_results model_result_fact" in body
+    assert "model_result_fact.id=content.model_result_id" in body
+    assert "model_result_fact.content_hash=content.result_hash" in body
+    assert "_agent_runtime_scheduled_safe_summary(CASE" in body
+    assert "summary IS DISTINCT FROM derived_summary" in body
     assert "length(summary) NOT BETWEEN 1 AND 500" in body
     assert "q.status" in body and "'success'" in body
     assert "agent_runtime_scheduled_finalization_intents" in body
     assert "agent_runtime_scheduled_delivery_contents" in body
     assert "agent_runtime_scheduled_delivery_intents" in body
-    assert "'corp_id'" in body and "'wecom_userid'" in body
-    assert "'chatid'" in body
+    assert "target->>'org_id' IS DISTINCT FROM context->>'org_id'" in body
+    assert "'org_id'" in body and "'corp_id'" in body and "'wecom_userid'" in body
+    assert "'chatid'" in body and "'org_id',(target->>'org_id')::UUID" in success
     for forbidden in (
         "mapping_id", "target_id", "mapping_user_id", "internal_user_id",
-        "agent_model_results", "text_content", "structured_content", "artifact_manifest",
-        "storage_ref", "object_path", "inline_content", "result_files", "last_result",
+        "artifact_manifest", "storage_ref", "object_path", "inline_content",
+        "result_files", "last_result",
         "secret", "password", "credential", "access_token", "refresh_token",
         "http://", "https://", "/private/",
     ):
         assert forbidden not in MIGRATION.lower()
+    returned = success[success.index("RETURN jsonb_build_object('outcome','payload'"):]
+    assert "text_content" not in returned and "structured_content" not in returned
+    assert "model_result_id" not in returned
     assert "'payload_hash'" in success and "_agent_runtime_scheduled_canonical_json" in success
 
 

@@ -169,11 +169,12 @@ def test_completed_text_returns_exact_safe_transport_payload_without_mutation(
     assert result["message_type"] == "text" and len(result["payload_hash"]) == 64
     assert result["delivery_state_version"] == claim["state_version"]
     assert result["item_state_version"] == item["version"]
+    assert result["target"]["org_id"] == str(ORG)
     if channel == "app":
-        assert set(result["target"]) == {"corp_id", "wecom_userid"}
+        assert set(result["target"]) == {"org_id", "corp_id", "wecom_userid"}
         assert result["target"]["wecom_userid"] == "runtime-user"
     else:
-        assert result["target"] == {"chatid": "runtime-chat"}
+        assert result["target"] == {"org_id": str(ORG), "chatid": "runtime-chat"}
     serialized = json.dumps(result, sort_keys=True).lower()
     for forbidden in (
         "mapping_id", "target_id", "user_id", "secret", "token", "password",
@@ -202,6 +203,49 @@ def test_completed_summary_uses_existing_sanitized_projection(
     result = _payload(database, claim, _item(database, claim["intent_id"]))
     assert result["text"] == expected
     assert "private-value" not in json.dumps(result)
+
+
+def test_substituted_safe_result_summary_fails_closed(database: str) -> None:
+    _setup(database)
+    _set_user_target(database, "app")
+    facts = _apply_completed(database, {"type": "wecom_user", "wecom_userid": "runtime-user"})
+    claim = _delivery_claim(database)
+    item = _item(database, claim["intent_id"])
+    _owner(
+        database, "UPDATE scheduled_task_runs SET result_summary='another safe summary' "
+        "WHERE id=%s RETURNING id", (facts["scheduled_run_id"],),
+    )
+    assert _payload(database, claim, item) == {
+        "outcome": "unavailable", "reason_code": "wecom_safe_text_unavailable",
+    }
+
+
+def test_model_result_and_content_identity_drift_are_fenced(database: str) -> None:
+    _setup(database)
+    _set_user_target(database, "app")
+    first = _apply_completed(database, {"type": "wecom_user", "wecom_userid": "runtime-user"})
+    claim = _delivery_claim(database)
+    item = _item(database, claim["intent_id"])
+    _owner(
+        database, "UPDATE agent_model_results SET content_hash=%s WHERE run_id=%s RETURNING id",
+        ("f" * 64, first["run_id"]),
+    )
+    assert _payload(database, claim, item) == {"outcome": "fenced"}
+
+    second = _apply_completed(database, {"type": "wecom_user", "wecom_userid": "runtime-user"})
+    replacement = _owner(
+        database, "SELECT id FROM agent_model_results WHERE run_id=%s", (second["run_id"],),
+    )
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute("ALTER TABLE agent_runtime_scheduled_delivery_contents DISABLE TRIGGER "
+                     "runtime_scheduled_delivery_content_immutable")
+        conn.execute("UPDATE agent_runtime_scheduled_delivery_contents SET model_result_id=%s "
+                     "WHERE scheduled_run_id=%s", (replacement, first["scheduled_run_id"]))
+        conn.execute("ALTER TABLE agent_runtime_scheduled_delivery_contents ENABLE TRIGGER "
+                     "runtime_scheduled_delivery_content_immutable")
+        conn.commit()
+    assert _payload(database, claim, item) == {"outcome": "fenced"}
 
 
 def test_artifact_identity_is_fixed_unsupported_and_read_only(database: str) -> None:
@@ -316,7 +360,7 @@ def test_existing_cross_intent_item_is_fenced(database: str) -> None:
     assert _payload(database, claim, other) == {"outcome": "fenced"}
 
 
-@pytest.mark.parametrize("drift", ("tenant", "target"))
+@pytest.mark.parametrize("drift", ("tenant", "target", "target_org"))
 def test_post_attempt_tenant_and_target_drift_are_fenced(
     database: str, drift: str,
 ) -> None:
@@ -336,6 +380,18 @@ def test_post_attempt_tenant_and_target_drift_are_fenced(
     )
     if drift == "target":
         _set_user_target(database, "smart_robot")
+    elif drift == "target_org":
+        fake_org = str(uuid4())
+        with psycopg.connect(database) as conn:
+            conn.execute("SET ROLE everydayai_owner")
+            conn.execute("ALTER TABLE agent_runtime_scheduled_wecom_deliveries DISABLE TRIGGER "
+                         "runtime_scheduled_wecom_delivery_identity_guard")
+            conn.execute("UPDATE agent_runtime_scheduled_wecom_deliveries SET target_snapshot="
+                         "jsonb_set(target_snapshot,'{org_id}',to_jsonb(%s::text)) "
+                         "WHERE intent_id=%s", (fake_org, claim["intent_id"]))
+            conn.execute("ALTER TABLE agent_runtime_scheduled_wecom_deliveries ENABLE TRIGGER "
+                         "runtime_scheduled_wecom_delivery_identity_guard")
+            conn.commit()
     else:
         other_org = str(uuid4())
         _owner(database, "INSERT INTO organizations(id) VALUES(%s) RETURNING id", (other_org,))

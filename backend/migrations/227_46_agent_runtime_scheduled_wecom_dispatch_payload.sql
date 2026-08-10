@@ -7,8 +7,9 @@ CREATE FUNCTION read_agent_runtime_scheduled_wecom_dispatch_payload_v1(
  p_expected_delivery_state_version BIGINT,p_expected_item_state_version BIGINT) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE context JSONB;item agent_runtime_scheduled_wecom_delivery_items%ROWTYPE;
- run scheduled_task_runs%ROWTYPE;target JSONB;transport_target JSONB;channel TEXT;
- summary TEXT;payload_hash TEXT;terminal_status TEXT;reason_code TEXT;
+ run scheduled_task_runs%ROWTYPE;model_result agent_model_results%ROWTYPE;
+ target JSONB;transport_target JSONB;channel TEXT;summary TEXT;derived_summary TEXT;
+ payload_hash TEXT;terminal_status TEXT;reason_code TEXT;
 BEGIN
  PERFORM _assert_agent_runtime_scheduled_wecom_actor();
  IF p_intent_id IS NULL OR p_item_id IS NULL OR p_claim_request_id IS NULL
@@ -75,6 +76,10 @@ BEGIN
   ON finalization.scheduled_run_id=q.id AND finalization.status='applied'
  JOIN agent_runtime_scheduled_delivery_contents content
   ON content.scheduled_run_id=q.id
+ JOIN agent_model_results model_result_fact
+  ON model_result_fact.id=content.model_result_id
+  AND model_result_fact.run_id=content.runtime_run_id
+  AND model_result_fact.content_hash=content.result_hash
  JOIN agent_runtime_scheduled_delivery_intents intent
   ON intent.scheduled_run_id=q.id AND intent.id=p_intent_id
  WHERE q.id=(context->>'scheduled_run_id')::UUID
@@ -92,24 +97,49 @@ BEGIN
   AND(content.runtime_run_id,content.terminal_status,content.result_hash,
       content.content_identity_hash)
    IS NOT DISTINCT FROM((context->>'runtime_run_id')::UUID,'completed',
-    context->>'result_hash',context->>'content_identity_hash');
+    context->>'result_hash',context->>'content_identity_hash')
+  AND(model_result_fact.id,model_result_fact.run_id,model_result_fact.org_id,
+      model_result_fact.user_id,model_result_fact.content_hash)
+   IS NOT DISTINCT FROM(item.source_id,(context->>'runtime_run_id')::UUID,
+    (context->>'org_id')::UUID,(context->>'user_id')::UUID,context->>'result_hash');
  IF NOT FOUND THEN RETURN jsonb_build_object('outcome','fenced'); END IF;
+ SELECT model_result_fact.* INTO model_result
+ FROM agent_runtime_scheduled_delivery_contents content
+ JOIN agent_model_results model_result_fact
+  ON model_result_fact.id=content.model_result_id
+ WHERE content.scheduled_run_id=run.id
+  AND(model_result_fact.id,model_result_fact.run_id,model_result_fact.org_id,
+      model_result_fact.user_id,model_result_fact.content_hash)
+   IS NOT DISTINCT FROM(item.source_id,(context->>'runtime_run_id')::UUID,
+    (context->>'org_id')::UUID,(context->>'user_id')::UUID,context->>'result_hash');
+ IF NOT FOUND THEN RETURN jsonb_build_object('outcome','fenced'); END IF;
+ derived_summary:=_agent_runtime_scheduled_safe_summary(CASE
+  WHEN model_result.output_kind='text' THEN model_result.text_content
+  WHEN model_result.output_kind='structured'
+   AND jsonb_typeof(model_result.structured_content->'summary')='string'
+   THEN model_result.structured_content->>'summary'
+  ELSE NULL END);
  summary:=run.result_summary;
  IF summary IS NULL OR length(summary) NOT BETWEEN 1 AND 500
- OR summary IS DISTINCT FROM _agent_runtime_scheduled_safe_summary(summary) THEN
+ OR summary IS DISTINCT FROM derived_summary THEN
   RETURN jsonb_build_object('outcome','unavailable',
    'reason_code','wecom_safe_text_unavailable');
  END IF;
 
  target:=context->'target';channel:=target->>'channel';
+ IF target->>'org_id' IS DISTINCT FROM context->>'org_id' THEN
+  RETURN jsonb_build_object('outcome','fenced');
+ END IF;
  IF channel='app' AND target->>'type'='wecom_user'
  AND NULLIF(btrim(target->>'corp_id'),'') IS NOT NULL
  AND NULLIF(btrim(target->>'wecom_userid'),'') IS NOT NULL THEN
   transport_target:=jsonb_build_object(
-   'corp_id',target->>'corp_id','wecom_userid',target->>'wecom_userid');
+   'org_id',(target->>'org_id')::UUID,'corp_id',target->>'corp_id',
+   'wecom_userid',target->>'wecom_userid');
  ELSIF channel='smart_robot' AND target->>'type' IN('wecom_user','wecom_group')
  AND NULLIF(btrim(target->>'chatid'),'') IS NOT NULL THEN
-  transport_target:=jsonb_build_object('chatid',target->>'chatid');
+  transport_target:=jsonb_build_object(
+   'org_id',(target->>'org_id')::UUID,'chatid',target->>'chatid');
  ELSE
   RETURN jsonb_build_object('outcome','fenced');
  END IF;
@@ -120,7 +150,8 @@ BEGIN
    'ordinal',item.ordinal,'source_revision',item.source_revision,
    'source_identity_hash',item.source_identity_hash,
    'content_identity_hash',item.content_identity_hash,
-   'target_hash',context->>'target_hash','channel',channel,'target',transport_target,
+   'target_hash',context->>'target_hash','org_id',(target->>'org_id')::UUID,
+   'channel',channel,'target',transport_target,
    'provider_revision',(context->>'provider_revision')::BIGINT,
    'message_type','text','text',summary)),'UTF8'),'sha256'),'hex');
  RETURN jsonb_build_object('outcome','payload','payload_revision',1,
