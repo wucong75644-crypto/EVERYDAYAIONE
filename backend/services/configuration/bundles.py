@@ -202,6 +202,12 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             "get_erp_runtime_bundle",
         )
 
+    async def wecom_app(self) -> ResolvedConfigurationBundle:
+        return await self._resolve_async(
+            "wecom.app",
+            "get_wecom_app_bundle",
+        )
+
     async def kuaimai_thinktank(self) -> ResolvedConfigurationBundle:
         return await self._resolve_async(
             "kuaimai_external.thinktank",

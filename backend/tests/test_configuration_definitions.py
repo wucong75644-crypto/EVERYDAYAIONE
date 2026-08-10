@@ -106,6 +106,20 @@ def test_wecom_callback_bundle_reuses_enterprise_agent_credentials() -> None:
     assert bundle.allowed_consumers == ("worker_org",)
 
 
+def test_wecom_app_bundle_reuses_only_existing_enterprise_agent_credentials() -> None:
+    bundle = CONFIG_REGISTRY.get_bundle("wecom.app")
+
+    assert bundle.required_keys == (
+        "wecom.corp_id",
+        "wecom.oauth_agent_id",
+        "wecom.oauth_agent_secret",
+    )
+    assert bundle.optional_keys == ()
+    assert bundle.allowed_consumers == ("wecom_runtime",)
+    for key in bundle.required_keys:
+        assert "wecom.app" in get_config_definition(key).bundles
+
+
 def test_non_ai_integrations_are_organization_only() -> None:
     for key, definition in CONFIG_DEFINITIONS.items():
         if key.startswith("ai."):

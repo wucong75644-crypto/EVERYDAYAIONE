@@ -710,10 +710,11 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   完全一致，并为三种 Scope 提供分离的配置 set/delete/status 调用。
 - `backend/services/configuration/resolver.py`：严格校验固定 Bundle RPC 返回的键顺序、
   来源、版本、普通值与 SecretRef，拒绝 Registry、Scope 或 envelope 漂移。
-- `backend/services/configuration/bundles.py`：仅暴露 13 个固定命名 Bundle 方法，在
+- `backend/services/configuration/bundles.py`：仅暴露固定命名 Bundle 方法，在
   请求/任务内按数据库选定 Scope 解密 Secret，并由 WeCom Target Resolver 执行
   无 Secret Discovery → 逐企业精确 Scope → `wecom.bot` Bundle；企业管理测试使用
-  独立 Runtime owner/admin 门面，不复用 Worker 门面。
+  独立 Runtime owner/admin 门面，不复用 Worker 门面；Scheduled WeCom Runtime 另以
+  async `wecom_app()` 读取现有企业 App 三键 Bundle。
 - `backend/migrations/216_configuration_admin_test_bundle.sql` 与对称 rollback：
   新增 Runtime 企业 owner/admin 专用企微测试 Bundle，保持 Worker 原门面及 ACL 不变。
 - `backend/tests/test_configuration_admin_test_bundle_migration.py`：覆盖迁移 216 的固定
@@ -733,6 +734,13 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   `backend/tests/test_configuration_resolver.py` 与
   `backend/tests/test_configuration_bundles.py`：覆盖继承、企业策略、角色矩阵、
   SecretRef/解密 Schema 和固定 RPC 映射。
+- `backend/migrations/227_50_agent_runtime_scheduled_wecom_configuration_facade.sql` 与
+  对称 rollback：将现有 `wecom.corp_id`、`wecom.oauth_agent_id`、
+  `wecom.oauth_agent_secret` 组成固定 `wecom.app` Bundle，仅向 actorless、精确 active
+  企业 Scope 的 Scheduled WeCom worker 开放无参数读取门面，不新增配置事实或 fallback。
+- `backend/tests/test_agent_runtime_scheduled_wecom_configuration_facade_migration.py` 与
+  PostgreSQL external：覆盖固定 Bundle、227_38 worker authority、tenant isolation、ACL、
+  无直表权限及 apply/rollback/reapply。
 - `backend/services/configuration/legacy_migration.py`：定义旧 `org_configs` 与快麦
   外部凭证到 Registry v1 的不可变组合契约；固定三次批量读取旧表，在内存中验证旧
   密文与 Corp ID 来源，再生成不含配置值的失败关闭预检报告。
