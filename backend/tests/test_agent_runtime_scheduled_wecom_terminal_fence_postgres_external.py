@@ -40,6 +40,11 @@ def _corrupt_terminal_contract(url: str, scheduled_run_id: str, mutation: str) -
             "FROM agent_runtime_scheduled_finalization_intents WHERE scheduled_run_id=%s)",
             (scheduled_run_id,),
         ),
+        "agent_run_state_version": (
+            "UPDATE agent_runs SET state_version=state_version+1 WHERE id=(SELECT runtime_run_id "
+            "FROM agent_runtime_scheduled_finalization_intents WHERE scheduled_run_id=%s)",
+            (scheduled_run_id,),
+        ),
         "scheduled_run_status": (
             "UPDATE scheduled_task_runs SET status='failed' WHERE id=%s",
             (scheduled_run_id,),
@@ -102,6 +107,7 @@ def test_valid_terminal_mapping_remains_dispatchable(
         "finalization_status",
         "binding_owner_status",
         "agent_run_status",
+        "agent_run_state_version",
         "scheduled_run_status",
         "application_request",
         "application_hash",
