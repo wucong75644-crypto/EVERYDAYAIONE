@@ -19,11 +19,17 @@ from services.agent.runtime.infrastructure.postgres.scheduled_wecom_parsing impo
     parse_reconcile_result,
     validate_evidence,
 )
+from services.agent.runtime.infrastructure.postgres.scheduled_wecom_payload_parsing import (
+    parse_dispatch_payload,
+    parse_unsupported_terminalization,
+)
 from services.agent.runtime.ports.scheduled_wecom_delivery import (
     AttemptStatus,
     DeliveryClaim,
     DeliveryFence,
     DispatchAttempt,
+    DispatchPayload,
+    DispatchPayloadReadback,
     DispatchOutcome,
     DispatchOutcomeReceipt,
     PreparedRecovery,
@@ -33,11 +39,12 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     ReconcileClaimOutcome,
     ReconcileResult,
     ReconcileResultReceipt,
+    UnsupportedTerminalizationReceipt,
 )
 
 
 class PostgresScheduledWecomDeliveryRepository:
-    """Uses only the Scheduled WeCom worker RPC surface from 227_39–227_45."""
+    """Uses only the Scheduled WeCom worker RPC surface from 227_39–227_47."""
 
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
@@ -86,6 +93,59 @@ class PostgresScheduledWecomDeliveryRepository:
         return parse_prepared_recovery(await self._replayable_rpc(
             "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1", params,
         ), request_id=request_id, worker_id=worker_id)
+
+    async def read_dispatch_payload(
+        self, claim: DeliveryClaim,
+    ) -> DispatchPayloadReadback | None:
+        if claim.outcome.value == "fenced":
+            raise _contract("delivery_claim_fenced")
+        fence = claim.fence
+        parsed = parse_dispatch_payload(await self._rpc(
+            "read_agent_runtime_scheduled_wecom_dispatch_payload_v1", {
+                "p_intent_id": fence.intent_id,
+                "p_item_id": fence.item_id,
+                "p_claim_request_id": fence.claim_request_id,
+                "p_lease_token": fence.lease_token,
+                "p_worker_id": fence.worker_id,
+                "p_expected_delivery_state_version": fence.delivery_state_version,
+                "p_expected_item_state_version": fence.item_state_version,
+            },
+        ))
+        if isinstance(parsed, DispatchPayload) and (
+            parsed.intent_id != fence.intent_id
+            or parsed.item_id != fence.item_id
+            or parsed.delivery_state_version != fence.delivery_state_version
+            or parsed.item_state_version != fence.item_state_version
+        ):
+            raise _contract("dispatch_payload_identity_changed")
+        return parsed
+
+    async def terminalize_unsupported(
+        self, claim: DeliveryClaim, *, request_id: str,
+    ) -> UnsupportedTerminalizationReceipt:
+        if claim.outcome.value == "fenced":
+            raise _contract("delivery_claim_fenced")
+        fence = claim.fence
+        params = {
+            "p_request_id": request_id,
+            "p_intent_id": fence.intent_id,
+            "p_item_id": fence.item_id,
+            "p_claim_request_id": fence.claim_request_id,
+            "p_lease_token": fence.lease_token,
+            "p_worker_id": fence.worker_id,
+            "p_expected_delivery_state_version": fence.delivery_state_version,
+            "p_expected_item_state_version": fence.item_state_version,
+        }
+        receipt = parse_unsupported_terminalization(await self._replayable_rpc(
+            "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1", params,
+        ))
+        if (
+            receipt.request_id != request_id
+            or receipt.intent_id != fence.intent_id
+            or receipt.item_id != fence.item_id
+        ):
+            raise _contract("unsupported_terminalization_identity_changed")
+        return receipt
 
     async def prepare_dispatch(
         self, claim: DeliveryClaim, identity: ProviderDispatchIdentity,

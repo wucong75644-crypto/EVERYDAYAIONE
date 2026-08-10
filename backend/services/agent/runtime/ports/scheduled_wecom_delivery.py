@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
 
 class DeliveryClaimOutcome(StrEnum):
@@ -61,6 +61,7 @@ class DeliveryStatus(StrEnum):
 
 class ItemStatus(StrEnum):
     ACCEPTED = "accepted"
+    CANCELLED = "cancelled"
     FAILED = "failed"
     UNKNOWN = "unknown"
     RECONCILE_REQUIRED = "reconcile_required"
@@ -90,6 +91,37 @@ class ReconcileResult(StrEnum):
     STILL_UNKNOWN = "still_unknown"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+
+
+class DispatchPayloadOutcome(StrEnum):
+    PAYLOAD = "payload"
+    UNSUPPORTED = "unsupported"
+    UNAVAILABLE = "unavailable"
+
+
+class DispatchChannel(StrEnum):
+    APP = "app"
+    SMART_ROBOT = "smart_robot"
+
+
+class UnsupportedReason(StrEnum):
+    ARTIFACT_IDENTITY = "wecom_artifact_identity_unsupported"
+    FAILED_CONTENT = "wecom_failed_content_unsupported"
+    CANCELLED_CONTENT = "wecom_cancelled_content_unsupported"
+    NON_COMPLETED_CONTENT = "wecom_non_completed_content_unsupported"
+
+
+class UnavailableReason(StrEnum):
+    CONTRACT = "wecom_contract_unavailable"
+    ORG = "wecom_org_unavailable"
+    MEMBER = "wecom_member_unavailable"
+    TARGET = "wecom_target_unavailable"
+    SAFE_TEXT = "wecom_safe_text_unavailable"
+
+
+class UnsupportedTerminalizationOutcome(StrEnum):
+    TERMINALIZED = "terminalized"
+    READBACK = "readback"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -214,6 +246,79 @@ class ReconcileResultReceipt:
     resolved_at: datetime | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class WecomAppDispatchTarget:
+    org_id: str
+    corp_id: str
+    wecom_userid: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class WecomSmartRobotDispatchTarget:
+    org_id: str
+    chatid: str
+
+
+DispatchTarget: TypeAlias = WecomAppDispatchTarget | WecomSmartRobotDispatchTarget
+
+
+@dataclass(frozen=True, kw_only=True)
+class DispatchPayload:
+    outcome: DispatchPayloadOutcome
+    payload_revision: int
+    scheduled_run_id: str
+    intent_id: str
+    item_id: str
+    item_key: str
+    ordinal: int
+    item_kind: str
+    source_role: str
+    source_revision: int
+    source_identity_hash: str
+    content_identity_hash: str
+    result_hash: str
+    target_hash: str
+    channel: DispatchChannel
+    target: DispatchTarget
+    provider_revision: int
+    delivery_state_version: int
+    item_state_version: int
+    message_type: str
+    text: str
+    payload_hash: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnsupportedDispatchPayload:
+    outcome: DispatchPayloadOutcome
+    reason: UnsupportedReason
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnavailableDispatchPayload:
+    outcome: DispatchPayloadOutcome
+    reason: UnavailableReason
+
+
+DispatchPayloadReadback: TypeAlias = (
+    DispatchPayload | UnsupportedDispatchPayload | UnavailableDispatchPayload
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnsupportedTerminalizationReceipt:
+    outcome: UnsupportedTerminalizationOutcome
+    request_id: str
+    intent_id: str
+    item_id: str
+    reason: UnsupportedReason
+    item_status: ItemStatus
+    delivery_status: DeliveryStatus
+    delivery_state_version: int
+    item_state_version: int
+    terminalized_at: datetime
+
+
 class ScheduledWecomDeliveryRepositoryPort(Protocol):
     async def claim_delivery(
         self, *, request_id: str, worker_id: str, lease_seconds: int = 60,
@@ -222,6 +327,14 @@ class ScheduledWecomDeliveryRepositoryPort(Protocol):
     async def recover_prepared(
         self, *, request_id: str, worker_id: str, lease_seconds: int = 60,
     ) -> PreparedRecovery | None: ...
+
+    async def read_dispatch_payload(
+        self, claim: DeliveryClaim,
+    ) -> DispatchPayloadReadback | None: ...
+
+    async def terminalize_unsupported(
+        self, claim: DeliveryClaim, *, request_id: str,
+    ) -> UnsupportedTerminalizationReceipt: ...
 
     async def prepare_dispatch(
         self, claim: DeliveryClaim, identity: ProviderDispatchIdentity,

@@ -2117,6 +2117,15 @@ cache = client.caches.create(
     claim；否则按 accepted-count 既有语义聚合为 completed/partial/failed，避免 unsupported reclaim loop。
   - rollback 在 ledger fact 或带本契约固定 reason 的 cancelled item 存在时失败关闭，不删除事实；无事实时仅撤销
     227_47 对象并恢复 227_44 predecessor guards。本批仍不接 provider/transport、循环 Worker 或 production。
+- **2026-08-10**：AR-18 D2-C1b1 Scheduled Runtime WeCom typed payload/unsupported repository
+  - `ScheduledWecomDeliveryRepositoryPort` 与 PostgreSQL adapter 新增 frozen typed 227_46 payload readback 和 227_47
+    unsupported terminalization receipt；仅通过 worker-scoped RPC 显式传递当前 claim/token/worker/delivery/item
+    version fence，不读表、不推算版本、不调用 provider。payload parser 只接受 App `org_id/corp_id/wecom_userid`
+    或 Smart Robot `org_id/chatid` 的精确 target，以及 bounded safe text、固定 revision 和 hash identities；unsupported、
+    unavailable、not-found 与 fenced 不会被转换成 transport payload。
+  - 227_47 durable mutation 仅在 psycopg connection response-loss 后原参数重放一次，并严格验证 request/intent/item、
+    cancelled item、pending/partial/failed delivery 与权威结果版本；227_46 read 不自动重放。本批仍不新增 migration、
+    Worker/orchestration/transport 或 production activation。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
