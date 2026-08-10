@@ -9,7 +9,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, TypeVar
 
 
 SEND_MSG_URL = "https://qyapi.weixin.qq.com/cgi-bin/message/send"
@@ -21,6 +21,10 @@ PROVIDER_MESSAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 MSGTYPE_PATTERN = re.compile(r"^[a-z0-9_]{1,64}$")
 REQUEST_ID_HEADER = "X-Request-ID"
 _SENSITIVE_PAYLOAD_KEYS = frozenset({"access_token", "agent_secret", "secret"})
+_PARTIAL_USER_FIELDS = frozenset({"invaliduser", "unlicenseduser"})
+_PARTIAL_ROUTE_FIELDS = frozenset({"invalidparty", "invalidtag"})
+_PARTIAL_FIELDS = _PARTIAL_USER_FIELDS | _PARTIAL_ROUTE_FIELDS
+_T = TypeVar("_T")
 
 
 class WecomAppOutboundStatus(str, Enum):
@@ -72,6 +76,33 @@ class AppHttpClient(Protocol):
 
 
 AppAccessTokenProvider = Callable[[], Awaitable[Optional[str]]]
+
+
+class _DeadlineExceeded(Exception):
+    pass
+
+
+async def _await_with_absolute_deadline(
+    awaitable: Awaitable[_T],
+    timeout: float,
+) -> _T:
+    task = asyncio.ensure_future(awaitable)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+    except asyncio.CancelledError:
+        task.cancel()
+        task.add_done_callback(_harvest_task)
+        raise
+    if task not in done:
+        task.cancel()
+        task.add_done_callback(_harvest_task)
+        raise _DeadlineExceeded
+    return task.result()
+
+
+def _harvest_task(task: asyncio.Future[Any]) -> None:
+    if not task.cancelled():
+        task.exception()
 
 
 @dataclass
@@ -204,11 +235,11 @@ class WecomAppOutbound:
         request_started = False
         try:
             try:
-                token = await asyncio.wait_for(
+                token = await _await_with_absolute_deadline(
                     self._token_provider(),  # type: ignore[misc]
-                    timeout=self._credential_timeout,
+                    self._credential_timeout,
                 )
-            except TimeoutError:
+            except _DeadlineExceeded:
                 result = _receipt(
                     provider_request_id,
                     WecomAppOutboundStatus.NOT_STARTED,
@@ -230,16 +261,16 @@ class WecomAppOutbound:
                 else:
                     request_started = True
                     try:
-                        response = await asyncio.wait_for(
+                        response = await _await_with_absolute_deadline(
                             self._http_client.post(  # type: ignore[union-attr]
                                 SEND_MSG_URL,
                                 params={"access_token": token},
                                 json=payload,
                                 headers={REQUEST_ID_HEADER: provider_request_id},
                             ),
-                            timeout=self._post_timeout,
+                            self._post_timeout,
                         )
-                    except TimeoutError:
+                    except _DeadlineExceeded:
                         result = _receipt(
                             provider_request_id,
                             WecomAppOutboundStatus.UNKNOWN,
@@ -402,24 +433,15 @@ def _response_receipt(
     try:
         data = response.json()
     except Exception:
-        return _receipt(
-            provider_request_id,
-            WecomAppOutboundStatus.UNKNOWN,
-            WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS,
-        )
+        return _ambiguous_response(provider_request_id)
     if not isinstance(data, dict):
-        return _receipt(
-            provider_request_id,
-            WecomAppOutboundStatus.UNKNOWN,
-            WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS,
-        )
+        return _ambiguous_response(provider_request_id)
     errcode = data.get("errcode")
     if not isinstance(errcode, int) or isinstance(errcode, bool):
-        return _receipt(
-            provider_request_id,
-            WecomAppOutboundStatus.UNKNOWN,
-            WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS,
-        )
+        return _ambiguous_response(provider_request_id)
+    partial_fields = _validated_partial_fields(data)
+    if partial_fields is None:
+        return _ambiguous_response(provider_request_id)
     if errcode != 0:
         return WecomAppOutboundReceipt(
             provider_request_id=provider_request_id,
@@ -427,13 +449,9 @@ def _response_receipt(
             errcode=errcode,
             error_class=WecomAppOutboundErrorClass.PROVIDER_REJECTED,
         )
-    if any(data.get(field) for field in ("invalidparty", "invalidtag")):
-        return _receipt(
-            provider_request_id,
-            WecomAppOutboundStatus.UNKNOWN,
-            WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS,
-        )
-    if any(data.get(field) for field in ("invaliduser", "unlicenseduser")):
+    if partial_fields & _PARTIAL_ROUTE_FIELDS:
+        return _ambiguous_response(provider_request_id)
+    if partial_fields & _PARTIAL_USER_FIELDS:
         return WecomAppOutboundReceipt(
             provider_request_id=provider_request_id,
             status=WecomAppOutboundStatus.REJECTED,
@@ -453,6 +471,21 @@ def _response_receipt(
         errcode=0,
         provider_message_id=safe_message_id,
     )
+
+
+def _validated_partial_fields(
+    data: Mapping[str, Any],
+) -> Optional[frozenset[str]]:
+    present = {field: data[field] for field in _PARTIAL_FIELDS if field in data}
+    if not all(isinstance(value, str) for value in present.values()):
+        return None
+    return frozenset(field for field, value in present.items() if value)
+
+
+def _ambiguous_response(
+    provider_request_id: str,
+) -> WecomAppOutboundReceipt:
+    return _receipt(provider_request_id, WecomAppOutboundStatus.UNKNOWN, WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS)
 
 
 def _receipt(

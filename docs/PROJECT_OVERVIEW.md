@@ -458,6 +458,8 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   作用域和三类连接池关闭合同。
 - `backend/tests/test_wecom_ws_outbound_ack.py`：以本地 mock 固定 typed 主动发送的 ACK
   证明状态、稳定 provider request ID、并发隔离、幂等/冲突、late ACK 与有界清理合同。
+- `backend/tests/test_wecom_app_outbound_hardening.py`：固定 App HTTP 部分失败字段类型、
+  不等待吞取消依赖的绝对 deadline，以及 late completion 不升级 typed receipt 合同。
 - `backend/migrations/152_wecom_runtime_capability.sql`：以不可变迁移增量扩展 WeCom
   runtime 角色匹配，并提供 org/corp/角色校验的身份、聊天地址和聊天目标安全门面。
 - `backend/migrations/rollback/152_wecom_runtime_capability_rollback.sql`：删除 WeCom

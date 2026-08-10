@@ -66,7 +66,8 @@ def _sender(
 @pytest.mark.asyncio
 async def test_explicit_injection_acknowledges_and_correlates_request() -> None:
     sender, token_provider, client = _sender()
-    client.post.return_value = _response({"errcode": 0, "msgid": "msg-001"})
+    empty = dict.fromkeys(("invaliduser", "unlicenseduser", "invalidparty", "invalidtag"), "")
+    client.post.return_value = _response({"errcode": 0, "msgid": "msg-001", **empty})
 
     result = await sender.send_typed(
         provider_request_id="request-001",
