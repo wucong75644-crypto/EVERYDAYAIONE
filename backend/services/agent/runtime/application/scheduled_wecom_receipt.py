@@ -17,24 +17,56 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
 
 
 _REQUEST_NAMESPACE = UUID("4990db79-f27b-4d4a-8b90-af6ab9e88f48")
-_IDENTITY_DOMAIN = "everydayai.scheduled_wecom.smart_dispatch_identity.v1"
+_SMART_IDENTITY_DOMAIN = "everydayai.scheduled_wecom.smart_dispatch_identity.v1"
+_APP_IDENTITY_DOMAIN = "everydayai.scheduled_wecom.app_dispatch_identity.v1"
 _RECEIPT_DOMAIN = "everydayai.scheduled_wecom.dispatch_receipt.v1"
 
 
 def scheduled_wecom_smart_identity(payload: DispatchPayload) -> ProviderDispatchIdentity:
     """Derive provider identities from the frozen payload and provider revision."""
     facts = {
-        "domain": _IDENTITY_DOMAIN,
+        "domain": _SMART_IDENTITY_DOMAIN,
         "item_id": payload.item_id,
         "payload_hash": payload.payload_hash,
         "provider_revision": payload.provider_revision,
     }
     digest = hashlib.sha256(_canonical_json(facts).encode("utf-8")).hexdigest()
     idempotency_key = hashlib.sha256(
-        f"{_IDENTITY_DOMAIN}:idempotency:{digest}".encode("ascii"),
+        f"{_SMART_IDENTITY_DOMAIN}:idempotency:{digest}".encode("ascii"),
     ).hexdigest()
     return ProviderDispatchIdentity(
         provider_request_id=f"scheduled-wecom-smart:{digest}",
+        idempotency_key=idempotency_key,
+        provider_revision=payload.provider_revision,
+    )
+
+
+def scheduled_wecom_app_identity(
+    payload: DispatchPayload,
+    *,
+    org_id: str,
+    corp_id: str,
+    agent_id: int,
+) -> ProviderDispatchIdentity:
+    """Derive App identities from frozen payload and non-secret tenant binding."""
+    binding_json = json.dumps(
+        {"agent_id": agent_id, "corp_id": corp_id, "org_id": org_id},
+        ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True,
+    )
+    binding_hash = hashlib.sha256(binding_json.encode("utf-8")).hexdigest()
+    facts = {
+        "binding_hash": binding_hash,
+        "domain": _APP_IDENTITY_DOMAIN,
+        "item_id": payload.item_id,
+        "payload_hash": payload.payload_hash,
+        "provider_revision": payload.provider_revision,
+    }
+    digest = hashlib.sha256(_canonical_json(facts).encode("utf-8")).hexdigest()
+    idempotency_key = hashlib.sha256(
+        f"{_APP_IDENTITY_DOMAIN}:idempotency:{digest}".encode("ascii"),
+    ).hexdigest()
+    return ProviderDispatchIdentity(
+        provider_request_id=f"scheduled-wecom-app:{digest}",
         idempotency_key=idempotency_key,
         provider_revision=payload.provider_revision,
     )
