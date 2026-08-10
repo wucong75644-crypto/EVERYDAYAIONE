@@ -463,7 +463,8 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
 - `backend/services/agent/runtime/wecom_app_credentials.py`：Runtime-owned 企微 App
   tenant-scoped credential/token builder；每次 token 调用经 CredentialBroker lease controlled
   consumer 将 opaque material 交给具备 readiness 的显式 exchange port 派生 token；本模块
-  不规定 material schema、不提供真实 token HTTP 实现，非 production-ready port 失败关闭。
+  不规定 material schema、不提供真实 token HTTP 实现，broker/exchange 非 production-ready
+  或 lease handle 不匹配均失败关闭，exchange 取消在 material frame 退出后重建传播。
 - `backend/tests/test_agent_runtime_wecom_app_credentials.py`、
   `backend/tests/test_agent_runtime_wecom_app_outbound_composition.py`：固定租户与 lease binding、
   material 不逃逸、exchange 失败关闭/取消传播，以及显式 send HTTP client 的

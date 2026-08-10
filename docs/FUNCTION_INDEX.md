@@ -1447,7 +1447,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | 类/函数 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
 | `TokenExchange` | `backend/services/agent/runtime/wecom_app_credentials.py` | 显式注入、具备 operational/production readiness 的纯端口；仅在 lease controlled consumer 内接收 opaque material，material schema 与 token 派生均由后续实现负责 | material | `Optional[str]` |
-| `build_wecom_app_token_provider` | `backend/services/agent/runtime/wecom_app_credentials.py` | 捕获不可变 RuntimeScope、opaque handle 与 revision；每次调用使用固定 provider/purpose 重新 resolve 并以同一 binding 执行 lease consumer，普通失败返回 None、取消传播 | broker, scope, credential_handle, provider_revision, token_exchange | D2-B2a `AppAccessTokenProvider` |
+| `build_wecom_app_token_provider` | `backend/services/agent/runtime/wecom_app_credentials.py` | 仅在 broker 与 exchange 均 production-ready 时，按不可变 RuntimeScope、opaque handle、固定 provider/purpose 与 revision 重新 resolve；显式复核 lease handle 后以同一 binding 执行 consumer，普通失败返回 None，exchange 取消在 material frame 正常离开后重建传播 | broker, scope, credential_handle, provider_revision, token_exchange | D2-B2a `AppAccessTokenProvider` |
 | `build_runtime_wecom_app_outbound` | `backend/services/agent/runtime/wecom_app_credentials.py` | 将 Runtime token provider 与显式 App send HTTP client 注入 `WecomAppOutbound`；不接真实 token HTTP、Worker、DB 或 production composition | credential binding, broker, token_exchange, outbound_http_client, limits | `WecomAppOutbound` |
 
 #### 后端函数 — 企微消息发送 (`backend/services/wecom/app_message_sender.py`)

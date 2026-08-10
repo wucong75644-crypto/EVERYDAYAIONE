@@ -51,6 +51,9 @@ class _Broker:
         self.lease = lease
         self.calls: list[dict[str, object]] = []
 
+    def require_production_ready(self) -> None:
+        pass
+
     async def resolve(self, **binding: object) -> CredentialLease[object]:
         self.calls.append(binding)
         return self.lease
@@ -58,6 +61,7 @@ class _Broker:
 
 def _lease(
     *,
+    handle: str = HANDLE,
     scope: RuntimeScope | None = None,
     provider: str = WECOM_APP_PROVIDER,
     revision: str = REVISION,
@@ -67,7 +71,7 @@ def _lease(
     binding_scope = scope or _scope()
     return CredentialLease(
         tenant_id=binding_scope.org_id or binding_scope.user_id,
-        handle=HANDLE,
+        handle=handle,
         provider=provider,
         revision=revision,
         purpose=purpose,
@@ -157,6 +161,15 @@ async def test_expired_lease_fails_before_exchange() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolved_lease_handle_must_match_captured_handle() -> None:
+    exchange = _Exchange()
+    provider = _provider(_Broker(_lease(handle="different-opaque-handle")), exchange)
+
+    assert await provider() is None
+    assert exchange.material_ids == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("result", [None, "", " ", " padded", 7])
 async def test_exchange_non_token_results_fail_closed(result: object) -> None:
     assert await _provider(_Broker(_lease()), _Exchange(result=result))() is None
@@ -165,6 +178,9 @@ async def test_exchange_non_token_results_fail_closed(result: object) -> None:
 @pytest.mark.asyncio
 async def test_broker_exchange_and_material_failures_are_redacted_to_none() -> None:
     class FailingBroker:
+        def require_production_ready(self) -> None:
+            pass
+
         async def resolve(self, **binding: object) -> CredentialLease[object]:
             raise RuntimeError(RAW_SECRET)
 
@@ -205,12 +221,40 @@ async def test_exchange_cancellation_propagates() -> None:
             await asyncio.Event().wait()
             return TOKEN
 
-    task = asyncio.create_task(_provider(_Broker(_lease()), WaitingExchange())())
+    lease = _lease()
+    material_id = id(lease._material)
+    task = asyncio.create_task(_provider(_Broker(lease), WaitingExchange())())
     await entered.wait()
     task.cancel()
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as caught:
         await task
+    error = caught.value
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    traceback = error.__traceback__
+    while traceback is not None:
+        for value in traceback.tb_frame.f_locals.values():
+            assert id(value) != material_id
+            try:
+                rendered = repr(value)
+            except Exception:
+                rendered = ""
+            assert RAW_SECRET not in rendered
+        traceback = traceback.tb_next
+
+
+@pytest.mark.asyncio
+async def test_broker_resolve_cancellation_propagates_directly() -> None:
+    class CancellingBroker:
+        def require_production_ready(self) -> None:
+            pass
+
+        async def resolve(self, **binding: object) -> CredentialLease[object]:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _provider(CancellingBroker(), _Exchange())()
 
 
 @pytest.mark.asyncio
@@ -227,6 +271,32 @@ async def test_missing_or_false_exchange_readiness_fails_closed(exchange: object
 
     assert await _provider(broker, exchange)() is None
     assert broker.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("readiness", ["missing", "false", "error"])
+async def test_broker_production_readiness_is_required_before_resolve(
+    readiness: str,
+) -> None:
+    lease = _lease()
+
+    class Broker:
+        calls = 0
+
+        if readiness == "false":
+            def require_production_ready(self) -> bool:
+                return False
+        elif readiness == "error":
+            def require_production_ready(self) -> None:
+                raise RuntimeError(RAW_SECRET)
+
+        async def resolve(self, **binding: object) -> CredentialLease[object]:
+            self.calls += 1
+            return lease
+
+    broker = Broker()
+    assert await _provider(broker, _Exchange())() is None
+    assert broker.calls == 0
 
 
 def test_module_has_no_forbidden_credential_dependencies() -> None:

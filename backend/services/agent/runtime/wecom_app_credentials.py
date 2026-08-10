@@ -19,6 +19,7 @@ from services.wecom.app_outbound import (
 
 WECOM_APP_PROVIDER = "wecom_app"
 WECOM_APP_SEND_PURPOSE = "wecom.app.send"
+_EXCHANGE_CANCELLED = object()
 
 
 class TokenExchange(Protocol):
@@ -41,35 +42,23 @@ def build_wecom_app_token_provider(
     """Adapt one immutable credential binding to the D2-B2a token provider."""
 
     async def provide() -> Optional[str]:
+        if not _ports_ready(broker, token_exchange):
+            return None
         try:
-            if not (
-                getattr(token_exchange, "operational", False) is True
-                and getattr(token_exchange, "production_ready", False) is True
-            ):
-                return None
-            lease = await broker.resolve(
+            token = await _resolve_and_exchange(
+                broker=broker,
                 scope=scope,
                 credential_handle=credential_handle,
-                provider=WECOM_APP_PROVIDER,
-                revision=provider_revision,
-                purpose=WECOM_APP_SEND_PURPOSE,
+                provider_revision=provider_revision,
+                token_exchange=token_exchange,
             )
-
-            async def exchange(material: object) -> Optional[str]:
-                return await token_exchange.exchange(material)
-
-            token = await lease.use(
-                scope=scope,
-                provider=WECOM_APP_PROVIDER,
-                revision=provider_revision,
-                purpose=WECOM_APP_SEND_PURPOSE,
-                consumer=exchange,
-            )
-            return token if _is_token(token) else None
         except asyncio.CancelledError:
             raise
         except Exception:
             return None
+        if token is _EXCHANGE_CANCELLED:
+            raise asyncio.CancelledError from None
+        return token if _is_token(token) else None
 
     return provide
 
@@ -108,6 +97,56 @@ def build_runtime_wecom_app_outbound(
 
 def _is_token(value: object) -> bool:
     return isinstance(value, str) and bool(value) and value.strip() == value
+
+
+def _ports_ready(broker: CredentialBroker, token_exchange: TokenExchange) -> bool:
+    try:
+        require_ready = getattr(broker, "require_production_ready", None)
+        if not callable(require_ready):
+            return False
+        broker_ready = require_ready()
+        return bool(
+            (broker_ready is None or broker_ready is True)
+            and getattr(token_exchange, "operational", False) is True
+            and getattr(token_exchange, "production_ready", False) is True
+        )
+    except asyncio.CancelledError:
+        return False
+    except Exception:
+        return False
+
+
+async def _resolve_and_exchange(
+    *,
+    broker: CredentialBroker,
+    scope: RuntimeScope,
+    credential_handle: str,
+    provider_revision: str,
+    token_exchange: TokenExchange,
+) -> object:
+    lease = await broker.resolve(
+        scope=scope,
+        credential_handle=credential_handle,
+        provider=WECOM_APP_PROVIDER,
+        revision=provider_revision,
+        purpose=WECOM_APP_SEND_PURPOSE,
+    )
+    if lease.handle != credential_handle:
+        return None
+
+    async def exchange(material: object) -> object:
+        try:
+            return await token_exchange.exchange(material)
+        except asyncio.CancelledError:
+            return _EXCHANGE_CANCELLED
+
+    return await lease.use(
+        scope=scope,
+        provider=WECOM_APP_PROVIDER,
+        revision=provider_revision,
+        purpose=WECOM_APP_SEND_PURPOSE,
+        consumer=exchange,
+    )
 
 
 __all__ = [
