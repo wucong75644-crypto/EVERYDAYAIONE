@@ -350,14 +350,16 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
         task_id?: string;
         run_id?: string;
         task_status?: string;
+        status?: string;
         next_run_at?: string;
         summary?: string;
       };
       if (!data?.task_id) return;
       const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
-      const taskStatus = validStatuses.includes(data.task_status as TaskStatus)
-        ? data.task_status as TaskStatus
-        : undefined;
+      const taskStatus = data.task_status !== undefined
+        ? (validStatuses.includes(data.task_status as TaskStatus)
+          ? data.task_status as TaskStatus : undefined)
+        : (data.status === 'success' ? 'active' : undefined);
       logger.info('ws:scheduled-task', 'completed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
@@ -383,9 +385,11 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       };
       if (!data?.task_id) return;
       const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
-      const taskStatus = validStatuses.includes(data.task_status as TaskStatus)
-        ? data.task_status as TaskStatus
-        : undefined;
+      const taskStatus = data.task_status !== undefined
+        ? (validStatuses.includes(data.task_status as TaskStatus)
+          ? data.task_status as TaskStatus : undefined)
+        : (validStatuses.includes(data.status as TaskStatus)
+          ? data.status as TaskStatus : undefined);
       logger.warn('ws:scheduled-task', 'failed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {

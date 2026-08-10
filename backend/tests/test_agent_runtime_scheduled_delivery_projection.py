@@ -3,6 +3,8 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from psycopg import OperationalError
+from psycopg.errors import SerializationFailure
 
 from services.agent.runtime.application.scheduled_delivery_projection import (
     ScheduledDeliveryProjectionWorker,
@@ -27,6 +29,7 @@ def _claim(**changes) -> ScheduledWebProjectionClaim:
         terminal_status="completed", scheduled_run_status="success",
         task_status="paused", summary="safe summary", reason_code=None,
         next_run_at=None, consecutive_failures=0,
+        claim_request_id="88888888-8888-8888-8888-888888888888",
         claim_token="77777777-7777-7777-7777-777777777777",
         state_version=1, projected=False,
     )
@@ -144,10 +147,13 @@ class _Response:
 
 
 class _RpcCall:
-    def __init__(self, response):
+    def __init__(self, response, params):
         self.response = response
+        self.params = params
 
     async def execute(self):
+        if callable(self.response):
+            return _Response(self.response(self.params))
         if isinstance(self.response, Exception):
             raise self.response
         return _Response(self.response)
@@ -164,7 +170,7 @@ class _Database:
 
     def rpc(self, name, params):
         self.calls.append((name, params))
-        return _RpcCall(self.responses[name])
+        return _RpcCall(self.responses[name], params)
 
 
 def _row(projected_at=None):
@@ -177,8 +183,10 @@ def _row(projected_at=None):
 @pytest.mark.asyncio
 async def test_claim_recovers_committed_response_loss_from_request_readback() -> None:
     database = _Database({
-        "claim_agent_runtime_scheduled_web_projection_v1": RuntimeError("response lost"),
-        "read_agent_runtime_scheduled_web_projection_claim_v1": _row(),
+        "claim_agent_runtime_scheduled_web_projection_v1": OperationalError("response lost"),
+        "read_agent_runtime_scheduled_web_projection_claim_v1": lambda params: {
+            **_row(), "claim_request_id": params["p_request_id"],
+        },
     })
 
     claim = await PostgresScheduledDeliveryProjection(database, "worker").claim()
@@ -196,7 +204,7 @@ async def test_apply_recovers_committed_response_loss_from_durable_receipt() -> 
     row = _row("2026-08-10T10:00:00+00:00")
     row.update(outcome="projected", projection_receipt_hash="c" * 64)
     database = _Database({
-        "apply_agent_runtime_scheduled_web_projection_v1": RuntimeError("response lost"),
+        "apply_agent_runtime_scheduled_web_projection_v1": OperationalError("response lost"),
         "get_agent_runtime_scheduled_web_projection_v1": row,
     })
 
@@ -209,6 +217,68 @@ async def test_apply_recovers_committed_response_loss_from_durable_receipt() -> 
         "apply_agent_runtime_scheduled_web_projection_v1",
         "get_agent_runtime_scheduled_web_projection_v1",
     ]
+
+
+@pytest.mark.asyncio
+async def test_apply_response_loss_cannot_adopt_reclaimed_worker_identity() -> None:
+    old_claim = _claim()
+    replacement = _row("2026-08-10T10:00:00+00:00")
+    replacement.update(
+        outcome="projected", projection_receipt_hash="c" * 64,
+        claim_request_id="99999999-9999-9999-9999-999999999999",
+        claim_token="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        state_version=2,
+    )
+    error = OperationalError("response lost")
+    database = _Database({
+        "apply_agent_runtime_scheduled_web_projection_v1": error,
+        "get_agent_runtime_scheduled_web_projection_v1": replacement,
+    })
+
+    with pytest.raises(OperationalError) as raised:
+        await PostgresScheduledDeliveryProjection(database, "worker-a").apply(old_claim)
+
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_explicit_database_fence_never_attempts_response_loss_readback() -> None:
+    error = SerializationFailure("claim fenced")
+    database = _Database({
+        "apply_agent_runtime_scheduled_web_projection_v1": error,
+    })
+
+    with pytest.raises(SerializationFailure):
+        await PostgresScheduledDeliveryProjection(database, "worker-a").apply(_claim())
+
+    assert [name for name, _ in database.calls] == [
+        "apply_agent_runtime_scheduled_web_projection_v1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_complete_response_loss_requires_same_completed_claim_identity() -> None:
+    claim = _claim(projected=True)
+    completed = _row("2026-08-10T10:00:00+00:00")
+    completed.update(
+        outcome="projected", projection_state="completed",
+        projection_receipt_hash="c" * 64, claim_token=None,
+        state_version=claim.state_version + 1, wakeup_result="failed",
+        wakeup_error_code="ws_not_connected",
+        wakeup_attempted_at="2026-08-10T10:00:01+00:00",
+    )
+    database = _Database({
+        "complete_agent_runtime_scheduled_web_wakeup_v1": OperationalError("response lost"),
+        "get_agent_runtime_scheduled_web_projection_v1": completed,
+    })
+
+    result = await PostgresScheduledDeliveryProjection(
+        database, "worker-a",
+    ).complete_wakeup(
+        claim, delivered=False, error_code="ws_not_connected",
+    )
+
+    assert result["projection_state"] == "completed"
 
 
 @pytest.mark.asyncio

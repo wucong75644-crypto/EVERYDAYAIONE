@@ -226,3 +226,50 @@ def test_apply_tenant_target_content_and_run_fences(
             database, "apply_agent_runtime_scheduled_web_projection_v1",
             (claim["intent_id"], claim["claim_token"], claim["state_version"]),
         )
+
+
+def test_expired_old_claim_cannot_apply_or_complete_after_reclaim(database: str) -> None:
+    _setup(database)
+    _finalized(database)
+    old_claim = _claim(database)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "UPDATE agent_runtime_scheduled_web_projection_receipts "
+            "SET claim_lease_expires_at=clock_timestamp()-interval '1 second' "
+            "WHERE intent_id=%s", (old_claim["intent_id"],),
+        )
+        conn.commit()
+    winner = _claim(database)
+    assert winner["outcome"] == "claimed"
+    assert winner["claim_token"] != old_claim["claim_token"]
+    assert winner["claim_request_id"] != old_claim["claim_request_id"]
+    applied = _projection_rpc(
+        database, "apply_agent_runtime_scheduled_web_projection_v1",
+        (winner["intent_id"], winner["claim_token"], winner["state_version"]),
+    )
+    assert applied["outcome"] == "projected"
+    with pytest.raises(Exception, match="PROJECTION_CLAIM_FENCED"):
+        _projection_rpc(
+            database, "apply_agent_runtime_scheduled_web_projection_v1",
+            (old_claim["intent_id"], old_claim["claim_token"],
+             old_claim["state_version"]),
+        )
+    with pytest.raises(Exception, match="WAKEUP_CLAIM_FENCED"):
+        _projection_rpc(
+            database, "complete_agent_runtime_scheduled_web_wakeup_v1",
+            (old_claim["intent_id"], old_claim["claim_token"],
+             old_claim["state_version"], True, None),
+        )
+    completed = _projection_rpc(
+        database, "complete_agent_runtime_scheduled_web_wakeup_v1",
+        (winner["intent_id"], winner["claim_token"], winner["state_version"],
+         True, None),
+    )
+    assert completed["outcome"] == "completed"
+    with pytest.raises(Exception, match="WAKEUP_CLAIM_FENCED"):
+        _projection_rpc(
+            database, "complete_agent_runtime_scheduled_web_wakeup_v1",
+            (old_claim["intent_id"], old_claim["claim_token"],
+             old_claim["state_version"], True, None),
+        )

@@ -61,7 +61,9 @@ describe('scheduled task projection wakeups', () => {
 
   it('does not trust an unknown task_status', async () => {
     handlers.scheduled_task_completed({
-      data: { task_id: 'task_unknown', task_status: 'compromised' },
+      data: {
+        task_id: 'task_unknown', task_status: 'compromised', status: 'success',
+      },
     });
 
     await vi.waitFor(() => expect(mockScheduledTaskState.optimisticUpdate)
@@ -69,5 +71,52 @@ describe('scheduled task projection wakeups', () => {
     const update = mockScheduledTaskState.optimisticUpdate.mock.calls[0][1];
     expect(update).not.toHaveProperty('status');
     expect(mockScheduledTaskState.fetchRuns).toHaveBeenCalledWith('task_unknown');
+  });
+
+  it('keeps legacy completed success fallback active', async () => {
+    handlers.scheduled_task_completed({
+      data: { task_id: 'legacy_completed', status: 'success' },
+    });
+
+    await vi.waitFor(() => expect(mockScheduledTaskState.optimisticUpdate)
+      .toHaveBeenCalledWith('legacy_completed', expect.objectContaining({
+        status: 'active',
+      })));
+  });
+
+  it('does not trust unknown legacy completed status', async () => {
+    handlers.scheduled_task_completed({
+      data: { task_id: 'legacy_completed_unknown', status: 'compromised' },
+    });
+
+    await vi.waitFor(() => expect(mockScheduledTaskState.optimisticUpdate)
+      .toHaveBeenCalled());
+    expect(mockScheduledTaskState.optimisticUpdate.mock.calls[0][1])
+      .not.toHaveProperty('status');
+  });
+
+  it.each(['active', 'paused', 'error'] as const)(
+    'keeps legacy failed status %s',
+    async (status) => {
+      handlers.scheduled_task_failed({
+        data: { task_id: `legacy_failed_${status}`, status },
+      });
+
+      await vi.waitFor(() => expect(mockScheduledTaskState.optimisticUpdate)
+        .toHaveBeenCalledWith(`legacy_failed_${status}`, expect.objectContaining({
+          status,
+        })));
+    },
+  );
+
+  it('does not trust unknown legacy failed status', async () => {
+    handlers.scheduled_task_failed({
+      data: { task_id: 'legacy_failed_unknown', status: 'compromised' },
+    });
+
+    await vi.waitFor(() => expect(mockScheduledTaskState.optimisticUpdate)
+      .toHaveBeenCalled());
+    expect(mockScheduledTaskState.optimisticUpdate.mock.calls[0][1])
+      .not.toHaveProperty('status');
   });
 });

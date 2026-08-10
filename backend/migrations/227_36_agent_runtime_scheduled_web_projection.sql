@@ -163,7 +163,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
   'consecutive_failures',p_receipt.consecutive_failures,
   'projection_receipt_hash',p_receipt.projection_receipt_hash,
   'projected_at',p_receipt.projected_at,'projection_state',p_receipt.projection_state,
-  'state_version',p_receipt.state_version,'claim_token',p_receipt.claim_token,
+  'state_version',p_receipt.state_version,
+  'claim_request_id',p_receipt.claim_request_id,'claim_token',p_receipt.claim_token,
   'claim_lease_expires_at',p_receipt.claim_lease_expires_at,
   'wakeup_result',p_receipt.wakeup_result,
   'wakeup_error_code',p_receipt.wakeup_error_code,
@@ -340,6 +341,11 @@ BEGIN
   WHERE intent_id=p_intent_id FOR UPDATE;
  IF NOT FOUND THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
  IF receipt.projection_state='completed' THEN
+  IF receipt.state_version IS DISTINCT FROM p_expected_state_version+1
+  OR NOT EXISTS(SELECT 1 FROM agent_runtime_scheduled_web_wakeup_attempts attempt
+   WHERE attempt.intent_id=p_intent_id AND attempt.claim_token=p_claim_token) THEN
+   RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_WEB_WAKEUP_CLAIM_FENCED' USING ERRCODE='40001';
+  END IF;
   RETURN jsonb_build_object('outcome','already_completed')
    ||_agent_runtime_scheduled_web_projection_payload(receipt);
  END IF;

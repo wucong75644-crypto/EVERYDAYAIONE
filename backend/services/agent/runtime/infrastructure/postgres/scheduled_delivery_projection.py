@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from uuid import uuid4
 
+from psycopg import InterfaceError, OperationalError
+
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
 from services.agent.runtime.domain.errors import PersistenceContractError
 from services.agent.runtime.infrastructure.postgres.parsing import (
@@ -34,6 +36,7 @@ class ScheduledWebProjectionClaim:
     reason_code: str | None
     next_run_at: str | None
     consecutive_failures: int
+    claim_request_id: str
     claim_token: str
     state_version: int
     projected: bool
@@ -64,7 +67,9 @@ class PostgresScheduledDeliveryProjection:
                     "p_lease_seconds": lease_seconds,
                 },
             ).execute()
-        except Exception as error:
+        except (OperationalError, InterfaceError) as error:
+            if not _transport_outcome_uncertain(error):
+                raise
             response = await self._database.rpc(
                 "read_agent_runtime_scheduled_web_projection_claim_v1",
                 {"p_request_id": request_id},
@@ -82,7 +87,10 @@ class PostgresScheduledDeliveryProjection:
         result = outcome(row, {"claimed", "not_found", "unavailable", "fenced"})
         if result in {"not_found", "unavailable", "fenced"}:
             return None
-        return _claim(row)
+        claim = _claim(row)
+        if claim.claim_request_id != request_id:
+            raise PersistenceContractError("claim request identity mismatch")
+        return claim
 
     async def apply(
         self, claim: ScheduledWebProjectionClaim,
@@ -100,10 +108,12 @@ class PostgresScheduledDeliveryProjection:
             ).execute()
             row = require_mapping(response.data, "scheduled web projection apply")
             outcome(row, {"projected", "already_projected"})
-        except Exception:
-            row = await self.readback(claim.intent_id)
-            if row is None or row.get("projection_receipt_hash") is None:
+        except (OperationalError, InterfaceError) as error:
+            if not _transport_outcome_uncertain(error):
                 raise
+            row = await self.readback(claim.intent_id)
+            if row is None or not _same_projected_claim(claim, row):
+                raise error
         return _claim(row, projected=True)
 
     async def readback(self, intent_id: str) -> Mapping[str, Any] | None:
@@ -134,10 +144,14 @@ class PostgresScheduledDeliveryProjection:
                 },
             ).execute()
             row = require_mapping(response.data, "scheduled web wakeup completion")
-        except Exception:
-            row = await self.readback(claim.intent_id)
-            if row is None or row.get("wakeup_attempted_at") is None:
+        except (OperationalError, InterfaceError) as error:
+            if not _transport_outcome_uncertain(error):
                 raise
+            row = await self.readback(claim.intent_id)
+            if row is None or not _same_completed_wakeup(
+                claim, row, delivered=delivered, error_code=error_code,
+            ):
+                raise error
             return row
         outcome(row, {"completed", "already_completed"})
         return row
@@ -175,6 +189,7 @@ def _claim(
         reason_code=reason,
         next_run_at=_optional_text(row, "next_run_at", 80),
         consecutive_failures=require_int(row, "consecutive_failures"),
+        claim_request_id=require_uuid(row, "claim_request_id"),
         claim_token=require_uuid(row, "claim_token"),
         state_version=require_int(row, "state_version"),
         projected=(row.get("projected_at") is not None if projected is None else projected),
@@ -195,3 +210,50 @@ def _optional_text(row: Mapping[str, Any], field: str, limit: int) -> str | None
     if not isinstance(value, str) or not value or len(value) > limit:
         raise PersistenceContractError(f"{field}: bounded text required")
     return value
+
+
+def _transport_outcome_uncertain(error: BaseException) -> bool:
+    if isinstance(error, InterfaceError):
+        return True
+    sqlstate = getattr(error, "sqlstate", None)
+    return isinstance(error, OperationalError) and (
+        sqlstate is None or str(sqlstate).startswith("08")
+    )
+
+
+def _same_projected_claim(
+    claim: ScheduledWebProjectionClaim, row: Mapping[str, Any],
+) -> bool:
+    try:
+        return (
+            row.get("outcome") == "projected"
+            and require_uuid(row, "intent_id") == claim.intent_id
+            and require_uuid(row, "claim_request_id") == claim.claim_request_id
+            and require_uuid(row, "claim_token") == claim.claim_token
+            and require_int(row, "state_version") == claim.state_version
+            and _hash(row, "projection_receipt_hash") is not None
+            and row.get("projected_at") is not None
+        )
+    except PersistenceContractError:
+        return False
+
+
+def _same_completed_wakeup(
+    claim: ScheduledWebProjectionClaim, row: Mapping[str, Any], *,
+    delivered: bool, error_code: str | None,
+) -> bool:
+    try:
+        expected_result = "sent" if delivered else "failed"
+        return (
+            row.get("outcome") == "projected"
+            and row.get("projection_state") == "completed"
+            and require_uuid(row, "intent_id") == claim.intent_id
+            and require_uuid(row, "claim_request_id") == claim.claim_request_id
+            and row.get("claim_token") is None
+            and require_int(row, "state_version") == claim.state_version + 1
+            and row.get("wakeup_result") == expected_result
+            and row.get("wakeup_error_code") == error_code
+            and row.get("wakeup_attempted_at") is not None
+        )
+    except PersistenceContractError:
+        return False
