@@ -1927,6 +1927,27 @@ cache = client.caches.create(
   - PostgreSQL adapter 严格解析 claim/context/apply/readback；响应丢失时先只读确认状态，再以同一确定性
     request id 重放 v2 apply，只有数据库返回 `already_applied` 才确认完成。drain 不再领取新 intent，错误仅
     记录脱敏类型且不阻断后续 Runtime 扫描；未接 legacy Scheduler、钱包、Provider 或消息投递。
+
+- **2026-08-10**：AR-18 B7-S2-B1-C Scheduled Runtime Credit Hard Budget
+  - 新增 `227_34_agent_runtime_scheduled_run_credit_budget.sql` 及精确 rollback：Scheduled Run
+    只从冻结 profile/run snapshot 取得 `max_credits`，在 Model Attempt prepare 前以 per-run 预算锁
+    原子分配；预算耗尽返回类型化 `budget_exhausted`，ModelLoop 在 Provider/Gateway dispatch 前安全
+    终结，不创建第二个外部副作用。
+  - Scheduled late receipt 的用户扣费不超过本 Run 剩余硬上限；完整 Provider actual 与平台 overage
+    写入不可变 reconciliation fact，`adjustment_pending` 重放不会在用户充值后自动补扣。普通非
+    Scheduled Run 保留既有完整计费语义。预算、allocation 与 overage 表 FORCE RLS，Worker 无表直权，
+    `production_ready=false` 保持。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D1-A Scheduled Delivery Snapshot 与 Intent（仅数据库合同）
+  - 新增 `227_35_agent_runtime_scheduled_delivery_intents.sql` 及精确 rollback；不修改 227_28～227_34。
+    现有 submission 事务通过 trigger 将经既有租户权限验证的 web、企微用户、企微群和 bounded multi
+    规范化为最多 20 个稳定 target key/hash，并冻结 task/profile/command 身份；任务后续修改
+    `push_target` 不改变本次 Run。
+  - Runtime Run 绑定后追加不可变 binding fact；`apply_agent_runtime_scheduled_finalization_v2` 成功事务
+    同步生成 per-target pending delivery intent，只保存 completed/failed/cancelled、安全 reason code、
+    result/content hash 和幂等身份，不复制结果正文、Prompt、Secret、路径或堆栈。Projection 仅获得
+    tenant/run-scoped readback 窄 RPC；本批不 claim、不发送 Web/企微、不使用 Redis 作为事实源，legacy
+    Run 不生成 Runtime intent，`production_ready=false` 保持。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
