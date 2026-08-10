@@ -123,8 +123,8 @@ class WecomAppOutbound:
     """Send App HTTP requests once with caller-owned local correlation identity.
 
     WeCom's App send API has no caller-owned idempotency field. The stable ID is
-    therefore sent as an HTTP correlation header and retained for this instance
-    lifetime only; it is not provider-side idempotency or a persistent fact.
+    an HTTP correlation header, not provider idempotency. Credential timeouts fail
+    closed via an instance tombstone; DB owners decide cross-instance retries.
     """
 
     def __init__(
@@ -325,7 +325,9 @@ class WecomAppOutbound:
             current = self._requests.get(provider_request_id)
             if current is not entry:
                 return
-            if result.status is WecomAppOutboundStatus.NOT_STARTED:
+            if result.status is WecomAppOutboundStatus.NOT_STARTED and (
+                result.error_class is not WecomAppOutboundErrorClass.CREDENTIAL_TIMEOUT
+            ):
                 self._requests.pop(provider_request_id)
             else:
                 entry.result = result
@@ -482,9 +484,7 @@ def _validated_partial_fields(
     return frozenset(field for field, value in present.items() if value)
 
 
-def _ambiguous_response(
-    provider_request_id: str,
-) -> WecomAppOutboundReceipt:
+def _ambiguous_response(provider_request_id: str) -> WecomAppOutboundReceipt:
     return _receipt(provider_request_id, WecomAppOutboundStatus.UNKNOWN, WecomAppOutboundErrorClass.RESPONSE_AMBIGUOUS)
 
 

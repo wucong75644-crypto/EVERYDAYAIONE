@@ -1439,7 +1439,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 
 | 类/方法 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `WecomAppOutbound` | `backend/services/wecom/app_outbound.py` | 依赖显式注入 token provider 与 HTTP client，在实例生命周期内有界保留全部已开始身份且满容量拒绝新身份；不提供企业微信服务端幂等，持久正确性依赖 DB facts | token_provider, http_client, capacity, credential_timeout, post_timeout | transport 实例 |
+| `WecomAppOutbound` | `backend/services/wecom/app_outbound.py` | 依赖显式注入 token provider 与 HTTP client；实例内有界保留已开始身份及 credential-timeout tombstone，timeout 后同 ID 只读且满容量拒绝新身份；immediate credential unavailable 仍可重试；不提供服务端幂等，新实例重试由 DB facts/owner 决定 | token_provider, http_client, capacity, credential_timeout, post_timeout | transport 实例 |
 | `WecomAppOutbound.send_typed` | `backend/services/wecom/app_outbound.py` | 以 caller-owned `provider_request_id` 最多执行一次 App HTTP POST；绝对 deadline 不等待吞取消依赖，仅可信 2xx 且部分失败字段类型合法的完整回执可 ACK | provider_request_id, target, payload | `WecomAppOutboundReceipt` |
 
 #### 后端函数 — 企微消息发送 (`backend/services/wecom/app_message_sender.py`)

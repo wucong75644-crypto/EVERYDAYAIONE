@@ -25,6 +25,34 @@ LATE_DELAY = 0.25
 DEADLINE_TOLERANCE = 0.12
 
 
+class _PermanentCredentialProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.active = 0
+        self.release = asyncio.Event()
+        self.all_done = asyncio.Event()
+
+    async def __call__(self) -> str:
+        self.calls += 1
+        self.active += 1
+        try:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                await self.release.wait()
+                return "late-token"
+        finally:
+            self.active -= 1
+            if self.active == 0:
+                self.all_done.set()
+
+    async def cleanup(self) -> None:
+        self.release.set()
+        if self.active:
+            await asyncio.wait_for(self.all_done.wait(), timeout=0.5)
+        await asyncio.sleep(0)
+
+
 def _payload() -> dict[str, Any]:
     return {
         "touser": "user-001",
@@ -131,6 +159,77 @@ async def test_credential_deadline_returns_before_cancel_suppressor_finishes() -
     assert asyncio.get_running_loop().time() - cancel_started < DEADLINE_TOLERANCE
     await asyncio.sleep(LATE_DELAY + 0.02)
     client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_credential_timeout_tombstone_prevents_same_id_orphan_growth() -> None:
+    provider = _PermanentCredentialProvider()
+    client = AsyncMock()
+    client.is_closed = False
+    sender = WecomAppOutbound(
+        token_provider=provider,
+        http_client=client,
+        credential_timeout=DEADLINE,
+    )
+    try:
+        results = [
+            await sender.send_typed(
+                provider_request_id="credential-orphan-one",
+                target="user-001",
+                payload=_payload(),
+            )
+            for _ in range(30)
+        ]
+
+        assert all(result == results[0] for result in results)
+        assert results[0].status is WecomAppOutboundStatus.NOT_STARTED
+        assert results[0].error_class is WecomAppOutboundErrorClass.CREDENTIAL_TIMEOUT
+        assert provider.calls == 1
+        assert provider.active == 1
+        assert len(sender._requests) == 1
+        client.post.assert_not_awaited()
+    finally:
+        await provider.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_credential_timeout_orphans_are_bounded_by_capacity() -> None:
+    provider = _PermanentCredentialProvider()
+    client = AsyncMock()
+    client.is_closed = False
+    sender = WecomAppOutbound(
+        token_provider=provider,
+        http_client=client,
+        capacity=2,
+        credential_timeout=DEADLINE,
+    )
+    try:
+        first = await sender.send_typed(
+            provider_request_id="credential-orphan-a",
+            target="user-001",
+            payload=_payload(),
+        )
+        second = await sender.send_typed(
+            provider_request_id="credential-orphan-b",
+            target="user-001",
+            payload=_payload(),
+        )
+        third = await sender.send_typed(
+            provider_request_id="credential-orphan-c",
+            target="user-001",
+            payload=_payload(),
+        )
+
+        assert first.error_class is WecomAppOutboundErrorClass.CREDENTIAL_TIMEOUT
+        assert second.error_class is WecomAppOutboundErrorClass.CREDENTIAL_TIMEOUT
+        assert third.status is WecomAppOutboundStatus.NOT_STARTED
+        assert third.error_class is WecomAppOutboundErrorClass.CAPACITY_EXCEEDED
+        assert provider.calls == 2
+        assert provider.active == 2
+        assert len(sender._requests) == 2
+        client.post.assert_not_awaited()
+    finally:
+        await provider.cleanup()
 
 
 @pytest.mark.asyncio
