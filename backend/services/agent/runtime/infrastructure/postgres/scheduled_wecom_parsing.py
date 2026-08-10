@@ -193,8 +193,18 @@ def parse_attempt(
     _same_identity(actual_identity, identity)
     if _uuid(row, "item_id") != fence.item_id:
         raise _fail("attempt_item_changed")
+    outcome = _enum(row, "outcome", AttemptOperationOutcome)
+    status = _enum(row, "status", AttemptStatus)
+    if (
+        outcome is AttemptOperationOutcome.PREPARED
+        and status is not AttemptStatus.PREPARED
+    ) or (
+        outcome is AttemptOperationOutcome.DISPATCH_STARTED
+        and status is not AttemptStatus.DISPATCH_STARTED
+    ):
+        raise _fail("dispatch_attempt_outcome_status")
     return DispatchAttempt(
-        outcome=_enum(row, "outcome", AttemptOperationOutcome),
+        outcome=outcome,
         fence=DeliveryFence(
             intent_id=fence.intent_id, item_id=fence.item_id,
             claim_request_id=fence.claim_request_id, lease_token=fence.lease_token,
@@ -205,7 +215,7 @@ def parse_attempt(
         attempt_id=_uuid(row, "attempt_id"),
         attempt_number=_integer(row, "attempt_number", 1),
         identity=actual_identity,
-        status=_enum(row, "status", AttemptStatus),
+        status=status,
     )
 
 

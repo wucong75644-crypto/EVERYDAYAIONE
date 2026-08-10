@@ -340,6 +340,37 @@ async def test_malformed_or_sensitive_receipts_fail_closed(mutation: str) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "status"),
+    tuple(
+        ("prepared", status)
+        for status in ("dispatch_started", "accepted", "rejected", "unknown")
+    ) + tuple(
+        ("dispatch_started", status)
+        for status in ("prepared", "accepted", "rejected", "unknown")
+    ),
+)
+async def test_attempt_outcome_status_mismatch_fails_closed(
+    outcome: str, status: str,
+) -> None:
+    database = _Database({
+        "claim_agent_runtime_scheduled_wecom_delivery_v2": _claim(),
+        "prepare_agent_runtime_scheduled_wecom_dispatch_v2": _attempt(
+            outcome, status, 8, 4,
+        ),
+    })
+    repository = PostgresScheduledWecomDeliveryRepository(database)
+    claim = await repository.claim_delivery(request_id=REQUEST, worker_id="wecom-worker")
+    assert claim is not None
+
+    with pytest.raises(
+        PersistenceContractError,
+        match="SCHEDULED_WECOM_RPC_CONTRACT_INVALID:dispatch_attempt_outcome_status",
+    ):
+        await repository.prepare_dispatch(claim, _identity())
+
+
+@pytest.mark.asyncio
 async def test_fenced_response_is_stable_error() -> None:
     database = _Database({
         "claim_agent_runtime_scheduled_wecom_delivery_v2": _claim(),
