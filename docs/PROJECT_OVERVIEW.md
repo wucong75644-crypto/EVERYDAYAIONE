@@ -460,6 +460,14 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
   证明状态、稳定 provider request ID、并发隔离、幂等/冲突、late ACK 与有界清理合同。
 - `backend/tests/test_wecom_app_outbound_hardening.py`：固定 App HTTP 部分失败字段类型、
   不等待吞取消依赖的绝对 deadline，以及 late completion 不升级 typed receipt 合同。
+- `backend/services/agent/runtime/wecom_app_credentials.py`：Runtime-owned 企微 App
+  tenant-scoped credential/token builder；每次 token 调用经 CredentialBroker lease controlled
+  consumer 将 opaque material 交给具备 readiness 的显式 exchange port 派生 token；本模块
+  不规定 material schema、不提供真实 token HTTP 实现，非 production-ready port 失败关闭。
+- `backend/tests/test_agent_runtime_wecom_app_credentials.py`、
+  `backend/tests/test_agent_runtime_wecom_app_outbound_composition.py`：固定租户与 lease binding、
+  material 不逃逸、exchange 失败关闭/取消传播，以及显式 send HTTP client 的
+  ACK/NOT_STARTED 组合分类。
 - `backend/migrations/152_wecom_runtime_capability.sql`：以不可变迁移增量扩展 WeCom
   runtime 角色匹配，并提供 org/corp/角色校验的身份、聊天地址和聊天目标安全门面。
 - `backend/migrations/rollback/152_wecom_runtime_capability_rollback.sql`：删除 WeCom
@@ -1217,6 +1225,8 @@ EVERYDAYAIONE/
 │   │   │   └── dispatcher.py            # API 调度器
 │   │   ├── agent/                    # Agent 架构层（多Agent单一职责）
 │   │   │   ├── runtime/              # Run合同、证据账本、工具产物策略与完成门
+│   │   │   │   ├── credential_broker.py     # tenant-bound opaque handle→lease→controlled consumer
+│   │   │   │   └── wecom_app_credentials.py # 企微 App lease→token exchange 端口与 typed transport 组装
 │   │   │   ├── image/requirement_assist_prompts.py # AI 帮写事实边界与多模态 Prompt
 │   │   │   ├── image/input_adapters.py # 详情项目到共享 AI 帮写输入的安全适配器
 │   │   │   ├── image/requirement_assist_service.py # 三方案模型调用、降级、校验与事实冲突闸门
