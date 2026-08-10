@@ -93,6 +93,7 @@ class WecomWSClient(WecomOutboundMixin):
         self._connect_start_time: float = 0  # 连接建立时间（诊断用）
         self._hb_sent: int = 0  # 心跳发送计数（诊断用）
         self._hb_acked: int = 0  # 心跳 ACK 计数（诊断用）
+        self._init_typed_outbound()
 
     # ── 公开接口 ──────────────────────────────────────────
 
@@ -114,6 +115,7 @@ class WecomWSClient(WecomOutboundMixin):
             except asyncio.CancelledError:
                 pass
         self._is_connected = False
+        self._mark_typed_outbound_disconnected()
         logger.info("Wecom WS client stopped")
 
     async def send_reply(
@@ -282,9 +284,11 @@ class WecomWSClient(WecomOutboundMixin):
                 logger.warning(
                     f"Wecom WS disconnected | uptime={uptime}s | "
                     f"hb_sent={self._hb_sent} hb_acked={self._hb_acked} | "
-                    f"close_code={close_code} close_reason={close_reason}"
+                    f"close_code={close_code} | "
+                    f"close_reason_present={bool(close_reason)}"
                 )
                 self._is_connected = False
+                self._mark_typed_outbound_disconnected()
                 self._ws = None
 
             if self._should_run:
@@ -386,6 +390,8 @@ class WecomWSClient(WecomOutboundMixin):
                         f"Wecom heartbeat ACK #{self._hb_acked} | "
                         f"req_id={req_id}"
                     )
+            elif not cmd and req_id:
+                self._route_typed_outbound_ack(data)
             elif cmd:
                 logger.debug(f"Wecom WS frame | cmd={cmd}")
             else:
@@ -475,6 +481,7 @@ class WecomWSClient(WecomOutboundMixin):
     async def _force_close(self) -> None:
         """强制关闭连接，触发重连"""
         self._is_connected = False
+        self._mark_typed_outbound_disconnected()
         if self._ws:
             try:
                 await self._ws.close()

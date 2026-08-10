@@ -9,6 +9,13 @@
 
 ## 函数列表
 
+### WeCom Smart Robot typed outbound ACK transport
+
+| 函数/类型 | 文件 | 说明 |
+|---|---|---|
+| `WecomOutboundAckResult` / `WecomOutboundStatus` / `WecomOutboundErrorClass` | `backend/services/wecom/ws_outbound.py` | 仅返回 provider request ID、证明状态、非零 ACK errcode 与受限错误分类，不携带 Secret、原始 payload 或自由 errmsg |
+| `WecomOutboundMixin.send_proactive_typed` | `backend/services/wecom/ws_outbound.py` | 使用调用方稳定 provider request ID 作为企微 req_id；send 前注册 ACK、同 ID 幂等共享/只读、冲突失败关闭，并有界保留 unknown 的 late ACK readback |
+
 ### Agent Runtime Sandbox Job专业Executor
 
 | 函数/类型 | 文件 | 说明 |

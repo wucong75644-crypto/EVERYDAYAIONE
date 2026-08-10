@@ -456,6 +456,8 @@ Agent Runtime AR-13 Command Claim与Coordinator骨架：
 - `backend/tests/test_wecom_ws_runner.py`、`backend/tests/test_wecom_ws_runner_main.py`、
   `backend/tests/test_wecom_request_scope.py`：固定 WeCom 双客户端装配、消息级企业/用户
   作用域和三类连接池关闭合同。
+- `backend/tests/test_wecom_ws_outbound_ack.py`：以本地 mock 固定 typed 主动发送的 ACK
+  证明状态、稳定 provider request ID、并发隔离、幂等/冲突、late ACK 与有界清理合同。
 - `backend/migrations/152_wecom_runtime_capability.sql`：以不可变迁移增量扩展 WeCom
   runtime 角色匹配，并提供 org/corp/角色校验的身份、聊天地址和聊天目标安全门面。
 - `backend/migrations/rollback/152_wecom_runtime_capability_rollback.sql`：删除 WeCom
@@ -1196,6 +1198,7 @@ EVERYDAYAIONE/
 │   │   │   ├── wecom_ai_mixin.py        # AI 路由 + 生成能力 Mixin
 │   │   │   ├── app_message_sender.py    # 自建应用消息发送（文本/图片/视频）
 │   │   │   ├── ws_client.py             # 智能机器人 WebSocket 客户端
+│   │   │   ├── ws_outbound.py           # 智能机器人 legacy 发送与 typed ACK transport
 │   │   │   ├── access_token_manager.py  # access_token 管理
 │   │   │   └── user_mapping_service.py  # 企微用户 → 系统用户映射
 │   │   ├── kuaimai/                  # 快麦 ERP 集成
