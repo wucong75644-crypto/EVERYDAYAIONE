@@ -28,6 +28,14 @@ CONFIGURATION_BASE = (
 )
 OTHER_ORG = UUID("99999999-9999-9999-9999-999999999999")
 SIGNATURE = "get_wecom_app_bundle()"
+POST_201_HASHES = {
+    "wecom.corp_id":
+        "3ab214a20f2b8e096b2b19bed390b37f050b517fd63b37817e0c8760a66b351a",
+    "wecom.oauth_agent_id":
+        "29c6e8bec9211b29aa69b94cafabac2a0f95fd1f921eee12b8ab343cdb5f2476",
+    "wecom.oauth_agent_secret":
+        "0bcf0c906451d7f85ae319c165ab543ab0e6132e20f7b3fece2c9263ab7bf1bd",
+}
 
 
 def _setup(url: str) -> None:
@@ -79,7 +87,6 @@ def _setup(url: str) -> None:
                 (org_id, secret_id, USER),
             )
         connection.commit()
-    _apply(url, MIGRATION)
 
 
 def _call(
@@ -117,8 +124,110 @@ def _owner(url: str, sql: str, params: tuple[object, ...] = ()) -> object:
         return row[0] if row else None
 
 
+def _owner_execute(url: str, sql: str) -> None:
+    with psycopg.connect(url) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(sql)
+        connection.commit()
+
+
+def _registry_snapshot(url: str) -> tuple[list[tuple], list[tuple]]:
+    with psycopg.connect(url) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        definitions = connection.execute(
+            "SELECT config_key,active,contract_hash,contract_json::text "
+            "FROM configuration_definitions WHERE config_key=ANY(%s) "
+            "ORDER BY config_key",
+            (list(POST_201_HASHES),),
+        ).fetchall()
+        bundles = connection.execute(
+            "SELECT definition_version,bundle_name,active,contract_hash,"
+            "contract_json::text FROM configuration_bundle_definitions "
+            "WHERE bundle_name='wecom.app' ORDER BY definition_version",
+        ).fetchall()
+        return definitions, bundles
+
+
+def _assert_apply_fails_without_registry_write(
+    url: str,
+    error_code: str,
+) -> None:
+    before = _registry_snapshot(url)
+    with pytest.raises(Exception, match=error_code):
+        _apply(url, MIGRATION)
+    assert _registry_snapshot(url) == before
+
+
+def _assert_preflight_failures(url: str) -> None:
+    missing_dependencies = (
+        (
+            "ALTER FUNCTION public._assert_agent_runtime_scheduled_wecom_actor() "
+            "RENAME TO _assert_agent_runtime_scheduled_wecom_actor_missing_fixture",
+            "ALTER FUNCTION public._assert_agent_runtime_scheduled_wecom_actor_missing_fixture() "
+            "RENAME TO _assert_agent_runtime_scheduled_wecom_actor",
+        ),
+        (
+            "ALTER FUNCTION public._resolve_configuration_bundle(text,text,uuid,uuid) "
+            "RENAME TO _resolve_configuration_bundle_missing_fixture",
+            "ALTER FUNCTION public._resolve_configuration_bundle_missing_fixture("
+            "text,text,uuid,uuid) RENAME TO _resolve_configuration_bundle",
+        ),
+    )
+    for remove_dependency, restore_dependency in missing_dependencies:
+        _owner_execute(url, remove_dependency)
+        _assert_apply_fails_without_registry_write(
+            url, "WECOM_APP_CONFIG_FACADE_PREREQUISITE_MISSING",
+        )
+        _owner_execute(url, restore_dependency)
+
+    _rollback(url, "201_wecom_callback_inbox_rollback.sql")
+    _assert_apply_fails_without_registry_write(
+        url, "WECOM_APP_CONFIG_FACADE_DEFINITION_DRIFT",
+    )
+    _apply(url, "201_wecom_callback_inbox.sql")
+
+    _owner(
+        url,
+        "UPDATE configuration_definitions SET contract_hash=repeat('f',64) "
+        "WHERE definition_version='v1' AND config_key='wecom.corp_id' "
+        "RETURNING config_key",
+    )
+    _assert_apply_fails_without_registry_write(
+        url, "WECOM_APP_CONFIG_FACADE_DEFINITION_DRIFT",
+    )
+    _owner(
+        url,
+        "UPDATE configuration_definitions SET contract_hash=%s "
+        "WHERE definition_version='v1' AND config_key='wecom.corp_id' "
+        "RETURNING config_key",
+        (POST_201_HASHES["wecom.corp_id"],),
+    )
+
+    _owner(
+        url,
+        "INSERT INTO configuration_bundle_definitions("
+        "definition_version,bundle_name,contract_json,contract_hash,active) VALUES("
+        "'v1','wecom.app',"
+        "'{\"allowed_consumers\":[\"wecom_runtime\"],\"name\":\"wecom.app\","
+        "\"optional_keys\":[],\"required_keys\":[\"wecom.corp_id\","
+        "\"wecom.oauth_agent_id\",\"wecom.oauth_agent_secret\"]}'::jsonb,"
+        "repeat('e',64),false) RETURNING bundle_name",
+    )
+    _assert_apply_fails_without_registry_write(
+        url, "WECOM_APP_CONFIG_FACADE_BUNDLE_DRIFT",
+    )
+    _owner(
+        url,
+        "DELETE FROM configuration_bundle_definitions "
+        "WHERE definition_version='v1' AND bundle_name='wecom.app' "
+        "RETURNING bundle_name",
+    )
+
+
 def test_apply_readback_isolation_acl_rollback_and_reapply(database: str) -> None:
     _setup(database)
+    _assert_preflight_failures(database)
+    _apply(database, MIGRATION)
 
     first = _call(database, org_id=ORG)
     second = _call(database, org_id=OTHER_ORG)
@@ -215,11 +324,7 @@ def test_apply_readback_isolation_acl_rollback_and_reapply(database: str) -> Non
         "SELECT array_agg(contract_hash ORDER BY config_key) "
         "FROM configuration_definitions WHERE config_key=ANY(%s)",
         (["wecom.corp_id", "wecom.oauth_agent_id", "wecom.oauth_agent_secret"],),
-    ) == [
-        "3ab214a20f2b8e096b2b19bed390b37f050b517fd63b37817e0c8760a66b351a",
-        "29c6e8bec9211b29aa69b94cafabac2a0f95fd1f921eee12b8ab343cdb5f2476",
-        "0bcf0c906451d7f85ae319c165ab543ab0e6132e20f7b3fece2c9263ab7bf1bd",
-    ]
+    ) == [POST_201_HASHES[key] for key in sorted(POST_201_HASHES)]
 
     _apply(database, MIGRATION)
     assert _call(database)["bundle"] == "wecom.app"

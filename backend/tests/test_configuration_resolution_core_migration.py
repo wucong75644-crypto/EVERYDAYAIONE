@@ -51,8 +51,13 @@ def _snapshot_rows() -> dict[str, tuple[dict[str, object], str]]:
         for name, contract_json, contract_hash in rows
     }
     for incremental_sql in INCREMENTAL_SQL:
+        insert_marker = (
+            "INSERT INTO public.configuration_bundle_definitions("
+            if "INSERT INTO public.configuration_bundle_definitions(" in incremental_sql
+            else "INSERT INTO configuration_bundle_definitions("
+        )
         insert_sql = incremental_sql.split(
-            "INSERT INTO configuration_bundle_definitions(", 1,
+            insert_marker, 1,
         )[1].split("CREATE OR REPLACE FUNCTION", 1)[0]
         inserts = re.findall(
             r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
