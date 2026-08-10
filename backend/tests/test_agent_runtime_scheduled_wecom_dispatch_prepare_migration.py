@@ -58,6 +58,10 @@ def test_start_is_prepared_only_cas_and_readback_is_pure() -> None:
     assert "status='dispatch_started'" in start
     assert "dispatch_phase='external_request_started'" in start
     assert "read_agent_runtime_scheduled_wecom_dispatch_context_v1" in start
+    assert start.index("d.claim_request_id") < start.index("IF a.status<>'prepared'")
+    assert start.index("d.lease_expires_at<=clock_timestamp()") < start.index(
+        "IF a.status<>'prepared'",
+    )
     assert "STABLE SECURITY DEFINER" in readback
     assert "UPDATE " not in readback and "INSERT " not in readback
     for current_claim_fence in (

@@ -221,6 +221,42 @@ def test_pure_readback_fences_expired_and_replaced_current_claim(database: str) 
     )["outcome"] == "fenced"
 
 
+def test_started_replay_fences_expired_and_replaced_current_claim(database: str) -> None:
+    _setup(database)
+    claim, item = _seed(database)
+    prepared = _rpc(
+        database, "prepare_agent_runtime_scheduled_wecom_dispatch_v1",
+        _prepare_params(claim, item, _identity()),
+    )
+    start_params = _start_params(database, claim, item, prepared)
+    assert _rpc(
+        database, "start_agent_runtime_scheduled_wecom_dispatch_v1", start_params,
+    )["outcome"] == "dispatch_started"
+    assert _rpc(
+        database, "start_agent_runtime_scheduled_wecom_dispatch_v1", start_params,
+    )["outcome"] == "readback"
+    _owner(
+        database,
+        "UPDATE agent_runtime_scheduled_wecom_deliveries "
+        "SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE intent_id=%s RETURNING intent_id",
+        (claim["intent_id"],),
+    )
+    assert _rpc(
+        database, "start_agent_runtime_scheduled_wecom_dispatch_v1", start_params,
+    )["outcome"] == "fenced"
+    _owner(
+        database,
+        "UPDATE agent_runtime_scheduled_wecom_deliveries SET status='claimed',claim_request_id=%s,"
+        "lease_token=%s,claim_worker_id='replacement-worker',"
+        "lease_expires_at=clock_timestamp()+interval '1 minute',state_version=state_version+1 "
+        "WHERE intent_id=%s RETURNING intent_id",
+        (str(uuid4()), str(uuid4()), claim["intent_id"]),
+    )
+    assert _rpc(
+        database, "start_agent_runtime_scheduled_wecom_dispatch_v1", start_params,
+    )["outcome"] == "fenced"
+
+
 def test_split_provider_and_idempotency_hits_return_contract_conflict(database: str) -> None:
     _setup(database)
     claim, item = _seed(database)
