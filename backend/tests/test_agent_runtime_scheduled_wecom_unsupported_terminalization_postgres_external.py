@@ -160,6 +160,33 @@ def test_non_completed_text_terminalizes_once_and_replays(
         _terminalize(database, tuple(conflict))
 
 
+def test_renewed_claim_uses_current_delivery_version_and_replays(database: str) -> None:
+    _setup(database)
+    _set_user_target(database, "app")
+    _apply_terminal(
+        database, {"type": "wecom_user", "wecom_userid": "runtime-user"}, "failed",
+    )
+    claim = _claim(database)
+    stale = _params(claim)
+    renewed = _rpc(
+        database, "renew_agent_runtime_scheduled_wecom_delivery_lease_v1",
+        (
+            claim["intent_id"], claim["claim_request_id"], claim["lease_token"],
+            claim["worker_id"], claim["delivery_state_version"], 60,
+        ),
+    )
+    assert renewed["outcome"] == "renewed"
+    assert renewed["state_version"] == claim["delivery_state_version"] + 1
+    assert _terminalize(database, stale) == {"outcome": "fenced"}
+    current = list(stale)
+    current[6] = renewed["state_version"]
+    result = _terminalize(database, tuple(current))
+    replay = _terminalize(database, tuple(current))
+    assert result["outcome"] == "terminalized" and replay["outcome"] == "readback"
+    assert result["delivery_state_version"] == renewed["state_version"] + 1
+    assert replay["delivery_state_version"] == result["delivery_state_version"]
+
+
 def test_accepted_text_then_artifact_terminalizes_partial_without_attempt(database: str) -> None:
     _setup(database)
     _completed_with_artifact(database)

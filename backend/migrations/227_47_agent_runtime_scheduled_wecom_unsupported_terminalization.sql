@@ -213,9 +213,9 @@ BEGIN
   WHERE request_id=p_claim_request_id;
  IF item.intent_id IS DISTINCT FROM p_intent_id OR claim.request_id IS NULL
  OR(claim.intent_id,claim.item_id,claim.worker_id,claim.lease_token,
-    claim.delivery_state_version,claim.item_state_version)
+    claim.item_state_version)
    IS DISTINCT FROM(p_intent_id,p_item_id,btrim(p_worker_id),p_lease_token,
-    p_expected_delivery_state_version,p_expected_item_state_version)
+    p_expected_item_state_version)
  OR(d.status,d.claim_request_id,d.lease_token,d.claim_worker_id,d.state_version)
    IS DISTINCT FROM('claimed',p_claim_request_id,p_lease_token,btrim(p_worker_id),
     p_expected_delivery_state_version)

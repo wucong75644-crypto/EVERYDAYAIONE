@@ -58,6 +58,10 @@ def test_rpc_is_fenced_server_derived_and_does_not_create_transport_or_attempts(
     assert "_assert_agent_runtime_scheduled_wecom_actor()" in body
     assert "_agent_runtime_scheduled_wecom_global_request_lock(p_request_id)" in body
     assert "agent_runtime_scheduled_wecom_continuation_claim_requests" in body
+    assert "claim.delivery_state_version" not in body
+    assert "d.state_version) IS DISTINCT FROM('claimed'" in body
+    assert "p_expected_delivery_state_version)" in body
+    assert "claim.item_state_version" in body
     assert "read_agent_runtime_scheduled_wecom_dispatch_payload_v1(" in body
     assert "gate->>'outcome'<>'unsupported'" in body
     assert "p_reason" not in body and "p_free" not in body
