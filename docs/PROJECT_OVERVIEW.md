@@ -2036,6 +2036,20 @@ cache = client.caches.create(
     dispatch 或 resubmit。外部 readback 后 target drift 或 lease 刚过期仍记录，token/worker/version takeover 则 fence。
   - result request UUID 双向加入 227_41/42 全局 namespace guards；FORCE RLS、worker 无表权、response-loss readback
     与精确 rollback 均由 PG 契约覆盖。本批不包含 cancel、transport、Provider 调用或 accepted/rejected resolution。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-B1d2b1d Scheduled Runtime WeCom definitive reconcile result
+  - 新增 `227_44_agent_runtime_scheduled_wecom_reconcile_definitive.sql`、精确 rollback、append-only
+    definitive request ledger 与 worker-only result RPC。请求绑定 227_41 current claim、intent/item/attempt、
+    reconcile token/worker、delivery/item versions 与 Provider identity，只接受 typed `accepted|rejected`；canonical
+    readback hash 与 metadata allowlist 复用 227_43/227_40，底表 FORCE RLS 且 worker 无表权。
+  - 成功 readback 将 frozen unknown/ambiguous attempt 终结为 accepted/rejected receipt_recorded，保留 `unknown_at` 并
+    设置 receipt evidence/`resolved_at`；item 映射为 accepted/failed，清 ordinary/reconcile claims。存在后续
+    pending/retry_wait item 时 delivery 回到 pending，由 227_42 v2 领取真实下一 item；否则按 accepted 与
+    failed/cancelled 聚合 completed/partial/failed。readback 后 target/context drift 或 lease 过期仍记录，
+    token/worker/version takeover fence；不包含 still_unknown、cancel、transport、Provider 调用、普通 retry/resubmit。
+  - definitive request UUID 双向加入 227_41～43 与 legacy/continuation namespace guards；rollback 无事实时恢复
+    227_43 guard 定义，有事实时失败关闭。并发 accepted/rejected、readback/conflict、NULL/hash/metadata 零事实、
+    v2 continuation、ACL/RLS/search_path 与 rollback 均由 disposable PostgreSQL 契约覆盖。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
