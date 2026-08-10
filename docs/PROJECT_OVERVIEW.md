@@ -1965,7 +1965,8 @@ cache = client.caches.create(
 - **2026-08-10**：AR-18 B7-S2-B1-D2-A1 Scheduled Runtime WeCom delivery foundation
   - 新增 `227_37_agent_runtime_scheduled_wecom_delivery.sql` 与精确 rollback。D1-A 每个 WeCom intent
     在同一事务初始化一条 Runtime-owned delivery fact、至少一条 text identity item，并为 completed
-    Artifact manifest 逐项冻结 identity-only item；item key 绑定 intent/content/source identity/revision，
+    Artifact manifest 按 occurrence 逐项冻结 identity-only item；item key 绑定 intent/content、manifest
+    ordinal/role 与 source identity/revision，保留同一 Artifact 的合法重复 occurrence，
     不复制正文、URL、object path、Secret 或 bytes。
   - delivery/item/dispatch attempt 三表冻结完整状态与 provider evidence 字段，identity 不可改，attempt
     仅允许 prepared→dispatch_started→accepted/rejected/unknown 及 unknown→accepted/rejected；typed receipt

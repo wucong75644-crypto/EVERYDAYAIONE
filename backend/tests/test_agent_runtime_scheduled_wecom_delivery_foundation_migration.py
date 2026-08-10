@@ -19,7 +19,7 @@ def test_foundation_freezes_required_states_and_safe_identity_only_items() -> No
         assert f"'{state}'" in MIGRATION
     for identity in (
         "intent_id", "content_identity_hash", "source_id", "source_revision",
-        "source_identity_hash", "provider_request_id", "idempotency_key",
+        "source_identity_hash", "source_role", "ordinal", "provider_request_id", "idempotency_key",
         "provider_revision", "receipt_type", "receipt_hash", "was_ambiguous",
     ):
         assert identity in MIGRATION
@@ -57,4 +57,5 @@ def test_attempt_evidence_has_strict_transition_and_immutability_guards() -> Non
     assert "('dispatch_started','unknown')" in MIGRATION
     assert "('unknown','accepted')" in MIGRATION
     assert "('unknown','prepared')" not in MIGRATION
+    assert "'ordinal',position,'source_role',source_role" in MIGRATION
     assert len(MIGRATION.splitlines()) <= 500

@@ -46,6 +46,7 @@ CREATE TABLE agent_runtime_scheduled_wecom_delivery_items(
   REFERENCES agent_runtime_scheduled_wecom_deliveries(intent_id) ON DELETE RESTRICT,
  item_key TEXT NOT NULL UNIQUE CHECK(item_key~'^[0-9a-f]{64}$'),ordinal INTEGER NOT NULL CHECK(ordinal>0),
  item_kind TEXT NOT NULL CHECK(item_kind IN('text','artifact_identity')),
+ source_role TEXT NOT NULL CHECK(source_role IN('text','input','output','partial','materialized')),
  source_id UUID NOT NULL,source_revision BIGINT NOT NULL CHECK(source_revision>=0),
  source_identity_hash TEXT NOT NULL CHECK(source_identity_hash~'^[0-9a-f]{64}$'),
  content_identity_hash TEXT NOT NULL CHECK(content_identity_hash~'^[0-9a-f]{64}$'),
@@ -55,7 +56,9 @@ CREATE TABLE agent_runtime_scheduled_wecom_delivery_items(
  next_attempt_at TIMESTAMPTZ,terminal_reason_code TEXT CHECK(
   terminal_reason_code IS NULL OR terminal_reason_code~'^[a-z0-9_]{1,80}$'),
  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
- UNIQUE(intent_id,ordinal),UNIQUE(intent_id,item_key,content_identity_hash)
+ UNIQUE(intent_id,ordinal),UNIQUE(intent_id,item_key,content_identity_hash),
+ CHECK((item_kind='text' AND source_role='text') OR
+  (item_kind='artifact_identity' AND source_role IN('input','output','partial','materialized')))
 );
 CREATE TABLE agent_runtime_scheduled_wecom_dispatch_attempts(
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),item_id UUID NOT NULL
@@ -155,7 +158,7 @@ CREATE FUNCTION _initialize_agent_runtime_scheduled_wecom_delivery() RETURNS TRI
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE target agent_runtime_scheduled_delivery_targets%ROWTYPE;
  content agent_runtime_scheduled_delivery_contents%ROWTYPE;entry JSONB;source UUID;
- revision BIGINT;identity TEXT;item_key TEXT;position INTEGER:=1;
+ revision BIGINT;identity TEXT;source_role TEXT;item_key TEXT;position INTEGER:=1;
 BEGIN
  SELECT * INTO target FROM agent_runtime_scheduled_delivery_targets
   WHERE scheduled_run_id=NEW.scheduled_run_id AND target_key=NEW.target_key;
@@ -175,22 +178,25 @@ BEGIN
  identity:=coalesce(content.result_hash,content.content_identity_hash);
  item_key:=encode(digest(convert_to(_agent_runtime_scheduled_canonical_json(jsonb_build_object(
   'intent_id',NEW.id,'content_identity_hash',NEW.content_identity_hash,'kind','text',
-  'source_id',source,'source_revision',revision,'source_identity_hash',identity)),'UTF8'),'sha256'),'hex');
- INSERT INTO agent_runtime_scheduled_wecom_delivery_items(intent_id,item_key,ordinal,item_kind,
+  'ordinal',position,'source_role','text','source_id',source,'source_revision',revision,
+  'source_identity_hash',identity)),'UTF8'),'sha256'),'hex');
+ INSERT INTO agent_runtime_scheduled_wecom_delivery_items(intent_id,item_key,ordinal,item_kind,source_role,
   source_id,source_revision,source_identity_hash,content_identity_hash)
- VALUES(NEW.id,item_key,position,'text',source,revision,identity,NEW.content_identity_hash);
+ VALUES(NEW.id,item_key,position,'text','text',source,revision,identity,NEW.content_identity_hash);
  FOR entry IN SELECT value FROM jsonb_array_elements(content.artifact_manifest) LOOP
   position:=position+1;source:=(entry->>'artifact_id')::UUID;
-  revision:=(entry->>'materialize_revision')::BIGINT;identity:=entry->>'content_hash';
-  IF identity!~'^[0-9a-f]{64}$' THEN
+  revision:=(entry->>'materialize_revision')::BIGINT;identity:=entry->>'content_hash';source_role:=entry->>'role';
+  IF identity!~'^[0-9a-f]{64}$' OR source_role IS NULL
+  OR source_role NOT IN('input','output','partial','materialized') THEN
    RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_WECOM_ARTIFACT_IDENTITY_INVALID' USING ERRCODE='55000';
   END IF;
   item_key:=encode(digest(convert_to(_agent_runtime_scheduled_canonical_json(jsonb_build_object(
    'intent_id',NEW.id,'content_identity_hash',NEW.content_identity_hash,'kind','artifact_identity',
-   'source_id',source,'source_revision',revision,'source_identity_hash',identity)),'UTF8'),'sha256'),'hex');
-  INSERT INTO agent_runtime_scheduled_wecom_delivery_items(intent_id,item_key,ordinal,item_kind,
+   'ordinal',position,'source_role',source_role,'source_id',source,'source_revision',revision,
+   'source_identity_hash',identity)),'UTF8'),'sha256'),'hex');
+  INSERT INTO agent_runtime_scheduled_wecom_delivery_items(intent_id,item_key,ordinal,item_kind,source_role,
    source_id,source_revision,source_identity_hash,content_identity_hash)
-  VALUES(NEW.id,item_key,position,'artifact_identity',source,revision,identity,NEW.content_identity_hash);
+  VALUES(NEW.id,item_key,position,'artifact_identity',source_role,source,revision,identity,NEW.content_identity_hash);
  END LOOP;
  RETURN NEW;
 END $$;

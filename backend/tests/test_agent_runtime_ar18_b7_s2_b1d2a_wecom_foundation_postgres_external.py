@@ -77,13 +77,14 @@ def test_initializes_one_delivery_and_text_identity_per_wecom_intent(
             "FROM agent_runtime_scheduled_wecom_deliveries",
         ).fetchone()
         item = conn.execute(
-            "SELECT item_kind,ordinal,status,source_revision,source_identity_hash,item_key "
+            "SELECT item_kind,ordinal,status,source_revision,source_identity_hash,item_key,source_role "
             "FROM agent_runtime_scheduled_wecom_delivery_items",
         ).fetchone()
         assert delivery[0] == target["type"] and delivery[2:4] == ("pending", 0)
         assert len(delivery[4]) == 64 and delivery[1].get("secret") is None
         assert item[:4] == ("text", 1, "pending", 1)
         assert len(item[4]) == len(item[5]) == 64
+        assert item[6] == "text"
 
 
 def test_web_is_ignored_and_completed_artifacts_create_identity_only_items(database: str) -> None:
@@ -106,14 +107,91 @@ def test_web_is_ignored_and_completed_artifacts_create_identity_only_items(datab
             "SELECT count(*) FROM agent_runtime_scheduled_wecom_deliveries",
         ).fetchone()[0] == 1
         items = conn.execute(
-            "SELECT item_kind,source_id,source_revision,source_identity_hash "
+            "SELECT item_kind,source_id,source_revision,source_identity_hash,source_role "
             "FROM agent_runtime_scheduled_wecom_delivery_items ORDER BY ordinal",
         ).fetchall()
         assert [row[0] for row in items] == ["text", "artifact_identity"]
         assert str(items[1][1]) == artifact["artifact_id"] and items[1][2] == 1
+        assert [row[4] for row in items] == ["text", "output"]
         serialized = json.dumps(items, default=str).lower()
         for forbidden in ("storage_ref", "inline_content", "secret", "/private/", "http"):
             assert forbidden not in serialized
+
+
+def test_repeated_artifact_occurrences_keep_manifest_order_and_stable_identity(
+    database: str,
+) -> None:
+    _setup(database)
+    facts = _bound_run(
+        database, {"type": "wecom_user", "wecom_userid": "runtime-user"},
+    )
+    result_hash = _install_final_result(database, facts)
+    first = _link_artifact(database, facts)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "UPDATE agent_actions SET action_index=1 WHERE id=(SELECT action_id "
+            "FROM agent_action_artifact_links WHERE artifact_id=%s)",
+            (first["artifact_id"],),
+        )
+        conn.commit()
+    second = _link_artifact(database, facts)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        first_link = conn.execute(
+            "SELECT action_id,attempt_id,content_hash,materialize_revision,"
+            "materialize_status,sensitivity FROM agent_action_artifact_links "
+            "WHERE artifact_id=%s", (first["artifact_id"],),
+        ).fetchone()
+        conn.execute(
+            "UPDATE agent_action_artifact_links SET artifact_id=%s,content_hash=%s "
+            "WHERE artifact_id=%s",
+            (first["artifact_id"], first["content_hash"], second["artifact_id"]),
+        )
+        conn.execute(
+            "INSERT INTO agent_action_artifact_links(action_id,attempt_id,artifact_id,role,"
+            "content_hash,materialize_revision,materialize_status,sensitivity) "
+            "VALUES(%s,%s,%s,'partial',%s,%s,%s,%s)",
+            (
+                first_link[0], first_link[1], first["artifact_id"],
+                first_link[2], first_link[3], first_link[4], first_link[5],
+            ),
+        )
+        conn.commit()
+    assert _rpc(database, "complete_agent_run", (
+        facts["run_id"], facts["token"], facts["version"], result_hash,
+    ))["outcome"] == "completed"
+    finalization = _claim(database)
+    request_id = str(uuid4())
+    next_run_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    assert _apply_v2(
+        database, finalization, request_id=request_id, next_run_at=next_run_at,
+    )["outcome"] == "applied"
+    with psycopg.connect(database) as conn:
+        manifest = conn.execute(
+            "SELECT artifact_manifest FROM agent_runtime_scheduled_delivery_contents",
+        ).fetchone()[0]
+        items = conn.execute(
+            "SELECT ordinal,source_role,source_id,source_revision,source_identity_hash,item_key "
+            "FROM agent_runtime_scheduled_wecom_delivery_items "
+            "WHERE item_kind='artifact_identity' ORDER BY ordinal",
+        ).fetchall()
+    assert len(manifest) == len(items) == 3
+    assert [row[0] for row in items] == [2, 3, 4]
+    assert [row[1] for row in items] == [entry["role"] for entry in manifest]
+    assert [str(row[2]) for row in items] == [first["artifact_id"]] * 3
+    assert [row[3] for row in items] == [entry["materialize_revision"] for entry in manifest]
+    assert [row[4] for row in items] == [entry["content_hash"] for entry in manifest]
+    assert len({row[5] for row in items}) == 3
+    assert _apply_v2(
+        database, finalization, request_id=request_id, next_run_at=next_run_at,
+    )["outcome"] == "already_applied"
+    with psycopg.connect(database) as conn:
+        replay = conn.execute(
+            "SELECT ordinal,source_role,item_key FROM agent_runtime_scheduled_wecom_delivery_items "
+            "WHERE item_kind='artifact_identity' ORDER BY ordinal",
+        ).fetchall()
+    assert replay == [(row[0], row[1], row[5]) for row in items]
 
 
 def test_attempt_identity_transition_ambiguity_and_receipt_evidence_are_guarded(
