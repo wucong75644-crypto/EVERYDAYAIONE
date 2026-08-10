@@ -2149,10 +2149,11 @@ cache = client.caches.create(
   - 新增 Runtime-owned one-shot service，输入仅为 router 已取得的 typed `DeliveryClaim + DispatchPayload`；Smart channel、
     target 和 claim/payload intent/item/version 在任何 prepare/start/transport 前失败关闭。服务不拥有 global claim、payload
     read、unsupported terminalization、App dispatch、循环 Worker 或 production composition。
-  - 仅 fresh prepare owner 可进入同进程 attempt/provider single-flight，且仅 fresh start owner 可调用一次
-    `send_proactive_typed(markdown,{content: safe_text})`；prepare/start readback 不发送。ACK/rejection 生成与 227_40 SQL
+  - routed item/provider identity 在 await prepare 前建立同进程 single-flight，共享内部 task 完整持有
+    prepare→start→send→outcome，所有调用方仅 shielded await；调用方取消不会取消 owner、释放 flight 或允许重复发送。
+    仅 fresh prepare/start owner 可调用一次 `send_proactive_typed(markdown,{content: safe_text})`；readback 不发送。ACK/rejection 生成与 227_40 SQL
     canonical 完全一致的 allowlisted receipt，NOT_STARTED、UNKNOWN、异常或取消在 durable start 后均保守记录 UNKNOWN。
-    取消路径 best-effort shield 持久化后重抛，失败时保留 `dispatch_started` 供 227_48 恢复。
+    transport/internal task 取消路径 best-effort shield 持久化后重抛，失败时保留 `dispatch_started` 供 227_48 恢复。
   - 本批不组合 prepared/started recovery；跨进程安全仍依赖 PostgreSQL fresh outcome fence，进程内 50-way duplicate 由
     single-flight 收敛为一次 transport。production flags 保持关闭，无 migration、provider credential 或真实外呼。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.

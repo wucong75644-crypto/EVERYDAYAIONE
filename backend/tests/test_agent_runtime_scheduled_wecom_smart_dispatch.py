@@ -180,7 +180,7 @@ class _Transport:
     def __init__(
         self, status: WecomOutboundStatus = WecomOutboundStatus.ACKNOWLEDGED,
         *, errcode: int | None = None, mismatch: bool = False,
-        error: Exception | None = None, delay: float = 0,
+        error: BaseException | None = None, delay: float = 0,
     ) -> None:
         self.status = status
         self.errcode = errcode
@@ -209,10 +209,11 @@ class _Transport:
         )
 
 
-class _BlockingTransport(_Transport):
+class _GateTransport(_Transport):
     def __init__(self) -> None:
         super().__init__()
         self.started = asyncio.Event()
+        self.release = asyncio.Event()
 
     async def send_proactive_typed(
         self, provider_request_id: str, chatid: str,
@@ -220,8 +221,32 @@ class _BlockingTransport(_Transport):
     ) -> WecomOutboundAckResult:
         self.calls.append((provider_request_id, chatid, msgtype, content))
         self.started.set()
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
+        await self.release.wait()
+        return WecomOutboundAckResult(
+            provider_request_id, WecomOutboundStatus.ACKNOWLEDGED, None, None,
+        )
+
+
+class _ReversedPrepareRepository(_Repository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fresh_started = asyncio.Event()
+        self.release_fresh = asyncio.Event()
+
+    async def prepare_dispatch(
+        self, claim: DeliveryClaim, identity: ProviderDispatchIdentity,
+    ) -> DispatchAttempt:
+        self.prepare_calls.append(identity)
+        if self.attempt is None:
+            self.attempt = DispatchAttempt(
+                outcome=AttemptOperationOutcome.PREPARED,
+                fence=claim.fence, attempt_id=ATTEMPT, attempt_number=1,
+                identity=identity, status=AttemptStatus.PREPARED,
+            )
+            self.fresh_started.set()
+            await self.release_fresh.wait()
+            return self.attempt
+        return replace(self.attempt, outcome=AttemptOperationOutcome.READBACK)
 
 
 @pytest.mark.asyncio
@@ -298,17 +323,14 @@ async def test_identity_mismatch_and_transport_exception_record_unknown(transpor
 
 
 @pytest.mark.asyncio
-async def test_cancellation_after_start_records_unknown_then_reraises() -> None:
+async def test_transport_cancellation_after_start_records_unknown_then_reraises() -> None:
     repository = _Repository()
-    transport = _BlockingTransport()
-    task = asyncio.create_task(ScheduledWecomSmartDispatchService(
-        repository, transport,
-    ).dispatch_claimed(_claim(), _payload()))
-    await transport.started.wait()
+    service = ScheduledWecomSmartDispatchService(
+        repository, _Transport(error=asyncio.CancelledError()),
+    )
 
-    task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await service.dispatch_claimed(_claim(), _payload())
 
     assert repository.outcome_calls[0][1:] == (DispatchOutcome.UNKNOWN, None)
     assert repository.attempt.status is AttemptStatus.UNKNOWN
@@ -317,17 +339,36 @@ async def test_cancellation_after_start_records_unknown_then_reraises() -> None:
 @pytest.mark.asyncio
 async def test_cancellation_preserved_when_unknown_persistence_fails() -> None:
     repository = _Repository(record_error=True)
-    transport = _BlockingTransport()
-    task = asyncio.create_task(ScheduledWecomSmartDispatchService(
-        repository, transport,
-    ).dispatch_claimed(_claim(), _payload()))
-    await transport.started.wait()
+    service = ScheduledWecomSmartDispatchService(
+        repository, _Transport(error=asyncio.CancelledError()),
+    )
 
-    task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await service.dispatch_claimed(_claim(), _payload())
 
     assert repository.attempt.status is AttemptStatus.DISPATCH_STARTED
+    assert len(repository.outcome_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_owner_caller_cancellation_does_not_release_shared_flight() -> None:
+    repository = _Repository()
+    transport = _GateTransport()
+    service = ScheduledWecomSmartDispatchService(repository, transport)
+    owner = asyncio.create_task(service.dispatch_claimed(_claim(), _payload()))
+    await transport.started.wait()
+    duplicate = asyncio.create_task(service.dispatch_claimed(_claim(), _payload()))
+
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    transport.release.set()
+    result = await duplicate
+
+    assert result.outcome is SmartRobotDispatchOutcome.ACCEPTED
+    assert len(repository.prepare_calls) == 1
+    assert repository.start_calls == 1
+    assert len(transport.calls) == 1
     assert len(repository.outcome_calls) == 1
 
 
@@ -391,6 +432,33 @@ async def test_50_same_service_calls_use_one_transport() -> None:
     ))
 
     assert all(result.outcome is SmartRobotDispatchOutcome.ACCEPTED for result in results)
+    assert len(repository.prepare_calls) == 1
     assert len(transport.calls) == 1
     assert repository.start_calls == 1
+    assert len(repository.outcome_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_reversed_prepare_response_order_keeps_one_shared_owner() -> None:
+    repository = _ReversedPrepareRepository()
+    transport = _Transport()
+    service = ScheduledWecomSmartDispatchService(repository, transport)
+    callers = [
+        asyncio.create_task(service.dispatch_claimed(_claim(), _payload()))
+        for _ in range(50)
+    ]
+    await repository.fresh_started.wait()
+
+    readback = await repository.prepare_dispatch(
+        _claim(), repository.prepare_calls[0],
+    )
+    assert readback.outcome is AttemptOperationOutcome.READBACK
+    repository.release_fresh.set()
+    results = await asyncio.gather(*callers)
+
+    assert all(result.outcome is SmartRobotDispatchOutcome.ACCEPTED for result in results)
+    assert all(result == results[0] for result in results)
+    assert len(repository.prepare_calls) == 2
+    assert repository.start_calls == 1
+    assert len(transport.calls) == 1
     assert len(repository.outcome_calls) == 1

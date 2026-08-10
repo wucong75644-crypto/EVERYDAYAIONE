@@ -60,23 +60,44 @@ class ScheduledWecomSmartDispatchService:
     ) -> SmartRobotDispatchResult:
         target = _validate_routed_smart(claim, payload)
         identity = scheduled_wecom_smart_identity(payload)
+        key = _singleflight_key(claim, identity)
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(
+                self._prepare_start_send(claim, payload, target, identity),
+            )
+            self._inflight[key] = task
+            task.add_done_callback(
+                lambda completed, flight_key=key: self._finish_flight(
+                    flight_key, completed,
+                ),
+            )
+        return await asyncio.shield(task)
+
+    async def _prepare_start_send(
+        self,
+        claim: DeliveryClaim,
+        payload: DispatchPayload,
+        target: WecomSmartRobotDispatchTarget,
+        identity: ProviderDispatchIdentity,
+    ) -> SmartRobotDispatchResult:
         attempt = await self._repository.prepare_dispatch(claim, identity)
-        key = _singleflight_key(attempt)
-        existing = self._inflight.get(key)
-        if existing is not None:
-            return await asyncio.shield(existing)
         if (
             attempt.outcome is not AttemptOperationOutcome.PREPARED
             or attempt.status is not AttemptStatus.PREPARED
         ):
             return _already_persisted(payload)
-        task = asyncio.create_task(self._start_and_send(attempt, payload, target))
-        self._inflight[key] = task
-        try:
-            return await task
-        finally:
-            if self._inflight.get(key) is task:
-                self._inflight.pop(key, None)
+        return await self._start_and_send(attempt, payload, target)
+
+    def _finish_flight(
+        self,
+        key: tuple[str, str, str, int],
+        task: asyncio.Task[SmartRobotDispatchResult],
+    ) -> None:
+        if self._inflight.get(key) is task:
+            self._inflight.pop(key, None)
+        if not task.cancelled():
+            task.exception()
 
     async def _start_and_send(
         self, attempt: DispatchAttempt, payload: DispatchPayload,
@@ -141,10 +162,11 @@ def _validate_routed_smart(
     return payload.target
 
 
-def _singleflight_key(attempt: DispatchAttempt) -> tuple[str, str, str, int]:
-    identity = attempt.identity
+def _singleflight_key(
+    claim: DeliveryClaim, identity: ProviderDispatchIdentity,
+) -> tuple[str, str, str, int]:
     return (
-        attempt.attempt_id, identity.provider_request_id,
+        claim.fence.item_id, identity.provider_request_id,
         identity.idempotency_key, identity.provider_revision,
     )
 
