@@ -1197,6 +1197,7 @@ EVERYDAYAIONE/
 │   │   │   ├── turn_lifecycle.py      # 企微同步生成的 task/Turn 生命周期适配
 │   │   │   ├── wecom_ai_mixin.py        # AI 路由 + 生成能力 Mixin
 │   │   │   ├── app_message_sender.py    # 自建应用消息发送（文本/图片/视频）
+│   │   │   ├── app_outbound.py          # 自建应用 HTTP typed 回执与进程内请求关联边界
 │   │   │   ├── ws_client.py             # 智能机器人 WebSocket 客户端
 │   │   │   ├── ws_outbound.py           # 智能机器人 legacy 发送与 typed ACK transport
 │   │   │   ├── access_token_manager.py  # access_token 管理

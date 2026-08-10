@@ -28,6 +28,15 @@ def _make_creds(agent_id: int = 1000) -> OrgWecomCreds:
     )
 
 
+def _text_payload() -> dict:
+    return {
+        "touser": "u1",
+        "msgtype": "text",
+        "agentid": 1000,
+        "text": {"content": "hello"},
+    }
+
+
 # ============================================================
 # TestSend — 底层 _send 函数
 # ============================================================
@@ -54,7 +63,7 @@ class TestSend:
 
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1", "msgtype": "text"}, _make_creds())
+            result = await _send(_text_payload(), _make_creds())
             assert result is True
 
     @pytest.mark.asyncio
@@ -66,7 +75,7 @@ class TestSend:
         ):
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1"}, _make_creds())
+            result = await _send(_text_payload(), _make_creds())
             assert result is False
 
     @pytest.mark.asyncio
@@ -87,7 +96,7 @@ class TestSend:
 
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1"}, _make_creds())
+            result = await _send(_text_payload(), _make_creds())
             assert result is False
 
     @pytest.mark.asyncio
@@ -105,7 +114,7 @@ class TestSend:
 
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1"}, _make_creds())
+            result = await _send(_text_payload(), _make_creds())
             assert result is False
 
 
