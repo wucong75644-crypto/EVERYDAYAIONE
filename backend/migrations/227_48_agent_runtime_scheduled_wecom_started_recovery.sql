@@ -200,7 +200,7 @@ DECLARE d agent_runtime_scheduled_wecom_deliveries%ROWTYPE;
  a agent_runtime_scheduled_wecom_dispatch_attempts%ROWTYPE;
  request agent_runtime_scheduled_wecom_started_recovery_requests%ROWTYPE;
  candidate_intent UUID;candidate_item UUID;candidate_attempt UUID;outcome_request UUID;
- original_delivery_version BIGINT;original_item_version BIGINT;result JSONB;live_context JSONB;
+ original_delivery_version BIGINT;original_item_version BIGINT;result JSONB;
 BEGIN
  PERFORM _assert_agent_runtime_scheduled_wecom_actor();
  IF p_request_id IS NULL OR length(btrim(COALESCE(p_recovery_worker_id,''))) NOT BETWEEN 1 AND 128 THEN
@@ -254,10 +254,6 @@ BEGIN
  OR d.lease_expires_at>clock_timestamp() OR d.reconcile_token IS NOT NULL
  OR a.dispatch_started_at IS NULL OR a.receipt_type IS NOT NULL OR a.receipt_hash IS NOT NULL
  OR a.receipt_code IS NOT NULL OR a.unknown_at IS NOT NULL OR a.resolved_at IS NOT NULL OR a.was_ambiguous THEN
-  RETURN jsonb_build_object('outcome','empty'); END IF;
- live_context:=_agent_runtime_scheduled_wecom_live_context(d.intent_id);
- IF live_context->>'outcome'<>'available'
- OR live_context->'target'->>'org_id' IS DISTINCT FROM d.org_id::TEXT THEN
   RETURN jsonb_build_object('outcome','empty'); END IF;
  original_delivery_version:=d.state_version;original_item_version:=item.state_version;
  outcome_request:=gen_random_uuid();

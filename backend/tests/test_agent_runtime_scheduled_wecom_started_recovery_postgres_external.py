@@ -181,8 +181,8 @@ def test_terminal_attempt_states_are_never_recovered(database: str, outcome: str
     assert _state(database, claim["intent_id"]) == before
 
 
-@pytest.mark.parametrize("drift", ["claim", "provider", "version", "target", "org"])
-def test_identity_and_live_target_drift_are_fenced_without_mutation(database: str, drift: str) -> None:
+@pytest.mark.parametrize("drift", ["claim", "provider", "version"])
+def test_frozen_identity_drift_is_fenced_without_mutation(database: str, drift: str) -> None:
     _setup(database)
     claim, _ = _started(database)
     if drift == "claim":
@@ -199,12 +199,22 @@ def test_identity_and_live_target_drift_are_fenced_without_mutation(database: st
             database, "UPDATE agent_runtime_scheduled_wecom_deliveries SET provider_revision=provider_revision+1 "
             "WHERE intent_id=%s RETURNING intent_id", (claim["intent_id"],),
         )
-    elif drift == "version":
+    else:
         _owner(
             database, "UPDATE agent_runtime_scheduled_wecom_deliveries SET state_version=state_version+1 "
             "WHERE intent_id=%s RETURNING intent_id", (claim["intent_id"],),
         )
-    elif drift == "target":
+    before = _state(database, claim["intent_id"])
+    assert _recover(database)["outcome"] == "empty"
+    assert _state(database, claim["intent_id"]) == before
+    assert _owner(database, f"SELECT count(*) FROM {LEDGER}") == 0
+
+
+@pytest.mark.parametrize("drift", ["target", "org"])
+def test_live_target_or_org_drift_still_converges_unknown(database: str, drift: str) -> None:
+    _setup(database)
+    claim, started = _started(database)
+    if drift == "target":
         _owner(
             database, "UPDATE wecom_user_mappings SET wecom_userid='drifted-user' "
             "WHERE org_id=(SELECT org_id FROM agent_runtime_scheduled_wecom_deliveries WHERE intent_id=%s) "
@@ -216,10 +226,82 @@ def test_identity_and_live_target_drift_are_fenced_without_mutation(database: st
             "agent_runtime_scheduled_wecom_deliveries WHERE intent_id=%s) RETURNING id",
             (claim["intent_id"],),
         )
-    before = _state(database, claim["intent_id"])
-    assert _recover(database)["outcome"] == "empty"
-    assert _state(database, claim["intent_id"]) == before
-    assert _owner(database, f"SELECT count(*) FROM {LEDGER}") == 0
+    recovered = _recover(database)
+    assert recovered["outcome"] == "recovered" and recovered["attempt_status"] == "unknown"
+    state = _state(database, claim["intent_id"])
+    assert state["attempt"]["status"] == state["item"]["status"] == "unknown"
+    assert state["delivery"]["status"] == "unknown" and state["attempt_count"] == 1
+    assert _continuation(database)["outcome"] == "empty"
+    reconcile = _rpc(
+        database, "claim_agent_runtime_scheduled_wecom_reconcile_v1",
+        (str(uuid4()), "reconcile-after-drift", 60),
+    )
+    assert reconcile["outcome"] == "claimed" and reconcile["attempt_id"] == started["attempt_id"]
+
+
+@pytest.mark.parametrize("dispatch_outcome", ["accepted", "rejected", "unknown"])
+def test_recovery_races_authoritative_outcome_without_overwrite(
+    database: str, dispatch_outcome: str,
+) -> None:
+    _setup(database)
+    claim, started = _started(database)
+    recovery_request_id = str(uuid4())
+    outcome_params = _outcome_params(database, claim, started, dispatch_outcome)
+    barrier = Barrier(2)
+
+    def invoke_recovery() -> dict:
+        barrier.wait()
+        return _recover(database, recovery_request_id)
+
+    def invoke_outcome() -> dict | str:
+        barrier.wait()
+        try:
+            return _rpc(
+                database, "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
+                outcome_params,
+            )
+        except psycopg.Error as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        recovery_future = pool.submit(invoke_recovery)
+        outcome_future = pool.submit(invoke_outcome)
+        recovery_result = recovery_future.result()
+        outcome_result = outcome_future.result()
+
+    outcome_rows = _owner(
+        database, "SELECT jsonb_agg(to_jsonb(r)) FROM agent_runtime_scheduled_wecom_outcome_requests r "
+        "WHERE r.attempt_id=%s", (started["attempt_id"],),
+    )
+    state = _state(database, claim["intent_id"])
+    assert len(outcome_rows) == 1 and state["attempt_count"] == 1
+    if isinstance(outcome_result, dict):
+        assert outcome_result["outcome"] == "recorded"
+        assert outcome_result["dispatch_outcome"] == dispatch_outcome
+        assert recovery_result == {"outcome": "empty"}
+        assert _owner(database, f"SELECT count(*) FROM {LEDGER}") == 0
+        replay = _rpc(
+            database, "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
+            outcome_params,
+        )
+        assert replay["outcome"] == "readback"
+        if dispatch_outcome in {"accepted", "rejected"}:
+            assert outcome_rows[0]["receipt_hash"] is not None
+            assert state["attempt"]["receipt_hash"] == outcome_rows[0]["receipt_hash"]
+            assert state["attempt"]["status"] == dispatch_outcome
+    else:
+        assert "OUTCOME_REQUEST_CONFLICT" in outcome_result
+        assert recovery_result["outcome"] == "recovered"
+        assert outcome_rows[0]["dispatch_outcome"] == "unknown"
+        assert _recover(database, recovery_request_id)["outcome"] == "readback"
+    if state["attempt"]["status"] == "unknown":
+        assert state["item"]["status"] == state["delivery"]["status"] == "unknown"
+        assert _continuation(database)["outcome"] == "empty"
+        reconcile = _rpc(
+            database, "claim_agent_runtime_scheduled_wecom_reconcile_v1",
+            (str(uuid4()), "race-reconcile", 60),
+        )
+        assert reconcile["outcome"] == "claimed" and reconcile["attempt_id"] == started["attempt_id"]
 
 
 def test_same_request_replays_and_worker_conflict_fails_closed(database: str) -> None:

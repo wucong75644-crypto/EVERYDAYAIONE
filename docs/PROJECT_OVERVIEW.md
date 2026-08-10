@@ -2130,7 +2130,8 @@ cache = client.caches.create(
   - 新增 additive `227_48_agent_runtime_scheduled_wecom_started_recovery.sql` 与精确 rollback。worker-only
     `recover_agent_runtime_scheduled_wecom_started_dispatch_v1` 只选择 lease 已过期、delivery/item 仍为 dispatching、
     attempt 仍为 `dispatch_started/external_request_started` 且无 receipt/unknown/resolved 的精确候选；同时验证原
-    claim/token/worker、provider identity/revision、prepare→start 权威版本与 live org/target context。
+    claim/token/worker、provider identity/revision 与 prepare→start 权威版本。external dispatch 一旦开始，后续 target/org
+    drift 或 revocation 不能证明请求未发送，因此不会阻止 UNKNOWN 收敛。
   - RPC 在同一事务生成与 recovery request 不同的内部 outcome UUID，调用既有 227_40 UNKNOWN/no-evidence 状态机，
     再写 owner-only FORCE-RLS append-only ledger；响应丢失按 recovery request durable readback。成功后仅可进入 227_41
     reconcile，不可被 ordinary claim、prepare/start 或 transport 重派，也不创建第二 attempt。

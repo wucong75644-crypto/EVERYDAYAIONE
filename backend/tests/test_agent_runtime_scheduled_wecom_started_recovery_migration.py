@@ -71,8 +71,7 @@ def test_rpc_selects_only_expired_started_ambiguity_and_reuses_outcome_rpc() -> 
     ):
         assert condition in body
     assert body.count("record_agent_runtime_scheduled_wecom_dispatch_outcome_v1(") == 1
-    assert "_agent_runtime_scheduled_wecom_live_context(d.intent_id)" in body
-    assert "live_context->'target'->>'org_id' IS DISTINCT FROM d.org_id::TEXT" in body
+    assert "_agent_runtime_scheduled_wecom_live_context" not in body
     assert "cd.state_version=ca.prepared_delivery_state_version+2" in body
     assert "ci.state_version=ca.prepared_item_state_version+2" in body
     assert "'unknown',NULL,NULL,NULL,'{}'::JSONB" in body
