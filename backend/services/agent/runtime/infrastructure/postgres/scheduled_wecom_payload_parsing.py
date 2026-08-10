@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 import re
+import unicodedata
 from typing import Any, Mapping, TypeVar
 from uuid import UUID
 
@@ -30,16 +31,6 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
 
 EnumT = TypeVar("EnumT", bound=StrEnum)
 _HASH = re.compile(r"^[0-9a-f]{64}$")
-_ABSOLUTE_PATH = re.compile(
-    r"(?:^|[\s(\[])(?:/(?:[a-z0-9._-]+/)+[a-z0-9._-]+|[a-z]:[\\/])",
-    re.IGNORECASE,
-)
-_SENSITIVE_MARKERS = (
-    "authorization:", "bearer ", "cookie:", "secret", "password", "credential",
-    "api key", "api_key", "api-key", "access token", "access_token", "access-token",
-    "refresh token", "refresh_token", "refresh-token", "private key", "private_key",
-    "private-key", "http://", "https://", "file://", "s3://",
-)
 _PAYLOAD_KEYS = {
     "outcome", "payload_revision", "scheduled_run_id", "intent_id", "item_id",
     "item_key", "ordinal", "item_kind", "source_role", "source_revision",
@@ -71,18 +62,19 @@ def _text(row: Mapping[str, Any], field: str, *, maximum: int = 500) -> str:
     value = row.get(field)
     if (
         not isinstance(value, str) or not value or value != value.strip()
-        or len(value) > maximum or any(ord(char) < 32 for char in value)
+        or len(value) > maximum or any(_invalid_transport_char(char) for char in value)
     ):
         raise _fail(field)
     return value
 
 
-def _safe_text(row: Mapping[str, Any], field: str, *, maximum: int) -> str:
-    value = _text(row, field, maximum=maximum)
-    lowered = value.lower()
-    if any(marker in lowered for marker in _SENSITIVE_MARKERS) or _ABSOLUTE_PATH.search(value):
-        raise _fail(field)
-    return value
+def _invalid_transport_char(char: str) -> bool:
+    codepoint = ord(char)
+    return (
+        unicodedata.category(char) in {"Cc", "Cs"}
+        or 0xFDD0 <= codepoint <= 0xFDEF
+        or (codepoint & 0xFFFF) in {0xFFFE, 0xFFFF}
+    )
 
 
 def _uuid(row: Mapping[str, Any], field: str) -> str:
@@ -138,13 +130,13 @@ def _target(row: Mapping[str, Any], channel: DispatchChannel) -> DispatchTarget:
         target = _row(raw, {"org_id", "corp_id", "wecom_userid"}, "target")
         return WecomAppDispatchTarget(
             org_id=_uuid(target, "org_id"),
-            corp_id=_safe_text(target, "corp_id", maximum=256),
-            wecom_userid=_safe_text(target, "wecom_userid", maximum=256),
+            corp_id=_text(target, "corp_id", maximum=64),
+            wecom_userid=_text(target, "wecom_userid", maximum=64),
         )
     target = _row(raw, {"org_id", "chatid"}, "target")
     return WecomSmartRobotDispatchTarget(
         org_id=_uuid(target, "org_id"),
-        chatid=_safe_text(target, "chatid", maximum=256),
+        chatid=_text(target, "chatid", maximum=128),
     )
 
 
@@ -187,7 +179,7 @@ def parse_dispatch_payload(raw: object) -> DispatchPayloadReadback | None:
         provider_revision=_integer(row, "provider_revision", 1),
         delivery_state_version=_integer(row, "delivery_state_version", 1),
         item_state_version=_integer(row, "item_state_version", 0),
-        message_type=message_type, text=_safe_text(row, "text", maximum=500),
+        message_type=message_type, text=_text(row, "text", maximum=500),
         payload_hash=_hash(row, "payload_hash"),
     )
 

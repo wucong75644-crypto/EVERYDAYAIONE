@@ -148,6 +148,29 @@ async def test_payload_read_projects_exact_target_and_claim_fence(channel: str) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["app", "smart_robot"])
+async def test_payload_accepts_db_safe_url_and_opaque_secret_identifier(channel: str) -> None:
+    raw = _payload(channel)
+    raw["text"] = "See https://example.com/scheduled/result"
+    raw["target"] = (
+        {"org_id": ORG, "corp_id": "corp-secret", "wecom_userid": "secret-member"}
+        if channel == "app" else {"org_id": ORG, "chatid": "secret-chat"}
+    )
+    _, repository = _repository(
+        raw, "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
+    )
+
+    result = await repository.read_dispatch_payload(_claim())
+
+    assert isinstance(result, DispatchPayload)
+    assert result.text == "See https://example.com/scheduled/result"
+    assert "secret" in (
+        result.target.wecom_userid
+        if isinstance(result.target, WecomAppDispatchTarget) else result.target.chatid
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("raw", "kind", "reason"),
     [
@@ -202,9 +225,13 @@ async def test_payload_parser_rejects_extra_missing_malformed_and_sensitive_fiel
     missing = _payload()
     missing.pop("payload_hash")
     malformed.append(missing)
-    extra = _payload()
-    extra["access_token"] = "forbidden"
-    malformed.append(extra)
+    for extra_field in (
+        "access_token", "client_secret", "artifact_path", "text_content",
+        "structured_content",
+    ):
+        extra = _payload()
+        extra[extra_field] = "forbidden"
+        malformed.append(extra)
     for field, value in (
         ("scheduled_run_id", "not-a-uuid"), ("item_key", "x" * 64),
         ("source_identity_hash", "A" * 64), ("source_revision", 2),
@@ -216,16 +243,10 @@ async def test_payload_parser_rejects_extra_missing_malformed_and_sensitive_fiel
         row = _payload()
         row[field] = value
         malformed.append(row)
-    for text in (
-        "https://example.invalid/x", "/workspace/result/output.txt",
-        "access token bad", "contains secret material", "api-key value",
-    ):
+    for text in ("line one\nline two", "control\x00value", "invalid\ud800unicode"):
         row = _payload()
         row["text"] = text
         malformed.append(row)
-    raw_model = _payload()
-    raw_model["text_content"] = "raw model output"
-    malformed.append(raw_model)
     for target in (
         {"org_id": ORG, "corp_id": "corp-1"},
         {"org_id": "fake-org", "corp_id": "corp-1", "wecom_userid": "member-1"},
@@ -233,6 +254,11 @@ async def test_payload_parser_rejects_extra_missing_malformed_and_sensitive_fiel
             "org_id": ORG, "corp_id": "corp-1", "wecom_userid": "member-1",
             "user_id": "internal",
         },
+        {
+            "org_id": ORG, "corp_id": "corp-1", "wecom_userid": "member-1",
+            "access_token": "forbidden",
+        },
+        {"org_id": ORG, "corp_id": "corp-1", "wecom_userid": "member\x00bad"},
     ):
         row = _payload()
         row["target"] = target
