@@ -148,26 +148,20 @@ def _terminal(url: str, facts: dict, terminal: str) -> tuple[dict, dict]:
 @pytest.mark.parametrize(
     ("target", "expected"),
     (
-        ({"type": "web", "user_id": USER, "conversation_id": "ignored"},
-         [("web", f"web:{USER}")]),
+        ({"type": "web", "user_id": USER, "conversation_id": "ignored"}, ["web"]),
         ({"type": "wecom_user", "wecom_userid": " runtime-user ", "name": "ignored"},
-         [("wecom_user", "wecom_user:runtime-user")]),
+         ["wecom_user"]),
         ({"type": "wecom_group", "chatid": " runtime-group ", "chat_name": "ignored"},
-         [("wecom_group", "wecom_group:runtime-group")]),
+         ["wecom_group"]),
         ({"type": "multi", "targets": [
             {"type": "wecom_group", "chatid": "runtime-group"},
             {"type": "web", "user_id": USER},
             {"type": "wecom_user", "wecom_userid": "runtime-user"},
-            {"type": "web", "user_id": USER},
-        ]}, [
-            ("web", f"web:{USER}"),
-            ("wecom_group", "wecom_group:runtime-group"),
-            ("wecom_user", "wecom_user:runtime-user"),
-        ]),
+        ]}, ["web", "wecom_group", "wecom_user"]),
     ),
 )
 def test_real_push_target_shapes_freeze_deterministically(
-    database: str, target: dict, expected: list[tuple[str, str]],
+    database: str, target: dict, expected: list[str],
 ) -> None:
     _setup(database)
     _seed_wecom_targets(database)
@@ -175,7 +169,21 @@ def test_real_push_target_shapes_freeze_deterministically(
     read = _projection_read(database, facts)
     assert read["outcome"] == "found"
     assert read["snapshot"]["target_count"] == len(expected)
-    assert [(item["target_type"], item["target_key"]) for item in read["targets"]] == expected
+    assert [item["target_type"] for item in read["targets"]] == expected
+    for item in read["targets"]:
+        snapshot = item["target"]
+        assert snapshot["org_id"] == ORG
+        if item["target_type"] == "web":
+            assert snapshot["user_id"] == USER
+        elif item["target_type"] == "wecom_user":
+            assert set(snapshot) == {
+                "type", "mapping_id", "corp_id", "mapping_user_id", "org_id",
+                "wecom_userid", "channel",
+            }
+        else:
+            assert set(snapshot) == {
+                "type", "target_id", "corp_id", "org_id", "chatid", "chat_type",
+            }
     assert read["intents"] == []
     payload = json.dumps(read, sort_keys=True)
     for forbidden in ("ignored", "conversation_id", "secret", "token", "password"):
@@ -211,14 +219,18 @@ def test_finalization_atomically_creates_safe_idempotent_intent(
     assert read["targets"][0]["target"]["type"] == "web"
     assert len(read["intents"]) == 1
     intent = read["intents"][0]
+    content = read["content"]
     assert intent["terminal_status"] == terminal and intent["status"] == "pending"
     assert intent["state_version"] == 0
-    assert len(intent["content_identity_hash"]) == 64
+    assert intent["content_identity_hash"] == content["content_identity_hash"]
+    assert len(content["artifact_manifest_hash"]) == 64
     if terminal == "completed":
         assert intent["result_hash"] and intent["reason_code"] is None
+        assert content["model_result_id"] and content["artifact_manifest"] == []
     else:
         assert intent["result_hash"] is None
         assert intent["reason_code"] in {"redacted_terminal_reason", "runtime_cancel"}
+        assert content["model_result_id"] is None and content["artifact_manifest"] == []
     serialized = json.dumps(read, sort_keys=True).lower()
     for forbidden in (
         "scheduled result", "changed-after-submit", "should-not-survive",
@@ -251,6 +263,7 @@ def test_readback_tenant_run_fences_acl_rls_and_no_side_effect(database: str) ->
             "agent_runtime_scheduled_delivery_snapshots",
             "agent_runtime_scheduled_delivery_targets",
             "agent_runtime_scheduled_delivery_runtime_bindings",
+            "agent_runtime_scheduled_delivery_contents",
             "agent_runtime_scheduled_delivery_intents",
         ):
             assert conn.execute(
@@ -315,6 +328,7 @@ def test_rollback_guard_cleanup_reapply_and_exact_rollback(database: str) -> Non
         conn.execute("SET ROLE everydayai_owner")
         conn.execute(
             "TRUNCATE agent_runtime_scheduled_delivery_intents,"
+            "agent_runtime_scheduled_delivery_contents,"
             "agent_runtime_scheduled_delivery_runtime_bindings,"
             "agent_runtime_scheduled_delivery_targets,"
             "agent_runtime_scheduled_delivery_snapshots"

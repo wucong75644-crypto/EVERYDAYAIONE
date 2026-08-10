@@ -29,6 +29,7 @@ def test_snapshot_and_intent_facts_are_immutable_and_secret_free() -> None:
         "agent_runtime_scheduled_delivery_snapshots",
         "agent_runtime_scheduled_delivery_targets",
         "agent_runtime_scheduled_delivery_runtime_bindings",
+        "agent_runtime_scheduled_delivery_contents",
         "agent_runtime_scheduled_delivery_intents",
     ):
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in SQL
@@ -59,10 +60,27 @@ def test_target_contract_uses_proven_shapes_and_bounded_expansion() -> None:
     for target_type in ("web", "wecom_user", "wecom_group", "multi"):
         assert f"kind='{target_type}'" in SQL
     assert "_runtime_scheduler_push_target_allowed" in SQL
-    assert "p_depth NOT BETWEEN 0 AND 4" in SQL
-    assert "raw_count NOT BETWEEN 1 AND 20" in SQL
-    assert "DISTINCT ON(target_key)" in SQL
-    assert "ORDER BY normalized.target_key" in SQL
+    assert "p_depth NOT BETWEEN 0 AND 1" in SQL
+    assert "jsonb_array_length(p_target->'targets') NOT BETWEEN 1 AND 20" in SQL
+    assert "AGENT_RUNTIME_SCHEDULED_DELIVERY_NESTED_MULTI_DENIED" in SQL
+    assert "unique_count<>raw_count" in SQL
+    for identity in (
+        "mapping_id", "corp_id", "mapping_user_id", "wecom_userid", "channel",
+        "target_id", "chatid", "chat_type", "org_id", "user_id",
+    ):
+        assert identity in SQL
+
+
+def test_content_snapshot_binds_final_model_result_and_safe_manifest() -> None:
+    assert "agent_runtime_scheduled_delivery_contents" in SQL
+    for identity in (
+        "model_result_id", "result_hash", "artifact_manifest", "artifact_manifest_hash",
+        "content_identity_hash", "materialize_revision", "materialize_status",
+    ):
+        assert identity in SQL
+    assert "agent_action_artifact_links" in SQL and "conversation_artifacts" in SQL
+    assert "scheduled_tasks.last_result" not in SQL
+    assert "_agent_runtime_scheduled_delivery_target_available" in SQL
 
 
 def test_projection_readback_is_narrow_and_tables_have_no_worker_rights() -> None:
@@ -89,6 +107,7 @@ def test_apply_and_rollback_fail_closed_without_silent_backfill() -> None:
         "agent_runtime_scheduled_delivery_snapshots",
         "agent_runtime_scheduled_delivery_targets",
         "agent_runtime_scheduled_delivery_runtime_bindings",
+        "agent_runtime_scheduled_delivery_contents",
         "agent_runtime_scheduled_delivery_intents",
     ):
         assert table in guard

@@ -3,12 +3,14 @@
 SET LOCAL ROLE everydayai_owner;
 
 LOCK TABLE agent_runtime_scheduled_delivery_intents,
+ agent_runtime_scheduled_delivery_contents,
  agent_runtime_scheduled_delivery_runtime_bindings,
  agent_runtime_scheduled_delivery_targets,
  agent_runtime_scheduled_delivery_snapshots IN SHARE ROW EXCLUSIVE MODE;
 
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_delivery_intents)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_delivery_contents)
  OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_delivery_runtime_bindings)
  OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_delivery_targets)
  OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_delivery_snapshots) THEN
@@ -29,11 +31,13 @@ DROP TRIGGER bind_runtime_scheduled_delivery_runtime_run
 DROP TRIGGER capture_runtime_scheduled_delivery_snapshot
  ON agent_runtime_scheduled_submission_intents;
 DROP FUNCTION read_agent_runtime_scheduled_delivery_intents_v1(UUID,UUID,UUID);
+DROP FUNCTION _agent_runtime_scheduled_delivery_target_available(UUID,JSONB);
 DROP FUNCTION _capture_agent_runtime_scheduled_delivery_intents();
 DROP FUNCTION _bind_agent_runtime_scheduled_delivery_runtime_run();
 DROP FUNCTION _capture_agent_runtime_scheduled_delivery_snapshot();
 DROP FUNCTION _agent_runtime_scheduled_delivery_normalize(UUID,UUID,JSONB,INTEGER);
 DROP TABLE agent_runtime_scheduled_delivery_intents;
+DROP TABLE agent_runtime_scheduled_delivery_contents;
 DROP TABLE agent_runtime_scheduled_delivery_runtime_bindings;
 DROP TABLE agent_runtime_scheduled_delivery_targets;
 DROP TABLE agent_runtime_scheduled_delivery_snapshots;

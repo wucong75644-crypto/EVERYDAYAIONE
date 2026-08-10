@@ -1941,11 +1941,13 @@ cache = client.caches.create(
 - **2026-08-10**：AR-18 B7-S2-B1-D1-A Scheduled Delivery Snapshot 与 Intent（仅数据库合同）
   - 新增 `227_35_agent_runtime_scheduled_delivery_intents.sql` 及精确 rollback；不修改 227_28～227_34。
     现有 submission 事务通过 trigger 将经既有租户权限验证的 web、企微用户、企微群和 bounded multi
-    规范化为最多 20 个稳定 target key/hash，并冻结 task/profile/command 身份；任务后续修改
-    `push_target` 不改变本次 Run。
+    规范化为最多 20 个稳定 target key/hash；multi 仅允许一层 leaf 且拒绝重复。web 冻结 org/user，
+    企微用户冻结 mapping/corp/user/channel，企微群冻结 target/corp/chat/type，并在 Projection readback
+    时重新验证成员、映射和目标仍存在且 active；撤销或重绑后返回 unavailable，不暴露可发送目标。
   - Runtime Run 绑定后追加不可变 binding fact；`apply_agent_runtime_scheduled_finalization_v2` 成功事务
-    同步生成 per-target pending delivery intent，只保存 completed/failed/cancelled、安全 reason code、
-    result/content hash 和幂等身份，不复制结果正文、Prompt、Secret、路径或堆栈。Projection 仅获得
+    同步冻结最终 ModelResult identity 和经 run/action/attempt/conversation/org 严格校验的有序 Artifact
+    manifest（仅 artifact/hash/role/materialize revision/status），再生成 per-target pending delivery intent；
+    不复制结果正文、URL、storage ref、Prompt、Secret、路径或堆栈。Projection 仅获得
     tenant/run-scoped readback 窄 RPC；本批不 claim、不发送 Web/企微、不使用 Redis 作为事实源，legacy
     Run 不生成 Runtime intent，`production_ready=false` 保持。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
