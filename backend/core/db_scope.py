@@ -110,10 +110,23 @@ def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
         "p_attempt_state_version": "bigint",
         "p_capability_kill_epoch": "bigint",
         "p_expected_operation_version": "bigint",
+        "p_expected_delivery_state_version": "bigint",
+        "p_expected_item_state_version": "bigint",
         "p_limit": "integer",
+        "p_delay_seconds": "integer",
         "p_provider_kill_epoch": "bigint",
         "p_tenant_kill_epoch": "bigint",
     }
+    bigint_provider_revision_rpcs = {
+        "prepare_agent_runtime_scheduled_wecom_dispatch_v2",
+        "start_agent_runtime_scheduled_wecom_dispatch_v2",
+        "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
+        "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
+        "record_agent_runtime_scheduled_wecom_reconcile_result_v1",
+        "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
+    }
+    if name in bigint_provider_revision_rpcs:
+        numeric_types["p_provider_revision"] = "bigint"
     uuid_keys = {
         "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
         "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
