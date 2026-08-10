@@ -2184,10 +2184,18 @@ cache = client.caches.create(
   - App 路由只依赖窄 `AppBindingResolverPort.resolve_app_binding(org_id, corp_id)`；返回值必须是已构造且不暴露 Secret 的
     `ScheduledWecomAppBinding`，并在 dispatch 前精确核对 org/corp、positive agent id 与 typed transport。Router 不读取
     配置、不解密 Secret、不接 legacy sender、不拥有 recovery/reconcile loop，也未加入 production composition。
-  - 下一批 concrete adapter 应复用现有 tenant-owned `AsyncOrgConfigResolver` 的 enterprise-only
-    `wecom_agent_id/wecom_agent_secret`（禁止系统默认 fallback），在 resolver 内构造短生命周期 token provider 与
-    `WecomAppOutbound` 后只返回 non-secret binding；随后由独立 Worker composition 接入 227_48 started recovery、
-    prepared recovery 与 227_41～44 reconcile loop。production flags 保持关闭。
+  - concrete binding adapter、Worker composition、prepared/started recovery 与 227_41～44 reconcile loop 当时仍属于后续批次；
+    production flags 保持关闭。
+- **2026-08-11**：AR-18 D2-C1e-B Scheduled Runtime WeCom App tenant binding adapter
+  - 新增可信 `ScheduledWecomAppBindingResolver`：在 actorless exact-org `WORKER` scope 下调用仅
+    `everydayai_wecom_runtime` 可执行的 227_50 `wecom.app` façade，并通过现有 `AsyncSecretBundleResolver` 解密组织级
+    `wecom.corp_id/oauth_agent_id/oauth_agent_secret`。UUID、expected corp、canonical positive agent id、exact secret payload、
+    organization source 与 config versions 任一不合法均 failure-closed；取消保持传播。
+  - Secret 仅进入私有 exact-match credential backend，经现有 production-ready `CredentialBroker`/single-use lease consumer
+    交给注入的 per-org access-token manager；opaque handle/revision 只散列 org/corp/config versions。构造器强制注入 async
+    database、material service、token manager、共享 outbound HTTP client 与真实 credential audit sink，不提供 global/default、
+    callback credential、no-op audit 或隐式 HTTP lifecycle。Router/composition/runner、migration、legacy worker 与 production
+    flags 均未改动。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
