@@ -16,6 +16,7 @@ class SmartRobotDispatchOutcome(StrEnum):
     ALREADY_PERSISTED = "already_persisted"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+    UNAVAILABLE = "unavailable"
     UNKNOWN = "unknown"
 
 
@@ -32,6 +33,9 @@ class ScheduledWecomSmartDispatchError(RuntimeError):
 
 
 class SmartRobotProactiveTransportPort(Protocol):
+    org_id: str
+    is_connected: bool
+
     async def send_proactive_typed(
         self,
         provider_request_id: str,
@@ -39,3 +43,9 @@ class SmartRobotProactiveTransportPort(Protocol):
         msgtype: str,
         content: dict[str, str],
     ) -> WecomOutboundAckResult: ...
+
+
+class SmartRobotTransportResolverPort(Protocol):
+    async def resolve_smart_transport(
+        self, org_id: str,
+    ) -> SmartRobotProactiveTransportPort | None: ...

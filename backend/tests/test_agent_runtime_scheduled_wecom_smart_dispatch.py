@@ -181,13 +181,21 @@ class _Transport:
         self, status: WecomOutboundStatus = WecomOutboundStatus.ACKNOWLEDGED,
         *, errcode: int | None = None, mismatch: bool = False,
         error: BaseException | None = None, delay: float = 0,
+        org_id: str = ORG, is_connected: bool = True,
     ) -> None:
         self.status = status
         self.errcode = errcode
         self.mismatch = mismatch
         self.error = error
         self.delay = delay
+        self.org_id = org_id
+        self.is_connected = is_connected
+        self.resolve_calls: list[str] = []
         self.calls: list[tuple[str, str, str, dict[str, str]]] = []
+
+    async def resolve_smart_transport(self, org_id: str) -> _Transport | None:
+        self.resolve_calls.append(org_id)
+        return self
 
     async def send_proactive_typed(
         self, provider_request_id: str, chatid: str,
@@ -390,6 +398,7 @@ async def test_non_smart_and_route_drift_have_zero_side_effects() -> None:
                 repository, transport,
             ).dispatch_claimed(claim, payload)
         assert repository.prepare_calls == []
+        assert transport.resolve_calls == []
         assert transport.calls == []
 
 
@@ -433,6 +442,7 @@ async def test_50_same_service_calls_use_one_transport() -> None:
 
     assert all(result.outcome is SmartRobotDispatchOutcome.ACCEPTED for result in results)
     assert len(repository.prepare_calls) == 1
+    assert transport.resolve_calls == [ORG]
     assert len(transport.calls) == 1
     assert repository.start_calls == 1
     assert len(repository.outcome_calls) == 1

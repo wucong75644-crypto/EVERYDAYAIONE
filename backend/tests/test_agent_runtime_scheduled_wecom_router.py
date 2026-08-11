@@ -306,6 +306,7 @@ async def test_all_unsupported_reasons_terminalize_with_stable_replay_id(reason)
     [
         (SmartRobotDispatchOutcome.ACCEPTED, ScheduledWecomRouteOutcome.ACCEPTED),
         (SmartRobotDispatchOutcome.REJECTED, ScheduledWecomRouteOutcome.REJECTED),
+        (SmartRobotDispatchOutcome.UNAVAILABLE, ScheduledWecomRouteOutcome.UNAVAILABLE),
         (SmartRobotDispatchOutcome.UNKNOWN, ScheduledWecomRouteOutcome.UNKNOWN),
         (
             SmartRobotDispatchOutcome.ALREADY_PERSISTED,

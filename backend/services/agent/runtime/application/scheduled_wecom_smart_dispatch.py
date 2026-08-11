@@ -33,6 +33,7 @@ from services.agent.runtime.ports.scheduled_wecom_smart_dispatch import (
     SmartRobotDispatchOutcome,
     SmartRobotDispatchResult,
     SmartRobotProactiveTransportPort,
+    SmartRobotTransportResolverPort,
 )
 from services.wecom.ws_outbound import (
     WecomOutboundAckResult,
@@ -47,10 +48,10 @@ class ScheduledWecomSmartDispatchService:
     def __init__(
         self,
         repository: ScheduledWecomDeliveryRepositoryPort,
-        transport: SmartRobotProactiveTransportPort,
+        transport_resolver: SmartRobotTransportResolverPort,
     ) -> None:
         self._repository = repository
-        self._transport = transport
+        self._transport_resolver = transport_resolver
         self._inflight: dict[
             tuple[str, str, str, int], asyncio.Task[SmartRobotDispatchResult]
         ] = {}
@@ -64,7 +65,7 @@ class ScheduledWecomSmartDispatchService:
         task = self._inflight.get(key)
         if task is None:
             task = asyncio.create_task(
-                self._prepare_start_send(claim, payload, target, identity),
+                self._resolve_prepare_start_send(claim, payload, target, identity),
             )
             self._inflight[key] = task
             task.add_done_callback(
@@ -74,20 +75,30 @@ class ScheduledWecomSmartDispatchService:
             )
         return await asyncio.shield(task)
 
-    async def _prepare_start_send(
+    async def _resolve_prepare_start_send(
         self,
         claim: DeliveryClaim,
         payload: DispatchPayload,
         target: WecomSmartRobotDispatchTarget,
         identity: ProviderDispatchIdentity,
     ) -> SmartRobotDispatchResult:
+        try:
+            transport = await self._transport_resolver.resolve_smart_transport(
+                target.org_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return _unavailable(payload)
+        if not _valid_transport(transport, target.org_id):
+            return _unavailable(payload)
         attempt = await self._repository.prepare_dispatch(claim, identity)
         if (
             attempt.outcome is not AttemptOperationOutcome.PREPARED
             or attempt.status is not AttemptStatus.PREPARED
         ):
             return _already_persisted(payload)
-        return await self._start_and_send(attempt, payload, target)
+        return await self._start_and_send(attempt, payload, target, transport)
 
     def _finish_flight(
         self,
@@ -102,6 +113,7 @@ class ScheduledWecomSmartDispatchService:
     async def _start_and_send(
         self, attempt: DispatchAttempt, payload: DispatchPayload,
         target: WecomSmartRobotDispatchTarget,
+        transport: SmartRobotProactiveTransportPort,
     ) -> SmartRobotDispatchResult:
         attempt = await self._repository.start_dispatch(attempt)
         if (
@@ -114,7 +126,7 @@ class ScheduledWecomSmartDispatchService:
             "outcome", f"{attempt.attempt_id}:{identity.idempotency_key}",
         )
         try:
-            transport_result = await self._transport.send_proactive_typed(
+            transport_result = await transport.send_proactive_typed(
                 identity.provider_request_id,
                 target.chatid,
                 "markdown",
@@ -168,6 +180,17 @@ def _singleflight_key(
     return (
         claim.fence.item_id, identity.provider_request_id,
         identity.idempotency_key, identity.provider_revision,
+    )
+
+
+def _valid_transport(
+    transport: SmartRobotProactiveTransportPort | None, org_id: str,
+) -> bool:
+    return bool(
+        transport is not None
+        and getattr(transport, "org_id", None) == org_id
+        and getattr(transport, "is_connected", None) is True
+        and callable(getattr(transport, "send_proactive_typed", None))
     )
 
 
@@ -257,5 +280,12 @@ async def _best_effort_unknown_after_cancellation(
 def _already_persisted(payload: DispatchPayload) -> SmartRobotDispatchResult:
     return SmartRobotDispatchResult(
         outcome=SmartRobotDispatchOutcome.ALREADY_PERSISTED,
+        intent_id=payload.intent_id, item_id=payload.item_id,
+    )
+
+
+def _unavailable(payload: DispatchPayload) -> SmartRobotDispatchResult:
+    return SmartRobotDispatchResult(
+        outcome=SmartRobotDispatchOutcome.UNAVAILABLE,
         intent_id=payload.intent_id, item_id=payload.item_id,
     )

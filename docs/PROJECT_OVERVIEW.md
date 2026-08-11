@@ -2164,6 +2164,14 @@ cache = client.caches.create(
     transport/internal task 取消路径 best-effort shield 持久化后重抛，失败时保留 `dispatch_started` 供 227_48 恢复。
   - 本批不组合 prepared/started recovery；跨进程安全仍依赖 PostgreSQL fresh outcome fence，进程内 50-way duplicate 由
     single-flight 收敛为一次 transport。production flags 保持关闭，无 migration、provider credential 或真实外呼。
+- **2026-08-11**：AR-18 D2-C1f.0 Scheduled Runtime WeCom Smart Robot tenant transport resolver
+  - Smart dispatch 改为注入窄 `SmartRobotTransportResolverPort`，在 routed claim/payload/target 校验后、任何 prepare/start/facts
+    写入前按 canonical `target.org_id` 解析 transport。解析异常、缺失、租户不匹配或断连均返回 typed `UNAVAILABLE`，零
+    prepare/start/send/UNKNOWN 副作用；解析取消继续传播。解析在既有 item/provider single-flight owner 内执行，50-way duplicate
+    只解析并发送一次，解析成功后的 post-start exception/cancellation→UNKNOWN 合同不变。
+  - 新增 `backend/services/wecom/scheduled_smart_transport.py` 可信 adapter，仅调用注入的 `get_ws_client(org_id)`，并要求 client
+    的 `org_id` 精确匹配、`is_connected is True` 且 typed sender callable；不读取 Secret、不缓存 client、不按 chatid 或全局默认
+    选路。Router 将 Smart `UNAVAILABLE` 映射为 route `UNAVAILABLE`；本批不接 runner/composition、App、migration、环境或生产。
 - **2026-08-11**：AR-18 D2-C1c Scheduled Runtime WeCom App direct orchestration
   - 新增 Runtime-owned one-shot App service；输入仅为 router 后续提供的 typed `DeliveryClaim + App DispatchPayload` 与
     显式注入的非敏感 `org_id/corp_id/positive agent_id + WecomAppOutbound-compatible transport` binding。payload target 的

@@ -231,8 +231,13 @@ def _claim_result(
 
 
 def _smart_result(result: SmartRobotDispatchResult) -> ScheduledWecomRouteResult:
+    outcome = (
+        ScheduledWecomRouteOutcome.UNAVAILABLE
+        if result.outcome is SmartRobotDispatchOutcome.UNAVAILABLE
+        else ScheduledWecomRouteOutcome(result.outcome.value)
+    )
     return ScheduledWecomRouteResult(
-        outcome=ScheduledWecomRouteOutcome(result.outcome.value),
+        outcome=outcome,
         intent_id=result.intent_id,
         item_id=result.item_id,
         dispatch_receipt=result.dispatch_receipt,
