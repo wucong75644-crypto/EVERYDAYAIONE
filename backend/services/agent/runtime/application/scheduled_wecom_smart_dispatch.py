@@ -214,6 +214,7 @@ def _validate_recovered_smart(
     recovery: PreparedRecovery, payload: DispatchPayload,
 ) -> WecomSmartRobotDispatchTarget:
     attempt = recovery.attempt
+    payload_versions = attempt.payload_versions
     if (
         recovery.outcome not in (RecoveryOutcome.RECOVERED, RecoveryOutcome.READBACK)
         or attempt.outcome is not AttemptOperationOutcome.READBACK
@@ -227,7 +228,7 @@ def _validate_recovered_smart(
         payload.item_state_version,
     ) != (
         attempt.fence.intent_id, attempt.fence.item_id,
-        attempt.fence.delivery_state_version, attempt.fence.item_state_version,
+        payload_versions.delivery_state_version, payload_versions.item_state_version,
     ):
         raise ScheduledWecomSmartDispatchError(
             "SCHEDULED_WECOM_SMART_RECOVERY_ROUTE_FENCED",

@@ -113,6 +113,7 @@ _SCHEDULED_WECOM_UUID_RPCS = frozenset({
     "start_agent_runtime_scheduled_wecom_dispatch_v2",
     "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
     "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
+    "read_agent_runtime_scheduled_wecom_prepared_payload_v1",
     "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
     "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
 })

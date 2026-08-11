@@ -33,6 +33,7 @@ EXPECTED_RPCS = {
     "record_agent_runtime_scheduled_wecom_reconcile_result_v1",
     "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
     "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
+    "read_agent_runtime_scheduled_wecom_prepared_payload_v1",
     "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
     "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
 }

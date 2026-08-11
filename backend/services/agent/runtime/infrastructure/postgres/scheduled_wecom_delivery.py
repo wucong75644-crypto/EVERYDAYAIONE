@@ -49,7 +49,7 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
 
 
 class PostgresScheduledWecomDeliveryRepository:
-    """Uses only the Scheduled WeCom worker RPC surface from 227_39–227_47."""
+    """Uses only the narrow Scheduled WeCom worker RPC surface."""
 
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
@@ -139,6 +139,47 @@ class PostgresScheduledWecomDeliveryRepository:
             raise _contract("dispatch_payload_identity_changed")
         return parsed
 
+    async def read_prepared_dispatch_payload(
+        self, recovery: PreparedRecovery,
+    ) -> DispatchPayloadReadback | None:
+        attempt = recovery.attempt
+        if (
+            recovery.outcome.value not in {"recovered", "readback"}
+            or attempt.status is not AttemptStatus.PREPARED
+            or attempt.outcome.value != "readback"
+        ):
+            raise _contract("prepared_recovery_not_readable")
+        fence = attempt.fence
+        identity = attempt.identity
+        params = {
+            "p_recovery_request_id": fence.claim_request_id,
+            "p_intent_id": fence.intent_id,
+            "p_item_id": fence.item_id,
+            "p_attempt_id": attempt.attempt_id,
+            "p_attempt_number": attempt.attempt_number,
+            "p_claim_request_id": fence.claim_request_id,
+            "p_lease_token": fence.lease_token,
+            "p_worker_id": fence.worker_id,
+            "p_expected_delivery_state_version": fence.delivery_state_version,
+            "p_expected_item_state_version": fence.item_state_version,
+            "p_provider_request_id": identity.provider_request_id,
+            "p_idempotency_key": identity.idempotency_key,
+            "p_provider_revision": identity.provider_revision,
+        }
+        parsed = parse_dispatch_payload(await self._replayable_rpc(
+            "read_agent_runtime_scheduled_wecom_prepared_payload_v1", params,
+        ))
+        if isinstance(parsed, DispatchPayload) and (
+            parsed.intent_id != fence.intent_id
+            or parsed.item_id != fence.item_id
+            or parsed.delivery_state_version
+            != attempt.payload_versions.delivery_state_version
+            or parsed.item_state_version != attempt.payload_versions.item_state_version
+            or parsed.provider_revision != identity.provider_revision
+        ):
+            raise _contract("prepared_payload_identity_changed")
+        return parsed
+
     async def terminalize_unsupported(
         self, claim: DeliveryClaim, *, request_id: str,
     ) -> UnsupportedTerminalizationReceipt:
@@ -192,6 +233,7 @@ class PostgresScheduledWecomDeliveryRepository:
         started = parse_attempt(
             raw, attempt.fence, attempt.identity,
             operation=AttemptRpcOperation.START,
+            payload_versions=attempt.payload_versions,
         )
         if started.attempt_id != attempt.attempt_id:
             raise _contract("attempt_id_changed")
@@ -218,6 +260,7 @@ class PostgresScheduledWecomDeliveryRepository:
             fence,
             identity,
             operation=AttemptRpcOperation.READ,
+            payload_versions=attempt.payload_versions,
         )
         if readback.attempt_id != attempt.attempt_id:
             raise _contract("attempt_id_changed")

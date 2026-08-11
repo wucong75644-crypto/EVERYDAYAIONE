@@ -158,12 +158,19 @@ class DeliveryClaim:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DispatchPayloadVersions:
+    delivery_state_version: int
+    item_state_version: int
+
+
+@dataclass(frozen=True, kw_only=True)
 class DispatchAttempt:
     outcome: AttemptOperationOutcome
     fence: DeliveryFence
     attempt_id: str
     attempt_number: int
     identity: ProviderDispatchIdentity
+    payload_versions: DispatchPayloadVersions
     status: AttemptStatus
 
 
@@ -359,6 +366,10 @@ class ScheduledWecomDeliveryRepositoryPort(Protocol):
 
     async def read_dispatch_payload(
         self, claim: DeliveryClaim,
+    ) -> DispatchPayloadReadback | None: ...
+
+    async def read_prepared_dispatch_payload(
+        self, recovery: PreparedRecovery,
     ) -> DispatchPayloadReadback | None: ...
 
     async def terminalize_unsupported(

@@ -16,6 +16,7 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     AttemptStatus,
     DeliveryClaim,
     DispatchAttempt,
+    DispatchPayloadVersions,
     ProviderDispatchIdentity,
 )
 from services.wecom.app_outbound import (
@@ -70,6 +71,10 @@ class _ReversedPrepareRepository(_Repository):
                 attempt_id=ATTEMPT,
                 attempt_number=1,
                 identity=identity,
+                payload_versions=DispatchPayloadVersions(
+                    delivery_state_version=claim.fence.delivery_state_version,
+                    item_state_version=claim.fence.item_state_version,
+                ),
                 status=AttemptStatus.PREPARED,
             )
             self.fresh_started.set()

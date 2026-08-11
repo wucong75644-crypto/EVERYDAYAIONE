@@ -20,6 +20,7 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     DispatchAttempt,
     DispatchOutcome,
     DispatchOutcomeReceipt,
+    DispatchPayloadVersions,
     DispatchPhase,
     ItemStatus,
     PreparedRecovery,
@@ -209,9 +210,8 @@ _ATTEMPT_OPERATION_MATRIX = {
 }
 
 
-def parse_attempt(
-    raw: object, fence: DeliveryFence, identity: ProviderDispatchIdentity, *,
-    operation: AttemptRpcOperation,
+def parse_attempt(raw: object, fence: DeliveryFence, identity: ProviderDispatchIdentity, *,
+    operation: AttemptRpcOperation, payload_versions: DispatchPayloadVersions | None = None,
 ) -> DispatchAttempt:
     minimal = _outcome_only(raw, {"fenced", "not_found"}, "dispatch_attempt")
     if minimal is not None:
@@ -237,6 +237,9 @@ def parse_attempt(
         attempt_id=_uuid(row, "attempt_id"),
         attempt_number=_integer(row, "attempt_number", 1),
         identity=actual_identity,
+        payload_versions=payload_versions or DispatchPayloadVersions(
+            delivery_state_version=fence.delivery_state_version, item_state_version=fence.item_state_version,
+        ),
         status=status,
     )
 
@@ -246,10 +249,8 @@ def parse_prepared_recovery(
 ) -> PreparedRecovery | None:
     if _outcome_only(raw, {"empty"}, "prepared_recovery"):
         return None
-    keys = (_ATTEMPT_KEYS - {"delivery_state_version", "item_state_version"}) | {
-        "intent_id", "claim_request_id", "worker_id", "lease_token",
-        "lease_expires_at", "delivery_state_version", "item_state_version",
-    }
+    keys = _ATTEMPT_KEYS | {"intent_id", "claim_request_id", "worker_id", "lease_token",
+                            "lease_expires_at", "prepared_delivery_state_version", "prepared_item_state_version"}
     row = _row(raw, keys, "prepared_recovery")
     outcome = _enum(row, "outcome", RecoveryOutcome)
     returned_request = _uuid(row, "claim_request_id")
@@ -270,6 +271,9 @@ def parse_prepared_recovery(
         outcome=AttemptOperationOutcome.READBACK, fence=fence,
         attempt_id=_uuid(row, "attempt_id"),
         attempt_number=_integer(row, "attempt_number", 1), identity=identity,
+        payload_versions=DispatchPayloadVersions(
+            delivery_state_version=_integer(row, "prepared_delivery_state_version", 1),
+            item_state_version=_integer(row, "prepared_item_state_version", 0)),
         status=_enum(row, "status", AttemptStatus),
     )
     return PreparedRecovery(

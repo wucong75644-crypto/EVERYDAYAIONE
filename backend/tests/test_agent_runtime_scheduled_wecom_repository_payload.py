@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -17,11 +18,19 @@ from services.agent.runtime.infrastructure.postgres.scheduled_wecom_parsing impo
     parse_delivery_claim,
 )
 from services.agent.runtime.ports.scheduled_wecom_delivery import (
+    AttemptOperationOutcome,
+    AttemptStatus,
     DeliveryStatus,
+    DeliveryFence,
     DispatchChannel,
+    DispatchAttempt,
     DispatchPayload,
     DispatchPayloadOutcome,
+    DispatchPayloadVersions,
     ItemStatus,
+    PreparedRecovery,
+    ProviderDispatchIdentity,
+    RecoveryOutcome,
     UnavailableDispatchPayload,
     UnavailableReason,
     UnsupportedDispatchPayload,
@@ -40,6 +49,9 @@ RUN = "55555555-5555-5555-5555-555555555555"
 TERMINAL_REQUEST = "66666666-6666-6666-6666-666666666666"
 ORG = "77777777-7777-7777-7777-777777777777"
 NOW = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
+ATTEMPT = "88888888-8888-8888-8888-888888888888"
+PROVIDER_REQUEST = "provider-request-123"
+IDEMPOTENCY = "9" * 64
 
 
 class _Response:
@@ -120,6 +132,107 @@ def _terminal(
 def _repository(response: object, rpc_name: str):
     database = _Database({rpc_name: response})
     return database, PostgresScheduledWecomDeliveryRepository(database)
+
+
+def _recovery(
+    *, outcome: RecoveryOutcome = RecoveryOutcome.RECOVERED,
+    status: AttemptStatus = AttemptStatus.PREPARED,
+) -> PreparedRecovery:
+    return PreparedRecovery(
+        outcome=outcome,
+        attempt=DispatchAttempt(
+            outcome=AttemptOperationOutcome.READBACK,
+            fence=DeliveryFence(
+                intent_id=INTENT, item_id=ITEM, claim_request_id=REQUEST,
+                lease_token=LEASE, worker_id="wecom-worker",
+                delivery_state_version=7, item_state_version=3,
+            ),
+            attempt_id=ATTEMPT, attempt_number=2,
+            identity=ProviderDispatchIdentity(
+                provider_request_id=PROVIDER_REQUEST,
+                idempotency_key=IDEMPOTENCY, provider_revision=4,
+            ),
+            payload_versions=DispatchPayloadVersions(
+                delivery_state_version=5, item_state_version=0,
+            ),
+            status=status,
+        ),
+        lease_expires_at=NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepared_payload_read_uses_exact_recovery_and_provider_fences() -> None:
+    rpc = "read_agent_runtime_scheduled_wecom_prepared_payload_v1"
+    raw = _payload()
+    raw["delivery_state_version"] = 5
+    raw["item_state_version"] = 0
+    database, repository = _repository(raw, rpc)
+
+    result = await repository.read_prepared_dispatch_payload(_recovery())
+
+    assert isinstance(result, DispatchPayload)
+    assert database.calls == [(rpc, {
+        "p_recovery_request_id": REQUEST, "p_intent_id": INTENT,
+        "p_item_id": ITEM, "p_attempt_id": ATTEMPT, "p_attempt_number": 2,
+        "p_claim_request_id": REQUEST, "p_lease_token": LEASE,
+        "p_worker_id": "wecom-worker", "p_expected_delivery_state_version": 7,
+        "p_expected_item_state_version": 3,
+        "p_provider_request_id": PROVIDER_REQUEST,
+        "p_idempotency_key": IDEMPOTENCY, "p_provider_revision": 4,
+    })]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [OperationalError("lost"), InterfaceError("lost")])
+async def test_prepared_payload_response_loss_retries_same_pure_read(error: Exception) -> None:
+    rpc = "read_agent_runtime_scheduled_wecom_prepared_payload_v1"
+    raw = _payload("smart_robot")
+    raw["delivery_state_version"] = 5
+    raw["item_state_version"] = 0
+    database, repository = _repository([error, raw], rpc)
+
+    result = await repository.read_prepared_dispatch_payload(_recovery())
+
+    assert isinstance(result, DispatchPayload)
+    assert len(database.calls) == 2 and database.calls[0] == database.calls[1]
+
+
+@pytest.mark.asyncio
+async def test_prepared_payload_rejects_illegal_recovery_before_rpc() -> None:
+    for recovery in (
+        _recovery(outcome=RecoveryOutcome.FENCED),
+        _recovery(status=AttemptStatus.DISPATCH_STARTED),
+    ):
+        database, repository = _repository(
+            _payload(), "read_agent_runtime_scheduled_wecom_prepared_payload_v1",
+        )
+        with pytest.raises(PersistenceContractError):
+            await repository.read_prepared_dispatch_payload(recovery)
+        assert database.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prepared_payload_parser_rechecks_recovery_derived_identity() -> None:
+    rpc = "read_agent_runtime_scheduled_wecom_prepared_payload_v1"
+    for field, value in (
+        ("intent_id", ITEM), ("item_id", INTENT), ("provider_revision", 5),
+    ):
+        raw = _payload()
+        raw["delivery_state_version"] = 5
+        raw["item_state_version"] = 0
+        raw[field] = value
+        _, repository = _repository(raw, rpc)
+        with pytest.raises(PersistenceContractError):
+            await repository.read_prepared_dispatch_payload(_recovery())
+
+
+@pytest.mark.asyncio
+async def test_prepared_payload_cancelled_error_propagates() -> None:
+    rpc = "read_agent_runtime_scheduled_wecom_prepared_payload_v1"
+    _, repository = _repository(asyncio.CancelledError(), rpc)
+    with pytest.raises(asyncio.CancelledError):
+        await repository.read_prepared_dispatch_payload(_recovery())
 
 
 @pytest.mark.asyncio

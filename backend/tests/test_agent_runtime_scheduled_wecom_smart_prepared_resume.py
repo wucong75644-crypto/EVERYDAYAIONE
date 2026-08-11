@@ -19,6 +19,7 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     DispatchAttempt,
     DispatchChannel,
     DispatchOutcome,
+    DispatchPayloadVersions,
     PreparedRecovery,
     RecoveryOutcome,
 )
@@ -44,12 +45,21 @@ def _recovery(
     attempt: DispatchAttempt | None = None,
 ) -> PreparedRecovery:
     payload = _payload()
+    current_fence = replace(
+        _claim().fence,
+        delivery_state_version=payload.delivery_state_version + 2,
+        item_state_version=payload.item_state_version + 1,
+    )
     recovered_attempt = attempt or DispatchAttempt(
         outcome=AttemptOperationOutcome.READBACK,
-        fence=_claim().fence,
+        fence=current_fence,
         attempt_id=ATTEMPT,
         attempt_number=1,
         identity=scheduled_wecom_smart_identity(payload),
+        payload_versions=DispatchPayloadVersions(
+            delivery_state_version=payload.delivery_state_version,
+            item_state_version=payload.item_state_version,
+        ),
         status=AttemptStatus.PREPARED,
     )
     return PreparedRecovery(
@@ -136,7 +146,10 @@ async def test_recovery_drift_fails_before_resolve_or_start(drift: str) -> None:
             recovery,
             attempt=replace(
                 attempt,
-                fence=replace(attempt.fence, item_state_version=99),
+                fence=replace(
+                    attempt.fence,
+                    item_id="99999999-9999-9999-9999-999999999999",
+                ),
             ),
         )
     elif drift == "channel":

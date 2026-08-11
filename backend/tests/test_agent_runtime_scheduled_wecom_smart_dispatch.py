@@ -29,6 +29,7 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     DispatchOutcomeReceipt,
     DispatchPayload,
     DispatchPayloadOutcome,
+    DispatchPayloadVersions,
     ItemStatus,
     ProviderDispatchIdentity,
     ReceiptMetadata,
@@ -127,7 +128,12 @@ class _Repository:
                     if self.prepare_readback else AttemptOperationOutcome.PREPARED
                 ),
                 fence=claim.fence, attempt_id=ATTEMPT, attempt_number=1,
-                identity=identity, status=AttemptStatus.PREPARED,
+                identity=identity,
+                payload_versions=DispatchPayloadVersions(
+                    delivery_state_version=claim.fence.delivery_state_version,
+                    item_state_version=claim.fence.item_state_version,
+                ),
+                status=AttemptStatus.PREPARED,
             )
             return self.attempt
         return replace(self.attempt, outcome=AttemptOperationOutcome.READBACK)
@@ -249,7 +255,12 @@ class _ReversedPrepareRepository(_Repository):
             self.attempt = DispatchAttempt(
                 outcome=AttemptOperationOutcome.PREPARED,
                 fence=claim.fence, attempt_id=ATTEMPT, attempt_number=1,
-                identity=identity, status=AttemptStatus.PREPARED,
+                identity=identity,
+                payload_versions=DispatchPayloadVersions(
+                    delivery_state_version=claim.fence.delivery_state_version,
+                    item_state_version=claim.fence.item_state_version,
+                ),
+                status=AttemptStatus.PREPARED,
             )
             self.fresh_started.set()
             await self.release_fresh.wait()

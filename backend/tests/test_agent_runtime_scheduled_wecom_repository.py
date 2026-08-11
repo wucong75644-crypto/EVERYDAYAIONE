@@ -16,6 +16,7 @@ from services.agent.runtime.infrastructure.postgres.scheduled_wecom_delivery imp
 from services.agent.runtime.ports.scheduled_wecom_delivery import (
     AttemptStatus,
     DispatchOutcome,
+    DispatchPayloadVersions,
     ProviderDispatchIdentity,
     ProviderReceiptEvidence,
     ReceiptMetadata,
@@ -212,6 +213,8 @@ async def test_prepared_recovery_preserves_current_claim_and_provider_fences() -
         "outcome": "recovered", "intent_id": INTENT,
         "claim_request_id": REQUEST, "worker_id": "recovery-worker",
         "lease_token": LEASE, "lease_expires_at": NOW,
+        "prepared_delivery_state_version": 10,
+        "prepared_item_state_version": 0,
     }
     database = _Database({
         "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1": recovery,
@@ -221,6 +224,10 @@ async def test_prepared_recovery_preserves_current_claim_and_provider_fences() -
     )
     assert result is not None
     assert result.attempt.fence.delivery_state_version == 12
+    assert result.attempt.payload_versions == DispatchPayloadVersions(
+        delivery_state_version=10, item_state_version=0,
+    )
+    assert result.attempt.fence.item_state_version == 6
     assert database.calls == [(
         "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1",
         {"p_recovery_request_id": REQUEST, "p_worker_id": "recovery-worker", "p_lease_seconds": 90},
