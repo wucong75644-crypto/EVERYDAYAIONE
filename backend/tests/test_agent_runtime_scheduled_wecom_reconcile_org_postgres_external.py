@@ -1,4 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
+from threading import Barrier
 from uuid import uuid4
 
 import psycopg
@@ -57,6 +59,64 @@ def _unknown(url: str) -> None:
     _started(url)
     recovered = _recover(url)
     assert recovered["outcome"] == "recovered"
+
+
+def _add_unknown_tenant(url: str, org_id: str) -> str:
+    intent_id = str(uuid4())
+    target_key = f"wecom_user:{uuid4()}"
+    target_hash = hashlib.sha256(target_key.encode()).hexdigest()
+    intent_key = hashlib.sha256(f"intent:{intent_id}".encode()).hexdigest()
+    attempt_key = hashlib.sha256(f"attempt:{intent_id}".encode()).hexdigest()
+    with psycopg.connect(url) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(
+            "INSERT INTO organizations(id,status) VALUES(%s,'active')", (org_id,),
+        )
+        connection.execute(
+            "INSERT INTO agent_runtime_scheduled_delivery_targets("
+            "scheduled_run_id,target_key,target_hash,target_type,target_snapshot,ordinal) "
+            "SELECT scheduled_run_id,%s,%s,'wecom_user',"
+            "jsonb_build_object('type','wecom_user','org_id',%s::uuid,"
+            "'wecom_userid','tenant-b'),2 FROM agent_runtime_scheduled_delivery_targets LIMIT 1",
+            (target_key, target_hash, org_id),
+        )
+        connection.execute(
+            "INSERT INTO agent_runtime_scheduled_delivery_intents("
+            "id,scheduled_run_id,target_key,target_hash,runtime_run_id,scheduled_task_id,org_id,"
+            "user_id,terminal_status,result_hash,reason_code,content_identity_hash,"
+            "finalization_request_id,finalization_application_hash,idempotency_key) "
+            "SELECT %s,scheduled_run_id,%s,%s,runtime_run_id,scheduled_task_id,%s,user_id,"
+            "terminal_status,result_hash,reason_code,content_identity_hash,"
+            "finalization_request_id,finalization_application_hash,%s "
+            "FROM agent_runtime_scheduled_delivery_intents LIMIT 1",
+            (intent_id, target_key, target_hash, org_id, intent_key),
+        )
+        item_id = connection.execute(
+            "SELECT id FROM agent_runtime_scheduled_wecom_delivery_items "
+            "WHERE intent_id=%s AND ordinal=1", (intent_id,),
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO agent_runtime_scheduled_wecom_dispatch_attempts("
+            "item_id,attempt_number,provider_request_id,idempotency_key,provider_revision,"
+            "status,dispatch_phase,claim_request_id,lease_token,claim_worker_id,"
+            "prepared_delivery_state_version,prepared_item_state_version,was_ambiguous,"
+            "dispatch_started_at,unknown_at) "
+            "VALUES(%s,1,%s,%s,1,'unknown','ambiguous',%s,%s,'tenant-b-dispatch',1,1,true,"
+            "clock_timestamp()-interval '2 seconds',clock_timestamp()-interval '1 second')",
+            (item_id, f"tenant-b-{uuid4()}", attempt_key, str(uuid4()), str(uuid4())),
+        )
+        connection.execute(
+            "UPDATE agent_runtime_scheduled_wecom_deliveries SET status='unknown',"
+            "state_version=1,next_attempt_at=clock_timestamp()-interval '1 second' "
+            "WHERE intent_id=%s", (intent_id,),
+        )
+        connection.execute(
+            "UPDATE agent_runtime_scheduled_wecom_delivery_items SET status='unknown',"
+            "state_version=1,next_attempt_at=clock_timestamp()-interval '1 second' "
+            "WHERE id=%s", (item_id,),
+        )
+        connection.commit()
+    return intent_id
 
 
 def _read(url: str, request_id: str) -> dict:
@@ -135,19 +195,42 @@ def test_claim_read_renew_org_is_immutable_and_lease_fenced(database: str) -> No
     assert _read(database, claimed["request_id"])["org_id"] == str(ORG)
 
 
-def test_concurrent_claim_returns_only_the_locked_tenant(database: str) -> None:
+def test_concurrent_claims_bind_each_receipt_to_its_actual_tenant(database: str) -> None:
     _setup(database)
     _unknown(database)
-    requests = [str(uuid4()) for _ in range(30)]
-    with ThreadPoolExecutor(max_workers=30) as pool:
+    other_org = str(uuid4())
+    other_intent = _add_unknown_tenant(database, other_org)
+    expected = _owner(
+        database,
+        "SELECT jsonb_object_agg(intent_id::text,org_id::text) FROM "
+        "agent_runtime_scheduled_wecom_deliveries WHERE status='unknown'",
+    )
+    assert len(expected) == 2 and expected[other_intent] == other_org
+    requests = [str(uuid4()) for _ in range(2)]
+    barrier = Barrier(2)
+
+    def claim(pair: tuple[int, str]) -> dict:
+        barrier.wait()
+        return _claim(database, f"org-race-{pair[0]}", pair[1])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(
-            lambda pair: _claim(database, f"org-race-{pair[0]}", pair[1]),
-            enumerate(requests),
+            claim, enumerate(requests),
         ))
-    winners = [result for result in results if result["outcome"] == "claimed"]
-    assert len(winners) == 1
-    assert winners[0]["org_id"] == str(ORG)
-    assert sum(result["outcome"] == "empty" for result in results) == 29
+    assert all(result["outcome"] == "claimed" for result in results)
+    assert {result["intent_id"] for result in results} == set(expected)
+    for result in results:
+        bound = _owner(
+            database,
+            "SELECT jsonb_build_object('org_id',d.org_id,'item_id',item.id,"
+            "'attempt_id',attempt.id) FROM agent_runtime_scheduled_wecom_deliveries d "
+            "JOIN agent_runtime_scheduled_wecom_delivery_items item ON item.intent_id=d.intent_id "
+            "JOIN agent_runtime_scheduled_wecom_dispatch_attempts attempt ON attempt.item_id=item.id "
+            "WHERE d.intent_id=%s", (result["intent_id"],),
+        )
+        assert result["org_id"] == expected[result["intent_id"]] == bound["org_id"]
+        assert result["item_id"] == bound["item_id"]
+        assert result["attempt_id"] == bound["attempt_id"]
 
 
 def test_rollback_reapply_rollback_restores_output_without_acl_or_fact_drift(

@@ -413,7 +413,7 @@ _RECONCILE_KEYS = {
 
 
 def parse_reconcile_claim(raw: object) -> ReconcileClaim | None:
-    if _outcome_only(raw, {"empty", "not_found"}, "reconcile_claim"):
+    if _outcome_only(raw, {"empty", "not_found", "fenced"}, "reconcile_claim"):
         return None
     row = _row(raw, _RECONCILE_KEYS, "reconcile_claim")
     claim = ReconcileClaim(
