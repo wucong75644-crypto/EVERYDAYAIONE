@@ -2217,7 +2217,9 @@ cache = client.caches.create(
   - 新增独立 `ScheduledRuntimeWecomWorker`，每个 pass 固定执行 started recovery → prepared recovery → fresh dispatch；任一阶段异常或
     非 EMPTY 恢复结果都会终止本轮，started recovery 永不发送，prepared recovery 仅沿原 attempt 恢复路径发送。
   - 每阶段使用独立 canonical request UUID；无 durable identity 的 UNAVAILABLE 返回未处理并进入有界 poll，带 identity 的
-    unavailable/config 结果按已处理结束本轮。该 Worker 尚未接入旧 `WecomDeliveryWorker`、runner、systemd、env 或 production composition。
+    unavailable/config 结果按已处理结束本轮。实例级 pass lock 与唯一 loop task/generation ownership 防止 public `run_once`、
+    stop-during-pass 和并发 restart 形成重叠发送；`stop()` 会唤醒并等待所属 loop 安全退出。该 Worker 尚未接入旧
+    `WecomDeliveryWorker`、runner、systemd、env 或 production composition。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

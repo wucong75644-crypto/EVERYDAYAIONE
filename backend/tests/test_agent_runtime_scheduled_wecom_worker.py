@@ -95,6 +95,68 @@ class _ConcurrentRouter:
         return _result(ScheduledWecomRouteOutcome.ACCEPTED, identified=True)
 
 
+class _LifecycleRouter:
+    def __init__(self) -> None:
+        self.dispatch_entered = [asyncio.Event(), asyncio.Event()]
+        self.dispatch_release = [asyncio.Event(), asyncio.Event()]
+        self.dispatch_calls = 0
+        self.active_dispatch = 0
+        self.max_active_dispatch = 0
+
+    async def recover_prepared_once(
+        self, *, request_id: str, worker_id: str, lease_seconds: int,
+    ) -> ScheduledWecomRouteResult:
+        del request_id, worker_id, lease_seconds
+        return _result(ScheduledWecomRouteOutcome.EMPTY)
+
+    async def dispatch_once(
+        self, *, request_id: str, worker_id: str, lease_seconds: int,
+    ) -> ScheduledWecomRouteResult:
+        del request_id, worker_id, lease_seconds
+        index = self.dispatch_calls
+        self.dispatch_calls += 1
+        self.active_dispatch += 1
+        self.max_active_dispatch = max(
+            self.max_active_dispatch, self.active_dispatch,
+        )
+        self.dispatch_entered[index].set()
+        try:
+            await self.dispatch_release[index].wait()
+        finally:
+            self.active_dispatch -= 1
+        return _result(ScheduledWecomRouteOutcome.ACCEPTED, identified=True)
+
+
+class _TrackedWorker(ScheduledRuntimeWecomWorker):
+    def __init__(self, repository: object, router: object) -> None:
+        super().__init__(
+            repository, router, worker_id="lifecycle-worker",
+            poll_interval_seconds=60,
+        )
+        self.active_passes = 0
+        self.max_active_passes = 0
+
+    async def _run_priority_pass(self) -> bool:
+        self.active_passes += 1
+        self.max_active_passes = max(
+            self.max_active_passes, self.active_passes,
+        )
+        try:
+            return await super()._run_priority_pass()
+        finally:
+            self.active_passes -= 1
+
+
+class _SelfStoppingRepository:
+    worker: ScheduledRuntimeWecomWorker | None = None
+
+    async def recover_started(self, *, request_id: str, worker_id: str) -> object:
+        del request_id, worker_id
+        assert self.worker is not None
+        await self.worker.stop()
+        return object()
+
+
 def _result(
     outcome: ScheduledWecomRouteOutcome,
     *,
@@ -288,6 +350,90 @@ async def test_start_stop_is_idempotent_and_wakes_poll() -> None:
     await asyncio.wait_for(task, timeout=1)
 
     assert len(repository.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_during_pass_fences_concurrent_restart_to_one_loop() -> None:
+    repository = _Repository([None, None])
+    router = _LifecycleRouter()
+    worker = _TrackedWorker(repository, router)
+
+    old_loop = asyncio.create_task(worker.start())
+    await asyncio.wait_for(router.dispatch_entered[0].wait(), timeout=1)
+    stopping = asyncio.create_task(worker.stop())
+    await asyncio.sleep(0)
+    restarted = asyncio.create_task(worker.start())
+    await asyncio.sleep(0)
+
+    assert not stopping.done()
+    assert not restarted.done()
+    assert router.dispatch_calls == 1
+
+    router.dispatch_release[0].set()
+    await asyncio.wait_for(router.dispatch_entered[1].wait(), timeout=1)
+
+    assert old_loop.done()
+    assert stopping.done()
+    assert not restarted.done()
+    assert worker._loop_task is restarted
+    assert worker.max_active_passes == 1
+    assert router.max_active_dispatch == 1
+
+    final_stop = asyncio.create_task(worker.stop())
+    router.dispatch_release[1].set()
+    await asyncio.wait_for(final_stop, timeout=1)
+    await asyncio.wait_for(restarted, timeout=1)
+    assert worker._loop_task is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_waiter_does_not_cancel_owned_loop() -> None:
+    repository = _Repository([None])
+    router = _LifecycleRouter()
+    worker = _TrackedWorker(repository, router)
+    loop = asyncio.create_task(worker.start())
+    await asyncio.wait_for(router.dispatch_entered[0].wait(), timeout=1)
+
+    stopping = asyncio.create_task(worker.stop())
+    await asyncio.sleep(0)
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert not loop.done()
+
+    router.dispatch_release[0].set()
+    await asyncio.wait_for(loop, timeout=1)
+    assert worker._loop_task is None
+
+
+@pytest.mark.asyncio
+async def test_loop_cancellation_propagates_and_releases_ownership() -> None:
+    repository = _Repository([None])
+    router = _LifecycleRouter()
+    worker = _TrackedWorker(repository, router)
+    loop = asyncio.create_task(worker.start())
+    await asyncio.wait_for(router.dispatch_entered[0].wait(), timeout=1)
+
+    loop.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await loop
+
+    assert worker._loop_task is None
+    assert worker.active_passes == 0
+    assert router.active_dispatch == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_from_owned_loop_does_not_self_wait() -> None:
+    repository = _SelfStoppingRepository()
+    worker = ScheduledRuntimeWecomWorker(
+        repository, _Router(), worker_id="self-stopping-worker",
+    )
+    repository.worker = worker
+
+    await asyncio.wait_for(worker.start(), timeout=1)
+
+    assert worker._loop_task is None
 
 
 @pytest.mark.asyncio

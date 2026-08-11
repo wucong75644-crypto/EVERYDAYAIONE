@@ -64,28 +64,42 @@ class ScheduledRuntimeWecomWorker:
         self._poll_interval = float(poll_interval_seconds)
         self._lease_seconds = lease_seconds
         self._request_id_factory = request_id_factory
-        self._running = False
         self._wake_event = asyncio.Event()
         self._pass_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._loop_task: asyncio.Task[None] | None = None
+        self._loop_stop_event: asyncio.Event | None = None
 
     async def start(self) -> None:
-        if self._running:
+        owner = asyncio.current_task()
+        if owner is None:
+            raise RuntimeError("SCHEDULED_RUNTIME_WECOM_LOOP_TASK_UNAVAILABLE")
+        stop_event = await self._claim_loop_ownership(owner)
+        if stop_event is None:
             return
-        self._running = True
         logger.info("ScheduledRuntimeWecomWorker started")
         try:
-            while self._running:
+            while not stop_event.is_set():
                 processed = await self._run_safely()
                 if processed:
                     continue
-                await self._wait_for_next_poll()
+                await self._wait_for_next_poll(stop_event)
         finally:
-            self._running = False
+            await self._release_loop_ownership(owner)
             logger.info("ScheduledRuntimeWecomWorker stopped")
 
     async def stop(self) -> None:
-        self._running = False
-        self._wake_event.set()
+        current = asyncio.current_task()
+        async with self._lifecycle_lock:
+            owner = self._loop_task
+            stop_event = self._loop_stop_event
+            if owner is None or stop_event is None:
+                return
+            stop_event.set()
+            self._wake_event.set()
+        if owner is current:
+            return
+        await _wait_for_loop_exit(owner)
 
     async def run_once(self) -> bool:
         """Run started recovery, prepared recovery, then fresh dispatch."""
@@ -128,9 +142,9 @@ class ScheduledRuntimeWecomWorker:
             )
             return False
 
-    async def _wait_for_next_poll(self) -> None:
+    async def _wait_for_next_poll(self, stop_event: asyncio.Event) -> None:
         self._wake_event.clear()
-        if not self._running:
+        if stop_event.is_set():
             return
         try:
             await asyncio.wait_for(
@@ -138,6 +152,32 @@ class ScheduledRuntimeWecomWorker:
             )
         except asyncio.TimeoutError:
             pass
+
+    async def _claim_loop_ownership(
+        self, owner: asyncio.Task[None],
+    ) -> asyncio.Event | None:
+        while True:
+            async with self._lifecycle_lock:
+                previous = self._loop_task
+                previous_stop = self._loop_stop_event
+                if previous is None:
+                    stop_event = asyncio.Event()
+                    self._loop_task = owner
+                    self._loop_stop_event = stop_event
+                    return stop_event
+                if previous is owner:
+                    return None
+                if previous_stop is None or not previous_stop.is_set():
+                    return None
+            await _wait_for_loop_exit(previous)
+
+    async def _release_loop_ownership(
+        self, owner: asyncio.Task[None],
+    ) -> None:
+        async with self._lifecycle_lock:
+            if self._loop_task is owner:
+                self._loop_task = None
+                self._loop_stop_event = None
 
     def _next_request_id(self, previous: set[str]) -> str:
         request_id = self._request_id_factory()
@@ -174,3 +214,12 @@ def _valid_request_id(request_id: object) -> bool:
         return str(UUID(request_id)) == request_id
     except (ValueError, AttributeError):
         return False
+
+
+async def _wait_for_loop_exit(owner: asyncio.Task[None]) -> None:
+    try:
+        await asyncio.shield(owner)
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
+            raise
