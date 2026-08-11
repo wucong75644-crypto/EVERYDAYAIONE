@@ -27,10 +27,12 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     DispatchOutcome,
     DispatchPayload,
     DispatchPayloadOutcome,
+    PreparedRecovery,
     ProviderDispatchIdentity,
     ProviderReceiptEvidence,
     ReceiptMetadata,
     ReceiptType,
+    RecoveryOutcome,
     ScheduledWecomDeliveryRepositoryPort,
     WecomAppDispatchTarget,
 )
@@ -64,11 +66,45 @@ class ScheduledWecomAppDispatchService:
             corp_id=binding.corp_id,
             agent_id=binding.agent_id,
         )
-        key = _singleflight_key(claim, identity)
+        key = _singleflight_key(claim.fence.item_id, identity)
         task = self._inflight.get(key)
         if task is None:
             task = asyncio.create_task(
                 self._prepare_start_send(claim, payload, binding, target, identity),
+            )
+            self._inflight[key] = task
+            task.add_done_callback(
+                lambda completed, flight_key=key: self._finish_flight(
+                    flight_key, completed,
+                ),
+            )
+        return await asyncio.shield(task)
+
+    async def dispatch_recovered_prepared(
+        self,
+        recovery: PreparedRecovery,
+        payload: DispatchPayload,
+        binding: ScheduledWecomAppBinding,
+    ) -> AppDispatchResult:
+        """Resume one verified PREPARED attempt without preparing again."""
+        target = _validate_recovered_app(recovery, payload, binding)
+        identity = scheduled_wecom_app_identity(
+            payload,
+            org_id=binding.org_id,
+            corp_id=binding.corp_id,
+            agent_id=binding.agent_id,
+        )
+        if identity != recovery.attempt.identity:
+            raise ScheduledWecomAppDispatchError(
+                "SCHEDULED_WECOM_APP_RECOVERY_IDENTITY_FENCED",
+            )
+        key = _singleflight_key(recovery.attempt.fence.item_id, identity)
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(
+                self._start_and_send(
+                    recovery.attempt, payload, binding, target,
+                ),
             )
             self._inflight[key] = task
             task.add_done_callback(
@@ -192,12 +228,58 @@ def _validate_routed_app(
     return payload.target
 
 
+def _validate_recovered_app(
+    recovery: PreparedRecovery,
+    payload: DispatchPayload,
+    binding: ScheduledWecomAppBinding,
+) -> WecomAppDispatchTarget:
+    attempt = recovery.attempt
+    if (
+        recovery.outcome not in (RecoveryOutcome.RECOVERED, RecoveryOutcome.READBACK)
+        or attempt.outcome is not AttemptOperationOutcome.READBACK
+        or attempt.status is not AttemptStatus.PREPARED
+    ):
+        raise ScheduledWecomAppDispatchError(
+            "SCHEDULED_WECOM_APP_RECOVERY_STATE_FENCED",
+        )
+    if (
+        payload.intent_id, payload.item_id, payload.delivery_state_version,
+        payload.item_state_version,
+    ) != (
+        attempt.fence.intent_id, attempt.fence.item_id,
+        attempt.fence.delivery_state_version, attempt.fence.item_state_version,
+    ):
+        raise ScheduledWecomAppDispatchError(
+            "SCHEDULED_WECOM_APP_RECOVERY_ROUTE_FENCED",
+        )
+    if (
+        payload.outcome is not DispatchPayloadOutcome.PAYLOAD
+        or payload.channel is not DispatchChannel.APP
+        or not isinstance(payload.target, WecomAppDispatchTarget)
+    ):
+        raise ScheduledWecomAppDispatchError(
+            "SCHEDULED_WECOM_APP_RECOVERY_CHANNEL_FENCED",
+        )
+    if (
+        payload.target.org_id != binding.org_id
+        or payload.target.corp_id != binding.corp_id
+        or isinstance(binding.agent_id, bool)
+        or not isinstance(binding.agent_id, int)
+        or binding.agent_id <= 0
+        or not callable(getattr(binding.transport, "send_typed", None))
+    ):
+        raise ScheduledWecomAppDispatchError(
+            "SCHEDULED_WECOM_APP_RECOVERY_BINDING_FENCED",
+        )
+    return payload.target
+
+
 def _singleflight_key(
-    claim: DeliveryClaim,
+    item_id: str,
     identity: ProviderDispatchIdentity,
 ) -> tuple[str, str, str, int]:
     return (
-        claim.fence.item_id,
+        item_id,
         identity.provider_request_id,
         identity.idempotency_key,
         identity.provider_revision,

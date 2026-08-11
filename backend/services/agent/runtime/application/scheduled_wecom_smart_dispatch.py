@@ -21,10 +21,12 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     DispatchOutcome,
     DispatchPayload,
     DispatchPayloadOutcome,
+    PreparedRecovery,
     ProviderDispatchIdentity,
     ProviderReceiptEvidence,
     ReceiptMetadata,
     ReceiptType,
+    RecoveryOutcome,
     ScheduledWecomDeliveryRepositoryPort,
     WecomSmartRobotDispatchTarget,
 )
@@ -61,11 +63,45 @@ class ScheduledWecomSmartDispatchService:
     ) -> SmartRobotDispatchResult:
         target = _validate_routed_smart(claim, payload)
         identity = scheduled_wecom_smart_identity(payload)
-        key = _singleflight_key(claim, identity)
+        key = _singleflight_key(claim.fence.item_id, identity)
         task = self._inflight.get(key)
         if task is None:
             task = asyncio.create_task(
                 self._resolve_prepare_start_send(claim, payload, target, identity),
+            )
+            self._inflight[key] = task
+            task.add_done_callback(
+                lambda completed, flight_key=key: self._finish_flight(
+                    flight_key, completed,
+                ),
+            )
+        return await asyncio.shield(task)
+
+    async def dispatch_recovered_prepared(
+        self, recovery: PreparedRecovery, payload: DispatchPayload,
+    ) -> SmartRobotDispatchResult:
+        """Resume one verified PREPARED attempt without preparing again."""
+        target = _validate_recovered_smart(recovery, payload)
+        identity = scheduled_wecom_smart_identity(payload)
+        if identity != recovery.attempt.identity:
+            raise ScheduledWecomSmartDispatchError(
+                "SCHEDULED_WECOM_SMART_RECOVERY_IDENTITY_FENCED",
+            )
+        try:
+            transport = await self._transport_resolver.resolve_smart_transport(
+                target.org_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return _unavailable(payload)
+        if not _valid_transport(transport, target.org_id):
+            return _unavailable(payload)
+        key = _singleflight_key(recovery.attempt.fence.item_id, identity)
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(
+                self._start_and_send(recovery.attempt, payload, target, transport),
             )
             self._inflight[key] = task
             task.add_done_callback(
@@ -174,11 +210,44 @@ def _validate_routed_smart(
     return payload.target
 
 
+def _validate_recovered_smart(
+    recovery: PreparedRecovery, payload: DispatchPayload,
+) -> WecomSmartRobotDispatchTarget:
+    attempt = recovery.attempt
+    if (
+        recovery.outcome not in (RecoveryOutcome.RECOVERED, RecoveryOutcome.READBACK)
+        or attempt.outcome is not AttemptOperationOutcome.READBACK
+        or attempt.status is not AttemptStatus.PREPARED
+    ):
+        raise ScheduledWecomSmartDispatchError(
+            "SCHEDULED_WECOM_SMART_RECOVERY_STATE_FENCED",
+        )
+    if (
+        payload.intent_id, payload.item_id, payload.delivery_state_version,
+        payload.item_state_version,
+    ) != (
+        attempt.fence.intent_id, attempt.fence.item_id,
+        attempt.fence.delivery_state_version, attempt.fence.item_state_version,
+    ):
+        raise ScheduledWecomSmartDispatchError(
+            "SCHEDULED_WECOM_SMART_RECOVERY_ROUTE_FENCED",
+        )
+    if (
+        payload.outcome is not DispatchPayloadOutcome.PAYLOAD
+        or payload.channel is not DispatchChannel.SMART_ROBOT
+        or not isinstance(payload.target, WecomSmartRobotDispatchTarget)
+    ):
+        raise ScheduledWecomSmartDispatchError(
+            "SCHEDULED_WECOM_SMART_RECOVERY_CHANNEL_FENCED",
+        )
+    return payload.target
+
+
 def _singleflight_key(
-    claim: DeliveryClaim, identity: ProviderDispatchIdentity,
+    item_id: str, identity: ProviderDispatchIdentity,
 ) -> tuple[str, str, str, int]:
     return (
-        claim.fence.item_id, identity.provider_request_id,
+        item_id, identity.provider_request_id,
         identity.idempotency_key, identity.provider_revision,
     )
 
