@@ -78,10 +78,17 @@ class _HttpClient:
 
 class _TokenManager:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, str]] = []
 
-    async def __call__(self, org_id: str, corp_id: str, secret: str) -> str:
-        self.calls.append((org_id, corp_id, secret))
+    async def __call__(
+        self,
+        org_id: str,
+        corp_id: str,
+        secret: str,
+        *,
+        credential_revision: str,
+    ) -> str:
+        self.calls.append((org_id, corp_id, secret, credential_revision))
         return TOKEN_A
 
 
@@ -193,10 +200,11 @@ async def test_two_tenants_resolve_isolated_exact_bindings(
     assert [database.scope.org_id for database in scopes] == [ORG_A, ORG_B]  # type: ignore[attr-defined]
     assert await binding_a.transport._token_provider() == TOKEN_A  # type: ignore[attr-defined]
     assert await binding_b.transport._token_provider() == TOKEN_A  # type: ignore[attr-defined]
-    assert token_manager.calls == [
-        (ORG_A, CORP_A, SECRET_A),
-        (ORG_B, CORP_B, SECRET_B),
+    assert [call[:3] for call in token_manager.calls] == [
+        (ORG_A, CORP_A, SECRET_A), (ORG_B, CORP_B, SECRET_B),
     ]
+    assert token_manager.calls[0][3] != token_manager.calls[1][3]
+    assert all(call[3].startswith("wecom-app:") for call in token_manager.calls)
 
 
 @pytest.mark.asyncio
@@ -406,7 +414,12 @@ async def test_token_exchange_occurs_only_on_lease_consumption_and_reuses_http(
     )
 
     assert receipt.status is WecomAppOutboundStatus.ACKNOWLEDGED
-    assert token_manager.calls == [(ORG_A, CORP_A, SECRET_A)]
+    expected_revision = adapter._binding_identity(
+        ORG_A, CORP_A, 1001, dict(zip(KEYS, (1, 2, 3))),
+    )[1]
+    assert token_manager.calls == [(
+        ORG_A, CORP_A, SECRET_A, expected_revision,
+    )]
     assert len(http_client.calls) == 1
     assert [event.outcome for event in audit_sink.events] == ["issued"]
     assert SECRET_A not in repr(audit_sink.events)
@@ -419,7 +432,15 @@ async def test_secret_never_appears_in_binding_repr_failure_or_audit(
     _install_bundles(monkeypatch, {ORG_A: _bundle()})
 
     class FailingTokenManager:
-        async def __call__(self, _org: str, _corp: str, _secret: str) -> str:
+        async def __call__(
+            self,
+            _org: str,
+            _corp: str,
+            _secret: str,
+            *,
+            credential_revision: str,
+        ) -> str:
+            assert credential_revision.startswith("wecom-app:")
             raise RuntimeError(SECRET_A)
 
     audit_sink = _AuditSink()
@@ -453,7 +474,14 @@ async def test_token_manager_cancellation_propagates_from_lease_consumer(
 ) -> None:
     _install_bundles(monkeypatch, {ORG_A: _bundle()})
 
-    async def cancel(_org: str, _corp: str, _secret: str) -> str:
+    async def cancel(
+        _org: str,
+        _corp: str,
+        _secret: str,
+        *,
+        credential_revision: str,
+    ) -> str:
+        assert credential_revision.startswith("wecom-app:")
         raise asyncio.CancelledError
 
     binding = await _resolver(token_manager=cancel).resolve_app_binding(

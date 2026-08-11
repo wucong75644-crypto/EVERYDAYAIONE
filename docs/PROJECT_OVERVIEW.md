@@ -2191,8 +2191,10 @@ cache = client.caches.create(
     `everydayai_wecom_runtime` 可执行的 227_50 `wecom.app` façade，并通过现有 `AsyncSecretBundleResolver` 解密组织级
     `wecom.corp_id/oauth_agent_id/oauth_agent_secret`。UUID、expected corp、canonical positive agent id、exact secret payload、
     organization source 与 config versions 任一不合法均 failure-closed；取消保持传播。
-  - Secret 仅进入私有 exact-match credential backend，经现有 production-ready `CredentialBroker`/single-use lease consumer
-    交给注入的 per-org access-token manager；opaque handle/revision 只散列 org/corp/config versions。构造器强制注入 async
+  - Secret 仅进入不可序列化、不可通过 dataclass/`vars()` 展开的 slot-only 私有 material，并由五分钟有效的 exact-match
+    credential backend 经现有 production-ready `CredentialBroker`/lease consumer 交给注入的 per-org access-token manager；
+    opaque handle/revision 只散列 org/corp/agent/config versions，Runtime token cache 以 org+revision 隔离配置轮换，legacy 无
+    revision 调用保持原 key/行为。构造器强制注入 async
     database、material service、token manager、共享 outbound HTTP client 与真实 credential audit sink，不提供 global/default、
     callback credential、no-op audit 或隐式 HTTP lifecycle。Router/composition/runner、migration、legacy worker 与 production
     flags 均未改动。

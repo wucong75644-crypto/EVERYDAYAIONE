@@ -6,9 +6,8 @@ import asyncio
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Mapping
+from datetime import datetime, timedelta, timezone
+from typing import Any, Mapping, Protocol
 from uuid import UUID
 
 from core.db_scope import (
@@ -46,21 +45,51 @@ _CONFIG_KEYS = (
     "wecom.oauth_agent_secret",
 )
 _SECRET_KEY = "wecom.oauth_agent_secret"
-_MAX_EXPIRY = datetime.max.replace(tzinfo=timezone.utc)
-AccessTokenGetter = Callable[[str, str, str], Awaitable[str | None]]
+_BACKEND_CREDENTIAL_TTL = timedelta(minutes=5)
 
 
-@dataclass(frozen=True, repr=False)
+class AccessTokenGetter(Protocol):
+    async def __call__(
+        self,
+        org_id: str,
+        corp_id: str,
+        agent_secret: str,
+        *,
+        credential_revision: str,
+    ) -> str | None: ...
+
+
 class _WecomAppMaterial:
-    org_id: str
-    corp_id: str
-    agent_secret: str = field(repr=False)
+    __slots__ = ("__org_id", "__corp_id", "__agent_secret")
+
+    def __init__(self, org_id: str, corp_id: str, agent_secret: str) -> None:
+        self.__org_id = org_id
+        self.__corp_id = corp_id
+        self.__agent_secret = agent_secret
 
     def __repr__(self) -> str:
         return "_WecomAppMaterial(<redacted>)"
 
     def __getstate__(self) -> Mapping[str, object]:
         raise TypeError("WECOM_APP_MATERIAL_NOT_SERIALIZABLE")
+
+    def __reduce__(self) -> object:
+        raise TypeError("WECOM_APP_MATERIAL_NOT_SERIALIZABLE")
+
+    def __reduce_ex__(self, _protocol: int) -> object:
+        raise TypeError("WECOM_APP_MATERIAL_NOT_SERIALIZABLE")
+
+    async def exchange_token(
+        self,
+        get_access_token: AccessTokenGetter,
+        credential_revision: str,
+    ) -> str | None:
+        return await get_access_token(
+            self.__org_id,
+            self.__corp_id,
+            self.__agent_secret,
+            credential_revision=credential_revision,
+        )
 
 
 class _ExactCredentialBackend:
@@ -106,10 +135,15 @@ class _ExistingAccessTokenExchange:
     operational = True
     production_ready = True
 
-    def __init__(self, get_access_token: AccessTokenGetter) -> None:
+    def __init__(
+        self,
+        get_access_token: AccessTokenGetter,
+        credential_revision: str,
+    ) -> None:
         if not callable(get_access_token):
             raise ValueError("WECOM_APP_TOKEN_MANAGER_REQUIRED")
         self._get_access_token = get_access_token
+        self._credential_revision = credential_revision
 
     def __repr__(self) -> str:
         return "_ExistingAccessTokenExchange(<redacted>)"
@@ -117,10 +151,9 @@ class _ExistingAccessTokenExchange:
     async def exchange(self, material: object) -> str | None:
         if not isinstance(material, _WecomAppMaterial):
             return None
-        return await self._get_access_token(
-            material.org_id,
-            material.corp_id,
-            material.agent_secret,
+        return await material.exchange_token(
+            self._get_access_token,
+            self._credential_revision,
         )
 
 
@@ -221,7 +254,7 @@ class ScheduledWecomAppBindingResolver:
             provider=WECOM_APP_PROVIDER,
             revision=revision,
             purpose=WECOM_APP_SEND_PURPOSE,
-            expires_at=_MAX_EXPIRY,
+            expires_at=_utc_now() + _BACKEND_CREDENTIAL_TTL,
             _material=material,
         ))
         transport = build_runtime_wecom_app_outbound(
@@ -229,7 +262,10 @@ class ScheduledWecomAppBindingResolver:
             scope=scope,
             credential_handle=handle,
             provider_revision=revision,
-            token_exchange=_ExistingAccessTokenExchange(self._get_access_token),
+            token_exchange=_ExistingAccessTokenExchange(
+                self._get_access_token,
+                revision,
+            ),
             outbound_http_client=self._outbound_http_client,
         )
         return ScheduledWecomAppBinding(
@@ -306,6 +342,10 @@ def _canonical_uuid(value: object) -> str | None:
     except ValueError:
         return None
     return normalized if value == normalized else None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _exact_nonempty(value: object) -> bool:
