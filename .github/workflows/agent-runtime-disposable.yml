@@ -7,6 +7,7 @@ on:
       - ".github/workflows/agent-runtime-disposable.yml"
       - "backend/agent_runtime_worker_main.py"
       - "backend/agent_model_gateway_main.py"
+      - "backend/wecom_ws_runner.py"
       - "backend/api/routes/message_chat_preparation.py"
       - "backend/core/config.py"
       - "backend/core/db_scope.py"
@@ -16,16 +17,20 @@ on:
       - "backend/migrations/227_*.sql"
       - "backend/migrations/rollback/227_*.sql"
       - "backend/services/agent/runtime/**"
-      - "backend/services/wecom/actor_enqueue.py"
+      - "backend/services/wecom/**"
       - "backend/tests/test_agent_runtime_*.py"
       - "backend/tests/agent_runtime_deploy_test_support.py"
       - "backend/tests/test_artifact_runtime.py"
       - "backend/tests/test_message_chat_preparation.py"
       - "backend/tests/test_wecom_actor_enqueue.py"
+      - "backend/tests/test_scheduled_wecom_*.py"
+      - "backend/tests/test_wecom_ws_runner*.py"
       - "deploy/everydayai-agent-*.service"
+      - "deploy/everydayai-wecom.service"
       - "deploy/everydayai-sandbox-worker.service"
       - "deploy/env-templates/agent-*.env.template"
       - "deploy/env-templates/sandbox-worker.env.template"
+      - "deploy/env-templates/wecom-runtime.env.template"
       - "deploy/*.sh"
       - "deploy/provision-control-plane-worker-envs.py"
       - "deploy/control_plane_env_source.py"
@@ -60,6 +65,7 @@ jobs:
       AGENT_RUNTIME_INGRESS_ENABLED: "false"
       AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"
       AGENT_RUNTIME_MODEL_GATEWAY_ENABLED: "false"
+      AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"
       AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED: "false"
       C7_QUALITY_BASELINE: "25513882a76efdfc77cc9ea6031ed1d52282f18b"
 
@@ -76,6 +82,7 @@ jobs:
           test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
           test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false
           test "$AGENT_RUNTIME_MODEL_GATEWAY_ENABLED" = false
+          test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false
           test "$AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED" = false
           git cat-file -e "$C7_QUALITY_BASELINE^{commit}"
 
@@ -166,6 +173,31 @@ jobs:
             -k 'not isolated_harness_invokes_all_23_distinct_provider_adapters and not http_mock_server_proves_media_query_and_cancel_semantics' \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/services.log"
 
+      - name: Run Scheduled WeCom runner and runtime unit contracts
+        if: always()
+        run: |
+          set -euo pipefail
+          pytest -q \
+            backend/tests/test_wecom_ws_runner.py \
+            backend/tests/test_wecom_ws_runner_main.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_worker.py \
+            backend/tests/test_scheduled_wecom_runtime_composition.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_router.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_prepared_router.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_repository.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_repository_contract.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_repository_payload.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_started_recovery_repository.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_app_dispatch.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_app_dispatch_concurrency.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_app_prepared_resume.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_smart_dispatch.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_smart_prepared_resume.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_smart_transport_resolution.py \
+            backend/tests/test_scheduled_wecom_app_binding.py \
+            backend/tests/test_scheduled_wecom_app_binding_lifecycle.py \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/scheduled-wecom-unit.log"
+
       - name: Run disposable PostgreSQL migration and security contracts
         if: always()
         run: |
@@ -183,6 +215,33 @@ jobs:
             backend/tests/test_agent_runtime_c7_b32a_postgres_external.py \
             backend/tests/test_agent_runtime_pgcrypto_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
+
+      - name: Run Scheduled WeCom disposable PostgreSQL contracts
+        if: always()
+        run: |
+          set -euo pipefail
+          pytest -q -m external \
+            backend/tests/test_agent_runtime_ar18_b7_s2_b1d2a_wecom_foundation_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_claim_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_prepare_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_outcome_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_claim_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_continuation_claim_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_still_unknown_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_definitive_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_version_readback_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_version_readback_races_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_payload_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_unsupported_terminalization_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_started_recovery_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_unicode_payload_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_configuration_facade_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_prepared_payload_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_app_receipt_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_smart_receipt_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_prepared_recovery_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_terminal_fence_postgres_external.py \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/scheduled-wecom-postgres.log"
 
       - name: Collect disposable PostgreSQL server logs
         if: ${{ failure() }}
@@ -211,7 +270,9 @@ jobs:
             python -m compileall -q \
               backend/agent_model_gateway_main.py \
               backend/agent_runtime_worker_main.py \
-              backend/services/agent/runtime
+              backend/wecom_ws_runner.py \
+              backend/services/agent/runtime \
+              backend/services/wecom
             pytest -q \
               backend/tests/test_agent_runtime_ar17_migration.py \
               backend/tests/test_agent_runtime_provider_submission_migration.py \
@@ -223,6 +284,21 @@ jobs:
               backend/tests/test_agent_runtime_additive_ingress_compatibility_migration.py \
               backend/tests/test_agent_runtime_owner_rpc_acl_closure_migration.py \
               backend/tests/test_agent_runtime_c7_b32a_migration.py
+            pytest -q \
+              backend/tests/test_agent_runtime_scheduled_wecom_delivery_foundation_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_claim_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_dispatch_prepare_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_dispatch_outcome_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_reconcile_claim_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_continuation_claim_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_reconcile_definitive_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_dispatch_version_readback_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_dispatch_payload_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_unsupported_terminalization_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_started_recovery_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_unicode_payload_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_configuration_facade_migration.py \
+              backend/tests/test_agent_runtime_scheduled_wecom_prepared_payload_migration.py
             pytest -q -m 'not external' \
               backend/tests/test_agent_runtime_pgcrypto_migration.py \
               backend/tests/test_migration_runner.py

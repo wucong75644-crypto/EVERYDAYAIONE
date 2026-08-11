@@ -159,6 +159,62 @@ def test_four_unit_transaction_and_ci_entry_are_release_bound() -> None:
     assert "production_ready=false" in workflow
 
 
+def test_scheduled_wecom_disposable_ci_is_flags_off_and_release_bound() -> None:
+    workflow = (ROOT / ".github/workflows/agent-runtime-disposable.yml").read_text(
+        encoding="utf-8"
+    )
+    for path_filter in (
+        '"backend/wecom_ws_runner.py"',
+        '"backend/services/wecom/**"',
+        '"backend/migrations/227_*.sql"',
+        '"backend/migrations/rollback/227_*.sql"',
+        '"backend/tests/test_scheduled_wecom_*.py"',
+        '"backend/tests/test_wecom_ws_runner*.py"',
+        '"deploy/everydayai-wecom.service"',
+        '"deploy/env-templates/wecom-runtime.env.template"',
+        '"deploy/*.sh"',
+    ):
+        assert f"- {path_filter}" in workflow
+    assert 'AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"' in workflow
+    assert 'test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false' in workflow
+    for test_name in (
+        "test_wecom_ws_runner_main.py",
+        "test_agent_runtime_scheduled_wecom_worker.py",
+        "test_scheduled_wecom_runtime_composition.py",
+        "test_agent_runtime_scheduled_wecom_router.py",
+        "test_agent_runtime_scheduled_wecom_app_dispatch.py",
+        "test_agent_runtime_scheduled_wecom_smart_dispatch.py",
+        "test_agent_runtime_scheduled_wecom_smart_transport_resolution.py",
+        "test_scheduled_wecom_app_binding.py",
+        "test_tenant_db_env_contract.py",
+    ):
+        assert test_name in workflow
+    for postgres_contract in (
+        "test_agent_runtime_ar18_b7_s2_b1d2a_wecom_foundation_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_claim_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_dispatch_prepare_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_dispatch_outcome_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_claim_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_continuation_claim_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_still_unknown_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_definitive_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_dispatch_version_readback_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_dispatch_payload_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_unsupported_terminalization_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_started_recovery_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_unicode_payload_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_configuration_facade_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_prepared_payload_postgres_external.py",
+    ):
+        assert postgres_contract in workflow
+    for evidence in (
+        "scheduled-wecom-unit.log",
+        "scheduled-wecom-postgres.log",
+    ):
+        assert evidence in workflow
+    assert "production_ready=false" in workflow
+
+
 def test_ci_quality_scope_is_the_frozen_c7_candidate_diff() -> None:
     workflow = (ROOT / ".github/workflows/agent-runtime-disposable.yml").read_text(
         encoding="utf-8"
