@@ -315,6 +315,28 @@ async def test_lost_outcome_response_replays_exact_versions_and_receipt() -> Non
 
 
 @pytest.mark.asyncio
+async def test_lost_reconcile_record_response_replays_exact_result_request() -> None:
+    database = _Database({
+        "claim_agent_runtime_scheduled_wecom_reconcile_v1": _reconcile(),
+        "record_agent_runtime_scheduled_wecom_reconcile_result_v1": [
+            OperationalError("lost"), _reconcile_result(outcome="readback"),
+        ],
+    })
+    repository = PostgresScheduledWecomDeliveryRepository(database)
+    claim = await repository.claim_reconcile(
+        request_id=RECONCILE_REQUEST, worker_id="reconciler",
+    )
+    assert claim is not None
+
+    receipt = await repository.record_still_unknown(
+        claim, request_id=RESULT_REQUEST, evidence=_evidence(), delay_seconds=300,
+    )
+
+    assert receipt.outcome.value == "readback"
+    assert database.calls[-2] == database.calls[-1]
+
+
+@pytest.mark.asyncio
 async def test_non_connection_database_error_is_not_replayed() -> None:
     database = _Database({
         "claim_agent_runtime_scheduled_wecom_delivery_v2": RuntimeError("db-contract"),

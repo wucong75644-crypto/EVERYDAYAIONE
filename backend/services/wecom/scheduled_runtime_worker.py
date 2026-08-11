@@ -12,6 +12,9 @@ from loguru import logger
 from services.agent.runtime.application.scheduled_wecom_router import (
     ScheduledWecomRouter,
 )
+from services.agent.runtime.application.scheduled_wecom_reconcile import (
+    ScheduledWecomReconcileService,
+)
 from services.agent.runtime.ports.scheduled_wecom_delivery import (
     ScheduledWecomDeliveryRepositoryPort,
 )
@@ -34,6 +37,7 @@ class ScheduledRuntimeWecomWorker:
     def __init__(
         self,
         repository: ScheduledWecomDeliveryRepositoryPort,
+        reconciler: ScheduledWecomReconcileService,
         router: ScheduledWecomRouter,
         *,
         worker_id: str,
@@ -59,6 +63,7 @@ class ScheduledRuntimeWecomWorker:
         if not callable(request_id_factory):
             raise ValueError("invalid scheduled runtime request id factory")
         self._repository = repository
+        self._reconciler = reconciler
         self._router = router
         self._worker_id = worker_id
         self._poll_interval = float(poll_interval_seconds)
@@ -102,7 +107,7 @@ class ScheduledRuntimeWecomWorker:
         await _wait_for_loop_exit(owner)
 
     async def run_once(self) -> bool:
-        """Run started recovery, prepared recovery, then fresh dispatch."""
+        """Run started recovery, reconcile, prepared recovery, then dispatch."""
         async with self._pass_lock:
             return await self._run_priority_pass()
 
@@ -113,6 +118,14 @@ class ScheduledRuntimeWecomWorker:
             worker_id=self._worker_id,
         )
         if started is not None:
+            return True
+
+        reconciled = await self._reconciler.reconcile_once(
+            request_id=self._next_request_id(request_ids),
+            worker_id=self._worker_id,
+            lease_seconds=self._lease_seconds,
+        )
+        if reconciled is not None:
             return True
 
         prepared = await self._router.recover_prepared_once(

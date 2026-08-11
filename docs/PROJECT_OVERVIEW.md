@@ -2232,6 +2232,14 @@ cache = client.caches.create(
     claim/read/renew 从已锁定并读取的 delivery 返回不可变 `org_id`；rollback 精确恢复 227_41 输出，不删除事实或改变
     RPC、ACL、RLS、角色与状态。Python claim/parser/repository 同步 canonical UUID 与跨租户 identity readback fence；未新增
     channel、reconcile service、配置、开关、Provider、Secret 或生产接线。
+- **2026-08-11**：AR-18 D2-C1f.3c Scheduled Runtime WeCom reconcile worker
+  - 新增最小 reconcile service，复用 227_41～227_44：Smart 仅按 claim `org_id` 读取 exact resolver 的内存 ACK cache，
+    ACK/REJECTED 写 definitive，其余写固定 60 秒 still-unknown；App 不读取 credential/HTTP/transport，直接写 typed
+    `readback_unsupported`，未知 provider identity 前缀失败关闭。Python readback hash 与 227_43 SQL canonical 字段一致，
+    result request UUID 从 claim identity 稳定派生以支持响应丢失重放。
+  - Worker 优先级调整为 started recovery → reconcile → prepared recovery → fresh dispatch；高优先级非空或异常均阻断
+    下游普通派发。Composition 向 Worker 注入同一 Repository 与现有 Smart readback resolver；未修改 migration、表、RPC、
+    Admin API、tenant config、App credential path 或 production activation。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

@@ -25,6 +25,9 @@ from services.agent.runtime.application.scheduled_wecom_app_dispatch import (
 from services.agent.runtime.application.scheduled_wecom_router import (
     ScheduledWecomRouter,
 )
+from services.agent.runtime.application.scheduled_wecom_reconcile import (
+    ScheduledWecomReconcileService,
+)
 from services.agent.runtime.application.scheduled_wecom_smart_dispatch import (
     ScheduledWecomSmartDispatchService,
 )
@@ -67,6 +70,7 @@ class ScheduledWecomRuntimeComponents:
 
     worker: ScheduledRuntimeWecomWorker
     repository: PostgresScheduledWecomDeliveryRepository
+    reconciler: ScheduledWecomReconcileService
     router: ScheduledWecomRouter
     smart_transport_resolver: ScheduledSmartTransportResolver
     app_binding_resolver: ScheduledWecomAppBindingResolver
@@ -132,6 +136,7 @@ def build_scheduled_wecom_runtime_components(
         smart_resolver,
     )
     app_dispatch = ScheduledWecomAppDispatchService(repository)
+    reconciler = ScheduledWecomReconcileService(repository, smart_resolver)
     router = ScheduledWecomRouter(
         repository,
         smart_dispatch,
@@ -140,12 +145,14 @@ def build_scheduled_wecom_runtime_components(
     )
     worker = ScheduledRuntimeWecomWorker(
         repository,
+        reconciler,
         router,
         worker_id=worker_id,
     )
     return ScheduledWecomRuntimeComponents(
         worker=worker,
         repository=repository,
+        reconciler=reconciler,
         router=router,
         smart_transport_resolver=smart_resolver,
         app_binding_resolver=app_resolver,

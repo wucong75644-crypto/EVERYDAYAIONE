@@ -105,7 +105,13 @@ def test_builder_composes_one_non_owning_runtime_graph_without_side_effects() ->
     assert scope.request_id.startswith("scheduled-wecom-runtime:")
     assert len(scope.request_id) <= 128
     assert components.worker._repository is components.repository
+    assert components.worker._reconciler is components.reconciler
     assert components.worker._router is components.router
+    assert components.reconciler._repository is components.repository
+    assert (
+        components.reconciler._smart_readback_resolver
+        is components.smart_transport_resolver
+    )
     assert components.router._repository is components.repository
     assert components.router._smart_dispatch._repository is components.repository
     assert components.router._app_dispatch._repository is components.repository

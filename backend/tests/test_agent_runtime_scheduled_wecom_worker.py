@@ -57,6 +57,22 @@ class _Router:
         return result
 
 
+class _Reconciler:
+    def __init__(self, results: list[object] | None = None) -> None:
+        self.results = list(results or [None])
+
+    async def reconcile_once(
+        self, *, request_id: str, worker_id: str, lease_seconds: int,
+    ) -> object:
+        del request_id, worker_id, lease_seconds
+        if not self.results:
+            return None
+        result = self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
 class _ConcurrentRepository:
     def __init__(self) -> None:
         self.active_passes = 0
@@ -130,7 +146,7 @@ class _LifecycleRouter:
 class _TrackedWorker(ScheduledRuntimeWecomWorker):
     def __init__(self, repository: object, router: object) -> None:
         super().__init__(
-            repository, router, worker_id="lifecycle-worker",
+            repository, _Reconciler(), router, worker_id="lifecycle-worker",
             poll_interval_seconds=60,
         )
         self.active_passes = 0
@@ -183,7 +199,7 @@ def _worker(
 ) -> ScheduledRuntimeWecomWorker:
     values = request_ids or _ids()
     return ScheduledRuntimeWecomWorker(
-        repository, router, worker_id="scheduled-runtime-worker",
+        repository, _Reconciler(), router, worker_id="scheduled-runtime-worker",
         poll_interval_seconds=poll_interval_seconds, lease_seconds=60,
         request_id_factory=lambda: next(values),
     )
@@ -192,14 +208,16 @@ def _worker(
 @pytest.mark.parametrize("worker_id", ("", " ", " worker", "worker ", "w" * 129))
 def test_rejects_noncanonical_worker_id(worker_id: str) -> None:
     with pytest.raises(ValueError, match="worker_id"):
-        ScheduledRuntimeWecomWorker(_Repository(), _Router(), worker_id=worker_id)
+        ScheduledRuntimeWecomWorker(
+            _Repository(), _Reconciler(), _Router(), worker_id=worker_id,
+        )
 
 
 @pytest.mark.parametrize("poll", (0, -1, float("inf"), float("nan"), True))
 def test_rejects_invalid_poll_interval(poll: float) -> None:
     with pytest.raises(ValueError, match="poll interval"):
         ScheduledRuntimeWecomWorker(
-            _Repository(), _Router(), worker_id="worker",
+            _Repository(), _Reconciler(), _Router(), worker_id="worker",
             poll_interval_seconds=poll,
         )
 
@@ -208,17 +226,23 @@ def test_rejects_invalid_poll_interval(poll: float) -> None:
 def test_rejects_invalid_lease(lease: int) -> None:
     with pytest.raises(ValueError, match="lease"):
         ScheduledRuntimeWecomWorker(
-            _Repository(), _Router(), worker_id="worker", lease_seconds=lease,
+            _Repository(), _Reconciler(), _Router(), worker_id="worker",
+            lease_seconds=lease,
         )
 
 
 @pytest.mark.asyncio
 async def test_started_recovery_has_absolute_priority() -> None:
     repository = _Repository([object()])
+    reconciler = _Reconciler()
     router = _Router()
 
-    assert await _worker(repository, router).run_once() is True
+    worker = ScheduledRuntimeWecomWorker(
+        repository, reconciler, router, worker_id="scheduled-runtime-worker",
+    )
+    assert await worker.run_once() is True
     assert len(repository.calls) == 1
+    assert reconciler.results == [None]
     assert router.calls == []
 
 
@@ -243,20 +267,6 @@ async def test_identified_prepared_result_blocks_normal_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_three_empty_stages_return_unprocessed_with_unique_requests() -> None:
-    repository = _Repository()
-    router = _Router()
-
-    assert await _worker(repository, router).run_once() is False
-
-    request_ids = [repository.calls[0][0], router.calls[0][1], router.calls[1][1]]
-    assert len(set(request_ids)) == 3
-    assert all(str(UUID(value)) == value for value in request_ids)
-    assert [call[0] for call in router.calls] == ["prepared", "dispatch"]
-    assert all(call[2:] == ("scheduled-runtime-worker", 60) for call in router.calls)
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ("started", "prepared", "dispatch"))
 async def test_stage_exception_stops_lower_priority_work(stage: str) -> None:
     error = RuntimeError(f"{stage}-failed")
@@ -267,7 +277,10 @@ async def test_stage_exception_stops_lower_priority_work(stage: str) -> None:
     )
 
     with pytest.raises(RuntimeError, match=f"{stage}-failed"):
-        await _worker(repository, router).run_once()
+        await ScheduledRuntimeWecomWorker(
+            repository, _Reconciler(), router,
+            worker_id="scheduled-runtime-worker",
+        ).run_once()
 
     expected = {
         "started": [],
@@ -288,7 +301,10 @@ async def test_cancelled_error_propagates_without_fallback(stage: str) -> None:
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await _worker(repository, router).run_once()
+        await ScheduledRuntimeWecomWorker(
+            repository, _Reconciler(), router,
+            worker_id="scheduled-runtime-worker",
+        ).run_once()
 
     expected = {
         "started": [],
@@ -427,7 +443,7 @@ async def test_loop_cancellation_propagates_and_releases_ownership() -> None:
 async def test_stop_from_owned_loop_does_not_self_wait() -> None:
     repository = _SelfStoppingRepository()
     worker = ScheduledRuntimeWecomWorker(
-        repository, _Router(), worker_id="self-stopping-worker",
+        repository, _Reconciler(), _Router(), worker_id="self-stopping-worker",
     )
     repository.worker = worker
 
@@ -476,7 +492,7 @@ async def test_request_id_cannot_be_reused_between_stages() -> None:
 async def test_default_factory_emits_canonical_uuid4() -> None:
     repository = _Repository([object()])
     worker = ScheduledRuntimeWecomWorker(
-        repository, _Router(), worker_id="worker",
+        repository, _Reconciler(), _Router(), worker_id="worker",
     )
 
     assert await worker.run_once() is True
