@@ -1,6 +1,6 @@
 # Agent Runtime 单一运行时收敛方案
 
-状态：已确认，进入实施。基线：`9a52e947`。
+状态：已确认并实施 S1 模型链收敛。实施基线：`e9e15761`。
 
 ## 1. 最终边界
 
@@ -75,6 +75,12 @@ Runtime 负责自主循环、状态推进、授权、成本、幂等、租约、
 复用现有模型选择、订阅和 adapter factory；移除重复 Provider factory；让 Runtime
 直接通过唯一 ModelAttempt 生命周期完成调用。完成后 Runtime 不再依赖第二套 Gateway
 operation 状态机才能启动。
+
+已完成：Runtime 直接使用既有模型选择、配置 Bundle、KEK 解密与
+`create_chat_adapter`。`agent_model_attempts` 通过 227_53 原子冻结 dispatch kill epoch，
+同一 fenced Attempt 的窄只读 RPC 才可取得 encrypted Bundle。独立 Gateway 进程、UDS、
+Python operation owner、systemd unit 和部署环境已删除；227_18～227_27 只作为不可改写的
+历史 migration 链保留，不再具有 Python 调用方或运行进程。
 
 ### S2 ERP 与 Media 薄适配
 

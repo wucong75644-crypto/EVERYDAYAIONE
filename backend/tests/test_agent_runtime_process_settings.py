@@ -33,9 +33,6 @@ def test_agent_runtime_settings_field_allowlist() -> None:
         "agent_runtime_heartbeat_seconds",
         "agent_runtime_drain_timeout_seconds",
         "agent_runtime_production_composition_enabled",
-        "agent_runtime_model_gateway_enabled",
-        "agent_runtime_model_gateway_socket",
-        "agent_runtime_model_gateway_health_socket",
         "agent_runtime_agent_definition_id",
         "agent_runtime_agent_definition_revision",
         "sandbox_job_root",
@@ -62,15 +59,9 @@ def test_runtime_does_not_load_dotenv_but_backend_settings_still_does(
     script = """
 import json
 import agent_runtime_worker_main as entrypoint
-from services.agent.runtime.infrastructure.model.runtime_adapter_factory import (
-    create_runtime_chat_adapter,
-)
 
 runtime = entrypoint.AgentRuntimeProcessSettings()
 runtime_dump = runtime.model_dump()
-adapter = create_runtime_chat_adapter(
-    "gemini-3-flash", api_key="lease-material", stream_timeout=1.0,
-)
 from core.config import get_settings
 runtime_called_common_settings = get_settings.cache_info().misses != 0
 
@@ -80,7 +71,6 @@ print(json.dumps({
     "runtime_production_enabled": runtime.agent_runtime_production_composition_enabled,
     "runtime_fields": sorted(runtime_dump),
     "runtime_values": list(runtime_dump.values()),
-    "runtime_adapter_created": type(adapter).__name__ == "KieChatAdapter",
     "backend_kie_loaded": backend.kie_api_key == "fake-provider-secret-from-dotenv",
 }))
 """
@@ -109,7 +99,6 @@ print(json.dumps({
     result = json.loads(completed.stdout)
 
     assert result["runtime_called_common_settings"] is False
-    assert result["runtime_adapter_created"] is True
     assert result["runtime_production_enabled"] is False
     assert marker not in result["runtime_values"]
     assert result["runtime_fields"] == sorted(
@@ -118,16 +107,17 @@ print(json.dumps({
     assert result["backend_kie_loaded"] is True
 
 
-def test_runtime_systemd_blocks_current_and_legacy_dotenv_paths() -> None:
+def test_runtime_systemd_loads_scoped_model_kek_and_blocks_general_dotenv() -> None:
     unit = UNIT.read_text()
+    assert "EnvironmentFile=/etc/everydayai/agent-runtime-model.env" in unit
     for path in (
         "/var/www/everydayai/backend/.env",
         "/var/www/everydayai/backend/.env.kek",
         "/etc/everydayai/agent-model-gateway.env",
         "/etc/everydayai/agent-model-gateway-kek.env",
-        "/etc/everydayai/agent-runtime-model.env",
     ):
         assert f"-{path}" in unit
+    assert "-/etc/everydayai/agent-runtime-model.env" not in unit
 
 
 COMMON_FIELDS = {
@@ -242,9 +232,12 @@ def test_all_worker_units_block_application_secret_files() -> None:
         for path in (
             "/var/www/everydayai/backend/.env",
             "/var/www/everydayai/backend/.env.kek",
-            "/etc/everydayai/agent-runtime-model.env",
         ):
             assert f"-{path}" in unit
+        if name == "everydayai-agent-runtime.service":
+            assert "EnvironmentFile=/etc/everydayai/agent-runtime-model.env" in unit
+        else:
+            assert "-/etc/everydayai/agent-runtime-model.env" in unit
 
 
 def test_projection_and_authorization_templates_are_narrow() -> None:

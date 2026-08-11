@@ -16,7 +16,6 @@ case "$scope" in
     all)
         services=(
             everydayai-agent-runtime
-            everydayai-agent-model-gateway
             everydayai-agent-projection
             everydayai-agent-authorization
             everydayai-sandbox-worker
@@ -25,7 +24,6 @@ case "$scope" in
     control-plane)
         services=(
             everydayai-agent-runtime
-            everydayai-agent-model-gateway
             everydayai-agent-projection
             everydayai-agent-authorization
         )
@@ -35,6 +33,16 @@ case "$scope" in
         exit 2
         ;;
 esac
+
+legacy_service=everydayai-agent-model-gateway
+legacy_active=$(systemctl is-active "$legacy_service" 2>/dev/null || true)
+legacy_enabled=$(systemctl is-enabled "$legacy_service" 2>/dev/null || true)
+legacy_pair="${legacy_active:-unknown}:${legacy_enabled:-unknown}"
+if [ "$legacy_pair" != inactive:not-found ]; then
+    echo "❌ legacy Model Gateway 必须不存在，实际为 ${legacy_pair}" >&2
+    exit 1
+fi
+
 for service in "${services[@]}"; do
     active_state=$(systemctl is-active "$service" 2>/dev/null || true)
     enabled_state=$(systemctl is-enabled "$service" 2>/dev/null || true)

@@ -232,6 +232,19 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             bundle_name, "get_agent_runtime_ai_bundle", params,
         )
 
+    async def runtime_model(
+        self, bundle_name: str, params: Mapping[str, object],
+    ) -> ResolvedConfigurationBundle:
+        """Resolve one claimed Run's model Bundle through the final Worker RPC."""
+        if bundle_name not in {
+            "ai.provider.dashscope", "ai.provider.openrouter",
+            "ai.provider.kie", "ai.provider.google",
+        }:
+            raise ConfigurationResolutionError("CONFIG_BUNDLE_UNKNOWN")
+        return await self._resolve_async(
+            bundle_name, "get_agent_runtime_model_configuration_v1", params,
+        )
+
     async def _resolve_async(
         self,
         bundle_name: str,

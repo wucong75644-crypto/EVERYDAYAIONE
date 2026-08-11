@@ -5,7 +5,6 @@ set -euo pipefail
 systemd_dir=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 services=(
     everydayai-agent-runtime
-    everydayai-agent-model-gateway
     everydayai-agent-projection
     everydayai-agent-authorization
 )
@@ -19,7 +18,7 @@ sha256_file() {
     fi
 }
 
-[ "$#" -eq 8 ] || {
+[ "$#" -eq 6 ] || {
     echo "❌ reviewed unit manifest 参数数量无效" >&2
     exit 2
 }
@@ -44,4 +43,4 @@ for service in "${services[@]}"; do
     fi
 done
 
-echo "✅ 四个 control-plane target unit reviewed SHA-256 预检通过"
+echo "✅ 三个 control-plane target unit reviewed SHA-256 预检通过"

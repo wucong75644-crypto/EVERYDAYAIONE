@@ -20,7 +20,6 @@ RELEASE_SCRIPT = (DEPLOY / "release.sh").read_text(encoding="utf-8")
 RELEASE_SHA = "a" * 40
 RUNTIME_SERVICES = (
     "everydayai-agent-runtime",
-    "everydayai-agent-model-gateway",
     "everydayai-agent-projection",
     "everydayai-agent-authorization",
     "everydayai-sandbox-worker",
@@ -81,8 +80,7 @@ def _render_worker_envs(directory: Path) -> None:
     }
     names = (
         "agent-runtime-worker",
-        "agent-model-gateway",
-        "agent-model-gateway-kek",
+        "agent-runtime-model",
         "agent-projection-worker",
         "agent-authorization-worker",
         "sandbox-worker",
@@ -184,6 +182,8 @@ def _make_release_harness(
     fake_systemctl = fake_bin / "systemctl"
     fake_systemctl.write_text(
         "#!/bin/sh\n"
+        "if [ \"$2\" = everydayai-agent-model-gateway ]; then "
+        "[ \"$1\" = is-active ] && echo inactive || echo not-found; exit 0; fi\n"
         "phase=pre\n"
         "test ! -f \"$INSTALL_MARKER\" || phase=post\n"
         "cat \"$STATE_DIR/${phase}.$2.$1\"\n",
@@ -251,7 +251,7 @@ def _run_installer(
     return result, systemd_dir, calls
 
 
-def test_agent_runtime_only_installs_five_units_and_wrapper(tmp_path: Path) -> None:
+def test_agent_runtime_only_installs_four_units_and_wrapper(tmp_path: Path) -> None:
     result, systemd_dir, calls = _run_installer(tmp_path)
 
     assert result.returncode == 0, result.stderr
@@ -262,7 +262,11 @@ def test_agent_runtime_only_installs_five_units_and_wrapper(tmp_path: Path) -> N
     assert wrapper.read_bytes() == (
         DEPLOY / "sandbox-worker-cgroup-wrapper.sh"
     ).read_bytes()
-    assert calls.read_text(encoding="utf-8").splitlines() == ["daemon-reload"]
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "is-active everydayai-agent-model-gateway",
+        "is-enabled everydayai-agent-model-gateway",
+        "daemon-reload",
+    ]
     assert "未启停或启用服务" in result.stdout
 
 
@@ -305,7 +309,10 @@ def test_agent_runtime_only_rejects_different_target_before_writes(
     assert target.read_text(encoding="utf-8") == "existing-content\n"
     assert [path.name for path in systemd_dir.iterdir()] == [target.name]
     assert not libexec_dir.exists()
-    assert not calls.exists()
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "is-active everydayai-agent-model-gateway",
+        "is-enabled everydayai-agent-model-gateway",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -328,6 +335,7 @@ def test_agent_runtime_only_strictly_rejects_worker_env_keys(
     path.write_text(path.read_text(encoding="utf-8") + mutation, encoding="utf-8")
     systemd_dir = tmp_path / "systemd"
     systemd_dir.mkdir()
+    fake_bin, _ = fake_installer_commands(tmp_path)
 
     result = subprocess.run(
         [
@@ -339,6 +347,7 @@ def test_agent_runtime_only_strictly_rejects_worker_env_keys(
         ],
         env={
             **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "SYSTEMD_UNIT_DIR": str(systemd_dir),
             "AGENT_RUNTIME_ENV_DIR": str(runtime_env_dir),
             "LIBEXEC_DIR": str(tmp_path / "libexec"),

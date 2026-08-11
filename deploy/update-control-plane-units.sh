@@ -18,7 +18,6 @@ update_started=false
 
 services=(
     everydayai-agent-runtime
-    everydayai-agent-model-gateway
     everydayai-agent-projection
     everydayai-agent-authorization
 )
@@ -71,20 +70,32 @@ read_manifest() {
             return 1
         fi
         case "$name" in
-            everydayai-agent-runtime.service|everydayai-agent-model-gateway.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
+            everydayai-agent-runtime.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
             *) echo "❌ reviewed unit manifest 包含非控制面条目" >&2; return 1 ;;
         esac
         manifest_hashes+=("$hash")
         manifest_names+=("$name")
     done < "$manifest_path"
-    [ "${#manifest_names[@]}" -eq 4 ] || {
-        echo "❌ reviewed unit manifest 必须精确包含四个 unit" >&2
+    [ "${#manifest_names[@]}" -eq 3 ] || {
+        echo "❌ reviewed unit manifest 必须精确包含三个 unit" >&2
         return 1
     }
 }
 
 check_unit_states() {
     local service active enabled
+    active=$(systemctl is-active everydayai-agent-model-gateway 2>/dev/null || true)
+    enabled=$(systemctl is-enabled everydayai-agent-model-gateway 2>/dev/null || true)
+    if [ "${active:-unknown}:${enabled:-unknown}" != inactive:not-found ]; then
+        echo "❌ legacy Model Gateway 必须先完成受审查退役" >&2
+        return 1
+    fi
+    for legacy_env in agent-model-gateway.env agent-model-gateway-kek.env; do
+        if [ -e "${env_dir}/${legacy_env}" ] || [ -L "${env_dir}/${legacy_env}" ]; then
+            echo "❌ legacy Model Gateway env 必须先完成受审查退役" >&2
+            return 1
+        fi
+    done
     for service in "${services[@]}"; do
         active=$(systemctl is-active "$service" 2>/dev/null || true)
         enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
@@ -203,7 +214,7 @@ read_unit_journal() {
         [[ "$old_hash" =~ ^[0-9a-f]{64}$ && "$new_hash" =~ ^[0-9a-f]{64}$ ]] \
             && [ -z "${extra:-}" ] || { echo "❌ unit journal 条目无效" >&2; return 1; }
         case "$name" in
-            everydayai-agent-runtime.service|everydayai-agent-model-gateway.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
+            everydayai-agent-runtime.service|everydayai-agent-projection.service|everydayai-agent-authorization.service) ;;
             *) echo "❌ unit journal 文件集合无效" >&2; return 1 ;;
         esac
         contains "$name" "${journal_names[@]-}" && {
@@ -213,8 +224,8 @@ read_unit_journal() {
         journal_new_hashes+=("$new_hash")
         journal_names+=("$name")
     done < <(tail -n +2 "$unit_journal")
-    [ "${#journal_names[@]}" -eq 4 ] || {
-        echo "❌ unit journal 必须精确包含四个 unit" >&2; return 1
+    [ "${#journal_names[@]}" -eq 3 ] || {
+        echo "❌ unit journal 必须精确包含三个 unit" >&2; return 1
     }
 }
 

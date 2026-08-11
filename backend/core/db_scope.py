@@ -18,7 +18,6 @@ class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
     AGENT_RUNTIME = "agent_runtime"
-    AGENT_MODEL_GATEWAY = "agent_model_gateway"
     AUTHORIZATION = "authorization"
     PROJECTION = "projection"
     RUNTIME = "runtime"

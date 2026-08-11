@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
@@ -28,6 +28,7 @@ from services.agent.runtime.ports.model import (
 
 
 AdapterFactory = Callable[..., Any]
+RequestAdapterFactory = Callable[[ModelStepRequest], Awaitable[Any]]
 
 _DEFAULT_CLOSE_TIMEOUT_SECONDS = 5.0
 
@@ -41,6 +42,7 @@ class ExistingProviderModelAdapter:
         org_id: str | None = None,
         db: Any = None,
         adapter_factory: AdapterFactory | None = None,
+        request_adapter_factory: RequestAdapterFactory | None = None,
         close_timeout_seconds: float = _DEFAULT_CLOSE_TIMEOUT_SECONDS,
     ) -> None:
         if close_timeout_seconds <= 0:
@@ -48,7 +50,10 @@ class ExistingProviderModelAdapter:
         self._org_id = org_id
         self._db = db
         self._adapter_factory = adapter_factory
+        self._request_adapter_factory = request_adapter_factory
         self._close_timeout_seconds = close_timeout_seconds
+        if adapter_factory is not None and request_adapter_factory is not None:
+            raise ValueError("RUNTIME_MODEL_ADAPTER_FACTORY_CONFLICT")
 
     async def complete(
         self,
@@ -165,8 +170,10 @@ class ExistingProviderModelAdapter:
             )
 
     async def _create_adapter(self, request: ModelStepRequest) -> Any:
+        if self._request_adapter_factory is not None:
+            return await self._request_adapter_factory(request)
         if self._adapter_factory is None:
-            raise ValueError("RUNTIME_MODEL_GATEWAY_REQUIRED")
+            raise ValueError("RUNTIME_MODEL_ADAPTER_FACTORY_REQUIRED")
         return self._adapter_factory(
             request.model_id,
             org_id=request.org_id or self._org_id,

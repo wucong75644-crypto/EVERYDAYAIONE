@@ -6,7 +6,6 @@ on:
     paths:
       - ".github/workflows/agent-runtime-disposable.yml"
       - "backend/agent_runtime_worker_main.py"
-      - "backend/agent_model_gateway_main.py"
       - "backend/wecom_ws_runner.py"
       - "backend/api/routes/message_chat_preparation.py"
       - "backend/core/config.py"
@@ -41,9 +40,8 @@ on:
       - "docs/FUNCTION_INDEX.md"
       - "docs/AGENT_RUNTIME_PRODUCTION_RUNBOOK.md"
       - "docs/document/AR17_STAGING_PROVISIONING.md"
-      - "docs/document/TECH_AGENT_RUNTIME_MODEL_GATEWAY.md"
+      - "docs/document/TECH_AGENT_RUNTIME_SINGLE_RUNTIME_CONVERGENCE.md"
       - "scripts/check_task_change.py"
-      - "scripts/run_agent_model_gateway_disposable.sh"
 
 permissions:
   contents: read
@@ -54,7 +52,7 @@ concurrency:
 
 jobs:
   disposable-runtime:
-    name: C7 BG5 Disposable Flags-off Candidate
+    name: Single Runtime Disposable Flags-off Candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -64,9 +62,7 @@ jobs:
       RUN_AR17_1_DB_TEST: "1"
       AGENT_RUNTIME_INGRESS_ENABLED: "false"
       AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED: "false"
-      AGENT_RUNTIME_MODEL_GATEWAY_ENABLED: "false"
       AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED: "false"
-      AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED: "false"
       C7_QUALITY_BASELINE: "25513882a76efdfc77cc9ea6031ed1d52282f18b"
 
     steps:
@@ -81,9 +77,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$AGENT_RUNTIME_INGRESS_ENABLED" = false
           test "$AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED" = false
-          test "$AGENT_RUNTIME_MODEL_GATEWAY_ENABLED" = false
           test "$AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED" = false
-          test "$AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED" = false
           git cat-file -e "$C7_QUALITY_BASELINE^{commit}"
 
       - name: Configure disposable Python environment
@@ -114,11 +108,14 @@ jobs:
       - name: Prepare evidence directory
         run: mkdir -p "$RUNNER_TEMP/ar17-evidence"
 
-      - name: Run unified Model Gateway disposable acceptance
+      - name: Run single Runtime model contracts
         run: |
           set -euo pipefail
-          scripts/run_agent_model_gateway_disposable.sh all \
-            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/model-gateway-bg5.log"
+          pytest -q \
+            backend/tests/test_agent_runtime_single_model_adapter.py \
+            backend/tests/test_agent_runtime_model_configuration_facade_migration.py \
+            backend/tests/test_agent_runtime_model_loop_budget.py \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/single-runtime-model.log"
 
       - name: Run Runtime correction and unit contracts
         run: |
@@ -133,7 +130,6 @@ jobs:
             backend/tests/test_agent_runtime_worker_readiness.py \
             backend/tests/test_agent_runtime_process_settings.py \
             backend/tests/test_agent_runtime_flags_off_install.py \
-            backend/tests/test_agent_runtime_model_gateway_dac.py \
             backend/tests/test_agent_runtime_control_plane_update.py \
             backend/tests/test_agent_runtime_control_plane_env_transaction.py \
             backend/tests/test_tenant_db_env_contract.py \
@@ -216,6 +212,7 @@ jobs:
             backend/tests/test_agent_runtime_owner_transition_postgres_external.py \
             backend/tests/test_agent_runtime_owner_rpc_acl_closure_postgres_external.py \
             backend/tests/test_agent_runtime_c7_b32a_postgres_external.py \
+            backend/tests/test_agent_runtime_model_configuration_facade_postgres_external.py \
             backend/tests/test_agent_runtime_pgcrypto_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
@@ -272,7 +269,6 @@ jobs:
           set -euo pipefail
           {
             python -m compileall -q \
-              backend/agent_model_gateway_main.py \
               backend/agent_runtime_worker_main.py \
               backend/wecom_ws_runner.py \
               backend/services/agent/runtime \
@@ -321,7 +317,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "result=${{ job.status == 'success' && 'C7 BG5 Disposable Flags-off Candidate Verified' || 'C7 BG5 Disposable Flags-off Candidate Not Verified' }}"
+            echo "result=${{ job.status == 'success' && 'Single Runtime Disposable Flags-off Candidate Verified' || 'Single Runtime Disposable Flags-off Candidate Not Verified' }}"
             echo "verification_scope=local disposable CI contract only"
             echo "staging_verified=false"
             echo "production_verified=false"

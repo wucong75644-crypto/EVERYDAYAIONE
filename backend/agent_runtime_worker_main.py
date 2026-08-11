@@ -64,9 +64,6 @@ class AgentRuntimeProcessSettings(BaseSettings):
     agent_runtime_heartbeat_seconds: float = 10.0
     agent_runtime_drain_timeout_seconds: float = 3600.0
     agent_runtime_production_composition_enabled: bool = False
-    agent_runtime_model_gateway_enabled: bool = False
-    agent_runtime_model_gateway_socket: str = ""
-    agent_runtime_model_gateway_health_socket: str = ""
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     sandbox_job_root: str

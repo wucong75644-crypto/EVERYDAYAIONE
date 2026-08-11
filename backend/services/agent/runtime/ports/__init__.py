@@ -14,6 +14,7 @@ from services.agent.runtime.ports.executor import (
 from services.agent.runtime.ports.model import (
     ModelCallError,
     ModelCallUnknownError,
+    ModelExecutionBinding,
     ModelInputReceipt,
     ModelOutput,
     ModelOutputKind,
@@ -69,6 +70,7 @@ __all__ = [
     "ExecutorPort",
     "ModelCallError",
     "ModelCallUnknownError",
+    "ModelExecutionBinding",
     "ModelInputReceipt",
     "ModelOutput",
     "ModelOutputKind",

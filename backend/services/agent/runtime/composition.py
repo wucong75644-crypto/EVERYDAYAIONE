@@ -205,9 +205,16 @@ def build_runtime(
     from services.agent.runtime.production_composition import (
         build_safe_runtime_composition,
     )
-    from services.agent.runtime.production_factory import (
-        build_production_model_gateway_components,
+    from services.adapters.factory import create_chat_adapter
+    from services.agent.runtime.infrastructure.model.adapter import (
+        ExistingProviderModelAdapter,
     )
+    from services.agent.runtime.infrastructure.model.configured_adapter import (
+        RuntimeConfiguredAdapterFactory,
+    )
+    from services.configuration.bundles import AsyncSecretBundleResolver
+    from services.configuration.envelope import LocalKEKProvider
+    from services.configuration.material_service import SecretMaterialService
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
     runtime_repository = PostgresRuntimeRepository(db)
@@ -215,9 +222,21 @@ def build_runtime(
     actions = PostgresActionRepository(db)
     attempts = PostgresModelAttemptRepository(db)
     versions = build_runtime_version_registry()
-    gateway = build_production_model_gateway_components(db, settings)
+    try:
+        material_service = SecretMaterialService(
+            LocalKEKProvider.from_environment(),
+        )
+    except ValueError:
+        raise RuntimeError("RUNTIME_MODEL_CONFIGURATION_NOT_READY") from None
+    configured_factory = RuntimeConfiguredAdapterFactory(
+        AsyncSecretBundleResolver(db, material_service),
+        adapter_factory=create_chat_adapter,
+    )
+    model = ExistingProviderModelAdapter(
+        request_adapter_factory=configured_factory,
+    )
     safe = build_safe_runtime_composition(
-        resources=RuntimeReadResources(database=db), model_port=gateway.model,
+        resources=RuntimeReadResources(database=db), model_port=model,
     )
     registry = safe.registry
     action_loop = ActionLoopDriver(
@@ -236,9 +255,8 @@ def build_runtime(
         attempt_repository=attempts,
         action_repository=actions,
         recovery_repository=recovery,
-        model=gateway.model, call_factory=model_factory,
+        model=model, call_factory=model_factory,
         reconciler=retain_unknown_model_attempt,
-        gateway_dispatch_repository=gateway.repository,
     )
     runtime = RuntimeLoopCoordinator(
         recovery_repository=recovery,
@@ -255,7 +273,7 @@ def build_runtime(
     composition = build_safe_runtime_composition(
         resources=RuntimeReadResources(database=db),
         model_call_factory=model_factory, model_loop=model_loop,
-        action_loop=action_loop, model_port=gateway.model,
+        action_loop=action_loop, model_port=model,
     )
     finalizer = ScheduledRuntimeFinalizer(
         PostgresScheduledFinalizationRepository(db), worker_id,

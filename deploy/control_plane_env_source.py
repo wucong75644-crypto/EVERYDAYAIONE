@@ -12,13 +12,11 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 PASSWORD_KEYS = {
     "agent-runtime-worker.env": "EVERYDAYAI_AGENT_RUNTIME_WORKER_PASSWORD",
-    "agent-model-gateway.env": "EVERYDAYAI_AGENT_MODEL_GATEWAY_PASSWORD",
     "agent-projection-worker.env": "EVERYDAYAI_PROJECTION_WORKER_PASSWORD",
     "agent-authorization-worker.env": "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD",
 }
 ROLES = {
     "agent-runtime-worker.env": "everydayai_agent_runtime_worker",
-    "agent-model-gateway.env": "everydayai_agent_model_gateway",
     "agent-projection-worker.env": "everydayai_projection_worker",
     "agent-authorization-worker.env": "everydayai_authorization_worker",
 }
@@ -139,19 +137,19 @@ def validate_kek(values: dict[str, str]) -> dict[str, str]:
             if isinstance(key, str) and isinstance(value, str)
         }
     except (TypeError, ValueError, json.JSONDecodeError):
-        raise ProvisioningError("Gateway KEK 配置无效") from None
+        raise ProvisioningError("Runtime model KEK 配置无效") from None
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", version) \
         or set(decoded) != set(keyring) \
         or any(not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key)
                or len(value) != 32 for key, value in decoded.items()) \
         or "'" in raw_keyring or "<" in raw_keyring:
-        raise ProvisioningError("Gateway KEK 配置无效")
+        raise ProvisioningError("Runtime model KEK 配置无效")
     return values
 
 
 def render_envs(
     backend: dict[str, str], migrator_dsn: str, release_sha: str,
-    runtime_uid: int, kek: dict[str, str],
+    kek: dict[str, str],
 ) -> dict[str, str]:
     passwords = {name: backend[key] for name, key in PASSWORD_KEYS.items()}
     if any(len(value) < 24 or "\n" in value or "\r" in value
@@ -172,21 +170,7 @@ def render_envs(
             "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
             "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-runtime/health.sock",
             "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED": "false",
-            "AGENT_RUNTIME_MODEL_GATEWAY_ENABLED": "false",
-            "AGENT_RUNTIME_MODEL_GATEWAY_SOCKET": "/run/everydayai-agent-model-gateway/gateway.sock",
-            "AGENT_RUNTIME_MODEL_GATEWAY_HEALTH_SOCKET": "/run/everydayai-agent-model-gateway/health.sock",
             "SANDBOX_JOB_ROOT": "/var/lib/everydayai/sandbox-jobs", "SANDBOX_RUNTIME_REVISION": "unprovisioned",
-        },
-        "agent-model-gateway.env": {
-            "AGENT_MODEL_GATEWAY_DATABASE_URL": urls["agent-model-gateway.env"],
-            "AGENT_MODEL_GATEWAY_WORKER_ID": "agent-model-gateway-01",
-            "AGENT_MODEL_GATEWAY_RELEASE_REVISION": release_sha,
-            "AGENT_MODEL_GATEWAY_SOCKET": "/run/everydayai-agent-model-gateway/gateway.sock",
-            "AGENT_MODEL_GATEWAY_HEALTH_SOCKET": "/run/everydayai-agent-model-gateway/health.sock",
-            "AGENT_MODEL_GATEWAY_RUNTIME_UID": str(runtime_uid),
-            "AGENT_MODEL_GATEWAY_DRAIN_TIMEOUT_SECONDS": "130",
-            "AGENT_MODEL_GATEWAY_ISOLATED_HARNESS_ENABLED": "true",
-            "AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED": "false",
         },
         "agent-projection-worker.env": {
             "WORKER_DATABASE_URL": urls["agent-projection-worker.env"], **projection,
@@ -205,7 +189,7 @@ def render_envs(
     }
     output = {name: "".join(f"{key}={value}\n" for key, value in values.items())
               for name, values in rendered.items()}
-    output["agent-model-gateway-kek.env"] = (
+    output["agent-runtime-model.env"] = (
         f"CONFIG_KEK_CURRENT_VERSION={kek['CONFIG_KEK_CURRENT_VERSION']}\n"
         f"CONFIG_KEK_KEYRING_JSON='{kek['CONFIG_KEK_KEYRING_JSON']}'\n"
     )

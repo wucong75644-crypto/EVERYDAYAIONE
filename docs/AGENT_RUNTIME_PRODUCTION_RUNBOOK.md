@@ -46,7 +46,6 @@ run in separate processes and scan durable work after restart.
 | Conversation Actor (`everydayai-actor` / DB `everydayai_runtime`) | legacy actor tasks only | existing actor capabilities | no Runtime/Sandbox claim or non-SAFE dispatch | SAFE legacy tools only | existing actor queue | existing actor contract |
 | WeCom Runtime (`everydayai-wecom` / DB `everydayai_wecom_runtime`) | inbound WeCom item only | atomic WeCom V3 ingress, V3 Interaction resolution | no Runtime/Sandbox claim or non-SAFE dispatch | channel ingress/egress only | existing channel/actor wake only | existing channel contract |
 | Agent Runtime Worker (`everydayai-agent-runtime` / DB `everydayai_agent_runtime_worker`) | Commands, Runs, model/action attempts | migration 223 runtime allow-list | no projection/admin/Sandbox execution tables; no direct confirmation authority | model provider and authorized action adapter only | none | stage Sandbox inputs; no Sandbox process |
-| Model Gateway (`everydayai-agent-model-gateway` / DB `everydayai_agent_model_gateway`) | one durable Provider operation | 227_18–227_20 claim/readback/finalize/recover, 227_25 parent cancel fence and encrypted configuration bundle | no Runtime attempt completion; no public API; no Runtime env | one mock/Provider call after durable dispatch only | none | none |
 | Projection Worker (`everydayai-agent-projection` / DB `everydayai_projection_worker`) | projection outbox and open-Interaction notification leases | projection claim/project/fail/dead RPCs; narrow Tool Confirmation notification claim/complete RPCs | no Runtime, Authorization or Sandbox execution claims | compatibility DB projection and V3 challenge delivery only; never resolves or dispatches an Action | Tool Confirmation V3 namespace and distributed WebSocket delivery only | none |
 | Authorization Recovery (`everydayai-agent-authorization` / DB `everydayai_authorization_worker`) | resolved, approved Authorization Interactions with active grants | authorization recovery RPCs | no action dispatch, model or Sandbox claim | none | none | none |
 | Sandbox Worker (`everydayai-sandbox` / DB `everydayai_sandbox_worker`) | local Sandbox Jobs | existing Sandbox Job worker RPC allow-list | no Runtime tables, Redis, model, JWT, WeCom, OSS or application secrets | nsjail only; network denied | none | node-local job store only; no OSS credential |
@@ -77,19 +76,18 @@ timeout. Backlog does not affect readiness.
   rollback: schema, ACLs, gates, audit and failure-closed rollback.
 - `deploy/everydayai-agent-*.service`,
   `deploy/everydayai-sandbox-worker.service`: non-root process roles.
-- `deploy/bootstrap-agent-runtime-roles.sh` creates the four existing Runtime
-  LOGIN roles; `deploy/bootstrap-agent-model-gateway-role.sh` exclusively creates
-  the fifth Gateway LOGIN role. Migrations contain no password or LOGIN creation.
+- `deploy/bootstrap-agent-runtime-roles.sh` creates the four active Runtime
+  LOGIN roles. The historical Gateway bootstrap is retained only so a disposable
+  database can traverse frozen 227_18 migration history; it does not provision an
+  active service or current execution owner.
 
 ## Environment and secrets
 
 Install `/etc/everydayai/*.env` from `deploy/env-templates`, owned by root and
-mode 0640. Runtime loads only `agent-runtime-worker.env` and cannot read either
-Gateway env. Model Gateway alone loads its narrow DB/process env and the two-key
-KEK env, both `root:everydayai-model-gateway-secret`; only the Gateway user joins
-that secret group. Runtime joins only the separate `everydayai-model-gateway`
-socket group, and provisioning verifies with both OS identities that Gateway can
-read and Runtime cannot read either env. Neither file contains Provider API keys.
+mode 0640. Runtime loads `agent-runtime-worker.env` and the two-key
+`agent-runtime-model.env`. The model file is `root:everydayai-runtime-model-secret`;
+only the Runtime user joins that group. It contains KEK metadata only, never a
+Provider API key. Projection, Authorization and Sandbox cannot read it.
 The Sandbox template is deliberately limited to its database URL,
 immutable hashes, local paths, limits and Sentry; it must not contain Redis,
 OSS, model, JWT or WeCom values. `RUNTIME_ADMIN_DATABASE_URL` is available only
@@ -154,23 +152,24 @@ admin audit rows supply actor, tenant, request id, reason and result.
 
 ## Ordered release
 
-BG5 code validation is flags-off only. The reviewed manifest contains exactly
-Runtime, Model Gateway, Projection and Authorization units. Provisioning stages
-five env files in one release transaction; any env publish, unit install,
-daemon-reload or state postcheck failure restores all envs and units. Runtime
-and Gateway must be `inactive:disabled`, all production flags remain false,
-and Sandbox assets must have zero diff. Run
-`scripts/run_agent_model_gateway_disposable.sh all` for local UDS, disposable
-PostgreSQL 227_18–227_20/227_25 and mock Provider acceptance. `static-only`
-includes the 227_25 migration contract but intentionally omits all PostgreSQL
-and UDS+PostgreSQL tests. `all` creates its own disposable PostgreSQL instances,
-does not consume `DATABASE_URL`, and fails if the required local PostgreSQL
-tools or any B4 Barrier/UDS test cannot run; a skipped database stage is not
-acceptance evidence. This validation does not authorize the flags-off
-installation, migration, service start or Owner switch.
+Single-Runtime code validation is flags-off only. The reviewed control-plane
+manifest contains exactly Runtime, Projection and Authorization units.
+Provisioning stages four env files in one release transaction; any env publish,
+unit install, daemon-reload or state postcheck failure restores all envs and
+units. Runtime must be `inactive:disabled`, all production flags remain false,
+and Sandbox assets must have zero diff. The disposable workflow validates 227_53,
+the direct model adapter, existing Runtime recovery contracts and mock Providers.
+It does not consume production `DATABASE_URL` and does not authorize installation,
+migration, service start or Owner switch.
 
-1. Bootstrap and verify the five database LOGIN roles with the two dedicated
-   bootstrap scripts; inject secrets outside migration tooling.
+Before any install, the historical `everydayai-agent-model-gateway` unit must be
+`inactive:not-found`, and its two env files must be absent. The installer fails
+closed when legacy assets remain; retirement is a separate reviewed, recoverable
+operation and is never performed implicitly by provisioning.
+
+1. Bootstrap and verify the four active Runtime database LOGIN roles; inject
+   secrets outside migration tooling. Create the historical Gateway role only
+   inside disposable migration-chain verification when 227_18 requires it.
 2. Apply migration 223. Verify all control switches are false and ACL tests
    pass.
 3. Run the Redis V3 capability probe.
@@ -192,10 +191,10 @@ installation, migration, service start or Owner switch.
 
 ## Rollback and recovery
 
-- **Model Gateway binary/unit rollback:** keep all production flags false,
-  drain without redispatching `dispatching` ambiguity, and restore only through
-  the release-bound env/unit journal. Preserve additive operation facts; the
-  227 rollback SQL is disposable/staging-only and must fail when facts exist.
+- **Runtime model rollback:** keep production flags false, drain without
+  redispatching `dispatching` ambiguity, and restore only through the
+  release-bound env/unit journal. Preserve ModelAttempt facts; 227_53 rollback
+  is disposable-only and fails when captured epoch facts exist.
 
 - **Migration rollback:** run the exact 223 rollback only before any Runtime,
   Authorization, Projection, Sandbox, heartbeat, capability or admin facts

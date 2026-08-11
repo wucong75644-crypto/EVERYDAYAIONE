@@ -10,7 +10,6 @@ from typing import Mapping, Protocol
 from services.agent.runtime.context import ProviderContextPlan
 from services.agent.runtime.domain import ModelStepId, StopReason
 from services.agent.runtime.domain.identity import require_stable_value
-from services.agent.runtime.ports.model_gateway import ModelGatewayDispatchBinding
 
 
 class ModelOutputKind(StrEnum):
@@ -178,6 +177,27 @@ class ModelResponseReceipt:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ModelExecutionBinding:
+    run_id: str
+    attempt_id: str
+    worker_id: str
+    execution_token: str
+    attempt_state_version: int
+
+    def __post_init__(self) -> None:
+        require_stable_value(self.run_id, "run_id")
+        require_stable_value(self.attempt_id, "attempt_id")
+        require_stable_value(self.worker_id, "worker_id")
+        require_stable_value(self.execution_token, "execution_token")
+        if (
+            isinstance(self.attempt_state_version, bool)
+            or not isinstance(self.attempt_state_version, int)
+            or self.attempt_state_version < 0
+        ):
+            raise ValueError("attempt_state_version must be non-negative")
+
+
+@dataclass(frozen=True, kw_only=True)
 class ModelStepRequest:
     model_step_id: ModelStepId
     model_id: str
@@ -189,9 +209,7 @@ class ModelStepRequest:
     tool_catalog_revision: str
     options: ModelRequestOptions
     org_id: str | None = None
-    # Durable, Secret-free Gateway identity is attached only after atomic
-    # dispatch and is never part of the frozen provider request hash.
-    gateway_binding: ModelGatewayDispatchBinding | None = field(
+    execution_binding: ModelExecutionBinding | None = field(
         default=None, repr=False, compare=False,
     )
 

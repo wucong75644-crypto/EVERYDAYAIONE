@@ -15,9 +15,6 @@ from services.agent.runtime.infrastructure.postgres.projection_recovery import (
 from services.agent.runtime.infrastructure.postgres.repository import (
     PostgresRuntimeRepository,
 )
-from services.agent.runtime.infrastructure.postgres.model_gateway import (
-    PostgresModelGatewayRepository,
-)
 from services.agent.runtime.infrastructure.postgres.sandbox_job_repository import (
     PostgresSandboxJobRepository,
 )
@@ -31,7 +28,6 @@ __all__ = [
     "PostgresActionAuthorizationRepository",
     "PostgresRuntimeEventStore",
     "PostgresRuntimeRepository",
-    "PostgresModelGatewayRepository",
     "PostgresSandboxJobRepository",
     "PostgresSpecialistRepository",
 ]

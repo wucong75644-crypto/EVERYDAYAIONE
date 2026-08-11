@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextlib import suppress
 from typing import Callable, Mapping, Protocol
 
@@ -18,6 +18,7 @@ from services.agent.runtime.ports.coordinator_recovery import (
 )
 from services.agent.runtime.ports.model import (
     ModelCallUnknownError,
+    ModelExecutionBinding,
     ModelOutputKind,
     ModelPort,
     ModelProviderError,
@@ -27,12 +28,6 @@ from services.agent.runtime.ports.model import (
 from services.agent.runtime.ports.model_attempt import (
     ModelAttemptOutcome,
     ModelAttemptRepositoryPort,
-)
-from services.agent.runtime.ports.model_gateway import (
-    ModelGatewayDispatchRepositoryPort,
-)
-from services.agent.runtime.application.model_gateway_dispatch import (
-    start_gateway_dispatch,
 )
 from services.agent.runtime.ports.repository import (
     MutationOutcome,
@@ -87,21 +82,16 @@ class ModelLoopDriver:
         recovery_repository: CoordinatorRecoveryPort,
         model: ModelPort, call_factory: ModelCallFactory,
         reconciler: ModelAttemptReconciler,
-        gateway_dispatch_repository: ModelGatewayDispatchRepositoryPort | None = None,
         attempt_lease_seconds: int = 120,
         attempt_renew_interval: float = 40.0,
     ) -> None:
         if attempt_renew_interval <= 0:
             raise ValueError("MODEL_ATTEMPT_RENEW_INTERVAL_MUST_BE_POSITIVE")
-        gateway_model = bool(getattr(model, "requires_gateway_dispatch", False))
-        if gateway_model != (gateway_dispatch_repository is not None):
-            raise ValueError("MODEL_GATEWAY_DISPATCH_CONFIGURATION_INVALID")
         self._runtime = runtime_repository
         self._attempts = attempt_repository
         self._actions = action_repository
         self._recovery = recovery_repository
         self._model = model
-        self._gateway_dispatch = gateway_dispatch_repository
         self._call_factory = call_factory
         self._reconciler = reconciler
         self._attempt_lease_seconds = attempt_lease_seconds
@@ -203,9 +193,10 @@ class ModelLoopDriver:
             attempt_token = str(attempt["execution_token"])
 
         dispatched = await self._start_dispatch(
-            snapshot=snapshot, plan=plan, request=request,
+            request=request,
             attempt_id=attempt_id, attempt_version=attempt_version,
             run_id=run_id, run_execution_token=run_execution_token,
+            worker_id=worker_id,
         )
         if dispatched is None:
             return None
@@ -217,31 +208,30 @@ class ModelLoopDriver:
         )
 
     async def _start_dispatch(
-        self, *, snapshot: RunAggregateSnapshot, plan: PreparedModelCall,
-        request: ModelStepRequest, attempt_id: str, attempt_version: int,
-        run_id: str, run_execution_token: str,
+        self, *, request: ModelStepRequest,
+        attempt_id: str, attempt_version: int,
+        run_id: str, run_execution_token: str, worker_id: str,
     ) -> tuple[ModelStepRequest, int] | None:
-        if self._gateway_dispatch is None:
-            dispatch = await self._attempts.start_dispatch(
-                attempt_id=attempt_id,
-                run_execution_token=run_execution_token,
-                expected_attempt_version=attempt_version,
-                request_hash=request.request_hash,
-            )
-            if dispatch.outcome not in {
-                ModelAttemptOutcome.DISPATCHING,
-                ModelAttemptOutcome.ALREADY_DISPATCHING,
-            }:
-                return None
-            return request, _required_int(
-                dispatch.state_version, "dispatch state_version",
-            )
-        return await start_gateway_dispatch(
-            self._gateway_dispatch, run=snapshot.run, plan=plan,
-            request=request, attempt_id=attempt_id,
-            attempt_version=attempt_version, run_id=run_id,
+        dispatch = await self._attempts.start_dispatch(
+            attempt_id=attempt_id,
             run_execution_token=run_execution_token,
+            expected_attempt_version=attempt_version,
+            request_hash=request.request_hash,
         )
+        if dispatch.outcome not in {
+            ModelAttemptOutcome.DISPATCHING,
+            ModelAttemptOutcome.ALREADY_DISPATCHING,
+        }:
+            return None
+        dispatch_version = _required_int(
+            dispatch.state_version, "dispatch state_version",
+        )
+        binding = ModelExecutionBinding(
+            run_id=run_id, attempt_id=attempt_id, worker_id=worker_id,
+            execution_token=run_execution_token,
+            attempt_state_version=dispatch_version,
+        )
+        return replace(request, execution_binding=binding), dispatch_version
 
     async def _dispatch(
         self, *, active: _ActiveModelCall, run_execution_token: str,

@@ -63,12 +63,13 @@ class PostgresModelAttemptRepository:
         expected_attempt_version: int, request_hash: str,
     ) -> ModelAttemptReceipt:
         return await self._mutation(
-            "start_model_attempt_dispatch", {
+            "start_model_attempt_dispatch_v2", {
                 "p_attempt_id": attempt_id,
                 "p_run_execution_token": run_execution_token,
                 "p_expected_attempt_version": expected_attempt_version,
                 "p_request_hash": request_hash,
             }, {
+                ModelAttemptOutcome.FENCED,
                 ModelAttemptOutcome.DISPATCHING,
                 ModelAttemptOutcome.ALREADY_DISPATCHING,
                 ModelAttemptOutcome.NOT_FOUND,

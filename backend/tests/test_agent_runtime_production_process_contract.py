@@ -82,8 +82,13 @@ def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
         if line.startswith("EnvironmentFile=")
     )
 
-    assert environment_files == ("/etc/everydayai/agent-runtime-worker.env",)
-    assert not (DEPLOY / "env-templates/agent-runtime-model.env.template").exists()
+    assert environment_files == (
+        "/etc/everydayai/agent-runtime-worker.env",
+        "/etc/everydayai/agent-runtime-model.env",
+    )
+    model_template = DEPLOY / "env-templates/agent-runtime-model.env.template"
+    assert model_template.exists()
+    assert "CONFIG_KEK_CURRENT_VERSION=" in model_template.read_text()
 
     worker_template = (
         DEPLOY / "env-templates/agent-runtime-worker.env.template"
@@ -92,7 +97,7 @@ def test_runtime_worker_environment_does_not_receive_provider_secrets() -> None:
         "KIE_API_KEY", "GOOGLE_API_KEY", "DASHSCOPE_API_KEY",
         "APP_OPENROUTER_API_KEY", "CONFIG_KEK", "credential",
     )
-    runtime_environment = f"{unit}\n{worker_template}".lower()
+    runtime_environment = worker_template.lower()
     assert not any(item.lower() in runtime_environment for item in forbidden)
     assert "class AgentRuntimeProcessSettings" in (
         ROOT / "backend" / "agent_runtime_worker_main.py"
@@ -182,7 +187,9 @@ async def test_runtime_worker_entry_cannot_promote_unwired_composition(tmp_path)
         sandbox_runtime_revision="sandbox-c7-b31",
     )
 
-    with pytest.raises(RuntimeError, match="RUNTIME_MODEL_GATEWAY_DISABLED"):
+    with pytest.raises(
+        RuntimeError, match="RUNTIME_MODEL_CONFIGURATION_NOT_READY",
+    ):
         await entrypoint._build_owner_and_cycle(
             "agent_runtime", DatabaseWithoutGateRead(), settings,
         )

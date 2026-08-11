@@ -1,4 +1,4 @@
-"""Failure matrix for the C7-BG5 five-env transaction."""
+"""Failure matrix for the single-Runtime four-env transaction."""
 
 from __future__ import annotations
 
@@ -15,14 +15,12 @@ PROVISIONER = ROOT / "deploy/provision-control-plane-worker-envs.py"
 RELEASE_SHA = "d" * 40
 ENV_NAMES = (
     "agent-runtime-worker.env",
-    "agent-model-gateway.env",
-    "agent-model-gateway-kek.env",
+    "agent-runtime-model.env",
     "agent-projection-worker.env",
     "agent-authorization-worker.env",
 )
 SECRETS = (
     "runtime!@:/?#[]%+ secret-0123456789",
-    "gateway!@:/?#[]%+ secret-0123456789",
     "projection!@:/?#[]%+ secret-0123456789",
     "authorization!@:/?#[]%+ secret-0123456789",
 )
@@ -40,7 +38,6 @@ def _sources(path: Path) -> None:
     path.mkdir()
     keys = (
         "EVERYDAYAI_AGENT_RUNTIME_WORKER_PASSWORD",
-        "EVERYDAYAI_AGENT_MODEL_GATEWAY_PASSWORD",
         "EVERYDAYAI_PROJECTION_WORKER_PASSWORD",
         "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD",
     )
@@ -77,15 +74,14 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     env_dir.mkdir()
     (env_dir / ENV_NAMES[0]).write_bytes(b"old-runtime\x00bytes\n")
     (env_dir / ENV_NAMES[0]).chmod(0o600)
-    (env_dir / ENV_NAMES[1]).write_bytes(b"old-gateway-db\n")
+    (env_dir / ENV_NAMES[1]).write_bytes(b"old-runtime-model\n")
     (env_dir / ENV_NAMES[1]).chmod(0o640)
-    (env_dir / ENV_NAMES[2]).write_bytes(b"old-gateway-kek\n")
+    (env_dir / ENV_NAMES[2]).write_bytes(b"old-projection\n")
     (env_dir / ENV_NAMES[2]).chmod(0o640)
-    (env_dir / ENV_NAMES[3]).write_bytes(b"old-projection\n")
+    (env_dir / ENV_NAMES[3]).write_bytes(b"old-authorization\n")
     (env_dir / ENV_NAMES[3]).chmod(0o640)
     uid, gid = os.getuid(), os.getgid()
     monkeypatch.setattr(module, "_resolve_owner", lambda _name=None: (uid, gid))
-    monkeypatch.setattr(module, "_runtime_uid", lambda: uid)
     monkeypatch.setattr(module, "_resolve_transaction_owner", lambda: (uid, gid))
     monkeypatch.setattr(module.os, "geteuid", lambda: 0)
     prepare = [
@@ -113,7 +109,7 @@ def _snapshot(env_dir: Path) -> dict[str, tuple[bytes, int, int, int] | None]:
     return result
 
 
-def test_gateway_targets_use_secret_gid_in_release_journal(
+def test_runtime_model_target_uses_secret_gid_in_release_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module, _, root, prepare, _ = _setup(tmp_path, monkeypatch)
@@ -124,18 +120,17 @@ def test_gateway_targets_use_secret_gid_in_release_journal(
         "_resolve_owner",
         lambda name=None: (
             uid,
-            secret_gid if name and name.startswith("agent-model-gateway") else app_gid,
+            secret_gid if name == "agent-runtime-model.env" else app_gid,
         ),
     )
     assert module.main(prepare) == 0
     journal = json.loads((root / RELEASE_SHA / "env-journal.json").read_text())
     published = {entry["name"]: entry["published"] for entry in journal["files"]}
-    assert published["agent-model-gateway.env"]["gid"] == secret_gid
-    assert published["agent-model-gateway-kek.env"]["gid"] == secret_gid
+    assert published["agent-runtime-model.env"]["gid"] == secret_gid
     assert published["agent-runtime-worker.env"]["gid"] == app_gid
 
 
-@pytest.mark.parametrize("failure_index", (1, 2, 3, 4, 5))
+@pytest.mark.parametrize("failure_index", (1, 2, 3, 4))
 def test_each_stage_failure_has_zero_target_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_index: int
 ) -> None:
@@ -160,7 +155,7 @@ def test_each_stage_failure_has_zero_target_writes(
     assert not (env_dir / "sandbox-worker.env").exists()
 
 
-@pytest.mark.parametrize("failure_index", (1, 2, 3, 4, 5))
+@pytest.mark.parametrize("failure_index", (1, 2, 3, 4))
 def test_each_publish_failure_restores_all_bytes_and_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_index: int
 ) -> None:
@@ -254,6 +249,20 @@ def test_kek_source_rejects_unapproved_key_before_transaction(
     assert not (root / RELEASE_SHA).exists()
 
 
+def test_legacy_gateway_env_blocks_transaction_before_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, env_dir, root, prepare, _ = _setup(tmp_path, monkeypatch)
+    legacy = env_dir / "agent-model-gateway-kek.env"
+    legacy.write_text("legacy-secret-material\n", encoding="utf-8")
+    before = _snapshot(env_dir)
+    with pytest.raises(module.ProvisioningError, match="legacy Model Gateway"):
+        module.main(prepare)
+    assert _snapshot(env_dir) == before
+    assert legacy.read_text(encoding="utf-8") == "legacy-secret-material\n"
+    assert not (root / RELEASE_SHA).exists()
+
+
 def test_kek_source_preserves_approved_rotation_keyring(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -267,7 +276,7 @@ def test_kek_source_preserves_approved_rotation_keyring(
     )
     module.main(prepare)
     module.main(command("publish"))
-    published = (env_dir / "agent-model-gateway-kek.env").read_text(encoding="utf-8")
+    published = (env_dir / "agent-runtime-model.env").read_text(encoding="utf-8")
     assert set(line.split("=", 1)[0] for line in published.splitlines()) == {
         "CONFIG_KEK_CURRENT_VERSION", "CONFIG_KEK_KEYRING_JSON",
     }

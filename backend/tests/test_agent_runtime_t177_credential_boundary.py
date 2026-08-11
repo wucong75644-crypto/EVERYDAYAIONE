@@ -45,9 +45,9 @@ def _request() -> ModelStepRequest:
 
 
 @pytest.mark.asyncio
-async def test_runtime_provider_builder_requires_gateway_composition() -> None:
+async def test_runtime_provider_builder_requires_configured_factory() -> None:
     adapter = ExistingProviderModelAdapter(db=object())
-    with pytest.raises(ValueError, match="RUNTIME_MODEL_GATEWAY_REQUIRED"):
+    with pytest.raises(ValueError, match="RUNTIME_MODEL_ADAPTER_FACTORY_REQUIRED"):
         await adapter._create_adapter(_request())
 
 
@@ -68,21 +68,20 @@ def test_runtime_credential_sources_are_not_imported_by_provider_boundary() -> N
         root / "composition.py",
     )
     forbidden = (
-        "AsyncSecretBundleResolver", "get_settings()", "provider_api_key",
+        "get_settings()", "provider_api_key",
         "get_oss_service", "OrgConfigResolver", "RedisClient",
     )
     for source in sources:
         text = source.read_text()
         assert not any(item in text for item in forbidden), source
     adapter_source = (root / "infrastructure/model/adapter.py").read_text()
-    assert "create_runtime_chat_adapter" not in adapter_source
+    assert "create_chat_adapter" not in adapter_source
     strict_sources = (
         root / "production_model.py", root / "production_factory.py",
-        root / "model_gateway/runtime_client.py",
     )
     strict_forbidden = (
         "CredentialBroker", "CredentialLease", "LocalKEKProvider",
-        "SecretMaterialService", "create_runtime_chat_adapter",
+        "create_chat_adapter",
     )
     for source in strict_sources:
         text = source.read_text()

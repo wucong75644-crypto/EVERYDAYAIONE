@@ -150,7 +150,7 @@ class PostgresModelCallFactory:
 async def retain_unknown_model_attempt(
     snapshot: RunAggregateSnapshot,
 ) -> None:
-    """No provider has a proven readback API; unknown is reconcile-only."""
+    """Keep direct model ambiguity durable and reconcile-only without churn."""
     del snapshot
 
 

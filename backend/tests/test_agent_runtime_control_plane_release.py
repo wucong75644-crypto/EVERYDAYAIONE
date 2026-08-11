@@ -1,4 +1,4 @@
-"""Outer release rollback contract for the C7-BG5 control plane."""
+"""Outer release rollback contract for the single-Runtime control plane."""
 from __future__ import annotations
 
 import os
@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy"
 RELEASE_SHA = "c" * 40
 SERVICES = (
-    "everydayai-agent-runtime", "everydayai-agent-model-gateway",
+    "everydayai-agent-runtime",
     "everydayai-agent-projection", "everydayai-agent-authorization",
 )
 
@@ -63,6 +63,8 @@ def _release_harness(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
     systemctl = fake_bin / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RELEASE_CALLS\"\n"
+        "if [ \"$2\" = everydayai-agent-model-gateway ]; then "
+        "[ \"$1\" = is-active ] && echo inactive || echo not-found; exit 0; fi\n"
         "if [ -f \"$INSTALL_MARKER\" ] && [ \"$1\" = is-active ]; then echo active; exit 0; fi\n"
         "if [ \"$1\" = is-active ]; then echo inactive; else echo disabled; fi\n",
         encoding="utf-8",

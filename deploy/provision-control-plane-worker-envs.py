@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the five flags-off control-plane environment files."""
+"""Provision the four flags-off control-plane environment files."""
 from __future__ import annotations
 import argparse
 import grp
@@ -25,14 +25,17 @@ except ModuleNotFoundError:
 RELEASE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 OWNER = "root"
 GROUP = "everydayai-app"
-GATEWAY_SECRET_GROUP = "everydayai-model-gateway-secret"
+RUNTIME_MODEL_SECRET_GROUP = "everydayai-runtime-model-secret"
 DEFAULT_TRANSACTION_ROOT = Path("/var/backups/everydayai/control-plane-updates")
 ENV_NAMES = (
     "agent-runtime-worker.env",
-    "agent-model-gateway.env",
-    "agent-model-gateway-kek.env",
+    "agent-runtime-model.env",
     "agent-projection-worker.env",
     "agent-authorization-worker.env",
+)
+LEGACY_ENV_NAMES = (
+    "agent-model-gateway.env",
+    "agent-model-gateway-kek.env",
 )
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -44,18 +47,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--transaction-root", type=Path, default=DEFAULT_TRANSACTION_ROOT)
     return parser.parse_args(argv)
 def _resolve_owner(name: str | None = None) -> tuple[int, int]:
-    group = GATEWAY_SECRET_GROUP if name and name.startswith("agent-model-gateway") else GROUP
+    group = RUNTIME_MODEL_SECRET_GROUP if name == "agent-runtime-model.env" else GROUP
     try:
         return pwd.getpwnam(OWNER).pw_uid, grp.getgrnam(group).gr_gid
     except KeyError as exc:
         raise ProvisioningError(f"缺少目标 owner/group: {OWNER}:{group}") from exc
-def _runtime_uid() -> int:
-    try:
-        return pwd.getpwnam("everydayai-agent-runtime").pw_uid
-    except KeyError as exc:
-        raise ProvisioningError("缺少 Runtime peer user") from exc
 def _target_identities() -> dict[str, tuple[int, int]]:
     return {name: _resolve_owner(name) for name in ENV_NAMES}
+
+
+def _reject_legacy_envs(env_dir: Path) -> None:
+    for name in LEGACY_ENV_NAMES:
+        path = env_dir / name
+        if path.exists() or path.is_symlink():
+            raise ProvisioningError("legacy Model Gateway env 必须先完成受审查退役")
 def _resolve_transaction_owner() -> tuple[int, int]:
     return 0, 0
 def _sha256(content: bytes) -> str:
@@ -272,7 +277,7 @@ def _prepare(
     rendered = {
         name: content.encode() for name, content in render_envs(
             backend, migrator["MIGRATION_DATABASE_URL"], args.release_sha,
-            _runtime_uid(), kek,
+            kek,
         ).items()
     }
     _ensure_transaction_root(args.transaction_root, tx_uid, tx_gid)
@@ -321,6 +326,7 @@ def _dispatch(args: argparse.Namespace) -> None:
         raise ProvisioningError("release revision 必须是 40 位小写 SHA")
     if not args.env_dir.is_dir() or args.env_dir.is_symlink():
         raise ProvisioningError(f"目标环境目录必须已存在: {args.env_dir}")
+    _reject_legacy_envs(args.env_dir)
     if os.geteuid() != 0:
         raise ProvisioningError("control-plane env transaction 必须以 root 执行")
     identities = _target_identities()

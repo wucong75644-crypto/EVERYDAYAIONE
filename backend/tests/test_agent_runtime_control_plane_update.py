@@ -18,13 +18,11 @@ RELEASE_SCRIPT = (DEPLOY / "release.sh").read_text(encoding="utf-8")
 RELEASE_SHA = "c" * 40
 SERVICES = (
     "everydayai-agent-runtime",
-    "everydayai-agent-model-gateway",
     "everydayai-agent-projection",
     "everydayai-agent-authorization",
 )
 SECRETS = {
     "EVERYDAYAI_AGENT_RUNTIME_WORKER_PASSWORD": "Agent!@:/?#[]%+ space-0123456789",
-    "EVERYDAYAI_AGENT_MODEL_GATEWAY_PASSWORD": "Gateway!@:/?#[]%+ space-0123456789",
     "EVERYDAYAI_PROJECTION_WORKER_PASSWORD": "Projection!@:/?#[]%+ space-0123456789",
     "EVERYDAYAI_AUTHORIZATION_WORKER_PASSWORD": "Authorization!@:/?#[]%+ space-0123456789",
 }
@@ -84,7 +82,6 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     query = _write_source_envs(backend_dir)
     uid, gid = os.getuid(), os.getgid()
     monkeypatch.setattr(provisioner, "_resolve_owner", lambda _name=None: (uid, gid))
-    monkeypatch.setattr(provisioner, "_runtime_uid", lambda: uid)
     monkeypatch.setattr(provisioner, "_resolve_transaction_owner", lambda: (uid, gid))
     monkeypatch.setattr(provisioner.os, "geteuid", lambda: 0)
     monkeypatch.setattr(provisioner.os, "chown", lambda path, owner, group: None)
@@ -105,34 +102,25 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
         assert secret not in argv
         assert secret not in output
     assert sorted(path.name for path in env_dir.iterdir()) == sorted((
-        "agent-runtime-worker.env", "agent-model-gateway.env",
-        "agent-model-gateway-kek.env", "agent-projection-worker.env",
+        "agent-runtime-worker.env", "agent-runtime-model.env",
+        "agent-projection-worker.env",
         "agent-authorization-worker.env",
     ))
     for path in env_dir.iterdir():
         assert path.stat().st_mode & 0o777 == 0o640
         assert (path.stat().st_uid, path.stat().st_gid) == (uid, gid)
         values = _read_env(path)
-        if path.name == "agent-model-gateway-kek.env":
+        if path.name == "agent-runtime-model.env":
             assert set(values) == {"CONFIG_KEK_CURRENT_VERSION", "CONFIG_KEK_KEYRING_JSON"}
             continue
-        release_key = ("AGENT_MODEL_GATEWAY_RELEASE_REVISION"
-                       if path.name == "agent-model-gateway.env"
-                       else "AGENT_RUNTIME_RELEASE_REVISION")
-        assert values[release_key] == RELEASE_SHA
-        dsn_key = ("AGENT_MODEL_GATEWAY_DATABASE_URL"
-                   if path.name == "agent-model-gateway.env" else "WORKER_DATABASE_URL")
-        dsn = values[dsn_key]
+        assert values["AGENT_RUNTIME_RELEASE_REVISION"] == RELEASE_SHA
+        dsn = values["WORKER_DATABASE_URL"]
         assert "@[::1]:5544/everydayai?" in dsn
         assert dsn.endswith(query)
         assert "%40%3A%2F%3F%23%5B%5D%25%2B%20space-" in dsn
     runtime = _read_env(env_dir / "agent-runtime-worker.env")
     projection = _read_env(env_dir / "agent-projection-worker.env")
     assert runtime["AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED"] == "false"
-    assert runtime["AGENT_RUNTIME_MODEL_GATEWAY_ENABLED"] == "false"
-    gateway = _read_env(env_dir / "agent-model-gateway.env")
-    assert gateway["AGENT_MODEL_GATEWAY_PRODUCTION_ENABLED"] == "false"
-    assert gateway["AGENT_MODEL_GATEWAY_RUNTIME_UID"] == str(uid)
     assert runtime["SANDBOX_RUNTIME_REVISION"] == "unprovisioned"
     assert projection["REDIS_HOST"] == "redis.internal"
     assert projection["REDIS_PASSWORD"] == "redis!secret#value"
@@ -157,6 +145,10 @@ def _write_fake_commands(fake_bin: Path, calls: Path) -> None:
     systemctl.write_text(
         "#!/bin/bash\n"
         "printf 'systemctl %s\\n' \"$*\" >> \"$CALLS\"\n"
+        "if [ \"$2\" = everydayai-agent-model-gateway ]; then "
+        "if [ \"${LEGACY_GATEWAY_INSTALLED:-false}\" = true ]; then "
+        "[ \"$1\" = is-active ] && echo inactive || echo disabled; "
+        "else [ \"$1\" = is-active ] && echo inactive || echo not-found; fi; exit 0; fi\n"
         "if [ \"$1\" = daemon-reload ]; then\n"
         "  count=0; test ! -f \"$RELOAD_COUNT\" || count=$(cat \"$RELOAD_COUNT\")\n"
         "  echo $((count + 1)) > \"$RELOAD_COUNT\"\n"
@@ -175,7 +167,7 @@ def _write_fake_env_tool(path: Path) -> None:
         "import argparse, os, pathlib, sys\n"
         "p=argparse.ArgumentParser(); p.add_argument('op'); p.add_argument('--env-dir'); "
         "p.add_argument('--release-sha'); p.add_argument('--transaction-root'); a=p.parse_args()\n"
-        "names=('agent-runtime-worker.env','agent-model-gateway.env','agent-model-gateway-kek.env','agent-projection-worker.env','agent-authorization-worker.env')\n"
+        "names=('agent-runtime-worker.env','agent-runtime-model.env','agent-projection-worker.env','agent-authorization-worker.env')\n"
         "root=pathlib.Path(a.transaction_root)/a.release_sha; env=pathlib.Path(a.env_dir); state=root/'fake-env-state'\n"
         "with open(os.environ['CALLS'],'a') as calls: calls.write('env '+a.op+'\\n')\n"
         "def same(x,y): return x.exists() and y.exists() and x.read_bytes()==y.read_bytes()\n"
@@ -211,8 +203,8 @@ def _unit_harness(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Pat
     new_env_dir.mkdir(mode=0o700)
     release_dir.chmod(0o700)
     for name in (
-        "agent-runtime-worker.env", "agent-model-gateway.env",
-        "agent-model-gateway-kek.env", "agent-projection-worker.env",
+        "agent-runtime-worker.env", "agent-runtime-model.env",
+        "agent-projection-worker.env",
         "agent-authorization-worker.env",
     ):
         (env_dir / name).write_text(f"old:{name}\n", encoding="utf-8")
@@ -286,6 +278,17 @@ def test_review_manifest_content_is_never_logged(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert marker not in result.stdout + result.stderr
     assert not (backup_root / RELEASE_SHA / "units").exists()
+
+
+def test_installed_legacy_gateway_blocks_update_before_writes(tmp_path: Path) -> None:
+    env, _, target_dir, backup_root, manifest = _unit_harness(tmp_path)
+    env["LEGACY_GATEWAY_INSTALLED"] = "true"
+    before = {path.name: path.read_bytes() for path in target_dir.iterdir()}
+    result = _run_updater(env, manifest)
+    assert result.returncode != 0
+    assert "legacy Model Gateway" in result.stderr
+    assert {path.name: path.read_bytes() for path in target_dir.iterdir()} == before
+    assert not (backup_root / RELEASE_SHA / "units").exists()
 @pytest.mark.parametrize("mutation", ("missing", "extra", "duplicate"))
 def test_manifest_missing_extra_or_duplicate_is_rejected_before_writes(
     tmp_path: Path, mutation: str,
@@ -326,8 +329,8 @@ def test_all_units_are_backed_up_before_any_atomic_replacement(tmp_path: Path) -
     ]
     replace_calls = [index for index, call in enumerate(calls) if ".c7-" in call]
     publish_call = calls.index("env publish")
-    assert len(backup_calls) >= 4
-    assert max(backup_calls[:4]) < publish_call < min(replace_calls)
+    assert len(backup_calls) >= 3
+    assert max(backup_calls[:3]) < publish_call < min(replace_calls)
     for service in SERVICES:
         assert (target_dir / f"{service}.service").read_bytes() == (
             source_dir / f"{service}.service"
@@ -387,8 +390,8 @@ def test_update_failure_restores_all_reviewed_units(
     assert all((backup_root / RELEASE_SHA / "units" / name).exists() for name in before)
     env_dir = Path(env["CONTROL_PLANE_ENV_DIR"])
     assert all((env_dir / name).read_text().startswith("old:") for name in (
-        "agent-runtime-worker.env", "agent-model-gateway.env",
-        "agent-model-gateway-kek.env", "agent-projection-worker.env",
+        "agent-runtime-worker.env", "agent-runtime-model.env",
+        "agent-projection-worker.env",
         "agent-authorization-worker.env",
     ))
     if failure not in {"env-postcheck", SERVICES[0]}:
