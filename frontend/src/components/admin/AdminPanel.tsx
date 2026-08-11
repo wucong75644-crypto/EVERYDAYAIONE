@@ -15,11 +15,12 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import SuperAdminPanel from './SuperAdminPanel';
 import OrgManagePanel from './OrgManagePanel';
 import KuaimaiIntegrationPanel from '../integrations/KuaimaiIntegrationPanel';
+import RuntimeAdminPanel from './runtime/RuntimeAdminPanel';
 
 const ErrorMonitorPanel = lazy(() => import('./ErrorMonitorPanel'));
 const UserManagePanel = lazy(() => import('./UserManagePanel'));
 
-type Tab = 'platform' | 'org' | 'monitoring' | 'kuaimai' | 'users';
+type Tab = 'platform' | 'org' | 'monitoring' | 'runtime' | 'kuaimai' | 'users';
 
 
 export default function AdminPanel() {
@@ -33,6 +34,7 @@ export default function AdminPanel() {
     { key: 'users', label: '用户管理', visible: isSuperAdmin },
     { key: 'org', label: '企业管理', visible: isOrgAdmin || isSuperAdmin },
     { key: 'monitoring', label: '系统监控', visible: isSuperAdmin },
+    { key: 'runtime', label: 'Runtime 运维', visible: isSuperAdmin },
     { key: 'kuaimai', label: '🔗 快麦接入', visible: isOrgAdmin },
   ];
   const visibleTabs = tabs.filter((t) => t.visible);
@@ -88,6 +90,7 @@ export default function AdminPanel() {
             <ErrorMonitorPanel />
           </Suspense>
         )}
+        {activeTab === 'runtime' && isSuperAdmin && <RuntimeAdminPanel />}
         {activeTab === 'kuaimai' && isOrgAdmin && (
           <KuaimaiIntegrationPanel />
         )}
