@@ -27,6 +27,11 @@
     - **文件存储**：阿里云OSS（图片/视频存储 + CDN）
     - **实时通信**：Supabase Realtime（替代Socket.io）
 
+Agent Runtime 单一运行时收敛：
+- `docs/document/TECH_AGENT_RUNTIME_SINGLE_RUNTIME_CONVERGENCE.md`：冻结最终唯一
+  ModelLoop/ActionLoop Owner、现有业务能力薄适配、平行配置/事实/Worker 删除边界，
+  以及模型、ERP/Media、Scheduler/WeCom、Ingress、数据库和发布的实施顺序。
+
 ## 核心功能
 - **多对话管理**：用户可创建多个AI对话，支持重命名、删除、搜索
 - **多任务并发**：全局最多15个任务同时执行，单对话最多5个任务
