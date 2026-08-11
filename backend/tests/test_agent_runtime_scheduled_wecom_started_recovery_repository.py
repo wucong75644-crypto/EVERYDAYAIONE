@@ -130,6 +130,41 @@ async def test_started_recovery_empty_is_none() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("worker_id", ("", " ", f" {WORKER}", f"{WORKER} ", "w" * 129))
+async def test_started_recovery_rejects_invalid_worker_before_rpc(
+    worker_id: str,
+) -> None:
+    database = _Database(_recovery())
+    with pytest.raises(
+        PersistenceContractError,
+        match="SCHEDULED_WECOM_STARTED_RECOVERY_CONTRACT_INVALID:recovery_worker_id",
+    ):
+        await PostgresScheduledWecomDeliveryRepository(database).recover_started(
+            request_id=REQUEST, worker_id=worker_id,
+        )
+    assert database.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_id",
+    ("", "not-a-uuid", f" {REQUEST}", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"),
+)
+async def test_started_recovery_rejects_noncanonical_request_before_rpc(
+    request_id: str,
+) -> None:
+    database = _Database(_recovery())
+    with pytest.raises(
+        PersistenceContractError,
+        match="SCHEDULED_WECOM_STARTED_RECOVERY_CONTRACT_INVALID:request_id",
+    ):
+        await PostgresScheduledWecomDeliveryRepository(database).recover_started(
+            request_id=request_id, worker_id=WORKER,
+        )
+    assert database.calls == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mutation", "value"),
     (

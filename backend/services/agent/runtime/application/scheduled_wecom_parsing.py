@@ -77,6 +77,26 @@ def _timestamp(row: Mapping[str, Any], field: str) -> datetime:
     return value
 
 
+def validate_started_recovery_request(
+    request_id: str, worker_id: str,
+) -> tuple[str, str]:
+    """Validate the exact stable identity before the mutating 227_48 RPC."""
+    if not isinstance(request_id, str) or request_id != request_id.strip():
+        raise _fail("request_id")
+    try:
+        normalized_request = str(UUID(request_id))
+    except ValueError as exc:
+        raise _fail("request_id") from exc
+    if request_id != normalized_request:
+        raise _fail("request_id")
+    if (
+        not isinstance(worker_id, str) or worker_id != worker_id.strip()
+        or not 1 <= len(worker_id) <= 128
+    ):
+        raise _fail("recovery_worker_id")
+    return normalized_request, worker_id
+
+
 def parse_started_recovery(
     raw: object, *, request_id: str, worker_id: str,
 ) -> StartedRecoveryResult | None:
@@ -94,11 +114,10 @@ def parse_started_recovery(
 
     returned_request = _uuid(raw, "request_id")
     returned_worker = _text(raw, "recovery_worker_id", maximum=128)
-    try:
-        expected_request = str(UUID(request_id))
-    except ValueError as exc:
-        raise _fail("request_id") from exc
-    if returned_request != expected_request or returned_worker != worker_id:
+    expected_request, expected_worker = validate_started_recovery_request(
+        request_id, worker_id,
+    )
+    if returned_request != expected_request or returned_worker != expected_worker:
         raise _fail("started_recovery_identity_changed")
 
     result = StartedRecoveryResult(
