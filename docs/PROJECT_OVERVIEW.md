@@ -277,6 +277,15 @@ Agent Runtime S2-TAB-A 资源清单边界：
 - Runtime Worker 只有窄 RPC EXECUTE 权限且无附件表直权；当前批次尚未注册
   `file_analyze`，真实分析、Artifact materialization、Catalog release 留在后续小批次。
 
+Agent Runtime S2-TAB-B1 文件分析与 ERP 分页适配边界：
+- `backend/services/agent/runtime/executors/data_adapters.py` 通过 TAB-A 冻结资源清单调用
+  既有 `file_analyze`，并通过请求级 ERP dispatcher 调用既有只读分页逻辑；两者均不建立
+  第二套文件、表格或 ERP 体系。
+- 文件分析只允许清单内路径，暂不接受尚未证明可安全传递的 `sheet` 参数；分页保留脱敏的
+  partial failure 证据且不会把自然结束误报为截断。
+- 本批次未修改 Catalog/production composition，`local_data` 仍等待窄、fenced 数据库 facade，
+  因此三项能力尚未作为 production Runtime 工具启用。
+
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
   增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用

@@ -60,6 +60,8 @@ async def paginate_erp(
 
     params = params or {}
     all_items: list = []
+    partial_failure_page: int | None = None
+    last_page_count = 0
     page = 0
     page_size = int(params.get("page_size", 100))
     api_total = None
@@ -80,6 +82,7 @@ async def paginate_erp(
 
         if "error" in data:
             if all_items:
+                partial_failure_page = page
                 logger.warning(
                     f"paginate_erp partial | page={page} | error={data['error']}"
                 )
@@ -97,6 +100,7 @@ async def paginate_erp(
                     pass
 
         items, _key = extract_list(data)
+        last_page_count = len(items)
         all_items.extend(items)
 
         if len(items) < page_size:
@@ -110,6 +114,14 @@ async def paginate_erp(
     result: Dict[str, Any] = {"list": all_items, "total": len(all_items)}
     if api_total is not None:
         result["api_total"] = api_total
-    if page >= max_pages:
-        result["warning"] = f"已达翻页上限({max_pages}页)，数据可能不完整"
+    if partial_failure_page is not None:
+        result["warning"] = "ERP pagination stopped after a provider error"
+        result["partial_error"] = {
+            "error_code": "ERP_PAGE_PROVIDER_PARTIAL",
+            "failed_page": partial_failure_page,
+        }
+    if page >= max_pages and last_page_count >= page_size:
+        result["warning"] = result.get("warning") or (
+            f"已达翻页上限({max_pages}页)，数据可能不完整"
+        )
     return result

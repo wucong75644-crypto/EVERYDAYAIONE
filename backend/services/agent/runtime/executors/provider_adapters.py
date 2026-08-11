@@ -31,6 +31,10 @@ class ProviderTransport(Protocol):
 class ErpDispatcherPort(Protocol):
     async def execute(self, tool_name: str, action: str, params: dict[str, object]) -> object: ...
 
+    async def execute_raw(
+        self, tool_name: str, action: str, params: dict[str, object],
+    ) -> dict[str, object]: ...
+
     async def close(self) -> None: ...
 
 
@@ -327,9 +331,20 @@ class LocalArtifactProvider(SpecialistProvider):
     port: ArtifactPort
     operation: str
 
+    @property
+    def requires_dispatch_context(self) -> bool:
+        return True
+
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
         result = await self.port.prepare(attempt, {**request, "operation": self.operation, "idempotency_key": idempotency_key})
-        return ProviderReceipt(state=ProviderState.COMPLETED, provider="artifact", request_hash=attempt.request_hash, result=result)
+        failed = str(result.get("status", "")).lower() in {
+            "error", "rejected", "timeout",
+        }
+        return ProviderReceipt(
+            state=ProviderState.FAILED if failed else ProviderState.COMPLETED,
+            provider="artifact", request_hash=attempt.request_hash,
+            result=result,
+        )
 
     async def reconcile(self, attempt: ActionAttempt, receipt: Mapping[str, object]) -> ProviderReceipt:
         return _unknown("artifact", attempt.request_hash, "ARTIFACT_RECONCILE_UNAVAILABLE")

@@ -30,6 +30,10 @@ class RuntimeResourceManifest:
     source: str
     assets: tuple[RuntimeResourceAsset, ...]
 
+    @property
+    def allowed_paths(self) -> frozenset[str]:
+        return frozenset(asset.workspace_path for asset in self.assets)
+
     def resolve_file(self, request: Mapping[str, object]) -> RuntimeResourceAsset:
         file_id = _optional_text(request.get("file_id"))
         path = _optional_text(request.get("path"))
