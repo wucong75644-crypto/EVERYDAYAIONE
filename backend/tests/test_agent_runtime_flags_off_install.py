@@ -39,6 +39,8 @@ def _write_backend_envs(directory: Path) -> None:
         ".env.wecom-runtime": (
             "DATABASE_URL=postgresql://everydayai_wecom_runtime:wecom-secret@localhost/db\n"
             "AGENT_RUNTIME_INGRESS_ENABLED=false\n"
+            "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false\n"
+            "AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID=scheduled-wecom-01\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3\n"
         ),
@@ -475,8 +477,12 @@ def test_flags_off_deploy_route_rejects_other_modes_before_release_checks() -> N
 
 def test_flags_off_templates_and_projection_dependency_are_pinned() -> None:
     sandbox = (DEPLOY / "env-templates/sandbox-worker.env.template").read_text()
+    wecom_runtime = (
+        DEPLOY / "env-templates/wecom-runtime.env.template"
+    ).read_text()
     projection = (DEPLOY / "everydayai-agent-projection.service").read_text()
 
     assert "AGENT_RUNTIME_RELEASE_REVISION=<git-sha>" in sandbox
+    assert "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false" in wecom_runtime
     assert "redis.service" in projection
     assert "redis-server.service" not in projection

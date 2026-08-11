@@ -163,6 +163,8 @@ runtime_keys=(
 wecom_runtime_keys=(
     DATABASE_URL
     AGENT_RUNTIME_INGRESS_ENABLED
+    AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED
+    AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID
     AGENT_RUNTIME_AGENT_DEFINITION_ID
     AGENT_RUNTIME_AGENT_DEFINITION_REVISION
 )
@@ -213,6 +215,8 @@ if [ "$validation_mode" = runtime-flags-off-v3 ]; then
         AGENT_RUNTIME_AGENT_DEFINITION_ID everydayai-default
     require_exact_value "$runtime_path" AGENT_RUNTIME_AGENT_DEFINITION_REVISION v3
     require_exact_value "$wecom_runtime_path" AGENT_RUNTIME_INGRESS_ENABLED false
+    require_exact_value \
+        "$wecom_runtime_path" AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED false
     require_exact_value "$wecom_runtime_path" \
         AGENT_RUNTIME_AGENT_DEFINITION_ID everydayai-default
     require_exact_value "$wecom_runtime_path" \

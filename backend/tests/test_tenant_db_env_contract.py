@@ -26,6 +26,8 @@ def _write_env_files(directory: Path) -> None:
             "DATABASE_URL=postgresql://everydayai_wecom_runtime:"
             "wecom-runtime-secret@localhost/everydayai\n"
             "AGENT_RUNTIME_INGRESS_ENABLED=false\n"
+            "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false\n"
+            "AGENT_RUNTIME_SCHEDULED_WECOM_WORKER_ID=scheduled-wecom-01\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_ID=everydayai-default\n"
             "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3"
         ),
@@ -120,6 +122,9 @@ def test_role_env_templates_are_safe_placeholders() -> None:
     assert "AGENT_RUNTIME_AGENT_DEFINITION_REVISION=v3" in (
         TEMPLATES / "wecom-runtime.env.template"
     ).read_text(encoding="utf-8")
+    assert "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED=false" in (
+        TEMPLATES / "wecom-runtime.env.template"
+    ).read_text(encoding="utf-8")
 
 
 def test_role_env_contract_accepts_isolated_role_files(tmp_path: Path) -> None:
@@ -148,6 +153,7 @@ def test_flags_off_v3_contract_accepts_exact_runtime_files(tmp_path: Path) -> No
         (".env.runtime", "AGENT_RUNTIME_INGRESS_ENABLED"),
         (".env.runtime", "TOOL_CONFIRMATION_V3_ENABLED"),
         (".env.wecom-runtime", "AGENT_RUNTIME_INGRESS_ENABLED"),
+        (".env.wecom-runtime", "AGENT_RUNTIME_SCHEDULED_WECOM_ENABLED"),
     ),
 )
 def test_flags_off_v3_contract_rejects_every_enabled_switch(
