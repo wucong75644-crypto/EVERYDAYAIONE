@@ -131,6 +131,8 @@ class RuntimeStatusSnapshot:
             payload, control, production, claim_gate, workers, domains,
             _capabilities(payload, supplied), owner_transition,
         )
+        if tenant_control.state is RuntimeStatusState.UNAVAILABLE and tenant_control.error_code:
+            reasons.append(tenant_control.error_code)
         return cls(
             tenant_id=tenant,
             composition=_composition(payload), workers=workers,
@@ -208,6 +210,8 @@ def _claim_gate(control: Mapping[str, object]) -> DomainStatus:
 
 
 def _tenant_control(control: Mapping[str, object]) -> DomainStatus:
+    if control.get("tenant_gate_unavailable") is True:
+        return _unavailable("TENANT_GATE_STATUS_UNAVAILABLE")
     if not control:
         return _unavailable("RUNTIME_CONTROL_STATUS_UNAVAILABLE")
     summary = _safe_summary(control)

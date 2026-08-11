@@ -85,6 +85,11 @@ def test_super_admin_gets_all_read_models_and_tenant_scope(monkeypatch):
 
     admin_db = FakeAdminDb([
         _status_payload(),
+        {"outcome": "found", "org_id": ORG_ID, "controls": [{
+            "gate_scope": "tenant", "scope_key": "tenant",
+            "ingress_blocked": False, "claim_blocked": False,
+            "dispatch_blocked": False, "kill_epoch": 4, "state_version": 7,
+        }]},
         {"outcome": "readback", "org_id": ORG_ID, "items": []},
         {"outcome": "readback", "org_id": ORG_ID, "items": []},
         {"outcome": "readback", "org_id": ORG_ID, "cost_ledger": [], "side_effect_ledger": []},
@@ -106,18 +111,61 @@ def test_super_admin_gets_all_read_models_and_tenant_scope(monkeypatch):
 
     assert [name for name, _ in admin_db.calls] == [
         "get_agent_runtime_admin_status",
+        "get_agent_runtime_tenant_gate_status",
         "list_agent_runtime_provider_operations",
         "list_agent_runtime_recovery_snapshot",
         "get_agent_runtime_cost_side_effect_snapshot",
     ]
-    assert admin_db.calls[1][1]["p_org_id"] == ORG_ID
     assert admin_db.calls[2][1]["p_org_id"] == ORG_ID
     assert admin_db.calls[3][1]["p_org_id"] == ORG_ID
+    assert admin_db.calls[4][1]["p_org_id"] == ORG_ID
+    assert admin_db.calls[1][1] == {"p_org_id": ORG_ID}
     assert scopes[0] == (ADMIN_ID, ORG_ID, "read-status")
     assert all(scope[1] == ORG_ID for scope in scopes)
     rendered = repr(admin_db.calls)
     assert "token" not in rendered.lower()
     assert "payload" not in rendered.lower()
+
+
+def test_status_exposes_tenant_gate_block_and_epoch(monkeypatch):
+    from api.routes import runtime_admin
+
+    admin_db = FakeAdminDb([
+        _status_payload(),
+        {"outcome": "found", "org_id": ORG_ID, "controls": [{
+            "gate_scope": "tenant", "scope_key": "tenant",
+            "ingress_blocked": False, "claim_blocked": True,
+            "dispatch_blocked": True, "kill_epoch": 9, "state_version": 12,
+        }]},
+    ])
+    monkeypatch.setattr(runtime_admin, "_admin_db", lambda *_args: admin_db)
+    client = TestClient(_build_app(FakeAuthDb("super_admin"), ADMIN_ID))
+    response = client.get(
+        "/api/admin/agent-runtime/status",
+        params={"org_id": ORG_ID}, headers={"Idempotency-Key": "read-status"},
+    )
+    assert response.status_code == 200
+    tenant = response.json()["snapshot"]["tenant_control"]
+    assert tenant["state"] == "degraded"
+    assert tenant["summary"]["gate_blocked"] is True
+    assert tenant["summary"]["kill_epoch"] == 9
+    assert tenant["summary"]["state_version"] == 12
+
+
+def test_status_fails_closed_when_tenant_gate_read_fails(monkeypatch):
+    from api.routes import runtime_admin
+
+    admin_db = FakeAdminDb([_status_payload(), RuntimeError("gate unavailable")])
+    monkeypatch.setattr(runtime_admin, "_admin_db", lambda *_args: admin_db)
+    client = TestClient(_build_app(FakeAuthDb("super_admin"), ADMIN_ID))
+    response = client.get(
+        "/api/admin/agent-runtime/status",
+        params={"org_id": ORG_ID}, headers={"Idempotency-Key": "read-status"},
+    )
+    assert response.status_code == 200
+    tenant = response.json()["snapshot"]["tenant_control"]
+    assert tenant["state"] == "unavailable"
+    assert tenant["error_code"] == "TENANT_GATE_STATUS_UNAVAILABLE"
 
 
 def test_non_super_admin_is_denied_before_runtime_rpc(monkeypatch):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import Mapping
 from typing import Literal
 from uuid import UUID
 
@@ -90,6 +91,38 @@ def _admin_db(user_id: str, org_id: str | None, request_id: str):
     )
 
 
+def _tenant_gate_projection(value: object) -> dict[str, object]:
+    """Project the tenant-scoped gate without treating missing data as open."""
+    if not isinstance(value, Mapping):
+        return {"tenant_gate_unavailable": True}
+    controls = value.get("controls")
+    if not isinstance(controls, list):
+        return {"tenant_gate_unavailable": True}
+    tenant = next(
+        (
+            row for row in controls
+            if isinstance(row, Mapping)
+            and row.get("gate_scope") == "tenant"
+            and row.get("scope_key") == "tenant"
+        ),
+        None,
+    )
+    if not isinstance(tenant, Mapping):
+        return {"tenant_gate_unavailable": True}
+    blocked = any(bool(tenant.get(key)) for key in (
+        "ingress_blocked", "claim_blocked", "dispatch_blocked",
+    ))
+    return {
+        "gate_blocked": blocked,
+        "kill_switch_active": blocked,
+        "kill_epoch": tenant.get("kill_epoch"),
+        "state_version": tenant.get("state_version"),
+        "ingress_blocked": bool(tenant.get("ingress_blocked")),
+        "claim_blocked": bool(tenant.get("claim_blocked")),
+        "dispatch_blocked": bool(tenant.get("dispatch_blocked")),
+    }
+
+
 @router.get("/status")
 async def runtime_status(
     user_id: CurrentUserId,
@@ -98,13 +131,31 @@ async def runtime_status(
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ) -> dict:
     _require_super_admin(user_id, db)
-    response = _admin_db(
+    admin_db = _admin_db(
         user_id, str(org_id), idempotency_key,
-    ).rpc("get_agent_runtime_admin_status", {}).execute()
+    )
+    response = admin_db.rpc("get_agent_runtime_admin_status", {}).execute()
+    payload = response.data
+    try:
+        gate_response = admin_db.rpc(
+            "get_agent_runtime_tenant_gate_status",
+            {"p_org_id": str(org_id)},
+        ).execute()
+        gate_projection = _tenant_gate_projection(gate_response.data)
+    except Exception:
+        gate_projection = {"tenant_gate_unavailable": True}
+    if isinstance(payload, Mapping):
+        payload_for_snapshot = dict(payload)
+        payload_for_snapshot["control"] = {
+            **(payload.get("control") if isinstance(payload.get("control"), Mapping) else {}),
+            **gate_projection,
+        }
+    else:
+        payload_for_snapshot = payload
     snapshot = RuntimeStatusSnapshot.from_admin_payload(
-        response.data, tenant_id=str(org_id),
+        payload_for_snapshot, tenant_id=str(org_id),
     ).to_dict()
-    return {"success": True, "data": response.data, "snapshot": snapshot}
+    return {"success": True, "data": payload, "snapshot": snapshot}
 
 
 @router.get("/provider-operations")

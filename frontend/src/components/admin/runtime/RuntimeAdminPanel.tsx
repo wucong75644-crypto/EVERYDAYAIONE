@@ -70,13 +70,22 @@ function countByState(items: Array<{ state?: string }>): Record<string, number> 
   }, {});
 }
 
+function countByDomain(items: Array<{ recovery_domain?: string }>): Record<string, number> {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    const domain = item.recovery_domain || 'unknown';
+    counts[domain] = (counts[domain] || 0) + 1;
+    return counts;
+  }, {});
+}
+
 function RuntimeSnapshotView({ snapshot }: { snapshot: RuntimeAdminSnapshot }) {
   const { status } = snapshot;
   const control = status.tenant_control.summary;
   const projection = status.projection.summary;
   const unknown = status.submissions.summary;
   const operationCounts = countByState(snapshot.providerOperations);
-  const recoveryCounts = countByState(snapshot.recovery);
+  const recoveryCounts = countByDomain(snapshot.recovery);
+  const tenantGateUnavailable = status.tenant_control.state === 'unavailable';
 
   return (
     <div className="space-y-4">
@@ -103,7 +112,7 @@ function RuntimeSnapshotView({ snapshot }: { snapshot: RuntimeAdminSnapshot }) {
 
         <Section title="租户 / Provider / Capability 控制" status={status.tenant_control}>
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <Metric label="租户状态" value={control.gate_blocked ? '已阻断' : '允许'} />
+            <Metric label="租户状态" value={tenantGateUnavailable ? '不可用' : control.gate_blocked ? '已阻断' : '允许'} />
             <Metric label="控制版本" value={control.state_version} />
             <Metric label="Provider epoch" value={control.provider_kill_epoch} />
             <Metric label="Capability epoch" value={control.capability_kill_epoch} />
@@ -121,7 +130,7 @@ function RuntimeSnapshotView({ snapshot }: { snapshot: RuntimeAdminSnapshot }) {
         <Section title="恢复快照">
           <div className="grid grid-cols-2 gap-2 text-sm">
             {(['artifact', 'workspace', 'scheduler', 'child_run', 'sandbox'] as const).map((domain) => (
-              <div key={domain} className="flex justify-between rounded bg-hover/60 px-3 py-2">
+              <div key={domain} data-testid={`recovery-count-${domain}`} className="flex justify-between rounded bg-hover/60 px-3 py-2">
                 <span>{domain}</span><span className="font-medium">{recoveryCounts[domain] ?? 0}</span>
               </div>
             ))}

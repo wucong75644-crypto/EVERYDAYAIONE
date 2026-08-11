@@ -65,6 +65,19 @@ describe('RuntimeAdminPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Runtime 运维数据暂时不可用');
   });
 
+  it('renders tenant gate blocked state and aggregates recovery by domain', async () => {
+    const blocked = snapshot('org-a');
+    blocked.status.tenant_control = {
+      state: 'degraded', summary: { gate_blocked: true, kill_epoch: 9, state_version: 12 },
+    };
+    mockedSnapshot.mockResolvedValue(blocked);
+    render(<RuntimeAdminPanel />);
+    expect(await screen.findByText('已阻断')).toBeInTheDocument();
+    expect(screen.getByText('9')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByTestId('recovery-count-sandbox')).toHaveTextContent('1');
+  });
+
   it('ignores stale tenant responses after switching enterprise', async () => {
     let resolveA!: (value: ReturnType<typeof snapshot>) => void;
     const first = new Promise<ReturnType<typeof snapshot>>((resolve) => { resolveA = resolve; });
