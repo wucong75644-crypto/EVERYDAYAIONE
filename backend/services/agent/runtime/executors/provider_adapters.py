@@ -35,7 +35,9 @@ class ErpDispatcherPort(Protocol):
 
 
 class ErpDispatcherFactoryPort(Protocol):
-    async def create(self, scope: RuntimeScope) -> ErpDispatcherPort: ...
+    async def create(
+        self, attempt: ActionAttempt, request: Mapping[str, object],
+    ) -> ErpDispatcherPort: ...
 
 
 class HttpProviderTransport:
@@ -221,6 +223,8 @@ class _HTTPProvider(SpecialistProvider):
 
 
 class ERPQueryProvider(_HTTPProvider):
+    requires_dispatch_context = True
+
     def __init__(
         self, dispatcher: ErpDispatcherPort | None = None, *, tool_name: str,
         write: bool = False, dispatcher_factory: ErpDispatcherFactoryPort | None = None,
@@ -236,13 +240,23 @@ class ERPQueryProvider(_HTTPProvider):
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
         action = request.get("action")
         if not isinstance(action, str) or not _valid_erp_action(self.tool_name, action, write=self.write):
-            return _unknown("erp", attempt.request_hash, "ERP_ACTION_NOT_REGISTERED")
+            return _provider_failed(
+                "erp", attempt.request_hash, "ERP_ACTION_NOT_REGISTERED",
+            )
         dispatcher = self.dispatcher
         owned = False
         if self.dispatcher_factory is not None and not self.write:
             if not attempt.scope.org_id:
                 raise ValueError("ERP_ORG_SCOPE_REQUIRED")
-            dispatcher = await self.dispatcher_factory.create(attempt.scope)
+            try:
+                dispatcher = await self.dispatcher_factory.create(
+                    attempt, request,
+                )
+            except Exception:
+                return _provider_failed(
+                    "erp", attempt.request_hash,
+                    "ERP_CONFIGURATION_UNAVAILABLE",
+                )
             owned = True
         if dispatcher is None:
             raise RuntimeError("ERP_DISPATCHER_NOT_READY")
@@ -390,6 +404,15 @@ def _object(value: object) -> dict[str, object]:
 
 def _unknown(provider: str, request_hash_value: str, code: str) -> ProviderReceipt:
     return ProviderReceipt(state=ProviderState.UNKNOWN, provider=provider, request_hash=request_hash_value, evidence={"error_code": code})
+
+
+def _provider_failed(
+    provider: str, request_hash_value: str, code: str,
+) -> ProviderReceipt:
+    return ProviderReceipt(
+        state=ProviderState.FAILED, provider=provider,
+        request_hash=request_hash_value, evidence={"error_code": code},
+    )
 
 
 def _has_provider_identity(receipt: Mapping[str, object]) -> bool:

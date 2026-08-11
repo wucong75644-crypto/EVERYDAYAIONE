@@ -2067,7 +2067,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `build_agent_runtime_production_components` / `ProductionCompositionNotReady` | `backend/services/agent/runtime/production_factory.py` | Runtime Worker 唯一 code-owned 生产组装入口；真实安全服务未接线时返回携带强类型 readiness 的结构化失败 |
 | `build_safe_runtime_components` | `backend/services/agent/runtime/composition.py` | 不启动 Worker 的 safe Runtime read/model/action 基础接线；不接 provider-dependent 能力 |
 | `CapabilityReadiness` / `RuntimeAssemblyReadiness` | `backend/services/agent/runtime/runtime_assembly.py` | 区分 capability ready、unavailable、disabled 与整体 production readiness |
-| `build_safe_runtime_composition` | `backend/services/agent/runtime/production_composition.py` | 只从真实 Runtime read registry 构造 safe composition，ERP write/Media/external specialist 不注册 |
+| `build_safe_runtime_composition` | `backend/services/agent/runtime/production_composition.py` | 从真实 Runtime read registry 构造 safe composition；显式提供企业 ERP factory 时仅增加六项 ERP Read，ERP Write/Sync、淘宝奇门、Media 不注册 |
 | `PostgresModelCallFactory` | `backend/services/agent/runtime/production_model.py` | 从 fenced PostgreSQL 上下文冻结模型选择、ContextPlan、request hash、非 Secret provider revision/purpose 与确定性 Action；不获取 credential material |
 | `agent_runtime_worker_main.main` | `backend/agent_runtime_worker_main.py` | Worker gate、Unix health、heartbeat、drain 与 shutdown |
 | `AgentRuntimeProcessSettings` / `_load_process_settings` | `backend/agent_runtime_worker_main.py` | Runtime Owner 的最小 typed settings；`env_file=None`，不读取 Backend `.env`，Projection/Authorization 保持既有配置边界 |
@@ -2082,6 +2082,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `build_safe_read_registry` / `build_safe_read_catalog` / `build_safe_read_snapshot` | `backend/services/agent/runtime/catalog/safe_read_release.py` | C7-B3.2-A 从 Read Descriptor SSOT 确定性冻结 17 项安全只读 release；保留既有 user/channel scope 过滤 |
 | `start_model_attempt_dispatch_v2` | `backend/migrations/227_53_agent_runtime_model_configuration_facade.sql` | Runtime-only 原子锁定 Run/ModelStep/ModelAttempt，验证 lease/request hash/config revision 与三层 kill gate，并将 epoch 快照写入唯一 ModelAttempt |
 | `get_agent_runtime_model_configuration_v1` | `backend/migrations/227_53_agent_runtime_model_configuration_facade.sql` | 只向持有同一 Run/Attempt execution token、state version 与 request hash 的 Runtime Worker返回现有 encrypted configuration Bundle |
+| `get_agent_runtime_erp_configuration_v1` / `rotate_agent_runtime_erp_token_pair_v1` | `backend/migrations/227_54_agent_runtime_erp_read_configuration.sql` | 只向持有同一 ActionAttempt、dispatch intent、kill epoch、execution token、state version 与 request hash 的 Runtime Worker返回既有 ERP Bundle，并以配置版本 CAS 写回刷新 Token |
+| `build_erp_read_snapshot` | `backend/services/agent/runtime/catalog/erp_read_release.py` | 从 17 项既有安全读与六项 ERP Read Descriptor 确定性生成 v5 Catalog、Definition、EffectiveToolset；排除 ERP Write/Sync、淘宝奇门与 Media |
 | `start_agent_runtime_model_gateway_dispatch` | `backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql` | Runtime-only 原子锁定并验证 Session/Run/ModelStep/ModelAttempt、credential binding 与三层 kill gate，由 DB 读取 epoch 后同事务推进 Attempt 并创建唯一 operation |
 | `claim_agent_runtime_model_gateway_operation_v2` | `backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql` | Gateway-only claim；要求 ModelAttempt=`dispatching/request_started` 且 operation attempt version 与当前 Attempt 一致，保留 lease/fence/configuration bundle 合同 |
 | `submit_agent_runtime_model_gateway_operation` / `claim_agent_runtime_model_gateway_operation` | `backend/migrations/227_18_agent_runtime_model_gateway.sql` | BG2 历史 RPC 保持不可变；227_20 撤销 Runtime/Gateway EXECUTE，防止绕过 atomic dispatch binding |
@@ -2110,8 +2112,8 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | `AllowlistedTransport` / Provider adapters | `backend/services/agent/runtime/executors/provider_adapters.py` | 绑定 ERP、DashScope、Crawler、KIE 的隔离网络路由并限制响应大小 |
 | `WorkspaceResourceService` / `ScheduledTaskService` | `backend/services/agent/runtime/executors/resource_contracts.py` | OSS retention、稳定资源恢复、原子 rename 与计划任务 CAS |
 | `PostgresSpecialistRepository` | `backend/services/agent/runtime/infrastructure/postgres/specialist_repository.py` | Cost、Callback、Artifact、Child Run 与资源 RPC 的 worker-scoped adapter |
-| `ERPQueryProvider` / `ErpApiSearchProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 分别通过正式 ERP Registry/Dispatcher 和本地 `search_erp_api`；不把 `erp_api_search` 发到远程 ERP |
-| `OrgScopedErpDispatcherFactory` | `backend/services/agent/runtime/executors/erp_factory.py` | 每次从 `ActionAttempt.scope.org_id` 解析企业 ERP 凭证并构造一次性 dispatcher；仅接读路径，不暴露 Secret |
+| `ERPQueryProvider` / `ErpApiSearchProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 分别通过正式 ERP Registry/Dispatcher 和本地 `search_erp_api`；只有六项 ERP Read 可进入远程 dispatcher，非法 action 在提交前失败 |
+| `OrgScopedErpDispatcherFactory` | `backend/services/agent/runtime/executors/erp_factory.py` | 每次以 ActionAttempt fence 和 `scope.org_id` 解析既有企业 ERP Bundle，构造一次性现有 client/dispatcher，并用窄 CAS RPC 持久化刷新 Token；不读取平台默认凭证或 Redis Token 缓存 |
 | `HttpProviderTransport` / `KieMediaProvider` | `backend/services/agent/runtime/executors/provider_adapters.py` | 隔离 HTTP submit/status/cancel，限制 timeout/响应大小/redirect；无终止证明返回 unknown |
 | `CallbackInbox.ingest` | `backend/services/agent/runtime/providers/callback_inbox.py` | 原始 body 验签、时间窗校验、脱敏后唯一写入持久化 repository；旧 `record` 入口明确拒绝 |
 | `ContentAddressedArtifactService` / `RuntimeResourceMutationService` | `backend/services/agent/runtime/executors/resource_contracts.py` | 内容寻址 materialize、Workspace/OSS retention、Scheduler CAS 的非生产具体 composition |

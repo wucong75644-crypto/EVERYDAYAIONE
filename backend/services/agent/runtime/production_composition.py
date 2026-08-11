@@ -33,7 +33,8 @@ from services.agent.runtime.executors.registry import ExecutorRegistry
 from services.agent.runtime.catalog import RuntimeToolCatalog
 from services.agent.runtime.executors.specialist_registry import (
     ARTIFACT_JOB_TOOLS, CHILD_RUN_TOOLS, ERP_CATALOG_TOOLS, MEDIA_TOOLS,
-    REMOTE_READ_TOOLS, SCHEDULED_TASK_TOOLS, SPECIALIST_FAMILIES,
+    ERP_RUNTIME_READ_TOOLS, REMOTE_READ_TOOLS, SCHEDULED_TASK_TOOLS,
+    SPECIALIST_FAMILIES,
     SPECIALIST_SAFETY, WORKSPACE_MUTATION_TOOLS, specialist_descriptor,
 )
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
@@ -127,6 +128,7 @@ def build_safe_runtime_composition(
     *, resources: RuntimeReadResources, model_call_factory: object | None = None,
     model_loop: object | None = None, action_loop: object | None = None,
     credential_broker: object | None = None, model_port: object | None = None,
+    erp_dispatcher_factory: ErpDispatcherFactoryPort | None = None,
 ) -> SafeRuntimeComposition:
     """Compose only safe reads and explicitly supplied Runtime loop seams.
 
@@ -140,6 +142,11 @@ def build_safe_runtime_composition(
     registry = build_production_read_registry(
         resources, tool_names=SAFE_READ_TOOL_NAMES,
     )
+    if erp_dispatcher_factory is not None:
+        registry = _merge_registries(
+            registry,
+            build_runtime_erp_read_registry(erp_dispatcher_factory),
+        )
     catalog = RuntimeToolCatalog.from_executor_registry(registry)
     model_ready = (
         callable(model_call_factory) and (
@@ -154,7 +161,10 @@ def build_safe_runtime_composition(
             state=CapabilityReadinessState.READY,
         ),
         "runtime.erp.read": CapabilityReadiness(
-            state=CapabilityReadinessState.READY,
+            state=(CapabilityReadinessState.READY if erp_dispatcher_factory
+                   is not None else CapabilityReadinessState.UNAVAILABLE),
+            error_code=(None if erp_dispatcher_factory is not None
+                        else "ERP_READ_CONFIGURATION_NOT_READY"),
         ),
         "runtime.model": CapabilityReadiness(
             state=(CapabilityReadinessState.READY if model_ready
@@ -248,6 +258,28 @@ def build_production_read_registry(
         if group == "erp_local"
     })
     return build_read_executor_registry(capabilities, tool_names=tool_names)
+
+
+def build_runtime_erp_read_registry(
+    dispatcher_factory: ErpDispatcherFactoryPort,
+) -> ExecutorRegistry:
+    """Compose only governed tenant ERP reads; no write/sync/Taobao tools."""
+    registry = ExecutorRegistry()
+    for tool in sorted(ERP_RUNTIME_READ_TOOLS):
+        descriptor = specialist_descriptor(tool)
+        registry.register_read(
+            descriptor,
+            EXECUTOR_BY_FAMILY["remote_read"](
+                action_kind=tool, executor_type=descriptor.executor_type,
+                revision=descriptor.revision,
+                provider=ERPQueryProvider(
+                    tool_name=tool, dispatcher_factory=dispatcher_factory,
+                ),
+                async_submit=False,
+            ),
+            safety_level="safe",
+        )
+    return registry
 
 
 def build_production_specialist_registry(
@@ -455,6 +487,7 @@ __all__ = [
     "ProductionRuntimeComponents", "ProductionSpecialistPorts",
     "SafeRuntimeComposition", "build_safe_runtime_composition",
     "build_production_components", "build_production_read_registry",
+    "build_runtime_erp_read_registry",
     "build_production_specialist_registry",
     "build_production_components_from_services",
     "build_production_action_loop",

@@ -18,6 +18,10 @@ REMOTE_READ_TOOLS = frozenset({
     "erp_aftersales_query", "erp_warehouse_query", "erp_info_query",
     "erp_taobao_query", "web_search", "social_crawler",
 })
+ERP_RUNTIME_READ_TOOLS = frozenset({
+    "erp_product_query", "erp_trade_query", "erp_purchase_query",
+    "erp_aftersales_query", "erp_warehouse_query", "erp_info_query",
+})
 ERP_CATALOG_TOOLS = frozenset({"erp_api_search"})
 ARTIFACT_JOB_TOOLS = frozenset({"local_data", "file_analyze", "fetch_all_pages"})
 MEDIA_TOOLS = frozenset({"generate_image", "generate_video"})

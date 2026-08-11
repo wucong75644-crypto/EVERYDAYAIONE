@@ -144,6 +144,28 @@ def test_erp_bundle_decrypts_with_database_selected_scope_and_version() -> None:
     assert first_call.args[0].payload_version == 1
 
 
+@pytest.mark.asyncio
+async def test_runtime_erp_uses_attempt_fenced_facade() -> None:
+    db = AsyncFakeDB(_erp_response())
+    material = MagicMock()
+    material.decrypt_payload.side_effect = (
+        {"app_key": "app", "app_secret": "secret"},
+        {"access_token": "access", "refresh_token": "refresh"},
+    )
+    params = {
+        "p_attempt_id": "attempt-1", "p_worker_id": "worker-1",
+        "p_execution_token": "token-1", "p_expected_attempt_version": 3,
+        "p_request_hash": "a" * 64,
+    }
+
+    result = await AsyncSecretBundleResolver(
+        db, material,
+    ).runtime_erp(params)
+
+    assert result.name == "erp.runtime"
+    assert db.calls == [("get_agent_runtime_erp_configuration_v1", params)]
+
+
 def test_decrypted_payload_schema_mismatch_fails_closed() -> None:
     material = MagicMock()
     material.decrypt_payload.side_effect = (

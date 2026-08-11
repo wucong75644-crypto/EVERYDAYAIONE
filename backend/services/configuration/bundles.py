@@ -245,6 +245,14 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             bundle_name, "get_agent_runtime_model_configuration_v1", params,
         )
 
+    async def runtime_erp(
+        self, params: Mapping[str, object],
+    ) -> ResolvedConfigurationBundle:
+        """Resolve ERP credentials for one fenced Runtime ActionAttempt."""
+        return await self._resolve_async(
+            "erp.runtime", "get_agent_runtime_erp_configuration_v1", params,
+        )
+
     async def _resolve_async(
         self,
         bundle_name: str,

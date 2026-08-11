@@ -215,6 +215,9 @@ def build_runtime(
     from services.configuration.bundles import AsyncSecretBundleResolver
     from services.configuration.envelope import LocalKEKProvider
     from services.configuration.material_service import SecretMaterialService
+    from services.agent.runtime.executors.erp_factory import (
+        OrgScopedErpDispatcherFactory,
+    )
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
     runtime_repository = PostgresRuntimeRepository(db)
@@ -235,8 +238,12 @@ def build_runtime(
     model = ExistingProviderModelAdapter(
         request_adapter_factory=configured_factory,
     )
+    erp_factory = OrgScopedErpDispatcherFactory(
+        db, worker_id=worker_id, material_service=material_service,
+    )
     safe = build_safe_runtime_composition(
         resources=RuntimeReadResources(database=db), model_port=model,
+        erp_dispatcher_factory=erp_factory,
     )
     registry = safe.registry
     action_loop = ActionLoopDriver(
@@ -274,6 +281,7 @@ def build_runtime(
         resources=RuntimeReadResources(database=db),
         model_call_factory=model_factory, model_loop=model_loop,
         action_loop=action_loop, model_port=model,
+        erp_dispatcher_factory=erp_factory,
     )
     finalizer = ScheduledRuntimeFinalizer(
         PostgresScheduledFinalizationRepository(db), worker_id,

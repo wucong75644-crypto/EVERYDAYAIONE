@@ -263,8 +263,12 @@ Agent Runtime S1 单一模型链收敛：
 
 Agent Runtime C2.1 ERP 只读接线：
 - `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
-  scope 的 `org_id` 逐次解析企业 ERP 凭证并构造一次性 dispatcher；不启用生产
-  composition，不接 ERP 写入或其他专业能力收口。
+  scope 的 `org_id` 和 ActionAttempt fence 逐次解析既有企业 ERP Bundle，并构造现有
+  `KuaiMaiClient`/`ErpDispatcher`；227_54 提供窄配置 readback 与 Token 版本 CAS。
+- `erp_read_release.py` 与 227_55 确定性冻结包含六项 ERP Read 的 v5
+  Catalog/Definition/EffectiveToolset；release 默认关闭，不改写 227_16/v4 历史身份。
+- production composition 只注册六项 ERP Read；关闭请求参数日志与参数知识记录。
+  ERP Write、ERP Sync、淘宝奇门、Media 继续关闭，整体 `production_ready=false`。
 
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：

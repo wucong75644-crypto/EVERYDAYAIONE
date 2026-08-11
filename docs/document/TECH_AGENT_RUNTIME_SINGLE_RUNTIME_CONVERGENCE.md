@@ -1,6 +1,6 @@
 # Agent Runtime 单一运行时收敛方案
 
-状态：已确认并实施 S1 模型链收敛。实施基线：`e9e15761`。
+状态：已确认并实施 S1 模型链收敛与 S2-ERP-R1 企业 ERP 只读接线。
 
 ## 1. 最终边界
 
@@ -86,6 +86,14 @@ Python operation owner、systemd unit 和部署环境已删除；227_18～227_27
 
 接通现有 ERP 配置/client/dispatcher 与 Media adapter。保持 ERP Write、收费 Media
 默认关闭，先完成 isolated/disposable 验证；不得新增配置表或 Provider 状态表。
+
+ERP-R1 已完成：六项企业 ERP Read Executor 复用既有 `erp.runtime` Bundle、
+`KuaiMaiClient` 与 `ErpDispatcher`。227_54 只增加 ActionAttempt-fenced 配置读取和
+Token 版本 CAS 窄 RPC，不增加配置表；租户、worker、execution token、request hash、
+attempt version、dispatch intent 与 kill epoch 任一不匹配均失败关闭。Runtime 路径关闭
+Redis Token readback、参数知识记录和请求参数日志；刷新 Token 通过既有配置事实 CAS
+持久化。227_55 由独立 Python SSOT 确定性冻结 v5 Catalog/Definition/Toolset，保留原
+v4 migration 身份；新 release 默认不启用。ERP Write、ERP Sync、淘宝奇门、Media 仍未接入。
 
 ### S3 Scheduler 与 WeCom 收敛
 

@@ -18,6 +18,7 @@ class _ReadyBroker:
 def test_safe_composition_registers_only_internal_and_erp_read_tools() -> None:
     composition = build_safe_runtime_composition(
         resources=RuntimeReadResources(database=object()),
+        erp_dispatcher_factory=object(),
     )
     names = {
         name
@@ -27,17 +28,28 @@ def test_safe_composition_registers_only_internal_and_erp_read_tools() -> None:
 
     assert "local_stock_query" in names
     assert "local_product_identify" in names
-    assert len(names) == 17
+    assert len(names) == 23
     assert "file_search" not in names
     assert "erp_execute" not in names
     assert "trigger_erp_sync" not in names
     assert "generate_image" not in names
     assert "generate_video" not in names
+    assert "erp_trade_query" in names
+    assert "erp_taobao_query" not in names
     assert composition.readiness.production_ready is False
     assert composition.readiness.capabilities["runtime.read"].ready
     assert composition.readiness.capabilities["runtime.erp.read"].ready
     assert composition.readiness.capabilities["runtime.erp.write"].state is CapabilityReadinessState.DISABLED
     assert composition.readiness.capabilities["runtime.media"].state is CapabilityReadinessState.DISABLED
+
+
+def test_safe_composition_does_not_claim_unwired_remote_erp_read() -> None:
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=object()),
+    )
+    assert composition.readiness.capabilities[
+        "runtime.erp.read"
+    ].state is CapabilityReadinessState.UNAVAILABLE
 
 
 def test_safe_composition_requires_model_credential_boundary() -> None:
