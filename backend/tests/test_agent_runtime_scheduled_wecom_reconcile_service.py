@@ -215,6 +215,44 @@ async def test_smart_definitive_readback_records_exact_typed_evidence(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("errcode", "error_class"),
+    (
+        (0, WecomOutboundErrorClass.PROVIDER_REJECTED),
+        (True, WecomOutboundErrorClass.PROVIDER_REJECTED),
+        (None, WecomOutboundErrorClass.PROVIDER_REJECTED),
+        (2**31, WecomOutboundErrorClass.PROVIDER_REJECTED),
+        (-(2**31) - 1, WecomOutboundErrorClass.PROVIDER_REJECTED),
+        (40013, WecomOutboundErrorClass.ACK_TIMEOUT),
+    ),
+)
+async def test_contradictory_rejected_readback_fails_closed_without_record(
+    errcode: object,
+    error_class: WecomOutboundErrorClass,
+) -> None:
+    claim = _claim()
+    repository = _Repository(claim)
+    transport = _Transport(WecomOutboundAckResult(
+        claim.identity.provider_request_id,
+        WecomOutboundStatus.REJECTED,
+        errcode,  # type: ignore[arg-type]
+        error_class,
+    ))
+
+    with pytest.raises(
+        ScheduledWecomReconcileError,
+        match="REJECTED_EVIDENCE_INVALID",
+    ):
+        await ScheduledWecomReconcileService(
+            repository, _Resolver(transport),
+        ).reconcile_once(request_id=CLAIM_CALL, worker_id="reconciler")
+
+    assert repository.records == []
+    assert transport.lookup_calls == [claim.identity.provider_request_id]
+    assert transport.send_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("readback", "code"),
     (
         (None, "lookup_miss_or_pending"),

@@ -132,13 +132,17 @@ def _smart_readback_result(
         and readback.error_class is None
     ):
         return ReconcileResult.ACCEPTED, "acknowledged", ReceiptMetadata()
-    if (
-        readback.status is WecomOutboundStatus.REJECTED
-        and readback.error_class is WecomOutboundErrorClass.PROVIDER_REJECTED
-        and not isinstance(readback.errcode, bool)
-        and isinstance(readback.errcode, int)
-        and -(2**31) <= readback.errcode < 2**31
-    ):
+    if readback.status is WecomOutboundStatus.REJECTED:
+        if not (
+            readback.error_class is WecomOutboundErrorClass.PROVIDER_REJECTED
+            and not isinstance(readback.errcode, bool)
+            and isinstance(readback.errcode, int)
+            and readback.errcode != 0
+            and -(2**31) <= readback.errcode < 2**31
+        ):
+            raise ScheduledWecomReconcileError(
+                "SCHEDULED_WECOM_RECONCILE_REJECTED_EVIDENCE_INVALID",
+            )
         return (
             ReconcileResult.REJECTED,
             "provider_rejected",
