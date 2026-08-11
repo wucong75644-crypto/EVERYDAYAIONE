@@ -181,6 +181,9 @@ jobs:
             backend/tests/test_wecom_ws_runner.py \
             backend/tests/test_wecom_ws_runner_main.py \
             backend/tests/test_agent_runtime_scheduled_wecom_worker.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_worker_reconcile_priority.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_service.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_org_repository.py \
             backend/tests/test_scheduled_wecom_runtime_composition.py \
             backend/tests/test_agent_runtime_scheduled_wecom_router.py \
             backend/tests/test_agent_runtime_scheduled_wecom_prepared_router.py \
@@ -241,6 +244,7 @@ jobs:
             backend/tests/test_agent_runtime_scheduled_wecom_smart_receipt_postgres_external.py \
             backend/tests/test_agent_runtime_scheduled_wecom_prepared_recovery_postgres_external.py \
             backend/tests/test_agent_runtime_scheduled_wecom_terminal_fence_postgres_external.py \
+            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_org_postgres_external.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/scheduled-wecom-postgres.log"
 
       - name: Collect disposable PostgreSQL server logs
@@ -299,6 +303,8 @@ jobs:
               backend/tests/test_agent_runtime_scheduled_wecom_unicode_payload_migration.py \
               backend/tests/test_agent_runtime_scheduled_wecom_configuration_facade_migration.py \
               backend/tests/test_agent_runtime_scheduled_wecom_prepared_payload_migration.py
+            pytest -q \
+              backend/tests/test_agent_runtime_scheduled_wecom_reconcile_org_migration.py
             pytest -q -m 'not external' \
               backend/tests/test_agent_runtime_pgcrypto_migration.py \
               backend/tests/test_migration_runner.py

@@ -180,6 +180,9 @@ def test_scheduled_wecom_disposable_ci_is_flags_off_and_release_bound() -> None:
     for test_name in (
         "test_wecom_ws_runner_main.py",
         "test_agent_runtime_scheduled_wecom_worker.py",
+        "test_agent_runtime_scheduled_wecom_worker_reconcile_priority.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_service.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_org_repository.py",
         "test_scheduled_wecom_runtime_composition.py",
         "test_agent_runtime_scheduled_wecom_router.py",
         "test_agent_runtime_scheduled_wecom_app_dispatch.py",
@@ -205,8 +208,10 @@ def test_scheduled_wecom_disposable_ci_is_flags_off_and_release_bound() -> None:
         "test_agent_runtime_scheduled_wecom_unicode_payload_postgres_external.py",
         "test_agent_runtime_scheduled_wecom_configuration_facade_postgres_external.py",
         "test_agent_runtime_scheduled_wecom_prepared_payload_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_org_postgres_external.py",
     ):
         assert postgres_contract in workflow
+    assert "test_agent_runtime_scheduled_wecom_reconcile_org_migration.py" in workflow
     for evidence in (
         "scheduled-wecom-unit.log",
         "scheduled-wecom-postgres.log",
