@@ -2213,6 +2213,11 @@ cache = client.caches.create(
   - unsupported、unavailable、fenced、payload/target/identity drift 与 App exact binding 缺失均在 start/send 前失败关闭；已进入
     dispatch service 后的 UNKNOWN、取消和持久化异常仍由原 service 合同负责，Router 不吞异常、不普通重派。本批新增独立
     Router 恢复测试，不新增 migration、Worker/composition、配置、Secret、transport 或 production activation。
+- **2026-08-11**：AR-18 D2-C1f.2d Scheduled Runtime WeCom Worker 安全循环
+  - 新增独立 `ScheduledRuntimeWecomWorker`，每个 pass 固定执行 started recovery → prepared recovery → fresh dispatch；任一阶段异常或
+    非 EMPTY 恢复结果都会终止本轮，started recovery 永不发送，prepared recovery 仅沿原 attempt 恢复路径发送。
+  - 每阶段使用独立 canonical request UUID；无 durable identity 的 UNAVAILABLE 返回未处理并进入有界 poll，带 identity 的
+    unavailable/config 结果按已处理结束本轮。该 Worker 尚未接入旧 `WecomDeliveryWorker`、runner、systemd、env 或 production composition。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.

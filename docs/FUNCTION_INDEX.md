@@ -442,6 +442,7 @@
 | `WecomDeliverySender.build_items/send` | `backend/services/wecom/delivery_sender.py` | 将 AI 终态或带来源标识的 Web 用户文本展开为稳定分项；chart 降级为格式化 JSON、diagram 降级为原始 Mermaid 源码，智能机器人终态可完成原 stream | task, message, context, delivery_kind / context, item | list / bool |
 | `_graphic_fallback` | `backend/services/wecom/delivery_sender.py` | 将企微不支持的结构化 chart/diagram 转换为仍可读取的文本数据 | part | str / None |
 | `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，按 delivery_kind 加载输入或助手消息，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
+| `ScheduledRuntimeWecomWorker.start/stop/run_once` | `backend/services/wecom/scheduled_runtime_worker.py` | 以 started recovery → prepared recovery → fresh dispatch 的固定优先级执行单次 Scheduled Runtime 企微循环；任一异常或非空恢复结果都会阻止降级到后续发送路径 | - | None / bool |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
 | `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
 | `build_running_step` | `backend/services/handlers/chat/tool_loop.py` | Web 与无头执行内核共用的 running tool_step 构造原语 | call | Dict |
