@@ -270,6 +270,13 @@ Agent Runtime C2.1 ERP 只读接线：
 - production composition 只注册六项 ERP Read；关闭请求参数日志与参数知识记录。
   ERP Write、ERP Sync、淘宝奇门、Media 继续关闭，整体 `production_ready=false`。
 
+Agent Runtime S2-TAB-A 资源清单边界：
+- `backend/services/agent/runtime/executors/resource_manifest.py` 与 227_56 只通过
+  fenced ActionAttempt 读取现有 `task_attachment_refs`；Web 沿用固定输入消息回退，
+  企微群沿用既有 channel Workspace owner 算法，不新增附件或 Workspace 体系。
+- Runtime Worker 只有窄 RPC EXECUTE 权限且无附件表直权；当前批次尚未注册
+  `file_analyze`，真实分析、Artifact materialization、Catalog release 留在后续小批次。
+
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
   增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用
