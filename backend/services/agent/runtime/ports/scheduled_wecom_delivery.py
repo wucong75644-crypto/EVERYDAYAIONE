@@ -80,6 +80,11 @@ class RecoveryOutcome(StrEnum):
     FENCED = "fenced"
 
 
+class StartedRecoveryOutcome(StrEnum):
+    RECOVERED = "recovered"
+    READBACK = "readback"
+
+
 class ReconcileClaimOutcome(StrEnum):
     CLAIMED = "claimed"
     RENEWED = "renewed"
@@ -167,6 +172,26 @@ class PreparedRecovery:
     outcome: RecoveryOutcome
     attempt: DispatchAttempt
     lease_expires_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class StartedRecoveryResult:
+    outcome: StartedRecoveryOutcome
+    request_id: str
+    recovery_worker_id: str
+    org_id: str
+    intent_id: str
+    item_id: str
+    attempt_id: str
+    outcome_request_id: str
+    dispatch_outcome: DispatchOutcome
+    attempt_status: AttemptStatus
+    dispatch_phase: DispatchPhase
+    item_status: ItemStatus
+    delivery_status: DeliveryStatus
+    delivery_state_version: int
+    item_state_version: int
+    recovered_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -327,6 +352,10 @@ class ScheduledWecomDeliveryRepositoryPort(Protocol):
     async def recover_prepared(
         self, *, request_id: str, worker_id: str, lease_seconds: int = 60,
     ) -> PreparedRecovery | None: ...
+
+    async def recover_started(
+        self, *, request_id: str, worker_id: str,
+    ) -> StartedRecoveryResult | None: ...
 
     async def read_dispatch_payload(
         self, claim: DeliveryClaim,

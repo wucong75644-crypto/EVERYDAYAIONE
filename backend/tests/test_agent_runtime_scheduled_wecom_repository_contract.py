@@ -15,6 +15,9 @@ PARSER = ROOT.joinpath(
 PAYLOAD_PARSER = ROOT.joinpath(
     "services/agent/runtime/infrastructure/postgres/scheduled_wecom_payload_parsing.py",
 ).read_text()
+STARTED_RECOVERY_PARSER = ROOT.joinpath(
+    "services/agent/runtime/application/scheduled_wecom_parsing.py",
+).read_text()
 DB_SCOPE = ROOT.joinpath("core/db_scope.py").read_text()
 
 EXPECTED_RPCS = {
@@ -31,6 +34,7 @@ EXPECTED_RPCS = {
     "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
     "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
     "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
+    "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
 }
 
 
@@ -58,6 +62,7 @@ def test_adapter_and_parser_forbid_untyped_or_sensitive_passthrough() -> None:
     assert "set(raw).issubset(allowed)" in PARSER
     assert "set(raw) != keys" in PARSER
     assert "set(raw) != keys" in PAYLOAD_PARSER
+    assert "set(raw) != _STARTED_RECOVERY_KEYS" in STARTED_RECOVERY_PARSER
     for forbidden in ("p_secret", "p_access_token", "p_payload", "p_raw_body", "p_free_text"):
         assert f'"{forbidden}"' not in REPOSITORY
     assert ".table(" not in REPOSITORY
@@ -66,6 +71,12 @@ def test_adapter_and_parser_forbid_untyped_or_sensitive_passthrough() -> None:
     assert "p_expected_item_state_version" in DB_SCOPE
     assert "p_provider_revision" in DB_SCOPE
     assert "p_delay_seconds" in DB_SCOPE
+    assert "p_recovery_worker_id" in REPOSITORY
+
+
+def test_started_recovery_has_no_resubmit_or_transport_surface() -> None:
+    for forbidden in ("resubmit", "send(", "prepare_dispatch(", "start_dispatch("):
+        assert forbidden not in STARTED_RECOVERY_PARSER
 
 
 def test_every_attempt_parser_call_is_operation_specific() -> None:

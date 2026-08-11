@@ -7,6 +7,10 @@ from typing import Any
 from psycopg import InterfaceError, OperationalError
 
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
+from services.agent.runtime.application.scheduled_wecom_parsing import (
+    parse_started_recovery,
+    validate_started_recovery_request,
+)
 from services.agent.runtime.domain.errors import PersistenceContractError
 from services.agent.runtime.infrastructure.postgres.scheduled_wecom_parsing import (
     AttemptRpcOperation,
@@ -39,6 +43,7 @@ from services.agent.runtime.ports.scheduled_wecom_delivery import (
     ReconcileClaimOutcome,
     ReconcileResult,
     ReconcileResultReceipt,
+    StartedRecoveryResult,
     UnsupportedTerminalizationReceipt,
 )
 
@@ -93,6 +98,20 @@ class PostgresScheduledWecomDeliveryRepository:
         return parse_prepared_recovery(await self._replayable_rpc(
             "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1", params,
         ), request_id=request_id, worker_id=worker_id)
+
+    async def recover_started(
+        self, *, request_id: str, worker_id: str,
+    ) -> StartedRecoveryResult | None:
+        normalized_request, normalized_worker = validate_started_recovery_request(
+            request_id, worker_id,
+        )
+        params = {
+            "p_request_id": normalized_request,
+            "p_recovery_worker_id": normalized_worker,
+        }
+        return parse_started_recovery(await self._replayable_rpc(
+            "recover_agent_runtime_scheduled_wecom_started_dispatch_v1", params,
+        ), request_id=normalized_request, worker_id=normalized_worker)
 
     async def read_dispatch_payload(
         self, claim: DeliveryClaim,
