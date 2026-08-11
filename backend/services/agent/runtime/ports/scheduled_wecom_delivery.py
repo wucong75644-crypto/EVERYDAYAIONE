@@ -239,6 +239,7 @@ class ReconcileClaim:
     outcome: ReconcileClaimOutcome
     request_id: str
     intent_id: str
+    org_id: str
     item_id: str
     attempt_id: str
     worker_id: str
@@ -398,7 +399,7 @@ class ScheduledWecomDeliveryRepositoryPort(Protocol):
         self, claim: ReconcileClaim, *, lease_seconds: int = 60,
     ) -> ReconcileClaim: ...
 
-    async def read_reconcile(self, request_id: str) -> ReconcileClaim | None: ...
+    async def read_reconcile(self, claim: ReconcileClaim) -> ReconcileClaim | None: ...
 
     async def record_still_unknown(
         self, claim: ReconcileClaim, *, request_id: str,

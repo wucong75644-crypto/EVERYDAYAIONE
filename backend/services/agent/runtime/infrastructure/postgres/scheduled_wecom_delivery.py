@@ -342,15 +342,15 @@ class PostgresScheduledWecomDeliveryRepository:
         _same_reconcile_identity(renewed, claim)
         return renewed
 
-    async def read_reconcile(self, request_id: str) -> ReconcileClaim | None:
-        claim = parse_reconcile_claim(await self._rpc(
+    async def read_reconcile(self, claim: ReconcileClaim) -> ReconcileClaim | None:
+        readback = parse_reconcile_claim(await self._rpc(
             "read_agent_runtime_scheduled_wecom_reconcile_v1", {
-                "p_request_id": request_id,
+                "p_request_id": claim.request_id,
             },
         ))
-        if claim is not None and claim.request_id != request_id:
-            raise _contract("reconcile_read_identity_changed")
-        return claim
+        if readback is not None:
+            _same_reconcile_identity(readback, claim)
+        return readback
 
     async def record_still_unknown(
         self, claim: ReconcileClaim, *, request_id: str,
@@ -437,10 +437,11 @@ def _require_active_reconcile(claim: ReconcileClaim) -> None:
 
 def _same_reconcile_identity(actual: ReconcileClaim, expected: ReconcileClaim) -> None:
     if (
-        actual.request_id, actual.intent_id, actual.item_id, actual.attempt_id,
+        actual.request_id, actual.intent_id, actual.org_id, actual.item_id, actual.attempt_id,
         actual.worker_id, actual.reconcile_token, actual.identity,
     ) != (
-        expected.request_id, expected.intent_id, expected.item_id, expected.attempt_id,
+        expected.request_id, expected.intent_id, expected.org_id, expected.item_id,
+        expected.attempt_id,
         expected.worker_id, expected.reconcile_token, expected.identity,
     ):
         raise _contract("reconcile_identity_changed")

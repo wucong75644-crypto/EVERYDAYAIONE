@@ -404,7 +404,7 @@ def parse_dispatch_outcome(raw: object) -> DispatchOutcomeReceipt:
 
 
 _RECONCILE_KEYS = {
-    "outcome", "request_id", "intent_id", "item_id", "attempt_id", "worker_id",
+    "outcome", "request_id", "intent_id", "org_id", "item_id", "attempt_id", "worker_id",
     "reconcile_token", "lease_seconds", "lease_expires_at", "claimed_lease_expires_at",
     "claim_delivery_state_version", "claim_item_state_version", "delivery_state_version",
     "item_state_version", "delivery_status", "item_status", "attempt_status",
@@ -419,7 +419,7 @@ def parse_reconcile_claim(raw: object) -> ReconcileClaim | None:
     claim = ReconcileClaim(
         outcome=_enum(row, "outcome", ReconcileClaimOutcome),
         request_id=_uuid(row, "request_id"), intent_id=_uuid(row, "intent_id"),
-        item_id=_uuid(row, "item_id"), attempt_id=_uuid(row, "attempt_id"),
+        org_id=_uuid(row, "org_id"), item_id=_uuid(row, "item_id"), attempt_id=_uuid(row, "attempt_id"),
         worker_id=_text(row, "worker_id"), reconcile_token=_uuid(row, "reconcile_token"),
         lease_seconds=_bounded_integer(row, "lease_seconds", 5, 900),
         lease_expires_at=_timestamp(row, "lease_expires_at"),

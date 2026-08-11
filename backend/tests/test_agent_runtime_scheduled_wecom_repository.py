@@ -33,6 +33,7 @@ ATTEMPT = "55555555-5555-5555-5555-555555555555"
 RESULT_REQUEST = "66666666-6666-6666-6666-666666666666"
 RECONCILE_REQUEST = "77777777-7777-7777-7777-777777777777"
 RECONCILE_TOKEN = "88888888-8888-8888-8888-888888888888"
+ORG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 PROVIDER_REQUEST = "provider-request-123"
 IDEMPOTENCY = "a" * 64
 HASH = "b" * 64
@@ -109,7 +110,7 @@ def _outcome(outcome="recorded", dispatch="accepted"):
 def _reconcile(outcome="claimed"):
     return {
         "outcome": outcome, "request_id": RECONCILE_REQUEST, "intent_id": INTENT,
-        "item_id": ITEM, "attempt_id": ATTEMPT, "worker_id": "reconciler",
+        "org_id": ORG, "item_id": ITEM, "attempt_id": ATTEMPT, "worker_id": "reconciler",
         "reconcile_token": RECONCILE_TOKEN, "lease_seconds": 60,
         "lease_expires_at": NOW, "claimed_lease_expires_at": NOW,
         "claim_delivery_state_version": 11, "claim_item_state_version": 7,
@@ -250,9 +251,10 @@ async def test_reconcile_claim_renew_read_and_both_result_rpcs_are_exact() -> No
         request_id=RECONCILE_REQUEST, worker_id="reconciler",
     )
     assert claim is not None
+    assert claim.org_id == ORG
     renewed = await repository.renew_reconcile(claim, lease_seconds=90)
     assert renewed.delivery_state_version == 12
-    readback = await repository.read_reconcile(RECONCILE_REQUEST)
+    readback = await repository.read_reconcile(claim)
     assert readback is not None
     still = await repository.record_still_unknown(
         claim, request_id=RESULT_REQUEST, evidence=_evidence(), delay_seconds=300,
