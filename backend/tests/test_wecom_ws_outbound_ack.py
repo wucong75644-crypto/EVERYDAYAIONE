@@ -36,6 +36,98 @@ def _ack(client: WecomWSClient, req_id: str, errcode: int, **extra: object) -> b
     })
 
 
+@pytest.mark.parametrize("provider_request_id", [
+    "short7", "unsafe/id", "ping_12345678", "x" * 201,
+])
+def test_readback_invalid_or_missing_identity_returns_none_without_send(
+    client: WecomWSClient, provider_request_id: str,
+) -> None:
+    assert client.lookup_outbound_result(provider_request_id) is None
+    assert client.lookup_outbound_result("provider-missing") is None
+    client._ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_readback_pending_returns_immediately_without_extra_send(client):
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+
+    async def send(_: str) -> None:
+        send_started.set()
+        await release_send.wait()
+
+    client._ws.send = AsyncMock(side_effect=send)
+    task = asyncio.create_task(client.send_proactive_typed(
+        "provider-pending", "chat", "text", {"content": "safe"},
+    ))
+    await send_started.wait()
+
+    assert client.lookup_outbound_result("provider-pending") is None
+    assert task.done() is False
+    assert client._ws.send.await_count == 1
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_readback_returns_unknown_then_late_definitive_results(
+    monkeypatch, client,
+):
+    monkeypatch.setattr(ws_outbound, "OUTBOUND_ACK_TIMEOUT", 0.01)
+    unknown = await client.send_proactive_typed(
+        "provider-readback-ack", "chat", "text", {"content": "safe"},
+    )
+    assert client.lookup_outbound_result("provider-readback-ack") == unknown
+
+    assert _ack(client, "provider-readback-ack", 0) is True
+    client._is_connected = False
+    acknowledged = client.lookup_outbound_result("provider-readback-ack")
+    assert acknowledged is not None
+    assert acknowledged.status is WecomOutboundStatus.ACKNOWLEDGED
+
+    client._is_connected = True
+    rejected_unknown = await client.send_proactive_typed(
+        "provider-readback-reject", "chat", "text", {"content": "safe"},
+    )
+    assert rejected_unknown.status is WecomOutboundStatus.UNKNOWN
+    assert _ack(client, "provider-readback-reject", 41013) is True
+    rejected = client.lookup_outbound_result("provider-readback-reject")
+    assert rejected is not None
+    assert rejected.status is WecomOutboundStatus.REJECTED
+    assert rejected.errcode == 41013
+    assert client._ws.send.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_readback_prunes_expired_result_without_refreshing_ttl(
+    monkeypatch, client,
+):
+    async def send(raw: str) -> None:
+        _ack(client, json.loads(raw)["headers"]["req_id"], 0)
+
+    client._ws.send = AsyncMock(side_effect=send)
+    await client.send_proactive_typed(
+        "provider-expired", "chat", "text", {"content": "safe"},
+    )
+    entry = client._outbound_requests["provider-expired"]
+    original_updated_at = entry.updated_at
+    monkeypatch.setattr(
+        ws_outbound.time, "monotonic",
+        lambda: original_updated_at + ws_outbound.OUTBOUND_RESULT_TTL - 1,
+    )
+    assert client.lookup_outbound_result("provider-expired") is entry.result
+    assert entry.updated_at == original_updated_at
+
+    monkeypatch.setattr(
+        ws_outbound.time, "monotonic",
+        lambda: original_updated_at + ws_outbound.OUTBOUND_RESULT_TTL,
+    )
+    assert client.lookup_outbound_result("provider-expired") is None
+    assert "provider-expired" not in client._outbound_requests
+    assert client._ws.send.await_count == 1
+
+
 @pytest.mark.asyncio
 async def test_ack_success_registers_before_send_and_uses_provider_id(client):
     async def send(raw: str) -> None:

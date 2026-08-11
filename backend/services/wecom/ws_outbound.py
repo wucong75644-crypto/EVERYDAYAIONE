@@ -70,6 +70,16 @@ class WecomOutboundMixin:
     def _init_typed_outbound(self) -> None:
         self._outbound_requests: OrderedDict[str, _OutboundRequest] = OrderedDict()
 
+    def lookup_outbound_result(
+        self, provider_request_id: str,
+    ) -> Optional[WecomOutboundAckResult]:
+        """Return one cached result without waiting or refreshing its lifetime."""
+        if not _valid_provider_request_id(provider_request_id):
+            return None
+        self._prune_outbound_requests(time.monotonic())
+        entry = self._outbound_requests.get(provider_request_id)
+        return entry.result if entry is not None else None
+
     async def send_proactive_typed(
         self,
         provider_request_id: str,
@@ -383,14 +393,20 @@ def _valid_request(
     params_hash: Optional[str],
 ) -> bool:
     return bool(
-        isinstance(provider_request_id, str)
-        and PROVIDER_REQUEST_ID_PATTERN.fullmatch(provider_request_id)
-        and not provider_request_id.startswith("ping_")
+        _valid_provider_request_id(provider_request_id)
         and isinstance(chatid, str)
         and chatid
         and isinstance(msgtype, str)
         and msgtype
         and params_hash
+    )
+
+
+def _valid_provider_request_id(provider_request_id: object) -> bool:
+    return bool(
+        isinstance(provider_request_id, str)
+        and PROVIDER_REQUEST_ID_PATTERN.fullmatch(provider_request_id)
+        and not provider_request_id.startswith("ping_")
     )
 
 

@@ -8,11 +8,12 @@ from uuid import UUID
 
 from services.agent.runtime.ports.scheduled_wecom_smart_dispatch import (
     SmartRobotProactiveTransportPort,
+    SmartRobotReadbackTransportPort,
 )
 
 
 class ScheduledSmartTransportResolver:
-    """Resolve one connected WS client without credentials or cross-tenant cache."""
+    """Resolve exact-org WS dispatch or cache-readback capabilities."""
 
     def __init__(
         self,
@@ -33,6 +34,19 @@ class ScheduledSmartTransportResolver:
         ):
             return None
         return cast(SmartRobotProactiveTransportPort, client)
+
+    async def resolve_smart_readback(
+        self, org_id: str,
+    ) -> SmartRobotReadbackTransportPort | None:
+        if not _canonical_uuid(org_id):
+            return None
+        client = self._get_ws_client(org_id)
+        if (
+            getattr(client, "org_id", None) != org_id
+            or not callable(getattr(client, "lookup_outbound_result", None))
+        ):
+            return None
+        return cast(SmartRobotReadbackTransportPort, client)
 
 
 def _canonical_uuid(value: object) -> bool:

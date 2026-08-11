@@ -25,6 +25,9 @@ class _Client:
     async def send_proactive_typed(self, *_: object) -> object:
         return object()
 
+    def lookup_outbound_result(self, *_: object) -> object:
+        return object()
+
 
 @pytest.mark.asyncio
 async def test_resolves_two_tenants_to_their_exact_connected_clients() -> None:
@@ -78,4 +81,27 @@ async def test_noncanonical_org_is_rejected_before_getter(org_id: str) -> None:
     )
 
     assert await resolver.resolve_smart_transport(org_id) is None
+    assert await resolver.resolve_smart_readback(org_id) is None
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_readback_resolves_exact_disconnected_client_with_lookup() -> None:
+    client = _Client(ORG_A, is_connected=False)
+    resolver = ScheduledSmartTransportResolver(lambda _: client)
+
+    assert await resolver.resolve_smart_readback(ORG_A) is client
+    assert await resolver.resolve_smart_transport(ORG_A) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client", [
+    _Client(ORG_B, is_connected=False),
+    object(),
+])
+async def test_readback_rejects_cross_org_or_missing_lookup(
+    client: object,
+) -> None:
+    resolver = ScheduledSmartTransportResolver(lambda _: client)
+
+    assert await resolver.resolve_smart_readback(ORG_A) is None

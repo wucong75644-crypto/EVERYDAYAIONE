@@ -49,3 +49,17 @@ class SmartRobotTransportResolverPort(Protocol):
     async def resolve_smart_transport(
         self, org_id: str,
     ) -> SmartRobotProactiveTransportPort | None: ...
+
+
+class SmartRobotReadbackTransportPort(Protocol):
+    org_id: str
+
+    def lookup_outbound_result(
+        self, provider_request_id: str,
+    ) -> WecomOutboundAckResult | None: ...
+
+
+class SmartRobotReadbackResolverPort(Protocol):
+    async def resolve_smart_readback(
+        self, org_id: str,
+    ) -> SmartRobotReadbackTransportPort | None: ...
