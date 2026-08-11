@@ -2206,6 +2206,13 @@ cache = client.caches.create(
     database、material service、token manager、共享 outbound HTTP client 与真实 credential audit sink，不提供 global/default、
     callback credential、no-op audit 或隐式 HTTP lifecycle。Router/composition/runner、migration、legacy worker 与 production
     flags 均未改动。
+- **2026-08-11**：AR-18 D2-C1f.2c Scheduled Runtime WeCom PREPARED recovery router
+  - `ScheduledWecomRouter.recover_prepared_once` 以独立 request single-flight 串联 durable prepared recovery、专用 frozen
+    payload readback 与现有 Smart/App recovered dispatch；只接受原 attempt 的 payload versions 和完整 provider identity，
+    同时保留 recovery current fence 作为 start 权限，不创建新 attempt、不走 fresh dispatch 或 started recovery。
+  - unsupported、unavailable、fenced、payload/target/identity drift 与 App exact binding 缺失均在 start/send 前失败关闭；已进入
+    dispatch service 后的 UNKNOWN、取消和持久化异常仍由原 service 合同负责，Router 不吞异常、不普通重派。本批新增独立
+    Router 恢复测试，不新增 migration、Worker/composition、配置、Secret、transport 或 production activation。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
