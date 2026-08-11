@@ -443,6 +443,7 @@
 | `_graphic_fallback` | `backend/services/wecom/delivery_sender.py` | 将企微不支持的结构化 chart/diagram 转换为仍可读取的文本数据 | part | str / None |
 | `WecomDeliveryWorker.start/stop/run_once` | `backend/services/wecom/delivery_worker.py` | 轮询认领企微事务 Outbox，按 delivery_kind 加载输入或助手消息，续租、逐项检查点、完成或指数退避/dead | - | None / bool |
 | `ScheduledRuntimeWecomWorker.start/stop/run_once` | `backend/services/wecom/scheduled_runtime_worker.py` | 以唯一 loop task 和实例 pass lock 串行执行 started recovery → prepared recovery → fresh dispatch；stop 等待所属 loop 退出，并发 restart 只能在旧代释放 ownership 后启动 | - | None / bool |
+| `build_scheduled_wecom_runtime_components` / `ScheduledWecomCredentialJournalAuditSink.record` | `backend/services/wecom/scheduled_runtime_composition.py` | 以 actorless/orgless `WORKER` scope 组合 Scheduled WeCom Repository、exact-tenant Smart/App resolver、Router 与 Worker；构造过程无 RPC、Secret read 或发送，默认 journal sink 仅记录已验证的 opaque credential 生命周期白名单字段 | 显式 DB/WS/material/token/HTTP/worker/audit 依赖 | `ScheduledWecomRuntimeComponents` / None |
 | `cancel_actor_task` | `backend/services/conversation_task.py` | 经 user/org 范围约束的 cancel RPC 原子取消 Actor task | db, task, user_id, org_id | bool |
 | `update_generation_progress` | `backend/migrations/123_conversation_actor_progress.sql` | 仅当前 running task 的有效 fencing token 可更新 accumulated 内容与块 | task_id, execution_token, accumulated_content, accumulated_blocks | JSONB |
 | `build_running_step` | `backend/services/handlers/chat/tool_loop.py` | Web 与无头执行内核共用的 running tool_step 构造原语 | call | Dict |

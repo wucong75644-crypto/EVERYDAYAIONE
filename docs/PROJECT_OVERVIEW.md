@@ -2220,6 +2220,13 @@ cache = client.caches.create(
     unavailable/config 结果按已处理结束本轮。实例级 pass lock 与唯一 loop task/generation ownership 防止 public `run_once`、
     stop-during-pass 和并发 restart 形成重叠发送；`stop()` 会唤醒并等待所属 loop 安全退出。该 Worker 尚未接入旧
     `WecomDeliveryWorker`、runner、systemd、env 或 production composition。
+- **2026-08-11**：AR-18 D2-C1f.2e Scheduled Runtime WeCom composition boundary
+  - 新增非 owning composition builder：以 actorless/orgless `WORKER` scope 装配 Scheduled WeCom PostgreSQL Repository、
+    exact-org Smart resolver、复用现有租户配置的 App binding resolver、Smart/App dispatch、Router 与安全优先级 Worker；
+    App resolver 单独持有注入的 raw async database，以便按目标 org 建立 exact-tenant scope。
+  - 默认凭证审计为严格白名单 journal sink，只接受 canonical tenant UUID、opaque `wecom-app` handle/revision、固定 provider/
+    purpose、Broker outcome 与 aware timestamp；不记录 Secret、token、payload、路径或异常正文。Builder 不启动组件、不拥有或
+    关闭 DB/HTTP/WS 资源，也未接入 runner、env、systemd、migration 或 production activation。
 AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
 
 The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
