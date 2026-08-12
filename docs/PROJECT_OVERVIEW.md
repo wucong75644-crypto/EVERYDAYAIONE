@@ -1192,7 +1192,7 @@ EVERYDAYAIONE/
 │   │   ├── wecom/conversation_settings.py # 企微对话设置数据库事实源
 │   │   ├── wecom/delivery_sender.py  # 企微 Outbox 稳定分项与双通道发送适配
 │   │   ├── wecom/delivery_worker.py  # 企微 Outbox 租约、检查点、重试与 dead 消费
-│   │   ├── wecom/wecom_ingress_mixin.py # 企微 Actor 灰度与旧链路入站分发
+│   │   ├── wecom/wecom_ingress_mixin.py # 企微文件暂存后进入 Runtime ingress，其他消息入站分发
 │   │   ├── wecom/wecom_reply_mixin.py # 企微结果格式化与双通道回复职责
 │   │   ├── handlers/chat/            # Chat 流式与无头执行内核
 │   │   │   ├── execution_engine.py   # 通道无关模型流、工具循环、预算与结果构造

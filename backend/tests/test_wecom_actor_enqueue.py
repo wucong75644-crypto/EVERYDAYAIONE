@@ -112,6 +112,80 @@ async def test_enqueue_requires_provider_message_id():
 
 
 @pytest.mark.asyncio
+async def test_runtime_required_routes_file_payload_to_runtime_owner():
+    handler = _handler()
+    handler.db.rpc.side_effect = (
+        lambda name, params: MagicMock(
+            execute=MagicMock(return_value=SimpleNamespace(data=(
+                {"definition_hash": "definition", "catalog_revision": "catalog"}
+                if name == "get_agent_runtime_definition_fact" else
+                {"task_id": "internal", "runtime_owned": True}
+            )))
+        )
+    )
+    settings = SimpleNamespace(
+        agent_runtime_ingress_enabled=False,
+        agent_runtime_agent_definition_id="agent",
+        agent_runtime_agent_definition_revision="v1",
+        agent_runtime_release_revision="release",
+    )
+    payload = {
+        "url": "https://cdn/report.csv",
+        "name": "report.csv",
+        "mime_type": "text/csv",
+        "workspace_path": "上传/企微/report.csv",
+    }
+
+    with patch("core.config.get_settings", return_value=settings):
+        result = await enqueue_wecom_message(
+            handler=handler,
+            msg=_message(),
+            user_id="user",
+            conversation_id="conversation",
+            image_urls=[],
+            file_payload=payload,
+            runtime_required=True,
+        )
+
+    assert result.owner_state == "runtime_owned"
+    assert handler.db.rpc.call_args_list[-1].args[0] == "enqueue_wecom_runtime_turn_v6"
+    input_content = handler.db.rpc.call_args_list[-1].args[1]["p_input_content"].obj
+    assert {"type": "file", **payload} in input_content
+
+
+@pytest.mark.asyncio
+async def test_runtime_required_rejects_legacy_fallback():
+    handler = _handler()
+    handler.db.rpc.side_effect = (
+        lambda name, params: MagicMock(
+            execute=MagicMock(return_value=SimpleNamespace(data=(
+                {"definition_hash": "definition", "catalog_revision": "catalog"}
+                if name == "get_agent_runtime_definition_fact" else
+                {"task_id": "internal", "runtime_owned": False}
+            )))
+        )
+    )
+    settings = SimpleNamespace(
+        agent_runtime_ingress_enabled=False,
+        agent_runtime_agent_definition_id="agent",
+        agent_runtime_agent_definition_revision="v1",
+        agent_runtime_release_revision="release",
+    )
+
+    with patch("core.config.get_settings", return_value=settings), pytest.raises(
+        RuntimeError, match="WECOM_RUNTIME_OWNERSHIP_REQUIRED",
+    ):
+        await enqueue_wecom_message(
+            handler=handler,
+            msg=_message(),
+            user_id="user",
+            conversation_id="conversation",
+            image_urls=[],
+            runtime_required=True,
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("runtime_owned", "owner_state", "wakeup_count"),
     ((True, "runtime_owned", 0), (False, "legacy_fallback", 1)),

@@ -39,6 +39,7 @@ async def enqueue_wecom_message(
     image_urls: list[str],
     file_payload: dict[str, Any] | None = None,
     stream_context: Mapping[str, Any] | None = None,
+    runtime_required: bool = False,
 ) -> WecomActorEnqueueResult:
     """使用稳定 ID 原子创建消息和 Actor task，并 best-effort 唤醒 Worker。"""
     if not msg.msgid:
@@ -78,7 +79,7 @@ async def enqueue_wecom_message(
     settings = get_settings()
     rpc_name = (
         "enqueue_wecom_runtime_turn_v6"
-        if settings.agent_runtime_ingress_enabled
+        if runtime_required or settings.agent_runtime_ingress_enabled
         else "enqueue_wecom_generation_turn_v2"
     )
     params = {
@@ -120,7 +121,10 @@ async def enqueue_wecom_message(
     if not isinstance(result, dict) or not result.get("task_id"):
         raise RuntimeError("WECOM_ACTOR_ENQUEUE_RESULT_INVALID")
 
-    if not bool(result.get("runtime_owned")):
+    runtime_owned = bool(result.get("runtime_owned"))
+    if runtime_required and not runtime_owned:
+        raise RuntimeError("WECOM_RUNTIME_OWNERSHIP_REQUIRED")
+    if not runtime_owned:
         from services.conversation_worker import RedisConversationWakeup
         await RedisConversationWakeup().publish(conversation_id, msg.org_id)
     return WecomActorEnqueueResult(
@@ -129,7 +133,7 @@ async def enqueue_wecom_message(
         output_message_id=str(result.get("output_message_id") or ids["output"]),
         already_enqueued=bool(result.get("already_enqueued")),
         owner_state=(
-            "runtime_owned" if bool(result.get("runtime_owned"))
+            "runtime_owned" if runtime_owned
             else "legacy_fallback"
         ),
     )

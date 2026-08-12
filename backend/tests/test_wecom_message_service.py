@@ -186,6 +186,7 @@ class TestHandleMessage:
             "size": 10,
         }
         svc._prepare_wecom_file = AsyncMock(return_value=file_payload)
+        svc._enqueue_actor_message = AsyncMock()
         msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
         msg.chattype = chat_type
         if chat_type == WecomChatType.GROUP:
@@ -205,8 +206,12 @@ class TestHandleMessage:
         assert stage.call_args.kwargs["storage_scope"] == expected_scope
         owner = stage.call_args.kwargs["storage_owner_id"]
         assert owner.startswith("channels/wecom/") if expected_scope == "channel" else owner == USER_ID
-        svc._reply_text.assert_awaited_once_with(
-            ctx, "文件已收到，请告诉我需要如何处理。",
+        svc._enqueue_actor_message.assert_awaited_once_with(
+            msg, ctx, USER_ID, "conv1", [],
+            file_payload=file_payload,
+            runtime_required=True,
+            notify_web=False,
+            acknowledgement="文件已收到，请告诉我需要如何处理。",
         )
 
     @pytest.mark.asyncio
