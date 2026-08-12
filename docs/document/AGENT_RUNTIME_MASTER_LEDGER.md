@@ -57,7 +57,7 @@
 |---|---|---|---|---|
 | S3-R | Scheduler/WeCom 主线总复审 | 已完成 | C7 B3.2 | 相关 Runtime/legacy 分流与 readback/reconcile 回归通过；证据见 Owner 调用图 |
 | S4-A | Ingress/Owner 静态调用图 | 已完成 | S3-R | 已记录 Web、WeCom、Scheduler、Conversation Actor、ToolLoop 真实入口与边界 |
-| S4-B | 本地 Owner 收敛修复 | 进行中 | S4-A | 先做 profileless adoption preflight 和 Runtime 不回退门禁；不删除旧 Owner |
+| S4-B | 本地 Owner 收敛修复 | 阻塞（需 adoption 决策） | S4-A | Runtime profile 任务已有不回退门禁；profileless 历史任务的全量 adoption 会改变数据/产品行为，未擅自迁移或删除旧 Owner |
 | S4-C | Owner cutover disposable/dry-run | 待执行 | S4-B | crash、drain、fence、duplicate side-effect、UNKNOWN/reconcile |
 | S5 | 最终 migration/install manifest | 待执行 | S4-C | 从生产最高 migration 220 与当前主线生成最终安装清单；不执行生产 |
 | S6 | AR-17/18 本地与 CI 发布候选验收 | 待执行 | S5 | 全链回归、权限、回滚、单 Owner 证据 |
@@ -73,7 +73,7 @@
 C7-B3.2
   → S3-R Scheduler/WeCom 总复审（已完成）
   → S4-A 旧 Owner/Ingress 调用图（已完成）
-  → S4-B profileless adoption preflight 与 Owner 门禁
+  → S4-B profileless adoption preflight 与 Owner 门禁（当前阻塞）
   → S4-C disposable/dry-run
   → S5 最终 migration/install manifest
   → S6 AR-17/18 本地与 CI 发布候选
@@ -89,6 +89,14 @@ C7-B3.2
 - `ProductionServiceBundle`、tenant binding、Provider readiness 等历史结构暂不能删除，必须先证明无真实调用方和无生产事实引用。
 - `UNKNOWN/ACCEPTED` 永远只能 readback/reconcile，不得用 Owner 收敛名义普通重派。
 - 未经用户明确生产授权，不推送、不部署、不连接生产、不读取真实 Secret、不调用真实 Provider。
+
+## S4-B 阻断证据
+
+- `agent_runtime_scheduled_execution_profiles` 是 Runtime Owner 的事实边界；有 profile 的任务由 Runtime submission/claim 路径处理，旧 Owner RPC 明确拒绝。
+- 无 profile 的历史任务仍由 `worker_claim_due_scheduled_executions_v1` 返回 `owner_kind=legacy`，随后进入 `ScheduledTaskExecutor → ScheduledTaskAgent → ToolLoopExecutor`。
+- `request_runtime_scheduled_execution`、`ScheduledTaskScanner` 和相关定向回归均证明 Runtime 任务不会回退到旧 Owner。
+- 在没有非生产数据库快照的情况下，无法知道真实 profileless 任务数量、是否存在正在运行任务以及是否可无损创建 source action/attempt/run。
+- 因此不能用静态代码修改代替 adoption；下一步需要用户确认“历史 scheduled task 是否全部纳入 Runtime，以及失败时如何保留/暂停旧任务”的产品和数据迁移语义。
 
 ## 每批交付门禁
 
