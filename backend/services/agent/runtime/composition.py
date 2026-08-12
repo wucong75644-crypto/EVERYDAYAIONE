@@ -218,6 +218,7 @@ def build_runtime(
     from services.agent.runtime.executors.erp_factory import (
         OrgScopedErpDispatcherFactory,
     )
+    from services.agent.runtime.data_read_composition import build_runtime_data_adapters
     worker_id = settings.agent_runtime_worker_id
     db = scoped(database, DatabaseAccessKind.AGENT_RUNTIME, worker_id)
     runtime_repository = PostgresRuntimeRepository(db)
@@ -241,9 +242,13 @@ def build_runtime(
     erp_factory = OrgScopedErpDispatcherFactory(
         db, worker_id=worker_id, material_service=material_service,
     )
+    data_adapters = build_runtime_data_adapters(
+        db, worker_id=worker_id, erp_dispatcher_factory=erp_factory,
+    )
     safe = build_safe_runtime_composition(
         resources=RuntimeReadResources(database=db), model_port=model,
         erp_dispatcher_factory=erp_factory,
+        **data_adapters,
     )
     registry = safe.registry
     action_loop = ActionLoopDriver(
@@ -282,6 +287,7 @@ def build_runtime(
         model_call_factory=model_factory, model_loop=model_loop,
         action_loop=action_loop, model_port=model,
         erp_dispatcher_factory=erp_factory,
+        **data_adapters,
     )
     finalizer = ScheduledRuntimeFinalizer(
         PostgresScheduledFinalizationRepository(db), worker_id,
