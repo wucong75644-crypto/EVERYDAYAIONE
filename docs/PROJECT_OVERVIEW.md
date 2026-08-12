@@ -274,8 +274,9 @@ Agent Runtime S2-TAB-A 资源清单边界：
 - `backend/services/agent/runtime/executors/resource_manifest.py` 与 227_56 只通过
   fenced ActionAttempt 读取现有 `task_attachment_refs`；Web 沿用固定输入消息回退，
   企微群沿用既有 channel Workspace owner 算法，不新增附件或 Workspace 体系。
-- Runtime Worker 只有窄 RPC EXECUTE 权限且无附件表直权；当前批次尚未注册
-  `file_analyze`，真实分析、Artifact materialization、Catalog release 留在后续小批次。
+- Runtime Worker 只有窄 RPC EXECUTE 权限且无附件表直权；`file_analyze`、
+  `fetch_all_pages` 与 `local_data` 通过显式 adapter 接入，未注入时保持 unavailable，
+  不回退通用 Artifact port。
 
 Agent Runtime S2-TAB-B1 文件分析与 ERP 分页适配边界：
 - `backend/services/agent/runtime/executors/data_adapters.py` 通过 TAB-A 冻结资源清单调用
@@ -283,6 +284,13 @@ Agent Runtime S2-TAB-B1 文件分析与 ERP 分页适配边界：
   第二套文件、表格或 ERP 体系。
 - 文件分析只允许清单内路径，暂不接受尚未证明可安全传递的 `sheet` 参数；分页保留脱敏的
   partial failure 证据且不会把自然结束误报为截断。
+
+Agent Runtime S2-TAB-B3.2 数据读取发布闭环：
+- `data_read_release.py` 与 227_58 确定性冻结 safe read、六项 ERP Read 以及
+  `local_data`/`file_analyze`/`fetch_all_pages` 的 v6 Catalog/Definition/EffectiveToolset；
+  不修改 227_02 或 227_54～227_57 历史事实。
+- disabled toolset 只保留无副作用安全读取；ERP Write、Media、Scheduler、Sandbox、Export
+  不注册，production flags 与 `production_ready` 继续关闭。
 - `file_analyze`、ERP 只读分页和 `local_data` 已具备 Runtime 适配器；Runtime 主构造入口
   显式注入三项只读 adapter，其他 Composition 仍只有在显式提供 port 时注册，不启用生产 flags。
 

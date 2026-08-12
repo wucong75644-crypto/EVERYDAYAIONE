@@ -306,8 +306,9 @@ def build_production_specialist_registry(
             "local_data": ports.local_data, "file_analyze": ports.file_analyze,
             "fetch_all_pages": ports.fetch_all_pages,
         }.get(tool)
+        if specialized is None: raise RuntimeError(f"RUNTIME_SPECIALIST_SERVICE_WIRING_NOT_READY:{tool}")
         providers[tool] = LocalArtifactProvider(
-            port=specialized or ports.artifact, operation=tool,
+            port=specialized, operation=tool,
         )
     providers["generate_image"] = KieMediaProvider(
         ports.transport, kind="image", task_port=ports.media_task,
@@ -357,7 +358,6 @@ def build_production_specialist_registry(
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return registry
-
 
 def build_production_components(
     *, database, read_resources: RuntimeReadResources,

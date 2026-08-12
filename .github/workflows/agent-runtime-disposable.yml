@@ -157,6 +157,7 @@ jobs:
             backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
             backend/tests/test_agent_runtime_c7_b32a_safe_release.py \
             backend/tests/test_agent_runtime_c7_b32a_migration.py \
+            backend/tests/test_agent_runtime_data_read_release.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/unit.log"
 
       - name: Run Artifact, Workspace, Child Run and specialist contracts
@@ -215,6 +216,7 @@ jobs:
             backend/tests/test_agent_runtime_owner_rpc_acl_closure_postgres_external.py \
             backend/tests/test_agent_runtime_c7_b32a_postgres_external.py \
             backend/tests/test_agent_runtime_local_query_postgres_external.py \
+            backend/tests/test_agent_runtime_data_read_release_postgres_external.py \
             backend/tests/test_agent_runtime_model_configuration_facade_postgres_external.py \
             backend/tests/test_agent_runtime_pgcrypto_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
@@ -286,7 +288,8 @@ jobs:
               backend/tests/test_agent_runtime_cost_side_effect_observability_migration.py \
               backend/tests/test_agent_runtime_additive_ingress_compatibility_migration.py \
               backend/tests/test_agent_runtime_owner_rpc_acl_closure_migration.py \
-              backend/tests/test_agent_runtime_c7_b32a_migration.py
+              backend/tests/test_agent_runtime_c7_b32a_migration.py \
+              backend/tests/test_agent_runtime_data_read_release.py
             pytest -q \
               backend/tests/test_agent_runtime_scheduled_wecom_delivery_foundation_migration.py \
               backend/tests/test_agent_runtime_scheduled_wecom_claim_migration.py \
