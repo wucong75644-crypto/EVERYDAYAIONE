@@ -4,7 +4,7 @@
 
 权威主线：`codex/agent-runtime-ar-17-4-integration`
 
-当前基线：`a6930567`
+当前基线：`148b1902`
 
 当前工作区：干净；未推送、未部署、未连接生产。
 
@@ -30,7 +30,7 @@
 | S2 ERP Read | 已接入 | 复用现有租户 ERP Bundle/Dispatcher；ERP Write、Sync、淘宝奇门关闭 |
 | S2 数据读取 | 已接入 | `local_data`、`file_analyze`、`fetch_all_pages` 显式 adapter；无隐式 Artifact fallback |
 | AR-18 cancel | 技术批次已在主线形成等价集成 | Run/Action/Provider/Model/Sandbox/Child cancel 及 fence 有测试证据 |
-| AR-18 Scheduler/WeCom | 技术批次已大部进入主线 | scheduled Runtime、WeCom delivery/readback/reconcile/worker/CI 需做总复审 |
+| AR-18 Scheduler/WeCom | S3-R 总复审通过 | Runtime profile Owner、legacy profileless 分流、WeCom delivery/readback/reconcile 已核对；Owner 全量切换仍未完成 |
 | Production readiness | 未开启 | `production_ready=false`，生产 flags 默认关闭 |
 | T5 Staging | 未执行 | 仅有 disposable local/CI verified，不冒充 staging |
 | T8/T9 | 未执行 | 需要真实生产授权和观察窗口，当前不做 |
@@ -55,9 +55,9 @@
 
 | ID | 任务 | 状态 | 依赖 | 下一动作 |
 |---|---|---|---|---|
-| S3-R | Scheduler/WeCom 主线总复审 | 待执行 | C7 B3.2 | 核对唯一 Owner、事实、readback/reconcile、旧发送入口 |
-| S4-A | Ingress/Owner 静态调用图 | 待执行 | S3-R | 列出 Web、WeCom、Scheduler、Conversation Actor、ToolLoop 全部真实入口 |
-| S4-B | 本地 Owner 收敛修复 | 待执行 | S4-A | 仅关闭真实旁路副作用入口；保留兼容投影和 reconcile |
+| S3-R | Scheduler/WeCom 主线总复审 | 已完成 | C7 B3.2 | 相关 Runtime/legacy 分流与 readback/reconcile 回归通过；证据见 Owner 调用图 |
+| S4-A | Ingress/Owner 静态调用图 | 已完成 | S3-R | 已记录 Web、WeCom、Scheduler、Conversation Actor、ToolLoop 真实入口与边界 |
+| S4-B | 本地 Owner 收敛修复 | 进行中 | S4-A | 先做 profileless adoption preflight 和 Runtime 不回退门禁；不删除旧 Owner |
 | S4-C | Owner cutover disposable/dry-run | 待执行 | S4-B | crash、drain、fence、duplicate side-effect、UNKNOWN/reconcile |
 | S5 | 最终 migration/install manifest | 待执行 | S4-C | 从生产最高 migration 220 与当前主线生成最终安装清单；不执行生产 |
 | S6 | AR-17/18 本地与 CI 发布候选验收 | 待执行 | S5 | 全链回归、权限、回滚、单 Owner 证据 |
@@ -71,9 +71,9 @@
 
 ```text
 C7-B3.2
-  → S3-R Scheduler/WeCom 总复审
-  → S4-A 旧 Owner/Ingress 调用图
-  → S4-B 本地 Owner 收敛
+  → S3-R Scheduler/WeCom 总复审（已完成）
+  → S4-A 旧 Owner/Ingress 调用图（已完成）
+  → S4-B profileless adoption preflight 与 Owner 门禁
   → S4-C disposable/dry-run
   → S5 最终 migration/install manifest
   → S6 AR-17/18 本地与 CI 发布候选
