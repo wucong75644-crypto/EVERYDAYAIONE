@@ -50,6 +50,13 @@ class _Lifecycle:
         return self.result
 
 
+def _runtime_receipt() -> RuntimeIngressReceipt:
+    return RuntimeIngressReceipt(
+        outcome="created", session_id="session", command_id="command",
+        run_id="run", owner_state="runtime_owned", runtime_owned=True,
+    )
+
+
 def _body(operation: MessageOperation = MessageOperation.SEND) -> GenerateRequest:
     return GenerateRequest(
         operation=operation,
@@ -87,6 +94,10 @@ async def test_send_prepares_stable_messages_and_reuses_task_anchor(monkeypatch)
     monkeypatch.setattr(
         "api.routes.message_chat_preparation.record_user_activity", lambda *a, **k: None,
     )
+    monkeypatch.setattr(
+        "api.routes.message_chat_preparation._submit_runtime_ingress",
+        AsyncMock(return_value=_runtime_receipt()),
+    )
     handler = _Handler()
 
     response = await prepare_and_start_chat_generation(
@@ -99,9 +110,10 @@ async def test_send_prepares_stable_messages_and_reuses_task_anchor(monkeypatch)
     assert prepared["turn_id"] is not None
     assert prepared["input_message"]["id"] is not None
     assert prepared["tasks"][0]["id"] == task_id
-    assert prepared["tasks"][0]["delivery_context"] == {"actor": True, "channel": "web"}
-    metadata = handler.start.await_args.kwargs["metadata"]
-    assert metadata.context_anchor.task_id == task_id
+    assert prepared["tasks"][0]["delivery_context"] == {
+        "actor": False, "runtime": True, "channel": "web",
+    }
+    handler.start.assert_not_awaited()
     assert response.user_message.id == "input-1"
     assert response.assistant_message.reply_to_message_id == "input-1"
 
@@ -128,6 +140,10 @@ async def test_existing_output_operation_uses_database_anchor_without_new_input(
     lifecycle = _Lifecycle(result)
     monkeypatch.setattr(
         "api.routes.message_chat_preparation.GenerationLifecycle", lambda db: lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_chat_preparation._submit_runtime_ingress",
+        AsyncMock(return_value=_runtime_receipt()),
     )
     handler = _Handler()
 
@@ -164,6 +180,10 @@ async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkey
     monkeypatch.setattr(
         "api.routes.message_chat_preparation.record_user_activity", lambda *a, **k: None,
     )
+    monkeypatch.setattr(
+        "api.routes.message_chat_preparation._submit_runtime_ingress",
+        AsyncMock(return_value=_runtime_receipt()),
+    )
     handler = _Handler()
 
     response = await prepare_and_start_chat_generation(
@@ -172,10 +192,7 @@ async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkey
         body=_body(),
     )
 
-    metadata = handler.start.await_args.kwargs["metadata"]
-    assert metadata.context_anchor.task_id == task_id
-    assert metadata.turn_id == "existing-turn"
-    assert metadata.input_message_id == "existing-input"
+    handler.start.assert_not_awaited()
     assert response.task_id == "client-task"
     assert response.user_message.id == "existing-input"
     assert response.assistant_message.id == result.output_message_id
@@ -204,10 +221,6 @@ async def test_runtime_gate_closed_fails_closed_without_actor_start(monkeypatch)
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "core.config.get_settings",
-        lambda: type("Settings", (), {"agent_runtime_ingress_enabled": True})(),
-    )
-    monkeypatch.setattr(
         "api.routes.message_chat_preparation._submit_runtime_ingress",
         AsyncMock(return_value=RuntimeIngressReceipt(
             outcome="runtime_required_unavailable",
@@ -225,7 +238,7 @@ async def test_runtime_gate_closed_fails_closed_without_actor_start(monkeypatch)
         )
 
     assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": True, "runtime": False, "channel": "web",
+        "actor": False, "runtime": True, "channel": "web",
     }
     handler.start.assert_not_awaited()
 
@@ -252,10 +265,6 @@ async def test_runtime_receipt_transfers_owner_without_actor_start(monkeypatch):
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "core.config.get_settings",
-        lambda: type("Settings", (), {"agent_runtime_ingress_enabled": True})(),
-    )
-    monkeypatch.setattr(
         "api.routes.message_chat_preparation._submit_runtime_ingress",
         AsyncMock(return_value=RuntimeIngressReceipt(
             outcome="created", session_id="session", command_id="command",
@@ -271,6 +280,6 @@ async def test_runtime_receipt_transfers_owner_without_actor_start(monkeypatch):
     )
 
     assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
-        "actor": True, "runtime": False, "channel": "web",
+        "actor": False, "runtime": True, "channel": "web",
     }
     handler.start.assert_not_awaited()

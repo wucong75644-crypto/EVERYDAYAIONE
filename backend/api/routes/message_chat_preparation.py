@@ -57,8 +57,6 @@ async def prepare_and_start_chat_generation(
         external_task_id=client_task_id,
     )
     business_params = _business_params(body)
-    from core.config import get_settings
-    runtime_owned = get_settings().agent_runtime_ingress_enabled
     task_payload = _build_task_payload(
         handler=handler,
         body=body,
@@ -69,7 +67,6 @@ async def prepare_and_start_chat_generation(
         conversation_id=conversation_id,
         user_id=user_id,
         placeholder_at=placeholder_at,
-        runtime_owned=runtime_owned,
     )
     preparation = GenerationLifecycle(db).prepare(
         request_id=request_id,
@@ -82,30 +79,14 @@ async def prepare_and_start_chat_generation(
         output_message=_output_payload(body, assistant_message_id, placeholder_at),
         tasks=[task_payload],
     )
-    metadata = TaskMetadata(
-        client_task_id=client_task_id,
-        placeholder_created_at=placeholder_at,
-        input_message_id=preparation.input_message_id,
-        turn_id=preparation.turn_id,
-        execution_mode="serial",
-        context_anchor=preparation.context_anchor(internal_task_id, org_id),
+    ingress = await _submit_runtime_ingress(
+        db=db, handler=handler, conversation_id=conversation_id,
+        user_id=user_id, org_id=org_id, request_id=request_id, body=body,
+        preparation=preparation, business_params=business_params,
+        internal_task_id=internal_task_id,
     )
-    external_task_id = client_task_id
-    if runtime_owned:
-        ingress = await _submit_runtime_ingress(
-            db=db, handler=handler, conversation_id=conversation_id,
-            user_id=user_id, org_id=org_id, request_id=request_id, body=body,
-            preparation=preparation, business_params=business_params,
-            internal_task_id=internal_task_id,
-        )
-        if not ingress.accepted or ingress.runtime_owned is not True:
-            raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
-    else:
-        external_task_id = await handler.start(
-            message_id=preparation.output_message_id,
-            conversation_id=conversation_id, user_id=user_id,
-            content=body.content, params=business_params, metadata=metadata,
-        )
+    if not ingress.accepted or ingress.runtime_owned is not True:
+        raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
     user_message = _build_user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,
@@ -117,7 +98,7 @@ async def prepare_and_start_chat_generation(
             metadata={"conversation_id": conversation_id},
         )
     return GenerateResponse(
-        task_id=client_task_id or external_task_id,
+        task_id=client_task_id,
         user_message=user_message,
         assistant_message=_build_assistant_message(
             body, conversation_id, preparation.output_message_id,
@@ -133,7 +114,6 @@ def _build_task_payload(
     *, handler: Any, body: GenerateRequest, business_params: dict[str, Any],
     internal_task_id: str, client_task_id: str, assistant_message_id: str,
     conversation_id: str, user_id: str, placeholder_at: datetime,
-    runtime_owned: bool,
 ) -> dict[str, Any]:
     model_id = body.model or DEFAULT_MODEL_ID
     request_params = {
@@ -153,12 +133,7 @@ def _build_task_payload(
     payload.update({
         "id": internal_task_id,
         "execution_mode": "serial",
-        # The prepared task remains actor-owned until 227.14 atomically binds
-        # the Runtime session/command and flips this owner marker.
-        "delivery_context": (
-            {"actor": True, "runtime": False, "channel": "web"}
-            if runtime_owned else {"actor": True, "channel": "web"}
-        ),
+        "delivery_context": {"actor": False, "runtime": True, "channel": "web"},
     })
     return payload
 
