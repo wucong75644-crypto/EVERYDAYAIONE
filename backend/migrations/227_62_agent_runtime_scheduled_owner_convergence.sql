@@ -85,27 +85,18 @@ BEGIN
     WHERE EXISTS(
         SELECT 1 FROM agent_runtime_scheduled_execution_profiles profile
         WHERE profile.scheduled_task_id = task.id
-    ) OR EXISTS(
-        SELECT 1 FROM agent_runtime_scheduled_adoption_profiles adoption
-        WHERE adoption.scheduled_task_id = task.id
     );
     SELECT count(*) INTO profileless_tasks
     FROM scheduled_tasks task
     WHERE NOT EXISTS(
         SELECT 1 FROM agent_runtime_scheduled_execution_profiles profile
         WHERE profile.scheduled_task_id = task.id
-    ) AND NOT EXISTS(
-        SELECT 1 FROM agent_runtime_scheduled_adoption_profiles adoption
-        WHERE adoption.scheduled_task_id = task.id
     );
     SELECT count(*) INTO in_flight_profileless
     FROM scheduled_tasks task
     WHERE NOT EXISTS(
         SELECT 1 FROM agent_runtime_scheduled_execution_profiles profile
         WHERE profile.scheduled_task_id = task.id
-    ) AND NOT EXISTS(
-        SELECT 1 FROM agent_runtime_scheduled_adoption_profiles adoption
-        WHERE adoption.scheduled_task_id = task.id
     )
       AND (task.status = 'running' OR EXISTS(
           SELECT 1 FROM scheduled_task_runs run
@@ -187,10 +178,6 @@ BEGIN
            AND NOT EXISTS(
                SELECT 1 FROM agent_runtime_scheduled_execution_profiles profile
                WHERE profile.scheduled_task_id = t.id
-           )
-           AND NOT EXISTS(
-               SELECT 1 FROM agent_runtime_scheduled_adoption_profiles adoption
-               WHERE adoption.scheduled_task_id = t.id
            ) THEN
             RAISE EXCEPTION 'SCHEDULED_ADOPTION_RUNTIME_OWNER_INCOMPLETE'
                 USING ERRCODE = '55000';
@@ -206,6 +193,13 @@ BEGIN
             IF item->>'outcome' = 'runtime_disabled' THEN
                 CONTINUE;
             END IF;
+        ELSIF EXISTS(
+            SELECT 1 FROM agent_runtime_scheduled_adoption_profiles adoption
+            WHERE adoption.scheduled_task_id = t.id
+        ) THEN
+            -- A partial adoption must not be marked running and then rejected
+            -- by the legacy executor. Leave it due for reconciliation.
+            CONTINUE;
         ELSE
             UPDATE scheduled_tasks
             SET status = 'running', next_run_at = NULL, updated_at = p_now
@@ -233,9 +227,6 @@ BEGIN
     END IF;
     IF EXISTS(
         SELECT 1 FROM agent_runtime_scheduled_execution_profiles
-        WHERE scheduled_task_id = p_task_id
-    ) OR EXISTS(
-        SELECT 1 FROM agent_runtime_scheduled_adoption_profiles
         WHERE scheduled_task_id = p_task_id
     ) THEN
         RAISE EXCEPTION 'SCHEDULED_RUN_RUNTIME_OWNED' USING ERRCODE = '42501';

@@ -3,6 +3,38 @@
 
 SET LOCAL ROLE everydayai_owner;
 
+-- Adoption facts are executable Runtime ownership facts, but have no ordinary
+-- source Action/Attempt/Run. Keep those provenance columns empty explicitly.
+ALTER TABLE agent_runtime_scheduled_execution_profiles
+    ALTER COLUMN source_action_id DROP NOT NULL,
+    ALTER COLUMN source_attempt_id DROP NOT NULL,
+    ALTER COLUMN source_run_id DROP NOT NULL;
+ALTER TABLE agent_runtime_scheduled_execution_profiles
+    ADD CONSTRAINT runtime_scheduled_profile_source_shape_check CHECK(
+        (source_action_id IS NULL AND source_attempt_id IS NULL AND source_run_id IS NULL)
+        OR (source_action_id IS NOT NULL AND source_attempt_id IS NOT NULL AND source_run_id IS NOT NULL)
+    );
+
+DROP TRIGGER IF EXISTS runtime_scheduled_profile_immutable
+    ON agent_runtime_scheduled_execution_profiles;
+CREATE FUNCTION _agent_runtime_scheduled_profile_immutable() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       AND current_user = 'everydayai_owner'
+       AND current_setting('app.agent_runtime_scheduled_adoption_rollback', true) = '1'
+       AND OLD.source_action_id IS NULL
+       AND OLD.source_attempt_id IS NULL
+       AND OLD.source_run_id IS NULL THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'RUNTIME_SCHEDULER_FACT_IMMUTABLE' USING ERRCODE = '55000';
+END;
+$$;
+CREATE TRIGGER runtime_scheduled_profile_immutable
+    BEFORE UPDATE OR DELETE ON agent_runtime_scheduled_execution_profiles
+    FOR EACH ROW EXECUTE FUNCTION _agent_runtime_scheduled_profile_immutable();
+
 CREATE TABLE agent_runtime_scheduled_adoption_provenance(
     adoption_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scheduled_task_id UUID NOT NULL UNIQUE REFERENCES scheduled_tasks(id) ON DELETE RESTRICT,
@@ -201,6 +233,20 @@ BEGIN
             facts->>'provider_key',facts->>'capability_key',facts->>'provider_revision',
             facts->>'capability_revision',facts->>'request_hash'
         );
+        INSERT INTO agent_runtime_scheduled_execution_profiles(
+            scheduled_task_id,org_id,user_id,source_action_id,source_attempt_id,source_run_id,
+            agent_definition_id,agent_definition_revision,agent_definition_hash,catalog_revision,
+            source_effective_toolset_hash,effective_toolset_hash,model_snapshot,toolset_snapshot,
+            scope_snapshot,channel,budget_snapshot,provider_key,capability_key,provider_revision,
+            capability_revision,request_hash,state_version
+        ) VALUES(
+            task.id,task.org_id,task.user_id,NULL,NULL,NULL,
+            facts->>'agent_definition_id',facts->>'agent_definition_revision',facts->>'agent_definition_hash',
+            facts->>'catalog_revision',facts->>'source_effective_toolset_hash',facts->>'effective_toolset_hash',
+            facts->'model_snapshot',facts->'toolset_snapshot',facts->'scope_snapshot',facts->>'channel',
+            facts->'budget_snapshot',facts->>'provider_key',facts->>'capability_key',
+            facts->>'provider_revision',facts->>'capability_revision',facts->>'request_hash',1
+        );
         applied := applied + 1;
     END LOOP;
     RETURN jsonb_build_object('outcome','adopted','applied_count',applied,
@@ -260,6 +306,11 @@ BEGIN
         RAISE EXCEPTION 'SCHEDULED_ADOPTION_ROLLBACK_SIDE_EFFECTS_EXIST' USING ERRCODE = '55000';
     END IF;
     PERFORM set_config('app.agent_runtime_scheduled_adoption_rollback','1',TRUE);
+    DELETE FROM agent_runtime_scheduled_execution_profiles
+    WHERE scheduled_task_id = p_task_id
+      AND source_action_id IS NULL
+      AND source_attempt_id IS NULL
+      AND source_run_id IS NULL;
     DELETE FROM agent_runtime_scheduled_adoption_profiles WHERE adoption_id = adoption;
     DELETE FROM agent_runtime_scheduled_adoption_provenance WHERE adoption_id = adoption;
     RETURN jsonb_build_object('outcome','rolled_back','scheduled_task_id',p_task_id,
@@ -272,6 +323,7 @@ REVOKE ALL ON TABLE agent_runtime_scheduled_adoption_provenance,
     FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,
          everydayai_sync,everydayai,everydayai_agent_runtime_worker;
 REVOKE ALL ON FUNCTION _agent_runtime_scheduled_adoption_immutable(),
+    _agent_runtime_scheduled_profile_immutable(),
     adopt_agent_runtime_scheduled_tasks_v1(JSONB,UUID),
     read_agent_runtime_scheduled_adoption_v1(UUID),
     rollback_agent_runtime_scheduled_adoption_v1(UUID)

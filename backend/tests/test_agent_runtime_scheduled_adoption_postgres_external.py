@@ -140,6 +140,13 @@ def test_apply_readback_rollback_reapply_and_completion_gate(database: str) -> N
             "SELECT read_agent_runtime_scheduled_adoption_v1(NULL)"
         ).fetchone()[0]
         assert len(readback["profiles"]) == 3
+        assert conn.execute(
+            "SELECT count(*) FROM agent_runtime_scheduled_execution_profiles"
+        ).fetchone()[0] == 3
+        assert conn.execute(
+            "SELECT count(*) FROM agent_runtime_scheduled_execution_profiles "
+            "WHERE source_action_id IS NULL AND source_attempt_id IS NULL AND source_run_id IS NULL"
+        ).fetchone()[0] == 3
         for task in tasks:
             rolled_back = conn.execute(
                 "SELECT rollback_agent_runtime_scheduled_adoption_v1(%s)",

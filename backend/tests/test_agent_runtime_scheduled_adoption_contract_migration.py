@@ -18,6 +18,8 @@ def test_adoption_migration_has_separate_provenance_and_profile_contracts() -> N
     assert "SCHEDULED_ADOPTION_TASK_IN_FLIGHT" in sql
     assert "SCHEDULED_ADOPTION_FACT_INCOMPLETE" in sql
     assert "agent_runtime_scheduled_execution_profiles" in sql
+    assert "INSERT INTO agent_runtime_scheduled_execution_profiles" in sql
+    assert "runtime_scheduled_profile_source_shape_check" in sql
 
 
 def test_adoption_migration_is_immutable_and_rollback_is_guarded() -> None:

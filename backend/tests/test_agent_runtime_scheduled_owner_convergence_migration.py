@@ -24,8 +24,10 @@ def test_owner_convergence_rollback_is_blocked_after_completion() -> None:
     assert "DROP TABLE IF EXISTS agent_runtime_scheduled_adoption_control" in sql
 
 
-def test_completion_counts_adoption_profiles_and_worker_keeps_runtime_owner() -> None:
+def test_completion_and_worker_use_executable_runtime_profiles_only() -> None:
     sql = MIGRATION.read_text()
+    assert "agent_runtime_scheduled_execution_profiles profile" in sql
     assert "agent_runtime_scheduled_adoption_profiles adoption" in sql
+    assert "A partial adoption must not be marked running" in sql
     assert "SCHEDULED_ADOPTION_RUNTIME_OWNER_INCOMPLETE" in sql
     assert "SCHEDULED_LEGACY_OWNER_DISABLED" in sql
