@@ -1,4 +1,4 @@
--- 227_61: close the scheduled-task legacy Owner only after a verified cutover.
+-- 227_62: close the scheduled-task legacy Owner only after a verified cutover.
 -- The default is pending: historical tasks continue to use the existing
 -- legacy path until an owner-only completion RPC proves Runtime coverage.
 

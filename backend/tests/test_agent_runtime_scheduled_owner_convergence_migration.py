@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "migrations/227_61_agent_runtime_scheduled_owner_convergence.sql"
-ROLLBACK = ROOT / "migrations/rollback/227_61_agent_runtime_scheduled_owner_convergence_rollback.sql"
+MIGRATION = ROOT / "migrations/227_62_agent_runtime_scheduled_owner_convergence.sql"
+ROLLBACK = ROOT / "migrations/rollback/227_62_agent_runtime_scheduled_owner_convergence_rollback.sql"
 
 
 def test_owner_convergence_defaults_pending_and_requires_full_runtime_coverage() -> None:

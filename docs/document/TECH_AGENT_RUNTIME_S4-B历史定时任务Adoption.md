@@ -60,11 +60,11 @@ apply/readback/rollback/reapply。
 - apply 不创建 `agent_runtime_sessions`、`agent_session_commands`、`agent_runs`、`agent_actions` 或 `agent_action_attempts`，因此 adoption 不会伪装成普通 completed 执行历史。
 - `read_agent_runtime_scheduled_adoption_v1` 可回读 profile 快照；`rollback_agent_runtime_scheduled_adoption_v1` 仅在没有 Runtime submission/binding/delivery 副作用时删除本批事实。迁移 rollback 另有“事实存在即拒绝”保护。
 
-## Owner 收敛门禁（227_61）
+## Owner 收敛门禁（227_62）
 
 - `agent_runtime_scheduled_adoption_control` 默认是 `pending`；未完成 adoption 时不自动停掉 profileless 历史任务。
 - `complete_agent_runtime_scheduled_adoption_v1(request_id)` 只有在每一条 `scheduled_tasks` 都已有 Runtime execution profile 时才允许切换为 `complete`，并提供 control readback。
 - 切换完成后，worker 对异常 profileless 任务直接 fail-closed，不再返回 `legacy`；`worker_assert_scheduled_task_legacy_owner_v1` 也拒绝旧 `ScheduledTaskAgent/ToolLoopExecutor`。
-- 227_61 rollback 仅允许在 `pending` 状态执行；完成切换后必须通过 Runtime recovery/reconcile 处理，不能回开旧 Owner。
+- 227_62 rollback 仅允许在 `pending` 状态执行；完成切换后必须通过 Runtime recovery/reconcile 处理，不能回开旧 Owner。
 
 Python service 只负责无 Secret 的事实绑定、候选全集校验和 rollback gate；数据库 RPC 负责最终哈希、状态、快照安全和原子写入。

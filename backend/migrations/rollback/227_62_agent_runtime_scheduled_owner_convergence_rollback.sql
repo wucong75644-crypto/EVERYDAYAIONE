@@ -1,4 +1,4 @@
--- 227_61 rollback: only while the convergence control is still pending.
+-- 227_62 rollback: only while the convergence control is still pending.
 
 SET LOCAL ROLE everydayai_owner;
 DO $$
@@ -12,7 +12,7 @@ BEGIN
 END;
 $$;
 
--- Restore the pre-227_61 worker behavior before removing the cutover helper.
+-- Restore the pre-227_62 worker behavior before removing the cutover helper.
 CREATE OR REPLACE FUNCTION worker_claim_due_scheduled_executions_v1(
     p_now TIMESTAMPTZ, p_limit INTEGER
 ) RETURNS JSONB
