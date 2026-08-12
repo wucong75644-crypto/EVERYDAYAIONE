@@ -1953,6 +1953,9 @@ cache = client.caches.create(
     target hash 和 adoption candidate，不读取或回显 prompt/target，不修改任务或 Runtime 数据。
     `safe_to_adopt_count` 固定为 0；缺少来源 Action/Attempt/Run 或 Runtime facts 的任务继续由旧
     Owner 保持运行/阻断，待后续事实重建与人工语义确认后再设计可回滚 adoption。
+  - AR-18 分支复审确认 Provider/Child/Scheduler/Scheduled Run/Delivery/Projection/Web/WeCom 相关 tip
+    已在 Runtime 主线祖先链；Sandbox `929ec2e2` 与主线 `77585d21` 三文件 patch-id 一致。150 个
+    AR-18/Owner/调度本地定向测试通过；该证据不等于 profileless 历史任务已 adoption，也不改变旧 Owner 保留边界。
 
 - **2026-08-09**：AR-18 B7-S2-A2 Scheduled Runtime Command Submission（仅 disposable）
   - 新增 `227_30_agent_runtime_scheduled_submission.sql` 及精确 rollback：到期扫描与立即执行

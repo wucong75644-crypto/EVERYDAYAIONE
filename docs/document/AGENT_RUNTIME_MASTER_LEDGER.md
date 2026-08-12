@@ -4,7 +4,7 @@
 
 权威主线：`codex/agent-runtime-ar-17-4-integration`
 
-当前基线：`148b1902`
+当前基线：`4aa22b5c`
 
 当前工作区：干净；未推送、未部署、未连接生产。
 
@@ -30,7 +30,7 @@
 | S2 ERP Read | 已接入 | 复用现有租户 ERP Bundle/Dispatcher；ERP Write、Sync、淘宝奇门关闭 |
 | S2 数据读取 | 已接入 | `local_data`、`file_analyze`、`fetch_all_pages` 显式 adapter；无隐式 Artifact fallback |
 | AR-18 cancel | 技术批次已在主线形成等价集成 | Run/Action/Provider/Model/Sandbox/Child cancel 及 fence 有测试证据 |
-| AR-18 Scheduler/WeCom | S3-R 总复审通过 | Runtime profile Owner、legacy profileless 分流、WeCom delivery/readback/reconcile 已核对；Owner 全量切换仍未完成 |
+| AR-18 Scheduler/WeCom | S3-R 总复审通过 | AR-18 分支祖先链、Sandbox 等价 patch、Runtime/legacy 分流、WeCom delivery/readback/reconcile 与定向回归已核对；Owner 全量切换仍未完成 |
 | Production readiness | 未开启 | `production_ready=false`，生产 flags 默认关闭 |
 | T5 Staging | 未执行 | 仅有 disposable local/CI verified，不冒充 staging |
 | T8/T9 | 未执行 | 需要真实生产授权和观察窗口，当前不做 |
@@ -43,13 +43,21 @@
 - `c7-b1-*`、`c7-b2-*`、`c7-b31-*`、`c7-bg*`、`c7-d0-*`、`c7-final-*`：必须以当前源码和实际 diff 复审；不能仅因旁路 tip 不在祖先链就重复合并。当前主线已包含 flags-off、composition、gateway fence、release gate 的等价提交。
 - `agent-runtime-final-integration`：其 orphan sandbox recovery 等价提交已在当前主线祖先链中。
 
-### AR-18 已形成等价主线但仍需总复审
+### AR-18 已形成等价主线并完成总复审
 
 - `ar18-a11-*`：lifecycle fence。
 - `ar18-a12-*`：cancel intent、Web、Provider、Model、Sandbox、Child Run。
 - `ar18-b7-s1-*`、`ar18-b7-s2-*`：Scheduler、scheduled Runtime、Web/WeCom delivery、readback、reconcile、worker、CI。
 
 注意：例如 Sandbox B5 协作分支使用 `929ec2e2`，主线已有等价修复 `77585d21`；应审查实际 diff，不直接 cherry-pick。
+
+## AR-18 集成复审证据
+
+- 当前 `codex/agent-runtime-ar-17-4-integration` 的祖先链包含 Provider Cancel、Child Cancel、Scheduler Control、Scheduled Run、Terminal Intent、Finalizer、Budget、Delivery、Projection、Web/WeCom delivery/readback/reconcile、Worker 与 CI 相关 AR-18 分支 tip。
+- Sandbox B5 分支 tip `929ec2e2` 不在当前祖先链；其三文件 patch-id 与主线等价提交 `77585d21` 完全一致，migration、migration test 和 disposable PostgreSQL test 均已由主线保留，未重复合并。
+- `ScheduledWorkerStore` 只通过 `worker_claim_due_scheduled_executions_v1` 接收 `owner_kind`；Runtime claim 在 Scanner 中跳过旧 Executor，profileless legacy claim 在 `worker_assert_scheduled_task_legacy_owner_v1` 通过后才进入 `ScheduledTaskExecutor → ScheduledTaskAgent → ToolLoopExecutor`。
+- AR-18/Owner/调度定向本地回归：150 passed；本批未连接生产、未调用真实 Provider、未开启 production flags。
+- 该复审只证明 AR-18 技术批次的主线等价集成与单 Owner 门禁，不证明 profileless 历史任务已经 adoption，也不授权删除旧 Owner。
 
 ## 当前未完成任务
 
