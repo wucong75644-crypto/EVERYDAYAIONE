@@ -74,8 +74,7 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_scheduled_wecom_reconcile_org_migration.py \
       backend/tests/test_agent_runtime_ar18_migration_continuity.py \
       backend/tests/test_agent_runtime_model_attempt_migration.py \
-      backend/tests/test_agent_runtime_model_attempt_migration_order.py \
-      backend/tests/test_agent_runtime_ar18_migration_continuity.py
+      backend/tests/test_agent_runtime_model_attempt_migration_order.py
     ;;
   external)
     run_tests external \
