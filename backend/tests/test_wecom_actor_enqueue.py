@@ -38,8 +38,15 @@ def _handler() -> MagicMock:
         "org_id": "org",
         "assistant_message_id": "output",
     }
-    handler.db.rpc.return_value.execute.return_value = SimpleNamespace(
-        data={"task_id": "internal", "already_enqueued": False},
+    handler.db.rpc.side_effect = (
+        lambda name, params: MagicMock(
+            execute=MagicMock(return_value=SimpleNamespace(data=(
+                {"definition_hash": "definition", "catalog_revision": "catalog"}
+                if name == "get_agent_runtime_definition_fact" else
+                {"task_id": "internal", "already_enqueued": False,
+                 "runtime_owned": True}
+            )))
+        )
     )
     return handler
 
@@ -47,12 +54,23 @@ def _handler() -> MagicMock:
 @pytest.mark.asyncio
 async def test_enqueue_is_stable_atomic_and_contains_no_secret():
     handler = _handler()
-    wakeup = AsyncMock(return_value=True)
-
-    with patch(
-        "services.conversation_worker.RedisConversationWakeup.publish",
-        new=wakeup,
-    ):
+    handler.db.rpc.side_effect = (
+        lambda name, params: MagicMock(
+            execute=MagicMock(return_value=SimpleNamespace(data=(
+                {"definition_hash": "definition", "catalog_revision": "catalog"}
+                if name == "get_agent_runtime_definition_fact" else
+                {"task_id": "internal", "already_enqueued": False,
+                 "runtime_owned": True}
+            )))
+        )
+    )
+    settings = SimpleNamespace(
+        agent_runtime_ingress_enabled=False,
+        agent_runtime_agent_definition_id="agent",
+        agent_runtime_agent_definition_revision="v1",
+        agent_runtime_release_revision="release",
+    )
+    with patch("core.config.get_settings", return_value=settings):
         first = await enqueue_wecom_message(
             handler=handler,
             msg=_message(),
@@ -83,7 +101,7 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
     assert first_params["p_input_message_id"] == second_params["p_input_message_id"]
     assert first_params["p_output_message_id"] == second_params["p_output_message_id"]
     assert isinstance(first_params["p_input_content"], Jsonb)
-    assert handler.db.rpc.call_args.args[0] == "enqueue_wecom_generation_turn_v2"
+    assert handler.db.rpc.call_args.args[0] == "enqueue_wecom_runtime_turn_v6"
     delivery = first_params["p_delivery_context"].obj
     assert delivery["channel"] == "wecom"
     assert delivery["chatid"] == "chat"
@@ -92,7 +110,6 @@ async def test_enqueue_is_stable_atomic_and_contains_no_secret():
     assert delivery["stream_started_at"] == 123.0
     assert delivery["stream_task_id"] == first_params["p_task_data"].obj["id"]
     assert "agent_secret" not in delivery
-    wakeup.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -186,20 +203,14 @@ async def test_runtime_required_rejects_legacy_fallback():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("runtime_owned", "owner_state", "wakeup_count"),
-    ((True, "runtime_owned", 0), (False, "legacy_fallback", 1)),
-)
-async def test_runtime_owner_transition_controls_legacy_wakeup(
-    runtime_owned, owner_state, wakeup_count,
-):
+async def test_runtime_owner_transition_rejects_non_runtime_owner():
     handler = _handler()
     handler.db.rpc.side_effect = (
         lambda name, params: MagicMock(
             execute=MagicMock(return_value=SimpleNamespace(data=(
                 {"definition_hash": "definition", "catalog_revision": "catalog"}
                 if name == "get_agent_runtime_definition_fact" else
-                {"task_id": "internal", "runtime_owned": runtime_owned}
+                {"task_id": "internal", "runtime_owned": False}
             )))
         )
     )
@@ -209,19 +220,13 @@ async def test_runtime_owner_transition_controls_legacy_wakeup(
         agent_runtime_agent_definition_revision="v1",
         agent_runtime_release_revision="release",
     )
-    wakeup = AsyncMock(return_value=True)
-
-    with patch("core.config.get_settings", return_value=settings), patch(
-        "services.conversation_worker.RedisConversationWakeup.publish",
-        new=wakeup,
+    with patch("core.config.get_settings", return_value=settings), pytest.raises(
+        RuntimeError, match="WECOM_RUNTIME_OWNERSHIP_REQUIRED",
     ):
-        result = await enqueue_wecom_message(
+        await enqueue_wecom_message(
             handler=handler, msg=_message(), user_id="user",
             conversation_id="conversation", image_urls=[],
         )
-
-    assert result.owner_state == owner_state
-    assert wakeup.await_count == wakeup_count
 
 
 @pytest.mark.asyncio
@@ -237,10 +242,13 @@ async def test_enqueue_file_uses_structured_filepart_without_scanned_text():
         "mime_type": "text/csv",
         "size": 10,
     }
-    with patch(
-        "services.conversation_worker.RedisConversationWakeup.publish",
-        new=AsyncMock(return_value=True),
-    ):
+    settings = SimpleNamespace(
+        agent_runtime_ingress_enabled=False,
+        agent_runtime_agent_definition_id="agent",
+        agent_runtime_agent_definition_revision="v1",
+        agent_runtime_release_revision="release",
+    )
+    with patch("core.config.get_settings", return_value=settings):
         await enqueue_wecom_message(
             handler=handler,
             msg=msg,

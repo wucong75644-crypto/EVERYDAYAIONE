@@ -1,4 +1,4 @@
-"""企业微信消息到 Conversation Actor 的原子幂等入口。"""
+"""企业微信消息到 Agent Runtime 的原子幂等门面。"""
 
 from __future__ import annotations
 
@@ -39,9 +39,9 @@ async def enqueue_wecom_message(
     image_urls: list[str],
     file_payload: dict[str, Any] | None = None,
     stream_context: Mapping[str, Any] | None = None,
-    runtime_required: bool = False,
+    runtime_required: bool = True,
 ) -> WecomActorEnqueueResult:
-    """使用稳定 ID 原子创建消息和 Actor task，并 best-effort 唤醒 Worker。"""
+    """使用稳定 ID 原子创建消息并交给 Runtime；不可用时直接失败。"""
     if not msg.msgid:
         raise RuntimeError("WECOM_ACTOR_MSGID_MISSING")
     ids = _stable_ids(msg, user_id)
@@ -77,11 +77,7 @@ async def enqueue_wecom_message(
     from core.config import get_settings
 
     settings = get_settings()
-    rpc_name = (
-        "enqueue_wecom_runtime_turn_v6"
-        if runtime_required or settings.agent_runtime_ingress_enabled
-        else "enqueue_wecom_generation_turn_v2"
-    )
+    rpc_name = "enqueue_wecom_runtime_turn_v6"
     params = {
             "p_task_data": Jsonb(task_data),
             "p_input_message_id": ids["input"],
@@ -122,20 +118,14 @@ async def enqueue_wecom_message(
         raise RuntimeError("WECOM_ACTOR_ENQUEUE_RESULT_INVALID")
 
     runtime_owned = bool(result.get("runtime_owned"))
-    if runtime_required and not runtime_owned:
-        raise RuntimeError("WECOM_RUNTIME_OWNERSHIP_REQUIRED")
     if not runtime_owned:
-        from services.conversation_worker import RedisConversationWakeup
-        await RedisConversationWakeup().publish(conversation_id, msg.org_id)
+        raise RuntimeError("WECOM_RUNTIME_OWNERSHIP_REQUIRED")
     return WecomActorEnqueueResult(
         task_id=str(result["task_id"]),
         input_message_id=str(result.get("input_message_id") or ids["input"]),
         output_message_id=str(result.get("output_message_id") or ids["output"]),
         already_enqueued=bool(result.get("already_enqueued")),
-        owner_state=(
-            "runtime_owned" if runtime_owned
-            else "legacy_fallback"
-        ),
+        owner_state="runtime_owned",
     )
 
 

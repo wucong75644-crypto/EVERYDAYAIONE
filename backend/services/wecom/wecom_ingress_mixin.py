@@ -1,4 +1,4 @@
-"""企业微信 AI 入站的 Actor 灰度与旧链路分发。"""
+"""企业微信 AI 入站的 Runtime 单一 Owner 分发。"""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ class WecomIngressMixin:
         if msg.msgtype in _ACTOR_MESSAGE_TYPES:
             await self._enqueue_actor_message(
                 msg, reply_ctx, user_id, conversation_id, image_urls,
+                runtime_required=True,
             )
             return
 

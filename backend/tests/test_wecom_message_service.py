@@ -108,7 +108,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, USER_ID, "conv1", [],
+            msg, ctx, USER_ID, "conv1", [], runtime_required=True,
         )
 
     @pytest.mark.asyncio
@@ -129,7 +129,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, USER_ID, "conv1", [],
+            msg, ctx, USER_ID, "conv1", [], runtime_required=True,
         )
 
     @pytest.mark.asyncio
@@ -207,8 +207,7 @@ class TestHandleMessage:
         owner = stage.call_args.kwargs["storage_owner_id"]
         assert owner.startswith("channels/wecom/") if expected_scope == "channel" else owner == USER_ID
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, USER_ID, "conv1", [],
-            file_payload=file_payload,
+            msg, ctx, USER_ID, "conv1", [], file_payload=file_payload,
             runtime_required=True,
             notify_web=False,
             acknowledgement="文件已收到，请告诉我需要如何处理。",
@@ -261,7 +260,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, USER_ID, "conv1", [],
+            msg, ctx, USER_ID, "conv1", [], runtime_required=True,
         )
 
     @pytest.mark.asyncio
@@ -329,7 +328,7 @@ class TestHandleMessage:
         await svc.handle_message(msg, ctx)
 
         svc._enqueue_actor_message.assert_awaited_once_with(
-            msg, ctx, USER_ID, "conv1", [],
+            msg, ctx, USER_ID, "conv1", [], runtime_required=True,
         )
 
 
@@ -421,7 +420,7 @@ class TestCommandInterception:
         ):
             await svc.handle_message(msg, ctx)
             svc._enqueue_actor_message.assert_awaited_once_with(
-                msg, ctx, USER_ID, "conv1", [],
+                msg, ctx, USER_ID, "conv1", [], runtime_required=True,
             )
 
 
