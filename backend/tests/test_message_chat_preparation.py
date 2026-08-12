@@ -182,10 +182,8 @@ async def test_duplicate_request_preserves_prepared_task_and_response_ids(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "outcome", ("ingress_disabled", "org_not_enabled", "fallback_to_legacy"),
-)
-async def test_runtime_gate_closed_preserves_actor_owner(monkeypatch, outcome):
+@pytest.mark.asyncio
+async def test_runtime_gate_closed_fails_closed_without_actor_start(monkeypatch):
     task_id = stable_actor_task_id(
         user_id="user-1", conversation_id="conversation-1",
         external_task_id="client-task",
@@ -211,20 +209,25 @@ async def test_runtime_gate_closed_preserves_actor_owner(monkeypatch, outcome):
     )
     monkeypatch.setattr(
         "api.routes.message_chat_preparation._submit_runtime_ingress",
-        AsyncMock(return_value=RuntimeIngressReceipt(outcome=outcome)),
+        AsyncMock(return_value=RuntimeIngressReceipt(
+            outcome="runtime_required_unavailable",
+            owner_state="runtime_required_unavailable",
+            runtime_owned=False,
+        )),
     )
     handler = _Handler()
 
-    await prepare_and_start_chat_generation(
-        db=object(), handler=handler, conversation_id="conversation-1",
-        user_id="user-1", org_id="org-1", request_id="request-row",
-        body=_body(),
-    )
+    with pytest.raises(RuntimeError, match="RUNTIME_INGRESS_RUNTIME_REQUIRED_UNAVAILABLE"):
+        await prepare_and_start_chat_generation(
+            db=object(), handler=handler, conversation_id="conversation-1",
+            user_id="user-1", org_id="org-1", request_id="request-row",
+            body=_body(),
+        )
 
     assert lifecycle.calls[0]["tasks"][0]["delivery_context"] == {
         "actor": True, "runtime": False, "channel": "web",
     }
-    handler.start.assert_awaited_once()
+    handler.start.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -256,7 +259,7 @@ async def test_runtime_receipt_transfers_owner_without_actor_start(monkeypatch):
         "api.routes.message_chat_preparation._submit_runtime_ingress",
         AsyncMock(return_value=RuntimeIngressReceipt(
             outcome="created", session_id="session", command_id="command",
-            run_id="run",
+            run_id="run", owner_state="runtime_owned", runtime_owned=True,
         )),
     )
     handler = _Handler()

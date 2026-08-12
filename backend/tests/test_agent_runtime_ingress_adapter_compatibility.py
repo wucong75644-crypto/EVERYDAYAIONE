@@ -77,6 +77,62 @@ async def test_prepared_task_uses_atomic_v5_owner_transition_wrapper() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_required_prepared_task_uses_v6_without_legacy_fallback() -> None:
+    database = _Database({
+        "get_agent_runtime_ingress_capability": {
+            "outcome": "available", "ingress_version": 5,
+        },
+        "runtime_submit_ingress_v6_required": {
+            "outcome": "runtime_required_unavailable", "runtime_owned": False,
+        },
+        "get_agent_runtime_definition_fact": {
+            "definition_hash": "definition", "catalog_revision": "catalog",
+        },
+    })
+    result = await RuntimeIngress(
+        database, contract_revision=3, require_runtime_owner=True,
+    ).submit(
+        conversation_id="conversation", org_id="org", user_id="user",
+        scope_kind="user", scope_id="user", agent_definition_id="agent",
+        agent_definition_revision="v1", command_type="submit_input",
+        idempotency_key="request", payload={
+            "channel": "web", "input_message_id": "message",
+            "output_message_id": "output", "turn_id": "turn", "task_id": "task",
+            "client_task_id": "client", "request_id": "request",
+        },
+    )
+    assert result.outcome == "runtime_required_unavailable"
+    assert result.owner_state == "runtime_required_unavailable"
+    assert result.runtime_owned is False
+    assert database.calls[-1][0] == "runtime_submit_ingress_v6_required"
+
+
+@pytest.mark.asyncio
+async def test_runtime_required_does_not_fallback_when_capability_is_missing() -> None:
+    missing = RuntimeError("PGRST202: Could not find the function")
+    database = _Database({
+        "get_agent_runtime_ingress_capability": _Rpc(error=missing),
+        "runtime_submit_ingress_v4": {"outcome": "created", "entity_id": "legacy"},
+        "get_agent_runtime_definition_fact": {
+            "definition_hash": "definition", "catalog_revision": "catalog",
+        },
+    })
+    with pytest.raises(RuntimeError, match="RUNTIME_INGRESS_REQUIRED_CAPABILITY_UNAVAILABLE"):
+        await RuntimeIngress(
+            database, contract_revision=3, require_runtime_owner=True,
+        ).submit(
+            conversation_id="conversation", org_id="org", user_id="user",
+            scope_kind="user", scope_id="user", agent_definition_id="agent",
+            agent_definition_revision="v1", command_type="submit_input",
+            idempotency_key="request", payload={
+                "channel": "web", "input_message_id": "message",
+                "task_id": "task", "request_id": "request",
+            },
+        )
+    assert [name for name, _ in database.calls].count("runtime_submit_ingress_v4") == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("raw_outcome", "outcome", "owner_state", "runtime_owned"),
     (

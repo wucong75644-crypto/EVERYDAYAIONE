@@ -27,11 +27,13 @@ class RuntimeIngressReceipt:
 
 class RuntimeIngress:
     def __init__(self, database: Any, version_registry: Any | None = None,
-                 *, contract_revision: int = 2) -> None:
+                 *, contract_revision: int = 2,
+                 require_runtime_owner: bool = False) -> None:
         self._database = database
         if contract_revision not in {2, 3}:
             raise ValueError("RUNTIME_INGRESS_CONTRACT_REVISION_INVALID")
         self._contract_revision = contract_revision
+        self._require_runtime_owner = require_runtime_owner
         if version_registry is None:
             from services.agent.runtime.catalog import build_runtime_version_registry
             version_registry = build_runtime_version_registry()
@@ -76,13 +78,19 @@ class RuntimeIngress:
             if not definition_hash or not catalog_revision:
                 raise RuntimeError("RUNTIME_DEFINITION_FACT_INVALID")
         rpc_name = await self._resolve_rpc_name()
+        if self._require_runtime_owner and rpc_name != "runtime_submit_ingress_v5":
+            raise RuntimeError("RUNTIME_INGRESS_REQUIRED_CAPABILITY_UNAVAILABLE")
         owner_transition = (
             self._contract_revision == 3
             and bool(payload.get("task_id"))
             and rpc_name == "runtime_submit_ingress_v5"
         )
         if owner_transition:
-            rpc_name = "runtime_submit_ingress_v5_owner_transition"
+            rpc_name = (
+                "runtime_submit_ingress_v6_required"
+                if self._require_runtime_owner
+                else "runtime_submit_ingress_v5_owner_transition"
+            )
         rpc_params = {
             "p_conversation_id": conversation_id, "p_org_id": org_id,
             "p_user_id": user_id, "p_scope_kind": scope_kind,
@@ -183,6 +191,8 @@ def _owner_transition_evidence(
         return outcome, "runtime_owned", True
     if raw_outcome in {"restored", "already_actor_owned"}:
         return "fallback_to_legacy", "legacy_fallback", False
+    if raw_outcome == "runtime_required_unavailable":
+        return raw_outcome, "runtime_required_unavailable", False
     if raw_outcome in {
         "ingress_disabled", "org_not_enabled", "subject_not_enabled", "fenced",
     }:

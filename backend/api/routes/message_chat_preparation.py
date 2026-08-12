@@ -98,16 +98,7 @@ async def prepare_and_start_chat_generation(
             preparation=preparation, business_params=business_params,
             internal_task_id=internal_task_id,
         )
-        if ingress.outcome in {
-            "ingress_disabled", "org_not_enabled", "subject_not_enabled",
-            "runtime_unavailable", "fenced", "fallback_to_legacy",
-        }:
-            external_task_id = await handler.start(
-                message_id=preparation.output_message_id,
-                conversation_id=conversation_id, user_id=user_id,
-                content=body.content, params=business_params, metadata=metadata,
-            )
-        elif not ingress.accepted:
+        if not ingress.accepted or ingress.runtime_owned is not True:
             raise RuntimeError(f"RUNTIME_INGRESS_{ingress.outcome.upper()}")
     else:
         external_task_id = await handler.start(
@@ -164,9 +155,10 @@ def _build_task_payload(
         "execution_mode": "serial",
         # The prepared task remains actor-owned until 227.14 atomically binds
         # the Runtime session/command and flips this owner marker.
-        "delivery_context": {
-            "actor": True, "runtime": False, "channel": "web",
-        } if runtime_owned else {"actor": True, "channel": "web"},
+        "delivery_context": (
+            {"actor": True, "runtime": False, "channel": "web"}
+            if runtime_owned else {"actor": True, "channel": "web"}
+        ),
     })
     return payload
 
@@ -187,7 +179,9 @@ async def _submit_runtime_ingress(
     if not isinstance(conversation, dict):
         raise RuntimeError("RUNTIME_INGRESS_CONVERSATION_MISSING")
     settings = get_settings()
-    return await RuntimeIngress(db, contract_revision=3).submit(
+    return await RuntimeIngress(
+        db, contract_revision=3, require_runtime_owner=True,
+    ).submit(
         conversation_id=conversation_id, org_id=org_id, user_id=user_id,
         scope_kind=str(conversation["scope_type"]),
         scope_id=str(conversation["scope_id"]),

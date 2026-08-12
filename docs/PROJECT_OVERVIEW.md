@@ -1947,6 +1947,13 @@ cache = client.caches.create(
     或绑定后 task/profile/gate epoch 已变化时拒绝绑定。存在事实时 rollback 失败关闭；
     production Scheduler capability 与 readiness 继续关闭。
 
+- **2026-08-12**：Web ingress Runtime-required 接线（227.61）
+  - 新增 `runtime_submit_ingress_v6_required` 及精确 rollback；Web Chat 在 Runtime ingress
+    gate、能力或命令创建失败时，将 prepared task 隔离为 Runtime rejected 并返回明确错误，
+    不恢复旧 Conversation Actor Owner。
+  - WeCom、Scheduler 和旧 ToolExecutor 不在本批范围；Runtime 成功时仍由 Command claim
+    进入 ModelLoop/ActionLoop。
+
 - **2026-08-12**：S4-B 历史定时任务 Runtime adoption preflight（仅非生产）
   - 新增 `227_59_agent_runtime_scheduled_adoption_preflight.sql` 及精确 rollback，提供
     owner-only、只读的历史 `scheduled_tasks` 分类报告；仅返回状态、事实完整性、语义/投递
