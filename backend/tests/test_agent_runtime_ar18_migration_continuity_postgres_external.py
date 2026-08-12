@@ -36,7 +36,7 @@ def _lane() -> tuple[str, ...]:
 
 def _rollbacks() -> tuple[str, ...]:
     return tuple(
-        f"rollback/{Path(name).stem}_rollback.sql" for name in reversed(_lane())
+        f"{Path(name).stem}_rollback.sql" for name in reversed(_lane())
     )
 
 
@@ -148,8 +148,8 @@ def _assert_security_contracts(url: str) -> None:
                 (function_name,),
             ).fetchone()[0] is True, function_name
         for function_name in (
-            "claim_next_agent_action_reconciliation",
-            "resolve_agent_action_reconciliation",
+            "claim_agent_action_reconciliation_v2",
+            "resolve_agent_action_reconciliation_v2",
         ):
             assert conn.execute(
                 "SELECT has_function_privilege(%s,p.oid,'EXECUTE') "
