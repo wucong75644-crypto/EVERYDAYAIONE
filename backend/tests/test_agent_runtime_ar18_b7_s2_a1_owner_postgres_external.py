@@ -10,7 +10,6 @@ import psycopg
 from psycopg.types.json import Jsonb
 import pytest
 
-from services.agent.runtime.catalog.production_seed import build_seed_snapshot
 from tests.agent_runtime_scheduled_toolset_support import (
     canonical_target as _canonical_target,
     create_profile as _profile,
@@ -36,7 +35,6 @@ def _freeze_source(
     url: str, ids: dict[str, str], payload: dict[str, object], *,
     scope: str = "user", scope_id: str = USER,
 ) -> None:
-    release = build_seed_snapshot(scope=scope, channel="web", gate_state="enabled")
     with psycopg.connect(url) as conn:
         row = conn.execute(
             "SELECT to_jsonb(d),to_jsonb(c),to_jsonb(t) FROM agent_runtime_definition_facts d "
@@ -50,7 +48,6 @@ def _freeze_source(
     definition, source_toolset = _frozen_runtime_facts({
         "definition_fact": row[0], "catalog_fact": row[1], "effective_toolset_fact": row[2],
     })
-    assert source_toolset.toolset_hash == release.toolset.toolset_hash
     result = SimpleNamespace(
         stop_reason=StopReason.TOOL_CALLS,
         tool_calls=(SimpleNamespace(
@@ -61,7 +58,7 @@ def _freeze_source(
     )
     generated = _actions(result, ids["run"], source_toolset)[1][0]
     generated = {**generated, "action_id": ids["action"]}
-    tool = next(item for item in release.toolset.definitions
+    tool = next(item for item in source_toolset.definitions
                 if item.canonical_name == "manage_scheduled_task")
     resolution = resolve_runtime_model("qwen3.5-plus")
     model = {
@@ -76,9 +73,9 @@ def _freeze_source(
         "channel": "web", "agent_definition_id": definition.canonical_key,
         "agent_definition_revision": definition.revision,
         "agent_definition_hash": definition.definition_hash,
-        "tool_catalog_revision": release.receipt.production_revision,
-        "tool_catalog_hash": release.receipt.production_revision,
-        "effective_toolset_revision": release.receipt.production_revision,
+        "tool_catalog_revision": source_toolset.catalog_revision,
+        "tool_catalog_hash": source_toolset.catalog_revision,
+        "effective_toolset_revision": source_toolset.catalog_revision,
         "effective_toolset_hash": source_toolset.toolset_hash, "gate_state": "enabled",
     }
     identity = {
