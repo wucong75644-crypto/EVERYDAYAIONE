@@ -127,6 +127,8 @@ jobs:
             backend/tests/test_message_chat_preparation.py \
             backend/tests/test_wecom_actor_enqueue.py \
             backend/tests/test_agent_runtime_c52_safe_composition.py \
+            backend/tests/test_agent_runtime_data_adapters.py \
+            backend/tests/test_agent_runtime_local_query_migration.py \
             backend/tests/test_agent_runtime_worker_readiness.py \
             backend/tests/test_agent_runtime_process_settings.py \
             backend/tests/test_agent_runtime_flags_off_install.py \
@@ -212,6 +214,7 @@ jobs:
             backend/tests/test_agent_runtime_owner_transition_postgres_external.py \
             backend/tests/test_agent_runtime_owner_rpc_acl_closure_postgres_external.py \
             backend/tests/test_agent_runtime_c7_b32a_postgres_external.py \
+            backend/tests/test_agent_runtime_local_query_postgres_external.py \
             backend/tests/test_agent_runtime_model_configuration_facade_postgres_external.py \
             backend/tests/test_agent_runtime_pgcrypto_migration.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
