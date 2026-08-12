@@ -129,6 +129,43 @@ async def test_composition_to_executor_dispatches_injected_local_data() -> None:
     assert receipt.result and receipt.result.data["summary"] == "trend ready"
 
 
+@pytest.mark.asyncio
+async def test_composition_dispatches_file_and_pagination_adapters() -> None:
+    from services.agent.runtime.domain import (
+        ActionAttempt, ActionAttemptStatus, Lease, RuntimeScope, ScopeKind,
+    )
+    from services.agent.runtime.executors.contracts import canonical_request_hash
+    from services.agent.runtime.ports.executor import ExecutionOutcome
+
+    class ReadPort:
+        async def prepare(self, attempt, request):
+            return {"status": "success", "summary": request["operation"]}
+
+    requests = {
+        "file_analyze": {"file_id": "asset-a"},
+        "fetch_all_pages": {"tool_name": "erp_trade_query", "action": "query"},
+    }
+    now = datetime.now(timezone.utc)
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=object()),
+        file_analyze=ReadPort(), fetch_all_pages=ReadPort(),
+    )
+    for tool, request in requests.items():
+        attempt = ActionAttempt(
+            attempt_id=f"attempt-{tool}", action_id=f"action-{tool}",
+            scope=RuntimeScope(
+                kind=ScopeKind.USER, scope_id="user-a", user_id="user-a", org_id="org-a",
+            ), attempt_number=1, status=ActionAttemptStatus.DISPATCHING,
+            worker_id="worker-a", idempotency_key=f"attempt-{tool}",
+            request_hash=canonical_request_hash(request),
+            lease=Lease(fencing_token="fence-a", expires_at=now + timedelta(minutes=1)),
+            started_at=now,
+        )
+        receipt = await composition.registry.resolve(tool)[1].dispatch(attempt, request)
+        assert receipt.outcome is ExecutionOutcome.COMPLETED
+        assert receipt.result and receipt.result.data["summary"] == tool
+
+
 def test_safe_composition_requires_model_credential_boundary() -> None:
     without_broker = build_safe_runtime_composition(
         resources=RuntimeReadResources(database=object()),
