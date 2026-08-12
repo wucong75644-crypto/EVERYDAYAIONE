@@ -133,7 +133,9 @@ def _build_task_payload(
     payload.update({
         "id": internal_task_id,
         "execution_mode": "serial",
-        "delivery_context": {"actor": False, "runtime": True, "channel": "web"},
+        # The required-owner RPC atomically flips this handoff marker to
+        # actor=false/runtime=true before Runtime can execute the task.
+        "delivery_context": {"actor": True, "runtime": False, "channel": "web"},
     })
     return payload
 
