@@ -55,6 +55,10 @@ CREATE POLICY scheduled_adoption_profiles_owner_all ON agent_runtime_scheduled_a
 CREATE FUNCTION _agent_runtime_scheduled_adoption_immutable() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 BEGIN
+    IF current_user = 'everydayai_owner'
+       AND current_setting('app.agent_runtime_scheduled_adoption_rollback', true) = '1' THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_ADOPTION_FACT_IMMUTABLE' USING ERRCODE = '55000';
 END;
 $$;
@@ -88,11 +92,11 @@ BEGIN
     END IF;
 
     SELECT count(*)::INTEGER INTO candidate_count
-    FROM scheduled_tasks task
+    FROM scheduled_tasks AS scheduled_task_row
     LEFT JOIN agent_runtime_scheduled_adoption_profiles profile
-      ON profile.scheduled_task_id = task.id
+      ON profile.scheduled_task_id = scheduled_task_row.id
     LEFT JOIN agent_runtime_scheduled_execution_profiles runtime_profile
-      ON runtime_profile.scheduled_task_id = task.id
+      ON runtime_profile.scheduled_task_id = scheduled_task_row.id
     WHERE profile.scheduled_task_id IS NULL
       AND runtime_profile.scheduled_task_id IS NULL;
     SELECT count(*)::INTEGER INTO fact_count FROM jsonb_object_keys(p_facts);
@@ -101,14 +105,14 @@ BEGIN
     END IF;
 
     FOR task IN
-        SELECT task.* FROM scheduled_tasks task
+        SELECT scheduled_task_row.* FROM scheduled_tasks AS scheduled_task_row
         LEFT JOIN agent_runtime_scheduled_adoption_profiles profile
-          ON profile.scheduled_task_id = task.id
+          ON profile.scheduled_task_id = scheduled_task_row.id
         LEFT JOIN agent_runtime_scheduled_execution_profiles runtime_profile
-          ON runtime_profile.scheduled_task_id = task.id
+          ON runtime_profile.scheduled_task_id = scheduled_task_row.id
         WHERE profile.scheduled_task_id IS NULL
           AND runtime_profile.scheduled_task_id IS NULL
-        ORDER BY task.id FOR UPDATE OF task
+        ORDER BY scheduled_task_row.id FOR UPDATE OF scheduled_task_row
     LOOP
         IF task.status NOT IN ('active','paused','error') THEN
             RAISE EXCEPTION 'SCHEDULED_ADOPTION_TASK_STATUS_BLOCKED' USING ERRCODE = '55000';
@@ -140,15 +144,18 @@ BEGIN
         IF jsonb_typeof(facts) IS DISTINCT FROM 'object' THEN
             RAISE EXCEPTION 'SCHEDULED_ADOPTION_FACT_MISSING' USING ERRCODE = '55000';
         END IF;
-        expected_task_hash := encode(digest(convert_to((jsonb_build_object(
-            'id',task.id,'org_id',task.org_id,'user_id',task.user_id,'name',task.name,
-            'prompt',task.prompt,'timezone',task.timezone,'push_target',task.push_target,
-            'template_file',task.template_file,'max_credits',task.max_credits,
-            'retry_count',task.retry_count,'timeout_sec',task.timeout_sec,
-            'schedule_type',task.schedule_type,'cron_expr',task.cron_expr,'run_at',task.run_at,
-            'weekdays',task.weekdays,'day_of_month',task.day_of_month,'next_run_at',task.next_run_at,
-            'last_summary',task.last_summary))::TEXT, 'UTF8'),'sha256'),'hex');
-        expected_target_hash := encode(digest(convert_to(task.push_target::TEXT, 'UTF8'),'sha256'),'hex');
+        expected_task_hash := encode(digest(convert_to((jsonb_build_array(
+            task.id,task.org_id,task.user_id,task.name,task.prompt,task.timezone,
+            task.push_target,task.template_file,task.max_credits,task.retry_count,
+            task.timeout_sec,task.schedule_type,task.cron_expr,
+            CASE WHEN task.run_at IS NULL THEN NULL ELSE
+                to_char(task.run_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS') || '+00:00' END,
+            task.weekdays,task.day_of_month,
+            CASE WHEN task.next_run_at IS NULL THEN NULL ELSE
+                to_char(task.next_run_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS') || '+00:00' END,
+            task.last_summary))::TEXT, 'UTF8'),'sha256'),'hex');
+        expected_target_hash := encode(digest(convert_to(
+            jsonb_build_array(task.push_target)::TEXT, 'UTF8'),'sha256'),'hex');
         IF facts->>'task_semantics_hash' IS DISTINCT FROM expected_task_hash
            OR facts->>'delivery_target_hash' IS DISTINCT FROM expected_target_hash
            OR NULLIF(facts->>'agent_definition_id','') IS NULL
@@ -179,7 +186,7 @@ BEGIN
         ) VALUES(
             task.id,p_adoption_request_id,task.org_id,task.user_id,task.status,
             expected_task_hash,expected_target_hash
-        ) RETURNING adoption_id INTO adoption_id;
+        ) RETURNING agent_runtime_scheduled_adoption_provenance.adoption_id INTO adoption_id;
         INSERT INTO agent_runtime_scheduled_adoption_profiles(
             adoption_id,scheduled_task_id,org_id,user_id,agent_definition_id,
             agent_definition_revision,agent_definition_hash,catalog_revision,
@@ -252,6 +259,7 @@ BEGIN
                  WHERE projection.scheduled_task_id = p_task_id) THEN
         RAISE EXCEPTION 'SCHEDULED_ADOPTION_ROLLBACK_SIDE_EFFECTS_EXIST' USING ERRCODE = '55000';
     END IF;
+    PERFORM set_config('app.agent_runtime_scheduled_adoption_rollback','1',TRUE);
     DELETE FROM agent_runtime_scheduled_adoption_profiles WHERE adoption_id = adoption;
     DELETE FROM agent_runtime_scheduled_adoption_provenance WHERE adoption_id = adoption;
     RETURN jsonb_build_object('outcome','rolled_back','scheduled_task_id',p_task_id,

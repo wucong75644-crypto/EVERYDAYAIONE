@@ -21,8 +21,18 @@ from tests.test_agent_runtime_ar173_postgres_external import _apply, _rollback
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 
+CONFIGURATION_BASE = (
+    "158_configuration_control_plane_foundation.sql",
+    "159_configuration_management_core.sql",
+    "160_configuration_resolution_core.sql",
+    "160_configuration_resolution_facades.sql",
+    "201_wecom_callback_inbox.sql",
+)
+
 
 def _apply_adoption_lane(url: str) -> None:
+    for name in CONFIGURATION_BASE:
+        _apply(url, name)
     for number in range(29, 59):
         path = next(ROOT.glob(f"migrations/227_{number:02d}_*.sql"))
         _apply(url, path.name)
@@ -32,16 +42,13 @@ def _apply_adoption_lane(url: str) -> None:
 
 
 def _hash_task(task: dict[str, object]) -> str:
-    fields = {
-        key: task.get(key)
-        for key in (
-            "id", "org_id", "user_id", "name", "prompt", "timezone",
-            "push_target", "template_file", "max_credits", "retry_count",
-            "timeout_sec", "schedule_type", "cron_expr", "run_at",
-            "weekdays", "day_of_month", "next_run_at", "last_summary",
-        )
-    }
-    encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    fields = [task.get(key) for key in (
+        "id", "org_id", "user_id", "name", "prompt", "timezone",
+        "push_target", "template_file", "max_credits", "retry_count",
+        "timeout_sec", "schedule_type", "cron_expr", "run_at", "weekdays",
+        "day_of_month", "next_run_at", "last_summary",
+    )]
+    encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
@@ -94,7 +101,7 @@ def _facts(tasks: list[dict[str, object]]) -> dict[str, dict[str, object]]:
         str(task["id"]): {
             "task_semantics_hash": _hash_task(task),
             "delivery_target_hash": hashlib.sha256(
-                json.dumps(task["push_target"], sort_keys=True, separators=(",", ":")).encode()
+                json.dumps([task["push_target"]], sort_keys=True).encode()
             ).hexdigest(),
             "agent_definition_id": "everydayai-default",
             "agent_definition_revision": "v3",

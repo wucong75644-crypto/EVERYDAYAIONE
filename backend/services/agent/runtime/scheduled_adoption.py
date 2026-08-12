@@ -157,7 +157,7 @@ def classify_scheduled_task(
         category=category,
         reason_codes=tuple(reasons),
         task_semantics_hash=_hash_task_semantics(task),
-        delivery_target_hash=_hash_value(task.get("push_target")),
+        delivery_target_hash=_hash_value([task.get("push_target")]),
         adoption_candidate=candidate,
     )
 
@@ -291,20 +291,18 @@ def _target_shape_is_valid(value: Any, depth: int = 0) -> bool:
 
 
 def _hash_task_semantics(task: Mapping[str, Any]) -> str:
-    fields = {
-        key: task.get(key)
-        for key in (
-            "id", "org_id", "user_id", "name", "prompt", "timezone",
-            "push_target", "template_file", "max_credits", "retry_count",
-            "timeout_sec", "schedule_type", "cron_expr", "run_at",
-            "weekdays", "day_of_month", "next_run_at", "last_summary",
-        )
-    }
+    fields = [task.get(key) for key in (
+        "id", "org_id", "user_id", "name", "prompt", "timezone",
+        "push_target", "template_file", "max_credits", "retry_count",
+        "timeout_sec", "schedule_type", "cron_expr", "run_at", "weekdays",
+        "day_of_month", "next_run_at", "last_summary",
+    )]
     return _hash_value(fields)
 
 
 def _hash_value(value: Any) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    # Match PostgreSQL jsonb text canonicalization used by the adoption RPCs.
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
