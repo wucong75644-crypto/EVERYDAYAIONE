@@ -123,7 +123,8 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_model_attempt_permissions_postgres_external.py \
       backend/tests/test_agent_runtime_model_attempt_credits_postgres_external.py \
       backend/tests/test_agent_runtime_ar18_migration_continuity_postgres_external.py \
-      backend/tests/test_agent_runtime_scheduled_adoption_postgres_external.py
+      backend/tests/test_agent_runtime_scheduled_adoption_postgres_external.py \
+      backend/tests/test_agent_runtime_wecom_owner_closure_postgres_external.py
     ;;
   *)
     echo "usage: $0 {unit|migration|external}" >&2

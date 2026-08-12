@@ -33,7 +33,6 @@ from core.database import (
     close_db,
     close_worker_db,
     get_async_db,
-    get_async_worker_db,
     get_db,
     get_worker_db,
 )
@@ -392,28 +391,15 @@ async def _close_scheduled_wecom_dependencies(
 
 async def _stop_existing_wecom_components(
     *,
-    proactive_task: asyncio.Task[Any] | None,
     callback_task: asyncio.Task[Any] | None,
-    delivery_worker: Any,
-    delivery_task: asyncio.Task[Any] | None,
     manager: WecomWSManager | None,
 ) -> None:
-    background_tasks = [
-        task for task in (proactive_task, callback_task) if task is not None
-    ]
+    background_tasks = [task for task in (callback_task,) if task is not None]
     for task in background_tasks:
         task.cancel()
     if background_tasks:
         await asyncio.gather(*background_tasks, return_exceptions=True)
 
-    if delivery_worker is not None:
-        await delivery_worker.stop()
-    if delivery_task is not None:
-        try:
-            await asyncio.wait_for(delivery_task, timeout=10)
-        except asyncio.TimeoutError:
-            delivery_task.cancel()
-            await asyncio.gather(delivery_task, return_exceptions=True)
     if manager is not None:
         await manager.stop()
     await close_async_worker_db()
@@ -435,38 +421,15 @@ async def main() -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     scheduled_runtime = None
-    delivery_worker = None
-    delivery_task = None
-    proactive_task = None
     callback_task = None
     manager = None
     try:
         runtime_db = get_db()
         control_db = get_worker_db()
-        async_db = await get_async_worker_db()
-
         global _manager
         manager = _manager = WecomWSManager(control_db, runtime_db)
         await manager.start()
 
-        from services.wecom.delivery_sender import WecomDeliverySender
-        from services.wecom.delivery_worker import (
-            WecomDeliveryWorker,
-            build_wecom_delivery_worker_db,
-        )
-        delivery_db = build_wecom_delivery_worker_db(async_db)
-        delivery_worker = WecomDeliveryWorker(
-            delivery_db,
-            WecomDeliverySender(delivery_db, get_ws_client),
-        )
-        delivery_task = asyncio.create_task(
-            delivery_worker.start(),
-            name="wecom_delivery_worker",
-        )
-
-        # Legacy proactive IPC remains for non-Runtime deliveries only.
-        from services.scheduler.push_dispatcher import start_proactive_subscriber
-        proactive_task = asyncio.create_task(start_proactive_subscriber())
         from services.wecom.callback_inbox_worker import WecomCallbackInboxWorker
         callback_worker = WecomCallbackInboxWorker(runtime_db, control_db)
         callback_task = asyncio.create_task(
@@ -487,10 +450,7 @@ async def main() -> None:
             await _stop_scheduled_wecom_runtime(scheduled_runtime)
         finally:
             await _stop_existing_wecom_components(
-                proactive_task=proactive_task,
                 callback_task=callback_task,
-                delivery_worker=delivery_worker,
-                delivery_task=delivery_task,
                 manager=manager,
             )
         logger.info("Wecom WS runner stopped")

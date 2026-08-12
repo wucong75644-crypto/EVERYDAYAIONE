@@ -5,7 +5,7 @@ import signal
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,7 +34,6 @@ async def test_scheduled_disabled_constructs_nothing() -> None:
     with (
         patch("wecom_ws_runner.settings", _scheduled_settings(enabled=False)),
         patch("wecom_ws_runner.get_async_db", new=AsyncMock()) as get_runtime_db,
-        patch("wecom_ws_runner.get_async_worker_db", new=AsyncMock()) as get_worker_db,
         patch("wecom_ws_runner.httpx.AsyncClient") as http_client,
         patch(
             "services.configuration.envelope.LocalKEKProvider.from_environment"
@@ -51,7 +50,6 @@ async def test_scheduled_disabled_constructs_nothing() -> None:
 
     assert handle is None
     get_runtime_db.assert_not_awaited()
-    get_worker_db.assert_not_awaited()
     http_client.assert_not_called()
     from_environment.assert_not_called()
     material_service.assert_not_called()
@@ -72,7 +70,6 @@ async def test_scheduled_enabled_uses_runtime_role_and_explicit_dependencies() -
             "wecom_ws_runner.get_async_db",
             new=AsyncMock(return_value=runtime_db),
         ) as get_runtime_db,
-        patch("wecom_ws_runner.get_async_worker_db", new=AsyncMock()) as get_worker_db,
         patch("wecom_ws_runner.close_async_db", new=AsyncMock()) as close_runtime_db,
         patch("wecom_ws_runner.httpx.AsyncClient", return_value=http_client),
         patch(
@@ -98,7 +95,6 @@ async def test_scheduled_enabled_uses_runtime_role_and_explicit_dependencies() -
         await wecom_ws_runner._stop_scheduled_wecom_runtime(handle)
 
     get_runtime_db.assert_awaited_once()
-    get_worker_db.assert_not_awaited()
     from_environment.assert_called_once()
     material_service.assert_called_once()
     assert build_components.call_args.kwargs == {
@@ -303,7 +299,8 @@ def test_runner_has_no_legacy_scheduled_fallback() -> None:
         "services.scheduler.executor",
     ):
         assert forbidden not in source
-    assert "start_proactive_subscriber" in source
+    assert "start_proactive_subscriber" not in source
+    assert "WecomDeliveryWorker" not in source
 
 
 class TestSignalHandling:
@@ -319,11 +316,6 @@ class TestSignalHandling:
             stop=AsyncMock(),
             clients={},
         )
-        mock_delivery_worker = MagicMock(
-            start=AsyncMock(),
-            stop=AsyncMock(),
-        )
-
         def fake_add_signal_handler(sig, handler):
             registered_handlers[sig] = handler
 
@@ -345,7 +337,6 @@ class TestSignalHandling:
             patch("wecom_ws_runner.settings", _scheduled_settings()),
             patch("wecom_ws_runner.get_db", side_effect=get_runtime_db),
             patch("wecom_ws_runner.get_worker_db", return_value=MagicMock()),
-            patch("wecom_ws_runner.get_async_worker_db", new=AsyncMock(return_value=MagicMock())),
             patch("wecom_ws_runner.get_async_db", new=blocked_scheduled_db),
             patch("wecom_ws_runner.close_async_db", new=AsyncMock()) as close_scheduled,
             patch(
@@ -360,10 +351,6 @@ class TestSignalHandling:
             patch("wecom_ws_runner.close_worker_db") as close_worker,
             patch("wecom_ws_runner.close_db") as close_runtime,
             patch("wecom_ws_runner.WecomWSManager", return_value=mock_manager),
-            patch(
-                "services.wecom.delivery_worker.WecomDeliveryWorker",
-                return_value=mock_delivery_worker,
-            ),
             patch("asyncio.get_running_loop", return_value=mock_loop),
         ):
             main_task = asyncio.create_task(wecom_ws_runner.main())
@@ -374,7 +361,6 @@ class TestSignalHandling:
         assert startup_cancelled.is_set()
         close_scheduled.assert_awaited_once()
         mock_manager.stop.assert_awaited_once()
-        mock_delivery_worker.stop.assert_awaited_once()
         close_async.assert_awaited_once()
         close_worker.assert_called_once()
         close_runtime.assert_called_once()
@@ -390,10 +376,6 @@ class TestSignalHandling:
             stop=AsyncMock(),
             clients={"org-1": MagicMock()},
         )
-        mock_delivery_worker = MagicMock(
-            start=AsyncMock(),
-            stop=AsyncMock(),
-        )
         mock_callback_worker = MagicMock(run=AsyncMock())
         scheduled_http_client = MagicMock(aclose=AsyncMock())
 
@@ -408,10 +390,6 @@ class TestSignalHandling:
             stack.enter_context(
                 patch("wecom_ws_runner.get_worker_db", return_value=control_db)
             )
-            stack.enter_context(patch(
-                "wecom_ws_runner.get_async_worker_db",
-                new=AsyncMock(return_value=async_control_db),
-            ))
             get_scheduled_db = stack.enter_context(patch(
                 "wecom_ws_runner.get_async_db",
                 new=AsyncMock(return_value=MagicMock()),
@@ -451,17 +429,6 @@ class TestSignalHandling:
                 "wecom_ws_runner.WecomWSManager",
                 return_value=mock_manager,
             ))
-            MockDeliveryWorker = stack.enter_context(patch(
-                "services.wecom.delivery_worker.WecomDeliveryWorker",
-                return_value=mock_delivery_worker,
-            ))
-            MockDeliverySender = stack.enter_context(patch(
-                "services.wecom.delivery_sender.WecomDeliverySender"
-            ))
-            start_proactive = stack.enter_context(patch(
-                "services.scheduler.push_dispatcher.start_proactive_subscriber",
-                new=AsyncMock(),
-            ))
             MockCallbackWorker = stack.enter_context(patch(
                 "services.wecom.callback_inbox_worker.WecomCallbackInboxWorker",
                 return_value=mock_callback_worker,
@@ -475,21 +442,8 @@ class TestSignalHandling:
         mock_manager.start.assert_awaited_once()
         mock_manager.stop.assert_awaited_once()
         MockManager.assert_called_once_with(control_db, runtime_db)
-        delivery_db = MockDeliverySender.call_args.args[0]
-        assert delivery_db._client is async_control_db
-        assert delivery_db.scope.settings == (
-            "", "", "worker", "wecom-delivery-worker",
-        )
-        MockDeliverySender.assert_called_once_with(delivery_db, ANY)
-        MockDeliveryWorker.assert_called_once_with(
-            delivery_db,
-            MockDeliverySender.return_value,
-        )
-        start_proactive.assert_called_once()
         MockCallbackWorker.assert_called_once_with(runtime_db, control_db)
         mock_callback_worker.run.assert_called_once()
-        mock_delivery_worker.start.assert_awaited_once()
-        mock_delivery_worker.stop.assert_awaited_once()
         get_scheduled_db.assert_awaited_once()
         scheduled_http_client.aclose.assert_awaited_once()
         close_scheduled_db.assert_awaited_once()

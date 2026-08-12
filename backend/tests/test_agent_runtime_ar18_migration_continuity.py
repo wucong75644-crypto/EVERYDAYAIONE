@@ -7,7 +7,7 @@ from scripts.migration_runner import discover_migrations
 
 ROOT = Path(__file__).resolve().parents[1]
 FIRST = "227_21_agent_runtime_legacy_lifecycle_fence.sql"
-LAST = "227_63_agent_runtime_chat_action_submission.sql"
+LAST = "227_64_agent_runtime_wecom_owner_closure.sql"
 
 
 def _migration_number(path: Path) -> int:
@@ -35,7 +35,7 @@ def test_ar18_lane_is_contiguous_and_has_exact_reverse_rollbacks() -> None:
             (ROOT / "migrations").glob("227_*.sql"),
             key=lambda path: (_migration_number(path), path.name),
         )
-        if 21 <= _migration_number(path) <= 63
+        if 21 <= _migration_number(path) <= 64
     ]
     assert [item.identity for item in lane] == expected
 
