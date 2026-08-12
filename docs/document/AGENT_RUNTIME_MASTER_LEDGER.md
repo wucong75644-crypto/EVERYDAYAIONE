@@ -65,7 +65,7 @@
 |---|---|---|---|---|
 | S3-R | Scheduler/WeCom 主线总复审 | 已完成 | C7 B3.2 | 相关 Runtime/legacy 分流与 readback/reconcile 回归通过；证据见 Owner 调用图 |
 | S4-A | Ingress/Owner 静态调用图 | 已完成 | S3-R | 已记录 Web、WeCom、Scheduler、Conversation Actor、ToolLoop 真实入口与边界 |
-| S4-B | 历史 scheduled_tasks adoption preflight | 第一批完成；真实 adoption 仍 blocked | S4-A | 227_59/离线 planner 已提供只读分类、数量、语义哈希和 rollback；没有非生产快照与可重建 source Action/Attempt/Run 证据，不迁移、不删除旧 Owner |
+| S4-B | 历史 scheduled_tasks adoption | 227_59 preflight + 227_60 provenance/profile 契约完成；真实 adoption blocked | S4-A | 227_59 提供只读分类；227_60 提供独立 provenance/profile、原子 fail-closed apply、readback、side-effect rollback gate；不创建普通 Run/Action 历史，不执行生产迁移，不删除旧 Owner |
 | S4-C | Owner cutover disposable/dry-run | 待执行 | S4-B | crash、drain、fence、duplicate side-effect、UNKNOWN/reconcile |
 | S5 | 最终 migration/install manifest | 待执行 | S4-C | 从生产最高 migration 220 与当前主线生成最终安装清单；不执行生产 |
 | S6 | AR-17/18 本地与 CI 发布候选验收 | 待执行 | S5 | 全链回归、权限、回滚、单 Owner 证据 |

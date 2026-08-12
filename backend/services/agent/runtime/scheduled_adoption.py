@@ -57,6 +57,92 @@ class AdoptionDecision:
         }
 
 
+@dataclass(frozen=True)
+class RuntimeAdoptionFacts:
+    """Facts for a Runtime profile, without ordinary execution identity."""
+
+    scheduled_task_id: str
+    task_semantics_hash: str
+    delivery_target_hash: str
+    runtime_facts: Mapping[str, Any]
+
+    def as_payload(self) -> dict[str, Any]:
+        payload = dict(self.runtime_facts)
+        payload.update(
+            task_semantics_hash=self.task_semantics_hash,
+            delivery_target_hash=self.delivery_target_hash,
+        )
+        return payload
+
+
+def build_runtime_adoption_facts(
+    task: Mapping[str, Any], runtime_facts: Mapping[str, Any],
+) -> RuntimeAdoptionFacts:
+    """Bind current Runtime facts to one historical task without Run/Action facts."""
+
+    decision = classify_scheduled_task(task)
+    if decision.category not in {
+        AdoptionCategory.CANDIDATE_RUNTIME_SOURCE_REQUIRED,
+        AdoptionCategory.PRESERVE_PAUSED,
+        AdoptionCategory.PRESERVE_ERROR,
+    }:
+        raise ValueError(f"task_not_adoptable:{decision.category.value}")
+    if any(key in runtime_facts for key in ("source_run_id", "source_action_id", "source_attempt_id")):
+        raise ValueError("ordinary_execution_identity_forbidden")
+    required = {
+        "agent_definition_id", "agent_definition_revision", "agent_definition_hash",
+        "catalog_revision", "source_effective_toolset_hash", "effective_toolset_hash",
+        "model_snapshot", "toolset_snapshot", "scope_snapshot", "channel",
+        "budget_snapshot", "provider_key", "capability_key", "provider_revision",
+        "capability_revision", "request_hash",
+    }
+    missing = sorted(key for key in required if key not in runtime_facts)
+    if missing:
+        raise ValueError(f"runtime_facts_missing:{','.join(missing)}")
+    return RuntimeAdoptionFacts(
+        scheduled_task_id=decision.task_id,
+        task_semantics_hash=decision.task_semantics_hash,
+        delivery_target_hash=decision.delivery_target_hash,
+        runtime_facts=runtime_facts,
+    )
+
+
+def build_runtime_adoption_batch(
+    tasks: Iterable[Mapping[str, Any]],
+    runtime_facts_by_task: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build an exact candidate set; missing or extra facts fail before DB writes."""
+
+    task_list = list(tasks)
+    candidate_ids = {
+        decision.task_id
+        for decision in (classify_scheduled_task(task) for task in task_list)
+        if decision.category in {
+            AdoptionCategory.CANDIDATE_RUNTIME_SOURCE_REQUIRED,
+            AdoptionCategory.PRESERVE_PAUSED,
+            AdoptionCategory.PRESERVE_ERROR,
+        }
+    }
+    supplied_ids = set(runtime_facts_by_task)
+    if supplied_ids != candidate_ids:
+        missing = sorted(candidate_ids - supplied_ids)
+        extra = sorted(supplied_ids - candidate_ids)
+        raise ValueError(f"runtime_adoption_batch_mismatch:missing={missing}:extra={extra}")
+    return {
+        task_id: build_runtime_adoption_facts(
+            next(task for task in task_list if str(task.get("id") or "") == task_id),
+            runtime_facts_by_task[task_id],
+        ).as_payload()
+        for task_id in sorted(candidate_ids)
+    }
+
+
+def rollback_is_allowed(*, runtime_side_effects_exist: bool) -> bool:
+    """Rollback is available only before a Runtime submission or delivery fact."""
+
+    return not runtime_side_effects_exist
+
+
 def classify_scheduled_task(
     task: Mapping[str, Any], *, profile_exists: bool = False,
 ) -> AdoptionDecision:
@@ -228,4 +314,3 @@ def _non_empty(value: Any) -> bool:
 
 def _optional_text(value: Any) -> str | None:
     return str(value) if value not in (None, "") else None
-

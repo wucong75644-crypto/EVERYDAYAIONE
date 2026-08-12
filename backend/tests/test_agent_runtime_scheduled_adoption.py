@@ -1,7 +1,10 @@
 from services.agent.runtime.scheduled_adoption import (
     AdoptionCategory,
     build_adoption_report,
+    build_runtime_adoption_batch,
+    build_runtime_adoption_facts,
     classify_scheduled_task,
+    rollback_is_allowed,
 )
 
 
@@ -64,3 +67,55 @@ def test_report_is_deterministic_and_does_not_echo_prompt_or_target() -> None:
     assert "private prompt" not in rendered
     assert "push_target" not in rendered
 
+
+def _runtime_facts() -> dict:
+    return {
+        "agent_definition_id": "everydayai-default",
+        "agent_definition_revision": "v6",
+        "agent_definition_hash": "a" * 64,
+        "catalog_revision": "b" * 64,
+        "source_effective_toolset_hash": "c" * 64,
+        "effective_toolset_hash": "d" * 64,
+        "model_snapshot": {"model_id": "qwen3.5-plus", "provider": "dashscope", "revision": "v1"},
+        "toolset_snapshot": {"tool_names": ["get_conversation_context"]},
+        "scope_snapshot": {"scope_kind": "user", "scope_id": "user-1"},
+        "channel": "web",
+        "budget_snapshot": {"max_credits": 10, "retry_count": 1, "timeout_sec": 180},
+        "provider_key": "scheduler",
+        "capability_key": "scheduler.task.cas",
+        "provider_revision": "v1",
+        "capability_revision": "v1",
+        "request_hash": "e" * 64,
+    }
+
+
+def test_adoption_facts_are_not_ordinary_execution_identity() -> None:
+    facts = build_runtime_adoption_facts(_task("active"), _runtime_facts())
+    payload = facts.as_payload()
+    assert payload["task_semantics_hash"] == classify_scheduled_task(_task("active")).task_semantics_hash
+    assert "source_run_id" not in payload
+    assert "source_action_id" not in payload
+    assert "source_attempt_id" not in payload
+
+
+def test_batch_requires_exact_candidate_set_and_rejects_running() -> None:
+    tasks = [_task("active"), _task("paused", "paused"), _task("error", "error")]
+    facts = {str(task["id"]): _runtime_facts() for task in tasks}
+    assert set(build_runtime_adoption_batch(tasks, facts)) == {"active", "paused", "error"}
+    try:
+        build_runtime_adoption_batch(tasks, {"active": _runtime_facts()})
+    except ValueError as error:
+        assert "runtime_adoption_batch_mismatch" in str(error)
+    else:
+        raise AssertionError("missing adoption facts must fail closed")
+    try:
+        build_runtime_adoption_facts(_task("running", "running"), _runtime_facts())
+    except ValueError as error:
+        assert "task_not_adoptable" in str(error)
+    else:
+        raise AssertionError("running task must fail closed")
+
+
+def test_rollback_is_fail_closed_after_side_effects() -> None:
+    assert rollback_is_allowed(runtime_side_effects_exist=False) is True
+    assert rollback_is_allowed(runtime_side_effects_exist=True) is False

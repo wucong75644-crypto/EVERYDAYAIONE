@@ -29,10 +29,35 @@ Session/Command/Run/Action/Attempt。分类为：
 
 ## 后续真实 adoption 门禁
 
-只有在非生产快照中逐项证明租户、owner、schedule、payload、delivery target、model/toolset
-facts 与权限语义不变后，才设计下一条 additive migration，使用正常 Runtime Action/Attempt/Run
-创建来源事实，再调用现有 profile RPC。任何 `accepted/unknown`、运行中任务、部分 Runtime 事实或
-无法重建 Provider/Capability 版本的任务都保持 blocked/unavailable，不能普通重派。
+用户已确认最终方向：所有历史 `scheduled_tasks` 都纳入 Runtime，旧
+`ScheduledTaskAgent`/`ToolLoopExecutor` Owner 不作为长期兼容路径保留。
 
-Rollback 仅删除 227_59 的两个函数；它不删除任务、profile、Run 或历史执行记录。
+下一批采用全量、失败关闭的 adoption：
 
+- 新增 additive adoption facts，并为每个任务生成不可变 Runtime profile；不新建第二套模型、ERP、文件或查询来源。
+- model snapshot、catalog/toolset、scope、budget、Provider/Capability facts 从当前 Runtime 事实和原有任务定义生成。
+- 每个任务逐条加锁；任何任务无法生成完整 profile 时，整个 migration 失败，不产生部分切换，也不静默标成功。
+- adoption 后 `worker_claim_due_scheduled_executions_v1` 对所有任务只返回 Runtime Owner；旧 Scanner、
+  `ScheduledTaskExecutor` 与 legacy RPC 仅保留到 disposable 验收结束，随后删除。
+- rollback 只在没有 Runtime submission、Run、delivery 或 projection facts 时允许；一旦产生执行事实，必须失败关闭，
+  改走 Runtime reconcile/cancel。
+
+非生产验收覆盖：任务数量和分类、task/payload/delivery hash、Runtime profile/readback、一次完整 scheduled Run、
+ActionLoop、finalizer、Projection/Delivery、accepted/unknown/reconcile、旧 Owner 零命中，以及
+apply/readback/rollback/reapply。
+
+缺少 Runtime facts、租户/目标不一致或未知状态时，adoption 整体失败；不伪造普通执行历史、不普通重派，
+也不允许部分 adoption 后删除旧 Owner。
+
+## 本批：adoption provenance/profile 最小契约（227_60）
+
+本批只建立数据契约，不执行真实历史任务迁移，也不删除 legacy Owner。
+
+- `agent_runtime_scheduled_adoption_provenance` 记录任务来源、adoption request、迁移前状态和脱敏语义/投递哈希。
+- `agent_runtime_scheduled_adoption_profiles` 记录 Runtime 所需的 definition、catalog/toolset、model、scope、budget、Provider/Capability 快照。
+- 两张表均启用并强制 RLS，身份事实不可更新或删除。
+- `adopt_agent_runtime_scheduled_tasks_v1(facts, request_id)` 要求 facts 集合与所有未 adoption 任务精确相等；active、paused、error 都是候选，running、非法状态、运行中 execution、部分 Runtime 身份或缺失事实均整体失败。
+- apply 不创建 `agent_runtime_sessions`、`agent_session_commands`、`agent_runs`、`agent_actions` 或 `agent_action_attempts`，因此 adoption 不会伪装成普通 completed 执行历史。
+- `read_agent_runtime_scheduled_adoption_v1` 可回读 profile 快照；`rollback_agent_runtime_scheduled_adoption_v1` 仅在没有 Runtime submission/binding/delivery 副作用时删除本批事实。迁移 rollback 另有“事实存在即拒绝”保护。
+
+Python service 只负责无 Secret 的事实绑定、候选全集校验和 rollback gate；数据库 RPC 负责最终哈希、状态、快照安全和原子写入。
