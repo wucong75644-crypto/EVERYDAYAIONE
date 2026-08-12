@@ -30,6 +30,10 @@ class ScheduledWorkerStore:
                     "_execution_owner": "runtime",
                     "command_id": item.get("command_id"),
                 })
+            else:
+                # Unknown owner states must never be silently discarded: doing
+                # so would hide a broken cutover and lose a scheduled run.
+                raise RuntimeError("scheduled claim returned unknown owner")
         return claims
 
     def legacy_owner_allowed(self, task_id: str) -> bool:

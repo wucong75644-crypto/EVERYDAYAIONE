@@ -89,6 +89,13 @@ def test_worker_store_normalizes_mixed_owner_claims():
     ]
 
 
+def test_worker_store_rejects_unknown_owner_claim():
+    db = _rpc_db([{"owner_kind": "unknown"}])
+
+    with pytest.raises(RuntimeError, match="unknown owner"):
+        ScheduledWorkerStore(db).claim_due(datetime.now(timezone.utc), 5)
+
+
 @pytest.mark.asyncio
 async def test_scanner_never_sends_runtime_claim_to_legacy_executor():
     executor = MagicMock()
