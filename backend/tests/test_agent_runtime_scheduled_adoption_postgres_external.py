@@ -1,110 +1,173 @@
+from __future__ import annotations
+
+import hashlib
+import json
 from pathlib import Path
+from uuid import uuid4
 
 import psycopg
+from psycopg.types.json import Jsonb
 import pytest
 
 from tests.test_agent_runtime_ar17_postgres_external import database
+from tests.test_agent_runtime_ar18_b7_scheduler_control_postgres_external import (
+    ORG,
+    USER,
+    _prepare,
+)
+from tests.test_agent_runtime_ar173_postgres_external import _apply, _rollback
 
 
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = "227_59_agent_runtime_scheduled_adoption_preflight.sql"
-ROLLBACK = "227_59_agent_runtime_scheduled_adoption_preflight_rollback.sql"
 
 
-def _apply(url: str, name: str) -> None:
-    with psycopg.connect(url) as conn:
-        with conn.transaction():
-            conn.execute((ROOT / "migrations" / name).read_text())
+def _apply_adoption_lane(url: str) -> None:
+    for number in range(29, 59):
+        path = next(ROOT.glob(f"migrations/227_{number:02d}_*.sql"))
+        _apply(url, path.name)
+    _apply(url, "227_59_agent_runtime_scheduled_adoption_preflight.sql")
+    _apply(url, "227_60_agent_runtime_scheduled_adoption.sql")
+    _apply(url, "227_62_agent_runtime_scheduled_owner_convergence.sql")
 
 
-def _rollback(url: str) -> None:
-    with psycopg.connect(url) as conn:
-        with conn.transaction():
-            conn.execute((ROOT / "migrations/rollback" / ROLLBACK).read_text())
+def _hash_task(task: dict[str, object]) -> str:
+    fields = {
+        key: task.get(key)
+        for key in (
+            "id", "org_id", "user_id", "name", "prompt", "timezone",
+            "push_target", "template_file", "max_credits", "retry_count",
+            "timeout_sec", "schedule_type", "cron_expr", "run_at",
+            "weekdays", "day_of_month", "next_run_at", "last_summary",
+        )
+    }
+    encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def _setup_tables(url: str) -> None:
+def _seed_tasks(url: str) -> list[dict[str, object]]:
+    tasks: list[dict[str, object]] = []
     with psycopg.connect(url) as conn:
         conn.execute("SET ROLE everydayai_owner")
-        conn.execute("""
-            CREATE TABLE scheduled_tasks(
-                id UUID PRIMARY KEY, org_id UUID, user_id UUID, name TEXT,
-                prompt TEXT, timezone TEXT, push_target JSONB,
-                template_file JSONB, max_credits INTEGER, retry_count INTEGER,
-                timeout_sec INTEGER, schedule_type TEXT, cron_expr TEXT,
-                run_at TIMESTAMPTZ, weekdays SMALLINT[], day_of_month SMALLINT,
-                next_run_at TIMESTAMPTZ, last_summary TEXT, status TEXT,
-                runtime_action_id UUID, runtime_attempt_id UUID,
-                runtime_request_hash TEXT, runtime_idempotency_key TEXT,
-                runtime_state_version BIGINT DEFAULT 0
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE agent_runtime_scheduled_execution_profiles(
-                scheduled_task_id UUID PRIMARY KEY
-            )
-        """)
-        rows = [
-            ("00000000-0000-0000-0000-000000000001", "active", None, None, None, None, "web"),
-            ("00000000-0000-0000-0000-000000000002", "running", None, None, None, None, "web"),
-            ("00000000-0000-0000-0000-000000000003", "paused", None, None, None, None, "web"),
-            ("00000000-0000-0000-0000-000000000004", "error", None, None, None, None, "web"),
-            ("00000000-0000-0000-0000-000000000005", "active", None, None, None, None, "bad"),
-            ("00000000-0000-0000-0000-000000000006", "active", "66666666-6666-6666-6666-666666666666", None, None, None, "web"),
-            ("00000000-0000-0000-0000-000000000007", "active", None, None, None, None, "web"),
-        ]
-        for task_id, status, action, attempt, request_hash, key, target_type in rows:
-            target = {
-                "type": target_type,
-                "user_id": "44444444-4444-4444-4444-444444444444",
+        for status in ("active", "paused", "error"):
+            task = {
+                "id": str(uuid4()),
+                "org_id": ORG,
+                "user_id": USER,
+                "name": f"adoption-{status}",
+                "prompt": "read-only adoption fixture",
+                "timezone": "UTC",
+                "push_target": {"type": "web", "user_id": USER},
+                "template_file": None,
+                "max_credits": 10,
+                "retry_count": 1,
+                "timeout_sec": 180,
+                "schedule_type": "cron",
+                "cron_expr": "0 9 * * *",
+                "run_at": None,
+                "weekdays": None,
+                "day_of_month": None,
+                "next_run_at": "2026-08-13T01:00:00+00:00",
+                "last_summary": None,
+                "status": status,
             }
             conn.execute(
-                """INSERT INTO scheduled_tasks(
-                    id,org_id,user_id,name,prompt,timezone,push_target,
-                    max_credits,retry_count,timeout_sec,schedule_type,cron_expr,
-                    next_run_at,status,runtime_action_id,runtime_attempt_id,
-                    runtime_request_hash,runtime_idempotency_key
-                ) VALUES(%s,'22222222-2222-2222-2222-222222222222',
-                    '44444444-4444-4444-4444-444444444444','task','prompt','UTC',%s,10,1,180,
-                    'cron','0 9 * * *',clock_timestamp(),%s,%s,%s,%s,%s)""",
-                (task_id, psycopg.types.json.Jsonb(target), status, action, attempt, request_hash, key),
+                "INSERT INTO scheduled_tasks("
+                "id,org_id,user_id,name,prompt,cron_expr,timezone,push_target,"
+                "template_file,status,max_credits,retry_count,timeout_sec,next_run_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::timestamptz)",
+                (
+                    task["id"], task["org_id"], task["user_id"], task["name"],
+                    task["prompt"], task["cron_expr"], task["timezone"],
+                    Jsonb(task["push_target"]), task["template_file"], task["status"],
+                    task["max_credits"], task["retry_count"], task["timeout_sec"],
+                    task["next_run_at"],
+                ),
             )
-        conn.execute(
-            "INSERT INTO agent_runtime_scheduled_execution_profiles VALUES(%s)",
-            ("00000000-0000-0000-0000-000000000007",),
-        )
+            tasks.append(task)
+        conn.commit()
+    return tasks
+
+
+def _facts(tasks: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    return {
+        str(task["id"]): {
+            "task_semantics_hash": _hash_task(task),
+            "delivery_target_hash": hashlib.sha256(
+                json.dumps(task["push_target"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "agent_definition_id": "everydayai-default",
+            "agent_definition_revision": "v3",
+            "agent_definition_hash": "a" * 64,
+            "catalog_revision": "b" * 64,
+            "source_effective_toolset_hash": "c" * 64,
+            "effective_toolset_hash": "d" * 64,
+            "model_snapshot": {"model_id": "qwen3.5-plus", "provider": "dashscope", "revision": "fixture"},
+            "toolset_snapshot": {"tool_names": ["get_conversation_context"]},
+            "scope_snapshot": {"scope_kind": "user", "scope_id": USER},
+            "channel": "web",
+            "budget_snapshot": {"max_credits": 10, "retry_count": 1, "timeout_sec": 180},
+            "provider_key": "scheduler",
+            "capability_key": "runtime.scheduler.adoption",
+            "provider_revision": "fixture-v1",
+            "capability_revision": "fixture-v1",
+            "request_hash": "e" * 64,
+        }
+        for task in tasks
+    }
+
+
+def test_apply_readback_rollback_reapply_and_completion_gate(database: str) -> None:
+    _prepare(database)
+    _apply_adoption_lane(database)
+    tasks = _seed_tasks(database)
+    facts = _facts(tasks)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        applied = conn.execute(
+            "SELECT adopt_agent_runtime_scheduled_tasks_v1(%s::jsonb,%s)",
+            (Jsonb(facts), str(uuid4())),
+        ).fetchone()[0]
+        assert applied["applied_count"] == 3
+        readback = conn.execute(
+            "SELECT read_agent_runtime_scheduled_adoption_v1(NULL)"
+        ).fetchone()[0]
+        assert len(readback["profiles"]) == 3
+        for task in tasks:
+            rolled_back = conn.execute(
+                "SELECT rollback_agent_runtime_scheduled_adoption_v1(%s)",
+                (task["id"],),
+            ).fetchone()[0]
+            assert rolled_back["outcome"] == "rolled_back"
         conn.commit()
 
-
-def test_apply_readback_rollback_reapply_and_owner_acl(database: str) -> None:
-    _setup_tables(database)
-    _apply(database, MIGRATION)
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
-        report = conn.execute(
-            "SELECT read_agent_runtime_scheduled_adoption_plan_v1(NULL, TRUE)"
+        reapplied = conn.execute(
+            "SELECT adopt_agent_runtime_scheduled_tasks_v1(%s::jsonb,%s)",
+            (Jsonb(facts), str(uuid4())),
         ).fetchone()[0]
-        assert report["outcome"] == "dry_run"
-        assert report["total_tasks"] == 7
-        assert report["safe_to_adopt_count"] == 0
-        categories = {item["category"] for item in report["tasks"]}
-        assert "runtime_owned" in categories
-        assert "candidate_runtime_source_required" in categories
-        assert "blocked_running" in categories
-        assert "blocked_invalid_task" in categories
-        assert conn.execute(
-            "SELECT has_function_privilege('everydayai_worker', "
-            "'read_agent_runtime_scheduled_adoption_plan_v1(uuid,boolean)', 'EXECUTE')"
-        ).fetchone()[0] is False
-    _rollback(database)
-    with psycopg.connect(database) as conn:
-        assert conn.execute(
-            "SELECT to_regprocedure('read_agent_runtime_scheduled_adoption_plan_v1(uuid,boolean)')"
-        ).fetchone()[0] is None
-    _apply(database, MIGRATION)
+        assert reapplied["applied_count"] == 3
+        for task in tasks:
+            conn.execute(
+                "SELECT rollback_agent_runtime_scheduled_adoption_v1(%s)",
+                (task["id"],),
+            )
+        conn.commit()
+
+    _rollback(database, "227_62_agent_runtime_scheduled_owner_convergence_rollback.sql")
+    _rollback(database, "227_60_agent_runtime_scheduled_adoption_rollback.sql")
+    _apply(database, "227_60_agent_runtime_scheduled_adoption.sql")
+    _apply(database, "227_62_agent_runtime_scheduled_owner_convergence.sql")
+
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
-        assert conn.execute(
-            "SELECT (read_agent_runtime_scheduled_adoption_plan_v1(NULL, TRUE)->>'total_tasks')::int"
-        ).fetchone()[0] == 7
+        completed = conn.execute(
+            "SELECT adopt_agent_runtime_scheduled_tasks_v1(%s::jsonb,%s)",
+            (Jsonb(facts), str(uuid4())),
+        ).fetchone()[0]
+        assert completed["applied_count"] == 3
+        outcome = conn.execute(
+            "SELECT complete_agent_runtime_scheduled_adoption_v1(%s)", (str(uuid4()),)
+        ).fetchone()[0]
+        assert outcome["outcome"] == "completed"

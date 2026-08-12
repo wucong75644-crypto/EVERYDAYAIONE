@@ -73,6 +73,9 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_ar18_b7_s2_b1d1_delivery_migration.py \
       backend/tests/test_agent_runtime_scheduled_wecom_reconcile_org_migration.py \
       backend/tests/test_agent_runtime_ar18_migration_continuity.py \
+      backend/tests/test_agent_runtime_scheduled_adoption.py \
+      backend/tests/test_agent_runtime_scheduled_adoption_contract_migration.py \
+      backend/tests/test_agent_runtime_scheduled_owner_convergence_migration.py \
       backend/tests/test_agent_runtime_model_attempt_migration.py \
       backend/tests/test_agent_runtime_model_attempt_migration_order.py
     ;;
@@ -119,7 +122,8 @@ case "${1:-}" in
       backend/tests/test_agent_runtime_model_attempt_postgres_external.py \
       backend/tests/test_agent_runtime_model_attempt_permissions_postgres_external.py \
       backend/tests/test_agent_runtime_model_attempt_credits_postgres_external.py \
-      backend/tests/test_agent_runtime_ar18_migration_continuity_postgres_external.py
+      backend/tests/test_agent_runtime_ar18_migration_continuity_postgres_external.py \
+      backend/tests/test_agent_runtime_scheduled_adoption_postgres_external.py
     ;;
   *)
     echo "usage: $0 {unit|migration|external}" >&2

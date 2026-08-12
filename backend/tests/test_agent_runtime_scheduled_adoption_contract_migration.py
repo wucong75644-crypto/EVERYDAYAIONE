@@ -29,3 +29,4 @@ def test_adoption_migration_is_immutable_and_rollback_is_guarded() -> None:
     assert "AGENT_RUNTIME_SCHEDULED_ADOPTION_FACTS_EXIST" in rollback
     assert "DROP TABLE IF EXISTS agent_runtime_scheduled_adoption_profiles" in rollback
     assert "DROP TABLE IF EXISTS agent_runtime_scheduled_adoption_provenance" in rollback
+    assert "agent_runtime_scheduled_web_projection_receipts" in sql

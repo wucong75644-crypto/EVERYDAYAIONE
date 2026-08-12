@@ -247,7 +247,9 @@ BEGIN
        OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_submission_intents intent
                  WHERE intent.scheduled_task_id = p_task_id)
        OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_delivery_intents delivery
-                 WHERE delivery.scheduled_task_id = p_task_id) THEN
+                 WHERE delivery.scheduled_task_id = p_task_id)
+       OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_web_projection_receipts projection
+                 WHERE projection.scheduled_task_id = p_task_id) THEN
         RAISE EXCEPTION 'SCHEDULED_ADOPTION_ROLLBACK_SIDE_EFFECTS_EXIST' USING ERRCODE = '55000';
     END IF;
     DELETE FROM agent_runtime_scheduled_adoption_profiles WHERE adoption_id = adoption;
