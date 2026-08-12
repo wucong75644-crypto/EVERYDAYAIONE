@@ -24,6 +24,7 @@ on:
       - "backend/tests/test_wecom_actor_enqueue.py"
       - "backend/tests/test_scheduled_wecom_*.py"
       - "backend/tests/test_wecom_ws_runner*.py"
+      - "scripts/run_agent_runtime_ar18_disposable.sh"
       - "deploy/everydayai-agent-*.service"
       - "deploy/everydayai-wecom.service"
       - "deploy/everydayai-sandbox-worker.service"
@@ -172,6 +173,27 @@ jobs:
             -k 'not isolated_harness_invokes_all_23_distinct_provider_adapters and not http_mock_server_proves_media_query_and_cancel_semantics' \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/services.log"
 
+      - name: Run AR-18 cancel, scheduler, finalizer and ModelAttempt unit contracts
+        if: always()
+        run: |
+          set -euo pipefail
+          bash scripts/run_agent_runtime_ar18_disposable.sh unit \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/ar18-unit.log"
+
+      - name: Run AR-18 migration order and rollback contracts
+        if: always()
+        run: |
+          set -euo pipefail
+          bash scripts/run_agent_runtime_ar18_disposable.sh migration \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/ar18-migration.log"
+
+      - name: Run AR-18 disposable PostgreSQL contracts
+        if: always()
+        run: |
+          set -euo pipefail
+          bash scripts/run_agent_runtime_ar18_disposable.sh external \
+            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/ar18-postgres.log"
+
       - name: Run Scheduled WeCom runner and runtime unit contracts
         if: always()
         run: |
@@ -219,6 +241,7 @@ jobs:
             backend/tests/test_agent_runtime_data_read_release_postgres_external.py \
             backend/tests/test_agent_runtime_model_configuration_facade_postgres_external.py \
             backend/tests/test_agent_runtime_pgcrypto_migration.py \
+            backend/tests/test_agent_runtime_ar18_migration_continuity_postgres_external.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
       - name: Run Scheduled WeCom disposable PostgreSQL contracts
