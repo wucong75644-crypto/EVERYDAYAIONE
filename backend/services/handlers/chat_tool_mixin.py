@@ -52,41 +52,13 @@ class ChatToolMixin(ChatToolResultMixin):
         Returns:
             List of (tool_call_dict, result, is_error, display_text)
         """
-        from config.chat_tools import is_concurrency_safe
-        from services.tool_executor import ToolExecutor
-
-        # request_ctx 由入口（HTTP/WS/企微）注入到 handler，全链路不可变
-        _request_ctx = getattr(self, "request_ctx", None)
-        if _request_ctx is None:
-            # 防御性 fallback（不应该走到这里，说明入口未注入）
-            from utils.time_context import RequestContext
-            _request_ctx = RequestContext.build(
-                user_id=user_id, org_id=self.org_id,
-                request_id=conversation_id or "",
-            )
-            logger.warning("request_ctx fallback in _execute_tool_calls — entry point should inject it")
-
-        executor = ToolExecutor(
-            db=self.db, user_id=user_id,
-            conversation_id=conversation_id, org_id=self.org_id,
-            request_ctx=_request_ctx,
-            workspace_user_id=getattr(self, "_workspace_user_id", user_id),
-            resource_manifest=getattr(self, "_resource_manifest", None),
-            runtime_state=runtime_state,
-            personal_context_allowed=getattr(
-                self,
-                "_personal_context_allowed",
-                True,
-            ),
+        from services.agent.runtime.application.chat_action_bridge import (
+            FailClosedRuntimeChatActionExecutor,
         )
-        # 每轮上下文
-        executor._task_id = task_id
-        executor._message_id = message_id
-        executor._parent_messages = messages
-        if budget is not None:
-            executor._budget = budget
-        # 提取当前用户消息中的图片 URLs（供 image_agent 自动注入）
-        executor._current_message_images = self._extract_user_image_urls(messages)
+
+        executor = getattr(self, "_runtime_action_executor", None)
+        if executor is None:
+            executor = FailClosedRuntimeChatActionExecutor()
         results: List[tuple] = []
 
         # 按并发安全性分批
@@ -142,10 +114,6 @@ class ChatToolMixin(ChatToolResultMixin):
                 getattr(self, "_erp_agent_tokens", 0) + result.tokens_used
             )
 
-        # 清理遗留 _pending_schemas(兼容 fetch_all_pages 等仍写入的场景)
-        if executor._pending_schemas:
-            executor._pending_schemas.clear()
-
         return results
 
     async def _execute_single_tool(
@@ -169,7 +137,20 @@ class ChatToolMixin(ChatToolResultMixin):
         args = prepared
         started_at = time.monotonic()
         try:
-            result = await executor.execute(tc["name"], args)
+            from services.agent.runtime.application.chat_action_bridge import (
+                ChatActionRequest,
+                RuntimeChatActionOwnershipError,
+            )
+
+            result = await executor.execute(ChatActionRequest(
+                tool_name=tc["name"],
+                arguments=args,
+                task_id=task_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                user_id=user_id,
+                turn=turn,
+            ))
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000
             )
@@ -188,6 +169,8 @@ class ChatToolMixin(ChatToolResultMixin):
                     elapsed_ms=elapsed_ms,
                 ),
             )
+        except RuntimeChatActionOwnershipError:
+            raise
         except Exception as error:
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000
