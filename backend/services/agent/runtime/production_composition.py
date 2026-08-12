@@ -38,6 +38,9 @@ from services.agent.runtime.executors.specialist_registry import (
     SPECIALIST_SAFETY, WORKSPACE_MUTATION_TOOLS, specialist_descriptor,
 )
 from services.agent.runtime.executors.specialist_executor import SpecialistExecutor
+from services.agent.runtime.data_read_composition import (
+    build_runtime_data_read_registry, data_readiness,
+)
 from services.agent.runtime.infrastructure.postgres.specialist_repository import (
     PostgresSpecialistRepository,
 )
@@ -53,8 +56,6 @@ from services.agent.runtime.infrastructure.postgres.coordinator_recovery import 
 from services.agent.runtime.runtime_assembly import (
     CapabilityReadiness, CapabilityReadinessState, RuntimeAssemblyReadiness,
 )
-
-
 def build_production_components_for_worker(
     *, database: object, settings: object,
     sandbox_registry: ExecutorRegistry,
@@ -122,21 +123,16 @@ class SafeRuntimeComposition:
             raise RuntimeError("RUNTIME_CAPABILITY_NOT_REGISTERED")
         if not capability.ready:
             raise RuntimeError(capability.error_code or "RUNTIME_CAPABILITY_NOT_READY")
-
-
 def build_safe_runtime_composition(
     *, resources: RuntimeReadResources, model_call_factory: object | None = None,
     model_loop: object | None = None, action_loop: object | None = None,
     credential_broker: object | None = None, model_port: object | None = None,
     erp_dispatcher_factory: ErpDispatcherFactoryPort | None = None,
+    local_data: ArtifactPort | None = None,
+    file_analyze: ArtifactPort | None = None,
+    fetch_all_pages: ArtifactPort | None = None,
 ) -> SafeRuntimeComposition:
-    """Compose only safe reads and explicitly supplied Runtime loop seams.
-
-    This function intentionally does not accept provider ports, a sandbox
-    registry, or service bundles.  Consequently ERP writes, Media, external
-    specialists, and unstarted worker-owned capabilities cannot enter this
-    composition accidentally.
-    """
+    """Compose safe reads and explicitly supplied Runtime loop seams."""
     if resources is None or resources.database is None:
         raise RuntimeError("RUNTIME_SAFE_READ_SERVICE_WIRING_NOT_READY")
     registry = build_production_read_registry(
@@ -147,6 +143,13 @@ def build_safe_runtime_composition(
             registry,
             build_runtime_erp_read_registry(erp_dispatcher_factory),
         )
+    data_registry = build_runtime_data_read_registry(
+        local_data=local_data, file_analyze=file_analyze,
+        fetch_all_pages=fetch_all_pages,
+    )
+    data_ready = bool(data_registry.descriptors())
+    if data_ready:
+        registry = _merge_registries(registry, data_registry)
     catalog = RuntimeToolCatalog.from_executor_registry(registry)
     model_ready = (
         callable(model_call_factory) and (
@@ -179,6 +182,7 @@ def build_safe_runtime_composition(
         "runtime.erp.write": CapabilityReadiness(
             state=CapabilityReadinessState.DISABLED,
         ),
+        "runtime.data.read": data_readiness(data_ready),
         "runtime.media": CapabilityReadiness(
             state=CapabilityReadinessState.DISABLED,
         ),
@@ -488,6 +492,7 @@ __all__ = [
     "SafeRuntimeComposition", "build_safe_runtime_composition",
     "build_production_components", "build_production_read_registry",
     "build_runtime_erp_read_registry",
+    "build_runtime_data_read_registry",
     "build_production_specialist_registry",
     "build_production_components_from_services",
     "build_production_action_loop",

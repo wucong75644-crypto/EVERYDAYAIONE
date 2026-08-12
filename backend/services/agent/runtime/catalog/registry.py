@@ -124,6 +124,8 @@ def _read_tool_group(tool_name: str) -> str:
     )
     if tool_name in ERP_RUNTIME_READ_TOOLS:
         return "erp"
+    if tool_name in {"local_data", "file_analyze", "fetch_all_pages"}:
+        return "artifact"
     try:
         return READ_TOOL_SPECS[tool_name][1]
     except KeyError as exc:

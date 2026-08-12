@@ -52,6 +52,45 @@ def test_safe_composition_does_not_claim_unwired_remote_erp_read() -> None:
     ].state is CapabilityReadinessState.UNAVAILABLE
 
 
+def test_safe_composition_registers_only_explicit_data_read_adapters() -> None:
+    from services.agent.runtime.production_composition import (
+        build_runtime_data_read_registry,
+    )
+
+    local_data = object()
+    registry = build_runtime_data_read_registry(local_data=local_data)
+    names = {
+        name for descriptor in registry.descriptors()
+        for name in descriptor.action_kinds
+    }
+    assert names == {"local_data"}
+    assert registry.resolve("local_data")[0].mode.value == "local_render"
+
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=object()),
+        local_data=local_data,
+    )
+    assert "local_data" in {
+        name for descriptor in composition.registry.descriptors()
+        for name in descriptor.action_kinds
+    }
+    assert composition.readiness.capabilities["runtime.data.read"].ready
+
+
+def test_safe_composition_keeps_data_read_unavailable_without_injection() -> None:
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=object()),
+    )
+    names = {
+        name for descriptor in composition.registry.descriptors()
+        for name in descriptor.action_kinds
+    }
+    assert not names.intersection({"local_data", "file_analyze", "fetch_all_pages"})
+    assert composition.readiness.capabilities[
+        "runtime.data.read"
+    ].state is CapabilityReadinessState.UNAVAILABLE
+
+
 def test_safe_composition_requires_model_credential_boundary() -> None:
     without_broker = build_safe_runtime_composition(
         resources=RuntimeReadResources(database=object()),
