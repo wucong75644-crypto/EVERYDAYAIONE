@@ -149,12 +149,16 @@ def request_runtime_scheduled_execution(
     org_id: str,
     user_id: str,
     idempotency_key: Optional[str],
-) -> Optional[Dict[str, Any]]:
-    """Read back or submit Runtime-owned tasks; preserve the legacy route."""
+) -> Dict[str, Any]:
+    """Read back or submit a Runtime-owned scheduled task.
+
+    Scheduled execution must never fall back to the legacy scheduler owner.
+    """
     if not task.get("runtime_action_id"):
-        if task.get("status") == "running":
-            raise HTTPException(409, "任务正在执行中")
-        return None
+        raise HTTPException(
+            503,
+            "该定时任务尚未接入 Runtime，已阻止旧执行链路",
+        )
     stable_key = (idempotency_key or "").strip()
     if not 1 <= len(stable_key) <= 128:
         raise HTTPException(400, "Runtime 定时任务需要有效的 Idempotency-Key")

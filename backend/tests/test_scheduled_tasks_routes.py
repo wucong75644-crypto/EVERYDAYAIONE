@@ -698,34 +698,48 @@ class TestRunsAndChatTargets:
         assert resp.status_code == 200
         assert resp.json()["data"] == []
 
-    def test_run_now_executes_immediately(self):
+    def test_run_now_submits_runtime_execution(self):
+        db, task = self._make_task_db_with_runs()
+        task.update({"runtime_action_id": "action-1", "runtime_state_version": 3})
+        db.add_rpc("request_agent_runtime_scheduled_execution_v1", {
+            "owner_kind": "runtime",
+            "outcome": "submitted",
+            "command_id": "command-1",
+        })
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post(
+                "/api/scheduled-tasks/t1/run",
+                headers={"Idempotency-Key": "manual-1"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert "Runtime" in body["message"]
+        assert body["command_id"] == "command-1"
+
+    def test_run_now_without_runtime_profile_fails_closed(self):
         db, _task = self._make_task_db_with_runs()
         app = _build_app(db)
 
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
-        ), patch(
-            "services.scheduler.task_executor.ScheduledTaskExecutor"
-        ) as mock_exec_cls, patch(
-            "core.database.get_worker_db",
-            return_value=MagicMock(name="worker_db"),
-        ) as get_worker_db:
-            mock_executor = MagicMock()
-            mock_executor.execute = AsyncMock(return_value=None)
-            mock_exec_cls.return_value = mock_executor
-
+        ):
             client = TestClient(app)
-            resp = client.post("/api/scheduled-tasks/t1/run")
+            resp = client.post(
+                "/api/scheduled-tasks/t1/run",
+                headers={"Idempotency-Key": "manual-1"},
+            )
 
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-        assert "已开始执行" in body["message"]
-        mock_exec_cls.assert_called_once_with(
-            get_worker_db.return_value,
-            runtime_db=db,
-        )
+        assert resp.status_code == 503
+        assert "旧执行链路" in resp.json()["detail"]
 
 
 class TestParseNL:

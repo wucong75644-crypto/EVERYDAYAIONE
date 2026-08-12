@@ -18,15 +18,16 @@ def _rpc_db(data):
     return db
 
 
-def test_legacy_immediate_execution_does_not_call_runtime_rpc():
+def test_legacy_immediate_execution_fails_closed_without_runtime_rpc():
     db = _rpc_db({})
 
-    result = request_runtime_scheduled_execution(
-        db, task={"id": "legacy"}, task_id="legacy",
-        org_id="org", user_id="user", idempotency_key=None,
-    )
+    with pytest.raises(HTTPException, match="旧执行链路") as exc_info:
+        request_runtime_scheduled_execution(
+            db, task={"id": "legacy"}, task_id="legacy",
+            org_id="org", user_id="user", idempotency_key="manual-1",
+        )
 
-    assert result is None
+    assert exc_info.value.status_code == 503
     db.rpc.assert_not_called()
 
 
@@ -123,3 +124,16 @@ async def test_legacy_executor_gate_prevents_run_and_credit_entrypoints():
 
     executor._create_run.assert_not_called()
     executor._credits.assert_not_called()
+    executor._store.legacy_owner_allowed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_executor_cannot_be_reenabled_by_runtime_marker():
+    executor = ScheduledTaskExecutor(MagicMock())
+    executor._store = MagicMock()
+    executor._create_run = AsyncMock()
+
+    await executor.execute({"id": "runtime-marked", "_execution_owner": "runtime"})
+
+    executor._create_run.assert_not_called()
+    executor._store.legacy_owner_allowed.assert_not_called()

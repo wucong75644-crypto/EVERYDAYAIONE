@@ -404,23 +404,7 @@ async def run_task_now(
     runtime_response = request_runtime_scheduled_execution(
         scoped_db, task, task_id, org_id, user_id, idempotency_key,
     )
-    if runtime_response is not None:
-        return runtime_response
-
-    scoped_db.table("scheduled_tasks").update({
-        "status": "running",
-        "next_run_at": None,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", task_id).execute()
-
-    # 异步执行（不阻塞 HTTP 响应）
-    import asyncio
-    from core.database import get_worker_db
-    from services.scheduler.task_executor import ScheduledTaskExecutor
-    executor = ScheduledTaskExecutor(get_worker_db(), runtime_db=db)
-    asyncio.create_task(executor.execute(dict(task)))
-
-    return {"success": True, "message": "任务已开始执行，请稍后查看执行历史"}
+    return runtime_response
 
 
 @router.get("/{task_id}/runs", summary="执行历史")

@@ -87,13 +87,17 @@ class ScheduledTaskExecutor:
             logger.warning(f"_push_ws_event failed | event={event_type} | error={e}")
 
     async def execute(self, task: Dict[str, Any]) -> None:
-        """执行单个定时任务（被 Scanner.poll 调用）"""
-        if not self._store.legacy_owner_allowed(str(task["id"])):
-            logger.error(
-                "ScheduledTask aborted: legacy owner gate rejected | "
-                f"task={task['id']}"
-            )
-            return
+        """拒绝旧 Scheduler Owner 执行任务。
+
+        Runtime worker 通过受控 RPC 领取并提交执行，不再进入这个旧的
+        Agent/ToolLoop 链。保留本类及其方法是为了兼容历史非运行代码引用，
+        但任何实际调度调用都必须在这里 fail-closed。
+        """
+        logger.error(
+            "ScheduledTask aborted: legacy scheduler owner disabled | "
+            f"task={task.get('id')}"
+        )
+        return
         run = await self._create_run(task)
         if run is None:
             # 无法记录执行历史 → 放弃执行（防止 update WHERE id 全部静默失效）
