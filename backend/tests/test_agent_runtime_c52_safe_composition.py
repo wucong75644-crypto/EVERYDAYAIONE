@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -89,6 +90,43 @@ def test_safe_composition_keeps_data_read_unavailable_without_injection() -> Non
     assert composition.readiness.capabilities[
         "runtime.data.read"
     ].state is CapabilityReadinessState.UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_composition_to_executor_dispatches_injected_local_data() -> None:
+    from services.agent.runtime.domain import (
+        ActionAttempt, ActionAttemptStatus, Lease, RuntimeScope, ScopeKind,
+    )
+    from services.agent.runtime.executors.contracts import canonical_request_hash
+    from services.agent.runtime.ports.executor import ExecutionOutcome
+
+    class LocalDataPort:
+        async def prepare(self, attempt, request):
+            assert attempt.scope.org_id == "org-a"
+            assert request["operation"] == "local_data"
+            return {"status": "success", "summary": "trend ready", "count": 2}
+
+    request = {"doc_type": "daily_stats", "query_type": "trend"}
+    now = datetime.now(timezone.utc)
+    attempt = ActionAttempt(
+        attempt_id="attempt-a", action_id="action-a",
+        scope=RuntimeScope(
+            kind=ScopeKind.USER, scope_id="user-a", user_id="user-a", org_id="org-a",
+        ), attempt_number=1, status=ActionAttemptStatus.DISPATCHING,
+        worker_id="worker-a", idempotency_key="attempt-a",
+        request_hash=canonical_request_hash(request),
+        lease=Lease(fencing_token="fence-a", expires_at=now + timedelta(minutes=1)),
+        started_at=now,
+    )
+    composition = build_safe_runtime_composition(
+        resources=RuntimeReadResources(database=object()),
+        local_data=LocalDataPort(),
+    )
+    descriptor, executor = composition.registry.resolve("local_data")
+    receipt = await executor.dispatch(attempt, request)
+    assert descriptor.executor_type == "runtime_artifact_job:local_data"
+    assert receipt.outcome is ExecutionOutcome.COMPLETED
+    assert receipt.result and receipt.result.data["summary"] == "trend ready"
 
 
 def test_safe_composition_requires_model_credential_boundary() -> None:
