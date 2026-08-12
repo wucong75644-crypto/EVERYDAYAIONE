@@ -106,7 +106,8 @@ async def query_distribution(
         rpc_params["p_end"] = tr.end_iso
 
     try:
-        result = db.rpc("erp_distribution_query", rpc_params).execute()
+        from services.kuaimai.rpc_compat import execute_rpc
+        result = await execute_rpc(db, "erp_distribution_query", rpc_params)
         rows = result.data or []
     except Exception as e:
         logger.error(f"Distribution query failed | doc_type={doc_type} "

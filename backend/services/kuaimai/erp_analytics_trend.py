@@ -59,13 +59,14 @@ async def query_trend(
     granularity = _auto_adjust_granularity(time_granularity, start_date, end_date)
 
     try:
-        rpc_result = db.rpc("erp_trend_query", {
+        from services.kuaimai.rpc_compat import execute_rpc
+        rpc_result = await execute_rpc(db, "erp_trend_query", {
             "p_org_id": org_id, "p_start": start_date, "p_end": end_date,
             "p_granularity": granularity, "p_metrics": clean_metrics,
             "p_group_by": group_by, "p_outer_id": outer_id,
             "p_platform": platform, "p_shop_name": shop_name,
             "p_limit": min(limit, 366),
-        }).execute()
+        })
     except Exception as e:
         logger.error(f"erp_trend_query RPC failed | error={e}", exc_info=True)
         return ToolOutput(
@@ -295,9 +296,10 @@ async def _fetch_stats(
     start: Union[date, datetime], end: Union[date, datetime],
 ) -> Any:
     """调用 erp_global_stats_query RPC。"""
-    result = db.rpc("erp_global_stats_query", {
+    from services.kuaimai.rpc_compat import execute_rpc
+    result = await execute_rpc(db, "erp_global_stats_query", {
         **base_params, "p_start": start.isoformat(), "p_end": end.isoformat(),
-    }).execute()
+    })
     return result.data
 
 

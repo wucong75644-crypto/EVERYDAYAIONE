@@ -10,6 +10,7 @@ from services.agent.runtime.domain import RuntimeScope, ScopeKind
 from services.agent.runtime.executors.data_adapters import (
     RuntimeFetchAllPagesAdapter,
     RuntimeFileAnalyzeAdapter,
+    RuntimeLocalDataAdapter,
 )
 from services.agent.runtime.executors.family_executors import ArtifactJobExecutor
 from services.agent.runtime.executors.provider_adapters import LocalArtifactProvider
@@ -28,6 +29,7 @@ def _attempt(*, kind: ScopeKind = ScopeKind.USER):
     return SimpleNamespace(
         attempt_id="attempt-1", action_id="action-1", session_id="session-1",
         run_id="run-1", request_hash="a" * 64,
+        worker_id="worker-1",
         scope=RuntimeScope(
             kind=kind, scope_id=USER if kind is ScopeKind.USER else "group-1",
             user_id=USER if kind is ScopeKind.USER else None, org_id=ORG,
@@ -217,3 +219,37 @@ async def test_artifact_provider_maps_existing_tool_failure_to_failed_receipt() 
         _attempt(), {"path": "上传/a.exe"}, idempotency_key="key-1",
     )
     assert receipt.state.value == "failed"
+
+
+@pytest.mark.asyncio
+async def test_local_data_rejects_disabled_query_type_before_database_access() -> None:
+    database = SimpleNamespace(rpc=AsyncMock())
+    adapter = RuntimeLocalDataAdapter(database=database)
+    with pytest.raises(PermissionError, match="QUERY_TYPE_DISABLED"):
+        await adapter.prepare(_attempt(), {
+            "doc_type": "order", "query_type": "summary",
+            "_dispatch_context": {"expected_attempt_version": 1},
+        })
+    database.rpc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_local_data_facade_binds_action_and_ignores_org_parameter() -> None:
+    response = SimpleNamespace(data=[{"period": "2026-01-01", "order_count": 2}])
+    rpc_call = SimpleNamespace(execute=AsyncMock(return_value=response))
+    calls = []
+    database = SimpleNamespace(
+        rpc=lambda name, params: (calls.append((name, params)) or rpc_call),
+    )
+    adapter = RuntimeLocalDataAdapter(database=database)
+    result = await adapter.prepare(_attempt(), {
+        "doc_type": "daily_stats", "query_type": "trend",
+        "metrics": ["order_count"], "filters": [],
+        "_dispatch_context": {"expected_attempt_version": 2},
+    })
+    assert result["status"] == "success"
+    assert response.data[0] in result["data"]
+    sent = calls[0][1]
+    assert sent["p_rpc_name"] == "erp_trend_query"
+    assert sent["p_action_arguments"]["doc_type"] == "daily_stats"
+    assert "p_org_id" not in sent["p_params"]

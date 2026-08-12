@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from types import SimpleNamespace
 
 from services.agent.agent_result import AgentResult
 from services.agent.runtime.domain import ActionAttempt
@@ -50,6 +51,112 @@ class RuntimeFileAnalyzeAdapter:
         payload["source_asset_id"] = asset.asset_id
         payload["source_workspace_path"] = asset.workspace_path
         return payload
+
+
+@dataclass(frozen=True, kw_only=True)
+class RuntimeLocalDataAdapter:
+    """Run the existing UnifiedQueryEngine through the Runtime query facade."""
+
+    database: object
+
+    async def prepare(
+        self, attempt: ActionAttempt, request: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        query_type = _text(request, "query_type", 32)
+        if query_type not in {"trend", "compare", "cross", "distribution"}:
+            raise PermissionError("LOCAL_DATA_QUERY_TYPE_DISABLED")
+        expected_version = _dispatch_version(request)
+        action_arguments = {
+            key: value for key, value in request.items()
+            if key != "_dispatch_context"
+        }
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+
+        database = _RuntimeLocalQueryDatabase(
+            database=self.database, attempt=attempt,
+            expected_version=expected_version,
+            action_arguments=action_arguments,
+        )
+        result = await UnifiedQueryEngine(
+            db=database, org_id=str(attempt.scope.org_id),
+        ).execute(
+            doc_type=_text(request, "doc_type", 40),
+            mode=str(request.get("mode") or "summary"),
+            filters=_filters(request),
+            group_by=request.get("group_by"),
+            sort_by=request.get("sort_by"),
+            sort_dir=str(request.get("sort_dir") or "desc"),
+            extra_fields=request.get("extra_fields"),
+            limit=request.get("limit", 20),
+            time_type=request.get("time_type"),
+            query_type=query_type,
+            time_granularity=request.get("time_granularity"),
+            compare_range=request.get("compare_range"),
+            metrics=request.get("metrics"),
+            alert_type=request.get("alert_type"),
+        )
+        payload: dict[str, object] = {
+            "operation": "local_data", "status": str(result.status),
+            "summary": result.summary,
+            "metadata": dict(result.metadata),
+        }
+        if result.data is not None:
+            payload["data"] = result.data
+            payload["count"] = len(result.data)
+        if result.columns:
+            payload["columns"] = [
+                {"name": column.name, "dtype": column.dtype,
+                 "label": column.label}
+                for column in result.columns
+            ]
+        if result.is_failure:
+            payload["error_code"] = "RUNTIME_LOCAL_QUERY_FAILED"
+        return payload
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RuntimeLocalQueryDatabase:
+    database: object
+    attempt: ActionAttempt
+    expected_version: int
+    action_arguments: Mapping[str, object]
+
+    def rpc(self, name: str, params: Mapping[str, object]):
+        return _RuntimeLocalQueryCall(
+            database=self.database, attempt=self.attempt,
+            expected_version=self.expected_version,
+            action_arguments=self.action_arguments,
+            name=name, params=dict(params),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RuntimeLocalQueryCall:
+    database: object
+    attempt: ActionAttempt
+    expected_version: int
+    action_arguments: Mapping[str, object]
+    name: str
+    params: Mapping[str, object]
+
+    async def execute(self):
+        params = {
+            key: value for key, value in self.params.items()
+            if key != "p_org_id"
+        }
+        response = await self.database.rpc(
+            "execute_agent_runtime_local_query_v1", {
+                "p_attempt_id": self.attempt.attempt_id,
+                "p_worker_id": self.attempt.worker_id,
+                "p_execution_token": self.attempt.lease.fencing_token,
+                "p_expected_attempt_version": self.expected_version,
+                "p_request_hash": self.attempt.request_hash,
+                "p_rpc_name": self.name,
+                "p_action_arguments": dict(self.action_arguments),
+                "p_params": params,
+            },
+        ).execute()
+        return SimpleNamespace(data=response.data)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -121,6 +228,23 @@ def _assert_read_operation(tool: str, action: str) -> None:
         raise PermissionError("ERP_PAGE_ACTION_NOT_READ_ONLY")
 
 
+def _dispatch_version(request: Mapping[str, object]) -> int:
+    context = request.get("_dispatch_context")
+    if not isinstance(context, Mapping):
+        raise ValueError("RUNTIME_LOCAL_QUERY_DISPATCH_CONTEXT_REQUIRED")
+    value = context.get("expected_attempt_version")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("RUNTIME_LOCAL_QUERY_ATTEMPT_VERSION_REQUIRED")
+    return value
+
+
+def _filters(request: Mapping[str, object]) -> list[object]:
+    filters = request.get("filters", [])
+    if not isinstance(filters, list):
+        raise ValueError("LOCAL_DATA_FILTERS_INVALID")
+    return filters
+
+
 def _public_result(value: object, *, operation: str) -> Mapping[str, object]:
     if not isinstance(value, AgentResult):
         raise RuntimeError("RUNTIME_DATA_RESULT_INVALID")
@@ -179,4 +303,5 @@ def _bounded_int(
 
 __all__ = [
     "RuntimeFetchAllPagesAdapter", "RuntimeFileAnalyzeAdapter",
+    "RuntimeLocalDataAdapter",
 ]

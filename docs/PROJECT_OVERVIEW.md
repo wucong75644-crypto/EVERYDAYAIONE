@@ -286,6 +286,14 @@ Agent Runtime S2-TAB-B1 文件分析与 ERP 分页适配边界：
 - 本批次未修改 Catalog/production composition，`local_data` 仍等待窄、fenced 数据库 facade，
   因此三项能力尚未作为 production Runtime 工具启用。
 
+Agent Runtime S2-TAB-B2 `local_data` 查询接入边界：
+- `227_57_agent_runtime_local_query_facade.sql` 只新增 Runtime Worker 可执行的
+  attempt-fenced 查询 facade；租户从当前 Action/Run 事实取得，Worker 无 ERP 业务表直权。
+- facade 复用既有 `UnifiedQueryEngine` 和 ERP analytics RPC，不复制 Filter DSL 或查询 SQL；
+  当前只允许 trend、compare、distribution 及安全的 daily-stats cross 指标。
+- detail、export、summary、ratio、alert 和复合跨域指标仍关闭；没有把全局 DATABASE_URL、
+  DuckDB 导出或裸文件 staging 接入 Runtime。Catalog/production composition 仍待后续 release。
+
 Agent Runtime Projection dead stream恢复：
 - `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
   增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用
