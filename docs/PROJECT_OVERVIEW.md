@@ -1947,6 +1947,13 @@ cache = client.caches.create(
     或绑定后 task/profile/gate epoch 已变化时拒绝绑定。存在事实时 rollback 失败关闭；
     production Scheduler capability 与 readiness 继续关闭。
 
+- **2026-08-12**：S4-B 历史定时任务 Runtime adoption preflight（仅非生产）
+  - 新增 `227_59_agent_runtime_scheduled_adoption_preflight.sql` 及精确 rollback，提供
+    owner-only、只读的历史 `scheduled_tasks` 分类报告；仅返回状态、事实完整性、语义/投递
+    target hash 和 adoption candidate，不读取或回显 prompt/target，不修改任务或 Runtime 数据。
+    `safe_to_adopt_count` 固定为 0；缺少来源 Action/Attempt/Run 或 Runtime facts 的任务继续由旧
+    Owner 保持运行/阻断，待后续事实重建与人工语义确认后再设计可回滚 adoption。
+
 - **2026-08-09**：AR-18 B7-S2-A2 Scheduled Runtime Command Submission（仅 disposable）
   - 新增 `227_30_agent_runtime_scheduled_submission.sql` 及精确 rollback：到期扫描与立即执行
     通过同一原子合同创建 scheduled run、隐藏 scheduler conversation/message anchor、system-scoped
