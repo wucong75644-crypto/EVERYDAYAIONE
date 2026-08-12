@@ -71,6 +71,36 @@ class PostgresActionRepository:
     async def get_action(self, *, action_id: str) -> ActionMutationReceipt:
         return await self._rpc("get_agent_action", {"p_action_id": action_id})
 
+    async def submit_chat_action(
+        self, *, request: Mapping[str, object],
+        policy_snapshot: Mapping[str, object], policy_revision: str,
+        executor_type: str, executor_revision: int,
+    ) -> ActionMutationReceipt:
+        return await self._rpc("submit_agent_runtime_chat_action_v1", {
+            "p_conversation_id": request["conversation_id"],
+            "p_org_id": request.get("org_id"),
+            "p_user_id": request["user_id"],
+            "p_task_id": request["task_id"],
+            "p_message_id": request["message_id"],
+            "p_tool_call_id": request["tool_call_id"],
+            "p_turn": request["turn"],
+            "p_tool_name": request["tool_name"],
+            "p_arguments": dict(request["arguments"]),
+            "p_model_id": request.get("model_id") or "unknown",
+            "p_model_provider": request.get("model_provider") or "runtime",
+            "p_model_revision": request.get("model_revision") or "chat-bridge",
+            "p_catalog_revision": request.get("catalog_revision") or "runtime",
+            "p_policy_revision": policy_revision,
+            "p_executor_type": executor_type,
+            "p_executor_revision": executor_revision,
+            "p_policy_snapshot": dict(policy_snapshot),
+            "p_context_receipt": dict(request.get("context_receipt") or {}),
+            "p_idempotency_key": request.get(
+                "idempotency_key",
+                f"chat-action:{request['task_id']}:{request['tool_call_id']}",
+            ),
+        })
+
     async def renew(
         self, *, attempt_id: str, execution_token: str,
         expected_state_version: int, lease_seconds: int = 120,

@@ -150,6 +150,8 @@ class ChatToolMixin(ChatToolResultMixin):
                 message_id=message_id,
                 user_id=user_id,
                 turn=turn,
+                tool_call_id=tc["id"],
+                org_id=getattr(self, "org_id", None),
             ))
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000

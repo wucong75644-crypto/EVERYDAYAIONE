@@ -4,6 +4,7 @@ from services.agent.runtime.ports.action_repository import (
     ActionMutationOutcome,
     ActionMutationReceipt,
     ActionRepositoryPort,
+    ChatActionSubmissionPort,
 )
 from services.agent.runtime.ports.event import RuntimeEventPort
 from services.agent.runtime.ports.executor import (
@@ -65,6 +66,7 @@ __all__ = [
     "ActionMutationOutcome",
     "ActionMutationReceipt",
     "ActionRepositoryPort",
+    "ChatActionSubmissionPort",
     "ExecutionOutcome",
     "ExecutionReceipt",
     "ExecutorPort",
