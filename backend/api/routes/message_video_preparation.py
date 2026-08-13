@@ -57,21 +57,22 @@ async def prepare_and_start_video_generation(
         "prompt": settings.prompt, "model": settings.model_id,
         **handler._serialize_params(params),
     }
+    task_payload = {
+        "id": task_id, "client_task_id": body.client_task_id,
+        "user_id": user_id, "org_id": org_id,
+        "conversation_id": conversation_id, "type": "video",
+        "status": "preparing", "model_id": settings.model_id,
+        "request_params": request_params,
+        "placeholder_created_at": placeholder_at.isoformat(),
+        "execution_mode": "serial", "delivery_context": {"channel": "web"},
+    }
     preparation = GenerationLifecycle(db).prepare(
         request_id=request_id, operation=body.operation.value,
         conversation_id=conversation_id, user_id=user_id, org_id=org_id,
         turn_id=turn_id,
         input_message=_input_payload(body, input_id, created_at),
         output_message=_output_payload(body, placeholder_at),
-        tasks=[{
-            "id": task_id, "client_task_id": body.client_task_id,
-            "user_id": user_id, "org_id": org_id,
-            "conversation_id": conversation_id, "type": "video",
-            "status": "preparing", "model_id": settings.model_id,
-            "request_params": request_params,
-            "placeholder_created_at": placeholder_at.isoformat(),
-            "execution_mode": "serial", "delivery_context": {"channel": "web"},
-        }],
+        tasks=[task_payload],
     )
     metadata = PreparedVideoTaskMetadata(
         client_task_id=_required(body.client_task_id),
@@ -81,11 +82,20 @@ async def prepare_and_start_video_generation(
         context_anchor=preparation.context_anchor(task_id, org_id),
         prepared_task_id=task_id,
     )
-    external_task_id = await handler.start(
-        message_id=preparation.output_message_id,
-        conversation_id=conversation_id, user_id=user_id,
-        content=body.content, params=params, metadata=metadata,
+    from api.routes.message_media_runtime import submit_runtime_media_ingress
+    receipt = await submit_runtime_media_ingress(
+        db=db, conversation_id=conversation_id, user_id=user_id, org_id=org_id,
+        task_id=task_id, input_message_id=preparation.input_message_id,
+        output_message_id=preparation.output_message_id,
+        turn_id=preparation.turn_id, idempotency_key=request_id, kind="video",
+        request={
+            **task_payload["request_params"], "reserved_credits": settings.credits,
+            "currency": "credits",
+        }, model_id=settings.model_id,
     )
+    if not receipt.accepted or not receipt.runtime_owned:
+        raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
+    external_task_id = receipt.run_id or task_id
     user_message = _user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,

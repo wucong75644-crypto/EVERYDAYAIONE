@@ -61,6 +61,11 @@ def _is_legacy_safe_delivery_context(task: dict) -> bool:
     )
 
 
+def _is_runtime_owned(task: dict) -> bool:
+    context = task.get("delivery_context")
+    return isinstance(context, dict) and context.get("runtime") is True
+
+
 class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
     """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
@@ -197,6 +202,12 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
 
         使用任务记录中的 model_id 创建适配器（而非硬编码）。
         """
+        if _is_runtime_owned(task):
+            logger.info(
+                "Skipping Runtime-owned media task in legacy worker | "
+                f"task_id={task.get('external_task_id')}"
+            )
+            return
         external_task_id = task["external_task_id"]
         task_type = task["type"]
         model_id = task.get("model_id")

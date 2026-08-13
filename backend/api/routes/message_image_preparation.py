@@ -70,17 +70,18 @@ async def prepare_and_start_image_generation(
     )
     created_at = body.created_at or datetime.now(timezone.utc)
     placeholder_at = body.placeholder_created_at or datetime.now(timezone.utc)
+    task_payloads = _task_payloads(
+        handler=handler, body=body, settings=settings, task_ids=task_ids,
+        batch_id=batch_id, conversation_id=conversation_id, user_id=user_id,
+        org_id=org_id, placeholder_at=placeholder_at,
+    )
     preparation = GenerationLifecycle(db).prepare(
         request_id=request_id, operation=body.operation.value,
         conversation_id=conversation_id, user_id=user_id, org_id=org_id,
         turn_id=turn_id,
         input_message=_input_payload(body, input_id, created_at),
         output_message=_output_payload(body, placeholder_at, response_generation_type),
-        tasks=_task_payloads(
-            handler=handler, body=body, settings=settings, task_ids=task_ids,
-            batch_id=batch_id, conversation_id=conversation_id,
-            user_id=user_id, org_id=org_id, placeholder_at=placeholder_at,
-        ),
+        tasks=task_payloads,
     )
     metadata = PreparedImageTaskMetadata(
         client_task_id=_required(body.client_task_id),
@@ -92,11 +93,25 @@ async def prepare_and_start_image_generation(
         prepared_batch_id=batch_id,
     )
     try:
-        external_task_id = await handler.start(
-            message_id=preparation.output_message_id,
-            conversation_id=conversation_id, user_id=user_id,
-            content=body.content, params=_business_params(body), metadata=metadata,
-        )
+        from api.routes.message_media_runtime import submit_runtime_media_ingress
+        external_task_ids = []
+        per_image_credits = settings["total_credits"] // settings["num_images"]
+        for task_id, task in zip(task_ids, task_payloads):
+            receipt = await submit_runtime_media_ingress(
+                db=db, conversation_id=conversation_id, user_id=user_id,
+                org_id=org_id, task_id=task_id,
+                input_message_id=preparation.input_message_id,
+                output_message_id=preparation.output_message_id,
+                turn_id=preparation.turn_id, idempotency_key=f"{request_id}:{task_id}",
+                kind="image", request={
+                    **task["request_params"], "reserved_credits": per_image_credits,
+                    "currency": "credits",
+                }, model_id=settings["model_id"],
+            )
+            if not receipt.accepted or not receipt.runtime_owned:
+                raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
+            external_task_ids.append(receipt.run_id or task_id)
+        external_task_id = external_task_ids[0] if external_task_ids else _required(body.client_task_id)
     except Exception as error:
         from core.exceptions import AppException
         if isinstance(error, AppException) and error.code == "IMAGE_GENERATION_FAILED":

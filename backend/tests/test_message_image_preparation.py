@@ -99,10 +99,15 @@ async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
         "api.routes.message_image_preparation.record_user_activity",
         lambda *args, **kwargs: None,
     )
+    async def _ingress(**kwargs):
+        return SimpleNamespace(accepted=True, runtime_owned=True, run_id="run-1")
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
+    )
     handler = _Handler()
 
     response = await prepare_and_start_image_generation(
-        db=object(), handler=handler,
+        db=MagicMock(), handler=handler,
         conversation_service=_ConversationService(), conversation_id="conv-1",
         user_id="user-1", org_id="org-1", request_id="request-row",
         body=_body(),
@@ -111,7 +116,7 @@ async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
     prepared = _Lifecycle.instances[0].calls[0]
     assert len(prepared["tasks"]) == 2
     assert {task["status"] for task in prepared["tasks"]} == {"preparing"}
-    assert len(handler.start.await_args.kwargs["metadata"].prepared_task_ids) == 2
+    assert handler.start.await_count == 0
     assert response.user_message.id == "input-1"
 
 

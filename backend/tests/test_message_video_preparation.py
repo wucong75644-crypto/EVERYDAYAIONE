@@ -174,6 +174,11 @@ async def test_video_task_is_prepared_before_handler_start(monkeypatch):
         "api.routes.message_video_preparation.record_user_activity",
         lambda *args, **kwargs: None,
     )
+    async def _ingress(**kwargs):
+        return SimpleNamespace(accepted=True, runtime_owned=True, run_id="run-1")
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
+    )
     handler = _Handler()
     body = GenerateRequest(
         content=[TextPart(text="dance")], generation_type=GenerationType.VIDEO,
@@ -182,15 +187,14 @@ async def test_video_task_is_prepared_before_handler_start(monkeypatch):
     )
 
     response = await prepare_and_start_video_generation(
-        db=object(), handler=handler, conversation_service=_ConversationService(),
+        db=MagicMock(), handler=handler, conversation_service=_ConversationService(),
         conversation_id="conv-1", user_id="user-1", org_id="org-1",
         request_id="request-row", body=body,
     )
 
     task = _Lifecycle.instances[0].calls[0]["tasks"][0]
     assert task["status"] == "preparing"
-    metadata = handler.start.await_args.kwargs["metadata"]
-    assert metadata.prepared_task_id == task["id"]
+    assert handler.start.await_count == 0
     assert response.user_message.id == "input-1"
 
 
