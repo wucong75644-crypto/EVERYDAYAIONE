@@ -103,6 +103,11 @@ class ArtifactPort(Protocol):
 class MediaTaskPort(Protocol):
     async def prepare(self, attempt: ActionAttempt, request: Mapping[str, object], *, kind: str) -> Mapping[str, object]: ...
 
+    async def attach(
+        self, attempt: ActionAttempt, request: Mapping[str, object],
+        receipt: ProviderReceipt, *, kind: str,
+    ) -> Mapping[str, object]: ...
+
 
 class ResourceMutationPort(Protocol):
     async def mutate(self, attempt: ActionAttempt, request: Mapping[str, object], *, operation: str) -> Mapping[str, object]: ...
@@ -298,6 +303,24 @@ class KieMediaProvider(_HTTPProvider):
         if self.task_port is not None:
             task_facts = dict(await self.task_port.prepare(attempt, request, kind=self.kind))
         receipt = await super().submit(attempt, {**request, "runtime_task": task_facts}, idempotency_key=idempotency_key)
+        attach = getattr(self.task_port, "attach", None)
+        if callable(attach) and receipt.state is ProviderState.ACCEPTED:
+            try:
+                task_facts = dict(await attach(
+                    attempt, request, receipt, kind=self.kind,
+                ))
+            except Exception:
+                return ProviderReceipt(
+                    state=ProviderState.UNKNOWN, provider=receipt.provider,
+                    request_hash=receipt.request_hash,
+                    provider_task_ref=receipt.provider_task_ref,
+                    status_locator=receipt.status_locator,
+                    callback_correlation=receipt.callback_correlation,
+                    evidence={
+                        **dict(receipt.evidence),
+                        "error_code": "MEDIA_TASK_ATTACH_UNKNOWN",
+                    },
+                )
         if task_facts:
             receipt = ProviderReceipt(
                 state=receipt.state, provider=receipt.provider, request_hash=receipt.request_hash,
