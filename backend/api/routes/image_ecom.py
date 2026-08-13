@@ -142,6 +142,46 @@ def _build_multimodal_content(
     return parts
 
 
+def _runtime_model_payload(response: Any) -> dict[str, Any] | None:
+    """Return a non-terminal envelope; terminal responses continue parsing."""
+    status = getattr(response, "status", "completed")
+    if status == "completed" and isinstance(getattr(response, "content", None), str):
+        return None
+    if status == "completed":
+        status = "reconcile"
+        error = "Runtime 结果不可读，请执行 readback/reconcile"
+    else:
+        error = "Runtime 任务尚未产生最终结果，请稍后查询"
+    return {
+        "success": False, "status": status,
+        "runtime_run_id": getattr(response, "run_id", None), "error": error,
+    }
+
+
+def _read_existing_style(db: Any, conversation_id: str, user_id: str) -> str | None:
+    if not conversation_id.strip():
+        return None
+    try:
+        row = db.table("conversations").select("image_style_directive").eq(
+            "id", conversation_id,
+        ).eq("user_id", user_id).maybe_single().execute()
+        return row.data.get("image_style_directive") if row and row.data else None
+    except Exception as exc:
+        logger.warning(f"读取 style_directive 失败: {exc}")
+        return None
+
+
+def _persist_style(db: Any, conversation_id: str, user_id: str, style: str) -> None:
+    if not style or not conversation_id.strip():
+        return
+    try:
+        db.table("conversations").update({"image_style_directive": style}).eq(
+            "id", conversation_id,
+        ).eq("user_id", user_id).execute()
+    except Exception as exc:
+        logger.warning(f"持久化 style_directive 失败: {exc}")
+
+
 # ============================================================
 # POST /ecom-image/enhance-prompt
 # ============================================================
@@ -152,11 +192,7 @@ async def enhance_prompt(
     user_id: CurrentUserId,
     db: Database,
 ) -> dict[str, Any]:
-    """方案策划 API（v2）— 千问VL一步到位。
-
-    输入产品信息+图片 → 千问VL理解产品+策划方案+输出gpt-image-2 prompt
-    → 返回结构化 JSON（images[]含每张图的prompt）。
-    """
+    """Runtime-owned 方案策划 API。"""
     from core.config import get_settings
     from services.agent.image.prompt_builder import PromptBuilder
 
@@ -191,16 +227,7 @@ async def enhance_prompt(
         }
 
     # 1. 风格管理：读取已有风格（用于多轮对话风格延续）
-    existing_style: str | None = None
-    if req.conversation_id and req.conversation_id.strip():
-        try:
-            row = db.table("conversations").select("image_style_directive").eq(
-                "id", req.conversation_id,
-            ).eq("user_id", user_id).maybe_single().execute()
-            if row and row.data:
-                existing_style = row.data.get("image_style_directive")
-        except Exception as e:
-            logger.warning(f"读取 style_directive 失败: {e}")
+    existing_style = _read_existing_style(db, req.conversation_id, user_id)
 
     # 2. 组装三层 system prompt
     system_prompt = builder.build_system_prompt(platform)
@@ -253,19 +280,17 @@ async def enhance_prompt(
         logger.warning("ecom enhance blocked by Runtime capability: %s", exc)
         return {"error": "方案生成服务暂未接入 Runtime，请稍后重试", "success": False}
 
+    non_terminal = _runtime_model_payload(response)
+    if non_terminal is not None:
+        return non_terminal
+
     # 6. 解析设计方案 JSON
     plan = _parse_design_plan(response.content)
     images = plan.get("images", [])
 
     # 7. 持久化 visual_strategy 作为 style_directive
     new_style = plan.get("visual_strategy", "") or existing_style
-    if new_style and req.conversation_id and req.conversation_id.strip():
-        try:
-            db.table("conversations").update(
-                {"image_style_directive": new_style}
-            ).eq("id", req.conversation_id).eq("user_id", user_id).execute()
-        except Exception as e:
-            logger.warning(f"持久化 style_directive 失败: {e}")
+    _persist_style(db, req.conversation_id, user_id, new_style)
 
     logger.info(
         f"enhance-prompt v2 | user={user_id} | platform={platform} "

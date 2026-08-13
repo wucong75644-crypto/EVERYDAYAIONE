@@ -27,6 +27,22 @@ class RuntimeEcomIngressReceipt:
         return self.outcome in {"created", "already_exists"}
 
 
+@dataclass(frozen=True, kw_only=True)
+class RuntimeEcomReadback:
+    """Authoritative Runtime state; only terminal results contain content."""
+
+    status: str
+    run_id: str | None = None
+    model_step_id: str | None = None
+    content: str | None = None
+    structured_content: Mapping[str, Any] | None = None
+    reason_code: str | None = None
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in {"completed", "failed", "cancelled"}
+
+
 class RuntimeEcomModelIngress:
     """Convert e-commerce model requests into the shared Runtime ingress."""
 
@@ -53,7 +69,7 @@ class RuntimeEcomModelIngress:
             scope_kind=scope_kind, scope_id=scope_id,
             agent_definition_id=agent_definition_id,
             agent_definition_revision=agent_definition_revision,
-            command_type="ecom_model_request",
+            command_type="submit_input",
             idempotency_key=idempotency_key,
             payload={
                 "channel": "web", "model_id": model_id,
@@ -70,5 +86,31 @@ class RuntimeEcomModelIngress:
             runtime_owned=receipt.runtime_owned is True,
         )
 
+    async def readback(
+        self, *, conversation_id: str, org_id: str | None, user_id: str,
+        idempotency_key: str,
+    ) -> RuntimeEcomReadback:
+        response = self._ingress._database.rpc(
+            "read_agent_runtime_ecom_model_v1",
+            {
+                "p_conversation_id": conversation_id,
+                "p_org_id": org_id,
+                "p_user_id": user_id,
+                "p_idempotency_key": idempotency_key,
+            },
+        ).execute()
+        import inspect
+        if inspect.isawaitable(response):
+            response = await response
+        data = getattr(response, "data", None)
+        if not isinstance(data, dict) or not isinstance(data.get("outcome"), str):
+            raise RuntimeError("RUNTIME_ECOM_READBACK_INVALID")
+        return RuntimeEcomReadback(
+            status=data["outcome"], run_id=data.get("run_id"),
+            model_step_id=data.get("model_step_id"), content=data.get("content"),
+            structured_content=data.get("structured_content"),
+            reason_code=data.get("reason_code"),
+        )
 
-__all__ = ["RuntimeEcomIngressReceipt", "RuntimeEcomModelIngress"]
+
+__all__ = ["RuntimeEcomIngressReceipt", "RuntimeEcomModelIngress", "RuntimeEcomReadback"]

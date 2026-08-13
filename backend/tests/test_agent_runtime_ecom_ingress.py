@@ -1,9 +1,10 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from services.agent.runtime.ecom_ingress import RuntimeEcomModelIngress
+from services.agent.runtime.ecom_capability import RuntimeEcomNonTerminal
 
 
 @pytest.mark.asyncio
@@ -31,7 +32,7 @@ async def test_ecom_ingress_submits_to_shared_runtime_ingress(monkeypatch) -> No
     assert receipt.accepted is True
     assert receipt.runtime_owned is True
     runtime.submit.assert_awaited_once()
-    assert runtime.submit.await_args.kwargs["command_type"] == "ecom_model_request"
+    assert runtime.submit.await_args.kwargs["command_type"] == "submit_input"
     assert runtime.submit.await_args.kwargs["payload"]["feature"] == "ecom_plan"
 
 
@@ -46,3 +47,28 @@ async def test_ecom_ingress_rejects_unknown_feature() -> None:
             model_id="m", messages=[{"role": "user", "content": "x"}],
             feature="unknown", source_id="s",
         )
+
+
+@pytest.mark.asyncio
+async def test_readback_preserves_pending_without_dispatching() -> None:
+    runtime = MagicMock()
+    runtime._database.rpc.return_value.execute = AsyncMock(
+        return_value=SimpleNamespace(data={"outcome": "unknown", "run_id": "run-1"}),
+    )
+    ingress = RuntimeEcomModelIngress.__new__(RuntimeEcomModelIngress)
+    ingress._ingress = runtime
+
+    readback = await ingress.readback(
+        conversation_id="conversation-1", org_id="org-1", user_id="user-1",
+        idempotency_key="ecom-1",
+    )
+
+    assert readback.status == "unknown"
+    assert readback.terminal is False
+    runtime._database.rpc.assert_called_once()
+
+
+def test_non_terminal_runtime_result_is_not_terminal() -> None:
+    error = RuntimeEcomNonTerminal("unknown", "reconcile_required")
+    assert error.status == "unknown"
+    assert error.reason_code == "reconcile_required"

@@ -9,8 +9,20 @@ class RuntimeEcomCapabilityUnavailable(RuntimeError):
     """The e-commerce capability is not enabled in the Runtime composition."""
 
 
+class RuntimeEcomNonTerminal(RuntimeError):
+    """Runtime has not produced a terminal model result yet."""
+
+    def __init__(self, status: str, reason_code: str | None = None) -> None:
+        self.status = status
+        self.reason_code = reason_code
+        super().__init__(f"RUNTIME_ECOM_MODEL_{status.upper()}")
+
+
 class RuntimeEcomCapabilityPort(Protocol):
     ready: bool
+
+    async def readback(self, **kwargs: Any) -> Any:
+        """Read the authoritative Runtime result without dispatching."""
 
     async def submit_model(self, **kwargs: Any) -> Any:
         """Submit a durable e-commerce ModelLoop request to Runtime."""
@@ -32,6 +44,11 @@ class DisabledRuntimeEcomCapability:
     ready = False
 
     """Explicit fail-closed implementation used until composition is wired."""
+
+    async def readback(self, **_: Any) -> Any:
+        raise RuntimeEcomCapabilityUnavailable(
+            "RUNTIME_ECOM_MODEL_READBACK_UNAVAILABLE"
+        )
 
     async def submit_model(self, **_: Any) -> Any:
         raise RuntimeEcomCapabilityUnavailable(
@@ -62,5 +79,6 @@ __all__ = [
     "DisabledRuntimeEcomCapability",
     "RuntimeEcomCapabilityPort",
     "RuntimeEcomCapabilityUnavailable",
+    "RuntimeEcomNonTerminal",
     "get_runtime_ecom_capability",
 ]

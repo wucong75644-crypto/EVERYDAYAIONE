@@ -16,7 +16,9 @@ from core.config import get_settings
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
-from services.agent.runtime.ecom_capability import get_runtime_ecom_capability
+from services.agent.runtime.ecom_capability import (
+    RuntimeEcomNonTerminal, get_runtime_ecom_capability,
+)
 
 
 _TOTAL_TIMEOUT_SECONDS = 100.0
@@ -48,6 +50,10 @@ class RequirementAssistService:
                 _PRIMARY_TIMEOUT_SECONDS,
             )
             return self._outcome(result, settings.image_enhance_vl_model, False, started_at)
+        except RuntimeEcomNonTerminal as exc:
+            raise AppException(
+                "REQUIREMENT_ASSIST_PENDING", "AI任务仍在 Runtime 中处理，请稍后查询", 202,
+            ) from exc
         except Exception as exc:
             primary_error = exc
             logger.warning(
@@ -90,6 +96,9 @@ class RequirementAssistService:
             ),
             timeout=timeout_seconds,
         )
+        status = getattr(response, "status", "completed")
+        if status != "completed":
+            raise RuntimeEcomNonTerminal(status, getattr(response, "reason_code", None))
         result = parse_requirement_result(response.content)
         validate_reference_ids(result, data)
         validate_no_output_urls(result)
