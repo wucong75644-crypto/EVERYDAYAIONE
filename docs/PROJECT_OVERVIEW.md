@@ -31,6 +31,9 @@ Agent Runtime 单一运行时收敛：
 - `docs/document/TECH_AGENT_RUNTIME_SINGLE_RUNTIME_CONVERGENCE.md`：冻结最终唯一
   ModelLoop/ActionLoop Owner、现有业务能力薄适配、平行配置/事实/Worker 删除边界，
   以及模型、ERP/Media、Scheduler/WeCom、Ingress、数据库和发布的实施顺序。
+- `backend/services/agent/runtime/catalog/batch_media_release.py` 与
+  `backend/scripts/generate_agent_runtime_batch_media_seed.py`：从完整生产 Registry 生成默认关闭的
+  v7 批量媒体 Catalog/Definition；普通对话只暴露标准 `generate_image`，历史 Catalog 不改写。
 
 ## 核心功能
 - **多对话管理**：用户可创建多个AI对话，支持重命名、删除、搜索

@@ -26,6 +26,7 @@ from services.agent.runtime.ports.model import (
 
 _ACTION_NAMESPACE = UUID("76bc769a-a201-43aa-8ee9-cd13f009f12d")
 _POLICY_REVISION = "agent-runtime-policy-v1"
+MAX_RUNTIME_IMAGE_ACTIONS = 10
 
 
 class PostgresModelCallFactory:
@@ -59,7 +60,15 @@ class PostgresModelCallFactory:
             snapshot=snapshot, context=context, definition=definition,
         )
         model_id = model_resolution.model_id
-        messages = _messages(context.get("messages"), definition.system_prompt)
+        input_message_id = _optional_text(payload.get("input_message_id"))
+        reference_image_count = _current_input_image_count(
+            context.get("messages"), input_message_id,
+        )
+        messages = _messages(
+            context.get("messages"), definition.system_prompt,
+            current_input_message_id=input_message_id,
+            supports_vision=_supports_vision(model_id),
+        )
         step_number = len(snapshot.model_steps) + 1
         stable_prefix_blocks = _stable_prefix_blocks(definition.context_policy)
         runtime_context = build_runtime_context(
@@ -143,7 +152,10 @@ class PostgresModelCallFactory:
             reserved_credits=reserved,
             build_request=build_request,
             actual_credits=lambda result: _actual_credits(model_id, result),
-            build_actions=lambda result: _actions(result, run_id, toolset),
+            build_actions=lambda result: _actions(
+                result, run_id, toolset,
+                reference_image_count=reference_image_count,
+            ),
         )
 
 
@@ -154,11 +166,19 @@ async def retain_unknown_model_attempt(
     del snapshot
 
 
-def _messages(value: object, system_prompt: str) -> list[dict]:
+def _messages(
+    value: object,
+    system_prompt: str,
+    *,
+    current_input_message_id: str | None = None,
+    supports_vision: bool = True,
+) -> list[dict]:
     if not isinstance(value, list):
         raise RuntimeError("AGENT_RUNTIME_MESSAGES_INVALID")
     from services.handlers.chat_context.content_extractors import (
+        extract_image_urls_from_content,
         extract_oai_messages_from_content,
+        project_user_image_urls,
     )
     if not system_prompt:
         raise RuntimeError("RUNTIME_DEFINITION_PROMPT_MISSING")
@@ -168,9 +188,22 @@ def _messages(value: object, system_prompt: str) -> list[dict]:
         role = str(row.get("role") or "")
         if role not in {"system", "user", "assistant"}:
             continue
-        result.extend(extract_oai_messages_from_content(
+        projected = extract_oai_messages_from_content(
             row.get("content"), role, safe_completed_tools_only=True,
-        ))
+        )
+        is_current_input = (
+            role == "user"
+            and current_input_message_id is not None
+            and str(row.get("id") or "") == current_input_message_id
+        )
+        if is_current_input:
+            image_urls = extract_image_urls_from_content(row.get("content"))
+            if image_urls and not supports_vision:
+                raise RuntimeError("RUNTIME_MODEL_VISION_REQUIRED")
+            projected = project_user_image_urls(
+                projected, image_urls, include_reference_indexes=True,
+            )
+        result.extend(projected)
     if len(result) == 1:
         raise RuntimeError("AGENT_RUNTIME_MESSAGES_EMPTY")
     return result
@@ -250,12 +283,18 @@ def _actual_credits(model_id: str, result: ModelStepResult) -> int:
 
 def _actions(
     result: ModelStepResult, run_id: str, toolset: EffectiveToolset | None = None,
+    *, reference_image_count: int = 0,
 ) -> tuple[str, tuple[dict, ...]]:
     validate_schema = toolset is not None
     if toolset is None:
         raise RuntimeError("RUNTIME_VERSION_FACTS_REQUIRED")
     if getattr(result, "stop_reason", StopReason.TOOL_CALLS) is not StopReason.TOOL_CALLS:
         return "0" * 64, ()
+    image_call_count = sum(
+        1 for call in result.tool_calls if call.name == "generate_image"
+    )
+    if image_call_count > MAX_RUNTIME_IMAGE_ACTIONS:
+        raise ValueError("RUNTIME_IMAGE_ACTION_BATCH_LIMIT_EXCEEDED")
     actions = []
     for call in result.tool_calls:
         arguments = json.loads(call.arguments_json)
@@ -263,6 +302,10 @@ def _actions(
             raise ValueError("RUNTIME_TOOL_CALL_ARGUMENTS_INVALID")
         if validate_schema:
             toolset.validate_call(call.name, arguments)
+        if call.name == "generate_image":
+            _validate_reference_image_indexes(
+                arguments, reference_image_count=reference_image_count,
+            )
         tool = next(item for item in toolset.definitions
                     if item.canonical_name == call.name)
         action_id = str(uuid5(
@@ -305,6 +348,56 @@ def _actions(
             ),
         })
     return "0" * 64, tuple(actions)
+
+
+def _current_input_image_count(
+    value: object, current_input_message_id: str | None,
+) -> int:
+    if current_input_message_id is None:
+        return 0
+    if not isinstance(value, list):
+        raise RuntimeError("AGENT_RUNTIME_MESSAGES_INVALID")
+    from services.handlers.chat_context.content_extractors import (
+        extract_image_urls_from_content,
+    )
+
+    matches = [
+        item for item in value
+        if isinstance(item, dict)
+        and str(item.get("id") or "") == current_input_message_id
+        and item.get("role") == "user"
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("RUNTIME_INPUT_MESSAGE_CONTEXT_INVALID")
+    return len(extract_image_urls_from_content(matches[0].get("content")))
+
+
+def _validate_reference_image_indexes(
+    arguments: dict, *, reference_image_count: int,
+) -> None:
+    indexes = arguments.get("reference_image_indexes", [])
+    if not isinstance(indexes, list):
+        raise ValueError("RUNTIME_REFERENCE_IMAGE_INDEX_INVALID")
+    if len(indexes) != len(set(indexes)):
+        raise ValueError("RUNTIME_REFERENCE_IMAGE_INDEX_INVALID")
+    if any(
+        not isinstance(index, int) or isinstance(index, bool)
+        or index < 0 or index >= reference_image_count
+        for index in indexes
+    ):
+        raise ValueError("RUNTIME_REFERENCE_IMAGE_INDEX_INVALID")
+    prompt = arguments.get("prompt")
+    if not isinstance(prompt, str) or not 1 <= len(prompt) <= 20_000:
+        raise ValueError("RUNTIME_IMAGE_PROMPT_INVALID")
+
+
+def _supports_vision(model_id: str) -> bool:
+    from services.adapters.factory import get_model_config
+
+    config = get_model_config(model_id)
+    if config is None:
+        raise RuntimeError("AGENT_RUNTIME_MODEL_UNKNOWN")
+    return bool(config.supports_vision)
 
 
 def _is_safe_automatic(tool: object) -> bool:

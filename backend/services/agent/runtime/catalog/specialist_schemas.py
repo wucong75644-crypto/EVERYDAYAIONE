@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from services.adapters.factory import IMAGE_MODEL_REGISTRY
+
 
 def _object(properties: dict[str, object], required: list[str] | None = None) -> dict[str, object]:
     return {"type": "object", "additionalProperties": False,
@@ -11,6 +13,12 @@ def _object(properties: dict[str, object], required: list[str] | None = None) ->
 _QUERY = {"action": {"type": "string"}, "params": {"type": "object"},
           "page": {"type": "integer", "minimum": 1},
           "page_size": {"type": "integer", "minimum": 1, "maximum": 100}}
+RUNTIME_IMAGE_MODEL_IDS = tuple(sorted(IMAGE_MODEL_REGISTRY))
+RUNTIME_IMAGE_ASPECT_RATIOS = (
+    "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4",
+    "9:16", "16:9", "21:9", "auto",
+)
+RUNTIME_IMAGE_RESOLUTIONS = ("1K", "2K", "4K")
 SPECIALIST_TOOL_SCHEMAS: dict[str, dict[str, object]] = {
     **{name: _object(dict(_QUERY), ["action"]) for name in (
         "erp_product_query", "erp_trade_query", "erp_purchase_query",
@@ -42,7 +50,20 @@ SPECIALIST_TOOL_SCHEMAS: dict[str, dict[str, object]] = {
     }, ["doc_type", "query_type"]),
     "file_analyze": _object({"file_id": {"type": "string"}, "path": {"type": "string"}, "sheet": {"type": "string"}}, ["file_id"]),
     "fetch_all_pages": _object({"tool_name": {"type": "string"}, "action": {"type": "string"}, "params": {"type": "object"}}, ["tool_name", "action"]),
-    "generate_image": _object({"prompt": {"type": "string"}, "model": {"type": "string"}}, ["prompt"]),
+    "generate_image": _object({
+        "prompt": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "reference_image_indexes": {
+            "type": "array", "uniqueItems": True,
+            "items": {"type": "integer", "minimum": 0},
+        },
+        "aspect_ratio": {
+            "type": "string", "enum": list(RUNTIME_IMAGE_ASPECT_RATIOS),
+        },
+        "resolution": {
+            "type": "string", "enum": list(RUNTIME_IMAGE_RESOLUTIONS),
+        },
+        "model": {"type": "string", "enum": list(RUNTIME_IMAGE_MODEL_IDS)},
+    }, ["prompt"]),
     "generate_video": _object({"prompt": {"type": "string"}, "duration": {"type": "integer"}}, ["prompt"]),
     "image_agent": _object({"prompt": {"type": "string"}, "product_id": {"type": "string"}}, ["prompt"]),
     "erp_agent": _object({"query": {"type": "string"}, "messages_ref": {"type": "string"}}, ["query"]),
@@ -54,4 +75,7 @@ SPECIALIST_TOOL_SCHEMAS: dict[str, dict[str, object]] = {
     "manage_scheduled_task": _object({"operation": {"type": "string"}, "task_id": {"type": "string"}, "state_version": {"type": "integer"}, "payload": {"type": "object"}}, ["operation"]),
 }
 
-__all__ = ["SPECIALIST_TOOL_SCHEMAS"]
+__all__ = [
+    "RUNTIME_IMAGE_ASPECT_RATIOS", "RUNTIME_IMAGE_MODEL_IDS",
+    "RUNTIME_IMAGE_RESOLUTIONS", "SPECIALIST_TOOL_SCHEMAS",
+]

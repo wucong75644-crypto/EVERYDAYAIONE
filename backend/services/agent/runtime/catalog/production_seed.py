@@ -48,6 +48,8 @@ def build_descriptor_registries() -> tuple[
 def build_seed_snapshot(
     *, scope: str = "user", channel: str = "web",
     gate_state: str = "enabled",
+    agent: AgentDefinition | None = None,
+    excluded_tool_names: frozenset[str] = frozenset(),
 ) -> ProductionFactSnapshot:
     """Return deterministic facts for one frozen production scope."""
     from services.agent.runtime.executors.read_registry import READ_TOOL_SPECS
@@ -58,6 +60,8 @@ def build_seed_snapshot(
         for descriptor in registry.descriptors()
         for name in descriptor.action_kinds
     )
+    if not excluded_tool_names.issubset(names):
+        raise ValueError("RUNTIME_SEED_EXCLUDED_TOOL_UNKNOWN")
     bindings = {
         name: ProductionToolBinding(
             provider_revision="provider-v1",
@@ -72,13 +76,13 @@ def build_seed_snapshot(
         )
         for name in names
     }
-    agent = build_seed_agent()
+    resolved_agent = agent or build_seed_agent()
     return build_production_fact_snapshot(
-        agent=agent, read_registry=read, sandbox_registry=sandbox,
+        agent=resolved_agent, read_registry=read, sandbox_registry=sandbox,
         specialist_registry=specialist, bindings=bindings,
         scope=scope, channel=channel,
-        entitled_groups=frozenset(agent.requested_tool_groups),
-        authorized_names=names, gate_state=gate_state,
+        entitled_groups=frozenset(resolved_agent.requested_tool_groups),
+        authorized_names=names - excluded_tool_names, gate_state=gate_state,
     )
 
 

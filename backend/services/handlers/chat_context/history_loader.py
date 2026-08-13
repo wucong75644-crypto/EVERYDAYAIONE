@@ -17,6 +17,7 @@ from services.handlers.chat_context.content_extractors import (
     extract_interrupt_marker,
     extract_oai_messages_from_content,
     extract_text_from_content,
+    project_user_image_urls,
 )
 from services.handlers.interrupt_anchor import (
     TASK_RESUMPTION_TEMPLATE,
@@ -80,27 +81,7 @@ def _row_to_oai_messages(
         return messages, 0
 
     if role == "user":
-        text_index = next(
-            (
-                index for index, message in enumerate(messages)
-                if message.get("role") == "user"
-                and isinstance(message.get("content"), str)
-            ),
-            None,
-        )
-        text_value = messages[text_index]["content"] if text_index is not None else ""
-        parts: List[Dict[str, Any]] = []
-        if text_value:
-            parts.append({"type": "text", "text": text_value})
-        parts.extend(
-            {"type": "image_url", "image_url": {"url": url}}
-            for url in images
-        )
-        user_message = {"role": "user", "content": parts}
-        if text_index is None:
-            messages.insert(0, user_message)
-        else:
-            messages[text_index] = user_message
+        messages = project_user_image_urls(messages, images)
     else:
         image_hint = "".join("\n📊 [已生成图表]" for _ in images)
         target_index = next(

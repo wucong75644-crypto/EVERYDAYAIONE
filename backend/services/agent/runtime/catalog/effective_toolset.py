@@ -92,17 +92,36 @@ def _validate_json_value(
     elif expected == "string":
         if not isinstance(value, str):
             raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        if isinstance(maximum, int) and len(value) > maximum:
+            raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
     elif expected == "number":
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        _validate_numeric_bounds(value, schema, path)
     elif expected == "integer":
         if not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        _validate_numeric_bounds(value, schema, path)
     elif expected == "boolean":
         if not isinstance(value, bool):
             raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
     elif expected == "array":
         if not isinstance(value, list):
+            raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        if isinstance(maximum, int) and len(value) > maximum:
+            raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+        if schema.get("uniqueItems") is True and len({
+            json.dumps(item, sort_keys=True, separators=(",", ":"))
+            for item in value
+        }) != len(value):
             raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
         items = schema.get("items")
         if isinstance(items, Mapping):
@@ -114,6 +133,17 @@ def _validate_json_value(
         raise ValueError("RUNTIME_TOOL_SCHEMA_INVALID")
     enum = schema.get("enum")
     if isinstance(enum, list) and value not in enum:
+        raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+
+
+def _validate_numeric_bounds(
+    value: int | float, schema: Mapping[str, object], path: str,
+) -> None:
+    minimum = schema.get("minimum")
+    maximum = schema.get("maximum")
+    if isinstance(minimum, (int, float)) and value < minimum:
+        raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
+    if isinstance(maximum, (int, float)) and value > maximum:
         raise ValueError(f"RUNTIME_TOOL_CALL_SCHEMA_INVALID:{path}")
 
 
