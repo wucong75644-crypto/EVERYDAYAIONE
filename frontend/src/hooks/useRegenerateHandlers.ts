@@ -10,6 +10,7 @@ import { sendMessage, determineMessageType, extractModelId, extractGenerationPar
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import toast from 'react-hot-toast';
 import { logger } from '../utils/logger';
+import { getRuntimeMediaImageSlots } from '../utils/runtimeMediaSlots';
 
 interface RegenerateHandlersOptions {
   conversationId: string | null;
@@ -74,6 +75,8 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
       try {
         const modelId = extractModelId(targetMessage);
         const originalParams = extractGenerationParams(targetMessage);
+        const runtimeSlot = getRuntimeMediaImageSlots(targetMessage.content)
+          .find((slot) => slot.slot_index === imageIndex);
 
         await sendMessage({
           conversationId,
@@ -86,6 +89,10 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
           params: {
             ...originalParams,
             image_index: imageIndex,
+            ...(runtimeSlot ? {
+              runtime_slot_id: runtimeSlot.slot_id,
+              runtime_slot_revision: runtimeSlot.slot_revision,
+            } : {}),
           },
         });
       } catch (error) {

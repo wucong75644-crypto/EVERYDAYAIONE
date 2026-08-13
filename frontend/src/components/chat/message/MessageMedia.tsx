@@ -45,6 +45,8 @@ interface MessageMediaProps {
   failedMediaType?: 'image' | 'video' | null;
   /** 重新生成回调（失败时 retry） */
   onRegenerate?: () => void;
+  /** Runtime 媒体批次取消 */
+  onCancelBatch?: () => void;
 }
 
 export default memo(function MessageMedia({
@@ -64,6 +66,7 @@ export default memo(function MessageMedia({
   onRegenerateSingle,
   failedMediaType,
   onRegenerate,
+  onCancelBatch,
 }: MessageMediaProps) {
   const videoUrl = videoUrls[0] || null;
   const failedImage = useMemo(() => {
@@ -142,6 +145,7 @@ export default memo(function MessageMedia({
             onMediaLoaded={onMediaLoaded}
             isGenerating={isGenerating && generatingType === 'image'}
             onRegenerateSingle={onRegenerateSingle}
+            onCancelBatch={onCancelBatch}
           />
         ) : (
           // AI 单图：占位符 + 淡入效果

@@ -416,4 +416,42 @@ describe('AiImageGrid', () => {
       'data-slot-status', 'cancelled',
     );
   });
+
+  it('Runtime 批次只在存在活跃槽位时显示停止控制', () => {
+    const onCancel = vi.fn();
+    render(
+      <AiImageGrid
+        content={makeRuntimeSlots(9)}
+        numImages={10}
+        messageId="runtime-cancel"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        onCancelBatch={onCancel}
+        isGenerating={true}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '停止生成' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('Runtime 批次全部终态后隐藏停止控制', () => {
+    const terminal = makeRuntimeSlots().map((part, index) => ({
+      ...part,
+      slot_status: index === 0 ? 'failed' as const : 'completed' as const,
+      url: index === 0 ? null : `https://img${index}.png`,
+      slot_revision: 2,
+    }));
+    render(
+      <AiImageGrid
+        content={terminal}
+        numImages={10}
+        messageId="runtime-terminal"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        onCancelBatch={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '停止生成' })).toBeNull();
+  });
 });

@@ -21,6 +21,20 @@ class RuntimeMediaTaskPort:
         self, attempt: ActionAttempt, *, kind: str,
     ) -> Mapping[str, object]:
         self._validate(attempt, kind)
+        retry_params = self.attempt_params(attempt)
+        retry_params["p_execution_token"] = retry_params.pop("p_owner_token")
+        retry_response = await self._database.rpc(
+            "read_agent_runtime_media_retry_binding_v1",
+            retry_params,
+        ).execute()
+        retry = _mapping(
+            retry_response.data, "MEDIA_RETRY_BINDING_RESPONSE_INVALID",
+        )
+        if retry.get("outcome") == "found":
+            return await self.read(attempt, kind=kind)
+        if retry.get("outcome") != "not_retry":
+            raise RuntimeError("MEDIA_RETRY_BINDING_RESPONSE_INVALID")
+        # 228_05 owns manifest validation and dispatch binding atomically.
         response = await self._database.rpc(
             "prepare_agent_runtime_media_dispatch_v1",
             self.attempt_params(attempt),

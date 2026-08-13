@@ -12,7 +12,7 @@
 import { memo, useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
-import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
@@ -44,6 +44,7 @@ interface AiImageGridProps {
   isGenerating: boolean;
   /** 单图重新生成回调 */
   onRegenerateSingle?: (imageIndex: number) => void;
+  onCancelBatch?: () => void;
 }
 
 /** 网格布局：auto-fill 根据单图宽度自动计算每行列数，放不下自动换行 */
@@ -273,6 +274,7 @@ export default function AiImageGrid({
   onMediaLoaded,
   isGenerating,
   onRegenerateSingle,
+  onCancelBatch,
 }: AiImageGridProps) {
   const runtimeSlots = useMemo(() => getRuntimeMediaImageSlots(content), [content]);
   const runtimeSummary = useMemo(
@@ -376,6 +378,16 @@ export default function AiImageGrid({
           {runtimeSummary.failed > 0 && ` · ${runtimeSummary.failed} 失败`}
           {runtimeSummary.cancelled > 0 && ` · ${runtimeSummary.cancelled} 已取消`}
           {runtimeSummary.unknown > 0 && ` · ${runtimeSummary.unknown} 结果确认中`}
+          {onCancelBatch && runtimeSummary.active > 0 && (
+            <button
+              type="button"
+              className="ml-2 inline-flex items-center gap-1 text-text-secondary hover:text-text-primary"
+              onClick={onCancelBatch}
+              aria-label="停止生成"
+            >
+              <XCircle className="w-3 h-3" /> 停止
+            </button>
+          )}
         </div>
       )}
     </div>

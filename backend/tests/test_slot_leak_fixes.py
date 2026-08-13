@@ -234,6 +234,9 @@ class TestTaskRouteSlotRelease:
 
         db = MagicMock()
         db.table.return_value = chain
+        rpc_result = MagicMock()
+        rpc_result.data = {"outcome": "not_runtime_media"}
+        db.rpc.return_value.execute.return_value = rpc_result
         return db, chain
 
     @pytest.mark.asyncio

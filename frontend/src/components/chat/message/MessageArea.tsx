@@ -14,7 +14,10 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import { ArrowDown, MessageSquare } from 'lucide-react';
-import { deleteMessage, cancelTaskByMessageId } from '../../../services/message';
+import {
+  deleteMessage,
+  cancelTaskByMessageId,
+} from '../../../services/message';
 import { useMessageStore, type Message, type ImageAsset, getTextContent, getImageAssets } from '../../../stores/useMessageStore';
 import MessageItem from './MessageItem';
 import EmptyState from '../layout/EmptyState';
@@ -384,6 +387,20 @@ export default function MessageArea({
     await doRegenerateSingle(pair.target, imageIndex, pair.user);
   }, [conversationId, findMessagePair, doRegenerateSingle]);
 
+  const handleCancelRuntimeMediaBatch = useCallback(async (messageId: string) => {
+    try {
+      const result = await cancelTaskByMessageId(messageId);
+      if (result.reconcile_count) {
+        toast.success(`已停止继续提交，${result.reconcile_count} 张图片正在确认取消结果`);
+      } else {
+        toast.success('已停止未完成的图片生成');
+      }
+    } catch (error) {
+      logger.error('messageArea', '取消 Runtime 媒体批次失败', error);
+      toast.error('停止生成失败，请重试');
+    }
+  }, []);
+
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
     return <EmptyState hasConversation={false} />;
@@ -454,6 +471,7 @@ export default function MessageArea({
                     currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
                     skipEntryAnimation={loading || loadingMore}
                     onRegenerateSingle={handleRegenerateSingle}
+                    onCancelRuntimeMediaBatch={handleCancelRuntimeMediaBatch}
                     enableLayoutAnimation={enableLayoutAnimation}
                     suggestions={isLastAi ? suggestions : undefined}
                   />

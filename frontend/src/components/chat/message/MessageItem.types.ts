@@ -20,6 +20,8 @@ export interface MessageItemProps {
   skipEntryAnimation?: boolean;
   /** 单图重新生成回调（多图模式） */
   onRegenerateSingle?: (messageId: string, imageIndex: number) => void;
+  /** Runtime 媒体批次取消（仅 runtime_media_batch 消息） */
+  onCancelRuntimeMediaBatch?: (messageId: string) => void;
   /** Agent Loop 步骤提示（"正在搜索..." 等） */
   agentStepHint?: string;
   /** 流式思考内容 */

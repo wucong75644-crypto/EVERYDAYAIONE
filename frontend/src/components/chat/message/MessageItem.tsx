@@ -45,9 +45,9 @@ export default memo(function MessageItem({
   thinkingStartTime,
   enableLayoutAnimation = true,
   suggestions,
+  onCancelRuntimeMediaBatch,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
-
   // 消息动画管理
   const {
     entryAnimationClass,
@@ -211,7 +211,6 @@ export default memo(function MessageItem({
     e.preventDefault();
     setTextContextMenu({ x: e.clientX, y: e.clientY, selectedText });
   }, [isUser, textContent]);
-
   // 工具栏显示/隐藏状态
   const [showToolbar, setShowToolbar] = useState(false);
   const hideTimeoutRef = useRef<number | null>(null);
@@ -247,7 +246,6 @@ export default memo(function MessageItem({
     const globalIndex = allImageAssets.findIndex((asset) => asset.originalUrl === targetUrl);
     return globalIndex >= 0 ? globalIndex : currentImageIndex;
   }, [hasRuntimeMediaBatch, runtimeImageSlots, imageAssets, allImageAssets, currentImageIndex]);
-
   // 图片点击回调（合并用户/AI 两处相同逻辑，稳定引用）
   const handleImageClick = useCallback((index?: number) => {
     const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
@@ -261,12 +259,13 @@ export default memo(function MessageItem({
   const handleRegenerateSingle = useCallback((idx: number) => {
     onRegenerateSingle?.(message.id, idx);
   }, [onRegenerateSingle, message.id]);
-
   // 整体重新生成回调（绑定 message.id，稳定引用）
   const handleRegenerate = useCallback(() => {
     onRegenerate?.(message.id);
   }, [onRegenerate, message.id]);
-
+  const handleCancelRuntimeMediaBatch = useCallback(() => {
+    if (hasRuntimeMediaBatch) onCancelRuntimeMediaBatch?.(message.id);
+  }, [hasRuntimeMediaBatch, message.id, onCancelRuntimeMediaBatch]);
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
     if (hideTimeoutRef.current) {
@@ -432,6 +431,7 @@ export default memo(function MessageItem({
             onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
             failedMediaType={failedMediaType}
             onRegenerate={onRegenerate ? handleRegenerate : undefined}
+            onCancelBatch={hasRuntimeMediaBatch ? handleCancelRuntimeMediaBatch : undefined}
           />
         )}
         {/* AI 聊天消息：失败的媒体占位符（仅非 isMediaMessage 时需要） */}

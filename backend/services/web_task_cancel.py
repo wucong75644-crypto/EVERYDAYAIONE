@@ -60,6 +60,18 @@ class WebTaskCancelService:
         )
 
     async def cancel_by_message(self, message_id: str) -> dict[str, Any]:
+        from services.runtime_media_message_control import (
+            RuntimeMediaMessageControlService,
+        )
+        media_result = await RuntimeMediaMessageControlService(
+            self._database, user_id=self._user_id, org_id=self._org_id,
+        ).cancel_message(
+            message_id,
+            idempotency_key=f"web-media-message-cancel:{message_id}",
+            release_slot=self._release_slot,
+        )
+        if media_result is not None:
+            return media_result
         plans = self._preflight(self._load_union(message_id), message_id)
         successes: list[_CancelPlan] = []
         failures: list[_Failure] = []

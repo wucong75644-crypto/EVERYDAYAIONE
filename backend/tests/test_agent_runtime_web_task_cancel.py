@@ -71,6 +71,11 @@ class _Rpc:
         return SimpleNamespace(data=item)
 
 
+class _NotRuntimeMediaRpc:
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data={"outcome": "not_runtime_media"})
+
+
 class _Database:
     def __init__(
         self, tasks: list[dict[str, object]], *,
@@ -91,7 +96,9 @@ class _Database:
     def table(self, name: str) -> _Query:
         return _Query(self, name)
 
-    def rpc(self, name: str, params: dict[str, object]) -> _Rpc:
+    def rpc(self, name: str, params: dict[str, object]) -> _Rpc | _NotRuntimeMediaRpc:
+        if name == "request_agent_runtime_media_message_cancel_v1":
+            return _NotRuntimeMediaRpc()
         self.rpc_calls.append((name, params))
         return _Rpc(self, len(self.rpc_calls) - 1)
 

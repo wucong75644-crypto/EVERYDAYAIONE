@@ -22,15 +22,21 @@ class _DB:
         access_kind=DatabaseAccessKind.AGENT_RUNTIME,
     )
 
-    def __init__(self, *, kind="image", source="model_loop"):
+    def __init__(self, *, kind="image", source="model_loop", retry=False):
         self.calls = []
         self.kind = kind
         self.source = source
+        self.retry = retry
 
     def rpc(self, name, params):
         self.calls.append((name, params))
         if name == "prepare_agent_runtime_media_dispatch_v1":
             return _RPC({"outcome": "prepared"})
+        if name == "read_agent_runtime_media_retry_binding_v1":
+            return _RPC({
+                "outcome": "found" if self.retry else "not_retry",
+                "binding": {"action_id": "action-1", "task_id": "task-1"},
+            })
         if name == "read_agent_runtime_media_provider_request_v1":
             return _RPC({
                 "outcome": "found", "kind": self.kind, "source": self.source,
@@ -67,10 +73,29 @@ async def test_runtime_media_task_port_prepares_and_reads_server_provider_reques
     assert readback["provider_request"]["model"] == "gpt-image-2-image-to-image"
     assert "task_id" not in readback["provider_request"]
     assert [name for name, _ in db.calls] == [
+        "read_agent_runtime_media_retry_binding_v1",
         "prepare_agent_runtime_media_dispatch_v1",
         "read_agent_runtime_media_provider_request_v1",
         "read_agent_runtime_media_provider_request_v1",
     ]
+    retry_params = db.calls[0][1]
+    assert retry_params["p_execution_token"] == "token-1"
+    assert "p_owner_token" not in retry_params
+
+
+@pytest.mark.asyncio
+async def test_runtime_media_task_port_uses_precreated_retry_binding() -> None:
+    db = _DB(retry=True)
+    prepared = await RuntimeMediaTaskPort(db).prepare(_attempt(), kind="image")
+
+    assert prepared["provider_request_hash"] == "e" * 64
+    assert [name for name, _ in db.calls] == [
+        "read_agent_runtime_media_retry_binding_v1",
+        "read_agent_runtime_media_provider_request_v1",
+    ]
+    assert "prepare_agent_runtime_media_dispatch_v1" not in {
+        name for name, _ in db.calls
+    }
 
 
 @pytest.mark.asyncio
@@ -87,7 +112,8 @@ async def test_runtime_media_task_port_supports_prepared_video():
     result = await RuntimeMediaTaskPort(db).prepare(_attempt(), kind="video")
     assert result["kind"] == "video"
     assert result["source"] == "media_ingress"
-    assert db.calls[0][1]["p_owner_token"] == "token-1"
+    assert db.calls[0][1]["p_execution_token"] == "token-1"
+    assert db.calls[1][1]["p_owner_token"] == "token-1"
 
 
 @pytest.mark.asyncio

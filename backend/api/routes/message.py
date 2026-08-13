@@ -31,6 +31,7 @@ from services.conversation_service import ConversationService
 from services.handlers import get_handler
 from services.user_activity_service import record_user_activity
 from services.message_idempotency_service import MessageIdempotencyService
+from api.routes.message_runtime_media_retry import try_runtime_media_slot_retry
 
 from api.routes.message_generation_helpers import (
     handle_retry_operation,
@@ -245,8 +246,13 @@ async def _do_generate_message(
     request_id: str,
 ) -> GenerateResponse:
     """generate_message 的实际执行逻辑（拆分以支持 try/except 槽位释放）"""
-
     gen_type = await resolve_generation_context(request, body)
+    runtime_retry = await try_runtime_media_slot_retry(
+        conversation_id=conversation_id, body=body, ctx=ctx, db=db, user_id=user_id,
+        request_id=request_id, gen_type=gen_type, record_feedback=_record_generation_feedback,
+    )
+    if runtime_retry is not None:
+        return runtime_retry
     requested_turn_id = str(uuid.uuid4())
     handler = get_handler(
         gen_type, db, org_id=ctx.org_id, user_id=user_id,
@@ -278,14 +284,12 @@ async def _do_generate_message(
             conversation_id=conversation_id, user_id=user_id, org_id=ctx.org_id,
             request_id=request_id, body=body,
         )
-
     handler, conversation, user_message = await prepare_generation_request(
         db=db, conversation_id=conversation_id, body=body, gen_type=gen_type,
         user_id=user_id, org_id=ctx.org_id, handler=handler,
         conversation_service=get_conversation_service(db),
         create_user_message_fn=create_user_message, turn_id=requested_turn_id,
     )
-
     if body.params is None:
         body.params = {}
     body.params["_org_id"] = ctx.org_id

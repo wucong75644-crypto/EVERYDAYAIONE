@@ -99,7 +99,10 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       url: `/conversations/${conversationId}/messages/generate`,
       method: 'POST',
       timeout: 60000,
-      headers: { 'Idempotency-Key': ctx.clientRequestId },
+      headers: {
+        'Idempotency-Key': ctx.clientRequestId,
+        'X-Request-Id': ctx.clientRequestId,
+      },
       data: {
         operation, content, generation_type: generationType,
         model, params, original_message_id: originalMessageId,
