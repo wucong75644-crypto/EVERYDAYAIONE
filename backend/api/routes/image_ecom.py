@@ -142,22 +142,6 @@ def _build_multimodal_content(
     return parts
 
 
-def _runtime_model_payload(response: Any) -> dict[str, Any] | None:
-    """Return a non-terminal envelope; terminal responses continue parsing."""
-    status = getattr(response, "status", "completed")
-    if status == "completed" and isinstance(getattr(response, "content", None), str):
-        return None
-    if status == "completed":
-        status = "reconcile"
-        error = "Runtime 结果不可读，请执行 readback/reconcile"
-    else:
-        error = "Runtime 任务尚未产生最终结果，请稍后查询"
-    return {
-        "success": False, "status": status,
-        "runtime_run_id": getattr(response, "run_id", None), "error": error,
-    }
-
-
 def _read_existing_style(db: Any, conversation_id: str, user_id: str) -> str | None:
     if not conversation_id.strip():
         return None
@@ -265,24 +249,41 @@ async def enhance_prompt(
     else:
         messages.append({"role": "user", "content": user_prompt})
 
-    # 5. Runtime-owned ModelStep。未完成公共 ingress 时必须 fail-closed。
-    from services.agent.runtime.ecom_capability import (
-        RuntimeEcomCapabilityUnavailable, get_runtime_ecom_capability,
-    )
+    # 5. 独立电商页面模型链路：保留页面既有主模型/备用模型语义。
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+
     model = settings.image_enhance_vl_model if all_image_urls else settings.image_enhance_model
     timeout = settings.image_enhance_timeout
+    response = None
+    adapter = DashScopeChatAdapter(
+        api_key=settings.dashscope_api_key or "",
+        model=model,
+        base_url=settings.dashscope_base_url,
+        stream_timeout=timeout,
+    )
     try:
-        response = await get_runtime_ecom_capability().invoke_model(
-            messages=messages, model=model, timeout_seconds=timeout,
-            org_id=None,
-        )
-    except RuntimeEcomCapabilityUnavailable as exc:
-        logger.warning("ecom enhance blocked by Runtime capability: %s", exc)
-        return {"error": "方案生成服务暂未接入 Runtime，请稍后重试", "success": False}
+        response = await adapter.chat_sync(messages=messages)
+    except Exception as primary_err:
+        logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
+    finally:
+        await adapter.close()
 
-    non_terminal = _runtime_model_payload(response)
-    if non_terminal is not None:
-        return non_terminal
+    if response is None:
+        fallback = settings.image_enhance_fallback_model
+        adapter_fb = DashScopeChatAdapter(
+            api_key=settings.dashscope_api_key or "",
+            model=fallback,
+            base_url=settings.dashscope_base_url,
+            stream_timeout=timeout,
+        )
+        try:
+            response = await adapter_fb.chat_sync(messages=messages)
+            model = fallback
+        except Exception as fallback_err:
+            logger.error(f"enhance fallback also failed: {fallback_err}")
+            return {"error": "方案生成失败，请稍后重试", "success": False}
+        finally:
+            await adapter_fb.close()
 
     # 6. 解析设计方案 JSON
     plan = _parse_design_plan(response.content)
@@ -337,6 +338,7 @@ async def retry_image(
         user_id=user_id,
         conversation_id=req.conversation_id,
         org_id=conv_check.data.get("org_id"),
+        runtime_owned=False,
     )
     result = await agent.execute(
         task=req.task,

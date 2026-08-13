@@ -16,9 +16,7 @@ from core.config import get_settings
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
-from services.agent.runtime.ecom_capability import (
-    RuntimeEcomNonTerminal, get_runtime_ecom_capability,
-)
+from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
 
 
 _TOTAL_TIMEOUT_SECONDS = 100.0
@@ -50,10 +48,6 @@ class RequirementAssistService:
                 _PRIMARY_TIMEOUT_SECONDS,
             )
             return self._outcome(result, settings.image_enhance_vl_model, False, started_at)
-        except RuntimeEcomNonTerminal as exc:
-            raise AppException(
-                "REQUIREMENT_ASSIST_PENDING", "AI任务仍在 Runtime 中处理，请稍后查询", 202,
-            ) from exc
         except Exception as exc:
             primary_error = exc
             logger.warning(
@@ -89,16 +83,20 @@ class RequirementAssistService:
         model: str,
         timeout_seconds: float,
     ) -> RequirementAssistResult:
-        response = await asyncio.wait_for(
-            get_runtime_ecom_capability().invoke_model(
-                messages=build_multimodal_messages(data), model=model,
-                timeout_seconds=timeout_seconds, org_id=data.org_id,
-            ),
-            timeout=timeout_seconds,
+        settings = get_settings()
+        adapter = DashScopeChatAdapter(
+            api_key=settings.dashscope_api_key or "",
+            model=model,
+            base_url=settings.dashscope_base_url,
+            stream_timeout=timeout_seconds,
         )
-        status = getattr(response, "status", "completed")
-        if status != "completed":
-            raise RuntimeEcomNonTerminal(status, getattr(response, "reason_code", None))
+        try:
+            response = await asyncio.wait_for(
+                adapter.chat_sync(messages=build_multimodal_messages(data)),
+                timeout=timeout_seconds,
+            )
+        finally:
+            await adapter.close()
         result = parse_requirement_result(response.content)
         validate_reference_ids(result, data)
         validate_no_output_urls(result)
