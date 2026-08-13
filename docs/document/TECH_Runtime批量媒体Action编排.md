@@ -76,12 +76,15 @@ Runtime 在 Action 执行前根据 Run 固定的输入消息和 manifest 解析�
 
 ### 3.4 精确授权
 
-- 前台 Web/WeCom 用户当前命令直接触发的首个图片 Action batch，可生成绑定
-  `command_id + model_step_id + batch_hash + arguments_hashes` 的 explicit-intent receipt。
-- receipt 只允许同一工具、同一输入事实和最多 10 个 Action，不形成持久泛化授权。
-- 非当前前台命令、模型后续自行扩张、后台或语义不明确的批次只通知一个 confirmation leader；
-  批准时仍为每个 Action 生成独立精确 grant 和 PolicyReceipt。
+- 当前普通 `generationType=chat` ingress 没有可验证的结构化图片意图事实，不能仅凭模型选择
+  `generate_image` 自动花费积分；首版所有模型产生的图片批次都走一次 grouped confirmation。
+- `generate_image` 的新执行 Descriptor 使用 `persisted_interaction`；228_02/v7 的冻结 Catalog
+  文档保持不变，历史 Run 仍按原事实恢复。
+- 同一 ModelStep/Batch 的 2～10 个图片 Action 只通知一个 confirmation leader；批准时仍为
+  每个 Action 生成独立 interaction、action grant、grant use 和 PolicyReceipt。
 - grouped interaction 由新 RPC 原子解决，旧单 Action RPC 遇到组成员时失败关闭。
+- 后续若要自动执行，ingress 必须先新增绑定 `command_id + input_message_id + intent_kind +
+  requested_count` 的结构化 explicit-intent 事实，再单独评审其防伪、幂等和租户合同。
 
 ## 4. 数据与 RPC
 
@@ -112,7 +115,19 @@ created_at / updated_at
 
 不复制 Action 状态，不复制 Task 生命周期，不开放 Worker 直写。
 
-### 4.3 批量准备 RPC
+### 4.3 批量授权 RPC
+
+`228_03` 为 `agent_interactions` 增加最小 group 身份，并提供：
+
+- `open_agent_authorization_batch_v1`：原子校验完整图片 Action batch 并创建独立 interactions；
+- `claim_agent_tool_batch_confirmation_v1`：并发下只领取一个 leader，过期时整批关闭；
+- `resolve_agent_tool_batch_confirmation_v1`：一次响应原子批准或拒绝整批，同时保持每 Action
+  精确 grant；
+- 旧单 Action resolve 遇到 group 成员返回 `group_confirmation_required`。
+
+Runtime notification/Redis binding 携带 group hash 和 size；非 group Action 继续走 V3 单项合同。
+
+### 4.4 批量准备 RPC
 
 `prepare_agent_runtime_media_batch_v1` 在一个事务中：
 
@@ -125,7 +140,7 @@ created_at / updated_at
 
 余额不足、并发重复、租户不匹配、槽位冲突和输入漂移均整批回滚；此时不得提交 Provider。
 
-### 4.4 投影 RPC
+### 4.5 投影 RPC
 
 `apply_agent_runtime_media_projection_v1` 按 Action 事件序号执行单调状态转移：
 

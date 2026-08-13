@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -115,6 +116,32 @@ async def test_create_response_loss_retries_same_challenge_and_waiter() -> None:
     first, second = store.create.await_args_list
     assert first.args == second.args
     assert request.confirmation_id == first.args[0]
+
+
+@pytest.mark.asyncio
+async def test_group_create_binds_hash_size_and_redacted_batch_summary() -> None:
+    from services.tool_confirmation.service import ToolConfirmationService
+
+    store = AsyncMock()
+    store.create = AsyncMock(return_value="CREATED:PENDING")
+    service = ToolConfirmationService(store)
+    service.set_available(True)
+    request = await service.create(
+        action_id="action", interaction_id="interaction",
+        interaction_version=0,
+        authorization_expires_at=(
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        ),
+        task_id="task", tool_call_id="call", tool_name="generate_image",
+        arguments={"prompt": "secret prompt"}, user_id="user", org_id="org",
+        safety_level="confirm", confirmation_group_hash="a" * 64,
+        confirmation_group_size=10,
+    )
+
+    assert request.binding.confirmation_group_hash == "a" * 64
+    assert request.binding.confirmation_group_size == 10
+    assert request.summary["batch_size"] == 10
+    assert "secret prompt" not in str(request.summary)
 
 
 @pytest.mark.asyncio
@@ -237,3 +264,45 @@ async def test_task_cancel_after_claim_never_returns_execution_permission() -> N
 
     assert decision.can_execute is False
     assert decision.outcome.value == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_group_response_uses_exact_batch_resolution_rpc(monkeypatch) -> None:
+    from core.redis import RedisClient
+    from services.tool_confirmation.service import ToolConfirmationService
+
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    group_hash = "a" * 64
+    record = {
+        "confirmation_id": "c" * 40,
+        "action_id": "action", "interaction_id": "interaction",
+        "interaction_version": "0", "task_id": "task",
+        "tool_call_id": "call", "tool_name": "generate_image",
+        "arguments_hash": "b" * 64, "user_id": "user", "org_id": "org",
+        "authorization_expires_at": expires_at.isoformat(),
+        "confirmation_group_hash": group_hash,
+        "confirmation_group_size": "10",
+    }
+    client = MagicMock(hgetall=AsyncMock(return_value=record))
+    monkeypatch.setattr(
+        RedisClient, "get_client", AsyncMock(return_value=client),
+    )
+    store = AsyncMock()
+    store.consume = AsyncMock(return_value="WON:APPROVED")
+    database = MagicMock()
+    database.rpc.return_value.execute.return_value = SimpleNamespace(
+        data={"outcome": "resolved"},
+    )
+    service = ToolConfirmationService(store)
+    service.set_available(True)
+
+    assert await service.consume_response(
+        confirmation_id="c" * 40, user_id="user", org_id="org",
+        approved=True, database=database,
+    ) == "WON:PERSISTED"
+    assert database.rpc.call_args.args[0] == (
+        "resolve_agent_tool_batch_confirmation_v1"
+    )
+    assert database.rpc.call_args.args[1][
+        "p_confirmation_group_hash"
+    ] == group_hash

@@ -1653,3 +1653,13 @@
 - `org_id=NULL` personal ingress is intentionally rejected because 224 still
   requires an enabled organization rollout row. This remains a pre-AR-17
   completion blocker and is not treated as covered by the organization path.
+
+# 2026-08-14 Runtime 批量媒体授权 — grouped confirmation 已实现
+
+- `generate_image` 新执行 Descriptor 使用 `persisted_interaction`；同一 ModelStep/Batch
+  的 2～10 个 Action 只投递一个 leader，但保留每 Action 独立 interaction、grant、
+  grant use 和 PolicyReceipt。
+- 普通 `generationType=chat` 仍没有可验证的结构化 explicit-intent ingress fact，
+  因此当前图片批次不会仅凭模型工具调用自动花费积分，而是整批确认一次。
+- 后续若要恢复“明确图片命令自动执行”，必须先新增绑定 command、输入消息、意图类型和
+  请求数量的不可伪造 ingress 事实；提示词或模型自行判断不能代替授权证据。

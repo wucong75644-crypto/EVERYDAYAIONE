@@ -37,6 +37,8 @@ class ConfirmationBinding:
     user_id: str
     org_id: str
     expires_at: datetime
+    confirmation_group_hash: str = ""
+    confirmation_group_size: int = 1
 
 
 @dataclass(frozen=True)

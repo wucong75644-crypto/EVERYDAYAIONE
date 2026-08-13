@@ -263,9 +263,10 @@
 | `get_safety_level` | `backend/config/tool_safety.py` | 查询显式安全分类；未知工具抛出受控错误 | tool_name | SafetyLevel |
 | `build_confirmation_summary` | `backend/services/tool_confirmation/preview.py` | 按工具 allowlist 生成不含原始参数的有界确认摘要 | tool_name、arguments | dict |
 | `ToolConfirmationRedisStore` | `backend/services/tool_confirmation/redis_store.py` | 执行三键 create/consume/expire/read/claim Lua 合同 | immutable binding | Redis result |
-| `ToolConfirmationService.create` | `backend/services/tool_confirmation/service.py` | 创建随机 challenge 与 waiter token，并绑定 execution identity | scoped tool call | ConfirmationRequest |
+| `ToolConfirmationService.create` | `backend/services/tool_confirmation/service.py` | 创建随机 challenge 与 waiter token，绑定单 Action 或 confirmation group leader 身份 | scoped tool call / group facts | ConfirmationRequest |
 | `ToolConfirmationService.await_and_claim` | `backend/services/tool_confirmation/service.py` | 轮询权威 Hash、复核完整 binding 并唯一领取执行权 | ConfirmationRequest | ConfirmationDecision |
-| `ToolConfirmationService.consume_response` | `backend/services/tool_confirmation/service.py` | 以可信 WS actor scope 原子批准或拒绝 challenge | confirmation_id、actor | str |
+| `ToolConfirmationService.consume_response` | `backend/services/tool_confirmation/service.py` | 以可信 WS actor scope 将单项响应路由到 V3 RPC、group 响应路由到批量原子 RPC | confirmation_id、actor | str |
+| `ToolConfirmationNotificationWorker.run_once` | `backend/services/agent/runtime/application/confirmation_notification.py` | 从 grouped claim RPC 只领取并投递一个 leader；非组挑战保持 V3 兼容 | worker_id | bool |
 | `WebSocketManager.send_tool_confirmation` | `backend/services/websocket_manager.py` | V3 专用投递；要求本地实际发送或跨 Worker delivery ACK | task、user、message、org | bool |
 | `RedisPubSubMixin._publish_with_delivery_ack` | `backend/services/websocket_redis.py` | 以随机短 TTL key 等待远端 Worker 实际 WebSocket 发送确认 | user、message、org | bool |
 | `log_agent_event` | `backend/services/agent/safe_tool_logging.py` | 仅记录作用域、工具、稳定错误码和异常类型的脱敏 Agent 日志 | event、agent、tool、code | None |
@@ -2107,6 +2108,7 @@ ChatGenerationExecutor 与持久 Outbox 负责，不再由该 Mixin 建立第二
 | 函数/类 | 文件 | 说明 |
 |---|---|---|
 | `specialist_descriptor` / `build_specialist_registry` | `backend/services/agent/runtime/executors/specialist_registry.py` | 23 项工具的唯一 Descriptor、族级 Capability 与 fail-closed Registry |
+| `open_agent_authorization_batch_v1` / `claim_agent_tool_batch_confirmation_v1` / `resolve_agent_tool_batch_confirmation_v1` | `backend/migrations/228_03_agent_runtime_media_authorization_group.sql` | 为同一 ModelStep/Batch 的 2～10 个 `generate_image` Action 创建独立 interaction，只投递一个 leader，并一次原子批准或拒绝整批 |
 | `SpecialistExecutor` | `backend/services/agent/runtime/executors/specialist_executor.py` | Provider submit/reconcile/cancel 外壳；响应丢失转 unknown，禁止普通重派 |
 | `CallbackInbox` | `backend/services/agent/runtime/providers/callback_inbox.py` | 签名校验、敏感字段脱敏和 callback 幂等去重 |
 | `InMemoryActionCostLedger` | `backend/services/agent/runtime/costs.py` | 非模型 Action Cost Ledger 的单元测试实现；生产通过窄 RPC |

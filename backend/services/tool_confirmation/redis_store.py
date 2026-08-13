@@ -21,12 +21,18 @@ def hash_waiter_token(token: str) -> str:
 
 
 def identity_digest(binding: ConfirmationBinding) -> str:
-    value = json.dumps([
+    facts: list[object] = [
         binding.action_id, binding.interaction_id,
         binding.interaction_version, binding.task_id,
         binding.tool_call_id, binding.tool_name,
         binding.user_id, binding.org_id,
-    ], separators=(",", ":"), ensure_ascii=False)
+    ]
+    if binding.confirmation_group_hash:
+        facts.extend([
+            binding.confirmation_group_hash,
+            binding.confirmation_group_size,
+        ])
+    value = json.dumps(facts, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -71,7 +77,8 @@ class ToolConfirmationRedisStore:
             binding.interaction_version, binding.task_id,
             binding.tool_call_id, binding.tool_name, binding.arguments_hash,
             binding.user_id, binding.org_id, binding.expires_at.isoformat(),
-            waiter_hash, CONFIRM_SECONDS, TERMINAL_SECONDS,
+            waiter_hash, binding.confirmation_group_hash,
+            binding.confirmation_group_size, CONFIRM_SECONDS, TERMINAL_SECONDS,
         )
         return str(result)
 

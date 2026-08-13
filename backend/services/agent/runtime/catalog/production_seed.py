@@ -7,7 +7,9 @@ credentials; readiness is supplied as an explicit, secret-free binding fact.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
+from typing import Callable
 from services.agent.runtime.agents import AgentDefinition
 from services.agent.runtime.catalog.production import (
     ProductionFactSnapshot, ProductionToolBinding,
@@ -19,13 +21,32 @@ from services.agent.runtime.executors.sandbox_job import SANDBOX_JOB_DESCRIPTOR
 from services.agent.runtime.executors.specialist_registry import (
     SPECIALIST_TOOLS, specialist_descriptor,
 )
+from services.agent.runtime.executors.types import (
+    AuthorizationRequirement,
+    ExecutorDescriptor,
+)
 
 
 class _DescriptorOnlyExecutor:
     """Placeholder implementation used only for seed fact generation."""
 
 
-def build_descriptor_registries() -> tuple[
+def _frozen_seed_specialist_descriptor(tool_name: str) -> ExecutorDescriptor:
+    """Keep existing catalog migrations byte-stable after execution changes."""
+    descriptor = specialist_descriptor(tool_name)
+    if tool_name != "generate_image":
+        return descriptor
+    return replace(
+        descriptor,
+        authorization=AuthorizationRequirement.EXPLICIT_INTENT,
+    )
+
+
+def build_descriptor_registries(
+    *, specialist_factory: Callable[[str], ExecutorDescriptor] = (
+        _frozen_seed_specialist_descriptor
+    ),
+) -> tuple[
     ExecutorRegistry, ExecutorRegistry, ExecutorRegistry,
 ]:
     """Build descriptor registries without provider or database side effects."""
@@ -39,7 +60,7 @@ def build_descriptor_registries() -> tuple[
         (SANDBOX_JOB_DESCRIPTOR, _DescriptorOnlyExecutor()),
     ])
     specialist = ExecutorRegistry(
-        [(specialist_descriptor(name), _DescriptorOnlyExecutor())
+        [(specialist_factory(name), _DescriptorOnlyExecutor())
          for name in sorted(SPECIALIST_TOOLS)],
     )
     return read, sandbox, specialist
@@ -50,11 +71,16 @@ def build_seed_snapshot(
     gate_state: str = "enabled",
     agent: AgentDefinition | None = None,
     excluded_tool_names: frozenset[str] = frozenset(),
+    specialist_factory: Callable[[str], ExecutorDescriptor] = (
+        _frozen_seed_specialist_descriptor
+    ),
 ) -> ProductionFactSnapshot:
     """Return deterministic facts for one frozen production scope."""
     from services.agent.runtime.executors.read_registry import READ_TOOL_SPECS
 
-    read, sandbox, specialist = build_descriptor_registries()
+    read, sandbox, specialist = build_descriptor_registries(
+        specialist_factory=specialist_factory,
+    )
     names = frozenset(
         name for registry in (read, sandbox, specialist)
         for descriptor in registry.descriptors()

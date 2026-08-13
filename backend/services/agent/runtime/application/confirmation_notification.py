@@ -23,7 +23,7 @@ class ToolConfirmationNotificationWorker:
 
     async def run_once(self) -> bool:
         response = await self._database.rpc(
-            "claim_agent_tool_confirmation_notification", {
+            "claim_agent_tool_batch_confirmation_v1", {
                 "p_worker_id": self._worker_id, "p_lease_seconds": 60,
             },
         ).execute()
@@ -57,6 +57,10 @@ class ToolConfirmationNotificationWorker:
                 safety_level=get_safety_level(
                     _text(claim, "tool_name"),
                 ).value,
+                confirmation_group_hash=_optional_text(
+                    claim.get("confirmation_group_hash"),
+                ) or "",
+                confirmation_group_size=_group_size(claim),
             )
             delivered = await self._websocket.send_tool_confirmation(
                 request.binding.task_id, request.binding.user_id,
@@ -114,6 +118,16 @@ def _integer(value: Mapping[str, Any], field: str) -> int:
     if isinstance(item, bool) or not isinstance(item, int) or item < 0:
         raise ValueError(f"{field} must be a nonnegative integer")
     return item
+
+
+def _group_size(value: Mapping[str, Any]) -> int:
+    group_hash = _optional_text(value.get("confirmation_group_hash"))
+    if group_hash is None:
+        return 1
+    size = _integer(value, "confirmation_group_size")
+    if size not in range(2, 11):
+        raise ValueError("confirmation_group_size must be between 2 and 10")
+    return size
 
 
 def _datetime(value: object) -> datetime:

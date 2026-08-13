@@ -38,6 +38,11 @@ def _matches(
         "org_id": binding.org_id,
         "authorization_expires_at": binding.expires_at.isoformat(),
     }
+    if binding.confirmation_group_hash:
+        expected.update({
+            "confirmation_group_hash": binding.confirmation_group_hash,
+            "confirmation_group_size": str(binding.confirmation_group_size),
+        })
     return all(record.get(key) == value for key, value in expected.items())
 
 
@@ -55,6 +60,7 @@ class ToolConfirmationService:
         task_id: str, tool_call_id: str, tool_name: str,
         arguments: Mapping[str, Any], user_id: str,
         org_id: str | None, safety_level: str,
+        confirmation_group_hash: str = "", confirmation_group_size: int = 1,
     ) -> ConfirmationRequest:
         if not self._available:
             raise RuntimeError("TOOL_CONFIRMATION_V3_DISABLED")
@@ -68,15 +74,29 @@ class ToolConfirmationService:
             or authorization_expires_at <= datetime.now(timezone.utc)
         ):
             raise ValueError("invalid authorization binding")
+        if (
+            (confirmation_group_hash and (
+                len(confirmation_group_hash) != 64
+                or any(char not in "0123456789abcdef"
+                       for char in confirmation_group_hash)
+                or confirmation_group_size not in range(2, 11)
+            ))
+            or (not confirmation_group_hash and confirmation_group_size != 1)
+        ):
+            raise ValueError("invalid confirmation group binding")
         binding = ConfirmationBinding(
             action_id, interaction_id, interaction_version,
             task_id, tool_call_id, tool_name,
             canonical_arguments_hash(arguments), user_id, org_id or "",
-            authorization_expires_at,
+            authorization_expires_at, confirmation_group_hash,
+            confirmation_group_size,
         )
+        summary = dict(build_confirmation_summary(tool_name, arguments))
+        if confirmation_group_hash:
+            summary["batch_size"] = confirmation_group_size
         request = ConfirmationRequest(
             secrets.token_urlsafe(32), secrets.token_urlsafe(32), binding,
-            build_confirmation_summary(tool_name, arguments), safety_level,
+            summary, safety_level,
         )
         waiter_hash = hash_waiter_token(request.waiter_token)
         try:
@@ -97,7 +117,7 @@ class ToolConfirmationService:
                 raise RuntimeError("confirmation is no longer pending")
             return ConfirmationRequest(
                 existing[0], "", binding,
-                build_confirmation_summary(tool_name, arguments),
+                summary,
                 safety_level,
             )
         if result not in {"CREATED:PENDING", "IDEMPOTENT:PENDING"}:
@@ -235,6 +255,8 @@ class ToolConfirmationService:
             record["tool_call_id"], record["tool_name"],
             record["arguments_hash"], record["user_id"], record["org_id"],
             datetime.fromisoformat(record["authorization_expires_at"]),
+            record.get("confirmation_group_hash", ""),
+            int(record.get("confirmation_group_size", "1")),
         )
         redis_result = await self.store.consume(
             confirmation_id, binding, user_id, org_id or "", approved,
@@ -246,8 +268,12 @@ class ToolConfirmationService:
             }
         ):
             return redis_result
-        persisted = database.rpc(
-            "resolve_agent_tool_confirmation_v3", {
+        rpc_name = (
+            "resolve_agent_tool_batch_confirmation_v1"
+            if binding.confirmation_group_hash
+            else "resolve_agent_tool_confirmation_v3"
+        )
+        params = {
                 "p_confirmation_id": confirmation_id,
                 "p_interaction_id": binding.interaction_id,
                 "p_action_id": binding.action_id,
@@ -257,8 +283,12 @@ class ToolConfirmationService:
                 "p_arguments_hash": binding.arguments_hash,
                 "p_expires_at": binding.expires_at,
                 "p_approved": approved,
-            },
-        ).execute()
+        }
+        if binding.confirmation_group_hash:
+            params["p_confirmation_group_hash"] = (
+                binding.confirmation_group_hash
+            )
+        persisted = database.rpc(rpc_name, params).execute()
         if inspect.isawaitable(persisted):
             persisted = await persisted
         outcome = getattr(persisted, "data", None)

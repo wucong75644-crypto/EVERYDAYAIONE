@@ -33,6 +33,15 @@ def test_runtime_action_snapshot_binds_registry_safety_level():
     assert actions[0]["policy_snapshot"] == {
         "source": "runtime_executor_registry",
         "safety_level": "dangerous",
+        "side_effect": "sandbox",
+        "authorization_requirement": "persisted_interaction",
+        "capability_requirements": ["sandbox_job"],
+        "capability_revision":
+            "6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0",
+        "catalog_revision":
+            "9ef52c52816e357a4cb2bf03a9893e41127105a3ffb4c2cba18489fa880ce874",
+        "effective_toolset_hash":
+            "407113c665c9c28d9f34f47a8f1cf6783da8723b44e47773ac1f0403613d651c",
         "schema_hash": "6a247874257a1ebb5c7689f1f767d705b22d897f28309dc7b05ca8118fd605b0",
         "executor_revision": 1,
     }
@@ -90,6 +99,9 @@ async def test_notification_binds_persisted_interaction_before_delivery():
     assert await worker.run_once() is True
     service.create.assert_awaited_once()
     websocket.send_tool_confirmation.assert_awaited_once()
+    assert database.rpc.call_args_list[0].args[0] == (
+        "claim_agent_tool_batch_confirmation_v1"
+    )
     assert database.rpc.call_args_list[1].args[0] == (
         "complete_agent_tool_confirmation_notification"
     )
@@ -127,3 +139,51 @@ async def test_notification_hash_mismatch_releases_claim_without_delivery():
         await worker.run_once()
     service.create.assert_not_called()
     websocket.send_tool_confirmation.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_group_notification_delivers_only_the_leader_binding():
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    group_hash = "a" * 64
+    arguments = {"prompt": "variant 0"}
+    from services.tool_confirmation.canonical import canonical_arguments_hash
+    claim = {
+        "outcome": "claimed", "notification_token": "token",
+        "interaction_id": "0ade5f65-bfe9-4592-8319-7c04dc4579fc",
+        "interaction_version": 0, "authorization_expires_at": expires_at,
+        "action_id": "ce9380ec-3691-45ca-a6e4-a5445df869b4",
+        "task_id": "f8ad4a64-5b53-4b2c-bc94-b57363829518",
+        "conversation_id": "1600d848-5728-4be3-9229-bf37cfab8b02",
+        "tool_call_id": "call-0", "tool_name": "generate_image",
+        "arguments": arguments,
+        "arguments_hash": canonical_arguments_hash(arguments),
+        "user_id": "a82a3f1c-c763-461a-b3a5-3e130752aaf4",
+        "org_id": "81dd6b01-f7bf-4d5c-94b4-99bf5047052b",
+        "confirmation_group_hash": group_hash,
+        "confirmation_group_size": 10,
+    }
+    database = MagicMock()
+    database.rpc.side_effect = [
+        MagicMock(execute=AsyncMock(return_value=_response(claim))),
+        MagicMock(execute=AsyncMock(return_value=_response(
+            {"outcome": "completed"},
+        ))),
+    ]
+    binding = ConfirmationBinding(
+        claim["action_id"], claim["interaction_id"], 0, claim["task_id"],
+        claim["tool_call_id"], claim["tool_name"], claim["arguments_hash"],
+        claim["user_id"], claim["org_id"], expires_at, group_hash, 10,
+    )
+    request = ConfirmationRequest("c" * 40, "waiter", binding, {}, "confirm")
+    service = MagicMock(create=AsyncMock(return_value=request))
+    websocket = MagicMock(send_tool_confirmation=AsyncMock(return_value=True))
+
+    worker = ToolConfirmationNotificationWorker(
+        database=database, service=service,
+        websocket_manager=websocket, worker_id="projection-1",
+    )
+
+    assert await worker.run_once() is True
+    assert service.create.await_args.kwargs["confirmation_group_hash"] == group_hash
+    assert service.create.await_args.kwargs["confirmation_group_size"] == 10
+    websocket.send_tool_confirmation.assert_awaited_once()

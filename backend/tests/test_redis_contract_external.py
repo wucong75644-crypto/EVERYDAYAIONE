@@ -285,6 +285,31 @@ async def test_v3_create_retry_is_strictly_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_v3_group_binding_round_trips_hash_and_size(
+    v3_store: ToolConfirmationRedisStore,
+) -> None:
+    binding = ConfirmationBinding(
+        "action-1", "interaction-1", 0, "task-1", "call-1",
+        "generate_image", "a" * 64, "user-1", "org-1",
+        _CONFIRMATION_EXPIRY, "b" * 64, 10,
+    )
+    waiter_hash = hash_waiter_token("group-waiter")
+
+    assert await v3_store.create(
+        "group-confirmation", binding, waiter_hash,
+    ) == "CREATED:PENDING"
+    assert await v3_store.create(
+        "group-confirmation", binding, waiter_hash,
+    ) == "IDEMPOTENT:PENDING"
+    record = await v3_store.read("group-confirmation", binding)
+    assert record["confirmation_group_hash"] == "b" * 64
+    assert record["confirmation_group_size"] == "10"
+    assert await v3_store.consume(
+        "group-confirmation", binding, "user-1", "org-1", True,
+    ) == "WON:APPROVED"
+
+
+@pytest.mark.asyncio
 async def test_v3_decision_and_claim_are_single_winner(
     v3_store: ToolConfirmationRedisStore,
 ) -> None:
