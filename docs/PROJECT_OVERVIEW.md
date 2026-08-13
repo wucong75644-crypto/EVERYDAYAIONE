@@ -1037,6 +1037,7 @@ Agent Runtime AR-05～AR-09 基础实现：
 - `docs/document/TECH_AGENT_RUNTIME_Subagent与后台任务.md`：定义受限 Child Run、委派合同、隔离 Context/Capability、预算、Workspace isolation、父级唤醒及 Background Action 分界。
 - `docs/document/TECH_AGENT_RUNTIME_多通道Projection与交互协议.md`：定义 RuntimeEvent 有序信封、Snapshot/Replay、Projection reducer、持久 Interaction、ChannelCapability 及 Web/企微确定性降级。
 - `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：保留历史文件名，正文定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、无副作用 shadow 对账、完整切换门禁与回滚；不采用租户、用户或流量 Canary。
+- `docs/document/TECH_Runtime批量媒体Action编排.md`：基于现有 ModelStep Action batch，定义普通对话参考图分析、1～10 张图片并行 Action、媒体 Task/积分原子绑定、精确授权、Provider reconcile、稳定槽位、混合内容投影及电商链路隔离。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
