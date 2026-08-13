@@ -40,6 +40,17 @@ function makeContent(urls: (string | null)[], failed?: boolean[]): ContentPart[]
   }));
 }
 
+function makeRuntimeSlots(completedIndex?: number): ContentPart[] {
+  return Array.from({ length: 10 }, (_, index) => ({
+    type: 'image' as const,
+    url: index === completedIndex ? `https://img${index}.png` : null,
+    slot_id: `slot-${index}`,
+    slot_index: index,
+    slot_status: index === completedIndex ? 'completed' as const : 'pending' as const,
+    slot_revision: index === completedIndex ? 1 : 0,
+  }));
+}
+
 describe('AiImageGrid', () => {
   it('渲染正确数量的网格单元（含占位符）', () => {
     const content = makeContent(['https://img1.png', null, null, null]);
@@ -329,5 +340,80 @@ describe('AiImageGrid', () => {
     const buttons = screen.getAllByRole('button', { name: /查看图片/ });
     fireEvent.click(buttons[1]);
     expect(onClick).toHaveBeenCalledWith(1);
+  });
+
+  it('Runtime 第一张乱序完成后仍保留十个固定槽位', () => {
+    const content = [
+      { type: 'text' as const, text: '最终说明' },
+      ...makeRuntimeSlots(9).reverse(),
+    ];
+    const { container } = render(
+      <AiImageGrid
+        content={content}
+        numImages={10}
+        messageId="runtime-10"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={true}
+      />,
+    );
+
+    const cells = container.querySelector('.grid')?.children;
+    expect(cells).toHaveLength(10);
+    expect(cells?.[0]).toHaveAttribute('data-slot-id', 'slot-0');
+    expect(cells?.[9]).toHaveAttribute('data-slot-id', 'slot-9');
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://img9.png');
+    expect(screen.getByTestId('runtime-media-summary')).toHaveTextContent('1/10 已完成');
+    expect(screen.getByTestId('runtime-media-summary')).toHaveAttribute('data-active-count', '9');
+  });
+
+  it('Runtime 图片点击和重试使用稳定 slot_index', () => {
+    const onClick = vi.fn();
+    const content: ContentPart[] = makeRuntimeSlots(9).map((part) => (
+      part.type === 'image' && part.slot_index === 4
+        ? { ...part, slot_status: 'failed', failed: true, slot_revision: 2 }
+        : part
+    ));
+    const onRegenerate = vi.fn();
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={10}
+        messageId="runtime-index"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={onClick}
+        onRegenerateSingle={onRegenerate}
+        isGenerating={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '查看图片 10' }));
+    expect(onClick).toHaveBeenCalledWith(9);
+    fireEvent.click(screen.getByText('重新生成'));
+    expect(onRegenerate).toHaveBeenCalledWith(4);
+  });
+
+  it('Runtime unknown 和 cancelled 槽位显示可恢复状态', () => {
+    const content: ContentPart[] = [
+      { ...makeRuntimeSlots()[0], slot_status: 'unknown', slot_revision: 2 },
+      { ...makeRuntimeSlots()[1], slot_status: 'cancelled', slot_revision: 3 },
+    ];
+    render(
+      <AiImageGrid
+        content={content}
+        numImages={2}
+        messageId="runtime-states"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        isGenerating={true}
+      />,
+    );
+
+    expect(screen.getByLabelText('正在确认生成结果')).toHaveAttribute(
+      'data-slot-status', 'unknown',
+    );
+    expect(screen.getByLabelText('已取消')).toHaveAttribute(
+      'data-slot-status', 'cancelled',
+    );
   });
 });

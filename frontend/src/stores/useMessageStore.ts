@@ -33,6 +33,7 @@ export type {
   ContentPart,
   TextPart,
   ImagePart,
+  RuntimeMediaSlotStatus,
   VideoPart,
   AudioPart,
   FilePart,

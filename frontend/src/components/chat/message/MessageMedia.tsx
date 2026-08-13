@@ -10,6 +10,7 @@ import styles from '../menus/shared.module.css';
 import type { ContentPart, FilePart, ImageAsset } from '../../../types/message';
 import FileCardList from '../media/FileCard';
 import { AiGeneratedImage, UserImageGallery } from './MessageImageBlocks';
+import { getRuntimeMediaImageSlots } from '../../../utils/runtimeMediaSlots';
 
 interface MessageMediaProps {
   /** 图片资产列表（原图/缩略图分离） */
@@ -69,6 +70,11 @@ export default memo(function MessageMedia({
     const failedPart = content.find((part) => part.type === 'image' && part.failed);
     return failedPart?.type === 'image' ? failedPart : undefined;
   }, [content]);
+  const runtimeImageSlots = useMemo(
+    () => getRuntimeMediaImageSlots(content),
+    [content],
+  );
+  const hasRuntimeImageSlots = runtimeImageSlots.length > 0;
 
   const imagePlaceholderSize = useMemo(
     () => getImagePlaceholderSize(imageAspectRatio),
@@ -100,12 +106,20 @@ export default memo(function MessageMedia({
     onImageClick(index ?? 0);
   }, [onImageClick]);
 
-  if (imageAssets.length === 0 && !videoUrl && !isGenerating && !failedMediaType && files.length === 0) return null;
+  if (
+    imageAssets.length === 0
+    && !hasRuntimeImageSlots
+    && !videoUrl
+    && !isGenerating
+    && !failedMediaType
+    && files.length === 0
+  ) return null;
 
   return (
     <>
       {/* 图片渲染 */}
       {(imageAssets.length > 0
+        || hasRuntimeImageSlots
         || (isGenerating && generatingType === 'image')
         || (failedMediaType === 'image' && numImages > 1)) && (
         isUser ? (
@@ -117,7 +131,7 @@ export default memo(function MessageMedia({
             onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
           />
-        ) : numImages > 1 ? (
+        ) : hasRuntimeImageSlots || numImages > 1 ? (
           // AI 多图：网格布局
           <AiImageGrid
             content={content}

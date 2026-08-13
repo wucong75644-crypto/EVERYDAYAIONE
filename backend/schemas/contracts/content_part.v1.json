@@ -475,6 +475,67 @@
             ],
             "default": null,
             "title": "Mime Type"
+          },
+          "slot_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slot Id"
+          },
+          "slot_index": {
+            "anyOf": [
+              {
+                "maximum": 9,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slot Index"
+          },
+          "slot_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "accepted",
+                  "unknown",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slot Status"
+          },
+          "slot_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slot Revision"
           }
         },
         "required": [
@@ -860,6 +921,14 @@
       "url": "https://example.com/input.png"
     },
     {
+      "type": "image",
+      "slot_id": "runtime-slot-10",
+      "slot_index": 9,
+      "slot_status": "unknown",
+      "slot_revision": 3,
+      "url": null
+    },
+    {
       "type": "video",
       "url": "https://example.com/video.mp4"
     },
@@ -967,6 +1036,19 @@
   "invalid_examples": [
     {
       "type": "image"
+    },
+    {
+      "type": "image",
+      "url": null,
+      "slot_id": "partial-runtime-slot"
+    },
+    {
+      "type": "image",
+      "url": null,
+      "slot_id": "runtime-slot-11",
+      "slot_index": 10,
+      "slot_status": "pending",
+      "slot_revision": 0
     },
     {
       "type": "file",

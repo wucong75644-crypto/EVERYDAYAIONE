@@ -26,6 +26,8 @@ import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../.
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 import type { MessageItemProps } from './MessageItem.types';
+import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
+import { getRuntimeMediaImageSlots, isRuntimeMediaSlotActive } from '../../../utils/runtimeMediaSlots';
 
 export default memo(function MessageItem({
   message,
@@ -60,6 +62,9 @@ export default memo(function MessageItem({
   const hasImage = imageAssets.length > 0;
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
+  const runtimeImageSlots = useMemo(() => getRuntimeMediaImageSlots(message.content), [message.content]);
+  const hasRuntimeMediaBatch = !isUser && runtimeImageSlots.length > 0;
+  const isRuntimeMediaGenerating = hasRuntimeMediaBatch && runtimeImageSlots.some((slot) => isRuntimeMediaSlotActive(slot.slot_status));
 
   // 检测是否为多内容块模式
   // tool_step / tool_result / image / file / form 均触发多块模式
@@ -92,7 +97,7 @@ export default memo(function MessageItem({
   const savedSettings = useMemo(() => getSavedSettings(), []);
 
   // 计算实际使用的宽高比：已生成的媒体使用保存的参数，生成中使用当前设置
-  const genParams = message.generation_params || {};
+  const genParams = useMemo(() => message.generation_params || {}, [message.generation_params]);
   const actualImageAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.image.aspectRatio) as AspectRatio;
   const actualVideoAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.video.aspectRatio) as VideoAspectRatio;
 
@@ -159,6 +164,8 @@ export default memo(function MessageItem({
   const isActuallyGenerating = useMemo(() => {
     if (message.role !== 'assistant') return false;
 
+    if (isRuntimeMediaGenerating) return true;
+
     // 1. 如果正在流式输出，算作生成中（聊天消息）
     if (isStreaming) return true;
 
@@ -176,7 +183,10 @@ export default memo(function MessageItem({
 
     // 4. 其他情况（包括聊天任务），pending 状态算生成中
     return true;
-  }, [message.role, message.status, message.generation_params, hasImage, hasVideo, isStreaming]);
+  }, [
+    message.role, message.status, message.generation_params, hasImage, hasVideo,
+    isStreaming, isRuntimeMediaGenerating,
+  ]);
 
   // 用户文字气泡右键菜单状态
   const userBubbleRef = useRef<HTMLDivElement>(null);
@@ -222,13 +232,21 @@ export default memo(function MessageItem({
 
   // 将消息内图片索引转换为全局索引
   const getGlobalImageIndex = useCallback((localIndex: number): number => {
+    if (hasRuntimeMediaBatch) {
+      const slot = runtimeImageSlots.find((candidate) => candidate.slot_index === localIndex);
+      const targetUrl = slot ? resolveImageOriginalUrl(slot) : null;
+      const slotGlobalIndex = targetUrl
+        ? allImageAssets.findIndex((asset) => asset.originalUrl === targetUrl)
+        : -1;
+      if (slotGlobalIndex >= 0) return slotGlobalIndex;
+    }
     if (imageAssets.length === 0 || localIndex >= imageAssets.length) {
       return currentImageIndex;
     }
     const targetUrl = imageAssets[localIndex].originalUrl;
     const globalIndex = allImageAssets.findIndex((asset) => asset.originalUrl === targetUrl);
     return globalIndex >= 0 ? globalIndex : currentImageIndex;
-  }, [imageAssets, allImageAssets, currentImageIndex]);
+  }, [hasRuntimeMediaBatch, runtimeImageSlots, imageAssets, allImageAssets, currentImageIndex]);
 
   // 图片点击回调（合并用户/AI 两处相同逻辑，稳定引用）
   const handleImageClick = useCallback((index?: number) => {
@@ -315,7 +333,8 @@ export default memo(function MessageItem({
   };
 
   // 判断是否有媒体内容（需要更宽的显示区域）
-  const hasMedia = hasImage || hasVideo || hasFiles || !!mediaPlaceholderInfo;
+  const hasMedia = hasImage || hasVideo || hasFiles
+    || hasRuntimeMediaBatch || !!mediaPlaceholderInfo;
 
   return (
     <m.div
@@ -391,7 +410,7 @@ export default memo(function MessageItem({
         {/* AI 媒体生成消息（generate_image / generate_video）：保留 MessageMedia 全部功能
             聊天消息的 image/file 已在多块模式内联渲染，不走此通道
             设计文档：TECH_内容块混排渲染架构.md §7.1 */}
-        {!isUser && isMediaMessage && (
+        {!isUser && (isMediaMessage || hasRuntimeMediaBatch) && (
           <MessageMedia
             imageAssets={imageAssets}
             videoUrls={videoUrls}
@@ -400,11 +419,15 @@ export default memo(function MessageItem({
             isUser={isUser}
             onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
-            isGenerating={!!mediaPlaceholderInfo}
-            generatingType={mediaPlaceholderInfo?.type}
+            isGenerating={hasRuntimeMediaBatch
+              ? isRuntimeMediaGenerating
+              : !!mediaPlaceholderInfo}
+            generatingType={hasRuntimeMediaBatch ? 'image' : mediaPlaceholderInfo?.type}
             imageAspectRatio={actualImageAspectRatio}
             videoAspectRatio={actualVideoAspectRatio}
-            numImages={Number(genParams.num_images) || 1}
+            numImages={hasRuntimeMediaBatch
+              ? runtimeImageSlots.length
+              : Number(genParams.num_images) || 1}
             content={message.content}
             onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
             failedMediaType={failedMediaType}
