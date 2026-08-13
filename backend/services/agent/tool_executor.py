@@ -25,12 +25,13 @@ from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
 from services.agent.knowledge_tool_mixin import KnowledgeToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
+from services.agent.runtime_media_tool_mixin import RuntimeMediaToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
 class ToolExecutor(
     ArtifactToolMixin, MemoryToolMixin, ConversationToolMixin,
     FileToolMixin, CrawlerToolMixin,
-    MediaToolMixin, EvidenceToolMixin,
+    RuntimeMediaToolMixin, MediaToolMixin, EvidenceToolMixin,
     ErpToolMixin, KnowledgeToolMixin, SandboxToolMixin,
     CreditMixin,
 ):
@@ -44,12 +45,20 @@ class ToolExecutor(
         resource_manifest=None, runtime_state=None,
         personal_context_allowed: bool = True,
         allowed_tools: AbstractSet[str] | None = None,
+        runtime_action_executor: Any | None = None,
+        input_message_id: str | None = None,
+        task_id: str | None = None,
+        message_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
+        self._runtime_action_executor = runtime_action_executor
+        self._input_message_id = input_message_id
+        self._task_id = task_id
+        self._message_id = message_id
         self.resource_manifest, self.runtime_state = resource_manifest, runtime_state
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
@@ -213,8 +222,6 @@ class ToolExecutor(
         2. style_directive — 会话级全局风格（从 DB 读）
         3. history_images — 历史生成图片（从消息 FilePart 查）
         """
-        from services.agent.image.image_agent import ImageAgent
-
         # === 三重自动注入（LLM 不需要传这些参数）===
 
         # 注入1：用户上传的图片
@@ -241,22 +248,12 @@ class ToolExecutor(
         if not args.get("history_images"):
             args["history_images"] = self._get_conversation_image_parts()
 
-        agent = ImageAgent(
-            db=self.db,
-            user_id=self.user_id,
-            conversation_id=self.conversation_id,
-            org_id=self.org_id,
-            task_id=getattr(self, "_task_id", None),
-            message_id=getattr(self, "_message_id", None),
-            workspace_user_id=self.workspace_user_id,
-        )
-        return await agent.execute(
-            task=args.get("task", ""),
-            image_urls=args.get("image_urls", []),
-            platform=args.get("platform", "taobao"),
-            style_directive=args.get("style_directive", ""),
-            history_images=args.get("history_images", []),
-        )
+        runtime_args = dict(args)
+        runtime_args.setdefault("prompt", runtime_args.get("task", ""))
+        runtime_args["image_urls"] = runtime_args.get("image_urls", [])
+        runtime_args["style_directive"] = runtime_args.get("style_directive", "")
+        runtime_args["history_images"] = runtime_args.get("history_images", [])
+        return await self._execute_runtime_media_action("generate_image", runtime_args)
 
     def _get_conversation_image_parts(self) -> list[dict]:
         """从会话消息历史中提取已生成的图片 FilePart（供修改引用）。"""
