@@ -253,6 +253,15 @@ class AsyncSecretBundleResolver(SecretBundleResolver):
             "erp.runtime", "get_agent_runtime_erp_configuration_v1", params,
         )
 
+    async def runtime_media(
+        self, params: Mapping[str, object],
+    ) -> ResolvedConfigurationBundle:
+        """Resolve KIE only for one fenced Runtime media ActionAttempt."""
+        return await self._resolve_async(
+            "ai.provider.kie", "get_agent_runtime_media_configuration_v1",
+            params,
+        )
+
     async def _resolve_async(
         self,
         bundle_name: str,

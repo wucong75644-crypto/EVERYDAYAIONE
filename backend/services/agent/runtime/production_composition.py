@@ -1,14 +1,10 @@
 """Production composition for the complete AR-17 tool surface.
-
 Only concrete, injected ports are accepted here.  Test adapters and the
 non-production catalog module are intentionally unreachable from this root.
 """
-
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Mapping
-
 from services.agent.runtime.catalog.production import (
     ProductionCatalogReceipt, ProductionToolBinding, build_production_catalog,
 )
@@ -16,8 +12,7 @@ from services.agent.runtime.executors.family_executors import EXECUTOR_BY_FAMILY
 from services.agent.runtime.executors.provider_adapters import (
     ArtifactPort, ChildRunPort, CrawlerProvider, DashScopeSearchProvider,
     ErpApiSearchProvider, ErpDispatcherFactoryPort, ErpDispatcherPort,
-    ERPQueryProvider, KieMediaProvider,
-    LocalArtifactProvider, MediaTaskPort, PortBackedProvider, ProviderTransport,
+    ERPQueryProvider, LocalArtifactProvider, MediaTaskPort, PortBackedProvider, ProviderTransport,
     ResourceMutationPort, TenantProviderResolver, TenantScopedProvider,
 )
 from services.agent.runtime.executors.read_registry import (
@@ -47,6 +42,7 @@ from services.agent.runtime.infrastructure.postgres.specialist_repository import
 from services.agent.runtime.providers.callback_inbox import (
     CallbackInbox, CallbackSignatureVerifier,
 )
+from services.agent.runtime.providers.kie_media import RuntimeKieMediaProvider
 from services.agent.runtime.production_services import ProductionServiceBundle
 from services.agent.runtime.application.action_loop import ActionLoopDriver
 from services.agent.runtime.executors.resolver import PostgresActionExecutorResolver
@@ -56,11 +52,12 @@ from services.agent.runtime.infrastructure.postgres.coordinator_recovery import 
 from services.agent.runtime.runtime_assembly import (
     CapabilityReadiness, CapabilityReadinessState, RuntimeAssemblyReadiness,
 )
+from services.agent.runtime.registry_merge import merge_runtime_registries
 def build_production_components_for_worker(
     *, database: object, settings: object,
     sandbox_registry: ExecutorRegistry,
 ) -> "ProductionRuntimeComponents":
-    """Delegate Worker construction to the sole code-owned production root."""
+    """Delegate Worker construction to the code-owned production factory."""
     from services.agent.runtime.production_factory import (
         build_agent_runtime_production_components,
     )
@@ -71,12 +68,8 @@ def build_production_components_for_worker(
     if not isinstance(components, ProductionRuntimeComponents):
         raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_FACTORY_INVALID")
     if not isinstance(components.readiness, RuntimeAssemblyReadiness):
-        raise RuntimeError(
-            "RUNTIME_PRODUCTION_COMPONENT_READINESS_INVALID"
-        )
+        raise RuntimeError("RUNTIME_PRODUCTION_COMPONENT_READINESS_INVALID")
     return components
-
-
 @dataclass(frozen=True, kw_only=True)
 class ProductionSpecialistPorts:
     transport: ProviderTransport
@@ -93,8 +86,11 @@ class ProductionSpecialistPorts:
     fetch_all_pages: ArtifactPort | None = None
     provider_resolver: TenantProviderResolver | None = None
     provider_revisions: Mapping[str, str] | None = None
-
-
+    kie_transport: object | None = None
+    kie_credentials: object | None = None
+    media_provider_ready: bool = False
+    media_credentials_ready: bool = False
+    media_capability_enabled: bool = False
 @dataclass(frozen=True, kw_only=True)
 class ProductionRuntimeComponents:
     registry: ExecutorRegistry
@@ -103,12 +99,9 @@ class ProductionRuntimeComponents:
     specialist_repository: PostgresSpecialistRepository
     readiness: RuntimeAssemblyReadiness
     service_bundle: ProductionServiceBundle | None
-
-
 @dataclass(frozen=True, kw_only=True)
 class SafeRuntimeComposition:
     """Read-only Runtime composition; provider-dependent tools are absent."""
-
     registry: ExecutorRegistry
     catalog: RuntimeToolCatalog
     readiness: RuntimeAssemblyReadiness
@@ -116,7 +109,6 @@ class SafeRuntimeComposition:
     model_loop: object | None = None
     action_loop: object | None = None
     model_port: object | None = None
-
     def require_capability(self, name: str) -> None:
         capability = self.readiness.capabilities.get(name)
         if capability is None:
@@ -139,7 +131,7 @@ def build_safe_runtime_composition(
         resources, tool_names=SAFE_READ_TOOL_NAMES,
     )
     if erp_dispatcher_factory is not None:
-        registry = _merge_registries(
+        registry = merge_runtime_registries(
             registry,
             build_runtime_erp_read_registry(erp_dispatcher_factory),
         )
@@ -149,7 +141,7 @@ def build_safe_runtime_composition(
     )
     data_ready = bool(data_registry.descriptors())
     if data_ready:
-        registry = _merge_registries(registry, data_registry)
+        registry = merge_runtime_registries(registry, data_registry)
     catalog = RuntimeToolCatalog.from_executor_registry(registry)
     model_ready = (
         callable(model_call_factory) and (
@@ -217,14 +209,10 @@ def build_safe_runtime_composition(
         model_call_factory=model_call_factory, model_loop=model_loop,
         action_loop=action_loop, model_port=model_port,
     )
-
-
 def _credential_ready(broker: object) -> bool:
     status = getattr(broker, "readiness", None)
     status = status() if callable(status) else status
     return bool(getattr(status, "ready", False))
-
-
 def build_production_action_loop(*, database, worker_id: str,
                                  components: ProductionRuntimeComponents,
                                  capability_issuer) -> ActionLoopDriver:
@@ -238,8 +226,6 @@ def build_production_action_loop(*, database, worker_id: str,
         capability_issuer=capability_issuer,
         specialist_facts=components.specialist_repository,
     )
-
-
 def build_production_read_registry(
     resources: RuntimeReadResources, *,
     tool_names: frozenset[str] | None = None,
@@ -262,8 +248,6 @@ def build_production_read_registry(
         if group == "erp_local"
     })
     return build_read_executor_registry(capabilities, tool_names=tool_names)
-
-
 def build_runtime_erp_read_registry(
     dispatcher_factory: ErpDispatcherFactoryPort,
 ) -> ExecutorRegistry:
@@ -284,8 +268,6 @@ def build_runtime_erp_read_registry(
             safety_level="safe",
         )
     return registry
-
-
 def build_production_specialist_registry(
     ports: ProductionSpecialistPorts, *, facts: object,
 ) -> ExecutorRegistry:
@@ -310,11 +292,20 @@ def build_production_specialist_registry(
         providers[tool] = LocalArtifactProvider(
             port=specialized, operation=tool,
         )
-    providers["generate_image"] = KieMediaProvider(
-        ports.transport, kind="image", task_port=ports.media_task,
+    media_ready = (ports.kie_transport is not None
+                   and ports.kie_credentials is not None
+                   and ports.media_provider_ready
+                   and ports.media_credentials_ready
+                   and ports.media_capability_enabled)
+    providers["generate_image"] = RuntimeKieMediaProvider(
+        ports.kie_transport or ports.transport, task_port=ports.media_task,
+        credentials=ports.kie_credentials, kind="image",
+        production_ready=media_ready,
     )
-    providers["generate_video"] = KieMediaProvider(
-        ports.transport, kind="video", task_port=ports.media_task,
+    providers["generate_video"] = RuntimeKieMediaProvider(
+        ports.kie_transport or ports.transport, task_port=ports.media_task,
+        credentials=ports.kie_credentials, kind="video",
+        production_ready=media_ready,
     )
     for tool in CHILD_RUN_TOOLS:
         providers[tool] = PortBackedProvider(
@@ -358,7 +349,6 @@ def build_production_specialist_registry(
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return registry
-
 def build_production_components(
     *, database, read_resources: RuntimeReadResources,
     specialist_ports: ProductionSpecialistPorts,
@@ -377,7 +367,9 @@ def build_production_components(
         specialist_registry=specialist_registry, bindings=bindings,
     )
     return ProductionRuntimeComponents(
-        registry=_merge_registries(read_registry, sandbox_registry, specialist_registry),
+        registry=merge_runtime_registries(
+            read_registry, sandbox_registry, specialist_registry,
+        ),
         catalog=catalog,
         callback_inbox=CallbackInbox(callback_verifier, facts),
         specialist_repository=facts,
@@ -389,11 +381,26 @@ def build_production_components(
             probe_passed=False,
             production_ready=False,
             error_code="TENANT_PROVIDER_BINDING_NOT_READY",
+            capabilities={
+                "runtime.media": CapabilityReadiness(
+                    state=(CapabilityReadinessState.READY if (
+                        specialist_ports.media_provider_ready
+                        and specialist_ports.media_credentials_ready
+                        and specialist_ports.media_capability_enabled
+                    ) else CapabilityReadinessState.UNAVAILABLE if (
+                        specialist_ports.media_capability_enabled
+                    ) else CapabilityReadinessState.DISABLED),
+                    error_code=(None if (
+                        specialist_ports.media_provider_ready
+                        and specialist_ports.media_credentials_ready
+                    ) else "RUNTIME_MEDIA_PROVIDER_NOT_READY" if (
+                        specialist_ports.media_capability_enabled
+                    ) else None),
+                ),
+            },
         ),
         service_bundle=service_bundle,
     )
-
-
 def build_production_components_from_services(
     *, database, read_resources: RuntimeReadResources, transport: ProviderTransport,
     erp_dispatcher: ErpDispatcherPort, erp_search: object, artifact: ArtifactPort,
@@ -405,6 +412,9 @@ def build_production_components_from_services(
     provider_resolver: TenantProviderResolver | None = None,
     credential_broker: object | None = None,
     erp_dispatcher_factory: ErpDispatcherFactoryPort | None = None,
+    kie_transport: object | None = None, kie_credentials: object | None = None,
+    media_provider_ready: bool = False, media_credentials_ready: bool = False,
+    media_capability_enabled: bool = False,
 ) -> ProductionRuntimeComponents:
     """Production service join: Artifact, Workspace, Scheduler and Sync share one facts port."""
     from dataclasses import replace
@@ -470,23 +480,13 @@ def build_production_components_from_services(
                 name: binding.provider_revision for name, binding in bindings.items()
                 if name in SPECIALIST_FAMILIES
             } if provider_resolver is not None else None,
+            kie_transport=kie_transport, kie_credentials=kie_credentials,
+            media_provider_ready=media_provider_ready,
+            media_credentials_ready=media_credentials_ready,
+            media_capability_enabled=media_capability_enabled,
         ), sandbox_registry=sandbox_registry, bindings=bindings,
         callback_verifier=callback_verifier, service_bundle=service_bundle,
     )
-
-
-def _merge_registries(*registries: ExecutorRegistry) -> ExecutorRegistry:
-    result = ExecutorRegistry()
-    for registry in registries:
-        for descriptor in registry.descriptors():
-            _, executor = registry.resolve(next(iter(descriptor.action_kinds)))
-            result.register(
-                descriptor, executor,
-                safety_level=registry.safety_level(next(iter(descriptor.action_kinds))),
-            )
-    return result
-
-
 __all__ = [
     "ProductionRuntimeComponents", "ProductionSpecialistPorts",
     "SafeRuntimeComposition", "build_safe_runtime_composition",

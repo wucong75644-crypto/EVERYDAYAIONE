@@ -40,10 +40,13 @@ def test_media_composition_is_disabled_by_default():
 
 def test_media_composition_requires_explicit_wiring():
     with pytest.raises(RuntimeError, match="WIRING_REQUIRED"):
-        build_runtime_media_composition(database=object(), transport=None, enabled=True)
+        build_runtime_media_composition(
+            database=object(), transport=None, credentials=object(),
+            enabled=True, provider_probe_passed=True,
+        )
 
 
-def test_enabled_media_composition_registers_both_actions():
+def test_enabled_media_composition_without_provider_readiness_fails_closed():
     database = SimpleNamespace(scope=DatabaseScope(
         actor_user_id=None, org_id=None,
         access_kind=DatabaseAccessKind.AGENT_RUNTIME,
@@ -51,12 +54,30 @@ def test_enabled_media_composition_registers_both_actions():
     composition = build_runtime_media_composition(
         database=database, transport=object(), enabled=True,
     )
+    assert composition.enabled is False
+    assert composition.production_ready is False
+    assert composition.registry.descriptors() == ()
+
+
+def test_enabled_media_composition_registers_both_actions():
+    database = SimpleNamespace(scope=DatabaseScope(
+        actor_user_id=None, org_id=None,
+        access_kind=DatabaseAccessKind.AGENT_RUNTIME,
+    ))
+    facts = object()
+    composition = build_runtime_media_composition(
+        database=database, transport=object(), enabled=True,
+        credentials=object(), provider_probe_passed=True,
+        specialist_facts=facts,
+    )
     assert composition.enabled is True
-    assert composition.production_ready is True
+    assert composition.production_ready is False
+    assert composition.error_code == "PRODUCTION_READINESS_DISABLED"
     assert {name for descriptor in composition.registry.descriptors()
             for name in descriptor.action_kinds} == {
-                "generate_image", "generate_video",
+            "generate_image", "generate_video",
             }
+    assert composition.registry.specialist_facts is facts
 
 
 @pytest.mark.asyncio
@@ -80,3 +101,19 @@ async def test_media_ingress_calls_only_narrow_rpc():
     assert receipt.runtime_owned is True
     rpc.execute.assert_awaited_once()
     assert rpc.execute.await_args.args[0] == "submit_agent_runtime_media_action_v1"
+
+
+@pytest.mark.asyncio
+async def test_media_ingress_rejects_credit_and_internal_identity_arguments():
+    database = SimpleNamespace(rpc=lambda *_: pytest.fail("RPC must not run"))
+    with pytest.raises(RuntimeError, match="INTERNAL_ARGUMENT_FORBIDDEN"):
+        await RuntimeMediaIngress(database).submit(
+            conversation_id="c", org_id="o", user_id="u",
+            scope_kind="user", scope_id="u",
+            agent_definition_id="everydayai-default",
+            agent_definition_revision="v1", task_id="t",
+            input_message_id="i", output_message_id="m", turn_id=None,
+            idempotency_key="media:t", kind="video",
+            request={"prompt": "x", "reserved_credits": 31},
+            model_id="sora-2-text-to-video",
+        )

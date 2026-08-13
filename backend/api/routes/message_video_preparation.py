@@ -88,10 +88,7 @@ async def prepare_and_start_video_generation(
         task_id=task_id, input_message_id=preparation.input_message_id,
         output_message_id=preparation.output_message_id,
         turn_id=preparation.turn_id, idempotency_key=request_id, kind="video",
-        request={
-            **task_payload["request_params"], "reserved_credits": settings.credits,
-            "currency": "credits",
-        }, model_id=settings.model_id,
+        request=task_payload["request_params"], model_id=settings.model_id,
     )
     if not receipt.accepted or not receipt.runtime_owned:
         raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")

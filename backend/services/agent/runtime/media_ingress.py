@@ -42,6 +42,13 @@ class RuntimeMediaIngress:
     ) -> RuntimeMediaIngressReceipt:
         if kind not in {"image", "video"}:
             raise RuntimeError("RUNTIME_MEDIA_KIND_INVALID")
+        forbidden = {
+            "task_id", "user_id", "org_id", "credit_transaction_id",
+            "reserved_credits", "currency", "image_urls", "input_urls",
+            "runtime_task", "internal_facts",
+        }
+        if forbidden.intersection(request):
+            raise RuntimeError("RUNTIME_MEDIA_INTERNAL_ARGUMENT_FORBIDDEN")
         tool_name = f"generate_{kind}"
         params = {
             "p_conversation_id": conversation_id,

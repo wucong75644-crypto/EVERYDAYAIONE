@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     # AR-17.4 remains closed until an explicit, injected production
     # composition has passed its provider/readiness checks.
     agent_runtime_production_composition_enabled: bool = False
+    agent_runtime_media_enabled: bool = False
+    agent_runtime_media_provider_probe_passed: bool = False
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     agent_runtime_release_revision: str = "development"

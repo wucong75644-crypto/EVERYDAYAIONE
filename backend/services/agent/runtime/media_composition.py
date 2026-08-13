@@ -1,21 +1,18 @@
-"""Production media-only Runtime composition.
-
-The graph is constructible without enabling it. Provider access is only
-possible when callers explicitly supply a transport and enable the capability.
-"""
+"""Fail-closed production assembly for Runtime-owned KIE media."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from services.agent.runtime.executors.provider_adapters import KieMediaProvider
+from services.agent.runtime.executors.family_executors import EXECUTOR_BY_FAMILY
 from services.agent.runtime.executors.registry import ExecutorRegistry
 from services.agent.runtime.executors.specialist_registry import (
-    MEDIA_TOOLS, SPECIALIST_FAMILIES, SPECIALIST_SAFETY, specialist_descriptor,
+    MEDIA_TOOLS, SPECIALIST_FAMILIES, SPECIALIST_SAFETY,
+    specialist_descriptor,
 )
-from services.agent.runtime.executors.family_executors import EXECUTOR_BY_FAMILY
 from services.agent.runtime.media_task_port import build_runtime_media_task_port
+from services.agent.runtime.providers.kie_media import RuntimeKieMediaProvider
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -23,24 +20,36 @@ class RuntimeMediaComposition:
     registry: ExecutorRegistry
     enabled: bool
     production_ready: bool
+    error_code: str | None = None
 
 
 def build_runtime_media_composition(
-    *, database: Any, transport: Any | None, enabled: bool = False,
+    *, database: Any, transport: Any | None,
+    credentials: Any | None = None, specialist_facts: object | None = None,
+    enabled: bool = False, provider_probe_passed: bool = False,
 ) -> RuntimeMediaComposition:
-    """Build media Executors; default construction is fail-closed."""
+    """Register media only when flag, wiring and probe facts are explicit."""
     registry = ExecutorRegistry()
+    registry.specialist_facts = specialist_facts
     if not enabled:
         return RuntimeMediaComposition(
             registry=registry, enabled=False, production_ready=False,
+            error_code="RUNTIME_MEDIA_DISABLED",
         )
-    if database is None or transport is None:
+    if not provider_probe_passed:
+        return RuntimeMediaComposition(
+            registry=registry, enabled=False, production_ready=False,
+            error_code="RUNTIME_MEDIA_PROVIDER_NOT_READY",
+        )
+    if database is None or transport is None or credentials is None:
         raise RuntimeError("RUNTIME_MEDIA_COMPOSITION_WIRING_REQUIRED")
     task_port = build_runtime_media_task_port(database)
     for tool in sorted(MEDIA_TOOLS):
         descriptor = specialist_descriptor(tool)
-        provider = KieMediaProvider(
-            transport, kind=tool.removeprefix("generate_"), task_port=task_port,
+        provider = RuntimeKieMediaProvider(
+            transport, task_port=task_port, credentials=credentials,
+            kind=tool.removeprefix("generate_"),
+            production_ready=provider_probe_passed,
         )
         registry.register(
             descriptor,
@@ -52,7 +61,8 @@ def build_runtime_media_composition(
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return RuntimeMediaComposition(
-        registry=registry, enabled=True, production_ready=True,
+        registry=registry, enabled=True, production_ready=False,
+        error_code="PRODUCTION_READINESS_DISABLED",
     )
 
 

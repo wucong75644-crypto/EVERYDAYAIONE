@@ -170,6 +170,8 @@ def render_envs(
             "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
             "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-runtime/health.sock",
             "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED": "false",
+            "AGENT_RUNTIME_MEDIA_ENABLED": "false",
+            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": "false",
             "SANDBOX_JOB_ROOT": "/var/lib/everydayai/sandbox-jobs", "SANDBOX_RUNTIME_REVISION": "unprovisioned",
         },
         "agent-projection-worker.env": {

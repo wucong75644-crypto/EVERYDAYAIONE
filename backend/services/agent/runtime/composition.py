@@ -44,11 +44,15 @@ from services.agent.runtime.infrastructure.postgres.repository import (
 from services.agent.runtime.infrastructure.postgres.scheduled_finalization_repository import (
     PostgresScheduledFinalizationRepository,
 )
+from services.agent.runtime.infrastructure.postgres.specialist_repository import (
+    PostgresSpecialistRepository,
+)
 from services.agent.runtime.policy.evaluator import PolicyEvaluator
 from services.agent.runtime.sandbox.composition import build_sandbox_worker_components
 from services.agent.runtime.sandbox.nsjail import (
     NsJailSubprocessLauncher, SandboxWorkerIdentity,
 )
+from services.agent.runtime.registry_merge import merge_runtime_registries
 from services.agent.runtime.production_model import (
     PostgresModelCallFactory, retain_unknown_model_attempt,
 )
@@ -185,7 +189,6 @@ def build_projection(
         scheduled_delivery,
     )
 
-
 def build_runtime(
     database: Any, settings, *, production_components=None,
     process_role: str | None = None,
@@ -225,6 +228,7 @@ def build_runtime(
     recovery = PostgresCoordinatorRecoveryRepository(db)
     actions = PostgresActionRepository(db)
     attempts = PostgresModelAttemptRepository(db)
+    specialist_facts = PostgresSpecialistRepository(db)
     versions = build_runtime_version_registry()
     try:
         material_service = SecretMaterialService(
@@ -232,8 +236,9 @@ def build_runtime(
         )
     except ValueError:
         raise RuntimeError("RUNTIME_MODEL_CONFIGURATION_NOT_READY") from None
+    bundle_resolver = AsyncSecretBundleResolver(db, material_service)
     configured_factory = RuntimeConfiguredAdapterFactory(
-        AsyncSecretBundleResolver(db, material_service),
+        bundle_resolver,
         adapter_factory=create_chat_adapter,
     )
     model = ExistingProviderModelAdapter(
@@ -250,7 +255,11 @@ def build_runtime(
         erp_dispatcher_factory=erp_factory,
         **data_adapters,
     )
-    registry = safe.registry
+    media = _build_runtime_media(
+        database=db, settings=settings, bundle_resolver=bundle_resolver,
+        specialist_facts=specialist_facts,
+    )
+    registry = merge_runtime_registries(safe.registry, media.registry)
     action_loop = ActionLoopDriver(
         recovery_repository=recovery,
         action_repository=actions,
@@ -258,6 +267,7 @@ def build_runtime(
         resolver=PostgresActionExecutorResolver(registry),
         worker_id=worker_id,
         capability_issuer=None,
+        specialist_facts=specialist_facts,
     )
     model_factory = PostgresModelCallFactory(
         db, worker_id, version_registry=versions,
@@ -401,3 +411,22 @@ def _require_process_role(expected: str, actual: str) -> None:
         raise RuntimeError(
             f"RUNTIME_COMPOSITION_ROLE_MISMATCH:{expected}:{actual}",
         )
+
+
+def _build_runtime_media(*, database: Any, settings: Any,
+                         bundle_resolver: object,
+                         specialist_facts: object):
+    from services.agent.runtime.media_composition import build_runtime_media_composition
+    from services.agent.runtime.providers.kie_credentials import PostgresRuntimeKieCredentialSource
+    from services.agent.runtime.providers.kie_transport import HttpxKieOneShotTransport
+
+    enabled = bool(getattr(settings, "agent_runtime_media_enabled", False))
+    return build_runtime_media_composition(
+        database=database,
+        transport=HttpxKieOneShotTransport() if enabled else None,
+        credentials=PostgresRuntimeKieCredentialSource(bundle_resolver) if enabled else None,
+        specialist_facts=specialist_facts, enabled=enabled,
+        provider_probe_passed=bool(getattr(
+            settings, "agent_runtime_media_provider_probe_passed", False,
+        )),
+    )

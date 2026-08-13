@@ -439,7 +439,25 @@ class ActionLoopDriver:
             status_locator=external.get("status_locator"),
             callback_correlation=external.get("callback_correlation"),
             provider_idempotency_key=external.get("provider_idempotency_key", attempt_id),
-            provider_request_hash=str(external.get("request_hash", request_hash)),
+            provider_request_hash=_provider_request_hash(
+                external, request_hash,
+            ),
             external_receipt=external,
         )
         return True
+
+
+def _provider_request_hash(
+    external: Mapping[str, object], fallback: str,
+) -> str:
+    evidence = external.get("evidence")
+    value = evidence.get("provider_request_hash") if isinstance(
+        evidence, Mapping
+    ) else None
+    if not isinstance(value, str):
+        value = external.get("request_hash", fallback)
+    if not isinstance(value, str) or len(value) != 64 or any(
+        char not in "0123456789abcdef" for char in value
+    ):
+        raise RuntimeError("SPECIALIST_PROVIDER_REQUEST_HASH_INVALID")
+    return value

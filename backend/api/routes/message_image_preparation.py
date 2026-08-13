@@ -93,25 +93,20 @@ async def prepare_and_start_image_generation(
         prepared_batch_id=batch_id,
     )
     try:
-        from api.routes.message_media_runtime import submit_runtime_media_ingress
-        external_task_ids = []
-        per_image_credits = settings["total_credits"] // settings["num_images"]
-        for task_id, task in zip(task_ids, task_payloads):
-            receipt = await submit_runtime_media_ingress(
-                db=db, conversation_id=conversation_id, user_id=user_id,
-                org_id=org_id, task_id=task_id,
-                input_message_id=preparation.input_message_id,
-                output_message_id=preparation.output_message_id,
-                turn_id=preparation.turn_id, idempotency_key=f"{request_id}:{task_id}",
-                kind="image", request={
-                    **task["request_params"], "reserved_credits": per_image_credits,
-                    "currency": "credits",
-                }, model_id=settings["model_id"],
+        if response_generation_type == GenerationType.IMAGE_ECOM:
+            external_task_id = await handler.start(
+                message_id=preparation.output_message_id,
+                conversation_id=conversation_id, user_id=user_id,
+                content=body.content, params=_business_params(body),
+                metadata=metadata,
             )
-            if not receipt.accepted or not receipt.runtime_owned:
-                raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
-            external_task_ids.append(receipt.run_id or task_id)
-        external_task_id = external_task_ids[0] if external_task_ids else _required(body.client_task_id)
+        else:
+            external_task_id = await _submit_runtime_image_tasks(
+                db=db, conversation_id=conversation_id, user_id=user_id,
+                org_id=org_id, request_id=request_id, task_ids=task_ids,
+                task_payloads=task_payloads, preparation=preparation,
+                model_id=settings["model_id"],
+            )
     except Exception as error:
         from core.exceptions import AppException
         if isinstance(error, AppException) and error.code == "IMAGE_GENERATION_FAILED":
@@ -152,6 +147,28 @@ async def prepare_and_start_image_generation(
     )
 
 
+async def _submit_runtime_image_tasks(
+    *, db: Any, conversation_id: str, user_id: str, org_id: str | None,
+    request_id: str, task_ids: tuple[str, ...],
+    task_payloads: list[dict[str, Any]], preparation: Any, model_id: str,
+) -> str:
+    from api.routes.message_media_runtime import submit_runtime_media_ingress
+
+    external_task_ids = []
+    for task_id, task in zip(task_ids, task_payloads):
+        receipt = await submit_runtime_media_ingress(
+            db=db, conversation_id=conversation_id, user_id=user_id,
+            org_id=org_id, task_id=task_id,
+            input_message_id=preparation.input_message_id,
+            output_message_id=preparation.output_message_id,
+            turn_id=preparation.turn_id,
+            idempotency_key=f"{request_id}:{task_id}", kind="image",
+            request=task["request_params"], model_id=model_id,
+        )
+        if not receipt.accepted or not receipt.runtime_owned:
+            raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
+        external_task_ids.append(receipt.run_id or task_id)
+    return external_task_ids[0] if external_task_ids else task_ids[0]
 def _task_payloads(
     *, handler: Any, body: GenerateRequest, settings: dict[str, Any],
     task_ids: tuple[str, ...], batch_id: str, conversation_id: str,
