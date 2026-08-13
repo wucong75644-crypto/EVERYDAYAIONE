@@ -1,9 +1,4 @@
-"""Runtime-owned boundary for e-commerce image capabilities.
-
-The public Runtime Model/Child-Run ingress for these synchronous HTTP
-contracts is not wired yet.  Until it is, this boundary must fail closed so
-the legacy image and model adapters cannot become a second Owner.
-"""
+"""Runtime-owned boundary for e-commerce image capabilities."""
 
 from __future__ import annotations
 
@@ -16,6 +11,9 @@ class RuntimeEcomCapabilityUnavailable(RuntimeError):
 
 class RuntimeEcomCapabilityPort(Protocol):
     ready: bool
+
+    async def submit_model(self, **kwargs: Any) -> Any:
+        """Submit a durable e-commerce ModelLoop request to Runtime."""
 
     async def invoke_model(
         self, *, messages: list[Mapping[str, Any]], model: str,
@@ -34,6 +32,11 @@ class DisabledRuntimeEcomCapability:
     ready = False
 
     """Explicit fail-closed implementation used until composition is wired."""
+
+    async def submit_model(self, **_: Any) -> Any:
+        raise RuntimeEcomCapabilityUnavailable(
+            "RUNTIME_ECOM_MODEL_INGRESS_UNAVAILABLE"
+        )
 
     async def invoke_model(self, **_: Any) -> Any:
         raise RuntimeEcomCapabilityUnavailable(
