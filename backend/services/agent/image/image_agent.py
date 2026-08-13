@@ -21,9 +21,9 @@ from uuid import uuid4
 
 from config.kie_models import calculate_image_cost
 from core.exceptions import InsufficientCreditsError
-from services.adapters.factory import create_image_adapter
 from services.agent.agent_result import AgentResult
 from services.agent.safe_tool_logging import log_agent_event
+from services.agent.runtime.ecom_capability import get_runtime_ecom_capability
 from services.handlers.mixins.credit_mixin import CreditMixin
 from .image_processor import detect_aspect_ratio, detect_dimensions
 from .prompt_builder import PromptBuilder
@@ -204,43 +204,33 @@ class ImageAgent(CreditMixin):
         messages: list[dict[str, Any]],
         has_images: bool,
     ) -> tuple[Any | None, str, AgentResult | None]:
-        from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
-
         model = (
             settings.image_enhance_vl_model
             if has_images else settings.image_enhance_model
         )
-        models = [model, settings.image_enhance_fallback_model]
-        last_error: Exception | None = None
-        for index, candidate in enumerate(models):
-            adapter = DashScopeChatAdapter(
-                api_key=settings.dashscope_api_key or "",
-                model=candidate,
-                base_url=settings.dashscope_base_url,
-                stream_timeout=settings.image_enhance_timeout,
+        try:
+            return (
+                await get_runtime_ecom_capability().invoke_model(
+                    messages=messages, model=model,
+                    timeout_seconds=settings.image_enhance_timeout,
+                    org_id=self.org_id,
+                ),
+                model,
+                None,
             )
-            try:
-                return (
-                    await adapter.chat_sync(messages=messages),
-                    candidate,
-                    None,
-                )
-            except Exception as error:
-                last_error = error
-                log_agent_event(
-                    "warning" if index == 0 else "error", "ecom_plan model failed",
-                    self, "image_agent",
-                    "IMAGE_PLAN_MODEL_FAILED", type(error).__name__,
-                )
-            finally:
-                await adapter.close()
+        except RuntimeEcomCapabilityUnavailable as error:
+            log_agent_event(
+                "warning", "ecom_plan blocked by Runtime capability",
+                self, "image_agent", "RUNTIME_ECOM_MODEL_UNAVAILABLE",
+                type(error).__name__,
+            )
         error_result = AgentResult(
             status="error",
-            summary="方案生成失败，请稍后重试",
+            summary="方案生成服务暂未接入 Runtime，请稍后重试",
             source="image_agent",
-            error_message=f"LLM调用失败: {last_error}",
+            error_message="RUNTIME_ECOM_MODEL_INGRESS_UNAVAILABLE",
         )
-        return None, models[-1], error_result
+        return None, model, error_result
 
     # ----------------------------------------------------------
     # Phase 2：单张图片生成（原 execute，保持不变）
@@ -272,7 +262,15 @@ class ImageAgent(CreditMixin):
                 error_message=err,
             )
 
-        # 2. 计算并锁定积分（复用 CreditMixin，含乐观锁+重试）
+        # 2. Runtime capability gate 必须先于积分锁定，避免 blocked 请求产生账务副作用。
+        capability = get_runtime_ecom_capability()
+        if not getattr(capability, "ready", False):
+            return self._error_result(
+                "图片生成服务暂未接入 Runtime，请稍后重试",
+                task, image_urls, platform, style_directive,
+            )
+
+        # 3. 计算并锁定积分（复用 CreditMixin，含乐观锁+重试）
         model_id = self._select_model(image_urls)
         try:
             cost = calculate_image_cost(model_name=model_id, image_count=1)
@@ -341,18 +339,16 @@ class ImageAgent(CreditMixin):
         final_prompt = self._prompt_builder.build_final_prompt(
             task, style_directive,
         )
-        adapter = create_image_adapter(model_id)
-        try:
-            result = await adapter.generate(
-                prompt=final_prompt,
-                image_urls=image_urls or None,
-                size=detect_aspect_ratio(task),
-                wait_for_result=True,
-                max_wait_time=90.0,
-                poll_interval=2.0,
-            )
-        finally:
-            await adapter.close()
+        result = await get_runtime_ecom_capability().invoke_image(
+            prompt=final_prompt,
+            image_urls=image_urls or None,
+            model=model_id,
+            org_id=self.org_id,
+            size=detect_aspect_ratio(task),
+            wait_for_result=True,
+            max_wait_time=90.0,
+            poll_interval=2.0,
+        )
         if not result.image_urls:
             self._refund_credits(tx_id)
             return self._error_result(

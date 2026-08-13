@@ -238,42 +238,20 @@ async def enhance_prompt(
     else:
         messages.append({"role": "user", "content": user_prompt})
 
-    # 5. 调千问 VL（主模型 → 降级备选）
-    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
-
+    # 5. Runtime-owned ModelStep。未完成公共 ingress 时必须 fail-closed。
+    from services.agent.runtime.ecom_capability import (
+        RuntimeEcomCapabilityUnavailable, get_runtime_ecom_capability,
+    )
     model = settings.image_enhance_vl_model if all_image_urls else settings.image_enhance_model
     timeout = settings.image_enhance_timeout
-
-    response = None
-    adapter = DashScopeChatAdapter(
-        api_key=settings.dashscope_api_key or "",
-        model=model,
-        base_url=settings.dashscope_base_url,
-        stream_timeout=timeout,
-    )
     try:
-        response = await adapter.chat_sync(messages=messages)
-    except Exception as primary_err:
-        logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
-    finally:
-        await adapter.close()
-
-    if response is None:
-        fallback = settings.image_enhance_fallback_model
-        adapter_fb = DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key or "",
-            model=fallback,
-            base_url=settings.dashscope_base_url,
-            stream_timeout=timeout,
+        response = await get_runtime_ecom_capability().invoke_model(
+            messages=messages, model=model, timeout_seconds=timeout,
+            org_id=None,
         )
-        try:
-            response = await adapter_fb.chat_sync(messages=messages)
-            model = fallback
-        except Exception as fallback_err:
-            logger.error(f"enhance fallback also failed: {fallback_err}")
-            return {"error": "方案生成失败，请稍后重试", "success": False}
-        finally:
-            await adapter_fb.close()
+    except RuntimeEcomCapabilityUnavailable as exc:
+        logger.warning("ecom enhance blocked by Runtime capability: %s", exc)
+        return {"error": "方案生成服务暂未接入 Runtime，请稍后重试", "success": False}
 
     # 6. 解析设计方案 JSON
     plan = _parse_design_plan(response.content)

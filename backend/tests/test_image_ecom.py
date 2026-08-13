@@ -5,6 +5,7 @@
 设计文档：docs/document/TECH_电商图片Agent_v2.md
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -339,7 +340,8 @@ class TestImageAgentExecute:
         mock_adapter = AsyncMock(generate=AsyncMock(return_value=mock_result), close=AsyncMock())
 
         # mock 落盘:返回 None 触发 fallback,emit_payload 保留原 CDN url
-        with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
+        capability = SimpleNamespace(ready=True, invoke_image=mock_adapter.generate)
+        with patch("services.agent.image.image_agent.get_runtime_ecom_capability", return_value=capability), \
              patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
              patch("services.file_upload.download_url_to_workspace",
                    new=AsyncMock(return_value=None)), \
@@ -370,7 +372,8 @@ class TestImageAgentExecute:
             "size": 12345,
         }
 
-        with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
+        capability = SimpleNamespace(ready=True, invoke_image=mock_adapter.generate)
+        with patch("services.agent.image.image_agent.get_runtime_ecom_capability", return_value=capability), \
              patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
              patch("services.file_upload.download_url_to_workspace",
                    new=AsyncMock(return_value=persisted)), \
@@ -396,7 +399,8 @@ class TestImageAgentExecute:
         mock_result = MagicMock(image_urls=urls, fail_msg=None)
         mock_adapter = AsyncMock(generate=AsyncMock(return_value=mock_result), close=AsyncMock())
 
-        with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
+        capability = SimpleNamespace(ready=True, invoke_image=mock_adapter.generate)
+        with patch("services.agent.image.image_agent.get_runtime_ecom_capability", return_value=capability), \
              patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
              patch("services.file_upload.download_url_to_workspace",
                    new=AsyncMock(return_value=None)), \
@@ -416,7 +420,8 @@ class TestImageAgentExecute:
         mock_result = MagicMock(image_urls=[], fail_msg="违规")
         mock_adapter = AsyncMock(generate=AsyncMock(return_value=mock_result), close=AsyncMock())
 
-        with patch("services.agent.image.image_agent.create_image_adapter", return_value=mock_adapter), \
+        capability = SimpleNamespace(ready=True, invoke_image=mock_adapter.generate)
+        with patch("services.agent.image.image_agent.get_runtime_ecom_capability", return_value=capability), \
              patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 6}), \
              patch.object(agent, "_lock_credits", return_value="tx_2"), \
              patch.object(agent, "_refund_credits") as mock_refund:
@@ -430,12 +435,14 @@ class TestImageAgentExecute:
         from core.exceptions import InsufficientCreditsError
         agent, _ = self._make_agent()
 
-        with patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 100}), \
+        capability = SimpleNamespace(ready=False)
+        with patch("services.agent.image.image_agent.get_runtime_ecom_capability", return_value=capability), \
+             patch("services.agent.image.image_agent.calculate_image_cost", return_value={"user_credits": 100}), \
              patch.object(agent, "_lock_credits", side_effect=InsufficientCreditsError(required=100, current=5)):
             result = await agent.execute(task="白底主图", platform="taobao")
 
         assert result.status == "error"
-        assert result.emit_payloads == []
+        assert result.emit_payloads[0]["failed"] is True
 
 
 # ============================================================
