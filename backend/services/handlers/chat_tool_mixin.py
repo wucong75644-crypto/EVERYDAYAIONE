@@ -213,7 +213,11 @@ class ChatToolMixin(ChatToolResultMixin):
             error = "工具未登记或参数解析失败，已拒绝执行"
             return tc, error, True, error
         args = _resolve_file_ids(args, conversation_id, tc["name"])
-        if safety == SafetyLevel.SAFE:
+        # Safety is a Runtime policy fact, not a chat-layer execution decision.
+        # CONFIRM calls must be submitted to Runtime so its durable receipt,
+        # approval, fencing and recovery rules remain authoritative. DANGEROUS
+        # calls still require the existing explicit approval handoff first.
+        if safety in (SafetyLevel.SAFE, SafetyLevel.CONFIRM):
             return args
         logger.warning(
             "legacy_non_safe_tool_rejected | user_id={} | org_id={} | "

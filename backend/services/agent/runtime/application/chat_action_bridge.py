@@ -78,9 +78,10 @@ class RuntimeChatActionPersistenceExecutor:
             raise RuntimeChatActionOwnershipError(
                 "RUNTIME_CHAT_ACTION_CATALOG_MISSING"
             ) from error
-        if self._registry.safety_level(request.tool_name) != "safe":
+        safety_level = self._registry.safety_level(request.tool_name)
+        if safety_level is None:
             raise RuntimeChatActionOwnershipError(
-                "RUNTIME_CHAT_ACTION_POLICY_REQUIRED"
+                "RUNTIME_CHAT_ACTION_SAFETY_UNDECLARED"
             )
         snapshot = {
             "source": "chat",
@@ -88,6 +89,7 @@ class RuntimeChatActionPersistenceExecutor:
             "executor_type": descriptor.executor_type,
             "executor_revision": descriptor.revision,
             "tool_name": request.tool_name,
+            "safety_level": safety_level,
             "scope": {"org_id": request.org_id, "user_id": request.user_id},
         }
         receipt = await self._submission.submit_chat_action(

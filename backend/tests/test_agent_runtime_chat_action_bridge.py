@@ -110,7 +110,7 @@ async def test_chat_action_persistence_submits_catalog_bound_action() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_action_persistence_rejects_non_safe_catalog_entry() -> None:
+async def test_chat_action_persistence_submits_confirm_catalog_entry() -> None:
     class Descriptor:
         executor_type = "mutation"
         revision = 1
@@ -123,15 +123,18 @@ async def test_chat_action_persistence_rejects_non_safe_catalog_entry() -> None:
             return "confirm"
 
     class Submission:
-        async def submit_chat_action(self, **_kwargs):
-            raise AssertionError("policy rejection must precede persistence")
+        async def submit_chat_action(self, **kwargs):
+            assert kwargs["policy_snapshot"]["safety_level"] == "confirm"
+            return ActionMutationReceipt(
+                outcome=ActionMutationOutcome.CREATED,
+                action_id="00000000-0000-0000-0000-000000000002",
+            )
 
-    with pytest.raises(RuntimeChatActionOwnershipError,
-                       match="RUNTIME_CHAT_ACTION_POLICY_REQUIRED"):
-        await RuntimeChatActionPersistenceExecutor(
-            submission=Submission(), registry=Registry(),
-        ).execute(ChatActionRequest(
-            tool_name="erp_execute", arguments={}, task_id="task",
-            conversation_id="conversation", message_id="message",
-            user_id="user", turn=1,
-        ))
+    result = await RuntimeChatActionPersistenceExecutor(
+        submission=Submission(), registry=Registry(),
+    ).execute(ChatActionRequest(
+        tool_name="erp_execute", arguments={}, task_id="task",
+        conversation_id="conversation", message_id="message",
+        user_id="user", turn=1,
+    ))
+    assert "action_id=00000000-0000-0000-0000-000000000002" in result
