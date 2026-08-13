@@ -337,6 +337,21 @@ class TestMaybeFanoutToWecom:
         MockGW.return_value.fanout_to_wecom.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_runtime_owned_task_skips_legacy_fanout(self):
+        """Runtime Projection owns the durable WeCom delivery outbox."""
+        mixin = self._make_mixin("wecom")
+        content_dicts = [{"type": "text", "text": "hello"}]
+        task = {"user_id": "u1", "delivery_context": {"runtime": True}}
+
+        with patch(
+            "services.message_gateway.MessageGateway",
+        ) as MockGW:
+            MockGW.return_value.fanout_to_wecom = AsyncMock()
+            await mixin._maybe_fanout_to_wecom("conv-1", content_dicts, task)
+
+        MockGW.return_value.fanout_to_wecom.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_no_text_content_skips(self):
         """content_dicts 无文本时不推送"""
         mixin = self._make_mixin("wecom")
