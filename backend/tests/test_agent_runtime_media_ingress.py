@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.agent.runtime.media_composition import (
     build_runtime_media_composition,
 )
@@ -43,8 +44,12 @@ def test_media_composition_requires_explicit_wiring():
 
 
 def test_enabled_media_composition_registers_both_actions():
+    database = SimpleNamespace(scope=DatabaseScope(
+        actor_user_id=None, org_id=None,
+        access_kind=DatabaseAccessKind.AGENT_RUNTIME,
+    ))
     composition = build_runtime_media_composition(
-        database=object(), transport=object(), enabled=True,
+        database=database, transport=object(), enabled=True,
     )
     assert composition.enabled is True
     assert composition.production_ready is True

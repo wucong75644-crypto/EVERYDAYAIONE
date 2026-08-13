@@ -198,6 +198,10 @@ slot_revision
 
 每个批次独立提交；数据库、授权、Provider 和 Projection 由独立复核验证。
 
+批次 E 已在独立分支实现第 4 项及对应 discovery SQL fence：`228_04` 冻结服务器图片定价，
+原子准备 Action/既有 Task/逐项积分交易/固定槽位，并提供 prepare/readback 与逐项结算退款基础 RPC。
+真实 Provider、终态消息/Asset 投影和前端仍按第 5～7 项独立实施。
+
 ## 8. 验收
 
 - 参考图真实进入模型上下文，模型不能引用当前输入外的资产。

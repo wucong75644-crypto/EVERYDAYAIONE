@@ -101,11 +101,12 @@ class ArtifactPort(Protocol):
 
 
 class MediaTaskPort(Protocol):
-    async def prepare(self, attempt: ActionAttempt, request: Mapping[str, object], *, kind: str) -> Mapping[str, object]: ...
+    async def prepare(
+        self, attempt: ActionAttempt, *, kind: str,
+    ) -> Mapping[str, object]: ...
 
-    async def attach(
-        self, attempt: ActionAttempt, request: Mapping[str, object],
-        receipt: ProviderReceipt, *, kind: str,
+    async def read(
+        self, attempt: ActionAttempt, *, kind: str,
     ) -> Mapping[str, object]: ...
 
 
@@ -299,36 +300,11 @@ class KieMediaProvider(_HTTPProvider):
         super().__init__(transport, provider="kie", submit_path=path, reconcile_path=status, cancel_path=cancel)
 
     async def submit(self, attempt: ActionAttempt, request: Mapping[str, object], *, idempotency_key: str) -> ProviderReceipt:
-        task_facts = {}
         if self.task_port is not None:
-            task_facts = dict(await self.task_port.prepare(attempt, request, kind=self.kind))
-        receipt = await super().submit(attempt, {**request, "runtime_task": task_facts}, idempotency_key=idempotency_key)
-        attach = getattr(self.task_port, "attach", None)
-        if callable(attach) and receipt.state is ProviderState.ACCEPTED:
-            try:
-                task_facts = dict(await attach(
-                    attempt, request, receipt, kind=self.kind,
-                ))
-            except Exception:
-                return ProviderReceipt(
-                    state=ProviderState.UNKNOWN, provider=receipt.provider,
-                    request_hash=receipt.request_hash,
-                    provider_task_ref=receipt.provider_task_ref,
-                    status_locator=receipt.status_locator,
-                    callback_correlation=receipt.callback_correlation,
-                    evidence={
-                        **dict(receipt.evidence),
-                        "error_code": "MEDIA_TASK_ATTACH_UNKNOWN",
-                    },
-                )
-        if task_facts:
-            receipt = ProviderReceipt(
-                state=receipt.state, provider=receipt.provider, request_hash=receipt.request_hash,
-                provider_task_ref=receipt.provider_task_ref, status_locator=receipt.status_locator,
-                callback_correlation=receipt.callback_correlation, result={**receipt.result, "runtime_task": task_facts},
-                cost=receipt.cost, evidence=receipt.evidence,
-            )
-        return receipt
+            await self.task_port.prepare(attempt, kind=self.kind)
+        return await super().submit(
+            attempt, request, idempotency_key=idempotency_key,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)

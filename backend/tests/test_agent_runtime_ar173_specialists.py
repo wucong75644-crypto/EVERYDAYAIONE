@@ -297,7 +297,7 @@ async def test_isolated_harness_invokes_all_23_distinct_provider_adapters(tmp_pa
         await writer.wait_closed()
 
     class _Media:
-        async def prepare(self, attempt, request, *, kind):
+        async def prepare(self, attempt, *, kind):
             return {"task_id": f"task-{kind}", "state": "prepared"}
 
     class _Resource:
