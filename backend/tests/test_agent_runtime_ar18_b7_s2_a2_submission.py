@@ -10,6 +10,7 @@ from api.routes.scheduled_task_support import request_runtime_scheduled_executio
 from services.scheduler.scanner import ScheduledTaskScanner
 from services.scheduler.task_executor import ScheduledTaskExecutor
 from services.scheduler.worker_store import ScheduledWorkerStore
+from services.agent.scheduled_task_agent import LegacyScheduledTaskOwnerDisabled
 
 
 def _rpc_db(data):
@@ -152,3 +153,14 @@ async def test_legacy_executor_cannot_be_reenabled_by_runtime_marker():
 
     executor._create_run.assert_not_called()
     executor._store.legacy_owner_allowed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_owned_executor_never_constructs_old_agent():
+    executor = ScheduledTaskExecutor(MagicMock())
+    run = MagicMock()
+    with pytest.raises(LegacyScheduledTaskOwnerDisabled) as exc_info:
+        await executor._execute_owned(
+            {"id": "legacy-task"}, run, datetime.now(timezone.utc),
+        )
+    assert exc_info.value.code == "SCHEDULED_TASK_LEGACY_OWNER_DISABLED"
