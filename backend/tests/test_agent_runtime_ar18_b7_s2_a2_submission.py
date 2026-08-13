@@ -85,7 +85,7 @@ def test_worker_store_normalizes_mixed_owner_claims():
     )
 
     assert claims == [
-        {"id": "legacy"},
+        {"_execution_owner": "legacy_blocked", "task_id": "legacy"},
         {"_execution_owner": "runtime", "command_id": "command-1"},
     ]
 
@@ -107,6 +107,21 @@ async def test_scanner_never_sends_runtime_claim_to_legacy_executor():
     scanner._store.claim_due.return_value = [
         {"_execution_owner": "runtime", "command_id": "command-1"},
     ]
+
+    assert await scanner.poll() == 1
+    executor.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scanner_blocks_profileless_history_without_legacy_executor():
+    executor = MagicMock()
+    executor.execute = AsyncMock()
+    scanner = ScheduledTaskScanner(MagicMock(), executor=executor)
+    scanner._store = MagicMock()
+    scanner._store.list_stale.return_value = []
+    scanner._store.claim_due.return_value = [{
+        "_execution_owner": "legacy_blocked", "task_id": "legacy-1",
+    }]
 
     assert await scanner.poll() == 1
     executor.execute.assert_not_called()

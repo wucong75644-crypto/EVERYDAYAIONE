@@ -92,6 +92,13 @@ class ScheduledTaskScanner:
                     f"command_id={task.get('command_id')}"
                 )
                 continue
+            if task.get("_execution_owner") == "legacy_blocked":
+                logger.warning(
+                    "ScheduledTaskScanner | historical task blocked: "
+                    "Runtime profile required | "
+                    f"task_id={task.get('task_id')}"
+                )
+                continue
             asyncio.create_task(self._run_with_limit(task))
 
         return len(tasks)

@@ -24,7 +24,14 @@ class ScheduledWorkerStore:
         claims: list[dict[str, Any]] = []
         for item in list(result.data or []):
             if item.get("owner_kind") == "legacy" and isinstance(item.get("task"), dict):
-                claims.append(dict(item["task"]))
+                task = dict(item["task"])
+                # Historical tasks without a Runtime profile are adoption
+                # candidates, not permission for the legacy Agent owner to
+                # execute. Keep only a safe identity marker for quarantine.
+                claims.append({
+                    "_execution_owner": "legacy_blocked",
+                    "task_id": task.get("id"),
+                })
             elif item.get("owner_kind") == "runtime":
                 claims.append({
                     "_execution_owner": "runtime",
