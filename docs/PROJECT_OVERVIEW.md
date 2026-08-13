@@ -36,7 +36,8 @@ Agent Runtime 单一运行时收敛：
   v7 批量媒体 Catalog/Definition；普通对话只暴露标准 `generate_image`，历史 Catalog 不改写。
 - `backend/migrations/228_04_agent_runtime_media_action_bindings.sql` 与
   `backend/services/agent/runtime/media_task_port.py`：以 fenced ActionAttempt 原子准备 1～10 个既有
-  图片 Task、服务器定价、逐项积分交易和固定消息槽位；旧媒体 Worker discovery 排除 Runtime binding。
+  图片 Task、服务器定价、逐项积分交易和固定消息槽位；完整批次允许 sibling Provider fact 后的
+  幂等 readback，未完整批次保持失败关闭，旧媒体 Worker discovery 排除 Runtime binding。
 
 ## 核心功能
 - **多对话管理**：用户可创建多个AI对话，支持重命名、删除、搜索

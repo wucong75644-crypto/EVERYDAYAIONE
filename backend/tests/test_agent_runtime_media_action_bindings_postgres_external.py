@@ -19,6 +19,7 @@ from tests.test_agent_runtime_ar17_postgres_external import (
 pytestmark = pytest.mark.external
 MIGRATION = Path(__file__).resolve().parents[1] / "migrations/228_04_agent_runtime_media_action_bindings.sql"
 ROLLBACK = MIGRATION.parent / "rollback/228_04_agent_runtime_media_action_bindings_rollback.sql"
+PROVIDER_FACTS_MIGRATION = MIGRATION.parent / "227_04_agent_runtime_provider_submission_facts.sql"
 
 
 class AttemptFact(NamedTuple):
@@ -46,10 +47,8 @@ def _prepare_legacy_schema(database_url: str) -> None:
             ADD COLUMN batch_id TEXT,
             ADD COLUMN credit_transaction_id UUID REFERENCES credit_transactions(id),
             ADD COLUMN last_polled_at TIMESTAMPTZ;
-          CREATE TABLE agent_runtime_provider_submission_facts(
-            action_id UUID NOT NULL REFERENCES agent_actions(id)
-          );
         """)
+        connection.execute(PROVIDER_FACTS_MIGRATION.read_text(encoding="utf-8"))
         connection.execute(MIGRATION.read_text(encoding="utf-8"))
 
 

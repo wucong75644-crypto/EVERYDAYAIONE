@@ -273,6 +273,7 @@ DECLARE
     output_message messages%ROWTYPE;
     app_user users%ROWTYPE;
     action agent_actions%ROWTYPE;
+    current_attempt agent_action_attempts%ROWTYPE;
     pricing agent_runtime_media_pricing_facts%ROWTYPE;
     binding agent_runtime_media_action_bindings%ROWTYPE;
     manifest JSONB;
@@ -316,6 +317,7 @@ BEGIN
     PERFORM id FROM agent_actions WHERE model_step_id = step.id
      ORDER BY action_index, id FOR UPDATE;
     SELECT * INTO seed_action FROM agent_actions WHERE id = p_action_id;
+    SELECT * INTO current_attempt FROM agent_action_attempts WHERE id = p_attempt_id;
     SELECT * INTO command FROM agent_session_commands WHERE id = run.command_id FOR UPDATE;
     SELECT * INTO chat_task FROM tasks
      WHERE id = NULLIF(command.payload->>'task_id', '')::UUID FOR UPDATE;
@@ -328,8 +330,9 @@ BEGIN
     SELECT * INTO output_message FROM messages
      WHERE id = NULLIF(command.payload->>'output_message_id', '')::UUID;
     SELECT * INTO app_user FROM users WHERE id = session.user_id FOR UPDATE;
-
     SELECT count(*) INTO action_count FROM agent_actions WHERE model_step_id = step.id;
+    SELECT count(*) INTO existing_count FROM agent_runtime_media_action_bindings
+     WHERE model_step_id = step.id;
     IF session.id IS NULL OR run.id IS NULL OR step.id IS NULL OR command.id IS NULL
        OR chat_task.id IS NULL OR input_message.id IS NULL OR output_message.id IS NULL
        OR app_user.id IS NULL OR action_count NOT BETWEEN 1 AND 10
@@ -364,7 +367,8 @@ BEGIN
                OR batch_action.batch_hash IS DISTINCT FROM seed_action.batch_hash
                OR batch_action.tool_name <> 'generate_image'
                OR batch_action.action_index NOT BETWEEN 0 AND 9
-               OR batch_action.status NOT IN ('queued','running'))
+               OR (existing_count <> action_count
+                   AND batch_action.status NOT IN ('queued','running')))
        )
        OR EXISTS (
            SELECT 1 FROM generate_series(0, action_count - 1) expected(index)
@@ -378,22 +382,22 @@ BEGIN
            p_action_id, p_attempt_id, p_worker_id, p_execution_token,
            p_expected_attempt_version, p_request_hash
        )
-       OR EXISTS (
+       OR current_attempt.status NOT IN ('claimed','dispatching')
+       OR seed_action.status <> 'running'
+       OR (existing_count <> action_count AND EXISTS (
            SELECT 1 FROM agent_runtime_provider_submission_facts provider_fact
            JOIN agent_actions provider_action ON provider_action.id = provider_fact.action_id
            WHERE provider_action.model_step_id = step.id
-       ) THEN
+       )) THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_BATCH_SCOPE_INVALID'
             USING ERRCODE = '42501';
     END IF;
-
     manifest := _agent_runtime_media_input_manifest_v1(input_message.content);
     image_count := (manifest->>'image_count')::INTEGER;
     IF manifest->>'manifest_hash' IS DISTINCT FROM p_reference_manifest_hash THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_MANIFEST_CONFLICT'
             USING ERRCODE = '23505';
     END IF;
-
     FOR action IN SELECT * FROM agent_actions
       WHERE model_step_id = step.id ORDER BY action_index
     LOOP
@@ -484,9 +488,6 @@ BEGIN
             ), 'sha256'), 'hex'))
         );
     END LOOP;
-
-    SELECT count(*) INTO existing_count FROM agent_runtime_media_action_bindings
-     WHERE model_step_id = step.id;
     IF existing_count = action_count THEN
         FOR item IN SELECT value FROM jsonb_array_elements(items) LOOP
             SELECT * INTO binding FROM agent_runtime_media_action_bindings
@@ -528,7 +529,6 @@ BEGIN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PREPARE_CONFLICT'
             USING ERRCODE = '23505';
     END IF;
-
     UPDATE users SET credits = credits - total_credits, updated_at = clock_timestamp()
      WHERE id = session.user_id AND status::TEXT = 'active' AND credits >= total_credits
      RETURNING credits INTO final_balance;

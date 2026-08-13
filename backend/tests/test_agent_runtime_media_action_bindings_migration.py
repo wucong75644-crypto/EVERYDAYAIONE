@@ -58,6 +58,15 @@ def test_binding_contract_is_narrow_fenced_and_atomic() -> None:
     assert "TO everydayai_agent_runtime_worker" in sql
     assert "TO everydayai_projection_worker" in sql
     assert "GRANT SELECT" not in sql
+    scope_start = sql.index("SELECT count(*) INTO action_count")
+    initial_scope = sql[scope_start:sql.index("manifest :=", scope_start)]
+    provider_guard = "existing_count <> action_count AND EXISTS ("
+    assert provider_guard in initial_scope
+    assert initial_scope.index(provider_guard) < initial_scope.index(
+        "agent_runtime_provider_submission_facts",
+    )
+    assert "current_attempt.status NOT IN ('claimed','dispatching')" in initial_scope
+    assert "seed_action.status <> 'running'" in initial_scope
 
 
 def test_rollback_is_guarded_and_restores_worker_discovery() -> None:
