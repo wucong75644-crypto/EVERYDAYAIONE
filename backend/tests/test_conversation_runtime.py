@@ -136,6 +136,19 @@ def test_runtime_routes_worker_and_task_databases_by_scope():
     assert observer._post_handler_factory().db is handler
 
 
+def test_runtime_injects_runtime_action_executor_factory_into_chat_executor():
+    marker = object()
+    runtime = ConversationActorRuntime(
+        object(), object(), _Kernel(), worker_factory=_Worker,
+        runtime_action_executor_factory=lambda _db: marker,
+    )
+    databases = ActorTaskDatabases(object(), object(), object())
+
+    executor = runtime._create_executor(databases)
+
+    assert executor._runtime_action_executor_factory(databases.application) is marker
+
+
 def test_default_handler_database_uses_worker_role(monkeypatch):
     worker_db = object()
     runtime_db_called = False

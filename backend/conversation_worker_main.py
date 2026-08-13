@@ -26,12 +26,16 @@ async def _run() -> None:
     from core.redis import RedisClient
     from services.conversation_runtime import (
         ConversationActorRuntime,
+        build_actor_runtime_action_executor,
         create_kernel_manager,
     )
     from services.websocket_manager import ws_manager
 
     db = await get_async_worker_db()
-    runtime = ConversationActorRuntime(db, ws_manager, create_kernel_manager())
+    runtime = ConversationActorRuntime(
+        db, ws_manager, create_kernel_manager(),
+        runtime_action_executor_factory=build_actor_runtime_action_executor,
+    )
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
