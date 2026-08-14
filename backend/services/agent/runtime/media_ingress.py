@@ -161,7 +161,7 @@ class RuntimeMediaIngress:
             "p_items": encoded_items,
         }
         response = self._database.rpc(
-            "submit_agent_runtime_media_image_batch_v1", params,
+            "submit_agent_runtime_media_image_batch_v2", params,
         ).execute()
         if inspect.isawaitable(response):
             response = await response

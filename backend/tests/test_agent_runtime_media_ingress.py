@@ -161,7 +161,7 @@ async def test_image_batch_ingress_calls_one_atomic_narrow_rpc():
     assert len(receipt.receipts) == 2
     rpc.execute.assert_awaited_once()
     name, params = rpc.execute.await_args.args
-    assert name == "submit_agent_runtime_media_image_batch_v1"
+    assert name == "submit_agent_runtime_media_image_batch_v2"
     assert [item["task_id"] for item in params["p_items"]] == ["t1", "t2"]
 
 

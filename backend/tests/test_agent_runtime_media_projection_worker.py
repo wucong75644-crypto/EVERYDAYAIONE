@@ -279,6 +279,29 @@ async def test_prepared_video_uses_result_urls_and_video_persistence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prepared_image_batch_uses_task_image_index() -> None:
+    facts = _facts()
+    action_facts = facts["action_facts"]
+    assert isinstance(action_facts, dict)
+    binding = action_facts["binding"]
+    task = action_facts["task"]
+    assert isinstance(binding, dict)
+    assert isinstance(task, dict)
+    binding.pop("slot_id")
+    binding.pop("action_index")
+    task["image_index"] = 7
+    projection = _Projection("action.completed", facts)
+    persistence = _Persistence()
+
+    await RuntimeMediaProjectionWorker(projection, persistence).run_once()
+
+    request = persistence.requests[0]
+    assert request.slot_id == "action"
+    assert request.slot_index == 7
+    assert request.identity == "runtime-media:image:action:action"
+
+
+@pytest.mark.asyncio
 async def test_durable_slot_release_acks_only_after_redis_success() -> None:
     release_claim = _slot_release_claim()
     projection = _Projection(

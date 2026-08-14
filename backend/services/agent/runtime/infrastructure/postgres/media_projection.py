@@ -207,7 +207,9 @@ def asset_request_from_readback(
         ),
         slot_index=(
             _required_int(binding.get("action_index"), "action_index")
-            if binding.get("action_index") is not None else 0
+            if binding.get("action_index") is not None
+            else _required_int(task.get("image_index"), "image_index")
+            if task.get("image_index") is not None else 0
         ),
         source_url=urls[0],
         user_id=_required_text(binding.get("user_id"), "user_id"),

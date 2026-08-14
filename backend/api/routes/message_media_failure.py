@@ -17,6 +17,17 @@ class RuntimeMediaNotOwned(RuntimeError):
         super().__init__(f"RUNTIME_MEDIA_{outcome.upper()}")
 
 
+class RuntimeMediaPartialOwnership(AppException):
+    """A batch has mixed Runtime ownership and requires reconciliation."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="RUNTIME_MEDIA_PARTIAL_OWNERSHIP_RECONCILE_REQUIRED",
+            message="图片批次接管状态不一致，请先完成取消或对账",
+            status_code=409,
+        )
+
+
 async def fail_closed_prepared_media(
     *, db: Any, lifecycle: Any, task_ids: Sequence[str],
     task_payloads: Sequence[dict[str, Any]], message_id: str,
@@ -57,5 +68,6 @@ async def fail_closed_prepared_media(
 
 __all__ = [
     "RuntimeMediaNotOwned",
+    "RuntimeMediaPartialOwnership",
     "fail_closed_prepared_media",
 ]

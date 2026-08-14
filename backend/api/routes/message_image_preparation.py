@@ -19,6 +19,7 @@ from services.user_activity_service import record_user_activity
 
 from api.routes.message_media_failure import (
     RuntimeMediaNotOwned,
+    RuntimeMediaPartialOwnership,
     fail_closed_prepared_media,
 )
 
@@ -177,6 +178,8 @@ async def _submit_runtime_image_tasks(
             "request": task["request_params"],
         } for task_id, task in zip(task_ids, task_payloads)],
     )
+    if receipt.outcome == "partial_ownership":
+        raise RuntimeMediaPartialOwnership()
     if not receipt.runtime_owned:
         raise RuntimeMediaNotOwned(receipt.outcome)
     if not receipt.accepted:
