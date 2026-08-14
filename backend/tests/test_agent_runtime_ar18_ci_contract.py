@@ -47,6 +47,7 @@ def test_runtime_media_changes_trigger_the_disposable_lane() -> None:
         "frontend/src/components/chat/message/MessageMedia.tsx",
         "frontend/src/contexts/wsTaskMessageHandlers.ts",
         "frontend/src/schemas/messageProtocol.ts",
+        "frontend/src/services/messageSender.ts",
         "frontend/src/utils/runtimeMediaSlots.ts",
     )
     for path in required_paths:
@@ -60,6 +61,13 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         prefix = f"228_{sequence:02d}_agent_runtime_"
         assert f"backend/migrations/{prefix}" in RUNNER
         assert f"backend/migrations/rollback/{prefix}" in RUNNER
+    for identity in (
+        "228_06a_agent_runtime_media_projection_isolation",
+        "228_06b_agent_runtime_media_projection_readiness",
+        "228_06c_agent_runtime_media_slot_release",
+    ):
+        assert f"backend/migrations/{identity}.sql" in RUNNER
+        assert f"backend/migrations/rollback/{identity}_rollback.sql" in RUNNER
 
     for dependency in (
         "test_agent_runtime_media_manifest_readback_migration.py",
@@ -79,9 +87,14 @@ def test_runtime_media_unit_migration_and_external_contracts_are_wired() -> None
         "test_agent_runtime_media_action_bindings_postgres_external.py",
         "test_agent_runtime_kie_media_provider.py",
         "test_agent_runtime_media_projection_worker.py",
+        "test_agent_runtime_media_safe_download.py",
         "test_agent_runtime_media_projection_controls_postgres_external.py",
+        "test_agent_runtime_media_projection_review_postgres_external.py",
+        "test_agent_runtime_media_slot_release_postgres_external.py",
         "test_agent_runtime_media_controls_postgres_external.py",
         "test_agent_runtime_media_controls_concurrency_postgres_external.py",
+        "test_agent_runtime_media_formal_composition_postgres_external.py",
+        "test_agent_runtime_media_ecom_postgres_external.py",
         "test_agent_runtime_chat_media_owner.py",
         "test_media_tool_executor.py",
         "test_message_image_preparation.py",
@@ -103,6 +116,7 @@ def test_runtime_media_frontend_contracts_and_build_are_wired() -> None:
         "wsRuntimeMediaSlots.test.ts",
         "messageProtocol.test.ts",
         "runtimeMediaSlots.test.ts",
+        "messageSenderRetry.test.ts",
     ):
         assert test_name in WORKFLOW
     assert "npm run test:run --" in WORKFLOW

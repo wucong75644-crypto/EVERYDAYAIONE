@@ -13,6 +13,9 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/228_04_agent_runtime_media_action_bindings.sql
   backend/migrations/228_05_agent_runtime_media_manifest_readback.sql
   backend/migrations/228_06_agent_runtime_media_projection.sql
+  backend/migrations/228_06a_agent_runtime_media_projection_isolation.sql
+  backend/migrations/228_06b_agent_runtime_media_projection_readiness.sql
+  backend/migrations/228_06c_agent_runtime_media_slot_release.sql
   backend/migrations/228_07_agent_runtime_media_controls.sql
   backend/migrations/rollback/228_01_agent_runtime_action_hash_canonicalization_rollback.sql
   backend/migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql
@@ -20,6 +23,9 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/rollback/228_04_agent_runtime_media_action_bindings_rollback.sql
   backend/migrations/rollback/228_05_agent_runtime_media_manifest_readback_rollback.sql
   backend/migrations/rollback/228_06_agent_runtime_media_projection_rollback.sql
+  backend/migrations/rollback/228_06a_agent_runtime_media_projection_isolation_rollback.sql
+  backend/migrations/rollback/228_06b_agent_runtime_media_projection_readiness_rollback.sql
+  backend/migrations/rollback/228_06c_agent_runtime_media_slot_release_rollback.sql
   backend/migrations/rollback/228_07_agent_runtime_media_controls_rollback.sql
 )
 
@@ -33,6 +39,7 @@ MEDIA_UNIT_TESTS=(
   backend/tests/test_agent_runtime_media_ingress.py
   backend/tests/test_agent_runtime_media_production_composition.py
   backend/tests/test_agent_runtime_media_projection_worker.py
+  backend/tests/test_agent_runtime_media_safe_download.py
   backend/tests/test_agent_runtime_media_task_port.py
   backend/tests/test_file_upload_runtime_media.py
   backend/tests/test_media_tool_executor.py
@@ -61,11 +68,15 @@ MEDIA_EXTERNAL_TESTS=(
   backend/tests/test_agent_runtime_media_action_bindings_postgres_external.py
   backend/tests/test_agent_runtime_media_action_binding_serial_postgres_external.py
   backend/tests/test_agent_runtime_media_manifest_readback_postgres_external.py
+  backend/tests/test_agent_runtime_media_ecom_postgres_external.py
   backend/tests/test_agent_runtime_media_projection_postgres_external.py
   backend/tests/test_agent_runtime_media_projection_controls_postgres_external.py
+  backend/tests/test_agent_runtime_media_projection_review_postgres_external.py
+  backend/tests/test_agent_runtime_media_slot_release_postgres_external.py
   backend/tests/test_agent_runtime_media_controls_postgres_external.py
   backend/tests/test_agent_runtime_media_controls_concurrency_postgres_external.py
   backend/tests/test_agent_runtime_media_controls_composition_postgres_external.py
+  backend/tests/test_agent_runtime_media_formal_composition_postgres_external.py
 )
 
 require_files() {

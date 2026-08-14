@@ -41,6 +41,8 @@ on:
       - "frontend/package-lock.json"
       - "frontend/src/components/chat/media/AiImageGrid.tsx"
       - "frontend/src/components/chat/message/MessageMedia.tsx"
+      - "frontend/src/services/messageSender.ts"
+      - "frontend/src/services/__tests__/messageSenderRetry.test.ts"
       - "frontend/src/components/chat/__tests__/AiImageGrid.test.tsx"
       - "frontend/src/components/chat/__tests__/MessageMedia.test.tsx"
       - "frontend/src/components/chat/__tests__/RuntimeMediaMessageItem.test.tsx"
@@ -346,6 +348,7 @@ jobs:
             src/contexts/__tests__/wsRuntimeMediaSlots.test.ts \
             src/schemas/__tests__/messageProtocol.test.ts \
             src/utils/__tests__/runtimeMediaSlots.test.ts \
+            src/services/__tests__/messageSenderRetry.test.ts \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/runtime-media-frontend.log"
           npm run build \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/runtime-media-frontend-build.log"
