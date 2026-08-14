@@ -70,6 +70,11 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "228_08a_agent_runtime_media_model_video",
         "228_08b_agent_runtime_media_wecom_delivery",
         "228_08c_agent_runtime_media_worker_scope",
+        "228_08d_agent_runtime_media_atomic_image_batch",
+        "228_08e1_agent_runtime_media_model_video_fence",
+        "228_08e2_agent_runtime_media_model_video_projection",
+        "228_08f1_agent_runtime_media_prepared_image_batch_projection",
+        "228_08f2_agent_runtime_media_atomic_image_batch_ownership",
     ):
         assert f"backend/migrations/{identity}.sql" in RUNNER
         assert f"backend/migrations/rollback/{identity}_rollback.sql" in RUNNER
@@ -86,6 +91,15 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "test_agent_runtime_media_wecom_delivery_postgres_external.py",
         "test_agent_runtime_media_worker_scope_migration.py",
         "test_agent_runtime_media_worker_scope_postgres_external.py",
+        "test_agent_runtime_media_atomic_image_batch_migration.py",
+        "test_agent_runtime_media_atomic_image_batch_postgres_external.py",
+        "test_agent_runtime_media_model_video_projection_fence_migration.py",
+        "test_agent_runtime_media_model_video_projection_fence_postgres_external.py",
+        "test_agent_runtime_media_prepared_image_batch_projection_migration.py",
+        "test_agent_runtime_media_prepared_image_batch_projection_postgres_external.py",
+        "test_agent_runtime_media_atomic_image_batch_ownership_migration.py",
+        "test_agent_runtime_media_atomic_image_batch_ownership_postgres_external.py",
+        "test_background_task_worker_media_scope.py",
     ):
         assert dependency in RUNNER
 
