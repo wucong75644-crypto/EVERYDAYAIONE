@@ -265,8 +265,7 @@ def test_agent_runtime_only_installs_four_units_and_wrapper(tmp_path: Path) -> N
         DEPLOY / "sandbox-worker-cgroup-wrapper.sh"
     ).read_bytes()
     assert calls.read_text(encoding="utf-8").splitlines() == [
-        "is-active everydayai-agent-model-gateway",
-        "is-enabled everydayai-agent-model-gateway",
+        "show everydayai-agent-model-gateway -p LoadState --value",
         "daemon-reload",
     ]
     assert "未启停或启用服务" in result.stdout
@@ -312,8 +311,7 @@ def test_agent_runtime_only_rejects_different_target_before_writes(
     assert [path.name for path in systemd_dir.iterdir()] == [target.name]
     assert not libexec_dir.exists()
     assert calls.read_text(encoding="utf-8").splitlines() == [
-        "is-active everydayai-agent-model-gateway",
-        "is-enabled everydayai-agent-model-gateway",
+        "show everydayai-agent-model-gateway -p LoadState --value",
     ]
 
 

@@ -20,10 +20,10 @@ cleanup_manifest_temp() {
     fi
 }
 reject_legacy_model_gateway() {
-    local active enabled legacy_env
-    active=$(systemctl is-active everydayai-agent-model-gateway 2>/dev/null || true)
-    enabled=$(systemctl is-enabled everydayai-agent-model-gateway 2>/dev/null || true)
-    if [ "${active:-unknown}:${enabled:-unknown}" != inactive:not-found ]; then
+    local load_state legacy_env
+    load_state=$(systemctl show everydayai-agent-model-gateway \
+        -p LoadState --value 2>/dev/null || true)
+    if [ "${load_state:-unknown}" != not-found ]; then
         echo "❌ legacy Model Gateway 必须先完成受审查退役" >&2
         return 1
     fi

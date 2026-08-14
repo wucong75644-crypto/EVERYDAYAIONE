@@ -35,11 +35,10 @@ case "$scope" in
 esac
 
 legacy_service=everydayai-agent-model-gateway
-legacy_active=$(systemctl is-active "$legacy_service" 2>/dev/null || true)
-legacy_enabled=$(systemctl is-enabled "$legacy_service" 2>/dev/null || true)
-legacy_pair="${legacy_active:-unknown}:${legacy_enabled:-unknown}"
-if [ "$legacy_pair" != inactive:not-found ]; then
-    echo "❌ legacy Model Gateway 必须不存在，实际为 ${legacy_pair}" >&2
+legacy_load_state=$(systemctl show "$legacy_service" \
+    -p LoadState --value 2>/dev/null || true)
+if [ "${legacy_load_state:-unknown}" != not-found ]; then
+    echo "❌ legacy Model Gateway 必须不存在，实际 LoadState 为 ${legacy_load_state:-unknown}" >&2
     exit 1
 fi
 
