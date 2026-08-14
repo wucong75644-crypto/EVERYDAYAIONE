@@ -107,6 +107,8 @@ class MediaTaskPort(Protocol):
 
     async def read(
         self, attempt: ActionAttempt, *, kind: str,
+        owner_token: str | None = None,
+        expected_state_version: int | None = None,
     ) -> Mapping[str, object]: ...
 
 

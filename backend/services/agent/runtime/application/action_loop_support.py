@@ -49,6 +49,45 @@ def failure_result(receipt: ExecutionReceipt) -> Mapping[str, object]:
     }
 
 
+def specialist_finalizer(
+    facts: object, receipt: ExecutionReceipt,
+    external: Mapping[str, object],
+):
+    evidence = external.get("evidence")
+    if (
+        receipt.outcome in {ExecutionOutcome.COMPLETED, ExecutionOutcome.FAILED}
+        and external.get("provider") == "kie"
+        and isinstance(evidence, Mapping)
+        and evidence.get("cancel_unproven") is True
+        and hasattr(facts, "media_cancel_readback_terminal")
+    ):
+        return facts.media_cancel_readback_terminal
+    return facts.finalize
+
+
+async def persist_specialist_unknown(
+    facts: object, *, external: Mapping[str, object], attempt_id: str,
+    token: str, state_version: int, request_hash: str,
+    ambiguity_evidence: Mapping[str, object], next_reconcile_at: datetime,
+) -> None:
+    if external.get("provider") == "kie" and hasattr(
+        facts, "media_provider_unknown",
+    ):
+        await facts.media_provider_unknown(
+            attempt_id=attempt_id, execution_token=token,
+            expected_state_version=state_version, request_hash=request_hash,
+            provider_receipt=dict(external),
+            ambiguity_evidence=dict(ambiguity_evidence),
+            next_reconcile_at=next_reconcile_at,
+        )
+        return
+    await facts.provider_unknown(
+        attempt_id=attempt_id, execution_token=token,
+        request_hash=request_hash,
+        ambiguity_evidence=dict(ambiguity_evidence),
+    )
+
+
 def int_value(value: Mapping[str, object], field: str) -> int:
     item = value.get(field)
     if isinstance(item, bool) or not isinstance(item, int):
@@ -91,6 +130,20 @@ def reserved_amount(snapshot: ActionDispatchSnapshot) -> int:
 
 def next_reconcile_at(lease_seconds: int) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=max(60, lease_seconds))
+
+
+def provider_idempotency_key(
+    external: Mapping[str, object], fallback: str,
+) -> str:
+    evidence = external.get("evidence")
+    value = evidence.get("provider_idempotency_key") if isinstance(
+        evidence, Mapping
+    ) else None
+    if not isinstance(value, str):
+        value = external.get("provider_idempotency_key", fallback)
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 300:
+        raise RuntimeError("SPECIALIST_PROVIDER_IDEMPOTENCY_KEY_INVALID")
+    return value.strip()
 
 
 class ActionLease:

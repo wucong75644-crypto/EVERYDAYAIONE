@@ -22,7 +22,7 @@ def test_production_media_provider_requires_all_readiness_facts():
     registry = build_production_specialist_registry(
         _ports(media_provider_ready=True, media_credentials_ready=True,
                media_capability_enabled=True, kie_transport=object(),
-               kie_credentials=object()),
+               kie_credentials=object(), provider_facts=object()),
         facts=object(),
     )
     _, executor = registry.resolve("generate_image")

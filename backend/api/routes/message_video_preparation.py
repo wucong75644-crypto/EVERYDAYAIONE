@@ -90,9 +90,16 @@ async def prepare_and_start_video_generation(
         turn_id=preparation.turn_id, idempotency_key=request_id, kind="video",
         request=task_payload["request_params"], model_id=settings.model_id,
     )
-    if not receipt.accepted or not receipt.runtime_owned:
+    if not receipt.runtime_owned:
+        external_task_id = await handler.start(
+            message_id=preparation.output_message_id,
+            conversation_id=conversation_id, user_id=user_id,
+            content=body.content, params=params, metadata=metadata,
+        )
+    elif not receipt.accepted:
         raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
-    external_task_id = receipt.run_id or task_id
+    else:
+        external_task_id = receipt.run_id or task_id
     user_message = _user_message(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,

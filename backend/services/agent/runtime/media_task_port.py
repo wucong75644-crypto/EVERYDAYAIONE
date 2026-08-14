@@ -34,11 +34,18 @@ class RuntimeMediaTaskPort:
 
     async def read(
         self, attempt: ActionAttempt, *, kind: str,
+        owner_token: str | None = None,
+        expected_state_version: int | None = None,
     ) -> Mapping[str, object]:
         self._validate(attempt, kind)
+        params = self.attempt_params(attempt)
+        if owner_token is not None:
+            params["p_owner_token"] = owner_token
+        if expected_state_version is not None:
+            params["p_expected_attempt_version"] = expected_state_version
         response = await self._database.rpc(
             "read_agent_runtime_media_provider_request_v1",
-            self.attempt_params(attempt),
+            params,
         ).execute()
         result = _mapping(response.data, "MEDIA_PROVIDER_REQUEST_RESPONSE_INVALID")
         if result.get("outcome") != "found" or result.get("kind") != kind:

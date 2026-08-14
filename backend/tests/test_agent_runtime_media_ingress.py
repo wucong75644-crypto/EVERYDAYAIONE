@@ -9,6 +9,7 @@ from services.agent.runtime.media_composition import (
     build_runtime_media_composition,
 )
 from services.agent.runtime.media_ingress import RuntimeMediaIngress
+from api.routes.message_media_runtime import submit_runtime_media_ingress
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +79,25 @@ def test_enabled_media_composition_registers_both_actions():
             "generate_image", "generate_video",
             }
     assert composition.registry.specialist_facts is facts
+    _, executor = composition.registry.resolve("generate_image")
+    assert executor.provider.production_ready is False
+    assert executor.provider.recovery_ready is True
+
+
+def test_media_composition_executes_only_with_production_readiness():
+    database = SimpleNamespace(scope=DatabaseScope(
+        actor_user_id=None, org_id=None,
+        access_kind=DatabaseAccessKind.AGENT_RUNTIME,
+    ))
+    composition = build_runtime_media_composition(
+        database=database, transport=object(), enabled=True,
+        credentials=object(), provider_probe_passed=True,
+        production_ready=True,
+    )
+    assert composition.production_ready is True
+    assert composition.error_code is None
+    _, executor = composition.registry.resolve("generate_image")
+    assert executor.provider.production_ready is True
 
 
 @pytest.mark.asyncio
@@ -117,3 +137,24 @@ async def test_media_ingress_rejects_credit_and_internal_identity_arguments():
             request={"prompt": "x", "reserved_credits": 31},
             model_id="sora-2-text-to-video",
         )
+
+
+@pytest.mark.asyncio
+async def test_local_media_flags_off_return_legacy_ownership(monkeypatch):
+    monkeypatch.setattr(
+        "core.config.get_settings",
+        lambda: SimpleNamespace(
+            agent_runtime_media_enabled=True,
+            agent_runtime_media_provider_probe_passed=True,
+            agent_runtime_media_production_ready=False,
+        ),
+    )
+    receipt = await submit_runtime_media_ingress(
+        db=SimpleNamespace(table=lambda *_: pytest.fail("DB must not run")),
+        conversation_id="c", user_id="u", org_id="o", task_id="t",
+        input_message_id="i", output_message_id="m", turn_id=None,
+        idempotency_key="media:t", kind="image", request={"prompt": "x"},
+        model_id="google/nano-banana",
+    )
+    assert receipt.outcome == "media_not_ready"
+    assert receipt.runtime_owned is False

@@ -12,6 +12,18 @@ async def submit_runtime_media_ingress(
     request: Mapping[str, object], model_id: str,
 ):
     """Submit one prepared task through the narrow Runtime media RPC."""
+    from core.config import get_settings
+    from services.agent.runtime.media_ingress import (
+        RuntimeMediaIngress, RuntimeMediaIngressReceipt,
+    )
+
+    settings = get_settings()
+    if not all((
+        settings.agent_runtime_media_enabled,
+        settings.agent_runtime_media_provider_probe_passed,
+        settings.agent_runtime_media_production_ready,
+    )):
+        return RuntimeMediaIngressReceipt(outcome="media_not_ready")
     if not input_message_id:
         raise RuntimeError("RUNTIME_MEDIA_INPUT_MESSAGE_REQUIRED")
     row = db.table("conversations").select(
@@ -20,10 +32,6 @@ async def submit_runtime_media_ingress(
     conversation = getattr(row, "data", None)
     if not isinstance(conversation, dict):
         raise RuntimeError("RUNTIME_MEDIA_CONVERSATION_MISSING")
-    from core.config import get_settings
-    from services.agent.runtime.media_ingress import RuntimeMediaIngress
-
-    settings = get_settings()
     return await RuntimeMediaIngress(db).submit(
         conversation_id=conversation_id, org_id=org_id, user_id=user_id,
         scope_kind=str(conversation["scope_type"]),

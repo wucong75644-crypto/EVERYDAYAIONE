@@ -107,6 +107,13 @@ async def prepare_and_start_image_generation(
                 task_payloads=task_payloads, preparation=preparation,
                 model_id=settings["model_id"],
             )
+            if external_task_id is None:
+                external_task_id = await handler.start(
+                    message_id=preparation.output_message_id,
+                    conversation_id=conversation_id, user_id=user_id,
+                    content=body.content, params=_business_params(body),
+                    metadata=metadata,
+                )
     except Exception as error:
         from core.exceptions import AppException
         if isinstance(error, AppException) and error.code == "IMAGE_GENERATION_FAILED":
@@ -151,7 +158,7 @@ async def _submit_runtime_image_tasks(
     *, db: Any, conversation_id: str, user_id: str, org_id: str | None,
     request_id: str, task_ids: tuple[str, ...],
     task_payloads: list[dict[str, Any]], preparation: Any, model_id: str,
-) -> str:
+) -> str | None:
     from api.routes.message_media_runtime import submit_runtime_media_ingress
 
     external_task_ids = []
@@ -165,7 +172,11 @@ async def _submit_runtime_image_tasks(
             idempotency_key=f"{request_id}:{task_id}", kind="image",
             request=task["request_params"], model_id=model_id,
         )
-        if not receipt.accepted or not receipt.runtime_owned:
+        if not receipt.runtime_owned:
+            if external_task_ids:
+                raise RuntimeError("RUNTIME_MEDIA_PARTIAL_OWNERSHIP")
+            return None
+        if not receipt.accepted:
             raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
         external_task_ids.append(receipt.run_id or task_id)
     return external_task_ids[0] if external_task_ids else task_ids[0]

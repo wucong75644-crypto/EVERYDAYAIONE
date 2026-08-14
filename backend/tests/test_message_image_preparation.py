@@ -83,7 +83,12 @@ def _body(num_images: int = 2) -> GenerateRequest:
 
 
 @pytest.mark.asyncio
-async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
+@pytest.mark.parametrize(("runtime_owned", "legacy_calls"), (
+    (True, 0), (False, 1),
+))
+async def test_image_batch_routes_by_runtime_readiness(
+    monkeypatch, runtime_owned, legacy_calls,
+):
     _Lifecycle.instances.clear()
     monkeypatch.setattr(
         "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
@@ -100,7 +105,10 @@ async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
         lambda *args, **kwargs: None,
     )
     async def _ingress(**kwargs):
-        return SimpleNamespace(accepted=True, runtime_owned=True, run_id="run-1")
+        return SimpleNamespace(
+            accepted=runtime_owned, runtime_owned=runtime_owned,
+            run_id="run-1" if runtime_owned else None,
+        )
     monkeypatch.setattr(
         "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
     )
@@ -116,7 +124,7 @@ async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
     prepared = _Lifecycle.instances[0].calls[0]
     assert len(prepared["tasks"]) == 2
     assert {task["status"] for task in prepared["tasks"]} == {"preparing"}
-    assert handler.start.await_count == 0
+    assert handler.start.await_count == legacy_calls
     assert response.user_message.id == "input-1"
 
 

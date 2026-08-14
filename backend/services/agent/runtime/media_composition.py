@@ -12,6 +12,7 @@ from services.agent.runtime.executors.specialist_registry import (
     specialist_descriptor,
 )
 from services.agent.runtime.media_task_port import build_runtime_media_task_port
+from services.agent.runtime.provider_facts import PostgresProviderSubmissionFacts
 from services.agent.runtime.providers.kie_media import RuntimeKieMediaProvider
 
 
@@ -27,6 +28,7 @@ def build_runtime_media_composition(
     *, database: Any, transport: Any | None,
     credentials: Any | None = None, specialist_facts: object | None = None,
     enabled: bool = False, provider_probe_passed: bool = False,
+    production_ready: bool = False,
 ) -> RuntimeMediaComposition:
     """Register media only when flag, wiring and probe facts are explicit."""
     registry = ExecutorRegistry()
@@ -44,12 +46,15 @@ def build_runtime_media_composition(
     if database is None or transport is None or credentials is None:
         raise RuntimeError("RUNTIME_MEDIA_COMPOSITION_WIRING_REQUIRED")
     task_port = build_runtime_media_task_port(database)
+    provider_facts = PostgresProviderSubmissionFacts(database)
     for tool in sorted(MEDIA_TOOLS):
         descriptor = specialist_descriptor(tool)
         provider = RuntimeKieMediaProvider(
             transport, task_port=task_port, credentials=credentials,
             kind=tool.removeprefix("generate_"),
-            production_ready=provider_probe_passed,
+            production_ready=production_ready,
+            recovery_ready=provider_probe_passed,
+            facts=provider_facts,
         )
         registry.register(
             descriptor,
@@ -61,8 +66,9 @@ def build_runtime_media_composition(
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return RuntimeMediaComposition(
-        registry=registry, enabled=True, production_ready=False,
-        error_code="PRODUCTION_READINESS_DISABLED",
+        registry=registry, enabled=True, production_ready=production_ready,
+        error_code=(None if production_ready
+                    else "PRODUCTION_READINESS_DISABLED"),
     )
 
 

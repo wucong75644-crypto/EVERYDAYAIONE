@@ -429,4 +429,7 @@ def _build_runtime_media(*, database: Any, settings: Any,
         provider_probe_passed=bool(getattr(
             settings, "agent_runtime_media_provider_probe_passed", False,
         )),
+        production_ready=bool(getattr(
+            settings, "agent_runtime_media_production_ready", False,
+        )),
     )

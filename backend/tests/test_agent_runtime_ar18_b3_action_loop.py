@@ -100,13 +100,22 @@ class _Provider:
 
 class _Facts:
     def __init__(self):
-        self.finalized = self.unknown = None
+        self.finalized = self.unknown = self.accepted = None
 
     async def finalize(self, **kwargs):
         self.finalized = kwargs
 
+    async def media_cancel_readback_terminal(self, **kwargs):
+        self.finalized = {**kwargs, "media_cancel_readback": True}
+
     async def still_unknown(self, **kwargs):
         self.unknown = kwargs
+
+    async def media_cancel_unproven(self, **kwargs):
+        self.unknown = {**kwargs, "media_cancel_unproven": True}
+
+    async def still_accepted(self, **kwargs):
+        self.accepted = kwargs
 
 
 class _Resolver:
@@ -177,3 +186,149 @@ async def test_cancel_lease_loss_aborts_provider_and_never_finalizes(
     assert provider.cancel_calls == 1
     assert provider.cancel_aborted is True
     assert facts.finalized is facts.unknown is None
+
+
+class _SequenceRecovery:
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+
+    async def claim_action_reconciliation(self, **_kwargs):
+        return ActionRecoveryClaim(
+            outcome=RecoveryOutcome.CLAIMED,
+            operation=ActionRecoveryOperation.CANCEL,
+            parent_run_id=RUN_ID, parent_run_status="cancelled",
+            parent_run_state_version=7, attempt_id=ATTEMPT_ID,
+            execution_token=TOKEN,
+            state_version=self.snapshot.attempt["state_version"],
+            lease_expires_at=NOW + timedelta(minutes=5),
+            snapshot=self.snapshot,
+        )
+
+
+class _KieReadbackProvider:
+    def __init__(self, state):
+        self.state = state
+        self.cancel_calls = self.reconcile_calls = self.submit_calls = 0
+
+    async def submit(self, *_args, **_kwargs):
+        self.submit_calls += 1
+        raise AssertionError("cancel recovery must never redispatch")
+
+    async def cancel(self, attempt, receipt):
+        self.cancel_calls += 1
+        evidence = {
+            **dict(receipt["evidence"]), "error_code": "CANCEL_UNPROVEN",
+            "cancel_unproven": True, "provider_fact_state": "cancel_requested",
+            "state_version": 3,
+        }
+        return ProviderReceipt(
+            state=ProviderState.UNKNOWN, provider="kie",
+            request_hash=attempt.request_hash,
+            provider_task_ref=receipt["provider_task_ref"], evidence=evidence,
+        )
+
+    async def reconcile(self, attempt, receipt):
+        self.reconcile_calls += 1
+        returned_state = (
+            ProviderState.UNKNOWN
+            if self.state is ProviderState.ACCEPTED else self.state
+        )
+        evidence = {
+            **dict(receipt["evidence"]), "provider_state": self.state.value,
+            "state_version": 4,
+        }
+        if self.state is ProviderState.ACCEPTED:
+            evidence["error_code"] = "KIE_CANCEL_UNPROVEN_PROVIDER_PENDING"
+        if self.state is ProviderState.CANCELLED:
+            evidence["cancel_confirmed"] = True
+        return ProviderReceipt(
+            state=returned_state, provider="kie",
+            request_hash=attempt.request_hash,
+            provider_task_ref=receipt["provider_task_ref"],
+            result=(
+                {"image_urls": ["https://cdn.example/result.png"]}
+                if self.state is ProviderState.COMPLETED else {}
+            ),
+            evidence=evidence,
+        )
+
+
+class _SequenceResolver(_Resolver):
+    def resolve(self, snapshot):
+        raw = snapshot.attempt
+        status = ActionAttemptStatus(raw["status"])
+        attempt = ActionAttempt(
+            attempt_id=ActionAttemptId(ATTEMPT_ID), action_id=ActionId(ACTION_ID),
+            scope=RuntimeScope(kind=ScopeKind.USER,scope_id="user-1",user_id="user-1",org_id="org-1"),
+            attempt_number=1,status=status,worker_id="b3",
+            idempotency_key=IdempotencyKey("b3-attempt"),request_hash="a"*64,
+            lease=Lease(fencing_token=FencingToken("55555555-5555-5555-5555-555555555555"),expires_at=NOW+timedelta(minutes=5)),
+            started_at=NOW,accepted_at=NOW,session_id="session-1",run_id=RUN_ID,
+            state_version=raw["state_version"],
+            external_receipt=raw["external_receipt"],
+            ambiguity_evidence=raw.get("ambiguity_evidence", {}),
+        )
+        return type("Resolved", (), {
+            "attempt": attempt, "executor": self.executor,
+            "descriptor": type("Descriptor", (), {
+                "executor_type": "runtime_media_generation:generate_image",
+                "revision": 1,
+            })(), "request": {},
+        })()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [
+    ProviderState.COMPLETED, ProviderState.FAILED,
+    ProviderState.CANCELLED, ProviderState.ACCEPTED,
+])
+async def test_cancel_unproven_switches_to_readback_and_converges_without_submit(
+    terminal,
+) -> None:
+    provider = _KieReadbackProvider(terminal)
+    facts, actions = _Facts(), _Actions()
+    initial_receipt = {
+        "provider": "kie", "provider_task_ref": "kie-task-1",
+        "evidence": {
+            "submission_id": "provider-fact-1", "state_version": 2,
+            "provider_fact_state": "submitted",
+            "provider_request_hash": "b" * 64,
+            "provider_idempotency_key": "c" * 64,
+        },
+    }
+    accepted = ActionDispatchSnapshot(
+        attempt={**SNAPSHOT.attempt, "external_receipt": initial_receipt},
+        action=SNAPSHOT.action,
+    )
+    recovery = _SequenceRecovery(accepted)
+    resolver = _SequenceResolver(provider, facts)
+    driver = ActionLoopDriver(
+        recovery_repository=recovery, action_repository=actions,
+        authorization_repository=object(), resolver=resolver, worker_id="b3",
+        lease_seconds=120, renew_interval=60, specialist_facts=facts,
+    )
+    assert await driver.reconcile_once()
+    assert facts.unknown["provider_receipt"]["evidence"][
+        "cancel_unproven"
+    ] is True
+    assert facts.unknown["media_cancel_unproven"] is True
+    recovery.snapshot = ActionDispatchSnapshot(
+        attempt={
+            **accepted.attempt, "status": "unknown", "state_version": 5,
+            "external_receipt": facts.unknown["provider_receipt"],
+            "ambiguity_evidence": facts.unknown["ambiguity_evidence"],
+        },
+        action={**accepted.action, "status": "unknown"},
+    )
+    assert await driver.reconcile_once()
+    assert provider.cancel_calls == provider.reconcile_calls == 1
+    assert provider.submit_calls == 0
+    if terminal is ProviderState.ACCEPTED:
+        assert facts.unknown["ambiguity_evidence"]["evidence"][
+            "error_code"
+        ] == "KIE_CANCEL_UNPROVEN_PROVIDER_PENDING"
+        assert facts.finalized is None
+    else:
+        assert facts.finalized["terminal_state"] == terminal.value
+        if terminal in {ProviderState.COMPLETED, ProviderState.FAILED}:
+            assert facts.finalized["media_cancel_readback"] is True

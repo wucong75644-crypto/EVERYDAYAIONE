@@ -163,7 +163,12 @@ def test_video_settings_resolve_model_duration_and_cost(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_video_task_is_prepared_before_handler_start(monkeypatch):
+@pytest.mark.parametrize(("runtime_owned", "legacy_calls"), (
+    (True, 0), (False, 1),
+))
+async def test_video_task_routes_by_runtime_readiness(
+    monkeypatch, runtime_owned, legacy_calls,
+):
     _Lifecycle.instances.clear()
     monkeypatch.setattr("api.routes.message_video_preparation.GenerationLifecycle", _Lifecycle)
     monkeypatch.setattr(
@@ -175,7 +180,10 @@ async def test_video_task_is_prepared_before_handler_start(monkeypatch):
         lambda *args, **kwargs: None,
     )
     async def _ingress(**kwargs):
-        return SimpleNamespace(accepted=True, runtime_owned=True, run_id="run-1")
+        return SimpleNamespace(
+            accepted=runtime_owned, runtime_owned=runtime_owned,
+            run_id="run-1" if runtime_owned else None,
+        )
     monkeypatch.setattr(
         "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
     )
@@ -194,7 +202,7 @@ async def test_video_task_is_prepared_before_handler_start(monkeypatch):
 
     task = _Lifecycle.instances[0].calls[0]["tasks"][0]
     assert task["status"] == "preparing"
-    assert handler.start.await_count == 0
+    assert handler.start.await_count == legacy_calls
     assert response.user_message.id == "input-1"
 
 

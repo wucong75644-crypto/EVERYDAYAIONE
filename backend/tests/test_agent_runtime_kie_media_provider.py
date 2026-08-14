@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,10 @@ from services.agent.runtime.executors.specialist_contracts import (
 )
 from services.agent.runtime.providers.kie_media import RuntimeKieMediaProvider
 from services.agent.runtime.providers.kie_transport import KieHttpResponse
+from services.agent.runtime.application.action_loop import ActionLoopDriver
+from services.agent.runtime.ports.executor import (
+    ExecutionOutcome, ExecutionReceipt,
+)
 
 
 class FakeTransport:
@@ -45,7 +50,11 @@ class FakeTaskPort:
         self.calls.append("prepare")
         return self._facts(kind)
 
-    async def read(self, attempt, *, kind):
+    async def read(
+        self, attempt, *, kind, owner_token=None,
+        expected_state_version=None,
+    ):
+        del owner_token, expected_state_version
         self.calls.append("read")
         return self._facts(kind)
 
@@ -69,27 +78,123 @@ class FakeCredentials:
     def __init__(self, error: Exception | None = None):
         self.error = error
         self.hashes: list[str] = []
+        self.ownership: list[tuple[object, object]] = []
 
-    async def api_key(self, attempt, *, provider_request_hash):
+    async def api_key(
+        self, attempt, *, provider_request_hash, owner_token=None,
+        expected_state_version=None,
+    ):
         self.hashes.append(provider_request_hash)
+        self.ownership.append((owner_token, expected_state_version))
         if self.error:
             raise self.error
         return "fixture-key"
+
+
+class FakeProviderFacts:
+    def __init__(self):
+        self.version = 0
+        self.calls: list[str] = []
+
+    def _result(self, state, *, provider_task_ref=None):
+        self.version += 1
+        return {
+            "outcome": state, "submission_id": "submission-1",
+            "state": state, "state_version": self.version,
+            "provider_task_ref": provider_task_ref,
+        }
+
+    async def create(self, _context):
+        self.calls.append("create")
+        return {
+            "outcome": "created", "submission_id": "submission-1",
+            "state": "submission_pending", "state_version": self.version,
+        }
+
+    async def read(self, _context, submission_id):
+        self.calls.append("read")
+        return {
+            "outcome": "readback", "submission_id": submission_id,
+            "state": "submitted", "state_version": self.version,
+            "provider_task_ref": "kie-1",
+        }
+
+    async def submitted(self, **params):
+        self.calls.append("submitted")
+        return self._result(
+            "submitted", provider_task_ref=params["provider_task_ref"],
+        )
+
+    async def unknown(self, **_params):
+        self.calls.append("unknown")
+        return self._result("unknown")
+
+    async def rejected(self, **_params):
+        self.calls.append("rejected")
+        return self._result("failed")
+
+    async def request_cancel(self, **params):
+        self.calls.append("request_cancel")
+        self.version = params["expected_state_version"]
+        return self._result("cancel_requested", provider_task_ref="kie-1")
+
+    async def readback(self, **params):
+        self.calls.append("readback")
+        self.version = params["expected_state_version"]
+        state = {
+            "completed": "readback_confirmed",
+            "cancelled": "cancelled",
+        }.get(params["provider_state"], params["provider_state"])
+        return self._result(state, provider_task_ref="kie-1")
+
+
+class ExistingProviderFacts(FakeProviderFacts):
+    async def create(self, _context):
+        self.calls.append("create")
+        return {
+            "outcome": "already_applied", "submission_id": "submission-1",
+            "state": "submitted", "state_version": 8,
+            "provider_task_ref": "kie-existing",
+        }
 
 
 def attempt():
     return SimpleNamespace(
         action_id="action-1", attempt_id="attempt-1",
         request_hash="a" * 64, idempotency_key="runtime-idempotency-1",
+        run_id="run-1", session_id="session-1",
+        scope=SimpleNamespace(
+            kind=SimpleNamespace(value="user"), scope_id="user-1",
+            user_id="user-1", org_id="org-1",
+        ),
+        lease=SimpleNamespace(fencing_token="execution-token"),
     )
 
 
-def provider(transport, *, credentials=None, task_port=None):
+def provider(transport, *, credentials=None, task_port=None, facts=None):
     return RuntimeKieMediaProvider(
         transport, task_port=task_port or FakeTaskPort(),
         credentials=credentials or FakeCredentials(), kind="image",
-        production_ready=True,
+        production_ready=True, facts=facts or FakeProviderFacts(),
     )
+
+
+def provider_receipt(*, cancel_unproven=False):
+    evidence = {
+        "submission_id": "submission-1", "state_version": 1,
+        "provider_fact_state": "submitted",
+        "provider_request_hash": "b" * 64,
+        "provider_idempotency_key": "c" * 64,
+    }
+    if cancel_unproven:
+        evidence.update({
+            "cancel_unproven": True, "error_code": "CANCEL_UNPROVEN",
+        })
+    return {
+        "provider": "kie", "provider_task_ref": "kie-1",
+        "evidence": evidence, "reconciliation_token": "reconcile-token",
+        "reconciliation_state_version": 4,
+    }
 
 
 @pytest.mark.asyncio
@@ -113,6 +218,7 @@ async def test_submit_is_single_shot_and_uses_only_server_provider_body():
     ))
     assert credentials.hashes == ["b" * 64]
     assert receipt.evidence["provider_request_hash"] == "b" * 64
+    assert receipt.evidence["provider_idempotency_key"] == "ignored"
 
 
 @pytest.mark.asyncio
@@ -125,6 +231,21 @@ async def test_submit_timeout_is_unknown_and_never_retries():
     assert receipt.state is ProviderState.UNKNOWN
     assert receipt.evidence["error_code"] == "KIE_SUBMIT_RESULT_UNKNOWN"
     assert [name for name, _ in transport.calls] == ["submit"]
+
+
+@pytest.mark.asyncio
+async def test_existing_submission_fact_never_redispatches_provider():
+    transport = FakeTransport()
+    receipt = await provider(
+        transport, facts=ExistingProviderFacts(),
+    ).submit(attempt(), {}, idempotency_key="one-shot")
+
+    assert receipt.state is ProviderState.UNKNOWN
+    assert receipt.provider_task_ref == "kie-existing"
+    assert receipt.evidence["error_code"] == (
+        "KIE_SUBMISSION_FACT_REQUIRES_READBACK"
+    )
+    assert transport.calls == []
 
 
 @pytest.mark.asyncio
@@ -159,13 +280,15 @@ async def test_reconcile_maps_only_kie_readback_states(
     transport = FakeTransport(query=KieHttpResponse(
         status_code=200, payload={"code": 200, "data": data},
     ))
+    credentials = FakeCredentials()
 
-    receipt = await provider(transport).reconcile(
-        attempt(), {"provider_task_ref": "kie-1"},
+    receipt = await provider(transport, credentials=credentials).reconcile(
+        attempt(), provider_receipt(),
     )
 
     assert receipt.state is expected
     assert [name for name, _ in transport.calls] == ["query"]
+    assert credentials.ownership == [("reconcile-token", 4)]
     if expected is ProviderState.COMPLETED:
         # 228_06 projection consumes image_urls/urls/images from Action result.
         assert receipt.result["image_urls"] == [
@@ -186,7 +309,7 @@ async def test_success_with_invalid_result_urls_stays_unknown():
         },
     ))
     receipt = await provider(transport).reconcile(
-        attempt(), {"provider_task_ref": "kie-1"},
+        attempt(), provider_receipt(),
     )
     assert receipt.state is ProviderState.UNKNOWN
     assert receipt.evidence["error_code"] == "KIE_RESULT_URLS_AMBIGUOUS"
@@ -195,12 +318,52 @@ async def test_success_with_invalid_result_urls_stays_unknown():
 @pytest.mark.asyncio
 async def test_cancel_requires_explicit_provider_confirmation():
     transport = FakeTransport()
-    receipt = await provider(transport).cancel(
-        attempt(), {"provider_task_ref": "kie-1"},
+    facts = FakeProviderFacts()
+    receipt = await provider(transport, facts=facts).cancel(
+        attempt(), provider_receipt(),
     )
     assert receipt.state is ProviderState.UNKNOWN
     assert receipt.evidence["error_code"] == "CANCEL_UNPROVEN"
+    assert receipt.evidence["cancel_unproven"] is True
+    assert receipt.evidence["provider_request_hash"] == "b" * 64
+    assert receipt.evidence["provider_idempotency_key"] == "c" * 64
+    assert facts.calls == ["read", "request_cancel"]
     assert transport.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("state", "expected"), [
+    ("success", ProviderState.COMPLETED),
+    ("fail", ProviderState.FAILED),
+    ("waiting", ProviderState.UNKNOWN),
+])
+async def test_cancel_unproven_next_operation_is_record_info_readback(
+    state, expected,
+):
+    result_json = (
+        '{"resultUrls":["https://cdn.example/result.png"]}'
+        if state == "success" else None
+    )
+    data = {"taskId": "kie-1", "state": state}
+    if result_json:
+        data["resultJson"] = result_json
+    transport = FakeTransport(query=KieHttpResponse(
+        status_code=200, payload={"code": 200, "data": data},
+    ))
+    facts = FakeProviderFacts()
+    kie = provider(transport, facts=facts)
+    cancelled = await kie.cancel(attempt(), provider_receipt())
+    readback_input = {
+        **receipt_facts(cancelled),
+        "reconciliation_token": "reconcile-token",
+        "reconciliation_state_version": 5,
+    }
+    readback = await kie.reconcile(attempt(), readback_input)
+
+    assert readback.state is expected
+    assert [name for name, _ in transport.calls] == ["query"]
+    assert facts.calls == ["read", "request_cancel", "read", "readback"]
+    assert readback.evidence["cancel_unproven"] is True
 
 
 @pytest.mark.asyncio
@@ -212,3 +375,86 @@ async def test_missing_credential_fails_closed_before_network():
     assert receipt.state is ProviderState.FAILED
     assert receipt.evidence["error_code"] == "KIE_MEDIA_CONFIGURATION_UNAVAILABLE"
     assert transport.calls == []
+
+
+class _ReconciliationFacts:
+    def __init__(self):
+        self.accepted = self.unknown = self.dispatched_unknown = None
+
+    async def still_accepted(self, **kwargs):
+        self.accepted = kwargs
+
+    async def still_unknown(self, **kwargs):
+        self.unknown = kwargs
+
+    async def media_provider_unknown(self, **kwargs):
+        self.dispatched_unknown = kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", (
+    ExecutionOutcome.ACCEPTED, ExecutionOutcome.UNKNOWN,
+))
+async def test_nonterminal_readback_schedules_reconcile_without_redispatch(
+    outcome,
+):
+    facts = _ReconciliationFacts()
+    driver = ActionLoopDriver(
+        recovery_repository=object(), action_repository=object(),
+        authorization_repository=object(), resolver=object(), worker_id="media",
+        specialist_facts=facts,
+    )
+    receipt = ExecutionReceipt(
+        outcome=outcome, request_hash="a" * 64,
+        external_receipt=(
+            {"provider_task_ref": "kie-1"}
+            if outcome is ExecutionOutcome.ACCEPTED else {}
+        ),
+        ambiguity_evidence=(
+            {"error_code": "STILL_UNKNOWN"}
+            if outcome is ExecutionOutcome.UNKNOWN else {}
+        ),
+    )
+    persisted = await driver._persist_specialist_nonterminal(
+        receipt, attempt_id="attempt", token="token", state_version=7,
+        request_hash="a" * 64, reconciliation=True, specialist=True,
+    )
+    call = facts.accepted or facts.unknown
+    assert persisted is True
+    assert call["next_reconcile_at"].tzinfo is not None
+    assert call["next_reconcile_at"] > datetime.now(timezone.utc)
+    assert (facts.accepted is not None) is (
+        outcome is ExecutionOutcome.ACCEPTED
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unknown_persists_provider_fact_identity():
+    facts = _ReconciliationFacts()
+    driver = ActionLoopDriver(
+        recovery_repository=object(), action_repository=object(),
+        authorization_repository=object(), resolver=object(), worker_id="media",
+        specialist_facts=facts,
+    )
+    external = {
+        "provider": "kie", "provider_task_ref": None,
+        "evidence": {
+            "submission_id": "submission-1", "state_version": 1,
+            "provider_request_hash": "b" * 64,
+            "provider_idempotency_key": "c" * 64,
+        },
+    }
+    receipt = ExecutionReceipt(
+        outcome=ExecutionOutcome.UNKNOWN, request_hash="a" * 64,
+        external_receipt=external,
+        ambiguity_evidence={"error_code": "KIE_SUBMIT_RESULT_UNKNOWN"},
+    )
+    assert await driver._persist_specialist_nonterminal(
+        receipt, attempt_id="attempt", token="token", state_version=7,
+        request_hash="a" * 64, reconciliation=False, specialist=True,
+    )
+    assert facts.dispatched_unknown["provider_receipt"] == external
+    assert facts.dispatched_unknown["expected_state_version"] == 7
+    assert facts.dispatched_unknown["next_reconcile_at"] > datetime.now(
+        timezone.utc,
+    )

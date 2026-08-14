@@ -3,18 +3,116 @@ CREATE TABLE agent_runtime_prepared_media_video_pricing_facts (pricing_revision 
 WITH facts(model_id,duration_seconds,user_credits,requires_image_input) AS (VALUES ('sora-2-text-to-video',10,31,FALSE), ('sora-2-text-to-video',15,46,FALSE), ('sora-2-image-to-video',10,31,TRUE), ('sora-2-image-to-video',15,46,TRUE), ('sora-2-pro-storyboard',10,91,FALSE), ('sora-2-pro-storyboard',15,136,FALSE), ('sora-2-pro-storyboard',25,226,FALSE) ) INSERT INTO agent_runtime_prepared_media_video_pricing_facts(pricing_revision,model_id,duration_seconds,user_credits, requires_image_input,active,fact_hash ) SELECT 'kie-video-pricing-v1',model_id,duration_seconds,user_credits, requires_image_input,TRUE,encode(digest(convert_to(jsonb_build_object('pricing_revision','kie-video-pricing-v1','model_id',model_id, 'duration_seconds',duration_seconds,'user_credits',user_credits, 'requires_image_input',requires_image_input,'active',TRUE )::TEXT,'UTF8'),'sha256'),'hex') FROM facts;
 CREATE TRIGGER agent_runtime_prepared_media_video_pricing_immutable BEFORE INSERT OR UPDATE OR DELETE ON agent_runtime_prepared_media_video_pricing_facts FOR EACH ROW EXECUTE FUNCTION _agent_runtime_media_pricing_immutable_v1();
 CREATE TABLE agent_runtime_prepared_media_action_bindings (action_id UUID PRIMARY KEY REFERENCES agent_actions(id) ON DELETE RESTRICT, task_id UUID NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE RESTRICT, session_id UUID NOT NULL REFERENCES agent_runtime_sessions(id) ON DELETE RESTRICT, run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT, model_step_id UUID NOT NULL REFERENCES agent_model_steps(id) ON DELETE RESTRICT, org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT, user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT, conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE RESTRICT, input_message_id UUID NOT NULL REFERENCES messages(id) ON DELETE RESTRICT, output_message_id UUID NOT NULL REFERENCES messages(id) ON DELETE RESTRICT, media_kind TEXT NOT NULL CHECK (media_kind IN ('image','video')), action_request_hash TEXT NOT NULL CHECK (action_request_hash ~ '^[0-9a-f]{64}$'), task_request_hash TEXT NOT NULL CHECK (task_request_hash ~ '^[0-9a-f]{64}$'), reference_manifest_hash TEXT NOT NULL CHECK (reference_manifest_hash ~ '^[0-9a-f]{64}$'), provider_request_hash TEXT NOT NULL CHECK (provider_request_hash ~ '^[0-9a-f]{64}$'), pricing_revision TEXT NOT NULL, pricing_model_id TEXT NOT NULL, pricing_key TEXT NOT NULL, pricing_fact_hash TEXT NOT NULL CHECK (pricing_fact_hash ~ '^[0-9a-f]{64}$'), unit_credits INTEGER NOT NULL CHECK (unit_credits > 0), credit_transaction_id UUID NOT NULL UNIQUE REFERENCES credit_transactions(id) ON DELETE RESTRICT, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp() );
+ALTER TABLE agent_runtime_media_action_bindings
+    ADD COLUMN provider_request_canonical_hash TEXT
+    CHECK (provider_request_canonical_hash IS NULL OR provider_request_canonical_hash ~ '^[0-9a-f]{64}$');
+CREATE TABLE agent_runtime_media_owner_readiness (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    runtime_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    provider_probe_passed BOOLEAN NOT NULL DEFAULT FALSE,
+    production_ready BOOLEAN NOT NULL DEFAULT FALSE,
+    projection_owner_ready BOOLEAN NOT NULL DEFAULT FALSE,
+    projection_worker_id TEXT,
+    projection_revision TEXT,
+    projection_heartbeat_at TIMESTAMPTZ,
+    projection_heartbeat_ttl_seconds INTEGER NOT NULL DEFAULT 30
+        CHECK (projection_heartbeat_ttl_seconds BETWEEN 5 AND 300),
+    state_version BIGINT NOT NULL DEFAULT 0 CHECK (state_version >= 0),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CHECK (NOT production_ready OR (runtime_enabled AND provider_probe_passed)),
+    CHECK (NOT projection_owner_ready OR (
+        NULLIF(btrim(projection_worker_id),'') IS NOT NULL
+        AND NULLIF(btrim(projection_revision),'') IS NOT NULL
+        AND projection_heartbeat_at IS NOT NULL
+    ))
+);
+INSERT INTO agent_runtime_media_owner_readiness(singleton) VALUES(TRUE);
 ALTER TABLE agent_runtime_prepared_media_video_pricing_facts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_runtime_prepared_media_action_bindings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_runtime_media_owner_readiness ENABLE ROW LEVEL SECURITY;
 CREATE POLICY agent_runtime_prepared_media_video_pricing_owner_all ON agent_runtime_prepared_media_video_pricing_facts FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
 CREATE POLICY agent_runtime_prepared_media_bindings_owner_all ON agent_runtime_prepared_media_action_bindings FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
+CREATE POLICY agent_runtime_media_owner_readiness_owner_all ON agent_runtime_media_owner_readiness FOR ALL TO everydayai_owner USING (TRUE) WITH CHECK (TRUE);
 ALTER TABLE agent_runtime_prepared_media_video_pricing_facts FORCE ROW LEVEL SECURITY;
 ALTER TABLE agent_runtime_prepared_media_action_bindings FORCE ROW LEVEL SECURITY;
+ALTER TABLE agent_runtime_media_owner_readiness FORCE ROW LEVEL SECURITY;
+CREATE FUNCTION _agent_runtime_media_owner_readiness_v1()
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+DECLARE control agent_runtime_media_owner_readiness%ROWTYPE;
+projection_heartbeat_fresh BOOLEAN;
+BEGIN
+SELECT * INTO control FROM agent_runtime_media_owner_readiness WHERE singleton;
+IF control.singleton IS NULL THEN
+    RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_READINESS_MISSING' USING ERRCODE='55000';
+END IF;
+projection_heartbeat_fresh:=(
+    control.projection_owner_ready
+    AND control.projection_heartbeat_at IS NOT NULL
+    AND control.projection_heartbeat_at >= statement_timestamp()
+        - make_interval(secs=>control.projection_heartbeat_ttl_seconds)
+);
+RETURN jsonb_build_object(
+    'runtime_enabled',control.runtime_enabled,
+    'provider_probe_passed',control.provider_probe_passed,
+    'production_ready',control.production_ready,
+    'projection_owner_ready',control.projection_owner_ready,
+    'projection_worker_id',control.projection_worker_id,
+    'projection_revision',control.projection_revision,
+    'projection_heartbeat_at',control.projection_heartbeat_at,
+    'projection_heartbeat_ttl_seconds',control.projection_heartbeat_ttl_seconds,
+    'projection_heartbeat_fresh',projection_heartbeat_fresh,
+    'ready',(control.runtime_enabled AND control.provider_probe_passed
+        AND control.production_ready AND projection_heartbeat_fresh),
+    'state_version',control.state_version
+);
+END;
+$$;
+CREATE FUNCTION record_agent_runtime_media_projection_readiness_v1(
+    p_worker_id TEXT,
+    p_projection_revision TEXT,
+    p_ready BOOLEAN,
+    p_heartbeat_ttl_seconds INTEGER DEFAULT 30
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+BEGIN
+    IF session_user<>'everydayai_projection_worker'
+       OR current_setting('app.access_kind',TRUE) IS DISTINCT FROM 'projection' THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROJECTION_SCOPE_REQUIRED'
+            USING ERRCODE='42501';
+    END IF;
+    IF NULLIF(btrim(p_worker_id),'') IS NULL
+       OR length(btrim(p_worker_id))>128
+       OR NULLIF(btrim(p_projection_revision),'') IS NULL
+       OR length(btrim(p_projection_revision))>128
+       OR p_ready IS NULL
+       OR p_heartbeat_ttl_seconds NOT BETWEEN 5 AND 300 THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROJECTION_READINESS_INVALID'
+            USING ERRCODE='22023';
+    END IF;
+    UPDATE agent_runtime_media_owner_readiness
+       SET projection_owner_ready=p_ready,
+           projection_worker_id=btrim(p_worker_id),
+           projection_revision=btrim(p_projection_revision),
+           projection_heartbeat_at=statement_timestamp(),
+           projection_heartbeat_ttl_seconds=p_heartbeat_ttl_seconds,
+           state_version=state_version+1,
+           updated_at=clock_timestamp()
+     WHERE singleton;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_READINESS_MISSING'
+            USING ERRCODE='55000';
+    END IF;
+    RETURN _agent_runtime_media_owner_readiness_v1();
+END;
+$$;
 CREATE FUNCTION _agent_runtime_media_attempt_context_v2(p_action_id UUID,p_attempt_id UUID,p_worker_id TEXT,p_owner_token UUID, p_expected_attempt_version BIGINT,p_request_hash TEXT ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ DECLARE attempt agent_action_attempts%ROWTYPE;
 action agent_actions%ROWTYPE;
 runtime_session agent_runtime_sessions%ROWTYPE;
 runtime_run agent_runs%ROWTYPE;
 intent agent_action_dispatch_intents%ROWTYPE;
 kill_context JSONB;
+readiness JSONB;
 BEGIN PERFORM _agent_runtime_media_worker_v1();
 IF p_action_id IS NULL OR p_attempt_id IS NULL OR p_owner_token IS NULL OR NULLIF(btrim(p_worker_id),'') IS NULL OR p_expected_attempt_version IS NULL OR p_expected_attempt_version < 0 OR COALESCE(p_request_hash,'') !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ATTEMPT_SCOPE_INVALID' USING ERRCODE='42501';
 END IF;
@@ -24,6 +122,10 @@ SELECT * INTO runtime_session FROM agent_runtime_sessions WHERE id=action.sessio
 SELECT * INTO runtime_run FROM agent_runs WHERE id=action.run_id;
 SELECT * INTO intent FROM agent_action_dispatch_intents WHERE attempt_id=attempt.id AND action_id=action.id;
 IF attempt.id IS NULL OR action.id IS NULL OR runtime_session.id IS NULL OR runtime_run.id IS NULL OR intent.id IS NULL OR action.tool_name NOT IN ('generate_image','generate_video') OR attempt.action_id IS DISTINCT FROM action.id OR attempt.session_id IS DISTINCT FROM runtime_session.id OR attempt.run_id IS DISTINCT FROM runtime_run.id OR action.session_id IS DISTINCT FROM runtime_session.id OR action.run_id IS DISTINCT FROM runtime_run.id OR runtime_run.session_id IS DISTINCT FROM runtime_session.id OR attempt.org_id IS DISTINCT FROM action.org_id OR action.org_id IS DISTINCT FROM runtime_session.org_id OR runtime_run.org_id IS DISTINCT FROM runtime_session.org_id OR attempt.user_id IS DISTINCT FROM action.user_id OR action.user_id IS DISTINCT FROM runtime_session.user_id OR runtime_run.user_id IS DISTINCT FROM runtime_session.user_id OR attempt.worker_id IS DISTINCT FROM btrim(p_worker_id) OR attempt.state_version IS DISTINCT FROM p_expected_attempt_version OR attempt.request_hash IS DISTINCT FROM p_request_hash OR action.request_hash IS DISTINCT FROM p_request_hash OR intent.execution_token IS DISTINCT FROM attempt.execution_token OR intent.request_hash IS DISTINCT FROM p_request_hash OR intent.executor_type IS DISTINCT FROM 'runtime_media_generation:'||action.tool_name OR intent.executor_revision <> 1 OR NOT EXISTS (SELECT 1 FROM agent_policy_receipts receipt WHERE receipt.id=intent.policy_receipt_id AND receipt.action_id=action.id AND receipt.decision='allow' AND receipt.arguments_hash=action.arguments_hash AND receipt.executor_type=intent.executor_type AND receipt.executor_revision=intent.executor_revision ) OR NOT ((attempt.status IN ('claimed','dispatching') AND action.status='running' AND attempt.execution_token=p_owner_token AND attempt.lease_expires_at>clock_timestamp()) OR (attempt.status IN ('accepted','unknown') AND action.status=attempt.status AND attempt.reconciliation_token=p_owner_token AND attempt.reconciliation_lease_expires_at>clock_timestamp()) ) THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ATTEMPT_SCOPE_INVALID' USING ERRCODE='42501';
+END IF;
+readiness:=_agent_runtime_media_owner_readiness_v1();
+IF attempt.status IN ('claimed','dispatching') AND (readiness->>'ready')::BOOLEAN IS NOT TRUE THEN
+    RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_OWNER_NOT_READY' USING ERRCODE='55000';
 END IF;
 IF attempt.status IN ('claimed','dispatching') THEN kill_context:=_agent_runtime_kill_epoch_context(attempt.id,attempt.execution_token,attempt.request_hash, attempt.state_version,'dispatch' );
 IF kill_context->>'outcome' IS DISTINCT FROM 'allowed' THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ATTEMPT_FENCED' USING ERRCODE='42501';
@@ -58,16 +160,35 @@ duration_seconds INTEGER;
 provider_input JSONB;
 BEGIN IF p_kind NOT IN ('image','video') OR jsonb_typeof(p_request)<>'object' OR jsonb_typeof(p_reference_urls)<>'array' OR EXISTS (SELECT 1 FROM jsonb_array_elements(p_reference_urls) url WHERE jsonb_typeof(url)<>'string' OR trim(BOTH '"' FROM url::TEXT) !~ '^https://[^[:space:]]+$') THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
 END IF;
-IF p_kind='image' THEN IF model_id NOT IN ('google/nano-banana','google/nano-banana-edit','nano-banana-pro', 'gpt-image-2-text-to-image','gpt-image-2-image-to-image' ) OR prompt IS NULL OR length(prompt)>20000 THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
+IF p_kind='image' THEN
+IF model_id NOT IN ('google/nano-banana','google/nano-banana-edit','nano-banana-pro', 'gpt-image-2-text-to-image','gpt-image-2-image-to-image') OR prompt IS NULL OR length(prompt)>20000 THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
 END IF;
 aspect_ratio:=COALESCE(aspect_ratio,'1:1');
 resolution:=COALESCE(resolution,'1K');
 output_format:=COALESCE(output_format,'png');
-IF aspect_ratio NOT IN ('1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9','auto') OR resolution NOT IN ('1K','2K','4K') OR output_format NOT IN ('png','jpeg','jpg','webp') THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
+IF model_id IN ('google/nano-banana','google/nano-banana-edit') THEN
+    IF length(prompt)>5000 OR aspect_ratio NOT IN ('1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9','auto') OR output_format NOT IN ('png','jpeg') THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
+    END IF;
+    IF model_id='google/nano-banana' AND jsonb_array_length(p_reference_urls)<>0 THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REFERENCE_INVALID' USING ERRCODE='22023';
+    END IF;
+    IF model_id='google/nano-banana-edit' AND jsonb_array_length(p_reference_urls) NOT BETWEEN 1 AND 10 THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REFERENCE_INVALID' USING ERRCODE='22023';
+    END IF;
+ELSIF model_id='nano-banana-pro' THEN
+    IF aspect_ratio NOT IN ('1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9','auto') OR resolution NOT IN ('1K','2K','4K') OR output_format NOT IN ('png','jpg') OR jsonb_array_length(p_reference_urls)>8 THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
+    END IF;
+ELSE
+    IF aspect_ratio NOT IN ('1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9','auto') OR resolution NOT IN ('1K','2K','4K') THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
+    END IF;
+    IF (model_id='gpt-image-2-image-to-image' AND jsonb_array_length(p_reference_urls) NOT BETWEEN 1 AND 16) OR (model_id='gpt-image-2-text-to-image' AND jsonb_array_length(p_reference_urls)<>0) THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REFERENCE_INVALID' USING ERRCODE='22023';
+    END IF;
 END IF;
-provider_input:=CASE model_id WHEN 'google/nano-banana' THEN jsonb_build_object('prompt',prompt,'image_size',aspect_ratio,'output_format',output_format) WHEN 'google/nano-banana-edit' THEN jsonb_build_object('prompt',prompt,'image_urls',p_reference_urls, 'image_size',aspect_ratio,'output_format',output_format) WHEN 'nano-banana-pro' THEN jsonb_build_object('prompt',prompt,'image_input',p_reference_urls, 'aspect_ratio',aspect_ratio,'resolution',resolution, 'output_format',CASE WHEN output_format='jpeg' THEN 'jpg' ELSE output_format END) WHEN 'gpt-image-2-text-to-image' THEN jsonb_build_object('prompt',prompt,'aspect_ratio',aspect_ratio,'resolution',resolution) WHEN 'gpt-image-2-image-to-image' THEN jsonb_build_object('prompt',prompt,'input_urls',p_reference_urls, 'aspect_ratio',aspect_ratio,'resolution',resolution) END;
-IF (model_id IN ('google/nano-banana-edit','gpt-image-2-image-to-image') AND jsonb_array_length(p_reference_urls)=0) OR (model_id='google/nano-banana-edit' AND jsonb_array_length(p_reference_urls)>10) OR (model_id='nano-banana-pro' AND jsonb_array_length(p_reference_urls)>8) OR (model_id='gpt-image-2-image-to-image' AND jsonb_array_length(p_reference_urls)>16) THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REFERENCE_INVALID' USING ERRCODE='22023';
-END IF;
+provider_input:=CASE model_id
+    WHEN 'google/nano-banana' THEN jsonb_build_object('prompt',prompt,'aspect_ratio',aspect_ratio,'output_format',output_format)
+    WHEN 'google/nano-banana-edit' THEN jsonb_build_object('prompt',prompt,'image_urls',p_reference_urls,'aspect_ratio',aspect_ratio,'output_format',output_format)
+    WHEN 'nano-banana-pro' THEN jsonb_build_object('prompt',prompt,'image_input',p_reference_urls,'aspect_ratio',aspect_ratio,'resolution',resolution,'output_format',output_format)
+    WHEN 'gpt-image-2-text-to-image' THEN jsonb_build_object('prompt',prompt,'aspect_ratio',aspect_ratio,'resolution',resolution)
+    WHEN 'gpt-image-2-image-to-image' THEN jsonb_build_object('prompt',prompt,'input_urls',p_reference_urls,'aspect_ratio',aspect_ratio,'resolution',resolution)
+END;
 ELSE IF model_id NOT IN ('sora-2-text-to-video','sora-2-image-to-video', 'sora-2-pro-storyboard' ) THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_INVALID' USING ERRCODE='22023';
 END IF;
 aspect_ratio:=COALESCE(aspect_ratio,'landscape');
@@ -87,11 +208,29 @@ CREATE OR REPLACE FUNCTION submit_agent_runtime_media_action_v1(p_conversation_i
 session_result JSONB;
 runtime_result JSONB;
 safe_arguments JSONB;
+readiness JSONB;
 BEGIN PERFORM _assert_agent_runtime_actor(FALSE);
 IF p_tool_name NOT IN ('generate_image','generate_video') OR jsonb_typeof(p_arguments)<>'object' OR NULLIF(btrim(p_idempotency_key),'') IS NULL OR p_task_id IS NULL OR p_input_message_id IS NULL OR p_output_message_id IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ACTION_INVALID' USING ERRCODE='22023';
 END IF;
-SELECT * INTO prepared_task FROM tasks WHERE id=p_task_id FOR UPDATE;
-IF prepared_task.id IS NULL OR prepared_task.conversation_id IS DISTINCT FROM p_conversation_id OR prepared_task.user_id IS DISTINCT FROM p_user_id OR prepared_task.org_id IS DISTINCT FROM p_org_id OR prepared_task.type::TEXT IS DISTINCT FROM (CASE WHEN p_tool_name='generate_image' THEN 'image' ELSE 'video' END) OR prepared_task.input_message_id IS DISTINCT FROM p_input_message_id OR prepared_task.assistant_message_id IS DISTINCT FROM p_output_message_id THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_TASK_SCOPE_MISMATCH' USING ERRCODE='42501';
+SELECT * INTO prepared_task FROM tasks
+ WHERE id=p_task_id
+   AND conversation_id=p_conversation_id
+   AND user_id=p_user_id
+   AND org_id IS NOT DISTINCT FROM p_org_id
+   AND type::TEXT=(CASE WHEN p_tool_name='generate_image' THEN 'image' ELSE 'video' END)
+   AND input_message_id=p_input_message_id
+   AND assistant_message_id=p_output_message_id
+ FOR UPDATE;
+IF prepared_task.id IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_TASK_SCOPE_MISMATCH' USING ERRCODE='42501';
+END IF;
+IF COALESCE((prepared_task.delivery_context->>'runtime')::BOOLEAN,FALSE) THEN
+    IF prepared_task.delivery_context->>'runtime_owner' IS DISTINCT FROM 'action_loop' OR COALESCE(pg_input_is_valid(prepared_task.delivery_context->>'runtime_action_id','uuid'),FALSE) IS NOT TRUE OR COALESCE(pg_input_is_valid(prepared_task.delivery_context->>'runtime_run_id','uuid'),FALSE) IS NOT TRUE THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_TASK_SCOPE_MISMATCH' USING ERRCODE='42501';
+    END IF;
+    RETURN jsonb_build_object('outcome','already_exists','runtime_owned',TRUE, 'action_id',prepared_task.delivery_context->>'runtime_action_id', 'run_id',prepared_task.delivery_context->>'runtime_run_id', 'readiness_revision',prepared_task.delivery_context->>'runtime_media_readiness_revision');
+END IF;
+readiness:=_agent_runtime_media_owner_readiness_v1();
+IF (readiness->>'ready')::BOOLEAN IS NOT TRUE THEN
+    RETURN jsonb_build_object('outcome','media_not_ready','runtime_owned',FALSE, 'readiness_revision',(readiness->>'state_version')::BIGINT);
 END IF;
 safe_arguments:=jsonb_strip_nulls(CASE WHEN p_tool_name='generate_image' THEN jsonb_build_object('prompt',p_arguments->'prompt','model',p_arguments->'model', 'aspect_ratio',p_arguments->'aspect_ratio', 'resolution',p_arguments->'resolution', 'output_format',p_arguments->'output_format') ELSE jsonb_build_object('prompt',p_arguments->'prompt','model',p_arguments->'model', 'aspect_ratio',p_arguments->'aspect_ratio', 'n_frames',p_arguments->'n_frames', 'remove_watermark',p_arguments->'remove_watermark') END);
 IF NULLIF(btrim(safe_arguments->>'prompt'),'') IS NULL AND p_tool_name<>'generate_video' THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ACTION_INVALID' USING ERRCODE='22023';
@@ -100,10 +239,401 @@ session_result:=ensure_agent_runtime_session(p_conversation_id,p_org_id,p_user_i
 IF session_result->>'outcome' NOT IN ('created','already_exists') THEN RETURN session_result||jsonb_build_object('runtime_owned',FALSE);
 END IF;
 runtime_result:=submit_agent_runtime_chat_action_v1(p_conversation_id,p_org_id,p_user_id,p_task_id::TEXT, p_input_message_id::TEXT,p_task_id::TEXT,1,p_tool_name,safe_arguments, p_model_id,p_model_provider,p_model_revision,p_catalog_revision, p_policy_revision,'runtime_media_generation:'||p_tool_name,1, jsonb_build_object('source','media_ingress','task_id',p_task_id, 'input_message_id',p_input_message_id, 'output_message_id',p_output_message_id,'turn_id',p_turn_id, 'provider','kie','provider_revision','kie-runtime-media-v1', 'capability','media.provider.submit','capability_revision','v1', 'capability_requirements',jsonb_build_array('media.provider.submit')), jsonb_build_object('source','media_ingress','task_id',p_task_id, 'input_message_id',p_input_message_id, 'output_message_id',p_output_message_id,'turn_id',p_turn_id), p_idempotency_key );
-IF runtime_result->>'outcome' IN ('created','already_exists') THEN UPDATE tasks SET delivery_context=delivery_context||jsonb_build_object('actor',FALSE,'runtime',TRUE,'runtime_owner','action_loop', 'runtime_action_id',runtime_result->>'action_id', 'runtime_run_id',runtime_result->>'run_id') WHERE id=p_task_id;
-RETURN runtime_result||jsonb_build_object('runtime_owned',TRUE);
+IF runtime_result->>'outcome' IN ('created','already_exists') THEN UPDATE tasks SET delivery_context=delivery_context||jsonb_build_object('actor',FALSE,'runtime',TRUE,'runtime_owner','action_loop', 'runtime_action_id',runtime_result->>'action_id', 'runtime_run_id',runtime_result->>'run_id', 'runtime_media_readiness_revision',(readiness->>'state_version')::BIGINT) WHERE id=p_task_id;
+RETURN runtime_result||jsonb_build_object('runtime_owned',TRUE, 'readiness_revision',(readiness->>'state_version')::BIGINT);
 END IF;
 RETURN runtime_result||jsonb_build_object('runtime_owned',FALSE);
+END;
+$$;
+CREATE FUNCTION record_agent_runtime_media_provider_submission_v1(
+    p_attempt_id UUID, p_execution_token UUID, p_request_hash TEXT,
+    p_provider TEXT, p_provider_task_ref TEXT, p_status_locator TEXT,
+    p_callback_correlation TEXT, p_provider_idempotency_key TEXT,
+    p_provider_request_hash TEXT, p_next_reconcile_at TIMESTAMPTZ,
+    p_external_receipt JSONB DEFAULT '{}'
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+DECLARE
+    attempt agent_action_attempts%ROWTYPE;
+    result JSONB;
+    tool_name TEXT;
+    batch_provider_hash TEXT;
+    prepared_provider_hash TEXT;
+    expected_provider_hash TEXT;
+    provider_fact agent_runtime_provider_submission_facts%ROWTYPE;
+BEGIN
+    PERFORM _assert_agent_runtime_actor(TRUE);
+    SELECT * INTO attempt FROM agent_action_attempts
+     WHERE id=p_attempt_id FOR UPDATE;
+    IF attempt.id IS NULL THEN
+        RETURN jsonb_build_object('outcome','not_found');
+    END IF;
+    IF attempt.execution_token IS DISTINCT FROM p_execution_token
+       OR attempt.request_hash IS DISTINCT FROM p_request_hash
+       OR attempt.status NOT IN ('dispatching','accepted','unknown') THEN
+        RETURN jsonb_build_object('outcome','fenced');
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM agent_action_dispatch_intents intent
+        JOIN agent_policy_receipts receipt ON receipt.id=intent.policy_receipt_id
+         WHERE intent.attempt_id=attempt.id
+           AND intent.action_id=attempt.action_id
+           AND intent.execution_token=p_execution_token
+           AND intent.request_hash=p_request_hash
+           AND receipt.action_id=attempt.action_id
+           AND receipt.expires_at>clock_timestamp()
+    ) THEN
+        RETURN jsonb_build_object('outcome','dispatch_contract_missing');
+    END IF;
+    IF NULLIF(btrim(p_provider),'') IS NULL
+       OR NULLIF(btrim(p_provider_task_ref),'') IS NULL
+       OR NULLIF(btrim(p_provider_idempotency_key),'') IS NULL
+       OR length(btrim(p_provider_idempotency_key))>300
+       OR COALESCE(p_provider_request_hash,'') !~ '^[0-9a-f]{64}$'
+       OR jsonb_typeof(COALESCE(p_external_receipt,'{}'::JSONB)) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'AGENT_PROVIDER_RECEIPT_INVALID' USING ERRCODE='22023';
+    END IF;
+    SELECT action.tool_name,binding.provider_request_hash,
+           prepared.provider_request_hash
+      INTO tool_name,batch_provider_hash,prepared_provider_hash
+      FROM agent_actions action
+      LEFT JOIN agent_runtime_media_action_bindings binding
+        ON binding.action_id=action.id
+      LEFT JOIN agent_runtime_prepared_media_action_bindings prepared
+        ON prepared.action_id=action.id
+     WHERE action.id=attempt.action_id;
+    SELECT binding.provider_request_canonical_hash
+      INTO batch_provider_hash
+      FROM agent_runtime_media_action_bindings binding
+     WHERE binding.action_id=attempt.action_id;
+    expected_provider_hash:=COALESCE(prepared_provider_hash,batch_provider_hash);
+    SELECT * INTO provider_fact
+      FROM agent_runtime_provider_submission_facts
+     WHERE attempt_id=attempt.id FOR UPDATE;
+    IF tool_name NOT IN ('generate_image','generate_video')
+       OR expected_provider_hash IS NULL
+       OR (prepared_provider_hash IS NOT NULL AND batch_provider_hash IS NOT NULL
+           AND prepared_provider_hash IS DISTINCT FROM batch_provider_hash)
+       OR p_provider_request_hash IS DISTINCT FROM expected_provider_hash
+       OR btrim(p_provider_idempotency_key) !~ '^[0-9a-f]{64}$'
+       OR p_external_receipt#>>'{evidence,provider_request_hash}' IS DISTINCT FROM p_provider_request_hash
+       OR p_external_receipt#>>'{evidence,provider_idempotency_key}' IS DISTINCT FROM btrim(p_provider_idempotency_key)
+       OR provider_fact.id IS NULL
+       OR provider_fact.action_id IS DISTINCT FROM attempt.action_id
+       OR provider_fact.run_id IS DISTINCT FROM attempt.run_id
+       OR provider_fact.execution_token IS DISTINCT FROM attempt.execution_token
+       OR provider_fact.request_hash IS DISTINCT FROM attempt.request_hash
+       OR provider_fact.provider IS DISTINCT FROM btrim(p_provider)
+       OR provider_fact.external_idempotency_key IS DISTINCT FROM btrim(p_provider_idempotency_key)
+       OR provider_fact.provider_task_ref IS DISTINCT FROM btrim(p_provider_task_ref)
+       OR provider_fact.state IS DISTINCT FROM 'submitted'
+       OR p_external_receipt#>>'{evidence,submission_id}' IS DISTINCT FROM provider_fact.id::TEXT
+       OR p_external_receipt#>>'{evidence,state_version}' IS DISTINCT FROM provider_fact.state_version::TEXT THEN
+        RAISE EXCEPTION 'AGENT_PROVIDER_RECEIPT_INVALID' USING ERRCODE='22023';
+    END IF;
+    UPDATE agent_action_attempts SET
+        status='accepted',dispatch_phase='accepted',provider=btrim(p_provider),
+        provider_task_ref=btrim(p_provider_task_ref),
+        provider_status_locator=NULLIF(btrim(p_status_locator),''),
+        callback_correlation=NULLIF(btrim(p_callback_correlation),''),
+        provider_idempotency_key=btrim(p_provider_idempotency_key),
+        provider_request_hash=p_provider_request_hash,
+        next_reconcile_at=p_next_reconcile_at,last_provider_status='accepted',
+        external_receipt=p_external_receipt,accepted_at=clock_timestamp(),
+        state_version=state_version+1,updated_at=clock_timestamp()
+      WHERE id=p_attempt_id
+      RETURNING to_jsonb(agent_action_attempts.*) INTO result;
+    UPDATE agent_actions SET status='accepted',accepted_at=clock_timestamp(),
+        state_version=state_version+1,updated_at=clock_timestamp()
+      WHERE id=attempt.action_id AND status='running';
+    PERFORM _agent_runtime_226_append_action_event(
+        attempt.action_id,'action.provider.accepted',
+        jsonb_build_object('provider',p_provider,
+                           'provider_task_ref',p_provider_task_ref)
+    );
+    RETURN jsonb_build_object('outcome','accepted','attempt',result);
+END;
+$$;
+CREATE FUNCTION record_agent_runtime_media_provider_rejected_v1(
+    p_submission_id UUID,p_execution_token UUID,p_request_hash TEXT,
+    p_expected_state_version BIGINT,p_evidence JSONB
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+DECLARE fact agent_runtime_provider_submission_facts%ROWTYPE;
+BEGIN
+    PERFORM _assert_agent_runtime_actor(TRUE);
+    IF NOT _agent_runtime_provider_evidence_safe(p_evidence)
+       OR COALESCE(p_evidence,'{}'::JSONB)='{}'::JSONB THEN
+        RAISE EXCEPTION 'RUNTIME_MEDIA_PROVIDER_REJECTION_INVALID' USING ERRCODE='22023';
+    END IF;
+    SELECT * INTO fact FROM agent_runtime_provider_submission_facts
+     WHERE id=p_submission_id FOR UPDATE;
+    IF fact.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
+    IF fact.execution_token IS DISTINCT FROM p_execution_token
+       OR fact.request_hash IS DISTINCT FROM p_request_hash
+       OR fact.state_version IS DISTINCT FROM p_expected_state_version THEN
+        RETURN jsonb_build_object('outcome','fenced');
+    END IF;
+    IF fact.provider IS DISTINCT FROM 'kie'
+       OR fact.provider_revision IS DISTINCT FROM 'kie-runtime-media-v1'
+       OR fact.state IS DISTINCT FROM 'submission_pending' THEN
+        RETURN jsonb_build_object('outcome','stale_version');
+    END IF;
+    UPDATE agent_runtime_provider_submission_facts SET state='failed',
+        ambiguity_evidence=p_evidence,next_reconcile_at=NULL,
+        state_version=state_version+1,updated_at=clock_timestamp()
+     WHERE id=fact.id RETURNING * INTO fact;
+    RETURN jsonb_build_object('outcome','failed','submission_id',fact.id,
+        'state',fact.state,'state_version',fact.state_version);
+END;
+$$;
+CREATE FUNCTION record_agent_runtime_media_provider_unknown_v1(
+    p_attempt_id UUID,p_execution_token UUID,p_expected_state_version BIGINT,
+    p_request_hash TEXT,p_provider_receipt JSONB,p_ambiguity_evidence JSONB,
+    p_next_reconcile_at TIMESTAMPTZ
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+DECLARE attempt agent_action_attempts%ROWTYPE; action agent_actions%ROWTYPE;
+provider_fact agent_runtime_provider_submission_facts%ROWTYPE;
+expected_hash TEXT;
+BEGIN
+    PERFORM _assert_agent_runtime_actor(TRUE);
+    IF jsonb_typeof(COALESCE(p_provider_receipt,'{}')) IS DISTINCT FROM 'object'
+       OR jsonb_typeof(COALESCE(p_ambiguity_evidence,'{}')) IS DISTINCT FROM 'object'
+       OR COALESCE(p_ambiguity_evidence,'{}')='{}'::JSONB
+       OR p_provider_receipt->>'provider' IS DISTINCT FROM 'kie'
+       OR COALESCE(p_provider_receipt#>>'{evidence,submission_id}','')
+            !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       OR COALESCE(p_provider_receipt#>>'{evidence,state_version}','') !~ '^[0-9]+$'
+       OR p_next_reconcile_at IS NULL OR p_next_reconcile_at<=clock_timestamp() THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_UNKNOWN_INVALID' USING ERRCODE='22023';
+    END IF;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id;
+    IF attempt.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
+    PERFORM 1 FROM agent_runtime_sessions WHERE id=attempt.session_id FOR UPDATE;
+    PERFORM 1 FROM agent_runs WHERE id=attempt.run_id FOR UPDATE;
+    SELECT * INTO action FROM agent_actions WHERE id=attempt.action_id FOR UPDATE;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id FOR UPDATE;
+    SELECT COALESCE(prepared.provider_request_hash,binding.provider_request_canonical_hash)
+      INTO expected_hash FROM agent_actions candidate
+      LEFT JOIN agent_runtime_media_action_bindings binding ON binding.action_id=candidate.id
+      LEFT JOIN agent_runtime_prepared_media_action_bindings prepared ON prepared.action_id=candidate.id
+     WHERE candidate.id=action.id;
+    SELECT * INTO provider_fact FROM agent_runtime_provider_submission_facts
+     WHERE id=(p_provider_receipt#>>'{evidence,submission_id}')::UUID FOR UPDATE;
+    IF attempt.status IS DISTINCT FROM 'dispatching' OR action.status IS DISTINCT FROM 'running'
+       OR attempt.execution_token IS DISTINCT FROM p_execution_token
+       OR attempt.state_version IS DISTINCT FROM p_expected_state_version
+       OR attempt.request_hash IS DISTINCT FROM p_request_hash
+       OR expected_hash IS NULL
+       OR expected_hash IS DISTINCT FROM p_provider_receipt#>>'{evidence,provider_request_hash}'
+       OR provider_fact.id IS NULL OR provider_fact.attempt_id IS DISTINCT FROM attempt.id
+       OR provider_fact.action_id IS DISTINCT FROM action.id
+       OR provider_fact.run_id IS DISTINCT FROM attempt.run_id
+       OR provider_fact.execution_token IS DISTINCT FROM attempt.execution_token
+       OR provider_fact.request_hash IS DISTINCT FROM attempt.request_hash
+       OR provider_fact.provider IS DISTINCT FROM 'kie'
+       OR provider_fact.provider_revision IS DISTINCT FROM 'kie-runtime-media-v1'
+       OR provider_fact.external_idempotency_key IS DISTINCT FROM p_provider_receipt#>>'{evidence,provider_idempotency_key}'
+       OR provider_fact.state IS DISTINCT FROM 'unknown'
+       OR provider_fact.state_version::TEXT IS DISTINCT FROM p_provider_receipt#>>'{evidence,state_version}'
+       OR NOT EXISTS (SELECT 1 FROM agent_action_dispatch_intents intent
+            WHERE intent.attempt_id=attempt.id AND intent.action_id=action.id
+              AND intent.execution_token=p_execution_token
+              AND intent.request_hash=p_request_hash) THEN
+        RETURN jsonb_build_object('outcome','fenced');
+    END IF;
+    UPDATE agent_action_attempts SET status='unknown',
+        provider=CASE WHEN NULLIF(p_provider_receipt->>'provider_task_ref','') IS NULL THEN NULL ELSE 'kie' END,
+        provider_task_ref=NULLIF(p_provider_receipt->>'provider_task_ref',''),
+        provider_status_locator=NULLIF(p_provider_receipt->>'status_locator',''),
+        provider_idempotency_key=p_provider_receipt#>>'{evidence,provider_idempotency_key}',
+        provider_request_hash=expected_hash,external_receipt=p_provider_receipt,
+        ambiguity_evidence=p_ambiguity_evidence,last_provider_status='unknown',
+        next_reconcile_at=p_next_reconcile_at,state_version=state_version+1,
+        updated_at=clock_timestamp() WHERE id=attempt.id;
+    UPDATE agent_actions SET status='unknown',state_version=state_version+1,
+        updated_at=clock_timestamp() WHERE id=action.id;
+    PERFORM _agent_runtime_226_append_action_event(action.id,
+        'action.provider.unknown',p_ambiguity_evidence);
+    RETURN jsonb_build_object('outcome','unknown','attempt_id',attempt.id);
+END;
+$$;
+CREATE FUNCTION finalize_agent_runtime_media_after_cancel_v1(
+    p_attempt_id UUID,p_execution_token UUID,p_reconciliation_token UUID,
+    p_expected_state_version INTEGER,p_request_hash TEXT,p_terminal_state TEXT,
+    p_provider_receipt JSONB,p_result JSONB,p_cost_kind TEXT,
+    p_reserved_amount BIGINT,p_actual_amount BIGINT,p_currency TEXT,
+    p_reason_code TEXT,p_provider_receipt_hash TEXT
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+DECLARE attempt agent_action_attempts%ROWTYPE; action agent_actions%ROWTYPE;
+runtime_run agent_runs%ROWTYPE; runtime_session agent_runtime_sessions%ROWTYPE;
+provider_fact agent_runtime_provider_submission_facts%ROWTYPE;
+existing agent_action_results%ROWTYPE; result_hash TEXT; cost_result JSONB; event JSONB;
+BEGIN
+    PERFORM _assert_agent_runtime_actor(TRUE);
+    IF p_execution_token IS NOT NULL OR p_terminal_state NOT IN ('completed','failed')
+       OR jsonb_typeof(COALESCE(p_provider_receipt,'{}')) IS DISTINCT FROM 'object'
+       OR jsonb_typeof(COALESCE(p_result,'{}')) IS DISTINCT FROM 'object'
+       OR p_provider_receipt#>>'{evidence,cancel_unproven}' IS DISTINCT FROM 'true'
+       OR COALESCE(p_provider_receipt#>>'{evidence,submission_id}','')
+            !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       OR COALESCE(p_provider_receipt#>>'{evidence,state_version}','') !~ '^[0-9]+$'
+       OR COALESCE(p_provider_receipt_hash,'') !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CANCEL_READBACK_INVALID' USING ERRCODE='22023';
+    END IF;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id;
+    IF attempt.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
+    SELECT * INTO runtime_session FROM agent_runtime_sessions WHERE id=attempt.session_id FOR UPDATE;
+    SELECT * INTO runtime_run FROM agent_runs WHERE id=attempt.run_id FOR UPDATE;
+    SELECT * INTO action FROM agent_actions WHERE id=attempt.action_id FOR UPDATE;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id FOR UPDATE;
+    SELECT * INTO existing FROM agent_action_results WHERE action_id=action.id FOR UPDATE;
+    SELECT * INTO provider_fact FROM agent_runtime_provider_submission_facts
+     WHERE id=(p_provider_receipt#>>'{evidence,submission_id}')::UUID FOR UPDATE;
+    result_hash:=_agent_action_result_hash(
+        p_result,p_terminal_state,runtime_session.conversation_id,action.org_id
+    );
+    IF attempt.status IN ('completed','failed') AND action.status=attempt.status THEN
+        IF attempt.status IS DISTINCT FROM p_terminal_state OR existing.action_id IS NULL
+           OR existing.result_hash IS DISTINCT FROM result_hash THEN
+            RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CANCEL_READBACK_CONFLICT' USING ERRCODE='40001';
+        END IF;
+        RETURN jsonb_build_object('outcome','already_'||p_terminal_state,'action_id',action.id);
+    END IF;
+    IF runtime_run.status IS DISTINCT FROM 'cancelled'
+       OR attempt.status NOT IN ('accepted','unknown')
+       OR action.status NOT IN ('accepted','unknown')
+       OR attempt.reconciliation_token IS DISTINCT FROM p_reconciliation_token
+       OR attempt.reconciliation_lease_expires_at<=clock_timestamp()
+       OR attempt.state_version IS DISTINCT FROM p_expected_state_version
+       OR attempt.request_hash IS DISTINCT FROM p_request_hash
+       OR attempt.provider IS DISTINCT FROM 'kie'
+       OR attempt.provider_task_ref IS DISTINCT FROM p_provider_receipt->>'provider_task_ref'
+       OR attempt.provider_request_hash IS DISTINCT FROM p_provider_receipt#>>'{evidence,provider_request_hash}'
+       OR attempt.provider_idempotency_key IS DISTINCT FROM p_provider_receipt#>>'{evidence,provider_idempotency_key}'
+       OR attempt.external_receipt#>>'{evidence,cancel_unproven}' IS DISTINCT FROM 'true'
+       OR provider_fact.id IS NULL OR provider_fact.attempt_id IS DISTINCT FROM attempt.id
+       OR provider_fact.action_id IS DISTINCT FROM action.id
+       OR provider_fact.run_id IS DISTINCT FROM runtime_run.id
+       OR provider_fact.execution_token IS DISTINCT FROM attempt.execution_token
+       OR provider_fact.request_hash IS DISTINCT FROM attempt.request_hash
+       OR provider_fact.provider IS DISTINCT FROM 'kie'
+       OR provider_fact.provider_revision IS DISTINCT FROM 'kie-runtime-media-v1'
+       OR provider_fact.provider_task_ref IS DISTINCT FROM attempt.provider_task_ref
+       OR provider_fact.external_idempotency_key IS DISTINCT FROM attempt.provider_idempotency_key
+       OR provider_fact.cancel_requested_at IS NULL
+       OR provider_fact.state_version::TEXT IS DISTINCT FROM p_provider_receipt#>>'{evidence,state_version}'
+       OR provider_fact.state IS DISTINCT FROM (CASE p_terminal_state
+            WHEN 'completed' THEN 'readback_confirmed' ELSE 'failed' END) THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CANCEL_READBACK_FENCED' USING ERRCODE='42501';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM agent_action_dispatch_intents intent
+        JOIN agent_policy_receipts receipt ON receipt.id=intent.policy_receipt_id
+        WHERE intent.attempt_id=attempt.id AND intent.action_id=action.id
+          AND intent.execution_token=attempt.execution_token
+          AND intent.request_hash=p_request_hash AND receipt.action_id=action.id
+          AND receipt.decision='allow') THEN
+        RAISE EXCEPTION 'AGENT_FINALIZE_DISPATCH_CONTRACT_MISSING' USING ERRCODE='42501';
+    END IF;
+    IF p_cost_kind IS NOT NULL THEN
+        SELECT record_agent_action_cost_strict(action.id,attempt.id,p_cost_kind,
+            p_reserved_amount,p_actual_amount,p_currency,p_reason_code,
+            p_provider_receipt_hash) INTO cost_result;
+    END IF;
+    INSERT INTO agent_action_results(action_id,session_id,run_id,org_id,user_id,
+        status,result_hash,summary,data,artifact_ids,usage,cost,external_receipt,error_code)
+    VALUES(action.id,action.session_id,action.run_id,action.org_id,action.user_id,
+        p_result->>'status',result_hash,COALESCE(p_result->>'summary',''),p_result->'data',
+        ARRAY(SELECT value::UUID FROM jsonb_array_elements_text(
+            COALESCE(p_result->'artifact_ids','[]'::JSONB)) value),
+        COALESCE(p_result->'usage','{}'),COALESCE(p_result->'cost','{}'),
+        p_provider_receipt,p_result->>'error_code');
+    UPDATE agent_action_attempts SET status=p_terminal_state,
+        external_receipt=p_provider_receipt,last_provider_status=p_terminal_state,
+        ended_at=clock_timestamp(),reconciliation_token=NULL,
+        reconciliation_lease_expires_at=NULL,next_reconcile_at=NULL,
+        state_version=state_version+1,updated_at=clock_timestamp() WHERE id=attempt.id;
+    UPDATE agent_actions SET status=p_terminal_state,
+        terminal_reason='provider_'||p_terminal_state||'_after_cancel',
+        completed_at=clock_timestamp(),state_version=state_version+1,
+        updated_at=clock_timestamp() WHERE id=action.id;
+    event:=append_agent_runtime_event(action.session_id,
+        'action.'||p_terminal_state||'_after_cancel',action.run_id,
+        action.model_step_id,action.id,'reconciler',session_user,
+        jsonb_build_object('action_id',action.id,'result_hash',result_hash,
+            'cancel_unproven',TRUE),ARRAY['web_runtime','audit']::TEXT[]);
+    RETURN jsonb_build_object('outcome',p_terminal_state,'action_id',action.id,
+        'result_hash',result_hash,'run_status',runtime_run.status,
+        'cost',COALESCE(cost_result,'{}'),'event_sequence',event->'event_sequence');
+END;
+$$;
+CREATE FUNCTION record_agent_runtime_media_cancel_unproven_v1(
+    p_attempt_id UUID,p_reconciliation_token UUID,p_expected_state_version BIGINT,
+    p_request_hash TEXT,p_provider_receipt JSONB,p_ambiguity_evidence JSONB,
+    p_next_reconcile_at TIMESTAMPTZ
+) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
+DECLARE attempt agent_action_attempts%ROWTYPE; action agent_actions%ROWTYPE;
+provider_fact agent_runtime_provider_submission_facts%ROWTYPE;
+BEGIN
+    PERFORM _assert_agent_runtime_actor(TRUE);
+    IF jsonb_typeof(COALESCE(p_provider_receipt,'{}')) IS DISTINCT FROM 'object'
+       OR jsonb_typeof(COALESCE(p_ambiguity_evidence,'{}')) IS DISTINCT FROM 'object'
+       OR COALESCE(p_ambiguity_evidence,'{}')='{}'::JSONB
+       OR p_provider_receipt->>'provider' IS DISTINCT FROM 'kie'
+       OR p_provider_receipt#>>'{evidence,error_code}' IS DISTINCT FROM 'CANCEL_UNPROVEN'
+       OR p_provider_receipt#>>'{evidence,cancel_unproven}' IS DISTINCT FROM 'true'
+       OR COALESCE(p_provider_receipt#>>'{evidence,submission_id}','')
+            !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       OR COALESCE(p_provider_receipt#>>'{evidence,state_version}','') !~ '^[0-9]+$'
+       OR p_next_reconcile_at IS NULL OR p_next_reconcile_at<=clock_timestamp() THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CANCEL_UNPROVEN_INVALID' USING ERRCODE='22023';
+    END IF;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id;
+    IF attempt.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
+    PERFORM 1 FROM agent_runtime_sessions WHERE id=attempt.session_id FOR UPDATE;
+    PERFORM 1 FROM agent_runs WHERE id=attempt.run_id FOR UPDATE;
+    SELECT * INTO action FROM agent_actions WHERE id=attempt.action_id FOR UPDATE;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE id=p_attempt_id FOR UPDATE;
+    SELECT * INTO provider_fact FROM agent_runtime_provider_submission_facts
+     WHERE id=(p_provider_receipt#>>'{evidence,submission_id}')::UUID FOR UPDATE;
+    IF attempt.status NOT IN ('accepted','unknown') OR action.status<>attempt.status
+       OR attempt.reconciliation_token IS DISTINCT FROM p_reconciliation_token
+       OR attempt.reconciliation_lease_expires_at<=clock_timestamp()
+       OR attempt.state_version IS DISTINCT FROM p_expected_state_version
+       OR attempt.request_hash IS DISTINCT FROM p_request_hash
+       OR NOT (
+            (attempt.provider='kie' AND attempt.provider_task_ref IS NOT DISTINCT FROM p_provider_receipt->>'provider_task_ref')
+            OR (attempt.provider IS NULL AND attempt.provider_task_ref IS NULL
+                AND NULLIF(p_provider_receipt->>'provider_task_ref','') IS NULL)
+       )
+       OR attempt.provider_request_hash IS DISTINCT FROM p_provider_receipt#>>'{evidence,provider_request_hash}'
+       OR attempt.provider_idempotency_key IS DISTINCT FROM p_provider_receipt#>>'{evidence,provider_idempotency_key}'
+       OR provider_fact.id IS NULL OR provider_fact.attempt_id IS DISTINCT FROM attempt.id
+       OR provider_fact.action_id IS DISTINCT FROM action.id
+       OR provider_fact.execution_token IS DISTINCT FROM attempt.execution_token
+       OR provider_fact.request_hash IS DISTINCT FROM attempt.request_hash
+       OR provider_fact.provider IS DISTINCT FROM 'kie'
+       OR provider_fact.provider_revision IS DISTINCT FROM 'kie-runtime-media-v1'
+       OR provider_fact.provider_task_ref IS DISTINCT FROM attempt.provider_task_ref
+       OR provider_fact.external_idempotency_key IS DISTINCT FROM attempt.provider_idempotency_key
+       OR provider_fact.state IS DISTINCT FROM 'cancel_requested'
+       OR provider_fact.state_version::TEXT IS DISTINCT FROM p_provider_receipt#>>'{evidence,state_version}' THEN
+        RETURN jsonb_build_object('outcome','fenced');
+    END IF;
+    UPDATE agent_action_attempts SET status='unknown',
+        external_receipt=p_provider_receipt,ambiguity_evidence=p_ambiguity_evidence,
+        last_provider_status='unknown',next_reconcile_at=p_next_reconcile_at,
+        reconciliation_token=NULL,reconciliation_lease_expires_at=NULL,
+        state_version=state_version+1,updated_at=clock_timestamp() WHERE id=attempt.id;
+    UPDATE agent_actions SET status='unknown',state_version=state_version+1,
+        updated_at=clock_timestamp() WHERE id=action.id AND status IN ('accepted','unknown');
+    PERFORM _agent_runtime_226_append_action_event(action.id,
+        'action.provider.cancel_unproven',jsonb_build_object(
+            'provider','kie','provider_task_ref',attempt.provider_task_ref));
+    RETURN jsonb_build_object('outcome','still_unknown','attempt_id',attempt.id);
 END;
 $$;
 CREATE FUNCTION _prepare_agent_runtime_prepared_media_binding_v1(p_context JSONB,p_request_hash TEXT ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ DECLARE action agent_actions%ROWTYPE;
@@ -182,7 +712,8 @@ INSERT INTO agent_runtime_media_action_bindings(
   conversation_id,batch_hash,action_index,action_arguments_hash,
   action_request_hash,input_message_id,output_message_id,credit_transaction_id,
   pricing_revision,pricing_model_id,pricing_resolution,pricing_fact_hash,
-  provider_request_hash,unit_credits,reference_manifest_hash
+  provider_request_hash,unit_credits,reference_manifest_hash,
+  provider_request_canonical_hash
 ) VALUES(
   action.id,prepared_task.id,action.session_id,action.run_id,action.model_step_id,
   prepared_task.id,prepared_task.org_id,prepared_task.user_id,
@@ -190,7 +721,7 @@ INSERT INTO agent_runtime_media_action_bindings(
   COALESCE(prepared_task.image_index,0),action.arguments_hash,p_request_hash,
   input_message.id,output_message.id,transaction_id,pricing_revision,
   selected_model,pricing_key,pricing_fact_hash,provider_hash,unit_credits,
-  resolved->>'manifest_hash'
+  resolved->>'manifest_hash',provider_hash
 );
 UPDATE messages SET
   content=(SELECT COALESCE(jsonb_agg(part ORDER BY ordinality)
@@ -212,6 +743,7 @@ $$;
 CREATE FUNCTION prepare_agent_runtime_media_dispatch_v1(p_action_id UUID,p_attempt_id UUID,p_worker_id TEXT,p_owner_token UUID, p_expected_attempt_version BIGINT,p_request_hash TEXT ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$ DECLARE context JSONB;
 manifest JSONB;
 prepared JSONB;
+request_fact JSONB;
 BEGIN context:=_agent_runtime_media_attempt_context_v2(p_action_id,p_attempt_id,p_worker_id,p_owner_token, p_expected_attempt_version,p_request_hash);
 IF context->>'source'='media_ingress' THEN RETURN _prepare_agent_runtime_prepared_media_binding_v1(context,p_request_hash);
 END IF;
@@ -219,6 +751,14 @@ IF context->>'tool_name'<>'generate_image' THEN RAISE EXCEPTION 'AGENT_RUNTIME_M
 END IF;
 manifest:=read_agent_runtime_media_manifest_v1(p_action_id,p_attempt_id,p_worker_id,p_owner_token, p_expected_attempt_version,p_request_hash);
 prepared:=prepare_agent_runtime_media_batch_v1(p_action_id,p_attempt_id,p_worker_id,p_owner_token, p_expected_attempt_version,p_request_hash,manifest->>'reference_manifest_hash');
+request_fact:=read_agent_runtime_media_provider_request_v1(p_action_id,p_attempt_id,p_worker_id,p_owner_token, p_expected_attempt_version,p_request_hash);
+UPDATE agent_runtime_media_action_bindings SET
+    provider_request_canonical_hash=request_fact->>'provider_request_hash',
+    updated_at=clock_timestamp()
+ WHERE action_id=p_action_id
+   AND (provider_request_canonical_hash IS NULL OR provider_request_canonical_hash=request_fact->>'provider_request_hash');
+IF NOT FOUND THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_CONFLICT' USING ERRCODE='23505';
+END IF;
 RETURN jsonb_build_object('outcome',prepared->>'outcome');
 END;
 $$;
@@ -260,6 +800,8 @@ provider_request:=_agent_runtime_kie_provider_request_v1(kind,task.request_param
 provider_hash:=encode(digest(convert_to(provider_request::TEXT,'UTF8'),'sha256'),'hex');
 IF prepared_binding.action_id IS NOT NULL AND provider_hash IS DISTINCT FROM prepared_binding.provider_request_hash THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_CONFLICT' USING ERRCODE='23505';
 END IF;
+IF batch_binding.action_id IS NOT NULL AND batch_binding.provider_request_canonical_hash IS NOT NULL AND provider_hash IS DISTINCT FROM batch_binding.provider_request_canonical_hash THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROVIDER_REQUEST_CONFLICT' USING ERRCODE='23505';
+END IF;
 RETURN jsonb_build_object('outcome','found','source',context->>'source','kind',kind, 'provider_request',provider_request,'provider_request_hash',provider_hash);
 END;
 $$;
@@ -283,9 +825,22 @@ SELECT COALESCE(jsonb_agg(to_jsonb(task_row)),'[]'::JSONB) INTO discovered FROM 
 RETURN discovered;
 END;
 $$;
-REVOKE ALL ON TABLE agent_runtime_prepared_media_video_pricing_facts, agent_runtime_prepared_media_action_bindings FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker, everydayai_sync,everydayai,everydayai_agent_runtime_worker, everydayai_projection_worker,everydayai_authorization_worker, everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON TABLE agent_runtime_prepared_media_video_pricing_facts, agent_runtime_prepared_media_action_bindings, agent_runtime_media_owner_readiness FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker, everydayai_sync,everydayai,everydayai_agent_runtime_worker, everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION _agent_runtime_media_owner_readiness_v1() FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION record_agent_runtime_media_projection_readiness_v1(TEXT,TEXT,BOOLEAN,INTEGER) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION record_agent_runtime_media_provider_submission_v1(UUID,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TIMESTAMPTZ,JSONB) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION record_agent_runtime_media_provider_rejected_v1(UUID,UUID,TEXT,BIGINT,JSONB) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION record_agent_runtime_media_provider_unknown_v1(UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION finalize_agent_runtime_media_after_cancel_v1(UUID,UUID,UUID,INTEGER,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
+REVOKE ALL ON FUNCTION record_agent_runtime_media_cancel_unproven_v1(UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
 REVOKE ALL ON FUNCTION _agent_runtime_media_attempt_context_v2(UUID,UUID,TEXT,UUID,BIGINT,TEXT), _agent_runtime_media_resolved_images_v1(UUID,UUID), _agent_runtime_kie_provider_request_v1(TEXT,JSONB,JSONB), _prepare_agent_runtime_prepared_media_binding_v1(JSONB,TEXT), prepare_agent_runtime_media_dispatch_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT), read_agent_runtime_media_provider_request_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT), get_agent_runtime_media_configuration_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT,TEXT) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker, everydayai_sync,everydayai,everydayai_agent_runtime_worker, everydayai_projection_worker,everydayai_authorization_worker, everydayai_sandbox_worker,everydayai_runtime_admin;
 GRANT EXECUTE ON FUNCTION prepare_agent_runtime_media_dispatch_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT), read_agent_runtime_media_provider_request_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT), get_agent_runtime_media_configuration_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT,TEXT) TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION record_agent_runtime_media_provider_submission_v1(UUID,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TIMESTAMPTZ,JSONB) TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION record_agent_runtime_media_provider_rejected_v1(UUID,UUID,TEXT,BIGINT,JSONB) TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION record_agent_runtime_media_provider_unknown_v1(UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ) TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION finalize_agent_runtime_media_after_cancel_v1(UUID,UUID,UUID,INTEGER,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT) TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION record_agent_runtime_media_cancel_unproven_v1(UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ) TO everydayai_agent_runtime_worker;
+GRANT EXECUTE ON FUNCTION record_agent_runtime_media_projection_readiness_v1(TEXT,TEXT,BOOLEAN,INTEGER) TO everydayai_projection_worker;
 REVOKE ALL ON FUNCTION worker_discover_media_tasks(INTEGER) FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime, everydayai_agent_runtime_worker,everydayai_projection_worker, everydayai_authorization_worker,everydayai_sandbox_worker, everydayai_sync,everydayai,everydayai_runtime_admin;
 GRANT EXECUTE ON FUNCTION worker_discover_media_tasks(INTEGER) TO everydayai_worker;
 RESET ROLE;

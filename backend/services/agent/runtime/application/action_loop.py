@@ -42,12 +42,16 @@ from services.agent.runtime.application.action_loop_support import (
     CostReserveFailure as _CostReserveFailure,
     failure_result as _failure_result,
     int_value as _int,
+    next_reconcile_at as _next_reconcile_at,
+    persist_specialist_unknown as _persist_specialist_unknown,
+    provider_idempotency_key as _provider_idempotency_key,
     required as _required,
     required_int as _required_int,
     required_result as _required_result,
     required_time as _required_time,
     reserved_amount as _reserved_amount,
     result as _result,
+    specialist_finalizer as _specialist_finalizer,
 )
 
 
@@ -113,9 +117,13 @@ class ActionLoopDriver:
         )
         try:
             if claim.operation is ActionRecoveryOperation.CANCEL:
-                await self.cancel_action(claim.snapshot, lease=lease)
-                return True
-            if claim.operation is not ActionRecoveryOperation.RECONCILE:
+                from services.agent.runtime.application.action_cancel import (
+                    cancel_requires_readback,
+                )
+                if not cancel_requires_readback(claim.snapshot):
+                    await self.cancel_action(claim.snapshot, lease=lease)
+                    return True
+            elif claim.operation is not ActionRecoveryOperation.RECONCILE:
                 raise RuntimeError("ACTION_RECOVERY_OPERATION_REQUIRED")
             resolved = self._resolver.resolve(claim.snapshot)
             reconciled_attempt = self._with_capabilities(
@@ -365,11 +373,15 @@ class ActionLoopDriver:
         amount = cost.get("credits", cost.get("actual_credits", 0))
         if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
             amount = 0
-        result = _result(receipt)
+        result = _result(receipt) or {
+            "status": "empty", "summary": "cancelled", "data": {},
+            "artifact_ids": [], "usage": {}, "cost": {}, "external_receipt": external,
+        }
+        finalizer = _specialist_finalizer(self._specialist_facts, receipt, external)
         provider_receipt_hash = hashlib.sha256(
             canonical_json(external).encode("utf-8")
         ).hexdigest()
-        await self._specialist_facts.finalize(
+        await finalizer(
             attempt_id=attempt_id,
             execution_token=None if reconciliation else token,
             reconciliation_token=token if reconciliation else None,
@@ -377,7 +389,7 @@ class ActionLoopDriver:
             request_hash=request_hash,
             terminal_state=receipt.outcome.value,
             provider_receipt=external,
-            result=result or {"status": "empty", "summary": "cancelled", "data": {}, "artifact_ids": [], "usage": {}, "cost": {}, "external_receipt": external},
+            result=result,
             cost_kind=("settle" if receipt.outcome is ExecutionOutcome.COMPLETED
                        else "release" if receipt.outcome is ExecutionOutcome.FAILED
                        else "refund"),
@@ -412,37 +424,52 @@ class ActionLoopDriver:
         if receipt.outcome not in {ExecutionOutcome.ACCEPTED, ExecutionOutcome.UNKNOWN}:
             return False
         if reconciliation:
-            method = ("still_accepted" if receipt.outcome is ExecutionOutcome.ACCEPTED
-                      else "still_unknown")
-            await getattr(self._specialist_facts, method)(
+            common = dict(
                 attempt_id=attempt_id, reconciliation_token=token,
                 expected_state_version=state_version, request_hash=request_hash,
                 provider_receipt=dict(receipt.external_receipt),
-                ambiguity_evidence=receipt.ambiguity_evidence,
+                next_reconcile_at=_next_reconcile_at(self._lease_seconds),
             )
+            if receipt.outcome is ExecutionOutcome.ACCEPTED:
+                await self._specialist_facts.still_accepted(**common)
+            else:
+                await self._specialist_facts.still_unknown(
+                    **common,
+                    ambiguity_evidence=dict(receipt.ambiguity_evidence),
+                )
             return True
         external = dict(receipt.external_receipt)
         if receipt.outcome is ExecutionOutcome.UNKNOWN:
-            await self._specialist_facts.provider_unknown(
-                attempt_id=attempt_id, execution_token=token,
-                request_hash=request_hash,
+            await _persist_specialist_unknown(
+                self._specialist_facts, external=external,
+                attempt_id=attempt_id, token=token,
+                state_version=state_version, request_hash=request_hash,
                 ambiguity_evidence=receipt.ambiguity_evidence,
+                next_reconcile_at=_next_reconcile_at(self._lease_seconds),
             )
             return True
         provider_ref = external.get("provider_task_ref")
         provider = external.get("provider")
         if not isinstance(provider_ref, str) or not isinstance(provider, str):
             raise RuntimeError("SPECIALIST_PROVIDER_IDENTITY_REQUIRED")
-        await self._specialist_facts.provider_submission(
+        submission = self._specialist_facts.provider_submission
+        if provider == "kie" and hasattr(
+            self._specialist_facts, "media_provider_submission",
+        ):
+            submission = self._specialist_facts.media_provider_submission
+        await submission(
             attempt_id=attempt_id, execution_token=token, request_hash=request_hash,
             provider=provider, provider_task_ref=provider_ref,
             status_locator=external.get("status_locator"),
             callback_correlation=external.get("callback_correlation"),
-            provider_idempotency_key=external.get("provider_idempotency_key", attempt_id),
+            provider_idempotency_key=_provider_idempotency_key(
+                external, attempt_id,
+            ),
             provider_request_hash=_provider_request_hash(
                 external, request_hash,
             ),
             external_receipt=external,
+            next_reconcile_at=_next_reconcile_at(self._lease_seconds),
         )
         return True
 

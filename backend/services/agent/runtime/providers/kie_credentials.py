@@ -14,16 +14,22 @@ class PostgresRuntimeKieCredentialSource:
 
     async def api_key(
         self, attempt: ActionAttempt, *, provider_request_hash: str,
+        owner_token: str | None = None,
+        expected_state_version: int | None = None,
     ) -> str:
-        bundle = await self._resolver.runtime_media({
+        params = {
             "p_action_id": str(attempt.action_id),
             "p_attempt_id": str(attempt.attempt_id),
             "p_worker_id": attempt.worker_id,
-            "p_owner_token": str(attempt.lease.fencing_token),
-            "p_expected_attempt_version": attempt.state_version,
+            "p_owner_token": owner_token or str(attempt.lease.fencing_token),
+            "p_expected_attempt_version": (
+                attempt.state_version if expected_state_version is None
+                else expected_state_version
+            ),
             "p_request_hash": attempt.request_hash,
             "p_provider_request_hash": provider_request_hash,
-        })
+        }
+        bundle = await self._resolver.runtime_media(params)
         secret = bundle.values.get("ai.kie.api_key")
         if not isinstance(secret, Mapping) or set(secret) != {"api_key"}:
             raise RuntimeError("KIE_CREDENTIAL_UNAVAILABLE")

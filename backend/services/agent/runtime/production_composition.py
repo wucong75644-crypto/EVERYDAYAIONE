@@ -1,9 +1,6 @@
-"""Production composition for the complete AR-17 tool surface.
-Only concrete, injected ports are accepted here.  Test adapters and the
-non-production catalog module are intentionally unreachable from this root.
-"""
+"""Production composition for the concrete, injected AR-17 tool surface."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping
 from services.agent.runtime.catalog.production import (
     ProductionCatalogReceipt, ProductionToolBinding, build_production_catalog,
@@ -43,6 +40,7 @@ from services.agent.runtime.providers.callback_inbox import (
     CallbackInbox, CallbackSignatureVerifier,
 )
 from services.agent.runtime.providers.kie_media import RuntimeKieMediaProvider
+from services.agent.runtime.provider_facts import PostgresProviderSubmissionFacts
 from services.agent.runtime.production_services import ProductionServiceBundle
 from services.agent.runtime.application.action_loop import ActionLoopDriver
 from services.agent.runtime.executors.resolver import PostgresActionExecutorResolver
@@ -81,6 +79,7 @@ class ProductionSpecialistPorts:
     resource_mutation: ResourceMutationPort
     child_run: ChildRunPort
     facts: object | None = None
+    provider_facts: object | None = None
     local_data: ArtifactPort | None = None
     file_analyze: ArtifactPort | None = None
     fetch_all_pages: ArtifactPort | None = None
@@ -292,20 +291,20 @@ def build_production_specialist_registry(
         providers[tool] = LocalArtifactProvider(
             port=specialized, operation=tool,
         )
-    media_ready = (ports.kie_transport is not None
-                   and ports.kie_credentials is not None
+    media_ready = (ports.kie_transport is not None and ports.kie_credentials is not None
+                   and ports.provider_facts is not None
                    and ports.media_provider_ready
                    and ports.media_credentials_ready
                    and ports.media_capability_enabled)
     providers["generate_image"] = RuntimeKieMediaProvider(
         ports.kie_transport or ports.transport, task_port=ports.media_task,
         credentials=ports.kie_credentials, kind="image",
-        production_ready=media_ready,
+        production_ready=media_ready, facts=ports.provider_facts,
     )
     providers["generate_video"] = RuntimeKieMediaProvider(
         ports.kie_transport or ports.transport, task_port=ports.media_task,
         credentials=ports.kie_credentials, kind="video",
-        production_ready=media_ready,
+        production_ready=media_ready, facts=ports.provider_facts,
     )
     for tool in CHILD_RUN_TOOLS:
         providers[tool] = PortBackedProvider(
@@ -358,6 +357,11 @@ def build_production_components(
     service_bundle: object | None = None,
 ) -> ProductionRuntimeComponents:
     facts = PostgresSpecialistRepository(database)
+    if specialist_ports.provider_facts is None:
+        specialist_ports = replace(
+            specialist_ports,
+            provider_facts=PostgresProviderSubmissionFacts(database),
+        )
     read_registry = build_production_read_registry(read_resources)
     specialist_registry = build_production_specialist_registry(
         specialist_ports, facts=facts,

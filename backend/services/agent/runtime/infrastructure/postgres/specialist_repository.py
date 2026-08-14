@@ -88,6 +88,16 @@ class PostgresSpecialistRepository:
             "p_external_receipt": dict(external_receipt or {}),
         }, allowed={"accepted"})
 
+    async def media_provider_submission(self, **params: object) -> object:
+        return await self._rpc(
+            "record_agent_runtime_media_provider_submission_v1",
+            {
+                f"p_{key}": value
+                for key, value in params.items()
+            },
+            allowed={"accepted"},
+        )
+
     async def provider_unknown(
         self, *, attempt_id: str, execution_token: str, request_hash: str,
         ambiguity_evidence: Mapping[str, object],
@@ -97,6 +107,13 @@ class PostgresSpecialistRepository:
             "p_request_hash": request_hash,
             "p_ambiguity_evidence": dict(ambiguity_evidence),
         }, allowed={"unknown"})
+
+    async def media_provider_unknown(self, **params: object) -> object:
+        return await self._rpc(
+            "record_agent_runtime_media_provider_unknown_v1",
+            {f"p_{key}": value for key, value in params.items()},
+            allowed={"unknown"},
+        )
 
     async def provider_terminal(
         self, *, attempt_id: str, execution_token: str, request_hash: str,
@@ -126,10 +143,25 @@ class PostgresSpecialistRepository:
         }, allowed={resolution})
 
     async def still_accepted(self, **params: object) -> object:
-        return await self._rpc("record_agent_action_provider_still_accepted", params, allowed={"still_accepted"})
+        return await self._rpc(
+            "record_agent_action_provider_still_accepted",
+            {f"p_{key}": value for key, value in params.items()},
+            allowed={"still_accepted"},
+        )
 
     async def still_unknown(self, **params: object) -> object:
-        return await self._rpc("record_agent_action_provider_still_unknown", params, allowed={"still_unknown"})
+        return await self._rpc(
+            "record_agent_action_provider_still_unknown",
+            {f"p_{key}": value for key, value in params.items()},
+            allowed={"still_unknown"},
+        )
+
+    async def media_cancel_unproven(self, **params: object) -> object:
+        return await self._rpc(
+            "record_agent_runtime_media_cancel_unproven_v1",
+            {f"p_{key}": value for key, value in params.items()},
+            allowed={"still_unknown"},
+        )
 
     async def link_artifact(self, **params: object) -> object:
         return await self._rpc("link_agent_action_artifact", params, allowed={"linked"})
@@ -251,6 +283,13 @@ class PostgresSpecialistRepository:
             "p_actual_amount": actual_amount, "p_currency": currency,
             "p_reason_code": reason_code, "p_provider_receipt_hash": provider_receipt_hash or hashlib.sha256(canonical_json(provider_receipt).encode("utf-8")).hexdigest(),
         }, allowed={terminal_state})
+
+    async def media_cancel_readback_terminal(self, **params: object) -> object:
+        return await self._rpc(
+            "finalize_agent_runtime_media_after_cancel_v1",
+            {f"p_{name}": value for name, value in params.items()},
+            allowed={str(params["terminal_state"])},
+        )
 
     async def sync_phase(self, **params: object) -> Mapping[str, object]:
         return await self._rpc("record_agent_sync_phase_v3", params, allowed={"recorded"})

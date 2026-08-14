@@ -172,6 +172,7 @@ def render_envs(
             "AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED": "false",
             "AGENT_RUNTIME_MEDIA_ENABLED": "false",
             "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": "false",
+            "AGENT_RUNTIME_MEDIA_PRODUCTION_READY": "false",
             "SANDBOX_JOB_ROOT": "/var/lib/everydayai/sandbox-jobs", "SANDBOX_RUNTIME_REVISION": "unprovisioned",
         },
         "agent-projection-worker.env": {

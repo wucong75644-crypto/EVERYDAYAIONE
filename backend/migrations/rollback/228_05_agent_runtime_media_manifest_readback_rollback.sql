@@ -3,8 +3,29 @@ SET LOCAL ROLE everydayai_owner;
 
 DO $guard$
 BEGIN
-    IF EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings) THEN
-        RAISE EXCEPTION 'AGENT_RUNTIME_228_05_PREPARED_BINDINGS_IN_USE'
+    IF EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings)
+       OR EXISTS (
+           SELECT 1 FROM agent_runtime_media_action_bindings binding
+           JOIN agent_actions action ON action.id=binding.action_id
+            WHERE action.status NOT IN ('completed','failed','rejected','cancelled')
+       )
+       OR EXISTS (
+           SELECT 1 FROM agent_runtime_media_action_bindings binding
+           JOIN agent_actions action ON action.id=binding.action_id
+            WHERE action.status IN ('accepted','unknown')
+       )
+       OR EXISTS (
+           SELECT 1 FROM agent_runtime_media_action_bindings
+            WHERE credit_state='pending'
+       )
+       OR EXISTS (
+           SELECT 1 FROM agent_projection_outbox outbox
+           JOIN agent_runtime_events event ON event.id=outbox.event_id
+           JOIN agent_runtime_media_action_bindings binding
+             ON binding.action_id=event.action_id
+            WHERE outbox.status<>'delivered'
+       ) THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_228_05_ACTIVE_MEDIA_FACTS'
             USING ERRCODE='55000';
     END IF;
 END
@@ -95,11 +116,35 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION
+    record_agent_runtime_media_provider_submission_v1(
+      UUID,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TIMESTAMPTZ,JSONB),
+    record_agent_runtime_media_provider_rejected_v1(
+      UUID,UUID,TEXT,BIGINT,JSONB),
+    record_agent_runtime_media_provider_unknown_v1(
+      UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ),
+    finalize_agent_runtime_media_after_cancel_v1(
+      UUID,UUID,UUID,INTEGER,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT),
+    record_agent_runtime_media_cancel_unproven_v1(
+      UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ),
     prepare_agent_runtime_media_dispatch_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT),
     read_agent_runtime_media_provider_request_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT),
     get_agent_runtime_media_configuration_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT,TEXT)
 FROM everydayai_agent_runtime_worker,PUBLIC;
 
+REVOKE ALL ON FUNCTION record_agent_runtime_media_projection_readiness_v1(
+    TEXT,TEXT,BOOLEAN,INTEGER)
+FROM everydayai_projection_worker,PUBLIC;
+
+DROP FUNCTION record_agent_runtime_media_provider_submission_v1(
+    UUID,UUID,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TIMESTAMPTZ,JSONB);
+DROP FUNCTION record_agent_runtime_media_provider_rejected_v1(
+    UUID,UUID,TEXT,BIGINT,JSONB);
+DROP FUNCTION record_agent_runtime_media_provider_unknown_v1(
+    UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ);
+DROP FUNCTION finalize_agent_runtime_media_after_cancel_v1(
+    UUID,UUID,UUID,INTEGER,TEXT,TEXT,JSONB,JSONB,TEXT,BIGINT,BIGINT,TEXT,TEXT,TEXT);
+DROP FUNCTION record_agent_runtime_media_cancel_unproven_v1(
+    UUID,UUID,BIGINT,TEXT,JSONB,JSONB,TIMESTAMPTZ);
 DROP FUNCTION get_agent_runtime_media_configuration_v1(
     UUID,UUID,TEXT,UUID,BIGINT,TEXT,TEXT);
 DROP FUNCTION read_agent_runtime_media_provider_request_v1(
@@ -111,8 +156,14 @@ DROP FUNCTION _agent_runtime_kie_provider_request_v1(TEXT,JSONB,JSONB);
 DROP FUNCTION _agent_runtime_media_resolved_images_v1(UUID,UUID);
 DROP FUNCTION _agent_runtime_media_attempt_context_v2(
     UUID,UUID,TEXT,UUID,BIGINT,TEXT);
+DROP FUNCTION record_agent_runtime_media_projection_readiness_v1(
+    TEXT,TEXT,BOOLEAN,INTEGER);
+DROP FUNCTION _agent_runtime_media_owner_readiness_v1();
 
 DROP TABLE agent_runtime_prepared_media_action_bindings;
 DROP TABLE agent_runtime_prepared_media_video_pricing_facts;
+DROP TABLE agent_runtime_media_owner_readiness;
+ALTER TABLE agent_runtime_media_action_bindings
+    DROP COLUMN provider_request_canonical_hash;
 
 RESET ROLE;

@@ -22,6 +22,18 @@ from services.agent.runtime.ports.coordinator_recovery import ActionDispatchSnap
 from services.agent.runtime.ports.executor import ExecutionOutcome
 
 
+def cancel_requires_readback(snapshot: ActionDispatchSnapshot) -> bool:
+    """A proven-unavailable cancel becomes readback-only on the next lease."""
+    receipt = snapshot.attempt.get("external_receipt")
+    if not isinstance(receipt, dict) or receipt.get("provider") != "kie":
+        return False
+    evidence = receipt.get("evidence")
+    return isinstance(evidence, dict) and (
+        evidence.get("cancel_unproven") is True
+        or evidence.get("error_code") == "CANCEL_UNPROVEN"
+    )
+
+
 async def cancel_action(
     driver, snapshot: ActionDispatchSnapshot, *, lease: ActionLease | None,
 ) -> ExecutionOutcome:
@@ -107,11 +119,20 @@ async def _settle_specialist(
         return
     if receipt.outcome is not ExecutionOutcome.UNKNOWN:
         raise RuntimeError("SPECIALIST_CANCEL_UNEXPECTED_OUTCOME")
-    await driver._specialist_facts.still_unknown(
+    persistence = driver._specialist_facts.still_unknown
+    external = dict(receipt.external_receipt)
+    evidence = external.get("evidence")
+    if (
+        external.get("provider") == "kie" and isinstance(evidence, dict)
+        and evidence.get("cancel_unproven") is True
+        and hasattr(driver._specialist_facts, "media_cancel_unproven")
+    ):
+        persistence = driver._specialist_facts.media_cancel_unproven
+    await persistence(
         attempt_id=str(raw_attempt["id"]), reconciliation_token=token,
         expected_state_version=state_version,
         request_hash=str(raw_attempt["request_hash"]),
-        provider_receipt=dict(receipt.external_receipt),
+        provider_receipt=external,
         ambiguity_evidence=receipt.ambiguity_evidence,
         next_reconcile_at=next_reconcile_at(driver._lease_seconds),
     )

@@ -18,6 +18,7 @@ class RuntimeMediaIngressReceipt:
     run_id: str | None = None
     model_step_id: str | None = None
     runtime_owned: bool = False
+    readiness_revision: int | None = None
 
     @property
     def accepted(self) -> bool:
@@ -84,6 +85,10 @@ class RuntimeMediaIngress:
             outcome=data["outcome"], action_id=data.get("action_id"),
             run_id=data.get("run_id"), model_step_id=data.get("model_step_id"),
             runtime_owned=bool(data.get("runtime_owned", False)),
+            readiness_revision=(
+                data.get("readiness_revision")
+                if isinstance(data.get("readiness_revision"), int) else None
+            ),
         )
 
 

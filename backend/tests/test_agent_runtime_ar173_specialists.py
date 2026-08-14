@@ -122,8 +122,10 @@ class _RpcResponse:
 class _RpcDatabase:
     def __init__(self, data):
         self.data = data
+        self.calls = []
 
     def rpc(self, name, params):
+        self.calls.append((name, params))
         return _RpcResponse(self.data)
 
     async def provider_unknown(self, **params):
@@ -199,6 +201,29 @@ async def test_postgres_repository_rejects_ambiguous_rpc_outcomes() -> None:
     repository._database = _RpcDatabase({"outcome": "idempotent_readback", "settlement_id": "s"})
     result = await repository.cost("reserve", CostReservation(action_id="a", attempt_id="t", kind="reserve", reserved_amount=1))
     assert result["outcome"] == "idempotent_readback"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "outcome", "rpc_name"), (
+    ("still_accepted", "still_accepted", "record_agent_action_provider_still_accepted"),
+    ("still_unknown", "still_unknown", "record_agent_action_provider_still_unknown"),
+    ("media_provider_unknown", "unknown", "record_agent_runtime_media_provider_unknown_v1"),
+    ("media_cancel_unproven", "still_unknown", "record_agent_runtime_media_cancel_unproven_v1"),
+))
+async def test_postgres_repository_prefixes_reconciliation_rpc_parameters(
+    method: str, outcome: str, rpc_name: str,
+) -> None:
+    repository = object.__new__(PostgresSpecialistRepository)
+    database = _RpcDatabase({"outcome": outcome})
+    repository._database = database
+    await getattr(repository, method)(
+        attempt_id="attempt", expected_state_version=2,
+        reconciliation_token="token", next_reconcile_at="later",
+    )
+    assert database.calls == [(rpc_name, {
+        "p_attempt_id": "attempt", "p_expected_state_version": 2,
+        "p_reconciliation_token": "token", "p_next_reconcile_at": "later",
+    })]
 
 
 @pytest.mark.asyncio
