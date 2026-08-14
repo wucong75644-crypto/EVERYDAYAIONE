@@ -25,6 +25,10 @@ def test_atomic_image_batch_migration_is_additive_and_fenced() -> None:
 
 def test_atomic_image_batch_rollback_is_exact() -> None:
     rollback = ROLLBACK.read_text(encoding="utf-8")
+    assert "submit_agent_runtime_media_image_batch_v2" in rollback
+    assert "_agent_runtime_media_image_batch_ownership_v1" in rollback
+    assert "AGENT_RUNTIME_MEDIA_IMAGE_BATCH_ROLLBACK_08F2_REQUIRED" in rollback
+    assert "ERRCODE='55000'" in rollback
     assert "DROP FUNCTION submit_agent_runtime_media_image_batch_v1" in rollback
     assert "DROP TABLE" not in rollback
     assert "submit_agent_runtime_media_action_v1" not in rollback
