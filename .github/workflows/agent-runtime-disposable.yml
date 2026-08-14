@@ -10,6 +10,7 @@ on:
       - "backend/api/routes/message_chat_preparation.py"
       - "backend/api/routes/message_image_preparation.py"
       - "backend/api/routes/message_video_preparation.py"
+      - "backend/api/routes/message_media_failure.py"
       - "backend/core/config.py"
       - "backend/core/db_scope.py"
       - "backend/core/redis.py"
@@ -28,6 +29,7 @@ on:
       - "backend/services/media_tool_executor.py"
       - "backend/services/task_completion_service.py"
       - "backend/services/handlers/image_handler.py"
+      - "backend/services/handlers/image_request_settings.py"
       - "backend/services/handlers/image_prepared_submission.py"
       - "backend/services/handlers/video_prepared_submission.py"
       - "backend/services/wecom/**"
@@ -35,6 +37,7 @@ on:
       - "backend/tests/agent_runtime_deploy_test_support.py"
       - "backend/tests/test_artifact_runtime.py"
       - "backend/tests/test_message_chat_preparation.py"
+      - "backend/tests/test_image_runtime_request_guardrails.py"
       - "backend/tests/test_wecom_actor_enqueue.py"
       - "backend/tests/test_scheduled_wecom_*.py"
       - "backend/tests/test_wecom_ws_runner*.py"
@@ -42,6 +45,8 @@ on:
       - "frontend/package.json"
       - "frontend/package-lock.json"
       - "frontend/src/components/chat/media/AiImageGrid.tsx"
+      - "frontend/src/constants/mediaOptions.ts"
+      - "frontend/src/constants/__tests__/models.test.ts"
       - "frontend/src/components/chat/message/MessageMedia.tsx"
       - "frontend/src/services/messageSender.ts"
       - "frontend/src/services/__tests__/messageSenderRetry.test.ts"
@@ -351,6 +356,7 @@ jobs:
             src/schemas/__tests__/messageProtocol.test.ts \
             src/utils/__tests__/runtimeMediaSlots.test.ts \
             src/services/__tests__/messageSenderRetry.test.ts \
+            src/constants/__tests__/models.test.ts \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/runtime-media-frontend.log"
           npm run build \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/runtime-media-frontend-build.log"

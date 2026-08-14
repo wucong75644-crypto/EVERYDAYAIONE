@@ -75,6 +75,8 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "228_08e2_agent_runtime_media_model_video_projection",
         "228_08f1_agent_runtime_media_prepared_image_batch_projection",
         "228_08f2_agent_runtime_media_atomic_image_batch_ownership",
+        "228_08g1_agent_runtime_media_real_event_normalization",
+        "228_08g2_agent_runtime_media_model_video_wecom_outbox",
     ):
         assert f"backend/migrations/{identity}.sql" in RUNNER
         assert f"backend/migrations/rollback/{identity}_rollback.sql" in RUNNER
@@ -100,6 +102,10 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "test_agent_runtime_media_atomic_image_batch_ownership_migration.py",
         "test_agent_runtime_media_atomic_image_batch_ownership_postgres_external.py",
         "test_background_task_worker_media_scope.py",
+        "test_image_runtime_request_guardrails.py",
+        "test_agent_runtime_media_real_event_normalization_migration.py",
+        "test_agent_runtime_media_real_event_normalization_postgres_external.py",
+        "test_agent_runtime_media_real_event_terminal_postgres_external.py",
     ):
         assert dependency in RUNNER
 
@@ -142,6 +148,7 @@ def test_runtime_media_frontend_contracts_and_build_are_wired() -> None:
         "messageProtocol.test.ts",
         "runtimeMediaSlots.test.ts",
         "messageSenderRetry.test.ts",
+        "models.test.ts",
     ):
         assert test_name in WORKFLOW
     assert "npm run test:run --" in WORKFLOW

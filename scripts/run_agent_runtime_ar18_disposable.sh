@@ -25,6 +25,8 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/228_08e2_agent_runtime_media_model_video_projection.sql
   backend/migrations/228_08f1_agent_runtime_media_prepared_image_batch_projection.sql
   backend/migrations/228_08f2_agent_runtime_media_atomic_image_batch_ownership.sql
+  backend/migrations/228_08g1_agent_runtime_media_real_event_normalization.sql
+  backend/migrations/228_08g2_agent_runtime_media_model_video_wecom_outbox.sql
   backend/migrations/rollback/228_01_agent_runtime_action_hash_canonicalization_rollback.sql
   backend/migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql
   backend/migrations/rollback/228_03_agent_runtime_media_authorization_group_rollback.sql
@@ -43,6 +45,8 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/rollback/228_08e2_agent_runtime_media_model_video_projection_rollback.sql
   backend/migrations/rollback/228_08f1_agent_runtime_media_prepared_image_batch_projection_rollback.sql
   backend/migrations/rollback/228_08f2_agent_runtime_media_atomic_image_batch_ownership_rollback.sql
+  backend/migrations/rollback/228_08g1_agent_runtime_media_real_event_normalization_rollback.sql
+  backend/migrations/rollback/228_08g2_agent_runtime_media_model_video_wecom_outbox_rollback.sql
 )
 
 MEDIA_UNIT_TESTS=(
@@ -59,6 +63,7 @@ MEDIA_UNIT_TESTS=(
   backend/tests/test_agent_runtime_media_task_port.py
   backend/tests/test_background_task_worker_media_scope.py
   backend/tests/test_file_upload_runtime_media.py
+  backend/tests/test_image_runtime_request_guardrails.py
   backend/tests/test_media_tool_executor.py
   backend/tests/test_message_image_preparation.py
   backend/tests/test_message_video_preparation.py
@@ -83,6 +88,7 @@ MEDIA_MIGRATION_TESTS=(
   backend/tests/test_agent_runtime_media_model_video_projection_fence_migration.py
   backend/tests/test_agent_runtime_media_prepared_image_batch_projection_migration.py
   backend/tests/test_agent_runtime_media_atomic_image_batch_ownership_migration.py
+  backend/tests/test_agent_runtime_media_real_event_normalization_migration.py
 )
 
 MEDIA_EXTERNAL_TESTS=(
@@ -108,6 +114,8 @@ MEDIA_EXTERNAL_TESTS=(
   backend/tests/test_agent_runtime_media_model_video_projection_fence_postgres_external.py
   backend/tests/test_agent_runtime_media_prepared_image_batch_projection_postgres_external.py
   backend/tests/test_agent_runtime_media_atomic_image_batch_ownership_postgres_external.py
+  backend/tests/test_agent_runtime_media_real_event_normalization_postgres_external.py
+  backend/tests/test_agent_runtime_media_real_event_terminal_postgres_external.py
 )
 
 require_files() {
