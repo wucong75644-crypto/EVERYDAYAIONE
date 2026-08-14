@@ -57,6 +57,25 @@ def test_all_production_services_are_non_root() -> None:
         assert "Group=root" not in text
 
 
+def test_shared_application_services_have_isolated_log_directories() -> None:
+    expected = {
+        "everydayai-backend.service": "/var/log/everydayai/backend",
+        "everydayai-sync.service": "/var/log/everydayai/sync",
+        "everydayai-conversation-actor.service": (
+            "/var/log/everydayai/conversation-actor"
+        ),
+        "everydayai-wecom.service": "/var/log/everydayai/wecom",
+    }
+    for name, log_dir in expected.items():
+        text = (DEPLOY / name).read_text()
+        assert f'Environment="EVERYDAYAI_LOG_DIR={log_dir}"' in text
+        assert "UMask=0027" in text
+
+    provisioner = (DEPLOY / "provision-runtime-users.sh").read_text()
+    for log_dir in expected.values():
+        assert log_dir in provisioner
+
+
 def test_sandbox_environment_has_no_forbidden_credentials() -> None:
     text = (DEPLOY / "env-templates/sandbox-worker.env.template").read_text()
     for forbidden in ("REDIS", "OSS_", "MODEL_", "JWT", "WECOM"):

@@ -16,6 +16,7 @@ Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §4.4 / §17
 # sync 进程的 scheduler 用 Asia/Shanghai 计算"明天 10:00"，时区错会让定时任务跑错时刻
 Environment="TZ=Asia/Shanghai"
+Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/sync"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.sync
 EnvironmentFile=/var/www/everydayai/backend/.env.kek
@@ -40,6 +41,7 @@ LimitNPROC=4096
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+UMask=0027
 
 # 日志配置
 StandardOutput=journal

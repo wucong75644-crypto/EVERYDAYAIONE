@@ -41,6 +41,14 @@ install -d -o root -g everydayai-sandbox-io -m 2770 \
 install -d -o root -g everydayai-sandbox-io -m 0750 \
   /var/lib/everydayai/sandbox-rootfs
 install -d -o root -g everydayai-app -m 2770 /var/log/everydayai
+install -d -o everydayai-api -g everydayai-app -m 0750 \
+  /var/log/everydayai/backend
+install -d -o everydayai-sync -g everydayai-app -m 0750 \
+  /var/log/everydayai/sync
+install -d -o everydayai-actor -g everydayai-app -m 0750 \
+  /var/log/everydayai/conversation-actor
+install -d -o everydayai-wecom -g everydayai-app -m 0750 \
+  /var/log/everydayai/wecom
 install -d -o everydayai-agent-runtime -g everydayai-app -m 0750 \
   /var/log/everydayai/agent-runtime
 install -d -o everydayai-agent-projection -g everydayai-app -m 0750 \

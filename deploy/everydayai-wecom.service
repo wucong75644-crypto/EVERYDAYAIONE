@@ -13,6 +13,7 @@ Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/
 # L0 时区固化 — 必须显式设置，不依赖 OS /etc/localtime（防御性配置）
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §4.4 / §17
 Environment="TZ=Asia/Shanghai"
+Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/wecom"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.wecom-runtime
 EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
@@ -37,6 +38,7 @@ LimitNOFILE=65535
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+UMask=0027
 
 # 日志配置
 StandardOutput=journal

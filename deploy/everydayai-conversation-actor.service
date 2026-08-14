@@ -9,6 +9,7 @@ Group=everydayai-app
 WorkingDirectory=/var/www/everydayai/backend
 Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="TZ=Asia/Shanghai"
+Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/conversation-actor"
 EnvironmentFile=/var/www/everydayai/backend/.env
 EnvironmentFile=/var/www/everydayai/backend/.env.runtime
 EnvironmentFile=/var/www/everydayai/backend/.env.worker-client
@@ -27,6 +28,7 @@ LimitNPROC=4096
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+UMask=0027
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=everydayai-conversation-actor
