@@ -294,6 +294,15 @@ def test_worker_db_probe_never_loads_application_settings() -> None:
     assert "get_settings" not in text
 
 
+def test_projection_confirmation_uses_settings_free_safety_registry() -> None:
+    text = (
+        ROOT
+        / "backend/services/agent/runtime/application/confirmation_notification.py"
+    ).read_text()
+    assert "from config.tool_safety import get_safety_level" in text
+    assert "from config.chat_tools" not in text
+
+
 def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
     text = (DEPLOY / "everydayai-sandbox-worker.service").read_text()
     assert "Delegate=cpu memory pids" in text

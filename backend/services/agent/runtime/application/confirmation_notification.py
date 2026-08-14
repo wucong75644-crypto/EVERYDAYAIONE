@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Mapping
 
-from config.chat_tools import get_safety_level
+from config.tool_safety import get_safety_level
 from schemas.websocket_builders import build_tool_confirm_request
 from services.tool_confirmation import ToolConfirmationService
 from services.tool_confirmation.canonical import canonical_arguments_hash
