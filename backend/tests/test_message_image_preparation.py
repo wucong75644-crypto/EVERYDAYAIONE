@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from api.routes.message_image_preparation import prepare_and_start_image_generation
+from core.exceptions import AppException
 from schemas.message import GenerateRequest, GenerationType, TextPart
 from services.generation_lifecycle import GenerationPreparation
 from services.handlers.image_prepared_submission import submit_prepared_image_task
@@ -83,12 +84,7 @@ def _body(num_images: int = 2) -> GenerateRequest:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("runtime_owned", "legacy_calls"), (
-    (True, 0), (False, 1),
-))
-async def test_image_batch_routes_by_runtime_readiness(
-    monkeypatch, runtime_owned, legacy_calls,
-):
+async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch):
     _Lifecycle.instances.clear()
     monkeypatch.setattr(
         "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
@@ -106,8 +102,7 @@ async def test_image_batch_routes_by_runtime_readiness(
     )
     async def _ingress(**kwargs):
         return SimpleNamespace(
-            accepted=runtime_owned, runtime_owned=runtime_owned,
-            run_id="run-1" if runtime_owned else None,
+            accepted=True, runtime_owned=True, outcome="created", run_id="run-1",
         )
     monkeypatch.setattr(
         "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
@@ -124,8 +119,65 @@ async def test_image_batch_routes_by_runtime_readiness(
     prepared = _Lifecycle.instances[0].calls[0]
     assert len(prepared["tasks"]) == 2
     assert {task["status"] for task in prepared["tasks"]} == {"preparing"}
-    assert handler.start.await_count == legacy_calls
+    handler.start.assert_not_awaited()
+    assert _Lifecycle.instances[0].fail_calls == []
     assert response.user_message.id == "input-1"
+
+
+@pytest.mark.asyncio
+async def test_image_media_not_ready_fails_prepared_state_without_legacy_provider(
+    monkeypatch,
+):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": 2, "total_credits": 10,
+        },
+    )
+    ingress = AsyncMock(return_value=SimpleNamespace(
+        accepted=False, runtime_owned=False, outcome="media_not_ready", run_id=None,
+    ))
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_media_ingress", ingress,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
+    )
+    handler = _Handler()
+    body = _body()
+    body.params["_task_slot_id"] = "slot-1"
+    db = MagicMock()
+
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=db, handler=handler, conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=body,
+        )
+
+    assert captured.value.code == "RUNTIME_MEDIA_UNAVAILABLE"
+    assert captured.value.status_code == 503
+    assert captured.value.details == {"outcome": "media_not_ready"}
+    handler.start.assert_not_awaited()
+    handler._lock_credits.assert_not_called()
+    assert ingress.await_count == 1
+    lifecycle = _Lifecycle.instances[0]
+    assert {call["task_id"] for call in lifecycle.fail_calls} == set(
+        lifecycle.calls[0]["tasks"][index]["id"] for index in range(2)
+    )
+    assert lifecycle.refund_calls == []
+    message_update = db.table.return_value.update.call_args.args[0]
+    assert message_update["status"] == "failed"
+    assert len(message_update["content"]) == 2
+    assert all(part["failed"] for part in message_update["content"])
+    release_slot.assert_awaited_once()
+    assert release_slot.await_args.args[0]["request_params"]["_task_slot_id"] == "slot-1"
 
 
 class _Adapter:

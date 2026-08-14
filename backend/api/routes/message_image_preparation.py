@@ -17,6 +17,11 @@ from services.handlers.base import TaskMetadata
 from services.handlers.image_request_settings import resolve_image_generation_settings
 from services.user_activity_service import record_user_activity
 
+from api.routes.message_media_failure import (
+    RuntimeMediaNotOwned,
+    fail_closed_prepared_media,
+)
+
 
 _IMAGE_TURN_NAMESPACE = uuid.UUID("fd68022e-6cda-444a-843c-53832f58de7f")
 _IMAGE_INPUT_NAMESPACE = uuid.UUID("0c68e63b-0748-4971-b907-54e291279441")
@@ -58,9 +63,7 @@ async def prepare_and_start_image_generation(
     )
     if settings["num_images"] > 4:
         raise RuntimeError("IMAGE_PREPARED_TASK_COUNT_INVALID")
-    existing_output = body.operation in {
-        MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE,
-    }
+    existing_output = body.operation in {MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE}
     turn_id = None if existing_output else _stable_id(_IMAGE_TURN_NAMESPACE, request_id)
     input_id = None if existing_output else _stable_id(_IMAGE_INPUT_NAMESPACE, request_id)
     batch_id = _stable_id(_IMAGE_BATCH_NAMESPACE, request_id)
@@ -75,7 +78,8 @@ async def prepare_and_start_image_generation(
         batch_id=batch_id, conversation_id=conversation_id, user_id=user_id,
         org_id=org_id, placeholder_at=placeholder_at,
     )
-    preparation = GenerationLifecycle(db).prepare(
+    lifecycle = GenerationLifecycle(db)
+    preparation = lifecycle.prepare(
         request_id=request_id, operation=body.operation.value,
         conversation_id=conversation_id, user_id=user_id, org_id=org_id,
         turn_id=turn_id,
@@ -107,13 +111,13 @@ async def prepare_and_start_image_generation(
                 task_payloads=task_payloads, preparation=preparation,
                 model_id=settings["model_id"],
             )
-            if external_task_id is None:
-                external_task_id = await handler.start(
-                    message_id=preparation.output_message_id,
-                    conversation_id=conversation_id, user_id=user_id,
-                    content=body.content, params=_business_params(body),
-                    metadata=metadata,
-                )
+    except RuntimeMediaNotOwned as error:
+        await fail_closed_prepared_media(
+            db=db, lifecycle=lifecycle, task_ids=task_ids, task_payloads=task_payloads,
+            message_id=preparation.output_message_id,
+            operation=body.operation, params=body.params, media_kind="image",
+            outcome=error.outcome, org_id=org_id, user_id=user_id,
+        )
     except Exception as error:
         from core.exceptions import AppException
         if isinstance(error, AppException) and error.code == "IMAGE_GENERATION_FAILED":
@@ -158,7 +162,7 @@ async def _submit_runtime_image_tasks(
     *, db: Any, conversation_id: str, user_id: str, org_id: str | None,
     request_id: str, task_ids: tuple[str, ...],
     task_payloads: list[dict[str, Any]], preparation: Any, model_id: str,
-) -> str | None:
+) -> str:
     from api.routes.message_media_runtime import submit_runtime_media_ingress
 
     external_task_ids = []
@@ -175,7 +179,7 @@ async def _submit_runtime_image_tasks(
         if not receipt.runtime_owned:
             if external_task_ids:
                 raise RuntimeError("RUNTIME_MEDIA_PARTIAL_OWNERSHIP")
-            return None
+            raise RuntimeMediaNotOwned(receipt.outcome)
         if not receipt.accepted:
             raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
         external_task_ids.append(receipt.run_id or task_id)
