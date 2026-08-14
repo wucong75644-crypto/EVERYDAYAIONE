@@ -50,6 +50,7 @@ class _Projection:
         self.readback_value = readback
         self.applied: list[tuple[str, Mapping[str, object] | None]] = []
         self.failed: list[str] = []
+        self.isolated: list[str] = []
 
     async def claim(self, batch_size: int = 50, lease_seconds: int = 60):
         return (self.claim_value,)
@@ -63,6 +64,10 @@ class _Projection:
 
     async def fail(self, claim, error_code: str):
         self.failed.append(error_code)
+
+    async def isolate(self, claim, error_code: str):
+        self.isolated.append(error_code)
+        return True
 
     async def read_result(self, claim):
         return None
@@ -167,7 +172,7 @@ async def test_unknown_never_persists_or_refunds_and_ws_failure_is_best_effort()
 
 
 @pytest.mark.asyncio
-async def test_missing_authoritative_facts_releases_claim_for_retry() -> None:
+async def test_missing_authoritative_facts_isolates_terminal_poison() -> None:
     projection = _Projection(
         "action.completed", {"outcome": "found", "action_facts": {}},
     )
@@ -177,7 +182,8 @@ async def test_missing_authoritative_facts_releases_claim_for_retry() -> None:
     ).run_once()
 
     assert projection.applied == []
-    assert projection.failed == ["contract_persistencecontracterror"]
+    assert projection.failed == []
+    assert projection.isolated == ["contract_persistencecontracterror"]
 
 
 @pytest.mark.asyncio
@@ -295,6 +301,32 @@ async def test_failure_cancel_and_one_shot_retry_release_task_slot(
 
     assert released == ["task"]
     assert persistence.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", [
+    "run.completed", "run.failed", "run.cancelled",
+])
+async def test_initial_media_run_releases_explicit_chat_task_slot(
+    event_type: str,
+) -> None:
+    facts = _facts()
+    action_facts = facts["action_facts"]
+    assert isinstance(action_facts, dict)
+    action_facts["run"] = {"capability_snapshot": {"source": "chat"}}
+    action_facts["run_projection_mode"] = "runtime_media_initial"
+    action_facts["chat_task_slot_id"] = "limit-slot"
+    released = []
+
+    async def release(task: Mapping[str, object]) -> None:
+        released.append(task["id"])
+
+    await RuntimeMediaProjectionWorker(
+        _Projection(event_type, facts), _Persistence(),
+        release_task_slot=release,
+    ).run_once()
+
+    assert released == ["task"]
 
 
 @pytest.mark.asyncio

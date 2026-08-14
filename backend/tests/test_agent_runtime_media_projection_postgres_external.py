@@ -22,25 +22,23 @@ ROLLBACK = ROOT / "migrations/rollback/228_06_agent_runtime_media_projection_rol
 PREPARED_MIGRATION = ROOT / "migrations/228_05_agent_runtime_media_manifest_readback.sql"
 PREPARED_SCHEMA_STUB = """
 CREATE TABLE agent_runtime_prepared_media_action_bindings (
-    action_id UUID PRIMARY KEY REFERENCES agent_actions(id) ON DELETE RESTRICT,
-    task_id UUID NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE RESTRICT,
-    session_id UUID NOT NULL REFERENCES agent_runtime_sessions(id) ON DELETE RESTRICT,
-    run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
-    model_step_id UUID NOT NULL REFERENCES agent_model_steps(id) ON DELETE RESTRICT,
-    org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT,
+    action_id UUID PRIMARY KEY REFERENCES agent_actions(id) ON DELETE RESTRICT, task_id UUID NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE RESTRICT,
+    session_id UUID NOT NULL REFERENCES agent_runtime_sessions(id) ON DELETE RESTRICT, run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+    model_step_id UUID NOT NULL REFERENCES agent_model_steps(id) ON DELETE RESTRICT, org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE RESTRICT,
-    input_message_id UUID NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE RESTRICT, input_message_id UUID NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
     output_message_id UUID NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
     media_kind TEXT NOT NULL CHECK (media_kind IN ('image','video')),
-    action_request_hash TEXT NOT NULL, task_request_hash TEXT NOT NULL,
-    reference_manifest_hash TEXT NOT NULL, provider_request_hash TEXT NOT NULL,
-    pricing_revision TEXT NOT NULL, pricing_model_id TEXT NOT NULL,
-    pricing_key TEXT NOT NULL, pricing_fact_hash TEXT NOT NULL,
-    unit_credits INTEGER NOT NULL CHECK (unit_credits > 0),
-    credit_transaction_id UUID NOT NULL UNIQUE REFERENCES credit_transactions(id),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    action_request_hash TEXT NOT NULL, task_request_hash TEXT NOT NULL, reference_manifest_hash TEXT NOT NULL, provider_request_hash TEXT NOT NULL,
+    pricing_revision TEXT NOT NULL, pricing_model_id TEXT NOT NULL, pricing_key TEXT NOT NULL, pricing_fact_hash TEXT NOT NULL,
+    unit_credits INTEGER NOT NULL CHECK (unit_credits > 0), credit_transaction_id UUID NOT NULL UNIQUE REFERENCES credit_transactions(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE FUNCTION _agent_runtime_media_owner_readiness_v1()
+RETURNS JSONB LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path=pg_catalog,public
+RETURN jsonb_build_object(
+    'ready',TRUE,'state_version',1,'projection_heartbeat_fresh',TRUE
 );
 """
 ASSET_RPC_STUB = """
@@ -334,14 +332,17 @@ def _assert_rollback_reapply(database: str, historical) -> None:
                 status,delivered_at
             ) VALUES(%s,%s,%s,%s,%s,'web_runtime','delivered',clock_timestamp())
         """, (delivered_outbox, *event))
-        connection.execute("""
-            INSERT INTO agent_runtime_media_projection_recoveries(
-                recovery_request_id,outbox_id,event_id,session_id,org_id,user_id,
-                actor_user_id,expected_recovery_version,expected_attempt_count,
-                reason,not_before,database_request_id
-            ) VALUES(%s,%s,%s,%s,%s,%s,%s,0,8,'historical recovery audit',
-                     clock_timestamp(),'rollback-exact-guard')
-        """, (uuid4(), delivered_outbox, *event[0:4], event[3]))
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            with connection.transaction():
+                connection.execute("""
+                    INSERT INTO agent_runtime_media_projection_recoveries(
+                        recovery_request_id,outbox_id,event_id,session_id,org_id,user_id,
+                        actor_user_id,expected_recovery_version,expected_attempt_count,
+                        reason,not_before,database_request_id
+                    ) VALUES(%s,%s,%s,%s,%s,%s,%s,0,8,'historical recovery audit',
+                             clock_timestamp(),'rollback-exact-guard')
+                """, (uuid4(), delivered_outbox, *event[0:4], event[3]))
+                connection.execute(ROLLBACK.read_text(encoding="utf-8"))
         connection.execute(ROLLBACK.read_text(encoding="utf-8"))
         assert connection.execute("""
             SELECT pg_get_functiondef(
@@ -496,5 +497,4 @@ def test_prepared_media_has_terminal_projection_owner(
         call = connection.execute(
             "SELECT payload FROM runtime_media_asset_calls",
         ).fetchone()[0]
-        assert call["media_type"] == media_kind
-        assert call["source_kind"] == f"{media_kind}_task"
+        assert (call["media_type"], call["source_kind"]) == (media_kind, f"{media_kind}_task")

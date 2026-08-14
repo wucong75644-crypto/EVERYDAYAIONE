@@ -24,6 +24,7 @@ class MediaProjectionPort(Protocol):
     async def read(self, claim: ProjectionClaim) -> Mapping[str, object] | None: ...
     async def apply(self, claim: ProjectionClaim, action: str, content_part: Mapping[str, object] | None = None) -> Mapping[str, object]: ...
     async def fail(self, claim: ProjectionClaim, error_code: str) -> None: ...
+    async def isolate(self, claim: ProjectionClaim, error_code: str) -> bool: ...
     async def read_result(self, claim: ProjectionClaim) -> Mapping[str, object] | None: ...
 
 
@@ -48,12 +49,13 @@ class RuntimeMediaProjectionWorker:
         return len(claims)
 
     async def _process(self, claim: ProjectionClaim) -> None:
+        readback: Mapping[str, object] | None = None
         try:
             readback = await self._projection.read(claim)
             if readback is None:
                 return
-            await self._release_terminal_slot(claim, readback)
             if readback.get("outcome") == "already_applied":
+                await self._release_terminal_slot(claim, readback)
                 return
             action = _projection_action(claim.event.event_type)
             content_part = None
@@ -62,12 +64,21 @@ class RuntimeMediaProjectionWorker:
                 content_part = dict(await self._persistence.persist(request))
                 content_part.setdefault("source_url", request.source_url)
             result = await self._projection.apply(claim, action, content_part)
+            if result.get("outcome") in {"applied", "already_applied"}:
+                await self._release_terminal_slot(claim, readback)
             if result.get("outcome") == "applied":
                 await self._notify(result.get("notification"))
         except PersistenceContractError as error:
-            await self._projection.fail(claim, _error_code("contract", error))
+            error_code = _error_code("contract", error)
+            if await self._projection.isolate(claim, error_code):
+                if readback is not None:
+                    await self._release_terminal_slot(claim, readback)
+            else:
+                await self._projection.fail(claim, error_code)
         except Exception as error:
             if await self._projection.read_result(claim) is not None:
+                if readback is not None:
+                    await self._release_terminal_slot(claim, readback)
                 return
             logger.warning(
                 "runtime_media_projection_retry | outbox_id={} | event_id={} | error={}",
@@ -143,6 +154,23 @@ def _terminal_task(
         if not isinstance(task, Mapping):
             raise PersistenceContractError("terminal media retry task facts required")
         return task
+    if facts.get("run_projection_mode") == "runtime_media_initial":
+        if not isinstance(task, Mapping):
+            raise PersistenceContractError("terminal media run task facts required")
+        slot_id = facts.get("chat_task_slot_id")
+        if (
+            not isinstance(slot_id, str) or not slot_id.strip()
+            or slot_id != _task_slot_id(task)
+        ):
+            raise PersistenceContractError("terminal media task slot facts invalid")
+        return task
+    return None
+
+
+def _task_slot_id(task: Mapping[str, object]) -> object:
+    params = task.get("request_params")
+    if isinstance(params, Mapping):
+        return params.get("_task_slot_id")
     return None
 
 

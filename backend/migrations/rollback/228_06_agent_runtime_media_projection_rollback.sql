@@ -7,6 +7,10 @@ BEGIN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CONTROLS_MUST_ROLL_BACK_FIRST'
             USING ERRCODE = '55000';
     END IF;
+    IF to_regclass('public.agent_runtime_media_projection_isolations') IS NOT NULL THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ISOLATION_MUST_ROLL_BACK_FIRST'
+            USING ERRCODE = '55000';
+    END IF;
     IF EXISTS (
            SELECT 1 FROM agent_actions action
             WHERE action.status NOT IN ('completed','failed','rejected','cancelled')
@@ -33,7 +37,8 @@ BEGIN
        OR EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings
                    WHERE credit_state='pending')
        OR EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings
-                   WHERE credit_state='pending') THEN
+                   WHERE credit_state='pending')
+       OR EXISTS (SELECT 1 FROM agent_runtime_media_projection_recoveries) THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROJECTION_IN_USE'
             USING ERRCODE = '55000';
     END IF;

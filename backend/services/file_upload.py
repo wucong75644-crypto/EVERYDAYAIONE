@@ -351,14 +351,10 @@ async def download_url_to_workspace(
     cdn_domain: str | None = None,
     oss_service: Any | None = None,
     use_configured_oss: bool = True,
+    downloader: Any | None = None,
+    strict_download_errors: bool = False,
 ) -> Optional[dict[str, Any]]:
-    """下载远程 URL → 工作区子目录 → 双轨 emit_payload。
-
-    复用 HttpDownloader(流式+超时) + tenacity(重试 3 次/总 45s) + upload_to_payload(OSS+workspace_path)。
-    subdir 默认 image→"下载/AI图片"/video→"下载/AI视频"。suggested_name 为 None 则生成
-    `IMG_<YYYYMMDD>_<HHMMSS>_<6hex>_<3idx>.<ext>` (VID_ for video)。
-    失败返回 None,调用方应降级用原 url(聊天可见、工作区不可见)。
-    """
+    """下载远程 URL 到工作区并返回双轨 payload。"""
     from services.http_downloader import HttpDownloader
 
     if workspace_root is None:
@@ -378,7 +374,8 @@ async def download_url_to_workspace(
         logger.error(f"download_url_to_workspace path escape | subdir={subdir}")
         return None
 
-    downloader = HttpDownloader()
+    owns_downloader = downloader is None
+    downloader = downloader or HttpDownloader()
     try:
         # 1. 下载(含重试 + 总超时预算)
         try:
@@ -386,11 +383,15 @@ async def download_url_to_workspace(
                 downloader, url, user_id, media_type, max_size_mb * 1024 * 1024,
             )
         except ValueError as e:
+            if strict_download_errors:
+                raise
             logger.warning(
                 f"download_url_to_workspace skipped | url={url[:80]} | reason={e}"
             )
             return None
         except Exception as e:
+            if strict_download_errors:
+                raise
             logger.warning(
                 f"download_url_to_workspace download failed | "
                 f"url={url[:80]} | error={e}"
@@ -442,7 +443,8 @@ async def download_url_to_workspace(
         )
         return payload
     finally:
-        await downloader.close()
+        if owns_downloader:
+            await downloader.close()
 
 
 async def persist_media_urls_to_workspace(

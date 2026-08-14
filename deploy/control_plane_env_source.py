@@ -181,8 +181,10 @@ def render_envs(
             "AGENT_RUNTIME_RELEASE_REVISION": release_sha,
             "AGENT_RUNTIME_HEALTH_SOCKET": "/run/everydayai-agent-projection/health.sock",
             "AGENT_RUNTIME_MEDIA_ENABLED": "false",
+            "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": "false",
             "MEDIA_WORKSPACE_ROOT": "/mnt/nas-workspace",
             "MEDIA_CDN_DOMAIN": "",
+            "MEDIA_RESULT_ALLOWED_HOSTS": "",
             "AGENT_RUNTIME_POLL_INTERVAL_SECONDS": "1", "AGENT_RUNTIME_HEARTBEAT_SECONDS": "10", **shared,
         },
         "agent-authorization-worker.env": {

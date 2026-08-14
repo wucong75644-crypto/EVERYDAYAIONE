@@ -97,9 +97,13 @@ class RuntimeMediaPersistence:
 
 def build_runtime_media_persistence(
     *, asset_registry: Any, workspace_root: str | None = None,
-    cdn_domain: str | None = None,
+    cdn_domain: str | None = None, allowed_result_hosts: tuple[str, ...],
 ) -> RuntimeMediaPersistence:
     """Build the real adapter from existing Workspace/OSS/registry services."""
+
+    from services.agent.runtime.application.media_safe_download import (
+        RuntimeMediaSafeDownloader,
+    )
 
     async def persist_workspace(**kwargs: object) -> Mapping[str, object] | None:
         from services.file_upload import download_url_to_workspace
@@ -111,14 +115,19 @@ def build_runtime_media_persistence(
         identity = str(kwargs["identity"])
         media_type = str(kwargs["media_type"])
         subdir = "下载/AI视频" if media_type == "video" else "下载/AI图片"
-        return await download_url_to_workspace(
-            url=source_url, user_id=user_id, org_id=org_text,
-            subdir=subdir, suggested_stem=identity.replace(":", "_"),
-            media_type=media_type, idx=1,
-            meta={"runtime_identity": identity}, strict_content_mime=True,
-            idempotent_name=True, workspace_root=workspace_root,
-            cdn_domain=cdn_domain, use_configured_oss=workspace_root is None,
-        )
+        downloader = RuntimeMediaSafeDownloader(allowed_result_hosts)
+        try:
+            return await download_url_to_workspace(
+                url=source_url, user_id=user_id, org_id=org_text,
+                subdir=subdir, suggested_stem=identity.replace(":", "_"),
+                media_type=media_type, idx=1,
+                meta={"runtime_identity": identity}, strict_content_mime=True,
+                idempotent_name=True, workspace_root=workspace_root,
+                cdn_domain=cdn_domain, use_configured_oss=workspace_root is None,
+                downloader=downloader, strict_download_errors=True,
+            )
+        finally:
+            await downloader.close()
 
     return RuntimeMediaPersistence(
         workspace_persist=persist_workspace, asset_registry=asset_registry,

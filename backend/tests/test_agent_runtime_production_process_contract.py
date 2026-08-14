@@ -216,8 +216,10 @@ async def test_projection_process_starts_supervised_media_owner() -> None:
         agent_runtime_worker_id="projection-test",
         agent_runtime_scheduled_web_projection_enabled=False,
         agent_runtime_media_enabled=True,
+        agent_runtime_media_provider_probe_passed=True,
         media_workspace_root="/mnt/nas-workspace",
         media_cdn_domain="cdn.example.test",
+        media_result_allowed_hosts="provider.example.test,*.provider-cdn.test",
     )
     owner = MagicMock(run_once=AsyncMock(return_value=True))
     probe = SimpleNamespace(ready=True, code="READY")
@@ -240,6 +242,9 @@ async def test_projection_process_starts_supervised_media_owner() -> None:
         media_projection_enabled=True,
         media_workspace_root="/mnt/nas-workspace",
         media_cdn_domain="cdn.example.test",
+        media_result_allowed_hosts=(
+            "provider.example.test", "*.provider-cdn.test",
+        ),
     )
 
 

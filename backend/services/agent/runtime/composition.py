@@ -132,13 +132,14 @@ class ProjectionOwner:
         self.confirmations = confirmations
         self.scheduled_delivery = scheduled_delivery
         self.media_projection = media_projection
+        self._media_ready = False
         self._draining = False
 
     async def run_once(self) -> bool:
         if self._draining:
             return False
         media_projected = 0
-        if self.media_projection is not None:
+        if self.media_projection is not None and self._media_ready:
             media_projected = await self.media_projection.run_once()
         projected = await self.projection.run_once()
         delivered = False
@@ -154,7 +155,11 @@ class ProjectionOwner:
         return bool(media_projected or projected or delivered or notified)
 
     def drain(self) -> None:
+        self._media_ready = False
         self._draining = True
+
+    def set_media_readiness(self, ready: bool) -> None:
+        self._media_ready = bool(ready) and not self._draining
 
     def stop(self) -> None:
         self.drain()
@@ -173,6 +178,7 @@ def build_projection(
     media_projection_enabled: bool = False,
     media_workspace_root: str | None = None,
     media_cdn_domain: str | None = None,
+    media_result_allowed_hosts: tuple[str, ...] = (),
 ):
     _require_process_role("projection", process_role)
     from services.agent.runtime.application.confirmation_notification import (
@@ -190,7 +196,10 @@ def build_projection(
     db = scoped(database, DatabaseAccessKind.PROJECTION, worker_id)
     media_projection = None
     if media_projection_enabled:
-        if not media_workspace_root or not media_cdn_domain:
+        if (
+            not media_workspace_root or not media_cdn_domain
+            or not media_result_allowed_hosts
+        ):
             raise RuntimeError("RUNTIME_MEDIA_PROJECTION_STORAGE_REQUIRED")
         from services.agent.runtime.application.media_persistence import (
             RuntimeMediaAssetRegistry, build_runtime_media_persistence,
@@ -204,6 +213,7 @@ def build_projection(
                 asset_registry=RuntimeMediaAssetRegistry(db),
                 workspace_root=media_workspace_root,
                 cdn_domain=media_cdn_domain,
+                allowed_result_hosts=media_result_allowed_hosts,
             ),
             ws_manager,
         )

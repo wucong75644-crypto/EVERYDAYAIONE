@@ -6,6 +6,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations/228_06_agent_runtime_media_projection.sql"
 ROLLBACK = ROOT / "migrations/rollback/228_06_agent_runtime_media_projection_rollback.sql"
+ISOLATION = ROOT / "migrations/228_06a_agent_runtime_media_projection_isolation.sql"
+ISOLATION_ROLLBACK = ROOT / "migrations/rollback/228_06a_agent_runtime_media_projection_isolation_rollback.sql"
+READINESS = ROOT / "migrations/228_06b_agent_runtime_media_projection_readiness.sql"
+READINESS_ROLLBACK = ROOT / "migrations/rollback/228_06b_agent_runtime_media_projection_readiness_rollback.sql"
 
 
 def test_projection_lane_is_additive_and_fenced() -> None:
@@ -35,6 +39,8 @@ def test_projection_lane_is_additive_and_fenced() -> None:
     assert "agent_runtime_media_action_bindings binding" in sql
     assert "agent_runtime_prepared_media_action_bindings binding" in sql
     assert "action.rejected" in sql
+    assert "_agent_runtime_media_owner_readiness_v1" in sql
+    assert "(v_readiness->>'ready')::BOOLEAN IS NOT TRUE" in sql
 
 
 def test_terminal_projection_reads_persistent_facts_and_merges_slots() -> None:
@@ -73,7 +79,7 @@ def test_rollback_guard_requires_drained_projection_and_bindings() -> None:
     assert "AGENT_RUNTIME_MEDIA_PROJECTION_IN_USE" in rollback
     assert "AGENT_RUNTIME_MEDIA_CONTROLS_MUST_ROLL_BACK_FIRST" in rollback
     assert "agent_runtime_media_projection_recoveries" in rollback
-    assert "IF EXISTS (SELECT 1 FROM agent_runtime_media_projection_recoveries)" not in rollback
+    assert "OR EXISTS (SELECT 1 FROM agent_runtime_media_projection_recoveries)" in rollback
     assert "action.status NOT IN ('completed','failed','rejected','cancelled')" in rollback
     assert "outbox.status<>'delivered'" in rollback
     assert "credit_state='pending'" in rollback
@@ -87,3 +93,39 @@ def test_rollback_guard_requires_drained_projection_and_bindings() -> None:
     assert "restore its exact 220.12" in rollback
     assert "CREATE OR REPLACE FUNCTION claim_agent_compat_projection_outbox" in rollback
     assert "'action.rejected'" not in rollback
+
+
+def test_poison_isolation_is_fenced_audited_and_compensating() -> None:
+    sql = ISOLATION.read_text(encoding="utf-8")
+    rollback = ISOLATION_ROLLBACK.read_text(encoding="utf-8")
+    assert "CREATE TABLE agent_runtime_media_projection_isolations" in sql
+    assert "FORCE ROW LEVEL SECURITY" in sql
+    assert "isolate_agent_runtime_media_projection_v1" in sql
+    assert "isolate_dead_agent_runtime_media_projection_v1" in sql
+    assert "lease_token IS DISTINCT FROM p_lease_token" in sql
+    assert "recovery_version IS DISTINCT FROM p_expected_recovery_version" in sql
+    assert "atomic_refund_credits" in sql
+    assert sql.index("FROM tasks WHERE id=v_binding.task_id FOR UPDATE") < sql.index(
+        "FROM agent_runtime_media_action_bindings\n             WHERE action_id=v_event.action_id FOR UPDATE"
+    ) < sql.index("FROM messages\n             WHERE id=v_binding.output_message_id FOR UPDATE")
+    assert "through_sequence=v_event.sequence" in sql
+    assert "'isolated',TRUE" in sql
+    assert "TO everydayai_projection_worker" in sql
+    assert "TO everydayai_runtime_admin" in sql
+    assert "AGENT_RUNTIME_MEDIA_ISOLATION_AUDIT_PRESENT" in rollback
+
+
+def test_projection_readiness_requires_control_probe_heartbeat_and_fence() -> None:
+    sql = READINESS.read_text(encoding="utf-8")
+    rollback = READINESS_ROLLBACK.read_text(encoding="utf-8")
+    assert "CREATE OR REPLACE FUNCTION record_agent_runtime_media_projection_readiness_v1" in sql
+    assert "runtime_control.projection_enabled" in sql
+    assert "runtime_control.release_revision=btrim(p_projection_revision)" in sql
+    assert "media_control.provider_probe_passed" in sql
+    assert "media_control.runtime_enabled" in sql
+    assert "heartbeat.ready AND NOT heartbeat.draining" in sql
+    assert "heartbeat.observed_at>=statement_timestamp()" in sql
+    assert "media_projection_enabled" in sql
+    assert "media_provider_probe_passed" in sql
+    assert "projection_owner_ready=COALESCE(effective_ready,FALSE)" in sql
+    assert "projection_owner_ready=p_ready" in rollback

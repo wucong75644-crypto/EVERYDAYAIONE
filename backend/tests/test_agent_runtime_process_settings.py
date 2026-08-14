@@ -147,7 +147,9 @@ def test_projection_and_authorization_field_allowlists() -> None:
         "redis_host", "redis_port", "redis_password", "redis_db", "redis_ssl",
         "agent_runtime_scheduled_web_projection_enabled",
         "agent_runtime_media_enabled",
+        "agent_runtime_media_provider_probe_passed",
         "media_workspace_root", "media_cdn_domain",
+        "media_result_allowed_hosts",
     }
     assert ProjectionProcessSettings.model_fields[
         "agent_runtime_media_enabled"
@@ -222,6 +224,8 @@ print(json.dumps({
         "SANDBOX_CGROUP_V2_MOUNT": "/sys/fs/cgroup",
         "REDIS_PASSWORD": "projection-password-do-not-render",
         "MEDIA_CDN_DOMAIN": "cdn.example.test",
+        "MEDIA_RESULT_ALLOWED_HOSTS": "provider.example.test",
+        "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED": "true",
     })
     completed = subprocess.run(
         [sys.executable, "-c", script], cwd=tmp_path, env=environment,
@@ -271,6 +275,8 @@ def test_projection_and_authorization_templates_are_narrow() -> None:
     assert "MEDIA_WORKSPACE_ROOT=" in projection
     assert "MEDIA_CDN_DOMAIN=" in projection
     assert "AGENT_RUNTIME_MEDIA_ENABLED=false" in projection
+    assert "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED=false" in projection
+    assert "MEDIA_RESULT_ALLOWED_HOSTS=" in projection
     runtime = (templates / "agent-runtime-worker.env.template").read_text()
     assert "AGENT_RUNTIME_MEDIA_ENABLED=false" in runtime
     assert "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED=false" in runtime

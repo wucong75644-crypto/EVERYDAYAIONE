@@ -8,6 +8,7 @@ from agent_runtime_worker_main import (
     _health_payload,
     _redacted_error,
     _report_heartbeat,
+    _report_media_projection_readiness,
 )
 from services.agent.runtime.composition import RuntimeOwner
 
@@ -86,7 +87,7 @@ async def test_heartbeat_reports_actual_readiness_and_draining() -> None:
 
     class Rpc:
         async def execute(self):
-            return SimpleNamespace(data={})
+            return SimpleNamespace(data={"ready": True})
 
     class Db:
         def rpc(self, name, params):
@@ -110,6 +111,69 @@ async def test_heartbeat_reports_actual_readiness_and_draining() -> None:
     assert calls[0][1]["p_draining"] is False
     assert calls[1][1]["p_ready"] is False
     assert calls[1][1]["p_draining"] is True
+
+
+@pytest.mark.asyncio
+async def test_projection_heartbeat_records_media_owner_readiness() -> None:
+    calls = []
+
+    class Rpc:
+        async def execute(self):
+            return SimpleNamespace(data={"ready": True})
+
+    class Db:
+        def rpc(self, name, params):
+            calls.append((name, params))
+            return Rpc()
+
+    settings = SimpleNamespace(
+        agent_runtime_worker_id="projection-worker",
+        agent_runtime_release_revision="release-1",
+        agent_runtime_heartbeat_seconds=10,
+        agent_runtime_media_enabled=True,
+        agent_runtime_media_provider_probe_passed=True,
+    )
+    assert await _report_heartbeat(
+        Db(), settings, "projection", ready=True, draining=False,
+        status_code="accepting",
+    )
+    assert calls[1] == (
+        "record_agent_runtime_media_projection_readiness_v1",
+        {
+            "p_worker_id": "projection-worker",
+            "p_projection_revision": "release-1",
+            "p_ready": True,
+            "p_heartbeat_ttl_seconds": 30,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_projection_media_readiness_fails_closed_without_provider_probe() -> None:
+    calls = []
+
+    class Rpc:
+        async def execute(self):
+            return SimpleNamespace(data={"ready": False})
+
+    class Db:
+        def rpc(self, name, params):
+            calls.append((name, params))
+            return Rpc()
+
+    settings = SimpleNamespace(
+        agent_runtime_worker_id="projection-worker",
+        agent_runtime_release_revision="release-1",
+        agent_runtime_heartbeat_seconds=10,
+        agent_runtime_media_enabled=True,
+        agent_runtime_media_provider_probe_passed=False,
+    )
+    rpc_ok, persisted_ready = await _report_media_projection_readiness(
+        Db(), settings, "projection", ready=True, draining=False,
+    )
+    assert rpc_ok is True
+    assert persisted_ready is False
+    assert calls[0][1]["p_ready"] is False
 
 
 @pytest.mark.asyncio

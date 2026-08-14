@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import psycopg
@@ -15,6 +16,9 @@ from tests.test_agent_runtime_media_projection_postgres_external import (
 
 
 pytestmark = pytest.mark.external
+ROOT = Path(__file__).resolve().parents[1]
+ISOLATION = ROOT / "migrations/228_06a_agent_runtime_media_projection_isolation.sql"
+ISOLATION_ROLLBACK = ROOT / "migrations/rollback/228_06a_agent_runtime_media_projection_isolation_rollback.sql"
 
 
 def test_projection_failure_dead_threshold_and_admin_requeue(database: str) -> None:
@@ -93,6 +97,125 @@ def test_projection_failure_dead_threshold_and_admin_requeue(database: str) -> N
             SELECT count(*) FROM agent_runtime_media_projection_recoveries
              WHERE recovery_request_id=%s
         """, (recovery_id,)).fetchone()[0] == 1
+
+
+def test_terminal_poison_isolation_refunds_and_advances_checkpoint(database: str) -> None:
+    _prepare_legacy_schema(database)
+    _install_projection_migration(database)
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(ISOLATION.read_text(encoding="utf-8"))
+    batch = _seed_batch(database, 1, credits=1000)
+    assert _prepare(database, batch.attempts[0])["outcome"] == "prepared"
+    action_id = batch.attempts[0].action_id
+    outbox_id = _seed_terminal_event(
+        database, action_id, "https://provider.example/poison.webp",
+    )
+    with _projection_connection(database) as connection:
+        connection.execute(
+            "SELECT set_config('app.request_id','media-isolation-worker',false)",
+        )
+        [claimed] = connection.execute(
+            "SELECT claim_agent_runtime_media_projection_v1(1,15)",
+        ).fetchone()[0]
+        result = connection.execute(
+            "SELECT isolate_agent_runtime_media_projection_v1(%s,%s,%s)",
+            (outbox_id, UUID(claimed["lease_token"]), "contract_ssrf_forbidden"),
+        ).fetchone()[0]
+        assert result["outcome"] == "isolated"
+    with psycopg.connect(database) as connection:
+        task_status, used, locked, credit_state, tx_status = connection.execute("""
+            SELECT task.status,task.credits_used,task.credits_locked,
+                   binding.credit_state,transaction.status
+              FROM agent_runtime_media_action_bindings binding
+              JOIN tasks task ON task.id=binding.task_id
+              JOIN credit_transactions transaction
+                ON transaction.id=binding.credit_transaction_id
+             WHERE binding.action_id=%s
+        """, (action_id,)).fetchone()
+        assert (task_status, used, locked, credit_state, tx_status) == (
+            "failed", 0, 0, "refunded", "refunded",
+        )
+        outbox_status, isolated = connection.execute("""
+            SELECT status,checkpoint->>'isolated'
+              FROM agent_projection_outbox WHERE id=%s
+        """, (outbox_id,)).fetchone()
+        assert (outbox_status, isolated) == ("delivered", "true")
+        assert connection.execute("""
+            SELECT count(*) FROM agent_runtime_media_projection_isolations
+             WHERE outbox_id=%s AND error_code='contract_ssrf_forbidden'
+        """, (outbox_id,)).fetchone()[0] == 1
+
+
+def test_isolation_migration_rollback_reapply_without_audit(database: str) -> None:
+    _prepare_legacy_schema(database)
+    _install_projection_migration(database)
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(ISOLATION.read_text(encoding="utf-8"))
+        connection.execute(ISOLATION_ROLLBACK.read_text(encoding="utf-8"))
+        assert connection.execute(
+            "SELECT to_regclass('agent_runtime_media_projection_isolations') IS NULL",
+        ).fetchone()[0] is True
+        connection.execute(ISOLATION.read_text(encoding="utf-8"))
+        assert connection.execute(
+            "SELECT to_regprocedure('isolate_agent_runtime_media_projection_v1(uuid,uuid,text)') IS NOT NULL",
+        ).fetchone()[0] is True
+
+
+def test_admin_can_fenced_isolate_dead_terminal_event(database: str) -> None:
+    _prepare_legacy_schema(database)
+    _install_projection_migration(database)
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(ISOLATION.read_text(encoding="utf-8"))
+    batch = _seed_batch(database, 1, credits=1000)
+    assert _prepare(database, batch.attempts[0])["outcome"] == "prepared"
+    outbox_id = _seed_terminal_event(
+        database, batch.attempts[0].action_id,
+        "https://provider.example/dead-poison.webp",
+    )
+    with psycopg.connect(database) as connection:
+        connection.execute("""
+            UPDATE agent_projection_outbox SET status='dead',attempt_count=8,
+                   recovery_version=2,last_error_code='asset_contract_invalid'
+             WHERE id=%s
+        """, (outbox_id,))
+    admin_url = database.replace("postgres@", "everydayai_runtime_admin@")
+    request_id = uuid4()
+    with psycopg.connect(admin_url) as connection:
+        connection.execute(
+            "SELECT set_config('app.actor_user_id',%s,false)", (str(USER),),
+        )
+        connection.execute(
+            "SELECT set_config('app.org_id',%s,false)", (str(ORG),),
+        )
+        connection.execute(
+            "SELECT set_config('app.access_kind','runtime_admin',false)",
+        )
+        connection.execute(
+            "SELECT set_config('app.request_id','media-isolation-test',false)",
+        )
+        stale = connection.execute("""
+            SELECT isolate_dead_agent_runtime_media_projection_v1(
+                %s,1,8,%s,'stale review'
+            )
+        """, (outbox_id, uuid4())).fetchone()[0]
+        assert stale["outcome"] == "stale_version"
+        result = connection.execute("""
+            SELECT isolate_dead_agent_runtime_media_projection_v1(
+                %s,2,8,%s,'operator verified deterministic poison'
+            )
+        """, (outbox_id, request_id)).fetchone()[0]
+        assert result["outcome"] == "isolated"
+    with psycopg.connect(database) as connection:
+        audit = connection.execute("""
+            SELECT actor_user_id,worker_id,expected_recovery_version,
+                   expected_attempt_count,database_request_id
+              FROM agent_runtime_media_projection_isolations
+             WHERE isolation_request_id=%s
+        """, (request_id,)).fetchone()
+        assert audit == (USER, None, 2, 8, "media-isolation-test")
 
 
 def test_retry_one_shot_run_is_checkpoint_only_without_model_final(database: str) -> None:

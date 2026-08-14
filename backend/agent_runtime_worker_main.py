@@ -17,6 +17,10 @@ from core.logging_config import setup_logging
 from services.agent.runtime.composition import (
     build_authorization, build_projection, build_runtime, build_sandbox, scoped,
 )
+from services.agent.runtime.application.media_projection_readiness import (
+    report_media_projection_readiness as _report_media_projection_readiness,
+    set_media_owner_readiness as _set_media_owner_readiness,
+)
 
 
 class SandboxProcessSettings(BaseSettings):
@@ -94,6 +98,7 @@ class ProjectionProcessSettings(AuthorizationProcessSettings):
 
     agent_runtime_scheduled_web_projection_enabled: bool = False
     agent_runtime_media_enabled: bool = False
+    agent_runtime_media_provider_probe_passed: bool = False
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_password: SecretStr | None = None
@@ -101,6 +106,7 @@ class ProjectionProcessSettings(AuthorizationProcessSettings):
     redis_ssl: bool = False
     media_workspace_root: str = "/mnt/nas-workspace"
     media_cdn_domain: str | None = None
+    media_result_allowed_hosts: str = ""
 
 
 def _load_process_settings(role: str):
@@ -242,7 +248,18 @@ async def _run() -> None:
                     control_reason,
                 )
             if _can_run_cycle(owner, cycle, enabled, bool(state["ready"])):
-                await cycle()
+                media_rpc_ok, media_ready = await _report_media_projection_readiness(
+                    control_db, settings, role, ready=True, draining=False,
+                )
+                if media_rpc_ok and _set_media_owner_readiness(
+                    owner, role, media_ready,
+                ):
+                    await cycle()
+                else:
+                    state.update(
+                        ready=False, status="unavailable",
+                        reason="MEDIA_READINESS_HEARTBEAT_FAILED",
+                    )
             else:
                 await asyncio.sleep(settings.agent_runtime_poll_interval_seconds)
     finally:
@@ -325,6 +342,10 @@ async def _build_owner_and_cycle(role, raw, settings):
             media_projection_enabled=settings.agent_runtime_media_enabled,
             media_workspace_root=settings.media_workspace_root,
             media_cdn_domain=settings.media_cdn_domain,
+            media_result_allowed_hosts=tuple(
+                host.strip() for host in settings.media_result_allowed_hosts.split(",")
+                if host.strip()
+            ),
         )
         cycle = owner.run_once
     elif role == "authorization":
@@ -368,9 +389,24 @@ async def _report_heartbeat(
             "p_ready": ready,
             "p_draining": draining,
             "p_status_code": status_code,
-            "p_details": {"ready": ready, "draining": draining},
+            "p_details": {
+                "ready": ready, "draining": draining,
+                "media_projection_enabled": bool(
+                    role == "projection"
+                    and settings.agent_runtime_media_enabled
+                ),
+                "media_provider_probe_passed": bool(
+                    role == "projection"
+                    and settings.agent_runtime_media_provider_probe_passed
+                ),
+            },
             },
         ).execute()
+        media_rpc_ok, _ = await _report_media_projection_readiness(
+            control_db, settings, role, ready=ready, draining=draining,
+        )
+        if not media_rpc_ok:
+            return False
     except Exception:
         return False
     return True

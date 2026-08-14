@@ -77,6 +77,22 @@ class PostgresMediaProjection:
         result = require_mapping(response.data, "media projection fail")
         outcome(result, {"failed", "ownership_lost", "not_found"})
 
+    async def isolate(self, claim: ProjectionClaim, error_code: str) -> bool:
+        response = await self._database.rpc(
+            "isolate_agent_runtime_media_projection_v1",
+            {
+                "p_outbox_id": claim.outbox_id,
+                "p_lease_token": claim.lease_token,
+                "p_error_code": error_code,
+            },
+        ).execute()
+        result = require_mapping(response.data, "media projection isolation")
+        result_outcome = outcome(result, {
+            "isolated", "already_isolated", "ownership_lost", "not_found",
+            "not_terminal", "not_media", "projection_gap",
+        })
+        return result_outcome in {"isolated", "already_isolated"}
+
     async def read_result(self, claim: ProjectionClaim) -> Mapping[str, object] | None:
         response = await self._database.rpc(
             "read_agent_runtime_media_projection_result_v1",
