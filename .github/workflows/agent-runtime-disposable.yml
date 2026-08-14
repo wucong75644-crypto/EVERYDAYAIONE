@@ -17,6 +17,8 @@ on:
       - "backend/services/configuration/**"
       - "backend/migrations/227_*.sql"
       - "backend/migrations/rollback/227_*.sql"
+      - "backend/migrations/217_*.sql"
+      - "backend/migrations/rollback/217_*.sql"
       - "backend/migrations/228_*.sql"
       - "backend/migrations/rollback/228_*.sql"
       - "backend/services/agent/runtime/**"

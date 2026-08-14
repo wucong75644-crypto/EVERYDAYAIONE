@@ -34,6 +34,8 @@ def test_ar18_runner_is_the_ci_entrypoint_and_keeps_flags_off() -> None:
 
 def test_runtime_media_changes_trigger_the_disposable_lane() -> None:
     required_paths = (
+        "backend/migrations/217_*.sql",
+        "backend/migrations/rollback/217_*.sql",
         "backend/migrations/228_*.sql",
         "backend/migrations/rollback/228_*.sql",
         "backend/api/routes/message_image_preparation.py",
@@ -65,6 +67,9 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "228_06a_agent_runtime_media_projection_isolation",
         "228_06b_agent_runtime_media_projection_readiness",
         "228_06c_agent_runtime_media_slot_release",
+        "228_08a_agent_runtime_media_model_video",
+        "228_08b_agent_runtime_media_wecom_delivery",
+        "228_08c_agent_runtime_media_worker_scope",
     ):
         assert f"backend/migrations/{identity}.sql" in RUNNER
         assert f"backend/migrations/rollback/{identity}_rollback.sql" in RUNNER
@@ -75,6 +80,12 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "test_agent_runtime_media_controls_migration.py",
         "test_agent_runtime_media_controls_composition_contract.py",
         "test_agent_runtime_media_controls_composition_postgres_external.py",
+        "test_agent_runtime_media_model_video_migration.py",
+        "test_agent_runtime_media_model_video_postgres_external.py",
+        "test_agent_runtime_media_wecom_delivery_migration.py",
+        "test_agent_runtime_media_wecom_delivery_postgres_external.py",
+        "test_agent_runtime_media_worker_scope_migration.py",
+        "test_agent_runtime_media_worker_scope_postgres_external.py",
     ):
         assert dependency in RUNNER
 

@@ -17,6 +17,9 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/228_06b_agent_runtime_media_projection_readiness.sql
   backend/migrations/228_06c_agent_runtime_media_slot_release.sql
   backend/migrations/228_07_agent_runtime_media_controls.sql
+  backend/migrations/228_08a_agent_runtime_media_model_video.sql
+  backend/migrations/228_08b_agent_runtime_media_wecom_delivery.sql
+  backend/migrations/228_08c_agent_runtime_media_worker_scope.sql
   backend/migrations/rollback/228_01_agent_runtime_action_hash_canonicalization_rollback.sql
   backend/migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql
   backend/migrations/rollback/228_03_agent_runtime_media_authorization_group_rollback.sql
@@ -27,6 +30,9 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/rollback/228_06b_agent_runtime_media_projection_readiness_rollback.sql
   backend/migrations/rollback/228_06c_agent_runtime_media_slot_release_rollback.sql
   backend/migrations/rollback/228_07_agent_runtime_media_controls_rollback.sql
+  backend/migrations/rollback/228_08a_agent_runtime_media_model_video_rollback.sql
+  backend/migrations/rollback/228_08b_agent_runtime_media_wecom_delivery_rollback.sql
+  backend/migrations/rollback/228_08c_agent_runtime_media_worker_scope_rollback.sql
 )
 
 MEDIA_UNIT_TESTS=(
@@ -59,6 +65,9 @@ MEDIA_MIGRATION_TESTS=(
   backend/tests/test_agent_runtime_media_projection_migration.py
   backend/tests/test_agent_runtime_media_controls_migration.py
   backend/tests/test_agent_runtime_media_controls_composition_contract.py
+  backend/tests/test_agent_runtime_media_model_video_migration.py
+  backend/tests/test_agent_runtime_media_wecom_delivery_migration.py
+  backend/tests/test_agent_runtime_media_worker_scope_migration.py
 )
 
 MEDIA_EXTERNAL_TESTS=(
@@ -77,6 +86,9 @@ MEDIA_EXTERNAL_TESTS=(
   backend/tests/test_agent_runtime_media_controls_concurrency_postgres_external.py
   backend/tests/test_agent_runtime_media_controls_composition_postgres_external.py
   backend/tests/test_agent_runtime_media_formal_composition_postgres_external.py
+  backend/tests/test_agent_runtime_media_model_video_postgres_external.py
+  backend/tests/test_agent_runtime_media_wecom_delivery_postgres_external.py
+  backend/tests/test_agent_runtime_media_worker_scope_postgres_external.py
 )
 
 require_files() {
