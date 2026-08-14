@@ -168,6 +168,8 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `frontend/src/components/integrations/KuaimaiSourcesTab.tsx`：快麦数据源凭证卡片、
   cURL 配置引导与保存反馈。
 - `docs/document/TECH_快麦凭证保存修复.md`：快麦 cURL 校验、原子保存、失败语义与回滚设计。
+- `docs/document/TECH_异步任务占位消息原位更新.md`：定义媒体任务按消息 ID 原位更新、
+  文字流条件式清理和乱序完成下的稳定展示顺序。
 - `deploy/transfer-sync-domain-ownership.sh` /
   `deploy/rollback-sync-domain-ownership.sh`：Sync 数据域 owner 原子切换与回滚。
 - `deploy/grant-sync-wecom-employee-access.sh` /
@@ -443,13 +445,21 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   source/migrator DSN 分离，apply 要求固定 import_id 与精确确认字符串。
 - `frontend/src/components/admin/configuration/ErpConfigSection.tsx`：以
   `erp.app_credentials` 与 `erp.token_pair` 两个原子组管理企业 ERP 凭证，写入携带
-  状态版本 CAS。
+  状态版本 CAS，并以统一状态卡展示配置与重新配置入口。
+- `frontend/src/components/admin/configuration/CredentialGroupSection.tsx`：统一 ERP 与
+  企业微信机器人凭证组的已配置/未配置状态、折叠展示和重新配置入口。
+- `frontend/src/components/admin/__tests__/OrgCredentialSections.test.tsx`：覆盖 ERP 与
+  企业微信凭证组隐藏内部版本、展示配置状态及展开重新配置。
 - `frontend/src/components/admin/__tests__/AiConfigSection.test.tsx`：覆盖企业 AI Key
   切换平台服务时的逐键 CAS 停用、部分失败后的权威重载、防重复请求及组织生命周期隔离。
 - `frontend/src/components/admin/useAiConfigLoader.ts`：隔离企业 AI 配置权威状态加载、
   active Key 判定和 orgId/卸载后的异步结果失效。
 - `frontend/src/components/admin/OrgInfoSection.tsx`：从企业管理主面板拆出的企业信息
   与登录链接展示，使主面板保持在结构阈值内。
+- `docs/document/REQ_企业管理整合组织管理.md`：确认保留“企业管理”一级模块，将
+  组织管理作为内部板块，并把成员、任职和企微员工的重叠体验统一。
+- `docs/document/UI_企业管理整合组织管理.md`：定义企业管理内部信息架构、统一
+  “成员与任职”列表、群聊管理边界、旧入口兼容和可验证交互状态。
 - `deploy/env-templates/legacy-config-import.env.template`：161 一次性迁移的旧库只读 DSN、
   migrator DSN、旧密钥兜底和新 KEK 示例，不包含真实材料。
 - `backend/migrations/161_configuration_legacy_import.sql` 同时提供
@@ -1102,6 +1112,7 @@ EVERYDAYAIONE/
         │   ├── __tests__/useWorkspace.test.ts # 工作区切换、取消和竞态回归测试
         │   ├── useVirtuaScroll.ts        # Virtua 滚动管理（统一入口）
         │   ├── useUnifiedMessages.ts     # 统一消息读取（合并持久化+临时消息）
+        │   ├── __tests__/useUnifiedMessages.test.ts # 异步任务乱序完成的稳定顺序回归
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
         │   └── handlers/                 # 消息处理器子模块
         │       ├── useTextMessageHandler.ts   # 文本消息处理
