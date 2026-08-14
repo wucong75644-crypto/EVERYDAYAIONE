@@ -40,7 +40,7 @@ async def test_add_saves_one_original_memory(monkeypatch) -> None:
     assert result[0]["memory"] == "我喜欢简洁回答"
     assert result[0]["metadata"] == {"source": "manual"}
     name, params = db.rpc.call_args.args
-    assert name == "create_manual_memory"
+    assert name == "runtime_create_manual_memory"
     assert params["p_org_id"] is None
     assert params["p_content"] == "我喜欢简洁回答"
     assert params["p_embedding"] == "[0.1,0.2]"
@@ -92,6 +92,8 @@ async def test_update_rejects_non_manual_or_cross_scope_target(
     with pytest.raises(NotFoundError):
         await service.update_memory(MEMORY_ID, "新内容", USER_ID)
 
+    assert db.rpc.call_args.args[0] == "runtime_update_manual_memory"
+
 
 @pytest.mark.asyncio
 async def test_delete_uses_personal_scope_and_hides_missing_target() -> None:
@@ -104,6 +106,7 @@ async def test_delete_uses_personal_scope_and_hides_missing_target() -> None:
         await service.delete_memory(MEMORY_ID, USER_ID, org_id=None)
 
     _, params = db.rpc.call_args.args
+    assert db.rpc.call_args.args[0] == "runtime_delete_memory_atom"
     assert params["p_org_id"] is None
     assert params["p_user_id"] == USER_ID
 

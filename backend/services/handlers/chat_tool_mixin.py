@@ -52,41 +52,13 @@ class ChatToolMixin(ChatToolResultMixin):
         Returns:
             List of (tool_call_dict, result, is_error, display_text)
         """
-        from config.chat_tools import is_concurrency_safe
-        from services.tool_executor import ToolExecutor
-
-        # request_ctx 由入口（HTTP/WS/企微）注入到 handler，全链路不可变
-        _request_ctx = getattr(self, "request_ctx", None)
-        if _request_ctx is None:
-            # 防御性 fallback（不应该走到这里，说明入口未注入）
-            from utils.time_context import RequestContext
-            _request_ctx = RequestContext.build(
-                user_id=user_id, org_id=self.org_id,
-                request_id=conversation_id or "",
-            )
-            logger.warning("request_ctx fallback in _execute_tool_calls — entry point should inject it")
-
-        executor = ToolExecutor(
-            db=self.db, user_id=user_id,
-            conversation_id=conversation_id, org_id=self.org_id,
-            request_ctx=_request_ctx,
-            workspace_user_id=getattr(self, "_workspace_user_id", user_id),
-            resource_manifest=getattr(self, "_resource_manifest", None),
-            runtime_state=runtime_state,
-            personal_context_allowed=getattr(
-                self,
-                "_personal_context_allowed",
-                True,
-            ),
+        from services.agent.runtime.application.chat_action_bridge import (
+            FailClosedRuntimeChatActionExecutor,
         )
-        # 每轮上下文
-        executor._task_id = task_id
-        executor._message_id = message_id
-        executor._parent_messages = messages
-        if budget is not None:
-            executor._budget = budget
-        # 提取当前用户消息中的图片 URLs（供 image_agent 自动注入）
-        executor._current_message_images = self._extract_user_image_urls(messages)
+
+        executor = getattr(self, "_runtime_action_executor", None)
+        if executor is None:
+            executor = FailClosedRuntimeChatActionExecutor()
         results: List[tuple] = []
 
         # 按并发安全性分批
@@ -142,10 +114,6 @@ class ChatToolMixin(ChatToolResultMixin):
                 getattr(self, "_erp_agent_tokens", 0) + result.tokens_used
             )
 
-        # 清理遗留 _pending_schemas(兼容 fetch_all_pages 等仍写入的场景)
-        if executor._pending_schemas:
-            executor._pending_schemas.clear()
-
         return results
 
     async def _execute_single_tool(
@@ -166,12 +134,25 @@ class ChatToolMixin(ChatToolResultMixin):
         )
         if isinstance(prepared, tuple):
             return prepared
-        args = _resolve_file_ids(
-            prepared, conversation_id, tc["name"],
-        )
+        args = prepared
         started_at = time.monotonic()
         try:
-            result = await executor.execute(tc["name"], args)
+            from services.agent.runtime.application.chat_action_bridge import (
+                ChatActionRequest,
+                RuntimeChatActionOwnershipError,
+            )
+
+            result = await executor.execute(ChatActionRequest(
+                tool_name=tc["name"],
+                arguments=args,
+                task_id=task_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                user_id=user_id,
+                turn=turn,
+                tool_call_id=tc["id"],
+                org_id=getattr(self, "org_id", None),
+            ))
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000
             )
@@ -190,6 +171,8 @@ class ChatToolMixin(ChatToolResultMixin):
                     elapsed_ms=elapsed_ms,
                 ),
             )
+        except RuntimeChatActionOwnershipError:
+            raise
         except Exception as error:
             elapsed_ms = int(
                 (time.monotonic() - started_at) * 1000
@@ -220,46 +203,29 @@ class ChatToolMixin(ChatToolResultMixin):
     ) -> Dict[str, Any] | tuple:
         from config.chat_tools import SafetyLevel, get_safety_level
 
-        safety = get_safety_level(tc["name"])
         try:
+            safety = get_safety_level(tc["name"])
             args = (
                 json.loads(tc["arguments"])
                 if tc["arguments"] else {}
             )
-        except json.JSONDecodeError:
-            error = f"参数解析失败: {tc['arguments'][:100]}"
+        except (json.JSONDecodeError, ValueError):
+            error = "工具未登记或参数解析失败，已拒绝执行"
             return tc, error, True, error
-        if safety != SafetyLevel.DANGEROUS:
-            if safety == SafetyLevel.CONFIRM:
-                logger.info(
-                    f"Tool confirm notify | tool={tc['name']} "
-                    f"| task={task_id}"
-                )
+        args = _resolve_file_ids(args, conversation_id, tc["name"])
+        # Safety is a Runtime policy fact, not a chat-layer execution decision.
+        # CONFIRM calls must be submitted to Runtime so its durable receipt,
+        # approval, fencing and recovery rules remain authoritative. DANGEROUS
+        # calls still require the existing explicit approval handoff first.
+        if safety in (SafetyLevel.SAFE, SafetyLevel.CONFIRM):
             return args
-        await ws_manager.send_to_task_or_user(
-            task_id,
-            user_id,
-            build_tool_confirm_request(
-                task_id=task_id,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                tool_call_id=tc["id"],
-                tool_name=tc["name"],
-                arguments=args,
-                description=f"AI 要执行写操作: {tc['name']}",
-                safety_level=safety.value,
-            ),
-            org_id=self.org_id,
+        logger.warning(
+            "legacy_non_safe_tool_rejected | user_id={} | org_id={} | "
+            "task_id={} | tool_call_id={} | tool={} | "
+            "error_code=RUNTIME_OWNER_REQUIRED",
+            user_id, self.org_id or "", task_id, tc["id"], tc["name"],
         )
-        approved = await ws_manager.wait_for_confirm(
-            tc["id"], user_id, self.org_id, timeout=60.0,
-        )
-        if approved:
-            return args
-        rejected = (
-            f"⚠ 用户拒绝或超时未确认写操作 {tc['name']}。"
-            "请告知用户操作未执行，询问是否需要重新确认。"
-        )
+        rejected = f"⚠ 工具 {tc['name']} 仅允许由 Agent Runtime 授权执行。"
         return tc, rejected, True, rejected
 
     async def _push_tool_step_update(

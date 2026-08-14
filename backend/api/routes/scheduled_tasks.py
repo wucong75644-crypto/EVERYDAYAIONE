@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from loguru import logger
 
 from api.deps import CurrentUserId, OrgCtx, ScopedDB, Database
@@ -38,6 +38,7 @@ from .scheduled_task_support import (
     ParseNLRequest,
     UpdateScheduledTaskRequest,
     enrich_with_creator as _enrich_with_creator,
+    request_runtime_scheduled_execution,
     resolve_schedule_fields as _resolve_schedule_fields,
 )
 
@@ -389,10 +390,10 @@ async def run_task_now(
     org_ctx: OrgCtx,
     scoped_db: ScopedDB,
     db: Database,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> Dict[str, Any]:
     """立即触发任务执行（异步，不等待结果）"""
     org_id = _require_org(org_ctx)
-
     result = scoped_db.table("scheduled_tasks").select("*").eq("id", task_id).execute()
     if not result.data:
         raise HTTPException(404, "任务不存在")
@@ -400,23 +401,10 @@ async def run_task_now(
 
     if not await check_permission(db, user_id, org_id, "task.execute", task):
         raise HTTPException(403, "无权立即执行此任务")
-    if task.get("status") == "running":
-        raise HTTPException(409, "任务正在执行中")
-
-    scoped_db.table("scheduled_tasks").update({
-        "status": "running",
-        "next_run_at": None,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", task_id).execute()
-
-    # 异步执行（不阻塞 HTTP 响应）
-    import asyncio
-    from core.database import get_worker_db
-    from services.scheduler.task_executor import ScheduledTaskExecutor
-    executor = ScheduledTaskExecutor(get_worker_db(), runtime_db=db)
-    asyncio.create_task(executor.execute(dict(task)))
-
-    return {"success": True, "message": "任务已开始执行，请稍后查看执行历史"}
+    runtime_response = request_runtime_scheduled_execution(
+        scoped_db, task, task_id, org_id, user_id, idempotency_key,
+    )
+    return runtime_response
 
 
 @router.get("/{task_id}/runs", summary="执行历史")

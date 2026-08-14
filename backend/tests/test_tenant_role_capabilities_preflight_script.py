@@ -176,6 +176,7 @@ def _wrapper_fixture(tmp_path: Path) -> tuple[Path, Path]:
         "tenant-core.sh",
         "admin-user-assets-capability.sh",
         "worker-control.sh",
+        "organization-lifecycle.sh",
     ):
         (preflight / name).write_text(
             "#!/bin/bash\n"
@@ -206,6 +207,7 @@ def test_wrapper_calls_role_gate_once_before_core(tmp_path: Path) -> None:
         "tenant-core.sh",
         "admin-user-assets-capability.sh",
         "worker-control.sh",
+        "organization-lifecycle.sh",
     ]
 
 

@@ -16,11 +16,61 @@ class ScheduledWorkerStore:
         self._db = db
 
     def claim_due(self, now: datetime, limit: int) -> list[dict[str, Any]]:
-        result = self._db.rpc(
-            "worker_claim_due_scheduled_tasks",
+        result = self._worker_rpc(
+            "worker_claim_due_scheduled_executions_v1",
             {"p_now": now.isoformat(), "p_limit": limit},
+            request_id="scheduled-claim",
         ).execute()
-        return list(result.data or [])
+        claims: list[dict[str, Any]] = []
+        for item in list(result.data or []):
+            if item.get("owner_kind") == "legacy" and isinstance(item.get("task"), dict):
+                task = dict(item["task"])
+                # Historical tasks without a Runtime profile are adoption
+                # candidates, not permission for the legacy Agent owner to
+                # execute. Keep only a safe identity marker for quarantine.
+                claims.append({
+                    "_execution_owner": "legacy_blocked",
+                    "task_id": task.get("id"),
+                })
+            elif item.get("owner_kind") == "runtime":
+                claims.append({
+                    "_execution_owner": "runtime",
+                    "command_id": item.get("command_id"),
+                })
+            else:
+                # Unknown owner states must never be silently discarded: doing
+                # so would hide a broken cutover and lose a scheduled run.
+                raise RuntimeError("scheduled claim returned unknown owner")
+        return claims
+
+    def legacy_owner_allowed(self, task_id: str) -> bool:
+        result = self._worker_rpc(
+            "worker_assert_scheduled_task_legacy_owner_v1",
+            {"p_task_id": task_id}, request_id=f"scheduled-owner:{task_id}",
+        ).execute()
+        data = result.data if isinstance(result.data, dict) else {}
+        return data == {"outcome": "allowed", "owner_kind": "legacy"}
+
+    def _worker_rpc(
+        self, name: str, params: dict[str, Any], *, request_id: str,
+    ) -> Any:
+        from core.local_db import LocalDBClient
+
+        if not isinstance(self._db, LocalDBClient):
+            return self._db.rpc(name, params)
+        from core.db_scope import (
+            DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient,
+        )
+
+        scoped = ScopedDatabaseClient(
+            self._db,
+            DatabaseScope(
+                actor_user_id=None, org_id=None,
+                access_kind=DatabaseAccessKind.WORKER,
+                request_id=request_id[:128],
+            ),
+        )
+        return scoped.rpc(name, params)
 
     def list_stale(self, cutoff: datetime) -> list[dict[str, Any]]:
         result = self._db.rpc(

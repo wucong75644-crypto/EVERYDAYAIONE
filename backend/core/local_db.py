@@ -733,7 +733,16 @@ class AsyncLocalDBClient:
 
     async def open(self) -> None:
         """打开连接池（必须在 async 上下文中调用）"""
-        await self._pool.open()
+        try:
+            await self._pool.open()
+            await self._pool.wait(timeout=10)
+        except Exception as exc:
+            logger.error(
+                "AsyncLocalDB 连接池启动失败 | type=%s | error=%s",
+                type(exc).__name__, str(exc).split("@", 1)[0],
+            )
+            await self._pool.close()
+            raise RuntimeError("ASYNC_LOCAL_DB_POOL_START_FAILED") from exc
         logger.info(
             f"AsyncLocalDB 连接池已打开 | min={self._min_size} max={self._max_size}"
         )

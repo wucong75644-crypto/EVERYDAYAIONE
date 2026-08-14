@@ -93,9 +93,9 @@ async def test_steer_rejects_task_outside_connection_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_response_uses_connection_identity() -> None:
+async def test_legacy_confirm_response_is_rejected() -> None:
     with patch("api.routes.ws.ws_manager") as manager:
-        manager.resolve_confirm = AsyncMock(return_value=True)
+        manager.send_to_connection = AsyncMock()
 
         await _handle_message(
             "conn-1",
@@ -107,9 +107,90 @@ async def test_confirm_response_uses_connection_identity() -> None:
             },
         )
 
-    manager.resolve_confirm.assert_called_once_with(
-        "tc-1", "user-1", "org-a", True,
+    message = manager.send_to_connection.await_args.args[1]
+    assert message["payload"]["code"] == "TOOL_CONFIRM_PROTOCOL_OBSOLETE"
+
+
+@pytest.mark.asyncio
+async def test_v3_confirm_response_uses_authenticated_actor() -> None:
+    service = MagicMock()
+    service.consume_response = AsyncMock(return_value="WON:APPROVED")
+    confirmation_id = "c" * 43
+    with (
+        patch("api.routes.ws.ws_manager") as manager,
+        patch("services.tool_confirmation.tool_confirmation_service", service),
+    ):
+        manager.send_to_connection = AsyncMock()
+        await _handle_message(
+            "conn-1", "user-1", "org-a",
+            {"type": "tool_confirm_response", "payload": {
+                "protocol_version": 3,
+                "confirmation_id": confirmation_id, "approved": True,
+            }},
+        )
+    service.consume_response.assert_awaited_once_with(
+        confirmation_id=confirmation_id, user_id="user-1",
+        org_id="org-a", approved=True, database=None,
     )
+    manager.send_to_connection.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wrong_actor_does_not_clear_disconnect_tracking() -> None:
+    service = MagicMock()
+    service.consume_response = AsyncMock(return_value="ACTOR_MISMATCH")
+    with (
+        patch("api.routes.ws.ws_manager") as manager,
+        patch("services.tool_confirmation.tool_confirmation_service", service),
+    ):
+        manager.send_to_connection = AsyncMock()
+        await _handle_message(
+            "conn-1", "user-1", "wrong-org",
+            {"type": "tool_confirm_response", "payload": {
+                "protocol_version": 3,
+                "confirmation_id": "c" * 43, "approved": True,
+            }},
+        )
+    manager.forget_confirmation_delivery.assert_not_called()
+    error = manager.send_to_connection.await_args.args[1]
+    assert error["payload"]["code"] == "ACTOR_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_v3_confirm_response_rejects_coerced_boolean() -> None:
+    with patch("api.routes.ws.ws_manager") as manager:
+        manager.send_to_connection = AsyncMock()
+        await _handle_message(
+            "conn-1", "user-1", "org-a",
+            {"type": "tool_confirm_response", "payload": {
+                "protocol_version": 3,
+                "confirmation_id": "c" * 43, "approved": "true",
+            }},
+        )
+    message = manager.send_to_connection.await_args.args[1]
+    assert message["payload"]["code"] == "MALFORMED_TOOL_CONFIRM_RESPONSE"
+
+
+@pytest.mark.asyncio
+async def test_v3_confirm_response_rejects_legacy_extra_field() -> None:
+    service = MagicMock()
+    service.consume_response = AsyncMock()
+    with (
+        patch("api.routes.ws.ws_manager") as manager,
+        patch("services.tool_confirmation.tool_confirmation_service", service),
+    ):
+        manager.send_to_connection = AsyncMock()
+        await _handle_message(
+            "conn-1", "user-1", "org-a",
+            {"type": "tool_confirm_response", "payload": {
+                "confirmation_id": "c" * 43,
+                "approved": True,
+                "tool_call_id": "legacy",
+            }},
+        )
+    service.consume_response.assert_not_awaited()
+    message = manager.send_to_connection.await_args.args[1]
+    assert message["payload"]["code"] == "MALFORMED_TOOL_CONFIRM_RESPONSE"
 
 
 @pytest.mark.asyncio

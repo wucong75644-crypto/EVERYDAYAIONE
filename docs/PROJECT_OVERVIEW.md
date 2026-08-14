@@ -27,6 +27,18 @@
     - **文件存储**：阿里云OSS（图片/视频存储 + CDN）
     - **实时通信**：Supabase Realtime（替代Socket.io）
 
+Agent Runtime 单一运行时收敛：
+- `docs/document/TECH_AGENT_RUNTIME_SINGLE_RUNTIME_CONVERGENCE.md`：冻结最终唯一
+  ModelLoop/ActionLoop Owner、现有业务能力薄适配、平行配置/事实/Worker 删除边界，
+  以及模型、ERP/Media、Scheduler/WeCom、Ingress、数据库和发布的实施顺序。
+- `backend/services/agent/runtime/catalog/batch_media_release.py` 与
+  `backend/scripts/generate_agent_runtime_batch_media_seed.py`：从完整生产 Registry 生成默认关闭的
+  v7 批量媒体 Catalog/Definition；普通对话只暴露标准 `generate_image`，历史 Catalog 不改写。
+- `backend/migrations/228_04_agent_runtime_media_action_bindings.sql` 与
+  `backend/services/agent/runtime/media_task_port.py`：以 fenced ActionAttempt 原子准备 1～10 个既有
+  图片 Task、服务器定价、逐项积分交易和固定消息槽位；完整批次允许 sibling Provider fact 后的
+  幂等 readback，未完整批次保持失败关闭，旧媒体 Worker discovery 排除 Runtime binding。
+
 ## 核心功能
 - **多对话管理**：用户可创建多个AI对话，支持重命名、删除、搜索
 - **多任务并发**：全局最多15个任务同时执行，单对话最多5个任务
@@ -38,6 +50,275 @@
 - **管理员后台**：用户管理、积分充值、数据统计
 
 ## 目录结构
+
+Sandbox Linux隔离安全合同：
+- `.github/workflows/sandbox-linux-security.yml`：仅在AR-16 Phase 2验证分支或手动触发的
+  无生产Secret托管Ubuntu合同，固定nsjail源码提交并使用一次性rootfs。
+- `backend/tests/test_agent_runtime_sandbox_linux_external.py`：真实验证nsjail、cgroup v2、
+  host/network/input mount隔离、内存上限及完整进程树终止；不属于默认测试集合。
+- `backend/tests/test_agent_runtime_sandbox_job_reconciliation_postgres_external.py`：
+  独立承载Sandbox Job未知结果协调、敏感回执拒绝与Runtime作用域隔离合同。
+
+Tool Confirmation V3：
+- `backend/config/tool_safety.py`：冻结的显式 SAFE/CONFIRM/DANGEROUS 注册表；未知工具
+  不再继承默认 SAFE。
+- `backend/services/tool_confirmation/`：确定性 JSON hash、脱敏 preview、Redis 三键 Lua、
+  一次 challenge 与唯一 execution claim 服务。
+- `backend/services/agent/safe_tool_logging.py`：确认门禁可达 Agent 的结构化脱敏日志助手。
+- `docs/document/TECH_TOOL_CONFIRMATION_V3.md`：协议、状态机、失败关闭与发布门禁。
+- 旧 ToolLoop 与 ChatTool 生产 composition 保持不变，仅关闭非 SAFE 授权绕过；未接
+  Agent Runtime startup、Sandbox 专业 Executor 或数据库 migration。
+
+Agent Runtime AR-14～AR-16 授权恢复与 Dispatch Gate：
+- `backend/migrations/220_24_agent_runtime_authorization_dispatch_gate.sql`、
+  `220_25_agent_runtime_authorization_recovery.sql`及同名 rollback：增加持久
+  DispatchIntent、授权恢复、原子 GrantUse、取消/拒绝收敛和 reconcile-only 恢复。
+- `backend/services/agent/runtime/ports/authorization.py`、
+  `application/authorization_recovery.py`及
+  `infrastructure/postgres/authorization.py`：提供唯一授权恢复与 gate Port/Worker 适配。
+- `backend/services/agent/runtime/executors/resolver.py`与
+  `application/action_loop.py`：Registry 保持唯一 Executor 映射 SSOT，按
+  Resolver→gate→dispatch/reconcile 编排；未接 startup/ingress。
+- `backend/services/agent/runtime/application/action_loop_support.py`与
+  `executors/resource_support.py`：承载租约/结果辅助合同、Child Run、内容寻址
+  materialize 与资源恢复辅助逻辑，保持核心编排模块在结构阈值内。
+- `docs/document/TECH_AGENT_RUNTIME_AR-14-16授权恢复与DispatchGate.md`：记录状态机、
+  原子边界、锁序、故障恢复、权限与 rollback 合同。
+
+Agent Runtime Sandbox Job Controller 与专业 Executor：
+- `backend/migrations/222_01_agent_runtime_sandbox_job_foundation.sql`、
+  `222_02_agent_runtime_sandbox_job_rpcs.sql`、
+  `222_03_agent_runtime_sandbox_job_recovery_rpcs.sql`及精确 rollback：建立幂等
+  Job事实、execution/reconciliation fencing、精确响应丢失readback、durable
+  recovery scanner、partial/cleanup合同、FORCE RLS和窄RPC。
+- `backend/services/agent/runtime/domain/sandbox_job.py`、`ports/sandbox_job.py`及
+  `infrastructure/postgres/sandbox_job_repository.py`：提供 fail-closed typed Port。
+- `backend/services/agent/runtime/sandbox/`：独立Worker编排、Linux隔离探针、nsjail
+  launcher边界、受限Capability、不可变输入、内容寻址输出和partial清理。
+- `backend/services/agent/runtime/executors/sandbox_job.py`：Registry中唯一
+  `code_execute`专业Executor映射；dispatch只创建Job，accepted/unknown只query/reconcile。
+- `everydayai_sandbox_worker`由数据库 bootstrap 创建，NOINHERIT、无表直权且仅能执行
+  222 Worker RPC；production composition/startup仍未连接。
+- `docs/document/TECH_AGENT_RUNTIME_SandboxJobController_BatchA.md`：记录身份、
+  状态机、锁序、权限、Worker/Executor和三层隔离验证门禁。
+
+Agent Runtime C7-B3.1 production composition spine：
+- `backend/services/agent/runtime/production_factory.py`：Runtime Worker 唯一 code-owned
+  production composition 入口，不接受 Settings callable 或组件对象注入，不读取 Secret、
+  不调用 Provider。
+- 当前批次不接 Credential、ERP/Media、Object Store 或 Scheduler；缺少真实安全服务时以
+  `RuntimeAssemblyReadiness` 携带 required/unavailable/disabled 能力状态并结构化失败关闭，
+  production gate 不能将 composition readiness 提升为 ready。
+
+Agent Runtime C7-BG4 Model Gateway Runtime 接线（历史实现，S1 已移除运行代码）：
+- `ModelLoopDriver` 的显式 Gateway 分支通过 227_20 `start_dispatch` 在一个事务中推进
+  ModelAttempt 并建立 operation；UDS request id、租户、provider、revision identity 与三层
+  kill epoch 全部来自返回的 durable binding，direct/mock ModelPort 继续使用原路径。
+- `ModelGatewayClient` 每个 operation 只连接一次本地 UDS，并用 Runtime scoped read RPC
+  证明 terminal；终帧丢失或无法证明完整 completed 时收敛为 UNKNOWN/reconcile-only，绝不
+  普通重派。Runtime 生产路径不解析 credential、不构造 Provider adapter，也不持有 Secret。
+- production composition 仅在 flags、独立 call/health sockets、scoped repository 与健康
+  projection 齐全时构造 safe read/model/action lane；ERP Write、Media、Scheduler、Sandbox
+  保持关闭，BG5 前 flags 默认关闭且整体 `production_ready=false`。
+
+Agent Runtime C7-BG5 Model Gateway Deploy 与统一验收（历史实现，S1 已移除部署资产）：
+- 新增专用 Gateway systemd user/group/unit，以及最小 DB/process env 与仅含两个批准键的
+  KEK env；`bootstrap-agent-model-gateway-role.sh` 以独立密码创建 migration 已冻结的窄 DB role；
+  Runtime 只加入 `everydayai-model-gateway` UDS group；两份 env 属于独立
+  `everydayai-model-gateway-secret` group，Gateway 是唯一服务成员，Runtime 由 DAC 与运行时
+  身份探针共同禁止读取 Gateway env、KEK 和 Provider key。
+- D0-A release transaction 扩为五 env/四 control-plane unit；reviewed SHA、全量预检、
+  daemon-reload、内外层 inactive:disabled 后验任一点失败均按同一 release journal 恢复。
+- `scripts/run_agent_model_gateway_disposable.sh` 统一执行部署静态合同、本地 UDS、mock Provider、
+  227_18～227_20/227_25 disposable PostgreSQL、B4 cancel Barrier与真实 UDS blocked-provider
+  回归，以及 crash/response-loss/UNKNOWN/drain 回归；`all` 自建 disposable PostgreSQL且不读取
+  `DATABASE_URL`，数据库阶段未运行不得作为验收证据。CI 保持所有 production flags false，
+  `production_ready=false`，不改 Sandbox。
+
+Agent Runtime C7-B3.2-A safe Toolset 与 Authorization：
+- `backend/services/agent/runtime/catalog/safe_read_release.py` 与生成脚本从
+  `READ_TOOL_SPECS` 冻结 17 项已证明安全的只读 Catalog；Workspace `file_search`、
+  远程 ERP、ERP Write、Media、Scheduler、Sandbox 均不进入该 release。
+- `227_16` 新增默认关闭的 v4 Catalog/EffectiveToolset facts；`227_17` 仅为
+  SAFE/NONE Action 建立 attempt、token、request hash、revision 与 kill epoch 绑定的
+  durable PolicyReceipt activation，随后仍必须经过既有 Dispatch Gate。
+- 既有 scope SSOT 保持不变：channel Toolset 为 17 项，user Toolset 为 9 项；
+  production flags 与 `production_ready` 均未开启。
+
+Agent Runtime C7-B3.2-BG1 Model Gateway protocol（历史实现，S1 已移除）：
+- `backend/services/agent/runtime/model_gateway/` 定义严格的 UDS v2 framing、请求/响应
+  校验、可注入 peer credential 验证以及仅供隔离测试使用的 client/fake server。
+- `backend/tests/test_agent_runtime_c7_r2_result_integrity.py` 固定 canonical stop reason、两类
+  tool call id、五项 usage 与 DB/wire/Runtime 三方 response hash 完整性及篡改收敛 UNKNOWN。
+- BG1 不访问数据库、配置 Secret 或 Provider，也不进入 production composition；local harness
+  与 fake server 均固定 `production_ready=false`。
+
+Agent Runtime C7-B3.2-BG2 Model Gateway database owner（仅保留冻结 migration 账本）：
+- `backend/migrations/227_18_agent_runtime_model_gateway.sql` 与精确 rollback 新增
+  secret-free Gateway operation facts、专用数据库角色门禁、Runtime submit/read 与 Gateway
+  claim/dispatch/renew/finalize/recover 窄 RPC；Runtime 旧 AI bundle 直权被撤销。
+- `backend/services/agent/runtime/infrastructure/postgres/model_gateway.py` 以 scoped repository
+  分离 Runtime 与 Gateway 可调用面；claimed 过期可恢复，dispatching 过期只收敛 UNKNOWN，
+  Gateway finalize 不修改 ModelAttempt/ModelStep。systemd 与生产配置仍未实现，
+  `production_ready=false`。
+
+Agent Runtime C7-BG2.1 Model Gateway pre-dispatch failure closure（仅保留冻结 migration 账本）：
+- `backend/migrations/227_19_agent_runtime_model_gateway_predispatch_failure.sql`
+  新增 Gateway-only claimed→failed 窄 RPC；仅接受固定脱敏错误码，并以 claim token、
+  operation version、tenant binding、request/revision/kill epochs 和有效租约失败关闭。
+- rollback 只删除该 RPC、保留 operation facts 与 227_18 readback；repository 增加
+  Gateway scope `fail_before_dispatch`，Runtime scope 不可调用，平台仍为 `production_ready=false`。
+
+Agent Runtime C7-BG3 Model Gateway isolated process（历史实现，S1 已移除）：
+- `backend/agent_model_gateway_main.py` 与 `model_gateway/service.py` 提供默认关闭、
+  `production_ready=false` 的本地隔离进程、健康契约、drain，以及 claim→predispatch
+  failure/dispatch→Provider→finalize 的唯一时序；不接 systemd 或 Runtime composition。
+- `model_gateway/configuration.py` 是 Runtime 子树内唯一 KEK/SecretMaterial 构造边界，
+  只在一次性 async consumer 生命周期内解密 BG2 bundle；`provider.py` 是唯一
+  `create_runtime_chat_adapter` consumer，并保证 DB dispatch fact 先于网络调用。
+- `infrastructure/model/stream_execution.py` 复用既有 `ResponseAccumulator`，统一 text、
+  tool call、usage、错误与 UNKNOWN 分类；Provider adapter 在 UDS 终态后关闭，Secret、
+  encrypted bundle 与原始异常均不进入协议、事实或日志。
+
+Agent Runtime C7-BG3.5 ModelAttempt/Gateway atomic dispatch binding（仅保留冻结 migration 账本）：
+- `backend/migrations/227_20_agent_runtime_model_gateway_dispatch_binding.sql` 在同一事务按
+  Session→Run→ModelStep→ModelAttempt→operation 锁序验证 Runtime owner、credential receipt
+  与 tenant/provider/capability gate，从数据库读取 kill epoch，并原子提交
+  ModelAttempt `prepared→dispatching/request_started` 和唯一 Gateway operation。
+- Gateway claim v2 只接受与当前 dispatching Attempt version 一致的 durable operation；
+  227_18 submit/claim 对 Runtime/Gateway 撤权，其他 UNKNOWN/recovery/finalize 合同保持不变。
+  Python scoped repository 暴露 secret-free typed dispatch binding，尚未接 ModelLoop、UDS
+  Runtime client 或 production composition，`production_ready=false`。
+
+Agent Runtime AR-18-A1.1 legacy lifecycle fence：
+- `backend/migrations/227_21_agent_runtime_legacy_lifecycle_fence.sql` 仅将 Runtime key 缺失或
+  严格为 JSON boolean false 的 task 视为 legacy-safe；其他值均从旧 startup orphan recovery
+  与 legacy stale timeout 的 discovery/claim 排除，并在旧 complete/fail/stale RPC 内再次
+  失败关闭。Rollback 遇到非终态非 legacy-safe marker 时拒绝；Actor 排除与普通 legacy
+  task 行为不变。
+
+Agent Runtime AR-18-A1.2-B1 atomic task cancel intent：
+- `backend/migrations/227_22_01～227_22_03` 建立 owner-only、FORCE RLS 的 durable
+  task cancel intent 与 Runtime/WeCom Runtime v1 facade；固定 Session→submit Command→Command Claim
+  →Cancel Intent→Run→Task→既有 cancel helper 锁序。Cancel-first 原子创建并 CAS 绑定唯一
+  cancelled 根 Run；claim scanner 与 direct `create_agent_run` 均在 Run DML 前受 intent fence。
+- Request identity 使用 SHA-256，将 nullable session/command `scope_user_id` 与非空
+  `requested_by_user_id` 分离并纳入不可变 idempotency identity；user scope 绑定 owner，
+  channel scope 绑定 org/channel/conversation 并要求请求者为 active org member。
+  Task/Message/Command 绑定保持不可变；
+  rollback 遇到任意 intent fact 失败关闭。当前未接 Web API 或 Provider cancel handoff，
+  production flags 保持关闭。
+- `backend/migrations/227_23_agent_runtime_task_cancel_facade_callable.sql` 新增不接收
+  client hash 的 v2 facade，由 PostgreSQL 私有 helper生成 canonical hash后委托 v1；v1 与
+  hash helper 对外撤权，仅 v2 授权 Runtime/WeCom Runtime。该 lane 不拥有或删除 facts，
+  rollback 只删除 v2 并精确恢复 v1 ACL，因此即使已有 227_22 intent facts 也无需 guard。
+
+Agent Runtime AR-18-A1.2-B3 Provider cancellation handoff：
+- `backend/migrations/227_24_agent_runtime_provider_cancel_handoff.sql` 为 accepted/unknown
+  Action reconciliation claim 保留 220_25 对 durable dispatch intent + expired dispatching 的
+  unknown/retry-after-reconcile 转换，再持久绑定 `reconcile|cancel` operation、父 Run identity/version；
+  cancelled 父 Run 始终进入 cancel，正常 claim 与响应丢失 readback 不重新推导不同 operation。
+- Provider cancel 只在续租 reconciliation lease 下执行；confirmed 必须同时满足 receipt 与
+  durable provider fact、token/state-version/request-hash、owner/kill/revision fence，随后原子终结
+  Attempt/Action、记录 refund/event并保持父 Run cancelled 与 blocker=0。UNKNOWN 写入明确的
+  `next_reconcile_at`，保持 unknown/reconcile-only，后续仍领取 cancel且从不普通重派。
+- `request_agent_runtime_provider_cancel` 仅授权 `everydayai_agent_runtime_worker`；rollback 在
+  cancelled Run 的 accepted/unknown、活动 reconciliation lease 或未收敛 cancel facts 存在时
+  失败关闭，并恢复 226_13 函数、227_04 ACL及新增 claim binding columns。
+
+Agent Runtime AR-18-A1.2-B4 Model Gateway cancel fence：
+- `backend/migrations/227_25_agent_runtime_model_gateway_cancel_fence.sql` 将 Run cancel
+  扩展到 Model Gateway operation：按 Session→Run→ModelStep→ModelAttempt→operation 锁序，
+  `submitted/claimed` 收敛为明确 pre-dispatch failed fact，`dispatching` 保守收敛为
+  durable unknown，既有 `completed/failed/unknown` 不可变。
+- Gateway mark/renew/finalize 每次重新锁定并验证父 Run/ModelAttempt；cancel 先赢时旧 claim
+  只能 readback/fenced，finalize 先赢则保留真实终态并由 Runtime 使用 late-receipt 语义。
+  Gateway 下一次 lease poll 发现 fence 后取消 provider coroutine并关闭 adapter，不依赖 Web
+  进程内 gate；rollback 对 cancel-derived facts、cancelled Run 未收敛 operation与活动 lease
+  失败关闭。
+
+Agent Runtime AR-18-A1.2-B5 Sandbox cancellation handoff：
+- `backend/migrations/227_26_agent_runtime_sandbox_cancel_handoff.sql` 将 cancelled Run 下的
+  `code_execute` CANCEL operation绑定到唯一 Runtime facade；Action reconciliation token/lease、
+  state/request hash、dispatch intent、父 Run version与kill epoch全量一致后才写Sandbox cancel intent。
+- Sandbox worker仍是进程终止与cleanup证明的唯一owner；cancel intent 后数据库禁止写成
+  succeeded/failed/timed_out。Runtime仅在durable cancelled receipt、cancel confirmation与cleanup
+  proof一致时终结Attempt/Action，不改父Run或已清零blocker；unknown保持reconcile-only且不重派。
+- 旧 `request_sandbox_job_cancel` 对Runtime撤权；rollback遇到cancel facts、活动reconciliation或
+  cleanup residue失败关闭，零facts时恢复旧ACL。
+
+Agent Runtime AR-18-A1.2-B6 Child Run recursive cancellation：
+- `backend/migrations/227_27_agent_runtime_child_run_recursive_cancel.sql` 为每个直接 Child
+  Action 建立owner-only、FORCE RLS durable cancel intent；Run cancel立即保留父Run cancelled，
+  后台scanner按层递归创建孙层intent并等待Child、Provider或Sandbox各自proof收敛。
+- Child create与cancel以parent action/ordinal唯一绑定：cancel-first确认not-created并禁止后建，
+  create-first持久绑定权威child ID，且create context的org/user必须与父Run完全一致；响应丢失可按parent binding readback。Child专用finalizer仅在
+  intent confirmed及reconciliation token/lease、state/request hash、kill epoch全部有效时终结父
+  Attempt/Action，不改父Run、不递减blocker，也不复用Provider submission proof；它验证既有reserve
+  fact，not-created幂等release，其余confirmed cancel幂等refund，重复finalize不重复结算或事件。
+- requested/applied crash可由新scanner owner接管；任何UNKNOWN或未完成descendant proof永久保持
+  reconcile-only，不按超时强制关闭；ownership-lost是正常takeover结果，不终止Runtime scanner。
+  Rollback遇到任意intent事实或未收敛child依赖失败关闭，
+  零事实时恢复227_25函数与既有ACL；budget递归治理不属于本批。
+
+Agent Runtime S1 单一模型链收敛：
+- `TECH_AGENT_RUNTIME_SINGLE_RUNTIME_CONVERGENCE.md` 是当前权威方案。Runtime 直接复用
+  现有模型选择、配置 Bundle、KEK 和 adapter factory；`agent_model_attempts` 是唯一执行事实。
+- 227_53 在 ModelAttempt 原子 dispatch 时冻结 kill epoch，并只允许同一 fenced Attempt
+  读取 encrypted Bundle。独立 Gateway 进程、UDS、Python owner、systemd unit 与 env 已删除。
+- 227_18～227_27 保留为不可改写历史 migration 账本，但无当前 Python 调用方或运行 Owner。
+
+Agent Runtime C2.1 ERP 只读接线：
+- `backend/services/agent/runtime/executors/erp_factory.py`：按不可变 Runtime
+  scope 的 `org_id` 和 ActionAttempt fence 逐次解析既有企业 ERP Bundle，并构造现有
+  `KuaiMaiClient`/`ErpDispatcher`；227_54 提供窄配置 readback 与 Token 版本 CAS。
+- `erp_read_release.py` 与 227_55 确定性冻结包含六项 ERP Read 的 v5
+  Catalog/Definition/EffectiveToolset；release 默认关闭，不改写 227_16/v4 历史身份。
+- production composition 只注册六项 ERP Read；关闭请求参数日志与参数知识记录。
+  ERP Write、ERP Sync、淘宝奇门、Media 继续关闭，整体 `production_ready=false`。
+
+Agent Runtime S2-TAB-A 资源清单边界：
+- `backend/services/agent/runtime/executors/resource_manifest.py` 与 227_56 只通过
+  fenced ActionAttempt 读取现有 `task_attachment_refs`；Web 沿用固定输入消息回退，
+  企微群沿用既有 channel Workspace owner 算法，不新增附件或 Workspace 体系。
+- Runtime Worker 只有窄 RPC EXECUTE 权限且无附件表直权；`file_analyze`、
+  `fetch_all_pages` 与 `local_data` 通过显式 adapter 接入，未注入时保持 unavailable，
+  不回退通用 Artifact port。
+
+Agent Runtime S2-TAB-B1 文件分析与 ERP 分页适配边界：
+- `backend/services/agent/runtime/executors/data_adapters.py` 通过 TAB-A 冻结资源清单调用
+  既有 `file_analyze`，并通过请求级 ERP dispatcher 调用既有只读分页逻辑；两者均不建立
+  第二套文件、表格或 ERP 体系。
+- 文件分析只允许清单内路径，暂不接受尚未证明可安全传递的 `sheet` 参数；分页保留脱敏的
+  partial failure 证据且不会把自然结束误报为截断。
+
+Agent Runtime S2-TAB-B3.2 数据读取发布闭环：
+- `data_read_release.py` 与 227_58 确定性冻结 safe read、六项 ERP Read 以及
+  `local_data`/`file_analyze`/`fetch_all_pages` 的 v6 Catalog/Definition/EffectiveToolset；
+  不修改 227_02 或 227_54～227_57 历史事实。
+- disabled toolset 只保留无副作用安全读取；ERP Write、Media、Scheduler、Sandbox、Export
+  不注册，production flags 与 `production_ready` 继续关闭。
+- `file_analyze`、ERP 只读分页和 `local_data` 已具备 Runtime 适配器；Runtime 主构造入口
+  显式注入三项只读 adapter，其他 Composition 仍只有在显式提供 port 时注册，不启用生产 flags。
+
+Agent Runtime S2-TAB-B2 `local_data` 查询接入边界：
+- `227_57_agent_runtime_local_query_facade.sql` 只新增 Runtime Worker 可执行的
+  attempt-fenced 查询 facade；租户从当前 Action/Run 事实取得，Worker 无 ERP 业务表直权。
+- facade 复用既有 `UnifiedQueryEngine` 和 ERP analytics RPC，不复制 Filter DSL 或查询 SQL；
+  当前只允许 trend、compare、distribution 及安全的 daily-stats cross 指标。
+- detail、export、summary、ratio、alert 和复合跨域指标仍关闭；没有把全局 DATABASE_URL、
+  DuckDB 导出或裸文件 staging 接入 Runtime。Catalog schema 只开放 trend、compare、distribution
+  与安全 cross 指标。
+
+Agent Runtime Projection dead stream恢复：
+- `backend/migrations/220_26_agent_runtime_projection_dead_recovery.sql`及rollback：
+  增加tenant-scoped inspect、严格幂等人工requeue、不可变恢复审计事实，并将通用
+  Projection claim收紧为audit-only。
+- `backend/services/agent/runtime/ports/projection_recovery.py`及
+  `infrastructure/postgres/projection_recovery.py`：定义active super_admin Runtime
+  调用的只读检查和人工恢复适配；未接API、UI、startup或ingress。
+- `docs/document/TECH_AGENT_RUNTIME_ProjectionDeadStream恢复.md`：记录顺序阻塞、
+  Session→Outbox锁序、恢复审计、权限和回滚合同。
 
 Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `docs/document/TECH_AGENT_RUNTIME_AR-11ModelAttempt与唯一计费结算.md`：冻结
@@ -51,6 +332,31 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   Attempt、唯一结算、生命周期和恢复能力；不修改迁移212～216。
 - 当前仍是additive foundation，生产Chat Owner继续为Conversation Actor；AR-12完成
   Action统一终态前禁止切换Runtime Owner。
+
+Agent Runtime AR-12 Action持久化与Tool终态：
+- `docs/document/TECH_AGENT_RUNTIME_AR-12Action持久化与Tool终态.md`：冻结Tool Calls
+  唯一原子终态、Action恢复、claim批次回读、依赖、取消、权限与回滚合同。
+- `backend/services/agent/runtime/ports/action_repository.py`及
+  `infrastructure/postgres/action_repository.py`：定义Action lifecycle typed Port，
+  并通过Worker Scoped RPC映射terminal、claim、reconcile与readback。
+- `backend/migrations/218_01_agent_runtime_action_foundation.sql`至
+  `218_04_agent_runtime_action_reconciliation.sql`及同编号helper迁移：建立Action、
+  ActionAttempt、ActionResult、claim batch、数据库SHA-256身份、FORCE RLS和窄RPC。
+- 当前仍为additive基础设施，生产Chat Owner继续为Conversation Actor；Coordinator、
+  Executor/Policy正式接线及生产切换属于后续AR任务。
+
+Agent Runtime AR-13 Command Claim与Coordinator骨架：
+- `docs/document/TECH_AGENT_RUNTIME_AR-13CommandClaim与Coordinator骨架.md`：冻结
+  pending Command扫描、CommandClaim lease/fencing、唯一Run、恢复与终态兼容合同。
+- `backend/services/agent/runtime/ports/command_claim.py`、
+  `infrastructure/postgres/command_claim_repository.py`及
+  `application/coordinator.py`：提供typed CommandClaim Port、Worker Scoped RPC adapter
+  和PostgreSQL优先的Coordinator扫描/续租骨架。
+- `backend/migrations/219_01_agent_runtime_command_claim_foundation.sql`至
+  `219_02a_agent_runtime_command_claim_terminal_compatibility.sql`：建立CommandClaim
+  事实、窄RPC、Run原子创建、Event/Outbox、历史Run状态兼容与有效lease保护。
+- 当前仍未接入生产startup/ingress或完整Model/Action循环；Conversation Actor继续是
+  生产Chat Owner，AR-14～AR-16完成前不得切换。
 
 定时任务委托执行边界：
 - `docs/document/TECH_定时任务委托执行边界.md`：定义 Worker 控制面、Runtime 工具面、
@@ -155,8 +461,14 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   SQL 字面量转义、密码不进入日志以及 psql 失败传播。
 - `deploy/env-templates/*.env.template`：runtime、worker、migrator 的无凭证连接文件合同，
   分别约束 `DATABASE_URL` 或 `MIGRATION_DATABASE_URL` 的数据库登录角色。
-- `deploy/validate-tenant-db-env.sh`：切换服务前验证四个真实角色文件的存在性、0600 权限、
-  固定配置键、角色用户名、占位符清理和连接串独立性，不输出连接内容。
+- `deploy/everydayai-agent-runtime.service` 与
+  `deploy/env-templates/agent-runtime-worker.env.template`：独立 Runtime Worker 只加载窄角色
+  与进程运行配置；独立 typed settings 禁止读取 `backend/.env`，Systemd 也屏蔽该文件及
+  历史模型环境文件；Provider Secret/KEK 不进入进程环境，凭证必须经 CredentialBroker。
+- `deploy/validate-tenant-db-env.sh`：切换服务前验证真实角色文件的存在性、0600 权限、
+  角色用户名、占位符清理和连接串独立性；Runtime/WeCom 文件使用显式多键白名单，其他
+  角色保持单键。`--runtime-flags-off-v3` 严格入口额外锁定 v3 且拒绝任一启用开关，
+  全程不输出连接内容。
 - `backend/tests/test_tenant_db_env_contract.py`：覆盖模板安全性及角色环境合同的成功/失败边界。
 - `deploy/env-templates/sync.env.template`：Sync/ERP 使用独立
   `everydayai_sync` 数据库角色的环境模板
@@ -192,6 +504,19 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `backend/tests/test_wecom_ws_runner.py`、`backend/tests/test_wecom_ws_runner_main.py`、
   `backend/tests/test_wecom_request_scope.py`：固定 WeCom 双客户端装配、消息级企业/用户
   作用域和三类连接池关闭合同。
+- `backend/tests/test_wecom_ws_outbound_ack.py`：以本地 mock 固定 typed 主动发送的 ACK
+  证明状态、稳定 provider request ID、并发隔离、幂等/冲突、late ACK 与有界清理合同。
+- `backend/tests/test_wecom_app_outbound_hardening.py`：固定 App HTTP 部分失败字段类型、
+  不等待吞取消依赖的绝对 deadline，以及 late completion 不升级 typed receipt 合同。
+- `backend/services/agent/runtime/wecom_app_credentials.py`：Runtime-owned 企微 App
+  tenant-scoped credential/token builder；每次 token 调用经 CredentialBroker lease controlled
+  consumer 将 opaque material 交给具备 readiness 的显式 exchange port 派生 token；本模块
+  不规定 material schema、不提供真实 token HTTP 实现，broker/exchange 非 production-ready
+  或 lease handle 不匹配均失败关闭，exchange 取消在 material frame 退出后重建传播。
+- `backend/tests/test_agent_runtime_wecom_app_credentials.py`、
+  `backend/tests/test_agent_runtime_wecom_app_outbound_composition.py`：固定租户与 lease binding、
+  material 不逃逸、exchange 失败关闭/取消传播，以及显式 send HTTP client 的
+  ACK/NOT_STARTED 组合分类。
 - `backend/migrations/152_wecom_runtime_capability.sql`：以不可变迁移增量扩展 WeCom
   runtime 角色匹配，并提供 org/corp/角色校验的身份、聊天地址和聊天目标安全门面。
 - `backend/migrations/rollback/152_wecom_runtime_capability_rollback.sql`：删除 WeCom
@@ -227,8 +552,40 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `backend/migrations/166_wecom_worker_discovery.sql`：提供无 Secret 的 WeCom 企业目标
   Discovery，只向 actorless Worker 返回 active 企业 ID 与凭证版本；rollback 仅撤销
   新能力。
-- `deploy/install-service-units.sh`：验证角色与 KEK 环境文件，安装并核对仓库内四个
-  Systemd 单元后执行 daemon-reload，防止生产继续运行旧单元。
+- `deploy/install-service-units.sh`：普通模式验证角色与 KEK 环境文件并安装既有服务单元；
+  `agent-runtime-only` 模式验证 Runtime Worker、Runtime Model、Projection、Authorization 与
+  Sandbox 环境文件，只安装四个 Agent Runtime 单元与 wrapper 后执行 daemon-reload。已有目标
+  不一致时在任何写入前失败关闭；`control-plane-only` 只处理 Runtime、Projection、Authorization，要求
+  reviewed target SHA-256 manifest，不依赖或触碰 Sandbox env/assets/wrapper。
+- `deploy/provision-control-plane-worker-envs.py` 与 `deploy/control_plane_env_source.py`：服务器端从
+  安全的 `backend/.env`、`.env.migrator`、`.env.kek` 读取三个窄角色密码、既有运行配置和
+  最小 KEK，保持 migrator DSN 非凭证部分不变并 URL encode 新凭证；四份 env 先在
+  release-bound、root-only transaction
+  目录完整 staging，并记录旧内容 hash、mode、uid/gid 与不存在状态，再以
+  目录完整 staging；普通 env 为 root:everydayai-app，Runtime Model env 为
+  root:everydayai-runtime-model-secret，均以 0640 原子发布，journal 精确记录并恢复 uid/gid。
+  Runtime production flag 固定关闭，
+  且不生成 Sandbox env。
+- `deploy/update-control-plane-units.sh`：在三个 unit 严格 inactive + disabled 且当前 SHA-256
+  全量匹配 reviewed manifest 后，将旧 unit 全部备份到同一 release transaction，再发布
+  四 env 与三个 unit。状态为 `prepared → published → restored`；env/unit apply、daemon-reload、
+  内外层 postcheck 任一失败均统一恢复，重复 rollback 幂等，错误 release 或外来内容由 hash
+  fence 失败关闭。
+- `deploy/check-control-plane-unit-manifest.sh`：由发布入口通过 stdin 发送到远端的只读预检，
+  在 rsync 发生前核对三个当前 target unit 的 reviewed SHA-256，避免 mismatch 时产生同步写入。
+- `deploy/deploy.sh` / `deploy/release.sh` / `deploy/runtime-flags-off-install.sh`：提供互斥的
+  `--runtime-flags-off-install` 与 `--runtime-control-plane-flags-off-update` 路径；后者
+  要求 reviewed manifest 且不执行 code/backend 同步、migration、Owner 或服务生命周期
+  操作。`check-agent-runtime-unit-states.sh` 支持 all/control-plane scope；旧安装路径预检
+  还允许未安装 unit 的 inactive + not-found，完成后要求四个 unit inactive + disabled；
+  新更新路径前后均要求三个控制面 unit 严格 inactive + disabled。
+- `backend/tests/test_agent_runtime_flags_off_install.py`：覆盖严格 Worker/Runtime Model 配置、四单元安装、
+  差异目标零写入失败关闭、远端状态门禁顺序及模板/unit 合同。
+- `backend/tests/test_agent_runtime_control_plane_update.py`：动态覆盖 Secret 隔离与 URL encode、
+  env mode/owner、reviewed hash/state 零写入、七目标备份/发布顺序、unit/daemon/postcheck
+  统一恢复、幂等/hash fence、Sandbox 零触碰及 release/deploy 互斥路由。
+- `backend/tests/test_agent_runtime_control_plane_env_transaction.py`：动态覆盖四份 env 各阶段
+  staging/publish 故障、后验故障、原内容与 mode/uid/gid/不存在状态恢复及 release/hash fence。
 - `deploy/transfer-runtime-message-ownership.sh`：原子接管 Runtime/Message 第二批 19 张表、
   实际列 sequence 和 37 个固定业务函数签名（含 Actor 核心依赖、两个 WeCom enqueue
   重载及四个 Outbox 租约函数）；撤销
@@ -240,6 +597,21 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   `admin-user-assets-capability.sh` 与 `worker-control.sh`；先核验隔离角色集合及
   Runtime 旧 Chat enqueue 撤权，再核验核心域、管理员资产和 Worker Control 的
   checksum、owner、ACL、RLS 与能力边界。
+- `backend/migrations/217_organization_lifecycle_governance.sql`、
+  `218_suspended_organization_execution_fence.sql`：提供平台企业原子停用/恢复、脱敏
+  治理审计、active 邀请/任务发现与 suspended 企业服务写入 Fence。
+- `deploy/preflight/organization-lifecycle.sh`：只读核验生命周期迁移、Runtime-only
+  RPC 精确 ACL、owner/SECURITY DEFINER/search_path、完整 trigger 集合与 suspended
+  执行 Fence。
+- `backend/tests/test_organization_lifecycle_external.py`、
+  `test_organization_lifecycle_permissions_external.py`：在显式隔离 PostgreSQL 中分离
+  验证迁移/并发/事务/逆序 rollback 与 Actor/Scope/角色 ACL/四类服务 Fence，单文件
+  均保持在 500 行以内。
+- `backend/api/routes/org_lifecycle.py`：隔离平台企业停用/恢复路由及安全数据库故障映射，
+  避免继续扩大既有企业管理路由文件。
+- `frontend/src/components/admin/useOrganizationLifecycle.ts`、
+  `SuperAdminPanelSections.tsx`：隔离生命周期请求状态和创建/列表/确认区块，保持请求取消、
+  权威刷新与前端函数长度阈值。
 - `deploy/transfer-admin-user-assets-ownership.sh`：在迁移 209 前仅校验并将旧
   `list_admin_user_assets` 查询函数从遗留角色转移给 `everydayai_owner`，不修改
   其他对象或 ACL。
@@ -386,10 +758,11 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   完全一致，并为三种 Scope 提供分离的配置 set/delete/status 调用。
 - `backend/services/configuration/resolver.py`：严格校验固定 Bundle RPC 返回的键顺序、
   来源、版本、普通值与 SecretRef，拒绝 Registry、Scope 或 envelope 漂移。
-- `backend/services/configuration/bundles.py`：仅暴露 13 个固定命名 Bundle 方法，在
+- `backend/services/configuration/bundles.py`：仅暴露固定命名 Bundle 方法，在
   请求/任务内按数据库选定 Scope 解密 Secret，并由 WeCom Target Resolver 执行
   无 Secret Discovery → 逐企业精确 Scope → `wecom.bot` Bundle；企业管理测试使用
-  独立 Runtime owner/admin 门面，不复用 Worker 门面。
+  独立 Runtime owner/admin 门面，不复用 Worker 门面；Scheduled WeCom Runtime 另以
+  async `wecom_app()` 读取现有企业 App 三键 Bundle。
 - `backend/migrations/216_configuration_admin_test_bundle.sql` 与对称 rollback：
   新增 Runtime 企业 owner/admin 专用企微测试 Bundle，保持 Worker 原门面及 ACL 不变。
 - `backend/tests/test_configuration_admin_test_bundle_migration.py`：覆盖迁移 216 的固定
@@ -409,6 +782,13 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
   `backend/tests/test_configuration_resolver.py` 与
   `backend/tests/test_configuration_bundles.py`：覆盖继承、企业策略、角色矩阵、
   SecretRef/解密 Schema 和固定 RPC 映射。
+- `backend/migrations/227_50_agent_runtime_scheduled_wecom_configuration_facade.sql` 与
+  对称 rollback：将现有 `wecom.corp_id`、`wecom.oauth_agent_id`、
+  `wecom.oauth_agent_secret` 组成固定 `wecom.app` Bundle，仅向 actorless、精确 active
+  企业 Scope 的 Scheduled WeCom worker 开放无参数读取门面，不新增配置事实或 fallback。
+- `backend/tests/test_agent_runtime_scheduled_wecom_configuration_facade_migration.py` 与
+  PostgreSQL external：覆盖固定 Bundle、227_38 worker authority、tenant isolation、ACL、
+  无直表权限及 apply/rollback/reapply。
 - `backend/services/configuration/legacy_migration.py`：定义旧 `org_configs` 与快麦
   外部凭证到 Registry v1 的不可变组合契约；固定三次批量读取旧表，在内存中验证旧
   密文与 Corp ID 来源，再生成不含配置值的失败关闭预检报告。
@@ -572,6 +952,9 @@ Agent Runtime AR-11 ModelAttempt与唯一计费：
 - `backend/services/memory/config.py`：仅保留通用提取、Consolidation、调度、召回、压缩与 Embedding 配置；停用的旧 Dedup、L2 Scene/L3 Persona 配置已物理删除。
 - `backend/tests/test_memory_legacy_exit.py`：固定 Scheduler 不再暴露 L2/L3 运行入口、无 revision 不触碰数据库、旧 Redis Session cache 中的 Persona 不能再次进入 Prompt。
 - `backend/migrations/144_manual_curated_memory.sql`：为通用 Curated Memory 增加个人 `org_id=NULL` scope、来源标记和仅限 `service_role` 的手动创建、更新、软删除、清空 RPC；rollback 停止写入但保留个人 scope 与来源事实。
+- `backend/migrations/220_runtime_manual_memory_capabilities.sql`：角色隔离后提供仅授权
+  `everydayai_runtime` 的 owner-definer 手动记忆写能力；每次写入验证可信 Actor、
+  组织 Scope、active 用户与成员关系，不向 Runtime 开放 `memory_atoms` 表权限。
 - `backend/tests/test_manual_curated_memory_migration.py`：固定个人/组织 scope、并发锁、容量与内容边界、去重、手动来源限制、软删除、RPC 权限和保留数据回滚协议。
 - `backend/services/memory/manual_memory_service.py`：手动 Curated Memory 的唯一服务边界；原文经过通用 embedding 后调用原子 RPC，统一处理个人/组织 scope、容量、重复、跨 scope 隐藏与失败关闭。
 - `backend/services/memory/retrieval_pipeline.py`、`memory_service_v2.py`、`backend/services/agent/memory_tool_mixin.py`：Search/Get、Prompt 自动注入和 Agent 只读工具使用同一 NULL-safe scope，个人用户无需虚拟组织 ID 即可召回。
@@ -665,11 +1048,14 @@ Agent Runtime AR-05～AR-09 基础实现：
 - `docs/document/TECH_AGENT_RUNTIME_Subagent与后台任务.md`：定义受限 Child Run、委派合同、隔离 Context/Capability、预算、Workspace isolation、父级唤醒及 Background Action 分界。
 - `docs/document/TECH_AGENT_RUNTIME_多通道Projection与交互协议.md`：定义 RuntimeEvent 有序信封、Snapshot/Replay、Projection reducer、持久 Interaction、ChannelCapability 及 Web/企微确定性降级。
 - `docs/document/TECH_AGENT_RUNTIME_测试灰度发布与回滚.md`：保留历史文件名，正文定义状态机/真实依赖/Trace/E2E/Eval 测试体系、ReleaseManifest、Actor drain、无副作用 shadow 对账、完整切换门禁与回滚；不采用租户、用户或流量 Canary。
+- `docs/document/TECH_Runtime批量媒体Action编排.md`：基于现有 ModelStep Action batch，定义普通对话参考图分析、1～10 张图片并行 Action、媒体 Task/积分原子绑定、精确授权、Provider reconcile、稳定槽位、混合内容投影及电商链路隔离。
+- `backend/migrations/228_03_agent_runtime_media_authorization_group.sql`：为 2～10 个同批 `generate_image` Action 建立单 leader 通知、整批原子响应及每 Action 独立 grant/receipt 的持久授权合同，并附精确 rollback 与 disposable PostgreSQL 验证。
 ```
 EVERYDAYAIONE/
 ├── .cursorrules              # AI开发执行核心规则
 ├── .claude/skills/everydayai-test-coverage/SKILL.md # Claude 按需加载测试规则的轻量入口
 ├── scripts/run_tests.sh      # 后端 target/fast/pr/full/large/external 分层测试入口
+├── scripts/run_redis_contract_tests.sh # 临时 localhost Redis Standalone 外部合同测试入口
 ├── CLAUDE.md                 # Claude Code 开发规则
 ├── .env                      # 环境变量（本地）
 ├── docs/                     # 项目文档
@@ -819,7 +1205,7 @@ EVERYDAYAIONE/
 │   │   ├── wecom/conversation_settings.py # 企微对话设置数据库事实源
 │   │   ├── wecom/delivery_sender.py  # 企微 Outbox 稳定分项与双通道发送适配
 │   │   ├── wecom/delivery_worker.py  # 企微 Outbox 租约、检查点、重试与 dead 消费
-│   │   ├── wecom/wecom_ingress_mixin.py # 企微 Actor 灰度与旧链路入站分发
+│   │   ├── wecom/wecom_ingress_mixin.py # 企微文件暂存后进入 Runtime ingress，其他消息入站分发
 │   │   ├── wecom/wecom_reply_mixin.py # 企微结果格式化与双通道回复职责
 │   │   ├── handlers/chat/            # Chat 流式与无头执行内核
 │   │   │   ├── execution_engine.py   # 通道无关模型流、工具循环、预算与结果构造
@@ -884,7 +1270,9 @@ EVERYDAYAIONE/
 │   │   │   ├── turn_lifecycle.py      # 企微同步生成的 task/Turn 生命周期适配
 │   │   │   ├── wecom_ai_mixin.py        # AI 路由 + 生成能力 Mixin
 │   │   │   ├── app_message_sender.py    # 自建应用消息发送（文本/图片/视频）
+│   │   │   ├── app_outbound.py          # 自建应用 HTTP typed 回执与进程内请求关联边界
 │   │   │   ├── ws_client.py             # 智能机器人 WebSocket 客户端
+│   │   │   ├── ws_outbound.py           # 智能机器人 legacy 发送与 typed ACK transport
 │   │   │   ├── access_token_manager.py  # access_token 管理
 │   │   │   └── user_mapping_service.py  # 企微用户 → 系统用户映射
 │   │   ├── kuaimai/                  # 快麦 ERP 集成
@@ -900,6 +1288,8 @@ EVERYDAYAIONE/
 │   │   │   └── dispatcher.py            # API 调度器
 │   │   ├── agent/                    # Agent 架构层（多Agent单一职责）
 │   │   │   ├── runtime/              # Run合同、证据账本、工具产物策略与完成门
+│   │   │   │   ├── credential_broker.py     # tenant-bound opaque handle→lease→controlled consumer
+│   │   │   │   └── wecom_app_credentials.py # 企微 App lease→token exchange 端口与 typed transport 组装
 │   │   │   ├── image/requirement_assist_prompts.py # AI 帮写事实边界与多模态 Prompt
 │   │   │   ├── image/input_adapters.py # 详情项目到共享 AI 帮写输入的安全适配器
 │   │   │   ├── image/requirement_assist_service.py # 三方案模型调用、降级、校验与事实冲突闸门
@@ -1498,3 +1888,437 @@ cache = client.caches.create(
 - **2026-01-31**：完成登录/注册弹窗化重构（Modal、AuthModal、LoginForm、RegisterForm）
 - **2026-01-24**：完成视频生成功能集成（Sora 2 系列 3 个模型）
 - **2026-01-21**：完成基础架构搭建（FastAPI + React + Supabase）
+- **2026-07-29**：Agent Runtime 生产 composition 已实现但默认关闭
+  - API、Actor、WeCom 仅负责持久 ingress，不构造 Runtime 或 Sandbox Owner
+  - Runtime、Projection、Authorization Recovery、Sandbox 使用独立进程、
+    Linux 用户和最小权限数据库角色
+  - Tool Confirmation V3 仅解决 PostgreSQL Authorization Interaction；
+    PolicyReceipt 与 Dispatch Gate 是唯一执行门禁
+  - Sandbox 固定 nsjail/rootfs/seccomp 哈希及 cgroup v2 上限，无裸 Python 降级
+  - Sandbox Linux合同以真实非root `everydayai-sandbox` 身份运行；jail内
+    65534:65534只映射到启动Worker的非root UID/GID，root启动失败关闭
+  - migration 223 clean rollback通过有效权限矩阵验证PUBLIC、普通Runtime和旧Worker
+    均不能取得compatibility projection mutation权限
+  - 生产发布、灰度、告警和回滚合同见
+    [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](AGENT_RUNTIME_PRODUCTION_RUNBOOK.md)
+- **2026-08-04**：C5.2 增加 capability-scoped safe composition；仅接入 Runtime read（含 C2.1 org-scoped ERP read），模型/ActionLoop 通过显式注入接线，ERP write、Media、external specialist 及未启动 Worker/Projection/Authorization/Sandbox 保持 unavailable/disabled，整体 production readiness 仍为 false。
+- **2026-08-05**：C7-B3.1 增加 code-owned production composition spine；Worker 不再接受动态 factory 或组件注入，真实安全服务未接线时返回强类型、结构化 NOT_READY，未启用任何 Provider 或生产能力。
+- **2026-08-01**：AR-17.1 共享基础已在独立分支实现，默认仍关闭
+  - 224 additive v2 ingress 在同一 PostgreSQL 事务中冻结 Session、Command、Run envelope、上下文锚点和 EffectiveToolset
+  - AgentDefinition、Runtime Tool Catalog、Executor revision 与 Authorization 使用同一 code_execute-only 目录事实
+  - v2 Context 严格绑定 Run/session/base revision/through message，并在后续 ModelStep 复现 tool_call 与 terminal result
+  - 224 持久化不可变 AgentDefinition/Catalog/EffectiveToolset 文档，分离新 ingress enablement 与历史 Run recoverability；v1→v2 后旧 Run 仍按原 facts 恢复。`org_id=NULL` 个人 ingress 仍受组织 rollout 白名单限制，属于 AR-17 完成前阻塞项
+  - Definition facts 冻结 prompt/model/context policy；Catalog 与 EffectiveToolset hash 覆盖完整执行安全语义，已提交 Command 在 gate 漂移后按原 envelope readback
+  - AR-17.2～17.4、42 项专业工具、生产启动接线和生产验收未完成
+- **2026-08-02**：AR-17.3 专业 Executor 与 226 additive lane 在独立 worktree 实施
+  - 新增 23 项唯一 Descriptor、Remote Read/Artifact Job/Media/ERP Mutation/Sync/Workspace/Child Run/Scheduled Task 专业族
+  - 新增 Provider reconcile、Callback Inbox、独立 Action Cost Ledger、Artifact lineage、Child Run 与资源 CAS 的 226_01～226_06 迁移及失败关闭 rollback
+  - 非生产 Catalog 显式合并 18 个 AR-17.2 只读工具、code_execute 与 23 项新工具，生产 Catalog、EffectiveToolset、rollout 和 Owner 仍关闭
+  - 真实 PostgreSQL 并发/RLS/权限和隔离 Provider 网络验收仍未执行；AR-17、AR-17.4 和生产启用仍未完成
+
+- **2026-08-02**：AR-17.3 真实适配器修复批次继续实施（非生产）
+  - 23 项工具逐项绑定 ERP、DashScope、Crawler、KIE、Artifact、Workspace/OSS、Scheduler 与 Child Run 端口
+  - 八类 Executor 具备各自请求边界；严格传输层只允许登记的 provider/method/path
+  - Callback 应用层 HMAC 验签后才写持久 inbox；Child Run 使用 SHA-256 并做幂等 readback
+  - Workspace 删除前验证 OSS retention，恢复按稳定资源 ID 使用隔离暂存和原子 rename
+  - ERP action 只接受 `services.kuaimai.registry.TOOL_REGISTRIES` 正式条目；`erp_api_search` 保持本地文档搜索
+  - Provider status/cancel 无证明时保持 unknown；Callback 唯一入口拒绝旧 boolean 验签绕过
+
+- **2026-08-09**：AR-18 B7-S1 Scheduler 控制面（仅非生产）
+  - 新增 `backend/migrations/227_28_agent_runtime_scheduler_control.sql` 及精确 rollback：复用既有
+    `scheduled_tasks`，以不可变 operation intent/receipt 和单一 Runtime worker RPC 原子完成
+    create/update/pause/resume/delete，包含 tenant/session/run/action/attempt、PolicyReceipt、
+    DispatchIntent、request hash、execution token、kill epoch/revision、幂等和 CAS 栅栏。
+  - `PostgresSchedulerControlStore`、`ScheduledTaskService` 和 `PortBackedProvider` 接入
+    readback/cancel/reconcile 与 committed/unknown/cancelled 状态映射；旧 Scanner、
+    ScheduledTaskAgent、ToolLoop、投递/计费/Provider 业务链路未切换，production readiness 仍为 false。
+  - 新入口沿用现有组织职位/部门权限和 push target 租户边界；未配置业务权限的 `other`
+    部门失败关闭。调度定义变更必须原子携带已校验时区和重新计算的 `next_run_at`，避免
+    Scanner 继续读取旧执行时间。
+  - 资源操作范围与 `PermissionChecker` 保持一致：boss 全部、VP 按 data scope、manager
+    同部门、deputy/member 仅本人。pause 原子清空 `next_run_at`；resume 先经窄 RPC 读取
+    权威调度快照，再用既有 `calc_next_run` 计算并通过 schedule hash + CAS 原子提交；过期
+    once 任务失败关闭，模型参数不能指定恢复时间。
+  - Scheduler payload normalization 与 service orchestration 分别位于
+    `scheduler_control_payload.py`、`scheduler_service_support.py`，沿用既有 cron/once 定义语义。
+
+- **2026-08-09**：AR-18 B7-S2-A1 Scheduled Run Owner Facts（仅非生产）
+  - 新增 `227_29_agent_runtime_scheduled_execution_owner.sql` 及精确 rollback，仅建立
+    Runtime scheduled execution profile 与 per-run 单一 Owner binding，不提交 Runtime
+    Command/Run，也不改变旧 Scanner、计费、终结或投递行为。
+  - 仅没有 Runtime profile 的历史 run 可默认 legacy；Runtime profile 已存在但 run 尚未
+    binding 时失败关闭。Profile 的 definition/model/toolset/scope/channel/budget 全部从来源
+    Session/Command/Run/Action 与 227_28 receipt 派生；来源 Run 必须持有真实可调用
+    `manage_scheduled_task` 的冻结 production toolset，目标 profile 再派生为 C7-B3.2-A
+    9/17 项 safe-read 子集；`catalog/scheduled_toolset.py` 使用 Runtime canonical JSON 生成
+    snapshot/hash，数据库逐字段重建来源子集并复算规范字节，不接受任意 Worker 快照。
+    Owner 按 run → trigger → tenant/provider/capability gate
+    固定锁序选择且不可切换。
+  - Runtime Worker 仅获得 profile/readback/owner-select/runtime-binding/assert 窄 RPC；两张
+    事实表 FORCE RLS 且无 Worker 直权；旧入口可在后续通过不可外调的 owner gate 包装。
+    Runtime Command/Run 缺少专用 scheduler system context/envelope、原生 scheduled run kind，
+    或绑定后 task/profile/gate epoch 已变化时拒绝绑定。存在事实时 rollback 失败关闭；
+    production Scheduler capability 与 readiness 继续关闭。
+
+- **2026-08-12**：Web ingress Runtime-required 接线（227.61）
+  - 新增 `runtime_submit_ingress_v6_required` 及精确 rollback；Web Chat 在 Runtime ingress
+    gate、能力或命令创建失败时，将 prepared task 隔离为 Runtime rejected 并返回明确错误，
+    不恢复旧 Conversation Actor Owner。
+  - WeCom、Scheduler 和旧 ToolExecutor 不在本批范围；Runtime 成功时仍由 Command claim
+    进入 ModelLoop/ActionLoop。
+
+- **2026-08-12**：S4-B 历史定时任务 Runtime adoption preflight（仅非生产）
+  - 新增 `227_59_agent_runtime_scheduled_adoption_preflight.sql` 及精确 rollback，提供
+    owner-only、只读的历史 `scheduled_tasks` 分类报告；仅返回状态、事实完整性、语义/投递
+    target hash 和 adoption candidate，不读取或回显 prompt/target，不修改任务或 Runtime 数据。
+    `safe_to_adopt_count` 固定为 0；缺少来源 Action/Attempt/Run 或 Runtime facts 的任务继续由旧
+    Owner 保持运行/阻断，待后续事实重建与人工语义确认后再设计可回滚 adoption。
+  - AR-18 分支复审确认 Provider/Child/Scheduler/Scheduled Run/Delivery/Projection/Web/WeCom 相关 tip
+    已在 Runtime 主线祖先链；Sandbox `929ec2e2` 与主线 `77585d21` 三文件 patch-id 一致。150 个
+    AR-18/Owner/调度本地定向测试通过；该证据不等于 profileless 历史任务已 adoption，也不改变旧 Owner 保留边界。
+
+- **2026-08-09**：AR-18 B7-S2-A2 Scheduled Runtime Command Submission（仅 disposable）
+  - 新增 `227_30_agent_runtime_scheduled_submission.sql` 及精确 rollback：到期扫描与立即执行
+    通过同一原子合同创建 scheduled run、隐藏 scheduler conversation/message anchor、system-scoped
+    Runtime Session、Command 和 A1 owner binding；按 scheduled time 或 manual request id 权威
+    readback，响应丢失不会重复 Command。
+  - Background Worker 仅获得 claim/readback/legacy-owner 窄 RPC，无 Runtime 表直权；没有 Runtime
+    profile 的任务保持旧 Scanner/Executor 路径，存在 profile 的任务不会进入旧 credits、ToolLoop、
+    stale recovery 或 completion owner。普通对话列表只展示 web/wecom source。
+  - submission control 默认 `disabled`，仅 disposable 模式可构造 Runtime Command；本批不实现
+    terminal finalizer、next-run 恢复、计费、Projection/Delivery，也不启用 production readiness。
+
+- **2026-08-09**：AR-18 B7-S2-B1-A Scheduled Runtime Terminal Intent（仅事实捕获）
+  - 新增 `227_31_agent_runtime_scheduled_terminal_intents.sql` 及精确 rollback：scheduled Runtime
+    Run 首次进入 completed/failed/cancelled 时，由 `agent_runs` 同事务 trigger 校验 A2 binding 与
+    scheduled run/task/tenant 身份，写入不可变 finalization intent，并把 binding 标记为
+    `reconcile_required`；正常完成、失败、取消和 command attempts exhausted 共用同一事实入口。
+  - Runtime Worker 仅通过 claim/readback 窄 RPC 获取脱敏终态、binding、schedule hash/snapshot、
+    ModelResult、usage 与 cost 投影输入；claim 使用 `SKIP LOCKED`、token lease 和过期恢复。
+    intent 表 FORCE RLS 且 Worker 无表直权，迁移回填和 rollback 对缺失、冲突及历史终态事实均
+    失败关闭。scheduled task 终态、next-run/counters/result、credits 与投递留待 B1-B；生产开关不变。
+
+- **2026-08-09**：AR-18 B7-S2-B1-B1 Scheduled Runtime Finalization Apply（仅数据库合同）
+  - 新增 `227_32_agent_runtime_scheduled_finalization_apply.sql` 及精确 rollback：持有效 intent claim
+    的 Runtime Worker 通过单一窄 RPC，按 intent、binding、Runtime Run、scheduled run、task 锁序，
+    原子投影 completed/failed/cancelled，并保留不可变 request-id/application-hash receipt。
+  - once/周期、快速重试和自动暂停沿用既有 scheduled task 状态；credits/tokens 仅从 Runtime
+    Model facts 重算，绝不调用 legacy credit lock/settle 或写用户钱包。结果只持久化 ModelResult
+    身份与 content hash，不复制正文或 Secret。Worker 主循环、cron 计算和消息投递留待 B1-B2。
+
+- **2026-08-09**：AR-18 B7-S2-B1-B1.1 Scheduled Finalization Context Readback
+  - 新增 `227_33_agent_runtime_scheduled_finalization_context.sql` 及精确 rollback：Runtime Worker
+    只有持有未过期 finalization claim token 时，才能只读取得终态基准、冻结 schedule hash、
+    task/intent 版本、retry count 与 consecutive failures；applied、not-found 和 fenced 明确区分。
+  - Context RPC 在返回前重新校验 scheduled task/run、Runtime binding/Run、execution profile、
+    冻结 epoch/revision，且不续租、不更新事实、不返回 prompt、push target、claim token、Secret、
+    路径或 Provider payload。新增 apply v2 仅在 Runtime Run 已 terminal 后完成本地 scheduled facts
+    收敛；后续 tenant/provider/capability kill 仍阻止新副作用，但不会把 terminal intent 永久卡在
+    running/reconcile_required。v1 身份保持不变，Worker 循环与 next-run 规划仍留待 B1-B2。
+
+- **2026-08-10**：AR-18 B7-S2-B1-B2 Scheduled Runtime Finalizer Worker Wiring
+  - Runtime Worker 在既有 Command、Run、Action、Child Cancel 与 Reconcile 扫描后，每轮最多领取一个
+    scheduled finalization intent；使用冻结的 terminal baseline 和现有 cron 语义确定 next run，再只调用
+    `apply_agent_runtime_scheduled_finalization_v2` 原子收敛本地 scheduled facts。
+  - PostgreSQL adapter 严格解析 claim/context/apply/readback；响应丢失时先只读确认状态，再以同一确定性
+    request id 重放 v2 apply，只有数据库返回 `already_applied` 才确认完成。drain 不再领取新 intent，错误仅
+    记录脱敏类型且不阻断后续 Runtime 扫描；未接 legacy Scheduler、钱包、Provider 或消息投递。
+
+- **2026-08-10**：AR-18 B7-S2-B1-C Scheduled Runtime Credit Hard Budget
+  - 新增 `227_34_agent_runtime_scheduled_run_credit_budget.sql` 及精确 rollback：Scheduled Run
+    只从冻结 profile/run snapshot 取得 `max_credits`，在 Model Attempt prepare 前以 per-run 预算锁
+    原子分配；预算耗尽返回类型化 `budget_exhausted`，ModelLoop 在 Provider/Gateway dispatch 前安全
+    终结，不创建第二个外部副作用。
+  - Scheduled late receipt 的用户扣费不超过本 Run 剩余硬上限；完整 Provider actual 与平台 overage
+    写入不可变 reconciliation fact，`adjustment_pending` 重放不会在用户充值后自动补扣。普通非
+    Scheduled Run 保留既有完整计费语义。预算、allocation 与 overage 表 FORCE RLS，Worker 无表直权，
+    `production_ready=false` 保持。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D1-A Scheduled Delivery Snapshot 与 Intent（仅数据库合同）
+  - 新增 `227_35_agent_runtime_scheduled_delivery_intents.sql` 及精确 rollback；不修改 227_28～227_34。
+    现有 submission 事务通过 trigger 将经既有租户权限验证的 web、企微用户、企微群和 bounded multi
+    规范化为最多 20 个稳定 target key/hash；multi 仅允许一层 leaf 且拒绝重复。web 冻结 org/user，
+    企微用户冻结 mapping/corp/user/channel，企微群冻结 target/corp/chat/type，并在 Projection readback
+    时重新验证成员、映射和目标仍存在且 active；撤销或重绑后返回 unavailable，不暴露可发送目标。
+  - Runtime Run 绑定后追加不可变 binding fact；`apply_agent_runtime_scheduled_finalization_v2` 成功事务
+    同步冻结最终 ModelResult identity 和经 run/action/attempt/conversation/org 严格校验的有序 Artifact
+    manifest（仅 artifact/hash/role/materialize revision/status），再生成 per-target pending delivery intent；
+    不复制结果正文、URL、storage ref、Prompt、Secret、路径或堆栈。Projection 仅获得
+    tenant/run-scoped readback 窄 RPC；本批不 claim、不发送 Web/企微、不使用 Redis 作为事实源，legacy
+    Run 不生成 Runtime intent，`production_ready=false` 保持。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D1-B Scheduled Runtime Web durable projection receipt + wakeup
+  - 新增 `227_36_agent_runtime_scheduled_web_projection.sql` 与失败关闭 rollback；Projection Worker
+    只 claim Web intent，以 lease token/state version 单赢家验证 org/user、target/content hash、
+    scheduled/runtime/task/finalization 绑定、terminal run/task Web 投影及 active membership。WeCom intent
+    保持 pending，receipt/attempt 表 FORCE RLS，Worker 仅有窄 RPC EXECUTE，生产 flag 默认关闭且
+    `production_ready=false`。
+  - apply 先写唯一 durable projection receipt，再调用现有 `ws_manager.send_to_user` 发送仅含刷新字段的
+    completed/failed wakeup；无连接、Redis/WS 异常只写脱敏 attempt/result，不撤销 receipt。lease 过期可从
+    projected receipt 恢复，允许崩溃窗口内重复 wakeup，但不会重复数据库投影，也不创建 conversation/message。
+    前端按白名单采纳 DB `task_status` 后 `fetchRuns`，once task 不再被 completed handler 短暂硬编码为 active。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A1 Scheduled Runtime WeCom delivery foundation
+  - 新增 `227_37_agent_runtime_scheduled_wecom_delivery.sql` 与精确 rollback。D1-A 每个 WeCom intent
+    在同一事务初始化一条 Runtime-owned delivery fact、至少一条 text identity item，并为 completed
+    Artifact manifest 按 occurrence 逐项冻结 identity-only item；item key 绑定 intent/content、manifest
+    ordinal/role 与 source identity/revision，保留同一 Artifact 的合法重复 occurrence，
+    不复制正文、URL、object path、Secret 或 bytes。
+  - delivery/item/dispatch attempt 三表冻结完整状态与 provider evidence 字段，identity 不可改，attempt
+    仅允许 prepared→dispatch_started→accepted/rejected/unknown 及 unknown→accepted/rejected；typed receipt
+    写入后不可改。三表 FORCE RLS、仅 owner policy，本批不向 WeCom/Runtime/Projection/legacy Worker
+    授予表或函数权限，不实现 claim、reconcile、transport 或真实发送，`production_ready=false` 不变。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A2a Scheduled Runtime WeCom live claim contract
+  - 新增 `227_38_agent_runtime_scheduled_wecom_claim.sql` 与精确 rollback。WeCom delivery worker 以现有
+    `everydayai_wecom_runtime` + `app.access_kind=worker` 调用窄 RPC，按 request/token/version fence 完成
+    `SKIP LOCKED` claim、纯 claim readback、renew 和 lease-expiry takeover；仍无底表权限。
+  - claim 与 dispatch gate 按 intent 独立复核 D1/A1、org/member 及 app/smart_robot user/group 当前身份。
+    纯 claim readback 不续租或写版本；dispatch-context gate 若在尚无 attempt 时发现 target 失效，会将该
+    delivery 标记 unavailable 并取消 pending/retry_wait items。返回值仅含安全身份与 hash，不读取 Secret，
+    不创建 attempt、不发起 transport；rollback 允许保留 pristine A1 facts，但存在 A2a 状态即失败关闭。
+  - `test_agent_runtime_scheduled_wecom_terminal_fence_postgres_external.py` 逐项验证 applied finalization
+    application identity、binding/Run/scheduled-run terminal 漂移会阻断 dispatch，且不影响独立 valid intent。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A2b1 Scheduled Runtime WeCom dispatch prepare/recovery
+  - `227_39_agent_runtime_scheduled_wecom_dispatch_prepare.sql` 在 transport 前持久化稳定 provider request、
+    idempotency 与 provider revision，并以 current delivery claim fence 原子推进 prepared→dispatch_started。
+    prepared 后崩溃仅可由独立 recovery RPC 在原 lease 过期且无 started/unknown/receipt 证据时接管；
+    append-only recovery request fact 永久绑定 request ID 与原 attempt/issued claim，重复接管不会改写副作用身份。
+  - 新 recovery fact FORCE RLS、owner-only，WeCom worker 仅获窄 RPC EXECUTE 且无表权；精确 rollback
+    在 attempt、dispatching 状态或 recovery request fact 存在时失败关闭。PG 测试覆盖 50 并发 recovery/start
+    单赢家、旧 token fence、request response-loss/后续接管重放、NULL 零事实变更和 split identity 稳定冲突。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A2b2a1 Scheduled Runtime WeCom dispatch outcomes
+  - `227_40_agent_runtime_scheduled_wecom_dispatch_outcomes.sql` 新增 append-only outcome request ledger 与单一
+    WeCom worker RPC，把 `dispatch_started` 原子推进为 accepted/rejected/unknown，并逐 ordinal 更新 item；仍有
+    后续 pending/retry_wait 时保留 current claim，否则同事务聚合 completed/partial/failed，unknown 则进入
+    ambiguous/unknown 并清 claim，不能被普通 claim 重派。
+  - accepted/rejected receipt 仅接受 app/smart_robot 的平铺 typed metadata allowlist，数据库用带 domain、outcome、
+    receipt type/code、provider identity/revision 的 canonical envelope 重算 SHA-256；unknown 不接受 receipt metadata。
+    start 后 live context 或 lease 时钟变化不会丢弃已发生的外部事实，但 claim identity/version takeover 仍会 fence。
+    FORCE RLS、无表权、精确 rollback；本批不接 transport、Secret、真实企微或 unknown reconcile/cancel。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A2b2b1a Scheduled Runtime WeCom UNKNOWN reconcile claim
+  - `227_41_agent_runtime_scheduled_wecom_reconcile_claim.sql` 新增 owner-only、FORCE RLS、append-only
+    reconcile claim request ledger，并向 `everydayai_wecom_runtime` worker 仅开放 claim/renew/pure readback RPC。
+    claim 只接管 delivery/item 均已到期的 unknown 或 reconcile_required 与 frozen unknown/ambiguous attempt，复用
+    delivery 既有 reconcile lease 字段，不创建 attempt、不 dispatch、不修改 provider identity；过期 lease 可 takeover，
+    旧 request 永久 readback 原 token/attempt 且返回 fenced。统一 global request lock/guard 使 reconcile ledger 与既有
+    delivery claim、prepared recovery、outcome request namespace 双向并发互斥。精确 rollback 在 ledger 或 active reconcile fact 存在时
+    失败关闭；本批不实现 accepted/rejected/still_unknown 结果、cancel、transport、Provider 或 Secret 访问。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A2b2b1b-1 Scheduled Runtime WeCom initial/continuation claim v2
+  - 新增 `227_42_agent_runtime_scheduled_wecom_continuation_claim.sql` 与精确 rollback，并以 worker-only
+    `claim_agent_runtime_scheduled_wecom_delivery_v2` 取代 v1 的可执行权限。v2 同时覆盖互斥的 initial claim
+    （delivery 尚无 attempt）与 continuation claim（历史 attempt 全部 terminal accepted/rejected，严格下一 due item
+    尚无 attempt）；两者都只建立 delivery lease，不创建 dispatch attempt，不重建或 resubmit 历史 attempt。
+  - 新 append-only continuation claim request ledger 永久绑定 request/intent/item、claim kind、worker、token、lease
+    与 delivery/item versions，支持 response-loss readback；FORCE RLS、owner-only 底表和扩展后的 global request guards
+    保证其 request UUID 与 227_38～227_41 delivery claim、prepared recovery、outcome、reconcile ledger 双向互斥。
+    live target 失效时，initial 复用安全 unavailable cancellation；continuation 仅取消剩余未发送 item，再按包含
+    cancelled item 的 227_40 规则聚合 completed/partial/failed，清除 claim 且不修改历史 attempt。
+  - migration 撤销 `everydayai_wecom_runtime` 对 `claim_agent_runtime_scheduled_wecom_delivery_v1` 的 EXECUTE；rollback
+    在不存在 v2 ledger facts 时删除本批对象、精确恢复 227_41 namespace guard 定义并恢复 v1 EXECUTE。本批不实现
+    reconcile accepted/rejected/still_unknown result、transport、Provider、Secret、Redis、retry 或 resubmit。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-A2b2b1c Scheduled Runtime WeCom still_unknown reconcile result
+  - 新增 `227_43_agent_runtime_scheduled_wecom_reconcile_still_unknown.sql`、精确 rollback、append-only
+    reconcile result request ledger 与 worker-only result RPC。请求永久绑定 227_41 current claim、intent/item/attempt、
+    reconcile token/worker、delivery/item versions 及 provider identity；仅接受 `still_unknown`，不实现 accepted/rejected。
+  - readback type/code/metadata 复用 227_40 typed allowlist，禁止自由文本，并由数据库以独立 domain canonical envelope
+    重算 SHA-256。成功后 attempt 继续保持 unknown/ambiguous、`unknown_at` 不变；item 与 delivery 原子变为
+    `reconcile_required`，清 reconcile lease，并以同一时间设置 5～86400 秒后的 `next_attempt_at`，不创建 attempt、
+    dispatch 或 resubmit。外部 readback 后 target drift 或 lease 刚过期仍记录，token/worker/version takeover 则 fence。
+  - result request UUID 双向加入 227_41/42 全局 namespace guards；FORCE RLS、worker 无表权、response-loss readback
+    与精确 rollback 均由 PG 契约覆盖。本批不包含 cancel、transport、Provider 调用或 accepted/rejected resolution。
+
+- **2026-08-10**：AR-18 B7-S2-B1-D2-B1d2b1d Scheduled Runtime WeCom definitive reconcile result
+  - 新增 `227_44_agent_runtime_scheduled_wecom_reconcile_definitive.sql`、精确 rollback、append-only
+    definitive request ledger 与 worker-only result RPC。请求绑定 227_41 current claim、intent/item/attempt、
+    reconcile token/worker、delivery/item versions 与 Provider identity，只接受 typed `accepted|rejected`；canonical
+    readback hash 与 metadata allowlist 复用 227_43/227_40，底表 FORCE RLS 且 worker 无表权。
+  - 成功 readback 将 frozen unknown/ambiguous attempt 终结为 accepted/rejected receipt_recorded，保留 `unknown_at` 并
+    设置 receipt evidence/`resolved_at`；item 映射为 accepted/failed，清 ordinary/reconcile claims。存在后续
+    pending/retry_wait item 时 delivery 回到 pending，由 227_42 v2 领取真实下一 item；否则按 accepted 与
+    failed/cancelled 聚合 completed/partial/failed。readback 后 target/context drift 或 lease 过期仍记录，
+    token/worker/version takeover fence；不包含 still_unknown、cancel、transport、Provider 调用、普通 retry/resubmit。
+  - definitive request UUID 双向加入 227_41～43 与 legacy/continuation namespace guards；rollback 无事实时恢复
+    227_43 guard 定义，有事实时失败关闭。并发 accepted/rejected、readback/conflict、NULL/hash/metadata 零事实、
+    v2 continuation、ACL/RLS/search_path 与 rollback 均由 disposable PostgreSQL 契约覆盖。
+
+- **2026-08-10**：AR-18 D2-C0a Scheduled Runtime WeCom authoritative dispatch version readback
+  - 新增 additive `227_45_agent_runtime_scheduled_wecom_dispatch_version_readback.sql` 与无事实精确 rollback；不修改
+    227_39/40 身份、状态机或持久事实。worker-only prepare/start/readback v2 在调用 v1 的同一事务内，以
+    intent/item/attempt、Provider identity/revision 和 current claim/lease/worker 联合绑定的窄查询附加当前
+    `delivery_state_version` / `item_state_version`，fenced/not_found 不返回版本或业务事实。
+  - prepare v2 的版本可直接调用 start v2，start v2 的版本可直接调用 227_40 outcome v1；response-loss 重放返回
+    同一 attempt 与当前权威版本。migration 撤销 WeCom runtime 对三个 v1 入口的 EXECUTE，仅开放 v2，仍无底表
+    SELECT；rollback 删除 v2 并精确恢复 v1 权限。静态与 disposable PostgreSQL 测试覆盖闭环、identity drift、
+    ACL/RLS/search_path、legacy 拒绝及 rollback/reapply/rollback。
+
+- **2026-08-10**：AR-18 B7-S2 D2-C1a Scheduled Runtime WeCom typed repository boundary
+  - 新增 frozen dataclass/enum port 与 `PostgresScheduledWecomDeliveryRepository`，以现有
+    `everydayai_wecom_runtime`、`app.access_kind=worker` scoped client 仅调用窄 RPC。完整覆盖 delivery v2
+    initial/continuation claim、prepared recovery、227_45 prepare/start/read v2、227_40 dispatch outcome v1，
+    以及 227_41～44 reconcile claim/renew/read、still_unknown 和 definitive result；不接 transport、循环 Worker
+    或 production composition。
+  - 所有参数逐字段映射并保留 request/worker/lease/reconcile token、delivery/item version、Provider request、
+    idempotency hash 与 revision。输出按 outcome 使用精确字段 allowlist 和 typed receipt metadata；缺字段、额外
+    Secret/credential/payload/free-text 字段、非法 UUID/版本/状态均稳定失败关闭。prepare/start/read 只使用
+    227_45 v2 权威版本，禁止表直读和本地版本推算；仅有 durable identity/readback 的写 RPC 在连接响应丢失后
+    原参数重放，lease renew 不自动重放。
+
+- **2026-08-10**：AR-18 D2-C0b Scheduled Runtime WeCom safe dispatch payload readback
+  - 新增 additive `227_46_agent_runtime_scheduled_wecom_dispatch_payload.sql` 与仅删除该函数的精确 rollback。
+    `read_agent_runtime_scheduled_wecom_dispatch_payload_v1` 使用当前 claim/lease/worker 与 delivery/item BIGINT
+    version fence 调用既有 227_38 live dispatch context，再绑定同一 scheduled run、task、applied finalization、delivery
+    content、intent、当前有序 item 与冻结 `agent_model_results` identity。completed text 的正文仍只返回
+    `scheduled_task_runs.result_summary`，但 SQL 会从 content 的精确 `model_result_id` 在内部重算
+    `_agent_runtime_scheduled_safe_summary` 并要求逐字相等；原始 model text/structured content 不进入响应或异常。
+    RPC 也不返回 target snapshot、内部 mapping/user/target ID、Secret、URL、路径或 artifact bytes。
+  - 成功响应仅含稳定内容/target hash、当前版本、`message_type=text`、bounded safe text 和确定性 payload hash；
+    transport target 仅投影 App `org_id + corp_id + wecom_userid` 或 Smart Robot `org_id + chatid`，且经 live
+    context 验证的 `org_id` 纳入 canonical payload hash。artifact identity、failed、
+    cancelled 与其它 non-completed content 只返回固定 payload-free `unsupported`，不生成通知文案。RPC 会继承
+    227_38 已批准的 pre-attempt unavailable cancellation，但不会合并或透传完整 context。
+  - 本批仅建立 inactive database contract，不接 repository orchestration、transport、循环 Worker 或 production。
+    D2-C0b 阶段曾因缺少 durable unsupported terminalization/no-claim policy 而阻塞 Worker 激活；后续 227_47
+    已关闭该生命周期缺口，但不会追溯改变本批的 inactive 范围。
+- **2026-08-10**：AR-18 D2-C0c Scheduled Runtime WeCom unsupported durable terminalization
+  - 新增 additive `227_47_agent_runtime_scheduled_wecom_unsupported_terminalization.sql` 与精确 rollback。
+    `terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1` 仅在当前 227_42 v2 claim、item、lease、worker
+    与 delivery/item version 全部匹配且 227_46 返回四种固定 `unsupported` reason 之一时，原子地把当前未发送 item
+    标记为 `cancelled`；调用方不能提交 reason 或正文，也不会创建、重派或改写 dispatch attempt。
+  - owner-only FORCE-RLS append-only ledger 冻结 request 与原 claim identity、server-derived reason、结果状态、权威
+    version 和时间，支持响应丢失后的同参数 `readback`；同 request 异参冲突，且新 ledger 双向加入完整 Scheduled
+    WeCom global request namespace。仍有 pending/retry item 时立即释放 delivery 为 `pending` 供 fresh strict continuation
+    claim；否则按 accepted-count 既有语义聚合为 completed/partial/failed，避免 unsupported reclaim loop。
+  - rollback 在 ledger fact 或带本契约固定 reason 的 cancelled item 存在时失败关闭，不删除事实；无事实时仅撤销
+    227_47 对象并恢复 227_44 predecessor guards。本批仍不接 provider/transport、循环 Worker 或 production。
+- **2026-08-10**：AR-18 D2-C1b1 Scheduled Runtime WeCom typed payload/unsupported repository
+  - `ScheduledWecomDeliveryRepositoryPort` 与 PostgreSQL adapter 新增 frozen typed 227_46 payload readback 和 227_47
+    unsupported terminalization receipt；仅通过 worker-scoped RPC 显式传递当前 claim/token/worker/delivery/item
+    version fence，不读表、不推算版本、不调用 provider。payload parser 只接受 App `org_id/corp_id/wecom_userid`
+    或 Smart Robot `org_id/chatid` 的精确 target，以及 bounded safe text、固定 revision 和 hash identities；unsupported、
+    unavailable、not-found 与 fenced 不会被转换成 transport payload。
+  - 227_47 durable mutation 仅在 psycopg connection response-loss 后原参数重放一次，并严格验证 request/intent/item、
+    cancelled item、pending/partial/failed delivery 与权威结果版本；227_46 read 不自动重放。本批仍不新增 migration、
+    Worker/orchestration/transport 或 production activation。
+- **2026-08-10**：AR-18 D2-C0d Scheduled Runtime WeCom stale started recovery
+  - 新增 additive `227_48_agent_runtime_scheduled_wecom_started_recovery.sql` 与精确 rollback。worker-only
+    `recover_agent_runtime_scheduled_wecom_started_dispatch_v1` 只选择 lease 已过期、delivery/item 仍为 dispatching、
+    attempt 仍为 `dispatch_started/external_request_started` 且无 receipt/unknown/resolved 的精确候选；同时验证原
+    claim/token/worker、provider identity/revision 与 prepare→start 权威版本。external dispatch 一旦开始，后续 target/org
+    drift 或 revocation 不能证明请求未发送，因此不会阻止 UNKNOWN 收敛。
+  - RPC 在同一事务生成与 recovery request 不同的内部 outcome UUID，调用既有 227_40 UNKNOWN/no-evidence 状态机，
+    再写 owner-only FORCE-RLS append-only ledger；响应丢失按 recovery request durable readback。成功后仅可进入 227_41
+    reconcile，不可被 ordinary claim、prepare/start 或 transport 重派，也不创建第二 attempt。
+  - 新 ledger 双向加入完整 Scheduled WeCom request namespace；rollback 有 recovery facts 时失败关闭，无事实时恢复
+    精确 227_47 guards 并只删除 227_48 对象。本批不接 Worker/orchestration/provider/transport/production，flags 保持关闭。
+- **2026-08-10**：AR-18 D2-C0e Scheduled Runtime WeCom UTF-8 payload hash
+  - 新增 additive `227_49_agent_runtime_scheduled_wecom_unicode_payload.sql`，以同签名替换 227_46 read RPC 的成功 hash
+    实现并返回 `payload_revision=2`。safe summary 与最小 transport target 先按 UTF-8 分别计算 SHA-256，随后仅将 64hex
+    digest 和冻结 source/content/result/target、org/channel/provider、delivery/item/version identities 交给既有 ASCII-only
+    canonical helper；不放宽全局 helper，也不返回 raw model、target snapshot、Secret 或路径。
+  - rollback 恢复精确 227_46 revision 1 函数并删除 v2 helper；Python parser 为协调数据库回滚仅兼容 revision 1/2，
+    其它 revision failure-closed。RPC ACL 仍仅开放给 `everydayai_wecom_runtime`，无新增表权限、Worker、transport、
+    provider 或 production activation。
+- **2026-08-11**：AR-18 D2-C1b2 Scheduled Runtime WeCom Smart Robot direct orchestration
+  - 新增 Runtime-owned one-shot service，输入仅为 router 已取得的 typed `DeliveryClaim + DispatchPayload`；Smart channel、
+    target 和 claim/payload intent/item/version 在任何 prepare/start/transport 前失败关闭。服务不拥有 global claim、payload
+    read、unsupported terminalization、App dispatch、循环 Worker 或 production composition。
+  - routed item/provider identity 在 await prepare 前建立同进程 single-flight，共享内部 task 完整持有
+    prepare→start→send→outcome，所有调用方仅 shielded await；调用方取消不会取消 owner、释放 flight 或允许重复发送。
+    仅 fresh prepare/start owner 可调用一次 `send_proactive_typed(markdown,{content: safe_text})`；readback 不发送。ACK/rejection 生成与 227_40 SQL
+    canonical 完全一致的 allowlisted receipt，NOT_STARTED、UNKNOWN、异常或取消在 durable start 后均保守记录 UNKNOWN。
+    transport/internal task 取消路径 best-effort shield 持久化后重抛，失败时保留 `dispatch_started` 供 227_48 恢复。
+  - 本批不组合 prepared/started recovery；跨进程安全仍依赖 PostgreSQL fresh outcome fence，进程内 50-way duplicate 由
+    single-flight 收敛为一次 transport。production flags 保持关闭，无 migration、provider credential 或真实外呼。
+- **2026-08-11**：AR-18 D2-C1f.0 Scheduled Runtime WeCom Smart Robot tenant transport resolver
+  - Smart dispatch 改为注入窄 `SmartRobotTransportResolverPort`，在 routed claim/payload/target 校验后、任何 prepare/start/facts
+    写入前按 canonical `target.org_id` 解析 transport。解析异常、缺失、租户不匹配或断连均返回 typed `UNAVAILABLE`，零
+    prepare/start/send/UNKNOWN 副作用；解析取消继续传播。解析在既有 item/provider single-flight owner 内执行，50-way duplicate
+    只解析并发送一次，解析成功后的 post-start exception/cancellation→UNKNOWN 合同不变。
+  - 新增 `backend/services/wecom/scheduled_smart_transport.py` 可信 adapter，仅调用注入的 `get_ws_client(org_id)`，并要求 client
+    的 `org_id` 精确匹配、`is_connected is True` 且 typed sender callable；不读取 Secret、不缓存 client、不按 chatid 或全局默认
+    选路。Router 将 Smart `UNAVAILABLE` 映射为 route `UNAVAILABLE`；本批不接 runner/composition、App、migration、环境或生产。
+- **2026-08-11**：AR-18 D2-C1c Scheduled Runtime WeCom App direct orchestration
+  - 新增 Runtime-owned one-shot App service；输入仅为 router 后续提供的 typed `DeliveryClaim + App DispatchPayload` 与
+    显式注入的非敏感 `org_id/corp_id/positive agent_id + WecomAppOutbound-compatible transport` binding。payload target 的
+    org/corp 在 prepare 前逐字匹配 binding；Smart、fence drift、无效 binding 均零持久化和零 HTTP 副作用。本批不新增
+    config table/resolver、credential material、router/composition、Worker、migration 或 production flag。
+  - App-specific provider identity 绑定冻结 item/payload/provider revision 及 UTF-8-safe tenant binding hash，并在 await
+    prepare 前注册同实例 single-flight；共享内部 task 完整持有 fresh prepare→start→一次 `send_typed`→durable outcome，
+    调用方取消不释放 flight。发送体固定为 `touser + msgtype=text + agentid + text.content`。
+  - ACK 仅记录 allowlisted provider message id 与 errcode；provider rejection/partial rejection 仅记录 errcode；receipt hash
+    与 227_40 SQL canonical 完全一致。DB start 后 NOT_STARTED、UNKNOWN、异常或 internal cancellation 均收敛 UNKNOWN；
+    cancellation outcome 持久化失败时保留 `dispatch_started` 供 227_48。现有 tenant config binding composition 与全局
+    router 仍属于后续批次，production 保持 inactive。
+- **2026-08-11**：AR-18 D2-C1d Scheduled Runtime WeCom unified router
+  - 新增 Runtime-owned 单次 router：同一 request 在进程内 single-flight 后只执行一次 delivery claim 与一次 safe payload
+    read，并按 typed outcome 路由 unsupported、Smart Robot 或 App。unsupported 使用由 claim/item/reason 派生的稳定
+    request UUID 调用既有 227_47 durable terminalization；unavailable、not-found、fence drift 与配置缺失均在
+    prepare/start/transport 前返回 typed deferred 结果，不创建 attempt。
+  - App 路由只依赖窄 `AppBindingResolverPort.resolve_app_binding(org_id, corp_id)`；返回值必须是已构造且不暴露 Secret 的
+    `ScheduledWecomAppBinding`，并在 dispatch 前精确核对 org/corp、positive agent id 与 typed transport。Router 不读取
+    配置、不解密 Secret、不接 legacy sender、不拥有 recovery/reconcile loop，也未加入 production composition。
+  - concrete binding adapter、Worker composition、prepared/started recovery 与 227_41～44 reconcile loop 当时仍属于后续批次；
+    production flags 保持关闭。
+- **2026-08-11**：AR-18 D2-C1e-B Scheduled Runtime WeCom App tenant binding adapter
+  - 新增可信 `ScheduledWecomAppBindingResolver`：在 actorless exact-org `WORKER` scope 下调用仅
+    `everydayai_wecom_runtime` 可执行的 227_50 `wecom.app` façade，并通过现有 `AsyncSecretBundleResolver` 解密组织级
+    `wecom.corp_id/oauth_agent_id/oauth_agent_secret`。UUID、expected corp、canonical positive agent id、exact secret payload、
+    organization source 与 config versions 任一不合法均 failure-closed；取消保持传播。
+  - Secret 仅进入不可序列化、不可通过 dataclass/`vars()` 展开的 slot-only 私有 material，并由五分钟有效的 exact-match
+    credential backend 经现有 production-ready `CredentialBroker`/lease consumer 交给注入的 per-org access-token manager；
+    opaque handle/revision 只散列 org/corp/agent/config versions，Runtime token cache 以 org+revision 隔离配置轮换，legacy 无
+    revision 调用保持原 key/行为。构造器强制注入 async
+    database、material service、token manager、共享 outbound HTTP client 与真实 credential audit sink，不提供 global/default、
+    callback credential、no-op audit 或隐式 HTTP lifecycle。Router/composition/runner、migration、legacy worker 与 production
+    flags 均未改动。
+- **2026-08-11**：AR-18 D2-C1f.2c Scheduled Runtime WeCom PREPARED recovery router
+  - `ScheduledWecomRouter.recover_prepared_once` 以独立 request single-flight 串联 durable prepared recovery、专用 frozen
+    payload readback 与现有 Smart/App recovered dispatch；只接受原 attempt 的 payload versions 和完整 provider identity，
+    同时保留 recovery current fence 作为 start 权限，不创建新 attempt、不走 fresh dispatch 或 started recovery。
+  - unsupported、unavailable、fenced、payload/target/identity drift 与 App exact binding 缺失均在 start/send 前失败关闭；已进入
+    dispatch service 后的 UNKNOWN、取消和持久化异常仍由原 service 合同负责，Router 不吞异常、不普通重派。本批新增独立
+    Router 恢复测试，不新增 migration、Worker/composition、配置、Secret、transport 或 production activation。
+- **2026-08-11**：AR-18 D2-C1f.2d Scheduled Runtime WeCom Worker 安全循环
+  - 新增独立 `ScheduledRuntimeWecomWorker`，每个 pass 固定执行 started recovery → prepared recovery → fresh dispatch；任一阶段异常或
+    非 EMPTY 恢复结果都会终止本轮，started recovery 永不发送，prepared recovery 仅沿原 attempt 恢复路径发送。
+  - 每阶段使用独立 canonical request UUID；无 durable identity 的 UNAVAILABLE 返回未处理并进入有界 poll，带 identity 的
+    unavailable/config 结果按已处理结束本轮。实例级 pass lock 与唯一 loop task/generation ownership 防止 public `run_once`、
+    stop-during-pass 和并发 restart 形成重叠发送；`stop()` 会唤醒并等待所属 loop 安全退出。该 Worker 尚未接入旧
+    `WecomDeliveryWorker`、runner、systemd、env 或 production composition。
+- **2026-08-11**：AR-18 D2-C1f.2e Scheduled Runtime WeCom composition boundary
+  - 新增非 owning composition builder：以 actorless/orgless `WORKER` scope 装配 Scheduled WeCom PostgreSQL Repository、
+    exact-org Smart resolver、复用现有租户配置的 App binding resolver、Smart/App dispatch、Router 与安全优先级 Worker；
+    App resolver 单独持有注入的 raw async database，以便按目标 org 建立 exact-tenant scope。
+  - 默认凭证审计为严格白名单 journal sink，只接受 canonical tenant UUID、opaque `wecom-app` handle/revision、固定 provider/
+    purpose、Broker outcome 与 aware timestamp；不记录 Secret、token、payload、路径或异常正文。Builder 不启动组件、不拥有或
+    关闭 DB/HTTP/WS 资源，也未接入 runner、env、systemd、migration 或 production activation。
+- **2026-08-11**：AR-18 D2-C1f.3a Scheduled Runtime WeCom reconcile tenant identity
+  - 新增 additive `227_52_agent_runtime_scheduled_wecom_reconcile_org.sql`，只替换既有 reconcile JSON helper，令
+    claim/read/renew 从已锁定并读取的 delivery 返回不可变 `org_id`；rollback 精确恢复 227_41 输出，不删除事实或改变
+    RPC、ACL、RLS、角色与状态。Python claim/parser/repository 同步 canonical UUID 与跨租户 identity readback fence；未新增
+    channel、reconcile service、配置、开关、Provider、Secret 或生产接线。
+- **2026-08-11**：AR-18 D2-C1f.3c Scheduled Runtime WeCom reconcile worker
+  - 新增最小 reconcile service，复用 227_41～227_44：Smart 仅按 claim `org_id` 读取 exact resolver 的内存 ACK cache，
+    ACK/REJECTED 写 definitive，其余写固定 60 秒 still-unknown；App 不读取 credential/HTTP/transport，直接写 typed
+    `readback_unsupported`，未知 provider identity 前缀失败关闭。Python readback hash 与 227_43 SQL canonical 字段一致，
+    result request UUID 从 claim identity 稳定派生以支持响应丢失重放。
+  - Worker 优先级调整为 started recovery → reconcile → prepared recovery → fresh dispatch；高优先级非空或异常均阻断
+    下游普通派发。Composition 向 Worker 注入同一 Repository 与现有 Smart readback resolver；未修改 migration、表、RPC、
+    Admin API、tenant config、App credential path 或 production activation。
+AR-17.3 remediation adds a worker-scoped `PostgresSpecialistRepository` composition path. Durable provider, cost, callback, artifact, resource and Child Run facts are persisted before terminal results are exposed. Local data, file analysis and ERP pagination use separate services; isolated HTTP and disposable PostgreSQL harnesses exercise the non-production contracts. Production remains inactive.
+
+The current AR-17.3 remediation adds additive 226_08–226_18 lanes for strict fact idempotency, application-owned atomic provider/cost/ActionResult finalization, non-terminal reconciliation lease release, Child Run v2 readback/terminal aggregation and ordinal idempotency, cancel parity, database-fact-based ERP sync recovery with durable submission identity, ownership/version fencing and same-phase conflict detection, and exact worker RPC numeric overloads. The isolated PostgreSQL harness now drives the formal ActionLoop/Resolver/SpecialistExecutor/Postgres repository chain and real 50-connection races. Production activation remains unchanged and AR-17.3 is not accepted until the complete end-to-end matrix is closed.
+
+- **2026-08-04**：T17.3-A 新增 227_06 tenant/provider/capability kill control、owner fence 与不可变 kill audit facts；提供 tenant-scoped admin CAS/audit status RPC，以及仅按 execution token 读取 owner fence 的 Worker 窄 RPC。该批不接入 ingress、claim、dispatch 或 lease 行为，production flags 继续关闭；rollback 在任何新事实存在时失败关闭。
+- **2026-08-04**：C4.1 新增 227_13 additive ingress compatibility lane；RuntimeIngress 在确认 v5 capability 后使用 v5，保留 v4/v3 fallback。v5 保留 tenant kill-epoch ingress fence、rollout、anchor、版本与 effective toolset facts，移除 42 binding ready 总门禁且不修改 binding facts；v5 rollback 仅撤销自身函数/权限，存在 ingress facts 时失败关闭。
+- **2026-08-04**：C5.1-R 新增 227_14 owner transition additive lane；Web/WeCom Runtime ingress 在未 accepted 时通过受控 RPC 恢复 Actor owner，在 created/already_exists 时通过同事务 transition 保持 Runtime owner；不启用 Worker、provider binding、生产 flags，也不修改 227_01～227_13。
+- **2026-08-05**：C6.2-A 新增 227_15 Owner RPC ACL 收口；Web 仅可调用原子 owner-transition ingress，WeCom 仅可调用 v6 enqueue，两者保留 capability readback，但不能直接调用 raw v5 或 restore/mark helper。Rollback 只恢复 227_14 后的 ACL，不修改 Runtime facts 或任务 Owner 状态。
+- **2026-08-05**：C7-B1 完成 production flags-off 安装配置闭环：Runtime/WeCom v3
+  模板与严格白名单校验、四 Worker release revision 一致性、仅四个新 unit + wrapper 的
+  失败关闭安装，以及不迁移、不启停、不切 Owner 的互斥发布路径；production flags 仍关闭。

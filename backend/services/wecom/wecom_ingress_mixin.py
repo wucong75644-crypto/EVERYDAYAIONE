@@ -1,4 +1,4 @@
-"""企业微信 AI 入站的 Actor 灰度与旧链路分发。"""
+"""企业微信 AI 入站的 Runtime 单一 Owner 分发。"""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ class WecomIngressMixin:
         if msg.msgtype in _ACTOR_MESSAGE_TYPES:
             await self._enqueue_actor_message(
                 msg, reply_ctx, user_id, conversation_id, image_urls,
+                runtime_required=True,
             )
             return
 
@@ -77,8 +78,12 @@ class WecomIngressMixin:
         await self._notify_web_conversation_updated(
             user_id, conversation_id, org_id=msg.org_id,
         )
-        await self._reply_text(
-            reply_ctx, "文件已收到，请告诉我需要如何处理。",
+        await self._enqueue_actor_message(
+            msg, reply_ctx, user_id, conversation_id, [],
+            file_payload=file_payload,
+            runtime_required=True,
+            notify_web=False,
+            acknowledgement="文件已收到，请告诉我需要如何处理。",
         )
 
     async def _enqueue_actor_message(
@@ -88,6 +93,11 @@ class WecomIngressMixin:
         user_id: str,
         conversation_id: str,
         image_urls: List[str],
+        *,
+        file_payload: dict | None = None,
+        runtime_required: bool = False,
+        notify_web: bool = True,
+        acknowledgement: str | None = None,
     ) -> None:
         if self._get_user_balance(user_id) <= 0:
             await self._reply_credits_insufficient(
@@ -141,24 +151,30 @@ class WecomIngressMixin:
                 user_id=user_id,
                 conversation_id=conversation_id,
                 image_urls=image_urls,
-                file_payload=None,
+                file_payload=file_payload,
                 stream_context=stream_context,
+                runtime_required=runtime_required,
             )
         except Exception:
             if keepalive_registered:
                 await stop_stream_keepalive(task_id)
             raise
-        await self._notify_web_conversation_updated(
-            user_id, conversation_id, org_id=msg.org_id,
-        )
+        if notify_web:
+            await self._notify_web_conversation_updated(
+                user_id, conversation_id, org_id=msg.org_id,
+            )
         if keepalive_registered and not result.already_enqueued:
             return
         if keepalive_registered:
             await stop_stream_keepalive(task_id)
         acknowledgement = (
-            "该消息已经收到，正在处理中。"
-            if result.already_enqueued
-            else "已收到，正在处理中。"
+            acknowledgement
+            if acknowledgement is not None
+            else (
+                "该消息已经收到，正在处理中。"
+                if result.already_enqueued
+                else "已收到，正在处理中。"
+            )
         )
         await self._reply_text(reply_ctx, acknowledgement)
 

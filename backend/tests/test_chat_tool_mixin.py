@@ -15,6 +15,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
+pytest_plugins = ("tests.tool_confirmation_fixtures",)
 
 
 # ============================================================
@@ -82,7 +83,7 @@ class TestPartitionToolCalls:
     def test_single_safe_tool(self):
         """单个安全工具"""
         from services.handlers.chat_tool_mixin import _partition_tool_calls
-        batches = _partition_tool_calls([{"name": "web_search", "id": "tc1"}])
+        batches = _partition_tool_calls([{"name": "search_knowledge", "id": "tc1"}])
         assert len(batches) == 1
         assert batches[0][0] is True
 
@@ -115,13 +116,16 @@ class TestExecuteSingleTool:
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_dangerous_tool_rejected(self, mock_ws):
+    async def test_dangerous_tool_rejected(self, mock_ws, mock_v3_confirmation):
         """dangerous 工具→用户拒绝→不执行，返回拒绝提示"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
-        mock_ws.wait_for_confirm = AsyncMock(return_value=False)
+        from services.tool_confirmation.types import ConfirmationDecision, ConfirmationOutcome
+        mock_v3_confirmation.await_and_claim.return_value = ConfirmationDecision(
+            ConfirmationOutcome.DENIED, "TERMINAL_DENIED",
+        )
         executor = AsyncMock()
 
         tc = {"name": "erp_execute", "id": "tc1", "arguments": '{"action":"cancel"}'}
@@ -130,7 +134,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error, _display = result
         assert is_error is True
-        assert "拒绝" in text or "超时" in text
+        assert "Agent Runtime" in text
         # 不应该调用 executor
         executor.execute.assert_not_called()
 
@@ -142,6 +146,7 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="库存100件")
 
@@ -162,6 +167,7 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(side_effect=Exception("API timeout"))
 
@@ -181,6 +187,7 @@ class TestExecuteSingleTool:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
 
         tc = {"name": "local_stock_query", "id": "tc1", "arguments": "not json{{{"}
@@ -190,26 +197,6 @@ class TestExecuteSingleTool:
         tc_out, text, is_error, _display = result
         assert is_error is True
         assert "参数解析失败" in text
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_confirm_tool_executes_with_log(self, mock_ws):
-        """confirm 工具→正常执行（通知但不阻塞）"""
-        from services.handlers.chat_tool_mixin import ChatToolMixin
-
-        mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
-        executor = AsyncMock()
-        executor.execute = AsyncMock(return_value="图片生成中")
-
-        tc = {"name": "generate_image", "id": "tc1", "arguments": '{"prompt":"cat"}'}
-        result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
-        )
-        tc_out, text, is_error, _display = result
-        assert is_error is False
-        executor.execute.assert_called_once()
-
 
 # ============================================================
 # _accumulate_tool_call_delta 增量累积
@@ -221,7 +208,6 @@ class TestAccumulateToolCallDelta:
 
     def test_single_complete_delta(self):
         """单个完整的 tool_call delta"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -235,7 +221,6 @@ class TestAccumulateToolCallDelta:
 
     def test_incremental_arguments(self):
         """arguments 增量拼接"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -254,7 +239,6 @@ class TestAccumulateToolCallDelta:
 
     def test_multiple_tools(self):
         """多个工具同时累积"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -269,15 +253,12 @@ class TestAccumulateToolCallDelta:
 
     def test_empty_deltas(self):
         """空 deltas 列表→acc 不变"""
-        from services.handlers.chat_handler import ChatHandler
-
         acc = {}
         accumulate_tool_call_delta(acc, [])
         assert len(acc) == 0
 
     def test_none_fields_ignored(self):
         """None 字段不覆盖已有值"""
-        from services.handlers.chat_handler import ChatHandler
         from services.adapters.types import ToolCallDelta
 
         acc = {}
@@ -312,13 +293,14 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=AgentResult(
             status="success", summary="共 945 条订单",
             source="erp_agent", tokens_used=500,
         ))
 
-        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查订单"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -336,13 +318,14 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=AgentResult(
             status="error", summary="查询超时",
             source="erp_agent", error_message="查询超时",
         ))
 
-        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查订单"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -359,18 +342,19 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=AgentResult(
             status="success", summary="ok",
             source="erp_agent",
         ))
 
-        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"查"}'}
         await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        # 2 次调用：build_tool_result + tool_step 完成更新(content_block_add)
+        mock_ws.send_tool_confirmation.assert_not_awaited()
         assert mock_ws.send_to_task_or_user.call_count == 2
 
     @pytest.mark.asyncio
@@ -381,10 +365,11 @@ class TestExecuteSingleToolAgentResult:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="搜索结果：3条")
 
-        tc = {"name": "web_search", "id": "tc1", "arguments": '{"query":"天气"}'}
+        tc = {"name": "search_knowledge", "id": "tc1", "arguments": '{"query":"天气"}'}
         tc_out, result, is_error, _display = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
@@ -462,6 +447,7 @@ class TestFormBlockResultChannel:
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
 
         form_data = {
@@ -482,17 +468,11 @@ class TestFormBlockResultChannel:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        # 返回 llm_hint 字符串
-        assert is_error is False
+        assert is_error is True
         assert isinstance(result, str)
-        assert "等待用户确认" in result
-        # form 暂存到 _pending_form_block（chat_handler 统一处理）
-        assert mixin._pending_form_block is not None
-        assert mixin._pending_form_block["form_type"] == "scheduled_task_create"
-        # 发 tool_result + tool_step 完成更新
-        ws_calls = mock_ws.send_to_task_or_user.call_args_list
-        assert len(ws_calls) == 2
-        assert ws_calls[0][0][2]["type"] == "tool_result"
+        assert "Agent Runtime" in result
+        mock_ws.send_tool_confirmation.assert_not_awaited()
+        executor.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
@@ -504,6 +484,7 @@ class TestFormBlockResultChannel:
         mixin = _make_mixin()
         mixin._emit_tool_audit = MagicMock()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.send_tool_confirmation = AsyncMock(return_value=True)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=FormBlockResult(
             form={"type": "form", "form_type": "scheduled_task_update", "fields": []},
@@ -515,10 +496,8 @@ class TestFormBlockResultChannel:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 2,
         )
 
-        mixin._emit_tool_audit.assert_called_once()
-        audit_args = mixin._emit_tool_audit.call_args[0]
-        assert audit_args[3] == "manage_scheduled_task"  # tool_name
-        assert audit_args[9] == "success"  # status (index 9)
+        mixin._emit_tool_audit.assert_not_called()
+        executor.execute.assert_not_awaited()
 
 
 class TestPushToolStepUpdate:

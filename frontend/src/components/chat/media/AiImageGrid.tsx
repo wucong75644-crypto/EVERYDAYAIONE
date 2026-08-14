@@ -12,16 +12,20 @@
 import { memo, useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
-import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
 import { downloadImage } from '../../../utils/downloadImage';
 import { useThumbnailFallback } from '../../../hooks/useThumbnailFallback';
 import { resolveImageOriginalUrl } from '../../../utils/messageUtils';
+import {
+  getRuntimeMediaImageSlots,
+  summarizeRuntimeMediaSlots,
+} from '../../../utils/runtimeMediaSlots';
 import styles from '../menus/shared.module.css';
 import type { ContentPart } from '../../../stores/useMessageStore';
-import type { ImageAsset, ImagePart } from '../../../types/message';
+import type { ImageAsset, ImagePart, RuntimeMediaSlotStatus } from '../../../types/message';
 
 interface AiImageGridProps {
   /** 内容数组（包含已完成和未完成的图片） */
@@ -40,6 +44,7 @@ interface AiImageGridProps {
   isGenerating: boolean;
   /** 单图重新生成回调 */
   onRegenerateSingle?: (imageIndex: number) => void;
+  onCancelBatch?: () => void;
 }
 
 /** 网格布局：auto-fill 根据单图宽度自动计算每行列数，放不下自动换行 */
@@ -50,6 +55,8 @@ interface GridCellProps {
   failed?: boolean;
   errorMessage?: string;
   errorCode?: string;
+  slotId?: string;
+  slotStatus?: RuntimeMediaSlotStatus;
   index: number;
   messageId: string;
   placeholderSize: { width: number; height: number };
@@ -67,6 +74,8 @@ function gridCellAreEqual(prev: GridCellProps, next: GridCellProps): boolean {
     prev.failed === next.failed &&
     prev.errorMessage === next.errorMessage &&
     prev.errorCode === next.errorCode &&
+    prev.slotId === next.slotId &&
+    prev.slotStatus === next.slotStatus &&
     prev.index === next.index &&
     prev.messageId === next.messageId &&
     prev.isGenerating === next.isGenerating
@@ -79,6 +88,8 @@ const GridCell = memo(function GridCell({
   failed,
   errorMessage,
   errorCode,
+  slotId,
+  slotStatus,
   index,
   messageId,
   placeholderSize,
@@ -119,29 +130,45 @@ const GridCell = memo(function GridCell({
   };
 
   const aspectRatio = placeholderSize.width / placeholderSize.height;
+  const isRuntimeSlot = slotId !== undefined && slotStatus !== undefined;
+  const isRuntimeRetryable = slotStatus === 'failed' || slotStatus === 'cancelled';
 
-  // 失败的图片
-  if (failed) {
+  // Runtime 只允许失败/取消槽重试；legacy 继续沿用原失败重试行为。
+  if (failed || isRuntimeRetryable) {
     return (
-      <FailedMediaPlaceholder
-        type="image"
-        aspectRatio={aspectRatio}
-        onRetry={onRegenerateSingle ? () => onRegenerateSingle(index) : undefined}
-        retryLabel="重新生成"
-        errorMessage={errorMessage || '图片生成失败'}
-        errorCode={errorCode}
-      />
+      <div data-slot-id={slotId} data-slot-status={slotStatus || 'failed'}>
+        <FailedMediaPlaceholder
+          type="image"
+          aspectRatio={aspectRatio}
+          onRetry={onRegenerateSingle && (!isRuntimeSlot || isRuntimeRetryable)
+            ? () => onRegenerateSingle(index) : undefined}
+          retryLabel="重新生成"
+          errorMessage={errorMessage || (slotStatus === 'cancelled'
+            ? '图片生成已取消' : '图片生成失败')}
+          errorCode={errorCode}
+        />
+      </div>
     );
   }
 
-  // 占位符（未完成）— 自适应填充 grid cell，不用固定像素
+  // Runtime 槽位按状态保留，便于后续批次取消和 reconcile 直接复用同一状态面。
   if (!imageAsset?.originalUrl) {
+    const label = slotStatus === 'accepted' ? '已提交，正在生成'
+      : slotStatus === 'unknown' ? '正在确认生成结果'
+        : slotStatus === 'completed' ? '正在同步生成结果'
+          : '等待生成';
     return (
       <div
         className="rounded-xl bg-hover dark:bg-surface-dark-card flex items-center justify-center shadow-sm animate-fade-in animate-media-pulse"
         style={{ aspectRatio }}
+        data-slot-id={slotId}
+        data-slot-status={slotStatus || 'pending'}
+        aria-label={label}
       >
-        <ImageIcon className="w-10 h-10 text-text-disabled dark:text-text-tertiary" aria-hidden />
+        <div className="flex flex-col items-center gap-2 text-text-disabled dark:text-text-tertiary">
+          <ImageIcon className="w-10 h-10" aria-hidden />
+          {slotStatus && <span className="text-xs">{label}</span>}
+        </div>
       </div>
     );
   }
@@ -166,6 +193,8 @@ const GridCell = memo(function GridCell({
       ref={lazyRef}
       className={`group cursor-pointer relative rounded-xl overflow-hidden ${styles['dynamic-aspect-ratio']}`}
       style={{ '--aspect-ratio': imageLoaded ? 'auto' : aspectRatio, aspectRatio } as React.CSSProperties}
+      data-slot-id={slotId}
+      data-slot-status={slotStatus || undefined}
       role="button"
       tabIndex={0}
       onClick={() => onImageClick(index)}
@@ -196,7 +225,7 @@ const GridCell = memo(function GridCell({
 
       {/* 悬浮操作按钮 */}
       <div className={`absolute bottom-0 left-0 right-0 flex justify-center gap-1.5 py-1.5 bg-gradient-to-t from-black/50 to-transparent transition-opacity ${imageLoaded ? 'opacity-0 group-hover:opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        {onRegenerateSingle && (
+        {onRegenerateSingle && !isRuntimeSlot && (
           <button
             type="button"
             className="flex items-center px-2 py-0.5 text-white bg-black/40 hover:bg-black/60 rounded-full transition-base"
@@ -248,10 +277,48 @@ export default function AiImageGrid({
   onMediaLoaded,
   isGenerating,
   onRegenerateSingle,
+  onCancelBatch,
 }: AiImageGridProps) {
-  // 只消费显式 ImagePart。生成中按请求数量补占位；结束后只展示实际结果。
+  const runtimeSlots = useMemo(() => getRuntimeMediaImageSlots(content), [content]);
+  const runtimeSummary = useMemo(
+    () => runtimeSlots.length > 0 ? summarizeRuntimeMediaSlots(runtimeSlots) : null,
+    [runtimeSlots],
+  );
+
+  // Runtime 使用稳定 slot_index；历史纯图片链路继续按图片集合顺序兼容。
   const cells = useMemo(() => {
-    const result: Array<{ asset: ImageAsset | null; failed?: boolean; errorMessage?: string; errorCode?: string }> = [];
+    const result: Array<{
+      asset: ImageAsset | null;
+      failed?: boolean;
+      errorMessage?: string;
+      errorCode?: string;
+      slotId?: string;
+      slotIndex?: number;
+      slotStatus?: RuntimeMediaSlotStatus;
+    }> = [];
+    if (runtimeSlots.length > 0) {
+      runtimeSlots.forEach((imgPart) => {
+        const originalUrl = resolveImageOriginalUrl(imgPart);
+        result.push({
+          asset: originalUrl ? {
+            originalUrl,
+            ...(imgPart.thumbnail_url ? { thumbnailUrl: imgPart.thumbnail_url } : {}),
+            ...(imgPart.alt ? { alt: imgPart.alt } : {}),
+            ...(imgPart.width ? { width: imgPart.width } : {}),
+            ...(imgPart.height ? { height: imgPart.height } : {}),
+            sourcePart: imgPart,
+          } : null,
+          failed: imgPart.slot_status === 'failed' || !!imgPart.failed,
+          ...(imgPart.error ? { errorMessage: imgPart.error } : {}),
+          ...(imgPart.error_code ? { errorCode: imgPart.error_code } : {}),
+          slotId: imgPart.slot_id,
+          slotIndex: imgPart.slot_index,
+          slotStatus: imgPart.slot_status,
+        });
+      });
+      return result;
+    }
+
     const imageParts = content.filter((part): part is ImagePart => part.type === 'image');
     const cellCount = isGenerating ? Math.max(numImages, imageParts.length) : imageParts.length;
 
@@ -279,28 +346,53 @@ export default function AiImageGrid({
     }
 
     return result;
-  }, [content, isGenerating, numImages]);
+  }, [content, isGenerating, numImages, runtimeSlots]);
 
   return (
     <div className="mt-3 w-full">
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fill, ${placeholderSize.width}px)` }}>
         {cells.map((cell, index) => (
           <GridCell
-            key={`${messageId}-cell-${index}`}
+            key={cell.slotId || `${messageId}-cell-${index}`}
             imageAsset={cell.asset}
             failed={cell.failed}
             errorMessage={cell.errorMessage}
             errorCode={cell.errorCode}
-            index={index}
+            slotId={cell.slotId}
+            slotStatus={cell.slotStatus}
+            index={cell.slotIndex ?? index}
             messageId={messageId}
             placeholderSize={placeholderSize}
             onImageClick={onImageClick}
-            onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
+            onMediaLoaded={runtimeSlots.length > 0 || index === 0 ? onMediaLoaded : undefined}
             isGenerating={isGenerating}
             onRegenerateSingle={onRegenerateSingle}
           />
         ))}
       </div>
+      {runtimeSummary && (
+        <div
+          className="mt-2 text-xs text-text-tertiary"
+          data-testid="runtime-media-summary"
+          data-active-count={runtimeSummary.active}
+          aria-live="polite"
+        >
+          {runtimeSummary.completed}/{runtimeSummary.total} 已完成
+          {runtimeSummary.failed > 0 && ` · ${runtimeSummary.failed} 失败`}
+          {runtimeSummary.cancelled > 0 && ` · ${runtimeSummary.cancelled} 已取消`}
+          {runtimeSummary.unknown > 0 && ` · ${runtimeSummary.unknown} 结果确认中`}
+          {onCancelBatch && runtimeSummary.active > 0 && (
+            <button
+              type="button"
+              className="ml-2 inline-flex items-center gap-1 text-text-secondary hover:text-text-primary"
+              onClick={onCancelBatch}
+              aria-label="停止生成"
+            >
+              <XCircle className="w-3 h-3" /> 停止
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

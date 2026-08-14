@@ -48,6 +48,30 @@ def test_image_url_is_required_but_nullable() -> None:
         ImagePart()
 
 
+def test_runtime_image_slot_fields_are_complete_and_bounded() -> None:
+    slot = ImagePart(
+        url=None,
+        slot_id="slot-10",
+        slot_index=9,
+        slot_status="accepted",
+        slot_revision=2,
+    )
+
+    assert slot.slot_index == 9
+    assert slot.slot_status == "accepted"
+
+    with pytest.raises(ValidationError):
+        ImagePart(url=None, slot_id="partial-slot")
+    with pytest.raises(ValidationError):
+        ImagePart(
+            url=None,
+            slot_id="slot-11",
+            slot_index=10,
+            slot_status="pending",
+            slot_revision=0,
+        )
+
+
 def test_serialization_preserves_nullable_protocol_and_file_identity() -> None:
     parts = [
         ImagePart(url=None, failed=True),

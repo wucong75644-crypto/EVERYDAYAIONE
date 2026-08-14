@@ -19,7 +19,6 @@ from services.agent.runtime.infrastructure.model import (
 from services.agent.runtime.ports import (
     ModelCallUnknownError,
     ModelInputReceipt,
-    ModelProviderError,
     ModelRequestOptions,
     ModelStepRequest,
 )
@@ -263,13 +262,18 @@ async def test_stop_reason_mapping_is_closed(
 @pytest.mark.asyncio
 async def test_explicit_refusal_overrides_provider_stop() -> None:
     adapter = FakeAdapter([
-        StreamChunk(finish_reason="stop", refusal=True),
+        StreamChunk(
+            content="refused", finish_reason="stop", refusal=True,
+            tool_calls=[ToolCallDelta(0, "provider-call", "lookup", '{"id":1}')],
+        ),
     ])
 
     result = await _port([adapter]).complete(_request())
 
     assert result.stop_reason is StopReason.MODEL_REFUSAL
     assert result.provider_stop_reason == "stop"
+    assert result.output and result.output.content == "refused"
+    assert result.tool_calls[0].provider_call_id == "provider-call"
 
 
 @pytest.mark.asyncio
@@ -302,13 +306,13 @@ async def test_429_does_not_redispatch_without_typed_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_failure_is_not_unknown() -> None:
+async def test_http_rejection_without_nonexecution_proof_is_unknown() -> None:
     adapter = FakeAdapter([ProviderFailure(400)])
 
-    with pytest.raises(ModelProviderError) as caught:
+    with pytest.raises(ModelCallUnknownError) as caught:
         await _port([adapter]).complete(_request())
 
-    assert caught.value.attempts[0].outcome == "failed"
+    assert caught.value.attempts[0].outcome == "unknown"
     assert caught.value.attempts[0].status_code == 400
 
 

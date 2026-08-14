@@ -303,22 +303,24 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
 
   tool_confirm_request: (deps, msg) => {
       const { conversation_id, task_id } = msg;
-      const toolCallId = msg.payload?.tool_call_id as string | undefined;
+      const protocolVersion = msg.payload?.protocol_version as number | undefined;
+      const confirmationId = msg.payload?.confirmation_id as string | undefined;
       const toolName = msg.payload?.tool_name as string | undefined;
-      const description = msg.payload?.description as string | undefined;
-      const args = (msg.payload?.arguments ?? {}) as Record<string, unknown>;
+      const summary = msg.payload?.confirmation_summary as Record<string, string | number | boolean> | undefined;
       const timeout = (msg.payload?.timeout as number) || 60;
-      if (!conversation_id || !toolCallId || !toolName) return;
+      if (protocolVersion !== 3 || !conversation_id || !confirmationId || !toolName || !summary) {
+        deps.getStore().setToolConfirmRequest(null);
+        return;
+      }
 
       // 显示步骤提示
-      deps.getStore().setAgentStepHint(conversation_id, `⚠ ${description || toolName} — 等待确认`);
+      deps.getStore().setAgentStepHint(conversation_id, `⚠ ${toolName} — 等待确认`);
 
       // 触发确认弹窗
       deps.getStore().setToolConfirmRequest({
-        toolCallId,
+        confirmationId,
         toolName,
-        arguments: args,
-        description: description || `AI 要执行: ${toolName}`,
+        confirmationSummary: summary,
         timeout,
       });
 
@@ -346,16 +348,22 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   scheduled_task_completed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
-        task_name?: string;
+        run_id?: string;
+        task_status?: string;
+        status?: string;
         next_run_at?: string;
         summary?: string;
-        push_status?: string;
       };
       if (!data?.task_id) return;
+      const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
+      const taskStatus = data.task_status !== undefined
+        ? (validStatuses.includes(data.task_status as TaskStatus)
+          ? data.task_status as TaskStatus : undefined)
+        : (data.status === 'success' ? 'active' : undefined);
       logger.info('ws:scheduled-task', 'completed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status: 'active',
+          ...(taskStatus ? { status: taskStatus } : {}),
           last_run_at: new Date().toISOString(),
           last_summary: data.summary || null,
           next_run_at: data.next_run_at || null,
@@ -368,22 +376,26 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
   scheduled_task_failed: (_deps, msg) => {
       const data = (msg.data || msg.payload) as {
         task_id?: string;
-        task_name?: string;
+        run_id?: string;
+        task_status?: string;
         status?: string;
-        error?: string;
+        reason?: string;
         consecutive_failures?: number;
-        will_retry?: boolean;
+        next_run_at?: string;
       };
       if (!data?.task_id) return;
       const validStatuses: TaskStatus[] = ['active', 'paused', 'error', 'running'];
-      const status = validStatuses.includes(data.status as TaskStatus)
-        ? data.status as TaskStatus
-        : 'error';
+      const taskStatus = data.task_status !== undefined
+        ? (validStatuses.includes(data.task_status as TaskStatus)
+          ? data.task_status as TaskStatus : undefined)
+        : (validStatuses.includes(data.status as TaskStatus)
+          ? data.status as TaskStatus : undefined);
       logger.warn('ws:scheduled-task', 'failed', data);
       import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
         useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
-          status,
+          ...(taskStatus ? { status: taskStatus } : {}),
           consecutive_failures: data.consecutive_failures || 0,
+          next_run_at: data.next_run_at || null,
         });
         useScheduledTaskStore.getState().fetchRuns(data.task_id!);
       });

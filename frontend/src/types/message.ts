@@ -30,6 +30,14 @@ export interface TextPart {
   text: string;
 }
 
+export type RuntimeMediaSlotStatus =
+  | 'pending'
+  | 'accepted'
+  | 'unknown'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
 export interface ImagePart {
   type: 'image';
   url: string | null;
@@ -51,6 +59,11 @@ export interface ImagePart {
   workspace_path?: string;
   size?: number;
   mime_type?: string;
+  /** Runtime 媒体槽位字段完整出现；历史图片和电商图片全部省略。 */
+  slot_id?: string;
+  slot_index?: number;
+  slot_status?: RuntimeMediaSlotStatus;
+  slot_revision?: number;
 }
 
 export interface ImageAsset {

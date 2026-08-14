@@ -168,11 +168,25 @@ class VideoHandler(BaseHandler):
             client_task_id, task["user_id"], task.get("org_id"), done,
         )
         asyncio.create_task(
-            self._maybe_fanout_to_wecom(task["conversation_id"], content, task)
+            self._maybe_fanout_to_wecom_if_legacy_owner(
+                task["conversation_id"], content, task,
+            )
         )
         self._schedule_worker_metric(task, "success")
         await self._release_worker_slot(task)
         return message
+
+    async def _maybe_fanout_to_wecom_if_legacy_owner(
+        self, conversation_id: str, content: list, task: dict,
+    ) -> None:
+        """Keep direct fanout only for tasks not owned by Runtime Projection."""
+        delivery_context = task.get("delivery_context") or {}
+        if isinstance(delivery_context, str):
+            import json
+            delivery_context = json.loads(delivery_context)
+        if isinstance(delivery_context, dict) and delivery_context.get("runtime") is True:
+            return
+        await self._maybe_fanout_to_wecom(conversation_id, content, task)
 
     async def _on_worker_error(
         self,

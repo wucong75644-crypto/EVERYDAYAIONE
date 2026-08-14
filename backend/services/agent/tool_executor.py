@@ -25,12 +25,13 @@ from services.agent.conversation_tool_mixin import ConversationToolMixin
 from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
 from services.agent.knowledge_tool_mixin import KnowledgeToolMixin
 from services.agent.sandbox_tool_mixin import SandboxToolMixin
+from services.agent.runtime_media_tool_mixin import RuntimeMediaToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
 class ToolExecutor(
     ArtifactToolMixin, MemoryToolMixin, ConversationToolMixin,
     FileToolMixin, CrawlerToolMixin,
-    MediaToolMixin, EvidenceToolMixin,
+    RuntimeMediaToolMixin, MediaToolMixin, EvidenceToolMixin,
     ErpToolMixin, KnowledgeToolMixin, SandboxToolMixin,
     CreditMixin,
 ):
@@ -44,12 +45,20 @@ class ToolExecutor(
         resource_manifest=None, runtime_state=None,
         personal_context_allowed: bool = True,
         allowed_tools: AbstractSet[str] | None = None,
+        runtime_action_executor: Any | None = None,
+        input_message_id: str | None = None,
+        task_id: str | None = None,
+        message_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.workspace_user_id = workspace_user_id or user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
+        self._runtime_action_executor = runtime_action_executor
+        self._input_message_id = input_message_id
+        self._task_id = task_id
+        self._message_id = message_id
         self.resource_manifest, self.runtime_state = resource_manifest, runtime_state
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
@@ -111,9 +120,18 @@ class ToolExecutor(
             ValueError: 未知工具名
             Exception: 工具执行异常（由调用方 catch 后回传大脑）
         """
+        from config.chat_tools import SafetyLevel, get_safety_level
+        from services.tool_confirmation.preview import registered_preview_tools
+
         handler = self._handlers.get(tool_name)
         if not handler:
-            raise ValueError(f"Unknown sync tool: {tool_name}")
+            raise ValueError("UNKNOWN_TOOL_HANDLER")
+        safety = get_safety_level(tool_name)
+        has_preview = tool_name in registered_preview_tools()
+        if (safety == SafetyLevel.SAFE and has_preview) or (
+            safety != SafetyLevel.SAFE and not has_preview
+        ):
+            raise ValueError("TOOL_REGISTRY_INCONSISTENT")
         return await handler(arguments)
 
     # ========================================
@@ -167,12 +185,12 @@ class ToolExecutor(
         conversation_context = args.get("conversation_context", "")
 
         logger.info(
-            f"ERPAgent dispatch | task={task[:300]} | "
-            f"context_len={len(conversation_context)} | "
-            f"context_preview={conversation_context[:200] if conversation_context else '(empty)'}"
+            "ERPAgent dispatch | "
+            f"user_id={self.user_id} | org_id={self.org_id} | "
+            f"task_id={getattr(self, '_task_id', None)} | tool=erp_agent"
         )
 
-        # v6: budget 通过构造函数传递（替代属性注入 hack）
+        # v6: budget 通过构造函数显式传递
         _parent_budget = getattr(self, "_budget", None)
         agent = ERPAgent(
             db=self.db,
@@ -204,8 +222,6 @@ class ToolExecutor(
         2. style_directive — 会话级全局风格（从 DB 读）
         3. history_images — 历史生成图片（从消息 FilePart 查）
         """
-        from services.agent.image.image_agent import ImageAgent
-
         # === 三重自动注入（LLM 不需要传这些参数）===
 
         # 注入1：用户上传的图片
@@ -220,29 +236,24 @@ class ToolExecutor(
                 ).eq("id", self.conversation_id).maybe_single().execute()
                 if row and row.data and row.data.get("image_style_directive"):
                     args["style_directive"] = row.data["image_style_directive"]
-            except Exception as e:
-                logger.warning(f"读取 style_directive 失败: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "image_agent style lookup failed | "
+                    f"user_id={self.user_id} | org_id={self.org_id} | "
+                    "tool=image_agent | error_code=IMAGE_STYLE_LOOKUP_FAILED | "
+                    f"exception_type={type(exc).__name__}"
+                )
 
         # 注入3：历史生成图片（供修改引用）
         if not args.get("history_images"):
             args["history_images"] = self._get_conversation_image_parts()
 
-        agent = ImageAgent(
-            db=self.db,
-            user_id=self.user_id,
-            conversation_id=self.conversation_id,
-            org_id=self.org_id,
-            task_id=getattr(self, "_task_id", None),
-            message_id=getattr(self, "_message_id", None),
-            workspace_user_id=self.workspace_user_id,
-        )
-        return await agent.execute(
-            task=args.get("task", ""),
-            image_urls=args.get("image_urls", []),
-            platform=args.get("platform", "taobao"),
-            style_directive=args.get("style_directive", ""),
-            history_images=args.get("history_images", []),
-        )
+        runtime_args = dict(args)
+        runtime_args.setdefault("prompt", runtime_args.get("task", ""))
+        runtime_args["image_urls"] = runtime_args.get("image_urls", [])
+        runtime_args["style_directive"] = runtime_args.get("style_directive", "")
+        runtime_args["history_images"] = runtime_args.get("history_images", [])
+        return await self._execute_runtime_media_action("generate_image", runtime_args)
 
     def _get_conversation_image_parts(self) -> list[dict]:
         """从会话消息历史中提取已生成的图片 FilePart（供修改引用）。"""
@@ -261,8 +272,13 @@ class ToolExecutor(
                         if mime.startswith("image/"):
                             images.append({"url": part["url"], "name": part.get("name", "")})
             return images
-        except Exception as e:
-            logger.warning(f"查询历史图片失败: {e}")
+        except Exception as exc:
+            logger.warning(
+                "image_agent history lookup failed | "
+                f"user_id={self.user_id} | org_id={self.org_id} | "
+                "tool=image_agent | error_code=IMAGE_HISTORY_LOOKUP_FAILED | "
+                f"exception_type={type(exc).__name__}"
+            )
             return []
 
     async def _erp_analyze(self, args: Dict[str, Any]) -> "AgentResult":
@@ -279,7 +295,11 @@ class ToolExecutor(
             return _AR(status="error", summary="请输入要分析的 ERP 查询")
         conversation_context = args.get("conversation_context", "")
 
-        logger.info(f"ERPAgent analyze | task={task[:200]}")
+        logger.info(
+            "ERPAgent analyze | "
+            f"user_id={self.user_id} | org_id={self.org_id} | "
+            f"tool=erp_analyze"
+        )
 
         agent = ERPAgent(
             db=self.db,

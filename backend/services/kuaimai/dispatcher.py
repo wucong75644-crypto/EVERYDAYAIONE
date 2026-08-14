@@ -33,9 +33,15 @@ from services.kuaimai.registry.base import ApiEntry
 class ErpDispatcher:
     """ERP API统一调度器"""
 
-    def __init__(self, client: KuaiMaiClient, db_source: Any = None) -> None:
+    def __init__(
+        self, client: KuaiMaiClient, db_source: Any = None, *,
+        record_param_knowledge: bool = True,
+        log_request_params: bool = True,
+    ) -> None:
         self._client = client
         self._db_source = db_source
+        self._record_param_knowledge_enabled = record_param_knowledge
+        self._log_request_params = log_request_params
 
     async def execute(
         self,
@@ -81,11 +87,12 @@ class ErpDispatcher:
         ]
         if missing:
             valid = sorted(entry.param_map.keys())
-            self._record_param_knowledge(
-                tool_name, action,
-                f"缺少必填参数: {', '.join(missing)}，支持: {', '.join(valid)}",
-                db_source=self._db_source,
-            )
+            if self._record_param_knowledge_enabled:
+                self._record_param_knowledge(
+                    tool_name, action,
+                    f"缺少必填参数: {', '.join(missing)}，支持: {', '.join(valid)}",
+                    db_source=self._db_source,
+                )
             return ToolOutput(
                 summary=(
                     f"缺少必填参数: {', '.join(missing)}。"
@@ -106,15 +113,17 @@ class ErpDispatcher:
                 f"ErpDispatcher invalid params | tool={tool_name} "
                 f"action={action} invalid={param_warnings}"
             )
-            self._record_param_knowledge(
-                tool_name, action,
-                f"无效参数: {', '.join(param_warnings)}，"
-                f"支持: {', '.join(sorted(entry.param_map.keys()))}",
-                db_source=self._db_source,
-            )
+            if self._record_param_knowledge_enabled:
+                self._record_param_knowledge(
+                    tool_name, action,
+                    f"无效参数: {', '.join(param_warnings)}，"
+                    f"支持: {', '.join(sorted(entry.param_map.keys()))}",
+                    db_source=self._db_source,
+                )
+        log_params = api_params if self._log_request_params else "<redacted>"
         logger.info(
             f"ErpDispatcher | tool={tool_name} action={action} "
-            f"method={entry.method} params={api_params}"
+            f"method={entry.method} params={log_params}"
         )
 
         api_result = await self._call_api(

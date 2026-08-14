@@ -1,5 +1,11 @@
 """Agent Runtime 应用层稳定 SPI。"""
 
+from services.agent.runtime.ports.action_repository import (
+    ActionMutationOutcome,
+    ActionMutationReceipt,
+    ActionRepositoryPort,
+    ChatActionSubmissionPort,
+)
 from services.agent.runtime.ports.event import RuntimeEventPort
 from services.agent.runtime.ports.executor import (
     ExecutionOutcome,
@@ -9,6 +15,7 @@ from services.agent.runtime.ports.executor import (
 from services.agent.runtime.ports.model import (
     ModelCallError,
     ModelCallUnknownError,
+    ModelExecutionBinding,
     ModelInputReceipt,
     ModelOutput,
     ModelOutputKind,
@@ -37,6 +44,10 @@ from services.agent.runtime.ports.projection import (
     ProjectionPort,
     ProjectionReceipt,
 )
+from services.agent.runtime.ports.projection_recovery import (
+    ProjectionDeadRecoveryPort,
+    ProjectionDeadRecoveryReceipt,
+)
 from services.agent.runtime.ports.repository import (
     ClaimOutcome,
     MutationOutcome,
@@ -45,13 +56,23 @@ from services.agent.runtime.ports.repository import (
     RuntimeRepositoryPort,
     SessionSnapshot,
 )
+from services.agent.runtime.ports.sandbox_job import (
+    SandboxJobOutcome,
+    SandboxJobReceipt,
+    SandboxJobRepositoryPort,
+)
 
 __all__ = [
+    "ActionMutationOutcome",
+    "ActionMutationReceipt",
+    "ActionRepositoryPort",
+    "ChatActionSubmissionPort",
     "ExecutionOutcome",
     "ExecutionReceipt",
     "ExecutorPort",
     "ModelCallError",
     "ModelCallUnknownError",
+    "ModelExecutionBinding",
     "ModelInputReceipt",
     "ModelOutput",
     "ModelOutputKind",
@@ -75,11 +96,16 @@ __all__ = [
     "ProjectionOutboxPort",
     "ProjectionPort",
     "ProjectionReceipt",
+    "ProjectionDeadRecoveryPort",
+    "ProjectionDeadRecoveryReceipt",
     "RuntimeEventPort",
     "RuntimeRepositoryPort",
     "ClaimOutcome",
     "MutationOutcome",
     "MutationReceipt",
     "RunClaim",
+    "SandboxJobOutcome",
+    "SandboxJobReceipt",
+    "SandboxJobRepositoryPort",
     "SessionSnapshot",
 ]

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from api.routes.message_image_preparation import prepare_and_start_image_generation
+from core.exceptions import AppException
 from schemas.message import GenerateRequest, GenerationType, TextPart
 from services.generation_lifecycle import GenerationPreparation
 from services.handlers.image_prepared_submission import submit_prepared_image_task
@@ -50,6 +51,7 @@ class _Handler:
         self.db = MagicMock()
         self.org_id = "org-1"
         self.preflight = MagicMock()
+        self._check_balance = MagicMock()
         self.start = AsyncMock(return_value="client-task")
         self._lock_credits = MagicMock(side_effect=["tx-1", "tx-2"])
         self._refund_credits = MagicMock()
@@ -83,7 +85,66 @@ def _body(num_images: int = 2) -> GenerateRequest:
 
 
 @pytest.mark.asyncio
-async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
+@pytest.mark.parametrize("num_images,use_batch_prompts", (
+    (1, False), (4, False), (10, False), (10, True),
+))
+async def test_image_batch_routes_to_runtime_when_accepted(
+    monkeypatch, num_images, use_batch_prompts,
+):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": num_images,
+            "total_credits": 5 * num_images,
+        },
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.record_user_activity",
+        lambda *args, **kwargs: None,
+    )
+    ingress = AsyncMock(return_value=SimpleNamespace(
+        accepted=True, runtime_owned=True, outcome="created", run_id="run-1",
+    ))
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress", ingress,
+    )
+    handler = _Handler()
+    body = _body(num_images)
+    if use_batch_prompts:
+        body.params = {"_batch_prompts": [
+            {"prompt": f"cat-{index}"} for index in range(num_images)
+        ]}
+
+    response = await prepare_and_start_image_generation(
+        db=MagicMock(), handler=handler,
+        conversation_service=_ConversationService(), conversation_id="conv-1",
+        user_id="user-1", org_id="org-1", request_id="request-row",
+        body=body,
+    )
+
+    prepared = _Lifecycle.instances[0].calls[0]
+    assert len(prepared["tasks"]) == num_images
+    assert {task["status"] for task in prepared["tasks"]} == {"preparing"}
+    ingress.assert_awaited_once()
+    assert len(ingress.await_args.kwargs["items"]) == num_images
+    handler.start.assert_not_awaited()
+    handler._check_balance.assert_called_once_with("user-1", 5 * num_images)
+    handler.preflight.assert_not_called()
+    assert _Lifecycle.instances[0].fail_calls == []
+    assert body.params["num_images"] == num_images
+    assert response.assistant_message.generation_params.num_images == num_images
+    assert response.user_message.id == "input-1"
+
+
+@pytest.mark.asyncio
+async def test_image_media_not_ready_fails_prepared_state_without_legacy_provider(
+    monkeypatch,
+):
     _Lifecycle.instances.clear()
     monkeypatch.setattr(
         "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
@@ -95,24 +156,187 @@ async def test_image_batch_is_prepared_before_handler_start(monkeypatch):
             "resolution": None, "num_images": 2, "total_credits": 10,
         },
     )
+    ingress = AsyncMock(return_value=SimpleNamespace(
+        accepted=False, runtime_owned=False, outcome="media_not_ready", run_id=None,
+    ))
+    release_slot = AsyncMock()
     monkeypatch.setattr(
-        "api.routes.message_image_preparation.record_user_activity",
-        lambda *args, **kwargs: None,
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress", ingress,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
+    )
+    handler = _Handler()
+    body = _body()
+    body.params["_task_slot_id"] = "slot-1"
+    db = MagicMock()
+
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=db, handler=handler, conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=body,
+        )
+
+    assert captured.value.code == "RUNTIME_MEDIA_UNAVAILABLE"
+    assert captured.value.status_code == 503
+    assert captured.value.details == {"outcome": "media_not_ready"}
+    handler.start.assert_not_awaited()
+    handler._lock_credits.assert_not_called()
+    ingress.assert_awaited_once()
+    assert len(ingress.await_args.kwargs["items"]) == 2
+    lifecycle = _Lifecycle.instances[0]
+    assert {call["task_id"] for call in lifecycle.fail_calls} == set(
+        lifecycle.calls[0]["tasks"][index]["id"] for index in range(2)
+    )
+    assert lifecycle.refund_calls == []
+    message_update = db.table.return_value.update.call_args.args[0]
+    assert message_update["status"] == "failed"
+    assert len(message_update["content"]) == 2
+    assert all(part["failed"] for part in message_update["content"])
+    release_slot.assert_awaited_once()
+    assert release_slot.await_args.args[0]["request_params"]["_task_slot_id"] == "slot-1"
+
+
+@pytest.mark.asyncio
+async def test_partial_runtime_ownership_requires_reconcile_without_terminalizing(
+    monkeypatch,
+):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": 2, "total_credits": 10,
+        },
+    )
+    ingress = AsyncMock(return_value=SimpleNamespace(
+        accepted=False, runtime_owned=False, outcome="partial_ownership",
+        run_id=None,
+    ))
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress", ingress,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
     )
     handler = _Handler()
 
-    response = await prepare_and_start_image_generation(
-        db=object(), handler=handler,
-        conversation_service=_ConversationService(), conversation_id="conv-1",
-        user_id="user-1", org_id="org-1", request_id="request-row",
-        body=_body(),
-    )
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=MagicMock(), handler=handler,
+            conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=_body(),
+        )
 
-    prepared = _Lifecycle.instances[0].calls[0]
-    assert len(prepared["tasks"]) == 2
-    assert {task["status"] for task in prepared["tasks"]} == {"preparing"}
-    assert len(handler.start.await_args.kwargs["metadata"].prepared_task_ids) == 2
-    assert response.user_message.id == "input-1"
+    assert captured.value.code == (
+        "RUNTIME_MEDIA_PARTIAL_OWNERSHIP_RECONCILE_REQUIRED"
+    )
+    assert captured.value.status_code == 409
+    assert _Lifecycle.instances[0].fail_calls == []
+    handler.start.assert_not_awaited()
+    handler._lock_credits.assert_not_called()
+    release_slot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_error_without_ownership_closes_all_prepared_state(monkeypatch):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": 10, "total_credits": 50,
+        },
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.read_prepared_media_ownership",
+        AsyncMock(return_value="none"),
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress",
+        AsyncMock(side_effect=RuntimeError("pricing unavailable")),
+    )
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
+    )
+    body = _body(10)
+    body.params["_task_slot_id"] = "slot-10"
+    db = MagicMock()
+    handler = _Handler()
+
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=db, handler=handler, conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=body,
+        )
+
+    assert captured.value.code == "RUNTIME_MEDIA_UNAVAILABLE"
+    assert captured.value.details == {"outcome": "submit_failed_no_ownership"}
+    lifecycle = _Lifecycle.instances[0]
+    assert len(lifecycle.fail_calls) == 10
+    message_update = db.table.return_value.update.call_args.args[0]
+    assert len(message_update["content"]) == 10
+    release_slot.assert_awaited_once()
+    handler.start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ownership", ("full", "partial", "unknown"))
+async def test_submit_error_with_uncertain_ownership_requires_reconcile(
+    monkeypatch, ownership,
+):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": 4, "total_credits": 20,
+        },
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.read_prepared_media_ownership",
+        AsyncMock(return_value=ownership),
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress",
+        AsyncMock(side_effect=TimeoutError("commit result unknown")),
+    )
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
+    )
+    handler = _Handler()
+
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=MagicMock(), handler=handler,
+            conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=_body(4),
+        )
+
+    assert captured.value.code == "RUNTIME_MEDIA_OWNERSHIP_RECONCILE_REQUIRED"
+    assert captured.value.status_code == 503
+    assert captured.value.details == {
+        "ownership": ownership, "reconcile_required": True,
+    }
+    assert _Lifecycle.instances[0].fail_calls == []
+    release_slot.assert_not_awaited()
+    handler.start.assert_not_awaited()
 
 
 class _Adapter:

@@ -8,7 +8,9 @@
 set -euo pipefail
 
 NSJAIL_VERSION="3.4"
+NSJAIL_COMMIT="079d70dda4aa1edd9512cfd25ff1e47e316dc355"
 NSJAIL_SRC="/opt/nsjail-src"
+NSJAIL_DEST="/usr/local/lib/everydayai/nsjail/$NSJAIL_VERSION/nsjail"
 
 echo "=== 1. 安装编译依赖 ==="
 dnf install -y epel-release
@@ -24,23 +26,25 @@ else
     cd "$NSJAIL_SRC"
 fi
 
-# 使用稳定版本
-git checkout "$NSJAIL_VERSION" 2>/dev/null || echo "使用 HEAD（$NSJAIL_VERSION 标签不存在）"
+git fetch --depth=1 origin "$NSJAIL_COMMIT"
+git checkout --detach "$NSJAIL_COMMIT"
+test "$(git rev-parse HEAD)" = "$NSJAIL_COMMIT"
+git submodule update --init --recursive --depth=1
 
 echo "=== 3. 编译 ==="
 make clean 2>/dev/null || true
 make -j"$(nproc)"
 
 echo "=== 4. 安装 ==="
-cp nsjail /usr/local/bin/nsjail
-chmod +x /usr/local/bin/nsjail
+install -D -o root -g root -m 0755 nsjail "$NSJAIL_DEST"
 
 echo "=== 5. 验证 ==="
-nsjail --version || nsjail --help 2>&1 | head -3
+"$NSJAIL_DEST" --version || "$NSJAIL_DEST" --help 2>&1 | head -3
+sha256sum "$NSJAIL_DEST"
 
 echo "=== 6. 清理编译产物（保留源码以备重新编译） ==="
 make clean
 
 echo ""
-echo "nsjail 安装完成: $(which nsjail)"
-echo "版本: $(nsjail --version 2>&1 || echo 'see --help')"
+echo "nsjail 安装完成: $NSJAIL_DEST"
+echo "版本: $("$NSJAIL_DEST" --version 2>&1 || echo 'see --help')"

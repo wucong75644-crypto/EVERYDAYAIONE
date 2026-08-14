@@ -39,6 +39,16 @@ def _message_content(task: dict[str, Any]) -> list[dict[str, Any]] | None:
     return [{"type": "text", "text": accumulated}]
 
 
+def _is_legacy_safe_delivery_context(task: dict[str, Any]) -> bool:
+    if "delivery_context" not in task:
+        return True
+    delivery_context = task["delivery_context"]
+    return isinstance(delivery_context, dict) and (
+        "runtime" not in delivery_context
+        or delivery_context["runtime"] is False
+    )
+
+
 def _rpc_data(
     db: ScopedDatabaseClient,
     name: str,
@@ -101,6 +111,12 @@ async def recover_orphan_tasks(db: Any) -> int:
 
         for task in tasks:
             task_id = task.get("id")
+            if not _is_legacy_safe_delivery_context(task):
+                logger.error(
+                    "Runtime-owned task returned by orphan claim; skipping | "
+                    f"task_id={task_id} | task_type={task.get('type')}"
+                )
+                continue
             try:
                 has_content, outcome = _settle_claimed_task(recovery_db, task)
                 if has_content and outcome and outcome.get(

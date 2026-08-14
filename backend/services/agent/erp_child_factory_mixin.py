@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loguru import logger
+from services.agent.safe_tool_logging import log_agent_event
 
 
 class ERPChildFactoryMixin:
@@ -34,7 +34,11 @@ class ERPChildFactoryMixin:
                 self.conversation_id or "default",
             )
         except Exception as error:
-            logger.warning(f"resolve staging_dir failed: {error}")
+            log_agent_event(
+                "warning", "resolve staging directory failed", self,
+                "erp_agent", "ERP_STAGING_RESOLVE_FAILED",
+                type(error).__name__,
+            )
         child_budget = (
             self._budget.fork(max_turns=5)
             if self._budget else None

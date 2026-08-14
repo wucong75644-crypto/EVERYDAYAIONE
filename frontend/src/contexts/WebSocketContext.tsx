@@ -75,6 +75,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
   // ws ref（避免回调重建）
   const wsRef = useRef(ws);
+  // eslint-disable-next-line react-hooks/refs -- latest WS handle is read only by callbacks/effects
   wsRef.current = ws;
 
   // 统一消息处理
@@ -105,7 +106,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         flushTimerRef.current = null;
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- handler 通过 getState() 获取最新 store，无需依赖 messageStore
   }, [ws]);
 
   // 订阅任务（带映射）
@@ -124,6 +124,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
   // subscribeTaskWithMapping ref（用于任务恢复，避免循环依赖）
   const subscribeTaskWithMappingRef = useRef(subscribeTaskWithMapping);
+  // eslint-disable-next-line react-hooks/refs -- latest callback is read only by recovery effects
   subscribeTaskWithMappingRef.current = subscribeTaskWithMapping;
 
   // 任务恢复逻辑（两阶段）
@@ -180,7 +181,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       if (state.hydrateComplete) runPhase1();
     });
     return unsub;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrgId]);
 
   // Phase 2：WS 就绪后，对 Phase 1 的任务执行 subscribe
@@ -272,7 +272,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     // 重连：检查是否有遗漏的媒体完成事件
     recoverMissedMediaCompletions();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws.isConnected]);
 
   // 注册操作上下文
@@ -284,18 +283,22 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 工具确认弹窗回调
   const toolConfirmRequest = useMessageStore((s) => s.toolConfirmRequest);
 
-  const handleToolConfirm = useCallback((toolCallId: string) => {
+  const handleToolConfirm = useCallback((confirmationId: string) => {
     ws.send({
       type: 'tool_confirm_response' as const,
-      payload: { tool_call_id: toolCallId, approved: true },
+      payload: {
+        protocol_version: 3, confirmation_id: confirmationId, approved: true,
+      },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);
 
-  const handleToolReject = useCallback((toolCallId: string) => {
+  const handleToolReject = useCallback((confirmationId: string) => {
     ws.send({
       type: 'tool_confirm_response' as const,
-      payload: { tool_call_id: toolCallId, approved: false },
+      payload: {
+        protocol_version: 3, confirmation_id: confirmationId, approved: false,
+      },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);

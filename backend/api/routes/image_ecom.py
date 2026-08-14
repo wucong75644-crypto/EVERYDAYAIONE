@@ -142,6 +142,75 @@ def _build_multimodal_content(
     return parts
 
 
+def _read_existing_style(db: Any, conversation_id: str, user_id: str) -> str | None:
+    if not conversation_id.strip():
+        return None
+    try:
+        row = db.table("conversations").select("image_style_directive").eq(
+            "id", conversation_id,
+        ).eq("user_id", user_id).maybe_single().execute()
+        return row.data.get("image_style_directive") if row and row.data else None
+    except Exception as exc:
+        logger.warning(f"读取 style_directive 失败: {exc}")
+        return None
+
+
+def _persist_style(db: Any, conversation_id: str, user_id: str, style: str) -> None:
+    if not style or not conversation_id.strip():
+        return
+    try:
+        db.table("conversations").update({"image_style_directive": style}).eq(
+            "id", conversation_id,
+        ).eq("user_id", user_id).execute()
+    except Exception as exc:
+        logger.warning(f"持久化 style_directive 失败: {exc}")
+
+
+async def _request_ecom_design_plan(
+    settings: Any,
+    messages: list[dict[str, Any]],
+    has_images: bool,
+) -> tuple[Any | None, str]:
+    """Call the independent e-commerce page's primary and fallback models."""
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+
+    model = (
+        settings.image_enhance_vl_model
+        if has_images else settings.image_enhance_model
+    )
+    timeout = settings.image_enhance_timeout
+    response = None
+    adapter = DashScopeChatAdapter(
+        api_key=settings.dashscope_api_key or "",
+        model=model,
+        base_url=settings.dashscope_base_url,
+        stream_timeout=timeout,
+    )
+    try:
+        response = await adapter.chat_sync(messages=messages)
+    except Exception as primary_err:
+        logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
+    finally:
+        await adapter.close()
+    if response is not None:
+        return response, model
+
+    model = settings.image_enhance_fallback_model
+    fallback_adapter = DashScopeChatAdapter(
+        api_key=settings.dashscope_api_key or "",
+        model=model,
+        base_url=settings.dashscope_base_url,
+        stream_timeout=timeout,
+    )
+    try:
+        response = await fallback_adapter.chat_sync(messages=messages)
+    except Exception as fallback_err:
+        logger.error(f"enhance fallback also failed: {fallback_err}")
+    finally:
+        await fallback_adapter.close()
+    return response, model
+
+
 # ============================================================
 # POST /ecom-image/enhance-prompt
 # ============================================================
@@ -152,11 +221,7 @@ async def enhance_prompt(
     user_id: CurrentUserId,
     db: Database,
 ) -> dict[str, Any]:
-    """方案策划 API（v2）— 千问VL一步到位。
-
-    输入产品信息+图片 → 千问VL理解产品+策划方案+输出gpt-image-2 prompt
-    → 返回结构化 JSON（images[]含每张图的prompt）。
-    """
+    """独立电商页面的方案策划 API。"""
     from core.config import get_settings
     from services.agent.image.prompt_builder import PromptBuilder
 
@@ -191,16 +256,7 @@ async def enhance_prompt(
         }
 
     # 1. 风格管理：读取已有风格（用于多轮对话风格延续）
-    existing_style: str | None = None
-    if req.conversation_id and req.conversation_id.strip():
-        try:
-            row = db.table("conversations").select("image_style_directive").eq(
-                "id", req.conversation_id,
-            ).eq("user_id", user_id).maybe_single().execute()
-            if row and row.data:
-                existing_style = row.data.get("image_style_directive")
-        except Exception as e:
-            logger.warning(f"读取 style_directive 失败: {e}")
+    existing_style = _read_existing_style(db, req.conversation_id, user_id)
 
     # 2. 组装三层 system prompt
     system_prompt = builder.build_system_prompt(platform)
@@ -238,42 +294,14 @@ async def enhance_prompt(
     else:
         messages.append({"role": "user", "content": user_prompt})
 
-    # 5. 调千问 VL（主模型 → 降级备选）
-    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
-
-    model = settings.image_enhance_vl_model if all_image_urls else settings.image_enhance_model
-    timeout = settings.image_enhance_timeout
-
-    response = None
-    adapter = DashScopeChatAdapter(
-        api_key=settings.dashscope_api_key or "",
-        model=model,
-        base_url=settings.dashscope_base_url,
-        stream_timeout=timeout,
+    # 5. 独立电商页面模型链路：保留页面既有主模型/备用模型语义。
+    response, model = await _request_ecom_design_plan(
+        settings,
+        messages,
+        bool(all_image_urls),
     )
-    try:
-        response = await adapter.chat_sync(messages=messages)
-    except Exception as primary_err:
-        logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
-    finally:
-        await adapter.close()
-
     if response is None:
-        fallback = settings.image_enhance_fallback_model
-        adapter_fb = DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key or "",
-            model=fallback,
-            base_url=settings.dashscope_base_url,
-            stream_timeout=timeout,
-        )
-        try:
-            response = await adapter_fb.chat_sync(messages=messages)
-            model = fallback
-        except Exception as fallback_err:
-            logger.error(f"enhance fallback also failed: {fallback_err}")
-            return {"error": "方案生成失败，请稍后重试", "success": False}
-        finally:
-            await adapter_fb.close()
+        return {"error": "方案生成失败，请稍后重试", "success": False}
 
     # 6. 解析设计方案 JSON
     plan = _parse_design_plan(response.content)
@@ -281,13 +309,7 @@ async def enhance_prompt(
 
     # 7. 持久化 visual_strategy 作为 style_directive
     new_style = plan.get("visual_strategy", "") or existing_style
-    if new_style and req.conversation_id and req.conversation_id.strip():
-        try:
-            db.table("conversations").update(
-                {"image_style_directive": new_style}
-            ).eq("id", req.conversation_id).eq("user_id", user_id).execute()
-        except Exception as e:
-            logger.warning(f"持久化 style_directive 失败: {e}")
+    _persist_style(db, req.conversation_id, user_id, new_style)
 
     logger.info(
         f"enhance-prompt v2 | user={user_id} | platform={platform} "
@@ -334,6 +356,7 @@ async def retry_image(
         user_id=user_id,
         conversation_id=req.conversation_id,
         org_id=conv_check.data.get("org_id"),
+        runtime_owned=False,
     )
     result = await agent.execute(
         task=req.task,

@@ -106,6 +106,45 @@ def validate_ledger(
     return [migration for migration in migrations if migration.identity not in rows]
 
 
+def reconcile_failed(
+    connection: Any,
+    migrations: Sequence[Migration],
+    identity: str,
+    applied_by: str,
+    acknowledge_transaction_rollback: bool,
+) -> None:
+    """Remove one failed ledger marker after an operator confirms rollback."""
+    if not acknowledge_transaction_rollback:
+        raise MigrationError(
+            "reconcile-failed requires transaction rollback acknowledgement"
+        )
+    migration = next(
+        (item for item in migrations if item.identity == identity), None
+    )
+    if migration is None:
+        raise MigrationError(f"unknown migration identity: {identity}")
+    rows = _ledger_rows(connection)
+    row = rows.get(identity)
+    if row is None or row["status"] != "failed":
+        raise MigrationError(f"migration is not failed: {identity}")
+    if row["checksum_sha256"] != migration.checksum:
+        raise MigrationError(f"checksum drift: {identity}")
+    with connection.transaction():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM schema_migration_ledger
+                WHERE identity = %s AND status = 'failed'
+                  AND checksum_sha256 = %s
+                RETURNING identity
+                """,
+                (identity, migration.checksum),
+            )
+            if cursor.fetchone() is None:
+                raise MigrationError(f"failed marker changed: {identity}")
+    del applied_by  # retained in the signature for audit-compatible callers
+
+
 def _record_failure(
     connection: Any,
     migration: Migration,
@@ -222,6 +261,8 @@ def run(
     command: str,
     applied_by: str,
     through: str | None = None,
+    identity: str | None = None,
+    acknowledge_transaction_rollback: bool = False,
 ) -> list[str]:
     """Run one migration command while holding the database advisory lock."""
     migrations = discover_migrations()
@@ -240,6 +281,18 @@ def run(
             baseline_through(connection, migrations, through, applied_by)
             return []
 
+        if command == "reconcile-failed":
+            if not identity:
+                raise MigrationError("reconcile-failed requires --identity")
+            reconcile_failed(
+                connection,
+                migrations,
+                identity,
+                applied_by,
+                acknowledge_transaction_rollback,
+            )
+            return []
+
         pending = validate_ledger(migrations, _ledger_rows(connection))
         connection.commit()
         if command == "apply":
@@ -253,12 +306,21 @@ def run(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "plan", "apply", "baseline"))
+    parser.add_argument(
+        "command",
+        choices=("check", "plan", "apply", "baseline", "reconcile-failed"),
+    )
     parser.add_argument("--through")
+    parser.add_argument("--identity")
     parser.add_argument(
         "--acknowledge-existing-schema",
         action="store_true",
         help="required for baseline; confirms an external schema audit",
+    )
+    parser.add_argument(
+        "--acknowledge-transaction-rollback",
+        action="store_true",
+        help="required for reconcile-failed; confirms failed SQL rolled back",
     )
     parser.add_argument("--applied-by", default=os.getenv("USER", "unknown"))
     return parser
@@ -280,11 +342,13 @@ def main() -> int:
         return 2
     try:
         with psycopg.connect(database_url) as connection:
+            run_kwargs = {"through": args.through}
+            if args.identity is not None:
+                run_kwargs["identity"] = args.identity
+            if args.acknowledge_transaction_rollback:
+                run_kwargs["acknowledge_transaction_rollback"] = True
             pending = run(
-                connection,
-                args.command,
-                args.applied_by,
-                through=args.through,
+                connection, args.command, args.applied_by, **run_kwargs
             )
         for identity in pending:
             print(identity)

@@ -76,7 +76,7 @@ def build_psql_environment(database_url: str) -> dict[str, str]:
         if key not in LIBPQ_CONNECTION_ENV
     }
     environment.update({
-        "PGHOST": parsed.hostname,
+        "PGHOST": unquote(parsed.hostname),
         "PGPORT": str(port),
         "PGDATABASE": unquote(parsed.path.lstrip("/")),
         "PGUSER": unquote(parsed.username),

@@ -80,10 +80,25 @@ class ScheduledTaskScanner:
         if not tasks:
             return 0
 
-        logger.info(f"ScheduledTaskScanner | claimed {len(tasks)} tasks (fire-and-forget)")
+        logger.info(
+            f"ScheduledTaskScanner | claimed {len(tasks)} executions"
+        )
 
         # fire-and-forget：后台执行，不阻塞 worker 主循环
         for task in tasks:
+            if task.get("_execution_owner") == "runtime":
+                logger.info(
+                    "ScheduledTaskScanner | Runtime Command submitted | "
+                    f"command_id={task.get('command_id')}"
+                )
+                continue
+            if task.get("_execution_owner") == "legacy_blocked":
+                logger.warning(
+                    "ScheduledTaskScanner | historical task blocked: "
+                    "Runtime profile required | "
+                    f"task_id={task.get('task_id')}"
+                )
+                continue
             asyncio.create_task(self._run_with_limit(task))
 
         return len(tasks)

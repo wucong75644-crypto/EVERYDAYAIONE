@@ -15,8 +15,8 @@ from pydantic import ValidationError
 from core.config import get_settings
 from core.exceptions import AppException
 from schemas.ecom_requirement import RequirementAssistInput, RequirementAssistResult
-from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
 from services.agent.image.requirement_assist_prompts import build_multimodal_messages
+from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
 
 
 _TOTAL_TIMEOUT_SECONDS = 100.0

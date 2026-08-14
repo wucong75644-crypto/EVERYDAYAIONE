@@ -29,9 +29,13 @@ show_help() {
     cat <<'EOF'
 用法:
   ./deploy/release.sh --message "feat: 描述" --file 路径 [--file 路径...]
-                      [--frontend-only|--backend-only] [--skip-test]
+                      [--frontend-only|--backend-only|
+                       --runtime-flags-off-install|
+                       --runtime-control-plane-flags-off-update \
+                         --expected-unit-manifest PATH] [--skip-test]
 
 默认部署前端和后端。正常路径不进行交互确认；任何门禁失败都会停止。
+flags-off 安装/更新路径不能与其他部署范围或 --skip-test 组合。
 EOF
 }
 
@@ -42,6 +46,10 @@ init_deploy_log
 COMMIT_ARGS=()
 DEPLOY_ARGS=()
 scope_count=0
+runtime_flags_off_install=false
+control_plane_flags_off_update=false
+expected_unit_manifest=
+skip_test=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,13 +58,27 @@ while [[ $# -gt 0 ]]; do
             COMMIT_ARGS+=("$1" "$2")
             shift 2
             ;;
-        -f|--frontend-only|-b|--backend-only)
+        -f|--frontend-only|-b|--backend-only|--runtime-flags-off-install|--runtime-control-plane-flags-off-update)
             DEPLOY_ARGS+=("$1")
             scope_count=$((scope_count + 1))
+            if [ "$1" = --runtime-flags-off-install ]; then
+                runtime_flags_off_install=true
+            elif [ "$1" = --runtime-control-plane-flags-off-update ]; then
+                control_plane_flags_off_update=true
+            fi
             shift
+            ;;
+        --expected-unit-manifest)
+            [[ $# -ge 2 ]] || fail "$1 缺少值"
+            [ -z "$expected_unit_manifest" ] || fail "$1 不能重复"
+            [ -f "$2" ] && [ ! -L "$2" ] || fail "$1 必须指向普通文件"
+            expected_unit_manifest="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+            DEPLOY_ARGS+=("$1" "$expected_unit_manifest")
+            shift 2
             ;;
         --skip-test)
             DEPLOY_ARGS+=("$1")
+            skip_test=true
             shift
             ;;
         -h|--help)
@@ -69,7 +91,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-(( scope_count <= 1 )) || fail "不能同时选择仅前端和仅后端"
+(( scope_count <= 1 )) || fail "不能同时选择多个部署范围"
+if [ "$runtime_flags_off_install" = true ] && [ "$skip_test" = true ]; then
+    fail "--runtime-flags-off-install 不能与 --skip-test 组合"
+fi
+if [ "$control_plane_flags_off_update" = true ] && [ "$skip_test" = true ]; then
+    fail "--runtime-control-plane-flags-off-update 不能与 --skip-test 组合"
+fi
+if [ "$control_plane_flags_off_update" = true ] && [ -z "$expected_unit_manifest" ]; then
+    fail "control-plane flags-off update 缺少 --expected-unit-manifest"
+fi
+if [ "$control_plane_flags_off_update" = false ] && [ -n "$expected_unit_manifest" ]; then
+    fail "--expected-unit-manifest 仅用于 control-plane flags-off update"
+fi
 
 run_stage "提交并推送任务文件" "$REPO_ROOT/git-push.sh" "${COMMIT_ARGS[@]}"
 release_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"

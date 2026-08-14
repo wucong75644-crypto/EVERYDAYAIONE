@@ -37,6 +37,13 @@ def build_content_part_contract() -> dict[str, Any]:
             name=None,
             workspace_path=None,
         ),
+        ImagePart(
+            url=None,
+            slot_id="runtime-slot-10",
+            slot_index=9,
+            slot_status="unknown",
+            slot_revision=3,
+        ),
         VideoPart(url="https://example.com/video.mp4"),
         AudioPart(url="https://example.com/audio.mp3"),
         FilePart(
@@ -95,6 +102,19 @@ def build_content_part_contract() -> dict[str, Any]:
         "valid_examples": valid_examples,
         "invalid_examples": [
             {"type": "image"},
+            {
+                "type": "image",
+                "url": None,
+                "slot_id": "partial-runtime-slot",
+            },
+            {
+                "type": "image",
+                "url": None,
+                "slot_id": "runtime-slot-11",
+                "slot_index": 10,
+                "slot_status": "pending",
+                "slot_revision": 0,
+            },
             {"type": "file", "url": "/a", "name": "a.txt"},
             {
                 "type": "interrupt_marker",

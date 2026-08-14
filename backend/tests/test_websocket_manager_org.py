@@ -55,7 +55,10 @@ class TestSendToUserOrgFilter:
     @pytest.mark.asyncio
     async def test_org_a_only_sends_to_org_a(self):
         """指定 org_id=A 只发给 A 的连接"""
-        await self.manager.send_to_user("user1", {"type": "test"}, org_id=ORG_A)
+        delivered = await self.manager.send_to_user(
+            "user1", {"type": "test"}, org_id=ORG_A,
+        )
+        assert delivered is True
         self.manager.send_to_connection.assert_called_once_with("conn_a", {"type": "test"})
 
     @pytest.mark.asyncio
@@ -75,9 +78,10 @@ class TestSendToUserOrgFilter:
     @pytest.mark.asyncio
     async def test_nonexistent_org_sends_nothing(self):
         """不存在的 org_id 不发给任何人"""
-        await self.manager.send_to_user(
+        delivered = await self.manager.send_to_user(
             "user1", {"type": "test"}, org_id="nonexistent",
         )
+        assert delivered is False
         self.manager.send_to_connection.assert_not_called()
 
     @pytest.mark.asyncio
@@ -124,6 +128,66 @@ class TestSendToUserOrgFilter:
         self.manager.send_to_connection.assert_called_once_with(
             "conn_b", {"type": "message_chunk"},
         )
+
+    @pytest.mark.asyncio
+    async def test_confirmation_requires_a_successful_delivery(self):
+        self.manager.send_to_connection = AsyncMock(return_value=False)
+        self.manager._publish_with_delivery_ack = AsyncMock(return_value=False)
+
+        delivered = await self.manager.send_tool_confirmation(
+            "task-1", "user1",
+            {
+                "type": "tool_confirm_request",
+                "payload": {"confirmation_id": "opaque"},
+            },
+            org_id=ORG_A,
+        )
+
+        assert delivered is False
+        self.manager._publish_with_delivery_ack.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_confirmation_local_delivery_succeeds(self):
+        self.manager.send_to_connection = AsyncMock(return_value=True)
+
+        delivered = await self.manager.send_tool_confirmation(
+            "task-1", "user1",
+            {
+                "type": "tool_confirm_request",
+                "payload": {"confirmation_id": "opaque"},
+            },
+            org_id=ORG_A,
+        )
+
+        assert delivered is True
+        self.manager._publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_denies_delivered_confirmation(self):
+        from services.websocket_manager import Connection
+
+        user_id = "bbbb2222-0000-0000-0000-000000000002"
+        connection = Connection(
+            websocket=MagicMock(), user_id=user_id,
+            conn_id="conn_a", org_id=ORG_A,
+        )
+        self.manager._connections = {user_id: {"conn_a": connection}}
+        self.manager._conn_index = {"conn_a": connection}
+        self.manager._delivered_confirmations = {"conn_a": {"opaque"}}
+        with patch(
+            "services.tool_confirmation.tool_confirmation_service.consume_response",
+            new_callable=AsyncMock,
+            return_value="WON:DENIED",
+        ) as consume:
+            await self.manager.disconnect("conn_a")
+
+        consume.assert_awaited_once()
+        kwargs = consume.await_args.kwargs
+        assert kwargs["confirmation_id"] == "opaque"
+        assert kwargs["user_id"] == user_id
+        assert kwargs["org_id"] == ORG_A
+        assert kwargs["approved"] is False
+        assert kwargs["database"] is not None
 
     @pytest.mark.asyncio
     async def test_subscribe_and_unsubscribe_use_composite_task_scope(self):

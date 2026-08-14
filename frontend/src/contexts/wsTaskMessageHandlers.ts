@@ -5,6 +5,13 @@ import { normalizeMessage, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
 import { tabSync } from '../utils/tabSync';
 import { parseContentPart } from '../schemas/messageProtocol';
+import type { ContentPart, ImagePart, RuntimeMediaSlotStatus } from '../types/message';
+import {
+  findImagePartContentIndex,
+  findRuntimeMediaSlotContentIndex,
+  getRuntimeMediaImageSlots,
+  isRuntimeMediaImageSlot,
+} from '../utils/runtimeMediaSlots';
 import {
   cleanupTaskSubscription,
   flushChunkBuffer,
@@ -230,20 +237,18 @@ export function handleImagePartialUpdate(
   msg: WSIncomingMessage,
 ): void {
   const { message_id } = msg;
-  const payload = (msg.payload || {}) as {
-    image_index?: number;
-    content_part?: unknown;
-    completed_count?: number;
-    total_count?: number;
-    error?: string;
-    error_code?: string;
-  };
-  const { image_index, content_part, completed_count, total_count, error, error_code } = payload;
-  if (!message_id || image_index === undefined) return;
+  const payload = (msg.payload || {}) as ImagePartialUpdatePayload;
+  const {
+    image_index, slot_index, completed_count, total_count, error,
+  } = payload;
+  if (!message_id || (image_index === undefined && slot_index === undefined && !payload.slot_id)) {
+    return;
+  }
 
   logger.info('ws:image', 'partial update', {
     messageId: message_id,
-    imageIndex: image_index,
+    imageIndex: image_index ?? slot_index,
+    slotId: payload.slot_id,
     progress: `${completed_count}/${total_count}`,
     hasError: !!error,
   });
@@ -251,27 +256,171 @@ export function handleImagePartialUpdate(
   const store = deps.getStore();
   const existing = store.getMessage(message_id);
   if (!existing) return;
-  const content = [...(existing.content || [])];
-  while (content.length <= image_index) {
-    content.push({ type: 'image', url: null } as Message['content'][number]);
-  }
+  const update = getRuntimeMediaImageSlots(existing.content).length > 0
+    || isRuntimeSlotPayload(payload)
+    ? applyRuntimeSlotUpdate(existing.content, payload, message_id)
+    : applyLegacyImageUpdate(existing.content, payload, message_id);
+  if (!update) return;
+  store.updateMessage(message_id, { content: update.content });
 
-  if (error) {
-    content[image_index] = {
-      type: 'image', url: null, failed: true, error, error_code,
-    } as Message['content'][number];
-  } else if (content_part) {
-    const parsed = parseContentPart(content_part, {
-      messageId: message_id,
-      source: 'ws:image_partial_update',
-    });
-    if (!parsed || parsed.type !== 'image') return;
-    content[image_index] = parsed;
-  }
-  store.updateMessage(message_id, { content });
-
-  const updatedPart = content[image_index];
-  if (updatedPart.type === 'image' && updatedPart.workspace_path) {
+  if (update.updatedPart.workspace_path) {
     window.dispatchEvent(new CustomEvent('workspace:changed'));
   }
+}
+
+interface ImagePartialUpdatePayload {
+  image_index?: number;
+  slot_id?: string;
+  slot_index?: number;
+  slot_status?: RuntimeMediaSlotStatus;
+  slot_revision?: number;
+  content_part?: unknown;
+  completed_count?: number;
+  total_count?: number;
+  error?: string;
+  error_code?: string;
+}
+
+interface AppliedImageUpdate {
+  content: ContentPart[];
+  updatedPart: ImagePart;
+}
+
+function contentPartRecord(contentPart: unknown): Record<string, unknown> {
+  return contentPart && typeof contentPart === 'object' && !Array.isArray(contentPart)
+    ? contentPart as Record<string, unknown>
+    : {};
+}
+
+function isRuntimeSlotPayload(payload: ImagePartialUpdatePayload): boolean {
+  const rawPart = contentPartRecord(payload.content_part);
+  return payload.slot_id !== undefined
+    || payload.slot_index !== undefined
+    || payload.slot_status !== undefined
+    || payload.slot_revision !== undefined
+    || rawPart.slot_id !== undefined
+    || rawPart.slot_index !== undefined
+    || rawPart.slot_status !== undefined
+    || rawPart.slot_revision !== undefined;
+}
+
+function applyRuntimeSlotUpdate(
+  original: ContentPart[],
+  payload: ImagePartialUpdatePayload,
+  messageId: string,
+): AppliedImageUpdate | null {
+  const rawPart = contentPartRecord(payload.content_part);
+  const rawSlotId = typeof rawPart.slot_id === 'string' ? rawPart.slot_id : undefined;
+  const rawSlotIndex = typeof rawPart.slot_index === 'number' ? rawPart.slot_index : undefined;
+  const rawRevision = typeof rawPart.slot_revision === 'number'
+    ? rawPart.slot_revision
+    : undefined;
+  if ((payload.slot_id !== undefined && payload.slot_id.length === 0)
+    || (rawSlotId !== undefined && rawSlotId.length === 0)
+    || (payload.slot_id && rawSlotId && payload.slot_id !== rawSlotId)
+    || (payload.slot_index !== undefined && rawSlotIndex !== undefined
+      && payload.slot_index !== rawSlotIndex)
+    || (payload.slot_revision !== undefined && rawRevision !== undefined
+      && payload.slot_revision !== rawRevision)) return null;
+
+  const slotId = payload.slot_id ?? rawSlotId;
+  const slotIndex = payload.slot_index ?? rawSlotIndex;
+  const contentIndex = findRuntimeMediaSlotContentIndex(original, slotId, slotIndex);
+  if (contentIndex < 0) return null;
+  const current = original[contentIndex];
+  if (!isRuntimeMediaImageSlot(current)) return null;
+
+  const revision = payload.slot_revision ?? rawRevision;
+  if (!Number.isInteger(revision) || revision === undefined || revision <= current.slot_revision) {
+    return null;
+  }
+  if ((slotId && slotId !== current.slot_id) || (
+    slotIndex !== undefined && slotIndex !== current.slot_index
+  )) return null;
+
+  const slotStatus = payload.error
+    ? 'failed'
+    : payload.slot_status ?? (
+      typeof rawPart.slot_status === 'string'
+        ? rawPart.slot_status as RuntimeMediaSlotStatus
+        : undefined
+    );
+  if (!slotStatus) return null;
+  if (current.slot_status === 'completed' && slotStatus === 'cancelled') return null;
+
+  const candidate = buildRuntimeSlotCandidate(current, payload, rawPart, slotStatus);
+  const parsed = parseContentPart({
+    ...candidate,
+    slot_id: current.slot_id,
+    slot_index: current.slot_index,
+    slot_status: slotStatus,
+    slot_revision: revision,
+  }, {
+    messageId,
+    source: 'ws:image_partial_update:runtime-slot',
+  });
+  if (!parsed || !isRuntimeMediaImageSlot(parsed)) return null;
+
+  const content = [...original];
+  content[contentIndex] = parsed;
+  return { content, updatedPart: parsed };
+}
+
+function buildRuntimeSlotCandidate(
+  current: ImagePart,
+  payload: ImagePartialUpdatePayload,
+  rawPart: Record<string, unknown>,
+  slotStatus: RuntimeMediaSlotStatus,
+): Record<string, unknown> {
+  if (payload.error) {
+    return {
+      ...current,
+      url: null,
+      failed: true,
+      error: payload.error,
+      error_code: payload.error_code,
+    };
+  }
+  if (payload.content_part) return rawPart;
+  if (slotStatus === 'failed') return { ...current, failed: true };
+  const clearsPreviousResult = slotStatus !== 'completed';
+  const withoutPreviousError = { ...current };
+  delete withoutPreviousError.error;
+  delete withoutPreviousError.error_code;
+  return {
+    ...withoutPreviousError,
+    ...(clearsPreviousResult ? { url: null } : {}),
+    failed: false,
+  };
+}
+
+function applyLegacyImageUpdate(
+  original: ContentPart[],
+  payload: ImagePartialUpdatePayload,
+  messageId: string,
+): AppliedImageUpdate | null {
+  const imageIndex = payload.image_index ?? payload.slot_index;
+  if (imageIndex === undefined || !Number.isInteger(imageIndex) || imageIndex < 0) return null;
+  const content = [...original];
+  let contentIndex = findImagePartContentIndex(content, imageIndex);
+  while (contentIndex < 0) {
+    content.push({ type: 'image', url: null });
+    contentIndex = findImagePartContentIndex(content, imageIndex);
+  }
+
+  let parsed: ContentPart | null = null;
+  if (payload.error) {
+    parsed = {
+      type: 'image', url: null, failed: true,
+      error: payload.error, error_code: payload.error_code,
+    };
+  } else if (payload.content_part) {
+    parsed = parseContentPart(payload.content_part, {
+      messageId,
+      source: 'ws:image_partial_update:legacy',
+    });
+  }
+  if (!parsed || parsed.type !== 'image') return null;
+  content[contentIndex] = parsed;
+  return { content, updatedPart: parsed };
 }

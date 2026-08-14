@@ -60,6 +60,7 @@ def create_test_conversation(
         "message_count": 0,
         "credits_consumed": 0,
         "org_id": org_id,
+        "source": "web",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

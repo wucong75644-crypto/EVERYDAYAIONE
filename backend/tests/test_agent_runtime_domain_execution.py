@@ -86,21 +86,21 @@ def test_completed_action_requires_result() -> None:
         action_id=ActionId("action-1"),
         scope=RuntimeScope(ScopeKind.USER, "user:u-1", "u-1", None),
         status=ActionResultStatus.SUCCESS,
-        result_hash="result-hash",
+        result_hash="a" * 64,
     )
     require_action_result(ActionStatus.COMPLETED, result)
     with pytest.raises(ValueError, match="requires ActionResult"):
         require_action_result(ActionStatus.COMPLETED, None)
 
 
-def test_non_completed_action_rejects_result() -> None:
+def test_failed_action_rejects_success_result() -> None:
     result = ActionResult(
         action_id=ActionId("action-1"),
         scope=RuntimeScope(ScopeKind.USER, "user:u-1", "u-1", None),
         status=ActionResultStatus.SUCCESS,
-        result_hash="result-hash",
+        result_hash="a" * 64,
     )
-    with pytest.raises(ValueError, match="only valid"):
+    with pytest.raises(ValueError, match="requires an error"):
         require_action_result(ActionStatus.FAILED, result)
 
 
@@ -149,7 +149,7 @@ def test_action_attempt_rejects_naive_datetime(field_name: str) -> None:
             status=ActionAttemptStatus.COMPLETED,
             worker_id="worker-1",
             idempotency_key=IdempotencyKey("action:1"),
-            request_hash="request-hash",
+            request_hash="b" * 64,
             lease=_lease(),
             started_at=values["started_at"],
             accepted_at=values["accepted_at"],

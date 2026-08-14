@@ -51,12 +51,36 @@ def _resolve_poll_interval(settings: Settings) -> int:
     return _DEFAULT_POLL_INTERVAL_NO_WEBHOOK
 
 
+def _is_legacy_safe_delivery_context(task: dict) -> bool:
+    if "delivery_context" not in task:
+        return True
+    delivery_context = task["delivery_context"]
+    return isinstance(delivery_context, dict) and (
+        "runtime" not in delivery_context
+        or delivery_context["runtime"] is False
+    )
+
+
+def _is_runtime_owned(task: dict) -> bool:
+    context = task.get("delivery_context")
+    return isinstance(context, dict) and context.get("runtime") is True
+
+
 class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
     """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
     def __init__(self, db, runtime_db=None):
         self.db = db
-        self._media_tasks = WorkerMediaTasks(db)
+        media_db = ScopedDatabaseClient(
+            db,
+            DatabaseScope(
+                actor_user_id=None,
+                org_id=None,
+                access_kind=DatabaseAccessKind.WORKER,
+                request_id="legacy-media-worker",
+            ),
+        )
+        self._media_tasks = WorkerMediaTasks(media_db)
         self.settings: Settings = get_settings()
         self.poll_interval = _resolve_poll_interval(self.settings)
         self.is_running = False
@@ -187,6 +211,12 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
 
         使用任务记录中的 model_id 创建适配器（而非硬编码）。
         """
+        if _is_runtime_owned(task):
+            logger.info(
+                "Skipping Runtime-owned media task in legacy worker | "
+                f"task_id={task.get('external_task_id')}"
+            )
+            return
         external_task_id = task["external_task_id"]
         task_type = task["type"]
         model_id = task.get("model_id")
@@ -269,6 +299,13 @@ class BackgroundTaskWorker(BackgroundPeriodicTasksMixin):
         for task in tasks:
             from services.conversation_task import is_actor_task
             if is_actor_task(task):
+                continue
+            if not _is_legacy_safe_delivery_context(task):
+                logger.error(
+                    "Runtime-owned task returned by legacy stale discovery; "
+                    f"skipping | task_id={task.get('id')} | "
+                    f"task_type={task.get('type')}"
+                )
                 continue
             # 跳过没有 started_at 的任务（可能是旧数据或创建时未设置）
             if not task.get("started_at"):

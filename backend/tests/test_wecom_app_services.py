@@ -31,6 +31,8 @@ from services.wecom.app_message_sender import (
 TEST_ORG_ID = "org_test"
 TEST_CORP_ID = "corp_test"
 TEST_SECRET = "secret_test"
+TEST_REVISION_1 = f"wecom-app:{'1' * 64}"
+TEST_REVISION_2 = f"wecom-app:{'2' * 64}"
 
 
 def _make_creds(agent_id: int = 1000006) -> OrgWecomCreds:
@@ -66,6 +68,87 @@ class TestAccessTokenManager:
         mock_redis.get.assert_called_once_with(_redis_key(TEST_ORG_ID))
 
     @pytest.mark.asyncio
+    async def test_runtime_revision_rotation_uses_a_new_cache_key(self):
+        old_key = _redis_key(
+            TEST_ORG_ID,
+            credential_revision=TEST_REVISION_1,
+        )
+        new_key = _redis_key(
+            TEST_ORG_ID,
+            credential_revision=TEST_REVISION_2,
+        )
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(
+            side_effect=lambda key: "old_token" if key == old_key else None,
+        )
+        fetch = AsyncMock(return_value="new_token")
+
+        with patch(
+            "services.wecom.access_token_manager.get_redis",
+            new=AsyncMock(return_value=mock_redis),
+        ), patch(
+            "services.wecom.access_token_manager._fetch_and_cache_token",
+            new=fetch,
+        ):
+            old_token = await get_access_token(
+                TEST_ORG_ID,
+                TEST_CORP_ID,
+                TEST_SECRET,
+                credential_revision=TEST_REVISION_1,
+            )
+            new_token = await get_access_token(
+                TEST_ORG_ID,
+                TEST_CORP_ID,
+                TEST_SECRET,
+                credential_revision=TEST_REVISION_2,
+            )
+
+        assert old_token == "old_token"
+        assert new_token == "new_token"
+        assert old_key != new_key
+        assert TEST_CORP_ID not in new_key
+        assert TEST_SECRET not in new_key
+        fetch.assert_awaited_once_with(
+            TEST_ORG_ID,
+            TEST_CORP_ID,
+            TEST_SECRET,
+            credential_revision=TEST_REVISION_2,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "revision",
+        ["", "wecom-app:short", TEST_CORP_ID, TEST_SECRET, "other:" + "a" * 64, 7],
+    )
+    async def test_invalid_runtime_revision_fails_before_cache_or_fetch(
+        self,
+        revision: object,
+    ):
+        get_redis = AsyncMock()
+        fetch = AsyncMock()
+
+        with patch(
+            "services.wecom.access_token_manager.get_redis",
+            new=get_redis,
+        ), patch(
+            "services.wecom.access_token_manager._fetch_and_cache_token",
+            new=fetch,
+        ):
+            token = await get_access_token(
+                TEST_ORG_ID,
+                TEST_CORP_ID,
+                TEST_SECRET,
+                credential_revision=revision,  # type: ignore[arg-type]
+            )
+
+        assert token is None
+        get_redis.assert_not_awaited()
+        fetch.assert_not_awaited()
+
+    def test_legacy_cache_key_remains_byte_for_byte_compatible(self):
+        assert _redis_key(TEST_ORG_ID) == f"wecom:access_token:{TEST_ORG_ID}"
+
+    @pytest.mark.asyncio
     async def test_fetches_on_cache_miss(self):
         """Redis 缓存未命中 → 从 API 获取"""
         mock_redis = AsyncMock()
@@ -95,6 +178,44 @@ class TestAccessTokenManager:
 
         assert token == "new_token_xyz"
         mock_redis.set.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_runtime_fetch_writes_only_the_revision_bound_key(self):
+        mock_redis = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "errcode": 0,
+            "access_token": "rotated_token",
+            "expires_in": 7200,
+        }
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "services.wecom.access_token_manager.get_redis",
+            new=AsyncMock(return_value=mock_redis),
+        ), patch(
+            "services.wecom.access_token_manager.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            token = await _fetch_and_cache_token(
+                TEST_ORG_ID,
+                TEST_CORP_ID,
+                TEST_SECRET,
+                credential_revision=TEST_REVISION_2,
+            )
+
+        assert token == "rotated_token"
+        mock_redis.set.assert_awaited_once_with(
+            _redis_key(
+                TEST_ORG_ID,
+                credential_revision=TEST_REVISION_2,
+            ),
+            "rotated_token",
+            ex=6900,
+        )
 
     @pytest.mark.asyncio
     async def test_returns_none_on_missing_config(self):
@@ -181,6 +302,7 @@ class TestAppMessageSender:
     async def test_send_text_success(self):
         """文本消息发送成功"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         mock_client = AsyncMock()
@@ -210,6 +332,7 @@ class TestAppMessageSender:
     async def test_send_markdown_success(self):
         """Markdown 消息发送成功"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         mock_client = AsyncMock()
@@ -249,6 +372,7 @@ class TestAppMessageSender:
     async def test_send_fails_on_api_error(self):
         """API 返回错误 → 返回 False"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 40003, "errmsg": "invalid userid"}
 
         mock_client = AsyncMock()
@@ -273,6 +397,7 @@ class TestAppMessageSender:
     async def test_custom_agent_id(self):
         """自定义 agent_id 传递（通过 creds）"""
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
         mock_client = AsyncMock()

@@ -29,6 +29,7 @@ from services.handlers.chat.tool_loop import (
     prepare_tool_turn,
 )
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
+from services.agent.runtime.application.chat_model_loop import RuntimeChatModelLoop
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,7 @@ async def execute_chat(
     try:
         await output.start()
         try:
-            await _run_loop(
+            await RuntimeChatModelLoop().run(
                 handler=handler,
                 request=request,
                 prepared=prepared,
@@ -129,7 +130,7 @@ async def execute_chat(
         await prepared.adapter.close()
 
 
-async def _run_loop(
+async def _execute_model_turns(
     *,
     handler: Any,
     request: ChatExecutionRequest,
@@ -467,7 +468,10 @@ def _build_digest(
     try:
         return build_tool_digest(messages, conversation_id)
     except Exception as error:
-        logger.warning(f"Tool digest build failed | error={error}")
+        logger.warning(
+            "TOOL_DIGEST_BUILD_FAILED | exception_type={}",
+            type(error).__name__,
+        )
         return None
 
 
@@ -480,13 +484,5 @@ def _raise_if_cancelled(
 
 
 def _interrupt_kernel(conversation_id: str, task_id: str) -> None:
-    try:
-        from services.sandbox.kernel_manager import get_kernel_manager
-
-        manager = get_kernel_manager()
-        if manager is not None:
-            manager.interrupt(conversation_id)
-    except Exception as error:
-        logger.warning(
-            f"Kernel interrupt failed | task={task_id} | error={error}"
-        )
+    """Legacy conversation-scoped Kernel cancellation has no execution owner."""
+    del conversation_id, task_id

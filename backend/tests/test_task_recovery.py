@@ -186,6 +186,38 @@ async def test_non_committing_outcome_is_not_counted(
     assert await task_recovery.recover_orphan_tasks(object()) == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_marker", [True, "true", None, 1, {}, []])
+async def test_non_legacy_safe_runtime_marker_is_never_settled(
+    recovery_db: _RecoveryDb,
+    runtime_marker: Any,
+) -> None:
+    recovery_db.results.extend([
+        [_task(delivery_context={"runtime": runtime_marker})],
+        [],
+    ])
+
+    assert await task_recovery.recover_orphan_tasks(object()) == 0
+    assert [call[0] for call in recovery_db.calls] == [
+        "worker_claim_orphan_tasks",
+        "worker_claim_orphan_tasks",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_canonical_runtime_false_remains_legacy_compatible(
+    recovery_db: _RecoveryDb,
+) -> None:
+    recovery_db.results.extend([
+        [_task(delivery_context={"runtime": False})],
+        {"outcome": "completed"},
+        [],
+    ])
+
+    assert await task_recovery.recover_orphan_tasks(object()) == 1
+    assert recovery_db.calls[1][0] == "worker_complete_orphan_task"
+
+
 def test_recovery_scope_is_actorless_worker() -> None:
     client = task_recovery._recovery_db(object())
 

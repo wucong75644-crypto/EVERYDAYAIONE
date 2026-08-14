@@ -157,6 +157,14 @@ class TaskCompletionService(MediaResultPersistence):
             logger.warning(f"Task not found | task_id={external_task_id}")
             return False
 
+        delivery_context = task.get("delivery_context")
+        if isinstance(delivery_context, dict) and delivery_context.get("runtime") is True:
+            logger.info(
+                "Skipping Runtime-owned task in legacy completion service | "
+                f"task_id={external_task_id}"
+            )
+            return True
+
         # 2. 幂等检查：任务已经是终态，跳过处理
         if task['status'] in ['completed', 'failed', 'cancelled']:
             logger.info(

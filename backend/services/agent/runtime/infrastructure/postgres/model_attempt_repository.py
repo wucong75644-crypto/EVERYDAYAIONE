@@ -20,7 +20,7 @@ from services.agent.runtime.ports.model_attempt import (
 class PostgresModelAttemptRepository:
     def __init__(self, database: Any) -> None:
         scope = database_scope_from_client(database)
-        if scope is None or scope.access_kind is not DatabaseAccessKind.WORKER:
+        if scope is None or scope.access_kind is not DatabaseAccessKind.AGENT_RUNTIME:
             raise ValueError("WORKER_SCOPED_DATABASE_CLIENT_REQUIRED")
         self._database = database
 
@@ -53,6 +53,7 @@ class PostgresModelAttemptRepository:
                 ModelAttemptOutcome.ALREADY_PREPARED,
                 ModelAttemptOutcome.UNRESOLVED_ATTEMPT,
                 ModelAttemptOutcome.INSUFFICIENT_CREDITS,
+                ModelAttemptOutcome.BUDGET_EXHAUSTED,
                 ModelAttemptOutcome.NOT_FOUND,
             },
         )
@@ -62,12 +63,13 @@ class PostgresModelAttemptRepository:
         expected_attempt_version: int, request_hash: str,
     ) -> ModelAttemptReceipt:
         return await self._mutation(
-            "start_model_attempt_dispatch", {
+            "start_model_attempt_dispatch_v2", {
                 "p_attempt_id": attempt_id,
                 "p_run_execution_token": run_execution_token,
                 "p_expected_attempt_version": expected_attempt_version,
                 "p_request_hash": request_hash,
             }, {
+                ModelAttemptOutcome.FENCED,
                 ModelAttemptOutcome.DISPATCHING,
                 ModelAttemptOutcome.ALREADY_DISPATCHING,
                 ModelAttemptOutcome.NOT_FOUND,

@@ -48,12 +48,14 @@ show_help() {
     --skip-build           跳过构建步骤
     --skip-test            跳过测试
     --expected-sha SHA     只部署指定且已推送的 Git 提交
-
+    --runtime-flags-off-install  仅安装 flags-off Runtime 单元，不迁移或启停服务
+    --runtime-control-plane-flags-off-update --expected-unit-manifest PATH  reviewed 更新三控制面 unit
 示例:
     $0 -s                   首次部署（包含服务器初始化）
     $0                      正常部署（前后端都部署）
     $0 -f                   仅部署前端
     $0 -b                   仅部署后端
+    $0 --runtime-flags-off-install  安装四个关闭状态的 Runtime 单元
 EOF
 }
 
@@ -290,7 +292,7 @@ remote_exec() {
 deploy_backend() {
     log_info "在服务器上部署后端..."
 
-    remote_exec "RUN_MIGRATIONS=${RUN_MIGRATIONS:-false} bash -s" << 'ENDSSH'
+    remote_exec "RUN_MIGRATIONS=${RUN_MIGRATIONS:-false} RECONCILE_FAILED_MIGRATION=${RECONCILE_FAILED_MIGRATION:-} ACKNOWLEDGE_MIGRATION_ROLLBACK=${ACKNOWLEDGE_MIGRATION_ROLLBACK:-false} bash -s" << 'ENDSSH'
         set -e
         cd /var/www/everydayai/backend
         if [ ! -d "venv" ]; then
@@ -302,6 +304,7 @@ deploy_backend() {
             echo "❌ .env 文件不存在"
             exit 1
         fi
+        sudo bash ../deploy/provision-runtime-users.sh
         bash ../deploy/install-service-units.sh /var/www/everydayai/backend
         bash ../deploy/run-migrations.sh
         set -a
@@ -480,6 +483,8 @@ main() {
     printf 'DEPLOY_RESULT sha=%s scope=%s technical=passed automatic_validation=passed business_acceptance=pending_user log=%s\n' \
         "$EXPECTED_SHA" "$deploy_scope" "$DEPLOY_LOG_FILE"
 }
-
-# 执行主函数
+if [[ " $* " == *" --runtime-flags-off-install "* ]] \
+    || [[ " $* " == *" --runtime-control-plane-flags-off-update "* ]]; then
+    exec bash deploy/runtime-flags-off-install.sh "$@"
+fi
 main "$@"

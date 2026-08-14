@@ -20,10 +20,24 @@ case "${RUN_MIGRATIONS:-false}" in
         ;;
 esac
 
+echo "ℹ️ 生产 Schema 仅允许 forward migration；禁止执行 rollback SQL"
+echo "ℹ️ 故障时关闭 Runtime flags/停止新事实，回退 N-1 兼容二进制，健康验证后以新 migration 修复"
+
 migration_python=${MIGRATION_PYTHON:-./venv/bin/python}
 if [ ! -x "$migration_python" ]; then
     echo "❌ 迁移 Python 不可执行: ${migration_python}"
     exit 1
+fi
+
+if [ -n "${RECONCILE_FAILED_MIGRATION:-}" ]; then
+    if [ "${ACKNOWLEDGE_MIGRATION_ROLLBACK:-false}" != "true" ]; then
+        echo "❌ 失败迁移恢复必须明确确认事务已回滚"
+        exit 1
+    fi
+    "$migration_python" scripts/migration_runner.py reconcile-failed \
+        --identity "$RECONCILE_FAILED_MIGRATION" \
+        --acknowledge-transaction-rollback \
+        --applied-by deploy-reconciliation
 fi
 
 migration_plan=$(
@@ -40,8 +54,10 @@ if printf '%s\n' "$migration_plan" | grep -Fxq \
         echo "❌ 迁移数据库名不合法，停止管理员积分 owner 转移"
         exit 1
     fi
+    migration_python_dir=$(dirname "$migration_python")
     sudo -n -u postgres env \
-        "TENANT_DB_ADMIN_URL=postgresql:///${database_name}?host=/var/run/postgresql" \
+        "PATH=${migration_python_dir}:/usr/local/bin:/usr/bin:/bin" \
+        "TENANT_DB_ADMIN_URL=postgresql://postgres@%2Fvar%2Frun%2Fpostgresql/${database_name}" \
         bash ../deploy/transfer-admin-credit-adjustment-ownership.sh
 fi
 if printf '%s\n' "$migration_plan" | grep -Eq \

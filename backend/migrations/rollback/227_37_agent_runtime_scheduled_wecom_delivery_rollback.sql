@@ -1,0 +1,21 @@
+-- Roll back 227_37 only after disposable WeCom delivery facts are removed.
+SET LOCAL ROLE everydayai_owner;
+LOCK TABLE agent_runtime_scheduled_wecom_dispatch_attempts,agent_runtime_scheduled_wecom_delivery_items,
+ agent_runtime_scheduled_wecom_deliveries IN SHARE ROW EXCLUSIVE MODE;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_deliveries)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_delivery_items)
+ OR EXISTS(SELECT 1 FROM agent_runtime_scheduled_wecom_dispatch_attempts) THEN
+  RAISE EXCEPTION 'AGENT_RUNTIME_SCHEDULED_WECOM_ROLLBACK_HAS_FACTS' USING ERRCODE='55000';
+ END IF;
+END $$;
+DROP TRIGGER initialize_runtime_scheduled_wecom_delivery ON agent_runtime_scheduled_delivery_intents;
+DROP FUNCTION _initialize_agent_runtime_scheduled_wecom_delivery();
+DROP TRIGGER runtime_scheduled_wecom_attempt_identity_guard ON agent_runtime_scheduled_wecom_dispatch_attempts;
+DROP TRIGGER runtime_scheduled_wecom_item_identity_guard ON agent_runtime_scheduled_wecom_delivery_items;
+DROP TRIGGER runtime_scheduled_wecom_delivery_identity_guard ON agent_runtime_scheduled_wecom_deliveries;
+DROP FUNCTION _agent_runtime_scheduled_wecom_identity_guard();
+DROP TABLE agent_runtime_scheduled_wecom_dispatch_attempts;
+DROP TABLE agent_runtime_scheduled_wecom_delivery_items;
+DROP TABLE agent_runtime_scheduled_wecom_deliveries;
+RESET ROLE;

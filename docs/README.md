@@ -14,6 +14,7 @@
 | [TECH_ARCHITECTURE.md](./document/TECH_ARCHITECTURE.md) | 技术架构、数据库设计、API 设计 | ✅ 完成 |
 | [PAGE_DESIGN.md](./document/PAGE_DESIGN.md) | 页面设计、交互流程、UI 规范 | ✅ 完成 |
 | [OSS_CDN_DESIGN.md](./document/OSS_CDN_DESIGN.md) | OSS + CDN 存储方案设计 | ✅ 完成 |
+| [AGENT_RUNTIME_PRODUCTION_RUNBOOK.md](./AGENT_RUNTIME_PRODUCTION_RUNBOOK.md) | Agent Runtime 生产 composition、发布、观测与回滚 | ✅ 完成 |
 
 ### 开发辅助文档
 

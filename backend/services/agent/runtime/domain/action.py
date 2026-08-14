@@ -18,6 +18,12 @@ from services.agent.runtime.domain.identity import (
 from services.agent.runtime.domain.scope import RuntimeScope
 
 
+def _require_sha256(value: str, name: str) -> None:
+    require_stable_value(value, name)
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hash")
+
+
 class ActionStatus(StrEnum):
     REQUESTED = "requested"
     AWAITING_AUTHORIZATION = "awaiting_authorization"
@@ -70,10 +76,14 @@ class ActionAttempt:
     request_hash: str
     lease: Lease
     started_at: datetime
+    state_version: int = 0
     accepted_at: datetime | None = None
     ended_at: datetime | None = None
+    session_id: str | None = None
+    run_id: str | None = None
     external_receipt: Mapping[str, object] = field(default_factory=dict)
     ambiguity_evidence: Mapping[str, object] = field(default_factory=dict)
+    capabilities: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -81,14 +91,20 @@ class ActionAttempt:
             (self.action_id, "action_id"),
             (self.worker_id, "worker_id"),
             (self.idempotency_key, "idempotency_key"),
-            (self.request_hash, "request_hash"),
         ):
             require_stable_value(value, name)
+        _require_sha256(self.request_hash, "request_hash")
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be positive")
+        if self.state_version < 0:
+            raise ValueError("state_version must not be negative")
         require_aware_datetime(self.started_at, "started_at")
         require_aware_datetime(self.accepted_at, "accepted_at")
         require_aware_datetime(self.ended_at, "ended_at")
+        if self.session_id is not None:
+            require_stable_value(self.session_id, "session_id")
+        if self.run_id is not None:
+            require_stable_value(self.run_id, "run_id")
         if self.status is ActionAttemptStatus.ACCEPTED:
             if self.accepted_at is None or not self.external_receipt:
                 raise ValueError(
@@ -122,7 +138,7 @@ class ActionResult:
 
     def __post_init__(self) -> None:
         require_stable_value(self.action_id, "action_id")
-        require_stable_value(self.result_hash, "result_hash")
+        _require_sha256(self.result_hash, "result_hash")
 
 
 def require_retry_safe(
@@ -144,8 +160,21 @@ def require_action_result(
     target: ActionStatus,
     result: ActionResult | None,
 ) -> None:
-    """Action completed 必须有结果，其他状态不得提前绑定终态结果。"""
-    if target is ActionStatus.COMPLETED and result is None:
-        raise ValueError("completed action requires ActionResult")
-    if target is not ActionStatus.COMPLETED and result is not None:
-        raise ValueError("ActionResult is only valid for completed action")
+    """Action completed/failed 必须有规范结果，其他状态不得提前绑定。"""
+    result_targets = {ActionStatus.COMPLETED, ActionStatus.FAILED}
+    if target in result_targets and result is None:
+        raise ValueError(f"{target.value} action requires ActionResult")
+    if target not in result_targets and result is not None:
+        raise ValueError("ActionResult is only valid for completed/failed action")
+    if (
+        result is not None
+        and target is ActionStatus.FAILED
+        and result.status is not ActionResultStatus.ERROR
+    ):
+        raise ValueError("failed action requires an error ActionResult")
+    if (
+        result is not None
+        and target is ActionStatus.COMPLETED
+        and result.status is ActionResultStatus.ERROR
+    ):
+        raise ValueError("completed action cannot use an error ActionResult")

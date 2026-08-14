@@ -26,6 +26,7 @@ def test_backend_and_wecom_use_isolated_runtime_role_overrides() -> None:
         *backend_expected,
         "/var/www/everydayai/backend/.env.worker-client",
         "/var/www/everydayai/backend/.env.kek",
+        "/etc/everydayai/runtime-admin.env",
     ]
     assert _environment_files("everydayai-wecom.service") == [
         "/var/www/everydayai/backend/.env",

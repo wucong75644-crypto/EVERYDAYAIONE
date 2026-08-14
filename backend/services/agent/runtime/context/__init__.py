@@ -32,6 +32,9 @@ from services.agent.runtime.context.provider_receipt import (
     prepare_provider_context_plan,
 )
 from services.agent.runtime.context.provider_plan import ProviderContextPlan
+from services.agent.runtime.context.runtime_builder import (
+    RuntimeContextV2, build_runtime_context,
+)
 from services.agent.runtime.context.pruning import PruningReceipt, prune_context
 from services.agent.runtime.context.telemetry import record_context_event
 
@@ -44,6 +47,8 @@ __all__ = [
     "CompactionReceipt",
     "HistoryAssemblyPlan",
     "ProviderContextPlan",
+    "RuntimeContextV2",
+    "build_runtime_context",
     "PruningReceipt",
     "acquire_loop_compaction",
     "accumulate_provider_context_usage",

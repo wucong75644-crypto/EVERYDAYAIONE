@@ -284,6 +284,7 @@ _DEFINITIONS = (
             "wecom.callback",
             "wecom.oauth.public",
             "wecom.oauth.exchange",
+            "wecom.app",
         ),
     ),
     _secret(
@@ -302,7 +303,7 @@ _DEFINITIONS = (
         fallback_policy="none",
         user_override="deny",
         validation={"max_length": 100, "min_length": 1},
-        bundles=("wecom.callback", "wecom.oauth.public"),
+        bundles=("wecom.callback", "wecom.oauth.public", "wecom.app"),
     ),
     _secret(
         "wecom.oauth_agent_secret",
@@ -311,7 +312,12 @@ _DEFINITIONS = (
         user_override="deny",
         secret_name="wecom.oauth_agent_secret",
         payload_fields=("agent_secret",),
-        bundles=("wecom.callback", "wecom.contact", "wecom.oauth.exchange"),
+        bundles=(
+            "wecom.callback",
+            "wecom.contact",
+            "wecom.oauth.exchange",
+            "wecom.app",
+        ),
     ),
     _secret(
         "wecom.callback_credentials",
@@ -396,6 +402,16 @@ _BUNDLES = (
         required_keys=("wecom.corp_id", "wecom.bot_credentials"),
         optional_keys=(),
         allowed_consumers=("worker_org",),
+    ),
+    BundleDefinition(
+        name="wecom.app",
+        required_keys=(
+            "wecom.corp_id",
+            "wecom.oauth_agent_id",
+            "wecom.oauth_agent_secret",
+        ),
+        optional_keys=(),
+        allowed_consumers=("wecom_runtime",),
     ),
     BundleDefinition(
         name="wecom.oauth.public",

@@ -94,6 +94,15 @@ def test_backend_deploy_validates_migration_mode() -> None:
     assert "RUN_MIGRATIONS 只能是 true 或 false" in MIGRATION_SCRIPT
     assert "缺少 MIGRATION_DATABASE_URL" in MIGRATION_SCRIPT
     assert "source .env.migrator" in MIGRATION_SCRIPT
+    assert "RECONCILE_FAILED_MIGRATION" in MIGRATION_SCRIPT
+    assert "ACKNOWLEDGE_MIGRATION_ROLLBACK" in MIGRATION_SCRIPT
+    policy_notice = "生产 Schema 仅允许 forward migration；禁止执行 rollback SQL"
+    assert policy_notice in MIGRATION_SCRIPT
+    assert "回退 N-1 兼容二进制" in MIGRATION_SCRIPT
+    assert MIGRATION_SCRIPT.index(policy_notice) < MIGRATION_SCRIPT.index(
+        "migration_plan=$("
+    )
+    assert "provision-runtime-users.sh" in SCRIPT
     assert "venv/bin/python -m pytest" in SCRIPT
     assert 'command -v python3.12 || command -v python3' in SCRIPT
     assert '"$PYTHON_BIN" -m venv venv' in SCRIPT

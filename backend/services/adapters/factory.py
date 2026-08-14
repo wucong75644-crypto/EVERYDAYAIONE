@@ -501,6 +501,7 @@ def create_chat_adapter(
     stream_timeout: Optional[float] = None,
     org_id: Optional[str] = None,
     db=None,
+    api_key_override: Optional[str] = None,
 ) -> BaseChatAdapter:
     """
     根据模型 ID 创建对应的聊天适配器
@@ -547,7 +548,9 @@ def create_chat_adapter(
     if config.provider == ModelProvider.KIE:
         from .kie import KieClient, KieChatAdapter
 
-        api_key = _resolve_ai_key(org_id, "kie", "kie_api_key", db)
+        api_key = api_key_override or _resolve_ai_key(
+            org_id, "kie", "kie_api_key", db,
+        )
         if not api_key:
             raise ConfigurationError("KIE")
 
@@ -557,7 +560,9 @@ def create_chat_adapter(
     elif config.provider == ModelProvider.DASHSCOPE:
         from .dashscope import DashScopeChatAdapter
 
-        api_key = _resolve_ai_key(org_id, "dashscope", "dashscope_api_key", db)
+        api_key = api_key_override or _resolve_ai_key(
+            org_id, "dashscope", "dashscope_api_key", db,
+        )
         if not api_key:
             raise ConfigurationError("DashScope")
 
@@ -571,7 +576,9 @@ def create_chat_adapter(
     elif config.provider == ModelProvider.OPENROUTER:
         from .openrouter import OpenRouterChatAdapter
 
-        api_key = _resolve_ai_key(org_id, "openrouter", "openrouter_api_key", db)
+        api_key = api_key_override or _resolve_ai_key(
+            org_id, "openrouter", "openrouter_api_key", db,
+        )
         if not api_key:
             raise ConfigurationError("OpenRouter")
 
@@ -586,7 +593,9 @@ def create_chat_adapter(
     elif config.provider == ModelProvider.GOOGLE:
         from .google import GoogleChatAdapter
 
-        api_key = _resolve_ai_key(org_id, "google", "google_api_key", db)
+        api_key = api_key_override or _resolve_ai_key(
+            org_id, "google", "google_api_key", db,
+        )
         if not api_key:
             raise ConfigurationError("Google")
 

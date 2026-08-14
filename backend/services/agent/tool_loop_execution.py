@@ -116,56 +116,14 @@ class ToolLoopExecutionMixin:
         args: Dict[str, Any],
         tool_call_id: str,
         hook_ctx: HookContext,
-    ) -> str | None:
-        """向前端发起写操作确认；无任务或观察异常不阻塞工具执行。"""
-        if not hook_ctx.task_id:
-            return None
-
-        try:
-            from schemas.websocket_builders import build_tool_confirm_request
-            from services.websocket_manager import ws_manager
-
-            await ws_manager.send_to_task_or_user(
-                hook_ctx.task_id,
-                hook_ctx.user_id,
-                build_tool_confirm_request(
-                    task_id=hook_ctx.task_id,
-                    conversation_id=hook_ctx.conversation_id,
-                    message_id="",
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    arguments=args,
-                    description=f"AI 要执行写操作: {tool_name}",
-                    safety_level="dangerous",
-                    timeout=60,
-                ),
-                org_id=hook_ctx.org_id,
-            )
-            approved = await ws_manager.wait_for_confirm(
-                tool_call_id,
-                hook_ctx.user_id,
-                hook_ctx.org_id,
-                timeout=60.0,
-            )
-            if approved:
-                logger.info(
-                    f"Tool confirm approved | tool={tool_name} | "
-                    f"tool_call_id={tool_call_id}"
-                )
-                return None
-            logger.info(
-                f"Tool confirm rejected/timeout | tool={tool_name} | "
-                f"tool_call_id={tool_call_id}"
-            )
-            return (
-                f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
-                f"请告知用户操作未执行，询问是否需要重新确认。"
-            )
-        except Exception as exc:
-            logger.warning(
-                f"Tool confirm error | tool={tool_name} | error={exc}"
-            )
-            return None
+    ) -> bool:
+        """Legacy ToolLoop is never an execution owner for non-SAFE tools."""
+        logger.warning(
+            "legacy_tool_owner_rejected | "
+            f"tool={tool_name} | task_id={hook_ctx.task_id or ''} | "
+            f"tool_call_id={tool_call_id} | error_code=RUNTIME_OWNER_REQUIRED"
+        )
+        return False
 
     async def _execute_tools(
         self,
@@ -236,7 +194,9 @@ class ToolLoopExecutionMixin:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
             except json.JSONDecodeError as exc:
                 logger.warning(
-                    f"ToolLoop bad JSON | tool={tool_name} | error={exc}"
+                    "tool_arguments_rejected | "
+                    f"tool={tool_name} | error_code=INVALID_JSON | "
+                    f"exception_type={type(exc).__name__}"
                 )
                 result = f"工具参数JSON格式错误: {exc}，请检查参数格式"
                 hook_ctx.messages.append({
@@ -246,18 +206,13 @@ class ToolLoopExecutionMixin:
                 })
                 accumulated = result
                 continue
-            if get_safety_level(tool_name) == SafetyLevel.DANGEROUS:
-                confirm_result = await self._request_user_confirm(
-                    tool_name, args, tc["id"], hook_ctx,
-                )
-                if confirm_result is not None:
-                    hook_ctx.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": confirm_result,
-                    })
-                    accumulated = confirm_result
-                    continue
+            try:
+                safety = get_safety_level(tool_name)
+            except ValueError:
+                result = "工具未登记，已拒绝执行。"
+                hook_ctx.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                accumulated = result
+                continue
             args, validation_error = validate_tool_args(
                 tool_name, args, selected_tools,
             )
@@ -268,6 +223,21 @@ class ToolLoopExecutionMixin:
                     "content": validation_error,
                 })
                 accumulated = validation_error
+                continue
+            if safety != SafetyLevel.SAFE:
+                await self._request_user_confirm(
+                    tool_name, args, tc["id"], hook_ctx,
+                )
+                confirm_result = (
+                    f"⚠ 工具 {tool_name} 仅允许由 Agent Runtime "
+                    "在持久授权与 Dispatch Gate 后执行。"
+                )
+                hook_ctx.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": confirm_result,
+                })
+                accumulated = confirm_result
                 continue
             ready.append((tc, tool_name, args))
         return ready, accumulated, False
@@ -298,8 +268,10 @@ class ToolLoopExecutionMixin:
                     status, cached, elapsed_ms,
                 )
             except Exception as exc:
-                logger.opt(exception=True).error(
-                    f"ToolLoop parallel error | tool={tool_name} | error={exc}"
+                logger.error(
+                    "tool_execution_failed | "
+                    f"tool={tool_name} | error_code=HANDLER_FAILED | "
+                    f"exception_type={type(exc).__name__}"
                 )
                 return (
                     tc, tool_name, args, f"工具执行失败: {exc}",

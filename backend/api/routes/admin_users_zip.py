@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from core.db_scope import PostgresArray
 from api.deps import CurrentUserId, Database
 from services.assets import is_allowed_asset_url as _is_allowed_asset_url
 
@@ -53,7 +54,7 @@ def _resolve_download_assets(
             "resolve_platform_admin_user_assets_download",
             {
                 "p_actor_user_id": uid,
-                "p_asset_ids": asset_ids,
+                "p_asset_ids": PostgresArray(asset_ids),
             },
         ).execute()
     except Exception as error:

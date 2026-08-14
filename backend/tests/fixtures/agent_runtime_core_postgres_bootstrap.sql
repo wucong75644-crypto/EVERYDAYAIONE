@@ -21,6 +21,7 @@ GRANT everydayai_owner, everydayai_runtime, everydayai_wecom_runtime,
 GRANT USAGE, CREATE ON SCHEMA public TO everydayai_owner;
 GRANT USAGE ON SCHEMA public TO everydayai_runtime,
     everydayai_wecom_runtime, everydayai_worker;
+ALTER SCHEMA public OWNER TO everydayai_owner;
 SET ROLE everydayai_owner;
 CREATE TABLE users(id UUID PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active');
 CREATE TABLE organizations(

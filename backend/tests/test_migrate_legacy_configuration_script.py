@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 import subprocess
+import sys
 
 from scripts import migrate_legacy_configuration as script
 from services.configuration.legacy_import import (
@@ -289,7 +290,7 @@ def test_stable_planning_error_is_reported_without_traceback(
 def test_script_help_runs_from_project_root() -> None:
     result = subprocess.run(
         [
-            str(script.BACKEND_ROOT / "venv/bin/python"),
+            sys.executable,
             str(script.BACKEND_ROOT / "scripts/migrate_legacy_configuration.py"),
             "--help",
         ],

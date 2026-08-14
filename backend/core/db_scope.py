@@ -13,12 +13,34 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 
+
 class DatabaseAccessKind(StrEnum):
     """允许进入普通数据库事务的服务类别。"""
 
+    AGENT_RUNTIME = "agent_runtime"
+    AUTHORIZATION = "authorization"
+    PROJECTION = "projection"
     RUNTIME = "runtime"
+    RUNTIME_ADMIN = "runtime_admin"
+    SANDBOX_WORKER = "sandbox_worker"
     SYNC = "sync"
     WORKER = "worker"
+
+
+@dataclass(frozen=True)
+class PostgresArray:
+    """显式标记 Scoped RPC 参数应按 PostgreSQL UUID 数组传递。"""
+
+    values: list[UUID]
+
+    def __init__(self, values: list[str | UUID]) -> None:
+        object.__setattr__(self, "values", [UUID(str(value)) for value in values])
+
+
+def _adapt_rpc_param(value: Any) -> Any:
+    if isinstance(value, PostgresArray):
+        return value.values
+    return Jsonb(value) if isinstance(value, (dict, list)) else value
 
 
 @dataclass(frozen=True)
@@ -70,15 +92,93 @@ SELECT
 """
 
 
+_SCHEDULED_WECOM_UUID_RPCS = frozenset({
+    "claim_agent_runtime_scheduled_wecom_delivery_v1",
+    "renew_agent_runtime_scheduled_wecom_delivery_lease_v1",
+    "read_agent_runtime_scheduled_wecom_claim_v1",
+    "read_agent_runtime_scheduled_wecom_dispatch_context_v1",
+    "recover_agent_runtime_scheduled_wecom_prepared_dispatch_v1",
+    "prepare_agent_runtime_scheduled_wecom_dispatch_v1",
+    "start_agent_runtime_scheduled_wecom_dispatch_v1",
+    "read_agent_runtime_scheduled_wecom_dispatch_attempt_v1",
+    "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
+    "claim_agent_runtime_scheduled_wecom_reconcile_v1",
+    "renew_agent_runtime_scheduled_wecom_reconcile_lease_v1",
+    "read_agent_runtime_scheduled_wecom_reconcile_v1",
+    "claim_agent_runtime_scheduled_wecom_delivery_v2",
+    "record_agent_runtime_scheduled_wecom_reconcile_result_v1",
+    "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
+    "prepare_agent_runtime_scheduled_wecom_dispatch_v2",
+    "start_agent_runtime_scheduled_wecom_dispatch_v2",
+    "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
+    "read_agent_runtime_scheduled_wecom_dispatch_payload_v1",
+    "read_agent_runtime_scheduled_wecom_prepared_payload_v1",
+    "terminalize_agent_runtime_scheduled_wecom_unsupported_item_v1",
+    "recover_agent_runtime_scheduled_wecom_started_dispatch_v1",
+})
+
+_SCHEDULED_WECOM_UUID_KEYS = {
+    "p_request_id", "p_intent_id", "p_item_id", "p_attempt_id",
+    "p_claim_request_id", "p_lease_token", "p_reconcile_token",
+    "p_recovery_request_id",
+}
+
+
 def _rpc_sql(name: str, params: dict[str, Any]) -> tuple[str, list[Any]]:
     if not params:
-        return f'SELECT "{name}"()', []
-    named_args = ", ".join(f"{key} := %s" for key in params)
-    values = [
-        Jsonb(value) if isinstance(value, (dict, list)) else value
-        for value in params.values()
-    ]
-    return f'SELECT "{name}"({named_args})', values
+        return f'SELECT public."{name}"()', []
+    # PostgreSQL resolves an untyped parameter from its runtime value.  Small
+    # Python integers (notably version 0/1) are therefore inferred as
+    # ``smallint`` and fail against BIGINT RPC contracts.  Keep the RPC
+    # surface named, while pinning the known numeric contract arguments.
+    numeric_types = {
+        "p_expected_action_version": "bigint",
+        "p_expected_attempt_version": "bigint",
+        "p_expected_version": "bigint",
+        "p_fencing_token": "bigint",
+        "p_executor_revision": "integer",
+        "p_lease_seconds": "integer",
+        "p_attempt_state_version": "bigint",
+        "p_capability_kill_epoch": "bigint",
+        "p_expected_operation_version": "bigint",
+        "p_expected_delivery_state_version": "bigint",
+        "p_expected_item_state_version": "bigint",
+        "p_limit": "integer",
+        "p_delay_seconds": "integer",
+        "p_provider_kill_epoch": "bigint",
+        "p_tenant_kill_epoch": "bigint",
+    }
+    bigint_provider_revision_rpcs = {
+        "prepare_agent_runtime_scheduled_wecom_dispatch_v2",
+        "start_agent_runtime_scheduled_wecom_dispatch_v2",
+        "read_agent_runtime_scheduled_wecom_dispatch_attempt_v2",
+        "record_agent_runtime_scheduled_wecom_dispatch_outcome_v1",
+        "record_agent_runtime_scheduled_wecom_reconcile_result_v1",
+        "record_agent_runtime_scheduled_wecom_reconcile_definitive_result_v1",
+    }
+    if name in bigint_provider_revision_rpcs:
+        numeric_types["p_provider_revision"] = "bigint"
+    uuid_keys = {
+        "p_action_id", "p_attempt_id", "p_dispatch_intent_id", "p_job_id",
+        "p_claim_token", "p_receipt_id", "p_policy_receipt_id",
+    }
+    if name in _SCHEDULED_WECOM_UUID_RPCS:
+        uuid_keys.update(_SCHEDULED_WECOM_UUID_KEYS)
+    text_keys = {
+        "p_external_idempotency_key", "p_request_hash", "p_executor_type",
+        "p_runtime_revision", "p_workspace_scope_ref", "p_code_sha256",
+        "p_terminal_status", "p_terminal_reason", "p_phase", "p_worker_id",
+    }
+    named_args = ", ".join(
+        f"{key} := %s::{numeric_types[key]}"
+        if key in numeric_types else (
+            f"{key} := %s::uuid" if key in uuid_keys else
+            f"{key} := %s::text" if key in text_keys else f"{key} := %s"
+        )
+        for key in params
+    )
+    values = [_adapt_rpc_param(value) for value in params.values()]
+    return f'SELECT public."{name}"({named_args})', values
 
 
 def _rpc_response(rows: list[dict[str, Any]]) -> Any:

@@ -19,9 +19,13 @@ ROLLBACK = (
     / "migrations/rollback/160_configuration_resolution_core_rollback.sql"
 )
 SQL = MIGRATION.read_text(encoding="utf-8")
-INCREMENTAL_SQL = (
-    ROOT / "migrations/201_wecom_callback_inbox.sql"
-).read_text(encoding="utf-8")
+INCREMENTAL_SQL = tuple(
+    (ROOT / "migrations" / migration).read_text(encoding="utf-8")
+    for migration in (
+        "201_wecom_callback_inbox.sql",
+        "227_50_agent_runtime_scheduled_wecom_configuration_facade.sql",
+    )
+)
 ROLLBACK_SQL = ROLLBACK.read_text(encoding="utf-8")
 
 
@@ -46,19 +50,25 @@ def _snapshot_rows() -> dict[str, tuple[dict[str, object], str]]:
         name: (json.loads(contract_json), contract_hash)
         for name, contract_json, contract_hash in rows
     }
-    insert_sql = INCREMENTAL_SQL.split(
-        "INSERT INTO configuration_bundle_definitions(", 1,
-    )[1].split("CREATE OR REPLACE FUNCTION", 1)[0]
-    inserts = re.findall(
-        r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
-        r"'([0-9a-f]{64})',\s*TRUE\s*\)",
-        insert_sql,
-        re.DOTALL,
-    )
-    snapshot.update({
-        name: (json.loads(contract_json), contract_hash)
-        for name, contract_json, contract_hash in inserts
-    })
+    for incremental_sql in INCREMENTAL_SQL:
+        insert_marker = (
+            "INSERT INTO public.configuration_bundle_definitions("
+            if "INSERT INTO public.configuration_bundle_definitions(" in incremental_sql
+            else "INSERT INTO configuration_bundle_definitions("
+        )
+        insert_sql = incremental_sql.split(
+            insert_marker, 1,
+        )[1].split("CREATE OR REPLACE FUNCTION", 1)[0]
+        inserts = re.findall(
+            r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
+            r"'([0-9a-f]{64})',\s*TRUE\s*\)",
+            insert_sql,
+            re.DOTALL,
+        )
+        snapshot.update({
+            name: (json.loads(contract_json), contract_hash)
+            for name, contract_json, contract_hash in inserts
+        })
     return snapshot
 
 

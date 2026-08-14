@@ -1,0 +1,33 @@
+[Unit]
+Description=EVERYDAYAIONE Agent Runtime Coordinator
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=everydayai-agent-runtime
+Group=everydayai-app
+SupplementaryGroups=everydayai-sandbox-io everydayai-runtime-model-secret
+WorkingDirectory=/var/www/everydayai/backend
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/bin:/bin"
+Environment="EVERYDAYAI_LOG_DIR=/var/log/everydayai/agent-runtime"
+EnvironmentFile=/etc/everydayai/agent-runtime-worker.env
+EnvironmentFile=/etc/everydayai/agent-runtime-model.env
+InaccessiblePaths=-/var/www/everydayai/backend/.env -/var/www/everydayai/backend/.env.kek -/etc/everydayai/agent-model-gateway.env -/etc/everydayai/agent-model-gateway-kek.env
+RuntimeDirectory=everydayai-agent-runtime
+ExecStartPre=/var/www/everydayai/deploy/runtime-capability-probe.sh agent_runtime
+ExecStart=/var/www/everydayai/backend/venv/bin/python agent_runtime_worker_main.py
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=3600
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/everydayai-agent-runtime /var/lib/everydayai/sandbox-jobs /var/log/everydayai
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

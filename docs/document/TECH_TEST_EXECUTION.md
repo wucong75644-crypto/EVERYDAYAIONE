@@ -33,6 +33,22 @@ RUN_EXTERNAL_TESTS=1 scripts/run_tests.sh external
 普通开发遵循 `target → 受影响模块 → fast`。A级任务最终验收运行 `pr`；
 `full/large/external` 仅在方案、发布门禁或用户要求时运行。
 
+### 隔离 Redis 合同测试
+
+Redis 原子性与 Lua 合同不能使用 FakeRedis 代替。执行
+`scripts/run_redis_contract_tests.sh` 会在 `127.0.0.1` 的随机端口启动临时
+Redis Standalone，使用临时目录且禁用持久化，测试结束后检查零残留并停止进程。
+测试本身还要求 `RUN_REDIS_EXTERNAL_TESTS=1` 和显式
+`REDIS_TEST_URL`；fixture 拒绝非 localhost、缺少端口或与
+`REDIS_URL` 相同的地址，不会读取项目 Redis 作为默认值。
+worktree 未包含虚拟环境时，可用 `EVERYDAYAI_TEST_PYTHON` 指向已安装项目依赖的
+Python 可执行文件。
+
+当前合同只证明执行测试时报告的 Redis Standalone 版本。未来 Tool
+Confirmation Challenge 接入生产前，启动前能力探针仍须使用专用前缀验证
+`PING`、`TIME`、`EVAL`、TTL 与原子状态脚本；任一步失败必须关闭授权能力。
+Upstash、代理与 Cluster 必须在对应真实环境中另行验证。
+
 ## AI 渐进加载
 
 ```text

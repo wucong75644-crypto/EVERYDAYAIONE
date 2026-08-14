@@ -147,66 +147,27 @@ class TestRequestUserConfirm:
         )
 
     @pytest.mark.asyncio
-    async def test_headless_mode_skips_confirm(self):
-        """task_id=None（headless）→ 直接放行"""
+    async def test_missing_task_id_fails_closed(self):
+        """A non-SAFE tool without task identity is rejected."""
         executor = self._make_executor()
         ctx = self._make_hook_ctx(task_id=None)
         result = await executor._request_user_confirm(
             "erp_execute", {"action": "test"}, "tc_001", ctx,
         )
-        assert result is None  # None = 继续执行
+        assert result is False
 
     @pytest.mark.asyncio
-    async def test_confirm_approved_returns_none(self):
-        """用户确认 → 返回 None（继续执行）"""
+    async def test_legacy_owner_rejects_even_if_v3_service_is_available(self):
+        """Redis confirmation never grants the legacy loop execution rights."""
         executor = self._make_executor()
         ctx = self._make_hook_ctx(task_id="task_001")
-
+        service = MagicMock()
         with patch(
-            "services.websocket_manager.ws_manager.send_to_task_or_user",
-            new_callable=AsyncMock,
-        ), patch(
-            "services.websocket_manager.ws_manager.wait_for_confirm",
-            new_callable=AsyncMock,
-            return_value=True,
+            "services.tool_confirmation.tool_confirmation_service", service,
         ):
             result = await executor._request_user_confirm(
                 "erp_execute", {"action": "test"}, "tc_001", ctx,
             )
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_confirm_rejected_returns_message(self):
-        """用户拒绝 → 返回拒绝提示文本"""
-        executor = self._make_executor()
-        ctx = self._make_hook_ctx(task_id="task_001")
-
-        with patch(
-            "services.websocket_manager.ws_manager.send_to_task_or_user",
-            new_callable=AsyncMock,
-        ), patch(
-            "services.websocket_manager.ws_manager.wait_for_confirm",
-            new_callable=AsyncMock,
-            return_value=False,
-        ):
-            result = await executor._request_user_confirm(
-                "erp_execute", {"action": "test"}, "tc_001", ctx,
-            )
-            assert result is not None
-            assert "拒绝" in result or "超时" in result
-
-    @pytest.mark.asyncio
-    async def test_confirm_error_fails_open(self):
-        """确认机制异常 → 放行（fail-open）"""
-        executor = self._make_executor()
-        ctx = self._make_hook_ctx(task_id="task_001")
-
-        with patch(
-            "services.websocket_manager.ws_manager.send_to_task_or_user",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("ws broken"),
-        ):
-            result = await executor._request_user_confirm(
-                "erp_execute", {"action": "test"}, "tc_001", ctx,
-            )
-            assert result is None  # fail-open
+            assert result is False
+        service.create.assert_not_called()
+        service.await_and_claim.assert_not_called()

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Mapping, Protocol
+from typing import TYPE_CHECKING, Mapping, Protocol
 
 from services.agent.runtime.domain import ActionAttempt, ActionResult
 from services.agent.runtime.domain.identity import require_stable_value
+if TYPE_CHECKING:
+    from services.agent.runtime.executors.specialist_contracts import ReconciliationContext
 
 
 class ExecutionOutcome(StrEnum):
@@ -16,6 +18,14 @@ class ExecutionOutcome(StrEnum):
     UNKNOWN = "unknown"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class ExecutorDispatchUnknown(RuntimeError):
+    """A submit may have committed; callers must persist reconcile facts."""
+
+    def __init__(self, evidence: Mapping[str, object]) -> None:
+        super().__init__("EXECUTOR_DISPATCH_UNKNOWN")
+        self.evidence = dict(evidence)
 
 
 @dataclass(frozen=True)
@@ -49,8 +59,21 @@ class ExecutorPort(Protocol):
     ) -> ExecutionReceipt:
         """执行或提交 Action。"""
 
-    async def reconcile(self, attempt: ActionAttempt) -> ExecutionReceipt:
+    async def reconcile(
+        self, attempt: ActionAttempt, context: ReconciliationContext | None = None,
+    ) -> ExecutionReceipt:
         """查询 accepted/unknown 外部动作，禁止重复 dispatch。"""
 
-    async def cancel(self, attempt: ActionAttempt) -> ExecutionReceipt:
+    async def cancel(
+        self, attempt: ActionAttempt, context: ReconciliationContext | None = None,
+    ) -> ExecutionReceipt:
         """请求取消并返回可证明的结果。"""
+
+
+class DispatchCapabilityIssuerPort(Protocol):
+    """Trusted application issuer; Executors cannot mint capabilities."""
+
+    def issue(
+        self, *, attempt: ActionAttempt, descriptor: object,
+        phase: str, dispatch_gate: object | None = None,
+    ) -> Mapping[str, object]: ...

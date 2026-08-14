@@ -42,7 +42,7 @@ class _Worker:
 
 
 @pytest.mark.asyncio
-async def test_runtime_starts_and_stops_worker_and_kernel():
+async def test_runtime_starts_worker_without_becoming_sandbox_owner():
     kernel = _Kernel()
     runtime = ConversationActorRuntime(
         object(), object(), kernel, worker_factory=_Worker,
@@ -52,8 +52,8 @@ async def test_runtime_starts_and_stops_worker_and_kernel():
     await asyncio.sleep(0)
     await runtime.stop()
 
-    assert kernel.started is True
-    assert kernel.stopped is True
+    assert kernel.started is False
+    assert kernel.stopped is False
     assert get_kernel_manager() is None
 
 
@@ -134,6 +134,19 @@ def test_runtime_routes_worker_and_task_databases_by_scope():
     assert executor._handler_db_factory() is handler
     assert observer._db is control
     assert observer._post_handler_factory().db is handler
+
+
+def test_runtime_injects_runtime_action_executor_factory_into_chat_executor():
+    marker = object()
+    runtime = ConversationActorRuntime(
+        object(), object(), _Kernel(), worker_factory=_Worker,
+        runtime_action_executor_factory=lambda _db: marker,
+    )
+    databases = ActorTaskDatabases(object(), object(), object())
+
+    executor = runtime._create_executor(databases)
+
+    assert executor._runtime_action_executor_factory(databases.application) is marker
 
 
 def test_default_handler_database_uses_worker_role(monkeypatch):

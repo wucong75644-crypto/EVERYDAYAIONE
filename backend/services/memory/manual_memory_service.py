@@ -72,7 +72,7 @@ class ManualMemoryService(MemorySettingsService):
         if not embedding:
             raise _unavailable()
         outcome = await self._rpc(
-            "create_manual_memory",
+            "runtime_create_manual_memory",
             {
                 "p_org_id": org_id,
                 "p_user_id": user_id,
@@ -113,7 +113,7 @@ class ManualMemoryService(MemorySettingsService):
         if not embedding:
             raise _unavailable()
         outcome = await self._rpc(
-            "update_manual_memory",
+            "runtime_update_manual_memory",
             {
                 "p_org_id": org_id,
                 "p_user_id": user_id,
@@ -147,7 +147,7 @@ class ManualMemoryService(MemorySettingsService):
     ) -> None:
         _validate_uuid(memory_id)
         outcome = await self._rpc(
-            "delete_memory_atom",
+            "runtime_delete_memory_atom",
             {
                 "p_org_id": org_id,
                 "p_user_id": user_id,
@@ -165,7 +165,7 @@ class ManualMemoryService(MemorySettingsService):
         org_id: str | None = None,
     ) -> None:
         outcome = await self._rpc(
-            "clear_memory_atoms",
+            "runtime_clear_memory_atoms",
             {"p_org_id": org_id, "p_user_id": user_id},
             user_id=user_id,
             org_id=org_id,

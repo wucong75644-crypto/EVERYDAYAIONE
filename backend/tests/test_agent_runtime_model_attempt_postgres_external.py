@@ -15,7 +15,15 @@ import pytest
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE_URL = os.getenv("AR11_TEST_DATABASE_URL", "")
-MIGRATIONS = tuple(sorted((ROOT / "migrations").glob("217_*.sql")))
+MIGRATIONS = tuple(
+    ROOT / "migrations" / name
+    for name in (
+        "217_01_agent_runtime_model_attempt_foundation.sql",
+        "217_02_agent_runtime_model_attempt_credits.sql",
+        "217_03_agent_runtime_model_attempt_lifecycle.sql",
+        "217_04_agent_runtime_model_attempt_reconciliation.sql",
+    )
+)
 ROLLBACKS = tuple(
     ROOT / "migrations/rollback" / f"{path.stem}_rollback.sql"
     for path in reversed(MIGRATIONS)

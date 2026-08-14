@@ -4,8 +4,8 @@ After=network.target everydayai-backend.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=everydayai-wecom
+Group=everydayai-app
 WorkingDirectory=/var/www/everydayai/backend
 
 # 环境变量
@@ -34,6 +34,9 @@ StartLimitBurst=10
 
 # 资源限制
 LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
 
 # 日志配置
 StandardOutput=journal

@@ -1,5 +1,89 @@
 # 当前问题 (CURRENT_ISSUES)
 
+## 2026-07-28 Sandbox专业Executor — 本地合同实施中，Linux隔离待远程验证
+
+- migration 222_01/222_02/222_03建立 PostgreSQL Job SSOT、全局外部幂等键、execution 与
+  reconciliation fencing、unknown-only恢复、partial 24小时清理上限及窄RPC。
+- 新角色 `everydayai_sandbox_worker` 由bootstrap创建，NOINHERIT、无表直权、只获
+  222 Worker RPC；Batch A不创建或启动Worker，不运行代码且不注册`code_execute`。
+- stdout/stderr不保存用户可控正文，只保存长度、SHA-256与截断标记；代码仍引用不可变
+  Action参数。输出以未来不可变内容寻址Workspace对象为首要事实，路径/OSS为派生。
+- 独立Worker、attempt-scoped Capability、内容寻址Workspace对象、partial quarantine/
+  cleanup和专业Executor已建立；API/Actor旧Kernel Owner关闭，旧ToolLoop code_execute
+  明确拒绝，production startup/ingress仍未连接。
+- Worker默认清空stdout/stderr摘要；数据库继续使用manifest/evidence字段allowlist
+  和敏感模式拒绝，但不把模式扫描冒充完整脱敏。222_03补充完整binding readback、
+  可证明未启动Job的重新领取，以及只发reconciliation token的durable scanner。
+- terminal/reconcile在数据库边界重算规范JSONB receipt SHA-256；unknown partial
+  manifest不可被reconcile覆盖，cleanup proof持久化并完成前保持unknown。
+- 本地macOS只证明缺Linux/nsjail/cgroup时不领取。真实namespace、cgroup v2、mount、
+  默认无网络、进程树终止和零残留仍需无生产Secret的托管临时Linux runner；通过前
+  禁止启用code_execute或宣称Sandbox生产安全。
+
+## 2026-07-28 旧 ToolLoop Tool Confirmation V3 — 本地实现，待生产切换
+
+- 旧协议存在 CONFIRM 仅通知即执行、授权异常放行和未知工具默认 SAFE；V3 已改为显式
+  Safety Registry、脱敏 preview Registry、Handler allowlist 一致性和 Redis 唯一 claim。
+- 本地 Redis Standalone 已验证三键 Lua 原子竞争；生产发布前仍必须执行 Redis capability
+  probe，并 drain 旧非 SAFE Owner。旧客户端安全失败，禁止兼容放行或混合 Backend。
+- 本阶段未接 startup/composition、未新增 migration，也未实现 Sandbox/ERP/媒体专业
+  Executor；这些仍由 AR-16 Phase 2 后续批次处理。
+
+## 2026-07-28 Agent Runtime Projection Outbox dead stream — 候选已修复，尚未接入生产
+
+- migration 220_26增加当前tenant active super_admin专属inspect/requeue、不可变恢复
+  审计、严格request绑定和保留attempt/error事实的一次人工恢复机会；恢复仍走既有
+  compat claim/apply和幂等checkpoint，不允许跳过或直接修改业务投影。
+- 通用215 claim已additive收紧为audit-only，web_runtime/wecom仅由有序compat claim
+  领取；隔离PostgreSQL与独立Review门禁均已通过，尚未接入API、UI、startup或ingress。
+
+## 2026-07-27 Agent Runtime AR-13 Command Claim 与 Coordinator 骨架 — 已集成，尚未接入生产 Owner
+
+- migration `219_01`、`219_02`、`219_02a`新增CommandClaim事实和Worker窄RPC；
+  PostgreSQL是pending Command、lease、fencing、唯一Run与恢复的正确性事实源，Redis
+  仅可作为wakeup提示。
+- scanner按Session→Command→CommandClaim→Run锁序使用`SKIP LOCKED`，原子创建或返回
+  `UNIQUE(command_id)` Run；提交响应丢失可readback，进程重启从过期lease恢复。
+- Run创建、cancel-before-start和attempts exhausted均与Runtime Event/Projection
+  Outbox同事务；canonical request hash兼容既有`create_agent_run`，有效Run lease不会
+  被过期或耗尽的CommandClaim覆盖。
+- 历史queued Run可安全接管；running有效lease、waiting/paused和终态Run不会重新执行；
+  错误Run关联失败关闭。Coordinator当前仅为扫描、续租和恢复骨架，不执行完整
+  Model/Action循环。
+- 生产Chat Owner仍为Conversation Actor；未接Web/WeCom ingress、Projection、
+  Executor/Policy或生产startup。AR-14、AR-15、AR-16必须在本任务集成后再启动，
+  AR-17门禁完成前不得切换Owner。
+
+## 2026-07-27 记忆、定时任务与历史消息生产故障
+
+- 记忆修改/删除失败来自角色隔离后服务已使用 `everydayai_runtime`，迁移 144 的四个
+  遗留写 RPC 仍只面向已移除的 `service_role`。迁移 220 新增 Runtime 专用能力，
+  并在函数内验证可信 Actor、组织 Scope 和 active 成员关系。
+- 定时任务列表失败来自 Scoped RPC 默认把 Python `list` 编码为 JSONB，而任职、
+  部门和资产能力要求 PostgreSQL UUID 数组。`PostgresArray` 显式区分数组与 JSONB，
+  三个真实调用点已统一接入。
+- 生产只读对账发现截图个人会话元数据为 `message_count=2`，实际消息表为 0；该用户
+  81 个个人会话中 48 个元数据标记非空，实际仅 2 个会话仍有消息。服务器无全库备份、
+  WAL 归档关闭，现有专项 dump 不包含通用消息表；必须取得云盘快照、宿主机快照或
+  外部备份后，恢复到临时库并只增量合并。
+- 企业会话消息大部分仍在，Workspace 两种 Scope 请求均返回 200；个人与企业目录随
+  当前组织上下文切换。代码修复与生产恢复验证完成前，本事件保持开启。
+
+## 2026-07-27 Agent Runtime AR-12 Action 持久化与 Tool 终态 — 已集成，尚未接入生产 Owner
+
+- migration 218新增Action、ActionAttempt、ActionResult与claim batch事实，全部启用
+  RLS和FORCE RLS；Worker仅通过窄RPC执行Tool terminal、claim、terminal、
+  reconciliation和readback，无核心表直权。
+- Tool Calls终态在单一事务内完成ModelAttempt、ModelStep、AR-11积分结算、完整
+  SHA-256 Action批次、Run waiting、RunAttempt闭合以及Event/Outbox；取消链与结果链
+  使用统一锁序。
+- 稳定`claim_request_id`支持数据库提交成功但客户端丢失响应后的原批次恢复；
+  accepted/unknown禁止普通重试，只能reconcile。可执行Action依赖rejected Action时
+  整批失败关闭，需要授权的Action不会被暗中批准。
+- 当前仍为additive基础设施：Conversation Actor继续是生产Chat Owner，Action
+  Coordinator、Executor/Policy正式接线及生产切换属于后续AR任务；不得因迁移218落地
+  就停用旧执行链。
+
 ## 2026-07-27 Runtime 媒体提交拒绝退款权限错误 — 本地修复，待生产补偿与部署
 
 - 生产图片供应商明确拒绝路径出现两笔 `atomic_refund_credits` EXECUTE 权限错误；
@@ -1451,6 +1535,30 @@
 - 本地定向与治理回归已通过；尚未提交、部署，也未执行生产 super_admin/普通用户的
   HTTP 冒烟，因此生产状态仍为待验证。
 
+# 2026-07-27 平台企业停用与恢复 — 本地实现，待生产验证
+
+- 已增加 Runtime-only 的原子停用/恢复治理能力，状态更新与无秘密值审计同事务提交；
+  平台 API 固定使用 `org_id=NULL` 的 PlatformDB。
+- 已补 active 邀请、Actor Chat、媒体和定时任务发现，并在数据库阻断 suspended 企业的
+  Runtime、Worker、WeCom、Sync 任务与 Agent 后续写入。
+- 前端按权威状态提供停用/恢复确认，停用要求完整企业名，成功后重新读取列表。
+- 本机 PostgreSQL 16 隔离库已验证 active/suspended 双向转换、重复转换与不存在冲突、
+  两连接并发仅一次成功且仅一条审计、事务 rollback 同时撤销状态与审计、四类服务
+  suspended 写入 Fence，以及 217/218 逆序 rollback 可重新应用；未连接生产。
+- External 测试现已固化并发、事务、Runtime/Worker/WeCom/Sync Fence、完整 Actor/
+  Scope/数据库角色 ACL、grant option/继承旁路、217/218 对象消失与 synthetic 事实保留，
+  并要求迁移前 pending 精确为 217、218。
+- `deploy/init-database.sql` 与 017–149 历史迁移链存在既有漂移，全新库重放会在旧
+  ERP/Agent 前置结构失败；该问题不属于生命周期功能，本任务不修改历史迁移。
+- 仓库未保存可复用生产 schema-only 快照。取得“当前生产结构”兼容证据需要另行授权
+  只读 schema-only 导出；在此之前不得把本地基础结构验证表述为生产结构预演完成。
+- 生产主机本地 schema-only 安全扫描未传输文件：严格 SQL 结构分类未发现私钥、
+  连接 URL、JWT、Key 前缀、密码哈希或 DEFAULT 敏感固定值，但上一版分类器标出的
+  6 个疑似固定 Secret/Token 无法被后续对象头定位器稳定复现；353 个高熵待分类项中
+  仍有 113 个只能归入“其他”。所有远端临时文件与目录均已删除。该结果作为独立安全
+  阻塞，禁止继续传输生产 schema，也不能作为生命周期迁移的生产结构预演证据。
+- 尚未应用生产迁移，也未执行生产 HTTP 冒烟或真实 suspended 企业 E2E。
+
 # 2026-07-26 Worker 周期巡检与模型评分配置断层 — 本地完成，待部署
 
 - 生产只读核查确认企微孤儿用户、重复身份和重复昵称均为 0；故障来自 Worker 撤销
@@ -1520,3 +1628,38 @@
   占位按消息 ID 原位替换并保留发送时间，终态只清理同 ID 文字流，展示始终稳定排序。
 - 已补同对话乱序完成、无关文字流隔离和持久化乱序回归；相关前端测试、定向覆盖率、
   ESLint 与生产构建已通过，仍待提交部署和生产并发任务验收。
+
+# 2026-08-01 Agent Runtime AR-17.1 — 共享基础已实现，生产仍关闭
+
+- 224 additive migration 提供 Web/WeCom 共用的 v2 ingress envelope、Run anchor
+  context readback、AgentDefinition 与 EffectiveToolset 冻结事实。
+- 当前只允许已注册的 `code_execute` 进入生产模型目录；41 个专业工具不在本次范围。
+- AR-17.2～17.4、生产启动接线、真实环境迁移验收和组织 rollout 仍未完成。
+
+# 2026-08-01 Agent Runtime AR-17.1 version recovery contract
+
+- 224 now persists immutable AgentDefinition, Catalog, and EffectiveToolset
+  documents. New ingress enablement is separate from historical recovery;
+  stopping v1 and enabling v2 does not invalidate a claimed v1 Run.
+- Model context reads the Run-bound persisted facts and restores its frozen
+  toolset after process restart. Catalog entries without a registered Executor
+  remain catalog facts only and are not offered to the model.
+- Definition facts also freeze the complete system prompt, prompt revision,
+  model policy, and context policy. Catalog and EffectiveToolset hashes cover
+  all execution safety semantics; committed commands are read back before
+  current gate evaluation, so capability drift cannot change their envelope.
+- Migration filenames are `224_01_agent_runtime_ar17_core.sql` followed by
+  `224_02_agent_runtime_ar17_version_seed.sql`, with rollback in reverse order.
+- `org_id=NULL` personal ingress is intentionally rejected because 224 still
+  requires an enabled organization rollout row. This remains a pre-AR-17
+  completion blocker and is not treated as covered by the organization path.
+
+# 2026-08-14 Runtime 批量媒体授权 — grouped confirmation 已实现
+
+- `generate_image` 新执行 Descriptor 使用 `persisted_interaction`；同一 ModelStep/Batch
+  的 2～10 个 Action 只投递一个 leader，但保留每 Action 独立 interaction、grant、
+  grant use 和 PolicyReceipt。
+- 普通 `generationType=chat` 仍没有可验证的结构化 explicit-intent ingress fact，
+  因此当前图片批次不会仅凭模型工具调用自动花费积分，而是整批确认一次。
+- 后续若要恢复“明确图片命令自动执行”，必须先新增绑定 command、输入消息、意图类型和
+  请求数量的不可伪造 ingress 事实；提示词或模型自行判断不能代替授权证据。

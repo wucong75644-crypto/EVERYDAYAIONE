@@ -8,6 +8,7 @@
 """
 
 import logging
+import os
 import re
 import warnings
 from pathlib import Path
@@ -58,7 +59,12 @@ def setup_logging():
     _install_access_token_filter()
 
     # 创建日志目录
-    log_dir = Path(__file__).parent.parent / "logs"
+    log_dir = Path(
+        os.environ.get(
+            "EVERYDAYAI_LOG_DIR",
+            str(Path(__file__).parent.parent / "logs"),
+        )
+    )
     log_dir.mkdir(exist_ok=True)
 
     # 1. 应用日志（INFO 及以上级别）

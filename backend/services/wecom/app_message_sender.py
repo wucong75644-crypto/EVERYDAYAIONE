@@ -9,13 +9,17 @@ API 文档：https://developer.work.weixin.qq.com/document/path/90236
 
 from dataclasses import dataclass
 from typing import Optional
+from uuid import uuid4
 
 import httpx
 from loguru import logger
 
 from services.wecom.access_token_manager import get_access_token
+from services.wecom.app_outbound import (
+    WecomAppOutbound,
+    WecomAppOutboundStatus,
+)
 
-SEND_MSG_URL = "https://qyapi.weixin.qq.com/cgi-bin/message/send"
 UPLOAD_MEDIA_URL = "https://qyapi.weixin.qq.com/cgi-bin/media/upload"
 
 
@@ -167,39 +171,43 @@ async def upload_temp_media(
 
 
 async def _send(payload: dict, creds: OrgWecomCreds) -> bool:
-    """发送消息到企微 API"""
-    token = await get_access_token(creds.org_id, creds.corp_id, creds.agent_secret)
-    if not token:
-        logger.error(f"Wecom send: no access_token | org_id={creds.org_id}")
-        return False
+    """发送消息到企微 API，保持 legacy bool 结果合同。"""
+    async def legacy_token_provider() -> Optional[str]:
+        return await get_access_token(
+            creds.org_id, creds.corp_id, creds.agent_secret,
+        )
 
+    legacy_payload = dict(payload)
+    legacy_payload.setdefault("agentid", creds.agent_id)
+    target = legacy_payload.get("touser")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                SEND_MSG_URL,
-                params={"access_token": token},
-                json=payload,
+            outbound = WecomAppOutbound(
+                token_provider=legacy_token_provider,
+                http_client=client,
             )
-            data = resp.json()
-
-        errcode = data.get("errcode", -1)
-        if errcode != 0:
-            errmsg = data.get("errmsg", "unknown")
-            logger.warning(
-                f"Wecom send: API error | org_id={creds.org_id} | "
-                f"errcode={errcode} | errmsg={errmsg} | touser={payload.get('touser')}"
+            result = await outbound.send_typed(
+                provider_request_id=f"legacy-{uuid4().hex}",
+                target=target if isinstance(target, str) else "",
+                payload=legacy_payload,
             )
-            return False
-
-        logger.debug(
-            f"Wecom send: OK | org_id={creds.org_id} | "
-            f"touser={payload.get('touser')} | msgtype={payload.get('msgtype')}"
-        )
-        return True
-
-    except Exception as e:
-        logger.error(
-            f"Wecom send: request failed | org_id={creds.org_id} | "
-            f"error={e} | touser={payload.get('touser')}"
+    except Exception:
+        logger.warning(
+            f"Wecom send: transport lifecycle failed | org_id={creds.org_id} | "
+            f"touser={target} | msgtype={legacy_payload.get('msgtype')}"
         )
         return False
+
+    if result.status is WecomAppOutboundStatus.ACKNOWLEDGED:
+        logger.debug(
+            f"Wecom send: OK | org_id={creds.org_id} | "
+            f"touser={target} | msgtype={legacy_payload.get('msgtype')}"
+        )
+        return True
+    logger.warning(
+        f"Wecom send: not acknowledged | org_id={creds.org_id} | "
+        f"status={result.status.value} | errcode={result.errcode} | "
+        f"error_class={result.error_class.value if result.error_class else None} | "
+        f"touser={target} | msgtype={legacy_payload.get('msgtype')}"
+    )
+    return False

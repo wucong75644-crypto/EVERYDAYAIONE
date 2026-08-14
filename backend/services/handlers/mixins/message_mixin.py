@@ -234,6 +234,14 @@ class MessageMixin(MessagePersistenceMixin):
         fire-and-forget，失败不影响主流程。
         """
         try:
+            delivery_context = task.get("delivery_context") or {}
+            if isinstance(delivery_context, str):
+                import json
+                delivery_context = json.loads(delivery_context)
+            if isinstance(delivery_context, dict) and delivery_context.get("runtime") is True:
+                # Runtime Projection creates the durable conversation_deliveries
+                # outbox. The legacy fanout here would duplicate delivery.
+                return
             conv = (
                 self.db.table("conversations")
                 .select("source, org_id")

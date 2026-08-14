@@ -1,0 +1,469 @@
+name: Sandbox Linux security contract
+run-name: Sandbox Linux security contract @ ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/agent-runtime-ar-16-phase2-executors
+      - codex/agent-runtime-final-integration
+    paths:
+      - ".github/workflows/sandbox-linux-security.yml"
+      - "backend/migrations/223_agent_runtime_production_composition.sql"
+      - "backend/migrations/rollback/223_agent_runtime_production_composition_rollback.sql"
+      - "backend/services/agent/runtime/sandbox/**"
+      - "backend/core/db_scope.py"
+      - "backend/services/agent/runtime/composition.py"
+      - "backend/services/agent/runtime/infrastructure/postgres/sandbox_job_repository.py"
+      - "backend/agent_runtime_worker_main.py"
+      - "backend/tests/agent_runtime_sandbox_daemon_e2e.py"
+      - "backend/tests/test_agent_runtime_sandbox_daemon_contract.py"
+      - "backend/tests/test_agent_runtime_production_composition_postgres_external.py"
+      - "deploy/bootstrap-agent-runtime-roles.sh"
+      - "deploy/setup-tenant-db-roles.sh"
+      - "backend/tests/test_agent_runtime_sandbox_linux_external.py"
+      - "deploy/everydayai-sandbox-worker.service"
+      - "deploy/env-templates/sandbox-worker.env.template"
+      - "deploy/install-service-units.sh"
+      - "deploy/check-control-plane-unit-manifest.sh"
+      - "deploy/provision-control-plane-worker-envs.py"
+      - "deploy/update-control-plane-units.sh"
+      - "deploy/sandbox-worker-cgroup-wrapper.sh"
+      - "deploy/preflight-agent-runtime-release.sh"
+      - "deploy/provision-runtime-users.sh"
+      - "deploy/runtime-capability-probe.sh"
+      - "deploy/sandbox-job.policy"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-linux-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-isolation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      NSJAIL_COMMIT: 079d70dda4aa1edd9512cfd25ff1e47e316dc355
+      SANDBOX_ROOTFS: /tmp/everydayai-sandbox-rootfs
+      SANDBOX_SECCOMP_POLICY: ${{ github.workspace }}/deploy/sandbox-job.policy
+      SANDBOX_ROOTFS_MANIFEST: /tmp/everydayai-sandbox-rootfs.manifest
+      SANDBOX_NSJAIL_PATH: /usr/local/bin/nsjail
+      SANDBOX_CGROUP_V2_MOUNT: /sys/fs/cgroup
+      SANDBOX_JOB_ROOT: /tmp/everydayai-sandbox-worker/jobs
+      SANDBOX_HOST_MARKER: /sandbox-host-secret-everydayai-contract
+      RUN_SANDBOX_LINUX_EXTERNAL_TESTS: "1"
+
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Verify checked out candidate
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Install fixed build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf bison debootstrap flex g++ gcc git libcap-dev \
+            libnl-route-3-dev libprotobuf-dev make pkg-config \
+            postgresql postgresql-client protobuf-compiler python3-venv
+
+      - name: Build pinned nsjail
+        run: |
+          set -euo pipefail
+          git init /tmp/nsjail
+          git -C /tmp/nsjail remote add origin https://github.com/google/nsjail.git
+          git -C /tmp/nsjail fetch --depth=1 origin "$NSJAIL_COMMIT"
+          git -C /tmp/nsjail checkout --detach FETCH_HEAD
+          git -C /tmp/nsjail submodule update --init --recursive --depth=1
+          make -C /tmp/nsjail -j2
+          sudo install -m 0755 /tmp/nsjail/nsjail /usr/local/bin/nsjail
+          echo "SANDBOX_NSJAIL_SHA256=$(sha256sum /usr/local/bin/nsjail | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          nsjail --help > /tmp/nsjail-help.txt 2>&1
+          head -n 3 /tmp/nsjail-help.txt
+
+      - name: Build disposable rootfs
+        run: |
+          set -euo pipefail
+          sudo debootstrap --variant=minbase --include=python3 \
+            noble "$SANDBOX_ROOTFS" http://archive.ubuntu.com/ubuntu/
+          sudo mkdir -p \
+            "$SANDBOX_ROOTFS/job/input" \
+            "$SANDBOX_ROOTFS/job/output"
+          # The non-root daemon verifies the complete manifest. Disposable
+          # rootfs metadata must therefore be traversable/readable without
+          # granting the worker access to host files or credentials.
+          sudo find "$SANDBOX_ROOTFS" -xdev -type f ! -perm -004 -delete
+          sudo find "$SANDBOX_ROOTFS" -xdev -type d ! -perm -001 \
+            -exec chmod a+rx {} +
+          sudo python3 backend/services/agent/runtime/sandbox/rootfs_manifest.py \
+            create "$SANDBOX_ROOTFS" "$SANDBOX_ROOTFS_MANIFEST"
+          sudo chown "$USER:$USER" "$SANDBOX_ROOTFS_MANIFEST"
+          sudo mount --bind "$SANDBOX_ROOTFS" "$SANDBOX_ROOTFS"
+          sudo mount -o remount,bind,ro "$SANDBOX_ROOTFS"
+          echo "SANDBOX_ROOTFS_SHA256=$(sha256sum "$SANDBOX_ROOTFS_MANIFEST" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "SANDBOX_SECCOMP_SHA256=$(sha256sum "$SANDBOX_SECCOMP_POLICY" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Record Linux isolation capabilities
+        run: |
+          set -euo pipefail
+          uname -a
+          stat -fc %T /sys/fs/cgroup
+          cat /sys/fs/cgroup/cgroup.controllers
+          nsjail --help 2>&1 | grep -E -- \
+            '--use_cgroupv2|--cgroup_mem_max|--cgroup_pids_max|--cgroup_cpu_ms_per_sec'
+
+      - name: Prepare non-root Sandbox worker contract
+        run: |
+          set -euo pipefail
+          sudo groupadd --system everydayai-sandbox
+          sudo useradd --system --no-create-home \
+            --shell /usr/sbin/nologin --gid everydayai-sandbox \
+            everydayai-sandbox
+          sandbox_uid=$(id -u everydayai-sandbox)
+          sandbox_gid=$(id -g everydayai-sandbox)
+          test "$sandbox_uid" -ne 0
+          test "$sandbox_gid" -ne 0
+          sudo touch "$SANDBOX_HOST_MARKER"
+          sudo chmod 0600 "$SANDBOX_HOST_MARKER"
+          apparmor_userns=$(sudo sysctl -n \
+            kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo missing)
+          apparmor_unconfined=$(sudo sysctl -n \
+            kernel.apparmor_restrict_unprivileged_unconfined 2>/dev/null || echo missing)
+          echo "SANDBOX_APPARMOR_USERNS_ORIGINAL=$apparmor_userns" >> "$GITHUB_ENV"
+          echo "SANDBOX_APPARMOR_UNCONFINED_ORIGINAL=$apparmor_unconfined" \
+            >> "$GITHUB_ENV"
+          if test "$apparmor_userns" != missing; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          if test "$apparmor_unconfined" != missing; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          fi
+          for controller in cpu memory pids; do
+            if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control; then
+              echo "+$controller" | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+            fi
+          done
+          sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract
+          sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract/runner
+          sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract/external
+          sudo mkdir /sys/fs/cgroup/everydayai-sandbox-contract/external/runner
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /sys/fs/cgroup/everydayai-sandbox-contract
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /sys/fs/cgroup/everydayai-sandbox-contract/runner
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /sys/fs/cgroup/everydayai-sandbox-contract/external \
+            /sys/fs/cgroup/everydayai-sandbox-contract/external/runner
+          for file in cgroup.procs cgroup.threads cgroup.subtree_control; do
+            sudo chown "$sandbox_uid:$sandbox_gid" \
+              "/sys/fs/cgroup/everydayai-sandbox-contract/$file"
+            sudo chown "$sandbox_uid:$sandbox_gid" \
+              "/sys/fs/cgroup/everydayai-sandbox-contract/runner/$file"
+            sudo chown "$sandbox_uid:$sandbox_gid" \
+              "/sys/fs/cgroup/everydayai-sandbox-contract/external/$file" \
+              "/sys/fs/cgroup/everydayai-sandbox-contract/external/runner/$file"
+          done
+          sudo mkdir /tmp/everydayai-sandbox-worker
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /tmp/everydayai-sandbox-worker
+          sudo mkdir /tmp/everydayai-sandbox-worker/logs
+          sudo chown "$sandbox_uid:$sandbox_gid" \
+            /tmp/everydayai-sandbox-worker/logs
+          sudo chmod 0750 /tmp/everydayai-sandbox-worker/logs
+          sudo cp -a "$GITHUB_WORKSPACE" \
+            /tmp/everydayai-sandbox-worker/source
+          sudo chmod -R a+rX /tmp/everydayai-sandbox-worker/source
+          sudo -u everydayai-sandbox test -w /tmp/everydayai-sandbox-worker/logs
+          sudo -u everydayai-sandbox sh -c \
+            '! test -w /tmp/everydayai-sandbox-worker/source/backend'
+          echo "EVERYDAYAI_LOG_DIR=/tmp/everydayai-sandbox-worker/logs" \
+            >> "$GITHUB_ENV"
+          echo "SANDBOX_SECCOMP_POLICY=/tmp/everydayai-sandbox-worker/source/deploy/sandbox-job.policy" \
+            >> "$GITHUB_ENV"
+          echo "SANDBOX_CGROUP_V2_MOUNT=/sys/fs/cgroup/everydayai-sandbox-contract" \
+            >> "$GITHUB_ENV"
+          echo "SANDBOX_CGROUP_V2_RUNNER=/sys/fs/cgroup/everydayai-sandbox-contract/runner" \
+            >> "$GITHUB_ENV"
+          echo "SANDBOX_CGROUP_V2_EXTERNAL=/sys/fs/cgroup/everydayai-sandbox-contract/external" \
+            >> "$GITHUB_ENV"
+
+      - name: Build daemon test environment
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/everydayai-sandbox-daemon-venv
+          /tmp/everydayai-sandbox-daemon-venv/bin/pip install \
+            -r backend/requirements.txt
+          pg_bin=$(pg_config --bindir)
+          pg_data=/tmp/everydayai-sandbox-postgres
+          "$pg_bin/initdb" --auth-local=trust --auth-host=trust \
+            --username="$USER" --pgdata="$pg_data"
+          "$pg_bin/pg_ctl" --pgdata="$pg_data" \
+            --options="-h 127.0.0.1 -p 55432 -k /tmp" \
+            --log=/tmp/everydayai-sandbox-postgres.log start
+          runtime_password=$(openssl rand -hex 24)
+          sandbox_password=$(openssl rand -hex 24)
+          jwt_secret=$(openssl rand -hex 32)
+          echo "::add-mask::$runtime_password"
+          echo "::add-mask::$sandbox_password"
+          echo "::add-mask::$jwt_secret"
+          "$pg_bin/createdb" -h 127.0.0.1 -p 55432 -U "$USER" \
+            ar223_sandbox_daemon
+          admin_url="postgresql://$USER@127.0.0.1:55432/ar223_sandbox_daemon"
+          runtime_url="postgresql://everydayai_agent_runtime_worker@/ar223_sandbox_daemon?host=/tmp&port=55432"
+          web_url="postgresql://everydayai_runtime@/ar223_sandbox_daemon?host=/tmp&port=55432"
+          worker_url="postgresql://everydayai_sandbox_worker@/ar223_sandbox_daemon?host=/tmp&port=55432"
+          echo "::add-mask::$admin_url"
+          echo "::add-mask::$runtime_url"
+          echo "::add-mask::$web_url"
+          echo "::add-mask::$worker_url"
+          {
+            echo "AR223_TEST_DATABASE_URL=$admin_url"
+            echo "TENANT_DB_ADMIN_URL=$admin_url"
+            echo "RUNTIME_DATABASE_URL=$runtime_url"
+            echo "WORKER_DATABASE_URL=$worker_url"
+            echo "DATABASE_URL=$web_url"
+            echo "JWT_SECRET_KEY=$jwt_secret"
+            echo "EVERYDAYAI_RUNTIME_PASSWORD=$runtime_password"
+            echo "EVERYDAYAI_SANDBOX_WORKER_PASSWORD=$sandbox_password"
+            echo "SANDBOX_E2E_PG_BIN=$pg_bin"
+            echo "SANDBOX_E2E_PG_DATA=$pg_data"
+          } >> "$GITHUB_ENV"
+          for name in CONFIG_IMPORT_READER MIGRATOR SYNC WECOM_RUNTIME WORKER \
+            AGENT_RUNTIME_WORKER PROJECTION_WORKER AUTHORIZATION_WORKER \
+            RUNTIME_ADMIN; do
+            value=$(openssl rand -hex 24)
+            echo "::add-mask::$value"
+            echo "EVERYDAYAI_${name}_PASSWORD=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Apply real migrations through 223 and bootstrap roles
+        id: migration
+        run: |
+          set -euo pipefail
+          deploy/setup-tenant-db-roles.sh
+          deploy/bootstrap-agent-runtime-roles.sh
+          cd backend
+          RUN_AR223_DB_TEST=1 \
+            /tmp/everydayai-sandbox-daemon-venv/bin/python -m pytest \
+            -q --tb=short -p no:warnings -p testing.pytest_policy \
+            -m external \
+            tests/test_agent_runtime_production_composition_postgres_external.py
+
+      - name: Prepare daemon lifecycle facts
+        run: |
+          set -euo pipefail
+          cd backend
+          export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
+          sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
+            -m tests.agent_runtime_sandbox_daemon_e2e prepare
+
+      - name: Probe Sandbox Worker database identity
+        id: probe
+        run: |
+          set -euo pipefail
+          sudo --preserve-env runuser --preserve-environment \
+            -u everydayai-sandbox -- \
+            /tmp/everydayai-sandbox-daemon-venv/bin/python - <<'PY'
+          import os, psycopg
+          try:
+              with psycopg.connect(os.environ["WORKER_DATABASE_URL"]) as c:
+                  with c.cursor() as cur:
+                      cur.execute("SELECT session_user,current_user,current_setting('app.access_kind',true),has_schema_privilege(current_user,'public','USAGE'),has_function_privilege(current_user,'public.get_agent_runtime_worker_control(text)','EXECUTE')")
+                      print("sandbox_db_probe=", cur.fetchone())
+          except Exception as exc:
+              print("sandbox_db_probe_error=", type(exc).__name__, getattr(exc, "sqlstate", None), str(exc).split("@",1)[0])
+              raise
+          PY
+          sandbox_uid=$(id -u everydayai-sandbox)
+          sandbox_gid=$(id -g everydayai-sandbox)
+          sudo chown -R "$sandbox_uid:$sandbox_gid" "$SANDBOX_JOB_ROOT"
+          sudo chmod 0700 "$SANDBOX_JOB_ROOT"
+
+      - name: Run real Sandbox Worker daemon lifecycle
+        id: daemon
+        run: |
+          set -uo pipefail
+          export AGENT_RUNTIME_PROCESS_ROLE=sandbox
+          export AGENT_RUNTIME_WORKER_ID=sandbox-daemon-e2e
+          export AGENT_RUNTIME_RELEASE_REVISION="$GITHUB_SHA"
+          export AGENT_RUNTIME_HEALTH_SOCKET=/tmp/everydayai-sandbox-worker/daemon.sock
+          export AGENT_RUNTIME_POLL_INTERVAL_SECONDS=0.1
+          export AGENT_RUNTIME_HEARTBEAT_SECONDS=1
+          export SANDBOX_ROOTFS_MANIFEST SANDBOX_ROOTFS_SHA256
+          export SANDBOX_NSJAIL_PATH SANDBOX_NSJAIL_SHA256
+          export SANDBOX_SECCOMP_POLICY SANDBOX_SECCOMP_SHA256
+          export SANDBOX_CGROUP_V2_MOUNT SANDBOX_CGROUP_V2_RUNNER \
+            SANDBOX_JOB_ROOT SANDBOX_ROOTFS
+          export SANDBOX_PYTHON_PATH=/usr/bin/python3
+          export SANDBOX_WORKER_CONCURRENCY=1
+          export SANDBOX_PARTIAL_RETENTION_SECONDS=86400
+          export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
+          export SANDBOX_DAEMON_PYTHON=/tmp/everydayai-sandbox-daemon-venv/bin/python
+          export ENVIRONMENT=test
+          cd /tmp/everydayai-sandbox-worker/source/backend
+          set +e
+          timeout --signal=KILL 300s sudo --preserve-env /bin/sh -c \
+            'echo "$$" > "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"; \
+            exec runuser --preserve-environment -u everydayai-sandbox -- "$@"' \
+            _ /tmp/everydayai-sandbox-daemon-venv/bin/python \
+            -m tests.agent_runtime_sandbox_daemon_e2e exercise
+          daemon_rc=$?
+          echo "daemon_rc=$daemon_rc" >> "$GITHUB_OUTPUT"
+          sudo tail -n 160 "$SANDBOX_JOB_ROOT/daemon-e2e-worker.log" \
+            2>/dev/null || true
+          sudo find "$EVERYDAYAI_LOG_DIR" -maxdepth 1 -type f \
+            -print -exec tail -n 160 {} \; 2>/dev/null || true
+          # Keep independent security/ACL gates running; aggregate-gate below
+          # converts this recorded result into the final job status.
+          exit 0
+
+      - name: Verify role matrix and remove database facts
+        id: permissions
+        if: ${{ always() && steps.migration.outcome == 'success' && steps.probe.outcome == 'success' }}
+        run: |
+          set +e
+          cd backend
+          export SANDBOX_RUNTIME_REVISION=python-nsjail-v1
+          sudo --preserve-env /tmp/everydayai-sandbox-daemon-venv/bin/python \
+            -m tests.agent_runtime_sandbox_daemon_e2e verify
+          permissions_rc=$?
+          echo "permissions_rc=$permissions_rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Run real nsjail contract
+        id: nsjail
+        if: ${{ always() && steps.migration.outcome == 'success' && steps.probe.outcome == 'success' }}
+        run: |
+          set -uo pipefail
+          export SANDBOX_CGROUP_V2_MOUNT="$SANDBOX_CGROUP_V2_EXTERNAL"
+          export SANDBOX_CGROUP_V2_RUNNER="$SANDBOX_CGROUP_V2_EXTERNAL/runner"
+          cd /tmp/everydayai-sandbox-worker/source/backend
+          python3 -m venv /tmp/everydayai-sandbox-test-venv
+          /tmp/everydayai-sandbox-test-venv/bin/pip install \
+            pytest==8.3.4 pytest-asyncio==0.25.2
+          set +e
+          sudo --preserve-env /bin/sh -c \
+            'echo "$$" > "$SANDBOX_CGROUP_V2_RUNNER/cgroup.procs"; \
+            exec runuser --preserve-environment -u everydayai-sandbox -- "$@"' \
+            _ env AGENT_RUNTIME_PROCESS_ROLE=sandbox \
+            RUN_SANDBOX_LINUX_EXTERNAL_TESTS=1 \
+            /tmp/everydayai-sandbox-test-venv/bin/python -m pytest \
+            -q --tb=short -p no:warnings -p testing.pytest_policy \
+            -m external tests/test_agent_runtime_sandbox_linux_external.py \
+            2>&1 | tee /tmp/everydayai-sandbox-contract.log
+          contract_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$contract_rc" -ne 0 ]; then
+            {
+              echo "### Sandbox Linux contract failure"
+              echo '```text'
+              tail -n 80 /tmp/everydayai-sandbox-contract.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            diagnostic=$(tail -n 80 /tmp/everydayai-sandbox-contract.log |
+              tr '\n' ' ' | sed 's/%/%25/g;s/\\r/%0D/g')
+            echo "::error title=Sandbox Linux contract failed::$diagnostic"
+          fi
+          echo "nsjail_rc=$contract_rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify zero runtime residue
+        id: residue
+        if: always()
+        run: |
+          set -uo pipefail
+          residue=0
+          if pgrep -fa '[n]sjail'; then
+            echo "Residual nsjail process detected" >&2
+            residue=1
+          fi
+          if find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print -quit \
+            | grep -q .; then
+            echo "Residual nsjail cgroup detected" >&2
+            sudo find /sys/fs/cgroup -maxdepth 3 -iname '*nsjail*' -print >&2
+            residue=1
+          fi
+          if find "$SANDBOX_JOB_ROOT/jobs" "$SANDBOX_JOB_ROOT/quarantine" \
+            -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+            echo "Residual Sandbox job directory detected" >&2
+            residue=1
+          fi
+          if mountpoint -q "$SANDBOX_ROOTFS"; then
+            sudo umount "$SANDBOX_ROOTFS" || residue=1
+          fi
+          sudo rm -rf \
+            "$SANDBOX_ROOTFS" \
+            /tmp/everydayai-sandbox-test-venv \
+            /tmp/everydayai-sandbox-daemon-venv \
+            /tmp/nsjail \
+            /tmp/everydayai-sandbox-worker \
+            "$SANDBOX_ROOTFS_MANIFEST" || residue=1
+          sudo rm -f "$SANDBOX_HOST_MARKER" || residue=1
+          for cgroup_root in "$SANDBOX_CGROUP_V2_EXTERNAL" \
+            "$SANDBOX_CGROUP_V2_MOUNT"; do
+            if test -d "$cgroup_root"; then
+              while IFS= read -r child; do
+                sudo rmdir "$child" || residue=1
+              done < <(sudo find "$cgroup_root" -mindepth 1 -maxdepth 1 \
+                -type d -name 'NSJAIL.*' -print)
+              sudo rmdir "$cgroup_root/runner" || residue=1
+              sudo rmdir "$cgroup_root" || residue=1
+            fi
+          done
+          if test -n "${SANDBOX_E2E_PG_BIN:-}" \
+            && test -d "${SANDBOX_E2E_PG_DATA:-/nonexistent}"; then
+            "$SANDBOX_E2E_PG_BIN/pg_ctl" \
+              --pgdata="$SANDBOX_E2E_PG_DATA" --mode=immediate stop \
+              || residue=1
+            rm -rf "$SANDBOX_E2E_PG_DATA" || residue=1
+          fi
+          case "${SANDBOX_APPARMOR_USERNS_ORIGINAL:-missing}" in
+            0|1) sudo sysctl -w \
+              kernel.apparmor_restrict_unprivileged_userns="$SANDBOX_APPARMOR_USERNS_ORIGINAL" \
+              >/dev/null || residue=1 ;;
+          esac
+          case "${SANDBOX_APPARMOR_UNCONFINED_ORIGINAL:-missing}" in
+            0|1) sudo sysctl -w \
+              kernel.apparmor_restrict_unprivileged_unconfined="$SANDBOX_APPARMOR_UNCONFINED_ORIGINAL" \
+              >/dev/null || residue=1 ;;
+          esac
+          rm -f /tmp/everydayai-sandbox-postgres.log || residue=1
+          test ! -e "$SANDBOX_ROOTFS" || residue=1
+          echo "residue_rc=$residue" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Aggregate Sandbox security gates
+        if: always()
+        run: |
+          set -u
+          failed=0
+          if [ "${{ steps.migration.outcome }}" != success ]; then
+            echo "migration_gate=${{ steps.migration.outcome }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.probe.outcome }}" != success ]; then
+            echo "database_probe_gate=${{ steps.probe.outcome }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.daemon.outputs.daemon_rc || 'not-run' }}" != 0 ]; then
+            echo "daemon_gate=${{ steps.daemon.outputs.daemon_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.permissions.outputs.permissions_rc || 'not-run' }}" != 0 ]; then
+            echo "permissions_gate=${{ steps.permissions.outputs.permissions_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.nsjail.outputs.nsjail_rc || 'not-run' }}" != 0 ]; then
+            echo "nsjail_gate=${{ steps.nsjail.outputs.nsjail_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          if [ "${{ steps.residue.outputs.residue_rc || 'not-run' }}" != 0 ]; then
+            echo "residue_gate=${{ steps.residue.outputs.residue_rc || 'not-run' }}" >&2
+            failed=1
+          fi
+          exit "$failed"

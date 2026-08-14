@@ -16,6 +16,13 @@ from loguru import logger
 class FileDeleteMixin:
     """文件删除 + 恢复工具 Mixin"""
 
+    def _log_file_operation(self, tool: str, error_code: str) -> None:
+        logger.info(
+            "file_operation_completed | "
+            f"tool={tool} | user_id={self.user_id} | "
+            f"org_id={self.org_id or ''} | error_code={error_code}"
+        )
+
     # ================================================================
     # file_delete：从共享缓存取精确路径 + 物理删除 + 记录 deleted_files
     # ================================================================
@@ -93,7 +100,7 @@ class FileDeleteMixin:
 
             os.remove(abs_path)
             deleted.append((name, abs_path))
-            logger.info(f"file_delete | path={name} | resolved={abs_path}")
+            self._log_file_operation("file_delete", "NONE")
 
         # 记录到 deleted_files 表（fire-and-forget）
         if deleted:
@@ -168,7 +175,12 @@ class FileDeleteMixin:
                 oss.bucket.get_object_to_file, oss_key, str(target_path),
             )
         except Exception as e:
-            logger.error(f"restore_file OSS download failed | key={oss_key} | error={e}")
+            logger.error(
+                "file_operation_failed | tool=restore_file | "
+                f"user_id={self.user_id} | org_id={self.org_id or ''} | "
+                "error_code=OSS_DOWNLOAD_FAILED | "
+                f"exception_type={type(e).__name__}"
+            )
             return AgentResult(
                 summary=f"从 OSS 恢复「{filename}」失败: {e}",
                 status="error",
@@ -178,7 +190,7 @@ class FileDeleteMixin:
         # 标记 deleted_files 记录为已恢复
         await self._mark_restored(record["id"])
 
-        logger.info(f"restore_file | file={filename} | oss_key={oss_key} | target={target_path}")
+        self._log_file_operation("restore_file", "NONE")
 
         return AgentResult(
             summary=f"已恢复「{filename}」到 {rel_path}",
@@ -216,7 +228,12 @@ class FileDeleteMixin:
                     if row:
                         return {"id": row[0], "relative_path": row[1], "oss_object_key": row[2]}
         except Exception as e:
-            logger.warning(f"restore_file query failed | error={e}")
+            logger.warning(
+                "file_operation_failed | tool=restore_file | "
+                f"user_id={self.user_id} | org_id={self.org_id or ''} | "
+                "error_code=RECORD_QUERY_FAILED | "
+                f"exception_type={type(e).__name__}"
+            )
         return None
 
     async def _mark_restored(self, record_id: int) -> None:
@@ -235,4 +252,9 @@ class FileDeleteMixin:
                         (record_id,),
                     )
         except Exception as e:
-            logger.warning(f"restore_file mark restored failed | error={e}")
+            logger.warning(
+                "file_operation_failed | tool=restore_file | "
+                f"user_id={self.user_id} | org_id={self.org_id or ''} | "
+                "error_code=MARK_RESTORED_FAILED | "
+                f"exception_type={type(e).__name__}"
+            )

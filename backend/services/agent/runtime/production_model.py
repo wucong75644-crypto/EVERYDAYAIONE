@@ -1,0 +1,458 @@
+"""Production ModelLoop plan built only from fenced PostgreSQL context."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from uuid import UUID, uuid5
+
+from services.agent.runtime.application.model_loop import PreparedModelCall
+from services.agent.runtime.context import build_runtime_context, build_context_receipt
+from services.agent.runtime.domain import StopReason
+from services.agent.runtime.catalog import (
+    EffectiveToolset, restore_agent_definition, restore_frozen_toolset,
+)
+from services.agent.runtime.infrastructure.model.projection import (
+    compute_request_hash, resolve_model_revision,
+)
+from services.agent.runtime.model_resolution import resolve_runtime_model
+from services.agent.runtime.ports.coordinator_recovery import RunAggregateSnapshot
+from services.agent.runtime.ports.model import (
+    ModelInputReceipt, ModelRequestOptions, ModelStepId, ModelStepRequest,
+    ModelStepResult,
+)
+
+
+_ACTION_NAMESPACE = UUID("76bc769a-a201-43aa-8ee9-cd13f009f12d")
+_POLICY_REVISION = "agent-runtime-policy-v1"
+MAX_RUNTIME_IMAGE_ACTIONS = 10
+
+
+class PostgresModelCallFactory:
+    def __init__(
+        self, database, worker_id: str, *, version_registry=None,
+    ) -> None:
+        self._database = database
+        self._worker_id = worker_id
+        self._versions = version_registry
+
+    async def __call__(
+        self, snapshot: RunAggregateSnapshot,
+    ) -> PreparedModelCall:
+        run_id = str(snapshot.run["id"])
+        token = str(snapshot.run["execution_token"])
+        response = await self._database.rpc(
+            "get_agent_runtime_model_context_v2", {
+                "p_run_id": run_id,
+                "p_worker_id": self._worker_id,
+                "p_execution_token": token,
+            },
+        ).execute()
+        context = response.data
+        if not isinstance(context, dict) or context.get("outcome") != "found":
+            raise RuntimeError("AGENT_RUNTIME_MODEL_CONTEXT_UNAVAILABLE")
+        command = _mapping(context.get("command"), "command")
+        session = _mapping(context.get("session"), "session")
+        payload = _mapping(command.get("payload"), "payload")
+        definition, toolset = _frozen_runtime_facts(context)
+        model_resolution = _resolve_model_selection(
+            snapshot=snapshot, context=context, definition=definition,
+        )
+        model_id = model_resolution.model_id
+        input_message_id = _optional_text(payload.get("input_message_id"))
+        reference_image_count = _current_input_image_count(
+            context.get("messages"), input_message_id,
+        )
+        messages = _messages(
+            context.get("messages"), definition.system_prompt,
+            current_input_message_id=input_message_id,
+            supports_vision=_supports_vision(model_id),
+        )
+        step_number = len(snapshot.model_steps) + 1
+        stable_prefix_blocks = _stable_prefix_blocks(definition.context_policy)
+        runtime_context = build_runtime_context(
+            run=dict(snapshot.run), session=session, messages=messages,
+            actions=_list(context.get("actions")), toolset=toolset,
+            model_step=step_number, stable_prefix_blocks=stable_prefix_blocks,
+        )
+        plan = runtime_context.plan
+        tools = toolset.provider_tools()
+        context_messages, _ = plan.project()
+        receipt = build_context_receipt(
+            messages=context_messages,
+            tools=tools,
+            conversation_id=str(session["conversation_id"]),
+            task_id=str(payload.get("task_id") or command["id"]),
+            model_id=model_id,
+            base_revision=int(str(runtime_context.base_context_revision).split(":")[-1] or 0)
+            if str(runtime_context.base_context_revision).split(":")[-1].isdigit()
+            else 0,
+            stable_prefix_blocks=stable_prefix_blocks,
+        )
+        receipt_data = receipt.to_log_fields()
+        org_id = str(session["org_id"])
+        receipt_data["org_id"] = org_id
+        revision = resolve_model_revision(model_id)
+        provider = _provider(model_id)
+        receipt_data.update({
+            "credential_provider": provider,
+            "credential_revision": revision,
+            "credential_purpose": "model.invoke",
+        })
+        receipt_hash = _hash(receipt_data)
+        options = ModelRequestOptions(
+            thinking_mode=_optional_text(
+                _mapping(payload.get("params") or {}, "params").get(
+                    "thinking_mode",
+                ),
+            ),
+            timeout_seconds=120,
+            max_provider_attempts=1,
+        )
+        reserved = _reserved_credits(
+            model_id, receipt.estimated_prompt_tokens,
+        )
+
+        def build_request(step_id: str) -> ModelStepRequest:
+            input_receipt = ModelInputReceipt(
+                receipt_id=f"context:{run_id}:{step_number}",
+                receipt_hash=receipt_hash,
+                context_plan_hash=plan.plan_hash,
+            )
+            request_hash = compute_request_hash(
+                model_id=model_id,
+                model_revision=revision,
+                prompt_revision=definition.prompt_revision,
+                tool_catalog_revision=toolset.catalog_revision,
+                input_receipt_hash=receipt_hash,
+                context_plan_hash=plan.plan_hash,
+                options=options,
+            )
+            return ModelStepRequest(
+                model_step_id=ModelStepId(step_id),
+                model_id=model_id,
+                request_hash=request_hash,
+                input_receipt=input_receipt,
+                context_plan=plan,
+                model_revision=revision,
+                prompt_revision=definition.prompt_revision,
+                tool_catalog_revision=toolset.catalog_revision,
+                options=options,
+                org_id=org_id,
+            )
+
+        return PreparedModelCall(
+            model_id=model_id,
+            provider=_provider(model_id),
+            model_revision=revision,
+            prompt_revision=definition.prompt_revision,
+            tool_catalog_revision=toolset.catalog_revision,
+            request_receipt=receipt_data,
+            reserved_credits=reserved,
+            build_request=build_request,
+            actual_credits=lambda result: _actual_credits(model_id, result),
+            build_actions=lambda result: _actions(
+                result, run_id, toolset,
+                reference_image_count=reference_image_count,
+            ),
+        )
+
+
+async def retain_unknown_model_attempt(
+    snapshot: RunAggregateSnapshot,
+) -> None:
+    """Keep direct model ambiguity durable and reconcile-only without churn."""
+    del snapshot
+
+
+def _messages(
+    value: object,
+    system_prompt: str,
+    *,
+    current_input_message_id: str | None = None,
+    supports_vision: bool = True,
+) -> list[dict]:
+    if not isinstance(value, list):
+        raise RuntimeError("AGENT_RUNTIME_MESSAGES_INVALID")
+    from services.handlers.chat_context.content_extractors import (
+        extract_image_urls_from_content,
+        extract_oai_messages_from_content,
+        project_user_image_urls,
+    )
+    if not system_prompt:
+        raise RuntimeError("RUNTIME_DEFINITION_PROMPT_MISSING")
+    result = [{"role": "system", "content": system_prompt}]
+    for item in value:
+        row = _mapping(item, "message")
+        role = str(row.get("role") or "")
+        if role not in {"system", "user", "assistant"}:
+            continue
+        projected = extract_oai_messages_from_content(
+            row.get("content"), role, safe_completed_tools_only=True,
+        )
+        is_current_input = (
+            role == "user"
+            and current_input_message_id is not None
+            and str(row.get("id") or "") == current_input_message_id
+        )
+        if is_current_input:
+            image_urls = extract_image_urls_from_content(row.get("content"))
+            if image_urls and not supports_vision:
+                raise RuntimeError("RUNTIME_MODEL_VISION_REQUIRED")
+            projected = project_user_image_urls(
+                projected, image_urls, include_reference_indexes=True,
+            )
+        result.extend(projected)
+    if len(result) == 1:
+        raise RuntimeError("AGENT_RUNTIME_MESSAGES_EMPTY")
+    return result
+
+
+def _code_execute_tools(org_id: object) -> list[dict]:
+    from config.chat_tools import get_chat_tools
+
+    return [
+        tool for tool in get_chat_tools(org_id=str(org_id) if org_id else None)
+        if tool.get("function", {}).get("name") == "code_execute"
+    ]
+
+
+def _frozen_runtime_facts(context: dict):
+    facts = (
+        context.get("definition_fact"), context.get("catalog_fact"),
+        context.get("effective_toolset_fact"),
+    )
+    if not all(isinstance(fact, dict) for fact in facts):
+        raise RuntimeError("RUNTIME_VERSION_FACTS_UNAVAILABLE")
+    try:
+        definition = restore_agent_definition(facts[0]["definition_document"])
+        toolset = restore_frozen_toolset(
+            facts[0]["definition_document"], facts[1]["catalog_document"],
+            facts[2]["toolset_document"],
+            catalog_revision=facts[1].get("catalog_revision"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("RUNTIME_VERSION_FACTS_INVALID") from exc
+    if toolset.toolset_hash != facts[2].get("effective_toolset_hash"):
+        raise RuntimeError("RUNTIME_EFFECTIVE_TOOLSET_REVISION_MISMATCH")
+    return definition, toolset
+
+
+def _stable_prefix_blocks(policy: object) -> int:
+    if not isinstance(policy, dict):
+        raise RuntimeError("RUNTIME_CONTEXT_POLICY_INVALID")
+    value = policy.get("stable_prefix_blocks", 0)
+    if not isinstance(value, int) or not 0 <= value <= 8:
+        raise RuntimeError("RUNTIME_CONTEXT_POLICY_INVALID")
+    return value
+
+
+def _list(value: object) -> list[dict]:
+    if not isinstance(value, list):
+        raise RuntimeError("RUNTIME_ACTIONS_INVALID")
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _reserved_credits(model_id: str, input_tokens: int) -> int:
+    from services.adapters.factory import get_model_config
+
+    config = get_model_config(model_id)
+    if config is None:
+        raise RuntimeError("AGENT_RUNTIME_MODEL_UNKNOWN")
+    return max(1, math.ceil(
+        max(input_tokens, config.context_window) / 1000
+        * config.credits_per_1k_input
+        + config.max_tokens / 1000 * config.credits_per_1k_output
+    ) + 1)
+
+
+def _actual_credits(model_id: str, result: ModelStepResult) -> int:
+    from services.adapters.factory import get_model_config
+
+    config = get_model_config(model_id)
+    if config is None:
+        raise RuntimeError("AGENT_RUNTIME_MODEL_UNKNOWN")
+    usage = result.usage
+    value = math.ceil(
+        usage.input_tokens / 1000 * config.credits_per_1k_input
+        + usage.output_tokens / 1000 * config.credits_per_1k_output
+    )
+    return max(1, value + 1)
+
+
+def _actions(
+    result: ModelStepResult, run_id: str, toolset: EffectiveToolset | None = None,
+    *, reference_image_count: int = 0,
+) -> tuple[str, tuple[dict, ...]]:
+    validate_schema = toolset is not None
+    if toolset is None:
+        raise RuntimeError("RUNTIME_VERSION_FACTS_REQUIRED")
+    if getattr(result, "stop_reason", StopReason.TOOL_CALLS) is not StopReason.TOOL_CALLS:
+        return "0" * 64, ()
+    image_call_count = sum(
+        1 for call in result.tool_calls if call.name == "generate_image"
+    )
+    if image_call_count > MAX_RUNTIME_IMAGE_ACTIONS:
+        raise ValueError("RUNTIME_IMAGE_ACTION_BATCH_LIMIT_EXCEEDED")
+    actions = []
+    for call in result.tool_calls:
+        arguments = json.loads(call.arguments_json)
+        if not isinstance(arguments, dict):
+            raise ValueError("RUNTIME_TOOL_CALL_ARGUMENTS_INVALID")
+        if validate_schema:
+            toolset.validate_call(call.name, arguments)
+        if call.name == "generate_image":
+            _validate_reference_image_indexes(
+                arguments, reference_image_count=reference_image_count,
+            )
+        tool = next(item for item in toolset.definitions
+                    if item.canonical_name == call.name)
+        action_id = str(uuid5(
+            _ACTION_NAMESPACE, f"{run_id}:{call.index}:{call.call_id}",
+        ))
+        policy_snapshot = {
+            "source": "runtime_executor_registry",
+            "safety_level": tool.safety_level,
+            "side_effect": tool.side_effect,
+            "authorization_requirement": tool.authorization_requirement,
+            "capability_requirements": sorted(tool.capability_requirements),
+            "capability_revision": tool.schema_hash,
+            "catalog_revision": toolset.catalog_revision,
+            "effective_toolset_hash": toolset.toolset_hash,
+        }
+        if validate_schema:
+            policy_snapshot.update({
+                "schema_hash": tool.schema_hash,
+                "executor_revision": tool.executor_revision,
+            })
+        actions.append({
+            "action_id": action_id,
+            "index": call.index,
+            "stable_tool_call_id": call.call_id,
+            "provider_call_id": call.provider_call_id,
+            "tool_name": call.name,
+            "arguments": arguments,
+            "wave": 0,
+            "dependencies": [],
+            "blocking": True,
+            "policy_decision": (
+                "preauthorized" if _is_safe_automatic(tool)
+                else "requires_authorization"
+            ),
+            "policy_snapshot": policy_snapshot,
+            "policy_revision": _POLICY_REVISION,
+            "retry_disposition": (
+                "retry_safe" if _is_safe_automatic(tool)
+                else "retry_after_reconcile"
+            ),
+        })
+    return "0" * 64, tuple(actions)
+
+
+def _current_input_image_count(
+    value: object, current_input_message_id: str | None,
+) -> int:
+    if current_input_message_id is None:
+        return 0
+    if not isinstance(value, list):
+        raise RuntimeError("AGENT_RUNTIME_MESSAGES_INVALID")
+    from services.handlers.chat_context.content_extractors import (
+        extract_image_urls_from_content,
+    )
+
+    matches = [
+        item for item in value
+        if isinstance(item, dict)
+        and str(item.get("id") or "") == current_input_message_id
+        and item.get("role") == "user"
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("RUNTIME_INPUT_MESSAGE_CONTEXT_INVALID")
+    return len(extract_image_urls_from_content(matches[0].get("content")))
+
+
+def _validate_reference_image_indexes(
+    arguments: dict, *, reference_image_count: int,
+) -> None:
+    indexes = arguments.get("reference_image_indexes", [])
+    if not isinstance(indexes, list):
+        raise ValueError("RUNTIME_REFERENCE_IMAGE_INDEX_INVALID")
+    if len(indexes) != len(set(indexes)):
+        raise ValueError("RUNTIME_REFERENCE_IMAGE_INDEX_INVALID")
+    if any(
+        not isinstance(index, int) or isinstance(index, bool)
+        or index < 0 or index >= reference_image_count
+        for index in indexes
+    ):
+        raise ValueError("RUNTIME_REFERENCE_IMAGE_INDEX_INVALID")
+    prompt = arguments.get("prompt")
+    if not isinstance(prompt, str) or not 1 <= len(prompt) <= 20_000:
+        raise ValueError("RUNTIME_IMAGE_PROMPT_INVALID")
+
+
+def _supports_vision(model_id: str) -> bool:
+    from services.adapters.factory import get_model_config
+
+    config = get_model_config(model_id)
+    if config is None:
+        raise RuntimeError("AGENT_RUNTIME_MODEL_UNKNOWN")
+    return bool(config.supports_vision)
+
+
+def _is_safe_automatic(tool: object) -> bool:
+    return (
+        getattr(tool, "safety_level", None) == "safe"
+        and getattr(tool, "side_effect", None) == "none"
+        and getattr(tool, "authorization_requirement", None) == "none"
+    )
+
+
+def _provider(model_id: str) -> str:
+    from services.adapters.factory import get_model_config
+
+    config = get_model_config(model_id)
+    if config is None:
+        raise RuntimeError("AGENT_RUNTIME_MODEL_UNKNOWN")
+    return str(config.provider.value)
+
+
+def _resolve_model_selection(snapshot, *, context: dict, definition):
+    config_snapshot = snapshot.run.get("config_snapshot")
+    if isinstance(config_snapshot, dict):
+        frozen = config_snapshot.get("resolved_model")
+        if isinstance(frozen, dict):
+            model_id = frozen.get("model_id")
+            provider = frozen.get("provider")
+            revision = frozen.get("revision")
+            resolution = resolve_runtime_model(model_id)
+            if (
+                resolution.model_id != model_id
+                or resolution.provider != provider
+                or resolution.revision != revision
+            ):
+                raise RuntimeError("RUNTIME_MODEL_SNAPSHOT_MISMATCH")
+            return resolution
+    task = context.get("task")
+    task_model = task.get("model_id") if isinstance(task, dict) else None
+    if not task_model and isinstance(task, dict):
+        params = task.get("request_params")
+        task_model = params.get("model") if isinstance(params, dict) else None
+    return resolve_runtime_model(task_model)
+
+
+def _hash(value: object) -> str:
+    return hashlib.sha256(json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        default=str,
+    ).encode()).hexdigest()
+
+
+def _mapping(value: object, name: str) -> dict:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"AGENT_RUNTIME_{name.upper()}_INVALID")
+    return value
+
+
+def _optional_text(value: object) -> str | None:
+    return str(value) if isinstance(value, str) and value else None

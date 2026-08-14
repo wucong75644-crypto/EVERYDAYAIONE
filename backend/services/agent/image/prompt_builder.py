@@ -116,9 +116,8 @@ class PromptBuilder:
             )
 
         logger.debug(
-            f"build_user_message | product={product_name} | platform={platform} "
-            f"| product_imgs={product_image_count} | style_refs={style_ref_count} "
-            f"| size={image_size} | detail={generate_detail}"
+            "build_user_message | tool=image_agent | "
+            "error_code=IMAGE_PROMPT_BUILT"
         )
         return "\n".join(parts)
 

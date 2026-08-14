@@ -59,7 +59,7 @@ def _result() -> ActionResult:
         action_id=ActionId("action-1"),
         scope=RuntimeScope(ScopeKind.USER, "user:u-1", "u-1", None),
         status=ActionResultStatus.SUCCESS,
-        result_hash="result-hash",
+        result_hash="a" * 64,
     )
 
 

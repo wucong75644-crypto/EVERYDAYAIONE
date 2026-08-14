@@ -58,7 +58,7 @@ def test_rpc_sql_binds_asset_id_list_as_named_jsonb_parameter() -> None:
     )
 
     assert sql == (
-        f'SELECT "{RPC_NAME}"('
+        f'SELECT public."{RPC_NAME}"('
         "p_actor_user_id := %s, p_asset_ids := %s)"
     )
     assert params[0] == target_user_id

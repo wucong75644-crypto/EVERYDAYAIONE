@@ -163,7 +163,8 @@ async def _query_ds_metric(
         "p_shop_name": shop_name,
         "p_limit": min(limit, 500),
     }
-    result = db.rpc("erp_cross_metric_query", params).execute()
+    from services.kuaimai.rpc_compat import execute_rpc
+    result = await execute_rpc(db, "erp_cross_metric_query", params)
     data = result.data
 
     if isinstance(data, dict) and "error" in data:
@@ -219,7 +220,8 @@ async def _query_repurchase_rate(
         "p_shop_name": shop_name,
         "p_limit": min(limit, 200),
     }
-    result = db.rpc("erp_repurchase_rate_query", params).execute()
+    from services.kuaimai.rpc_compat import execute_rpc
+    result = await execute_rpc(db, "erp_repurchase_rate_query", params)
     rows = result.data if isinstance(result.data, list) else []
 
     if not rows:
@@ -283,7 +285,8 @@ async def _query_ship_time(
         "p_shop_name": shop_name,
         "p_limit": min(limit, 200),
     }
-    result = db.rpc("erp_ship_time_query", params).execute()
+    from services.kuaimai.rpc_compat import execute_rpc
+    result = await execute_rpc(db, "erp_ship_time_query", params)
     rows = result.data if isinstance(result.data, list) else []
 
     if not rows:
