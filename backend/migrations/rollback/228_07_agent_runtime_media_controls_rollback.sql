@@ -10,6 +10,10 @@ BEGIN
     END IF;
 END $$;
 
+DROP TRIGGER agent_runtime_media_retry_run_terminal_event ON agent_runs;
+DROP TRIGGER agent_runtime_media_retry_run_guard ON agent_runs;
+DROP FUNCTION _agent_runtime_media_retry_run_event_v1();
+DROP FUNCTION _agent_runtime_media_retry_run_guard_v1();
 DROP FUNCTION read_agent_runtime_media_retry_binding_v1(UUID,UUID,TEXT,UUID,BIGINT,TEXT);
 DROP FUNCTION retry_agent_runtime_media_slot_v1(
     UUID,UUID,INTEGER,UUID,BIGINT,UUID,UUID,TEXT,TEXT,TEXT

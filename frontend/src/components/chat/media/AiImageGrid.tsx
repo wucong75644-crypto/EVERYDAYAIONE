@@ -130,17 +130,21 @@ const GridCell = memo(function GridCell({
   };
 
   const aspectRatio = placeholderSize.width / placeholderSize.height;
+  const isRuntimeSlot = slotId !== undefined && slotStatus !== undefined;
+  const isRuntimeRetryable = slotStatus === 'failed' || slotStatus === 'cancelled';
 
-  // 失败的图片
-  if (failed) {
+  // Runtime 只允许失败/取消槽重试；legacy 继续沿用原失败重试行为。
+  if (failed || isRuntimeRetryable) {
     return (
       <div data-slot-id={slotId} data-slot-status={slotStatus || 'failed'}>
         <FailedMediaPlaceholder
           type="image"
           aspectRatio={aspectRatio}
-          onRetry={onRegenerateSingle ? () => onRegenerateSingle(index) : undefined}
+          onRetry={onRegenerateSingle && (!isRuntimeSlot || isRuntimeRetryable)
+            ? () => onRegenerateSingle(index) : undefined}
           retryLabel="重新生成"
-          errorMessage={errorMessage || '图片生成失败'}
+          errorMessage={errorMessage || (slotStatus === 'cancelled'
+            ? '图片生成已取消' : '图片生成失败')}
           errorCode={errorCode}
         />
       </div>
@@ -151,9 +155,8 @@ const GridCell = memo(function GridCell({
   if (!imageAsset?.originalUrl) {
     const label = slotStatus === 'accepted' ? '已提交，正在生成'
       : slotStatus === 'unknown' ? '正在确认生成结果'
-        : slotStatus === 'cancelled' ? '已取消'
-          : slotStatus === 'completed' ? '正在同步生成结果'
-            : '等待生成';
+        : slotStatus === 'completed' ? '正在同步生成结果'
+          : '等待生成';
     return (
       <div
         className="rounded-xl bg-hover dark:bg-surface-dark-card flex items-center justify-center shadow-sm animate-fade-in animate-media-pulse"
@@ -222,7 +225,7 @@ const GridCell = memo(function GridCell({
 
       {/* 悬浮操作按钮 */}
       <div className={`absolute bottom-0 left-0 right-0 flex justify-center gap-1.5 py-1.5 bg-gradient-to-t from-black/50 to-transparent transition-opacity ${imageLoaded ? 'opacity-0 group-hover:opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        {onRegenerateSingle && (
+        {onRegenerateSingle && !isRuntimeSlot && (
           <button
             type="button"
             className="flex items-center px-2 py-0.5 text-white bg-black/40 hover:bg-black/60 rounded-full transition-base"

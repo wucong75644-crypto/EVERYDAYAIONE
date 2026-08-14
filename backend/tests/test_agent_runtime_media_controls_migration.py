@@ -22,6 +22,14 @@ def test_runtime_media_controls_are_additive_and_fenced() -> None:
     assert "'completed','failed','rejected','cancelled'" in sql
     assert "TO everydayai_agent_runtime_worker" in sql
     assert "TO everydayai_runtime,everydayai_wecom_runtime" in sql
+    assert "CREATE TRIGGER agent_runtime_media_retry_run_guard" in sql
+    assert "execution_mode','action_only'" in sql
+    assert "model_loop_enabled',FALSE" in sql
+    assert "source_binding.credit_state <> 'refunded'" in sql
+    assert "source_task.status::TEXT NOT IN ('failed','cancelled')" in sql
+    assert "conversation.org_id,conversation.user_id" in sql
+    assert "'assistant',p_org_id,p_user_id" in sql
+    assert "'task_id',action_id" in sql
 
 
 def test_runtime_media_controls_rollback_only_drops_228_07() -> None:

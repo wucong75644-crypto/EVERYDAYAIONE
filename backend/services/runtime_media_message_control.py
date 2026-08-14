@@ -110,6 +110,12 @@ class RuntimeMediaMessageControlService:
             "slot_not_found": (
                 "RUNTIME_MEDIA_SLOT_NOT_FOUND", "未找到可重试的图片槽位", 404,
             ),
+            "projection_pending": (
+                "RUNTIME_MEDIA_PROJECTION_PENDING", "图片状态正在结算，请稍后重试", 409,
+            ),
+            "slot_conflict": (
+                "RUNTIME_MEDIA_SLOT_CONFLICT", "图片状态已变化，请刷新后重试", 409,
+            ),
         }
         if outcome in errors:
             code, message, status = errors[outcome]

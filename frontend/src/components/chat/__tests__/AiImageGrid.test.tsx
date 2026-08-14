@@ -398,7 +398,7 @@ describe('AiImageGrid', () => {
       { ...makeRuntimeSlots()[0], slot_status: 'unknown', slot_revision: 2 },
       { ...makeRuntimeSlots()[1], slot_status: 'cancelled', slot_revision: 3 },
     ];
-    render(
+    const { container } = render(
       <AiImageGrid
         content={content}
         numImages={2}
@@ -412,9 +412,48 @@ describe('AiImageGrid', () => {
     expect(screen.getByLabelText('正在确认生成结果')).toHaveAttribute(
       'data-slot-status', 'unknown',
     );
-    expect(screen.getByLabelText('已取消')).toHaveAttribute(
-      'data-slot-status', 'cancelled',
+    expect(container.querySelector('[data-slot-status="cancelled"]')).not.toBeNull();
+  });
+
+  it('Runtime 仅 failed/cancelled 槽显示重试，completed 不显示', () => {
+    const onRegenerate = vi.fn();
+    const slots: ContentPart[] = [
+      { ...makeRuntimeSlots()[0], slot_status: 'failed', failed: true, slot_revision: 2 },
+      { ...makeRuntimeSlots()[1], slot_status: 'cancelled', slot_revision: 3 },
+      { ...makeRuntimeSlots(2)[2], slot_status: 'completed', slot_revision: 4 },
+    ];
+    render(
+      <AiImageGrid
+        content={slots}
+        numImages={3}
+        messageId="runtime-retryable"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        onRegenerateSingle={onRegenerate}
+        isGenerating={false}
+      />,
     );
+
+    const retryButtons = screen.getAllByText('重新生成');
+    expect(retryButtons).toHaveLength(2);
+    expect(screen.queryByLabelText('重新生成')).toBeNull();
+    fireEvent.click(retryButtons[1]);
+    expect(onRegenerate).toHaveBeenCalledWith(1);
+  });
+
+  it('legacy completed 图片继续显示重新生成按钮', () => {
+    render(
+      <AiImageGrid
+        content={makeContent(['https://legacy.example/image.png'])}
+        numImages={1}
+        messageId="legacy-regenerate"
+        placeholderSize={defaultPlaceholderSize}
+        onImageClick={vi.fn()}
+        onRegenerateSingle={vi.fn()}
+        isGenerating={false}
+      />,
+    );
+    expect(screen.getByLabelText('重新生成')).toBeInTheDocument();
   });
 
   it('Runtime 批次只在存在活跃槽位时显示停止控制', () => {

@@ -136,6 +136,29 @@ async def test_retry_rejects_active_slot_without_falling_back() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "code"),
+    [
+        ("projection_pending", "RUNTIME_MEDIA_PROJECTION_PENDING"),
+        ("slot_conflict", "RUNTIME_MEDIA_SLOT_CONFLICT"),
+    ],
+)
+async def test_retry_surfaces_projection_and_slot_conflicts(
+    outcome: str, code: str,
+) -> None:
+    service = RuntimeMediaMessageControlService(
+        _DB({"outcome": outcome}), user_id="user", org_id="org",
+    )
+    with pytest.raises(AppException) as error:
+        await service.retry_slot(
+            "message", "conversation", 0, slot_id="slot",
+            expected_slot_revision=1, idempotency_key="retry-1",
+            client_task_id=None, task_slot_id=None,
+        )
+    assert error.value.code == code
+
+
+@pytest.mark.asyncio
 async def test_non_runtime_message_can_fall_back() -> None:
     service = RuntimeMediaMessageControlService(
         _DB({"outcome": "not_runtime_media"}), user_id="user", org_id="org",
