@@ -279,6 +279,25 @@ async def test_prepared_video_uses_result_urls_and_video_persistence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_completed_after_cancel_persists_before_normalized_apply() -> None:
+    facts = _facts()
+    action_facts = facts["action_facts"]
+    assert isinstance(action_facts, dict)
+    action_facts["media_kind"] = "video"
+    action_facts["result_urls"] = ["https://provider.example/late.mp4"]
+    projection = _Projection("action.completed_after_cancel", facts)
+    persistence = _Persistence()
+
+    await RuntimeMediaProjectionWorker(projection, persistence).run_once()
+
+    assert persistence.requests[0].source_url == "https://provider.example/late.mp4"
+    assert projection.applied[0][0] == "action_progress"
+    assert projection.applied[0][1]["source_url"] == (
+        "https://provider.example/late.mp4"
+    )
+
+
+@pytest.mark.asyncio
 async def test_prepared_image_batch_uses_task_image_index() -> None:
     facts = _facts()
     action_facts = facts["action_facts"]

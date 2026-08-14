@@ -63,7 +63,9 @@ class RuntimeMediaProjectionWorker:
                 return
             action = _projection_action(claim.event.event_type)
             content_part = None
-            if claim.event.event_type == "action.completed":
+            if claim.event.event_type in {
+                "action.completed", "action.completed_after_cancel",
+            }:
                 request = asset_request_from_readback(claim, readback)
                 content_part = dict(await self._persistence.persist(request))
                 content_part.setdefault("source_url", request.source_url)
