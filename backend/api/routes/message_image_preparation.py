@@ -109,7 +109,7 @@ async def prepare_and_start_image_generation(
                 db=db, conversation_id=conversation_id, user_id=user_id,
                 org_id=org_id, request_id=request_id, task_ids=task_ids,
                 task_payloads=task_payloads, preparation=preparation,
-                model_id=settings["model_id"],
+                model_id=settings["model_id"], batch_id=batch_id,
             )
     except RuntimeMediaNotOwned as error:
         await fail_closed_prepared_media(
@@ -162,28 +162,28 @@ async def _submit_runtime_image_tasks(
     *, db: Any, conversation_id: str, user_id: str, org_id: str | None,
     request_id: str, task_ids: tuple[str, ...],
     task_payloads: list[dict[str, Any]], preparation: Any, model_id: str,
+    batch_id: str,
 ) -> str:
-    from api.routes.message_media_runtime import submit_runtime_media_ingress
+    from api.routes.message_media_runtime import submit_runtime_image_batch_ingress
 
-    external_task_ids = []
-    for task_id, task in zip(task_ids, task_payloads):
-        receipt = await submit_runtime_media_ingress(
-            db=db, conversation_id=conversation_id, user_id=user_id,
-            org_id=org_id, task_id=task_id,
-            input_message_id=preparation.input_message_id,
-            output_message_id=preparation.output_message_id,
-            turn_id=preparation.turn_id,
-            idempotency_key=f"{request_id}:{task_id}", kind="image",
-            request=task["request_params"], model_id=model_id,
-        )
-        if not receipt.runtime_owned:
-            if external_task_ids:
-                raise RuntimeError("RUNTIME_MEDIA_PARTIAL_OWNERSHIP")
-            raise RuntimeMediaNotOwned(receipt.outcome)
-        if not receipt.accepted:
-            raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
-        external_task_ids.append(receipt.run_id or task_id)
-    return external_task_ids[0] if external_task_ids else task_ids[0]
+    receipt = await submit_runtime_image_batch_ingress(
+        db=db, conversation_id=conversation_id, user_id=user_id, org_id=org_id,
+        input_message_id=preparation.input_message_id,
+        output_message_id=preparation.output_message_id,
+        turn_id=preparation.turn_id, batch_id=batch_id, model_id=model_id,
+        items=[{
+            "task_id": task_id,
+            "idempotency_key": f"{request_id}:{task_id}",
+            "request": task["request_params"],
+        } for task_id, task in zip(task_ids, task_payloads)],
+    )
+    if not receipt.runtime_owned:
+        raise RuntimeMediaNotOwned(receipt.outcome)
+    if not receipt.accepted:
+        raise RuntimeError("RUNTIME_MEDIA_INGRESS_NOT_OWNED")
+    return receipt.run_id or task_ids[0]
+
+
 def _task_payloads(
     *, handler: Any, body: GenerateRequest, settings: dict[str, Any],
     task_ids: tuple[str, ...], batch_id: str, conversation_id: str,

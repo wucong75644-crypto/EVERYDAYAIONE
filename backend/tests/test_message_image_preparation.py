@@ -84,7 +84,8 @@ def _body(num_images: int = 2) -> GenerateRequest:
 
 
 @pytest.mark.asyncio
-async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch):
+@pytest.mark.parametrize("num_images", (1, 2))
+async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch, num_images):
     _Lifecycle.instances.clear()
     monkeypatch.setattr(
         "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
@@ -93,19 +94,19 @@ async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch):
         "api.routes.message_image_preparation.resolve_image_generation_settings",
         lambda **kwargs: {
             "model_id": "image-model", "aspect_ratio": "1:1",
-            "resolution": None, "num_images": 2, "total_credits": 10,
+            "resolution": None, "num_images": num_images,
+            "total_credits": 5 * num_images,
         },
     )
     monkeypatch.setattr(
         "api.routes.message_image_preparation.record_user_activity",
         lambda *args, **kwargs: None,
     )
-    async def _ingress(**kwargs):
-        return SimpleNamespace(
-            accepted=True, runtime_owned=True, outcome="created", run_id="run-1",
-        )
+    ingress = AsyncMock(return_value=SimpleNamespace(
+        accepted=True, runtime_owned=True, outcome="created", run_id="run-1",
+    ))
     monkeypatch.setattr(
-        "api.routes.message_media_runtime.submit_runtime_media_ingress", _ingress,
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress", ingress,
     )
     handler = _Handler()
 
@@ -113,12 +114,14 @@ async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch):
         db=MagicMock(), handler=handler,
         conversation_service=_ConversationService(), conversation_id="conv-1",
         user_id="user-1", org_id="org-1", request_id="request-row",
-        body=_body(),
+        body=_body(num_images),
     )
 
     prepared = _Lifecycle.instances[0].calls[0]
-    assert len(prepared["tasks"]) == 2
+    assert len(prepared["tasks"]) == num_images
     assert {task["status"] for task in prepared["tasks"]} == {"preparing"}
+    ingress.assert_awaited_once()
+    assert len(ingress.await_args.kwargs["items"]) == num_images
     handler.start.assert_not_awaited()
     assert _Lifecycle.instances[0].fail_calls == []
     assert response.user_message.id == "input-1"
@@ -144,7 +147,7 @@ async def test_image_media_not_ready_fails_prepared_state_without_legacy_provide
     ))
     release_slot = AsyncMock()
     monkeypatch.setattr(
-        "api.routes.message_media_runtime.submit_runtime_media_ingress", ingress,
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress", ingress,
     )
     monkeypatch.setattr(
         "api.routes.message_media_failure.release_task_slot_checked", release_slot,
@@ -166,7 +169,8 @@ async def test_image_media_not_ready_fails_prepared_state_without_legacy_provide
     assert captured.value.details == {"outcome": "media_not_ready"}
     handler.start.assert_not_awaited()
     handler._lock_credits.assert_not_called()
-    assert ingress.await_count == 1
+    ingress.assert_awaited_once()
+    assert len(ingress.await_args.kwargs["items"]) == 2
     lifecycle = _Lifecycle.instances[0]
     assert {call["task_id"] for call in lifecycle.fail_calls} == set(
         lifecycle.calls[0]["tasks"][index]["id"] for index in range(2)
