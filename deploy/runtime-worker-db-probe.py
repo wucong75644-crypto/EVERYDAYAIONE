@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,12 +14,12 @@ sys.path.insert(0, str(BACKEND))
 
 
 def main(role: str) -> int:
-    from core.database import close_worker_db, get_worker_db
     from core.db_scope import (
         DatabaseAccessKind,
         DatabaseScope,
         ScopedDatabaseClient,
     )
+    from core.local_db import LocalDBClient
 
     kind = {
         "agent_runtime": DatabaseAccessKind.AGENT_RUNTIME,
@@ -28,8 +29,12 @@ def main(role: str) -> int:
     }.get(role)
     if kind is None:
         raise RuntimeError("AGENT_RUNTIME_PROCESS_ROLE_INVALID")
+    database_url = os.environ.get("WORKER_DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("WORKER_DATABASE_URL_REQUIRED")
+    raw_database = LocalDBClient(database_url, min_size=1, max_size=1)
     database = ScopedDatabaseClient(
-        get_worker_db(),
+        raw_database,
         DatabaseScope(
             actor_user_id=None,
             org_id=None,
@@ -52,7 +57,7 @@ def main(role: str) -> int:
         }, separators=(",", ":")))
         return 0
     finally:
-        close_worker_db()
+        raw_database.close()
 
 
 if __name__ == "__main__":

@@ -286,6 +286,14 @@ def test_sandbox_probe_checks_fixed_capabilities() -> None:
         assert contract in text
 
 
+def test_worker_db_probe_never_loads_application_settings() -> None:
+    text = (DEPLOY / "runtime-worker-db-probe.py").read_text()
+    assert 'os.environ.get("WORKER_DATABASE_URL")' in text
+    assert "from core.local_db import LocalDBClient" in text
+    assert "from core.database" not in text
+    assert "get_settings" not in text
+
+
 def test_sandbox_unit_delegates_only_required_cgroup_controllers() -> None:
     text = (DEPLOY / "everydayai-sandbox-worker.service").read_text()
     assert "Delegate=cpu memory pids" in text
