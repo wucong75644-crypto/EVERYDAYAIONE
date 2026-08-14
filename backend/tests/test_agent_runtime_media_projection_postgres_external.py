@@ -14,7 +14,6 @@ from tests.test_agent_runtime_ar17_postgres_external import database
 from tests.test_agent_runtime_media_action_bindings_postgres_external import (
     _prepare, _prepare_legacy_schema, _seed_batch,
 )
-
 pytestmark = pytest.mark.external
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations/228_06_agent_runtime_media_projection.sql"
@@ -67,6 +66,7 @@ def _install_prepared_contract(connection: psycopg.Connection) -> None:
         connection.execute(PREPARED_MIGRATION.read_text(encoding="utf-8"))
     else:
         connection.execute(PREPARED_SCHEMA_STUB)
+    connection.execute("SET LOCAL ROLE everydayai_owner")
 
 def _seed_terminal_event(
     database: str, action_id: UUID, source_url: str,
