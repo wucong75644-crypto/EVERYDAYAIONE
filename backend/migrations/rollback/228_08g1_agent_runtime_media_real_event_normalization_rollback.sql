@@ -4,6 +4,13 @@ SET LOCAL ROLE everydayai_owner;
 DO $guard$
 BEGIN
     IF to_regprocedure(
+           '_agent_runtime_media_normalize_model_video_event_228_08g1_v1'
+           '(agent_runtime_events)'
+       ) IS NOT NULL THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_228_08I1_MUST_ROLL_BACK_FIRST'
+            USING ERRCODE='55000';
+    END IF;
+    IF to_regprocedure(
            '_derive_agent_runtime_model_video_wecom_outbox_v1()'
        ) IS NOT NULL THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_228_08G2_MUST_ROLL_BACK_FIRST'

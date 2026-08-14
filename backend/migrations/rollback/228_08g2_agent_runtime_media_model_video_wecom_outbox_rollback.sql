@@ -3,6 +3,12 @@ SET LOCAL ROLE everydayai_owner;
 
 DO $guard$
 BEGIN
+    IF to_regprocedure(
+           '_derive_agent_runtime_model_media_wecom_outbox_v2()'
+       ) IS NOT NULL THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_228_08I2_MUST_ROLL_BACK_FIRST'
+            USING ERRCODE='55000';
+    END IF;
     IF EXISTS(
         SELECT 1
           FROM agent_runtime_prepared_media_action_bindings binding
