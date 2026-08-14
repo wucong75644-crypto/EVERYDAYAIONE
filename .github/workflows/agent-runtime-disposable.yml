@@ -154,7 +154,7 @@ jobs:
           echo "$RUNNER_TEMP/ar17-venv/bin" >> "$GITHUB_PATH"
 
       - name: Configure frontend Node environment
-        uses: actions/setup-node@1e60f620b9541d7c243d22f54075a5cc0b1d
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20.19.0"
           cache: npm
