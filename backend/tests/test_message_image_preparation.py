@@ -51,6 +51,7 @@ class _Handler:
         self.db = MagicMock()
         self.org_id = "org-1"
         self.preflight = MagicMock()
+        self._check_balance = MagicMock()
         self.start = AsyncMock(return_value="client-task")
         self._lock_credits = MagicMock(side_effect=["tx-1", "tx-2"])
         self._refund_credits = MagicMock()
@@ -84,8 +85,12 @@ def _body(num_images: int = 2) -> GenerateRequest:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("num_images", (1, 2))
-async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch, num_images):
+@pytest.mark.parametrize("num_images,use_batch_prompts", (
+    (1, False), (4, False), (10, False), (10, True),
+))
+async def test_image_batch_routes_to_runtime_when_accepted(
+    monkeypatch, num_images, use_batch_prompts,
+):
     _Lifecycle.instances.clear()
     monkeypatch.setattr(
         "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
@@ -109,12 +114,17 @@ async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch, num_imag
         "api.routes.message_media_runtime.submit_runtime_image_batch_ingress", ingress,
     )
     handler = _Handler()
+    body = _body(num_images)
+    if use_batch_prompts:
+        body.params = {"_batch_prompts": [
+            {"prompt": f"cat-{index}"} for index in range(num_images)
+        ]}
 
     response = await prepare_and_start_image_generation(
         db=MagicMock(), handler=handler,
         conversation_service=_ConversationService(), conversation_id="conv-1",
         user_id="user-1", org_id="org-1", request_id="request-row",
-        body=_body(num_images),
+        body=body,
     )
 
     prepared = _Lifecycle.instances[0].calls[0]
@@ -123,7 +133,11 @@ async def test_image_batch_routes_to_runtime_when_accepted(monkeypatch, num_imag
     ingress.assert_awaited_once()
     assert len(ingress.await_args.kwargs["items"]) == num_images
     handler.start.assert_not_awaited()
+    handler._check_balance.assert_called_once_with("user-1", 5 * num_images)
+    handler.preflight.assert_not_called()
     assert _Lifecycle.instances[0].fail_calls == []
+    assert body.params["num_images"] == num_images
+    assert response.assistant_message.generation_params.num_images == num_images
     assert response.user_message.id == "input-1"
 
 
@@ -228,6 +242,101 @@ async def test_partial_runtime_ownership_requires_reconcile_without_terminalizin
     handler.start.assert_not_awaited()
     handler._lock_credits.assert_not_called()
     release_slot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_error_without_ownership_closes_all_prepared_state(monkeypatch):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": 10, "total_credits": 50,
+        },
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.read_prepared_media_ownership",
+        AsyncMock(return_value="none"),
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress",
+        AsyncMock(side_effect=RuntimeError("pricing unavailable")),
+    )
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
+    )
+    body = _body(10)
+    body.params["_task_slot_id"] = "slot-10"
+    db = MagicMock()
+    handler = _Handler()
+
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=db, handler=handler, conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=body,
+        )
+
+    assert captured.value.code == "RUNTIME_MEDIA_UNAVAILABLE"
+    assert captured.value.details == {"outcome": "submit_failed_no_ownership"}
+    lifecycle = _Lifecycle.instances[0]
+    assert len(lifecycle.fail_calls) == 10
+    message_update = db.table.return_value.update.call_args.args[0]
+    assert len(message_update["content"]) == 10
+    release_slot.assert_awaited_once()
+    handler.start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ownership", ("full", "partial", "unknown"))
+async def test_submit_error_with_uncertain_ownership_requires_reconcile(
+    monkeypatch, ownership,
+):
+    _Lifecycle.instances.clear()
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.GenerationLifecycle", _Lifecycle,
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.resolve_image_generation_settings",
+        lambda **kwargs: {
+            "model_id": "image-model", "aspect_ratio": "1:1",
+            "resolution": None, "num_images": 4, "total_credits": 20,
+        },
+    )
+    monkeypatch.setattr(
+        "api.routes.message_image_preparation.read_prepared_media_ownership",
+        AsyncMock(return_value=ownership),
+    )
+    monkeypatch.setattr(
+        "api.routes.message_media_runtime.submit_runtime_image_batch_ingress",
+        AsyncMock(side_effect=TimeoutError("commit result unknown")),
+    )
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "api.routes.message_media_failure.release_task_slot_checked", release_slot,
+    )
+    handler = _Handler()
+
+    with pytest.raises(AppException) as captured:
+        await prepare_and_start_image_generation(
+            db=MagicMock(), handler=handler,
+            conversation_service=_ConversationService(),
+            conversation_id="conv-1", user_id="user-1", org_id="org-1",
+            request_id="request-row", body=_body(4),
+        )
+
+    assert captured.value.code == "RUNTIME_MEDIA_OWNERSHIP_RECONCILE_REQUIRED"
+    assert captured.value.status_code == 503
+    assert captured.value.details == {
+        "ownership": ownership, "reconcile_required": True,
+    }
+    assert _Lifecycle.instances[0].fail_calls == []
+    release_slot.assert_not_awaited()
+    handler.start.assert_not_awaited()
 
 
 class _Adapter:

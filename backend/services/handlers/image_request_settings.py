@@ -6,9 +6,17 @@ from config import kie_models
 from services.adapters.factory import DEFAULT_IMAGE_MODEL_ID
 
 
+class ImageCountValidationError(ValueError):
+    """Requested image count cannot be represented by the active product path."""
+
+
 def resolve_image_generation_settings(
     params: Dict[str, Any],
     has_image_urls: bool,
+    *,
+    max_images: int = 4,
+    batch_prompt_limit: int = 8,
+    strict_count: bool = False,
 ) -> Dict[str, Any]:
     """返回图片任务提交与积分预检共用的标准参数。"""
     model_id = params.get("model") or DEFAULT_IMAGE_MODEL_ID
@@ -39,9 +47,21 @@ def resolve_image_generation_settings(
     if is_regenerate_single:
         num_images = 1
     elif batch_prompts:
-        num_images = min(len(batch_prompts), 8)
+        if strict_count and (
+            not isinstance(batch_prompts, list)
+            or any(not isinstance(item, dict) for item in batch_prompts)
+            or not 1 <= len(batch_prompts) <= batch_prompt_limit
+        ):
+            raise ImageCountValidationError("IMAGE_BATCH_PROMPTS_COUNT_INVALID")
+        num_images = min(len(batch_prompts), batch_prompt_limit)
     else:
-        num_images = max(1, min(4, int(params.get("num_images", 1))))
+        try:
+            requested_images = int(params.get("num_images", 1))
+        except (TypeError, ValueError) as error:
+            raise ImageCountValidationError("IMAGE_COUNT_INVALID") from error
+        if strict_count and not 1 <= requested_images <= max_images:
+            raise ImageCountValidationError("IMAGE_COUNT_INVALID")
+        num_images = max(1, min(max_images, requested_images))
 
     cost_result = kie_models.calculate_image_cost(
         model_name=model_id,

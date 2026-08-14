@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NoReturn
 
 from schemas.message import (
     GenerateRequest, GenerateResponse, GenerationParams, GenerationType,
@@ -14,13 +14,18 @@ from schemas.message import (
 )
 from services.generation_lifecycle import GenerationLifecycle
 from services.handlers.base import TaskMetadata
-from services.handlers.image_request_settings import resolve_image_generation_settings
+from services.handlers.image_request_settings import (
+    ImageCountValidationError,
+    resolve_image_generation_settings,
+)
 from services.user_activity_service import record_user_activity
 
 from api.routes.message_media_failure import (
     RuntimeMediaNotOwned,
+    RuntimeMediaOwnershipReconcileRequired,
     RuntimeMediaPartialOwnership,
     fail_closed_prepared_media,
+    read_prepared_media_ownership,
 )
 
 
@@ -28,6 +33,8 @@ _IMAGE_TURN_NAMESPACE = uuid.UUID("fd68022e-6cda-444a-843c-53832f58de7f")
 _IMAGE_INPUT_NAMESPACE = uuid.UUID("0c68e63b-0748-4971-b907-54e291279441")
 _IMAGE_TASK_NAMESPACE = uuid.UUID("07932385-a335-40ba-8e76-ea254b674a6a")
 _IMAGE_BATCH_NAMESPACE = uuid.UUID("49852944-8734-42d6-8a43-6f2694375334")
+_RUNTIME_IMAGE_BATCH_LIMIT = 10
+_ECOM_IMAGE_BATCH_LIMIT = 4
 
 
 @dataclass
@@ -57,13 +64,10 @@ async def prepare_and_start_image_generation(
     if body.params is None:
         body.params = {}
     body.params["_org_id"] = org_id
-    handler.preflight(user_id, body.content, _business_params(body))
-    settings = resolve_image_generation_settings(
-        params=_business_params(body),
-        has_image_urls=bool(handler._extract_image_urls(body.content)),
+    settings = _resolve_and_preflight_image_settings(
+        handler=handler, body=body, user_id=user_id,
+        response_generation_type=response_generation_type,
     )
-    if settings["num_images"] > 4:
-        raise RuntimeError("IMAGE_PREPARED_TASK_COUNT_INVALID")
     existing_output = body.operation in {MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE}
     turn_id = None if existing_output else _stable_id(_IMAGE_TURN_NAMESPACE, request_id)
     input_id = None if existing_output else _stable_id(_IMAGE_INPUT_NAMESPACE, request_id)
@@ -119,7 +123,17 @@ async def prepare_and_start_image_generation(
             operation=body.operation, params=body.params, media_kind="image",
             outcome=error.outcome, org_id=org_id, user_id=user_id,
         )
+    except RuntimeMediaPartialOwnership:
+        raise
     except Exception as error:
+        if response_generation_type == GenerationType.IMAGE:
+            await _close_or_isolate_runtime_submit_error(
+                error=error, db=db, lifecycle=lifecycle, task_ids=task_ids,
+                task_payloads=task_payloads,
+                message_id=preparation.output_message_id,
+                operation=body.operation, params=body.params,
+                org_id=org_id, user_id=user_id,
+            )
         from core.exceptions import AppException
         if isinstance(error, AppException) and error.code == "IMAGE_GENERATION_FAILED":
             from api.routes.message_generation_helpers import finalize_image_request_failure
@@ -133,6 +147,58 @@ async def prepare_and_start_image_generation(
         body, conversation_id, preparation.input_message_id,
         preparation.turn_id, created_at,
     )
+    return _complete_image_request(
+        db=db, body=body, conversation_id=conversation_id, user_id=user_id,
+        org_id=org_id, preparation=preparation, user_message=user_message,
+        external_task_id=external_task_id, placeholder_at=placeholder_at,
+        generation_type=response_generation_type,
+    )
+
+
+def _resolve_and_preflight_image_settings(
+    *, handler: Any, body: GenerateRequest, user_id: str,
+    response_generation_type: GenerationType,
+) -> dict[str, Any]:
+    business_params = _business_params(body)
+    is_runtime_image = response_generation_type == GenerationType.IMAGE
+    try:
+        settings = resolve_image_generation_settings(
+            params=business_params,
+            has_image_urls=bool(handler._extract_image_urls(body.content)),
+            max_images=(
+                _RUNTIME_IMAGE_BATCH_LIMIT
+                if is_runtime_image else _ECOM_IMAGE_BATCH_LIMIT
+            ),
+            batch_prompt_limit=(
+                _RUNTIME_IMAGE_BATCH_LIMIT if is_runtime_image else 8
+            ),
+            strict_count=is_runtime_image,
+        )
+    except ImageCountValidationError as error:
+        from core.exceptions import AppException
+
+        raise AppException(
+            code="IMAGE_BATCH_COUNT_INVALID",
+            message="普通对话每次可生成 1 到 10 张图片",
+            status_code=400,
+        ) from error
+    if is_runtime_image:
+        handler._check_balance(user_id, settings["total_credits"])
+        if body.operation != MessageOperation.REGENERATE_SINGLE:
+            body.params["num_images"] = settings["num_images"]
+    else:
+        handler.preflight(user_id, body.content, business_params)
+        if settings["num_images"] > _ECOM_IMAGE_BATCH_LIMIT:
+            raise RuntimeError("IMAGE_PREPARED_TASK_COUNT_INVALID")
+    return settings
+
+
+def _complete_image_request(
+    *, db: Any, body: GenerateRequest, conversation_id: str, user_id: str,
+    org_id: str | None, preparation: Any, user_message: Message | None,
+    external_task_id: str, placeholder_at: datetime,
+    generation_type: GenerationType,
+) -> GenerateResponse:
     if user_message:
         record_user_activity(
             db, user_id=user_id, event_type="message_sent", org_id=org_id,
@@ -142,21 +208,37 @@ async def prepare_and_start_image_generation(
     record_user_activity(
         db, user_id=user_id, event_type="task_created", org_id=org_id,
         source="web", resource_type="task", resource_id=external_task_id,
-        metadata={
-            "conversation_id": conversation_id,
-            "generation_type": response_generation_type.value,
-            "operation": body.operation.value,
-        },
+        metadata={"conversation_id": conversation_id,
+                  "generation_type": generation_type.value,
+                  "operation": body.operation.value},
     )
     return GenerateResponse(
         task_id=_required(body.client_task_id), user_message=user_message,
         assistant_message=_assistant_message(
             body, conversation_id, preparation.output_message_id,
             preparation.input_message_id, preparation.turn_id, placeholder_at,
-            response_generation_type,
+            generation_type,
         ),
-        operation=body.operation, generation_type=response_generation_type.value,
+        operation=body.operation, generation_type=generation_type.value,
     )
+
+
+async def _close_or_isolate_runtime_submit_error(
+    *, error: Exception, db: Any, lifecycle: GenerationLifecycle,
+    task_ids: tuple[str, ...], task_payloads: list[dict[str, Any]],
+    message_id: str, operation: MessageOperation,
+    params: dict[str, Any] | None, org_id: str | None, user_id: str,
+) -> NoReturn:
+    ownership = await read_prepared_media_ownership(db, task_ids)
+    if ownership == "none":
+        await fail_closed_prepared_media(
+            db=db, lifecycle=lifecycle, task_ids=task_ids,
+            task_payloads=task_payloads, message_id=message_id,
+            operation=operation, params=params, media_kind="image",
+            outcome="submit_failed_no_ownership", org_id=org_id,
+            user_id=user_id,
+        )
+    raise RuntimeMediaOwnershipReconcileRequired(ownership) from error
 
 
 async def _submit_runtime_image_tasks(

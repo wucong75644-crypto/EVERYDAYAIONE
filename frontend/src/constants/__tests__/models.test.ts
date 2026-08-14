@@ -256,9 +256,9 @@ describe('媒体选项常量', () => {
     expect(values).toContain('jpeg');
   });
 
-  it('IMAGE_COUNTS 包含 1-4', () => {
+  it('IMAGE_COUNTS 包含 1-10', () => {
     const values = IMAGE_COUNTS.map((c) => c.value);
-    expect(values).toEqual([1, 2, 3, 4]);
+    expect(values).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it('VIDEO_DURATIONS 非空', () => {
