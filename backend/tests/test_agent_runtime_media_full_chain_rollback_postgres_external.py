@@ -49,6 +49,8 @@ FORWARD_NAMES = (
     "228_08f2_agent_runtime_media_atomic_image_batch_ownership.sql",
     "228_08g1_agent_runtime_media_real_event_normalization.sql",
     "228_08g2_agent_runtime_media_model_video_wecom_outbox.sql",
+    "228_08i1_agent_runtime_media_real_image_event_normalization.sql",
+    "228_08i2_agent_runtime_media_model_image_wecom_outbox.sql",
 )
 FORWARDS = tuple(ROOT / "migrations" / name for name in FORWARD_NAMES)
 ROLLBACKS = tuple(
@@ -68,6 +70,10 @@ OWNERSHIP = (
     "_agent_runtime_media_image_batch_ownership_v1"
     "(uuid,uuid,uuid,uuid,uuid,text,text,jsonb)"
 )
+IMAGE_NORMALIZER = (
+    "_agent_runtime_media_normalize_image_event_v1(agent_runtime_events)"
+)
+IMAGE_WECOM = "_derive_agent_runtime_model_media_wecom_outbox_v2()"
 
 
 def _prepare_prerequisites(database_url: str) -> None:
@@ -120,8 +126,9 @@ def _install_full_chain(database_url: str) -> None:
 def _assert_installed(database_url: str) -> None:
     with psycopg.connect(database_url) as connection:
         functions = connection.execute(
-            "SELECT to_regprocedure(%s),to_regprocedure(%s),to_regprocedure(%s)",
-            (V1, V2, OWNERSHIP),
+            "SELECT to_regprocedure(%s),to_regprocedure(%s),to_regprocedure(%s),"
+            "to_regprocedure(%s),to_regprocedure(%s)",
+            (V1, V2, OWNERSHIP, IMAGE_NORMALIZER, IMAGE_WECOM),
         ).fetchone()
         rls = connection.execute("""
             SELECT count(*),bool_and(relrowsecurity AND relforcerowsecurity)
@@ -131,7 +138,8 @@ def _assert_installed(database_url: str) -> None:
                'agent_runtime_media_projection_results',
                'agent_runtime_prepared_image_batch_slots',
                'agent_runtime_media_normalized_projection_inputs_v1',
-               'agent_runtime_media_wecom_outbox_facts_v1'
+               'agent_runtime_media_wecom_outbox_facts_v1',
+               'agent_runtime_media_image_wecom_outbox_facts_v1'
              ])
         """).fetchone()
         acl = connection.execute("""
@@ -146,25 +154,34 @@ def _assert_installed(database_url: str) -> None:
                    has_table_privilege(
                      'everydayai_projection_worker',
                      'agent_runtime_media_normalized_projection_inputs_v1','SELECT'
+                   ),
+                   has_table_privilege(
+                     'everydayai_projection_worker',
+                     'agent_runtime_media_image_wecom_outbox_facts_v1','SELECT'
+                   ),
+                   has_function_privilege(
+                     'everydayai_projection_worker',%s,'EXECUTE'
                    )
-        """, (V1, V2, V2)).fetchone()
+        """, (V1, V2, V2, IMAGE_NORMALIZER)).fetchone()
     assert all(value is not None for value in functions)
-    assert rls == (5, True)
-    assert acl == (False, True, False, True, False)
+    assert rls == (6, True)
+    assert acl == (False, True, False, True, False, False, False)
 
 
 def _assert_rolled_back(database_url: str) -> None:
     with psycopg.connect(database_url) as connection:
         functions = connection.execute(
-            "SELECT to_regprocedure(%s),to_regprocedure(%s),to_regprocedure(%s)",
-            (V1, V2, OWNERSHIP),
+            "SELECT to_regprocedure(%s),to_regprocedure(%s),to_regprocedure(%s),"
+            "to_regprocedure(%s),to_regprocedure(%s)",
+            (V1, V2, OWNERSHIP, IMAGE_NORMALIZER, IMAGE_WECOM),
         ).fetchone()
         tables = connection.execute("""
             SELECT to_regclass('agent_runtime_media_action_bindings'),
                    to_regclass('agent_runtime_prepared_media_action_bindings'),
                    to_regclass('agent_runtime_prepared_image_batch_slots'),
                    to_regclass('agent_runtime_media_normalized_projection_inputs_v1'),
-                   to_regclass('agent_runtime_media_wecom_outbox_facts_v1')
+                   to_regclass('agent_runtime_media_wecom_outbox_facts_v1'),
+                   to_regclass('agent_runtime_media_image_wecom_outbox_facts_v1')
         """).fetchone()
         release_count = connection.execute(
             "SELECT count(*) FROM agent_runtime_definition_facts "
@@ -175,8 +192,8 @@ def _assert_rolled_back(database_url: str) -> None:
             "WHERE table_name='agent_interactions' "
             "AND column_name='confirmation_group_hash'",
         ).fetchone()[0]
-    assert functions == (None, None, None)
-    assert tables == (None, None, None, None, None)
+    assert functions == (None, None, None, None, None)
+    assert tables == (None, None, None, None, None, None)
     assert release_count == 0
     assert group_column == 0
 
@@ -207,12 +224,12 @@ def test_active_batch_blocks_strict_reverse_until_drained(database: str) -> None
     task_ids, batch_id, anchor = _candidate(database)
     assert _submit_v2(database, batch_id, anchor)["runtime_owned"] is True
 
-    _execute_paths(database, ROLLBACKS[:3])
+    _execute_paths(database, ROLLBACKS[:1])
     with pytest.raises(
         psycopg.errors.ObjectNotInPrerequisiteState,
-        match="PROJECTION_NOT_DRAINED",
+        match="228_08I1_IMAGE_EVENTS_NOT_DRAINED",
     ):
-        _apply(database, ROLLBACKS[3])
+        _apply(database, ROLLBACKS[1])
 
     with psycopg.connect(database) as connection:
         action_rows = connection.execute(
@@ -236,7 +253,7 @@ def test_active_batch_blocks_strict_reverse_until_drained(database: str) -> None
     )
     _apply_projection(database, failed)
 
-    _apply(database, ROLLBACKS[3])
+    _execute_paths(database, ROLLBACKS[1:6])
     with psycopg.connect(database) as connection:
         assert connection.execute(
             "SELECT to_regclass('agent_runtime_prepared_image_batch_slots')",
