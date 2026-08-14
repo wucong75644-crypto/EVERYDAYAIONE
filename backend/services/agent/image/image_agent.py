@@ -12,12 +12,8 @@
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
-from urllib.parse import urlparse
 from uuid import uuid4
-
 
 from config.kie_models import calculate_image_cost
 from core.exceptions import InsufficientCreditsError
@@ -26,10 +22,15 @@ from services.agent.agent_result import AgentResult
 from services.agent.safe_tool_logging import log_agent_event
 from services.agent.runtime.ecom_capability import get_runtime_ecom_capability
 from services.handlers.mixins.credit_mixin import CreditMixin
+from .image_agent_helpers import (
+    build_image_error_result,
+    parse_image_plan,
+    validate_image_request,
+)
 from .image_processor import detect_aspect_ratio, detect_dimensions
 from .prompt_builder import PromptBuilder
-# CDN 域名白名单（防 SSRF）
-_ALLOWED_IMAGE_HOSTS = frozenset({"cdn.everydayai.com.cn", "img.everydayai.com.cn"})
+
+
 class ImageAgent(CreditMixin):
     """电商图片生成 Agent — 单张图片生成器。
 
@@ -446,21 +447,7 @@ class ImageAgent(CreditMixin):
 
     def _parse_plan_json(self, content: str) -> dict[str, Any]:
         """解析千问输出的方案 JSON（三层兜底）。"""
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r"\{[\s\S]*\}", content)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        log_agent_event(
-            "warning", "ImageAgent plan parse failed", self, "image_agent",
-            "IMAGE_PLAN_PARSE_FAILED",
-        )
-        return {"product_insight": "", "visual_strategy": "", "images": []}
+        return parse_image_plan(content, self)
 
     def _read_style_directive(self) -> str:
         """从 DB 读取会话级风格。"""
@@ -499,40 +486,13 @@ class ImageAgent(CreditMixin):
 
     def _validate_input(self, task: str, image_urls: list[str]) -> str | None:
         """输入校验。返回错误信息或 None（通过）。"""
-        if not task or not task.strip():
-            return "提示词不能为空"
-        if len(task) > 2000:
-            return "提示词过长，请精简到 2000 字以内"
-        for url in image_urls:
-            host = urlparse(url).hostname or ""
-            if host and host not in _ALLOWED_IMAGE_HOSTS:
-                return f"不支持的图片来源: {host}"
-        return None
+        return validate_image_request(task, image_urls)
 
     def _error_result(
         self, summary: str,
         task: str, image_urls: list[str], platform: str, style_directive: str,
     ) -> AgentResult:
         """构建失败结果（含 failed ImagePart + retry_context）。"""
-        width, height = detect_dimensions(task, platform)
-        return AgentResult(
-            status="error",
-            summary=summary,
-            source="image_agent",
-            error_message=summary,
-            emit_payloads=[{
-                "kind": "image",
-                "url": None,
-                "width": width,
-                "height": height,
-                "alt": task[:50],
-                "failed": True,
-                "error": summary,
-                "retry_context": {
-                    "task": task,
-                    "image_urls": image_urls,
-                    "platform": platform,
-                    "style_directive": style_directive,
-                },
-            }],
+        return build_image_error_result(
+            summary, task, image_urls, platform, style_directive,
         )

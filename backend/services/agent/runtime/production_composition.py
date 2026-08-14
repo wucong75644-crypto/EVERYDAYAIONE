@@ -493,12 +493,8 @@ def build_production_components_from_services(
     )
 __all__ = [
     "ProductionRuntimeComponents", "ProductionSpecialistPorts",
-    "SafeRuntimeComposition", "build_safe_runtime_composition",
-    "build_production_components", "build_production_read_registry",
-    "build_runtime_erp_read_registry",
-    "build_runtime_data_read_registry",
-    "build_production_specialist_registry",
-    "build_production_components_from_services",
-    "build_production_action_loop",
-    "build_production_components_for_worker",
+    "SafeRuntimeComposition", "build_safe_runtime_composition", "build_production_components", "build_production_read_registry",
+    "build_runtime_erp_read_registry", "build_runtime_data_read_registry",
+    "build_production_specialist_registry", "build_production_components_from_services",
+    "build_production_action_loop", "build_production_components_for_worker",
 ]

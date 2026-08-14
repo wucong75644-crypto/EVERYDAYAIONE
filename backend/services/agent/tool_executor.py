@@ -190,7 +190,7 @@ class ToolExecutor(
             f"task_id={getattr(self, '_task_id', None)} | tool=erp_agent"
         )
 
-        # v6: budget 通过构造函数传递（替代属性注入 hack）
+        # v6: budget 通过构造函数显式传递
         _parent_budget = getattr(self, "_budget", None)
         agent = ERPAgent(
             db=self.db,

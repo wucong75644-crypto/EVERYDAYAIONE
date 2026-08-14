@@ -166,6 +166,51 @@ def _persist_style(db: Any, conversation_id: str, user_id: str, style: str) -> N
         logger.warning(f"持久化 style_directive 失败: {exc}")
 
 
+async def _request_ecom_design_plan(
+    settings: Any,
+    messages: list[dict[str, Any]],
+    has_images: bool,
+) -> tuple[Any | None, str]:
+    """Call the independent e-commerce page's primary and fallback models."""
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+
+    model = (
+        settings.image_enhance_vl_model
+        if has_images else settings.image_enhance_model
+    )
+    timeout = settings.image_enhance_timeout
+    response = None
+    adapter = DashScopeChatAdapter(
+        api_key=settings.dashscope_api_key or "",
+        model=model,
+        base_url=settings.dashscope_base_url,
+        stream_timeout=timeout,
+    )
+    try:
+        response = await adapter.chat_sync(messages=messages)
+    except Exception as primary_err:
+        logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
+    finally:
+        await adapter.close()
+    if response is not None:
+        return response, model
+
+    model = settings.image_enhance_fallback_model
+    fallback_adapter = DashScopeChatAdapter(
+        api_key=settings.dashscope_api_key or "",
+        model=model,
+        base_url=settings.dashscope_base_url,
+        stream_timeout=timeout,
+    )
+    try:
+        response = await fallback_adapter.chat_sync(messages=messages)
+    except Exception as fallback_err:
+        logger.error(f"enhance fallback also failed: {fallback_err}")
+    finally:
+        await fallback_adapter.close()
+    return response, model
+
+
 # ============================================================
 # POST /ecom-image/enhance-prompt
 # ============================================================
@@ -176,7 +221,7 @@ async def enhance_prompt(
     user_id: CurrentUserId,
     db: Database,
 ) -> dict[str, Any]:
-    """Runtime-owned 方案策划 API。"""
+    """独立电商页面的方案策划 API。"""
     from core.config import get_settings
     from services.agent.image.prompt_builder import PromptBuilder
 
@@ -250,40 +295,13 @@ async def enhance_prompt(
         messages.append({"role": "user", "content": user_prompt})
 
     # 5. 独立电商页面模型链路：保留页面既有主模型/备用模型语义。
-    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
-
-    model = settings.image_enhance_vl_model if all_image_urls else settings.image_enhance_model
-    timeout = settings.image_enhance_timeout
-    response = None
-    adapter = DashScopeChatAdapter(
-        api_key=settings.dashscope_api_key or "",
-        model=model,
-        base_url=settings.dashscope_base_url,
-        stream_timeout=timeout,
+    response, model = await _request_ecom_design_plan(
+        settings,
+        messages,
+        bool(all_image_urls),
     )
-    try:
-        response = await adapter.chat_sync(messages=messages)
-    except Exception as primary_err:
-        logger.warning(f"enhance primary model failed: {primary_err}, trying fallback")
-    finally:
-        await adapter.close()
-
     if response is None:
-        fallback = settings.image_enhance_fallback_model
-        adapter_fb = DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key or "",
-            model=fallback,
-            base_url=settings.dashscope_base_url,
-            stream_timeout=timeout,
-        )
-        try:
-            response = await adapter_fb.chat_sync(messages=messages)
-            model = fallback
-        except Exception as fallback_err:
-            logger.error(f"enhance fallback also failed: {fallback_err}")
-            return {"error": "方案生成失败，请稍后重试", "success": False}
-        finally:
-            await adapter_fb.close()
+        return {"error": "方案生成失败，请稍后重试", "success": False}
 
     # 6. 解析设计方案 JSON
     plan = _parse_design_plan(response.content)
