@@ -157,7 +157,7 @@ def _build_delivery(
 
 def build_actor_runtime_action_executor(database: Any) -> Any:
     """Build the chat Action boundary with the real Runtime read catalog."""
-    from services.agent.runtime.application.chat_action_composition import (
+    from services.agent.runtime.chat_action_composition import (
         build_production_chat_action_executor,
     )
     from services.agent.runtime.data_read_composition import (

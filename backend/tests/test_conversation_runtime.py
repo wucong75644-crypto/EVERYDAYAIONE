@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from services.conversation_runtime import (
     ConversationActorRuntime,
     _build_delivery,
     _get_handler_db,
+    build_actor_runtime_action_executor,
 )
 from services.handlers.chat.actor_sink import ActorWebSink
 from services.sandbox.kernel_manager import get_kernel_manager
@@ -147,6 +149,37 @@ def test_runtime_injects_runtime_action_executor_factory_into_chat_executor():
     executor = runtime._create_executor(databases)
 
     assert executor._runtime_action_executor_factory(databases.application) is marker
+
+
+def test_default_runtime_action_executor_resolves_real_composition(monkeypatch):
+    registry = object()
+    expected = object()
+    monkeypatch.setattr(
+        "services.configuration.envelope.LocalKEKProvider.from_environment",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "services.configuration.material_service.SecretMaterialService",
+        lambda _provider: object(),
+    )
+    monkeypatch.setattr(
+        "services.agent.runtime.executors.erp_factory.OrgScopedErpDispatcherFactory",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "services.agent.runtime.data_read_composition.build_runtime_data_adapters",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "services.agent.runtime.production_composition.build_safe_runtime_composition",
+        lambda **_kwargs: SimpleNamespace(registry=registry),
+    )
+    monkeypatch.setattr(
+        "services.agent.runtime.chat_action_composition.build_production_chat_action_executor",
+        lambda **kwargs: expected if kwargs["registry"] is registry else None,
+    )
+
+    assert build_actor_runtime_action_executor(object()) is expected
 
 
 def test_default_handler_database_uses_worker_role(monkeypatch):
