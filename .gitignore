@@ -40,6 +40,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 
@@ -47,6 +48,11 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+coverage/
+frontend/coverage/
+backend/coverage/
+outputs/
+tmp/
 
 # Build
 dist/
