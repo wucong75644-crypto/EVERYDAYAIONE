@@ -56,10 +56,23 @@ def test_composed_media_retry_contract_and_lock_order() -> None:
     assert "FOR UPDATE" in action_projection[task_lock:binding_lock]
     assert "FOR UPDATE" in action_projection[binding_lock:message_lock]
 
-    run_projection = _function(projection, "_agent_runtime_media_run_projection_v1")
+    action_only_start = projection.index(
+        "CREATE FUNCTION _agent_runtime_media_action_only_run_v1",
+    )
+    action_only_end = projection.index(
+        "CREATE FUNCTION read_agent_runtime_media_projection_v1",
+        action_only_start,
+    )
+    action_only = projection[action_only_start:action_only_end]
     for value in ("runtime_media_retry", "one_shot_action", "media_action_only"):
-        assert value in run_projection
-    assert "retry_task_id" in run_projection
+        assert value in action_only
+    run_projection = _function(projection, "_agent_runtime_media_run_projection_v1")
+    assert "_agent_runtime_media_action_only_run_v1" in run_projection
+    apply_projection = _function(
+        projection, "apply_agent_runtime_media_projection_v1",
+    )
+    assert "_agent_runtime_media_action_only_run_v1" in apply_projection
+    assert "checkpoint_only" in apply_projection
 
     for fragment in (
         "'source','runtime_media_retry'",
