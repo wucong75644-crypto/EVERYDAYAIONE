@@ -8,7 +8,8 @@ getent group everydayai-sandbox >/dev/null ||
   groupadd --system everydayai-sandbox
 getent group everydayai-runtime-model-secret >/dev/null ||
   groupadd --system everydayai-runtime-model-secret
-for name in api actor wecom sync agent-runtime projection authorization; do
+for name in api actor wecom sync agent-runtime agent-projection \
+  agent-authorization; do
   id "everydayai-$name" >/dev/null 2>&1 || useradd --system \
     --no-create-home --shell /usr/sbin/nologin --gid everydayai-app \
     "everydayai-$name"
@@ -40,10 +41,12 @@ install -d -o root -g everydayai-sandbox-io -m 2770 \
 install -d -o root -g everydayai-sandbox-io -m 0750 \
   /var/lib/everydayai/sandbox-rootfs
 install -d -o root -g everydayai-app -m 2770 /var/log/everydayai
-for name in agent-runtime projection authorization; do
-  install -d -o "everydayai-$name" -g everydayai-app -m 0750 \
-    "/var/log/everydayai/$name"
-done
+install -d -o everydayai-agent-runtime -g everydayai-app -m 0750 \
+  /var/log/everydayai/agent-runtime
+install -d -o everydayai-agent-projection -g everydayai-app -m 0750 \
+  /var/log/everydayai/projection
+install -d -o everydayai-agent-authorization -g everydayai-app -m 0750 \
+  /var/log/everydayai/authorization
 install -d -o everydayai-sandbox -g everydayai-sandbox-io -m 0750 \
   /var/log/everydayai/sandbox
 install -d -o root -g root -m 0751 /etc/everydayai
@@ -87,7 +90,8 @@ install -d -o root -g everydayai-app -m 2770 \
   /var/www/everydayai/backend/logs
 find /var/www/everydayai/backend/logs -maxdepth 1 -type f \
   -exec chown root:everydayai-app {} + -exec chmod 0660 {} +
-for name in api actor wecom sync agent-runtime projection authorization; do
+for name in api actor wecom sync agent-runtime agent-projection \
+  agent-authorization; do
   runuser -u "everydayai-$name" -- test -r /var/www/everydayai/backend
   runuser -u "everydayai-$name" -- test -x /var/www/everydayai/backend
 done

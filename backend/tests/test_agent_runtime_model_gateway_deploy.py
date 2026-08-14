@@ -33,6 +33,11 @@ def test_runtime_model_env_is_minimal_and_runtime_only() -> None:
     assert "usermod -a -G everydayai-runtime-model-secret everydayai-agent-runtime" in users
     assert "chown root:everydayai-runtime-model-secret" in users
     assert "Legacy Model Gateway env 必须先完成受审查退役" in users
+    assert "agent-runtime agent-projection" in users
+    assert "agent-authorization" in users
+    assert "-o everydayai-agent-projection" in users
+    assert "-o everydayai-agent-authorization" in users
+    assert "agent-runtime projection authorization" not in users
     assert "! -name 'agent-model-gateway.env'" in users
     assert "! -name 'agent-model-gateway-kek.env'" in users
     assert not (DEPLOY / "everydayai-agent-model-gateway.service").exists()
