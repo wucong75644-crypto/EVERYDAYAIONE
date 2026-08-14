@@ -77,6 +77,8 @@ def _render_worker_envs(directory: Path) -> None:
         "<seccomp-sha256>": "3" * 64,
         "<redis-password-or-empty>": "",
         "<existing-sentry-dsn>": "",
+        "<workspace-cdn-domain>": "cdn.example.test",
+        "<comma-separated-provider-result-hosts>": "provider.example.test",
     }
     names = (
         "agent-runtime-worker",

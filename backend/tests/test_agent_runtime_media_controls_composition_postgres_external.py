@@ -33,7 +33,7 @@ def _require_composed_lanes() -> None:
     missing = [path.name for path in (*MIGRATIONS, *ROLLBACKS) if not path.exists()]
     if missing:
         pytest.skip(
-            "requires 228.05 commit 1b6bce8d and 228.06 commit 0cc37ef2: "
+            "requires 228.05 commit 1b6bce8d and 228.06 commit 8bea7ba6: "
             + ", ".join(missing),
         )
 

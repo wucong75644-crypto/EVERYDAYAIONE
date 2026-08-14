@@ -254,7 +254,7 @@ def _function_exists(connection: psycopg.Connection, name: str) -> bool:
 def _projection_migration_sql() -> str:
     path = "backend/migrations/228_06_agent_runtime_media_projection.sql"
     result = subprocess.run(
-        ["git", "show", f"0cc37ef2:{path}"], check=True,
+        ["git", "show", f"8bea7ba6:{path}"], check=True,
         capture_output=True, text=True,
     )
     assert "v_data->'image_urls'" in result.stdout
