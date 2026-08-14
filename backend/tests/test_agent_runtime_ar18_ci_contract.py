@@ -77,6 +77,7 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "228_08f2_agent_runtime_media_atomic_image_batch_ownership",
         "228_08g1_agent_runtime_media_real_event_normalization",
         "228_08g2_agent_runtime_media_model_video_wecom_outbox",
+        "228_08h_agent_runtime_scheduled_web_projection_claim_ordering",
     ):
         assert f"backend/migrations/{identity}.sql" in RUNNER
         assert f"backend/migrations/rollback/{identity}_rollback.sql" in RUNNER
@@ -106,6 +107,10 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "test_agent_runtime_media_real_event_normalization_migration.py",
         "test_agent_runtime_media_real_event_normalization_postgres_external.py",
         "test_agent_runtime_media_real_event_terminal_postgres_external.py",
+        "test_agent_runtime_scheduled_web_projection_claim_ordering_migration.py",
+        "test_agent_runtime_scheduled_web_projection_claim_ordering_postgres_external.py",
+        "test_agent_runtime_media_candidate_rollback_guards_postgres_external.py",
+        "test_agent_runtime_media_full_chain_rollback_postgres_external.py",
     ):
         assert dependency in RUNNER
 
@@ -182,6 +187,45 @@ def test_ar18_runner_contains_each_required_lane() -> None:
     )
     for test_name in required:
         assert test_name in RUNNER
+
+
+def test_projection_rollback_closure_is_ordered_and_triggered() -> None:
+    migration_g2 = (
+        "backend/migrations/228_08g2_agent_runtime_media_model_video_wecom_outbox.sql"
+    )
+    migration_h = (
+        "backend/migrations/228_08h_agent_runtime_scheduled_web_projection_"
+        "claim_ordering.sql"
+    )
+    rollback_g2 = (
+        "backend/migrations/rollback/"
+        "228_08g2_agent_runtime_media_model_video_wecom_outbox_rollback.sql"
+    )
+    rollback_h = (
+        "backend/migrations/rollback/"
+        "228_08h_agent_runtime_scheduled_web_projection_claim_ordering_rollback.sql"
+    )
+    assert RUNNER.index(migration_g2) < RUNNER.index(migration_h)
+    assert RUNNER.index(rollback_g2) < RUNNER.index(rollback_h)
+
+    for test_name in (
+        "test_agent_runtime_scheduled_web_projection_claim_ordering_migration.py",
+        "test_agent_runtime_scheduled_web_projection_claim_ordering_postgres_external.py",
+        "test_agent_runtime_media_candidate_rollback_guards_postgres_external.py",
+        "test_agent_runtime_media_full_chain_rollback_postgres_external.py",
+    ):
+        assert RUNNER.count(test_name) == 1
+
+    assert RUNNER.count(
+        "test_agent_runtime_ar18_b7_s2_b1d1b_projection_postgres_external.py"
+    ) == 1
+    for trigger_path in (
+        'backend/migrations/228_*.sql',
+        'backend/migrations/rollback/228_*.sql',
+        'backend/tests/test_agent_runtime_*.py',
+        'scripts/run_agent_runtime_ar18_disposable.sh',
+    ):
+        assert f'- "{trigger_path}"' in WORKFLOW
 
 
 def test_workflow_runs_the_scheduled_wecom_disposable_lane() -> None:
