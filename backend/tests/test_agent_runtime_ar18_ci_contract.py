@@ -78,6 +78,8 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "228_08g1_agent_runtime_media_real_event_normalization",
         "228_08g2_agent_runtime_media_model_video_wecom_outbox",
         "228_08h_agent_runtime_scheduled_web_projection_claim_ordering",
+        "228_08i1_agent_runtime_media_real_image_event_normalization",
+        "228_08i2_agent_runtime_media_model_image_wecom_outbox",
     ):
         assert f"backend/migrations/{identity}.sql" in RUNNER
         assert f"backend/migrations/rollback/{identity}_rollback.sql" in RUNNER
@@ -109,6 +111,9 @@ def test_runtime_media_runner_fails_closed_when_composition_is_incomplete() -> N
         "test_agent_runtime_media_real_event_terminal_postgres_external.py",
         "test_agent_runtime_scheduled_web_projection_claim_ordering_migration.py",
         "test_agent_runtime_scheduled_web_projection_claim_ordering_postgres_external.py",
+        "test_agent_runtime_media_real_image_events_migration.py",
+        "test_agent_runtime_media_real_image_events_postgres_external.py",
+        "test_agent_runtime_media_model_image_wecom_postgres_external.py",
         "test_agent_runtime_media_candidate_rollback_guards_postgres_external.py",
         "test_agent_runtime_media_full_chain_rollback_postgres_external.py",
     ):
@@ -205,12 +210,34 @@ def test_projection_rollback_closure_is_ordered_and_triggered() -> None:
         "backend/migrations/rollback/"
         "228_08h_agent_runtime_scheduled_web_projection_claim_ordering_rollback.sql"
     )
+    migration_i1 = (
+        "backend/migrations/228_08i1_agent_runtime_media_real_image_event_"
+        "normalization.sql"
+    )
+    migration_i2 = (
+        "backend/migrations/228_08i2_agent_runtime_media_model_image_wecom_outbox.sql"
+    )
+    rollback_i1 = (
+        "backend/migrations/rollback/"
+        "228_08i1_agent_runtime_media_real_image_event_normalization_rollback.sql"
+    )
+    rollback_i2 = (
+        "backend/migrations/rollback/"
+        "228_08i2_agent_runtime_media_model_image_wecom_outbox_rollback.sql"
+    )
     assert RUNNER.index(migration_g2) < RUNNER.index(migration_h)
+    assert RUNNER.index(migration_h) < RUNNER.index(migration_i1)
+    assert RUNNER.index(migration_i1) < RUNNER.index(migration_i2)
     assert RUNNER.index(rollback_g2) < RUNNER.index(rollback_h)
+    assert RUNNER.index(rollback_h) < RUNNER.index(rollback_i1)
+    assert RUNNER.index(rollback_i1) < RUNNER.index(rollback_i2)
 
     for test_name in (
         "test_agent_runtime_scheduled_web_projection_claim_ordering_migration.py",
         "test_agent_runtime_scheduled_web_projection_claim_ordering_postgres_external.py",
+        "test_agent_runtime_media_real_image_events_migration.py",
+        "test_agent_runtime_media_real_image_events_postgres_external.py",
+        "test_agent_runtime_media_model_image_wecom_postgres_external.py",
         "test_agent_runtime_media_candidate_rollback_guards_postgres_external.py",
         "test_agent_runtime_media_full_chain_rollback_postgres_external.py",
     ):

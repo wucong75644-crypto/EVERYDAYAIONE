@@ -28,6 +28,8 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/228_08g1_agent_runtime_media_real_event_normalization.sql
   backend/migrations/228_08g2_agent_runtime_media_model_video_wecom_outbox.sql
   backend/migrations/228_08h_agent_runtime_scheduled_web_projection_claim_ordering.sql
+  backend/migrations/228_08i1_agent_runtime_media_real_image_event_normalization.sql
+  backend/migrations/228_08i2_agent_runtime_media_model_image_wecom_outbox.sql
   backend/migrations/rollback/228_01_agent_runtime_action_hash_canonicalization_rollback.sql
   backend/migrations/rollback/228_02_agent_runtime_batch_media_release_rollback.sql
   backend/migrations/rollback/228_03_agent_runtime_media_authorization_group_rollback.sql
@@ -49,6 +51,8 @@ MEDIA_MIGRATION_FILES=(
   backend/migrations/rollback/228_08g1_agent_runtime_media_real_event_normalization_rollback.sql
   backend/migrations/rollback/228_08g2_agent_runtime_media_model_video_wecom_outbox_rollback.sql
   backend/migrations/rollback/228_08h_agent_runtime_scheduled_web_projection_claim_ordering_rollback.sql
+  backend/migrations/rollback/228_08i1_agent_runtime_media_real_image_event_normalization_rollback.sql
+  backend/migrations/rollback/228_08i2_agent_runtime_media_model_image_wecom_outbox_rollback.sql
 )
 
 MEDIA_UNIT_TESTS=(
@@ -92,6 +96,7 @@ MEDIA_MIGRATION_TESTS=(
   backend/tests/test_agent_runtime_media_atomic_image_batch_ownership_migration.py
   backend/tests/test_agent_runtime_media_real_event_normalization_migration.py
   backend/tests/test_agent_runtime_scheduled_web_projection_claim_ordering_migration.py
+  backend/tests/test_agent_runtime_media_real_image_events_migration.py
 )
 
 MEDIA_EXTERNAL_TESTS=(
@@ -120,6 +125,8 @@ MEDIA_EXTERNAL_TESTS=(
   backend/tests/test_agent_runtime_media_real_event_normalization_postgres_external.py
   backend/tests/test_agent_runtime_media_real_event_terminal_postgres_external.py
   backend/tests/test_agent_runtime_scheduled_web_projection_claim_ordering_postgres_external.py
+  backend/tests/test_agent_runtime_media_real_image_events_postgres_external.py
+  backend/tests/test_agent_runtime_media_model_image_wecom_postgres_external.py
   backend/tests/test_agent_runtime_media_candidate_rollback_guards_postgres_external.py
   backend/tests/test_agent_runtime_media_full_chain_rollback_postgres_external.py
 )
