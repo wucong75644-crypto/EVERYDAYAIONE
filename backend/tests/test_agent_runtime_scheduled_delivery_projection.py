@@ -333,7 +333,7 @@ async def test_media_projection_crash_is_supervised_and_drain_stops_claims() -> 
 
 
 @pytest.mark.asyncio
-async def test_media_projection_stays_off_until_persisted_readiness() -> None:
+async def test_media_projection_continues_inflight_when_dispatch_not_ready() -> None:
     from services.agent.runtime.composition import ProjectionOwner
 
     compatibility = MagicMock(run_once=AsyncMock(return_value=True))
@@ -343,10 +343,10 @@ async def test_media_projection_stays_off_until_persisted_readiness() -> None:
         media_projection=media,
     )
     assert await owner.run_once() is True
-    media.run_once.assert_not_awaited()
-    owner.set_media_readiness(True)
-    assert await owner.run_once() is True
     media.run_once.assert_awaited_once()
+    owner.set_media_readiness(False)
+    assert await owner.run_once() is True
+    assert media.run_once.await_count == 2
 
 
 def test_scheduled_projection_flag_defaults_off() -> None:

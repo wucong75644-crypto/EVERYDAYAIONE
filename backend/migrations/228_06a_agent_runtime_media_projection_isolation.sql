@@ -51,6 +51,9 @@ DECLARE
     v_result JSONB;
     v_refund JSONB;
 BEGIN
+    SELECT * INTO v_outbox FROM agent_projection_outbox
+     WHERE id=p_outbox_id FOR UPDATE;
+    IF v_outbox.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
     SELECT to_jsonb(audit) INTO v_result
       FROM agent_runtime_media_projection_isolations audit
      WHERE isolation_request_id=p_isolation_request_id;
@@ -60,9 +63,38 @@ BEGIN
         END IF;
         RETURN jsonb_build_object('outcome','isolation_request_conflict');
     END IF;
-    SELECT * INTO v_outbox FROM agent_projection_outbox
-     WHERE id=p_outbox_id FOR UPDATE;
-    IF v_outbox.id IS NULL THEN RETURN jsonb_build_object('outcome','not_found'); END IF;
+    IF p_worker_id IS NOT NULL THEN
+        IF p_actor_user_id IS NOT NULL OR p_lease_token IS NULL
+           OR p_expected_recovery_version IS NOT NULL
+           OR p_expected_attempt_count IS NOT NULL THEN
+            RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ISOLATION_FENCE_INVALID'
+                USING ERRCODE='42501';
+        END IF;
+        IF v_outbox.status<>'processing'
+           OR v_outbox.lease_token IS DISTINCT FROM p_lease_token
+           OR v_outbox.lease_expires_at IS NULL
+           OR v_outbox.lease_expires_at<=clock_timestamp() THEN
+            RETURN jsonb_build_object('outcome','ownership_lost');
+        END IF;
+    ELSIF p_actor_user_id IS NOT NULL THEN
+        IF p_lease_token IS NOT NULL OR p_expected_recovery_version IS NULL
+           OR p_expected_attempt_count IS NULL THEN
+            RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ISOLATION_FENCE_INVALID'
+                USING ERRCODE='42501';
+        END IF;
+        IF v_outbox.status<>'dead' THEN
+            RETURN jsonb_build_object('outcome','not_dead');
+        END IF;
+        IF v_outbox.recovery_version IS DISTINCT FROM p_expected_recovery_version THEN
+            RETURN jsonb_build_object('outcome','stale_version');
+        END IF;
+        IF v_outbox.attempt_count IS DISTINCT FROM p_expected_attempt_count THEN
+            RETURN jsonb_build_object('outcome','attempt_count_conflict');
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ISOLATION_FENCE_REQUIRED'
+            USING ERRCODE='42501';
+    END IF;
     SELECT * INTO v_event FROM agent_runtime_events WHERE id=v_outbox.event_id;
     INSERT INTO agent_runtime_media_projection_checkpoints(
         session_id,projection_kind

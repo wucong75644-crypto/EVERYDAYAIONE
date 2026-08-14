@@ -139,7 +139,7 @@ class ProjectionOwner:
         if self._draining:
             return False
         media_projected = 0
-        if self.media_projection is not None and self._media_ready:
+        if self.media_projection is not None:
             media_projected = await self.media_projection.run_once()
         projected = await self.projection.run_once()
         delivered = False

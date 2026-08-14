@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, Protocol, Sequence
 from urllib.parse import urljoin, urlsplit
 
-import httpx
+import httpcore
 
 from services.agent.runtime.domain.errors import PersistenceContractError
 
@@ -27,7 +27,8 @@ class SafeDownloadResponse:
 
 class SafeDownloadTransport(Protocol):
     async def fetch(
-        self, url: str, *, timeout_seconds: float, max_size: int,
+        self, url: str, *, connect_ip: str, server_hostname: str,
+        timeout_seconds: float, max_size: int,
     ) -> SafeDownloadResponse: ...
 
     async def close(self) -> None: ...
@@ -36,42 +37,74 @@ class SafeDownloadTransport(Protocol):
 Resolver = Callable[[str, int], Awaitable[Sequence[str]]]
 
 
-class HttpxSafeDownloadTransport:
-    """HTTPS transport with redirects disabled; the guard owns every hop."""
-
-    def __init__(self) -> None:
-        self._client = httpx.AsyncClient(
-            follow_redirects=False,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        )
+class HttpcorePinnedDownloadTransport:
+    """Connect to one validated IP while preserving the original Host and SNI."""
 
     async def fetch(
-        self, url: str, *, timeout_seconds: float, max_size: int,
+        self, url: str, *, connect_ip: str, server_hostname: str,
+        timeout_seconds: float, max_size: int,
     ) -> SafeDownloadResponse:
-        timeout = httpx.Timeout(
-            connect=10.0, read=timeout_seconds, write=10.0, pool=10.0,
+        parsed = urlsplit(url)
+        target = parsed.path or "/"
+        if parsed.query:
+            target = f"{target}?{parsed.query}"
+        request = httpcore.Request(
+            method="GET",
+            url=httpcore.URL(
+                scheme="https", host=connect_ip, port=443, target=target,
+            ),
+            headers={
+                "Host": _host_header(server_hostname),
+                "Accept": "*/*",
+                "User-Agent": "EverydayAI-Runtime-Media/1",
+            },
+            extensions={
+                "sni_hostname": server_hostname,
+                "timeout": {
+                    "connect": 10.0, "read": timeout_seconds,
+                    "write": 10.0, "pool": 10.0,
+                },
+            },
         )
         chunks: list[bytes] = []
         size = 0
-        async with self._client.stream("GET", url, timeout=timeout) as response:
-            if response.status_code not in _REDIRECT_CODES:
-                response.raise_for_status()
-                declared = response.headers.get("content-length")
+        async with httpcore.AsyncConnectionPool(
+            max_connections=1, max_keepalive_connections=0,
+        ) as pool:
+            response = await pool.handle_async_request(request)
+            headers = {
+                key.decode("ascii").lower(): value.decode("latin-1")
+                for key, value in response.headers
+            }
+            try:
+                if (
+                    response.status not in _REDIRECT_CODES
+                    and not 200 <= response.status < 300
+                ):
+                    raise RuntimeError(
+                        f"runtime media result HTTP {response.status}"
+                    )
+                declared = headers.get("content-length")
                 if declared and int(declared) > max_size:
                     raise ValueError("runtime media result exceeds size limit")
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    size += len(chunk)
-                    if size > max_size:
-                        raise ValueError("runtime media result exceeds size limit")
-                    chunks.append(chunk)
+                if response.status not in _REDIRECT_CODES:
+                    async for chunk in response.aiter_stream():
+                        size += len(chunk)
+                        if size > max_size:
+                            raise ValueError(
+                                "runtime media result exceeds size limit"
+                            )
+                        chunks.append(chunk)
+            finally:
+                await response.aclose()
             return SafeDownloadResponse(
-                status_code=response.status_code,
-                headers=dict(response.headers),
+                status_code=response.status,
+                headers=headers,
                 content=b"".join(chunks),
             )
 
     async def close(self) -> None:
-        await self._client.aclose()
+        return None
 
 
 class RuntimeMediaSafeDownloader:
@@ -88,7 +121,7 @@ class RuntimeMediaSafeDownloader:
         if max_redirects not in range(0, 11):
             raise ValueError("RUNTIME_MEDIA_REDIRECT_LIMIT_INVALID")
         self._resolver = resolver or _resolve_public_addresses
-        self._transport = transport or HttpxSafeDownloadTransport()
+        self._transport = transport or HttpcorePinnedDownloadTransport()
         self._max_redirects = max_redirects
 
     async def download(
@@ -98,9 +131,11 @@ class RuntimeMediaSafeDownloader:
         current = url
         timeout_seconds = 120.0 if media_type == "video" else 60.0
         for redirect_count in range(self._max_redirects + 1):
-            await self._validate_hop(current)
+            connect_ip, server_hostname = await self._validate_hop(current)
             response = await self._transport.fetch(
-                current, timeout_seconds=timeout_seconds, max_size=max_size,
+                current, connect_ip=connect_ip,
+                server_hostname=server_hostname,
+                timeout_seconds=timeout_seconds, max_size=max_size,
             )
             if response.status_code not in _REDIRECT_CODES:
                 return response.content, response.headers.get("content-type", "")
@@ -116,7 +151,7 @@ class RuntimeMediaSafeDownloader:
             current = urljoin(current, location)
         raise RuntimeMediaDownloadSecurityError("RUNTIME_MEDIA_REDIRECT_INVALID")
 
-    async def _validate_hop(self, url: str) -> None:
+    async def _validate_hop(self, url: str) -> tuple[str, str]:
         parsed = urlsplit(url)
         host = (parsed.hostname or "").lower().rstrip(".")
         if (
@@ -132,6 +167,7 @@ class RuntimeMediaSafeDownloader:
             raise RuntimeMediaDownloadSecurityError(
                 "RUNTIME_MEDIA_RESULT_DNS_EMPTY"
             )
+        validated: list[str] = []
         for value in addresses:
             try:
                 address = ipaddress.ip_address(value)
@@ -143,6 +179,8 @@ class RuntimeMediaSafeDownloader:
                 raise RuntimeMediaDownloadSecurityError(
                     "RUNTIME_MEDIA_RESULT_DNS_FORBIDDEN"
                 )
+            validated.append(str(address))
+        return sorted(validated)[0], host
 
     async def close(self) -> None:
         await self._transport.close()
@@ -158,6 +196,10 @@ async def _resolve_public_addresses(host: str, port: int) -> Sequence[str]:
 
 def _normalize_rule(value: str) -> str:
     return value.strip().lower().rstrip(".")
+
+
+def _host_header(host: str) -> str:
+    return f"[{host}]" if ":" in host else host
 
 
 def _host_allowed(host: str, rules: Sequence[str]) -> bool:
@@ -182,6 +224,7 @@ _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 
 
 __all__ = [
-    "RuntimeMediaDownloadSecurityError", "RuntimeMediaSafeDownloader",
+    "HttpcorePinnedDownloadTransport", "RuntimeMediaDownloadSecurityError",
+    "RuntimeMediaSafeDownloader",
     "SafeDownloadResponse", "SafeDownloadTransport",
 ]

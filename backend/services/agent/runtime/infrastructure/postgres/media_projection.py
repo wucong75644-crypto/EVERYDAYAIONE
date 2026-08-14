@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from core.db_scope import DatabaseAccessKind, database_scope_from_client
@@ -13,6 +14,13 @@ from services.agent.runtime.infrastructure.postgres.parsing import (
 )
 from services.agent.runtime.ports.media_projection import MediaProjectionAssetRequest
 from services.agent.runtime.ports.projection import ProjectionClaim
+
+
+@dataclass(frozen=True)
+class MediaSlotReleaseClaim:
+    release_id: str
+    lease_token: str
+    task: Mapping[str, object]
 
 
 class PostgresMediaProjection:
@@ -100,6 +108,54 @@ class PostgresMediaProjection:
         ).execute()
         result = require_mapping(response.data, "media projection result read")
         return result if outcome(result, {"found", "not_found"}) == "found" else None
+
+    async def claim_slot_releases(
+        self, batch_size: int = 50, lease_seconds: int = 60,
+    ) -> tuple[MediaSlotReleaseClaim, ...]:
+        response = await self._database.rpc(
+            "claim_agent_runtime_media_slot_release_v1",
+            {"p_batch_size": batch_size, "p_lease_seconds": lease_seconds},
+        ).execute()
+        claims = []
+        for item in require_list(response.data, "media slot release claim"):
+            row = require_mapping(item, "media slot release")
+            claims.append(MediaSlotReleaseClaim(
+                release_id=require_uuid(row, "release_id"),
+                lease_token=require_uuid(row, "lease_token"),
+                task={
+                    "id": require_uuid(row, "task_id"),
+                    "user_id": require_uuid(row, "user_id"),
+                    "org_id": row.get("org_id"),
+                    "conversation_id": require_uuid(row, "conversation_id"),
+                    "request_params": {
+                        "_task_slot_id": require_text(row, "task_slot_id"),
+                    },
+                },
+            ))
+        return tuple(claims)
+
+    async def ack_slot_release(self, claim: MediaSlotReleaseClaim) -> None:
+        response = await self._database.rpc(
+            "ack_agent_runtime_media_slot_release_v1", {
+                "p_release_id": claim.release_id,
+                "p_lease_token": claim.lease_token,
+            },
+        ).execute()
+        result = require_mapping(response.data, "media slot release ack")
+        outcome(result, {"acked", "already_acked", "ownership_lost", "not_found"})
+
+    async def fail_slot_release(
+        self, claim: MediaSlotReleaseClaim, error_code: str,
+    ) -> None:
+        response = await self._database.rpc(
+            "fail_agent_runtime_media_slot_release_v1", {
+                "p_release_id": claim.release_id,
+                "p_lease_token": claim.lease_token,
+                "p_error_code": error_code,
+            },
+        ).execute()
+        result = require_mapping(response.data, "media slot release fail")
+        outcome(result, {"failed", "ownership_lost", "not_found"})
 
     async def _read_claim(
         self, row: Mapping[str, Any],
@@ -189,4 +245,7 @@ def _required_int(value: object, name: str) -> int:
     return value
 
 
-__all__ = ["PostgresMediaProjection", "asset_request_from_readback"]
+__all__ = [
+    "MediaSlotReleaseClaim", "PostgresMediaProjection",
+    "asset_request_from_readback",
+]

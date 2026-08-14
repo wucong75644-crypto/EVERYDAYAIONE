@@ -11,6 +11,10 @@ BEGIN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ISOLATION_MUST_ROLL_BACK_FIRST'
             USING ERRCODE = '55000';
     END IF;
+    IF to_regclass('public.agent_runtime_media_slot_release_outbox') IS NOT NULL THEN
+        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_SLOT_RELEASE_MUST_ROLL_BACK_FIRST'
+            USING ERRCODE = '55000';
+    END IF;
     IF EXISTS (
            SELECT 1 FROM agent_actions action
             WHERE action.status NOT IN ('completed','failed','rejected','cancelled')

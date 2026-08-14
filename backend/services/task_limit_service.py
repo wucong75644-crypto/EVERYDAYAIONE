@@ -139,20 +139,29 @@ class TaskLimitService:
             return
 
         try:
-            global_key = self._global_key(user_id, org_id)
-            conv_key = self._conversation_key(user_id, conversation_id, org_id)
-
-            async with self.redis.pipeline() as pipe:
-                await pipe.srem(global_key, slot_id)
-                await pipe.srem(conv_key, slot_id)
-                await pipe.execute()
-
-            logger.debug(
-                f"释放任务槽位 | user_id={user_id} | "
-                f"conversation_id={conversation_id} | slot_id={slot_id}"
+            await self.release_checked(
+                user_id, conversation_id, org_id=org_id, slot_id=slot_id,
             )
         except Exception as e:
             logger.warning(f"释放任务槽位失败，忽略 | slot_id={slot_id} | error={e}")
+
+    async def release_checked(
+        self, user_id: str, conversation_id: str,
+        org_id: str | None = None, slot_id: str | None = None,
+    ) -> None:
+        """Idempotently release a slot and surface Redis failures."""
+        if not slot_id:
+            raise ValueError("TASK_SLOT_ID_REQUIRED")
+        global_key = self._global_key(user_id, org_id)
+        conv_key = self._conversation_key(user_id, conversation_id, org_id)
+        async with self.redis.pipeline() as pipe:
+            await pipe.srem(global_key, slot_id)
+            await pipe.srem(conv_key, slot_id)
+            await pipe.execute()
+        logger.debug(
+            f"释放任务槽位 | user_id={user_id} | "
+            f"conversation_id={conversation_id} | slot_id={slot_id}"
+        )
 
     async def get_active_count(
         self,
@@ -223,3 +232,19 @@ async def release_task_slot(task: dict) -> None:
             )
     except Exception as e:
         logger.debug(f"Task slot release skipped | slot_id={slot_id} | error={e}")
+
+
+async def release_task_slot_checked(task: dict) -> None:
+    """Release a durable slot handoff without swallowing unavailable Redis."""
+    slot_id = extract_slot_id(task)
+    if not slot_id:
+        raise ValueError("TASK_SLOT_ID_REQUIRED")
+    from api.deps import get_task_limit_service
+
+    service = await get_task_limit_service()
+    if service is None:
+        raise RuntimeError("TASK_LIMIT_SERVICE_UNAVAILABLE")
+    await service.release_checked(
+        task["user_id"], task["conversation_id"],
+        org_id=task.get("org_id"), slot_id=slot_id,
+    )

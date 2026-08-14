@@ -10,6 +10,8 @@ ISOLATION = ROOT / "migrations/228_06a_agent_runtime_media_projection_isolation.
 ISOLATION_ROLLBACK = ROOT / "migrations/rollback/228_06a_agent_runtime_media_projection_isolation_rollback.sql"
 READINESS = ROOT / "migrations/228_06b_agent_runtime_media_projection_readiness.sql"
 READINESS_ROLLBACK = ROOT / "migrations/rollback/228_06b_agent_runtime_media_projection_readiness_rollback.sql"
+SLOT_RELEASE = ROOT / "migrations/228_06c_agent_runtime_media_slot_release.sql"
+SLOT_RELEASE_ROLLBACK = ROOT / "migrations/rollback/228_06c_agent_runtime_media_slot_release_rollback.sql"
 
 
 def test_projection_lane_is_additive_and_fenced() -> None:
@@ -39,8 +41,8 @@ def test_projection_lane_is_additive_and_fenced() -> None:
     assert "agent_runtime_media_action_bindings binding" in sql
     assert "agent_runtime_prepared_media_action_bindings binding" in sql
     assert "action.rejected" in sql
-    assert "_agent_runtime_media_owner_readiness_v1" in sql
-    assert "(v_readiness->>'ready')::BOOLEAN IS NOT TRUE" in sql
+    assert "_agent_runtime_media_owner_readiness_v1" not in sql
+    assert "v_readiness" not in sql
 
 
 def test_terminal_projection_reads_persistent_facts_and_merges_slots() -> None:
@@ -113,6 +115,11 @@ def test_poison_isolation_is_fenced_audited_and_compensating() -> None:
     assert "TO everydayai_projection_worker" in sql
     assert "TO everydayai_runtime_admin" in sql
     assert "AGENT_RUNTIME_MEDIA_ISOLATION_AUDIT_PRESENT" in rollback
+    lock = "WHERE id=p_outbox_id FOR UPDATE"
+    assert sql.index(lock) < sql.index("IF p_worker_id IS NOT NULL")
+    assert sql.index(lock) < sql.index(
+        "v_outbox.recovery_version IS DISTINCT FROM p_expected_recovery_version"
+    )
 
 
 def test_projection_readiness_requires_control_probe_heartbeat_and_fence() -> None:
@@ -129,3 +136,25 @@ def test_projection_readiness_requires_control_probe_heartbeat_and_fence() -> No
     assert "media_provider_probe_passed" in sql
     assert "projection_owner_ready=COALESCE(effective_ready,FALSE)" in sql
     assert "projection_owner_ready=p_ready" in rollback
+    assert "AGENT_RUNTIME_MEDIA_READINESS_ROLLBACK_NOT_DRAINED" in rollback
+    assert "AGENT_RUNTIME_MEDIA_READINESS_ROLLBACK_HEARTBEAT_ACTIVE" in rollback
+    assert "AGENT_RUNTIME_MEDIA_READINESS_ROLLBACK_IN_FLIGHT" in rollback
+
+
+def test_durable_slot_release_is_fenced_retryable_and_audited() -> None:
+    sql = SLOT_RELEASE.read_text(encoding="utf-8")
+    rollback = SLOT_RELEASE_ROLLBACK.read_text(encoding="utf-8")
+    assert "CREATE TABLE agent_runtime_media_slot_release_outbox" in sql
+    assert "CREATE TABLE agent_runtime_media_slot_release_recoveries" in sql
+    assert "FORCE ROW LEVEL SECURITY" in sql
+    assert "AFTER INSERT ON agent_runtime_media_projection_results" in sql
+    assert "claim_agent_runtime_media_slot_release_v1" in sql
+    assert "ack_agent_runtime_media_slot_release_v1" in sql
+    assert "fail_agent_runtime_media_slot_release_v1" in sql
+    assert "requeue_agent_runtime_media_slot_release_v1" in sql
+    assert "attempt_count>=8" in sql
+    assert "lease_token IS DISTINCT FROM p_lease_token" in sql
+    assert "app.access_kind',TRUE) IS DISTINCT FROM 'runtime_admin'" in sql
+    assert "TO everydayai_projection_worker" in sql
+    assert "TO everydayai_runtime_admin" in sql
+    assert "AGENT_RUNTIME_MEDIA_SLOT_RELEASE_HISTORY_PRESENT" in rollback

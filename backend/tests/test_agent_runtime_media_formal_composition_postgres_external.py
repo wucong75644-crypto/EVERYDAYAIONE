@@ -19,6 +19,7 @@ MIGRATION_NAMES = (
     ("228_06_agent_runtime_media_projection.sql", None),
     ("228_06a_agent_runtime_media_projection_isolation.sql", None),
     ("228_06b_agent_runtime_media_projection_readiness.sql", None),
+    ("228_06c_agent_runtime_media_slot_release.sql", None),
     ("228_07_agent_runtime_media_controls.sql", "RUNTIME_MEDIA_228_07_PATH"),
 )
 
@@ -56,6 +57,16 @@ def _assert_projection_readiness_lifecycle(
         """).fetchone()[0]
         assert readiness["ready"] is True
 
+    rollback = ROOT / (
+        "migrations/rollback/"
+        "228_06b_agent_runtime_media_projection_readiness_rollback.sql"
+    )
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            with connection.transaction():
+                connection.execute(rollback.read_text(encoding="utf-8"))
+
     with psycopg.connect(database) as connection:
         connection.execute("SET ROLE everydayai_owner")
         connection.execute("""
@@ -73,13 +84,31 @@ def _assert_projection_readiness_lifecycle(
             )
         """).fetchone()[0]
         assert readiness["ready"] is False
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            with connection.transaction():
+                connection.execute(rollback.read_text(encoding="utf-8"))
+    with psycopg.connect(projection_url) as connection:
+        connection.execute(
+            "SELECT set_config('app.access_kind','projection',false)",
+        )
+        connection.execute("""
+            SELECT report_agent_runtime_worker_heartbeat(
+                'projection','formal-combo-worker','formal-combo-release',
+                FALSE,TRUE,'draining',
+                '{"media_projection_enabled":true,"media_provider_probe_passed":true}'
+            )
+        """)
+        readiness = connection.execute("""
+            SELECT record_agent_runtime_media_projection_readiness_v1(
+                'formal-combo-worker','formal-combo-release',FALSE,30
+            )
+        """).fetchone()[0]
+        assert readiness["ready"] is False
 
     with psycopg.connect(database) as connection:
         connection.execute("SET ROLE everydayai_owner")
-        rollback = ROOT / (
-            "migrations/rollback/"
-            "228_06b_agent_runtime_media_projection_readiness_rollback.sql"
-        )
         connection.execute(rollback.read_text(encoding="utf-8"))
         restored = connection.execute("""
             SELECT pg_get_functiondef(
@@ -108,7 +137,7 @@ def _assert_projection_readiness_lifecycle(
         """).fetchone()[0] is True
 
 
-def test_real_228_05_06_07_share_one_readiness_gate(database: str) -> None:
+def test_real_228_05_06_06c_07_share_owner_contracts(database: str) -> None:
     migrations = _migration_paths()
     missing = [path.name for path in migrations if not path.exists()]
     if missing:
@@ -130,8 +159,15 @@ def test_real_228_05_06_07_share_one_readiness_gate(database: str) -> None:
                 "claim_agent_compat_projection_outbox(integer,integer)",
             )
         }
-        for definition in definitions.values():
-            assert "_agent_runtime_media_owner_readiness_v1" in definition
+        assert "_agent_runtime_media_owner_readiness_v1" in definitions[
+            "submit_agent_runtime_media_action_v1(uuid,uuid,uuid,text,text,uuid,text,text,uuid,uuid,uuid,uuid,text,jsonb,text,text,text,text,text,text)"
+        ]
+        assert "_agent_runtime_media_owner_readiness_v1" not in definitions[
+            "claim_agent_runtime_media_projection_v1(integer,integer)"
+        ]
+        assert "_agent_runtime_media_owner_readiness_v1" not in definitions[
+            "claim_agent_compat_projection_outbox(integer,integer)"
+        ]
         readiness = connection.execute(
             "SELECT _agent_runtime_media_owner_readiness_v1()",
         ).fetchone()[0]
@@ -141,6 +177,13 @@ def test_real_228_05_06_07_share_one_readiness_gate(database: str) -> None:
             SELECT has_function_privilege(
                 'everydayai_projection_worker',
                 'record_agent_runtime_media_projection_readiness_v1(text,text,boolean,integer)',
+                'EXECUTE'
+            )
+        """).fetchone()[0] is True
+        assert connection.execute("""
+            SELECT has_function_privilege(
+                'everydayai_projection_worker',
+                'claim_agent_runtime_media_slot_release_v1(integer,integer)',
                 'EXECUTE'
             )
         """).fetchone()[0] is True

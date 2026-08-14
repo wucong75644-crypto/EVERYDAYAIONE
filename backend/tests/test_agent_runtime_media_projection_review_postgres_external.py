@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from uuid import UUID, uuid4
 
@@ -212,3 +213,68 @@ def test_prepared_video_cancelled_has_generic_terminal_settlement(
         assert state == (
             "cancelled", 0, 0, "refunded", "refunded", "failed", "video",
         )
+
+
+def test_stale_readiness_keeps_runtime_and_compat_claims_disjoint(
+    database: str,
+) -> None:
+    _prepare_legacy_schema(database)
+    _install_projection_migration(database)
+    batch = _seed_batch(database, 1, credits=1000)
+    assert _prepare(database, batch.attempts[0])["outcome"] == "prepared"
+    runtime_outbox = _seed_terminal_event(
+        database, batch.attempts[0].action_id,
+        "https://provider.example/inflight.webp",
+    )
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        action = connection.execute("""
+            SELECT session_id,org_id,user_id FROM agent_actions WHERE id=%s
+        """, (batch.attempts[0].action_id,)).fetchone()
+        sequence = connection.execute(
+            "SELECT max(sequence)+1 FROM agent_runtime_events WHERE session_id=%s",
+            (action[0],),
+        ).fetchone()[0]
+        event_id, legacy_outbox = uuid4(), uuid4()
+        connection.execute("""
+            INSERT INTO agent_runtime_events(
+                id,session_id,sequence,org_id,user_id,scope_kind,scope_id,
+                event_type,correlation_id,actor_type,payload,payload_hash
+            ) VALUES(%s,%s,%s,%s,%s,'user',%s,'session.created',%s,
+                     'system','{}','stale-legacy-event')
+        """, (
+            event_id,action[0],sequence,action[1],action[2],str(action[2]),event_id,
+        ))
+        connection.execute("""
+            INSERT INTO agent_projection_outbox(
+                id,event_id,session_id,org_id,user_id,projection_kind
+            ) VALUES(%s,%s,%s,%s,%s,'wecom')
+        """, (legacy_outbox,event_id,action[0],action[1],action[2]))
+        connection.execute("""
+            CREATE OR REPLACE FUNCTION _agent_runtime_media_owner_readiness_v1()
+            RETURNS JSONB LANGUAGE sql STABLE SECURITY DEFINER
+            SET search_path=pg_catalog,public
+            RETURN '{"ready":false,"projection_heartbeat_fresh":false}'::JSONB
+        """)
+
+    def claim(function_name: str):
+        with _projection_connection(database) as connection:
+            return connection.execute(
+                f"SELECT {function_name}(10,15)",
+            ).fetchone()[0]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        runtime_future = executor.submit(
+            claim, "claim_agent_runtime_media_projection_v1",
+        )
+        compat_future = executor.submit(
+            claim, "claim_agent_compat_projection_outbox",
+        )
+        runtime_claims = runtime_future.result()
+        compat_claims = compat_future.result()
+
+    runtime_ids = {UUID(item["id"]) for item in runtime_claims}
+    compat_ids = {UUID(item["id"]) for item in compat_claims}
+    assert runtime_ids == {runtime_outbox}
+    assert legacy_outbox in compat_ids
+    assert runtime_ids.isdisjoint(compat_ids)

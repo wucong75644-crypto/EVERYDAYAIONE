@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Mapping
+from uuid import uuid4
 
 import pytest
 
@@ -17,6 +18,9 @@ from services.agent.runtime.ports.media_projection import (
     MediaProjectionAssetRequest,
 )
 from services.agent.runtime.ports.projection import ProjectionClaim
+from services.agent.runtime.infrastructure.postgres.media_projection import (
+    MediaSlotReleaseClaim,
+)
 
 
 def _claim(
@@ -41,16 +45,31 @@ def _claim(
     )
 
 
+def _slot_release_claim() -> MediaSlotReleaseClaim:
+    return MediaSlotReleaseClaim(
+        release_id=str(uuid4()), lease_token=str(uuid4()),
+        task={
+            "id": uuid4(), "user_id": uuid4(), "org_id": None,
+            "conversation_id": uuid4(),
+            "request_params": {"_task_slot_id": "limit-slot"},
+        },
+    )
+
+
 class _Projection:
     def __init__(
         self, event_type: str, readback: Mapping[str, object],
         payload: Mapping[str, object] | None = None,
+        slot_releases: tuple[MediaSlotReleaseClaim, ...] = (),
     ) -> None:
         self.claim_value = _claim(event_type, payload)
         self.readback_value = readback
         self.applied: list[tuple[str, Mapping[str, object] | None]] = []
         self.failed: list[str] = []
         self.isolated: list[str] = []
+        self.slot_releases = slot_releases
+        self.acked_releases = []
+        self.failed_releases = []
 
     async def claim(self, batch_size: int = 50, lease_seconds: int = 60):
         return (self.claim_value,)
@@ -71,6 +90,17 @@ class _Projection:
 
     async def read_result(self, claim):
         return None
+
+    async def claim_slot_releases(
+        self, batch_size: int = 50, lease_seconds: int = 60,
+    ):
+        return self.slot_releases
+
+    async def ack_slot_release(self, claim):
+        self.acked_releases.append(claim.release_id)
+
+    async def fail_slot_release(self, claim, error_code):
+        self.failed_releases.append((claim.release_id, error_code))
 
 
 class _Persistence:
@@ -249,84 +279,44 @@ async def test_prepared_video_uses_result_urls_and_video_persistence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prepared_terminal_slot_release_is_idempotent() -> None:
-    facts = _facts()
-    action_facts = facts["action_facts"]
-    assert isinstance(action_facts, dict)
-    action_facts["media_kind"] = "video"
-    effects: set[str] = set()
-    attempts: list[str] = []
-
-    async def release(task: Mapping[str, object]) -> None:
-        attempts.append(str(task["id"]))
-        effects.add(str(task["request_params"]))
-
-    worker = RuntimeMediaProjectionWorker(
-        _Projection("action.completed", facts), _Persistence(),
-        release_task_slot=release,
+async def test_durable_slot_release_acks_only_after_redis_success() -> None:
+    release_claim = _slot_release_claim()
+    projection = _Projection(
+        "action.failed", _facts(), slot_releases=(release_claim,),
     )
-    await worker.run_once()
-    await worker.run_once()
-
-    assert attempts == ["task", "task"]
-    assert len(effects) == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("event_type", [
-    "action.failed", "action.cancelled", "run.completed", "run.failed",
-    "run.cancelled",
-])
-async def test_failure_cancel_and_one_shot_retry_release_task_slot(
-    event_type: str,
-) -> None:
-    released = []
-    facts = _facts()
-    if event_type.startswith("run."):
-        action_facts = facts["action_facts"]
-        assert isinstance(action_facts, dict)
-        action_facts["run"] = {"capability_snapshot": {
-            "source": "runtime_media_retry", "execution_mode": "one_shot_action",
-            "projection_mode": "media_action_only",
-        }}
-
-    async def release(task: Mapping[str, object]) -> None:
-        released.append(task["id"])
-
-    projection = _Projection(event_type, facts)
-    persistence = _Persistence()
-    await RuntimeMediaProjectionWorker(
-        projection, persistence, release_task_slot=release,
-    ).run_once()
-
-    assert released == ["task"]
-    assert persistence.requests == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("event_type", [
-    "run.completed", "run.failed", "run.cancelled",
-])
-async def test_initial_media_run_releases_explicit_chat_task_slot(
-    event_type: str,
-) -> None:
-    facts = _facts()
-    action_facts = facts["action_facts"]
-    assert isinstance(action_facts, dict)
-    action_facts["run"] = {"capability_snapshot": {"source": "chat"}}
-    action_facts["run_projection_mode"] = "runtime_media_initial"
-    action_facts["chat_task_slot_id"] = "limit-slot"
     released = []
 
     async def release(task: Mapping[str, object]) -> None:
         released.append(task["id"])
 
-    await RuntimeMediaProjectionWorker(
-        _Projection(event_type, facts), _Persistence(),
-        release_task_slot=release,
+    count = await RuntimeMediaProjectionWorker(
+        projection, _Persistence(), release_task_slot=release,
     ).run_once()
 
-    assert released == ["task"]
+    assert count == 2
+    assert released == [release_claim.task["id"]]
+    assert projection.acked_releases == [release_claim.release_id]
+    assert projection.failed_releases == []
+
+
+@pytest.mark.asyncio
+async def test_durable_slot_release_failure_is_retained_for_retry() -> None:
+    release_claim = _slot_release_claim()
+    projection = _Projection(
+        "action.failed", _facts(), slot_releases=(release_claim,),
+    )
+
+    async def release(task: Mapping[str, object]) -> None:
+        raise ConnectionError("redis unavailable")
+
+    await RuntimeMediaProjectionWorker(
+        projection, _Persistence(), release_task_slot=release,
+    ).run_once()
+
+    assert projection.acked_releases == []
+    assert projection.failed_releases == [(
+        release_claim.release_id, "slot_release_connectionerror",
+    )]
 
 
 @pytest.mark.asyncio

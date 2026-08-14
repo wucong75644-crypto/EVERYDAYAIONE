@@ -218,6 +218,68 @@ def test_admin_can_fenced_isolate_dead_terminal_event(database: str) -> None:
         assert audit == (USER, None, 2, 8, "media-isolation-test")
 
 
+def test_isolation_inner_fence_rejects_released_worker_without_writes(
+    database: str,
+) -> None:
+    _prepare_legacy_schema(database)
+    _install_projection_migration(database)
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(ISOLATION.read_text(encoding="utf-8"))
+    batch = _seed_batch(database, 1, credits=1000)
+    assert _prepare(database, batch.attempts[0])["outcome"] == "prepared"
+    action_id = batch.attempts[0].action_id
+    outbox_id = _seed_terminal_event(
+        database, action_id, "https://provider.example/fence.webp",
+    )
+    with _projection_connection(database) as connection:
+        [claimed] = connection.execute(
+            "SELECT claim_agent_runtime_media_projection_v1(1,15)",
+        ).fetchone()[0]
+    with psycopg.connect(database) as connection:
+        before = connection.execute("""
+            SELECT task.status,binding.credit_state,message.status,
+                   transaction.status,
+                   (SELECT count(*) FROM agent_runtime_media_projection_results),
+                   (SELECT count(*) FROM agent_runtime_media_projection_isolations)
+              FROM agent_runtime_media_action_bindings binding
+              JOIN tasks task ON task.id=binding.task_id
+              JOIN messages message ON message.id=binding.output_message_id
+              JOIN credit_transactions transaction
+                ON transaction.id=binding.credit_transaction_id
+             WHERE binding.action_id=%s
+        """, (action_id,)).fetchone()
+        connection.execute("""
+            UPDATE agent_projection_outbox
+               SET lease_token=gen_random_uuid(),
+                   lease_expires_at=clock_timestamp()+interval '30 seconds'
+             WHERE id=%s
+        """, (outbox_id,))
+    with _projection_connection(database) as connection:
+        connection.execute(
+            "SELECT set_config('app.request_id','stale-isolation-worker',false)",
+        )
+        result = connection.execute(
+            "SELECT isolate_agent_runtime_media_projection_v1(%s,%s,'stale')",
+            (outbox_id, UUID(claimed["lease_token"])),
+        ).fetchone()[0]
+        assert result["outcome"] == "ownership_lost"
+    with psycopg.connect(database) as connection:
+        after = connection.execute("""
+            SELECT task.status,binding.credit_state,message.status,
+                   transaction.status,
+                   (SELECT count(*) FROM agent_runtime_media_projection_results),
+                   (SELECT count(*) FROM agent_runtime_media_projection_isolations)
+              FROM agent_runtime_media_action_bindings binding
+              JOIN tasks task ON task.id=binding.task_id
+              JOIN messages message ON message.id=binding.output_message_id
+              JOIN credit_transactions transaction
+                ON transaction.id=binding.credit_transaction_id
+             WHERE binding.action_id=%s
+        """, (action_id,)).fetchone()
+        assert after == before
+
+
 def test_retry_one_shot_run_is_checkpoint_only_without_model_final(database: str) -> None:
     _prepare_legacy_schema(database)
     _install_projection_migration(database)

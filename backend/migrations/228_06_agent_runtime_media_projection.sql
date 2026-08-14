@@ -107,11 +107,10 @@ SET search_path = pg_catalog, public AS $$ BEGIN
 $$;
 CREATE OR REPLACE FUNCTION claim_agent_compat_projection_outbox(     p_batch_size INTEGER DEFAULT 50, p_lease_seconds INTEGER DEFAULT 60
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
-DECLARE v_rows JSONB; v_readiness JSONB; BEGIN
+DECLARE v_rows JSONB; BEGIN
     PERFORM _assert_agent_runtime_actor(TRUE);     IF p_batch_size NOT BETWEEN 1 AND 100
        OR p_lease_seconds NOT BETWEEN 15 AND 300 THEN         RAISE EXCEPTION 'AGENT_COMPAT_PROJECTION_CLAIM_INVALID'
             USING ERRCODE = '22023';     END IF;
-    v_readiness:=_agent_runtime_media_owner_readiness_v1();
     INSERT INTO agent_compat_projection_checkpoints(session_id, projection_kind)     SELECT DISTINCT outbox.session_id, outbox.projection_kind
       FROM agent_projection_outbox outbox      WHERE outbox.projection_kind IN ('web_runtime', 'wecom')
     ON CONFLICT DO NOTHING;     WITH eligible AS (
@@ -120,18 +119,16 @@ DECLARE v_rows JSONB; v_readiness JSONB; BEGIN
             ON checkpoint.session_id = outbox.session_id            AND checkpoint.projection_kind = outbox.projection_kind
          WHERE outbox.projection_kind IN ('web_runtime', 'wecom')            AND outbox.next_attempt_at <= clock_timestamp()
            AND (outbox.status = 'pending' OR (outbox.status = 'processing'                 AND outbox.lease_expires_at <= clock_timestamp()))
-           AND event.sequence > checkpoint.through_sequence            AND (
-               (v_readiness->>'ready')::BOOLEAN IS NOT TRUE OR (
-                   NOT EXISTS (
-                       SELECT 1 FROM agent_runtime_media_action_bindings binding
-                        WHERE binding.action_id IS NOT DISTINCT FROM event.action_id
-                           OR binding.run_id IS NOT DISTINCT FROM event.run_id
-                   ) AND NOT EXISTS (
-                       SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding
-                        WHERE binding.action_id IS NOT DISTINCT FROM event.action_id
-                           OR binding.run_id IS NOT DISTINCT FROM event.run_id
-                   )
-               )
+           AND event.sequence > checkpoint.through_sequence
+           AND NOT EXISTS (
+               SELECT 1 FROM agent_runtime_media_action_bindings binding
+                WHERE binding.action_id IS NOT DISTINCT FROM event.action_id
+                   OR binding.run_id IS NOT DISTINCT FROM event.run_id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding
+                WHERE binding.action_id IS NOT DISTINCT FROM event.action_id
+                   OR binding.run_id IS NOT DISTINCT FROM event.run_id
            )
            AND NOT EXISTS (                SELECT 1 FROM agent_projection_outbox earlier
                JOIN agent_runtime_events earlier_event                  ON earlier_event.id = earlier.event_id
@@ -173,14 +170,10 @@ END; $$;
 CREATE FUNCTION register_agent_runtime_media_asset_v1( p_action_id UUID, p_payload JSONB ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$ DECLARE v_binding agent_runtime_media_action_bindings%ROWTYPE; v_prepared agent_runtime_prepared_media_action_bindings%ROWTYPE; v_task tasks%ROWTYPE; v_user users%ROWTYPE; v_payload JSONB; v_kind TEXT; v_slot_id UUID; v_index INTEGER; v_model_id TEXT; v_conversation_id UUID; v_message_id UUID; v_task_id UUID; v_org_id UUID; v_user_id UUID; v_url TEXT; v_storage_provider TEXT; v_storage_key TEXT; BEGIN PERFORM _agent_runtime_media_projection_scope_v1(); IF jsonb_typeof(p_payload) IS DISTINCT FROM 'object' THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ASSET_PAYLOAD_INVALID' USING ERRCODE='22023'; END IF; SELECT * INTO v_binding FROM agent_runtime_media_action_bindings WHERE action_id=p_action_id; SELECT * INTO v_prepared FROM agent_runtime_prepared_media_action_bindings WHERE action_id=p_action_id; IF v_prepared.action_id IS NOT NULL THEN v_kind:=v_prepared.media_kind; v_slot_id:=p_action_id; v_index:=0; v_model_id:=v_prepared.pricing_model_id; v_conversation_id:=v_prepared.conversation_id; v_message_id:=v_prepared.output_message_id; v_task_id:=v_prepared.task_id; v_org_id:=v_prepared.org_id; v_user_id:=v_prepared.user_id; ELSE v_kind:='image'; v_slot_id:=v_binding.slot_id; v_index:=v_binding.action_index; v_model_id:=v_binding.pricing_model_id; v_conversation_id:=v_binding.conversation_id; v_message_id:=v_binding.output_message_id; v_task_id:=v_binding.task_id; v_org_id:=v_binding.org_id; v_user_id:=v_binding.user_id; END IF; SELECT * INTO v_task FROM tasks WHERE id=v_task_id; SELECT * INTO v_user FROM users WHERE id=v_user_id; v_url:=NULLIF(BTRIM(p_payload->>'url'),''); v_storage_provider:=NULLIF(BTRIM(p_payload->>'storage_provider'),''); v_storage_key:=NULLIF(BTRIM(p_payload->>'storage_key'),''); IF (v_binding.action_id IS NULL AND v_prepared.action_id IS NULL) OR v_task.id IS NULL OR v_user.id IS NULL OR v_task.user_id IS DISTINCT FROM v_user_id OR v_task.org_id IS DISTINCT FROM v_org_id OR v_task.assistant_message_id IS DISTINCT FROM v_message_id OR v_task.delivery_context @> '{"runtime":true}'::JSONB IS NOT TRUE OR v_url IS NULL OR v_storage_provider NOT IN ('workspace','oss') OR v_storage_key IS NULL OR NULLIF(BTRIM(p_payload->>'name'),'') IS NULL OR NULLIF(BTRIM(p_payload->>'download_url'),'') IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ASSET_SCOPE_INVALID' USING ERRCODE='42501'; END IF; v_payload:=jsonb_build_object( 'type',v_kind,'url',v_url,'download_url',p_payload->>'download_url', 'original_url',COALESCE(NULLIF(BTRIM(p_payload->>'original_url'),''),v_url), 'workspace_path',NULLIF(BTRIM(p_payload->>'workspace_path'),''), 'thumbnail_url',NULLIF(BTRIM(p_payload->>'thumbnail_url'),''), 'name',p_payload->>'name','mime_type',NULLIF(BTRIM(p_payload->>'mime_type'),''), 'size',CASE WHEN p_payload->>'size' ~ '^[0-9]+$' THEN (p_payload->>'size')::BIGINT END ); RETURN register_user_asset( v_org_id,'user',v_user_id::TEXT,v_storage_provider,v_storage_key,v_kind, v_payload->>'original_url',v_payload->>'thumbnail_url', v_payload->>'download_url',v_payload->>'workspace_path', v_payload->>'name',v_payload->>'mime_type', CASE WHEN v_payload->>'size' IS NULL THEN NULL ELSE (v_payload->>'size')::BIGINT END, NULLIF(BTRIM(p_payload->>'content_sha256'),''), jsonb_build_object( 'runtime_identity','runtime-media:'||v_kind||':'||p_action_id::TEXT||':'||v_slot_id::TEXT, 'source_url',p_payload->>'source_url'), 'runtime-media:'||v_kind||':'||p_action_id::TEXT||':'||v_slot_id::TEXT, v_user_id,'generated',v_kind||'_task','task',v_conversation_id, v_message_id,v_task_id,NULL,NULL,v_index,v_model_id, NULLIF(BTRIM(p_payload->>'prompt'),''), jsonb_build_object('action_id',p_action_id,'slot_id',v_slot_id,'media_kind',v_kind), clock_timestamp() ); END; $$;
  CREATE FUNCTION claim_agent_runtime_media_projection_v1(
     p_batch_size INTEGER DEFAULT 50, p_lease_seconds INTEGER DEFAULT 60 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = pg_catalog, public AS $$ DECLARE v_rows JSONB; v_readiness JSONB;
+SET search_path = pg_catalog, public AS $$ DECLARE v_rows JSONB;
 BEGIN     PERFORM _agent_runtime_media_projection_scope_v1();
     IF p_batch_size NOT BETWEEN 1 AND 100        OR p_lease_seconds NOT BETWEEN 15 AND 300 THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROJECTION_CLAIM_INVALID'             USING ERRCODE = '22023';
-    END IF;
-    v_readiness:=_agent_runtime_media_owner_readiness_v1();
-    IF (v_readiness->>'ready')::BOOLEAN IS NOT TRUE THEN
-        RETURN '[]'::JSONB;
     END IF;
     INSERT INTO agent_runtime_media_projection_checkpoints(session_id, projection_kind)
     SELECT DISTINCT outbox.session_id, outbox.projection_kind       FROM agent_projection_outbox outbox
