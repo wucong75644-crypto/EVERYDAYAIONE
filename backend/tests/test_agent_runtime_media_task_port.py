@@ -117,6 +117,20 @@ async def test_runtime_media_task_port_supports_prepared_video():
 
 
 @pytest.mark.asyncio
+async def test_runtime_media_task_port_supports_model_loop_video():
+    db = _DB(kind="video", source="model_loop")
+    result = await RuntimeMediaTaskPort(db).prepare(_attempt(), kind="video")
+
+    assert result["kind"] == "video"
+    assert result["source"] == "model_loop"
+    assert [name for name, _ in db.calls] == [
+        "read_agent_runtime_media_retry_binding_v1",
+        "prepare_agent_runtime_media_dispatch_v1",
+        "read_agent_runtime_media_provider_request_v1",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_media_task_port_rejects_invalid_provider_request():
     db = _DB()
     original_rpc = db.rpc
