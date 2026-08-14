@@ -34,7 +34,20 @@ def test_prepared_image_batch_projection_is_additive_and_scoped() -> None:
 
 def test_prepared_image_batch_projection_has_exact_guarded_rollback() -> None:
     rollback = ROLLBACK.read_text(encoding="utf-8")
-    assert "AGENT_RUNTIME_MEDIA_IMAGE_BATCH_PROJECTION_IN_USE" in rollback
+    assert "AGENT_RUNTIME_MEDIA_IMAGE_BATCH_ROLLBACK_08F2_REQUIRED" in rollback
+    assert "AGENT_RUNTIME_MEDIA_IMAGE_BATCH_PROJECTION_NOT_DRAINED" in rollback
+    assert "agent_runtime_prepared_media_action_bindings" in rollback
+    assert "task.delivery_context" in rollback
+    assert "task.batch_id" in rollback
+    assert "message.generation_params" in rollback
+    assert "binding.projection_revision>0" in rollback
+    assert "credit_transactions" in rollback
+    assert "binding.credit_state='confirmed'" in rollback
+    assert "binding.credit_state='refunded'" in rollback
+    assert "agent_action_attempts" in rollback
+    assert "agent_projection_outbox" in rollback
+    assert "outbox.status<>'delivered'" in rollback
+    assert "slot.slot_status IN ('completed','failed','cancelled')" in rollback
     assert "DROP TRIGGER agent_runtime_prepared_image_batch_result_v1" in rollback
     assert "DROP FUNCTION _merge_agent_runtime_prepared_image_batch_projection_v1" in rollback
     assert "DROP TABLE agent_runtime_prepared_image_batch_slots" in rollback

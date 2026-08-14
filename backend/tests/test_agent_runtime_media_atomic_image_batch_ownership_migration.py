@@ -28,9 +28,20 @@ def test_atomic_image_batch_ownership_is_preflighted_and_narrow() -> None:
 
 def test_atomic_image_batch_ownership_has_exact_rollback() -> None:
     rollback = ROLLBACK.read_text(encoding="utf-8")
+    assert "AGENT_RUNTIME_MEDIA_IMAGE_BATCH_ROLLBACK_ORDER_INVALID" in rollback
+    assert "AGENT_RUNTIME_MEDIA_IMAGE_BATCH_ROLLBACK_PARTIAL_OWNERSHIP" in rollback
+    assert "agent_runtime_prepared_media_action_bindings" in rollback
+    assert "task.delivery_context" in rollback
+    assert "agent_session_commands" in rollback
+    assert "command.payload->>'task_id'=task.id::TEXT" in rollback
+    assert "evidence_count<>total_count" in rollback
+    assert "valid_count<>total_count" in rollback
     assert "DROP FUNCTION submit_agent_runtime_media_image_batch_v2" in rollback
     assert "DROP FUNCTION _agent_runtime_media_image_batch_ownership_v1" in rollback
     assert "GRANT EXECUTE ON FUNCTION submit_agent_runtime_media_image_batch_v1" in rollback
+    assert rollback.index("ROLLBACK_PARTIAL_OWNERSHIP") < rollback.index(
+        "GRANT EXECUTE ON FUNCTION submit_agent_runtime_media_image_batch_v1"
+    )
 
 
 def test_atomic_image_batch_ownership_identity_is_unique() -> None:

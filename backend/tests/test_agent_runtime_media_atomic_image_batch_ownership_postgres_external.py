@@ -119,6 +119,11 @@ def test_ownership_apply_rollback_reapply_and_acl(database: str) -> None:
     assert config == ["search_path=pg_catalog, public"]
     assert privileges == (False, True, False)
 
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="ROLLBACK_08F2_REQUIRED",
+    ):
+        _apply(database, SLOTS_ROLLBACK)
     _apply(database, ROLLBACK)
     with psycopg.connect(database) as connection:
         assert connection.execute(
@@ -176,6 +181,68 @@ def test_runtime_partial_is_read_only_and_not_redispatched(database: str) -> Non
     assert receipt["evidence_count"] == 1
     assert len(receipt["results"]) == 1
     assert _ownership(database, task_ids) == (1, 1, 1)
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="ROLLBACK_PARTIAL_OWNERSHIP",
+    ):
+        _apply(database, ROLLBACK)
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT to_regprocedure(%s),"
+            "has_function_privilege('everydayai_runtime',%s,'EXECUTE')",
+            (V2, V1),
+        ).fetchone() == (V2, False)
+
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(
+            "DELETE FROM agent_runtime_prepared_media_action_bindings "
+            "WHERE task_id=%s", (task_ids[0],),
+        )
+        connection.execute(
+            "UPDATE tasks SET delivery_context=delivery_context"
+            "-'actor'-'runtime'-'runtime_action_id'-'runtime_run_id' "
+            "WHERE id=%s", (task_ids[0],),
+        )
+    assert _ownership(database, task_ids) == (0, 0, 1)
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="ROLLBACK_PARTIAL_OWNERSHIP",
+    ):
+        _apply(database, ROLLBACK)
+
+
+@pytest.mark.parametrize("invalid_fact", ("delivery", "idempotency"))
+def test_rollback_rejects_invalid_full_ownership(
+    database: str, invalid_fact: str,
+) -> None:
+    _install_projection_stack(database)
+    _apply(database, MIGRATION)
+    _set_ready(database)
+    task_ids, batch_id, anchor = _candidate(database)
+    assert _submit_v2(database, batch_id, anchor)["runtime_owned"] is True
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        if invalid_fact == "delivery":
+            connection.execute(
+                "UPDATE tasks SET delivery_context=delivery_context"
+                "-'runtime_action_id' WHERE id=%s", (task_ids[0],),
+            )
+        else:
+            connection.execute(
+                "UPDATE agent_session_commands command SET payload="
+                "command.payload||%s FROM agent_runs run,"
+                "agent_runtime_prepared_media_action_bindings binding "
+                "WHERE run.command_id=command.id AND run.id=binding.run_id "
+                "AND binding.task_id=%s",
+                (Jsonb({"task_id": str(UUID(int=0))}), task_ids[0]),
+            )
+
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="ROLLBACK_PARTIAL_OWNERSHIP",
+    ):
+        _apply(database, ROLLBACK)
 
 
 def test_concurrent_v2_retries_create_once_then_read_back(database: str) -> None:
@@ -195,3 +262,15 @@ def test_concurrent_v2_retries_create_once_then_read_back(database: str) -> None
     assert all(receipt["runtime_owned"] is True for receipt in receipts)
     assert all(len(receipt["results"]) == 2 for receipt in receipts)
     assert _ownership(database, task_ids) == (2, 2, 2)
+
+    _apply(database, ROLLBACK)
+    replay = _submit(database, batch_id, anchor)
+    assert replay["outcome"] == "already_exists"
+    assert replay["runtime_owned"] is True
+    assert len(replay["results"]) == 2
+    assert _ownership(database, task_ids) == (2, 2, 2)
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="PROJECTION_NOT_DRAINED",
+    ):
+        _apply(database, SLOTS_ROLLBACK)

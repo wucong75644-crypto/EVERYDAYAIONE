@@ -181,6 +181,30 @@ def _message(database_url: str, task_id: UUID):
         ).fetchone()
 
 
+def _prepare_unprojected_owned_batch(database_url: str):
+    _install_predecessors(database_url)
+    _apply(database_url, ATOMIC)
+    _apply(database_url, PROJECTION)
+    _apply(database_url, MIGRATION)
+    _set_ready(database_url)
+    task_ids, batch_id, anchor = _seed_prepared_batch(database_url)
+    with psycopg.connect(database_url) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(
+            "UPDATE tasks SET delivery_context=delivery_context||%s "
+            "WHERE id=ANY(%s)",
+            (Jsonb({"channel": "web"}), task_ids),
+        )
+        connection.execute(
+            "UPDATE messages SET generation_params=%s WHERE id=(SELECT "
+            "assistant_message_id FROM tasks WHERE id=%s)",
+            (Jsonb({"type": "image", "num_images": 2}), task_ids[0]),
+        )
+    receipt = _submit(database_url, batch_id, anchor)
+    assert receipt["runtime_owned"] is True
+    return task_ids
+
+
 def test_projection_apply_rollback_reapply(database: str) -> None:
     _install_predecessors(database)
     _apply(database, ATOMIC)
@@ -198,6 +222,73 @@ def test_projection_apply_rollback_reapply(database: str) -> None:
             "SELECT to_regclass('agent_runtime_prepared_image_batch_slots')",
         ).fetchone()[0] is None
     _apply(database, MIGRATION)
+
+
+def test_projection_rollback_rejects_owned_batch_before_first_projection(
+    database: str,
+) -> None:
+    task_ids = _prepare_unprojected_owned_batch(database)
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM agent_runtime_prepared_image_batch_slots",
+        ).fetchone()[0] == 0
+
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="PROJECTION_NOT_DRAINED",
+    ):
+        _apply(database, ROLLBACK)
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM agent_runtime_prepared_media_action_bindings "
+            "WHERE task_id=ANY(%s)", (task_ids,),
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT to_regclass('agent_runtime_prepared_image_batch_slots')",
+        ).fetchone()[0] is not None
+
+
+def test_projection_rollback_allows_fully_terminal_drained_batch(
+    database: str,
+) -> None:
+    task_ids, actions, _ = _prepare_batch(database)
+    completed = _seed_terminal_event(
+        database, actions[0], "https://provider.example/first.png",
+    )
+    _apply_projection(database, completed, {
+        "type": "image", "url": "https://cdn.example/first.png",
+        "source_url": "https://provider.example/first.png",
+    })
+    failed = _seed_terminal_event(
+        database, actions[1], "https://provider.example/failed.png",
+        event_type="action.failed",
+    )
+    _apply_projection(database, failed)
+    assert _message(database, task_ids[0])[0] == "completed"
+
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(
+            "UPDATE agent_runtime_prepared_media_action_bindings "
+            "SET credit_state='pending' WHERE action_id=%s", (actions[0],),
+        )
+    with pytest.raises(
+        psycopg.errors.ObjectNotInPrerequisiteState,
+        match="PROJECTION_NOT_DRAINED",
+    ):
+        _apply(database, ROLLBACK)
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        connection.execute(
+            "UPDATE agent_runtime_prepared_media_action_bindings "
+            "SET credit_state='confirmed' WHERE action_id=%s", (actions[0],),
+        )
+    _apply(database, ROLLBACK)
+
+    with psycopg.connect(database) as connection:
+        assert connection.execute(
+            "SELECT to_regclass('agent_runtime_prepared_image_batch_slots')",
+        ).fetchone()[0] is None
 
 
 def test_arbitrary_mixed_terminal_order_preserves_completed_slots(database: str) -> None:
