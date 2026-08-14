@@ -222,9 +222,11 @@ def _assert_retry_contract(
           JOIN tasks task ON task.id=binding.task_id WHERE run.id=%s
         """, (UUID(retry["run_id"]),)).fetchone()
         assert run_contract[0] == "waiting_actions"
-        assert run_contract[1]["execution_mode"] == "action_only"
-        assert run_contract[1]["model_loop_enabled"] is False
-        assert run_contract[2]["source"] == "runtime_media_slot_retry"
+        assert run_contract[1]["source"] == "runtime_media_retry"
+        assert run_contract[1]["execution_mode"] == "one_shot_action"
+        assert run_contract[1]["projection_mode"] == "media_action_only"
+        assert "model_loop_enabled" not in run_contract[1]
+        assert run_contract[2]["source"] == "runtime_media_retry"
         assert run_contract[3] == str(action_id)
         assert run_contract[4] != run_contract[5]
 

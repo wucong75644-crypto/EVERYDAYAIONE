@@ -1,6 +1,5 @@
 -- 228.07: Runtime image message cancellation and single-slot retry controls.
-SET LOCAL ROLE everydayai_owner;
-DO $$ BEGIN
+SET LOCAL ROLE everydayai_owner; DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE
         attrelid='public.agent_runtime_media_action_bindings'::regclass
         AND attname='slot_id' AND NOT attisdropped) THEN
@@ -53,20 +52,51 @@ BEGIN
             USING ERRCODE = '42501';
     END IF;
 END $$;
+CREATE FUNCTION _agent_runtime_media_cancel_dispatch_v1(p_action_id UUID,
+ p_idempotency_key TEXT) RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
+ SET search_path=pg_catalog,public AS $$ DECLARE action agent_actions%ROWTYPE;
+ attempt agent_action_attempts%ROWTYPE; binding agent_runtime_media_action_bindings%ROWTYPE;
+ fact agent_runtime_provider_submission_facts%ROWTYPE; evidence JSONB;
+BEGIN
+    SELECT * INTO action FROM agent_actions WHERE id=p_action_id FOR UPDATE;
+    SELECT * INTO attempt FROM agent_action_attempts WHERE action_id=action.id ORDER BY
+      attempt_number DESC LIMIT 1 FOR UPDATE;
+    SELECT * INTO binding FROM agent_runtime_media_action_bindings WHERE action_id=action.id;
+    SELECT * INTO fact FROM agent_runtime_provider_submission_facts WHERE attempt_id=attempt.id FOR UPDATE;
+    IF action.status IN ('accepted','unknown') THEN RETURN 'cancel_reconcile'; END IF;
+    IF action.status<>'running' OR attempt.status NOT IN ('claimed','dispatching')
+       OR (attempt.status='claimed' AND attempt.dispatch_phase='claimed'
+           AND fact.id IS NULL) THEN RETURN 'cancel_now'; END IF;
+    evidence:=COALESCE(attempt.ambiguity_evidence,'{}'::JSONB)||jsonb_build_object(
+      'kind','runtime_media_cancel_after_dispatch','cancel_idempotency_key',btrim(p_idempotency_key),
+      'provider_task_ref',COALESCE(fact.provider_task_ref,attempt.provider_task_ref,
+      attempt.external_receipt->>'provider_task_ref'),'provider_idempotency_key',
+      COALESCE(fact.external_idempotency_key,attempt.provider_idempotency_key,attempt.idempotency_key),
+      'provider_request_hash',COALESCE(
+      binding.provider_request_hash,fact.request_hash,attempt.provider_request_hash,
+      attempt.request_hash),'submission_id',fact.id);
+    UPDATE agent_action_attempts SET status='unknown',ambiguity_evidence=evidence,last_provider_status=
+      'unknown',next_reconcile_at=clock_timestamp(),retry_disposition='retry_after_reconcile',
+      state_version=state_version+1,updated_at=clock_timestamp() WHERE id=attempt.id;
+    UPDATE agent_actions SET status='unknown',retry_disposition='retry_after_reconcile',state_version=
+      state_version+1,updated_at=clock_timestamp() WHERE id=action.id;
+    PERFORM append_agent_runtime_event(action.session_id,'action.unknown',action.run_id,
+      action.model_step_id,action.id,'system',session_user,evidence,ARRAY['web_runtime','audit']::TEXT[]);
+    RETURN 'cancel_reconcile';
+END $$;
 CREATE FUNCTION _agent_runtime_media_retry_run_guard_v1() RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE command agent_session_commands%ROWTYPE; action agent_actions%ROWTYPE;
     action_result agent_action_results%ROWTYPE;
 BEGIN
     IF NEW.status IN ('completed','failed','cancelled') OR NEW.blocking_action_count<>0
-       OR NEW.capability_snapshot->>'source' IS DISTINCT FROM 'runtime_media_slot_retry'
-       OR NEW.capability_snapshot->>'execution_mode' IS DISTINCT FROM 'action_only'
-       OR NEW.capability_snapshot->>'projection_mode' IS DISTINCT FROM 'media_slot_retry'
-       OR NEW.capability_snapshot->>'model_loop_enabled' IS DISTINCT FROM 'false' THEN
+       OR NEW.capability_snapshot->>'source' IS DISTINCT FROM 'runtime_media_retry'
+       OR NEW.capability_snapshot->>'execution_mode' IS DISTINCT FROM 'one_shot_action'
+       OR NEW.capability_snapshot->>'projection_mode' IS DISTINCT FROM 'media_action_only' THEN
         RETURN NEW; END IF;
     SELECT * INTO command FROM agent_session_commands WHERE id=NEW.command_id;
-    IF command.payload->>'source' IS DISTINCT FROM 'runtime_media_slot_retry' OR
-       command.payload->>'execution_mode' IS DISTINCT FROM 'action_only' THEN
+    IF command.payload->>'source' IS DISTINCT FROM 'runtime_media_retry' OR
+       command.payload->>'execution_mode' IS DISTINCT FROM 'one_shot_action' THEN
        RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_RETRY_RUN_CONTRACT_INVALID'
        USING ERRCODE='55000'; END IF;
     SELECT candidate.* INTO action FROM agent_actions candidate
@@ -81,14 +111,12 @@ BEGIN
     SELECT * INTO action_result FROM agent_action_results WHERE action_id=action.id;
     NEW.status := CASE action.status WHEN 'completed' THEN 'completed'
         WHEN 'cancelled' THEN 'cancelled' ELSE 'failed' END;
-    NEW.execution_token := NULL; NEW.lease_expires_at := NULL;
-    NEW.completed_at := clock_timestamp();
+    NEW.execution_token:=NULL; NEW.lease_expires_at:=NULL; NEW.completed_at:=clock_timestamp();
     NEW.result_hash:=CASE WHEN action.status='completed' THEN action_result.result_hash
         ELSE NULL END;
-    NEW.terminal_reason := CASE WHEN action.status IN ('failed','rejected')
-        THEN COALESCE(action.terminal_reason,'runtime_media_retry_failed')
-        WHEN action.status='cancelled' THEN 'runtime_media_retry_cancelled'
-        ELSE NULL END;
+    NEW.terminal_reason:=CASE WHEN action.status IN ('failed','rejected') THEN
+      COALESCE(action.terminal_reason,'runtime_media_retry_failed') WHEN action.status='cancelled'
+      THEN 'runtime_media_retry_cancelled' ELSE NULL END;
     RETURN NEW;
 END $$;
 CREATE FUNCTION _agent_runtime_media_retry_run_event_v1() RETURNS TRIGGER
@@ -98,14 +126,14 @@ DECLARE command agent_session_commands%ROWTYPE; action agent_actions%ROWTYPE;
 BEGIN
     IF OLD.status IN ('completed','failed','cancelled') OR
        NEW.status NOT IN ('completed','failed','cancelled')
-       OR NEW.capability_snapshot->>'source' IS DISTINCT FROM 'runtime_media_slot_retry'
-       OR NEW.capability_snapshot->>'execution_mode' IS DISTINCT FROM 'action_only' THEN
+       OR NEW.capability_snapshot->>'source' IS DISTINCT FROM 'runtime_media_retry'
+       OR NEW.capability_snapshot->>'execution_mode' IS DISTINCT FROM 'one_shot_action' THEN
         RETURN NEW; END IF;
     SELECT * INTO command FROM agent_session_commands WHERE id=NEW.command_id;
     SELECT candidate.* INTO action FROM agent_actions candidate
      WHERE candidate.run_id=NEW.id ORDER BY candidate.action_index, candidate.id LIMIT 1;
-    IF command.payload->>'source' IS DISTINCT FROM 'runtime_media_slot_retry'
-       OR command.payload->>'execution_mode' IS DISTINCT FROM 'action_only'
+    IF command.payload->>'source' IS DISTINCT FROM 'runtime_media_retry'
+       OR command.payload->>'execution_mode' IS DISTINCT FROM 'one_shot_action'
        OR command.payload->>'task_id' IS DISTINCT FROM action.id::TEXT THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_RETRY_RUN_EVENT_CONTRACT_INVALID'
             USING ERRCODE='55000'; END IF;
@@ -113,9 +141,8 @@ BEGIN
     IF NOT EXISTS(SELECT 1 FROM agent_runtime_events existing WHERE
       existing.run_id=NEW.id AND existing.event_type=terminal_event_type) THEN
         PERFORM append_agent_runtime_event(NEW.session_id,terminal_event_type,NEW.id,
-            action.model_step_id,action.id,
-            'system',session_user,jsonb_build_object(
-                'source','runtime_media_slot_retry','execution_mode','action_only',
+            action.model_step_id,action.id,'system',session_user,jsonb_build_object(
+                'source','runtime_media_retry','execution_mode','one_shot_action',
                 'action_id',action.id,'task_id',action.id,'result_hash',NEW.result_hash,
                 'reason',NEW.terminal_reason),
             ARRAY['web_runtime','audit']::TEXT[]);
@@ -125,118 +152,90 @@ END $$;
 CREATE TRIGGER agent_runtime_media_retry_run_guard BEFORE UPDATE OF status,blocking_action_count ON agent_runs FOR EACH ROW EXECUTE FUNCTION _agent_runtime_media_retry_run_guard_v1();
 CREATE CONSTRAINT TRIGGER agent_runtime_media_retry_run_terminal_event AFTER UPDATE ON agent_runs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION _agent_runtime_media_retry_run_event_v1();
 CREATE FUNCTION request_agent_runtime_media_message_cancel_v1(p_output_message_id UUID,
-    p_org_id UUID,p_user_id UUID,p_idempotency_key TEXT)
-RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
-DECLARE message messages%ROWTYPE; candidate RECORD; active_runs UUID[]; run_id UUID;
-    run_row agent_runs%ROWTYPE; result JSONB; cancelled_count INTEGER;
-    reconcile_count INTEGER; completed_count INTEGER;
+ p_org_id UUID,p_user_id UUID,p_idempotency_key TEXT) RETURNS JSONB LANGUAGE plpgsql
+ SECURITY DEFINER SET search_path=pg_catalog,public AS $$ DECLARE message messages%ROWTYPE;
+ candidate RECORD; active_runs UUID[]; run_id UUID; run_row agent_runs%ROWTYPE; result JSONB;
+ cancelled_count INTEGER; reconcile_count INTEGER; completed_count INTEGER;
 BEGIN
     PERFORM _agent_runtime_media_web_control_v1(p_org_id,p_user_id);
     IF p_output_message_id IS NULL OR length(btrim(COALESCE(p_idempotency_key,'')))
        NOT BETWEEN 1 AND 200 THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CANCEL_INVALID'
        USING ERRCODE='22023'; END IF;
-    SELECT scoped_message.* INTO message FROM messages scoped_message JOIN
-      conversations conversation ON conversation.id=scoped_message.conversation_id
-     WHERE (scoped_message.id,scoped_message.org_id,scoped_message.role::TEXT,
-            conversation.org_id,conversation.user_id)
-        IS NOT DISTINCT FROM (p_output_message_id,p_org_id,'assistant',p_org_id,p_user_id)
-       AND EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings binding
-        WHERE (binding.output_message_id,binding.org_id,binding.user_id)
-        IS NOT DISTINCT FROM (scoped_message.id,p_org_id,p_user_id))
-     FOR UPDATE OF scoped_message;
-    IF message.id IS NULL THEN RETURN jsonb_build_object('outcome','not_runtime_media'); END IF;
-    PERFORM 1 FROM agent_runtime_media_action_bindings binding WHERE
+    SELECT scoped_message.* INTO message FROM messages scoped_message JOIN conversations
+      conversation ON conversation.id=scoped_message.conversation_id WHERE(scoped_message.id,
+      scoped_message.org_id,scoped_message.role::TEXT,conversation.org_id,conversation.user_id)
+      IS NOT DISTINCT FROM(p_output_message_id,p_org_id,'assistant',p_org_id,p_user_id) AND
+      EXISTS(SELECT 1 FROM agent_runtime_media_action_bindings binding WHERE
       (binding.output_message_id,binding.org_id,binding.user_id) IS NOT DISTINCT FROM
-      (message.id,p_org_id,p_user_id) FOR UPDATE;
+      (scoped_message.id,p_org_id,p_user_id));
+    IF message.id IS NULL THEN RETURN jsonb_build_object('outcome','not_runtime_media'); END IF;
+    PERFORM 1 FROM tasks task WHERE task.id IN(SELECT binding.task_id FROM
+      agent_runtime_media_action_bindings binding WHERE (binding.output_message_id,
+      binding.org_id,binding.user_id) IS NOT DISTINCT FROM(message.id,p_org_id,p_user_id)
+      UNION SELECT binding.chat_task_id FROM agent_runtime_media_action_bindings binding
+      WHERE(binding.output_message_id,binding.org_id,binding.user_id) IS NOT DISTINCT FROM
+      (message.id,p_org_id,p_user_id)) ORDER BY task.id FOR UPDATE;
+    PERFORM 1 FROM agent_runtime_media_action_bindings binding WHERE(binding.output_message_id,
+      binding.org_id,binding.user_id) IS NOT DISTINCT FROM(message.id,p_org_id,p_user_id)
+      ORDER BY binding.action_id FOR UPDATE;
     IF NOT FOUND THEN RETURN jsonb_build_object('outcome', 'not_runtime_media'); END IF;
-    PERFORM 1 FROM agent_actions action JOIN agent_runtime_media_action_bindings binding
-     ON binding.action_id=action.id WHERE binding.output_message_id=message.id
-     ORDER BY action.id FOR UPDATE OF action;
-    PERFORM 1 FROM agent_action_attempts attempt JOIN
-     agent_runtime_media_action_bindings binding ON binding.action_id=attempt.action_id
-     WHERE binding.output_message_id=message.id ORDER BY attempt.id FOR UPDATE OF attempt;
+    SELECT scoped_message.* INTO message FROM messages scoped_message JOIN conversations
+      conversation ON conversation.id=scoped_message.conversation_id WHERE(scoped_message.id,
+      scoped_message.org_id,scoped_message.role::TEXT,conversation.org_id,conversation.user_id)
+      IS NOT DISTINCT FROM(message.id,p_org_id,'assistant',p_org_id,p_user_id) FOR UPDATE OF scoped_message;
+    IF message.id IS NULL THEN RETURN jsonb_build_object('outcome','not_runtime_media'); END IF;
+    PERFORM 1 FROM agent_actions action JOIN agent_runtime_media_action_bindings binding ON
+      binding.action_id=action.id WHERE binding.output_message_id=message.id ORDER BY action.id FOR UPDATE OF action;
+    PERFORM 1 FROM agent_action_attempts attempt JOIN agent_runtime_media_action_bindings binding
+      ON binding.action_id=attempt.action_id WHERE binding.output_message_id=message.id ORDER BY attempt.id FOR UPDATE OF attempt;
     PERFORM 1 FROM agent_runtime_provider_submission_facts fact JOIN
-     agent_runtime_media_action_bindings binding ON binding.action_id=fact.action_id
-     WHERE binding.output_message_id=message.id ORDER BY fact.id FOR UPDATE OF fact;
-    -- Dispatch crossed the side-effect gate: preserve as unknown for reconcile.
-    FOR candidate IN
-        SELECT action.id AS action_id, attempt.id AS attempt_id
-          FROM agent_actions action
-          JOIN agent_action_attempts attempt ON attempt.action_id = action.id
-          JOIN agent_runtime_media_action_bindings binding ON binding.action_id = action.id
-         WHERE binding.output_message_id = message.id
-           AND action.status = 'running'
-           AND attempt.status IN ('claimed','dispatching')
-           AND (attempt.dispatch_phase <> 'claimed' OR EXISTS (
-               SELECT 1 FROM agent_runtime_provider_submission_facts fact
-                WHERE fact.action_id = action.id))
-    LOOP
-        UPDATE agent_action_attempts SET status='unknown',ambiguity_evidence=
-            jsonb_build_object('kind','message_cancel_after_dispatch',
-                'cancel_idempotency_key',btrim(p_idempotency_key)),
-            retry_disposition = 'retry_after_reconcile',
-            state_version = state_version + 1, updated_at = clock_timestamp()
-         WHERE id = candidate.attempt_id;
-        UPDATE agent_actions SET status='unknown',retry_disposition='retry_after_reconcile',
-            state_version = state_version + 1, updated_at = clock_timestamp()
-         WHERE id = candidate.action_id;
+      agent_runtime_media_action_bindings binding ON binding.action_id=fact.action_id WHERE
+      binding.output_message_id=message.id ORDER BY fact.id FOR UPDATE OF fact;
+    FOR candidate IN SELECT DISTINCT ON(binding.action_index) action.id FROM agent_actions
+      action JOIN agent_runtime_media_action_bindings binding ON binding.action_id=action.id
+      WHERE binding.output_message_id=message.id ORDER BY binding.action_index,
+      binding.created_at DESC,action.id DESC LOOP PERFORM
+      _agent_runtime_media_cancel_dispatch_v1(candidate.id,btrim(p_idempotency_key));
     END LOOP;
-    INSERT INTO agent_runtime_media_cancel_requests(action_id,output_message_id,run_id,
-      org_id,user_id,disposition,action_status_at_request,idempotency_key)
-    SELECT action.id, message.id, action.run_id, p_org_id, p_user_id,
-           CASE WHEN action.status IN ('accepted','unknown')
-                THEN 'cancel_reconcile' ELSE 'cancel_now' END,
-           action.status, btrim(p_idempotency_key)
-      FROM (
-          SELECT DISTINCT ON(binding.action_index) action.* FROM agent_actions action
-          JOIN agent_runtime_media_action_bindings binding ON binding.action_id=action.id
-          WHERE binding.output_message_id=message.id ORDER BY binding.action_index,
-          binding.created_at DESC,action.id DESC
-      ) action
+    INSERT INTO agent_runtime_media_cancel_requests(action_id,output_message_id,run_id,org_id,
+      user_id,disposition,action_status_at_request,idempotency_key) SELECT action.id,message.id,
+      action.run_id,p_org_id,p_user_id,CASE WHEN action.status IN('accepted','unknown') THEN
+      'cancel_reconcile' ELSE 'cancel_now' END,action.status,btrim(p_idempotency_key) FROM(
+      SELECT DISTINCT ON(binding.action_index) action.* FROM agent_actions action JOIN
+      agent_runtime_media_action_bindings binding ON binding.action_id=action.id WHERE
+      binding.output_message_id=message.id ORDER BY binding.action_index,binding.created_at DESC,
+      action.id DESC) action
      WHERE action.status NOT IN ('completed','failed','rejected','cancelled')
     ON CONFLICT (action_id) DO NOTHING;
-    SELECT array_agg(DISTINCT action.run_id ORDER BY action.run_id) INTO active_runs
-      FROM (
-          SELECT DISTINCT ON(binding.action_index) action.* FROM agent_actions action
-          JOIN agent_runtime_media_action_bindings binding ON binding.action_id=action.id
-          WHERE binding.output_message_id=message.id ORDER BY binding.action_index,
-          binding.created_at DESC,action.id DESC
-      ) action
-     WHERE action.status NOT IN ('completed','failed','rejected','cancelled');
+    SELECT array_agg(DISTINCT action.run_id ORDER BY action.run_id) INTO active_runs FROM(
+      SELECT DISTINCT ON(binding.action_index) action.* FROM agent_actions action JOIN
+      agent_runtime_media_action_bindings binding ON binding.action_id=action.id WHERE
+      binding.output_message_id=message.id ORDER BY binding.action_index,binding.created_at DESC,
+      action.id DESC) action WHERE action.status NOT IN('completed','failed','rejected','cancelled');
     FOREACH run_id IN ARRAY COALESCE(active_runs, ARRAY[]::UUID[]) LOOP
         SELECT * INTO run_row FROM agent_runs WHERE id = run_id FOR UPDATE;
         IF run_row.status NOT IN ('completed','failed','cancelled') THEN
-            result := cancel_agent_run(
-                run_row.id, run_row.state_version, 'runtime_media_message_cancel');
+            result:=cancel_agent_run(run_row.id,run_row.state_version,'runtime_media_message_cancel');
             IF result->>'outcome' NOT IN ('cancelled','already_cancelled') THEN RAISE
                 EXCEPTION 'AGENT_RUNTIME_MEDIA_CANCEL_CONFLICT' USING ERRCODE='40001'; END IF;
         END IF;
     END LOOP;
-    SELECT count(*)FILTER(WHERE action.status='cancelled'),count(*)FILTER(
-      WHERE action.status IN('accepted','unknown')),count(*)FILTER(WHERE
-      action.status='completed')
-      INTO cancelled_count, reconcile_count, completed_count
-      FROM (
-          SELECT DISTINCT ON(binding.action_index) action.* FROM agent_actions action
-          JOIN agent_runtime_media_action_bindings binding ON binding.action_id=action.id
-          WHERE binding.output_message_id=message.id ORDER BY binding.action_index,
-          binding.created_at DESC,action.id DESC
-      ) action;
+    SELECT count(*)FILTER(WHERE action.status='cancelled'),count(*)FILTER(WHERE action.status
+      IN('accepted','unknown')),count(*)FILTER(WHERE action.status='completed') INTO
+      cancelled_count,reconcile_count,completed_count FROM(SELECT DISTINCT ON(binding.action_index)
+      action.* FROM agent_actions action JOIN agent_runtime_media_action_bindings binding ON
+      binding.action_id=action.id WHERE binding.output_message_id=message.id ORDER BY
+      binding.action_index,binding.created_at DESC,action.id DESC) action;
     RETURN jsonb_build_object('outcome',CASE WHEN COALESCE(cardinality(active_runs),0)=0
         THEN 'already_terminal' ELSE 'cancel_requested' END,'cancelled_count',
         cancelled_count,'reconcile_count',reconcile_count,'completed_count',completed_count,
-        'release_task_ids', (SELECT COALESCE(jsonb_agg(DISTINCT task_id), '[]')
-            FROM (SELECT binding.chat_task_id AS task_id FROM
-                    agent_runtime_media_action_bindings binding WHERE
-                    binding.output_message_id=message.id
-                  UNION
-                  SELECT binding.task_id FROM agent_runtime_media_action_bindings binding
-                    JOIN agent_runtime_media_cancel_requests cancel_request
-                      ON cancel_request.action_id=binding.action_id
-                    JOIN agent_actions action ON action.id=binding.action_id WHERE
-                    binding.output_message_id=message.id AND
-                    cancel_request.disposition='cancel_now' AND
-                    action.status='cancelled') releasable));
+        'release_task_ids',(SELECT COALESCE(jsonb_agg(DISTINCT task_id),'[]') FROM(SELECT
+          binding.chat_task_id AS task_id FROM agent_runtime_media_action_bindings binding WHERE
+          binding.output_message_id=message.id UNION SELECT binding.task_id FROM
+          agent_runtime_media_action_bindings binding JOIN agent_runtime_media_cancel_requests
+          cancel_request ON cancel_request.action_id=binding.action_id JOIN agent_actions action
+          ON action.id=binding.action_id WHERE binding.output_message_id=message.id AND
+          cancel_request.disposition='cancel_now' AND action.status='cancelled') releasable));
 END $$;
 CREATE FUNCTION retry_agent_runtime_media_slot_v1(p_output_message_id UUID,
     p_conversation_id UUID,p_slot_index INTEGER,p_slot_id UUID,
@@ -259,26 +258,36 @@ BEGIN
        OR (p_client_task_id IS NOT NULL AND length(p_client_task_id) > 100)
        OR (p_task_slot_id IS NOT NULL AND length(p_task_slot_id)>200) THEN RAISE EXCEPTION
        'AGENT_RUNTIME_MEDIA_RETRY_INVALID' USING ERRCODE='22023'; END IF;
-    SELECT scoped_message.* INTO message FROM messages scoped_message JOIN
-      conversations conversation ON conversation.id=scoped_message.conversation_id
-     WHERE (scoped_message.id,scoped_message.org_id,scoped_message.conversation_id,
-            scoped_message.role::TEXT,conversation.org_id,conversation.user_id)
-        IS NOT DISTINCT FROM (p_output_message_id,p_org_id,p_conversation_id,
-            'assistant',p_org_id,p_user_id)
-       AND EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings binding
-        WHERE (binding.output_message_id,binding.org_id,binding.user_id,
-               binding.conversation_id) IS NOT DISTINCT FROM
-              (scoped_message.id,p_org_id,p_user_id,p_conversation_id))
-     FOR UPDATE OF scoped_message;
+    SELECT scoped_message.* INTO message FROM messages scoped_message JOIN conversations
+      conversation ON conversation.id=scoped_message.conversation_id WHERE(scoped_message.id,
+      scoped_message.org_id,scoped_message.conversation_id,scoped_message.role::TEXT,
+      conversation.org_id,conversation.user_id) IS NOT DISTINCT FROM(p_output_message_id,
+      p_org_id,p_conversation_id,'assistant',p_org_id,p_user_id) AND EXISTS(SELECT 1 FROM
+      agent_runtime_media_action_bindings binding WHERE(binding.output_message_id,
+      binding.org_id,binding.user_id,binding.conversation_id) IS NOT DISTINCT FROM
+      (scoped_message.id,p_org_id,p_user_id,p_conversation_id));
     IF message.id IS NULL THEN RETURN jsonb_build_object('outcome','not_runtime_media'); END IF;
-    SELECT runtime_session.* INTO session FROM agent_runtime_media_action_bindings binding JOIN
-      agent_runtime_sessions runtime_session ON runtime_session.id=binding.session_id
-      WHERE (binding.output_message_id,binding.org_id,binding.user_id) IS NOT DISTINCT
-      FROM (message.id,p_org_id,p_user_id) ORDER BY binding.created_at,binding.action_id
-      LIMIT 1 FOR UPDATE OF runtime_session;
+    SELECT binding.* INTO source_binding FROM agent_runtime_media_action_bindings binding WHERE
+      (binding.output_message_id,binding.org_id,binding.user_id,binding.conversation_id,
+      binding.action_index) IS NOT DISTINCT FROM(message.id,p_org_id,p_user_id,
+      p_conversation_id,p_slot_index) ORDER BY binding.created_at DESC,binding.action_id DESC LIMIT 1;
+    IF source_binding.action_id IS NULL THEN RETURN jsonb_build_object('outcome','slot_not_found'); END IF;
+    SELECT * INTO session FROM agent_runtime_sessions WHERE id=source_binding.session_id FOR UPDATE;
     IF session.id IS NULL OR session.org_id IS DISTINCT FROM p_org_id OR
        session.user_id IS DISTINCT FROM p_user_id THEN RETURN
        jsonb_build_object('outcome','not_runtime_media'); END IF;
+    SELECT * INTO source_task FROM tasks WHERE id=source_binding.task_id FOR UPDATE;
+    SELECT binding.* INTO source_binding FROM agent_runtime_media_action_bindings binding WHERE
+      binding.action_id=source_binding.action_id AND(binding.output_message_id,binding.org_id,
+      binding.user_id,binding.conversation_id,binding.action_index) IS NOT DISTINCT FROM
+      (message.id,p_org_id,p_user_id,p_conversation_id,p_slot_index) FOR UPDATE;
+    IF source_binding.action_id IS NULL THEN RETURN jsonb_build_object('outcome','slot_conflict'); END IF;
+    SELECT scoped_message.* INTO message FROM messages scoped_message JOIN conversations
+      conversation ON conversation.id=scoped_message.conversation_id WHERE(scoped_message.id,
+      scoped_message.org_id,scoped_message.conversation_id,scoped_message.role::TEXT,
+      conversation.org_id,conversation.user_id) IS NOT DISTINCT FROM(message.id,p_org_id,
+      p_conversation_id,'assistant',p_org_id,p_user_id) FOR UPDATE OF scoped_message;
+    IF message.id IS NULL THEN RETURN jsonb_build_object('outcome','not_runtime_media'); END IF;
     SELECT * INTO replay_lineage FROM agent_runtime_media_retry_lineage WHERE
      output_message_id=message.id AND idempotency_key=btrim(p_idempotency_key);
     IF FOUND THEN
@@ -301,17 +310,8 @@ BEGIN
               (message.id,p_org_id,p_user_id,p_conversation_id,p_slot_index)
           AND active.status NOT IN ('completed','failed','rejected','cancelled')
     ) THEN RETURN jsonb_build_object('outcome','slot_active'); END IF;
-    SELECT binding.* INTO source_binding
-      FROM agent_runtime_media_action_bindings binding
-     WHERE (binding.output_message_id,binding.org_id,binding.user_id,
-            binding.conversation_id,binding.action_index) IS NOT DISTINCT FROM
-           (message.id,p_org_id,p_user_id,p_conversation_id,p_slot_index)
-     ORDER BY binding.created_at DESC, binding.action_id DESC LIMIT 1 FOR UPDATE;
-    IF source_binding.action_id IS NULL THEN RETURN jsonb_build_object(
-        'outcome','slot_not_found'); END IF;
     SELECT * INTO source_action FROM agent_actions
      WHERE id=source_binding.action_id FOR UPDATE;
-    SELECT * INTO source_task FROM tasks WHERE id=source_binding.task_id FOR UPDATE;
     IF source_action.status NOT IN ('failed','rejected','cancelled') THEN RETURN
         jsonb_build_object('outcome',CASE WHEN source_action.status='completed'
         THEN 'slot_completed' ELSE 'slot_active' END); END IF;
@@ -342,7 +342,7 @@ BEGIN
     INSERT INTO agent_session_commands(session_id,org_id,user_id,command_type,
       idempotency_key,payload,request_hash) VALUES(session.id,p_org_id,p_user_id,
       'submit_input',btrim(p_idempotency_key),
-      jsonb_build_object('source','runtime_media_slot_retry','execution_mode','action_only',
+      jsonb_build_object('source','runtime_media_retry','execution_mode','one_shot_action',
         'task_id',action_id,'source_chat_task_id',source_binding.chat_task_id,
         'input_message_id',source_binding.input_message_id,
         'output_message_id',message.id,'retry_slot_index',p_slot_index),
@@ -355,9 +355,9 @@ BEGIN
       'media-slot-retry:'||command.id,command.request_hash,
       jsonb_build_object('source_action_id',source_action.id,'slot_id',stable_slot_id),
       jsonb_build_object('model_id',source_binding.pricing_model_id),
-      jsonb_build_object('channel','web','source','runtime_media_slot_retry',
-        'execution_mode','action_only','projection_mode','media_slot_retry',
-        'model_loop_enabled',FALSE,'retry_task_id',action_id,
+      jsonb_build_object('channel','web','source','runtime_media_retry',
+        'execution_mode','one_shot_action','projection_mode','media_action_only',
+        'retry_task_id',action_id,
         'output_message_id',message.id),1)
       RETURNING * INTO run;
     UPDATE agent_session_commands SET result_entity_id=run.id WHERE id=command.id;
@@ -394,7 +394,7 @@ BEGIN
       action.arguments_hash,'runtime_media_generation:generate_image',1,
       action.policy_revision,jsonb_build_object('org_id',p_org_id,'user_id',p_user_id,
         'output_message_id',message.id,'slot_index',p_slot_index),
-      ARRAY['explicit_runtime_media_slot_retry'],encode(digest(convert_to(
+      ARRAY['explicit_runtime_media_retry'],encode(digest(convert_to(
         jsonb_build_object('action_id',action.id,'arguments_hash',action.arguments_hash,
           'slot_id',stable_slot_id,'slot_index',p_slot_index)::TEXT,'UTF8'),'sha256'),'hex'),
       clock_timestamp()+interval '15 minutes');
@@ -463,7 +463,7 @@ BEGIN
         WHERE id=message.id;
     event:=append_agent_runtime_event(session.id,'action.requested',run.id,step.id,
       action.id,'user',p_user_id::TEXT,jsonb_build_object('action_id',action.id,
-      'source','runtime_media_slot_retry','source_action_id',source_action.id,
+      'source','runtime_media_retry','source_action_id',source_action.id,
       'slot_id',stable_slot_id,'slot_index',p_slot_index,'retry_ordinal',retry_ordinal),
       ARRAY['web_runtime','audit']::TEXT[]);
     RETURN jsonb_build_object('outcome','created','action_id',action.id,'run_id',run.id,
@@ -489,6 +489,7 @@ BEGIN
 END $$;
 REVOKE ALL ON TABLE agent_runtime_media_cancel_requests,agent_runtime_media_retry_lineage FROM PUBLIC,everydayai_runtime,everydayai_wecom_runtime,everydayai_worker,everydayai_sync,everydayai,everydayai_agent_runtime_worker,everydayai_projection_worker,everydayai_authorization_worker,everydayai_sandbox_worker,everydayai_runtime_admin;
 REVOKE ALL ON FUNCTION _agent_runtime_media_web_control_v1(UUID,UUID),
+ _agent_runtime_media_cancel_dispatch_v1(UUID,TEXT),
  _agent_runtime_media_retry_run_guard_v1(),_agent_runtime_media_retry_run_event_v1(),
  request_agent_runtime_media_message_cancel_v1(UUID,UUID,UUID,TEXT),
     retry_agent_runtime_media_slot_v1(UUID,UUID,INTEGER,UUID,BIGINT,UUID,UUID,TEXT,TEXT,TEXT),
