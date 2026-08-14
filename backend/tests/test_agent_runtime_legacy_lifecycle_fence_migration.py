@@ -25,8 +25,6 @@ def _body(sql: str, name: str) -> str:
 
 
 def test_identity_is_additive_and_has_rollback_pair() -> None:
-    names = sorted(path.name for path in (ROOT / "migrations").glob("227_*.sql"))
-    assert names[-1] == MIGRATION.name
     assert MIGRATION.is_file()
     assert ROLLBACK.is_file()
     discovered = {

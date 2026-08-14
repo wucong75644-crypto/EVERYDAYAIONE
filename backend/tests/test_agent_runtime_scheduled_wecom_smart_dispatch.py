@@ -60,8 +60,9 @@ NOW = datetime(2026, 8, 10, tzinfo=timezone.utc)
 
 
 def test_service_has_no_global_claim_payload_read_or_legacy_transport() -> None:
-    source = Path(
-        "backend/services/agent/runtime/application/scheduled_wecom_smart_dispatch.py",
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "services/agent/runtime/application/scheduled_wecom_smart_dispatch.py"
     ).read_text()
     for forbidden in (
         ".claim_delivery(", ".read_dispatch_payload(", ".terminalize_unsupported(",

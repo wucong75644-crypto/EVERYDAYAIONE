@@ -251,8 +251,9 @@ def _binding(transport: _Transport, **changes: object) -> ScheduledWecomAppBindi
 
 
 def test_service_has_no_global_claim_config_or_legacy_sender() -> None:
-    source = Path(
-        "backend/services/agent/runtime/application/scheduled_wecom_app_dispatch.py",
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "services/agent/runtime/application/scheduled_wecom_app_dispatch.py"
     ).read_text()
     for forbidden in (
         ".claim_delivery(", ".read_dispatch_payload(", ".terminalize_unsupported(",

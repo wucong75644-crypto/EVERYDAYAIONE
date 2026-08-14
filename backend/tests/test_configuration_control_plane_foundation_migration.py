@@ -19,9 +19,13 @@ ROLLBACK = (
     / "migrations/rollback/158_configuration_control_plane_foundation_rollback.sql"
 )
 SQL = MIGRATION.read_text(encoding="utf-8")
-INCREMENTAL_SQL = (
-    ROOT / "migrations/201_wecom_callback_inbox.sql"
-).read_text(encoding="utf-8")
+INCREMENTAL_SQLS = tuple(
+    (ROOT / "migrations" / name).read_text(encoding="utf-8")
+    for name in (
+        "201_wecom_callback_inbox.sql",
+        "227_50_agent_runtime_scheduled_wecom_configuration_facade.sql",
+    )
+)
 ROLLBACK_SQL = ROLLBACK.read_text(encoding="utf-8")
 PROTECTED_TABLES = (
     "secret_records",
@@ -41,28 +45,32 @@ def _snapshot_rows() -> dict[str, tuple[dict[str, object], str]]:
         key: (json.loads(contract_json), contract_hash)
         for key, contract_json, contract_hash in rows
     }
-    updates = re.findall(
-        r"UPDATE configuration_definitions\s+SET contract_json\s*=\s*"
-        r"'(\{.*?\})'::JSONB,\s*contract_hash\s*=\s*"
-        r"'([0-9a-f]{64})'\s+WHERE .*?config_key\s*=\s*'([^']+)';",
-        INCREMENTAL_SQL,
-        re.DOTALL,
-    )
-    for contract_json, contract_hash, key in updates:
-        snapshot[key] = (json.loads(contract_json), contract_hash)
-    insert_sql = INCREMENTAL_SQL.split(
-        "INSERT INTO configuration_definitions(", 1,
-    )[1].split("INSERT INTO configuration_bundle_definitions(", 1)[0]
-    inserts = re.findall(
-        r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
-        r"'([0-9a-f]{64})',\s*TRUE\s*\)",
-        insert_sql,
-        re.DOTALL,
-    )
-    snapshot.update({
-        key: (json.loads(contract_json), contract_hash)
-        for key, contract_json, contract_hash in inserts
-    })
+    for incremental_sql in INCREMENTAL_SQLS:
+        updates = re.findall(
+            r"UPDATE (?:public\.)?configuration_definitions\s+"
+            r"SET contract_json\s*=\s*'(\{.*?\})'::JSONB,\s*"
+            r"contract_hash\s*=\s*'([0-9a-f]{64})'\s+"
+            r"WHERE .*?config_key\s*=\s*'([^']+)'.*?;",
+            incremental_sql,
+            re.DOTALL,
+        )
+        for contract_json, contract_hash, key in updates:
+            snapshot[key] = (json.loads(contract_json), contract_hash)
+        if "INSERT INTO configuration_definitions(" not in incremental_sql:
+            continue
+        insert_sql = incremental_sql.split(
+            "INSERT INTO configuration_definitions(", 1,
+        )[1].split("INSERT INTO configuration_bundle_definitions(", 1)[0]
+        inserts = re.findall(
+            r"\(\s*'v1',\s*'([^']+)',\s*'(\{.*?\})'::JSONB,\s*"
+            r"'([0-9a-f]{64})',\s*TRUE\s*\)",
+            insert_sql,
+            re.DOTALL,
+        )
+        snapshot.update({
+            key: (json.loads(contract_json), contract_hash)
+            for key, contract_json, contract_hash in inserts
+        })
     return snapshot
 
 
