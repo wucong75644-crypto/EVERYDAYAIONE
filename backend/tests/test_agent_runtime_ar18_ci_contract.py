@@ -266,11 +266,17 @@ def test_projection_rollback_closure_is_ordered_and_triggered() -> None:
         assert f'- "{trigger_path}"' in WORKFLOW
 
 
-def test_workflow_runs_the_scheduled_wecom_disposable_lane() -> None:
-    assert "Run Scheduled WeCom disposable PostgreSQL contracts" in WORKFLOW
-    assert "test_agent_runtime_scheduled_wecom_dispatch_prepare_postgres_external.py" in WORKFLOW
-    assert "test_agent_runtime_scheduled_wecom_reconcile_definitive_postgres_external.py" in WORKFLOW
-    assert "test_agent_runtime_scheduled_wecom_prepared_recovery_postgres_external.py" in WORKFLOW
+def test_workflow_does_not_repeat_the_scheduled_wecom_disposable_lane() -> None:
+    assert "Run AR-18 disposable PostgreSQL contracts" in WORKFLOW
+    assert "Run Scheduled WeCom disposable PostgreSQL contracts" not in WORKFLOW
+    assert "scheduled-wecom-postgres.log" not in WORKFLOW
+    for test_name in (
+        "test_agent_runtime_scheduled_wecom_dispatch_prepare_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_reconcile_definitive_postgres_external.py",
+        "test_agent_runtime_scheduled_wecom_prepared_recovery_postgres_external.py",
+    ):
+        assert test_name in RUNNER
+        assert test_name not in WORKFLOW
 
 
 def test_model_attempt_lane_explicitly_covers_unknown_and_reconcile() -> None:

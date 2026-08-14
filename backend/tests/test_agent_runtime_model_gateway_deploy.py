@@ -113,6 +113,9 @@ def test_scheduled_wecom_disposable_ci_is_flags_off_and_release_bound() -> None:
         "test_tenant_db_env_contract.py",
     ):
         assert test_name in workflow
+    ar18_runner = (
+        ROOT / "scripts/run_agent_runtime_ar18_disposable.sh"
+    ).read_text(encoding="utf-8")
     for postgres_contract in (
         "test_agent_runtime_ar18_b7_s2_b1d2a_wecom_foundation_postgres_external.py",
         "test_agent_runtime_scheduled_wecom_claim_postgres_external.py",
@@ -131,12 +134,9 @@ def test_scheduled_wecom_disposable_ci_is_flags_off_and_release_bound() -> None:
         "test_agent_runtime_scheduled_wecom_prepared_payload_postgres_external.py",
         "test_agent_runtime_scheduled_wecom_reconcile_org_postgres_external.py",
     ):
-        assert postgres_contract in workflow
+        assert postgres_contract in ar18_runner
     assert "test_agent_runtime_scheduled_wecom_reconcile_org_migration.py" in workflow
-    for evidence in (
-        "scheduled-wecom-unit.log",
-        "scheduled-wecom-postgres.log",
-    ):
+    for evidence in ("scheduled-wecom-unit.log", "ar18-postgres.log"):
         assert evidence in workflow
     assert "production_ready=false" in workflow
 

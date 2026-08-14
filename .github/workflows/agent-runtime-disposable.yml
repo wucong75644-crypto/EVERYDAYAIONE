@@ -302,34 +302,6 @@ jobs:
             backend/tests/test_agent_runtime_ar18_migration_continuity_postgres_external.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/postgres.log"
 
-      - name: Run Scheduled WeCom disposable PostgreSQL contracts
-        if: always()
-        run: |
-          set -euo pipefail
-          pytest -q -m external \
-            backend/tests/test_agent_runtime_ar18_b7_s2_b1d2a_wecom_foundation_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_claim_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_prepare_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_outcome_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_claim_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_continuation_claim_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_still_unknown_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_definitive_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_version_readback_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_version_readback_races_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_dispatch_payload_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_unsupported_terminalization_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_started_recovery_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_unicode_payload_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_configuration_facade_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_prepared_payload_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_app_receipt_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_smart_receipt_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_prepared_recovery_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_terminal_fence_postgres_external.py \
-            backend/tests/test_agent_runtime_scheduled_wecom_reconcile_org_postgres_external.py \
-            2>&1 | tee "$RUNNER_TEMP/ar17-evidence/scheduled-wecom-postgres.log"
-
       - name: Collect disposable PostgreSQL server logs
         if: ${{ failure() }}
         run: |
