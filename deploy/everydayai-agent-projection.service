@@ -22,7 +22,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/run/everydayai-agent-projection /var/log/everydayai
+ReadWritePaths=/run/everydayai-agent-projection /var/log/everydayai /mnt/nas-workspace
 UMask=0027
 
 [Install]

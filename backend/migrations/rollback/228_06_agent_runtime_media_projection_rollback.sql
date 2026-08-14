@@ -7,22 +7,46 @@ BEGIN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_CONTROLS_MUST_ROLL_BACK_FIRST'
             USING ERRCODE = '55000';
     END IF;
-    IF EXISTS (SELECT 1 FROM agent_runtime_media_projection_results)
-       OR EXISTS (SELECT 1 FROM agent_runtime_media_projection_checkpoints)
+    IF EXISTS (
+           SELECT 1 FROM agent_actions action
+            WHERE action.status NOT IN ('completed','failed','rejected','cancelled')
+              AND (
+                  EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings binding
+                          WHERE binding.action_id=action.id)
+                  OR EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding
+                          WHERE binding.action_id=action.id)
+              )
+       )
        OR EXISTS (
-           SELECT 1 FROM agent_runtime_media_action_bindings
-            WHERE projection_revision > 0 OR credit_state <> 'pending'
-       ) THEN
+           SELECT 1 FROM agent_projection_outbox outbox
+           JOIN agent_runtime_events event ON event.id=outbox.event_id
+            WHERE outbox.status<>'delivered'
+              AND (
+                  EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings binding
+                          WHERE binding.action_id IS NOT DISTINCT FROM event.action_id
+                             OR binding.run_id IS NOT DISTINCT FROM event.run_id)
+                  OR EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding
+                          WHERE binding.action_id IS NOT DISTINCT FROM event.action_id
+                             OR binding.run_id IS NOT DISTINCT FROM event.run_id)
+              )
+       )
+       OR EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings
+                   WHERE credit_state='pending')
+       OR EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings
+                   WHERE credit_state='pending') THEN
         RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_PROJECTION_IN_USE'
             USING ERRCODE = '55000';
     END IF;
 END $$;
 
 DROP FUNCTION read_agent_runtime_media_projection_result_v1(UUID);
+DROP FUNCTION requeue_agent_runtime_media_projection_v1(UUID,BIGINT,INTEGER,UUID,TEXT,TIMESTAMPTZ);
 DROP FUNCTION fail_agent_runtime_media_projection_v1(UUID,UUID,TEXT);
 DROP FUNCTION apply_agent_runtime_media_projection_v1(UUID,UUID,TEXT,JSONB);
 DROP FUNCTION _agent_runtime_media_run_projection_v1(agent_runtime_events,TEXT);
+DROP FUNCTION _agent_runtime_media_action_only_run_v1(UUID);
 DROP FUNCTION _agent_runtime_media_merge_run_content_v1(UUID,JSONB);
+DROP FUNCTION _agent_runtime_media_prepared_action_projection_v1(agent_runtime_events,JSONB);
 DROP FUNCTION read_agent_runtime_media_projection_v1(UUID,UUID);
 DROP FUNCTION claim_agent_runtime_media_projection_v1(INTEGER,INTEGER);
 DROP FUNCTION _agent_runtime_media_slot_update_v1(UUID,UUID,INTEGER,TEXT,BIGINT,JSONB);
@@ -33,11 +57,16 @@ DROP FUNCTION _agent_runtime_media_projection_action_v1(agent_runtime_events);
 DROP FUNCTION _agent_runtime_media_projection_scope_v1();
 DROP TABLE agent_runtime_media_projection_results;
 DROP TABLE agent_runtime_media_projection_checkpoints;
+DROP TABLE agent_runtime_media_projection_recoveries;
 DROP INDEX idx_agent_runtime_media_bindings_slot;
 DROP TRIGGER agent_runtime_media_binding_slot_default_v1
     ON agent_runtime_media_action_bindings;
 DROP FUNCTION _agent_runtime_media_binding_slot_default_v1();
 ALTER TABLE agent_runtime_media_action_bindings DROP COLUMN slot_id;
+ALTER TABLE agent_runtime_prepared_media_action_bindings
+    DROP COLUMN credit_state,
+    DROP COLUMN projection_revision,
+    DROP COLUMN state_version;
 
 -- 228.06 temporarily fences the legacy claim lane; restore its exact 220.12
 -- definitions when the additive projection lane is rolled back.

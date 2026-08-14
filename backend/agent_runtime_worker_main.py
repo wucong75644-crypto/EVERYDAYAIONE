@@ -64,6 +64,8 @@ class AgentRuntimeProcessSettings(BaseSettings):
     agent_runtime_heartbeat_seconds: float = 10.0
     agent_runtime_drain_timeout_seconds: float = 3600.0
     agent_runtime_production_composition_enabled: bool = False
+    agent_runtime_media_enabled: bool = False
+    agent_runtime_media_provider_probe_passed: bool = False
     agent_runtime_agent_definition_id: str = "everydayai-default"
     agent_runtime_agent_definition_revision: str = "v1"
     sandbox_job_root: str
@@ -91,11 +93,14 @@ class ProjectionProcessSettings(AuthorizationProcessSettings):
     """Projection config plus its explicit Tool Confirmation Redis scope."""
 
     agent_runtime_scheduled_web_projection_enabled: bool = False
+    agent_runtime_media_enabled: bool = False
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_password: SecretStr | None = None
     redis_db: int = 0
     redis_ssl: bool = False
+    media_workspace_root: str = "/mnt/nas-workspace"
+    media_cdn_domain: str | None = None
 
 
 def _load_process_settings(role: str):
@@ -317,6 +322,9 @@ async def _build_owner_and_cycle(role, raw, settings):
             scheduled_web_projection_enabled=(
                 settings.agent_runtime_scheduled_web_projection_enabled
             ),
+            media_projection_enabled=settings.agent_runtime_media_enabled,
+            media_workspace_root=settings.media_workspace_root,
+            media_cdn_domain=settings.media_cdn_domain,
         )
         cycle = owner.run_once
     elif role == "authorization":

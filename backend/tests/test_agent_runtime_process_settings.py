@@ -33,11 +33,19 @@ def test_agent_runtime_settings_field_allowlist() -> None:
         "agent_runtime_heartbeat_seconds",
         "agent_runtime_drain_timeout_seconds",
         "agent_runtime_production_composition_enabled",
+        "agent_runtime_media_enabled",
+        "agent_runtime_media_provider_probe_passed",
         "agent_runtime_agent_definition_id",
         "agent_runtime_agent_definition_revision",
         "sandbox_job_root",
         "sandbox_runtime_revision",
     }
+    assert AgentRuntimeProcessSettings.model_fields[
+        "agent_runtime_media_enabled"
+    ].default is False
+    assert AgentRuntimeProcessSettings.model_fields[
+        "agent_runtime_media_provider_probe_passed"
+    ].default is False
 
 
 def test_runtime_does_not_load_dotenv_but_backend_settings_still_does(
@@ -138,7 +146,12 @@ def test_projection_and_authorization_field_allowlists() -> None:
     assert set(ProjectionProcessSettings.model_fields) == COMMON_FIELDS | {
         "redis_host", "redis_port", "redis_password", "redis_db", "redis_ssl",
         "agent_runtime_scheduled_web_projection_enabled",
+        "agent_runtime_media_enabled",
+        "media_workspace_root", "media_cdn_domain",
     }
+    assert ProjectionProcessSettings.model_fields[
+        "agent_runtime_media_enabled"
+    ].default is False
     forbidden = {
         "kie_api_key", "google_api_key", "dashscope_api_key",
         "openrouter_api_key", "config_kek", "jwt_secret_key",
@@ -208,6 +221,7 @@ print(json.dumps({
         "SANDBOX_SECCOMP_SHA256": "2" * 64,
         "SANDBOX_CGROUP_V2_MOUNT": "/sys/fs/cgroup",
         "REDIS_PASSWORD": "projection-password-do-not-render",
+        "MEDIA_CDN_DOMAIN": "cdn.example.test",
     })
     completed = subprocess.run(
         [sys.executable, "-c", script], cwd=tmp_path, env=environment,
@@ -254,4 +268,10 @@ def test_projection_and_authorization_templates_are_narrow() -> None:
         assert forbidden not in authorization
     assert "REDIS_HOST=" in projection
     assert "REDIS_PASSWORD=" in projection
+    assert "MEDIA_WORKSPACE_ROOT=" in projection
+    assert "MEDIA_CDN_DOMAIN=" in projection
+    assert "AGENT_RUNTIME_MEDIA_ENABLED=false" in projection
+    runtime = (templates / "agent-runtime-worker.env.template").read_text()
+    assert "AGENT_RUNTIME_MEDIA_ENABLED=false" in runtime
+    assert "AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED=false" in runtime
     assert "REDIS_" not in authorization

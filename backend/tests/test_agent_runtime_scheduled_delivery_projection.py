@@ -295,10 +295,10 @@ async def test_projection_owner_preserves_worker_order_and_regression() -> None:
 
     owner = ProjectionOwner(
         worker("compatibility", 1), worker("confirmation", False),
-        worker("scheduled", True),
+        worker("scheduled", True), media_projection=worker("media", 1),
     )
     assert await owner.run_once() is True
-    assert calls == ["compatibility", "scheduled", "confirmation"]
+    assert calls == ["media", "compatibility", "scheduled", "confirmation"]
 
     calls.clear()
     failing = MagicMock(run_once=AsyncMock(side_effect=RuntimeError("unavailable")))
@@ -307,6 +307,26 @@ async def test_projection_owner_preserves_worker_order_and_regression() -> None:
     )
     assert await owner.run_once() is True
     assert calls == ["compatibility", "confirmation"]
+
+
+@pytest.mark.asyncio
+async def test_media_projection_crash_is_supervised_and_drain_stops_claims() -> None:
+    from services.agent.runtime.composition import ProjectionOwner
+
+    compatibility = MagicMock(run_once=AsyncMock(return_value=False))
+    media = MagicMock(run_once=AsyncMock(side_effect=RuntimeError("media crashed")))
+    owner = ProjectionOwner(
+        compatibility, MagicMock(run_once=AsyncMock(return_value=False)),
+        media_projection=media,
+    )
+
+    with pytest.raises(RuntimeError, match="media crashed"):
+        await owner.run_once()
+    compatibility.run_once.assert_not_awaited()
+
+    owner.drain()
+    assert await owner.run_once() is False
+    assert media.run_once.await_count == 1
 
 
 def test_scheduled_projection_flag_defaults_off() -> None:

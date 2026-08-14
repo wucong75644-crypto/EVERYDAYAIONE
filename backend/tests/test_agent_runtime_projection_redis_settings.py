@@ -37,6 +37,8 @@ def _settings() -> ProjectionProcessSettings:
         redis_password="projection-secret",
         redis_db=3,
         redis_ssl=True,
+        agent_runtime_media_enabled=False,
+        media_cdn_domain="cdn.example.test",
     )
 
 

@@ -32,20 +32,15 @@ if TYPE_CHECKING:
     from services.http_downloader import HttpDownloader
 
 
-# AI 媒体产物落盘默认子目录
 _DEFAULT_IMAGE_SUBDIR = "下载/AI图片"
 _DEFAULT_VIDEO_SUBDIR = "下载/AI视频"
 
-# 单次下载总耗时上限(秒)。避免 tenacity 3 次重试 × HttpDownloader 60s read 叠加成数分钟。
 _DOWNLOAD_TOTAL_BUDGET_SEC = 45
 
-# 多媒体并发落盘上限(防瞬时打 N 倍 NAS/OSS IO)
 _PERSIST_MAX_CONCURRENCY = 5
 
-# 同名冲突重试上限(命名带 datetime+hash,理论几乎不触发)
 _FILENAME_COLLISION_RETRY = 100
 
-# 允许落盘的 MIME 白名单(防异常 content-type 写入)
 _ALLOWED_IMAGE_MIMES: frozenset[str] = frozenset({
     "image/png", "image/jpeg", "image/jpg",
     "image/webp", "image/gif",
@@ -54,7 +49,6 @@ _ALLOWED_VIDEO_MIMES: frozenset[str] = frozenset({
     "video/mp4", "video/webm", "video/quicktime",
 })
 
-# MIME → 扩展名(白名单内的明确映射,避免 mimetypes.guess_extension 平台差异)
 _MIME_EXTENSIONS: dict[str, str] = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
@@ -99,6 +93,11 @@ async def upload_to_payload(
     output_dir: str,
     user_id: str,
     org_id: Optional[str] = None,
+    *,
+    workspace_root: str | Path | None = None,
+    cdn_domain: str | None = None,
+    oss_service: Any | None = None,
+    use_configured_oss: bool = True,
 ) -> dict[str, Any] | None:
     """同步 NAS 文件到 OSS 拿 CDN URL,产出 emit payload 双轨 dict。
 
@@ -115,15 +114,20 @@ async def upload_to_payload(
     safe_name = Path(filename).name
     mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
 
-    from core.config import get_settings
-    settings = get_settings()
+    settings = None
+    if workspace_root is None or cdn_domain is None:
+        from core.config import get_settings
+
+        settings = get_settings()
+    resolved_workspace_root = workspace_root or settings.file_workspace_root
+    resolved_cdn_domain = cdn_domain if cdn_domain is not None else settings.oss_cdn_domain
     file_path = Path(output_dir) / safe_name
 
     # workspace_path(供前端代理预览 + AI file_search 引用)
     workspace_path: str | None = None
     try:
         from services.file_executor import FileExecutor
-        ws_base = Path(settings.file_workspace_root).resolve()
+        ws_base = Path(resolved_workspace_root).resolve()
         workspace_path = FileExecutor.extract_user_relative_path(
             file_path, ws_base, user_id, org_id,
         )
@@ -134,24 +138,29 @@ async def upload_to_payload(
     url: str | None = None
     thumbnail_url: str | None = None
     try:
-        from services.oss_service import get_oss_service
-        oss = get_oss_service()
-        ws_base = Path(settings.file_workspace_root).resolve()
-        rel_path = str(file_path.relative_to(ws_base))
-        url = await oss.sync_workspace_file(file_path, rel_path)
-        if url and mime_type.startswith("image/"):
-            thumbnail_url = await oss.sync_workspace_thumbnail(file_path, rel_path)
+        if oss_service is None and use_configured_oss:
+            from services.oss_service import get_oss_service
+
+            oss_service = get_oss_service()
+        if oss_service is not None:
+            ws_base = Path(resolved_workspace_root).resolve()
+            rel_path = str(file_path.relative_to(ws_base))
+            url = await oss_service.sync_workspace_file(file_path, rel_path)
+            if url and mime_type.startswith("image/"):
+                thumbnail_url = await oss_service.sync_workspace_thumbnail(
+                    file_path, rel_path,
+                )
     except Exception as e:
         logger.warning(f"upload_to_payload OSS sync failed | file={safe_name} | error={e}")
 
     # 兜底:OSS 同步失败时拼 CDN URL(NAS 文件已存在)
-    if not url and settings.oss_cdn_domain:
+    if not url and resolved_cdn_domain:
         try:
             from urllib.parse import quote
-            ws_base = Path(settings.file_workspace_root).resolve()
+            ws_base = Path(resolved_workspace_root).resolve()
             object_key = str(file_path.relative_to(ws_base))
             encoded_key = quote(object_key, safe="/")
-            url = f"https://{settings.oss_cdn_domain}/workspace/{encoded_key}"
+            url = f"https://{resolved_cdn_domain}/workspace/{encoded_key}"
         except ValueError:
             pass
 
@@ -170,11 +179,6 @@ async def upload_to_payload(
     if thumbnail_url:
         payload["thumbnail_url"] = thumbnail_url
     return payload
-
-
-# ============================================================
-# 远程 URL → 工作区落盘(供 AI 媒体产物使用)
-# ============================================================
 
 
 def _compute_user_root(ws_base: Path, user_id: str, org_id: Optional[str]) -> Path:
@@ -272,6 +276,63 @@ async def _write_meta_sidecar(
         )
 
 
+def _trusted_download_mime(
+    content: bytes, content_type: str, media_type: str, *, source_url: str,
+    strict_content_mime: bool,
+) -> str | None:
+    mime_main = _normalize_mime(content_type)
+    allowed = _ALLOWED_VIDEO_MIMES if media_type == "video" else _ALLOWED_IMAGE_MIMES
+    if strict_content_mime:
+        from services.assets.file_identity import identify_file
+
+        detected = identify_file(content, stable_id="runtime-media").detected_mime_type
+        if detected not in allowed:
+            logger.warning(
+                "download_url_to_workspace content mime rejected | "
+                f"url={source_url[:80]} | detected={detected}"
+            )
+            return None
+        mime_main = detected
+    if mime_main and mime_main not in allowed:
+        logger.warning(
+            "download_url_to_workspace mime rejected | "
+            f"url={source_url[:80]} | mime={mime_main}"
+        )
+        return None
+    return mime_main
+
+
+def _download_filename(
+    mime_main: str, media_type: str, idx: int,
+    suggested_name: str | None, suggested_stem: str | None,
+) -> str | None:
+    if suggested_name:
+        return Path(suggested_name).name
+    if not suggested_stem:
+        return _generate_media_filename(mime_main, idx, media_type)
+    safe_stem = Path(suggested_stem).name[:180]
+    extension = _MIME_EXTENSIONS.get(mime_main)
+    return safe_stem + extension if safe_stem and extension else None
+
+
+async def _store_downloaded_media(
+    target_dir: Path, filename: str, content: bytes, *, idempotent_name: bool,
+) -> tuple[Path, int] | None:
+    try:
+        await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
+        file_path = target_dir / filename if idempotent_name else _resolve_unique_path(
+            target_dir, filename,
+        )
+        if file_path.exists() and idempotent_name:
+            return file_path, file_path.stat().st_size
+        await asyncio.to_thread(file_path.write_bytes, content)
+        return file_path, len(content)
+    except OSError as exc:
+        logger.error("download_url_to_workspace write failed | "
+                     f"dir={target_dir} | error={exc}")
+        return None
+
+
 async def download_url_to_workspace(
     url: str,
     user_id: str,
@@ -279,10 +340,17 @@ async def download_url_to_workspace(
     *,
     subdir: Optional[str] = None,
     suggested_name: Optional[str] = None,
+    suggested_stem: Optional[str] = None,
     media_type: str = "image",
     idx: int = 1,
     max_size_mb: int = 50,
     meta: Optional[dict[str, Any]] = None,
+    strict_content_mime: bool = False,
+    idempotent_name: bool = False,
+    workspace_root: str | Path | None = None,
+    cdn_domain: str | None = None,
+    oss_service: Any | None = None,
+    use_configured_oss: bool = True,
 ) -> Optional[dict[str, Any]]:
     """下载远程 URL → 工作区子目录 → 双轨 emit_payload。
 
@@ -291,11 +359,13 @@ async def download_url_to_workspace(
     `IMG_<YYYYMMDD>_<HHMMSS>_<6hex>_<3idx>.<ext>` (VID_ for video)。
     失败返回 None,调用方应降级用原 url(聊天可见、工作区不可见)。
     """
-    from core.config import get_settings
     from services.http_downloader import HttpDownloader
 
-    settings = get_settings()
-    ws_base = Path(settings.file_workspace_root).resolve()
+    if workspace_root is None:
+        from core.config import get_settings
+
+        workspace_root = get_settings().file_workspace_root
+    ws_base = Path(workspace_root).resolve()
     user_root = _compute_user_root(ws_base, user_id, org_id)
 
     if subdir is None:
@@ -327,45 +397,34 @@ async def download_url_to_workspace(
             )
             return None
 
-        # 2. MIME 白名单
-        mime_main = _normalize_mime(content_type)
-        allowed = _ALLOWED_IMAGE_MIMES if media_type == "image" else _ALLOWED_VIDEO_MIMES
-        if mime_main and mime_main not in allowed:
-            logger.warning(
-                f"download_url_to_workspace mime rejected | "
-                f"url={url[:80]} | mime={mime_main}"
-            )
-            return None
-
-        # 3. 文件名
-        filename = (
-            Path(suggested_name).name if suggested_name
-            else _generate_media_filename(mime_main or "", idx, media_type)
+        mime_main = _trusted_download_mime(
+            content, content_type, media_type, source_url=url,
+            strict_content_mime=strict_content_mime,
         )
-
-        # 4. 写盘(off-loop,避免阻塞事件循环)
-        try:
-            await asyncio.to_thread(
-                target_dir.mkdir, parents=True, exist_ok=True,
-            )
-            file_path = _resolve_unique_path(target_dir, filename)
-            filename = file_path.name
-            await asyncio.to_thread(file_path.write_bytes, content)
-        except OSError as e:
-            logger.error(
-                f"download_url_to_workspace write failed | "
-                f"dir={target_dir} | error={e}"
-            )
+        if mime_main is None:
             return None
 
-        # 5. .meta.json sidecar(可选)
-        if meta:
-            await _write_meta_sidecar(file_path, url, len(content), mime_main, meta)
+        filename = _download_filename(
+            mime_main, media_type, idx, suggested_name, suggested_stem,
+        )
+        if filename is None:
+            return None
+        stored = await _store_downloaded_media(
+            target_dir, filename, content, idempotent_name=idempotent_name,
+        )
+        if stored is None:
+            return None
+        file_path, stored_size = stored
+        filename = file_path.name
 
-        # 6. 双轨 dict
+        if meta:
+            await _write_meta_sidecar(file_path, url, stored_size, mime_main, meta)
+
         payload = await upload_to_payload(
-            filename=filename, size=len(content),
+            filename=filename, size=stored_size,
             output_dir=str(target_dir), user_id=user_id, org_id=org_id,
+            workspace_root=ws_base, cdn_domain=cdn_domain,
+            oss_service=oss_service, use_configured_oss=use_configured_oss,
         )
         if not payload:
             logger.warning(
@@ -378,7 +437,7 @@ async def download_url_to_workspace(
         _add_media_asset_urls(payload, media_type)
         logger.info(
             f"download_url_to_workspace ok | user={user_id} | "
-            f"path={payload.get('workspace_path')} | size={len(content)} | "
+            f"path={payload.get('workspace_path')} | size={stored_size} | "
             f"mime={mime_main}"
         )
         return payload

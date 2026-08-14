@@ -12,6 +12,7 @@ def test_projection_lane_is_additive_and_fenced() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
     assert "CREATE TABLE agent_runtime_media_projection_checkpoints" in sql
     assert "CREATE TABLE agent_runtime_media_projection_results" in sql
+    assert "CREATE TABLE agent_runtime_media_projection_recoveries" in sql
     assert "ALTER TABLE agent_runtime_media_action_bindings ADD COLUMN slot_id UUID" in sql
     assert sql.index("UPDATE agent_runtime_media_action_bindings SET slot_id = action_id") < sql.index(
         "ALTER TABLE agent_runtime_media_action_bindings ALTER COLUMN slot_id SET NOT NULL",
@@ -32,6 +33,7 @@ def test_projection_lane_is_additive_and_fenced() -> None:
     assert "GRANT EXECUTE ON FUNCTION" in sql
     assert "CREATE OR REPLACE FUNCTION claim_agent_compat_projection_outbox" in sql
     assert "agent_runtime_media_action_bindings binding" in sql
+    assert "agent_runtime_prepared_media_action_bindings binding" in sql
     assert "action.rejected" in sql
 
 
@@ -47,6 +49,17 @@ def test_terminal_projection_reads_persistent_facts_and_merges_slots() -> None:
     assert "result = p_content_part" in sql
     assert "result_data =" not in sql
     assert "AGENT_RUNTIME_MEDIA_PROVIDER_FACT_REQUIRED" in sql
+    assert "v_data->'result_urls'" in sql
+    assert "v_prepared.media_kind" in sql
+    assert "attempt_count >= 8" in sql
+    assert "requeue_agent_runtime_media_projection_v1" in sql
+    assert "runtime_media_retry" in sql
+    assert "one_shot_action" in sql
+    assert "media_action_only" in sql
+    assert "runtime_media_slot_retry" not in sql
+    assert "action_only_run_v1(v_event.run_id)" in sql
+    assert "WHERE id=v_binding.task_id FOR UPDATE" in sql
+    assert "WHERE action_id=p_event.action_id FOR UPDATE" in sql
     assert "event_sequence = v_event.sequence" in sql
     assert "settle_agent_runtime_media_credit_v1" in sql
     assert "refund_agent_runtime_media_credit_v1" in sql
@@ -59,11 +72,16 @@ def test_rollback_guard_requires_drained_projection_and_bindings() -> None:
     rollback = ROLLBACK.read_text(encoding="utf-8")
     assert "AGENT_RUNTIME_MEDIA_PROJECTION_IN_USE" in rollback
     assert "AGENT_RUNTIME_MEDIA_CONTROLS_MUST_ROLL_BACK_FIRST" in rollback
-    assert "agent_runtime_media_projection_results" in rollback
-    assert "projection_revision > 0 OR credit_state <> 'pending'" in rollback
+    assert "agent_runtime_media_projection_recoveries" in rollback
+    assert "IF EXISTS (SELECT 1 FROM agent_runtime_media_projection_recoveries)" not in rollback
+    assert "action.status NOT IN ('completed','failed','rejected','cancelled')" in rollback
+    assert "outbox.status<>'delivered'" in rollback
+    assert "credit_state='pending'" in rollback
+    assert "SELECT 1 FROM agent_runtime_media_projection_checkpoints" not in rollback
     assert "DROP TABLE agent_runtime_media_projection_results" in rollback
     assert "DROP TABLE agent_runtime_media_projection_checkpoints" in rollback
     assert "ALTER TABLE agent_runtime_media_action_bindings DROP COLUMN slot_id" in rollback
+    assert "DROP FUNCTION _agent_runtime_media_action_only_run_v1(UUID)" in rollback
     assert "DROP FUNCTION _agent_runtime_media_binding_slot_default_v1()" in rollback
     assert "DROP FUNCTION _agent_runtime_media_action_projection_v1" in rollback
     assert "restore its exact 220.12" in rollback

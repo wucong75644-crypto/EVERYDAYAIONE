@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -38,33 +39,34 @@ class RuntimeMediaPersistence:
                 url=request.source_url,
                 user_id=request.user_id,
                 org_id=request.org_id,
-                media_type="image",
+                media_type=request.media_kind,
                 identity=request.identity,
             )
             if not isinstance(payload, Mapping) or not payload.get("url"):
                 raise RuntimeError("RUNTIME_MEDIA_WORKSPACE_PERSIST_FAILED")
             result = dict(payload)
             result["source_url"] = request.source_url
-            asset_result = await asyncio.to_thread(self._register_asset, request, result)
+            asset_result = await self._register_asset(request, result)
             asset = asset_result.get("asset")
             if isinstance(asset, Mapping) and asset.get("id"):
                 result["asset_id"] = asset["id"]
             self._persisted[request.identity] = dict(result)
             return result
 
-    def _register_asset(
+    async def _register_asset(
         self, request: MediaProjectionAssetRequest,
         payload: Mapping[str, object],
     ) -> Mapping[str, object]:
         runtime_register = getattr(self._asset_registry, "register_runtime_media_asset", None)
         if runtime_register is not None:
-            return runtime_register(request, payload)
+            registered = runtime_register(request, payload)
+            return await registered if inspect.isawaitable(registered) else registered
         url = str(payload["url"])
         asset = ReadyAssetDraft(
             org_id=request.org_id,
             storage_scope="user",
             storage_owner_key=request.user_id,
-            media_type="image",
+            media_type=request.media_kind,
             original_url=url,
             download_url=str(payload.get("download_url") or url),
             thumbnail_url=_text(payload.get("thumbnail_url")),
@@ -78,7 +80,7 @@ class RuntimeMediaPersistence:
             ref_key=request.identity,
             actor_user_id=request.user_id,
             source_type="generated",
-            source_kind="image_task",
+            source_kind=f"{request.media_kind}_task",
             ref_kind="task",
             conversation_id=request.conversation_id,
             source_message_id=request.message_id,
@@ -88,42 +90,34 @@ class RuntimeMediaPersistence:
             prompt=request.prompt,
             metadata={"slot_id": request.slot_id, "action_id": request.action_id},
         )
-        return self._asset_registry.register_ready_asset(asset, ref)
+        return await asyncio.to_thread(
+            self._asset_registry.register_ready_asset, asset, ref,
+        )
 
 
 def build_runtime_media_persistence(
-    *, asset_registry: Any,
+    *, asset_registry: Any, workspace_root: str | None = None,
+    cdn_domain: str | None = None,
 ) -> RuntimeMediaPersistence:
     """Build the real adapter from existing Workspace/OSS/registry services."""
 
     async def persist_workspace(**kwargs: object) -> Mapping[str, object] | None:
-        from core.config import get_settings
-        from core.workspace import resolve_workspace_dir
-        from services.file_upload import (
-            download_url_to_workspace, upload_to_payload,
-        )
+        from services.file_upload import download_url_to_workspace
 
         source_url = str(kwargs["url"])
         user_id = str(kwargs["user_id"])
         org_id = kwargs.get("org_id")
         org_text = str(org_id) if org_id else None
         identity = str(kwargs["identity"])
-        filename = identity.replace(":", "_") + ".png"
-        root = Path(resolve_workspace_dir(
-            get_settings().file_workspace_root, user_id, org_text,
-        ))
-        target_dir = root / "下载" / "AI图片"
-        target_path = target_dir / filename
-        if target_path.exists():
-            return await upload_to_payload(
-                filename=filename, size=target_path.stat().st_size,
-                output_dir=str(target_dir), user_id=user_id, org_id=org_text,
-            )
+        media_type = str(kwargs["media_type"])
+        subdir = "下载/AI视频" if media_type == "video" else "下载/AI图片"
         return await download_url_to_workspace(
             url=source_url, user_id=user_id, org_id=org_text,
-            subdir="下载/AI图片", suggested_name=filename,
-            media_type="image", idx=1,
-            meta={"runtime_identity": identity},
+            subdir=subdir, suggested_stem=identity.replace(":", "_"),
+            media_type=media_type, idx=1,
+            meta={"runtime_identity": identity}, strict_content_mime=True,
+            idempotent_name=True, workspace_root=workspace_root,
+            cdn_domain=cdn_domain, use_configured_oss=workspace_root is None,
         )
 
     return RuntimeMediaPersistence(
@@ -137,7 +131,7 @@ class RuntimeMediaAssetRegistry:
     def __init__(self, database: Any) -> None:
         self._database = database
 
-    def register_runtime_media_asset(
+    async def register_runtime_media_asset(
         self, request: MediaProjectionAssetRequest,
         payload: Mapping[str, object],
     ) -> Mapping[str, object]:
@@ -158,7 +152,7 @@ class RuntimeMediaAssetRegistry:
             "download_url": str(payload.get("download_url") or url),
             "prompt": request.prompt,
         }
-        response = self._database.rpc(
+        response = await self._database.rpc(
             "register_agent_runtime_media_asset_v1",
             {"p_action_id": request.action_id, "p_payload": rpc_payload},
         ).execute()

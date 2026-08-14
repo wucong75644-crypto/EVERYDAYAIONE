@@ -124,12 +124,22 @@ class RuntimeOwner:
 
 
 class ProjectionOwner:
-    def __init__(self, projection, confirmations, scheduled_delivery=None) -> None:
+    def __init__(
+        self, projection, confirmations, scheduled_delivery=None,
+        media_projection=None,
+    ) -> None:
         self.projection = projection
         self.confirmations = confirmations
         self.scheduled_delivery = scheduled_delivery
+        self.media_projection = media_projection
+        self._draining = False
 
     async def run_once(self) -> bool:
+        if self._draining:
+            return False
+        media_projected = 0
+        if self.media_projection is not None:
+            media_projected = await self.media_projection.run_once()
         projected = await self.projection.run_once()
         delivered = False
         if self.scheduled_delivery is not None:
@@ -141,7 +151,13 @@ class ProjectionOwner:
                     type(exc).__name__,
                 )
         notified = await self.confirmations.run_once()
-        return bool(projected or delivered or notified)
+        return bool(media_projected or projected or delivered or notified)
+
+    def drain(self) -> None:
+        self._draining = True
+
+    def stop(self) -> None:
+        self.drain()
 
 
 def scoped(database: Any, kind: DatabaseAccessKind, worker_id: str):
@@ -154,6 +170,9 @@ def scoped(database: Any, kind: DatabaseAccessKind, worker_id: str):
 def build_projection(
     database: Any, worker_id: str, *, process_role: str = "projection",
     scheduled_web_projection_enabled: bool = False,
+    media_projection_enabled: bool = False,
+    media_workspace_root: str | None = None,
+    media_cdn_domain: str | None = None,
 ):
     _require_process_role("projection", process_role)
     from services.agent.runtime.application.confirmation_notification import (
@@ -169,6 +188,25 @@ def build_projection(
     from services.websocket_manager import ws_manager
 
     db = scoped(database, DatabaseAccessKind.PROJECTION, worker_id)
+    media_projection = None
+    if media_projection_enabled:
+        if not media_workspace_root or not media_cdn_domain:
+            raise RuntimeError("RUNTIME_MEDIA_PROJECTION_STORAGE_REQUIRED")
+        from services.agent.runtime.application.media_persistence import (
+            RuntimeMediaAssetRegistry, build_runtime_media_persistence,
+        )
+        from services.agent.runtime.application.media_projection_worker import (
+            build_runtime_media_projection_worker,
+        )
+        media_projection = build_runtime_media_projection_worker(
+            db,
+            build_runtime_media_persistence(
+                asset_registry=RuntimeMediaAssetRegistry(db),
+                workspace_root=media_workspace_root,
+                cdn_domain=media_cdn_domain,
+            ),
+            ws_manager,
+        )
     scheduled_delivery = None
     if scheduled_web_projection_enabled:
         from services.agent.runtime.application.scheduled_delivery_projection import (
@@ -187,6 +225,7 @@ def build_projection(
             websocket_manager=ws_manager, worker_id=worker_id,
         ),
         scheduled_delivery,
+        media_projection,
     )
 
 def build_runtime(

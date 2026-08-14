@@ -121,9 +121,14 @@ def test_provisioner_keeps_secrets_off_argv_and_output_and_encodes_dsn(
     runtime = _read_env(env_dir / "agent-runtime-worker.env")
     projection = _read_env(env_dir / "agent-projection-worker.env")
     assert runtime["AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED"] == "false"
+    assert runtime["AGENT_RUNTIME_MEDIA_ENABLED"] == "false"
+    assert runtime["AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED"] == "false"
     assert runtime["SANDBOX_RUNTIME_REVISION"] == "unprovisioned"
     assert projection["REDIS_HOST"] == "redis.internal"
     assert projection["REDIS_PASSWORD"] == "redis!secret#value"
+    assert projection["AGENT_RUNTIME_MEDIA_ENABLED"] == "false"
+    assert projection["MEDIA_WORKSPACE_ROOT"] == "/mnt/nas-workspace"
+    assert projection["MEDIA_CDN_DOMAIN"] == ""
     assert projection["SENTRY_DSN"] == "https://public@example.invalid/42"
     assert projection["ENVIRONMENT"] == "production-c7"
     assert not (env_dir / "sandbox-worker.env").exists()

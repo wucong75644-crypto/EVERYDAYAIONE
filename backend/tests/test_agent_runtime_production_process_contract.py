@@ -2,6 +2,7 @@ from inspect import Parameter, signature
 from pathlib import Path
 from types import SimpleNamespace
 from typing import get_type_hints
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -207,6 +208,39 @@ def test_runtime_rejects_explicit_component_injection() -> None:
             object(), settings, production_components=object(),
             process_role="agent_runtime",
         )
+
+
+@pytest.mark.asyncio
+async def test_projection_process_starts_supervised_media_owner() -> None:
+    settings = SimpleNamespace(
+        agent_runtime_worker_id="projection-test",
+        agent_runtime_scheduled_web_projection_enabled=False,
+        agent_runtime_media_enabled=True,
+        media_workspace_root="/mnt/nas-workspace",
+        media_cdn_domain="cdn.example.test",
+    )
+    owner = MagicMock(run_once=AsyncMock(return_value=True))
+    probe = SimpleNamespace(ready=True, code="READY")
+
+    with patch.object(entrypoint, "_configure_projection_redis"), patch.object(
+        entrypoint, "build_projection", return_value=owner,
+    ) as builder, patch(
+        "services.tool_confirmation.capability_probe.probe_tool_confirmation_redis",
+        new=AsyncMock(return_value=probe),
+    ):
+        built, cycle = await entrypoint._build_owner_and_cycle(
+            "projection", object(), settings,
+        )
+
+    assert built is owner
+    assert await cycle() is True
+    builder.assert_called_once_with(
+        ANY, "projection-test", process_role="projection",
+        scheduled_web_projection_enabled=False,
+        media_projection_enabled=True,
+        media_workspace_root="/mnt/nas-workspace",
+        media_cdn_domain="cdn.example.test",
+    )
 
 
 @pytest.mark.parametrize(

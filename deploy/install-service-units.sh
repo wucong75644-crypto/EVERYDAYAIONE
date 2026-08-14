@@ -210,7 +210,9 @@ validate_runtime_worker_envs() {
         WORKER_DATABASE_URL AGENT_RUNTIME_PROCESS_ROLE \
         AGENT_RUNTIME_WORKER_ID AGENT_RUNTIME_RELEASE_REVISION \
         AGENT_RUNTIME_HEALTH_SOCKET \
-        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED SANDBOX_JOB_ROOT \
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED \
+        AGENT_RUNTIME_MEDIA_ENABLED AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED \
+        SANDBOX_JOB_ROOT \
         SANDBOX_RUNTIME_REVISION
     validate_exact_env_file "$model_path" \
         CONFIG_KEK_CURRENT_VERSION CONFIG_KEK_KEYRING_JSON
@@ -219,6 +221,7 @@ validate_runtime_worker_envs() {
         WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
         REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \
         AGENT_RUNTIME_RELEASE_REVISION AGENT_RUNTIME_HEALTH_SOCKET \
+        AGENT_RUNTIME_MEDIA_ENABLED MEDIA_WORKSPACE_ROOT MEDIA_CDN_DOMAIN \
         AGENT_RUNTIME_POLL_INTERVAL_SECONDS AGENT_RUNTIME_HEARTBEAT_SECONDS \
         SENTRY_DSN ENVIRONMENT
     validate_exact_env_file "$authorization_path" \
@@ -243,7 +246,11 @@ validate_runtime_worker_envs() {
     require_env_value "$runtime_path" AGENT_RUNTIME_PROCESS_ROLE agent_runtime
     require_env_value "$runtime_path" \
         AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED false
+    require_env_value "$runtime_path" AGENT_RUNTIME_MEDIA_ENABLED false
+    require_env_value "$runtime_path" \
+        AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED false
     require_env_value "$projection_path" AGENT_RUNTIME_PROCESS_ROLE projection
+    require_env_value "$projection_path" AGENT_RUNTIME_MEDIA_ENABLED false
     require_env_value "$authorization_path" AGENT_RUNTIME_PROCESS_ROLE authorization
     require_env_value "$sandbox_path" AGENT_RUNTIME_PROCESS_ROLE sandbox
 
@@ -270,7 +277,9 @@ validate_control_plane_worker_envs() {
         WORKER_DATABASE_URL AGENT_RUNTIME_PROCESS_ROLE \
         AGENT_RUNTIME_WORKER_ID AGENT_RUNTIME_RELEASE_REVISION \
         AGENT_RUNTIME_HEALTH_SOCKET \
-        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED SANDBOX_JOB_ROOT \
+        AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED \
+        AGENT_RUNTIME_MEDIA_ENABLED AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED \
+        SANDBOX_JOB_ROOT \
         SANDBOX_RUNTIME_REVISION
     validate_exact_env_file "$model_path" \
         CONFIG_KEK_CURRENT_VERSION CONFIG_KEK_KEYRING_JSON
@@ -279,6 +288,7 @@ validate_control_plane_worker_envs() {
         WORKER_DATABASE_URL REDIS_HOST REDIS_PORT REDIS_PASSWORD REDIS_DB \
         REDIS_SSL AGENT_RUNTIME_PROCESS_ROLE AGENT_RUNTIME_WORKER_ID \
         AGENT_RUNTIME_RELEASE_REVISION AGENT_RUNTIME_HEALTH_SOCKET \
+        AGENT_RUNTIME_MEDIA_ENABLED MEDIA_WORKSPACE_ROOT MEDIA_CDN_DOMAIN \
         AGENT_RUNTIME_POLL_INTERVAL_SECONDS AGENT_RUNTIME_HEARTBEAT_SECONDS \
         SENTRY_DSN ENVIRONMENT
     validate_exact_env_file "$authorization_path" \
@@ -293,7 +303,11 @@ validate_control_plane_worker_envs() {
     require_env_value "$runtime_path" AGENT_RUNTIME_PROCESS_ROLE agent_runtime
     require_env_value "$runtime_path" \
         AGENT_RUNTIME_PRODUCTION_COMPOSITION_ENABLED false
+    require_env_value "$runtime_path" AGENT_RUNTIME_MEDIA_ENABLED false
+    require_env_value "$runtime_path" \
+        AGENT_RUNTIME_MEDIA_PROVIDER_PROBE_PASSED false
     require_env_value "$projection_path" AGENT_RUNTIME_PROCESS_ROLE projection
+    require_env_value "$projection_path" AGENT_RUNTIME_MEDIA_ENABLED false
     require_env_value "$authorization_path" AGENT_RUNTIME_PROCESS_ROLE authorization
 
     local path

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Protocol
+from typing import Awaitable, Callable, Mapping, Protocol
 
 from loguru import logger
 
@@ -34,10 +34,12 @@ class RuntimeMediaProjectionWorker:
         self, projection: MediaProjectionPort,
         persistence: MediaPersistencePort,
         notifier: ProjectionNotifierPort | None = None,
+        release_task_slot: Callable[[Mapping[str, object]], Awaitable[None]] | None = None,
     ) -> None:
         self._projection = projection
         self._persistence = persistence
         self._notifier = notifier
+        self._release_task_slot = release_task_slot
 
     async def run_once(self, batch_size: int = 50) -> int:
         claims = await self._projection.claim(batch_size=batch_size)
@@ -48,7 +50,10 @@ class RuntimeMediaProjectionWorker:
     async def _process(self, claim: ProjectionClaim) -> None:
         try:
             readback = await self._projection.read(claim)
-            if readback is None or readback.get("outcome") == "already_applied":
+            if readback is None:
+                return
+            await self._release_terminal_slot(claim, readback)
+            if readback.get("outcome") == "already_applied":
                 return
             action = _projection_action(claim.event.event_type)
             content_part = None
@@ -69,6 +74,18 @@ class RuntimeMediaProjectionWorker:
                 claim.outbox_id, claim.event.event_id, type(error).__name__,
             )
             await self._projection.fail(claim, _error_code("apply", error))
+
+    async def _release_terminal_slot(
+        self, claim: ProjectionClaim, readback: Mapping[str, object],
+    ) -> None:
+        if self._release_task_slot is None:
+            return
+        task = _terminal_task(claim, readback)
+        if task is None:
+            return
+        if not isinstance(task.get("request_params"), (Mapping, str)):
+            raise PersistenceContractError("terminal media task facts required")
+        await self._release_task_slot(task)
 
     async def _notify(self, payload: object) -> None:
         if self._notifier is None or not isinstance(payload, Mapping):
@@ -93,6 +110,40 @@ def _projection_action(event_type: str) -> str:
         "run.failed": "run_failed",
         "run.cancelled": "run_cancelled",
     }.get(event_type, "checkpoint_only")
+
+
+def _terminal_task(
+    claim: ProjectionClaim, readback: Mapping[str, object],
+) -> Mapping[str, object] | None:
+    event = claim.event
+    action_terminal = event.event_type in {
+        "action.completed", "action.failed", "action.rejected", "action.cancelled",
+    }
+    facts = readback.get("action_facts")
+    if not isinstance(facts, Mapping):
+        if action_terminal:
+            raise PersistenceContractError("terminal media task facts required")
+        return None
+    task = facts.get("task")
+    if action_terminal:
+        if not isinstance(task, Mapping):
+            raise PersistenceContractError("terminal media task facts required")
+        return task
+    run = facts.get("run")
+    snapshot = run.get("capability_snapshot") if isinstance(run, Mapping) else None
+    if event.event_type not in {"run.completed", "run.failed", "run.cancelled"}:
+        return None
+    if not isinstance(snapshot, Mapping):
+        return None
+    if (
+        snapshot.get("source") == "runtime_media_retry"
+        and snapshot.get("execution_mode") == "one_shot_action"
+        and snapshot.get("projection_mode") == "media_action_only"
+    ):
+        if not isinstance(task, Mapping):
+            raise PersistenceContractError("terminal media retry task facts required")
+        return task
+    return None
 
 
 def _error_code(prefix: str, error: Exception) -> str:
@@ -144,8 +195,11 @@ def build_runtime_media_projection_worker(
         WebsocketMediaProjectionNotifier(websocket_manager)
         if websocket_manager is not None else None
     )
+    from services.task_limit_service import release_task_slot
+
     return RuntimeMediaProjectionWorker(
         PostgresMediaProjection(database), persistence, notifier,
+        release_task_slot,
     )
 
 

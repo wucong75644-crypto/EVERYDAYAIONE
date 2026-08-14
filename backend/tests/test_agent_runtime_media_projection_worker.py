@@ -19,7 +19,9 @@ from services.agent.runtime.ports.media_projection import (
 from services.agent.runtime.ports.projection import ProjectionClaim
 
 
-def _claim(event_type: str) -> ProjectionClaim:
+def _claim(
+    event_type: str, payload: Mapping[str, object] | None = None,
+) -> ProjectionClaim:
     event = RuntimeEvent(
         event_id=f"event-{event_type}", session_id="session",
         scope=RuntimeScope(
@@ -28,7 +30,9 @@ def _claim(event_type: str) -> ProjectionClaim:
         durability=EventDurability.DURABLE, correlation_id="correlation",
         actor_type=RuntimeActorType.EXECUTOR, payload_hash="hash",
         occurred_at=datetime.now(timezone.utc), redaction_revision="v1",
-        sequence=EventSequence(1), action_id="action",
+        payload=payload or {},
+        sequence=EventSequence(1),
+        action_id=None if event_type.startswith("run.") else "action",
     )
     return ProjectionClaim(
         outbox_id="outbox", projection_kind="web_runtime", lease_token="lease",
@@ -38,8 +42,11 @@ def _claim(event_type: str) -> ProjectionClaim:
 
 
 class _Projection:
-    def __init__(self, event_type: str, readback: Mapping[str, object]) -> None:
-        self.claim_value = _claim(event_type)
+    def __init__(
+        self, event_type: str, readback: Mapping[str, object],
+        payload: Mapping[str, object] | None = None,
+    ) -> None:
+        self.claim_value = _claim(event_type, payload)
         self.readback_value = readback
         self.applied: list[tuple[str, Mapping[str, object] | None]] = []
         self.failed: list[str] = []
@@ -107,6 +114,7 @@ def _facts() -> dict[str, object]:
     return {
         "outcome": "found",
         "action_facts": {
+            "media_kind": "image",
             "binding": {
                 "action_id": "action", "action_index": 0,
                 "slot_id": "stable-slot",
@@ -114,7 +122,11 @@ def _facts() -> dict[str, object]:
                 "output_message_id": "message", "task_id": "task",
                 "pricing_model_id": "model",
             },
-            "task": {"request_params": {"prompt": "p"}},
+            "task": {
+                "id": "task", "user_id": "user", "org_id": None,
+                "conversation_id": "conversation",
+                "request_params": {"prompt": "p", "_task_slot_id": "limit-slot"},
+            },
             "result_urls": ["https://provider.example/result.png"],
         },
     }
@@ -132,7 +144,7 @@ async def test_completed_uses_readback_facts_and_persists_before_apply() -> None
 
     assert count == 1
     assert persistence.requests[0].source_url == "https://provider.example/result.png"
-    assert persistence.requests[0].identity == "runtime-media:action:stable-slot"
+    assert persistence.requests[0].identity == "runtime-media:image:action:stable-slot"
     assert projection.applied[0][0] == "action_progress"
     assert projection.applied[0][1]["source_url"] == "https://provider.example/result.png"
     assert projection.failed == []
@@ -205,6 +217,84 @@ async def test_persistence_and_asset_registration_are_identity_idempotent() -> N
     assert first == second
     assert len(workspace_calls) == 1
     assert len(registry.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_prepared_video_uses_result_urls_and_video_persistence() -> None:
+    facts = _facts()
+    action_facts = facts["action_facts"]
+    assert isinstance(action_facts, dict)
+    action_facts["media_kind"] = "video"
+    binding = action_facts["binding"]
+    assert isinstance(binding, dict)
+    binding.pop("slot_id")
+    binding.pop("action_index")
+    action_facts["result_urls"] = ["https://provider.example/result.mp4"]
+    projection = _Projection("action.completed", facts)
+    persistence = _Persistence()
+
+    await RuntimeMediaProjectionWorker(projection, persistence).run_once()
+
+    request = persistence.requests[0]
+    assert request.media_kind == "video"
+    assert request.slot_id == "action"
+    assert request.slot_index == 0
+    assert request.identity == "runtime-media:video:action:action"
+
+
+@pytest.mark.asyncio
+async def test_prepared_terminal_slot_release_is_idempotent() -> None:
+    facts = _facts()
+    action_facts = facts["action_facts"]
+    assert isinstance(action_facts, dict)
+    action_facts["media_kind"] = "video"
+    effects: set[str] = set()
+    attempts: list[str] = []
+
+    async def release(task: Mapping[str, object]) -> None:
+        attempts.append(str(task["id"]))
+        effects.add(str(task["request_params"]))
+
+    worker = RuntimeMediaProjectionWorker(
+        _Projection("action.completed", facts), _Persistence(),
+        release_task_slot=release,
+    )
+    await worker.run_once()
+    await worker.run_once()
+
+    assert attempts == ["task", "task"]
+    assert len(effects) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", [
+    "action.failed", "action.cancelled", "run.completed", "run.failed",
+    "run.cancelled",
+])
+async def test_failure_cancel_and_one_shot_retry_release_task_slot(
+    event_type: str,
+) -> None:
+    released = []
+    facts = _facts()
+    if event_type.startswith("run."):
+        action_facts = facts["action_facts"]
+        assert isinstance(action_facts, dict)
+        action_facts["run"] = {"capability_snapshot": {
+            "source": "runtime_media_retry", "execution_mode": "one_shot_action",
+            "projection_mode": "media_action_only",
+        }}
+
+    async def release(task: Mapping[str, object]) -> None:
+        released.append(task["id"])
+
+    projection = _Projection(event_type, facts)
+    persistence = _Persistence()
+    await RuntimeMediaProjectionWorker(
+        projection, persistence, release_task_slot=release,
+    ).run_once()
+
+    assert released == ["task"]
+    assert persistence.requests == []
 
 
 @pytest.mark.asyncio

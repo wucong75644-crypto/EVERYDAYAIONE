@@ -23,11 +23,12 @@ class MediaProjectionAssetRequest:
     prompt: str
     aspect_ratio: str
     resolution: str | None
+    media_kind: str = "image"
 
     @property
     def identity(self) -> str:
         """Stable identity shared by workspace file and asset reference."""
-        return f"runtime-media:{self.action_id}:{self.slot_id}"
+        return f"runtime-media:{self.media_kind}:{self.action_id}:{self.slot_id}"
 
 
 class MediaPersistencePort(Protocol):

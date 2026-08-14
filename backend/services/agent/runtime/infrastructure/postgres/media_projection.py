@@ -121,6 +121,7 @@ def asset_request_from_readback(
     facts = require_mapping(readback.get("action_facts"), "action facts")
     binding = require_mapping(facts.get("binding"), "media binding")
     task = require_mapping(facts.get("task"), "media task")
+    media_kind = _media_kind(facts.get("media_kind"))
     urls = facts.get("result_urls")
     if not isinstance(urls, list) or len(urls) != 1 or not isinstance(urls[0], str):
         raise PersistenceContractError("exactly one authoritative media URL required")
@@ -129,8 +130,13 @@ def asset_request_from_readback(
         request_params = {}
     return MediaProjectionAssetRequest(
         action_id=_required_text(binding.get("action_id"), "action_id"),
-        slot_id=_required_text(binding.get("slot_id"), "slot_id"),
-        slot_index=_required_int(binding.get("action_index"), "action_index"),
+        slot_id=_required_text(
+            binding.get("slot_id") or binding.get("action_id"), "slot_id",
+        ),
+        slot_index=(
+            _required_int(binding.get("action_index"), "action_index")
+            if binding.get("action_index") is not None else 0
+        ),
         source_url=urls[0],
         user_id=_required_text(binding.get("user_id"), "user_id"),
         org_id=_optional_text(binding.get("org_id")),
@@ -141,7 +147,14 @@ def asset_request_from_readback(
         prompt=str(request_params.get("prompt") or ""),
         aspect_ratio=str(request_params.get("aspect_ratio") or "1:1"),
         resolution=_optional_text(request_params.get("resolution")),
+        media_kind=media_kind,
     )
+
+
+def _media_kind(value: object) -> str:
+    if value not in {"image", "video"}:
+        raise PersistenceContractError("media kind required")
+    return str(value)
 
 
 def _required_text(value: object, name: str) -> str:
