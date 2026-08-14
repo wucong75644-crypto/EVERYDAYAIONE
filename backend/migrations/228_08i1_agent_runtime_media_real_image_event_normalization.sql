@@ -58,18 +58,24 @@ BEGIN
        OR action.model_step_id IS DISTINCT FROM p_event.model_step_id
        OR action.org_id IS DISTINCT FROM p_event.org_id
        OR action.user_id IS DISTINCT FROM p_event.user_id
-       OR NOT (
-           (p_event.event_type='action.requested'
-                AND p_event.actor_type IN ('model','user'))
-           OR (p_event.event_type='action.cancelled' AND p_event.actor_type='system')
-           OR (p_event.event_type IN (
-                   'action.completed_after_cancel','action.failed_after_cancel'
-               ) AND p_event.actor_type='reconciler')
-           OR (p_event.event_type NOT IN (
-                   'action.requested','action.cancelled',
-                   'action.completed_after_cancel','action.failed_after_cancel'
-               ) AND p_event.actor_type='executor')
-       ) THEN
+       OR NOT (CASE p_event.event_type
+           WHEN 'action.requested' THEN p_event.actor_type IN ('model','user')
+           WHEN 'action.accepted' THEN p_event.actor_type='executor'
+           WHEN 'action.unknown' THEN p_event.actor_type IN ('executor','system')
+           WHEN 'action.completed' THEN p_event.actor_type='executor'
+           WHEN 'action.failed' THEN p_event.actor_type='executor'
+           WHEN 'action.rejected' THEN p_event.actor_type='system'
+           WHEN 'action.cancelled' THEN p_event.actor_type IN (
+               'system','executor','reconciler'
+           )
+           WHEN 'action.provider.accepted' THEN p_event.actor_type='executor'
+           WHEN 'action.provider.unknown' THEN p_event.actor_type='executor'
+           WHEN 'action.completed_after_cancel' THEN
+               p_event.actor_type='reconciler'
+           WHEN 'action.failed_after_cancel' THEN
+               p_event.actor_type='reconciler'
+           ELSE FALSE
+       END) THEN
         RETURN NULL;
     END IF;
     IF prepared.action_id IS NOT NULL THEN

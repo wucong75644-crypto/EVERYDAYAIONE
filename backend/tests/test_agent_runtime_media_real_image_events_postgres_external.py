@@ -416,3 +416,71 @@ def test_wrong_image_correlation_stays_checkpoint_only(database: str) -> None:
     result = _apply_until(database, outbox)
     assert result["result"]["projection_action"] == "checkpoint_only"
     assert result["result"]["action_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("event_type", "actor_type", "action_status", "attempt_status",
+     "expected_slot", "expected_task", "expected_credit"),
+    (
+        ("action.unknown", "system", "unknown", "unknown",
+         "unknown", "running", "pending"),
+        ("action.unknown", "executor", "unknown", "unknown",
+         "unknown", "running", "pending"),
+        ("action.rejected", "system", "rejected", "cancelled",
+         "failed", "failed", "refunded"),
+        ("action.cancelled", "system", "cancelled", "cancelled",
+         "cancelled", "cancelled", "refunded"),
+        ("action.cancelled", "executor", "cancelled", "cancelled",
+         "cancelled", "cancelled", "refunded"),
+        ("action.cancelled", "reconciler", "cancelled", "cancelled",
+         "cancelled", "cancelled", "refunded"),
+    ),
+)
+def test_existing_image_event_actor_contracts_are_normalized(
+    database: str, event_type: str, actor_type: str, action_status: str,
+    attempt_status: str, expected_slot: str, expected_task: str,
+    expected_credit: str,
+) -> None:
+    batch = _prepare_images(database, 1)
+    fact = batch.attempts[0]
+    terminal = action_status in {"rejected", "cancelled"}
+    with psycopg.connect(database) as connection:
+        connection.execute("SET ROLE everydayai_owner")
+        scope = connection.execute(
+            "SELECT session_id,run_id,model_step_id FROM agent_actions WHERE id=%s",
+            (fact.action_id,),
+        ).fetchone()
+        connection.execute(
+            "UPDATE agent_actions SET status=%s,terminal_reason=%s,"
+            "completed_at=CASE WHEN %s THEN clock_timestamp() END WHERE id=%s",
+            (action_status, event_type, terminal, fact.action_id),
+        )
+        connection.execute(
+            "UPDATE agent_action_attempts SET status=%s,"
+            "ambiguity_evidence=CASE WHEN %s='unknown' "
+            "THEN '{\"kind\":\"actor_contract\"}'::JSONB ELSE '{}'::JSONB END,"
+            "ended_at=CASE WHEN %s='cancelled' THEN clock_timestamp() END "
+            "WHERE id=%s",
+            (attempt_status, attempt_status, attempt_status, fact.attempt_id),
+        )
+        appended = connection.execute(
+            "SELECT append_agent_runtime_event(%s,%s,%s,%s,%s,%s,"
+            "'actor-contract-test','{}'::JSONB,ARRAY['web_runtime']::TEXT[])",
+            (scope[0], event_type, scope[1], scope[2], fact.action_id, actor_type),
+        ).fetchone()[0]
+        outbox = connection.execute(
+            "SELECT id FROM agent_projection_outbox WHERE event_id=%s",
+            (appended["event_id"],),
+        ).fetchone()[0]
+    projected = _apply_until(database, outbox)
+    assert projected["result"]["action_id"] == str(fact.action_id)
+    with psycopg.connect(database) as connection:
+        state = connection.execute("""
+            SELECT message.content::JSONB->0->>'slot_status',task.status::TEXT,
+                   binding.credit_state
+              FROM agent_runtime_media_action_bindings binding
+              JOIN tasks task ON task.id=binding.task_id
+              JOIN messages message ON message.id=binding.output_message_id
+             WHERE binding.action_id=%s
+        """, (fact.action_id,)).fetchone()
+    assert state == (expected_slot, expected_task, expected_credit)

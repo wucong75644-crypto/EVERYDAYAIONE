@@ -29,6 +29,10 @@ def test_i1_normalizes_only_strict_real_image_events() -> None:
     assert "action.tool_name<>'generate_image'" in sql
     assert "_agent_runtime_prepared_media_source_v1(action.id)<>'media_ingress'" in sql
     assert "p_event.actor_type IN ('model','user')" in sql
+    assert "p_event.actor_type IN ('executor','system')" in sql
+    assert "WHEN 'action.rejected' THEN p_event.actor_type='system'" in sql
+    assert "'system','executor','reconciler'" in sql
+    assert "action_loop" not in sql
     assert "p_event.actor_type<>'user'" in sql
     assert "p_event.actor_type<>'model'" in sql
     assert "source NOT IN ('model_loop','runtime_executor_registry')" in sql
