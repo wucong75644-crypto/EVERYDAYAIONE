@@ -141,7 +141,7 @@ describe('streamingSlice - suggestions', () => {
       state.setSuggestions('conv_1', ['建议']);
 
       store.getState().completeStreamingWithMessage('conv_1', {
-        id: 'msg_done',
+        id: 'msg_1',
         conversation_id: 'conv_1',
         role: 'assistant',
         content: [{ type: 'text', text: '回复' }],
@@ -150,6 +150,35 @@ describe('streamingSlice - suggestions', () => {
       });
 
       expect(store.getState().suggestions.get('conv_1')).toBeUndefined();
+    });
+
+    it('should preserve another message streaming in the same conversation', () => {
+      const state = store.getState();
+      state.startStreaming('conv_1', 'msg_a', {
+        createdAt: '2026-07-27T08:00:00.001Z',
+      });
+      state.startStreaming('conv_1', 'msg_b', {
+        createdAt: '2026-07-27T08:01:00.001Z',
+      });
+      state.setSuggestions('conv_1', ['建议']);
+
+      store.getState().completeStreamingWithMessage('conv_1', {
+        id: 'msg_a',
+        conversation_id: 'conv_1',
+        role: 'assistant',
+        content: [{ type: 'image', url: 'https://example.com/a.png' }],
+        status: 'completed',
+        created_at: '2026-07-27T09:00:00.000Z',
+      });
+
+      const messages = store.getState().optimisticMessages.get('conv_1')!;
+      expect(messages.map((message) => message.id)).toEqual(['msg_a', 'msg_b']);
+      expect(messages[0].created_at).toBe('2026-07-27T08:00:00.001Z');
+      expect(messages[0].content).toEqual([
+        { type: 'image', url: 'https://example.com/a.png' },
+      ]);
+      expect(store.getState().getStreamingMessageId('conv_1')).toBe('msg_b');
+      expect(store.getState().suggestions.get('conv_1')).toEqual(['建议']);
     });
   });
 

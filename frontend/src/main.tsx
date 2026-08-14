@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client'
 import { LazyMotion, domAnimation } from 'framer-motion'
 import './index.css'
 import App from './App.tsx'
+import { installChunkLoadRecovery } from './utils/chunkLoadRecovery'
+
+installChunkLoadRecovery()
 
 /**
  * LazyMotion + domAnimation：

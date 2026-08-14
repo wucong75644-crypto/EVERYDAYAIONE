@@ -18,16 +18,12 @@ const EMPTY_MESSAGES: Message[] = [];
  * 2. 再追加 optimisticMessages 中不重复的
  * 3. 按 created_at 排序（修复重新生成时的顺序问题）
  */
-function mergeMessages(
+export function mergeMessages(
   messages: Message[] | undefined,
   optimisticMessages: Message[] | undefined
 ): Message[] {
   const persisted = messages || [];
   const optimistic = optimisticMessages || [];
-
-  if (optimistic.length === 0) {
-    return persisted;
-  }
 
   // 收集已持久化消息的 ID
   const persistedIds = new Set(persisted.map((m) => m.id));
@@ -35,11 +31,7 @@ function mergeMessages(
   // 过滤出不重复的乐观消息
   const newOptimistic = optimistic.filter((m) => !persistedIds.has(m.id));
 
-  if (newOptimistic.length === 0) {
-    return persisted;
-  }
-
-  // 合并后按 created_at 排序（修复重新生成时的顺序问题）
+  // 持久化消息会按任务完成顺序写入 Store，因此即使没有乐观消息也必须排序。
   const merged = [...persisted, ...newOptimistic];
   merged.sort((a, b) => {
     const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
@@ -77,4 +69,3 @@ export function useUnifiedMessages(conversationId: string | null): Message[] {
     return merged;
   }, [conversationId, messages, optimisticMessages]);
 }
-

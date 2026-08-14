@@ -74,6 +74,7 @@ function createMockStore(): MessageStoreActions {
     failTask: vi.fn(),
     completeStreaming: vi.fn(),
     completeStreamingWithMessage: vi.fn(),
+    getStreamingMessageId: vi.fn(() => 'msg_1'),
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
@@ -340,6 +341,26 @@ describe('wsMessageHandlers', () => {
       }));
     });
 
+    it('should not clear an unrelated chat stream when a media task completes', () => {
+      vi.mocked(store.getStreamingMessageId).mockReturnValue('chat_msg');
+      vi.mocked(store.getMessage).mockReturnValue(undefined);
+
+      handlers.message_done({
+        task_id: 'media_task',
+        conversation_id: 'conv_1',
+        message: {
+          id: 'image_msg',
+          role: 'assistant',
+          content: [{ type: 'image', url: 'https://example.com/image.png' }],
+          created_at: '2026-07-27T08:00:00Z',
+        },
+      });
+
+      expect(store.completeTask).toHaveBeenCalledWith('media_task');
+      expect(store.completeStreaming).not.toHaveBeenCalled();
+      expect(store.setIsSending).not.toHaveBeenCalledWith(false);
+    });
+
     it('should trigger onComplete callback', () => {
       const onComplete = vi.fn();
       deps.operationContextRef.current.set('task_1', {
@@ -452,6 +473,21 @@ describe('wsMessageHandlers', () => {
       expect(store.failTask).toHaveBeenCalledWith('task_1', '测试错误');
       expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
       expect(store.setIsSending).toHaveBeenCalledWith(false);
+    });
+
+    it('should not clear an unrelated chat stream when a media task fails', () => {
+      vi.mocked(store.getStreamingMessageId).mockReturnValue('chat_msg');
+
+      handlers.message_error({
+        task_id: 'media_task',
+        message_id: 'image_msg',
+        conversation_id: 'conv_1',
+        error: { code: 'MEDIA_FAILED', message: '生成失败' },
+      });
+
+      expect(store.failTask).toHaveBeenCalledWith('media_task', '生成失败');
+      expect(store.completeStreaming).not.toHaveBeenCalled();
+      expect(store.setIsSending).not.toHaveBeenCalledWith(false);
     });
 
     it('should keep image errors as failed media content', () => {

@@ -14,7 +14,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
-import { logoutOnce } from '../utils/tokenManager';
+import { logoutOnce, silentRefresh } from '../utils/tokenManager';
 
 // === 配置常量 ===
 
@@ -280,9 +280,10 @@ export function useWebSocket(): UseWebSocketReturn {
       }
     };
 
-    ws.onclose = (event) => {
+    ws.onclose = async (event) => {
       logger.info('ws:connection', 'Closed', { code: event.code, reason: event.reason });
       setConnectionState('disconnected');
+      if (wsRef.current === ws) wsRef.current = null;
 
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
@@ -291,12 +292,11 @@ export function useWebSocket(): UseWebSocketReturn {
 
       // 认证或租户访问失败：后端明确返回业务关闭码后统一退出
       // 1006 是"异常关闭"（网络断开/服务器重启），不代表认证失败
-      const isAuthError =
-        event.code === 4001 ||
-        event.code === 4002 ||
-        event.code === 4003;
-
-      if (isAuthError) {
+      if (event.code === 4002) {
+        logger.info('ws:connection', 'Access token expired, refreshing before reconnect');
+        await silentRefresh().catch(() =>
+          logger.info('ws:connection', 'Refresh deferred; retrying with backoff'));
+      } else if (event.code === 4001 || event.code === 4003) {
         logger.warn('ws:connection', 'Auth failed, unified logout', { code: event.code });
         logoutOnce();
         return;
