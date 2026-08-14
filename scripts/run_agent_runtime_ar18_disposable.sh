@@ -97,6 +97,52 @@ require_media_batch_closure() {
     "${MEDIA_EXTERNAL_TESTS[@]}"
 }
 
+_MODEL_ATTEMPT_PG_DIR=""
+
+cleanup_model_attempt_postgres() {
+  if [[ -z "${_MODEL_ATTEMPT_PG_DIR}" ]]; then
+    return
+  fi
+  local pg_ctl_path="${_MODEL_ATTEMPT_PG_DIR}/pg_ctl"
+  if [[ -x "${pg_ctl_path}" ]]; then
+    "${pg_ctl_path}" -D "${_MODEL_ATTEMPT_PG_DIR}/data" -m immediate -w stop >/dev/null 2>&1 || true
+  fi
+  if [[ "$(basename "${_MODEL_ATTEMPT_PG_DIR}")" == runtime-ar11-pg.* ]]; then
+    rm -rf -- "${_MODEL_ATTEMPT_PG_DIR}"
+  fi
+  _MODEL_ATTEMPT_PG_DIR=""
+}
+
+start_model_attempt_postgres() {
+  local pg_bin_dir="${AGENT_RUNTIME_PG_BIN_DIR:-}"
+  if [[ -z "${pg_bin_dir}" ]] && command -v initdb >/dev/null 2>&1; then
+    pg_bin_dir="$(dirname "$(command -v initdb)")"
+  fi
+  if [[ -z "${pg_bin_dir}" ]] && [[ -x /opt/homebrew/bin/initdb ]]; then
+    pg_bin_dir=/opt/homebrew/bin
+  fi
+  for command_name in initdb pg_ctl createdb; do
+    if [[ ! -x "${pg_bin_dir}/${command_name}" ]]; then
+      echo "required disposable PostgreSQL command is missing: ${command_name}" >&2
+      exit 4
+    fi
+  done
+
+  _MODEL_ATTEMPT_PG_DIR="$(mktemp -d "${TMPDIR:-/private/tmp}/runtime-ar11-pg.XXXXXX")"
+  ln -s "${pg_bin_dir}/pg_ctl" "${_MODEL_ATTEMPT_PG_DIR}/pg_ctl"
+  local port
+  port="$(${PYTHON_BIN} -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+  "${pg_bin_dir}/initdb" -D "${_MODEL_ATTEMPT_PG_DIR}/data" -U postgres \
+    --auth-host=trust --auth-local=trust >/dev/null
+  "${pg_bin_dir}/pg_ctl" -D "${_MODEL_ATTEMPT_PG_DIR}/data" \
+    -l "${_MODEL_ATTEMPT_PG_DIR}/postgres.log" \
+    -o "-h 127.0.0.1 -p ${port} -F" -w start >/dev/null
+  "${pg_bin_dir}/createdb" -h 127.0.0.1 -p "${port}" -U postgres ar11_runtime_ci
+  export RUN_AR11_DB_TEST=1
+  export AR11_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${port}/ar11_runtime_ci"
+  trap cleanup_model_attempt_postgres EXIT
+}
+
 run_tests() {
   local mode="$1"
   shift
@@ -176,6 +222,7 @@ case "${1:-}" in
       "${MEDIA_MIGRATION_TESTS[@]}"
     ;;
   external)
+    start_model_attempt_postgres
     run_tests external \
       backend/tests/test_agent_runtime_task_cancel_intent_postgres_external.py \
       backend/tests/test_agent_runtime_task_cancel_facade_v2_postgres_external.py \

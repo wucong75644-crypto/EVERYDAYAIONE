@@ -160,6 +160,10 @@ def test_workflow_runs_the_scheduled_wecom_disposable_lane() -> None:
 
 
 def test_model_attempt_lane_explicitly_covers_unknown_and_reconcile() -> None:
+    assert "start_model_attempt_postgres" in RUNNER
+    assert "RUN_AR11_DB_TEST=1" in RUNNER
+    assert "AR11_TEST_DATABASE_URL=" in RUNNER
+    assert "required disposable PostgreSQL command is missing" in RUNNER
     assert "test_unknown_is_non_terminal_and_fencing_fails_closed" in (
         (ROOT / "tests/test_agent_runtime_model_attempt_postgres_external.py").read_text(
             encoding="utf-8"
