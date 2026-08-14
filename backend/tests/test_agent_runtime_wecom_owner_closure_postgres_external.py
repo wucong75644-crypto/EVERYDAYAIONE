@@ -47,7 +47,7 @@ def test_runtime_required_wecom_task_is_not_actor_claimable(database: str) -> No
     with psycopg.connect(database) as conn:
         conn.execute("SET ROLE everydayai_owner")
         conn.execute(
-            "UPDATE tasks SET delivery_context='{" 
+            "UPDATE tasks SET delivery_context='{"
             "\"actor\":true,\"runtime\":true,\"runtime_required\":true"
             "}'::jsonb WHERE id=%s",
             (task_id,),

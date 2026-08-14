@@ -28,4 +28,3 @@ def test_rollback_only_removes_the_new_preflight_functions() -> None:
     assert "DROP FUNCTION IF EXISTS _agent_runtime_scheduled_adoption_target_shape" in rollback
     assert "DROP TABLE" not in rollback
     assert "scheduled_tasks" not in rollback
-

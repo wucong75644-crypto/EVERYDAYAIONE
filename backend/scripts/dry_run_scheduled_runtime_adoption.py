@@ -54,4 +54,3 @@ def _load_json(path: Path) -> Any:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
