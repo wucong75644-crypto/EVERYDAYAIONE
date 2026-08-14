@@ -275,6 +275,8 @@ def test_workflow_runs_the_scheduled_wecom_disposable_lane() -> None:
 
 def test_model_attempt_lane_explicitly_covers_unknown_and_reconcile() -> None:
     assert "start_model_attempt_postgres" in RUNNER
+    assert "-k ${_MODEL_ATTEMPT_PG_DIR}" in RUNNER
+    assert 'cat "${_MODEL_ATTEMPT_PG_DIR}/postgres.log" >&2' in RUNNER
     assert "RUN_AR11_DB_TEST=1" in RUNNER
     assert "AR11_TEST_DATABASE_URL=" in RUNNER
     assert "required disposable PostgreSQL command is missing" in RUNNER

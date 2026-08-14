@@ -183,17 +183,21 @@ start_model_attempt_postgres() {
 
   _MODEL_ATTEMPT_PG_DIR="$(mktemp -d "${TMPDIR:-/private/tmp}/runtime-ar11-pg.XXXXXX")"
   ln -s "${pg_bin_dir}/pg_ctl" "${_MODEL_ATTEMPT_PG_DIR}/pg_ctl"
+  trap cleanup_model_attempt_postgres EXIT
   local port
   port="$(${PYTHON_BIN} -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
   "${pg_bin_dir}/initdb" -D "${_MODEL_ATTEMPT_PG_DIR}/data" -U postgres \
     --auth-host=trust --auth-local=trust >/dev/null
-  "${pg_bin_dir}/pg_ctl" -D "${_MODEL_ATTEMPT_PG_DIR}/data" \
+  if ! "${pg_bin_dir}/pg_ctl" -D "${_MODEL_ATTEMPT_PG_DIR}/data" \
     -l "${_MODEL_ATTEMPT_PG_DIR}/postgres.log" \
-    -o "-h 127.0.0.1 -p ${port} -F" -w start >/dev/null
+    -o "-h 127.0.0.1 -p ${port} -k ${_MODEL_ATTEMPT_PG_DIR} -F" \
+    -w start >/dev/null; then
+    cat "${_MODEL_ATTEMPT_PG_DIR}/postgres.log" >&2
+    return 1
+  fi
   "${pg_bin_dir}/createdb" -h 127.0.0.1 -p "${port}" -U postgres ar11_runtime_ci
   export RUN_AR11_DB_TEST=1
   export AR11_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${port}/ar11_runtime_ci"
-  trap cleanup_model_attempt_postgres EXIT
 }
 
 run_tests() {

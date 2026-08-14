@@ -173,7 +173,7 @@ jobs:
           pytest -q \
             backend/tests/test_agent_runtime_single_model_adapter.py \
             backend/tests/test_agent_runtime_model_configuration_facade_migration.py \
-            backend/tests/test_agent_runtime_model_loop_budget.py \
+            backend/tests/test_agent_runtime_model_loop_budget_outcome.py \
             2>&1 | tee "$RUNNER_TEMP/ar17-evidence/single-runtime-model.log"
 
       - name: Run Runtime correction and unit contracts
