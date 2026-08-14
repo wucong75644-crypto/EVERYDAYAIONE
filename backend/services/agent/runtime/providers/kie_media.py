@@ -185,6 +185,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             fact = await latest_fact(
                 self._facts, attempt, fact, provider_key,
             )
+            provider_ref = fact.provider_task_ref or provider_ref
             persisted_hash = _receipt_evidence_text(
                 receipt, "provider_request_hash",
             )
@@ -295,6 +296,7 @@ class RuntimeKieMediaProvider(SpecialistProvider):
             fact = await latest_fact(
                 self._facts, attempt, fact, provider_key,
             )
+            provider_ref = fact.provider_task_ref or provider_ref
             fact = await cancel_requested_fact(
                 self._facts, attempt, fact,
             )

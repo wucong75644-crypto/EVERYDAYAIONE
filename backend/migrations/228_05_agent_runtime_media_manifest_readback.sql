@@ -68,6 +68,8 @@ RETURN jsonb_build_object(
 );
 END;
 $$;
+-- 228_06 projection-owner contract: call on startup and refresh before the
+-- returned heartbeat TTL expires; send p_ready=FALSE before an intentional drain.
 CREATE FUNCTION record_agent_runtime_media_projection_readiness_v1(
     p_worker_id TEXT,
     p_projection_revision TEXT,
@@ -209,6 +211,10 @@ session_result JSONB;
 runtime_result JSONB;
 safe_arguments JSONB;
 readiness JSONB;
+runtime_action agent_actions%ROWTYPE;
+runtime_session agent_runtime_sessions%ROWTYPE;
+prepared_binding agent_runtime_prepared_media_action_bindings%ROWTYPE;
+prepared_result JSONB;
 BEGIN PERFORM _assert_agent_runtime_actor(FALSE);
 IF p_tool_name NOT IN ('generate_image','generate_video') OR jsonb_typeof(p_arguments)<>'object' OR NULLIF(btrim(p_idempotency_key),'') IS NULL OR p_task_id IS NULL OR p_input_message_id IS NULL OR p_output_message_id IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ACTION_INVALID' USING ERRCODE='22023';
 END IF;
@@ -226,7 +232,13 @@ END IF;
 IF COALESCE((prepared_task.delivery_context->>'runtime')::BOOLEAN,FALSE) THEN
     IF prepared_task.delivery_context->>'runtime_owner' IS DISTINCT FROM 'action_loop' OR COALESCE(pg_input_is_valid(prepared_task.delivery_context->>'runtime_action_id','uuid'),FALSE) IS NOT TRUE OR COALESCE(pg_input_is_valid(prepared_task.delivery_context->>'runtime_run_id','uuid'),FALSE) IS NOT TRUE THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_TASK_SCOPE_MISMATCH' USING ERRCODE='42501';
     END IF;
-    RETURN jsonb_build_object('outcome','already_exists','runtime_owned',TRUE, 'action_id',prepared_task.delivery_context->>'runtime_action_id', 'run_id',prepared_task.delivery_context->>'runtime_run_id', 'readiness_revision',prepared_task.delivery_context->>'runtime_media_readiness_revision');
+    SELECT * INTO prepared_binding
+      FROM agent_runtime_prepared_media_action_bindings
+     WHERE task_id=prepared_task.id
+       AND action_id=(prepared_task.delivery_context->>'runtime_action_id')::UUID;
+    IF prepared_binding.action_id IS NOT NULL THEN
+        RETURN jsonb_build_object('outcome','already_exists','runtime_owned',TRUE, 'action_id',prepared_task.delivery_context->>'runtime_action_id', 'run_id',prepared_task.delivery_context->>'runtime_run_id', 'readiness_revision',prepared_task.delivery_context->>'runtime_media_readiness_revision');
+    END IF;
 END IF;
 readiness:=_agent_runtime_media_owner_readiness_v1();
 IF (readiness->>'ready')::BOOLEAN IS NOT TRUE THEN
@@ -240,6 +252,21 @@ IF session_result->>'outcome' NOT IN ('created','already_exists') THEN RETURN se
 END IF;
 runtime_result:=submit_agent_runtime_chat_action_v1(p_conversation_id,p_org_id,p_user_id,p_task_id::TEXT, p_input_message_id::TEXT,p_task_id::TEXT,1,p_tool_name,safe_arguments, p_model_id,p_model_provider,p_model_revision,p_catalog_revision, p_policy_revision,'runtime_media_generation:'||p_tool_name,1, jsonb_build_object('source','media_ingress','task_id',p_task_id, 'input_message_id',p_input_message_id, 'output_message_id',p_output_message_id,'turn_id',p_turn_id, 'provider','kie','provider_revision','kie-runtime-media-v1', 'capability','media.provider.submit','capability_revision','v1', 'capability_requirements',jsonb_build_array('media.provider.submit')), jsonb_build_object('source','media_ingress','task_id',p_task_id, 'input_message_id',p_input_message_id, 'output_message_id',p_output_message_id,'turn_id',p_turn_id), p_idempotency_key );
 IF runtime_result->>'outcome' IN ('created','already_exists') THEN UPDATE tasks SET delivery_context=delivery_context||jsonb_build_object('actor',FALSE,'runtime',TRUE,'runtime_owner','action_loop', 'runtime_action_id',runtime_result->>'action_id', 'runtime_run_id',runtime_result->>'run_id', 'runtime_media_readiness_revision',(readiness->>'state_version')::BIGINT) WHERE id=p_task_id;
+SELECT * INTO runtime_action FROM agent_actions WHERE id=(runtime_result->>'action_id')::UUID;
+SELECT * INTO runtime_session FROM agent_runtime_sessions WHERE id=runtime_action.session_id;
+IF runtime_action.id IS NULL OR runtime_session.id IS NULL OR runtime_action.run_id IS DISTINCT FROM (runtime_result->>'run_id')::UUID THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ACTION_BINDING_INVALID' USING ERRCODE='55000';
+END IF;
+prepared_result:=_prepare_agent_runtime_prepared_media_binding_v1(
+    jsonb_build_object('action_id',runtime_action.id,'session_id',runtime_session.id,
+      'run_id',runtime_action.run_id,'model_step_id',runtime_action.model_step_id,
+      'org_id',runtime_session.org_id,'user_id',runtime_session.user_id,
+      'conversation_id',runtime_session.conversation_id,'tool_name',runtime_action.tool_name,
+      'source','media_ingress','task_id',p_task_id,'input_message_id',p_input_message_id,
+      'output_message_id',p_output_message_id),
+    runtime_action.request_hash
+);
+IF prepared_result->>'outcome' NOT IN ('prepared','already_prepared') THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_ACTION_BINDING_INVALID' USING ERRCODE='55000';
+END IF;
 RETURN runtime_result||jsonb_build_object('runtime_owned',TRUE, 'readiness_revision',(readiness->>'state_version')::BIGINT);
 END IF;
 RETURN runtime_result||jsonb_build_object('runtime_owned',FALSE);
@@ -665,8 +692,6 @@ SELECT * INTO output_message FROM messages WHERE id=NULLIF(p_context->>'output_m
 kind:=CASE action.tool_name WHEN 'generate_image' THEN 'image' ELSE 'video' END;
 IF p_context->>'source'<>'media_ingress' OR prepared_task.id IS NULL OR input_message.id IS NULL OR output_message.id IS NULL OR prepared_task.type::TEXT<>kind OR prepared_task.user_id IS DISTINCT FROM (p_context->>'user_id')::UUID OR prepared_task.org_id IS DISTINCT FROM NULLIF(p_context->>'org_id','')::UUID OR prepared_task.conversation_id IS DISTINCT FROM (p_context->>'conversation_id')::UUID OR prepared_task.input_message_id IS DISTINCT FROM input_message.id OR prepared_task.assistant_message_id IS DISTINCT FROM output_message.id OR input_message.conversation_id IS DISTINCT FROM prepared_task.conversation_id OR output_message.conversation_id IS DISTINCT FROM prepared_task.conversation_id OR input_message.org_id IS DISTINCT FROM prepared_task.org_id OR output_message.org_id IS DISTINCT FROM prepared_task.org_id OR output_message.generation_params->>'type'='image_ecom' OR prepared_task.delivery_context @> jsonb_build_object('actor',FALSE,'runtime',TRUE, 'runtime_action_id',action.id::TEXT) IS NOT TRUE OR action.arguments ?| ARRAY[ 'task_id','user_id','org_id','credit_transaction_id', 'reserved_credits','currency','image_urls','input_urls','runtime_task' ] THEN RAISE EXCEPTION 'AGENT_RUNTIME_PREPARED_MEDIA_SCOPE_INVALID' USING ERRCODE='42501';
 END IF;
-IF kind='video' THEN RAISE EXCEPTION 'AGENT_RUNTIME_PREPARED_VIDEO_UNAVAILABLE' USING ERRCODE='55000';
-END IF;
 resolved:=_agent_runtime_media_resolved_images_v1(action.session_id,input_message.id );
 urls:=(SELECT COALESCE(jsonb_agg(image->'url' ORDER BY (image->>'index')::INTEGER),'[]'::JSONB) FROM jsonb_array_elements(resolved->'images') image);
 provider_request:=_agent_runtime_kie_provider_request_v1(kind,prepared_task.request_params,urls );
@@ -704,9 +729,10 @@ IF final_balance IS NULL THEN RAISE EXCEPTION 'AGENT_RUNTIME_MEDIA_INSUFFICIENT_
 END IF;
 transaction_id:=gen_random_uuid();
 INSERT INTO credit_transactions(id,task_id,user_id,amount,type,status,reason,org_id) VALUES(transaction_id,prepared_task.id,prepared_task.user_id,unit_credits, 'lock','pending','Agent Runtime prepared media reservation',prepared_task.org_id);
-INSERT INTO credits_history(user_id,change_type,change_amount,balance_after,description,org_id ) VALUES(prepared_task.user_id,'image_generation_cost'::credits_change_type, -unit_credits,final_balance,'Agent Runtime prepared image reservation', prepared_task.org_id );
+INSERT INTO credits_history(user_id,change_type,change_amount,balance_after,description,org_id ) VALUES(prepared_task.user_id,'image_generation_cost'::credits_change_type, -unit_credits,final_balance,'Agent Runtime prepared media reservation', prepared_task.org_id );
 UPDATE tasks SET credits_locked=unit_credits,credit_transaction_id=transaction_id, delivery_context=delivery_context||jsonb_build_object('actor',FALSE,'runtime',TRUE,'runtime_owner','action_loop') WHERE id=prepared_task.id;
 INSERT INTO agent_runtime_prepared_media_action_bindings(action_id,task_id,session_id,run_id,model_step_id,org_id,user_id, conversation_id,input_message_id,output_message_id,media_kind, action_request_hash,task_request_hash,reference_manifest_hash, provider_request_hash,pricing_revision,pricing_model_id,pricing_key, pricing_fact_hash,unit_credits,credit_transaction_id ) VALUES(action.id,prepared_task.id,action.session_id,action.run_id,action.model_step_id, prepared_task.org_id,prepared_task.user_id,prepared_task.conversation_id, input_message.id,output_message.id,kind,p_request_hash,task_hash, resolved->>'manifest_hash',provider_hash,pricing_revision,selected_model, pricing_key,pricing_fact_hash,unit_credits,transaction_id );
+IF kind='image' THEN
 INSERT INTO agent_runtime_media_action_bindings(
   action_id,task_id,session_id,run_id,model_step_id,chat_task_id,org_id,user_id,
   conversation_id,batch_hash,action_index,action_arguments_hash,
@@ -723,6 +749,7 @@ INSERT INTO agent_runtime_media_action_bindings(
   selected_model,pricing_key,pricing_fact_hash,provider_hash,unit_credits,
   resolved->>'manifest_hash',provider_hash
 );
+END IF;
 UPDATE messages SET
   content=(SELECT COALESCE(jsonb_agg(part ORDER BY ordinality)
              FILTER (WHERE part->>'slot_id' IS DISTINCT FROM action.id::TEXT),
@@ -730,7 +757,7 @@ UPDATE messages SET
              FROM jsonb_array_elements(output_message.content::JSONB)
              WITH ORDINALITY source(part,ordinality))
           ||jsonb_build_array(jsonb_build_object(
-               'type','image','url',NULL,'slot_id',action.id,
+               'type',kind,'url',NULL,'slot_id',action.id,
                'slot_index',COALESCE(prepared_task.image_index,0),
                'slot_status','pending','slot_revision',0)),
   status='pending',
@@ -821,7 +848,7 @@ BEGIN IF session_user<>'everydayai_worker' THEN RAISE EXCEPTION 'MEDIA_WORKER_RO
 END IF;
 IF p_limit IS NULL OR p_limit<1 OR p_limit>500 THEN RAISE EXCEPTION 'MEDIA_WORKER_LIMIT_INVALID' USING ERRCODE='22023';
 END IF;
-SELECT COALESCE(jsonb_agg(to_jsonb(task_row)),'[]'::JSONB) INTO discovered FROM (SELECT task.* FROM tasks task WHERE task.status IN ('pending','running') AND task.type IN ('image','video') AND COALESCE((task.delivery_context->>'runtime')::BOOLEAN,FALSE) IS FALSE AND NOT EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings binding WHERE binding.task_id=task.id) AND NOT EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding WHERE binding.task_id=task.id) AND (task.org_id IS NULL OR EXISTS (SELECT 1 FROM organizations organization WHERE organization.id=task.org_id AND organization.status='active')) ORDER BY COALESCE(task.last_polled_at,task.created_at),task.id LIMIT p_limit ) task_row;
+SELECT COALESCE(jsonb_agg(to_jsonb(task_row)),'[]'::JSONB) INTO discovered FROM (SELECT task.* FROM tasks task WHERE task.status IN ('pending','running') AND task.type IN ('image','video') AND NOT EXISTS (SELECT 1 FROM agent_runtime_media_action_bindings binding WHERE binding.task_id=task.id) AND NOT EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding WHERE binding.task_id=task.id) AND (task.org_id IS NULL OR EXISTS (SELECT 1 FROM organizations organization WHERE organization.id=task.org_id AND organization.status='active')) ORDER BY COALESCE(task.last_polled_at,task.created_at),task.id LIMIT p_limit ) task_row;
 RETURN discovered;
 END;
 $$;

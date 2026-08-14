@@ -119,7 +119,9 @@ def test_prepared_media_ingress_uses_runtime_owner(
     assert str(prepared_task) not in str(discovered)
 
 
-def test_prepared_video_is_runtime_owned_and_fails_closed(database: str) -> None:
+def test_prepared_video_creates_runtime_binding_and_provider_request(
+    database: str,
+) -> None:
     _prepare_legacy_schema(database)
     _prepare_asset_schema(database)
     _apply_runtime_fence_schema(database)
@@ -133,11 +135,18 @@ def test_prepared_video_is_runtime_owned_and_fails_closed(database: str) -> None
         connection.execute("SET ROLE everydayai_owner")
         connection.execute(MIGRATION.read_text(encoding="utf-8"))
     _set_media_ready(database)
-    with pytest.raises(psycopg.Error, match="PREPARED_VIDEO_UNAVAILABLE"):
-        _worker_call(
-            database, "prepare_agent_runtime_media_dispatch_v1",
-            batch.attempts[0],
-        )
+    prepared = _worker_call(
+        database, "prepare_agent_runtime_media_dispatch_v1",
+        batch.attempts[0],
+    )
+    assert prepared["outcome"] == "prepared"
+    request = _worker_call(
+        database, "read_agent_runtime_media_provider_request_v1",
+        batch.attempts[0],
+    )
+    assert request["kind"] == "video"
+    assert request["provider_request"]["model"] == "sora-2-image-to-video"
+    assert request["provider_request"]["input"]["n_frames"] == "10"
     with _connect(database, "everydayai_worker") as connection:
         _settings(connection, "everydayai_worker")
         [discovered] = connection.execute(
@@ -145,14 +154,20 @@ def test_prepared_video_is_runtime_owned_and_fails_closed(database: str) -> None
         ).fetchone()
     assert str(prepared_task) not in str(discovered)
     with psycopg.connect(database) as connection:
-        assert connection.execute(
-            "SELECT credit_transaction_id FROM tasks WHERE id=%s",
+        bound = connection.execute(
+            "SELECT binding.media_kind,task.credit_transaction_id IS NOT NULL,"
+            "task.credits_locked,message.content::jsonb->0->>'type' "
+            "FROM agent_runtime_prepared_media_action_bindings binding "
+            "JOIN tasks task ON task.id=binding.task_id "
+            "JOIN messages message ON message.id=binding.output_message_id "
+            "WHERE binding.task_id=%s",
             (prepared_task,),
-        ).fetchone()[0] is None
+        ).fetchone()
+    assert bound == ("video", True, 31, "video")
 
 
 @pytest.mark.parametrize(("kind", "model"), (
-    ("image", "google/nano-banana"),
+    ("image", "gpt-image-2-image-to-image"),
     ("video", "sora-2-text-to-video"),
 ))
 def test_prepared_media_waits_for_fresh_projection_owner(
@@ -711,15 +726,18 @@ def _assert_legacy_media_owner(
     database: str, task_id, *, runtime_actions: int, legacy: bool = True,
 ) -> None:
     with psycopg.connect(database) as connection:
-        action_count, runtime_owned = connection.execute(
+        action_count, runtime_owned, binding_count = connection.execute(
             "SELECT (SELECT count(*) FROM agent_actions "
             "WHERE policy_snapshot->>'task_id'=%s),"
-            "COALESCE((delivery_context->>'runtime')::boolean,false) "
+            "COALESCE((delivery_context->>'runtime')::boolean,false),"
+            "(SELECT count(*) FROM agent_runtime_prepared_media_action_bindings "
+            "WHERE task_id=tasks.id) "
             "FROM tasks WHERE id=%s",
             (str(task_id), task_id),
         ).fetchone()
     assert action_count == runtime_actions
     assert runtime_owned is (not legacy)
+    assert binding_count == (0 if legacy else 1)
     with _connect(database, "everydayai_worker") as connection:
         _settings(connection, "everydayai_worker")
         [discovered] = connection.execute(

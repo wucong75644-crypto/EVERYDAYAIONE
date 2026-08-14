@@ -15,7 +15,7 @@ def test_manifest_readback_migration_is_additive_and_worker_scoped():
     assert "CREATE FUNCTION read_agent_runtime_media_provider_request_v1" in sql
     assert "user_assets" in sql
     assert "conversation_attachment_refs" in sql
-    assert "AGENT_RUNTIME_PREPARED_VIDEO_UNAVAILABLE" in sql
+    assert "AGENT_RUNTIME_PREPARED_VIDEO_UNAVAILABLE" not in sql
     assert "CREATE TABLE agent_runtime_media_owner_readiness" in sql
     assert "production_ready BOOLEAN NOT NULL DEFAULT FALSE" in sql
     assert "projection_owner_ready BOOLEAN NOT NULL DEFAULT FALSE" in sql
@@ -31,7 +31,7 @@ def test_manifest_readback_migration_is_additive_and_worker_scoped():
     assert "cancel_unproven" in sql
     assert "'aspect_ratio',aspect_ratio" in sql
     assert "'image_size',aspect_ratio" not in sql
-    assert "COALESCE((task.delivery_context->>'runtime')::BOOLEAN,FALSE) IS FALSE" in sql
+    assert "NOT EXISTS (SELECT 1 FROM agent_runtime_prepared_media_action_bindings binding" in sql
     assert "agent_runtime_prepared_media_action_bindings binding" in sql
     assert "INSERT INTO agent_runtime_media_action_bindings" in sql
     assert "'slot_status','pending'" in sql

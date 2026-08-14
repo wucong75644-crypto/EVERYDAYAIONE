@@ -84,7 +84,7 @@ def test_enabled_media_composition_registers_both_actions():
     assert executor.provider.recovery_ready is True
 
 
-def test_media_composition_executes_only_with_production_readiness():
+def test_local_production_flag_does_not_claim_database_readiness():
     database = SimpleNamespace(scope=DatabaseScope(
         actor_user_id=None, org_id=None,
         access_kind=DatabaseAccessKind.AGENT_RUNTIME,
@@ -94,8 +94,8 @@ def test_media_composition_executes_only_with_production_readiness():
         credentials=object(), provider_probe_passed=True,
         production_ready=True,
     )
-    assert composition.production_ready is True
-    assert composition.error_code is None
+    assert composition.production_ready is False
+    assert composition.error_code == "DATABASE_READINESS_UNVERIFIED"
     _, executor = composition.registry.resolve("generate_image")
     assert executor.provider.production_ready is True
 
@@ -140,17 +140,34 @@ async def test_media_ingress_rejects_credit_and_internal_identity_arguments():
 
 
 @pytest.mark.asyncio
-async def test_local_media_flags_off_return_legacy_ownership(monkeypatch):
+async def test_database_gate_false_wins_over_local_media_flags(monkeypatch):
     monkeypatch.setattr(
         "core.config.get_settings",
         lambda: SimpleNamespace(
             agent_runtime_media_enabled=True,
             agent_runtime_media_provider_probe_passed=True,
-            agent_runtime_media_production_ready=False,
+            agent_runtime_media_production_ready=True,
+            agent_runtime_agent_definition_id="everydayai-default",
+            agent_runtime_agent_definition_revision="v1",
         ),
     )
+    class Query:
+        data = {"scope_type": "user", "scope_id": "u"}
+
+        def select(self, *_args): return self
+        def eq(self, *_args): return self
+        def single(self): return self
+        def execute(self): return self
+
+    rpc = AsyncMock(return_value=SimpleNamespace(data={
+        "outcome": "media_not_ready", "runtime_owned": False,
+    }))
+    database = SimpleNamespace(
+        table=lambda *_: Query(),
+        rpc=lambda *_: SimpleNamespace(execute=rpc),
+    )
     receipt = await submit_runtime_media_ingress(
-        db=SimpleNamespace(table=lambda *_: pytest.fail("DB must not run")),
+        db=database,
         conversation_id="c", user_id="u", org_id="o", task_id="t",
         input_message_id="i", output_message_id="m", turn_id=None,
         idempotency_key="media:t", kind="image", request={"prompt": "x"},
@@ -158,3 +175,4 @@ async def test_local_media_flags_off_return_legacy_ownership(monkeypatch):
     )
     assert receipt.outcome == "media_not_ready"
     assert receipt.runtime_owned is False
+    rpc.assert_awaited_once()

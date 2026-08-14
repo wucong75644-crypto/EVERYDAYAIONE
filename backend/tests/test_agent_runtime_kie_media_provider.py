@@ -60,16 +60,23 @@ class FakeTaskPort:
 
     def _facts(self, kind):
         assert kind == self.kind
+        provider_request = {
+            "model": "sora-2-text-to-video",
+            "input": {
+                "prompt": "make it move", "aspect_ratio": "landscape",
+                "n_frames": "10", "remove_watermark": True,
+            },
+        } if kind == "video" else {
+            "model": "gpt-image-2-image-to-image",
+            "input": {
+                "prompt": "make it blue",
+                "input_urls": ["https://cdn.example/reference.png"],
+                "aspect_ratio": "1:1", "resolution": "1K",
+            },
+        }
         return {
             "kind": kind, "source": "model_loop",
-            "provider_request": {
-                "model": "gpt-image-2-image-to-image",
-                "input": {
-                    "prompt": "make it blue",
-                    "input_urls": ["https://cdn.example/reference.png"],
-                    "aspect_ratio": "1:1", "resolution": "1K",
-                },
-            },
+            "provider_request": provider_request,
             "provider_request_hash": "b" * 64,
         }
 
@@ -171,10 +178,12 @@ def attempt():
     )
 
 
-def provider(transport, *, credentials=None, task_port=None, facts=None):
+def provider(
+    transport, *, credentials=None, task_port=None, facts=None, kind="image",
+):
     return RuntimeKieMediaProvider(
-        transport, task_port=task_port or FakeTaskPort(),
-        credentials=credentials or FakeCredentials(), kind="image",
+        transport, task_port=task_port or FakeTaskPort(kind),
+        credentials=credentials or FakeCredentials(), kind=kind,
         production_ready=True, facts=facts or FakeProviderFacts(),
     )
 
@@ -231,6 +240,37 @@ async def test_submit_timeout_is_unknown_and_never_retries():
     assert receipt.state is ProviderState.UNKNOWN
     assert receipt.evidence["error_code"] == "KIE_SUBMIT_RESULT_UNKNOWN"
     assert [name for name, _ in transport.calls] == ["submit"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("phase", "expected", "fact_state"), (
+    ("accepted", ProviderState.ACCEPTED, "submitted"),
+    ("unknown", ProviderState.UNKNOWN, "unknown"),
+    ("completed", ProviderState.COMPLETED, "readback_confirmed"),
+))
+async def test_prepared_video_provider_facts_cover_nonterminal_and_terminal(
+    phase, expected, fact_state,
+):
+    facts = FakeProviderFacts()
+    if phase == "completed":
+        transport = FakeTransport(query=KieHttpResponse(
+            status_code=200, payload={"code": 200, "data": {
+                "taskId": "kie-1", "state": "success",
+                "resultJson": '{"resultUrls":["https://cdn.example/video.mp4"]}',
+            }},
+        ))
+        receipt = await provider(
+            transport, facts=facts, kind="video",
+        ).reconcile(attempt(), provider_receipt())
+    else:
+        transport = FakeTransport(
+            error=TimeoutError("uncertain") if phase == "unknown" else None,
+        )
+        receipt = await provider(
+            transport, facts=facts, kind="video",
+        ).submit(attempt(), {}, idempotency_key=f"video-{phase}")
+    assert receipt.state is expected
+    assert receipt.evidence["provider_fact_state"] == fact_state
 
 
 @pytest.mark.asyncio
@@ -332,6 +372,16 @@ async def test_cancel_requires_explicit_provider_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_cancel_recovers_provider_ref_from_durable_fact():
+    stale = provider_receipt()
+    stale["provider_task_ref"] = None
+    receipt = await provider(FakeTransport()).cancel(attempt(), stale)
+    assert receipt.state is ProviderState.UNKNOWN
+    assert receipt.provider_task_ref == "kie-1"
+    assert receipt.evidence["cancel_unproven"] is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("state", "expected"), [
     ("success", ProviderState.COMPLETED),
     ("fail", ProviderState.FAILED),
@@ -364,6 +414,43 @@ async def test_cancel_unproven_next_operation_is_record_info_readback(
     assert [name for name, _ in transport.calls] == ["query"]
     assert facts.calls == ["read", "request_cancel", "read", "readback"]
     assert readback.evidence["cancel_unproven"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("receipt_phase", (
+    "accepted", "unknown", "cancel_unproven",
+))
+@pytest.mark.parametrize(("state", "terminal"), (
+    ("success", ProviderState.COMPLETED),
+    ("fail", ProviderState.FAILED),
+    ("waiting", ProviderState.ACCEPTED),
+))
+async def test_stale_receipt_recovers_provider_ref_from_durable_fact(
+    receipt_phase, state, terminal,
+):
+    data = {"taskId": "kie-1", "state": state}
+    if state == "success":
+        data["resultJson"] = '{"resultUrls":["https://cdn.example/video.mp4"]}'
+    transport = FakeTransport(query=KieHttpResponse(
+        status_code=200, payload={"code": 200, "data": data},
+    ))
+    stale = provider_receipt(cancel_unproven=receipt_phase == "cancel_unproven")
+    stale["provider_task_ref"] = None
+    stale["evidence"]["provider_fact_state"] = receipt_phase
+    readback = await provider(
+        transport, facts=FakeProviderFacts(), kind="video",
+    ).reconcile(attempt(), stale)
+
+    expected = (
+        ProviderState.UNKNOWN
+        if receipt_phase == "cancel_unproven" and state == "waiting"
+        else terminal
+    )
+    assert readback.state is expected
+    assert readback.provider_task_ref == "kie-1"
+    assert transport.calls == [("query", {
+        "api_key": "fixture-key", "provider_task_ref": "kie-1",
+    })]
 
 
 @pytest.mark.asyncio

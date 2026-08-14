@@ -30,7 +30,7 @@ def build_runtime_media_composition(
     enabled: bool = False, provider_probe_passed: bool = False,
     production_ready: bool = False,
 ) -> RuntimeMediaComposition:
-    """Register media only when flag, wiring and probe facts are explicit."""
+    """Register local wiring; only the database may report owner readiness."""
     registry = ExecutorRegistry()
     registry.specialist_facts = specialist_facts
     if not enabled:
@@ -66,8 +66,8 @@ def build_runtime_media_composition(
             safety_level=SPECIALIST_SAFETY[tool],
         )
     return RuntimeMediaComposition(
-        registry=registry, enabled=True, production_ready=production_ready,
-        error_code=(None if production_ready
+        registry=registry, enabled=True, production_ready=False,
+        error_code=("DATABASE_READINESS_UNVERIFIED" if production_ready
                     else "PRODUCTION_READINESS_DISABLED"),
     )
 

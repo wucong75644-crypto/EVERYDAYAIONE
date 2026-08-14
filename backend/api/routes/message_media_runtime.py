@@ -13,17 +13,9 @@ async def submit_runtime_media_ingress(
 ):
     """Submit one prepared task through the narrow Runtime media RPC."""
     from core.config import get_settings
-    from services.agent.runtime.media_ingress import (
-        RuntimeMediaIngress, RuntimeMediaIngressReceipt,
-    )
+    from services.agent.runtime.media_ingress import RuntimeMediaIngress
 
     settings = get_settings()
-    if not all((
-        settings.agent_runtime_media_enabled,
-        settings.agent_runtime_media_provider_probe_passed,
-        settings.agent_runtime_media_production_ready,
-    )):
-        return RuntimeMediaIngressReceipt(outcome="media_not_ready")
     if not input_message_id:
         raise RuntimeError("RUNTIME_MEDIA_INPUT_MESSAGE_REQUIRED")
     row = db.table("conversations").select(
