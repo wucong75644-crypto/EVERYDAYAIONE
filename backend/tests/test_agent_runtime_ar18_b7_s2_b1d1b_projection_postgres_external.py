@@ -18,12 +18,16 @@ from tests.test_agent_runtime_ar18_b7_s2_b1b1_context_postgres_external import _
 
 
 pytestmark = pytest.mark.external
-MIGRATION = "227_36_agent_runtime_scheduled_web_projection.sql"
-ROLLBACK = "rollback/227_36_agent_runtime_scheduled_web_projection_rollback.sql"
+BASE_MIGRATION = "227_36_agent_runtime_scheduled_web_projection.sql"
+MIGRATION = "228_08h_agent_runtime_scheduled_web_projection_claim_ordering.sql"
+ROLLBACK = (
+    "rollback/228_08h_agent_runtime_scheduled_web_projection_claim_ordering_rollback.sql"
+)
 
 
 def _setup(url: str) -> None:
     _delivery_setup(url)
+    _apply(url, BASE_MIGRATION)
     _apply(url, MIGRATION)
 
 
@@ -172,8 +176,11 @@ def test_acl_rls_rollback_guard_cleanup_reapply_and_rollback(database: str) -> N
         )
         for function in functions:
             assert conn.execute(
-                "SELECT proconfig FROM pg_proc WHERE oid=%s::regprocedure", (function,),
-            ).fetchone()[0] == ["search_path=pg_catalog, public"]
+                "SELECT proconfig,prosecdef,proowner::regrole::text "
+                "FROM pg_proc WHERE oid=%s::regprocedure", (function,),
+            ).fetchone() == (
+                ["search_path=pg_catalog, public"], True, "everydayai_owner",
+            )
             assert conn.execute(
                 "SELECT has_function_privilege('everydayai_projection_worker',%s,'EXECUTE')",
                 (function,),
@@ -182,19 +189,75 @@ def test_acl_rls_rollback_guard_cleanup_reapply_and_rollback(database: str) -> N
                 "SELECT has_function_privilege('everydayai_worker',%s,'EXECUTE')",
                 (function,),
             ).fetchone()[0] is False
+        assert conn.execute(
+            "SELECT has_function_privilege('everydayai_projection_worker',"
+            "'_claim_agent_runtime_scheduled_web_projection_227_36_v1"
+            "(text,uuid,integer)','EXECUTE')"
+        ).fetchone()[0] is False
+        predecessor_definition = conn.execute(
+            "SELECT pg_get_functiondef("
+            "'_claim_agent_runtime_scheduled_web_projection_227_36_v1"
+            "(text,uuid,integer)'::regprocedure)"
+        ).fetchone()[0]
+
+    projection_url = database.replace("postgres@", "everydayai_projection_worker@")
+    with psycopg.connect(projection_url) as conn:
+        with pytest.raises(Exception, match="PROJECTION_SCOPE_REQUIRED"):
+            conn.execute(
+                "SELECT claim_agent_runtime_scheduled_web_projection_v1(%s,%s,60)",
+                ("wrong-scope", uuid4()),
+            ).fetchone()
+
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "COMMENT ON FUNCTION claim_agent_runtime_scheduled_web_projection_v1"
+            "(text,uuid,integer) IS 'later migration'"
+        )
+    with pytest.raises(Exception, match="228_08H_ROLLBACK_DEPENDENCY_CONFLICT"):
+        _apply(database, ROLLBACK)
+    with psycopg.connect(database) as conn:
+        conn.execute("SET ROLE everydayai_owner")
+        conn.execute(
+            "COMMENT ON FUNCTION claim_agent_runtime_scheduled_web_projection_v1"
+            "(text,uuid,integer) IS "
+            "'228_08h ordered scheduled Web projection receipt materialization'"
+        )
 
     _apply(database, ROLLBACK)
     _apply(database, MIGRATION)
     _finalized(database)
-    assert _claim(database)["outcome"] == "claimed"
-    with pytest.raises(Exception, match="PROJECTION_ROLLBACK_HAS_FACTS"):
+    with pytest.raises(Exception, match="228_08H_ROLLBACK_ACTIVE_PROJECTION"):
         _apply(database, ROLLBACK)
-    with psycopg.connect(database) as conn:
-        conn.execute("SET ROLE everydayai_owner")
-        conn.execute("DELETE FROM agent_runtime_scheduled_web_wakeup_attempts")
-        conn.execute("DELETE FROM agent_runtime_scheduled_web_projection_receipts")
-        conn.commit()
+    claim = _claim(database)
+    with pytest.raises(Exception, match="228_08H_ROLLBACK_ACTIVE_PROJECTION"):
+        _apply(database, ROLLBACK)
+    projected = _projection_rpc(
+        database, "apply_agent_runtime_scheduled_web_projection_v1",
+        (claim["intent_id"], claim["claim_token"], claim["state_version"]),
+    )
+    completed = _projection_rpc(
+        database, "complete_agent_runtime_scheduled_web_wakeup_v1",
+        (projected["intent_id"], projected["claim_token"],
+         projected["state_version"], True, None),
+    )
+    assert completed["outcome"] == "completed"
     _apply(database, ROLLBACK)
+    with psycopg.connect(database) as conn:
+        restored = conn.execute(
+            "SELECT pg_get_functiondef("
+            "'claim_agent_runtime_scheduled_web_projection_v1"
+            "(text,uuid,integer)'::regprocedure),"
+            "to_regprocedure("
+            "'_claim_agent_runtime_scheduled_web_projection_227_36_v1"
+            "(text,uuid,integer)')"
+        ).fetchone()
+    assert "ORDER BY i.id ASC" not in restored[0]
+    assert restored[1] is None
+    assert restored[0].replace(
+        "claim_agent_runtime_scheduled_web_projection_v1",
+        "_claim_agent_runtime_scheduled_web_projection_227_36_v1",
+    ) == predecessor_definition
     _apply(database, MIGRATION)
     _apply(database, ROLLBACK)
 
