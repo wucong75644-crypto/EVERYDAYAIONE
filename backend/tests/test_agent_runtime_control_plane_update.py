@@ -423,6 +423,11 @@ def test_control_plane_state_scope_and_release_routes_never_touch_sandbox(
     assert "everydayai-sandbox-worker" not in control_branch
     assert "sandbox-worker.env" not in control_branch
     assert "control-plane-only" in INSTALLER
+    assert 'local env_python="${backend_dir}/venv/bin/python"' in INSTALLER
+    assert 'CONTROL_PLANE_ENV_PYTHON="$env_python"' in INSTALLER
+    updater = UPDATER.read_text(encoding="utf-8")
+    assert "env_python=${CONTROL_PLANE_ENV_PYTHON:-python3}" in updater
+    assert '"$env_python" "$env_tool"' in updater
     assert "--runtime-control-plane-flags-off-update" in DEPLOY_SCRIPT
     assert "--runtime-control-plane-flags-off-update" in RELEASE_SCRIPT
     release_check = FLAGS_OFF.index("check_release_source")

@@ -9,6 +9,7 @@ deploy_dir=${CONTROL_PLANE_DEPLOY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && 
 systemd_dir=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 env_dir=${CONTROL_PLANE_ENV_DIR:-/etc/everydayai}
 env_tool=${CONTROL_PLANE_ENV_TOOL:-${deploy_dir}/provision-control-plane-worker-envs.py}
+env_python=${CONTROL_PLANE_ENV_PYTHON:-python3}
 transaction_root=${CONTROL_PLANE_TRANSACTION_ROOT:-/var/backups/everydayai/control-plane-updates}
 release_dir="${transaction_root}/${release_sha}"
 unit_backup_dir="${release_dir}/units"
@@ -107,7 +108,7 @@ check_unit_states() {
 }
 
 run_env_transaction() {
-    python3 "$env_tool" "$1" --env-dir "$env_dir" \
+    "$env_python" "$env_tool" "$1" --env-dir "$env_dir" \
         --release-sha "$release_sha" --transaction-root "$transaction_root"
 }
 

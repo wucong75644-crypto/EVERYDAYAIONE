@@ -385,10 +385,12 @@ install_control_plane_units_only() {
 
     local provisioner="${deploy_dir}/provision-control-plane-worker-envs.py"
     local updater="${deploy_dir}/update-control-plane-units.sh"
+    local env_python="${backend_dir}/venv/bin/python"
     test -f "$provisioner"
     test -f "$updater"
+    test -x "$env_python"
 
-    sudo python3 "$provisioner" prepare \
+    sudo "$env_python" "$provisioner" prepare \
         --backend-dir "$backend_dir" \
         --env-dir "$runtime_env_dir" \
         --release-sha "$expected_release_revision" \
@@ -397,12 +399,14 @@ install_control_plane_units_only() {
         CONTROL_PLANE_DEPLOY_DIR="$deploy_dir" \
         CONTROL_PLANE_ENV_DIR="$runtime_env_dir" \
         CONTROL_PLANE_ENV_TOOL="$provisioner" \
+        CONTROL_PLANE_ENV_PYTHON="$env_python" \
         CONTROL_PLANE_TRANSACTION_ROOT="$transaction_root" \
         bash "$updater" preflight "$expected_release_revision" "$manifest_path"
     sudo env SYSTEMD_UNIT_DIR="$systemd_dir" \
         CONTROL_PLANE_DEPLOY_DIR="$deploy_dir" \
         CONTROL_PLANE_ENV_DIR="$runtime_env_dir" \
         CONTROL_PLANE_ENV_TOOL="$provisioner" \
+        CONTROL_PLANE_ENV_PYTHON="$env_python" \
         CONTROL_PLANE_TRANSACTION_ROOT="$transaction_root" \
         bash "$updater" apply "$expected_release_revision" "$manifest_path"
     cleanup_manifest_temp
